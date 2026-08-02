@@ -1,0 +1,151 @@
+{
+  "id": "1NPVfPP868n5hw7D",
+  "name": "Excel extraction agent — FastAPI tools + Qwen loop",
+  "description": null,
+  "nodes": [
+    {
+      "parameters": {
+        "httpMethod": "POST",
+        "path": "excel-extract",
+        "responseMode": "responseNode",
+        "options": {
+          "binaryData": true
+        }
+      },
+      "id": "0faac0c7-01e9-451f-87a8-000000000001",
+      "name": "Excel extraction webhook",
+      "type": "n8n-nodes-base.webhook",
+      "typeVersion": 2,
+      "position": [
+        0,
+        0
+      ],
+      "webhookId": "0faac0c7-01e9-451f-87a8-000000000001"
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "http://excel-tools:8000/api/v1/sessions",
+        "sendHeaders": true,
+        "headerParameters": {
+          "parameters": [
+            {
+              "name": "X-API-Key",
+              "value": "={{ $env.EXCEL_TOOLS_API_KEY }}"
+            }
+          ]
+        },
+        "sendBody": true,
+        "contentType": "multipart-form-data",
+        "bodyParameters": {
+          "parameters": [
+            {
+              "parameterType": "formBinaryData",
+              "name": "file",
+              "inputDataFieldName": "file"
+            },
+            {
+              "parameterType": "formData",
+              "name": "payload",
+              "value": "={{ JSON.stringify({ request: $json.request ?? $json.body?.request ?? $json.body ?? {} }) }}"
+            }
+          ]
+        },
+        "options": {
+          "response": {
+            "response": {
+              "responseFormat": "json"
+            }
+          }
+        }
+      },
+      "id": "0faac0c7-01e9-451f-87a8-000000000004",
+      "name": "Upload Excel to FastAPI",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.4,
+      "position": [
+        260,
+        0
+      ]
+    },
+    {
+      "parameters": {
+        "jsCode": "const cfg = {\n  toolsUrl: ($env.EXCEL_TOOLS_URL || 'http://excel-tools:8000/api/v1').replace(/\\/$/, ''),\n  toolsApiKey: $env.EXCEL_TOOLS_API_KEY || '',\n  qwenBaseUrl: ($env.QWEN_BASE_URL || '').replace(/\\/$/, ''),\n  qwenApiKey: $env.QWEN_API_KEY || '',\n  qwenModel: $env.QWEN_MODEL || 'qwen3.6-plus',\n  maxIterations: 12,\n  maxToolCalls: 30,\n};\nconst uploaded = $input.first().json;\nconst original = $('Excel extraction webhook').first().json;\n\nconst parseJsonObject = (value, fallback = {}) => {\n  if (value === undefined || value === null || value === '') return fallback;\n  if (typeof value === 'object' && !Array.isArray(value)) return value;\n  if (typeof value === 'string') {\n    try {\n      const parsed = JSON.parse(value);\n      return parsed && typeof parsed === 'object' && !Array.isArray(parsed) ? parsed : fallback;\n    } catch { return fallback; }\n  }\n  return fallback;\n};\nconst request = parseJsonObject(original.request ?? original.body?.request ?? original.body, {});\nconst clarificationResponse = parseJsonObject(original.clarification_response ?? original.body?.clarification_response, null);\n\nconst finalError = (message, meta = {}) => [{ json: {\n  status: 'error', message, next_action: 'handle_error',\n  data: { result_id: null, artifact_ref: null, columns: [], records: [], row_count: 0, returned_count: 0, truncated: false, provenance: [] },\n  filters_applied: [], field_mapping: {}, assumptions: [], warnings: [], errors: [{ code: 'AGENT_LOOP_ERROR', message }], clarification: null, meta,\n}}];\nconst requestJson = async (url, options = {}) => {\n  const response = await helpers.httpRequest({\n    url,\n    method: options.method || 'GET',\n    headers: options.headers || {},\n    body: options.body,\n    json: true,\n    timeout: 120000,\n    returnFullResponse: true,\n    ignoreHttpStatusErrors: true,\n  });\n  const statusCode = response.statusCode ?? 200;\n  const payload = response.body ?? response;\n  if (statusCode < 200 || statusCode >= 300) {\n    throw new Error(`HTTP ${statusCode} from ${url}: ${JSON.stringify(payload).slice(0, 2000)}`);\n  }\n  return payload;\n};\nconst toolsHeaders = { 'X-API-Key': cfg.toolsApiKey };\n\ntry {\n  const sessionId = uploaded.session_id;\n  if (typeof sessionId !== 'string' || !sessionId) return finalError('Excel Tools upload did not return session_id');\n  if (!cfg.qwenBaseUrl || !cfg.qwenApiKey) return finalError('Qwen endpoint or API key is not configured', { session_id: sessionId });\n\n  const { tools } = await requestJson(`${cfg.toolsUrl}/tools`, { headers: toolsHeaders });\n  let recoveredState = null;\n  if (clarificationResponse) {\n    const resolvePayload = await requestJson(`${cfg.toolsUrl}/sessions/${encodeURIComponent(sessionId)}/tools/batch`, {\n      method: 'POST', headers: { ...toolsHeaders, 'Content-Type': 'application/json' },\n      body: { calls: [{ call_id: 'resolve_clarification', name: 'resolve_clarification', args: clarificationResponse }] },\n    });\n    const resolved = resolvePayload.results?.[0];\n    if (!resolved?.ok) return finalError('Could not resolve clarification', { session_id: sessionId, tool_error: resolved?.error });\n    recoveredState = await requestJson(`${cfg.toolsUrl}/sessions/${encodeURIComponent(sessionId)}/state`, { headers: toolsHeaders });\n  }\n\n  let messages = [\n    { role: 'system', content: \"Ты — агент извлечения данных из Excel.\\n\\nУ тебя есть доступ только к инструментам сервиса Excel Tools. Excel-файл никогда не передаётся в LLM.\\n\\nПорядок работы:\\n1. Начни с workbook_introspect.\\n2. При необходимости используй sheet_preview, затем detect_tables и describe_table.\\n3. Перед фильтрацией проверяй допустимые значения list_column_values.\\n4. Извлекай данные query_table, проверяй validate_result и экспортируй большие результаты export_result.\\n5. При неоднозначности вызови submit_clarification, затем finalize_extraction со status=clarification_needed.\\n6. Всегда заканчивай единственным вызовом finalize_extraction.\\n\\nПравила: не выдумывай данные; не возвращай большие таблицы текстом; фиксируй допущения; при ошибке завершай finalize_extraction со status=error.\" },\n    { role: 'user', content: JSON.stringify({ session_id: sessionId, request, clarification_response: clarificationResponse, recovered_state: recoveredState }) },\n  ];\n  let totalToolCalls = 0;\n  let askedForFinalization = false;\n\n  for (let iteration = 0; iteration < cfg.maxIterations; iteration++) {\n    const qwenPayload = await requestJson(`${cfg.qwenBaseUrl}/chat/completions`, {\n      method: 'POST',\n      headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${cfg.qwenApiKey}` },\n      body: { model: cfg.qwenModel, temperature: 0, messages, tools, tool_choice: 'auto' },\n    });\n    const assistantMessage = qwenPayload.choices?.[0]?.message;\n    if (!assistantMessage) return finalError('Qwen response has no choices[0].message', { session_id: sessionId });\n    messages.push(assistantMessage);\n    const toolCalls = Array.isArray(assistantMessage.tool_calls) ? assistantMessage.tool_calls : [];\n\n    if (toolCalls.length === 0) {\n      if (!askedForFinalization) {\n        askedForFinalization = true;\n        messages.push({ role: 'user', content: 'You must finish by calling finalize_extraction with valid structured output. Do not reply with plain text.' });\n        continue;\n      }\n      return finalError('Model did not call finalize_extraction', { session_id: sessionId, raw: assistantMessage.content || null });\n    }\n    totalToolCalls += toolCalls.length;\n    if (totalToolCalls > cfg.maxToolCalls) return finalError('Agent exceeded maximum tool calls', { session_id: sessionId, total_tool_calls: totalToolCalls });\n\n    const calls = toolCalls.map((toolCall) => {\n      let args = {};\n      try { args = JSON.parse(toolCall.function?.arguments || '{}'); }\n      catch { args = { _invalid_arguments_json: toolCall.function?.arguments || '' }; }\n      return { call_id: toolCall.id, name: toolCall.function?.name || '', args };\n    });\n    const toolPayload = await requestJson(`${cfg.toolsUrl}/sessions/${encodeURIComponent(sessionId)}/tools/batch`, {\n      method: 'POST', headers: { ...toolsHeaders, 'Content-Type': 'application/json' }, body: { calls },\n    });\n    for (const result of toolPayload.results || []) {\n      messages.push({ role: 'tool', tool_call_id: result.call_id, content: JSON.stringify(result) });\n      if (result.name === 'finalize_extraction' && result.ok) return [{ json: result.result.output }];\n    }\n  }\n  return finalError('Agent exceeded maximum iterations', { session_id: sessionId, max_iterations: cfg.maxIterations });\n} catch (error) {\n  return finalError(error instanceof Error ? error.message : String(error));\n}"
+      },
+      "id": "0faac0c7-01e9-451f-87a8-000000000002",
+      "name": "Run deterministic-tools agent loop",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        520,
+        0
+      ]
+    },
+    {
+      "parameters": {
+        "respondWith": "firstIncomingItem",
+        "options": {}
+      },
+      "id": "0faac0c7-01e9-451f-87a8-000000000005",
+      "name": "Return agent output",
+      "type": "n8n-nodes-base.respondToWebhook",
+      "typeVersion": 1.5,
+      "position": [
+        780,
+        0
+      ]
+    }
+  ],
+  "connections": {
+    "Excel extraction webhook": {
+      "main": [
+        [
+          {
+            "node": "Upload Excel to FastAPI",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Upload Excel to FastAPI": {
+      "main": [
+        [
+          {
+            "node": "Run deterministic-tools agent loop",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Run deterministic-tools agent loop": {
+      "main": [
+        [
+          {
+            "node": "Return agent output",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    }
+  },
+  "settings": {
+    "executionOrder": "v1",
+    "saveManualExecutions": true
+  },
+  "staticData": null,
+  "meta": {
+    "templateCredsSetupCompleted": false
+  },
+  "nodeGroups": [],
+  "pinData": {},
+  "versionId": "69a88572-b609-415e-a9a5-56d9ac4022f7",
+  "sourceWorkflowId": null,
+  "versionMetadata": {
+    "name": null,
+    "description": null
+  },
+  "active": false
+}

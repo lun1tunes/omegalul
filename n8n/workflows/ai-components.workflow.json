@@ -1,0 +1,220 @@
+{
+  "name": "AI components — PostgreSQL memory, pgvector, Qwen models",
+  "nodes": [
+    {
+      "parameters": {},
+      "id": "cae00001-0000-4000-8000-000000000001",
+      "name": "When clicking Execute workflow",
+      "type": "n8n-nodes-base.manualTrigger",
+      "typeVersion": 1,
+      "position": [
+        0,
+        280
+      ]
+    },
+    {
+      "parameters": {
+        "assignments": {
+          "assignments": [
+            {
+              "id": "cae00001-0000-4000-8000-000000000002",
+              "name": "chatInput",
+              "value": "What data should I retrieve?",
+              "type": "string"
+            }
+          ]
+        },
+        "options": {}
+      },
+      "id": "cae00001-0000-4000-8000-000000000003",
+      "name": "Set prompt",
+      "type": "n8n-nodes-base.set",
+      "typeVersion": 3.4,
+      "position": [
+        220,
+        280
+      ]
+    },
+    {
+      "parameters": {
+        "promptType": "define",
+        "text": "={{ $json.chatInput }}",
+        "options": {
+          "systemMessage": "You are an orchestrator. Use available tools and stored context."
+        }
+      },
+      "id": "cae00001-0000-4000-8000-000000000004",
+      "name": "AI Agent",
+      "type": "@n8n/n8n-nodes-langchain.agent",
+      "typeVersion": 2,
+      "position": [
+        480,
+        280
+      ]
+    },
+    {
+      "parameters": {
+        "model": "qwen3.6-plus",
+        "options": {
+          "temperature": 0
+        }
+      },
+      "id": "cae00001-0000-4000-8000-000000000005",
+      "name": "Qwen Chat Model (OpenAI-compatible credential)",
+      "type": "@n8n/n8n-nodes-langchain.lmChatOpenAi",
+      "typeVersion": 1.2,
+      "position": [
+        440,
+        500
+      ],
+      "credentials": {
+        "openAiApi": {
+          "id": "REPLACE_WITH_QWEN_CHAT_CREDENTIAL",
+          "name": "Qwen chat (OpenAI-compatible protocol)"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "sessionIdType": "customKey",
+        "sessionKey": "={{ $json.session_id || $execution.id }}",
+        "tableName": "n8n_chat_memory",
+        "contextWindowLength": 20
+      },
+      "id": "cae00001-0000-4000-8000-000000000006",
+      "name": "Postgres Chat Memory",
+      "type": "@n8n/n8n-nodes-langchain.memoryPostgresChat",
+      "typeVersion": 1.3,
+      "position": [
+        620,
+        500
+      ],
+      "credentials": {
+        "postgres": {
+          "id": "REPLACE_WITH_POSTGRES_CREDENTIAL",
+          "name": "Postgres pgvector"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "model": "Qwen/Qwen3-Embedding-8B",
+        "options": {}
+      },
+      "id": "cae00001-0000-4000-8000-000000000007",
+      "name": "Qwen Embeddings (dedicated compatible credential)",
+      "type": "@n8n/n8n-nodes-langchain.embeddingsOpenAi",
+      "typeVersion": 1.2,
+      "position": [
+        900,
+        560
+      ],
+      "credentials": {
+        "openAiApi": {
+          "id": "REPLACE_WITH_QWEN_EMBEDDINGS_CREDENTIAL",
+          "name": "Qwen embeddings (OpenAI-compatible protocol)"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "mode": "retrieve-as-tool",
+        "toolName": "context_search",
+        "toolDescription": "Search indexed contextual knowledge.",
+        "tableName": "n8n_vectors",
+        "topK": 4
+      },
+      "id": "cae00001-0000-4000-8000-000000000008",
+      "name": "PGVector Vector Store",
+      "type": "@n8n/n8n-nodes-langchain.vectorStorePGVector",
+      "typeVersion": 1.3,
+      "position": [
+        820,
+        440
+      ],
+      "credentials": {
+        "postgres": {
+          "id": "REPLACE_WITH_POSTGRES_CREDENTIAL",
+          "name": "Postgres pgvector"
+        }
+      }
+    }
+  ],
+  "connections": {
+    "When clicking Execute workflow": {
+      "main": [
+        [
+          {
+            "node": "Set prompt",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Set prompt": {
+      "main": [
+        [
+          {
+            "node": "AI Agent",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Qwen Chat Model (OpenAI-compatible credential)": {
+      "ai_languageModel": [
+        [
+          {
+            "node": "AI Agent",
+            "type": "ai_languageModel",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Postgres Chat Memory": {
+      "ai_memory": [
+        [
+          {
+            "node": "AI Agent",
+            "type": "ai_memory",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "PGVector Vector Store": {
+      "ai_tool": [
+        [
+          {
+            "node": "AI Agent",
+            "type": "ai_tool",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Qwen Embeddings (dedicated compatible credential)": {
+      "ai_embedding": [
+        [
+          {
+            "node": "PGVector Vector Store",
+            "type": "ai_embedding",
+            "index": 0
+          }
+        ]
+      ]
+    }
+  },
+  "active": false,
+  "settings": {
+    "executionOrder": "v1"
+  },
+  "versionId": "cae00001-0000-4000-8000-000000000009",
+  "meta": {
+    "templateCredsSetupCompleted": false
+  },
+  "tags": []
+}

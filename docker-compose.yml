@@ -15,11 +15,12 @@ services:
       timeout: 5s
       retries: 20
     ports:
-      - "127.0.0.1:5432:5432"
+      - "127.0.0.1:${POSTGRES_HOST_PORT:-5432}:5432"
 
   excel-tools:
     build:
       context: ./excel-agent-tools
+      target: runtime
     restart: unless-stopped
     environment:
       API_KEY: ${EXCEL_TOOLS_API_KEY:?Set EXCEL_TOOLS_API_KEY in .env}
@@ -36,7 +37,7 @@ services:
       timeout: 5s
       retries: 12
     ports:
-      - "127.0.0.1:8000:8000"
+      - "127.0.0.1:${EXCEL_TOOLS_HOST_PORT:-8000}:8000"
 
   n8n:
     image: n8nio/n8n:2.30.8
@@ -59,24 +60,25 @@ services:
       N8N_PROTOCOL: ${N8N_PROTOCOL:-http}
       N8N_PORT: 5678
       N8N_EDITOR_BASE_URL: ${N8N_EDITOR_BASE_URL:-http://localhost:5678/}
-      WEBHOOK_URL: ${WEBHOOK_URL:-http://localhost:5678/}
+      N8N_WEBHOOK_URL: ${N8N_WEBHOOK_URL:-http://localhost:5678/}
       N8N_SECURE_COOKIE: "false"
       N8N_ENFORCE_SETTINGS_FILE_PERMISSIONS: "true"
-      N8N_RUNNERS_ENABLED: "true"
+      # The imported Code node reads only the listed QWEN/Excel service env vars.
+      N8N_BLOCK_ENV_ACCESS_IN_NODE: "false"
       EXECUTIONS_DATA_PRUNE: "true"
       EXECUTIONS_DATA_MAX_AGE: 168
       EXCEL_TOOLS_URL: http://excel-tools:8000/api/v1
       EXCEL_TOOLS_API_KEY: ${EXCEL_TOOLS_API_KEY:?Set EXCEL_TOOLS_API_KEY in .env}
-      QWEN_BASE_URL: ${QWEN_BASE_URL:-http://host.docker.internal:8001/v1}
+      QWEN_BASE_URL: ${QWEN_BASE_URL:-https://codex.sale/v1}
       QWEN_API_KEY: ${QWEN_API_KEY:-}
-      QWEN_MODEL: ${QWEN_MODEL:-qwen3.6-27b-instruct}
+      QWEN_MODEL: ${QWEN_MODEL:-qwen3.6-plus}
     extra_hosts:
       - "host.docker.internal:host-gateway"
     volumes:
       - n8n_data:/home/node/.n8n
       - ./n8n/workflows:/workflows:ro
     ports:
-      - "127.0.0.1:5678:5678"
+      - "127.0.0.1:${N8N_HOST_PORT:-5678}:5678"
 
 volumes:
   postgres_data:
