@@ -8,13 +8,14 @@ ENV PYTHONDONTWRITEBYTECODE=1 \
 WORKDIR /service
 RUN addgroup --system app && adduser --system --ingroup app app
 COPY requirements.txt ./
-RUN pip install --no-cache-dir -r requirements.txt
+RUN pip install --no-cache-dir --disable-pip-version-check -r requirements.txt \
+    && rm -rf /root/.cache
 COPY app ./app
 RUN mkdir -p /data/sessions && chown -R app:app /service /data
 
 USER app
 EXPOSE 8000
-CMD ["uvicorn", "app.main:app", "--host", "0.0.0.0", "--port", "8000", "--proxy-headers"]
+CMD ["uvicorn", "app.main:app", "--host", "0.0.0.0", "--port", "8000"]
 
 FROM runtime AS test
 USER root

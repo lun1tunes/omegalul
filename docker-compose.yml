@@ -1,6 +1,6 @@
 services:
   postgres:
-    image: pgvector/pgvector:pg16
+    image: pgvector/pgvector:pg16@sha256:a36250871de0833b8757561c72f2477ef1ddd1101afa4e617fb552e0de514c6b
     restart: unless-stopped
     environment:
       POSTGRES_USER: ${POSTGRES_USER:-n8n}
@@ -9,13 +9,16 @@ services:
     volumes:
       - postgres_data:/var/lib/postgresql/data
       - ./postgres-init:/docker-entrypoint-initdb.d:ro
+    mem_limit: ${POSTGRES_MEMORY_LIMIT:-1g}
+    cpus: ${POSTGRES_CPUS:-2.0}
+    pids_limit: 256
     healthcheck:
       test: ["CMD-SHELL", "pg_isready -U $$POSTGRES_USER -d $$POSTGRES_DB"]
       interval: 5s
       timeout: 5s
       retries: 20
-    ports:
-      - "127.0.0.1:${POSTGRES_HOST_PORT:-5432}:5432"
+    networks:
+      - backend
 
   excel-tools:
     build:
@@ -27,20 +30,33 @@ services:
       SESSION_DIR: /data/sessions
       SESSION_TTL_HOURS: ${SESSION_TTL_HOURS:-24}
       MAX_FILE_SIZE_MB: ${MAX_FILE_SIZE_MB:-200}
+      MAX_EXCEL_ZIP_ENTRIES: ${MAX_EXCEL_ZIP_ENTRIES:-10000}
+      MAX_EXCEL_UNCOMPRESSED_MB: ${MAX_EXCEL_UNCOMPRESSED_MB:-500}
+      EXCEL_TOOLS_ENABLE_DOCS: ${EXCEL_TOOLS_ENABLE_DOCS:-false}
       MAX_PREVIEW_ROWS: 100
       MAX_QUERY_PREVIEW_ROWS: 100
     volumes:
       - excel_sessions:/data/sessions
+    read_only: true
+    tmpfs:
+      - /tmp:rw,noexec,nosuid,size=${EXCEL_TOOLS_TMPFS_SIZE:-256m}
+    mem_limit: ${EXCEL_TOOLS_MEMORY_LIMIT:-2g}
+    cpus: ${EXCEL_TOOLS_CPUS:-2.0}
+    pids_limit: 256
+    cap_drop:
+      - ALL
+    security_opt:
+      - no-new-privileges:true
     healthcheck:
       test: ["CMD", "python", "-c", "import urllib.request; urllib.request.urlopen('http://127.0.0.1:8000/health')"]
       interval: 10s
       timeout: 5s
       retries: 12
-    ports:
-      - "127.0.0.1:${EXCEL_TOOLS_HOST_PORT:-8000}:8000"
+    networks:
+      - backend
 
   n8n:
-    image: n8nio/n8n:2.30.8
+    image: n8nio/n8n:2.30.8@sha256:11524034450080bd0032754892b23ff20be43d72cf320ce75640f7c5475fdca8
     restart: unless-stopped
     depends_on:
       postgres:
@@ -61,26 +77,59 @@ services:
       N8N_PORT: 5678
       N8N_EDITOR_BASE_URL: ${N8N_EDITOR_BASE_URL:-http://localhost:5678/}
       N8N_WEBHOOK_URL: ${N8N_WEBHOOK_URL:-http://localhost:5678/}
-      N8N_SECURE_COOKIE: "false"
+      N8N_SECURE_COOKIE: ${N8N_SECURE_COOKIE:-true}
       N8N_ENFORCE_SETTINGS_FILE_PERMISSIONS: "true"
-      # The imported Code node reads only the listed QWEN/Excel service env vars.
+      # Workflow Code nodes only use the two injected service secrets below for
+      # request validation and FastAPI calls. Keep editor access restricted.
       N8N_BLOCK_ENV_ACCESS_IN_NODE: "false"
       EXECUTIONS_DATA_PRUNE: "true"
-      EXECUTIONS_DATA_MAX_AGE: 168
+      EXECUTIONS_DATA_MAX_AGE: ${EXECUTIONS_DATA_MAX_AGE:-168}
+      EXECUTIONS_DATA_SAVE_ON_ERROR: ${EXECUTIONS_DATA_SAVE_ON_ERROR:-all}
+      EXECUTIONS_DATA_SAVE_ON_SUCCESS: ${EXECUTIONS_DATA_SAVE_ON_SUCCESS:-none}
+      N8N_DIAGNOSTICS_ENABLED: "false"
+      N8N_PERSONALIZATION_ENABLED: "false"
+      N8N_TEMPLATES_ENABLED: "false"
+      N8N_VERSION_NOTIFICATIONS_ENABLED: "false"
+      N8N_PUBLIC_API_DISABLED: "true"
+      N8N_COMMUNITY_PACKAGES_ENABLED: "false"
+      N8N_UNVERIFIED_PACKAGES_ENABLED: "false"
+      N8N_RUNNERS_TASK_TIMEOUT: ${N8N_RUNNERS_TASK_TIMEOUT:-120}
+      N8N_COMPRESSION_NODE_MAX_DECOMPRESSED_SIZE_BYTES: ${N8N_COMPRESSION_NODE_MAX_DECOMPRESSED_SIZE_BYTES:-268435456}
+      N8N_COMPRESSION_NODE_MAX_ZIP_ENTRIES: ${N8N_COMPRESSION_NODE_MAX_ZIP_ENTRIES:-1000}
+      N8N_NODES_EXCLUDE: >-
+        n8n-nodes-base.executeCommand,
+        n8n-nodes-base.localFileTrigger,
+        n8n-nodes-base.e2eTest,
+        n8n-nodes-base.dynamicCredentialCheck,
+        n8n-nodes-base.readWriteFile
       EXCEL_TOOLS_URL: http://excel-tools:8000/api/v1
       EXCEL_TOOLS_API_KEY: ${EXCEL_TOOLS_API_KEY:?Set EXCEL_TOOLS_API_KEY in .env}
-      QWEN_BASE_URL: ${QWEN_BASE_URL:-https://codex.sale/v1}
-      QWEN_API_KEY: ${QWEN_API_KEY:-}
-      QWEN_MODEL: ${QWEN_MODEL:-qwen3.6-plus}
-    extra_hosts:
-      - "host.docker.internal:host-gateway"
+      OPENAI_API_KEY: ${OPENAI_API_KEY:?Set OPENAI_API_KEY in .env}
+      EXCEL_WEBHOOK_API_KEY: ${EXCEL_WEBHOOK_API_KEY:?Set EXCEL_WEBHOOK_API_KEY in .env}
     volumes:
       - n8n_data:/home/node/.n8n
       - ./n8n/workflows:/workflows:ro
+    mem_limit: ${N8N_MEMORY_LIMIT:-1g}
+    cpus: ${N8N_CPUS:-2.0}
+    pids_limit: 512
+    cap_drop:
+      - ALL
+    security_opt:
+      - no-new-privileges:true
     ports:
       - "127.0.0.1:${N8N_HOST_PORT:-5678}:5678"
+    networks:
+      - backend
+      - egress
+      - ingress
 
 volumes:
   postgres_data:
   n8n_data:
   excel_sessions:
+
+networks:
+  backend:
+    internal: true
+  egress:
+  ingress:

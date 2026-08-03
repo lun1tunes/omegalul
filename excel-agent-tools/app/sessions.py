@@ -6,13 +6,16 @@ import os
 import re
 import shutil
 import tempfile
+import threading
 import uuid
+from contextlib import contextmanager
 from datetime import UTC, datetime, timedelta
 from pathlib import Path
 from typing import Any
 
 SESSION_RE = re.compile(r"^sess_[A-Za-z0-9_-]{12,60}$")
 ARTIFACT_RE = re.compile(r"^(?:res|art|clr)_[A-Za-z0-9_-]{8,64}$")
+_CLEANUP_LOCK = threading.Lock()
 
 
 def session_root() -> Path:
@@ -45,6 +48,28 @@ def session_file(session_id: str, relative_path: str) -> Path:
     if candidate != base and base not in candidate.parents:
         raise ValueError("Invalid session-relative path")
     return candidate
+
+
+@contextmanager
+def locked_session(session_id: str):
+    """Serialize state-changing tool calls for one disk-backed session.
+
+    n8n executes calls in order, but the public API can receive concurrent requests
+    for the same session. The lock prevents a stale load/save cycle from discarding
+    another call's result. Docker deployments run on Linux, where ``fcntl`` locks
+    are available and released automatically if the process exits.
+    """
+    import fcntl
+
+    directory = session_dir(session_id)
+    if not directory.is_dir():
+        raise ValueError("Session not found")
+    with (directory / ".lock").open("a+") as lock:
+        fcntl.flock(lock.fileno(), fcntl.LOCK_EX)
+        try:
+            yield
+        finally:
+            fcntl.flock(lock.fileno(), fcntl.LOCK_UN)
 
 
 def state_path(session_id: str) -> Path:
@@ -132,6 +157,18 @@ def cleanup_expired_sessions() -> int:
 
     Only directories with a valid generated session id are ever deleted.
     """
+    # Uploads schedule this work in FastAPI's threadpool. Under a burst, retain
+    # one bounded scan rather than starting an O(number_of_sessions) scan per
+    # request. A later upload will retry if this pass is still in progress.
+    if not _CLEANUP_LOCK.acquire(blocking=False):
+        return 0
+    try:
+        return _cleanup_expired_sessions()
+    finally:
+        _CLEANUP_LOCK.release()
+
+
+def _cleanup_expired_sessions() -> int:
     try:
         ttl_hours = int(os.getenv("SESSION_TTL_HOURS", "24"))
     except ValueError:

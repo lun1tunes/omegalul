@@ -50,6 +50,24 @@ def _id(prefix: str) -> str:
     return f"{prefix}_{uuid.uuid4().hex[:16]}"
 
 
+def _opaque_id(value: Any, prefix: str) -> str:
+    """Validate and normalize an opaque ID returned by a previous tool.
+
+    Tool-use models occasionally preserve an invisible trailing newline or space
+    while copying IDs from a JSON response.  IDs are server-generated, never user
+    supplied identifiers, so trimming surrounding whitespace is safe and avoids a
+    needless failed/retried tool iteration.  The strict pattern still prevents an
+    arbitrary key or path from being used for a state lookup.
+    """
+    if not isinstance(value, str):
+        raise ToolError("INVALID_ARGUMENTS", f"{prefix}_id must be a string")
+    normalized = value.strip()
+    pattern = re.compile(rf"^{re.escape(prefix)}_[A-Za-z0-9_-]{{8,64}}$")
+    if not pattern.fullmatch(normalized):
+        raise ToolError("INVALID_ARGUMENTS", f"Invalid {prefix}_id")
+    return normalized
+
+
 def _file_path(state: dict[str, Any]) -> Path:
     stored_path = state.get("file_path")
     if not isinstance(stored_path, str):
@@ -195,6 +213,176 @@ def _headers(header_values: list[Any], max_col: int) -> list[str]:
     return result
 
 
+def _row_bounds(row: list[Any]) -> tuple[int, int] | None:
+    """Return the 1-based first/last meaningful cells in a row."""
+    nonempty = [index for index, value in enumerate(row, start=1) if not _is_empty(value)]
+    if not nonempty:
+        return None
+    return min(nonempty), max(nonempty)
+
+
+def _filled_header_values(row: list[Any], start_column: int, end_column: int) -> list[Any]:
+    """Fill merged-header blanks horizontally for an OpenAI-friendly display name.
+
+    `openpyxl` deliberately exposes non-anchor cells of a merged range as `None` in
+    read-only mode. For ``Q1`` merged over two sub-columns this produces
+    ``["Q1", None]``. Carrying the anchor to the right gives useful deterministic
+    names while still retaining the physical table coordinates.
+    """
+    result: list[Any] = []
+    last_value: Any = None
+    for index in range(start_column - 1, end_column):
+        value = row[index] if index < len(row) else None
+        if not _is_empty(value):
+            last_value = value
+        result.append(value if not _is_empty(value) else last_value)
+    return result
+
+
+def _join_header_rows(
+    header_rows: list[list[Any]], start_column: int, end_column: int
+) -> list[str]:
+    """Combine one or more header rows into stable unique column names."""
+    width = end_column - start_column + 1
+    filled_rows = [_filled_header_values(row, start_column, end_column) for row in header_rows]
+    raw_columns: list[str] = []
+    for offset in range(width):
+        parts: list[str] = []
+        for row in filled_rows:
+            value = row[offset]
+            if _is_empty(value):
+                continue
+            text = str(value).strip()
+            if not parts or parts[-1] != text:
+                parts.append(text)
+        raw_columns.append(" — ".join(parts) if parts else f"Column {get_column_letter(start_column + offset)}")
+
+    used: Counter[str] = Counter()
+    result: list[str] = []
+    for value in raw_columns:
+        used[value] += 1
+        result.append(value if used[value] == 1 else f"{value} ({used[value]})")
+    return result
+
+
+def _header_score(row: list[Any], next_row: list[Any] | None) -> int:
+    """Heuristic score for candidate headers in messy business worksheets.
+
+    The score intentionally rewards text labels and a populated data-like next row,
+    while penalising report metadata (two-cell key/value rows) and obvious total
+    rows. It is only used to locate table regions; the agent can always inspect a
+    preview and select a table explicitly.
+    """
+    bounds = _row_bounds(row)
+    if not bounds:
+        return -100
+    start, end = bounds
+    values = [row[index - 1] for index in range(start, end + 1)]
+    populated = [value for value in values if not _is_empty(value)]
+    text_count = sum(isinstance(value, str) and bool(value.strip()) for value in populated)
+    nontext_count = len(populated) - text_count
+    score = len(populated) * 2 + text_count * 2 - nontext_count * 2
+    if len(populated) <= 2:
+        score -= 3
+    first = str(populated[0]).strip().casefold() if populated else ""
+    if first in {"total", "subtotal", "итого", "всего"}:
+        score -= 8
+    if next_row is not None:
+        next_bounds = _row_bounds(next_row)
+        if next_bounds:
+            overlap = max(0, min(end, next_bounds[1]) - max(start, next_bounds[0]) + 1)
+            score += min(overlap, 8)
+            next_values = [next_row[index - 1] if index - 1 < len(next_row) else None for index in range(start, end + 1)]
+            if any(not _is_empty(value) and not isinstance(value, str) for value in next_values):
+                score += 2
+    return score
+
+
+def _looks_like_data_row(row: list[Any], header: list[Any]) -> bool:
+    """Whether a row is plausibly data for the preceding header.
+
+    Header rows are overwhelmingly labels, whereas business records often contain a
+    number/date/bool or an identifier such as ``INV-100`` / ``CC-20``. This keeps
+    an ordinary all-text record from becoming a second header only when it exhibits
+    a data-like signal; otherwise a second header remains possible.
+    """
+    header_bounds = _row_bounds(header)
+    row_bounds = _row_bounds(row)
+    if not header_bounds or not row_bounds:
+        return False
+    start = max(header_bounds[0], row_bounds[0])
+    end = min(header_bounds[1], row_bounds[1])
+    if start > end:
+        return False
+    values = [row[index - 1] if index - 1 < len(row) else None for index in range(start, end + 1)]
+    nonempty = [value for value in values if not _is_empty(value)]
+    if not nonempty:
+        return False
+    if any(isinstance(value, (int, float, bool, datetime, date, time)) for value in nonempty):
+        return True
+    # Identifier-shaped strings are much more common in records than in headings.
+    if any(
+        isinstance(value, str)
+        and bool(re.search(r"(?:\d|[-_/])", value.strip()))
+        for value in nonempty
+    ):
+        return True
+    return False
+
+
+def _is_likely_metadata_pair(values: list[Any]) -> bool:
+    """Recognise common report key/value labels before opening a narrow table."""
+    first = next((value for value in values if not _is_empty(value)), None)
+    return isinstance(first, str) and first.strip().casefold() in {
+        "report", "entity", "run date", "currency", "confidential", "prepared by",
+        "generated", "source", "period", "version", "owner",
+    }
+
+
+def _split_row_segments(row: list[Any]) -> list[tuple[int, int]]:
+    """Find contiguous non-empty column islands in one worksheet row."""
+    segments: list[tuple[int, int]] = []
+    start: int | None = None
+    for index, value in enumerate(row, start=1):
+        if not _is_empty(value):
+            if start is None:
+                start = index
+        elif start is not None:
+            segments.append((start, index - 1))
+            start = None
+    if start is not None:
+        segments.append((start, len(row)))
+    return segments
+
+
+def _is_group_header_row(row: list[Any], next_row: list[Any] | None) -> bool:
+    """Identify a sparse first row of a merged/multi-row header."""
+    if next_row is None:
+        return False
+    bounds = _row_bounds(row)
+    next_bounds = _row_bounds(next_row)
+    if not bounds or not next_bounds:
+        return False
+    own_count = _nonempty_count(row)
+    next_count = _nonempty_count(next_row)
+    if own_count < 1 or next_count <= own_count:
+        return False
+    # A merged heading has a gap *inside its own populated span*.  Do not include
+    # trailing cells needed only by the next row: ``Prepared by | Operations``
+    # followed by a five-column header is report metadata, not a grouped header.
+    # The slice is end-exclusive, hence ``bounds[1]`` itself must be included.
+    return any(_is_empty(value) for value in row[bounds[0] - 1 : bounds[1]])
+
+
+def _is_total_row(row: list[Any], start_column: int, end_column: int) -> bool:
+    """Return whether a row begins with a conventional total/subtotal label."""
+    values = row[start_column - 1 : end_column]
+    first = next((value for value in values if not _is_empty(value)), None)
+    if not isinstance(first, str):
+        return False
+    return first.strip().casefold() in {"total", "subtotal", "grand total", "итого", "всего"}
+
+
 def _column_index(columns: list[str], requested: str) -> int:
     if requested in columns:
         return columns.index(requested)
@@ -205,15 +393,34 @@ def _column_index(columns: list[str], requested: str) -> int:
     raise ToolError("COLUMN_NOT_FOUND", f"Column {requested} not found", {"available_columns": columns})
 
 
-def _table(state: dict[str, Any], table_id: str) -> dict[str, Any]:
-    table = state.get("tables", {}).get(table_id)
-    if not table:
-        raise ToolError("TABLE_NOT_FOUND", f"Table {table_id} not found", {"available_table_ids": list(state.get("tables", {}))})
-    return table
+def _table(state: dict[str, Any], table_id: str | None) -> dict[str, Any]:
+    """Return a detected table while keeping model-facing ID recovery bounded.
+
+    ``detect_tables`` creates opaque IDs. A tool-using model can safely omit or
+    slightly corrupt that opaque value only when this session has precisely one
+    detected table; there is then no data-selection ambiguity. Multi-table
+    workbooks continue to require an exact server-issued ID.
+    """
+    tables = state.get("tables", {})
+    raw = table_id.strip() if isinstance(table_id, str) else ""
+    if raw:
+        try:
+            normalized = _opaque_id(raw, "tbl")
+        except ToolError:
+            normalized = ""
+        if normalized and normalized in tables:
+            return tables[normalized]
+    if len(tables) == 1:
+        return next(iter(tables.values()))
+    if not raw:
+        message = "table_id is required when more than one table is detected"
+    else:
+        message = f"Table {raw} not found"
+    raise ToolError("TABLE_NOT_FOUND", message, {"available_table_ids": list(tables)})
 
 
 def _rows_for_table(state: dict[str, Any], table: dict[str, Any]) -> Iterator[list[Any]]:
-    for row_number, row in _iter_sheet_rows(state, table["sheet"], table["header_row"] + 1, table["end_row"]):
+    for row_number, row in _iter_sheet_rows(state, table["sheet"], table["data_start_row"], table["end_row"]):
         del row_number
         values = row[table["start_column"] - 1 : table["end_column"]]
         if not all(_is_empty(value) for value in values):
@@ -292,60 +499,175 @@ def detect_tables(ctx: dict[str, Any], args: dict[str, Any]) -> dict[str, Any]:
 
     found: list[dict[str, Any]] = []
     for sheet in sheets:
-        active: dict[str, Any] | None = None
-        blank_run = 0
-        # A table starts at a row containing at least two nonempty header cells. It ends after a blank row.
-        for row_number, row in _iter_sheet_rows(state, sheet):
-            nonempty = [index for index, value in enumerate(row, start=1) if not _is_empty(value)]
-            if not nonempty:
-                if active:
-                    blank_run += 1
-                    if blank_run >= 1:
-                        active["end_row"] = row_number - 1
-                        found.append(active)
-                        active = None
-                        if len(found) >= max_tables:
-                            break
+        # Detection is deliberately streaming too: only the current and next rows
+        # are held in memory. This matters for the supported 200 MB workbooks.
+        # The one-row look-ahead is enough for grouped headers and for accepting a
+        # single blank separator within an otherwise continuous data region.
+        iterator = iter(_iter_sheet_rows(state, sheet))
+        current_item = next(iterator, None)
+        active: list[dict[str, Any]] = []
+        while current_item is not None:
+            row_number, row = current_item
+            next_item = next(iterator, None)
+            next_row = next_item[1] if next_item is not None else None
+            bounds = _row_bounds(row)
+            if bounds is None:
+                next_active: list[dict[str, Any]] = []
+                for current in active:
+                    header = current["header_rows"][-1][1]
+                    # Exported reports often insert a single blank visual
+                    # separator in the middle of a table. Retain the table only
+                    # when the immediately following row looks like its record.
+                    if current["data_rows"] and next_row is not None and _looks_like_data_row(next_row, header):
+                        next_active.append(current)
+                    elif current["data_rows"]:
+                        found.append(current)
+                active = next_active
+                if len(found) >= max_tables:
+                    break
+                current_item = next_item
                 continue
-            blank_run = 0
-            if active is None:
-                if len(nonempty) < 2:
+
+            if not active:
+                # Sparse merged group headers (e.g. Customer / FY2025 on row 1,
+                # ID / Name / Revenue / Margin on row 2) are one table even
+                # though the first row has multiple islands.
+                if _is_group_header_row(row, next_row) and _nonempty_count(row) >= 2:
+                    active.append(
+                        {
+                            "sheet": sheet,
+                            "header_rows": [(row_number, row)],
+                            "data_rows": [],
+                            "start_column": min(bounds[0], _row_bounds(next_row)[0]),
+                            "end_column": max(bounds[1], _row_bounds(next_row)[1]),
+                        }
+                    )
+                    current_item = next_item
                     continue
-                active = {
-                    "sheet": sheet,
-                    "header_row": row_number,
-                    "start_column": min(nonempty),
-                    "end_column": max(nonempty),
-                    "end_row": row_number,
-                    "header_values": row,
-                }
-            else:
-                active["end_row"] = row_number
-                active["start_column"] = min(active["start_column"], min(nonempty))
-                active["end_column"] = max(active["end_column"], max(nonempty))
-        if active and len(found) < max_tables:
-            found.append(active)
+                # Multiple horizontal islands on the same row are independent
+                # tables (e.g. Sales in A:C and Stock in E:G), not one sparse
+                # seven-column table.
+                segments = _split_row_segments(row)
+                # A row containing ordinary adjacent labels is one table. Split
+                # only at a deliberate blank gap (A:C ... E:G), which is a common
+                # dashboard layout for side-by-side tables.
+                if len(segments) > 1:
+                    candidate_segments = segments
+                else:
+                    candidate_segments = [(bounds[0], bounds[1])]
+                for start_column, end_column in candidate_segments:
+                    segment = row[start_column - 1 : end_column]
+                    if len(segment) < 2 or _header_score(segment, None) < 4:
+                        continue
+                    # A two-cell key/value pair is more often preamble metadata
+                    # than a table header. Keep genuine narrow tables when their
+                    # immediate successor has a record signal (for example an ID
+                    # or number), but wait for a wider header otherwise.
+                    if len(segment) == 2:
+                        if _is_likely_metadata_pair(segment):
+                            continue
+                        following_segment = (
+                            next_row[start_column - 1 : end_column] if next_row is not None else []
+                        )
+                        if not _looks_like_data_row(following_segment, segment):
+                            continue
+                    active.append(
+                        {
+                            "sheet": sheet,
+                            "header_rows": [(row_number, row)],
+                            "data_rows": [],
+                            "start_column": start_column,
+                            "end_column": end_column,
+                        }
+                    )
+                current_item = next_item
+                continue
+
+            next_active: list[dict[str, Any]] = []
+            for current in active:
+                header_rows: list[tuple[int, list[Any]]] = current["header_rows"]
+                # A row belongs to the table only if it overlaps its header island.
+                overlap = max(
+                    0,
+                    min(current["end_column"], bounds[1])
+                    - max(current["start_column"], bounds[0])
+                    + 1,
+                )
+                if overlap == 0:
+                    if current["data_rows"]:
+                        found.append(current)
+                    continue
+
+                if not current["data_rows"]:
+                    previous_header = header_rows[-1][1]
+                    # Combine rows only where the candidate has a genuine grouped
+                    # header signal. A normal record directly below a header must
+                    # start data, even if it happens to contain text in all cells.
+                    previous_has_merged_gap = any(
+                        _is_empty(value)
+                        for value in previous_header[current["start_column"] - 1 : current["end_column"]]
+                    )
+                    candidate_has_merged_gap = any(
+                        _is_empty(value)
+                        for value in row[current["start_column"] - 1 : current["end_column"]]
+                    )
+                    if (
+                        len(header_rows) < 2
+                        and _nonempty_count(row) >= 2
+                        and _header_score(row, next_row) >= 5
+                        and (
+                            _is_group_header_row(previous_header, row)
+                            or (
+                                not _looks_like_data_row(row, previous_header)
+                                and (previous_has_merged_gap or candidate_has_merged_gap)
+                            )
+                        )
+                    ):
+                        header_rows.append((row_number, row))
+                        next_active.append(current)
+                        continue
+
+                if current["data_rows"] and _is_total_row(row, current["start_column"], current["end_column"]):
+                    found.append(current)
+                    continue
+                current["data_rows"].append((row_number, row))
+                next_active.append(current)
+
+            active = next_active
+            if len(found) >= max_tables:
+                break
+            current_item = next_item
+
+        for current in active:
+            if current["data_rows"] and len(found) < max_tables:
+                found.append(current)
         if len(found) >= max_tables:
             break
 
     response_tables: list[dict[str, Any]] = []
     for candidate in found:
-        max_col = candidate["end_column"] - candidate["start_column"] + 1
-        header_source = candidate["header_values"][candidate["start_column"] - 1 : candidate["end_column"]]
-        columns = _headers(header_source, max_col)
+        header_rows: list[tuple[int, list[Any]]] = candidate["header_rows"]
+        data_rows: list[tuple[int, list[Any]]] = candidate["data_rows"]
+        columns = _join_header_rows(
+            [row for _, row in header_rows], candidate["start_column"], candidate["end_column"]
+        )
         table_id = _id("tbl")
         persisted = {
             "table_id": table_id,
             "sheet": candidate["sheet"],
-            "header_row": candidate["header_row"],
+            "header_row": header_rows[0][0],
+            "header_rows": [row_number for row_number, _ in header_rows],
+            "data_start_row": data_rows[0][0],
             "start_column": candidate["start_column"],
             "end_column": candidate["end_column"],
-            "end_row": candidate["end_row"],
-            "range": f"{get_column_letter(candidate['start_column'])}{candidate['header_row']}:{get_column_letter(candidate['end_column'])}{candidate['end_row']}",
+            "end_row": data_rows[-1][0],
+            "range": f"{get_column_letter(candidate['start_column'])}{header_rows[0][0]}:{get_column_letter(candidate['end_column'])}{data_rows[-1][0]}",
             "columns": columns,
         }
         state.setdefault("tables", {})[table_id] = persisted
-        response_tables.append({key: persisted[key] for key in ("table_id", "sheet", "header_row", "range")})
+        response_tables.append(
+            {key: persisted[key] for key in ("table_id", "sheet", "header_row", "header_rows", "range")}
+        )
     return {"tables": response_tables}
 
 
@@ -534,6 +856,10 @@ def query_table(ctx: dict[str, Any], args: dict[str, Any]) -> dict[str, Any]:
         "columns": columns,
         "row_count": row_count,
         "stored_rows": stored_rows,
+        # A bounded, JSON-safe preview belongs in session state so the workflow
+        # can return useful records without ever loading the complete result.
+        # Full data remains in the session artifact/JSONL file.
+        "preview_records": preview_rows,
         "truncated": row_count > stored_rows,
         "path": relative_path,
         "query": {"select": columns, "filters": args.get("filters", [])},
@@ -558,9 +884,10 @@ def query_table(ctx: dict[str, Any], args: dict[str, Any]) -> dict[str, Any]:
 )
 def validate_result(ctx: dict[str, Any], args: dict[str, Any]) -> dict[str, Any]:
     state = ctx["state"]
-    result = state.get("result_sets", {}).get(args.get("result_id"))
+    result_id = _opaque_id(args.get("result_id"), "res")
+    result = state.get("result_sets", {}).get(result_id)
     if not result:
-        raise ToolError("RESULT_NOT_FOUND", f"Result {args.get('result_id')} not found")
+        raise ToolError("RESULT_NOT_FOUND", f"Result {result_id} not found")
     required_columns = args.get("required_columns", [])
     min_rows = args.get("min_rows", 1)
     if not isinstance(required_columns, list) or not all(isinstance(value, str) for value in required_columns) or not isinstance(min_rows, int) or min_rows < 0:
@@ -571,19 +898,28 @@ def validate_result(ctx: dict[str, Any], args: dict[str, Any]) -> dict[str, Any]
 
 
 def _result_or_raise(state: dict[str, Any], result_id: str) -> dict[str, Any]:
+    result_id = _opaque_id(result_id, "res")
     result = state.get("result_sets", {}).get(result_id)
     if not result:
         raise ToolError("RESULT_NOT_FOUND", f"Result {result_id} not found")
     return result
 
 
+def _csv_value(value: Any) -> Any:
+    """Prevent spreadsheet formula execution when an exported CSV is opened."""
+    safe = _json_value(value)
+    if isinstance(safe, str) and safe.lstrip().startswith(("=", "+", "-", "@")):
+        return f"'{safe}"
+    return safe
+
+
 def _export_csv(path: Path, records: Iterable[dict[str, Any]], columns: list[str]) -> int:
     count = 0
     with path.open("w", encoding="utf-8-sig", newline="") as file:
         writer = csv.DictWriter(file, fieldnames=columns, extrasaction="ignore")
-        writer.writeheader()
+        writer.writerow({column: _csv_value(column) for column in columns})
         for record in records:
-            writer.writerow(record)
+            writer.writerow({column: _csv_value(record.get(column)) for column in columns})
             count += 1
     return count
 

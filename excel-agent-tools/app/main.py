@@ -6,14 +6,15 @@ import json
 import logging
 import os
 import shutil
+import zipfile
 from pathlib import Path
 from typing import Annotated, Any
 
-from fastapi import Depends, FastAPI, File, Form, Header, HTTPException, UploadFile, status
+from fastapi import BackgroundTasks, Depends, FastAPI, File, Form, Header, HTTPException, UploadFile, status
 from fastapi.responses import FileResponse
 from pydantic import BaseModel, ConfigDict, Field
 
-from .sessions import cleanup_expired_sessions, init_state, load_state, new_session_id, session_dir, session_file
+from .sessions import cleanup_expired_sessions, init_state, load_state, locked_session, new_session_id, session_dir, session_file
 from .tools import TOOL_SCHEMAS, execute_tool
 
 # Import modules for registration. These modules never invoke an LLM.
@@ -22,7 +23,14 @@ from . import state_tools as _state_tools  # noqa: F401
 
 logging.basicConfig(level=os.getenv("LOG_LEVEL", "INFO").upper(), format="%(asctime)s %(levelname)s %(name)s %(message)s")
 logger = logging.getLogger(__name__)
-app = FastAPI(title="Excel Tools Service", version="1.0.0", docs_url="/docs", redoc_url=None)
+DOCS_ENABLED = os.getenv("EXCEL_TOOLS_ENABLE_DOCS", "false").strip().casefold() == "true"
+app = FastAPI(
+    title="Excel Tools Service",
+    version="1.0.0",
+    docs_url="/docs" if DOCS_ENABLED else None,
+    openapi_url="/openapi.json" if DOCS_ENABLED else None,
+    redoc_url=None,
+)
 
 API_KEY = os.getenv("API_KEY", "")
 try:
@@ -30,12 +38,60 @@ try:
 except ValueError:
     MAX_FILE_SIZE = 200 * 1024 * 1024
 ALLOWED_UPLOAD_SUFFIXES = {".xlsx", ".xlsm", ".xltx", ".xltm", ".xls"}
+try:
+    MAX_ZIP_ENTRIES = int(os.getenv("MAX_EXCEL_ZIP_ENTRIES", "10000"))
+    MAX_ZIP_UNCOMPRESSED_SIZE = int(os.getenv("MAX_EXCEL_UNCOMPRESSED_MB", "500")) * 1024 * 1024
+except ValueError:
+    MAX_ZIP_ENTRIES = 10000
+    MAX_ZIP_UNCOMPRESSED_SIZE = 500 * 1024 * 1024
+
+
+def _require_runtime_configuration() -> None:
+    """Fail fast rather than exposing an unauthenticated tools API by mistake."""
+    if not API_KEY:
+        raise RuntimeError("API_KEY must be configured")
+    if MAX_ZIP_ENTRIES < 1 or MAX_ZIP_UNCOMPRESSED_SIZE < 1:
+        raise RuntimeError("Excel ZIP safety limits must be positive")
+
+
+_require_runtime_configuration()
 
 
 def require_api_key(x_api_key: Annotated[str | None, Header()] = None) -> None:
-    # An empty API_KEY is allowed only for local development; production compose requires it.
-    if API_KEY and x_api_key != API_KEY:
+    if x_api_key != API_KEY:
         raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail="Unauthorized")
+
+
+def _validate_excel_archive(path: Path, suffix: str) -> None:
+    """Reject malformed and zip-bomb-like OOXML uploads before workbook parsing."""
+    if suffix == ".xls":
+        try:
+            with path.open("rb") as file:
+                signature = file.read(8)
+            if signature != b"\xd0\xcf\x11\xe0\xa1\xb1\x1a\xe1":
+                raise HTTPException(status_code=status.HTTP_415_UNSUPPORTED_MEDIA_TYPE, detail="Invalid Excel workbook")
+        except OSError as error:
+            raise HTTPException(status_code=status.HTTP_415_UNSUPPORTED_MEDIA_TYPE, detail="Invalid Excel workbook") from error
+        return
+    if suffix not in {".xlsx", ".xlsm", ".xltx", ".xltm"}:
+        return
+    try:
+        with zipfile.ZipFile(path) as archive:
+            entries = archive.infolist()
+            if len(entries) > MAX_ZIP_ENTRIES:
+                raise HTTPException(status_code=status.HTTP_413_CONTENT_TOO_LARGE, detail="Excel archive has too many entries")
+            if any(entry.flag_bits & 0x1 for entry in entries):
+                raise HTTPException(status_code=status.HTTP_415_UNSUPPORTED_MEDIA_TYPE, detail="Encrypted Excel workbooks are not supported")
+            uncompressed_size = sum(entry.file_size for entry in entries)
+            if uncompressed_size > MAX_ZIP_UNCOMPRESSED_SIZE:
+                raise HTTPException(status_code=status.HTTP_413_CONTENT_TOO_LARGE, detail="Excel archive expands beyond the configured limit")
+            names = {entry.filename for entry in entries}
+            if "[Content_Types].xml" not in names or "xl/workbook.xml" not in names:
+                raise HTTPException(status_code=status.HTTP_415_UNSUPPORTED_MEDIA_TYPE, detail="Invalid Excel workbook")
+    except HTTPException:
+        raise
+    except (OSError, zipfile.BadZipFile) as error:
+        raise HTTPException(status_code=status.HTTP_415_UNSUPPORTED_MEDIA_TYPE, detail="Invalid Excel workbook") from error
 
 
 def safe_state(state: dict[str, Any]) -> dict[str, Any]:
@@ -57,7 +113,11 @@ def get_tools() -> dict[str, Any]:
 
 
 @app.post("/api/v1/sessions", dependencies=[Depends(require_api_key)], status_code=status.HTTP_201_CREATED)
-async def create_session(file: UploadFile = File(...), payload: str = Form("{}")) -> dict[str, Any]:
+async def create_session(
+    background_tasks: BackgroundTasks,
+    file: UploadFile = File(...),
+    payload: str = Form("{}"),
+) -> dict[str, Any]:
     filename = file.filename or "input.xlsx"
     suffix = Path(filename).suffix.lower()
     if suffix not in ALLOWED_UPLOAD_SUFFIXES:
@@ -69,7 +129,6 @@ async def create_session(file: UploadFile = File(...), payload: str = Form("{}")
     if not isinstance(payload_json, dict):
         raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="payload must be a JSON object")
 
-    cleanup_expired_sessions()
     session_id = new_session_id()
     try:
         directory = session_dir(session_id, create=True)
@@ -84,15 +143,19 @@ async def create_session(file: UploadFile = File(...), payload: str = Form("{}")
             while chunk := await file.read(1024 * 1024):
                 total_size += len(chunk)
                 if total_size > MAX_FILE_SIZE:
-                    raise HTTPException(status_code=status.HTTP_413_REQUEST_ENTITY_TOO_LARGE, detail="File too large")
+                    raise HTTPException(status_code=status.HTTP_413_CONTENT_TOO_LARGE, detail="File too large")
                 destination.write(chunk)
                 digest.update(chunk)
+        _validate_excel_archive(file_path, suffix)
         state = init_state(session_id=session_id, file_path=relative_path, file_name=filename, file_hash=f"sha256:{digest.hexdigest()}", file_size=total_size, payload=payload_json)
     except Exception:
         shutil.rmtree(directory, ignore_errors=True)
         raise
     finally:
         await file.close()
+    # Session cleanup scans every session directory. It must not make the upload
+    # latency depend on the number of retained sessions.
+    background_tasks.add_task(cleanup_expired_sessions)
     logger.info("Uploaded Excel session %s: %d bytes", session_id, total_size)
     return {"session_id": session_id, "status": "uploaded", "file_size": total_size, "file_hash": state["file_hash"]}
 
@@ -123,18 +186,30 @@ def get_loaded_state(session_id: str) -> dict[str, Any]:
 
 @app.post("/api/v1/sessions/{session_id}/tool", dependencies=[Depends(require_api_key)])
 def call_tool(session_id: str, body: SingleToolRequest) -> dict[str, Any]:
-    state = get_loaded_state(session_id)
-    return execute_tool(state, body.name, body.args)
+    try:
+        with locked_session(session_id):
+            state = get_loaded_state(session_id)
+            return execute_tool(state, body.name, body.args)
+    except ValueError as error:
+        detail = str(error)
+        code = status.HTTP_404_NOT_FOUND if detail == "Session not found" else status.HTTP_422_UNPROCESSABLE_ENTITY
+        raise HTTPException(status_code=code, detail=detail) from error
 
 
 @app.post("/api/v1/sessions/{session_id}/tools/batch", dependencies=[Depends(require_api_key)])
 def call_tools_batch(session_id: str, body: BatchToolRequest) -> dict[str, Any]:
-    state = get_loaded_state(session_id)
-    results: list[dict[str, Any]] = []
-    for call in body.calls:
-        result = execute_tool(state, call.name, call.args)
-        results.append({"call_id": call.call_id, "name": call.name, **result})
-    return {"session_id": session_id, "results": results}
+    try:
+        with locked_session(session_id):
+            state = get_loaded_state(session_id)
+            results: list[dict[str, Any]] = []
+            for call in body.calls:
+                result = execute_tool(state, call.name, call.args)
+                results.append({"call_id": call.call_id, "name": call.name, **result})
+            return {"session_id": session_id, "results": results}
+    except ValueError as error:
+        detail = str(error)
+        code = status.HTTP_404_NOT_FOUND if detail == "Session not found" else status.HTTP_422_UNPROCESSABLE_ENTITY
+        raise HTTPException(status_code=code, detail=detail) from error
 
 
 @app.get("/api/v1/sessions/{session_id}/state", dependencies=[Depends(require_api_key)])

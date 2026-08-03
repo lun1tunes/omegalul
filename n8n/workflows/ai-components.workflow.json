@@ -69,8 +69,8 @@
       ],
       "credentials": {
         "openAiApi": {
-          "id": "REPLACE_WITH_QWEN_CHAT_CREDENTIAL",
-          "name": "Qwen chat (OpenAI-compatible protocol)"
+          "id": "qwen-codex-sale-chat",
+          "name": "Qwen Codex Sale chat"
         }
       }
     },
@@ -91,7 +91,7 @@
       ],
       "credentials": {
         "postgres": {
-          "id": "REPLACE_WITH_POSTGRES_CREDENTIAL",
+          "id": "postgres-pgvector-memory",
           "name": "Postgres pgvector"
         }
       }
@@ -134,7 +134,7 @@
       ],
       "credentials": {
         "postgres": {
-          "id": "REPLACE_WITH_POSTGRES_CREDENTIAL",
+          "id": "postgres-pgvector-memory",
           "name": "Postgres pgvector"
         }
       }
@@ -212,9 +212,10 @@
   "settings": {
     "executionOrder": "v1"
   },
-  "versionId": "cae00001-0000-4000-8000-000000000009",
+  "versionId": "80f35a1a-9558-498e-85aa-3288de3269b9",
   "meta": {
     "templateCredsSetupCompleted": false
   },
-  "tags": []
+  "tags": [],
+  "id": "7V5KTGd397BTcuDy"
 }
