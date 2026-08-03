@@ -12,7 +12,7 @@ from typing import Annotated, Any
 
 from fastapi import BackgroundTasks, Depends, FastAPI, File, Form, Header, HTTPException, UploadFile, status
 from fastapi.responses import FileResponse
-from pydantic import BaseModel, ConfigDict, Field
+from pydantic import BaseModel, ConfigDict, Field, model_validator
 
 from .sessions import cleanup_expired_sessions, init_state, load_state, locked_session, new_session_id, session_dir, session_file
 from .tools import TOOL_SCHEMAS, execute_tool
@@ -166,6 +166,45 @@ class SingleToolRequest(BaseModel):
     args: dict[str, Any] = Field(default_factory=dict)
 
 
+class AgentToolRequest(BaseModel):
+    """Adapter for n8n AI-tool request transports.
+
+    n8n's current AI Agent v2 turns supplied tools into LangChain dynamic tools.
+    With HTTP Request Tool v1, the dynamic wrapper reliably unwraps the model
+    input into top-level HTTP fields before the request is made.  Other n8n
+    versions expose a single ``input`` object instead.  Support both shapes at
+    this narrow adapter boundary, while keeping the public session API strict.
+
+    Crucially, ``session_id`` is a field value supplied by the workflow
+    expression, never a function parameter exposed to the model.  Any allowed
+    extra fields are merely the arguments for the already route-fixed tool.
+    """
+
+    model_config = ConfigDict(extra="allow")
+    session_id: str = Field(min_length=1, max_length=128)
+    # Keep compatibility with workflow exports that use an explicit envelope.
+    # Current n8n 2.30.x HTTP Tool v1 sends the tool fields top-level instead.
+    input: dict[str, Any] | None = None
+    args: dict[str, Any] | None = None
+
+    @model_validator(mode="after")
+    def require_one_argument_object(self) -> "AgentToolRequest":
+        if self.input is not None and self.args is not None:
+            raise ValueError("Provide either input or args, not both")
+        if (self.input is not None or self.args is not None) and self.model_extra:
+            raise ValueError("Do not mix input/args envelope with top-level tool arguments")
+        return self
+
+    def tool_args(self) -> dict[str, Any]:
+        if self.input is not None:
+            return self.input
+        if self.args is not None:
+            return self.args
+        # Pydantic places allow-listed unknown top-level fields here.  Their
+        # actual schema/validation is still enforced by the named Excel tool.
+        return dict(self.model_extra or {})
+
+
 class ToolCallItem(SingleToolRequest):
     call_id: str = Field(min_length=1, max_length=256)
 
@@ -184,12 +223,84 @@ def get_loaded_state(session_id: str) -> dict[str, Any]:
         raise HTTPException(status_code=code, detail=detail) from error
 
 
+def normalize_agent_tool_args(tool_name: str, args: dict[str, Any]) -> dict[str, Any]:
+    """Accept a few unambiguous LLM transport aliases before strict tool validation.
+
+    The public session endpoints intentionally remain strict. This adapter only
+    protects the constrained, named agent-tool transport from common function
+    calling vocabulary such as ``fields`` versus the API's canonical ``select``.
+    It never invents an ID, a filter value, or a column name.
+    """
+    normalized = dict(args)
+
+    if tool_name == "describe_table" and "table_id" not in normalized:
+        candidate = normalized.get("verified_table")
+        if isinstance(candidate, str):
+            normalized["table_id"] = candidate
+        elif isinstance(candidate, dict) and isinstance(candidate.get("table_id"), str):
+            normalized["table_id"] = candidate["table_id"]
+
+    if tool_name == "query_table":
+        if "table_id" not in normalized and isinstance(normalized.get("table"), str):
+            normalized["table_id"] = normalized["table"]
+        if "select" not in normalized and isinstance(normalized.get("fields"), list):
+            normalized["select"] = normalized["fields"]
+        filters = normalized.get("filters")
+        if isinstance(filters, dict):
+            canonical_filters: list[dict[str, Any]] = []
+            for field, condition in filters.items():
+                if not isinstance(field, str):
+                    continue
+                if isinstance(condition, dict):
+                    canonical_filters.append({"field": field, **condition})
+                else:
+                    canonical_filters.append({"field": field, "operator": "eq", "value": condition})
+            normalized["filters"] = canonical_filters
+
+    if tool_name == "save_agent_plan":
+        candidate = normalized.get("verified_table")
+        table_id = candidate.get("table_id") if isinstance(candidate, dict) else candidate
+        if "selected_table_ids" not in normalized and isinstance(table_id, str):
+            normalized["selected_table_ids"] = [table_id]
+        if "field_mapping" not in normalized and isinstance(normalized.get("mapping"), dict):
+            normalized["field_mapping"] = normalized["mapping"]
+        if "plan" not in normalized and isinstance(table_id, str):
+            normalized["plan"] = f"Selected verified table {table_id}"
+        filters = normalized.get("filters")
+        if isinstance(filters, dict):
+            normalized["filters"] = [
+                {"field": field, **condition} if isinstance(condition, dict) else {"field": field, "operator": "eq", "value": condition}
+                for field, condition in filters.items()
+                if isinstance(field, str)
+            ]
+
+    return normalized
+
+
 @app.post("/api/v1/sessions/{session_id}/tool", dependencies=[Depends(require_api_key)])
 def call_tool(session_id: str, body: SingleToolRequest) -> dict[str, Any]:
     try:
         with locked_session(session_id):
             state = get_loaded_state(session_id)
             return execute_tool(state, body.name, body.args)
+    except ValueError as error:
+        detail = str(error)
+        code = status.HTTP_404_NOT_FOUND if detail == "Session not found" else status.HTTP_422_UNPROCESSABLE_ENTITY
+        raise HTTPException(status_code=code, detail=detail) from error
+
+
+@app.post("/api/v1/agent-tools/{tool_name}", dependencies=[Depends(require_api_key)])
+def call_agent_tool(tool_name: str, body: AgentToolRequest) -> dict[str, Any]:
+    """Execute a named Excel tool through the single-object agent contract.
+
+    ``tool_name`` is fixed by the orchestrator node, so the model cannot select
+    an arbitrary endpoint.  The session remains authoritative and is protected
+    by the same per-session advisory file lock as all other mutation endpoints.
+    """
+    try:
+        with locked_session(body.session_id):
+            state = get_loaded_state(body.session_id)
+            return execute_tool(state, tool_name, normalize_agent_tool_args(tool_name, body.tool_args()))
     except ValueError as error:
         detail = str(error)
         code = status.HTTP_404_NOT_FOUND if detail == "Session not found" else status.HTTP_422_UNPROCESSABLE_ENTITY

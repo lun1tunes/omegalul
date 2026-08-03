@@ -478,10 +478,79 @@ def sheet_preview(ctx: dict[str, Any], args: dict[str, Any]) -> dict[str, Any]:
     return {"sheet": sheet, "start_row": start_row, "rows": rows}
 
 
+def _candidate_has_data(candidate: dict[str, Any]) -> bool:
+    return candidate["data_row_count"] > 0
+
+
+def _append_candidate_data(candidate: dict[str, Any], row_number: int, row: list[Any]) -> None:
+    """Record only bounded metadata for a detected data row.
+
+    Detection must not retain every worksheet row: large workbooks are re-streamed by
+    describe/query after the table coordinates are known. Keeping the previous record
+    shape lets us safely bridge short visual blank gaps in O(table-width) memory.
+    """
+    start_column = candidate["start_column"]
+    end_column = candidate["end_column"]
+    if candidate["data_row_count"] == 0:
+        candidate["data_start_row"] = row_number
+    candidate["last_data_row"] = row_number
+    candidate["last_data_values"] = row[start_column - 1 : end_column]
+    candidate["data_row_count"] += 1
+    candidate["blank_row_count"] = 0
+
+
+def _looks_like_continuation_after_gap(
+    row: list[Any], candidate: dict[str, Any], next_row: list[Any] | None
+) -> bool:
+    """Decide whether a non-empty row resumes a table after visual blank rows.
+
+    The fast path recognises ordinary business records (numbers, dates, booleans or
+    identifier-shaped values). For all-text records we additionally require a similar
+    occupied-column shape to the preceding record. A likely fresh header followed by a
+    record is deliberately rejected so neighbouring report blocks are not silently
+    stitched together.
+    """
+    start_column = candidate["start_column"]
+    end_column = candidate["end_column"]
+    values = row[start_column - 1 : end_column]
+    populated_count = _nonempty_count(values)
+    width = end_column - start_column + 1
+    minimum_cells = 1 if width == 1 else 2
+    if populated_count < minimum_cells:
+        return False
+
+    header = candidate["header_rows"][-1][1][start_column - 1 : end_column]
+    data_like = _looks_like_data_row(values, header)
+
+    # ``Other | Value`` followed by ``x | 1`` after a gap is far more likely a
+    # new narrow table than a continuation of the prior one. This still permits
+    # records such as ``CC-30 | Support | 12000`` because they are data-like
+    # against the original header.
+    if not data_like and next_row is not None:
+        next_values = next_row[start_column - 1 : end_column]
+        label_count = sum(isinstance(value, str) and bool(value.strip()) for value in values if not _is_empty(value))
+        if (
+            label_count >= minimum_cells
+            and _looks_like_data_row(next_values, values)
+            and _header_score(values, next_values) >= 5
+        ):
+            return False
+
+    if data_like:
+        return True
+
+    previous = candidate.get("last_data_values") or []
+    previous_count = _nonempty_count(previous)
+    # All-text data (names/categories) has no identifier or numeric signal. The
+    # occupied shape is a lightweight conservative fallback; never bridge a
+    # one-cell note into a multi-column table.
+    return populated_count >= max(minimum_cells, math.ceil(previous_count * 0.6))
+
+
 @tool(
     _schema(
         "detect_tables",
-        "Detects contiguous tabular regions and saves their IDs for later tools. Use optional sheet to restrict search.",
+        "Detects tabular regions, including up to a bounded number of blank visual rows inside one table, and saves their IDs for later tools. Use optional sheet to restrict search.",
         {"sheet": {"type": "string", "minLength": 1}, "max_tables": {"type": "integer", "minimum": 1, "maximum": 30, "default": 10}},
     )
 )
@@ -497,12 +566,72 @@ def detect_tables(ctx: dict[str, Any], args: dict[str, Any]) -> dict[str, Any]:
     if requested_sheet:
         _ensure_sheet(state, requested_sheet)
 
+    try:
+        max_internal_blank_rows = int(os.getenv("MAX_INTERNAL_BLANK_ROWS", "5"))
+    except ValueError:
+        max_internal_blank_rows = 5
+    # A bounded threshold avoids scanning an entire whitespace-separated report
+    # as one table while covering common paginated/visual spreadsheet gaps.
+    max_internal_blank_rows = max(0, min(max_internal_blank_rows, 100))
+
     found: list[dict[str, Any]] = []
+
+    def new_candidate(
+        sheet: str, header_row_number: int, header_row: list[Any], start_column: int, end_column: int
+    ) -> dict[str, Any]:
+        return {
+            "sheet": sheet,
+            "header_rows": [(header_row_number, header_row)],
+            "start_column": start_column,
+            "end_column": end_column,
+            "data_start_row": None,
+            "last_data_row": None,
+            "last_data_values": [],
+            "data_row_count": 0,
+            "blank_row_count": 0,
+        }
+
+    def open_candidates(
+        sheet: str, row_number: int, row: list[Any], next_row: list[Any] | None
+    ) -> list[dict[str, Any]]:
+        """Open one or more table candidates from a potential header row."""
+        bounds = _row_bounds(row)
+        if bounds is None:
+            return []
+        if _is_group_header_row(row, next_row) and _nonempty_count(row) >= 2:
+            assert next_row is not None
+            next_bounds = _row_bounds(next_row)
+            assert next_bounds is not None
+            return [
+                new_candidate(
+                    sheet,
+                    row_number,
+                    row,
+                    min(bounds[0], next_bounds[0]),
+                    max(bounds[1], next_bounds[1]),
+                )
+            ]
+
+        segments = _split_row_segments(row)
+        candidate_segments = segments if len(segments) > 1 else [(bounds[0], bounds[1])]
+        candidates: list[dict[str, Any]] = []
+        for start_column, end_column in candidate_segments:
+            segment = row[start_column - 1 : end_column]
+            if len(segment) < 2 or _header_score(segment, None) < 4:
+                continue
+            if len(segment) == 2:
+                if _is_likely_metadata_pair(segment):
+                    continue
+                following_segment = next_row[start_column - 1 : end_column] if next_row is not None else []
+                if not _looks_like_data_row(following_segment, segment):
+                    continue
+            candidates.append(new_candidate(sheet, row_number, row, start_column, end_column))
+        return candidates
+
     for sheet in sheets:
-        # Detection is deliberately streaming too: only the current and next rows
-        # are held in memory. This matters for the supported 200 MB workbooks.
-        # The one-row look-ahead is enough for grouped headers and for accepting a
-        # single blank separator within an otherwise continuous data region.
+        # Stream each worksheet. Per active candidate we retain only two header rows,
+        # one previous record shape and counters; workbook-height does not increase
+        # detector memory use.
         iterator = iter(_iter_sheet_rows(state, sheet))
         current_item = next(iterator, None)
         active: list[dict[str, Any]] = []
@@ -511,17 +640,17 @@ def detect_tables(ctx: dict[str, Any], args: dict[str, Any]) -> dict[str, Any]:
             next_item = next(iterator, None)
             next_row = next_item[1] if next_item is not None else None
             bounds = _row_bounds(row)
+
             if bounds is None:
                 next_active: list[dict[str, Any]] = []
-                for current in active:
-                    header = current["header_rows"][-1][1]
-                    # Exported reports often insert a single blank visual
-                    # separator in the middle of a table. Retain the table only
-                    # when the immediately following row looks like its record.
-                    if current["data_rows"] and next_row is not None and _looks_like_data_row(next_row, header):
-                        next_active.append(current)
-                    elif current["data_rows"]:
-                        found.append(current)
+                for candidate in active:
+                    if not _candidate_has_data(candidate):
+                        continue
+                    candidate["blank_row_count"] += 1
+                    if candidate["blank_row_count"] <= max_internal_blank_rows:
+                        next_active.append(candidate)
+                    else:
+                        found.append(candidate)
                 active = next_active
                 if len(found) >= max_tables:
                     break
@@ -529,87 +658,59 @@ def detect_tables(ctx: dict[str, Any], args: dict[str, Any]) -> dict[str, Any]:
                 continue
 
             if not active:
-                # Sparse merged group headers (e.g. Customer / FY2025 on row 1,
-                # ID / Name / Revenue / Margin on row 2) are one table even
-                # though the first row has multiple islands.
-                if _is_group_header_row(row, next_row) and _nonempty_count(row) >= 2:
-                    active.append(
-                        {
-                            "sheet": sheet,
-                            "header_rows": [(row_number, row)],
-                            "data_rows": [],
-                            "start_column": min(bounds[0], _row_bounds(next_row)[0]),
-                            "end_column": max(bounds[1], _row_bounds(next_row)[1]),
-                        }
-                    )
-                    current_item = next_item
-                    continue
-                # Multiple horizontal islands on the same row are independent
-                # tables (e.g. Sales in A:C and Stock in E:G), not one sparse
-                # seven-column table.
-                segments = _split_row_segments(row)
-                # A row containing ordinary adjacent labels is one table. Split
-                # only at a deliberate blank gap (A:C ... E:G), which is a common
-                # dashboard layout for side-by-side tables.
-                if len(segments) > 1:
-                    candidate_segments = segments
-                else:
-                    candidate_segments = [(bounds[0], bounds[1])]
-                for start_column, end_column in candidate_segments:
-                    segment = row[start_column - 1 : end_column]
-                    if len(segment) < 2 or _header_score(segment, None) < 4:
-                        continue
-                    # A two-cell key/value pair is more often preamble metadata
-                    # than a table header. Keep genuine narrow tables when their
-                    # immediate successor has a record signal (for example an ID
-                    # or number), but wait for a wider header otherwise.
-                    if len(segment) == 2:
-                        if _is_likely_metadata_pair(segment):
-                            continue
-                        following_segment = (
-                            next_row[start_column - 1 : end_column] if next_row is not None else []
-                        )
-                        if not _looks_like_data_row(following_segment, segment):
-                            continue
-                    active.append(
-                        {
-                            "sheet": sheet,
-                            "header_rows": [(row_number, row)],
-                            "data_rows": [],
-                            "start_column": start_column,
-                            "end_column": end_column,
-                        }
-                    )
+                active = open_candidates(sheet, row_number, row, next_row)
                 current_item = next_item
                 continue
 
-            next_active: list[dict[str, Any]] = []
-            for current in active:
-                header_rows: list[tuple[int, list[Any]]] = current["header_rows"]
-                # A row belongs to the table only if it overlaps its header island.
+            next_active = []
+            restart_as_header = False
+            for candidate in active:
+                header_rows: list[tuple[int, list[Any]]] = candidate["header_rows"]
                 overlap = max(
                     0,
-                    min(current["end_column"], bounds[1])
-                    - max(current["start_column"], bounds[0])
+                    min(candidate["end_column"], bounds[1])
+                    - max(candidate["start_column"], bounds[0])
                     + 1,
                 )
                 if overlap == 0:
-                    if current["data_rows"]:
-                        found.append(current)
+                    if _candidate_has_data(candidate):
+                        found.append(candidate)
+                        # The same physical row may be the header of a new block
+                        # placed beside/after the prior table.  Reconsider it
+                        # once the prior candidate has closed; otherwise a
+                        # short, valid table such as ``Contact | Escalation``
+                        # can be skipped merely because a blank gap kept the
+                        # preceding table open.
+                        restart_as_header = True
                     continue
 
-                if not current["data_rows"]:
+                # A total/subtotal is a terminator even when it follows visual
+                # spacing. Otherwise it could be mistaken for a text-shaped
+                # continuation row and end up in the extracted data.
+                if _candidate_has_data(candidate) and _is_total_row(
+                    row, candidate["start_column"], candidate["end_column"]
+                ):
+                    found.append(candidate)
+                    continue
+
+                if _candidate_has_data(candidate) and candidate["blank_row_count"]:
+                    if _looks_like_continuation_after_gap(row, candidate, next_row):
+                        _append_candidate_data(candidate, row_number, row)
+                        next_active.append(candidate)
+                    else:
+                        found.append(candidate)
+                        restart_as_header = True
+                    continue
+
+                if not _candidate_has_data(candidate):
                     previous_header = header_rows[-1][1]
-                    # Combine rows only where the candidate has a genuine grouped
-                    # header signal. A normal record directly below a header must
-                    # start data, even if it happens to contain text in all cells.
                     previous_has_merged_gap = any(
                         _is_empty(value)
-                        for value in previous_header[current["start_column"] - 1 : current["end_column"]]
+                        for value in previous_header[candidate["start_column"] - 1 : candidate["end_column"]]
                     )
                     candidate_has_merged_gap = any(
                         _is_empty(value)
-                        for value in row[current["start_column"] - 1 : current["end_column"]]
+                        for value in row[candidate["start_column"] - 1 : candidate["end_column"]]
                     )
                     if (
                         len(header_rows) < 2
@@ -624,44 +725,52 @@ def detect_tables(ctx: dict[str, Any], args: dict[str, Any]) -> dict[str, Any]:
                         )
                     ):
                         header_rows.append((row_number, row))
-                        next_active.append(current)
+                        next_active.append(candidate)
                         continue
 
-                if current["data_rows"] and _is_total_row(row, current["start_column"], current["end_column"]):
-                    found.append(current)
-                    continue
-                current["data_rows"].append((row_number, row))
-                next_active.append(current)
+                _append_candidate_data(candidate, row_number, row)
+                next_active.append(candidate)
 
-            active = next_active
+            # If every active table was explicitly rejected as a continuation after
+            # a short blank gap, revisit this row as a possible fresh header. That
+            # prevents a neighbouring table from being swallowed or skipped.
+            active = (
+                open_candidates(sheet, row_number, row, next_row)
+                if restart_as_header and not next_active
+                else next_active
+            )
             if len(found) >= max_tables:
                 break
             current_item = next_item
 
-        for current in active:
-            if current["data_rows"] and len(found) < max_tables:
-                found.append(current)
+        for candidate in active:
+            if _candidate_has_data(candidate) and len(found) < max_tables:
+                found.append(candidate)
         if len(found) >= max_tables:
             break
 
     response_tables: list[dict[str, Any]] = []
     for candidate in found:
         header_rows: list[tuple[int, list[Any]]] = candidate["header_rows"]
-        data_rows: list[tuple[int, list[Any]]] = candidate["data_rows"]
+        if not _candidate_has_data(candidate):
+            continue
         columns = _join_header_rows(
             [row for _, row in header_rows], candidate["start_column"], candidate["end_column"]
         )
         table_id = _id("tbl")
+        data_start_row = candidate["data_start_row"]
+        end_row = candidate["last_data_row"]
+        assert isinstance(data_start_row, int) and isinstance(end_row, int)
         persisted = {
             "table_id": table_id,
             "sheet": candidate["sheet"],
             "header_row": header_rows[0][0],
             "header_rows": [row_number for row_number, _ in header_rows],
-            "data_start_row": data_rows[0][0],
+            "data_start_row": data_start_row,
             "start_column": candidate["start_column"],
             "end_column": candidate["end_column"],
-            "end_row": data_rows[-1][0],
-            "range": f"{get_column_letter(candidate['start_column'])}{header_rows[0][0]}:{get_column_letter(candidate['end_column'])}{data_rows[-1][0]}",
+            "end_row": end_row,
+            "range": f"{get_column_letter(candidate['start_column'])}{header_rows[0][0]}:{get_column_letter(candidate['end_column'])}{end_row}",
             "columns": columns,
         }
         state.setdefault("tables", {})[table_id] = persisted
@@ -669,7 +778,6 @@ def detect_tables(ctx: dict[str, Any], args: dict[str, Any]) -> dict[str, Any]:
             {key: persisted[key] for key in ("table_id", "sheet", "header_row", "header_rows", "range")}
         )
     return {"tables": response_tables}
-
 
 @tool(
     _schema(
@@ -743,8 +851,13 @@ def _comparable(value: Any) -> Any:
     value = _json_value(value)
     if value is None:
         return None
-    if isinstance(value, (int, float, bool)):
+    if isinstance(value, bool):
         return value
+    if isinstance(value, (int, float)):
+        # LLM tool transports frequently serialize numeric filter values as
+        # strings. Use one numeric representation so ``2000`` and "2000"
+        # compare consistently without weakening boolean comparisons.
+        return float(value)
     if isinstance(value, str):
         try:
             return float(value.replace(" ", "").replace(",", "."))
@@ -894,7 +1007,20 @@ def validate_result(ctx: dict[str, Any], args: dict[str, Any]) -> dict[str, Any]
         raise ToolError("INVALID_ARGUMENTS", "Invalid required_columns or min_rows")
     missing = [column for column in required_columns if column not in result["columns"]]
     enough_rows = result["row_count"] >= min_rows
-    return {"result_id": result["result_id"], "valid": not missing and enough_rows, "row_count": result["row_count"], "columns": result["columns"], "missing_columns": missing, "min_rows": min_rows, "enough_rows": enough_rows}
+    valid = not missing and enough_rows
+    # Validation is an explicit, server-side fact about this immutable query
+    # result.  The n8n terminal safety-net and finalizer can therefore reject a
+    # plausible-looking result that the agent never validated (or that failed
+    # validation) instead of fabricating a successful extraction response.
+    result["validation"] = {
+        "valid": valid,
+        "required_columns": list(required_columns),
+        "min_rows": min_rows,
+        "missing_columns": missing,
+        "enough_rows": enough_rows,
+        "row_count": result["row_count"],
+    }
+    return {"result_id": result["result_id"], "valid": valid, "row_count": result["row_count"], "columns": result["columns"], "missing_columns": missing, "min_rows": min_rows, "enough_rows": enough_rows}
 
 
 def _result_or_raise(state: dict[str, Any], result_id: str) -> dict[str, Any]:

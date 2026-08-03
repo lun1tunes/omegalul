@@ -120,6 +120,17 @@ def test_complex_corpus_special_cases(client: TestClient) -> None:
     queried = _tool(client, dates_id, "query_table", {"table_id": table["table_id"], "limit": 10})
     assert queried["preview_rows"][0]["Start date"] == "2024-06-01T00:00:00"
     assert queried["preview_rows"][0]["Active"] is True
+    numeric_string_filter = _tool(
+        client,
+        dates_id,
+        "query_table",
+        {
+            "table_id": table["table_id"],
+            "select": ["Employee ID", "Base salary"],
+            "filters": [{"field": "Base salary", "operator": "gt", "value": "60000"}],
+        },
+    )
+    assert numeric_string_filter["row_count"] == 3
 
     duplicate_id = _upload_fixture(client, FIXTURE_ROOT / "09_duplicate_headers.xlsx")
     tables = _tool(client, duplicate_id, "detect_tables", {"sheet": "Duplicate columns"})["tables"]

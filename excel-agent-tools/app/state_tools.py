@@ -72,8 +72,6 @@ def resolve_clarification(ctx: dict[str, Any], args: dict[str, Any]) -> dict[str
     clarification = state.get("clarifications", {}).get(token)
     if not clarification:
         raise ToolError("CLARIFICATION_NOT_FOUND", f"Clarification token {token} not found")
-    if clarification.get("status") == "resolved":
-        raise ToolError("CLARIFICATION_ALREADY_RESOLVED", f"Clarification token {token} is already resolved")
     if not isinstance(answers, list):
         raise ToolError("INVALID_ARGUMENTS", "answers must be an array")
     question_ids = {question["id"] for question in clarification["questions"]}
@@ -83,13 +81,24 @@ def resolve_clarification(ctx: dict[str, Any], args: dict[str, Any]) -> dict[str
             raise ToolError("INVALID_ARGUMENTS", "Every answer needs question_id and answer")
         if answer["question_id"] not in question_ids:
             raise ToolError("UNKNOWN_QUESTION", f"Question {answer['question_id']} does not belong to clarification", {"available_question_ids": sorted(question_ids)})
+        if answer["question_id"] in supplied_ids:
+            raise ToolError("INVALID_ARGUMENTS", f"Duplicate answer for question {answer['question_id']}")
         supplied_ids.add(answer["question_id"])
     if supplied_ids != question_ids:
         raise ToolError("INCOMPLETE_CLARIFICATION", "Answers are required for every question", {"missing_question_ids": sorted(question_ids - supplied_ids)})
+
+    # A client may time out after the server persisted the answer and retry the
+    # exact continuation. Retrying must be safe: return the prior resolution
+    # without changing state. A different answer remains a deliberate conflict.
+    if clarification.get("status") == "resolved":
+        if clarification.get("answers") == answers:
+            return {"token": token, "status": "resolved", "idempotent": True}
+        raise ToolError("CLARIFICATION_ALREADY_RESOLVED", f"Clarification token {token} is already resolved")
+
     clarification["answers"] = answers
     clarification["status"] = "resolved"
     state["status"] = "clarification_resolved"
-    return {"token": token, "status": "resolved"}
+    return {"token": token, "status": "resolved", "idempotent": False}
 
 
 def normalize_final_output(args: dict[str, Any]) -> dict[str, Any]:
@@ -122,8 +131,16 @@ def finalize_extraction(ctx: dict[str, Any], args: dict[str, Any]) -> dict[str, 
     if status in {"success", "partial"}:
         result_id = output["data"].get("result_id")
         artifact_ref = output["data"].get("artifact_ref")
-        if result_id and result_id not in state.get("result_sets", {}):
+        if not isinstance(result_id, str) or not result_id:
+            raise ToolError("INVALID_FINAL_OUTPUT", "success or partial requires data.result_id")
+        result = state.get("result_sets", {}).get(result_id)
+        if result is None:
             raise ToolError("RESULT_NOT_FOUND", f"Result {result_id} not found")
+        if result.get("validation", {}).get("valid") is not True:
+            raise ToolError(
+                "RESULT_NOT_VALIDATED",
+                f"Result {result_id} has no successful server-side validation",
+            )
         if artifact_ref and artifact_ref not in state.get("artifacts", {}):
             raise ToolError("ARTIFACT_NOT_FOUND", f"Artifact {artifact_ref} not found")
     state["status"] = status

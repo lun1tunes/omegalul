@@ -5,6 +5,7 @@ import json
 import os
 import re
 import shutil
+import sys
 import tempfile
 import threading
 import uuid
@@ -13,13 +14,16 @@ from datetime import UTC, datetime, timedelta
 from pathlib import Path
 from typing import Any
 
+from filelock import FileLock
+
 SESSION_RE = re.compile(r"^sess_[A-Za-z0-9_-]{12,60}$")
 ARTIFACT_RE = re.compile(r"^(?:res|art|clr)_[A-Za-z0-9_-]{8,64}$")
 _CLEANUP_LOCK = threading.Lock()
 
 
 def session_root() -> Path:
-    path = Path(os.getenv("SESSION_DIR", "/data/sessions")).resolve()
+    default_dir = "/data/sessions" if sys.platform != "win32" else os.path.join(tempfile.gettempdir(), "excel_agent_sessions")
+    path = Path(os.getenv("SESSION_DIR", default_dir)).resolve()
     path.mkdir(parents=True, exist_ok=True)
     return path
 
@@ -56,20 +60,17 @@ def locked_session(session_id: str):
 
     n8n executes calls in order, but the public API can receive concurrent requests
     for the same session. The lock prevents a stale load/save cycle from discarding
-    another call's result. Docker deployments run on Linux, where ``fcntl`` locks
-    are available and released automatically if the process exits.
+    another call's result. FileLock uses platform-native locking (``msvcrt`` on
+    Windows and ``fcntl`` on Unix), so a native Windows FastAPI service has the
+    same per-session cross-process serialization as the Docker/Linux service.
     """
-    import fcntl
-
     directory = session_dir(session_id)
     if not directory.is_dir():
         raise ValueError("Session not found")
-    with (directory / ".lock").open("a+") as lock:
-        fcntl.flock(lock.fileno(), fcntl.LOCK_EX)
-        try:
-            yield
-        finally:
-            fcntl.flock(lock.fileno(), fcntl.LOCK_UN)
+    # No finite timeout: a slow workbook operation must serialize rather than
+    # cause the client to retry a conflicting state mutation.
+    with FileLock(str(directory / ".lock")):
+        yield
 
 
 def state_path(session_id: str) -> Path:

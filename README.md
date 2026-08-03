@@ -1,163 +1,187 @@
-# Excel extraction agent stack
+# Excel Extractor Agent — n8n + FastAPI
 
-Docker deployment for the technical task:
+Production-oriented Excel component for a future MAS. It contains **one active core workflow** governed by a native n8n AI Agent, plus a thin authenticated form adapter:
 
-- **n8n 2.30.8** — agent/orchestration layer;
-- **PostgreSQL 16 + pgvector** — n8n database, contextual memory and vector store;
-- **Excel Tools FastAPI** — separate Docker container that stores sessions and executes deterministic Excel tools only. It does not call OpenAI/Qwen and has no agent loop.
+- **n8n 2.30.8** — orchestration, three entry points and the AI Agent;
+- **OpenAI `gpt-4.1-nano`, temperature `0`** — only chat model;
+- **OpenAI `text-embedding-3-small` (1536 dimensions)** — only embedding model;
+- **PostgreSQL 16 + pgvector** — n8n database, session-scoped chat memory and static operating context;
+- **FastAPI Excel Tools** — deterministic, authenticated workbook session/tool service; it never calls an LLM;
+- **n8n-runners** — separate hardened external execution runner for JavaScript Code nodes.
 
-## Start
+No Qwen credential or model is used by the deployed workflow.
+
+## Architecture and contracts
+
+The active core workflow is **`Excel Extractor Agent — OpenAI nano + FastAPI tools`** (`1NPVfPP868n5hw7D`). It has all requested components in the same workflow graph:
+
+1. native AI Agent connected to `gpt-4.1-nano` with temperature `0`;
+2. PostgreSQL Chat Memory keyed as `excel:<session_id>`;
+3. PGVector context-search tool backed by `n8n_excel_agent_context` and `text-embedding-3-small`;
+4. exactly one HTTP AI-tool node per FastAPI Excel tool;
+5. deterministic preflight/finalization guards around the model.
+
+The model receives compact tool outputs only. Workbooks stay in the FastAPI Docker volume. The system prompt requires discovery before querying, exact opaque IDs, verified columns/values, hard-stop clarification on material ambiguity, validation of every query, and no invented data.
+
+The available Excel tools are:
+
+`workbook_introspect`, `sheet_preview`, `detect_tables`, `describe_table`, `list_column_values`, `query_table`, `validate_result`, `export_result`, `get_session_state`, `save_agent_plan`, `submit_clarification`, `resolve_clarification`, `finalize_extraction`.
+
+Tool calls for the same session are serialized by `filelock` using the operating system’s locking mechanism. Session state is atomically saved. Exact retries of a resolved clarification are idempotent; conflicting answers are rejected.
+
+### Пустые строки внутри таблиц
+
+`detect_tables` потоково сшивает **до 5 подряд полностью пустых строк в каждом разрыве** внутри уже начатой таблицы; после очередной строки данных счётчик сбрасывается. Поэтому последовательность «данные → пустые строки → данные → пустые строки → данные» остаётся одной таблицей, если каждый непрерывный разрыв укладывается в лимит. Пустые строки не становятся записями: `describe_table`, `query_table` и экспорт возвращают только фактические данные. Лимит задаётся `MAX_INTERNAL_BLANK_ROWS` (0–100; по умолчанию `5`) и намеренно ограничен: более длинный разрыв завершает текущую таблицу, а строка, похожая на новый заголовок с последующей записью, открывает новый блок. Это предотвращает неявное склеивание независимых таблиц и сохраняет память детектора O(ширина таблицы), а не O(число строк листа).
+
+## Entry points
+
+All routes normalize to the same core workflow and structured result (`success`, `partial`, `clarification_needed`, or `error`).
+
+- **HTTP:** `POST /webhook/excel-extract`, protected by `X-Excel-Webhook-Key`.
+- **Form:** `/form/excel-extract-form`, protected by n8n user authentication. The form adapter calls the core via Execute Sub-workflow.
+- **Another n8n workflow:** use **Execute Sub-workflow** → core workflow. Pass `binary.file` and `request`; for a continuation pass `session_id` and `clarification_response` with no file.
+
+For a clarification, retain the returned `meta.session_id`; send all answers with the returned `clarification.token`. The original workbook is not uploaded again. The workflow resolves the answer deterministically, then the agent reads the same session state and resumes.
+
+## Local testing on Windows
+
+For local development on Windows, `uvicorn` can be run natively. The `locked_session` method uses `msvcrt` on Windows and `fcntl` on Linux. The default `SESSION_DIR` fallback on Windows uses the system temporary directory.
+
+### Бесплатный n8n: настройка только через UI
+
+Импортируемые workflow JSON **не используют** Global Variables, `$vars` или `$env` n8n. После импорта откройте основной workflow **Excel Extractor Agent — OpenAI nano + FastAPI tools** и измените только узел **Runtime configuration**:
+
+1. `excel_tools_url` — базовый адрес FastAPI, обязательно с `/api/v1` в конце;
+2. `excel_tools_api_key` — значение заголовка `X-API-Key` FastAPI;
+3. `excel_webhook_api_key` — ключ заголовка `X-Excel-Webhook-Key` для HTTP-входа.
+
+Затем в UI назначьте/пересоздайте обычные n8n credentials для OpenAI и PostgreSQL. Никакой доступ к shell, файловой системе сервера или его переменным окружения не нужен.
+
+Адрес должен быть доступен **с сервера n8n**. Если корпоративный n8n работает удалённо, `127.0.0.1:8000` указывает на сам сервер n8n, а не на ваш рабочий ноутбук. Для теста с локальным n8n в Docker Desktop подходит `http://host.docker.internal:8000/api/v1`; для удалённого n8n ИТ должны обеспечить маршрут/VPN/firewall rule, защищённый tunnel или внутренний reverse proxy до Windows-хоста с FastAPI.
+
+Значения в узле Runtime configuration — удобный вариант для первичного UI-теста, но они сохраняются в данных workflow. Перед промышленной эксплуатацией ИТ должны перенести ключ FastAPI в credential/secret store и ограничить доступ к workflow.
+
+## Deploy
+
+Docker is mandatory for the complete production topology. The **FastAPI Excel Tools service itself is cross-platform** and can also run natively on Windows without Docker (for local development, a Windows-hosted deployment, or when n8n runs separately). A native process does not provide n8n, PostgreSQL/pgvector, external task runners, Docker volume isolation, or the production network boundary by itself.
 
 ```bash
 cp .env.example .env
-# edit every change-me value and public host values
-# For the supplied Codex Sale provider, set QWEN_BASE_URL=https://codex.sale/v1,
-# QWEN_API_KEY to its API key and QWEN_MODEL=qwen3.6-plus.
+# Replace every change-me value with independently generated secrets.
+docker compose --env-file .env config --quiet
 docker compose up -d --build
 docker compose ps
 ```
 
-Open n8n at `http://localhost:${N8N_HOST_PORT:-5678}`. PostgreSQL and Excel Tools
-are internal-only Docker services: they have no host ports and the Excel Tools
-OpenAPI documentation is disabled by default.
+Required secret variables include `POSTGRES_PASSWORD`, `N8N_ENCRYPTION_KEY`, `N8N_USER_MANAGEMENT_JWT_SECRET`, `N8N_RUNNERS_AUTH_TOKEN`, `EXCEL_TOOLS_API_KEY`, `EXCEL_WEBHOOK_API_KEY`, and `OPENAI_API_KEY`. `N8N_RUNNERS_AUTH_TOKEN` is shared only over the private backend network by n8n and `n8n-runners`.
 
-For production, expose **only n8n** through an authenticated TLS reverse proxy;
-set `N8N_PROTOCOL=https`, HTTPS `N8N_EDITOR_BASE_URL`/`N8N_WEBHOOK_URL`, and
-`N8N_SECURE_COOKIE=true`. Keep the n8n container port loopback-only or remove its
-host port entirely when the proxy shares the Docker network. The workflow also
-requires `X-Excel-Webhook-Key: $EXCEL_WEBHOOK_API_KEY` on every extraction request.
+Only n8n binds a host port, and it binds loopback by default. PostgreSQL, FastAPI, and the task broker have no host ports. Production must put n8n behind an authenticated TLS reverse proxy, set `N8N_PROTOCOL=https`, HTTPS `N8N_EDITOR_BASE_URL`/`N8N_WEBHOOK_URL`, and retain `N8N_SECURE_COOKIE=true`. Apply request-size limits and rate limits at that proxy.
 
-## n8n configuration
+### Native FastAPI on Windows (without Docker)
 
-1. The running local instance has encrypted n8n credentials **Qwen Codex Sale chat** and **Postgres pgvector**. The supplied Qwen key is not written to any repository file. On a fresh instance, create equivalents: `postgres:5432` plus `POSTGRES_*` from `.env`, and an **OpenAI-compatible** Qwen credential with Base URL `${QWEN_BASE_URL}` and `${QWEN_API_KEY}`. For production, put these values in a secret manager; n8n credentials are encrypted at rest by `N8N_ENCRYPTION_KEY`.
-2. **Postgres Chat Memory** and **PGVector Vector Store** are bound to **Postgres pgvector**. The init script enables the `vector` extension automatically.
-3. **Qwen Chat Model** is bound to **Qwen Codex Sale chat** with `qwen3.6-plus`. It is a Qwen provider connection, not OpenAI.
-4. For **Qwen Embeddings**, configure a *separate* credential for a provider that exposes `/embeddings` (for example, self-hosted `Qwen/Qwen3-Embedding-8B`); the supplied Codex Sale catalog exposes chat Qwen models only, so it must not be used as an embeddings credential.
-5. Import `n8n/workflows/ai-components.workflow.json` to get the **AI Agent**, **Postgres Chat Memory**, **PGVector Vector Store**, Qwen chat model and embedding-node wiring. The Excel workflow intentionally performs the multi-tool loop in its Code node because the FastAPI tool schemas are dynamic per service.
-6. Import `n8n/workflows/excel-extraction-agent.workflow.json` and activate it. It has **three equivalent entry points** that normalize to one Excel-agent loop:
-   - **HTTP** — `POST /webhook/excel-extract`, protected by `X-Excel-Webhook-Key`; send multipart field `file` and `request`.
-   - **Form** — `GET /form/excel-extract-form`; upload one workbook and write a request in the browser. It requires a logged-in n8n user, so no webhook secret is exposed in page HTML.
-   - **Call another workflow** — select this workflow in n8n’s **Execute Sub-workflow** node; pass `binary.file` and a `request` object (or a `session_id` plus `clarification_response` to continue a clarification).
-   In every route, a clarification is resumed with the original `session_id` and `clarification_response`, without re-uploading the workbook.
-7. `n8n/workflows/ai-components.workflow.json` is a reference/template for the required AI Agent, PostgreSQL memory, pgvector and embeddings wiring; it is inactive by design and its embeddings credential placeholder **must** be replaced with a real embeddings provider before enabling it. It is not part of the production extraction webhook path.
+Supported on Windows 10/11 and Windows Server with **Python 3.11–3.13 x64**. In PowerShell:
 
-Example requests:
+```powershell
+cd excel-agent-tools
+py -3.13 -m venv .venv
+.\.venv\Scripts\Activate.ps1
+python -m pip install --upgrade pip
+pip install -r requirements.txt
+
+$env:API_KEY = "replace-with-a-long-random-secret"
+$env:SESSION_DIR = "$PWD\data\sessions"
+$env:SESSION_TTL_HOURS = "24"
+$env:MAX_FILE_SIZE_MB = "200"
+$env:MAX_EXCEL_ZIP_ENTRIES = "10000"
+$env:MAX_EXCEL_UNCOMPRESSED_MB = "500"
+$env:MAX_INTERNAL_BLANK_ROWS = "5"
+python -m uvicorn app.main:app --host 127.0.0.1 --port 8000
+```
+
+Use `http://127.0.0.1:8000/health` to check the service. Its session lock uses `filelock`, which maps to platform-native locking on Windows and Unix; do not run multiple worker processes against a network share unless that filesystem’s locking semantics have been validated. For a Windows FastAPI process with n8n in Docker Desktop, set `EXCEL_TOOLS_URL=http://host.docker.internal:8000/api/v1` for n8n and allow the port only from the Docker/host boundary (or, preferably, place both services behind a private proxy). Do not expose the raw FastAPI port publicly; it requires `X-API-Key` but should still be behind TLS, firewall and rate limits.
+
+## Import and activate workflows
+
+### Без доступа к серверу: импорт через UI
+
+1. В n8n нажмите **Import from File** и загрузите `n8n/workflows/excel-extraction-agent.workflow.json`.
+2. В узле **Runtime configuration** задайте три значения из предыдущего раздела.
+3. В узлах OpenAI Chat Model, OpenAI Embeddings, PostgreSQL Chat Memory и PGVector назначьте свои credentials в UI.
+4. Сохраните и опубликуйте/активируйте основной workflow.
+5. При необходимости аналогично импортируйте `excel-extraction-form-adapter.workflow.json` и `excel-mas-orchestrator.workflow.json`, затем выберите импортированный core workflow в узлах Execute Sub-workflow.
+
+Сначала проверьте обычный HTTP-вход, затем Form и Execute Sub-workflow. Так проще локализовать сетевую или credential-проблему.
+
+### Администраторский импорт Compose
+
+Importing a workflow deactivates it. After import, activate/publish it before use:
+
+```bash
+docker compose exec -T n8n n8n import:workflow --input=/workflows/excel-extraction-agent.workflow.json
+docker compose exec -T n8n n8n import:workflow --input=/workflows/excel-extraction-form-adapter.workflow.json
+# Activate both in the n8n UI (or publish their imported versions through the n8n API/CLI used by your release process).
+```
+
+Create an n8n OpenAI credential named in the imported workflow (or remap it) with `OPENAI_API_KEY`. Create/remap the PostgreSQL credential to the compose PostgreSQL service. Credentials are encrypted at rest by `N8N_ENCRYPTION_KEY`; keep credentials out of workflow JSON and Git. The UI-only Runtime configuration node is the documented temporary exception for the FastAPI keys; replace it with IT-managed secret storage before production.
+
+## Seed PGVector context
+
+Static operating guidance must exist before first production use. This idempotent one-shot job calls only `text-embedding-3-small` and writes three documents to `n8n_excel_agent_context`:
+
+```bash
+docker build -t excel-context-seeder ./context-seeder
+docker run --rm --network omegalul_egress --network omegalul_backend \
+  -e OPENAI_API_KEY -e POSTGRES_HOST=postgres -e POSTGRES_PORT=5432 \
+  -e POSTGRES_DB -e POSTGRES_USER -e POSTGRES_PASSWORD \
+  excel-context-seeder
+```
+
+If Compose project name differs from `omegalul`, substitute its `<project>_egress` and `<project>_backend` Docker networks. The image is digest-pinned and runs unprivileged. It has no access to FastAPI workbook sessions.
+
+## API examples
 
 ```bash
 # New extraction
 curl -X POST http://localhost:${N8N_HOST_PORT:-5678}/webhook/excel-extract \
-  -H 'X-Excel-Webhook-Key: <your-webhook-secret>' \
+  -H 'X-Excel-Webhook-Key: <webhook-secret>' \
   -F 'file=@orders.xlsx' \
-  -F 'request={"fields":["order_id","amount"],"prompt":"Extract paid orders"}'
+  -F 'request={"prompt":"Extract paid orders with Order ID, Customer and Amount as CSV."}'
 
-# Open the authenticated browser form
-# http://localhost:${N8N_HOST_PORT:-5678}/form/excel-extract-form
-#
-# Resume a clarification returned by the first request
+# Resume a clarification; do not send file again
 curl -X POST http://localhost:${N8N_HOST_PORT:-5678}/webhook/excel-extract \
-  -H 'X-Excel-Webhook-Key: <your-webhook-secret>' \
+  -H 'X-Excel-Webhook-Key: <webhook-secret>' \
   -F 'session_id=sess_...' \
-  -F 'clarification_response={"token":"clr_...","answers":[{"question_id":"amount_column","answer":"Сумма итого"}]}'
+  -F 'clarification_response={"token":"clr_...","answers":[{"question_id":"table_selection","answer":"Sales rep, Region, Revenue"}]}'
 ```
 
-When an extraction needs input, the response has `status: "clarification_needed"`,
-`clarification.token`, the question list, and `meta.session_id`. Send that exact
-session ID and an answer for **every** question to resume; the workbook is retained
-in the Docker-backed Excel Tools session and must not be uploaded again. The
-continuation performs `resolve_clarification` before returning to the model/tool loop.
+The authenticated form is at `http://localhost:${N8N_HOST_PORT:-5678}/form/excel-extract-form`.
 
-The workflow makes the tool loop itself: upload binary to FastAPI, load `/tools`, call the Qwen OpenAI-compatible endpoint, execute tool calls with `/tools/batch`, append `tool` messages, and only returns an output produced by `finalize_extraction`. It caps iterations at 12 and total calls at 30.
-
-### Calling it from another n8n workflow
-
-In a caller workflow, add **Execute Sub-workflow**, choose **Excel extraction agent — FastAPI tools + Qwen loop**, and use “Run once with all items”. Pass the Excel binary as `file` and JSON such as:
-
-```json
-{
-  "request": {
-    "fields": ["order_id", "amount"],
-    "prompt": "Extract paid orders"
-  }
-}
-```
-
-The child workflow returns the same structured result as the HTTP route. For a clarification continuation, pass `{ "session_id": "sess_...", "clarification_response": { ... } }` and no binary file.
-
-`N8N_BLOCK_ENV_ACCESS_IN_NODE=false` is set because this imported local Code node reads the Docker-injected Qwen and Excel Tools configuration. Keep n8n private (the compose ports bind to loopback) and do not grant editor access to untrusted users; use n8n credentials/HTTP Request nodes instead if that trust boundary is required.
-
-## Production operations checklist
-
-- Replace every `change-me-*` value with independently generated secrets and store
-  them in a secret manager or protected deployment environment; never commit `.env`.
-- Use HTTPS URLs and `N8N_SECURE_COOKIE=true` behind a TLS reverse proxy. Apply
-  request-size and rate limits there, especially to `/webhook/excel-extract`.
-- Back up the `postgres_data` and `n8n_data` Docker volumes, encrypt backups, and
-  test restoration. `excel_sessions` is intentionally disposable after its TTL.
-- Pin image digests as in `docker-compose.yml`; review and deliberately update
-  them as part of a vulnerability/patch-management process.
-- Alert on container health, disk usage for Docker volumes, n8n failed executions,
-  and provider errors. The current Qwen provider has returned `429 upstream_busy`,
-  so production needs retry/backoff or a provider SLO before relying on it.
-
-
-## Qwen access
-
-`codex-sale-credentials.md` contains an OpenAI-compatible provider configuration. Its catalog was checked and includes `qwen3.5-plus`, `qwen3.6-plus`, `qwen3.7-plus` and `qwen3.7-max`; this stack defaults to `qwen3.6-plus`. Put the key **only** in `.env` as `QWEN_API_KEY`; the credentials file and `.env` are ignored by Git.
-
-A real end-to-end webhook run was made with Microsoft’s public Financial Sample Excel workbook: n8n sent the file to the FastAPI container (a 83,418-byte `candidate.xlsx` session was created), then called Codex Sale. `/v1/models` returned the Qwen catalog, but `/v1/chat/completions` returned provider HTTP 429 (`upstream_busy`). Thus Docker, binary upload, session creation and orchestration are proven; model inference needs to be retried after the provider's temporary rate limit clears.
-
-For the exact public weights requested, [`Qwen/Qwen3.6-27B`](https://huggingface.co/Qwen/Qwen3.6-27B) is public (Apache-2.0) and its card documents the OpenAI-compatible Model Studio ID `qwen3.6-27b` as well as self-hosting with vLLM/SGLang. The standard checkpoint is approximately **51.7 GiB** of safetensors and the official SGLang/vLLM examples use tensor parallelism on 8 GPUs, so it was not downloaded or started on this host (no NVIDIA GPU is available). Point `QWEN_BASE_URL` to a managed Model Studio endpoint or a separately provisioned vLLM/SGLang server to use the exact 27B model.
-
-## Excel Tools API
-
-Every `/api/v1/*` endpoint requires `X-API-Key: $EXCEL_TOOLS_API_KEY`.
+## Verification
 
 ```bash
-curl -X POST http://localhost:8000/api/v1/sessions \
-  -H "X-API-Key: $EXCEL_TOOLS_API_KEY" \
-  -F 'file=@orders.xlsx' \
-  -F 'payload={"request":{"fields":["order_id","customer","amount"]}}'
-```
+docker compose --env-file .env config --quiet
+docker compose ps
 
-The OpenAI tool schemas are available at `GET /api/v1/tools`. The implemented tools are:
-
-`workbook_introspect`, `sheet_preview`, `detect_tables`, `describe_table`, `list_column_values`, `query_table`, `validate_result`, `export_result`, `get_session_state`, `save_agent_plan`, `submit_clarification`, `resolve_clarification`, `finalize_extraction`.
-
-Session files are Docker-volume backed, API keys are checked, IDs/paths are validated,
-and per-session tool calls are serialized to prevent concurrent state loss. Uploads
-stream to disk with a 200 MB default ceiling; OOXML archive entry and expanded-size
-limits are enforced before parsing; stale-session cleanup runs in a background task
-according to `SESSION_TTL_HOURS`. CSV export neutralizes spreadsheet formulas.
-
-## Verify
-
-```bash
-docker compose --env-file .env config
 docker build --target test -t excel-tools-test ./excel-agent-tools
 docker run --rm excel-tools-test
-curl http://localhost:${N8N_HOST_PORT:-5678}/healthz
-# check pgvector
-docker compose exec postgres psql -U "$POSTGRES_USER" -d "$POSTGRES_DB" -c "SELECT extname FROM pg_extension WHERE extname = 'vector';"
-docker compose exec excel-tools python -c "import urllib.request; print(urllib.request.urlopen('http://127.0.0.1:8000/health').read().decode())"
+
+# n8n external runner should be healthy; logs must show “n8n Task Broker ready”
+docker compose logs --tail=100 n8n n8n-runners
+
+# Vector context
+set -a; . ./.env; set +a
+docker compose exec postgres psql -U "$POSTGRES_USER" -d "$POSTGRES_DB" \
+  -c "select metadata->>'slug', vector_dims(embedding) from n8n_excel_agent_context order by 1;"
 ```
 
-## Complex Excel regression corpus
+`excel-agent-tools/tests/fixtures/complex/` contains ten deterministic non-sensitive `.xlsx` fixtures: preambles/titles, side-by-side tables, multi-row headers, late headers, grouped headers, several internal blank rows plus total rows, Unicode/hidden sheets, sparse layouts, duplicate headers, and date/number/boolean data. The Docker test image executes the full deterministic tool flow across all ten.
 
-`excel-agent-tools/tests/fixtures/complex/` contains ten small, deterministic,
-non-sensitive `.xlsx` files plus `manifest.json`. They cover merged titles and
-headers, preambles, headers away from row one, horizontal tables on one sheet,
-internal blank rows and total rows, duplicate column names, Unicode/hidden sheets,
-sparse layouts, and dates/numbers/booleans. Regenerate only when intentionally
-changing the fixtures:
+## Operational controls and remaining deployment responsibility
 
-```bash
-python excel-agent-tools/tests/fixtures/complex/generate_corpus.py
-docker build --target test -t excel-tools-test ./excel-agent-tools
-docker run --rm excel-tools-test
-```
+- FastAPI sessions/artifacts are disposable after `SESSION_TTL_HOURS` (24 hours by default); n8n execution data is pruned after 168 hours by default. Treat both as potentially sensitive data and set retention to policy.
+- Back up and restore-test `postgres_data` and `n8n_data`; do not back up `excel_sessions` unless retention policy requires it. Encrypt backups.
+- Alert on all container health checks, Docker volume free space, n8n failed executions, FastAPI 4xx/5xx, OpenAI failures/latency, and runner disconnects.
+- Use a managed secret store, TLS, reverse-proxy rate limits/WAF, centralized logs, and an incident/restore runbook before exposing the host publicly.
+- Image digests are intentionally pinned. Review CVEs and deliberately update/retest pinned images as part of patch management.
 
-The manifest-driven test performs `workbook_introspect → detect_tables →
-describe_table → query_table → validate_result → export_result` for every expected
-table. `detect_tables` streams worksheets with one-row look-ahead, flattens
-multi-row merged headers, separates horizontal tables, tolerates one blank data
-row, and excludes conventional total rows from records.
+The stack is production-oriented and E2E-tested, but production sign-off remains an operator responsibility until the public TLS/proxy, secret manager, backup/restore test, and monitoring/alerting are deployed in the target environment.

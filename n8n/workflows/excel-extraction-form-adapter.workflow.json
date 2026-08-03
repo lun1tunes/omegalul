@@ -1,0 +1,178 @@
+{
+  "id": "excel-extraction-form-adapter-v1",
+  "name": "Excel Extractor — authenticated form adapter",
+  "description": "Thin authenticated n8n Form entry point. It normalizes form data and calls the single Excel Extractor Agent core workflow through Execute Sub-workflow; no model, workbook parsing, memory, or FastAPI tool logic is duplicated here.",
+  "active": true,
+  "settings": {
+    "executionOrder": "v1"
+  },
+  "nodes": [
+    {
+      "parameters": {
+        "authentication": "n8nUserAuth",
+        "formTitle": "Excel data extraction",
+        "formDescription": "Upload an Excel workbook and describe the data you need. For a clarification continuation, provide its session ID and the exact answer JSON; no re-upload is necessary. The workbook stays in the Excel Tools service and is never sent to the language model.",
+        "formFields": {
+          "values": [
+            {
+              "fieldName": "file",
+              "fieldLabel": "Excel file (.xlsx or .xls)",
+              "fieldType": "file",
+              "multipleFiles": false,
+              "acceptFileTypes": ".xlsx, .xls",
+              "requiredField": false
+            },
+            {
+              "fieldName": "request",
+              "fieldLabel": "Extraction request",
+              "fieldType": "textarea",
+              "placeholder": "For example: Extract paid orders with order_id and amount",
+              "requiredField": true
+            },
+            {
+              "fieldName": "session_id",
+              "fieldLabel": "Clarification session ID (optional)",
+              "fieldType": "text",
+              "placeholder": "sess_...",
+              "requiredField": false
+            },
+            {
+              "fieldName": "clarification_response",
+              "fieldLabel": "Clarification answer JSON (optional)",
+              "fieldType": "textarea",
+              "placeholder": "{\"token\":\"clr_...\",\"answers\":[{\"question_id\":\"...\",\"answer\":\"...\"}]}",
+              "requiredField": false
+            }
+          ]
+        },
+        "responseMode": "lastNode",
+        "options": {
+          "path": "excel-extract-form",
+          "appendAttribution": false,
+          "buttonLabel": "Extract data",
+          "ignoreBots": true,
+          "includeUserInOutput": true
+        }
+      },
+      "id": "e3b1c4c0-424c-41c3-85a0-a1f1c6d4d001",
+      "name": "Excel extraction form",
+      "type": "n8n-nodes-base.formTrigger",
+      "typeVersion": 2.6,
+      "position": [
+        0,
+        0
+      ],
+      "webhookId": "e3b1c4c0-424c-41c3-85a0-a1f1c6d4d001"
+    },
+    {
+      "parameters": {
+        "jsCode": "const item = $input.first();\nconst input = item.json || {};\nconst parseObject = (raw, fallback) => {\n  if (raw === undefined || raw === null || raw === '') return fallback;\n  if (typeof raw === 'object' && !Array.isArray(raw)) return raw;\n  if (typeof raw !== 'string') return fallback;\n  const text = raw.trim();\n  if (!text) return fallback;\n  try {\n    const parsed = JSON.parse(text);\n    return parsed && typeof parsed === 'object' && !Array.isArray(parsed) ? parsed : fallback;\n  } catch {\n    return { prompt: text };\n  }\n};\nconst rawRequest = typeof input.request === 'string' ? input.request.trim() : '';\nconst request = parseObject(input.request, rawRequest ? { prompt: rawRequest } : {});\nconst rawAnswer = typeof input.clarification_response === 'string' ? input.clarification_response.trim() : '';\nconst clarificationResponse = rawAnswer ? parseObject(rawAnswer, null) : null;\nconst sessionId = typeof input.session_id === 'string' ? input.session_id.trim() : '';\nconst file = item.binary?.file;\nreturn [{\n  json: {\n    request,\n    session_id: sessionId || undefined,\n    clarification_response: clarificationResponse,\n    entrypoint: 'form',\n  },\n  binary: file ? { file } : undefined,\n}];"
+      },
+      "id": "e3b1c4c0-424c-41c3-85a0-a1f1c6d4d002",
+      "name": "Normalize form input",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        280,
+        0
+      ]
+    },
+    {
+      "parameters": {
+        "source": "database",
+        "workflowId": {
+          "__rl": true,
+          "value": "1NPVfPP868n5hw7D",
+          "mode": "list",
+          "cachedResultName": "Excel Extractor Agent — OpenAI nano + FastAPI tools"
+        },
+        "mode": "once",
+        "options": {
+          "waitForSubWorkflow": true
+        }
+      },
+      "id": "e3b1c4c0-424c-41c3-85a0-a1f1c6d4d003",
+      "name": "Call Excel Extractor core",
+      "type": "n8n-nodes-base.executeWorkflow",
+      "typeVersion": 1.1,
+      "position": [
+        560,
+        0
+      ]
+    },
+    {
+      "parameters": {
+        "jsCode": "const result = $input.first().json || {};\nconst escapeHtml = (value) => String(value ?? '')\n  .replace(/&/g, '&amp;')\n  .replace(/</g, '&lt;')\n  .replace(/>/g, '&gt;')\n  .replace(/\\\"/g, '&quot;')\n  .replace(/'/g, '&#39;');\nconst prettyJson = (value, limit = 16000) => {\n  let text;\n  try { text = JSON.stringify(value, null, 2); } catch { text = String(value); }\n  return text.length > limit ? `${text.slice(0, limit)}\\n… truncated for display` : text;\n};\nconst status = escapeHtml(result.status || 'error');\nconst message = escapeHtml(result.message || 'The workflow did not return a message.');\nconst sessionId = escapeHtml(result.session_id || result.meta?.session_id || '');\nconst artifact = escapeHtml(result.data?.artifact_ref || '');\nconst clarification = result.clarification && typeof result.clarification === 'object' ? result.clarification : null;\nconst details = {\n  status: result.status || 'error',\n  session_id: result.session_id || result.meta?.session_id || null,\n  data: result.data || null,\n  filters_applied: result.filters_applied || [],\n  warnings: result.warnings || [],\n  errors: result.errors || [],\n  clarification: clarification,\n};\nconst clarificationBlock = clarification\n  ? `<h2>Clarification required</h2><p>Session ID: <code>${sessionId}</code></p><p>Token: <code>${escapeHtml(clarification.token || '')}</code></p><pre>${escapeHtml(prettyJson(clarification.questions || []))}</pre><p>Submit this form again with the session ID and a JSON clarification answer. Do not upload the workbook again.</p>`\n  : '';\nconst artifactBlock = artifact ? `<p>Artifact reference: <code>${artifact}</code></p>` : '';\nconst html = `<main><h1>Excel extraction result</h1><p>Status: <strong>${status}</strong></p><p>${message}</p>${sessionId ? `<p>Session ID: <code>${sessionId}</code></p>` : ''}${artifactBlock}${clarificationBlock}<details><summary>Structured response</summary><pre>${escapeHtml(prettyJson(details))}</pre></details></main>`;\nreturn [{ json: { ...result, form_response_html: html } }];"
+      },
+      "id": "e3b1c4c0-424c-41c3-85a0-a1f1c6d4d004",
+      "name": "Build safe form response",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        840,
+        0
+      ]
+    },
+    {
+      "parameters": {
+        "operation": "completion",
+        "respondWith": "showText",
+        "responseText": "={{ $json.form_response_html }}"
+      },
+      "id": "e3b1c4c0-424c-41c3-85a0-a1f1c6d4d005",
+      "name": "Show extraction result",
+      "type": "n8n-nodes-base.form",
+      "typeVersion": 2.5,
+      "position": [
+        1120,
+        0
+      ]
+    }
+  ],
+  "connections": {
+    "Excel extraction form": {
+      "main": [
+        [
+          {
+            "node": "Normalize form input",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Normalize form input": {
+      "main": [
+        [
+          {
+            "node": "Call Excel Extractor core",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Call Excel Extractor core": {
+      "main": [
+        [
+          {
+            "node": "Build safe form response",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Build safe form response": {
+      "main": [
+        [
+          {
+            "node": "Show extraction result",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    }
+  }
+}

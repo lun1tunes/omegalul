@@ -9,9 +9,10 @@ from pathlib import Path
 
 import pytest
 from fastapi.testclient import TestClient
+from filelock import FileLock
 from openpyxl import Workbook
 
-from app.sessions import load_state
+from app.sessions import load_state, locked_session, session_dir
 
 
 @pytest.fixture()
@@ -92,6 +93,56 @@ def test_full_excel_tool_flow_and_artifact(client: TestClient) -> None:
     state = client.get(f"/api/v1/sessions/{session_id}/state", headers={"X-API-Key": "test-key"}).json()
     assert "file_path" not in state
     assert "path" not in state["artifacts"][artifact["artifact_id"]]
+    assert state["result_sets"][queried["result_id"]]["validation"] == {
+        "valid": True,
+        "required_columns": ["Заказ №"],
+        "min_rows": 1,
+        "missing_columns": [],
+        "enough_rows": True,
+        "row_count": 2,
+    }
+
+
+def test_successful_finalization_requires_successful_result_validation(client: TestClient) -> None:
+    session_id = upload(client)
+    missing_result = client.post(
+        f"/api/v1/sessions/{session_id}/tool",
+        headers={"X-API-Key": "test-key"},
+        json={"name": "finalize_extraction", "args": {"status": "success", "data": {}}},
+    ).json()
+    assert missing_result["ok"] is False
+    assert missing_result["error"]["code"] == "INVALID_FINAL_OUTPUT"
+
+    table_id = tool(client, session_id, "detect_tables", {"sheet": "Заказы"})["tables"][0]["table_id"]
+    queried = tool(client, session_id, "query_table", {"table_id": table_id, "select": ["Заказ №"]})
+
+    unvalidated = client.post(
+        f"/api/v1/sessions/{session_id}/tool",
+        headers={"X-API-Key": "test-key"},
+        json={"name": "finalize_extraction", "args": {"status": "success", "data": {"result_id": queried["result_id"]}}},
+    ).json()
+    assert unvalidated["ok"] is False
+    assert unvalidated["error"]["code"] == "RESULT_NOT_VALIDATED"
+
+    rejected_validation = tool(
+        client,
+        session_id,
+        "validate_result",
+        {"result_id": queried["result_id"], "required_columns": ["Missing"]},
+    )
+    assert rejected_validation["valid"] is False
+    failed_finalization = client.post(
+        f"/api/v1/sessions/{session_id}/tool",
+        headers={"X-API-Key": "test-key"},
+        json={"name": "finalize_extraction", "args": {"status": "success", "data": {"result_id": queried["result_id"]}}},
+    ).json()
+    assert failed_finalization["ok"] is False
+    assert failed_finalization["error"]["code"] == "RESULT_NOT_VALIDATED"
+
+    accepted_validation = tool(client, session_id, "validate_result", {"result_id": queried["result_id"], "required_columns": ["Заказ №"]})
+    assert accepted_validation["valid"] is True
+    final = tool(client, session_id, "finalize_extraction", {"status": "success", "data": {"result_id": queried["result_id"]}})
+    assert final["output"]["status"] == "success"
 
 
 def test_structured_errors_batch_and_clarification(client: TestClient) -> None:
@@ -106,8 +157,61 @@ def test_structured_errors_batch_and_clarification(client: TestClient) -> None:
     assert results[0]["ok"] is False and results[0]["error"]["code"] == "UNKNOWN_TOOL"
     assert results[1]["ok"] is True
     clarification = tool(client, session_id, "submit_clarification", {"questions": [{"id": "amount", "question": "Какую сумму использовать?", "type": "choice", "options": ["Сумма", "Сумма итого"]}]})
-    resolved = tool(client, session_id, "resolve_clarification", {"token": clarification["token"], "answers": [{"question_id": "amount", "answer": "Сумма итого"}]})
-    assert resolved["status"] == "resolved"
+    answer = {"token": clarification["token"], "answers": [{"question_id": "amount", "answer": "Сумма итого"}]}
+    resolved = tool(client, session_id, "resolve_clarification", answer)
+    assert resolved == {"token": clarification["token"], "status": "resolved", "idempotent": False}
+    # A retry after a client timeout is safe and does not mutate the answer.
+    repeated = tool(client, session_id, "resolve_clarification", answer)
+    assert repeated == {"token": clarification["token"], "status": "resolved", "idempotent": True}
+    conflict = client.post(
+        f"/api/v1/sessions/{session_id}/tool",
+        headers={"X-API-Key": "test-key"},
+        json={"name": "resolve_clarification", "args": {"token": clarification["token"], "answers": [{"question_id": "amount", "answer": "Сумма"}]}},
+    ).json()
+    assert conflict["ok"] is False and conflict["error"]["code"] == "CLARIFICATION_ALREADY_RESOLVED"
+
+
+def test_agent_tool_transport_accepts_n8n_envelopes_and_top_level_arguments(client: TestClient) -> None:
+    """n8n envelope variants stay safe without model-controlled session IDs.
+
+    HTTP Request Tool v1 unfolds the DynamicTool input into direct body fields;
+    other exports use ``input``/``args``.  The endpoint name fixes the tool and
+    the session is supplied by the workflow, not selected by a model call.
+    """
+    session_id = upload(client)
+    for body in (
+        {"session_id": session_id, "input": {}},
+        {"session_id": session_id, "args": {}},
+    ):
+        response = client.post(
+            "/api/v1/agent-tools/workbook_introspect",
+            headers={"X-API-Key": "test-key"},
+            json=body,
+        )
+        assert response.status_code == 200, response.text
+        assert response.json()["ok"] is True
+    ambiguous = client.post(
+        "/api/v1/agent-tools/workbook_introspect",
+        headers={"X-API-Key": "test-key"},
+        json={"session_id": session_id, "input": {}, "args": {}},
+    )
+    assert ambiguous.status_code == 422
+
+    table_id = tool(client, session_id, "detect_tables", {"sheet": "Заказы"})["tables"][0]["table_id"]
+    top_level = client.post(
+        "/api/v1/agent-tools/describe_table",
+        headers={"X-API-Key": "test-key"},
+        json={"session_id": session_id, "table_id": table_id, "sample_rows": 1},
+    )
+    assert top_level.status_code == 200, top_level.text
+    assert top_level.json()["result"]["table_id"] == table_id
+
+    mixed = client.post(
+        "/api/v1/agent-tools/describe_table",
+        headers={"X-API-Key": "test-key"},
+        json={"session_id": session_id, "input": {"table_id": table_id}, "sample_rows": 1},
+    )
+    assert mixed.status_code == 422
 
 
 def test_rejects_pathlike_or_non_excel_upload(client: TestClient) -> None:
@@ -192,6 +296,25 @@ def test_tool_calls_for_one_session_are_serialized(client: TestClient, monkeypat
     ]
 
 
+def test_portable_session_lock_serializes_external_file_lock(client: TestClient) -> None:
+    """The native Windows/Unix lock shares one persistent per-session lock path."""
+    session_id = upload(client)
+    acquired = threading.Event()
+    lock_path = str(session_dir(session_id) / ".lock")
+
+    with FileLock(lock_path):
+        def acquire() -> None:
+            with locked_session(session_id):
+                acquired.set()
+
+        contender = threading.Thread(target=acquire)
+        contender.start()
+        time.sleep(0.1)
+        assert acquired.is_set() is False
+    contender.join(timeout=3)
+    assert acquired.is_set() is True
+
+
 def test_opaque_tool_ids_allow_only_surrounding_whitespace(client: TestClient) -> None:
     """LLM tool calls may add a newline while copying server-generated IDs."""
     session_id = upload(client)
@@ -201,6 +324,67 @@ def test_opaque_tool_ids_allow_only_surrounding_whitespace(client: TestClient) -
     queried = tool(client, session_id, "query_table", {"table_id": f"{table_id} ", "limit": 10})
     validated = tool(client, session_id, "validate_result", {"result_id": f"\n{queried['result_id']}\t"})
     assert validated["result_id"] == queried["result_id"]
+
+
+def test_detector_stitches_bounded_blank_gaps_without_merging_new_blocks(
+    client: TestClient, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Several visual blank rows are ignored, but a longer gap starts a new table.
+
+    This regression covers both record shapes seen in customer workbooks: numeric
+    business rows and all-text rows.  The detector is deliberately bounded so a
+    whitespace-separated report block cannot become part of the prior table.
+    """
+    monkeypatch.setenv("MAX_INTERNAL_BLANK_ROWS", "3")
+    workbook = Workbook()
+    worksheet = workbook.active
+    worksheet.title = "Gaps"
+    # Three text columns exercise the all-text continuation path without
+    # relaxing the existing two-cell metadata-pair protection.
+    worksheet.append(["Category", "Status", "Channel"])
+    worksheet.append(["Red", "Open", "Retail"])
+    worksheet.append([])
+    worksheet.append([])
+    worksheet.append([])
+    worksheet.append(["Blue", "Closed", "Partner"])
+    # A new gap later in the same physical table must be evaluated independently:
+    # accepting Blue resets the blank-gap counter before Green is encountered.
+    worksheet.append([])
+    worksheet.append([])
+    worksheet.append(["Green", "Open", "Direct"])
+    # Four rows exceed the configured three-row visual-gap cap. The following
+    # header is a distinct block, not an extension of Category/Status.
+    for _ in range(4):
+        worksheet.append([])
+    worksheet.append(["Metric", "Value"])
+    worksheet.append(["Tickets", 42])
+    stream = io.BytesIO()
+    workbook.save(stream)
+
+    response = client.post(
+        "/api/v1/sessions",
+        headers={"X-API-Key": "test-key"},
+        files={"file": ("blank-gaps.xlsx", stream.getvalue(), "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet")},
+    )
+    assert response.status_code == 201, response.text
+    session_id = response.json()["session_id"]
+
+    tables = tool(client, session_id, "detect_tables", {"sheet": "Gaps", "max_tables": 10})["tables"]
+    descriptions = [tool(client, session_id, "describe_table", {"table_id": table["table_id"], "sample_rows": 10}) for table in tables]
+    stitched = next(
+        description
+        for description in descriptions
+        if description["columns"] == ["Category", "Status", "Channel"]
+    )
+    separate = next(description for description in descriptions if description["columns"] == ["Metric", "Value"])
+    assert stitched["row_count"] == 3
+    assert stitched["sample_rows"] == [
+        {"Category": "Red", "Status": "Open", "Channel": "Retail"},
+        {"Category": "Blue", "Status": "Closed", "Channel": "Partner"},
+        {"Category": "Green", "Status": "Open", "Channel": "Direct"},
+    ]
+    assert separate["row_count"] == 1
+    assert separate["sample_rows"] == [{"Metric": "Tickets", "Value": 42}]
 
 
 def test_csv_export_neutralizes_spreadsheet_formulas(client: TestClient, tmp_path: Path) -> None:

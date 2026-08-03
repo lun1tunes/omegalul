@@ -130,7 +130,11 @@ def fixture_06() -> None:
     ws.append(["CC-10", "Engineering", 50000, 48000])
     ws.append(["CC-20", "Marketing", 20000, 21500])
     ws.append([])
+    ws.append([])
+    ws.append([])
     ws.append(["CC-30", "Support", 12000, 9000])
+    ws.append([])
+    ws.append([])
     ws.append(["CC-40", "HR", 8000, 7800])
     ws.append(["Total", None, 90000, 86300])
     style_header(ws, 1, 1, 4)
@@ -218,7 +222,7 @@ manifest = {
         {"file": "03_merged_two_row_header.xlsx", "patterns": ["merged_cells", "two_row_header", "grouped_columns"], "expected": [{"sheet": "Multi level", "header_rows": [1, 2], "columns": ["Customer — ID", "Customer — Name", "FY2025 metrics — Revenue", "FY2025 metrics — Margin"], "rows": 3}]},
         {"file": "04_header_after_long_notes.xlsx", "patterns": ["header_after_notes", "preamble_rows_with_multiple_values"], "expected": [{"sheet": "Late header", "header_rows": [7], "columns": ["Invoice", "Debtor", "Due date", "Outstanding"], "rows": 3}]},
         {"file": "05_repeated_grouped_headers.xlsx", "patterns": ["merged_cells", "two_row_header", "repeated_group_headers"], "expected": [{"sheet": "Quarterly plan", "header_rows": [1, 2], "columns": ["Product", "Q1 — Units", "Q1 — Revenue", "Q2 — Units", "Q2 — Revenue"], "rows": 3}]},
-        {"file": "06_blank_line_and_total_row.xlsx", "patterns": ["blank_row_inside_table", "total_row"], "expected": [{"sheet": "Budget", "header_rows": [1], "columns": ["Cost centre", "Owner", "Budget", "Actual"], "rows": 4}]},
+        {"file": "06_blank_line_and_total_row.xlsx", "patterns": ["multiple_blank_rows_inside_table", "total_row"], "expected": [{"sheet": "Budget", "header_rows": [1], "columns": ["Cost centre", "Owner", "Budget", "Actual"], "rows": 4}]},
         {"file": "07_unicode_and_hidden_sheet.xlsx", "patterns": ["unicode_sheet_name", "hidden_sheet", "merged_title"], "expected": [{"sheet": "Заказы 📦", "header_rows": [2], "columns": ["Номер", "Контрагент", "Статус", "Сумма"], "rows": 3}]},
         {"file": "08_sparse_columns_and_side_notes.xlsx", "patterns": ["sparse_columns", "side_notes", "two_tables_one_sheet"], "expected": [{"sheet": "Sparse layout", "header_rows": [3], "columns": ["Site", "Month", "Tickets", "SLA %"], "rows": 3}, {"sheet": "Sparse layout", "header_rows": [8], "columns": ["Contact", "Escalation"], "rows": 1}]},
         {"file": "09_duplicate_headers.xlsx", "patterns": ["duplicate_headers"], "expected": [{"sheet": "Duplicate columns", "header_rows": [1], "columns": ["Region", "Sales", "Sales (2)", "%"], "rows": 3}]},

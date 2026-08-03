@@ -134,7 +134,7 @@
     {
       "file": "06_blank_line_and_total_row.xlsx",
       "patterns": [
-        "blank_row_inside_table",
+        "multiple_blank_rows_inside_table",
         "total_row"
       ],
       "expected": [
