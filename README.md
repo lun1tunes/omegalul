@@ -1,15 +1,15 @@
 # Excel Extractor Agent — n8n + FastAPI
 
-Production-oriented Excel component for a future MAS. It contains **one active core workflow** governed by a native n8n AI Agent, plus a thin authenticated form adapter:
+Production-oriented Excel component for a future MAS. It contains a native n8n AI Agent core, authenticated form/MAS adapters, and a separate UI-only RAG ingestion workflow:
 
 - **n8n 2.30.8** — orchestration, three entry points and the AI Agent;
 - **OpenAI `gpt-4.1-nano`, temperature `0`** — only chat model;
-- **OpenAI `text-embedding-3-small` (1536 dimensions)** — only embedding model;
+- **OpenAI `text-embedding-3-small` (1536 dimensions) by default** — replaceable in UI with the approved corporate embedding model;
 - **PostgreSQL 16 + pgvector** — n8n database, session-scoped chat memory and static operating context;
 - **FastAPI Excel Tools** — deterministic, authenticated workbook session/tool service; it never calls an LLM;
 - **n8n-runners** — separate hardened external execution runner for JavaScript Code nodes.
 
-No Qwen credential or model is used by the deployed workflow.
+The delivery workflows contain no Qwen credential or model. The imported Qwen example is not part of this component. For the corporate installation, chat remains `gpt-4.1-nano`; the embedding subnode is intentionally replaceable in UI.
 
 ## Architecture and contracts
 
@@ -21,7 +21,7 @@ The active core workflow is **`Excel Extractor Agent — OpenAI nano + FastAPI t
 4. exactly one HTTP AI-tool node per FastAPI Excel tool;
 5. deterministic preflight/finalization guards around the model.
 
-The model receives compact tool outputs only. Workbooks stay in the FastAPI Docker volume. The system prompt requires discovery before querying, exact opaque IDs, verified columns/values, hard-stop clarification on material ambiguity, validation of every query, and no invented data.
+The model receives compact tool outputs only. Workbooks stay in the FastAPI session store (Docker volume in the reference topology or a local Windows directory). The system prompt requires discovery before querying, exact opaque IDs, verified columns/values, hard-stop clarification on material ambiguity, and no invented data. After `query_table`, a deterministic workflow tail—not the model—validates the result, writes a CSV artifact and finalizes the response.
 
 The available Excel tools are:
 
@@ -40,6 +40,7 @@ All routes normalize to the same core workflow and structured result (`success`,
 - **HTTP:** `POST /webhook/excel-extract`, protected by `X-Excel-Webhook-Key`.
 - **Form:** `/form/excel-extract-form`, protected by n8n user authentication. The form adapter calls the core via Execute Sub-workflow.
 - **Another n8n workflow:** use **Execute Sub-workflow** → core workflow. Pass `binary.file` and `request`; for a continuation pass `session_id` and `clarification_response` with no file.
+- **MAS orchestration:** `POST /webhook/excel-mas-orchestrator`, protected by its own `X-Excel-MAS-Key`; it delegates to the core via Execute Sub-workflow and uses PostgreSQL memory only for the Russian-facing orchestration message.
 
 For a clarification, retain the returned `meta.session_id`; send all answers with the returned `clarification.token`. The original workbook is not uploaded again. The workflow resolves the answer deterministically, then the agent reads the same session state and resumes.
 
@@ -47,7 +48,7 @@ For a clarification, retain the returned `meta.session_id`; send all answers wit
 
 For local development on Windows, `uvicorn` can be run natively. The `locked_session` method uses `msvcrt` on Windows and `fcntl` on Linux. The default `SESSION_DIR` fallback on Windows uses the system temporary directory.
 
-### Бесплатный n8n: настройка только через UI
+### Бесплатный n8n 2.30.8: настройка только через UI
 
 Импортируемые workflow JSON **не используют** Global Variables, `$vars` или `$env` n8n. После импорта откройте основной workflow **Excel Extractor Agent — OpenAI nano + FastAPI tools** и измените только узел **Runtime configuration**:
 
@@ -55,7 +56,7 @@ For local development on Windows, `uvicorn` can be run natively. The `locked_ses
 2. `excel_tools_api_key` — значение заголовка `X-API-Key` FastAPI;
 3. `excel_webhook_api_key` — ключ заголовка `X-Excel-Webhook-Key` для HTTP-входа.
 
-Затем в UI назначьте/пересоздайте обычные n8n credentials для OpenAI и PostgreSQL. Никакой доступ к shell, файловой системе сервера или его переменным окружения не нужен.
+Затем в UI назначьте/пересоздайте обычные n8n credentials для OpenAI и PostgreSQL. Для корпоративного RAG замените **оба** embedding-subnode (в core и в ingestion workflow) на один и тот же разрешённый embedding model. Никакой доступ к shell, файловой системе сервера или его переменным окружения не нужен.
 
 Адрес должен быть доступен **с сервера n8n**. Если корпоративный n8n работает удалённо, `127.0.0.1:8000` указывает на сам сервер n8n, а не на ваш рабочий ноутбук. Для теста с локальным n8n в Docker Desktop подходит `http://host.docker.internal:8000/api/v1`; для удалённого n8n ИТ должны обеспечить маршрут/VPN/firewall rule, защищённый tunnel или внутренний reverse proxy до Windows-хоста с FastAPI.
 
@@ -100,43 +101,46 @@ python -m uvicorn app.main:app --host 127.0.0.1 --port 8000
 
 Use `http://127.0.0.1:8000/health` to check the service. Its session lock uses `filelock`, which maps to platform-native locking on Windows and Unix; do not run multiple worker processes against a network share unless that filesystem’s locking semantics have been validated. For a Windows FastAPI process with n8n in Docker Desktop, set `EXCEL_TOOLS_URL=http://host.docker.internal:8000/api/v1` for n8n and allow the port only from the Docker/host boundary (or, preferably, place both services behind a private proxy). Do not expose the raw FastAPI port publicly; it requires `X-API-Key` but should still be behind TLS, firewall and rate limits.
 
-## Import and activate workflows
+## Импорт и запуск через UI n8n 2.30.8 — без доступа к серверу
 
-### Без доступа к серверу: импорт через UI
+Это основной путь для рабочего окружения. Нужны только файлы JSON из репозитория, браузер с UI n8n и учётные данные, созданные в UI. Ни `$env`, ни `$vars`, ни Global Variables, ни shell/SQL/Docker на сервере n8n не используются.
 
-1. В n8n нажмите **Import from File** и загрузите `n8n/workflows/excel-extraction-agent.workflow.json`.
-2. В узле **Runtime configuration** задайте три значения из предыдущего раздела.
-3. В узлах OpenAI Chat Model, OpenAI Embeddings, PostgreSQL Chat Memory и PGVector назначьте свои credentials в UI.
-4. Сохраните и опубликуйте/активируйте основной workflow.
-5. При необходимости аналогично импортируйте `excel-extraction-form-adapter.workflow.json` и `excel-mas-orchestrator.workflow.json`, затем выберите импортированный core workflow в узлах Execute Sub-workflow.
+### Один раз: FastAPI на Windows
 
-Сначала проверьте обычный HTTP-вход, затем Form и Execute Sub-workflow. Так проще локализовать сетевую или credential-проблему.
+1. На Windows поднимите `excel-agent-tools` по инструкции выше, проверьте `http://127.0.0.1:8000/health`.
+2. Убедитесь, что **сервер n8n** маршрутизируется до Windows FastAPI. Если n8n не на том же компьютере, `127.0.0.1` использовать нельзя: нужен адрес Windows-хоста, VPN/tunnel или внутренний reverse proxy, согласованный с ИТ.
+3. Сохраните длинный случайный `API_KEY`: он будет указан и в Windows PowerShell, и в Runtime configuration core workflow.
 
-### Администраторский импорт Compose
+### Последовательность импорта
 
-Importing a workflow deactivates it. After import, activate/publish it before use:
+1. Импортируйте `n8n/workflows/excel-extraction-agent.workflow.json`.
+2. Откройте **Runtime configuration** и задайте `excel_tools_url` (с `/api/v1`), `excel_tools_api_key`, `excel_webhook_api_key`.
+3. В UI выберите credentials для **OpenAI Chat Model — gpt-4.1-nano**, **PostgreSQL Chat Memory — session scoped** и **PGVector operating context**. Для core сохраните `temperature: 0`.
+4. Для корпоративного embedding удалите placeholder **OpenAI Embeddings — text-embedding-3-small**, добавьте разрешённый корпоративный Embedding Model из UI и соедините его с **PGVector operating context**. Запомните конкретную модель и её размерность.
+5. Импортируйте `n8n/workflows/excel-rag-ingestion.workflow.json`. В **RAG runtime configuration** укажите тот же `rag_table_name`, что в core node **PGVector operating context**. Выберите PostgreSQL credential, замените placeholder embedding subnode на **тот же** корпоративный embedding model и соедините его с **PGVector — insert operating guide**. Нажмите **Test workflow** один раз; ingestion workflow активировать не нужно.
+6. Импортируйте `n8n/workflows/excel-extraction-form-adapter.workflow.json` и `n8n/workflows/excel-mas-orchestrator.workflow.json` при необходимости. В каждом **Execute Sub-workflow** выберите только что импортированный core workflow. В **MAS runtime configuration** задайте отдельный случайный ключ и вызывайте MAS только с `X-Excel-MAS-Key`.
+7. Сохраните и активируйте core; после этого проверьте HTTP, Form и Execute Sub-workflow. MAS активируйте только после настройки ключа.
+
+### Переносимая RAG-база
+
+- Канонический текст: `n8n/rag/excel-agent-operating-guide.documents.json`; это пять коротких документов о границах доверия, discovery/blank gaps, query/result, clarification и эксплуатации RAG.
+- Тот же текст встроен в node **RAG documents — portable operating guide**, поэтому для загрузки не нужен доступ к файлам сервера. JSON рядом нужен для ревью/версирования и при желании редактируется до импорта.
+- `Default Data Loader` + `Recursive Character Text Splitter (1000/150)` + PGVector insert совместимы с n8n **2.30.8**. Локальная проверка на этой версии успешно создала 10 chunks размерности 1536 с `text-embedding-3-small`.
+- Вставка и поиск **обязаны** использовать одинаковую embedding-модель и размерность. На новой таблице PGVector создаёт векторную колонку по первой модели. При смене модели/размерности выберите **новое имя таблицы** одновременно в core и ingestion, затем запустите ingestion заново. Не смешивайте размерности в одной таблице.
+- Повторный запуск insertion добавляет копии. Для чистого повторного наполнения используйте новое имя таблицы либо только утверждённую ИТ очистку прежней.
+
+Значения Runtime configuration удобны для первого UI-теста, но сохраняются в workflow. Перед production ИТ должны перенести ключ FastAPI/MAS в approved credential or secret store и ограничить редактирование workflow.
+
+### Администраторский Compose импорт (опционально)
+
+Если ИТ использует reference Compose, импорт можно делать CLI, но это **не требуется** для рабочего UI-only сценария:
 
 ```bash
 docker compose exec -T n8n n8n import:workflow --input=/workflows/excel-extraction-agent.workflow.json
-docker compose exec -T n8n n8n import:workflow --input=/workflows/excel-extraction-form-adapter.workflow.json
-# Activate both in the n8n UI (or publish their imported versions through the n8n API/CLI used by your release process).
+docker compose exec -T n8n n8n import:workflow --input=/workflows/excel-rag-ingestion.workflow.json
 ```
 
-Create an n8n OpenAI credential named in the imported workflow (or remap it) with `OPENAI_API_KEY`. Create/remap the PostgreSQL credential to the compose PostgreSQL service. Credentials are encrypted at rest by `N8N_ENCRYPTION_KEY`; keep credentials out of workflow JSON and Git. The UI-only Runtime configuration node is the documented temporary exception for the FastAPI keys; replace it with IT-managed secret storage before production.
-
-## Seed PGVector context
-
-Static operating guidance must exist before first production use. This idempotent one-shot job calls only `text-embedding-3-small` and writes three documents to `n8n_excel_agent_context`:
-
-```bash
-docker build -t excel-context-seeder ./context-seeder
-docker run --rm --network omegalul_egress --network omegalul_backend \
-  -e OPENAI_API_KEY -e POSTGRES_HOST=postgres -e POSTGRES_PORT=5432 \
-  -e POSTGRES_DB -e POSTGRES_USER -e POSTGRES_PASSWORD \
-  excel-context-seeder
-```
-
-If Compose project name differs from `omegalul`, substitute its `<project>_egress` and `<project>_backend` Docker networks. The image is digest-pinned and runs unprivileged. It has no access to FastAPI workbook sessions.
+После CLI import workflow деактивирован: опубликуйте/активируйте его в UI. Старый `context-seeder` остаётся только как OpenAI/Compose convenience option; не используйте его для корпоративного UI-only deployment.
 
 ## API examples
 

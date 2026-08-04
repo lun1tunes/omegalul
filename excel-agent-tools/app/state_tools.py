@@ -32,8 +32,8 @@ def get_session_state(ctx: dict[str, Any], args: dict[str, Any]) -> dict[str, An
 @tool(
     _schema(
         "save_agent_plan",
-        "Saves external agent's selected tables, field mapping, filters and assumptions for recovery/observability.",
-        {"plan": {"type": "string", "minLength": 1}, "status": {"type": "string", "enum": ["planning", "executing", "clarifying", "finalizing"]}, "selected_table_ids": {"type": "array", "items": {"type": "string"}}, "field_mapping": {"type": "object", "additionalProperties": {"type": "string"}}, "filters": {"type": "array", "items": {"type": "object"}}, "assumptions": {"type": "array", "items": {"type": "string"}}, "warnings": {"type": "array", "items": {"type": "string"}}},
+        "Saves external agent's selected tables, exact output columns, field mapping, filters and assumptions for recovery/observability. The select list is the canonical query projection used by the deterministic recovery path.",
+        {"plan": {"type": "string", "minLength": 1}, "status": {"type": "string", "enum": ["planning", "executing", "clarifying", "finalizing"]}, "selected_table_ids": {"type": "array", "items": {"type": "string"}}, "select": {"type": "array", "items": {"type": "string", "minLength": 1}}, "field_mapping": {"type": "object", "additionalProperties": {"type": "string"}}, "filters": {"type": "array", "items": {"type": "object"}}, "assumptions": {"type": "array", "items": {"type": "string"}}, "warnings": {"type": "array", "items": {"type": "string"}}},
         ["plan"],
     )
 )
@@ -45,11 +45,13 @@ def save_agent_plan(ctx: dict[str, Any], args: dict[str, Any]) -> dict[str, Any]
     for field in ("selected_table_ids", "assumptions", "warnings"):
         if field in args and (not isinstance(args[field], list) or not all(isinstance(value, str) for value in args[field])):
             raise ToolError("INVALID_ARGUMENTS", f"{field} must be an array of strings")
+    if "select" in args and (not isinstance(args["select"], list) or not all(isinstance(value, str) and value.strip() for value in args["select"])):
+        raise ToolError("INVALID_ARGUMENTS", "select must be an array of non-empty strings")
     if "field_mapping" in args and not isinstance(args["field_mapping"], dict):
         raise ToolError("INVALID_ARGUMENTS", "field_mapping must be an object")
     if "filters" in args and not isinstance(args["filters"], list):
         raise ToolError("INVALID_ARGUMENTS", "filters must be an array")
-    state["plan"] = {"plan": plan, "status": args.get("status", "planning"), "selected_table_ids": args.get("selected_table_ids", []), "field_mapping": args.get("field_mapping", {}), "filters": args.get("filters", [])}
+    state["plan"] = {"plan": plan, "status": args.get("status", "planning"), "selected_table_ids": args.get("selected_table_ids", []), "select": args.get("select", []), "field_mapping": args.get("field_mapping", {}), "filters": args.get("filters", [])}
     if "assumptions" in args:
         state["assumptions"] = args["assumptions"]
     if "warnings" in args:

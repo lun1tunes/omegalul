@@ -264,6 +264,8 @@ def normalize_agent_tool_args(tool_name: str, args: dict[str, Any]) -> dict[str,
             normalized["selected_table_ids"] = [table_id]
         if "field_mapping" not in normalized and isinstance(normalized.get("mapping"), dict):
             normalized["field_mapping"] = normalized["mapping"]
+        if "select" not in normalized and isinstance(normalized.get("fields"), list):
+            normalized["select"] = normalized["fields"]
         if "plan" not in normalized and isinstance(table_id, str):
             normalized["plan"] = f"Selected verified table {table_id}"
         filters = normalized.get("filters")
