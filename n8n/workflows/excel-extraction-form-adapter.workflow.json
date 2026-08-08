@@ -2,7 +2,7 @@
   "id": "excel-extraction-form-adapter-v1",
   "name": "Excel Extractor — authenticated form adapter",
   "description": "Thin authenticated n8n Form entry point. It normalizes form data and calls the single Excel Extractor Agent core workflow through Execute Sub-workflow; no model, workbook parsing, memory, or FastAPI tool logic is duplicated here.",
-  "active": true,
+  "active": false,
   "settings": {
     "executionOrder": "v1"
   },
@@ -94,7 +94,7 @@
       "id": "e3b1c4c0-424c-41c3-85a0-a1f1c6d4d003",
       "name": "Call Excel Extractor core",
       "type": "n8n-nodes-base.executeWorkflow",
-      "typeVersion": 1.1,
+      "typeVersion": 1.3,
       "position": [
         560,
         0

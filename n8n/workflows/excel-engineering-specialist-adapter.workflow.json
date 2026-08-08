@@ -1,0 +1,199 @@
+{
+  "name": "Excel Extraction Specialist Adapter — universal contract",
+  "nodes": [
+    {
+      "parameters": {
+        "content": "## UI-only binding (n8n 2.30.8)\n1. Import `excel-extraction-agent.workflow.json`.\n2. In `Call native Excel Extraction Agent`, select that workflow from the UI.\n3. Keep this adapter inactive until the native agent is fully configured.\n\nThis workflow is a bounded anti-corruption layer: the universal orchestrator sees only specialist_packet/result v1.0. Native continuation identifiers remain opaque to the control-plane. Binary workbook data passes directly between executions and is never stored in orchestrator state.",
+        "height": 360,
+        "width": 500,
+        "color": 5
+      },
+      "id": "cc2f9e3d-416c-53d0-80bd-0685bfcd309b",
+      "name": "Excel adapter README",
+      "type": "n8n-nodes-base.stickyNote",
+      "typeVersion": 1,
+      "position": [
+        -920,
+        -520
+      ]
+    },
+    {
+      "parameters": {
+        "inputSource": "jsonExample",
+        "jsonExample": "{\"specialist_packet\": {\"contract\": \"specialist_packet\", \"contract_version\": \"1.0\", \"task_id\": \"eng_example\", \"specialist_id\": \"excel_extraction_specialist\", \"attempt\": 1, \"objective\": \"Extract the requested governed table\", \"inputs\": {}, \"controls\": {}, \"acceptance_criteria\": [], \"artifact_refs\": []}, \"previous_specialist_result\": {}, \"latest_human_response\": {}}"
+      },
+      "id": "8a8f5ef2-691c-5b24-9a90-c9119aa6240d",
+      "name": "Receive Excel specialist packet",
+      "type": "n8n-nodes-base.executeWorkflowTrigger",
+      "typeVersion": 1.2,
+      "position": [
+        -920,
+        -80
+      ]
+    },
+    {
+      "parameters": {
+        "jsCode": "const item=$input.first();const incoming=item.json||{};\nconst isObject=value=>value&&typeof value==='object'&&!Array.isArray(value);\nconst parseObject=value=>{if(isObject(value)) return value;if(typeof value==='string'&&value.trim()){try{const parsed=JSON.parse(value);return isObject(parsed)?parsed:{}}catch{return {}}}return {}};\nconst packet=parseObject(incoming.specialist_packet);\nconst previous=parseObject(incoming.previous_specialist_result);\nconst latest=isObject(incoming.latest_human_response)?incoming.latest_human_response:{};\nconst packetValid=packet.contract==='specialist_packet'&&packet.contract_version==='1.0'&&typeof packet.task_id==='string'&&packet.task_id.trim()&&packet.specialist_id==='excel_extraction_specialist'&&Number.isInteger(packet.attempt)&&packet.attempt>=1&&typeof packet.objective==='string'&&packet.objective.trim()&&isObject(packet.inputs)&&isObject(packet.controls)&&Array.isArray(packet.acceptance_criteria)&&Array.isArray(packet.artifact_refs);\nconst previousMatches=!Object.keys(previous).length||(previous.contract==='specialist_result'&&previous.contract_version==='1.0'&&previous.task_id===packet.task_id&&previous.specialist_id===packet.specialist_id);\nconst continuation=isObject(previous.continuation)?previous.continuation:{};\nconst opaque=continuation.protocol==='excel-extraction-continuation-v1'&&isObject(continuation.opaque)?continuation.opaque:{};\nconst questionIds=Array.isArray(opaque.question_refs)?opaque.question_refs.filter(value=>typeof value==='string'&&value.trim()):[];\nconst hasContinuation=typeof opaque.execution_ref==='string'&&opaque.execution_ref.trim()&&typeof opaque.clarification_ref==='string'&&opaque.clarification_ref.trim();\nconst normalizeAnswers=(value,ids)=>{\n const source=Array.isArray(value.answers)?value.answers:(typeof value.question_id==='string'&&Object.prototype.hasOwnProperty.call(value,'answer')?[value]:[]);\n const answers=source.map(entry=>{\n  if(!isObject(entry)) return null;\n  const questionId=String(entry.question_id??entry.id??'').trim();\n  if(!questionId||!Object.prototype.hasOwnProperty.call(entry,'answer')) return null;\n  return {question_id:questionId,answer:entry.answer};\n }).filter(Boolean);\n if(!answers.length&&ids.length===1&&typeof value.text==='string'&&value.text.trim()) answers.push({question_id:ids[0],answer:value.text.trim()});\n const supplied=new Set(answers.map(answer=>answer.question_id));\n return ids.length&&ids.every(id=>supplied.has(id))&&supplied.size===ids.length?answers:[];\n};\nlet ready=false,gate='';let nativeJson={};\nif(!packetValid||!previousMatches) gate='invalid_packet';\nelse if(hasContinuation){\n const answers=normalizeAnswers(latest,questionIds);\n if(!answers.length) gate='missing_answers';\n else {ready=true;nativeJson={session_id:opaque.execution_ref,clarification_response:{token:opaque.clarification_ref,answers}};}\n} else if(!item.binary?.file) gate='missing_file';\nelse {ready=true;nativeJson={request:{...packet.inputs,prompt:packet.objective,controls:packet.controls,acceptance_criteria:packet.acceptance_criteria,artifact_refs:packet.artifact_refs}};}\nreturn [{json:{...nativeJson,specialist_packet:packet,previous_specialist_result:previous,latest_human_response:latest,native_request_ready:ready,adapter_gate:gate},...(item.binary?{binary:item.binary}:{})}];"
+      },
+      "id": "1bd2013a-5c40-557f-8980-ce2fea959a6a",
+      "name": "Prepare native Excel invocation",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        -660,
+        -80
+      ]
+    },
+    {
+      "parameters": {
+        "conditions": {
+          "options": {
+            "caseSensitive": true,
+            "leftValue": "",
+            "typeValidation": "strict",
+            "version": 2
+          },
+          "conditions": [
+            {
+              "id": "f5fafdd8-2ce7-55a0-8161-4fb55543d8cd",
+              "leftValue": "={{ $json.native_request_ready }}",
+              "rightValue": true,
+              "operator": {
+                "type": "boolean",
+                "operation": "equals"
+              }
+            }
+          ],
+          "combinator": "and"
+        },
+        "options": {}
+      },
+      "id": "b77dd7ee-b7f4-5348-862c-883af7b109be",
+      "name": "Native Excel invocation ready?",
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2.2,
+      "position": [
+        -400,
+        -80
+      ]
+    },
+    {
+      "parameters": {
+        "source": "database",
+        "workflowId": {
+          "__rl": true,
+          "value": "REPLACE_EXCEL_EXTRACTION_AGENT_IN_UI",
+          "mode": "list",
+          "cachedResultName": "Excel Extractor Agent — OpenAI nano + FastAPI tools"
+        },
+        "mode": "once",
+        "options": {
+          "waitForSubWorkflow": true
+        }
+      },
+      "id": "def7c191-3962-59ae-9b52-0be430da5d65",
+      "name": "Call native Excel Extraction Agent",
+      "type": "n8n-nodes-base.executeWorkflow",
+      "typeVersion": 1.3,
+      "position": [
+        -140,
+        -200
+      ],
+      "onError": "continueRegularOutput"
+    },
+    {
+      "parameters": {
+        "jsCode": "const prepared=$('Prepare native Excel invocation').first().json||{};const packet=prepared.specialist_packet||{};\nlet native=$json;if(native&&native.json&&typeof native.json==='object') native=native.json;\nif(typeof native==='string'){try{native=JSON.parse(native)}catch{native={}}}if(!native||typeof native!=='object'||Array.isArray(native)) native={};\nconst strings=value=>Array.isArray(value)?value.map(entry=>typeof entry==='string'?entry:String(entry?.message??entry?.code??entry)).filter(Boolean):[];\nconst data=native.data&&typeof native.data==='object'&&!Array.isArray(native.data)?native.data:{};\nconst errors=Array.isArray(native.errors)?native.errors:[];\nconst statusMap={success:'succeeded',partial:'partial',clarification_needed:'needs_input',error:'retryable_error'};\nlet status=statusMap[native.status]||'retryable_error';\nconst sessionRef=typeof native.meta?.session_id==='string'?native.meta.session_id.trim():'';\nconst clarificationRef=typeof native.clarification?.token==='string'?native.clarification.token.trim():'';\nconst rawQuestions=Array.isArray(native.clarification?.questions)?native.clarification.questions:[];\nconst questions=rawQuestions.filter(value=>value&&typeof value==='object'&&!Array.isArray(value)).map((question,index)=>({id:String(question.id||`excel_question_${index+1}`),question:String(question.question||question.text||'Additional Excel extraction information is required.'),type:String(question.type||'text'),...(Array.isArray(question.options)?{options:question.options.slice(0,100)}:{})}));\nconst questionRefs=questions.map(question=>question.id);\nlet continuation=null;\nif(status==='needs_input'&&sessionRef&&clarificationRef&&questionRefs.length) continuation={protocol:'excel-extraction-continuation-v1',opaque:{execution_ref:sessionRef,clarification_ref:clarificationRef,question_refs:questionRefs}};\nelse if(status==='needs_input'){status='retryable_error';}\nconst cleanValue=value=>{if(value===null||typeof value==='boolean'||typeof value==='number') return value;if(typeof value==='string') return value.slice(0,1000);return String(value).slice(0,1000)};\nconst columns=Array.isArray(data.columns)?data.columns.slice(0,100).map(value=>String(value).slice(0,256)):[];\nconst preview=Array.isArray(data.records)?data.records.slice(0,5).map(record=>{if(!record||typeof record!=='object'||Array.isArray(record)) return {value:cleanValue(record)};const entries=Object.entries(record).slice(0,100).map(([key,value])=>[String(key).slice(0,256),cleanValue(value)]);return Object.fromEntries(entries)}):[];\nconst refs=[];\nif(typeof data.artifact_ref==='string'&&data.artifact_ref.trim()) refs.push({ref:`excel-agent://${sessionRef||'execution'}/${data.artifact_ref.trim()}`,kind:'tabular-extract',revision:'runtime',description:'Excel extraction artifact produced by the governed specialist workflow.'});\nif(typeof data.result_id==='string'&&data.result_id.trim()) refs.push({ref:`excel-result://${sessionRef||'execution'}/${data.result_id.trim()}`,kind:'query-result',revision:'runtime',description:'Immutable Excel query result reference.'});\nconst provenance=Array.isArray(data.provenance)?data.provenance:[];\nconst evidence=provenance.slice(0,100).map(entry=>entry&&typeof entry==='object'&&!Array.isArray(entry)?entry:{source:String(entry).slice(0,1000)});\nconst nativeError=native.error&&typeof native.error==='object'?native.error:null;\nconst selfPassed=['succeeded','partial'].includes(status)&&errors.length===0&&!nativeError;\nconst summary=String(native.message||native.error?.message||'Excel specialist returned an error or malformed result.').slice(0,4000);\nreturn [{json:{specialist_result:{contract:'specialist_result',contract_version:'1.0',task_id:packet.task_id,specialist_id:'excel_extraction_specialist',attempt:packet.attempt,status,summary,deliverables:refs.length?[{kind:'excel_extraction',description:summary,artifact_refs:refs.map(ref=>ref.ref)}]:[],artifact_refs:refs,compact_data:{columns,preview_records:preview,row_count:Number.isFinite(Number(data.row_count))?Number(data.row_count):0,returned_count:Number.isFinite(Number(data.returned_count))?Number(data.returned_count):preview.length,truncated:Boolean(data.truncated),filters_applied:Array.isArray(native.filters_applied)?native.filters_applied.slice(0,100):[],field_mapping:native.field_mapping&&typeof native.field_mapping==='object'&&!Array.isArray(native.field_mapping)?native.field_mapping:{},next_action:String(native.next_action||'handle_error')},assumptions:strings(native.assumptions),warnings:strings(native.warnings),evidence,self_check:{performed:['succeeded','partial'].includes(status),passed:selfPassed,checks:[{check:'native_result_contract',passed:Boolean(statusMap[native.status])},{check:'native_error_list_empty',passed:errors.length===0},{check:'bounded_compact_preview',passed:preview.length<=5}],reproducibility:refs.length?'Use the governed artifact/result references and recorded provenance.':'No durable result reference was returned.'},human_request:status==='needs_input'?{kind:'needs_input',questions}:null,error:['retryable_error','fatal_error'].includes(status)?{code:'EXCEL_SPECIALIST_ERROR',details:errors.slice(0,20),native_error:nativeError}:null,continuation}}}];"
+      },
+      "id": "f4fdeba6-5203-5931-a2c9-fe0ed27b89a8",
+      "name": "Adapt native Excel result",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        120,
+        -200
+      ]
+    },
+    {
+      "parameters": {
+        "jsCode": "const x=$('Prepare native Excel invocation').first().json||{};const packet=x.specialist_packet||{};const previous=x.previous_specialist_result||{};\nconst continuation=previous.continuation&&typeof previous.continuation==='object'?previous.continuation:null;\nconst fatal=x.adapter_gate==='invalid_packet';\nconst questions=x.adapter_gate==='missing_file'?[{id:'excel_file',question:'Upload the .xlsx or .xls workbook in binary field file and repeat this controlled action.',type:'file'}]:x.adapter_gate==='missing_answers'?[{id:'excel_clarification_answers',question:'Answer every pending Excel clarification question using {\"answers\":[{\"question_id\":\"...\",\"answer\":\"...\"}]}.',type:'json'}]:[];\nconst summary=fatal?'Invalid or mismatched specialist_packet supplied to the Excel adapter.':x.adapter_gate==='missing_answers'?'Complete answers are required for every pending Excel clarification question.':'Excel extraction requires an .xlsx or .xls workbook in binary field file.';\nreturn [{json:{specialist_result:{contract:'specialist_result',contract_version:'1.0',task_id:String(packet.task_id||'unknown'),specialist_id:'excel_extraction_specialist',attempt:Number.isInteger(packet.attempt)?packet.attempt:1,status:fatal?'fatal_error':'needs_input',summary,deliverables:[],artifact_refs:[],compact_data:{adapter_gate:x.adapter_gate},assumptions:[],warnings:[],evidence:[],self_check:{performed:false,passed:false,checks:[],reproducibility:''},human_request:fatal?null:{kind:'needs_input',questions},error:fatal?{code:'INVALID_EXCEL_SPECIALIST_PACKET'}:null,continuation:x.adapter_gate==='missing_answers'?continuation:null}}}];"
+      },
+      "id": "f90b5900-100d-53dc-a149-4370f91696a7",
+      "name": "Build Excel adapter input gate",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        -140,
+        80
+      ]
+    }
+  ],
+  "pinData": {},
+  "connections": {
+    "Receive Excel specialist packet": {
+      "main": [
+        [
+          {
+            "node": "Prepare native Excel invocation",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Prepare native Excel invocation": {
+      "main": [
+        [
+          {
+            "node": "Native Excel invocation ready?",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Native Excel invocation ready?": {
+      "main": [
+        [
+          {
+            "node": "Call native Excel Extraction Agent",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Build Excel adapter input gate",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Call native Excel Extraction Agent": {
+      "main": [
+        [
+          {
+            "node": "Adapt native Excel result",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    }
+  },
+  "active": false,
+  "settings": {
+    "executionOrder": "v1",
+    "saveManualExecutions": true,
+    "callerPolicy": "workflowsFromSameOwner",
+    "errorWorkflow": ""
+  },
+  "versionId": "9a6281dd-0e85-5bc9-a9cf-05bf478108d3",
+  "meta": {
+    "templateCredsSetupCompleted": false,
+    "targetN8nVersion": "2.30.8",
+    "contractVersion": "1.0"
+  },
+  "tags": []
+}

@@ -82,9 +82,9 @@ services:
       N8N_WEBHOOK_URL: ${N8N_WEBHOOK_URL:-http://localhost:5678/}
       N8N_SECURE_COOKIE: ${N8N_SECURE_COOKIE:-true}
       N8N_ENFORCE_SETTINGS_FILE_PERMISSIONS: "true"
-      # Workflow Code nodes only use the two injected service secrets below for
-      # request validation and FastAPI calls. Keep editor access restricted.
-      N8N_BLOCK_ENV_ACCESS_IN_NODE: "false"
+      # Imported workflows are configured through UI nodes and credentials.
+      # They do not require environment or Global Variables access.
+      N8N_BLOCK_ENV_ACCESS_IN_NODE: "true"
       EXECUTIONS_DATA_PRUNE: "true"
       EXECUTIONS_DATA_MAX_AGE: ${EXECUTIONS_DATA_MAX_AGE:-168}
       EXECUTIONS_DATA_SAVE_ON_ERROR: ${EXECUTIONS_DATA_SAVE_ON_ERROR:-all}
@@ -113,12 +113,6 @@ services:
         n8n-nodes-base.e2eTest,
         n8n-nodes-base.dynamicCredentialCheck,
         n8n-nodes-base.readWriteFile
-      # Override for a native Windows FastAPI process, e.g.
-      # http://host.docker.internal:8000/api/v1 on Docker Desktop.
-      EXCEL_TOOLS_URL: ${EXCEL_TOOLS_URL:-http://excel-tools:8000/api/v1}
-      EXCEL_TOOLS_API_KEY: ${EXCEL_TOOLS_API_KEY:?Set EXCEL_TOOLS_API_KEY in .env}
-      OPENAI_API_KEY: ${OPENAI_API_KEY:?Set OPENAI_API_KEY in .env}
-      EXCEL_WEBHOOK_API_KEY: ${EXCEL_WEBHOOK_API_KEY:?Set EXCEL_WEBHOOK_API_KEY in .env}
     volumes:
       - n8n_data:/home/node/.n8n
       - ./n8n/workflows:/workflows:ro

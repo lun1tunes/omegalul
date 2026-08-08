@@ -1,7 +1,10 @@
 .env
+excel-agent-tools/excel-tools.env
+context-seeder/context-seeder.env
 __pycache__/
 *.py[cod]
 .pytest_cache/
 .venv/
 excel-agent-tools/.coverage
 codex-sale-credentials.md
+tech_task.md

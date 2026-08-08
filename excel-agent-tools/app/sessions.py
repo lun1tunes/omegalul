@@ -14,7 +14,7 @@ from datetime import UTC, datetime, timedelta
 from pathlib import Path
 from typing import Any
 
-from filelock import FileLock
+from filelock import FileLock, Timeout
 
 SESSION_RE = re.compile(r"^sess_[A-Za-z0-9_-]{12,60}$")
 ARTIFACT_RE = re.compile(r"^(?:res|art|clr)_[A-Za-z0-9_-]{8,64}$")
@@ -54,6 +54,14 @@ def session_file(session_id: str, relative_path: str) -> Path:
     return candidate
 
 
+def session_lock_path(session_id: str) -> Path:
+    """Keep locks outside session directories so Windows can delete expired data."""
+    validate_session_id(session_id)
+    locks = session_root() / ".locks"
+    locks.mkdir(mode=0o700, exist_ok=True)
+    return locks / f"{session_id}.lock"
+
+
 @contextmanager
 def locked_session(session_id: str):
     """Serialize state-changing tool calls for one disk-backed session.
@@ -69,7 +77,12 @@ def locked_session(session_id: str):
         raise ValueError("Session not found")
     # No finite timeout: a slow workbook operation must serialize rather than
     # cause the client to retry a conflicting state mutation.
-    with FileLock(str(directory / ".lock")):
+    with FileLock(str(session_lock_path(session_id))):
+        # Cleanup may have removed the directory after the pre-lock check but
+        # before this request acquired the lock. Recheck under the lock so an
+        # expired session is never resurrected or exposed as an internal error.
+        if not directory.is_dir():
+            raise ValueError("Session not found")
         yield
 
 
@@ -147,6 +160,9 @@ def init_state(
         "assumptions": [],
         "warnings": [],
         "final_output": None,
+        # Internal deterministic cache for expensive workbook discovery tools.
+        # API state serializers must never expose it to clients or the model.
+        "tool_cache": {},
         "tool_history": [],
     }
     save_state(session_id, state)
@@ -183,13 +199,20 @@ def _cleanup_expired_sessions() -> int:
         if not directory.is_dir() or not SESSION_RE.fullmatch(directory.name):
             continue
         try:
-            with (directory / "state.json").open("r", encoding="utf-8") as file:
-                created_at = datetime.fromisoformat(json.load(file)["created_at"])
-            if created_at.tzinfo is None:
-                created_at = created_at.replace(tzinfo=UTC)
-            if created_at < threshold:
-                shutil.rmtree(directory)
-                deleted += 1
+            # Never remove a session while a tool is in its load/execute/save
+            # critical section. This matters for long workbook operations that
+            # can outlive a short TTL. A busy session is retried by a later scan.
+            lock_path = session_lock_path(directory.name)
+            with FileLock(str(lock_path), timeout=0):
+                with (directory / "state.json").open("r", encoding="utf-8") as file:
+                    created_at = datetime.fromisoformat(json.load(file)["created_at"])
+                if created_at.tzinfo is None:
+                    created_at = created_at.replace(tzinfo=UTC)
+                if created_at < threshold:
+                    shutil.rmtree(directory)
+                    deleted += 1
+        except Timeout:
+            continue
         except (OSError, ValueError, KeyError, json.JSONDecodeError):
             # Corrupt/incomplete sessions must not make new uploads fail. Leave them for an operator.
             continue

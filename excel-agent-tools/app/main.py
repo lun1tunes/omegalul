@@ -5,6 +5,7 @@ import hashlib
 import json
 import logging
 import os
+import secrets
 import shutil
 import zipfile
 from pathlib import Path
@@ -13,6 +14,16 @@ from typing import Annotated, Any
 from fastapi import BackgroundTasks, Depends, FastAPI, File, Form, Header, HTTPException, UploadFile, status
 from fastapi.responses import FileResponse
 from pydantic import BaseModel, ConfigDict, Field, model_validator
+from dotenv import load_dotenv
+
+# Native Windows/CMD launches often invoke Uvicorn directly instead of using
+# Docker or the bundled .bat launcher.  Load service-local configuration before
+# any module-level settings are evaluated.  A real process environment always
+# wins; ``excel-tools.env`` is preferred while ``.env`` remains compatible with
+# older deployments of this project.
+SERVICE_ROOT = Path(__file__).resolve().parents[1]
+load_dotenv(SERVICE_ROOT / "excel-tools.env", override=False)
+load_dotenv(SERVICE_ROOT / ".env", override=False)
 
 from .sessions import cleanup_expired_sessions, init_state, load_state, locked_session, new_session_id, session_dir, session_file
 from .tools import TOOL_SCHEMAS, execute_tool
@@ -58,7 +69,7 @@ _require_runtime_configuration()
 
 
 def require_api_key(x_api_key: Annotated[str | None, Header()] = None) -> None:
-    if x_api_key != API_KEY:
+    if not isinstance(x_api_key, str) or not secrets.compare_digest(x_api_key, API_KEY):
         raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail="Unauthorized")
 
 
@@ -79,12 +90,12 @@ def _validate_excel_archive(path: Path, suffix: str) -> None:
         with zipfile.ZipFile(path) as archive:
             entries = archive.infolist()
             if len(entries) > MAX_ZIP_ENTRIES:
-                raise HTTPException(status_code=status.HTTP_413_CONTENT_TOO_LARGE, detail="Excel archive has too many entries")
+                raise HTTPException(status_code=413, detail="Excel archive has too many entries")
             if any(entry.flag_bits & 0x1 for entry in entries):
                 raise HTTPException(status_code=status.HTTP_415_UNSUPPORTED_MEDIA_TYPE, detail="Encrypted Excel workbooks are not supported")
             uncompressed_size = sum(entry.file_size for entry in entries)
             if uncompressed_size > MAX_ZIP_UNCOMPRESSED_SIZE:
-                raise HTTPException(status_code=status.HTTP_413_CONTENT_TOO_LARGE, detail="Excel archive expands beyond the configured limit")
+                raise HTTPException(status_code=413, detail="Excel archive expands beyond the configured limit")
             names = {entry.filename for entry in entries}
             if "[Content_Types].xml" not in names or "xl/workbook.xml" not in names:
                 raise HTTPException(status_code=status.HTTP_415_UNSUPPORTED_MEDIA_TYPE, detail="Invalid Excel workbook")
@@ -97,6 +108,7 @@ def _validate_excel_archive(path: Path, suffix: str) -> None:
 def safe_state(state: dict[str, Any]) -> dict[str, Any]:
     result = dict(state)
     result.pop("file_path", None)
+    result.pop("tool_cache", None)
     for collection in ("result_sets", "artifacts"):
         result[collection] = {key: {field: value for field, value in item.items() if field != "path"} for key, item in result.get(collection, {}).items()}
     return result
@@ -143,7 +155,7 @@ async def create_session(
             while chunk := await file.read(1024 * 1024):
                 total_size += len(chunk)
                 if total_size > MAX_FILE_SIZE:
-                    raise HTTPException(status_code=status.HTTP_413_CONTENT_TOO_LARGE, detail="File too large")
+                    raise HTTPException(status_code=413, detail="File too large")
                 destination.write(chunk)
                 digest.update(chunk)
         _validate_excel_archive(file_path, suffix)
@@ -169,11 +181,10 @@ class SingleToolRequest(BaseModel):
 class AgentToolRequest(BaseModel):
     """Adapter for n8n AI-tool request transports.
 
-    n8n's current AI Agent v2 turns supplied tools into LangChain dynamic tools.
-    With HTTP Request Tool v1, the dynamic wrapper reliably unwraps the model
-    input into top-level HTTP fields before the request is made.  Other n8n
-    versions expose a single ``input`` object instead.  Support both shapes at
-    this narrow adapter boundary, while keeping the public session API strict.
+    n8n 2.30.8 AI Agent 3.1 and HTTP Request Tool 1.1 send model parameters as
+    top-level HTTP fields. Older exports may expose ``input``/``args`` instead;
+    keep those two unambiguous compatibility shapes at this narrow boundary
+    while the public session API remains strict.
 
     Crucially, ``session_id`` is a field value supplied by the workflow
     expression, never a function parameter exposed to the model.  Any allowed
@@ -183,7 +194,6 @@ class AgentToolRequest(BaseModel):
     model_config = ConfigDict(extra="allow")
     session_id: str = Field(min_length=1, max_length=128)
     # Keep compatibility with workflow exports that use an explicit envelope.
-    # Current n8n 2.30.x HTTP Tool v1 sends the tool fields top-level instead.
     input: dict[str, Any] | None = None
     args: dict[str, Any] | None = None
 
@@ -223,6 +233,27 @@ def get_loaded_state(session_id: str) -> dict[str, Any]:
         raise HTTPException(status_code=code, detail=detail) from error
 
 
+def _n8n_json_sequence(value: Any) -> Any:
+    """Turn n8n HTTP Tool 1.1's object-shaped JSON into a canonical array.
+
+    The node's UI exposes JSON parameters, but its generated Zod schema accepts
+    JSON objects rather than arrays. Delivery workflows therefore describe
+    array fields as zero-based objects. Keep this compatibility quirk entirely
+    at the n8n adapter boundary; regular FastAPI clients continue to use arrays.
+    """
+    if not isinstance(value, dict):
+        return value
+    if not value:
+        return []
+    keys = list(value)
+    if not all(isinstance(key, str) and key.isdigit() for key in keys):
+        return value
+    indexes = sorted(int(key) for key in keys)
+    if indexes != list(range(len(keys))):
+        return value
+    return [value[str(index)] for index in indexes]
+
+
 def normalize_agent_tool_args(tool_name: str, args: dict[str, Any]) -> dict[str, Any]:
     """Accept a few unambiguous LLM transport aliases before strict tool validation.
 
@@ -245,6 +276,12 @@ def normalize_agent_tool_args(tool_name: str, args: dict[str, Any]) -> dict[str,
             normalized["table_id"] = normalized["table"]
         if "select" not in normalized and isinstance(normalized.get("fields"), list):
             normalized["select"] = normalized["fields"]
+        # Preserve omission of optional fields. Injecting ``None`` here makes
+        # the strict tool validator treat an otherwise valid no-filter query
+        # as ``filters: null`` instead of applying its default empty list.
+        for field in ("select", "filters"):
+            if field in normalized:
+                normalized[field] = _n8n_json_sequence(normalized[field])
         filters = normalized.get("filters")
         if isinstance(filters, dict):
             canonical_filters: list[dict[str, Any]] = []
@@ -268,6 +305,9 @@ def normalize_agent_tool_args(tool_name: str, args: dict[str, Any]) -> dict[str,
             normalized["select"] = normalized["fields"]
         if "plan" not in normalized and isinstance(table_id, str):
             normalized["plan"] = f"Selected verified table {table_id}"
+        for field in ("selected_table_ids", "select", "filters", "assumptions", "warnings"):
+            if field in normalized:
+                normalized[field] = _n8n_json_sequence(normalized[field])
         filters = normalized.get("filters")
         if isinstance(filters, dict):
             normalized["filters"] = [

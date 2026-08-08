@@ -1,0 +1,159 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "urn:engineering-orchestrator:specialist-result:1.0",
+  "title": "Universal engineering specialist result",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "contract",
+    "contract_version",
+    "task_id",
+    "specialist_id",
+    "attempt",
+    "status",
+    "summary",
+    "deliverables",
+    "artifact_refs",
+    "compact_data",
+    "assumptions",
+    "warnings",
+    "evidence",
+    "self_check",
+    "human_request",
+    "error",
+    "continuation"
+  ],
+  "properties": {
+    "contract": {
+      "const": "specialist_result"
+    },
+    "contract_version": {
+      "const": "1.0"
+    },
+    "task_id": {
+      "type": "string",
+      "minLength": 1
+    },
+    "specialist_id": {
+      "type": "string",
+      "minLength": 1
+    },
+    "attempt": {
+      "type": "integer",
+      "minimum": 1
+    },
+    "status": {
+      "enum": [
+        "succeeded",
+        "partial",
+        "needs_input",
+        "needs_decision",
+        "needs_approval",
+        "retryable_error",
+        "fatal_error"
+      ]
+    },
+    "summary": {
+      "type": "string"
+    },
+    "deliverables": {
+      "type": "array",
+      "items": {
+        "type": "object"
+      }
+    },
+    "artifact_refs": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": [
+          "ref",
+          "kind",
+          "revision",
+          "description"
+        ],
+        "properties": {
+          "ref": {
+            "type": "string"
+          },
+          "kind": {
+            "type": "string"
+          },
+          "revision": {
+            "type": "string"
+          },
+          "description": {
+            "type": "string"
+          }
+        }
+      }
+    },
+    "compact_data": {
+      "type": "object"
+    },
+    "assumptions": {
+      "type": "array",
+      "items": {
+        "type": "string"
+      }
+    },
+    "warnings": {
+      "type": "array",
+      "items": {
+        "type": "string"
+      }
+    },
+    "evidence": {
+      "type": "array",
+      "items": {
+        "type": "object"
+      }
+    },
+    "self_check": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "performed",
+        "passed",
+        "checks",
+        "reproducibility"
+      ],
+      "properties": {
+        "performed": {
+          "type": "boolean"
+        },
+        "passed": {
+          "type": "boolean"
+        },
+        "checks": {
+          "type": "array",
+          "items": {
+            "type": "object"
+          }
+        },
+        "reproducibility": {
+          "type": "string"
+        }
+      }
+    },
+    "human_request": {
+      "type": [
+        "object",
+        "null"
+      ]
+    },
+    "error": {
+      "type": [
+        "object",
+        "null"
+      ]
+    },
+    "continuation": {
+      "type": [
+        "object",
+        "null"
+      ]
+    }
+  }
+}

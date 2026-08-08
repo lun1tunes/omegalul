@@ -21,6 +21,10 @@ FROM runtime AS test
 USER root
 COPY requirements-dev.txt ./
 RUN pip install --no-cache-dir -r requirements-dev.txt
-COPY tests ./tests
+# The image tests only the FastAPI service. Cross-component workflow contracts
+# live in tests/test_workflow_contracts.py and run from the repository root,
+# because the production image intentionally has no n8n/RAG files.
+COPY tests/test_api.py tests/test_complex_corpus.py ./tests/
+COPY tests/fixtures ./tests/fixtures
 USER app
 CMD ["python", "-m", "pytest", "-q", "tests"]

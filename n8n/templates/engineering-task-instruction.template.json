@@ -1,0 +1,70 @@
+{
+  "template_version": "1.0",
+  "task": {
+    "title": "<short engineering task title>",
+    "objective": "<measurable engineering objective>",
+    "problem_statement": "<what must be calculated, checked, compared, or designed>",
+    "task_type": "<calculation|verification|simulation|document_analysis|data_preparation|other>",
+    "requested_deliverables": [
+      "<deliverable and required format>"
+    ]
+  },
+  "engineering_context": {
+    "discipline": "<mechanical|civil|electrical|process|multidisciplinary|other>",
+    "asset_or_system": "<system, assembly, structure, circuit, or process>",
+    "lifecycle_stage": "<concept|basic_design|detailed_design|verification|operation|other>",
+    "source_revisions": [
+      {
+        "source_ref": "<controlled source reference>",
+        "revision": "<revision>",
+        "authority": "<owner or issuing authority>"
+      }
+    ],
+    "standards": [
+      {
+        "reference": "<standard/code/specification>",
+        "edition": "<edition/date>",
+        "authority": "<jurisdiction or contract authority>"
+      }
+    ],
+    "coordinate_systems": [
+      "<name, origin, axes and handedness>"
+    ],
+    "load_cases": [
+      "<identifier, combination and duration>"
+    ],
+    "boundary_conditions": [
+      "<constraint or environmental condition>"
+    ],
+    "units_policy": "<required unit system and reporting units>",
+    "tolerances": [
+      "<dimensional, numerical, manufacturing or acceptance tolerance>"
+    ]
+  },
+  "inputs": {
+    "parameters": {},
+    "artifact_refs": [],
+    "known_facts": [],
+    "unknowns": []
+  },
+  "controls": {
+    "risk_class": "<low|high|critical>",
+    "assumptions_allowed": false,
+    "required_independent_checks": [],
+    "acceptance_criteria": [
+      {
+        "criterion_id": "AC-001",
+        "metric": "<measurable quantity or check>",
+        "operator": "<eq|lte|gte|between|contains|boolean>",
+        "target": "<target including units where applicable>",
+        "evidence_required": "<reproducible evidence>"
+      }
+    ]
+  },
+  "human_authority": {
+    "decision_owner": "<role, not a secret or personal credential>",
+    "approval_required_for": [
+      "<assumption, release, safety decision or deviation>"
+    ]
+  }
+}

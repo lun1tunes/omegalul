@@ -2,6 +2,9 @@ from __future__ import annotations
 
 import io
 import os
+import shutil
+import subprocess
+import sys
 import threading
 import time
 import zipfile
@@ -12,7 +15,7 @@ from fastapi.testclient import TestClient
 from filelock import FileLock
 from openpyxl import Workbook
 
-from app.sessions import load_state, locked_session, session_dir
+from app.sessions import load_state, locked_session, session_lock_path
 
 
 @pytest.fixture()
@@ -40,6 +43,48 @@ def workbook_bytes() -> bytes:
     stream = io.BytesIO()
     workbook.save(stream)
     return stream.getvalue()
+
+
+def test_direct_uvicorn_import_loads_service_local_env_with_safe_precedence(tmp_path: Path) -> None:
+    """A native CMD launch must not depend on the .bat file to populate env."""
+    service = tmp_path / "excel-agent-tools"
+    shutil.copytree(Path(__file__).resolve().parents[1] / "app", service / "app")
+    (service / "excel-tools.env").write_text(
+        f"API_KEY=from-excel-tools-env\nSESSION_DIR={tmp_path / 'sessions'}\n",
+        encoding="utf-8",
+    )
+    # The compatibility file must not override the preferred service file.
+    (service / ".env").write_text("API_KEY=from-old-dot-env\n", encoding="utf-8")
+    command = [
+        sys.executable,
+        "-c",
+        "import app.main as main; print(main.API_KEY)",
+    ]
+    clean_env = os.environ.copy()
+    clean_env.pop("API_KEY", None)
+    clean_env["PYTHONPATH"] = str(service)
+    loaded = subprocess.run(
+        command,
+        cwd=service,
+        env=clean_env,
+        check=True,
+        capture_output=True,
+        text=True,
+    )
+    assert loaded.stdout.strip() == "from-excel-tools-env"
+
+    # Docker, a Windows service manager, or an explicit CMD ``set`` remains
+    # authoritative over both files.
+    process_env = dict(clean_env, API_KEY="from-process-environment")
+    overridden = subprocess.run(
+        command,
+        cwd=service,
+        env=process_env,
+        check=True,
+        capture_output=True,
+        text=True,
+    )
+    assert overridden.stdout.strip() == "from-process-environment"
 
 
 def upload(client: TestClient) -> str:
@@ -174,8 +219,8 @@ def test_structured_errors_batch_and_clarification(client: TestClient) -> None:
 def test_agent_tool_transport_accepts_n8n_envelopes_and_top_level_arguments(client: TestClient) -> None:
     """n8n envelope variants stay safe without model-controlled session IDs.
 
-    HTTP Request Tool v1 unfolds the DynamicTool input into direct body fields;
-    other exports use ``input``/``args``.  The endpoint name fixes the tool and
+    HTTP Request Tool 1.1 sends structured arguments as direct body fields;
+    compatible older exports may use ``input``/``args``. The endpoint name fixes the tool and
     the session is supplied by the workflow, not selected by a model call.
     """
     session_id = upload(client)
@@ -214,6 +259,62 @@ def test_agent_tool_transport_accepts_n8n_envelopes_and_top_level_arguments(clie
     assert mixed.status_code == 422
 
 
+def test_n8n_http_tool_1_1_object_json_fields_are_normalized(client: TestClient) -> None:
+    """n8n's JSON tool-parameter schema is object-only; API restores arrays."""
+    session_id = upload(client)
+    table_id = tool(client, session_id, "detect_tables", {"sheet": "Заказы"})["tables"][0]["table_id"]
+    plan = client.post(
+        "/api/v1/agent-tools/save_agent_plan",
+        headers={"X-API-Key": "test-key"},
+        json={
+            "session_id": session_id,
+            "plan": "Extract paid orders",
+            "selected_table_ids": {"0": table_id},
+            "select": {"0": "Заказ №", "1": "Статус"},
+            "filters": {"0": {"field": "Статус", "operator": "eq", "value": "Оплачен"}},
+            "assumptions": {},
+            "warnings": {},
+        },
+    )
+    assert plan.status_code == 200, plan.text
+    assert plan.json()["ok"] is True
+    queried = client.post(
+        "/api/v1/agent-tools/query_table",
+        headers={"X-API-Key": "test-key"},
+        json={
+            "session_id": session_id,
+            "table_id": table_id,
+            "select": {"0": "Заказ №", "1": "Статус"},
+            "filters": {"0": {"field": "Статус", "operator": "eq", "value": "Оплачен"}},
+        },
+    )
+    assert queried.status_code == 200, queried.text
+    assert queried.json()["result"]["preview_rows"] == [{"Заказ №": "Z-1045", "Статус": "Оплачен"}]
+
+
+def test_n8n_http_tool_optional_fields_remain_omitted(client: TestClient) -> None:
+    """A minimal structured call must use tool defaults, not injected nulls."""
+    session_id = upload(client)
+    table_id = tool(client, session_id, "detect_tables", {"sheet": "Заказы"})["tables"][0]["table_id"]
+
+    plan = client.post(
+        "/api/v1/agent-tools/save_agent_plan",
+        headers={"X-API-Key": "test-key"},
+        json={"session_id": session_id, "plan": "Use the detected orders table"},
+    )
+    assert plan.status_code == 200, plan.text
+    assert plan.json()["ok"] is True
+
+    queried = client.post(
+        "/api/v1/agent-tools/query_table",
+        headers={"X-API-Key": "test-key"},
+        json={"session_id": session_id, "table_id": table_id},
+    )
+    assert queried.status_code == 200, queried.text
+    assert queried.json()["ok"] is True
+    assert queried.json()["result"]["row_count"] == 3
+
+
 def test_rejects_pathlike_or_non_excel_upload(client: TestClient) -> None:
     response = client.post("/api/v1/sessions", headers={"X-API-Key": "test-key"}, files={"file": ("../../bad.txt", b"not excel", "text/plain")})
     assert response.status_code == 415
@@ -247,6 +348,37 @@ def test_upload_schedules_ttl_cleanup_in_background(client: TestClient, monkeypa
     # TestClient waits for response background tasks, proving cleanup is scheduled
     # through FastAPI instead of running inline before session creation.
     assert calls == [True]
+
+
+def test_expensive_discovery_is_cached_but_cache_is_not_exposed(
+    client: TestClient, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Repeated discovery returns stable IDs without reopening the workbook."""
+    session_id = upload(client)
+    import app.excel_tools as excel_tools
+    import app.tools as tools
+
+    original = excel_tools.detect_tables
+    calls = 0
+
+    def counted_detect(ctx: dict, args: dict) -> dict:
+        nonlocal calls
+        calls += 1
+        return original(ctx, args)
+
+    monkeypatch.setitem(tools.TOOL_FUNCS, "detect_tables", counted_detect)
+    first = tool(client, session_id, "detect_tables", {"sheet": "Заказы"})
+    second = tool(client, session_id, "detect_tables", {"sheet": "Заказы"})
+
+    assert second == first
+    assert calls == 1
+    persisted = load_state(session_id)
+    assert len(persisted["tool_cache"]) == 1
+    public_state = client.get(
+        f"/api/v1/sessions/{session_id}/state",
+        headers={"X-API-Key": "test-key"},
+    ).json()
+    assert "tool_cache" not in public_state
 
 
 def test_tool_calls_for_one_session_are_serialized(client: TestClient, monkeypatch: pytest.MonkeyPatch) -> None:
@@ -300,7 +432,7 @@ def test_portable_session_lock_serializes_external_file_lock(client: TestClient)
     """The native Windows/Unix lock shares one persistent per-session lock path."""
     session_id = upload(client)
     acquired = threading.Event()
-    lock_path = str(session_dir(session_id) / ".lock")
+    lock_path = str(session_lock_path(session_id))
 
     with FileLock(lock_path):
         def acquire() -> None:

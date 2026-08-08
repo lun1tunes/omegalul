@@ -1,5 +1,13 @@
-fastapi>=0.115,<1.0
+# Keep the FastAPI/Starlette pair on the tested 0.115 line. Newer Starlette 1.x
+# releases changed TestClient behaviour and currently hang with our supported
+# Python 3.13 test setup.
+fastapi>=0.115.14,<0.116
+# AnyIO 4.14 hangs Starlette 0.46 TestClient on Python 3.13. Keep the tested
+# compatible line for reproducible Windows installs and CI runs.
+anyio>=4.9,<4.10
 uvicorn[standard]>=0.30,<1.0
+# Direct ``uvicorn app.main:app`` launches load service-local env files too.
+python-dotenv>=1,<2
 # Cross-platform advisory locks for disk-backed session state (Windows + Unix).
 filelock>=3.15,<4.0
 python-multipart>=0.0.9,<1.0
