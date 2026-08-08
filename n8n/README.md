@@ -2,6 +2,8 @@
 
 Workflows рассчитаны строго на n8n 2.30.8 и не требуют Global Variables, `$env`, shell или доступа к серверным файлам.
 
+Текущая runtime-поставка — базовый Universal Engineering Orchestrator и готовый Excel specialist. Petroleum capability registry, MAS-wide hybrid RAG, Math Service, `.DATA`/`SCHEDULE` builders и deterministic deck validator пока находятся в плане и не должны восприниматься как уже реализованные workflow. Целевая архитектура, источники и поэтапный Definition of Done описаны в [`docs/architecture/petroleum-mas-research-and-roadmap.md`](../docs/architecture/petroleum-mas-research-and-roadmap.md).
+
 ## Одна основная архитектура
 
 `Universal Engineering Orchestrator` — единственная точка оркестрации инженерных задач. Excel Extraction уже предусмотрен в его allowlisted routing как готовый specialist. Физически specialist вынесен в два sub-workflow: универсальный adapter и прикладной Excel Agent. Такое разделение сохраняет небольшой control-plane, независимую проверку и строгую границу контрактов; это не второй параллельный orchestrator.

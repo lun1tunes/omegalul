@@ -1,19 +1,39 @@
-# Excel Extractor
+# Petroleum Engineering MAS — n8n 2.30.8
 
-Система состоит из трёх независимых частей. Не смешивайте их настройки:
+Отправная точка управляемой multi-agent системы для нефтегазовых инженерных задач: hydrodynamic model workflows, будущая генерация ECLIPSE/tNavigator `.DATA` и прогнозных `SCHEDULE`, hybrid RAG и детерминированные расчеты. Текущая поставка уже содержит stateful Universal Orchestrator и готовый Excel Extraction specialist; нефтегазовые builders, MAS-wide RAG и Math Service находятся в утверждаемом roadmap, а не выдаются за готовый runtime.
 
-| Компонент | Назначение | Где настраивается |
+## Состояние компонентов
+
+| Компонент | Статус | Назначение |
 |---|---|---|
-| `excel-agent-tools/` | FastAPI-сервис: хранит Excel-сессии, находит таблицы, фильтрует и экспортирует результат | `excel-agent-tools/excel-tools.env` |
-| `n8n/` | AI Agent, память PostgreSQL, RAG, уточнения и три входа: HTTP, Form, вызов из другого workflow | только в UI n8n 2.30.8 |
-| `context-seeder/` | опциональная одноразовая загрузка статической инструкции в PGVector напрямую | `context-seeder/context-seeder.env` |
+| `n8n/workflows/universal-engineering-orchestrator.workflow.json` | готовая основа | Planner, durable Data Table state/CAS, HITL, allowlisted routing, retry/replan, independent Verifier |
+| Excel Agent + universal adapter | готово | Excel extraction через отдельный FastAPI tool service |
+| `engineering-specialist-template.workflow.json` | готовая заготовка | universal `specialist_packet/result` boundary |
+| Excel operating-guide PGVector ingestion | готово, локально для Excel | не является будущим MAS-wide hybrid RAG |
+| Petroleum capability registry и agent templates | planned | Phase 0–1 |
+| Governed hybrid RAG: semantic + lexical + tags | planned | Phase 2 |
+| Math Service и discovery specialist | planned | Phase 3 |
+| DATA/SCHEDULE builders, parser/linter и release flow | planned | Phase 4–5 |
 
-Корневой `.env` относится **только** к локальному запуску полного Docker Compose-стенда. n8n-workflows не используют Global Variables, `$env` или доступ к файловой системе сервера.
+Полная ревизия, архитектура, источники и Definition of Done: **[Petroleum MAS research and roadmap](docs/architecture/petroleum-mas-research-and-roadmap.md)**.
 
-## Быстрый запуск на работе: Windows CMD + n8n UI
+## Структура репозитория
 
-1. Установите Python 3.11–3.13 и откройте `cmd.exe`.
-2. Подготовьте и запустите FastAPI:
+| Путь | Что это | Настройка |
+|---|---|---|
+| `n8n/` | n8n 2.30.8 workflows, contracts, templates и Excel RAG seed | только UI n8n; без Global Variables, `$env`, shell и server files |
+| `excel-agent-tools/` | детерминированный FastAPI-сервис Excel sessions/tools/artifacts | `excel-agent-tools/excel-tools.env`; Windows CMD или Docker |
+| `context-seeder/` | опциональный legacy/CLI способ засеять Excel context напрямую | не нужен при UI-only доступе; основной путь — ingestion workflow |
+| `postgres-init/` | локальная Docker Compose инициализация PGVector | только compose-стенд |
+| `docs/architecture/` | целевая MAS-архитектура и roadmap | документация |
+
+Корневой `.env` относится **только** к локальному Docker Compose. Секреты не должны храниться в workflow JSON или документации.
+
+## Быстрый greenfield запуск: Windows CMD + n8n UI
+
+### 1. Excel FastAPI без Docker
+
+Требуется Python 3.11–3.13:
 
 ```bat
 cd excel-agent-tools
@@ -23,47 +43,64 @@ notepad excel-tools.env
 start-windows.bat
 ```
 
-3. Проверьте сервис из второго окна CMD:
+Во втором CMD:
 
 ```bat
 cd excel-agent-tools
 check-windows.bat
 ```
 
-4. В UI n8n 2.30.8 импортируйте в таком порядке:
-   - `n8n/workflows/excel-extraction-agent.workflow.json`;
-   - `n8n/workflows/excel-engineering-specialist-adapter.workflow.json`;
-   - `n8n/workflows/universal-engineering-orchestrator.workflow.json` — единственный основной orchestrator;
-   - `n8n/workflows/excel-rag-ingestion.workflow.json` — одноразовое наполнение RAG.
-5. В Universal Orchestrator выберите Excel adapter в **Call Excel Extraction Specialist Adapter**, а в adapter выберите Excel Agent в **Call native Excel Extraction Agent**.
-6. В узле **Runtime configuration** Excel Agent укажите адрес FastAPI, его API key и отдельный webhook key.
-7. Через UI назначьте Data Table, OpenAI/совместимые chat credentials, embedding credential и PostgreSQL credentials.
-8. Не активируйте workflows, пока все `REPLACE_*`, workflow bindings и credentials не настроены (поставляемые JSON уже выключены).
-9. В RAG workflow выберите тот же embedding credential и PostgreSQL credential, нажмите **Test workflow** один раз. Затем в Excel Agent используйте ту же таблицу и ту же embedding-модель.
-10. Активируйте настроенные workflows и тестируйте входы Universal Orchestrator.
+Если n8n работает на сервере, `127.0.0.1:8000` указывает на сервер n8n, а не на ваш ПК. В `excel_tools_url` задайте разрешенный IT адрес Windows-машины, включите `EXCEL_TOOLS_HOST=0.0.0.0` и откройте порт только для n8n. Детали: [excel-agent-tools/README.md](excel-agent-tools/README.md).
 
-`excel-extraction-form-adapter.workflow.json` нужен только для отдельной формы прямого запуска Excel Agent. `excel-mas-orchestrator.workflow.json` — legacy migration-only и в новую установку не импортируется.
+### 2. Импорт в UI n8n 2.30.8
 
-Если n8n запущен на удалённом сервере, `127.0.0.1:8000` для него означает сам сервер n8n, а не ваш ПК. В `excel_tools_url` нужен разрешённый IT адрес Windows-машины, например `http://10.20.30.40:8000/api/v1`. Для такого режима задайте `EXCEL_TOOLS_HOST=0.0.0.0` и откройте порт только для адреса n8n.
+Импортировать runtime-файлы в порядке:
 
-Подробности:
+1. `n8n/workflows/excel-extraction-agent.workflow.json`;
+2. `n8n/workflows/excel-engineering-specialist-adapter.workflow.json`;
+3. `n8n/workflows/universal-engineering-orchestrator.workflow.json`;
+4. `n8n/workflows/excel-rag-ingestion.workflow.json` — один Test run для Excel operating context.
 
-- [FastAPI tools и Windows CMD](excel-agent-tools/README.md)
-- [Импорт и настройка n8n 2.30.8](n8n/README.md)
-- [Что такое context-seeder](context-seeder/README.md)
+Не импортируйте в greenfield runtime:
 
-## Docker Compose
+- `excel-mas-orchestrator.workflow.json` — legacy migration-only;
+- `engineering-specialist-template.workflow.json` — только шаблон разработки;
+- `ai-components.workflow.json` — справочный canvas;
+- `excel-extraction-form-adapter.workflow.json` — только если нужна отдельная Excel-форма вне основного orchestrator.
 
-Для локального полного стенда:
+Все JSON поставляются `active:false`. После импорта через UI:
+
+1. В **Call Excel Extraction Specialist Adapter** выберите импортированный adapter.
+2. В adapter, в **Call native Excel Extraction Agent**, выберите Excel Agent.
+3. Создайте Data Table по схеме из [n8n/README.md](n8n/README.md) и выберите ее во всех Data Table nodes.
+4. Назначьте Planner/Verifier chat credentials, PostgreSQL memory/PGVector и embedding credentials.
+5. В **Runtime configuration** Excel Agent задайте FastAPI URL/API key и отдельный webhook key.
+6. В ingestion и Excel Agent укажите одну таблицу PGVector и одну embedding model/dimensions; выполните ingestion один раз.
+7. Уберите все `REPLACE_*`/красные warnings, выполните smoke checklist и только затем активируйте workflows.
+
+Workflow IDs и credentials нельзя переносимо зашить в JSON, поэтому две UI-привязки обязательны. Полная настройка Data Table, HITL и трех входов: [n8n/README.md](n8n/README.md).
+
+## Три входа orchestrator
+
+- authenticated HTTP Webhook;
+- n8n Form Trigger;
+- Execute Sub-workflow из другого workflow.
+
+HITL не держит Wait execution: состояние и gate сохраняются, а `reply/approve/reject/retry/cancel/status` приходят новым вызовом с `task_id`, актуальной `expected_version` и `gate_id`. Approval требует внешне аутентифицированного accountable actor.
+
+## Локальный Docker Compose
 
 ```bash
 cp .env.example .env
+# заполнить обязательные секреты
 docker compose up --build -d
 ```
 
-Этот режим поднимает PostgreSQL, n8n 2.30.8, task runners и FastAPI tools. `context-seeder` в runtime не входит: для RAG используйте UI-workflow либо запускайте seeder отдельно.
+Поднимаются pinned n8n 2.30.8, runners, PostgreSQL/PGVector и Excel tools. Context-seeder в runtime не входит.
 
-## Проверки репозитория
+## Smoke gate
+
+После каждого изменения workflow обязательно:
 
 ```bash
 cd excel-agent-tools
@@ -71,10 +108,21 @@ python3 -m venv .venv
 .venv/bin/python -m pip install -r requirements-dev.txt
 .venv/bin/python -m pytest tests
 cd ..
-python3 -m json.tool n8n/workflows/excel-extraction-agent.workflow.json > /dev/null
-python3 -m json.tool n8n/workflows/excel-rag-ingestion.workflow.json > /dev/null
+python3 - <<'PY'
+import glob, json
+for path in glob.glob('n8n/workflows/*.workflow.json'):
+    json.load(open(path, encoding='utf-8'))
+print('workflow JSON: OK')
+PY
 ```
 
-На Windows после `setup-windows.bat` запускайте тесты из CMD так: `.venv\Scripts\python.exe -m pip install -r requirements-dev.txt`, затем `.venv\Scripts\python.exe -m pytest tests`.
+Затем выполняется автоматический graph/registry/Code-node audit и **чистый import всех delivery JSON в новую пустую БД официального `n8nio/n8n:2.30.8`**. В целевом UI отдельно проверяются credentials, Data Table, workflow bindings, HTTP/Form/Sub-workflow, HITL, Excel upload/clarification и RAG. CLI import не проверяет корпоративную сеть и секреты.
 
-Live-проверка корпоративных credentials, сетевой доступности Windows-хоста и прав PostgreSQL выполняется уже в целевой инфраструктуре.
+Подробный smoke protocol и acceptance gates находятся в [roadmap, раздел 10](docs/architecture/petroleum-mas-research-and-roadmap.md#10-smoke-gate-после-каждого-изменения-workflow).
+
+## Безопасность
+
+- Не храните API keys в репозитории, export JSON, examples или execution data; найденный/закоммиченный ключ необходимо отозвать и удалить из истории.
+- LLM выбирает только logical capability; Code/Switch nodes разрешают статически привязанный workflow.
+- Большие инженерные файлы хранятся как immutable artifact references, а не в prompt/Data Table.
+- `.DATA`/`SCHEDULE` в целевой системе всегда проходят deterministic parser/linter, независимую проверку и human release gate.
