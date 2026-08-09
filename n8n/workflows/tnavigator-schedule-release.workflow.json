@@ -5,7 +5,7 @@
   "nodes": [
     {
       "parameters": {
-        "content": "Approval needs actor and matching gate. Only immutable refs are returned.",
+        "content": "Approval needs actor and matching gate. Approved output is returned as bounded inline .INC text.",
         "width": 440,
         "height": 300,
         "color": 5
@@ -22,7 +22,7 @@
     {
       "parameters": {
         "inputSource": "jsonExample",
-        "jsonExample": "{\"action\": \"request\", \"gate_id\": \"gate_example\", \"artifact_ref\": \"artifact://schedule/draft\", \"validation_result\": {\"status\": \"valid\"}, \"verifier_result\": {\"verdict\": \"pass\"}}"
+        "jsonExample": "{\"action\": \"request\", \"gate_id\": \"gate_example\", \"filename\": \"schedule.inc\", \"schedule_text\": \"DATES\\n  1 JAN 2025 /\\n/\\n\", \"validation_result\": {\"status\": \"valid\"}, \"verifier_result\": {\"verdict\": \"pass\"}}"
       },
       "id": "ba696327-ace1-5f6c-8563-d6a8ed57ccd7",
       "name": "Receive SCHEDULE release request",
@@ -35,7 +35,7 @@
     },
     {
       "parameters": {
-        "jsCode": "const x=$json,action=String(x.action||'request').toLowerCase(),v=x.verifier_result||{},d=x.validation_result||{},a=x.approval||{},findings=[];if(!['request','approve','reject'].includes(action))findings.push({code:'ACTION_INVALID'});if(d.status!=='valid')findings.push({code:'VALIDATION_REQUIRED'});if(v.verdict!=='pass')findings.push({code:'INDEPENDENT_REVIEW_REQUIRED'});if(action==='approve'&&(!String(a.actor||'').trim()||!String(a.gate_id||'').trim()))findings.push({code:'ACCOUNTABLE_APPROVAL_REQUIRED'});if(action==='approve'&&a.gate_id!==x.gate_id)findings.push({code:'GATE_MISMATCH'});const status=action==='reject'?'rejected':findings.length?'blocked':action==='approve'?'approved':'pending_approval';return[{json:{contract:'schedule_release_result',contract_version:'1.0',status,artifact_ref:status==='approved'?x.artifact_ref||null:null,approval:{actor:a.actor||null,at:status==='approved'?new Date().toISOString():null,gate_id:a.gate_id||null},findings,immutable_release:status==='approved'}}];"
+        "jsCode": "const x=$json,action=String(x.action||'request').toLowerCase(),v=x.verifier_result||{},d=x.validation_result||{},a=x.approval||{},scheduleText=String(x.schedule_text||''),findings=[];if(!['request','approve','reject'].includes(action))findings.push({code:'ACTION_INVALID'});if(d.status!=='valid')findings.push({code:'VALIDATION_REQUIRED'});if(v.verdict!=='pass')findings.push({code:'INDEPENDENT_REVIEW_REQUIRED'});if(!scheduleText.trim())findings.push({code:'SCHEDULE_TEXT_REQUIRED'});if(scheduleText.length>10485760)findings.push({code:'SCHEDULE_TEXT_TOO_LARGE'});if(action==='approve'&&(!String(a.actor||'').trim()||!String(a.gate_id||'').trim()))findings.push({code:'ACCOUNTABLE_APPROVAL_REQUIRED'});if(action==='approve'&&a.gate_id!==x.gate_id)findings.push({code:'GATE_MISMATCH'});const status=action==='reject'?'rejected':findings.length?'blocked':action==='approve'?'approved':'pending_approval';return[{json:{contract:'schedule_release_result',contract_version:'1.0',status,filename:String(x.filename||'schedule.inc'),schedule_text:status==='approved'?scheduleText:null,approval:{actor:a.actor||null,at:status==='approved'?new Date().toISOString():null,gate_id:a.gate_id||null},findings}}];"
       },
       "id": "956949ee-9b69-52a3-8e61-87d5bebd0b57",
       "name": "Apply SCHEDULE release policy",

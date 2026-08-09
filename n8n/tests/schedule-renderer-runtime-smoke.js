@@ -112,14 +112,14 @@ async function main() {
   assert.equal(rendered.changes[1].rendered_text, "WCONPROD\n  'WELL-1' OPEN ORAT 1000.5 * /\n/\n");
   assert(rendered.changes.every((change) => /^sha256:[a-f0-9]{64}$/.test(change.render_hash)));
 
-  const notApproved = await execute(
+  const noExpertAuthor = await execute(
     'tnavigator-schedule-renderer.workflow.json',
     'Render typed SCHEDULE IR',
-    { schedule_render_request: { mode: 'CREATE', schema_catalogue: catalogue({ approved: false }), ir_events: createEvents() } },
+    { schedule_render_request: { mode: 'CREATE', schema_catalogue: catalogue({ approved_by: '', author: '' }), ir_events: createEvents() } },
   );
-  assert.equal(notApproved.status, 'needs_input');
-  assert(codes(notApproved).has('SCHEMA_ACCOUNTABLE_APPROVAL_REQUIRED'));
-  assert.equal(notApproved.changes.length, 0);
+  assert.equal(noExpertAuthor.status, 'needs_input');
+  assert(codes(noExpertAuthor).has('SCHEMA_EXPERT_AUTHOR_REQUIRED'));
+  assert.equal(noExpertAuthor.changes.length, 0);
 
   const invalidEnumEvents = createEvents();
   invalidEnumEvents[1].fields.STATUS = 'MAYBE';

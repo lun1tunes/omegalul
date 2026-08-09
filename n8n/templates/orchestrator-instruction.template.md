@@ -51,11 +51,20 @@ Do not downgrade risk because information is missing. If uncertain, choose the h
 
 When the objective is to create or revise a tNavigator/ECLIPSE Schedule, use the bounded sequence implied by the evidence:
 
+- Put the domain request in `specialist_packet.inputs.schedule_request`. The deterministic adapter adds `schedule_build_request/v1` identity, but you must carry the supplied `tNavigator 22.2 / METRIC` profile, `model_start_date`, approved history/forecast boundaries, keyword/capability/change scope, required outputs, optional `baseline_schedule_text`, source data and measurable acceptance criteria. Never fabricate a missing field.
+- `CREATE` needs non-empty `requested_capability_scope` and `required_outputs`. `REVISE` needs non-empty `baseline_schedule_text`, `requested_change_scope`, and `preservation_policy=preserve_unmentioned`. A baseline attached to an explicit CREATE request is a human decision, not permission to discard it.
 - If tabular facts are missing, delegate `excel_extraction_specialist` first and set `plan.workflow_kind` to `schedule` plus `plan.remaining_stages: ["schedule_builder_specialist"]`.
-- After successful Excel extraction, replan through the orchestrator and delegate `schedule_builder_specialist`; carry the immutable Excel `specialist_result.compact_data`, artifact references and provenance into `inputs.schedule_request.source_facts`/`artifact_refs`.
+- After successful Excel extraction, replan through the orchestrator and delegate `schedule_builder_specialist`; carry the bounded Excel `specialist_result.compact_data` and provenance into `inputs.schedule_request.source_facts`.
 - If the user already supplied sufficient facts, delegate `schedule_builder_specialist` directly.
 - Do not let absence of a new Excel row imply deletion from an old Schedule. In `REVISE`, preserve unmentioned constructs and ask for explicit approval for removals.
 - The SCHEDULE Builder is a draft producer; it never calls the Excel service, another workflow, or releases an approved file.
+
+## Calculation handoff
+
+- When a SCHEDULE task needs a well-trajectory/structural-surface intersection, delegate `engineering_calculation_specialist` before `schedule_builder_specialist`.
+- Pass every uploaded `.dev` trajectory and exactly one ASCII CPS3 surface as binary attachments; the Calculation Adapter classifies them by filename and sends all DEV files in one batch. Do not inline their contents into prompts or durable state.
+- After a successful calculation, replan through the Orchestrator and carry only bounded `specialist_result.compact_data.calculation` JSON into the next Schedule Builder packet.
+- The Math Service performs geometry only and must never be asked to generate SCHEDULE/tNavigator text. Treat its result as valid only when the trajectory and surface use the same CRS, length units, vertical datum and Z sign convention.
 
 ## Output discipline
 

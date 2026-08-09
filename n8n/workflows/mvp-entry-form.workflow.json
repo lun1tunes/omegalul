@@ -1,0 +1,141 @@
+{
+  "name": "MAS MVP Entry Form — Universal Engineering Orchestrator",
+  "nodes": [
+    {
+      "parameters": {
+        "formTitle": "MAS MVP — Engineering Task",
+        "formDescription": "Describe the engineering task and attach the input files required by the MAS orchestrator.",
+        "formFields": {
+          "values": [
+            {
+              "fieldName": "task_description",
+              "fieldLabel": "Task Description",
+              "fieldType": "textarea",
+              "placeholder": "Describe the required engineering result and acceptance criteria.",
+              "requiredField": true
+            },
+            {
+              "fieldName": "input_data",
+              "fieldLabel": "Input Data",
+              "fieldType": "file",
+              "multipleFiles": true,
+              "acceptFileTypes": ".xlsx, .xls, .xlsm, .dev, .sch",
+              "requiredField": false
+            }
+          ]
+        },
+        "responseMode": "lastNode",
+        "options": {
+          "path": "mas-mvp-entry",
+          "appendAttribution": false,
+          "buttonLabel": "Run MAS task",
+          "ignoreBots": true
+        }
+      },
+      "id": "7d62b879-a8ea-4fde-8f6f-9ca6d381ff93",
+      "name": "MAS task form",
+      "type": "n8n-nodes-base.formTrigger",
+      "typeVersion": 2.6,
+      "position": [
+        0,
+        0
+      ],
+      "webhookId": "7d62b879-a8ea-4fde-8f6f-9ca6d381ff93"
+    },
+    {
+      "parameters": {
+        "jsCode": "const item = $input.first();\nconst description = String(item.json?.task_description || '').trim();\nconst taskId = `mvp_${Date.now()}_${Math.random().toString(36).slice(2, 10)}`;\nconst inputFiles = Object.entries(item.binary || {}).map(([field, file]) => ({\n  field,\n  filename: String(file.fileName || ''),\n  mime_type: String(file.mimeType || ''),\n}));\nreturn [{\n  json: {\n    entrypoint: 'mvp_form',\n    action: 'start',\n    task_id: taskId,\n    task_description: description,\n    request_text: description,\n    request: {\n      objective: description,\n      problem_statement: description,\n      task_description: description,\n      input_files: inputFiles,\n    },\n    context: {\n      source: 'mvp-entry-form',\n      submitted_task_id: taskId,\n    },\n    requested_by: 'mvp-form-engineer',\n  },\n  binary: item.binary || {},\n}];"
+      },
+      "id": "df644c3e-6d9d-4420-af14-e82a9b632527",
+      "name": "Prepare orchestrator request",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        280,
+        0
+      ]
+    },
+    {
+      "parameters": {
+        "source": "database",
+        "workflowId": {
+          "__rl": true,
+          "value": "REPLACE_ORCHESTRATOR_ID_IN_UI",
+          "mode": "list",
+          "cachedResultName": "Universal Engineering Orchestrator — stateful HITL template"
+        },
+        "mode": "once",
+        "options": {
+          "waitForSubWorkflow": true
+        }
+      },
+      "id": "65a0e8a8-5937-49c3-9885-29c86b7e89de",
+      "name": "Call Universal Engineering Orchestrator",
+      "type": "n8n-nodes-base.executeWorkflow",
+      "typeVersion": 1.3,
+      "position": [
+        560,
+        0
+      ]
+    },
+    {
+      "parameters": {
+        "jsCode": "const response = $input.first().json || {};\nconst result = response.result && typeof response.result === 'object' ? response.result : null;\nconst deliverables = Array.isArray(result?.deliverables) ? result.deliverables : [];\nconst scheduleText = response.schedule_text\n  || result?.release?.schedule_text\n  || result?.compact_data?.generated_schedule\n  || deliverables.find(value => typeof value?.schedule_text === 'string')?.schedule_text\n  || null;\nreturn [{json: {\n  task_id: response.task_id || null,\n  status: response.status || 'completed',\n  message: response.message || (scheduleText ? 'SCHEDULE generated.' : 'MAS task completed.'),\n  schedule_text: scheduleText,\n  human_gate: response.human_gate || null,\n  result: result || response,\n}}];"
+      },
+      "id": "677238b1-42dc-49f5-aa4f-51090ded7794",
+      "name": "Return MAS result",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        840,
+        0
+      ]
+    }
+  ],
+  "pinData": {},
+  "connections": {
+    "MAS task form": {
+      "main": [
+        [
+          {
+            "node": "Prepare orchestrator request",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Prepare orchestrator request": {
+      "main": [
+        [
+          {
+            "node": "Call Universal Engineering Orchestrator",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Call Universal Engineering Orchestrator": {
+      "main": [
+        [
+          {
+            "node": "Return MAS result",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    }
+  },
+  "active": false,
+  "settings": {
+    "executionOrder": "v1"
+  },
+  "versionId": "7a5cc8e8-fef8-493a-97aa-c18c59075743",
+  "meta": {
+    "templateCredsSetupCompleted": true
+  },
+  "id": "f720624a-7bed-455b-b166-bbb213023ee5",
+  "tags": []
+}

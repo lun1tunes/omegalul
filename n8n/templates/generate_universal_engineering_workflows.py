@@ -297,7 +297,8 @@ const requestCandidate = firstValue(body.request, body.request_json);
 const requestFallback = clean(body.request_text) ? { problem_statement: clean(body.request_text) } : {};
 const requestParsed = parseStructured(requestCandidate, requestFallback, 'request_json');
 const contextParsed = parseStructured(firstValue(body.context, body.context_json), {}, 'context_json');
-const request = requestParsed.value;
+const uploadedSchedule=typeof body.baseline_schedule_text==='string'?body.baseline_schedule_text:null;
+const request = uploadedSchedule===null?requestParsed.value:{...requestParsed.value,baseline_schedule_text:uploadedSchedule,baseline_filename:String(item.binary?.schedule_file?.fileName||'schedule.inc'),build_mode:String(requestParsed.value.build_mode||'AUTO')};
 const context = contextParsed.value;
 const parseHumanResponse = value => {
   if (!hasValue(value)) return null;
@@ -314,9 +315,13 @@ const expected = Number(body.expected_version);
 const retryCandidate = Number(body.max_retries ?? 2);
 const maxRetries = Number.isFinite(retryCandidate) ? Math.min(5, Math.max(0, Math.trunc(retryCandidate))) : 2;
 const jsonSize = value => { try { return JSON.stringify(value).length; } catch { return Number.MAX_SAFE_INTEGER; } };
-const payloadValid = jsonSize(request) <= 262144 && jsonSize(context) <= 262144 && jsonSize(humanResponse) <= 65536;
+const baselineBytes=uploadedSchedule===null?0:new TextEncoder().encode(uploadedSchedule).length;
+const filename=String(item.binary?.schedule_file?.fileName||'');const scheduleFileValid=!filename||/\.(?:data|inc|sch|txt)$/i.test(filename);
+const requestLimit=uploadedSchedule===null?262144:2359296;
+const payloadValid = jsonSize(request) <= requestLimit && baselineBytes<=2097152 && jsonSize(context) <= 262144 && jsonSize(humanResponse) <= 65536;
 const inputErrors = [!allowed.has(action) ? 'Unsupported action.' : null, requestParsed.error, contextParsed.error,
-  !payloadValid ? 'Payload is too large; pass large engineering data as governed artifact references.' : null].filter(Boolean);
+  !scheduleFileValid?'SCHEDULE upload must use .data, .inc, .sch or .txt.':null,
+  !payloadValid ? 'Payload is too large; SCHEDULE text is limited to 2 MiB in the MVP.' : null].filter(Boolean);
 return [{json:{
   entrypoint,
   action: allowed.has(action) ? action : 'invalid',
@@ -410,7 +415,7 @@ const parse=(v,f)=>{try{return typeof v==='string'?JSON.parse(v):v??f}catch{retu
 const history=parse(x.history_json,[]);
 const pending=parse(x.pending_human_json,{});
 let nextPending=null;
-let outcome='respond', message='', nextStatus=x.stored_status, nextPhase=x.phase, shouldPlan=false, shouldDelegate=false, shouldContinueSimulator=false;
+let outcome='respond', message='', nextStatus=x.stored_status, nextPhase=x.phase, shouldPlan=false, shouldDelegate=false;
 if(!x.state_found){outcome='respond';nextStatus=x.status||'not_found';nextPhase=x.phase||'lookup';message=x.message||'Task not found.';}
 else if(x.action==='status'){outcome='respond';}
 else if(['completed','failed','rejected','cancelled'].includes(x.stored_status)){nextStatus=x.stored_status;message='Task is terminal; create a new task or inspect status.';}
@@ -429,29 +434,21 @@ else if(['reply','approve','reject'].includes(x.action)){
     const result=parse(x.result_json,{});const verification=parse(x.verification_json,{});
     const isSchedule=result.specialist_id==='schedule_builder_specialist';
     const releaseReady=result.compact_data&&result.compact_data.release_ready===true;
-    const artifacts=Array.isArray(result.artifact_refs)?result.artifact_refs:[];
-    const releaseArtifact=artifacts.find(a=>a&&['schedule-package','schedule-draft'].includes(String(a.kind||''))&&a.immutable===true&&!String(a.ref||'').startsWith('inline-schedule://'));
-    const artifactHash=String(releaseArtifact?.manifest_hash||releaseArtifact?.revision||'').toLowerCase();
-    const simulator=result.compact_data?.simulator_check_result;
-    const simulatorProfile=simulator?.simulator_profile||{};
-    const simulatorPassed=simulator?.contract==='simulator_check_result'&&simulator?.contract_version==='1.0'&&simulator?.status==='passed'&&simulator?.terminal===true&&simulator?.release_gate_passed===true&&String(simulatorProfile.vendor||'')==='Rock Flow Dynamics'&&String(simulatorProfile.simulator||'').toLowerCase()==='tnavigator'&&String(simulatorProfile.version||'')==='22.2'&&artifactHash&&String(simulator?.artifact_manifest_hash||'').toLowerCase()===artifactHash;
+    const merge=result.compact_data?.merge_result||{};const outputPackage=merge.output_package||{};
+    const inlineText=String(merge.generated_schedule||result.compact_data?.generated_schedule||'');
+    const inlineReady=releaseReady&&merge.status==='merged'&&outputPackage.contract==='schedule_package'&&inlineText.length>0&&inlineText.length<=10485760;
     const verifierPassed=['pass','pass_with_warnings'].includes(verification.verdict);
-    if(isSchedule&&(!releaseReady||!releaseArtifact||!simulatorPassed||!verifierPassed)){
-      nextStatus='conflict';message='SCHEDULE release is blocked: release-ready draft, matching immutable artifact, passed tNavigator 22.2 simulator evidence and independent verification are all required.';
+    if(isSchedule&&(!inlineReady||!verifierPassed)){
+      nextStatus='conflict';message='SCHEDULE release is blocked: merged bounded inline .INC, release_ready and independent verification are required.';
     }else{
       if(isSchedule){
-        result.release={contract:'schedule_release_result',contract_version:'1.0',status:'approved',artifact_ref:releaseArtifact.ref,artifact_refs:artifacts,simulator_result_hash:simulator.result_hash,approval:{actor:x.requested_by,at:new Date().toISOString(),gate_id:x.gate_id},immutable_release:true};
+        result.release={contract:'schedule_release_result',contract_version:'1.0',status:'approved',filename:String(outputPackage.root_path||'schedule.inc'),schedule_text:inlineText,approval:{actor:x.requested_by,at:new Date().toISOString(),gate_id:x.gate_id}};
         x.result_json=JSON.stringify(result);
       }
       nextStatus='completed';nextPhase='terminal';outcome='persist';
     }
   } else if(x.action==='approve' && pending.kind==='needs_approval'){
     nextStatus='planning';nextPhase='approved_specialist_request';shouldPlan=true;outcome='persist_plan';
-  } else if(x.action==='reply' && pending.kind==='simulator_check_pending'){
-    const context=parse(x.context_json,{}),job=context.simulator_check&&typeof context.simulator_check==='object'?context.simulator_check:{};
-    const requested=String(x.human_response?.action||x.human_response?.text||'STATUS').trim().toUpperCase();
-    if(!['STATUS','RESULT','CANCEL'].includes(requested)||!job.job_id){nextStatus='conflict';message='Active simulator job and human_response.action STATUS, RESULT or CANCEL are required.';}
-    else{nextStatus='delegated';nextPhase='simulator_check';shouldContinueSimulator=true;outcome='persist_simulator';}
   } else if(x.action==='reply' && ['needs_input','needs_decision'].includes(pending.kind)){
     const previousResult=parse(x.result_json,{});const packet=parse(x.specialist_json,{});
     const canContinue=Boolean(previousResult.continuation&&typeof previousResult.continuation==='object'&&packet.specialist_id&&previousResult.task_id===x.task_id&&previousResult.specialist_id===packet.specialist_id);
@@ -478,7 +475,7 @@ if(outcome.startsWith('persist')){
   x.pending_human_json=JSON.stringify(nextPending||{});
 }
 const responseStatus=outcome==='respond'&&nextStatus?nextStatus:x.status;
-return [{json:{...x,status:responseStatus,outcome,message,should_plan:shouldPlan,should_delegate:shouldDelegate,should_continue_simulator:shouldContinueSimulator,previous_version:x.stored_version}}];
+return [{json:{...x,status:responseStatus,outcome,message,should_plan:shouldPlan,should_delegate:shouldDelegate,previous_version:x.stored_version}}];
 """.strip()
 
 
@@ -488,12 +485,14 @@ const parse=(v,f)=>{try{return typeof v==='string'?JSON.parse(v):v??f}catch{retu
 const specialist_catalog=[
   {specialist_id:'excel_extraction_specialist',capabilities:['Excel workbook extraction','table detection','controlled filtering','tabular data export','normalized source facts for downstream specialists']},
   {specialist_id:'schedule_builder_specialist',capabilities:['tNavigator 22.2 SCHEDULE CREATE','preserve-by-default SCHEDULE REVISE','keyword impact/change set','typed temporal draft','evidence gap reporting'],depends_on:['approved normalized source facts when tabular evidence is needed'],constraints:['never calls Excel directly','never approves or releases output']},
-  {specialist_id:'engineering_calculation_specialist',capabilities:['engineering calculation','verification calculation','unit conversion','acceptance criteria evaluation']},
+  {specialist_id:'engineering_calculation_specialist',capabilities:['batch well-trajectory and structural-surface intersection','engineering geometry calculation','verification calculation'],depends_on:['one or more uploaded .dev trajectories and exactly one ASCII CPS3 surface in the same CRS, units, vertical datum and Z sign convention'],constraints:['returns filename-correlated JSON only','never writes SCHEDULE code']},
   {specialist_id:'engineering_data_specialist',capabilities:['controlled engineering data preparation','tabular engineering data extraction','data quality assessment']},
   {specialist_id:'engineering_document_specialist',capabilities:['requirements extraction','standards and revision comparison','technical document analysis']},
 ];
+const fullRequest=parse(x.request_json,{}),request={...fullRequest};
+if(typeof request.baseline_schedule_text==='string'){request.baseline_schedule={present:true,filename:request.baseline_filename||'schedule.inc',byte_length:new TextEncoder().encode(request.baseline_schedule_text).length};delete request.baseline_schedule_text;}
 const payload={contract:'orchestrator_planning_request',contract_version:'1.0',task_id:x.task_id,attempt:Number(x.retry_count)+1,
- request:parse(x.request_json,{}),context:parse(x.context_json,{}),previous_plan:parse(x.plan_json,{}),last_error:parse(x.last_error_json,{}),
+ request,context:parse(x.context_json,{}),previous_plan:parse(x.plan_json,{}),last_error:parse(x.last_error_json,{}),
  previous_specialist_result:parse(x.result_json,{}),previous_verification:parse(x.verification_json,{}),specialist_catalog,
  instruction:'Plan one bounded next delegation or request a human gate. Select only specialist_id from specialist_catalog. Never output a workflow ID.'};
 return [{json:{...x,planner_input:JSON.stringify(payload),specialist_catalog}}];
@@ -522,8 +521,9 @@ if(decision==='delegate' && packetObject && !allowed.has(plan.specialist_packet.
 else if(decision==='delegate' && !packetComplete){decision='needs_input';plan.reason='Planner could not produce a complete specialist_packet v1.0; review the task inputs and acceptance criteria.';plan.questions=Array.isArray(plan.questions)?plan.questions:[];}
 if(!decisionRecordValid){decision='needs_input';plan.reason='Planner did not provide a valid observable decision_record/v1.';plan.questions=arr(plan.questions)?plan.questions:[];}
 const criticalDelegation=decision==='delegate'&&risk==='critical';
-const packetCandidate=decision==='delegate'?{...plan.specialist_packet,contract:'specialist_packet',contract_version:'1.0',task_id:base.task_id,attempt:Number(base.retry_count)+1}:{};
+let packetCandidate=decision==='delegate'?{...plan.specialist_packet,contract:'specialist_packet',contract_version:'1.0',task_id:base.task_id,attempt:Number(base.retry_count)+1,controls:{...(obj(plan.specialist_packet.controls)?plan.specialist_packet.controls:{}),expected_version:Number(base.version)+1,idempotency_key:`${base.task_id}:specialist:${plan.specialist_packet.specialist_id}:${Number(base.retry_count)+1}:${Number(base.version)+1}`,policy_version:'petroleum-schedule-policy-v1'}}:{};
 const scheduleTask=packetCandidate.specialist_id==='schedule_builder_specialist'||request?.task_type==='schedule_build'||Boolean(request?.schedule_request||request?.build_mode||request?.requested_keyword_scope)||/(schedule|wconprod|wconhist|welspecs|compdatmd|gruptree|welltrack|t-?navigator)/i.test(JSON.stringify(request));
+if(decision==='delegate'&&packetCandidate.specialist_id==='schedule_builder_specialist'){const modelInputs=obj(packetCandidate.inputs)?packetCandidate.inputs:{},modelSchedule=obj(modelInputs.schedule_request)?modelInputs.schedule_request:modelInputs,originalSchedule=obj(request.schedule_request)?request.schedule_request:request;packetCandidate={...packetCandidate,inputs:{...modelInputs,schedule_request:{...originalSchedule,...modelSchedule,baseline_schedule_text:typeof originalSchedule.baseline_schedule_text==='string'?originalSchedule.baseline_schedule_text:modelSchedule.baseline_schedule_text}}};}
 if(scheduleTask&&riskRank[risk]<riskRank.high)risk='high';
 if(criticalDelegation) decision='needs_approval';
 const requestRefs=arr(request.artifact_refs)?request.artifact_refs.filter(obj):[],criteria=arr(packetCandidate.acceptance_criteria)?packetCandidate.acceptance_criteria.filter(obj):[],questions=arr(plan.questions)?plan.questions.filter(obj):[];
@@ -568,7 +568,7 @@ const specialistId=String(packet.specialist_id||x.specialist_id||'');
 const allowlist={
  excel_extraction_specialist:{route:0,configured:true},
  schedule_builder_specialist:{route:1,configured:true},
- engineering_calculation_specialist:{route:2,configured:false},
+ engineering_calculation_specialist:{route:2,configured:true},
  engineering_data_specialist:{route:3,configured:false},
  engineering_document_specialist:{route:4,configured:false},
 };
@@ -601,8 +601,9 @@ const inputs=packet.inputs&&typeof packet.inputs==='object'?packet.inputs:{},req
 const scope=Array.isArray(req.requested_keyword_scope)?req.requested_keyword_scope:Array.isArray(req.keyword_scope)?req.keyword_scope:[];
 const accessScope=String(req.access_scope||packet.controls?.access_scope||'').trim();
 const objective=String(packet.objective||'').trim();
-const query=[objective,scope.length?`Keywords: ${scope.join(', ')}`:'','tNavigator 22.2 SCHEDULE grammar parameters prerequisites dependencies'].filter(Boolean).join('\n');
-return[{json:{...x,schedule_retrieval_request:{query,filters:{simulator_version:'22.2',authority_level:'vendor_manual',access_scope:accessScope,keyword_families:scope},top_k:Math.min(20,Math.max(5,scope.length*2||10))}}}];
+const topics=Array.isArray(req.topics)?req.topics:[],patterns=Array.isArray(req.task_patterns)?req.task_patterns:[];
+const query=[objective,scope.length?`Keywords: ${scope.join(', ')}`:'',topics.length?`Topics: ${topics.join(', ')}`:'',patterns.length?`Task patterns: ${patterns.join(', ')}`:'','SCHEDULE parameters prerequisites dependencies and worked examples'].filter(Boolean).join('\n');
+return[{json:{...x,schedule_retrieval_request:{query,filters:{target_base:String(req.target_base||'schedule_mvp'),access_scope:accessScope||'petroleum-engineering',knowledge_types:['keyword_instruction','worked_example'],keyword_families:scope,topics,task_patterns:patterns},top_k:Math.min(20,Math.max(5,scope.length*3||10))}}}];
 """.strip()
 
 
@@ -610,7 +611,7 @@ ATTACH_SCHEDULE_RAG = r"""
 const state=$('Prepare governed SCHEDULE RAG request').first().json;
 const result=$json.schedule_retrieval_result??$json;
 const packet=state.specialist_packet&&typeof state.specialist_packet==='object'?state.specialist_packet:{};
-const valid=result&&result.contract==='schedule_retrieval_result'&&result.contract_version==='1.0'&&result.status==='succeeded'&&result.evidence_ready===true&&Array.isArray(result.citations)&&result.citations.length>0&&Array.isArray(result.results)&&result.results.length>0&&result.schema_catalogue&&result.schema_catalogue.contract==='schedule_schema_catalogue';
+const valid=result&&result.contract==='schedule_retrieval_result'&&result.contract_version==='1.0'&&result.status==='succeeded'&&result.evidence_ready===true&&Array.isArray(result.citations)&&result.citations.length>0&&Array.isArray(result.results)&&result.results.length>0&&result.results.some(v=>v&&v.knowledge_type==='keyword_instruction'&&v.body)&&result.schema_catalogue&&result.schema_catalogue.contract==='schedule_schema_catalogue';
 const inputs=packet.inputs&&typeof packet.inputs==='object'?packet.inputs:{};
 const original=inputs.schedule_request&&typeof inputs.schedule_request==='object'?inputs.schedule_request:inputs;
 const evidencePacket={contract:'schedule_rag_evidence',contract_version:'1.0',query:result.query||state.schedule_retrieval_request.query,filters:result.filters||state.schedule_retrieval_request.filters,citations:Array.isArray(result.citations)?result.citations:[],results:Array.isArray(result.results)?result.results:[],schema_catalogue:result.schema_catalogue||null,retrieval:result.retrieval||{},findings:Array.isArray(result.findings)?result.findings:[]};
@@ -622,9 +623,9 @@ return[{json:{...state,specialist_packet:nextPacket,schedule_rag_result:result,s
 BUILD_SCHEDULE_RAG_GATE = r"""
 const x=$json,packet=x.specialist_packet||{},r=x.schedule_rag_result||{},findings=Array.isArray(r.findings)?r.findings:[{code:'SCHEDULE_RAG_UNAVAILABLE',severity:'error'}];
 const questions=[];
-if(!String(x.schedule_retrieval_request?.filters?.access_scope||'').trim())questions.push({id:'schedule_access_scope',text:'Укажите разрешённый access_scope для базы знаний tNavigator 22.2.',expected_format:'configured access-scope name',required:true});
-questions.push({id:'schedule_rag_evidence',text:'Убедитесь, что утверждённые фрагменты Technical Manual 22.2 и machine-readable schema catalogue загружены через SCHEDULE Knowledge Ingestion и покрывают запрошенные keywords.',expected_format:'approved citations plus catalogue hash/approval gate',required:true});
-const result={contract:'specialist_result',contract_version:'1.0',task_id:packet.task_id,specialist_id:'schedule_builder_specialist',attempt:packet.attempt,status:'needs_input',summary:'SCHEDULE Builder не запущен: authoritative RAG evidence отсутствует либо недоступен для данного scope.',deliverables:[],artifact_refs:[],compact_data:{rag_status:r.status||'failed',rag_findings:findings,retrieval_filters:x.schedule_retrieval_request?.filters||{}},assumptions:[],warnings:[],evidence:[],self_check:{performed:false,passed:false,checks:[],reproducibility:'Повторите тот же task_id после ingestion/access correction; Builder получит только новый versioned evidence packet.'},human_request:{kind:'needs_input',questions},error:{code:'SCHEDULE_RAG_EVIDENCE_REQUIRED',findings},continuation:null};
+if(!String(x.schedule_retrieval_request?.filters?.access_scope||'').trim())questions.push({id:'schedule_access_scope',text:'Укажите разрешённый access_scope для базы знаний SCHEDULE.',expected_format:'configured access-scope name',required:true});
+questions.push({id:'schedule_rag_evidence',text:'Через SCHEDULE Knowledge Ingestion загрузите в schedule_mvp полную active keyword_instruction и экспертный schema_catalogue для каждого требуемого keyword. Worked examples необязательны.',expected_format:'schedule_knowledge_block/v1 plus expert schema JSON',required:true});
+const result={contract:'specialist_result',contract_version:'1.0',task_id:packet.task_id,specialist_id:'schedule_builder_specialist',attempt:packet.attempt,status:'needs_input',summary:'SCHEDULE Builder не запущен: в выбранной базе не хватает полной экспертной инструкции или schema JSON.',deliverables:[],artifact_refs:[],compact_data:{rag_status:r.status||'failed',rag_findings:findings,retrieval_filters:x.schedule_retrieval_request?.filters||{}},assumptions:[],warnings:[],evidence:[],self_check:{performed:false,passed:false,checks:[],reproducibility:'Пополните knowledge base и повторите тот же task_id; Builder получит новый versioned evidence packet.'},human_request:{kind:'needs_input',questions},error:{code:'SCHEDULE_RAG_EVIDENCE_REQUIRED',findings},continuation:null};
 return[{json:{specialist_result:result}}];
 """.strip()
 
@@ -641,7 +642,8 @@ const stringArray=value=>Array.isArray(value)&&value.every(item=>typeof item==='
 const artifactArray=value=>objectArray(value)&&value.every(item=>['ref','kind','revision','description'].every(key=>typeof item[key]==='string'&&item[key].trim()));
 const expectedAttempt=Number(state.specialist_packet?.attempt||Number(state.retry_count)+1);
 let resultSize=Number.MAX_SAFE_INTEGER;try{resultSize=JSON.stringify(result).length}catch{}
-const valid=result&&result.contract==='specialist_result'&&result.contract_version==='1.0'&&result.task_id===state.task_id&&result.specialist_id===state.specialist_id&&Number.isInteger(result.attempt)&&result.attempt===expectedAttempt&&statuses.has(result.status)&&typeof result.summary==='string'&&objectArray(result.deliverables)&&artifactArray(result.artifact_refs)&&isObject(result.compact_data)&&stringArray(result.assumptions)&&stringArray(result.warnings)&&objectArray(result.evidence)&&isObject(result.self_check)&&typeof result.self_check.performed==='boolean'&&typeof result.self_check.passed==='boolean'&&objectArray(result.self_check.checks)&&typeof result.self_check.reproducibility==='string'&&nullableObject(result.human_request)&&nullableObject(result.error)&&nullableObject(result.continuation)&&resultSize<=262144;
+const transientSchedulePackage=state.specialist_id==='schedule_builder_specialist'&&result?.compact_data?.merge_result?.output_package?.contract==='schedule_package';const maxResultSize=transientSchedulePackage?11534336:262144;
+const valid=result&&result.contract==='specialist_result'&&result.contract_version==='1.0'&&result.task_id===state.task_id&&result.specialist_id===state.specialist_id&&Number.isInteger(result.attempt)&&result.attempt===expectedAttempt&&statuses.has(result.status)&&typeof result.summary==='string'&&objectArray(result.deliverables)&&artifactArray(result.artifact_refs)&&isObject(result.compact_data)&&stringArray(result.assumptions)&&stringArray(result.warnings)&&objectArray(result.evidence)&&isObject(result.self_check)&&typeof result.self_check.performed==='boolean'&&typeof result.self_check.passed==='boolean'&&objectArray(result.self_check.checks)&&typeof result.self_check.reproducibility==='string'&&nullableObject(result.human_request)&&nullableObject(result.error)&&nullableObject(result.continuation)&&resultSize<=maxResultSize;
 if(!valid) result={contract:'specialist_result',contract_version:'1.0',task_id:state.task_id,specialist_id:state.specialist_id,attempt:Number(state.retry_count)+1,status:'retryable_error',summary:'Specialist returned an invalid universal result contract.',deliverables:[],artifact_refs:[],compact_data:{},assumptions:[],warnings:[],evidence:[],self_check:{performed:false,passed:false,checks:[],reproducibility:''},human_request:null,error:{code:'INVALID_SPECIALIST_CONTRACT'},continuation:null};
 else if(['succeeded','partial'].includes(result.status)&&(!result.self_check.performed||!result.self_check.passed)) result={...result,status:'retryable_error',summary:'Specialist success was rejected because its mandatory self-check was not performed or did not pass.',error:{code:result.self_check.performed?'SELF_CHECK_FAILED':'SELF_CHECK_REQUIRED',previous_error:result.error},human_request:null};
 const decisionRecord=result.compact_data?.decision_record,decisionRecordValid=isObject(decisionRecord)&&decisionRecord.contract==='decision_record'&&decisionRecord.contract_version==='1.0'&&typeof decisionRecord.objective==='string'&&decisionRecord.objective.trim()&&isObject(decisionRecord.selected_action)&&stringArray(decisionRecord.selected_action.reason_codes);
@@ -661,108 +663,14 @@ const requestText=JSON.stringify(request).toLowerCase();
 const scheduleRequested=Boolean(inputs.schedule_request||request.schedule_request||request.task_type==='schedule_build'||request.build_mode||request.requested_keyword_scope||/(schedule|wconprod|wconhist|welspecs|compdatmd|gruptree|welltrack|t-navigator)/.test(requestText));
 const successful=['succeeded','partial'].includes(result.status);
 const excelToSchedule=successful&&x.specialist_id==='excel_extraction_specialist'&&scheduleRequested;
+const calculationToSchedule=successful&&x.specialist_id==='engineering_calculation_specialist'&&scheduleRequested;
 const context=(()=>{try{return JSON.parse(x.context_json||'{}')}catch{return {}}})();
 const loop=context.schedule_evidence_loop&&typeof context.schedule_evidence_loop==='object'?context.schedule_evidence_loop:{};
 const resumeSchedule=excelToSchedule&&loop.active===true&&loop.builder_packet&&typeof loop.builder_packet==='object';
-const scheduleToArtifact=successful&&x.specialist_id==='schedule_builder_specialist';
-return [{json:{...x,post_specialist_route:resumeSchedule?'resume_schedule':excelToSchedule?'replan':scheduleToArtifact?'publish':'verify',last_error_json:excelToSchedule?JSON.stringify({code:'EXCEL_EVIDENCE_READY',next_specialist:'schedule_builder_specialist',source_facts_packet:result.compact_data||{},artifact_refs:result.artifact_refs||[],evidence:result.evidence||[]}):x.last_error_json}}];
-""".strip()
-
-
-PREPARE_SCHEDULE_ARTIFACT_PUBLICATION = r"""
-const x=$json,result=x.specialist_result||{},arr=Array.isArray,obj=v=>v&&typeof v==='object'&&!Array.isArray(v),clean=v=>typeof v==='string'?v.trim():'';
-const refs=arr(result.artifact_refs)?result.artifact_refs.filter(obj):[],compact=obj(result.compact_data)?result.compact_data:{},merge=obj(compact.merge_result)?compact.merge_result:{},pkg=obj(merge.output_package)?merge.output_package:{};
-const sha=/^sha256:[a-f0-9]{64}$/i,existing=refs.find(r=>['schedule-package','schedule-draft'].includes(clean(r.kind))&&clean(r.ref)&&!clean(r.ref).startsWith('inline-schedule://')&&r.immutable===true&&sha.test(clean(r.manifest_hash||r.revision)));
-const packageValid=pkg.contract==='schedule_package'&&pkg.contract_version==='1.0'&&clean(pkg.root_path)&&sha.test(clean(pkg.package_hash))&&arr(pkg.files)&&pkg.files.length>0;
-const traceId=clean(x.trace_id)||`trace_${x.task_id}`,manifestHash=packageValid?clean(pkg.package_hash).toLowerCase():null,requestId=`publish_${x.task_id}_${Number(x.version)}_${manifestHash?manifestHash.slice(-12):'missing'}`.slice(0,200);
-const findings=[];if(!existing&&!packageValid)findings.push({code:'VALIDATED_SCHEDULE_PACKAGE_REQUIRED',severity:'error',message:'Schedule Builder must return merge_result.output_package with a SHA-256 package hash before governed publication.'});
-const publishRequest=!existing&&packageValid?{contract:'schedule_artifact_publish_request',contract_version:'1.0',task_id:x.task_id,trace_id:traceId,request_id:requestId,idempotency_key:`${x.task_id}:schedule-publish:${manifestHash}`,simulator_profile:{vendor:'Rock Flow Dynamics',simulator:'tNavigator',version:'22.2'},artifact:{kind:'schedule-package',package:pkg}}:null;
-return[{json:{...x,schedule_artifact_publish_request:publishRequest,artifact_publication_route:existing?'reuse':publishRequest?'publish':'blocked',artifact_publish_findings:findings,artifact_expected_hash:existing?clean(existing.manifest_hash||existing.revision).toLowerCase():manifestHash,artifact_existing_ref:existing||null}}];
-""".strip()
-
-
-BUILD_ARTIFACT_PRECHECK_RESULT = r"""
-const x=$json,findings=Array.isArray(x.artifact_publish_findings)?x.artifact_publish_findings:[];return[{json:{...x,schedule_artifact_publish_result:{contract:'schedule_artifact_publish_result',contract_version:'1.0',status:'needs_input',task_id:x.task_id,trace_id:x.trace_id||`trace_${x.task_id}`,request_id:x.schedule_artifact_publish_request?.request_id||null,idempotency_key:x.schedule_artifact_publish_request?.idempotency_key||null,simulator_profile:{vendor:'Rock Flow Dynamics',simulator:'tNavigator',version:'22.2'},artifact:null,package_summary:null,findings,hard_blockers:findings.map(f=>f.code)}}}];
-""".strip()
-
-
-NORMALIZE_ORCHESTRATOR_ARTIFACT_RESULT = r"""
-const base=$('Prepare SCHEDULE artifact publication').first().json,raw=$json.schedule_artifact_publish_result??$json,obj=v=>v&&typeof v==='object'&&!Array.isArray(v),arr=Array.isArray,clean=v=>typeof v==='string'?v.trim():'';
-const p=obj(raw)?raw:{},result=obj(base.specialist_result)?base.specialist_result:{},compact=obj(result.compact_data)?result.compact_data:{},request=obj(base.schedule_artifact_publish_request)?base.schedule_artifact_publish_request:{};
-const findings=arr(p.findings)?p.findings.slice(0,100):[],hard=arr(p.hard_blockers)?p.hard_blockers.slice(0,100):[],sha=/^sha256:[a-f0-9]{64}$/i,artifact=obj(p.artifact)?p.artifact:{};
-if(p.contract!=='schedule_artifact_publish_result'||p.contract_version!=='1.0')hard.push('ARTIFACT_PUBLISH_RESULT_CONTRACT_INVALID');if(clean(p.task_id)!==clean(base.task_id))hard.push('ARTIFACT_PUBLISH_TASK_MISMATCH');if(clean(p.request_id)!==clean(request.request_id))hard.push('ARTIFACT_PUBLISH_REQUEST_MISMATCH');
-const profile=obj(p.simulator_profile)?p.simulator_profile:{};if(clean(profile.vendor)!=='Rock Flow Dynamics'||clean(profile.simulator).toLowerCase()!=='tnavigator'||clean(profile.version)!=='22.2')hard.push('ARTIFACT_PUBLISH_PROFILE_MISMATCH');
-const manifestHash=clean(artifact.manifest_hash||artifact.revision).toLowerCase(),expectedHash=clean(base.artifact_expected_hash).toLowerCase();if(!clean(artifact.ref)||clean(artifact.ref).startsWith('inline-schedule://')||clean(artifact.kind)!=='schedule-package'||artifact.immutable!==true||!sha.test(manifestHash)||manifestHash!==expectedHash)hard.push('ARTIFACT_PUBLISH_BINDING_INVALID');
-const uniqueHard=[...new Set(hard.filter(Boolean))],published=p.status==='published'&&!uniqueHard.length;
-let nextResult=result;if(published){const refs=(arr(result.artifact_refs)?result.artifact_refs:[]).filter(r=>!String(r?.ref||'').startsWith('inline-schedule://')&&r?.kind!=='schedule-draft-inline'),publishedArtifact={ref:clean(artifact.ref),kind:'schedule-package',revision:manifestHash,manifest_hash:manifestHash,immutable:true,description:clean(artifact.description||'Governed immutable tNavigator SCHEDULE package.')};if(!refs.some(r=>r.ref===publishedArtifact.ref))refs.push(publishedArtifact);
- const merge=obj(compact.merge_result)?compact.merge_result:{},pkg=obj(merge.output_package)?merge.output_package:{},packageSummary={contract:pkg.contract||'schedule_package',contract_version:pkg.contract_version||'1.0',root_path:pkg.root_path||p.package_summary?.root_path||null,package_hash:manifestHash,files:arr(pkg.files)?pkg.files.slice(0,200).map(f=>({file_ref:f.file_ref,manifest:f.manifest||{}})):[]};const {generated_schedule,...compactRest}=compact,{generated_schedule:mergeText,output_package,...mergeRest}=merge;
- nextResult={...result,artifact_refs:refs,compact_data:{...compactRest,merge_result:{...mergeRest,output_package:packageSummary},artifact_publication_result:{...p,artifact:publishedArtifact}},evidence:[...(arr(result.evidence)?result.evidence:[]),{kind:'artifact_publication',artifact_ref:publishedArtifact.ref,manifest_hash:manifestHash,request_id:p.request_id}]};
-}else{const configuration=p.status==='needs_input'||uniqueHard.some(code=>['VALIDATED_SCHEDULE_PACKAGE_REQUIRED','ARTIFACT_SERVICE_CONFIGURATION_REQUIRED'].includes(code));nextResult={...result,status:configuration?'needs_input':'retryable_error',summary:configuration?'SCHEDULE artifact publication requires configuration or a valid package.':'The governed artifact service did not return a trustworthy immutable SCHEDULE reference.',human_request:{kind:configuration?'needs_input':'needs_decision',questions:[{id:'schedule_artifact_publication',text:'Resolve the artifact publication findings, then retry the governed task.',findings:[...findings,...uniqueHard.filter(code=>!findings.some(f=>f.code===code)).map(code=>({code,severity:'error'}))]}]},error:{code:configuration?'SCHEDULE_ARTIFACT_INPUT_REQUIRED':'SCHEDULE_ARTIFACT_PUBLICATION_FAILED',findings,hard_blockers:uniqueHard},continuation:null};}
-return[{json:{...base,specialist_result:nextResult,result_json:JSON.stringify(nextResult),schedule_artifact_publish_result:{...p,hard_blockers:uniqueHard},artifact_publication_route:published?'simulate':'blocked'}}];
-""".strip()
-
-
-PREPARE_SIMULATOR_SUBMIT = r"""
-const x=$json,result=x.specialist_result||{},arr=Array.isArray,obj=v=>v&&typeof v==='object'&&!Array.isArray(v),clean=v=>typeof v==='string'?v.trim():'';
-const refs=arr(result.artifact_refs)?result.artifact_refs.filter(obj):[];
-const sha=/^sha256:[a-f0-9]{64}$/i;
-const artifact=refs.find(r=>['schedule-package','schedule-draft'].includes(clean(r.kind))&&clean(r.ref)&&!clean(r.ref).startsWith('inline-schedule://')&&r.immutable===true&&sha.test(clean(r.manifest_hash||r.revision)));
-const traceId=clean(x.trace_id)||`trace_${x.task_id}`;
-const manifestHash=artifact?clean(artifact.manifest_hash||artifact.revision).toLowerCase():null;
-const requestId=`simcheck_${x.task_id}_${Number(x.version)}_${manifestHash?manifestHash.slice(-12):'missing'}`.slice(0,200);
-const findings=[];if(!artifact)findings.push({code:'IMMUTABLE_SCHEDULE_ARTIFACT_REQUIRED',severity:'error',message:'Persist the validated SCHEDULE package in governed immutable storage and return its SHA-256 manifest hash before simulator submission.'});
-const simulatorCheckRequest=artifact?{contract:'simulator_check_request',contract_version:'1.0',action:'SUBMIT',task_id:x.task_id,trace_id:traceId,request_id:requestId,idempotency_key:`${x.task_id}:schedule-check:${Number(x.version)}:${manifestHash}`,simulator_profile:{vendor:'Rock Flow Dynamics',simulator:'tNavigator',version:'22.2'},artifact:{ref:clean(artifact.ref),manifest_hash:manifestHash,kind:clean(artifact.kind),immutable:true},wait_for_terminal_seconds:0}:null;
-return[{json:{...x,simulator_check_request:simulatorCheckRequest,simulator_request_ready:Boolean(artifact),simulator_precheck_findings:findings,simulator_expected_artifact:artifact||null}}];
-""".strip()
-
-
-PREPARE_SIMULATOR_CONTINUE = r"""
-const x=$json,parse=(v,f)=>{try{return typeof v==='string'?JSON.parse(v):v??f}catch{return f}},clean=v=>typeof v==='string'?v.trim():'';
-const context=parse(x.context_json,{}),job=context.simulator_check&&typeof context.simulator_check==='object'?context.simulator_check:{};
-const specialistResult=parse(x.result_json,{});
-const response=x.human_response&&typeof x.human_response==='object'?x.human_response:{};
-const action=clean(response.action||response.text||'STATUS').toUpperCase();
-const allowed=new Set(['STATUS','CANCEL','RESULT']),valid=allowed.has(action)&&clean(job.job_id)&&Number.isInteger(Number(job.job_version))&&Number(job.job_version)>=0;
-const requestId=`simcheck_${x.task_id}_${Number(x.version)}_${action.toLowerCase()}`.slice(0,200);
-const request=valid?{contract:'simulator_check_request',contract_version:'1.0',action,task_id:x.task_id,trace_id:clean(job.trace_id)||clean(x.trace_id)||`trace_${x.task_id}`,request_id:requestId,idempotency_key:`${x.task_id}:schedule-check:${clean(job.job_id)}:${Number(job.job_version)}:${action}`,job_id:clean(job.job_id),expected_job_version:Number(job.job_version),simulator_profile:{vendor:'Rock Flow Dynamics',simulator:'tNavigator',version:'22.2'},wait_for_terminal_seconds:0}:null;
-return[{json:{...x,specialist_result:specialistResult,simulator_check_request:request,simulator_request_ready:valid,simulator_precheck_findings:valid?[]:[{code:'SIMULATOR_CONTINUATION_INVALID',severity:'error',message:'Use reply with human_response.action STATUS, RESULT or CANCEL for the active persisted simulator job.'}],simulator_expected_artifact:{manifest_hash:clean(job.artifact_manifest_hash)},simulator_continuation:true}}];
-""".strip()
-
-
-BUILD_SIMULATOR_PRECHECK_RESULT = r"""
-const x=$json,findings=Array.isArray(x.simulator_precheck_findings)?x.simulator_precheck_findings:[];
-return[{json:{...x,simulator_check_result:{contract:'simulator_check_result',contract_version:'1.0',status:'needs_input',action:x.simulator_check_request?.action||null,task_id:x.task_id,trace_id:x.trace_id||`trace_${x.task_id}`,request_id:x.simulator_check_request?.request_id||null,job_id:null,job_version:null,check_profile_id:null,simulator_profile:{vendor:'Rock Flow Dynamics',simulator:'tNavigator',version:'22.2'},artifact_manifest_hash:x.simulator_expected_artifact?.manifest_hash||null,result_hash:null,diagnostics:{error_count:null,warning_count:null,summary:'Simulator check was not submitted because deterministic preconditions failed.'},findings,hard_blockers:findings.map(f=>f.code),terminal:false,release_gate_passed:false,poll_after_seconds:0,result_artifact_refs:[]}}}];
-""".strip()
-
-
-NORMALIZE_ORCHESTRATOR_SIMULATOR_RESULT = r"""
-let base={};for(const name of['Prepare simulator SUBMIT','Prepare simulator continuation']){try{const candidate=$(name).first().json;if(candidate&&candidate.task_id){base=candidate;break}}catch{}}
-const raw=$json.simulator_check_result??$json,obj=v=>v&&typeof v==='object'&&!Array.isArray(v),arr=Array.isArray,clean=v=>typeof v==='string'?v.trim():'';
-const s=obj(raw)?raw:{},result=obj(base.specialist_result)?base.specialist_result:{},compact=obj(result.compact_data)?result.compact_data:{};
-const findings=arr(s.findings)?s.findings.slice(0,200):[],hard=arr(s.hard_blockers)?s.hard_blockers.slice(0,100):[];
-const expectedHash=clean(base.simulator_expected_artifact?.manifest_hash||base.simulator_check_request?.artifact?.manifest_hash).toLowerCase();
-const context=(()=>{try{return JSON.parse(base.context_json||'{}')}catch{return {}}})(),prior=obj(context.simulator_check)?context.simulator_check:{};
-if(s.contract!=='simulator_check_result'||s.contract_version!=='1.0')hard.push('SIMULATOR_RESULT_CONTRACT_INVALID');
-if(clean(s.task_id)!==clean(base.task_id))hard.push('SIMULATOR_RESULT_TASK_MISMATCH');
-const profile=obj(s.simulator_profile)?s.simulator_profile:{};if(clean(profile.vendor)!=='Rock Flow Dynamics'||clean(profile.simulator).toLowerCase()!=='tnavigator'||clean(profile.version)!=='22.2')hard.push('SIMULATOR_RESULT_PROFILE_MISMATCH');
-const actualHash=clean(s.artifact_manifest_hash).toLowerCase();if(expectedHash&&actualHash!==expectedHash)hard.push('SIMULATOR_RESULT_ARTIFACT_MISMATCH');
-if(base.simulator_continuation&&prior.job_id&&clean(s.job_id)!==clean(prior.job_id))hard.push('SIMULATOR_JOB_ID_MISMATCH');
-if(base.simulator_continuation&&Number.isInteger(Number(prior.job_version))&&(!Number.isInteger(Number(s.job_version))||Number(s.job_version)<Number(prior.job_version)))hard.push('SIMULATOR_JOB_VERSION_STALE');
-const uniqueHard=[...new Set(hard.filter(Boolean))],normalized={...s,hard_blockers:uniqueHard,findings:[...findings,...uniqueHard.filter(code=>!findings.some(f=>f.code===code)).map(code=>({code,severity:'error'}))],release_gate_passed:s.release_gate_passed===true&&!uniqueHard.length};
-const passed=normalized.status==='passed'&&normalized.release_gate_passed===true&&normalized.terminal===true;
-const pending=['queued','running'].includes(normalized.status)&&!uniqueHard.length&&clean(normalized.job_id)&&Number.isInteger(Number(normalized.job_version));
-let nextResult=result;if(!passed&&!pending){const configuration=['needs_input'].includes(normalized.status)||uniqueHard.includes('IMMUTABLE_SCHEDULE_ARTIFACT_REQUIRED');nextResult={...result,status:configuration?'needs_input':normalized.status==='failed'?'needs_decision':'retryable_error',summary:configuration?'SCHEDULE simulator gate requires configuration or an immutable artifact.':normalized.status==='failed'?'tNavigator 22.2 simulator check rejected the SCHEDULE package.':'Simulator check did not return trustworthy release evidence.',human_request:{kind:configuration?'needs_input':'needs_decision',questions:[{id:'simulator_check',text:'Resolve the reported simulator/artifact findings, then retry the governed task.',findings:normalized.findings}]},error:{code:configuration?'SIMULATOR_CHECK_INPUT_REQUIRED':'SIMULATOR_CHECK_FAILED',findings:normalized.findings},continuation:null};}
-if(passed)nextResult={...result,compact_data:{...compact,simulator_check_result:normalized,release_ready:compact.release_ready===true},evidence:[...(arr(result.evidence)?result.evidence:[]),{kind:'simulator_check',job_id:normalized.job_id,result_hash:normalized.result_hash,artifact_manifest_hash:normalized.artifact_manifest_hash,profile:'tNavigator 22.2'}]};
-const jobState=pending?{job_id:clean(normalized.job_id),job_version:Number(normalized.job_version),trace_id:clean(normalized.trace_id),artifact_manifest_hash:actualHash||expectedHash,status:normalized.status,poll_after_seconds:Number(normalized.poll_after_seconds||0),last_result:normalized}:null;
-return[{json:{...base,specialist_result:nextResult,result_json:JSON.stringify(nextResult),simulator_check_result:normalized,simulator_route:passed?'verify':pending?'pending':'blocked',simulator_job_state:jobState}}];
-""".strip()
-
-
-PERSIST_SIMULATOR_PENDING = r"""
-const x=$json,context=(()=>{try{return JSON.parse(x.context_json||'{}')}catch{return {}}})(),history=(()=>{try{return JSON.parse(x.history_json||'[]')}catch{return []}})();
-history.push({at:new Date().toISOString(),event:'simulator_check_pending',job_id:x.simulator_job_state?.job_id,job_version:x.simulator_job_state?.job_version,status:x.simulator_job_state?.status});if(history.length>100)history.splice(0,history.length-100);
-const version=Number(x.version)+1,pending={gate_id:`gate_${x.task_id}_${version}_simulator_check`,kind:'simulator_check_pending',reason:'The external tNavigator 22.2 check is queued or running. Continue explicitly; the workflow never polls indefinitely.',questions:[{id:'simulator_action',text:'Reply with human_response.action STATUS, RESULT or CANCEL.',job_id:x.simulator_job_state?.job_id,poll_after_seconds:x.simulator_job_state?.poll_after_seconds||0}],expected_version:version};
-return[{json:{...x,version,previous_version:Number(x.version),status:'awaiting_human',phase:'simulator_check',context_json:JSON.stringify({...context,simulator_check:x.simulator_job_state}),pending_human_json:JSON.stringify(pending),history_json:JSON.stringify(history),updated_at:new Date().toISOString()}}];
+const scheduleSuccess=successful&&x.specialist_id==='schedule_builder_specialist';
+const route=resumeSchedule?'resume_schedule':(excelToSchedule||calculationToSchedule)?'replan':'verify';
+const handoff=excelToSchedule?{code:'EXCEL_EVIDENCE_READY',next_specialist:'schedule_builder_specialist',source_facts_packet:result.compact_data||{},artifact_refs:result.artifact_refs||[],evidence:result.evidence||[]}:calculationToSchedule?{code:'CALCULATION_DATA_READY',next_specialist:'schedule_builder_specialist',calculation:result.compact_data?.calculation||{},warnings:result.warnings||[]}:null;
+return [{json:{...x,specialist_result:result,result_json:JSON.stringify(result),post_specialist_route:route,last_error_json:handoff?JSON.stringify(handoff):x.last_error_json}}];
 """.strip()
 
 
@@ -786,7 +694,7 @@ PREPARE_SCHEDULE_RESUME = r"""
 const x=$json;const result=x.specialist_result||{};const context=(()=>{try{return JSON.parse(x.context_json||'{}')}catch{return {}}})();const loop=context.schedule_evidence_loop&&typeof context.schedule_evidence_loop==='object'?context.schedule_evidence_loop:{};const original=loop.builder_packet&&typeof loop.builder_packet==='object'?loop.builder_packet:{};
 const facts=result.compact_data&&typeof result.compact_data==='object'?result.compact_data:{};const snapshot=String(facts.source_snapshot_hash||'');const correlation=String(facts.correlation_id||'');let valid=loop.active===true&&original.specialist_id==='schedule_builder_specialist'&&result.specialist_id==='excel_extraction_specialist'&&['succeeded','partial'].includes(result.status)&&snapshot&&correlation&&correlation===String(loop.expected_correlation_id||'');
 if(!valid){const failed={...result,status:'retryable_error',summary:'Excel evidence result cannot resume SCHEDULE Builder because correlation or snapshot metadata is missing.',error:{code:'INVALID_EXCEL_EVIDENCE_SNAPSHOT'},human_request:null};return[{json:{...x,specialist_result:failed,result_json:JSON.stringify(failed),schedule_resume_ready:false}}];}
-const priorReq=original.inputs?.schedule_request&&typeof original.inputs.schedule_request==='object'?original.inputs.schedule_request:{};const builderPacket={...original,attempt:Number(x.retry_count)+1,inputs:{...original.inputs,schedule_request:{...priorReq,source_facts_packet:facts,source_snapshot_hash:snapshot,previous_builder_findings:loop.last_builder_result?.error?.findings||[],evidence_iteration:Number(loop.excel_iterations||0)+1}}};
+const priorReq=original.inputs?.schedule_request&&typeof original.inputs.schedule_request==='object'?original.inputs.schedule_request:{};const nextAttempt=Number(x.retry_count)+1,nextVersion=Number(x.version)+1;const builderPacket={...original,attempt:nextAttempt,controls:{...(original.controls&&typeof original.controls==='object'?original.controls:{}),expected_version:nextVersion,idempotency_key:`${x.task_id}:specialist:schedule_builder_specialist:${nextAttempt}:${nextVersion}`,policy_version:'petroleum-schedule-policy-v1'},inputs:{...original.inputs,schedule_request:{...priorReq,source_facts_packet:facts,source_snapshot_hash:snapshot,previous_builder_findings:loop.last_builder_result?.error?.findings||[],evidence_iteration:Number(loop.excel_iterations||0)+1}}};
 const nextLoop={...loop,excel_iterations:Number(loop.excel_iterations||0)+1,builder_iterations:Number(loop.builder_iterations||1)+1,last_source_snapshot:snapshot};const history=(()=>{try{return JSON.parse(x.history_json||'[]')}catch{return []}})();history.push({at:new Date().toISOString(),event:'schedule_builder_resumed_with_excel_evidence',source_snapshot_hash:snapshot,excel_iteration:nextLoop.excel_iterations,builder_iteration:nextLoop.builder_iterations});if(history.length>100)history.splice(0,history.length-100);
 return[{json:{...x,version:Number(x.version)+1,previous_version:Number(x.version),status:'delegated',phase:'schedule_builder_resume',specialist_id:'schedule_builder_specialist',specialist_packet:builderPacket,specialist_json:JSON.stringify(builderPacket),result_json:JSON.stringify(result),context_json:JSON.stringify({...context,schedule_evidence_loop:nextLoop}),last_error_json:'{}',history_json:JSON.stringify(history),updated_at:new Date().toISOString(),schedule_resume_ready:true}}];
 """.strip()
@@ -856,6 +764,10 @@ PREPARE_FINAL_TRACE = r"""
 const x=$json;const parse=(v,f)=>{try{return typeof v==='string'?JSON.parse(v):v??f}catch{return f}};
 const pending=parse(x.pending_human_json,{}),result=parse(x.result_json,{}),verification=parse(x.verification_json,{}),error=parse(x.last_error_json,{}),plan=parse(x.plan_json,{});
 const compact=result?.compact_data&&typeof result.compact_data==='object'?result.compact_data:{};
+const obj=v=>v&&typeof v==='object'&&!Array.isArray(v),arr=Array.isArray,clean=v=>typeof v==='string'?v.trim():'';const digest=value=>{let text='';try{text=JSON.stringify(value)}catch{text=String(value??'')}let h=2166136261;for(const ch of text){h^=ch.charCodeAt(0);h=Math.imul(h,16777619)}return{hash:`fnv1a32:${(h>>>0).toString(16).padStart(8,'0')}`,bytes:new TextEncoder().encode(text).length}};
+const safeHash=value=>/^(?:fnv1a32:[a-f0-9]{8}|sha256:[a-f0-9]{64})$/i.test(clean(value))?clean(value).toLowerCase():null;
+const sanitizeToolCall=(value,index=0)=>{const v=obj(value)?value:{},action=obj(v.action)?v.action:{},input=v.input??v.toolInput??action.toolInput??action.tool_input??null,output=v.output??v.observation??null,inputMeta=input===null?null:digest(input),outputMeta=output===null?null:digest(output);return{name:clean(v.name||v.tool||action.tool||'agent_tool').slice(0,120),tool_call_id:clean(v.tool_call_id||v.toolCallId||v.id||action.tool_call_id||action.toolCallId).slice(0,200)||null,status:clean(v.status||(v.error?'error':'observed')).slice(0,30),stage:clean(v.stage).slice(0,40)||null,sequence:Number.isInteger(Number(v.sequence))?Number(v.sequence):index+1,input_hash:safeHash(v.input_hash)||inputMeta?.hash||null,input_bytes:Number.isInteger(Number(v.input_bytes))?Number(v.input_bytes):inputMeta?.bytes??null,output_hash:safeHash(v.output_hash)||outputMeta?.hash||null,output_bytes:Number.isInteger(Number(v.output_bytes))?Number(v.output_bytes):outputMeta?.bytes??null}};
+const sanitizeToolCalls=value=>(arr(value)?value:[]).slice(0,50).map(sanitizeToolCall);
 const records=Array.isArray(compact.decision_records)?compact.decision_records:[];
 const decisionRecord=verification?.decision_record||(records.length?records[records.length-1]:(compact.decision_record||plan.decision_record||null));
 const stage=String(x.phase||'error').toLowerCase(),allowed=new Set(['intake','plan','rag','baseline','excel','builder','merge','validate','verify','hitl','release','error']);
@@ -863,9 +775,9 @@ const normalizedStage=x.status==='awaiting_human'?'hitl':x.status==='completed'?
 const stageScores=[...(Array.isArray(plan.score)?plan.score:plan.score?[{stage:'plan',...plan.score}]:[]),...(Array.isArray(compact.stage_scores)?compact.stage_scores:[]),...(verification?.score?[{stage:'verify',...verification.score}]:[])],numericScores=stageScores.map(s=>Number(s.stage_score)).filter(Number.isFinite);const overall=numericScores.length?Math.min(...numericScores):compact.overall_score;
 const traceId=String(x.trace_id||`trace_${x.task_id||'unknown'}`),baseEvent={trace_id:traceId,task_id:x.task_id||null,actor:String(x.requested_by||'orchestrator')},events=[];
 if(plan.decision_record)events.push({...baseEvent,stage:'plan',event_type:'gate_decision',status:String(plan.planner_decision||plan.decision_record.selected_action?.action||'observed'),summary:'Universal Planner decision and deterministic readiness gate.',score:plan.score||null,decision_record:plan.decision_record});
-for(const entry of(Array.isArray(compact.trace_summary)?compact.trace_summary:[])){const raw=String(entry.stage||'builder').toLowerCase(),mapped=raw.includes('excel')?'excel':raw.includes('plan')?'plan':raw.includes('baseline')?'baseline':raw.includes('merge')?'merge':raw.includes('valid')?'validate':raw.includes('verif')?'verify':raw.includes('rag')?'rag':'builder';events.push({...baseEvent,stage:mapped,event_type:'stage_finished',status:String(entry.status||'observed'),summary:`${mapped} stage completed with observable decision evidence.`,score:entry.score||null,decision_record:entry.decision_record||null,tool_calls:Array.isArray(entry.tool_calls)?entry.tool_calls:[]});}
+for(const entry of(Array.isArray(compact.trace_summary)?compact.trace_summary:[])){const raw=String(entry.stage||'builder').toLowerCase(),mapped=raw.includes('excel')?'excel':raw.includes('plan')?'plan':raw.includes('baseline')?'baseline':raw.includes('merge')?'merge':raw.includes('valid')?'validate':raw.includes('verif')?'verify':raw.includes('rag')?'rag':'builder';events.push({...baseEvent,stage:mapped,event_type:'stage_finished',status:String(entry.status||'observed'),summary:`${mapped} stage completed with observable decision evidence.`,score:entry.score||null,decision_record:entry.decision_record||null,tool_calls:sanitizeToolCalls(entry.tool_calls)});}
 if(verification.decision_record)events.push({...baseEvent,stage:'verify',event_type:'gate_decision',status:String(verification.verdict||'observed'),summary:String(verification.summary||'Independent verification completed.'),score:verification.score||null,findings:Array.isArray(verification.findings)?verification.findings:[],decision_record:verification.decision_record});
-const traceEvent={...baseEvent,stage:normalizedStage,event_type:'orchestrator_response',status:String(x.status||'observed'),summary:String(x.message||result.summary||verification.summary||`Task ${x.status||'observed'} at ${x.phase||'unknown'} phase.`).slice(0,2000),tool_calls:Array.isArray(compact.tool_calls)?compact.tool_calls:[],evidence_refs:Array.isArray(result.evidence)?result.evidence:[],findings:Array.isArray(verification.findings)?verification.findings:(Array.isArray(error.findings)?error.findings:[]),score:overall==null?null:{overall_score:overall,stage_scores:stageScores},gate:Object.keys(pending).length?{gate_id:pending.gate_id||null,kind:pending.kind||null,reason:pending.reason||null}:null,decision_record:decisionRecord};events.push(traceEvent);
+const lowLevel=[...(arr(compact.agent_tool_trace)?compact.agent_tool_trace:[]),...(arr(compact.tool_calls)?compact.tool_calls:[]),...(arr(compact.intermediateSteps)?compact.intermediateSteps:[])];const traceEvent={...baseEvent,stage:normalizedStage,event_type:'orchestrator_response',status:String(x.status||'observed'),summary:String(x.message||result.summary||verification.summary||`Task ${x.status||'observed'} at ${x.phase||'unknown'} phase.`).slice(0,2000),tool_calls:sanitizeToolCalls(lowLevel),evidence_refs:Array.isArray(result.evidence)?result.evidence:[],findings:Array.isArray(verification.findings)?verification.findings:(Array.isArray(error.findings)?error.findings:[]),score:overall==null?null:{overall_score:overall,stage_scores:stageScores},gate:Object.keys(pending).length?{gate_id:pending.gate_id||null,kind:pending.kind||null,reason:pending.reason||null}:null,decision_record:decisionRecord};events.push(traceEvent);
 return [{json:{mas_trace_event:traceEvent,mas_trace_events:events.slice(0,100),passthrough:x}}];
 """.strip()
 
@@ -892,8 +804,8 @@ def build_orchestrator() -> dict:
     nodes: list[dict] = []
     c: dict = {}
     nodes += [
-        note("README — setup", (-1260, -900), "## UI-only setup (n8n 2.30.8)\n1. Create task-state and trace Data Tables using `n8n/README.md`.\n2. Select those tables in every purple Data Table node.\n3. Assign chat-model credentials to Planner and Verifier.\n4. Import and bind Excel adapter/agent, SCHEDULE Retrieval/Builder, Artifact Publisher, Simulator Adapter and MAS Trace Writer.\n5. Configure the two external HTTPS boundaries and Header Auth credentials.\n6. Import additional specialists, bind their static Call nodes, then enable deterministic allowlist entries.\n7. Test start → HITL → delegation → publication → simulation → verification before activation.\n\nNo environment/global-variable expressions, server filesystem, or suspended Wait execution is used.", 500, 440, 5),
-        note("Architecture", (-720, -900), "## Enterprise control plane\n- Data Table is authoritative durable state.\n- LLM plans; deterministic nodes own transitions.\n- Optimistic concurrency is `task_id + version`.\n- Human gates resume via a fresh invocation.\n- Model selects logical `specialist_id` only.\n- Independent Verifier is separated from Planner and Specialist.\n- Large artifacts remain outside compact orchestrator state.", 470, 340, 4),
+        note("README — setup", (-1260, -900), "## UI-only setup (n8n 2.30.8)\n1. Create task-state and trace Data Tables using `n8n/README.md`.\n2. Select them in every matching Data Table node.\n3. Assign Planner/Verifier credentials.\n4. Bind Excel adapter/agent, SCHEDULE Retrieval/Builder and MAS Trace Writer.\n5. Load expert keyword instructions/schema JSON into `schedule_mvp`.\n6. Test start → HITL → delegation → validation → verification → inline .INC.\n\nSCHEDULE input and result remain bounded text inside n8n. The control-plane uses UI credentials/bindings and Data Tables; no global-variable expressions, shell or server filesystem is used.", 500, 440, 5),
+        note("Architecture", (-720, -900), "## Serious MVP control plane\n- Data Table is authoritative durable state.\n- LLM plans; deterministic nodes own transitions.\n- Optimistic concurrency is `task_id + version`.\n- Human gates resume via a fresh invocation.\n- Model selects logical `specialist_id` only.\n- Independent Verifier is separated from Planner and Specialist.\n- One bounded baseline copy may live in task state; Planner/trace receive metadata only.\n- SCHEDULE result is returned as bounded inline `.INC` text.", 470, 360, 4),
         note("Extension point", (440, -900), "## Add a specialist safely\n1. Clone the universal specialist template.\n2. Preserve `specialist_packet` / `specialist_result` v1.0.\n3. Add logical capability metadata to Planner catalogue.\n4. Bind its workflow only in a static `Call … Specialist` node and enable its deterministic route in `Resolve allowlisted specialist`.\n5. Add contract, failure, HITL and verification tests.\n\nNever put a workflow ID in an LLM prompt or result.", 460, 340, 3),
         node("Authenticated engineering webhook", "n8n-nodes-base.webhook", 2.1, (-1260, -400), {"httpMethod": "POST", "path": "engineering-orchestrator", "authentication": "headerAuth", "responseMode": "lastNode", "options": {}}, credentials={"httpHeaderAuth": {"id": "REPLACE_IN_UI", "name": "REPLACE: engineering orchestrator inbound key"}}),
         set_fields("Mark HTTP entrypoint", (-1040, -400), [("entrypoint", "={{ 'http' }}", "string")]),
@@ -903,6 +815,9 @@ def build_orchestrator() -> dict:
             {"fieldName": "request_json", "fieldLabel": "Structured task JSON (optional; overrides text)", "fieldType": "textarea", "requiredField": False},
             {"fieldName": "context_json", "fieldLabel": "Structured engineering context JSON (optional)", "fieldType": "textarea", "requiredField": False},
             {"fieldName": "file", "fieldLabel": "Excel file (.xlsx or .xls; upload again when an approval gate precedes delegation)", "fieldType": "file", "multipleFiles": False, "acceptFileTypes": ".xlsx, .xls", "requiredField": False},
+            {"fieldName": "schedule_file", "fieldLabel": "Baseline SCHEDULE (.data/.inc/.sch/.txt, max 2 MiB)", "fieldType": "file", "multipleFiles": False, "acceptFileTypes": ".data, .inc, .sch, .txt", "requiredField": False},
+            {"fieldName": "trajectory_files", "fieldLabel": "Well trajectories (.dev) for Calculation Specialist", "fieldType": "file", "multipleFiles": True, "acceptFileTypes": ".dev", "requiredField": False},
+            {"fieldName": "surface_file", "fieldLabel": "ASCII CPS3 surface (.cps3/.grd/.grid/.txt) for Calculation Specialist", "fieldType": "file", "multipleFiles": False, "acceptFileTypes": ".cps3, .grd, .grid, .txt", "requiredField": False},
             {"fieldName": "task_id", "fieldLabel": "Task ID (resume/status)", "fieldType": "text", "requiredField": False},
             {"fieldName": "expected_version", "fieldLabel": "Expected version", "fieldType": "number", "requiredField": False},
             {"fieldName": "gate_id", "fieldLabel": "Gate ID", "fieldType": "text", "requiredField": False},
@@ -910,6 +825,8 @@ def build_orchestrator() -> dict:
             {"fieldName": "requested_by", "fieldLabel": "Engineering role", "fieldType": "text", "requiredField": True},
         ]}, "responseMode": "lastNode", "options": {"path": "engineering-orchestrator-form", "appendAttribution": False, "buttonLabel": "Submit controlled action", "ignoreBots": True, "includeUserInOutput": True}}),
         set_fields("Mark Form entrypoint", (-1040, -120), [("entrypoint", "={{ 'form' }}", "string")]),
+        if_node("Form has SCHEDULE upload?", (-900, -220), "={{ Boolean($binary.schedule_file) }}", True, "boolean"),
+        node("Extract SCHEDULE upload as UTF-8 text", "n8n-nodes-base.extractFromFile", 1.1, (-900, -80), {"operation": "text", "binaryPropertyName": "schedule_file", "destinationKey": "baseline_schedule_text", "options": {"encoding": "utf8", "stripBOM": True, "keepSource": "both"}}),
         node("When called by another workflow", "n8n-nodes-base.executeWorkflowTrigger", 1.2, (-1260, 160), {"inputSource": "passthrough"}),
         set_fields("Mark Sub-workflow entrypoint", (-1040, 160), [("entrypoint", "={{ 'subworkflow' }}", "string")]),
         code("Normalize invocation", (-800, -120), NORMALIZE),
@@ -921,17 +838,12 @@ def build_orchestrator() -> dict:
         data_table("Load task by ID", (-120, -40), "get", [("task_id", "={{ $json.task_id }}")], alwaysOutputData=True),
         code("Validate loaded task state", (120, -40), CHECK_LOADED, executeOnce=True),
         code("Apply action and version guard", (340, -40), APPLY_ACTION),
-        node("Resume action router", "n8n-nodes-base.switch", 3.4, (560, -40), {"mode": "expression", "numberOutputs": 4, "output": "={{ $json.outcome === 'persist_plan' ? 0 : $json.outcome === 'persist_simulator' ? 1 : $json.outcome === 'persist' ? 2 : 3 }}"}),
+        node("Resume action router", "n8n-nodes-base.switch", 3.4, (560, -40), {"mode": "expression", "numberOutputs": 3, "output": "={{ $json.outcome === 'persist_plan' ? 0 : $json.outcome === 'persist' ? 1 : 2 }}"}),
         data_table("CAS persist human action then plan", (800, -180), "update", [("task_id", "={{ $json.task_id }}"), ("version", "={{ $json.previous_version }}")], STATE_COLUMNS, alwaysOutputData=True),
-        data_table("CAS persist simulator continuation", (800, -40), "update", [("task_id", "={{ $json.task_id }}"), ("version", "={{ $json.previous_version }}")], STATE_COLUMNS, alwaysOutputData=True),
         data_table("CAS persist terminal human action", (800, 80), "update", [("task_id", "={{ $json.task_id }}"), ("version", "={{ $json.previous_version }}")], STATE_COLUMNS, alwaysOutputData=True),
         confirm_cas("Confirm human action planning CAS", (1020, -180), "Apply action and version guard"),
         if_node("Human action planning CAS succeeded?", (1240, -180), "={{ $json.cas_succeeded }}", True, "boolean"),
         if_node("Approved or continued task delegates directly?", (1460, -180), "={{ $json.should_delegate }}", True, "boolean"),
-        confirm_cas("Confirm simulator continuation CAS", (1020, -40), "Apply action and version guard"),
-        if_node("Simulator continuation CAS succeeded?", (1240, -40), "={{ $json.cas_succeeded }}", True, "boolean"),
-        code("Prepare simulator continuation", (1460, -40), PREPARE_SIMULATOR_CONTINUE),
-        if_node("Simulator continuation request valid?", (1680, -40), "={{ $json.simulator_request_ready }}", True, "boolean"),
         confirm_cas("Confirm terminal human action CAS", (1020, 80), "Apply action and version guard"),
         code("Prepare planner input", (580, -420), PLANNER_INPUT),
         node("Engineering Planner Agent", "@n8n/n8n-nodes-langchain.agent", 3.1, (820, -420), {"promptType": "define", "text": "={{ $json.planner_input }}", "hasOutputParser": True, "needsFallback": False, "options": {"systemMessage": ORCHESTRATOR_SYSTEM, "maxIterations": 4, "returnIntermediateSteps": False, "enableStreaming": False}}),
@@ -952,28 +864,13 @@ def build_orchestrator() -> dict:
         if_node("SCHEDULE RAG evidence ready?", (3260, -800), "={{ $json.schedule_rag_ready }}", True, "boolean"),
         node("Call SCHEDULE Builder Specialist", "n8n-nodes-base.executeWorkflow", 1.3, (3480, -860), {"source": "database", "workflowId": {"__rl": True, "value": "REPLACE_SCHEDULE_BUILDER_IN_UI", "mode": "list", "cachedResultName": "tNavigator SCHEDULE Builder — governed CREATE/REVISE pipeline"}, "workflowInputs": {"mappingMode": "defineBelow", "value": {"specialist_packet": "={{ $json.specialist_packet }}", "previous_specialist_result": "={{ $json.previous_specialist_result }}", "latest_human_response": "={{ $json.latest_human_response }}"}, "matchingColumns": [], "schema": [], "attemptToConvertTypes": False, "convertFieldsToString": False}, "mode": "once", "options": {"waitForSubWorkflow": True}}, onError="continueRegularOutput"),
         code("Build SCHEDULE RAG evidence gate", (3480, -720), BUILD_SCHEDULE_RAG_GATE),
-        node("Call Calculation Specialist", "n8n-nodes-base.executeWorkflow", 1.3, (2600, -660), {"source": "database", "workflowId": {"__rl": True, "value": "REPLACE_CALCULATION_SPECIALIST_IN_UI", "mode": "list", "cachedResultName": "Engineering Calculation Specialist"}, "workflowInputs": {"mappingMode": "defineBelow", "value": {"specialist_packet": "={{ $json.specialist_packet }}"}, "matchingColumns": [], "schema": [], "attemptToConvertTypes": False, "convertFieldsToString": False}, "mode": "once", "options": {"waitForSubWorkflow": True}}, onError="continueRegularOutput"),
+        node("Call Calculation Specialist", "n8n-nodes-base.executeWorkflow", 1.3, (2600, -660), {"source": "database", "workflowId": {"__rl": True, "value": "REPLACE_CALCULATION_ADAPTER_IN_UI", "mode": "list", "cachedResultName": "Engineering Calculation Specialist Adapter — Math Service"}, "workflowInputs": {"mappingMode": "defineBelow", "value": {"specialist_packet": "={{ $json.specialist_packet }}"}, "matchingColumns": [], "schema": [], "attemptToConvertTypes": False, "convertFieldsToString": False}, "mode": "once", "options": {"waitForSubWorkflow": True}}, onError="continueRegularOutput"),
         node("Call Data Specialist", "n8n-nodes-base.executeWorkflow", 1.3, (2600, -520), {"source": "database", "workflowId": {"__rl": True, "value": "REPLACE_DATA_SPECIALIST_IN_UI", "mode": "list", "cachedResultName": "Engineering Data Specialist"}, "workflowInputs": {"mappingMode": "defineBelow", "value": {"specialist_packet": "={{ $json.specialist_packet }}"}, "matchingColumns": [], "schema": [], "attemptToConvertTypes": False, "convertFieldsToString": False}, "mode": "once", "options": {"waitForSubWorkflow": True}}, onError="continueRegularOutput"),
         node("Call Document Specialist", "n8n-nodes-base.executeWorkflow", 1.3, (2600, -380), {"source": "database", "workflowId": {"__rl": True, "value": "REPLACE_DOCUMENT_SPECIALIST_IN_UI", "mode": "list", "cachedResultName": "Engineering Document Specialist"}, "workflowInputs": {"mappingMode": "defineBelow", "value": {"specialist_packet": "={{ $json.specialist_packet }}"}, "matchingColumns": [], "schema": [], "attemptToConvertTypes": False, "convertFieldsToString": False}, "mode": "once", "options": {"waitForSubWorkflow": True}}, onError="continueRegularOutput"),
         code("Normalize specialist result", (2820, -660), NORMALIZE_SPECIALIST),
         if_node("Specialist result is verifiable?", (2820, -660), "={{ $json.specialist_requires_verification }}", True, "boolean"),
         code("Route successful specialist handoff", (3040, -660), ROUTE_SUCCESSFUL_SPECIALIST),
-        node("Successful specialist next stage", "n8n-nodes-base.switch", 3.4, (3260, -660), {"mode": "expression", "numberOutputs": 4, "output": "={{ $json.post_specialist_route === 'replan' ? 0 : $json.post_specialist_route === 'resume_schedule' ? 1 : $json.post_specialist_route === 'publish' ? 2 : 3 }}"}),
-        code("Prepare SCHEDULE artifact publication", (3480, -1180), PREPARE_SCHEDULE_ARTIFACT_PUBLICATION),
-        node("SCHEDULE artifact publication route", "n8n-nodes-base.switch", 3.4, (3700, -1180), {"mode": "expression", "numberOutputs": 3, "output": "={{ $json.artifact_publication_route === 'reuse' ? 0 : $json.artifact_publication_route === 'publish' ? 1 : 2 }}"}),
-        node("Call SCHEDULE Artifact Publisher", "n8n-nodes-base.executeWorkflow", 1.3, (3920, -1240), {"source": "database", "workflowId": {"__rl": True, "value": "REPLACE_SCHEDULE_ARTIFACT_PUBLISHER_IN_UI", "mode": "list", "cachedResultName": "tNavigator SCHEDULE Artifact Publisher — immutable HTTPS boundary"}, "workflowInputs": {"mappingMode": "defineBelow", "value": {"schedule_artifact_publish_request": "={{ $json.schedule_artifact_publish_request }}"}, "matchingColumns": [], "schema": [], "attemptToConvertTypes": False, "convertFieldsToString": False}, "mode": "once", "options": {"waitForSubWorkflow": True}}, onError="continueRegularOutput"),
-        code("Build artifact publication precheck result", (3920, -1120), BUILD_ARTIFACT_PRECHECK_RESULT),
-        code("Normalize orchestrator artifact publication", (4140, -1180), NORMALIZE_ORCHESTRATOR_ARTIFACT_RESULT),
-        node("SCHEDULE artifact publication outcome", "n8n-nodes-base.switch", 3.4, (4360, -1180), {"mode": "expression", "numberOutputs": 2, "output": "={{ $json.artifact_publication_route === 'simulate' ? 0 : 1 }}"}),
-        code("Prepare simulator SUBMIT", (3480, -1040), PREPARE_SIMULATOR_SUBMIT),
-        if_node("Simulator submit preconditions valid?", (3700, -1040), "={{ $json.simulator_request_ready }}", True, "boolean"),
-        node("Call SCHEDULE Simulator Check Adapter", "n8n-nodes-base.executeWorkflow", 1.3, (3920, -1120), {"source": "database", "workflowId": {"__rl": True, "value": "REPLACE_SCHEDULE_SIMULATOR_CHECK_IN_UI", "mode": "list", "cachedResultName": "tNavigator SCHEDULE Simulator Check Adapter — governed HTTPS runner"}, "workflowInputs": {"mappingMode": "defineBelow", "value": {"simulator_check_request": "={{ $json.simulator_check_request }}"}, "matchingColumns": [], "schema": [], "attemptToConvertTypes": False, "convertFieldsToString": False}, "mode": "once", "options": {"waitForSubWorkflow": True}}, onError="continueRegularOutput"),
-        code("Build simulator precheck result", (3920, -980), BUILD_SIMULATOR_PRECHECK_RESULT),
-        code("Normalize orchestrator simulator result", (4140, -1060), NORMALIZE_ORCHESTRATOR_SIMULATOR_RESULT),
-        node("SCHEDULE simulator outcome", "n8n-nodes-base.switch", 3.4, (4360, -1060), {"mode": "expression", "numberOutputs": 3, "output": "={{ $json.simulator_route === 'verify' ? 0 : $json.simulator_route === 'pending' ? 1 : 2 }}"}),
-        code("Persist simulator pending state", (4580, -980), PERSIST_SIMULATOR_PENDING),
-        data_table("CAS persist simulator pending state", (4800, -980), "update", [("task_id", "={{ $json.task_id }}"), ("version", "={{ $json.previous_version }}")], STATE_COLUMNS, alwaysOutputData=True),
-        confirm_cas("Confirm simulator pending CAS", (5020, -980), "Persist simulator pending state"),
+        node("Successful specialist next stage", "n8n-nodes-base.switch", 3.4, (3260, -660), {"mode": "expression", "numberOutputs": 3, "output": "={{ $json.post_specialist_route === 'replan' ? 0 : $json.post_specialist_route === 'resume_schedule' ? 1 : 2 }}"}),
         code("Prepare SCHEDULE evidence retry", (3040, -400), PREPARE_SCHEDULE_EVIDENCE_RETRY),
         if_node("SCHEDULE evidence retry allowed?", (3260, -400), "={{ $json.schedule_evidence_retry }}", True, "boolean"),
         data_table("CAS persist SCHEDULE evidence retry", (3480, -400), "update", [("task_id", "={{ $json.task_id }}"), ("version", "={{ $json.previous_version }}")], STATE_COLUMNS, alwaysOutputData=True),
@@ -1004,10 +901,14 @@ def build_orchestrator() -> dict:
         code("Format orchestrator response", (4180, -200), FORMAT_RESPONSE, executeOnce=True),
     ]
 
-    for source in ["Mark HTTP entrypoint", "Mark Form entrypoint", "Mark Sub-workflow entrypoint"]:
+    for source in ["Mark HTTP entrypoint", "Mark Sub-workflow entrypoint"]:
         connect(c, source, "Normalize invocation")
     connect(c, "Authenticated engineering webhook", "Mark HTTP entrypoint")
     connect(c, "Engineering task form", "Mark Form entrypoint")
+    connect(c, "Mark Form entrypoint", "Form has SCHEDULE upload?")
+    connect(c, "Form has SCHEDULE upload?", "Extract SCHEDULE upload as UTF-8 text", source_index=0)
+    connect(c, "Form has SCHEDULE upload?", "Normalize invocation", source_index=1)
+    connect(c, "Extract SCHEDULE upload as UTF-8 text", "Normalize invocation")
     connect(c, "When called by another workflow", "Mark Sub-workflow entrypoint")
     connect(c, "Normalize invocation", "Route invocation action")
     connect(c, "Route invocation action", "Action router")
@@ -1023,22 +924,14 @@ def build_orchestrator() -> dict:
     connect(c, "Validate loaded task state", "Apply action and version guard")
     connect(c, "Apply action and version guard", "Resume action router")
     connect(c, "Resume action router", "CAS persist human action then plan", source_index=0)
-    connect(c, "Resume action router", "CAS persist simulator continuation", source_index=1)
-    connect(c, "Resume action router", "CAS persist terminal human action", source_index=2)
-    connect(c, "Resume action router", "Prepare final MAS trace event", source_index=3)
+    connect(c, "Resume action router", "CAS persist terminal human action", source_index=1)
+    connect(c, "Resume action router", "Prepare final MAS trace event", source_index=2)
     connect(c, "CAS persist human action then plan", "Confirm human action planning CAS")
     connect(c, "Confirm human action planning CAS", "Human action planning CAS succeeded?")
     connect(c, "Human action planning CAS succeeded?", "Approved or continued task delegates directly?", source_index=0)
     connect(c, "Human action planning CAS succeeded?", "Prepare final MAS trace event", source_index=1)
     connect(c, "Approved or continued task delegates directly?", "Resolve allowlisted specialist", source_index=0)
     connect(c, "Approved or continued task delegates directly?", "Prepare planner input", source_index=1)
-    connect(c, "CAS persist simulator continuation", "Confirm simulator continuation CAS")
-    connect(c, "Confirm simulator continuation CAS", "Simulator continuation CAS succeeded?")
-    connect(c, "Simulator continuation CAS succeeded?", "Prepare simulator continuation", source_index=0)
-    connect(c, "Simulator continuation CAS succeeded?", "Prepare final MAS trace event", source_index=1)
-    connect(c, "Prepare simulator continuation", "Simulator continuation request valid?")
-    connect(c, "Simulator continuation request valid?", "Call SCHEDULE Simulator Check Adapter", source_index=0)
-    connect(c, "Simulator continuation request valid?", "Build simulator precheck result", source_index=1)
     connect(c, "CAS persist terminal human action", "Confirm terminal human action CAS")
     connect(c, "Confirm terminal human action CAS", "Prepare final MAS trace event")
     connect(c, "Prepare planner input", "Engineering Planner Agent")
@@ -1084,29 +977,7 @@ def build_orchestrator() -> dict:
     connect(c, "Route successful specialist handoff", "Successful specialist next stage")
     connect(c, "Successful specialist next stage", "Prepare planner input", source_index=0)
     connect(c, "Successful specialist next stage", "Prepare SCHEDULE resume after Excel", source_index=1)
-    connect(c, "Successful specialist next stage", "Prepare SCHEDULE artifact publication", source_index=2)
-    connect(c, "Successful specialist next stage", "Prepare independent verification", source_index=3)
-    connect(c, "Prepare SCHEDULE artifact publication", "SCHEDULE artifact publication route")
-    connect(c, "SCHEDULE artifact publication route", "Prepare simulator SUBMIT", source_index=0)
-    connect(c, "SCHEDULE artifact publication route", "Call SCHEDULE Artifact Publisher", source_index=1)
-    connect(c, "SCHEDULE artifact publication route", "Build artifact publication precheck result", source_index=2)
-    connect(c, "Call SCHEDULE Artifact Publisher", "Normalize orchestrator artifact publication")
-    connect(c, "Build artifact publication precheck result", "Normalize orchestrator artifact publication")
-    connect(c, "Normalize orchestrator artifact publication", "SCHEDULE artifact publication outcome")
-    connect(c, "SCHEDULE artifact publication outcome", "Prepare simulator SUBMIT", source_index=0)
-    connect(c, "SCHEDULE artifact publication outcome", "Build specialist gate or error", source_index=1)
-    connect(c, "Prepare simulator SUBMIT", "Simulator submit preconditions valid?")
-    connect(c, "Simulator submit preconditions valid?", "Call SCHEDULE Simulator Check Adapter", source_index=0)
-    connect(c, "Simulator submit preconditions valid?", "Build simulator precheck result", source_index=1)
-    connect(c, "Call SCHEDULE Simulator Check Adapter", "Normalize orchestrator simulator result")
-    connect(c, "Build simulator precheck result", "Normalize orchestrator simulator result")
-    connect(c, "Normalize orchestrator simulator result", "SCHEDULE simulator outcome")
-    connect(c, "SCHEDULE simulator outcome", "Prepare independent verification", source_index=0)
-    connect(c, "SCHEDULE simulator outcome", "Persist simulator pending state", source_index=1)
-    connect(c, "SCHEDULE simulator outcome", "Build specialist gate or error", source_index=2)
-    connect(c, "Persist simulator pending state", "CAS persist simulator pending state")
-    connect(c, "CAS persist simulator pending state", "Confirm simulator pending CAS")
-    connect(c, "Confirm simulator pending CAS", "Prepare final MAS trace event")
+    connect(c, "Successful specialist next stage", "Prepare independent verification", source_index=2)
     connect(c, "Prepare SCHEDULE resume after Excel", "SCHEDULE resume snapshot valid?")
     connect(c, "SCHEDULE resume snapshot valid?", "CAS persist SCHEDULE resume", source_index=0)
     connect(c, "SCHEDULE resume snapshot valid?", "Build specialist gate or error", source_index=1)
@@ -1200,6 +1071,8 @@ const prepared=$('Prepare native Excel invocation').first().json||{};const packe
 let native=$json;if(native&&native.json&&typeof native.json==='object') native=native.json;
 if(typeof native==='string'){try{native=JSON.parse(native)}catch{native={}}}if(!native||typeof native!=='object'||Array.isArray(native)) native={};
 const strings=value=>Array.isArray(value)?value.map(entry=>typeof entry==='string'?entry:String(entry?.message??entry?.code??entry)).filter(Boolean):[];
+const obj=value=>value&&typeof value==='object'&&!Array.isArray(value),boundedHash=value=>{let text='';try{text=JSON.stringify(value)}catch{text=String(value??'')}let h=2166136261;for(const ch of text){h^=ch.charCodeAt(0);h=Math.imul(h,16777619)}return{hash:`fnv1a32:${(h>>>0).toString(16).padStart(8,'0')}`,bytes:new TextEncoder().encode(text).length}};
+const rawSteps=Array.isArray(native.intermediateSteps)?native.intermediateSteps:(Array.isArray(native.meta?.tool_calls)?native.meta.tool_calls:(Array.isArray(native.meta?.tool_call_ids)?native.meta.tool_call_ids.map(id=>({id,name:'excel_tool_call',status:'observed'})):[]));const agentToolTrace=rawSteps.slice(0,50).map((step,index)=>{const action=obj(step?.action)?step.action:{},input=action.toolInput??action.tool_input??step?.input??null,output=step?.observation??step?.output??null,inputMeta=boundedHash(input),outputMeta=boundedHash(output);return{name:String(action.tool||step?.name||step?.tool||'excel_tool_call').slice(0,120),tool_call_id:String(action.toolCallId||action.tool_call_id||step?.id||'').slice(0,200)||null,status:step?.error?'error':String(step?.status||'completed').slice(0,30),stage:'excel',sequence:index+1,input_hash:inputMeta.hash,input_bytes:inputMeta.bytes,output_hash:outputMeta.hash,output_bytes:outputMeta.bytes}});
 const data=native.data&&typeof native.data==='object'&&!Array.isArray(native.data)?native.data:{};
 const errors=Array.isArray(native.errors)?native.errors:[];
 const statusMap={success:'succeeded',partial:'partial',clarification_needed:'needs_input',error:'retryable_error'};
@@ -1240,7 +1113,7 @@ const reasonCodes=hardBlockers.length?hardBlockers:[scoreDecision==='continue'?'
 const missing=requested.filter(field=>!available.has(field.toLowerCase())),scoreQuestions=[...(status==='needs_input'?questions:[])];if(missing.length)scoreQuestions.push({id:'excel_missing_requested_fields',question:`Provide or identify workbook columns for: ${missing.join(', ')}.`,type:'text'});if(hardBlockers.includes('EXCEL_NO_FACT_ROWS'))scoreQuestions.push({id:'excel_no_fact_rows',question:'Confirm the target table, entity/date filters and whether an empty result is expected.',type:'text'});if(hardBlockers.includes('EXCEL_PROVENANCE_REQUIRED'))scoreQuestions.push({id:'excel_provenance',question:'Select a governed table/query that returns row-level workbook provenance.',type:'text'});
 const decisionRecord={contract:'decision_record',contract_version:'1.0',objective:String(packet.objective||'Extract governed workbook facts.'),considered_inputs:[{kind:'excel_specialist_packet',requested_fields:requested,correlation_id:correlationId||null},{kind:'native_excel_result',source_snapshot_hash:sourceSnapshotHash,row_count:rowCount,returned_count:returnedCount}],proposed_actions:[{action:'accept_source_snapshot'},{action:'request_targeted_excel_input'},{action:'retry_extraction'}],selected_action:{action:status,reason_codes:reasonCodes},rejected_actions:hardBlockers.map(code=>({action:'accept_source_snapshot',reason_codes:[code]})),assumptions:strings(native.assumptions),evidence_refs:[...refs,...evidence].slice(0,100),citations:[],tool_call_ids:Array.isArray(native.meta?.tool_call_ids)?native.meta.tool_call_ids.map(String).slice(0,100):[],unresolved_questions:scoreQuestions,acceptance_check_results:[{check:'scope_fit',score:scopeFit,passed:scopeFit===100},{check:'evidence_completeness',score:evidenceCompleteness,passed:evidenceCompleteness===100},{check:'source_authority_and_citation',score:sourceAuthority,passed:sourceAuthority===100},{check:'entity_temporal_consistency',score:entityTemporalConsistency,passed:entityTemporalConsistency===100},{check:'deterministic_validation_health',score:deterministicValidationHealth,passed:deterministicValidationHealth===100}]};
 const score={stage_score:stageScore,components:{scope_fit:scopeFit,evidence_completeness:evidenceCompleteness,source_authority_and_citation:sourceAuthority,entity_temporal_consistency:entityTemporalConsistency,deterministic_validation_health:deterministicValidationHealth},raw_counts:{requested_fields:requested.length,covered_fields:covered.length,row_count:rowCount,returned_count:returnedCount,provenance_entries:evidence.length,conflicts:conflicts.length,hard_blockers:hardBlockers.length},thresholds:{attention:85,hitl:70},decision:scoreDecision,provisional:true};
-return [{json:{specialist_result:{contract:'specialist_result',contract_version:'1.0',task_id:packet.task_id,specialist_id:'excel_extraction_specialist',attempt:packet.attempt,status,summary,deliverables:refs.length?[{kind:'excel_extraction',description:summary,artifact_refs:refs.map(ref=>ref.ref)}]:[],artifact_refs:refs,compact_data:{source_snapshot_hash:sourceSnapshotHash,correlation_id:correlationId,columns,preview_records:preview,row_count:rowCount,returned_count:returnedCount,truncated:Boolean(data.truncated),filters_applied:filters,field_mapping:mapping,conflicts,next_action:String(native.next_action||'handle_error'),decision_record:decisionRecord,stage_scores:[{stage:'excel_evidence',...score}],overall_score:stageScore,gate_decisions:[{stage:'excel_evidence',decision:scoreDecision,score:stageScore,reason_codes:reasonCodes}],trace_summary:[{stage:'excel',status,score,decision_record:decisionRecord}]},assumptions:strings(native.assumptions),warnings:strings(native.warnings),evidence,self_check:{performed:['succeeded','partial','needs_input'].includes(status),passed:selfPassed&&hardBlockers.length===0,checks:[{check:'native_result_contract',passed:Boolean(statusMap[native.status])},{check:'native_error_list_empty',passed:errors.length===0},{check:'bounded_compact_preview',passed:preview.length<=5},{check:'source_snapshot_hash',passed:Boolean(sourceSnapshotHash)},{check:'requested_fields_covered',passed:scopeFit===100},{check:'provenance_present',passed:sourceAuthority===100}],reproducibility:refs.length?'Use the governed artifact/result references, source_snapshot_hash and recorded provenance.':'Use source_snapshot_hash and the recorded compact evidence.'},human_request:status==='needs_input'?{kind:'needs_input',questions:scoreQuestions}:null,error:['retryable_error','fatal_error'].includes(status)?{code:'EXCEL_SPECIALIST_ERROR',details:errors.slice(0,20),native_error:nativeError}:null,continuation}}}];
+return [{json:{specialist_result:{contract:'specialist_result',contract_version:'1.0',task_id:packet.task_id,specialist_id:'excel_extraction_specialist',attempt:packet.attempt,status,summary,deliverables:refs.length?[{kind:'excel_extraction',description:summary,artifact_refs:refs.map(ref=>ref.ref)}]:[],artifact_refs:refs,compact_data:{source_snapshot_hash:sourceSnapshotHash,correlation_id:correlationId,columns,preview_records:preview,row_count:rowCount,returned_count:returnedCount,truncated:Boolean(data.truncated),filters_applied:filters,field_mapping:mapping,conflicts,next_action:String(native.next_action||'handle_error'),decision_record:decisionRecord,stage_scores:[{stage:'excel_evidence',...score}],overall_score:stageScore,gate_decisions:[{stage:'excel_evidence',decision:scoreDecision,score:stageScore,reason_codes:reasonCodes}],agent_tool_trace:agentToolTrace,trace_summary:[{stage:'excel',status,score,decision_record:decisionRecord,tool_calls:agentToolTrace}]},assumptions:strings(native.assumptions),warnings:strings(native.warnings),evidence,self_check:{performed:['succeeded','partial','needs_input'].includes(status),passed:selfPassed&&hardBlockers.length===0,checks:[{check:'native_result_contract',passed:Boolean(statusMap[native.status])},{check:'native_error_list_empty',passed:errors.length===0},{check:'bounded_compact_preview',passed:preview.length<=5},{check:'source_snapshot_hash',passed:Boolean(sourceSnapshotHash)},{check:'requested_fields_covered',passed:scopeFit===100},{check:'provenance_present',passed:sourceAuthority===100}],reproducibility:refs.length?'Use the governed artifact/result references, source_snapshot_hash and recorded provenance.':'Use source_snapshot_hash and the recorded compact evidence.'},human_request:status==='needs_input'?{kind:'needs_input',questions:scoreQuestions}:null,error:['retryable_error','fatal_error'].includes(status)?{code:'EXCEL_SPECIALIST_ERROR',details:errors.slice(0,20),native_error:nativeError}:null,continuation}}}];
 """.strip()
 
 

@@ -258,18 +258,26 @@ async function main() {
   assert.equal(weakVerification.score.stage_score, 80);
   assert.equal(weakVerification.verdict, 'pass_with_warnings');
 
-  const scheduleArtifact = {
-    ref: 'artifact://schedule/eng-1/package-1',
-    kind: 'schedule-package',
-    revision: `sha256:${'a'.repeat(64)}`,
-    description: 'immutable package',
-    immutable: true,
-    manifest_hash: `sha256:${'a'.repeat(64)}`,
-  };
+  const scheduleText = 'DATES\n  1 JAN 2025 /\n/\n';
   const scheduleResult = specialistResult({
     specialist_id: 'schedule_builder_specialist',
-    artifact_refs: [scheduleArtifact],
-    compact_data: { release_ready: true, decision_record: decisionRecord('Build SCHEDULE') },
+    artifact_refs: [],
+    deliverables: [{ kind: 'schedule_inc_text', filename: 'schedule.inc', schedule_text: scheduleText }],
+    compact_data: {
+      release_ready: true,
+      generated_schedule: scheduleText,
+      merge_result: {
+        status: 'merged',
+        generated_schedule: scheduleText,
+        output_package: {
+          contract: 'schedule_package',
+          contract_version: '1.0',
+          root_path: 'schedule.inc',
+          files: [{ file_ref: 'schedule.inc', text: scheduleText }],
+        },
+      },
+      decision_record: decisionRecord('Build SCHEDULE'),
+    },
   });
   const routedSchedule = (await execute(orchestrator, 'Route successful specialist handoff', {
     ...base,
@@ -278,82 +286,11 @@ async function main() {
     specialist_packet: { inputs: { schedule_request: { requested_keyword_scope: ['WCONPROD'] } } },
     context_json: '{}',
   }))[0].json;
-  assert.equal(routedSchedule.post_specialist_route, 'simulate');
-
-  const preparedSubmit = (await execute(orchestrator, 'Prepare simulator SUBMIT', {
-    ...routedSchedule,
-    trace_id: 'trace-1',
-  }))[0].json;
-  assert.equal(preparedSubmit.simulator_request_ready, true);
-  assert.equal(preparedSubmit.simulator_check_request.action, 'SUBMIT');
-  assert.equal(preparedSubmit.simulator_check_request.simulator_profile.version, '22.2');
-
-  const simulatorPass = {
-    contract: 'simulator_check_result',
-    contract_version: '1.0',
-    status: 'passed',
-    action: 'SUBMIT',
-    task_id: 'eng-1',
-    trace_id: 'trace-1',
-    request_id: preparedSubmit.simulator_check_request.request_id,
-    job_id: 'job-1',
-    job_version: 1,
-    check_profile_id: 'tnavigator-22.2-schedule-check-v1',
-    simulator_profile: { vendor: 'Rock Flow Dynamics', simulator: 'tNavigator', version: '22.2' },
-    artifact_manifest_hash: scheduleArtifact.manifest_hash,
-    result_hash: `sha256:${'b'.repeat(64)}`,
-    diagnostics: { error_count: 0, warning_count: 0, summary: 'passed' },
-    findings: [],
-    hard_blockers: [],
-    terminal: true,
-    release_gate_passed: true,
-    poll_after_seconds: 0,
-    result_artifact_refs: [],
-  };
-  const simulatorPassed = (await execute(
-    orchestrator,
-    'Normalize orchestrator simulator result',
-    { simulator_check_result: simulatorPass },
-    { 'Prepare simulator SUBMIT': preparedSubmit },
-  ))[0].json;
-  assert.equal(simulatorPassed.simulator_route, 'verify');
-  assert.equal(JSON.parse(simulatorPassed.result_json).compact_data.simulator_check_result.release_gate_passed, true);
-
-  const queued = (await execute(
-    orchestrator,
-    'Normalize orchestrator simulator result',
-    { simulator_check_result: { ...simulatorPass, status: 'queued', terminal: false, release_gate_passed: false, result_hash: null } },
-    { 'Prepare simulator SUBMIT': preparedSubmit },
-  ))[0].json;
-  assert.equal(queued.simulator_route, 'pending');
-  const queuedState = (await execute(orchestrator, 'Persist simulator pending state', queued))[0].json;
-  assert.equal(queuedState.status, 'awaiting_human');
-  assert.equal(JSON.parse(queuedState.pending_human_json).kind, 'simulator_check_pending');
-
-  const continued = (await execute(orchestrator, 'Apply action and version guard', {
-    ...queuedState,
-    state_found: true,
-    stored_status: 'awaiting_human',
-    stored_version: queuedState.version,
-    expected_version: queuedState.version,
-    action: 'reply',
-    gate_id: JSON.parse(queuedState.pending_human_json).gate_id,
-    requested_by: 'engineer',
-    human_response: { action: 'STATUS' },
-  }))[0].json;
-  assert.equal(continued.outcome, 'persist_simulator');
-  const continuationRequest = (await execute(orchestrator, 'Prepare simulator continuation', continued))[0].json;
-  assert.equal(continuationRequest.simulator_request_ready, true);
-  assert.equal(continuationRequest.simulator_check_request.action, 'STATUS');
-
-  const mismatched = (await execute(
-    orchestrator,
-    'Normalize orchestrator simulator result',
-    { simulator_check_result: { ...simulatorPass, artifact_manifest_hash: `sha256:${'c'.repeat(64)}` } },
-    { 'Prepare simulator SUBMIT': preparedSubmit },
-  ))[0].json;
-  assert.equal(mismatched.simulator_route, 'blocked');
-  assert(mismatched.simulator_check_result.hard_blockers.includes('SIMULATOR_RESULT_ARTIFACT_MISMATCH'));
+  assert.equal(routedSchedule.post_specialist_route, 'verify');
+  assert.equal(JSON.parse(routedSchedule.result_json).compact_data.generated_schedule, scheduleText);
+  const verifierHandoff = (await execute(orchestrator, 'Prepare independent verification', routedSchedule))[0].json;
+  assert.match(verifierHandoff.verifier_input, /schedule\.inc/);
+  assert.match(verifierHandoff.verifier_input, /WCONPROD|DATES/);
 
   const releaseBase = {
     task_id: 'eng-1',
@@ -367,20 +304,24 @@ async function main() {
     requested_by: 'engineer',
     human_response: null,
     pending_human_json: JSON.stringify({ gate_id: 'gate-release', kind: 'result_approval' }),
-    result_json: JSON.stringify({ ...scheduleResult, compact_data: { ...scheduleResult.compact_data, simulator_check_result: simulatorPass } }),
+    result_json: JSON.stringify(scheduleResult),
     verification_json: JSON.stringify({ verdict: 'pass' }),
     context_json: '{}',
     history_json: '[]',
   };
   const released = (await execute(orchestrator, 'Apply action and version guard', JSON.parse(JSON.stringify(releaseBase))))[0].json;
   assert.equal(released.status, 'completed');
-  assert.equal(JSON.parse(released.result_json).release.simulator_result_hash, simulatorPass.result_hash);
+  assert.equal(JSON.parse(released.result_json).release.filename, 'schedule.inc');
+  assert.equal(JSON.parse(released.result_json).release.schedule_text, scheduleText);
   const releaseBlocked = (await execute(orchestrator, 'Apply action and version guard', {
     ...releaseBase,
-    result_json: JSON.stringify(scheduleResult),
+    result_json: JSON.stringify({
+      ...scheduleResult,
+      compact_data: { ...scheduleResult.compact_data, generated_schedule: '', merge_result: { ...scheduleResult.compact_data.merge_result, generated_schedule: '' } },
+    }),
   }))[0].json;
   assert.equal(releaseBlocked.status, 'conflict');
-  assert.match(releaseBlocked.message, /simulator evidence/);
+  assert.match(releaseBlocked.message, /inline \.INC/);
 
   const traceState = {
     task_id: 'eng-1',
@@ -399,12 +340,16 @@ async function main() {
   assert(preparedTrace.mas_trace_events.some((event) => event.stage === 'plan'));
   assert(preparedTrace.mas_trace_events.some((event) => event.stage === 'excel'));
   assert(preparedTrace.mas_trace_events.some((event) => event.stage === 'verify'));
+  const excelTrace = preparedTrace.mas_trace_events.find((event) => event.stage === 'excel');
+  assert.equal(excelTrace.tool_calls[0].tool_call_id, 'query-1');
+  assert.equal(Object.prototype.hasOwnProperty.call(excelTrace.tool_calls[0], 'input_hash'), true);
+  assert.equal(JSON.stringify(excelTrace.tool_calls).includes('toolInput'), false);
 
   const traceRows = await execute(trace, 'Normalize MAS trace event', preparedTrace);
   assert.equal(traceRows.length, preparedTrace.mas_trace_events.length);
   assert(traceRows.every((row) => !row.json.trace_row.details_json.includes('raw_prompt')));
 
-  console.log('Universal decision runtime smoke: 15 scenarios passed');
+  console.log('Universal decision runtime smoke: 14 scenarios passed');
 }
 
 main().catch((error) => {

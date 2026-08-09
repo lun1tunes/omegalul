@@ -1,11 +1,11 @@
 {
   "id": "7ca6cc83-4f15-5eb3-a9f8-41099beecbfd",
   "name": "tNavigator SCHEDULE Hybrid Retrieval — executable RRF runtime",
-  "description": "Exact, PostgreSQL lexical, PGVector semantic and tag candidates with deterministic RRF and fail-closed citations.",
+  "description": "Lexical, semantic and exact-tag RRF with namespace isolation, full parent hydration and fail-closed expert schema lookup.",
   "nodes": [
     {
       "parameters": {
-        "content": "## Hybrid retrieval + exact schema lookup — n8n 2.30.8\n\nExact keyword + PostgreSQL full-text + PGVector semantic + tags → deterministic RRF, followed by a separate lookup of an accountable machine-readable catalogue. Every branch is constrained to approved tNavigator 22.2 content/access scope. Missing citations, keyword coverage or catalogue causes `abstain`; free text never defines grammar.",
+        "content": "## Hybrid retrieval + full parent hydration — n8n 2.30.8\n\nPostgreSQL full-text + PGVector semantic + exact tags → deterministic RRF per parent block → full active instruction/example hydration → expert schema lookup. Namespace and access filters are applied in every branch. Missing keyword instruction or schema causes `abstain`; prose never defines renderer field order.",
         "width": 610,
         "height": 450,
         "color": 5
@@ -22,7 +22,7 @@
     {
       "parameters": {
         "inputSource": "jsonExample",
-        "jsonExample": "{\"schedule_retrieval_request\": {\"query\": \"WCONPROD BHP forecast\", \"filters\": {\"simulator_version\": \"22.2\", \"authority_level\": \"vendor_manual\", \"access_scope\": \"petroleum-engineering\"}, \"top_k\": 10}}"
+        "jsonExample": "{\"schedule_retrieval_request\": {\"query\": \"WCONPROD лимит по воде прогноз\", \"filters\": {\"target_base\": \"schedule_mvp\", \"access_scope\": \"petroleum-engineering\", \"knowledge_types\": [\"keyword_instruction\", \"worked_example\"], \"keyword_families\": [\"WCONPROD\"]}, \"top_k\": 10}}"
       },
       "id": "a371113b-bae5-5366-839c-ab9956948c5f",
       "name": "Receive SCHEDULE retrieval request",
@@ -35,7 +35,7 @@
     },
     {
       "parameters": {
-        "jsCode": "const raw=$json.schedule_retrieval_request??$json;\nconst obj=v=>v&&typeof v==='object'&&!Array.isArray(v),clean=v=>typeof v==='string'?v.trim():'';\nconst parse=v=>{if(obj(v))return v;if(typeof v!=='string'||!v.trim())return{};try{const x=JSON.parse(v);return obj(x)?x:{}}catch{return{}}};\nconst f={...parse(raw.filters_json),...(obj(raw.filters)?raw.filters:{})},findings=[];\nconst query=clean(raw.query),accessScope=clean(f.access_scope||raw.access_scope),version=clean(f.simulator_version||raw.simulator_version),authority=clean(f.authority_level||raw.authority_level);\nif(!query)findings.push({code:'QUERY_REQUIRED',severity:'error'});\nif(query.length>8000)findings.push({code:'QUERY_TOO_LARGE',severity:'error'});\nif(version!=='22.2')findings.push({code:'EXACT_VERSION_REQUIRED',severity:'error'});\nif(authority!=='vendor_manual')findings.push({code:'AUTHORITY_FILTER_REQUIRED',severity:'error'});\nif(!accessScope)findings.push({code:'ACCESS_SCOPE_REQUIRED',severity:'error'});\nconst allowed=new Set([\"DATES\", \"INCLUDE\", \"GRUPTREE\", \"WELSPECS\", \"WELLTRACK\", \"COMPDATMD\", \"WCONHIST\", \"WCONPROD\", \"GCONPROD\", \"BRANPROP\", \"NODEPROP\", \"FRACTURE_SPECS\", \"FRACTURE_STAGE\", \"WECON\", \"WTEST\"]),exact=[...new Set((query.match(/\\b[A-Z][A-Z0-9_]+\\b/g)||[]).filter(k=>allowed.has(k)))];\nconst tags=Array.isArray(f.keyword_families)?f.keyword_families.map(v=>clean(v).toUpperCase()).filter(v=>allowed.has(v)):exact;\nconst topK=Math.min(30,Math.max(1,Math.trunc(Number(raw.top_k)||10)));\nreturn[{json:{contract:'schedule_retrieval_query',contract_version:'1.0',status:findings.length?'needs_input':'query_ready',query,top_k:topK,filters:{vendor:'Rock Flow Dynamics',simulator:'tNavigator',simulator_version:'22.2',authority_level:'vendor_manual',approval_status:'approved',access_scope:accessScope,keyword_families:tags},exact_keyword_terms:exact,findings}}];"
+        "jsCode": "const raw=$json.schedule_retrieval_request??$json,obj=v=>v&&typeof v==='object'&&!Array.isArray(v),clean=v=>typeof v==='string'?v.trim():'';\nconst parse=v=>{if(obj(v))return v;if(typeof v!=='string'||!v.trim())return{};try{const x=JSON.parse(v);return obj(x)?x:{}}catch{return{}}},f={...parse(raw.filters_json),...(obj(raw.filters)?raw.filters:{})},findings=[];\nconst query=clean(raw.query),targetBase=clean(f.target_base||raw.target_base||'schedule_mvp'),accessScope=clean(f.access_scope||raw.access_scope||'petroleum-engineering'),requestId=clean(raw.request_id),allowedBases=new Set(['schedule_mvp']);\nif(!query)findings.push({code:'QUERY_REQUIRED',severity:'error'});if(query.length>8000)findings.push({code:'QUERY_TOO_LARGE',severity:'error'});if(!allowedBases.has(targetBase))findings.push({code:'TARGET_BASE_NOT_ALLOWLISTED',severity:'error'});if(!accessScope)findings.push({code:'ACCESS_SCOPE_REQUIRED',severity:'error'});\nconst allowed=new Set([\"DATES\", \"INCLUDE\", \"GRUPTREE\", \"WELSPECS\", \"WELLTRACK\", \"COMPDATMD\", \"WCONHIST\", \"WCONPROD\", \"GCONPROD\", \"BRANPROP\", \"NODEPROP\", \"FRACTURE_SPECS\", \"FRACTURE_STAGE\", \"WECON\", \"WTEST\"]),exact=[...new Set((query.match(/\\b[A-Z][A-Z0-9_]+\\b/g)||[]).filter(k=>allowed.has(k)))],tags=Array.isArray(f.keyword_families)?f.keyword_families.map(v=>clean(v).toUpperCase()).filter(v=>allowed.has(v)):exact;\nconst types=Array.isArray(f.knowledge_types)?[...new Set(f.knowledge_types.map(v=>clean(v).toLowerCase()).filter(v=>['keyword_instruction','worked_example'].includes(v)))]:['keyword_instruction','worked_example'],topics=Array.isArray(f.topics)?[...new Set(f.topics.map(clean).filter(Boolean))]:[],patterns=Array.isArray(f.task_patterns)?[...new Set(f.task_patterns.map(clean).filter(Boolean))]:[];\nreturn[{json:{contract:'schedule_retrieval_query',contract_version:'1.0',status:findings.length?'needs_input':'query_ready',query,request_id:requestId||null,top_k:Math.min(30,Math.max(1,Math.trunc(Number(raw.top_k)||10))),filters:{target_base:targetBase,access_scope:accessScope,knowledge_types:types,keyword_families:tags,topics,task_patterns:patterns,simulator_version:'22.2',section:'SCHEDULE',knowledge_status:'current'},exact_keyword_terms:exact,findings}}];"
       },
       "id": "d11ab629-c51c-5b06-9f06-3aef520c2b31",
       "name": "Validate SCHEDULE retrieval request",
@@ -81,7 +81,7 @@
     },
     {
       "parameters": {
-        "jsCode": "const x=$json;\nreturn[{json:{...x,branch:'lexical',sql_parameters:[x.query,x.filters.access_scope,x.top_k,JSON.stringify(x.filters.keyword_families||[])]}}];"
+        "jsCode": "const x=$json;return[{json:{...x,branch:'lexical',sql_parameters:[x.query,x.filters.target_base,x.filters.access_scope,x.top_k,JSON.stringify(x.filters.keyword_families||[]),JSON.stringify(x.filters.knowledge_types||[])]}}];"
       },
       "id": "6f1754d3-53ed-5463-83f0-2c40870b2b1d",
       "name": "Prepare lexical retrieval",
@@ -95,7 +95,7 @@
     {
       "parameters": {
         "operation": "executeQuery",
-        "query": "WITH authorized AS (\n  SELECT id, text, metadata,\n         regexp_split_to_array(\n           upper(regexp_replace(coalesce(metadata->>'keyword_families',''), '[\\[\\]\"]', '', 'g')),\n           '\\s*,\\s*'\n         ) AS keyword_tags\n  FROM tnavigator_schedule_knowledge_v1\n  WHERE metadata @> jsonb_build_object(\n    'vendor','Rock Flow Dynamics','simulator','tNavigator','simulator_version','22.2',\n    'authority_level','vendor_manual','approval_status','approved','access_scope',$2\n  )\n), ranked AS (\n  SELECT id::text AS candidate_id,\n         text AS page_content,\n         metadata,\n         CASE WHEN EXISTS (\n           SELECT 1 FROM jsonb_array_elements_text($4::jsonb) requested\n           WHERE upper(trim(requested.value)) = ANY (keyword_tags)\n         ) THEN 1 ELSE 0 END AS exact_hit,\n         ts_rank_cd(to_tsvector('simple', coalesce(text,'')), websearch_to_tsquery('simple',$1)) AS lexical_score\n  FROM authorized\n  WHERE to_tsvector('simple', coalesce(text,'')) @@ websearch_to_tsquery('simple',$1)\n     OR EXISTS (\n       SELECT 1 FROM jsonb_array_elements_text($4::jsonb) requested\n       WHERE upper(trim(requested.value)) = ANY (keyword_tags)\n     )\n)\nSELECT candidate_id,page_content,metadata,exact_hit,lexical_score,\n       row_number() OVER (ORDER BY exact_hit DESC, lexical_score DESC, candidate_id) AS lexical_rank\nFROM ranked\nORDER BY lexical_rank\nLIMIT $3",
+        "query": "WITH authorized AS (SELECT id,text,metadata FROM tnavigator_schedule_knowledge_v1 WHERE metadata->>'target_base'=$2 AND metadata->>'access_scope'=$3 AND metadata->>'knowledge_status'='current' AND metadata->>'knowledge_type' IN (SELECT jsonb_array_elements_text($6::jsonb))), ranked AS (SELECT id::text candidate_id,text page_content,metadata,CASE WHEN EXISTS(SELECT 1 FROM jsonb_array_elements_text($5::jsonb) q WHERE upper(trim(q.value))=ANY(regexp_split_to_array(upper(regexp_replace(coalesce(metadata->>'keyword_families',''),'[\\[\\]\"]','','g')),'\\s*,\\s*'))) THEN 1 ELSE 0 END exact_hit,ts_rank_cd(to_tsvector('simple',coalesce(text,'')),websearch_to_tsquery('simple',$1)) lexical_score FROM authorized WHERE to_tsvector('simple',coalesce(text,''))@@websearch_to_tsquery('simple',$1) OR EXISTS(SELECT 1 FROM jsonb_array_elements_text($5::jsonb) q WHERE upper(trim(q.value))=ANY(regexp_split_to_array(upper(regexp_replace(coalesce(metadata->>'keyword_families',''),'[\\[\\]\"]','','g')),'\\s*,\\s*')))) SELECT candidate_id,page_content,metadata,exact_hit,lexical_score,row_number() OVER(ORDER BY exact_hit DESC,lexical_score DESC,candidate_id) lexical_rank FROM ranked ORDER BY lexical_rank LIMIT $4",
         "options": {
           "queryReplacement": "={{ $json.sql_parameters }}",
           "queryBatching": "single",
@@ -122,7 +122,7 @@
     },
     {
       "parameters": {
-        "jsCode": "const q=$('Validate SCHEDULE retrieval request').first().json;\nconst input=$input.all(),error=input.find(i=>i.json?.error||i.json?.message&&i.json?.level==='error');\nconst candidates=input.filter(i=>i.json?.candidate_id&&i.json?.page_content!==undefined).map((i,n)=>({candidate_id:String(i.json.candidate_id),page_content:String(i.json.page_content||''),metadata:i.json.metadata||{},rank:Number(i.json.lexical_rank||n+1),score:Number(i.json.lexical_score||0),exact_hit:Boolean(Number(i.json.exact_hit||0))}));\nreturn[{json:{branch:'lexical',query:q,candidates,branch_findings:error?[{code:'LEXICAL_BRANCH_FAILED',severity:'error',message:String(error.json.error||error.json.message)}]:[]}}];"
+        "jsCode": "const q=$('Validate SCHEDULE retrieval request').first().json,input=$input.all(),error=input.find(i=>i.json?.error||i.json?.message&&i.json?.level==='error'),candidates=input.filter(i=>i.json?.candidate_id&&i.json?.page_content!==undefined).map((i,n)=>({candidate_id:String(i.json.candidate_id),page_content:String(i.json.page_content||''),metadata:i.json.metadata||{},rank:Number(i.json.lexical_rank||n+1),score:Number(i.json.lexical_score||0),exact_hit:Boolean(Number(i.json.exact_hit||0))}));return[{json:{branch:'lexical',query:q,candidates,branch_findings:error?[{code:'LEXICAL_BRANCH_FAILED',severity:'error',message:String(error.json.error||error.json.message)}]:[]}}];"
       },
       "id": "4ca2d676-650c-56d3-af3d-dffce875ad50",
       "name": "Wrap lexical candidates",
@@ -135,7 +135,7 @@
     },
     {
       "parameters": {
-        "jsCode": "const x=$('Validate SCHEDULE retrieval request').first().json;\nreturn[{json:{...x,branch:'tag',sql_parameters:[x.filters.access_scope,JSON.stringify(x.filters.keyword_families||[]),x.top_k]}}];"
+        "jsCode": "const x=$('Validate SCHEDULE retrieval request').first().json;return[{json:{...x,branch:'tag',sql_parameters:[x.filters.target_base,x.filters.access_scope,JSON.stringify(x.filters.keyword_families||[]),JSON.stringify(x.filters.topics||[]),JSON.stringify(x.filters.task_patterns||[]),JSON.stringify(x.filters.knowledge_types||[]),x.top_k]}}];"
       },
       "id": "5b580035-8714-52a2-902d-1d4e5acfb5f5",
       "name": "Prepare tag retrieval",
@@ -149,7 +149,7 @@
     {
       "parameters": {
         "operation": "executeQuery",
-        "query": "SELECT id::text AS candidate_id,text AS page_content,metadata,\n       row_number() OVER (ORDER BY id::text) AS tag_rank\nFROM tnavigator_schedule_knowledge_v1\nWHERE metadata @> jsonb_build_object(\n  'vendor','Rock Flow Dynamics','simulator','tNavigator','simulator_version','22.2',\n  'authority_level','vendor_manual','approval_status','approved','access_scope',$1\n)\nAND ($2::jsonb = '[]'::jsonb OR EXISTS (\n  SELECT 1 FROM jsonb_array_elements_text($2::jsonb) q\n  WHERE upper(trim(q.value)) = ANY (\n    regexp_split_to_array(\n      upper(regexp_replace(coalesce(metadata->>'keyword_families',''), '[\\[\\]\"]', '', 'g')),\n      '\\s*,\\s*'\n    )\n  )\n))\nORDER BY id::text\nLIMIT $3",
+        "query": "SELECT id::text candidate_id,text page_content,metadata,row_number() OVER(ORDER BY id::text) tag_rank FROM tnavigator_schedule_knowledge_v1 WHERE metadata->>'target_base'=$1 AND metadata->>'access_scope'=$2 AND metadata->>'knowledge_status'='current' AND metadata->>'knowledge_type' IN (SELECT jsonb_array_elements_text($6::jsonb)) AND (($3::jsonb='[]'::jsonb AND $4::jsonb='[]'::jsonb AND $5::jsonb='[]'::jsonb) OR EXISTS(SELECT 1 FROM jsonb_array_elements_text($3::jsonb) q WHERE upper(trim(q.value))=ANY(regexp_split_to_array(upper(regexp_replace(coalesce(metadata->>'keyword_families',''),'[\\[\\]\"]','','g')),'\\s*,\\s*'))) OR EXISTS(SELECT 1 FROM jsonb_array_elements_text($4::jsonb) q WHERE lower(trim(q.value))=ANY(regexp_split_to_array(lower(regexp_replace(coalesce(metadata->>'topics',''),'[\\[\\]\"]','','g')),'\\s*,\\s*'))) OR EXISTS(SELECT 1 FROM jsonb_array_elements_text($5::jsonb) q WHERE lower(trim(q.value))=ANY(regexp_split_to_array(lower(regexp_replace(coalesce(metadata->>'task_patterns',''),'[\\[\\]\"]','','g')),'\\s*,\\s*')))) ORDER BY id::text LIMIT $7",
         "options": {
           "queryReplacement": "={{ $json.sql_parameters }}",
           "queryBatching": "single",
@@ -176,7 +176,7 @@
     },
     {
       "parameters": {
-        "jsCode": "const q=$('Validate SCHEDULE retrieval request').first().json;\nconst input=$input.all(),error=input.find(i=>i.json?.error||i.json?.message&&i.json?.level==='error');\nconst candidates=input.filter(i=>i.json?.candidate_id&&i.json?.page_content!==undefined).map((i,n)=>({candidate_id:String(i.json.candidate_id),page_content:String(i.json.page_content||''),metadata:i.json.metadata||{},rank:Number(i.json.tag_rank||n+1),score:0}));\nreturn[{json:{branch:'tag',query:q,candidates,branch_findings:error?[{code:'TAG_BRANCH_FAILED',severity:'error',message:String(error.json.error||error.json.message)}]:[]}}];"
+        "jsCode": "const q=$('Validate SCHEDULE retrieval request').first().json,input=$input.all(),error=input.find(i=>i.json?.error||i.json?.message&&i.json?.level==='error'),candidates=input.filter(i=>i.json?.candidate_id&&i.json?.page_content!==undefined).map((i,n)=>({candidate_id:String(i.json.candidate_id),page_content:String(i.json.page_content||''),metadata:i.json.metadata||{},rank:Number(i.json.tag_rank||n+1),score:0}));return[{json:{branch:'tag',query:q,candidates,branch_findings:error?[{code:'TAG_BRANCH_FAILED',severity:'error',message:String(error.json.error||error.json.message)}]:[]}}];"
       },
       "id": "c5c0feee-cb4e-5754-9334-cdb3ce364ef8",
       "name": "Wrap tag candidates",
@@ -207,28 +207,16 @@
           "metadata": {
             "metadataValues": [
               {
-                "name": "vendor",
-                "value": "Rock Flow Dynamics"
-              },
-              {
-                "name": "simulator",
-                "value": "tNavigator"
-              },
-              {
-                "name": "simulator_version",
-                "value": "22.2"
-              },
-              {
-                "name": "authority_level",
-                "value": "vendor_manual"
-              },
-              {
-                "name": "approval_status",
-                "value": "approved"
+                "name": "target_base",
+                "value": "={{ $json.filters.target_base }}"
               },
               {
                 "name": "access_scope",
                 "value": "={{ $json.filters.access_scope }}"
+              },
+              {
+                "name": "knowledge_status",
+                "value": "current"
               }
             ]
           }
@@ -279,7 +267,7 @@
     },
     {
       "parameters": {
-        "jsCode": "const q=$('Validate SCHEDULE retrieval request').first().json;\nconst input=$input.all(),error=input.find(i=>i.json?.error||i.json?.message&&i.json?.level==='error');\nconst candidates=input.map((i,n)=>{const d=i.json.document||{};return{candidate_id:String(d.metadata?.chunk_id||d.metadata?.ingest_key||''),page_content:String(d.pageContent||''),metadata:d.metadata||{},rank:n+1,score:Number(i.json.score||0)}}).filter(c=>c.candidate_id&&c.page_content);\nreturn[{json:{branch:'semantic',query:q,candidates,branch_findings:error?[{code:'SEMANTIC_BRANCH_FAILED',severity:'error',message:String(error.json.error||error.json.message)}]:[]}}];"
+        "jsCode": "const q=$('Validate SCHEDULE retrieval request').first().json,input=$input.all(),error=input.find(i=>i.json?.error||i.json?.message&&i.json?.level==='error'),candidates=input.map((i,n)=>{const d=i.json.document||{};return{candidate_id:String(d.metadata?.chunk_id||d.metadata?.ingest_key||''),page_content:String(d.pageContent||''),metadata:d.metadata||{},rank:n+1,score:Number(i.json.score||0)}}).filter(c=>c.candidate_id&&c.page_content);return[{json:{branch:'semantic',query:q,candidates,branch_findings:error?[{code:'SEMANTIC_BRANCH_FAILED',severity:'error',message:String(error.json.error||error.json.message)}]:[]}}];"
       },
       "id": "66b40adf-aceb-596c-a2c2-1d80f0942c0d",
       "name": "Wrap semantic candidates",
@@ -306,7 +294,7 @@
     },
     {
       "parameters": {
-        "jsCode": "const packets=$input.all().map(i=>i.json),q=packets.find(p=>p.query)?.query||{},by=new Map(),k=60;\nconst required={vendor:'Rock Flow Dynamics',simulator:'tNavigator',simulator_version:'22.2',authority_level:'vendor_manual',approval_status:'approved',access_scope:q.filters?.access_scope};\nconst validMeta=m=>m&&Object.entries(required).every(([a,b])=>String(m[a]??'')===String(b??''));\nconst branchFindings=packets.flatMap(p=>Array.isArray(p.branch_findings)?p.branch_findings:[]),findings=[...branchFindings];\nfor(const p of packets){for(const c of(Array.isArray(p.candidates)?p.candidates:[])){if(!validMeta(c.metadata))continue;const id=String(c.candidate_id||'');if(!id)continue;const x=by.get(id)||{candidate_id:id,page_content:String(c.page_content||''),metadata:c.metadata,rrf_score:0,branches:[],ranks:{}};x.rrf_score+=1/(k+Math.max(1,Number(c.rank)||999));x.branches.push(p.branch);x.ranks[p.branch]=Number(c.rank)||999;if(c.exact_hit)x.rrf_score+=0.02;by.set(id,x)}}\nconst results=[...by.values()].sort((a,b)=>b.rrf_score-a.rrf_score||a.candidate_id.localeCompare(b.candidate_id)).slice(0,Number(q.top_k)||10);\nconst normalizeTags=v=>{if(Array.isArray(v))return v.map(String).map(x=>x.trim().toUpperCase()).filter(Boolean);if(typeof v==='string'){try{const p=JSON.parse(v);if(Array.isArray(p))return normalizeTags(p)}catch{}return v.replace(/[\\[\\]\"]/g,'').split(',').map(x=>x.trim().toUpperCase()).filter(Boolean)}return[]};\nconst citations=results.map(r=>({candidate_id:r.candidate_id,document_id:String(r.metadata.document_id||''),document_revision:String(r.metadata.document_revision||''),source_hash:String(r.metadata.source_hash||''),page:String(r.metadata.page||''),heading:String(r.metadata.heading||''),keyword_families:normalizeTags(r.metadata.keyword_families),rrf_score:Number(r.rrf_score.toFixed(8)),branches:[...new Set(r.branches)].sort()}));\nconst missing=citations.filter(c=>!c.document_id||!c.document_revision||!c.source_hash||(!c.page&&!c.heading));\nconst requested=Array.isArray(q.exact_keyword_terms)?q.exact_keyword_terms.map(String).map(x=>x.toUpperCase()):[],covered=new Set(citations.flatMap(c=>c.keyword_families));\nconst uncovered=requested.filter(k=>!covered.has(k));\nif(!results.length)findings.push({code:'NO_AUTHORIZED_EVIDENCE',severity:'error'});\nif(missing.length)findings.push({code:'CITATION_INCOMPLETE',severity:'error',candidate_ids:missing.map(x=>x.candidate_id)});\nif(uncovered.length)findings.push({code:'KEYWORD_COVERAGE_INCOMPLETE',severity:'error',keywords:uncovered});\nconst hard=findings.length>0;\nreturn[{json:{contract:'schedule_retrieval_result',contract_version:'1.0',status:hard?'abstain':'succeeded',query:q.query,filters:q.filters,results:hard?[]:results.map(r=>({candidate_id:r.candidate_id,text:r.page_content,metadata:r.metadata,rrf_score:Number(r.rrf_score.toFixed(8)),branches:[...new Set(r.branches)].sort()})),citations:hard?[]:citations,findings,retrieval:{algorithm:'rrf',rrf_k:k,branches:['lexical','semantic','tag'],candidate_count:by.size,returned:hard?0:results.length},evidence_ready:!hard}}];"
+        "jsCode": "const packets=$input.all().map(i=>i.json),q=packets.find(p=>p.query)?.query||{},by=new Map(),k=60,arr=Array.isArray,clean=v=>typeof v==='string'?v.trim():'';\nconst validMeta=m=>m&&String(m.target_base||'')===String(q.filters?.target_base||'')&&String(m.access_scope||'')===String(q.filters?.access_scope||'')&&String(m.knowledge_status||'')==='current'&&(q.filters?.knowledge_types||[]).includes(String(m.knowledge_type||'')),findings=packets.flatMap(p=>arr(p.branch_findings)?p.branch_findings:[]);\nfor(const p of packets)for(const c of(arr(p.candidates)?p.candidates:[])){if(!validMeta(c.metadata))continue;const id=String(c.candidate_id||''),parent=String(c.metadata.parent_key||`${c.metadata.target_base}:${c.metadata.knowledge_id}:${c.metadata.revision}`);if(!id||!parent)continue;const x=by.get(parent)||{parent_key:parent,representative_chunk_id:id,page_content:String(c.page_content||''),metadata:c.metadata,rrf_score:0,branches:[],chunk_ids:[]};x.rrf_score+=1/(k+Math.max(1,Number(c.rank)||999));if(c.exact_hit)x.rrf_score+=.02;x.branches.push(p.branch);x.chunk_ids.push(id);if(String(c.page_content||'').length>x.page_content.length)x.page_content=String(c.page_content||'');by.set(parent,x)}\nconst ranked=[...by.values()].sort((a,b)=>b.rrf_score-a.rrf_score||a.parent_key.localeCompare(b.parent_key)).slice(0,Number(q.top_k)||10),tags=v=>arr(v)?v.map(String).map(x=>x.trim().toUpperCase()).filter(Boolean):typeof v==='string'?(()=>{try{return tags(JSON.parse(v))}catch{return v.replace(/[\\[\\]\"]/g,'').split(',').map(x=>x.trim().toUpperCase()).filter(Boolean)}})():[];\nconst requested=arr(q.exact_keyword_terms)?q.exact_keyword_terms.map(String).map(x=>x.toUpperCase()):[],instructionCoverage=new Set(ranked.filter(r=>r.metadata.knowledge_type==='keyword_instruction').flatMap(r=>tags(r.metadata.keyword_families))),uncovered=requested.filter(v=>!instructionCoverage.has(v));if(!ranked.length)findings.push({code:'NO_AUTHORIZED_EVIDENCE',severity:'error'});if(uncovered.length)findings.push({code:'KEYWORD_INSTRUCTION_COVERAGE_INCOMPLETE',severity:'error',keywords:uncovered});const hard=findings.some(f=>f.severity==='error');\nreturn[{json:{contract:'schedule_retrieval_result',contract_version:'1.0',status:hard?'abstain':'ranked',request_id:q.request_id||null,query:q.query,filters:q.filters,exact_keyword_terms:requested,ranked_parents:hard?[]:ranked.map(r=>({parent_key:r.parent_key,target_base:r.metadata.target_base,knowledge_id:r.metadata.knowledge_id,revision:r.metadata.revision,knowledge_type:r.metadata.knowledge_type,keyword_families:tags(r.metadata.keyword_families),rrf_score:Number(r.rrf_score.toFixed(8)),branches:[...new Set(r.branches)].sort(),chunk_ids:[...new Set(r.chunk_ids)]})),findings,retrieval:{algorithm:'rrf',rrf_k:k,branches:['lexical','semantic','tag'],candidate_count:by.size,returned:hard?0:ranked.length},evidence_ready:false}}];"
       },
       "id": "47cd4093-4630-5384-93e6-fe57edf03818",
       "name": "Fuse authorized candidates with deterministic RRF",
@@ -319,10 +307,10 @@
     },
     {
       "parameters": {
-        "jsCode": "const evidence=$json||{},hashes=[...new Set((Array.isArray(evidence.citations)?evidence.citations:[]).map(c=>String(c.source_hash||'').toLowerCase()).filter(Boolean))];\nreturn[{json:{evidence,sql_parameters:[String(evidence.filters?.access_scope||''),JSON.stringify(hashes)]}}];"
+        "jsCode": "const e=$json||{},parents=Array.isArray(e.ranked_parents)?e.ranked_parents:[];\nreturn[{json:{evidence:e,sql_parameters:[String(e.filters?.target_base||''),String(e.filters?.access_scope||''),JSON.stringify(parents.map(p=>({knowledge_id:p.knowledge_id,revision:p.revision}))) ]}}];"
       },
-      "id": "0bc31d13-adb4-5f9c-a585-726c237e832d",
-      "name": "Prepare approved schema catalogue lookup",
+      "id": "c287dc41-830f-50bc-832b-3a32109ea885",
+      "name": "Prepare full parent knowledge lookup",
       "type": "n8n-nodes-base.code",
       "typeVersion": 2,
       "position": [
@@ -333,7 +321,7 @@
     {
       "parameters": {
         "operation": "executeQuery",
-        "query": "SELECT catalogue_hash,catalogue_ref,source_hash,access_scope,\n       approved_by,approval_gate_id,schema_catalogue\nFROM tnavigator_schedule_schema_catalogue_v1\nWHERE access_scope=$1 AND simulator_version='22.2'\n  AND source_hash IN (SELECT jsonb_array_elements_text($2::jsonb))\nORDER BY stored_at DESC,catalogue_hash\nLIMIT 20",
+        "query": "SELECT target_base,knowledge_id,revision,knowledge_type,status,keywords,topics,task_patterns,title,body_json,content_hash,access_scope,author FROM tnavigator_schedule_knowledge_documents_v1 WHERE target_base=$1 AND access_scope=$2 AND status='active' AND EXISTS(SELECT 1 FROM jsonb_to_recordset($3::jsonb) x(knowledge_id text,revision text) WHERE x.knowledge_id=tnavigator_schedule_knowledge_documents_v1.knowledge_id AND x.revision=tnavigator_schedule_knowledge_documents_v1.revision)",
         "options": {
           "queryReplacement": "={{ $json.sql_parameters }}",
           "queryBatching": "single",
@@ -341,8 +329,8 @@
           "replaceEmptyStrings": false
         }
       },
-      "id": "f34a6576-8f06-5709-b152-af04931f62cc",
-      "name": "PostgreSQL approved schema catalogue",
+      "id": "ffdbc7f8-6d75-50a9-9508-6c88a5152ecc",
+      "name": "PostgreSQL full parent knowledge",
       "type": "n8n-nodes-base.postgres",
       "typeVersion": 2.6,
       "position": [
@@ -360,20 +348,74 @@
     },
     {
       "parameters": {
-        "jsCode": "const prepared=$('Prepare approved schema catalogue lookup').first().json,e=prepared.evidence||{},obj=v=>v&&typeof v==='object'&&!Array.isArray(v),arr=Array.isArray,clean=v=>typeof v==='string'?v.trim():'';\nconst parse=v=>{if(obj(v))return v;if(typeof v!=='string'||!v.trim())return{};try{const x=JSON.parse(v);return obj(x)?x:{}}catch{return{}}};\nconst rows=$input.all().map(i=>i.json||{}),findings=arr(e.findings)?e.findings.slice():[],requested=arr(e.filters?.keyword_families)&&e.filters.keyword_families.length?e.filters.keyword_families.map(v=>clean(v).toUpperCase()):(clean(e.query).match(/\\b[A-Z][A-Z0-9_]+\\b/g)||[]);\nconst citationHashes=new Set((arr(e.citations)?e.citations:[]).map(c=>clean(c.source_hash).toLowerCase()).filter(Boolean));\nconst valid=[];for(const row of rows){const c=parse(row.schema_catalogue);if(!Object.keys(c).length)continue;const p=obj(c.simulator_profile)?c.simulator_profile:{},schemas=arr(c.schemas)?c.schemas:[],covered=new Set(schemas.map(s=>clean(s.keyword).toUpperCase()).filter(Boolean)),semanticsComplete=schemas.every(s=>obj(s.semantics));const okay=c.contract==='schedule_schema_catalogue'&&c.contract_version==='1.0'&&c.approved===true&&clean(c.approved_by)&&clean(c.approval_gate_id)&&clean(c.access_scope)===clean(e.filters?.access_scope)&&clean(p.vendor)==='Rock Flow Dynamics'&&clean(p.simulator).toLowerCase()==='tnavigator'&&clean(p.version)==='22.2'&&/^sha256:[a-f0-9]{64}$/i.test(clean(c.catalogue_hash))&&citationHashes.has(clean(c.source_hash).toLowerCase())&&requested.every(k=>covered.has(k))&&semanticsComplete;if(okay)valid.push(c)}\nif(rows.some(r=>r.error||r.message&&r.level==='error'))findings.push({code:'SCHEMA_CATALOGUE_LOOKUP_FAILED',severity:'error'});\nif(!requested.length)findings.push({code:'SCHEMA_KEYWORD_SCOPE_REQUIRED',severity:'error'});\nif(!valid.length)findings.push({code:'APPROVED_SCHEMA_CATALOGUE_NOT_FOUND',severity:'error',keywords:requested});\nif(valid.length>1&&new Set(valid.map(c=>clean(c.catalogue_hash).toLowerCase())).size>1)findings.push({code:'SCHEMA_CATALOGUE_AMBIGUOUS',severity:'error',catalogue_hashes:[...new Set(valid.map(c=>clean(c.catalogue_hash)))]});\nconst hard=findings.some(f=>f.severity==='error'),selected=hard?null:valid[0];\nreturn[{json:{...e,status:hard?'abstain':'succeeded',results:hard?[]:e.results,citations:hard?[]:e.citations,findings,evidence_ready:!hard,schema_catalogue:selected,retrieval:{...(e.retrieval||{}),schema_catalogue_lookup:true,catalogue_hash:selected?.catalogue_hash||null}}}];"
+        "jsCode": "const prepared=$('Prepare full parent knowledge lookup').first().json,e=prepared.evidence||{},arr=Array.isArray,obj=v=>v&&typeof v==='object'&&!arr(v),parse=v=>{if(obj(v))return v;if(typeof v==='string'){try{const x=JSON.parse(v);return obj(x)?x:{}}catch{return{}}}return{}},rows=$input.all().map(i=>i.json||{}),ranked=arr(e.ranked_parents)?e.ranked_parents:[],by=new Map(rows.filter(r=>r.knowledge_id).map(r=>[`${r.knowledge_id}:${r.revision}`,r])),findings=arr(e.findings)?e.findings.slice():[];\nconst results=[];for(const rank of ranked){const row=by.get(`${rank.knowledge_id}:${rank.revision}`);if(!row){findings.push({code:'INACTIVE_OR_MISSING_PARENT_SKIPPED',severity:'warning',knowledge_id:rank.knowledge_id,revision:rank.revision});continue}results.push({knowledge_id:row.knowledge_id,revision:row.revision,knowledge_type:row.knowledge_type,title:row.title,keywords:row.keywords,topics:row.topics,task_patterns:row.task_patterns,body:parse(row.body_json),content_hash:row.content_hash,author:row.author,rrf_score:rank.rrf_score,branches:rank.branches})}\nconst requested=arr(e.exact_keyword_terms)?e.exact_keyword_terms:arr(e.filters?.keyword_families)?e.filters.keyword_families:[],covered=new Set(results.filter(r=>r.knowledge_type==='keyword_instruction').flatMap(r=>arr(r.keywords)?r.keywords:[]).map(String).map(x=>x.toUpperCase())),uncovered=requested.map(String).map(x=>x.toUpperCase()).filter(k=>!covered.has(k));if(uncovered.length)findings.push({code:'KEYWORD_INSTRUCTION_COVERAGE_INCOMPLETE',severity:'error',keywords:uncovered});if(rows.some(r=>r.error||r.message&&r.level==='error'))findings.push({code:'PARENT_KNOWLEDGE_LOOKUP_FAILED',severity:'error'});const hard=findings.some(f=>f.severity==='error');\nreturn[{json:{...e,status:hard?'abstain':'succeeded',results:hard?[]:results,citations:hard?[]:results.map(r=>({knowledge_id:r.knowledge_id,revision:r.revision,knowledge_type:r.knowledge_type,content_hash:r.content_hash,author:r.author,keyword_families:r.keywords,rrf_score:r.rrf_score,branches:r.branches})),findings,evidence_ready:!hard}}];"
+      },
+      "id": "d955289d-eaa4-58e7-bf0e-2f7d530d57e9",
+      "name": "Hydrate full parent knowledge blocks",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        1200,
+        -140
+      ]
+    },
+    {
+      "parameters": {
+        "jsCode": "const e=$json||{},hashes=[...new Set((Array.isArray(e.results)?e.results:[]).map(r=>String(r.content_hash||'')).filter(Boolean))];return[{json:{evidence:e,sql_parameters:[String(e.filters?.target_base||''),String(e.filters?.access_scope||''),JSON.stringify(hashes)]}}];"
+      },
+      "id": "0bc31d13-adb4-5f9c-a585-726c237e832d",
+      "name": "Prepare approved schema catalogue lookup",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        1440,
+        -140
+      ]
+    },
+    {
+      "parameters": {
+        "operation": "executeQuery",
+        "query": "SELECT catalogue_hash,catalogue_ref,source_hash,access_scope,approved_by,approval_gate_id,schema_catalogue FROM tnavigator_schedule_schema_catalogue_v1 WHERE target_base=$1 AND access_scope=$2 ORDER BY stored_at DESC,catalogue_hash LIMIT 20",
+        "options": {
+          "queryReplacement": "={{ $json.sql_parameters }}",
+          "queryBatching": "single",
+          "largeNumbersOutput": "text",
+          "replaceEmptyStrings": false
+        }
+      },
+      "id": "f34a6576-8f06-5709-b152-af04931f62cc",
+      "name": "PostgreSQL approved schema catalogue",
+      "type": "n8n-nodes-base.postgres",
+      "typeVersion": 2.6,
+      "position": [
+        1680,
+        -140
+      ],
+      "credentials": {
+        "postgres": {
+          "id": "REPLACE_IN_UI",
+          "name": "REPLACE: SCHEDULE PostgreSQL / PGVector credential"
+        }
+      },
+      "alwaysOutputData": true,
+      "onError": "continueRegularOutput"
+    },
+    {
+      "parameters": {
+        "jsCode": "const prepared=$('Prepare approved schema catalogue lookup').first().json,e=prepared.evidence||{},obj=v=>v&&typeof v==='object'&&!Array.isArray(v),arr=Array.isArray,clean=v=>typeof v==='string'?v.trim():'',parse=v=>{if(obj(v))return v;if(typeof v==='string'){try{const x=JSON.parse(v);return obj(x)?x:{}}catch{return{}}}return{}},findings=arr(e.findings)?e.findings.slice():[],requested=arr(e.filters?.keyword_families)?e.filters.keyword_families.map(v=>clean(v).toUpperCase()):[],valid=[];\nfor(const row of $input.all().map(i=>i.json||{})){const c=parse(row.schema_catalogue),p=obj(c.simulator_profile)?c.simulator_profile:{},schemas=arr(c.schemas)?c.schemas:[],covered=new Set(schemas.map(s=>clean(s.keyword).toUpperCase())),okay=c.contract==='schedule_schema_catalogue'&&c.contract_version==='1.0'&&clean(p.simulator).toLowerCase()==='tnavigator'&&clean(p.version)==='22.2'&&/^sha256:[a-f0-9]{64}$/i.test(clean(c.catalogue_hash))&&requested.every(k=>covered.has(k))&&schemas.every(s=>obj(s.semantics)&&arr(s.fields)&&s.fields.length);if(okay)valid.push(c)}\nif(!requested.length)findings.push({code:'SCHEMA_KEYWORD_SCOPE_REQUIRED',severity:'error'});if(!valid.length)findings.push({code:'EXPERT_SCHEMA_CATALOGUE_NOT_FOUND',severity:'error',keywords:requested});if(valid.length>1&&new Set(valid.map(c=>clean(c.catalogue_hash))).size>1)findings.push({code:'SCHEMA_CATALOGUE_AMBIGUOUS',severity:'error'});const hard=findings.some(f=>f.severity==='error'),selected=hard?null:valid[0];return[{json:{...e,status:hard?'abstain':'succeeded',results:hard?[]:e.results,citations:hard?[]:e.citations,findings,evidence_ready:!hard,schema_catalogue:selected,retrieval:{...(e.retrieval||{}),full_parent_hydration:true,schema_catalogue_lookup:true,catalogue_hash:selected?.catalogue_hash||null}}}];"
       },
       "id": "3bdcbdc3-d78f-5aa3-bb91-036046648873",
       "name": "Attach approved schema catalogue",
       "type": "n8n-nodes-base.code",
       "typeVersion": 2,
       "position": [
-        1220,
+        1920,
         -140
       ]
     },
     {
       "parameters": {
-        "jsCode": "return[{json:{contract:'schedule_retrieval_result',contract_version:'1.0',status:'needs_input',results:[],citations:[],findings:$json.findings,evidence_ready:false}}];"
+        "jsCode": "return[{json:{contract:'schedule_retrieval_result',contract_version:'1.0',status:'needs_input',request_id:$json.request_id||null,query:$json.query||'',filters:$json.filters||{},results:[],citations:[],findings:$json.findings,evidence_ready:false}}];"
       },
       "id": "940dd5bb-70b5-59c6-bf93-10a6e3c37ff1",
       "name": "Return retrieval authorization gate",
@@ -548,6 +590,39 @@
       ]
     },
     "Fuse authorized candidates with deterministic RRF": {
+      "main": [
+        [
+          {
+            "node": "Prepare full parent knowledge lookup",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Prepare full parent knowledge lookup": {
+      "main": [
+        [
+          {
+            "node": "PostgreSQL full parent knowledge",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "PostgreSQL full parent knowledge": {
+      "main": [
+        [
+          {
+            "node": "Hydrate full parent knowledge blocks",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Hydrate full parent knowledge blocks": {
       "main": [
         [
           {

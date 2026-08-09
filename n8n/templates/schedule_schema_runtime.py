@@ -1,8 +1,8 @@
 """Catalogue-driven SCHEDULE IR renderer for portable n8n Code nodes.
 
-No vendor field layout is embedded here.  The runtime accepts an accountable,
-version-pinned machine-readable catalogue prepared from the licensed manual and
-renders typed IR only after validating every field against that catalogue.
+No field layout is embedded here.  The runtime accepts a content-addressed,
+version-pinned machine-readable catalogue maintained by the department expert
+and renders typed IR only after validating every field against that catalogue.
 """
 from __future__ import annotations
 
@@ -27,11 +27,11 @@ const sourceHash=clean(catalogue.source_hash).toLowerCase(),catalogueHash=clean(
 if(!['CREATE','REVISE'].includes(mode))findings.push({code:'RENDER_MODE_INVALID',severity:'error'});
 if(catalogue.contract!=='schedule_schema_catalogue'||catalogue.contract_version!=='1.0')findings.push({code:'SCHEMA_CATALOGUE_CONTRACT_INVALID',severity:'error'});
 if(clean(profile.vendor)!=='Rock Flow Dynamics'||clean(profile.simulator).toLowerCase()!=='tnavigator'||clean(profile.version)!=='22.2')findings.push({code:'SCHEMA_PROFILE_NOT_APPROVED',severity:'error'});
-if(catalogue.approved!==true||!clean(catalogue.approved_by)||!clean(catalogue.approval_gate_id))findings.push({code:'SCHEMA_ACCOUNTABLE_APPROVAL_REQUIRED',severity:'error'});
+if(!clean(catalogue.approved_by||catalogue.author))findings.push({code:'SCHEMA_EXPERT_AUTHOR_REQUIRED',severity:'error'});
 if(!shaPattern.test(sourceHash))findings.push({code:'SCHEMA_SOURCE_HASH_INVALID',severity:'error'});
 if(!shaPattern.test(catalogueHash))findings.push({code:'SCHEMA_CATALOGUE_HASH_INVALID',severity:'error'});
 if(!schemas.length)findings.push({code:'SCHEMA_CATALOGUE_EMPTY',severity:'error'});
-const citationValid=c=>obj(c)&&clean(c.document_id)&&clean(c.document_revision)==='22.2'&&clean(c.source_hash).toLowerCase()===sourceHash&&(clean(c.page)||clean(c.heading));
+const citationValid=c=>obj(c)&&clean(c.document_id||c.knowledge_id)&&clean(c.document_revision||c.revision)&&(!clean(c.source_hash)||clean(c.source_hash).toLowerCase()===sourceHash);
 const normalizeLayout=raw=>{const l=obj(raw)?raw:{},newline=clean(l.newline).toUpperCase()==='CRLF'?'\r\n':'\n';return{newline,indent:l.indent==='    '?'    ':'  ',delimiter:l.delimiter==='TAB'?'\t':' ',record_terminator:clean(l.record_terminator).toUpperCase()==='NONE'?'':' /',block_terminator:clean(l.block_terminator).toUpperCase()==='SLASH_LINE'?'slash_line':'none'}};
 for(let i=0;i<schemas.length;i++){
   const s=schemas[i],kw=clean(s.keyword).toUpperCase(),variant=clean(s.variant)||'default',fields=arr(s.fields)?s.fields.filter(obj):[];

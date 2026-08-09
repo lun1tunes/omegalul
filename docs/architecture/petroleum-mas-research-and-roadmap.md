@@ -3,41 +3,56 @@
 **Целевая платформа:** n8n **2.30.8**.
 **Дата ревизии:** 2026-08-09 (implementation status синхронизирован после smoke).
 **Текущий предметный scope:** создание, проверка и выпуск файлов секции `SCHEDULE` для tNavigator/ECLIPSE-совместимых моделей в двух равноправных режимах: `CREATE` с нуля и `REVISE` с безопасным изменением существующего Schedule.
-**Вне текущего scope:** построение сеток, 3D grid, геологическое моделирование и генерация `GRID`/`PROPS`/`REGIONS`/`SOLUTION`. Базовая гидродинамическая модель импортируется из ГМ и рассматривается как immutable input.
-**Статус документа:** живой implementation roadmap. Importable foundations реализованы для Orchestrator, Excel specialist, SCHEDULE intake/planner/lossless lexical baseline/catalogue decoder/targeted inventory query/typed-IR renderer/двухфазного semantic replay/atomic merge/validator/verifier/release и redacted trace writer; SCHEDULE knowledge ingestion и hybrid retrieval уже исполняют PGVector/PostgreSQL runtime и статически вызываются Orchestrator перед Builder. В `REVISE` Builder автоматически строит hash-bound `PRE_CHANGE_BOUNDARY`, выдаёт Planner только bounded summary, а mutation-authority получает отдельным полным query slice с target/hash guards. Generic lifecycle, numeric, interval и wildcard gates реализованы; переносимый simulator-check adapter и его durable SUBMIT/STATUS/RESULT/CANCEL continuation встроены в Orchestrator. External immutable artifact store, реальный лицензированный tNavigator 22.2 runner/check procedure, exact declarations 22.2 и целевая инфраструктура всё ещё требуют лицензированного manual/IT/инженерного sign-off. Этот документ не является Technical Manual.
+**Вне текущего scope:** построение сеток, 3D grid, геологическое моделирование и генерация `GRID`/`PROPS`/`REGIONS`/`SOLUTION`. При необходимости существующий `.data/.inc` передаётся в n8n как обычный bounded UTF-8 text.
+**Статус документа:** живой roadmap серьёзного внутреннего MVP с заделом на дальнейшее развитие. Реализованы Orchestrator, Excel specialist, SCHEDULE planner/lossless baseline/catalogue decoder/targeted query/typed renderer/semantic replay/atomic merge/validator/verifier/release и redacted trace. Knowledge Ingestion и Hybrid Retrieval используют expert-authored blocks, lexical + semantic + exact tags + RRF и full-parent hydration. В `REVISE` Builder строит hash-bound `PRE_CHANGE_BOUNDARY`, а mutation authority получает отдельный полный query slice с target/hash guards. Этот документ не является техническим справочником keyword layouts.
+
+> **Актуальный MVP-профиль:** система остаётся серьёзной инженерной основой, но runtime-путь намеренно прост: expert-authored hybrid RAG, Excel evidence loop, lossless baseline, typed IR, deterministic renderer/validator, independent verifier и inline `.INC` result. Источник знаний — подготовленные гидродинамиком `keyword_instruction` и `worked_example`; `schedule_schema_catalogue/v1` — runtime JSON-справочник эксперта отдела. `.data/.inc` обрабатываются как bounded text внутри n8n.
+
+### 0.1. Хирургический delta: что сохраняем и что меняем
+
+| Уже созданный компонент | Решение |
+|---|---|
+| Universal Orchestrator, CAS/HITL/retry/trace | сохраняем без смены владельца состояния |
+| Excel Extractor + adapter + FastAPI | сохраняем; Builder по-прежнему не вызывает Excel напрямую |
+| Lossless baseline, decoder/query, CREATE/REVISE, typed IR, renderer/merge/validator | сохраняем; это основная ценность MVP |
+| PostgreSQL + PGVector + lexical/tag/RRF retrieval | сохраняем и расширяем типами `keyword_instruction`/`worked_example` |
+| `schedule_schema_catalogue/v1` | переиспользуем как expert-authored JSON grammar/semantics, без требования vendor licence |
+| `.data/.inc` artifacts | принимаем и возвращаем как текст/binary n8n с лимитами; server filesystem не нужен |
 
 ## 1. Решение в одном абзаце
 
-Первый нефтегазовый product slice MAS — не генератор полного `.DATA`, а управляемый **SCHEDULE Construction System**. В нём появляются два прикладных специалиста: уже существующий **Excel Extractor** и обязательный конкретный **Schedule Builder**. Universal Orchestrator принимает immutable reference на исходную модель, задачу, инженерные исходные данные и, опционально, старый Schedule package. Для `CREATE` система строит Schedule с нуля; для `REVISE` lossless baseline analyzer и change planner определяют минимальный доказанный change set и сохраняют всё не затронутое задачей. Специализированные workflow собирают versioned temporal IR, а детерминированный renderer формирует только SCHEDULE include-package. LLM помогает классифицировать вход, находить подтвержденные правила и предлагать draft, но не задает grammar, порядок полей, defaults или simulator compatibility. Выпуск выполняется только после `schema validation -> temporal/state validation -> preservation/diff reconciliation -> tNavigator-version validation/dry-run -> independent review -> human approval`. Excel Extractor остается готовым upstream specialist для табличных исходных данных.
+Первый нефтегазовый product slice MAS — не генератор полного `.DATA`, а управляемый **SCHEDULE Construction System**. В нём есть два прикладных специалиста: существующий **Excel Extractor** и конкретный **Schedule Builder**. Universal Orchestrator принимает задачу, инженерные исходные данные и, опционально, текст старого Schedule. Для `CREATE` система строит Schedule с нуля; для `REVISE` lossless baseline analyzer и change planner определяют минимальный доказанный change set и сохраняют всё не затронутое задачей. Специализированные workflow собирают versioned temporal IR, а deterministic renderer формирует SCHEDULE text. LLM помогает классифицировать вход, находить подтвержденные правила и предлагать typed changes, но не задаёт grammar, порядок полей или defaults. Выпуск выполняется после `schema validation -> temporal/state validation -> preservation/diff reconciliation -> independent review -> применимый human approval`. Excel Extractor остаётся upstream specialist для табличных исходных данных.
 
-## 2. Нормативный источник: tNavigator Technical Manual 22.2
+## 2. Технические источники и текущая MVP-authority
+
+> Раздел ниже сохраняет результаты web-исследования только как справочный контекст. Runtime-authority текущего MVP — активная карточка знания и exact JSON schema, подготовленные и проверенные гидродинамиком отдела.
 
 ### 2.1. Что удалось найти в web
 
 - Официальный [RFD Client Centre](https://support.rfdyn.com/) существует и возвращает login page/HTTP 401 без клиентского доступа. Это официальный защищенный канал документации и release notes.
 - Публичная страница [tNavigator 26.2 release](https://rfdyn.com/tnavigator-26-2-accelerating-the-digital-energy-workflow-with-ai-petrophysics-and-advanced-simulation/) прямо направляет действующих клиентов в Client Centre за полным комплектом release notes. Следовательно, grammar нельзя привязывать просто к слову «tNavigator»: нужна конкретная версия документации.
-- В [публично индексируемой научной публикации](https://www.researchgate.net/publication/374018238_Estimation_of_the_volume_of_trapped_gas_and_the_use_of_sidetracking_as_a_method_of_its_additional_recovery_using_hydrodynamic_modeling_in_the_tNavigator_software_product) встречается библиографическая ссылка `tNavigator 22.2: Technical manual. Moscow: Rock Flow Dynamics, 2022`. Это подтверждает существование нужной versioned редакции; нормативным источником для проекта считаем сам экземпляр Technical Manual 22.2, полученный по лицензированному каналу.
+- В [публично индексируемой научной публикации](https://www.researchgate.net/publication/374018238_Estimation_of_the_volume_of_trapped_gas_and_the_use_of_sidetracking_as_a_method_of_its_additional_recovery_using_hydrodynamic_modeling_in_the_tNavigator_software_product) встречается библиографическая ссылка `tNavigator 22.2: Technical manual. Moscow: Rock Flow Dynamics, 2022`. Это подтверждает существование versioned редакции и полезно для проверки экспертных карточек, но не является deployment dependency MVP.
 - Публичный [RFD Resources Hub](https://rfdyn.com/resources-hub/) предоставляет продуктовые материалы, но не открытый Schedule keyword reference.
 
-**Итог для текущего milestone:** мануала **tNavigator 22.2 достаточно** для технического описания и параметров выбранного набора Schedule keywords. В production knowledge base он загружается как `vendor=tNavigator`, `simulator_version=22.2`, `document_revision=22.2`, `authority_level=vendor_manual`, с SHA-256 исходного файла. Случайные копии неизвестного происхождения в RAG не используются. Если фактический runtime окажется другой версии, 22.2 остается базовым профилем, но задача проходит compatibility-delta gate: каждое отличие должно быть подтверждено manual/runtime конкретной версии или инженером.
+**Итог для текущего milestone:** профиль рендера фиксирован как tNavigator 22.2-compatible, но знания загружаются в `target_base=schedule_mvp` как `department_expert`. Expert block обязан быть versioned/content-addressed; случайный PDF-текст не становится grammar автоматически. Если позже появится другой runtime, вводится отдельный compatibility profile.
 
-### 2.2. Authoritative-source gate
+### 2.2. Практический источник истины MVP
 
-Перед разработкой grammar profile необходимо получить:
+Эксперт отдела готовит один versioned knowledge block на используемый keyword:
 
 ```text
 vendor                 Rock Flow Dynamics
 simulator              tNavigator
 simulator_version      22.2 для первого production profile
-document_title         Technical Manual / Schedule keyword reference
-document_revision      из титульного листа
-source                  RFD Client Centre
-source_hash             SHA-256 оригинального файла
+document_title         название экспертной карточки или исходного PDF
+document_revision      ревизия карточки
+source                  department_expert / working_example / internal_pdf
+source_hash             content hash подготовленного блока
 access_scope            внутренняя разрешенная группа
-approved_by             ответственный инженер/владелец лицензии
+approved_by             ответственный инженер-гидродинамик
 ```
 
-Для первого профиля Technical Manual 22.2 является достаточным источником grammar/parameters. Если runtime не 22.2, фиксируется compatibility matrix: `manual_22.2 -> runtime_version`, поддержанные/измененные/запрещенные keywords и ответственный sign-off. Manual загружается в закрытую PostgreSQL/PGVector knowledge base, но не в git, workflow export или публичный seed JSON.
+Для deterministic render вместе с текстовой инструкцией загружается `schedule_schema_catalogue/v1`: поля, позиции, required/default/enum/type и семантические правила. Источник может быть подготовлен по рабочему PDF, личному опыту и проверенным примерам. Необработанный PDF не получает authority автоматически: в runtime попадает только вычитанная экспертная карточка.
 
 ### 2.3. Открытый cross-check, но не замена tNavigator manual
 
@@ -78,23 +93,21 @@ approved_by             ответственный инженер/владеле
 | `CREATE` | Старого Schedule нет; нужно создать новый по базовой ГМ, задаче и исходным данным | Не генерировать обязательные сущности/поля без достаточных данных; полнота доказывается coverage matrix |
 | `REVISE` | Приложен старый готовый Schedule, который нужно актуализировать | **Preserve by default:** менять только доказанную область задачи; остальное сохранить |
 
-`build_mode` входит в request как `CREATE`, `REVISE` или `AUTO`. Для удобства `AUTO` детерминированно выбирает `REVISE`, если приложен `baseline_schedule_package_ref`, иначе `CREATE`. Выбранный режим возвращается в intake response до планирования. `CREATE` не требует искусственного пустого baseline и идет по собственной greenfield-ветке. Конфликт, например явный «создать заново» при приложенном baseline, требует подтверждения человека: наличие файла само по себе не дает разрешения отбросить его содержимое.
+`build_mode` входит в request как `CREATE`, `REVISE` или `AUTO`. Для удобства `AUTO` детерминированно выбирает `REVISE`, если передан непустой `baseline_schedule_text`, иначе `CREATE`. Выбранный режим возвращается в intake response до планирования. `CREATE` не требует искусственного пустого baseline и идёт по собственной greenfield-ветке. Конфликт, например явный «создать заново» при приложенном baseline, требует подтверждения человека: наличие файла само по себе не даёт разрешения отбросить его содержимое.
 
-### 4.1. Общие входы и immutable base model
+### 4.1. Общие входы
 
 MAS не переписывает геологическую сетку или исходный `.DATA`. На вход поступают:
 
-- `base_model_ref` и SHA-256 manifest;
-- optional `baseline_schedule_package_ref` с полным include-package и manifest hash; обязательный при `REVISE`;
+- optional `baseline_schedule_text`; обязательный при `REVISE`;
 - simulator profile `tNavigator 22.2` и подтвержденный `METRIC`;
 - model start date, history end/cutover, forecast horizon;
-- registry существующих wells/groups/network/features из base model;
-- разрешенные relative include roots;
+- optional известные wells/groups/network/features из задачи, baseline или Excel;
 - поставленная задача и acceptance criteria;
-- Excel и другие source artifacts с hashes/revisions;
+- Excel и другие приложенные source data с provenance;
 - явные указания `must_change`, `must_add`, `must_remove`, `must_preserve`, если они известны.
 
-Результат — standalone SCHEDULE include-package либо детерминированная replacement/patch instruction. Оригинальная модель и приложенный baseline никогда не перезаписываются.
+Результат — standalone SCHEDULE text с именем `schedule.inc`, completeness/preservation report и diff. Приложенный baseline никогда не перезаписывается: изменённый текст возвращается как новый result.
 
 ### 4.2. `CREATE`: создание SCHEDULE с нуля
 
@@ -308,7 +321,7 @@ Validator replay-ит event stream и обнаруживает duplicate/redefin
 
 ## 5. Target MAS architecture
 
-Stateful **Orchestrator-Workers**: Universal Orchestrator планирует и владеет CAS/HITL; specialists вызываются только через adapter/packet-контракты. Excel-файл парсит FastAPI, не LLM. SCHEDULE идёт через intake → baseline decode/replay (`REVISE`) → planner → typed IR/render → merge → candidate validation → immutable artifact → simulator check → independent verify → release.
+Stateful **Orchestrator-Workers**: Universal Orchestrator планирует и владеет CAS/HITL; specialists вызываются только через adapter/packet-контракты. Excel-файл парсит FastAPI, не LLM. SCHEDULE идёт через hybrid RAG → Builder → baseline decode/replay (`REVISE`) → typed IR/render → merge → candidate validation → independent verify → inline release.
 
 Под каждой нодой мелким шрифтом — файл workflow из `n8n/workflows/` (или сервис, если это не n8n).
 
@@ -382,12 +395,7 @@ flowchart TB
     SAgent --> Render
     Render --> Merge
     Merge --> Valid
-    Sim["Simulator Check Adapter<br/><small>tnavigator-schedule-simulator-check-adapter.workflow.json</small>"]
-    Runner["IT-managed tNavigator 22.2 runner<br/><small>external HTTPS service</small>"]
-    Valid --> Sim
-    Sim -.->|"immutable ref/hash"| Runner
-    Runner -.->|"sanitized result"| Sim
-    Sim -->|"passed"| SVer
+    Valid --> SVer
     SVer --> Rel
   end
 
@@ -407,7 +415,7 @@ Universal Petroleum Engineering Orchestrator
   `- independent verifier + human release gate
                  |
        SCHEDULE Construction Pipeline
-  |- Base Model Intake / Manifest Reader
+  |- Text task and optional baseline .data/.inc
   |- Excel Extraction Specialist (implemented)
   |- tNavigator Manual RAG Researcher
   |- Deterministic CREATE / REVISE Mode Router
@@ -421,10 +429,10 @@ Universal Petroleum Engineering Orchestrator
   |- Dependency / Conflict Resolver
   |- Deterministic SCHEDULE Renderer
   |- Parser / Stateful Linter / Completeness or Preservation Evidence
-  `- tNavigator Simulator Check Adapter (implemented boundary; external runner required)
+  `- Independent Verifier -> inline schedule.inc
 ```
 
-Для `CREATE` baseline analyzer/decoder/query/merger не вызываются: requirements planner строит required-data matrix, greenfield-builder создает полный approved IR, а renderer выпускает новый пакет и completeness evidence. Для `REVISE` analyzer фиксирует lossless CST/include graph, catalogue decoder строит typed prefix/suffix IR, общий replay формирует `PRE_CHANGE_BOUNDARY`, planning query выдаёт только summary/samples, а после плана targeted query возвращает полный релевантный mutation-safe slice. Merger применяет только одобренные `KEEP/MODIFY/ADD/REMOVE`, причём `MODIFY/REMOVE` обязаны ссылаться на target/hash из этого slice. Общими для обеих веток остаются schema catalogue 22.2, normalized source facts, dependency rules, renderer, candidate validator, simulator check, independent verifier и human release. Один LLM не должен одновременно планировать, генерировать, проверять и выпускать Schedule. Specialists не меняют authoritative task state и возвращают universal `specialist_result`; большие файлы передаются immutable refs.
+Для `CREATE` baseline analyzer/decoder/query/merger не вызываются: requirements planner строит required-data matrix, greenfield-builder создаёт полный approved IR, а renderer выпускает новый текст и completeness evidence. Для `REVISE` analyzer фиксирует lossless CST/include graph, catalogue decoder строит typed prefix/suffix IR, общий replay формирует `PRE_CHANGE_BOUNDARY`, planning query выдаёт только summary/samples, а после плана targeted query возвращает полный релевантный mutation-safe slice. Merger применяет только одобренные `KEEP/MODIFY/ADD/REMOVE`, причём `MODIFY/REMOVE` обязаны ссылаться на target/hash из этого slice. Общими для обеих веток остаются schema catalogue, normalized source facts, dependency rules, renderer, candidate validator, independent verifier и human release. Один LLM не должен одновременно планировать, генерировать, проверять и выпускать Schedule. Specialists не меняют authoritative task state и возвращают universal `specialist_result`; итоговый bounded `.INC` text возвращается пользователю внутри результата n8n.
 
 ### 5.1. Граница ответственности: Orchestrator → Excel Extractor → Schedule Builder
 
@@ -471,7 +479,7 @@ Excel Extractor отвечает только за детерминирован�
 | Наблюдаемость | высокая для UI-only n8n | Executions UI + redacted trace показывают handoff/tool/evidence/gate; скрытый chain-of-thought не публикуется |
 | Расширяемость | высокая | новый specialist подключается через versioned packet и allowlist, не меняя Excel/Builder контракты |
 | Операционная сложность | средняя | несколько sub-workflows и ручные UI bindings неизбежны при n8n 2.30.8/UI-only; это компенсируется импортным manifest и smoke gate |
-| Production readiness сейчас | условная | importable foundation, automatic baseline snapshot и simulator control-plane gate уже запускаются, но exact field/semantic catalogue, immutable artifact store, real licensed runner/check procedure, golden corpus и полноценный low-level trace integration остаются обязательными gates |
+| Production readiness сейчас | условная | importable foundation, automatic baseline snapshot, artifact-publisher и simulator control-plane gates уже запускаются, но exact field/semantic catalogue, реальный artifact service/runner/check procedure, golden corpus и corporate UI acceptance остаются обязательными gates |
 
 Итоговое решение: для MVP фиксируем **orchestrator-mediated sequential MAS**. Direct specialist-to-specialist calls, свободный выбор workflow моделью и автоматический выпуск при одном высоком score не входят в допустимую архитектуру. После накопления golden cases отдельные независимые read-only проверки можно распараллелить, не меняя владельца state и release policy.
 
@@ -500,9 +508,9 @@ Loop limits задаются policy (`max_excel_iterations`, `max_builder_iterat
 - только Hybrid Retrieval получает governed knowledge evidence; Builder не выбирает RAG workflow и не выполняет произвольный retrieval;
 - только Schedule Builder формирует typed domain IR/change proposal, но не утверждает release;
 - только deterministic renderer/validator превращают утверждённый typed IR в authoritative text и проверяют его;
-- только accountable Release gate присваивает артефакту статус `approved`.
+- только accountable Release gate присваивает результату статус `approved`.
 
-Таким образом, «через Orchestrator» означает не пересылку всех байтов через prompt. Orchestrator передаёт immutable artifact references, hashes и маленькие typed packets; workbook binary остаётся на границе Excel subsystem, baseline/package — в artifact store, а в durable task state сохраняются только ссылки, версии, решения и audit metadata.
+Таким образом, «через Orchestrator» не означает передачу всех байтов в LLM prompt. Workbook binary остаётся на границе Excel subsystem, baseline text обрабатывается deterministic Code nodes, а модели получают только bounded typed packets и необходимые excerpts. В durable task state сохраняются версии, решения, compact results и audit metadata без лишних копий больших файлов.
 
 #### Каноническая последовательность принятия решения о keywords
 
@@ -535,8 +543,9 @@ Loop limits задаются policy (`max_excel_iterations`, `max_builder_iterat
 
 ```text
 User (HTTP/Form/file upload)
-  -> Universal Orchestrator: intake + immutable artifact refs
-  -> Control-plane triage: mode, preliminary scope, artifact classification
+  -> Universal Orchestrator: task + optional Excel + optional baseline .data/.inc text
+  -> governed schedule_build_request/v1 gate: task/version/idempotency, METRIC, time boundaries, mode/scope, catalogue binding
+  -> Control-plane triage: mode, preliminary scope, input classification
   -> deterministic stage-readiness gate (не LLM confidence)
        ├─ attention: один targeted re-check/research, trace warning
        └─ HITL: clarification/decision, durable pause and resume
@@ -553,17 +562,14 @@ User (HTTP/Form/file upload)
   -> [REVISE only] targeted baseline query: complete relevant records + target/hash/provenance
   -> [if evidence_gap] Excel clarification/retry, then resume same task_id at next version
   -> tNavigator 22.2 Hybrid RAG: authorized keyword evidence + complete citations
-  -> Schedule Builder: typed CREATE/REVISE IR and draft package
+  -> Schedule Builder: typed CREATE/REVISE IR and draft .INC text
   -> deterministic validator + state replay + diff/preservation checks
-  -> governed immutable package ref/hash
-  -> tNavigator 22.2 Simulator Check Adapter -> external runner
-  -> if queued/running: durable STATUS/RESULT/CANCEL continuation
-  -> if passed with matching artifact hash: independent verifier
+  -> independent verifier
   -> readiness/risk gate + HITL release
-  -> immutable approved SCHEDULE package + audit/trace
+  -> approved inline schedule.inc + audit/trace
 ```
 
-В MVP порядок вызовов последовательный, потому что каждый этап создаёт входные данные для следующего. Excel не является обязательным hop: для задачи без workbook или для `REVISE`, где approved snapshot уже содержит все нужные значения, Evidence router не вызывает Extractor и передает Builder тот же зафиксированный evidence snapshot. Напротив, если mandatory факт отсутствует и ни один приложенный artifact не может его доказать, Orchestrator сразу открывает HITL, а не запускает «поиск наугад». Параллелить можно только независимые read-only операции (например, tNavigator RAG lookup и базовую проверку Excel facts) после фиксации immutable snapshot; запись состояния, изменение Schedule и approval всегда проходят через один orchestrator task ledger. Это сочетает рекомендуемые patterns `sequential pipeline`, `orchestrator-workers` и ограниченную `concurrent fan-out/fan-in`, не превращая систему в peer-to-peer swarm.
+В MVP порядок вызовов последовательный, потому что каждый этап создаёт входные данные для следующего. Excel не является обязательным hop: для задачи без workbook или для `REVISE`, где уже представлены все нужные значения, Evidence router не вызывает Extractor. Если mandatory факт отсутствует и ни один приложенный источник не может его доказать, Orchestrator сразу открывает HITL, а не запускает «поиск наугад». Параллелить можно только независимые read-only операции; запись состояния, изменение Schedule и approval всегда проходят через один orchestrator task ledger. Это сочетает patterns `sequential pipeline`, `orchestrator-workers` и ограниченную `concurrent fan-out/fan-in`, не превращая систему в peer-to-peer swarm.
 
 Критически важно: в первой реализации routing выполняется **после** первичного плана. Поэтому workbook не отправляется в Excel «целиком на всякий случай»: Planner/required-data matrix сначала ограничивает искомые таблицы, сущности, даты и поля. Если структура workbook неизвестна, разрешён ровно один дешёвый discovery pass (`workbook_introspect`/`detect_tables`), после которого Orchestrator либо формирует scoped query, либо конкретный HITL-вопрос. Это снижает стоимость и риск случайного извлечения нерелевантных данных.
 
@@ -581,15 +587,15 @@ pending -> running -> succeeded
 
 Минимальный сценарий пользователя:
 
-1. Пользователь вызывает Orchestrator, пишет инженерную задачу и прикладывает `.xlsx` с исходными данными; для `REVISE` дополнительно прикладывает старый Schedule include-package.
-2. Orchestrator классифицирует artifacts, вычисляет hashes и сохраняет `task_id`, `trace_id`, `expected_version` и `idempotency_key`. Неправильно классифицированный или неоднозначный baseline не используется молча — создаётся clarification.
+1. Пользователь вызывает Orchestrator, пишет инженерную задачу и прикладывает `.xlsx` с исходными данными; для `REVISE` дополнительно прикладывает старый `.data/.inc`.
+2. Orchestrator классифицирует inputs и сохраняет `task_id`, `trace_id`, `expected_version` и `idempotency_key`. Неправильно классифицированный или неоднозначный baseline не используется молча — создаётся clarification.
 3. Control-plane Planner подтверждает режим и формирует preliminary decomposition. В `REVISE` после этого детерминированный Baseline Analyzer строит inventory/CST/INCLUDE graph, catalogue decoder выбирает ровно один утверждённый schema variant на record и делит event stream относительно явного `change_effective_from`, а общий semantic runtime replay-ит prefix в `PRE_CHANGE_BOUNDARY`. Только затем SCHEDULE Planner определяет candidate keyword/change scope. Так old Schedule является декодированным evidence, а не непрочитанным вложением или внешне подготовленным snapshot.
 4. SCHEDULE Planner формирует `schedule_plan`: candidate keywords/records, этапы, зависимости, нужные Excel facts и acceptance criteria. Он получает hash-bound semantic boundary и planning summary — counts, field names, date range и не более пяти samples на keyword, но не сырой baseline text и не полный массив. Это ещё не разрешение на изменение файла.
 5. Evidence router вызывает Excel adapter только если required-data matrix указывает на конкретные недостающие поля и приложенный workbook является допустимым источником. В запрос Extractor попадают лишь `task_id`, `correlation_id`, artifact/continuation ref, target sheets/tables/columns, requested fields и лимиты. FastAPI session и tool calls остаются внутри Excel specialist. Если Excel не нужен, router записывает детерминированный `SKIPPED_NOT_REQUIRED` trace event; если доказать поле не из чего — создаёт HITL, а не пустой Excel-вызов.
 6. Orchestrator принимает `source_facts`, provenance, row coverage, warnings и `needs_input`/`evidence_gap`; обновляет ledger и либо продолжает, либо задаёт пользователю конкретный вопрос с форматом ответа. Затем SCHEDULE Planner/детерминированный reconciler утверждает минимальный change scope.
 7. Orchestrator выполняет обязательный Hybrid RAG retrieval только по утверждённому keyword/version/access scope. Для каждого затронутого keyword нужны authorized evidence и полная citation (`document_id`, revision, source hash, page/heading); `abstain`, неполное покрытие или неверная версия создают конкретный HITL gate, а не разрешают Builder угадывать синтаксис.
 8. После плана детерминированный baseline query выбирает записи по approved keyword/entity/date/node/file/field scope. Builder получает approved plan, source facts, RAG catalogue 22.2 и только полный релевантный slice. `MODIFY/REMOVE` вне slice или с несовпадающим `expected_raw_hash` отклоняется до renderer/merge. Если совпадений больше лимита полного slice, workflow возвращает `BASELINE_QUERY_REFINEMENT_REQUIRED`, а не усечённый prompt. Builder возвращает typed IR/change set либо точный `needs_input`; свободный текст не является результатом.
-9. Validator выполняется независимо от Builder. Затем Orchestrator требует governed immutable package ref/hash, вызывает Simulator Check Adapter и принимает только совпадающий `simulator_check_result/v1` для tNavigator 22.2. `queued/running` сохраняется в CAS-state и продолжается явным `STATUS/RESULT/CANCEL`; бесконечного polling нет. После pass выполняются independent verifier и release gate. До human approval статус только `draft`/`validated`; пользователь получает package, completeness/preservation report, semantic/textual diff, simulator findings и trace summary.
+9. Validator выполняется независимо от Builder, затем Orchestrator вызывает independent verifier и применяет release gate. До требуемого human approval статус остаётся `draft`/`validated`; пользователь получает новый текст `schedule.inc`, completeness/preservation report, semantic/textual diff и trace summary.
 
 ### 5.3. Что именно является Schedule Builder
 
@@ -626,7 +632,7 @@ error_code, safe_message, created_at
 1. штатный **Executions UI** показывает граф, входы/выходы нод, ошибки и дочерние Execute Sub-workflow executions;
 2. явный trace ledger показывает сквозной `trace_id`, handoff между workflow, tool name/result summary, latency, retries, score и gate decision даже после завершения отдельных execution.
 
-Для QA/демо у tool-using AI Agent включается `returnIntermediateSteps=true`, поэтому в execution видны вызовы инструментов и их результаты (Excel Agent и Schedule Builder foundation используют этот режим). Это **операторская диагностика**, а не источник authoritative state: production trace хранит только redacted summaries/IDs/hashes. Для Planner/Verifier показываются их bounded structured outputs: decomposition, rationale, criteria, findings и gate reason codes — не скрытый внутренний монолог. Для production сохраняем structured summaries и метаданные, а не весь prompt/tool payload; retention и redaction обязательны. Нативный execution UI не является durable audit log: его retention/настройки могут удалить execution, поэтому критические события дублируются в ledger. Внешний LangSmith/OpenTelemetry допускается как дополнительный sink только после отдельной проверки credentials, data residency и совместимости с 2.30.8.
+Для QA/демо у Excel tool-using AI Agent включается `returnIntermediateSteps=true`, поэтому в execution видны вызовы FastAPI tools и их результаты. SCHEDULE Planner/Builder также экспортированы с этим флагом для безопасного будущего подключения allowlisted tools; в текущем foundation их фактические действия — отдельные детерминированные Code/IF/Switch stages, видимые прямо на canvas и в execution. Это **операторская диагностика**, а не источник authoritative state: production trace хранит только redacted summaries/IDs/hashes. Для Planner/Verifier показываются их bounded structured outputs: decomposition, rationale, criteria, findings и gate reason codes — не скрытый внутренний монолог. Для production сохраняем structured summaries и метаданные, а не весь prompt/tool payload; retention и redaction обязательны. Нативный execution UI не является durable audit log: его retention/настройки могут удалить execution, поэтому критические события дублируются в ledger. Внешний LangSmith/OpenTelemetry допускается как дополнительный sink только после отдельной проверки credentials, data residency и совместимости с 2.30.8.
 
 Каждый AI stage обязан вернуть отдельный показываемый `decision_record`, независимо от того, использовал ли он tools:
 
@@ -961,16 +967,126 @@ Decoder fail closed при ambiguous/no matching schema variant, missing semanti
 
 ## 8. RAG для tNavigator SCHEDULE
 
+### 8.0. Практический MVP-профиль: expert-authored knowledge base
+
+Для MVP нормативным источником является не «лицензированный каталог», а версия знаний, которую подготовил и опубликовал гидродинамик отдела. Сохраняем один существующий hybrid RAG stack и одну таблицу `tnavigator_schedule_knowledge_v1`; отдельную конкурирующую RAG-систему не создаём.
+
+Два обязательных `knowledge_type`:
+
+1. `keyword_instruction` — полная рабочая инструкция по keyword: назначение, scope, record layout, fields/types/defaults, units, зависимости, history/forecast semantics, validation rules, anti-patterns и примеры;
+2. `worked_example` — типовая решённая задача с фрагментом `.DATA/.INC`, например «лимит по воде», с problem/intent, применёнными keywords, входными facts, ожидаемым результатом и пояснением эксперта.
+
+Опциональные типы: `policy_note`, `troubleshooting`, `pattern`. Для всех используются одинаковые filters и provenance. Минимальный knowledge block:
+
+```json
+{
+  "contract": "schedule_knowledge_block",
+  "contract_version": "1.0",
+  "target_base": "schedule_mvp",
+  "knowledge_type": "keyword_instruction",
+  "knowledge_id": "wconprod-forecast-control-v1",
+  "revision": "1",
+  "title": "WCONPROD — управление добывающей скважиной",
+  "keywords": ["WCONPROD"],
+  "topics": ["Контроль по скважинам", "Прогноз", "лимит по воде"],
+  "task_patterns": ["задать ограничение по воде", "изменить BHP"],
+  "simulator_family": ["E100", "E300", "tNavigator"],
+  "status": "active",
+  "author": "ФИО гидродинамика",
+  "text": "Полная самодостаточная инструкция...",
+  "examples": [
+    {"title": "Water-rate limit", "task": "...", "schedule_text": "WCONPROD ... /", "explanation": "..."}
+  ],
+  "schema_catalogue": null
+}
+```
+
+Для точного deterministic render тот же block может нести `schema_catalogue` существующего контракта. Это **наш JSON-справочник**, подготовленный экспертом из PDF, личных примеров и рабочего опыта. RAG prose помогает выбрать и понять правило; renderer по-прежнему не угадывает порядок полей и использует структурированную schema-часть, если keyword будет генерироваться автоматически.
+
+#### Типовой Knowledge Ingestion workflow
+
+Точечно расширяем существующий `tnavigator-schedule-knowledge-ingestion.workflow.json`, не создавая новый стек:
+
+```text
+Form / Execute Sub-workflow
+  -> Parse one schedule_knowledge_block/v1 (batch extension remains optional)
+  -> Validate target_base against static UI allowlist
+  -> Normalize knowledge_type / keywords / topics / task_patterns / revision
+  -> Build one self-contained document per instruction/example
+  -> Recursive splitter (instruction and example boundaries are never mixed)
+  -> Embeddings
+  -> PGVector insert into selected allowlisted table
+  -> PostgreSQL indexes + dedupe by knowledge_id/revision/content_hash
+  -> optional upsert of expert schema_catalogue
+  -> ingest summary
+```
+
+`target_base` выбирается пользователем как **логический namespace**, а не превращается в произвольное имя SQL-таблицы. Это позволяет переиспользовать существующие PGVector/PostgreSQL nodes без динамического SQL и новых credentials. В Code хранится небольшой UI-editable allowlist, например:
+
+```text
+schedule_mvp
+schedule_vendor_22_2
+```
+
+Оба namespace хранятся в существующей `tnavigator_schedule_knowledge_v1` и всегда участвуют в metadata filter; один namespace никогда не смешивается с другим. Для первого MVP используется `schedule_mvp`. Credentials и embedding выбираются в UI. Form заполняет один block за запуск; Execute Sub-workflow принимает тот же объект. Binary PDF напрямую не индексируем: эксперт заранее готовит самодостаточный block и контролирует качество.
+
+Чтобы Builder всегда получал **полную инструкцию**, а не один случайный chunk, ingestion дополнительно upsert-ит исходный block целиком в маленькую PostgreSQL-таблицу `tnavigator_schedule_knowledge_documents_v1`:
+
+```text
+PRIMARY KEY (target_base, knowledge_id, revision)
+knowledge_type, status, keywords[], topics[], task_patterns[]
+title, body_json, searchable_text, content_hash, updated_at
+```
+
+PGVector table остаётся chunk index. Lexical/semantic/tag branches ранжируют chunks, RRF агрегирует score на уровне `knowledge_id + revision`, после чего один PostgreSQL node **гидратирует top parent blocks целиком** из documents table. Только active revision возвращается Builder. Это минимальное дополнение к существующему workflow, но оно гарантирует полноту instruction и сохраняет качественный chunk retrieval.
+
+#### Hybrid retrieval для Builder
+
+Baseline Analyzer/Planner сначала извлекает inventory и candidate scope. Orchestrator формирует запрос из:
+
+- exact keywords (`WCONPROD`, `WECON`);
+- объектов и временного scope;
+- русских/английских topics (`Контроль по скважинам`, `Прогноз`);
+- task pattern (`лимит по воде`);
+- `knowledge_types=[keyword_instruction, worked_example]`.
+
+Один существующий Retrieval выполняет три обязательные ветки:
+
+1. PostgreSQL full-text `simple` — лексический поиск, сохраняющий keywords и русские/английские термины;
+2. PGVector — семантический поиск по формулировке задачи;
+3. exact tag lookup по `keywords/topics/task_patterns/knowledge_type`;
+4. deterministic RRF объединяет результаты и дедуплицирует их по parent knowledge block;
+5. parent hydration возвращает полный `keyword_instruction`/`worked_example`, сохраняя matched chunk IDs/scores для объяснимости.
+
+Для каждого затронутого keyword Builder получает минимум одну полную `keyword_instruction`; релевантные `worked_example` добавляются как few-shot evidence. Если instruction отсутствует, Orchestrator открывает понятный `needs_input`: «Добавьте или дополните карточку WCONPROD в Knowledge Ingestion». Пример никогда не заменяет инструкцию и не является разрешением слепо копировать имена скважин, даты или числа.
+
+#### Хирургический implementation delta по файлам
+
+| Файл | Точное изменение |
+|---|---|
+| `schedule_rag_workflows.py` | **реализовано:** expert block metadata, logical `target_base`, parent upsert/hydration; существующие lexical/PGVector/tag/RRF nodes сохранены |
+| `tnavigator-schedule-knowledge-ingestion.workflow.json` | **реализовано:** Form-поля block; второго ingestion workflow нет |
+| `tnavigator-schedule-hybrid-retrieval.workflow.json` | **реализовано:** `target_base`, `knowledge_types`, aggregate-by-parent и hydration |
+| `generate_universal_engineering_workflows.py` | **реализовано:** query из keyword scope/topics/task patterns; instruction coverage обязательна, examples optional |
+| `schedule_schema_runtime.py` | **реализовано:** expert author/provenance при сохранении exact content-addressed schema contract |
+| `schedule-rag-runtime-smoke.js` | **реализовано:** instruction/example, namespace isolation, inactive block и full-parent hydration cases |
+| README/import manifest | **синхронизировано:** актуальные workflow IDs/UI credentials и пять MVP bindings |
+
+Новые agent/workflow boundaries, новый векторный движок или прямой Builder→RAG вызов **не вводятся**.
+
+#### Простой operational check вместо corporate gold evaluation
+
+После пополнения базы инженер запускает 3–5 реальных запросов через Retrieval Form/Execute input и визуально проверяет top results/citations. Минимальный gate: exact keyword найден, instruction возвращён полностью, пример соответствует задаче, inactive revision не попала в результат, а отсутствующий keyword приводит к `abstain`.
+
 ### 8.1. Knowledge tiers
 
-Приоритет задается policy:
+Приоритет задаётся policy:
 
-1. licensed Technical Manual tNavigator 22.2 для базового production profile;
-2. approved compatibility delta/manual выбранного runtime, если он не 22.2;
-3. validated corporate golden examples;
-4. approved project baseline и decisions;
-5. OPM manual/registry — cross-check только для compatible subset;
-6. общие статьи/web — discovery, но не grammar authority.
+1. active `keyword_instruction`, подготовленная и подтверждённая экспертом отдела;
+2. exact `schedule_schema_catalogue/v1` того же keyword/revision;
+3. проверенные `worked_example` из реальных задач;
+4. приложенный baseline и явные решения текущей задачи;
+5. PDF/manual/OPM/web — материал для подготовки и cross-check карточки, но не прямой runtime authority.
 
 Retrieved content остается untrusted data и не может менять system policy. Противоречие tier 1–3 открывает human decision; модель не выбирает удобный источник.
 
@@ -1004,7 +1120,7 @@ valid_from/to, ingested_at, embedding_model/dimensions
 
 Исполняемый `tnavigator-schedule-hybrid-retrieval.workflow.json`:
 
-1. обязательные filters: approved, access scope, `simulator=tNavigator`, `simulator_version=22.2`, `section=SCHEDULE`; для другого runtime — отдельный approved compatibility profile;
+1. обязательные filters: approved, access scope, `simulator=tNavigator`, `simulator_version=22.2`, `section=SCHEDULE`, `knowledge_status=current`; для другого runtime — отдельный approved compatibility profile;
 2. exact keyword/field lookup первым каналом;
 3. PostgreSQL full-text lexical candidates;
 4. PGVector semantic candidates;
@@ -1017,42 +1133,40 @@ Orchestrator статически вызывает Retrieval перед кажд
 
 RAG дает evidence; renderer использует machine-readable schema catalogue. Free text из RAG не интерпретируется напрямую как record layout.
 
-### 8.5. RAG evaluation
+### 8.5. Практическая проверка RAG
 
-Для каждого keyword нужны gold cases:
+Отдельный evaluation workflow для MVP не нужен. После загрузки карточки эксперт вручную выполняет несколько понятных retrieval checks через существующий Hybrid Retrieval:
 
-- найди назначение, record variants, field order/types/defaults/enums;
-- prerequisites/conflicts и допустимая section;
-- history/forecast semantics;
-- version change/unsupported keyword;
-- exact citation page/heading;
-- negative tests: другой simulator/version, obsolete manual, prompt injection, forbidden scope.
+- exact keyword, например `WCONPROD`;
+- русское описание задачи, например «задать лимит по воде»;
+- topic/tag, например «Контроль по скважинам» и «Прогноз»;
+- запрос на отсутствующий keyword, который должен завершиться `abstain`;
+- inactive или чужой `target_base`, который не должен попасть в ответ.
 
-Metrics: Recall@K, MRR/nDCG, exact-keyword accuracy, field-table coverage, citation correctness/completeness, abstention quality, access leakage = 0, obsolete-hit rate = 0.
+Эти проверки входят в repository/runtime smoke и в UI checklist. Сложная статистическая оценка retrieval может быть добавлена позднее отдельным проектом, но не является частью текущей схемы.
 
 ## 9. Реализованные n8n workflows и следующие extensions
 
 ### Runtime slice v1 — importable foundation
 
-1. `tnavigator-schedule-intake.workflow.json` — **реализован**: CREATE/REVISE/AUTO, profile, keyword scope и immutable-ref gates.
-2. `tnavigator-schedule-knowledge-ingestion.workflow.json` — **реализован runtime**: Form/sub-workflow input, accountable approval, exact metadata/hash/citation gate, loader/splitter/embeddings/PGVector insert, indexes и content-addressed dedupe.
-3. `tnavigator-schedule-hybrid-retrieval.workflow.json` — **реализован runtime**: PostgreSQL exact/lexical, PGVector semantic, tags, deterministic RRF, post-fusion access/version verification, citation/coverage abstention.
-4. `tnavigator-schedule-baseline-analyzer.workflow.json` — **реализован foundation**: lossless lexical CST с exact raw bytes/offsets/hashes, opaque unknown nodes, INCLUDE manifest/path/cycle checks; semantic field-aware grammar CST расширяется после утверждения catalogue 22.2.
-5. `tnavigator-schedule-baseline-decoder.workflow.json` — **реализован foundation**: approved-catalogue record decode, exact variant selection, INCLUDE execution order, prefix/suffix boundary split и hash/provenance binding без встроенных vendor layouts.
-6. `tnavigator-schedule-baseline-query.workflow.json` — **реализован foundation**: planning summary и complete targeted BUILD slice с cursor/hash/filter guards; неполный mutation context fail closed.
-7. `tnavigator-schedule-planner.workflow.json` — **реализован**: bounded AI planner, `decision_record/v1`, structured observations и deterministic five-component keyword/preservation/readiness gates без модельной самооценки процентов.
-8. `tnavigator-schedule-builder.workflow.json` — **реализован foundation**: concrete bounded specialist, CREATE/REVISE, автоматический `PRE_CHANGE_BOUNDARY`, targeted mutation authority, typed IR, `evidence_gap`, removal/profile gates и no direct Excel call.
-9. `tnavigator-schedule-renderer.workflow.json` — **реализован foundation**: generic `schedule_schema_catalogue/v1` validation и deterministic typed-IR → record rendering; vendor field layouts намеренно не встроены.
-10. `tnavigator-schedule-merge.workflow.json` — **реализован foundation**: deterministic KEEP/MODIFY/ADD/REMOVE, explicit removal approval и zero-change byte-identity invariant.
-11. `tnavigator-schedule-validator.workflow.json` — **реализован fail-closed foundation**: общий `BASELINE_PREFIX`/`CANDIDATE` replay для entities/references/prerequisites/hierarchy/cutover/state/lifecycle/numeric/interval/wildcard rules.
-12. `tnavigator-schedule-verifier.workflow.json` — **реализован**: independent read-only hard-blocker/score gate.
-13. `tnavigator-schedule-release.workflow.json` — **реализован**: accountable actor + matching gate + immutable ref contract.
-14. `tnavigator-schedule-simulator-check-adapter.workflow.json` — **реализован portable boundary**: HTTPS `SUBMIT/STATUS/RESULT/CANCEL`, exact tNavigator 22.2 profile, immutable artifact/hash binding, bounded sanitized findings; shell/server paths запрещены. Сам runner внешний.
-15. `mas-trace-event-writer.workflow.json` — **реализован foundation**: redacted `mas_trace_event/v1` и sanitized `decision_record` в выбранную через UI Data Table; Orchestrator выполняет bounded fan-in до 100 событий за ответ, включая доступные summaries Planner/Excel/Builder/Verifier.
-16. Existing Excel Agent/adapter — **реализованы**: upstream table normalization, вызываются только Orchestrator.
-17. Universal Orchestrator — **реализован control-plane foundation**: durable CAS state, Excel→RAG→Builder handoff, schema-catalogue-carrying RAG evidence, RAG abstention/HITL, evidence-gap retry, simulator adapter state machine, matching simulator release gate, verifier и статический trace-writer binding с bounded per-stage fan-in. External artifact store, real licensed runner/check procedure и полный low-level tool-event propagation остаются следующими integration increments.
+1. `tnavigator-schedule-intake.workflow.json` — единый `schedule_build_request/v1` gate для identity/version/idempotency/policy, CREATE/REVISE/AUTO, METRIC/time boundaries, scope, acceptance criteria, expert citations/catalogue и фиксированных thresholds.
+2. `tnavigator-schedule-knowledge-ingestion.workflow.json` — Form/sub-workflow загрузка expert-authored `keyword_instruction` и `worked_example` в PostgreSQL/PGVector.
+3. `tnavigator-schedule-hybrid-retrieval.workflow.json` — PostgreSQL exact/lexical, PGVector semantic, tags, deterministic RRF, access/current-revision filters и full-parent hydration.
+4. `tnavigator-schedule-baseline-analyzer.workflow.json` — lossless lexical CST с raw text/offsets/hashes, opaque unknown nodes и INCLUDE checks.
+5. `tnavigator-schedule-baseline-decoder.workflow.json` — catalogue-driven record decode, exact variant selection, prefix/suffix boundary split и provenance binding.
+6. `tnavigator-schedule-baseline-query.workflow.json` — planning summary и complete targeted mutation-safe slice.
+7. `tnavigator-schedule-planner.workflow.json` — bounded AI planner, `decision_record/v1` и deterministic readiness gates.
+8. `tnavigator-schedule-builder.workflow.json` — concrete CREATE/REVISE specialist, `PRE_CHANGE_BOUNDARY`, typed IR, `evidence_gap`, no direct Excel call и inline `.INC` result.
+9. `tnavigator-schedule-renderer.workflow.json` — generic `schedule_schema_catalogue/v1` validation и deterministic typed-IR → record rendering.
+10. `tnavigator-schedule-merge.workflow.json` — deterministic KEEP/MODIFY/ADD/REMOVE, explicit removal approval и zero-change byte-identity invariant.
+11. `tnavigator-schedule-validator.workflow.json` — fail-closed state replay для entities/references/prerequisites/hierarchy/cutover/state/lifecycle/numeric/interval/wildcard rules.
+12. `tnavigator-schedule-verifier.workflow.json` — independent read-only hard-blocker/score gate.
+13. `tnavigator-schedule-release.workflow.json` — accountable actor + matching gate + bounded inline `schedule.inc` result.
+14. `mas-trace-event-writer.workflow.json` — redacted `mas_trace_event/v1` и sanitized tool metadata в выбранную через UI Data Table.
+15. Existing Excel Agent/adapter — upstream table normalization; вызываются только Orchestrator.
+16. Universal Orchestrator — durable CAS state, Excel→RAG→Builder handoff, RAG abstention/HITL, evidence-gap retry, direct Builder→Verifier route и static trace-writer binding.
 
-`production-ready` не заявляется: обязательны approved exact field/semantic catalogue content из licensed manual, exact 22.2 extended declarations, immutable artifact store, real IT-managed tNavigator runner/check procedure, calibrated golden corpus и target corporate UI smoke.
+MVP готов к repository smoke, но итоговая приёмка всё равно требует target n8n `2.30.8` UI, реальных credentials/Data Tables/network и экспертных карточек для keywords конкретного рабочего сценария.
 
 ### Reusable templates
 
@@ -1061,22 +1175,22 @@ Metrics: Recall@K, MRR/nDCG, exact-keyword accuracy, field-table coverage, citat
 - deterministic validator adapter;
 - independent verifier;
 - HITL decision/release;
-- long-running simulator job adapter — portable implementation shipped; external runner integration remains;
 - generic bounded specialist.
 
-Entrypoints соответствуют роли workflow: user-facing Orchestrator/ingestion получают HTTP, Form и Execute Sub-workflow; внутренние production specialists — только Execute Sub-workflow Trigger, а контролируемые HTTP/Form-входы допускаются лишь для диагностики и smoke. Все delivery workflow используют versioned packet/result, `active:false`, UI credentials/bindings only, без `$env`/Global Variables/server filesystem. Baseline и generated packages передаются immutable artifact references; крупные файлы не помещаются в prompt.
+Entrypoints соответствуют роли workflow: user-facing Orchestrator/ingestion получают HTTP, Form и Execute Sub-workflow; внутренние production specialists — только Execute Sub-workflow Trigger, а контролируемые HTTP/Form-входы допускаются лишь для диагностики и smoke. Все delivery workflow используют versioned packet/result, `active:false`, UI credentials/bindings only, без `$env`/Global Variables/server filesystem. Baseline и generated `.INC` передаются как bounded text внутри n8n; полный текст не помещается в LLM prompt без необходимости.
 
 ## 10. Implementation roadmap
 
-### Phase 0 — scope, manual и contracts
+### Phase 0 — scope, expert catalogue и contracts
 
-**Работы:** зафиксировать первый production profile `tNavigator 22.2`; получить licensed Technical Manual 22.2 и его hash; определить `METRIC`, cutover и keyword subset; утвердить contracts для `CREATE`/`REVISE`, `preserve_unmentioned`, source/artifact/event/findings, threat model и approval roles.
-**DoD:** manual 22.2 hash/revision/access approved; no keyword schema inferred from LLM; обе mode-схемы и preservation policy имеют good/bad JSON fixtures; baseline package обязателен для `REVISE`; unsupported runtime/version fail closed либо проходит отдельный compatibility sign-off.
+**Работы:** зафиксировать профиль `tNavigator 22.2`, `METRIC`, cutover и keyword subset; подготовить первые expert-authored instructions/schema JSON; утвердить contracts для `CREATE`/`REVISE`, `preserve_unmentioned`, source/event/findings и approval roles.
+**DoD:** no keyword schema inferred from LLM; обе mode-схемы и preservation policy имеют good/bad JSON fixtures; baseline text обязателен для `REVISE`; unsupported profile fail closed.
 
 ### Phase 1 — SCHEDULE knowledge foundation
 
-**Работы:** PostgreSQL schema; UI-only ingestion Technical Manual 22.2; keyword-aware chunking; exact/lexical/vector/tag retrieval; separate approved `schedule_schema_catalogue/v1` table/snapshot; RAG eval set для всех 15 unique keywords; baseline package manifest/CST inventory contract.
-**DoD:** exact `tNavigator/22.2/SCHEDULE` filtering; field table/citation coverage; one compatible catalogue per access scope; no access/status leakage; duplicate ingestion idempotent; manual/catalogue version cutover/rollback tested; baseline upload preserves encoding/include graph and produces stable inventory.
+**Работы:** PostgreSQL schema; UI-only ingestion экспертных инструкций и примеров; keyword-aware chunking; exact/lexical/vector/tag retrieval; `schedule_schema_catalogue/v1`; baseline text/CST inventory contract.
+**Статус repository-side:** ingestion и hybrid retrieval реализованы и импортируемы. **Нужно в рабочем UI:** выбрать embedding/PostgreSQL credentials, загрузить карточки используемых keywords и выполнить operational retrieval checks.
+**DoD:** exact `target_base/access/current-revision` filtering; keyword coverage; one compatible catalogue per access scope; no access/status leakage; duplicate ingestion idempotent; baseline upload preserves encoding/include graph and produces stable inventory.
 
 ### Phase 2 — temporal IR, renderer и linter
 
@@ -1088,10 +1202,9 @@ Entrypoints соответствуют роли workflow: user-facing Orchestrat
 **Работы:** mode router; конкретный Schedule Builder для CREATE/REVISE; baseline analyzer/change planner/merger; common researcher/validators/verifier/release workflows; scoped Excel input adapter; typed `evidence_gap` clarification loop; `mas_trace_event/v1`; детерминированный stage scoring и два policy thresholds; accountable approval; bounded retry/replan; cost/tool budgets. Excel и Builder соединяются только через Orchestrator, который сохраняет CAS state между итерациями.
 **DoD:** end-to-end CREATE и REVISE artifacts остаются draft до всех gates; Schedule Builder не содержит Excel workflow ID/FastAPI URL и не вызывает Extractor напрямую; iterative Excel evidence gap возобновляет ту же задачу без потери state и без смешивания snapshots; stale approval/reply отклоняется CAS; unknown/deconfigured route не исполняется; каждый stage имеет explainable score/components/reason codes и trace; attention/re-check и HITL thresholds отрабатывают детерминированно; для `CREATE` полны requirements matrix, source map и completeness report; для `REVISE` полны change set, preservation report и semantic/textual diff; conceptual removals/cascade changes always reach HITL.
 
-### Phase 4 — exact tNavigator validation
+### Phase 4 — будущая автоматическая проверка расчётом
 
-**Уже реализовано:** portable async adapter, static Orchestrator binding, `SUBMIT/STATUS/CANCEL/RESULT`, durable job continuation, exact profile/artifact/result guards и sanitized response contract. **Осталось:** IT-managed sandboxed runner for approved tNavigator 22.2 installation, immutable artifact storage, approved check procedure/command inside runner, resource quota, log parser, simulator-version regression corpus и compatibility matrix.
-**DoD:** реальный runner round-trip на immutable CREATE/REVISE packages; 22.2 profile and any unapproved runtime mismatch classified deterministically; timeout/restart/cancel/replay tested against the deployed service; host paths/secrets/commands hidden from n8n and model.
+Отложена полностью. В текущем репозитории и Orchestrator нет соответствующих workflow, bindings или release dependencies. Отдельный проект можно спроектировать после успешной обкатки генерации `.INC`.
 
 ### Phase 5 — production hardening
 
@@ -1104,9 +1217,21 @@ Entrypoints соответствуют роли workflow: user-facing Orchestrat
 - general full-DATA builder;
 - PVT/SCAL/rock/property agents;
 - Math Service beyond schedule date/unit utilities;
-- full simulation optimization/autonomous history matching.
+- full simulation optimization/autonomous history matching;
+- автоматический запуск расчёта;
+- security/load/backup/DR acceptance.
 
 Архитектурные extension points сохраняются, но эти функции не должны размывать первый production milestone.
+
+### Актуальный MVP DoD
+
+1. Через UI импортируются существующие workflow n8n 2.30.8, настраиваются Data Tables, credentials и обязательные MVP bindings.
+2. Эксперт через Knowledge Ingestion добавляет/обновляет `keyword_instruction` и `worked_example` в выбранную allowlisted RAG base.
+3. Hybrid Retrieval доказуемо использует lexical + semantic + exact tags + RRF и возвращает инструкции по candidate keywords baseline/задачи.
+4. Orchestrator принимает `.data/.inc` как bounded text/binary, Excel — через существующий adapter; Builder не вызывает источники напрямую.
+5. `CREATE` возвращает новый текст SCHEDULE `.INC`; `REVISE` возвращает изменённый `.INC` и preservation/diff, сохраняя невовлечённые baseline blocks.
+6. Parser/renderer/validator и independent verifier не имеют blocking findings; при missing instruction/fact система задаёт конкретный HITL-вопрос.
+7. Результат скачивается/копируется из n8n как обычный `.inc` text.
 
 ## 11. Smoke gate после каждого workflow change
 
@@ -1118,52 +1243,71 @@ Entrypoints соответствуют роли workflow: user-facing Orchestrat
 4. contracts/security tests; отсутствие `$env`, Global Variables и секретов;
 5. все delivery workflows `active:false`;
 6. чистый CLI import всех delivery JSON в новую пустую DB официального n8n 2.30.8;
-7. SCHEDULE golden corpus: CREATE without baseline; REVISE with one approved field change; zero-change byte-identical replay; untouched comments/defaults/unknown keywords/includes retained; missing Excel field => KEEP/`needs_input`; explicit REMOVE => HITL; valid/invalid history/forecast cutover, all keywords, include traversal/cycle, conflict/state replay;
-8. catalogue renderer regression: approved `schedule_schema_catalogue/v1`, type/enum/date/default/provenance checks, unsupported variant, stale target hash, CREATE-only ADD policy and no vendor catalogue embedded in export;
-9. baseline decode/two-phase replay regression: INCLUDE execution order, quotes/escaped quotes, defaults/repeats, multi-token dates, exact/ambiguous variants, malformed/unknown records, CRLF/LF stability, boundary equality in suffix, stable boundary hash, provenance и catalogue/package/initial-snapshot guards;
-10. targeted baseline query regression: planning summary, keyword/entity/date/node/file/field filters, complete-slice refusal, cursor diagnostics, stale decoded hash и mutation identity propagation;
-11. semantic candidate replay regression: entity existence/effective dates, prerequisites, hierarchy, cutover, duplicate/conflicting assignments, lifecycle retire/reactivate, numeric bounds, interval overlap, wildcard refusal, candidate-before-boundary и stale snapshot guards;
-12. orchestration regression: Excel facts → Builder; Builder `evidence_gap` → scoped second Excel request → resume; Builder success → simulator instead of verifier; pass → verifier; queued/running → durable continuation; mismatch/failure/missing immutable artifact → block; no direct specialist-to-specialist calls; stale snapshot/job/version and exhausted loop budget fail closed;
-13. scoring/gates: `>=85`, `70–84`, `<70`, every hard blocker, high/critical mandatory approval; golden-case calibration report prevents weighted average from hiding a critical weak stage;
-14. trace regression: every model/tool/handoff/gate has one correlated event; secrets/binary/raw prompts absent; execution and ledger reconstruct the same stage order;
-15. RAG exact-version/access/citation **and schema-catalogue lookup** regression;
-16. Excel regression; `pytest`; `git diff --check`.
+7. governed input regression: deterministic `schedule_build_request/v1`, exact task/version/idempotency/policy, `METRIC`, time boundaries, CREATE/REVISE scopes, expert catalogue binding, fixed thresholds and explicit HITL questions;
+8. SCHEDULE fixtures: CREATE without baseline; REVISE with one approved field change; zero-change byte-identical replay; untouched comments/defaults/unknown keywords/includes retained; missing Excel field => KEEP/`needs_input`; explicit REMOVE => HITL; valid/invalid history/forecast cutover, include traversal/cycle, conflict/state replay;
+9. catalogue renderer regression: `schedule_schema_catalogue/v1`, type/enum/date/default/provenance checks, unsupported variant, stale target hash and CREATE-only ADD policy;
+10. baseline decode/two-phase replay regression: INCLUDE execution order, quotes/escaped quotes, defaults/repeats, multi-token dates, exact/ambiguous variants, malformed/unknown records, CRLF/LF stability, boundary equality in suffix, stable boundary hash and provenance guards;
+11. targeted baseline query regression: planning summary, keyword/entity/date/node/file/field filters, complete-slice refusal, cursor diagnostics, stale decoded hash и mutation identity propagation;
+12. semantic candidate replay regression: entity existence/effective dates, prerequisites, hierarchy, cutover, duplicate/conflicting assignments, lifecycle retire/reactivate, numeric bounds, interval overlap, wildcard refusal, candidate-before-boundary и stale snapshot guards;
+13. orchestration regression: Excel facts → Builder; Builder `evidence_gap` → scoped Excel request → resume; Builder success → independent verifier; valid inline `.INC` → release; missing/oversized/invalid inline text → block; no direct specialist-to-specialist calls; stale snapshot/version and exhausted loop budget fail closed;
+14. scoring/gates: `>=85`, `70–84`, `<70`, every hard blocker and high/critical mandatory approval;
+15. trace regression: every model/tool/handoff/gate has one correlated event; secrets/binary/raw prompts absent; execution and ledger reconstruct the same stage order;
+16. RAG exact/lexical/semantic/tag/RRF, access/current revision, full-parent hydration, keyword instruction coverage and `abstain` regression;
+17. Excel regression; `pytest`; `git diff --check`.
 
 В чистом target UI:
 
-1. импортировать manifest в документированном порядке;
+1. открыть `n8n/import-manifest.json` и импортировать перечисленные runtime workflows в указанном порядке;
 2. выбрать credentials, Data Table и static workflow bindings;
-3. загрузить approved licensed excerpts через ingestion Form и получить успешный ingest result;
-4. убедиться, что runtime nodes не красные;
-5. прогнать HTTP, Form и Execute Sub-workflow entrypoints;
-6. проверить clarification, stale version, unauthorized access, retry/reject/approve и видимый trace всех model/tool/sub-workflow calls;
-7. выполнить два независимых сценария: создать Schedule с нуля без baseline и пересобрать старый Schedule с одним approved change; проверить catalogue-driven render/completeness/state replay для CREATE и hash-compatible baseline semantic snapshot + semantic/textual diff + preservation report для REVISE;
-8. отдельно вызвать нехватку обязательного Excel-поля: увидеть `evidence_gap`, конкретный HITL-вопрос, сохранение state, повторное извлечение и resume Builder; проверить attention и HITL thresholds;
-9. настроить уже импортированный Simulator Check Adapter, immutable artifact store и реальный runner; проверить SUBMIT → queued/running → STATUS/RESULT, failed/cancel, profile/hash mismatch и release block без matching pass;
-10. только после этого активировать production workflows.
+3. загрузить экспертную `keyword_instruction` и optional schema JSON через ingestion Form;
+4. выполнить exact keyword, русский task-pattern, topic/tag и negative `abstain` retrieval checks;
+5. убедиться, что runtime nodes не красные;
+6. прогнать HTTP, Form и Execute Sub-workflow entrypoints;
+7. проверить clarification, stale version, unauthorized access, retry/reject/approve и видимый trace model/tool/sub-workflow calls;
+8. выполнить два независимых сценария: создать Schedule с нуля и пересобрать старый `.data/.inc` с одним approved change; проверить inline result, completeness, state replay, diff и preservation;
+9. отдельно вызвать нехватку обязательного Excel-поля: увидеть `evidence_gap`, конкретный HITL-вопрос, сохранение state, повторное извлечение и resume Builder;
+10. только после этого активировать user-facing workflows.
 
-CLI import не проверяет корпоративную сеть, credentials, PostgreSQL rights, manual access и vendor runtime — UI/infrastructure smoke обязателен отдельно.
+CLI import не проверяет корпоративную сеть, credentials, PostgreSQL rights и реальный UI round-trip — UI/infrastructure smoke обязателен отдельно.
+
+**Последний полный repository gate на официальном n8n 2.30.8:** 121 runtime-сценарий; 18/18 FastAPI tests; 28/28 workflow contracts; 119/119 Code nodes compiled; clean import/export 22/22, активных после импорта — 0. Целевой UI всё равно требует ручного round-trip с реальными credentials, Data Tables и сетью.
 
 ## 12. Ревизия текущего репозитория
 
 | Компонент | Сейчас | Решение для SCHEDULE slice |
 |---|---|---|
-| Universal Engineering Orchestrator | state/CAS/HITL/router/verifier, static Excel→RAG→Builder→Simulator, durable simulator continuation/release gate и bounded trace fan-in реализованы | подключить external artifact store, real runner/check procedure и полный low-level tool-event propagation |
+| Universal Engineering Orchestrator | state/CAS/HITL/router/verifier, static Excel→RAG→Builder→Verifier и bounded redacted trace fan-in реализованы | target UI binding/Data Table/credential smoke |
 | Excel Agent + adapter | реализованы | использовать для history/forecast input tables |
 | Excel FastAPI tools | реализованы отдельно | не смешивать с Schedule grammar/validation |
 | Engineering specialist template | базовый | создать SCHEDULE-specific templates из раздела 9 |
 | Excel RAG | локальный operating guide | не считать tNavigator knowledge base |
-| tNavigator manual RAG | executable ingestion + PostgreSQL/PGVector/tag/RRF retrieval; mandatory pre-Builder route | в UI выбрать credentials, загрузить licensed approved excerpts и откалибровать eval corpus |
-| Конкретный Schedule Builder agent | importable foundation с automatic pre-change snapshot и targeted mutation authority реализован | довести до production после approved exact field/semantic catalogue, immutable artifact export, real runner evidence и golden corpus; вызов только через Orchestrator |
-| SCHEDULE parser/decoder/query/renderer/merge/validator | block-preserving baseline/merge, catalogue decoder, targeted query, two-phase replay и generic lifecycle/numeric/interval/wildcard mechanisms реализованы | загрузить exact 22.2 declarations, уточнить control/unit/completion/fracture policy и откалибровать golden corpus |
-| Simulator check adapter | portable HTTPS boundary и Orchestrator state/release integration реализованы | IT должен развернуть licensed tNavigator 22.2 runner, artifact access и approved check procedure; затем corporate round-trip smoke |
+| SCHEDULE hybrid RAG | executable ingestion + PostgreSQL/PGVector/tag/RRF retrieval; mandatory pre-Builder route | в UI выбрать credentials и загрузить expert-authored instructions/examples/schema JSON |
+| Конкретный Schedule Builder agent | importable foundation с automatic pre-change snapshot, targeted mutation authority и inline `.INC` result реализован | заполнить expert catalogue для keywords рабочего сценария и провести UI end-to-end smoke |
+| SCHEDULE parser/decoder/query/renderer/merge/validator | block-preserving baseline/merge, catalogue decoder, targeted query, two-phase replay и generic lifecycle/numeric/interval/wildcard mechanisms реализованы | уточнять expert schema/policy по мере добавления keywords |
 | Math Service | отсутствует | deferred по текущему SCHEDULE slice; extension point сохранён |
 | Full DATA/grid generation | отсутствует | явно вне scope |
 | `excel-mas-orchestrator` | legacy | не импортировать в greenfield |
 
+### 12.1. Requirement-by-requirement completion audit
+
+| Обязательное требование текущего SCHEDULE slice | Repository evidence | Что ещё блокирует production acceptance |
+|---|---|---|
+| Один Orchestrator, Excel и Builder без прямых вызовов | статические allowlisted routes, universal adapter, `evidence_gap` resume и contract regression | target UI binding/network round-trip |
+| `CREATE` с нуля | отдельная greenfield-ветка, required-data/source/completeness contracts, catalogue renderer и semantic replay | экспертные инструкции/schema JSON и рабочие CREATE cases |
+| Preserve-by-default `REVISE` | lossless CST/INCLUDE, approved decoder, `PRE_CHANGE_BOUNDARY`, targeted mutation authority, atomic merge/diff; `REMOVE` только через approval | representative baseline files и engineer sign-off |
+| Выбор `KEEP/MODIFY/ADD/REMOVE` и итеративный Excel evidence loop | Planner/reconciler boundary, scoped Excel packet, CAS task version, loop/stale-snapshot guards | corporate workbooks and accountable HITL acceptance |
+| Наглядность работы агентов без hidden chain-of-thought | n8n execution graph, structured `decision_record`, redacted tool/stage events и trace Data Table | production trace sink, retention/RBAC/data-residency policy |
+| Explainable readiness `>=85`, `70–84`, `<70` + hard blockers | deterministic score components/raw counts/reason codes, attention retry и HITL regression | проверить пороги на рабочих сценариях отдела |
+| Hybrid RAG: exact/lexical/vector/tags/RRF | executable PostgreSQL/PGVector retrieval, access/current filters, full-parent hydration и abstention | corporate embeddings/PGVector credentials и expert-authored content |
+| Практический RAG gate | exact/task-pattern/tag/negative retrieval smoke через фактический Hybrid Retrieval | target UI проверка на знаниях отдела |
+| n8n 2.30.8 UI-only portability | no `$env`/Globals/shell/server files; manifest и пять UI bindings | clean corporate UI import, credentials/Data Tables and network acceptance |
+| Windows Excel service | dotenv-aware FastAPI package, CMD `.bat` setup/start/check and Docker alternative | corporate Windows firewall/service account/availability acceptance |
+
+**Аудит-вывод:** текущая repository-side архитектура соответствует практичному MVP. Рабочая готовность подтверждается только после импорта в целевой UI, настройки credentials/Data Tables и двух end-to-end сценариев `CREATE`/`REVISE` на экспертных карточках отдела.
+
 ## 13. Источники и примененные выводы
 
-Доступ проверен 2026-08-08; implementation status обновлён 2026-08-09. Online-документация может описывать более новую версию, поэтому runtime grammar всегда version-pinned.
+Доступ к первичным web-источникам по MAS/n8n повторно проверен 2026-08-09; implementation status обновлён в ту же дату. Online-документация может описывать более новую версию, поэтому runtime grammar всегда version-pinned, а node registry/typeVersion фиксируются smoke-прогоном официального image `n8nio/n8n:2.30.8`.
 
 ### SCHEDULE/tNavigator
 

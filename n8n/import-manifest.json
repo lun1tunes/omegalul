@@ -1,0 +1,203 @@
+{
+  "contract": "n8n_ui_import_manifest",
+  "contract_version": "1.0",
+  "target_n8n_version": "2.30.8",
+  "deployment_mode": "ui_only_no_global_variables",
+  "full_clean_import_set": [
+    "workflows/ai-components.workflow.json",
+    "workflows/calculation-specialist-adapter.workflow.json",
+    "workflows/engineering-specialist-template.workflow.json",
+    "workflows/excel-engineering-specialist-adapter.workflow.json",
+    "workflows/excel-extraction-agent.workflow.json",
+    "workflows/excel-extraction-form-adapter.workflow.json",
+    "workflows/excel-mas-orchestrator.workflow.json",
+    "workflows/excel-rag-ingestion.workflow.json",
+    "workflows/mas-trace-event-writer.workflow.json",
+    "workflows/tnavigator-schedule-baseline-analyzer.workflow.json",
+    "workflows/tnavigator-schedule-baseline-decoder.workflow.json",
+    "workflows/tnavigator-schedule-baseline-query.workflow.json",
+    "workflows/tnavigator-schedule-builder.workflow.json",
+    "workflows/tnavigator-schedule-hybrid-retrieval.workflow.json",
+    "workflows/tnavigator-schedule-intake.workflow.json",
+    "workflows/tnavigator-schedule-knowledge-ingestion.workflow.json",
+    "workflows/tnavigator-schedule-merge.workflow.json",
+    "workflows/tnavigator-schedule-planner.workflow.json",
+    "workflows/tnavigator-schedule-release.workflow.json",
+    "workflows/tnavigator-schedule-renderer.workflow.json",
+    "workflows/tnavigator-schedule-validator.workflow.json",
+    "workflows/tnavigator-schedule-verifier.workflow.json",
+    "workflows/universal-engineering-orchestrator.workflow.json"
+  ],
+  "runtime_import_order": [
+    "workflows/calculation-specialist-adapter.workflow.json",
+    "workflows/excel-extraction-agent.workflow.json",
+    "workflows/excel-engineering-specialist-adapter.workflow.json",
+    "workflows/tnavigator-schedule-knowledge-ingestion.workflow.json",
+    "workflows/tnavigator-schedule-hybrid-retrieval.workflow.json",
+    "workflows/tnavigator-schedule-builder.workflow.json",
+    "workflows/mas-trace-event-writer.workflow.json",
+    "workflows/universal-engineering-orchestrator.workflow.json"
+  ],
+  "optional_or_non_runtime": [
+    {
+      "workflow": "workflows/excel-extraction-form-adapter.workflow.json",
+      "reason": "standalone Excel form only"
+    },
+    {
+      "workflow": "workflows/excel-rag-ingestion.workflow.json",
+      "reason": "Excel operating-guide seeding only"
+    },
+    {
+      "workflow": "workflows/engineering-specialist-template.workflow.json",
+      "reason": "extension template"
+    },
+    {
+      "workflow": "workflows/ai-components.workflow.json",
+      "reason": "reference components"
+    },
+    {
+      "workflow": "workflows/excel-mas-orchestrator.workflow.json",
+      "reason": "legacy migration-only; never activate"
+    }
+  ],
+  "data_tables": [
+    {
+      "name": "engineering_orchestrator_tasks_v1",
+      "purpose": "authoritative CAS task state",
+      "columns": {
+        "task_id": "String",
+        "version": "Number",
+        "status": "String",
+        "phase": "String",
+        "task_type": "String",
+        "risk_class": "String",
+        "request_json": "String",
+        "context_json": "String",
+        "plan_json": "String",
+        "specialist_json": "String",
+        "result_json": "String",
+        "verification_json": "String",
+        "pending_human_json": "String",
+        "last_error_json": "String",
+        "retry_count": "Number",
+        "max_retries": "Number",
+        "history_json": "String",
+        "created_at": "String",
+        "updated_at": "String"
+      }
+    },
+    {
+      "name": "mas_trace_events_v1",
+      "purpose": "redacted append-only execution ledger",
+      "columns": {
+        "event_id": "String",
+        "trace_id": "String",
+        "task_id": "String",
+        "at": "String",
+        "stage": "String",
+        "event_type": "String",
+        "actor": "String",
+        "status": "String",
+        "summary": "String",
+        "details_json": "String"
+      }
+    }
+  ],
+  "mandatory_execute_workflow_bindings": [
+    {
+      "owner": "Universal Engineering Orchestrator — stateful HITL template",
+      "node": "Call Excel Extraction Specialist Adapter",
+      "target": "Excel Extraction Specialist Adapter — universal contract",
+      "placeholder": "REPLACE_EXCEL_ADAPTER_IN_UI"
+    },
+    {
+      "owner": "Universal Engineering Orchestrator — stateful HITL template",
+      "node": "Call SCHEDULE Hybrid Retrieval",
+      "target": "tNavigator SCHEDULE Hybrid Retrieval — executable RRF runtime",
+      "placeholder": "REPLACE_SCHEDULE_RAG_RETRIEVAL_IN_UI"
+    },
+    {
+      "owner": "Universal Engineering Orchestrator — stateful HITL template",
+      "node": "Call SCHEDULE Builder Specialist",
+      "target": "tNavigator SCHEDULE Builder — governed CREATE/REVISE pipeline",
+      "placeholder": "REPLACE_SCHEDULE_BUILDER_IN_UI"
+    },
+    {
+      "owner": "Universal Engineering Orchestrator — stateful HITL template",
+      "node": "Call Calculation Specialist",
+      "target": "Engineering Calculation Specialist Adapter — Math Service",
+      "placeholder": "REPLACE_CALCULATION_ADAPTER_IN_UI"
+    },
+    {
+      "owner": "Universal Engineering Orchestrator — stateful HITL template",
+      "node": "Call MAS Trace Event Writer",
+      "target": "MAS Trace Event Writer — redacted execution ledger",
+      "placeholder": "REPLACE_MAS_TRACE_WRITER_IN_UI"
+    },
+    {
+      "owner": "Excel Extraction Specialist Adapter — universal contract",
+      "node": "Call native Excel Extraction Agent",
+      "target": "Excel Extractor Agent — OpenAI nano + FastAPI tools",
+      "placeholder": "REPLACE_EXCEL_EXTRACTION_AGENT_IN_UI"
+    }
+  ],
+  "future_enterprise_or_optional_bindings": [],
+  "optional_execute_workflow_bindings": [
+    {
+      "node": "Call Data Specialist",
+      "placeholder": "REPLACE_DATA_SPECIALIST_IN_UI"
+    },
+    {
+      "node": "Call Document Specialist",
+      "placeholder": "REPLACE_DOCUMENT_SPECIALIST_IN_UI"
+    }
+  ],
+  "required_credentials": [
+    {
+      "type": "openAiApi",
+      "use": "Planner, Verifier, SCHEDULE Planner/Builder, embeddings; use approved low-cost deployments"
+    },
+    {
+      "type": "postgres",
+      "use": "Postgres memory plus PostgreSQL/PGVector hybrid RAG"
+    },
+    {
+      "type": "httpHeaderAuth",
+      "use": "orchestrator inbound webhook and Excel Tools only"
+    }
+  ],
+  "ui_configuration": [
+    "Select both Data Tables in every matching Data Table node.",
+    "Apply the six mandatory MVP Execute Workflow bindings.",
+    "Configure Excel Tools base URL/API key; 127.0.0.1 is valid only when n8n runs on the same Windows host.",
+    "Edit Math Service Configuration in the Calculation Adapter; its default is http://127.0.0.1:8100/api/v1/math and it uses no credential.",
+    "Configure one embedding model/dimension consistently for SCHEDULE ingestion and retrieval.",
+    "Use Knowledge Ingestion to load expert-authored keyword_instruction and worked_example text into target_base=schedule_mvp; include schema_catalogue JSON only when deterministic rendering needs it.",
+    "Keep every workflow inactive until placeholders and credentials are resolved. Activate only required user-facing entrypoints."
+  ],
+  "activation_order": [
+    "Run SCHEDULE Knowledge Ingestion manually and verify expert keyword instructions and worked examples through Hybrid Retrieval.",
+    "Smoke-test Excel Agent and the inline .data/.inc path while inactive.",
+    "Smoke-test Universal Orchestrator through Execute Workflow, then Form, then authenticated HTTP.",
+    "Activate Universal Orchestrator web entrypoints only after all gates pass. Do not activate legacy Excel MAS."
+  ],
+  "smoke_expectations": [
+    "start without objective returns a bounded HITL request",
+    "Calculation Adapter asks for one or more DEV trajectories plus exactly one surface when they are absent and otherwise posts every DEV as repeated trajectory_files fields in one Math Service request",
+    "Excel clarification resumes with the same controlled task and correlated evidence snapshot",
+    "CREATE and REVISE stop when an affected keyword lacks an active expert instruction or schema JSON needed for deterministic rendering",
+    "Hybrid Retrieval combines lexical, semantic and exact tags with RRF and returns full active parent knowledge blocks",
+    "Builder evidence_gap routes through Orchestrator to Excel and resumes Builder; no direct specialist-to-specialist call exists",
+    "validated CREATE and preserve-by-default REVISE return ordinary bounded .INC text plus completeness/preservation and diff evidence",
+    "redacted traces expose decisions, readiness, gates and tool IDs/hashes without prompts, secrets, binary or raw payloads",
+    "stale expected_version or wrong gate_id fails closed"
+  ],
+  "mvp_external_blockers": [
+    "expert-authored active keyword_instruction and schema JSON for each keyword used by the MVP scenario",
+    "corporate n8n 2.30.8 UI round-trip with real credentials, Data Tables and network access to Windows Excel FastAPI"
+  ],
+  "deferred_enterprise_gates": [
+    "optional real tNavigator integration may be designed later as a separate approved project",
+    "security/load/backup/DR acceptance and production trace policy"
+  ]
+}

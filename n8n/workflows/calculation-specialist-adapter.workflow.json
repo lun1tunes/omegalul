@@ -1,0 +1,239 @@
+{
+  "id": "864e068c-d406-51c0-aa1c-345415210d25",
+  "name": "Engineering Calculation Specialist Adapter — Math Service",
+  "nodes": [
+    {
+      "parameters": {
+        "content": "## Calculation Adapter — n8n 2.30.8\n\nAccepts `specialist_packet/v1.0`, every attached `.dev` binary and one ASCII CPS3 surface. Edit the local Math Service URL in the visible configuration node, then bind this workflow in the Orchestrator's `Call Calculation Specialist` node.\n\nAll DEV files are sent in one multipart request as repeated `trajectory_files` fields. The Math Service parses the surface once, performs bilinear interpolation and returns one first-in-MD intersection per source filename.",
+        "height": 300,
+        "width": 500,
+        "color": 5
+      },
+      "id": "ad1cae65-5ba0-5848-b31e-cba74bca51a4",
+      "name": "Calculation adapter README",
+      "type": "n8n-nodes-base.stickyNote",
+      "typeVersion": 1,
+      "position": [
+        -920,
+        -500
+      ]
+    },
+    {
+      "parameters": {
+        "inputSource": "jsonExample",
+        "jsonExample": "{\"specialist_packet\":{\"contract\":\"specialist_packet\",\"contract_version\":\"1.0\",\"task_id\":\"eng_example\",\"specialist_id\":\"engineering_calculation_specialist\",\"attempt\":1,\"objective\":\"Find the well trajectory intersection with the structural surface\",\"inputs\":{},\"controls\":{},\"acceptance_criteria\":[],\"artifact_refs\":[]}}"
+      },
+      "id": "af96a635-73c8-5dde-93e4-2ea06149cb0c",
+      "name": "Receive calculation specialist packet",
+      "type": "n8n-nodes-base.executeWorkflowTrigger",
+      "typeVersion": 1.2,
+      "position": [
+        -920,
+        -80
+      ]
+    },
+    {
+      "parameters": {
+        "jsCode": "const item=$input.first();\nconst incoming=item.json||{};\nconst object=value=>value&&typeof value==='object'&&!Array.isArray(value);\nconst parse=value=>{if(object(value))return value;if(typeof value==='string'){try{const parsed=JSON.parse(value);return object(parsed)?parsed:{}}catch{return {}}}return {}};\nconst packet=parse(incoming.specialist_packet);\nconst packetValid=packet.contract==='specialist_packet'&&packet.contract_version==='1.0'&&typeof packet.task_id==='string'&&packet.task_id.trim()&&packet.specialist_id==='engineering_calculation_specialist'&&Number.isInteger(packet.attempt)&&packet.attempt>=1&&typeof packet.objective==='string'&&packet.objective.trim()&&object(packet.inputs)&&object(packet.controls)&&Array.isArray(packet.acceptance_criteria)&&Array.isArray(packet.artifact_refs);\nconst entries=Object.entries(item.binary||{});\nconst trajectories=entries.filter(([,file])=>/\\.dev$/i.test(String(file?.fileName||'')));\nconst surfaces=entries.filter(([,file])=>/\\.(?:cps3|grd|grid|txt)$/i.test(String(file?.fileName||'')));\nlet gate='ready';\nif(!packetValid)gate='invalid_packet';else if(!trajectories.length||surfaces.length!==1)gate='missing_or_ambiguous_files';\nconst binary={};\nconst bodyParameters=[];\nfor(let i=0;i<trajectories.length;i++){const field=`trajectory_${i}`;binary[field]=trajectories[i][1];bodyParameters.push({parameterType:'formBinaryData',name:'trajectory_files',inputDataFieldName:field});}\nif(surfaces.length===1){binary.surface_file=surfaces[0][1];bodyParameters.push({parameterType:'formBinaryData',name:'surface_file',inputDataFieldName:'surface_file'});}\nreturn [{json:{specialist_packet:packet,request_ready:gate==='ready',adapter_gate:gate,trajectory_filenames:trajectories.map(([,file])=>String(file.fileName||'')),surface_filename:surfaces.length===1?String(surfaces[0][1].fileName||''):null,body_parameters:bodyParameters},binary}];"
+      },
+      "id": "8061b750-4e46-5553-af09-e3ca515497fe",
+      "name": "Prepare trajectory intersection request",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        -660,
+        -80
+      ]
+    },
+    {
+      "parameters": {
+        "conditions": {
+          "options": {
+            "caseSensitive": true,
+            "leftValue": "",
+            "typeValidation": "strict",
+            "version": 2
+          },
+          "conditions": [
+            {
+              "id": "41749b52-a4d4-58b3-a209-c3e267be670f",
+              "leftValue": "={{ $json.request_ready }}",
+              "rightValue": true,
+              "operator": {
+                "type": "boolean",
+                "operation": "equals"
+              }
+            }
+          ],
+          "combinator": "and"
+        },
+        "options": {}
+      },
+      "id": "4824ac19-3771-5f6c-bd2d-536a76f8fd89",
+      "name": "Trajectory inputs ready?",
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2.2,
+      "position": [
+        -400,
+        -80
+      ]
+    },
+    {
+      "parameters": {
+        "assignments": {
+          "assignments": [
+            {
+              "id": "ab4ca4b2-a9a7-51aa-b5b5-82e644ab2aae",
+              "name": "math_service_url",
+              "value": "http://127.0.0.1:8100/api/v1/math",
+              "type": "string"
+            }
+          ]
+        },
+        "options": {},
+        "includeOtherFields": true
+      },
+      "id": "ab4ca4b2-a9a7-51aa-b5b5-82e644ab2aae",
+      "name": "Math Service Configuration",
+      "type": "n8n-nodes-base.set",
+      "typeVersion": 3.4,
+      "position": [
+        -140,
+        -200
+      ]
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "={{ $('Math Service Configuration').first().json.math_service_url + '/trajectory-intersection' }}",
+        "sendBody": true,
+        "contentType": "multipart-form-data",
+        "bodyParameters": {
+          "parameters": "={{ $('Prepare trajectory intersection request').first().json.body_parameters }}"
+        },
+        "options": {
+          "response": {
+            "response": {
+              "responseFormat": "json",
+              "neverError": true
+            }
+          }
+        }
+      },
+      "id": "a1786a41-1610-58a7-82a2-f786f2af617c",
+      "name": "Call trajectory intersection",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.4,
+      "position": [
+        120,
+        -200
+      ],
+      "onError": "continueRegularOutput"
+    },
+    {
+      "parameters": {
+        "jsCode": "const prepared=$('Prepare trajectory intersection request').first().json||{};\nconst packet=prepared.specialist_packet||{};\nlet response=$json;if(response?.body&&typeof response.body==='object')response=response.body;\nconst finite=value=>typeof value==='number'&&Number.isFinite(value);\nconst results=Array.isArray(response?.results)?response.results:[];\nconst expected=Array.isArray(prepared.trajectory_filenames)?prepared.trajectory_filenames:[];\nconst valid=results.length===expected.length&&results.length>0&&results.every(value=>value&&typeof value.filename==='string'&&value.filename&&finite(value.intersection_md)&&finite(value.x)&&finite(value.y)&&finite(value.z));\nconst returnedNames=results.map(value=>value?.filename);\nconst filenamesMatch=valid&&expected.every(name=>returnedNames.includes(name))&&new Set(returnedNames).size===returnedNames.length;\nconst passed=valid&&filenamesMatch;\nconst status=passed?'succeeded':'retryable_error';\nconst summary=passed?`Math Service calculated ${results.length} DEV trajectory/CPS3 surface intersections in one batch.`:'Math Service returned an invalid or incomplete batch trajectory-intersection response.';\nconst calculation=passed?{results:results.map(value=>({filename:value.filename,intersection_md:value.intersection_md,x:value.x,y:value.y,z:value.z})),trajectory_count:results.length,result_mode:'computed_batch'}:{};\nconst reasonCodes=passed?['TRAJECTORY_INTERSECTION_BATCH_COMPUTED']:['MATH_SERVICE_BATCH_RESPONSE_INVALID'];\nconst checks=[{check:'math_service_batch_response_contract',passed:valid},{check:'one_result_per_trajectory_filename',passed:filenamesMatch},{check:'finite_intersection_coordinates',passed}];\nconst assumptions=['All trajectories and the surface use the same CRS, length units, vertical datum and Z sign convention.'];\nconst considered=[...expected.map(filename=>({kind:'dev_trajectory',filename})),{kind:'ascii_cps3_surface',filename:prepared.surface_filename}];\nconst decision={contract:'decision_record',contract_version:'1.0',objective:String(packet.objective||'Calculate trajectory/surface intersections.'),considered_inputs:considered,proposed_actions:[{action:'return_computed_batch'}],selected_action:{action:status,reason_codes:reasonCodes},rejected_actions:[],assumptions,evidence_refs:[],citations:[],tool_call_ids:['math-service:trajectory-intersection:batch'],unresolved_questions:passed?[]:[{id:'math_service_response',question:'Check the Math Service URL, every DEV/CPS3 input and the batch response.',type:'text'}],acceptance_check_results:checks};\nreturn [{json:{specialist_result:{contract:'specialist_result',contract_version:'1.0',task_id:String(packet.task_id||'unknown'),specialist_id:'engineering_calculation_specialist',attempt:Number.isInteger(packet.attempt)?packet.attempt:1,status,summary,deliverables:passed?[{kind:'trajectory_surface_intersections',description:summary,artifact_refs:[]}]:[],artifact_refs:[],compact_data:{calculation,decision_record:decision,agent_tool_trace:[{name:'trajectory-intersection',tool_call_id:'math-service:trajectory-intersection:batch',status:passed?'completed':'error',stage:'calculation',sequence:1}]},assumptions,warnings:[],evidence:passed?[{source_ref:'math-service://trajectory-intersection',trajectory_filenames:expected,surface_filename:prepared.surface_filename,result_mode:'computed_batch'}]:[],self_check:{performed:true,passed,checks,reproducibility:'Repeat with the same DEV batch and ASCII CPS3 input.'},human_request:null,error:passed?null:{code:'MATH_SERVICE_BATCH_RESPONSE_INVALID',response},continuation:null}}}];"
+      },
+      "id": "48eec70e-1407-5422-aa4d-a28b7b820857",
+      "name": "Adapt trajectory intersection result",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        380,
+        -200
+      ]
+    },
+    {
+      "parameters": {
+        "jsCode": "const x=$('Prepare trajectory intersection request').first().json||{};\nconst packet=x.specialist_packet||{};\nconst fatal=x.adapter_gate==='invalid_packet';\nconst questions=fatal?[]:[{id:'trajectory_files',question:'Upload one or more well trajectories as .dev files.',type:'file'},{id:'surface_file',question:'Upload exactly one ASCII CPS3 surface as .cps3, .grd, .grid or .txt.',type:'file'}];\nconst status=fatal?'fatal_error':'needs_input';\nconst code=fatal?'INVALID_CALCULATION_SPECIALIST_PACKET':'CALCULATION_FILES_REQUIRED';\nconst decision={contract:'decision_record',contract_version:'1.0',objective:String(packet.objective||'Validate batch trajectory-intersection input.'),considered_inputs:[{kind:'calculation_adapter_input',adapter_gate:x.adapter_gate,trajectory_count:(x.trajectory_filenames||[]).length,surface_filename:x.surface_filename}],proposed_actions:[{action:'call_math_service_batch'},{action:'request_files'}],selected_action:{action:status,reason_codes:[code]},rejected_actions:[{action:'call_math_service_batch',reason_codes:[code]}],assumptions:[],evidence_refs:[],citations:[],tool_call_ids:[],unresolved_questions:questions,acceptance_check_results:[{check:'one_or_more_trajectories_and_exactly_one_surface',passed:false}]};\nreturn [{json:{specialist_result:{contract:'specialist_result',contract_version:'1.0',task_id:String(packet.task_id||'unknown'),specialist_id:'engineering_calculation_specialist',attempt:Number.isInteger(packet.attempt)?packet.attempt:1,status,summary:fatal?'Invalid specialist_packet supplied to Calculation Adapter.':'One or more valid DEV trajectories and exactly one CPS3 surface are required.',deliverables:[],artifact_refs:[],compact_data:{adapter_gate:x.adapter_gate,decision_record:decision},assumptions:[],warnings:[],evidence:[],self_check:{performed:false,passed:false,checks:[],reproducibility:''},human_request:fatal?null:{kind:'needs_input',questions},error:fatal?{code}:null,continuation:null}}}];"
+      },
+      "id": "9a45187c-eb96-5d44-b51f-fb8ca2d416c2",
+      "name": "Build calculation input gate",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        -140,
+        80
+      ]
+    }
+  ],
+  "pinData": {},
+  "connections": {
+    "Receive calculation specialist packet": {
+      "main": [
+        [
+          {
+            "node": "Prepare trajectory intersection request",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Prepare trajectory intersection request": {
+      "main": [
+        [
+          {
+            "node": "Trajectory inputs ready?",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Trajectory inputs ready?": {
+      "main": [
+        [
+          {
+            "node": "Math Service Configuration",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Build calculation input gate",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Math Service Configuration": {
+      "main": [
+        [
+          {
+            "node": "Call trajectory intersection",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Call trajectory intersection": {
+      "main": [
+        [
+          {
+            "node": "Adapt trajectory intersection result",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    }
+  },
+  "active": false,
+  "settings": {
+    "executionOrder": "v1",
+    "saveManualExecutions": true,
+    "callerPolicy": "workflowsFromSameOwner",
+    "errorWorkflow": ""
+  },
+  "versionId": "df90b849-c6bd-57be-99db-b1e2b888d6d1",
+  "meta": {
+    "templateCredsSetupCompleted": false,
+    "targetN8nVersion": "2.30.8",
+    "contractVersion": "1.1"
+  },
+  "tags": []
+}

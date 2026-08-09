@@ -1,0 +1,2 @@
+"""FastAPI math service package."""
+

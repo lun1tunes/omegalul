@@ -5,7 +5,7 @@
   "nodes": [
     {
       "parameters": {
-        "content": "Fails closed without an approved licensed 22.2 schema catalogue.",
+        "content": "Fails closed without an expert-approved exact schema catalogue for the requested keyword scope.",
         "width": 440,
         "height": 300,
         "color": 5
@@ -22,7 +22,7 @@
     {
       "parameters": {
         "inputSource": "jsonExample",
-        "jsonExample": "{\"schedule_validation_request\": {\"schedule_text\": \"DATES\\n  2025-01-01 /\\n\", \"simulator_profile\": {\"vendor\": \"Rock Flow Dynamics\", \"simulator\": \"tNavigator\", \"version\": \"22.2\"}, \"schema_catalogue_ref\": \"manual://tnavigator/22.2\", \"schema_catalogue_approved\": false}}"
+        "jsonExample": "{\"schedule_validation_request\": {\"schedule_text\": \"DATES\\n  2025-01-01 /\\n\", \"simulator_profile\": {\"vendor\": \"Rock Flow Dynamics\", \"simulator\": \"tNavigator\", \"version\": \"22.2\"}, \"schema_catalogue_ref\": \"knowledge://schedule_mvp/schema/v1\", \"schema_catalogue_approved\": false}}"
       },
       "id": "f1588c27-27ad-50e2-8be5-1e2a7dc3c020",
       "name": "Receive SCHEDULE validation request",
