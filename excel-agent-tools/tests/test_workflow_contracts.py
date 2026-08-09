@@ -17,10 +17,28 @@ EXCEL_DELIVERY_WORKFLOWS = {
     "excel-mas-orchestrator.workflow.json",
     "excel-rag-ingestion.workflow.json",
 }
+SCHEDULE_FOUNDATION_WORKFLOWS = {
+    "mas-trace-event-writer.workflow.json",
+    "tnavigator-schedule-baseline-analyzer.workflow.json",
+    "tnavigator-schedule-baseline-decoder.workflow.json",
+    "tnavigator-schedule-baseline-query.workflow.json",
+    "tnavigator-schedule-hybrid-retrieval.workflow.json",
+    "tnavigator-schedule-intake.workflow.json",
+    "tnavigator-schedule-knowledge-ingestion.workflow.json",
+    "tnavigator-schedule-merge.workflow.json",
+    "tnavigator-schedule-planner.workflow.json",
+    "tnavigator-schedule-renderer.workflow.json",
+    "tnavigator-schedule-release.workflow.json",
+    "tnavigator-schedule-renderer.workflow.json",
+    "tnavigator-schedule-simulator-check-adapter.workflow.json",
+    "tnavigator-schedule-validator.workflow.json",
+    "tnavigator-schedule-verifier.workflow.json",
+}
 UNIVERSAL_ENGINEERING_WORKFLOWS = {
     "engineering-specialist-template.workflow.json",
+    "tnavigator-schedule-builder.workflow.json",
     "universal-engineering-orchestrator.workflow.json",
-}
+} | SCHEDULE_FOUNDATION_WORKFLOWS
 
 # Registry names and versions verified against the node packages bundled in
 # the official n8nio/n8n:2.30.8 image. These are export JSON identifiers, not
@@ -45,6 +63,7 @@ N8N_2_30_8_PORTABLE_NODE_VERSIONS = {
     "n8n-nodes-base.if": {2.2, 2.3},
     "n8n-nodes-base.manualTrigger": {1},
     "n8n-nodes-base.merge": {3.2},
+    "n8n-nodes-base.postgres": {2.6},
     "n8n-nodes-base.set": {3.4},
     "n8n-nodes-base.stickyNote": {1},
     "n8n-nodes-base.webhook": {2, 2.1},
@@ -234,7 +253,10 @@ def test_delivery_workflows_are_inactive_until_ui_configuration() -> None:
 
 
 def test_universal_engineering_orchestrator_has_no_service_or_excel_contract() -> None:
-    paths = [WORKFLOWS / name for name in UNIVERSAL_ENGINEERING_WORKFLOWS]
+    paths = [
+        WORKFLOWS / "engineering-specialist-template.workflow.json",
+        WORKFLOWS / "universal-engineering-orchestrator.workflow.json",
+    ]
     forbidden = (
         "fastapi",
         "excel_tools",
@@ -255,6 +277,7 @@ def test_universal_engineering_orchestrator_has_no_service_or_excel_contract() -
 def test_universal_orchestrator_enterprise_control_plane() -> None:
     workflow = load_json(WORKFLOWS / "universal-engineering-orchestrator.workflow.json")
     nodes = workflow["nodes"]
+    by_name = {node["name"]: node for node in nodes}
     names = {node["name"] for node in nodes}
     types = [node["type"] for node in nodes]
     text = json.dumps(workflow, ensure_ascii=False)
@@ -328,12 +351,27 @@ def test_universal_orchestrator_enterprise_control_plane() -> None:
     assert "...req,...row,state_found:true" in text
     assert "SELF_CHECK_REQUIRED" in text
     assert "SELF_CHECK_FAILED" in text
-    assert "idempotency_key" not in text
+    assert "idempotency_key" in by_name["Prepare simulator SUBMIT"]["parameters"]["jsCode"]
+    assert "idempotency_key" in by_name["Prepare simulator continuation"]["parameters"]["jsCode"]
     assert "n8n-nodes-base.wait" not in types
     assert "memoryPostgresChat" not in text
 
     planner_parser = next(node for node in nodes if node["name"] == "Planner Structured Output")
     planner_schema = json.loads(planner_parser["parameters"]["inputSchema"])
+    verifier_parser = next(node for node in nodes if node["name"] == "Verifier Structured Output")
+    verifier_schema = json.loads(verifier_parser["parameters"]["inputSchema"])
+    assert "decision_record" in planner_schema["required"]
+    assert "decision_record" in verifier_schema["required"]
+    for code_node_name in ("Validate and apply plan", "Apply verification policy"):
+        code_text = next(node for node in nodes if node["name"] == code_node_name)["parameters"]["jsCode"]
+        assert ".25*scopeFit" in code_text
+        assert ".25*evidenceCompleteness" in code_text
+        assert ".20*sourceAuthority" in code_text
+        assert ".15*entityTemporalConsistency" in code_text
+        assert ".15*deterministicValidationHealth" in code_text
+        assert "raw_counts" in code_text
+        assert "provisional:true" in code_text
+        assert "decision_record" in code_text
     packet_schema = planner_schema["properties"]["specialist_packet"]
     assert {
         "contract", "contract_version", "specialist_id", "objective", "inputs", "controls",
@@ -354,7 +392,7 @@ def test_universal_orchestrator_has_a_static_excel_specialist_route() -> None:
     assert "excel_extraction_specialist" in text
     resolve_code = by_name["Resolve allowlisted specialist"]["parameters"]["jsCode"]
     assert "excel_extraction_specialist:{route:0,configured:true}" in resolve_code
-    assert by_name["Configured specialist router"]["parameters"]["numberOutputs"] == 4
+    assert by_name["Configured specialist router"]["parameters"]["numberOutputs"] == 5
 
     call = by_name["Call Excel Extraction Specialist Adapter"]
     assert call["type"] == "n8n-nodes-base.executeWorkflow"
@@ -376,6 +414,196 @@ def test_universal_orchestrator_has_a_static_excel_specialist_route() -> None:
     assert "$('Normalize invocation').first().binary" in prepare_code
     state_columns = by_name["Insert durable task state"]["parameters"]["columns"]["value"]
     assert "binary" not in state_columns
+
+
+def test_universal_orchestrator_has_a_static_schedule_builder_route() -> None:
+    workflow = load_json(WORKFLOWS / "universal-engineering-orchestrator.workflow.json")
+    by_name = {node["name"]: node for node in workflow["nodes"]}
+    text = json.dumps(workflow, ensure_ascii=False).lower()
+
+    assert "schedule_builder_specialist" in text
+    resolve_code = by_name["Resolve allowlisted specialist"]["parameters"]["jsCode"]
+    assert "schedule_builder_specialist:{route:1,configured:true}" in resolve_code
+    call = by_name["Call SCHEDULE Builder Specialist"]
+    assert call["type"] == "n8n-nodes-base.executeWorkflow"
+    assert call["typeVersion"] == 1.3
+    assert call["parameters"]["workflowId"]["value"] == "REPLACE_SCHEDULE_BUILDER_IN_UI"
+    assert call["parameters"]["options"]["waitForSubWorkflow"] is True
+    assert call["onError"] == "continueRegularOutput"
+    assert set(call["parameters"]["workflowInputs"]["value"]) == {"specialist_packet", "previous_specialist_result", "latest_human_response"}
+    rag_call = by_name["Call SCHEDULE Hybrid Retrieval"]
+    assert rag_call["type"] == "n8n-nodes-base.executeWorkflow"
+    assert rag_call["typeVersion"] == 1.3
+    assert rag_call["parameters"]["workflowId"]["value"] == "REPLACE_SCHEDULE_RAG_RETRIEVAL_IN_UI"
+    assert set(rag_call["parameters"]["workflowInputs"]["value"]) == {"schedule_retrieval_request"}
+    assert rag_call["onError"] == "continueRegularOutput"
+    assert "SCHEDULE_RAG_EVIDENCE_REQUIRED" in by_name["Build SCHEDULE RAG evidence gate"]["parameters"]["jsCode"]
+    attach = by_name["Attach governed SCHEDULE RAG evidence"]["parameters"]["jsCode"]
+    assert "schedule_rag_evidence" in attach
+    assert "result.citations.length>0" in attach
+
+
+def test_universal_orchestrator_has_a_static_redacted_trace_route() -> None:
+    workflow = load_json(WORKFLOWS / "universal-engineering-orchestrator.workflow.json")
+    by_name = {node["name"]: node for node in workflow["nodes"]}
+    call = by_name["Call MAS Trace Event Writer"]
+    assert call["type"] == "n8n-nodes-base.executeWorkflow"
+    assert call["typeVersion"] == 1.3
+    assert call["parameters"]["workflowId"]["value"] == "REPLACE_MAS_TRACE_WRITER_IN_UI"
+    assert call["parameters"]["options"]["waitForSubWorkflow"] is True
+    assert call["onError"] == "continueRegularOutput"
+    assert set(call["parameters"]["workflowInputs"]["value"]) == {
+        "mas_trace_event", "mas_trace_events", "passthrough",
+    }
+    prepare = by_name["Prepare final MAS trace event"]["parameters"]["jsCode"]
+    restore = by_name["Restore orchestrator state after trace"]["parameters"]["jsCode"]
+    assert "decision_record:decisionRecord" in prepare
+    assert "mas_trace_events:events.slice(0,100)" in prepare
+    assert "tool_calls" in prepare and "evidence_refs" in prepare and "findings" in prepare
+    assert "passthrough:x" in prepare
+    assert "Trace writer did not return orchestrator state" in restore
+
+
+def test_schedule_flow_is_orchestrator_mediated_and_multi_stage() -> None:
+    workflow = load_json(WORKFLOWS / "universal-engineering-orchestrator.workflow.json")
+    by_name = {node["name"]: node for node in workflow["nodes"]}
+    connections = workflow["connections"]
+    handoff_code = by_name["Route successful specialist handoff"]["parameters"]["jsCode"]
+
+    assert "EXCEL_EVIDENCE_READY" in handoff_code
+    assert "next_specialist:'schedule_builder_specialist'" in handoff_code
+    assert "source_facts_packet:result.compact_data" in handoff_code
+    next_stage = connections["Successful specialist next stage"]["main"]
+    assert next_stage[0][0]["node"] == "Prepare planner input"
+    assert next_stage[1][0]["node"] == "Prepare SCHEDULE resume after Excel"
+    assert next_stage[2][0]["node"] == "Prepare simulator SUBMIT"
+    assert next_stage[3][0]["node"] == "Prepare independent verification"
+    simulator_call = by_name["Call SCHEDULE Simulator Check Adapter"]
+    assert simulator_call["parameters"]["workflowId"]["value"] == "REPLACE_SCHEDULE_SIMULATOR_CHECK_IN_UI"
+    assert set(simulator_call["parameters"]["workflowInputs"]["value"]) == {"simulator_check_request"}
+    assert simulator_call["onError"] == "continueRegularOutput"
+    submit_code = by_name["Prepare simulator SUBMIT"]["parameters"]["jsCode"]
+    assert "IMMUTABLE_SCHEDULE_ARTIFACT_REQUIRED" in submit_code
+    assert "Rock Flow Dynamics" in submit_code and "tNavigator" in submit_code and "22.2" in submit_code
+    release_code = by_name["Apply action and version guard"]["parameters"]["jsCode"]
+    assert "simulator_check_result" in release_code
+    assert "simulatorPassed" in release_code
+    builder = load_json(WORKFLOWS / "tnavigator-schedule-builder.workflow.json")
+    assert not [node for node in builder["nodes"] if node["type"] == "n8n-nodes-base.executeWorkflow"]
+
+    required_pipeline_nodes = {
+        "Run deterministic SCHEDULE intake",
+        "Analyze lossless baseline inventory",
+        "Decode typed baseline records",
+        "Replay baseline prefix into semantic boundary",
+        "Query baseline planning context",
+        "Query targeted baseline records",
+        "SCHEDULE Planner Agent",
+        "SCHEDULE Builder Agent",
+        "Render typed SCHEDULE IR deterministically",
+        "Merge SCHEDULE draft deterministically",
+        "Validate merged SCHEDULE package",
+        "Run independent SCHEDULE verifier",
+        "Build release-ready specialist result",
+    }
+    assert required_pipeline_nodes <= {node["name"] for node in builder["nodes"]}
+
+    retry_code = by_name["Prepare SCHEDULE evidence retry"]["parameters"]["jsCode"]
+    resume_code = by_name["Prepare SCHEDULE resume after Excel"]["parameters"]["jsCode"]
+    assert "schedule-builder-evidence-gap-v1" in retry_code
+    assert "STALLED_EVIDENCE_LOOP" in retry_code
+    assert "EXCEL_EVIDENCE_BUDGET_EXHAUSTED" in retry_code
+    assert "schedule_evidence_gap" in retry_code
+    assert "source_snapshot_hash" in resume_code
+    assert "expected_correlation_id" in retry_code
+    assert "correlation===String(loop.expected_correlation_id" in resume_code
+    assert "schedule_builder_specialist" in resume_code
+
+    apply_action = by_name["Apply action and version guard"]["parameters"]["jsCode"]
+    apply_plan = by_name["Validate and apply plan"]["parameters"]["jsCode"]
+    assert "SCHEDULE release is blocked" in apply_action
+    assert "immutable_release:true" in apply_action
+    assert "scheduleTask&&riskRank[risk]<riskRank.high" in apply_plan
+
+
+def test_schedule_builder_is_bounded_and_orchestrator_mediated() -> None:
+    workflow = load_json(WORKFLOWS / "tnavigator-schedule-builder.workflow.json")
+    by_name = {node["name"]: node for node in workflow["nodes"]}
+    text = json.dumps(workflow, ensure_ascii=False).lower()
+
+    assert workflow["active"] is False
+    assert by_name["Receive specialist packet"]["type"] == "n8n-nodes-base.executeWorkflowTrigger"
+    assert by_name["SCHEDULE Builder Agent"]["parameters"]["options"]["returnIntermediateSteps"] is True
+    assert "create" in text and "revise" in text
+    assert all(keyword.lower() in text for keyword in (
+        "dates", "include", "gruptree", "welspecs", "welltrack", "compdatmd",
+        "wconhist", "wconprod", "gconprod", "branprop", "nodeprop",
+        "fracture_specs", "fracture_stage", "wecon", "wtest",
+    ))
+    assert "keep" in text and "modify" in text and "add" in text and "remove" in text
+    assert "preserve_unmentioned" in text
+    assert "evidence_gap" in text
+    assert "remove_requires_accountable_approval" in text
+    assert not [node for node in workflow["nodes"] if node["type"] == "n8n-nodes-base.executeWorkflow"]
+    assert "session_id" not in text
+    assert "/api/v1" not in text
+    assert "toolhttprequest" not in text
+    assert workflow["name"] == "tNavigator SCHEDULE Builder — governed CREATE/REVISE pipeline"
+    stage_order = [
+        "Run deterministic SCHEDULE intake",
+        "Analyze lossless baseline inventory",
+        "Decode typed baseline records",
+        "Replay baseline prefix into semantic boundary",
+        "Query baseline planning context",
+        "Validate SCHEDULE pipeline plan",
+        "Query targeted baseline records",
+        "Validate SCHEDULE builder stage",
+        "Render typed SCHEDULE IR deterministically",
+        "Merge SCHEDULE draft deterministically",
+        "Validate merged SCHEDULE package",
+        "Run independent SCHEDULE verifier",
+    ]
+    positions = {node["name"]: node["position"][0] for node in workflow["nodes"]}
+    assert [positions[name] for name in stage_order] == sorted(positions[name] for name in stage_order)
+    assert "schema_catalogue_not_approved" in text
+    assert "schedule_rag_evidence_required" in text
+    assert "rag.citations.length>0" in text
+    prepare_validation = by_name["Prepare SCHEDULE validation"]["parameters"]["jsCode"]
+    assert "generatedBoundary" in prepare_validation
+    assert "root.request.semantic_baseline_snapshot" not in prepare_validation
+    assert "validation_phase:'CANDIDATE'" in prepare_validation
+    prepare_replay = by_name["Prepare baseline prefix replay"]["parameters"]["jsCode"]
+    assert "validation_phase:'BASELINE_PREFIX'" in prepare_replay
+    targeted_query = by_name["Prepare targeted baseline query"]["parameters"]["jsCode"]
+    assert "purpose:'BUILD'" in targeted_query
+    assert "require_complete:true" in targeted_query
+    builder_validation = by_name["Validate SCHEDULE builder stage"]["parameters"]["jsCode"]
+    assert "CHANGE_TARGET_OUTSIDE_BASELINE_QUERY" in builder_validation
+    assert "CHANGE_TARGET_HASH_MISMATCH" in builder_validation
+    assert "TARGETED_BASELINE_QUERY_REQUIRED" in builder_validation
+
+    planner_parser = by_name["SCHEDULE Planner Structured Output"]
+    planner_schema = json.loads(planner_parser["parameters"]["inputSchema"])
+    builder_parser = by_name["SCHEDULE Builder Structured Output"]
+    builder_schema = json.loads(builder_parser["parameters"]["inputSchema"])
+    assert "decision_record" in planner_schema["required"]
+    assert "decision_record" in builder_schema["required"]
+    assert "ir_events" in builder_schema["required"]
+    assert "schedule_schema_catalogue" in by_name["Render typed SCHEDULE IR deterministically"]["parameters"]["jsCode"]
+    assert "SCHEMA_ACCOUNTABLE_APPROVAL_REQUIRED" in by_name["Render typed SCHEDULE IR deterministically"]["parameters"]["jsCode"]
+    assert "relevance_score" not in planner_parser["parameters"]["inputSchema"]
+    planner_validation = by_name["Validate SCHEDULE pipeline plan"]["parameters"]["jsCode"]
+    builder_validation = by_name["Validate SCHEDULE builder stage"]["parameters"]["jsCode"]
+    for code in (planner_validation, builder_validation):
+        assert ".25*scopeFit" in code
+        assert ".25*evidenceCompleteness" in code
+        assert ".20*sourceAuthority" in code
+        assert ".15*entityTemporalConsistency" in code
+        assert ".15*deterministicValidationHealth" in code
+        assert "raw_counts" in code
+        assert "provisional:true" in code
+        assert "hardBlockers" in code
+    assert "relevance_score" not in planner_validation
 
 
 def test_excel_specialist_adapter_is_a_bounded_native_contract_boundary() -> None:
@@ -412,6 +640,14 @@ def test_excel_specialist_adapter_is_a_bounded_native_contract_boundary() -> Non
     assert "clarification_ref:clarificationRef" in adapt_code
     assert "data.records.slice(0,5)" in adapt_code
     assert "preview.length<=5" in adapt_code
+    assert "source_snapshot_hash:sourceSnapshotHash" in adapt_code
+    assert "correlation_id:correlationId" in adapt_code
+    assert "excludes ephemeral result/artifact IDs" in adapt_code
+    assert ".25*scopeFit" in adapt_code
+    assert "EXCEL_REQUESTED_FIELDS_MISSING" in adapt_code
+    assert "EXCEL_PROVENANCE_REQUIRED" in adapt_code
+    assert "decision_record:decisionRecord" in adapt_code
+    assert "trace_summary" in adapt_code
 
 
 def test_legacy_excel_mas_is_explicitly_not_a_deployment_entrypoint() -> None:
@@ -438,7 +674,7 @@ def test_specialist_template_uses_only_universal_boundary() -> None:
     assert schema["additionalProperties"] is False
     assert set(schema["required"]) == {
         "status", "summary", "deliverables", "artifact_refs", "compact_data", "assumptions", "warnings",
-        "evidence", "self_check", "human_request", "error", "continuation",
+        "evidence", "self_check", "human_request", "error", "continuation", "decision_record",
     }
 
 
@@ -449,6 +685,15 @@ def test_universal_engineering_instruction_templates_are_portable() -> None:
         "orchestrator-instruction.template.md",
         "specialist-workflow-instruction.template.md",
         "generate_universal_engineering_workflows.py",
+        "generate_schedule_workflows.py",
+        "schedule_lossless_runtime.py",
+        "schedule_baseline_decoder.py",
+        "schedule_baseline_query.py",
+        "schedule_pipeline.py",
+        "schedule_rag_workflows.py",
+        "schedule_schema_runtime.py",
+        "schedule_semantic_runtime.py",
+        "schedule_simulator_runtime.py",
     }
     assert {path.name for path in TEMPLATES.iterdir() if path.is_file()} == expected
     contract = load_json(TEMPLATES / "specialist-result-contract.schema.json")
@@ -462,6 +707,22 @@ def test_universal_engineering_instruction_templates_are_portable() -> None:
         "retryable_error",
         "fatal_error",
     }
+
+
+def test_schedule_generator_and_architecture_decisions_are_portable_and_explicit() -> None:
+    generator = (TEMPLATES / "generate_schedule_workflows.py").read_text(encoding="utf-8")
+    assert "Path(__file__).resolve().parents[2]" in generator
+    assert "/home/" not in generator
+
+    roadmap = (ROOT / "docs" / "architecture" / "petroleum-mas-research-and-roadmap.md").read_text(
+        encoding="utf-8"
+    )
+    assert "Прямой вызов Excel Extractor из Schedule Builder запрещён" in roadmap
+    assert "returnIntermediateSteps=true" in roadmap
+    assert "attention_threshold = 85" in roadmap
+    assert "hitl_threshold      = 70" in roadmap
+    assert "`CREATE`: создание SCHEDULE с нуля" in roadmap
+    assert "Excel→RAG→Builder handoff" in roadmap
 
 
 def test_rag_workflow_contains_the_canonical_documents() -> None:
@@ -489,3 +750,154 @@ def test_continuation_protocol_has_no_stale_agent_state_lookup_instruction() -> 
         text = path.read_text(encoding="utf-8")
         for phrase in stale_phrases:
             assert phrase not in text, (path.name, phrase)
+
+
+def test_schedule_foundation_workflows_implement_roadmap_boundaries() -> None:
+    expected_contracts = {
+        "tnavigator-schedule-intake.workflow.json": "schedule_intake/v1",
+        "tnavigator-schedule-baseline-analyzer.workflow.json": "baseline_analysis/v1",
+        "tnavigator-schedule-baseline-decoder.workflow.json": "baseline_decode_result/v1",
+        "tnavigator-schedule-baseline-query.workflow.json": "baseline_inventory_query_result/v1",
+        "tnavigator-schedule-planner.workflow.json": "schedule_plan/v1",
+        "tnavigator-schedule-merge.workflow.json": "schedule_merge/v1",
+        "tnavigator-schedule-renderer.workflow.json": "schedule_render_result/v1",
+        "tnavigator-schedule-validator.workflow.json": "schedule_validation/v1",
+        "tnavigator-schedule-verifier.workflow.json": "schedule_verifier/v1",
+        "tnavigator-schedule-release.workflow.json": "schedule_release/v1",
+        "tnavigator-schedule-knowledge-ingestion.workflow.json": "schedule_knowledge_ingest/v1",
+        "tnavigator-schedule-hybrid-retrieval.workflow.json": "schedule_retrieval/v1",
+        "tnavigator-schedule-simulator-check-adapter.workflow.json": "simulator_check_result/v1",
+        "mas-trace-event-writer.workflow.json": "mas_trace_event/v1",
+    }
+    assert SCHEDULE_FOUNDATION_WORKFLOWS == set(expected_contracts)
+    for filename, contract in expected_contracts.items():
+        workflow = load_json(WORKFLOWS / filename)
+        assert workflow["active"] is False
+        assert workflow["meta"]["targetN8nVersion"] == "2.30.8"
+        assert workflow["meta"]["contractVersion"] == contract
+        runtime = [n for n in workflow["nodes"] if n["type"] != "n8n-nodes-base.stickyNote"]
+        assert runtime[0]["type"] == "n8n-nodes-base.executeWorkflowTrigger"
+        text = json.dumps(workflow, ensure_ascii=False).lower()
+        assert "$env" not in text and "$vars" not in text
+        assert "readwritefile" not in text and "executecommand" not in text
+
+
+def test_simulator_check_adapter_is_portable_and_fail_closed() -> None:
+    workflow = load_json(WORKFLOWS / "tnavigator-schedule-simulator-check-adapter.workflow.json")
+    by_name = {node["name"]: node for node in workflow["nodes"]}
+    text = json.dumps(workflow, ensure_ascii=False)
+
+    trigger = by_name["Receive simulator check request"]
+    assert trigger["type"] == "n8n-nodes-base.executeWorkflowTrigger"
+    call = by_name["Call IT-managed simulator runner"]
+    assert call["type"] == "n8n-nodes-base.httpRequest"
+    assert call["typeVersion"] == 4.4
+    assert call["credentials"]["httpHeaderAuth"]["id"] == "REPLACE_IN_UI"
+    assert call["onError"] == "continueRegularOutput"
+    assert all(node["type"] not in {"n8n-nodes-base.executeCommand", "n8n-nodes-base.readWriteFile"} for node in workflow["nodes"])
+    for action in ("SUBMIT", "STATUS", "CANCEL", "RESULT"):
+        assert action in text
+    for required in (
+        "Rock Flow Dynamics", "tNavigator", "22.2", "SIMULATOR_PASS_EVIDENCE_INVALID",
+        "SIMULATOR_RESULT_ARTIFACT_MISMATCH", "artifact_manifest_hash", "release_gate_passed",
+    ):
+        assert required in text
+    lowered = text.lower()
+    assert "$env" not in lowered and "$vars" not in lowered
+    assert "host_path" not in lowered and "shell_command" not in lowered
+
+
+def test_schedule_foundation_is_fail_closed_and_preserve_by_default() -> None:
+    intake = (WORKFLOWS / "tnavigator-schedule-intake.workflow.json").read_text()
+    baseline = (WORKFLOWS / "tnavigator-schedule-baseline-analyzer.workflow.json").read_text()
+    decoder = (WORKFLOWS / "tnavigator-schedule-baseline-decoder.workflow.json").read_text()
+    baseline_query = (WORKFLOWS / "tnavigator-schedule-baseline-query.workflow.json").read_text()
+    merge = (WORKFLOWS / "tnavigator-schedule-merge.workflow.json").read_text()
+    renderer = (WORKFLOWS / "tnavigator-schedule-renderer.workflow.json").read_text()
+    validator = (WORKFLOWS / "tnavigator-schedule-validator.workflow.json").read_text()
+    release = (WORKFLOWS / "tnavigator-schedule-release.workflow.json").read_text()
+    assert "UNAPPROVED_RUNTIME_PROFILE" in intake
+    assert "BASELINE_REQUIRED" in intake
+    assert "preservation_token" in baseline and "INCLUDE_CYCLE" in baseline
+    assert "BASELINE_RECORD_VARIANT_AMBIGUOUS" in decoder
+    assert "INCLUDE_MULTIPLE_EXPANSION" in decoder
+    assert "OPAQUE_BASELINE_SEMANTICS_UNAVAILABLE" in decoder
+    assert "change_effective_from" in decoder and "prefix_ir_events" in decoder
+    assert "BASELINE_QUERY_REFINEMENT_REQUIRED" in baseline_query
+    assert "expected_raw_hash" in baseline_query and "query_hash" in baseline_query
+    assert "zero_change_byte_identical" in merge
+    assert "REMOVE_REQUIRES_ACCOUNTABLE_APPROVAL" in merge
+    assert "SCHEMA_ACCOUNTABLE_APPROVAL_REQUIRED" in renderer
+    assert "IR_REQUIRED_FIELD_MISSING" in renderer
+    assert "CREATE_REQUIRES_ADD_ONLY" in renderer
+    assert "schedule_schema_catalogue" in renderer
+    assert "SCHEMA_SEMANTICS_REQUIRED" in renderer
+    assert "SCHEMA_CATALOGUE_NOT_APPROVED" in validator
+    assert "KEYWORD_SCHEMA_NOT_APPROVED" in validator
+    assert "SEMANTIC_BASELINE_SNAPSHOT_REQUIRED" in validator
+    assert "SEMANTIC_PRE_CHANGE_BOUNDARY_REQUIRED" in validator
+    assert "SEMANTIC_EVENT_NOT_AFTER_BOUNDARY" in validator
+    assert "SEMANTIC_EVENT_BEFORE_CHANGE_BOUNDARY" in validator
+    assert "BASELINE_DECODER_PREFIX_MISMATCH" in validator
+    assert "PRE_CHANGE_BOUNDARY" in validator
+    assert "ENTITY_REFERENCE_MISSING" in validator
+    assert "KEYWORD_PREREQUISITE_MISSING" in validator
+    assert "HIERARCHY_CYCLE" in validator
+    assert "CONFLICTING_STATE_ASSIGNMENT" in validator
+    assert "SEMANTIC_LIFECYCLE_RULE_INVALID" in validator
+    assert "WILDCARD_EXPANSION_REQUIRED" in validator
+    assert "INTERVAL_OVERLAP" in validator
+    assert "NUMERIC_VALUE_BELOW_MIN" in validator
+    assert "interval_assignments" in validator
+    assert "HISTORY_EVENT_AFTER_CUTOVER" in validator
+    assert "FORECAST_EVENT_BEFORE_START" in validator
+    assert "schedule_semantic_snapshot" in validator
+    assert "ACCOUNTABLE_APPROVAL_REQUIRED" in release and "GATE_MISMATCH" in release
+
+
+def test_schedule_rag_and_trace_foundations_enforce_governance() -> None:
+    ingestion = (WORKFLOWS / "tnavigator-schedule-knowledge-ingestion.workflow.json").read_text()
+    retrieval = (WORKFLOWS / "tnavigator-schedule-hybrid-retrieval.workflow.json").read_text()
+    trace = load_json(WORKFLOWS / "mas-trace-event-writer.workflow.json")
+    assert "MANUAL_VERSION_REQUIRED" in ingestion
+    assert "SOURCE_HASH_REQUIRED" in ingestion
+    assert "ACCOUNTABLE_APPROVAL_REQUIRED" in ingestion
+    assert "PGVector — insert approved SCHEDULE knowledge" in ingestion
+    assert "documentDefaultDataLoader" in ingestion
+    assert "textSplitterRecursiveCharacterTextSplitter" in ingestion
+    assert "Finalize indexes and deduplicate chunks" in ingestion
+    assert "schema_catalogue_json" in ingestion
+    assert "tnavigator_schedule_schema_catalogue_v1" in ingestion
+    assert "SCHEMA_CATALOGUE_CONTRACT_INVALID" in ingestion
+    assert "SCHEMA_SEMANTICS_REQUIRED" in ingestion
+    assert "SEMANTIC_LIFECYCLE_RULE_INVALID" in ingestion
+    assert "SEMANTIC_INTERVAL_RULE_INVALID" in ingestion
+    assert "SEMANTIC_NUMERIC_RULE_INVALID" in ingestion
+    assert "SEMANTIC_WILDCARD_RULE_INVALID" in ingestion
+    assert "EXACT_VERSION_REQUIRED" in retrieval
+    assert "AUTHORITY_FILTER_REQUIRED" in retrieval
+    assert "ACCESS_SCOPE_REQUIRED" in retrieval
+    assert "PostgreSQL lexical + exact candidates" in retrieval
+    assert "PGVector semantic candidates" in retrieval
+    assert "PostgreSQL tag candidates" in retrieval
+    assert "algorithm:'rrf'" in retrieval
+    assert "CITATION_INCOMPLETE" in retrieval
+    assert "NO_AUTHORIZED_EVIDENCE" in retrieval
+    assert "status:hard?'abstain':'succeeded'" in retrieval
+    assert "PostgreSQL approved schema catalogue" in retrieval
+    assert "APPROVED_SCHEMA_CATALOGUE_NOT_FOUND" in retrieval
+    assert "schema_catalogue:selected" in retrieval
+    assert "semanticsComplete" in retrieval
+    assert any(n["type"] == "n8n-nodes-base.dataTable" for n in trace["nodes"])
+    trace_text = json.dumps(trace, ensure_ascii=False)
+    assert "raw_prompt:false" in trace_text
+    assert "secret:false" in trace_text
+    assert "binary:false" in trace_text
+    normalize_trace = next(n for n in trace["nodes"] if n["name"] == "Normalize MAS trace event")
+    trace_code = normalize_trace["parameters"]["jsCode"]
+    assert "decision_record" in trace_code
+    assert "rawDecision.contract==='decision_record'" in trace_code
+    assert "prompt|secret|token|password|authorization|binary|content|text" in trace_code
+    assert "decision_record:e.decision_record" in trace_code
+    assert "root.mas_trace_events" in trace_code
+    assert "source.map((candidate,index)" in trace_code

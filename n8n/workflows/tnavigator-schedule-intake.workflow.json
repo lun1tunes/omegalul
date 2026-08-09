@@ -1,0 +1,77 @@
+{
+  "id": "106aabe7-2335-56b1-bb61-86a7e3536df2",
+  "name": "tNavigator SCHEDULE Intake — CREATE/REVISE contract",
+  "description": "Deterministic intake/profile gate.",
+  "nodes": [
+    {
+      "parameters": {
+        "content": "Validates CREATE/REVISE/AUTO, immutable refs and tNavigator 22.2. No file or grammar inference.",
+        "width": 440,
+        "height": 300,
+        "color": 5
+      },
+      "id": "1f5d30b1-6cf9-56f8-85b0-b6100809561a",
+      "name": "tNavigator SCHEDULE Intake — CREATE/REVISE contract README",
+      "type": "n8n-nodes-base.stickyNote",
+      "typeVersion": 1,
+      "position": [
+        -900,
+        -450
+      ]
+    },
+    {
+      "parameters": {
+        "inputSource": "jsonExample",
+        "jsonExample": "{\"schedule_intake_request\": {\"build_mode\": \"CREATE\", \"simulator_profile\": {\"vendor\": \"Rock Flow Dynamics\", \"simulator\": \"tNavigator\", \"version\": \"22.2\"}, \"task\": {\"objective\": \"Create forecast controls\"}, \"requested_keyword_scope\": [\"DATES\", \"WCONPROD\"], \"artifact_refs\": []}}"
+      },
+      "id": "3b23d2af-eae9-51ac-adc7-4d5a9da36316",
+      "name": "Receive SCHEDULE intake request",
+      "type": "n8n-nodes-base.executeWorkflowTrigger",
+      "typeVersion": 1.2,
+      "position": [
+        -900,
+        -80
+      ]
+    },
+    {
+      "parameters": {
+        "jsCode": "const raw=$json.schedule_intake_request??$json;const obj=v=>v&&typeof v==='object'&&!Array.isArray(v);const arr=Array.isArray;const clean=v=>typeof v==='string'?v.trim():'';const allowed=new Set([\"DATES\", \"INCLUDE\", \"GRUPTREE\", \"WELSPECS\", \"WELLTRACK\", \"COMPDATMD\", \"WCONHIST\", \"WCONPROD\", \"GCONPROD\", \"BRANPROP\", \"NODEPROP\", \"FRACTURE_SPECS\", \"FRACTURE_STAGE\", \"WECON\", \"WTEST\"]);const request=obj(raw)?raw:{};const modeRaw=clean(request.build_mode||'AUTO').toUpperCase();const baseline=obj(request.baseline_schedule_package_ref)||clean(request.baseline_schedule_text);const mode=modeRaw==='AUTO'?(baseline?'REVISE':'CREATE'):modeRaw;const profile=obj(request.simulator_profile)?request.simulator_profile:{};const scope=arr(request.requested_keyword_scope)?[...new Set(request.requested_keyword_scope.map(v=>clean(v).toUpperCase()).filter(Boolean))]:[];const refs=arr(request.artifact_refs)?request.artifact_refs:[];const findings=[];\nif(!['CREATE','REVISE'].includes(mode))findings.push({code:'INVALID_BUILD_MODE',severity:'error'});if(mode==='REVISE'&&!baseline)findings.push({code:'BASELINE_REQUIRED',severity:'error'});if(!clean(request.task?.objective||request.objective||request.problem_statement))findings.push({code:'OBJECTIVE_REQUIRED',severity:'error'});if(!clean(profile.vendor)||!clean(profile.simulator)||!clean(profile.version))findings.push({code:'SIMULATOR_PROFILE_REQUIRED',severity:'error'});if(clean(profile.simulator).toLowerCase()==='tnavigator'&&clean(profile.version)!=='22.2')findings.push({code:'UNAPPROVED_RUNTIME_PROFILE',severity:'error'});const unsupported=scope.filter(k=>!allowed.has(k));if(unsupported.length)findings.push({code:'UNSUPPORTED_KEYWORD',severity:'error',keywords:unsupported});if(!scope.length)findings.push({code:'KEYWORD_SCOPE_UNRESOLVED',severity:'warning'});if(!refs.every(r=>obj(r)&&clean(r.ref)&&clean(r.kind)&&clean(r.revision)))findings.push({code:'INVALID_ARTIFACT_REF',severity:'error'});\nconst hash=v=>{let s='';try{s=JSON.stringify(v)}catch{s=String(v)}let h=2166136261;for(const ch of s){h^=ch.charCodeAt(0);h=Math.imul(h,16777619)}return(h>>>0).toString(16).padStart(8,'0')};const errors=findings.filter(f=>f.severity==='error');return [{json:{contract:'schedule_intake_result',contract_version:'1.0',status:errors.length?'needs_input':'accepted',build_mode:mode,request_id:clean(request.request_id)||`sched_${Date.now().toString(36)}`,input_hash:hash(request),simulator_profile:profile,objective:clean(request.task?.objective||request.objective||request.problem_statement),requested_keyword_scope:scope,artifact_refs:refs,baseline_present:Boolean(baseline),findings,score:{scope_readiness:scope.length?100:60,profile_readiness:errors.some(f=>f.code.includes('PROFILE'))?0:100},next_action:errors.length?'ask_user':'plan'}}];"
+      },
+      "id": "fa5653e8-f4dc-5f00-8ced-f9b2ea372634",
+      "name": "Validate SCHEDULE intake",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        -520,
+        -80
+      ]
+    }
+  ],
+  "pinData": {},
+  "connections": {
+    "Receive SCHEDULE intake request": {
+      "main": [
+        [
+          {
+            "node": "Validate SCHEDULE intake",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    }
+  },
+  "active": false,
+  "settings": {
+    "executionOrder": "v1",
+    "saveManualExecutions": true,
+    "callerPolicy": "workflowsFromSameOwner"
+  },
+  "versionId": "34d660af-3320-5c0d-a5e1-dbfdc7750b5f",
+  "meta": {
+    "templateCredsSetupCompleted": false,
+    "targetN8nVersion": "2.30.8",
+    "contractVersion": "schedule_intake/v1"
+  },
+  "tags": []
+}

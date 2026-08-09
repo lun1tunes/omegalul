@@ -1,0 +1,77 @@
+{
+  "id": "f62d0113-8d37-5f6e-8927-fc152870efc9",
+  "name": "tNavigator SCHEDULE Verifier — independent review",
+  "description": "Independent read-only review.",
+  "nodes": [
+    {
+      "parameters": {
+        "content": "Hard blockers override scores; verifier cannot mutate or release.",
+        "width": 440,
+        "height": 300,
+        "color": 5
+      },
+      "id": "723931db-2837-55a0-b46e-e73abe836aae",
+      "name": "tNavigator SCHEDULE Verifier — independent review README",
+      "type": "n8n-nodes-base.stickyNote",
+      "typeVersion": 1,
+      "position": [
+        -900,
+        -450
+      ]
+    },
+    {
+      "parameters": {
+        "inputSource": "jsonExample",
+        "jsonExample": "{\"validation_result\": {\"status\": \"valid\", \"score\": {\"stage_score\": 90}}, \"merge_result\": {\"mode\": \"CREATE\"}, \"builder_result\": {\"status\": \"succeeded\", \"self_check\": {\"passed\": true}}}"
+      },
+      "id": "c89d9c6f-0013-5d9a-8fb9-f3b6a1e4b4b9",
+      "name": "Receive SCHEDULE verification request",
+      "type": "n8n-nodes-base.executeWorkflowTrigger",
+      "typeVersion": 1.2,
+      "position": [
+        -900,
+        -80
+      ]
+    },
+    {
+      "parameters": {
+        "jsCode": "const x=$json,obj=v=>v&&typeof v==='object'&&!Array.isArray(v),val=obj(x.validation_result)?x.validation_result:{},render=obj(x.render_result)?x.render_result:{},merge=obj(x.merge_result)?x.merge_result:{},builder=obj(x.builder_result)?x.builder_result:{},findings=[];if(render.status!=='rendered')findings.push({code:'DETERMINISTIC_RENDER_NOT_PASSED',severity:'error'});if(val.status!=='valid')findings.push({code:'VALIDATION_NOT_PASSED',severity:'error'});if(builder.status==='succeeded'&&!builder.self_check?.passed)findings.push({code:'SPECIALIST_SELF_CHECK_FAILED',severity:'error'});if(merge.mode==='REVISE'&&merge.preservation_report?.policy!=='preserve_unmentioned')findings.push({code:'PRESERVATION_POLICY_MISSING',severity:'error'});if(merge.mode==='REVISE'&&merge.preservation_report?.zero_change_byte_identical===false) findings.push({code:'ZERO_CHANGE_NOT_IDEMPOTENT',severity:'error'});const score=Math.min(render.status==='rendered'?100:0,Number(val.score?.stage_score??0),Number(builder.score?.stage_score??100)),verdict=findings.length?'reject':score<70?'needs_input':score<85?'pass_with_warnings':'pass';return[{json:{contract:'schedule_verifier_result',contract_version:'1.0',verdict,summary:findings.length?'Hard blockers found.':'Independent review completed.',findings,score:{stage_score:score,thresholds:{attention:85,hitl:70}},required_corrections:findings.map(f=>f.code),approval_required:true,can_release:verdict==='pass'}}];"
+      },
+      "id": "1b53058a-30cd-5b42-a0a1-11c3def67ea3",
+      "name": "Independently verify SCHEDULE",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        -520,
+        -80
+      ]
+    }
+  ],
+  "pinData": {},
+  "connections": {
+    "Receive SCHEDULE verification request": {
+      "main": [
+        [
+          {
+            "node": "Independently verify SCHEDULE",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    }
+  },
+  "active": false,
+  "settings": {
+    "executionOrder": "v1",
+    "saveManualExecutions": true,
+    "callerPolicy": "workflowsFromSameOwner"
+  },
+  "versionId": "9624408d-dbb7-50b5-a8a5-2157673598f5",
+  "meta": {
+    "templateCredsSetupCompleted": false,
+    "targetN8nVersion": "2.30.8",
+    "contractVersion": "schedule_verifier/v1"
+  },
+  "tags": []
+}

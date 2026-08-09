@@ -1,0 +1,150 @@
+{
+  "id": "2afa0adc-4e64-5b2e-b08c-9ac3f692ff57",
+  "name": "MAS Trace Event Writer — redacted execution ledger",
+  "description": "Portable durable trace writer.",
+  "nodes": [
+    {
+      "parameters": {
+        "content": "Structured redacted trace only; no raw prompts, secrets, binary or hidden chain-of-thought. Accepts one event or a bounded event batch. Select Data Table in UI.",
+        "width": 440,
+        "height": 300,
+        "color": 5
+      },
+      "id": "cdef7163-1873-50f5-b8d1-2112f0c6aa74",
+      "name": "Trace writer README",
+      "type": "n8n-nodes-base.stickyNote",
+      "typeVersion": 1,
+      "position": [
+        -920,
+        -480
+      ]
+    },
+    {
+      "parameters": {
+        "inputSource": "jsonExample",
+        "jsonExample": "{\"mas_trace_event\": {\"trace_id\": \"trace_example\", \"task_id\": \"eng_example\", \"stage\": \"builder\", \"event_type\": \"stage_completed\", \"summary\": \"Draft produced\"}, \"mas_trace_events\": [], \"passthrough\": {}}"
+      },
+      "id": "f2837034-3a71-55ac-8038-3a28f3cd90cf",
+      "name": "Receive MAS trace event",
+      "type": "n8n-nodes-base.executeWorkflowTrigger",
+      "typeVersion": 1.2,
+      "position": [
+        -920,
+        -80
+      ]
+    },
+    {
+      "parameters": {
+        "jsCode": "const root=$json,obj=v=>v&&typeof v==='object'&&!Array.isArray(v),arr=Array.isArray,clean=v=>typeof v==='string'?v.trim():'',allowed=new Set(['intake','plan','rag','baseline','excel','builder','merge','validate','verify','hitl','release','error']);\nconst source=arr(root.mas_trace_events)?root.mas_trace_events.slice(0,100):(root.mas_trace_event?[root.mas_trace_event]:[root]);\nconst safeRef=v=>obj(v)?Object.fromEntries(Object.entries(v).filter(([k,val])=>!/(prompt|secret|token|password|authorization|binary|content|text)/i.test(k)&&['string','number','boolean'].includes(typeof val)).slice(0,20)):v;\nconst sanitizeDecision=rawDecision=>rawDecision&&rawDecision.contract==='decision_record'&&rawDecision.contract_version==='1.0'&&clean(rawDecision.objective)&&obj(rawDecision.selected_action)&&arr(rawDecision.selected_action.reason_codes)?{contract:'decision_record',contract_version:'1.0',objective:clean(rawDecision.objective).slice(0,1000),considered_inputs:arr(rawDecision.considered_inputs)?rawDecision.considered_inputs.slice(0,100).map(safeRef):[],proposed_actions:arr(rawDecision.proposed_actions)?rawDecision.proposed_actions.slice(0,100).map(safeRef):[],selected_action:{action:clean(rawDecision.selected_action.action).slice(0,300),reason_codes:rawDecision.selected_action.reason_codes.map(v=>clean(v).slice(0,200)).filter(Boolean).slice(0,100)},rejected_actions:arr(rawDecision.rejected_actions)?rawDecision.rejected_actions.slice(0,100).map(safeRef):[],assumptions:arr(rawDecision.assumptions)?rawDecision.assumptions.map(v=>clean(v).slice(0,500)).slice(0,100):[],evidence_refs:arr(rawDecision.evidence_refs)?rawDecision.evidence_refs.slice(0,100).map(safeRef):[],citations:arr(rawDecision.citations)?rawDecision.citations.slice(0,100).map(safeRef):[],tool_call_ids:arr(rawDecision.tool_call_ids)?rawDecision.tool_call_ids.map(v=>clean(v).slice(0,200)).slice(0,100):[],unresolved_questions:arr(rawDecision.unresolved_questions)?rawDecision.unresolved_questions.slice(0,100).map(safeRef):[],acceptance_check_results:arr(rawDecision.acceptance_check_results)?rawDecision.acceptance_check_results.slice(0,100).map(safeRef):[]}:null;\nreturn source.map((candidate,index)=>{const x=obj(candidate)?candidate:{},stage=clean(x.stage).toLowerCase(),now=new Date().toISOString(),decision=sanitizeDecision(obj(x.decision_record)?x.decision_record:null);const e={contract:'mas_trace_event',contract_version:'1.0',trace_id:clean(x.trace_id)||`trace_${Date.now().toString(36)}`,task_id:clean(x.task_id)||null,event_id:clean(x.event_id)||`evt_${Date.now().toString(36)}_${index}_${Math.random().toString(36).slice(2,8)}`,at:now,stage:allowed.has(stage)?stage:'error',event_type:clean(x.event_type)||'stage_event',actor:clean(x.actor)||'system',status:clean(x.status)||'observed',summary:clean(x.summary).slice(0,2000),tool_calls:arr(x.tool_calls)?x.tool_calls.slice(0,50).map(v=>obj(v)?{name:clean(v.name),status:clean(v.status),summary:clean(v.summary).slice(0,500)}:null).filter(Boolean):[],evidence_refs:arr(x.evidence_refs)?x.evidence_refs.slice(0,100).map(safeRef):[],findings:arr(x.findings)?x.findings.slice(0,100).map(safeRef):[],score:obj(x.score)?x.score:null,gate:obj(x.gate)?x.gate:null,decision_record:decision,redaction:{raw_prompt:false,secret:false,binary:false}};return{json:{trace_event:e,trace_row:{event_id:e.event_id,trace_id:e.trace_id,task_id:e.task_id,at:e.at,stage:e.stage,event_type:e.event_type,actor:e.actor,status:e.status,summary:e.summary,details_json:JSON.stringify({tool_calls:e.tool_calls,evidence_refs:e.evidence_refs,findings:e.findings,score:e.score,gate:e.gate,decision_record:e.decision_record})}}}});"
+      },
+      "id": "1903289c-79b6-5621-be75-7684d35fcafa",
+      "name": "Normalize MAS trace event",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        -640,
+        -80
+      ]
+    },
+    {
+      "parameters": {
+        "operation": "insert",
+        "dataTableId": {
+          "__rl": true,
+          "mode": "list",
+          "value": "REPLACE_IN_UI",
+          "cachedResultName": "MAS trace events v1"
+        },
+        "columns": {
+          "mappingMode": "defineBelow",
+          "value": {
+            "event_id": "={{ $json.trace_row.event_id }}",
+            "trace_id": "={{ $json.trace_row.trace_id }}",
+            "task_id": "={{ $json.trace_row.task_id }}",
+            "at": "={{ $json.trace_row.at }}",
+            "stage": "={{ $json.trace_row.stage }}",
+            "event_type": "={{ $json.trace_row.event_type }}",
+            "actor": "={{ $json.trace_row.actor }}",
+            "status": "={{ $json.trace_row.status }}",
+            "summary": "={{ $json.trace_row.summary }}",
+            "details_json": "={{ $json.trace_row.details_json }}"
+          },
+          "matchingColumns": [],
+          "schema": [],
+          "attemptToConvertTypes": false,
+          "convertFieldsToString": false
+        }
+      },
+      "id": "451ca020-6fce-5610-8767-370201601908",
+      "name": "Insert MAS trace event",
+      "type": "n8n-nodes-base.dataTable",
+      "typeVersion": 1.1,
+      "position": [
+        -300,
+        -80
+      ]
+    },
+    {
+      "parameters": {
+        "jsCode": "const rows=$input.all().map(item=>item.json||{}),n=$('Normalize MAS trace event').first().json,e=n.trace_event,source=$('Receive MAS trace event').first().json;return[{json:{contract:'mas_trace_ack',contract_version:'1.0',stored:true,stored_count:rows.length,event_id:e.event_id,trace_id:e.trace_id,redaction:e.redaction,passthrough:source.passthrough??null}}];"
+      },
+      "id": "bd229fc0-7fc1-5aca-b418-4fd8df03409b",
+      "name": "Return trace acknowledgement",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        20,
+        -80
+      ]
+    }
+  ],
+  "pinData": {},
+  "connections": {
+    "Receive MAS trace event": {
+      "main": [
+        [
+          {
+            "node": "Normalize MAS trace event",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Normalize MAS trace event": {
+      "main": [
+        [
+          {
+            "node": "Insert MAS trace event",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Insert MAS trace event": {
+      "main": [
+        [
+          {
+            "node": "Return trace acknowledgement",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    }
+  },
+  "active": false,
+  "settings": {
+    "executionOrder": "v1",
+    "saveManualExecutions": true,
+    "callerPolicy": "workflowsFromSameOwner"
+  },
+  "versionId": "f5803f69-b97b-5dca-a86f-58b38729948c",
+  "meta": {
+    "templateCredsSetupCompleted": false,
+    "targetN8nVersion": "2.30.8",
+    "contractVersion": "mas_trace_event/v1"
+  },
+  "tags": []
+}

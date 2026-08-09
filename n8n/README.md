@@ -2,7 +2,7 @@
 
 Workflows рассчитаны строго на n8n 2.30.8 и не требуют Global Variables, `$env`, shell или доступа к серверным файлам.
 
-Текущая runtime-поставка — базовый Universal Engineering Orchestrator и готовый Excel specialist. Petroleum capability registry, MAS-wide hybrid RAG, Math Service, `.DATA`/`SCHEDULE` builders и deterministic deck validator пока находятся в плане и не должны восприниматься как уже реализованные workflow. Целевая архитектура, источники и поэтапный Definition of Done описаны в [`docs/architecture/petroleum-mas-research-and-roadmap.md`](../docs/architecture/petroleum-mas-research-and-roadmap.md).
+Текущая runtime-поставка — Universal Engineering Orchestrator, Excel specialist, governed SCHEDULE Builder, исполнимые PGVector ingestion/hybrid retrieval, lossless lexical baseline, catalogue-driven typed decoder/renderer, targeted baseline query, двухфазный state replay, atomic merge, переносимый HTTPS simulator-check adapter и отдельные boundaries intake/planner/validator/verifier/release/trace. Decoder, Query, Renderer и Validator не доверяют модели порядок полей, raw record text или domain semantics. В репозитории реализован control-plane simulator gate, но утверждённое содержимое exact field/semantic catalogue 22.2, immutable artifact store, реальный лицензированный tNavigator runner/check procedure и production golden corpus всё ещё требуют целевой инфраструктуры и инженерного sign-off.
 
 ## Одна основная архитектура
 
@@ -18,17 +18,25 @@ Workflows рассчитаны строго на n8n 2.30.8 и не требую
 
 1. `workflows/excel-extraction-agent.workflow.json` — прикладной Excel specialist с FastAPI tools.
 2. `workflows/excel-engineering-specialist-adapter.workflow.json` — переводит универсальный контракт в нативный Excel-вызов и обратно.
-3. `workflows/universal-engineering-orchestrator.workflow.json` — единственный stateful control-plane: планирование, allowlisted delegation, независимая проверка, retry/replan и Human-in-the-Loop.
-4. `workflows/excel-rag-ingestion.workflow.json` — одноразовое наполнение Excel operating context, если specialist использует RAG.
+3. Все `workflows/tnavigator-schedule-*.workflow.json` — intake, knowledge ingestion, hybrid retrieval, baseline analyzer/decoder/query, planner, builder, renderer, merge, validator, verifier, simulator-check adapter и release.
+4. `workflows/mas-trace-event-writer.workflow.json` — durable redacted execution ledger.
+5. `workflows/universal-engineering-orchestrator.workflow.json` — единственный stateful control-plane: планирование, allowlisted delegation, retry/replan и Human-in-the-Loop.
+6. `workflows/excel-rag-ingestion.workflow.json` — одноразовое наполнение Excel operating context, если specialist использует RAG.
 
 `workflows/engineering-specialist-template.workflow.json` импортируйте только при разработке новых специалистов. Это заготовка, а не runtime-зависимость основной схемы. `workflows/excel-extraction-form-adapter.workflow.json` нужен только для отдельной standalone-формы Excel Agent; основной orchestrator уже имеет собственную форму.
 
-После импорта обязательно сделайте две привязки через UI:
+После импорта обязательно сделайте шесть привязок через UI:
 
 1. В Universal Orchestrator, в ноде **Call Excel Extraction Specialist Adapter**, выберите импортированный Excel adapter.
-2. В Excel adapter, в ноде **Call native Excel Extraction Agent**, выберите импортированный Excel Agent.
+2. В Universal Orchestrator, в ноде **Call SCHEDULE Hybrid Retrieval**, выберите импортированный Hybrid Retrieval.
+3. В Universal Orchestrator, в ноде **Call SCHEDULE Builder Specialist**, выберите импортированный SCHEDULE Builder.
+4. В Universal Orchestrator, в ноде **Call SCHEDULE Simulator Check Adapter**, выберите импортированный Simulator Check Adapter.
+5. В Universal Orchestrator, в ноде **Call MAS Trace Event Writer**, выберите импортированный Trace Writer.
+6. В Excel adapter, в ноде **Call native Excel Extraction Agent**, выберите импортированный Excel Agent.
 
-Workflow ID не переносимы между инсталляциями n8n, поэтому эти две привязки намеренно не зашиты в JSON. Все workflow поставляются с `active: false`.
+RAG, Builder и simulator check входят в control-plane path: `Orchestrator → Hybrid Retrieval → Builder → immutable artifact → Simulator Check Adapter → Independent Verifier`; без authorized citations Builder не запускается, а без совпадающего tNavigator 22.2 pass evidence результат не выпускается. Внутри Builder выполняются intake, lossless baseline analysis, catalogue decode, pre-change replay, planning summary, planner, targeted mutation-safe baseline query, typed IR, catalogue render, merge, candidate replay/validation и specialist verifier. Отдельные одноимённые workflows остаются тестируемыми boundaries и примерами расширения.
+
+Workflow ID не переносимы между инсталляциями n8n, поэтому эти шесть привязок намеренно не зашиты в JSON. Все workflow поставляются с `active: false`.
 
 Переносимые шаблоны инструкций и контрактов:
 
@@ -77,6 +85,39 @@ Workflow намеренно не обещает дедупликацию ком�
 
 Structured `request`/`request_json` и `context`/`context_json` валидируются до создания задачи. Некорректный JSON, массив вместо объекта или payload сверх лимита возвращают validation conflict и не попадают в Planner: structured input не превращается молча в пустой `{}`. Если structured request не передан, `request_text` остаётся допустимым кратким fallback для intake.
 
+
+### Data Table для MAS trace
+
+Создайте вторую таблицу `mas_trace_events_v1` и выберите её в **Insert MAS trace event**:
+
+| Колонка | Тип |
+|---|---|
+| `event_id`, `trace_id`, `task_id` | String |
+| `at`, `stage`, `event_type`, `actor`, `status` | String |
+| `summary`, `details_json` | String |
+
+Trace хранит только redacted summaries, evidence refs, findings, scores, gate decisions и sanitized `decision_record`. Сырые prompts, secrets, binary, содержимое licensed manual и hidden chain-of-thought в него не записываются. Universal Orchestrator формирует bounded fan-in до 100 событий за ответ: итоговое событие и доступные summaries Planner/Excel/Builder/Verifier. Полная доставка каждого низкоуровневого tool event и внешний PostgreSQL event store остаются production hardening. Если Trace Writer не настроен, `continueRegularOutput` сохраняет ответ, но активация production path до настройки запрещена.
+
+### SCHEDULE foundation bindings
+
+Внутренние SCHEDULE workflows имеют **Execute Sub-workflow Trigger**; ingestion дополнительно имеет защищённую n8n Form. Ingestion пишет только после approval/version/hash/access/citation gate. Hybrid Retrieval выполняет PostgreSQL exact/lexical, PGVector semantic, tag search и deterministic RRF; exact filters: `22.2`, `vendor_manual`, `approved`, caller `access_scope`. Orchestrator вызывает Retrieval перед Builder; `abstain` открывает HITL. Renderer принимает только `schedule_schema_catalogue/v1` с exact profile 22.2, SHA-256, accountable approver/gate и citation каждого schema variant. Каждый variant обязан также иметь generic `semantics`: clock/period, entity definitions/references, prerequisites, hierarchy edges и state-assignment keys. Renderer type-checks IR/layout, а Validator replay-ит эти декларации и блокирует missing entities/dependencies, cycles, cutover violations и conflicting controls. Raw text и доменные догадки модели игнорируются.
+
+На Form ingestion поле `schema_catalogue_json` необязательно для загрузки только текста, но обязательно для рабочего Builder-пути. Это JSON snapshot, подготовленный инженером по Technical Manual 22.2; workflow проверяет contract/profile/hash/access/approval/citations, field layouts и semantic declarations, затем сохраняет его в PostgreSQL `tnavigator_schedule_schema_catalogue_v1`. Hybrid Retrieval выбирает один совместимый snapshot по keyword scope и передаёт его в `schedule_rag_evidence.schema_catalogue`. Не вставляйте в экспорт workflow сам manual или непроверенные layouts/semantics; при отсутствии полного snapshot Retrieval возвращает `APPROVED_SCHEMA_CATALOGUE_NOT_FOUND` и открывает HITL.
+
+Для `CREATE` Validator начинает replay с пустого состояния либо с optional `initial_semantic_snapshot` реестра сущностей базовой модели. Для `REVISE` Builder сам строит `schedule_semantic_snapshot/v1` вида `PRE_CHANGE_BOUNDARY`: lossless analyzer фиксирует CST/include package, catalogue decoder выбирает ровно один approved schema variant для каждой записи и делит события по явному `change_effective_from`, затем общий semantic runtime replay-ит только prefix. Snapshot связывает `catalogue_hash`, baseline `package_hash`, фактический `replay_through`, запрошенную границу и SHA-256 `boundary_hash`. Candidate replay принимает только этот сгенерированный snapshot; произвольный `semantic_baseline_snapshot` из request игнорируется. `model_start_date` и `change_effective_from` обязательны для REVISE и не выводятся из последней строки Excel. Unknown semantics, ambiguous schema, unsafe/repeated INCLUDE, stale hashes и события из будущего блокируют pipeline.
+
+Planner не получает весь baseline: `Query baseline planning context` возвращает counts, field inventory и не более пяти samples на keyword. После утверждения плана `Query targeted baseline records` фильтрует decoded records по keyword, entity, date, node/file и explicit field predicates. Только записи этого полного среза являются mutation authority; `MODIFY/REMOVE` обязаны повторять их `target_node_id + expected_raw_hash`. Если релевантных записей больше 2000, workflow возвращает `BASELINE_QUERY_REFINEMENT_REQUIRED` с числом совпадений и требует сузить entity/date/filter scope — данные не обрезаются молча.
+
+Ограничение foundation: один baseline keyword block остаётся одной CST mutation target, даже если содержит несколько decoded records; repeated inclusion одного файла запрещён безопасной политикой v1. Generic replay уже поддерживает lifecycle retire/reactivate, numeric bounds, interval overlap и fail-closed wildcard expansion policy, но production release всё ещё невозможен без полного утверждённого каталога/rules 22.2, immutable artifact store и результата реального лицензированного tNavigator check.
+
+### Simulator Check Adapter
+
+`workflows/tnavigator-schedule-simulator-check-adapter.workflow.json` — переносимая граница между n8n и управляемым IT сервисом проверки. n8n не запускает tNavigator через shell и не читает пути runner-сервера: adapter обращается по HTTPS и передаёт только immutable artifact reference/hash, логический `check_profile_id`, task/trace/request/idempotency IDs. Поддерживаются `SUBMIT`, `STATUS`, `RESULT` и `CANCEL`.
+
+После импорта откройте в adapter ноду конфигурации и задайте `service_url` и утверждённый `check_profile_id`; в HTTP Request выберите Header Auth credential. Runner обязан возвращать профиль ровно `tNavigator 22.2`, совпадающие request/profile/artifact hashes, bounded sanitized findings и SHA-256 result artifact. Host paths, команды и полный сырой log через workflow не передаются.
+
+Builder обязан сначала сохранить draft/package во внешнее governed immutable storage: inline preview не является release artifact и не отправляется в runner. Для `queued/running` Orchestrator сохраняет `job_id` и `job_version` в Data Table, открывает продолжение задачи и не выполняет бесконечный polling. Продолжение делается новым действием `STATUS`, `RESULT` или `CANCEL` с актуальной CAS-версией. Только matching `simulator_check_result/v1` со `status=passed` и `release_gate_passed=true` допускает переход к независимому Verifier. Реальный лицензированный runner, approved check procedure, artifact storage и credentials поставляются IT и не входят в репозиторий.
+
 ### Настройка Planner и Verifier
 
 Через UI назначьте chat-model credentials в двух нодах:
@@ -99,6 +140,8 @@ Verifier логически и, желательно, credential/model deploymen
 6. В Planner catalogue добавляйте только логические `specialist_id` и capabilities. Workflow ID никогда не помещается в prompt и не выбирается моделью.
 
 Excel Extractor уже добавлен в allowlist как `excel_extraction_specialist`. Universal Orchestrator вызывает только тонкий adapter workflow: adapter получает `specialist_packet`, переводит его в нативный вход Extractor и возвращает универсальный `specialist_result`. Нативные идентификаторы продолжения остаются внутри непрозрачного `continuation`; control-plane не знает URL и FastAPI-инструментов и не доверяет модели выбирать эти идентификаторы.
+
+В текущем importable foundation Orchestrator отдельно вызывает Schedule Builder. Builder не получает Excel workflow ID/FastAPI URL и не вызывает Extractor напрямую: Orchestrator передаёт ему versioned `source_facts`; при `evidence_gap` сохраняет state, повторно вызывает Excel adapter и возобновляет Builder. Так сохраняются единый CAS/HITL/audit loop и заменяемость обоих specialists. Внутри Builder уже есть lossless lexical baseline, approved-catalogue decode, автоматический pre-change snapshot, typed IR → catalogue renderer, atomic merge, candidate semantic replay и deterministic validation/verifier boundaries. После Builder Orchestrator требует immutable package, matching tNavigator 22.2 simulator pass, независимую проверку и accountable Release. В репозитории намеренно нет licensed field/semantic rules и реального runner: до их подключения результат остаётся blocked/draft.
 
 При первом Excel-вызове binary-поле `file` передаётся в sub-workflow напрямую средствами Execute Workflow и не записывается в Data Table или prompt. Если до первого делегирования открылся approval gate, файл нужно приложить снова при `approve`. После нативного Excel-уточнения повторная загрузка файла не нужна: adapter использует сохранённое непрозрачное продолжение и свежий ответ человека.
 
@@ -170,7 +213,7 @@ Excel Extractor уже добавлен в allowlist как `excel_extraction_sp
 
 Excel Agent очищен до 56 узлов без потери функций. Удалены отключённые дубликаты tools, осиротевшие узлы и старый строковый транспорт HTTP Tool v1. Семь агентских HTTP Request Tool используют структурированные параметры версии 1.1. Проверка, экспорт, разрешение уточнения и финализация выполняются детерминированной веткой обычных HTTP-узлов, поэтому дублировать их как AI tools не требуется. Сам HTTP Request Tool не является deprecated.
 
-Нативный Excel workflow не раздроблен на множество технических sub-workflow. Отдельно вынесен только adapter как anti-corruption boundary между универсальным `specialist_packet/result` и прикладным Excel-протоколом. Для основной поставки через UI нужно сделать ровно две Execute Workflow-привязки, перечисленные в начале документа.
+Нативный Excel workflow не раздроблен на множество технических sub-workflow. Отдельно вынесен adapter как anti-corruption boundary между универсальным `specialist_packet/result` и прикладным Excel-протоколом. Для основной поставки через UI нужны шесть Execute Workflow-привязок, перечисленных в начале документа.
 
 ## Совместимость нод n8n 2.30.8
 

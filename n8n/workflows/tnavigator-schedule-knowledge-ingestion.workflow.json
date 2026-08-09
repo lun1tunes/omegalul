@@ -1,0 +1,560 @@
+{
+  "id": "a666218c-9546-57f2-a6d6-0d0ee6ac7cd2",
+  "name": "tNavigator SCHEDULE Knowledge Ingestion — approved PGVector runtime",
+  "description": "UI-only licensed ingestion with accountable approval, exact metadata and PGVector insertion.",
+  "nodes": [
+    {
+      "parameters": {
+        "content": "## Licensed knowledge + schema ingestion — n8n 2.30.8\n\nForm or Execute Sub-workflow input → fail-closed metadata/approval gate → chunks/embeddings → PGVector. Optional machine-readable catalogue JSON is validated and stored separately in PostgreSQL; vendor text never becomes renderer grammar automatically.\n\nUse one embedding model/dimensions in ingestion and retrieval. Re-ingestion is content-addressed; catalogue replacement requires a new approved hash.",
+        "width": 590,
+        "height": 460,
+        "color": 5
+      },
+      "id": "fe00a2bb-88d0-5c1e-9876-1dbbb0293387",
+      "name": "SCHEDULE ingestion README",
+      "type": "n8n-nodes-base.stickyNote",
+      "typeVersion": 1,
+      "position": [
+        -1240,
+        -650
+      ]
+    },
+    {
+      "parameters": {
+        "inputSource": "jsonExample",
+        "jsonExample": "{\"schedule_knowledge_document\": {\"document_text\": \"DATES — approved excerpt\", \"document_id\": \"tnav-22.2-schedule\", \"document_revision\": \"22.2\", \"source_hash\": \"sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa\", \"access_scope\": \"petroleum-engineering\", \"approved_by\": \"responsible-engineer\", \"authority_level\": \"vendor_manual\", \"vendor\": \"Rock Flow Dynamics\", \"simulator\": \"tNavigator\", \"simulator_version\": \"22.2\", \"heading\": \"SCHEDULE / DATES\", \"page\": \"1\", \"approved\": true}}"
+      },
+      "id": "8eb5acc3-95a2-5a13-b4d0-703b3fa238e3",
+      "name": "Receive SCHEDULE knowledge document",
+      "type": "n8n-nodes-base.executeWorkflowTrigger",
+      "typeVersion": 1.2,
+      "position": [
+        -1200,
+        100
+      ]
+    },
+    {
+      "parameters": {
+        "authentication": "n8nUserAuth",
+        "formTitle": "tNavigator 22.2 SCHEDULE knowledge ingestion",
+        "formDescription": "Paste only licensed, internally approved excerpts. The manual is stored in PostgreSQL/PGVector, never in this workflow export.",
+        "formFields": {
+          "values": [
+            {
+              "fieldName": "document_text",
+              "fieldLabel": "Approved manual text",
+              "fieldType": "textarea",
+              "requiredField": true
+            },
+            {
+              "fieldName": "document_id",
+              "fieldLabel": "Document ID",
+              "fieldType": "text",
+              "requiredField": true
+            },
+            {
+              "fieldName": "document_revision",
+              "fieldLabel": "Document revision",
+              "fieldType": "text",
+              "requiredField": true
+            },
+            {
+              "fieldName": "source_hash",
+              "fieldLabel": "Source SHA-256 (sha256:...)",
+              "fieldType": "text",
+              "requiredField": true
+            },
+            {
+              "fieldName": "access_scope",
+              "fieldLabel": "Access scope",
+              "fieldType": "text",
+              "requiredField": true
+            },
+            {
+              "fieldName": "approved_by",
+              "fieldLabel": "Accountable approver",
+              "fieldType": "text",
+              "requiredField": true
+            },
+            {
+              "fieldName": "page",
+              "fieldLabel": "Page/range",
+              "fieldType": "text",
+              "requiredField": false
+            },
+            {
+              "fieldName": "heading",
+              "fieldLabel": "Heading",
+              "fieldType": "text",
+              "requiredField": true
+            },
+            {
+              "fieldName": "approved",
+              "fieldLabel": "Approval flag (true)",
+              "fieldType": "text",
+              "requiredField": true
+            },
+            {
+              "fieldName": "schema_catalogue_json",
+              "fieldLabel": "Approved machine-readable schema catalogue JSON (optional for knowledge-only ingestion)",
+              "fieldType": "textarea",
+              "requiredField": false
+            }
+          ]
+        },
+        "responseMode": "lastNode",
+        "options": {
+          "path": "tnavigator-schedule-knowledge-ingestion",
+          "appendAttribution": false,
+          "buttonLabel": "Validate and ingest",
+          "ignoreBots": true,
+          "includeUserInOutput": true
+        }
+      },
+      "id": "91579f62-0ccc-5290-abae-06aa2647c2c8",
+      "name": "SCHEDULE manual ingestion form",
+      "type": "n8n-nodes-base.formTrigger",
+      "typeVersion": 2.6,
+      "position": [
+        -1200,
+        -80
+      ]
+    },
+    {
+      "parameters": {
+        "jsCode": "const raw=$json.schedule_knowledge_document??$json;\nconst obj=v=>v&&typeof v==='object'&&!Array.isArray(v),clean=v=>typeof v==='string'?v.trim():'';\nconst parse=v=>{if(obj(v))return v;if(typeof v!=='string'||!v.trim())return{};try{const x=JSON.parse(v);return obj(x)?x:{}}catch{return{}}};\nconst m={...parse(raw.metadata_json),...(obj(raw.metadata)?raw.metadata:{})};\nconst catalogue=parse(raw.schema_catalogue_json??raw.schema_catalogue),catalogueProvided=Object.keys(catalogue).length>0;\nfor(const k of ['document_id','vendor','simulator','simulator_version','document_revision','source_hash','access_scope','approved_by','authority_level','title','page','heading'])if(clean(raw[k]))m[k]=clean(raw[k]);\nif(!clean(m.vendor))m.vendor='Rock Flow Dynamics';if(!clean(m.simulator))m.simulator='tNavigator';if(!clean(m.simulator_version))m.simulator_version='22.2';if(!clean(m.authority_level))m.authority_level='vendor_manual';\nconst approved=raw.approved===true||['true','yes','1','approved'].includes(clean(raw.approved).toLowerCase());\nconst text=clean(raw.text||raw.document_text),findings=[];\nconst required=['document_id','document_revision','source_hash','access_scope','approved_by'];\nif(!text)findings.push({code:'MANUAL_TEXT_REQUIRED',severity:'error'});\nif(text.length>2000000)findings.push({code:'MANUAL_TEXT_TOO_LARGE',severity:'error'});\nif(clean(m.vendor)!=='Rock Flow Dynamics'||clean(m.simulator).toLowerCase()!=='tnavigator'||clean(m.simulator_version)!=='22.2')findings.push({code:'MANUAL_VERSION_REQUIRED',severity:'error'});\nif(clean(m.authority_level)!=='vendor_manual')findings.push({code:'AUTHORITY_LEVEL_REQUIRED',severity:'error'});\nfor(const k of required)if(!clean(m[k]))findings.push({code:`${k.toUpperCase()}_REQUIRED`,severity:'error'});\nif(!clean(m.source_hash))findings.push({code:'SOURCE_HASH_REQUIRED',severity:'error'});else if(!/^sha256:[a-f0-9]{64}$/i.test(clean(m.source_hash)))findings.push({code:'SOURCE_HASH_INVALID',severity:'error'});\nif(!approved)findings.push({code:'ACCOUNTABLE_APPROVAL_REQUIRED',severity:'error'});\nif(!clean(m.page)&&!clean(m.heading))findings.push({code:'CITATION_LOCATION_REQUIRED',severity:'error'});\nconst allowed=new Set([\"DATES\", \"INCLUDE\", \"GRUPTREE\", \"WELSPECS\", \"WELLTRACK\", \"COMPDATMD\", \"WCONHIST\", \"WCONPROD\", \"GCONPROD\", \"BRANPROP\", \"NODEPROP\", \"FRACTURE_SPECS\", \"FRACTURE_STAGE\", \"WECON\", \"WTEST\"]);\nconst keywordFamilies=[...new Set((text.match(/\\b[A-Z][A-Z0-9_]+\\b/g)||[]).filter(k=>allowed.has(k)))];\nif(!keywordFamilies.length)findings.push({code:'NO_SCHEDULE_KEYWORD_FOUND',severity:'error'});\nif(catalogueProvided){const cp=obj(catalogue.simulator_profile)?catalogue.simulator_profile:{},schemas=Array.isArray(catalogue.schemas)?catalogue.schemas:[];\n  if(catalogue.contract!=='schedule_schema_catalogue'||catalogue.contract_version!=='1.0')findings.push({code:'SCHEMA_CATALOGUE_CONTRACT_INVALID',severity:'error'});\n  if(!/^sha256:[a-f0-9]{64}$/i.test(clean(catalogue.catalogue_hash)))findings.push({code:'SCHEMA_CATALOGUE_HASH_INVALID',severity:'error'});\n  if(clean(catalogue.source_hash).toLowerCase()!==clean(m.source_hash).toLowerCase())findings.push({code:'SCHEMA_SOURCE_HASH_MISMATCH',severity:'error'});\n  if(clean(catalogue.access_scope)!==clean(m.access_scope))findings.push({code:'SCHEMA_ACCESS_SCOPE_MISMATCH',severity:'error'});\n  if(clean(cp.vendor)!=='Rock Flow Dynamics'||clean(cp.simulator).toLowerCase()!=='tnavigator'||clean(cp.version)!=='22.2')findings.push({code:'SCHEMA_PROFILE_NOT_APPROVED',severity:'error'});\n  if(catalogue.approved!==true||clean(catalogue.approved_by)!==clean(m.approved_by)||!clean(catalogue.approval_gate_id))findings.push({code:'SCHEMA_ACCOUNTABLE_APPROVAL_REQUIRED',severity:'error'});\n  if(!schemas.length)findings.push({code:'SCHEMA_CATALOGUE_EMPTY',severity:'error'});\n  for(const s of schemas){const kw=clean(s.keyword).toUpperCase(),c=obj(s.citation)?s.citation:{},fields=Array.isArray(s.fields)?s.fields:[],names=new Set(fields.map(f=>clean(f?.name)).filter(Boolean)),sem=obj(s.semantics)?s.semantics:null;\n    if(!allowed.has(kw)||!clean(s.schema_id)||!clean(s.schema_revision)||!fields.length)findings.push({code:'SCHEMA_ENTRY_INVALID',severity:'error',keyword:kw});\n    if(clean(c.document_revision)!=='22.2'||clean(c.source_hash).toLowerCase()!==clean(m.source_hash).toLowerCase()||(!clean(c.page)&&!clean(c.heading)))findings.push({code:'SCHEMA_CITATION_INVALID',severity:'error',keyword:kw});\n    if(!sem)findings.push({code:'SCHEMA_SEMANTICS_REQUIRED',severity:'error',keyword:kw});else{\n      const period=clean(sem.period||'ANY').toUpperCase(),clock=obj(sem.clock)?sem.clock:{},fieldOk=f=>clean(f)&&names.has(clean(f));\n      if(!['ANY','HISTORY','FORECAST'].includes(period))findings.push({code:'SEMANTIC_PERIOD_INVALID',severity:'error',keyword:kw});for(const f of [clock.sets_from_field,clock.effective_date_field].filter(Boolean))if(!fieldOk(f))findings.push({code:'SEMANTIC_FIELD_UNKNOWN',severity:'error',keyword:kw,field:f});\n      for(const d of(Array.isArray(sem.definitions)?sem.definitions:[]))if(!obj(d)||!clean(d.entity_type)||!fieldOk(d.id_field))findings.push({code:'SEMANTIC_DEFINITION_INVALID',severity:'error',keyword:kw});\n      for(const r of(Array.isArray(sem.references)?sem.references:[]))if(!obj(r)||!clean(r.entity_type)||!fieldOk(r.id_field))findings.push({code:'SEMANTIC_REFERENCE_INVALID',severity:'error',keyword:kw});\n      for(const e of(Array.isArray(sem.hierarchy_edges)?sem.hierarchy_edges:[]))if(!obj(e)||!clean(e.graph)||!clean(e.child_entity_type)||!clean(e.parent_entity_type)||!fieldOk(e.child_field)||!fieldOk(e.parent_field))findings.push({code:'SEMANTIC_HIERARCHY_RULE_INVALID',severity:'error',keyword:kw});\n      for(const a of(Array.isArray(sem.state_assignments)?sem.state_assignments:[])){const keys=Array.isArray(a?.key_fields)?a.key_fields:[],values=Array.isArray(a?.value_fields)?a.value_fields:[];if(!obj(a)||!clean(a.namespace)||!clean(a.entity_type)||!fieldOk(a.entity_field)||!keys.every(fieldOk)||!values.length||!values.every(fieldOk))findings.push({code:'SEMANTIC_STATE_RULE_INVALID',severity:'error',keyword:kw})}\n      for(const l of(Array.isArray(sem.lifecycle_effects)?sem.lifecycle_effects:[]))if(!obj(l)||!clean(l.entity_type)||!fieldOk(l.id_field)||!['RETIRE','DELETE','REACTIVATE'].includes(clean(l.action).toUpperCase()))findings.push({code:'SEMANTIC_LIFECYCLE_RULE_INVALID',severity:'error',keyword:kw});\n      for(const q of(Array.isArray(sem.interval_rules)?sem.interval_rules:[]))if(!obj(q)||!clean(q.namespace)||!clean(q.entity_type)||!fieldOk(q.entity_field)||!fieldOk(q.start_field)||!fieldOk(q.end_field)||clean(q.start_field)===clean(q.end_field))findings.push({code:'SEMANTIC_INTERVAL_RULE_INVALID',severity:'error',keyword:kw});\n      for(const n of(Array.isArray(sem.numeric_constraints)?sem.numeric_constraints:[]))if(!obj(n)||!fieldOk(n.field)||(n.min!==undefined&&!Number.isFinite(Number(n.min)))||(n.max!==undefined&&!Number.isFinite(Number(n.max)))||(n.min!==undefined&&n.max!==undefined&&Number(n.min)>Number(n.max)))findings.push({code:'SEMANTIC_NUMERIC_RULE_INVALID',severity:'error',keyword:kw});\n      for(const w of(Array.isArray(sem.wildcard_rules)?sem.wildcard_rules:[]))if(!obj(w)||!fieldOk(w.field)||!clean(w.entity_type))findings.push({code:'SEMANTIC_WILDCARD_RULE_INVALID',severity:'error',keyword:kw});\n    }\n  }\n}\nconst hash=s=>{let h=2166136261;for(const ch of String(s)){h^=ch.charCodeAt(0);h=Math.imul(h,16777619)}return(h>>>0).toString(16).padStart(8,'0')};\nconst sourceHash=clean(m.source_hash).toLowerCase();\nreturn[{json:{contract:'schedule_knowledge_document',contract_version:'1.0',status:findings.length?'needs_input':'approved_for_ingestion',text,metadata:{document_id:clean(m.document_id),vendor:'Rock Flow Dynamics',simulator:'tNavigator',simulator_version:'22.2',document_revision:clean(m.document_revision),source_hash:sourceHash,access_scope:clean(m.access_scope),approved_by:clean(m.approved_by),authority_level:'vendor_manual',approval_status:'approved',title:clean(m.title)||'tNavigator Technical Manual 22.2',page:clean(m.page),heading:clean(m.heading),keyword_families:keywordFamilies,ingest_key:`${sourceHash}:${hash(text)}`},schema_catalogue:catalogueProvided?catalogue:null,catalogue_present:catalogueProvided,findings}}];"
+      },
+      "id": "f5c6e620-cad0-5245-8365-c0c39e4995cb",
+      "name": "Normalize approved SCHEDULE knowledge",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        -920,
+        -20
+      ]
+    },
+    {
+      "parameters": {
+        "conditions": {
+          "options": {
+            "caseSensitive": true,
+            "leftValue": "",
+            "typeValidation": "strict",
+            "version": 2
+          },
+          "conditions": [
+            {
+              "id": "7be88c54-6b9a-5dee-9ce9-6775e0bf9851",
+              "leftValue": "={{ $json.status }}",
+              "rightValue": "approved_for_ingestion",
+              "operator": {
+                "type": "string",
+                "operation": "equals"
+              }
+            }
+          ],
+          "combinator": "and"
+        },
+        "options": {}
+      },
+      "id": "811fe583-b110-5ec8-9b76-5204128b2e35",
+      "name": "Knowledge approved for ingestion?",
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2.2,
+      "position": [
+        -680,
+        -20
+      ]
+    },
+    {
+      "parameters": {
+        "mode": "insert",
+        "tableName": "tnavigator_schedule_knowledge_v1",
+        "embeddingBatchSize": 64,
+        "options": {
+          "columnNames": {
+            "values": {
+              "idColumnName": "id",
+              "vectorColumnName": "embedding",
+              "contentColumnName": "text",
+              "metadataColumnName": "metadata"
+            }
+          }
+        }
+      },
+      "id": "f2a0d1e0-88c6-500b-a51a-60b9d7f9c0de",
+      "name": "PGVector — insert approved SCHEDULE knowledge",
+      "type": "@n8n/n8n-nodes-langchain.vectorStorePGVector",
+      "typeVersion": 1.3,
+      "position": [
+        -400,
+        -180
+      ],
+      "credentials": {
+        "postgres": {
+          "id": "REPLACE_IN_UI",
+          "name": "REPLACE: SCHEDULE PostgreSQL / PGVector credential"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "dataType": "json",
+        "jsonMode": "expressionData",
+        "jsonData": "={{ $json.text }}",
+        "textSplittingMode": "custom",
+        "options": {
+          "metadata": {
+            "metadataValues": [
+              {
+                "name": "document_id",
+                "value": "={ $json.metadata.document_id }"
+              },
+              {
+                "name": "vendor",
+                "value": "={ $json.metadata.vendor }"
+              },
+              {
+                "name": "simulator",
+                "value": "={ $json.metadata.simulator }"
+              },
+              {
+                "name": "simulator_version",
+                "value": "={ $json.metadata.simulator_version }"
+              },
+              {
+                "name": "document_revision",
+                "value": "={ $json.metadata.document_revision }"
+              },
+              {
+                "name": "source_hash",
+                "value": "={ $json.metadata.source_hash }"
+              },
+              {
+                "name": "access_scope",
+                "value": "={ $json.metadata.access_scope }"
+              },
+              {
+                "name": "approved_by",
+                "value": "={ $json.metadata.approved_by }"
+              },
+              {
+                "name": "authority_level",
+                "value": "={ $json.metadata.authority_level }"
+              },
+              {
+                "name": "approval_status",
+                "value": "={ $json.metadata.approval_status }"
+              },
+              {
+                "name": "title",
+                "value": "={ $json.metadata.title }"
+              },
+              {
+                "name": "page",
+                "value": "={ $json.metadata.page }"
+              },
+              {
+                "name": "heading",
+                "value": "={ $json.metadata.heading }"
+              },
+              {
+                "name": "keyword_families",
+                "value": "={ $json.metadata.keyword_families }"
+              },
+              {
+                "name": "ingest_key",
+                "value": "={ $json.metadata.ingest_key }"
+              }
+            ]
+          }
+        }
+      },
+      "id": "7947e67a-59f9-5613-bce4-5eff3315d69b",
+      "name": "SCHEDULE Default Data Loader",
+      "type": "@n8n/n8n-nodes-langchain.documentDefaultDataLoader",
+      "typeVersion": 1.1,
+      "position": [
+        -420,
+        -500
+      ]
+    },
+    {
+      "parameters": {
+        "chunkSize": 1200,
+        "chunkOverlap": 180,
+        "options": {
+          "splitCode": "markdown"
+        }
+      },
+      "id": "fbce1acc-4928-51df-a80d-462993ce1023",
+      "name": "SCHEDULE Recursive Text Splitter — 1200/180",
+      "type": "@n8n/n8n-nodes-langchain.textSplitterRecursiveCharacterTextSplitter",
+      "typeVersion": 1,
+      "position": [
+        -700,
+        -500
+      ]
+    },
+    {
+      "parameters": {
+        "model": "text-embedding-3-small",
+        "options": {
+          "dimensions": 1536,
+          "batchSize": 128,
+          "stripNewLines": true,
+          "timeout": 180,
+          "encodingFormat": "float"
+        }
+      },
+      "id": "a4ee8fad-f6e4-5aac-a76f-37f4e6b0c239",
+      "name": "SCHEDULE Embeddings — configure same model in retrieval",
+      "type": "@n8n/n8n-nodes-langchain.embeddingsOpenAi",
+      "typeVersion": 1.2,
+      "position": [
+        -160,
+        -500
+      ],
+      "credentials": {
+        "openAiApi": {
+          "id": "REPLACE_IN_UI",
+          "name": "REPLACE: SCHEDULE embedding credential"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "operation": "executeQuery",
+        "query": "CREATE INDEX IF NOT EXISTS tn_sched_kb_metadata_gin ON tnavigator_schedule_knowledge_v1 USING gin (metadata);\nCREATE INDEX IF NOT EXISTS tn_sched_kb_lexical_gin ON tnavigator_schedule_knowledge_v1 USING gin (to_tsvector('simple', coalesce(text,'')));\nWITH ranked AS (SELECT id,row_number() OVER (PARTITION BY metadata->>'ingest_key',md5(text) ORDER BY id::text) AS rn FROM tnavigator_schedule_knowledge_v1), deleted AS (DELETE FROM tnavigator_schedule_knowledge_v1 t USING ranked r WHERE t.id=r.id AND r.rn>1 RETURNING t.id) SELECT count(*)::int AS duplicates_removed FROM deleted",
+        "options": {
+          "queryBatching": "single",
+          "largeNumbersOutput": "text",
+          "replaceEmptyStrings": false
+        }
+      },
+      "id": "77aee689-5178-5475-b47b-c587c9d33645",
+      "name": "Finalize indexes and deduplicate chunks",
+      "type": "n8n-nodes-base.postgres",
+      "typeVersion": 2.6,
+      "position": [
+        -120,
+        -180
+      ],
+      "credentials": {
+        "postgres": {
+          "id": "REPLACE_IN_UI",
+          "name": "REPLACE: SCHEDULE PostgreSQL / PGVector credential"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "jsCode": "const x=$('Normalize approved SCHEDULE knowledge').first().json,c=x.schema_catalogue;\nreturn[{json:{...x,sql_parameters:[c?JSON.stringify(c):'',c?.catalogue_hash||'',c?.catalogue_ref||'',c?.source_hash||'',c?.access_scope||'',c?.approved_by||'',c?.approval_gate_id||'']}}];"
+      },
+      "id": "bef6bf56-86a9-5210-8b06-c7718375fd0e",
+      "name": "Prepare approved schema catalogue persistence",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        140,
+        -180
+      ]
+    },
+    {
+      "parameters": {
+        "operation": "executeQuery",
+        "query": "CREATE TABLE IF NOT EXISTS tnavigator_schedule_schema_catalogue_v1 (\n  catalogue_hash text PRIMARY KEY,\n  catalogue_ref text NOT NULL,\n  source_hash text NOT NULL,\n  access_scope text NOT NULL,\n  simulator_version text NOT NULL CHECK (simulator_version = '22.2'),\n  approved_by text NOT NULL,\n  approval_gate_id text NOT NULL,\n  schema_catalogue jsonb NOT NULL,\n  stored_at timestamptz NOT NULL DEFAULT now()\n);\nWITH payload AS (SELECT NULLIF($1,'')::jsonb AS body), inserted AS (\n  INSERT INTO tnavigator_schedule_schema_catalogue_v1 (\n    catalogue_hash,catalogue_ref,source_hash,access_scope,simulator_version,\n    approved_by,approval_gate_id,schema_catalogue\n  )\n  SELECT $2,$3,$4,$5,'22.2',$6,$7,body FROM payload WHERE body IS NOT NULL\n  ON CONFLICT (catalogue_hash) DO UPDATE SET\n    catalogue_ref=EXCLUDED.catalogue_ref,source_hash=EXCLUDED.source_hash,\n    access_scope=EXCLUDED.access_scope,approved_by=EXCLUDED.approved_by,\n    approval_gate_id=EXCLUDED.approval_gate_id,schema_catalogue=EXCLUDED.schema_catalogue,\n    stored_at=now()\n  RETURNING catalogue_hash\n)\nSELECT count(*)::int AS catalogues_stored FROM inserted",
+        "options": {
+          "queryReplacement": "={{ $json.sql_parameters }}",
+          "queryBatching": "single",
+          "largeNumbersOutput": "text",
+          "replaceEmptyStrings": false
+        }
+      },
+      "id": "4aebae73-e392-575d-8692-84b72c114483",
+      "name": "PostgreSQL — upsert approved schema catalogue",
+      "type": "n8n-nodes-base.postgres",
+      "typeVersion": 2.6,
+      "position": [
+        400,
+        -180
+      ],
+      "credentials": {
+        "postgres": {
+          "id": "REPLACE_IN_UI",
+          "name": "REPLACE: SCHEDULE PostgreSQL / PGVector credential"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "jsCode": "const x=$('Normalize approved SCHEDULE knowledge').first().json;\nconst db=$json||{};\nreturn[{json:{contract:'schedule_knowledge_ingest_result',contract_version:'1.0',status:'ingested',document_id:x.metadata.document_id,source_hash:x.metadata.source_hash,document_revision:x.metadata.document_revision,access_scope:x.metadata.access_scope,approved_by:x.metadata.approved_by,authority_level:x.metadata.authority_level,keyword_families:x.metadata.keyword_families,vector_table:'tnavigator_schedule_knowledge_v1',schema_catalogue_table:'tnavigator_schedule_schema_catalogue_v1',schema_catalogue_stored:x.catalogue_present===true&&Number(db.catalogues_stored||0)===1,catalogue_hash:x.schema_catalogue?.catalogue_hash||null,embedding_profile:'configure one identical model/dimensions in ingestion and retrieval',idempotency_key:x.metadata.ingest_key,findings:[]}}];"
+      },
+      "id": "4830a5d4-e394-526a-8a79-8039d43f8fc9",
+      "name": "Return SCHEDULE ingestion result",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        660,
+        -180
+      ]
+    },
+    {
+      "parameters": {
+        "jsCode": "return [{json:{contract:'schedule_knowledge_ingest_result',contract_version:'1.0',status:$json.status,findings:$json.findings,vector_write_allowed:false}}];"
+      },
+      "id": "d67348ff-6817-5998-9f53-517a608dc912",
+      "name": "Return SCHEDULE ingestion gate",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        -400,
+        140
+      ]
+    }
+  ],
+  "pinData": {},
+  "connections": {
+    "SCHEDULE manual ingestion form": {
+      "main": [
+        [
+          {
+            "node": "Normalize approved SCHEDULE knowledge",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Receive SCHEDULE knowledge document": {
+      "main": [
+        [
+          {
+            "node": "Normalize approved SCHEDULE knowledge",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Normalize approved SCHEDULE knowledge": {
+      "main": [
+        [
+          {
+            "node": "Knowledge approved for ingestion?",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Knowledge approved for ingestion?": {
+      "main": [
+        [
+          {
+            "node": "PGVector — insert approved SCHEDULE knowledge",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Return SCHEDULE ingestion gate",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "SCHEDULE Default Data Loader": {
+      "ai_document": [
+        [
+          {
+            "node": "PGVector — insert approved SCHEDULE knowledge",
+            "type": "ai_document",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "SCHEDULE Recursive Text Splitter — 1200/180": {
+      "ai_textSplitter": [
+        [
+          {
+            "node": "SCHEDULE Default Data Loader",
+            "type": "ai_textSplitter",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "SCHEDULE Embeddings — configure same model in retrieval": {
+      "ai_embedding": [
+        [
+          {
+            "node": "PGVector — insert approved SCHEDULE knowledge",
+            "type": "ai_embedding",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "PGVector — insert approved SCHEDULE knowledge": {
+      "main": [
+        [
+          {
+            "node": "Finalize indexes and deduplicate chunks",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Finalize indexes and deduplicate chunks": {
+      "main": [
+        [
+          {
+            "node": "Prepare approved schema catalogue persistence",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Prepare approved schema catalogue persistence": {
+      "main": [
+        [
+          {
+            "node": "PostgreSQL — upsert approved schema catalogue",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "PostgreSQL — upsert approved schema catalogue": {
+      "main": [
+        [
+          {
+            "node": "Return SCHEDULE ingestion result",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    }
+  },
+  "active": false,
+  "settings": {
+    "executionOrder": "v1",
+    "saveManualExecutions": true,
+    "callerPolicy": "workflowsFromSameOwner"
+  },
+  "versionId": "4afcc636-b781-5258-8a43-8970e5d115d0",
+  "meta": {
+    "templateCredsSetupCompleted": false,
+    "targetN8nVersion": "2.30.8",
+    "contractVersion": "schedule_knowledge_ingest/v1"
+  },
+  "tags": []
+}
