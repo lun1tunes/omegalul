@@ -352,8 +352,8 @@ def test_calculation_adapter_posts_dev_batch_and_surface_and_is_statically_bound
     adapter_text = json.dumps(adapter, ensure_ascii=False)
     assert "specialist_result" in adapter_text
     assert "engineering_calculation_specialist" in adapter_text
-    assert "name:'trajectory_files'" in adapter_text
-    assert "name:'surface_file'" in adapter_text
+    assert '"name": "trajectory_files"' in adapter_text
+    assert '"name": "surface_file"' in adapter_text
     assert "TRAJECTORY_INTERSECTION_BATCH_COMPUTED" in adapter_text
     assert "result_mode:'computed_batch'" in adapter_text
     assert "MOCK_TRAJECTORY_INTERSECTION" not in adapter_text

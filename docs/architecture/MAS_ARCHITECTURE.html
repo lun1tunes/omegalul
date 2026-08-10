@@ -1,0 +1,233 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>MAS Architecture</title>
+    <script src="https://cdn.jsdelivr.net/npm/marked/marked.min.js"></script>
+    <script type="module">
+        import mermaid from 'https://cdn.jsdelivr.net/npm/mermaid@10/dist/mermaid.esm.min.mjs';
+        mermaid.initialize({ 
+            startOnLoad: true, 
+            theme: 'default',
+            securityLevel: 'loose'
+        });
+        window.mermaid = mermaid;
+    </script>
+    <style>
+        body { font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Helvetica, Arial, sans-serif; line-height: 1.6; padding: 2rem; max-width: 1200px; margin: 0 auto; color: #333; }
+        pre:not(.mermaid) { background: #f6f8fa; padding: 1rem; border-radius: 6px; overflow-x: auto; }
+        h1, h2, h3 { border-bottom: 1px solid #eaecef; padding-bottom: 0.3em; margin-top: 1.5em; }
+        .mermaid { display: flex; justify-content: center; width: 100%; margin: 2rem 0; }
+        .mermaid svg { max-width: 100% !important; height: auto !important; }
+        #markdown-content { display: none; }
+    </style>
+</head>
+<body>
+    <div id="content"></div>
+    
+<textarea id="markdown-content">
+# MAS Architecture Overview: Hydrodynamic Orchestrator
+
+This document outlines the architecture of the Multi-Agent System (MAS) designed to automate reservoir engineering workflows (specifically data extraction and tNavigator SCHEDULE generation).
+
+The architecture follows a **Stateful Orchestrator-Workers** pattern with explicit validation and independent verification loops.
+
+## High-Level System Architecture
+
+```mermaid
+graph TD
+    User([User / Webhook]) --> |Task Input| O["Universal Engineering Orchestrator<br/><small><i>universal-engineering-orchestrator</i></small>"]
+    
+    subgraph "Core Orchestration & Infra"
+        O -.-> |Uses| Tpl["Specialist Template<br/><small><i>engineering-specialist-template</i></small>"]
+        O -.-> |Logs| Trace["Trace Writer<br/><small><i>mas-trace-event-writer</i></small>"]
+        O -.-> |Shared| AI["AI Components<br/><small><i>ai-components</i></small><br/>[LLM REQUIRED]"]
+    end
+
+    subgraph "Excel Subsystem"
+        E_Adapt["Excel Specialist Adapter<br/><small><i>excel-engineering-specialist-adapter</i></small>"]
+        E_Form["Excel Form Adapter<br/><small><i>excel-extraction-form-adapter</i></small>"]
+        
+        E_Mas["Excel MAS Orchestrator<br/><small><i>excel-mas-orchestrator</i></small>"]
+        E_Agent["Excel Extraction Agent<br/><small><i>excel-extraction-agent</i></small><br/>[LLM REQUIRED]"]
+        E_RAG["Excel RAG Ingestion<br/><small><i>excel-rag-ingestion</i></small><br/>[EMBEDDINGS REQUIRED]"]
+        
+        O --> |Route| E_Adapt
+        User_Form([UI Form]) --> E_Form
+        E_Adapt --> E_Mas
+        E_Form --> E_Mas
+        E_Mas --> E_Agent
+        E_RAG -.-> |DB| E_Agent
+        E_Agent <--> |API| FastAPI["FastAPI (app/main.py)"]
+    end
+
+    subgraph "SCHEDULE Subsystem"
+        S_Intake["Schedule Intake<br/><small><i>tnavigator-schedule-intake</i></small>"]
+        O --> |Route| S_Intake
+        
+        subgraph "Baseline Analysis"
+            S_B_Ana["Baseline Analyzer<br/><small><i>tnavigator-schedule-baseline-analyzer</i></small>"]
+            S_B_Dec["Baseline Decoder<br/><small><i>tnavigator-schedule-baseline-decoder</i></small>"]
+            S_B_Qry["Baseline Query<br/><small><i>tnavigator-schedule-baseline-query</i></small>"]
+            S_Intake --> S_B_Ana --> S_B_Dec --> S_B_Qry
+        end
+        
+        subgraph "Knowledge & RAG"
+            S_K_Ing["Knowledge Ingestion<br/><small><i>tnavigator-schedule-knowledge-ingestion</i></small><br/>[EMBEDDINGS REQUIRED]"]
+            S_H_Ret["Hybrid Retrieval<br/><small><i>tnavigator-schedule-hybrid-retrieval</i></small><br/>[EMBEDDINGS REQUIRED]"]
+            S_K_Ing -.-> |DB| S_H_Ret
+        end
+        
+        subgraph "Generation Pipeline"
+            S_Plan["Schedule Planner<br/><small><i>tnavigator-schedule-planner</i></small><br/>[LLM REQUIRED]"]
+            S_Bld["Schedule Builder<br/><small><i>tnavigator-schedule-builder</i></small><br/>[LLM REQUIRED]"]
+            S_Rnd["Schedule Renderer<br/><small><i>tnavigator-schedule-renderer</i></small>"]
+            
+            S_B_Qry --> S_Plan
+            S_Plan --> S_H_Ret
+            S_H_Ret --> S_Bld
+            S_Bld --> S_Rnd
+        end
+        
+        subgraph "Validation & Release"
+            S_Val["Schedule Validator<br/><small><i>tnavigator-schedule-validator</i></small>"]
+            S_Ver["Schedule Verifier<br/><small><i>tnavigator-schedule-verifier</i></small><br/>[LLM REQUIRED]"]
+            S_Mrg["Schedule Merge<br/><small><i>tnavigator-schedule-merge</i></small>"]
+            S_Rel["Schedule Release<br/><small><i>tnavigator-schedule-release</i></small>"]
+            
+            S_Rnd --> S_Val --> S_Ver --> S_Mrg --> S_Rel
+        end
+    end
+```
+
+## Тезисы для презентации: Почему базовые подходы к LLM не работают
+
+Наивный подход "отправь промпт в ChatGPT" неприменим в гидродинамическом моделировании. Наша MAS-архитектура спроектирована специально для решения следующих enterprise-проблем:
+
+### 1. Миф менеджеров: "Зачем сложности? Просто напиши промпт"
+* **Миф:** Можно просто загрузить Excel в LLM и попросить её написать файл SCHEDULE.
+* **Реальность (Галлюцинации):** LLM — это вероятностные генераторы текста, а не инженеры. Если заставить их считать математику, парсить сложную геометрию или генерировать ключевые слова гидродинамики без жестких ограничений, они начинают придумывать координаты, несуществующие скважины и выдавать невалидный синтаксис.
+* **Решение MAS:** Строгое разделение ответственности (Contract-Driven Architecture). LLM-Оркестратор **никогда** не считает математику и не формирует итоговые файлы SCHEDULE. Он делегирует эти задачи изолированным детерминированным микросервисам (FastAPI для Excel и математики), общаясь с ними через строгие JSON-контракты. Независимый LLM-Верификатор проверяет результат перед выдачей готового файла SCHEDULE.
+
+### 2. Миф IT-отдела: "У нас есть парсеры (Docling), мы всё переведем в Markdown"
+* **Миф:** У нас уже есть инструменты, переводящие таблицы в текст/Markdown. Давайте скормим этот текст нейросети, и она сама во всем разберется.
+* **Реальность (Context Collapse):** Реальный инженерный Excel-файл (например, график бурения) содержит 5000+ строк. Конвертация его в Markdown создает гигантскую "простыню" текста. Загрузка этого текста в LLM переполняет контекстное окно, приводит к критическим провалам памяти модели ("lost-in-the-middle") и сжигает колоссальный бюджет на токены.
+* **Решение MAS:** Наш `Excel Extraction Agent` не читает весь файл глазами LLM. Он использует детерминированный Python-код (Pandas через FastAPI), чтобы умно запрашивать схему файла, фильтровать нужные строки и агрегировать данные на стороне сервера. Модель получает только *сухую выжимку* (например: "Скважина А пробурена 12.05"), экономя время, токены и исключая ошибки чтения.
+
+### 3. Миф безопасников: "Нейросеть — это черный ящик"
+* **Реальность:** Бизнес не может доверять системе, которая генерирует входные данные для гидродинамики "вслепую", без возможности аудита.
+* **Решение MAS:** Прозрачность и Human-In-The-Loop (HITL). Оркестратор останавливает работу и запрашивает явное подтверждение человека перед любыми необратимыми или критическими действиями. Каждое решение LLM, её логика рассуждений и история вызовов тулов записываются модулем `Trace Event Writer` в базу данных. Это обеспечивает полный лог аудита: мы всегда знаем, *почему* ИИ сгенерировал конкретное ключевое слово или строку в файле SCHEDULE.
+
+## Component Breakdown
+
+### 1. Universal Engineering Orchestrator
+The central nervous system of the MAS. It maintains state across asynchronous calls (HITL - Human in the loop) and dictates the workflow.
+*   **Planner:** An LLM responsible for analyzing the current state and deciding which Specialist to invoke next.
+*   **Independent Verifier:** A separate LLM that evaluates the output of a Specialist against the original request. If the output is hallucinated or incorrect, the Verifier forces the Planner to replan.
+*   **Router:** Executes specific sub-workflows (`Execute Workflow` nodes) based on the Planner's decision. Uses placeholder IDs (e.g., `REPLACE_EXCEL_ADAPTER_IN_UI`) that must be mapped to actual workflow IDs during deployment.
+
+### 2. Excel Subsystem (Data Extraction)
+Designed to handle unstructured, "dirty" engineering data.
+*   **Adapters:** `excel-engineering-specialist-adapter` translates the Orchestrator's standard contract into the specific prompt required by the Excel Agent.
+*   **Excel Extraction Agent (`excel-extraction-agent`):** The core ReAct agent utilizing a 9B model for reasoning.
+*   **FastAPI Backend (`excel-agent-tools`):** The python microservice executed outside n8n. It provides deterministic tools (`/schema`, `/extract`) to parse Excel files, handling locking and session states.
+
+### 3. SCHEDULE Subsystem (Code Generation)
+A highly specialized RAG-driven code generation pipeline.
+*   **Knowledge Ingestion:** `tnavigator-schedule-knowledge-ingestion` / `hybrid-retrieval` parse tNav manuals and baseline `.SCH` files into `pgvector`.
+*   **Builder Pipeline:** 
+    *   `tnavigator-schedule-planner`: Defines the strategy for the schedule.
+    *   `tnavigator-schedule-builder`: Writes the actual tNavigator syntax.
+    *   `tnavigator-schedule-validator` & `tnavigator-schedule-verifier`: Syntax and logic checks against tNav rules.
+    *   `tnavigator-schedule-merge`: Integrates the generated code with the baseline.
+
+### 4. Infrastructure
+*   **Trace Event Writer (`mas-trace-event-writer`):** Logs state transitions and LLM reasoning steps for debugging and audit trails.
+
+## Deployment Guide: Step-by-Step Setup
+
+Follow this sequence to deploy the MAS architecture into your corporate n8n instance. 
+
+### Step 1: Subsystems & Adapters (Import First)
+Import all specialist and infrastructure workflows so they generate internal IDs.
+**Excel Subsystem:**
+- `excel-engineering-specialist-adapter`
+- `excel-extraction-form-adapter`
+- `excel-mas-orchestrator`
+- `excel-extraction-agent`
+- `excel-rag-ingestion`
+
+**SCHEDULE Subsystem:**
+- `tnavigator-schedule-intake`
+- `tnavigator-schedule-baseline-analyzer` / `decoder` / `query`
+- `tnavigator-schedule-knowledge-ingestion` / `hybrid-retrieval`
+- `tnavigator-schedule-planner` / `builder` / `renderer`
+- `tnavigator-schedule-validator` / `verifier` / `merge` / `release`
+
+**Math / Infra:**
+- `calculation-specialist-adapter`
+- `mas-trace-event-writer`
+- `ai-components`
+- `engineering-specialist-template`
+
+*Note: After importing these, go to the workflow settings in n8n and copy the internal `Workflow IDs` for all the top-level Adapters (Excel, Schedule Intake, Calculation). You will need them for Step 2.*
+
+### Step 2: The Orchestrator (Import Second)
+1. Import `universal-engineering-orchestrator.workflow.json`.
+2. Open the Orchestrator in the UI.
+3. Locate the `Execute Workflow` node named **"Route invocation action"**.
+4. Inside this node, replace the placeholder IDs (e.g., `REPLACE_EXCEL_ADAPTER_IN_UI`) with the actual `Workflow IDs` you copied in Step 1.
+
+### Step 3: Global Variables Setup (n8n UI)
+Go to **Settings -> Variables** in your n8n UI and configure the environment for the FastAPI Microservices:
+- **`EXCEL_TOOLS_URL`**: `http://<your-windows-local-ip>:8080` (Points to `excel-agent-tools`).
+- **`EXCEL_TOOLS_API_KEY`**: `dev-secret-key`
+- **`MATH_TOOLS_URL`**: `http://<your-windows-local-ip>:8081` (Points to `fastapi-math-service`).
+- **`MATH_TOOLS_API_KEY`**: `dev-secret-key`
+
+### Step 4: Infrastructure & Credentials
+Within the n8n UI, ensure you have configured:
+- **PostgreSQL / PGVector Credential:** For State/Memory tracking and Knowledge Retrieval.
+- **LLM Credentials:** Set up your chosen models (e.g., GPT/Claude) for the Planner, Verifier, and Sub-agents.
+
+### Step 5: Start the Microservices (Windows PC)
+Open two separate terminals on the machine where the Python services reside and start both:
+
+**Terminal 1 (Excel Parser):**
+```bash
+cd ~/omegalul/excel-agent-tools
+python -m uvicorn app.main:app --host 0.0.0.0 --port 8080 --reload
+```
+
+**Terminal 2 (Math Service):**
+```bash
+cd ~/omegalul/fastapi-math-service
+python -m uvicorn app.main:app --host 0.0.0.0 --port 8081 --reload
+```
+
+### Step 6: Test the Entry Form
+1. Go to your n8n Workflows.
+2. Open `mvp-entry-form` and click **"Test Workflow"** (or use the production Webhook URL).
+3. Fill out the "Task Description" and attach your files (`.xlsx`, `.dev`, `.cps3`, etc.).
+4. Click Submit and watch the Orchestrator route your task!
+</textarea>
+
+    <script>
+        document.addEventListener('DOMContentLoaded', function() {
+            // Get raw markdown from textarea
+            const rawMarkdown = document.getElementById('markdown-content').value;
+            
+            // Parse markdown to HTML
+            document.getElementById('content').innerHTML = marked.parse(rawMarkdown);
+            
+            // Render mermaid diagrams
+            setTimeout(() => {
+                if (window.mermaid) {
+                    window.mermaid.init(undefined, document.querySelectorAll('.mermaid'));
+                }
+            }, 500);
+        });
+    </script>
+</body>
+</html>

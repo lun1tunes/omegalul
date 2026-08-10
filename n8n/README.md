@@ -22,6 +22,7 @@ task + optional baseline .data/.inc text
 Excel Extractor вызывается только через Orchestrator. Если Builder возвращает `evidence_gap`, Orchestrator сохраняет состояние, запрашивает недостающие табличные данные через Excel Adapter и возобновляет тот же Builder. Прямого вызова Excel из Builder нет.
 
 Calculation Specialist также вызывается только через Orchestrator. Его Adapter передаёт все приложенные `.dev` и одну ASCII CPS3 поверхность одним batch-запросом в простой Math Service, получает JSON с пересечением для каждого исходного имени файла и при SCHEDULE-задаче возвращает управление Planner для следующего делегирования Builder.
+Практический предел одного batch — 256 DEV-файлов; это переносимый workaround для статической multipart-конфигурации HTTP Request в n8n `2.30.8`.
 
 ## Импорт через UI
 
