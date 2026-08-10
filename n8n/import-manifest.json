@@ -13,6 +13,7 @@
     "workflows/excel-mas-orchestrator.workflow.json",
     "workflows/excel-rag-ingestion.workflow.json",
     "workflows/mas-trace-event-writer.workflow.json",
+    "workflows/mvp-entry-form.workflow.json",
     "workflows/tnavigator-schedule-baseline-analyzer.workflow.json",
     "workflows/tnavigator-schedule-baseline-decoder.workflow.json",
     "workflows/tnavigator-schedule-baseline-query.workflow.json",
@@ -36,7 +37,8 @@
     "workflows/tnavigator-schedule-hybrid-retrieval.workflow.json",
     "workflows/tnavigator-schedule-builder.workflow.json",
     "workflows/mas-trace-event-writer.workflow.json",
-    "workflows/universal-engineering-orchestrator.workflow.json"
+    "workflows/universal-engineering-orchestrator.workflow.json",
+    "workflows/mvp-entry-form.workflow.json"
   ],
   "optional_or_non_runtime": [
     {
@@ -139,6 +141,12 @@
       "node": "Call native Excel Extraction Agent",
       "target": "Excel Extractor Agent — OpenAI nano + FastAPI tools",
       "placeholder": "REPLACE_EXCEL_EXTRACTION_AGENT_IN_UI"
+    },
+    {
+      "owner": "MAS MVP Entry Form — Universal Engineering Orchestrator",
+      "node": "Call Universal Engineering Orchestrator",
+      "target": "Universal Engineering Orchestrator — stateful HITL template",
+      "placeholder": "REPLACE_ORCHESTRATOR_ID_IN_UI"
     }
   ],
   "future_enterprise_or_optional_bindings": [],
@@ -168,7 +176,7 @@
   ],
   "ui_configuration": [
     "Select both Data Tables in every matching Data Table node.",
-    "Apply the six mandatory MVP Execute Workflow bindings.",
+    "Apply the seven mandatory MVP Execute Workflow bindings.",
     "Configure Excel Tools base URL/API key; 127.0.0.1 is valid only when n8n runs on the same Windows host.",
     "Edit Math Service Configuration in the Calculation Adapter; its default is http://127.0.0.1:8100/api/v1/math and it uses no credential.",
     "Configure one embedding model/dimension consistently for SCHEDULE ingestion and retrieval.",

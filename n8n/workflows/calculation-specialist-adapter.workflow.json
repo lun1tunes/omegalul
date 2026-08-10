@@ -4,7 +4,7 @@
   "nodes": [
     {
       "parameters": {
-        "content": "## Calculation Adapter — n8n 2.30.8\n\nAccepts `specialist_packet/v1.0`, every attached `.dev` binary and one ASCII CPS3 surface. Edit the local Math Service URL in the visible configuration node, then bind this workflow in the Orchestrator's `Call Calculation Specialist` node.\n\nAll DEV files are sent in one multipart request as repeated `trajectory_files` fields. The Math Service parses the surface once, performs bilinear interpolation and returns one first-in-MD intersection per source filename.",
+        "content": "## Calculation Adapter — n8n 2.30.8\n\nAccepts `specialist_packet/v1.0`, every attached `.dev` binary and one ASCII CPS3 surface. Edit the local Math Service URL in the visible configuration node, then bind this workflow in the Orchestrator's `Call Calculation Specialist` node.\n\nAll DEV files are sent in one multipart request as repeated `trajectory_files` fields. The Math Service parses the surface once, performs bilinear interpolation and returns one first-in-MD intersection per source filename.\n\nThe portable UI-only adapter reserves 256 multipart trajectory slots because n8n 2.30.8 does not evaluate a dynamic fixedCollection array in HTTP Request. Empty slots use tiny reserved sentinel uploads ignored by Math Service; occupied slots are repeated `trajectory_files`.",
         "height": 300,
         "width": 500,
         "color": 5
@@ -34,7 +34,7 @@
     },
     {
       "parameters": {
-        "jsCode": "const item=$input.first();\nconst incoming=item.json||{};\nconst object=value=>value&&typeof value==='object'&&!Array.isArray(value);\nconst parse=value=>{if(object(value))return value;if(typeof value==='string'){try{const parsed=JSON.parse(value);return object(parsed)?parsed:{}}catch{return {}}}return {}};\nconst packet=parse(incoming.specialist_packet);\nconst packetValid=packet.contract==='specialist_packet'&&packet.contract_version==='1.0'&&typeof packet.task_id==='string'&&packet.task_id.trim()&&packet.specialist_id==='engineering_calculation_specialist'&&Number.isInteger(packet.attempt)&&packet.attempt>=1&&typeof packet.objective==='string'&&packet.objective.trim()&&object(packet.inputs)&&object(packet.controls)&&Array.isArray(packet.acceptance_criteria)&&Array.isArray(packet.artifact_refs);\nconst entries=Object.entries(item.binary||{});\nconst trajectories=entries.filter(([,file])=>/\\.dev$/i.test(String(file?.fileName||'')));\nconst surfaces=entries.filter(([,file])=>/\\.(?:cps3|grd|grid|txt)$/i.test(String(file?.fileName||'')));\nlet gate='ready';\nif(!packetValid)gate='invalid_packet';else if(!trajectories.length||surfaces.length!==1)gate='missing_or_ambiguous_files';\nconst binary={};\nconst bodyParameters=[];\nfor(let i=0;i<trajectories.length;i++){const field=`trajectory_${i}`;binary[field]=trajectories[i][1];bodyParameters.push({parameterType:'formBinaryData',name:'trajectory_files',inputDataFieldName:field});}\nif(surfaces.length===1){binary.surface_file=surfaces[0][1];bodyParameters.push({parameterType:'formBinaryData',name:'surface_file',inputDataFieldName:'surface_file'});}\nreturn [{json:{specialist_packet:packet,request_ready:gate==='ready',adapter_gate:gate,trajectory_filenames:trajectories.map(([,file])=>String(file.fileName||'')),surface_filename:surfaces.length===1?String(surfaces[0][1].fileName||''):null,body_parameters:bodyParameters},binary}];"
+        "jsCode": "const item=$input.first();\nconst incoming=item.json||{};\nconst object=value=>value&&typeof value==='object'&&!Array.isArray(value);\nconst parse=value=>{if(object(value))return value;if(typeof value==='string'){try{const parsed=JSON.parse(value);return object(parsed)?parsed:{}}catch{return {}}}return {}};\nconst packet=parse(incoming.specialist_packet);\nconst packetValid=packet.contract==='specialist_packet'&&packet.contract_version==='1.0'&&typeof packet.task_id==='string'&&packet.task_id.trim()&&packet.specialist_id==='engineering_calculation_specialist'&&Number.isInteger(packet.attempt)&&packet.attempt>=1&&typeof packet.objective==='string'&&packet.objective.trim()&&object(packet.inputs)&&object(packet.controls)&&Array.isArray(packet.acceptance_criteria)&&Array.isArray(packet.artifact_refs);\nconst entries=Object.entries(item.binary||{});\nconst trajectories=entries.filter(([,file])=>/\\.dev$/i.test(String(file?.fileName||'')));\nconst surfaces=entries.filter(([,file])=>/\\.(?:cps3|grd|grid|txt)$/i.test(String(file?.fileName||'')));\nlet gate='ready';\nif(!packetValid)gate='invalid_packet';else if(!trajectories.length||surfaces.length!==1)gate='missing_or_ambiguous_files';else if(trajectories.length>256)gate='too_many_trajectories';\nconst binary={};\nfor(let i=0;i<256;i++)binary[`trajectory_${i}`]=i<trajectories.length?trajectories[i][1]:{data:'IyBuOG4tdW51c2VkLXRyYWplY3Rvcnktc2xvdAo=',mimeType:'text/plain',fileName:`__n8n_unused_${i}.dev`,fileExtension:'dev'};\nif(surfaces.length===1)binary.surface_file=surfaces[0][1];\nreturn [{json:{specialist_packet:packet,request_ready:gate==='ready',adapter_gate:gate,trajectory_filenames:trajectories.map(([,file])=>String(file.fileName||'')),surface_filename:surfaces.length===1?String(surfaces[0][1].fileName||''):null},binary}];"
       },
       "id": "8061b750-4e46-5553-af09-e3ca515497fe",
       "name": "Prepare trajectory intersection request",
@@ -109,7 +109,1293 @@
         "sendBody": true,
         "contentType": "multipart-form-data",
         "bodyParameters": {
-          "parameters": "={{ $('Prepare trajectory intersection request').first().json.body_parameters }}"
+          "parameters": [
+            {
+              "parameterType": "formBinaryData",
+              "name": "trajectory_files",
+              "inputDataFieldName": "trajectory_0"
+            },
+            {
+              "parameterType": "formBinaryData",
+              "name": "trajectory_files",
+              "inputDataFieldName": "trajectory_1"
+            },
+            {
+              "parameterType": "formBinaryData",
+              "name": "trajectory_files",
+              "inputDataFieldName": "trajectory_2"
+            },
+            {
+              "parameterType": "formBinaryData",
+              "name": "trajectory_files",
+              "inputDataFieldName": "trajectory_3"
+            },
+            {
+              "parameterType": "formBinaryData",
+              "name": "trajectory_files",
+              "inputDataFieldName": "trajectory_4"
+            },
+            {
+              "parameterType": "formBinaryData",
+              "name": "trajectory_files",
+              "inputDataFieldName": "trajectory_5"
+            },
+            {
+              "parameterType": "formBinaryData",
+              "name": "trajectory_files",
+              "inputDataFieldName": "trajectory_6"
+            },
+            {
+              "parameterType": "formBinaryData",
+              "name": "trajectory_files",
+              "inputDataFieldName": "trajectory_7"
+            },
+            {
+              "parameterType": "formBinaryData",
+              "name": "trajectory_files",
+              "inputDataFieldName": "trajectory_8"
+            },
+            {
+              "parameterType": "formBinaryData",
+              "name": "trajectory_files",
+              "inputDataFieldName": "trajectory_9"
+            },
+            {
+              "parameterType": "formBinaryData",
+              "name": "trajectory_files",
+              "inputDataFieldName": "trajectory_10"
+            },
+            {
+              "parameterType": "formBinaryData",
+              "name": "trajectory_files",
+              "inputDataFieldName": "trajectory_11"
+            },
+            {
+              "parameterType": "formBinaryData",
+              "name": "trajectory_files",
+              "inputDataFieldName": "trajectory_12"
+            },
+            {
+              "parameterType": "formBinaryData",
+              "name": "trajectory_files",
+              "inputDataFieldName": "trajectory_13"
+            },
+            {
+              "parameterType": "formBinaryData",
+              "name": "trajectory_files",
+              "inputDataFieldName": "trajectory_14"
+            },
+            {
+              "parameterType": "formBinaryData",
+              "name": "trajectory_files",
+              "inputDataFieldName": "trajectory_15"
+            },
+            {
+              "parameterType": "formBinaryData",
+              "name": "trajectory_files",
+              "inputDataFieldName": "trajectory_16"
+            },
+            {
+              "parameterType": "formBinaryData",
+              "name": "trajectory_files",
+              "inputDataFieldName": "trajectory_17"
+            },
+            {
+              "parameterType": "formBinaryData",
+              "name": "trajectory_files",
+              "inputDataFieldName": "trajectory_18"
+            },
+            {
+              "parameterType": "formBinaryData",
+              "name": "trajectory_files",
+              "inputDataFieldName": "trajectory_19"
+            },
+            {
+              "parameterType": "formBinaryData",
+              "name": "trajectory_files",
+              "inputDataFieldName": "trajectory_20"
+            },
+            {
+              "parameterType": "formBinaryData",
+              "name": "trajectory_files",
+              "inputDataFieldName": "trajectory_21"
+            },
+            {
+              "parameterType": "formBinaryData",
+              "name": "trajectory_files",
+              "inputDataFieldName": "trajectory_22"
+            },
+            {
+              "parameterType": "formBinaryData",
+              "name": "trajectory_files",
+              "inputDataFieldName": "trajectory_23"
+            },
+            {
+              "parameterType": "formBinaryData",
+              "name": "trajectory_files",
+              "inputDataFieldName": "trajectory_24"
+            },
+            {
+              "parameterType": "formBinaryData",
+              "name": "trajectory_files",
+              "inputDataFieldName": "trajectory_25"
+            },
+            {
+              "parameterType": "formBinaryData",
+              "name": "trajectory_files",
+              "inputDataFieldName": "trajectory_26"
+            },
+            {
+              "parameterType": "formBinaryData",
+              "name": "trajectory_files",
+              "inputDataFieldName": "trajectory_27"
+            },
+            {
+              "parameterType": "formBinaryData",
+              "name": "trajectory_files",
+              "inputDataFieldName": "trajectory_28"
+            },
+            {
+              "parameterType": "formBinaryData",
+              "name": "trajectory_files",
+              "inputDataFieldName": "trajectory_29"
+            },
+            {
+              "parameterType": "formBinaryData",
+              "name": "trajectory_files",
+              "inputDataFieldName": "trajectory_30"
+            },
+            {
+              "parameterType": "formBinaryData",
+              "name": "trajectory_files",
+              "inputDataFieldName": "trajectory_31"
+            },
+            {
+              "parameterType": "formBinaryData",
+              "name": "trajectory_files",
+              "inputDataFieldName": "trajectory_32"
+            },
+            {
+              "parameterType": "formBinaryData",
+              "name": "trajectory_files",
+              "inputDataFieldName": "trajectory_33"
+            },
+            {
+              "parameterType": "formBinaryData",
+              "name": "trajectory_files",
+              "inputDataFieldName": "trajectory_34"
+            },
+            {
+              "parameterType": "formBinaryData",
+              "name": "trajectory_files",
+              "inputDataFieldName": "trajectory_35"
+            },
+            {
+              "parameterType": "formBinaryData",
+              "name": "trajectory_files",
+              "inputDataFieldName": "trajectory_36"
+            },
+            {
+              "parameterType": "formBinaryData",
+              "name": "trajectory_files",
+              "inputDataFieldName": "trajectory_37"
+            },
+            {
+              "parameterType": "formBinaryData",
+              "name": "trajectory_files",
+              "inputDataFieldName": "trajectory_38"
+            },
+            {
+              "parameterType": "formBinaryData",
+              "name": "trajectory_files",
+              "inputDataFieldName": "trajectory_39"
+            },
+            {
+              "parameterType": "formBinaryData",
+              "name": "trajectory_files",
+              "inputDataFieldName": "trajectory_40"
+            },
+            {
+              "parameterType": "formBinaryData",
+              "name": "trajectory_files",
+              "inputDataFieldName": "trajectory_41"
+            },
+            {
+              "parameterType": "formBinaryData",
+              "name": "trajectory_files",
+              "inputDataFieldName": "trajectory_42"
+            },
+            {
+              "parameterType": "formBinaryData",
+              "name": "trajectory_files",
+              "inputDataFieldName": "trajectory_43"
+            },
+            {
+              "parameterType": "formBinaryData",
+              "name": "trajectory_files",
+              "inputDataFieldName": "trajectory_44"
+            },
+            {
+              "parameterType": "formBinaryData",
+              "name": "trajectory_files",
+              "inputDataFieldName": "trajectory_45"
+            },
+            {
+              "parameterType": "formBinaryData",
+              "name": "trajectory_files",
+              "inputDataFieldName": "trajectory_46"
+            },
+            {
+              "parameterType": "formBinaryData",
+              "name": "trajectory_files",
+              "inputDataFieldName": "trajectory_47"
+            },
+            {
+              "parameterType": "formBinaryData",
+              "name": "trajectory_files",
+              "inputDataFieldName": "trajectory_48"
+            },
+            {
+              "parameterType": "formBinaryData",
+              "name": "trajectory_files",
+              "inputDataFieldName": "trajectory_49"
+            },
+            {
+              "parameterType": "formBinaryData",
+              "name": "trajectory_files",
+              "inputDataFieldName": "trajectory_50"
+            },
+            {
+              "parameterType": "formBinaryData",
+              "name": "trajectory_files",
+              "inputDataFieldName": "trajectory_51"
+            },
+            {
+              "parameterType": "formBinaryData",
+              "name": "trajectory_files",
+              "inputDataFieldName": "trajectory_52"
+            },
+            {
+              "parameterType": "formBinaryData",
+              "name": "trajectory_files",
+              "inputDataFieldName": "trajectory_53"
+            },
+            {
+              "parameterType": "formBinaryData",
+              "name": "trajectory_files",
+              "inputDataFieldName": "trajectory_54"
+            },
+            {
+              "parameterType": "formBinaryData",
+              "name": "trajectory_files",
+              "inputDataFieldName": "trajectory_55"
+            },
+            {
+              "parameterType": "formBinaryData",
+              "name": "trajectory_files",
+              "inputDataFieldName": "trajectory_56"
+            },
+            {
+              "parameterType": "formBinaryData",
+              "name": "trajectory_files",
+              "inputDataFieldName": "trajectory_57"
+            },
+            {
+              "parameterType": "formBinaryData",
+              "name": "trajectory_files",
+              "inputDataFieldName": "trajectory_58"
+            },
+            {
+              "parameterType": "formBinaryData",
+              "name": "trajectory_files",
+              "inputDataFieldName": "trajectory_59"
+            },
+            {
+              "parameterType": "formBinaryData",
+              "name": "trajectory_files",
+              "inputDataFieldName": "trajectory_60"
+            },
+            {
+              "parameterType": "formBinaryData",
+              "name": "trajectory_files",
+              "inputDataFieldName": "trajectory_61"
+            },
+            {
+              "parameterType": "formBinaryData",
+              "name": "trajectory_files",
+              "inputDataFieldName": "trajectory_62"
+            },
+            {
+              "parameterType": "formBinaryData",
+              "name": "trajectory_files",
+              "inputDataFieldName": "trajectory_63"
+            },
+            {
+              "parameterType": "formBinaryData",
+              "name": "trajectory_files",
+              "inputDataFieldName": "trajectory_64"
+            },
+            {
+              "parameterType": "formBinaryData",
+              "name": "trajectory_files",
+              "inputDataFieldName": "trajectory_65"
+            },
+            {
+              "parameterType": "formBinaryData",
+              "name": "trajectory_files",
+              "inputDataFieldName": "trajectory_66"
+            },
+            {
+              "parameterType": "formBinaryData",
+              "name": "trajectory_files",
+              "inputDataFieldName": "trajectory_67"
+            },
+            {
+              "parameterType": "formBinaryData",
+              "name": "trajectory_files",
+              "inputDataFieldName": "trajectory_68"
+            },
+            {
+              "parameterType": "formBinaryData",
+              "name": "trajectory_files",
+              "inputDataFieldName": "trajectory_69"
+            },
+            {
+              "parameterType": "formBinaryData",
+              "name": "trajectory_files",
+              "inputDataFieldName": "trajectory_70"
+            },
+            {
+              "parameterType": "formBinaryData",
+              "name": "trajectory_files",
+              "inputDataFieldName": "trajectory_71"
+            },
+            {
+              "parameterType": "formBinaryData",
+              "name": "trajectory_files",
+              "inputDataFieldName": "trajectory_72"
+            },
+            {
+              "parameterType": "formBinaryData",
+              "name": "trajectory_files",
+              "inputDataFieldName": "trajectory_73"
+            },
+            {
+              "parameterType": "formBinaryData",
+              "name": "trajectory_files",
+              "inputDataFieldName": "trajectory_74"
+            },
+            {
+              "parameterType": "formBinaryData",
+              "name": "trajectory_files",
+              "inputDataFieldName": "trajectory_75"
+            },
+            {
+              "parameterType": "formBinaryData",
+              "name": "trajectory_files",
+              "inputDataFieldName": "trajectory_76"
+            },
+            {
+              "parameterType": "formBinaryData",
+              "name": "trajectory_files",
+              "inputDataFieldName": "trajectory_77"
+            },
+            {
+              "parameterType": "formBinaryData",
+              "name": "trajectory_files",
+              "inputDataFieldName": "trajectory_78"
+            },
+            {
+              "parameterType": "formBinaryData",
+              "name": "trajectory_files",
+              "inputDataFieldName": "trajectory_79"
+            },
+            {
+              "parameterType": "formBinaryData",
+              "name": "trajectory_files",
+              "inputDataFieldName": "trajectory_80"
+            },
+            {
+              "parameterType": "formBinaryData",
+              "name": "trajectory_files",
+              "inputDataFieldName": "trajectory_81"
+            },
+            {
+              "parameterType": "formBinaryData",
+              "name": "trajectory_files",
+              "inputDataFieldName": "trajectory_82"
+            },
+            {
+              "parameterType": "formBinaryData",
+              "name": "trajectory_files",
+              "inputDataFieldName": "trajectory_83"
+            },
+            {
+              "parameterType": "formBinaryData",
+              "name": "trajectory_files",
+              "inputDataFieldName": "trajectory_84"
+            },
+            {
+              "parameterType": "formBinaryData",
+              "name": "trajectory_files",
+              "inputDataFieldName": "trajectory_85"
+            },
+            {
+              "parameterType": "formBinaryData",
+              "name": "trajectory_files",
+              "inputDataFieldName": "trajectory_86"
+            },
+            {
+              "parameterType": "formBinaryData",
+              "name": "trajectory_files",
+              "inputDataFieldName": "trajectory_87"
+            },
+            {
+              "parameterType": "formBinaryData",
+              "name": "trajectory_files",
+              "inputDataFieldName": "trajectory_88"
+            },
+            {
+              "parameterType": "formBinaryData",
+              "name": "trajectory_files",
+              "inputDataFieldName": "trajectory_89"
+            },
+            {
+              "parameterType": "formBinaryData",
+              "name": "trajectory_files",
+              "inputDataFieldName": "trajectory_90"
+            },
+            {
+              "parameterType": "formBinaryData",
+              "name": "trajectory_files",
+              "inputDataFieldName": "trajectory_91"
+            },
+            {
+              "parameterType": "formBinaryData",
+              "name": "trajectory_files",
+              "inputDataFieldName": "trajectory_92"
+            },
+            {
+              "parameterType": "formBinaryData",
+              "name": "trajectory_files",
+              "inputDataFieldName": "trajectory_93"
+            },
+            {
+              "parameterType": "formBinaryData",
+              "name": "trajectory_files",
+              "inputDataFieldName": "trajectory_94"
+            },
+            {
+              "parameterType": "formBinaryData",
+              "name": "trajectory_files",
+              "inputDataFieldName": "trajectory_95"
+            },
+            {
+              "parameterType": "formBinaryData",
+              "name": "trajectory_files",
+              "inputDataFieldName": "trajectory_96"
+            },
+            {
+              "parameterType": "formBinaryData",
+              "name": "trajectory_files",
+              "inputDataFieldName": "trajectory_97"
+            },
+            {
+              "parameterType": "formBinaryData",
+              "name": "trajectory_files",
+              "inputDataFieldName": "trajectory_98"
+            },
+            {
+              "parameterType": "formBinaryData",
+              "name": "trajectory_files",
+              "inputDataFieldName": "trajectory_99"
+            },
+            {
+              "parameterType": "formBinaryData",
+              "name": "trajectory_files",
+              "inputDataFieldName": "trajectory_100"
+            },
+            {
+              "parameterType": "formBinaryData",
+              "name": "trajectory_files",
+              "inputDataFieldName": "trajectory_101"
+            },
+            {
+              "parameterType": "formBinaryData",
+              "name": "trajectory_files",
+              "inputDataFieldName": "trajectory_102"
+            },
+            {
+              "parameterType": "formBinaryData",
+              "name": "trajectory_files",
+              "inputDataFieldName": "trajectory_103"
+            },
+            {
+              "parameterType": "formBinaryData",
+              "name": "trajectory_files",
+              "inputDataFieldName": "trajectory_104"
+            },
+            {
+              "parameterType": "formBinaryData",
+              "name": "trajectory_files",
+              "inputDataFieldName": "trajectory_105"
+            },
+            {
+              "parameterType": "formBinaryData",
+              "name": "trajectory_files",
+              "inputDataFieldName": "trajectory_106"
+            },
+            {
+              "parameterType": "formBinaryData",
+              "name": "trajectory_files",
+              "inputDataFieldName": "trajectory_107"
+            },
+            {
+              "parameterType": "formBinaryData",
+              "name": "trajectory_files",
+              "inputDataFieldName": "trajectory_108"
+            },
+            {
+              "parameterType": "formBinaryData",
+              "name": "trajectory_files",
+              "inputDataFieldName": "trajectory_109"
+            },
+            {
+              "parameterType": "formBinaryData",
+              "name": "trajectory_files",
+              "inputDataFieldName": "trajectory_110"
+            },
+            {
+              "parameterType": "formBinaryData",
+              "name": "trajectory_files",
+              "inputDataFieldName": "trajectory_111"
+            },
+            {
+              "parameterType": "formBinaryData",
+              "name": "trajectory_files",
+              "inputDataFieldName": "trajectory_112"
+            },
+            {
+              "parameterType": "formBinaryData",
+              "name": "trajectory_files",
+              "inputDataFieldName": "trajectory_113"
+            },
+            {
+              "parameterType": "formBinaryData",
+              "name": "trajectory_files",
+              "inputDataFieldName": "trajectory_114"
+            },
+            {
+              "parameterType": "formBinaryData",
+              "name": "trajectory_files",
+              "inputDataFieldName": "trajectory_115"
+            },
+            {
+              "parameterType": "formBinaryData",
+              "name": "trajectory_files",
+              "inputDataFieldName": "trajectory_116"
+            },
+            {
+              "parameterType": "formBinaryData",
+              "name": "trajectory_files",
+              "inputDataFieldName": "trajectory_117"
+            },
+            {
+              "parameterType": "formBinaryData",
+              "name": "trajectory_files",
+              "inputDataFieldName": "trajectory_118"
+            },
+            {
+              "parameterType": "formBinaryData",
+              "name": "trajectory_files",
+              "inputDataFieldName": "trajectory_119"
+            },
+            {
+              "parameterType": "formBinaryData",
+              "name": "trajectory_files",
+              "inputDataFieldName": "trajectory_120"
+            },
+            {
+              "parameterType": "formBinaryData",
+              "name": "trajectory_files",
+              "inputDataFieldName": "trajectory_121"
+            },
+            {
+              "parameterType": "formBinaryData",
+              "name": "trajectory_files",
+              "inputDataFieldName": "trajectory_122"
+            },
+            {
+              "parameterType": "formBinaryData",
+              "name": "trajectory_files",
+              "inputDataFieldName": "trajectory_123"
+            },
+            {
+              "parameterType": "formBinaryData",
+              "name": "trajectory_files",
+              "inputDataFieldName": "trajectory_124"
+            },
+            {
+              "parameterType": "formBinaryData",
+              "name": "trajectory_files",
+              "inputDataFieldName": "trajectory_125"
+            },
+            {
+              "parameterType": "formBinaryData",
+              "name": "trajectory_files",
+              "inputDataFieldName": "trajectory_126"
+            },
+            {
+              "parameterType": "formBinaryData",
+              "name": "trajectory_files",
+              "inputDataFieldName": "trajectory_127"
+            },
+            {
+              "parameterType": "formBinaryData",
+              "name": "trajectory_files",
+              "inputDataFieldName": "trajectory_128"
+            },
+            {
+              "parameterType": "formBinaryData",
+              "name": "trajectory_files",
+              "inputDataFieldName": "trajectory_129"
+            },
+            {
+              "parameterType": "formBinaryData",
+              "name": "trajectory_files",
+              "inputDataFieldName": "trajectory_130"
+            },
+            {
+              "parameterType": "formBinaryData",
+              "name": "trajectory_files",
+              "inputDataFieldName": "trajectory_131"
+            },
+            {
+              "parameterType": "formBinaryData",
+              "name": "trajectory_files",
+              "inputDataFieldName": "trajectory_132"
+            },
+            {
+              "parameterType": "formBinaryData",
+              "name": "trajectory_files",
+              "inputDataFieldName": "trajectory_133"
+            },
+            {
+              "parameterType": "formBinaryData",
+              "name": "trajectory_files",
+              "inputDataFieldName": "trajectory_134"
+            },
+            {
+              "parameterType": "formBinaryData",
+              "name": "trajectory_files",
+              "inputDataFieldName": "trajectory_135"
+            },
+            {
+              "parameterType": "formBinaryData",
+              "name": "trajectory_files",
+              "inputDataFieldName": "trajectory_136"
+            },
+            {
+              "parameterType": "formBinaryData",
+              "name": "trajectory_files",
+              "inputDataFieldName": "trajectory_137"
+            },
+            {
+              "parameterType": "formBinaryData",
+              "name": "trajectory_files",
+              "inputDataFieldName": "trajectory_138"
+            },
+            {
+              "parameterType": "formBinaryData",
+              "name": "trajectory_files",
+              "inputDataFieldName": "trajectory_139"
+            },
+            {
+              "parameterType": "formBinaryData",
+              "name": "trajectory_files",
+              "inputDataFieldName": "trajectory_140"
+            },
+            {
+              "parameterType": "formBinaryData",
+              "name": "trajectory_files",
+              "inputDataFieldName": "trajectory_141"
+            },
+            {
+              "parameterType": "formBinaryData",
+              "name": "trajectory_files",
+              "inputDataFieldName": "trajectory_142"
+            },
+            {
+              "parameterType": "formBinaryData",
+              "name": "trajectory_files",
+              "inputDataFieldName": "trajectory_143"
+            },
+            {
+              "parameterType": "formBinaryData",
+              "name": "trajectory_files",
+              "inputDataFieldName": "trajectory_144"
+            },
+            {
+              "parameterType": "formBinaryData",
+              "name": "trajectory_files",
+              "inputDataFieldName": "trajectory_145"
+            },
+            {
+              "parameterType": "formBinaryData",
+              "name": "trajectory_files",
+              "inputDataFieldName": "trajectory_146"
+            },
+            {
+              "parameterType": "formBinaryData",
+              "name": "trajectory_files",
+              "inputDataFieldName": "trajectory_147"
+            },
+            {
+              "parameterType": "formBinaryData",
+              "name": "trajectory_files",
+              "inputDataFieldName": "trajectory_148"
+            },
+            {
+              "parameterType": "formBinaryData",
+              "name": "trajectory_files",
+              "inputDataFieldName": "trajectory_149"
+            },
+            {
+              "parameterType": "formBinaryData",
+              "name": "trajectory_files",
+              "inputDataFieldName": "trajectory_150"
+            },
+            {
+              "parameterType": "formBinaryData",
+              "name": "trajectory_files",
+              "inputDataFieldName": "trajectory_151"
+            },
+            {
+              "parameterType": "formBinaryData",
+              "name": "trajectory_files",
+              "inputDataFieldName": "trajectory_152"
+            },
+            {
+              "parameterType": "formBinaryData",
+              "name": "trajectory_files",
+              "inputDataFieldName": "trajectory_153"
+            },
+            {
+              "parameterType": "formBinaryData",
+              "name": "trajectory_files",
+              "inputDataFieldName": "trajectory_154"
+            },
+            {
+              "parameterType": "formBinaryData",
+              "name": "trajectory_files",
+              "inputDataFieldName": "trajectory_155"
+            },
+            {
+              "parameterType": "formBinaryData",
+              "name": "trajectory_files",
+              "inputDataFieldName": "trajectory_156"
+            },
+            {
+              "parameterType": "formBinaryData",
+              "name": "trajectory_files",
+              "inputDataFieldName": "trajectory_157"
+            },
+            {
+              "parameterType": "formBinaryData",
+              "name": "trajectory_files",
+              "inputDataFieldName": "trajectory_158"
+            },
+            {
+              "parameterType": "formBinaryData",
+              "name": "trajectory_files",
+              "inputDataFieldName": "trajectory_159"
+            },
+            {
+              "parameterType": "formBinaryData",
+              "name": "trajectory_files",
+              "inputDataFieldName": "trajectory_160"
+            },
+            {
+              "parameterType": "formBinaryData",
+              "name": "trajectory_files",
+              "inputDataFieldName": "trajectory_161"
+            },
+            {
+              "parameterType": "formBinaryData",
+              "name": "trajectory_files",
+              "inputDataFieldName": "trajectory_162"
+            },
+            {
+              "parameterType": "formBinaryData",
+              "name": "trajectory_files",
+              "inputDataFieldName": "trajectory_163"
+            },
+            {
+              "parameterType": "formBinaryData",
+              "name": "trajectory_files",
+              "inputDataFieldName": "trajectory_164"
+            },
+            {
+              "parameterType": "formBinaryData",
+              "name": "trajectory_files",
+              "inputDataFieldName": "trajectory_165"
+            },
+            {
+              "parameterType": "formBinaryData",
+              "name": "trajectory_files",
+              "inputDataFieldName": "trajectory_166"
+            },
+            {
+              "parameterType": "formBinaryData",
+              "name": "trajectory_files",
+              "inputDataFieldName": "trajectory_167"
+            },
+            {
+              "parameterType": "formBinaryData",
+              "name": "trajectory_files",
+              "inputDataFieldName": "trajectory_168"
+            },
+            {
+              "parameterType": "formBinaryData",
+              "name": "trajectory_files",
+              "inputDataFieldName": "trajectory_169"
+            },
+            {
+              "parameterType": "formBinaryData",
+              "name": "trajectory_files",
+              "inputDataFieldName": "trajectory_170"
+            },
+            {
+              "parameterType": "formBinaryData",
+              "name": "trajectory_files",
+              "inputDataFieldName": "trajectory_171"
+            },
+            {
+              "parameterType": "formBinaryData",
+              "name": "trajectory_files",
+              "inputDataFieldName": "trajectory_172"
+            },
+            {
+              "parameterType": "formBinaryData",
+              "name": "trajectory_files",
+              "inputDataFieldName": "trajectory_173"
+            },
+            {
+              "parameterType": "formBinaryData",
+              "name": "trajectory_files",
+              "inputDataFieldName": "trajectory_174"
+            },
+            {
+              "parameterType": "formBinaryData",
+              "name": "trajectory_files",
+              "inputDataFieldName": "trajectory_175"
+            },
+            {
+              "parameterType": "formBinaryData",
+              "name": "trajectory_files",
+              "inputDataFieldName": "trajectory_176"
+            },
+            {
+              "parameterType": "formBinaryData",
+              "name": "trajectory_files",
+              "inputDataFieldName": "trajectory_177"
+            },
+            {
+              "parameterType": "formBinaryData",
+              "name": "trajectory_files",
+              "inputDataFieldName": "trajectory_178"
+            },
+            {
+              "parameterType": "formBinaryData",
+              "name": "trajectory_files",
+              "inputDataFieldName": "trajectory_179"
+            },
+            {
+              "parameterType": "formBinaryData",
+              "name": "trajectory_files",
+              "inputDataFieldName": "trajectory_180"
+            },
+            {
+              "parameterType": "formBinaryData",
+              "name": "trajectory_files",
+              "inputDataFieldName": "trajectory_181"
+            },
+            {
+              "parameterType": "formBinaryData",
+              "name": "trajectory_files",
+              "inputDataFieldName": "trajectory_182"
+            },
+            {
+              "parameterType": "formBinaryData",
+              "name": "trajectory_files",
+              "inputDataFieldName": "trajectory_183"
+            },
+            {
+              "parameterType": "formBinaryData",
+              "name": "trajectory_files",
+              "inputDataFieldName": "trajectory_184"
+            },
+            {
+              "parameterType": "formBinaryData",
+              "name": "trajectory_files",
+              "inputDataFieldName": "trajectory_185"
+            },
+            {
+              "parameterType": "formBinaryData",
+              "name": "trajectory_files",
+              "inputDataFieldName": "trajectory_186"
+            },
+            {
+              "parameterType": "formBinaryData",
+              "name": "trajectory_files",
+              "inputDataFieldName": "trajectory_187"
+            },
+            {
+              "parameterType": "formBinaryData",
+              "name": "trajectory_files",
+              "inputDataFieldName": "trajectory_188"
+            },
+            {
+              "parameterType": "formBinaryData",
+              "name": "trajectory_files",
+              "inputDataFieldName": "trajectory_189"
+            },
+            {
+              "parameterType": "formBinaryData",
+              "name": "trajectory_files",
+              "inputDataFieldName": "trajectory_190"
+            },
+            {
+              "parameterType": "formBinaryData",
+              "name": "trajectory_files",
+              "inputDataFieldName": "trajectory_191"
+            },
+            {
+              "parameterType": "formBinaryData",
+              "name": "trajectory_files",
+              "inputDataFieldName": "trajectory_192"
+            },
+            {
+              "parameterType": "formBinaryData",
+              "name": "trajectory_files",
+              "inputDataFieldName": "trajectory_193"
+            },
+            {
+              "parameterType": "formBinaryData",
+              "name": "trajectory_files",
+              "inputDataFieldName": "trajectory_194"
+            },
+            {
+              "parameterType": "formBinaryData",
+              "name": "trajectory_files",
+              "inputDataFieldName": "trajectory_195"
+            },
+            {
+              "parameterType": "formBinaryData",
+              "name": "trajectory_files",
+              "inputDataFieldName": "trajectory_196"
+            },
+            {
+              "parameterType": "formBinaryData",
+              "name": "trajectory_files",
+              "inputDataFieldName": "trajectory_197"
+            },
+            {
+              "parameterType": "formBinaryData",
+              "name": "trajectory_files",
+              "inputDataFieldName": "trajectory_198"
+            },
+            {
+              "parameterType": "formBinaryData",
+              "name": "trajectory_files",
+              "inputDataFieldName": "trajectory_199"
+            },
+            {
+              "parameterType": "formBinaryData",
+              "name": "trajectory_files",
+              "inputDataFieldName": "trajectory_200"
+            },
+            {
+              "parameterType": "formBinaryData",
+              "name": "trajectory_files",
+              "inputDataFieldName": "trajectory_201"
+            },
+            {
+              "parameterType": "formBinaryData",
+              "name": "trajectory_files",
+              "inputDataFieldName": "trajectory_202"
+            },
+            {
+              "parameterType": "formBinaryData",
+              "name": "trajectory_files",
+              "inputDataFieldName": "trajectory_203"
+            },
+            {
+              "parameterType": "formBinaryData",
+              "name": "trajectory_files",
+              "inputDataFieldName": "trajectory_204"
+            },
+            {
+              "parameterType": "formBinaryData",
+              "name": "trajectory_files",
+              "inputDataFieldName": "trajectory_205"
+            },
+            {
+              "parameterType": "formBinaryData",
+              "name": "trajectory_files",
+              "inputDataFieldName": "trajectory_206"
+            },
+            {
+              "parameterType": "formBinaryData",
+              "name": "trajectory_files",
+              "inputDataFieldName": "trajectory_207"
+            },
+            {
+              "parameterType": "formBinaryData",
+              "name": "trajectory_files",
+              "inputDataFieldName": "trajectory_208"
+            },
+            {
+              "parameterType": "formBinaryData",
+              "name": "trajectory_files",
+              "inputDataFieldName": "trajectory_209"
+            },
+            {
+              "parameterType": "formBinaryData",
+              "name": "trajectory_files",
+              "inputDataFieldName": "trajectory_210"
+            },
+            {
+              "parameterType": "formBinaryData",
+              "name": "trajectory_files",
+              "inputDataFieldName": "trajectory_211"
+            },
+            {
+              "parameterType": "formBinaryData",
+              "name": "trajectory_files",
+              "inputDataFieldName": "trajectory_212"
+            },
+            {
+              "parameterType": "formBinaryData",
+              "name": "trajectory_files",
+              "inputDataFieldName": "trajectory_213"
+            },
+            {
+              "parameterType": "formBinaryData",
+              "name": "trajectory_files",
+              "inputDataFieldName": "trajectory_214"
+            },
+            {
+              "parameterType": "formBinaryData",
+              "name": "trajectory_files",
+              "inputDataFieldName": "trajectory_215"
+            },
+            {
+              "parameterType": "formBinaryData",
+              "name": "trajectory_files",
+              "inputDataFieldName": "trajectory_216"
+            },
+            {
+              "parameterType": "formBinaryData",
+              "name": "trajectory_files",
+              "inputDataFieldName": "trajectory_217"
+            },
+            {
+              "parameterType": "formBinaryData",
+              "name": "trajectory_files",
+              "inputDataFieldName": "trajectory_218"
+            },
+            {
+              "parameterType": "formBinaryData",
+              "name": "trajectory_files",
+              "inputDataFieldName": "trajectory_219"
+            },
+            {
+              "parameterType": "formBinaryData",
+              "name": "trajectory_files",
+              "inputDataFieldName": "trajectory_220"
+            },
+            {
+              "parameterType": "formBinaryData",
+              "name": "trajectory_files",
+              "inputDataFieldName": "trajectory_221"
+            },
+            {
+              "parameterType": "formBinaryData",
+              "name": "trajectory_files",
+              "inputDataFieldName": "trajectory_222"
+            },
+            {
+              "parameterType": "formBinaryData",
+              "name": "trajectory_files",
+              "inputDataFieldName": "trajectory_223"
+            },
+            {
+              "parameterType": "formBinaryData",
+              "name": "trajectory_files",
+              "inputDataFieldName": "trajectory_224"
+            },
+            {
+              "parameterType": "formBinaryData",
+              "name": "trajectory_files",
+              "inputDataFieldName": "trajectory_225"
+            },
+            {
+              "parameterType": "formBinaryData",
+              "name": "trajectory_files",
+              "inputDataFieldName": "trajectory_226"
+            },
+            {
+              "parameterType": "formBinaryData",
+              "name": "trajectory_files",
+              "inputDataFieldName": "trajectory_227"
+            },
+            {
+              "parameterType": "formBinaryData",
+              "name": "trajectory_files",
+              "inputDataFieldName": "trajectory_228"
+            },
+            {
+              "parameterType": "formBinaryData",
+              "name": "trajectory_files",
+              "inputDataFieldName": "trajectory_229"
+            },
+            {
+              "parameterType": "formBinaryData",
+              "name": "trajectory_files",
+              "inputDataFieldName": "trajectory_230"
+            },
+            {
+              "parameterType": "formBinaryData",
+              "name": "trajectory_files",
+              "inputDataFieldName": "trajectory_231"
+            },
+            {
+              "parameterType": "formBinaryData",
+              "name": "trajectory_files",
+              "inputDataFieldName": "trajectory_232"
+            },
+            {
+              "parameterType": "formBinaryData",
+              "name": "trajectory_files",
+              "inputDataFieldName": "trajectory_233"
+            },
+            {
+              "parameterType": "formBinaryData",
+              "name": "trajectory_files",
+              "inputDataFieldName": "trajectory_234"
+            },
+            {
+              "parameterType": "formBinaryData",
+              "name": "trajectory_files",
+              "inputDataFieldName": "trajectory_235"
+            },
+            {
+              "parameterType": "formBinaryData",
+              "name": "trajectory_files",
+              "inputDataFieldName": "trajectory_236"
+            },
+            {
+              "parameterType": "formBinaryData",
+              "name": "trajectory_files",
+              "inputDataFieldName": "trajectory_237"
+            },
+            {
+              "parameterType": "formBinaryData",
+              "name": "trajectory_files",
+              "inputDataFieldName": "trajectory_238"
+            },
+            {
+              "parameterType": "formBinaryData",
+              "name": "trajectory_files",
+              "inputDataFieldName": "trajectory_239"
+            },
+            {
+              "parameterType": "formBinaryData",
+              "name": "trajectory_files",
+              "inputDataFieldName": "trajectory_240"
+            },
+            {
+              "parameterType": "formBinaryData",
+              "name": "trajectory_files",
+              "inputDataFieldName": "trajectory_241"
+            },
+            {
+              "parameterType": "formBinaryData",
+              "name": "trajectory_files",
+              "inputDataFieldName": "trajectory_242"
+            },
+            {
+              "parameterType": "formBinaryData",
+              "name": "trajectory_files",
+              "inputDataFieldName": "trajectory_243"
+            },
+            {
+              "parameterType": "formBinaryData",
+              "name": "trajectory_files",
+              "inputDataFieldName": "trajectory_244"
+            },
+            {
+              "parameterType": "formBinaryData",
+              "name": "trajectory_files",
+              "inputDataFieldName": "trajectory_245"
+            },
+            {
+              "parameterType": "formBinaryData",
+              "name": "trajectory_files",
+              "inputDataFieldName": "trajectory_246"
+            },
+            {
+              "parameterType": "formBinaryData",
+              "name": "trajectory_files",
+              "inputDataFieldName": "trajectory_247"
+            },
+            {
+              "parameterType": "formBinaryData",
+              "name": "trajectory_files",
+              "inputDataFieldName": "trajectory_248"
+            },
+            {
+              "parameterType": "formBinaryData",
+              "name": "trajectory_files",
+              "inputDataFieldName": "trajectory_249"
+            },
+            {
+              "parameterType": "formBinaryData",
+              "name": "trajectory_files",
+              "inputDataFieldName": "trajectory_250"
+            },
+            {
+              "parameterType": "formBinaryData",
+              "name": "trajectory_files",
+              "inputDataFieldName": "trajectory_251"
+            },
+            {
+              "parameterType": "formBinaryData",
+              "name": "trajectory_files",
+              "inputDataFieldName": "trajectory_252"
+            },
+            {
+              "parameterType": "formBinaryData",
+              "name": "trajectory_files",
+              "inputDataFieldName": "trajectory_253"
+            },
+            {
+              "parameterType": "formBinaryData",
+              "name": "trajectory_files",
+              "inputDataFieldName": "trajectory_254"
+            },
+            {
+              "parameterType": "formBinaryData",
+              "name": "trajectory_files",
+              "inputDataFieldName": "trajectory_255"
+            },
+            {
+              "parameterType": "formBinaryData",
+              "name": "surface_file",
+              "inputDataFieldName": "surface_file"
+            }
+          ]
         },
         "options": {
           "response": {
@@ -145,7 +1431,7 @@
     },
     {
       "parameters": {
-        "jsCode": "const x=$('Prepare trajectory intersection request').first().json||{};\nconst packet=x.specialist_packet||{};\nconst fatal=x.adapter_gate==='invalid_packet';\nconst questions=fatal?[]:[{id:'trajectory_files',question:'Upload one or more well trajectories as .dev files.',type:'file'},{id:'surface_file',question:'Upload exactly one ASCII CPS3 surface as .cps3, .grd, .grid or .txt.',type:'file'}];\nconst status=fatal?'fatal_error':'needs_input';\nconst code=fatal?'INVALID_CALCULATION_SPECIALIST_PACKET':'CALCULATION_FILES_REQUIRED';\nconst decision={contract:'decision_record',contract_version:'1.0',objective:String(packet.objective||'Validate batch trajectory-intersection input.'),considered_inputs:[{kind:'calculation_adapter_input',adapter_gate:x.adapter_gate,trajectory_count:(x.trajectory_filenames||[]).length,surface_filename:x.surface_filename}],proposed_actions:[{action:'call_math_service_batch'},{action:'request_files'}],selected_action:{action:status,reason_codes:[code]},rejected_actions:[{action:'call_math_service_batch',reason_codes:[code]}],assumptions:[],evidence_refs:[],citations:[],tool_call_ids:[],unresolved_questions:questions,acceptance_check_results:[{check:'one_or_more_trajectories_and_exactly_one_surface',passed:false}]};\nreturn [{json:{specialist_result:{contract:'specialist_result',contract_version:'1.0',task_id:String(packet.task_id||'unknown'),specialist_id:'engineering_calculation_specialist',attempt:Number.isInteger(packet.attempt)?packet.attempt:1,status,summary:fatal?'Invalid specialist_packet supplied to Calculation Adapter.':'One or more valid DEV trajectories and exactly one CPS3 surface are required.',deliverables:[],artifact_refs:[],compact_data:{adapter_gate:x.adapter_gate,decision_record:decision},assumptions:[],warnings:[],evidence:[],self_check:{performed:false,passed:false,checks:[],reproducibility:''},human_request:fatal?null:{kind:'needs_input',questions},error:fatal?{code}:null,continuation:null}}}];"
+        "jsCode": "const x=$('Prepare trajectory intersection request').first().json||{};\nconst packet=x.specialist_packet||{};\nconst fatal=x.adapter_gate==='invalid_packet';\nconst tooMany=x.adapter_gate==='too_many_trajectories';\nconst questions=fatal?[]:tooMany?[{id:'trajectory_files_limit',question:'This MVP adapter accepts at most 256 DEV trajectories in one batch. Reduce the batch size.',type:'file'}]:[{id:'trajectory_files',question:'Upload one or more well trajectories as .dev files.',type:'file'},{id:'surface_file',question:'Upload exactly one ASCII CPS3 surface as .cps3, .grd, .grid or .txt.',type:'file'}];\nconst status=fatal?'fatal_error':'needs_input';\nconst code=fatal?'INVALID_CALCULATION_SPECIALIST_PACKET':tooMany?'CALCULATION_BATCH_TOO_LARGE':'CALCULATION_FILES_REQUIRED';\nconst decision={contract:'decision_record',contract_version:'1.0',objective:String(packet.objective||'Validate batch trajectory-intersection input.'),considered_inputs:[{kind:'calculation_adapter_input',adapter_gate:x.adapter_gate,trajectory_count:(x.trajectory_filenames||[]).length,surface_filename:x.surface_filename}],proposed_actions:[{action:'call_math_service_batch'},{action:'request_files'}],selected_action:{action:status,reason_codes:[code]},rejected_actions:[{action:'call_math_service_batch',reason_codes:[code]}],assumptions:[],evidence_refs:[],citations:[],tool_call_ids:[],unresolved_questions:questions,acceptance_check_results:[{check:'one_or_more_trajectories_and_exactly_one_surface',passed:false}]};\nreturn [{json:{specialist_result:{contract:'specialist_result',contract_version:'1.0',task_id:String(packet.task_id||'unknown'),specialist_id:'engineering_calculation_specialist',attempt:Number.isInteger(packet.attempt)?packet.attempt:1,status,summary:fatal?'Invalid specialist_packet supplied to Calculation Adapter.':'One or more valid DEV trajectories and exactly one CPS3 surface are required.',deliverables:[],artifact_refs:[],compact_data:{adapter_gate:x.adapter_gate,decision_record:decision},assumptions:[],warnings:[],evidence:[],self_check:{performed:false,passed:false,checks:[],reproducibility:''},human_request:fatal?null:{kind:'needs_input',questions},error:fatal?{code}:null,continuation:null}}}];"
       },
       "id": "9a45187c-eb96-5d44-b51f-fb8ca2d416c2",
       "name": "Build calculation input gate",

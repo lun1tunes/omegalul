@@ -54,7 +54,7 @@
 
 Builder содержит необходимые deterministic SCHEDULE stages внутри своей схемы. Отдельные `tnavigator-schedule-*` foundation workflows из manifest можно импортировать для диагностики и развития, но основной Orchestrator вызывает только Retrieval и Builder.
 
-После импорта в UI выполните шесть обязательных Execute Workflow bindings:
+После импорта в UI выполните семь обязательных Execute Workflow bindings:
 
 1. Orchestrator → Excel Adapter;
 2. Orchestrator → SCHEDULE Hybrid Retrieval;
@@ -130,7 +130,7 @@ Compose поднимает pinned n8n `2.30.8`, PostgreSQL/PGVector и Excel Too
 ## Проверка перед активацией
 
 - импортировать JSON через UI n8n `2.30.8`;
-- настроить шесть bindings, две Data Tables, credentials и URL Math Service;
+- настроить семь bindings, две Data Tables, credentials и URL Math Service;
 - загрузить хотя бы одну `keyword_instruction` и проверить Hybrid Retrieval;
 - проверить `CREATE` без baseline;
 - проверить `REVISE` с приложенным `.data/.inc` и сохранением незатронутых блоков;

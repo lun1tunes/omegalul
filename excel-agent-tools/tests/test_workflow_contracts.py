@@ -20,6 +20,9 @@ EXCEL_DELIVERY_WORKFLOWS = {
 MATH_DELIVERY_WORKFLOWS = {
     "calculation-specialist-adapter.workflow.json",
 }
+MVP_ENTRY_WORKFLOWS = {
+    "mvp-entry-form.workflow.json",
+}
 SCHEDULE_FOUNDATION_WORKFLOWS = {
     "mas-trace-event-writer.workflow.json",
     "tnavigator-schedule-baseline-analyzer.workflow.json",
@@ -86,7 +89,7 @@ def test_ui_import_manifest_is_complete_and_matches_static_bindings() -> None:
     assert manifest["target_n8n_version"] == "2.30.8"
     imported = {Path(value).name for value in manifest["full_clean_import_set"]}
     assert imported == {path.name for path in WORKFLOWS.glob("*.workflow.json")}
-    assert len(imported) == 23
+    assert len(imported) == 24
 
     workflows_by_name = {
         workflow["name"]: workflow
@@ -96,7 +99,7 @@ def test_ui_import_manifest_is_complete_and_matches_static_bindings() -> None:
     workflow_names = set(workflows_by_name)
     bindings = manifest["mandatory_execute_workflow_bindings"]
     future_bindings = manifest["future_enterprise_or_optional_bindings"]
-    assert len(bindings) == 6
+    assert len(bindings) == 7
     assert future_bindings == []
     all_static_bindings = bindings + future_bindings
     assert len({binding["placeholder"] for binding in all_static_bindings}) == len(all_static_bindings)
@@ -285,7 +288,7 @@ def test_workflows_do_not_depend_on_n8n_env_or_global_variables() -> None:
 def test_delivery_workflows_are_inactive_until_ui_configuration() -> None:
     """An import must not expose webhooks that still contain placeholders."""
     paths = list(WORKFLOWS.glob("*.workflow.json"))
-    assert {path.name for path in paths} == EXCEL_DELIVERY_WORKFLOWS | MATH_DELIVERY_WORKFLOWS | UNIVERSAL_ENGINEERING_WORKFLOWS
+    assert {path.name for path in paths} == EXCEL_DELIVERY_WORKFLOWS | MATH_DELIVERY_WORKFLOWS | MVP_ENTRY_WORKFLOWS | UNIVERSAL_ENGINEERING_WORKFLOWS
     for path in paths:
         workflow = load_json(path)
         assert workflow.get("active") is False, path.name
@@ -333,9 +336,19 @@ def test_calculation_adapter_posts_dev_batch_and_surface_and_is_statically_bound
     assert request["typeVersion"] == 4.4
     assert request["parameters"]["method"] == "POST"
     assert "/trajectory-intersection" in request["parameters"]["url"]
-    assert request["parameters"]["bodyParameters"]["parameters"] == (
-        "={{ $('Prepare trajectory intersection request').first().json.body_parameters }}"
-    )
+    fields = request["parameters"]["bodyParameters"]["parameters"]
+    assert len(fields) == 257
+    assert fields[0] == {
+        "parameterType": "formBinaryData",
+        "name": "trajectory_files",
+        "inputDataFieldName": "trajectory_0",
+    }
+    assert fields[255]["inputDataFieldName"] == "trajectory_255"
+    assert fields[-1] == {
+        "parameterType": "formBinaryData",
+        "name": "surface_file",
+        "inputDataFieldName": "surface_file",
+    }
     adapter_text = json.dumps(adapter, ensure_ascii=False)
     assert "specialist_result" in adapter_text
     assert "engineering_calculation_specialist" in adapter_text

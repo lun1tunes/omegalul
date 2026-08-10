@@ -36,7 +36,8 @@ Calculation Specialist также вызывается только через O
 5. `workflows/tnavigator-schedule-hybrid-retrieval.workflow.json`;
 6. `workflows/tnavigator-schedule-builder.workflow.json`;
 7. `workflows/mas-trace-event-writer.workflow.json`;
-8. `workflows/universal-engineering-orchestrator.workflow.json`.
+8. `workflows/universal-engineering-orchestrator.workflow.json`;
+9. `workflows/mvp-entry-form.workflow.json` — необязательная простая UI-обёртка.
 
 Диагностические/переиспользуемые SCHEDULE foundation workflows также перечислены в `full_clean_import_set`. Они позволяют отдельно проверять intake, baseline, renderer, merge, validator, verifier и release.
 
@@ -49,7 +50,7 @@ Calculation Specialist также вызывается только через O
 
 Все workflow экспортированы с `active:false`.
 
-## Шесть обязательных bindings
+## Семь обязательных bindings
 
 В UI выберите импортированные target workflows в следующих Execute Workflow nodes:
 
@@ -61,6 +62,7 @@ Calculation Specialist также вызывается только через O
 | Universal Orchestrator | `Call Calculation Specialist` | Calculation Adapter |
 | Universal Orchestrator | `Call MAS Trace Event Writer` | MAS Trace Writer |
 | Excel Adapter | `Call native Excel Extraction Agent` | Excel Extraction Agent |
+| MVP Entry Form | `Call Universal Engineering Orchestrator` | Universal Orchestrator |
 
 Calculation route уже включён и требует импортированного Adapter. Data/Document routes остаются optional extension points; не переводите их в `configured:true`, пока соответствующие workflow не импортированы и не проверены.
 
@@ -240,7 +242,7 @@ FastAPI можно поднять на Windows только через CMD: [`..
 
 1. Импортировать все файлы из `full_clean_import_set` в пустую n8n `2.30.8` и убедиться, что они остаются `active:false`.
 2. Проверить отсутствие красных unknown-node/credential warnings в runtime-наборе.
-3. Настроить шесть bindings, обе Data Tables и URL Math Service.
+3. Настроить семь bindings, обе Data Tables и URL Math Service.
 4. Загрузить экспертную инструкцию и получить её через lexical, semantic и exact-tag branches.
 5. Прогнать `CREATE` без baseline.
 6. Прогнать `REVISE` с `.data/.inc`; проверить preservation и diff.

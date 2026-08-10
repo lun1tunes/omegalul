@@ -233,6 +233,8 @@ async def trajectory_intersection(
     results: list[TrajectoryIntersectionResult] = []
     for trajectory_file in trajectory_files:
         filename = trajectory_file.filename or "trajectory.dev"
+        if filename.startswith("__n8n_unused_"):
+            continue
         try:
             trajectory = _parse_dev(_decode_text(await trajectory_file.read(), filename))
             results.append(_find_intersection(filename, trajectory, x_axis, y_axis, grid))
