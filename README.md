@@ -10,56 +10,100 @@ CSV шаблоны Data Tables: [`n8n/data-tables/`](n8n/data-tables/).
 
 ## Компонентная схема n8n runtime
 
-Источник истины для имён — [`n8n/import-manifest.json`](n8n/import-manifest.json) и поле `name` в [`n8n/workflows/*.workflow.json`](n8n/workflows/). Серым мелким шрифтом указано точное название workflow в UI n8n. Строки `LLM:` и `RAG:` перечисляют реальные ноды внутри соответствующих workflow.
+Источник истины для имён — [`n8n/import-manifest.json`](n8n/import-manifest.json) и поле `name` в [`n8n/workflows/*.workflow.json`](n8n/workflows/). Серые мелкие подписи рядом с блоками — точные названия workflow в UI n8n. Оранжевые блоки — реальные LLM-ноды, зелёные — RAG/knowledge-ноды, синие — локальные сервисы и tool-ноды.
 
 ```mermaid
 %%{init: {"flowchart": {"htmlLabels": true}, "securityLevel": "loose"}}%%
 flowchart TB
   classDef entry fill:#eef2ff,stroke:#6366f1,color:#1e1b4b
+  classDef component fill:#f8fafc,stroke:#64748b,color:#0f172a
   classDef llm fill:#fff7ed,stroke:#f97316,color:#7c2d12
   classDef rag fill:#ecfdf5,stroke:#10b981,color:#064e3b
-  classDef llmrag fill:#fffbeb,stroke:#10b981,color:#3f2a00
+  classDef tool fill:#eff6ff,stroke:#3b82f6,color:#1e3a8a
   classDef svc fill:#eff6ff,stroke:#3b82f6,color:#1e3a8a
   classDef data fill:#f9fafb,stroke:#9ca3af,color:#374151
-  classDef code fill:#f8fafc,stroke:#94a3b8,color:#334155
   classDef optional fill:#f3f4f6,stroke:#d1d5db,color:#6b7280
+  classDef caption fill:transparent,stroke:transparent,stroke-width:0px,color:#6b7280
 
-  User["Инженер<br/><small><span style='color:#6b7280'>Form/Webhook input: задача + Excel/.data/.inc/.dev/CPS3</span></small>"]:::entry
-  Entry["Entry<br/><small><span style='color:#6b7280'>n8n: Form — MAS Entry</span></small>"]:::entry
-  Gate["Human Gate<br/><small><span style='color:#6b7280'>n8n: Form — MAS Human Gate</span></small>"]:::entry
-  Health["Health Check<br/><small><span style='color:#6b7280'>n8n: Form — MAS Deployment Health Check</span></small>"]:::entry
+  User["Инженер<br/><small>задача + Excel/.data/.inc/.dev/CPS3</small>"]:::entry
+  Entry["Entry"]:::entry
+  EntryWF["<span style='font-size:11px;color:#6b7280'>n8n: Form — MAS Entry</span>"]:::caption
+  Gate["Human Gate"]:::entry
+  GateWF["<span style='font-size:11px;color:#6b7280'>n8n: Form — MAS Human Gate</span>"]:::caption
+  Health["Health Check"]:::entry
+  HealthWF["<span style='font-size:11px;color:#6b7280'>n8n: Form — MAS Deployment Health Check</span>"]:::caption
 
-  Orch["Universal Engineering Orchestrator<br/><small><span style='color:#6b7280'>n8n: Orchestrator — Engineering MAS</span></small><br/><small>LLM: Planner Chat Model — configure in UI; Verifier Chat Model — separate credential</small><br/><small>RAG: Prepare governed SCHEDULE RAG request → Call SCHEDULE Hybrid Retrieval</small>"]:::llm
-  TaskDT[("Task state Data Table<br/><small><span style='color:#6b7280'>engineering_orchestrator_tasks_v1</span></small>")]:::data
-  Trace["Trace Writer<br/><small><span style='color:#6b7280'>n8n: Writer — MAS Trace</span></small>"]:::code
-  TraceDT[("Trace Data Table<br/><small><span style='color:#6b7280'>mas_trace_events_v1</span></small>")]:::data
+  Orch["Universal Engineering Orchestrator"]:::component
+  OrchWF["<span style='font-size:11px;color:#6b7280'>n8n: Orchestrator — Engineering MAS</span>"]:::caption
+  OrchLLM["LLM nodes<br/><small>Planner Chat Model — configure in UI<br/>Verifier Chat Model — separate credential</small>"]:::llm
+  OrchRAG["RAG gate nodes<br/><small>Prepare governed SCHEDULE RAG request<br/>Call SCHEDULE Hybrid Retrieval<br/>Attach governed SCHEDULE RAG evidence<br/>SCHEDULE RAG evidence ready?<br/>Build SCHEDULE RAG evidence gate</small>"]:::rag
+  TaskDT[("Task state Data Table<br/><small>engineering_orchestrator_tasks_v1</small>")]:::data
+  Trace["Trace Writer"]:::component
+  TraceWF["<span style='font-size:11px;color:#6b7280'>n8n: Writer — MAS Trace</span>"]:::caption
+  TraceDT[("Trace Data Table<br/><small>mas_trace_events_v1</small>")]:::data
 
-  ExcelAdapt["Excel Adapter<br/><small><span style='color:#6b7280'>n8n: Adapter — Excel Extraction</span></small>"]:::code
-  ExcelAgent["Excel Extractor<br/><small><span style='color:#6b7280'>n8n: Agent — Excel Extractor</span></small><br/><small>LLM: OpenAI Chat Model — gpt-4.1-nano</small><br/><small>RAG/memory: PGVector operating context; OpenAI Embeddings — text-embedding-3-small; Postgres Chat Memory — session scoped</small>"]:::llmrag
-  ExcelTools["Excel extractor tools<br/><small><span style='color:#6b7280'>service: excel-agent-tools /api/v1</span></small><br/><small><span style='color:#6b7280'>workbook_introspect, sheet_preview, detect_tables, describe_table, list_column_values, query_table, save_agent_plan</span></small><br/><small><span style='color:#6b7280'>Назначение: держит workbook-сессию, читает/фильтрует таблицы, валидирует и экспортирует результат без загрузки всего Excel в LLM.</span></small>"]:::svc
-  ExcelRag["Excel guide ingestion<br/><small><span style='color:#6b7280'>n8n: Ingestion — Excel Agent Knowledge; optional Test workflow</span></small>"]:::optional
+  ExcelAdapt["Excel Adapter"]:::component
+  ExcelAdaptWF["<span style='font-size:11px;color:#6b7280'>n8n: Adapter — Excel Extraction</span>"]:::caption
+  ExcelAgent["Excel Extractor"]:::component
+  ExcelAgentWF["<span style='font-size:11px;color:#6b7280'>n8n: Agent — Excel Extractor</span>"]:::caption
+  ExcelLLM["LLM node<br/><small>OpenAI Chat Model — gpt-4.1-nano</small>"]:::llm
+  ExcelRAGNodes["RAG / memory nodes<br/><small>PGVector operating context<br/>OpenAI Embeddings — text-embedding-3-small<br/>Postgres Chat Memory — session scoped</small>"]:::rag
+  ExcelTools["Excel tool nodes<br/><small><span style='color:#6b7280'>service: excel-agent-tools /api/v1</span></small><br/><small><span style='color:#6b7280'>workbook_introspect — workbook/sheets/session</span></small><br/><small><span style='color:#6b7280'>sheet_preview — лист/диапазон preview</span></small><br/><small><span style='color:#6b7280'>detect_tables, describe_table — поиск и описание таблиц</span></small><br/><small><span style='color:#6b7280'>list_column_values, query_table — значения, фильтры, выборки</span></small><br/><small><span style='color:#6b7280'>save_agent_plan — сохранить план/результат</span></small><br/><small><span style='color:#6b7280'>Назначение: workbook-сессия, чтение/фильтрация таблиц и export без загрузки всего Excel в LLM.</span></small>"]:::tool
+  ExcelGuide["Excel guide ingestion"]:::optional
+  ExcelGuideWF["<span style='font-size:11px;color:#6b7280'>n8n: Ingestion — Excel Agent Knowledge; optional Test workflow</span>"]:::caption
 
-  SIngest["SCHEDULE Knowledge Ingestion<br/><small><span style='color:#6b7280'>n8n: SCHEDULE — Knowledge Ingestion</span></small><br/><small>RAG write: PGVector — insert approved SCHEDULE knowledge; SCHEDULE Embeddings — configure same model in retrieval</small>"]:::rag
-  SRetr["SCHEDULE Knowledge Retrieval<br/><small><span style='color:#6b7280'>n8n: SCHEDULE — Knowledge Retrieval</span></small><br/><small>RAG read: PostgreSQL lexical + exact candidates; PostgreSQL tag candidates; PGVector semantic candidates; full parent knowledge; schema catalogue</small>"]:::rag
-  SBuilder["SCHEDULE Builder<br/><small><span style='color:#6b7280'>n8n: SCHEDULE — Builder</span></small><br/><small>LLM: SCHEDULE Planner Chat Model — configure in UI; SCHEDULE Builder Chat Model — configure in UI</small><br/><small>Code stages: intake → baseline → plan → render → merge → validate → verify</small>"]:::llm
+  SIngest["SCHEDULE Knowledge Ingestion"]:::component
+  SIngestWF["<span style='font-size:11px;color:#6b7280'>n8n: SCHEDULE — Knowledge Ingestion</span>"]:::caption
+  SIngestRAG["RAG write nodes<br/><small>PGVector insert approved knowledge<br/>SCHEDULE embeddings<br/>PostgreSQL catalogue upserts</small>"]:::rag
+  SRetr["SCHEDULE Knowledge Retrieval"]:::component
+  SRetrWF["<span style='font-size:11px;color:#6b7280'>n8n: SCHEDULE — Knowledge Retrieval</span>"]:::caption
+  SRetrRAG["RAG read nodes<br/><small>PostgreSQL lexical/exact/tag candidates<br/>PGVector semantic candidates<br/>full parent knowledge + schema catalogue</small>"]:::rag
+  SBuilder["SCHEDULE Builder"]:::component
+  SBuilderWF["<span style='font-size:11px;color:#6b7280'>n8n: SCHEDULE — Builder</span>"]:::caption
+  SBuilderLLM["LLM nodes<br/><small>SCHEDULE Planner Chat Model — configure in UI<br/>SCHEDULE Builder Chat Model — configure in UI</small>"]:::llm
+  SBuilderCode["Code stages<br/><small>intake → baseline → plan → render → merge → validate → verify</small>"]:::component
 
-  CalcAdapt["Calculation Adapter<br/><small><span style='color:#6b7280'>n8n: Adapter — Calculation (Math Service)</span></small><br/><small>HTTP: Call trajectory intersection</small>"]:::code
+  CalcAdapt["Calculation Adapter"]:::component
+  CalcAdaptWF["<span style='font-size:11px;color:#6b7280'>n8n: Adapter — Calculation (Math Service)</span>"]:::caption
+  CalcHTTP["HTTP node<br/><small>Call trajectory intersection</small>"]:::component
   MathSvc["Math Service<br/><small><span style='color:#6b7280'>service: fastapi-math-service /api/v1/math</span></small><br/><small><span style='color:#6b7280'>Назначение: NumPy batch для DEV + CPS3/ZMAP; возвращает intersection_md/x/y/z по траекториям.</span></small>"]:::svc
-  Pg[("PostgreSQL + PGVector<br/><small><span style='color:#6b7280'>memory, embeddings, SCHEDULE knowledge/schema catalogue</span></small>")]:::data
+  Pg[("PostgreSQL + PGVector<br/><small>memory, embeddings, SCHEDULE knowledge/schema catalogue</small>")]:::data
+
+  Entry ~~~ EntryWF
+  Gate ~~~ GateWF
+  Health ~~~ HealthWF
+  Orch ~~~ OrchWF
+  Trace ~~~ TraceWF
+  ExcelAdapt ~~~ ExcelAdaptWF
+  ExcelAgent ~~~ ExcelAgentWF
+  ExcelGuide ~~~ ExcelGuideWF
+  SIngest ~~~ SIngestWF
+  SRetr ~~~ SRetrWF
+  SBuilder ~~~ SBuilderWF
+  CalcAdapt ~~~ CalcAdaptWF
 
   User --> Entry --> Orch
   Gate --> Orch
   Health --> Orch
   Health --> Trace
   Orch <--> TaskDT
+  Orch --> OrchLLM
+  Orch --> OrchRAG
   Orch --> Trace --> TraceDT
-  Orch --> ExcelAdapt --> ExcelAgent --> ExcelTools
+  Orch --> ExcelAdapt --> ExcelAgent
+  ExcelAgent --> ExcelLLM
+  ExcelAgent --> ExcelRAGNodes
+  ExcelAgent --> ExcelTools
   ExcelAgent <--> Pg
-  ExcelRag -.-> Pg
+  ExcelGuide -.-> Pg
   Orch --> SRetr --> SBuilder --> Orch
+  SIngest --> SIngestRAG
   SIngest -.-> Pg
+  SRetr --> SRetrRAG
   SRetr <--> Pg
-  Orch --> CalcAdapt --> MathSvc
+  SBuilder --> SBuilderLLM
+  SBuilder --> SBuilderCode
+  Orch --> CalcAdapt --> CalcHTTP --> MathSvc
 ```
 
 Неактивные/опциональные canvas не входят в runtime-схему: `Legacy — Excel Orchestrator` не активировать; `Adapter — Excel Form`, `Ingestion — Excel Agent Knowledge`, `Template — Engineering Specialist` и `Reference — AI Components` использовать только для отдельных UI/testing/reference-сценариев.
