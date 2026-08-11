@@ -349,7 +349,7 @@ flowchart TB
     EAdapt["Excel Specialist Adapter<br/><small>excel-engineering-specialist-adapter.workflow.json</small>"]
     SAdapt["Schedule Builder Adapter<br/><small>binding in universal-engineering-orchestrator</small>"]
     RAdapt["RAG Retrieval Adapter<br/><small>binding in universal-engineering-orchestrator</small>"]
-    CAdapt["Calculation Adapter<br/><small>not shipped yet</small>"]
+    CAdapt["Calculation Adapter<br/><small>calculation-specialist-adapter.workflow.json</small>"]
   end
 
   subgraph ExcelSys["Excel subsystem"]
@@ -380,7 +380,7 @@ flowchart TB
   end
 
   Orch -.->|"mas_trace_event"| Trace["Trace Event Writer<br/><small>mas-trace-event-writer.workflow.json</small>"]
-  CAdapt -.->|"later"| Calc["Calculation services<br/><small>not shipped yet</small>"]
+  CAdapt -->|"DEV + CPS3/ZMAP intersections"| Calc["Math Service<br/><small>fastapi-math-service/ microservice</small>"]
 ```
 
 Текстовый эквивалент того же control-plane (если preview без Mermaid):
@@ -1174,9 +1174,9 @@ Entrypoints соответствуют роли workflow: user-facing Orchestrat
 **Работы:** mode router; конкретный Schedule Builder для CREATE/REVISE; baseline analyzer/change planner/merger; common researcher/validators/verifier/release workflows; scoped Excel input adapter; typed `evidence_gap` clarification loop; `mas_trace_event/v1`; детерминированный stage scoring и два policy thresholds; accountable approval; bounded retry/replan; cost/tool budgets. Excel и Builder соединяются только через Orchestrator, который сохраняет CAS state между итерациями.
 **DoD:** end-to-end CREATE и REVISE artifacts остаются draft до всех gates; Schedule Builder не содержит Excel workflow ID/FastAPI URL и не вызывает Extractor напрямую; iterative Excel evidence gap возобновляет ту же задачу без потери state и без смешивания snapshots; stale approval/reply отклоняется CAS; unknown/deconfigured route не исполняется; каждый stage имеет explainable score/components/reason codes и trace; attention/re-check и HITL thresholds отрабатывают детерминированно; для `CREATE` полны requirements matrix, source map и completeness report; для `REVISE` полны change set, preservation report и semantic/textual diff; conceptual removals/cascade changes always reach HITL.
 
-### Phase 4 — будущая автоматическая проверка расчётом
+### Phase 4 — расчётные сервисы и будущая автоматическая проверка расчётом
 
-Отложена полностью. В текущем репозитории и Orchestrator нет соответствующих workflow, bindings или release dependencies. Отдельный проект можно спроектировать после успешной обкатки генерации `.INC`.
+Текущий репозиторий уже содержит `Calculation Adapter` и `fastapi-math-service` для детерминированного расчёта пересечений DEV-траекторий с CPS3/ZMAP-поверхностью. Отложены именно simulator-backed verification, optimization и любые более широкие расчётные workflow, которые должны становиться release dependency для `.INC`.
 
 ### Phase 5 — production hardening
 
@@ -1188,7 +1188,7 @@ Entrypoints соответствуют роли workflow: user-facing Orchestrat
 - grid/3D model generation;
 - general full-DATA builder;
 - PVT/SCAL/rock/property agents;
-- Math Service beyond schedule date/unit utilities;
+- simulator-backed verification beyond the current DEV + CPS3/ZMAP intersection utility;
 - full simulation optimization/autonomous history matching;
 - автоматический запуск расчёта;
 - security/load/backup/DR acceptance.
@@ -1256,7 +1256,7 @@ CLI import не проверяет корпоративную сеть, credenti
 | SCHEDULE hybrid RAG | executable ingestion + PostgreSQL/PGVector/tag/RRF retrieval; mandatory pre-Builder route | в UI выбрать credentials и загрузить expert-authored instructions/examples/schema JSON |
 | Конкретный Schedule Builder agent | importable foundation с automatic pre-change snapshot, targeted mutation authority и inline `.INC` result реализован | заполнить expert catalogue для keywords рабочего сценария и провести UI end-to-end smoke |
 | SCHEDULE parser/decoder/query/renderer/merge/validator | block-preserving baseline/merge, catalogue decoder, targeted query, two-phase replay и generic lifecycle/numeric/interval/wildcard mechanisms реализованы | уточнять expert schema/policy по мере добавления keywords |
-| Math Service | отсутствует | deferred по текущему SCHEDULE slice; extension point сохранён |
+| Calculation Adapter + Math Service | реализованы: `calculation-specialist-adapter.workflow.json` вызывает `fastapi-math-service` для DEV + CPS3/ZMAP intersections | использовать как отдельную deterministic capability; simulator-backed verification остаётся вне текущего SCHEDULE slice |
 | Full DATA/grid generation | отсутствует | явно вне scope |
 | `excel-mas-orchestrator` | legacy | не импортировать в greenfield |
 

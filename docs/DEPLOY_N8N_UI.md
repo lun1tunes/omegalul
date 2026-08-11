@@ -7,44 +7,52 @@
 ## Component map
 
 ```mermaid
+%%{init: {"flowchart": {"htmlLabels": true}, "securityLevel": "loose"}}%%
 flowchart TB
-  subgraph entry [Entry]
-    EntryForm["Form_MAS_Entry"]
-    GateForm["Form_MAS_Human_Gate"]
-    Health["Form_MAS_Deployment_Health_Check"]
-  end
-  subgraph control [Control_plane]
-    Orch["Orchestrator_Engineering_MAS"]
-    Trace["Writer_MAS_Trace"]
-    TaskDT["DT_engineering_orchestrator_tasks_v1"]
-    TraceDT["DT_mas_trace_events_v1"]
-  end
-  subgraph excel [Excel]
-    ExcelAdapt["Adapter_Excel_Extraction"]
-    ExcelAgent["Agent_Excel_Extractor"]
-  end
-  subgraph schedule [SCHEDULE]
-    Ingest["SCHEDULE_Knowledge_Ingestion"]
-    Retr["SCHEDULE_Knowledge_Retrieval"]
-    Builder["SCHEDULE_Builder"]
-  end
-  subgraph calc [Calculation]
-    CalcAdapt["Adapter_Calculation"]
-  end
+  classDef entry fill:#eef2ff,stroke:#6366f1,color:#1e1b4b
+  classDef llm fill:#fff7ed,stroke:#f97316,color:#7c2d12
+  classDef rag fill:#ecfdf5,stroke:#10b981,color:#064e3b
+  classDef llmrag fill:#fffbeb,stroke:#10b981,color:#3f2a00
+  classDef svc fill:#eff6ff,stroke:#3b82f6,color:#1e3a8a
+  classDef data fill:#f9fafb,stroke:#9ca3af,color:#374151
+  classDef code fill:#f8fafc,stroke:#94a3b8,color:#334155
+  classDef optional fill:#f3f4f6,stroke:#d1d5db,color:#6b7280
+
+  EntryForm["Entry<br/><small><span style='color:#6b7280'>n8n: Form — MAS Entry</span></small>"]:::entry
+  GateForm["Human Gate<br/><small><span style='color:#6b7280'>n8n: Form — MAS Human Gate</span></small>"]:::entry
+  Health["Health Check<br/><small><span style='color:#6b7280'>n8n: Form — MAS Deployment Health Check</span></small>"]:::entry
+
+  Orch["Universal Engineering Orchestrator<br/><small><span style='color:#6b7280'>n8n: Orchestrator — Engineering MAS</span></small><br/><small>LLM: Planner Chat Model — configure in UI; Verifier Chat Model — separate credential</small><br/><small>RAG: Prepare governed SCHEDULE RAG request → Call SCHEDULE Hybrid Retrieval</small>"]:::llm
+  Trace["Trace Writer<br/><small><span style='color:#6b7280'>n8n: Writer — MAS Trace</span></small>"]:::code
+  TaskDT[("Task state Data Table<br/><small><span style='color:#6b7280'>engineering_orchestrator_tasks_v1</span></small>")]:::data
+  TraceDT[("Trace Data Table<br/><small><span style='color:#6b7280'>mas_trace_events_v1</span></small>")]:::data
+
+  ExcelAdapt["Excel Adapter<br/><small><span style='color:#6b7280'>n8n: Adapter — Excel Extraction</span></small>"]:::code
+  ExcelAgent["Excel Extractor<br/><small><span style='color:#6b7280'>n8n: Agent — Excel Extractor</span></small><br/><small>LLM: OpenAI Chat Model — gpt-4.1-nano</small><br/><small>RAG/memory: PGVector operating context; OpenAI Embeddings — text-embedding-3-small; Postgres Chat Memory — session scoped</small>"]:::llmrag
+  ExcelTools["Excel extractor tools<br/><small><span style='color:#6b7280'>service: excel-agent-tools /api/v1</span></small><br/><small><span style='color:#6b7280'>workbook_introspect, sheet_preview, detect_tables, describe_table, list_column_values, query_table, save_agent_plan</span></small><br/><small><span style='color:#6b7280'>Назначение: workbook-сессия, табличные чтения/фильтры, validation/export без загрузки всего Excel в LLM.</span></small>"]:::svc
+  ExcelRag["Excel guide ingestion<br/><small><span style='color:#6b7280'>n8n: Ingestion — Excel Agent Knowledge; optional Test workflow</span></small>"]:::optional
+
+  Ingest["SCHEDULE Knowledge Ingestion<br/><small><span style='color:#6b7280'>n8n: SCHEDULE — Knowledge Ingestion</span></small><br/><small>RAG write: PGVector + PostgreSQL catalogue</small>"]:::rag
+  Retr["SCHEDULE Knowledge Retrieval<br/><small><span style='color:#6b7280'>n8n: SCHEDULE — Knowledge Retrieval</span></small><br/><small>RAG read: lexical/exact/tags + PGVector semantic + schema catalogue</small>"]:::rag
+  Builder["SCHEDULE Builder<br/><small><span style='color:#6b7280'>n8n: SCHEDULE — Builder</span></small><br/><small>LLM: SCHEDULE Planner Chat Model — configure in UI; SCHEDULE Builder Chat Model — configure in UI</small>"]:::llm
+
+  CalcAdapt["Calculation Adapter<br/><small><span style='color:#6b7280'>n8n: Adapter — Calculation (Math Service)</span></small><br/><small>HTTP: Call trajectory intersection</small>"]:::code
+  MathSvc["Math Service<br/><small><span style='color:#6b7280'>service: fastapi-math-service /api/v1/math</span></small><br/><small><span style='color:#6b7280'>Назначение: DEV + CPS3/ZMAP intersections batch.</span></small>"]:::svc
+  Pg[("PostgreSQL + PGVector<br/><small><span style='color:#6b7280'>memory, embeddings, SCHEDULE knowledge/schema catalogue</span></small>")]:::data
+
   EntryForm --> Orch
   GateForm --> Orch
   Health --> Orch
   Health --> Trace
-  Health --> TaskDT
-  Health --> TraceDT
-  Orch --> ExcelAdapt --> ExcelAgent
-  Orch --> Retr
-  Orch --> Builder
-  Orch --> CalcAdapt
-  Orch --> Trace
-  Orch --> TaskDT
-  Trace --> TraceDT
-  Ingest -.-> Retr
+  Orch <--> TaskDT
+  Orch --> Trace --> TraceDT
+  Orch --> ExcelAdapt --> ExcelAgent --> ExcelTools
+  ExcelAgent <--> Pg
+  ExcelRag -.-> Pg
+  Orch --> Retr --> Builder --> Orch
+  Ingest -.-> Pg
+  Retr <--> Pg
+  Orch --> CalcAdapt --> MathSvc
 ```
 
 **MVP runtime (активировать только forms после Health Check):** Entry, Human Gate, Health Check, Orchestrator, Trace, Excel Adapter+Agent, SCHEDULE Ingestion/Retrieval/Builder, Calculation Adapter.

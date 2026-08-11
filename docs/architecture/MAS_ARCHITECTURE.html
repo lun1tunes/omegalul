@@ -36,43 +36,53 @@ The architecture follows a **Stateful Orchestrator-Workers** pattern with explic
 ## High-Level System Architecture
 
 ```mermaid
-graph TD
-    User([User / Webhook]) --> |Task Input| O["Universal Engineering Orchestrator<br/><small><i>universal-engineering-orchestrator</i></small>"]
-    
-    subgraph "Core Orchestration & Infra"
-        O -.-> |Uses| Tpl["Specialist Template<br/><small><i>engineering-specialist-template</i></small>"]
-        O -.-> |Logs| Trace["Trace Writer<br/><small><i>mas-trace-event-writer</i></small>"]
-        O -.-> |Shared| AI["AI Components<br/><small><i>ai-components</i></small><br/>[LLM REQUIRED]"]
-    end
+%%{init: {"flowchart": {"htmlLabels": true}, "securityLevel": "loose"}}%%
+flowchart TB
+    classDef entry fill:#eef2ff,stroke:#6366f1,color:#1e1b4b
+    classDef llm fill:#fff7ed,stroke:#f97316,color:#7c2d12
+    classDef rag fill:#ecfdf5,stroke:#10b981,color:#064e3b
+    classDef llmrag fill:#fffbeb,stroke:#10b981,color:#3f2a00
+    classDef svc fill:#eff6ff,stroke:#3b82f6,color:#1e3a8a
+    classDef data fill:#f9fafb,stroke:#9ca3af,color:#374151
+    classDef code fill:#f8fafc,stroke:#94a3b8,color:#334155
+    classDef optional fill:#f3f4f6,stroke:#d1d5db,color:#6b7280
 
-    subgraph "Excel Subsystem"
-        E_Adapt["Excel Specialist Adapter<br/><small><i>excel-engineering-specialist-adapter</i></small>"]
-        E_Form["Excel Form Adapter<br/><small><i>excel-extraction-form-adapter</i></small>"]
-        
-        E_Mas["Excel MAS Orchestrator<br/><small><i>excel-mas-orchestrator</i></small>"]
-        E_Agent["Excel Extraction Agent<br/><small><i>excel-extraction-agent</i></small><br/>[LLM REQUIRED]"]
-        E_RAG["Excel RAG Ingestion<br/><small><i>excel-rag-ingestion</i></small><br/>[EMBEDDINGS REQUIRED]"]
-        
-        O --> |Route| E_Adapt
-        User_Form([UI Form]) --> E_Form
-        E_Adapt --> E_Mas
-        E_Form --> E_Mas
-        E_Mas --> E_Agent
-        E_RAG -.-> |DB| E_Agent
-        E_Agent <--> |API| FastAPI["FastAPI (app/main.py)"]
-    end
+    User["User / Form / Webhook<br/><small><span style='color:#6b7280'>task + Excel/.data/.inc/.dev/CPS3 artifacts</span></small>"]:::entry
+    Entry["Entry<br/><small><span style='color:#6b7280'>n8n: Form — MAS Entry</span></small>"]:::entry
+    Gate["Human Gate<br/><small><span style='color:#6b7280'>n8n: Form — MAS Human Gate</span></small>"]:::entry
+    Health["Health Check<br/><small><span style='color:#6b7280'>n8n: Form — MAS Deployment Health Check</span></small>"]:::entry
 
-    subgraph "SCHEDULE Subsystem"
-        S_K_Ing["Knowledge Ingestion<br/><small><i>tnavigator-schedule-knowledge-ingestion</i></small><br/>[EMBEDDINGS REQUIRED]"]
-        S_H_Ret["Hybrid Retrieval<br/><small><i>tnavigator-schedule-hybrid-retrieval</i></small><br/>[EMBEDDINGS REQUIRED]"]
-        S_Bld["Schedule Builder pipeline<br/><small><i>tnavigator-schedule-builder</i></small><br/>intake→baseline→plan→render→merge→validate→verify<br/>[LLM REQUIRED]"]
-        S_Rel["Accountable release<br/><small><i>orchestrator Apply action and version guard</i></small>"]
-        S_K_Ing -.-> |DB| S_H_Ret
-        O --> |Route| S_H_Ret
-        O --> |Route| S_Bld
-        S_H_Ret --> S_Bld
-        S_Bld --> S_Rel
-    end
+    O["Universal Engineering Orchestrator<br/><small><span style='color:#6b7280'>n8n: Orchestrator — Engineering MAS</span></small><br/><small>LLM: Planner Chat Model — configure in UI; Verifier Chat Model — separate credential</small><br/><small>RAG: Prepare governed SCHEDULE RAG request → Call SCHEDULE Hybrid Retrieval</small>"]:::llm
+    TaskDT[("Task state Data Table<br/><small><span style='color:#6b7280'>engineering_orchestrator_tasks_v1</span></small>")]:::data
+    Trace["Trace Writer<br/><small><span style='color:#6b7280'>n8n: Writer — MAS Trace</span></small>"]:::code
+    TraceDT[("Trace Data Table<br/><small><span style='color:#6b7280'>mas_trace_events_v1</span></small>")]:::data
+
+    E_Adapt["Excel Adapter<br/><small><span style='color:#6b7280'>n8n: Adapter — Excel Extraction</span></small>"]:::code
+    E_Agent["Excel Extractor<br/><small><span style='color:#6b7280'>n8n: Agent — Excel Extractor</span></small><br/><small>LLM: OpenAI Chat Model — gpt-4.1-nano</small><br/><small>RAG/memory: PGVector operating context; OpenAI Embeddings — text-embedding-3-small; Postgres Chat Memory — session scoped</small>"]:::llmrag
+    ExcelTools["Excel extractor tools<br/><small><span style='color:#6b7280'>service: excel-agent-tools /api/v1</span></small><br/><small><span style='color:#6b7280'>workbook_introspect, sheet_preview, detect_tables, describe_table, list_column_values, query_table, save_agent_plan</span></small><br/><small><span style='color:#6b7280'>Purpose: workbook sessions, table reads/filters, validation/export without loading whole Excel files into the LLM.</span></small>"]:::svc
+    E_RAG["Excel guide ingestion<br/><small><span style='color:#6b7280'>n8n: Ingestion — Excel Agent Knowledge; optional Test workflow</span></small>"]:::optional
+
+    S_K_Ing["SCHEDULE Knowledge Ingestion<br/><small><span style='color:#6b7280'>n8n: SCHEDULE — Knowledge Ingestion</span></small><br/><small>RAG write: PGVector + PostgreSQL catalogue</small>"]:::rag
+    S_H_Ret["SCHEDULE Knowledge Retrieval<br/><small><span style='color:#6b7280'>n8n: SCHEDULE — Knowledge Retrieval</span></small><br/><small>RAG read: lexical/exact/tags + PGVector semantic + schema catalogue</small>"]:::rag
+    S_Bld["SCHEDULE Builder<br/><small><span style='color:#6b7280'>n8n: SCHEDULE — Builder</span></small><br/><small>LLM: SCHEDULE Planner Chat Model — configure in UI; SCHEDULE Builder Chat Model — configure in UI</small><br/><small>Code stages: intake → baseline → plan → render → merge → validate → verify</small>"]:::llm
+
+    C_Adapt["Calculation Adapter<br/><small><span style='color:#6b7280'>n8n: Adapter — Calculation (Math Service)</span></small><br/><small>HTTP: Call trajectory intersection</small>"]:::code
+    MathSvc["Math Service<br/><small><span style='color:#6b7280'>service: fastapi-math-service /api/v1/math</span></small><br/><small><span style='color:#6b7280'>Purpose: DEV + CPS3/ZMAP trajectory-surface intersections.</span></small>"]:::svc
+    Pg[("PostgreSQL + PGVector<br/><small><span style='color:#6b7280'>memory, embeddings, SCHEDULE knowledge/schema catalogue</span></small>")]:::data
+
+    User --> Entry --> O
+    Gate --> O
+    Health --> O
+    Health --> Trace
+    O <--> TaskDT
+    O --> Trace --> TraceDT
+    O --> E_Adapt --> E_Agent --> ExcelTools
+    E_Agent <--> Pg
+    E_RAG -.-> Pg
+    O --> S_H_Ret --> S_Bld --> O
+    S_K_Ing -.-> Pg
+    S_H_Ret <--> Pg
+    O --> C_Adapt --> MathSvc
 ```
 
 ## Тезисы для презентации: Почему базовые подходы к LLM не работают
@@ -97,15 +107,17 @@ graph TD
 
 ### 1. Universal Engineering Orchestrator
 The central nervous system of the MAS. It maintains state across asynchronous calls (HITL - Human in the loop) and dictates the workflow.
-*   **Planner:** An LLM responsible for analyzing the current state and deciding which Specialist to invoke next.
-*   **Independent Verifier:** A separate LLM that evaluates the output of a Specialist against the original request. If the output is hallucinated or incorrect, the Verifier forces the Planner to replan.
-*   **Router:** Executes specific sub-workflows (`Execute Workflow` nodes) based on the Planner's decision. Uses placeholder IDs (e.g., `REPLACE_EXCEL_ADAPTER_IN_UI`) that must be mapped to actual workflow IDs during deployment.
+*   **Planner:** `Planner Chat Model — configure in UI`, an LLM responsible for analyzing current task state and choosing the next bounded capability.
+*   **Independent Verifier:** `Verifier Chat Model — separate credential`, a separate LLM that evaluates specialist output against the original request and evidence gates.
+*   **Router:** Deterministic Code/Switch path that invokes allowlisted `Execute Workflow` nodes. The deployment operator binds each call node to the exact UI workflow name listed in `docs/DEPLOY_N8N_UI.md`.
+*   **State:** `engineering_orchestrator_tasks_v1` Data Table stores CAS task state, HITL gates, retries and versions.
 
 ### 2. Excel Subsystem (Data Extraction)
 Designed to handle unstructured, "dirty" engineering data.
-*   **Adapters:** `excel-engineering-specialist-adapter` translates the Orchestrator's standard contract into the specific prompt required by the Excel Agent.
-*   **Excel Extraction Agent (`excel-extraction-agent`):** The core ReAct agent utilizing a 9B model for reasoning.
-*   **FastAPI Backend (`excel-agent-tools`):** The python microservice executed outside n8n. It provides deterministic tools (`/schema`, `/extract`) to parse Excel files, handling locking and session states.
+*   **Adapter:** `Adapter — Excel Extraction` (`excel-engineering-specialist-adapter.workflow.json`) translates the Orchestrator's standard contract into the Excel Agent packet.
+*   **Excel Extraction Agent:** `Agent — Excel Extractor` (`excel-extraction-agent.workflow.json`) uses `OpenAI Chat Model — gpt-4.1-nano`, `Postgres Chat Memory — session scoped`, `PGVector operating context` and `OpenAI Embeddings — text-embedding-3-small`.
+*   **FastAPI Backend:** `excel-agent-tools` runs outside n8n at `/api/v1`. It owns workbook sessions and deterministic tool calls: `workbook_introspect`, `sheet_preview`, `detect_tables`, `describe_table`, `list_column_values`, `query_table`, `save_agent_plan`, plus validation/export/state endpoints.
+*   **Optional:** `Ingestion — Excel Agent Knowledge` seeds Excel operating-guide RAG and is normally run as Test workflow only. `Legacy — Excel Orchestrator` is not part of the runtime path and must not be activated for MVP.
 
 ### 3. SCHEDULE Subsystem (Code Generation)
 A highly specialized RAG-driven code generation pipeline with three importable workflows.
@@ -113,37 +125,35 @@ A highly specialized RAG-driven code generation pipeline with three importable w
 *   **Builder pipeline (`tnavigator-schedule-builder`):** single specialist that owns intake, baseline analyze/decode/query, planner, typed-IR render, merge, validate and independent verify as Code stages.
 *   **Release:** accountable human gate lives in Universal Orchestrator (`Apply action and version guard`), not a separate SCHEDULE workflow.
 
-### 4. Infrastructure
+### 4. Calculation Subsystem
+*   **Adapter:** `Adapter — Calculation (Math Service)` (`calculation-specialist-adapter.workflow.json`) normalizes orchestrator requests and calls `Call trajectory intersection`.
+*   **Math Service:** `fastapi-math-service` runs outside n8n at `/api/v1/math`. It parses DEV trajectories and CPS3/ZMAP surfaces and returns `intersection_md`, `intersection_x`, `intersection_y`, `intersection_z` for up to 256 trajectories per batch.
+
+### 5. Infrastructure
 *   **Trace Event Writer (`mas-trace-event-writer`):** Logs state transitions and LLM reasoning steps for debugging and audit trails.
+*   **Data Tables:** `engineering_orchestrator_tasks_v1` and `mas_trace_events_v1` are created manually in n8n 2.30.8 and then selected in the corresponding Data Table nodes.
+*   **PostgreSQL + PGVector:** backs SCHEDULE RAG, Excel memory/context and embeddings. Ingestion and retrieval embedding model/dimensions must match.
 
 ## Deployment Guide: Step-by-Step Setup
 
 Follow this sequence to deploy the MAS architecture into your corporate n8n instance. 
 
-### Step 1: Subsystems & Adapters (Import First)
-Import all specialist and infrastructure workflows so they generate internal IDs.
-**Excel Subsystem:**
-- `excel-engineering-specialist-adapter`
-- `excel-extraction-form-adapter`
-- `excel-mas-orchestrator`
-- `excel-extraction-agent`
-- `excel-rag-ingestion`
+### Step 1: Runtime workflows (Import First)
+Import the 11 runtime workflows in the order defined by `n8n/import-manifest.json`:
 
-**SCHEDULE Subsystem:**
-- `tnavigator-schedule-knowledge-ingestion`
-- `tnavigator-schedule-hybrid-retrieval`
-- `tnavigator-schedule-builder`
+1. `calculation-specialist-adapter.workflow.json` — `Adapter — Calculation (Math Service)`
+2. `excel-extraction-agent.workflow.json` — `Agent — Excel Extractor`
+3. `excel-engineering-specialist-adapter.workflow.json` — `Adapter — Excel Extraction`
+4. `tnavigator-schedule-knowledge-ingestion.workflow.json` — `SCHEDULE — Knowledge Ingestion`
+5. `tnavigator-schedule-hybrid-retrieval.workflow.json` — `SCHEDULE — Knowledge Retrieval`
+6. `tnavigator-schedule-builder.workflow.json` — `SCHEDULE — Builder`
+7. `mas-trace-event-writer.workflow.json` — `Writer — MAS Trace`
+8. `universal-engineering-orchestrator.workflow.json` — `Orchestrator — Engineering MAS`
+9. `mvp-entry-form.workflow.json` — `Form — MAS Entry`
+10. `mas-human-gate-form.workflow.json` — `Form — MAS Human Gate`
+11. `mas-deployment-health-check.workflow.json` — `Form — MAS Deployment Health Check`
 
-**Math / Infra:**
-- `calculation-specialist-adapter`
-- `mas-trace-event-writer`
-- `ai-components`
-- `engineering-specialist-template`
-
-**User-facing forms (native n8n 2.30.8):**
-- `mvp-entry-form` — start a task; completion HTML explains success or human_gate
-- `mas-human-gate-form` — resume HITL with Task ID + answer; `expected_version` / `gate_id` are bound from Orchestrator status automatically
-- `mas-deployment-health-check` — press-and-read readiness report (`where_to_fix` for every FAIL)
+Optional/non-runtime imports from the full clean set: `excel-extraction-form-adapter.workflow.json`, `excel-rag-ingestion.workflow.json`, `ai-components.workflow.json`, `engineering-specialist-template.workflow.json`, `excel-mas-orchestrator.workflow.json`. Do not activate `Legacy — Excel Orchestrator` for MVP.
 
 **Corporate UI deploy from scratch:** [`docs/DEPLOY_N8N_UI.md`](../DEPLOY_N8N_UI.md) (import order, Data Table click-paths, Execute Workflow bindings, CSV templates under `n8n/data-tables/`).
 
