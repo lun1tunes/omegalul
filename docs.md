@@ -17,10 +17,10 @@
 
 Источник истины для имён — `n8n/import-manifest.json` и поле `name` в `n8n/workflows/*.workflow.json`.
 
-**Как читать:** короткий заголовок — роль; справа серым — точное имя workflow в UI (`n8n: …`). Цветные блоки — реальные ноды: **оранжевый = LLM**, **зелёный = RAG/memory**, **синий = FastAPI / tool-ноды**.
+**Как читать:** короткий заголовок в блоке — роль; **сразу под блоком** серым — точное имя workflow в UI (`n8n: …`). Цветные блоки — реальные ноды: **оранжевый = LLM**, **зелёный = RAG/memory**, **синий = FastAPI / tool-ноды**.
 
 ```mermaid
-%%{init: {"flowchart": {"htmlLabels": true, "nodeSpacing": 24, "rankSpacing": 36}, "securityLevel": "loose"}}%%
+%%{init: {"flowchart": {"htmlLabels": true, "nodeSpacing": 20, "rankSpacing": 28}, "securityLevel": "loose"}}%%
 flowchart TB
   classDef entry fill:#eef2ff,stroke:#6366f1,color:#1e1b4b
   classDef box fill:#f8fafc,stroke:#64748b,color:#0f172a
@@ -35,42 +35,67 @@ flowchart TB
 
   subgraph HITL[" "]
     direction LR
-    Entry["Entry"]:::entry --- EntryCap["n8n: Form — MAS Entry"]:::cap
-    Gate["Human Gate"]:::entry --- GateCap["n8n: Form — MAS Human Gate"]:::cap
-    Health["Health Check"]:::entry --- HealthCap["n8n: Form — MAS Deployment Health Check"]:::cap
+    subgraph E1[" "]
+      direction TB
+      Entry["Entry"]:::entry
+      EntryCap["<span style='font-size:11px;color:rgb(107,114,128)'>n8n: Form — MAS Entry</span>"]:::cap
+      Entry ~~~ EntryCap
+    end
+    subgraph E2[" "]
+      direction TB
+      Gate["Human Gate"]:::entry
+      GateCap["<span style='font-size:11px;color:rgb(107,114,128)'>n8n: Form — MAS Human Gate</span>"]:::cap
+      Gate ~~~ GateCap
+    end
+    subgraph E3[" "]
+      direction TB
+      Health["Health Check"]:::entry
+      HealthCap["<span style='font-size:11px;color:rgb(107,114,128)'>n8n: Form — MAS Deployment Health Check</span>"]:::cap
+      Health ~~~ HealthCap
+    end
   end
 
   subgraph ORCHBOX[" "]
-    direction LR
-    Orch["Orchestrator"]:::box --- OrchCap["n8n: Orchestrator — Engineering MAS"]:::cap
+    direction TB
+    Orch["Orchestrator"]:::box
+    OrchCap["<span style='font-size:11px;color:rgb(107,114,128)'>n8n: Orchestrator — Engineering MAS</span>"]:::cap
+    Orch ~~~ OrchCap
   end
   OrchLLM["LLM<br/><small>Planner Chat Model — configure in UI</small><br/><small>Verifier Chat Model — separate credential</small>"]:::llm
   OrchRAG["RAG gate<br/><small>Prepare governed SCHEDULE RAG request</small><br/><small>Call SCHEDULE Hybrid Retrieval</small><br/><small>Attach / gate SCHEDULE RAG evidence</small>"]:::rag
   TaskDT[("engineering_orchestrator_tasks_v1")]:::data
 
   subgraph TRACEBOX[" "]
-    direction LR
-    Trace["Trace Writer"]:::box --- TraceCap["n8n: Writer — MAS Trace"]:::cap
+    direction TB
+    Trace["Trace Writer"]:::box
+    TraceCap["<span style='font-size:11px;color:rgb(107,114,128)'>n8n: Writer — MAS Trace</span>"]:::cap
+    Trace ~~~ TraceCap
   end
   TraceDT[("mas_trace_events_v1")]:::data
 
   subgraph EXCEL["Excel subsystem"]
     direction TB
     subgraph XAD[" "]
-      direction LR
-      ExcelAdapt["Excel Adapter"]:::box --- ExcelAdaptCap["n8n: Adapter — Excel Extraction"]:::cap
+      direction TB
+      ExcelAdapt["Excel Adapter"]:::box
+      ExcelAdaptCap["<span style='font-size:11px;color:rgb(107,114,128)'>n8n: Adapter — Excel Extraction</span>"]:::cap
+      ExcelAdapt ~~~ ExcelAdaptCap
     end
     subgraph XAG[" "]
-      direction LR
-      ExcelAgent["Excel Extractor"]:::box --- ExcelAgentCap["n8n: Agent — Excel Extractor"]:::cap
+      direction TB
+      ExcelAgent["Excel Extractor"]:::box
+      ExcelAgentCap["<span style='font-size:11px;color:rgb(107,114,128)'>n8n: Agent — Excel Extractor</span>"]:::cap
+      ExcelAgent ~~~ ExcelAgentCap
     end
     ExcelLLM["LLM<br/><small>OpenAI Chat Model — gpt-4.1-nano</small>"]:::llm
     ExcelRAG["RAG / memory<br/><small>PGVector operating context</small><br/><small>OpenAI Embeddings — text-embedding-3-small</small><br/><small>Postgres Chat Memory — session scoped</small>"]:::rag
     ExcelTools["Excel tool nodes → excel-agent-tools /api/v1<br/><small style='color:rgb(107,114,128)'>workbook_introspect — метаданные workbook и листов</small><br/><small style='color:rgb(107,114,128)'>sheet_preview — небольшой preview диапазона листа</small><br/><small style='color:rgb(107,114,128)'>detect_tables — поиск таблиц на грязных листах</small><br/><small style='color:rgb(107,114,128)'>describe_table — колонки, размер, sample</small><br/><small style='color:rgb(107,114,128)'>list_column_values — уникальные значения колонки</small><br/><small style='color:rgb(107,114,128)'>query_table — фильтры и проекция без полной загрузки Excel в LLM</small><br/><small style='color:rgb(107,114,128)'>save_agent_plan — сохранить план/маппинг/фильтры</small>"]:::svc
     ExcelSvc["excel-agent-tools<br/><small style='color:rgb(107,114,128)'>FastAPI: workbook-сессия, табличные чтения/фильтры, validation/export</small>"]:::svc
     subgraph XING[" "]
-      direction LR
-      ExcelGuide["Excel guide ingestion"]:::opt --- ExcelGuideCap["n8n: Ingestion — Excel Agent Knowledge"]:::cap
+      direction TB
+      ExcelGuide["Excel guide ingestion"]:::opt
+      ExcelGuideCap["<span style='font-size:11px;color:rgb(107,114,128)'>n8n: Ingestion — Excel Agent Knowledge</span>"]:::cap
+      ExcelGuide ~~~ ExcelGuideCap
     end
     ExcelAdapt --> ExcelAgent
     ExcelAgent --> ExcelLLM
@@ -81,16 +106,22 @@ flowchart TB
   subgraph SCHED["SCHEDULE subsystem"]
     direction TB
     subgraph SIN[" "]
-      direction LR
-      SIngest["Knowledge Ingestion"]:::box --- SIngestCap["n8n: SCHEDULE — Knowledge Ingestion"]:::cap
+      direction TB
+      SIngest["Knowledge Ingestion"]:::box
+      SIngestCap["<span style='font-size:11px;color:rgb(107,114,128)'>n8n: SCHEDULE — Knowledge Ingestion</span>"]:::cap
+      SIngest ~~~ SIngestCap
     end
     subgraph SRE[" "]
-      direction LR
-      SRetr["Knowledge Retrieval"]:::box --- SRetrCap["n8n: SCHEDULE — Knowledge Retrieval"]:::cap
+      direction TB
+      SRetr["Knowledge Retrieval"]:::box
+      SRetrCap["<span style='font-size:11px;color:rgb(107,114,128)'>n8n: SCHEDULE — Knowledge Retrieval</span>"]:::cap
+      SRetr ~~~ SRetrCap
     end
     subgraph SBL[" "]
-      direction LR
-      SBuilder["Builder"]:::box --- SBuilderCap["n8n: SCHEDULE — Builder"]:::cap
+      direction TB
+      SBuilder["Builder"]:::box
+      SBuilderCap["<span style='font-size:11px;color:rgb(107,114,128)'>n8n: SCHEDULE — Builder</span>"]:::cap
+      SBuilder ~~~ SBuilderCap
     end
     SIngestRAG["RAG write<br/><small>PGVector — insert approved SCHEDULE knowledge</small><br/><small>SCHEDULE Embeddings</small><br/><small>PostgreSQL catalogue upserts</small>"]:::rag
     SRetrRAG["RAG read<br/><small>PostgreSQL lexical / exact / tags</small><br/><small>PGVector semantic candidates</small><br/><small>full parent knowledge + schema catalogue</small>"]:::rag
@@ -106,8 +137,10 @@ flowchart TB
   subgraph CALC["Calculation subsystem"]
     direction TB
     subgraph CAD[" "]
-      direction LR
-      CalcAdapt["Calculation Adapter"]:::box --- CalcAdaptCap["n8n: Adapter — Calculation (Math Service)"]:::cap
+      direction TB
+      CalcAdapt["Calculation Adapter"]:::box
+      CalcAdaptCap["<span style='font-size:11px;color:rgb(107,114,128)'>n8n: Adapter — Calculation (Math Service)</span>"]:::cap
+      CalcAdapt ~~~ CalcAdaptCap
     end
     MathSvc["fastapi-math-service /api/v1/math<br/><small style='color:rgb(107,114,128)'>NumPy batch: DEV + CPS3/ZMAP → intersection_md/x/y/z</small>"]:::svc
     CalcAdapt --> MathSvc
