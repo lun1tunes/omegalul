@@ -38,19 +38,19 @@ flowchart TB
     subgraph E1[" "]
       direction TB
       Entry["Entry"]:::entry
-      EntryCap["<span style='font-size:11px;color:rgb(107,114,128)'>n8n: Form — MAS Entry</span>"]:::cap
+      EntryCap["<span style='font-size:11px;color:rgb(107,114,128)'>MAS Entry</span>"]:::cap
       Entry ~~~ EntryCap
     end
     subgraph E2[" "]
       direction TB
       Gate["Human Gate"]:::entry
-      GateCap["<span style='font-size:11px;color:rgb(107,114,128)'>n8n: Form — MAS Human Gate</span>"]:::cap
+      GateCap["<span style='font-size:11px;color:rgb(107,114,128)'>MAS Human Gate</span>"]:::cap
       Gate ~~~ GateCap
     end
     subgraph E3[" "]
       direction TB
       Health["Health Check"]:::entry
-      HealthCap["<span style='font-size:11px;color:rgb(107,114,128)'>n8n: Form — MAS Deployment Health Check</span>"]:::cap
+      HealthCap["<span style='font-size:11px;color:rgb(107,114,128)'>MAS Deployment Health Check</span>"]:::cap
       Health ~~~ HealthCap
     end
   end
