@@ -17,10 +17,10 @@
 
 Источник истины для имён — `n8n/import-manifest.json` и поле `name` в `n8n/workflows/*.workflow.json`.
 
-**Как читать:** короткий заголовок в блоке — роль; **сразу под блоком** серым — точное имя workflow в UI (`n8n: …`). Цветные блоки — реальные ноды: **оранжевый = LLM**, **зелёный = RAG/memory**, **синий = FastAPI / tool-ноды**.
+**Как читать:** в блоке сверху роль, снизу серым — имя workflow в UI. Цветные блоки — реальные ноды: **оранжевый = LLM**, **зелёный = RAG/memory**, **синий = FastAPI / tool-ноды**.
 
 ```mermaid
-%%{init: {"flowchart": {"htmlLabels": true, "nodeSpacing": 20, "rankSpacing": 28}, "securityLevel": "loose"}}%%
+%%{init: {"flowchart": {"htmlLabels": true, "nodeSpacing": 24, "rankSpacing": 36}, "securityLevel": "loose"}}%%
 flowchart TB
   classDef entry fill:#eef2ff,stroke:#6366f1,color:#1e1b4b
   classDef box fill:#f8fafc,stroke:#64748b,color:#0f172a
@@ -29,74 +29,33 @@ flowchart TB
   classDef svc fill:#dbeafe,stroke:#2563eb,color:#1e3a8a
   classDef data fill:#f9fafb,stroke:#9ca3af,color:#374151
   classDef opt fill:#f3f4f6,stroke:#d1d5db,color:#6b7280
-  classDef cap fill:transparent,stroke:transparent,stroke-width:0px,color:#6b7280,font-size:11px
 
   User["Инженер<br/><small>задача + Excel / .data / .inc / .dev / CPS3</small>"]:::entry
 
   subgraph HITL[" "]
     direction LR
-    subgraph E1[" "]
-      direction TB
-      Entry["Entry"]:::entry
-      EntryCap["<span style='font-size:11px;color:rgb(107,114,128)'>MAS Entry</span>"]:::cap
-      Entry ~~~ EntryCap
-    end
-    subgraph E2[" "]
-      direction TB
-      Gate["Human Gate"]:::entry
-      GateCap["<span style='font-size:11px;color:rgb(107,114,128)'>MAS Human Gate</span>"]:::cap
-      Gate ~~~ GateCap
-    end
-    subgraph E3[" "]
-      direction TB
-      Health["Health Check"]:::entry
-      HealthCap["<span style='font-size:11px;color:rgb(107,114,128)'>MAS Deployment Health Check</span>"]:::cap
-      Health ~~~ HealthCap
-    end
+    Entry["Entry<br/><small style='color:rgb(107,114,128)'>MAS Entry</small>"]:::entry
+    Gate["Human Gate<br/><small style='color:rgb(107,114,128)'>MAS Human Gate</small>"]:::entry
+    Health["Health Check<br/><small style='color:rgb(107,114,128)'>MAS Deployment Health Check</small>"]:::entry
   end
 
-  subgraph ORCHBOX[" "]
-    direction TB
-    Orch["Orchestrator"]:::box
-    OrchCap["<span style='font-size:11px;color:rgb(107,114,128)'>n8n: Orchestrator — Engineering MAS</span>"]:::cap
-    Orch ~~~ OrchCap
-  end
+  Orch["Orchestrator<br/><small style='color:rgb(107,114,128)'>Orchestrator — Engineering MAS</small>"]:::box
   OrchLLM["LLM<br/><small>Planner Chat Model — configure in UI</small><br/><small>Verifier Chat Model — separate credential</small>"]:::llm
   OrchRAG["RAG gate<br/><small>Prepare governed SCHEDULE RAG request</small><br/><small>Call SCHEDULE Hybrid Retrieval</small><br/><small>Attach / gate SCHEDULE RAG evidence</small>"]:::rag
   TaskDT[("engineering_orchestrator_tasks_v1")]:::data
 
-  subgraph TRACEBOX[" "]
-    direction TB
-    Trace["Trace Writer"]:::box
-    TraceCap["<span style='font-size:11px;color:rgb(107,114,128)'>n8n: Writer — MAS Trace</span>"]:::cap
-    Trace ~~~ TraceCap
-  end
+  Trace["Trace Writer<br/><small style='color:rgb(107,114,128)'>Writer — MAS Trace</small>"]:::box
   TraceDT[("mas_trace_events_v1")]:::data
 
   subgraph EXCEL["Excel subsystem"]
     direction TB
-    subgraph XAD[" "]
-      direction TB
-      ExcelAdapt["Excel Adapter"]:::box
-      ExcelAdaptCap["<span style='font-size:11px;color:rgb(107,114,128)'>n8n: Adapter — Excel Extraction</span>"]:::cap
-      ExcelAdapt ~~~ ExcelAdaptCap
-    end
-    subgraph XAG[" "]
-      direction TB
-      ExcelAgent["Excel Extractor"]:::box
-      ExcelAgentCap["<span style='font-size:11px;color:rgb(107,114,128)'>n8n: Agent — Excel Extractor</span>"]:::cap
-      ExcelAgent ~~~ ExcelAgentCap
-    end
+    ExcelAdapt["Excel Adapter<br/><small style='color:rgb(107,114,128)'>Adapter — Excel Extraction</small>"]:::box
+    ExcelAgent["Excel Extractor<br/><small style='color:rgb(107,114,128)'>Agent — Excel Extractor</small>"]:::box
     ExcelLLM["LLM<br/><small>OpenAI Chat Model — gpt-4.1-nano</small>"]:::llm
     ExcelRAG["RAG / memory<br/><small>PGVector operating context</small><br/><small>OpenAI Embeddings — text-embedding-3-small</small><br/><small>Postgres Chat Memory — session scoped</small>"]:::rag
     ExcelTools["Excel tool nodes → excel-agent-tools /api/v1<br/><small style='color:rgb(107,114,128)'>workbook_introspect — метаданные workbook и листов</small><br/><small style='color:rgb(107,114,128)'>sheet_preview — небольшой preview диапазона листа</small><br/><small style='color:rgb(107,114,128)'>detect_tables — поиск таблиц на грязных листах</small><br/><small style='color:rgb(107,114,128)'>describe_table — колонки, размер, sample</small><br/><small style='color:rgb(107,114,128)'>list_column_values — уникальные значения колонки</small><br/><small style='color:rgb(107,114,128)'>query_table — фильтры и проекция без полной загрузки Excel в LLM</small><br/><small style='color:rgb(107,114,128)'>save_agent_plan — сохранить план/маппинг/фильтры</small>"]:::svc
     ExcelSvc["excel-agent-tools<br/><small style='color:rgb(107,114,128)'>FastAPI: workbook-сессия, табличные чтения/фильтры, validation/export</small>"]:::svc
-    subgraph XING[" "]
-      direction TB
-      ExcelGuide["Excel guide ingestion"]:::opt
-      ExcelGuideCap["<span style='font-size:11px;color:rgb(107,114,128)'>n8n: Ingestion — Excel Agent Knowledge</span>"]:::cap
-      ExcelGuide ~~~ ExcelGuideCap
-    end
+    ExcelGuide["Excel guide ingestion<br/><small style='color:rgb(107,114,128)'>Ingestion — Excel Agent Knowledge</small>"]:::opt
     ExcelAdapt --> ExcelAgent
     ExcelAgent --> ExcelLLM
     ExcelAgent --> ExcelRAG
@@ -105,24 +64,9 @@ flowchart TB
 
   subgraph SCHED["SCHEDULE subsystem"]
     direction TB
-    subgraph SIN[" "]
-      direction TB
-      SIngest["Knowledge Ingestion"]:::box
-      SIngestCap["<span style='font-size:11px;color:rgb(107,114,128)'>n8n: SCHEDULE — Knowledge Ingestion</span>"]:::cap
-      SIngest ~~~ SIngestCap
-    end
-    subgraph SRE[" "]
-      direction TB
-      SRetr["Knowledge Retrieval"]:::box
-      SRetrCap["<span style='font-size:11px;color:rgb(107,114,128)'>n8n: SCHEDULE — Knowledge Retrieval</span>"]:::cap
-      SRetr ~~~ SRetrCap
-    end
-    subgraph SBL[" "]
-      direction TB
-      SBuilder["Builder"]:::box
-      SBuilderCap["<span style='font-size:11px;color:rgb(107,114,128)'>n8n: SCHEDULE — Builder</span>"]:::cap
-      SBuilder ~~~ SBuilderCap
-    end
+    SIngest["Knowledge Ingestion<br/><small style='color:rgb(107,114,128)'>SCHEDULE — Knowledge Ingestion</small>"]:::box
+    SRetr["Knowledge Retrieval<br/><small style='color:rgb(107,114,128)'>SCHEDULE — Knowledge Retrieval</small>"]:::box
+    SBuilder["Builder<br/><small style='color:rgb(107,114,128)'>SCHEDULE — Builder</small>"]:::box
     SIngestRAG["RAG write<br/><small>PGVector — insert approved SCHEDULE knowledge</small><br/><small>SCHEDULE Embeddings</small><br/><small>PostgreSQL catalogue upserts</small>"]:::rag
     SRetrRAG["RAG read<br/><small>PostgreSQL lexical / exact / tags</small><br/><small>PGVector semantic candidates</small><br/><small>full parent knowledge + schema catalogue</small>"]:::rag
     SBuilderLLM["LLM<br/><small>SCHEDULE Planner Chat Model — configure in UI</small><br/><small>SCHEDULE Builder Chat Model — configure in UI</small>"]:::llm
@@ -136,12 +80,7 @@ flowchart TB
 
   subgraph CALC["Calculation subsystem"]
     direction TB
-    subgraph CAD[" "]
-      direction TB
-      CalcAdapt["Calculation Adapter"]:::box
-      CalcAdaptCap["<span style='font-size:11px;color:rgb(107,114,128)'>n8n: Adapter — Calculation (Math Service)</span>"]:::cap
-      CalcAdapt ~~~ CalcAdaptCap
-    end
+    CalcAdapt["Calculation Adapter<br/><small style='color:rgb(107,114,128)'>Adapter — Calculation (Math Service)</small>"]:::box
     MathSvc["fastapi-math-service /api/v1/math<br/><small style='color:rgb(107,114,128)'>NumPy batch: DEV + CPS3/ZMAP → intersection_md/x/y/z</small>"]:::svc
     CalcAdapt --> MathSvc
   end
