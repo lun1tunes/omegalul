@@ -20,42 +20,68 @@
 **Как читать:** в блоке сверху роль, снизу серым — имя workflow в UI. Цветные блоки — реальные ноды: **оранжевый = LLM**, **зелёный = RAG/memory**, **синий = FastAPI / tool-ноды**.
 
 ```mermaid
-%%{init: {"flowchart": {"htmlLabels": true, "nodeSpacing": 24, "rankSpacing": 36}, "securityLevel": "loose"}}%%
+%%{init: {"flowchart": {"htmlLabels": true, "nodeSpacing": 24, "rankSpacing": 36}, "securityLevel": "loose", "themeVariables": {"fontSize": "14px"}}}%%
 flowchart TB
-  classDef entry fill:#eef2ff,stroke:#6366f1,color:#1e1b4b
-  classDef box fill:#f8fafc,stroke:#64748b,color:#0f172a
-  classDef llm fill:#fff7ed,stroke:#f97316,color:#7c2d12
-  classDef rag fill:#ecfdf5,stroke:#10b981,color:#064e3b
-  classDef svc fill:#dbeafe,stroke:#2563eb,color:#1e3a8a
-  classDef data fill:#f9fafb,stroke:#9ca3af,color:#374151
-  classDef opt fill:#f3f4f6,stroke:#d1d5db,color:#6b7280
+  classDef entry fill:#eef2ff,stroke:#6366f1
+  classDef box fill:#f8fafc,stroke:#64748b
+  classDef llm fill:#fff7ed,stroke:#f97316
+  classDef rag fill:#ecfdf5,stroke:#10b981
+  classDef svc fill:#dbeafe,stroke:#2563eb
+  classDef data fill:#f9fafb,stroke:#9ca3af
+  classDef opt fill:#f3f4f6,stroke:#d1d5db
 
-  User["Инженер<br/><small>задача + Excel / .data / .inc / .dev / CPS3</small>"]:::entry
+  User["`Инженер
+задача + Excel / .data / .inc / .dev / CPS3`"]:::entry
 
   subgraph HITL[" "]
     direction LR
-    Entry["Entry<br/><small style='color:rgb(107,114,128)'>MAS Entry</small>"]:::entry
-    Gate["Human Gate<br/><small style='color:rgb(107,114,128)'>MAS Human Gate</small>"]:::entry
-    Health["Health Check<br/><small style='color:rgb(107,114,128)'>MAS Deployment Health Check</small>"]:::entry
+    Entry["`Entry
+<font color='#6b7280'>MAS Entry</font>`"]:::entry
+    Gate["`Human Gate
+<font color='#6b7280'>MAS Human Gate</font>`"]:::entry
+    Health["`Health Check
+<font color='#6b7280'>MAS Deployment Health Check</font>`"]:::entry
   end
 
-  Orch["Orchestrator<br/><small style='color:rgb(107,114,128)'>Orchestrator — Engineering MAS</small>"]:::box
-  OrchLLM["LLM<br/><small>Planner Chat Model — configure in UI</small><br/><small>Verifier Chat Model — separate credential</small>"]:::llm
-  OrchRAG["RAG gate<br/><small>Prepare governed SCHEDULE RAG request</small><br/><small>Call SCHEDULE Hybrid Retrieval</small><br/><small>Attach / gate SCHEDULE RAG evidence</small>"]:::rag
+  Orch["`Orchestrator
+<font color='#6b7280'>Orchestrator — Engineering MAS</font>`"]:::box
+  OrchLLM["`LLM
+Planner Chat Model — configure in UI
+Verifier Chat Model — separate credential`"]:::llm
+  OrchRAG["`RAG gate
+Prepare governed SCHEDULE RAG request
+Call SCHEDULE Hybrid Retrieval
+Attach / gate SCHEDULE RAG evidence`"]:::rag
   TaskDT[("engineering_orchestrator_tasks_v1")]:::data
 
-  Trace["Trace Writer<br/><small style='color:rgb(107,114,128)'>Writer — MAS Trace</small>"]:::box
+  Trace["`Trace Writer
+<font color='#6b7280'>Writer — MAS Trace</font>`"]:::box
   TraceDT[("mas_trace_events_v1")]:::data
 
   subgraph EXCEL["Excel subsystem"]
     direction TB
-    ExcelAdapt["Excel Adapter<br/><small style='color:rgb(107,114,128)'>Adapter — Excel Extraction</small>"]:::box
-    ExcelAgent["Excel Extractor<br/><small style='color:rgb(107,114,128)'>Agent — Excel Extractor</small>"]:::box
-    ExcelLLM["LLM<br/><small>OpenAI Chat Model — gpt-4.1-nano</small>"]:::llm
-    ExcelRAG["RAG / memory<br/><small>PGVector operating context</small><br/><small>OpenAI Embeddings — text-embedding-3-small</small><br/><small>Postgres Chat Memory — session scoped</small>"]:::rag
-    ExcelTools["Excel tool nodes → excel-agent-tools /api/v1<br/><small style='color:rgb(107,114,128)'>workbook_introspect — метаданные workbook и листов</small><br/><small style='color:rgb(107,114,128)'>sheet_preview — небольшой preview диапазона листа</small><br/><small style='color:rgb(107,114,128)'>detect_tables — поиск таблиц на грязных листах</small><br/><small style='color:rgb(107,114,128)'>describe_table — колонки, размер, sample</small><br/><small style='color:rgb(107,114,128)'>list_column_values — уникальные значения колонки</small><br/><small style='color:rgb(107,114,128)'>query_table — фильтры и проекция без полной загрузки Excel в LLM</small><br/><small style='color:rgb(107,114,128)'>save_agent_plan — сохранить план/маппинг/фильтры</small>"]:::svc
-    ExcelSvc["excel-agent-tools<br/><small style='color:rgb(107,114,128)'>FastAPI: workbook-сессия, табличные чтения/фильтры, validation/export</small>"]:::svc
-    ExcelGuide["Excel guide ingestion<br/><small style='color:rgb(107,114,128)'>Ingestion — Excel Agent Knowledge</small>"]:::opt
+    ExcelAdapt["`Excel Adapter
+<font color='#6b7280'>Adapter — Excel Extraction</font>`"]:::box
+    ExcelAgent["`Excel Extractor
+<font color='#6b7280'>Agent — Excel Extractor</font>`"]:::box
+    ExcelLLM["`LLM
+OpenAI Chat Model — gpt-4.1-nano`"]:::llm
+    ExcelRAG["`RAG / memory
+PGVector operating context
+OpenAI Embeddings — text-embedding-3-small
+Postgres Chat Memory — session scoped`"]:::rag
+    ExcelTools["`Excel tool nodes → excel-agent-tools /api/v1
+<font color='#6b7280'>workbook_introspect — метаданные workbook и листов
+sheet_preview — небольшой preview диапазона листа
+detect_tables — поиск таблиц на грязных листах
+describe_table — колонки, размер, sample
+list_column_values — уникальные значения колонки
+query_table — фильтры и проекция без полной загрузки Excel в LLM
+save_agent_plan — сохранить план/маппинг/фильтры</font>`"]:::svc
+    ExcelSvc["`excel-agent-tools
+<font color='#6b7280'>FastAPI: workbook-сессия, табличные чтения/фильтры, validation/export</font>`"]:::svc
+    ExcelGuide["`Excel guide ingestion
+<font color='#6b7280'>Ingestion — Excel Agent Knowledge</font>`"]:::opt
     ExcelAdapt --> ExcelAgent
     ExcelAgent --> ExcelLLM
     ExcelAgent --> ExcelRAG
@@ -64,13 +90,25 @@ flowchart TB
 
   subgraph SCHED["SCHEDULE subsystem"]
     direction TB
-    SIngest["Knowledge Ingestion<br/><small style='color:rgb(107,114,128)'>SCHEDULE — Knowledge Ingestion</small>"]:::box
-    SRetr["Knowledge Retrieval<br/><small style='color:rgb(107,114,128)'>SCHEDULE — Knowledge Retrieval</small>"]:::box
-    SBuilder["Builder<br/><small style='color:rgb(107,114,128)'>SCHEDULE — Builder</small>"]:::box
-    SIngestRAG["RAG write<br/><small>PGVector — insert approved SCHEDULE knowledge</small><br/><small>SCHEDULE Embeddings</small><br/><small>PostgreSQL catalogue upserts</small>"]:::rag
-    SRetrRAG["RAG read<br/><small>PostgreSQL lexical / exact / tags</small><br/><small>PGVector semantic candidates</small><br/><small>full parent knowledge + schema catalogue</small>"]:::rag
-    SBuilderLLM["LLM<br/><small>SCHEDULE Planner Chat Model — configure in UI</small><br/><small>SCHEDULE Builder Chat Model — configure in UI</small>"]:::llm
-    SBuilderCode["Code stages<br/><small>intake → baseline → plan → render → merge → validate → verify</small>"]:::box
+    SIngest["`Knowledge Ingestion
+<font color='#6b7280'>SCHEDULE — Knowledge Ingestion</font>`"]:::box
+    SRetr["`Knowledge Retrieval
+<font color='#6b7280'>SCHEDULE — Knowledge Retrieval</font>`"]:::box
+    SBuilder["`Builder
+<font color='#6b7280'>SCHEDULE — Builder</font>`"]:::box
+    SIngestRAG["`RAG write
+PGVector — insert approved SCHEDULE knowledge
+SCHEDULE Embeddings
+PostgreSQL catalogue upserts`"]:::rag
+    SRetrRAG["`RAG read
+PostgreSQL lexical / exact / tags
+PGVector semantic candidates
+full parent knowledge + schema catalogue`"]:::rag
+    SBuilderLLM["`LLM
+SCHEDULE Planner Chat Model — configure in UI
+SCHEDULE Builder Chat Model — configure in UI`"]:::llm
+    SBuilderCode["`Code stages
+intake → baseline → plan → render → merge → validate → verify`"]:::box
     SIngest --> SIngestRAG
     SRetr --> SRetrRAG
     SBuilder --> SBuilderLLM
@@ -80,12 +118,14 @@ flowchart TB
 
   subgraph CALC["Calculation subsystem"]
     direction TB
-    CalcAdapt["Calculation Adapter<br/><small style='color:rgb(107,114,128)'>Adapter — Calculation (Math Service)</small>"]:::box
-    MathSvc["fastapi-math-service /api/v1/math<br/><small style='color:rgb(107,114,128)'>NumPy batch: DEV + CPS3/ZMAP → intersection_md/x/y/z</small>"]:::svc
+    CalcAdapt["`Calculation Adapter
+<font color='#6b7280'>Adapter — Calculation (Math Service)</font>`"]:::box
+    MathSvc["`fastapi-math-service /api/v1/math
+<font color='#6b7280'>NumPy batch: DEV + CPS3/ZMAP → intersection_md/x/y/z</font>`"]:::svc
     CalcAdapt --> MathSvc
   end
 
-  Pg[("PostgreSQL + PGVector<br/><small>memory, embeddings, SCHEDULE knowledge/schema catalogue</small>")]:::data
+  Pg[("PostgreSQL + PGVector<br/>memory, embeddings, SCHEDULE knowledge/schema catalogue")]:::data
 
   User --> Entry
   Entry --> Orch
