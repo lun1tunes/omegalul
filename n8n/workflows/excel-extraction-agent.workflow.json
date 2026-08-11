@@ -671,7 +671,7 @@
         "options": {
           "batchSize": 128,
           "stripNewLines": true,
-          "timeout": 60,
+          "timeout": -1,
           "encodingFormat": "float"
         }
       },

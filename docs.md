@@ -17,7 +17,7 @@
 
 Источник истины для имён — `n8n/import-manifest.json` и поле `name` в `n8n/workflows/*.workflow.json`.
 
-**Как читать:** в блоке сверху роль, снизу (курсивом) — имя workflow в UI. Серый цвет подписей GitHub Mermaid не рендерит — только перенос через `<br/>`. Цветные блоки — реальные ноды: **оранжевый = LLM**, **зелёный = RAG/memory**, **синий = FastAPI / tool-ноды**.
+**Как читать:** короткие названия — роли/сервисы. Цвет: **оранжевый = LLM**, **зелёный = RAG/memory**, **синий = FastAPI / tools**. Имена workflow в UI — в `n8n/import-manifest.json`.
 
 ```mermaid
 flowchart TB
@@ -29,47 +29,47 @@ flowchart TB
   classDef data fill:#f9fafb,stroke:#9ca3af,color:#374151
   classDef opt fill:#f3f4f6,stroke:#d1d5db,color:#6b7280
 
-  User["Инженер<br/><i>задача + Excel / .data / .inc / .dev / CPS3</i>"]:::entry
+  User[Инженер]:::entry
 
   subgraph HITL[" "]
     direction LR
-    Entry["Entry<br/><i>MAS Entry</i>"]:::entry
-    Gate["Human Gate<br/><i>MAS Human Gate</i>"]:::entry
-    Health["Health Check<br/><i>MAS Deployment Health Check</i>"]:::entry
+    Entry[Entry]:::entry
+    Gate[Human Gate]:::entry
+    Health[Health Check]:::entry
   end
 
-  Orch["Orchestrator<br/><i>Orchestrator — Engineering MAS</i>"]:::box
-  OrchLLM["LLM<br/>Planner Chat Model — configure in UI<br/>Verifier Chat Model — separate credential"]:::llm
-  OrchRAG["RAG gate<br/>Prepare governed SCHEDULE RAG request<br/>Call SCHEDULE Hybrid Retrieval<br/>Attach / gate SCHEDULE RAG evidence"]:::rag
-  TaskDT[("engineering_orchestrator_tasks_v1")]:::data
+  Orch[Orchestrator]:::box
+  OrchLLM[LLM]:::llm
+  OrchRAG[RAG gate]:::rag
+  TaskDT[(tasks)]:::data
 
-  Trace["Trace Writer<br/><i>Writer — MAS Trace</i>"]:::box
-  TraceDT[("mas_trace_events_v1")]:::data
+  Trace[Trace Writer]:::box
+  TraceDT[(trace events)]:::data
 
-  subgraph EXCEL["Excel subsystem"]
+  subgraph EXCEL[Excel subsystem]
     direction TB
-    ExcelAdapt["Excel Adapter<br/><i>Adapter — Excel Extraction</i>"]:::box
-    ExcelAgent["Excel Extractor<br/><i>Agent — Excel Extractor</i>"]:::box
-    ExcelLLM["LLM<br/>OpenAI Chat Model — gpt-4.1-nano"]:::llm
-    ExcelRAG["RAG / memory<br/>PGVector operating context<br/>OpenAI Embeddings — text-embedding-3-small<br/>Postgres Chat Memory — session scoped"]:::rag
-    ExcelTools["Excel tool nodes → excel-agent-tools /api/v1<br/><i>workbook_introspect — метаданные workbook и листов<br/>sheet_preview — небольшой preview диапазона листа<br/>detect_tables — поиск таблиц на грязных листах<br/>describe_table — колонки, размер, sample<br/>list_column_values — уникальные значения колонки<br/>query_table — фильтры и проекция без полной загрузки Excel в LLM<br/>save_agent_plan — сохранить план/маппинг/фильтры</i>"]:::svc
-    ExcelSvc["excel-agent-tools<br/><i>FastAPI: workbook-сессия, табличные чтения/фильтры, validation/export</i>"]:::svc
-    ExcelGuide["Excel guide ingestion<br/><i>Ingestion — Excel Agent Knowledge</i>"]:::opt
+    ExcelAdapt[Excel Adapter]:::box
+    ExcelAgent[Excel Extractor]:::box
+    ExcelLLM[LLM]:::llm
+    ExcelRAG[RAG / memory]:::rag
+    ExcelTools[Excel tools]:::svc
+    ExcelSvc[excel-agent-tools]:::svc
+    ExcelGuide[Excel guide ingestion]:::opt
     ExcelAdapt --> ExcelAgent
     ExcelAgent --> ExcelLLM
     ExcelAgent --> ExcelRAG
     ExcelAgent --> ExcelTools --> ExcelSvc
   end
 
-  subgraph SCHED["SCHEDULE subsystem"]
+  subgraph SCHED[SCHEDULE subsystem]
     direction TB
-    SIngest["Knowledge Ingestion<br/><i>SCHEDULE — Knowledge Ingestion</i>"]:::box
-    SRetr["Knowledge Retrieval<br/><i>SCHEDULE — Knowledge Retrieval</i>"]:::box
-    SBuilder["Builder<br/><i>SCHEDULE — Builder</i>"]:::box
-    SIngestRAG["RAG write<br/>PGVector — insert approved SCHEDULE knowledge<br/>SCHEDULE Embeddings<br/>PostgreSQL catalogue upserts"]:::rag
-    SRetrRAG["RAG read<br/>PostgreSQL lexical / exact / tags<br/>PGVector semantic candidates<br/>full parent knowledge + schema catalogue"]:::rag
-    SBuilderLLM["LLM<br/>SCHEDULE Planner Chat Model — configure in UI<br/>SCHEDULE Builder Chat Model — configure in UI"]:::llm
-    SBuilderCode["Code stages<br/>intake → baseline → plan → render → merge → validate → verify"]:::box
+    SIngest[Knowledge Ingestion]:::box
+    SRetr[Knowledge Retrieval]:::box
+    SBuilder[Builder]:::box
+    SIngestRAG[RAG write]:::rag
+    SRetrRAG[RAG read]:::rag
+    SBuilderLLM[LLM]:::llm
+    SBuilderCode[Code stages]:::box
     SIngest --> SIngestRAG
     SRetr --> SRetrRAG
     SBuilder --> SBuilderLLM
@@ -77,14 +77,14 @@ flowchart TB
     SRetr --> SBuilder
   end
 
-  subgraph CALC["Calculation subsystem"]
+  subgraph CALC[Calculation subsystem]
     direction TB
-    CalcAdapt["Calculation Adapter<br/><i>Adapter — Calculation (Math Service)</i>"]:::box
-    MathSvc["fastapi-math-service /api/v1/math<br/><i>NumPy batch: DEV + CPS3/ZMAP → intersection_md/x/y/z</i>"]:::svc
+    CalcAdapt[Calculation Adapter]:::box
+    MathSvc[fastapi-math-service]:::svc
     CalcAdapt --> MathSvc
   end
 
-  Pg[("PostgreSQL + PGVector<br/>memory, embeddings, SCHEDULE knowledge/schema catalogue")]:::data
+  Pg[(PostgreSQL + PGVector)]:::data
 
   User --> Entry
   Entry --> Orch

@@ -161,7 +161,7 @@
         "options": {
           "batchSize": 128,
           "stripNewLines": true,
-          "timeout": 180,
+          "timeout": -1,
           "encodingFormat": "float"
         }
       },
@@ -180,7 +180,7 @@
         }
       },
       "notesInFlow": true,
-      "notes": "Placeholder only. In the UI replace this sub-node with the corporate embedding integration/model, then attach the SAME model and embedding dimensions to core → “PGVector operating context”. The 180-second timeout is a conservative ingestion limit; do not run with an unconfigured placeholder."
+      "notes": "Attach OpenAI / corporate embedding credential. Use the SAME model on core → “PGVector operating context”. Timeout must be -1 (or milliseconds, e.g. 180000): n8n passes this value straight to the OpenAI client as ms, not seconds."
     },
     {
       "parameters": {
