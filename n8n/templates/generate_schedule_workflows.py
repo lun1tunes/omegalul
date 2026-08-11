@@ -178,6 +178,13 @@ def build_all():
  # Runtime SCHEDULE delivery is intentionally three workflows plus the shared
  # MAS Trace writer. Diagnostic one-node mirrors of Builder stages are not
  # emitted: regenerate must not resurrect dead import surfaces.
+ #
+ # Hand-authored HITL / deploy forms are NOT generated here and must stay as
+ # committed JSON under n8n/workflows/ (imported via import-manifest):
+ #   mvp-entry-form.workflow.json
+ #   mas-human-gate-form.workflow.json
+ #   mas-deployment-health-check.workflow.json
+ # Clean import reads those files directly; it does not run this generator.
  d={}
  d['tnavigator-schedule-knowledge-ingestion.workflow.json']=build_ingestion(node=node,note=note,code=code,trigger=trigger,ifnode=ifnode,connect=connect,workflow=workflow)
  d['tnavigator-schedule-hybrid-retrieval.workflow.json']=build_retrieval(node=node,note=note,code=code,trigger=trigger,ifnode=ifnode,connect=connect,workflow=workflow)

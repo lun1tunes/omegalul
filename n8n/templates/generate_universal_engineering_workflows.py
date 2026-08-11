@@ -1231,6 +1231,10 @@ def build_schedule_builder() -> dict:
 
 
 def main() -> None:
+    # Regenerates only the Python-owned engineering/SCHEDULE Builder surfaces.
+    # HITL Entry / Human Gate / Deployment Health Check remain hand-authored
+    # JSON in n8n/workflows/ and are imported via import-manifest (not via
+    # this generator). Do not add them here — Form UX drifts easily under codegen.
     WORKFLOWS.mkdir(parents=True, exist_ok=True)
     outputs = {
         WORKFLOWS / "universal-engineering-orchestrator.workflow.json": build_orchestrator(),

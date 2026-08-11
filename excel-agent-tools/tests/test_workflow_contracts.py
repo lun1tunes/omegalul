@@ -307,6 +307,33 @@ def test_form_adapter_uses_real_trigger_and_real_form_page() -> None:
     assert by_type["n8n-nodes-base.executeWorkflow"]["typeVersion"] == 1.3
 
 
+def test_hitl_and_health_forms_are_hand_authored_not_generator_emitted() -> None:
+    """Clean import uses committed JSON; generators intentionally do not emit forms."""
+    import re
+
+    hand_authored = MVP_ENTRY_WORKFLOWS
+    for filename in sorted(hand_authored):
+        assert (WORKFLOWS / filename).is_file(), filename
+
+    schedule_source = (TEMPLATES / "generate_schedule_workflows.py").read_text(encoding="utf-8")
+    schedule_emitted = set(re.findall(r"d\['([^']+\.workflow\.json)'\]", schedule_source))
+    schedule_emitted |= set(re.findall(r'd\["([^"]+\.workflow\.json)"\]', schedule_source))
+    assert hand_authored.isdisjoint(schedule_emitted)
+
+    universal_source = (TEMPLATES / "generate_universal_engineering_workflows.py").read_text(encoding="utf-8")
+    universal_emitted = set(re.findall(r'WORKFLOWS / "([^"]+\.workflow\.json)"', universal_source))
+    universal_emitted |= set(re.findall(r"WORKFLOWS / '([^']+\.workflow\.json)'", universal_source))
+    assert hand_authored.isdisjoint(universal_emitted)
+
+    for rel in (
+        "workflows/mvp-entry-form.workflow.json",
+        "workflows/mas-human-gate-form.workflow.json",
+        "workflows/mas-deployment-health-check.workflow.json",
+    ):
+        assert rel in load_json(IMPORT_MANIFEST)["full_clean_import_set"]
+        assert rel in load_json(IMPORT_MANIFEST)["runtime_import_order"]
+
+
 def test_mas_entry_and_human_gate_forms_are_native_hitl_ux() -> None:
     """Entry + Human Gate use only portable 2.30.8 Form nodes and auto-bind CAS."""
     entry = load_json(WORKFLOWS / "mvp-entry-form.workflow.json")
