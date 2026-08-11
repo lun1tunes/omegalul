@@ -445,7 +445,7 @@ def build_schedule_pipeline(*, node, note, code, trigger, ifnode, connect, workf
     connect(connections, "SCHEDULE verifier passed?", "Build release-ready specialist result", idx=0)
     connect(connections, "SCHEDULE verifier passed?", "Build SCHEDULE pipeline gate result", idx=1)
     return workflow(
-        "tNavigator SCHEDULE Builder — governed CREATE/REVISE pipeline",
+        "SCHEDULE — Builder",
         "Visible intake, lossless catalogue decode, pre-change state replay, targeted baseline retrieval, plan, typed IR, deterministic render, merge, candidate validation and independent review. Durable state, Excel and release remain in the Orchestrator.",
         nodes,
         connections,

@@ -1,6 +1,6 @@
 {
   "id": "1NPVfPP868n5hw7D",
-  "name": "Excel Extractor Agent — OpenAI nano + FastAPI tools",
+  "name": "Agent — Excel Extractor",
   "description": "Production Excel extractor. Three entry points normalize to one OpenAI gpt-4.1-nano AI Agent with PostgreSQL session memory, PGVector static operating context, and one constrained FastAPI tool node per Excel tool. Files remain in FastAPI; only compact tool results enter the model.",
   "nodes": [
     {
@@ -2489,7 +2489,7 @@
   },
   "nodeGroups": [],
   "pinData": {},
-  "versionId": "29573aa2-3eb0-411b-a4e2-abb761484221",
+  "versionId": "aadf0e98-cf84-46fe-938d-fa5e06ad236e",
   "sourceWorkflowId": null,
   "versionMetadata": {
     "name": null,

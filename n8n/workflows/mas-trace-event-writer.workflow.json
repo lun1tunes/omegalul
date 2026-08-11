@@ -1,6 +1,6 @@
 {
   "id": "2afa0adc-4e64-5b2e-b08c-9ac3f692ff57",
-  "name": "MAS Trace Event Writer — redacted execution ledger",
+  "name": "Writer — MAS Trace",
   "description": "Portable durable trace writer.",
   "nodes": [
     {
@@ -140,7 +140,7 @@
     "saveManualExecutions": true,
     "callerPolicy": "workflowsFromSameOwner"
   },
-  "versionId": "f5803f69-b97b-5dca-a86f-58b38729948c",
+  "versionId": "376875c4-7e5d-476b-ab54-6c0a0aade068",
   "meta": {
     "templateCredsSetupCompleted": false,
     "targetN8nVersion": "2.30.8",

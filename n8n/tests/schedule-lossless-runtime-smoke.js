@@ -38,12 +38,12 @@ function findingCodes(result) {
 
 async function main() {
   const analyzeCode = codeFrom(
-    'tnavigator-schedule-baseline-analyzer.workflow.json',
-    'Analyze baseline SCHEDULE',
+    'tnavigator-schedule-builder.workflow.json',
+    'Analyze lossless baseline inventory',
   );
   const mergeCode = codeFrom(
-    'tnavigator-schedule-merge.workflow.json',
-    'Merge SCHEDULE without mutation',
+    'tnavigator-schedule-builder.workflow.json',
+    'Merge SCHEDULE draft deterministically',
   );
 
   const rootText = [

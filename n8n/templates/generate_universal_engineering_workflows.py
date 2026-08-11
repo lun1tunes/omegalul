@@ -804,7 +804,7 @@ def build_orchestrator() -> dict:
     nodes: list[dict] = []
     c: dict = {}
     nodes += [
-        note("README — setup", (-1260, -900), "## UI-only setup (n8n 2.30.8)\n1. Create task-state and trace Data Tables using `n8n/README.md`.\n2. Select them in every matching Data Table node.\n3. Assign Planner/Verifier credentials.\n4. Bind Excel adapter/agent, SCHEDULE Retrieval/Builder and MAS Trace Writer.\n5. Load expert keyword instructions/schema JSON into `schedule_mvp`.\n6. Test start → HITL → delegation → validation → verification → inline .INC.\n\nSCHEDULE input and result remain bounded text inside n8n. The control-plane uses UI credentials/bindings and Data Tables; no global-variable expressions, shell or server filesystem is used.", 500, 440, 5),
+        note("README — setup", (-1260, -900), "## UI-only setup (n8n 2.30.8)\n1. Create task-state and trace Data Tables using `README.md` in the repository root.\n2. Select them in every matching Data Table node.\n3. Assign Planner/Verifier credentials.\n4. Bind Excel adapter/agent, SCHEDULE Retrieval/Builder and MAS Trace Writer.\n5. Load expert keyword instructions/schema JSON into `schedule_mvp`.\n6. Test start → HITL → delegation → validation → verification → inline .INC.\n\nSCHEDULE input and result remain bounded text inside n8n. The control-plane uses UI credentials/bindings and Data Tables; no global-variable expressions, shell or server filesystem is used.", 500, 440, 5),
         note("Architecture", (-720, -900), "## Serious MVP control plane\n- Data Table is authoritative durable state.\n- LLM plans; deterministic nodes own transitions.\n- Optimistic concurrency is `task_id + version`.\n- Human gates resume via a fresh invocation.\n- Model selects logical `specialist_id` only.\n- Independent Verifier is separated from Planner and Specialist.\n- One bounded baseline copy may live in task state; Planner/trace receive metadata only.\n- SCHEDULE result is returned as bounded inline `.INC` text.", 470, 360, 4),
         note("Extension point", (440, -900), "## Add a specialist safely\n1. Clone the universal specialist template.\n2. Preserve `specialist_packet` / `specialist_result` v1.0.\n3. Add logical capability metadata to Planner catalogue.\n4. Bind its workflow only in a static `Call … Specialist` node and enable its deterministic route in `Resolve allowlisted specialist`.\n5. Add contract, failure, HITL and verification tests.\n\nNever put a workflow ID in an LLM prompt or result.", 460, 340, 3),
         node("Authenticated engineering webhook", "n8n-nodes-base.webhook", 2.1, (-1260, -400), {"httpMethod": "POST", "path": "engineering-orchestrator", "authentication": "headerAuth", "responseMode": "lastNode", "options": {}}, credentials={"httpHeaderAuth": {"id": "REPLACE_IN_UI", "name": "REPLACE: engineering orchestrator inbound key"}}),
@@ -857,14 +857,14 @@ def build_orchestrator() -> dict:
         if_node("Delegation allowlisted?", (1940, -540), "={{ $json.delegation_allowed }}", True, "boolean"),
         code("Prepare specialist invocation context", (2160, -660), PREPARE_DELEGATION),
         node("Configured specialist router", "n8n-nodes-base.switch", 3.4, (2380, -660), {"mode": "expression", "numberOutputs": 5, "output": "={{ $json.specialist_route }}"}),
-        node("Call Excel Extraction Specialist Adapter", "n8n-nodes-base.executeWorkflow", 1.3, (2600, -940), {"source": "database", "workflowId": {"__rl": True, "value": "REPLACE_EXCEL_ADAPTER_IN_UI", "mode": "list", "cachedResultName": "Excel Extraction Specialist Adapter"}, "workflowInputs": {"mappingMode": "defineBelow", "value": {"specialist_packet": "={{ $json.specialist_packet }}", "previous_specialist_result": "={{ $json.previous_specialist_result }}", "latest_human_response": "={{ $json.latest_human_response }}"}, "matchingColumns": [], "schema": [], "attemptToConvertTypes": False, "convertFieldsToString": False}, "mode": "once", "options": {"waitForSubWorkflow": True}}, onError="continueRegularOutput"),
+        node("Call Excel Extraction Specialist Adapter", "n8n-nodes-base.executeWorkflow", 1.3, (2600, -940), {"source": "database", "workflowId": {"__rl": True, "value": "REPLACE_EXCEL_ADAPTER_IN_UI", "mode": "list", "cachedResultName": "Adapter — Excel Extraction"}, "workflowInputs": {"mappingMode": "defineBelow", "value": {"specialist_packet": "={{ $json.specialist_packet }}", "previous_specialist_result": "={{ $json.previous_specialist_result }}", "latest_human_response": "={{ $json.latest_human_response }}"}, "matchingColumns": [], "schema": [], "attemptToConvertTypes": False, "convertFieldsToString": False}, "mode": "once", "options": {"waitForSubWorkflow": True}}, onError="continueRegularOutput"),
         code("Prepare governed SCHEDULE RAG request", (2600, -800), PREPARE_SCHEDULE_RAG),
-        node("Call SCHEDULE Hybrid Retrieval", "n8n-nodes-base.executeWorkflow", 1.3, (2820, -800), {"source": "database", "workflowId": {"__rl": True, "value": "REPLACE_SCHEDULE_RAG_RETRIEVAL_IN_UI", "mode": "list", "cachedResultName": "tNavigator SCHEDULE Hybrid Retrieval — executable RRF runtime"}, "workflowInputs": {"mappingMode": "defineBelow", "value": {"schedule_retrieval_request": "={{ $json.schedule_retrieval_request }}"}, "matchingColumns": [], "schema": [], "attemptToConvertTypes": False, "convertFieldsToString": False}, "mode": "once", "options": {"waitForSubWorkflow": True}}, onError="continueRegularOutput"),
+        node("Call SCHEDULE Hybrid Retrieval", "n8n-nodes-base.executeWorkflow", 1.3, (2820, -800), {"source": "database", "workflowId": {"__rl": True, "value": "REPLACE_SCHEDULE_RAG_RETRIEVAL_IN_UI", "mode": "list", "cachedResultName": "SCHEDULE — Knowledge Retrieval"}, "workflowInputs": {"mappingMode": "defineBelow", "value": {"schedule_retrieval_request": "={{ $json.schedule_retrieval_request }}"}, "matchingColumns": [], "schema": [], "attemptToConvertTypes": False, "convertFieldsToString": False}, "mode": "once", "options": {"waitForSubWorkflow": True}}, onError="continueRegularOutput"),
         code("Attach governed SCHEDULE RAG evidence", (3040, -800), ATTACH_SCHEDULE_RAG),
         if_node("SCHEDULE RAG evidence ready?", (3260, -800), "={{ $json.schedule_rag_ready }}", True, "boolean"),
-        node("Call SCHEDULE Builder Specialist", "n8n-nodes-base.executeWorkflow", 1.3, (3480, -860), {"source": "database", "workflowId": {"__rl": True, "value": "REPLACE_SCHEDULE_BUILDER_IN_UI", "mode": "list", "cachedResultName": "tNavigator SCHEDULE Builder — governed CREATE/REVISE pipeline"}, "workflowInputs": {"mappingMode": "defineBelow", "value": {"specialist_packet": "={{ $json.specialist_packet }}", "previous_specialist_result": "={{ $json.previous_specialist_result }}", "latest_human_response": "={{ $json.latest_human_response }}"}, "matchingColumns": [], "schema": [], "attemptToConvertTypes": False, "convertFieldsToString": False}, "mode": "once", "options": {"waitForSubWorkflow": True}}, onError="continueRegularOutput"),
+        node("Call SCHEDULE Builder Specialist", "n8n-nodes-base.executeWorkflow", 1.3, (3480, -860), {"source": "database", "workflowId": {"__rl": True, "value": "REPLACE_SCHEDULE_BUILDER_IN_UI", "mode": "list", "cachedResultName": "SCHEDULE — Builder"}, "workflowInputs": {"mappingMode": "defineBelow", "value": {"specialist_packet": "={{ $json.specialist_packet }}", "previous_specialist_result": "={{ $json.previous_specialist_result }}", "latest_human_response": "={{ $json.latest_human_response }}"}, "matchingColumns": [], "schema": [], "attemptToConvertTypes": False, "convertFieldsToString": False}, "mode": "once", "options": {"waitForSubWorkflow": True}}, onError="continueRegularOutput"),
         code("Build SCHEDULE RAG evidence gate", (3480, -720), BUILD_SCHEDULE_RAG_GATE),
-        node("Call Calculation Specialist", "n8n-nodes-base.executeWorkflow", 1.3, (2600, -660), {"source": "database", "workflowId": {"__rl": True, "value": "REPLACE_CALCULATION_ADAPTER_IN_UI", "mode": "list", "cachedResultName": "Engineering Calculation Specialist Adapter — Math Service"}, "workflowInputs": {"mappingMode": "defineBelow", "value": {"specialist_packet": "={{ $json.specialist_packet }}"}, "matchingColumns": [], "schema": [], "attemptToConvertTypes": False, "convertFieldsToString": False}, "mode": "once", "options": {"waitForSubWorkflow": True}}, onError="continueRegularOutput"),
+        node("Call Calculation Specialist", "n8n-nodes-base.executeWorkflow", 1.3, (2600, -660), {"source": "database", "workflowId": {"__rl": True, "value": "REPLACE_CALCULATION_ADAPTER_IN_UI", "mode": "list", "cachedResultName": "Adapter — Calculation (Math Service)"}, "workflowInputs": {"mappingMode": "defineBelow", "value": {"specialist_packet": "={{ $json.specialist_packet }}"}, "matchingColumns": [], "schema": [], "attemptToConvertTypes": False, "convertFieldsToString": False}, "mode": "once", "options": {"waitForSubWorkflow": True}}, onError="continueRegularOutput"),
         node("Call Data Specialist", "n8n-nodes-base.executeWorkflow", 1.3, (2600, -520), {"source": "database", "workflowId": {"__rl": True, "value": "REPLACE_DATA_SPECIALIST_IN_UI", "mode": "list", "cachedResultName": "Engineering Data Specialist"}, "workflowInputs": {"mappingMode": "defineBelow", "value": {"specialist_packet": "={{ $json.specialist_packet }}"}, "matchingColumns": [], "schema": [], "attemptToConvertTypes": False, "convertFieldsToString": False}, "mode": "once", "options": {"waitForSubWorkflow": True}}, onError="continueRegularOutput"),
         node("Call Document Specialist", "n8n-nodes-base.executeWorkflow", 1.3, (2600, -380), {"source": "database", "workflowId": {"__rl": True, "value": "REPLACE_DOCUMENT_SPECIALIST_IN_UI", "mode": "list", "cachedResultName": "Engineering Document Specialist"}, "workflowInputs": {"mappingMode": "defineBelow", "value": {"specialist_packet": "={{ $json.specialist_packet }}"}, "matchingColumns": [], "schema": [], "attemptToConvertTypes": False, "convertFieldsToString": False}, "mode": "once", "options": {"waitForSubWorkflow": True}}, onError="continueRegularOutput"),
         code("Normalize specialist result", (2820, -660), NORMALIZE_SPECIALIST),
@@ -896,7 +896,7 @@ def build_orchestrator() -> dict:
         confirm_cas("Confirm routing gate CAS", (2600, -380), "Build allowlist configuration gate"),
         code("Build invalid invocation response", (-120, 260), "return [{json:{...$json,status:'conflict',phase:'validation',message:$json.input_error||'Invalid action or missing task_id for a resume action.'}}];"),
         code("Prepare final MAS trace event", (3960, -80), PREPARE_FINAL_TRACE, executeOnce=True),
-        node("Call MAS Trace Event Writer", "n8n-nodes-base.executeWorkflow", 1.3, (4180, -80), {"source": "database", "workflowId": {"__rl": True, "value": "REPLACE_MAS_TRACE_WRITER_IN_UI", "mode": "list", "cachedResultName": "MAS Trace Event Writer — redacted execution ledger"}, "workflowInputs": {"mappingMode": "defineBelow", "value": {"mas_trace_event": "={{ $json.mas_trace_event }}", "mas_trace_events": "={{ $json.mas_trace_events }}", "passthrough": "={{ $json.passthrough }}"}, "matchingColumns": [], "schema": [], "attemptToConvertTypes": False, "convertFieldsToString": False}, "mode": "once", "options": {"waitForSubWorkflow": True}}, onError="continueRegularOutput"),
+        node("Call MAS Trace Event Writer", "n8n-nodes-base.executeWorkflow", 1.3, (4180, -80), {"source": "database", "workflowId": {"__rl": True, "value": "REPLACE_MAS_TRACE_WRITER_IN_UI", "mode": "list", "cachedResultName": "Writer — MAS Trace"}, "workflowInputs": {"mappingMode": "defineBelow", "value": {"mas_trace_event": "={{ $json.mas_trace_event }}", "mas_trace_events": "={{ $json.mas_trace_events }}", "passthrough": "={{ $json.passthrough }}"}, "matchingColumns": [], "schema": [], "attemptToConvertTypes": False, "convertFieldsToString": False}, "mode": "once", "options": {"waitForSubWorkflow": True}}, onError="continueRegularOutput"),
         code("Restore orchestrator state after trace", (4400, -80), RESTORE_AFTER_TRACE, executeOnce=True),
         code("Format orchestrator response", (4180, -200), FORMAT_RESPONSE, executeOnce=True),
     ]
@@ -1004,7 +1004,7 @@ def build_orchestrator() -> dict:
 
     return {
         "id": uid("universal-engineering-orchestrator"),
-        "name": "Universal Engineering Orchestrator — stateful HITL template",
+        "name": "Orchestrator — Engineering MAS",
         "nodes": nodes,
         "pinData": {},
         "connections": c,
@@ -1123,7 +1123,7 @@ def build_excel_adapter() -> dict:
         node("Receive Excel specialist packet", "n8n-nodes-base.executeWorkflowTrigger", 1.2, (-920, -80), {"inputSource": "jsonExample", "jsonExample": json.dumps({"specialist_packet": {"contract": "specialist_packet", "contract_version": "1.0", "task_id": "eng_example", "specialist_id": "excel_extraction_specialist", "attempt": 1, "objective": "Extract the requested governed table", "inputs": {}, "controls": {}, "acceptance_criteria": [], "artifact_refs": []}, "previous_specialist_result": {}, "latest_human_response": {}}, ensure_ascii=False)}),
         code("Prepare native Excel invocation", (-660, -80), PREPARE_EXCEL_ADAPTER),
         if_node("Native Excel invocation ready?", (-400, -80), "={{ $json.native_request_ready }}", True, "boolean"),
-        node("Call native Excel Extraction Agent", "n8n-nodes-base.executeWorkflow", 1.3, (-140, -200), {"source": "database", "workflowId": {"__rl": True, "value": "REPLACE_EXCEL_EXTRACTION_AGENT_IN_UI", "mode": "list", "cachedResultName": "Excel Extractor Agent — OpenAI nano + FastAPI tools"}, "mode": "once", "options": {"waitForSubWorkflow": True}}, onError="continueRegularOutput"),
+        node("Call native Excel Extraction Agent", "n8n-nodes-base.executeWorkflow", 1.3, (-140, -200), {"source": "database", "workflowId": {"__rl": True, "value": "REPLACE_EXCEL_EXTRACTION_AGENT_IN_UI", "mode": "list", "cachedResultName": "Agent — Excel Extractor"}, "mode": "once", "options": {"waitForSubWorkflow": True}}, onError="continueRegularOutput"),
         code("Adapt native Excel result", (120, -200), ADAPT_EXCEL_RESULT),
         code("Build Excel adapter input gate", (-140, 80), BUILD_EXCEL_ADAPTER_GATE),
     ]
@@ -1135,7 +1135,7 @@ def build_excel_adapter() -> dict:
     connect(c, "Call native Excel Extraction Agent", "Adapt native Excel result")
     return {
         "id": uid("excel-engineering-specialist-adapter"),
-        "name": "Excel Extraction Specialist Adapter — universal contract",
+        "name": "Adapter — Excel Extraction",
         "nodes": nodes,
         "pinData": {},
         "connections": c,
@@ -1203,7 +1203,7 @@ def build_specialist() -> dict:
     connect(c, "Engineering Specialist Agent", "Build universal specialist result")
     return {
         "id": uid("engineering-specialist-template"),
-        "name": "Engineering Specialist — universal workflow template",
+        "name": "Template — Engineering Specialist",
         "nodes": nodes,
         "pinData": {},
         "connections": c,
@@ -1224,7 +1224,7 @@ def build_schedule_builder() -> dict:
             "do not silently replace it with the generic specialist template."
         )
     workflow = json.loads(source.read_text(encoding="utf-8"))
-    if workflow.get("name") != "tNavigator SCHEDULE Builder — governed CREATE/REVISE pipeline":
+    if workflow.get("name") != "SCHEDULE — Builder":
         raise ValueError("Unexpected Schedule Builder source workflow")
     workflow.setdefault("id", uid("tnavigator-schedule-builder"))
     return workflow

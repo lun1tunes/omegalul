@@ -368,35 +368,15 @@ flowchart TB
 
   subgraph SchedSys["SCHEDULE subsystem"]
     direction TB
-    Intake["SCHEDULE Intake<br/><small>tnavigator-schedule-intake.workflow.json</small>"]
     KnowIn["Knowledge Ingestion<br/><small>tnavigator-schedule-knowledge-ingestion.workflow.json</small>"]
     RAG["Hybrid Retrieval<br/><small>tnavigator-schedule-hybrid-retrieval.workflow.json</small>"]
-    SPlanner["SCHEDULE Planner<br/><small>tnavigator-schedule-planner.workflow.json</small>"]
-    Baseline["Baseline Analyzer<br/><small>tnavigator-schedule-baseline-analyzer.workflow.json</small>"]
-    Decode["Baseline Decoder<br/><small>tnavigator-schedule-baseline-decoder.workflow.json</small>"]
-    BSummary["Baseline Planning Summary<br/><small>baseline-query runtime</small>"]
-    BQuery["Targeted Baseline Query<br/><small>tnavigator-schedule-baseline-query.workflow.json</small>"]
-    SAgent["Schedule Builder<br/><small>tnavigator-schedule-builder.workflow.json</small>"]
-    Render["Renderer<br/><small>tnavigator-schedule-renderer.workflow.json</small>"]
-    Merge["Merge<br/><small>tnavigator-schedule-merge.workflow.json</small>"]
-    Valid["Validator<br/><small>tnavigator-schedule-validator.workflow.json</small>"]
-    SVer["Verifier<br/><small>tnavigator-schedule-verifier.workflow.json</small>"]
-    Rel["Release<br/><small>tnavigator-schedule-release.workflow.json</small>"]
-    SAdapt --> Intake
-    Intake --> Baseline
-    Baseline --> Decode
-    Decode -->|"PRE_CHANGE_BOUNDARY"| BSummary
-    BSummary --> SPlanner
-    SPlanner -->|"approved scope"| BQuery
-    BQuery -->|"mutation-safe records"| SAgent
+    SAgent["Schedule Builder pipeline<br/><small>tnavigator-schedule-builder.workflow.json</small><br/><small>intake → baseline → decode → plan → query → render → merge → validate → verify</small>"]
+    Rel["Accountable release gate<br/><small>universal-engineering-orchestrator<br/>Apply action and version guard</small>"]
+    SAdapt --> SAgent
     RAdapt --> RAG
     KnowIn -.-> RAG
     RAG -->|"versioned cited evidence result"| S
-    SAgent --> Render
-    Render --> Merge
-    Merge --> Valid
-    Valid --> SVer
-    SVer --> Rel
+    SAgent --> Rel
   end
 
   Orch -.->|"mas_trace_event"| Trace["Trace Event Writer<br/><small>mas-trace-event-writer.workflow.json</small>"]
@@ -929,7 +909,7 @@ schedule_semantic_snapshot/v1
 
 Для `CREATE` replay начинается с пустого состояния либо optional `BASE_MODEL` snapshot реестра сущностей. Для `REVISE` реализованы две фазы на одном semantic runtime:
 
-1. `BASELINE_PREFIX`: `tnavigator-schedule-baseline-decoder.workflow.json` раскрывает уже проверенный INCLUDE graph в execution order, токенизирует quoted/default/repeat/date records, выбирает ровно один schema variant и делит typed events по явной границе (`effective_at < change_effective_from` входит в prefix; событие на границе — в suffix). Replay доверяет только decoder events с node/raw/record hashes и provenance, не требует renderer output и создаёт `PRE_CHANGE_BOUNDARY`.
+1. `BASELINE_PREFIX`: Code-узлы `Analyze lossless baseline inventory` / `Decode typed baseline records` внутри `tnavigator-schedule-builder.workflow.json` раскрывают уже проверенный INCLUDE graph в execution order, токенизируют quoted/default/repeat/date records, выбирают ровно один schema variant и делят typed events по явной границе (`effective_at < change_effective_from` входит в prefix; событие на границе — в suffix). Replay доверяет только decoder events с node/raw/record hashes и provenance, не требует renderer output и создаёт `PRE_CHANGE_BOUNDARY`.
 2. `CANDIDATE`: Builder/renderer events replay-ятся от этого snapshot; one-to-one matching с `rendered_records` остаётся обязательным. Candidate event раньше `change_effective_from`, stale catalogue/package, missing boundary или future-state snapshot блокируются.
 
 `boundary_hash` связывает `prefix_hash`, hash исходного `BASE_MODEL` snapshot, `catalogue_hash`, baseline `package_hash`, `model_start_date` и запрошенный `change_effective_from`; `replay_through` хранит фактическую дату последнего prefix state, а не подменяет сам cutover. Candidate Validator получает только сгенерированный snapshot из текущего Builder execution: произвольный `semantic_baseline_snapshot` во входном request не используется. Равенство boundary относится к suffix, поэтому изменения ровно на cutover не теряются и не попадают в «состояние из будущего».
@@ -1149,22 +1129,14 @@ RAG дает evidence; renderer использует machine-readable schema cat
 
 ### Runtime slice v1 — importable foundation
 
-1. `tnavigator-schedule-intake.workflow.json` — единый `schedule_build_request/v1` gate для identity/version/idempotency/policy, CREATE/REVISE/AUTO, METRIC/time boundaries, scope, acceptance criteria, expert citations/catalogue и фиксированных thresholds.
-2. `tnavigator-schedule-knowledge-ingestion.workflow.json` — Form/sub-workflow загрузка expert-authored `keyword_instruction` и `worked_example` в PostgreSQL/PGVector.
-3. `tnavigator-schedule-hybrid-retrieval.workflow.json` — PostgreSQL exact/lexical, PGVector semantic, tags, deterministic RRF, access/current-revision filters и full-parent hydration.
-4. `tnavigator-schedule-baseline-analyzer.workflow.json` — lossless lexical CST с raw text/offsets/hashes, opaque unknown nodes и INCLUDE checks.
-5. `tnavigator-schedule-baseline-decoder.workflow.json` — catalogue-driven record decode, exact variant selection, prefix/suffix boundary split и provenance binding.
-6. `tnavigator-schedule-baseline-query.workflow.json` — planning summary и complete targeted mutation-safe slice.
-7. `tnavigator-schedule-planner.workflow.json` — bounded AI planner, `decision_record/v1` и deterministic readiness gates.
-8. `tnavigator-schedule-builder.workflow.json` — concrete CREATE/REVISE specialist, `PRE_CHANGE_BOUNDARY`, typed IR, `evidence_gap`, no direct Excel call и inline `.INC` result.
-9. `tnavigator-schedule-renderer.workflow.json` — generic `schedule_schema_catalogue/v1` validation и deterministic typed-IR → record rendering.
-10. `tnavigator-schedule-merge.workflow.json` — deterministic KEEP/MODIFY/ADD/REMOVE, explicit removal approval и zero-change byte-identity invariant.
-11. `tnavigator-schedule-validator.workflow.json` — fail-closed state replay для entities/references/prerequisites/hierarchy/cutover/state/lifecycle/numeric/interval/wildcard rules.
-12. `tnavigator-schedule-verifier.workflow.json` — independent read-only hard-blocker/score gate.
-13. `tnavigator-schedule-release.workflow.json` — accountable actor + matching gate + bounded inline `schedule.inc` result.
-14. `mas-trace-event-writer.workflow.json` — redacted `mas_trace_event/v1` и sanitized tool metadata в выбранную через UI Data Table.
-15. Existing Excel Agent/adapter — upstream table normalization; вызываются только Orchestrator.
-16. Universal Orchestrator — durable CAS state, Excel→RAG→Builder handoff, RAG abstention/HITL, evidence-gap retry, direct Builder→Verifier route и static trace-writer binding.
+1. `tnavigator-schedule-knowledge-ingestion.workflow.json` — Form/sub-workflow загрузка expert-authored `keyword_instruction` и `worked_example` в PostgreSQL/PGVector.
+2. `tnavigator-schedule-hybrid-retrieval.workflow.json` — PostgreSQL exact/lexical, PGVector semantic, tags, deterministic RRF, access/current-revision filters и full-parent hydration.
+3. `tnavigator-schedule-builder.workflow.json` — единственный SCHEDULE specialist: intake → lossless baseline → catalogue decode → planning/targeted query → planner → typed IR → render → merge → validate → independent verifier; `evidence_gap`, no direct Excel call, inline `.INC` draft.
+4. `mas-trace-event-writer.workflow.json` — redacted `mas_trace_event/v1` и sanitized tool metadata в выбранную через UI Data Table.
+5. Existing Excel Agent/adapter — upstream table normalization; вызываются только Orchestrator.
+6. Universal Orchestrator — durable CAS state, Excel→RAG→Builder handoff, RAG abstention/HITL, evidence-gap retry, independent verification и accountable release gate (`Apply action and version guard`).
+
+Отдельные diagnostic workflow для intake/baseline/planner/renderer/merge/validator/verifier/release удалены из поставки: их алгоритмы остались Code-нодами Builder либо release-политикой Orchestrator.
 
 MVP готов к repository smoke, но итоговая приёмка всё равно требует target n8n `2.30.8` UI, реальных credentials/Data Tables/network и экспертных карточек для keywords конкретного рабочего сценария.
 
@@ -1270,7 +1242,7 @@ Entrypoints соответствуют роли workflow: user-facing Orchestrat
 
 CLI import не проверяет корпоративную сеть, credentials, PostgreSQL rights и реальный UI round-trip — UI/infrastructure smoke обязателен отдельно.
 
-**Последний полный repository gate на официальном n8n 2.30.8:** 121 runtime-сценарий; 18/18 FastAPI tests; 28/28 workflow contracts; 119/119 Code nodes compiled; clean import/export 22/22, активных после импорта — 0. Целевой UI всё равно требует ручного round-trip с реальными credentials, Data Tables и сетью.
+**Последний полный repository gate на официальном n8n 2.30.8:** 121 runtime-сценарий; pytest (`excel-agent-tools/tests`); generator emits only 4 SCHEDULE/trace JSON; native HITL forms + Deployment Health Check; UI runbook `docs/DEPLOY_N8N_UI.md`; clean import/export 16/16, активных после импорта — 0. Целевой UI всё равно требует ручного round-trip с реальными credentials, Data Tables и сетью.
 
 ## 12. Ревизия текущего репозитория
 

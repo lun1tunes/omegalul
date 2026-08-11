@@ -1,14 +1,8 @@
 # FastAPI Math Service (MVP)
 
-Минимальный HTTP-сервис геометрических расчётов MAS. Endpoint
-`trajectory-intersection` пакетно читает стандартные станции DEV в порядке
-`MD X Y Z`, преобразует ASCII CPS3/ZMAP grid в массивы NumPy, билинейно
-интерполирует поверхность и возвращает первое пересечение по MD для каждой траектории.
-Поверхность разбирается один раз на весь batch.
+Геометрический сервис MAS: batch intersection `.dev` × ASCII CPS3/ZMAP. Полная установка — корневой [`README.md`](../README.md); n8n Adapter — `calculation-specialist-adapter.workflow.json`.
 
-## Запуск в Windows CMD
-
-Нужен Python 3.11+:
+## Windows CMD
 
 ```bat
 cd fastapi-math-service
@@ -21,38 +15,11 @@ py -m venv .venv
 
 ## Endpoint
 
-`POST /api/v1/math/trajectory-intersection` принимает multipart-поля:
+`POST /api/v1/math/trajectory-intersection` (multipart):
 
-- `trajectory_files` — одно или несколько повторяющихся multipart-полей
-  с текстовыми `.dev`; в каждом минимум две станции `MD X Y Z`;
-- `surface_file` — ASCII CPS3 с обычными `FSNROW <rows> <columns>`,
-  `FSLIMI` и `->GRID` (вариант с отдельным `FSNCOL` тоже поддержан), либо
-  совместимый ZMAP `@GRID`.
+- `trajectory_files` — одно или несколько `.dev` (`MD X Y Z`, ≥2 станции);
+- `surface_file` — ASCII CPS3 (`FSNROW`/`FSLIMI`/`->GRID`) или совместимый ZMAP `@GRID`.
 
-Calculation Adapter n8n `2.30.8` отправляет до 256 реальных DEV за один вызов;
-зарезервированные им пустые слоты сервис автоматически игнорирует.
+Calculation Adapter n8n `2.30.8` шлёт до 256 DEV за вызов; пустые reserved slots сервис игнорирует. Ответ — первое пересечение по MD на каждый файл. CRS/единицы/datum/знак Z должны совпадать на входе; сервис координаты не пересчитывает.
 
-Ответ:
-
-```json
-{
-  "results": [
-    {
-      "filename": "W-1.dev",
-      "intersection_md": 2540.5,
-      "x": 100.0,
-      "y": 200.0,
-      "z": -2450.0
-    }
-  ]
-}
-```
-
-Возвращается первое пересечение по MD для каждого DEV. `filename` сохраняет
-исходное имя файла. Batch работает fail-fast: `404` с именем DEV означает отсутствие
-его пересечения в валидной области grid, `422` — ошибку входного формата. Траектории и
-поверхность должны использовать одинаковые CRS, единицы длины, вертикальный
-datum и знак Z; сервис намеренно не выполняет преобразование координат.
-
-Auth, credentials, sandbox и tNavigator-код отсутствуют по правилам локального
-MVP. Сервис выполняет только математику и возвращает JSON.
+Auth и tNavigator runner в MVP отсутствуют: только математика → JSON.

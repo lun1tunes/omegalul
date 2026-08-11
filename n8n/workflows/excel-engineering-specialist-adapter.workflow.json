@@ -1,6 +1,6 @@
 {
   "id": "ffccbaef-cab6-57ee-ab9f-edd345747f15",
-  "name": "Excel Extraction Specialist Adapter — universal contract",
+  "name": "Adapter — Excel Extraction",
   "nodes": [
     {
       "parameters": {
@@ -85,7 +85,7 @@
           "__rl": true,
           "value": "REPLACE_EXCEL_EXTRACTION_AGENT_IN_UI",
           "mode": "list",
-          "cachedResultName": "Excel Extractor Agent — OpenAI nano + FastAPI tools"
+          "cachedResultName": "Agent — Excel Extractor"
         },
         "mode": "once",
         "options": {
@@ -190,7 +190,7 @@
     "callerPolicy": "workflowsFromSameOwner",
     "errorWorkflow": ""
   },
-  "versionId": "9a6281dd-0e85-5bc9-a9cf-05bf478108d3",
+  "versionId": "03653815-b947-427a-bbcc-d5288d69502b",
   "meta": {
     "templateCredsSetupCompleted": false,
     "targetN8nVersion": "2.30.8",

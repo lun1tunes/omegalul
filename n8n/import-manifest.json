@@ -12,21 +12,13 @@
     "workflows/excel-extraction-form-adapter.workflow.json",
     "workflows/excel-mas-orchestrator.workflow.json",
     "workflows/excel-rag-ingestion.workflow.json",
+    "workflows/mas-deployment-health-check.workflow.json",
+    "workflows/mas-human-gate-form.workflow.json",
     "workflows/mas-trace-event-writer.workflow.json",
     "workflows/mvp-entry-form.workflow.json",
-    "workflows/tnavigator-schedule-baseline-analyzer.workflow.json",
-    "workflows/tnavigator-schedule-baseline-decoder.workflow.json",
-    "workflows/tnavigator-schedule-baseline-query.workflow.json",
     "workflows/tnavigator-schedule-builder.workflow.json",
     "workflows/tnavigator-schedule-hybrid-retrieval.workflow.json",
-    "workflows/tnavigator-schedule-intake.workflow.json",
     "workflows/tnavigator-schedule-knowledge-ingestion.workflow.json",
-    "workflows/tnavigator-schedule-merge.workflow.json",
-    "workflows/tnavigator-schedule-planner.workflow.json",
-    "workflows/tnavigator-schedule-release.workflow.json",
-    "workflows/tnavigator-schedule-renderer.workflow.json",
-    "workflows/tnavigator-schedule-validator.workflow.json",
-    "workflows/tnavigator-schedule-verifier.workflow.json",
     "workflows/universal-engineering-orchestrator.workflow.json"
   ],
   "runtime_import_order": [
@@ -38,7 +30,9 @@
     "workflows/tnavigator-schedule-builder.workflow.json",
     "workflows/mas-trace-event-writer.workflow.json",
     "workflows/universal-engineering-orchestrator.workflow.json",
-    "workflows/mvp-entry-form.workflow.json"
+    "workflows/mvp-entry-form.workflow.json",
+    "workflows/mas-human-gate-form.workflow.json",
+    "workflows/mas-deployment-health-check.workflow.json"
   ],
   "optional_or_non_runtime": [
     {
@@ -107,48 +101,98 @@
   ],
   "mandatory_execute_workflow_bindings": [
     {
-      "owner": "Universal Engineering Orchestrator — stateful HITL template",
+      "owner": "Orchestrator — Engineering MAS",
       "node": "Call Excel Extraction Specialist Adapter",
-      "target": "Excel Extraction Specialist Adapter — universal contract",
+      "target": "Adapter — Excel Extraction",
       "placeholder": "REPLACE_EXCEL_ADAPTER_IN_UI"
     },
     {
-      "owner": "Universal Engineering Orchestrator — stateful HITL template",
+      "owner": "Orchestrator — Engineering MAS",
       "node": "Call SCHEDULE Hybrid Retrieval",
-      "target": "tNavigator SCHEDULE Hybrid Retrieval — executable RRF runtime",
+      "target": "SCHEDULE — Knowledge Retrieval",
       "placeholder": "REPLACE_SCHEDULE_RAG_RETRIEVAL_IN_UI"
     },
     {
-      "owner": "Universal Engineering Orchestrator — stateful HITL template",
+      "owner": "Orchestrator — Engineering MAS",
       "node": "Call SCHEDULE Builder Specialist",
-      "target": "tNavigator SCHEDULE Builder — governed CREATE/REVISE pipeline",
+      "target": "SCHEDULE — Builder",
       "placeholder": "REPLACE_SCHEDULE_BUILDER_IN_UI"
     },
     {
-      "owner": "Universal Engineering Orchestrator — stateful HITL template",
+      "owner": "Orchestrator — Engineering MAS",
       "node": "Call Calculation Specialist",
-      "target": "Engineering Calculation Specialist Adapter — Math Service",
+      "target": "Adapter — Calculation (Math Service)",
       "placeholder": "REPLACE_CALCULATION_ADAPTER_IN_UI"
     },
     {
-      "owner": "Universal Engineering Orchestrator — stateful HITL template",
+      "owner": "Orchestrator — Engineering MAS",
       "node": "Call MAS Trace Event Writer",
-      "target": "MAS Trace Event Writer — redacted execution ledger",
+      "target": "Writer — MAS Trace",
       "placeholder": "REPLACE_MAS_TRACE_WRITER_IN_UI"
     },
     {
-      "owner": "Excel Extraction Specialist Adapter — universal contract",
+      "owner": "Adapter — Excel Extraction",
       "node": "Call native Excel Extraction Agent",
-      "target": "Excel Extractor Agent — OpenAI nano + FastAPI tools",
+      "target": "Agent — Excel Extractor",
       "placeholder": "REPLACE_EXCEL_EXTRACTION_AGENT_IN_UI"
     },
     {
-      "owner": "MAS MVP Entry Form — Universal Engineering Orchestrator",
+      "owner": "Form — MAS Entry",
       "node": "Call Universal Engineering Orchestrator",
-      "target": "Universal Engineering Orchestrator — stateful HITL template",
+      "target": "Orchestrator — Engineering MAS",
       "placeholder": "REPLACE_ORCHESTRATOR_ID_IN_UI"
+    },
+    {
+      "owner": "Form — MAS Human Gate",
+      "node": "Call Orchestrator status",
+      "target": "Orchestrator — Engineering MAS",
+      "placeholder": "REPLACE_ORCHESTRATOR_ID_IN_UI_HUMAN_GATE_STATUS"
+    },
+    {
+      "owner": "Form — MAS Human Gate",
+      "node": "Call Orchestrator resume",
+      "target": "Orchestrator — Engineering MAS",
+      "placeholder": "REPLACE_ORCHESTRATOR_ID_IN_UI_HUMAN_GATE_RESUME"
+    },
+    {
+      "owner": "Form — MAS Deployment Health Check",
+      "node": "Call Orchestrator probe",
+      "target": "Orchestrator — Engineering MAS",
+      "placeholder": "REPLACE_HEALTH_ORCHESTRATOR_IN_UI"
+    },
+    {
+      "owner": "Form — MAS Deployment Health Check",
+      "node": "Call Trace Writer probe",
+      "target": "Writer — MAS Trace",
+      "placeholder": "REPLACE_HEALTH_TRACE_IN_UI"
     }
   ],
+  "health_check": {
+    "workflow": "workflows/mas-deployment-health-check.workflow.json",
+    "ui_name": "Form — MAS Deployment Health Check",
+    "runbook": "docs/DEPLOY_N8N_UI.md",
+    "data_table_probes": [
+      {
+        "node": "Probe task Data Table",
+        "table": "engineering_orchestrator_tasks_v1"
+      },
+      {
+        "node": "Probe trace Data Table",
+        "table": "mas_trace_events_v1"
+      }
+    ],
+    "live_probes": [
+      "task Data Table get",
+      "trace Data Table get",
+      "Orchestrator action=status",
+      "Trace Writer mas_trace_ack"
+    ],
+    "does_not_call": [
+      "LLM Planner/Verifier",
+      "Excel Adapter/Agent",
+      "SCHEDULE Builder/Retrieval"
+    ]
+  },
   "future_enterprise_or_optional_bindings": [],
   "optional_execute_workflow_bindings": [
     {
@@ -176,7 +220,10 @@
   ],
   "ui_configuration": [
     "Select both Data Tables in every matching Data Table node.",
-    "Apply the seven mandatory MVP Execute Workflow bindings.",
+    "Apply all mandatory Execute Workflow bindings (Entry, Human Gate, Health Check, Orchestrator specialists) — see docs/DEPLOY_N8N_UI.md Step 4.",
+    "Create Data Tables from docs/DEPLOY_N8N_UI.md or n8n/data-tables/*.header.csv, then bind every Data Table node listed in Step 3.",
+    "Run Form — MAS Deployment Health Check before activating user forms; fix every FAIL using where_to_fix.",
+    "Activate Form — MAS Entry for new tasks and Form — MAS Human Gate for transparent HITL resume; engineers answer questions in the form without copying expected_version/gate_id.",
     "Configure Excel Tools base URL/API key; 127.0.0.1 is valid only when n8n runs on the same Windows host.",
     "Edit Math Service Configuration in the Calculation Adapter; its default is http://127.0.0.1:8100/api/v1/math and it uses no credential.",
     "Configure one embedding model/dimension consistently for SCHEDULE ingestion and retrieval.",

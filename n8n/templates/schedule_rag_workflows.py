@@ -212,7 +212,7 @@ def build_ingestion(*, node, note, code, trigger, ifnode, connect, workflow):
     connect(c, "PostgreSQL — upsert full parent knowledge", "Prepare approved schema catalogue persistence")
     connect(c, "Prepare approved schema catalogue persistence", "PostgreSQL — upsert approved schema catalogue")
     connect(c, "PostgreSQL — upsert approved schema catalogue", "Return SCHEDULE ingestion result")
-    return workflow("tNavigator SCHEDULE Knowledge Ingestion — approved PGVector runtime", "UI-only expert knowledge ingestion with parent-document persistence and hybrid-RAG metadata.", ns, c, "schedule_knowledge_ingest/v1")
+    return workflow("SCHEDULE — Knowledge Ingestion", "UI-only expert knowledge ingestion with parent-document persistence and hybrid-RAG metadata.", ns, c, "schedule_knowledge_ingest/v1")
 
 
 def _postgres(name, pos, query, params):
@@ -266,4 +266,4 @@ def build_retrieval(*, node, note, code, trigger, ifnode, connect, workflow):
     connect(c,"Hydrate full parent knowledge blocks","Prepare approved schema catalogue lookup")
     connect(c,"Prepare approved schema catalogue lookup","PostgreSQL approved schema catalogue")
     connect(c,"PostgreSQL approved schema catalogue","Attach approved schema catalogue")
-    return workflow("tNavigator SCHEDULE Hybrid Retrieval — executable RRF runtime", "Lexical, semantic and exact-tag RRF with namespace isolation, full parent hydration and fail-closed expert schema lookup.", ns, c, "schedule_retrieval/v1")
+    return workflow("SCHEDULE — Knowledge Retrieval", "Lexical, semantic and exact-tag RRF with namespace isolation, full parent hydration and fail-closed expert schema lookup.", ns, c, "schedule_retrieval/v1")

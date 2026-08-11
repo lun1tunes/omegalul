@@ -1,6 +1,6 @@
 {
   "id": "864e068c-d406-51c0-aa1c-345415210d25",
-  "name": "Engineering Calculation Specialist Adapter — Math Service",
+  "name": "Adapter — Calculation (Math Service)",
   "nodes": [
     {
       "parameters": {
@@ -1515,7 +1515,7 @@
     "callerPolicy": "workflowsFromSameOwner",
     "errorWorkflow": ""
   },
-  "versionId": "df90b849-c6bd-57be-99db-b1e2b888d6d1",
+  "versionId": "c207e25c-d8d9-4a93-83ed-7a4f40f5547d",
   "meta": {
     "templateCredsSetupCompleted": false,
     "targetN8nVersion": "2.30.8",

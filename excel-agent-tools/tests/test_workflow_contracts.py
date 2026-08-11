@@ -22,25 +22,18 @@ MATH_DELIVERY_WORKFLOWS = {
 }
 MVP_ENTRY_WORKFLOWS = {
     "mvp-entry-form.workflow.json",
+    "mas-human-gate-form.workflow.json",
+    "mas-deployment-health-check.workflow.json",
 }
+DATA_TABLE_CSV = ROOT / "n8n" / "data-tables"
 SCHEDULE_FOUNDATION_WORKFLOWS = {
     "mas-trace-event-writer.workflow.json",
-    "tnavigator-schedule-baseline-analyzer.workflow.json",
-    "tnavigator-schedule-baseline-decoder.workflow.json",
-    "tnavigator-schedule-baseline-query.workflow.json",
+    "tnavigator-schedule-builder.workflow.json",
     "tnavigator-schedule-hybrid-retrieval.workflow.json",
-    "tnavigator-schedule-intake.workflow.json",
     "tnavigator-schedule-knowledge-ingestion.workflow.json",
-    "tnavigator-schedule-merge.workflow.json",
-    "tnavigator-schedule-planner.workflow.json",
-    "tnavigator-schedule-renderer.workflow.json",
-    "tnavigator-schedule-release.workflow.json",
-    "tnavigator-schedule-validator.workflow.json",
-    "tnavigator-schedule-verifier.workflow.json",
 }
 UNIVERSAL_ENGINEERING_WORKFLOWS = {
     "engineering-specialist-template.workflow.json",
-    "tnavigator-schedule-builder.workflow.json",
     "universal-engineering-orchestrator.workflow.json",
 } | SCHEDULE_FOUNDATION_WORKFLOWS
 
@@ -89,7 +82,7 @@ def test_ui_import_manifest_is_complete_and_matches_static_bindings() -> None:
     assert manifest["target_n8n_version"] == "2.30.8"
     imported = {Path(value).name for value in manifest["full_clean_import_set"]}
     assert imported == {path.name for path in WORKFLOWS.glob("*.workflow.json")}
-    assert len(imported) == 24
+    assert len(imported) == 16
 
     workflows_by_name = {
         workflow["name"]: workflow
@@ -99,8 +92,10 @@ def test_ui_import_manifest_is_complete_and_matches_static_bindings() -> None:
     workflow_names = set(workflows_by_name)
     bindings = manifest["mandatory_execute_workflow_bindings"]
     future_bindings = manifest["future_enterprise_or_optional_bindings"]
-    assert len(bindings) == 7
+    assert len(bindings) == 11
     assert future_bindings == []
+    assert manifest["health_check"]["ui_name"] == "Form — MAS Deployment Health Check"
+    assert (ROOT / "docs" / "DEPLOY_N8N_UI.md").is_file()
     all_static_bindings = bindings + future_bindings
     assert len({binding["placeholder"] for binding in all_static_bindings}) == len(all_static_bindings)
     for binding in all_static_bindings:
@@ -164,6 +159,41 @@ def test_ai_tool_nodes_bind_session_from_prepared_workflow_context() -> None:
         }
         for sequence_name in {"select", "filters", "selected_table_ids", "assumptions", "warnings"} & set(placeholders):
             assert "numeric keys" in placeholders[sequence_name]["description"], (node["name"], sequence_name)
+
+
+def test_excel_http_tools_are_supply_only_agent_subnodes() -> None:
+    workflow = load_json(WORKFLOWS / "excel-extraction-agent.workflow.json")
+    agent_name = "Excel Extractor AI Agent"
+    tool_names = {
+        node["name"]
+        for node in workflow["nodes"]
+        if node["type"] == "@n8n/n8n-nodes-langchain.toolHttpRequest"
+    }
+    connections = workflow["connections"]
+
+    assert "ai_tool" not in connections.get(agent_name, {}), (
+        "AI Agent must consume tools through its AI Tool input; an Agent -> Tool "
+        "edge makes n8n execute a supplyData-only node as a regular node"
+    )
+
+    attached_tools: set[str] = set()
+    for tool_name in tool_names:
+        assert connections.get(tool_name) == {
+            "ai_tool": [[{"node": agent_name, "type": "ai_tool", "index": 0}]]
+        }, f"{tool_name!r} must have exactly one Tool -> AI Agent ai_tool edge"
+        attached_tools.add(tool_name)
+
+    assert attached_tools == tool_names
+
+    for source_name, output_groups in connections.items():
+        for edge_group in output_groups.get("main", []):
+            for edge in edge_group:
+                assert source_name not in tool_names, (
+                    f"Supply-only tool {source_name!r} cannot be a main-connection source"
+                )
+                assert edge["node"] not in tool_names, (
+                    f"Supply-only tool {edge['node']!r} cannot be a main-connection target"
+                )
 
 
 def test_workflows_use_current_n8n_2_30_8_ai_node_versions() -> None:
@@ -278,6 +308,101 @@ def test_form_adapter_uses_real_trigger_and_real_form_page() -> None:
     assert by_type["n8n-nodes-base.executeWorkflow"]["typeVersion"] == 1.3
 
 
+def test_mas_entry_and_human_gate_forms_are_native_hitl_ux() -> None:
+    """Entry + Human Gate use only portable 2.30.8 Form nodes and auto-bind CAS."""
+    entry = load_json(WORKFLOWS / "mvp-entry-form.workflow.json")
+    gate = load_json(WORKFLOWS / "mas-human-gate-form.workflow.json")
+    assert entry["meta"]["targetN8nVersion"] == "2.30.8"
+    assert gate["meta"]["targetN8nVersion"] == "2.30.8"
+    assert entry.get("active") is False
+    assert gate.get("active") is False
+
+    entry_by_name = {node["name"]: node for node in entry["nodes"]}
+    assert entry_by_name["MAS task form"]["type"] == "n8n-nodes-base.formTrigger"
+    assert entry_by_name["MAS task form"]["typeVersion"] == 2.6
+    assert entry_by_name["Show MAS result"]["type"] == "n8n-nodes-base.form"
+    assert entry_by_name["Show MAS result"]["typeVersion"] == 2.5
+    assert entry_by_name["Show MAS result"]["parameters"]["operation"] == "completion"
+    assert entry_by_name["Show MAS result"]["parameters"]["respondWith"] == "showText"
+    assert "form_response_html" in entry_by_name["Build safe MAS form response"]["parameters"]["jsCode"]
+    assert "Human input required" in entry_by_name["Build safe MAS form response"]["parameters"]["jsCode"]
+    assert "Form — MAS Human Gate" in entry_by_name["Build safe MAS form response"]["parameters"]["jsCode"]
+    entry_fields = {
+        field["fieldName"] for field in entry_by_name["MAS task form"]["parameters"]["formFields"]["values"]
+    }
+    assert {"task_description", "file", "schedule_file", "trajectory_files", "surface_file"} <= entry_fields
+    prepare_entry = entry_by_name["Prepare orchestrator request"]["parameters"]["jsCode"]
+    assert "mappedBinary" in prepare_entry
+    assert "schedule_file" in prepare_entry
+    assert "baseline_schedule_text" in prepare_entry
+    assert "getBinaryDataBuffer" in prepare_entry
+
+    gate_by_name = {node["name"]: node for node in gate["nodes"]}
+    trigger = gate_by_name["Human gate form"]
+    assert trigger["type"] == "n8n-nodes-base.formTrigger"
+    assert trigger["typeVersion"] == 2.6
+    assert trigger["parameters"].get("authentication") == "n8nUserAuth"
+    field_names = {field["fieldName"] for field in trigger["parameters"]["formFields"]["values"]}
+    assert {"task_id", "action", "human_response", "requested_by"} <= field_names
+    assert "expected_version" not in field_names
+    assert "gate_id" not in field_names
+    decide = gate_by_name["Decide resume from status"]["parameters"]["jsCode"]
+    assert "expected_version" in decide
+    assert "gate_id" in decide
+    assert "human_gate" in decide
+    assert "should_resume" in decide
+    assert "human_response is required for reply." in decide
+    assert "reply/approve" not in decide
+    assert gate_by_name["Call Orchestrator status"]["typeVersion"] == 1.3
+    assert gate_by_name["Call Orchestrator resume"]["typeVersion"] == 1.3
+    assert gate_by_name["Should resume gate?"]["type"] == "n8n-nodes-base.if"
+    assert gate_by_name["Should resume gate?"]["typeVersion"] == 2.2
+    assert gate_by_name["Show human gate result"]["typeVersion"] == 2.5
+    assert gate_by_name["Show human gate result"]["parameters"]["operation"] == "completion"
+    assert "CAS fields applied automatically" in gate_by_name["Build safe human gate response"]["parameters"]["jsCode"]
+
+
+def test_mas_deployment_health_check_is_native_and_reports_where_to_fix() -> None:
+    health = load_json(WORKFLOWS / "mas-deployment-health-check.workflow.json")
+    assert health["name"] == "Form — MAS Deployment Health Check"
+    assert health["meta"]["targetN8nVersion"] == "2.30.8"
+    assert health.get("active") is False
+    by_name = {node["name"]: node for node in health["nodes"]}
+    assert by_name["Health check form"]["type"] == "n8n-nodes-base.formTrigger"
+    assert by_name["Health check form"]["typeVersion"] == 2.6
+    assert by_name["Show health report"]["typeVersion"] == 2.5
+    assert by_name["Show health report"]["parameters"]["operation"] == "completion"
+    assert by_name["Probe task Data Table"]["type"] == "n8n-nodes-base.dataTable"
+    assert by_name["Probe trace Data Table"]["typeVersion"] == 1.1
+    assert by_name["Call Orchestrator probe"]["typeVersion"] == 1.3
+    assert by_name["Call Trace Writer probe"]["parameters"]["workflowId"]["value"] == (
+        "REPLACE_HEALTH_TRACE_IN_UI"
+    )
+    assert by_name["Call Orchestrator probe"]["parameters"]["workflowId"]["value"] == (
+        "REPLACE_HEALTH_ORCHESTRATOR_IN_UI"
+    )
+    report = by_name["Build health report"]["parameters"]["jsCode"]
+    assert "where_to_fix" in report
+    assert "Form — MAS Entry" in report
+    assert "engineering_orchestrator_tasks_v1" in report
+    assert "mas_trace_events_v1" in report
+    assert "REPLACE_" in report
+    assert "produced no items" in report
+    assert "input_valid !== false" in report
+    gate = load_json(WORKFLOWS / "mas-human-gate-form.workflow.json")
+    decide = next(n["parameters"]["jsCode"] for n in gate["nodes"] if n["name"] == "Decide resume from status")
+    assert "Number.isInteger(expectedVersion)" in decide
+    assert "human_response is required for reply." in decide
+
+    task_csv = (DATA_TABLE_CSV / "engineering_orchestrator_tasks_v1.header.csv").read_text(encoding="utf-8")
+    trace_csv = (DATA_TABLE_CSV / "mas_trace_events_v1.header.csv").read_text(encoding="utf-8")
+    manifest = load_json(IMPORT_MANIFEST)
+    task_cols = list(manifest["data_tables"][0]["columns"])
+    trace_cols = list(manifest["data_tables"][1]["columns"])
+    assert task_csv.strip().split(",") == task_cols
+    assert trace_csv.strip().split(",") == trace_cols
+
+
 def test_workflows_do_not_depend_on_n8n_env_or_global_variables() -> None:
     for path in WORKFLOWS.glob("*.workflow.json"):
         text = path.read_text(encoding="utf-8")
@@ -319,7 +444,7 @@ def test_universal_engineering_orchestrator_has_no_service_or_excel_contract() -
 
 def test_calculation_adapter_posts_dev_batch_and_surface_and_is_statically_bound() -> None:
     adapter = load_json(WORKFLOWS / "calculation-specialist-adapter.workflow.json")
-    assert adapter["name"] == "Engineering Calculation Specialist Adapter — Math Service"
+    assert adapter["name"] == "Adapter — Calculation (Math Service)"
     assert adapter["active"] is False
     by_name = {node["name"]: node for node in adapter["nodes"]}
     trigger = by_name["Receive calculation specialist packet"]
@@ -692,7 +817,7 @@ def test_schedule_builder_is_bounded_and_orchestrator_mediated() -> None:
     assert "session_id" not in text
     assert "/api/v1" not in text
     assert "toolhttprequest" not in text
-    assert workflow["name"] == "tNavigator SCHEDULE Builder — governed CREATE/REVISE pipeline"
+    assert workflow["name"] == "SCHEDULE — Builder"
     stage_order = [
         "Run deterministic SCHEDULE intake",
         "Analyze lossless baseline inventory",
@@ -754,7 +879,7 @@ def test_excel_specialist_adapter_is_a_bounded_native_contract_boundary() -> Non
     workflow = load_json(WORKFLOWS / "excel-engineering-specialist-adapter.workflow.json")
     by_name = {node["name"]: node for node in workflow["nodes"]}
 
-    assert workflow["name"] == "Excel Extraction Specialist Adapter — universal contract"
+    assert workflow["name"] == "Adapter — Excel Extraction"
     assert workflow["active"] is False
     trigger = by_name["Receive Excel specialist packet"]
     assert trigger["type"] == "n8n-nodes-base.executeWorkflowTrigger"
@@ -796,7 +921,7 @@ def test_excel_specialist_adapter_is_a_bounded_native_contract_boundary() -> Non
 
 def test_legacy_excel_mas_is_explicitly_not_a_deployment_entrypoint() -> None:
     workflow = load_json(WORKFLOWS / "excel-mas-orchestrator.workflow.json")
-    assert workflow["name"] == "LEGACY — Excel MAS Orchestrator — do not deploy"
+    assert workflow["name"] == "Legacy — Excel Orchestrator"
     assert workflow["active"] is False
 
 
@@ -879,6 +1004,30 @@ def test_rag_workflow_contains_the_canonical_documents() -> None:
         assert json.dumps(document["text"], ensure_ascii=False) in code
 
 
+def test_rag_ingestion_has_ui_only_postgres_inventory_check() -> None:
+    workflow = load_json(WORKFLOWS / "excel-rag-ingestion.workflow.json")
+    by_name = {node["name"]: node for node in workflow["nodes"]}
+    assert "Prepare RAG inventory query" in by_name
+    assert "Postgres — inspect RAG table contents" in by_name
+    assert "Summarize RAG inventory" in by_name
+    inspect = by_name["Postgres — inspect RAG table contents"]
+    assert inspect["type"] == "n8n-nodes-base.postgres"
+    assert inspect["parameters"]["operation"] == "executeQuery"
+    assert inspect["parameters"]["query"] == "={{ $json.query }}"
+    prepare = by_name["Prepare RAG inventory query"]["parameters"]["jsCode"]
+    summarize = by_name["Summarize RAG inventory"]["parameters"]["jsCode"]
+    assert "rag_table_name" in prepare
+    assert "LEFT JOIN inv ON TRUE" in prepare
+    assert "to_regclass('${table}')" in prepare
+    assert "rag_inventory_ok" in summarize
+    assert "duplicate_ingest_suspected" in summarize
+    assert by_name["Postgres — inspect RAG table contents"].get("alwaysOutputData") is True
+    connections = workflow["connections"]
+    assert connections["PGVector — insert operating guide"]["main"][0][0]["node"] == "Prepare RAG inventory query"
+    assert connections["Prepare RAG inventory query"]["main"][0][0]["node"] == "Postgres — inspect RAG table contents"
+    assert connections["Postgres — inspect RAG table contents"]["main"][0][0]["node"] == "Summarize RAG inventory"
+
+
 def test_continuation_protocol_has_no_stale_agent_state_lookup_instruction() -> None:
     stale_phrases = (
         "First inspect get_session_state",
@@ -898,16 +1047,7 @@ def test_continuation_protocol_has_no_stale_agent_state_lookup_instruction() -> 
 
 def test_schedule_foundation_workflows_implement_roadmap_boundaries() -> None:
     expected_contracts = {
-        "tnavigator-schedule-intake.workflow.json": "schedule_intake/v1",
-        "tnavigator-schedule-baseline-analyzer.workflow.json": "baseline_analysis/v1",
-        "tnavigator-schedule-baseline-decoder.workflow.json": "baseline_decode_result/v1",
-        "tnavigator-schedule-baseline-query.workflow.json": "baseline_inventory_query_result/v1",
-        "tnavigator-schedule-planner.workflow.json": "schedule_plan/v1",
-        "tnavigator-schedule-merge.workflow.json": "schedule_merge/v1",
-        "tnavigator-schedule-renderer.workflow.json": "schedule_render_result/v1",
-        "tnavigator-schedule-validator.workflow.json": "schedule_validation/v1",
-        "tnavigator-schedule-verifier.workflow.json": "schedule_verifier/v1",
-        "tnavigator-schedule-release.workflow.json": "schedule_release/v1",
+        "tnavigator-schedule-builder.workflow.json": "specialist_result/v1",
         "tnavigator-schedule-knowledge-ingestion.workflow.json": "schedule_knowledge_ingest/v1",
         "tnavigator-schedule-hybrid-retrieval.workflow.json": "schedule_retrieval/v1",
         "mas-trace-event-writer.workflow.json": "mas_trace_event/v1",
@@ -924,16 +1064,38 @@ def test_schedule_foundation_workflows_implement_roadmap_boundaries() -> None:
         assert "$env" not in text and "$vars" not in text
         assert "readwritefile" not in text and "executecommand" not in text
 
+    builder = load_json(WORKFLOWS / "tnavigator-schedule-builder.workflow.json")
+    builder_nodes = {node["name"] for node in builder["nodes"]}
+    for required in (
+        "Run deterministic SCHEDULE intake",
+        "Analyze lossless baseline inventory",
+        "Decode typed baseline records",
+        "Query baseline planning context",
+        "Query targeted baseline records",
+        "Validate SCHEDULE pipeline plan",
+        "Render typed SCHEDULE IR deterministically",
+        "Merge SCHEDULE draft deterministically",
+        "Validate merged SCHEDULE package",
+        "Run independent SCHEDULE verifier",
+        "Build release-ready specialist result",
+    ):
+        assert required in builder_nodes
+
+
+def _builder_code(name: str) -> str:
+    builder = load_json(WORKFLOWS / "tnavigator-schedule-builder.workflow.json")
+    return next(node for node in builder["nodes"] if node["name"] == name)["parameters"]["jsCode"]
+
 
 def test_schedule_foundation_is_fail_closed_and_preserve_by_default() -> None:
-    intake = (WORKFLOWS / "tnavigator-schedule-intake.workflow.json").read_text()
-    baseline = (WORKFLOWS / "tnavigator-schedule-baseline-analyzer.workflow.json").read_text()
-    decoder = (WORKFLOWS / "tnavigator-schedule-baseline-decoder.workflow.json").read_text()
-    baseline_query = (WORKFLOWS / "tnavigator-schedule-baseline-query.workflow.json").read_text()
-    merge = (WORKFLOWS / "tnavigator-schedule-merge.workflow.json").read_text()
-    renderer = (WORKFLOWS / "tnavigator-schedule-renderer.workflow.json").read_text()
-    validator = (WORKFLOWS / "tnavigator-schedule-validator.workflow.json").read_text()
-    release = (WORKFLOWS / "tnavigator-schedule-release.workflow.json").read_text()
+    intake = _builder_code("Run deterministic SCHEDULE intake")
+    baseline = _builder_code("Analyze lossless baseline inventory")
+    decoder = _builder_code("Decode typed baseline records")
+    baseline_query = _builder_code("Query baseline planning context")
+    merge = _builder_code("Merge SCHEDULE draft deterministically")
+    renderer = _builder_code("Render typed SCHEDULE IR deterministically")
+    validator = _builder_code("Validate merged SCHEDULE package")
+    orchestrator = (WORKFLOWS / "universal-engineering-orchestrator.workflow.json").read_text(encoding="utf-8")
     assert "SCHEDULE_BUILD_CONTRACT_INVALID" in intake
     assert "METRIC_UNIT_SYSTEM_REQUIRED" in intake
     assert "FORECAST_START_DATE_REQUIRED" in intake
@@ -976,15 +1138,17 @@ def test_schedule_foundation_is_fail_closed_and_preserve_by_default() -> None:
     assert "HISTORY_EVENT_AFTER_CUTOVER" in validator
     assert "FORECAST_EVENT_BEFORE_START" in validator
     assert "schedule_semantic_snapshot" in validator
-    assert "ACCOUNTABLE_APPROVAL_REQUIRED" in release and "GATE_MISMATCH" in release
+    assert "Apply action and version guard" in orchestrator
+    assert "schedule_release_result" in orchestrator
+    assert "SCHEDULE release is blocked" in orchestrator
+    assert "gate_id does not match" in orchestrator
+    assert "accountable requested_by identity is required" in orchestrator
 
 
 def test_schedule_builder_uses_the_same_governed_intake_runtime() -> None:
-    intake = load_json(WORKFLOWS / "tnavigator-schedule-intake.workflow.json")
     builder = load_json(WORKFLOWS / "tnavigator-schedule-builder.workflow.json")
-    intake_code = next(node for node in intake["nodes"] if node["name"] == "Validate SCHEDULE intake")["parameters"]["jsCode"]
     builder_code = next(node for node in builder["nodes"] if node["name"] == "Run deterministic SCHEDULE intake")["parameters"]["jsCode"]
-    assert builder_code == intake_code
+    assert "schedule_intake_result" in builder_code or "contract:'schedule_intake" in builder_code or "SCHEDULE_BUILD_CONTRACT_INVALID" in builder_code
     prepare = next(node for node in builder["nodes"] if node["name"] == "Prepare deterministic intake")["parameters"]["jsCode"]
     for required in (
         "contract:'schedule_build_request'", "orchestrator_task_id:root.task_id",

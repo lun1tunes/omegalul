@@ -1,6 +1,6 @@
 {
   "id": "excel-mas-orchestrator-v1",
-  "name": "LEGACY — Excel MAS Orchestrator — do not deploy",
+  "name": "Legacy — Excel Orchestrator",
   "description": "Migration-only legacy workflow. Do not deploy it for new installations: use Universal Engineering Orchestrator with Excel Extraction Specialist Adapter and Excel Extraction Agent instead.",
   "nodes": [
     {
@@ -42,7 +42,7 @@
           "__rl": true,
           "value": "1NPVfPP868n5hw7D",
           "mode": "list",
-          "cachedResultName": "Excel Extractor Agent — OpenAI nano + FastAPI tools"
+          "cachedResultName": "Agent — Excel Extractor"
         },
         "mode": "once",
         "options": {
@@ -347,7 +347,7 @@
     "saveExecutionProgress": true,
     "saveManualExecutions": true
   },
-  "versionId": "9ef33b87-317f-4dcb-a1e2-000000000099",
+  "versionId": "fa644deb-5db5-4ac2-b523-3d6090072367",
   "meta": {
     "templateCredsSetupCompleted": true
   },

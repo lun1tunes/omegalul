@@ -1,10 +1,18 @@
 {
-  "name": "MAS MVP Entry Form — Universal Engineering Orchestrator",
+  "id": "f720624a-7bed-455b-b166-bbb213023ee5",
+  "name": "Form — MAS Entry",
+  "description": "Native n8n 2.30.8 Form entry for MAS. Starts the Universal Orchestrator and shows a clear HTML completion page for success or human_gate.",
+  "active": false,
+  "settings": {
+    "executionOrder": "v1",
+    "saveManualExecutions": true,
+    "callerPolicy": "workflowsFromSameOwner"
+  },
   "nodes": [
     {
       "parameters": {
         "formTitle": "MAS MVP — Engineering Task",
-        "formDescription": "Describe the engineering task and attach the input files required by the MAS orchestrator.",
+        "formDescription": "Describe the engineering task and attach the input files required by the MAS orchestrator. If the orchestrator needs clarification, this form shows what is wrong and which task_id to resume in Form — MAS Human Gate.",
         "formFields": {
           "values": [
             {
@@ -15,11 +23,35 @@
               "requiredField": true
             },
             {
-              "fieldName": "input_data",
-              "fieldLabel": "Input Data",
+              "fieldName": "file",
+              "fieldLabel": "Excel workbook (.xlsx / .xls)",
+              "fieldType": "file",
+              "multipleFiles": false,
+              "acceptFileTypes": ".xlsx, .xls",
+              "requiredField": false
+            },
+            {
+              "fieldName": "schedule_file",
+              "fieldLabel": "Baseline SCHEDULE (.data / .inc / .sch / .txt)",
+              "fieldType": "file",
+              "multipleFiles": false,
+              "acceptFileTypes": ".data, .inc, .sch, .txt",
+              "requiredField": false
+            },
+            {
+              "fieldName": "trajectory_files",
+              "fieldLabel": "Well trajectories (.dev)",
               "fieldType": "file",
               "multipleFiles": true,
-              "acceptFileTypes": ".xlsx, .xls, .xlsm, .dev, .sch",
+              "acceptFileTypes": ".dev",
+              "requiredField": false
+            },
+            {
+              "fieldName": "surface_file",
+              "fieldLabel": "ASCII CPS3 surface (.cps3 / .grd / .grid / .txt)",
+              "fieldType": "file",
+              "multipleFiles": false,
+              "acceptFileTypes": ".cps3, .grd, .grid, .txt",
               "requiredField": false
             }
           ]
@@ -36,24 +68,18 @@
       "name": "MAS task form",
       "type": "n8n-nodes-base.formTrigger",
       "typeVersion": 2.6,
-      "position": [
-        0,
-        0
-      ],
+      "position": [0, 0],
       "webhookId": "7d62b879-a8ea-4fde-8f6f-9ca6d381ff93"
     },
     {
       "parameters": {
-        "jsCode": "const item = $input.first();\nconst description = String(item.json?.task_description || '').trim();\nconst taskId = `mvp_${Date.now()}_${Math.random().toString(36).slice(2, 10)}`;\nconst inputFiles = Object.entries(item.binary || {}).map(([field, file]) => ({\n  field,\n  filename: String(file.fileName || ''),\n  mime_type: String(file.mimeType || ''),\n}));\nreturn [{\n  json: {\n    entrypoint: 'mvp_form',\n    action: 'start',\n    task_id: taskId,\n    task_description: description,\n    request_text: description,\n    request: {\n      objective: description,\n      problem_statement: description,\n      task_description: description,\n      input_files: inputFiles,\n    },\n    context: {\n      source: 'mvp-entry-form',\n      submitted_task_id: taskId,\n    },\n    requested_by: 'mvp-form-engineer',\n  },\n  binary: item.binary || {},\n}];"
+        "jsCode": "const item = $input.first();\nconst description = String(item.json?.task_description || '').trim();\nconst taskId = `mvp_${Date.now()}_${Math.random().toString(36).slice(2, 10)}`;\nconst binary = item.binary && typeof item.binary === 'object' ? item.binary : {};\nconst inputFiles = Object.entries(binary).map(([field, file]) => ({\n  field,\n  filename: String(file?.fileName || ''),\n  mime_type: String(file?.mimeType || ''),\n}));\n// Keep Orchestrator binary keys: file / schedule_file / trajectory_files* / surface_file.\nconst mappedBinary = {};\nfor (const [field, file] of Object.entries(binary)) {\n  if (!file) continue;\n  if (field === 'file' || field === 'schedule_file' || field === 'surface_file' || field === 'trajectory_files' || /^trajectory_files\\d*$/i.test(field)) {\n    mappedBinary[field] = file;\n  }\n}\n// executeWorkflow path skips Orchestrator extractFromFile, so inline SCHEDULE text here.\nlet baselineScheduleText = null;\nlet baselineFilename = null;\nif (mappedBinary.schedule_file) {\n  const buffer = await this.helpers.getBinaryDataBuffer(0, 'schedule_file');\n  baselineScheduleText = buffer.toString('utf8').slice(0, 2097152);\n  baselineFilename = String(mappedBinary.schedule_file.fileName || 'schedule.inc');\n}\nconst request = {\n  objective: description,\n  problem_statement: description,\n  task_description: description,\n  input_files: inputFiles,\n};\nif (baselineScheduleText !== null) {\n  request.baseline_schedule_text = baselineScheduleText;\n  request.baseline_filename = baselineFilename;\n  request.build_mode = 'AUTO';\n}\nreturn [{\n  json: {\n    entrypoint: 'mvp_form',\n    action: 'start',\n    task_id: taskId,\n    task_description: description,\n    request_text: description,\n    request,\n    baseline_schedule_text: baselineScheduleText,\n    context: {\n      source: 'mvp-entry-form',\n      submitted_task_id: taskId,\n    },\n    requested_by: 'mvp-form-engineer',\n  },\n  binary: mappedBinary,\n}];"
       },
       "id": "df644c3e-6d9d-4420-af14-e82a9b632527",
       "name": "Prepare orchestrator request",
       "type": "n8n-nodes-base.code",
       "typeVersion": 2,
-      "position": [
-        280,
-        0
-      ]
+      "position": [280, 0]
     },
     {
       "parameters": {
@@ -62,7 +88,7 @@
           "__rl": true,
           "value": "REPLACE_ORCHESTRATOR_ID_IN_UI",
           "mode": "list",
-          "cachedResultName": "Universal Engineering Orchestrator — stateful HITL template"
+          "cachedResultName": "Orchestrator — Engineering MAS"
         },
         "mode": "once",
         "options": {
@@ -73,69 +99,51 @@
       "name": "Call Universal Engineering Orchestrator",
       "type": "n8n-nodes-base.executeWorkflow",
       "typeVersion": 1.3,
-      "position": [
-        560,
-        0
-      ]
+      "position": [560, 0]
     },
     {
       "parameters": {
-        "jsCode": "const response = $input.first().json || {};\nconst result = response.result && typeof response.result === 'object' ? response.result : null;\nconst deliverables = Array.isArray(result?.deliverables) ? result.deliverables : [];\nconst scheduleText = response.schedule_text\n  || result?.release?.schedule_text\n  || result?.compact_data?.generated_schedule\n  || deliverables.find(value => typeof value?.schedule_text === 'string')?.schedule_text\n  || null;\nreturn [{json: {\n  task_id: response.task_id || null,\n  status: response.status || 'completed',\n  message: response.message || (scheduleText ? 'SCHEDULE generated.' : 'MAS task completed.'),\n  schedule_text: scheduleText,\n  human_gate: response.human_gate || null,\n  result: result || response,\n}}];"
+        "jsCode": "const response = $input.first().json || {};\nconst escapeHtml = (value) => String(value ?? '')\n  .replace(/&/g, '&amp;')\n  .replace(/</g, '&lt;')\n  .replace(/>/g, '&gt;')\n  .replace(/\\\"/g, '&quot;')\n  .replace(/'/g, '&#39;');\nconst prettyJson = (value, limit = 16000) => {\n  let text;\n  try { text = JSON.stringify(value, null, 2); } catch { text = String(value); }\n  return text.length > limit ? `${text.slice(0, limit)}\\n… truncated for display` : text;\n};\nconst questionText = (q) => {\n  if (!q || typeof q !== 'object') return String(q ?? '');\n  return String(q.text || q.question || q.message || q.id || '').trim();\n};\nconst result = response.result && typeof response.result === 'object' ? response.result : null;\nconst deliverables = Array.isArray(result?.deliverables) ? result.deliverables : [];\nconst scheduleText = response.schedule_text\n  || result?.release?.schedule_text\n  || result?.compact_data?.generated_schedule\n  || deliverables.find((value) => typeof value?.schedule_text === 'string')?.schedule_text\n  || null;\nconst gate = response.human_gate && typeof response.human_gate === 'object' ? response.human_gate : null;\nconst questions = Array.isArray(gate?.questions) ? gate.questions : [];\nconst status = String(response.status || 'error');\nconst taskId = String(response.task_id || '');\nconst version = response.version ?? null;\nconst message = String(response.message || (scheduleText ? 'SCHEDULE generated.' : 'MAS task completed.'));\nconst questionItems = questions\n  .map((q, index) => `<li><strong>${escapeHtml(String(q.id || `q${index + 1}`))}</strong>: ${escapeHtml(questionText(q))}${q.expected_format ? ` <em>(format: ${escapeHtml(q.expected_format)})</em>` : ''}${q.required === false ? '' : ' <strong>*</strong>'}</li>`)\n  .join('');\nconst gateBlock = gate\n  ? `<section>\n<h2>Human input required</h2>\n<p><strong>What is wrong / why stopped:</strong> ${escapeHtml(gate.reason || message)}</p>\n<p><strong>Gate kind:</strong> <code>${escapeHtml(gate.kind || 'needs_input')}</code></p>\n${questionItems ? `<p><strong>What the orchestrator needs from you:</strong></p><ol>${questionItems}</ol>` : '<p>No structured questions were returned; use the reason above.</p>'}\n<p><strong>What you should do next:</strong></p>\n<ol>\n<li>Copy Task ID <code>${escapeHtml(taskId)}</code></li>\n<li>Open the published form <strong>Form — MAS Human Gate</strong> (<code>/form/mas-human-gate</code>)</li>\n<li>Paste the Task ID, choose action (<code>reply</code> / <code>approve</code> / <code>reject</code>), and answer in plain language</li>\n<li>Do <em>not</em> copy version/gate_id manually — Human Gate loads them from task status</li>\n</ol>\n</section>`\n  : '';\nconst scheduleBlock = scheduleText\n  ? `<section><h2>schedule.inc</h2><pre>${escapeHtml(String(scheduleText).slice(0, 100000))}</pre></section>`\n  : '';\nconst html = `<main>\n<h1>MAS task result</h1>\n<p>Status: <strong>${escapeHtml(status)}</strong></p>\n<p>${escapeHtml(message)}</p>\n<p>Task ID: <code>${escapeHtml(taskId || 'n/a')}</code></p>\n<p>Version: <code>${escapeHtml(version ?? 'n/a')}</code></p>\n${gateBlock}\n${scheduleBlock}\n<details><summary>Structured orchestrator response</summary><pre>${escapeHtml(prettyJson(response))}</pre></details>\n</main>`;\nreturn [{ json: {\n  task_id: taskId || null,\n  status,\n  message,\n  version,\n  schedule_text: scheduleText,\n  human_gate: gate,\n  result: result || response,\n  form_response_html: html,\n}}];"
       },
       "id": "677238b1-42dc-49f5-aa4f-51090ded7794",
-      "name": "Return MAS result",
+      "name": "Build safe MAS form response",
       "type": "n8n-nodes-base.code",
       "typeVersion": 2,
-      "position": [
-        840,
-        0
-      ]
+      "position": [840, 0]
+    },
+    {
+      "parameters": {
+        "operation": "completion",
+        "respondWith": "showText",
+        "responseText": "={{ $json.form_response_html }}"
+      },
+      "id": "a1b2c3d4-e5f6-7788-9900-aabbccddeeff",
+      "name": "Show MAS result",
+      "type": "n8n-nodes-base.form",
+      "typeVersion": 2.5,
+      "position": [1120, 0]
     }
   ],
   "pinData": {},
   "connections": {
     "MAS task form": {
-      "main": [
-        [
-          {
-            "node": "Prepare orchestrator request",
-            "type": "main",
-            "index": 0
-          }
-        ]
-      ]
+      "main": [[{ "node": "Prepare orchestrator request", "type": "main", "index": 0 }]]
     },
     "Prepare orchestrator request": {
-      "main": [
-        [
-          {
-            "node": "Call Universal Engineering Orchestrator",
-            "type": "main",
-            "index": 0
-          }
-        ]
-      ]
+      "main": [[{ "node": "Call Universal Engineering Orchestrator", "type": "main", "index": 0 }]]
     },
     "Call Universal Engineering Orchestrator": {
-      "main": [
-        [
-          {
-            "node": "Return MAS result",
-            "type": "main",
-            "index": 0
-          }
-        ]
-      ]
+      "main": [[{ "node": "Build safe MAS form response", "type": "main", "index": 0 }]]
+    },
+    "Build safe MAS form response": {
+      "main": [[{ "node": "Show MAS result", "type": "main", "index": 0 }]]
     }
   },
-  "active": false,
-  "settings": {
-    "executionOrder": "v1"
-  },
-  "versionId": "7a5cc8e8-fef8-493a-97aa-c18c59075743",
+  "versionId": "65ee5750-e77a-41a9-af57-d8aed364137a",
   "meta": {
-    "templateCredsSetupCompleted": true
+    "templateCredsSetupCompleted": false,
+    "targetN8nVersion": "2.30.8",
+    "contractVersion": "mas_entry_form/v1"
   },
-  "id": "f720624a-7bed-455b-b166-bbb213023ee5",
   "tags": []
 }

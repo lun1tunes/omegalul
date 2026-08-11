@@ -1,6 +1,6 @@
 {
   "id": "7ca6cc83-4f15-5eb3-a9f8-41099beecbfd",
-  "name": "tNavigator SCHEDULE Hybrid Retrieval — executable RRF runtime",
+  "name": "SCHEDULE — Knowledge Retrieval",
   "description": "Lexical, semantic and exact-tag RRF with namespace isolation, full parent hydration and fail-closed expert schema lookup.",
   "nodes": [
     {
@@ -662,7 +662,7 @@
     "saveManualExecutions": true,
     "callerPolicy": "workflowsFromSameOwner"
   },
-  "versionId": "e143c23a-08b8-5c66-aadf-e624229f6283",
+  "versionId": "25e86b90-4c9e-4455-aa7b-75520c40f488",
   "meta": {
     "templateCredsSetupCompleted": false,
     "targetN8nVersion": "2.30.8",

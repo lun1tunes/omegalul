@@ -63,41 +63,15 @@ graph TD
     end
 
     subgraph "SCHEDULE Subsystem"
-        S_Intake["Schedule Intake<br/><small><i>tnavigator-schedule-intake</i></small>"]
-        O --> |Route| S_Intake
-        
-        subgraph "Baseline Analysis"
-            S_B_Ana["Baseline Analyzer<br/><small><i>tnavigator-schedule-baseline-analyzer</i></small>"]
-            S_B_Dec["Baseline Decoder<br/><small><i>tnavigator-schedule-baseline-decoder</i></small>"]
-            S_B_Qry["Baseline Query<br/><small><i>tnavigator-schedule-baseline-query</i></small>"]
-            S_Intake --> S_B_Ana --> S_B_Dec --> S_B_Qry
-        end
-        
-        subgraph "Knowledge & RAG"
-            S_K_Ing["Knowledge Ingestion<br/><small><i>tnavigator-schedule-knowledge-ingestion</i></small><br/>[EMBEDDINGS REQUIRED]"]
-            S_H_Ret["Hybrid Retrieval<br/><small><i>tnavigator-schedule-hybrid-retrieval</i></small><br/>[EMBEDDINGS REQUIRED]"]
-            S_K_Ing -.-> |DB| S_H_Ret
-        end
-        
-        subgraph "Generation Pipeline"
-            S_Plan["Schedule Planner<br/><small><i>tnavigator-schedule-planner</i></small><br/>[LLM REQUIRED]"]
-            S_Bld["Schedule Builder<br/><small><i>tnavigator-schedule-builder</i></small><br/>[LLM REQUIRED]"]
-            S_Rnd["Schedule Renderer<br/><small><i>tnavigator-schedule-renderer</i></small>"]
-            
-            S_B_Qry --> S_Plan
-            S_Plan --> S_H_Ret
-            S_H_Ret --> S_Bld
-            S_Bld --> S_Rnd
-        end
-        
-        subgraph "Validation & Release"
-            S_Val["Schedule Validator<br/><small><i>tnavigator-schedule-validator</i></small>"]
-            S_Ver["Schedule Verifier<br/><small><i>tnavigator-schedule-verifier</i></small><br/>[LLM REQUIRED]"]
-            S_Mrg["Schedule Merge<br/><small><i>tnavigator-schedule-merge</i></small>"]
-            S_Rel["Schedule Release<br/><small><i>tnavigator-schedule-release</i></small>"]
-            
-            S_Rnd --> S_Val --> S_Ver --> S_Mrg --> S_Rel
-        end
+        S_K_Ing["Knowledge Ingestion<br/><small><i>tnavigator-schedule-knowledge-ingestion</i></small><br/>[EMBEDDINGS REQUIRED]"]
+        S_H_Ret["Hybrid Retrieval<br/><small><i>tnavigator-schedule-hybrid-retrieval</i></small><br/>[EMBEDDINGS REQUIRED]"]
+        S_Bld["Schedule Builder pipeline<br/><small><i>tnavigator-schedule-builder</i></small><br/>intake→baseline→plan→render→merge→validate→verify<br/>[LLM REQUIRED]"]
+        S_Rel["Accountable release<br/><small><i>orchestrator Apply action and version guard</i></small>"]
+        S_K_Ing -.-> |DB| S_H_Ret
+        O --> |Route| S_H_Ret
+        O --> |Route| S_Bld
+        S_H_Ret --> S_Bld
+        S_Bld --> S_Rel
     end
 ```
 
@@ -134,13 +108,10 @@ Designed to handle unstructured, "dirty" engineering data.
 *   **FastAPI Backend (`excel-agent-tools`):** The python microservice executed outside n8n. It provides deterministic tools (`/schema`, `/extract`) to parse Excel files, handling locking and session states.
 
 ### 3. SCHEDULE Subsystem (Code Generation)
-A highly specialized RAG-driven code generation pipeline.
-*   **Knowledge Ingestion:** `tnavigator-schedule-knowledge-ingestion` / `hybrid-retrieval` parse tNav manuals and baseline `.SCH` files into `pgvector`.
-*   **Builder Pipeline:** 
-    *   `tnavigator-schedule-planner`: Defines the strategy for the schedule.
-    *   `tnavigator-schedule-builder`: Writes the actual tNavigator syntax.
-    *   `tnavigator-schedule-validator` & `tnavigator-schedule-verifier`: Syntax and logic checks against tNav rules.
-    *   `tnavigator-schedule-merge`: Integrates the generated code with the baseline.
+A highly specialized RAG-driven code generation pipeline with three importable workflows.
+*   **Knowledge Ingestion / Hybrid Retrieval:** expert keyword instructions and schema catalogue into PostgreSQL/PGVector, then RRF retrieval.
+*   **Builder pipeline (`tnavigator-schedule-builder`):** single specialist that owns intake, baseline analyze/decode/query, planner, typed-IR render, merge, validate and independent verify as Code stages.
+*   **Release:** accountable human gate lives in Universal Orchestrator (`Apply action and version guard`), not a separate SCHEDULE workflow.
 
 ### 4. Infrastructure
 *   **Trace Event Writer (`mas-trace-event-writer`):** Logs state transitions and LLM reasoning steps for debugging and audit trails.
@@ -159,11 +130,9 @@ Import all specialist and infrastructure workflows so they generate internal IDs
 - `excel-rag-ingestion`
 
 **SCHEDULE Subsystem:**
-- `tnavigator-schedule-intake`
-- `tnavigator-schedule-baseline-analyzer` / `decoder` / `query`
-- `tnavigator-schedule-knowledge-ingestion` / `hybrid-retrieval`
-- `tnavigator-schedule-planner` / `builder` / `renderer`
-- `tnavigator-schedule-validator` / `verifier` / `merge` / `release`
+- `tnavigator-schedule-knowledge-ingestion`
+- `tnavigator-schedule-hybrid-retrieval`
+- `tnavigator-schedule-builder`
 
 **Math / Infra:**
 - `calculation-specialist-adapter`
@@ -171,20 +140,24 @@ Import all specialist and infrastructure workflows so they generate internal IDs
 - `ai-components`
 - `engineering-specialist-template`
 
-*Note: After importing these, go to the workflow settings in n8n and copy the internal `Workflow IDs` for all the top-level Adapters (Excel, Schedule Intake, Calculation). You will need them for Step 2.*
+**User-facing forms (native n8n 2.30.8):**
+- `mvp-entry-form` — start a task; completion HTML explains success or human_gate
+- `mas-human-gate-form` — resume HITL with Task ID + answer; `expected_version` / `gate_id` are bound from Orchestrator status automatically
+- `mas-deployment-health-check` — press-and-read readiness report (`where_to_fix` for every FAIL)
 
-### Step 2: The Orchestrator (Import Second)
-1. Import `universal-engineering-orchestrator.workflow.json`.
-2. Open the Orchestrator in the UI.
-3. Locate the `Execute Workflow` node named **"Route invocation action"**.
-4. Inside this node, replace the placeholder IDs (e.g., `REPLACE_EXCEL_ADAPTER_IN_UI`) with the actual `Workflow IDs` you copied in Step 1.
+**Corporate UI deploy from scratch:** [`docs/DEPLOY_N8N_UI.md`](../DEPLOY_N8N_UI.md) (import order, Data Table click-paths, Execute Workflow bindings, CSV templates under `n8n/data-tables/`).
 
-### Step 3: Global Variables Setup (n8n UI)
-Go to **Settings -> Variables** in your n8n UI and configure the environment for the FastAPI Microservices:
-- **`EXCEL_TOOLS_URL`**: `http://<your-windows-local-ip>:8080` (Points to `excel-agent-tools`).
-- **`EXCEL_TOOLS_API_KEY`**: `dev-secret-key`
-- **`MATH_TOOLS_URL`**: `http://<your-windows-local-ip>:8081` (Points to `fastapi-math-service`).
-- **`MATH_TOOLS_API_KEY`**: `dev-secret-key`
+*Note: After importing these, bind Execute Workflow and Data Table nodes using the tables in DEPLOY_N8N_UI.md — do not scroll the picker guessing names. Run Health Check before activating Entry/Human Gate.*
+
+### Step 2: Bind Execute Workflow nodes (not one router node)
+1. Import `universal-engineering-orchestrator.workflow.json` (and the rest per `docs/DEPLOY_N8N_UI.md`).
+2. Bind **each** `Call …` Execute Workflow node individually — there is no single picker on `Route invocation action` (that node is Code routing only).
+3. Use the exact owner → node → target table in [`docs/DEPLOY_N8N_UI.md`](../DEPLOY_N8N_UI.md) Step 4 (Orchestrator Call Excel / Retrieval / Builder / Calculation / Trace; Entry; Human Gate; Health Check).
+
+### Step 3: Service URLs (UI-only — no Global Variables / `$env`)
+Do **not** use n8n Variables / `$vars` / `$env`. Set URLs in visible workflow config nodes:
+- **Excel Agent** → `Runtime configuration`: `excel_tools_url` = `http://<windows-ip>:8000/api/v1` + API key
+- **Calculation Adapter** → `Math Service Configuration`: `math_service_url` = `http://<windows-ip>:8100/api/v1/math`
 
 ### Step 4: Infrastructure & Credentials
 Within the n8n UI, ensure you have configured:
@@ -197,13 +170,14 @@ Open two separate terminals on the machine where the Python services reside and 
 **Terminal 1 (Excel Parser):**
 ```bash
 cd ~/omegalul/excel-agent-tools
-python -m uvicorn app.main:app --host 0.0.0.0 --port 8080 --reload
+# prefer start-windows.bat; or:
+python -m uvicorn app.main:app --host 0.0.0.0 --port 8000 --reload
 ```
 
 **Terminal 2 (Math Service):**
 ```bash
 cd ~/omegalul/fastapi-math-service
-python -m uvicorn app.main:app --host 0.0.0.0 --port 8081 --reload
+python -m uvicorn app.main:app --host 0.0.0.0 --port 8100 --reload
 ```
 
 ### Step 6: Test the Entry Form

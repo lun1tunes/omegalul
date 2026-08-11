@@ -1,6 +1,6 @@
 {
   "id": "a6f23bbd-92a5-5dfe-869a-1c46c485804a",
-  "name": "tNavigator SCHEDULE Builder — governed CREATE/REVISE pipeline",
+  "name": "SCHEDULE — Builder",
   "description": "Visible intake, lossless catalogue decode, pre-change state replay, targeted baseline retrieval, plan, typed IR, deterministic render, merge, candidate validation and independent review. Durable state, Excel and release remain in the Orchestrator.",
   "nodes": [
     {
@@ -1656,7 +1656,7 @@
     "saveManualExecutions": true,
     "callerPolicy": "workflowsFromSameOwner"
   },
-  "versionId": "229f3d15-b21e-588b-8c33-74957abbddd2",
+  "versionId": "9e4ae600-9298-4d8d-a8bf-54442aa67ccf",
   "meta": {
     "templateCredsSetupCompleted": false,
     "targetN8nVersion": "2.30.8",

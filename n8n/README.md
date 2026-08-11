@@ -1,256 +1,63 @@
-# n8n 2.30.8 — UI-only установка Petroleum Engineering MAS
+# n8n 2.30.8 — UI-only Petroleum Engineering MAS
 
-Эта поставка рассчитана строго на n8n `2.30.8`. Доступ к серверной файловой системе, shell, Global Variables и `$env` не нужен.
+Полная пошаговая установка — в корневом [`README.md`](../README.md). Здесь — контракт поставки и границы SCHEDULE.
 
-## Архитектура MVP
+Целевая версия строго `2.30.8`. Server filesystem, shell, Global Variables и `$env` в workflow не используются.
 
-`Universal Engineering Orchestrator` — единственный stateful control-plane. Он хранит состояние задачи в Data Table, управляет CAS-version, HITL, retry/replan, вызывает специалистов по allowlist и отправляет результат независимому Verifier.
-
-SCHEDULE runtime:
+## Runtime shape
 
 ```text
-task + optional baseline .data/.inc text
-→ keyword/scope planning
-→ Hybrid Retrieval: lexical + semantic + exact tags + RRF
-→ SCHEDULE Builder: CREATE или preserve-by-default REVISE
-→ deterministic renderer/merge/validator
-→ Independent Verifier
-→ optional result approval
-→ { filename: "schedule.inc", schedule_text: "..." }
+Form / webhook
+→ Universal Engineering Orchestrator (CAS + HITL + Verifier)
+→ Calculation Adapter | Excel Adapter | SCHEDULE Hybrid Retrieval
+→ SCHEDULE Builder (intake→baseline→plan→render→merge→validate→verify)
+→ accountable release gate in Orchestrator
+→ bounded schedule.inc
 ```
 
-Excel Extractor вызывается только через Orchestrator. Если Builder возвращает `evidence_gap`, Orchestrator сохраняет состояние, запрашивает недостающие табличные данные через Excel Adapter и возобновляет тот же Builder. Прямого вызова Excel из Builder нет.
+SCHEDULE delivery — **три** importable workflow плюс shared Trace Writer:
 
-Calculation Specialist также вызывается только через Orchestrator. Его Adapter передаёт все приложенные `.dev` и одну ASCII CPS3 поверхность одним batch-запросом в простой Math Service, получает JSON с пересечением для каждого исходного имени файла и при SCHEDULE-задаче возвращает управление Planner для следующего делегирования Builder.
-Практический предел одного batch — 256 DEV-файлов; это переносимый workaround для статической multipart-конфигурации HTTP Request в n8n `2.30.8`.
+| JSON | UI name |
+|---|---|
+| `workflows/tnavigator-schedule-knowledge-ingestion.workflow.json` | `SCHEDULE — Knowledge Ingestion` |
+| `workflows/tnavigator-schedule-hybrid-retrieval.workflow.json` | `SCHEDULE — Knowledge Retrieval` |
+| `workflows/tnavigator-schedule-builder.workflow.json` | `SCHEDULE — Builder` |
+| `workflows/mas-trace-event-writer.workflow.json` | `Writer — MAS Trace` |
 
-## Импорт через UI
+Отдельных diagnostic mirrors (`intake`, `baseline-*`, `planner`, `renderer`, `merge`, `validator`, `verifier`, `release`) **нет**. Их алгоритмы живут Code-нодами внутри Builder; release policy — в Orchestrator `Apply action and version guard`. Generator `templates/generate_schedule_workflows.py` emit-ит только эти четыре JSON и не должен воскрешать удалённые файлы.
 
-Канонический manifest: [`import-manifest.json`](import-manifest.json).
+## Import
 
-Минимальный runtime-порядок:
+Канон: [`import-manifest.json`](import-manifest.json).
 
-1. `workflows/calculation-specialist-adapter.workflow.json`;
-2. `workflows/excel-extraction-agent.workflow.json`;
-3. `workflows/excel-engineering-specialist-adapter.workflow.json`;
-4. `workflows/tnavigator-schedule-knowledge-ingestion.workflow.json`;
-5. `workflows/tnavigator-schedule-hybrid-retrieval.workflow.json`;
-6. `workflows/tnavigator-schedule-builder.workflow.json`;
-7. `workflows/mas-trace-event-writer.workflow.json`;
-8. `workflows/universal-engineering-orchestrator.workflow.json`;
-9. `workflows/mvp-entry-form.workflow.json` — необязательная простая UI-обёртка.
+- `full_clean_import_set` — все **16** `workflows/*.workflow.json`;
+- `runtime_import_order` — минимальный порядок для рабочего MVP (см. [`docs/DEPLOY_N8N_UI.md`](../docs/DEPLOY_N8N_UI.md)).
 
-Диагностические/переиспользуемые SCHEDULE foundation workflows также перечислены в `full_clean_import_set`. Они позволяют отдельно проверять intake, baseline, renderer, merge, validator, verifier и release.
+Пользовательский HITL / deploy:
 
-Не активируйте:
+- `mvp-entry-form.workflow.json` — старт задачи + HTML completion (`form` 2.5 `showText`);
+- `mas-human-gate-form.workflow.json` — inspect/resume gate: `status` → auto CAS → `reply|approve|reject` → HTML completion;
+- `mas-deployment-health-check.workflow.json` — control-plane probes + `where_to_fix` report;
+- `data-tables/*.header.csv` — CSV templates for native Data table Import CSV.
 
-- `excel-mas-orchestrator.workflow.json` — legacy migration-only;
-- `engineering-specialist-template.workflow.json` — шаблон нового специалиста;
+Не активировать:
+
+- `excel-mas-orchestrator.workflow.json` — legacy;
+- `engineering-specialist-template.workflow.json` — шаблон;
 - `ai-components.workflow.json` — справочный canvas;
-- `excel-extraction-form-adapter.workflow.json` — нужен только для отдельной Excel-формы.
+- `excel-extraction-form-adapter.workflow.json` — только отдельная Excel-форма;
+- `excel-rag-ingestion.workflow.json` — одноразовый Test workflow, не Publish.
 
-Все workflow экспортированы с `active:false`.
+Все JSON экспортированы с `active: false`.
 
-## Семь обязательных bindings
+## Bindings
 
-В UI выберите импортированные target workflows в следующих Execute Workflow nodes:
+**11** обязательных Execute Workflow bindings — в [`import-manifest.json`](import-manifest.json) и пошагово в [`docs/DEPLOY_N8N_UI.md`](../docs/DEPLOY_N8N_UI.md) Step 4 (Orchestrator specialists + Entry + Human Gate ×2 + Health Check ×2). Orchestrator для SCHEDULE вызывает только Retrieval и Builder — не отдельные stage-workflow.
 
-| Owner | Node | Target |
-|---|---|---|
-| Universal Orchestrator | `Call Excel Extraction Specialist Adapter` | Excel Adapter |
-| Universal Orchestrator | `Call SCHEDULE Hybrid Retrieval` | SCHEDULE Hybrid Retrieval |
-| Universal Orchestrator | `Call SCHEDULE Builder Specialist` | SCHEDULE Builder |
-| Universal Orchestrator | `Call Calculation Specialist` | Calculation Adapter |
-| Universal Orchestrator | `Call MAS Trace Event Writer` | MAS Trace Writer |
-| Excel Adapter | `Call native Excel Extraction Agent` | Excel Extraction Agent |
-| MVP Entry Form | `Call Universal Engineering Orchestrator` | Universal Orchestrator |
+## Smoke
 
-Calculation route уже включён и требует импортированного Adapter. Data/Document routes остаются optional extension points; не переводите их в `configured:true`, пока соответствующие workflow не импортированы и не проверены.
-
-В `Math Service Configuration` адаптера задайте URL без использования `$env`/`$vars`: по умолчанию `http://127.0.0.1:8100/api/v1/math`. Если n8n работает на сервере, `127.0.0.1` указывает на сервер n8n, а не на ваш Windows-PC. Сам сервис запускается по [`../fastapi-math-service/README.md`](../fastapi-math-service/README.md) и в MVP не требует credential.
-
-## Data Table состояния
-
-Создайте `engineering_orchestrator_tasks_v1`:
-
-| Column | Type |
-|---|---|
-| `task_id` | String |
-| `version` | Number |
-| `status` | String |
-| `phase` | String |
-| `task_type` | String |
-| `risk_class` | String |
-| `request_json` | String |
-| `context_json` | String |
-| `plan_json` | String |
-| `specialist_json` | String |
-| `result_json` | String |
-| `verification_json` | String |
-| `pending_human_json` | String |
-| `last_error_json` | String |
-| `retry_count` | Number |
-| `max_retries` | Number |
-| `history_json` | String |
-| `created_at` | String |
-| `updated_at` | String |
-
-Во всех state Data Table nodes выберите эту одну таблицу.
-
-Создайте `mas_trace_events_v1`:
-
-| Column | Type |
-|---|---|
-| `event_id` | String |
-| `trace_id` | String |
-| `task_id` | String |
-| `at` | String |
-| `stage` | String |
-| `event_type` | String |
-| `actor` | String |
-| `status` | String |
-| `summary` | String |
-| `details_json` | String |
-
-Выберите её в `MAS Trace Event Writer`.
-
-## Credentials
-
-Настройте через UI:
-
-- OpenAI/OpenAI-compatible chat model для Planner, Builder и Verifier; для текущих задач используйте дешёвые модели с temperature `0`;
-- embedding model для SCHEDULE ingestion и retrieval;
-- PostgreSQL credential для memory, lexical tables и PGVector;
-- Header Auth для входного webhook Orchestrator;
-- Header Auth/API key для Excel FastAPI.
-
-Модель и размерность embeddings при записи и чтении должны совпадать. При смене модели используйте новую PGVector collection/table.
-
-## SCHEDULE Knowledge Ingestion
-
-`tnavigator-schedule-knowledge-ingestion` имеет Form и Execute Sub-workflow входы. Он принимает один экспертный блок за запуск:
-
-```json
-{
-  "schedule_knowledge_block": {
-    "contract": "schedule_knowledge_block",
-    "contract_version": "1.0",
-    "target_base": "schedule_mvp",
-    "knowledge_type": "keyword_instruction",
-    "knowledge_id": "wconprod-forecast-v1",
-    "revision": "1",
-    "title": "WCONPROD — прогнозный контроль скважины",
-    "keywords": ["WCONPROD"],
-    "topics": ["Контроль по скважинам", "Прогноз"],
-    "task_patterns": ["задать ограничение по воде"],
-    "status": "active",
-    "author": "expert-name",
-    "access_scope": "petroleum-engineering",
-    "text": "Полная экспертная инструкция и ограничения..."
-  }
-}
+```bash
+WORKSPACE_ROOT=/path/to/repo node n8n/tests/*.js
 ```
 
-Допустимые типы:
-
-- `keyword_instruction` — полное описание keyword и условий применения;
-- `worked_example` — задача, корректный SCHEDULE fragment и пояснение.
-
-Optional `schema_catalogue_json` используется для точного deterministic render: порядок полей, required/default/enum/type и семантические правила. Это экспертный JSON-справочник, а не внешний deployment dependency.
-
-Ingestion пишет полный parent document в PostgreSQL и chunks в PGVector. Hybrid Retrieval выполняет:
-
-1. PostgreSQL lexical search;
-2. PGVector semantic search;
-3. exact keyword/topic/tag search;
-4. deterministic RRF;
-5. фильтрацию `target_base=schedule_mvp`, access scope и active revision;
-6. hydration полного parent document.
-
-Если для requested keyword нет активной полной инструкции, система abstain/fail closed и формирует конкретный HITL-вопрос.
-
-## Работа с `.data/.inc`
-
-Form Orchestrator принимает файл как binary и преобразует его в UTF-8 text штатной `Extract From File` node. Текст передаётся Builder внутри execution context. Для `REVISE` он является baseline; незатронутые блоки, comments и unknown-but-preserved sections сохраняются lossless, если задача явно не требует удаления или концептуальной замены.
-
-На выходе после проверки и approval:
-
-```json
-{
-  "release": {
-    "contract": "schedule_release_result",
-    "contract_version": "1.0",
-    "status": "approved",
-    "filename": "schedule.inc",
-    "schedule_text": "DATES\n  1 JAN 2027 /\n/\n..."
-  }
-}
-```
-
-## Human-in-the-Loop
-
-Workflow не держит долгий Wait execution. При уточнении он сохраняет `awaiting_human` и возвращает `task_id`, `version`, `gate_id`, причину и конкретные вопросы.
-
-Ответ приходит новым вызовом:
-
-```json
-{
-  "action": "reply",
-  "task_id": "eng_...",
-  "expected_version": 3,
-  "gate_id": "gate_eng_...",
-  "requested_by": "engineer",
-  "human_response": {
-    "answers": [{"question_id": "oil_rate", "answer": "120 m3/day"}]
-  }
-}
-```
-
-Поддерживаются `status`, `reply`, `approve`, `reject`, `retry`, `cancel`. Неверный `gate_id` или stale `expected_version` завершается conflict без изменения состояния.
-
-## Три входа Orchestrator
-
-- authenticated HTTP Webhook;
-- n8n Form Trigger;
-- Execute Sub-workflow Trigger.
-
-Стартовая форма использует `n8n-nodes-base.formTrigger`. `n8n-nodes-base.form` — отдельная нода страницы формы/результата и не заменяет trigger.
-
-## Совместимость n8n 2.30.8
-
-Критические registry IDs официального image:
-
-- AI Agent: `@n8n/n8n-nodes-langchain.agent`, typeVersion `3.1`;
-- HTTP Request Tool: `@n8n/n8n-nodes-langchain.toolHttpRequest`, typeVersion `1.1`;
-- Form Trigger: `n8n-nodes-base.formTrigger`, typeVersion `2.6`;
-- n8n Form: `n8n-nodes-base.form`, typeVersion `2.5`.
-
-Если корпоративная сборка показывает неизвестную ноду, экспортируйте из неё минимальный workflow с одной рабочей нодой. UI-label не всегда совпадает с registry ID в JSON.
-
-## Excel Agent
-
-В `Runtime configuration` задайте:
-
-| Поле | Значение |
-|---|---|
-| `excel_tools_url` | сетевой URL FastAPI, включая `/api/v1` |
-| `excel_tools_api_key` | `API_KEY` из `excel-tools.env` |
-| `excel_webhook_api_key` | отдельный секрет входного Excel webhook |
-
-FastAPI можно поднять на Windows только через CMD: [`../excel-agent-tools/README.md`](../excel-agent-tools/README.md).
-
-## Smoke перед активацией
-
-1. Импортировать все файлы из `full_clean_import_set` в пустую n8n `2.30.8` и убедиться, что они остаются `active:false`.
-2. Проверить отсутствие красных unknown-node/credential warnings в runtime-наборе.
-3. Настроить семь bindings, обе Data Tables и URL Math Service.
-4. Загрузить экспертную инструкцию и получить её через lexical, semantic и exact-tag branches.
-5. Прогнать `CREATE` без baseline.
-6. Прогнать `REVISE` с `.data/.inc`; проверить preservation и diff.
-7. Вызвать `evidence_gap`; проверить Excel extraction, сохранение state и resume Builder.
-8. Передать `.dev` + ASCII CPS3 в Calculation Adapter и проверить рассчитанные `intersection_md/x/y/z` и `result_mode=computed`.
-9. Проверить Independent Verifier, result approval и возврат inline `schedule.inc`.
-10. Проверить HTTP, Form и Execute Workflow входы.
-11. Проверить stale version, неверный gate, неизвестный specialist route и отсутствие секретов/raw payloads в trace.
-
-Последний полный repository smoke официального `n8nio/n8n:2.30.8`: **121 runtime-сценарий**, **29/29 workflow contracts**, **122/122 Code nodes compiled**, clean import/export **23/23**, активных workflow после импорта — **0**. Excel FastAPI image прошёл **18/18** тестов; Math Service дополнительно проверен через HTTP на реальном `.dev` (`200`) и сценарии без пересечения (`404`). Это не заменяет ручной round-trip в корпоративном UI с реальными credentials и Data Tables.
+Скрипты исполняют Code-источники из Builder (и смежных runtime), а не удалённые standalone JSON.

@@ -1,6 +1,6 @@
 {
   "id": "excel-extraction-form-adapter-v1",
-  "name": "Excel Extractor — authenticated form adapter",
+  "name": "Adapter — Excel Form",
   "description": "Thin authenticated n8n Form entry point. It normalizes form data and calls the single Excel Extractor Agent core workflow through Execute Sub-workflow; no model, workbook parsing, memory, or FastAPI tool logic is duplicated here.",
   "active": false,
   "settings": {
@@ -84,7 +84,7 @@
           "__rl": true,
           "value": "1NPVfPP868n5hw7D",
           "mode": "list",
-          "cachedResultName": "Excel Extractor Agent — OpenAI nano + FastAPI tools"
+          "cachedResultName": "Agent — Excel Extractor"
         },
         "mode": "once",
         "options": {
@@ -174,5 +174,6 @@
         ]
       ]
     }
-  }
+  },
+  "versionId": "58676901-6742-439a-9a0f-863a4618e090"
 }

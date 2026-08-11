@@ -18,13 +18,13 @@ function source(file, name) {
 }
 
 const analyzeFn = new AsyncFunction('$json', source(
-  'tnavigator-schedule-baseline-analyzer.workflow.json', 'Analyze baseline SCHEDULE',
+  'tnavigator-schedule-builder.workflow.json', 'Analyze lossless baseline inventory',
 ));
 const decodeFn = new AsyncFunction('$json', source(
-  'tnavigator-schedule-baseline-decoder.workflow.json', 'Decode baseline SCHEDULE to typed IR',
+  'tnavigator-schedule-builder.workflow.json', 'Decode typed baseline records',
 ));
 const validateFn = new AsyncFunction('$json', source(
-  'tnavigator-schedule-validator.workflow.json', 'Validate SCHEDULE package',
+  'tnavigator-schedule-builder.workflow.json', 'Validate merged SCHEDULE package',
 ));
 
 const sourceHash = `sha256:${'a'.repeat(64)}`;

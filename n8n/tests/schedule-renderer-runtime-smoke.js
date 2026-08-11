@@ -102,8 +102,8 @@ function codes(result) {
 
 async function main() {
   const rendered = await execute(
-    'tnavigator-schedule-renderer.workflow.json',
-    'Render typed SCHEDULE IR',
+    'tnavigator-schedule-builder.workflow.json',
+    'Render typed SCHEDULE IR deterministically',
     { schedule_render_request: { mode: 'CREATE', schema_catalogue: catalogue(), ir_events: createEvents() } },
   );
   assert.equal(rendered.status, 'rendered');
@@ -113,8 +113,8 @@ async function main() {
   assert(rendered.changes.every((change) => /^sha256:[a-f0-9]{64}$/.test(change.render_hash)));
 
   const noExpertAuthor = await execute(
-    'tnavigator-schedule-renderer.workflow.json',
-    'Render typed SCHEDULE IR',
+    'tnavigator-schedule-builder.workflow.json',
+    'Render typed SCHEDULE IR deterministically',
     { schedule_render_request: { mode: 'CREATE', schema_catalogue: catalogue({ approved_by: '', author: '' }), ir_events: createEvents() } },
   );
   assert.equal(noExpertAuthor.status, 'needs_input');
@@ -124,7 +124,7 @@ async function main() {
   const invalidEnumEvents = createEvents();
   invalidEnumEvents[1].fields.STATUS = 'MAYBE';
   const invalidEnum = await execute(
-    'tnavigator-schedule-renderer.workflow.json', 'Render typed SCHEDULE IR',
+    'tnavigator-schedule-builder.workflow.json', 'Render typed SCHEDULE IR deterministically',
     { schedule_render_request: { mode: 'CREATE', schema_catalogue: catalogue(), ir_events: invalidEnumEvents } },
   );
   assert(codes(invalidEnum).has('IR_FIELD_VALUE_INVALID'));
@@ -132,7 +132,7 @@ async function main() {
   const missingFieldEvents = createEvents();
   delete missingFieldEvents[1].fields.ORAT;
   const missingField = await execute(
-    'tnavigator-schedule-renderer.workflow.json', 'Render typed SCHEDULE IR',
+    'tnavigator-schedule-builder.workflow.json', 'Render typed SCHEDULE IR deterministically',
     { schedule_render_request: { mode: 'CREATE', schema_catalogue: catalogue(), ir_events: missingFieldEvents } },
   );
   assert(codes(missingField).has('IR_REQUIRED_FIELD_MISSING'));
@@ -140,7 +140,7 @@ async function main() {
   const unknownFieldEvents = createEvents();
   unknownFieldEvents[1].fields.UNLICENSED_GUESS = 1;
   const unknownField = await execute(
-    'tnavigator-schedule-renderer.workflow.json', 'Render typed SCHEDULE IR',
+    'tnavigator-schedule-builder.workflow.json', 'Render typed SCHEDULE IR deterministically',
     { schedule_render_request: { mode: 'CREATE', schema_catalogue: catalogue(), ir_events: unknownFieldEvents } },
   );
   assert(codes(unknownField).has('IR_UNKNOWN_FIELD'));
@@ -148,13 +148,13 @@ async function main() {
   const createModify = createEvents();
   createModify[1].operation = 'MODIFY';
   const createModeGate = await execute(
-    'tnavigator-schedule-renderer.workflow.json', 'Render typed SCHEDULE IR',
+    'tnavigator-schedule-builder.workflow.json', 'Render typed SCHEDULE IR deterministically',
     { schedule_render_request: { mode: 'CREATE', schema_catalogue: catalogue(), ir_events: createModify } },
   );
   assert(codes(createModeGate).has('CREATE_REQUIRES_ADD_ONLY'));
 
   const createMerge = await execute(
-    'tnavigator-schedule-merge.workflow.json', 'Merge SCHEDULE without mutation',
+    'tnavigator-schedule-builder.workflow.json', 'Merge SCHEDULE draft deterministically',
     { merge_request: { mode: 'CREATE', changes: rendered.changes } },
   );
   assert.equal(createMerge.status, 'merged');
@@ -162,7 +162,7 @@ async function main() {
   assert.equal(createMerge.generated_schedule, expectedCreate);
 
   const validated = await execute(
-    'tnavigator-schedule-validator.workflow.json', 'Validate SCHEDULE package',
+    'tnavigator-schedule-builder.workflow.json', 'Validate merged SCHEDULE package',
     { schedule_validation_request: {
       mode: 'CREATE',
       schedule_text: createMerge.generated_schedule,
@@ -180,7 +180,7 @@ async function main() {
   assert.deepEqual(validated.keyword_counts, { DATES: 1, WCONPROD: 1 });
 
   const incompleteCatalogue = await execute(
-    'tnavigator-schedule-validator.workflow.json', 'Validate SCHEDULE package',
+    'tnavigator-schedule-builder.workflow.json', 'Validate merged SCHEDULE package',
     { schedule_validation_request: {
       mode: 'CREATE',
       schedule_text: createMerge.generated_schedule,
@@ -199,7 +199,7 @@ async function main() {
 
   const baselineText = "-- keep this comment\nWCONPROD\n  'WELL-1' OPEN ORAT 900 * /\n/\n";
   const baseline = await execute(
-    'tnavigator-schedule-baseline-analyzer.workflow.json', 'Analyze baseline SCHEDULE',
+    'tnavigator-schedule-builder.workflow.json', 'Analyze lossless baseline inventory',
     { baseline_request: { root_path: 'schedule.inc', baseline_schedule_text: baselineText } },
   );
   const target = baseline.package.files[0].nodes.find((node) => node.keyword === 'WCONPROD');
@@ -209,12 +209,12 @@ async function main() {
     target_node_id: target.node_id, expected_raw_hash: target.raw_hash,
   };
   const revisedRender = await execute(
-    'tnavigator-schedule-renderer.workflow.json', 'Render typed SCHEDULE IR',
+    'tnavigator-schedule-builder.workflow.json', 'Render typed SCHEDULE IR deterministically',
     { schedule_render_request: { mode: 'REVISE', schema_catalogue: catalogue(), ir_events: [reviseEvent] } },
   );
   assert.equal(revisedRender.status, 'rendered');
   const revisedMerge = await execute(
-    'tnavigator-schedule-merge.workflow.json', 'Merge SCHEDULE without mutation',
+    'tnavigator-schedule-builder.workflow.json', 'Merge SCHEDULE draft deterministically',
     { merge_request: { mode: 'REVISE', baseline_analysis: baseline, changes: revisedRender.changes } },
   );
   assert.equal(revisedMerge.status, 'merged');
@@ -224,12 +224,12 @@ async function main() {
 
   const staleTarget = { ...reviseEvent, expected_raw_hash: `sha256:${'f'.repeat(64)}` };
   const staleRender = await execute(
-    'tnavigator-schedule-renderer.workflow.json', 'Render typed SCHEDULE IR',
+    'tnavigator-schedule-builder.workflow.json', 'Render typed SCHEDULE IR deterministically',
     { schedule_render_request: { mode: 'REVISE', schema_catalogue: catalogue(), ir_events: [staleTarget] } },
   );
   assert.equal(staleRender.status, 'rendered');
   const staleMerge = await execute(
-    'tnavigator-schedule-merge.workflow.json', 'Merge SCHEDULE without mutation',
+    'tnavigator-schedule-builder.workflow.json', 'Merge SCHEDULE draft deterministically',
     { merge_request: { mode: 'REVISE', baseline_analysis: baseline, changes: staleRender.changes } },
   );
   assert.equal(staleMerge.status, 'needs_input');
@@ -238,7 +238,7 @@ async function main() {
   const noTarget = { ...reviseEvent };
   delete noTarget.target_node_id;
   const noTargetRender = await execute(
-    'tnavigator-schedule-renderer.workflow.json', 'Render typed SCHEDULE IR',
+    'tnavigator-schedule-builder.workflow.json', 'Render typed SCHEDULE IR deterministically',
     { schedule_render_request: { mode: 'REVISE', schema_catalogue: catalogue(), ir_events: [noTarget] } },
   );
   assert(codes(noTargetRender).has('IR_TARGET_IDENTITY_REQUIRED'));

@@ -1,0 +1,338 @@
+{
+  "id": "mas-human-gate-form-v1",
+  "name": "Form — MAS Human Gate",
+  "description": "Native n8n 2.30.8 Form to inspect or answer Orchestrator human_gate. Loads status first and binds expected_version/gate_id automatically; engineer never copies CAS fields by hand.",
+  "active": false,
+  "settings": {
+    "executionOrder": "v1",
+    "saveManualExecutions": true,
+    "callerPolicy": "workflowsFromSameOwner"
+  },
+  "nodes": [
+    {
+      "parameters": {
+        "authentication": "n8nUserAuth",
+        "formTitle": "MAS — Human Gate",
+        "formDescription": "Resume a controlled engineering task that is waiting for human input. Enter the Task ID from Form — MAS Entry. Choose status to only inspect the gate, or reply/approve/reject to continue. Version and gate_id are loaded automatically from Orchestrator status.",
+        "formFields": {
+          "values": [
+            {
+              "fieldName": "task_id",
+              "fieldLabel": "Task ID",
+              "fieldType": "text",
+              "placeholder": "mvp_... or eng_...",
+              "requiredField": true
+            },
+            {
+              "fieldName": "action",
+              "fieldLabel": "Action",
+              "fieldType": "dropdown",
+              "fieldOptions": {
+                "values": [
+                  {
+                    "option": "status"
+                  },
+                  {
+                    "option": "reply"
+                  },
+                  {
+                    "option": "approve"
+                  },
+                  {
+                    "option": "reject"
+                  },
+                  {
+                    "option": "cancel"
+                  }
+                ]
+              },
+              "requiredField": true
+            },
+            {
+              "fieldName": "human_response",
+              "fieldLabel": "Your answer / decision rationale",
+              "fieldType": "textarea",
+              "placeholder": "Answer the orchestrator questions in plain language. Required for reply; optional for approve/reject.",
+              "requiredField": false
+            },
+            {
+              "fieldName": "requested_by",
+              "fieldLabel": "Engineering role / accountable identity",
+              "fieldType": "text",
+              "placeholder": "e.g. reservoir-engineer-ivanov",
+              "requiredField": true
+            }
+          ]
+        },
+        "responseMode": "lastNode",
+        "options": {
+          "path": "mas-human-gate",
+          "appendAttribution": false,
+          "buttonLabel": "Submit human gate action",
+          "ignoreBots": true,
+          "includeUserInOutput": true
+        }
+      },
+      "id": "b1000001-0001-4000-8000-000000000001",
+      "name": "Human gate form",
+      "type": "n8n-nodes-base.formTrigger",
+      "typeVersion": 2.6,
+      "position": [
+        0,
+        0
+      ],
+      "webhookId": "b1000001-0001-4000-8000-000000000001"
+    },
+    {
+      "parameters": {
+        "jsCode": "const item = $input.first();\nconst input = item.json || {};\nconst clean = (value) => typeof value === 'string' ? value.trim() : '';\nconst taskId = clean(input.task_id);\nconst action = clean(input.action).toLowerCase() || 'status';\nconst humanResponse = clean(input.human_response);\nconst requestedBy = clean(input.requested_by) || 'anonymous';\nconst allowed = new Set(['status', 'reply', 'approve', 'reject', 'cancel']);\nif (!taskId) {\n  return [{ json: { entrypoint: 'human_gate_form', input_valid: false, status: 'invalid', message: 'task_id is required.', form_action: action, human_response: humanResponse, requested_by: requestedBy } }];\n}\nif (!allowed.has(action)) {\n  return [{ json: { entrypoint: 'human_gate_form', input_valid: false, status: 'invalid', message: 'Unsupported action.', form_action: action, task_id: taskId, human_response: humanResponse, requested_by: requestedBy } }];\n}\nreturn [{ json: {\n  entrypoint: 'human_gate_form',\n  action: 'status',\n  task_id: taskId,\n  requested_by: requestedBy,\n  form_action: action,\n  human_response: humanResponse,\n}}];"
+      },
+      "id": "b1000001-0001-4000-8000-000000000002",
+      "name": "Prepare status lookup",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        280,
+        0
+      ]
+    },
+    {
+      "parameters": {
+        "source": "database",
+        "workflowId": {
+          "__rl": true,
+          "value": "REPLACE_ORCHESTRATOR_ID_IN_UI_HUMAN_GATE_STATUS",
+          "mode": "list",
+          "cachedResultName": "Orchestrator — Engineering MAS"
+        },
+        "mode": "once",
+        "options": {
+          "waitForSubWorkflow": true
+        }
+      },
+      "id": "b1000001-0001-4000-8000-000000000003",
+      "name": "Call Orchestrator status",
+      "type": "n8n-nodes-base.executeWorkflow",
+      "typeVersion": 1.3,
+      "position": [
+        560,
+        0
+      ]
+    },
+    {
+      "parameters": {
+        "jsCode": "const prepared = $('Prepare status lookup').first().json || {};\nconst statusResponse = $input.first().json || {};\nconst formAction = String(prepared.form_action || 'status').toLowerCase();\nconst humanResponse = String(prepared.human_response || '').trim();\nconst requestedBy = String(prepared.requested_by || 'anonymous').trim();\nconst gate = statusResponse.human_gate && typeof statusResponse.human_gate === 'object' ? statusResponse.human_gate : null;\nconst awaiting = statusResponse.status === 'awaiting_human' && gate && gate.gate_id;\nconst mutating = ['reply', 'approve', 'reject', 'cancel'].includes(formAction);\nlet shouldResume = false;\nlet blockReason = '';\nif (prepared.input_valid === false) {\n  blockReason = prepared.message || 'Invalid form input.';\n} else if (!mutating) {\n  blockReason = 'status_only';\n} else if (!awaiting) {\n  blockReason = statusResponse.status === 'not_found'\n    ? 'Task not found. Check Task ID.'\n    : `Task status is ${statusResponse.status || 'unknown'}; there is no open human_gate to answer.`;\n} else if (formAction === 'reply' && !humanResponse) {\n  blockReason = 'human_response is required for reply.';\n} else if (!requestedBy || requestedBy === 'anonymous') {\n  blockReason = 'requested_by must be a named accountable engineering identity.';\n} else {\n  shouldResume = true;\n}\nconst expectedVersion = Number(gate?.expected_version ?? statusResponse.version);\nif (shouldResume && (!Number.isInteger(expectedVersion) || expectedVersion < 1 || !gate?.gate_id)) {\n  shouldResume = false;\n  blockReason = 'Open human_gate is missing integer expected_version or gate_id; reload status or re-open the gate.';\n}\nconst resumePayload = shouldResume ? {\n  entrypoint: 'human_gate_form',\n  action: formAction,\n  task_id: statusResponse.task_id || prepared.task_id,\n  expected_version: expectedVersion,\n  gate_id: String(gate.gate_id),\n  human_response: humanResponse,\n  requested_by: requestedBy,\n} : null;\nreturn [{ json: {\n  should_resume: shouldResume,\n  block_reason: blockReason,\n  form_action: formAction,\n  human_response: humanResponse,\n  requested_by: requestedBy,\n  status_response: statusResponse,\n  human_gate: gate,\n  resume_payload: resumePayload,\n  ...(resumePayload || {}),\n}}];"
+      },
+      "id": "b1000001-0001-4000-8000-000000000004",
+      "name": "Decide resume from status",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        840,
+        0
+      ]
+    },
+    {
+      "parameters": {
+        "conditions": {
+          "options": {
+            "caseSensitive": true,
+            "leftValue": "",
+            "typeValidation": "strict",
+            "version": 2
+          },
+          "conditions": [
+            {
+              "id": "b1000001-0001-4000-8000-000000000014",
+              "leftValue": "={{ $json.should_resume }}",
+              "rightValue": true,
+              "operator": {
+                "type": "boolean",
+                "operation": "equals"
+              }
+            }
+          ],
+          "combinator": "and"
+        },
+        "options": {}
+      },
+      "id": "b1000001-0001-4000-8000-000000000005",
+      "name": "Should resume gate?",
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2.2,
+      "position": [
+        1120,
+        0
+      ]
+    },
+    {
+      "parameters": {
+        "jsCode": "const decision = $('Decide resume from status').first().json || {};\nconst payload = decision.resume_payload && typeof decision.resume_payload === 'object' ? decision.resume_payload : {};\nreturn [{ json: payload }];"
+      },
+      "id": "b1000001-0001-4000-8000-000000000006",
+      "name": "Prepare resume payload",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        1400,
+        -120
+      ]
+    },
+    {
+      "parameters": {
+        "source": "database",
+        "workflowId": {
+          "__rl": true,
+          "value": "REPLACE_ORCHESTRATOR_ID_IN_UI_HUMAN_GATE_RESUME",
+          "mode": "list",
+          "cachedResultName": "Orchestrator — Engineering MAS"
+        },
+        "mode": "once",
+        "options": {
+          "waitForSubWorkflow": true
+        }
+      },
+      "id": "b1000001-0001-4000-8000-000000000007",
+      "name": "Call Orchestrator resume",
+      "type": "n8n-nodes-base.executeWorkflow",
+      "typeVersion": 1.3,
+      "position": [
+        1680,
+        -120
+      ]
+    },
+    {
+      "parameters": {
+        "jsCode": "const decision = $('Decide resume from status').first().json || {};\nconst resumed = $json && typeof $json === 'object' ? $json : {};\nconst usedResume = Boolean(decision.should_resume);\nconst response = usedResume ? resumed : (decision.status_response || {});\nconst escapeHtml = (value) => String(value ?? '')\n  .replace(/&/g, '&amp;')\n  .replace(/</g, '&lt;')\n  .replace(/>/g, '&gt;')\n  .replace(/\\\"/g, '&quot;')\n  .replace(/'/g, '&#39;');\nconst prettyJson = (value, limit = 16000) => {\n  let text;\n  try { text = JSON.stringify(value, null, 2); } catch { text = String(value); }\n  return text.length > limit ? `${text.slice(0, limit)}\\n… truncated for display` : text;\n};\nconst questionText = (q) => {\n  if (!q || typeof q !== 'object') return String(q ?? '');\n  return String(q.text || q.question || q.message || q.id || '').trim();\n};\nconst gate = response.human_gate && typeof response.human_gate === 'object'\n  ? response.human_gate\n  : (decision.human_gate || null);\nconst questions = Array.isArray(gate?.questions) ? gate.questions : [];\nconst status = String(response.status || decision.block_reason || 'error');\nconst taskId = String(response.task_id || decision.resume_payload?.task_id || decision.status_response?.task_id || '');\nconst version = response.version ?? decision.status_response?.version ?? null;\nconst message = String(response.message || decision.block_reason || 'Request processed.');\nconst questionItems = questions\n  .map((q, index) => `<li><strong>${escapeHtml(String(q.id || `q${index + 1}`))}</strong>: ${escapeHtml(questionText(q))}${q.expected_format ? ` <em>(format: ${escapeHtml(q.expected_format)})</em>` : ''}</li>`)\n  .join('');\nconst result = response.result && typeof response.result === 'object' ? response.result : null;\nconst deliverables = Array.isArray(result?.deliverables) ? result.deliverables : [];\nconst scheduleText = response.schedule_text\n  || result?.release?.schedule_text\n  || result?.compact_data?.generated_schedule\n  || deliverables.find((value) => typeof value?.schedule_text === 'string')?.schedule_text\n  || null;\nconst autoCas = usedResume\n  ? `<p><strong>CAS fields applied automatically:</strong> expected_version=<code>${escapeHtml(decision.resume_payload?.expected_version)}</code>, gate_id=<code>${escapeHtml(decision.resume_payload?.gate_id)}</code></p>`\n  : '';\nconst inspectHint = !usedResume && gate\n  ? `<section>\n<h2>Open human gate</h2>\n<p><strong>Why the orchestrator is waiting:</strong> ${escapeHtml(gate.reason || message)}</p>\n<p><strong>Gate kind:</strong> <code>${escapeHtml(gate.kind || '')}</code></p>\n${questionItems ? `<p><strong>Answer these points:</strong></p><ol>${questionItems}</ol>` : ''}\n<p>Submit this form again with the same Task ID, action <code>reply</code>/<code>approve</code>/<code>reject</code>, and your answer. Version/gate_id stay automatic.</p>\n</section>`\n  : '';\nconst nextGate = usedResume && gate\n  ? `<section>\n<h2>Still waiting / next gate</h2>\n<p>${escapeHtml(gate.reason || message)}</p>\n${questionItems ? `<ol>${questionItems}</ol>` : ''}\n</section>`\n  : '';\nconst blocked = !usedResume && decision.block_reason && decision.block_reason !== 'status_only'\n  ? `<p><strong>Could not resume:</strong> ${escapeHtml(decision.block_reason)}</p>`\n  : '';\nconst scheduleBlock = scheduleText\n  ? `<section><h2>schedule.inc</h2><pre>${escapeHtml(String(scheduleText).slice(0, 100000))}</pre></section>`\n  : '';\nconst html = `<main>\n<h1>MAS human gate</h1>\n<p>Status: <strong>${escapeHtml(status)}</strong></p>\n<p>${escapeHtml(message)}</p>\n<p>Task ID: <code>${escapeHtml(taskId || 'n/a')}</code></p>\n<p>Version: <code>${escapeHtml(version ?? 'n/a')}</code></p>\n<p>Requested action: <code>${escapeHtml(decision.form_action || '')}</code></p>\n${autoCas}\n${blocked}\n${inspectHint}\n${nextGate}\n${scheduleBlock}\n<details><summary>Structured response</summary><pre>${escapeHtml(prettyJson({ status_response: decision.status_response, resume_response: usedResume ? response : null, decision: { should_resume: decision.should_resume, block_reason: decision.block_reason, form_action: decision.form_action } }))}</pre></details>\n</main>`;\nreturn [{ json: { ...response, form_response_html: html, human_gate: gate } }];"
+      },
+      "id": "b1000001-0001-4000-8000-000000000008",
+      "name": "Build safe human gate response",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        1960,
+        0
+      ]
+    },
+    {
+      "parameters": {
+        "operation": "completion",
+        "respondWith": "showText",
+        "responseText": "={{ $json.form_response_html }}"
+      },
+      "id": "b1000001-0001-4000-8000-000000000009",
+      "name": "Show human gate result",
+      "type": "n8n-nodes-base.form",
+      "typeVersion": 2.5,
+      "position": [
+        2240,
+        0
+      ]
+    }
+  ],
+  "pinData": {},
+  "connections": {
+    "Human gate form": {
+      "main": [
+        [
+          {
+            "node": "Prepare status lookup",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Prepare status lookup": {
+      "main": [
+        [
+          {
+            "node": "Call Orchestrator status",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Call Orchestrator status": {
+      "main": [
+        [
+          {
+            "node": "Decide resume from status",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Decide resume from status": {
+      "main": [
+        [
+          {
+            "node": "Should resume gate?",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Should resume gate?": {
+      "main": [
+        [
+          {
+            "node": "Prepare resume payload",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Build safe human gate response",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Prepare resume payload": {
+      "main": [
+        [
+          {
+            "node": "Call Orchestrator resume",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Call Orchestrator resume": {
+      "main": [
+        [
+          {
+            "node": "Build safe human gate response",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Build safe human gate response": {
+      "main": [
+        [
+          {
+            "node": "Show human gate result",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    }
+  },
+  "versionId": "mas-human-gate-form-v1",
+  "meta": {
+    "templateCredsSetupCompleted": false,
+    "targetN8nVersion": "2.30.8",
+    "contractVersion": "mas_human_gate_form/v1"
+  },
+  "tags": []
+}

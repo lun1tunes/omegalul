@@ -11,7 +11,7 @@ const readWorkflow = (name) => JSON.parse(fs.readFileSync(
   path.join(workspace, 'n8n', 'workflows', name),
   'utf8',
 ));
-const plannerWorkflow = readWorkflow('tnavigator-schedule-planner.workflow.json');
+const plannerWorkflow = readWorkflow('tnavigator-schedule-builder.workflow.json');
 const builderWorkflow = readWorkflow('tnavigator-schedule-builder.workflow.json');
 const traceWorkflow = readWorkflow('mas-trace-event-writer.workflow.json');
 const AsyncFunction = Object.getPrototypeOf(async function () {}).constructor;
@@ -129,14 +129,14 @@ function builderWork(overrides = {}) {
 
 async function main() {
   const plannerNodes = { 'Prepare SCHEDULE planner input': plannerRequest() };
-  const fullPlan = await run(plannerWorkflow, 'Validate SCHEDULE plan', { output: plan() }, plannerNodes);
+  const fullPlan = await run(plannerWorkflow, 'Validate SCHEDULE pipeline plan', { output: plan() }, plannerNodes);
   assert.equal(fullPlan.score.stage_score, 100);
   assert.equal(fullPlan.score.decision, 'continue');
   assert.equal(fullPlan.decision_record.contract, 'decision_record');
 
   const attention = await run(
     plannerWorkflow,
-    'Validate SCHEDULE plan',
+    'Validate SCHEDULE pipeline plan',
     { output: plan() },
     { 'Prepare SCHEDULE planner input': plannerRequest([]) },
   );
@@ -152,7 +152,7 @@ async function main() {
   });
   const blockedPlan = await run(
     plannerWorkflow,
-    'Validate SCHEDULE plan',
+    'Validate SCHEDULE pipeline plan',
     { output: missingEvidence },
     plannerNodes,
   );
@@ -165,7 +165,7 @@ async function main() {
       { ...plan().stages[0], stage_id: 'b', dependencies: ['a'] },
     ],
   });
-  const blockedCycle = await run(plannerWorkflow, 'Validate SCHEDULE plan', { output: cyclic }, plannerNodes);
+  const blockedCycle = await run(plannerWorkflow, 'Validate SCHEDULE pipeline plan', { output: cyclic }, plannerNodes);
   assert.equal(blockedCycle.score.decision, 'hitl');
   assert(blockedCycle.hard_blockers.includes('PLAN_DEPENDENCY_CYCLE'));
 

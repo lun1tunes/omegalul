@@ -1,5 +1,5 @@
 {
-  "name": "AI components — PostgreSQL memory, pgvector, Qwen models",
+  "name": "Reference — AI Components",
   "nodes": [
     {
       "parameters": {},
@@ -214,7 +214,7 @@
   "settings": {
     "executionOrder": "v1"
   },
-  "versionId": "80f35a1a-9558-498e-85aa-3288de3269b9",
+  "versionId": "6a677188-4ab7-4943-9dd3-624adc8d46be",
   "meta": {
     "templateCredsSetupCompleted": false
   },

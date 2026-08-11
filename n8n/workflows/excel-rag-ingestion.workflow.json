@@ -1,6 +1,6 @@
 {
   "id": "excel-rag-ingestion-v1",
-  "name": "Excel Extractor — UI-only RAG operating-guide ingestion",
+  "name": "Ingestion — Excel Agent Knowledge",
   "description": "Manual, UI-only ingestion of the portable Excel Extractor operating guide into PGVector. Compatible with n8n 2.30.8.",
   "nodes": [
     {
@@ -14,7 +14,7 @@
         0
       ],
       "notesInFlow": true,
-      "notes": "UI-only bootstrap. Configure the PostgreSQL and embedding credentials first, then click Test workflow. Do not activate this workflow; it is a deliberate manual ingestion job."
+      "notes": "UI-only bootstrap. Configure the PostgreSQL and embedding credentials first, then click Test workflow. Do not activate/publish this workflow. After insert, the Postgres inventory nodes show what is already in the RAG table."
     },
     {
       "parameters": {
@@ -182,6 +182,67 @@
       },
       "notesInFlow": true,
       "notes": "Placeholder only. In the UI replace this sub-node with the corporate embedding integration/model, then attach the SAME model and embedding dimensions to core → “PGVector operating context”. The 180-second timeout is a conservative ingestion limit; do not run with an unconfigured placeholder."
+    },
+    {
+      "parameters": {
+        "jsCode": "const cfg = $('RAG runtime configuration').first().json || {};\nconst table = typeof cfg.rag_table_name === 'string' ? cfg.rag_table_name.trim() : '';\nif (!/^[A-Za-z_][A-Za-z0-9_]*$/.test(table)) {\n  throw new Error('rag_table_name must be a simple PostgreSQL identifier before inventory SQL can run');\n}\nconst expected = [\n  'excel-agent-trust-boundary',\n  'excel-agent-discovery-and-tables',\n  'excel-agent-query-and-result-protocol',\n  'excel-agent-clarification-and-continuation',\n  'excel-agent-rag-and-operations',\n];\n// LEFT JOIN keeps one meta row even when the table is empty, so Summarize always runs.\nconst query = [\n  'WITH inv AS (',\n  '  SELECT',\n  \"    coalesce(metadata->>'document_id', '(missing document_id)') AS document_id\",\n  \"    , coalesce(metadata->>'slug', '') AS slug\",\n  \"    , coalesce(metadata->>'guide_version', metadata->>'version', '') AS guide_version\",\n  '    , count(*)::int AS chunk_count',\n  '    , min(left(text, 120)) AS text_preview',\n  `  FROM ${table}`,\n  '  GROUP BY 1, 2, 3',\n  '), meta AS (',\n  `  SELECT (SELECT count(*)::int FROM ${table}) AS total_rows`,\n  `       , (SELECT count(DISTINCT nullif(coalesce(metadata->>'document_id', ''), ''))::int FROM ${table}) AS distinct_documents`,\n  '       , (',\n  '            SELECT pg_catalog.format_type(a.atttypid, a.atttypmod)',\n  '            FROM pg_catalog.pg_attribute AS a',\n  `            WHERE a.attrelid = to_regclass('${table}')`,\n  \"              AND a.attname = 'embedding'\",\n  '              AND NOT a.attisdropped',\n  '            LIMIT 1',\n  '          ) AS embedding_type',\n  ')',\n  'SELECT coalesce(inv.document_id, \\'(none)\\') AS document_id,',\n  '       coalesce(inv.slug, \\'\\') AS slug,',\n  '       coalesce(inv.guide_version, \\'\\') AS guide_version,',\n  '       coalesce(inv.chunk_count, 0)::int AS chunk_count,',\n  '       inv.text_preview,',\n  '       meta.total_rows, meta.distinct_documents, meta.embedding_type',\n  'FROM meta',\n  'LEFT JOIN inv ON TRUE',\n  'ORDER BY 1;',\n].join('\\n');\nreturn [{ json: {\n  rag_table_name: table,\n  expected_document_ids: expected,\n  expected_document_count: expected.length,\n  query,\n} }];"
+      },
+      "id": "4b9a63fe-6200-4bd1-8e4c-000000000008",
+      "name": "Prepare RAG inventory query",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        1260,
+        0
+      ],
+      "executeOnce": true,
+      "notesInFlow": true,
+      "notes": "Builds a read-only inventory SQL for the configured table. Safe for UI-only installs: no server shell access required."
+    },
+    {
+      "parameters": {
+        "operation": "executeQuery",
+        "query": "={{ $json.query }}",
+        "options": {
+          "queryBatching": "single",
+          "largeNumbersOutput": "text",
+          "replaceEmptyStrings": false
+        }
+      },
+      "id": "4b9a63fe-6200-4bd1-8e4c-000000000009",
+      "name": "Postgres — inspect RAG table contents",
+      "type": "n8n-nodes-base.postgres",
+      "typeVersion": 2.6,
+      "position": [
+        1520,
+        0
+      ],
+      "executeOnce": true,
+      "alwaysOutputData": true,
+      "credentials": {
+        "postgres": {
+          "id": "REPLACE_IN_UI",
+          "name": "REPLACE: PostgreSQL / pgvector credential"
+        }
+      },
+      "notesInFlow": true,
+      "notes": "UI REQUIRED: select the SAME PostgreSQL credential as “PGVector — insert operating guide” and as Excel Extractor → “PGVector operating context”. A different credential here silently inspects the wrong database. Output lists document_id, chunk counts, previews, total_rows and embedding_type."
+    },
+    {
+      "parameters": {
+        "jsCode": "const prepared = $('Prepare RAG inventory query').first().json || {};\nconst rows = $input.all().map((item) => item.json || {});\nconst expected = Array.isArray(prepared.expected_document_ids) ? prepared.expected_document_ids : [];\nconst found = [...new Set(\n  rows.map((row) => String(row.document_id || '')).filter((id) => id && id !== '(none)' && id !== '(missing document_id)')\n)];\nconst missing = expected.filter((id) => !found.includes(id));\nconst totalRows = Number(rows[0]?.total_rows ?? 0);\nconst distinctDocuments = Number(rows[0]?.distinct_documents ?? found.length);\nconst embeddingType = typeof rows[0]?.embedding_type === 'string' ? rows[0].embedding_type : null;\nconst ok = missing.length === 0 && distinctDocuments >= expected.length && totalRows > 0;\n// Fresh ingest of five ~1.2k docs with splitter 1000/150 is usually ~10 rows; much higher usually means re-ingest duplicates.\nconst duplicateIngestSuspected = ok && totalRows >= expected.length * 4;\nconst warnings = [];\nif (duplicateIngestSuspected) warnings.push('total_rows looks high for a single ingest; re-running insert appends chunks. Prefer a new table for a clean reload.');\nif (!embeddingType) warnings.push('embedding column type was not found; confirm the table exists in this credential/database.');\nreturn [{ json: {\n  status: ok ? 'rag_inventory_ok' : 'rag_inventory_incomplete',\n  rag_table_name: prepared.rag_table_name,\n  total_rows: totalRows,\n  distinct_documents: distinctDocuments,\n  expected_document_count: expected.length,\n  expected_document_ids: expected,\n  found_document_ids: found.sort(),\n  missing_document_ids: missing,\n  embedding_type: embeddingType,\n  duplicate_ingest_suspected: duplicateIngestSuspected,\n  warnings,\n  note: 'Chunking can create more than one row per document_id; compare distinct_documents/found_document_ids, not only total_rows. Use the same Postgres credential as PGVector insert.',\n  documents: rows\n    .filter((row) => row.document_id && row.document_id !== '(none)')\n    .map((row) => ({\n      document_id: row.document_id,\n      slug: row.slug,\n      guide_version: row.guide_version,\n      chunk_count: Number(row.chunk_count || 0),\n      text_preview: row.text_preview,\n    })),\n} }];"
+      },
+      "id": "4b9a63fe-6200-4bd1-8e4c-00000000000a",
+      "name": "Summarize RAG inventory",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        1780,
+        0
+      ],
+      "executeOnce": true,
+      "notesInFlow": true,
+      "notes": "Open this node’s output after Test workflow. status=rag_inventory_ok means all five operating-guide document_id values are present in the configured table."
     }
   ],
   "connections": {
@@ -250,6 +311,39 @@
           }
         ]
       ]
+    },
+    "PGVector — insert operating guide": {
+      "main": [
+        [
+          {
+            "node": "Prepare RAG inventory query",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Prepare RAG inventory query": {
+      "main": [
+        [
+          {
+            "node": "Postgres — inspect RAG table contents",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Postgres — inspect RAG table contents": {
+      "main": [
+        [
+          {
+            "node": "Summarize RAG inventory",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
     }
   },
   "active": false,
@@ -258,7 +352,7 @@
     "saveExecutionProgress": true,
     "saveManualExecutions": true
   },
-  "versionId": "4b9a63fe-6200-4bd1-8e4c-000000000099",
+  "versionId": "683fb764-ea06-4342-bbf4-8aba2e4d39ec",
   "meta": {
     "templateCredsSetupCompleted": false
   },

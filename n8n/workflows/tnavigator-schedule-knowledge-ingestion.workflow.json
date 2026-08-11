@@ -1,6 +1,6 @@
 {
   "id": "a666218c-9546-57f2-a6d6-0d0ee6ac7cd2",
-  "name": "tNavigator SCHEDULE Knowledge Ingestion — approved PGVector runtime",
+  "name": "SCHEDULE — Knowledge Ingestion",
   "description": "UI-only expert knowledge ingestion with parent-document persistence and hybrid-RAG metadata.",
   "nodes": [
     {
@@ -663,7 +663,7 @@
     "saveManualExecutions": true,
     "callerPolicy": "workflowsFromSameOwner"
   },
-  "versionId": "4afcc636-b781-5258-8a43-8970e5d115d0",
+  "versionId": "58cf3f9a-dc9f-4109-a5f9-c6853cb5ce64",
   "meta": {
     "templateCredsSetupCompleted": false,
     "targetN8nVersion": "2.30.8",

@@ -1,6 +1,6 @@
 {
   "id": "c64d8c27-879f-58fe-af4b-ca5c153559b4",
-  "name": "Engineering Specialist — universal workflow template",
+  "name": "Template — Engineering Specialist",
   "nodes": [
     {
       "parameters": {
@@ -278,7 +278,7 @@
     "callerPolicy": "workflowsFromSameOwner",
     "errorWorkflow": ""
   },
-  "versionId": "b74932e4-f4cd-55f0-9f13-b3ef13af22fb",
+  "versionId": "263f5d07-08ce-4cba-b159-1f3e8bd9eb8d",
   "meta": {
     "templateCredsSetupCompleted": false,
     "targetN8nVersion": "2.30.8",

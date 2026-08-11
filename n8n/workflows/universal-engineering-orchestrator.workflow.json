@@ -1,10 +1,10 @@
 {
   "id": "ba8ba59f-e4e4-5ff6-b22c-63ceae883271",
-  "name": "Universal Engineering Orchestrator — stateful HITL template",
+  "name": "Orchestrator — Engineering MAS",
   "nodes": [
     {
       "parameters": {
-        "content": "## UI-only setup (n8n 2.30.8)\n1. Create task-state and trace Data Tables using `n8n/README.md`.\n2. Select them in every matching Data Table node.\n3. Assign Planner/Verifier credentials.\n4. Bind Excel adapter/agent, SCHEDULE Retrieval/Builder and MAS Trace Writer.\n5. Load expert keyword instructions/schema JSON into `schedule_mvp`.\n6. Test start → HITL → delegation → validation → verification → inline .INC.\n\nSCHEDULE input and result remain bounded text inside n8n. The control-plane uses UI credentials/bindings and Data Tables; no global-variable expressions, shell or server filesystem is used.",
+        "content": "## UI-only setup (n8n 2.30.8)\n1. Create task-state and trace Data Tables using `README.md` in the repository root.\n2. Select them in every matching Data Table node.\n3. Assign Planner/Verifier credentials.\n4. Bind Excel adapter/agent, SCHEDULE Retrieval/Builder and MAS Trace Writer.\n5. Load expert keyword instructions/schema JSON into `schedule_mvp`.\n6. Test start → HITL → delegation → validation → verification → inline .INC.\n\nSCHEDULE input and result remain bounded text inside n8n. The control-plane uses UI credentials/bindings and Data Tables; no global-variable expressions, shell or server filesystem is used.",
         "height": 440,
         "width": 500,
         "color": 5
@@ -1060,7 +1060,7 @@
           "__rl": true,
           "value": "REPLACE_EXCEL_ADAPTER_IN_UI",
           "mode": "list",
-          "cachedResultName": "Excel Extraction Specialist Adapter"
+          "cachedResultName": "Adapter — Excel Extraction"
         },
         "workflowInputs": {
           "mappingMode": "defineBelow",
@@ -1109,7 +1109,7 @@
           "__rl": true,
           "value": "REPLACE_SCHEDULE_RAG_RETRIEVAL_IN_UI",
           "mode": "list",
-          "cachedResultName": "tNavigator SCHEDULE Hybrid Retrieval — executable RRF runtime"
+          "cachedResultName": "SCHEDULE — Knowledge Retrieval"
         },
         "workflowInputs": {
           "mappingMode": "defineBelow",
@@ -1189,7 +1189,7 @@
           "__rl": true,
           "value": "REPLACE_SCHEDULE_BUILDER_IN_UI",
           "mode": "list",
-          "cachedResultName": "tNavigator SCHEDULE Builder — governed CREATE/REVISE pipeline"
+          "cachedResultName": "SCHEDULE — Builder"
         },
         "workflowInputs": {
           "mappingMode": "defineBelow",
@@ -1238,7 +1238,7 @@
           "__rl": true,
           "value": "REPLACE_CALCULATION_ADAPTER_IN_UI",
           "mode": "list",
-          "cachedResultName": "Engineering Calculation Specialist Adapter — Math Service"
+          "cachedResultName": "Adapter — Calculation (Math Service)"
         },
         "workflowInputs": {
           "mappingMode": "defineBelow",
@@ -2102,7 +2102,7 @@
           "__rl": true,
           "value": "REPLACE_MAS_TRACE_WRITER_IN_UI",
           "mode": "list",
-          "cachedResultName": "MAS Trace Event Writer — redacted execution ledger"
+          "cachedResultName": "Writer — MAS Trace"
         },
         "workflowInputs": {
           "mappingMode": "defineBelow",
@@ -3178,7 +3178,7 @@
     "callerPolicy": "workflowsFromSameOwner",
     "errorWorkflow": ""
   },
-  "versionId": "1f66ada8-4382-5b1b-9538-e3ff077233e5",
+  "versionId": "b4fdfec7-f57a-4f83-95cc-4280fd371267",
   "meta": {
     "templateCredsSetupCompleted": false,
     "targetN8nVersion": "2.30.8",
