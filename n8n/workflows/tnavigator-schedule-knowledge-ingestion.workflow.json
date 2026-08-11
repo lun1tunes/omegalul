@@ -352,7 +352,6 @@
       "parameters": {
         "model": "text-embedding-3-small",
         "options": {
-          "dimensions": 1536,
           "batchSize": 128,
           "stripNewLines": true,
           "timeout": 180,

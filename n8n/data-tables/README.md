@@ -2,7 +2,7 @@
 
 n8n 2.30.8 Data tables support **Create → Import CSV**, not JSON schema import.
 
-1. Prefer creating tables from scratch with typed columns (see [`docs/DEPLOY_N8N_UI.md`](../../docs/DEPLOY_N8N_UI.md) Step 2).
+1. Prefer creating tables from scratch with typed columns (see [`docs.md`](../../docs.md) Step 2).
 2. Or import these header-only CSVs, then set `version`, `retry_count`, `max_retries` to **Number** on the task table.
 
 | File | Table name |

@@ -1242,7 +1242,7 @@ Entrypoints соответствуют роли workflow: user-facing Orchestrat
 
 CLI import не проверяет корпоративную сеть, credentials, PostgreSQL rights и реальный UI round-trip — UI/infrastructure smoke обязателен отдельно.
 
-**Последний полный repository gate на официальном n8n 2.30.8:** 121 runtime-сценарий; pytest (`excel-agent-tools/tests`); generator emits only 4 SCHEDULE/trace JSON; native HITL forms + Deployment Health Check; UI runbook `docs/DEPLOY_N8N_UI.md`; clean import/export 16/16, активных после импорта — 0. Целевой UI всё равно требует ручного round-trip с реальными credentials, Data Tables и сетью.
+**Последний полный repository gate на официальном n8n 2.30.8:** 121 runtime-сценарий; pytest (`excel-agent-tools/tests`); generator emits only 4 SCHEDULE/trace JSON; native HITL forms + Deployment Health Check; UI runbook `docs.md`; clean import/export 15/15, активных после импорта — 0. Целевой UI всё равно требует ручного round-trip с реальными credentials, Data Tables и сетью.
 
 ## 12. Ревизия текущего репозитория
 
@@ -1258,8 +1258,6 @@ CLI import не проверяет корпоративную сеть, credenti
 | SCHEDULE parser/decoder/query/renderer/merge/validator | block-preserving baseline/merge, catalogue decoder, targeted query, two-phase replay и generic lifecycle/numeric/interval/wildcard mechanisms реализованы | уточнять expert schema/policy по мере добавления keywords |
 | Calculation Adapter + Math Service | реализованы: `calculation-specialist-adapter.workflow.json` вызывает `fastapi-math-service` для DEV + CPS3/ZMAP intersections | использовать как отдельную deterministic capability; simulator-backed verification остаётся вне текущего SCHEDULE slice |
 | Full DATA/grid generation | отсутствует | явно вне scope |
-| `excel-mas-orchestrator` | legacy | не импортировать в greenfield |
-
 ### 12.1. Requirement-by-requirement completion audit
 
 | Обязательное требование текущего SCHEDULE slice | Repository evidence | Что ещё блокирует production acceptance |

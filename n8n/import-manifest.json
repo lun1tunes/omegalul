@@ -10,7 +10,6 @@
     "workflows/excel-engineering-specialist-adapter.workflow.json",
     "workflows/excel-extraction-agent.workflow.json",
     "workflows/excel-extraction-form-adapter.workflow.json",
-    "workflows/excel-mas-orchestrator.workflow.json",
     "workflows/excel-rag-ingestion.workflow.json",
     "workflows/mas-deployment-health-check.workflow.json",
     "workflows/mas-human-gate-form.workflow.json",
@@ -50,10 +49,6 @@
     {
       "workflow": "workflows/ai-components.workflow.json",
       "reason": "reference components"
-    },
-    {
-      "workflow": "workflows/excel-mas-orchestrator.workflow.json",
-      "reason": "legacy migration-only; never activate"
     }
   ],
   "data_tables": [
@@ -170,7 +165,7 @@
   "health_check": {
     "workflow": "workflows/mas-deployment-health-check.workflow.json",
     "ui_name": "Form — MAS Deployment Health Check",
-    "runbook": "docs/DEPLOY_N8N_UI.md",
+    "runbook": "docs.md",
     "data_table_probes": [
       {
         "node": "Probe task Data Table",
@@ -220,8 +215,8 @@
   ],
   "ui_configuration": [
     "Select both Data Tables in every matching Data Table node.",
-    "Apply all mandatory Execute Workflow bindings (Entry, Human Gate, Health Check, Orchestrator specialists) — see docs/DEPLOY_N8N_UI.md Step 4.",
-    "Create Data Tables from docs/DEPLOY_N8N_UI.md or n8n/data-tables/*.header.csv, then bind every Data Table node listed in Step 3.",
+    "Apply all mandatory Execute Workflow bindings (Entry, Human Gate, Health Check, Orchestrator specialists) — see docs.md Step 4.",
+    "Create Data Tables from docs.md or n8n/data-tables/*.header.csv, then bind every Data Table node listed in Step 3.",
     "Run Form — MAS Deployment Health Check before activating user forms; fix every FAIL using where_to_fix.",
     "Activate Form — MAS Entry for new tasks and Form — MAS Human Gate for transparent HITL resume; engineers answer questions in the form without copying expected_version/gate_id.",
     "Configure Excel Tools base URL/API key; 127.0.0.1 is valid only when n8n runs on the same Windows host.",
@@ -234,7 +229,7 @@
     "Run SCHEDULE Knowledge Ingestion manually and verify expert keyword instructions and worked examples through Hybrid Retrieval.",
     "Smoke-test Excel Agent and the inline .data/.inc path while inactive.",
     "Smoke-test Universal Orchestrator through Execute Workflow, then Form, then authenticated HTTP.",
-    "Activate Universal Orchestrator web entrypoints only after all gates pass. Do not activate legacy Excel MAS."
+    "Activate Universal Orchestrator web entrypoints only after all gates pass."
   ],
   "smoke_expectations": [
     "start without objective returns a bounded HITL request",

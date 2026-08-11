@@ -14,7 +14,6 @@ EXCEL_DELIVERY_WORKFLOWS = {
     "excel-engineering-specialist-adapter.workflow.json",
     "excel-extraction-agent.workflow.json",
     "excel-extraction-form-adapter.workflow.json",
-    "excel-mas-orchestrator.workflow.json",
     "excel-rag-ingestion.workflow.json",
 }
 MATH_DELIVERY_WORKFLOWS = {
@@ -82,7 +81,7 @@ def test_ui_import_manifest_is_complete_and_matches_static_bindings() -> None:
     assert manifest["target_n8n_version"] == "2.30.8"
     imported = {Path(value).name for value in manifest["full_clean_import_set"]}
     assert imported == {path.name for path in WORKFLOWS.glob("*.workflow.json")}
-    assert len(imported) == 16
+    assert len(imported) == 15
 
     workflows_by_name = {
         workflow["name"]: workflow
@@ -95,7 +94,7 @@ def test_ui_import_manifest_is_complete_and_matches_static_bindings() -> None:
     assert len(bindings) == 11
     assert future_bindings == []
     assert manifest["health_check"]["ui_name"] == "Form — MAS Deployment Health Check"
-    assert (ROOT / "docs" / "DEPLOY_N8N_UI.md").is_file()
+    assert (ROOT / "docs.md").is_file()
     all_static_bindings = bindings + future_bindings
     assert len({binding["placeholder"] for binding in all_static_bindings}) == len(all_static_bindings)
     for binding in all_static_bindings:
@@ -919,10 +918,8 @@ def test_excel_specialist_adapter_is_a_bounded_native_contract_boundary() -> Non
     assert "trace_summary" in adapt_code
 
 
-def test_legacy_excel_mas_is_explicitly_not_a_deployment_entrypoint() -> None:
-    workflow = load_json(WORKFLOWS / "excel-mas-orchestrator.workflow.json")
-    assert workflow["name"] == "Legacy — Excel Orchestrator"
-    assert workflow["active"] is False
+def test_legacy_excel_mas_workflow_is_removed() -> None:
+    assert not (WORKFLOWS / "excel-mas-orchestrator.workflow.json").exists()
 
 
 def test_specialist_template_uses_only_universal_boundary() -> None:

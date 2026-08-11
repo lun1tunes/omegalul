@@ -1,6 +1,6 @@
 # FastAPI Excel tools
 
-Детерминированный сервис без LLM: принимает Excel, держит дисковую сессию и отдаёт tools для schema/query/extract/validate/export. Развёртывание MAS целиком — в корневом [`README.md`](../README.md).
+Детерминированный сервис без LLM: принимает Excel, держит дисковую сессию и отдаёт tools для schema/query/extract/validate/export. Развёртывание MAS целиком — в [`docs.md`](../docs.md).
 
 Каждый запрос к `/api/v1/*` требует `X-API-Key`; исключение — `/health`.
 

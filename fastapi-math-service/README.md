@@ -1,6 +1,6 @@
 # FastAPI Math Service (MVP)
 
-Геометрический сервис MAS: batch intersection `.dev` × ASCII CPS3/ZMAP. Полная установка — корневой [`README.md`](../README.md); n8n Adapter — `calculation-specialist-adapter.workflow.json`.
+Геометрический сервис MAS: batch intersection `.dev` × ASCII CPS3/ZMAP. Полная установка — [`docs.md`](../docs.md); n8n Adapter — `calculation-specialist-adapter.workflow.json`.
 
 ## Windows CMD
 

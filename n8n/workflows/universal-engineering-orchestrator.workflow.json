@@ -4,7 +4,7 @@
   "nodes": [
     {
       "parameters": {
-        "content": "## UI-only setup (n8n 2.30.8)\n1. Create task-state and trace Data Tables using `README.md` in the repository root.\n2. Select them in every matching Data Table node.\n3. Assign Planner/Verifier credentials.\n4. Bind Excel adapter/agent, SCHEDULE Retrieval/Builder and MAS Trace Writer.\n5. Load expert keyword instructions/schema JSON into `schedule_mvp`.\n6. Test start → HITL → delegation → validation → verification → inline .INC.\n\nSCHEDULE input and result remain bounded text inside n8n. The control-plane uses UI credentials/bindings and Data Tables; no global-variable expressions, shell or server filesystem is used.",
+        "content": "## UI-only setup (n8n 2.30.8)\n1. Create task-state and trace Data Tables using `docs.md` in the repository root.\n2. Select them in every matching Data Table node.\n3. Assign Planner/Verifier credentials.\n4. Bind Excel adapter/agent, SCHEDULE Retrieval/Builder and MAS Trace Writer.\n5. Load expert keyword instructions/schema JSON into `schedule_mvp`.\n6. Test start → HITL → delegation → validation → verification → inline .INC.\n\nSCHEDULE input and result remain bounded text inside n8n. The control-plane uses UI credentials/bindings and Data Tables; no global-variable expressions, shell or server filesystem is used.",
         "height": 440,
         "width": 500,
         "color": 5
