@@ -218,20 +218,20 @@ py -m venv .venv
 
 **Предпочтительно From scratch** (типы сразу верные).
 
-`engineering_orchestrator_tasks_v1`:
+`engineering_orchestrator_tasks_v1` (lean CAS row — timeline is `mas_trace_events_v1`):
 
 | Column | Type | Column | Type |
 |---|---|---|---|
 | `task_id` | String | `version` | Number |
-| `status` | String | `phase` | String |
-| `task_type` | String | `risk_class` | String |
-| `request_json` | String | `context_json` | String |
-| `plan_json` | String | `specialist_json` | String |
+| `status` | String | `risk_class` | String |
+| `request_json` | String | `runtime_json` | String |
+| `plan_json` | String | `packet_json` | String |
 | `result_json` | String | `verification_json` | String |
-| `pending_human_json` | String | `last_error_json` | String |
-| `retry_count` | Number | `max_retries` | Number |
-| `history_json` | String | `created_at` | String |
+| `gate_json` | String | `retry_count` | Number |
+| `max_retries` | Number | `created_at` | String |
 | `updated_at` | String | | |
+
+Dropped vs older drafts: `phase`, `task_type`, `history_json`, `last_error_json` (error lives in `runtime_json.last_error`). Renames: `context_json`→`runtime_json`, `specialist_json`→`packet_json`, `pending_human_json`→`gate_json`. Recreate the Data Table (or rebuild columns) before rebinding.
 
 `mas_trace_events_v1` — все String:  
 `event_id`, `trace_id`, `task_id`, `at`, `stage`, `event_type`, `actor`, `status`, `summary`, `details_json`

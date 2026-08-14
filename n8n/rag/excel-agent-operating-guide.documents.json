@@ -670,7 +670,7 @@
       "status": "active",
       "author": "department-hydrodynamic-expert",
       "access_scope": "petroleum-engineering",
-      "text": "GRUPTREE — иерархия групп скважин (child → parent) в секции SCHEDULE.\n\nНазначение. GRUPTREE задаёт дерево многоуровневого группового управления: кто чья дочерняя/материнская группа. Вершина дерева — месторождение FIELD. Форматы: tN, E1, E3. Секция: только SCHEDULE. Скважины к группам приписывает WELSPECS, не GRUPTREE. Групповые лимиты/контроли — GCONPROD / GCONINJE и соседи; расширенная сеть — BRANPROP/NODEPROP (может отличаться от GRUPTREE, но leaf-группы со скважинами должны совпадать).\n\nПравило состава группы (мануал §12.20.103, §2.14.2). Группа либо содержит скважины (leaf / well-group), либо имеет дочерние группы (node-group) — не оба сразу. Node-группа не должна получать скважины через WELSPECS. Leaf-группа не должна получать child edges в GRUPTREE.\n\nRecord layout. Ключевое слово GRUPTREE, затем одна или несколько строк-записей, каждая заканчивается /. Блок заканчивается отдельным /. Одна запись = одно ребро иерархии:\n1. CHILD — имя дочерней группы (required string).\n2. PARENT — имя материнской группы (required string).\n\nВ IR поля CHILD и PARENT — строки без кавычек. Renderer печатает их в одинарных кавычках: `GRUPTREE` / `  'G1' 'GAS1' /` / `/`. Имена копируйте буквально из фактов; не нормализуйте регистр и не сокращайте.\n\nКанон мануала — один блок GRUPTREE со всеми рёбрами. Schema/renderer этого корпуса эмитит одно ребро на IR-event (отдельный GRUPTREE-блок на ребро). Последовательность таких блоков эквивалентна UPSERT рёбер в graph `groups`; не очищайте всё дерево между рёбрами одной даты.\n\nFIELD и defaults.\n- FIELD — корень (уровень 0). Не делайте FIELD чьим-то CHILD.\n- Если материнская группа не указана, симулятор считает группу дочерней к FIELD. В CREATE этого корпуса всегда пишите PARENT явно (обычно FIELD), не полагайтесь на default omission.\n- Группы без объявления в GRUPTREE, но впервые появившиеся в GSATPROD/GSATINJE как вспомогательные, иначе попадают сразу под FIELD; в многоуровневой иерархии вспомогательную группу сначала объявите в GRUPTREE.\n\nСемантика для validator/renderer.\n- period=ANY; clock.uses_current=true (ребро действует с текущей даты DATES).\n- definitions: UPSERT entity_type=group для CHILD и для PARENT.\n- hierarchy_edges: graph=`groups`, child_field=CHILD, parent_field=PARENT.\n- У одной CHILD в один момент — ровно один PARENT (второй parent = conflict).\n- Циклы A→B→A запрещены.\n- Orphan/неразрешённый root: не подвешивайте дерево к корню, отличному от FIELD, без факта; не оставляйте висячие ссылки на несуществующие группы, если пакет требует замкнутого дерева.\n- Не эмитьте BRANPROP/NODEPROP/GCONPROD из этой карточки.\n\nПорядок относительно других keywords.\n- Обычно GRUPTREE раньше WELSPECS и GCONPROD на той же или более ранней дате: группа должна существовать до ссылки.\n- WELSPECS.GROUP должен указывать на leaf-группу (или допустимую группу фактов), не на node-группу с детьми.\n- При REVISE preserve существующие рёбра вне scope; смена parent — MODIFY/ADD с доказательством; REMOVE ребра — только с accountable approval, как и прочие REMOVE.\n\nВалидация перед выпуском.\n- CHILD и PARENT непусты, без NUL/переводов строк.\n- CHILD ≠ PARENT.\n- CHILD ≠ FIELD.\n- Нет второго parent для той же CHILD на той же effective date.\n- Нет циклов в накопленном graph `groups`.\n- Node/leaf правило не нарушено относительно WELSPECS в том же пакете (если WELSPECS в scope).\n- Завершающие / записи и блока.\n\nАнтипаттерны.\n- Повесить скважины на группу, у которой уже есть дочерние группы.\n- Сделать две материнские группы для одной дочерней.\n- Цикл `A→B` и `B→A`.\n- Выдумать GAS1/G1 из примера мануала без фактов.\n- Заменить GRUPTREE сетью BRANPROP или наоборот.\n- Считать GRUPTREE контролем дебита (это GCONPROD).\n\nНехватка факта → needs_input: нет имён child/parent; неясно leaf vs node; конфликт с существующим parent в baseline; нужен корень не FIELD без обоснования; иерархия для Reservoir Coupling (GRUPMAST/GRUPSLAV) без полной карты связей.\n\nКарточка самодостаточна: renderer использует только schema_catalogue этой записи (variant default, поля CHILD и PARENT).",
+      "text": "GRUPTREE — иерархия групп скважин (child → parent) в секции SCHEDULE.\n\nНазначение. GRUPTREE задаёт дерево многоуровневого группового управления: кто чья дочерняя/материнская группа. Вершина дерева — месторождение FIELD. Форматы: tN, E1, E3. Секция: только SCHEDULE. Скважины к группам приписывает WELSPECS, не GRUPTREE. Групповые лимиты/контроли — GCONPROD / GCONINJE и соседи; расширенная сеть — BRANPROP/NODEPROP (может отличаться от GRUPTREE, но leaf-группы со скважинами должны совпадать).\n\nПравило состава группы (мануал §12.20.103, §2.14.2). Группа либо содержит скважины (leaf / well-group), либо имеет дочерние группы (node-group) — не оба сразу. Node-группа не должна получать скважины через WELSPECS. Leaf-группа не должна получать child edges в GRUPTREE.\n\nRecord layout. Ключевое слово GRUPTREE, затем одна или несколько строк-записей, каждая заканчивается /. Блок заканчивается отдельным /. Одна запись = одно ребро иерархии:\n1. CHILD — имя дочерней группы (required string).\n2. PARENT — имя материнской группы (required string).\n\nВ IR поля CHILD и PARENT — строки без кавычек. Renderer печатает их в одинарных кавычках: `GRUPTREE` / `  'G1' 'GAS1' /` / `/`. Имена копируйте буквально из фактов; не нормализуйте регистр и не сокращайте.\n\nКанон мануала — один блок GRUPTREE со всеми рёбрами. Schema/renderer этого корпуса эмитит одно ребро на IR-event (отдельный GRUPTREE-блок на ребро). Последовательность таких блоков эквивалентна UPSERT рёбер в graph `groups`; не очищайте всё дерево между рёбрами одной даты.\n\nFIELD и defaults.\n- FIELD — корень (уровень 0). Не делайте FIELD чьим-то CHILD.\n- Если материнская группа не указана, симулятор считает группу дочерней к FIELD. В CREATE этого корпуса всегда пишите PARENT явно (обычно FIELD), не полагайтесь на default omission.\n- Группы без объявления в GRUPTREE, но впервые появившиеся в GSATPROD/GSATINJE как вспомогательные, иначе попадают сразу под FIELD; в многоуровневой иерархии вспомогательную группу сначала объявите в GRUPTREE.\n\nСемантика для validator/renderer.\n- period=ANY; clock.uses_current=true (ребро действует с текущей даты DATES).\n- definitions: UPSERT entity_type=group для CHILD и для PARENT.\n- hierarchy_edges: graph=`groups`, child_field=CHILD, parent_field=PARENT.\n- У одной CHILD в один момент — ровно один PARENT (второй parent = conflict).\n- Циклы A→B→A запрещены.\n- Orphan/неразрешённый root: не подвешивайте дерево к корню, отличному от FIELD, без факта; не оставляйте висячие ссылки на несуществующие группы, если пакет требует замкнутого дерева.\n- Не эмитьте BRANPROP/NODEPROP/GCONPROD из этой карточки.\n\nПорядок относительно других keywords.\n- Обычно GRUPTREE раньше WELSPECS и GCONPROD на той же или более ранней дате: группа должна существовать до ссылки.\n- WELSPECS.GROUP должен указывать на leaf-группу (или допустимую группу фактов), не на node-группу с детьми.\n- При REVISE preserve существующие рёбра вне scope; смена parent — MODIFY/ADD с доказательством; REMOVE ребра — только с accountable approval, как и прочие REMOVE.\n\nВалидация перед выпуском.\n- CHILD и PARENT непусты, без NUL/переводов строк.\n- CHILD ≠ PARENT.\n- CHILD ≠ FIELD.\n- Нет второго parent для той же CHILD на той же effective date.\n- Нет циклов в накопленном graph `groups`.\n- Node/leaf правило не нарушено относительно WELSPECS в том же пакете (если WELSPECS в scope).\n- Завершающие / записи и блока.\n\nТеория (§2.14.2 — Групповой контроль).\n- GRUPTREE — каркас многоуровневого группового управления; FIELD на вершине.\n- Node-группа (есть children) не содержит скважин; leaf-группа содержит скважины через WELSPECS.\n- Семейство рядом: GCONPROD / GCONINJE / GUIDERAT / WGRUPCON; групповые дебиты делятся пропорционально направляющим (guide) дебитам.\n- По умолчанию guide = потенциал скважины (§5.6.7) на старте шага.\n\nАнтипаттерны.\n- Повесить скважины на группу, у которой уже есть дочерние группы.\n- Сделать две материнские группы для одной дочерней.\n- Цикл `A→B` и `B→A`.\n- Выдумать GAS1/G1 из примера мануала без фактов.\n- Заменить GRUPTREE сетью BRANPROP или наоборот.\n- Считать GRUPTREE контролем дебита (это GCONPROD).\n\nНехватка факта → needs_input: нет имён child/parent; неясно leaf vs node; конфликт с существующим parent в baseline; нужен корень не FIELD без обоснования; иерархия для Reservoir Coupling (GRUPMAST/GRUPSLAV) без полной карты связей.\n\nКарточка самодостаточна: renderer использует только schema_catalogue этой записи (variant default, поля CHILD и PARENT).",
       "examples": [
         {
           "title": "Двухуровневое дерево под FIELD",
@@ -696,7 +696,7 @@
         "contract_version": "1.0",
         "catalogue_ref": "catalogue://tnavigator/22.2/gruptree-group-hierarchy-v1",
         "catalogue_hash": "sha256:a26028d49e807eb3085298fe65cd3bf5571ca195ff92558c7d313656ef4d3203",
-        "source_hash": "sha256:ad8e3782bbb36444b55b12159b67cbcf3250f05d34d18f004970155da143b962",
+        "source_hash": "sha256:d76a96e9d8fa066cf27601de88d8034833d5379f107e4d5ef55c9f32c216b6ae",
         "access_scope": "petroleum-engineering",
         "simulator_profile": {
           "vendor": "Rock Flow Dynamics",
@@ -719,7 +719,7 @@
               "document_revision": "19.4",
               "page": "12.20.103 / 1968",
               "heading": "GRUPTREE",
-              "source_hash": "sha256:ad8e3782bbb36444b55b12159b67cbcf3250f05d34d18f004970155da143b962"
+              "source_hash": "sha256:d76a96e9d8fa066cf27601de88d8034833d5379f107e4d5ef55c9f32c216b6ae"
             },
             "parser": {
               "token_width": 2,
@@ -779,15 +779,15 @@
           }
         ]
       },
-      "source_hash": "sha256:ad8e3782bbb36444b55b12159b67cbcf3250f05d34d18f004970155da143b962",
-      "page": "12.20.103 GRUPTREE (с. 1968); групповой контроль 2.14.2 (с. 142); BRANPROP/сеть 2.14.10–11",
+      "source_hash": "sha256:d76a96e9d8fa066cf27601de88d8034833d5379f107e4d5ef55c9f32c216b6ae",
+      "page": "12.20.103 GRUPTREE (с. 1968); групповой контроль 2.14.2 (с. 142); BRANPROP/сеть 2.14.10–11; теория 2.14.2",
       "heading": "GRUPTREE — структура дерева групп",
       "id": "gruptree-group-hierarchy-v1",
       "metadata": {
         "document_id": "gruptree-group-hierarchy-v1",
         "document_revision": "1",
-        "source_hash": "sha256:ad8e3782bbb36444b55b12159b67cbcf3250f05d34d18f004970155da143b962",
-        "page": "12.20.103 / 1968",
+        "source_hash": "sha256:d76a96e9d8fa066cf27601de88d8034833d5379f107e4d5ef55c9f32c216b6ae",
+        "page": "12.20.103 / 1968; теория 2.14.2",
         "heading": "GRUPTREE",
         "target_base": "schedule_mvp",
         "knowledge_type": "keyword_instruction",
@@ -853,7 +853,7 @@
       "status": "active",
       "author": "department-hydrodynamic-expert",
       "access_scope": "petroleum-engineering",
-      "text": "WELSPECS — объявление/изменение спецификации скважины в SCHEDULE.\n\nНазначение. WELSPECS задаёт технические данные скважины: имя, группу, I/J устья/забоя, опорную глубину BHP, предпочтительную фазу, радиус дренирования, уравнение притока, реакцию на economic/group limits, crossflow, PVT-таблицу ствола, модель плотности и способ RESV-давления. Форматы: tN, E1, E3. Секция: только SCHEDULE. Это не перфорация (COMPDAT/COMPDATMD), не траектория (WELLTRACK), не контроль дебита (WCONPROD/WCONHIST). Для скважин в LGR используйте WELSPECL + COMPDATL — WELSPECL нет в allowlist Builder: если нужна LGR-скважина → needs_input. Устаревший WELLSPEC не эмитьте — только WELSPECS.\n\nКогда применять. CREATE/REVISE при вводе новой скважины или смене группы/геометрии устья; всегда до WCONPROD/WCONHIST/COMPDAT (если IJ берутся по умолчанию из WELSPECS) / WELLTRACK+COMPDATMD на той же сущности. Обычно после DATES текущего time block и после GRUPTREE, если GROUP ≠ FIELD и группа объявлена деревом.\n\nRecord layout. Одна скважина = одна запись, заканчивается /. Блок заканчивается отдельным /. Поля по порядку (§12.20.3):\n\n1. WELL — имя или номер скважины (required). Копируйте буквально; не нормализуйте. При LONGNAMES=0 имена E1/E3 режутся до 8 символов — не выдумывайте укорочения.\n2. GROUP — группа скважин. Default симулятора: FIELD. В этом корпусе всегда пишите GROUP явно. GROUP должна существовать как group-entity (FIELD или из GRUPTREE). Не вешайте скважину на node-группу, у которой уже есть дочерние группы в GRUPTREE.\n3. I (IW) — индекс ячейки X устья/забоя. Может быть *. Если * (и J=*), то в COMPDAT параметры 2–3 обязательны явно, иначе ошибка чтения.\n4. J (JW) — индекс ячейки Y. То же правило default/*.\n5. REF_DEPTH — опорная глубина BHP (METRIC: m, FIELD: ft). Рекомендуется глубина первой перфорации; для многосегментных — глубина верхнего сегмента. Default/отрицательное → глубина центра блока первой перфорации (порядок COMPORD).\n6. PHASE — OIL | WATER | GAS | LIQ. Для worst-well закрытия в GCONPROD и для PI/потенциала.\n7. D_RADIUS — радиус дренирования для PI (m/ft). Default 0 → эквивалентный радиус блоков. Отрицательный → в отчётах потенциалы вместо PI.\n8. INFLOW — STD|NO (стандарт), GPP (псевдодавление газоконденсат+PICOND), R-G|YES (Russell-Goodrich), P-P (сухого газа; не для газоконденсата). Default STD.\n9. ECON_ACTION — STOP (закрыта выше пласта, перетоки возможны) | SHUT (изолирована). При нарушении economic/group limits. Default SHUT.\n10. CROSSFLOW — YES (двусторонний переток в стволе) | NO (односторонний клапан). Default YES.\n11. PVT_TABLE — номер PVT-таблицы флюидов в стволе; 0 → PVT региона нижнего перфорированного блока. Default 0.\n12. DENSITY_MODEL — SEG (сегментированная; black-oil/compositional, +BRINE) | AVG (средняя по стволу). Default: SEG (black-oil/compositional), AVG (thermal).\n13. RESV_PRESSURE — способ давления для RESV-дебита: >0 номер FIP; 0 среднее по месторождению HC; <0 FIP региона последней перфорации (COMPORD). Default 0.\n\nКанонический render этого корпуса. IR-event = одна скважина. Variant выбирайте по фактам:\n- default — только WELL и GROUP (остальное trailing omission / симуляторные defaults).\n- with_ij — WELL, GROUP, I, J когда координаты даны.\n- with_ij_nocrossflow — как with_ij, затем 5* defaults (поля 5–9) и CROSSFLOW=NO — паттерн примера мануала `1043 G1 14 10 5* NO/`.\nНе эмитьте поля вне выбранного variant. Числа I/J — целые ≥1. WELL/GROUP — quoted strings.\n\nСемантика.\n- period=ANY; clock.uses_current=true.\n- definitions: UPSERT entity_type=well, id_field=WELL.\n- references: group GROUP required=true (группа должна существовать на effective date).\n- Не объявляйте prerequisite GRUPTREE как GLOBAL для FIELD: FIELD допустим без ребра. Если GROUP из дерева — группа должна быть создана GRUPTREE ранее (entity reference).\n\nСвязи с другими keywords (не эмитьте их из этой карточки).\n- COMPDAT: default I/J берутся из WELSPECS 3–4; если оба * — COMPDAT обязан задать I/J.\n- WELLTRACK + COMPDATMD: скважина сначала через WELSPECS; порядок WELSPECS/WELLTRACK произвольный.\n- COMPORD TRACK ориентируется на I/J устья из WELSPECS.\n- WCONPROD RESV учитывает параметр 13 WELSPECS.\n- Контроли WCON* требуют существующий WELL.\n\nВалидация.\n- WELL непустой, уникален как entity id на create; redefinition = UPSERT (смена GROUP/флагов по факту).\n- GROUP непустой; не node-группа с children, если это проверяется пакетом.\n- I/J при наличии — конечные положительные integers (или явный default-маркер политики variant).\n- PHASE/INFLOW/ECON_ACTION/CROSSFLOW/DENSITY_MODEL только из enum выше.\n- Не подставляйте учебные 1043/W13/G1 без фактов.\n\nАнтипаттерны.\n- WELSPECL/WELLSPEC вместо WELSPECS без LGR-authority.\n- Скважина на GAS1, если GAS1 — parent для G1/G2.\n- Забыть WELL перед WCONPROD.\n- Выдумать I/J, если в фактах только имя и группа.\n- Считать WELSPECS перфорацией или дебитом.\n\nНехватка факта → needs_input: нет имени скважины; нет группы; нужны I/J без координат; LGR-имя без WELSPECL-политики; конфликт имени с baseline без REVISE target; CROSSFLOW/PHASE требуются, но не заданы и не default.\n\nКарточка самодостаточна: renderer использует только schema_catalogue этой записи и выбранный variant.",
+      "text": "WELSPECS — объявление/изменение спецификации скважины в SCHEDULE.\n\nНазначение. WELSPECS задаёт технические данные скважины: имя, группу, I/J устья/забоя, опорную глубину BHP, предпочтительную фазу, радиус дренирования, уравнение притока, реакцию на economic/group limits, crossflow, PVT-таблицу ствола, модель плотности и способ RESV-давления. Форматы: tN, E1, E3. Секция: только SCHEDULE. Это не перфорация (COMPDAT/COMPDATMD), не траектория (WELLTRACK), не контроль дебита (WCONPROD/WCONHIST). Для скважин в LGR используйте WELSPECL + COMPDATL — WELSPECL нет в allowlist Builder: если нужна LGR-скважина → needs_input. Устаревший WELLSPEC не эмитьте — только WELSPECS.\n\nКогда применять. CREATE/REVISE при вводе новой скважины или смене группы/геометрии устья; всегда до WCONPROD/WCONHIST/COMPDAT (если IJ берутся по умолчанию из WELSPECS) / WELLTRACK+COMPDATMD на той же сущности. Обычно после DATES текущего time block и после GRUPTREE, если GROUP ≠ FIELD и группа объявлена деревом.\n\nRecord layout. Одна скважина = одна запись, заканчивается /. Блок заканчивается отдельным /. Поля по порядку (§12.20.3):\n\n1. WELL — имя или номер скважины (required). Копируйте буквально; не нормализуйте. При LONGNAMES=0 имена E1/E3 режутся до 8 символов — не выдумывайте укорочения.\n2. GROUP — группа скважин. Default симулятора: FIELD. В этом корпусе всегда пишите GROUP явно. GROUP должна существовать как group-entity (FIELD или из GRUPTREE). Не вешайте скважину на node-группу, у которой уже есть дочерние группы в GRUPTREE.\n3. I (IW) — индекс ячейки X устья/забоя. Может быть *. Если * (и J=*), то в COMPDAT параметры 2–3 обязательны явно, иначе ошибка чтения.\n4. J (JW) — индекс ячейки Y. То же правило default/*.\n5. REF_DEPTH — опорная глубина BHP (METRIC: m, FIELD: ft). Рекомендуется глубина первой перфорации; для многосегментных — глубина верхнего сегмента. Default/отрицательное → глубина центра блока первой перфорации (порядок COMPORD).\n6. PHASE — OIL | WATER | GAS | LIQ. Для worst-well закрытия в GCONPROD и для PI/потенциала.\n7. D_RADIUS — радиус дренирования для PI (m/ft). Default 0 → эквивалентный радиус блоков. Отрицательный → в отчётах потенциалы вместо PI.\n8. INFLOW — STD|NO (стандарт), GPP (псевдодавление газоконденсат+PICOND), R-G|YES (Russell-Goodrich), P-P (сухого газа; не для газоконденсата). Default STD.\n9. ECON_ACTION — STOP (закрыта выше пласта, перетоки возможны) | SHUT (изолирована). При нарушении economic/group limits. Default SHUT.\n10. CROSSFLOW — YES (двусторонний переток в стволе) | NO (односторонний клапан). Default YES.\n11. PVT_TABLE — номер PVT-таблицы флюидов в стволе; 0 → PVT региона нижнего перфорированного блока. Default 0.\n12. DENSITY_MODEL — SEG (сегментированная; black-oil/compositional, +BRINE) | AVG (средняя по стволу). Default: SEG (black-oil/compositional), AVG (thermal).\n13. RESV_PRESSURE — способ давления для RESV-дебита: >0 номер FIP; 0 среднее по месторождению HC; <0 FIP региона последней перфорации (COMPORD). Default 0.\n\nКанонический render этого корпуса. IR-event = одна скважина. Variant выбирайте по фактам:\n- default — только WELL и GROUP (остальное trailing omission / симуляторные defaults).\n- with_ij — WELL, GROUP, I, J когда координаты даны.\n- with_ij_nocrossflow — как with_ij, затем 5* defaults (поля 5–9) и CROSSFLOW=NO — паттерн примера мануала `1043 G1 14 10 5* NO/`.\nНе эмитьте поля вне выбранного variant. Числа I/J — целые ≥1. WELL/GROUP — quoted strings.\n\nСемантика.\n- period=ANY; clock.uses_current=true.\n- definitions: UPSERT entity_type=well, id_field=WELL.\n- references: group GROUP required=true (группа должна существовать на effective date).\n- Не объявляйте prerequisite GRUPTREE как GLOBAL для FIELD: FIELD допустим без ребра. Если GROUP из дерева — группа должна быть создана GRUPTREE ранее (entity reference).\n\nСвязи с другими keywords (не эмитьте их из этой карточки).\n- COMPDAT: default I/J берутся из WELSPECS 3–4; если оба * — COMPDAT обязан задать I/J.\n- WELLTRACK + COMPDATMD: скважина сначала через WELSPECS; порядок WELSPECS/WELLTRACK произвольный.\n- COMPORD TRACK ориентируется на I/J устья из WELSPECS.\n- WCONPROD RESV учитывает параметр 13 WELSPECS.\n- Контроли WCON* требуют существующий WELL.\n\nВалидация.\n- WELL непустой, уникален как entity id на create; redefinition = UPSERT (смена GROUP/флагов по факту).\n- GROUP непустой; не node-группа с children, если это проверяется пакетом.\n- I/J при наличии — конечные положительные integers (или явный default-маркер политики variant).\n- PHASE/INFLOW/ECON_ACTION/CROSSFLOW/DENSITY_MODEL только из enum выше.\n- Не подставляйте учебные 1043/W13/G1 без фактов.\n\nТеория (§5.6.6 — плотность/давление в стволе; §5.5.8 — LGR).\n- Параметры модели плотности/RESV в WELSPECS связаны с расчётом средней плотности и давления в стволе (§5.6.6) — не подставляйте «типовые» значения без факта/профиля.\n- Скважина в LGR (§5.5.8) объявляется WELSPECL + COMPDATL, не WELSPECS/COMPDATMD-only путём.\n\nАнтипаттерны.\n- WELSPECL/WELLSPEC вместо WELSPECS без LGR-authority.\n- Скважина на GAS1, если GAS1 — parent для G1/G2.\n- Забыть WELL перед WCONPROD.\n- Выдумать I/J, если в фактах только имя и группа.\n- Считать WELSPECS перфорацией или дебитом.\n\nНехватка факта → needs_input: нет имени скважины; нет группы; нужны I/J без координат; LGR-имя без WELSPECL-политики; конфликт имени с baseline без REVISE target; CROSSFLOW/PHASE требуются, но не заданы и не default.\n\nКарточка самодостаточна: renderer использует только schema_catalogue этой записи и выбранный variant.",
       "examples": [
         {
           "title": "Скважина в группе FIELD без IJ",
@@ -885,7 +885,7 @@
         "contract_version": "1.0",
         "catalogue_ref": "catalogue://tnavigator/22.2/welspecs-well-declaration-v1",
         "catalogue_hash": "sha256:12939eaaf295c63db44ba794354ad0c8e446c461c41c5f10d5a442c364afb3f3",
-        "source_hash": "sha256:80119bb0a54efe502208c77c56955e5d1a45f042a7ff1ccba65798676da2cc24",
+        "source_hash": "sha256:b22706094c493a139280c8244858ce6aa709a921ec659f59eeebfee5324166a8",
         "access_scope": "petroleum-engineering",
         "simulator_profile": {
           "vendor": "Rock Flow Dynamics",
@@ -908,7 +908,7 @@
               "document_revision": "19.4",
               "page": "12.20.3 / 1722-1725",
               "heading": "WELSPECS",
-              "source_hash": "sha256:80119bb0a54efe502208c77c56955e5d1a45f042a7ff1ccba65798676da2cc24"
+              "source_hash": "sha256:b22706094c493a139280c8244858ce6aa709a921ec659f59eeebfee5324166a8"
             },
             "parser": {
               "token_width": 13,
@@ -969,7 +969,7 @@
               "document_revision": "19.4",
               "page": "12.20.3 / 1722-1725",
               "heading": "WELSPECS",
-              "source_hash": "sha256:80119bb0a54efe502208c77c56955e5d1a45f042a7ff1ccba65798676da2cc24"
+              "source_hash": "sha256:b22706094c493a139280c8244858ce6aa709a921ec659f59eeebfee5324166a8"
             },
             "parser": {
               "token_width": 13,
@@ -1042,7 +1042,7 @@
               "document_revision": "19.4",
               "page": "12.20.3 / 1722-1725",
               "heading": "WELSPECS",
-              "source_hash": "sha256:80119bb0a54efe502208c77c56955e5d1a45f042a7ff1ccba65798676da2cc24"
+              "source_hash": "sha256:b22706094c493a139280c8244858ce6aa709a921ec659f59eeebfee5324166a8"
             },
             "parser": {
               "token_width": 13,
@@ -1174,15 +1174,15 @@
           }
         ]
       },
-      "source_hash": "sha256:80119bb0a54efe502208c77c56955e5d1a45f042a7ff1ccba65798676da2cc24",
-      "page": "12.20.3 WELSPECS (с. 1722–1725); WELSPECL 12.20.4; COMPDAT defaults 12.20.6",
+      "source_hash": "sha256:b22706094c493a139280c8244858ce6aa709a921ec659f59eeebfee5324166a8",
+      "page": "12.20.3 WELSPECS (с. 1722–1725); WELSPECL 12.20.4; COMPDAT defaults 12.20.6; теория 5.6.6 / 5.5.8",
       "heading": "WELSPECS — технические данные скважины",
       "id": "welspecs-well-declaration-v1",
       "metadata": {
         "document_id": "welspecs-well-declaration-v1",
         "document_revision": "1",
-        "source_hash": "sha256:80119bb0a54efe502208c77c56955e5d1a45f042a7ff1ccba65798676da2cc24",
-        "page": "12.20.3 / 1722-1725",
+        "source_hash": "sha256:b22706094c493a139280c8244858ce6aa709a921ec659f59eeebfee5324166a8",
+        "page": "12.20.3 / 1722-1725; теория 5.6.6 / 5.5.8",
         "heading": "WELSPECS",
         "target_base": "schedule_mvp",
         "knowledge_type": "keyword_instruction",
@@ -1248,7 +1248,7 @@
       "status": "active",
       "author": "department-hydrodynamic-expert",
       "access_scope": "petroleum-engineering",
-      "text": "WELLTRACK — траектория скважины (и боковых стволов) в координатах X Y Z MD.\n\nНазначение. WELLTRACK задаёт геометрию ствола(ов) скважины точками вдоль измеренной глубины. Это tNavigator-расширение (не классический ECLIPSE COMPDAT-only путь). Скважина объявляется WELSPECS; перфорации по MD/TVD — COMPDATMD. Форматы: tN, E1, E3. Секции: GRID и SCHEDULE. Для Schedule Builder MVP эмитьте WELLTRACK в SCHEDULE, если задача про schedule package. В GRID WELLTRACK нужен для ГРП через LGR (FRACTURE_SPECS и т.п.): тогда траектория в GRID, а WELSPECS/COMPDATMD — в SCHEDULE. Нельзя внутри ACTION-семейства.\n\nПорядок. WELSPECS и WELLTRACK — в любом порядке. COMPDATMD — после того как скважина и траектория заданы (оба keyword уже прочитаны к моменту перфорации). Запрещены маски и `*` в имени скважины WELLTRACK: только точное имя.\n\nКанонический синтаксис tNavigator (§12.20.9) — отличается от «обычной» табличной записи.\n\nСлучай 1 — один (главный) ствол:\nWELLTRACK 'WELLNAME'\n  X Y Z MD\n  X Y Z MD\n  ...\n/\n\nПервая строка: keyword + имя скважины (quoted). Каждая следующая: четыре числа. Последняя точка может нести `/` в конце строки; блок также закрывается политикой пакета.\n\nСлучай 2 — многоствольная:\nWELLTRACK 'WELLNAME'          — главный ствол (branch 0)\n  ...\n/\nWELLTRACK 'WELLNAME:1'        — ствол 1\n  ...\n/\nWELLTRACK 'WELLNAME:N'        — ствол N\n\nЕсли номер ствола не указан — главный ствол 0. Отдельный WELLTRACK-блок на каждый ствол; данные ствола заканчиваются `/`.\n\nПоля точки (METRIC: m; FIELD: ft):\n1. X — координата X;\n2. Y — координата Y;\n3. Z — абсолютная глубина (TVD-подобная абсолютная отметка; знак/уровень моря — как в модели);\n4. MD — измеренная глубина вдоль ствола.\n\nРазделитель в строке: пробел или `;`. Корпус рендерит пробелы. Числа конечные (finite). Вдоль одного ствола MD должна быть строго возрастающей (монотонность траектории). Не выдумывайте точки: берите из survey/Excel facts.\n\nСвязанные keywords (не эмитьте из этой карточки без scope).\n- WELSPECS — объявление скважины (обязательный entity).\n- COMPDATMD — перфорации по MD/TVD/STAGE на траектории.\n- WELLINCL — альтернатива «относительно устья»; для абсолютной траектории — WELLTRACK.\n- FRACTURE_WELL / FRACTURE_STAGE — привязка ГРП к MD на WELLTRACK (часто GRID).\n- VFPCORR — если WELLTRACK задан, корреляция вдоль траектории до глубины VFPCORR.\n\nIR / schema этого корпуса.\n- Variant `point`: одна точка = один IR-event с полями WELL, BRANCH, X, Y, Z, MD.\n- BRANCH: integer, default 0 (главный ствол). Для ствола N в каноне имя на header — `WELL:N`.\n- semantics: period=ANY; clock.uses_current; references well WELL; prerequisites WELSPECS scope=ENTITY по WELL; numeric_constraints на MD (min 0) и finite X/Y/Z/MD.\n- Несколько точек одного ствола — несколько point-events с одним WELL+BRANCH и возрастающим MD.\n- Канонический multi-line header-syntax мануала предпочтителен в examples и при REVISE preserve raw. Deterministic renderer MVP печатает табличную запись `WELLTRACK` / `  'WELL' BRANCH X Y Z MD /` / `/` на event. Если симулятор/QA требует строго header-form (`WELLTRACK 'W'\\n X Y Z MD`), а renderer даёт только record-form — не угадывайте слияние вручную: либо KEEP baseline raw track, либо needs_input на layout extension. Не подменяйте WELLTRACK набором COMPDAT.\n\nВалидация.\n- WELL точное, без wildcard; скважина существует (WELSPECS) или будет объявлена в том же пакете.\n- ≥2 точки на ствол для осмысленной траектории (одна точка — needs_input, если задача — полный track).\n- MD строго возрастает вдоль BRANCH.\n- X/Y/Z/MD finite; единицы согласованы с METRIC профиля.\n- Не внутри ACTION.\n- Не дублируйте противоречащие треки на одну дату без REVISE target.\n\nАнтипаттерны.\n- Маска скважин в WELLTRACK.\n- Траектория без WELSPECS/COMPDATMD-плана, когда перфорации по MD обязательны.\n- Убывающий или повторяющийся MD.\n- Копировать учебные координаты PROD1 из мануала.\n- Путать Z (абсолютная глубина) с MD.\n- Эмитить WELLINCL вместо WELLTRACK без факта об относительных координатах.\n\nНехватка факта → needs_input: нет survey-точек; нет привязки WELL; нужен branch id без номера; только MD без X/Y/Z; конфликт с baseline track; требуется GRID-only FRACTURE path без schedule authority.\n\nКарточка самодостаточна: schema_catalogue описывает point-IR; примеры показывают канон мануала.",
+      "text": "WELLTRACK — траектория скважины (и боковых стволов) в координатах X Y Z MD.\n\nНазначение. WELLTRACK задаёт геометрию ствола(ов) скважины точками вдоль измеренной глубины. Это tNavigator-расширение (не классический ECLIPSE COMPDAT-only путь). Скважина объявляется WELSPECS; перфорации по MD/TVD — COMPDATMD. Форматы: tN, E1, E3. Секции: GRID и SCHEDULE. Для Schedule Builder MVP эмитьте WELLTRACK в SCHEDULE, если задача про schedule package. В GRID WELLTRACK нужен для ГРП через LGR (FRACTURE_SPECS и т.п.): тогда траектория в GRID, а WELSPECS/COMPDATMD — в SCHEDULE. Нельзя внутри ACTION-семейства.\n\nПорядок. WELSPECS и WELLTRACK — в любом порядке. COMPDATMD — после того как скважина и траектория заданы (оба keyword уже прочитаны к моменту перфорации). Запрещены маски и `*` в имени скважины WELLTRACK: только точное имя.\n\nКанонический синтаксис tNavigator (§12.20.9) — отличается от «обычной» табличной записи.\n\nСлучай 1 — один (главный) ствол:\nWELLTRACK 'WELLNAME'\n  X Y Z MD\n  X Y Z MD\n  ...\n/\n\nПервая строка: keyword + имя скважины (quoted). Каждая следующая: четыре числа. Последняя точка может нести `/` в конце строки; блок также закрывается политикой пакета.\n\nСлучай 2 — многоствольная:\nWELLTRACK 'WELLNAME'          — главный ствол (branch 0)\n  ...\n/\nWELLTRACK 'WELLNAME:1'        — ствол 1\n  ...\n/\nWELLTRACK 'WELLNAME:N'        — ствол N\n\nЕсли номер ствола не указан — главный ствол 0. Отдельный WELLTRACK-блок на каждый ствол; данные ствола заканчиваются `/`.\n\nПоля точки (METRIC: m; FIELD: ft):\n1. X — координата X;\n2. Y — координата Y;\n3. Z — абсолютная глубина (TVD-подобная абсолютная отметка; знак/уровень моря — как в модели);\n4. MD — измеренная глубина вдоль ствола.\n\nРазделитель в строке: пробел или `;`. Корпус рендерит пробелы. Числа конечные (finite). Вдоль одного ствола MD должна быть строго возрастающей (монотонность траектории). Не выдумывайте точки: берите из survey/Excel facts.\n\nСвязанные keywords (не эмитьте из этой карточки без scope).\n- WELSPECS — объявление скважины (обязательный entity).\n- COMPDATMD — перфорации по MD/TVD/STAGE на траектории.\n- WELLINCL — альтернатива «относительно устья»; для абсолютной траектории — WELLTRACK.\n- FRACTURE_WELL / FRACTURE_STAGE — привязка ГРП к MD на WELLTRACK (часто GRID).\n- VFPCORR — если WELLTRACK задан, корреляция вдоль траектории до глубины VFPCORR.\n\nIR / schema этого корпуса.\n- Variant `point`: одна точка = один IR-event с полями WELL, BRANCH, X, Y, Z, MD.\n- BRANCH: integer, default 0 (главный ствол). Для ствола N в каноне имя на header — `WELL:N`.\n- semantics: period=ANY; clock.uses_current; references well WELL; prerequisites WELSPECS scope=ENTITY по WELL; numeric_constraints на MD (min 0) и finite X/Y/Z/MD.\n- Несколько точек одного ствола — несколько point-events с одним WELL+BRANCH и возрастающим MD.\n- Канонический multi-line header-syntax мануала предпочтителен в examples и при REVISE preserve raw. Deterministic renderer MVP печатает табличную запись `WELLTRACK` / `  'WELL' BRANCH X Y Z MD /` / `/` на event. Если симулятор/QA требует строго header-form (`WELLTRACK 'W'\\n X Y Z MD`), а renderer даёт только record-form — не угадывайте слияние вручную: либо KEEP baseline raw track, либо needs_input на layout extension. Не подменяйте WELLTRACK набором COMPDAT.\n\nВалидация.\n- WELL точное, без wildcard; скважина существует (WELSPECS) или будет объявлена в том же пакете.\n- ≥2 точки на ствол для осмысленной траектории (одна точка — needs_input, если задача — полный track).\n- MD строго возрастает вдоль BRANCH.\n- X/Y/Z/MD finite; единицы согласованы с METRIC профиля.\n- Не внутри ACTION.\n- Не дублируйте противоречащие треки на одну дату без REVISE target.\n\nТеория (§5.8 — ГРП через LGR).\n- Для пакета трещин через LGR (§5.8) WELLTRACK задаётся в GRID; затем FRACTURE_TEMPLATE / FRACTURE_SPECS и активация FRACTURE_STAGE в SCHEDULE.\n- В обычном MD-перфорационном пути WELLTRACK может жить в SCHEDULE вместе с COMPDATMD.\n\nАнтипаттерны.\n- Маска скважин в WELLTRACK.\n- Траектория без WELSPECS/COMPDATMD-плана, когда перфорации по MD обязательны.\n- Убывающий или повторяющийся MD.\n- Копировать учебные координаты PROD1 из мануала.\n- Путать Z (абсолютная глубина) с MD.\n- Эмитить WELLINCL вместо WELLTRACK без факта об относительных координатах.\n\nНехватка факта → needs_input: нет survey-точек; нет привязки WELL; нужен branch id без номера; только MD без X/Y/Z; конфликт с baseline track; требуется GRID-only FRACTURE path без schedule authority.\n\nКарточка самодостаточна: schema_catalogue описывает point-IR; примеры показывают канон мануала.",
       "examples": [
         {
           "title": "Один ствол — канон мануала",
@@ -1274,7 +1274,7 @@
         "contract_version": "1.0",
         "catalogue_ref": "catalogue://tnavigator/22.2/welltrack-trajectory-v1",
         "catalogue_hash": "sha256:05986e76cb84a728e5982e8b001b10cdce381084a8893baf2bf69fb0e83ab0c7",
-        "source_hash": "sha256:906162c40d4ff928a7d466882f590f859a39e341fc12cb1bbf3cbbaa212eed04",
+        "source_hash": "sha256:e8a71da5f612013f0219acf5f5ee716838742d0611e386b3be7f2a29f0004fef",
         "access_scope": "petroleum-engineering",
         "simulator_profile": {
           "vendor": "Rock Flow Dynamics",
@@ -1297,7 +1297,7 @@
               "document_revision": "19.4",
               "page": "12.20.9 / 1737-1739",
               "heading": "WELLTRACK",
-              "source_hash": "sha256:906162c40d4ff928a7d466882f590f859a39e341fc12cb1bbf3cbbaa212eed04"
+              "source_hash": "sha256:e8a71da5f612013f0219acf5f5ee716838742d0611e386b3be7f2a29f0004fef"
             },
             "parser": {
               "token_width": 6,
@@ -1385,15 +1385,15 @@
           }
         ]
       },
-      "source_hash": "sha256:906162c40d4ff928a7d466882f590f859a39e341fc12cb1bbf3cbbaa212eed04",
-      "page": "12.20.9 WELLTRACK (с. 1737–1739); COMPDATMD 12.20.10; tN well path 11.2 / с. 477",
+      "source_hash": "sha256:e8a71da5f612013f0219acf5f5ee716838742d0611e386b3be7f2a29f0004fef",
+      "page": "12.20.9 WELLTRACK (с. 1737–1739); COMPDATMD 12.20.10; tN well path 11.2 / с. 477; теория 5.8",
       "heading": "WELLTRACK — задание траектории скважины",
       "id": "welltrack-trajectory-v1",
       "metadata": {
         "document_id": "welltrack-trajectory-v1",
         "document_revision": "1",
-        "source_hash": "sha256:906162c40d4ff928a7d466882f590f859a39e341fc12cb1bbf3cbbaa212eed04",
-        "page": "12.20.9 / 1737-1739",
+        "source_hash": "sha256:e8a71da5f612013f0219acf5f5ee716838742d0611e386b3be7f2a29f0004fef",
+        "page": "12.20.9 / 1737-1739; теория 5.8",
         "heading": "WELLTRACK",
         "target_base": "schedule_mvp",
         "knowledge_type": "keyword_instruction",
@@ -1459,7 +1459,7 @@
       "status": "active",
       "author": "department-hydrodynamic-expert",
       "access_scope": "petroleum-engineering",
-      "text": "COMPDATMD — интервал перфораций по измеренной/абсолютной глубине (или у стадии ГРП).\n\nНазначение. COMPDATMD задаёт перфорации вдоль траектории: tNavigator пересекает WELLTRACK с сеткой и открывает соединения во всех блоках между верхней и нижней отметками. Считает CF (connection factor) и KH, если вы их не задали. Форматы: tN, E1, E3. Секция: SCHEDULE. Это не COMPDAT/COMPDATL (блочные IJK-перфорации E1/E3) и не WELSPECS/WELLTRACK. COMPDAT и COMPDATL нет в allowlist Builder как замена MD-пути: для траекторных перфораций эмитьте COMPDATMD.\n\nПререквизиты (обязательный порядок чтения к моменту COMPDATMD).\n- Режим MD/TVD: скважина и траектория уже заданы WELSPECS (§12.20.3) и WELLTRACK (§12.20.9). WELSPECS и WELLTRACK — в любом порядке друг относительно друга; COMPDATMD — после обоих.\n- Режим STAGE: имя стадии задано FRACTURE_SPECS (§12.2.131 FRACTURE_SPECS в новых мануалах; если стадии нет в baseline/scope → needs_input), стадия активирована FRACTURE_STAGE (§12.20.150), затем COMPDATMD с DEPTH_TYPE=STAGE.\n\nСемантика сетки/LGR (не эмитьте LGR-keywords из этой карточки).\n- При LGROFF перфорации из LGR-блоков переносятся на глобальную сетку; при LGRON — наоборот на локальную.\n- Если параметр 5 = STAGE, перфорации активны только в измельчённых блоках и автоматически закрываются при отключении локальной сетки.\n\nRecord layout. Keyword COMPDATMD, затем одна или несколько записей скважины/стадии, каждая заканчивается `/`. Блок заканчивается отдельным `/`.\n\nПоля по порядку (§12.20.10, METRIC: m / cP·rm³/day·bar / mD·m / day/sm³; FIELD: ft / cP·rb/day·psi / mD·ft / day/Mscf):\n\n1. WELL_OR_STAGE — идентификатор.\n   - DEPTH_TYPE = MD|TVD: имя/номер скважины (как в WELSPECS).\n   - DEPTH_TYPE = STAGE: имя стадии ГРП (первый параметр FRACTURE_SPECS).\n2. BRANCH_OR_STAGE_INDEX — номер ствола (MD/TVD; default 0 = главный) или номер стадии внутри FRACTURE_SPECS (STAGE; default = все стадии слова).\n3. TOP_OR_DELTA1 —\n   - MD/TVD: MDL — верхняя (первая) отсечка перфорации. Default симулятора: кровля пласта.\n   - STAGE: Delta1 — длина от точки привязки стадии к забою.\n4. BOTTOM_OR_DELTA2 —\n   - MD/TVD: MDU — нижняя отсечка перфорации. Default симулятора: подошва пласта.\n   - STAGE: Delta2 — длина от точки привязки к устью.\n   Именование MDL/MDU в мануале: поле 3 = верхняя отметка, поле 4 = нижняя (пример 2438→2469). Не путайте с вводным абзацем, где буквы U/L перепутаны местами — ориентируйтесь на нумерованный список полей и пример.\n5. DEPTH_TYPE — MD | TVD | STAGE. Default: MD.\n   - MD: поля 3–4 в измеренной глубине вдоль ствола.\n   - TVD: поля 3–4 в абсолютной глубине.\n   - STAGE: интервал вокруг точки привязки стадии (пересечение ствола с плоскостью трещины).\n6. STATUS — OPEN | SHUT. Default: OPEN.\n7. SAT_TABLE — номер таблицы фильтрации; ≤0 → таблица блока по SATNUM. Default: SATNUM блока.\n8. CF — connection factor (T(t) в §5.6.1). Default: рассчитывается tNavigator. Не выдумывайте CF без факта.\n9. DIAMETER — диаметр скважины dw (§5.6.2). Default: 0.3048 m (1 ft).\n10. KH — гидропроводность. Default: рассчитывается. Не выдумывайте.\n11. SKIN — скин s. Default: 0.\n12. D_FACTOR — D-фактор интервала для не-Дарси газа. Вводите со знаком минус; tNavigator берёт модуль. Если задан, WDFAC для этих перфораций игнорируется; масштабирование зависит от TNAVCTRL DFACTORSCALING (ALL|BRANCH). Default: не задано.\n13. CF_MULT — множитель CF. Default: 1.\n14. PERF_TYPE — для DUALPERM: FRAC | MAT | BOTH. Default: FRAC. При DUALPORO перфорации только в блоках трещины.\n\nКанон render этого корпуса.\n- Variant `md` — WELL, BRANCH, MDL, MDU, DEPTH_TYPE=MD, STATUS (типовой MD-интервал).\n- Variant `md_diameter` — как пример мануала: WELL + defaults BRANCH/DEPTH_TYPE + MDL MDU + STATUS=OPEN + defaults SAT/CF + DIAMETER.\n- Variant `tvd` — как `md`, но DEPTH_TYPE=TVD.\n- Variant `stage` — STAGE_NAME, STAGE_INDEX (default), DELTA1, DELTA2, DEPTH_TYPE=STAGE, STATUS, DIAMETER (паттерн примера STAGE1).\nНе эмитьте поля вне выбранного variant. Имена WELL/STAGE quoted. Числа finite. Для MD/TVD требуйте явные MDL и MDU из фактов (не подставляйте «кровлю/подошву» сами).\n\nIR / semantics.\n- period=ANY; clock.uses_current=true.\n- `md`/`md_diameter`/`tvd`: references well WELL; prerequisites WELSPECS и WELLTRACK scope=ENTITY по WELL.\n- `stage`: references fracture_stage STAGE; prerequisite FRACTURE_STAGE scope=ENTITY; FRACTURE_SPECS вне allowlist — если стадии нет в baseline → needs_input, не эмитьте FRACTURE_SPECS из этой карточки.\n- definitions: UPSERT entity_type=completion_interval (логический интервал перфорации); не создаёт well.\n- numeric_constraints: BRANCH/STAGE_INDEX ≥0; DIAMETER >0 при явном задании; для MD обычно MDL ≤ MDU; CF_MULT >0 при явном; D_FACTOR если задан — отрицательный в IR как в файле.\n\nСвязанные keywords (не эмитьте без scope).\n- WELSPECS, WELLTRACK — обязательный MD/TVD путь.\n- FRACTURE_STAGE / FRACTURE_SPECS / FRACTURE_SPECS — STAGE-путь и шаблоны ГРП.\n- WDFAC, TNAVCTRL DFACTORSCALING — D-фактор скважины vs интервала.\n- LGRON/LGROFF — перенос перфораций между global/LGR.\n- WCONPROD/WCONHIST — контроли после перфораций на той же скважине.\n\nВалидация.\n- WELL точное; существует через WELSPECS; WELLTRACK для того же WELL (и BRANCH, если не 0) уже в пакете/baseline.\n- DEPTH_TYPE ∈ {MD,TVD,STAGE}; STATUS ∈ {OPEN,SHUT}; PERF_TYPE ∈ {FRAC,MAT,BOTH}.\n- Не подменяйте COMPDATMD на COMPDAT «по слоям».\n- Не копируйте учебные PROD/2438/2469/0.16 без фактов.\n- D_FACTOR только с минусом, если пользователь/факт задал D-фактор интервала.\n- Несколько интервалов — несколько записей в одном блоке или несколько блоков на разных DATES.\n\nАнтипаттерны.\n- COMPDATMD до WELSPECS/WELLTRACK.\n- STAGE без FRACTURE_STAGE / без имени стадии в фактах.\n- Выдумать CF/KH вместо default (1* / omit).\n- Путать MDL (поле 3, верх) с MDU (поле 4, низ).\n- Считать COMPDATMD контролем дебита.\n- Wildcard по имени скважины.\n\nНехватка факта → needs_input: нет WELL; нет WELLTRACK; нет MDL/MDU (или Delta1/Delta2 для STAGE); нужен TVD без абсолютных глубин; STAGE без FRACTURE_* authority; конфликт с baseline completions без REVISE target; нужен явный CF/KH/D без чисел.\n\nКарточка самодостаточна: renderer использует только schema_catalogue этой записи и выбранный variant.",
+      "text": "COMPDATMD — интервал перфораций по измеренной/абсолютной глубине (или у стадии ГРП).\n\nНазначение. COMPDATMD задаёт перфорации вдоль траектории: tNavigator пересекает WELLTRACK с сеткой и открывает соединения во всех блоках между верхней и нижней отметками. Считает CF (connection factor) и KH, если вы их не задали. Форматы: tN, E1, E3. Секция: SCHEDULE. Это не COMPDAT/COMPDATL (блочные IJK-перфорации E1/E3) и не WELSPECS/WELLTRACK. COMPDAT и COMPDATL нет в allowlist Builder как замена MD-пути: для траекторных перфораций эмитьте COMPDATMD.\n\nПререквизиты (обязательный порядок чтения к моменту COMPDATMD).\n- Режим MD/TVD: скважина и траектория уже заданы WELSPECS (§12.20.3) и WELLTRACK (§12.20.9). WELSPECS и WELLTRACK — в любом порядке друг относительно друга; COMPDATMD — после обоих.\n- Режим STAGE: имя стадии задано FRACTURE_SPECS (§12.2.131 FRACTURE_SPECS в новых мануалах; если стадии нет в baseline/scope → needs_input), стадия активирована FRACTURE_STAGE (§12.20.150), затем COMPDATMD с DEPTH_TYPE=STAGE.\n\nСемантика сетки/LGR (не эмитьте LGR-keywords из этой карточки).\n- При LGROFF перфорации из LGR-блоков переносятся на глобальную сетку; при LGRON — наоборот на локальную.\n- Если параметр 5 = STAGE, перфорации активны только в измельчённых блоках и автоматически закрываются при отключении локальной сетки.\n\nRecord layout. Keyword COMPDATMD, затем одна или несколько записей скважины/стадии, каждая заканчивается `/`. Блок заканчивается отдельным `/`.\n\nПоля по порядку (§12.20.10, METRIC: m / cP·rm³/day·bar / mD·m / day/sm³; FIELD: ft / cP·rb/day·psi / mD·ft / day/Mscf):\n\n1. WELL_OR_STAGE — идентификатор.\n   - DEPTH_TYPE = MD|TVD: имя/номер скважины (как в WELSPECS).\n   - DEPTH_TYPE = STAGE: имя стадии ГРП (первый параметр FRACTURE_SPECS).\n2. BRANCH_OR_STAGE_INDEX — номер ствола (MD/TVD; default 0 = главный) или номер стадии внутри FRACTURE_SPECS (STAGE; default = все стадии слова).\n3. TOP_OR_DELTA1 —\n   - MD/TVD: MDL — верхняя (первая) отсечка перфорации. Default симулятора: кровля пласта.\n   - STAGE: Delta1 — длина от точки привязки стадии к забою.\n4. BOTTOM_OR_DELTA2 —\n   - MD/TVD: MDU — нижняя отсечка перфорации. Default симулятора: подошва пласта.\n   - STAGE: Delta2 — длина от точки привязки к устью.\n   Именование MDL/MDU в мануале: поле 3 = верхняя отметка, поле 4 = нижняя (пример 2438→2469). Не путайте с вводным абзацем, где буквы U/L перепутаны местами — ориентируйтесь на нумерованный список полей и пример.\n5. DEPTH_TYPE — MD | TVD | STAGE. Default: MD.\n   - MD: поля 3–4 в измеренной глубине вдоль ствола.\n   - TVD: поля 3–4 в абсолютной глубине.\n   - STAGE: интервал вокруг точки привязки стадии (пересечение ствола с плоскостью трещины).\n6. STATUS — OPEN | SHUT. Default: OPEN.\n7. SAT_TABLE — номер таблицы фильтрации; ≤0 → таблица блока по SATNUM. Default: SATNUM блока.\n8. CF — connection factor (T(t) в §5.6.1). Default: рассчитывается tNavigator. Не выдумывайте CF без факта.\n9. DIAMETER — диаметр скважины dw (§5.6.2). Default: 0.3048 m (1 ft).\n10. KH — гидропроводность. Default: рассчитывается. Не выдумывайте.\n11. SKIN — скин s. Default: 0.\n12. D_FACTOR — D-фактор интервала для не-Дарси газа. Вводите со знаком минус; tNavigator берёт модуль. Если задан, WDFAC для этих перфораций игнорируется; масштабирование зависит от TNAVCTRL DFACTORSCALING (ALL|BRANCH). Default: не задано.\n13. CF_MULT — множитель CF. Default: 1.\n14. PERF_TYPE — для DUALPERM: FRAC | MAT | BOTH. Default: FRAC. При DUALPORO перфорации только в блоках трещины.\n\nКанон render этого корпуса.\n- Variant `md` — WELL, BRANCH, MDL, MDU, DEPTH_TYPE=MD, STATUS (типовой MD-интервал).\n- Variant `md_diameter` — как пример мануала: WELL + defaults BRANCH/DEPTH_TYPE + MDL MDU + STATUS=OPEN + defaults SAT/CF + DIAMETER.\n- Variant `tvd` — как `md`, но DEPTH_TYPE=TVD.\n- Variant `stage` — STAGE_NAME, STAGE_INDEX (default), DELTA1, DELTA2, DEPTH_TYPE=STAGE, STATUS, DIAMETER (паттерн примера STAGE1).\nНе эмитьте поля вне выбранного variant. Имена WELL/STAGE quoted. Числа finite. Для MD/TVD требуйте явные MDL и MDU из фактов (не подставляйте «кровлю/подошву» сами).\n\nIR / semantics.\n- period=ANY; clock.uses_current=true.\n- `md`/`md_diameter`/`tvd`: references well WELL; prerequisites WELSPECS и WELLTRACK scope=ENTITY по WELL.\n- `stage`: references fracture_stage STAGE; prerequisite FRACTURE_STAGE scope=ENTITY; FRACTURE_SPECS вне allowlist — если стадии нет в baseline → needs_input, не эмитьте FRACTURE_SPECS из этой карточки.\n- definitions: UPSERT entity_type=completion_interval (логический интервал перфорации); не создаёт well.\n- numeric_constraints: BRANCH/STAGE_INDEX ≥0; DIAMETER >0 при явном задании; для MD обычно MDL ≤ MDU; CF_MULT >0 при явном; D_FACTOR если задан — отрицательный в IR как в файле.\n\nСвязанные keywords (не эмитьте без scope).\n- WELSPECS, WELLTRACK — обязательный MD/TVD путь.\n- FRACTURE_STAGE / FRACTURE_SPECS / FRACTURE_SPECS — STAGE-путь и шаблоны ГРП.\n- WDFAC, TNAVCTRL DFACTORSCALING — D-фактор скважины vs интервала.\n- LGRON/LGROFF — перенос перфораций между global/LGR.\n- WCONPROD/WCONHIST — контроли после перфораций на той же скважине.\n\nВалидация.\n- WELL точное; существует через WELSPECS; WELLTRACK для того же WELL (и BRANCH, если не 0) уже в пакете/baseline.\n- DEPTH_TYPE ∈ {MD,TVD,STAGE}; STATUS ∈ {OPEN,SHUT}; PERF_TYPE ∈ {FRAC,MAT,BOTH}.\n- Не подменяйте COMPDATMD на COMPDAT «по слоям».\n- Не копируйте учебные PROD/2438/2469/0.16 без фактов.\n- D_FACTOR только с минусом, если пользователь/факт задал D-фактор интервала.\n- Несколько интервалов — несколько записей в одном блоке или несколько блоков на разных DATES.\n\nТеория (§5.6.2 — CF/KH; приток §5.6.1).\n- Диаметр/скин в COMPDATMD входят в расчёт проводимости (§5.6.2), если CF/KH не заданы явно.\n- Предпосылки притока (§5.6.1): скважина через центр блока, постоянная плотность по стволу на шаге, трение в стволе пренебрегается — не ожидайте «трубной» гидравлики от одного COMPDATMD.\n\nАнтипаттерны.\n- COMPDATMD до WELSPECS/WELLTRACK.\n- STAGE без FRACTURE_STAGE / без имени стадии в фактах.\n- Выдумать CF/KH вместо default (1* / omit).\n- Путать MDL (поле 3, верх) с MDU (поле 4, низ).\n- Считать COMPDATMD контролем дебита.\n- Wildcard по имени скважины.\n\nНехватка факта → needs_input: нет WELL; нет WELLTRACK; нет MDL/MDU (или Delta1/Delta2 для STAGE); нужен TVD без абсолютных глубин; STAGE без FRACTURE_* authority; конфликт с baseline completions без REVISE target; нужен явный CF/KH/D без чисел.\n\nКарточка самодостаточна: renderer использует только schema_catalogue этой записи и выбранный variant.",
       "examples": [
         {
           "title": "MD-интервал — канон мануала",
@@ -1491,7 +1491,7 @@
         "contract_version": "1.0",
         "catalogue_ref": "catalogue://tnavigator/22.2/compdatmd-perforation-md-v1",
         "catalogue_hash": "sha256:411060c6726cad35a78db451121a422a4771ffa2f9a9ad56496314ab89a0537a",
-        "source_hash": "sha256:dbce43288940674b0e58423c8dcd7f864967113f6d9e1c9cc2870c00ec4a97c2",
+        "source_hash": "sha256:39c216c3785a908588736da5267d3b7d5a75a99e6af4495fc1b1869730703d99",
         "access_scope": "petroleum-engineering",
         "simulator_profile": {
           "vendor": "Rock Flow Dynamics",
@@ -1514,7 +1514,7 @@
               "document_revision": "19.4",
               "page": "12.20.10 / 1740-1744",
               "heading": "COMPDATMD",
-              "source_hash": "sha256:dbce43288940674b0e58423c8dcd7f864967113f6d9e1c9cc2870c00ec4a97c2"
+              "source_hash": "sha256:39c216c3785a908588736da5267d3b7d5a75a99e6af4495fc1b1869730703d99"
             },
             "parser": {
               "token_width": 14,
@@ -1634,7 +1634,7 @@
               "document_revision": "19.4",
               "page": "12.20.10 / 1740-1744",
               "heading": "COMPDATMD",
-              "source_hash": "sha256:dbce43288940674b0e58423c8dcd7f864967113f6d9e1c9cc2870c00ec4a97c2"
+              "source_hash": "sha256:39c216c3785a908588736da5267d3b7d5a75a99e6af4495fc1b1869730703d99"
             },
             "parser": {
               "token_width": 14,
@@ -1779,7 +1779,7 @@
               "document_revision": "19.4",
               "page": "12.20.10 / 1740-1744",
               "heading": "COMPDATMD",
-              "source_hash": "sha256:dbce43288940674b0e58423c8dcd7f864967113f6d9e1c9cc2870c00ec4a97c2"
+              "source_hash": "sha256:39c216c3785a908588736da5267d3b7d5a75a99e6af4495fc1b1869730703d99"
             },
             "parser": {
               "token_width": 14,
@@ -1891,7 +1891,7 @@
               "document_revision": "19.4",
               "page": "12.20.10 / 1740-1744",
               "heading": "COMPDATMD",
-              "source_hash": "sha256:dbce43288940674b0e58423c8dcd7f864967113f6d9e1c9cc2870c00ec4a97c2"
+              "source_hash": "sha256:39c216c3785a908588736da5267d3b7d5a75a99e6af4495fc1b1869730703d99"
             },
             "parser": {
               "token_width": 14,
@@ -2022,15 +2022,15 @@
           }
         ]
       },
-      "source_hash": "sha256:dbce43288940674b0e58423c8dcd7f864967113f6d9e1c9cc2870c00ec4a97c2",
-      "page": "12.20.10 COMPDATMD (с. 1740–1744); prerequisites WELSPECS/WELLTRACK; STAGE via FRACTURE_SPECS/FRACTURE_STAGE",
+      "source_hash": "sha256:39c216c3785a908588736da5267d3b7d5a75a99e6af4495fc1b1869730703d99",
+      "page": "12.20.10 COMPDATMD (с. 1740–1744); prerequisites WELSPECS/WELLTRACK; STAGE via FRACTURE_SPECS/FRACTURE_STAGE; теория 5.6.1–5.6.2",
       "heading": "COMPDATMD — интервал перфораций в измеренной глубине",
       "id": "compdatmd-perforation-md-v1",
       "metadata": {
         "document_id": "compdatmd-perforation-md-v1",
         "document_revision": "1",
-        "source_hash": "sha256:dbce43288940674b0e58423c8dcd7f864967113f6d9e1c9cc2870c00ec4a97c2",
-        "page": "12.20.10 / 1740-1744",
+        "source_hash": "sha256:39c216c3785a908588736da5267d3b7d5a75a99e6af4495fc1b1869730703d99",
+        "page": "12.20.10 / 1740-1744; теория 5.6.1–5.6.2",
         "heading": "COMPDATMD",
         "target_base": "schedule_mvp",
         "knowledge_type": "keyword_instruction",
@@ -2096,7 +2096,7 @@
       "status": "active",
       "author": "department-hydrodynamic-expert",
       "access_scope": "petroleum-engineering",
-      "text": "WCONPROD — прогнозный контроль добывающей скважины (или списка скважин).\n\nНазначение. WCONPROD задаёт статус и режим управления добывающей скважины на текущих часах SCHEDULE: OPEN/STOP/SHUT/AUTO и контроль ORAT/WRAT/GRAT/LRAT/RESV/BHP/THP/… плюс лимиты по фазам и давлениям. Форматы: tN, E1, E3. Секция: только SCHEDULE. Это не история (WCONHIST), не нагнетание (WCONINJE/WCONINJH), не объявление скважины (WELSPECS) и не перфорация (COMPDAT/COMPDATMD).\n\nКогда применять. FORECAST / после cutover: целевые дебиты и давления прогноза. Не эмитьте WCONPROD в history interval — там WCONHIST. Не подменяйте WCONHIST «похожим» WCONPROD. Обычно после DATES текущего time block и после WELSPECS (скважина должна существовать). Перфорации (COMPDATMD/COMPDAT) должны быть заданы к моменту осмысленной добычи, но entity-prerequisite этого корпуса — WELSPECS.\n\nRecord layout. Keyword WCONPROD, затем одна или несколько записей, каждая заканчивается `/`. Блок заканчивается отдельным `/`. Одна запись = одна скважина (или WLIST-список — WLIST вне allowlist MVP: маски/списки → needs_input, эмитьте по одной скважине).\n\nПоля по порядку (§12.20.42; METRIC unless noted):\n\n1. WELL — имя/номер скважины (или WLIST). Копируйте буквально из WELSPECS.\n2. STATUS — OPEN | STOP | SHUT | AUTO. Default: OPEN.\n   - AUTO: статус SHUT, но скважина открывается, когда позволяют ограничения (WDRILTIM, GRUPRIG, GECON, WELSOMIN и т.п.).\n3. CONTROL — режим управления. Default: пусто (допустимо, если скважина SHUT/STOP и не в очереди на бурение). Для OPEN в прогнозе CONTROL обязателен из фактов.\n   MVP black-oil (эмитьте свободно при наличии факта):\n   - ORAT — дебит нефти;\n   - WRAT — воды;\n   - GRAT — газа;\n   - LRAT — жидкости (нефть+вода на поверхности);\n   - RESV — флюид в пластовых условиях (учитывает параметр 13 WELSPECS);\n   - BHP — забойное давление (§5.6);\n   - THP — устьевое давление (нужна VFP-таблица ≠0, иначе THP не считается);\n   - GRUP — доля от GCONPROD группы.\n   E3 / thermal / спецрежимы (WGRA, TMRA, STRA, SATP, SATT, CVAL, NGL) — только при явном E3/THERMAL scope и фактах; иначе needs_input, не угадывайте.\n4. ORAT — дебит/верхний лимит нефти (sm3/day). UDQ допустим в симуляторе; корпус MVP — число из фактов.\n5. WRAT — воды (sm3/day).\n6. GRAT — газа (sm3/day; FIELD: Mscf/day).\n7. LRAT — жидкости на поверхности (sm3/day). Default симулятора: 1e+20.\n8. RESV — флюид в пластовых условиях (rm3/day). Default: 1e+20.\n9. BHP — забойное давление или нижний лимит (barsa). Default E1: атмосферное; E3: 100 atma, если не FBHPDEF.\n10. THP — устьевое давление или нижний лимит (barsa). 0 = только расчёт (если VFP≠0). Default: 0.\n11. VFP_TABLE — номер VFPPROD/VFPCORR; 0 → THP не вычисляется. Default: 0. VFPPROD вне allowlist — если нужен явный VFP id без таблицы в пакете → needs_input.\n12. ALQ — параметр искусственного подъёма для THP/VFP. Default: 0.\n13. WGRA — жирный газ (E3).\n14. TMRA — молярный расход (kg-M/day).\n15. STRA — пар CWE (THERMAL).\n16. SATP_DP — сдвиг ∆P для SATP (THERMAL).\n17. SATT_DT — сдвиг ∆T для SATT (THERMAL).\n18. CVAL — тепловой дебит (kJ/day, E3).\n19. LINCOM — игнорируется (совместимость E1/E3).\n20. NGL — ШФЛУ (E3).\n\nПоведение симулятора. Скважина стартует на заданном CONTROL; если лимит нарушен — переключается на неудовлетворённый контроль; при отрицательном дебите на текущем контроле — закрытие. WELTARG может позже менять цели. Групповой приоритет открытия может урезать дебит скважины несмотря на её собственные лимиты (§2.14.13).\n\nКанон render этого корпуса.\nВыбирайте variant по CONTROL факта; не эмитьте поля вне variant.\n- `orat` — WELL STATUS CONTROL=ORAT ORAT [WRAT GRAT LRAT RESV BHP].\n- `wrat` — WELL STATUS CONTROL=WRAT [ORAT] WRAT.\n- `grat` — WELL STATUS CONTROL=GRAT … GRAT.\n- `lrat` — WELL STATUS CONTROL=LRAT ORAT WRAT GRAT LRAT (паттерн примера 1043).\n- `bhp` — WELL STATUS CONTROL=BHP … BHP (дебиты — верхние лимиты; BHP — цель).\n- `thp` — WELL STATUS CONTROL=THP … THP (+ VFP_TABLE если дан).\n- `resv` — WELL STATUS CONTROL=RESV … RESV.\n- `grup` — WELL STATUS CONTROL=GRUP (доли/лимиты — по фактам или defaults).\nЧисла дебитов ≥0 и finite. Давления BHP/THP >0, если заданы явно как цель/лимит (не путайте с default-токеном 1*). Имена WELL quoted. Не копируйте учебные 1043/1054/18.19 без фактов.\n\nIR / semantics.\n- period=FORECAST; clock.uses_current=true.\n- references: well WELL required.\n- prerequisites: WELSPECS scope=ENTITY по WELL.\n- state_assignments: namespace well-control; key CONTROL; value_fields = заполненные rate/pressure поля variant.\n- numeric_constraints: ORAT/WRAT/GRAT/LRAT/RESV/ALQ min 0; BHP/THP min_exclusive 0 при явном значении; VFP_TABLE min 0.\n\nСвязанные keywords (не эмитьте без scope).\n- WELSPECS — обязателен; RESV читает параметр 13.\n- WCONHIST — история, не прогноз.\n- GCONPROD — групповой прогноз; CONTROL=GRUP опирается на него.\n- WELTARG — смена цели без полного WCONPROD.\n- VFPPROD/VFPCORR/WGASLIFT — THP/ALQ путь.\n- WECON — economic limits / закрытие.\n\nВалидация.\n- WELL существует; CONTROL согласован с заполненным целевым полем (ORAT→ORAT задан, BHP→BHP задан и т.д.).\n- Не WCONPROD в HISTORY.\n- Не WLIST/маски без authority.\n- Не выдумывать VFP/ALQ/E3-поля.\n- Несколько скважин — несколько записей в одном блоке на одной DATES.\n\nАнтипаттерны.\n- WCONHIST вместо WCONPROD на прогнозе (и наоборот).\n- CONTROL=ORAT без ORAT / CONTROL=BHP без BHP.\n- THP без VFP при требовании расчёта устья.\n- Подставить 1e+20 вручную вместо omit/default.\n- Считать WCONPROD перфорацией или объявлением скважины.\n\nНехватка факта → needs_input: нет WELL; нет STATUS/CONTROL; нет величины для выбранного CONTROL; cutover/history-forecast граница неясна; нужен E3/THERMAL CONTROL без профиля; нужен VFP id без таблицы; конфликт с baseline control без REVISE target.\n\nКарточка самодостаточна: renderer использует только schema_catalogue этой записи и выбранный variant.",
+      "text": "WCONPROD — прогнозный контроль добывающей скважины (или списка скважин).\n\nНазначение. WCONPROD задаёт статус и режим управления добывающей скважины на текущих часах SCHEDULE: OPEN/STOP/SHUT/AUTO и контроль ORAT/WRAT/GRAT/LRAT/RESV/BHP/THP/… плюс лимиты по фазам и давлениям. Форматы: tN, E1, E3. Секция: только SCHEDULE. Это не история (WCONHIST), не нагнетание (WCONINJE/WCONINJH), не объявление скважины (WELSPECS) и не перфорация (COMPDAT/COMPDATMD).\n\nКогда применять. FORECAST / после cutover: целевые дебиты и давления прогноза. Не эмитьте WCONPROD в history interval — там WCONHIST. Не подменяйте WCONHIST «похожим» WCONPROD. Обычно после DATES текущего time block и после WELSPECS (скважина должна существовать). Перфорации (COMPDATMD/COMPDAT) должны быть заданы к моменту осмысленной добычи, но entity-prerequisite этого корпуса — WELSPECS.\n\nRecord layout. Keyword WCONPROD, затем одна или несколько записей, каждая заканчивается `/`. Блок заканчивается отдельным `/`. Одна запись = одна скважина (или WLIST-список — WLIST вне allowlist MVP: маски/списки → needs_input, эмитьте по одной скважине).\n\nПоля по порядку (§12.20.42; METRIC unless noted):\n\n1. WELL — имя/номер скважины (или WLIST). Копируйте буквально из WELSPECS.\n2. STATUS — OPEN | STOP | SHUT | AUTO. Default: OPEN.\n   - AUTO: статус SHUT, но скважина открывается, когда позволяют ограничения (WDRILTIM, GRUPRIG, GECON, WELSOMIN и т.п.).\n3. CONTROL — режим управления. Default: пусто (допустимо, если скважина SHUT/STOP и не в очереди на бурение). Для OPEN в прогнозе CONTROL обязателен из фактов.\n   MVP black-oil (эмитьте свободно при наличии факта):\n   - ORAT — дебит нефти;\n   - WRAT — воды;\n   - GRAT — газа;\n   - LRAT — жидкости (нефть+вода на поверхности);\n   - RESV — флюид в пластовых условиях (учитывает параметр 13 WELSPECS);\n   - BHP — забойное давление (§5.6);\n   - THP — устьевое давление (нужна VFP-таблица ≠0, иначе THP не считается);\n   - GRUP — доля от GCONPROD группы.\n   E3 / thermal / спецрежимы (WGRA, TMRA, STRA, SATP, SATT, CVAL, NGL) — только при явном E3/THERMAL scope и фактах; иначе needs_input, не угадывайте.\n4. ORAT — дебит/верхний лимит нефти (sm3/day). UDQ допустим в симуляторе; корпус MVP — число из фактов.\n5. WRAT — воды (sm3/day).\n6. GRAT — газа (sm3/day; FIELD: Mscf/day).\n7. LRAT — жидкости на поверхности (sm3/day). Default симулятора: 1e+20.\n8. RESV — флюид в пластовых условиях (rm3/day). Default: 1e+20.\n9. BHP — забойное давление или нижний лимит (barsa). Default E1: атмосферное; E3: 100 atma, если не FBHPDEF.\n10. THP — устьевое давление или нижний лимит (barsa). 0 = только расчёт (если VFP≠0). Default: 0.\n11. VFP_TABLE — номер VFPPROD/VFPCORR; 0 → THP не вычисляется. Default: 0. VFPPROD вне allowlist — если нужен явный VFP id без таблицы в пакете → needs_input.\n12. ALQ — параметр искусственного подъёма для THP/VFP. Default: 0.\n13. WGRA — жирный газ (E3).\n14. TMRA — молярный расход (kg-M/day).\n15. STRA — пар CWE (THERMAL).\n16. SATP_DP — сдвиг ∆P для SATP (THERMAL).\n17. SATT_DT — сдвиг ∆T для SATT (THERMAL).\n18. CVAL — тепловой дебит (kJ/day, E3).\n19. LINCOM — игнорируется (совместимость E1/E3).\n20. NGL — ШФЛУ (E3).\n\nПоведение симулятора. Скважина стартует на заданном CONTROL; если лимит нарушен — переключается на неудовлетворённый контроль; при отрицательном дебите на текущем контроле — закрытие. WELTARG может позже менять цели. Групповой приоритет открытия может урезать дебит скважины несмотря на её собственные лимиты (§2.14.13).\n\nКанон render этого корпуса.\nВыбирайте variant по CONTROL факта; не эмитьте поля вне variant.\n- `orat` — WELL STATUS CONTROL=ORAT ORAT [WRAT GRAT LRAT RESV BHP].\n- `wrat` — WELL STATUS CONTROL=WRAT [ORAT] WRAT.\n- `grat` — WELL STATUS CONTROL=GRAT … GRAT.\n- `lrat` — WELL STATUS CONTROL=LRAT ORAT WRAT GRAT LRAT (паттерн примера 1043).\n- `bhp` — WELL STATUS CONTROL=BHP … BHP (дебиты — верхние лимиты; BHP — цель).\n- `thp` — WELL STATUS CONTROL=THP … THP (+ VFP_TABLE если дан).\n- `resv` — WELL STATUS CONTROL=RESV … RESV.\n- `grup` — WELL STATUS CONTROL=GRUP (доли/лимиты — по фактам или defaults).\nЧисла дебитов ≥0 и finite. Давления BHP/THP >0, если заданы явно как цель/лимит (не путайте с default-токеном 1*). Имена WELL quoted. Не копируйте учебные 1043/1054/18.19 без фактов.\n\nIR / semantics.\n- period=FORECAST; clock.uses_current=true.\n- references: well WELL required.\n- prerequisites: WELSPECS scope=ENTITY по WELL.\n- state_assignments: namespace well-control; key CONTROL; value_fields = заполненные rate/pressure поля variant.\n- numeric_constraints: ORAT/WRAT/GRAT/LRAT/RESV/ALQ min 0; BHP/THP min_exclusive 0 при явном значении; VFP_TABLE min 0.\n\nСвязанные keywords (не эмитьте без scope).\n- WELSPECS — обязателен; RESV читает параметр 13.\n- WCONHIST — история, не прогноз.\n- GCONPROD — групповой прогноз; CONTROL=GRUP опирается на него.\n- WELTARG — смена цели без полного WCONPROD.\n- VFPPROD/VFPCORR/WGASLIFT — THP/ALQ путь.\n- WECON — economic limits / закрытие.\n\nВалидация.\n- WELL существует; CONTROL согласован с заполненным целевым полем (ORAT→ORAT задан, BHP→BHP задан и т.д.).\n- Не WCONPROD в HISTORY.\n- Не WLIST/маски без authority.\n- Не выдумывать VFP/ALQ/E3-поля.\n- Несколько скважин — несколько записей в одном блоке на одной DATES.\n\nТеория (§5.6 — аппроксимация скважины; §2.14.13 — приоритеты).\n- BHP-контроль опирается на модель притока скважины (§5.6 / §5.6.1): связь дебита и забойного давления через проводимость перфораций.\n- Альтернатива пропорциональному делению группового дебита по guide — ввод/открытие по приоритетам (§2.14.13, PRIORITY/GCONPRI); не подменяйте GCONPROD+GUIDERAT приоритетами без факта.\n\nАнтипаттерны.\n- WCONHIST вместо WCONPROD на прогнозе (и наоборот).\n- CONTROL=ORAT без ORAT / CONTROL=BHP без BHP.\n- THP без VFP при требовании расчёта устья.\n- Подставить 1e+20 вручную вместо omit/default.\n- Считать WCONPROD перфорацией или объявлением скважины.\n\nНехватка факта → needs_input: нет WELL; нет STATUS/CONTROL; нет величины для выбранного CONTROL; cutover/history-forecast граница неясна; нужен E3/THERMAL CONTROL без профиля; нужен VFP id без таблицы; конфликт с baseline control без REVISE target.\n\nКарточка самодостаточна: renderer использует только schema_catalogue этой записи и выбранный variant.",
       "examples": [
         {
           "title": "ORAT — нефтяной контроль",
@@ -2134,7 +2134,7 @@
         "contract_version": "1.0",
         "catalogue_ref": "catalogue://tnavigator/22.2/wconprod-forecast-control-v1",
         "catalogue_hash": "sha256:f2a823599c3181ed3a775bb436dff6b3cde6ee21b3d6e9dfde7ec016d489b723",
-        "source_hash": "sha256:ffe1b1e45ec691e6ff88c7aa0160a6432f23c739c54f3c678389a4a6a2a2aa06",
+        "source_hash": "sha256:b80574e02d7abeaf2db807c213d2c98895b5cf57bf314c89f40e3ba73bcac57b",
         "access_scope": "petroleum-engineering",
         "simulator_profile": {
           "vendor": "Rock Flow Dynamics",
@@ -2157,7 +2157,7 @@
               "document_revision": "19.4",
               "page": "12.20.42 / 1820-1824",
               "heading": "WCONPROD",
-              "source_hash": "sha256:ffe1b1e45ec691e6ff88c7aa0160a6432f23c739c54f3c678389a4a6a2a2aa06"
+              "source_hash": "sha256:b80574e02d7abeaf2db807c213d2c98895b5cf57bf314c89f40e3ba73bcac57b"
             },
             "parser": {
               "token_width": 20,
@@ -2318,7 +2318,7 @@
               "document_revision": "19.4",
               "page": "12.20.42 / 1820-1824",
               "heading": "WCONPROD",
-              "source_hash": "sha256:ffe1b1e45ec691e6ff88c7aa0160a6432f23c739c54f3c678389a4a6a2a2aa06"
+              "source_hash": "sha256:b80574e02d7abeaf2db807c213d2c98895b5cf57bf314c89f40e3ba73bcac57b"
             },
             "parser": {
               "token_width": 20,
@@ -2430,7 +2430,7 @@
               "document_revision": "19.4",
               "page": "12.20.42 / 1820-1824",
               "heading": "WCONPROD",
-              "source_hash": "sha256:ffe1b1e45ec691e6ff88c7aa0160a6432f23c739c54f3c678389a4a6a2a2aa06"
+              "source_hash": "sha256:b80574e02d7abeaf2db807c213d2c98895b5cf57bf314c89f40e3ba73bcac57b"
             },
             "parser": {
               "token_width": 20,
@@ -2553,7 +2553,7 @@
               "document_revision": "19.4",
               "page": "12.20.42 / 1820-1824",
               "heading": "WCONPROD",
-              "source_hash": "sha256:ffe1b1e45ec691e6ff88c7aa0160a6432f23c739c54f3c678389a4a6a2a2aa06"
+              "source_hash": "sha256:b80574e02d7abeaf2db807c213d2c98895b5cf57bf314c89f40e3ba73bcac57b"
             },
             "parser": {
               "token_width": 20,
@@ -2690,7 +2690,7 @@
               "document_revision": "19.4",
               "page": "12.20.42 / 1820-1824",
               "heading": "WCONPROD",
-              "source_hash": "sha256:ffe1b1e45ec691e6ff88c7aa0160a6432f23c739c54f3c678389a4a6a2a2aa06"
+              "source_hash": "sha256:b80574e02d7abeaf2db807c213d2c98895b5cf57bf314c89f40e3ba73bcac57b"
             },
             "parser": {
               "token_width": 20,
@@ -2835,7 +2835,7 @@
               "document_revision": "19.4",
               "page": "12.20.42 / 1820-1824",
               "heading": "WCONPROD",
-              "source_hash": "sha256:ffe1b1e45ec691e6ff88c7aa0160a6432f23c739c54f3c678389a4a6a2a2aa06"
+              "source_hash": "sha256:b80574e02d7abeaf2db807c213d2c98895b5cf57bf314c89f40e3ba73bcac57b"
             },
             "parser": {
               "token_width": 20,
@@ -2996,7 +2996,7 @@
               "document_revision": "19.4",
               "page": "12.20.42 / 1820-1824",
               "heading": "WCONPROD",
-              "source_hash": "sha256:ffe1b1e45ec691e6ff88c7aa0160a6432f23c739c54f3c678389a4a6a2a2aa06"
+              "source_hash": "sha256:b80574e02d7abeaf2db807c213d2c98895b5cf57bf314c89f40e3ba73bcac57b"
             },
             "parser": {
               "token_width": 20,
@@ -3187,7 +3187,7 @@
               "document_revision": "19.4",
               "page": "12.20.42 / 1820-1824",
               "heading": "WCONPROD",
-              "source_hash": "sha256:ffe1b1e45ec691e6ff88c7aa0160a6432f23c739c54f3c678389a4a6a2a2aa06"
+              "source_hash": "sha256:b80574e02d7abeaf2db807c213d2c98895b5cf57bf314c89f40e3ba73bcac57b"
             },
             "parser": {
               "token_width": 20,
@@ -3267,15 +3267,15 @@
           }
         ]
       },
-      "source_hash": "sha256:ffe1b1e45ec691e6ff88c7aa0160a6432f23c739c54f3c678389a4a6a2a2aa06",
-      "page": "12.20.42 WCONPROD (с. 1820–1824); vs WCONHIST 12.20.43; GCONPROD 12.20.89",
+      "source_hash": "sha256:b80574e02d7abeaf2db807c213d2c98895b5cf57bf314c89f40e3ba73bcac57b",
+      "page": "12.20.42 WCONPROD (с. 1820–1824); vs WCONHIST 12.20.43; GCONPROD 12.20.89; теория 5.6 / 2.14.13",
       "heading": "WCONPROD — управление добывающей скважиной",
       "id": "wconprod-forecast-control-v1",
       "metadata": {
         "document_id": "wconprod-forecast-control-v1",
         "document_revision": "1",
-        "source_hash": "sha256:ffe1b1e45ec691e6ff88c7aa0160a6432f23c739c54f3c678389a4a6a2a2aa06",
-        "page": "12.20.42 / 1820-1824",
+        "source_hash": "sha256:b80574e02d7abeaf2db807c213d2c98895b5cf57bf314c89f40e3ba73bcac57b",
+        "page": "12.20.42 / 1820-1824; теория 5.6 / 2.14.13",
         "heading": "WCONPROD",
         "target_base": "schedule_mvp",
         "knowledge_type": "keyword_instruction",
@@ -3341,7 +3341,7 @@
       "status": "active",
       "author": "department-hydrodynamic-expert",
       "access_scope": "petroleum-engineering",
-      "text": "GCONPROD — прогнозные цели и ограничения дебита группы / месторождения.\n\nНазначение. GCONPROD задаёт тип группового контроля и лимиты дебита для группы скважин или FIELD. Симулятор перераспределяет дебиты скважин (пропорционально потенциалам / guide rates), чтобы удержать групповой контроль. Форматы: tN, E1, E3. Секция: только SCHEDULE. Это не скважинный прогноз (WCONPROD), не история (отдельные hist-слова), не дерево групп (GRUPTREE) и не GUIDERAT (формула направляющих).\n\nКогда применять. FORECAST / после cutover: групповые ORAT/WRAT/GRAT/LRAT/… лимиты. Не раньше утверждённого cutover. Обычно после DATES и после того, как группа существует: FIELD всегда; иначе группа из GRUPTREE и/или leaf-группа со скважинами WELSPECS. Скважины с CONTROL=GRUP в WCONPROD опираются на GCONPROD своей группы.\n\nRecord layout. Keyword GCONPROD, затем одна или несколько записей, каждая `/`. Блок — отдельный `/`.\n\nПоля по порядку (§12.20.89; METRIC):\n\n1. GROUP — имя группы, префикс с `*` (все группы с таким началом), или FIELD. Default симулятора: default-группа WELSPECS. В корпусе пишите GROUP явно. CREATE MVP: не эмитьте префикс-wildcard (`GROUP2*`) без детерминированного раскрытия в факты — иначе needs_input / перечислите точные имена. REVISE: KEEP raw wildcard baseline допустим.\n2. CONTROL — тип контроля (какое значение лимита ведёт расчёт дебита группы). Default: NONE.\n   MVP: NONE | ORAT | WRAT | GRAT | LRAT | RESV | FLD.\n   - ORAT/WRAT/GRAT/LRAT — лимит фазы (поля 3–6); при превышении операция фазы считается RATE независимо от параметров 7/11/12/13.\n   - RESV — пластовый флюид (поле 14; учитывает WELSPECS param 13).\n   - PRBL — уравновешивающая доля отбора (поле 15).\n   - FLD — группа под вышестоящей / FIELD по guide rate (поля 9–10).\n   - WGRA / PBGS / PBWS — E3-only → needs_input без E3 scope.\n3. ORAT — нефть sm3/day (или верхний лимит). Default: нет ограничения.\n4. WRAT — вода sm3/day.\n5. GRAT — газ sm3/day (FIELD: Mscf/day).\n6. LRAT — жидкость на поверхности sm3/day.\n7. EXCEED_ACTION — при превышении ORAT/WRAT/GRAT/LRAT (общее): NONE | CON | CON+ | +CON | WELL | RATE | TARG.\n   - RATE — приравнять дебит группы к нарушенному лимиту (пересчёт скважин по потенциалам).\n   - TARG — tNavigator-only: как RATE, но лимит снимается, когда перестаёт выполняться.\n   - WELL / CON / CON+ / +CON — закрытие скважины или интервала-нарушителя.\n8. EXCEED_PARENT — YES | NO: может ли вышестоящая группа перехватить контроль. Default: YES.\n9. GUIDE_RATE — безразмерный коэффициент доли группы в фазе (для FLD / распределения). Default: нет.\n10. GUIDE_PHASE — OIL | WAT | GAS | LIQ | WGA | CVAL | POTN | FORM.\n    - POTN/FORM: поле 9 игнорируется; FORM требует GUIDERAT (вне allowlist → needs_input, если FORM без baseline GUIDERAT).\n11–13. EXCEED_WRAT / EXCEED_GRAT / EXCEED_LRAT — операции на отдельные фазовые лимиты; default = поле 7.\n14. RESV — rm3/day.\n15. PRBL — уравновешивающая доля отбора (операция RATE).\n16. WGRA — жирный газ (E3).\n17. HEAT — игнорируется (совместимость).\n18–19. PBGS / PBWS — доли газа/воды surface (E3; операция RATE).\n\nПоведение. Если CONTROL ≠ NONE, симулятор меняет дебиты скважин/подгрупп, чтобы выполнить контроль. В текущей версии при расчёте учитывается только лимит активного CONTROL; прочие лимиты игнорируются (§12.20.89). Потенциал скважины = добыча без ограничений по дебиту.\n\nКанон render этого корпуса.\n- `orat` — GROUP CONTROL=ORAT ORAT EXCEED_ACTION EXCEED_PARENT.\n- `wrat` / `grat` / `lrat` — аналогично с целевым лимитом в своей позиции (для lrat: 3* defaults + LRAT, как пример GROUP11).\n- `none` — GROUP CONTROL=NONE.\n- `fld` — GROUP CONTROL=FLD … GUIDE_RATE GUIDE_PHASE (если даны).\n- `resv` — GROUP CONTROL=RESV … RESV.\nНе эмитьте поля вне variant. GROUP quoted (кроме политики unquoted). Дебиты ≥0 finite. Не копируйте учебные GROUP11/GROUP2*/500/1000 без фактов.\n\nIR / semantics.\n- period=FORECAST; clock.uses_current=true.\n- references: group GROUP required.\n- definitions: UPSERT group-control state на GROUP (не создаёт группу как hierarchy edge — это GRUPTREE).\n- prerequisites: для GROUP≠FIELD группа должна уже существовать как entity (GRUPTREE и/или WELSPECS leaf). Схема MVP: reference group; FIELD всегда валиден. Явный GRUPTREE prerequisite не ставим на FIELD.\n- state_assignments: namespace group-control; key CONTROL; value_fields = целевые лимиты/действия variant.\n- numeric_constraints: ORAT/WRAT/GRAT/LRAT/RESV/GUIDE_RATE min 0.\n\nСвязанные keywords (не эмитьте без scope).\n- GRUPTREE — иерархия; FLD/EXCEED_PARENT опираются на parent.\n- WELSPECS — скважины в leaf-группах; RESV связан с param 13.\n- WCONPROD CONTROL=GRUP — скважина берёт долю от GCONPROD.\n- GUIDERAT — GUIDE_PHASE=FORM.\n- WGRUPCON — постоянные guide rates скважин.\n\nВалидация.\n- CONTROL согласован с заполненным целевым полем (ORAT→ORAT, LRAT→LRAT, …).\n- EXCEED_ACTION ∈ enum; EXCEED_PARENT ∈ {YES,NO}.\n- Не GCONPROD в HISTORY interval.\n- Не wildcard GROUP в CREATE без resolved list.\n- Node-группа с children vs leaf: групповой контроль допустим на иерархии; не вешайте скважины на node-группу (правило GRUPTREE).\n\nАнтипаттерны.\n- WCONPROD вместо GCONPROD для группового лимита.\n- CONTROL=ORAT без ORAT / LRAT без LRAT.\n- Выдумать GUIDERAT/FORM.\n- Считать GCONPROD объявлением группы в дереве.\n- Префикс `*` «на всякий случай».\n\nНехватка факта → needs_input: нет GROUP; нет CONTROL/лимита; cutover неясен; wildcard без списка; FLD без guide/parent; E3 CONTROL без профиля; конфликт с baseline group-control без REVISE target.\n\nКарточка самодостаточна: renderer использует только schema_catalogue этой записи и выбранный variant.",
+      "text": "GCONPROD — прогнозные цели и ограничения дебита группы / месторождения.\n\nНазначение. GCONPROD задаёт тип группового контроля и лимиты дебита для группы скважин или FIELD. Симулятор перераспределяет дебиты скважин (пропорционально потенциалам / guide rates), чтобы удержать групповой контроль. Форматы: tN, E1, E3. Секция: только SCHEDULE. Это не скважинный прогноз (WCONPROD), не история (отдельные hist-слова), не дерево групп (GRUPTREE) и не GUIDERAT (формула направляющих).\n\nКогда применять. FORECAST / после cutover: групповые ORAT/WRAT/GRAT/LRAT/… лимиты. Не раньше утверждённого cutover. Обычно после DATES и после того, как группа существует: FIELD всегда; иначе группа из GRUPTREE и/или leaf-группа со скважинами WELSPECS. Скважины с CONTROL=GRUP в WCONPROD опираются на GCONPROD своей группы.\n\nRecord layout. Keyword GCONPROD, затем одна или несколько записей, каждая `/`. Блок — отдельный `/`.\n\nПоля по порядку (§12.20.89; METRIC):\n\n1. GROUP — имя группы, префикс с `*` (все группы с таким началом), или FIELD. Default симулятора: default-группа WELSPECS. В корпусе пишите GROUP явно. CREATE MVP: не эмитьте префикс-wildcard (`GROUP2*`) без детерминированного раскрытия в факты — иначе needs_input / перечислите точные имена. REVISE: KEEP raw wildcard baseline допустим.\n2. CONTROL — тип контроля (какое значение лимита ведёт расчёт дебита группы). Default: NONE.\n   MVP: NONE | ORAT | WRAT | GRAT | LRAT | RESV | FLD.\n   - ORAT/WRAT/GRAT/LRAT — лимит фазы (поля 3–6); при превышении операция фазы считается RATE независимо от параметров 7/11/12/13.\n   - RESV — пластовый флюид (поле 14; учитывает WELSPECS param 13).\n   - PRBL — уравновешивающая доля отбора (поле 15).\n   - FLD — группа под вышестоящей / FIELD по guide rate (поля 9–10).\n   - WGRA / PBGS / PBWS — E3-only → needs_input без E3 scope.\n3. ORAT — нефть sm3/day (или верхний лимит). Default: нет ограничения.\n4. WRAT — вода sm3/day.\n5. GRAT — газ sm3/day (FIELD: Mscf/day).\n6. LRAT — жидкость на поверхности sm3/day.\n7. EXCEED_ACTION — при превышении ORAT/WRAT/GRAT/LRAT (общее): NONE | CON | CON+ | +CON | WELL | RATE | TARG.\n   - RATE — приравнять дебит группы к нарушенному лимиту (пересчёт скважин по потенциалам).\n   - TARG — tNavigator-only: как RATE, но лимит снимается, когда перестаёт выполняться.\n   - WELL / CON / CON+ / +CON — закрытие скважины или интервала-нарушителя.\n8. EXCEED_PARENT — YES | NO: может ли вышестоящая группа перехватить контроль. Default: YES.\n9. GUIDE_RATE — безразмерный коэффициент доли группы в фазе (для FLD / распределения). Default: нет.\n10. GUIDE_PHASE — OIL | WAT | GAS | LIQ | WGA | CVAL | POTN | FORM.\n    - POTN/FORM: поле 9 игнорируется; FORM требует GUIDERAT (вне allowlist → needs_input, если FORM без baseline GUIDERAT).\n11–13. EXCEED_WRAT / EXCEED_GRAT / EXCEED_LRAT — операции на отдельные фазовые лимиты; default = поле 7.\n14. RESV — rm3/day.\n15. PRBL — уравновешивающая доля отбора (операция RATE).\n16. WGRA — жирный газ (E3).\n17. HEAT — игнорируется (совместимость).\n18–19. PBGS / PBWS — доли газа/воды surface (E3; операция RATE).\n\nПоведение. Если CONTROL ≠ NONE, симулятор меняет дебиты скважин/подгрупп, чтобы выполнить контроль. В текущей версии при расчёте учитывается только лимит активного CONTROL; прочие лимиты игнорируются (§12.20.89). Потенциал скважины = добыча без ограничений по дебиту.\n\nКанон render этого корпуса.\n- `orat` — GROUP CONTROL=ORAT ORAT EXCEED_ACTION EXCEED_PARENT.\n- `wrat` / `grat` / `lrat` — аналогично с целевым лимитом в своей позиции (для lrat: 3* defaults + LRAT, как пример GROUP11).\n- `none` — GROUP CONTROL=NONE.\n- `fld` — GROUP CONTROL=FLD … GUIDE_RATE GUIDE_PHASE (если даны).\n- `resv` — GROUP CONTROL=RESV … RESV.\nНе эмитьте поля вне variant. GROUP quoted (кроме политики unquoted). Дебиты ≥0 finite. Не копируйте учебные GROUP11/GROUP2*/500/1000 без фактов.\n\nIR / semantics.\n- period=FORECAST; clock.uses_current=true.\n- references: group GROUP required.\n- definitions: UPSERT group-control state на GROUP (не создаёт группу как hierarchy edge — это GRUPTREE).\n- prerequisites: для GROUP≠FIELD группа должна уже существовать как entity (GRUPTREE и/или WELSPECS leaf). Схема MVP: reference group; FIELD всегда валиден. Явный GRUPTREE prerequisite не ставим на FIELD.\n- state_assignments: namespace group-control; key CONTROL; value_fields = целевые лимиты/действия variant.\n- numeric_constraints: ORAT/WRAT/GRAT/LRAT/RESV/GUIDE_RATE min 0.\n\nСвязанные keywords (не эмитьте без scope).\n- GRUPTREE — иерархия; FLD/EXCEED_PARENT опираются на parent.\n- WELSPECS — скважины в leaf-группах; RESV связан с param 13.\n- WCONPROD CONTROL=GRUP — скважина берёт долю от GCONPROD.\n- GUIDERAT — GUIDE_PHASE=FORM.\n- WGRUPCON — постоянные guide rates скважин.\n\nВалидация.\n- CONTROL согласован с заполненным целевым полем (ORAT→ORAT, LRAT→LRAT, …).\n- EXCEED_ACTION ∈ enum; EXCEED_PARENT ∈ {YES,NO}.\n- Не GCONPROD в HISTORY interval.\n- Не wildcard GROUP в CREATE без resolved list.\n- Node-группа с children vs leaf: групповой контроль допустим на иерархии; не вешайте скважины на node-группу (правило GRUPTREE).\n\nТеория (§2.14.2 — Групповой контроль; §5.6.7 — потенциал).\n- Возможности групповой добычи в tNavigator описаны в §2.14.2: GRUPTREE задаёт дерево; GCONPROD — контроль добывающих групп; GUIDERAT — формула guide rates для GCONPROD.\n- Групповой целевой дебит делится между скважинами пропорционально их направляющим дебитам (не «поровну»).\n- Потенциал (§5.6.7) — дебит/приемистость без лимита на rate при текущих условиях блока, с учётом BHP/THP (и VFP) и опционально депрессии (WELDRAW). Потенциал группы = сумма потенциалов скважин.\n- Guide по умолчанию = потенциал; иначе GUIDERAT / WGRUPCON.\n\nАнтипаттерны.\n- WCONPROD вместо GCONPROD для группового лимита.\n- CONTROL=ORAT без ORAT / LRAT без LRAT.\n- Выдумать GUIDERAT/FORM.\n- Считать GCONPROD объявлением группы в дереве.\n- Префикс `*` «на всякий случай».\n\nНехватка факта → needs_input: нет GROUP; нет CONTROL/лимита; cutover неясен; wildcard без списка; FLD без guide/parent; E3 CONTROL без профиля; конфликт с baseline group-control без REVISE target.\n\nКарточка самодостаточна: renderer использует только schema_catalogue этой записи и выбранный variant.",
       "examples": [
         {
           "title": "LRAT группы — канон мануала",
@@ -3373,7 +3373,7 @@
         "contract_version": "1.0",
         "catalogue_ref": "catalogue://tnavigator/22.2/gconprod-group-forecast-v1",
         "catalogue_hash": "sha256:13c7d826c995f500f7a6612b322e8d1a8de3bff5a7ad0574810dc124668b23df",
-        "source_hash": "sha256:66d174e8dc6abf77ae07f436bfa66316164fbb1ed5cdf542f5d786c991fba932",
+        "source_hash": "sha256:1c016e5994de7fb36fc0ad9d89bda453b33c9cd7526ec66f81f339f6ab37d366",
         "access_scope": "petroleum-engineering",
         "simulator_profile": {
           "vendor": "Rock Flow Dynamics",
@@ -3396,7 +3396,7 @@
               "document_revision": "19.4",
               "page": "12.20.89 / 1928-1932",
               "heading": "GCONPROD",
-              "source_hash": "sha256:66d174e8dc6abf77ae07f436bfa66316164fbb1ed5cdf542f5d786c991fba932"
+              "source_hash": "sha256:1c016e5994de7fb36fc0ad9d89bda453b33c9cd7526ec66f81f339f6ab37d366"
             },
             "parser": {
               "token_width": 19,
@@ -3540,7 +3540,7 @@
               "document_revision": "19.4",
               "page": "12.20.89 / 1928-1932",
               "heading": "GCONPROD",
-              "source_hash": "sha256:66d174e8dc6abf77ae07f436bfa66316164fbb1ed5cdf542f5d786c991fba932"
+              "source_hash": "sha256:1c016e5994de7fb36fc0ad9d89bda453b33c9cd7526ec66f81f339f6ab37d366"
             },
             "parser": {
               "token_width": 19,
@@ -3684,7 +3684,7 @@
               "document_revision": "19.4",
               "page": "12.20.89 / 1928-1932",
               "heading": "GCONPROD",
-              "source_hash": "sha256:66d174e8dc6abf77ae07f436bfa66316164fbb1ed5cdf542f5d786c991fba932"
+              "source_hash": "sha256:1c016e5994de7fb36fc0ad9d89bda453b33c9cd7526ec66f81f339f6ab37d366"
             },
             "parser": {
               "token_width": 19,
@@ -3828,7 +3828,7 @@
               "document_revision": "19.4",
               "page": "12.20.89 / 1928-1932",
               "heading": "GCONPROD",
-              "source_hash": "sha256:66d174e8dc6abf77ae07f436bfa66316164fbb1ed5cdf542f5d786c991fba932"
+              "source_hash": "sha256:1c016e5994de7fb36fc0ad9d89bda453b33c9cd7526ec66f81f339f6ab37d366"
             },
             "parser": {
               "token_width": 19,
@@ -3972,7 +3972,7 @@
               "document_revision": "19.4",
               "page": "12.20.89 / 1928-1932",
               "heading": "GCONPROD",
-              "source_hash": "sha256:66d174e8dc6abf77ae07f436bfa66316164fbb1ed5cdf542f5d786c991fba932"
+              "source_hash": "sha256:1c016e5994de7fb36fc0ad9d89bda453b33c9cd7526ec66f81f339f6ab37d366"
             },
             "parser": {
               "token_width": 19,
@@ -4182,7 +4182,7 @@
               "document_revision": "19.4",
               "page": "12.20.89 / 1928-1932",
               "heading": "GCONPROD",
-              "source_hash": "sha256:66d174e8dc6abf77ae07f436bfa66316164fbb1ed5cdf542f5d786c991fba932"
+              "source_hash": "sha256:1c016e5994de7fb36fc0ad9d89bda453b33c9cd7526ec66f81f339f6ab37d366"
             },
             "parser": {
               "token_width": 19,
@@ -4250,7 +4250,7 @@
               "document_revision": "19.4",
               "page": "12.20.89 / 1928-1932",
               "heading": "GCONPROD",
-              "source_hash": "sha256:66d174e8dc6abf77ae07f436bfa66316164fbb1ed5cdf542f5d786c991fba932"
+              "source_hash": "sha256:1c016e5994de7fb36fc0ad9d89bda453b33c9cd7526ec66f81f339f6ab37d366"
             },
             "parser": {
               "token_width": 19,
@@ -4399,15 +4399,15 @@
           }
         ]
       },
-      "source_hash": "sha256:66d174e8dc6abf77ae07f436bfa66316164fbb1ed5cdf542f5d786c991fba932",
-      "page": "12.20.89 GCONPROD (с. 1928–1932); GUIDERAT 12.20.90; WCONPROD GRUP 12.20.42",
+      "source_hash": "sha256:1c016e5994de7fb36fc0ad9d89bda453b33c9cd7526ec66f81f339f6ab37d366",
+      "page": "12.20.89 GCONPROD (с. 1928–1932); GUIDERAT 12.20.90; WCONPROD GRUP 12.20.42; теория 2.14.2 / 5.6.7",
       "heading": "GCONPROD — ограничения дебитов групп скважин",
       "id": "gconprod-group-forecast-v1",
       "metadata": {
         "document_id": "gconprod-group-forecast-v1",
         "document_revision": "1",
-        "source_hash": "sha256:66d174e8dc6abf77ae07f436bfa66316164fbb1ed5cdf542f5d786c991fba932",
-        "page": "12.20.89 / 1928-1932",
+        "source_hash": "sha256:1c016e5994de7fb36fc0ad9d89bda453b33c9cd7526ec66f81f339f6ab37d366",
+        "page": "12.20.89 / 1928-1932; теория 2.14.2 / 5.6.7",
         "heading": "GCONPROD",
         "target_base": "schedule_mvp",
         "knowledge_type": "keyword_instruction",
@@ -4473,7 +4473,7 @@
       "status": "active",
       "author": "department-hydrodynamic-expert",
       "access_scope": "petroleum-engineering",
-      "text": "BRANPROP — ветви расширенной поверхностной сети (NETWORK).\n\nНазначение. BRANPROP задаёт рёбра расширенной сети: нижний узел → верхний узел, VFP-таблица потерь давления и ALQ. Расширенную сеть включает NETWORK в RUNSPEC (§12.1.92; вне allowlist Builder). Полная сеть = BRANPROP + NODEPROP (§12.20.106). Структура может отличаться от GRUPTREE (§12.20.103), но leaf-узлы (группы со скважинами) должны совпадать. Форматы: tN, E1, E3. Секция: SCHEDULE. Это не GRUPTREE, не NODEPROP (свойства узлов), не VFPPROD (сама таблица).\n\nКогда применять. Задача про extended network / автоматические штуцеры / компрессоры (§2.14.11). Требуется: NETWORK уже в base/.data (feature enabled). Если NETWORK нет в профиле/baseline → needs_input, не эмитьте NETWORK из этой карточки. BRANPROP до NODEPROP. Обычно после DATES; leaf-группы согласованы с GRUPTREE/WELSPECS.\n\nRecord layout. Keyword BRANPROP, затем одна или несколько записей `/`, блок — отдельный `/`.\n\nПоля (§12.20.105):\n\n1. DOWN_NODE — имя нижнего узла ветви (ближе к скважине).\n2. UP_NODE — имя верхнего узла (ближе к вершине дерева / концевому узлу).\n3. VFP_TABLE — номер таблицы:\n   - VFPPROD / VFPCORR — добывающая сеть;\n   - VFPINJ — нагнетательная сеть;\n   - одна таблица может обслуживать несколько ветвей с одинаковыми характеристиками;\n   - 9999 — нет падения давления в ветви; обязательно 9999 для ветвей-штуцеров (NODEPROP choke=YES на нижнем узле);\n   - 0 — закрыть/удалить ветвь из сети (поток нижнего узла не добавляется в сеть).\n   VFPPROD/VFPINJ вне allowlist: номер таблицы должен быть в facts/baseline; иначе needs_input.\n4. ALQ — искусственный лифт / параметр поиска в VFP (мощность насоса/компрессора). Для ветви с NETCOMPA — ALQ выключенного компрессора (обычно 0). Default: 0. UDQ допустим в симуляторе; MVP — число из фактов.\n\nКанон render.\n- `vfp` — DOWN_NODE UP_NODE VFP_TABLE (ALQ omit/default 0).\n- `with_alq` — DOWN_NODE UP_NODE VFP_TABLE ALQ.\n- `no_drop` — DOWN_NODE UP_NODE VFP_TABLE=9999 (штуцер / без ΔP).\n- `closed` — DOWN_NODE UP_NODE VFP_TABLE=0.\nИмена узлов quoted. Не копируйте учебные GASALL/G1/таблица 2 без фактов. Граф без циклов; каждый leaf подключён к пути на концевой узел (давление фиксирует NODEPROP).\n\nIR / semantics.\n- period=ANY; clock.uses_current=true.\n- definitions: UPSERT entity_type=network_branch; id logically (DOWN_NODE, UP_NODE).\n- references: network_node DOWN_NODE и UP_NODE (узлы появляются как endpoints ветвей; NODEPROP уточняет свойства).\n- prerequisites текстовые: NETWORK feature; NODEPROP следует за полным набором ветвей. Жёсткий keyword-prerequisite на NETWORK/NODEPROP в schema не ставим (NETWORK вне allowlist; NODEPROP — соседняя карточка).\n- numeric_constraints: VFP_TABLE min 0; ALQ min 0. Специальные значения 0 и 9999 — часть семантики variant.\n\nСвязанные keywords (не эмитьте без scope).\n- NODEPROP — давление концевого узла, флаги штуцера; после BRANPROP.\n- GRUPTREE — leaf-группы должны совпадать с leaf-узлами сети.\n- VFPPROD / VFPCORR / VFPINJ — таблицы потерь.\n- NETCOMPA — автокомпрессор на ветви.\n- GCONPROD / WCONPROD — дебиты групп/скважин на leaf-узлах.\n\nВалидация.\n- DOWN_NODE ≠ UP_NODE; оба непустые.\n- VFP_TABLE ∈ {0, 9999} или положительный номер существующей VFP.\n- Для choke-узла (NODEPROP YES) соответствующая вышележащая ветвь с VFP=9999.\n- Не BRANPROP без NETWORK authority.\n- Не подменяйте GRUPTREE сетью и наоборот.\n\nАнтипаттерны.\n- Эмитить NETWORK из Schedule Builder.\n- NODEPROP до BRANPROP.\n- VFP≠9999 на штуцерной ветви.\n- Выдумать номер VFP.\n- Leaf сети ≠ leaf GRUPTREE.\n\nНехватка факта → needs_input: нет NETWORK в base; нет пар узлов; нет VFP id (и не 9999/0); нужен ALQ без числа; конфликт с baseline network без REVISE target; NODEPROP-only правка без ветвей.\n\nКарточка самодостаточна: renderer использует только schema_catalogue этой записи и выбранный variant.",
+      "text": "BRANPROP — ветви расширенной поверхностной сети (NETWORK).\n\nНазначение. BRANPROP задаёт рёбра расширенной сети: нижний узел → верхний узел, VFP-таблица потерь давления и ALQ. Расширенную сеть включает NETWORK в RUNSPEC (§12.1.92; вне allowlist Builder). Полная сеть = BRANPROP + NODEPROP (§12.20.106). Структура может отличаться от GRUPTREE (§12.20.103), но leaf-узлы (группы со скважинами) должны совпадать. Форматы: tN, E1, E3. Секция: SCHEDULE. Это не GRUPTREE, не NODEPROP (свойства узлов), не VFPPROD (сама таблица).\n\nКогда применять. Задача про extended network / автоматические штуцеры / компрессоры (§2.14.11). Требуется: NETWORK уже в base/.data (feature enabled). Если NETWORK нет в профиле/baseline → needs_input, не эмитьте NETWORK из этой карточки. BRANPROP до NODEPROP. Обычно после DATES; leaf-группы согласованы с GRUPTREE/WELSPECS.\n\nRecord layout. Keyword BRANPROP, затем одна или несколько записей `/`, блок — отдельный `/`.\n\nПоля (§12.20.105):\n\n1. DOWN_NODE — имя нижнего узла ветви (ближе к скважине).\n2. UP_NODE — имя верхнего узла (ближе к вершине дерева / концевому узлу).\n3. VFP_TABLE — номер таблицы:\n   - VFPPROD / VFPCORR — добывающая сеть;\n   - VFPINJ — нагнетательная сеть;\n   - одна таблица может обслуживать несколько ветвей с одинаковыми характеристиками;\n   - 9999 — нет падения давления в ветви; обязательно 9999 для ветвей-штуцеров (NODEPROP choke=YES на нижнем узле);\n   - 0 — закрыть/удалить ветвь из сети (поток нижнего узла не добавляется в сеть).\n   VFPPROD/VFPINJ вне allowlist: номер таблицы должен быть в facts/baseline; иначе needs_input.\n4. ALQ — искусственный лифт / параметр поиска в VFP (мощность насоса/компрессора). Для ветви с NETCOMPA — ALQ выключенного компрессора (обычно 0). Default: 0. UDQ допустим в симуляторе; MVP — число из фактов.\n\nКанон render.\n- `vfp` — DOWN_NODE UP_NODE VFP_TABLE (ALQ omit/default 0).\n- `with_alq` — DOWN_NODE UP_NODE VFP_TABLE ALQ.\n- `no_drop` — DOWN_NODE UP_NODE VFP_TABLE=9999 (штуцер / без ΔP).\n- `closed` — DOWN_NODE UP_NODE VFP_TABLE=0.\nИмена узлов quoted. Не копируйте учебные GASALL/G1/таблица 2 без фактов. Граф без циклов; каждый leaf подключён к пути на концевой узел (давление фиксирует NODEPROP).\n\nIR / semantics.\n- period=ANY; clock.uses_current=true.\n- definitions: UPSERT entity_type=network_branch; id logically (DOWN_NODE, UP_NODE).\n- references: network_node DOWN_NODE и UP_NODE (узлы появляются как endpoints ветвей; NODEPROP уточняет свойства).\n- prerequisites текстовые: NETWORK feature; NODEPROP следует за полным набором ветвей. Жёсткий keyword-prerequisite на NETWORK/NODEPROP в schema не ставим (NETWORK вне allowlist; NODEPROP — соседняя карточка).\n- numeric_constraints: VFP_TABLE min 0; ALQ min 0. Специальные значения 0 и 9999 — часть семантики variant.\n\nСвязанные keywords (не эмитьте без scope).\n- NODEPROP — давление концевого узла, флаги штуцера; после BRANPROP.\n- GRUPTREE — leaf-группы должны совпадать с leaf-узлами сети.\n- VFPPROD / VFPCORR / VFPINJ — таблицы потерь.\n- NETCOMPA — автокомпрессор на ветви.\n- GCONPROD / WCONPROD — дебиты групп/скважин на leaf-узлах.\n\nВалидация.\n- DOWN_NODE ≠ UP_NODE; оба непустые.\n- VFP_TABLE ∈ {0, 9999} или положительный номер существующей VFP.\n- Для choke-узла (NODEPROP YES) соответствующая вышележащая ветвь с VFP=9999.\n- Не BRANPROP без NETWORK authority.\n- Не подменяйте GRUPTREE сетью и наоборот.\n\nТеория (§2.14.11 — NETWORK / автоштуцеры / компрессоры).\n- NETWORK (§12.1.92) включает расширенную сеть: целиком задаётся BRANPROP + NODEPROP (нагнетательная ветка — GNETINJE вне allowlist).\n- Назначение опции: динамические ограничения THP по группам через баланс расходов и потерь давления в трубах (не путать со стандартной сетью GRUPNET §2.14.10).\n- Иерархия GRUPTREE всё равно нужна; структура BRANPROP может отличаться от GRUPTREE, но leaf-группы со скважинами должны совпадать.\n- Верхний узел — с фиксированным давлением; ΔP узел↔устье скважины — WNETDP.\n\nАнтипаттерны.\n- Эмитить NETWORK из Schedule Builder.\n- NODEPROP до BRANPROP.\n- VFP≠9999 на штуцерной ветви.\n- Выдумать номер VFP.\n- Leaf сети ≠ leaf GRUPTREE.\n\nНехватка факта → needs_input: нет NETWORK в base; нет пар узлов; нет VFP id (и не 9999/0); нужен ALQ без числа; конфликт с baseline network без REVISE target; NODEPROP-only правка без ветвей.\n\nКарточка самодостаточна: renderer использует только schema_catalogue этой записи и выбранный variant.",
       "examples": [
         {
           "title": "Сеть с VFP и штуцерами — канон мануала",
@@ -4505,7 +4505,7 @@
         "contract_version": "1.0",
         "catalogue_ref": "catalogue://tnavigator/22.2/branprop-network-branch-v1",
         "catalogue_hash": "sha256:ee5589bf8576ada7ffb3904e6d642aa78a301a3f0025c7837d7f36d7b074ab3a",
-        "source_hash": "sha256:ff55b66e3e42258978cbdc59a13eaa5fa85d9df9790d77cc0ed5f21ab9fc4eb4",
+        "source_hash": "sha256:ea04c11b3e26c2e66697d2dbabb45ac55139eeda4840f5e629ccf5120dfe990a",
         "access_scope": "petroleum-engineering",
         "simulator_profile": {
           "vendor": "Rock Flow Dynamics",
@@ -4528,7 +4528,7 @@
               "document_revision": "19.4",
               "page": "12.20.105 / 1970-1972",
               "heading": "BRANPROP",
-              "source_hash": "sha256:ff55b66e3e42258978cbdc59a13eaa5fa85d9df9790d77cc0ed5f21ab9fc4eb4"
+              "source_hash": "sha256:ea04c11b3e26c2e66697d2dbabb45ac55139eeda4840f5e629ccf5120dfe990a"
             },
             "parser": {
               "token_width": 4,
@@ -4610,7 +4610,7 @@
               "document_revision": "19.4",
               "page": "12.20.105 / 1970-1972",
               "heading": "BRANPROP",
-              "source_hash": "sha256:ff55b66e3e42258978cbdc59a13eaa5fa85d9df9790d77cc0ed5f21ab9fc4eb4"
+              "source_hash": "sha256:ea04c11b3e26c2e66697d2dbabb45ac55139eeda4840f5e629ccf5120dfe990a"
             },
             "parser": {
               "token_width": 4,
@@ -4698,7 +4698,7 @@
               "document_revision": "19.4",
               "page": "12.20.105 / 1970-1972",
               "heading": "BRANPROP",
-              "source_hash": "sha256:ff55b66e3e42258978cbdc59a13eaa5fa85d9df9790d77cc0ed5f21ab9fc4eb4"
+              "source_hash": "sha256:ea04c11b3e26c2e66697d2dbabb45ac55139eeda4840f5e629ccf5120dfe990a"
             },
             "parser": {
               "token_width": 4,
@@ -4784,7 +4784,7 @@
               "document_revision": "19.4",
               "page": "12.20.105 / 1970-1972",
               "heading": "BRANPROP",
-              "source_hash": "sha256:ff55b66e3e42258978cbdc59a13eaa5fa85d9df9790d77cc0ed5f21ab9fc4eb4"
+              "source_hash": "sha256:ea04c11b3e26c2e66697d2dbabb45ac55139eeda4840f5e629ccf5120dfe990a"
             },
             "parser": {
               "token_width": 4,
@@ -4862,15 +4862,15 @@
           }
         ]
       },
-      "source_hash": "sha256:ff55b66e3e42258978cbdc59a13eaa5fa85d9df9790d77cc0ed5f21ab9fc4eb4",
-      "page": "12.20.105 BRANPROP (с. 1970–1972); NODEPROP 12.20.106; NETWORK 12.1.92; GRUPTREE 12.20.103",
+      "source_hash": "sha256:ea04c11b3e26c2e66697d2dbabb45ac55139eeda4840f5e629ccf5120dfe990a",
+      "page": "12.20.105 BRANPROP (с. 1970–1972); NODEPROP 12.20.106; NETWORK 12.1.92; GRUPTREE 12.20.103; теория 2.14.11",
       "heading": "BRANPROP — определение ветвей расширенной сети",
       "id": "branprop-network-branch-v1",
       "metadata": {
         "document_id": "branprop-network-branch-v1",
         "document_revision": "1",
-        "source_hash": "sha256:ff55b66e3e42258978cbdc59a13eaa5fa85d9df9790d77cc0ed5f21ab9fc4eb4",
-        "page": "12.20.105 / 1970-1972",
+        "source_hash": "sha256:ea04c11b3e26c2e66697d2dbabb45ac55139eeda4840f5e629ccf5120dfe990a",
+        "page": "12.20.105 / 1970-1972; теория 2.14.11",
         "heading": "BRANPROP",
         "target_base": "schedule_mvp",
         "knowledge_type": "keyword_instruction",
@@ -4936,7 +4936,7 @@
       "status": "active",
       "author": "department-hydrodynamic-expert",
       "access_scope": "petroleum-engineering",
-      "text": "NODEPROP — свойства узлов расширенной поверхностной сети (NETWORK).\n\nНазначение. NODEPROP задаёт давление концевого узла, флаг автоматического штуцера на вышележащей ветви, учёт газлифта и привязку узла к группе. Расширенную сеть включает NETWORK в RUNSPEC (§12.1.92; вне allowlist). Полная сеть = BRANPROP (§12.20.105) + NODEPROP. Форматы: tN, E1, E3. Секция: SCHEDULE. Это не BRANPROP (рёбра), не GRUPTREE, не NETCHOKE (детальные свойства штуцера).\n\nПорядок. Ветви BRANPROP уже заданы. Затем NODEPROP. Указывайте только концевой узел с фиксированным давлением и узлы, чьи свойства отличаются от defaults. Верхний узел каждого дерева сети (концевой) обязан иметь фиксированное давление.\n\nКогда применять. Extended network / автоштуцеры / компрессоры (§2.14.11). NETWORK в base обязателен; иначе needs_input. Leaf-узлы согласованы с GRUPTREE leaf-группами со скважинами.\n\nRecord layout. Keyword NODEPROP, записи `/`, блок — отдельный `/`.\n\nПоля (§12.20.106; METRIC: barsa):\n\n1. NODE — имя узла.\n2. PRESSURE — фиксированное давление концевого узла. Если узел не концевой — default или отрицательное. UDQ допустим в симуляторе; MVP — число из фактов.\n3. CHOKE — YES | NO: вышележащая ветвь действует как автоматический штуцер (ограничение расхода через ΔP).\n   - Вышележащая = к концевому узлу (отходящая для добычи / подводящая для закачки).\n   - BRANPROP VFP=9999 → ΔP только в штуцере; иначе + расчёт по VFP.\n   - Концевой узел нельзя ставить CHOKE=YES (нет вышележащей ветви).\n   - YES: целевой дебит группы — GCONPROD (добыча) / GCONINJE (закачка; вне allowlist). Guide rates: см. мануал (подчинённые choke-группе не должны иметь guide; скважины choke-группы не на guide group control).\n   Default: NO.\n4. ADD_GASLIFT — YES | NO: прибавлять газлифт скважин группы к газу, входящему в сеть в узле-источнике. Для не-источников — default. Default: NO.\n5. CHOKE_GROUP — группа, чей дебит штуцер удерживает. Нужен CHOKE=YES. Default: = NODE.\n6. SOURCE_GROUP — для узла-источника/стока: группа скважин / вспомогательная группа. Игнорируется если не source/sink; в E1 имена узла и группы совпадают. Default: = NODE, если группа существует. WEFAC param 3 влияет на умножение потоков на efficiency.\n\nКанон render.\n- `terminal` — NODE PRESSURE (концевой узел, напр. FIELD 20).\n- `choke_yes` — NODE [PRESSURE default] CHOKE=YES (leaf-штуцеры; BRANPROP ветвь с 9999).\n- `choke_no` — NODE [PRESSURE default] CHOKE=NO (промежуточные узлы явно).\n- `choke_target` — как choke_yes + CHOKE_GROUP, если цель ≠ NODE.\nНе эмитьте поля вне variant. Имена quoted. Не копируйте учебные FIELD/G1/20 без фактов.\n\nIR / semantics.\n- period=ANY; clock.uses_current=true.\n- definitions: UPSERT entity_type=network_node; id_field=NODE.\n- references: network_node NODE; для choke_target — group CHOKE_GROUP; опционально group SOURCE_GROUP.\n- prerequisites: BRANPROP уже определил ветви, инцидентные узлу (текстово; schema prerequisite BRANPROP scope не жёсткий GLOBAL — сеть может набираться пакетом). NETWORK feature в base.\n- numeric_constraints: PRESSURE min_exclusive 0 при явном terminal давлении.\n\nСвязанные keywords (не эмитьте без scope).\n- BRANPROP — до NODEPROP; VFP=9999 на choke-ветвях.\n- GCONPROD — целевые дебиты для choke-групп.\n- GRUPTREE — совпадение leaf.\n- NETCHOKE — детальная корреляция штуцера (вне allowlist → needs_input).\n- WEFAC — efficiency на source/sink потоках.\n\nВалидация.\n- Хотя бы один terminal с PRESSURE > 0 на дерево.\n- CHOKE=YES не на концевом узле.\n- CHOKE=YES ⇒ соответствующая BRANPROP-ветвь с VFP=9999 (если ΔP только в штуцере) согласована с фактами.\n- Не NODEPROP до BRANPROP.\n- Не NETWORK из Builder.\n\nАнтипаттерны.\n- Только NODEPROP без ветвей.\n- CHOKE=YES на FIELD/terminal.\n- Выдумать давление концевого узла.\n- Путать NODEPROP с NETCHOKE.\n\nНехватка факта → needs_input: нет NETWORK; нет BRANPROP/узлов; нет PRESSURE для terminal; CHOKE без YES/NO; CHOKE_GROUP без имени; конфликт baseline network без REVISE target.\n\nКарточка самодостаточна: renderer использует только schema_catalogue этой записи и выбранный variant.",
+      "text": "NODEPROP — свойства узлов расширенной поверхностной сети (NETWORK).\n\nНазначение. NODEPROP задаёт давление концевого узла, флаг автоматического штуцера на вышележащей ветви, учёт газлифта и привязку узла к группе. Расширенную сеть включает NETWORK в RUNSPEC (§12.1.92; вне allowlist). Полная сеть = BRANPROP (§12.20.105) + NODEPROP. Форматы: tN, E1, E3. Секция: SCHEDULE. Это не BRANPROP (рёбра), не GRUPTREE, не NETCHOKE (детальные свойства штуцера).\n\nПорядок. Ветви BRANPROP уже заданы. Затем NODEPROP. Указывайте только концевой узел с фиксированным давлением и узлы, чьи свойства отличаются от defaults. Верхний узел каждого дерева сети (концевой) обязан иметь фиксированное давление.\n\nКогда применять. Extended network / автоштуцеры / компрессоры (§2.14.11). NETWORK в base обязателен; иначе needs_input. Leaf-узлы согласованы с GRUPTREE leaf-группами со скважинами.\n\nRecord layout. Keyword NODEPROP, записи `/`, блок — отдельный `/`.\n\nПоля (§12.20.106; METRIC: barsa):\n\n1. NODE — имя узла.\n2. PRESSURE — фиксированное давление концевого узла. Если узел не концевой — default или отрицательное. UDQ допустим в симуляторе; MVP — число из фактов.\n3. CHOKE — YES | NO: вышележащая ветвь действует как автоматический штуцер (ограничение расхода через ΔP).\n   - Вышележащая = к концевому узлу (отходящая для добычи / подводящая для закачки).\n   - BRANPROP VFP=9999 → ΔP только в штуцере; иначе + расчёт по VFP.\n   - Концевой узел нельзя ставить CHOKE=YES (нет вышележащей ветви).\n   - YES: целевой дебит группы — GCONPROD (добыча) / GCONINJE (закачка; вне allowlist). Guide rates: см. мануал (подчинённые choke-группе не должны иметь guide; скважины choke-группы не на guide group control).\n   Default: NO.\n4. ADD_GASLIFT — YES | NO: прибавлять газлифт скважин группы к газу, входящему в сеть в узле-источнике. Для не-источников — default. Default: NO.\n5. CHOKE_GROUP — группа, чей дебит штуцер удерживает. Нужен CHOKE=YES. Default: = NODE.\n6. SOURCE_GROUP — для узла-источника/стока: группа скважин / вспомогательная группа. Игнорируется если не source/sink; в E1 имена узла и группы совпадают. Default: = NODE, если группа существует. WEFAC param 3 влияет на умножение потоков на efficiency.\n\nКанон render.\n- `terminal` — NODE PRESSURE (концевой узел, напр. FIELD 20).\n- `choke_yes` — NODE [PRESSURE default] CHOKE=YES (leaf-штуцеры; BRANPROP ветвь с 9999).\n- `choke_no` — NODE [PRESSURE default] CHOKE=NO (промежуточные узлы явно).\n- `choke_target` — как choke_yes + CHOKE_GROUP, если цель ≠ NODE.\nНе эмитьте поля вне variant. Имена quoted. Не копируйте учебные FIELD/G1/20 без фактов.\n\nIR / semantics.\n- period=ANY; clock.uses_current=true.\n- definitions: UPSERT entity_type=network_node; id_field=NODE.\n- references: network_node NODE; для choke_target — group CHOKE_GROUP; опционально group SOURCE_GROUP.\n- prerequisites: BRANPROP уже определил ветви, инцидентные узлу (текстово; schema prerequisite BRANPROP scope не жёсткий GLOBAL — сеть может набираться пакетом). NETWORK feature в base.\n- numeric_constraints: PRESSURE min_exclusive 0 при явном terminal давлении.\n\nСвязанные keywords (не эмитьте без scope).\n- BRANPROP — до NODEPROP; VFP=9999 на choke-ветвях.\n- GCONPROD — целевые дебиты для choke-групп.\n- GRUPTREE — совпадение leaf.\n- NETCHOKE — детальная корреляция штуцера (вне allowlist → needs_input).\n- WEFAC — efficiency на source/sink потоках.\n\nВалидация.\n- Хотя бы один terminal с PRESSURE > 0 на дерево.\n- CHOKE=YES не на концевом узле.\n- CHOKE=YES ⇒ соответствующая BRANPROP-ветвь с VFP=9999 (если ΔP только в штуцере) согласована с фактами.\n- Не NODEPROP до BRANPROP.\n- Не NETWORK из Builder.\n\nТеория (§2.14.11 — NETWORK; §2.14.12 — штуцеры).\n- NODEPROP задаёт свойства узлов расширенной сети вместе с BRANPROP (§2.14.11).\n- Штуцер (§2.14.12) ограничивает поток локальным сужением сечения (bean); используется для контроля расхода / перепада; подробная гидравлика — в теории, в MVP не выдумывайте параметры choke вне полей NODEPROP/фактов.\n\nАнтипаттерны.\n- Только NODEPROP без ветвей.\n- CHOKE=YES на FIELD/terminal.\n- Выдумать давление концевого узла.\n- Путать NODEPROP с NETCHOKE.\n\nНехватка факта → needs_input: нет NETWORK; нет BRANPROP/узлов; нет PRESSURE для terminal; CHOKE без YES/NO; CHOKE_GROUP без имени; конфликт baseline network без REVISE target.\n\nКарточка самодостаточна: renderer использует только schema_catalogue этой записи и выбранный variant.",
       "examples": [
         {
           "title": "Концевой узел + штуцеры — канон мануала",
@@ -4962,7 +4962,7 @@
         "contract_version": "1.0",
         "catalogue_ref": "catalogue://tnavigator/22.2/nodeprop-network-node-v1",
         "catalogue_hash": "sha256:c0b2b64cf3f4f44ad53280c041267557b4d7c3dcaa7f441b592667f91cc4a0bd",
-        "source_hash": "sha256:82be59e8f3f40010a332c73d5684b139bc175833c47b640bf5df40d6f2197617",
+        "source_hash": "sha256:d787235f06d5735fe0e260b86a2c5635dc37999d6b8e183a09f7ad444d088fe6",
         "access_scope": "petroleum-engineering",
         "simulator_profile": {
           "vendor": "Rock Flow Dynamics",
@@ -4985,7 +4985,7 @@
               "document_revision": "19.4",
               "page": "12.20.106 / 1973-1976",
               "heading": "NODEPROP",
-              "source_hash": "sha256:82be59e8f3f40010a332c73d5684b139bc175833c47b640bf5df40d6f2197617"
+              "source_hash": "sha256:d787235f06d5735fe0e260b86a2c5635dc37999d6b8e183a09f7ad444d088fe6"
             },
             "parser": {
               "token_width": 6,
@@ -5070,7 +5070,7 @@
               "document_revision": "19.4",
               "page": "12.20.106 / 1973-1976",
               "heading": "NODEPROP",
-              "source_hash": "sha256:82be59e8f3f40010a332c73d5684b139bc175833c47b640bf5df40d6f2197617"
+              "source_hash": "sha256:d787235f06d5735fe0e260b86a2c5635dc37999d6b8e183a09f7ad444d088fe6"
             },
             "parser": {
               "token_width": 6,
@@ -5161,7 +5161,7 @@
               "document_revision": "19.4",
               "page": "12.20.106 / 1973-1976",
               "heading": "NODEPROP",
-              "source_hash": "sha256:82be59e8f3f40010a332c73d5684b139bc175833c47b640bf5df40d6f2197617"
+              "source_hash": "sha256:d787235f06d5735fe0e260b86a2c5635dc37999d6b8e183a09f7ad444d088fe6"
             },
             "parser": {
               "token_width": 6,
@@ -5252,7 +5252,7 @@
               "document_revision": "19.4",
               "page": "12.20.106 / 1973-1976",
               "heading": "NODEPROP",
-              "source_hash": "sha256:82be59e8f3f40010a332c73d5684b139bc175833c47b640bf5df40d6f2197617"
+              "source_hash": "sha256:d787235f06d5735fe0e260b86a2c5635dc37999d6b8e183a09f7ad444d088fe6"
             },
             "parser": {
               "token_width": 6,
@@ -5360,15 +5360,15 @@
           }
         ]
       },
-      "source_hash": "sha256:82be59e8f3f40010a332c73d5684b139bc175833c47b640bf5df40d6f2197617",
-      "page": "12.20.106 NODEPROP (с. 1973–1976); BRANPROP 12.20.105; NETWORK 12.1.92",
+      "source_hash": "sha256:d787235f06d5735fe0e260b86a2c5635dc37999d6b8e183a09f7ad444d088fe6",
+      "page": "12.20.106 NODEPROP (с. 1973–1976); BRANPROP 12.20.105; NETWORK 12.1.92; теория 2.14.11 / 2.14.12",
       "heading": "NODEPROP — свойства узла расширенной сети",
       "id": "nodeprop-network-node-v1",
       "metadata": {
         "document_id": "nodeprop-network-node-v1",
         "document_revision": "1",
-        "source_hash": "sha256:82be59e8f3f40010a332c73d5684b139bc175833c47b640bf5df40d6f2197617",
-        "page": "12.20.106 / 1973-1976",
+        "source_hash": "sha256:d787235f06d5735fe0e260b86a2c5635dc37999d6b8e183a09f7ad444d088fe6",
+        "page": "12.20.106 / 1973-1976; теория 2.14.11 / 2.14.12",
         "heading": "NODEPROP",
         "target_base": "schedule_mvp",
         "knowledge_type": "keyword_instruction",
@@ -5434,7 +5434,7 @@
       "status": "active",
       "author": "department-hydrodynamic-expert",
       "access_scope": "petroleum-engineering",
-      "text": "WECON — экономические пределы добывающей скважины (закрытие / ремонт).\n\nНазначение. WECON задаёт нижние пределы по ORAT/GRAT/LRAT и верхние (или tNav-нижние через −X) по обводненности, GOR, WGR, GLR, плюс действие при нарушении (NONE/CON/CON+/+CON/WELL) и опции follow-on / end-run. Форматы: tN, E1, E3. Секция: SCHEDULE. Экономический контроль — §2.14.3. Это не WECONX (произвольные выражения; вне allowlist), не GECON/GECONX (группы), не WCONPROD (целевой контроль дебита), не WTEST (тест/переоткрытие).\n\nКогда применять. CREATE/REVISE, где нужны economic limits на производителе. После WELSPECS той же скважины. SHUT vs STOP при закрытии скважины берётся из WELSPECS param 9 (ECON_ACTION). Совместно с WTEST анализируйте риск shut/reopen циклов (roadmap). Использование WECON может давать различия tNavigator на разном числе ядер / vs другие симуляторы (§7.2) — не «чините» это эвристикой в Schedule.\n\nRecord layout. Keyword WECON, записи `/`, блок — отдельный `/`. WELL или WLIST (WLIST вне allowlist → needs_input; эмитьте по одной скважине).\n\nПоля (§12.20.77; METRIC):\n\n1. WELL — имя/номер скважины.\n2. MIN_ORAT — нижний эконом. предел дебита нефти (sm3/day). Нарушение → SHUT/STOP по WELSPECS§9. Default: 0.\n3. MIN_GRAT — нижний предел дебита газа (sm3/day). Default: 0.\n4. MAX_WCT — верхний предел обводненности (sm3/sm3). tNav: отрицательное −X → нижний предел обводненности X. Default: 0 (нет ограничения).\n5. MAX_GOR — верхний предел газового фактора (sm3/sm3). tNav: −X → нижний предел GOR. Default: нет ограничения.\n6. MAX_WGR — верхний предел воды в газе (sm3/sm3). tNav: −X → нижний. Default: нет ограничения.\n7. ACTION — при превышении WCT/GOR/WGR/GLR: NONE | CON | CON+ | +CON | WELL. Default: NONE.\n   - CON / CON+ / +CON — закрытие перфорации(й)-нарушителя;\n   - WELL — закрыть/остановить скважину (WELSPECS§9).\n8. END_RUN — YES | NO: остановить расчёт на следующем шаге, если скважина закрыта/остановлена после открытия. Default: NO.\n9. FOLLOWON_WELL — скважина, открываемая при эконом. закрытии WELL из п.1; должна быть SHUT producer/injector. Учитывает WDRILTIM / GRUPRIG.\n10. MIN_QUANTITY — RATE | POTN: к чему относятся минимумы п.2, 3, 14. Default: RATE.\n    - RATE: к дебиту; не проверяется при урезании по GCONPRI priority.\n    - POTN: к потенциалу (§5.6.7); при GCONPRI проверяется потенциал даже если скважина не работает.\n11. MAX_WCT2 — вторичный макс. обводненности. Default: 0.\n12. ACTION2 — операция при MAX_WCT2: NONE | CON | CON+ | +CON | WELL | LAST | RED. Default: = ACTION (п.7). LAST/RED — см. мануал (повторное открытие / поэтапный ремонт).\n13. MAX_GLR — верхний предел газа в жидкости (sm3/sm3); tNav −X → нижний. Default: 0.\n14. MIN_LRAT — нижний предел дебита жидкости (sm3/day) → SHUT/STOP по WELSPECS§9. Default: 0.\n\nКанон render.\n- `min_orat_well` — WELL MIN_ORAT … ACTION=WELL (паттерн p35: мин. нефть → закрыть скважину).\n- `wct_con` — WELL MIN_ORAT MAX_WCT ACTION=CON (паттерн p45: нефть+обводненность → закрыть перфорацию).\n- `min_orat_lrat` — WELL MIN_ORAT … MIN_LRAT с явным ACTION.\nНе эмитьте WECONX/GECONX. Не WLIST/маски. Числа finite; обводненность обычно 0–1 для доли; не копируйте p45/p35/0.95 без фактов.\n\nIR / semantics.\n- period=ANY; clock.uses_current=true (limits действуют с текущих DATES).\n- references: well WELL required; optional well FOLLOWON_WELL.\n- prerequisites: WELSPECS scope=ENTITY по WELL.\n- state_assignments: namespace well-economic; key_fields WELL; value_fields лимиты/ACTION.\n- numeric_constraints: MIN_ORAT/MIN_GRAT/MIN_LRAT min 0; MAX_WCT типично ≥0 (отрицательное = tNav lower-bound semantics — только при явном факте).\n\nСвязанные keywords (не эмитьте без scope).\n- WELSPECS ECON_ACTION — SHUT vs STOP.\n- WTEST — переоткрытие/тесты; избегайте непреднамеренных циклов с WECON.\n- WCONPROD — целевой контроль, не economic limit.\n- GCONPRI / WDRILTIM / GRUPRIG — priority и follow-on timing.\n- WECONX — обобщение вне allowlist → needs_input.\n\nВалидация.\n- WELL существует; ACTION ∈ enum.\n- Не WECON на injector без authority (слово для добычи; injection — другие keywords).\n- FOLLOWON_WELL существует и SHUT, если задан.\n- Не выдумывать вторичные MAX_WCT2/LAST/RED без фактов.\n\nАнтипаттерны.\n- WECONX вместо WECON «потому что гибче».\n- Путать MAX_WCT=0.95 (доля) с процентами 95.\n- Игнорировать WELSPECS§9 при ACTION=WELL.\n- Слепо копировать CON при необходимости WELL.\n\nНехватка факта → needs_input: нет WELL; нет величины лимита/ACTION; нужен follow-on без имени; нужен WECONX-логика; конфликт с baseline/WTEST циклом без REVISE target.\n\nКарточка самодостаточна: renderer использует только schema_catalogue этой записи и выбранный variant.",
+      "text": "WECON — экономические пределы добывающей скважины (закрытие / ремонт).\n\nНазначение. WECON задаёт нижние пределы по ORAT/GRAT/LRAT и верхние (или tNav-нижние через −X) по обводненности, GOR, WGR, GLR, плюс действие при нарушении (NONE/CON/CON+/+CON/WELL) и опции follow-on / end-run. Форматы: tN, E1, E3. Секция: SCHEDULE. Экономический контроль — §2.14.3. Это не WECONX (произвольные выражения; вне allowlist), не GECON/GECONX (группы), не WCONPROD (целевой контроль дебита), не WTEST (тест/переоткрытие).\n\nКогда применять. CREATE/REVISE, где нужны economic limits на производителе. После WELSPECS той же скважины. SHUT vs STOP при закрытии скважины берётся из WELSPECS param 9 (ECON_ACTION). Совместно с WTEST анализируйте риск shut/reopen циклов (roadmap). Использование WECON может давать различия tNavigator на разном числе ядер / vs другие симуляторы (§7.2) — не «чините» это эвристикой в Schedule.\n\nRecord layout. Keyword WECON, записи `/`, блок — отдельный `/`. WELL или WLIST (WLIST вне allowlist → needs_input; эмитьте по одной скважине).\n\nПоля (§12.20.77; METRIC):\n\n1. WELL — имя/номер скважины.\n2. MIN_ORAT — нижний эконом. предел дебита нефти (sm3/day). Нарушение → SHUT/STOP по WELSPECS§9. Default: 0.\n3. MIN_GRAT — нижний предел дебита газа (sm3/day). Default: 0.\n4. MAX_WCT — верхний предел обводненности (sm3/sm3). tNav: отрицательное −X → нижний предел обводненности X. Default: 0 (нет ограничения).\n5. MAX_GOR — верхний предел газового фактора (sm3/sm3). tNav: −X → нижний предел GOR. Default: нет ограничения.\n6. MAX_WGR — верхний предел воды в газе (sm3/sm3). tNav: −X → нижний. Default: нет ограничения.\n7. ACTION — при превышении WCT/GOR/WGR/GLR: NONE | CON | CON+ | +CON | WELL. Default: NONE.\n   - CON / CON+ / +CON — закрытие перфорации(й)-нарушителя;\n   - WELL — закрыть/остановить скважину (WELSPECS§9).\n8. END_RUN — YES | NO: остановить расчёт на следующем шаге, если скважина закрыта/остановлена после открытия. Default: NO.\n9. FOLLOWON_WELL — скважина, открываемая при эконом. закрытии WELL из п.1; должна быть SHUT producer/injector. Учитывает WDRILTIM / GRUPRIG.\n10. MIN_QUANTITY — RATE | POTN: к чему относятся минимумы п.2, 3, 14. Default: RATE.\n    - RATE: к дебиту; не проверяется при урезании по GCONPRI priority.\n    - POTN: к потенциалу (§5.6.7); при GCONPRI проверяется потенциал даже если скважина не работает.\n11. MAX_WCT2 — вторичный макс. обводненности. Default: 0.\n12. ACTION2 — операция при MAX_WCT2: NONE | CON | CON+ | +CON | WELL | LAST | RED. Default: = ACTION (п.7). LAST/RED — см. мануал (повторное открытие / поэтапный ремонт).\n13. MAX_GLR — верхний предел газа в жидкости (sm3/sm3); tNav −X → нижний. Default: 0.\n14. MIN_LRAT — нижний предел дебита жидкости (sm3/day) → SHUT/STOP по WELSPECS§9. Default: 0.\n\nКанон render.\n- `min_orat_well` — WELL MIN_ORAT … ACTION=WELL (паттерн p35: мин. нефть → закрыть скважину).\n- `wct_con` — WELL MIN_ORAT MAX_WCT ACTION=CON (паттерн p45: нефть+обводненность → закрыть перфорацию).\n- `min_orat_lrat` — WELL MIN_ORAT … MIN_LRAT с явным ACTION.\nНе эмитьте WECONX/GECONX. Не WLIST/маски. Числа finite; обводненность обычно 0–1 для доли; не копируйте p45/p35/0.95 без фактов.\n\nIR / semantics.\n- period=ANY; clock.uses_current=true (limits действуют с текущих DATES).\n- references: well WELL required; optional well FOLLOWON_WELL.\n- prerequisites: WELSPECS scope=ENTITY по WELL.\n- state_assignments: namespace well-economic; key_fields WELL; value_fields лимиты/ACTION.\n- numeric_constraints: MIN_ORAT/MIN_GRAT/MIN_LRAT min 0; MAX_WCT типично ≥0 (отрицательное = tNav lower-bound semantics — только при явном факте).\n\nСвязанные keywords (не эмитьте без scope).\n- WELSPECS ECON_ACTION — SHUT vs STOP.\n- WTEST — переоткрытие/тесты; избегайте непреднамеренных циклов с WECON.\n- WCONPROD — целевой контроль, не economic limit.\n- GCONPRI / WDRILTIM / GRUPRIG — priority и follow-on timing.\n- WECONX — обобщение вне allowlist → needs_input.\n\nВалидация.\n- WELL существует; ACTION ∈ enum.\n- Не WECON на injector без authority (слово для добычи; injection — другие keywords).\n- FOLLOWON_WELL существует и SHUT, если задан.\n- Не выдумывать вторичные MAX_WCT2/LAST/RED без фактов.\n\nТеория (§2.14.3 — Экономический контроль).\n- В §2.14.3 перечислены возможности econ-контроля: WECON (добыча: дебиты/обводнённость/ГФ и т.п.), WECONX (произвольные выражения), WECONINJ/WECONINJX (нагнетание), CECON (по перфорациям), GECON/GECONX/GDCQECON (группы).\n- Для MVP эмитьте WECON на производителе; остальные econ-слова вне allowlist → needs_input, не имитируйте их через WECON.\n\nАнтипаттерны.\n- WECONX вместо WECON «потому что гибче».\n- Путать MAX_WCT=0.95 (доля) с процентами 95.\n- Игнорировать WELSPECS§9 при ACTION=WELL.\n- Слепо копировать CON при необходимости WELL.\n\nНехватка факта → needs_input: нет WELL; нет величины лимита/ACTION; нужен follow-on без имени; нужен WECONX-логика; конфликт с baseline/WTEST циклом без REVISE target.\n\nКарточка самодостаточна: renderer использует только schema_catalogue этой записи и выбранный variant.",
       "examples": [
         {
           "title": "Мин. нефть + обводненность CON — канон мануала",
@@ -5460,7 +5460,7 @@
         "contract_version": "1.0",
         "catalogue_ref": "catalogue://tnavigator/22.2/wecon-economic-limits-v1",
         "catalogue_hash": "sha256:6b6f4d5f06fb4fecc7dd21e68880f74a0b6dd0329374b8b533456aab12ab1901",
-        "source_hash": "sha256:5671c90ab2bcfcb323d9429c8502dd9f2cce6fa7c84738ddac09f0bbd1d7a0a0",
+        "source_hash": "sha256:87a8b65f2a543a13e274fe47f871a0f003f3986caa9bab3a7415d29f8be4683f",
         "access_scope": "petroleum-engineering",
         "simulator_profile": {
           "vendor": "Rock Flow Dynamics",
@@ -5483,7 +5483,7 @@
               "document_revision": "19.4",
               "page": "12.20.77 / 1906-1909",
               "heading": "WECON",
-              "source_hash": "sha256:5671c90ab2bcfcb323d9429c8502dd9f2cce6fa7c84738ddac09f0bbd1d7a0a0"
+              "source_hash": "sha256:87a8b65f2a543a13e274fe47f871a0f003f3986caa9bab3a7415d29f8be4683f"
             },
             "parser": {
               "token_width": 14,
@@ -5621,7 +5621,7 @@
               "document_revision": "19.4",
               "page": "12.20.77 / 1906-1909",
               "heading": "WECON",
-              "source_hash": "sha256:5671c90ab2bcfcb323d9429c8502dd9f2cce6fa7c84738ddac09f0bbd1d7a0a0"
+              "source_hash": "sha256:87a8b65f2a543a13e274fe47f871a0f003f3986caa9bab3a7415d29f8be4683f"
             },
             "parser": {
               "token_width": 14,
@@ -5763,7 +5763,7 @@
               "document_revision": "19.4",
               "page": "12.20.77 / 1906-1909",
               "heading": "WECON",
-              "source_hash": "sha256:5671c90ab2bcfcb323d9429c8502dd9f2cce6fa7c84738ddac09f0bbd1d7a0a0"
+              "source_hash": "sha256:87a8b65f2a543a13e274fe47f871a0f003f3986caa9bab3a7415d29f8be4683f"
             },
             "parser": {
               "token_width": 14,
@@ -5968,15 +5968,15 @@
           }
         ]
       },
-      "source_hash": "sha256:5671c90ab2bcfcb323d9429c8502dd9f2cce6fa7c84738ddac09f0bbd1d7a0a0",
-      "page": "12.20.77 WECON (с. 1906–1909); vs WECONX 12.20.78; WELSPECS ECON_ACTION; WTEST",
+      "source_hash": "sha256:87a8b65f2a543a13e274fe47f871a0f003f3986caa9bab3a7415d29f8be4683f",
+      "page": "12.20.77 WECON (с. 1906–1909); vs WECONX 12.20.78; WELSPECS ECON_ACTION; WTEST; теория 2.14.3",
       "heading": "WECON — экономические пределы по добыче",
       "id": "wecon-economic-limits-v1",
       "metadata": {
         "document_id": "wecon-economic-limits-v1",
         "document_revision": "1",
-        "source_hash": "sha256:5671c90ab2bcfcb323d9429c8502dd9f2cce6fa7c84738ddac09f0bbd1d7a0a0",
-        "page": "12.20.77 / 1906-1909",
+        "source_hash": "sha256:87a8b65f2a543a13e274fe47f871a0f003f3986caa9bab3a7415d29f8be4683f",
+        "page": "12.20.77 / 1906-1909; теория 2.14.3",
         "heading": "WECON",
         "target_base": "schedule_mvp",
         "knowledge_type": "keyword_instruction",
@@ -7793,7 +7793,7 @@
       "status": "active",
       "author": "department-hydrodynamic-expert",
       "access_scope": "petroleum-engineering",
-      "text": "WNETDP — фиксированный перепад давления между узлом сети и устьем скважины.\n\nНазначение. WNETDP задаёт постоянный ΔP (METRIC: bar, FIELD: psi) между узлом группы в расширенной сети и устьевым давлением скважины. Только при опции NETWORK (§2.14.11 / RUNSPEC NETWORK; вне allowlist Builder). Форматы: tN, E1, E3. Секция: SCHEDULE. Это не BRANPROP/NODEPROP (топология узлов), не THP в WCONPROD/WELTARG, не VFP-таблица потерь в стволе/трубе.\n\nКогда применять. Extended network включён; нужно явное фиксированное падение давления wellhead↔network node. После WELSPECS; сеть (BRANPROP/NODEPROP) обычно уже задана. Если NETWORK нет в base → needs_input.\n\nRecord layout. Keyword WNETDP, записи `/`, блок — отдельный `/`.\n\nПоля (§12.20.253):\n\n1. WELL — имя скважины (маски/WLIST вне MVP CREATE → needs_input).\n2. DP — фиксированное падение давления (bar). Default симулятора: 0.\n\nКанон render.\n- `default` — WELL DP.\nИмена quoted. Не копируйте '28'/5.0 без фактов.\n\nIR / semantics.\n- period=ANY; clock.uses_current=true.\n- references: well WELL required.\n- prerequisites: WELSPECS scope=ENTITY; текстово NETWORK feature + узлы сети для группы скважины.\n- state_assignments: namespace well-network-dp; key WELL; value DP.\n- numeric_constraints: DP min 0 (явный 0 допустим = нет добавочного ΔP).\n\nСвязанные keywords.\n- BRANPROP / NODEPROP — топология сети.\n- WCONPROD THP / WELTARG THP|TARGTHP — устьевое давление контроля, не этот ΔP.\n- WEFAC — не путать с efficiency.\n\nВалидация / антипаттерны.\n- WELL существует; DP finite ≥0.\n- Не эмитить без NETWORK authority.\n- Не подменять WNETDP сменой THP.\n\nНехватка факта → needs_input: нет WELL/DP; нет NETWORK; конфликт baseline без REVISE target.\n\nКарточка самодостаточна: renderer использует только schema_catalogue этой записи и выбранный variant.",
+      "text": "WNETDP — фиксированный перепад давления между узлом сети и устьем скважины.\n\nНазначение. WNETDP задаёт постоянный ΔP (METRIC: bar, FIELD: psi) между узлом группы в расширенной сети и устьевым давлением скважины. Только при опции NETWORK (§2.14.11 / RUNSPEC NETWORK; вне allowlist Builder). Форматы: tN, E1, E3. Секция: SCHEDULE. Это не BRANPROP/NODEPROP (топология узлов), не THP в WCONPROD/WELTARG, не VFP-таблица потерь в стволе/трубе.\n\nКогда применять. Extended network включён; нужно явное фиксированное падение давления wellhead↔network node. После WELSPECS; сеть (BRANPROP/NODEPROP) обычно уже задана. Если NETWORK нет в base → needs_input.\n\nRecord layout. Keyword WNETDP, записи `/`, блок — отдельный `/`.\n\nПоля (§12.20.253):\n\n1. WELL — имя скважины (маски/WLIST вне MVP CREATE → needs_input).\n2. DP — фиксированное падение давления (bar). Default симулятора: 0.\n\nКанон render.\n- `default` — WELL DP.\nИмена quoted. Не копируйте '28'/5.0 без фактов.\n\nIR / semantics.\n- period=ANY; clock.uses_current=true.\n- references: well WELL required.\n- prerequisites: WELSPECS scope=ENTITY; текстово NETWORK feature + узлы сети для группы скважины.\n- state_assignments: namespace well-network-dp; key WELL; value DP.\n- numeric_constraints: DP min 0 (явный 0 допустим = нет добавочного ΔP).\n\nСвязанные keywords.\n- BRANPROP / NODEPROP — топология сети.\n- WCONPROD THP / WELTARG THP|TARGTHP — устьевое давление контроля, не этот ΔP.\n- WEFAC — не путать с efficiency.\n\nВалидация / антипаттерны.\n- WELL существует; DP finite ≥0.\n- Не эмитить без NETWORK authority.\n- Не подменять WNETDP сменой THP.\n\nТеория (§2.14.11 — NETWORK).\n- WNETDP задаёт фиксированную величину падения давления между узлом расширенной сети и устьевым давлением скважины (§2.14.11).\n- Имеет смысл только при включённом NETWORK + согласованных BRANPROP/NODEPROP; без сети → needs_input.\n\nНехватка факта → needs_input: нет WELL/DP; нет NETWORK; конфликт baseline без REVISE target.\n\nКарточка самодостаточна: renderer использует только schema_catalogue этой записи и выбранный variant.",
       "examples": [
         {
           "title": "Три скважины — канон мануала",
@@ -7813,7 +7813,7 @@
         "contract_version": "1.0",
         "catalogue_ref": "catalogue://tnavigator/22.2/wnetdp-network-delta-p-v1",
         "catalogue_hash": "sha256:b331c61be43640554aaad8f2f5b63120ffbabdcba634938fc92aa0ca62324ad6",
-        "source_hash": "sha256:dd51a48e3b37ac1600bb77603b4165db730214f1f03ff1504e367c0fa646280a",
+        "source_hash": "sha256:3f65185d73cedeaae873b2814b56fe343d973d6e36af0f89dd9866b21ccd725a",
         "access_scope": "petroleum-engineering",
         "simulator_profile": {
           "vendor": "Rock Flow Dynamics",
@@ -7836,7 +7836,7 @@
               "document_revision": "19.4",
               "page": "12.20.253 / 2250",
               "heading": "WNETDP",
-              "source_hash": "sha256:dd51a48e3b37ac1600bb77603b4165db730214f1f03ff1504e367c0fa646280a"
+              "source_hash": "sha256:3f65185d73cedeaae873b2814b56fe343d973d6e36af0f89dd9866b21ccd725a"
             },
             "parser": {
               "token_width": 2,
@@ -7908,15 +7908,15 @@
           }
         ]
       },
-      "source_hash": "sha256:dd51a48e3b37ac1600bb77603b4165db730214f1f03ff1504e367c0fa646280a",
-      "page": "12.20.253 WNETDP (с. 2250); NETWORK 2.14.11 / 12.1.92; BRANPROP/NODEPROP",
+      "source_hash": "sha256:3f65185d73cedeaae873b2814b56fe343d973d6e36af0f89dd9866b21ccd725a",
+      "page": "12.20.253 WNETDP (с. 2250); NETWORK 2.14.11 / 12.1.92; BRANPROP/NODEPROP; теория 2.14.11",
       "heading": "WNETDP — фиксированное падение давления к узлу сети",
       "id": "wnetdp-network-delta-p-v1",
       "metadata": {
         "document_id": "wnetdp-network-delta-p-v1",
         "document_revision": "1",
-        "source_hash": "sha256:dd51a48e3b37ac1600bb77603b4165db730214f1f03ff1504e367c0fa646280a",
-        "page": "12.20.253 / 2250",
+        "source_hash": "sha256:3f65185d73cedeaae873b2814b56fe343d973d6e36af0f89dd9866b21ccd725a",
+        "page": "12.20.253 / 2250; теория 2.14.11",
         "heading": "WNETDP",
         "target_base": "schedule_mvp",
         "knowledge_type": "keyword_instruction",
@@ -8497,7 +8497,7 @@
       "status": "active",
       "author": "department-hydrodynamic-expert",
       "access_scope": "petroleum-engineering",
-      "text": "FRACTURE_TEMPLATE — шаблон трещины ГРП (геометрия / LGR / свойства).\n\nНазначение. Задаёт именованный шаблон трещины: измельчение, плоскость/путь, UP/DOWN, SRV, ширины, проницаемости зоны FZ/NFZ и пр. Форматы: tN, E1, E3. Секция: прежде всего GRID (не SCHEDULE). Это не FRACTURE_SPECS (привязка к стволу; в новых мануалах FRACTURE_WELL), не FRACTURE_STAGE (активация в SCHEDULE).\n\nКогда применять. Пакет ГРП через LGR (§5.8). Нужны FRACTURE_PLANE/PATH для PLANE. WELLTRACK в GRID для последующего FRACTURE_SPECS. Неструктурированное измельчение по умолчанию (TNAVCTRL FRACTURE_BUILD_LOGIC); тогда NX/NY/NZ, REFINEMENT, LEVEL_* недоступны.\n\nRecord layout. Keyword; каждый параметр на своей строке с `/`; блок — `/` на отдельной строке.\n\nОбязательные/ключевые параметры (§12.2.130):\n1. NAME [NX NY NZ] — имя; при отключённом unstructured — счётчики refine по X Y Z.\n2. PLANE <plane_or_path_name> — FRACTURE_PLANE или одиночный FRACTURE_PATH.\n3. UP <m> — высота против оси Z от anchor.\n4. DOWN <m> — высота по оси Z.\n5–6. STIMULATED_WIDTH_R / _L — SRV по Y.\nДалее опционально WIDTH, PERM_FZ, EFFECTIVE_WIDTH, … (см. мануал; GEOMECH-only поля — только с GEOMECH FE + ROCKFAIL).\n\nКанон render MVP.\n- `refine_basic` — NAME NX NY NZ + PLANE + UP + DOWN + STIMULATED_WIDTH_R/L + EFFECTIVE_WIDTH (паттерн примера TEMPLATE_ONE).\nПолный tagged dump без фактов не выдумывайте; REVISE KEEP baseline template при сложной геометрии.\n\nIR / semantics.\n- period=ANY; definitions UPSERT fracture_template NAME.\n- references fracture_plane/path via PLANE.\n- numeric: NX/NY/NZ ≥1; lengths ≥0.\n\nНехватка факта → needs_input: нет имени; нет PLANE/UP/DOWN; нужен GEOMECH path без base options.\n\nКарточка самодостаточна.",
+      "text": "FRACTURE_TEMPLATE — шаблон трещины ГРП (геометрия / LGR / свойства).\n\nНазначение. Задаёт именованный шаблон трещины: измельчение, плоскость/путь, UP/DOWN, SRV, ширины, проницаемости зоны FZ/NFZ и пр. Форматы: tN, E1, E3. Секция: прежде всего GRID (не SCHEDULE). Это не FRACTURE_SPECS (привязка к стволу; в новых мануалах FRACTURE_WELL), не FRACTURE_STAGE (активация в SCHEDULE).\n\nКогда применять. Пакет ГРП через LGR (§5.8). Нужны FRACTURE_PLANE/PATH для PLANE. WELLTRACK в GRID для последующего FRACTURE_SPECS. Неструктурированное измельчение по умолчанию (TNAVCTRL FRACTURE_BUILD_LOGIC); тогда NX/NY/NZ, REFINEMENT, LEVEL_* недоступны.\n\nRecord layout. Keyword; каждый параметр на своей строке с `/`; блок — `/` на отдельной строке.\n\nОбязательные/ключевые параметры (§12.2.130):\n1. NAME [NX NY NZ] — имя; при отключённом unstructured — счётчики refine по X Y Z.\n2. PLANE <plane_or_path_name> — FRACTURE_PLANE или одиночный FRACTURE_PATH.\n3. UP <m> — высота против оси Z от anchor.\n4. DOWN <m> — высота по оси Z.\n5–6. STIMULATED_WIDTH_R / _L — SRV по Y.\nДалее опционально WIDTH, PERM_FZ, EFFECTIVE_WIDTH, … (см. мануал; GEOMECH-only поля — только с GEOMECH FE + ROCKFAIL).\n\nКанон render MVP.\n- `refine_basic` — NAME NX NY NZ + PLANE + UP + DOWN + STIMULATED_WIDTH_R/L + EFFECTIVE_WIDTH (паттерн примера TEMPLATE_ONE).\nПолный tagged dump без фактов не выдумывайте; REVISE KEEP baseline template при сложной геометрии.\n\nIR / semantics.\n- period=ANY; definitions UPSERT fracture_template NAME.\n- references fracture_plane/path via PLANE.\n- numeric: NX/NY/NZ ≥1; lengths ≥0.\n\nТеория (§5.8 — ГРП с помощью LGR; §2.29.3 — геомеханика).\n- §5.8 описывает построение трещин через локальное измельчение: шаблон (TEMPLATE) задаёт геометрию/refine/свойства зоны FZ/NFZ.\n- Для геомеханического моделирования трещин см. §2.29.3 (GEOMECH FE + ROCKFAIL); ряд параметров TEMPLATE в чистой гидродинамике игнорируется/ограничен — не включайте geomech-only поля без факта.\n\nНехватка факта → needs_input: нет имени; нет PLANE/UP/DOWN; нужен GEOMECH path без base options.\n\nКарточка самодостаточна.",
       "examples": [
         {
           "title": "Шаблон 5×5×5 — канон мануала",
@@ -8511,7 +8511,7 @@
         "contract_version": "1.0",
         "catalogue_ref": "catalogue://tnavigator/22.2/fracture-template-v1",
         "catalogue_hash": "sha256:78191ad2687301f9412c0e258e6e2d2761c9504e148ee1eba7b650a4de3a1463",
-        "source_hash": "sha256:85bc3ea15f250d4b4e309e76f2f87adede920103f30aa0713fc50eee9d1f7707",
+        "source_hash": "sha256:29a5693c4bac536b977ebf2ab427076ef0b493d9e68c8bc48760142cf37e9065",
         "access_scope": "petroleum-engineering",
         "simulator_profile": {
           "vendor": "Rock Flow Dynamics",
@@ -8534,7 +8534,7 @@
               "document_revision": "19.4",
               "page": "12.2.130 / 852-863",
               "heading": "FRACTURE_TEMPLATE",
-              "source_hash": "sha256:85bc3ea15f250d4b4e309e76f2f87adede920103f30aa0713fc50eee9d1f7707"
+              "source_hash": "sha256:29a5693c4bac536b977ebf2ab427076ef0b493d9e68c8bc48760142cf37e9065"
             },
             "parser": {
               "token_width": 8,
@@ -8672,15 +8672,15 @@
           }
         ]
       },
-      "source_hash": "sha256:85bc3ea15f250d4b4e309e76f2f87adede920103f30aa0713fc50eee9d1f7707",
-      "page": "12.2.130 FRACTURE_TEMPLATE (с. 852–863); PLANE/PATH; WELL 12.2.131",
+      "source_hash": "sha256:29a5693c4bac536b977ebf2ab427076ef0b493d9e68c8bc48760142cf37e9065",
+      "page": "12.2.130 FRACTURE_TEMPLATE (с. 852–863); PLANE/PATH; WELL 12.2.131; теория 5.8 / 2.29.3",
       "heading": "FRACTURE_TEMPLATE — шаблон трещины",
       "id": "fracture-template-v1",
       "metadata": {
         "document_id": "fracture-template-v1",
         "document_revision": "1",
-        "source_hash": "sha256:85bc3ea15f250d4b4e309e76f2f87adede920103f30aa0713fc50eee9d1f7707",
-        "page": "12.2.130 / 852-863",
+        "source_hash": "sha256:29a5693c4bac536b977ebf2ab427076ef0b493d9e68c8bc48760142cf37e9065",
+        "page": "12.2.130 / 852-863; теория 5.8 / 2.29.3",
         "heading": "FRACTURE_TEMPLATE",
         "target_base": "schedule_mvp",
         "knowledge_type": "keyword_instruction",
@@ -8743,7 +8743,7 @@
       "status": "active",
       "author": "department-hydrodynamic-expert",
       "access_scope": "petroleum-engineering",
-      "text": "FRACTURE_SPECS — привязка множества трещин к траектории скважины.\n\nИмя emit. В этом корпусе эмитьте FRACTURE_SPECS (имя из более старого мануала). В текущем PDF (§12.2.131) секция называется FRACTURE_WELL — layout и смысл те же. Не эмитьте FRACTURE_WELL отдельно (синоним/переименование, не второй keyword).\n\nНазначение. Связывает STAGE (множество трещин) с WELLTRACK: шаблон(ы) на MD или равномерно на [MDU,MDL]. Секция: GRID. Требует WELLTRACK в GRID. Это не FRACTURE_TEMPLATE (геометрия шаблона), не FRACTURE_STAGE (ON/OFF в SCHEDULE).\n\nКогда применять. После WELLTRACK (GRID) и FRACTURE_TEMPLATE. Затем FRACTURE_STAGE в SCHEDULE активирует STAGE.\n\nRecord layout (из §12.2.131).\nHeader-строка: STAGE WELL [BRANCH] /\nДалее строки шаблонов:\n- точечная: TEMPLATE MD /\n- интервал: TEMPLATE MDU MDL N /  (N≥2; точки равномерно, включая концы; MDU/MDL в любом порядке, ≠)\n\nКанон render.\n- `point` — STAGE WELL BRANCH + TEMPLATE MD (паттерн STAGE_ONE / TEMPLATE_ONE 500).\n- `span` — TEMPLATE MDU MDL N.\n\nIR / semantics.\n- period=ANY; definitions UPSERT fracture_stage STAGE.\n- references well WELL; fracture_template TEMPLATE; prerequisites WELLTRACK ENTITY по WELL; FRACTURE_TEMPLATE по TEMPLATE.\n- numeric: MD/MDU/MDL min 0; BRANCH min 0; N min 2.\n\nНехватка факта → needs_input: нет STAGE/WELL/TEMPLATE/MD; нет WELLTRACK в GRID.\n\nКарточка самодостаточна.",
+      "text": "FRACTURE_SPECS — привязка множества трещин к траектории скважины.\n\nИмя emit. В этом корпусе эмитьте FRACTURE_SPECS (имя из более старого мануала). В текущем PDF (§12.2.131) секция называется FRACTURE_WELL — layout и смысл те же. Не эмитьте FRACTURE_WELL отдельно (синоним/переименование, не второй keyword).\n\nНазначение. Связывает STAGE (множество трещин) с WELLTRACK: шаблон(ы) на MD или равномерно на [MDU,MDL]. Секция: GRID. Требует WELLTRACK в GRID. Это не FRACTURE_TEMPLATE (геометрия шаблона), не FRACTURE_STAGE (ON/OFF в SCHEDULE).\n\nКогда применять. После WELLTRACK (GRID) и FRACTURE_TEMPLATE. Затем FRACTURE_STAGE в SCHEDULE активирует STAGE.\n\nRecord layout (из §12.2.131).\nHeader-строка: STAGE WELL [BRANCH] /\nДалее строки шаблонов:\n- точечная: TEMPLATE MD /\n- интервал: TEMPLATE MDU MDL N /  (N≥2; точки равномерно, включая концы; MDU/MDL в любом порядке, ≠)\n\nКанон render.\n- `point` — STAGE WELL BRANCH + TEMPLATE MD (паттерн STAGE_ONE / TEMPLATE_ONE 500).\n- `span` — TEMPLATE MDU MDL N.\n\nIR / semantics.\n- period=ANY; definitions UPSERT fracture_stage STAGE.\n- references well WELL; fracture_template TEMPLATE; prerequisites WELLTRACK ENTITY по WELL; FRACTURE_TEMPLATE по TEMPLATE.\n- numeric: MD/MDU/MDL min 0; BRANCH min 0; N min 2.\n\nТеория (§5.8 — ГРП с помощью LGR).\n- FRACTURE_SPECS (в новых мануалах FRACTURE_WELL) привязывает STAGE к WELLTRACK на MD; общий LGR-workflow трещин — §5.8.\n- Требует WELLTRACK в GRID и FRACTURE_TEMPLATE; активация — FRACTURE_STAGE в SCHEDULE.\n\nНехватка факта → needs_input: нет STAGE/WELL/TEMPLATE/MD; нет WELLTRACK в GRID.\n\nКарточка самодостаточна.",
       "examples": [
         {
           "title": "Точка MD — канон (emit FRACTURE_SPECS)",
@@ -8763,7 +8763,7 @@
         "contract_version": "1.0",
         "catalogue_ref": "catalogue://tnavigator/22.2/fracture-specs-v1",
         "catalogue_hash": "sha256:b7c11d414e519dae6071d106dcc4a64250cdd057975937661a707b5af07436df",
-        "source_hash": "sha256:94651cdcef955f6ecf20f002fc18fd7ec391bac49730296a7603f9235499b7ad",
+        "source_hash": "sha256:209f2a134ff7c5c2bff1be7de1b48ef1fb997d9120789767d4db1746759708e8",
         "access_scope": "petroleum-engineering",
         "simulator_profile": {
           "vendor": "Rock Flow Dynamics",
@@ -8786,7 +8786,7 @@
               "document_revision": "19.4",
               "page": "12.2.131 / 864-865",
               "heading": "FRACTURE_WELL (emit FRACTURE_SPECS)",
-              "source_hash": "sha256:94651cdcef955f6ecf20f002fc18fd7ec391bac49730296a7603f9235499b7ad"
+              "source_hash": "sha256:209f2a134ff7c5c2bff1be7de1b48ef1fb997d9120789767d4db1746759708e8"
             },
             "parser": {
               "token_width": 5,
@@ -8896,7 +8896,7 @@
               "document_revision": "19.4",
               "page": "12.2.131 / 864-865",
               "heading": "FRACTURE_WELL (emit FRACTURE_SPECS)",
-              "source_hash": "sha256:94651cdcef955f6ecf20f002fc18fd7ec391bac49730296a7603f9235499b7ad"
+              "source_hash": "sha256:209f2a134ff7c5c2bff1be7de1b48ef1fb997d9120789767d4db1746759708e8"
             },
             "parser": {
               "token_width": 7,
@@ -9018,15 +9018,15 @@
           }
         ]
       },
-      "source_hash": "sha256:94651cdcef955f6ecf20f002fc18fd7ec391bac49730296a7603f9235499b7ad",
-      "page": "emit FRACTURE_SPECS; source §12.2.131 FRACTURE_WELL (с. 864–865); TEMPLATE 12.2.130; STAGE 12.20.150",
+      "source_hash": "sha256:209f2a134ff7c5c2bff1be7de1b48ef1fb997d9120789767d4db1746759708e8",
+      "page": "emit FRACTURE_SPECS; source §12.2.131 FRACTURE_WELL (с. 864–865); TEMPLATE 12.2.130; STAGE 12.20.150; теория 5.8",
       "heading": "FRACTURE_SPECS — привязка трещин к траектории",
       "id": "fracture-specs-v1",
       "metadata": {
         "document_id": "fracture-specs-v1",
         "document_revision": "1",
-        "source_hash": "sha256:94651cdcef955f6ecf20f002fc18fd7ec391bac49730296a7603f9235499b7ad",
-        "page": "12.2.131 / 864-865 (emit FRACTURE_SPECS)",
+        "source_hash": "sha256:209f2a134ff7c5c2bff1be7de1b48ef1fb997d9120789767d4db1746759708e8",
+        "page": "12.2.131 / 864-865 (emit FRACTURE_SPECS); теория 5.8",
         "heading": "FRACTURE_SPECS",
         "target_base": "schedule_mvp",
         "knowledge_type": "keyword_instruction",
@@ -9088,7 +9088,7 @@
       "status": "active",
       "author": "department-hydrodynamic-expert",
       "access_scope": "petroleum-engineering",
-      "text": "FRACTURE_STAGE — активация множества трещин (стадии) в SCHEDULE.\n\nНазначение. Включает/выключает STAGE, заданный FRACTURE_SPECS; опционально арифметика и объём пропанта (геомеханика). Форматы: tN, E1, E3. Секция: SCHEDULE. Доступные возможности ГРП — §5.8, §5.7.3.\n\nКогда применять. После FRACTURE_SPECS (+ TEMPLATE/PLANE/WELLTRACK в GRID). Для COMPDATMD DEPTH_TYPE=STAGE стадия должна быть активирована. Proppant volume только с GEOMECH FE + ROCKFAIL; иначе параметр игнорируется.\n\nRecord layout. После keyword — параметры; данные заканчиваются `/` на новой строке.\n\nПоля (§12.20.150):\n1. STAGE — имя множества трещин.\n2. STATE — ON | OFF.\n3. ARITHMETIC — имя FRACTURE_ARITHMETIC (опционально; вне allowlist → needs_input если нужна новая арифметика без baseline).\n4. PROPPANT — объём пропанта sm3 (геомеханика). Опционально.\n\nКанон render.\n- `on` — STAGE STATE=ON [ARITHMETIC].\n- `on_proppant` — + PROPPANT.\n- `off` — STATE=OFF.\n\nIR / semantics.\n- period=ANY; clock.uses_current.\n- references fracture_stage STAGE; prerequisites FRACTURE_SPECS ENTITY по STAGE.\n- state_assignments namespace fracture-stage; key STATE.\n\nНехватка факта → needs_input: нет STAGE/STATE; STAGE не из FRACTURE_SPECS; proppant без GEOMECH.\n\nКарточка самодостаточна.",
+      "text": "FRACTURE_STAGE — активация множества трещин (стадии) в SCHEDULE.\n\nНазначение. Включает/выключает STAGE, заданный FRACTURE_SPECS; опционально арифметика и объём пропанта (геомеханика). Форматы: tN, E1, E3. Секция: SCHEDULE. Доступные возможности ГРП — §5.8, §5.7.3.\n\nКогда применять. После FRACTURE_SPECS (+ TEMPLATE/PLANE/WELLTRACK в GRID). Для COMPDATMD DEPTH_TYPE=STAGE стадия должна быть активирована. Proppant volume только с GEOMECH FE + ROCKFAIL; иначе параметр игнорируется.\n\nRecord layout. После keyword — параметры; данные заканчиваются `/` на новой строке.\n\nПоля (§12.20.150):\n1. STAGE — имя множества трещин.\n2. STATE — ON | OFF.\n3. ARITHMETIC — имя FRACTURE_ARITHMETIC (опционально; вне allowlist → needs_input если нужна новая арифметика без baseline).\n4. PROPPANT — объём пропанта sm3 (геомеханика). Опционально.\n\nКанон render.\n- `on` — STAGE STATE=ON [ARITHMETIC].\n- `on_proppant` — + PROPPANT.\n- `off` — STATE=OFF.\n\nIR / semantics.\n- period=ANY; clock.uses_current.\n- references fracture_stage STAGE; prerequisites FRACTURE_SPECS ENTITY по STAGE.\n- state_assignments namespace fracture-stage; key STATE.\n\nТеория (§5.8 / §5.7.3; геомеханика §2.29.3).\n- Возможности построения трещин — §5.8 и виртуальные перфорации §5.7.3; STAGE только активирует уже привязанное FRACTURE_SPECS множество.\n- Объём пропанта в FRACTURE_STAGE для ширины трещины учитывается в геомеханике (§2.29.3) при GEOMECH FE + ROCKFAIL; иначе параметр игнорируется.\n\nНехватка факта → needs_input: нет STAGE/STATE; STAGE не из FRACTURE_SPECS; proppant без GEOMECH.\n\nКарточка самодостаточна.",
       "examples": [
         {
           "title": "Активация стадии — канон",
@@ -9108,7 +9108,7 @@
         "contract_version": "1.0",
         "catalogue_ref": "catalogue://tnavigator/22.2/fracture-stage-v1",
         "catalogue_hash": "sha256:5bc01742ff4208eabf70ad9222ebeb4382d6564d46312b6d23fe7335ef3ab20e",
-        "source_hash": "sha256:e73a1eabdd80096290206c2528a1d7515b2ce218230d0a5b3623a46fa658b74a",
+        "source_hash": "sha256:0a848c83c0178c256ef93c6976fc4c6062b0d77777f4b3d846e7c7ee64460c7e",
         "access_scope": "petroleum-engineering",
         "simulator_profile": {
           "vendor": "Rock Flow Dynamics",
@@ -9131,7 +9131,7 @@
               "document_revision": "19.4",
               "page": "12.20.150 / 2067-2068",
               "heading": "FRACTURE_STAGE",
-              "source_hash": "sha256:e73a1eabdd80096290206c2528a1d7515b2ce218230d0a5b3623a46fa658b74a"
+              "source_hash": "sha256:0a848c83c0178c256ef93c6976fc4c6062b0d77777f4b3d846e7c7ee64460c7e"
             },
             "parser": {
               "token_width": 4,
@@ -9217,7 +9217,7 @@
               "document_revision": "19.4",
               "page": "12.20.150 / 2067-2068",
               "heading": "FRACTURE_STAGE",
-              "source_hash": "sha256:e73a1eabdd80096290206c2528a1d7515b2ce218230d0a5b3623a46fa658b74a"
+              "source_hash": "sha256:0a848c83c0178c256ef93c6976fc4c6062b0d77777f4b3d846e7c7ee64460c7e"
             },
             "parser": {
               "token_width": 4,
@@ -9315,7 +9315,7 @@
               "document_revision": "19.4",
               "page": "12.20.150 / 2067-2068",
               "heading": "FRACTURE_STAGE",
-              "source_hash": "sha256:e73a1eabdd80096290206c2528a1d7515b2ce218230d0a5b3623a46fa658b74a"
+              "source_hash": "sha256:0a848c83c0178c256ef93c6976fc4c6062b0d77777f4b3d846e7c7ee64460c7e"
             },
             "parser": {
               "token_width": 2,
@@ -9383,15 +9383,15 @@
           }
         ]
       },
-      "source_hash": "sha256:e73a1eabdd80096290206c2528a1d7515b2ce218230d0a5b3623a46fa658b74a",
-      "page": "12.20.150 FRACTURE_STAGE (с. 2067–2068); WELL 12.2.131; TEMPLATE 12.2.130",
+      "source_hash": "sha256:0a848c83c0178c256ef93c6976fc4c6062b0d77777f4b3d846e7c7ee64460c7e",
+      "page": "12.20.150 FRACTURE_STAGE (с. 2067–2068); WELL 12.2.131; TEMPLATE 12.2.130; теория 5.8 / 5.7.3 / 2.29.3",
       "heading": "FRACTURE_STAGE — активация множества трещин",
       "id": "fracture-stage-v1",
       "metadata": {
         "document_id": "fracture-stage-v1",
         "document_revision": "1",
-        "source_hash": "sha256:e73a1eabdd80096290206c2528a1d7515b2ce218230d0a5b3623a46fa658b74a",
-        "page": "12.20.150 / 2067-2068",
+        "source_hash": "sha256:0a848c83c0178c256ef93c6976fc4c6062b0d77777f4b3d846e7c7ee64460c7e",
+        "page": "12.20.150 / 2067-2068; теория 5.8 / 5.7.3 / 2.29.3",
         "heading": "FRACTURE_STAGE",
         "target_base": "schedule_mvp",
         "knowledge_type": "keyword_instruction",
@@ -9452,7 +9452,7 @@
       "status": "active",
       "author": "department-hydrodynamic-expert",
       "access_scope": "petroleum-engineering",
-      "text": "WPIMULT — множитель коэффициента проводимости (connection factor) перфорации.\n\nНазначение. WPIMULT домножает CF интервала перфорации на заданное число (§2.14.1 / §5.6.1). Форматы: tN, E1, E3. Секция: SCHEDULE. Это не COMPDAT/COMPDATMD (задание перфорации), не WPIMULTL (LGR; вне allowlist → needs_input для LGR-скважин), не WPITAB/PIMULTAB (таблицы PI по обводненности).\n\nКогда применять. Нужно масштабировать CF существующей перфорации на текущих DATES. После WELSPECS и перфораций (COMPDAT/COMPDATMD). Между повторными WPIMULT на тот же интервал должны быть DATES/TSTEP — эффект кумулятивный. Если COMPDAT пересчитывает CF — множитель сбрасывается в 1.0.\n\nRecord layout. Keyword WPIMULT, записи `/`, блок — отдельный `/`.\n\nПоля (§12.20.35):\n\n1. WELL — имя скважины (WLIST вне MVP CREATE → needs_input).\n2. MULT — множитель CF. Default: 1.0. UDQ допустим в симуляторе; MVP — число из фактов.\n3. I — индекс X перфорации. Default: любой (все I).\n4. J — индекс Y. Default: любой.\n5. K — индекс Z/слой. Default: любой.\n6. COMPLUMP_FIRST — номер первого вскрытия (COMPLUMP). Default: любой.\n7. COMPLUMP_LAST — номер последнего вскрытия. Default: любой.\n\nМножитель действует только на перфорации, попадающие в заданные IJK и диапазон COMPLUMP (незаданные координаты = все).\n\nE1 vs E3: несколько WPIMULT со всеми defaults на одном шаге — E1 берёт только последний, E3 применяет все. Для tNavigator METRIC MVP пишите явные intended значения; не полагайтесь на «несколько defaults подряд» без факта о формате.\n\nКанон render.\n- `well_mult` — WELL MULT (все интервалы).\n- `ijk` — WELL MULT I J K (слой/ячейка).\n- `full` — все 7 полей при COMPLUMP-диапазоне.\nНе копируйте 1043/2/14/10/1 без фактов. LGR → WPIMULTL + needs_input (не в allowlist).\n\nIR / semantics.\n- period=ANY; clock.uses_current=true.\n- references well WELL; prerequisites WELSPECS ENTITY.\n- state_assignments namespace well-pi-mult; key WELL[+IJK]; value MULT (кумулятив на timeline — validator/replay).\n- numeric_constraints: MULT min_exclusive 0 (обычно); I/J/K min 1 при явном задании.\n\nСвязанные: COMPDAT/COMPDATMD, COMPLUMP, DATES, WPIMULTL (LGR).\n\nАнтипаттерны.\n- WPIMULT вместо пересчёта перфорации в COMPDAT.\n- Забыть DATES между кумулятивными множителями.\n- WPIMULTL-логика без LGR authority.\n\nНехватка факта → needs_input: нет WELL/MULT; нужны IJK без координат; LGR-скважина.\n\nКарточка самодостаточна: renderer использует только schema_catalogue этой записи и выбранный variant.",
+      "text": "WPIMULT — множитель коэффициента проводимости (connection factor) перфорации.\n\nНазначение. WPIMULT домножает CF интервала перфорации на заданное число (§2.14.1 / §5.6.1). Форматы: tN, E1, E3. Секция: SCHEDULE. Это не COMPDAT/COMPDATMD (задание перфорации), не WPIMULTL (LGR; вне allowlist → needs_input для LGR-скважин), не WPITAB/PIMULTAB (таблицы PI по обводненности).\n\nКогда применять. Нужно масштабировать CF существующей перфорации на текущих DATES. После WELSPECS и перфораций (COMPDAT/COMPDATMD). Между повторными WPIMULT на тот же интервал должны быть DATES/TSTEP — эффект кумулятивный. Если COMPDAT пересчитывает CF — множитель сбрасывается в 1.0.\n\nRecord layout. Keyword WPIMULT, записи `/`, блок — отдельный `/`.\n\nПоля (§12.20.35):\n\n1. WELL — имя скважины (WLIST вне MVP CREATE → needs_input).\n2. MULT — множитель CF. Default: 1.0. UDQ допустим в симуляторе; MVP — число из фактов.\n3. I — индекс X перфорации. Default: любой (все I).\n4. J — индекс Y. Default: любой.\n5. K — индекс Z/слой. Default: любой.\n6. COMPLUMP_FIRST — номер первого вскрытия (COMPLUMP). Default: любой.\n7. COMPLUMP_LAST — номер последнего вскрытия. Default: любой.\n\nМножитель действует только на перфорации, попадающие в заданные IJK и диапазон COMPLUMP (незаданные координаты = все).\n\nE1 vs E3: несколько WPIMULT со всеми defaults на одном шаге — E1 берёт только последний, E3 применяет все. Для tNavigator METRIC MVP пишите явные intended значения; не полагайтесь на «несколько defaults подряд» без факта о формате.\n\nКанон render.\n- `well_mult` — WELL MULT (все интервалы).\n- `ijk` — WELL MULT I J K (слой/ячейка).\n- `full` — все 7 полей при COMPLUMP-диапазоне.\nНе копируйте 1043/2/14/10/1 без фактов. LGR → WPIMULTL + needs_input (не в allowlist).\n\nIR / semantics.\n- period=ANY; clock.uses_current=true.\n- references well WELL; prerequisites WELSPECS ENTITY.\n- state_assignments namespace well-pi-mult; key WELL[+IJK]; value MULT (кумулятив на timeline — validator/replay).\n- numeric_constraints: MULT min_exclusive 0 (обычно); I/J/K min 1 при явном задании.\n\nСвязанные: COMPDAT/COMPDATMD, COMPLUMP, DATES, WPIMULTL (LGR).\n\nТеория (§2.14.1 / §5.6.2 — проводимость CF/KH).\n- В формуле проводимости перфорации множитель Kl_mult(t) — как раз WPIMULT (2-й параметр) или 13-й параметр COMPDATMD (§5.6.2).\n- WPIMULT масштабирует уже посчитанный/заданный CF; не заменяет задание перфорации и не задаёт геометрию ствола.\n\nАнтипаттерны.\n- WPIMULT вместо пересчёта перфорации в COMPDAT.\n- Забыть DATES между кумулятивными множителями.\n- WPIMULTL-логика без LGR authority.\n\nНехватка факта → needs_input: нет WELL/MULT; нужны IJK без координат; LGR-скважина.\n\nКарточка самодостаточна: renderer использует только schema_catalogue этой записи и выбранный variant.",
       "examples": [
         {
           "title": "Множитель по IJK — канон мануала",
@@ -9478,7 +9478,7 @@
         "contract_version": "1.0",
         "catalogue_ref": "catalogue://tnavigator/22.2/wpimult-connection-factor-v1",
         "catalogue_hash": "sha256:e4a92b4ec869000781be85a3a6b65624985e9b997248e3e1d112265d0d0873e7",
-        "source_hash": "sha256:934cb4839a5f49a546e42bd029e6edbf49c82ca3b4c43ae269de195b17eadb8e",
+        "source_hash": "sha256:f2937a8ba0aef0fdfd8ce31ebc503709f1cd541d97d15e079e953e73f2a69889",
         "access_scope": "petroleum-engineering",
         "simulator_profile": {
           "vendor": "Rock Flow Dynamics",
@@ -9501,7 +9501,7 @@
               "document_revision": "19.4",
               "page": "12.20.35 / 1807-1809",
               "heading": "WPIMULT",
-              "source_hash": "sha256:934cb4839a5f49a546e42bd029e6edbf49c82ca3b4c43ae269de195b17eadb8e"
+              "source_hash": "sha256:f2937a8ba0aef0fdfd8ce31ebc503709f1cd541d97d15e079e953e73f2a69889"
             },
             "parser": {
               "token_width": 7,
@@ -9581,7 +9581,7 @@
               "document_revision": "19.4",
               "page": "12.20.35 / 1807-1809",
               "heading": "WPIMULT",
-              "source_hash": "sha256:934cb4839a5f49a546e42bd029e6edbf49c82ca3b4c43ae269de195b17eadb8e"
+              "source_hash": "sha256:f2937a8ba0aef0fdfd8ce31ebc503709f1cd541d97d15e079e953e73f2a69889"
             },
             "parser": {
               "token_width": 7,
@@ -9694,7 +9694,7 @@
               "document_revision": "19.4",
               "page": "12.20.35 / 1807-1809",
               "heading": "WPIMULT",
-              "source_hash": "sha256:934cb4839a5f49a546e42bd029e6edbf49c82ca3b4c43ae269de195b17eadb8e"
+              "source_hash": "sha256:f2937a8ba0aef0fdfd8ce31ebc503709f1cd541d97d15e079e953e73f2a69889"
             },
             "parser": {
               "token_width": 7,
@@ -9826,15 +9826,15 @@
           }
         ]
       },
-      "source_hash": "sha256:934cb4839a5f49a546e42bd029e6edbf49c82ca3b4c43ae269de195b17eadb8e",
-      "page": "12.20.35 WPIMULT (с. 1807–1809); vs WPIMULTL 12.20.36; COMPDAT reset",
+      "source_hash": "sha256:f2937a8ba0aef0fdfd8ce31ebc503709f1cd541d97d15e079e953e73f2a69889",
+      "page": "12.20.35 WPIMULT (с. 1807–1809); vs WPIMULTL 12.20.36; COMPDAT reset; теория 5.6.2",
       "heading": "WPIMULT — множитель коэффициента проводимости",
       "id": "wpimult-connection-factor-v1",
       "metadata": {
         "document_id": "wpimult-connection-factor-v1",
         "document_revision": "1",
-        "source_hash": "sha256:934cb4839a5f49a546e42bd029e6edbf49c82ca3b4c43ae269de195b17eadb8e",
-        "page": "12.20.35 / 1807-1809",
+        "source_hash": "sha256:f2937a8ba0aef0fdfd8ce31ebc503709f1cd541d97d15e079e953e73f2a69889",
+        "page": "12.20.35 / 1807-1809; теория 5.6.2",
         "heading": "WPIMULT",
         "target_base": "schedule_mvp",
         "knowledge_type": "keyword_instruction",
@@ -9897,7 +9897,7 @@
       "status": "active",
       "author": "department-hydrodynamic-expert",
       "access_scope": "petroleum-engineering",
-      "text": "WFRACP — гидроразрыв пласта плоскостью (расширение WFRAC).\n\nНазначение. WFRACP задаёт трещину ГРП как часть плоскости: виртуальные перфорации во всех пересекаемых блоках (в т.ч. через неактивные до полудлины). Используется GUI ГРП и геомеханикой (§5.7, §2.29.3). Форматы: tN, E1, E3. Секция: SCHEDULE. Это не WFRAC (сокращённый вариант), не WFRACPL (LGR-вариант; §12.20.149), не COMPFRAC (один слой k), не FRACTURE_TEMPLATE/WELL/STAGE (LGR-шаблонный путь).\n\nКогда применять. Классический plane-frac на существующей скважине с перфорациями. После WELSPECS + COMPDAT/COMPDATMD. На DATES события ГРП. Для LGR-скважин — WFRACPL, не WFRACP.\n\nRecord layout. Keyword WFRACP, записи `/`, блок — отдельный `/`.\n\nПоля (§12.20.148; METRIC: m / mD / m³):\n\n1. WELL — имя скважины.\n2–7. I1 J1 K1 I2 J2 K2 — первый и последний интервал перфорации (XYZ). Если все 2–7 default — все перфорации скважины. Для ГРП ⊥ стволу: один интервал (I1=I2, J1=J2, K1=K2).\n8. AZIMUTH — азимут 0–360°: угол между +X и правой полудлиной L2. Default/GEOMECH: может считаться из напряжений.\n9. ZENITH — зенит 0–90°. Default: 0.\n10–11. L1 L2 — левая/правая полудлины от ствола.\n12–13. H1 H2 — высоты в двух направлениях от ствола.\n14. WIDTH — толщина трещины. Если не задана — нужны PROPANT_PERM (15) и PROPPANT_VOL (25); толщина рассчитывается.\n15. PROPANT — имя из PROPANTNAMES, или проницаемость пропанта (mD), или omit → бесконечная проводимость (труба).\n16. FLOW_OR_DAYS — имя FLOWFUNC/FLOWFTAB/FLOWFNAMES или days при TIME-decay.\n17. FLOW_PHASE — OIL|WAT|GAS|LIQ|TIME (игнор, если 16 не задан).\n18. PI_MULT — множитель продуктивности виртуальных перфораций. Default: 1.\n19–24. BOX X1 Y1 Z1 X2 Y2 Z2 — ограничивающий бокс индексов (0 → default; defaults 1..NX/NY/NZ).\n25. PROPPANT_VOL — объём пропанта m³ (геометрия по §5.10–5.11, если полудлины/высоты default).\n\nКанон render MVP.\n- `span` — WELL + полный IJK span + AZIMUTH ZENITH L1 L2 H1 H2 WIDTH [PROPANT FLOW…] (пример PROD5).\n- `point` — один интервал I=J=K span (горизонталь, пример WU1).\n- `proppant_vol` — 6* defaults на IJK + углы/нули длин + WIDTH + PROPANT + VOL (пример WU351).\nНе эмитьте WFRAC вместо WFRACP без факта «нужен короткий keyword». Не копируйте учебные PROD5/39/14/110/140.\n\nIR / semantics.\n- period=ANY; clock.uses_current=true.\n- references well WELL; prerequisites WELSPECS ENTITY.\n- definitions UPSERT fracture_plane_event на WELL (+IJK keys).\n- numeric: AZIMUTH 0–360; ZENITH 0–90; L/H/WIDTH/VOL ≥0; IJK ≥1; PI_MULT >0.\n\nСвязанные: WFRAC/COMPFRAC (упрощения), WFRACPL (LGR), PROPANTNAMES, FLOWFUNC*, GEOMECH/ROCKSTRE, FRACTURE_* (другой путь).\n\nАнтипаттерны.\n- WFRACP на LGR-скважине — эмитьте WFRACPL.\n- Путать с FRACTURE_STAGE.\n- Выдумать PROPANTNAMES/FLOWFUNC.\n- WIDTH omit без PROPANT_VOL+perm.\n\nНехватка факта → needs_input: нет WELL/геометрии; нет IJK и не «все перфы»; скважина в LGR (тогда WFRACPL); нет пропанта при расчёте WIDTH.\n\nКарточка самодостаточна.",
+      "text": "WFRACP — гидроразрыв пласта плоскостью (расширение WFRAC).\n\nНазначение. WFRACP задаёт трещину ГРП как часть плоскости: виртуальные перфорации во всех пересекаемых блоках (в т.ч. через неактивные до полудлины). Используется GUI ГРП и геомеханикой (§5.7, §2.29.3). Форматы: tN, E1, E3. Секция: SCHEDULE. Это не WFRAC (сокращённый вариант), не WFRACPL (LGR-вариант; §12.20.149), не COMPFRAC (один слой k), не FRACTURE_TEMPLATE/WELL/STAGE (LGR-шаблонный путь).\n\nКогда применять. Классический plane-frac на существующей скважине с перфорациями. После WELSPECS + COMPDAT/COMPDATMD. На DATES события ГРП. Для LGR-скважин — WFRACPL, не WFRACP.\n\nRecord layout. Keyword WFRACP, записи `/`, блок — отдельный `/`.\n\nПоля (§12.20.148; METRIC: m / mD / m³):\n\n1. WELL — имя скважины.\n2–7. I1 J1 K1 I2 J2 K2 — первый и последний интервал перфорации (XYZ). Если все 2–7 default — все перфорации скважины. Для ГРП ⊥ стволу: один интервал (I1=I2, J1=J2, K1=K2).\n8. AZIMUTH — азимут 0–360°: угол между +X и правой полудлиной L2. Default/GEOMECH: может считаться из напряжений.\n9. ZENITH — зенит 0–90°. Default: 0.\n10–11. L1 L2 — левая/правая полудлины от ствола.\n12–13. H1 H2 — высоты в двух направлениях от ствола.\n14. WIDTH — толщина трещины. Если не задана — нужны PROPANT_PERM (15) и PROPPANT_VOL (25); толщина рассчитывается.\n15. PROPANT — имя из PROPANTNAMES, или проницаемость пропанта (mD), или omit → бесконечная проводимость (труба).\n16. FLOW_OR_DAYS — имя FLOWFUNC/FLOWFTAB/FLOWFNAMES или days при TIME-decay.\n17. FLOW_PHASE — OIL|WAT|GAS|LIQ|TIME (игнор, если 16 не задан).\n18. PI_MULT — множитель продуктивности виртуальных перфораций. Default: 1.\n19–24. BOX X1 Y1 Z1 X2 Y2 Z2 — ограничивающий бокс индексов (0 → default; defaults 1..NX/NY/NZ).\n25. PROPPANT_VOL — объём пропанта m³ (геометрия по §5.10–5.11, если полудлины/высоты default).\n\nКанон render MVP.\n- `span` — WELL + полный IJK span + AZIMUTH ZENITH L1 L2 H1 H2 WIDTH [PROPANT FLOW…] (пример PROD5).\n- `point` — один интервал I=J=K span (горизонталь, пример WU1).\n- `proppant_vol` — 6* defaults на IJK + углы/нули длин + WIDTH + PROPANT + VOL (пример WU351).\nНе эмитьте WFRAC вместо WFRACP без факта «нужен короткий keyword». Не копируйте учебные PROD5/39/14/110/140.\n\nIR / semantics.\n- period=ANY; clock.uses_current=true.\n- references well WELL; prerequisites WELSPECS ENTITY.\n- definitions UPSERT fracture_plane_event на WELL (+IJK keys).\n- numeric: AZIMUTH 0–360; ZENITH 0–90; L/H/WIDTH/VOL ≥0; IJK ≥1; PI_MULT >0.\n\nСвязанные: WFRAC/COMPFRAC (упрощения), WFRACPL (LGR), PROPANTNAMES, FLOWFUNC*, GEOMECH/ROCKSTRE, FRACTURE_* (другой путь).\n\nТеория (§5.7 / §5.7.3 — изменённая модель скважины / виртуальные перфорации).\n- Матмодель ГРП через виртуальные перфорации — §5.7; плоскостная трещина пересекает блоки и создаёт виртуальные соединения (§5.7.3).\n- При заданном объёме пропанта геометрия (ширина/полудлины) считается по соотношениям мануала (формулы (5.10)–(5.11) в §5.7.3): не подбирайте WIDTH/L «на глаз», если VOL задан как источник геометрии.\n- Геомеханика трещин — отдельный контур §2.29.3 (GEOMECH/ROCKFAIL); не смешивайте с FRACTURE_* LGR-путём без факта.\n\nАнтипаттерны.\n- WFRACP на LGR-скважине — эмитьте WFRACPL.\n- Путать с FRACTURE_STAGE.\n- Выдумать PROPANTNAMES/FLOWFUNC.\n- WIDTH omit без PROPANT_VOL+perm.\n\nНехватка факта → needs_input: нет WELL/геометрии; нет IJK и не «все перфы»; скважина в LGR (тогда WFRACPL); нет пропанта при расчёте WIDTH.\n\nКарточка самодостаточна.",
       "examples": [
         {
           "title": "Плоскость вдоль перфораций — канон",
@@ -9923,7 +9923,7 @@
         "contract_version": "1.0",
         "catalogue_ref": "catalogue://tnavigator/22.2/wfracp-plane-fracture-v1",
         "catalogue_hash": "sha256:07f3d2e439cf9006bae087fdef2e99320caddaff65146edb16c62e8ed8e832aa",
-        "source_hash": "sha256:79d05c88eb17f2f6b2b2823cf063d4f00306e0cbcaafa41eee2ae5371cee01cc",
+        "source_hash": "sha256:1c1a234c8fa286f905515f55c7bfe9a6fa93c87f2fd2883b4fb38427eb1944cb",
         "access_scope": "petroleum-engineering",
         "simulator_profile": {
           "vendor": "Rock Flow Dynamics",
@@ -9946,7 +9946,7 @@
               "document_revision": "19.4",
               "page": "12.20.148 / 2051-2061",
               "heading": "WFRACP",
-              "source_hash": "sha256:79d05c88eb17f2f6b2b2823cf063d4f00306e0cbcaafa41eee2ae5371cee01cc"
+              "source_hash": "sha256:1c1a234c8fa286f905515f55c7bfe9a6fa93c87f2fd2883b4fb38427eb1944cb"
             },
             "parser": {
               "token_width": 25,
@@ -10226,7 +10226,7 @@
               "document_revision": "19.4",
               "page": "12.20.148 / 2051-2061",
               "heading": "WFRACP",
-              "source_hash": "sha256:79d05c88eb17f2f6b2b2823cf063d4f00306e0cbcaafa41eee2ae5371cee01cc"
+              "source_hash": "sha256:1c1a234c8fa286f905515f55c7bfe9a6fa93c87f2fd2883b4fb38427eb1944cb"
             },
             "parser": {
               "token_width": 25,
@@ -10506,7 +10506,7 @@
               "document_revision": "19.4",
               "page": "12.20.148 / 2051-2061",
               "heading": "WFRACP",
-              "source_hash": "sha256:79d05c88eb17f2f6b2b2823cf063d4f00306e0cbcaafa41eee2ae5371cee01cc"
+              "source_hash": "sha256:1c1a234c8fa286f905515f55c7bfe9a6fa93c87f2fd2883b4fb38427eb1944cb"
             },
             "parser": {
               "token_width": 25,
@@ -10783,15 +10783,15 @@
           }
         ]
       },
-      "source_hash": "sha256:79d05c88eb17f2f6b2b2823cf063d4f00306e0cbcaafa41eee2ae5371cee01cc",
-      "page": "12.20.148 WFRACP (с. 2051–2061); vs WFRAC 12.20.146; WFRACPL 12.20.149; FRACTURE_*",
+      "source_hash": "sha256:1c1a234c8fa286f905515f55c7bfe9a6fa93c87f2fd2883b4fb38427eb1944cb",
+      "page": "12.20.148 WFRACP (с. 2051–2061); vs WFRAC 12.20.146; WFRACPL 12.20.149; FRACTURE_*; теория 5.7 / 5.7.3",
       "heading": "WFRACP — задание гидроразрыва пласта",
       "id": "wfracp-plane-fracture-v1",
       "metadata": {
         "document_id": "wfracp-plane-fracture-v1",
         "document_revision": "1",
-        "source_hash": "sha256:79d05c88eb17f2f6b2b2823cf063d4f00306e0cbcaafa41eee2ae5371cee01cc",
-        "page": "12.20.148 / 2051-2061",
+        "source_hash": "sha256:1c1a234c8fa286f905515f55c7bfe9a6fa93c87f2fd2883b4fb38427eb1944cb",
+        "page": "12.20.148 / 2051-2061; теория 5.7 / 5.7.3",
         "heading": "WFRACP",
         "target_base": "schedule_mvp",
         "knowledge_type": "keyword_instruction",
@@ -10855,7 +10855,7 @@
       "status": "active",
       "author": "department-hydrodynamic-expert",
       "access_scope": "petroleum-engineering",
-      "text": "WFRACPL — гидроразрыв пласта плоскостью в LGR (расширение WFRACP).\n\nНазначение. WFRACPL задаёт трещину ГРП как часть плоскости для скважины в локальной сетке (LGR, §5.5.8): виртуальные перфорации во всех пересекаемых блоках (в т.ч. через неактивные до полудлины). Форматы: tN, E1, E3. Секция: SCHEDULE. Это расширение WFRACP (§12.20.148) с доп. полем имени LGR. Не путать с WFRAC/WFRACL, COMPFRAC/COMPFRACL, FRACTURE_TEMPLATE/WELL/STAGE.\n\nКогда применять. Скважина в LGR, объявлена WELSPECL + COMPDATL (§12.20.4 / §12.20.7). Имя LGR — из CARFIN (§12.2.99). Для скважины вне LGR — WFRACP, не WFRACPL. WELSPECL/COMPDATL/CARFIN вне allowlist MVP: если их нет в baseline/артефактах → needs_input (не подменяйте WELSPECS/COMPDATMD).\n\nRecord layout. Keyword WFRACPL, записи `/`, блок — отдельный `/`.\n\nПоля (§12.20.149; METRIC: m / mD / m³) — как WFRACP, но +LGR на позиции 2; всего 26:\n\n1. WELL — имя скважины.\n2. LGR — имя локальной сетки (CARFIN).\n3–8. I1 J1 K1 I2 J2 K2 — первый/последний интервал перфорации. Все default → все перфы скважины. ГРП ⊥ стволу: один интервал (I1=I2, J1=J2, K1=K2).\n9. AZIMUTH — 0–360° (угол +X ↔ правая полудлина L2).\n10. ZENITH — 0–90°. Default: 0.\n11–12. L1 L2 — левая/правая полудлины.\n13–14. H1 H2 — высоты.\n15. WIDTH — толщина.\n16. PROPANT — PROPANTNAMES / perm mD / omit → труба.\n17. FLOW_OR_DAYS — FLOWFUNC*|days при TIME.\n18. FLOW_PHASE — OIL|WAT|GAS|LIQ|TIME.\n19. PI_MULT — множитель PI виртуальных перф. Default: 1.\n20–25. BOX X1 Y1 Z1 X2 Y2 Z2 — объемлющий бокс (0 → default 1..NX/NY/NZ).\n26. PROPPANT_VOL — объём пропанта m³ (геометрия §5.10–5.11 при default длин/высот).\n\nКанон render MVP.\n- `span` — WELL LGR + полный IJK span + AZIMUTH … WIDTH PROPANT … PI_MULT [box defaults] (пример WELL123/LGR2).\n- `point` — один IJK-интервал (⊥ стволу / горизонт).\nНе эмитьте WFRACP вместо WFRACPL для LGR. Не копируйте учебные WELL123/LGR2/22/27.\n\nIR / semantics.\n- period=ANY; clock.uses_current=true.\n- references well WELL; LGR name as string fact.\n- prerequisites: WELSPECL/COMPDATL (вне emit — проверить baseline) ENTITY по WELL.\n- definitions UPSERT fracture_plane_lgr на WELL+LGR.\n- numeric: AZIMUTH 0–360; ZENITH 0–90; L/H/WIDTH/VOL ≥0; IJK ≥1; PI_MULT >0.\n\nСвязанные: WFRACP (без LGR), WFRAC/WFRACL, COMPFRAC*, PROPANTNAMES, FLOWFUNC*, FRACTURE_* (другой LGR-путь).\n\nАнтипаттерны.\n- WFRACPL без имени LGR / без LGR-скважины.\n- Подмена WELSPECL→WELSPECS или COMPDATL→COMPDATMD.\n- Путать с FRACTURE_STAGE.\n- Выдумать PROPANTNAMES/FLOWFUNC/имя LGR.\n\nНехватка факта → needs_input: нет WELL/LGR/геометрии; нет WELSPECL/COMPDATL в scope/baseline; нет IJK и не «все перфы».\n\nКарточка самодостаточна.",
+      "text": "WFRACPL — гидроразрыв пласта плоскостью в LGR (расширение WFRACP).\n\nНазначение. WFRACPL задаёт трещину ГРП как часть плоскости для скважины в локальной сетке (LGR, §5.5.8): виртуальные перфорации во всех пересекаемых блоках (в т.ч. через неактивные до полудлины). Форматы: tN, E1, E3. Секция: SCHEDULE. Это расширение WFRACP (§12.20.148) с доп. полем имени LGR. Не путать с WFRAC/WFRACL, COMPFRAC/COMPFRACL, FRACTURE_TEMPLATE/WELL/STAGE.\n\nКогда применять. Скважина в LGR, объявлена WELSPECL + COMPDATL (§12.20.4 / §12.20.7). Имя LGR — из CARFIN (§12.2.99). Для скважины вне LGR — WFRACP, не WFRACPL. WELSPECL/COMPDATL/CARFIN вне allowlist MVP: если их нет в baseline/артефактах → needs_input (не подменяйте WELSPECS/COMPDATMD).\n\nRecord layout. Keyword WFRACPL, записи `/`, блок — отдельный `/`.\n\nПоля (§12.20.149; METRIC: m / mD / m³) — как WFRACP, но +LGR на позиции 2; всего 26:\n\n1. WELL — имя скважины.\n2. LGR — имя локальной сетки (CARFIN).\n3–8. I1 J1 K1 I2 J2 K2 — первый/последний интервал перфорации. Все default → все перфы скважины. ГРП ⊥ стволу: один интервал (I1=I2, J1=J2, K1=K2).\n9. AZIMUTH — 0–360° (угол +X ↔ правая полудлина L2).\n10. ZENITH — 0–90°. Default: 0.\n11–12. L1 L2 — левая/правая полудлины.\n13–14. H1 H2 — высоты.\n15. WIDTH — толщина.\n16. PROPANT — PROPANTNAMES / perm mD / omit → труба.\n17. FLOW_OR_DAYS — FLOWFUNC*|days при TIME.\n18. FLOW_PHASE — OIL|WAT|GAS|LIQ|TIME.\n19. PI_MULT — множитель PI виртуальных перф. Default: 1.\n20–25. BOX X1 Y1 Z1 X2 Y2 Z2 — объемлющий бокс (0 → default 1..NX/NY/NZ).\n26. PROPPANT_VOL — объём пропанта m³ (геометрия §5.10–5.11 при default длин/высот).\n\nКанон render MVP.\n- `span` — WELL LGR + полный IJK span + AZIMUTH … WIDTH PROPANT … PI_MULT [box defaults] (пример WELL123/LGR2).\n- `point` — один IJK-интервал (⊥ стволу / горизонт).\nНе эмитьте WFRACP вместо WFRACPL для LGR. Не копируйте учебные WELL123/LGR2/22/27.\n\nIR / semantics.\n- period=ANY; clock.uses_current=true.\n- references well WELL; LGR name as string fact.\n- prerequisites: WELSPECL/COMPDATL (вне emit — проверить baseline) ENTITY по WELL.\n- definitions UPSERT fracture_plane_lgr на WELL+LGR.\n- numeric: AZIMUTH 0–360; ZENITH 0–90; L/H/WIDTH/VOL ≥0; IJK ≥1; PI_MULT >0.\n\nСвязанные: WFRACP (без LGR), WFRAC/WFRACL, COMPFRAC*, PROPANTNAMES, FLOWFUNC*, FRACTURE_* (другой LGR-путь).\n\nТеория (§5.5.8 — LGR; §5.7 — изменённая модель скважины).\n- WFRACPL — тот же плоскостной ГРП (§5.7), но для скважины в локальной сетке (§5.5.8): нужны имя LGR (CARFIN) и WELSPECL/COMPDATL.\n- Не путать с LGR-шаблонным путём FRACTURE_TEMPLATE/SPECS/STAGE (§5.8).\n\nАнтипаттерны.\n- WFRACPL без имени LGR / без LGR-скважины.\n- Подмена WELSPECL→WELSPECS или COMPDATL→COMPDATMD.\n- Путать с FRACTURE_STAGE.\n- Выдумать PROPANTNAMES/FLOWFUNC/имя LGR.\n\nНехватка факта → needs_input: нет WELL/LGR/геометрии; нет WELSPECL/COMPDATL в scope/baseline; нет IJK и не «все перфы».\n\nКарточка самодостаточна.",
       "examples": [
         {
           "title": "LGR span — канон мануала",
@@ -10875,7 +10875,7 @@
         "contract_version": "1.0",
         "catalogue_ref": "catalogue://tnavigator/22.2/wfracpl-lgr-plane-fracture-v1",
         "catalogue_hash": "sha256:4a622527873986c9b721771efdd5cb12186690d8011517d6fa7eed84002796e6",
-        "source_hash": "sha256:203d8651908c1618971a0f04e0256ee179304c6e46319a362b7b7435bb2e7861",
+        "source_hash": "sha256:a3cd9e1d3181f12f53494cb0cfb589152e6d4f1b9eb50fd9d7a5ecc85e7d7e2a",
         "access_scope": "petroleum-engineering",
         "simulator_profile": {
           "vendor": "Rock Flow Dynamics",
@@ -10898,7 +10898,7 @@
               "document_revision": "19.4",
               "page": "12.20.149 / 2062-2066",
               "heading": "WFRACPL",
-              "source_hash": "sha256:203d8651908c1618971a0f04e0256ee179304c6e46319a362b7b7435bb2e7861"
+              "source_hash": "sha256:a3cd9e1d3181f12f53494cb0cfb589152e6d4f1b9eb50fd9d7a5ecc85e7d7e2a"
             },
             "parser": {
               "token_width": 26,
@@ -11187,7 +11187,7 @@
               "document_revision": "19.4",
               "page": "12.20.149 / 2062-2066",
               "heading": "WFRACPL",
-              "source_hash": "sha256:203d8651908c1618971a0f04e0256ee179304c6e46319a362b7b7435bb2e7861"
+              "source_hash": "sha256:a3cd9e1d3181f12f53494cb0cfb589152e6d4f1b9eb50fd9d7a5ecc85e7d7e2a"
             },
             "parser": {
               "token_width": 26,
@@ -11468,15 +11468,15 @@
           }
         ]
       },
-      "source_hash": "sha256:203d8651908c1618971a0f04e0256ee179304c6e46319a362b7b7435bb2e7861",
-      "page": "12.20.149 WFRACPL (с. 2062–2066); vs WFRACP 12.20.148; WELSPECL/COMPDATL",
+      "source_hash": "sha256:a3cd9e1d3181f12f53494cb0cfb589152e6d4f1b9eb50fd9d7a5ecc85e7d7e2a",
+      "page": "12.20.149 WFRACPL (с. 2062–2066); vs WFRACP 12.20.148; WELSPECL/COMPDATL; теория 5.5.8 / 5.7",
       "heading": "WFRACPL — ГРП в локальной сетке",
       "id": "wfracpl-lgr-plane-fracture-v1",
       "metadata": {
         "document_id": "wfracpl-lgr-plane-fracture-v1",
         "document_revision": "1",
-        "source_hash": "sha256:203d8651908c1618971a0f04e0256ee179304c6e46319a362b7b7435bb2e7861",
-        "page": "12.20.149 / 2062-2066",
+        "source_hash": "sha256:a3cd9e1d3181f12f53494cb0cfb589152e6d4f1b9eb50fd9d7a5ecc85e7d7e2a",
+        "page": "12.20.149 / 2062-2066; теория 5.5.8 / 5.7",
         "heading": "WFRACPL",
         "target_base": "schedule_mvp",
         "knowledge_type": "keyword_instruction",

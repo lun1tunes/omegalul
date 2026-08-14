@@ -41,20 +41,16 @@ function attempted(overrides = {}) {
     version: 2,
     previous_version: 1,
     status: 'delegated',
-    phase: 'delegation',
-    task_type: 'schedule_build',
     risk_class: 'high',
     request_json: '{}',
-    context_json: '{}',
+    runtime_json: '{}',
     plan_json: '{}',
-    specialist_json: '{}',
+    packet_json: '{}',
     result_json: '{}',
     verification_json: '{}',
-    pending_human_json: '{}',
-    last_error_json: '{}',
+    gate_json: '{}',
     retry_count: 0,
     max_retries: 2,
-    history_json: '[]',
     created_at: '2026-01-01T00:00:00.000Z',
     updated_at: '2026-01-01T00:00:00.000Z',
     should_delegate: true,
@@ -112,13 +108,14 @@ function tableRow(overrides = {}) {
     version: 1,
     previous_version: undefined,
     status: undefined,
-    history_json: undefined,
+    gate_json: undefined,
   }));
   assert.equal(missingCols.cas_request_valid, false);
   const missing = missingCols.cas_findings.find((item) => item.code === 'CAS_STATE_COLUMNS_MISSING');
   assert(missing);
   assert(missing.fields.includes('status'));
-  assert(missing.fields.includes('history_json'));
+  assert(missing.fields.includes('gate_json'));
+  assert(!missing.fields.includes('history_json'));
 
   const prepared = await execute('Validate CAS persist request', request('update'));
   const confirmNodes = { 'Validate CAS persist request': prepared };
@@ -126,18 +123,17 @@ function tableRow(overrides = {}) {
   const zeroRows = await execute('Confirm CAS persist', {}, confirmNodes, []);
   assert.equal(zeroRows.cas_succeeded, false);
   assert.equal(zeroRows.status, 'conflict');
-  assert.equal(zeroRows.phase, 'concurrency');
   assert.match(zeroRows.message, /Reload task status/);
-  assert.equal(JSON.parse(zeroRows.last_error_json).code, 'CAS_CONFLICT');
-  assert.equal(JSON.parse(zeroRows.last_error_json).matched_rows, 0);
+  assert.equal(zeroRows.last_error.code, 'CAS_CONFLICT');
+  assert.equal(zeroRows.last_error.matched_rows, 0);
   assert.equal(zeroRows.should_delegate, true);
 
   const echoed = await execute('Confirm CAS persist', prepared, confirmNodes, [{ json: prepared }]);
   assert.equal(echoed.cas_succeeded, false);
-  assert.equal(JSON.parse(echoed.last_error_json).code, 'CAS_CONFLICT');
-  assert.equal(JSON.parse(echoed.last_error_json).matched_rows, 0);
+  assert.equal(echoed.last_error.code, 'CAS_CONFLICT');
+  assert.equal(echoed.last_error.matched_rows, 0);
 
-  const persisted = tableRow({ status: 'delegated', phase: 'delegation' });
+  const persisted = tableRow({ status: 'delegated' });
   const success = await execute('Confirm CAS persist', persisted, confirmNodes, [{ json: persisted }]);
   assert.equal(success.cas_succeeded, true);
   assert.equal(success.cas_operation, 'update');
@@ -162,23 +158,23 @@ function tableRow(overrides = {}) {
     'Confirm CAS persist',
     persisted,
     confirmNodes,
-    [{ json: persisted }, { json: { ...persisted, phase: 'duplicate' } }],
+    [{ json: persisted }, { json: { ...persisted, risk_class: 'low' } }],
   );
   assert.equal(twoRows.cas_succeeded, false);
-  assert.equal(JSON.parse(twoRows.last_error_json).code, 'CAS_CONFLICT');
-  assert.equal(JSON.parse(twoRows.last_error_json).matched_rows, 2);
+  assert.equal(twoRows.last_error.code, 'CAS_CONFLICT');
+  assert.equal(twoRows.last_error.matched_rows, 2);
 
   const invalid = await execute('Build invalid CAS persist result', badOp);
   assert.equal(invalid.cas_succeeded, false);
   assert.equal(invalid.status, 'conflict');
-  assert.equal(JSON.parse(invalid.last_error_json).code, 'INVALID_CAS_REQUEST');
-  assert(JSON.parse(invalid.last_error_json).findings.some((item) => item.code === 'CAS_OPERATION_INVALID'));
+  assert.equal(invalid.last_error.code, 'INVALID_CAS_REQUEST');
+  assert(invalid.last_error.findings.some((item) => item.code === 'CAS_OPERATION_INVALID'));
 
   const confirmInvalid = await execute('Confirm CAS persist', {}, {
     'Validate CAS persist request': badOp,
   }, [{ json: persisted }]);
   assert.equal(confirmInvalid.cas_succeeded, false);
-  assert.equal(JSON.parse(confirmInvalid.last_error_json).code, 'CAS_CONFLICT');
+  assert.equal(confirmInvalid.last_error.code, 'CAS_CONFLICT');
 
   console.log('CAS persist runtime smoke: 13 scenarios passed');
 })().catch((error) => {

@@ -1,1 +1,1 @@
-task_id,version,status,phase,task_type,risk_class,request_json,context_json,plan_json,specialist_json,result_json,verification_json,pending_human_json,last_error_json,retry_count,max_retries,history_json,created_at,updated_at
+task_id,version,status,risk_class,request_json,runtime_json,plan_json,packet_json,result_json,verification_json,gate_json,retry_count,max_retries,created_at,updated_at

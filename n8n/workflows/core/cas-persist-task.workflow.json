@@ -1,5 +1,5 @@
 {
-  "id": "27420a07-dce9-50c1-9c22-15e8cb93de47",
+  "id": "5876bb29-3a0a-5f80-827a-43504527c624",
   "name": "CAS — Persist Task State",
   "nodes": [
     {
@@ -9,7 +9,7 @@
         "width": 520,
         "color": 5
       },
-      "id": "5dbd775e-7e48-5741-a457-6d83a5624496",
+      "id": "956a97b4-3d3b-57d7-881c-a33b3f37a726",
       "name": "CAS persist README",
       "type": "n8n-nodes-base.stickyNote",
       "typeVersion": 1,
@@ -21,9 +21,9 @@
     {
       "parameters": {
         "inputSource": "jsonExample",
-        "jsonExample": "{\"cas_operation\": \"update\", \"attempted\": {\"task_id\": \"eng_example\", \"version\": 2, \"previous_version\": 1, \"status\": \"delegated\", \"phase\": \"delegation\", \"task_type\": \"schedule_build\", \"risk_class\": \"high\", \"request_json\": \"{}\", \"context_json\": \"{}\", \"plan_json\": \"{}\", \"specialist_json\": \"{}\", \"result_json\": \"{}\", \"verification_json\": \"{}\", \"pending_human_json\": \"{}\", \"last_error_json\": \"{}\", \"retry_count\": 0, \"max_retries\": 2, \"history_json\": \"[]\", \"created_at\": \"2026-01-01T00:00:00.000Z\", \"updated_at\": \"2026-01-01T00:00:00.000Z\"}}"
+        "jsonExample": "{\"cas_operation\": \"update\", \"attempted\": {\"task_id\": \"eng_example\", \"version\": 2, \"previous_version\": 1, \"status\": \"delegated\", \"risk_class\": \"high\", \"request_json\": \"{}\", \"runtime_json\": \"{}\", \"plan_json\": \"{}\", \"packet_json\": \"{}\", \"result_json\": \"{}\", \"verification_json\": \"{}\", \"gate_json\": \"{}\", \"retry_count\": 0, \"max_retries\": 2, \"created_at\": \"2026-01-01T00:00:00.000Z\", \"updated_at\": \"2026-01-01T00:00:00.000Z\"}}"
       },
-      "id": "57761f0f-e3b2-5fa1-b523-38732c5d7c11",
+      "id": "ef05f4ce-15ea-52d8-96fa-27efbc89174e",
       "name": "Receive CAS persist request",
       "type": "n8n-nodes-base.executeWorkflowTrigger",
       "typeVersion": 1.2,
@@ -34,9 +34,9 @@
     },
     {
       "parameters": {
-        "jsCode": "const root=$json;\nconst obj=v=>v&&typeof v==='object'&&!Array.isArray(v);\nconst attempted=obj(root.attempted)?root.attempted:(obj(root)&&typeof root.task_id==='string'?root:{});\nconst operation=String(root.cas_operation||'').trim();\nconst columns=['task_id','version','status','phase','task_type','risk_class','request_json','context_json','plan_json','specialist_json','result_json','verification_json','pending_human_json','last_error_json','retry_count','max_retries','history_json','created_at','updated_at'];\nconst present=key=>{const v=attempted[key];if(v===undefined||v===null)return false;if(typeof v==='number')return Number.isFinite(v);return true;};\nconst missing=columns.filter(key=>!present(key));\nconst findings=[];\nif(operation!=='insert'&&operation!=='update')findings.push({code:'CAS_OPERATION_INVALID',operation});\nif(typeof attempted.task_id!=='string'||!attempted.task_id.trim())findings.push({code:'CAS_TASK_ID_REQUIRED'});\nif(!Number.isInteger(Number(attempted.version)))findings.push({code:'CAS_VERSION_REQUIRED'});\nif(missing.length)findings.push({code:'CAS_STATE_COLUMNS_MISSING',fields:missing});\nif(operation==='update'){const prev=Number(attempted.previous_version);if(!Number.isInteger(prev)||prev<0)findings.push({code:'CAS_PREVIOUS_VERSION_REQUIRED'});}\nconst valid=findings.length===0;\nreturn [{json:{...attempted,cas_operation:operation,cas_attempted:attempted,cas_request_valid:valid,cas_findings:findings,cas_route:operation==='insert'?0:1}}];"
+        "jsCode": "const root=$json;\nconst obj=v=>v&&typeof v==='object'&&!Array.isArray(v);\nconst attempted=obj(root.attempted)?root.attempted:(obj(root)&&typeof root.task_id==='string'?root:{});\nconst operation=String(root.cas_operation||'').trim();\nconst columns=['task_id','version','status','risk_class','request_json','runtime_json','plan_json','packet_json','result_json','verification_json','gate_json','retry_count','max_retries','created_at','updated_at'];\nconst present=key=>{const v=attempted[key];if(v===undefined||v===null)return false;if(typeof v==='number')return Number.isFinite(v);return true;};\nconst missing=columns.filter(key=>!present(key));\nconst findings=[];\nif(operation!=='insert'&&operation!=='update')findings.push({code:'CAS_OPERATION_INVALID',operation});\nif(typeof attempted.task_id!=='string'||!attempted.task_id.trim())findings.push({code:'CAS_TASK_ID_REQUIRED'});\nif(!Number.isInteger(Number(attempted.version)))findings.push({code:'CAS_VERSION_REQUIRED'});\nif(missing.length)findings.push({code:'CAS_STATE_COLUMNS_MISSING',fields:missing});\nif(operation==='update'){const prev=Number(attempted.previous_version);if(!Number.isInteger(prev)||prev<0)findings.push({code:'CAS_PREVIOUS_VERSION_REQUIRED'});}\nconst valid=findings.length===0;\nreturn [{json:{...attempted,cas_operation:operation,cas_attempted:attempted,cas_request_valid:valid,cas_findings:findings,cas_route:operation==='insert'?0:1}}];"
       },
-      "id": "39f56445-605e-541c-a24f-039a19a2de85",
+      "id": "21f5f428-83a0-5fc6-ad57-04bdfa6b8c1f",
       "name": "Validate CAS persist request",
       "type": "n8n-nodes-base.code",
       "typeVersion": 2,
@@ -56,7 +56,7 @@
           },
           "conditions": [
             {
-              "id": "a5d5159d-f41d-5e64-ac23-c8c787b65702",
+              "id": "bb8c7763-4735-54c4-842e-2b6e034f3e37",
               "leftValue": "={{ $json.cas_request_valid }}",
               "rightValue": true,
               "operator": {
@@ -69,7 +69,7 @@
         },
         "options": {}
       },
-      "id": "888e4434-33b1-5de6-b1d9-7ffb20dd5668",
+      "id": "783c6ad5-7579-5f40-b5d6-87b0d5e4a313",
       "name": "CAS request valid?",
       "type": "n8n-nodes-base.if",
       "typeVersion": 2.2,
@@ -84,7 +84,7 @@
         "numberOutputs": 2,
         "output": "={{ $json.cas_route }}"
       },
-      "id": "010cb969-ce74-52c3-ad2f-9ae3b2155c70",
+      "id": "b67e2c6c-c6f3-517b-aeb6-42aa35ac72f8",
       "name": "CAS operation router",
       "type": "n8n-nodes-base.switch",
       "typeVersion": 3.4,
@@ -108,20 +108,16 @@
             "task_id": "={{ $json.task_id }}",
             "version": "={{ $json.version }}",
             "status": "={{ $json.status }}",
-            "phase": "={{ $json.phase }}",
-            "task_type": "={{ $json.task_type }}",
             "risk_class": "={{ $json.risk_class }}",
             "request_json": "={{ $json.request_json }}",
-            "context_json": "={{ $json.context_json }}",
+            "runtime_json": "={{ $json.runtime_json }}",
             "plan_json": "={{ $json.plan_json }}",
-            "specialist_json": "={{ $json.specialist_json }}",
+            "packet_json": "={{ $json.packet_json }}",
             "result_json": "={{ $json.result_json }}",
             "verification_json": "={{ $json.verification_json }}",
-            "pending_human_json": "={{ $json.pending_human_json }}",
-            "last_error_json": "={{ $json.last_error_json }}",
+            "gate_json": "={{ $json.gate_json }}",
             "retry_count": "={{ $json.retry_count }}",
             "max_retries": "={{ $json.max_retries }}",
-            "history_json": "={{ $json.history_json }}",
             "created_at": "={{ $json.created_at }}",
             "updated_at": "={{ $json.updated_at }}"
           },
@@ -131,7 +127,7 @@
           "convertFieldsToString": false
         }
       },
-      "id": "193a5329-5992-593d-af00-09f670c0b36e",
+      "id": "aa71fbb3-1977-51f9-a3a4-43dd6e1ad28d",
       "name": "Insert durable task row",
       "type": "n8n-nodes-base.dataTable",
       "typeVersion": 1.1,
@@ -150,34 +146,6 @@
           "value": "REPLACE_IN_UI",
           "cachedResultName": "Engineering orchestrator task state"
         },
-        "columns": {
-          "mappingMode": "defineBelow",
-          "value": {
-            "task_id": "={{ $json.task_id }}",
-            "version": "={{ $json.version }}",
-            "status": "={{ $json.status }}",
-            "phase": "={{ $json.phase }}",
-            "task_type": "={{ $json.task_type }}",
-            "risk_class": "={{ $json.risk_class }}",
-            "request_json": "={{ $json.request_json }}",
-            "context_json": "={{ $json.context_json }}",
-            "plan_json": "={{ $json.plan_json }}",
-            "specialist_json": "={{ $json.specialist_json }}",
-            "result_json": "={{ $json.result_json }}",
-            "verification_json": "={{ $json.verification_json }}",
-            "pending_human_json": "={{ $json.pending_human_json }}",
-            "last_error_json": "={{ $json.last_error_json }}",
-            "retry_count": "={{ $json.retry_count }}",
-            "max_retries": "={{ $json.max_retries }}",
-            "history_json": "={{ $json.history_json }}",
-            "created_at": "={{ $json.created_at }}",
-            "updated_at": "={{ $json.updated_at }}"
-          },
-          "matchingColumns": [],
-          "schema": [],
-          "attemptToConvertTypes": false,
-          "convertFieldsToString": false
-        },
         "matchType": "allConditions",
         "filters": {
           "conditions": [
@@ -192,9 +160,33 @@
               "keyValue": "={{ $json.previous_version }}"
             }
           ]
+        },
+        "columns": {
+          "mappingMode": "defineBelow",
+          "value": {
+            "task_id": "={{ $json.task_id }}",
+            "version": "={{ $json.version }}",
+            "status": "={{ $json.status }}",
+            "risk_class": "={{ $json.risk_class }}",
+            "request_json": "={{ $json.request_json }}",
+            "runtime_json": "={{ $json.runtime_json }}",
+            "plan_json": "={{ $json.plan_json }}",
+            "packet_json": "={{ $json.packet_json }}",
+            "result_json": "={{ $json.result_json }}",
+            "verification_json": "={{ $json.verification_json }}",
+            "gate_json": "={{ $json.gate_json }}",
+            "retry_count": "={{ $json.retry_count }}",
+            "max_retries": "={{ $json.max_retries }}",
+            "created_at": "={{ $json.created_at }}",
+            "updated_at": "={{ $json.updated_at }}"
+          },
+          "matchingColumns": [],
+          "schema": [],
+          "attemptToConvertTypes": false,
+          "convertFieldsToString": false
         }
       },
-      "id": "1a3d716c-3a4b-530f-9840-54376f234f50",
+      "id": "44b50919-c2b2-5dff-b834-12996ac01b78",
       "name": "Update durable task row",
       "type": "n8n-nodes-base.dataTable",
       "typeVersion": 1.1,
@@ -206,9 +198,9 @@
     },
     {
       "parameters": {
-        "jsCode": "const obj=v=>v&&typeof v==='object'&&!Array.isArray(v);\nconst prepared=$('Validate CAS persist request').first().json||{};\nconst attempted=obj(prepared.cas_attempted)?prepared.cas_attempted:{};\nconst operation=String(prepared.cas_operation||'');\nconst rows=$input.all().map(item=>item.json||{});\nconst tableRows=rows.filter(row=>obj(row)&&row.task_id===attempted.task_id&&Number(row.version)===Number(attempted.version)&&row.cas_attempted===undefined&&row.cas_operation===undefined&&row.cas_request_valid===undefined);\nif(!prepared.cas_request_valid||tableRows.length!==1)return [{json:{...attempted,status:'conflict',phase:'concurrency',message:'Concurrent or non-unique state update detected. Reload task status and retry with the current expected_version.',cas_succeeded:false,cas_operation:operation,last_error_json:JSON.stringify({code:'CAS_CONFLICT',findings:prepared.cas_findings||[],matched_rows:tableRows.length})}}];\nreturn [{json:{...attempted,...tableRows[0],cas_succeeded:true,cas_operation:operation}}];"
+        "jsCode": "const obj=v=>v&&typeof v==='object'&&!Array.isArray(v);\nconst prepared=$('Validate CAS persist request').first().json||{};\nconst attempted=obj(prepared.cas_attempted)?prepared.cas_attempted:{};\nconst operation=String(prepared.cas_operation||'');\nconst rows=$input.all().map(item=>item.json||{});\nconst tableRows=rows.filter(row=>obj(row)&&row.task_id===attempted.task_id&&Number(row.version)===Number(attempted.version)&&row.cas_attempted===undefined&&row.cas_operation===undefined&&row.cas_request_valid===undefined);\nif(!prepared.cas_request_valid||tableRows.length!==1)return [{json:{...attempted,status:'conflict',message:'Concurrent or non-unique state update detected. Reload task status and retry with the current expected_version.',cas_succeeded:false,cas_operation:operation,last_error:{code:'CAS_CONFLICT',findings:prepared.cas_findings||[],matched_rows:tableRows.length}}}];\nreturn [{json:{...attempted,...tableRows[0],cas_succeeded:true,cas_operation:operation}}];"
       },
-      "id": "e2a5a1d3-7357-5cda-aef6-c92096b6ece0",
+      "id": "a69af256-8a9f-5a08-a647-9a212e560c45",
       "name": "Confirm CAS persist",
       "type": "n8n-nodes-base.code",
       "typeVersion": 2,
@@ -220,9 +212,9 @@
     },
     {
       "parameters": {
-        "jsCode": "const x=$json;const attempted=x.cas_attempted&&typeof x.cas_attempted==='object'&&!Array.isArray(x.cas_attempted)?x.cas_attempted:{};\nreturn [{json:{...attempted,status:'conflict',phase:'concurrency',message:'Invalid CAS persist request. Reload task status and retry with the current expected_version.',cas_succeeded:false,cas_operation:String(x.cas_operation||''),last_error_json:JSON.stringify({code:'INVALID_CAS_REQUEST',findings:x.cas_findings||[]})}}];"
+        "jsCode": "const x=$json;const attempted=x.cas_attempted&&typeof x.cas_attempted==='object'&&!Array.isArray(x.cas_attempted)?x.cas_attempted:{};\nreturn [{json:{...attempted,status:'conflict',message:'Invalid CAS persist request. Reload task status and retry with the current expected_version.',cas_succeeded:false,cas_operation:String(x.cas_operation||''),last_error:{code:'INVALID_CAS_REQUEST',findings:x.cas_findings||[]}}}];"
       },
-      "id": "0ad0830f-2c20-54c8-b9da-26990a4f51aa",
+      "id": "5a914fbf-e1c0-5ea2-a4e7-ff41760fcfdc",
       "name": "Build invalid CAS persist result",
       "type": "n8n-nodes-base.code",
       "typeVersion": 2,
@@ -322,7 +314,7 @@
     "callerPolicy": "workflowsFromSameOwner",
     "errorWorkflow": ""
   },
-  "versionId": "89104754-b7d6-5410-bcd2-fc244cb9722a",
+  "versionId": "7e235d70-b608-59dd-9483-9f9932ff089d",
   "meta": {
     "templateCredsSetupCompleted": false,
     "targetN8nVersion": "2.30.8",

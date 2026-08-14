@@ -190,7 +190,7 @@
     "callerPolicy": "workflowsFromSameOwner",
     "errorWorkflow": ""
   },
-  "versionId": "03653815-b947-427a-bbcc-d5288d69502b",
+  "versionId": "9a6281dd-0e85-5bc9-a9cf-05bf478108d3",
   "meta": {
     "templateCredsSetupCompleted": false,
     "targetN8nVersion": "2.30.8",

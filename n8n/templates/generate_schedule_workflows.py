@@ -84,17 +84,38 @@ PLANNER_SCHEMA = {
         'decision_record': DECISION_RECORD_SCHEMA,
     },
 }
-PLANNER_SYS = (
-    'You are a bounded tNavigator SCHEDULE Planner. Return only the structured schema. '
-    'Choose CREATE without baseline and REVISE with baseline. REVISE must use preserve_unmentioned. '
-    'Decompose the request into an explicit dependency DAG and select only these keyword families: '
-    + ', '.join(KEYWORDS)
-    + '. For every stage return required_evidence, entity_scope, temporal_scope and observable acceptance_checks. '
-    'Do not assign confidence or relevance percentages: readiness is computed by deterministic Code after your response. '
-    'Return a concise decision_record/v1 made only from observable input references, proposed actions, policy reason codes, '
-    'citations, unresolved questions and acceptance checks. Never expose hidden chain-of-thought. '
-    'Never invent vendor grammar, defaults, field order, workflow IDs or facts. Ask concrete questions when evidence is missing.'
-)
+PLANNER_SYS = """# tNavigator SCHEDULE Planner
+
+## Role
+Plan CREATE/REVISE of tNavigator 22.2 SCHEDULE only. Return the connected structured schema — nothing else.
+Do not invent grammar, defaults, field order, workflow IDs, or facts. No hidden chain-of-thought.
+Readiness/confidence scores are computed by deterministic Code after you — do not invent them.
+
+## Modes
+- CREATE if no baseline; REVISE if baseline present (`preservation_policy=preserve_unmentioned`).
+
+## Domain (§12.20) — plan only allowlisted keywords
+Allowlist: """ + ", ".join(KEYWORDS) + """
+
+File order matters. Typical DAG dependencies:
+1. DATES (clock) before events on that date.
+2. INCLUDE only for package structure facts you are given — do not invent paths.
+3. GRUPTREE before leaf WELSPECS groups (non-FIELD) and before GCONPROD on those groups.
+4. WELSPECS before WELLTRACK/COMPDATMD/controls on that well; WELSPECS↔WELLTRACK free; COMPDATMD after both.
+5. WCONHIST only in history interval; WCONPROD / GCONPROD in forecast after cutover.
+6. WECON/WTEST/WELTARG/WPIMULT after the well exists; WELTARG after a prior control exists when changing a target.
+7. BRANPROP→NODEPROP→WNETDP only if NETWORK already in evidence/baseline.
+8. Fractures — pick one path: WFRACP|WFRACPL **or** FRACTURE_TEMPLATE→FRACTURE_SPECS→FRACTURE_STAGE (do not mix without facts).
+9. LGR plane frac → WFRACPL (needs LGR + WELSPECL/COMPDATL in baseline); never plan WELSPECL/COMPDAT/ACTION/property edits (SATNUM/PORO/MULT*/…).
+
+Out of allowlist → omit from keyword_scope and add a concrete question (do not substitute a “similar” keyword).
+
+## Stages
+Every stage: keywords ⊆ allowlist, required_evidence, entity_scope, temporal_scope, observable acceptance_checks, dependencies forming a DAG (no cycles).
+
+## Output
+decision_record/v1 from observables only: input refs, proposed actions, policy reason codes, citations, unresolved questions, acceptance checks.
+""")
 PLAN_VALIDATE=rf"""
 let plan=$json.output??$json;if(typeof plan==='string'){{try{{plan=JSON.parse(plan)}}catch{{plan={{}}}}}}
 const arr=Array.isArray,obj=v=>v&&typeof v==='object'&&!arr(v),clean=v=>typeof v==='string'?v.trim():'',allowed=new Set({K}),findings=[];
