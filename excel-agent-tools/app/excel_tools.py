@@ -11,7 +11,7 @@ import math
 import os
 import re
 import uuid
-from collections import Counter
+from collections import Counter, deque
 from collections.abc import Iterable, Iterator
 from datetime import date, datetime, time
 from pathlib import Path
@@ -91,7 +91,12 @@ def _suffix(state: dict[str, Any]) -> str:
 def _json_value(value: Any) -> Any:
     if value is None:
         return None
-    if isinstance(value, (str, int, bool)):
+    if isinstance(value, str):
+        stripped = value.strip()
+        if not stripped or stripped.casefold() in _EMPTY_PLACEHOLDERS:
+            return None
+        return value
+    if isinstance(value, (int, bool)):
         return value
     if isinstance(value, float):
         return None if math.isnan(value) or math.isinf(value) else value
@@ -106,8 +111,53 @@ def _json_value(value: Any) -> Any:
     return str(value)
 
 
+_EMPTY_PLACEHOLDERS = frozenset({"…", "...", "⋯", "n/a", "null"})
+_NOTE_SHEET_NAMES = frozenset(
+    {"description", "notes", "note", "readme", "contents", "afosheet", "changelog"}
+)
+_PREAMBLE_SHEET_NAMES = frozenset({"index"})
+_GENERIC_COLUMN_TOKENS = frozenset(
+    {"rate", "index", "price", "value", "total", "average", "avg", "percent", "bbl", "mmbtu"}
+)
+_MISSING_QUERY_RE = re.compile(
+    r"\b(?:missing|ellipsis|unavailable|empty|null|n/a|нет\s+данн|пуст)\b",
+    re.IGNORECASE,
+)
+_LATEST_COUNT_RE = re.compile(r"(?:latest|last|последн\w*)\s+(\d+)", re.IGNORECASE)
+_CAP_COUNT_RE = re.compile(r"(?:up to|at most|no more than|не более|до)\s+(\d+)", re.IGNORECASE)
+_LATEST_PERIOD_RE = re.compile(
+    r"(?:latest|last)(?: available)? (?:period|observation)(?: only)?",
+    re.IGNORECASE,
+)
+_UNIT_HINT = re.compile(
+    r"(?:[\$%/()]|index|\bbbl\b|\bmmbtu\b|\bmt\b|\bkg\b|\btonne|\b2010\s*=\s*100)",
+    re.IGNORECASE,
+)
+_SHEET_SUFFIX_ALIASES = {
+    "p": ("people", "persons", "person"),
+    "m": ("men", "male", "males", "man"),
+    "w": ("women", "female", "females", "woman"),
+}
+_MATCH_STOP_WORDS = frozenset(
+    {
+        "extract", "from", "this", "workbook", "data", "table", "sheet", "file", "excel", "xlsx",
+        "csv", "all", "with", "and", "the", "for", "not", "main", "visible", "orders", "order",
+        "return", "latest", "last", "only", "ignore", "use", "available", "period", "rows", "row",
+        "values", "value", "give", "me", "what", "is", "are", "please", "find", "shown", "those",
+        "using", "into", "onto", "that", "this", "these", "them", "then", "than", "also", "just",
+        "извлеки", "извлечь", "из", "этого", "этой", "этот", "книги", "книга", "файла", "файл",
+        "данные", "таблица", "лист", "все", "с", "и", "не", "главной", "видимого",
+    }
+)
+
+
 def _is_empty(value: Any) -> bool:
-    return value is None or (isinstance(value, str) and not value.strip())
+    if value is None:
+        return True
+    if isinstance(value, str):
+        stripped = value.strip()
+        return not stripped or stripped.casefold() in _EMPTY_PLACEHOLDERS
+    return False
 
 
 def _nonempty_count(row: Iterable[Any]) -> int:
@@ -333,10 +383,21 @@ def _looks_like_data_row(row: list[Any], header: list[Any]) -> bool:
 def _is_likely_metadata_pair(values: list[Any]) -> bool:
     """Recognise common report key/value labels before opening a narrow table."""
     first = next((value for value in values if not _is_empty(value)), None)
-    return isinstance(first, str) and first.strip().casefold() in {
+    if not isinstance(first, str):
+        return False
+    text = first.strip()
+    folded = text.casefold()
+    if folded in {
         "report", "entity", "run date", "currency", "confidential", "prepared by",
         "generated", "source", "period", "version", "owner",
-    }
+    }:
+        return True
+    if text.startswith("*") or len(text) >= 80:
+        return True
+    nonempty = [value for value in values if not _is_empty(value)]
+    if len(nonempty) == 2 and all(isinstance(value, str) and len(str(value).strip()) >= 60 for value in nonempty):
+        return True
+    return False
 
 
 def _split_row_segments(row: list[Any]) -> list[tuple[int, int]]:
@@ -482,6 +543,12 @@ def _candidate_has_data(candidate: dict[str, Any]) -> bool:
     return candidate["data_row_count"] > 0
 
 
+def _is_numeric_cell(value: Any) -> bool:
+    if isinstance(value, bool):
+        return False
+    return isinstance(value, (int, float, datetime, date, time))
+
+
 def _append_candidate_data(candidate: dict[str, Any], row_number: int, row: list[Any]) -> None:
     """Record only bounded metadata for a detected data row.
 
@@ -491,12 +558,41 @@ def _append_candidate_data(candidate: dict[str, Any], row_number: int, row: list
     """
     start_column = candidate["start_column"]
     end_column = candidate["end_column"]
+    values = row[start_column - 1 : end_column]
     if candidate["data_row_count"] == 0:
         candidate["data_start_row"] = row_number
     candidate["last_data_row"] = row_number
-    candidate["last_data_values"] = row[start_column - 1 : end_column]
+    candidate["last_data_values"] = values
     candidate["data_row_count"] += 1
     candidate["blank_row_count"] = 0
+    numeric_cells = 0
+    text_cells = 0
+    long_text_cells = 0
+    for value in values:
+        if _is_empty(value):
+            continue
+        if _is_numeric_cell(value):
+            numeric_cells += 1
+            continue
+        text_cells += 1
+        if isinstance(value, str) and len(value.strip()) >= 80:
+            long_text_cells += 1
+    candidate["numeric_cells"] = candidate.get("numeric_cells", 0) + numeric_cells
+    candidate["text_cells"] = candidate.get("text_cells", 0) + text_cells
+    candidate["long_text_cells"] = candidate.get("long_text_cells", 0) + long_text_cells
+    first = next((value for value in values if not _is_empty(value)), None)
+    if isinstance(first, str) and first.lstrip().startswith("*"):
+        candidate["star_rows"] = candidate.get("star_rows", 0) + 1
+    if start_column > 1:
+        occupancy = candidate.setdefault("left_occupancy", {})
+        for column in range(1, start_column):
+            stub = row[column - 1] if column - 1 < len(row) else None
+            if not _is_empty(stub):
+                occupancy[column] = occupancy.get(column, 0) + 1
+        stub_index = start_column - 2
+        stub = row[stub_index] if stub_index < len(row) else None
+        if not _is_empty(stub):
+            candidate["left_stub_populated"] = candidate.get("left_stub_populated", 0) + 1
 
 
 def _looks_like_continuation_after_gap(
@@ -547,11 +643,418 @@ def _looks_like_continuation_after_gap(
     return populated_count >= max(minimum_cells, math.ceil(previous_count * 0.6))
 
 
+def _is_note_sheet_name(name: str) -> bool:
+    folded = name.strip().casefold()
+    return folded in _NOTE_SHEET_NAMES or folded.startswith("note")
+
+
+def _is_preamble_sheet_name(name: str) -> bool:
+    return name.strip().casefold() in _PREAMBLE_SHEET_NAMES
+
+
+def _is_skipped_sheet_name(name: str) -> bool:
+    return _is_note_sheet_name(name) or _is_preamble_sheet_name(name)
+
+
+def _is_units_row(values: list[Any]) -> bool:
+    nonempty = [value for value in values if not _is_empty(value)]
+    if not nonempty:
+        return False
+    if any(_is_numeric_cell(value) for value in nonempty):
+        return False
+    unitish = 0
+    for value in nonempty:
+        if not isinstance(value, str):
+            return False
+        text = value.strip()
+        if len(text) > 40:
+            return False
+        if _UNIT_HINT.search(text):
+            unitish += 1
+    return unitish >= max(1, math.ceil(len(nonempty) * 0.6))
+
+
+def _candidate_is_notes(candidate: dict[str, Any]) -> bool:
+    width = candidate["end_column"] - candidate["start_column"] + 1
+    data_rows = candidate["data_row_count"]
+    numeric = candidate.get("numeric_cells", 0)
+    text = candidate.get("text_cells", 0)
+    long_text = candidate.get("long_text_cells", 0)
+    total = numeric + text
+    sheet_name = str(candidate.get("sheet", ""))
+    if _is_note_sheet_name(sheet_name) and (width <= 3 or (total and numeric / total < 0.2)):
+        return True
+    if _is_preamble_sheet_name(sheet_name) and total and numeric / total < 0.2:
+        return True
+    if width <= 2 and data_rows >= 1 and total:
+        if long_text / max(text, 1) >= 0.35 and numeric / total < 0.25:
+            return True
+        if candidate.get("star_rows", 0) >= max(2, math.ceil(0.3 * data_rows)):
+            return True
+    return False
+
+
+def _title_from_preamble(rows: Iterable[tuple[int, list[Any]]], limit: int = 400) -> str:
+    parts: list[str] = []
+    for _, row in rows:
+        for value in row[:16]:
+            if not isinstance(value, str):
+                continue
+            text = value.strip()
+            if 2 <= len(text) <= 80:
+                parts.append(text)
+    seen: set[str] = set()
+    unique: list[str] = []
+    for part in parts:
+        folded = part.casefold()
+        if folded in seen:
+            continue
+        seen.add(folded)
+        unique.append(part)
+    return " ".join(unique)[:limit]
+
+
+def _expand_stub_column(candidate: dict[str, Any]) -> None:
+    """Include populated row-label/date columns immediately left of the header block."""
+    start_column = candidate["start_column"]
+    if start_column <= 1:
+        return
+    data_rows = candidate["data_row_count"]
+    if data_rows < 1:
+        return
+    threshold = max(1, math.ceil(data_rows * 0.5))
+    occupancy = dict(candidate.get("left_occupancy") or {})
+    if not occupancy and candidate.get("left_stub_populated"):
+        occupancy[start_column - 1] = int(candidate["left_stub_populated"])
+    header_row = candidate["header_rows"][0][1]
+    new_start = start_column
+    scanned = 0
+    for column in range(start_column - 1, 0, -1):
+        scanned += 1
+        if scanned > 8:
+            break
+        header = header_row[column - 1] if column - 1 < len(header_row) else None
+        if not _is_empty(header):
+            break
+        if occupancy.get(column, 0) >= threshold:
+            new_start = column
+    candidate["start_column"] = new_start
+
+
+def _absorb_units_header(state: dict[str, Any], candidate: dict[str, Any]) -> None:
+    data_start = candidate.get("data_start_row")
+    end_row = candidate.get("last_data_row")
+    if not isinstance(data_start, int) or not isinstance(end_row, int) or data_start > end_row:
+        return
+    first_row: list[Any] | None = None
+    for _, row in _iter_sheet_rows(state, candidate["sheet"], data_start, data_start):
+        first_row = row
+        break
+    if first_row is None:
+        return
+    values = first_row[candidate["start_column"] - 1 : candidate["end_column"]]
+    if not _is_units_row(values):
+        return
+    if data_start >= end_row:
+        candidate["data_row_count"] = 0
+        return
+    candidate["data_start_row"] = data_start + 1
+    candidate["data_row_count"] = max(0, candidate["data_row_count"] - 1)
+
+
+def _compact_detected_table(table: dict[str, Any]) -> dict[str, Any]:
+    return {
+        "table_id": table["table_id"],
+        "sheet": table["sheet"],
+        "header_row": table["header_row"],
+        "header_rows": table["header_rows"],
+        "range": table["range"],
+        "columns": list(table.get("columns") or []),
+        "row_count": table.get("row_count"),
+        "kind": table.get("kind", "data"),
+        "title": table.get("title") or "",
+    }
+
+
+def _match_tokens(text: str) -> set[str]:
+    words = re.findall(r"[^\W_]+", (text or "").casefold(), flags=re.UNICODE)
+    return {word for word in words if len(word) >= 3 and word not in _MATCH_STOP_WORDS}
+
+
+def _token_overlap(query_tokens: set[str], target_tokens: set[str]) -> set[str]:
+    overlap: set[str] = set()
+    for query_token in query_tokens:
+        for target_token in target_tokens:
+            if query_token == target_token or (
+                len(query_token) >= 4
+                and len(target_token) >= 4
+                and (target_token.startswith(query_token) or query_token.startswith(target_token))
+            ):
+                overlap.add(query_token)
+                break
+    return overlap
+
+
+def _sheet_alias_tokens(name: str) -> set[str]:
+    tokens = _match_tokens(re.sub(r"[\s_\-]+", " ", name))
+    parts = [part for part in re.split(r"[\s_\-]+", name.strip()) if part]
+    if parts:
+        suffix = parts[-1].casefold()
+        if suffix in _SHEET_SUFFIX_ALIASES:
+            tokens.update(_SHEET_SUFFIX_ALIASES[suffix])
+    return tokens
+
+
+def _negated_tokens(query: str) -> set[str]:
+    tokens: set[str] = set()
+    for match in re.finditer(
+        r"(?:ignore|do not use|don't use|not(?: the)?)\s+([^.,;]+)",
+        query,
+        flags=re.IGNORECASE,
+    ):
+        tokens.update(_match_tokens(match.group(1)))
+    return tokens
+
+
+def _column_phrase_hits(query: str, columns: list[str]) -> int:
+    folded = query.casefold()
+    hits = 0
+    for column in columns:
+        label = column.strip()
+        if len(label) < 4:
+            continue
+        if label.casefold() in folded:
+            hits += 1
+    return hits
+
+
+def _score_text_overlap(query_tokens: set[str], target_tokens: set[str], negated: set[str]) -> int:
+    overlap = _token_overlap(query_tokens, target_tokens)
+    penalty = _token_overlap(negated, target_tokens)
+    return 8 * len(overlap) - 20 * len(penalty)
+
+
+def _ensure_sheet_labels(state: dict[str, Any]) -> dict[str, dict[str, Any]]:
+    cached = state.get("sheet_labels")
+    if isinstance(cached, dict) and cached:
+        return cached
+    labels: dict[str, dict[str, Any]] = {}
+    for sheet in _sheets(state):
+        name = sheet["name"]
+        snippets: list[str] = []
+        if sheet.get("state") != "hidden":
+            for _, row in _iter_sheet_rows(state, name, 1, 8):
+                for value in row[:12]:
+                    if isinstance(value, str):
+                        text = value.strip()
+                        if 2 <= len(text) <= 80:
+                            snippets.append(text)
+        title = " ".join(dict.fromkeys(snippets))[:400]
+        labels[name] = {
+            "sheet": name,
+            "title": title,
+            "hidden": sheet.get("state") == "hidden",
+            "tokens": sorted(_sheet_alias_tokens(name) | _match_tokens(title)),
+        }
+    state["sheet_labels"] = labels
+    return labels
+
+
+def _as_token_set(value: Any) -> set[str]:
+    if isinstance(value, set):
+        return {str(item) for item in value}
+    if isinstance(value, list):
+        return {str(item) for item in value if item}
+    if isinstance(value, str) and value.strip():
+        return _match_tokens(value)
+    return set()
+
+
+def _phrase_bonus(query: str, text: str) -> int:
+    query_words = re.findall(r"[^\W_]+", (query or "").casefold(), flags=re.UNICODE)
+    haystack = (text or "").casefold()
+    bonus = 0
+    for index in range(len(query_words) - 1):
+        left, right = query_words[index], query_words[index + 1]
+        if left in _MATCH_STOP_WORDS or right in _MATCH_STOP_WORDS:
+            continue
+        if f"{left} {right}" in haystack:
+            bonus += 18
+    return bonus
+
+
+def _score_sheet(query: str, query_tokens: set[str], negated: set[str], label: dict[str, Any]) -> int:
+    if label.get("hidden"):
+        return -1000
+    name = str(label["sheet"])
+    title = str(label.get("title") or "")
+    folded_query = query.casefold()
+    score = _score_text_overlap(query_tokens, _as_token_set(label.get("tokens")), negated)
+    score += _phrase_bonus(query, f"{name} {title}")
+    if name.casefold() in folded_query:
+        score += 50
+    if _is_skipped_sheet_name(name) and not (_match_tokens(name) & query_tokens):
+        score -= 40
+    return score
+
+
+def _score_table(query: str, query_tokens: set[str], negated: set[str], table: dict[str, Any], sheet_labels: dict[str, dict[str, Any]]) -> int:
+    folded_query = query.casefold()
+    sheet = str(table.get("sheet") or "")
+    table_range = str(table.get("range") or "")
+    columns = [str(column) for column in table.get("columns") or [] if column]
+    label = sheet_labels.get(sheet) or {}
+    tokens = _as_token_set(label.get("tokens")) | _sheet_alias_tokens(sheet) | _match_tokens(str(table.get("title") or label.get("title") or ""))
+    score = _score_sheet(
+        query,
+        query_tokens,
+        negated,
+        {"sheet": sheet, "title": table.get("title") or label.get("title") or "", "tokens": sorted(tokens), "hidden": False},
+    )
+    locator = f"{sheet}!{table_range}".casefold()
+    if locator in folded_query:
+        score += 80
+    if table_range.casefold() in folded_query:
+        score += 40
+    score += 12 * _column_phrase_hits(query, columns)
+    score += _score_text_overlap(query_tokens, _match_tokens(" ".join(columns[:40])), negated) // 2
+    if table.get("kind") == "notes":
+        score -= 80
+    return score
+
+
+def _normalize_label(text: str) -> str:
+    compact = re.sub(r"[\n\r]+", " ", text or "")
+    compact = re.sub(r"[^\w\s]+", " ", compact, flags=re.UNICODE)
+    return re.sub(r"\s+", " ", compact).strip().casefold()
+
+
+def _is_date_stub_column(column: str) -> bool:
+    folded = column.casefold()
+    return folded.startswith("column ") or any(token in folded for token in ("date", "period", "month", "year", "time"))
+
+
+def _phrase_in_text(phrase: str, text: str) -> bool:
+    if not phrase or len(phrase) < 4:
+        return False
+    index = text.find(phrase)
+    if index < 0:
+        return False
+    if index > 0 and text[index - 1].isalnum():
+        return False
+    end = index + len(phrase)
+    if end < len(text) and text[end].isalnum():
+        return False
+    return True
+
+
+def _column_series_label(column: str) -> str:
+    parts = re.split(r"\s+[—–-]\s+", (column or "").strip())
+    return parts[-1] if parts else (column or "")
+
+
+def _column_phrase_in_query(query: str, column: str) -> bool:
+    folded_query = _normalize_label(query)
+    raw_query = query.casefold()
+    for label_source in (column, _column_series_label(column)):
+        label = _normalize_label(label_source)
+        raw = re.sub(r"\s+", " ", (label_source or "").replace("\n", " ")).strip().casefold()
+        if _phrase_in_text(label, folded_query) or _phrase_in_text(raw, raw_query):
+            return True
+    return False
+
+
+def _column_tokens_covered(column: str, query_tokens: set[str]) -> bool:
+    col_tokens = _match_tokens(_column_series_label(column)) or _match_tokens(column)
+    if not col_tokens:
+        return False
+    distinctive = col_tokens - _GENERIC_COLUMN_TOKENS
+    needed = distinctive or col_tokens
+    return all(_token_overlap({token}, query_tokens) for token in needed)
+
+
+def _suggested_select(query: str, columns: list[str]) -> list[str]:
+    query_tokens = _match_tokens(query)
+    matched: list[str] = []
+    for column in columns:
+        if _is_date_stub_column(column) and not _column_phrase_in_query(query, column):
+            continue
+        if _column_phrase_in_query(query, column) or (
+            len(_match_tokens(column)) >= 2 and _column_tokens_covered(column, query_tokens)
+        ):
+            matched.append(column)
+    if not matched:
+        return []
+    first = columns[0] if columns else ""
+    if first and first not in matched and _is_date_stub_column(first):
+        matched = [first, *matched]
+    return matched
+
+
+def _competing_columns(query: str, columns: list[str]) -> list[str]:
+    query_tokens = _match_tokens(query)
+    if not query_tokens:
+        return []
+    content_tokens = query_tokens - _GENERIC_COLUMN_TOKENS
+    competitors: list[str] = []
+    for column in columns:
+        if _is_date_stub_column(column):
+            continue
+        col_tokens = _match_tokens(_column_series_label(column)) or _match_tokens(column)
+        needle = content_tokens or query_tokens
+        if _token_overlap(needle, col_tokens):
+            competitors.append(column)
+    return competitors
+
+
+def _suggested_limit(query: str) -> int | None:
+    match = _LATEST_COUNT_RE.search(query) or _CAP_COUNT_RE.search(query)
+    if match:
+        return max(1, min(int(match.group(1)), 10000))
+    if _LATEST_PERIOD_RE.search(query):
+        return 1
+    return None
+
+
+def _suggested_tail(query: str) -> bool:
+    if _LATEST_COUNT_RE.search(query) or _LATEST_PERIOD_RE.search(query):
+        return True
+    return False
+
+
+def _suggested_filters(query: str, columns: list[str]) -> list[dict[str, Any]]:
+    if not _MISSING_QUERY_RE.search(query):
+        return []
+    targets = [column for column in columns if not _is_date_stub_column(column)]
+    if not targets:
+        return []
+    folded = query.casefold()
+    named = [column for column in targets if _column_phrase_in_query(query, column) or column.casefold() in folded]
+    selected = named or (targets if len(targets) == 1 else [])
+    return [{"field": column, "operator": "is_null"} for column in selected]
+
+
+def _unique_winner(scored: list[tuple[int, Any]], min_score: int, gap: int) -> Any | None:
+    if not scored:
+        return None
+    scored = sorted(scored, key=lambda item: item[0], reverse=True)
+    best_score, best = scored[0]
+    second = scored[1][0] if len(scored) > 1 else 0
+    if best_score < min_score:
+        return None
+    if len(scored) == 1:
+        return best
+    needed = second + max(gap, int(second * 0.2))
+    if best_score >= needed:
+        return best
+    return None
+
+
 @tool(
     _schema(
         "detect_tables",
-        "Detects tabular regions, including up to a bounded number of blank visual rows inside one table, and saves their IDs for later tools. Use optional sheet to restrict search.",
-        {"sheet": {"type": "string", "minLength": 1}, "max_tables": {"type": "integer", "minimum": 1, "maximum": 30, "default": 10}},
+        "Detects tabular regions, including up to a bounded number of blank visual rows inside one table, and saves their IDs for later tools. Use optional sheet to restrict search. Returns compact table ids, ranges, column names and row counts — never the workbook.",
+        {"sheet": {"type": "string", "minLength": 1}, "max_tables": {"type": "integer", "minimum": 1, "maximum": 80, "default": 10}},
     )
 )
 def detect_tables(ctx: dict[str, Any], args: dict[str, Any]) -> dict[str, Any]:
@@ -560,8 +1063,8 @@ def detect_tables(ctx: dict[str, Any], args: dict[str, Any]) -> dict[str, Any]:
     max_tables = args.get("max_tables", 10)
     if requested_sheet is not None and (not isinstance(requested_sheet, str) or not requested_sheet):
         raise ToolError("INVALID_ARGUMENTS", "sheet must be a non-empty string")
-    if not isinstance(max_tables, int) or not 1 <= max_tables <= 30:
-        raise ToolError("INVALID_ARGUMENTS", "max_tables must be from 1 to 30")
+    if not isinstance(max_tables, int) or not 1 <= max_tables <= 80:
+        raise ToolError("INVALID_ARGUMENTS", "max_tables must be from 1 to 80")
     sheets = [requested_sheet] if requested_sheet else [item["name"] for item in _sheets(state)]
     if requested_sheet:
         _ensure_sheet(state, requested_sheet)
@@ -589,6 +1092,7 @@ def detect_tables(ctx: dict[str, Any], args: dict[str, Any]) -> dict[str, Any]:
             "last_data_values": [],
             "data_row_count": 0,
             "blank_row_count": 0,
+            "left_occupancy": {},
         }
 
     def open_candidates(
@@ -635,6 +1139,7 @@ def detect_tables(ctx: dict[str, Any], args: dict[str, Any]) -> dict[str, Any]:
         iterator = iter(_iter_sheet_rows(state, sheet))
         current_item = next(iterator, None)
         active: list[dict[str, Any]] = []
+        preamble: deque[tuple[int, list[Any]]] = deque(maxlen=8)
         while current_item is not None:
             row_number, row = current_item
             next_item = next(iterator, None)
@@ -658,7 +1163,12 @@ def detect_tables(ctx: dict[str, Any], args: dict[str, Any]) -> dict[str, Any]:
                 continue
 
             if not active:
+                if bounds is not None:
+                    preamble.append((row_number, row))
                 active = open_candidates(sheet, row_number, row, next_row)
+                title = _title_from_preamble(preamble)
+                for candidate in active:
+                    candidate["title"] = title
                 current_item = next_item
                 continue
 
@@ -734,11 +1244,13 @@ def detect_tables(ctx: dict[str, Any], args: dict[str, Any]) -> dict[str, Any]:
             # If every active table was explicitly rejected as a continuation after
             # a short blank gap, revisit this row as a possible fresh header. That
             # prevents a neighbouring table from being swallowed or skipped.
-            active = (
-                open_candidates(sheet, row_number, row, next_row)
-                if restart_as_header and not next_active
-                else next_active
-            )
+            if restart_as_header and not next_active:
+                active = open_candidates(sheet, row_number, row, next_row)
+                title = _title_from_preamble(preamble)
+                for candidate in active:
+                    candidate["title"] = title
+            else:
+                active = next_active
             if len(found) >= max_tables:
                 break
             current_item = next_item
@@ -749,18 +1261,29 @@ def detect_tables(ctx: dict[str, Any], args: dict[str, Any]) -> dict[str, Any]:
         if len(found) >= max_tables:
             break
 
+    existing_by_range: dict[tuple[str, str], dict[str, Any]] = {}
+    for table in (state.get("tables") or {}).values():
+        if isinstance(table, dict) and table.get("sheet") and table.get("range"):
+            existing_by_range[(str(table["sheet"]), str(table["range"]))] = table
     response_tables: list[dict[str, Any]] = []
     for candidate in found:
+        _expand_stub_column(candidate)
+        _absorb_units_header(state, candidate)
         header_rows: list[tuple[int, list[Any]]] = candidate["header_rows"]
-        if not _candidate_has_data(candidate):
+        if not _candidate_has_data(candidate) or _candidate_is_notes(candidate):
             continue
         columns = _join_header_rows(
             [row for _, row in header_rows], candidate["start_column"], candidate["end_column"]
         )
-        table_id = _id("tbl")
         data_start_row = candidate["data_start_row"]
         end_row = candidate["last_data_row"]
         assert isinstance(data_start_row, int) and isinstance(end_row, int)
+        table_range = f"{get_column_letter(candidate['start_column'])}{header_rows[0][0]}:{get_column_letter(candidate['end_column'])}{end_row}"
+        duplicate = existing_by_range.get((candidate["sheet"], table_range))
+        if duplicate:
+            response_tables.append(_compact_detected_table(duplicate))
+            continue
+        table_id = _id("tbl")
         persisted = {
             "table_id": table_id,
             "sheet": candidate["sheet"],
@@ -770,14 +1293,201 @@ def detect_tables(ctx: dict[str, Any], args: dict[str, Any]) -> dict[str, Any]:
             "start_column": candidate["start_column"],
             "end_column": candidate["end_column"],
             "end_row": end_row,
-            "range": f"{get_column_letter(candidate['start_column'])}{header_rows[0][0]}:{get_column_letter(candidate['end_column'])}{end_row}",
+            "range": table_range,
             "columns": columns,
+            "row_count": candidate["data_row_count"],
+            "kind": "data",
+            "title": candidate.get("title") or "",
         }
         state.setdefault("tables", {})[table_id] = persisted
-        response_tables.append(
-            {key: persisted[key] for key in ("table_id", "sheet", "header_row", "header_rows", "range")}
-        )
+        existing_by_range[(persisted["sheet"], persisted["range"])] = persisted
+        response_tables.append(_compact_detected_table(persisted))
     return {"tables": response_tables}
+
+
+@tool(
+    _schema(
+        "match_tables",
+        "Ranks detected tables against a natural-language request without reading the workbook into the model. Call this to pin one table or to see compact candidates. If no tables are saved yet, it inspects sheet titles first and only detects the matching sheet(s).",
+        {
+            "query": {"type": "string", "minLength": 1},
+            "max_candidates": {"type": "integer", "minimum": 1, "maximum": 12, "default": 8},
+            "sheet": {"type": "string", "minLength": 1},
+        },
+        ["query"],
+    )
+)
+def match_tables(ctx: dict[str, Any], args: dict[str, Any]) -> dict[str, Any]:
+    state = ctx["state"]
+    query = args.get("query")
+    max_candidates = args.get("max_candidates", 8)
+    requested_sheet = args.get("sheet")
+    if not isinstance(query, str) or not query.strip():
+        raise ToolError("INVALID_ARGUMENTS", "query must be a non-empty string")
+    if not isinstance(max_candidates, int) or not 1 <= max_candidates <= 12:
+        raise ToolError("INVALID_ARGUMENTS", "max_candidates must be from 1 to 12")
+    if requested_sheet is not None and (not isinstance(requested_sheet, str) or not requested_sheet):
+        raise ToolError("INVALID_ARGUMENTS", "sheet must be a non-empty string")
+
+    query_text = query.strip()
+    query_tokens = _match_tokens(query_text)
+    negated = _negated_tokens(query_text)
+    sheet_labels = _ensure_sheet_labels(state)
+    existing = [table for table in (state.get("tables") or {}).values() if isinstance(table, dict)]
+    existing_sheets = {str(table.get("sheet")) for table in existing}
+
+    target_sheets: list[str] = []
+    if requested_sheet:
+        _ensure_sheet(state, requested_sheet)
+        target_sheets = [requested_sheet]
+    else:
+        scored_sheets = [
+            (_score_sheet(query_text, query_tokens, negated, label), name)
+            for name, label in sheet_labels.items()
+            if not _is_skipped_sheet_name(name) or (_match_tokens(name) & query_tokens)
+        ]
+        winner = _unique_winner(scored_sheets, min_score=18, gap=10)
+        ranked_sheets = sorted(scored_sheets, key=lambda item: item[0], reverse=True)
+        positive = [name for score, name in ranked_sheets if score >= 12]
+        visible_data = [
+            name
+            for name, label in sheet_labels.items()
+            if not label.get("hidden") and not _is_skipped_sheet_name(name)
+        ]
+        if winner:
+            target_sheets = [winner]
+        elif 1 <= len(positive) <= 4:
+            target_sheets = positive
+        elif len(positive) > 4:
+            sheet_candidates = [
+                {
+                    "sheet": name,
+                    "title": sheet_labels.get(name, {}).get("title") or "",
+                    "score": score,
+                }
+                for score, name in ranked_sheets[:max_candidates]
+                if score > 0
+            ]
+            match = {
+                "selected": None,
+                "candidates": [],
+                "sheet_candidates": sheet_candidates,
+                "suggested_select": [],
+                "ambiguous": True,
+                "reason": "ambiguous_sheets",
+            }
+            state["table_match"] = {
+                "query": query_text,
+                "selected_table_id": None,
+                "ambiguous": True,
+                "reason": "ambiguous_sheets",
+                "candidate_ids": [],
+                "suggested_select": [],
+            }
+            return match
+        elif existing:
+            target_sheets = []
+        elif len(visible_data) > 8:
+            sheet_candidates = [
+                {
+                    "sheet": name,
+                    "title": sheet_labels.get(name, {}).get("title") or "",
+                    "score": score,
+                }
+                for score, name in ranked_sheets[:max_candidates]
+            ]
+            match = {
+                "selected": None,
+                "candidates": [],
+                "sheet_candidates": sheet_candidates,
+                "suggested_select": [],
+                "ambiguous": True,
+                "reason": "ambiguous_sheets",
+            }
+            state["table_match"] = {
+                "query": query_text,
+                "selected_table_id": None,
+                "ambiguous": True,
+                "reason": "ambiguous_sheets",
+                "candidate_ids": [],
+                "suggested_select": [],
+            }
+            return match
+        else:
+            target_sheets = visible_data
+
+    for sheet in target_sheets:
+        if sheet not in existing_sheets:
+            detect_tables(ctx, {"sheet": sheet, "max_tables": 80})
+            existing_sheets.add(sheet)
+
+    if not (state.get("tables") or {}) and not target_sheets:
+        detect_tables(ctx, {"max_tables": 80})
+
+    tables = [
+        table
+        for table in (state.get("tables") or {}).values()
+        if isinstance(table, dict) and table.get("kind") != "notes"
+    ]
+    scored_tables = [
+        (_score_table(query_text, query_tokens, negated, table, sheet_labels), table)
+        for table in tables
+    ]
+    scored_tables.sort(key=lambda item: item[0], reverse=True)
+    selected_table = _unique_winner(scored_tables, min_score=16, gap=12)
+    if selected_table is None and len(tables) == 1 and scored_tables and scored_tables[0][0] >= 0:
+        selected_table = tables[0]
+    candidates = [_compact_detected_table(table) for _, table in scored_tables[:max_candidates]]
+    selected = _compact_detected_table(selected_table) if selected_table else None
+    columns = list(selected_table.get("columns") or []) if selected_table else []
+    suggested = _suggested_select(query_text, columns) if selected_table else []
+    column_candidates: list[str] = []
+    suggested_limit = _suggested_limit(query_text)
+    suggested_tail = _suggested_tail(query_text)
+    suggested_filters = _suggested_filters(query_text, suggested or columns)
+    if selected is None and not tables:
+        reason = "no_tables"
+        ambiguous = False
+    elif selected is None:
+        reason = "ambiguous_tables"
+        ambiguous = True
+    else:
+        phrase_hits = [column for column in columns if _column_phrase_in_query(query_text, column)]
+        competitors = _competing_columns(query_text, columns)
+        if not phrase_hits and len(competitors) >= 2:
+            reason = "ambiguous_columns"
+            ambiguous = True
+            suggested = []
+            suggested_filters = []
+            column_candidates = competitors[:max_candidates]
+        else:
+            reason = "unique_table"
+            ambiguous = False
+    match = {
+        "selected": selected,
+        "candidates": candidates if selected is None else [selected],
+        "sheet_candidates": [],
+        "column_candidates": column_candidates,
+        "suggested_select": suggested,
+        "suggested_limit": suggested_limit,
+        "suggested_tail": suggested_tail,
+        "suggested_filters": suggested_filters,
+        "ambiguous": ambiguous,
+        "reason": reason,
+    }
+    state["table_match"] = {
+        "query": query_text,
+        "selected_table_id": selected["table_id"] if selected else None,
+        "ambiguous": ambiguous,
+        "reason": reason,
+        "candidate_ids": [item["table_id"] for item in (candidates if selected is None else [selected])],
+        "suggested_select": suggested,
+        "suggested_limit": suggested_limit,
+        "suggested_tail": suggested_tail,
+        "suggested_filters": suggested_filters,
+        "column_candidates": column_candidates,
+    }
+    return match
 
 @tool(
     _schema(
@@ -936,6 +1646,7 @@ def _iter_matching_records(state: dict[str, Any], table: dict[str, Any], selecte
             "select": {"type": "array", "items": {"type": "string"}, "minItems": 1},
             "filters": {"type": "array", "items": {"type": "object"}, "default": []},
             "limit": {"type": "integer", "minimum": 1, "maximum": 10000, "default": 200},
+            "tail": {"type": "boolean", "default": False},
         },
         ["table_id"],
     )
@@ -944,8 +1655,11 @@ def query_table(ctx: dict[str, Any], args: dict[str, Any]) -> dict[str, Any]:
     state = ctx["state"]
     table = _table(state, args.get("table_id", ""))
     limit = args.get("limit", 200)
+    tail = args.get("tail", False)
     if not isinstance(limit, int) or not 1 <= limit <= 10000:
         raise ToolError("INVALID_ARGUMENTS", "limit must be from 1 to 10000")
+    if not isinstance(tail, bool):
+        raise ToolError("INVALID_ARGUMENTS", "tail must be a boolean")
     columns, indices, filters = _prepare_query(table, args)
     result_id = _id("res")
     relative_path = f"results/{result_id}.jsonl"
@@ -954,11 +1668,20 @@ def query_table(ctx: dict[str, Any], args: dict[str, Any]) -> dict[str, Any]:
     row_count = 0
     stored_rows = 0
     preview_rows: list[dict[str, Any]] = []
-    # Keep no large table in memory; a later export can re-run the saved deterministic query for all records.
+    tail_buffer: deque[dict[str, Any]] | None = deque(maxlen=limit) if tail else None
     with output_path.open("w", encoding="utf-8") as output:
         for record in _iter_matching_records(state, table, columns, indices, filters):
             row_count += 1
+            if tail_buffer is not None:
+                tail_buffer.append(record)
+                continue
             if stored_rows < limit:
+                output.write(json.dumps(record, ensure_ascii=False, separators=(",", ":")) + "\n")
+                stored_rows += 1
+                if len(preview_rows) < MAX_QUERY_PREVIEW_ROWS:
+                    preview_rows.append(record)
+        if tail_buffer is not None:
+            for record in tail_buffer:
                 output.write(json.dumps(record, ensure_ascii=False, separators=(",", ":")) + "\n")
                 stored_rows += 1
                 if len(preview_rows) < MAX_QUERY_PREVIEW_ROWS:
@@ -969,13 +1692,10 @@ def query_table(ctx: dict[str, Any], args: dict[str, Any]) -> dict[str, Any]:
         "columns": columns,
         "row_count": row_count,
         "stored_rows": stored_rows,
-        # A bounded, JSON-safe preview belongs in session state so the workflow
-        # can return useful records without ever loading the complete result.
-        # Full data remains in the session artifact/JSONL file.
         "preview_records": preview_rows,
         "truncated": row_count > stored_rows,
         "path": relative_path,
-        "query": {"select": columns, "filters": args.get("filters", [])},
+        "query": {"select": columns, "filters": args.get("filters", []), "limit": limit, "tail": tail},
     }
     return {
         "result_id": result_id,

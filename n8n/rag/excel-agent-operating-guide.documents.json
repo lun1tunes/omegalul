@@ -78,12 +78,13 @@
       "target_base": "excel_protocol",
       "knowledge_type": "protocol_instruction",
       "knowledge_id": "excel-agent-discovery-and-tables",
-      "revision": "1",
+      "revision": "3",
       "title": "excel agent discovery and tables",
       "keywords": [
         "DISCOVERY-AND-TABLES",
         "WORKBOOK_INTROSPECT",
         "DETECT_TABLES",
+        "MATCH_TABLES",
         "DESCRIBE_TABLE"
       ],
       "topics": [
@@ -93,12 +94,12 @@
       "status": "active",
       "author": "excel-protocol-maintainer",
       "access_scope": "petroleum-engineering",
-      "text": "Руководство Excel Extractor: обнаружение, выбор таблицы и пустые строки.\n\nДля нового workbook сначала вызовите workbook_introspect. Если workflow передал preflight_tables, эти обнаруженные table ID авторитетны: выберите одну и вызовите describe_table; не запускайте detect_tables повторно. Иначе вызовите detect_tables, затем describe_table для выбранной таблицы перед запросом. Все выбранные колонки проверяйте через describe_table. Перед категориальным фильтром вызовите list_column_values, если значение ещё не подтверждено авторитетным выводом инструмента.\n\nВ таблице могут быть короткие полностью пустые промежутки строк. Серверный детектор склеивает до MAX_INTERNAL_BLANK_ROWS подряд идущих пустых строк в каждом внутреннем промежутке (по умолчанию 5); счётчик сбрасывается после каждой следующей строки данных. Пустые строки не возвращаются как записи. Более длинный промежуток или строка, похожая на новый заголовок с последующими данными, начинает отдельный блок таблицы. Не считайте, что два визуальных блока относятся к одной таблице.\n\nЕсли две или более независимые таблицы правдоподобно удовлетворяют запросу, а пользователь не указал одну из них через проверенные поля или назначение, остановитесь: deterministic preflight workflow создаст clarification. Не делайте query, не сохраняйте план, не экспортируйте и не угадывайте.",
+      "text": "Руководство Excel Extractor: обнаружение, выбор таблицы и пустые строки.\n\nДля нового workbook сначала вызовите workbook_introspect, если selected_table ещё нет. Если workflow передал selected_table и match_reason не ambiguous_columns, этот table ID авторитетен: вызовите describe_table, затем save_agent_plan и сразу query_table; не запускайте detect_tables и не вызывайте match_tables повторно без необходимости. Если переданы только preflight_tables, выберите одну проверенную таблицу через describe_table. Иначе вызовите match_tables с текстом запроса — инструмент компактно ранжирует листы и таблицы, не подгружая workbook в модель — затем describe_table для выбранной таблицы перед запросом. Все выбранные колонки проверяйте через describe_table. Перед категориальным фильтром вызовите list_column_values, если значение ещё не подтверждено авторитетным выводом инструмента.\n\ndetect_tables возвращает компактные table_id, sheet, range, имена колонок и row_count; это не выгрузка листа. Повторный detect_tables того же диапазона не создаёт дубликат. В таблице могут быть короткие полностью пустые промежутки строк. Серверный детектор склеивает до MAX_INTERNAL_BLANK_ROWS подряд идущих пустых строк в каждом внутреннем промежутке (по умолчанию 5); счётчик сбрасывается после каждой следующей строки данных. Пустые строки не возвращаются как записи. Более длинный промежуток или строка, похожая на новый заголовок с последующими данными, начинает отдельный блок таблицы. Не считайте, что два визуальных блока относятся к одной таблице.\n\nЛисты notes/description и узкие текстовые блоки без числовых данных не являются таблицами. Лист с именем Index является таблицей, если в нём есть числовые lookup-колонки. Столбец дат/подписей слева от заголовка, в том числе через пустые merged-колонки, входит в таблицу. Строка единиц измерения под заголовком не является строкой данных. Ячейка NA — это значение (например North America); пустые плейсхолдеры — n/a, … и null.\n\nsuggested_select совпадает с именами колонок как фразами, а не подстроками токенов: Natural gas, Europe не включает Banana, Europe. Если на уникальной таблице несколько конкурирующих колонок (Give me the oil price → Brent/WTI/average) и пользователь не назвал серию, match_tables возвращает ambiguous_columns; deterministic preflight создаст clarification. Не делайте query, не сохраняйте план, не экспортируйте и не угадывайте.",
       "id": "excel-agent-discovery-and-tables",
       "metadata": {
         "slug": "discovery-and-tables",
         "topic": "table-protocol",
-        "version": "2026-08-11"
+        "version": "2026-08-14"
       }
     },
     {
@@ -107,7 +108,7 @@
       "target_base": "excel_protocol",
       "knowledge_type": "protocol_instruction",
       "knowledge_id": "excel-agent-query-and-result-protocol",
-      "revision": "1",
+      "revision": "3",
       "title": "excel agent query and result protocol",
       "keywords": [
         "QUERY-RESULT-PROTOCOL",
@@ -121,12 +122,12 @@
       "status": "active",
       "author": "excel-protocol-maintainer",
       "access_scope": "petroleum-engineering",
-      "text": "Руководство Excel Extractor: запрос, результат, валидация и export.\n\nКогда ровно одна таблица и запрошенный intent подтверждены, вызовите save_agent_plan с коротким фактическим планом, выбранными tbl_ ID, проверенным field mapping и фильтрами. Затем вызовите query_table с буквальным table_id, объектом select (числовые ключи → точные проверенные имена колонок) и объектом filters (числовые ключи → объекты field/operator/value; для пустого набора используйте {}). Поддерживаемые операторы фильтров: eq, neq, in, not_in, contains, not_contains, gt, gte, lt, lte, between, is_null и not_null.\n\nТолько query_table создаёт res_ ID результата. После успешного query_table агент должен остановиться. Детерминированный хвост workflow валидирует этот res_, экспортирует CSV-артефакт, прикрепляет art_ к структурированному результату и завершает extraction. Агент сам не должен вызывать validate_result, export_result или finalize_extraction. Если инструмент вернул ошибку, исправляйте её только по проверенному выводу инструмента; никогда не выдумывайте таблицу, результат, артефакт, строку, колонку, фильтр или утверждение о валидации.\n\nВозвращаемые данные и ссылки на артефакты ограничены сессией. artifact_ref — это ссылка, а не публичный URL скачивания. CSV-export нейтрализует значения, похожие на формулы; не изменяйте данные вручную в ответе модели.",
+      "text": "Руководство Excel Extractor: запрос, результат, валидация и export.\n\nКогда ровно одна таблица и запрошенный intent подтверждены, вызовите save_agent_plan с коротким фактическим планом, выбранными tbl_ ID, проверенным field mapping и фильтрами. Затем сразу вызовите query_table с буквальным table_id; не останавливайтесь после save_agent_plan. Объект select (числовые ключи → точные проверенные имена колонок) можно опустить, чтобы взять все колонки, либо передать suggested_select/проверенные имена. Не проецируйте лишние колонки по подстроке rate/europe/oil. Объект filters — числовые ключи → объекты field/operator/value; для пустого набора используйте {}. Поддерживаемые операторы фильтров: eq, neq, in, not_in, contains, not_contains, gt, gte, lt, lte, between, is_null и not_null. Пустые плейсхолдеры вроде … и n/a в ячейках считаются null; значение NA не считается пустым.\n\nДля latest/last N наблюдений передайте limit=N и tail=true, чтобы взять последние строки, а не начало книги. Для up to N без latest используйте limit без tail. Только query_table создаёт res_ ID результата. После успешного query_table агент должен остановиться. Детерминированный хвост workflow валидирует этот res_, экспортирует CSV-артефакт, прикрепляет art_ к структурированному результату и завершает extraction. Если агент не вызвал query_table, а таблица уже однозначно закреплена и match не ambiguous, workflow выполнит один bounded query repair с suggested_select/limit/tail/filters — это не повод угадывать другую таблицу или колонку. Агент сам не должен вызывать validate_result, export_result или finalize_extraction. Если инструмент вернул ошибку, исправляйте её только по проверенному выводу инструмента; никогда не выдумывайте таблицу, результат, артефакт, строку, колонку, фильтр или утверждение о валидации.\n\nВозвращаемые данные и ссылки на артефакты ограничены сессией. artifact_ref — это ссылка, а не публичный URL скачивания. CSV-export нейтрализует значения, похожие на формулы; не изменяйте данные вручную в ответе модели.",
       "id": "excel-agent-query-and-result-protocol",
       "metadata": {
         "slug": "query-result-protocol",
         "topic": "query-and-output",
-        "version": "2026-08-11"
+        "version": "2026-08-14"
       }
     },
     {
@@ -135,7 +136,7 @@
       "target_base": "excel_protocol",
       "knowledge_type": "protocol_instruction",
       "knowledge_id": "excel-agent-clarification-and-continuation",
-      "revision": "1",
+      "revision": "3",
       "title": "excel agent clarification and continuation",
       "keywords": [
         "CLARIFICATION",
@@ -148,12 +149,12 @@
       "status": "active",
       "author": "excel-protocol-maintainer",
       "access_scope": "petroleum-engineering",
-      "text": "Руководство Excel Extractor: уточнение и продолжение.\n\nНеоднозначность — жёсткая остановка. Deterministic preflight создаёт вопросы уточнения только из проверенных кандидатных таблиц и полей; агент не должен вызывать инструмент clarification. Ответ на clarification возвращается в тот же meta.session_id без повторной загрузки исходного workbook и включает точный clarification token плюс ответы. Workflow разрешает ответ детерминированно до старта агента.\n\nПри продолжении workflow разрешает ответ и загружает continuation_state до старта агента. Используйте continuation_state.tables, continuation_state.clarifications и continuation_state.plan как авторитетное состояние; не переоткрывайте workbook без необходимости и не вызывайте get_session_state, submit_clarification или resolve_clarification самостоятельно. Повтор идентичного уже разрешённого clarification идемпотентен. Конфликтующий второй ответ должен быть отклонён, а не тихо заменить исходный.\n\nЗавершайте работу инструментов только одним кратким фактическим предложением. Не собирайте финальный response JSON: workflow возвращает серверно сформированный структурированный ответ со status success, partial, clarification_needed или error.",
+      "text": "Руководство Excel Extractor: уточнение и продолжение.\n\nНеоднозначность — жёсткая остановка. Deterministic preflight создаёт вопросы уточнения только из компактных кандидатных листов, таблиц или колонок (ambiguous_sheets, ambiguous_tables, ambiguous_columns); агент не должен вызывать инструмент clarification и не должен получать все 30+ диапазонов в контекст. Ответ на clarification возвращается в тот же meta.session_id без повторной загрузки исходного workbook и включает точный clarification token плюс ответы. Workflow разрешает ответ детерминированно до старта агента и заново вызывает match_tables, чтобы закрепить одну таблицу и, если названы колонки, suggested_select.\n\nПри продолжении workflow разрешает ответ, ранжирует таблицы и загружает continuation_state.selected_table до старта агента. Используйте selected_table / continuation_state.tables, continuation_state.clarifications и continuation_state.plan как авторитетное состояние; не переоткрывайте workbook без необходимости и не вызывайте get_session_state, submit_clarification или resolve_clarification самостоятельно. Повтор идентичного уже разрешённого clarification идемпотентен. Конфликтующий второй ответ должен быть отклонён, а не тихо заменить исходный.\n\nЗавершайте работу инструментов только одним кратким фактическим предложением. Не собирайте финальный response JSON: workflow возвращает серверно сформированный структурированный ответ со status success, partial, clarification_needed или error.",
       "id": "excel-agent-clarification-and-continuation",
       "metadata": {
         "slug": "clarification-continuation",
         "topic": "clarification",
-        "version": "2026-08-11"
+        "version": "2026-08-14"
       }
     },
     {

@@ -1,0 +1,119 @@
+{
+  "description": "Complex public-workbook query pack for Agent — Excel Extractor. Files are official statistical workbooks (not synthetic). Download via download_public_workbooks.py.",
+  "workbooks": [
+    {
+      "id": "worldbank-cmo-monthly",
+      "file": "worldbank-cmo-monthly.xlsx",
+      "source": "World Bank Pink Sheet / CMO Historical Data Monthly",
+      "url": "https://thedocs.worldbank.org/en/doc/74e8be41ceb20fa0da750cda2f6b9e4e-0050012026/related/CMO-Historical-Data-Monthly.xlsx",
+      "page": "https://www.worldbank.org/en/research/commodity-markets",
+      "layout": [
+        "title and preamble above the header",
+        "two-row commodity + units header",
+        "missing values encoded as ellipsis",
+        "empty AFOSHEET plus a Description sheet that is notes, not a table",
+        "Monthly Indices uses merged grouped headers"
+      ]
+    },
+    {
+      "id": "ons-hi00-regions",
+      "file": "ons-hi00-regions.xlsx",
+      "source": "ONS HI00 regional labour market headline indicators",
+      "url": "https://www.ons.gov.uk/file?uri=/employmentandlabourmarket/peopleinwork/employmentandemployeetypes/datasets/headlinelabourforcesurveyindicatorsforallregionshi00/current/regionaltable1s.xlsx",
+      "page": "https://www.ons.gov.uk/employmentandlabourmarket/peopleinwork/employmentandemployeetypes/datasets/headlinelabourforcesurveyindicatorsforallregionshi00/current",
+      "layout": [
+        "41 sheets",
+        "Note and Index preamble sheets",
+        "merged two-row grouped headers",
+        "people / men / women tables per region",
+        "blank rows after titles"
+      ]
+    }
+  ],
+  "queries": [
+    {
+      "id": "wb-brent-wti-prices",
+      "workbook": "worldbank-cmo-monthly",
+      "prompt": "From Monthly Prices, extract Crude oil, Brent and Crude oil, WTI. Ignore Description, Index Weights and notes. Return the latest 24 monthly rows.",
+      "expect": {
+        "status_in": ["success", "partial"],
+        "must_not_use_sheet": ["Description", "AFOSHEET"],
+        "column_hints": ["Brent", "WTI"],
+        "allowed_column_substrings": ["Brent", "WTI"],
+        "max_stored_rows": 24
+      },
+      "continue_with": "Monthly Prices!B5:BT805"
+    },
+    {
+      "id": "wb-wti-missing",
+      "workbook": "worldbank-cmo-monthly",
+      "prompt": "On Monthly Prices, find rows where Crude oil, WTI is missing or shown as an ellipsis. Return those WTI and Brent values only, up to 30 rows.",
+      "expect": {
+        "status_in": ["success", "partial"],
+        "column_hints": ["WTI", "Brent"],
+        "allowed_column_substrings": ["WTI", "Brent"],
+        "max_stored_rows": 30
+      },
+      "continue_with": "Monthly Prices!B5:BT805"
+    },
+    {
+      "id": "wb-gas-europe",
+      "workbook": "worldbank-cmo-monthly",
+      "prompt": "Extract Natural gas, Europe in $/mmbtu from the monthly prices table, last 12 observations. Do not use Monthly Indices.",
+      "expect": {
+        "status_in": ["success", "partial"],
+        "column_hints": ["Natural gas, Europe"],
+        "forbidden_column_hints": ["Banana"],
+        "allowed_column_substrings": ["Natural gas, Europe"],
+        "max_stored_rows": 12
+      },
+      "continue_with": "Monthly Prices!B5:BT805"
+    },
+    {
+      "id": "wb-ambiguous-oil",
+      "workbook": "worldbank-cmo-monthly",
+      "prompt": "Give me the oil price.",
+      "expect": {
+        "status_in": ["clarification_needed"],
+        "notes": "Several crude series exist; the agent must not guess Brent vs WTI vs average."
+      }
+    },
+    {
+      "id": "ons-neast-unemployment",
+      "workbook": "ons-hi00-regions",
+      "prompt": "From the North East people table, extract the unemployment rate (%) for the latest available period. Use the People sheet, not Men or Women.",
+      "expect": {
+        "status_in": ["success", "partial"],
+        "sheet_hints": ["neast_p"],
+        "column_hints": ["Unemployment"],
+        "forbidden_column_hints": ["Employment rate", "inactivity", "activity rate"],
+        "allowed_column_substrings": ["Unemployment"],
+        "max_stored_rows": 1
+      },
+      "continue_with": "neast_p!B7:S427"
+    },
+    {
+      "id": "ons-neast-women-employment",
+      "workbook": "ons-hi00-regions",
+      "prompt": "North East women: extract Employment rate (%) for the latest period only.",
+      "expect": {
+        "status_in": ["success", "partial"],
+        "sheet_hints": ["neast_w"],
+        "column_hints": ["Employment rate"],
+        "forbidden_column_hints": ["Unemployment"],
+        "allowed_column_substrings": ["Employment rate"],
+        "max_stored_rows": 1
+      },
+      "continue_with": "neast_w!B7:S427"
+    },
+    {
+      "id": "ons-ambiguous-employment",
+      "workbook": "ons-hi00-regions",
+      "prompt": "What is the employment rate?",
+      "expect": {
+        "status_in": ["clarification_needed"],
+        "notes": "41 regional people/men/women tables all match; agent must not guess a region."
+      }
+    }
+  ]
+}

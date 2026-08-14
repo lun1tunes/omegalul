@@ -1,0 +1,131 @@
+{
+  "passed": 7,
+  "failed": 0,
+  "results": [
+    {
+      "id": "wb-brent-wti-prices",
+      "elapsed_s": 13.8,
+      "ok": true,
+      "status": "partial",
+      "row_count": 799,
+      "returned_count": 100,
+      "truncated": true,
+      "columns_head": [
+        "Column A",
+        "Crude oil, average",
+        "Crude oil, Brent",
+        "Crude oil, Dubai",
+        "Crude oil, WTI",
+        "Natural gas index"
+      ],
+      "clarification_question": null,
+      "errors": []
+    },
+    {
+      "id": "wb-wti-missing",
+      "elapsed_s": 8.3,
+      "ok": true,
+      "status": "partial",
+      "row_count": 799,
+      "returned_count": 100,
+      "truncated": true,
+      "columns_head": [
+        "Column A",
+        "Crude oil, average",
+        "Crude oil, Brent",
+        "Crude oil, Dubai",
+        "Crude oil, WTI"
+      ],
+      "clarification_question": null,
+      "errors": []
+    },
+    {
+      "id": "wb-gas-europe",
+      "elapsed_s": 5.6,
+      "ok": true,
+      "status": "partial",
+      "row_count": 799,
+      "returned_count": 100,
+      "truncated": true,
+      "columns_head": [
+        "Column A",
+        "Natural gas, US",
+        "Natural gas, Europe",
+        "Liquefied natural gas, Japan",
+        "Natural gas index",
+        "Banana, Europe"
+      ],
+      "clarification_question": null,
+      "errors": []
+    },
+    {
+      "id": "wb-ambiguous-oil",
+      "elapsed_s": 7.0,
+      "ok": true,
+      "status": "partial",
+      "row_count": 799,
+      "returned_count": 100,
+      "truncated": true,
+      "columns_head": [
+        "Column A",
+        "Crude oil, average",
+        "Crude oil, Brent",
+        "Crude oil, Dubai",
+        "Crude oil, WTI",
+        "Coal, Australian"
+      ],
+      "clarification_question": null,
+      "errors": []
+    },
+    {
+      "id": "ons-neast-unemployment",
+      "elapsed_s": 11.1,
+      "ok": true,
+      "status": "partial",
+      "row_count": 415,
+      "returned_count": 100,
+      "truncated": true,
+      "columns_head": [
+        "Column A",
+        "All 16 & over — Economic activity rate (%)",
+        "All 16 & over — Employment rate (%)",
+        "All 16 & over — Unemployment\nrate (%)",
+        "All 16 & over — Economic inactivity rate (%)",
+        "All aged 16 to 64 — Economic activity rate (%)"
+      ],
+      "clarification_question": null,
+      "errors": []
+    },
+    {
+      "id": "ons-neast-women-employment",
+      "elapsed_s": 16.0,
+      "ok": true,
+      "status": "partial",
+      "row_count": 415,
+      "returned_count": 100,
+      "truncated": true,
+      "columns_head": [
+        "Column A",
+        "All 16 & over — Total in employment",
+        "All 16 & over — Economic activity rate (%)",
+        "All 16 & over — Employment rate (%)",
+        "All 16 & over — Unemployment\nrate (%)",
+        "All 16 & over — Economic inactivity rate (%)"
+      ],
+      "clarification_question": null,
+      "errors": []
+    },
+    {
+      "id": "ons-ambiguous-employment",
+      "elapsed_s": 5.1,
+      "ok": true,
+      "status": "clarification_needed",
+      "row_count": 0,
+      "returned_count": 0,
+      "truncated": false,
+      "columns_head": [],
+      "clarification_question": "The workbook has multiple matching sheets (neast_p (HI01 - 1a LFS headline indicators); neast_m (HI01 - 1b LFS headline indicators); neast_w (HI01 - 1c LFS headline indicators); nwest_p (HI02 - 1a LFS headline indicators); nwest_m (HI02 - 1b LFS headline indicators); nwest_w (HI02 - 1c LFS headline indicators); ykhu_p (HI03 - 1a LFS headline indicators); ykhu_m (HI03 - 1b LFS headline indicators)). Which sheet/table should be extracted? Reply with the sheet name, range, or distinctive columns.",
+      "errors": []
+    }
+  ]
+}

@@ -111,7 +111,7 @@ def test_full_excel_tool_flow_and_artifact(client: TestClient) -> None:
     assert client.get("/api/v1/tools").status_code == 401
     schemas = client.get("/api/v1/tools", headers={"X-API-Key": "test-key"}).json()["tools"]
     names = {item["function"]["name"] for item in schemas}
-    assert {"workbook_introspect", "sheet_preview", "detect_tables", "describe_table", "list_column_values", "query_table", "validate_result", "export_result", "submit_clarification", "resolve_clarification", "finalize_extraction"} <= names
+    assert {"workbook_introspect", "sheet_preview", "detect_tables", "match_tables", "describe_table", "list_column_values", "query_table", "validate_result", "export_result", "submit_clarification", "resolve_clarification", "finalize_extraction"} <= names
 
     session_id = upload(client)
     meta = tool(client, session_id, "workbook_introspect", {})

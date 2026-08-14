@@ -164,6 +164,7 @@ def test_ai_tool_nodes_bind_session_from_prepared_workflow_context() -> None:
         "workbook_introspect",
         "sheet_preview",
         "detect_tables",
+        "match_tables",
         "describe_table",
         "list_column_values",
         "query_table",
@@ -173,6 +174,7 @@ def test_ai_tool_nodes_bind_session_from_prepared_workflow_context() -> None:
         "workbook_introspect": set(),
         "sheet_preview": {"sheet"},
         "detect_tables": set(),
+        "match_tables": {"query"},
         "describe_table": {"table_id"},
         "list_column_values": {"table_id", "column"},
         "query_table": {"table_id"},
@@ -300,7 +302,7 @@ def test_delivery_workflow_graph_references_are_importable() -> None:
 
 def test_core_has_no_disabled_legacy_or_orphan_nodes() -> None:
     workflow = load_json(workflow_path("excel-extraction-agent.workflow.json"))
-    assert len(workflow["nodes"]) == 59
+    assert len(workflow["nodes"]) == 62
     assert not [node["name"] for node in workflow["nodes"] if node.get("disabled") is True]
     names = {node["name"] for node in workflow["nodes"]}
     assert not names.intersection(
@@ -324,6 +326,29 @@ def test_core_has_no_disabled_legacy_or_orphan_nodes() -> None:
             for branch in branches:
                 connected.update(edge["node"] for edge in branch)
     assert names <= connected
+
+
+def test_excel_agent_repair_and_preflight_lock_column_ambiguity() -> None:
+    workflow = load_json(workflow_path("excel-extraction-agent.workflow.json"))
+    by_name = {node["name"]: node for node in workflow["nodes"]}
+    assess = by_name["Assess deterministic clarification need"]["parameters"]["jsCode"]
+    repair = by_name["Prepare deterministic query repair"]["parameters"]["jsCode"]
+    terminal = by_name["Build deterministic terminal output"]["parameters"]["jsCode"]
+    query = by_name["query_table"]
+    retrieval = by_name["Call Excel protocol Hybrid Retrieval"]
+    assert "column_candidates" in assess
+    assert "ambiguous_columns" not in assess or "column_selection" in assess
+    assert "column_selection" in assess
+    assert "matchAmbiguous" in repair
+    assert "hasExtra" in repair
+    assert "suggested_tail" in repair
+    assert "candidate_ids" in repair
+    assert "stored_rows: storedRows" in terminal
+    assert any(
+        field.get("name") == "tail" and field.get("valueProvider") == "modelOptional"
+        for field in query["parameters"]["parametersBody"]["values"]
+    )
+    assert retrieval["parameters"]["workflowId"]["value"] == "REPLACE_SCHEDULE_RAG_RETRIEVAL_IN_UI"
 
 
 def test_tool_instructions_use_structured_arguments_not_legacy_input_wrapper() -> None:
