@@ -1,0 +1,24 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "urn:mas:evidence-gap:1.0",
+  "title": "Typed SCHEDULE evidence gap",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "entity",
+    "effective_at",
+    "keyword",
+    "field",
+    "reason",
+    "expected_format"
+  ],
+  "properties": {
+    "entity": { "type": "string", "minLength": 1 },
+    "effective_at": { "type": "string", "minLength": 1 },
+    "keyword": { "type": "string", "minLength": 1 },
+    "field": { "type": "string", "minLength": 1 },
+    "reason": { "type": "string", "minLength": 1 },
+    "expected_format": { "type": "string", "minLength": 1 },
+    "question": { "type": "string" }
+  }
+}

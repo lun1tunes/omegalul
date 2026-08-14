@@ -1,0 +1,47 @@
+<!DOCTYPE html>
+<html lang="ru">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>MAS Activity</title>
+  <link rel="preconnect" href="https://fonts.googleapis.com" />
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+  <link href="https://fonts.googleapis.com/css2?family=DM+Sans:opsz,wght@9..40,450;9..40,600;9..40,700&family=IBM+Plex+Mono:wght@400;500&display=swap" rel="stylesheet" />
+  <link rel="stylesheet" href="/static/app.css" />
+</head>
+<body>
+  <div class="atmosphere" aria-hidden="true"></div>
+  <header class="top">
+    <div class="brand">
+      <span class="mark">MAS</span>
+      <span class="product">Activity</span>
+    </div>
+    <div class="top-actions">
+      <label class="task-field">
+        <span>task_id</span>
+        <input id="taskInput" type="text" spellcheck="false" placeholder="eng_…" />
+      </label>
+      <button type="button" id="openBtn" class="btn">Open</button>
+      <button type="button" id="demoBtn" class="btn btn-quiet">Seed demo</button>
+    </div>
+  </header>
+
+  <main class="stage">
+    <aside class="rail" id="taskRail" aria-label="Recent tasks"></aside>
+    <section class="transcript" aria-live="polite">
+      <div class="transcript-head">
+        <h1 id="title">Select a task</h1>
+        <p id="subtitle">Handoffs between Orchestrator and specialists appear here as a live chat.</p>
+        <div class="live-row">
+          <span class="pulse" id="liveDot" hidden></span>
+          <span id="liveLabel">idle</span>
+        </div>
+      </div>
+      <ol class="thread" id="thread"></ol>
+      <p class="empty" id="empty">No turns yet. Run the Orchestrator or seed a demo.</p>
+    </section>
+  </main>
+
+  <script src="/static/app.js"></script>
+</body>
+</html>

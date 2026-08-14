@@ -1,0 +1,26 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "urn:mas:source-facts-packet:1.0",
+  "title": "Excel→Schedule source facts packet",
+  "type": "object",
+  "additionalProperties": true,
+  "required": [
+    "contract",
+    "contract_version",
+    "source_snapshot_hash",
+    "correlation_id",
+    "facts"
+  ],
+  "properties": {
+    "contract": { "const": "source_facts_packet" },
+    "contract_version": { "const": "1.0" },
+    "source_snapshot_hash": { "type": "string", "minLength": 1 },
+    "correlation_id": { "type": "string", "minLength": 1 },
+    "facts": { "type": "array", "items": { "type": "object" } },
+    "conflicts": { "type": "array" },
+    "columns": { "type": "array" },
+    "row_count": { "type": "number" },
+    "returned_count": { "type": "number" },
+    "truncated": { "type": "boolean" }
+  }
+}

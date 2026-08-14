@@ -74,9 +74,18 @@ approved_by             ответственный инженер-гидроди
 | `COMPDATMD` | completion/perforation definition по MD/trajectory | fields/defaults, интервалы, overlap, well/track dependency, grid intersection semantics по tNavigator 22.2 | tNavigator 22.2 manual |
 | `WCONHIST` | observed historical production controls/data | well exists, history period only, mode/rates/pressures/units, missing-vs-zero, no forecast misuse | tNavigator manual; OPM cross-check |
 | `WCONPROD` | forecast production target/constraint | well exists, forecast period, status/control mode, compatible active target, ORAT/WRAT/GRAT/LRAT/RESV/BHP/THP, VFP/ALQ refs | tNavigator manual; OPM cross-check |
+| `WCONINJE` | forecast injection control | well exists, fluid type WATER/OIL/GAS/MULTI/…, RATE/BHP/THP/RESV/GRUP, surface/reservoir rates, BHP/THP limits, MULTI fractions | tNavigator 22.2 manual |
 | `GCONPROD` | group production targets/constraints | group exists, mode-target consistency, exceed procedures, guide rates, parent-response behavior, unit dimensions | tNavigator manual; OPM cross-check |
+| `GCONINJE` | group injection targets/constraints | group exists, fluid WATER/GAS/OIL, RATE/RESV/REIN/VREP, surface/reservoir rates, rein/vrep ratios & source groups, parent-response, guide RATE/NETV/VOID | tNavigator 22.2 manual |
+| `GUIDERAT` | формула направляющих дебитов для GCONPROD | phase OIL/LIQ/GAS/RES/NONE, coeffs A–F, interval, YES/NO growth, GRDAMP, free-gas flag, GRmin; vs WGRUPCON | tNavigator 22.2 manual |
+| `GSATPROD` | дебиты вспомогательных (satellite) групп | ORAT/WRAT/GRAT/RESV; no wells/children; GRUPTREE placement; vs GSATINJE/GSATCOMP | tNavigator 22.2 manual |
+| `GSATINJE` | приемистость вспомогательных групп | PHASE OIL/WAT/GAS (одна фаза на запись), surface/reservoir rates; GRUPTREE; vs GSATCOMP | tNavigator 22.2 manual |
+| `WELLSTRE` | именованный поток закачки (мольные доли) | stream name, Nc mole fractions Σ=1, tN/E3 (не E1); consumers GINJGAS/WINJGAS/GSATCOMP | tNavigator 22.2 manual |
+| `GINJGAS` | состав газа закачки группы (E3/tN + GCONINJE) | GROUP, SOURCE GAS/STREAM/MIX/GV/WV/GRUP, SOURCE_REF, makeup WELLSTRE, separator stage | tNavigator 22.2 manual |
 | `BRANPROP` | extended surface-network branches | feature enabled in base profile, endpoints exist, no forbidden network mode, graph integrity, VFP/ALQ references | tNavigator manual; OPM cross-check |
 | `NODEPROP` | extended surface-network nodes | node uniqueness, required branch/network dependency, pressure units, choke/group references, network topology | tNavigator manual; OPM cross-check |
+| `GNETDP` | динамическая корректировка фиксированного давления группы/узла | PHASE OIL/WAT/GAS/LIQ, rate min/max, ΔP steps, Pmin/Pmax; vs WNETDP; NETWORK optional | tNavigator 22.2 manual |
+| `NETBALAN` | параметры балансирования NETWORK | pressure tol, max iterations, choke rate tol; field1 ignored; requires NETWORK | tNavigator 22.2 manual |
 | `FRACTURE_TEMPLATE` | шаблон трещины ГРП (геометрия/LGR/проницаемости) | template name, refine/PLANE/UP/DOWN/SRV/width, GRID section, FRACTURE_PLANE/PATH deps | tNavigator 22.2 manual |
 | `FRACTURE_SPECS` | привязка множества трещин к WELLTRACK (в новых мануалах: `FRACTURE_WELL`) | stage name, well/branch, template+MD or interval distribution, GRID+WELLTRACK | tNavigator manual (legacy name; content §12.2.131) |
 | `FRACTURE_STAGE` | активация стадии трещин в SCHEDULE | stage exists via FRACTURE_SPECS, ON/OFF, arithmetic, optional proppant/GEOMECH | tNavigator 22.2 manual |
@@ -85,8 +94,18 @@ approved_by             ответственный инженер-гидроди
 | `WELTARG` | изменение цели/лимита скважины без полного WCONPROD | well exists, target quantity/mode consistency, units, interaction with WCONPROD/WCONHIST | tNavigator manual; OPM cross-check |
 | `WNETDP` | перепад давления / network DP на скважине или ветви | well/network endpoint exists, pressure units, NETWORK feature, consistency with BRANPROP/NODEPROP | tNavigator 22.2 manual |
 | `WPIMULT` | множитель connection factor (CF/PI) перфорации | well exists, factor >0, optional IJK/COMPLUMP filter, cumulative across DATES, reset by COMPDAT recompute | tNavigator manual; OPM cross-check |
+| `WDFAC` | D-фактор скважины (rate-dependent skin для газа) | well exists, Dwell ≥0, interaction with COMPDATMD/COMPDAT per-completion D, non-Darcy gas | tNavigator 22.2 manual |
+| `WELDRAW` | макс. депрессия добывающих скважин/групп | DMax, PHASE LIQ/GAS, YES/NO в потенциале, AVG/MAX; QMax vs WCONPROD/WELTARG; §5.6.7 | tNavigator 22.2 manual |
+| `WLIST` | именованный список скважин для batch-keywords | list name starts with `*`, NEW/ADD/MOVE/DEL, members via WELSPECS, no dual-list membership on NEW/ADD | tNavigator 22.2 manual |
 | `WFRACP` | плоскостной ГРП (расширение WFRAC) | well/completions exist, azimuth/zenith, half-lengths/heights/width or proppant volume, optional flow/time decay, bounding box | tNavigator 22.2 manual |
 | `WFRACPL` | плоскостной ГРП в LGR (расширение WFRACP) | LGR well via WELSPECL/COMPDATL, LGR name (CARFIN), same geometry/proppant fields as WFRACP + LGR | tNavigator 22.2 manual |
+| `VFPPROD` | VFP-таблица BHP добычи (обычно Prosper/внешний артефакт) | table id 1..VFPPDIMS, link to WCONPROD/WCONHIST VFP_TABLE+ALQ; KEEP body; never invent axes | tNavigator 22.2 manual §12.20.68 / §6 |
+| `ACTIONX` | условный блок SCHEDULE (AND/OR условия) | action name, max calls, min interval, condition rows, allowlisted body, close with ENDACTIO | tNavigator 22.2 manual |
+| `DELAYACT` | отложенный блок после trigger-действия | delayed name, trigger action name, delay days, max activations, delay increment; ENDACTIO | tNavigator 22.2 manual |
+| `ENDACTIO` | конец блока ACTION*/DELAYACT | pairs with ACTIONX/DELAYACT; emit ENDACTIO not ENDACTION | tNavigator 22.2 manual |
+| `UDQ` | пользовательские выражения SCHEDULE | ASSIGN/DEFINE/UPDATE; name CU/FU/GU/RU/WU…; SUMMARY-based formulas; vs UDT | tNavigator 22.2 manual |
+| `UDT` | таблицы поиска для UDQ (TU*) | NUMDIM, axis NV/LC/LL + nodes, value grid, dim terminators; UDTDIMS in baseline | tNavigator 22.2 manual |
+| `APPLYSCRIPT` | Python-хук на каждый расчётный шаг | SCRIPT_FILE + FUNCTION_NAME from facts; never invent `.py` body; not GUI calculator | tNavigator 22.2 manual |
 
 Таблица отражает **назначение validation domain**, а не пытается воспроизвести vendor record layout. Порядок полей, обязательность, defaults и допустимые enumerations извлекаются только из versioned schema catalogue, утвержденного по Technical Manual.
 

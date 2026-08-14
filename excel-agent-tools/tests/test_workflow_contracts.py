@@ -587,6 +587,9 @@ def test_calculation_adapter_posts_dev_batch_and_surface_and_is_statically_bound
     assert call["parameters"]["workflowId"]["cachedResultName"] == adapter["name"]
     allowlist_code = orchestrator_by_name["Resolve allowlisted specialist"]["parameters"]["jsCode"]
     assert "engineering_calculation_specialist:{route:2,configured:true}" in allowlist_code
+    assert "specialist_registry" in allowlist_code or "excel_extraction_specialist:{route:0,configured:true}" in allowlist_code
+    assert "appendHandoffEvent" in allowlist_code
+    assert "DELEGATED" in allowlist_code
 
 
 def test_universal_orchestrator_enterprise_control_plane() -> None:
@@ -953,7 +956,26 @@ def test_schedule_flow_is_orchestrator_mediated_and_multi_stage() -> None:
 
     assert "EXCEL_EVIDENCE_READY" in handoff_code
     assert "next_specialist:'schedule_builder_specialist'" in handoff_code
-    assert "source_facts_packet:result.compact_data" in handoff_code
+    assert "normalizeSourceFactsPacket" in handoff_code
+    assert "INVALID_SOURCE_FACTS_PACKET" in handoff_code
+    assert "source_facts_packet:packetFacts" in handoff_code
+    retry_code = by_name["Prepare SCHEDULE evidence retry"]["parameters"]["jsCode"]
+    assert "MALFORMED_EVIDENCE_GAP" in retry_code
+    assert "typedEvidenceGaps" in retry_code
+    format_code = by_name["Format orchestrator response"]["parameters"]["jsCode"]
+    assert "mas_activity_feed/v1" in format_code
+    assert "handoff_events" in format_code
+    trace_code = by_name["Prepare final MAS trace event"]["parameters"]["jsCode"]
+    assert "event_type:'handoff'" in trace_code
+    registry = load_json(ROOT / "n8n" / "contracts" / "specialist_registry.v1.json")
+    assert registry["contract"] == "specialist_registry"
+    assert {s["specialist_id"] for s in registry["specialists"]} <= {
+        "excel_extraction_specialist",
+        "schedule_builder_specialist",
+        "engineering_calculation_specialist",
+        "engineering_data_specialist",
+        "engineering_document_specialist",
+    }
     next_stage = connections["Successful specialist next stage"]["main"]
     expected_routes = [
         "Prepare governed routing RAG request",
@@ -1217,6 +1239,7 @@ def test_universal_engineering_instruction_templates_are_portable() -> None:
         "schedule_intake_runtime.py",
         "schedule_schema_runtime.py",
         "schedule_semantic_runtime.py",
+        "mas_handoff_contracts.py",
     }
     assert {path.name for path in TEMPLATES.iterdir() if path.is_file()} == expected
     contract = load_json(TEMPLATES / "specialist-result-contract.schema.json")
@@ -1644,6 +1667,11 @@ def test_schedule_rag_and_trace_foundations_enforce_governance() -> None:
     assert "root.mas_trace_events" in trace_code
     assert "root.mas_trace_events.length" in trace_code
     assert "source.map((candidate,index)" in trace_code
+    assert any(n["name"] == "Prepare MAS activity sync" for n in trace["nodes"])
+    assert any(n["name"] == "POST handoffs to MAS Activity" for n in trace["nodes"])
+    assert "activity_sync_ready" in trace_text
+    assert "/v1/sync" in trace_text
+    assert "event_type==='handoff'" in trace_text
     health = load_json(workflow_path("mas-deployment-health-check.workflow.json"))
     probe = next(n for n in health["nodes"] if n["name"] == "Prepare Trace Writer probe")
     assert "mas_trace_event:" in probe["parameters"]["jsCode"]
@@ -1713,4 +1741,67 @@ def test_excel_agent_tools_remain_the_only_workbook_interface() -> None:
     agent = next(node for node in workflow["nodes"] if node["name"] == "Excel Extractor AI Agent")
     assert "rag_evidence (target_base=excel_protocol)" in agent["parameters"]["options"]["systemMessage"]
     assert "PGVector static operating context" not in workflow.get("description", "")
+
+
+def test_excel_protocol_cards_use_schedule_aligned_skeleton_and_retrieval_surface() -> None:
+    required_sections = ("Назначение.", "Когда применять.", "Канон протокола.", "Валидация")
+    must_keep = {
+        "excel-agent-trust-boundary": ("session_id", "tbl_", "недоверенн"),
+        "excel-agent-discovery-and-tables": (
+            "ambiguous_columns",
+            "suggested_select",
+            "MAX_INTERNAL_BLANK_ROWS",
+            "Index",
+            "n/a",
+        ),
+        "excel-agent-query-and-result-protocol": (
+            "tail=true",
+            "save_agent_plan",
+            "validate_result",
+            "bounded query repair",
+        ),
+        "excel-agent-clarification-and-continuation": (
+            "clarification_needed",
+            "continuation_state",
+            "get_session_state",
+        ),
+        "excel-agent-rag-and-operations": ("X-API-Key", "X-Excel-Webhook-Key", "embedding"),
+    }
+    cards = {
+        document.get("knowledge_id") or document.get("id"): document
+        for document in ingestible_operating_guide_documents()
+        if (document.get("target_base") or (document.get("schedule_knowledge_block") or {}).get("target_base"))
+        == "excel_protocol"
+        or str(document.get("knowledge_id") or document.get("id") or "").startswith("excel-agent-")
+    }
+    assert set(must_keep) <= set(cards)
+    for kid, needles in must_keep.items():
+        block = cards[kid].get("schedule_knowledge_block") if isinstance(cards[kid].get("schedule_knowledge_block"), dict) else cards[kid]
+        assert str(block.get("revision")) == "4", kid
+        assert not str(block.get("title") or "").lower().startswith("excel agent ")
+        assert len(block.get("task_patterns") or []) >= 4, kid
+        assert len(block.get("examples") or []) >= 2, kid
+        text = str(block.get("text") or "")
+        for section in required_sections:
+            assert section in text, (kid, section)
+        blob = text + json.dumps(block.get("examples") or [], ensure_ascii=False)
+        for needle in needles:
+            assert needle in blob, (kid, needle)
+
+
+def test_excel_protocol_retrieval_boost_baseline_fixture_is_frozen() -> None:
+    baseline_path = ROOT / "n8n" / "tests" / "fixtures" / "excel-protocol-searchable-baseline.json"
+    baseline = load_json(baseline_path)
+    assert set(baseline) == {
+        "excel-agent-trust-boundary",
+        "excel-agent-discovery-and-tables",
+        "excel-agent-query-and-result-protocol",
+        "excel-agent-clarification-and-continuation",
+        "excel-agent-rag-and-operations",
+    }
+    for kid, row in baseline.items():
+        assert row["task_patterns"] == []
+        assert (row.get("examples") or []) == []
+        assert str(row["revision"]) in {"1", "3"}
+        assert "searchable" in row and len(row["searchable"]) > 500
 

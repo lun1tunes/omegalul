@@ -187,6 +187,16 @@ py -m venv .venv
 
 Проверка: `http://127.0.0.1:8100/health`. Batch: одна ASCII CPS3/ZMAP + до 256 `.dev` (`MD X Y Z`), одинаковые CRS/единицы/datum/Z.
 
+**MAS Activity (chat-морда handoff’ов)**
+
+```bash
+cd mas-activity-service
+python3 -m pip install -r requirements.txt
+MAS_ACTIVITY_KEY=dev-local python3 -m uvicorn app.main:app --host 127.0.0.1 --port 8200
+```
+
+UI: `http://127.0.0.1:8200/` (кнопка **Seed demo**). В ленте: краткий `brief` (1–4 предложения), абсолютное время UTC, длительность specialist, статус/outcome. После импорта в Code node `Prepare MAS activity sync` у `Writer — MAS Trace` выставьте `ACTIVITY_BASE_URL` / `ACTIVITY_KEY` (для n8n в Docker часто `http://host.docker.internal:8200`).
+
 ### Step 1 — Import workflows (точный порядок)
 
 **Workflows → Import from File:**
@@ -373,7 +383,8 @@ Dropped vs older drafts: `phase`, `task_type`, `history_json`, `last_error_json`
 ```bash
 WORKSPACE_ROOT="$PWD" node n8n/tests/cas-persist-runtime-smoke.js
 WORKSPACE_ROOT="$PWD" node n8n/tests/schedule-intake-runtime-smoke.js
-# …остальные n8n/tests/*.js (160 scenarios)
+# …остальные n8n/tests/*.js (187 scenarios)
+# + mas-activity-service: PYTHONPATH=. python3 -m pytest -q tests/test_activity_api.py
 
 cd excel-agent-tools
 python -m pip install -r requirements-dev.txt

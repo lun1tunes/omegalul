@@ -1,13 +1,13 @@
 {
   "id": "3c93b407-5b49-5c3b-b503-2ace753c5582",
   "name": "Writer — MAS Trace",
-  "description": "Portable durable trace writer.",
+  "description": "Portable durable trace writer with optional MAS Activity UI sync.",
   "nodes": [
     {
       "parameters": {
-        "content": "Structured redacted trace only; no raw prompts, secrets, binary or hidden chain-of-thought. Accepts one event or a bounded event batch. Select Data Table in UI.",
-        "width": 440,
-        "height": 300,
+        "content": "Structured redacted trace only; no raw prompts, secrets, binary or hidden chain-of-thought. Accepts one event or a bounded event batch. Select Data Table in UI.\n\nOptional: after insert, handoff events POST to mas-activity-service (`/v1/sync`) for the chat presentation UI. Set URL/key in “Prepare MAS activity sync”. continueOnFail keeps Trace durable even if the UI service is down.",
+        "width": 620,
+        "height": 420,
         "color": 5
       },
       "id": "cdef7163-1873-50f5-b8d1-2112f0c6aa74",
@@ -35,7 +35,7 @@
     },
     {
       "parameters": {
-        "jsCode": "const root=$json,obj=v=>v&&typeof v==='object'&&!Array.isArray(v),arr=Array.isArray,clean=v=>typeof v==='string'?v.trim():'',allowed=new Set(['intake','plan','rag','baseline','excel','builder','merge','validate','verify','hitl','release','error']);\nconst source=arr(root.mas_trace_events)&&root.mas_trace_events.length?root.mas_trace_events.slice(0,100):(root.mas_trace_event?[root.mas_trace_event]:[root]);\nconst safeRef=v=>obj(v)?Object.fromEntries(Object.entries(v).filter(([k,val])=>!/(prompt|secret|token|password|authorization|binary|content|text)/i.test(k)&&['string','number','boolean'].includes(typeof val)).slice(0,20)):v;\nconst sanitizeDecision=rawDecision=>rawDecision&&rawDecision.contract==='decision_record'&&rawDecision.contract_version==='1.0'&&clean(rawDecision.objective)&&obj(rawDecision.selected_action)&&arr(rawDecision.selected_action.reason_codes)?{contract:'decision_record',contract_version:'1.0',objective:clean(rawDecision.objective).slice(0,1000),considered_inputs:arr(rawDecision.considered_inputs)?rawDecision.considered_inputs.slice(0,100).map(safeRef):[],proposed_actions:arr(rawDecision.proposed_actions)?rawDecision.proposed_actions.slice(0,100).map(safeRef):[],selected_action:{action:clean(rawDecision.selected_action.action).slice(0,300),reason_codes:rawDecision.selected_action.reason_codes.map(v=>clean(v).slice(0,200)).filter(Boolean).slice(0,100)},rejected_actions:arr(rawDecision.rejected_actions)?rawDecision.rejected_actions.slice(0,100).map(safeRef):[],assumptions:arr(rawDecision.assumptions)?rawDecision.assumptions.map(v=>clean(v).slice(0,500)).slice(0,100):[],evidence_refs:arr(rawDecision.evidence_refs)?rawDecision.evidence_refs.slice(0,100).map(safeRef):[],citations:arr(rawDecision.citations)?rawDecision.citations.slice(0,100).map(safeRef):[],tool_call_ids:arr(rawDecision.tool_call_ids)?rawDecision.tool_call_ids.map(v=>clean(v).slice(0,200)).slice(0,100):[],unresolved_questions:arr(rawDecision.unresolved_questions)?rawDecision.unresolved_questions.slice(0,100).map(safeRef):[],acceptance_check_results:arr(rawDecision.acceptance_check_results)?rawDecision.acceptance_check_results.slice(0,100).map(safeRef):[]}:null;\nreturn source.map((candidate,index)=>{const x=obj(candidate)?candidate:{},stage=clean(x.stage).toLowerCase(),now=new Date().toISOString(),decision=sanitizeDecision(obj(x.decision_record)?x.decision_record:null);const safeHash=v=>/^(?:fnv1a32:[a-f0-9]{8}|sha256:[a-f0-9]{64})$/i.test(clean(v))?clean(v).toLowerCase():null,safeCount=v=>Number.isInteger(Number(v))&&Number(v)>=0&&Number(v)<=16777216?Number(v):null;const toolCalls=arr(x.tool_calls)?x.tool_calls.slice(0,50).map((v,i)=>obj(v)?{name:clean(v.name).slice(0,120),tool_call_id:clean(v.tool_call_id).slice(0,200)||null,status:clean(v.status).slice(0,30),stage:clean(v.stage).slice(0,40)||null,sequence:Number.isInteger(Number(v.sequence))?Number(v.sequence):i+1,input_hash:safeHash(v.input_hash),input_bytes:safeCount(v.input_bytes),output_hash:safeHash(v.output_hash),output_bytes:safeCount(v.output_bytes)}:null).filter(Boolean):[];const e={contract:'mas_trace_event',contract_version:'1.0',trace_id:clean(x.trace_id)||`trace_${Date.now().toString(36)}`,task_id:clean(x.task_id)||null,event_id:clean(x.event_id)||`evt_${Date.now().toString(36)}_${index}_${Math.random().toString(36).slice(2,8)}`,at:now,stage:allowed.has(stage)?stage:'error',event_type:clean(x.event_type)||'stage_event',actor:clean(x.actor)||'system',status:clean(x.status)||'observed',summary:clean(x.summary).slice(0,2000),tool_calls:toolCalls,evidence_refs:arr(x.evidence_refs)?x.evidence_refs.slice(0,100).map(safeRef):[],findings:arr(x.findings)?x.findings.slice(0,100).map(safeRef):[],score:obj(x.score)?x.score:null,gate:obj(x.gate)?x.gate:null,decision_record:decision,redaction:{raw_prompt:false,secret:false,binary:false}};return{json:{trace_event:e,trace_row:{event_id:e.event_id,trace_id:e.trace_id,task_id:e.task_id,at:e.at,stage:e.stage,event_type:e.event_type,actor:e.actor,status:e.status,summary:e.summary,details_json:JSON.stringify({tool_calls:e.tool_calls,evidence_refs:e.evidence_refs,findings:e.findings,score:e.score,gate:e.gate,decision_record:e.decision_record})}}}});"
+        "jsCode": "const root=$json,obj=v=>v&&typeof v==='object'&&!Array.isArray(v),arr=Array.isArray,clean=v=>typeof v==='string'?v.trim():'',allowed=new Set(['intake','plan','rag','baseline','excel','builder','merge','validate','verify','hitl','release','error']);\nconst source=arr(root.mas_trace_events)&&root.mas_trace_events.length?root.mas_trace_events.slice(0,100):(root.mas_trace_event?[root.mas_trace_event]:[root]);\nconst safeRef=v=>obj(v)?Object.fromEntries(Object.entries(v).filter(([k,val])=>!/(prompt|secret|token|password|authorization|binary|content|text)/i.test(k)&&['string','number','boolean'].includes(typeof val)).slice(0,20)):v;\nconst sanitizeDecision=rawDecision=>rawDecision&&rawDecision.contract==='decision_record'&&rawDecision.contract_version==='1.0'&&clean(rawDecision.objective)&&obj(rawDecision.selected_action)&&arr(rawDecision.selected_action.reason_codes)?{contract:'decision_record',contract_version:'1.0',objective:clean(rawDecision.objective).slice(0,1000),considered_inputs:arr(rawDecision.considered_inputs)?rawDecision.considered_inputs.slice(0,100).map(safeRef):[],proposed_actions:arr(rawDecision.proposed_actions)?rawDecision.proposed_actions.slice(0,100).map(safeRef):[],selected_action:{action:clean(rawDecision.selected_action.action).slice(0,300),reason_codes:rawDecision.selected_action.reason_codes.map(v=>clean(v).slice(0,200)).filter(Boolean).slice(0,100)},rejected_actions:arr(rawDecision.rejected_actions)?rawDecision.rejected_actions.slice(0,100).map(safeRef):[],assumptions:arr(rawDecision.assumptions)?rawDecision.assumptions.map(v=>clean(v).slice(0,500)).slice(0,100):[],evidence_refs:arr(rawDecision.evidence_refs)?rawDecision.evidence_refs.slice(0,100).map(safeRef):[],citations:arr(rawDecision.citations)?rawDecision.citations.slice(0,100).map(safeRef):[],tool_call_ids:arr(rawDecision.tool_call_ids)?rawDecision.tool_call_ids.map(v=>clean(v).slice(0,200)).slice(0,100):[],unresolved_questions:arr(rawDecision.unresolved_questions)?rawDecision.unresolved_questions.slice(0,100).map(safeRef):[],acceptance_check_results:arr(rawDecision.acceptance_check_results)?rawDecision.acceptance_check_results.slice(0,100).map(safeRef):[]}:null;\nreturn source.map((candidate,index)=>{const x=obj(candidate)?candidate:{},stage=clean(x.stage).toLowerCase(),now=new Date().toISOString(),decision=sanitizeDecision(obj(x.decision_record)?x.decision_record:null);const safeHash=v=>/^(?:fnv1a32:[a-f0-9]{8}|sha256:[a-f0-9]{64})$/i.test(clean(v))?clean(v).toLowerCase():null,safeCount=v=>Number.isInteger(Number(v))&&Number(v)>=0&&Number(v)<=16777216?Number(v):null;const toolCalls=arr(x.tool_calls)?x.tool_calls.slice(0,50).map((v,i)=>obj(v)?{name:clean(v.name).slice(0,120),tool_call_id:clean(v.tool_call_id).slice(0,200)||null,status:clean(v.status).slice(0,30),stage:clean(v.stage).slice(0,40)||null,sequence:Number.isInteger(Number(v.sequence))?Number(v.sequence):i+1,input_hash:safeHash(v.input_hash),input_bytes:safeCount(v.input_bytes),output_hash:safeHash(v.output_hash),output_bytes:safeCount(v.output_bytes)}:null).filter(Boolean):[];const handoff=obj(x.handoff)?{from_specialist:clean(x.handoff.from_specialist)||null,to_specialist:clean(x.handoff.to_specialist)||null,from_role:clean(x.handoff.from_role)||null,to_role:clean(x.handoff.to_role)||null,details:obj(x.handoff.details)?safeRef(x.handoff.details):{}}:null;const e={contract:'mas_trace_event',contract_version:'1.0',trace_id:clean(x.trace_id)||`trace_${Date.now().toString(36)}`,task_id:clean(x.task_id)||null,event_id:clean(x.event_id)||`evt_${Date.now().toString(36)}_${index}_${Math.random().toString(36).slice(2,8)}`,at:clean(x.at)||now,stage:allowed.has(stage)?stage:'error',event_type:clean(x.event_type)||'stage_event',actor:clean(x.actor)||'system',status:clean(x.status)||'observed',summary:clean(x.summary).slice(0,2000),brief:clean(x.brief||(obj(x.handoff)?x.handoff.brief:'')).slice(0,800)||null,duration_ms:Number.isFinite(Number(x.duration_ms))?Math.trunc(Number(x.duration_ms)):(Number.isFinite(Number(obj(x.handoff)?.details?.duration_ms))?Math.trunc(Number(x.handoff.details.duration_ms)):null),tool_calls:toolCalls,evidence_refs:arr(x.evidence_refs)?x.evidence_refs.slice(0,100).map(safeRef):[],findings:arr(x.findings)?x.findings.slice(0,100).map(safeRef):[],score:obj(x.score)?x.score:null,gate:obj(x.gate)?x.gate:null,decision_record:decision,handoff,redaction:{raw_prompt:false,secret:false,binary:false}};return{json:{trace_event:e,trace_row:{event_id:e.event_id,trace_id:e.trace_id,task_id:e.task_id,at:e.at,stage:e.stage,event_type:e.event_type,actor:e.actor,status:e.status,summary:e.summary,details_json:JSON.stringify({tool_calls:e.tool_calls,evidence_refs:e.evidence_refs,findings:e.findings,score:e.score,gate:e.gate,decision_record:e.decision_record,handoff:e.handoff,brief:e.brief,duration_ms:e.duration_ms})}}}});"
       },
       "id": "1903289c-79b6-5621-be75-7684d35fcafa",
       "name": "Normalize MAS trace event",
@@ -86,14 +86,99 @@
     },
     {
       "parameters": {
-        "jsCode": "const rows=$input.all().map(item=>item.json||{}),n=$('Normalize MAS trace event').first().json,e=n.trace_event,source=$('Receive MAS trace event').first().json;return[{json:{contract:'mas_trace_ack',contract_version:'1.0',stored:true,stored_count:rows.length,event_id:e.event_id,trace_id:e.trace_id,redaction:e.redaction,passthrough:source.passthrough??null}}];"
+        "jsCode": "const source=$('Receive MAS trace event').first().json||{};\nconst rows=$('Normalize MAS trace event').all().map(i=>i.json||{});\nconst events=rows.map(r=>r.trace_event).filter(e=>e&&e.event_type==='handoff');\nconst taskId=String(events[0]?.task_id||source.mas_trace_event?.task_id||source.passthrough?.task_id||'').trim();\nconst traceId=String(events[0]?.trace_id||source.mas_trace_event?.trace_id||'').trim();\n// UI-only config: change these two strings in the Code node after import.\nconst ACTIVITY_BASE_URL='http://127.0.0.1:8200';\nconst ACTIVITY_KEY='dev-local';\nconst ready=Boolean(taskId&&events.length&&ACTIVITY_BASE_URL);\nreturn[{json:{\n  activity_sync_ready:ready,\n  activity_url:`${String(ACTIVITY_BASE_URL).replace(/\\/$/,'')}/v1/sync`,\n  activity_key:ACTIVITY_KEY,\n  activity_body:{task_id:taskId,trace_id:traceId||null,events},\n  stored_count:rows.length,\n  handoff_count:events.length,\n  event_id:rows[0]?.trace_event?.event_id||null,\n  trace_id:traceId||null,\n  redaction:rows[0]?.trace_event?.redaction||null,\n  passthrough:source.passthrough??null\n}}];"
+      },
+      "id": "93fee35b-b294-5e35-b2e8-765ef14e0de8",
+      "name": "Prepare MAS activity sync",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        20,
+        -80
+      ]
+    },
+    {
+      "parameters": {
+        "conditions": {
+          "options": {
+            "caseSensitive": true,
+            "leftValue": "",
+            "typeValidation": "strict",
+            "version": 2
+          },
+          "conditions": [
+            {
+              "id": "4e9379e2-b1f6-5c37-930c-4c0eb1792343",
+              "leftValue": "={{ $json.activity_sync_ready }}",
+              "rightValue": true,
+              "operator": {
+                "type": "boolean",
+                "operation": "equals"
+              }
+            }
+          ],
+          "combinator": "and"
+        },
+        "options": {}
+      },
+      "id": "708551c2-10ff-51d8-a6d4-e7737b149bec",
+      "name": "Activity sync needed?",
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2.2,
+      "position": [
+        260,
+        -80
+      ]
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "={{ $json.activity_url }}",
+        "sendHeaders": true,
+        "headerParameters": {
+          "parameters": [
+            {
+              "name": "Content-Type",
+              "value": "application/json"
+            },
+            {
+              "name": "X-Activity-Key",
+              "value": "={{ $json.activity_key }}"
+            }
+          ]
+        },
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "={{ $json.activity_body }}",
+        "options": {
+          "timeout": 5000,
+          "response": {
+            "response": {
+              "neverError": true
+            }
+          }
+        }
+      },
+      "id": "4d104be4-ac16-566c-9d87-9459bfc0d386",
+      "name": "POST handoffs to MAS Activity",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.4,
+      "position": [
+        520,
+        -200
+      ],
+      "onError": "continueRegularOutput"
+    },
+    {
+      "parameters": {
+        "jsCode": "const prepared=$('Prepare MAS activity sync').first().json||{};\nconst source=$('Receive MAS trace event').first().json||{};\nlet activity={attempted:Boolean(prepared.activity_sync_ready),stored:false,count:0};\ntry{\n  const http=$('POST handoffs to MAS Activity').first().json||{};\n  activity={attempted:true,stored:Boolean(http.stored),count:Number(http.count||0),task_id:http.task_id||prepared.activity_body?.task_id||null};\n}catch(_){ activity={attempted:Boolean(prepared.activity_sync_ready),stored:false,count:0,skipped:!prepared.activity_sync_ready}; }\nreturn[{json:{\n  contract:'mas_trace_ack',\n  contract_version:'1.0',\n  stored:true,\n  stored_count:Number(prepared.stored_count||0),\n  event_id:prepared.event_id||null,\n  trace_id:prepared.trace_id||null,\n  redaction:prepared.redaction||null,\n  activity,\n  passthrough:prepared.passthrough??source.passthrough??null\n}}];"
       },
       "id": "bd229fc0-7fc1-5aca-b418-4fd8df03409b",
       "name": "Return trace acknowledgement",
       "type": "n8n-nodes-base.code",
       "typeVersion": 2,
       "position": [
-        20,
+        780,
         -80
       ]
     }
@@ -123,6 +208,46 @@
       ]
     },
     "Insert MAS trace event": {
+      "main": [
+        [
+          {
+            "node": "Prepare MAS activity sync",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Prepare MAS activity sync": {
+      "main": [
+        [
+          {
+            "node": "Activity sync needed?",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Activity sync needed?": {
+      "main": [
+        [
+          {
+            "node": "POST handoffs to MAS Activity",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Return trace acknowledgement",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "POST handoffs to MAS Activity": {
       "main": [
         [
           {

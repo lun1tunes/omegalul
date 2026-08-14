@@ -18,7 +18,7 @@ from schedule_semantic_runtime import build_schedule_validator_js
 ROOT = Path(__file__).resolve().parents[2]
 WORKFLOWS=ROOT/'n8n'/'workflows'
 CORE=WORKFLOWS/'core'
-KEYWORDS=['DATES','INCLUDE','GRUPTREE','WELSPECS','WELLTRACK','COMPDATMD','WCONHIST','WCONPROD','GCONPROD','BRANPROP','NODEPROP','FRACTURE_TEMPLATE','FRACTURE_SPECS','FRACTURE_STAGE','WECON','WTEST','WELTARG','WNETDP','WPIMULT','WFRACP','WFRACPL']
+KEYWORDS=['DATES','INCLUDE','GRUPTREE','WELSPECS','WELLTRACK','COMPDATMD','WCONHIST','WCONPROD','WCONINJE','GCONPROD','GCONINJE','GUIDERAT','GSATPROD','GSATINJE','WELLSTRE','GINJGAS','BRANPROP','NODEPROP','GNETDP','NETBALAN','FRACTURE_TEMPLATE','FRACTURE_SPECS','FRACTURE_STAGE','WECON','WTEST','WELTARG','WNETDP','WPIMULT','WDFAC','WELDRAW','WLIST','WFRACP','WFRACPL','VFPPROD','ACTIONX','DELAYACT','ENDACTIO','UDQ','UDT','APPLYSCRIPT']
 def uid(name): return str(uuid.uuid5(uuid.NAMESPACE_URL,'omegalul/schedule-foundation/'+name))
 def node(name,type_,version,pos,parameters,**extra):
  v={'parameters':parameters,'id':uid(name),'name':name,'type':type_,'typeVersion':version,'position':list(pos)};v.update(extra);return v
@@ -100,13 +100,21 @@ Allowlist: """ + ", ".join(KEYWORDS) + """
 File order matters. Typical DAG dependencies:
 1. DATES (clock) before events on that date.
 2. INCLUDE only for package structure facts you are given — do not invent paths.
-3. GRUPTREE before leaf WELSPECS groups (non-FIELD) and before GCONPROD on those groups.
+3. GRUPTREE before leaf WELSPECS groups (non-FIELD) and before GCONPROD/GCONINJE on those groups; satellite groups for GSATPROD should appear in GRUPTREE first (else they attach under FIELD).
 4. WELSPECS before WELLTRACK/COMPDATMD/controls on that well; WELSPECS↔WELLTRACK free; COMPDATMD after both.
-5. WCONHIST only in history interval; WCONPROD / GCONPROD in forecast after cutover.
-6. WECON/WTEST/WELTARG/WPIMULT after the well exists; WELTARG after a prior control exists when changing a target.
-7. BRANPROP→NODEPROP→WNETDP only if NETWORK already in evidence/baseline.
-8. Fractures — pick one path: WFRACP|WFRACPL **or** FRACTURE_TEMPLATE→FRACTURE_SPECS→FRACTURE_STAGE (do not mix without facts).
-9. LGR plane frac → WFRACPL (needs LGR + WELSPECL/COMPDATL in baseline); never plan WELSPECL/COMPDAT/ACTION/property edits (SATNUM/PORO/MULT*/…).
+5. WLIST after member WELSPECS; before consumers that reference `*LIST` (WCONPROD/WCONHIST/WECON/…).
+6. WCONHIST only in history interval; WCONPROD / WCONINJE / GCONPROD / GCONINJE in forecast after cutover (producers vs injectors).
+7. GUIDERAT when GCONPROD needs FORM guides / WCUT-GOR-aware split (after GRUPTREE/GCONPROD facts); WGRUPCON still outside allowlist.
+8. GSATPROD / GSATINJE for satellite production/injection sources (no wells); GSATCOMP still outside allowlist.
+9. WELLSTRE before GINJGAS (and before WINJGAS/GSATCOMP if those appear in baseline); E3/tN only; mole fractions from facts (Σ=1). GINJGAS wires group inject composition after GCONINJE GAS; WINJGAS/GSATCOMP/WINJMIX/WELLSTRW still outside allowlist.
+10. VFPPROD table **number** must exist in baseline/facts before WCONPROD/WCONHIST reference it (THP/ALQ paths); never invent VFP table body.
+11. WECON/WTEST/WELTARG/WPIMULT/WDFAC/WELDRAW after the well (or group/FIELD for WELDRAW) exists; WELTARG after a prior control exists when changing a target.
+12. BRANPROP→NODEPROP→WNETDP only if NETWORK already in evidence/baseline; GNETDP for fixed-pressure group/node rate band (after group/node exists); NETBALAN for NETWORK balance solver tolerances (NETWORK required); GNETINJE still outside allowlist.
+13. Fractures — pick one path: WFRACP|WFRACPL **or** FRACTURE_TEMPLATE→FRACTURE_SPECS→FRACTURE_STAGE (do not mix without facts).
+14. LGR plane frac → WFRACPL (needs LGR + WELSPECL/COMPDATL in baseline); never plan WELSPECL/COMPDAT/ACTION/property edits (SATNUM/PORO/MULT*/…).
+15. ACTIONX|DELAYACT→(allowlisted body keywords)→ENDACTIO; no DATES/TSTEP inside; DELAYACT needs a trigger action name (usually prior ACTIONX); other ACTION* forms still outside allowlist.
+16. UDQ DEFINE/ASSIGN before consumers (ACTIONX conditions or UDA fields); UDT before UDQ that uses TU*[…]; never invent expression/table bodies; UDQPARAM/UDTDIMS still outside allowlist.
+17. APPLYSCRIPT wires SCRIPT_FILE + FUNCTION_NAME only; never invent Python script body — file/function must come from package facts; not GUI Python calculator.
 
 Out of allowlist → omit from keyword_scope and add a concrete question (do not substitute a “similar” keyword).
 
@@ -190,7 +198,7 @@ const root=$json,obj=v=>v&&typeof v==='object'&&!Array.isArray(v),arr=Array.isAr
 const source=arr(root.mas_trace_events)&&root.mas_trace_events.length?root.mas_trace_events.slice(0,100):(root.mas_trace_event?[root.mas_trace_event]:[root]);
 const safeRef=v=>obj(v)?Object.fromEntries(Object.entries(v).filter(([k,val])=>!/(prompt|secret|token|password|authorization|binary|content|text)/i.test(k)&&['string','number','boolean'].includes(typeof val)).slice(0,20)):v;
 const sanitizeDecision=rawDecision=>rawDecision&&rawDecision.contract==='decision_record'&&rawDecision.contract_version==='1.0'&&clean(rawDecision.objective)&&obj(rawDecision.selected_action)&&arr(rawDecision.selected_action.reason_codes)?{contract:'decision_record',contract_version:'1.0',objective:clean(rawDecision.objective).slice(0,1000),considered_inputs:arr(rawDecision.considered_inputs)?rawDecision.considered_inputs.slice(0,100).map(safeRef):[],proposed_actions:arr(rawDecision.proposed_actions)?rawDecision.proposed_actions.slice(0,100).map(safeRef):[],selected_action:{action:clean(rawDecision.selected_action.action).slice(0,300),reason_codes:rawDecision.selected_action.reason_codes.map(v=>clean(v).slice(0,200)).filter(Boolean).slice(0,100)},rejected_actions:arr(rawDecision.rejected_actions)?rawDecision.rejected_actions.slice(0,100).map(safeRef):[],assumptions:arr(rawDecision.assumptions)?rawDecision.assumptions.map(v=>clean(v).slice(0,500)).slice(0,100):[],evidence_refs:arr(rawDecision.evidence_refs)?rawDecision.evidence_refs.slice(0,100).map(safeRef):[],citations:arr(rawDecision.citations)?rawDecision.citations.slice(0,100).map(safeRef):[],tool_call_ids:arr(rawDecision.tool_call_ids)?rawDecision.tool_call_ids.map(v=>clean(v).slice(0,200)).slice(0,100):[],unresolved_questions:arr(rawDecision.unresolved_questions)?rawDecision.unresolved_questions.slice(0,100).map(safeRef):[],acceptance_check_results:arr(rawDecision.acceptance_check_results)?rawDecision.acceptance_check_results.slice(0,100).map(safeRef):[]}:null;
-return source.map((candidate,index)=>{const x=obj(candidate)?candidate:{},stage=clean(x.stage).toLowerCase(),now=new Date().toISOString(),decision=sanitizeDecision(obj(x.decision_record)?x.decision_record:null);const safeHash=v=>/^(?:fnv1a32:[a-f0-9]{8}|sha256:[a-f0-9]{64})$/i.test(clean(v))?clean(v).toLowerCase():null,safeCount=v=>Number.isInteger(Number(v))&&Number(v)>=0&&Number(v)<=16777216?Number(v):null;const toolCalls=arr(x.tool_calls)?x.tool_calls.slice(0,50).map((v,i)=>obj(v)?{name:clean(v.name).slice(0,120),tool_call_id:clean(v.tool_call_id).slice(0,200)||null,status:clean(v.status).slice(0,30),stage:clean(v.stage).slice(0,40)||null,sequence:Number.isInteger(Number(v.sequence))?Number(v.sequence):i+1,input_hash:safeHash(v.input_hash),input_bytes:safeCount(v.input_bytes),output_hash:safeHash(v.output_hash),output_bytes:safeCount(v.output_bytes)}:null).filter(Boolean):[];const e={contract:'mas_trace_event',contract_version:'1.0',trace_id:clean(x.trace_id)||`trace_${Date.now().toString(36)}`,task_id:clean(x.task_id)||null,event_id:clean(x.event_id)||`evt_${Date.now().toString(36)}_${index}_${Math.random().toString(36).slice(2,8)}`,at:now,stage:allowed.has(stage)?stage:'error',event_type:clean(x.event_type)||'stage_event',actor:clean(x.actor)||'system',status:clean(x.status)||'observed',summary:clean(x.summary).slice(0,2000),tool_calls:toolCalls,evidence_refs:arr(x.evidence_refs)?x.evidence_refs.slice(0,100).map(safeRef):[],findings:arr(x.findings)?x.findings.slice(0,100).map(safeRef):[],score:obj(x.score)?x.score:null,gate:obj(x.gate)?x.gate:null,decision_record:decision,redaction:{raw_prompt:false,secret:false,binary:false}};return{json:{trace_event:e,trace_row:{event_id:e.event_id,trace_id:e.trace_id,task_id:e.task_id,at:e.at,stage:e.stage,event_type:e.event_type,actor:e.actor,status:e.status,summary:e.summary,details_json:JSON.stringify({tool_calls:e.tool_calls,evidence_refs:e.evidence_refs,findings:e.findings,score:e.score,gate:e.gate,decision_record:e.decision_record})}}}});
+return source.map((candidate,index)=>{const x=obj(candidate)?candidate:{},stage=clean(x.stage).toLowerCase(),now=new Date().toISOString(),decision=sanitizeDecision(obj(x.decision_record)?x.decision_record:null);const safeHash=v=>/^(?:fnv1a32:[a-f0-9]{8}|sha256:[a-f0-9]{64})$/i.test(clean(v))?clean(v).toLowerCase():null,safeCount=v=>Number.isInteger(Number(v))&&Number(v)>=0&&Number(v)<=16777216?Number(v):null;const toolCalls=arr(x.tool_calls)?x.tool_calls.slice(0,50).map((v,i)=>obj(v)?{name:clean(v.name).slice(0,120),tool_call_id:clean(v.tool_call_id).slice(0,200)||null,status:clean(v.status).slice(0,30),stage:clean(v.stage).slice(0,40)||null,sequence:Number.isInteger(Number(v.sequence))?Number(v.sequence):i+1,input_hash:safeHash(v.input_hash),input_bytes:safeCount(v.input_bytes),output_hash:safeHash(v.output_hash),output_bytes:safeCount(v.output_bytes)}:null).filter(Boolean):[];const handoff=obj(x.handoff)?{from_specialist:clean(x.handoff.from_specialist)||null,to_specialist:clean(x.handoff.to_specialist)||null,from_role:clean(x.handoff.from_role)||null,to_role:clean(x.handoff.to_role)||null,details:obj(x.handoff.details)?safeRef(x.handoff.details):{}}:null;const e={contract:'mas_trace_event',contract_version:'1.0',trace_id:clean(x.trace_id)||`trace_${Date.now().toString(36)}`,task_id:clean(x.task_id)||null,event_id:clean(x.event_id)||`evt_${Date.now().toString(36)}_${index}_${Math.random().toString(36).slice(2,8)}`,at:clean(x.at)||now,stage:allowed.has(stage)?stage:'error',event_type:clean(x.event_type)||'stage_event',actor:clean(x.actor)||'system',status:clean(x.status)||'observed',summary:clean(x.summary).slice(0,2000),brief:clean(x.brief||(obj(x.handoff)?x.handoff.brief:'')).slice(0,800)||null,duration_ms:Number.isFinite(Number(x.duration_ms))?Math.trunc(Number(x.duration_ms)):(Number.isFinite(Number(obj(x.handoff)?.details?.duration_ms))?Math.trunc(Number(x.handoff.details.duration_ms)):null),tool_calls:toolCalls,evidence_refs:arr(x.evidence_refs)?x.evidence_refs.slice(0,100).map(safeRef):[],findings:arr(x.findings)?x.findings.slice(0,100).map(safeRef):[],score:obj(x.score)?x.score:null,gate:obj(x.gate)?x.gate:null,decision_record:decision,handoff,redaction:{raw_prompt:false,secret:false,binary:false}};return{json:{trace_event:e,trace_row:{event_id:e.event_id,trace_id:e.trace_id,task_id:e.task_id,at:e.at,stage:e.stage,event_type:e.event_type,actor:e.actor,status:e.status,summary:e.summary,details_json:JSON.stringify({tool_calls:e.tool_calls,evidence_refs:e.evidence_refs,findings:e.findings,score:e.score,gate:e.gate,decision_record:e.decision_record,handoff:e.handoff,brief:e.brief,duration_ms:e.duration_ms})}}}});
 """
 INGEST=f"""const x=$json.schedule_knowledge_document??$json,obj=v=>v&&typeof v==='object'&&!Array.isArray(v),clean=v=>typeof v==='string'?v.trim():'',allowed=new Set({K}),m=obj(x.metadata)?x.metadata:{{}},text=clean(x.text||x.document_text),findings=[];if(!text)findings.push({{code:'MANUAL_TEXT_REQUIRED',severity:'error'}});if(clean(m.vendor)!=='Rock Flow Dynamics'||clean(m.simulator).toLowerCase()!=='tnavigator'||clean(m.simulator_version)!=='22.2')findings.push({{code:'MANUAL_VERSION_REQUIRED',severity:'error'}});if(!clean(m.source_hash))findings.push({{code:'SOURCE_HASH_REQUIRED',severity:'error'}});const kws=[...new Set([...text.matchAll(/\\b[A-Z][A-Z0-9_]+\\b/g)].map(x=>x[0]).filter(k=>allowed.has(k)))],chunks=[];for(let i=0;i<text.length;i+=1020)chunks.push({{chunk_id:`${{clean(m.document_id)||'manual'}}:${{chunks.length+1}}`,text:text.slice(i,i+1200),metadata:{{...m,keyword_families:kws,authority_level:'vendor_manual',chunking:'recursive_char_1200_180'}}}});const status=findings.length?'needs_input':'staged';return[{{json:{{contract:'schedule_knowledge_ingest_result',contract_version:'1.0',status,document_id:clean(m.document_id),metadata:m,keyword_families:kws,chunks:chunks.slice(0,5000),chunk_count:chunks.length,findings,approval_required:true,vector_write_allowed:false,next_action:status==='staged'?'approve_and_embed':'correct_metadata_or_text'}}}}];"""
 RETRIEVE=f"""const x=$json.schedule_retrieval_request??$json,obj=v=>v&&typeof v==='object'&&!Array.isArray(v),clean=v=>typeof v==='string'?v.trim():'',allowed=new Set({K}),query=clean(x.query),f=obj(x.filters)?x.filters:{{}},findings=[];if(!query)findings.push({{code:'QUERY_REQUIRED',severity:'error'}});if(clean(f.simulator_version)!=='22.2')findings.push({{code:'EXACT_VERSION_REQUIRED',severity:'error'}});if(clean(f.authority_level)!=='vendor_manual')findings.push({{code:'AUTHORITY_FILTER_REQUIRED',severity:'error'}});const exact=[...new Set((query.match(/\\b[A-Z][A-Z0-9_]+\\b/g)||[]).filter(k=>allowed.has(k)))];return[{{json:{{contract:'schedule_retrieval_request',contract_version:'1.0',status:findings.length?'needs_input':'query_ready',query,filters:{{vendor:'Rock Flow Dynamics',simulator:'tNavigator',simulator_version:'22.2',authority_level:'vendor_manual',...f}},exact_keyword_terms:exact,retrieval_plan:{{lexical:'PostgreSQL full-text',semantic:'PGVector same embedding dimensions',tags:'metadata containment',fusion:'reciprocal_rank_fusion',top_k:Math.min(50,Math.max(1,Number(x.top_k)||10))}},findings,results:[],note:'Connect approved PostgreSQL/PGVector retrieval nodes after UI credential and embedding configuration.'}}}}];"""
@@ -211,7 +219,78 @@ def build_all():
  d['tnavigator-schedule-knowledge-ingestion.workflow.json']=build_ingestion(node=node,note=note,code=code,trigger=trigger,ifnode=ifnode,connect=connect,workflow=workflow)
  d['tnavigator-schedule-hybrid-retrieval.workflow.json']=build_retrieval(node=node,note=note,code=code,trigger=trigger,ifnode=ifnode,connect=connect,workflow=workflow)
  d['tnavigator-schedule-builder.workflow.json']=build_schedule_pipeline(node=node,note=note,code=code,trigger=trigger,ifnode=ifnode,connect=connect,workflow=workflow,keywords=KEYWORDS,planner_schema=PLANNER_SCHEMA,planner_system=PLANNER_SYS,intake_js=INTAKE,baseline_js=BASELINE,baseline_decode_js=BASELINE_DECODE,baseline_query_js=BASELINE_QUERY,plan_validate_js=PLAN_VALIDATE,render_js=RENDER,merge_js=MERGE,validate_js=VALIDATE,verify_js=VERIFY)
- ns=[note('Trace writer README',(-920,-480),'Structured redacted trace only; no raw prompts, secrets, binary or hidden chain-of-thought. Accepts one event or a bounded event batch. Select Data Table in UI.'),trigger('Receive MAS trace event',(-920,-80),{'mas_trace_event':{'trace_id':'trace_example','task_id':'eng_example','stage':'builder','event_type':'stage_completed','summary':'Draft produced'},'mas_trace_events':[],'passthrough':{}}),code('Normalize MAS trace event',(-640,-80),TRACE),node('Insert MAS trace event','n8n-nodes-base.dataTable',1.1,(-300,-80),{'operation':'insert','dataTableId':{'__rl':True,'mode':'list','value':'REPLACE_IN_UI','cachedResultName':'MAS trace events v1'},'columns':{'mappingMode':'defineBelow','value':{k:'={{ $json.trace_row.'+k+' }}' for k in ['event_id','trace_id','task_id','at','stage','event_type','actor','status','summary','details_json']},'matchingColumns':[],'schema':[],'attemptToConvertTypes':False,'convertFieldsToString':False}}),code('Return trace acknowledgement',(20,-80),"const rows=$input.all().map(item=>item.json||{}),n=$('Normalize MAS trace event').first().json,e=n.trace_event,source=$('Receive MAS trace event').first().json;return[{json:{contract:'mas_trace_ack',contract_version:'1.0',stored:true,stored_count:rows.length,event_id:e.event_id,trace_id:e.trace_id,redaction:e.redaction,passthrough:source.passthrough??null}}];")];c={};connect(c,'Receive MAS trace event','Normalize MAS trace event');connect(c,'Normalize MAS trace event','Insert MAS trace event');connect(c,'Insert MAS trace event','Return trace acknowledgement');d['mas-trace-event-writer.workflow.json']=workflow('Writer — MAS Trace','Portable durable trace writer.',ns,c,'mas_trace_event/v1')
+ ns=[
+  note('Trace writer README',(-920,-480),'Structured redacted trace only; no raw prompts, secrets, binary or hidden chain-of-thought. Accepts one event or a bounded event batch. Select Data Table in UI.\n\nOptional: after insert, handoff events POST to mas-activity-service (`/v1/sync`) for the chat presentation UI. Set URL/key in “Prepare MAS activity sync”. continueOnFail keeps Trace durable even if the UI service is down.',620,420),
+  trigger('Receive MAS trace event',(-920,-80),{'mas_trace_event':{'trace_id':'trace_example','task_id':'eng_example','stage':'builder','event_type':'stage_completed','summary':'Draft produced'},'mas_trace_events':[],'passthrough':{}}),
+  code('Normalize MAS trace event',(-640,-80),TRACE),
+  node('Insert MAS trace event','n8n-nodes-base.dataTable',1.1,(-300,-80),{'operation':'insert','dataTableId':{'__rl':True,'mode':'list','value':'REPLACE_IN_UI','cachedResultName':'MAS trace events v1'},'columns':{'mappingMode':'defineBelow','value':{k:'={{ $json.trace_row.'+k+' }}' for k in ['event_id','trace_id','task_id','at','stage','event_type','actor','status','summary','details_json']},'matchingColumns':[],'schema':[],'attemptToConvertTypes':False,'convertFieldsToString':False}}),
+  code('Prepare MAS activity sync',(20,-80),r"""
+const source=$('Receive MAS trace event').first().json||{};
+const rows=$('Normalize MAS trace event').all().map(i=>i.json||{});
+const events=rows.map(r=>r.trace_event).filter(e=>e&&e.event_type==='handoff');
+const taskId=String(events[0]?.task_id||source.mas_trace_event?.task_id||source.passthrough?.task_id||'').trim();
+const traceId=String(events[0]?.trace_id||source.mas_trace_event?.trace_id||'').trim();
+// UI-only config: change these two strings in the Code node after import.
+const ACTIVITY_BASE_URL='http://127.0.0.1:8200';
+const ACTIVITY_KEY='dev-local';
+const ready=Boolean(taskId&&events.length&&ACTIVITY_BASE_URL);
+return[{json:{
+  activity_sync_ready:ready,
+  activity_url:`${String(ACTIVITY_BASE_URL).replace(/\/$/,'')}/v1/sync`,
+  activity_key:ACTIVITY_KEY,
+  activity_body:{task_id:taskId,trace_id:traceId||null,events},
+  stored_count:rows.length,
+  handoff_count:events.length,
+  event_id:rows[0]?.trace_event?.event_id||null,
+  trace_id:traceId||null,
+  redaction:rows[0]?.trace_event?.redaction||null,
+  passthrough:source.passthrough??null
+}}];
+"""),
+  ifnode('Activity sync needed?',(260,-80),"={{ $json.activity_sync_ready }}",True,'boolean'),
+  node('POST handoffs to MAS Activity','n8n-nodes-base.httpRequest',4.4,(520,-200),{
+    'method':'POST',
+    'url':'={{ $json.activity_url }}',
+    'sendHeaders':True,
+    'headerParameters':{'parameters':[
+      {'name':'Content-Type','value':'application/json'},
+      {'name':'X-Activity-Key','value':'={{ $json.activity_key }}'},
+    ]},
+    'sendBody':True,
+    'specifyBody':'json',
+    'jsonBody':'={{ $json.activity_body }}',
+    'options':{'timeout':5000,'response':{'response':{'neverError':True}}},
+  }, onError='continueRegularOutput'),
+  code('Return trace acknowledgement',(780,-80),r"""
+const prepared=$('Prepare MAS activity sync').first().json||{};
+const source=$('Receive MAS trace event').first().json||{};
+let activity={attempted:Boolean(prepared.activity_sync_ready),stored:false,count:0};
+try{
+  const http=$('POST handoffs to MAS Activity').first().json||{};
+  activity={attempted:true,stored:Boolean(http.stored),count:Number(http.count||0),task_id:http.task_id||prepared.activity_body?.task_id||null};
+}catch(_){ activity={attempted:Boolean(prepared.activity_sync_ready),stored:false,count:0,skipped:!prepared.activity_sync_ready}; }
+return[{json:{
+  contract:'mas_trace_ack',
+  contract_version:'1.0',
+  stored:true,
+  stored_count:Number(prepared.stored_count||0),
+  event_id:prepared.event_id||null,
+  trace_id:prepared.trace_id||null,
+  redaction:prepared.redaction||null,
+  activity,
+  passthrough:prepared.passthrough??source.passthrough??null
+}}];
+"""),
+ ]
+ c={}
+ connect(c,'Receive MAS trace event','Normalize MAS trace event')
+ connect(c,'Normalize MAS trace event','Insert MAS trace event')
+ connect(c,'Insert MAS trace event','Prepare MAS activity sync')
+ connect(c,'Prepare MAS activity sync','Activity sync needed?')
+ connect(c,'Activity sync needed?','POST handoffs to MAS Activity',idx=0)
+ connect(c,'Activity sync needed?','Return trace acknowledgement',idx=1)
+ connect(c,'POST handoffs to MAS Activity','Return trace acknowledgement')
+ d['mas-trace-event-writer.workflow.json']=workflow('Writer — MAS Trace','Portable durable trace writer with optional MAS Activity UI sync.',ns,c,'mas_trace_event/v1')
  return d
 
 def main():

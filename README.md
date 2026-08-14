@@ -10,12 +10,14 @@
 | [`docs/architecture/petroleum-mas-research-and-roadmap.md`](docs/architecture/petroleum-mas-research-and-roadmap.md) | архитектура, словарь SCHEDULE keywords, INCLUDE path policy |
 | [`excel-agent-tools/`](excel-agent-tools/) | FastAPI Excel tools + pytest |
 | [`fastapi-math-service/`](fastapi-math-service/) | geometry FastAPI |
+| [`mas-activity-service/`](mas-activity-service/) | live handoff chat UI (FastAPI) |
 
 ## Быстрая проверка репозитория
 
 ```bash
 WORKSPACE_ROOT="$PWD" node n8n/tests/cas-persist-runtime-smoke.js
-# …все n8n/tests/*.js → 160 scenarios
+# …все n8n/tests/*.js → 187 scenarios
+# + cd mas-activity-service && PYTHONPATH=. python3 -m pytest -q tests/test_activity_api.py
 
 cd excel-agent-tools && python -m pytest tests   # 68 passed
 ```

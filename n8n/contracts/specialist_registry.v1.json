@@ -1,0 +1,112 @@
+{
+  "contract": "specialist_registry",
+  "contract_version": "1.0",
+  "purpose": "Single source of truth for Planner catalogue + deterministic allowlist + chat roles. RAG routing_card prose is policy text, not route numbers.",
+  "value_factors": [
+    {
+      "id": "registry",
+      "improves": "Stops catalogue/allowlist drift; unknown specialist_id fails closed before Call Workflow",
+      "not": "Extra bureaucracy fields that the Planner never uses"
+    },
+    {
+      "id": "domain_packet",
+      "improves": "Excel→Schedule handoff only when source_facts_packet has snapshot+correlation; UI can list facts",
+      "not": "Full OpenAPI for every compact_data key"
+    },
+    {
+      "id": "typed_evidence_gap",
+      "improves": "Incomplete gaps cannot open Excel loop; chat can show exact missing field chips",
+      "not": "Free-form prose gaps that burn budget"
+    },
+    {
+      "id": "handoff_trace",
+      "improves": "Every cross-specialist edge becomes a reconstructable chat turn in mas_trace_events",
+      "not": "Logging every LLM token"
+    }
+  ],
+  "specialists": [
+    {
+      "specialist_id": "excel_extraction_specialist",
+      "chat_role": "Excel Extractor",
+      "route": 0,
+      "configured": true,
+      "capabilities": [
+        "Excel workbook extraction",
+        "table detection",
+        "controlled filtering",
+        "tabular data export",
+        "normalized source facts for downstream specialists"
+      ],
+      "compact_data_kind": "source_facts_packet",
+      "inputs_kind": "excel_inputs"
+    },
+    {
+      "specialist_id": "schedule_builder_specialist",
+      "chat_role": "Schedule Builder",
+      "route": 1,
+      "configured": true,
+      "capabilities": [
+        "tNavigator 22.2 SCHEDULE CREATE",
+        "preserve-by-default SCHEDULE REVISE",
+        "keyword impact/change set",
+        "typed temporal draft",
+        "evidence gap reporting"
+      ],
+      "depends_on": [
+        "approved normalized source facts when tabular evidence is needed"
+      ],
+      "constraints": [
+        "never calls Excel directly",
+        "never approves or releases output"
+      ],
+      "compact_data_kind": "schedule_builder_compact",
+      "inputs_kind": "schedule_inputs"
+    },
+    {
+      "specialist_id": "engineering_calculation_specialist",
+      "chat_role": "Calculation Specialist",
+      "route": 2,
+      "configured": true,
+      "capabilities": [
+        "batch well-trajectory and structural-surface intersection",
+        "engineering geometry calculation",
+        "verification calculation"
+      ],
+      "depends_on": [
+        "one or more uploaded .dev trajectories and exactly one ASCII CPS3 surface in the same CRS, units, vertical datum and Z sign convention"
+      ],
+      "constraints": [
+        "returns filename-correlated JSON only",
+        "never writes SCHEDULE code"
+      ],
+      "compact_data_kind": "calculation_compact",
+      "inputs_kind": "calculation_inputs"
+    },
+    {
+      "specialist_id": "engineering_data_specialist",
+      "chat_role": "Data Specialist",
+      "route": 3,
+      "configured": false,
+      "capabilities": [
+        "controlled engineering data preparation",
+        "tabular engineering data extraction",
+        "data quality assessment"
+      ],
+      "compact_data_kind": "generic_compact",
+      "inputs_kind": "generic_inputs"
+    },
+    {
+      "specialist_id": "engineering_document_specialist",
+      "chat_role": "Document Specialist",
+      "route": 4,
+      "configured": false,
+      "capabilities": [
+        "requirements extraction",
+        "standards and revision comparison",
+        "technical document analysis"
+      ],
+      "compact_data_kind": "generic_compact",
+      "inputs_kind": "generic_inputs"
+    }
+  ]
+}

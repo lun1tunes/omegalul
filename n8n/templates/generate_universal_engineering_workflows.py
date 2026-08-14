@@ -4,12 +4,24 @@ import json
 import uuid
 from pathlib import Path
 
+from mas_handoff_contracts import (
+    APPEND_HANDOFF_JS,
+    NORMALIZE_SOURCE_FACTS_JS,
+    TYPED_GAP_FILTER_JS,
+    allowlist_js,
+    chat_role_map_js,
+    specialist_catalog_js,
+)
+
 
 ROOT = Path(__file__).resolve().parents[2]
 WORKFLOWS = ROOT / "n8n" / "workflows"
 CORE = WORKFLOWS / "core"
 SUPPORT = WORKFLOWS / "support"
 TEMPLATES = ROOT / "n8n" / "templates"
+_SPECIALIST_CATALOG_JSON = specialist_catalog_js()
+_SPECIALIST_ALLOWLIST_JS = allowlist_js()
+_CHAT_ROLE_MAP_JSON = chat_role_map_js()
 
 
 def uid(name: str) -> str:
@@ -568,13 +580,7 @@ return [{json:{...x,status:responseStatus,outcome,message,should_plan:shouldPlan
 PLANNER_INPUT = r"""
 const x=$json;
 const parse=(v,f)=>{try{return typeof v==='string'?JSON.parse(v):v??f}catch{return f}};
-const specialist_catalog=[
-  {specialist_id:'excel_extraction_specialist',capabilities:['Excel workbook extraction','table detection','controlled filtering','tabular data export','normalized source facts for downstream specialists']},
-  {specialist_id:'schedule_builder_specialist',capabilities:['tNavigator 22.2 SCHEDULE CREATE','preserve-by-default SCHEDULE REVISE','keyword impact/change set','typed temporal draft','evidence gap reporting'],depends_on:['approved normalized source facts when tabular evidence is needed'],constraints:['never calls Excel directly','never approves or releases output']},
-  {specialist_id:'engineering_calculation_specialist',capabilities:['batch well-trajectory and structural-surface intersection','engineering geometry calculation','verification calculation'],depends_on:['one or more uploaded .dev trajectories and exactly one ASCII CPS3 surface in the same CRS, units, vertical datum and Z sign convention'],constraints:['returns filename-correlated JSON only','never writes SCHEDULE code']},
-  {specialist_id:'engineering_data_specialist',capabilities:['controlled engineering data preparation','tabular engineering data extraction','data quality assessment']},
-  {specialist_id:'engineering_document_specialist',capabilities:['requirements extraction','standards and revision comparison','technical document analysis']},
-];
+const specialist_catalog=SPECIALIST_CATALOG_PLACEHOLDER;
 const fullRequest=parse(x.request_json,{}),request={...fullRequest};
 if(typeof request.baseline_schedule_text==='string'){request.baseline_schedule={present:true,filename:request.baseline_filename||'schedule.inc',byte_length:new TextEncoder().encode(request.baseline_schedule_text).length};delete request.baseline_schedule_text;}
 const payload={contract:'orchestrator_planning_request',contract_version:'1.0',task_id:x.task_id,attempt:Number(x.retry_count)+1,
@@ -661,20 +667,19 @@ return [{json:{...base,version:Number(base.version)+1,previous_version:Number(ba
 
 RESOLVE_SPECIALIST = r"""
 const x=$json;
-// TRUST BOUNDARY: edit this deterministic allowlist in the UI. The model sees
-// only logical specialist_id values and can never choose or disclose workflow_id.
+// TRUST BOUNDARY: allowlist is generated from n8n/contracts/specialist_registry.v1.json.
+// The model sees only logical specialist_id values and can never choose workflow_id.
 let packet={};try{packet=typeof x.packet_json==='string'?JSON.parse(x.packet_json):(x.specialist_packet||{})}catch{packet={}}
 const specialistId=String(packet.specialist_id||x.specialist_id||'');
-const allowlist={
- excel_extraction_specialist:{route:0,configured:true},
- schedule_builder_specialist:{route:1,configured:true},
- engineering_calculation_specialist:{route:2,configured:true},
- engineering_data_specialist:{route:3,configured:false},
- engineering_document_specialist:{route:4,configured:false},
-};
+const allowlist=SPECIALIST_ALLOWLIST_PLACEHOLDER;
+const chatRoles=CHAT_ROLE_MAP_PLACEHOLDER;
+__APPEND_HANDOFF__
 const binding=allowlist[specialistId];
-if(!binding){const runtime=(()=>{try{return JSON.parse(x.runtime_json||'{}')}catch{return{}}})();return [{json:{...x,specialist_id:specialistId,specialist_packet:packet,delegation_allowed:false,status:'awaiting_human',runtime_json:JSON.stringify({...runtime,last_error:{code:'SPECIALIST_NOT_ALLOWLISTED',specialist_id:specialistId}}),gate_json:JSON.stringify({gate_id:`gate_${x.task_id}_${Number(x.version)+1}_routing`,kind:'needs_decision',reason:'Specialist is not allowlisted.',questions:[],expected_version:Number(x.version)+1})}}];}
-return [{json:{...x,specialist_id:specialistId,specialist_packet:packet,delegation_allowed:Boolean(binding.configured),specialist_route:binding.route}}];
+const runtimeBase=(()=>{try{return JSON.parse(x.runtime_json||'{}')}catch{return{}}})();
+if(!binding){return [{json:{...x,specialist_id:specialistId,specialist_packet:packet,delegation_allowed:false,status:'awaiting_human',runtime_json:JSON.stringify({...runtimeBase,last_error:{code:'SPECIALIST_NOT_ALLOWLISTED',specialist_id:specialistId}}),gate_json:JSON.stringify({gate_id:`gate_${x.task_id}_${Number(x.version)+1}_routing`,kind:'needs_decision',reason:'Specialist is not allowlisted.',questions:[],expected_version:Number(x.version)+1})}}];}
+if(!binding.configured){return [{json:{...x,specialist_id:specialistId,specialist_packet:packet,delegation_allowed:false,specialist_route:binding.route,runtime_json:JSON.stringify(runtimeBase)}}];}
+const delegatedRuntime=appendHandoffEvent(runtimeBase,{stage:'plan',status:'DELEGATED',from_specialist:'universal_orchestrator',to_specialist:specialistId,from_role:'Orchestrator',to_role:chatRoles[specialistId]||specialistId,summary:`Orchestrator delegates to ${chatRoles[specialistId]||specialistId}.`,details:{attempt:packet.attempt||null,objective:String(packet.objective||'').slice(0,300)}});
+return [{json:{...x,specialist_id:specialistId,specialist_packet:packet,delegation_allowed:true,specialist_route:binding.route,runtime_json:JSON.stringify(delegatedRuntime)}}];
 """.strip()
 
 
@@ -825,37 +830,76 @@ const scheduleRequested=Boolean(inputs.schedule_request||request.schedule_reques
 const successful=['succeeded','partial'].includes(result.status);
 const excelToSchedule=successful&&x.specialist_id==='excel_extraction_specialist'&&scheduleRequested;
 const calculationToSchedule=successful&&x.specialist_id==='engineering_calculation_specialist'&&scheduleRequested;
+__NORMALIZE_SOURCE_FACTS__
+__APPEND_HANDOFF__
+const chatRoles=CHAT_ROLE_MAP_PLACEHOLDER;
 const context=(()=>{try{return JSON.parse(x.runtime_json||'{}')}catch{return {}}})();
 const loop=context.schedule_evidence_loop&&typeof context.schedule_evidence_loop==='object'?context.schedule_evidence_loop:{};
 const resumeSchedule=excelToSchedule&&loop.active===true&&loop.builder_packet&&typeof loop.builder_packet==='object';
 const scheduleSuccess=successful&&x.specialist_id==='schedule_builder_specialist';
-const route=resumeSchedule?'resume_schedule':(excelToSchedule||calculationToSchedule)?'replan':'verify';
-const handoff=excelToSchedule?{code:'EXCEL_EVIDENCE_READY',next_specialist:'schedule_builder_specialist',source_facts_packet:result.compact_data||{},artifact_refs:result.artifact_refs||[],evidence:result.evidence||[]}:calculationToSchedule?{code:'CALCULATION_DATA_READY',next_specialist:'schedule_builder_specialist',calculation:result.compact_data?.calculation||{},warnings:result.warnings||[]}:null;
-const runtimeBase=(()=>{try{return JSON.parse(x.runtime_json||'{}')}catch{return{}}})();return [{json:{...x,specialist_result:result,result_json:JSON.stringify(result),post_specialist_route:route,runtime_json:JSON.stringify({...runtimeBase,last_error:handoff||runtimeBase.last_error||null})}}];
+let runtimeBase={...context};
+let nextResult=result;
+let route=resumeSchedule?'resume_schedule':(excelToSchedule||calculationToSchedule)?'replan':'verify';
+let handoff=null;
+if(excelToSchedule){
+  const packetFacts=normalizeSourceFactsPacket(result.compact_data||{});
+  if(!packetFacts){
+    nextResult={...result,status:'retryable_error',summary:'Excel evidence cannot hand off to SCHEDULE Builder: source_facts_packet requires source_snapshot_hash and correlation_id.',error:{code:'INVALID_SOURCE_FACTS_PACKET',previous_error:result.error},human_request:null};
+    route='verify';
+    runtimeBase=appendHandoffEvent(runtimeBase,{stage:'excel',status:'INVALID_SOURCE_FACTS_PACKET',from_specialist:'excel_extraction_specialist',to_specialist:'schedule_builder_specialist',from_role:chatRoles.excel_extraction_specialist,to_role:chatRoles.schedule_builder_specialist,summary:'Handoff blocked: Excel compact_data missing snapshot/correlation.',details:{fact_count:0}});
+  }else{
+    handoff={code:'EXCEL_EVIDENCE_READY',next_specialist:'schedule_builder_specialist',source_facts_packet:packetFacts,artifact_refs:result.artifact_refs||[],evidence:result.evidence||[]};
+    runtimeBase=appendHandoffEvent(runtimeBase,{stage:'excel',status:'EXCEL_EVIDENCE_READY',from_specialist:'excel_extraction_specialist',to_specialist:'schedule_builder_specialist',from_role:chatRoles.excel_extraction_specialist,to_role:chatRoles.schedule_builder_specialist,summary:`Excel returned ${packetFacts.facts.length} fact(s) for Schedule Builder.`,details:{source_snapshot_hash:packetFacts.source_snapshot_hash,correlation_id:packetFacts.correlation_id,fact_count:packetFacts.facts.length,conflict_count:packetFacts.conflicts.length}});
+  }
+}else if(calculationToSchedule){
+  handoff={code:'CALCULATION_DATA_READY',next_specialist:'schedule_builder_specialist',calculation:result.compact_data?.calculation||{},warnings:result.warnings||[]};
+  runtimeBase=appendHandoffEvent(runtimeBase,{stage:'builder',status:'CALCULATION_DATA_READY',from_specialist:'engineering_calculation_specialist',to_specialist:'schedule_builder_specialist',from_role:chatRoles.engineering_calculation_specialist,to_role:chatRoles.schedule_builder_specialist,summary:'Calculation specialist returned geometry data for Schedule Builder.',details:{warning_count:Array.isArray(result.warnings)?result.warnings.length:0}});
+}else if(scheduleSuccess){
+  runtimeBase=appendHandoffEvent(runtimeBase,{stage:'builder',status:String(result.status||'succeeded'),from_specialist:'schedule_builder_specialist',to_specialist:'universal_orchestrator',from_role:chatRoles.schedule_builder_specialist,to_role:'Orchestrator',summary:String(result.summary||'Schedule Builder finished.').slice(0,500),details:{release_ready:Boolean(result.compact_data?.release_ready)}});
+}
+return [{json:{...x,specialist_result:nextResult,result_json:JSON.stringify(nextResult),post_specialist_route:route,runtime_json:JSON.stringify({...runtimeBase,last_error:handoff||runtimeBase.last_error||null})}}];
 """.strip()
 
 
 PREPARE_SCHEDULE_EVIDENCE_RETRY = r"""
 const x=$json;const result=x.specialist_result||{};const continuation=result.continuation&&typeof result.continuation==='object'?result.continuation:{};
 const context=(()=>{try{return JSON.parse(x.runtime_json||'{}')}catch{return {}}})();const prior=context.schedule_evidence_loop&&typeof context.schedule_evidence_loop==='object'?context.schedule_evidence_loop:{};
-const isGap=x.specialist_id==='schedule_builder_specialist'&&result.status==='needs_input'&&continuation.protocol==='schedule-builder-evidence-gap-v1'&&Array.isArray(continuation.evidence_gap)&&continuation.evidence_gap.length>0;
-const gaps=isGap?continuation.evidence_gap.slice(0,100):[];const signature=String(continuation.gap_signature||'');const snapshot=String(continuation.source_snapshot_hash||'none');
+__TYPED_GAP_FILTER__
+__APPEND_HANDOFF__
+const chatRoles=CHAT_ROLE_MAP_PLACEHOLDER;
+const rawGaps=Array.isArray(continuation.evidence_gap)?continuation.evidence_gap:[];
+const gaps=typedEvidenceGaps(rawGaps);
+const protocolOk=continuation.protocol==='schedule-builder-evidence-gap-v1';
+const isGap=x.specialist_id==='schedule_builder_specialist'&&result.status==='needs_input'&&protocolOk&&gaps.length>0;
+const signature=String(continuation.gap_signature||'');const snapshot=String(continuation.source_snapshot_hash||'none');
 const excelIterations=Number(prior.excel_iterations||0),builderIterations=Number(prior.builder_iterations||1);const maxExcel=Math.min(5,Math.max(1,Number(continuation.max_excel_iterations||prior.max_excel_iterations||2))),maxBuilder=Math.min(5,Math.max(1,Number(continuation.max_builder_iterations||prior.max_builder_iterations||3)));
-let retryAllowed=isGap,reason='';if(isGap&&prior.last_gap_signature===signature&&prior.last_source_snapshot===snapshot){retryAllowed=false;reason='STALLED_EVIDENCE_LOOP';}else if(isGap&&excelIterations>=maxExcel){retryAllowed=false;reason='EXCEL_EVIDENCE_BUDGET_EXHAUSTED';}else if(isGap&&builderIterations>=maxBuilder){retryAllowed=false;reason='BUILDER_ITERATION_BUDGET_EXHAUSTED';}
-if(!isGap)return[{json:{...x,schedule_evidence_retry:false}}];
-if(!retryAllowed){const stalled={...result,status:'needs_decision',summary:'SCHEDULE evidence loop stopped by deterministic policy.',human_request:{kind:'needs_decision',questions:[{id:'schedule_evidence_loop',question:`${reason}. Provide the missing facts directly, select another source, revise scope, or reject the task.`,type:'text'}]},error:{code:reason,gap_signature:signature,source_snapshot_hash:snapshot},continuation:null};return[{json:{...x,specialist_result:stalled,result_json:JSON.stringify(stalled),schedule_evidence_retry:false}}];}
-const fields=gaps.map(g=>({entity:String(g.entity||''),effective_at:String(g.effective_at||''),keyword:String(g.keyword||''),field:String(g.field||''),reason:String(g.reason||''),expected_format:String(g.expected_format||'value with unit and provenance')}));
-const builderPacket=x.specialist_packet||{};const correlationId=`schedule_gap_${x.task_id}_${signature}_${excelIterations+1}`.slice(0,240);const excelPacket={contract:'specialist_packet',contract_version:'1.0',task_id:x.task_id,specialist_id:'excel_extraction_specialist',attempt:Number(x.retry_count)+1,objective:'Extract only the missing SCHEDULE evidence fields from the governed workbook.',inputs:{workflow_kind:'schedule',schedule_evidence_gap:fields,requested_fields:[...new Set(fields.map(f=>f.field).filter(Boolean))],target_entities:[...new Set(fields.map(f=>f.entity).filter(Boolean))],date_scope:[...new Set(fields.map(f=>f.effective_at).filter(Boolean))],prompt:`Extract only these missing SCHEDULE facts: ${JSON.stringify(fields)}`},controls:{bounded_request:true,max_rows:10000,max_cells:200000,source_snapshot_hash:snapshot,correlation_id:correlationId},acceptance_criteria:fields.map((f,i)=>({id:`gap_${i+1}`,criterion:`Return ${f.field||'requested field'} for ${f.entity||'the requested entity'} at ${f.effective_at||'the requested date'} with units and row provenance.`})),artifact_refs:Array.isArray(builderPacket.artifact_refs)?builderPacket.artifact_refs:[]};
-const loop={active:true,excel_iterations:excelIterations,builder_iterations:builderIterations,max_excel_iterations:maxExcel,max_builder_iterations:maxBuilder,last_gap_signature:signature,last_source_snapshot:snapshot,expected_correlation_id:correlationId,builder_packet:builderPacket,last_builder_result:result};return[{json:{...x,version:Number(x.version)+1,previous_version:Number(x.version),status:'delegated',specialist_id:'excel_extraction_specialist',specialist_packet:excelPacket,packet_json:JSON.stringify(excelPacket),result_json:JSON.stringify(result),runtime_json:JSON.stringify({...context,schedule_evidence_loop:loop,last_error:{code:'SCHEDULE_EVIDENCE_GAP',gap_signature:signature,gaps:fields}}),updated_at:new Date().toISOString(),schedule_evidence_retry:true}}];
+let retryAllowed=isGap,reason='';
+if(x.specialist_id==='schedule_builder_specialist'&&result.status==='needs_input'&&protocolOk&&rawGaps.length&&!gaps.length){retryAllowed=false;reason='MALFORMED_EVIDENCE_GAP';}
+else if(isGap&&prior.last_gap_signature===signature&&prior.last_source_snapshot===snapshot){retryAllowed=false;reason='STALLED_EVIDENCE_LOOP';}
+else if(isGap&&excelIterations>=maxExcel){retryAllowed=false;reason='EXCEL_EVIDENCE_BUDGET_EXHAUSTED';}
+else if(isGap&&builderIterations>=maxBuilder){retryAllowed=false;reason='BUILDER_ITERATION_BUDGET_EXHAUSTED';}
+if(!isGap&&reason!=='MALFORMED_EVIDENCE_GAP')return[{json:{...x,schedule_evidence_retry:false}}];
+if(!retryAllowed){const stalled={...result,status:'needs_decision',summary:'SCHEDULE evidence loop stopped by deterministic policy.',human_request:{kind:'needs_decision',questions:[{id:'schedule_evidence_loop',question:`${reason}. Provide the missing facts directly, select another source, revise scope, or reject the task.`,type:'text'}]},error:{code:reason,gap_signature:signature,source_snapshot_hash:snapshot,dropped_gap_count:Math.max(0,rawGaps.length-gaps.length)},continuation:null};const runtime=appendHandoffEvent(context,{stage:'builder',status:reason,from_specialist:'schedule_builder_specialist',to_specialist:'universal_orchestrator',from_role:chatRoles.schedule_builder_specialist,to_role:'Orchestrator',summary:`Evidence loop stopped: ${reason}.`,details:{gap_count:gaps.length,dropped_gap_count:Math.max(0,rawGaps.length-gaps.length)}});return[{json:{...x,specialist_result:stalled,result_json:JSON.stringify(stalled),runtime_json:JSON.stringify(runtime),schedule_evidence_retry:false}}];}
+const fields=gaps;const builderPacket=x.specialist_packet||{};const correlationId=`schedule_gap_${x.task_id}_${signature}_${excelIterations+1}`.slice(0,240);const excelPacket={contract:'specialist_packet',contract_version:'1.0',task_id:x.task_id,specialist_id:'excel_extraction_specialist',attempt:Number(x.retry_count)+1,objective:'Extract only the missing SCHEDULE evidence fields from the governed workbook.',inputs:{workflow_kind:'schedule',schedule_evidence_gap:fields,requested_fields:[...new Set(fields.map(f=>f.field).filter(Boolean))],target_entities:[...new Set(fields.map(f=>f.entity).filter(Boolean))],date_scope:[...new Set(fields.map(f=>f.effective_at).filter(Boolean))],prompt:`Extract only these missing SCHEDULE facts: ${JSON.stringify(fields)}`},controls:{bounded_request:true,max_rows:10000,max_cells:200000,source_snapshot_hash:snapshot,correlation_id:correlationId},acceptance_criteria:fields.map((f,i)=>({id:`gap_${i+1}`,criterion:`Return ${f.field||'requested field'} for ${f.entity||'the requested entity'} at ${f.effective_at||'the requested date'} with units and row provenance.`})),artifact_refs:Array.isArray(builderPacket.artifact_refs)?builderPacket.artifact_refs:[]};
+const loop={active:true,excel_iterations:excelIterations,builder_iterations:builderIterations,max_excel_iterations:maxExcel,max_builder_iterations:maxBuilder,last_gap_signature:signature,last_source_snapshot:snapshot,expected_correlation_id:correlationId,builder_packet:builderPacket,last_builder_result:result};
+const runtime=appendHandoffEvent(context,{stage:'builder',status:'SCHEDULE_EVIDENCE_GAP',from_specialist:'schedule_builder_specialist',to_specialist:'excel_extraction_specialist',from_role:chatRoles.schedule_builder_specialist,to_role:chatRoles.excel_extraction_specialist,summary:`Schedule Builder requests ${fields.length} missing field(s) from Excel.`,details:{gap_count:fields.length,gap_signature:signature,source_snapshot_hash:snapshot,fields:fields.map(f=>f.field)}});
+return[{json:{...x,version:Number(x.version)+1,previous_version:Number(x.version),status:'delegated',specialist_id:'excel_extraction_specialist',specialist_packet:excelPacket,packet_json:JSON.stringify(excelPacket),result_json:JSON.stringify(result),runtime_json:JSON.stringify({...runtime,schedule_evidence_loop:loop,last_error:{code:'SCHEDULE_EVIDENCE_GAP',gap_signature:signature,gaps:fields}}),updated_at:new Date().toISOString(),schedule_evidence_retry:true}}];
 """.strip()
 
 
 PREPARE_SCHEDULE_RESUME = r"""
 const x=$json;const result=x.specialist_result||{};const context=(()=>{try{return JSON.parse(x.runtime_json||'{}')}catch{return {}}})();const loop=context.schedule_evidence_loop&&typeof context.schedule_evidence_loop==='object'?context.schedule_evidence_loop:{};const original=loop.builder_packet&&typeof loop.builder_packet==='object'?loop.builder_packet:{};
-const facts=result.compact_data&&typeof result.compact_data==='object'?result.compact_data:{};const snapshot=String(facts.source_snapshot_hash||'');const correlation=String(facts.correlation_id||'');let valid=loop.active===true&&original.specialist_id==='schedule_builder_specialist'&&result.specialist_id==='excel_extraction_specialist'&&['succeeded','partial'].includes(result.status)&&snapshot&&correlation&&correlation===String(loop.expected_correlation_id||'');
-if(!valid){const failed={...result,status:'retryable_error',summary:'Excel evidence result cannot resume SCHEDULE Builder because correlation or snapshot metadata is missing.',error:{code:'INVALID_EXCEL_EVIDENCE_SNAPSHOT'},human_request:null};return[{json:{...x,specialist_result:failed,result_json:JSON.stringify(failed),schedule_resume_ready:false}}];}
+__NORMALIZE_SOURCE_FACTS__
+__APPEND_HANDOFF__
+const chatRoles=CHAT_ROLE_MAP_PLACEHOLDER;
+const facts=normalizeSourceFactsPacket(result.compact_data||{});
+const snapshot=String(facts?.source_snapshot_hash||'');const correlation=String(facts?.correlation_id||'');
+let valid=loop.active===true&&original.specialist_id==='schedule_builder_specialist'&&result.specialist_id==='excel_extraction_specialist'&&['succeeded','partial'].includes(result.status)&&Boolean(facts)&&snapshot&&correlation&&correlation===String(loop.expected_correlation_id||'');
+if(!valid){const failed={...result,status:'retryable_error',summary:'Excel evidence result cannot resume SCHEDULE Builder because source_facts_packet, correlation or snapshot metadata is missing.',error:{code:'INVALID_EXCEL_EVIDENCE_SNAPSHOT'},human_request:null};const runtime=appendHandoffEvent(context,{stage:'excel',status:'INVALID_EXCEL_EVIDENCE_SNAPSHOT',from_specialist:'excel_extraction_specialist',to_specialist:'schedule_builder_specialist',from_role:chatRoles.excel_extraction_specialist,to_role:chatRoles.schedule_builder_specialist,summary:'Resume blocked: invalid Excel evidence snapshot.',details:{}});return[{json:{...x,specialist_result:failed,result_json:JSON.stringify(failed),runtime_json:JSON.stringify(runtime),schedule_resume_ready:false}}];}
 const priorReq=original.inputs?.schedule_request&&typeof original.inputs.schedule_request==='object'?original.inputs.schedule_request:{};const nextAttempt=Number(x.retry_count)+1,nextVersion=Number(x.version)+1;const builderPacket={...original,attempt:nextAttempt,controls:{...(original.controls&&typeof original.controls==='object'?original.controls:{}),expected_version:nextVersion,idempotency_key:`${x.task_id}:specialist:schedule_builder_specialist:${nextAttempt}:${nextVersion}`,policy_version:'petroleum-schedule-policy-v1'},inputs:{...original.inputs,schedule_request:{...priorReq,source_facts_packet:facts,source_snapshot_hash:snapshot,previous_builder_findings:loop.last_builder_result?.error?.findings||[],evidence_iteration:Number(loop.excel_iterations||0)+1}}};
-const nextLoop={...loop,excel_iterations:Number(loop.excel_iterations||0)+1,builder_iterations:Number(loop.builder_iterations||1)+1,last_source_snapshot:snapshot};return[{json:{...x,version:Number(x.version)+1,previous_version:Number(x.version),status:'delegated',specialist_id:'schedule_builder_specialist',specialist_packet:builderPacket,packet_json:JSON.stringify(builderPacket),result_json:JSON.stringify(result),runtime_json:JSON.stringify({...context,schedule_evidence_loop:nextLoop,last_error:null}),updated_at:new Date().toISOString(),schedule_resume_ready:true}}];
+const nextLoop={...loop,excel_iterations:Number(loop.excel_iterations||0)+1,builder_iterations:Number(loop.builder_iterations||1)+1,last_source_snapshot:snapshot};
+const runtime=appendHandoffEvent(context,{stage:'excel',status:'RESUME_SCHEDULE',from_specialist:'excel_extraction_specialist',to_specialist:'schedule_builder_specialist',from_role:chatRoles.excel_extraction_specialist,to_role:chatRoles.schedule_builder_specialist,summary:`Resuming Schedule Builder with ${facts.facts.length} fact(s).`,details:{source_snapshot_hash:snapshot,correlation_id:correlation,fact_count:facts.facts.length}});
+return[{json:{...x,version:Number(x.version)+1,previous_version:Number(x.version),status:'delegated',specialist_id:'schedule_builder_specialist',specialist_packet:builderPacket,packet_json:JSON.stringify(builderPacket),result_json:JSON.stringify(result),runtime_json:JSON.stringify({...runtime,schedule_evidence_loop:nextLoop,last_error:null}),updated_at:new Date().toISOString(),schedule_resume_ready:true}}];
 """.strip()
 
 
@@ -931,6 +975,7 @@ const normalizedStage=x.status==='awaiting_human'?'hitl':x.status==='completed'?
 const stageScores=[...(Array.isArray(plan.score)?plan.score:plan.score?[{stage:'plan',...plan.score}]:[]),...(Array.isArray(compact.stage_scores)?compact.stage_scores:[]),...(verification?.score?[{stage:'verify',...verification.score}]:[])],numericScores=stageScores.map(s=>Number(s.stage_score)).filter(Number.isFinite);const overall=numericScores.length?Math.min(...numericScores):compact.overall_score;
 const traceId=String(x.trace_id||`trace_${x.task_id||'unknown'}`),baseEvent={trace_id:traceId,task_id:x.task_id||null,actor:String(x.requested_by||'orchestrator')},events=[];
 if(plan.decision_record)events.push({...baseEvent,stage:'plan',event_type:'gate_decision',status:String(plan.planner_decision||plan.decision_record.selected_action?.action||'observed'),summary:'Universal Planner decision and deterministic readiness gate.',score:plan.score||null,decision_record:plan.decision_record});
+for(const turn of(Array.isArray(runtime.handoff_events)?runtime.handoff_events:[])){const stage=clean(turn.stage).toLowerCase();const mapped=['intake','plan','rag','baseline','excel','builder','merge','validate','verify','hitl','release','error'].includes(stage)?stage:(String(turn.from_specialist||'').includes('excel')?'excel':String(turn.to_specialist||'').includes('excel')?'excel':'builder');const details=obj(turn.details)?{...turn.details}:{};if(Number.isFinite(Number(turn.duration_ms)))details.duration_ms=Math.trunc(Number(turn.duration_ms));events.push({...baseEvent,at:turn.at||undefined,stage:mapped,event_type:'handoff',status:String(turn.status||'observed'),summary:String(turn.summary||'Specialist handoff').slice(0,2000),brief:String(turn.brief||turn.summary||'').slice(0,800),duration_ms:Number.isFinite(Number(turn.duration_ms))?Math.trunc(Number(turn.duration_ms)):null,actor:String(turn.from_role||turn.from_specialist||baseEvent.actor),evidence_refs:[],findings:[],score:null,gate:null,decision_record:null,tool_calls:[],handoff:{from_specialist:turn.from_specialist||null,to_specialist:turn.to_specialist||null,from_role:turn.from_role||null,to_role:turn.to_role||null,brief:String(turn.brief||'').slice(0,800)||null,details}});}
 for(const entry of(Array.isArray(compact.trace_summary)?compact.trace_summary:[])){const raw=String(entry.stage||'builder').toLowerCase(),mapped=raw.includes('excel')?'excel':raw.includes('plan')?'plan':raw.includes('baseline')?'baseline':raw.includes('merge')?'merge':raw.includes('valid')?'validate':raw.includes('verif')?'verify':raw.includes('rag')?'rag':'builder';events.push({...baseEvent,stage:mapped,event_type:'stage_finished',status:String(entry.status||'observed'),summary:`${mapped} stage completed with observable decision evidence.`,score:entry.score||null,decision_record:entry.decision_record||null,tool_calls:sanitizeToolCalls(entry.tool_calls)});}
 if(verification.decision_record)events.push({...baseEvent,stage:'verify',event_type:'gate_decision',status:String(verification.verdict||'observed'),summary:String(verification.summary||'Independent verification completed.'),score:verification.score||null,findings:Array.isArray(verification.findings)?verification.findings:[],decision_record:verification.decision_record});
 const lowLevel=[...(arr(compact.agent_tool_trace)?compact.agent_tool_trace:[]),...(arr(compact.tool_calls)?compact.tool_calls:[]),...(arr(compact.intermediateSteps)?compact.intermediateSteps:[])];const traceEvent={...baseEvent,stage:normalizedStage,event_type:'orchestrator_response',status:String(x.status||'observed'),summary:String(x.message||result.summary||verification.summary||`Task ${x.status||'observed'}`).slice(0,2000),tool_calls:sanitizeToolCalls(lowLevel),evidence_refs:Array.isArray(result.evidence)?result.evidence:[],findings:Array.isArray(verification.findings)?verification.findings:(Array.isArray(error.findings)?error.findings:[]),score:overall==null?null:{overall_score:overall,stage_scores:stageScores},gate:Object.keys(pending).length?{gate_id:pending.gate_id||null,kind:pending.kind||null,reason:pending.reason||null}:null,decision_record:decisionRecord};events.push(traceEvent);
@@ -947,13 +992,46 @@ return [{json:restored&&typeof restored==='object'?restored:{status:'error',mess
 
 FORMAT_RESPONSE = r"""
 const x=$json;const parse=(v,f)=>{try{return typeof v==='string'?JSON.parse(v):v??f}catch{return f}};
-const pending=parse(x.gate_json,{});const result=parse(x.result_json,{});const verification=parse(x.verification_json,{});
+const pending=parse(x.gate_json,{});const result=parse(x.result_json,{});const verification=parse(x.verification_json,{});const runtime=parse(x.runtime_json,{});
+const chatRoles=CHAT_ROLE_MAP_PLACEHOLDER;
+const activity=(Array.isArray(runtime.handoff_events)?runtime.handoff_events:[]).map((turn,index)=>({
+  turn_id:index+1,
+  at:turn.at||null,
+  kind:'handoff',
+  from:{specialist_id:turn.from_specialist||null,role:turn.from_role||chatRoles[turn.from_specialist]||turn.from_specialist||'Orchestrator'},
+  to:{specialist_id:turn.to_specialist||null,role:turn.to_role||chatRoles[turn.to_specialist]||turn.to_specialist||'Orchestrator'},
+  status:turn.status||null,
+  text:String(turn.summary||'').slice(0,500),
+  brief:String(turn.brief||turn.summary||'').slice(0,800),
+  duration_ms:Number.isFinite(Number(turn.duration_ms))?Math.trunc(Number(turn.duration_ms)):null,
+  chips:Object.entries(turn.details&&typeof turn.details==='object'?turn.details:{}).filter(([k,v])=>['string','number','boolean'].includes(typeof v)&&!/(prompt|secret|token|password|authorization|api[_-]?key)/i.test(k)).slice(0,6).map(([k,v])=>({id:k,label:String(k),value:v}))
+}));
 return [{json:{contract:'orchestrator_response',contract_version:'1.0',task_id:x.task_id||null,version:Number(x.version||x.stored_version||0)||null,status:x.status||'error',
  message:x.message||({planning:'Planning engineering task.',delegated:'Specialist delegated.',awaiting_human:'Human input or approval is required.',completed:'Engineering task completed after verification.',failed:'Engineering task failed.',rejected:'Engineering task rejected.',cancelled:'Engineering task cancelled.',conflict:'State version or gate conflict.',not_found:'Task not found.'}[x.status]||'Request processed.'),
  next_action:x.status==='awaiting_human'?'resume_with_task_id_expected_version_gate_id_and_action':x.status==='conflict'?'reload_status':x.status==='retryable_error'?'automatic_replan':null,
  human_gate:Object.keys(pending).length?pending:null,result:Object.keys(result).length?result:null,verification:Object.keys(verification).length?verification:null,
- audit:{risk_class:x.risk_class||null,retry_count:Number(x.retry_count||0),max_retries:Number(x.max_retries||0),updated_at:x.updated_at||null}}}];
+ activity,activity_contract:'mas_activity_feed/v1.1',
+ audit:{risk_class:x.risk_class||null,retry_count:Number(x.retry_count||0),max_retries:Number(x.max_retries||0),updated_at:x.updated_at||null,handoff_count:activity.length}}}];
 """.strip()
+
+def _materialize_handoff_js(source: str) -> str:
+    return (
+        source.replace("SPECIALIST_CATALOG_PLACEHOLDER", _SPECIALIST_CATALOG_JSON)
+        .replace("SPECIALIST_ALLOWLIST_PLACEHOLDER", _SPECIALIST_ALLOWLIST_JS)
+        .replace("CHAT_ROLE_MAP_PLACEHOLDER", _CHAT_ROLE_MAP_JSON)
+        .replace("__APPEND_HANDOFF__", APPEND_HANDOFF_JS)
+        .replace("__NORMALIZE_SOURCE_FACTS__", NORMALIZE_SOURCE_FACTS_JS)
+        .replace("__TYPED_GAP_FILTER__", TYPED_GAP_FILTER_JS)
+    )
+
+
+PLANNER_INPUT = _materialize_handoff_js(PLANNER_INPUT)
+RESOLVE_SPECIALIST = _materialize_handoff_js(RESOLVE_SPECIALIST)
+ROUTE_SUCCESSFUL_SPECIALIST = _materialize_handoff_js(ROUTE_SUCCESSFUL_SPECIALIST)
+PREPARE_SCHEDULE_EVIDENCE_RETRY = _materialize_handoff_js(PREPARE_SCHEDULE_EVIDENCE_RETRY)
+PREPARE_SCHEDULE_RESUME = _materialize_handoff_js(PREPARE_SCHEDULE_RESUME)
+FORMAT_RESPONSE = _materialize_handoff_js(FORMAT_RESPONSE)
+
 
 
 def build_orchestrator() -> dict:
@@ -962,7 +1040,7 @@ def build_orchestrator() -> dict:
     nodes += [
         note("README — setup", (-1260, -900), "## UI-only setup (n8n 2.30.8)\n1. Create task-state and trace Data Tables using `docs.md` in the repository root.\n2. Select them in CAS persist (insert+update) and Orchestrator Load task.\n3. Assign Planner/Verifier credentials.\n4. Bind CAS persist, Excel adapter/agent, SCHEDULE Retrieval/Builder and MAS Trace Writer.\n5. Load expert keyword instructions/schema JSON into `schedule_mvp`.\n6. Test start → HITL → delegation → validation → verification → inline .INC.\n\nSCHEDULE input and result remain bounded text inside n8n. The control-plane uses UI credentials/bindings and Data Tables; no global-variable expressions, shell or server filesystem is used.", 500, 440, 5),
         note("Architecture", (-720, -900), "## Serious MVP control plane\n- Data Table is authoritative durable state.\n- Insert/update CAS lives in `CAS — Persist Task State`; Orchestrator only loads by task_id.\n- LLM plans; deterministic nodes own transitions.\n- Optimistic concurrency is `task_id + version`.\n- Human gates resume via a fresh invocation.\n- Model selects logical `specialist_id` only.\n- Independent Verifier is separated from Planner and Specialist.\n- One bounded baseline copy may live in task state; Planner/trace receive metadata only.\n- SCHEDULE result is returned as bounded inline `.INC` text.", 470, 360, 4),
-        note("Extension point", (440, -900), "## Add a specialist safely\n1. Clone the universal specialist template.\n2. Preserve `specialist_packet` / `specialist_result` v1.0.\n3. Add logical capability metadata to Planner catalogue.\n4. Bind its workflow only in a static `Call … Specialist` node and enable its deterministic route in `Resolve allowlisted specialist`.\n5. Add contract, failure, HITL and verification tests.\n\nNever put a workflow ID in an LLM prompt or result.", 460, 340, 3),
+        note("Extension point", (440, -900), "## Add a specialist safely\n1. Clone the universal specialist template.\n2. Preserve `specialist_packet` / `specialist_result` v1.0.\n3. Add one row to `n8n/contracts/specialist_registry.v1.json` (catalogue + allowlist + chat_role).\n4. Bind its workflow only in a static `Call … Specialist` node and set `configured:true` + route index.\n5. Add contract, failure, HITL and verification tests.\n\nNever put a workflow ID in an LLM prompt or result. Domain handoffs must emit `runtime_json.handoff_events` for the chat activity feed.", 460, 360, 3),
         node("Authenticated engineering webhook", "n8n-nodes-base.webhook", 2.1, (-1260, -400), {"httpMethod": "POST", "path": "engineering-orchestrator", "authentication": "headerAuth", "responseMode": "lastNode", "options": {}}, credentials={"httpHeaderAuth": {"id": "REPLACE_IN_UI", "name": "REPLACE: engineering orchestrator inbound key"}}),
         set_fields("Mark HTTP entrypoint", (-1040, -400), [("entrypoint", "={{ 'http' }}", "string")]),
         node("Engineering task form", "n8n-nodes-base.formTrigger", 2.6, (-1260, -120), {"authentication": "n8nUserAuth", "formTitle": "Engineering task orchestrator", "formDescription": "Create or resume a controlled engineering task. For resume actions, provide task ID, expected version and gate ID exactly as returned.", "formFields": {"values": [

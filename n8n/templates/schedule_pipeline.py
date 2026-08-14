@@ -60,7 +60,23 @@ BUILDER_SCHEMA = {
         "source_map": {"type": "array", "items": {"type": "object"}},
         "completeness_report": {"type": "object"},
         "preservation_report": {"type": "object"},
-        "evidence_gap": {"type": "array", "items": {"type": "object"}},
+        "evidence_gap": {
+            "type": "array",
+            "items": {
+                "type": "object",
+                "additionalProperties": False,
+                "required": ["entity", "effective_at", "keyword", "field", "reason", "expected_format"],
+                "properties": {
+                    "entity": {"type": "string", "minLength": 1},
+                    "effective_at": {"type": "string", "minLength": 1},
+                    "keyword": {"type": "string", "minLength": 1},
+                    "field": {"type": "string", "minLength": 1},
+                    "reason": {"type": "string", "minLength": 1},
+                    "expected_format": {"type": "string", "minLength": 1},
+                    "question": {"type": "string"},
+                },
+            },
+        },
         "deliverables": {"type": "array", "items": {"type": "object"}},
         "artifact_refs": {"type": "array", "items": {"type": "object"}},
         "assumptions": {"type": "array", "items": {"type": "string"}},
@@ -105,18 +121,48 @@ Keywords are applied in **file order**. Canonical declare order: well → comple
 1. `WELSPECS` — well + group (group default FIELD).
 2. `WELLTRACK` — trajectory (order vs WELSPECS free).
 3. `COMPDATMD` — MD/TVD perfs (only after WELSPECS and WELLTRACK exist).
-4. Control on current `DATES`: `WCONHIST` in history, `WCONPROD` in forecast (cutover from temporal_policy/facts).
+4. Control on current `DATES`: `WCONHIST` in history, `WCONPROD` / `WCONINJE` in forecast (cutover from temporal_policy/facts).
+5. Optional drawdown cap: `WELDRAW` (affects potential §5.6.7 and may tighten phase rate vs WCONPROD/WELTARG).
 
 E1/E3 IJK perfs use `COMPDAT` — **not** in MVP allowlist. Do not emit `COMPDAT`. If the task requires IJK-only COMPDAT without MD facts → `needs_input`.
 
 ### Groups / guide rates (§2.14.2)
 `GRUPTREE` = hierarchy (FIELD root; node-group XOR leaf-group with wells via WELSPECS).
 `GCONPROD` = group production targets; rates split by guide rates (default = well potential §5.6.7), not equally.
-Do not emit `GUIDERAT`/`WGRUPCON` (outside allowlist) — if required → `needs_input`.
+`GCONINJE` = group injection targets (WATER/GAS/OIL; RATE/RESV/REIN/VREP); injector rates split by potentials / guide rates.
+`GUIDERAT` = formula for guide rates used with GCONPROD (especially GUIDE=FORM) and wells without fixed `WGRUPCON` guides.
+`GSATPROD` = fixed production rates for **satellite** (auxiliary) groups — no wells/children; external/other-region offtake sources.
+`GSATINJE` = fixed injection rates for satellite groups (OIL/WAT/GAS; one phase per record).
+Do not emit `WGRUPCON` (outside allowlist) — if fixed per-well guides required → `needs_input`.
+
+### Compositional streams (E3 / tN)
+`WELLSTRE` = named inject stream mole fractions (oil/gas); Σxi = 1; Nc matches model component count. Not for E1. Do not confuse with `WELLSTRW` (multicomponent water; outside allowlist).
+`GINJGAS` = group inject-gas composition for compositional models with `GCONINJE` GAS (SOURCE = GAS|STREAM|MIX|GV|WV|GRUP). STREAM needs prior `WELLSTRE`; MIX needs `WINJMIX` (outside allowlist → `needs_input`). Still outside: `WINJGAS`, `GSATCOMP`, `WINJMIX`, `WELLSTRW`.
+Never invent component counts, mole fractions, stream/mix names, or GV/WV sources without facts.
 
 ### Network (§2.14.11)
 `BRANPROP` + `NODEPROP` (+ `WNETDP`) only if `NETWORK` already enabled in baseline/profile.
-Leaf groups with wells must still align with `GRUPTREE`. Without NETWORK → `needs_input`, do not invent NETWORK.
+`GNETDP` = dynamic adjustment of fixed group/node pressure to keep rate in [RATE_MIN, RATE_MAX] (also usable with fixed-pressure groups without inventing NETWORK). `GNETINJE` remains outside allowlist.
+`NETBALAN` = NETWORK balance solver tolerances (node pressure tol, max iterations, auto-choke rate tol). Field 1 ignored (E1/E3 compat). Requires NETWORK in baseline — do not invent NETWORK.
+Leaf groups with wells must still align with `GRUPTREE`. Without NETWORK when topology/solver params are required → `needs_input`, do not invent NETWORK.
+
+### VFP tables (producers)
+`VFPPROD` bodies are large empirical BHP tables (Prosper / well-performance software / baseline `.inc`), not invented in Builder.
+MVP job: know **table number** `N` and wire it into `WCONPROD` / `WCONHIST` field VFP_TABLE (and ALQ units per that table). KEEP existing `VFPPROD` in REVISE. Never fabricate FLO/THP/WFR/GFR/ALQ axes or table body → `needs_input` for missing table artifact.
+
+### Conditional actions (§12.20.161+)
+`ACTIONX` + `ENDACTIO` = conditional SCHEDULE block (AND/OR conditions on wells/groups/regions/time/FIELD/completions). Emit `ENDACTIO` only (not synonym `ENDACTION`).
+`DELAYACT` + `ENDACTIO` = delayed body after a named trigger action fires (delay days, max activations, delay increment). Trigger is usually an `ACTIONX` name already declared.
+Nested keywords between opener and ENDACTIO must themselves be allowlisted. No `DATES`/`TSTEP` inside the block.
+Still outside allowlist: `ACTION`, `ACTIONG`, `ACTIONR`, `ACTIONW`, `ACTIONC` → `needs_input` if those forms are required.
+Unsupported ACTIONX features in tNavigator (ALWAYS, LGR perfs, aquifer, block) → `needs_input`.
+
+### User-defined quantities
+`UDQ` = DEFINE/ASSIGN/UPDATE named expressions (WU/GU/FU/RU/CU…; ≤8 chars, RU ≤5). Used in ACTIONX conditions and as UDA in many well/group keywords. Expression text must come from facts — never invent SUMMARY mnemonics or formulas.
+`UDT` = lookup tables named `TU*` (axes NV/LC/LL + value grid) consumed by UDQ via `TU*[…]`. Table body only from facts; `UDTDIMS` (RUNSPEC) must already match — outside allowlist → `needs_input` if dims missing. `UDQPARAM` remains outside allowlist.
+
+### Per-timestep Python hook
+`APPLYSCRIPT` = wire a Python library file + entry function that the simulator calls each timestep (`SCRIPT_FILE` + `FUNCTION_NAME`). Emit only the SCHEDULE record from facts — never invent/write the `.py` body, API helpers, or `__init_script__`. Script file must exist as a package artifact. Not the GUI/graph calculator Python path.
 
 ### Fractures — two disjoint paths
 - Plane/virtual perfs: `WFRACP` (global); `WFRACPL` (LGR well; needs LGR name + WELSPECL/COMPDATL in baseline).
@@ -125,15 +171,16 @@ Never mix paths or emit both for the same event without facts.
 
 ### Names, masks, defaults (§12.20 intro)
 - New wells: exact names only.
-- Masks `*` `?` `[n-m]` alter **existing** wells only; cannot introduce wells. MVP CREATE: exact names; masks → `needs_input` unless REVISE baseline already defines the set.
+- Named well sets: emit `WLIST` (`*NAME` + NEW/ADD/MOVE/DEL), then reference `*NAME` in consumer keywords. Wells in the list must already exist via WELSPECS.
+- Raw masks `*` `?` `[n-m]` without WLIST alter **existing** wells only and cannot introduce wells. Prefer exact names or WLIST; bare masks → `needs_input` unless REVISE baseline already defines the set.
 - Schema-allowed omission: `*` / `N*` — only when catalogue/facts permit.
 
 ## Allowlist (emit only these)
-DATES, INCLUDE, GRUPTREE, WELSPECS, WELLTRACK, COMPDATMD, WCONHIST, WCONPROD, GCONPROD, BRANPROP, NODEPROP, FRACTURE_TEMPLATE, FRACTURE_SPECS, FRACTURE_STAGE, WECON, WTEST, WELTARG, WNETDP, WPIMULT, WFRACP, WFRACPL.
+DATES, INCLUDE, GRUPTREE, WELSPECS, WELLTRACK, COMPDATMD, WCONHIST, WCONPROD, WCONINJE, GCONPROD, GCONINJE, GUIDERAT, GSATPROD, GSATINJE, WELLSTRE, GINJGAS, BRANPROP, NODEPROP, GNETDP, NETBALAN, FRACTURE_TEMPLATE, FRACTURE_SPECS, FRACTURE_STAGE, WECON, WTEST, WELTARG, WNETDP, WPIMULT, WDFAC, WELDRAW, WLIST, WFRACP, WFRACPL, VFPPROD, ACTIONX, DELAYACT, ENDACTIO, UDQ, UDT, APPLYSCRIPT.
 
 ## Explicitly out of scope (never invent)
 - SCHEDULE property/region edits listed in §12.20 but not allowlisted: SATNUM, PVTNUM, ROCKNUM, MULTX/Y/Z±, PORO, NTG, PERMX/Y/Z, LX/LY/LZ, SOIL/SWAT/SGAS, …
-- ACTION*/ENDACTIO family; injectors (`WCONINJE*` / `WCONINJH`); LGR declare (`WELSPECL`/`COMPDATL`) as CREATE emit; `COMPDAT`/`COMPDATL`; `FRACTURE_WELL` synonym (emit `FRACTURE_SPECS`); econ/group variants outside allowlist (`WECONX`, `GECON*`, …).
+- Other ACTION* forms (`ACTION`, `ACTIONG`, `ACTIONR`, `ACTIONW`, `ACTIONC`) and synonym `ENDACTION` (emit `ENDACTIO`); `UDQPARAM` / `UDTDIMS` (RUNSPEC dims); inventing `APPLYSCRIPT` Python **bodies**/helpers; hist injectors (`WCONINJH`); short synonym `WCONINJ` (emit `WCONINJE`); LGR declare (`WELSPECL`/`COMPDATL`) as CREATE emit; `COMPDAT`/`COMPDATL`; `FRACTURE_WELL` synonym (emit `FRACTURE_SPECS`); inventing `VFPPROD`/`VFPINJ` table **bodies** (Prosper/external); fixed per-well guides `WGRUPCON`; well/satellite composition wiring still outside (`WINJGAS`, `GSATCOMP`, `WINJMIX`, `WELLSTRW`); network inject tree `GNETINJE`; econ/group variants outside allowlist (`WECONX`, `GECON*`, `GCONSUMP`, …).
 If the task needs any of the above → `needs_input` (do not approximate with a nearby allowlisted keyword).
 
 ## Modes
@@ -269,7 +316,12 @@ const intermediate=arr(agentEnvelope.intermediateSteps)?agentEnvelope.intermedia
 const allowed=new Set(__KEYWORDS__),findings=[];
 const mode=clean(work.build_mode||plan.build_mode).toUpperCase();
 const scope=[...new Set((arr(plan.keyword_scope)?plan.keyword_scope:[]).map(v=>clean(v).toUpperCase()).filter(Boolean))];
-const changes=arr(work.changes)?work.changes.filter(obj):[],gaps=arr(work.evidence_gap)?work.evidence_gap.filter(obj):[];
+const changes=arr(work.changes)?work.changes.filter(obj):[];
+const evidenceGapRequired=['entity','effective_at','keyword','field','reason','expected_format'];
+const rawGaps=arr(work.evidence_gap)?work.evidence_gap.filter(obj):[];
+const gaps=rawGaps.filter(g=>evidenceGapRequired.every(k=>clean(g[k]))).map(g=>({entity:clean(g.entity),effective_at:clean(g.effective_at),keyword:clean(g.keyword).toUpperCase(),field:clean(g.field),reason:clean(g.reason),expected_format:clean(g.expected_format),...(clean(g.question)?{question:clean(g.question)}:{})}));
+if(rawGaps.length&&!gaps.length)findings.push({code:'MALFORMED_EVIDENCE_GAP',severity:'error',dropped:rawGaps.length});
+else if(rawGaps.length>gaps.length)findings.push({code:'PARTIAL_EVIDENCE_GAP_DROPPED',severity:'warning',dropped:rawGaps.length-gaps.length,kept:gaps.length});
 const irEvents=arr(work.ir_events)?work.ir_events.filter(obj):[];
 const requirements=arr(work.requirements_matrix)?work.requirements_matrix.filter(obj):[],sourceMap=arr(work.source_map)?work.source_map.filter(obj):[];
 const evidencePacket=obj(req.source_facts_packet)?req.source_facts_packet:{},facts=arr(evidencePacket.facts)?evidencePacket.facts:(arr(req.source_facts)?req.source_facts:[]),conflicts=arr(evidencePacket.conflicts)?evidencePacket.conflicts:[];
