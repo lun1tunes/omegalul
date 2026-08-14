@@ -4,123 +4,108 @@
   "results": [
     {
       "id": "wb-brent-wti-prices",
-      "elapsed_s": 13.8,
+      "elapsed_s": 8.2,
       "ok": true,
       "status": "partial",
       "row_count": 799,
-      "returned_count": 100,
+      "stored_rows": 24,
+      "returned_count": 24,
       "truncated": true,
       "columns_head": [
         "Column A",
-        "Crude oil, average",
         "Crude oil, Brent",
-        "Crude oil, Dubai",
-        "Crude oil, WTI",
-        "Natural gas index"
-      ],
-      "clarification_question": null,
-      "errors": []
-    },
-    {
-      "id": "wb-wti-missing",
-      "elapsed_s": 8.3,
-      "ok": true,
-      "status": "partial",
-      "row_count": 799,
-      "returned_count": 100,
-      "truncated": true,
-      "columns_head": [
-        "Column A",
-        "Crude oil, average",
-        "Crude oil, Brent",
-        "Crude oil, Dubai",
         "Crude oil, WTI"
       ],
       "clarification_question": null,
       "errors": []
     },
     {
-      "id": "wb-gas-europe",
-      "elapsed_s": 5.6,
+      "id": "wb-wti-missing",
+      "elapsed_s": 9.5,
       "ok": true,
       "status": "partial",
-      "row_count": 799,
-      "returned_count": 100,
+      "row_count": 264,
+      "stored_rows": 30,
+      "returned_count": 30,
       "truncated": true,
       "columns_head": [
         "Column A",
-        "Natural gas, US",
-        "Natural gas, Europe",
-        "Liquefied natural gas, Japan",
-        "Natural gas index",
-        "Banana, Europe"
+        "Crude oil, WTI",
+        "Crude oil, Brent"
+      ],
+      "clarification_question": null,
+      "errors": []
+    },
+    {
+      "id": "wb-gas-europe",
+      "elapsed_s": 7.6,
+      "ok": true,
+      "status": "partial",
+      "row_count": 799,
+      "stored_rows": 12,
+      "returned_count": 12,
+      "truncated": true,
+      "columns_head": [
+        "Column A",
+        "Natural gas, Europe"
       ],
       "clarification_question": null,
       "errors": []
     },
     {
       "id": "wb-ambiguous-oil",
-      "elapsed_s": 7.0,
+      "elapsed_s": 3.0,
       "ok": true,
-      "status": "partial",
-      "row_count": 799,
-      "returned_count": 100,
-      "truncated": true,
-      "columns_head": [
-        "Column A",
-        "Crude oil, average",
-        "Crude oil, Brent",
-        "Crude oil, Dubai",
-        "Crude oil, WTI",
-        "Coal, Australian"
-      ],
-      "clarification_question": null,
+      "status": "clarification_needed",
+      "row_count": 0,
+      "stored_rows": null,
+      "returned_count": 0,
+      "truncated": false,
+      "columns_head": [],
+      "clarification_question": "The selected table has multiple matching columns (Crude oil, average; Crude oil, Brent; Crude oil, Dubai; Crude oil, WTI; Coconut oil; Groundnut oil **; Palm oil; Palm kernel oil). Which column(s) should be extracted? Reply with the exact column names.",
       "errors": []
     },
     {
       "id": "ons-neast-unemployment",
-      "elapsed_s": 11.1,
+      "elapsed_s": 10.0,
       "ok": true,
       "status": "partial",
       "row_count": 415,
-      "returned_count": 100,
+      "stored_rows": 1,
+      "returned_count": 1,
       "truncated": true,
       "columns_head": [
         "Column A",
-        "All 16 & over — Economic activity rate (%)",
-        "All 16 & over — Employment rate (%)",
         "All 16 & over — Unemployment\nrate (%)",
-        "All 16 & over — Economic inactivity rate (%)",
-        "All aged 16 to 64 — Economic activity rate (%)"
+        "All aged 16 to 64 — Unemployment rate (%)"
       ],
       "clarification_question": null,
       "errors": []
     },
     {
       "id": "ons-neast-women-employment",
-      "elapsed_s": 16.0,
+      "elapsed_s": 7.7,
       "ok": true,
       "status": "partial",
       "row_count": 415,
-      "returned_count": 100,
+      "stored_rows": 1,
+      "returned_count": 1,
       "truncated": true,
       "columns_head": [
         "Column A",
-        "All 16 & over — Total in employment",
-        "All 16 & over — Economic activity rate (%)",
         "All 16 & over — Employment rate (%)",
-        "All 16 & over — Unemployment\nrate (%)",
-        "All 16 & over — Economic inactivity rate (%)"
+        "All aged 16 to 64 — Employment rate (%)"
       ],
       "clarification_question": null,
       "errors": []
     },
     {
       "id": "ons-ambiguous-employment",
-      "elapsed_s": 5.1,
+      "elapsed_s": 4.5,
       "ok": true,
       "status": "clarification_needed",
       "row_count": 0,
+      "stored_rows": null,
       "returned_count": 0,
       "truncated": false,
       "columns_head": [],

@@ -182,6 +182,17 @@ def test_match_tables_pins_named_sheet_and_keeps_employment_ambiguous(client: Te
     assert "Crude oil, Brent" in oil["column_candidates"]
     assert "Crude oil, WTI" in oil["column_candidates"]
 
+    missing = _tool(
+        client,
+        pink_id,
+        "match_tables",
+        {"query": "On Monthly Prices, find rows where Crude oil, WTI is missing. Return those WTI and Brent values only, up to 30 rows."},
+    )
+    assert "Crude oil, WTI" in missing["suggested_select"]
+    assert "Crude oil, Brent" in missing["suggested_select"]
+    assert "Crude oil, average" not in missing["suggested_select"]
+    assert missing["suggested_limit"] == 30
+
     gas = _tool(
         client,
         pink_id,

@@ -313,6 +313,166 @@
       "id": "specialist-template-bounded-work"
     },
     {
+      "contract": "schedule_knowledge_block",
+      "contract_version": "1.0",
+      "target_base": "schedule_mvp",
+      "knowledge_type": "keyword_instruction",
+      "knowledge_id": "dates-schedule-clock-v1",
+      "revision": "1",
+      "title": "DATES — календарь и перевод simulation clock",
+      "keywords": [
+        "DATES"
+      ],
+      "topics": [
+        "календарь",
+        "отчетные шаги",
+        "simulation clock",
+        "прогноз",
+        "история",
+        "cutover",
+        "временной шаг"
+      ],
+      "task_patterns": [
+        "задать даты расчета",
+        "добавить отчетный шаг",
+        "перевести simulation clock",
+        "календарь прогноза",
+        "даты history matching",
+        "поставить DATES на 1 января",
+        "последовательность дат SCHEDULE"
+      ],
+      "simulator_family": [
+        "E100",
+        "E300",
+        "tNavigator"
+      ],
+      "status": "active",
+      "author": "department-hydrodynamic-expert",
+      "access_scope": "petroleum-engineering",
+      "text": "DATES — календарь секции SCHEDULE и перевод simulation clock.\n\nНазначение. DATES задаёт даты ввода и вывода в секции SCHEDULE: на эту дату симулятор доводит расчёт (report / time block), после чего действуют все последующие ключевые слова до следующего DATES или TSTEP. Это не контроль скважины и не экономика. Форматы: tN, E1, E3. Секция: только SCHEDULE. Не путайте с ECDATES (список дат экономических параметров в RUNSPEC) и с START (дата начала моделирования в RUNSPEC).\n\nКогда применять. Любой CREATE/REVISE, где нужен календарь расчёта, граница history/forecast (cutover), дата ввода скважины, смена WCONPROD/WCONHIST/WELSPECS/COMPDAT, рестартный прогнозный .inc. Каждое событие скважины/группы живёт на текущих часах: сначала DATES, затем записи, которые должны вступить в силу на эту дату.\n\nRecord layout. Ключевое слово, затем одна или несколько строк-записей, каждая запись заканчивается /. Блок заканчивается отдельным /. Renderer этого корпуса выпускает один DATES-блок на одну дату (один IR-event, variant default). Несколько дат в одном блоке в tNavigator допустимы, но семантически эквивалентны последовательности отдельных DATES; не склеивайте чужие даты в один блок при REVISE.\n\nПоля одной записи (порядок фиксирован):\n1. DAY — число, день месяца (1–31, с ведущим нулём или без: 1 и 01 равноправны).\n2. MONTH — ровно один из токенов JAN FEB MAR APR MAY JUN JUL AUG SEP OCT NOV DEC; JLY тоже июль, но в выпуск пишите JUL, не JLY.\n3. YEAR — год, 4 цифры.\n4. TIME — в мануале необязательное 4-е поле, HH:MM:SS.SSSS, по умолчанию 00:00:00. Утверждённый schema variant default этого корпуса содержит только DATE: полуночное время не пишите. Если время суток — материальное требование (не полночь) — needs_input, не добавляйте поле вне schema и не подставляйте TIME в default-запись.\n\nКаноническая запись METRIC/ECLIPSE: `DATES` / `  1 JAN 2025 /` / `/`. Месяц без кавычек (кавычки вокруг месяца — синтаксис START, не DATES). Локализованные имена (март, Mar, 03) и форматы ДД.ММ.ГГГГ / MM/DD/YYYY запрещены. В IR поле DATE хранится как ISO `YYYY-MM-DD`; renderer печатает `D MON YYYY`.\n\nЧасы и монотонность.\n- Последовательность дат должна быть строго возрастающей (дата и время). Равенство предыдущей дате — ошибка, не «тот же шаг».\n- Все DATES должны быть позднее START (RUNSPEC, §12.1.19). START в этот MVP не рендерится; если START есть в source_facts/baseline — проверяйте; если START неизвестен, не выдумывайте его, но DATES внутри пакета всё равно строго возрастают.\n- DATES переводит clock: semantics.clock.sets_from_field=DATE, period=ANY. Сам keyword не является HISTORY или FORECAST; период следующих WCONHIST/WCONPROD задаёт cutover-политика пакета, а не DATES.\n- Не ставьте forecast-контроль раньше утверждённого forecast_start и history-контроль после history_end. Если cutover не дан — needs_input, не угадывайте.\n- После TSTEP следующий DATES обязан быть позже конца предыдущего шага. TSTEP в allowlist Builder нет: не эмитьте TSTEP. Если пользователь просит «шаг N дней» без календарных дат — либо посчитайте целевую дату от известного clock, либо needs_input.\n\nСвязанные правила из мануала (не эмитьте эти keywords, если их нет в requested_keyword_scope).\n- События скважины (WELSPECS, COMPDAT, WCONPROD, WPIMULT, WWAG, RUNCTRL, трещины и т.д.) вступают в силу на текущей дате; смена контроля через два месяца — новый DATES, затем новый WCONPROD.\n- Между двумя изменениями одного и того же множителя/сепаратора (WPIMULT, SEPVALS) должен быть хотя бы один DATES или TSTEP, иначе эффект не фиксируется на шаге.\n- Внутри ACTION / ACTIONG / ACTIONR / ACTIONW / ACTIONX … ENDACTIO нельзя ставить DATES и TSTEP.\n- Для DCQ/газовых контрактов GASYEAR и GASPERIO заменяют DATES/TSTEP; не подменяйте контрактный календарь обычным DATES, если задача явно про контрактный период.\n- Рестарт (RESTART / RESTARTDATE): в прогнозном .inc часто сначала текущие WCONPROD/WCONINJE на дате рестарта, и только потом DATES следующих отчётных шагов. Не вставляйте DATES раньше текущих контролей, если рестартный пакет так устроен в baseline.\n- MASTER/SLAVE: для синхронизации задают одинаковые DATES во всех моделях на всю SCHEDULE.\n- Циклический WAG (WWAG TIME): отчётный DATES должен быть мельче периода переключения, иначе на графиках цикла не видно. Не измельчайте календарь сами без факта.\n- Не путать DATES с ECDATES.\n\nВалидация перед выпуском.\n- Дата существует в григорианском календаре (не 31 FEB).\n- MONTH только из английского трёхбуквенного набора выше.\n- YEAR ровно 4 цифры.\n- Строгое возрастание относительно предыдущего clock (и START, если известен).\n- Запись непустая; завершающий / блока есть.\n- DATES не вложен в ACTION.\n- Имена скважин, дебиты и прочие поля соседних keywords не живут внутри DATES.\n\nАнтипаттерны.\n- Выдумать ежемесячный календарь, если в фактах одна дата cutover.\n- Писать 01.01.2025, 2025/01/01, «1 января 2025», MAR. с точкой, кавычки вокруг JAN.\n- Поставить DATES на ту же дату, что уже есть в baseline, «для порядка».\n- Заменить DATES на TSTEP или наоборот без факта о длительности.\n- Считать DATES контролем скважины или копировать примерные скважины 1043/1054 в продуктив.\n- Использовать ECDATES вместо DATES.\n\nНехватка факта → needs_input, не угадывать: нет конкретной даты; дата не парсится однозначно; неясно, после какой существующей даты вставлять; нужен TIME суток без значения; нужен TSTEP в днях без якорной даты; DATES просят внутри ACTION; неизвестно, history это или forecast, а от этого зависит, какие события ставить на дату.\n\nКарточка самодостаточна: renderer использует только schema_catalogue этой записи (variant default, поле DATE). Не добавляйте TIME, TSTEP и чужие keywords в DATES-запись.",
+      "examples": [
+        {
+          "title": "Один отчётный шаг",
+          "task": "Поставить отчётный шаг на 1 марта 2000.",
+          "schedule_text": "DATES\n  1 MAR 2000 /\n/",
+          "explanation": "Variant default, только DATE. Время 00:00:00 не пишется. Пример даты из §12.20.127; в продуктив подставляйте факт пакета, не эту дату."
+        },
+        {
+          "title": "Календарь полугодовых отчётных шагов",
+          "task": "Задать последовательность дат ввода-вывода каждые полгода: 1 JUL 2011, 1 JAN 2012, 1 JUL 2012, 1 JAN 2013, 1 JUL 2013.",
+          "schedule_text": "DATES\n  1 JUL 2011 /\n/\nDATES\n  1 JAN 2012 /\n/\nDATES\n  1 JUL 2012 /\n/\nDATES\n  1 JAN 2013 /\n/\nDATES\n  1 JUL 2013 /\n/",
+          "explanation": "Каждая дата — отдельный DATES-блок и отдельный IR-event. Последовательность строго возрастает. Не добавляйте промежуточные месяцы, которых нет в задаче."
+        },
+        {
+          "title": "DATES как граница time block для скважинных событий",
+          "task": "1 MAR 1985 ввести две добывающие скважины и их контроль; 1 MAY 1985 сменить контроль; дальше отчётные шаги 1 JAN 1986 и 1 JAN 1987.",
+          "schedule_text": "DATES\n  1 MAR 1985 /\n/\nWELSPECS\n1043 G1 14 10 /\n1054 1* 15 8 /\n/\nWCONPROD\n1043 OPEN LRAT 63.4 0 0 63.4 2* /\n1054 OPEN LRAT 59.6 6.4 0 66 2* /\n/\nDATES\n  1 MAY 1985 /\n/\nWCONPROD\n1043 OPEN LRAT 80 0 0 90 2* /\n1054 OPEN LRAT 67 9 0 76 2* /\n/\nDATES\n  1 JAN 1986 /\n/\nDATES\n  1 JAN 1987 /\n/",
+          "explanation": "Сначала clock, потом события на этой дате. Имена 1043/1054 и дебиты — учебный пример мануала §12.20.127 с. 2010; в продуктив подставляйте только факты пакета. WELSPECS/WCONPROD рендерите только если они в scope и для них есть свои карточки."
+        }
+      ],
+      "schema_catalogue": {
+        "contract": "schedule_schema_catalogue",
+        "contract_version": "1.0",
+        "catalogue_ref": "catalogue://tnavigator/22.2/dates-schedule-clock-v1",
+        "catalogue_hash": "sha256:52f16f57855e7fec78e5a940ac1ab197664e607a980ff0eeab0b70b484e1b381",
+        "source_hash": "sha256:38f4de9cab061f3188ca32dee1924f9ed295a39a3732efbe991ebad0052c9d68",
+        "access_scope": "petroleum-engineering",
+        "simulator_profile": {
+          "vendor": "Rock Flow Dynamics",
+          "simulator": "tNavigator",
+          "version": "22.2",
+          "unit_system": "METRIC"
+        },
+        "approved": true,
+        "approved_by": "department-hydrodynamic-expert",
+        "author": "department-hydrodynamic-expert",
+        "approval_gate_id": "expert:dates-schedule-clock-v1:1",
+        "schemas": [
+          {
+            "schema_id": "expert:DATES",
+            "schema_revision": "1",
+            "keyword": "DATES",
+            "variant": "default",
+            "citation": {
+              "document_id": "tnav-user-manual-russian",
+              "document_revision": "19.4",
+              "page": "12.20.127 / 2008-2010",
+              "heading": "DATES",
+              "source_hash": "sha256:38f4de9cab061f3188ca32dee1924f9ed295a39a3732efbe991ebad0052c9d68"
+            },
+            "parser": {
+              "token_width": 4,
+              "allow_trailing_omission": true,
+              "allow_unquoted_strings": true
+            },
+            "fields": [
+              {
+                "name": "DATE",
+                "position": 1,
+                "type": "date",
+                "format": "DD MON YYYY",
+                "required": true,
+                "quote": "none"
+              }
+            ],
+            "layout": {
+              "newline": "LF",
+              "indent": "  ",
+              "delimiter": "SPACE",
+              "record_terminator": "SLASH",
+              "block_terminator": "SLASH_LINE"
+            },
+            "semantics": {
+              "period": "ANY",
+              "clock": {
+                "sets_from_field": "DATE"
+              }
+            }
+          }
+        ]
+      },
+      "source_hash": "sha256:38f4de9cab061f3188ca32dee1924f9ed295a39a3732efbe991ebad0052c9d68",
+      "page": "12.20.127 DATES (с. 2008–2010); START 12.1.19 (с. 526); TSTEP 12.20.128 (с. 2011–2012)",
+      "heading": "DATES — даты ввода и вывода в SCHEDULE",
+      "id": "dates-schedule-clock-v1",
+      "metadata": {
+        "document_id": "dates-schedule-clock-v1",
+        "document_revision": "1",
+        "source_hash": "sha256:38f4de9cab061f3188ca32dee1924f9ed295a39a3732efbe991ebad0052c9d68",
+        "page": "12.20.127 / 2008-2010",
+        "heading": "DATES",
+        "target_base": "schedule_mvp",
+        "knowledge_type": "keyword_instruction",
+        "knowledge_id": "dates-schedule-clock-v1",
+        "revision": "1",
+        "status": "active",
+        "access_scope": "petroleum-engineering",
+        "author": "department-hydrodynamic-expert",
+        "approved_by": "department-hydrodynamic-expert",
+        "keyword_families": [
+          "DATES"
+        ],
+        "topics": [
+          "календарь",
+          "отчетные шаги",
+          "simulation clock",
+          "прогноз",
+          "история",
+          "cutover",
+          "временной шаг"
+        ],
+        "task_patterns": [
+          "задать даты расчета",
+          "добавить отчетный шаг",
+          "перевести simulation clock",
+          "календарь прогноза",
+          "даты history matching",
+          "поставить DATES на 1 января",
+          "последовательность дат SCHEDULE"
+        ]
+      }
+    },
+    {
       "role": "injection_template",
       "do_not_ingest": true,
       "id": "_injection-template",

@@ -964,24 +964,28 @@ def _column_phrase_in_query(query: str, column: str) -> bool:
     return False
 
 
-def _column_tokens_covered(column: str, query_tokens: set[str]) -> bool:
-    col_tokens = _match_tokens(_column_series_label(column)) or _match_tokens(column)
-    if not col_tokens:
-        return False
-    distinctive = col_tokens - _GENERIC_COLUMN_TOKENS
-    needed = distinctive or col_tokens
-    return all(_token_overlap({token}, query_tokens) for token in needed)
-
-
 def _suggested_select(query: str, columns: list[str]) -> list[str]:
     query_tokens = _match_tokens(query)
     matched: list[str] = []
     for column in columns:
         if _is_date_stub_column(column) and not _column_phrase_in_query(query, column):
             continue
-        if _column_phrase_in_query(query, column) or (
-            len(_match_tokens(column)) >= 2 and _column_tokens_covered(column, query_tokens)
-        ):
+        if _column_phrase_in_query(query, column):
+            matched.append(column)
+    families = []
+    for column in matched:
+        parts = _normalize_label(_column_series_label(column)).split()
+        if len(parts) >= 2:
+            families.append(" ".join(parts[:-1]))
+    for column in columns:
+        if column in matched or _is_date_stub_column(column):
+            continue
+        parts = _normalize_label(_column_series_label(column)).split()
+        if len(parts) < 2:
+            continue
+        family = " ".join(parts[:-1])
+        last = parts[-1]
+        if family in families and last in query_tokens and last not in _GENERIC_COLUMN_TOKENS:
             matched.append(column)
     if not matched:
         return []
