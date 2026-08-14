@@ -1,5 +1,5 @@
 {
-  "id": "2afa0adc-4e64-5b2e-b08c-9ac3f692ff57",
+  "id": "3c93b407-5b49-5c3b-b503-2ace753c5582",
   "name": "Writer — MAS Trace",
   "description": "Portable durable trace writer.",
   "nodes": [
@@ -140,7 +140,7 @@
     "saveManualExecutions": true,
     "callerPolicy": "workflowsFromSameOwner"
   },
-  "versionId": "376875c4-7e5d-476b-ab54-6c0a0aade068",
+  "versionId": "75256204-bf72-57b8-b309-6f9cdb5c3575",
   "meta": {
     "templateCredsSetupCompleted": false,
     "targetN8nVersion": "2.30.8",

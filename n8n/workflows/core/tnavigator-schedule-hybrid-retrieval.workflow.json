@@ -1,5 +1,5 @@
 {
-  "id": "af5d7586-f64a-57fa-bfe1-76fd7a93b63d",
+  "id": "c65ce76d-2608-53d7-8eb3-f7f9bc9dd0a7",
   "name": "MAS — Knowledge Retrieval",
   "description": "Shared hybrid retrieval for all MAS agents: lexical + semantic + tags, RRF, target_base isolation, full parent hydration and fail-closed coverage/schema rules per namespace.",
   "nodes": [
@@ -661,7 +661,7 @@
     "saveManualExecutions": true,
     "callerPolicy": "workflowsFromSameOwner"
   },
-  "versionId": "e6753e87-3d09-5693-bb5e-e631a6e6dd18",
+  "versionId": "e4cd86d6-1eec-5836-9c7a-159942687b8c",
   "meta": {
     "templateCredsSetupCompleted": false,
     "targetN8nVersion": "2.30.8",

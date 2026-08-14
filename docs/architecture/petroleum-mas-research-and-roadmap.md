@@ -311,7 +311,7 @@ schedule-package/
     preservation-report.json
 ```
 
-В `CREATE` renderer создает стабильный canonical layout. В `REVISE` исходный include layout сохраняется по умолчанию; новый canonical layout требует отдельного approved refactor, потому что реорганизация файлов сама является изменением. Запрещены absolute paths, `..`, symlink escape, duplicate/cyclic includes, URLs и незарегистрированные files. Manifest фиксирует hashes, encoding, line endings, profile и include graph.
+В `CREATE` renderer создает стабильный canonical layout. В `REVISE` исходный include layout сохраняется по умолчанию; новый canonical layout требует отдельного approved refactor, потому что реорганизация файлов сама является изменением. Разрешены relative paths (включая `..`), absolute paths и URL-пути; запрещены пустой/NUL PATH, duplicate/cyclic includes и незарегистрированные files без evidence в package. Manifest фиксирует hashes, encoding, line endings, profile и include graph.
 
 ### 4.8. Stateful semantics и conflict analysis
 

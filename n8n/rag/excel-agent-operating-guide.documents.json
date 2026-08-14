@@ -478,7 +478,7 @@
       "target_base": "schedule_mvp",
       "knowledge_type": "keyword_instruction",
       "knowledge_id": "include-schedule-package-v1",
-      "revision": "1",
+      "revision": "2",
       "title": "INCLUDE — вставка SCHEDULE-фрагментов пакета",
       "keywords": [
         "INCLUDE"
@@ -508,7 +508,7 @@
       "status": "active",
       "author": "department-hydrodynamic-expert",
       "access_scope": "petroleum-engineering",
-      "text": "INCLUDE — вставка внешнего файла ключевых слов в текущий .data/.inc.\n\nНазначение. INCLUDE подключает другой текстовый файл с ключевыми словами в место вызова. Чтение текущего файла приостанавливается, читается включаемый файл, затем продолжается исходный. Во включаемом файле снова могут быть INCLUDE: вложенность в tNavigator формально не ограничена. Один INCLUDE указывает ровно один файл. Форматы профиля MVP: tN, E1, E3. Секции: RUNSPEC, GRID, EDIT, PROPS, REGIONS, SOLUTION, SUMMARY, SCHEDULE. Для Schedule Builder scope — прежде всего SCHEDULE-фрагменты пакета (.inc), не сетка/PVT целиком.\n\nКогда применять. CREATE с multi-file package (корневой schedule.inc тянет timeblocks/*.inc); REVISE, где baseline уже содержит INCLUDE graph; рестартный прогнозный .inc, который .data подключает через INCLUDE после RESTART/RESTARTDATE; любой фрагмент, который должен остаться отдельным файлом с hash в manifest. Не используйте INCLUDE, чтобы «спрятать» неизвестный keyword: содержимое included file всё равно проходит decoder/validator.\n\nRecord layout. Ключевое слово INCLUDE, затем одна запись с путём к файлу, запись заканчивается /. Блок заканчивается отдельным /. После INCLUDE — только один файл; несколько файлов = несколько INCLUDE подряд.\n\nПоля одной записи (порядок фиксирован):\n1. PATH — относительный путь к включаемому файлу (или имя файла в корне пакета). В IR храните путь как строку без кавычек. Renderer печатает PATH в одинарных кавычках: `INCLUDE` / `  'controls.inc' /` / `/`.\n\nКавычки и пробелы (мануал §12.1.81). Если в имени/пути есть пробелы — кавычки обязательны (одинарные или двойные одинаково допустимы в симуляторе). Без пробелов tNavigator принимает и без кавычек (`INCLUDE title_grid.inc /`), но этот корпус всегда рендерит quoted PATH для детерминизма и безопасного парсинга. Внутри одинарных кавычек апостроф в имени файла удваивайте (`''`), как в общем string-escape renderer.\n\nАрхивы .gz (мануал). INCLUDE может указывать на .gz: внутри архива ровно один файл; лимит размера 2 ГБ на Windows; несколько архивов = несколько INCLUDE. Для MVP Schedule package не создавайте .gz без явного факта/политики артефактов; если baseline уже ссылается на .gz — сохраняйте путь как есть в REVISE preserve, не «разворачивайте» содержимое в текст без authority.\n\nPATHS (соседнее слово §12.1.82, не в allowlist Builder). PATHS задаёт до 100 алиасов корней пути; в INCLUDE путь пишут как `$ALIAS/rest`. PATHS сам Builder не эмитит. Если в baseline есть `$GRIDS/...` без раскрытого PATHS в пакете — needs_input / fail-closed, не выдумывайте абсолютный корень.\n\nПолитика путей пакета MAS (жёстче мануала, обязательна для release).\n- Только relative path от package root. Запрещены: absolute (`/…`, `C:\\…`), `..`, URL (`http://`, `file://`), symlink escape за корень пакета, пустой PATH.\n- Разделитель в каноническом выпуске — `/` (POSIX-style). Обратные слэши Windows в CREATE не эмитьте; в REVISE preserve исходный raw, если меняете только другое.\n- Имя файла должно совпадать с зарегистрированным file_ref в manifest/include_files. Не ссылайтесь на файл, которого нет в пакете.\n- Один и тот же file_ref не разворачивайте дважды в одном execution graph (INCLUDE_MULTIPLE_EXPANSION). Цикл A→B→A запрещён (INCLUDE_CYCLE).\n- Глубина вложенности в симуляторе «не ограничена», но runtime пакета режет по MAX_DEPTH / size limits baseline analyzer. Не стройте глубокие деревья без нужды: предпочтите плоский список INCLUDE из корня или один уровень timeblocks/.\n- Порядок INCLUDE детерминирован порядком записей в файле; decoder обходит graph в execution order. Не переставляйте INCLUDE «для красоты» в REVISE без approved refactor.\n\nСемантика для validator/renderer. INCLUDE — управляющая конструкция graph traversal, не entity и не clock. semantics.period=ANY; clock.uses_current=true (вставка происходит на текущей позиции SCHEDULE, сама дата не задаётся). Не ставьте DATES внутрь schema INCLUDE. Содержимое included file декодируется отдельно после раскрытия graph.\n\nCREATE vs REVISE.\n- CREATE: допустим единый schedule.inc без INCLUDE, либо canonical package с корневым schedule.inc и относительными INCLUDE на зарегистрированные фрагменты. Не выдумывайте имена файлов: берите из задачи/manifest или needs_input.\n- REVISE preserve-by-default: сохраняйте существующий include layout, пути и порядок. Новый canonical layout / слияние файлов / перенос блоков между .inc — отдельный approved refactor, не побочный эффект правки WCONPROD.\n- Рестартный .data часто делает `SCHEDULE` → `INCLUDE 'model_FORECAST_sch.inc'` → `END`. Не дублируйте SCHEDULE header внутри included forecast file, если baseline так не устроен.\n\nSKIP и INCLUDE. Между SKIP…ENDSKIP (и SKIPON/SKIPOFF) INCLUDE может игнорироваться или читаться по правилам skip-зоны. Не эмитьте SKIP-семейство из этой карточки; если задача требует условного пропуска include — needs_input.\n\nВалидация перед выпуском.\n- Ровно один PATH на INCLUDE-блок.\n- PATH непустой, без `..`, без absolute/URL/drive-letter, без NUL/переводов строк.\n- Файл есть в package (или явный include_files evidence).\n- Нет циклов и повторного expansion того же file_ref.\n- Quoted render; завершающий / записи и блока.\n- Не подставляйте содержимое чужого .inc inline вместо INCLUDE, если задача — сохранить package graph.\n\nАнтипаттерны.\n- `INCLUDE a.inc b.inc /` — два файла в одном INCLUDE.\n- Абсолютный путь или `../outside.inc`.\n- Выдумать `timeblocks/2030-01-01.inc`, которого нет в фактах.\n- В REVISE переписать multi-file baseline в один monolithic schedule.inc без approval.\n- Путать INCLUDE с IMPORT/GDFILE/RESTART (другие keywords и семантика).\n- Считать INCLUDE заменой DATES или контролей скважин.\n- Копировать учебные имена `title_grid.inc` / `modelSmall_FORECAST_sch.inc` в продуктив.\n\nНехватка факта → needs_input: нет имени/пути фрагмента; файл не зарегистрирован в пакете; нужен PATHS-алиас без таблицы PATHS; нужен .gz без политики артефактов; неясно, preserve layout или refactor; цикл/дубликат в предложенном graph.\n\nКарточка самодостаточна: renderer использует только schema_catalogue этой записи (variant default, поле PATH). Не добавляйте поля вне схемы.",
+      "text": "INCLUDE — вставка внешнего файла ключевых слов в текущий .data/.inc.\n\nНазначение. INCLUDE подключает другой текстовый файл с ключевыми словами в место вызова. Чтение текущего файла приостанавливается, читается включаемый файл, затем продолжается исходный. Во включаемом файле снова могут быть INCLUDE: вложенность в tNavigator формально не ограничена. Один INCLUDE указывает ровно один файл. Форматы профиля MVP: tN, E1, E3. Секции: RUNSPEC, GRID, EDIT, PROPS, REGIONS, SOLUTION, SUMMARY, SCHEDULE. Для Schedule Builder scope — прежде всего SCHEDULE-фрагменты пакета (.inc), не сетка/PVT целиком.\n\nКогда применять. CREATE с multi-file package (корневой schedule.inc тянет timeblocks/*.inc); REVISE, где baseline уже содержит INCLUDE graph; рестартный прогнозный .inc, который .data подключает через INCLUDE после RESTART/RESTARTDATE; любой фрагмент, который должен остаться отдельным файлом с hash в manifest. Не используйте INCLUDE, чтобы «спрятать» неизвестный keyword: содержимое included file всё равно проходит decoder/validator.\n\nRecord layout. Ключевое слово INCLUDE, затем одна запись с путём к файлу, запись заканчивается /. Блок заканчивается отдельным /. После INCLUDE — только один файл; несколько файлов = несколько INCLUDE подряд.\n\nПоля одной записи (порядок фиксирован):\n1. PATH — относительный путь к включаемому файлу (или имя файла в корне пакета). В IR храните путь как строку без кавычек. Renderer печатает PATH в одинарных кавычках: `INCLUDE` / `  'controls.inc' /` / `/`.\n\nКавычки и пробелы (мануал §12.1.81). Если в имени/пути есть пробелы — кавычки обязательны (одинарные или двойные одинаково допустимы в симуляторе). Без пробелов tNavigator принимает и без кавычек (`INCLUDE title_grid.inc /`), но этот корпус всегда рендерит quoted PATH для детерминизма и безопасного парсинга. Внутри одинарных кавычек апостроф в имени файла удваивайте (`''`), как в общем string-escape renderer.\n\nАрхивы .gz (мануал). INCLUDE может указывать на .gz: внутри архива ровно один файл; лимит размера 2 ГБ на Windows; несколько архивов = несколько INCLUDE. Для MVP Schedule package не создавайте .gz без явного факта/политики артефактов; если baseline уже ссылается на .gz — сохраняйте путь как есть в REVISE preserve, не «разворачивайте» содержимое в текст без authority.\n\nPATHS (соседнее слово §12.1.82, не в allowlist Builder). PATHS задаёт до 100 алиасов корней пути; в INCLUDE путь пишут как `$ALIAS/rest`. PATHS сам Builder не эмитит. Если в baseline есть `$GRIDS/...` без раскрытого PATHS в пакете — needs_input / fail-closed, не выдумывайте абсолютный корень.\n\nПолитика путей пакета MAS (согласована с мануалом + package evidence).\n- Разрешены relative paths (включая `..`), absolute (`/…`, `C:/…`) и URL-схемы (`file://`, `http://`, …), если PATH непустой и без NUL.\n- PATH в INCLUDE должен резолвиться в file_ref, зарегистрированный в package/include_files (или явный evidence). Иначе INCLUDE_NOT_FOUND — не «unsafe path».\n- В каноническом CREATE предпочтителен `/` как разделитель; `\\` нормализуется в `/` при анализе. В REVISE preserve исходный raw path, если меняете только другое.\n- Один и тот же file_ref не разворачивайте дважды в одном execution graph (INCLUDE_MULTIPLE_EXPANSION). Цикл A→B→A запрещён (INCLUDE_CYCLE).\n- Глубина вложенности в симуляторе «не ограничена», но runtime пакета режет по MAX_DEPTH / size limits baseline analyzer. Не стройте глубокие деревья без нужды: предпочтите плоский список INCLUDE из корня или один уровень timeblocks/.\n- Порядок INCLUDE детерминирован порядком записей в файле; decoder обходит graph в execution order. Не переставляйте INCLUDE «для красоты» в REVISE без approved refactor.\n\nСемантика для validator/renderer. INCLUDE — управляющая конструкция graph traversal, не entity и не clock. semantics.period=ANY; clock.uses_current=true (вставка происходит на текущей позиции SCHEDULE, сама дата не задаётся). Не ставьте DATES внутрь schema INCLUDE. Содержимое included file декодируется отдельно после раскрытия graph.\n\nCREATE vs REVISE.\n- CREATE: допустим единый schedule.inc без INCLUDE, либо canonical package с корневым schedule.inc и относительными INCLUDE на зарегистрированные фрагменты. Не выдумывайте имена файлов: берите из задачи/manifest или needs_input.\n- REVISE preserve-by-default: сохраняйте существующий include layout, пути и порядок. Новый canonical layout / слияние файлов / перенос блоков между .inc — отдельный approved refactor, не побочный эффект правки WCONPROD.\n- Рестартный .data часто делает `SCHEDULE` → `INCLUDE 'model_FORECAST_sch.inc'` → `END`. Не дублируйте SCHEDULE header внутри included forecast file, если baseline так не устроен.\n\nSKIP и INCLUDE. Между SKIP…ENDSKIP (и SKIPON/SKIPOFF) INCLUDE может игнорироваться или читаться по правилам skip-зоны. Не эмитьте SKIP-семейство из этой карточки; если задача требует условного пропуска include — needs_input.\n\nВалидация перед выпуском.\n- Ровно один PATH на INCLUDE-блок.\n- PATH непустой, без NUL/переводов строк; `..`/absolute/URL допустимы при наличии evidence.\n- Файл есть в package (или явный include_files evidence).\n- Нет циклов и повторного expansion того же file_ref.\n- Quoted render; завершающий / записи и блока.\n- Не подставляйте содержимое чужого .inc inline вместо INCLUDE, если задача — сохранить package graph.\n\nАнтипаттерны.\n- `INCLUDE a.inc b.inc /` — два файла в одном INCLUDE.\n- Пустой PATH или PATH с NUL.\n- Ссылка на файл вне package evidence (нет в include_files/manifest).\n- Выдумать `timeblocks/2030-01-01.inc`, которого нет в фактах.\n- В REVISE переписать multi-file baseline в один monolithic schedule.inc без approval.\n- Путать INCLUDE с IMPORT/GDFILE/RESTART (другие keywords и семантика).\n- Считать INCLUDE заменой DATES или контролей скважин.\n- Копировать учебные имена `title_grid.inc` / `modelSmall_FORECAST_sch.inc` в продуктив.\n\nНехватка факта → needs_input: нет имени/пути фрагмента; файл не зарегистрирован в пакете; нужен PATHS-алиас без таблицы PATHS; нужен .gz без политики артефактов; неясно, preserve layout или refactor; цикл/дубликат в предложенном graph.\n\nКарточка самодостаточна: renderer использует только schema_catalogue этой записи (variant default, поле PATH). Не добавляйте поля вне схемы.",
       "examples": [
         {
           "title": "Один SCHEDULE-фрагмент",
@@ -539,8 +539,8 @@
         "contract": "schedule_schema_catalogue",
         "contract_version": "1.0",
         "catalogue_ref": "catalogue://tnavigator/22.2/include-schedule-package-v1",
-        "catalogue_hash": "sha256:a6a97df625f28f7b23bafccde9c68591287568298c2805bc5be27cd206f536ac",
-        "source_hash": "sha256:8102c3b2d289aff2792fa4114273d4f929a5da44e07edf02827849694b0ff60a",
+        "catalogue_hash": "sha256:d228c78c640b180c96c63c21fc7a8dedd2b43e6997f097ef45ffad3f8631dbec",
+        "source_hash": "sha256:abed56c4b1a4eeb92ce7625105ea79170e3849397adf29537a5e4e071714a6fc",
         "access_scope": "petroleum-engineering",
         "simulator_profile": {
           "vendor": "Rock Flow Dynamics",
@@ -551,7 +551,7 @@
         "approved": true,
         "approved_by": "department-hydrodynamic-expert",
         "author": "department-hydrodynamic-expert",
-        "approval_gate_id": "expert:include-schedule-package-v1:1",
+        "approval_gate_id": "expert:include-schedule-package-v1:2",
         "schemas": [
           {
             "schema_id": "expert:INCLUDE",
@@ -563,7 +563,7 @@
               "document_revision": "19.4",
               "page": "12.1.81 / 602-603",
               "heading": "INCLUDE",
-              "source_hash": "sha256:8102c3b2d289aff2792fa4114273d4f929a5da44e07edf02827849694b0ff60a"
+              "source_hash": "sha256:abed56c4b1a4eeb92ce7625105ea79170e3849397adf29537a5e4e071714a6fc"
             },
             "parser": {
               "token_width": 1,
@@ -595,20 +595,20 @@
           }
         ]
       },
-      "source_hash": "sha256:8102c3b2d289aff2792fa4114273d4f929a5da44e07edf02827849694b0ff60a",
+      "source_hash": "sha256:abed56c4b1a4eeb92ce7625105ea79170e3849397adf29537a5e4e071714a6fc",
       "page": "12.1.81 INCLUDE (с. 602–603); PATHS 12.1.82 (с. 604); файлы модели гл. 9 (с. 465); RESTART INCLUDE 12.17.3",
       "heading": "INCLUDE — подключение внешнего файла ключевых слов",
       "id": "include-schedule-package-v1",
       "metadata": {
         "document_id": "include-schedule-package-v1",
-        "document_revision": "1",
-        "source_hash": "sha256:8102c3b2d289aff2792fa4114273d4f929a5da44e07edf02827849694b0ff60a",
+        "document_revision": "2",
+        "source_hash": "sha256:abed56c4b1a4eeb92ce7625105ea79170e3849397adf29537a5e4e071714a6fc",
         "page": "12.1.81 / 602-603",
         "heading": "INCLUDE",
         "target_base": "schedule_mvp",
         "knowledge_type": "keyword_instruction",
         "knowledge_id": "include-schedule-package-v1",
-        "revision": "1",
+        "revision": "2",
         "status": "active",
         "access_scope": "petroleum-engineering",
         "author": "department-hydrodynamic-expert",
@@ -632,6 +632,795 @@
           "сохранить include graph",
           "подключить прогнозный schedule.inc",
           "относительный путь к .inc"
+        ]
+      }
+    },
+    {
+      "contract": "schedule_knowledge_block",
+      "contract_version": "1.0",
+      "target_base": "schedule_mvp",
+      "knowledge_type": "keyword_instruction",
+      "knowledge_id": "gruptree-group-hierarchy-v1",
+      "revision": "1",
+      "title": "GRUPTREE — иерархия групп скважин",
+      "keywords": [
+        "GRUPTREE"
+      ],
+      "topics": [
+        "иерархия групп",
+        "групповой контроль",
+        "FIELD",
+        "child-parent",
+        "дерево групп",
+        "GCONPROD prerequisite"
+      ],
+      "task_patterns": [
+        "задать дерево групп",
+        "иерархия GRUPTREE",
+        "подчинить группу FIELD",
+        "создать групповую структуру",
+        "child parent группы скважин",
+        "объявить группы перед WELSPECS"
+      ],
+      "simulator_family": [
+        "E100",
+        "E300",
+        "tNavigator"
+      ],
+      "status": "active",
+      "author": "department-hydrodynamic-expert",
+      "access_scope": "petroleum-engineering",
+      "text": "GRUPTREE — иерархия групп скважин (child → parent) в секции SCHEDULE.\n\nНазначение. GRUPTREE задаёт дерево многоуровневого группового управления: кто чья дочерняя/материнская группа. Вершина дерева — месторождение FIELD. Форматы: tN, E1, E3. Секция: только SCHEDULE. Скважины к группам приписывает WELSPECS, не GRUPTREE. Групповые лимиты/контроли — GCONPROD / GCONINJE и соседи; расширенная сеть — BRANPROP/NODEPROP (может отличаться от GRUPTREE, но leaf-группы со скважинами должны совпадать).\n\nПравило состава группы (мануал §12.20.103, §2.14.2). Группа либо содержит скважины (leaf / well-group), либо имеет дочерние группы (node-group) — не оба сразу. Node-группа не должна получать скважины через WELSPECS. Leaf-группа не должна получать child edges в GRUPTREE.\n\nRecord layout. Ключевое слово GRUPTREE, затем одна или несколько строк-записей, каждая заканчивается /. Блок заканчивается отдельным /. Одна запись = одно ребро иерархии:\n1. CHILD — имя дочерней группы (required string).\n2. PARENT — имя материнской группы (required string).\n\nВ IR поля CHILD и PARENT — строки без кавычек. Renderer печатает их в одинарных кавычках: `GRUPTREE` / `  'G1' 'GAS1' /` / `/`. Имена копируйте буквально из фактов; не нормализуйте регистр и не сокращайте.\n\nКанон мануала — один блок GRUPTREE со всеми рёбрами. Schema/renderer этого корпуса эмитит одно ребро на IR-event (отдельный GRUPTREE-блок на ребро). Последовательность таких блоков эквивалентна UPSERT рёбер в graph `groups`; не очищайте всё дерево между рёбрами одной даты.\n\nFIELD и defaults.\n- FIELD — корень (уровень 0). Не делайте FIELD чьим-то CHILD.\n- Если материнская группа не указана, симулятор считает группу дочерней к FIELD. В CREATE этого корпуса всегда пишите PARENT явно (обычно FIELD), не полагайтесь на default omission.\n- Группы без объявления в GRUPTREE, но впервые появившиеся в GSATPROD/GSATINJE как вспомогательные, иначе попадают сразу под FIELD; в многоуровневой иерархии вспомогательную группу сначала объявите в GRUPTREE.\n\nСемантика для validator/renderer.\n- period=ANY; clock.uses_current=true (ребро действует с текущей даты DATES).\n- definitions: UPSERT entity_type=group для CHILD и для PARENT.\n- hierarchy_edges: graph=`groups`, child_field=CHILD, parent_field=PARENT.\n- У одной CHILD в один момент — ровно один PARENT (второй parent = conflict).\n- Циклы A→B→A запрещены.\n- Orphan/неразрешённый root: не подвешивайте дерево к корню, отличному от FIELD, без факта; не оставляйте висячие ссылки на несуществующие группы, если пакет требует замкнутого дерева.\n- Не эмитьте BRANPROP/NODEPROP/GCONPROD из этой карточки.\n\nПорядок относительно других keywords.\n- Обычно GRUPTREE раньше WELSPECS и GCONPROD на той же или более ранней дате: группа должна существовать до ссылки.\n- WELSPECS.GROUP должен указывать на leaf-группу (или допустимую группу фактов), не на node-группу с детьми.\n- При REVISE preserve существующие рёбра вне scope; смена parent — MODIFY/ADD с доказательством; REMOVE ребра — только с accountable approval, как и прочие REMOVE.\n\nВалидация перед выпуском.\n- CHILD и PARENT непусты, без NUL/переводов строк.\n- CHILD ≠ PARENT.\n- CHILD ≠ FIELD.\n- Нет второго parent для той же CHILD на той же effective date.\n- Нет циклов в накопленном graph `groups`.\n- Node/leaf правило не нарушено относительно WELSPECS в том же пакете (если WELSPECS в scope).\n- Завершающие / записи и блока.\n\nАнтипаттерны.\n- Повесить скважины на группу, у которой уже есть дочерние группы.\n- Сделать две материнские группы для одной дочерней.\n- Цикл `A→B` и `B→A`.\n- Выдумать GAS1/G1 из примера мануала без фактов.\n- Заменить GRUPTREE сетью BRANPROP или наоборот.\n- Считать GRUPTREE контролем дебита (это GCONPROD).\n\nНехватка факта → needs_input: нет имён child/parent; неясно leaf vs node; конфликт с существующим parent в baseline; нужен корень не FIELD без обоснования; иерархия для Reservoir Coupling (GRUPMAST/GRUPSLAV) без полной карты связей.\n\nКарточка самодостаточна: renderer использует только schema_catalogue этой записи (variant default, поля CHILD и PARENT).",
+      "examples": [
+        {
+          "title": "Двухуровневое дерево под FIELD",
+          "task": "FIELD содержит GAS1 и GAS2; GAS1 содержит G1,G2; GAS2 содержит G3,G4.",
+          "schedule_text": "GRUPTREE\n  'GAS1' 'FIELD' /\n/\nGRUPTREE\n  'GAS2' 'FIELD' /\n/\nGRUPTREE\n  'G1' 'GAS1' /\n/\nGRUPTREE\n  'G2' 'GAS1' /\n/\nGRUPTREE\n  'G3' 'GAS2' /\n/\nGRUPTREE\n  'G4' 'GAS2' /\n/",
+          "explanation": "Учебное дерево §12.20.103. G1–G4 — leaf-группы под скважины; GAS1/GAS2 — node-группы без скважин. Имена в продуктив — только из фактов."
+        },
+        {
+          "title": "Плоские группы сразу под FIELD",
+          "task": "Объявить группы I, J и вспомогательные PRODSAT1, PRODSAT2 непосредственно под FIELD.",
+          "schedule_text": "GRUPTREE\n  'I' 'FIELD' /\n/\nGRUPTREE\n  'J' 'FIELD' /\n/\nGRUPTREE\n  'PRODSAT1' 'FIELD' /\n/\nGRUPTREE\n  'PRODSAT2' 'FIELD' /\n/",
+          "explanation": "Паттерн перед GSATPROD из §12.20.100. Вспомогательные группы в иерархии сначала в GRUPTREE, иначе симулятор повесит их прямо на FIELD сам."
+        },
+        {
+          "title": "Простое дерево для coupling-подобной структуры",
+          "task": "FIELD → W и G; W → W1,W2,W3; G → G1,G2,G3.",
+          "schedule_text": "GRUPTREE\n  'W' 'FIELD' /\n/\nGRUPTREE\n  'G' 'FIELD' /\n/\nGRUPTREE\n  'W1' 'W' /\n/\nGRUPTREE\n  'W2' 'W' /\n/\nGRUPTREE\n  'W3' 'W' /\n/\nGRUPTREE\n  'G1' 'G' /\n/\nGRUPTREE\n  'G2' 'G' /\n/\nGRUPTREE\n  'G3' 'G' /\n/",
+          "explanation": "Учебный каркас из примера GRUPMAST §12.20.269. Сами GRUPMAST/GRUPSLAV этой карточкой не эмитить."
+        }
+      ],
+      "schema_catalogue": {
+        "contract": "schedule_schema_catalogue",
+        "contract_version": "1.0",
+        "catalogue_ref": "catalogue://tnavigator/22.2/gruptree-group-hierarchy-v1",
+        "catalogue_hash": "sha256:a26028d49e807eb3085298fe65cd3bf5571ca195ff92558c7d313656ef4d3203",
+        "source_hash": "sha256:ad8e3782bbb36444b55b12159b67cbcf3250f05d34d18f004970155da143b962",
+        "access_scope": "petroleum-engineering",
+        "simulator_profile": {
+          "vendor": "Rock Flow Dynamics",
+          "simulator": "tNavigator",
+          "version": "22.2",
+          "unit_system": "METRIC"
+        },
+        "approved": true,
+        "approved_by": "department-hydrodynamic-expert",
+        "author": "department-hydrodynamic-expert",
+        "approval_gate_id": "expert:gruptree-group-hierarchy-v1:1",
+        "schemas": [
+          {
+            "schema_id": "expert:GRUPTREE",
+            "schema_revision": "1",
+            "keyword": "GRUPTREE",
+            "variant": "default",
+            "citation": {
+              "document_id": "tnav-user-manual-russian",
+              "document_revision": "19.4",
+              "page": "12.20.103 / 1968",
+              "heading": "GRUPTREE",
+              "source_hash": "sha256:ad8e3782bbb36444b55b12159b67cbcf3250f05d34d18f004970155da143b962"
+            },
+            "parser": {
+              "token_width": 2,
+              "allow_trailing_omission": false,
+              "allow_unquoted_strings": true
+            },
+            "fields": [
+              {
+                "name": "CHILD",
+                "position": 1,
+                "type": "string",
+                "required": true,
+                "quote": "single"
+              },
+              {
+                "name": "PARENT",
+                "position": 2,
+                "type": "string",
+                "required": true,
+                "quote": "single"
+              }
+            ],
+            "layout": {
+              "newline": "LF",
+              "indent": "  ",
+              "delimiter": "SPACE",
+              "record_terminator": "SLASH",
+              "block_terminator": "SLASH_LINE"
+            },
+            "semantics": {
+              "period": "ANY",
+              "clock": {
+                "uses_current": true
+              },
+              "definitions": [
+                {
+                  "entity_type": "group",
+                  "id_field": "CHILD",
+                  "action": "UPSERT"
+                },
+                {
+                  "entity_type": "group",
+                  "id_field": "PARENT",
+                  "action": "UPSERT"
+                }
+              ],
+              "hierarchy_edges": [
+                {
+                  "graph": "groups",
+                  "child_entity_type": "group",
+                  "parent_entity_type": "group",
+                  "child_field": "CHILD",
+                  "parent_field": "PARENT"
+                }
+              ]
+            }
+          }
+        ]
+      },
+      "source_hash": "sha256:ad8e3782bbb36444b55b12159b67cbcf3250f05d34d18f004970155da143b962",
+      "page": "12.20.103 GRUPTREE (с. 1968); групповой контроль 2.14.2 (с. 142); BRANPROP/сеть 2.14.10–11",
+      "heading": "GRUPTREE — структура дерева групп",
+      "id": "gruptree-group-hierarchy-v1",
+      "metadata": {
+        "document_id": "gruptree-group-hierarchy-v1",
+        "document_revision": "1",
+        "source_hash": "sha256:ad8e3782bbb36444b55b12159b67cbcf3250f05d34d18f004970155da143b962",
+        "page": "12.20.103 / 1968",
+        "heading": "GRUPTREE",
+        "target_base": "schedule_mvp",
+        "knowledge_type": "keyword_instruction",
+        "knowledge_id": "gruptree-group-hierarchy-v1",
+        "revision": "1",
+        "status": "active",
+        "access_scope": "petroleum-engineering",
+        "author": "department-hydrodynamic-expert",
+        "approved_by": "department-hydrodynamic-expert",
+        "keyword_families": [
+          "GRUPTREE"
+        ],
+        "topics": [
+          "иерархия групп",
+          "групповой контроль",
+          "FIELD",
+          "child-parent",
+          "дерево групп",
+          "GCONPROD prerequisite"
+        ],
+        "task_patterns": [
+          "задать дерево групп",
+          "иерархия GRUPTREE",
+          "подчинить группу FIELD",
+          "создать групповую структуру",
+          "child parent группы скважин",
+          "объявить группы перед WELSPECS"
+        ]
+      }
+    },
+    {
+      "contract": "schedule_knowledge_block",
+      "contract_version": "1.0",
+      "target_base": "schedule_mvp",
+      "knowledge_type": "keyword_instruction",
+      "knowledge_id": "welspecs-well-declaration-v1",
+      "revision": "1",
+      "title": "WELSPECS — объявление скважины и группы",
+      "keywords": [
+        "WELSPECS"
+      ],
+      "topics": [
+        "объявление скважины",
+        "спецификация скважины",
+        "группа скважин",
+        "устье I J",
+        "WELSPECS",
+        "перед WCONPROD"
+      ],
+      "task_patterns": [
+        "объявить скважину",
+        "задать WELSPECS",
+        "приписать скважину к группе",
+        "устье скважины I J",
+        "добавить новую скважину в SCHEDULE",
+        "запретить crossflow"
+      ],
+      "simulator_family": [
+        "E100",
+        "E300",
+        "tNavigator"
+      ],
+      "status": "active",
+      "author": "department-hydrodynamic-expert",
+      "access_scope": "petroleum-engineering",
+      "text": "WELSPECS — объявление/изменение спецификации скважины в SCHEDULE.\n\nНазначение. WELSPECS задаёт технические данные скважины: имя, группу, I/J устья/забоя, опорную глубину BHP, предпочтительную фазу, радиус дренирования, уравнение притока, реакцию на economic/group limits, crossflow, PVT-таблицу ствола, модель плотности и способ RESV-давления. Форматы: tN, E1, E3. Секция: только SCHEDULE. Это не перфорация (COMPDAT/COMPDATMD), не траектория (WELLTRACK), не контроль дебита (WCONPROD/WCONHIST). Для скважин в LGR используйте WELSPECL + COMPDATL — WELSPECL нет в allowlist Builder: если нужна LGR-скважина → needs_input. Устаревший WELLSPEC не эмитьте — только WELSPECS.\n\nКогда применять. CREATE/REVISE при вводе новой скважины или смене группы/геометрии устья; всегда до WCONPROD/WCONHIST/COMPDAT (если IJ берутся по умолчанию из WELSPECS) / WELLTRACK+COMPDATMD на той же сущности. Обычно после DATES текущего time block и после GRUPTREE, если GROUP ≠ FIELD и группа объявлена деревом.\n\nRecord layout. Одна скважина = одна запись, заканчивается /. Блок заканчивается отдельным /. Поля по порядку (§12.20.3):\n\n1. WELL — имя или номер скважины (required). Копируйте буквально; не нормализуйте. При LONGNAMES=0 имена E1/E3 режутся до 8 символов — не выдумывайте укорочения.\n2. GROUP — группа скважин. Default симулятора: FIELD. В этом корпусе всегда пишите GROUP явно. GROUP должна существовать как group-entity (FIELD или из GRUPTREE). Не вешайте скважину на node-группу, у которой уже есть дочерние группы в GRUPTREE.\n3. I (IW) — индекс ячейки X устья/забоя. Может быть *. Если * (и J=*), то в COMPDAT параметры 2–3 обязательны явно, иначе ошибка чтения.\n4. J (JW) — индекс ячейки Y. То же правило default/*.\n5. REF_DEPTH — опорная глубина BHP (METRIC: m, FIELD: ft). Рекомендуется глубина первой перфорации; для многосегментных — глубина верхнего сегмента. Default/отрицательное → глубина центра блока первой перфорации (порядок COMPORD).\n6. PHASE — OIL | WATER | GAS | LIQ. Для worst-well закрытия в GCONPROD и для PI/потенциала.\n7. D_RADIUS — радиус дренирования для PI (m/ft). Default 0 → эквивалентный радиус блоков. Отрицательный → в отчётах потенциалы вместо PI.\n8. INFLOW — STD|NO (стандарт), GPP (псевдодавление газоконденсат+PICOND), R-G|YES (Russell-Goodrich), P-P (сухого газа; не для газоконденсата). Default STD.\n9. ECON_ACTION — STOP (закрыта выше пласта, перетоки возможны) | SHUT (изолирована). При нарушении economic/group limits. Default SHUT.\n10. CROSSFLOW — YES (двусторонний переток в стволе) | NO (односторонний клапан). Default YES.\n11. PVT_TABLE — номер PVT-таблицы флюидов в стволе; 0 → PVT региона нижнего перфорированного блока. Default 0.\n12. DENSITY_MODEL — SEG (сегментированная; black-oil/compositional, +BRINE) | AVG (средняя по стволу). Default: SEG (black-oil/compositional), AVG (thermal).\n13. RESV_PRESSURE — способ давления для RESV-дебита: >0 номер FIP; 0 среднее по месторождению HC; <0 FIP региона последней перфорации (COMPORD). Default 0.\n\nКанонический render этого корпуса. IR-event = одна скважина. Variant выбирайте по фактам:\n- default — только WELL и GROUP (остальное trailing omission / симуляторные defaults).\n- with_ij — WELL, GROUP, I, J когда координаты даны.\n- with_ij_nocrossflow — как with_ij, затем 5* defaults (поля 5–9) и CROSSFLOW=NO — паттерн примера мануала `1043 G1 14 10 5* NO/`.\nНе эмитьте поля вне выбранного variant. Числа I/J — целые ≥1. WELL/GROUP — quoted strings.\n\nСемантика.\n- period=ANY; clock.uses_current=true.\n- definitions: UPSERT entity_type=well, id_field=WELL.\n- references: group GROUP required=true (группа должна существовать на effective date).\n- Не объявляйте prerequisite GRUPTREE как GLOBAL для FIELD: FIELD допустим без ребра. Если GROUP из дерева — группа должна быть создана GRUPTREE ранее (entity reference).\n\nСвязи с другими keywords (не эмитьте их из этой карточки).\n- COMPDAT: default I/J берутся из WELSPECS 3–4; если оба * — COMPDAT обязан задать I/J.\n- WELLTRACK + COMPDATMD: скважина сначала через WELSPECS; порядок WELSPECS/WELLTRACK произвольный.\n- COMPORD TRACK ориентируется на I/J устья из WELSPECS.\n- WCONPROD RESV учитывает параметр 13 WELSPECS.\n- Контроли WCON* требуют существующий WELL.\n\nВалидация.\n- WELL непустой, уникален как entity id на create; redefinition = UPSERT (смена GROUP/флагов по факту).\n- GROUP непустой; не node-группа с children, если это проверяется пакетом.\n- I/J при наличии — конечные положительные integers (или явный default-маркер политики variant).\n- PHASE/INFLOW/ECON_ACTION/CROSSFLOW/DENSITY_MODEL только из enum выше.\n- Не подставляйте учебные 1043/W13/G1 без фактов.\n\nАнтипаттерны.\n- WELSPECL/WELLSPEC вместо WELSPECS без LGR-authority.\n- Скважина на GAS1, если GAS1 — parent для G1/G2.\n- Забыть WELL перед WCONPROD.\n- Выдумать I/J, если в фактах только имя и группа.\n- Считать WELSPECS перфорацией или дебитом.\n\nНехватка факта → needs_input: нет имени скважины; нет группы; нужны I/J без координат; LGR-имя без WELSPECL-политики; конфликт имени с baseline без REVISE target; CROSSFLOW/PHASE требуются, но не заданы и не default.\n\nКарточка самодостаточна: renderer использует только schema_catalogue этой записи и выбранный variant.",
+      "examples": [
+        {
+          "title": "Скважина в группе FIELD без IJ",
+          "task": "Объявить скважину P01 в группе FIELD.",
+          "schedule_text": "WELSPECS\n  'P01' 'FIELD' /\n/",
+          "explanation": "Variant default. I/J и прочие поля — симуляторные defaults / задаются COMPDAT явно."
+        },
+        {
+          "title": "Скважина с I/J в группе G1",
+          "task": "Скважина 1043, группа G1, устье I=14 J=10.",
+          "schedule_text": "WELSPECS\n  '1043' 'G1' 14 10 /\n/",
+          "explanation": "Variant with_ij. Имя/группа/координаты из фактов; 1043/G1 — учебные числа мануала."
+        },
+        {
+          "title": "I/J и запрет crossflow",
+          "task": "Скважина 1043 в G1, I=14 J=10, двусторонний переток запрещён (NO).",
+          "schedule_text": "WELSPECS\n  '1043' 'G1' 14 10 * * * * * NO /\n/",
+          "explanation": "Variant with_ij_nocrossflow: после J пять default-токенов (поля 5–9), затем CROSSFLOW=NO. Эквивалент записи мануала `14 10 5* NO` (§12.20.3 с. 1725)."
+        },
+        {
+          "title": "Вторая скважина с default GROUP=FIELD через явную группу",
+          "task": "Скважина W13, группа FIELD, I=16 J=13.",
+          "schedule_text": "WELSPECS\n  'W13' 'FIELD' 16 13 /\n/",
+          "explanation": "В мануале GROUP задан 1* (→FIELD). Корпус пишет 'FIELD' явно."
+        }
+      ],
+      "schema_catalogue": {
+        "contract": "schedule_schema_catalogue",
+        "contract_version": "1.0",
+        "catalogue_ref": "catalogue://tnavigator/22.2/welspecs-well-declaration-v1",
+        "catalogue_hash": "sha256:12939eaaf295c63db44ba794354ad0c8e446c461c41c5f10d5a442c364afb3f3",
+        "source_hash": "sha256:80119bb0a54efe502208c77c56955e5d1a45f042a7ff1ccba65798676da2cc24",
+        "access_scope": "petroleum-engineering",
+        "simulator_profile": {
+          "vendor": "Rock Flow Dynamics",
+          "simulator": "tNavigator",
+          "version": "22.2",
+          "unit_system": "METRIC"
+        },
+        "approved": true,
+        "approved_by": "department-hydrodynamic-expert",
+        "author": "department-hydrodynamic-expert",
+        "approval_gate_id": "expert:welspecs-well-declaration-v1:1",
+        "schemas": [
+          {
+            "schema_id": "expert:WELSPECS",
+            "schema_revision": "1",
+            "keyword": "WELSPECS",
+            "variant": "default",
+            "citation": {
+              "document_id": "tnav-user-manual-russian",
+              "document_revision": "19.4",
+              "page": "12.20.3 / 1722-1725",
+              "heading": "WELSPECS",
+              "source_hash": "sha256:80119bb0a54efe502208c77c56955e5d1a45f042a7ff1ccba65798676da2cc24"
+            },
+            "parser": {
+              "token_width": 13,
+              "allow_trailing_omission": true,
+              "allow_unquoted_strings": true
+            },
+            "fields": [
+              {
+                "name": "WELL",
+                "position": 1,
+                "type": "string",
+                "required": true,
+                "quote": "single"
+              },
+              {
+                "name": "GROUP",
+                "position": 2,
+                "type": "string",
+                "required": true,
+                "quote": "single"
+              }
+            ],
+            "layout": {
+              "newline": "LF",
+              "indent": "  ",
+              "delimiter": "SPACE",
+              "record_terminator": "SLASH",
+              "block_terminator": "SLASH_LINE"
+            },
+            "semantics": {
+              "period": "ANY",
+              "clock": {
+                "uses_current": true
+              },
+              "definitions": [
+                {
+                  "entity_type": "well",
+                  "id_field": "WELL",
+                  "action": "UPSERT"
+                }
+              ],
+              "references": [
+                {
+                  "entity_type": "group",
+                  "id_field": "GROUP",
+                  "required": true
+                }
+              ]
+            }
+          },
+          {
+            "schema_id": "expert:WELSPECS:with_ij",
+            "schema_revision": "1",
+            "keyword": "WELSPECS",
+            "variant": "with_ij",
+            "citation": {
+              "document_id": "tnav-user-manual-russian",
+              "document_revision": "19.4",
+              "page": "12.20.3 / 1722-1725",
+              "heading": "WELSPECS",
+              "source_hash": "sha256:80119bb0a54efe502208c77c56955e5d1a45f042a7ff1ccba65798676da2cc24"
+            },
+            "parser": {
+              "token_width": 13,
+              "allow_trailing_omission": true,
+              "allow_unquoted_strings": true
+            },
+            "fields": [
+              {
+                "name": "WELL",
+                "position": 1,
+                "type": "string",
+                "required": true,
+                "quote": "single"
+              },
+              {
+                "name": "GROUP",
+                "position": 2,
+                "type": "string",
+                "required": true,
+                "quote": "single"
+              },
+              {
+                "name": "I",
+                "position": 3,
+                "type": "integer",
+                "required": true
+              },
+              {
+                "name": "J",
+                "position": 4,
+                "type": "integer",
+                "required": true
+              }
+            ],
+            "layout": {
+              "newline": "LF",
+              "indent": "  ",
+              "delimiter": "SPACE",
+              "record_terminator": "SLASH",
+              "block_terminator": "SLASH_LINE"
+            },
+            "semantics": {
+              "period": "ANY",
+              "clock": {
+                "uses_current": true
+              },
+              "definitions": [
+                {
+                  "entity_type": "well",
+                  "id_field": "WELL",
+                  "action": "UPSERT"
+                }
+              ],
+              "references": [
+                {
+                  "entity_type": "group",
+                  "id_field": "GROUP",
+                  "required": true
+                }
+              ]
+            }
+          },
+          {
+            "schema_id": "expert:WELSPECS:with_ij_nocrossflow",
+            "schema_revision": "1",
+            "keyword": "WELSPECS",
+            "variant": "with_ij_nocrossflow",
+            "citation": {
+              "document_id": "tnav-user-manual-russian",
+              "document_revision": "19.4",
+              "page": "12.20.3 / 1722-1725",
+              "heading": "WELSPECS",
+              "source_hash": "sha256:80119bb0a54efe502208c77c56955e5d1a45f042a7ff1ccba65798676da2cc24"
+            },
+            "parser": {
+              "token_width": 13,
+              "allow_trailing_omission": true,
+              "allow_unquoted_strings": true
+            },
+            "fields": [
+              {
+                "name": "WELL",
+                "position": 1,
+                "type": "string",
+                "required": true,
+                "quote": "single"
+              },
+              {
+                "name": "GROUP",
+                "position": 2,
+                "type": "string",
+                "required": true,
+                "quote": "single"
+              },
+              {
+                "name": "I",
+                "position": 3,
+                "type": "integer",
+                "required": true
+              },
+              {
+                "name": "J",
+                "position": 4,
+                "type": "integer",
+                "required": true
+              },
+              {
+                "name": "REF_DEPTH",
+                "position": 5,
+                "type": "number",
+                "required": false,
+                "default_allowed": true
+              },
+              {
+                "name": "PHASE",
+                "position": 6,
+                "type": "enum",
+                "enum": [
+                  "OIL",
+                  "WATER",
+                  "GAS",
+                  "LIQ"
+                ],
+                "required": false,
+                "default_allowed": true,
+                "case": "upper"
+              },
+              {
+                "name": "D_RADIUS",
+                "position": 7,
+                "type": "number",
+                "required": false,
+                "default_allowed": true
+              },
+              {
+                "name": "INFLOW",
+                "position": 8,
+                "type": "enum",
+                "enum": [
+                  "STD",
+                  "NO",
+                  "GPP",
+                  "R-G",
+                  "YES",
+                  "P-P"
+                ],
+                "required": false,
+                "default_allowed": true,
+                "case": "upper"
+              },
+              {
+                "name": "ECON_ACTION",
+                "position": 9,
+                "type": "enum",
+                "enum": [
+                  "STOP",
+                  "SHUT"
+                ],
+                "required": false,
+                "default_allowed": true,
+                "case": "upper"
+              },
+              {
+                "name": "CROSSFLOW",
+                "position": 10,
+                "type": "enum",
+                "enum": [
+                  "YES",
+                  "NO"
+                ],
+                "required": true,
+                "case": "upper"
+              }
+            ],
+            "layout": {
+              "newline": "LF",
+              "indent": "  ",
+              "delimiter": "SPACE",
+              "record_terminator": "SLASH",
+              "block_terminator": "SLASH_LINE"
+            },
+            "semantics": {
+              "period": "ANY",
+              "clock": {
+                "uses_current": true
+              },
+              "definitions": [
+                {
+                  "entity_type": "well",
+                  "id_field": "WELL",
+                  "action": "UPSERT"
+                }
+              ],
+              "references": [
+                {
+                  "entity_type": "group",
+                  "id_field": "GROUP",
+                  "required": true
+                }
+              ]
+            }
+          }
+        ]
+      },
+      "source_hash": "sha256:80119bb0a54efe502208c77c56955e5d1a45f042a7ff1ccba65798676da2cc24",
+      "page": "12.20.3 WELSPECS (с. 1722–1725); WELSPECL 12.20.4; COMPDAT defaults 12.20.6",
+      "heading": "WELSPECS — технические данные скважины",
+      "id": "welspecs-well-declaration-v1",
+      "metadata": {
+        "document_id": "welspecs-well-declaration-v1",
+        "document_revision": "1",
+        "source_hash": "sha256:80119bb0a54efe502208c77c56955e5d1a45f042a7ff1ccba65798676da2cc24",
+        "page": "12.20.3 / 1722-1725",
+        "heading": "WELSPECS",
+        "target_base": "schedule_mvp",
+        "knowledge_type": "keyword_instruction",
+        "knowledge_id": "welspecs-well-declaration-v1",
+        "revision": "1",
+        "status": "active",
+        "access_scope": "petroleum-engineering",
+        "author": "department-hydrodynamic-expert",
+        "approved_by": "department-hydrodynamic-expert",
+        "keyword_families": [
+          "WELSPECS"
+        ],
+        "topics": [
+          "объявление скважины",
+          "спецификация скважины",
+          "группа скважин",
+          "устье I J",
+          "WELSPECS",
+          "перед WCONPROD"
+        ],
+        "task_patterns": [
+          "объявить скважину",
+          "задать WELSPECS",
+          "приписать скважину к группе",
+          "устье скважины I J",
+          "добавить новую скважину в SCHEDULE",
+          "запретить crossflow"
+        ]
+      }
+    },
+    {
+      "contract": "schedule_knowledge_block",
+      "contract_version": "1.0",
+      "target_base": "schedule_mvp",
+      "knowledge_type": "keyword_instruction",
+      "knowledge_id": "welltrack-trajectory-v1",
+      "revision": "1",
+      "title": "WELLTRACK — траектория скважины X Y Z MD",
+      "keywords": [
+        "WELLTRACK"
+      ],
+      "topics": [
+        "траектория скважины",
+        "WELLTRACK",
+        "MD survey",
+        "многоствольная скважина",
+        "перед COMPDATMD",
+        "X Y Z MD"
+      ],
+      "task_patterns": [
+        "задать траекторию скважины",
+        "WELLTRACK survey",
+        "точки ствола X Y Z MD",
+        "боковой ствол скважины",
+        "траектория перед перфорацией MD",
+        "многозабойная траектория"
+      ],
+      "simulator_family": [
+        "E100",
+        "E300",
+        "tNavigator"
+      ],
+      "status": "active",
+      "author": "department-hydrodynamic-expert",
+      "access_scope": "petroleum-engineering",
+      "text": "WELLTRACK — траектория скважины (и боковых стволов) в координатах X Y Z MD.\n\nНазначение. WELLTRACK задаёт геометрию ствола(ов) скважины точками вдоль измеренной глубины. Это tNavigator-расширение (не классический ECLIPSE COMPDAT-only путь). Скважина объявляется WELSPECS; перфорации по MD/TVD — COMPDATMD. Форматы: tN, E1, E3. Секции: GRID и SCHEDULE. Для Schedule Builder MVP эмитьте WELLTRACK в SCHEDULE, если задача про schedule package. В GRID WELLTRACK нужен для ГРП через LGR (FRACTURE_WELL и т.п.): тогда траектория в GRID, а WELSPECS/COMPDATMD — в SCHEDULE. Нельзя внутри ACTION-семейства.\n\nПорядок. WELSPECS и WELLTRACK — в любом порядке. COMPDATMD — после того как скважина и траектория заданы (оба keyword уже прочитаны к моменту перфорации). Запрещены маски и `*` в имени скважины WELLTRACK: только точное имя.\n\nКанонический синтаксис tNavigator (§12.20.9) — отличается от «обычной» табличной записи.\n\nСлучай 1 — один (главный) ствол:\nWELLTRACK 'WELLNAME'\n  X Y Z MD\n  X Y Z MD\n  ...\n/\n\nПервая строка: keyword + имя скважины (quoted). Каждая следующая: четыре числа. Последняя точка может нести `/` в конце строки; блок также закрывается политикой пакета.\n\nСлучай 2 — многоствольная:\nWELLTRACK 'WELLNAME'          — главный ствол (branch 0)\n  ...\n/\nWELLTRACK 'WELLNAME:1'        — ствол 1\n  ...\n/\nWELLTRACK 'WELLNAME:N'        — ствол N\n\nЕсли номер ствола не указан — главный ствол 0. Отдельный WELLTRACK-блок на каждый ствол; данные ствола заканчиваются `/`.\n\nПоля точки (METRIC: m; FIELD: ft):\n1. X — координата X;\n2. Y — координата Y;\n3. Z — абсолютная глубина (TVD-подобная абсолютная отметка; знак/уровень моря — как в модели);\n4. MD — измеренная глубина вдоль ствола.\n\nРазделитель в строке: пробел или `;`. Корпус рендерит пробелы. Числа конечные (finite). Вдоль одного ствола MD должна быть строго возрастающей (монотонность траектории). Не выдумывайте точки: берите из survey/Excel facts.\n\nСвязанные keywords (не эмитьте из этой карточки без scope).\n- WELSPECS — объявление скважины (обязательный entity).\n- COMPDATMD — перфорации по MD/TVD/STAGE на траектории.\n- WELLINCL — альтернатива «относительно устья»; для абсолютной траектории — WELLTRACK.\n- FRACTURE_WELL / FRACTURE_STAGE — привязка ГРП к MD на WELLTRACK (часто GRID).\n- VFPCORR — если WELLTRACK задан, корреляция вдоль траектории до глубины VFPCORR.\n\nIR / schema этого корпуса.\n- Variant `point`: одна точка = один IR-event с полями WELL, BRANCH, X, Y, Z, MD.\n- BRANCH: integer, default 0 (главный ствол). Для ствола N в каноне имя на header — `WELL:N`.\n- semantics: period=ANY; clock.uses_current; references well WELL; prerequisites WELSPECS scope=ENTITY по WELL; numeric_constraints на MD (min 0) и finite X/Y/Z/MD.\n- Несколько точек одного ствола — несколько point-events с одним WELL+BRANCH и возрастающим MD.\n- Канонический multi-line header-syntax мануала предпочтителен в examples и при REVISE preserve raw. Deterministic renderer MVP печатает табличную запись `WELLTRACK` / `  'WELL' BRANCH X Y Z MD /` / `/` на event. Если симулятор/QA требует строго header-form (`WELLTRACK 'W'\\n X Y Z MD`), а renderer даёт только record-form — не угадывайте слияние вручную: либо KEEP baseline raw track, либо needs_input на layout extension. Не подменяйте WELLTRACK набором COMPDAT.\n\nВалидация.\n- WELL точное, без wildcard; скважина существует (WELSPECS) или будет объявлена в том же пакете.\n- ≥2 точки на ствол для осмысленной траектории (одна точка — needs_input, если задача — полный track).\n- MD строго возрастает вдоль BRANCH.\n- X/Y/Z/MD finite; единицы согласованы с METRIC профиля.\n- Не внутри ACTION.\n- Не дублируйте противоречащие треки на одну дату без REVISE target.\n\nАнтипаттерны.\n- Маска скважин в WELLTRACK.\n- Траектория без WELSPECS/COMPDATMD-плана, когда перфорации по MD обязательны.\n- Убывающий или повторяющийся MD.\n- Копировать учебные координаты PROD1 из мануала.\n- Путать Z (абсолютная глубина) с MD.\n- Эмитить WELLINCL вместо WELLTRACK без факта об относительных координатах.\n\nНехватка факта → needs_input: нет survey-точек; нет привязки WELL; нужен branch id без номера; только MD без X/Y/Z; конфликт с baseline track; требуется GRID-only FRACTURE path без schedule authority.\n\nКарточка самодостаточна: schema_catalogue описывает point-IR; примеры показывают канон мануала.",
+      "examples": [
+        {
+          "title": "Один ствол — канон мануала",
+          "task": "Задать траекторию скважины PROD1 точками X Y Z MD.",
+          "schedule_text": "WELLTRACK 'PROD1'\n21500.716 30890.824 -1.501 60.000\n21500.304 30890.612 18.493 80.000\n21499.167 30890.004 38.449 100.000\n21442.479 30873.750 217.226 290.000\n21292.330 30852.813 464.342 580.000\n21094.197 30827.983 810.860 980.000\n20934.052 30811.399 1110.313 1320.000\n20807.357 30788.941 1403.000 1640.000\n20722.508 30782.704 1752.275 2000.000 /\n",
+          "explanation": "Header-form §12.20.9 с. 1738. MD строго растёт. Координаты учебные — в продуктив только facts/survey."
+        },
+        {
+          "title": "Два ствола (главный + :1)",
+          "task": "Главный ствол PROD1 и боковой ствол PROD1:1.",
+          "schedule_text": "WELLTRACK 'PROD1'\n5296.82 20531.05 2188.63 2188.63\n5296.82 20531.05 2237.75 2237.75\n4979.02 20901.82 2241.00 2726.10\n4633.34 21305.11 2243.07 3257.27\n4298.81 21695.40 2244.84 3771.31\n3953.13 22098.69 2245.28 4302.48 /\nWELLTRACK 'PROD1:1'\n5296.82 20531.05 2237.75 2237.75\n5442.35 20361.27 2241.19 2461.39\n5530.29 20258.67 2244.14 2596.55\n5569.37 20213.07 2245.08 2656.61 /\n",
+          "explanation": "Каждый ствол — отдельный WELLTRACK. Номер после двоеточия. Пример §12.20.9 с. 1739."
+        },
+        {
+          "title": "Минимальный осмысленный track (2 точки)",
+          "task": "Скважина P01, branch 0: от (1000,2000,0) MD=0 до (1000,2000,100) MD=100.",
+          "schedule_text": "WELLTRACK 'P01'\n1000 2000 0 0\n1000 2000 100 100 /\n",
+          "explanation": "Минимум две точки. Имена/числа замените фактами пакета."
+        }
+      ],
+      "schema_catalogue": {
+        "contract": "schedule_schema_catalogue",
+        "contract_version": "1.0",
+        "catalogue_ref": "catalogue://tnavigator/22.2/welltrack-trajectory-v1",
+        "catalogue_hash": "sha256:05986e76cb84a728e5982e8b001b10cdce381084a8893baf2bf69fb0e83ab0c7",
+        "source_hash": "sha256:3b8ed83214de16df1d4ec6990753fc6fe40d93805b6f3df225a2a8753fb91ca0",
+        "access_scope": "petroleum-engineering",
+        "simulator_profile": {
+          "vendor": "Rock Flow Dynamics",
+          "simulator": "tNavigator",
+          "version": "22.2",
+          "unit_system": "METRIC"
+        },
+        "approved": true,
+        "approved_by": "department-hydrodynamic-expert",
+        "author": "department-hydrodynamic-expert",
+        "approval_gate_id": "expert:welltrack-trajectory-v1:1",
+        "schemas": [
+          {
+            "schema_id": "expert:WELLTRACK:point",
+            "schema_revision": "1",
+            "keyword": "WELLTRACK",
+            "variant": "point",
+            "citation": {
+              "document_id": "tnav-user-manual-russian",
+              "document_revision": "19.4",
+              "page": "12.20.9 / 1737-1739",
+              "heading": "WELLTRACK",
+              "source_hash": "sha256:3b8ed83214de16df1d4ec6990753fc6fe40d93805b6f3df225a2a8753fb91ca0"
+            },
+            "parser": {
+              "token_width": 6,
+              "allow_trailing_omission": false,
+              "allow_unquoted_strings": true
+            },
+            "fields": [
+              {
+                "name": "WELL",
+                "position": 1,
+                "type": "string",
+                "required": true,
+                "quote": "single"
+              },
+              {
+                "name": "BRANCH",
+                "position": 2,
+                "type": "integer",
+                "required": false,
+                "default_allowed": true
+              },
+              {
+                "name": "X",
+                "position": 3,
+                "type": "number",
+                "required": true
+              },
+              {
+                "name": "Y",
+                "position": 4,
+                "type": "number",
+                "required": true
+              },
+              {
+                "name": "Z",
+                "position": 5,
+                "type": "number",
+                "required": true
+              },
+              {
+                "name": "MD",
+                "position": 6,
+                "type": "number",
+                "required": true
+              }
+            ],
+            "layout": {
+              "newline": "LF",
+              "indent": "  ",
+              "delimiter": "SPACE",
+              "record_terminator": "SLASH",
+              "block_terminator": "SLASH_LINE"
+            },
+            "semantics": {
+              "period": "ANY",
+              "clock": {
+                "uses_current": true
+              },
+              "references": [
+                {
+                  "entity_type": "well",
+                  "id_field": "WELL",
+                  "required": true
+                }
+              ],
+              "prerequisites": [
+                {
+                  "keyword": "WELSPECS",
+                  "scope": "ENTITY",
+                  "entity_field": "WELL",
+                  "prerequisite_entity_field": "WELL"
+                }
+              ],
+              "numeric_constraints": [
+                {
+                  "field": "MD",
+                  "min": 0
+                },
+                {
+                  "field": "BRANCH",
+                  "min": 0
+                }
+              ]
+            }
+          }
+        ]
+      },
+      "source_hash": "sha256:3b8ed83214de16df1d4ec6990753fc6fe40d93805b6f3df225a2a8753fb91ca0",
+      "page": "12.20.9 WELLTRACK (с. 1737–1739); COMPDATMD 12.20.10; tN well path 11.2 / с. 477",
+      "heading": "WELLTRACK — задание траектории скважины",
+      "id": "welltrack-trajectory-v1",
+      "metadata": {
+        "document_id": "welltrack-trajectory-v1",
+        "document_revision": "1",
+        "source_hash": "sha256:3b8ed83214de16df1d4ec6990753fc6fe40d93805b6f3df225a2a8753fb91ca0",
+        "page": "12.20.9 / 1737-1739",
+        "heading": "WELLTRACK",
+        "target_base": "schedule_mvp",
+        "knowledge_type": "keyword_instruction",
+        "knowledge_id": "welltrack-trajectory-v1",
+        "revision": "1",
+        "status": "active",
+        "access_scope": "petroleum-engineering",
+        "author": "department-hydrodynamic-expert",
+        "approved_by": "department-hydrodynamic-expert",
+        "keyword_families": [
+          "WELLTRACK"
+        ],
+        "topics": [
+          "траектория скважины",
+          "WELLTRACK",
+          "MD survey",
+          "многоствольная скважина",
+          "перед COMPDATMD",
+          "X Y Z MD"
+        ],
+        "task_patterns": [
+          "задать траекторию скважины",
+          "WELLTRACK survey",
+          "точки ствола X Y Z MD",
+          "боковой ствол скважины",
+          "траектория перед перфорацией MD",
+          "многозабойная траектория"
         ]
       }
     },

@@ -190,7 +190,45 @@ async function main() {
     },
   });
   assert.equal(unsafeInclude.status, 'needs_input');
-  assert(findingCodes(unsafeInclude).has('INCLUDE_PATH_UNSAFE'));
+  assert(findingCodes(unsafeInclude).has('INCLUDE_NOT_FOUND'));
+  assert(!findingCodes(unsafeInclude).has('INCLUDE_PATH_UNSAFE'));
+
+  const parentRelativeInclude = await runCode(analyzeCode, {
+    baseline_request: {
+      root_path: 'schedule.inc',
+      baseline_schedule_text: "INCLUDE\n '../outside.inc' /\n",
+      include_files: [
+        { path: '../outside.inc', text: "DATES\n  1 JAN 2025 /\n" },
+      ],
+    },
+  });
+  assert.equal(parentRelativeInclude.status, 'analyzed');
+  assert(!findingCodes(parentRelativeInclude).has('INCLUDE_PATH_UNSAFE'));
+  assert(!findingCodes(parentRelativeInclude).has('INCLUDE_NOT_FOUND'));
+
+  const absoluteInclude = await runCode(analyzeCode, {
+    baseline_request: {
+      root_path: 'schedule.inc',
+      baseline_schedule_text: "INCLUDE\n '/models/shared/controls.inc' /\n",
+      include_files: [
+        { path: '/models/shared/controls.inc', text: "DATES\n  1 FEB 2025 /\n" },
+      ],
+    },
+  });
+  assert.equal(absoluteInclude.status, 'analyzed');
+  assert(!findingCodes(absoluteInclude).has('INCLUDE_PATH_UNSAFE'));
+
+  const urlInclude = await runCode(analyzeCode, {
+    baseline_request: {
+      root_path: 'schedule.inc',
+      baseline_schedule_text: "INCLUDE\n 'file:///models/shared/controls.inc' /\n",
+      include_files: [
+        { path: 'file:///models/shared/controls.inc', text: "DATES\n  1 MAR 2025 /\n" },
+      ],
+    },
+  });
+  assert.equal(urlInclude.status, 'analyzed');
+  assert(!findingCodes(urlInclude).has('INCLUDE_PATH_UNSAFE'));
 
   const cycle = await runCode(analyzeCode, {
     baseline_request: {
@@ -204,7 +242,7 @@ async function main() {
   assert.equal(cycle.status, 'needs_input');
   assert(findingCodes(cycle).has('INCLUDE_CYCLE'));
 
-  console.log('SCHEDULE lossless runtime smoke: 9 scenarios passed');
+  console.log('SCHEDULE lossless runtime smoke: 12 scenarios passed');
 }
 
 main().catch((error) => {
