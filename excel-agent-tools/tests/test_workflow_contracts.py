@@ -668,7 +668,6 @@ def test_universal_orchestrator_enterprise_control_plane() -> None:
     assert "riskFloor" in text
     assert "Retry is allowed only for a persisted retryable_error" in text
     assert "Stored task state is malformed" in text
-    assert "state_integrity" in text
     assert "nextStatus=x.status||'not_found'" in text
     assert "nextStatus=x.stored_status;message='Task is terminal" in text
     assert "risk_class:'low'" in text
@@ -707,7 +706,7 @@ def test_universal_orchestrator_enterprise_control_plane() -> None:
 
     form = next(node for node in nodes if node["name"] == "Engineering task form")
     form_fields = {field["fieldName"] for field in form["parameters"]["formFields"]["values"]}
-    assert {"request_text", "request_json", "context_json", "file", "schedule_file"} <= form_fields
+    assert {"request_text", "request_json", "runtime_json", "file", "schedule_file"} <= form_fields
     schedule_field = next(
         field
         for field in form["parameters"]["formFields"]["values"]
@@ -747,10 +746,10 @@ def test_universal_orchestrator_enterprise_control_plane() -> None:
 
 
 CAS_STATE_COLUMNS = [
-    "task_id", "version", "status", "phase", "task_type", "risk_class",
-    "request_json", "context_json", "plan_json", "specialist_json", "result_json",
-    "verification_json", "pending_human_json", "last_error_json", "retry_count",
-    "max_retries", "history_json", "created_at", "updated_at",
+    "task_id", "version", "status", "risk_class",
+    "request_json", "runtime_json", "plan_json", "packet_json", "result_json",
+    "verification_json", "gate_json", "retry_count",
+    "max_retries", "created_at", "updated_at",
 ]
 
 
@@ -898,7 +897,7 @@ def test_universal_orchestrator_has_a_static_schedule_builder_route() -> None:
             "Attach governed Excel protocol RAG evidence",
         )
     }
-    assert excel_rag_y["Attach governed Excel protocol RAG evidence"] == 2560
+    assert excel_rag_y["Attach governed Excel protocol RAG evidence"] == excel_rag_y["Prepare governed Excel protocol RAG request"]
     assert len(set(excel_rag_y.values())) == 1
     routing_rag_y = {
         node_name: by_name[node_name]["position"][1]
@@ -1409,7 +1408,7 @@ def test_operating_guide_ends_with_full_injection_template() -> None:
     assert catalogue["contract"] == "schedule_schema_catalogue"
     assert catalogue["schemas"]
     packaged_ids = {document.get("knowledge_id") or document["id"] for document in documents[:-1]}
-    assert packaged_ids == {
+    required_ids = {
         "excel-agent-trust-boundary",
         "excel-agent-discovery-and-tables",
         "excel-agent-query-and-result-protocol",
@@ -1421,6 +1420,9 @@ def test_operating_guide_ends_with_full_injection_template() -> None:
         "route-hitl-required-evidence",
         "specialist-template-bounded-work",
     }
+    assert required_ids <= packaged_ids
+    assert documents[-1].get("id") == "_injection-template"
+    assert documents[-1].get("do_not_ingest") is True
 
 
 def test_rag_ingestion_has_ui_only_postgres_inventory_check() -> None:

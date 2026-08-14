@@ -1015,7 +1015,7 @@ def build_orchestrator() -> dict:
         if_node("Delegation allowlisted?", (1940, -540), "={{ $json.delegation_allowed }}", True, "boolean"),
         code("Prepare specialist invocation context", (2160, -660), PREPARE_DELEGATION),
         node("Configured specialist router", "n8n-nodes-base.switch", 3.4, (2380, -660), {"mode": "expression", "numberOutputs": 5, "output": "={{ $json.specialist_route }}"}),
-        code("Prepare governed Excel protocol RAG request", (2480, -940), PREPARE_EXCEL_RAG),
+        code("Prepare governed Excel protocol RAG request", (2480, -1080), PREPARE_EXCEL_RAG),
         call_hybrid_retrieval("Call Excel protocol Hybrid Retrieval", (2600, -1080)),
         code("Attach governed Excel protocol RAG evidence", (2820, -1080), ATTACH_EXCEL_RAG),
         if_node("Excel protocol RAG evidence ready?", (3040, -1080), "={{ $json.excel_rag_ready }}", True, "boolean"),

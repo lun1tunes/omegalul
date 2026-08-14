@@ -68,7 +68,6 @@ function basePlannerRequest(requestOverrides = {}) {
       artifact_refs: [{ ref: 'artifact://input/1', kind: 'input', revision: '1', description: 'input' }],
       ...requestOverrides,
     }),
-    history_json: '[]',
     specialist_catalog: [
       { specialist_id: 'engineering_calculation_specialist' },
       { specialist_id: 'schedule_builder_specialist' },
@@ -208,7 +207,7 @@ async function main() {
     { 'Prepare planner input': basePlannerRequest({ task_type: 'schedule_build' }) },
   ))[0].json;
   const excelPlan = JSON.parse(excelDelegated.plan_json);
-  const excelPacketOut = JSON.parse(excelDelegated.specialist_json);
+  const excelPacketOut = JSON.parse(excelDelegated.packet_json);
   assert.equal(excelDelegated.status, 'delegated');
   assert.equal(excelDelegated.specialist_id, 'excel_extraction_specialist');
   assert.equal(excelPlan.score.raw_counts.questions, 0);
@@ -238,9 +237,9 @@ async function main() {
     { 'Prepare planner input': basePlannerRequest() },
   ))[0].json;
   assert.equal(excelFlip.status, 'delegated');
-  assert.equal(JSON.parse(excelFlip.specialist_json).specialist_id, 'excel_extraction_specialist');
+  assert.equal(JSON.parse(excelFlip.packet_json).specialist_id, 'excel_extraction_specialist');
   assert.equal(JSON.parse(excelFlip.plan_json).planner_decision, 'delegate');
-  assert.equal(JSON.parse(excelFlip.pending_human_json).questions, undefined);
+  assert.equal(JSON.parse(excelFlip.gate_json).questions, undefined);
 
   const builderBlocked = (await execute(
     orchestrator,
@@ -272,8 +271,8 @@ async function main() {
   assert(builderBlockedPlan.decision_record.selected_action.reason_codes.includes(
     'PLANNER_UNRESOLVED_QUESTIONS',
   ));
-  assert.equal(JSON.parse(builderBlocked.pending_human_json).questions.length, 1);
-  assert.equal(JSON.parse(builderBlocked.pending_human_json).questions[0].id, 'keyword_scope');
+  assert.equal(JSON.parse(builderBlocked.gate_json).questions.length, 1);
+  assert.equal(JSON.parse(builderBlocked.gate_json).questions[0].id, 'keyword_scope');
 
   const packet = {
     contract: 'specialist_packet',
@@ -324,8 +323,7 @@ async function main() {
     specialist_packet: plannerOutput().specialist_packet,
     specialist_result: specialistResult(),
     result_json: JSON.stringify(specialistResult()),
-    pending_human_json: '{}',
-    last_error_json: '{}',
+    gate_json: '{}',
   };
   const verifierModel = {
     verdict: 'pass',
@@ -386,7 +384,7 @@ async function main() {
     specialist_id: 'schedule_builder_specialist',
     specialist_result: scheduleResult,
     specialist_packet: { inputs: { schedule_request: { requested_keyword_scope: ['WCONPROD'] } } },
-    context_json: '{}',
+    runtime_json: '{}',
   }))[0].json;
   assert.equal(routedSchedule.post_specialist_route, 'verify');
   assert.equal(JSON.parse(routedSchedule.result_json).compact_data.generated_schedule, scheduleText);
@@ -405,11 +403,10 @@ async function main() {
     gate_id: 'gate-release',
     requested_by: 'engineer',
     human_response: null,
-    pending_human_json: JSON.stringify({ gate_id: 'gate-release', kind: 'result_approval' }),
+    gate_json: JSON.stringify({ gate_id: 'gate-release', kind: 'result_approval' }),
     result_json: JSON.stringify(scheduleResult),
     verification_json: JSON.stringify({ verdict: 'pass' }),
-    context_json: '{}',
-    history_json: '[]',
+    runtime_json: '{}',
   };
   const released = (await execute(orchestrator, 'Apply action and version guard', JSON.parse(JSON.stringify(releaseBase))))[0].json;
   assert.equal(released.status, 'completed');
@@ -429,13 +426,11 @@ async function main() {
     task_id: 'eng-1',
     trace_id: 'trace-1',
     status: 'completed',
-    phase: 'terminal',
     requested_by: 'engineer',
     plan_json: applied.plan_json,
     result_json: JSON.stringify(excelResult),
     verification_json: verified.verification_json,
-    pending_human_json: '{}',
-    last_error_json: '{}',
+    gate_json: '{}',
   };
   const preparedTrace = (await execute(orchestrator, 'Prepare final MAS trace event', traceState))[0].json;
   assert(preparedTrace.mas_trace_events.length >= 4);

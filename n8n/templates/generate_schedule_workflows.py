@@ -115,7 +115,7 @@ Every stage: keywords ⊆ allowlist, required_evidence, entity_scope, temporal_s
 
 ## Output
 decision_record/v1 from observables only: input refs, proposed actions, policy reason codes, citations, unresolved questions, acceptance checks.
-""")
+"""
 PLAN_VALIDATE=rf"""
 let plan=$json.output??$json;if(typeof plan==='string'){{try{{plan=JSON.parse(plan)}}catch{{plan={{}}}}}}
 const arr=Array.isArray,obj=v=>v&&typeof v==='object'&&!arr(v),clean=v=>typeof v==='string'?v.trim():'',allowed=new Set({K}),findings=[];
