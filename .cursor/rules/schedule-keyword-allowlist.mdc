@@ -1,0 +1,19 @@
+---
+description: Schedule MVP keyword allowlist — add named keywords if they exist in tNav manual
+alwaysApply: true
+---
+
+# Schedule keyword allowlist policy
+
+When the user names a SCHEDULE/tNavigator keyword for a RAG card or Builder work:
+
+1. Check whether the keyword exists in `n8n/rag/tNavUserManualRussian.pdf` (repaired copy `/tmp/tnav-manual-repaired.pdf` if available) as a real section header (`12.x.y. KEYWORD`).
+2. **If it exists and is not already in the allowlist** — add it to:
+   - `n8n/templates/schedule_rag_workflows.py` → `KEYWORDS`
+   - `n8n/templates/generate_schedule_workflows.py` → `KEYWORDS`
+   - regenerate workflows via `python3 generate_schedule_workflows.py` from `n8n/templates`
+   - update the keyword table in `docs/architecture/petroleum-mas-research-and-roadmap.md` §3
+3. **Then** insert a `schedule_mvp` `keyword_instruction` card into `n8n/rag/excel-agent-operating-guide.documents.json` (before `injection_template`), following existing card style.
+4. **If the exact name does not exist** — do not invent it. Tell the user the closest real keywords from the manual and offer those (add + card) instead. Example: `VFPDP` → `WVFPDP`.
+5. Do not emit/allowlist synonyms as separate emit targets when the manual says they are synonyms (e.g. emit `WELTARG`, not `WELLTARG`).
+6. **Legacy alias (this corpus):** emit `FRACTURE_SPECS` (older manual name). Content/layout come from current-manual §`FRACTURE_WELL` (12.2.131). Do **not** also allowlist/emit `FRACTURE_WELL`.

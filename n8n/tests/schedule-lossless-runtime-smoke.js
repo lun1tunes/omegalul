@@ -190,8 +190,8 @@ async function main() {
     },
   });
   assert.equal(unsafeInclude.status, 'needs_input');
-  assert(findingCodes(unsafeInclude).has('INCLUDE_NOT_FOUND'));
-  assert(!findingCodes(unsafeInclude).has('INCLUDE_PATH_UNSAFE'));
+  assert(findingCodes(unsafeInclude).has('INCLUDE_PATH_UNSAFE'));
+  assert(!findingCodes(unsafeInclude).has('INCLUDE_NOT_FOUND'));
 
   const parentRelativeInclude = await runCode(analyzeCode, {
     baseline_request: {
@@ -202,8 +202,8 @@ async function main() {
       ],
     },
   });
-  assert.equal(parentRelativeInclude.status, 'analyzed');
-  assert(!findingCodes(parentRelativeInclude).has('INCLUDE_PATH_UNSAFE'));
+  assert.equal(parentRelativeInclude.status, 'needs_input');
+  assert(findingCodes(parentRelativeInclude).has('INCLUDE_PATH_UNSAFE'));
   assert(!findingCodes(parentRelativeInclude).has('INCLUDE_NOT_FOUND'));
 
   const absoluteInclude = await runCode(analyzeCode, {
@@ -215,8 +215,8 @@ async function main() {
       ],
     },
   });
-  assert.equal(absoluteInclude.status, 'analyzed');
-  assert(!findingCodes(absoluteInclude).has('INCLUDE_PATH_UNSAFE'));
+  assert.equal(absoluteInclude.status, 'needs_input');
+  assert(findingCodes(absoluteInclude).has('INCLUDE_PATH_UNSAFE'));
 
   const urlInclude = await runCode(analyzeCode, {
     baseline_request: {
@@ -227,8 +227,31 @@ async function main() {
       ],
     },
   });
-  assert.equal(urlInclude.status, 'analyzed');
-  assert(!findingCodes(urlInclude).has('INCLUDE_PATH_UNSAFE'));
+  assert.equal(urlInclude.status, 'needs_input');
+  assert(findingCodes(urlInclude).has('INCLUDE_PATH_UNSAFE'));
+
+  const collapsedSafeInclude = await runCode(analyzeCode, {
+    baseline_request: {
+      root_path: 'model/schedule.inc',
+      baseline_schedule_text: "INCLUDE\n 'includes/../includes/wells.inc' /\n",
+      include_files: [
+        { path: 'model/includes/wells.inc', text: "DATES\n  1 APR 2025 /\n" },
+      ],
+    },
+  });
+  assert.equal(collapsedSafeInclude.status, 'analyzed');
+  assert(!findingCodes(collapsedSafeInclude).has('INCLUDE_PATH_UNSAFE'));
+  assert(!findingCodes(collapsedSafeInclude).has('INCLUDE_NOT_FOUND'));
+
+  const malformedRoot = await runCode(analyzeCode, {
+    baseline_request: {
+      root_path: 'bad\0path.inc',
+      baseline_schedule_text: "DATES\n  1 MAY 2025 /\n",
+    },
+  });
+  assert.equal(malformedRoot.status, 'needs_input');
+  assert(findingCodes(malformedRoot).has('ROOT_PATH_INVALID'));
+  assert(!findingCodes(malformedRoot).has('ROOT_PATH_UNSAFE'));
 
   const cycle = await runCode(analyzeCode, {
     baseline_request: {
@@ -242,7 +265,7 @@ async function main() {
   assert.equal(cycle.status, 'needs_input');
   assert(findingCodes(cycle).has('INCLUDE_CYCLE'));
 
-  console.log('SCHEDULE lossless runtime smoke: 12 scenarios passed');
+  console.log('SCHEDULE lossless runtime smoke: 14 scenarios passed');
 }
 
 main().catch((error) => {

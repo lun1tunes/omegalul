@@ -58,7 +58,7 @@ approved_by             ответственный инженер-гидроди
 
 Открытый [OPM Flow Reference Manual 2025.10](https://opm-project.org/?page_id=955), [OPM keyword registry](https://github.com/OPM/opm-common/tree/master/opm/input/eclipse/share/keywords) и [Schedule integration fixtures](https://github.com/OPM/opm-common/tree/master/tests/parser/data/integration_tests/SCHEDULE) полезны для ECLIPSE-compatible grammar и regression oracle.
 
-В OPM Schedule registry подтверждены `DATES`, `INCLUDE`, `WELSPECS`, `WCONPROD`, `WCONHIST`, `GCONPROD`, `GRUPTREE`, `BRANPROP`, `NODEPROP`, `WECON`, `WTEST`. В открытом registry не найдены `COMPDATMD`, `WELLTRACK`, `FRACTURE_SPECS`, `FRACTURE_STAGE`; для них используем техническое описание и параметры именно из tNavigator 22.2, а не из похожих ECLIPSE keywords. OPM support — только cross-check совместимого subset; итоговую authority задает профиль tNavigator 22.2.
+В OPM Schedule registry подтверждены `DATES`, `INCLUDE`, `WELSPECS`, `WCONPROD`, `WCONHIST`, `GCONPROD`, `GRUPTREE`, `BRANPROP`, `NODEPROP`, `WECON`, `WTEST`. В открытом registry не найдены `COMPDATMD`, `WELLTRACK`, `FRACTURE_TEMPLATE`, `FRACTURE_SPECS` (в новых мануалах `FRACTURE_WELL`), `FRACTURE_STAGE`; для них используем техническое описание и параметры именно из tNavigator 22.2, а не из похожих ECLIPSE keywords. OPM support — только cross-check совместимого subset; итоговую authority задает профиль tNavigator 22.2.
 
 ## 3. Словарь SCHEDULE v1
 
@@ -77,10 +77,16 @@ approved_by             ответственный инженер-гидроди
 | `GCONPROD` | group production targets/constraints | group exists, mode-target consistency, exceed procedures, guide rates, parent-response behavior, unit dimensions | tNavigator manual; OPM cross-check |
 | `BRANPROP` | extended surface-network branches | feature enabled in base profile, endpoints exist, no forbidden network mode, graph integrity, VFP/ALQ references | tNavigator manual; OPM cross-check |
 | `NODEPROP` | extended surface-network nodes | node uniqueness, required branch/network dependency, pressure units, choke/group references, network topology | tNavigator manual; OPM cross-check |
-| `FRACTURE_SPECS` | fracture definition/configuration | fields, units, well/trajectory linkage, uniqueness и feature prerequisites по tNavigator 22.2 | tNavigator 22.2 manual |
-| `FRACTURE_STAGE` | stage placement/activation/event | fields, stage ordering, time/well/fracture dependency и overlap по tNavigator 22.2 | tNavigator 22.2 manual |
+| `FRACTURE_TEMPLATE` | шаблон трещины ГРП (геометрия/LGR/проницаемости) | template name, refine/PLANE/UP/DOWN/SRV/width, GRID section, FRACTURE_PLANE/PATH deps | tNavigator 22.2 manual |
+| `FRACTURE_SPECS` | привязка множества трещин к WELLTRACK (в новых мануалах: `FRACTURE_WELL`) | stage name, well/branch, template+MD or interval distribution, GRID+WELLTRACK | tNavigator manual (legacy name; content §12.2.131) |
+| `FRACTURE_STAGE` | активация стадии трещин в SCHEDULE | stage exists via FRACTURE_SPECS, ON/OFF, arithmetic, optional proppant/GEOMECH | tNavigator 22.2 manual |
 | `WECON` | economic limits/actions for producers | well exists, ratio/rate dimensions, action semantics, follow-on reference, conflict/cycling with other controls | tNavigator manual; OPM cross-check |
 | `WTEST` | well testing/reopening policy | well exists, positive interval, reason/action semantics, retry count/start time, interaction with WECON/status | tNavigator manual; OPM cross-check |
+| `WELTARG` | изменение цели/лимита скважины без полного WCONPROD | well exists, target quantity/mode consistency, units, interaction with WCONPROD/WCONHIST | tNavigator manual; OPM cross-check |
+| `WNETDP` | перепад давления / network DP на скважине или ветви | well/network endpoint exists, pressure units, NETWORK feature, consistency with BRANPROP/NODEPROP | tNavigator 22.2 manual |
+| `WPIMULT` | множитель connection factor (CF/PI) перфорации | well exists, factor >0, optional IJK/COMPLUMP filter, cumulative across DATES, reset by COMPDAT recompute | tNavigator manual; OPM cross-check |
+| `WFRACP` | плоскостной ГРП (расширение WFRAC) | well/completions exist, azimuth/zenith, half-lengths/heights/width or proppant volume, optional flow/time decay, bounding box | tNavigator 22.2 manual |
+| `WFRACPL` | плоскостной ГРП в LGR (расширение WFRACP) | LGR well via WELSPECL/COMPDATL, LGR name (CARFIN), same geometry/proppant fields as WFRACP + LGR | tNavigator 22.2 manual |
 
 Таблица отражает **назначение validation domain**, а не пытается воспроизвести vendor record layout. Порядок полей, обязательность, defaults и допустимые enumerations извлекаются только из versioned schema catalogue, утвержденного по Technical Manual.
 
@@ -311,7 +317,7 @@ schedule-package/
     preservation-report.json
 ```
 
-В `CREATE` renderer создает стабильный canonical layout. В `REVISE` исходный include layout сохраняется по умолчанию; новый canonical layout требует отдельного approved refactor, потому что реорганизация файлов сама является изменением. Разрешены relative paths (включая `..`), absolute paths и URL-пути; запрещены пустой/NUL PATH, duplicate/cyclic includes и незарегистрированные files без evidence в package. Manifest фиксирует hashes, encoding, line endings, profile и include graph.
+В `CREATE` renderer создает стабильный canonical layout. В `REVISE` исходный include layout сохраняется по умолчанию; новый canonical layout требует отдельного approved refactor, потому что реорганизация файлов сама является изменением. Package paths — виртуальные `file_ref` внутри пакета, не host filesystem: разрешены только package-relative пути, которые после collapse остаются внутри корня пакета (в том числе безопасный `subdir/../sibling.inc`). Запрещены escape через `..`, absolute paths, URL-схемы, пустой/NUL PATH (`INCLUDE_PATH_INVALID` / `ROOT_PATH_INVALID`), duplicate/cyclic includes и незарегистрированные files без evidence в package (`INCLUDE_PATH_UNSAFE` / `INCLUDE_NOT_FOUND`). Manifest фиксирует hashes, encoding, line endings, profile и include graph.
 
 ### 4.8. Stateful semantics и conflict analysis
 
@@ -1310,7 +1316,7 @@ CLI import не проверяет корпоративную сеть, credenti
 2. Разрешение владельца лицензии на внутреннюю индексацию manual в PostgreSQL/PGVector и список access roles.
 3. Представительские approved base models и Schedule golden cases без конфиденциальных данных.
 4. Точный history/forecast cutover policy и обязательные units/sign/precision conventions.
-5. Подтвердить извлечение и инженерное утверждение machine-readable `schedule_schema_catalogue/v1` с field layouts **и explicit semantic declarations** для всех 15 unique keywords, особенно `COMPDATMD`, `WELLTRACK`, `FRACTURE_SPECS`, `FRACTURE_STAGE` и их prerequisites по manual; загрузить его отдельным approved snapshot, а не в prompt.
+5. Подтвердить извлечение и инженерное утверждение machine-readable `schedule_schema_catalogue/v1` с field layouts **и explicit semantic declarations** для всех allowlisted keywords, особенно `COMPDATMD`, `WELLTRACK`, `FRACTURE_TEMPLATE`, `FRACTURE_SPECS`, `FRACTURE_STAGE`, `WELTARG`, `WNETDP` и их prerequisites по manual; загрузить его отдельным approved snapshot, а не в prompt.
 6. Допустимы ли wildcard records или v1 всегда раскрывает explicit entity list.
 7. Artifact storage/retention и правила relative INCLUDE layout в целевой инфраструктуре.
 8. Какой IT endpoint, Header Auth credential, logical `check_profile_id`, artifact-store interface и approved tNavigator 22.2 check procedure будут назначены уже реализованному adapter.
