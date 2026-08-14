@@ -323,7 +323,7 @@ Validator replay-ит event stream и обнаруживает duplicate/redefin
 
 Stateful **Orchestrator-Workers**: Universal Orchestrator планирует и владеет CAS/HITL; specialists вызываются только через adapter/packet-контракты. Excel-файл парсит FastAPI, не LLM. SCHEDULE идёт через hybrid RAG → Builder → baseline decode/replay (`REVISE`) → typed IR/render → merge → candidate validation → independent verify → inline release.
 
-Под каждой нодой мелким шрифтом — файл workflow из `n8n/workflows/` (или сервис, если это не n8n).
+Под каждой нодой мелким шрифтом — файл workflow из `n8n/workflows/core/` или `n8n/workflows/support/` (или сервис, если это не n8n).
 
 ```mermaid
 %%{init: {"flowchart": {"htmlLabels": true}}}%%

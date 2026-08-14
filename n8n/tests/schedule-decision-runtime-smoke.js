@@ -8,7 +8,7 @@ const path = require('node:path');
 
 const workspace = process.env.WORKSPACE_ROOT || '/workspace';
 const readWorkflow = (name) => JSON.parse(fs.readFileSync(
-  path.join(workspace, 'n8n', 'workflows', name),
+  path.join(workspace, 'n8n', 'workflows', 'core', name),
   'utf8',
 ));
 const plannerWorkflow = readWorkflow('tnavigator-schedule-builder.workflow.json');

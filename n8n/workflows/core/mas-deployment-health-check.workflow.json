@@ -192,7 +192,7 @@
     },
     {
       "parameters": {
-        "jsCode": "const prepared = $('Prepare health probes').first().json || {};\nconst now = new Date().toISOString();\nreturn [{ json: {\n  mas_trace_event: {\n    trace_id: `trace_health_${Date.now().toString(36)}`,\n    task_id: prepared.probe_task_id,\n    stage: 'hitl',\n    event_type: 'health_check',\n    actor: prepared.requested_by || 'mas-health-check',\n    status: 'observed',\n    summary: 'MAS deployment health-check probe (redacted, no secrets).',\n  },\n  mas_trace_events: [],\n  passthrough: { health_check: true, at: now },\n}}];"
+        "jsCode": "const prepared = $('Prepare health probes').first().json || {};\nconst now = new Date().toISOString();\nreturn [{ json: {\n  mas_trace_event: {\n    trace_id: `trace_health_${Date.now().toString(36)}`,\n    task_id: prepared.probe_task_id,\n    stage: 'hitl',\n    event_type: 'health_check',\n    actor: prepared.requested_by || 'mas-health-check',\n    status: 'observed',\n    summary: 'MAS deployment health-check probe (redacted, no secrets).',\n  },\n  passthrough: { health_check: true, at: now },\n}}];"
       },
       "id": "c1000001-0001-4000-8000-000000000009",
       "name": "Prepare Trace Writer probe",

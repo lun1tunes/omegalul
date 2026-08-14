@@ -2,7 +2,7 @@
 
 Опциональная одноразовая утилита: читает `n8n/rag/excel-agent-operating-guide.documents.json`, получает embeddings и пишет в PGVector (`RAG_TABLE_NAME`, по умолчанию `n8n_excel_agent_context`).
 
-Для UI-only установки **не нужна**. Используйте `n8n/workflows/excel-rag-ingestion.workflow.json` → **Test workflow** (не Publish). После insert смотрите `Summarize RAG inventory`. Общий guide — [`docs.md`](../docs.md).
+Для UI-only установки **не нужна**. Используйте `MAS — Knowledge Ingestion` → триггер **Sync packaged MAS knowledge**. После прогона смотрите `Summarize RAG inventory`. Общий guide — [`docs.md`](../docs.md).
 
 ## Когда нужен seeder
 

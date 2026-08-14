@@ -79,15 +79,27 @@ def load_documents() -> list[dict[str, Any]]:
     for item in documents:
         if not isinstance(item, dict):
             raise RuntimeError("Every context document must be an object")
-        document_id = str(item.get("id", "")).strip()
-        text = str(item.get("text", "")).strip()
-        metadata = item.get("metadata", {})
-        if not document_id or not text or not isinstance(metadata, dict):
-            raise RuntimeError("Every context document requires id, text and metadata")
+        if item.get("role") == "injection_template" or item.get("do_not_ingest") is True:
+            continue
+        block = item.get("schedule_knowledge_block") if isinstance(item.get("schedule_knowledge_block"), dict) else item
+        document_id = str(block.get("knowledge_id") or item.get("id") or "").strip()
+        text = str(block.get("text") or item.get("text") or "").strip()
+        metadata = item.get("metadata")
+        if not isinstance(metadata, dict):
+            metadata = {
+                "slug": document_id,
+                "topic": ",".join(block.get("topics") or []) or "protocol",
+                "version": str(block.get("revision") or "1"),
+                "target_base": str(block.get("target_base") or "excel_protocol"),
+            }
+        if not document_id or not text:
+            raise RuntimeError("Every context document requires knowledge_id/id and text")
         if document_id in seen:
             raise RuntimeError(f"Duplicate context document id: {document_id}")
         seen.add(document_id)
         result.append({"id": document_id, "text": text, "metadata": metadata})
+    if not result:
+        raise RuntimeError("Context document must contain at least one ingestible Excel protocol card")
     return result
 
 

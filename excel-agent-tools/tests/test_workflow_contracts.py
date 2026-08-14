@@ -6,6 +6,8 @@ from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[2]
 WORKFLOWS = ROOT / "n8n" / "workflows"
+CORE = WORKFLOWS / "core"
+SUPPORT = WORKFLOWS / "support"
 TEMPLATES = ROOT / "n8n" / "templates"
 RAG_SOURCE = ROOT / "n8n" / "rag" / "excel-agent-operating-guide.documents.json"
 IMPORT_MANIFEST = ROOT / "n8n" / "import-manifest.json"
@@ -14,7 +16,6 @@ EXCEL_DELIVERY_WORKFLOWS = {
     "excel-engineering-specialist-adapter.workflow.json",
     "excel-extraction-agent.workflow.json",
     "excel-extraction-form-adapter.workflow.json",
-    "excel-rag-ingestion.workflow.json",
 }
 MATH_DELIVERY_WORKFLOWS = {
     "calculation-specialist-adapter.workflow.json",
@@ -32,9 +33,22 @@ SCHEDULE_FOUNDATION_WORKFLOWS = {
     "tnavigator-schedule-knowledge-ingestion.workflow.json",
 }
 UNIVERSAL_ENGINEERING_WORKFLOWS = {
+    "cas-persist-task.workflow.json",
     "engineering-specialist-template.workflow.json",
     "universal-engineering-orchestrator.workflow.json",
 } | SCHEDULE_FOUNDATION_WORKFLOWS
+
+
+def workflow_files() -> list[Path]:
+    return sorted(WORKFLOWS.glob("**/*.workflow.json"))
+
+
+def workflow_path(name: str) -> Path:
+    for folder in (CORE, SUPPORT, WORKFLOWS):
+        candidate = folder / name
+        if candidate.is_file():
+            return candidate
+    return CORE / name
 
 # Registry names and versions verified against the node packages bundled in
 # the official n8nio/n8n:2.30.8 image. These are export JSON identifiers, not
@@ -80,23 +94,50 @@ def test_ui_import_manifest_is_complete_and_matches_static_bindings() -> None:
     assert manifest["contract"] == "n8n_ui_import_manifest"
     assert manifest["target_n8n_version"] == "2.30.8"
     imported = {Path(value).name for value in manifest["full_clean_import_set"]}
-    assert imported == {path.name for path in WORKFLOWS.glob("*.workflow.json")}
+    assert imported == {path.name for path in workflow_files()}
     assert len(imported) == 15
+    assert {path.name for path in CORE.glob("*.workflow.json")} == {
+        Path(value).name for value in manifest["runtime_import_order"]
+    }
+    assert {path.name for path in SUPPORT.glob("*.workflow.json")} == {
+        Path(item["workflow"]).name for item in manifest["optional_or_non_runtime"]
+    }
+    assert not list(WORKFLOWS.glob("*.workflow.json"))
 
     workflows_by_name = {
         workflow["name"]: workflow
-        for path in WORKFLOWS.glob("*.workflow.json")
+        for path in workflow_files()
         for workflow in [load_json(path)]
     }
     workflow_names = set(workflows_by_name)
     bindings = manifest["mandatory_execute_workflow_bindings"]
     future_bindings = manifest["future_enterprise_or_optional_bindings"]
-    assert len(bindings) == 11
+    assert len(bindings) == 24
     assert future_bindings == []
     assert manifest["health_check"]["ui_name"] == "Form — MAS Deployment Health Check"
     assert (ROOT / "docs.md").is_file()
+    runtime_order = [Path(value).name for value in manifest["runtime_import_order"]]
+    assert runtime_order.index("cas-persist-task.workflow.json") < runtime_order.index(
+        "universal-engineering-orchestrator.workflow.json"
+    )
     all_static_bindings = bindings + future_bindings
-    assert len({binding["placeholder"] for binding in all_static_bindings}) == len(all_static_bindings)
+    placeholder_targets: dict[str, tuple[str, str]] = {}
+    for binding in all_static_bindings:
+        identity = binding["target"]
+        key = binding["placeholder"]
+        if key in placeholder_targets:
+            assert placeholder_targets[key] == identity, (
+                f"Placeholder {key!r} is reused for a different owner/target"
+            )
+        else:
+            placeholder_targets[key] = identity
+    cas_nodes = [
+        binding["node"]
+        for binding in bindings
+        if binding["placeholder"] == "REPLACE_CAS_PERSIST_IN_UI"
+    ]
+    assert len(cas_nodes) == 9
+    assert len(set(cas_nodes)) == 9
     for binding in all_static_bindings:
         assert binding["owner"] in workflow_names
         assert binding["target"] in workflow_names
@@ -113,7 +154,7 @@ def test_ui_import_manifest_is_complete_and_matches_static_bindings() -> None:
 
 
 def test_ai_tool_nodes_bind_session_from_prepared_workflow_context() -> None:
-    workflow = load_json(WORKFLOWS / "excel-extraction-agent.workflow.json")
+    workflow = load_json(workflow_path("excel-extraction-agent.workflow.json"))
     tool_nodes = [
         node
         for node in workflow["nodes"]
@@ -161,7 +202,7 @@ def test_ai_tool_nodes_bind_session_from_prepared_workflow_context() -> None:
 
 
 def test_excel_http_tools_are_supply_only_agent_subnodes() -> None:
-    workflow = load_json(WORKFLOWS / "excel-extraction-agent.workflow.json")
+    workflow = load_json(workflow_path("excel-extraction-agent.workflow.json"))
     agent_name = "Excel Extractor AI Agent"
     tool_names = {
         node["name"]
@@ -196,7 +237,7 @@ def test_excel_http_tools_are_supply_only_agent_subnodes() -> None:
 
 
 def test_workflows_use_current_n8n_2_30_8_ai_node_versions() -> None:
-    for path in WORKFLOWS.glob("*.workflow.json"):
+    for path in workflow_files():
         workflow = load_json(path)
         for node in workflow["nodes"]:
             if node["type"] == "@n8n/n8n-nodes-langchain.agent":
@@ -212,7 +253,7 @@ def test_workflows_use_current_n8n_2_30_8_ai_node_versions() -> None:
 def test_delivery_workflows_use_only_verified_n8n_2_30_8_registry_ids() -> None:
     """Prevent UI display labels or old unscoped package names entering exports."""
     for filename in EXCEL_DELIVERY_WORKFLOWS | MATH_DELIVERY_WORKFLOWS | UNIVERSAL_ENGINEERING_WORKFLOWS:
-        workflow = load_json(WORKFLOWS / filename)
+        workflow = load_json(workflow_path(filename))
         for node in workflow["nodes"]:
             assert node["type"] in N8N_2_30_8_PORTABLE_NODE_VERSIONS, (
                 filename,
@@ -230,7 +271,7 @@ def test_delivery_workflows_use_only_verified_n8n_2_30_8_registry_ids() -> None:
 
 def test_delivery_workflow_graph_references_are_importable() -> None:
     for filename in EXCEL_DELIVERY_WORKFLOWS | MATH_DELIVERY_WORKFLOWS | UNIVERSAL_ENGINEERING_WORKFLOWS:
-        workflow = load_json(WORKFLOWS / filename)
+        workflow = load_json(workflow_path(filename))
         nodes = workflow["nodes"]
         names = [node["name"] for node in nodes]
         ids = [node["id"] for node in nodes]
@@ -258,8 +299,8 @@ def test_delivery_workflow_graph_references_are_importable() -> None:
 
 
 def test_core_has_no_disabled_legacy_or_orphan_nodes() -> None:
-    workflow = load_json(WORKFLOWS / "excel-extraction-agent.workflow.json")
-    assert len(workflow["nodes"]) == 56
+    workflow = load_json(workflow_path("excel-extraction-agent.workflow.json"))
+    assert len(workflow["nodes"]) == 59
     assert not [node["name"] for node in workflow["nodes"] if node.get("disabled") is True]
     names = {node["name"] for node in workflow["nodes"]}
     assert not names.intersection(
@@ -287,8 +328,8 @@ def test_core_has_no_disabled_legacy_or_orphan_nodes() -> None:
 
 def test_tool_instructions_use_structured_arguments_not_legacy_input_wrapper() -> None:
     paths = [
-        WORKFLOWS / "excel-extraction-agent.workflow.json",
-        WORKFLOWS / "excel-rag-ingestion.workflow.json",
+        workflow_path("excel-extraction-agent.workflow.json"),
+        workflow_path("tnavigator-schedule-knowledge-ingestion.workflow.json"),
         RAG_SOURCE,
     ]
     stale = ('{"input":', "one input string", "exactly one input JSON string", "Use [] for arrays")
@@ -300,7 +341,7 @@ def test_tool_instructions_use_structured_arguments_not_legacy_input_wrapper() -
 
 def test_form_adapter_uses_real_trigger_and_real_form_page() -> None:
     """In 2.30.8 ``form`` is a page node and cannot replace formTrigger."""
-    workflow = load_json(WORKFLOWS / "excel-extraction-form-adapter.workflow.json")
+    workflow = load_json(workflow_path("excel-extraction-form-adapter.workflow.json"))
     by_type = {node["type"]: node for node in workflow["nodes"]}
     assert by_type["n8n-nodes-base.formTrigger"]["typeVersion"] == 2.6
     assert by_type["n8n-nodes-base.form"]["typeVersion"] == 2.5
@@ -313,7 +354,7 @@ def test_hitl_and_health_forms_are_hand_authored_not_generator_emitted() -> None
 
     hand_authored = MVP_ENTRY_WORKFLOWS
     for filename in sorted(hand_authored):
-        assert (WORKFLOWS / filename).is_file(), filename
+        assert (workflow_path(filename)).is_file(), filename
 
     schedule_source = (TEMPLATES / "generate_schedule_workflows.py").read_text(encoding="utf-8")
     schedule_emitted = set(re.findall(r"d\['([^']+\.workflow\.json)'\]", schedule_source))
@@ -321,14 +362,14 @@ def test_hitl_and_health_forms_are_hand_authored_not_generator_emitted() -> None
     assert hand_authored.isdisjoint(schedule_emitted)
 
     universal_source = (TEMPLATES / "generate_universal_engineering_workflows.py").read_text(encoding="utf-8")
-    universal_emitted = set(re.findall(r'WORKFLOWS / "([^"]+\.workflow\.json)"', universal_source))
-    universal_emitted |= set(re.findall(r"WORKFLOWS / '([^']+\.workflow\.json)'", universal_source))
+    universal_emitted = set(re.findall(r'(?:WORKFLOWS|CORE|SUPPORT) / "([^"]+\.workflow\.json)"', universal_source))
+    universal_emitted |= set(re.findall(r"(?:WORKFLOWS|CORE|SUPPORT) / '([^']+\.workflow\.json)'", universal_source))
     assert hand_authored.isdisjoint(universal_emitted)
 
     for rel in (
-        "workflows/mvp-entry-form.workflow.json",
-        "workflows/mas-human-gate-form.workflow.json",
-        "workflows/mas-deployment-health-check.workflow.json",
+        "workflows/core/mvp-entry-form.workflow.json",
+        "workflows/core/mas-human-gate-form.workflow.json",
+        "workflows/core/mas-deployment-health-check.workflow.json",
     ):
         assert rel in load_json(IMPORT_MANIFEST)["full_clean_import_set"]
         assert rel in load_json(IMPORT_MANIFEST)["runtime_import_order"]
@@ -336,8 +377,8 @@ def test_hitl_and_health_forms_are_hand_authored_not_generator_emitted() -> None
 
 def test_mas_entry_and_human_gate_forms_are_native_hitl_ux() -> None:
     """Entry + Human Gate use only portable 2.30.8 Form nodes and auto-bind CAS."""
-    entry = load_json(WORKFLOWS / "mvp-entry-form.workflow.json")
-    gate = load_json(WORKFLOWS / "mas-human-gate-form.workflow.json")
+    entry = load_json(workflow_path("mvp-entry-form.workflow.json"))
+    gate = load_json(workflow_path("mas-human-gate-form.workflow.json"))
     assert entry["meta"]["targetN8nVersion"] == "2.30.8"
     assert gate["meta"]["targetN8nVersion"] == "2.30.8"
     assert entry.get("active") is False
@@ -389,7 +430,7 @@ def test_mas_entry_and_human_gate_forms_are_native_hitl_ux() -> None:
 
 
 def test_mas_deployment_health_check_is_native_and_reports_where_to_fix() -> None:
-    health = load_json(WORKFLOWS / "mas-deployment-health-check.workflow.json")
+    health = load_json(workflow_path("mas-deployment-health-check.workflow.json"))
     assert health["name"] == "Form — MAS Deployment Health Check"
     assert health["meta"]["targetN8nVersion"] == "2.30.8"
     assert health.get("active") is False
@@ -415,7 +456,7 @@ def test_mas_deployment_health_check_is_native_and_reports_where_to_fix() -> Non
     assert "REPLACE_" in report
     assert "produced no items" in report
     assert "input_valid !== false" in report
-    gate = load_json(WORKFLOWS / "mas-human-gate-form.workflow.json")
+    gate = load_json(workflow_path("mas-human-gate-form.workflow.json"))
     decide = next(n["parameters"]["jsCode"] for n in gate["nodes"] if n["name"] == "Decide resume from status")
     assert "Number.isInteger(expectedVersion)" in decide
     assert "human_response is required for reply." in decide
@@ -430,7 +471,7 @@ def test_mas_deployment_health_check_is_native_and_reports_where_to_fix() -> Non
 
 
 def test_workflows_do_not_depend_on_n8n_env_or_global_variables() -> None:
-    for path in WORKFLOWS.glob("*.workflow.json"):
+    for path in workflow_files():
         text = path.read_text(encoding="utf-8")
         assert "$env" not in text, path.name
         assert "$vars" not in text, path.name
@@ -438,7 +479,7 @@ def test_workflows_do_not_depend_on_n8n_env_or_global_variables() -> None:
 
 def test_delivery_workflows_are_inactive_until_ui_configuration() -> None:
     """An import must not expose webhooks that still contain placeholders."""
-    paths = list(WORKFLOWS.glob("*.workflow.json"))
+    paths = list(workflow_files())
     assert {path.name for path in paths} == EXCEL_DELIVERY_WORKFLOWS | MATH_DELIVERY_WORKFLOWS | MVP_ENTRY_WORKFLOWS | UNIVERSAL_ENGINEERING_WORKFLOWS
     for path in paths:
         workflow = load_json(path)
@@ -446,7 +487,12 @@ def test_delivery_workflows_are_inactive_until_ui_configuration() -> None:
 
 
 def test_universal_engineering_orchestrator_has_no_service_or_excel_contract() -> None:
-    paths = [WORKFLOWS / filename for filename in sorted(UNIVERSAL_ENGINEERING_WORKFLOWS)]
+    skip = {"tnavigator-schedule-knowledge-ingestion.workflow.json"}
+    paths = [
+        workflow_path(filename)
+        for filename in sorted(UNIVERSAL_ENGINEERING_WORKFLOWS)
+        if filename not in skip
+    ]
     assert all(path.is_file() for path in paths), (
         "Universal engineering workflow set contains missing files: "
         f"{[path.name for path in paths if not path.is_file()]}"
@@ -469,7 +515,7 @@ def test_universal_engineering_orchestrator_has_no_service_or_excel_contract() -
 
 
 def test_calculation_adapter_posts_dev_batch_and_surface_and_is_statically_bound() -> None:
-    adapter = load_json(WORKFLOWS / "calculation-specialist-adapter.workflow.json")
+    adapter = load_json(workflow_path("calculation-specialist-adapter.workflow.json"))
     assert adapter["name"] == "Adapter — Calculation (Math Service)"
     assert adapter["active"] is False
     by_name = {node["name"]: node for node in adapter["nodes"]}
@@ -509,7 +555,7 @@ def test_calculation_adapter_posts_dev_batch_and_surface_and_is_statically_bound
     assert "result_mode:'computed_batch'" in adapter_text
     assert "MOCK_TRAJECTORY_INTERSECTION" not in adapter_text
 
-    orchestrator = load_json(WORKFLOWS / "universal-engineering-orchestrator.workflow.json")
+    orchestrator = load_json(workflow_path("universal-engineering-orchestrator.workflow.json"))
     orchestrator_by_name = {node["name"]: node for node in orchestrator["nodes"]}
     call = orchestrator_by_name["Call Calculation Specialist"]
     assert call["parameters"]["workflowId"]["value"] == "REPLACE_CALCULATION_ADAPTER_IN_UI"
@@ -519,43 +565,56 @@ def test_calculation_adapter_posts_dev_batch_and_surface_and_is_statically_bound
 
 
 def test_universal_orchestrator_enterprise_control_plane() -> None:
-    workflow = load_json(WORKFLOWS / "universal-engineering-orchestrator.workflow.json")
+    workflow = load_json(workflow_path("universal-engineering-orchestrator.workflow.json"))
     nodes = workflow["nodes"]
     by_name = {node["name"]: node for node in nodes}
     names = {node["name"] for node in nodes}
     types = [node["type"] for node in nodes]
     text = json.dumps(workflow, ensure_ascii=False)
 
-    assert types.count("n8n-nodes-base.dataTable") >= 8
+    assert types.count("n8n-nodes-base.dataTable") == 1
+    assert by_name["Load task by ID"]["type"] == "n8n-nodes-base.dataTable"
     assert types.count("@n8n/n8n-nodes-langchain.agent") == 2
     assert {node["name"] for node in nodes if node["type"] == "@n8n/n8n-nodes-langchain.agent"} == {
         "Engineering Planner Agent",
         "Independent Verifier Agent",
     }
-    assert {
-        "CAS persist human action then plan",
-        "CAS persist terminal human action",
-        "CAS persist plan or human gate",
-        "CAS persist verification",
-        "CAS persist specialist gate or error",
-        "CAS persist routing gate",
-    } <= names
-    for node in nodes:
-        if node["name"].startswith("CAS persist"):
-            filters = node["parameters"]["filters"]["conditions"]
-            assert {item["keyName"] for item in filters} == {"task_id", "version"}, node["name"]
-            assert node.get("alwaysOutputData") is True, node["name"]
-
-    assert {
-        "Confirm human action planning CAS",
-        "Confirm terminal human action CAS",
-        "Confirm plan CAS",
-        "Confirm verification CAS",
-        "Confirm specialist gate CAS",
-        "Confirm routing gate CAS",
-    } <= names
+    cas_calls = [
+        "Call CAS persist — insert new task",
+        "Call CAS persist — human action then plan",
+        "Call CAS persist — terminal human action",
+        "Call CAS persist — plan or human gate",
+        "Call CAS persist — SCHEDULE evidence retry",
+        "Call CAS persist — SCHEDULE resume",
+        "Call CAS persist — verification",
+        "Call CAS persist — specialist gate or error",
+        "Call CAS persist — routing gate",
+    ]
+    assert set(cas_calls) <= names
+    for name in cas_calls:
+        node = by_name[name]
+        assert node["type"] == "n8n-nodes-base.executeWorkflow"
+        assert node["typeVersion"] == 1.3
+        assert node["parameters"]["workflowId"]["value"] == "REPLACE_CAS_PERSIST_IN_UI"
+        assert node["parameters"]["workflowId"]["cachedResultName"] == "CAS — Persist Task State"
+        assert node["parameters"]["options"]["waitForSubWorkflow"] is True
+        assert node.get("onError") == "continueRegularOutput"
+        assert set(node["parameters"]["workflowInputs"]["value"]) == {"cas_operation", "attempted"}
+        assert node["parameters"]["workflowInputs"]["value"]["attempted"] == "={{ $json }}"
+    assert not [name for name in names if name.startswith("CAS persist")]
+    assert not [name for name in names if name.startswith("Confirm ") and name.endswith(" CAS")]
+    assert "Insert durable task state" not in names
     assert "Approved or continued task delegates directly?" in names
-    assert text.count("cas_succeeded") >= 6
+    assert "Human action planning CAS succeeded?" in names
+    assert (
+        by_name["Human action planning CAS succeeded?"]["parameters"]["conditions"]["conditions"][0]["leftValue"]
+        == "={{ $json.cas_succeeded }}"
+    )
+    assert by_name["Call CAS persist — insert new task"]["parameters"]["workflowInputs"]["value"]["cas_operation"] == (
+        "={{ 'insert' }}"
+    )
+    for name in cas_calls[1:]:
+        assert by_name[name]["parameters"]["workflowInputs"]["value"]["cas_operation"] == "={{ 'update' }}"
     for node in nodes:
         if node["name"].startswith("Call ") and node["name"].endswith(" Specialist"):
             assert node.get("retryOnFail") is not True, node["name"]
@@ -574,7 +633,7 @@ def test_universal_orchestrator_enterprise_control_plane() -> None:
     assert "Approved task has no persisted specialist packet" in text
     assert "result_approval" in text
     assert "Data Table is authoritative durable state" in text
-    assert "updatedRows.length!==1" in text
+    assert "CAS — Persist Task State" in text
     assert "human_responses" in text
     assert "Payload is too large" in text
     assert "parseStructured" in text
@@ -662,8 +721,91 @@ def test_universal_orchestrator_enterprise_control_plane() -> None:
     assert "baseline_schedule_text:typeof originalSchedule.baseline_schedule_text" in apply_plan_code
 
 
+CAS_STATE_COLUMNS = [
+    "task_id", "version", "status", "phase", "task_type", "risk_class",
+    "request_json", "context_json", "plan_json", "specialist_json", "result_json",
+    "verification_json", "pending_human_json", "last_error_json", "retry_count",
+    "max_retries", "history_json", "created_at", "updated_at",
+]
+
+
+def test_cas_persist_task_is_the_single_fail_closed_write_path() -> None:
+    workflow = load_json(workflow_path("cas-persist-task.workflow.json"))
+    assert workflow["name"] == "CAS — Persist Task State"
+    assert workflow.get("active") is False
+    assert workflow["meta"]["targetN8nVersion"] == "2.30.8"
+    text = json.dumps(workflow, ensure_ascii=False)
+    assert "$env" not in text
+    assert "$vars" not in text
+    by_name = {node["name"]: node for node in workflow["nodes"]}
+    names = set(by_name)
+    assert {
+        "Receive CAS persist request",
+        "Validate CAS persist request",
+        "CAS request valid?",
+        "CAS operation router",
+        "Insert durable task row",
+        "Update durable task row",
+        "Confirm CAS persist",
+        "Build invalid CAS persist result",
+    } <= names
+
+    tables = [node for node in workflow["nodes"] if node["type"] == "n8n-nodes-base.dataTable"]
+    assert {node["name"] for node in tables} == {"Insert durable task row", "Update durable task row"}
+    for node in tables:
+        assert node["typeVersion"] == 1.1
+        assert node.get("alwaysOutputData") is True
+        assert node["parameters"]["dataTableId"]["value"] == "REPLACE_IN_UI"
+        columns = node["parameters"]["columns"]["value"]
+        assert list(columns) == CAS_STATE_COLUMNS
+        assert "binary" not in columns
+        assert "previous_version" not in columns
+
+    insert = by_name["Insert durable task row"]
+    assert insert["parameters"]["operation"] == "insert"
+    update = by_name["Update durable task row"]
+    assert update["parameters"]["operation"] == "update"
+    filters = {(item["keyName"], item["keyValue"]) for item in update["parameters"]["filters"]["conditions"]}
+    assert filters == {
+        ("task_id", "={{ $json.task_id }}"),
+        ("version", "={{ $json.previous_version }}"),
+    }
+
+    trigger = by_name["Receive CAS persist request"]
+    assert trigger["type"] == "n8n-nodes-base.executeWorkflowTrigger"
+    assert trigger["typeVersion"] == 1.2
+    validate = by_name["Validate CAS persist request"]["parameters"]["jsCode"]
+    assert "CAS_OPERATION_INVALID" in validate
+    assert "CAS_PREVIOUS_VERSION_REQUIRED" in validate
+    assert "CAS_STATE_COLUMNS_MISSING" in validate
+    confirm = by_name["Confirm CAS persist"]["parameters"]["jsCode"]
+    assert "tableRows.length!==1" in confirm
+    assert "cas_attempted===undefined" in confirm
+    assert "CAS_CONFLICT" in confirm
+    assert "cas_succeeded:true" in confirm
+    assert "cas_succeeded:false" in confirm
+    invalid = by_name["Build invalid CAS persist result"]["parameters"]["jsCode"]
+    assert "INVALID_CAS_REQUEST" in invalid
+    assert "cas_succeeded:false" in invalid
+
+    connections = workflow["connections"]
+    assert connections["CAS request valid?"]["main"][0][0]["node"] == "CAS operation router"
+    assert connections["CAS request valid?"]["main"][1][0]["node"] == "Build invalid CAS persist result"
+    assert connections["CAS operation router"]["main"][0][0]["node"] == "Insert durable task row"
+    assert connections["CAS operation router"]["main"][1][0]["node"] == "Update durable task row"
+    assert connections["Insert durable task row"]["main"][0][0]["node"] == "Confirm CAS persist"
+    assert connections["Update durable task row"]["main"][0][0]["node"] == "Confirm CAS persist"
+
+    generator = (TEMPLATES / "generate_universal_engineering_workflows.py").read_text(encoding="utf-8")
+    assert "def call_cas_persist(" in generator
+    assert "def build_cas_persist(" in generator
+    assert 'CORE / "cas-persist-task.workflow.json"' in generator
+    assert "Insert durable task state" not in generator
+    assert "CAS persist human action then plan" not in generator
+
+
 def test_universal_orchestrator_has_a_static_excel_specialist_route() -> None:
-    workflow = load_json(WORKFLOWS / "universal-engineering-orchestrator.workflow.json")
+    workflow = load_json(workflow_path("universal-engineering-orchestrator.workflow.json"))
     by_name = {node["name"]: node for node in workflow["nodes"]}
     text = json.dumps(workflow, ensure_ascii=False)
 
@@ -690,12 +832,15 @@ def test_universal_orchestrator_has_a_static_excel_specialist_route() -> None:
     assert "parse(x.result_json,{})" in prepare_code
     assert "responses[responses.length-1].response" in prepare_code
     assert "$('Normalize invocation').first().binary" in prepare_code
-    state_columns = by_name["Insert durable task state"]["parameters"]["columns"]["value"]
-    assert "binary" not in state_columns
+    load_columns = by_name["Load task by ID"]["parameters"]
+    assert "binary" not in json.dumps(load_columns)
+    cas = load_json(workflow_path("cas-persist-task.workflow.json"))
+    cas_by_name = {node["name"]: node for node in cas["nodes"]}
+    assert "binary" not in cas_by_name["Insert durable task row"]["parameters"]["columns"]["value"]
 
 
 def test_universal_orchestrator_has_a_static_schedule_builder_route() -> None:
-    workflow = load_json(WORKFLOWS / "universal-engineering-orchestrator.workflow.json")
+    workflow = load_json(workflow_path("universal-engineering-orchestrator.workflow.json"))
     by_name = {node["name"]: node for node in workflow["nodes"]}
     text = json.dumps(workflow, ensure_ascii=False).lower()
 
@@ -710,6 +855,39 @@ def test_universal_orchestrator_has_a_static_schedule_builder_route() -> None:
     assert call["onError"] == "continueRegularOutput"
     assert set(call["parameters"]["workflowInputs"]["value"]) == {"specialist_packet", "previous_specialist_result", "latest_human_response"}
     rag_call = by_name["Call SCHEDULE Hybrid Retrieval"]
+    assert rag_call["parameters"]["workflowId"]["value"] == "REPLACE_SCHEDULE_RAG_RETRIEVAL_IN_UI"
+    routing_call = by_name["Call routing Hybrid Retrieval"]
+    assert routing_call["parameters"]["workflowId"]["value"] == "REPLACE_SCHEDULE_RAG_RETRIEVAL_IN_UI"
+    excel_rag_call = by_name["Call Excel protocol Hybrid Retrieval"]
+    assert excel_rag_call["parameters"]["workflowId"]["value"] == "REPLACE_SCHEDULE_RAG_RETRIEVAL_IN_UI"
+    planner_code = by_name["Prepare planner input"]["parameters"]["jsCode"]
+    assert "routing_rag_evidence" in planner_code
+    assert "ORCHESTRATOR_ROUTING_RAG_REQUIRED" in by_name["Build routing RAG evidence gate"]["parameters"]["jsCode"]
+    assert "EXCEL_PROTOCOL_RAG_REQUIRED" in by_name["Build Excel protocol RAG evidence gate"]["parameters"]["jsCode"]
+    assert "excel_protocol" in by_name["Prepare governed Excel protocol RAG request"]["parameters"]["jsCode"]
+    excel_rag_y = {
+        node_name: by_name[node_name]["position"][1]
+        for node_name in (
+            "Prepare governed Excel protocol RAG request",
+            "Call Excel protocol Hybrid Retrieval",
+            "Attach governed Excel protocol RAG evidence",
+        )
+    }
+    assert excel_rag_y["Attach governed Excel protocol RAG evidence"] == 2560
+    assert len(set(excel_rag_y.values())) == 1
+    routing_rag_y = {
+        node_name: by_name[node_name]["position"][1]
+        for node_name in (
+            "Prepare governed routing RAG request",
+            "Call routing Hybrid Retrieval",
+            "Attach governed routing RAG evidence",
+        )
+    }
+    assert len(set(routing_rag_y.values())) == 1
+    connections = workflow["connections"]
+    assert connections["Configured specialist router"]["main"][0][0]["node"] == "Prepare governed Excel protocol RAG request"
+    assert connections["Excel protocol RAG evidence ready?"]["main"][0][0]["node"] == "Call Excel Extraction Specialist Adapter"
+    assert connections["Routing RAG evidence ready?"]["main"][0][0]["node"] == "Prepare planner input"
     assert rag_call["type"] == "n8n-nodes-base.executeWorkflow"
     assert rag_call["typeVersion"] == 1.3
     assert rag_call["parameters"]["workflowId"]["value"] == "REPLACE_SCHEDULE_RAG_RETRIEVAL_IN_UI"
@@ -722,7 +900,7 @@ def test_universal_orchestrator_has_a_static_schedule_builder_route() -> None:
 
 
 def test_universal_orchestrator_has_a_static_redacted_trace_route() -> None:
-    workflow = load_json(WORKFLOWS / "universal-engineering-orchestrator.workflow.json")
+    workflow = load_json(workflow_path("universal-engineering-orchestrator.workflow.json"))
     by_name = {node["name"]: node for node in workflow["nodes"]}
     call = by_name["Call MAS Trace Event Writer"]
     assert call["type"] == "n8n-nodes-base.executeWorkflow"
@@ -743,7 +921,7 @@ def test_universal_orchestrator_has_a_static_redacted_trace_route() -> None:
 
 
 def test_schedule_flow_is_orchestrator_mediated_and_multi_stage() -> None:
-    workflow = load_json(WORKFLOWS / "universal-engineering-orchestrator.workflow.json")
+    workflow = load_json(workflow_path("universal-engineering-orchestrator.workflow.json"))
     by_name = {node["name"]: node for node in workflow["nodes"]}
     connections = workflow["connections"]
     handoff_code = by_name["Route successful specialist handoff"]["parameters"]["jsCode"]
@@ -753,7 +931,7 @@ def test_schedule_flow_is_orchestrator_mediated_and_multi_stage() -> None:
     assert "source_facts_packet:result.compact_data" in handoff_code
     next_stage = connections["Successful specialist next stage"]["main"]
     expected_routes = [
-        "Prepare planner input",
+        "Prepare governed routing RAG request",
         "Prepare SCHEDULE resume after Excel",
         "Prepare independent verification",
     ]
@@ -777,7 +955,7 @@ def test_schedule_flow_is_orchestrator_mediated_and_multi_stage() -> None:
             f"Successful specialist next stage output {output_index} must route to "
             f"{expected_node!r}, got {first_connection['node']!r}"
         )
-    builder = load_json(WORKFLOWS / "tnavigator-schedule-builder.workflow.json")
+    builder = load_json(workflow_path("tnavigator-schedule-builder.workflow.json"))
     assert not [node for node in builder["nodes"] if node["type"] == "n8n-nodes-base.executeWorkflow"]
 
     required_pipeline_nodes = {
@@ -822,7 +1000,7 @@ def test_schedule_flow_is_orchestrator_mediated_and_multi_stage() -> None:
 
 
 def test_schedule_builder_is_bounded_and_orchestrator_mediated() -> None:
-    workflow = load_json(WORKFLOWS / "tnavigator-schedule-builder.workflow.json")
+    workflow = load_json(workflow_path("tnavigator-schedule-builder.workflow.json"))
     by_name = {node["name"]: node for node in workflow["nodes"]}
     text = json.dumps(workflow, ensure_ascii=False).lower()
 
@@ -902,7 +1080,7 @@ def test_schedule_builder_is_bounded_and_orchestrator_mediated() -> None:
 
 
 def test_excel_specialist_adapter_is_a_bounded_native_contract_boundary() -> None:
-    workflow = load_json(WORKFLOWS / "excel-engineering-specialist-adapter.workflow.json")
+    workflow = load_json(workflow_path("excel-engineering-specialist-adapter.workflow.json"))
     by_name = {node["name"]: node for node in workflow["nodes"]}
 
     assert workflow["name"] == "Adapter — Excel Extraction"
@@ -946,11 +1124,11 @@ def test_excel_specialist_adapter_is_a_bounded_native_contract_boundary() -> Non
 
 
 def test_legacy_excel_mas_workflow_is_removed() -> None:
-    assert not (WORKFLOWS / "excel-mas-orchestrator.workflow.json").exists()
+    assert not (workflow_path("excel-mas-orchestrator.workflow.json")).exists()
 
 
 def test_specialist_template_uses_only_universal_boundary() -> None:
-    workflow = load_json(WORKFLOWS / "engineering-specialist-template.workflow.json")
+    workflow = load_json(workflow_path("engineering-specialist-template.workflow.json"))
     text = json.dumps(workflow, ensure_ascii=False)
     assert "specialist_packet" in text
     assert "specialist_result" in text
@@ -979,6 +1157,7 @@ def test_universal_engineering_instruction_templates_are_portable() -> None:
         "specialist-workflow-instruction.template.md",
         "generate_universal_engineering_workflows.py",
         "generate_schedule_workflows.py",
+        "apply_mas_hybrid_rag.py",
         "schedule_lossless_runtime.py",
         "schedule_baseline_decoder.py",
         "schedule_baseline_query.py",
@@ -1018,18 +1197,182 @@ def test_schedule_generator_and_architecture_decisions_are_portable_and_explicit
     assert "Excel→RAG→Builder handoff" in roadmap
 
 
+def ingestible_operating_guide_documents() -> list[dict]:
+    documents = load_json(RAG_SOURCE)["documents"]
+    return [
+        document
+        for document in documents
+        if document.get("role") != "injection_template" and document.get("do_not_ingest") is not True
+    ]
+
+
 def test_rag_workflow_contains_the_canonical_documents() -> None:
-    source = load_json(RAG_SOURCE)["documents"]
-    workflow = load_json(WORKFLOWS / "excel-rag-ingestion.workflow.json")
-    node = next(node for node in workflow["nodes"] if node["name"] == "RAG documents — portable operating guide")
+    source = ingestible_operating_guide_documents()
+    workflow = load_json(workflow_path("tnavigator-schedule-knowledge-ingestion.workflow.json"))
+    node = next(node for node in workflow["nodes"] if node["name"] == "Collect MAS knowledge blocks")
     code = node["parameters"]["jsCode"]
+    assert source, "Packaged MAS knowledge cards must stay in the operating guide"
     for document in source:
-        assert document["id"] in code
+        document_id = document.get("knowledge_id") or document["id"]
+        assert document_id in code
         assert json.dumps(document["text"], ensure_ascii=False) in code
+    assert "Select new MAS knowledge" in {item["name"] for item in workflow["nodes"]}
+    assert "Lookup existing knowledge keys" in {item["name"] for item in workflow["nodes"]}
+
+
+def test_ingestion_accepts_the_whole_operating_guide_sheet() -> None:
+    workflow = load_json(workflow_path("tnavigator-schedule-knowledge-ingestion.workflow.json"))
+    by_name = {node["name"]: node for node in workflow["nodes"]}
+    form = by_name["SCHEDULE manual ingestion form"]
+    fields = form["parameters"]["formFields"]["values"]
+    names = [field["fieldName"] for field in fields]
+    assert names[0] == "corpus_json"
+    assert all(field.get("requiredField") is not True for field in fields)
+    collect = by_name["Collect MAS knowledge blocks"]["parameters"]["jsCode"]
+    select = by_name["Select new MAS knowledge"]["parameters"]["jsCode"]
+    summarize = by_name["Summarize RAG inventory"]["parameters"]["jsCode"]
+    loader = by_name["SCHEDULE Default Data Loader"]
+    parent_sql = by_name["PostgreSQL — upsert full parent knowledge"]["parameters"]["query"]
+    assert "corpus_json" in collect
+    assert "skipDoc" in collect
+    assert "docs.filter(d=>!skipDoc(d))" in collect
+    assert "d.schedule_knowledge_block||d" not in collect
+    assert "wconprod-forecast-injection-example" not in collect
+    assert "CORPUS_JSON_INVALID" in collect
+    assert "collect_empty" in collect
+    assert "canon=" in collect
+    assert "dedupe=" in collect
+    assert "'schedule_mvp'" in collect
+    assert "EXISTING_KNOWLEDGE_LOOKUP_FAILED" in select
+    assert "collect_failed" in select
+    assert "lookup_failed" in select
+    assert "seen.has(k)" in select
+    assert "schedule_mvp" in select
+    assert "collect_failed" in summarize
+    assert "lookup_failed" in summarize
+    assert "knowledge_status" in parent_sql and "superseded" in parent_sql
+    meta_values = [
+        item["value"]
+        for item in loader["parameters"]["options"]["metadata"]["metadataValues"]
+    ]
+    assert meta_values
+    assert all(value.startswith("={{ $json.metadata.") and value.endswith(" }}") for value in meta_values)
+    assert '"={ $json.metadata.' not in json.dumps(loader)
+    example = json.loads(by_name["Receive SCHEDULE knowledge document"]["parameters"]["jsonExample"])
+    assert "documents" in example
+    payload = load_json(RAG_SOURCE)
+    template_id = payload["documents"][-1]["schedule_knowledge_block"]["knowledge_id"]
+    assert template_id == "wconprod-forecast-injection-example"
+
+
+def test_ingestible_sheet_skips_template_and_dedupes_keys() -> None:
+    import sys
+
+    sys.path.insert(0, str(TEMPLATES))
+    from schedule_rag_workflows import ingestible_blocks_from_payload
+
+    payload = load_json(RAG_SOURCE)
+    blocks = ingestible_blocks_from_payload(payload)
+    ids = [block["knowledge_id"] for block in blocks]
+    assert "wconprod-forecast-injection-example" not in ids
+    assert len(ids) == len(set(ids))
+    first = {k: blocks[0][k] for k in ("contract", "target_base", "knowledge_id", "revision", "text") if k in blocks[0]}
+    duped = ingestible_blocks_from_payload({"documents": [blocks[0], dict(blocks[0])]})
+    assert len(duped) == 1
+    assert duped[0]["knowledge_id"] == first["knowledge_id"]
+    single = ingestible_blocks_from_payload(blocks[0])
+    assert len(single) == 1
+    empty_template = ingestible_blocks_from_payload({"documents": [payload["documents"][-1]]})
+    assert empty_template == []
+
+
+def test_portable_knowledge_block_reads_wrapper_text_like_seeder() -> None:
+    import sys
+
+    sys.path.insert(0, str(TEMPLATES))
+    from apply_mas_hybrid_rag import _portable_knowledge_block
+
+    wrapped = {
+        "id": "wrapper-id",
+        "text": "wrapper-level instruction",
+        "schedule_knowledge_block": {
+            "contract": "schedule_knowledge_block",
+            "knowledge_id": "wrapper-id",
+            "target_base": "excel_protocol",
+            "knowledge_type": "protocol_instruction",
+        },
+    }
+    block = _portable_knowledge_block(wrapped)
+    assert block is not None
+    assert block["text"] == "wrapper-level instruction"
+    nested = {
+        "text": "wrapper-level instruction",
+        "schedule_knowledge_block": {
+            "contract": "schedule_knowledge_block",
+            "knowledge_id": "nested-id",
+            "text": "nested-text",
+        },
+    }
+    assert _portable_knowledge_block(nested)["text"] == "nested-text"
+
+
+def test_operating_guide_ends_with_full_injection_template() -> None:
+    payload = load_json(RAG_SOURCE)
+    documents = payload["documents"]
+    assert documents, "operating guide must contain documents"
+    template = documents[-1]
+    assert template.get("role") == "injection_template"
+    assert template.get("do_not_ingest") is True
+    block = template["schedule_knowledge_block"]
+    required = (
+        "contract",
+        "contract_version",
+        "target_base",
+        "knowledge_type",
+        "knowledge_id",
+        "revision",
+        "title",
+        "keywords",
+        "topics",
+        "task_patterns",
+        "simulator_family",
+        "status",
+        "author",
+        "access_scope",
+        "text",
+        "examples",
+        "schema_catalogue",
+        "source_hash",
+        "page",
+        "heading",
+        "metadata",
+    )
+    for key in required:
+        assert key in block, key
+        assert block[key] not in (None, "", []), key
+    assert block["contract"] == "schedule_knowledge_block"
+    assert block["target_base"] == "schedule_mvp"
+    assert block["knowledge_type"] == "keyword_instruction"
+    catalogue = block["schema_catalogue"]
+    assert catalogue["contract"] == "schedule_schema_catalogue"
+    assert catalogue["schemas"]
+    packaged_ids = {document.get("knowledge_id") or document["id"] for document in documents[:-1]}
+    assert packaged_ids == {
+        "excel-agent-trust-boundary",
+        "excel-agent-discovery-and-tables",
+        "excel-agent-query-and-result-protocol",
+        "excel-agent-clarification-and-continuation",
+        "excel-agent-rag-and-operations",
+        "route-excel-extractor",
+        "route-schedule-builder",
+        "route-calculation",
+        "route-hitl-required-evidence",
+        "specialist-template-bounded-work",
+    }
 
 
 def test_rag_ingestion_has_ui_only_postgres_inventory_check() -> None:
-    workflow = load_json(WORKFLOWS / "excel-rag-ingestion.workflow.json")
+    workflow = load_json(workflow_path("tnavigator-schedule-knowledge-ingestion.workflow.json"))
     by_name = {node["name"]: node for node in workflow["nodes"]}
     assert "Prepare RAG inventory query" in by_name
     assert "Postgres — inspect RAG table contents" in by_name
@@ -1042,12 +1385,20 @@ def test_rag_ingestion_has_ui_only_postgres_inventory_check() -> None:
     summarize = by_name["Summarize RAG inventory"]["parameters"]["jsCode"]
     assert "rag_table_name" in prepare
     assert "LEFT JOIN inv ON TRUE" in prepare
-    assert "to_regclass('${table}')" in prepare
+    assert "to_regclass('" in prepare
     assert "rag_inventory_ok" in summarize
     assert "duplicate_ingest_suspected" in summarize
+    assert "skipped_existing" in summarize
     assert by_name["Postgres — inspect RAG table contents"].get("alwaysOutputData") is True
+    assert "$('Normalize approved SCHEDULE knowledge').all()" in by_name["Prepare full parent knowledge persistence"]["parameters"]["jsCode"]
+    assert by_name["Finalize indexes and deduplicate chunks"].get("executeOnce") is True
+    assert by_name["Lookup existing knowledge keys"]["parameters"]["query"].startswith("SELECT target_base, knowledge_id, revision")
     connections = workflow["connections"]
-    assert connections["PGVector — insert operating guide"]["main"][0][0]["node"] == "Prepare RAG inventory query"
+    assert connections["PGVector — insert approved SCHEDULE knowledge"]["main"][0][0]["node"] == "Finalize indexes and deduplicate chunks"
+    assert connections["Finalize indexes and deduplicate chunks"]["main"][0][0]["node"] == "Prepare full parent knowledge persistence"
+    assert connections["Prepare full parent knowledge persistence"]["main"][0][0]["node"] == "PostgreSQL — upsert full parent knowledge"
+    assert connections["PostgreSQL — upsert full parent knowledge"]["main"][0][0]["node"] == "Prepare approved schema catalogue persistence"
+    assert connections["New knowledge to insert?"]["main"][1][0]["node"] == "Prepare RAG inventory query"
     assert connections["Prepare RAG inventory query"]["main"][0][0]["node"] == "Postgres — inspect RAG table contents"
     assert connections["Postgres — inspect RAG table contents"]["main"][0][0]["node"] == "Summarize RAG inventory"
 
@@ -1059,8 +1410,8 @@ def test_continuation_protocol_has_no_stale_agent_state_lookup_instruction() -> 
         "On a continuation, call get_session_state first",
     )
     paths = [
-        WORKFLOWS / "excel-extraction-agent.workflow.json",
-        WORKFLOWS / "excel-rag-ingestion.workflow.json",
+        workflow_path("excel-extraction-agent.workflow.json"),
+        workflow_path("tnavigator-schedule-knowledge-ingestion.workflow.json"),
         RAG_SOURCE,
     ]
     for path in paths:
@@ -1078,7 +1429,7 @@ def test_schedule_foundation_workflows_implement_roadmap_boundaries() -> None:
     }
     assert SCHEDULE_FOUNDATION_WORKFLOWS == set(expected_contracts)
     for filename, contract in expected_contracts.items():
-        workflow = load_json(WORKFLOWS / filename)
+        workflow = load_json(workflow_path(filename))
         assert workflow["active"] is False
         assert workflow["meta"]["targetN8nVersion"] == "2.30.8"
         assert workflow["meta"]["contractVersion"] == contract
@@ -1088,7 +1439,7 @@ def test_schedule_foundation_workflows_implement_roadmap_boundaries() -> None:
         assert "$env" not in text and "$vars" not in text
         assert "readwritefile" not in text and "executecommand" not in text
 
-    builder = load_json(WORKFLOWS / "tnavigator-schedule-builder.workflow.json")
+    builder = load_json(workflow_path("tnavigator-schedule-builder.workflow.json"))
     builder_nodes = {node["name"] for node in builder["nodes"]}
     for required in (
         "Run deterministic SCHEDULE intake",
@@ -1107,7 +1458,7 @@ def test_schedule_foundation_workflows_implement_roadmap_boundaries() -> None:
 
 
 def _builder_code(name: str) -> str:
-    builder = load_json(WORKFLOWS / "tnavigator-schedule-builder.workflow.json")
+    builder = load_json(workflow_path("tnavigator-schedule-builder.workflow.json"))
     return next(node for node in builder["nodes"] if node["name"] == name)["parameters"]["jsCode"]
 
 
@@ -1119,7 +1470,7 @@ def test_schedule_foundation_is_fail_closed_and_preserve_by_default() -> None:
     merge = _builder_code("Merge SCHEDULE draft deterministically")
     renderer = _builder_code("Render typed SCHEDULE IR deterministically")
     validator = _builder_code("Validate merged SCHEDULE package")
-    orchestrator = (WORKFLOWS / "universal-engineering-orchestrator.workflow.json").read_text(encoding="utf-8")
+    orchestrator = (workflow_path("universal-engineering-orchestrator.workflow.json")).read_text(encoding="utf-8")
     assert "SCHEDULE_BUILD_CONTRACT_INVALID" in intake
     assert "METRIC_UNIT_SYSTEM_REQUIRED" in intake
     assert "FORECAST_START_DATE_REQUIRED" in intake
@@ -1170,7 +1521,7 @@ def test_schedule_foundation_is_fail_closed_and_preserve_by_default() -> None:
 
 
 def test_schedule_builder_uses_the_same_governed_intake_runtime() -> None:
-    builder = load_json(WORKFLOWS / "tnavigator-schedule-builder.workflow.json")
+    builder = load_json(workflow_path("tnavigator-schedule-builder.workflow.json"))
     builder_code = next(node for node in builder["nodes"] if node["name"] == "Run deterministic SCHEDULE intake")["parameters"]["jsCode"]
     assert "schedule_intake_result" in builder_code or "contract:'schedule_intake" in builder_code or "SCHEDULE_BUILD_CONTRACT_INVALID" in builder_code
     prepare = next(node for node in builder["nodes"] if node["name"] == "Prepare deterministic intake")["parameters"]["jsCode"]
@@ -1184,9 +1535,9 @@ def test_schedule_builder_uses_the_same_governed_intake_runtime() -> None:
 
 
 def test_schedule_rag_and_trace_foundations_enforce_governance() -> None:
-    ingestion = (WORKFLOWS / "tnavigator-schedule-knowledge-ingestion.workflow.json").read_text()
-    retrieval = (WORKFLOWS / "tnavigator-schedule-hybrid-retrieval.workflow.json").read_text()
-    trace = load_json(WORKFLOWS / "mas-trace-event-writer.workflow.json")
+    ingestion = (workflow_path("tnavigator-schedule-knowledge-ingestion.workflow.json")).read_text()
+    retrieval = (workflow_path("tnavigator-schedule-hybrid-retrieval.workflow.json")).read_text()
+    trace = load_json(workflow_path("mas-trace-event-writer.workflow.json"))
     assert "TARGET_BASE_NOT_ALLOWLISTED" in ingestion
     assert "FULL_KEYWORD_INSTRUCTION_REQUIRED" in ingestion
     assert "EXPERT_AUTHOR_REQUIRED" in ingestion
@@ -1200,8 +1551,21 @@ def test_schedule_rag_and_trace_foundations_enforce_governance() -> None:
     assert "SCHEMA_SEMANTICS_REQUIRED" in ingestion
     assert "tnavigator_schedule_knowledge_documents_v1" in ingestion
     assert "keyword_instruction" in ingestion and "worked_example" in ingestion
+    assert "protocol_instruction" in ingestion and "routing_card" in ingestion
+    assert "capability_instruction" in ingestion
+    assert "excel_protocol" in ingestion and "orchestrator_routing" in ingestion
+    assert "specialist_template" in ingestion
+    assert load_json(workflow_path("tnavigator-schedule-knowledge-ingestion.workflow.json"))["name"] == (
+        "MAS — Knowledge Ingestion"
+    )
+    assert load_json(workflow_path("tnavigator-schedule-hybrid-retrieval.workflow.json"))["name"] == (
+        "MAS — Knowledge Retrieval"
+    )
     assert "TARGET_BASE_NOT_ALLOWLISTED" in retrieval
     assert "ACCESS_SCOPE_REQUIRED" in retrieval
+    assert "mas_retrieval_request" in retrieval
+    assert "$3::jsonb<>'[]'::jsonb" in retrieval
+    assert "require_schema!==true" in retrieval
     assert "PostgreSQL lexical + exact candidates" in retrieval
     assert "PGVector semantic candidates" in retrieval
     assert "PostgreSQL tag candidates" in retrieval
@@ -1224,4 +1588,75 @@ def test_schedule_rag_and_trace_foundations_enforce_governance() -> None:
     assert "prompt|secret|token|password|authorization|binary|content|text" in trace_code
     assert "decision_record:e.decision_record" in trace_code
     assert "root.mas_trace_events" in trace_code
+    assert "root.mas_trace_events.length" in trace_code
     assert "source.map((candidate,index)" in trace_code
+    health = load_json(workflow_path("mas-deployment-health-check.workflow.json"))
+    probe = next(n for n in health["nodes"] if n["name"] == "Prepare Trace Writer probe")
+    assert "mas_trace_event:" in probe["parameters"]["jsCode"]
+    assert "mas_trace_events: []" not in probe["parameters"]["jsCode"]
+
+
+def test_hybrid_rag_is_the_only_agent_knowledge_path() -> None:
+    excel = load_json(workflow_path("excel-extraction-agent.workflow.json"))
+    excel_nodes = {node["name"]: node for node in excel["nodes"]}
+    excel_text = json.dumps(excel, ensure_ascii=False)
+    assert "context_search" not in excel_text
+    assert not any("vectorStore" in node["type"] for node in excel["nodes"])
+    assert excel_nodes["Call Excel protocol Hybrid Retrieval"]["parameters"]["workflowId"]["value"] == (
+        "REPLACE_SCHEDULE_RAG_RETRIEVAL_IN_UI"
+    )
+    assert "excel_protocol" in excel_nodes["Prepare excel protocol RAG request"]["parameters"]["jsCode"]
+    assert "rag_evidence" in excel_nodes["Attach excel protocol RAG evidence"]["parameters"]["jsCode"]
+    assert "EXCEL_PROTOCOL_RAG_REQUIRED" in excel_nodes["Build excel protocol RAG gate"]["parameters"]["jsCode"]
+    assert "rag_evidence" in excel_nodes["Prepare AI Agent input"]["parameters"]["jsCode"]
+    connections = excel["connections"]
+    assert connections["Prepare AI Agent input"]["main"][0][0]["node"] == "Prepare excel protocol RAG request"
+    assert connections["Excel protocol RAG ready?"]["main"][0][0]["node"] == "Is clarification continuation before preflight?"
+    assert connections["Excel protocol RAG ready?"]["main"][1][0]["node"] == "Build excel protocol RAG gate"
+
+    template = load_json(workflow_path("engineering-specialist-template.workflow.json"))
+    template_nodes = {node["name"]: node for node in template["nodes"]}
+    assert template_nodes["Call specialist Hybrid Retrieval"]["parameters"]["workflowId"]["value"] == (
+        "REPLACE_SCHEDULE_RAG_RETRIEVAL_IN_UI"
+    )
+    assert "specialist_template" in template_nodes["Prepare governed specialist RAG request"]["parameters"]["jsCode"]
+    assert "rag_evidence" in template_nodes["Attach governed specialist RAG evidence"]["parameters"]["jsCode"]
+    assert "SPECIALIST_RAG_EVIDENCE_REQUIRED" in template_nodes["Build specialist RAG evidence gate"]["parameters"]["jsCode"]
+    template_connections = template["connections"]
+    assert template_connections["Packet contract valid?"]["main"][0][0]["node"] == "Prepare governed specialist RAG request"
+    assert template_connections["Specialist RAG evidence ready?"]["main"][0][0]["node"] == "Prepare specialist work"
+    assert template_connections["Specialist RAG evidence ready?"]["main"][1][0]["node"] == "Build specialist RAG evidence gate"
+
+    adapter = load_json(workflow_path("excel-engineering-specialist-adapter.workflow.json"))
+    adapter_code = next(
+        node["parameters"]["jsCode"]
+        for node in adapter["nodes"]
+        if node["name"] == "Prepare native Excel invocation"
+    )
+    assert "...packet.inputs" in adapter_code
+
+    ingestion = load_json(workflow_path("tnavigator-schedule-knowledge-ingestion.workflow.json"))
+    seed_code = next(
+        node["parameters"]["jsCode"]
+        for node in ingestion["nodes"]
+        if node["name"] == "Collect MAS knowledge blocks"
+    )
+    inventory = next(
+        node["parameters"]["jsCode"]
+        for node in ingestion["nodes"]
+        if node["name"] == "Prepare RAG inventory query"
+    )
+    assert "tnavigator_schedule_knowledge_v1" in json.dumps(ingestion, ensure_ascii=False)
+    for document in ingestible_operating_guide_documents():
+        block = document.get("schedule_knowledge_block") if isinstance(document.get("schedule_knowledge_block"), dict) else document
+        assert block["knowledge_id"] in seed_code
+        assert block["knowledge_id"] in inventory
+        assert json.dumps(block["text"], ensure_ascii=False) in seed_code
+
+
+def test_excel_agent_tools_remain_the_only_workbook_interface() -> None:
+    workflow = load_json(workflow_path("excel-extraction-agent.workflow.json"))
+    agent = next(node for node in workflow["nodes"] if node["name"] == "Excel Extractor AI Agent")
+    assert "rag_evidence (target_base=excel_protocol)" in agent["parameters"]["options"]["systemMessage"]
+    assert "PGVector static operating context" not in workflow.get("description", "")
+

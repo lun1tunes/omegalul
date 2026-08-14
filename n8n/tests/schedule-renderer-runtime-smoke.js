@@ -8,7 +8,7 @@ const fs = require('node:fs');
 const path = require('node:path');
 
 const workspace = process.env.WORKSPACE_ROOT || '/workspace';
-const workflows = path.join(workspace, 'n8n', 'workflows');
+const workflows = path.join(workspace, 'n8n', 'workflows', 'core');
 const AsyncFunction = Object.getPrototypeOf(async function () {}).constructor;
 
 function source(file, nodeName) {

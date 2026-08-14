@@ -6,7 +6,7 @@ const path = require('node:path');
 
 const workspace = process.env.WORKSPACE_ROOT || '/workspace';
 const workflow = JSON.parse(fs.readFileSync(path.join(
-  workspace, 'n8n', 'workflows', 'tnavigator-schedule-builder.workflow.json',
+  workspace, 'n8n', 'workflows', 'core', 'tnavigator-schedule-builder.workflow.json',
 ), 'utf8'));
 const node = workflow.nodes.find((candidate) => candidate.name === 'Run deterministic SCHEDULE intake');
 assert(node && node.type === 'n8n-nodes-base.code');

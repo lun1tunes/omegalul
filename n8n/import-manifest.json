@@ -4,50 +4,47 @@
   "target_n8n_version": "2.30.8",
   "deployment_mode": "ui_only_no_global_variables",
   "full_clean_import_set": [
-    "workflows/ai-components.workflow.json",
-    "workflows/calculation-specialist-adapter.workflow.json",
-    "workflows/engineering-specialist-template.workflow.json",
-    "workflows/excel-engineering-specialist-adapter.workflow.json",
-    "workflows/excel-extraction-agent.workflow.json",
-    "workflows/excel-extraction-form-adapter.workflow.json",
-    "workflows/excel-rag-ingestion.workflow.json",
-    "workflows/mas-deployment-health-check.workflow.json",
-    "workflows/mas-human-gate-form.workflow.json",
-    "workflows/mas-trace-event-writer.workflow.json",
-    "workflows/mvp-entry-form.workflow.json",
-    "workflows/tnavigator-schedule-builder.workflow.json",
-    "workflows/tnavigator-schedule-hybrid-retrieval.workflow.json",
-    "workflows/tnavigator-schedule-knowledge-ingestion.workflow.json",
-    "workflows/universal-engineering-orchestrator.workflow.json"
+    "workflows/core/calculation-specialist-adapter.workflow.json",
+    "workflows/core/cas-persist-task.workflow.json",
+    "workflows/core/excel-engineering-specialist-adapter.workflow.json",
+    "workflows/core/excel-extraction-agent.workflow.json",
+    "workflows/core/mas-deployment-health-check.workflow.json",
+    "workflows/core/mas-human-gate-form.workflow.json",
+    "workflows/core/mas-trace-event-writer.workflow.json",
+    "workflows/core/mvp-entry-form.workflow.json",
+    "workflows/core/tnavigator-schedule-builder.workflow.json",
+    "workflows/core/tnavigator-schedule-hybrid-retrieval.workflow.json",
+    "workflows/core/tnavigator-schedule-knowledge-ingestion.workflow.json",
+    "workflows/core/universal-engineering-orchestrator.workflow.json",
+    "workflows/support/ai-components.workflow.json",
+    "workflows/support/engineering-specialist-template.workflow.json",
+    "workflows/support/excel-extraction-form-adapter.workflow.json"
   ],
   "runtime_import_order": [
-    "workflows/calculation-specialist-adapter.workflow.json",
-    "workflows/excel-extraction-agent.workflow.json",
-    "workflows/excel-engineering-specialist-adapter.workflow.json",
-    "workflows/tnavigator-schedule-knowledge-ingestion.workflow.json",
-    "workflows/tnavigator-schedule-hybrid-retrieval.workflow.json",
-    "workflows/tnavigator-schedule-builder.workflow.json",
-    "workflows/mas-trace-event-writer.workflow.json",
-    "workflows/universal-engineering-orchestrator.workflow.json",
-    "workflows/mvp-entry-form.workflow.json",
-    "workflows/mas-human-gate-form.workflow.json",
-    "workflows/mas-deployment-health-check.workflow.json"
+    "workflows/core/calculation-specialist-adapter.workflow.json",
+    "workflows/core/excel-extraction-agent.workflow.json",
+    "workflows/core/excel-engineering-specialist-adapter.workflow.json",
+    "workflows/core/tnavigator-schedule-knowledge-ingestion.workflow.json",
+    "workflows/core/tnavigator-schedule-hybrid-retrieval.workflow.json",
+    "workflows/core/tnavigator-schedule-builder.workflow.json",
+    "workflows/core/mas-trace-event-writer.workflow.json",
+    "workflows/core/cas-persist-task.workflow.json",
+    "workflows/core/universal-engineering-orchestrator.workflow.json",
+    "workflows/core/mvp-entry-form.workflow.json",
+    "workflows/core/mas-human-gate-form.workflow.json",
+    "workflows/core/mas-deployment-health-check.workflow.json"
   ],
   "optional_or_non_runtime": [
     {
-      "workflow": "workflows/excel-extraction-form-adapter.workflow.json",
+      "workflow": "workflows/support/excel-extraction-form-adapter.workflow.json",
       "reason": "standalone Excel form only"
     },
     {
-      "workflow": "workflows/excel-rag-ingestion.workflow.json",
-      "reason": "Excel operating-guide seeding only"
-    },
-    {
-      "workflow": "workflows/engineering-specialist-template.workflow.json",
+      "workflow": "workflows/support/engineering-specialist-template.workflow.json",
       "reason": "extension template"
     },
     {
-      "workflow": "workflows/ai-components.workflow.json",
+      "workflow": "workflows/support/ai-components.workflow.json",
       "reason": "reference components"
     }
   ],
@@ -97,6 +94,60 @@
   "mandatory_execute_workflow_bindings": [
     {
       "owner": "Orchestrator — Engineering MAS",
+      "node": "Call CAS persist — insert new task",
+      "target": "CAS — Persist Task State",
+      "placeholder": "REPLACE_CAS_PERSIST_IN_UI"
+    },
+    {
+      "owner": "Orchestrator — Engineering MAS",
+      "node": "Call CAS persist — human action then plan",
+      "target": "CAS — Persist Task State",
+      "placeholder": "REPLACE_CAS_PERSIST_IN_UI"
+    },
+    {
+      "owner": "Orchestrator — Engineering MAS",
+      "node": "Call CAS persist — terminal human action",
+      "target": "CAS — Persist Task State",
+      "placeholder": "REPLACE_CAS_PERSIST_IN_UI"
+    },
+    {
+      "owner": "Orchestrator — Engineering MAS",
+      "node": "Call CAS persist — plan or human gate",
+      "target": "CAS — Persist Task State",
+      "placeholder": "REPLACE_CAS_PERSIST_IN_UI"
+    },
+    {
+      "owner": "Orchestrator — Engineering MAS",
+      "node": "Call CAS persist — SCHEDULE evidence retry",
+      "target": "CAS — Persist Task State",
+      "placeholder": "REPLACE_CAS_PERSIST_IN_UI"
+    },
+    {
+      "owner": "Orchestrator — Engineering MAS",
+      "node": "Call CAS persist — SCHEDULE resume",
+      "target": "CAS — Persist Task State",
+      "placeholder": "REPLACE_CAS_PERSIST_IN_UI"
+    },
+    {
+      "owner": "Orchestrator — Engineering MAS",
+      "node": "Call CAS persist — verification",
+      "target": "CAS — Persist Task State",
+      "placeholder": "REPLACE_CAS_PERSIST_IN_UI"
+    },
+    {
+      "owner": "Orchestrator — Engineering MAS",
+      "node": "Call CAS persist — specialist gate or error",
+      "target": "CAS — Persist Task State",
+      "placeholder": "REPLACE_CAS_PERSIST_IN_UI"
+    },
+    {
+      "owner": "Orchestrator — Engineering MAS",
+      "node": "Call CAS persist — routing gate",
+      "target": "CAS — Persist Task State",
+      "placeholder": "REPLACE_CAS_PERSIST_IN_UI"
+    },
+    {
+      "owner": "Orchestrator — Engineering MAS",
       "node": "Call Excel Extraction Specialist Adapter",
       "target": "Adapter — Excel Extraction",
       "placeholder": "REPLACE_EXCEL_ADAPTER_IN_UI"
@@ -104,7 +155,31 @@
     {
       "owner": "Orchestrator — Engineering MAS",
       "node": "Call SCHEDULE Hybrid Retrieval",
-      "target": "SCHEDULE — Knowledge Retrieval",
+      "target": "MAS — Knowledge Retrieval",
+      "placeholder": "REPLACE_SCHEDULE_RAG_RETRIEVAL_IN_UI"
+    },
+    {
+      "owner": "Orchestrator — Engineering MAS",
+      "node": "Call routing Hybrid Retrieval",
+      "target": "MAS — Knowledge Retrieval",
+      "placeholder": "REPLACE_SCHEDULE_RAG_RETRIEVAL_IN_UI"
+    },
+    {
+      "owner": "Orchestrator — Engineering MAS",
+      "node": "Call Excel protocol Hybrid Retrieval",
+      "target": "MAS — Knowledge Retrieval",
+      "placeholder": "REPLACE_SCHEDULE_RAG_RETRIEVAL_IN_UI"
+    },
+    {
+      "owner": "Agent — Excel Extractor",
+      "node": "Call Excel protocol Hybrid Retrieval",
+      "target": "MAS — Knowledge Retrieval",
+      "placeholder": "REPLACE_SCHEDULE_RAG_RETRIEVAL_IN_UI"
+    },
+    {
+      "owner": "Template — Engineering Specialist",
+      "node": "Call specialist Hybrid Retrieval",
+      "target": "MAS — Knowledge Retrieval",
       "placeholder": "REPLACE_SCHEDULE_RAG_RETRIEVAL_IN_UI"
     },
     {
@@ -163,7 +238,7 @@
     }
   ],
   "health_check": {
-    "workflow": "workflows/mas-deployment-health-check.workflow.json",
+    "workflow": "workflows/core/mas-deployment-health-check.workflow.json",
     "ui_name": "Form — MAS Deployment Health Check",
     "runbook": "docs.md",
     "data_table_probes": [
@@ -185,7 +260,7 @@
     "does_not_call": [
       "LLM Planner/Verifier",
       "Excel Adapter/Agent",
-      "SCHEDULE Builder/Retrieval"
+      "SCHEDULE Builder, MAS Knowledge Retrieval"
     ]
   },
   "future_enterprise_or_optional_bindings": [],
@@ -214,19 +289,20 @@
     }
   ],
   "ui_configuration": [
-    "Select both Data Tables in every matching Data Table node.",
-    "Apply all mandatory Execute Workflow bindings (Entry, Human Gate, Health Check, Orchestrator specialists) — see docs.md Step 4.",
+    "Select both Data Tables in every matching Data Table node. Task-state insert/update are only in CAS — Persist Task State; Orchestrator keeps Load task by ID.",
+    "Apply all mandatory Execute Workflow bindings (CAS persist fan-in, Entry, Human Gate, Health Check, Orchestrator specialists) — see docs.md Step 4.",
     "Create Data Tables from docs.md or n8n/data-tables/*.header.csv, then bind every Data Table node listed in Step 3.",
     "Run Form — MAS Deployment Health Check before activating user forms; fix every FAIL using where_to_fix.",
     "Activate Form — MAS Entry for new tasks and Form — MAS Human Gate for transparent HITL resume; engineers answer questions in the form without copying expected_version/gate_id.",
     "Configure Excel Tools base URL/API key; 127.0.0.1 is valid only when n8n runs on the same Windows host.",
     "Edit Math Service Configuration in the Calculation Adapter; its default is http://127.0.0.1:8100/api/v1/math and it uses no credential.",
-    "Configure one embedding model/dimension consistently for SCHEDULE ingestion and retrieval.",
-    "Use Knowledge Ingestion to load expert-authored keyword_instruction and worked_example text into target_base=schedule_mvp; include schema_catalogue JSON only when deterministic rendering needs it.",
+    "Configure one embedding model/dimension consistently for MAS — Knowledge Ingestion and MAS — Knowledge Retrieval.",
+    "Use MAS — Knowledge Ingestion to load expert-authored keyword_instruction and worked_example text into target_base=schedule_mvp; include schema_catalogue JSON only when deterministic rendering needs it.",
+    "Seed the packaged MAS corpus (excel_protocol / orchestrator_routing / specialist_template) via MAS — Knowledge Ingestion Manual trigger; existing target_base+knowledge_id+revision rows are skipped. Empty tag filters never match the whole namespace.",
     "Keep every workflow inactive until placeholders and credentials are resolved. Activate only required user-facing entrypoints."
   ],
   "activation_order": [
-    "Run SCHEDULE Knowledge Ingestion manually and verify expert keyword instructions and worked examples through Hybrid Retrieval.",
+    "Run MAS — Knowledge Ingestion (Manual trigger Sync packaged MAS knowledge) and verify through MAS — Knowledge Retrieval.",
     "Smoke-test Excel Agent and the inline .data/.inc path while inactive.",
     "Smoke-test Universal Orchestrator through Execute Workflow, then Form, then authenticated HTTP.",
     "Activate Universal Orchestrator web entrypoints only after all gates pass."
@@ -236,11 +312,13 @@
     "Calculation Adapter asks for one or more DEV trajectories plus exactly one surface when they are absent and otherwise posts every DEV as repeated trajectory_files fields in one Math Service request",
     "Excel clarification resumes with the same controlled task and correlated evidence snapshot",
     "CREATE and REVISE stop when an affected keyword lacks an active expert instruction or schema JSON needed for deterministic rendering",
-    "Hybrid Retrieval combines lexical, semantic and exact tags with RRF and returns full active parent knowledge blocks",
+    "Hybrid Retrieval combines lexical, semantic and exact tags with RRF and returns full active parent knowledge blocks per target_base (schedule_mvp, excel_protocol, orchestrator_routing, specialist_template)",
+    "Planner, Excel Extractor, SCHEDULE Builder and the specialist template inject RAG via governed retrieval, not an agent vector tool",
     "Builder evidence_gap routes through Orchestrator to Excel and resumes Builder; no direct specialist-to-specialist call exists",
     "validated CREATE and preserve-by-default REVISE return ordinary bounded .INC text plus completeness/preservation and diff evidence",
     "redacted traces expose decisions, readiness, gates and tool IDs/hashes without prompts, secrets, binary or raw payloads",
-    "stale expected_version or wrong gate_id fails closed"
+    "stale expected_version or wrong gate_id fails closed",
+    "CAS persist fails closed on invalid request, 0/N matched rows, or echoed attempted input"
   ],
   "mvp_external_blockers": [
     "expert-authored active keyword_instruction and schema JSON for each keyword used by the MVP scenario",
