@@ -894,6 +894,7 @@ def test_universal_orchestrator_has_a_static_schedule_builder_route() -> None:
     assert set(rag_call["parameters"]["workflowInputs"]["value"]) == {"schedule_retrieval_request"}
     assert rag_call["onError"] == "continueRegularOutput"
     assert "SCHEDULE_RAG_EVIDENCE_REQUIRED" in by_name["Build SCHEDULE RAG evidence gate"]["parameters"]["jsCode"]
+    assert "schedule_access_scope" not in by_name["Build SCHEDULE RAG evidence gate"]["parameters"]["jsCode"]
     attach = by_name["Attach governed SCHEDULE RAG evidence"]["parameters"]["jsCode"]
     assert "schedule_rag_evidence" in attach
     assert "result.citations.length>0" in attach
@@ -997,6 +998,32 @@ def test_schedule_flow_is_orchestrator_mediated_and_multi_stage() -> None:
     assert "idempotency_key:`${base.task_id}:specialist:" in apply_plan
     assert "expected_version:Number(base.version)+1" in apply_plan
     assert "policy_version:'petroleum-schedule-policy-v1'" in resume_code
+    assert "blockingQuestions" in apply_plan
+    assert "profileQuestion" in apply_plan
+    assert "excelOwnedQuestion" in apply_plan
+    assert "access_scope:clean(c.access_scope)||'petroleum-engineering'" in apply_plan
+    assert "unit_system:clean(c.unit_system)||'METRIC'" in apply_plan
+    assert "simulator:clean(c.simulator)||'tNavigator'" in apply_plan
+    assert "simulator_version:clean(c.simulator_version)||'22.2'" in apply_plan
+    assert "if(blockingQuestions.length)hardBlockers.push('PLANNER_UNRESOLVED_QUESTIONS')" in apply_plan
+    assert "&&!excelDelegation&&!calcDelegation)hardBlockers.push('ENTITY_TEMPORAL_SCOPE_INCOMPLETE')" in apply_plan
+    assert "planner_questions:questions.length" in apply_plan
+    rag_gate = by_name["Build SCHEDULE RAG evidence gate"]["parameters"]["jsCode"]
+    assert "schedule_access_scope" not in rag_gate
+    assert "schedule_rag_evidence" in rag_gate
+    planner_message = by_name["Engineering Planner Agent"]["parameters"]["options"]["systemMessage"]
+    assert "It is not a questionnaire" in planner_message
+    assert "When to ask vs delegate" in planner_message
+    assert "access_scope=petroleum-engineering" in planner_message
+    assert "Do not ask the human to confirm these defaults" in planner_message
+    hitl_card = next(
+        document
+        for document in ingestible_operating_guide_documents()
+        if document.get("knowledge_id") == "route-hitl-required-evidence"
+    )
+    assert hitl_card["revision"] == "2"
+    assert "delegate excel_extraction_specialist, не HITL" in hitl_card["text"]
+    assert "Builder RAG evidence gate" in hitl_card["text"]
 
 
 def test_schedule_builder_is_bounded_and_orchestrator_mediated() -> None:

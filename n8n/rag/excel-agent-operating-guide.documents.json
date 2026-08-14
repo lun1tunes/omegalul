@@ -188,7 +188,7 @@
       "target_base": "orchestrator_routing",
       "knowledge_type": "routing_card",
       "knowledge_id": "route-excel-extractor",
-      "revision": "1",
+      "revision": "2",
       "title": "Excel Extractor routing card",
       "keywords": [
         "EXCEL_EXTRACTION_SPECIALIST",
@@ -205,7 +205,7 @@
       "status": "active",
       "author": "orchestrator-routing-maintainer",
       "access_scope": "petroleum-engineering",
-      "text": "Делегируйте excel_extraction_specialist, когда нужен табличный факт из .xlsx/.xls. Required evidence: workbook binary в поле file, не в CAS state. После успеха передайте compact_data как source_facts в schedule_builder_specialist. Не вызывайте Builder из Excel.",
+      "text": "Делегируйте excel_extraction_specialist, когда нужен табличный факт из .xlsx/.xls. Required evidence: workbook binary в поле file, не в CAS state. Если файла нет — delegate Excel, не HITL. Не спрашивайте человека про содержимое таблиц, имена листов, ORAT/дебиты, единицы или CRS: их читает агент Excel. После успеха передайте compact_data как source_facts в schedule_builder_specialist. Не вызывайте Builder из Excel.",
       "id": "route-excel-extractor"
     },
     {
@@ -214,7 +214,7 @@
       "target_base": "orchestrator_routing",
       "knowledge_type": "routing_card",
       "knowledge_id": "route-schedule-builder",
-      "revision": "1",
+      "revision": "2",
       "title": "SCHEDULE Builder routing card",
       "keywords": [
         "SCHEDULE_BUILDER_SPECIALIST",
@@ -231,7 +231,7 @@
       "status": "active",
       "author": "orchestrator-routing-maintainer",
       "access_scope": "petroleum-engineering",
-      "text": "Делегируйте schedule_builder_specialist для CREATE/REVISE tNavigator 22.2 SCHEDULE. Required evidence: requested_keyword_scope, facts/source_facts, и для REVISE baseline .inc. Orchestrator вызывает Hybrid Retrieval с target_base=schedule_mvp до Builder. Builder никогда не вызывает Excel.",
+      "text": "Делегируйте schedule_builder_specialist для CREATE/REVISE tNavigator 22.2 SCHEDULE. Controls уже заданы: METRIC, tNavigator 22.2, access_scope=petroleum-engineering — не подтверждайте их HITL. Required evidence: requested_keyword_scope, facts/source_facts, и для REVISE baseline .inc. Пробел keyword_instruction/schema_catalogue в schedule_mvp закрывает Builder RAG gate после routing, не вопрос планировщика. Orchestrator вызывает Hybrid Retrieval с target_base=schedule_mvp до Builder. Builder никогда не вызывает Excel.",
       "id": "route-schedule-builder"
     },
     {
@@ -240,7 +240,7 @@
       "target_base": "orchestrator_routing",
       "knowledge_type": "routing_card",
       "knowledge_id": "route-calculation",
-      "revision": "1",
+      "revision": "2",
       "title": "Calculation specialist routing card",
       "keywords": [
         "ENGINEERING_CALCULATION_SPECIALIST",
@@ -258,7 +258,7 @@
       "status": "active",
       "author": "orchestrator-routing-maintainer",
       "access_scope": "petroleum-engineering",
-      "text": "Делегируйте engineering_calculation_specialist при .dev траекториях и одном ASCII CPS3. Не генерирует SCHEDULE text. После успеха несите compact_data.calculation в Builder. Required evidence: один или более .dev и ровно одна поверхность в той же CRS/units/datum.",
+      "text": "Делегируйте engineering_calculation_specialist при .dev траекториях и одном ASCII CPS3. Не генерирует SCHEDULE text. После успеха несите compact_data.calculation в Builder. HITL оправдан только если нет одного или более .dev и ровно одной ASCII CPS3 поверхности в той же CRS/units/datum. Не спрашивайте units/CRS/access_scope, если petroleum defaults уже заданы.",
       "id": "route-calculation"
     },
     {
@@ -267,7 +267,7 @@
       "target_base": "orchestrator_routing",
       "knowledge_type": "routing_card",
       "knowledge_id": "route-hitl-required-evidence",
-      "revision": "1",
+      "revision": "2",
       "title": "HITL and required-evidence matrix",
       "keywords": [
         "HITL",
@@ -283,7 +283,7 @@
       "status": "active",
       "author": "orchestrator-routing-maintainer",
       "access_scope": "petroleum-engineering",
-      "text": "Если отсутствует workbook, baseline SCHEDULE, keyword scope, access_scope или routing/protocol knowledge — needs_input, не угадывание. critical risk требует approval до delegation. Data/Document specialists не сконфигурированы: needs_decision на routing. Verifier не получает domain RAG.",
+      "text": "Petroleum defaults уже заданы: access_scope=petroleum-engineering, unit_system=METRIC, simulator=tNavigator 22.2. HITL только для фактов, без которых нельзя выбрать специалиста или отдать пакет в Builder: нет objective/deliverable; REVISE без baseline .inc/.data; идём в Builder без requested_keyword_scope; идём в Calculation без .dev и ровно одной ASCII CPS3; critical risk (needs_approval до delegation); Data/Document specialists (needs_decision). Отсутствующий workbook → delegate excel_extraction_specialist, не HITL. Не спрашивайте units, CRS, access_scope, simulator. Пробел schedule_mvp keyword_instruction/schema_catalogue — Builder RAG evidence gate после routing, не вопрос планировщика. Verifier не получает domain RAG.",
       "id": "route-hitl-required-evidence"
     },
     {

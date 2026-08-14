@@ -72,7 +72,22 @@ function basePlannerRequest(requestOverrides = {}) {
     specialist_catalog: [
       { specialist_id: 'engineering_calculation_specialist' },
       { specialist_id: 'schedule_builder_specialist' },
+      { specialist_id: 'excel_extraction_specialist' },
     ],
+  };
+}
+
+function excelPacket(overrides = {}) {
+  return {
+    contract: 'specialist_packet',
+    contract_version: '1.0',
+    specialist_id: 'excel_extraction_specialist',
+    objective: 'Extract governed well rates from the workbook',
+    inputs: { requested_fields: ['WELL', 'ORAT'] },
+    controls: { bounded_request: true },
+    acceptance_criteria: [{ id: 'c1', required: true, check: 'tabular rows', expected: 'finite' }],
+    artifact_refs: [],
+    ...overrides,
   };
 }
 
@@ -172,6 +187,93 @@ async function main() {
   assert(JSON.parse(scheduleGate.plan_json).decision_record.selected_action.reason_codes.includes(
     'ENTITY_TEMPORAL_SCOPE_INCOMPLETE',
   ));
+
+  const excelQuestions = [
+    { id: 'units', text: 'Какая unit system / METRIC?' },
+    { id: 'scope', text: 'Confirm access_scope petroleum-engineering' },
+    { id: 'wb', text: 'Which workbook .xlsx sheet has well rates / ORAT?' },
+  ];
+  const excelDelegated = (await execute(
+    orchestrator,
+    'Validate and apply plan',
+    {
+      output: plannerOutput({
+        decision: 'delegate',
+        task_type: 'excel_extraction',
+        plan: { workflow_kind: 'schedule' },
+        questions: excelQuestions,
+        specialist_packet: excelPacket(),
+      }),
+    },
+    { 'Prepare planner input': basePlannerRequest({ task_type: 'schedule_build' }) },
+  ))[0].json;
+  const excelPlan = JSON.parse(excelDelegated.plan_json);
+  const excelPacketOut = JSON.parse(excelDelegated.specialist_json);
+  assert.equal(excelDelegated.status, 'delegated');
+  assert.equal(excelDelegated.specialist_id, 'excel_extraction_specialist');
+  assert.equal(excelPlan.score.raw_counts.questions, 0);
+  assert.equal(excelPlan.score.raw_counts.planner_questions, 3);
+  assert.equal(excelPlan.decision_record.unresolved_questions.length, 0);
+  assert.equal(excelPlan.decision_record.selected_action.reason_codes.includes('PLANNER_UNRESOLVED_QUESTIONS'), false);
+  assert.equal(excelPlan.decision_record.selected_action.reason_codes.includes('ENTITY_TEMPORAL_SCOPE_INCOMPLETE'), false);
+  assert.equal(excelPacketOut.controls.access_scope, 'petroleum-engineering');
+  assert.equal(excelPacketOut.controls.unit_system, 'METRIC');
+  assert.equal(excelPacketOut.controls.simulator, 'tNavigator');
+  assert.equal(excelPacketOut.controls.simulator_version, '22.2');
+
+  const excelFlip = (await execute(
+    orchestrator,
+    'Validate and apply plan',
+    {
+      output: plannerOutput({
+        decision: 'needs_input',
+        reason: 'Need units and workbook.',
+        questions: [
+          { id: 'units', text: 'Specify unit system METRIC or FIELD' },
+          { id: 'wb', text: 'Upload the .xlsx workbook' },
+        ],
+        specialist_packet: excelPacket(),
+      }),
+    },
+    { 'Prepare planner input': basePlannerRequest() },
+  ))[0].json;
+  assert.equal(excelFlip.status, 'delegated');
+  assert.equal(JSON.parse(excelFlip.specialist_json).specialist_id, 'excel_extraction_specialist');
+  assert.equal(JSON.parse(excelFlip.plan_json).planner_decision, 'delegate');
+  assert.equal(JSON.parse(excelFlip.pending_human_json).questions, undefined);
+
+  const builderBlocked = (await execute(
+    orchestrator,
+    'Validate and apply plan',
+    {
+      output: plannerOutput({
+        decision: 'delegate',
+        task_type: 'schedule_build',
+        plan: { workflow_kind: 'schedule' },
+        questions: [
+          { id: 'keyword_scope', text: 'Какой requested_keyword_scope нужен для Builder?' },
+        ],
+        specialist_packet: {
+          ...plannerOutput().specialist_packet,
+          specialist_id: 'schedule_builder_specialist',
+          objective: 'Create WCONPROD controls',
+          inputs: {
+            entity: 'WELL-1',
+            effective_at: '2025-01-01',
+            schedule_request: { requested_keyword_scope: ['WCONPROD'] },
+          },
+        },
+      }),
+    },
+    { 'Prepare planner input': basePlannerRequest({ task_type: 'schedule_build' }) },
+  ))[0].json;
+  const builderBlockedPlan = JSON.parse(builderBlocked.plan_json);
+  assert.equal(builderBlocked.status, 'awaiting_human');
+  assert(builderBlockedPlan.decision_record.selected_action.reason_codes.includes(
+    'PLANNER_UNRESOLVED_QUESTIONS',
+  ));
+  assert.equal(JSON.parse(builderBlocked.pending_human_json).questions.length, 1);
+  assert.equal(JSON.parse(builderBlocked.pending_human_json).questions[0].id, 'keyword_scope');
 
   const packet = {
     contract: 'specialist_packet',
@@ -349,7 +451,7 @@ async function main() {
   assert.equal(traceRows.length, preparedTrace.mas_trace_events.length);
   assert(traceRows.every((row) => !row.json.trace_row.details_json.includes('raw_prompt')));
 
-  console.log('Universal decision runtime smoke: 14 scenarios passed');
+  console.log('Universal decision runtime smoke: 17 scenarios passed');
 }
 
 main().catch((error) => {
