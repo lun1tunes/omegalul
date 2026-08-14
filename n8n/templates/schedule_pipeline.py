@@ -137,7 +137,8 @@ Do not emit `WGRUPCON` (outside allowlist) — if fixed per-well guides required
 
 ### Compositional streams (E3 / tN)
 `WELLSTRE` = named inject stream mole fractions (oil/gas); Σxi = 1; Nc matches model component count. Not for E1. Do not confuse with `WELLSTRW` (multicomponent water; outside allowlist).
-`GINJGAS` = group inject-gas composition for compositional models with `GCONINJE` GAS (SOURCE = GAS|STREAM|MIX|GV|WV|GRUP). STREAM needs prior `WELLSTRE`; MIX needs `WINJMIX` (outside allowlist → `needs_input`). Still outside: `WINJGAS`, `GSATCOMP`, `WINJMIX`, `WELLSTRW`.
+`WINJGAS` = well inject-gas composition for compositional models with `WCONINJE` GAS (SOURCE = GAS|STREAM|MIX|GV|WV|GRUP). STREAM needs prior `WELLSTRE`; MIX needs `WINJMIX` (outside allowlist → `needs_input`). Well or `*LIST` after WLIST.
+`GINJGAS` = group inject-gas composition with `GCONINJE` GAS (same SOURCE enum). Still outside: `GSATCOMP`, `WINJMIX`, `WELLSTRW`.
 Never invent component counts, mole fractions, stream/mix names, or GV/WV sources without facts.
 
 ### Network (§2.14.11)
@@ -149,6 +150,7 @@ Leaf groups with wells must still align with `GRUPTREE`. Without NETWORK when to
 ### VFP tables (producers)
 `VFPPROD` bodies are large empirical BHP tables (Prosper / well-performance software / baseline `.inc`), not invented in Builder.
 MVP job: know **table number** `N` and wire it into `WCONPROD` / `WCONHIST` field VFP_TABLE (and ALQ units per that table). KEEP existing `VFPPROD` in REVISE. Never fabricate FLO/THP/WFR/GFR/ALQ axes or table body → `needs_input` for missing table artifact.
+`WVFPDP` = per-well BHP add-on (METRIC: bars) and optional tubing ΔP scale `fp` applied to interpolated VFP BHP (`BHP1 = THP + fp*(BHPtab−THP)`). Emit `WVFPDP` only (not inventing `VFPDP`). Values from facts; do not invent calibrations.
 
 ### Conditional actions (§12.20.161+)
 `ACTIONX` + `ENDACTIO` = conditional SCHEDULE block (AND/OR conditions on wells/groups/regions/time/FIELD/completions). Emit `ENDACTIO` only (not synonym `ENDACTION`).
@@ -176,11 +178,11 @@ Never mix paths or emit both for the same event without facts.
 - Schema-allowed omission: `*` / `N*` — only when catalogue/facts permit.
 
 ## Allowlist (emit only these)
-DATES, INCLUDE, GRUPTREE, WELSPECS, WELLTRACK, COMPDATMD, WCONHIST, WCONPROD, WCONINJE, GCONPROD, GCONINJE, GUIDERAT, GSATPROD, GSATINJE, WELLSTRE, GINJGAS, BRANPROP, NODEPROP, GNETDP, NETBALAN, FRACTURE_TEMPLATE, FRACTURE_SPECS, FRACTURE_STAGE, WECON, WTEST, WELTARG, WNETDP, WPIMULT, WDFAC, WELDRAW, WLIST, WFRACP, WFRACPL, VFPPROD, ACTIONX, DELAYACT, ENDACTIO, UDQ, UDT, APPLYSCRIPT.
+DATES, INCLUDE, GRUPTREE, WELSPECS, WELLTRACK, COMPDATMD, WCONHIST, WCONPROD, WCONINJE, GCONPROD, GCONINJE, GUIDERAT, GSATPROD, GSATINJE, WELLSTRE, WINJGAS, GINJGAS, BRANPROP, NODEPROP, GNETDP, NETBALAN, FRACTURE_TEMPLATE, FRACTURE_SPECS, FRACTURE_STAGE, WECON, WTEST, WELTARG, WNETDP, WPIMULT, WDFAC, WELDRAW, WLIST, WFRACP, WFRACPL, VFPPROD, WVFPDP, ACTIONX, DELAYACT, ENDACTIO, UDQ, UDT, APPLYSCRIPT.
 
 ## Explicitly out of scope (never invent)
 - SCHEDULE property/region edits listed in §12.20 but not allowlisted: SATNUM, PVTNUM, ROCKNUM, MULTX/Y/Z±, PORO, NTG, PERMX/Y/Z, LX/LY/LZ, SOIL/SWAT/SGAS, …
-- Other ACTION* forms (`ACTION`, `ACTIONG`, `ACTIONR`, `ACTIONW`, `ACTIONC`) and synonym `ENDACTION` (emit `ENDACTIO`); `UDQPARAM` / `UDTDIMS` (RUNSPEC dims); inventing `APPLYSCRIPT` Python **bodies**/helpers; hist injectors (`WCONINJH`); short synonym `WCONINJ` (emit `WCONINJE`); LGR declare (`WELSPECL`/`COMPDATL`) as CREATE emit; `COMPDAT`/`COMPDATL`; `FRACTURE_WELL` synonym (emit `FRACTURE_SPECS`); inventing `VFPPROD`/`VFPINJ` table **bodies** (Prosper/external); fixed per-well guides `WGRUPCON`; well/satellite composition wiring still outside (`WINJGAS`, `GSATCOMP`, `WINJMIX`, `WELLSTRW`); network inject tree `GNETINJE`; econ/group variants outside allowlist (`WECONX`, `GECON*`, `GCONSUMP`, …).
+- Other ACTION* forms (`ACTION`, `ACTIONG`, `ACTIONR`, `ACTIONW`, `ACTIONC`) and synonym `ENDACTION` (emit `ENDACTIO`); `UDQPARAM` / `UDTDIMS` (RUNSPEC dims); inventing `APPLYSCRIPT` Python **bodies**/helpers; hist injectors (`WCONINJH`); short synonym `WCONINJ` (emit `WCONINJE`); LGR declare (`WELSPECL`/`COMPDATL`) as CREATE emit; `COMPDAT`/`COMPDATL`; `FRACTURE_WELL` synonym (emit `FRACTURE_SPECS`); inventing `VFPPROD`/`VFPINJ` table **bodies** (Prosper/external); fixed per-well guides `WGRUPCON`; satellite/mix/water composition still outside (`GSATCOMP`, `WINJMIX`, `WELLSTRW`); network inject tree `GNETINJE`; econ/group variants outside allowlist (`WECONX`, `GECON*`, `GCONSUMP`, …).
 If the task needs any of the above → `needs_input` (do not approximate with a nearby allowlisted keyword).
 
 ## Modes

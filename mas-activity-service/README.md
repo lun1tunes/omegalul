@@ -6,9 +6,9 @@ Live chat-style presentation of Orchestrator ↔ specialist handoffs.
 
 ```bash
 cd mas-activity-service
-python3 -m venv .venv
-.venv/bin/pip install -r requirements.txt
-MAS_ACTIVITY_KEY=dev-local .venv/bin/uvicorn app.main:app --host 127.0.0.1 --port 8200
+python3 -m pip install -r requirements.txt
+MAS_ACTIVITY_KEY=dev-local PYTHONPATH=. python3 -m uvicorn app.main:app --host 127.0.0.1 --port 8200
+# tests: PYTHONPATH=. python3 -m pytest -q tests/test_activity_api.py
 ```
 
 Open [http://127.0.0.1:8200/](http://127.0.0.1:8200/) → **Seed demo**, or `/t/<task_id>`.

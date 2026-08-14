@@ -46,6 +46,7 @@ flowchart TB
 
   Trace[Trace Writer]:::box
   TraceDT[(trace events)]:::data
+  Activity[Activity UI]:::svc
 
   subgraph EXCEL[Excel subsystem]
     direction TB
@@ -98,6 +99,7 @@ flowchart TB
   Orch --> TaskDT
   CasPersist --> TaskDT
   Orch --> Trace --> TraceDT
+  Trace -.-> Activity
   Orch --> ExcelAdapt
   Orch --> SRetr
   Orch --> CalcAdapt
@@ -108,7 +110,7 @@ flowchart TB
   SRetr <--> Pg
 ```
 
-**MVP runtime (активировать forms только после Health Check):** Entry, Human Gate, Health Check, Orchestrator, `CAS — Persist Task State`, Trace, Excel Adapter+Agent, `MAS — Knowledge Ingestion` / `MAS — Knowledge Retrieval`, `SCHEDULE — Builder`, Calculation Adapter.
+**MVP runtime (активировать forms только после Health Check):** Entry, Human Gate, Health Check, Orchestrator, `CAS — Persist Task State`, Trace, Excel Adapter+Agent, `MAS — Knowledge Ingestion` / `MAS — Knowledge Retrieval`, `SCHEDULE — Builder`, Calculation Adapter. Презентация handoff’ов — опциональный `mas-activity-service` (`:8200`), питается от Trace Writer после durable insert.
 
 **Не активировать:** `Adapter — Excel Form`, `Template — Engineering Specialist`, `Reference — AI Components`. `CAS — Persist Task State` остаётся inactive (его вызывает Orchestrator). `MAS — Knowledge Ingestion` не Publish: первый пакет — Manual-триггер, дальше — вставка всей простыни `excel-agent-operating-guide.documents.json`.
 
@@ -192,7 +194,7 @@ py -m venv .venv
 ```bash
 cd mas-activity-service
 python3 -m pip install -r requirements.txt
-MAS_ACTIVITY_KEY=dev-local python3 -m uvicorn app.main:app --host 127.0.0.1 --port 8200
+MAS_ACTIVITY_KEY=dev-local PYTHONPATH=. python3 -m uvicorn app.main:app --host 127.0.0.1 --port 8200
 ```
 
 UI: `http://127.0.0.1:8200/` (кнопка **Seed demo**). В ленте: краткий `brief` (1–4 предложения), абсолютное время UTC, длительность specialist, статус/outcome. После импорта в Code node `Prepare MAS activity sync` у `Writer — MAS Trace` выставьте `ACTIVITY_BASE_URL` / `ACTIVITY_KEY` (для n8n в Docker часто `http://host.docker.internal:8200`).
@@ -383,12 +385,13 @@ Dropped vs older drafts: `phase`, `task_type`, `history_json`, `last_error_json`
 ```bash
 WORKSPACE_ROOT="$PWD" node n8n/tests/cas-persist-runtime-smoke.js
 WORKSPACE_ROOT="$PWD" node n8n/tests/schedule-intake-runtime-smoke.js
-# …остальные n8n/tests/*.js (187 scenarios)
-# + mas-activity-service: PYTHONPATH=. python3 -m pytest -q tests/test_activity_api.py
+# …остальные n8n/tests/*.js (187 scenarios, вкл. mas-handoff + mas-activity-presentation)
+
+cd mas-activity-service && PYTHONPATH=. python3 -m pytest -q tests/test_activity_api.py   # 8 passed
 
 cd excel-agent-tools
 python -m pip install -r requirements-dev.txt
-python -m pytest tests
+python -m pytest tests   # 70 passed (incl. workflow contracts)
 ```
 
 Ожидание: smoke и pytest зелёные; clean import `n8nio/n8n:2.30.8` принимает все 15 JSON, `active=0`.
@@ -404,8 +407,9 @@ Compose: n8n `2.30.8`, PostgreSQL/PGVector, Excel Tools. На Windows для Fas
 
 ### Структура репозитория
 
-- `n8n/` — 15 workflow JSON (`workflows/core` runtime, `workflows/support` вспомогательные), import-manifest, data-tables CSV, генераторы, smoke-тесты
-- `excel-agent-tools/` — Excel FastAPI
+- `n8n/` — 15 workflow JSON (`workflows/core` runtime, `workflows/support` вспомогательные), import-manifest, data-tables CSV, генераторы, smoke-тесты (~187), contracts в `n8n/contracts/`
+- `mas-activity-service/` — chat-морда handoff’ов (`brief` / абсолютное UTC / duration specialist), SSE, sync из Trace Writer
+- `excel-agent-tools/` — Excel FastAPI + workflow contract pytest
 - `fastapi-math-service/` — NumPy geometry FastAPI
 - `context-seeder/` — опциональный прямой seeder (для UI-only не нужен)
 - `postgres-init/` — init PostgreSQL/PGVector

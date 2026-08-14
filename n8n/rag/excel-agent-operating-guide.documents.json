@@ -3433,7 +3433,7 @@
       "target_base": "schedule_mvp",
       "knowledge_type": "keyword_instruction",
       "knowledge_id": "wconinje-forecast-inject-v1",
-      "revision": "2",
+      "revision": "3",
       "title": "WCONINJE — прогнозный контроль нагнетания",
       "keywords": [
         "WCONINJE"
@@ -3461,7 +3461,7 @@
       "status": "active",
       "author": "department-hydrodynamic-expert",
       "access_scope": "petroleum-engineering",
-      "text": "WCONINJE — прогнозный контроль нагнетательной скважины.\n\nНазначение. Задаёт статус и режим управления закачкой (вода/нефть/газ/MULTI/…) на текущих часах SCHEDULE. Параметры можно точечно менять WELTARG. Форматы: tN, E1, E3. Секция: SCHEDULE. Это не добыча (WCONPROD), не hist-inject (WCONINJH; вне allowlist → needs_input), не короткий синоним WCONINJ (§12.20.45) — эмитьте только WCONINJE.\n\nКогда применять. FORECAST / после cutover для injector. После WELSPECS (+ перфорации к осмысленной закачке). Не эмитьте WCONINJE в history interval — там WCONINJH. GROUP-контроль GRUP требует GCONINJE (эмитьте GCONINJE из allowlist или KEEP baseline; без групповой цели → needs_input). E3 GAS/HCGAS/HCOIL часто требуют WINJGAS (вне allowlist → needs_input без состава в baseline).\n\nRecord layout. Keyword WCONINJE, записи `/`, блок — отдельный `/`. WELL или `*LIST` после WLIST.\n\nПоля (§12.20.44; METRIC):\n\n1. WELL — скважина или `*LIST`.\n2. FLUID — WATER|WAT | OIL | GAS | MULTI | HCGAS | HCOIL.\n   - MULTI (§2.14.6): основная фаза = WELSPECS preferred phase; RATE (поле 5) = лимит основной фазы; доли — поля 12–14 (>0).\n   - E1: HCGAS≡GAS, HCOIL≡OIL.\n3. STATUS — OPEN | STOP | SHUT. Default: OPEN.\n4. CONTROL — RATE | BHP | THP | RESV | GRUP.\n5. SURFACE_RATE — закачка surface sm3/day (лимит). Default: 1e6. MULTI → основная фаза.\n6. RESV_RATE — пластовая rm3/day. Default: 1e6.\n7. BHP — barsa (цель/лимит). Default: 6801·patm (или FBHPDEF).\n8. THP — barsa. Default: omit/0 path per facts.\n9. VFP_TABLE — VFPINJ. Default: 0.\n10–11. IGNORED (E1/E3 compat) — не эмитьте без факта совместимости.\n12–14. FOIL FWAT FGAS — доли MULTI surface (≥0; для MULTI из фактов).\n\nПереключение RATE↔BHP (§12.20.44): при RATE, если pBH выше лимита BHP → BHP; при BHP, если rate выше SURFACE_RATE → RATE; обратная проверка на шагах.\n\nКанон render MVP.\n- `water_rate` — WATER OPEN RATE surface [resv] [BHP limit…] (пример 1043/1054).\n- `water_bhp` — WATER OPEN BHP surface_or_* BHP_value (пример 43/54).\n- `multi` — MULTI + BHP/RATE + доли FOIL FWAT FGAS (пример 121R).\nНе эмитьте WCONINJ. Не копируйте учебные 253.1/400 без фактов.\n\nIR / semantics.\n- period=FORECAST; clock.uses_current=true.\n- references well WELL; prerequisites WELSPECS ENTITY.\n- state_assignments namespace well-control-inj.\n- numeric: rates/pressures ≥0; MULTI fractions ≥0.\n\nТеория (§2.14.6 — MULTI; приток §5.6).\n- MULTI — одновременная закачка фаз; доли 12–14 и основная фаза из WELSPECS.\n- BHP-контроль опирается на модель притока (§5.6 / (2.126)); RATE↔BHP auto-switch как выше.\n- E3 молярный расход: GAS/WATER — постоянная молярная плотность; HCGAS/HCOIL — flash STCOND (детали §12.20.44) — не упрощать без факта/WINJGAS.\n\nАнтипаттерны.\n- WCONPROD вместо WCONINJE на injector.\n- WCONINJE в HISTORY.\n- GRUP без GCONINJE (и без baseline group-inject-control).\n- GAS E3 без WINJGAS/состава.\n- MULTI без долей / без preferred phase.\n\nНехватка факта → needs_input: нет WELL/FLUID/CONTROL; нет rate/BHP; MULTI без долей; E3 gas composition; hist inject; GCONINJE для GRUP.\n\nКарточка самодостаточна.",
+      "text": "WCONINJE — прогнозный контроль нагнетательной скважины.\n\nНазначение. Задаёт статус и режим управления закачкой (вода/нефть/газ/MULTI/…) на текущих часах SCHEDULE. Параметры можно точечно менять WELTARG. Форматы: tN, E1, E3. Секция: SCHEDULE. Это не добыча (WCONPROD), не hist-inject (WCONINJH; вне allowlist → needs_input), не короткий синоним WCONINJ (§12.20.45) — эмитьте только WCONINJE.\n\nКогда применять. FORECAST / после cutover для injector. После WELSPECS (+ перфорации к осмысленной закачке). Не эмитьте WCONINJE в history interval — там WCONINJH. GROUP-контроль GRUP требует GCONINJE (эмитьте GCONINJE из allowlist или KEEP baseline; без групповой цели → needs_input). E3 GAS/HCGAS/HCOIL часто требуют WINJGAS (allowlist) или KEEP baseline состава.\n\nRecord layout. Keyword WCONINJE, записи `/`, блок — отдельный `/`. WELL или `*LIST` после WLIST.\n\nПоля (§12.20.44; METRIC):\n\n1. WELL — скважина или `*LIST`.\n2. FLUID — WATER|WAT | OIL | GAS | MULTI | HCGAS | HCOIL.\n   - MULTI (§2.14.6): основная фаза = WELSPECS preferred phase; RATE (поле 5) = лимит основной фазы; доли — поля 12–14 (>0).\n   - E1: HCGAS≡GAS, HCOIL≡OIL.\n3. STATUS — OPEN | STOP | SHUT. Default: OPEN.\n4. CONTROL — RATE | BHP | THP | RESV | GRUP.\n5. SURFACE_RATE — закачка surface sm3/day (лимит). Default: 1e6. MULTI → основная фаза.\n6. RESV_RATE — пластовая rm3/day. Default: 1e6.\n7. BHP — barsa (цель/лимит). Default: 6801·patm (или FBHPDEF).\n8. THP — barsa. Default: omit/0 path per facts.\n9. VFP_TABLE — VFPINJ. Default: 0.\n10–11. IGNORED (E1/E3 compat) — не эмитьте без факта совместимости.\n12–14. FOIL FWAT FGAS — доли MULTI surface (≥0; для MULTI из фактов).\n\nПереключение RATE↔BHP (§12.20.44): при RATE, если pBH выше лимита BHP → BHP; при BHP, если rate выше SURFACE_RATE → RATE; обратная проверка на шагах.\n\nКанон render MVP.\n- `water_rate` — WATER OPEN RATE surface [resv] [BHP limit…] (пример 1043/1054).\n- `water_bhp` — WATER OPEN BHP surface_or_* BHP_value (пример 43/54).\n- `multi` — MULTI + BHP/RATE + доли FOIL FWAT FGAS (пример 121R).\nНе эмитьте WCONINJ. Не копируйте учебные 253.1/400 без фактов.\n\nIR / semantics.\n- period=FORECAST; clock.uses_current=true.\n- references well WELL; prerequisites WELSPECS ENTITY.\n- state_assignments namespace well-control-inj.\n- numeric: rates/pressures ≥0; MULTI fractions ≥0.\n\nТеория (§2.14.6 — MULTI; приток §5.6).\n- MULTI — одновременная закачка фаз; доли 12–14 и основная фаза из WELSPECS.\n- BHP-контроль опирается на модель притока (§5.6 / (2.126)); RATE↔BHP auto-switch как выше.\n- E3 молярный расход: GAS/WATER — постоянная молярная плотность; HCGAS/HCOIL — flash STCOND (детали §12.20.44) — не упрощать без факта; состав — WINJGAS.\n\nАнтипаттерны.\n- WCONPROD вместо WCONINJE на injector.\n- WCONINJE в HISTORY.\n- GRUP без GCONINJE (и без baseline group-inject-control).\n- GAS E3 без WINJGAS/фактов состава и без baseline.\n- MULTI без долей / без preferred phase.\n\nНехватка факта → needs_input: нет WELL/FLUID/CONTROL; нет rate/BHP; MULTI без долей; E3 gas composition; hist inject; GCONINJE для GRUP.\n\nКарточка самодостаточна.",
       "examples": [
         {
           "title": "WATER RATE — канон",
@@ -3487,7 +3487,7 @@
         "contract_version": "1.0",
         "catalogue_ref": "catalogue://tnavigator/22.2/wconinje-forecast-inject-v1",
         "catalogue_hash": "sha256:516573cf43d68cc555cf4482d2ba7dc4de319c3134efeaa511966427ef9410dd",
-        "source_hash": "sha256:79142837681b1fabb57ce1e91851ce42583661dd2e450355c2f781f1da9e4742",
+        "source_hash": "sha256:e7e8a6710a6817f389b38e649d015c9b0e298af77c5ac07c79717ebed2ab00b8",
         "access_scope": "petroleum-engineering",
         "simulator_profile": {
           "vendor": "Rock Flow Dynamics",
@@ -3498,7 +3498,7 @@
         "approved": true,
         "approved_by": "department-hydrodynamic-expert",
         "author": "department-hydrodynamic-expert",
-        "approval_gate_id": "expert:wconinje-forecast-inject-v1:2",
+        "approval_gate_id": "expert:wconinje-forecast-inject-v1:3",
         "schemas": [
           {
             "schema_id": "expert:WCONINJE:water_rate",
@@ -3510,7 +3510,7 @@
               "document_revision": "19.4",
               "page": "12.20.44 / 1828-1832",
               "heading": "WCONINJE",
-              "source_hash": "sha256:79142837681b1fabb57ce1e91851ce42583661dd2e450355c2f781f1da9e4742"
+              "source_hash": "sha256:e7e8a6710a6817f389b38e649d015c9b0e298af77c5ac07c79717ebed2ab00b8"
             },
             "parser": {
               "token_width": 14,
@@ -3674,7 +3674,7 @@
               "document_revision": "19.4",
               "page": "12.20.44 / 1828-1832",
               "heading": "WCONINJE",
-              "source_hash": "sha256:79142837681b1fabb57ce1e91851ce42583661dd2e450355c2f781f1da9e4742"
+              "source_hash": "sha256:e7e8a6710a6817f389b38e649d015c9b0e298af77c5ac07c79717ebed2ab00b8"
             },
             "parser": {
               "token_width": 14,
@@ -3838,7 +3838,7 @@
               "document_revision": "19.4",
               "page": "12.20.44 / 1828-1832",
               "heading": "WCONINJE",
-              "source_hash": "sha256:79142837681b1fabb57ce1e91851ce42583661dd2e450355c2f781f1da9e4742"
+              "source_hash": "sha256:e7e8a6710a6817f389b38e649d015c9b0e298af77c5ac07c79717ebed2ab00b8"
             },
             "parser": {
               "token_width": 14,
@@ -4030,20 +4030,20 @@
           }
         ]
       },
-      "source_hash": "sha256:79142837681b1fabb57ce1e91851ce42583661dd2e450355c2f781f1da9e4742",
+      "source_hash": "sha256:e7e8a6710a6817f389b38e649d015c9b0e298af77c5ac07c79717ebed2ab00b8",
       "page": "12.20.44 WCONINJE (с. 1828–1832); vs WCONINJ 12.20.45; WCONINJH; GCONINJE; теория 2.14.6",
       "heading": "WCONINJE — контроль нагнетания",
       "id": "wconinje-forecast-inject-v1",
       "metadata": {
         "document_id": "wconinje-forecast-inject-v1",
-        "document_revision": "2",
-        "source_hash": "sha256:79142837681b1fabb57ce1e91851ce42583661dd2e450355c2f781f1da9e4742",
+        "document_revision": "3",
+        "source_hash": "sha256:e7e8a6710a6817f389b38e649d015c9b0e298af77c5ac07c79717ebed2ab00b8",
         "page": "12.20.44 / 1828-1832",
         "heading": "WCONINJE",
         "target_base": "schedule_mvp",
         "knowledge_type": "keyword_instruction",
         "knowledge_id": "wconinje-forecast-inject-v1",
-        "revision": "2",
+        "revision": "3",
         "status": "active",
         "access_scope": "petroleum-engineering",
         "author": "department-hydrodynamic-expert",
@@ -9232,7 +9232,7 @@
       "target_base": "schedule_mvp",
       "knowledge_type": "keyword_instruction",
       "knowledge_id": "vfpprod-table-ref-v1",
-      "revision": "1",
+      "revision": "2",
       "title": "VFPPROD — номер VFP-таблицы и связь с контролем",
       "keywords": [
         "VFPPROD"
@@ -9260,7 +9260,7 @@
       "status": "active",
       "author": "department-hydrodynamic-expert",
       "access_scope": "petroleum-engineering",
-      "text": "VFPPROD — VFP-таблица забойного давления для добывающих скважин.\n\nРоль в MVP (важно). Тело VFPPROD — большая эмпирическая таблица (обычно Prosper / другой well-performance софт / готовый `.inc` в baseline). Builder **не генерирует** оси FLO/THP/WFR/GFR/ALQ и сетку BHP. Задача корпуса:\n1) знать **номер таблицы** TABLE_ID (1 … VFPPDIMS param 6);\n2) связать его с `WCONPROD` / `WCONHIST` полем VFP_TABLE (и согласованным ALQ);\n3) в REVISE — KEEP существующие блоки VFPPROD (preserve_unmentioned), пока нет явного REMOVE/замены артефакта.\n\nНазначение в мануале (§12.20.68). Таблица BHP (или TEMP) как функция FLO, THP, WFR, GFR, ALQ для producers. Нужна ≥1 таблица, если скважинам считают THP. Несколько таблиц — несколько отдельных VFPPROD. Газлифт — §2.14.9. Автогенерация корреляцией — VFPCORR (§12.20.73; вне allowlist → needs_input). Теория создания таблиц — гл. 6.\n\nКогда применять.\n- Ссылка: факт/baseline даёт TABLE_ID → проставить VFP_TABLE=N в WCONPROD (forecast) или WCONHIST (history); 0 = THP не считается.\n- Артефакт: новый/заменённый Prosper-файл → INCLUDE/baseline package, не «нарисовать» таблицу в IR.\n- CREATE без таблицы при THP/ALQ-контроле → needs_input (нужен VFPPROD artifact).\n\nСвязь с контролем (§12.20.42 / §12.20.43).\n- WCONPROD / WCONHIST: поле VFP_TABLE = номер VFPPROD; поле ALQ — в единицах, заданных определением ALQ этой таблицы (GRAT/IGLR/PUMP/COMP).\n- WELTARG QUANTITY=VFP|LIFT|TARGTHP — смена номера/ALQ/лимита без переписи всей таблицы.\n- Не путать с VFPINJ (injectors / WCONINJE) — другая семья таблиц.\n\nRecord layout (справка; тело не эмитим из фактов Excel).\n1. Header: TABLE_ID, DATUM_DEPTH, FLO_TYPE, WFR_TYPE, GFR_TYPE, THP, ALQ_TYPE, UNITS, DATA_TYPE(BHP|TEMP) /\n2–6. Возрастающие оси FLO, THP, WFR, GFR, ALQ — каждая строка `/`\n7+. Тело значений BHP (размерность по осям) — `/`\nКаждая таблица — отдельный keyword VFPPROD.\n\nКанон render MVP.\n- `table_id_ref` — только фиксация TABLE_ID в IR/requirements (связка с well control); **не** schedule_text полной таблицы.\n- Полный VFPPROD text — только KEEP/ADD из verified artifact_ref (Prosper/.inc), не из «типовых» чисел.\n\nIR / semantics.\n- definitions UPSERT vfp_table TABLE_ID (metadata: source=external|baseline).\n- referenced_by: WCONPROD/WCONHIST.VFP_TABLE.\n- numeric: TABLE_ID ≥ 1.\n\nАнтипаттерны.\n- Выдумать FLO/THP сетку или BHP-значения.\n- Сослаться на N, которого нет в baseline/артефактах.\n- Подменить VFPPROD на VFPCORR «на глаз».\n- Использовать VFPINJ номер в WCONPROD.\n\nНехватка факта → needs_input: нужен THP/VFP-контроль без TABLE_ID; нет Prosper/.inc; конфликт номеров; нужна новая таблица без артефакта.\n\nКарточка самодостаточна.",
+      "text": "VFPPROD — VFP-таблица забойного давления для добывающих скважин.\n\nРоль в MVP (важно). Тело VFPPROD — большая эмпирическая таблица (обычно Prosper / другой well-performance софт / готовый `.inc` в baseline). Builder **не генерирует** оси FLO/THP/WFR/GFR/ALQ и сетку BHP. Задача корпуса:\n1) знать **номер таблицы** TABLE_ID (1 … VFPPDIMS param 6);\n2) связать его с `WCONPROD` / `WCONHIST` полем VFP_TABLE (и согласованным ALQ);\n3) в REVISE — KEEP существующие блоки VFPPROD (preserve_unmentioned), пока нет явного REMOVE/замены артефакта.\n\nНазначение в мануале (§12.20.68). Таблица BHP (или TEMP) как функция FLO, THP, WFR, GFR, ALQ для producers. Нужна ≥1 таблица, если скважинам считают THP. Несколько таблиц — несколько отдельных VFPPROD. Газлифт — §2.14.9. Автогенерация корреляцией — VFPCORR (§12.20.73; вне allowlist → needs_input). Теория создания таблиц — гл. 6.\n\nКогда применять.\n- Ссылка: факт/baseline даёт TABLE_ID → проставить VFP_TABLE=N в WCONPROD (forecast) или WCONHIST (history); 0 = THP не считается.\n- Артефакт: новый/заменённый Prosper-файл → INCLUDE/baseline package, не «нарисовать» таблицу в IR.\n- CREATE без таблицы при THP/ALQ-контроле → needs_input (нужен VFPPROD artifact).\n\nСвязь с контролем (§12.20.42 / §12.20.43).\n- WCONPROD / WCONHIST: поле VFP_TABLE = номер VFPPROD; поле ALQ — в единицах, заданных определением ALQ этой таблицы (GRAT/IGLR/PUMP/COMP).\n- WELTARG QUANTITY=VFP|LIFT|TARGTHP — смена номера/ALQ/лимита без переписи всей таблицы.\n- WVFPDP — коррекция BHP / fp к интерполированному VFP (§12.20.217; отдельная карточка).\n- Не путать с VFPINJ (injectors / WCONINJE) — другая семья таблиц.\n\nRecord layout (справка; тело не эмитим из фактов Excel).\n1. Header: TABLE_ID, DATUM_DEPTH, FLO_TYPE, WFR_TYPE, GFR_TYPE, THP, ALQ_TYPE, UNITS, DATA_TYPE(BHP|TEMP) /\n2–6. Возрастающие оси FLO, THP, WFR, GFR, ALQ — каждая строка `/`\n7+. Тело значений BHP (размерность по осям) — `/`\nКаждая таблица — отдельный keyword VFPPROD.\n\nКанон render MVP.\n- `table_id_ref` — только фиксация TABLE_ID в IR/requirements (связка с well control); **не** schedule_text полной таблицы.\n- Полный VFPPROD text — только KEEP/ADD из verified artifact_ref (Prosper/.inc), не из «типовых» чисел.\n\nIR / semantics.\n- definitions UPSERT vfp_table TABLE_ID (metadata: source=external|baseline).\n- referenced_by: WCONPROD/WCONHIST.VFP_TABLE; optionally tuned by WVFPDP.\n- numeric: TABLE_ID ≥ 1.\n\nАнтипаттерны.\n- Выдумать FLO/THP сетку или BHP-значения.\n- Сослаться на N, которого нет в baseline/артефактах.\n- Подменить VFPPROD на VFPCORR «на глаз».\n- Использовать VFPINJ номер в WCONPROD.\n\nНехватка факта → needs_input: нужен THP/VFP-контроль без TABLE_ID; нет Prosper/.inc; конфликт номеров; нужна новая таблица без артефакта.\n\nКарточка самодостаточна.",
       "examples": [
         {
           "title": "Связка номера с WCONPROD",
@@ -9286,7 +9286,7 @@
         "contract_version": "1.0",
         "catalogue_ref": "catalogue://tnavigator/22.2/vfpprod-table-ref-v1",
         "catalogue_hash": "sha256:dbb1f223a460abadf574c54769f8949a315dddc241c957767a21bf34bcd31f79",
-        "source_hash": "sha256:4511e73d7439c8ca58e8ba126cdfe6bf7554d5b2d40f548554e05a437e54637e",
+        "source_hash": "sha256:90dd03df4b90c1a648e835b81acde30600c7be1304c25ee4b5e3b945074acba6",
         "access_scope": "petroleum-engineering",
         "simulator_profile": {
           "vendor": "Rock Flow Dynamics",
@@ -9297,7 +9297,7 @@
         "approved": true,
         "approved_by": "department-hydrodynamic-expert",
         "author": "department-hydrodynamic-expert",
-        "approval_gate_id": "expert:vfpprod-table-ref-v1:1",
+        "approval_gate_id": "expert:vfpprod-table-ref-v1:2",
         "schemas": [
           {
             "schema_id": "expert:VFPPROD:table_id_ref",
@@ -9309,7 +9309,7 @@
               "document_revision": "19.4",
               "page": "12.20.68 / 1889-1893",
               "heading": "VFPPROD",
-              "source_hash": "sha256:4511e73d7439c8ca58e8ba126cdfe6bf7554d5b2d40f548554e05a437e54637e"
+              "source_hash": "sha256:90dd03df4b90c1a648e835b81acde30600c7be1304c25ee4b5e3b945074acba6"
             },
             "parser": {
               "token_width": 1,
@@ -9371,20 +9371,20 @@
           }
         ]
       },
-      "source_hash": "sha256:4511e73d7439c8ca58e8ba126cdfe6bf7554d5b2d40f548554e05a437e54637e",
+      "source_hash": "sha256:90dd03df4b90c1a648e835b81acde30600c7be1304c25ee4b5e3b945074acba6",
       "page": "12.20.68 VFPPROD (с. 1889+); link WCONPROD 12.20.42 / WCONHIST 12.20.43; §6; Prosper external",
       "heading": "VFPPROD — VFP таблица (reference)",
       "id": "vfpprod-table-ref-v1",
       "metadata": {
         "document_id": "vfpprod-table-ref-v1",
-        "document_revision": "1",
-        "source_hash": "sha256:4511e73d7439c8ca58e8ba126cdfe6bf7554d5b2d40f548554e05a437e54637e",
+        "document_revision": "2",
+        "source_hash": "sha256:90dd03df4b90c1a648e835b81acde30600c7be1304c25ee4b5e3b945074acba6",
         "page": "12.20.68 / 1889+",
         "heading": "VFPPROD",
         "target_base": "schedule_mvp",
         "knowledge_type": "keyword_instruction",
         "knowledge_id": "vfpprod-table-ref-v1",
-        "revision": "1",
+        "revision": "2",
         "status": "active",
         "access_scope": "petroleum-engineering",
         "author": "department-hydrodynamic-expert",
@@ -14269,7 +14269,7 @@
       "target_base": "schedule_mvp",
       "knowledge_type": "keyword_instruction",
       "knowledge_id": "gconinje-group-inject-v1",
-      "revision": "1",
+      "revision": "2",
       "title": "GCONINJE — прогнозный контроль закачки группы / FIELD",
       "keywords": [
         "GCONINJE"
@@ -14296,7 +14296,7 @@
       "status": "active",
       "author": "department-hydrodynamic-expert",
       "access_scope": "petroleum-engineering",
-      "text": "GCONINJE — прогнозный контроль закачки группы / FIELD.\n\nНазначение. Задаёт тип флюида и режим группового контроля нагнетания для группы скважин или FIELD. Симулятор пересчитывает дебиты нагнетательных скважин (пропорционально потенциалам / guide rates), чтобы удержать групповой контроль. Форматы: tN, E1, E3. Секция: только SCHEDULE. Это не скважинный inject (WCONINJE), не добыча группы (GCONPROD), не дерево групп (GRUPTREE), не расход/импорт газа (GCONSUMP; вне allowlist → needs_input).\n\nКогда применять. FORECAST / после cutover: групповые RATE/RESV/REIN/VREP для injectors. Обычно после DATES и после того, как группа существует: FIELD всегда; иначе группа из GRUPTREE и/или leaf-группа со скважинами WELSPECS. Скважины с CONTROL=GRUP в WCONINJE опираются на GCONINJE своей группы. E3 GAS: состав нагнетаемого газа — GINJGAS (§12.20.196; вне allowlist → needs_input без baseline), кроме случая, когда вышестоящая группа уже задала состав.\n\nRecord layout. Keyword GCONINJE, затем одна или несколько записей `/`. Блок — отдельный `/`.\n\nПоля по порядку (§12.20.98; METRIC):\n\n1. GROUP — имя группы, префикс с `*` (все группы с таким началом), или FIELD. Default симулятора: default-группа WELSPECS. В корпусе пишите GROUP явно. CREATE MVP: не эмитьте префикс-wildcard без детерминированного раскрытия в факты — иначе needs_input / перечислите точные имена. REVISE: KEEP raw wildcard baseline допустим.\n2. FLUID — WATER | GAS | OIL.\n3. CONTROL — тип контроля. Default: NONE.\n   - NONE — нет ограничений.\n   - RATE — контроль по объёму закачки на поверхности (поле 4).\n   - RESV — объём закачки группы в пластовых условиях (поле 5; учитывает WELSPECS param 13); фаза из поля 2 — дополняющая (в каждый момент одна дополняющая фаза).\n   - REIN — закачка = добыча той же фазы группы × коэффициент повторной закачки (поле 6); опционально источник-группа в поле 11.\n   - VREP — закачка в пластовых условиях = добыча группы в пластовых × коэффициент компенсации (поле 7); опционально источник-группа в поле 12.\n4. SURFACE_RATE — объём закачки surface (sm3/day; газ Mscf/day в FIELD). Default: нет ограничения. UDQ допустим в симуляторе; MVP — число из фактов.\n5. RESV_RATE — объём закачки reservoir (rm3/day). Default: нет. Если задано — фаза поля 2 дополняющая.\n6. REIN_RATIO — целевой коэффициент повторной закачки (CONTROL=REIN).\n7. VREP_RATIO — целевой коэффициент компенсации (CONTROL=VREP).\n8. EXCEED_PARENT — YES | NO: может ли вышестоящая группа перехватить контроль. Default: YES.\n9. GUIDE_RATE — безразмерная доля группы в объёме закачки (фаза = FLUID). Должен быть default, если GUIDE_DEF=NETV. E3: 0 → guide = потенциал нагнетания группы на каждом шаге.\n10. GUIDE_DEF — RATE | NETV | VOID.\n    - RATE — guide относится к surface-приемистости.\n    - NETV — guide = чистый потенциал отбора группы (потенциал добычи − потенциал закачки других фаз); поле 9 игнорируется / default.\n    - VOID — guide = дебит жидкости группы в пластовых; поле 9 не учитывается.\n11. REIN_GROUP — группа-источник добычи для REIN. Default: та же GROUP (поле 1).\n12. VREP_GROUP — группа-источник отбора для VREP. Default: та же GROUP.\n\nПоведение. Если CONTROL ≠ NONE, симулятор меняет дебиты inject-скважин/подгрупп. В текущей версии учитывается только лимит активного CONTROL; прочие лимиты игнорируются (§12.20.98). Потенциал скважины = объём закачки без ограничений по дебиту.\n\nКанон render этого корпуса.\n- `none` — GROUP FLUID CONTROL=NONE.\n- `rate` — GROUP FLUID CONTROL=RATE SURFACE_RATE [EXCEED_PARENT].\n- `resv` — GROUP FLUID CONTROL=RESV … RESV_RATE.\n- `rein` — GROUP FLUID CONTROL=REIN … REIN_RATIO [REIN_GROUP].\n- `vrep` — GROUP FLUID CONTROL=VREP … VREP_RATIO [VREP_GROUP] (паттерн `3* 1.1` для defaults полей 4–6).\nНе эмитьте поля вне variant. GROUP quoted (кроме политики unquoted). Дебиты/коэффициенты ≥0 finite (кроме явных фактов). Не копируйте учебные INJ11/GRP1*/253.1/1.1 без фактов.\n\nIR / semantics.\n- period=FORECAST; clock.uses_current=true.\n- references: group GROUP required; optional REIN_GROUP / VREP_GROUP.\n- definitions: UPSERT group-inject-control state на GROUP.\n- prerequisites: для GROUP≠FIELD группа должна уже существовать (GRUPTREE и/или WELSPECS leaf). FIELD всегда валиден.\n- state_assignments: namespace group-inject-control; key CONTROL+FLUID; value_fields = целевые лимиты/отношения variant.\n- numeric_constraints: SURFACE_RATE/RESV_RATE/REIN_RATIO/VREP_RATIO/GUIDE_RATE min 0.\n\nСвязанные keywords (не эмитьте без scope).\n- GRUPTREE — иерархия; EXCEED_PARENT опирается на parent.\n- WELSPECS — скважины в leaf-группах; RESV связан с param 13.\n- WCONINJE CONTROL=GRUP — скважина берёт долю от GCONINJE.\n- GCONPROD — групповая добыча (другая карточка).\n- GINJGAS — состав газа E3 (вне allowlist).\n- GCONSUMP — потребление/импорт газа при REIN по газу (вне allowlist → needs_input если нужен явный расход/импорт).\n\nТеория (§2.14.2).\n- GCONINJE — групповой контроль для нагнетательных скважин.\n- Групповой целевой объём делится пропорционально потенциалам / guide rates (не «поровну»).\n- Потенциал inject = объём закачки без rate-лимита при текущих условиях.\n\nАнтипаттерны.\n- WCONINJE вместо GCONINJE для группового лимита.\n- CONTROL=RATE без SURFACE_RATE / VREP без VREP_RATIO / REIN без REIN_RATIO.\n- Wildcard GROUP в CREATE без resolved list.\n- E3 GAS без GINJGAS/baseline состава.\n- Считать GCONINJE объявлением группы в дереве.\n\nНехватка факта → needs_input: нет GROUP/FLUID/CONTROL; нет целевого лимита/коэффициента; cutover неясен; wildcard без списка; E3 gas composition; нужен GCONSUMP; конфликт с baseline group-inject-control без REVISE target.\n\nКарточка самодостаточна: renderer использует только schema_catalogue этой записи и выбранный variant.",
+      "text": "GCONINJE — прогнозный контроль закачки группы / FIELD.\n\nНазначение. Задаёт тип флюида и режим группового контроля нагнетания для группы скважин или FIELD. Симулятор пересчитывает дебиты нагнетательных скважин (пропорционально потенциалам / guide rates), чтобы удержать групповой контроль. Форматы: tN, E1, E3. Секция: только SCHEDULE. Это не скважинный inject (WCONINJE), не добыча группы (GCONPROD), не дерево групп (GRUPTREE), не расход/импорт газа (GCONSUMP; вне allowlist → needs_input).\n\nКогда применять. FORECAST / после cutover: групповые RATE/RESV/REIN/VREP для injectors. Обычно после DATES и после того, как группа существует: FIELD всегда; иначе группа из GRUPTREE и/или leaf-группа со скважинами WELSPECS. Скважины с CONTROL=GRUP в WCONINJE опираются на GCONINJE своей группы. E3 GAS: состав нагнетаемого газа — GINJGAS (§12.20.196; allowlist) или KEEP baseline; кроме случая, когда вышестоящая группа уже задала состав.\n\nRecord layout. Keyword GCONINJE, затем одна или несколько записей `/`. Блок — отдельный `/`.\n\nПоля по порядку (§12.20.98; METRIC):\n\n1. GROUP — имя группы, префикс с `*` (все группы с таким началом), или FIELD. Default симулятора: default-группа WELSPECS. В корпусе пишите GROUP явно. CREATE MVP: не эмитьте префикс-wildcard без детерминированного раскрытия в факты — иначе needs_input / перечислите точные имена. REVISE: KEEP raw wildcard baseline допустим.\n2. FLUID — WATER | GAS | OIL.\n3. CONTROL — тип контроля. Default: NONE.\n   - NONE — нет ограничений.\n   - RATE — контроль по объёму закачки на поверхности (поле 4).\n   - RESV — объём закачки группы в пластовых условиях (поле 5; учитывает WELSPECS param 13); фаза из поля 2 — дополняющая (в каждый момент одна дополняющая фаза).\n   - REIN — закачка = добыча той же фазы группы × коэффициент повторной закачки (поле 6); опционально источник-группа в поле 11.\n   - VREP — закачка в пластовых условиях = добыча группы в пластовых × коэффициент компенсации (поле 7); опционально источник-группа в поле 12.\n4. SURFACE_RATE — объём закачки surface (sm3/day; газ Mscf/day в FIELD). Default: нет ограничения. UDQ допустим в симуляторе; MVP — число из фактов.\n5. RESV_RATE — объём закачки reservoir (rm3/day). Default: нет. Если задано — фаза поля 2 дополняющая.\n6. REIN_RATIO — целевой коэффициент повторной закачки (CONTROL=REIN).\n7. VREP_RATIO — целевой коэффициент компенсации (CONTROL=VREP).\n8. EXCEED_PARENT — YES | NO: может ли вышестоящая группа перехватить контроль. Default: YES.\n9. GUIDE_RATE — безразмерная доля группы в объёме закачки (фаза = FLUID). Должен быть default, если GUIDE_DEF=NETV. E3: 0 → guide = потенциал нагнетания группы на каждом шаге.\n10. GUIDE_DEF — RATE | NETV | VOID.\n    - RATE — guide относится к surface-приемистости.\n    - NETV — guide = чистый потенциал отбора группы (потенциал добычи − потенциал закачки других фаз); поле 9 игнорируется / default.\n    - VOID — guide = дебит жидкости группы в пластовых; поле 9 не учитывается.\n11. REIN_GROUP — группа-источник добычи для REIN. Default: та же GROUP (поле 1).\n12. VREP_GROUP — группа-источник отбора для VREP. Default: та же GROUP.\n\nПоведение. Если CONTROL ≠ NONE, симулятор меняет дебиты inject-скважин/подгрупп. В текущей версии учитывается только лимит активного CONTROL; прочие лимиты игнорируются (§12.20.98). Потенциал скважины = объём закачки без ограничений по дебиту.\n\nКанон render этого корпуса.\n- `none` — GROUP FLUID CONTROL=NONE.\n- `rate` — GROUP FLUID CONTROL=RATE SURFACE_RATE [EXCEED_PARENT].\n- `resv` — GROUP FLUID CONTROL=RESV … RESV_RATE.\n- `rein` — GROUP FLUID CONTROL=REIN … REIN_RATIO [REIN_GROUP].\n- `vrep` — GROUP FLUID CONTROL=VREP … VREP_RATIO [VREP_GROUP] (паттерн `3* 1.1` для defaults полей 4–6).\nНе эмитьте поля вне variant. GROUP quoted (кроме политики unquoted). Дебиты/коэффициенты ≥0 finite (кроме явных фактов). Не копируйте учебные INJ11/GRP1*/253.1/1.1 без фактов.\n\nIR / semantics.\n- period=FORECAST; clock.uses_current=true.\n- references: group GROUP required; optional REIN_GROUP / VREP_GROUP.\n- definitions: UPSERT group-inject-control state на GROUP.\n- prerequisites: для GROUP≠FIELD группа должна уже существовать (GRUPTREE и/или WELSPECS leaf). FIELD всегда валиден.\n- state_assignments: namespace group-inject-control; key CONTROL+FLUID; value_fields = целевые лимиты/отношения variant.\n- numeric_constraints: SURFACE_RATE/RESV_RATE/REIN_RATIO/VREP_RATIO/GUIDE_RATE min 0.\n\nСвязанные keywords (не эмитьте без scope).\n- GRUPTREE — иерархия; EXCEED_PARENT опирается на parent.\n- WELSPECS — скважины в leaf-группах; RESV связан с param 13.\n- WCONINJE CONTROL=GRUP — скважина берёт долю от GCONINJE.\n- GCONPROD — групповая добыча (другая карточка).\n- GINJGAS — состав газа E3 (отдельная карточка).\n- GCONSUMP — потребление/импорт газа при REIN по газу (вне allowlist → needs_input если нужен явный расход/импорт).\n\nТеория (§2.14.2).\n- GCONINJE — групповой контроль для нагнетательных скважин.\n- Групповой целевой объём делится пропорционально потенциалам / guide rates (не «поровну»).\n- Потенциал inject = объём закачки без rate-лимита при текущих условиях.\n\nАнтипаттерны.\n- WCONINJE вместо GCONINJE для группового лимита.\n- CONTROL=RATE без SURFACE_RATE / VREP без VREP_RATIO / REIN без REIN_RATIO.\n- Wildcard GROUP в CREATE без resolved list.\n- E3 GAS без GINJGAS/фактов состава и без baseline.\n- Считать GCONINJE объявлением группы в дереве.\n\nНехватка факта → needs_input: нет GROUP/FLUID/CONTROL; нет целевого лимита/коэффициента; cutover неясен; wildcard без списка; E3 gas composition; нужен GCONSUMP; конфликт с baseline group-inject-control без REVISE target.\n\nКарточка самодостаточна: renderer использует только schema_catalogue этой записи и выбранный variant.",
       "examples": [
         {
           "title": "RATE воды — канон мануала",
@@ -14322,7 +14322,7 @@
         "contract_version": "1.0",
         "catalogue_ref": "catalogue://tnavigator/22.2/gconinje-group-inject-v1",
         "catalogue_hash": "sha256:9c20662b9d1b2480639f1a5bc2c9820742f387649b2c272c860aabc0889b3ef8",
-        "source_hash": "sha256:a160588fe9559b42ff6dd5b3488841123c3af186a8b7d6511ad8bdd7fda50368",
+        "source_hash": "sha256:399a8ba7e57ccbb2a527df727b50d06e0b787c969235ffcfdc0ea9aad0dfca31",
         "access_scope": "petroleum-engineering",
         "simulator_profile": {
           "vendor": "Rock Flow Dynamics",
@@ -14333,7 +14333,7 @@
         "approved": true,
         "approved_by": "department-hydrodynamic-expert",
         "author": "department-hydrodynamic-expert",
-        "approval_gate_id": "expert:gconinje-group-inject-v1:1",
+        "approval_gate_id": "expert:gconinje-group-inject-v1:2",
         "schemas": [
           {
             "schema_id": "expert:GCONINJE:none",
@@ -14345,7 +14345,7 @@
               "document_revision": "19.4",
               "page": "12.20.98 / 1957-1960",
               "heading": "GCONINJE",
-              "source_hash": "sha256:a160588fe9559b42ff6dd5b3488841123c3af186a8b7d6511ad8bdd7fda50368"
+              "source_hash": "sha256:399a8ba7e57ccbb2a527df727b50d06e0b787c969235ffcfdc0ea9aad0dfca31"
             },
             "parser": {
               "token_width": 12,
@@ -14452,7 +14452,7 @@
               "document_revision": "19.4",
               "page": "12.20.98 / 1957-1960",
               "heading": "GCONINJE",
-              "source_hash": "sha256:a160588fe9559b42ff6dd5b3488841123c3af186a8b7d6511ad8bdd7fda50368"
+              "source_hash": "sha256:399a8ba7e57ccbb2a527df727b50d06e0b787c969235ffcfdc0ea9aad0dfca31"
             },
             "parser": {
               "token_width": 12,
@@ -14595,7 +14595,7 @@
               "document_revision": "19.4",
               "page": "12.20.98 / 1957-1960",
               "heading": "GCONINJE",
-              "source_hash": "sha256:a160588fe9559b42ff6dd5b3488841123c3af186a8b7d6511ad8bdd7fda50368"
+              "source_hash": "sha256:399a8ba7e57ccbb2a527df727b50d06e0b787c969235ffcfdc0ea9aad0dfca31"
             },
             "parser": {
               "token_width": 12,
@@ -14726,7 +14726,7 @@
               "document_revision": "19.4",
               "page": "12.20.98 / 1957-1960",
               "heading": "GCONINJE",
-              "source_hash": "sha256:a160588fe9559b42ff6dd5b3488841123c3af186a8b7d6511ad8bdd7fda50368"
+              "source_hash": "sha256:399a8ba7e57ccbb2a527df727b50d06e0b787c969235ffcfdc0ea9aad0dfca31"
             },
             "parser": {
               "token_width": 12,
@@ -14899,7 +14899,7 @@
               "document_revision": "19.4",
               "page": "12.20.98 / 1957-1960",
               "heading": "GCONINJE",
-              "source_hash": "sha256:a160588fe9559b42ff6dd5b3488841123c3af186a8b7d6511ad8bdd7fda50368"
+              "source_hash": "sha256:399a8ba7e57ccbb2a527df727b50d06e0b787c969235ffcfdc0ea9aad0dfca31"
             },
             "parser": {
               "token_width": 12,
@@ -15071,20 +15071,20 @@
           }
         ]
       },
-      "source_hash": "sha256:a160588fe9559b42ff6dd5b3488841123c3af186a8b7d6511ad8bdd7fda50368",
+      "source_hash": "sha256:399a8ba7e57ccbb2a527df727b50d06e0b787c969235ffcfdc0ea9aad0dfca31",
       "page": "12.20.98 GCONINJE (с. 1957–1960); WCONINJE GRUP 12.20.44; теория 2.14.2",
       "heading": "GCONINJE — ограничения закачки групп скважин",
       "id": "gconinje-group-inject-v1",
       "metadata": {
         "document_id": "gconinje-group-inject-v1",
-        "document_revision": "1",
-        "source_hash": "sha256:a160588fe9559b42ff6dd5b3488841123c3af186a8b7d6511ad8bdd7fda50368",
+        "document_revision": "2",
+        "source_hash": "sha256:399a8ba7e57ccbb2a527df727b50d06e0b787c969235ffcfdc0ea9aad0dfca31",
         "page": "12.20.98 / 1957-1960",
         "heading": "GCONINJE",
         "target_base": "schedule_mvp",
         "knowledge_type": "keyword_instruction",
         "knowledge_id": "gconinje-group-inject-v1",
-        "revision": "1",
+        "revision": "2",
         "status": "active",
         "access_scope": "petroleum-engineering",
         "author": "department-hydrodynamic-expert",
@@ -16352,7 +16352,7 @@
       "target_base": "schedule_mvp",
       "knowledge_type": "keyword_instruction",
       "knowledge_id": "wellstre-inject-stream-v1",
-      "revision": "1",
+      "revision": "3",
       "title": "WELLSTRE — именованный поток закачки (мольные доли)",
       "keywords": [
         "WELLSTRE"
@@ -16378,7 +16378,7 @@
       "status": "active",
       "author": "department-hydrodynamic-expert",
       "access_scope": "petroleum-engineering",
-      "text": "WELLSTRE — именованный поток закачиваемого флюида (мольные доли).\n\nНазначение. Задаёт состав (мольные доли компонентов) именованного потока нефти или газа для закачки. Поток затем ссылают WINJGAS / GINJGAS / GSATCOMP. Форматы: tN, E3 (E1 в мануале не отмечен — для E1-профиля → needs_input). Секция: SCHEDULE. Это не WELLSTRW (состав многокомпонентной воды; вне allowlist → needs_input), не WINJGAS/GINJGAS/GSATCOMP (привязка потока к скважине/группе/satellite; вне allowlist → needs_input без baseline), не WCONINJE (rate/control).\n\nКогда применять. E3/tN compositional inject: сначала WELLSTRE с именем и долями, затем consumer keyword (если consumer вне allowlist и нет baseline — needs_input на wiring, но сам stream можно эмитить при полных фактах). Nc = число компонентов модели; сумма мольных долей = 1. UDQ допустим в симуляторе; MVP — числа из фактов.\n\nRecord layout. Keyword WELLSTRE, записи `/`, блок — отдельный `/`.\n\nПоля (§12.20.189):\n\n1. STREAM — имя потока (quoted).\n2…(1+Nc). FRACTIONS — мольные доли x1…xNc по порядку компонентов модели. Сумма = 1. Число долей должно совпасть с Nc из facts/baseline (не угадывайте Nc).\n\nКанон render.\n- `stream` — STREAM + полный вектор FRACTIONS из фактов (паттерн `'stream1' 0.4 0.2 0.2 0.15 0.05`).\nНе копируйте stream1/доли без фактов. Не эмитьте WELLSTRW / WINJGAS / GINJGAS / GSATCOMP из этой карточки.\n\nIR / semantics.\n- period=ANY; clock.uses_current=true.\n- definitions: UPSERT well_stream STREAM.\n- references: нет WELL id в записи.\n- state_assignments: namespace well-stream-composition; value_fields FRACTIONS.\n- numeric_constraints: каждая доля ∈ [0,1]; сумма ≈ 1 (validator/replay).\n\nСвязанные keywords.\n- WINJGAS / GINJGAS — привязка к скважине/группе (вне allowlist).\n- GSATCOMP — состав satellite через имя потока WELLSTRE (вне allowlist).\n- WELLSTRW — вода (другая карточка/вне allowlist).\n\nАнтипаттерны.\n- E1-профиль.\n- Nc ≠ числу долей / сумма ≠ 1.\n- Путать с WELLSTRW.\n- Выдумать доли «примерно как в примере».\n- Считать WELLSTRE достаточным для закачки без WCONINJE/GCONINJE/GSATINJE rate.\n\nНехватка факта → needs_input: нет STREAM/долей/Nc; E1; нужен WELLSTRW; нужен wiring WINJGAS/GINJGAS/GSATCOMP без baseline.\n\nКарточка самодостаточна: renderer использует только schema_catalogue этой записи и выбранный variant.",
+      "text": "WELLSTRE — именованный поток закачиваемого флюида (мольные доли).\n\nНазначение. Задаёт состав (мольные доли компонентов) именованного потока нефти или газа для закачки. Поток затем ссылают WINJGAS / GINJGAS / GSATCOMP. Форматы: tN, E3 (E1 в мануале не отмечен — для E1-профиля → needs_input). Секция: SCHEDULE. Это не WELLSTRW (состав многокомпонентной воды; вне allowlist → needs_input), не WINJGAS/GINJGAS (привязка к скважине/группе — отдельные карточки), не GSATCOMP (satellite; вне allowlist → needs_input без baseline), не WCONINJE (rate/control).\n\nКогда применять. E3/tN compositional inject: сначала WELLSTRE с именем и долями, затем WINJGAS/GINJGAS (allowlist) и/или GSATCOMP (вне allowlist → needs_input на wiring без baseline). Nc = число компонентов модели; сумма мольных долей = 1. UDQ допустим в симуляторе; MVP — числа из фактов.\n\nRecord layout. Keyword WELLSTRE, записи `/`, блок — отдельный `/`.\n\nПоля (§12.20.189):\n\n1. STREAM — имя потока (quoted).\n2…(1+Nc). FRACTIONS — мольные доли x1…xNc по порядку компонентов модели. Сумма = 1. Число долей должно совпасть с Nc из facts/baseline (не угадывайте Nc).\n\nКанон render.\n- `stream` — STREAM + полный вектор FRACTIONS из фактов (паттерн `'stream1' 0.4 0.2 0.2 0.15 0.05`).\nНе копируйте stream1/доли без фактов. Не эмитьте WELLSTRW / GSATCOMP из этой карточки (WINJGAS/GINJGAS — отдельные).\n\nIR / semantics.\n- period=ANY; clock.uses_current=true.\n- definitions: UPSERT well_stream STREAM.\n- references: нет WELL id в записи.\n- state_assignments: namespace well-stream-composition; value_fields FRACTIONS.\n- numeric_constraints: каждая доля ∈ [0,1]; сумма ≈ 1 (validator/replay).\n\nСвязанные keywords.\n- WINJGAS / GINJGAS — привязка потока к скважине/группе (allowlist).\n- GSATCOMP — satellite (вне allowlist).\n- WELLSTRW — вода (другая карточка/вне allowlist).\n\nАнтипаттерны.\n- E1-профиль.\n- Nc ≠ числу долей / сумма ≠ 1.\n- Путать с WELLSTRW.\n- Выдумать доли «примерно как в примере».\n- Считать WELLSTRE достаточным для закачки без WCONINJE/GCONINJE/GSATINJE rate.\n\nНехватка факта → needs_input: нет STREAM/долей/Nc; E1; нужен WELLSTRW; нужен wiring GSATCOMP без baseline.\n\nКарточка самодостаточна: renderer использует только schema_catalogue этой записи и выбранный variant.",
       "examples": [
         {
           "title": "Пять компонент — канон мануала",
@@ -16398,7 +16398,7 @@
         "contract_version": "1.0",
         "catalogue_ref": "catalogue://tnavigator/22.2/wellstre-inject-stream-v1",
         "catalogue_hash": "sha256:ee64f1312f0233c53aee33e72a61c5a5fdf3a16e164f9bb34bdaa942bff9479f",
-        "source_hash": "sha256:8076d0b8ae0c1d9276b89209132cd05d05c2043d70cc58f45f6b4eba7b14b877",
+        "source_hash": "sha256:6bf114cd9c2c2fd2cabd7d46b0c52f5f7cfad964d0a69f2ba80ea7c7c320430a",
         "access_scope": "petroleum-engineering",
         "simulator_profile": {
           "vendor": "Rock Flow Dynamics",
@@ -16409,7 +16409,7 @@
         "approved": true,
         "approved_by": "department-hydrodynamic-expert",
         "author": "department-hydrodynamic-expert",
-        "approval_gate_id": "expert:wellstre-inject-stream-v1:1",
+        "approval_gate_id": "expert:wellstre-inject-stream-v1:3",
         "schemas": [
           {
             "schema_id": "expert:WELLSTRE:stream",
@@ -16421,7 +16421,7 @@
               "document_revision": "19.4",
               "page": "12.20.189 / 2148",
               "heading": "WELLSTRE",
-              "source_hash": "sha256:8076d0b8ae0c1d9276b89209132cd05d05c2043d70cc58f45f6b4eba7b14b877"
+              "source_hash": "sha256:6bf114cd9c2c2fd2cabd7d46b0c52f5f7cfad964d0a69f2ba80ea7c7c320430a"
             },
             "parser": {
               "token_width": 2,
@@ -16491,20 +16491,20 @@
           }
         ]
       },
-      "source_hash": "sha256:8076d0b8ae0c1d9276b89209132cd05d05c2043d70cc58f45f6b4eba7b14b877",
+      "source_hash": "sha256:6bf114cd9c2c2fd2cabd7d46b0c52f5f7cfad964d0a69f2ba80ea7c7c320430a",
       "page": "12.20.189 WELLSTRE (с. 2148); vs WELLSTRW 12.20.190; WINJGAS 12.20.195; GINJGAS 12.20.196; GSATCOMP 12.20.102",
       "heading": "WELLSTRE — состав потока закачиваемого флюида",
       "id": "wellstre-inject-stream-v1",
       "metadata": {
         "document_id": "wellstre-inject-stream-v1",
-        "document_revision": "1",
-        "source_hash": "sha256:8076d0b8ae0c1d9276b89209132cd05d05c2043d70cc58f45f6b4eba7b14b877",
+        "document_revision": "3",
+        "source_hash": "sha256:6bf114cd9c2c2fd2cabd7d46b0c52f5f7cfad964d0a69f2ba80ea7c7c320430a",
         "page": "12.20.189 / 2148",
         "heading": "WELLSTRE",
         "target_base": "schedule_mvp",
         "knowledge_type": "keyword_instruction",
         "knowledge_id": "wellstre-inject-stream-v1",
-        "revision": "1",
+        "revision": "3",
         "status": "active",
         "access_scope": "petroleum-engineering",
         "author": "department-hydrodynamic-expert",
@@ -19178,6 +19178,652 @@
           "хук на расчётный шаг",
           "script.py function",
           "APPLYSCRIPT без тела"
+        ]
+      }
+    },
+    {
+      "contract": "schedule_knowledge_block",
+      "contract_version": "1.0",
+      "target_base": "schedule_mvp",
+      "knowledge_type": "keyword_instruction",
+      "knowledge_id": "ginjgas-group-inject-gas-v1",
+      "revision": "2",
+      "title": "GINJGAS — состав газа закачки группы",
+      "keywords": [
+        "GINJGAS"
+      ],
+      "topics": [
+        "состав газа группы",
+        "GINJGAS",
+        "GCONINJE GAS",
+        "STREAM WELLSTRE",
+        "не WINJGAS"
+      ],
+      "task_patterns": [
+        "задать GINJGAS",
+        "состав закачки группы",
+        "GINJGAS STREAM",
+        "газ с сепаратора группы",
+        "makeup WELLSTRE"
+      ],
+      "simulator_family": [
+        "E300",
+        "tNavigator"
+      ],
+      "status": "active",
+      "author": "department-hydrodynamic-expert",
+      "access_scope": "petroleum-engineering",
+      "text": "GINJGAS — состав газа, нагнетаемого группой (композиционные модели).\n\nНазначение. Задаёт источник/состав закачиваемого газа для группы при групповом GAS-контроле через GCONINJE. Форматы: tN, E3 (E1 в мануале не отмечен — для E1 → needs_input). Секция: SCHEDULE. Это не WINJGAS (скважинный аналог — отдельная карточка), не GSATCOMP (satellite; вне allowlist), не WELLSTRE (объявление потока — отдельная карточка), не WINJMIX (смесь; вне allowlist → needs_input при SOURCE=MIX без baseline), не GCONINJE (rate/control).\n\nКогда применять. E3/tN + GCONINJE GAS: нужен явный состав на группе (или маске `NAME*`). STREAM → сначала WELLSTRE с тем же именем. MIX → WINJMIX вне allowlist → needs_input, если смеси нет в baseline. GV/WV — имя группы/скважины-источника из фактов. GAS — сепаратор месторождения. GRUP — состав вышележащей группы (default). Makeup-поток (поле 4) тоже через WELLSTRE.\n\nRecord layout. Keyword GINJGAS, записи `/`, блок — отдельный `/`. GROUP или маска с `*` на конце.\n\nПоля (§12.20.196):\n\n1. GROUP — имя группы или маска (`…*`).\n2. SOURCE — GAS | STREAM | MIX | GV | WV | GRUP. Default: GRUP.\n3. SOURCE_REF — зависит от SOURCE: STREAM→имя WELLSTRE; MIX→имя WINJMIX; GV→группа; WV→скважина. Для GAS/GRUP обычно опускается.\n4. MAKEUP_STREAM — имя WELLSTRE добавочного газа, если добываемого газа по SOURCE не хватает. Optional.\n5. SEPARATOR_STAGE — ступень сепаратора для состава (default 0 = весь сепаратор). Optional.\n\nКанон render.\n- `composition` — GROUP SOURCE [SOURCE_REF] [MAKEUP_STREAM] [SEPARATOR_STAGE] (паттерны `G1 STREAM 'stream1'`, `G2 GV GROUP1`, `'GINJ3*' GAS`).\nНе копируйте имена/stream без фактов. Не эмитьте GSATCOMP/WINJMIX/WELLSTRW из этой карточки (WINJGAS — отдельная).\n\nIR / semantics.\n- period=ANY; clock.uses_current=true.\n- definitions: UPSERT group_inject_gas GROUP.\n- references: group GROUP (GRUPTREE/FIELD); STREAM/MAKEUP → well_stream; GV→group; WV→well.\n- prerequisites: GCONINJE GAS context (soft); WELLSTRE before STREAM/MAKEUP.\n- state_assignments: namespace group-inject-gas; value SOURCE + refs.\n- MIX without WINJMIX in allowlist/baseline → needs_input.\n\nСвязанные: GCONINJE; WELLSTRE; WINJGAS; GSATCOMP / WINJMIX (вне allowlist).\n\nАнтипаттерны.\n- GINJGAS без GCONINJE GAS / без группы.\n- STREAM без WELLSTRE.\n- MIX без WINJMIX facts/baseline.\n- Подмена скважинного WINJGAS групповым GINJGAS без факта.\n- E1-профиль.\n\nНехватка факта → needs_input: нет GROUP/SOURCE; STREAM/MIX/GV/WV без SOURCE_REF; нет WELLSTRE; нужен MIX/WINJMIX; E1.\n\nКарточка самодостаточна для composition-record; поток объявляет WELLSTRE.",
+      "examples": [
+        {
+          "title": "STREAM / GV / GAS — канон мануала",
+          "task": "G1←stream1; G2←газ группы GROUP1; маска GINJ3*←сепаратор.",
+          "schedule_text": "GINJGAS\nG1 STREAM 'stream1' /\nG2 GV GROUP1 /\n'GINJ3*' GAS /\n/\n",
+          "explanation": "§12.20.196 с. 2160. Variant composition. stream1 должен быть в WELLSTRE. Учебные имена."
+        }
+      ],
+      "schema_catalogue": {
+        "contract": "schedule_schema_catalogue",
+        "contract_version": "1.0",
+        "catalogue_ref": "catalogue://tnavigator/22.2/ginjgas-group-inject-gas-v1",
+        "catalogue_hash": "sha256:db9853202286562edb5ce89276f969fcb57a6555d972b4db87e76b97941fc059",
+        "source_hash": "sha256:b2bf7c44ba9719880a54b8fc64e240c97875e6407738183f3aa7cb5d3859102e",
+        "access_scope": "petroleum-engineering",
+        "simulator_profile": {
+          "vendor": "Rock Flow Dynamics",
+          "simulator": "tNavigator",
+          "version": "22.2",
+          "unit_system": "METRIC"
+        },
+        "approved": true,
+        "approved_by": "department-hydrodynamic-expert",
+        "author": "department-hydrodynamic-expert",
+        "approval_gate_id": "expert:ginjgas-group-inject-gas-v1:2",
+        "schemas": [
+          {
+            "schema_id": "expert:GINJGAS:composition",
+            "schema_revision": "1",
+            "keyword": "GINJGAS",
+            "variant": "composition",
+            "citation": {
+              "document_id": "tnav-user-manual-russian",
+              "document_revision": "19.4",
+              "page": "12.20.196 / 2159-2160",
+              "heading": "GINJGAS",
+              "source_hash": "sha256:b2bf7c44ba9719880a54b8fc64e240c97875e6407738183f3aa7cb5d3859102e"
+            },
+            "parser": {
+              "token_width": 5,
+              "allow_trailing_omission": true,
+              "allow_unquoted_strings": true
+            },
+            "fields": [
+              {
+                "name": "GROUP",
+                "position": 1,
+                "type": "string",
+                "required": true,
+                "quote": "single"
+              },
+              {
+                "name": "SOURCE",
+                "position": 2,
+                "type": "string",
+                "required": true,
+                "enum": [
+                  "GAS",
+                  "STREAM",
+                  "MIX",
+                  "GV",
+                  "WV",
+                  "GRUP"
+                ]
+              },
+              {
+                "name": "SOURCE_REF",
+                "position": 3,
+                "type": "string",
+                "required": false,
+                "quote": "single"
+              },
+              {
+                "name": "MAKEUP_STREAM",
+                "position": 4,
+                "type": "string",
+                "required": false,
+                "quote": "single"
+              },
+              {
+                "name": "SEPARATOR_STAGE",
+                "position": 5,
+                "type": "number",
+                "required": false
+              }
+            ],
+            "layout": {
+              "newline": "LF",
+              "indent": "  ",
+              "delimiter": "SPACE",
+              "record_terminator": "SLASH",
+              "block_terminator": "SLASH_LINE"
+            },
+            "semantics": {
+              "period": "ANY",
+              "clock": {
+                "uses_current": true
+              },
+              "definitions": [
+                {
+                  "entity_type": "group_inject_gas",
+                  "id_field": "GROUP",
+                  "action": "UPSERT"
+                }
+              ],
+              "references": [
+                {
+                  "entity_type": "group",
+                  "id_field": "GROUP",
+                  "required": true
+                },
+                {
+                  "entity_type": "well_stream",
+                  "id_field": "SOURCE_REF",
+                  "required": false
+                },
+                {
+                  "entity_type": "well_stream",
+                  "id_field": "MAKEUP_STREAM",
+                  "required": false
+                }
+              ],
+              "prerequisites": [
+                {
+                  "keyword": "WELLSTRE",
+                  "soft": true
+                },
+                {
+                  "keyword": "GCONINJE",
+                  "soft": true
+                }
+              ],
+              "state_assignments": [
+                {
+                  "namespace": "group-inject-gas",
+                  "entity_type": "group_inject_gas",
+                  "entity_field": "GROUP",
+                  "key_fields": [
+                    "GROUP"
+                  ],
+                  "value_fields": [
+                    "SOURCE",
+                    "SOURCE_REF",
+                    "MAKEUP_STREAM",
+                    "SEPARATOR_STAGE"
+                  ]
+                }
+              ],
+              "numeric_constraints": [
+                {
+                  "field": "SEPARATOR_STAGE",
+                  "min": 0
+                }
+              ]
+            }
+          }
+        ]
+      },
+      "source_hash": "sha256:b2bf7c44ba9719880a54b8fc64e240c97875e6407738183f3aa7cb5d3859102e",
+      "page": "12.20.196 GINJGAS (с. 2159–2160); WELLSTRE 12.20.189; GCONINJE 12.20.98; WINJGAS 12.20.195",
+      "heading": "GINJGAS — состав нагнетаемого группой газа",
+      "id": "ginjgas-group-inject-gas-v1",
+      "metadata": {
+        "document_id": "ginjgas-group-inject-gas-v1",
+        "document_revision": "2",
+        "source_hash": "sha256:b2bf7c44ba9719880a54b8fc64e240c97875e6407738183f3aa7cb5d3859102e",
+        "page": "12.20.196 / 2159-2160",
+        "heading": "GINJGAS",
+        "target_base": "schedule_mvp",
+        "knowledge_type": "keyword_instruction",
+        "knowledge_id": "ginjgas-group-inject-gas-v1",
+        "revision": "2",
+        "status": "active",
+        "access_scope": "petroleum-engineering",
+        "author": "department-hydrodynamic-expert",
+        "approved_by": "department-hydrodynamic-expert",
+        "keyword_families": [
+          "GINJGAS"
+        ],
+        "topics": [
+          "состав газа группы",
+          "GINJGAS",
+          "GCONINJE GAS",
+          "STREAM WELLSTRE",
+          "не WINJGAS"
+        ],
+        "task_patterns": [
+          "задать GINJGAS",
+          "состав закачки группы",
+          "GINJGAS STREAM",
+          "газ с сепаратора группы",
+          "makeup WELLSTRE"
+        ]
+      }
+    },
+    {
+      "contract": "schedule_knowledge_block",
+      "contract_version": "1.0",
+      "target_base": "schedule_mvp",
+      "knowledge_type": "keyword_instruction",
+      "knowledge_id": "winjgas-well-inject-gas-v1",
+      "revision": "1",
+      "title": "WINJGAS — состав газа закачки скважины",
+      "keywords": [
+        "WINJGAS"
+      ],
+      "topics": [
+        "состав газа скважины",
+        "WINJGAS",
+        "WCONINJE GAS",
+        "STREAM WELLSTRE",
+        "не GSATCOMP"
+      ],
+      "task_patterns": [
+        "задать WINJGAS",
+        "состав закачки скважины",
+        "WINJGAS STREAM",
+        "газ сепаратора на скважине",
+        "makeup WELLSTRE"
+      ],
+      "simulator_family": [
+        "E300",
+        "tNavigator"
+      ],
+      "status": "active",
+      "author": "department-hydrodynamic-expert",
+      "access_scope": "petroleum-engineering",
+      "text": "WINJGAS — состав газа, нагнетаемого скважиной (композиционные модели).\n\nНазначение. Задаёт источник/состав закачиваемого газа для скважины при скважинном GAS-контроле через WCONINJE. Форматы: tN, E3 (E1 в мануале не отмечен — для E1 → needs_input). Секция: SCHEDULE. Это не GINJGAS (групповой аналог — отдельная карточка), не GSATCOMP (satellite; вне allowlist), не WELLSTRE (объявление потока — отдельная карточка), не WINJMIX (смесь; вне allowlist → needs_input при SOURCE=MIX без baseline), не WCONINJE (rate/control).\n\nКогда применять. E3/tN + WCONINJE GAS: нужен явный состав на скважине или `*LIST` после WLIST. STREAM → сначала WELLSTRE с тем же именем. MIX → WINJMIX вне allowlist → needs_input, если смеси нет в baseline. GV/WV — имя группы/скважины-источника из фактов. GAS — сепаратор месторождения. GRUP — состав вышележащей группы (default). Makeup-поток (поле 4) тоже через WELLSTRE.\n\nRecord layout. Keyword WINJGAS, записи `/`, блок — отдельный `/`. WELL или `*LIST`.\n\nПоля (§12.20.195):\n\n1. WELL — скважина или `*LIST` (после WLIST).\n2. SOURCE — GAS | STREAM | MIX | GV | WV | GRUP. Default: GRUP.\n3. SOURCE_REF — зависит от SOURCE: STREAM→имя WELLSTRE; MIX→имя WINJMIX; GV→группа; WV→скважина. Для GAS/GRUP обычно опускается.\n4. MAKEUP_STREAM — имя WELLSTRE добавочного газа, если добываемого газа по SOURCE не хватает. Optional.\n5. SEPARATOR_STAGE — ступень сепаратора для состава (default 0 = весь сепаратор). Optional.\n\nКанон render.\n- `composition` — WELL SOURCE [SOURCE_REF] [MAKEUP_STREAM] [SEPARATOR_STAGE] (паттерн `Well1 STREAM 'stream1'`).\nНе копируйте имена/stream без фактов. Не эмитьте GSATCOMP/WINJMIX/WELLSTRW из этой карточки.\n\nIR / semantics.\n- period=ANY; clock.uses_current=true.\n- definitions: UPSERT well_inject_gas WELL.\n- references: well WELL (или WLIST); STREAM/MAKEUP → well_stream; GV→group; WV→well.\n- prerequisites: WCONINJE GAS context (soft); WELLSTRE before STREAM/MAKEUP; WLIST before `*LIST`.\n- state_assignments: namespace well-inject-gas; value SOURCE + refs.\n- MIX without WINJMIX in allowlist/baseline → needs_input.\n\nСвязанные: WCONINJE; WELLSTRE; GINJGAS; WLIST; GSATCOMP / WINJMIX (вне allowlist).\n\nАнтипаттерны.\n- WINJGAS без WCONINJE GAS / без скважины.\n- STREAM без WELLSTRE.\n- MIX без WINJMIX facts/baseline.\n- Подмена группового GINJGAS скважинным WINJGAS без факта.\n- E1-профиль.\n\nНехватка факта → needs_input: нет WELL/SOURCE; STREAM/MIX/GV/WV без SOURCE_REF; нет WELLSTRE; нужен MIX/WINJMIX; E1.\n\nКарточка самодостаточна для composition-record; поток объявляет WELLSTRE.",
+      "examples": [
+        {
+          "title": "STREAM на скважине — канон мануала",
+          "task": "Well1 ← поток stream1.",
+          "schedule_text": "WINJGAS\nWell1 STREAM 'stream1' /\n/\n",
+          "explanation": "§12.20.195 с. 2158. Variant composition. stream1 должен быть в WELLSTRE. Учебные имена."
+        }
+      ],
+      "schema_catalogue": {
+        "contract": "schedule_schema_catalogue",
+        "contract_version": "1.0",
+        "catalogue_ref": "catalogue://tnavigator/22.2/winjgas-well-inject-gas-v1",
+        "catalogue_hash": "sha256:69da4e006de270db4045e288be0d074cd0f865e0b9b3af0bc5a2cb6f76682336",
+        "source_hash": "sha256:844c8ef6397e060eee6d5662ad6ed3f6031015eee5be3bf7ec7aa4efdee40f4a",
+        "access_scope": "petroleum-engineering",
+        "simulator_profile": {
+          "vendor": "Rock Flow Dynamics",
+          "simulator": "tNavigator",
+          "version": "22.2",
+          "unit_system": "METRIC"
+        },
+        "approved": true,
+        "approved_by": "department-hydrodynamic-expert",
+        "author": "department-hydrodynamic-expert",
+        "approval_gate_id": "expert:winjgas-well-inject-gas-v1:1",
+        "schemas": [
+          {
+            "schema_id": "expert:WINJGAS:composition",
+            "schema_revision": "1",
+            "keyword": "WINJGAS",
+            "variant": "composition",
+            "citation": {
+              "document_id": "tnav-user-manual-russian",
+              "document_revision": "19.4",
+              "page": "12.20.195 / 2157-2158",
+              "heading": "WINJGAS",
+              "source_hash": "sha256:844c8ef6397e060eee6d5662ad6ed3f6031015eee5be3bf7ec7aa4efdee40f4a"
+            },
+            "parser": {
+              "token_width": 5,
+              "allow_trailing_omission": true,
+              "allow_unquoted_strings": true
+            },
+            "fields": [
+              {
+                "name": "WELL",
+                "position": 1,
+                "type": "string",
+                "required": true,
+                "quote": "single"
+              },
+              {
+                "name": "SOURCE",
+                "position": 2,
+                "type": "string",
+                "required": true,
+                "enum": [
+                  "GAS",
+                  "STREAM",
+                  "MIX",
+                  "GV",
+                  "WV",
+                  "GRUP"
+                ]
+              },
+              {
+                "name": "SOURCE_REF",
+                "position": 3,
+                "type": "string",
+                "required": false,
+                "quote": "single"
+              },
+              {
+                "name": "MAKEUP_STREAM",
+                "position": 4,
+                "type": "string",
+                "required": false,
+                "quote": "single"
+              },
+              {
+                "name": "SEPARATOR_STAGE",
+                "position": 5,
+                "type": "number",
+                "required": false
+              }
+            ],
+            "layout": {
+              "newline": "LF",
+              "indent": "  ",
+              "delimiter": "SPACE",
+              "record_terminator": "SLASH",
+              "block_terminator": "SLASH_LINE"
+            },
+            "semantics": {
+              "period": "ANY",
+              "clock": {
+                "uses_current": true
+              },
+              "definitions": [
+                {
+                  "entity_type": "well_inject_gas",
+                  "id_field": "WELL",
+                  "action": "UPSERT"
+                }
+              ],
+              "references": [
+                {
+                  "entity_type": "well",
+                  "id_field": "WELL",
+                  "required": true
+                },
+                {
+                  "entity_type": "well_stream",
+                  "id_field": "SOURCE_REF",
+                  "required": false
+                },
+                {
+                  "entity_type": "well_stream",
+                  "id_field": "MAKEUP_STREAM",
+                  "required": false
+                }
+              ],
+              "prerequisites": [
+                {
+                  "keyword": "WELLSTRE",
+                  "soft": true
+                },
+                {
+                  "keyword": "WCONINJE",
+                  "soft": true
+                }
+              ],
+              "state_assignments": [
+                {
+                  "namespace": "well-inject-gas",
+                  "entity_type": "well_inject_gas",
+                  "entity_field": "WELL",
+                  "key_fields": [
+                    "WELL"
+                  ],
+                  "value_fields": [
+                    "SOURCE",
+                    "SOURCE_REF",
+                    "MAKEUP_STREAM",
+                    "SEPARATOR_STAGE"
+                  ]
+                }
+              ],
+              "numeric_constraints": [
+                {
+                  "field": "SEPARATOR_STAGE",
+                  "min": 0
+                }
+              ]
+            }
+          }
+        ]
+      },
+      "source_hash": "sha256:844c8ef6397e060eee6d5662ad6ed3f6031015eee5be3bf7ec7aa4efdee40f4a",
+      "page": "12.20.195 WINJGAS (с. 2157–2158); WELLSTRE 12.20.189; WCONINJE 12.20.44; GINJGAS 12.20.196",
+      "heading": "WINJGAS — состав нагнетаемого скважинами газа",
+      "id": "winjgas-well-inject-gas-v1",
+      "metadata": {
+        "document_id": "winjgas-well-inject-gas-v1",
+        "document_revision": "1",
+        "source_hash": "sha256:844c8ef6397e060eee6d5662ad6ed3f6031015eee5be3bf7ec7aa4efdee40f4a",
+        "page": "12.20.195 / 2157-2158",
+        "heading": "WINJGAS",
+        "target_base": "schedule_mvp",
+        "knowledge_type": "keyword_instruction",
+        "knowledge_id": "winjgas-well-inject-gas-v1",
+        "revision": "1",
+        "status": "active",
+        "access_scope": "petroleum-engineering",
+        "author": "department-hydrodynamic-expert",
+        "approved_by": "department-hydrodynamic-expert",
+        "keyword_families": [
+          "WINJGAS"
+        ],
+        "topics": [
+          "состав газа скважины",
+          "WINJGAS",
+          "WCONINJE GAS",
+          "STREAM WELLSTRE",
+          "не GSATCOMP"
+        ],
+        "task_patterns": [
+          "задать WINJGAS",
+          "состав закачки скважины",
+          "WINJGAS STREAM",
+          "газ сепаратора на скважине",
+          "makeup WELLSTRE"
+        ]
+      }
+    },
+    {
+      "contract": "schedule_knowledge_block",
+      "contract_version": "1.0",
+      "target_base": "schedule_mvp",
+      "knowledge_type": "keyword_instruction",
+      "knowledge_id": "wvfpdp-vfp-pressure-correction-v1",
+      "revision": "1",
+      "title": "WVFPDP — коррекция BHP к VFP",
+      "keywords": [
+        "WVFPDP"
+      ],
+      "topics": [
+        "коррекция BHP",
+        "WVFPDP",
+        "VFP ΔP",
+        "fp scale",
+        "не VFPDP"
+      ],
+      "task_patterns": [
+        "задать WVFPDP",
+        "коррекция давления VFP",
+        "масштаб потери в трубе",
+        "калибровка THP BHP",
+        "WVFPDP bars"
+      ],
+      "simulator_family": [
+        "E100",
+        "tNavigator"
+      ],
+      "status": "active",
+      "author": "department-hydrodynamic-expert",
+      "access_scope": "petroleum-engineering",
+      "text": "WVFPDP — коррекция BHP и масштаб потери давления трубы к VFP.\n\nНазначение. Добавляет поправку давления к BHP, полученному интерполяцией VFP-таблиц, и/или масштабирует потерю давления в трубе (BHP−THP). Типично для согласования дебита при заданном THP (калибровка эффективных потерь забой↔устье). Форматы: tN, E1 (E3 в мануале не отмечен — для E3-профиля → needs_input). Секция: SCHEDULE. Это не VFPPROD (тело таблицы — отдельная карточка/артефакт), не VFPINJ, не VFPCORR/WVFPEXP (вне allowlist → needs_input), не WNETDP (сеть), не inventing `VFPDP` — эмитьте только `WVFPDP`.\n\nКогда применять. Нужна явная калибровка ΔP/fp из фактов при VFP/THP-контроле. Значения не угадывайте. Автоматическая гидростатическая поправка REF_DEPTH WELSPECS ↔ datum VFPPROD выполняется симулятором и без WVFPDP — не дублируйте её «на глаз».\n\nRecord layout. Keyword WVFPDP, записи `/`, блок — отдельный `/`. WELL или `*LIST` после WLIST.\n\nПоля (§12.20.217; METRIC: bars):\n\n1. WELL — скважина или `*LIST`.\n2. DP_CORR — величина, добавляемая к BHP из VFP. Default: 0. (+ → выше BHP / ниже дебит producer; − → лучше добыча).\n3. FP_SCALE — коэффициент fp: BHP1 = THP + fp*(BHPtab − THP). Default: 1. Для producer fp>1 → выше BHP / ниже дебит.\n\nКанон render.\n- `correction` — WELL DP_CORR [FP_SCALE] (паттерны `302 2.5`, `303 -11.2`, `304 2 1.21`).\nНе копируйте 2.5/−11.2/1.21 без фактов.\n\nIR / semantics.\n- period=ANY; clock.uses_current=true.\n- definitions: UPSERT well_vfp_dp WELL.\n- references: well WELL (или WLIST).\n- prerequisites: well exists; VFPPROD/THP path soft (text).\n- state_assignments: namespace well-vfp-dp; value DP_CORR, FP_SCALE.\n- Never invent calibration numbers.\n\nСвязанные: VFPPROD; WCONPROD/WCONHIST (THP/VFP); WLIST; WELSPECS REF_DEPTH (авто-гидростатика).\n\nАнтипаттерны.\n- Эмитить `VFPDP` вместо `WVFPDP`.\n- Выдумать DP_CORR/FP_SCALE «примерно».\n- Подмена калибровкой отсутствующей VFP-таблицы.\n- E3-профиль без факта поддержки.\n\nНехватка факта → needs_input: нет WELL/величин; нужны числа калибровки; E3.\n\nКарточка самодостаточна для correction-record; тело VFP — через VFPPROD artifact.",
+      "examples": [
+        {
+          "title": "ΔP и fp — канон мануала",
+          "task": "302:+2.5 bar; 303:−11.2; 304:+2 bar и fp=1.21.",
+          "schedule_text": "WVFPDP\n302 2.5 /\n303 -11.2 /\n304 2 1.21 /\n/\n",
+          "explanation": "§12.20.217 с. 2192. Variant correction. Учебные имена/числа из мануала."
+        }
+      ],
+      "schema_catalogue": {
+        "contract": "schedule_schema_catalogue",
+        "contract_version": "1.0",
+        "catalogue_ref": "catalogue://tnavigator/22.2/wvfpdp-vfp-pressure-correction-v1",
+        "catalogue_hash": "sha256:4ea1d7a34e36a6a608e3c910ba690a4d6e034a4761052668d4d1231206fa7a8e",
+        "source_hash": "sha256:3f0c0f72ad54dc262bfb95c2b2a5262de3bd5256167d8803ebf09bc9447ccc67",
+        "access_scope": "petroleum-engineering",
+        "simulator_profile": {
+          "vendor": "Rock Flow Dynamics",
+          "simulator": "tNavigator",
+          "version": "22.2",
+          "unit_system": "METRIC"
+        },
+        "approved": true,
+        "approved_by": "department-hydrodynamic-expert",
+        "author": "department-hydrodynamic-expert",
+        "approval_gate_id": "expert:wvfpdp-vfp-pressure-correction-v1:1",
+        "schemas": [
+          {
+            "schema_id": "expert:WVFPDP:correction",
+            "schema_revision": "1",
+            "keyword": "WVFPDP",
+            "variant": "correction",
+            "citation": {
+              "document_id": "tnav-user-manual-russian",
+              "document_revision": "19.4",
+              "page": "12.20.217 / 2191-2192",
+              "heading": "WVFPDP",
+              "source_hash": "sha256:3f0c0f72ad54dc262bfb95c2b2a5262de3bd5256167d8803ebf09bc9447ccc67"
+            },
+            "parser": {
+              "token_width": 3,
+              "allow_trailing_omission": true,
+              "allow_unquoted_strings": true
+            },
+            "fields": [
+              {
+                "name": "WELL",
+                "position": 1,
+                "type": "string",
+                "required": true,
+                "quote": "single"
+              },
+              {
+                "name": "DP_CORR",
+                "position": 2,
+                "type": "number",
+                "required": true
+              },
+              {
+                "name": "FP_SCALE",
+                "position": 3,
+                "type": "number",
+                "required": false
+              }
+            ],
+            "layout": {
+              "newline": "LF",
+              "indent": "  ",
+              "delimiter": "SPACE",
+              "record_terminator": "SLASH",
+              "block_terminator": "SLASH_LINE"
+            },
+            "semantics": {
+              "period": "ANY",
+              "clock": {
+                "uses_current": true
+              },
+              "definitions": [
+                {
+                  "entity_type": "well_vfp_dp",
+                  "id_field": "WELL",
+                  "action": "UPSERT"
+                }
+              ],
+              "references": [
+                {
+                  "entity_type": "well",
+                  "id_field": "WELL",
+                  "required": true
+                }
+              ],
+              "prerequisites": [
+                {
+                  "keyword": "VFPPROD",
+                  "soft": true
+                }
+              ],
+              "state_assignments": [
+                {
+                  "namespace": "well-vfp-dp",
+                  "entity_type": "well_vfp_dp",
+                  "entity_field": "WELL",
+                  "key_fields": [
+                    "WELL"
+                  ],
+                  "value_fields": [
+                    "DP_CORR",
+                    "FP_SCALE"
+                  ]
+                }
+              ],
+              "numeric_constraints": [
+                {
+                  "field": "FP_SCALE",
+                  "min": 0
+                }
+              ]
+            }
+          }
+        ]
+      },
+      "source_hash": "sha256:3f0c0f72ad54dc262bfb95c2b2a5262de3bd5256167d8803ebf09bc9447ccc67",
+      "page": "12.20.217 WVFPDP (с. 2191–2192); VFPPROD 12.20.68; §6 VFP",
+      "heading": "WVFPDP — коррекция давления к VFP",
+      "id": "wvfpdp-vfp-pressure-correction-v1",
+      "metadata": {
+        "document_id": "wvfpdp-vfp-pressure-correction-v1",
+        "document_revision": "1",
+        "source_hash": "sha256:3f0c0f72ad54dc262bfb95c2b2a5262de3bd5256167d8803ebf09bc9447ccc67",
+        "page": "12.20.217 / 2191-2192",
+        "heading": "WVFPDP",
+        "target_base": "schedule_mvp",
+        "knowledge_type": "keyword_instruction",
+        "knowledge_id": "wvfpdp-vfp-pressure-correction-v1",
+        "revision": "1",
+        "status": "active",
+        "access_scope": "petroleum-engineering",
+        "author": "department-hydrodynamic-expert",
+        "approved_by": "department-hydrodynamic-expert",
+        "keyword_families": [
+          "WVFPDP"
+        ],
+        "topics": [
+          "коррекция BHP",
+          "WVFPDP",
+          "VFP ΔP",
+          "fp scale",
+          "не VFPDP"
+        ],
+        "task_patterns": [
+          "задать WVFPDP",
+          "коррекция давления VFP",
+          "масштаб потери в трубе",
+          "калибровка THP BHP",
+          "WVFPDP bars"
         ]
       }
     },

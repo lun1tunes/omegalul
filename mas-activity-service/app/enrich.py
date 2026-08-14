@@ -133,7 +133,7 @@ def build_brief(*, status: str | None, summary: str | None, brief: str | None, d
     if isinstance(details.get("fact_count"), (int, float)):
         extras.append(f"Фактов в пакете: {int(details['fact_count'])}.")
     if isinstance(details.get("gap_count"), (int, float)):
-        extras.append(f"Missing fields: {int(details['gap_count'])}.")
+        extras.append(f"Недостающих полей: {int(details['gap_count'])}.")
     if details.get("fields"):
         extras.append(f"Поля: {details['fields']}.")
     if details.get("objective") and "objective" not in raw.lower():

@@ -18,7 +18,7 @@ from schedule_semantic_runtime import build_schedule_validator_js
 ROOT = Path(__file__).resolve().parents[2]
 WORKFLOWS=ROOT/'n8n'/'workflows'
 CORE=WORKFLOWS/'core'
-KEYWORDS=['DATES','INCLUDE','GRUPTREE','WELSPECS','WELLTRACK','COMPDATMD','WCONHIST','WCONPROD','WCONINJE','GCONPROD','GCONINJE','GUIDERAT','GSATPROD','GSATINJE','WELLSTRE','GINJGAS','BRANPROP','NODEPROP','GNETDP','NETBALAN','FRACTURE_TEMPLATE','FRACTURE_SPECS','FRACTURE_STAGE','WECON','WTEST','WELTARG','WNETDP','WPIMULT','WDFAC','WELDRAW','WLIST','WFRACP','WFRACPL','VFPPROD','ACTIONX','DELAYACT','ENDACTIO','UDQ','UDT','APPLYSCRIPT']
+KEYWORDS=['DATES','INCLUDE','GRUPTREE','WELSPECS','WELLTRACK','COMPDATMD','WCONHIST','WCONPROD','WCONINJE','GCONPROD','GCONINJE','GUIDERAT','GSATPROD','GSATINJE','WELLSTRE','WINJGAS','GINJGAS','BRANPROP','NODEPROP','GNETDP','NETBALAN','FRACTURE_TEMPLATE','FRACTURE_SPECS','FRACTURE_STAGE','WECON','WTEST','WELTARG','WNETDP','WPIMULT','WDFAC','WELDRAW','WLIST','WFRACP','WFRACPL','VFPPROD','WVFPDP','ACTIONX','DELAYACT','ENDACTIO','UDQ','UDT','APPLYSCRIPT']
 def uid(name): return str(uuid.uuid5(uuid.NAMESPACE_URL,'omegalul/schedule-foundation/'+name))
 def node(name,type_,version,pos,parameters,**extra):
  v={'parameters':parameters,'id':uid(name),'name':name,'type':type_,'typeVersion':version,'position':list(pos)};v.update(extra);return v
@@ -106,8 +106,8 @@ File order matters. Typical DAG dependencies:
 6. WCONHIST only in history interval; WCONPROD / WCONINJE / GCONPROD / GCONINJE in forecast after cutover (producers vs injectors).
 7. GUIDERAT when GCONPROD needs FORM guides / WCUT-GOR-aware split (after GRUPTREE/GCONPROD facts); WGRUPCON still outside allowlist.
 8. GSATPROD / GSATINJE for satellite production/injection sources (no wells); GSATCOMP still outside allowlist.
-9. WELLSTRE before GINJGAS (and before WINJGAS/GSATCOMP if those appear in baseline); E3/tN only; mole fractions from facts (Σ=1). GINJGAS wires group inject composition after GCONINJE GAS; WINJGAS/GSATCOMP/WINJMIX/WELLSTRW still outside allowlist.
-10. VFPPROD table **number** must exist in baseline/facts before WCONPROD/WCONHIST reference it (THP/ALQ paths); never invent VFP table body.
+9. WELLSTRE before WINJGAS/GINJGAS (and before GSATCOMP if it appears in baseline); E3/tN only; mole fractions from facts (Σ=1). WINJGAS wires well inject composition after WCONINJE GAS; GINJGAS after GCONINJE GAS; GSATCOMP/WINJMIX/WELLSTRW still outside allowlist.
+10. VFPPROD table **number** must exist in baseline/facts before WCONPROD/WCONHIST reference it (THP/ALQ paths); never invent VFP table body. WVFPDP (BHP add-on / tubing ΔP scale) after the well exists and typically with VFP in use; not a synonym of inventing VFPDP — emit `WVFPDP` only.
 11. WECON/WTEST/WELTARG/WPIMULT/WDFAC/WELDRAW after the well (or group/FIELD for WELDRAW) exists; WELTARG after a prior control exists when changing a target.
 12. BRANPROP→NODEPROP→WNETDP only if NETWORK already in evidence/baseline; GNETDP for fixed-pressure group/node rate band (after group/node exists); NETBALAN for NETWORK balance solver tolerances (NETWORK required); GNETINJE still outside allowlist.
 13. Fractures — pick one path: WFRACP|WFRACPL **or** FRACTURE_TEMPLATE→FRACTURE_SPECS→FRACTURE_STAGE (do not mix without facts).

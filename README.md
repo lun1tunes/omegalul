@@ -19,7 +19,7 @@ WORKSPACE_ROOT="$PWD" node n8n/tests/cas-persist-runtime-smoke.js
 # …все n8n/tests/*.js → 187 scenarios
 # + cd mas-activity-service && PYTHONPATH=. python3 -m pytest -q tests/test_activity_api.py
 
-cd excel-agent-tools && python -m pytest tests   # 68 passed
+cd excel-agent-tools && python -m pytest tests   # 70 passed
 ```
 
 Clean import: `n8nio/n8n:2.30.8`, 15 JSON из `full_clean_import_set`, `active=0`.

@@ -80,7 +80,8 @@ approved_by             ответственный инженер-гидроди
 | `GUIDERAT` | формула направляющих дебитов для GCONPROD | phase OIL/LIQ/GAS/RES/NONE, coeffs A–F, interval, YES/NO growth, GRDAMP, free-gas flag, GRmin; vs WGRUPCON | tNavigator 22.2 manual |
 | `GSATPROD` | дебиты вспомогательных (satellite) групп | ORAT/WRAT/GRAT/RESV; no wells/children; GRUPTREE placement; vs GSATINJE/GSATCOMP | tNavigator 22.2 manual |
 | `GSATINJE` | приемистость вспомогательных групп | PHASE OIL/WAT/GAS (одна фаза на запись), surface/reservoir rates; GRUPTREE; vs GSATCOMP | tNavigator 22.2 manual |
-| `WELLSTRE` | именованный поток закачки (мольные доли) | stream name, Nc mole fractions Σ=1, tN/E3 (не E1); consumers GINJGAS/WINJGAS/GSATCOMP | tNavigator 22.2 manual |
+| `WELLSTRE` | именованный поток закачки (мольные доли) | stream name, Nc mole fractions Σ=1, tN/E3 (не E1); consumers WINJGAS/GINJGAS/GSATCOMP | tNavigator 22.2 manual |
+| `WINJGAS` | состав газа закачки скважины (E3/tN + WCONINJE) | WELL/`*LIST`, SOURCE GAS/STREAM/MIX/GV/WV/GRUP, SOURCE_REF, makeup WELLSTRE, separator stage | tNavigator 22.2 manual |
 | `GINJGAS` | состав газа закачки группы (E3/tN + GCONINJE) | GROUP, SOURCE GAS/STREAM/MIX/GV/WV/GRUP, SOURCE_REF, makeup WELLSTRE, separator stage | tNavigator 22.2 manual |
 | `BRANPROP` | extended surface-network branches | feature enabled in base profile, endpoints exist, no forbidden network mode, graph integrity, VFP/ALQ references | tNavigator manual; OPM cross-check |
 | `NODEPROP` | extended surface-network nodes | node uniqueness, required branch/network dependency, pressure units, choke/group references, network topology | tNavigator manual; OPM cross-check |
@@ -100,6 +101,7 @@ approved_by             ответственный инженер-гидроди
 | `WFRACP` | плоскостной ГРП (расширение WFRAC) | well/completions exist, azimuth/zenith, half-lengths/heights/width or proppant volume, optional flow/time decay, bounding box | tNavigator 22.2 manual |
 | `WFRACPL` | плоскостной ГРП в LGR (расширение WFRACP) | LGR well via WELSPECL/COMPDATL, LGR name (CARFIN), same geometry/proppant fields as WFRACP + LGR | tNavigator 22.2 manual |
 | `VFPPROD` | VFP-таблица BHP добычи (обычно Prosper/внешний артефакт) | table id 1..VFPPDIMS, link to WCONPROD/WCONHIST VFP_TABLE+ALQ; KEEP body; never invent axes | tNavigator 22.2 manual §12.20.68 / §6 |
+| `WVFPDP` | коррекция BHP / масштаб ΔP трубы к VFP | WELL/`*LIST`, ΔP add-on (bars), optional fp scale; with VFPPROD/WCON* THP | tNavigator 22.2 manual |
 | `ACTIONX` | условный блок SCHEDULE (AND/OR условия) | action name, max calls, min interval, condition rows, allowlisted body, close with ENDACTIO | tNavigator 22.2 manual |
 | `DELAYACT` | отложенный блок после trigger-действия | delayed name, trigger action name, delay days, max activations, delay increment; ENDACTIO | tNavigator 22.2 manual |
 | `ENDACTIO` | конец блока ACTION*/DELAYACT | pairs with ACTIONX/DELAYACT; emit ENDACTIO not ENDACTION | tNavigator 22.2 manual |
@@ -632,10 +634,11 @@ error_code, safe_message, created_at
 
 Разрешённые `event_type`: `task_received`, `stage_started`, `model_call`, `tool_call`, `tool_result`, `handoff`, `score_computed`, `clarification_requested`, `validation_finding`, `gate_decision`, `stage_finished`, `retry`, `approval`, `release`. `redacted_args` содержит только безопасные параметры или их hash; binary и крупные результаты — immutable refs.
 
-В n8n 2.30.8 оператор получает два уровня видимости:
+В n8n 2.30.8 оператор получает три уровня видимости:
 
 1. штатный **Executions UI** показывает граф, входы/выходы нод, ошибки и дочерние Execute Sub-workflow executions;
-2. явный trace ledger показывает сквозной `trace_id`, handoff между workflow, tool name/result summary, latency, retries, score и gate decision даже после завершения отдельных execution.
+2. явный trace ledger показывает сквозной `trace_id`, handoff между workflow, tool name/result summary, latency, retries, score и gate decision даже после завершения отдельных execution;
+3. **MAS Activity UI** (`mas-activity-service`, порт `8200`) — лёгкая chat-лента handoff’ов для демо/презентации: контракт `mas_activity_feed/v1.1` с полями `brief` (1–4 предложения), `at_abs` (абсолютное UTC), `duration_ms`/`duration_label` (wall time specialist до handoff), `outcome` и allowlisted chips. Питание — batch `POST /v1/sync` из `Writer — MAS Trace` после durable insert (`continueOnFail`: Trace остаётся источником истины, UI — presentation sink). Сырые prompts/секреты в ленту не попадают.
 
 Для QA/демо у Excel tool-using AI Agent включается `returnIntermediateSteps=true`, поэтому в execution видны вызовы FastAPI tools и их результаты. SCHEDULE Planner/Builder также экспортированы с этим флагом для безопасного будущего подключения allowlisted tools; в текущем foundation их фактические действия — отдельные детерминированные Code/IF/Switch stages, видимые прямо на canvas и в execution. Это **операторская диагностика**, а не источник authoritative state: production trace хранит только redacted summaries/IDs/hashes. Для Planner/Verifier показываются их bounded structured outputs: decomposition, rationale, criteria, findings и gate reason codes — не скрытый внутренний монолог. Для production сохраняем structured summaries и метаданные, а не весь prompt/tool payload; retention и redaction обязательны. Нативный execution UI не является durable audit log: его retention/настройки могут удалить execution, поэтому критические события дублируются в ledger. Внешний LangSmith/OpenTelemetry допускается как дополнительный sink только после отдельной проверки credentials, data residency и совместимости с 2.30.8.
 
@@ -857,6 +860,13 @@ schedule_builder_result/v1
 ```
 
 `evidence_gap` — единственный способ Builder запросить дополнительные табличные факты. Он не содержит команды «вызвать workflow»: Orchestrator сопоставляет gap с approved plan, проверяет budget/loop limit, сохраняет новую task version и формирует следующий `excel_query_request`. Повторный ответ Excel создаёт новый `source_snapshot_hash`; Builder не может молча смешать факты разных snapshots. Свободный текст между агентами не является authoritative handoff.
+
+Runtime foundation (UI-only MVP) дополнительно фиксирует:
+
+- единый registry `n8n/contracts/specialist_registry.v1.json` → planner catalogue, allowlist и chat roles через `n8n/templates/mas_handoff_contracts.py`;
+- domain `source_facts_packet` fail-closed: Excel→Schedule без `source_snapshot_hash`/`correlation_id` блокируется (`INVALID_SOURCE_FACTS_PACKET`);
+- typed `evidence_gap` с шестью обязательными полями; `MALFORMED_EVIDENCE_GAP` останавливает Excel loop без траты бюджета;
+- `runtime_json.handoff_events` (+ `specialist_timer` → `duration_ms`) и `event_type:handoff` в final Trace fan-in; Orchestrator response отдаёт `activity` / `activity_contract: mas_activity_feed/v1.1` для презентационной морды.
 
 ### 6.4. `schedule_schema_catalogue/v1` и typed-IR renderer
 
@@ -1248,7 +1258,8 @@ Entrypoints соответствуют роли workflow: user-facing Orchestrat
 12. semantic candidate replay regression: entity existence/effective dates, prerequisites, hierarchy, cutover, duplicate/conflicting assignments, lifecycle retire/reactivate, numeric bounds, interval overlap, wildcard refusal, candidate-before-boundary и stale snapshot guards;
 13. orchestration regression: Excel facts → Builder; Builder `evidence_gap` → scoped Excel request → resume; Builder success → independent verifier; valid inline `.INC` → release; missing/oversized/invalid inline text → block; no direct specialist-to-specialist calls; stale snapshot/version and exhausted loop budget fail closed;
 14. scoring/gates: `>=85`, `70–84`, `<70`, every hard blocker and high/critical mandatory approval;
-15. trace regression: every model/tool/handoff/gate has one correlated event; secrets/binary/raw prompts absent; execution and ledger reconstruct the same stage order;
+15. trace regression: every model/tool/handoff/gate has one correlated event; secrets/binary/raw prompts absent; execution and ledger reconstruct the same stage order; Activity sync preserves `brief`/`at_abs`/`duration_label` without secrets;
+15a. handoff contracts smoke: allowlist, fail-closed source_facts_packet, typed evidence_gap, activity feed v1.1;
 16. RAG exact/lexical/semantic/tag/RRF, access/current revision, full-parent hydration, keyword instruction coverage and `abstain` regression;
 17. Excel regression; `pytest`; `git diff --check`.
 
