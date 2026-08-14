@@ -373,7 +373,7 @@ Dropped vs older drafts: `phase`, `task_type`, `history_json`, `last_error_json`
 ```bash
 WORKSPACE_ROOT="$PWD" node n8n/tests/cas-persist-runtime-smoke.js
 WORKSPACE_ROOT="$PWD" node n8n/tests/schedule-intake-runtime-smoke.js
-# …остальные n8n/tests/*.js (134 scenario)
+# …остальные n8n/tests/*.js (160 scenarios)
 
 cd excel-agent-tools
 python -m pip install -r requirements-dev.txt
