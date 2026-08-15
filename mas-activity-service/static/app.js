@@ -23,9 +23,23 @@
   const cancelBtn = document.getElementById("cancelBtn");
   const hitlButtons = [approveBtn, rejectBtn, replyBtn, cancelBtn];
 
+  const newTaskBtn = document.getElementById("newTaskBtn");
+  const startComposer = document.getElementById("startComposer");
+  const startRequestedBy = document.getElementById("startRequestedBy");
+  const taskDescription = document.getElementById("taskDescription");
+  const scheduleRoot = document.getElementById("scheduleRoot");
+  const startDropzone = document.getElementById("startDropzone");
+  const startFileInput = document.getElementById("startFileInput");
+  const startFileList = document.getElementById("startFileList");
+  const startHint = document.getElementById("startHint");
+  const startCancelBtn = document.getElementById("startCancelBtn");
+
   const ACTIVITY_KEY = localStorage.getItem("mas_activity_key") || "dev-local";
   const storedBy = localStorage.getItem("mas_requested_by") || "";
-  if (storedBy) requestedBy.value = storedBy;
+  if (storedBy) {
+    requestedBy.value = storedBy;
+    startRequestedBy.value = storedBy;
+  }
 
   const LIVE_LABELS = {
     idle: "ожидание",
@@ -42,6 +56,9 @@
   let submitAction = "reply";
   let taskCatalog = [];
   let flashTimer = null;
+  let startOpen = false;
+  /** @type {{ file: File, kind: string }[]} */
+  let pendingFiles = [];
 
   function pathTaskId() {
     const m = location.pathname.match(/^\/t\/([^/]+)/);
@@ -86,11 +103,101 @@
     return String(q.text || q.question || q.message || q.id || "").trim();
   }
 
+  function classifyFile(file) {
+    const name = (file.name || "").toLowerCase();
+    if (/\.(xlsx|xls)$/.test(name)) return "excel";
+    if (/\.dev$/.test(name)) return "trajectory";
+    if (/\.(cps3|grd|grid)$/.test(name)) return "surface";
+    if (/\.(data|inc|sch|txt|grdecl)$/.test(name)) return "schedule";
+    return "other";
+  }
+
+  function kindLabel(kind) {
+    return ({
+      excel: "excel",
+      schedule: "schedule",
+      trajectory: "dev",
+      surface: "surface",
+      other: "file",
+    })[kind] || "file";
+  }
+
   function setComposerArmed(armed) {
     awaitingHuman = Boolean(armed);
-    composer.hidden = !awaitingHuman;
-    composer.classList.toggle("armed", awaitingHuman);
-    for (const btn of hitlButtons) btn.disabled = !awaitingHuman;
+    // Start composer takes the bottom slot when open.
+    composer.hidden = startOpen || !awaitingHuman;
+    composer.classList.toggle("armed", awaitingHuman && !startOpen);
+    for (const btn of hitlButtons) btn.disabled = !awaitingHuman || startOpen;
+  }
+
+  function setStartOpen(open) {
+    startOpen = Boolean(open);
+    startComposer.hidden = !startOpen;
+    newTaskBtn.classList.toggle("active-start", startOpen);
+    setComposerArmed(awaitingHuman);
+    if (startOpen) {
+      if (!startRequestedBy.value.trim() && requestedBy.value.trim()) {
+        startRequestedBy.value = requestedBy.value.trim();
+      }
+      taskDescription.focus();
+    }
+  }
+
+  function renderPendingFiles() {
+    startFileList.innerHTML = "";
+    if (!pendingFiles.length) {
+      startFileList.hidden = true;
+      return;
+    }
+    startFileList.hidden = false;
+    pendingFiles.forEach((entry, index) => {
+      const li = document.createElement("li");
+      const kind = document.createElement("span");
+      kind.className = "kind";
+      kind.textContent = kindLabel(entry.kind);
+      const name = document.createElement("span");
+      name.className = "name";
+      name.textContent = entry.file.name;
+      name.title = entry.file.name;
+      const remove = document.createElement("button");
+      remove.type = "button";
+      remove.setAttribute("aria-label", `Убрать ${entry.file.name}`);
+      remove.textContent = "×";
+      remove.addEventListener("click", (e) => {
+        e.stopPropagation();
+        pendingFiles.splice(index, 1);
+        renderPendingFiles();
+      });
+      li.append(kind, name, remove);
+      startFileList.append(li);
+    });
+  }
+
+  function addFiles(fileList) {
+    const incoming = Array.from(fileList || []);
+    for (const file of incoming) {
+      if (!file || !file.name) continue;
+      const kind = classifyFile(file);
+      if (kind === "other") {
+        showFlash(`Неизвестный тип файла: ${file.name}`);
+        continue;
+      }
+      if (kind === "excel" && pendingFiles.some((f) => f.kind === "excel")) {
+        showFlash("Можно прикрепить только один Excel workbook.");
+        continue;
+      }
+      if (kind === "surface" && pendingFiles.some((f) => f.kind === "surface")) {
+        showFlash("Можно прикрепить только один surface файл.");
+        continue;
+      }
+      if (pendingFiles.some((f) => f.file.name === file.name && f.file.size === file.size)) continue;
+      if (pendingFiles.length >= 40) {
+        showFlash("Слишком много файлов (макс. 40).");
+        break;
+      }
+      pendingFiles.push({ file, kind });
+    }
+    renderPendingFiles();
   }
 
   function renderGate(gate, { status, version, awaiting } = {}) {
@@ -142,7 +249,7 @@
     const li = document.createElement("li");
     const fromRole = turn.from?.role || "Orchestrator";
     const toRole = turn.to?.role || "Specialist";
-    const isHuman = turn.kind === "hitl" || /human/i.test(fromRole) || /^HUMAN_/.test(turn.status || "");
+    const isHuman = turn.kind === "hitl" || /human/i.test(fromRole) || /^HUMAN_/.test(turn.status || "") || turn.status === "TASK_STARTED";
     li.className = `turn outcome-${turn.outcome || "info"}${isHuman ? " human" : ""}`;
     if (!animate) {
       li.style.animation = "none";
@@ -226,7 +333,7 @@
       const emptyMsg = document.createElement("p");
       emptyMsg.className = "rail-empty";
       emptyMsg.id = "railEmpty";
-      emptyMsg.textContent = "Нет задач. Дождитесь handoff от Trace Writer или откройте /t/<task_id>.";
+      emptyMsg.textContent = "Нет задач. Создайте новую или дождитесь handoff от Trace Writer.";
       taskRail.append(emptyMsg);
       return;
     }
@@ -262,7 +369,6 @@
 
   function applyFeedMeta(data) {
     if (data.hitl_backend) backendLabel.textContent = `HITL: ${data.hitl_backend}`;
-    // REST + SSE snapshots use human_gate; accept legacy gate alias if present.
     renderGate(data.human_gate ?? data.gate ?? null, {
       status: data.status,
       version: data.version,
@@ -332,6 +438,7 @@
       return;
     }
     localStorage.setItem("mas_requested_by", by);
+    startRequestedBy.value = by;
     const responseText = humanResponse.value.trim();
     if (action === "reply" && !responseText) {
       humanResponse.focus();
@@ -393,6 +500,84 @@
     }
   }
 
+  async function submitStart(e) {
+    e.preventDefault();
+    const by = startRequestedBy.value.trim();
+    const description = taskDescription.value.trim();
+    if (!by) {
+      startRequestedBy.focus();
+      showFlash("Укажите requested_by — именной accountable инженер.");
+      return;
+    }
+    if (!description) {
+      taskDescription.focus();
+      showFlash("Нужно описание задачи.");
+      return;
+    }
+    localStorage.setItem("mas_requested_by", by);
+    requestedBy.value = by;
+
+    const form = new FormData();
+    form.append("task_description", description);
+    form.append("requested_by", by);
+    const root = scheduleRoot.value.trim();
+    if (root) form.append("schedule_root", root);
+
+    let excel = null;
+    let surface = null;
+    const schedules = [];
+    const trajectories = [];
+    for (const entry of pendingFiles) {
+      if (entry.kind === "excel") excel = entry.file;
+      else if (entry.kind === "surface") surface = entry.file;
+      else if (entry.kind === "trajectory") trajectories.push(entry.file);
+      else schedules.push(entry.file);
+    }
+    if (excel) form.append("file", excel, excel.name);
+    if (surface) form.append("surface_file", surface, surface.name);
+    for (const f of schedules) form.append("schedule_files", f, f.name);
+    for (const f of trajectories) form.append("trajectory_files", f, f.name);
+
+    startComposer.classList.add("busy");
+    startHint.textContent = "Создаём задачу…";
+    try {
+      const res = await fetch("/v1/tasks/start", {
+        method: "POST",
+        headers: { "X-Activity-Key": ACTIVITY_KEY },
+        body: form,
+      });
+      const data = await res.json().catch(() => ({}));
+      if (!res.ok) {
+        const detail = typeof data.detail === "string"
+          ? data.detail
+          : Array.isArray(data.detail)
+            ? data.detail.map((d) => d.msg || d).join("; ")
+            : `Старт не принят (${res.status})`;
+        showFlash(detail);
+        startHint.textContent = "Не удалось создать. Проверьте backend и вложения.";
+        return;
+      }
+      pendingFiles = [];
+      renderPendingFiles();
+      taskDescription.value = "";
+      scheduleRoot.value = "";
+      setStartOpen(false);
+      showFlash(
+        data.backend === "local"
+          ? `Локальная задача ${data.task_id} (Orchestrator не вызван).`
+          : `Задача ${data.task_id} создана.`,
+        { ok: true },
+      );
+      await openTask(data.task_id);
+    } catch (_) {
+      showFlash("Сеть недоступна при создании задачи.");
+      startHint.textContent = "Не удалось создать. Проверьте сеть и backend.";
+    } finally {
+      startComposer.classList.remove("busy");
+      startHint.textContent = "Как Form — MAS Entry: objective + вложения. Live backend отправит start в Orchestrator.";
+    }
+  }
+
   for (const btn of hitlButtons) {
     btn.addEventListener("click", () => {
       submitAction = btn.dataset.action || "reply";
@@ -402,6 +587,39 @@
   composer.addEventListener("submit", (e) => {
     e.preventDefault();
     submitHitl(submitAction || "reply");
+  });
+
+  newTaskBtn.addEventListener("click", () => setStartOpen(!startOpen));
+  startCancelBtn.addEventListener("click", () => setStartOpen(false));
+  startComposer.addEventListener("submit", submitStart);
+
+  startDropzone.addEventListener("click", () => startFileInput.click());
+  startDropzone.addEventListener("keydown", (e) => {
+    if (e.key === "Enter" || e.key === " ") {
+      e.preventDefault();
+      startFileInput.click();
+    }
+  });
+  startFileInput.addEventListener("change", () => {
+    addFiles(startFileInput.files);
+    startFileInput.value = "";
+  });
+  ["dragenter", "dragover"].forEach((evt) => {
+    startDropzone.addEventListener(evt, (e) => {
+      e.preventDefault();
+      e.stopPropagation();
+      startDropzone.classList.add("dragover");
+    });
+  });
+  ["dragleave", "drop"].forEach((evt) => {
+    startDropzone.addEventListener(evt, (e) => {
+      e.preventDefault();
+      e.stopPropagation();
+      startDropzone.classList.remove("dragover");
+    });
+  });
+  startDropzone.addEventListener("drop", (e) => {
+    addFiles(e.dataTransfer?.files);
   });
 
   const initial = pathTaskId();

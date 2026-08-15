@@ -1,5 +1,7 @@
 .env
 excel-agent-tools/excel-tools.env
+mas-activity-service/mas-activity.env
+fastapi-math-service/math-service.env
 context-seeder/context-seeder.env
 __pycache__/
 *.py[cod]

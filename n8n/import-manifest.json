@@ -251,8 +251,13 @@
       "task Data Table get",
       "trace Data Table get",
       "Orchestrator action=status",
-      "Trace Writer mas_trace_ack"
+      "Trace Writer mas_trace_ack",
+      "HTTP excel-tools:8000/health",
+      "HTTP n8n-runners:5680/healthz",
+      "HTTP mas-activity:8200/health",
+      "HTTP n8n:5678/healthz"
     ],
+    "host_health_script": "scripts/mas_stack_health.py",
     "does_not_call": [
       "LLM Planner/Verifier",
       "Excel Adapter/Agent",

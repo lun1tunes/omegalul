@@ -1,8 +1,9 @@
-"""Orchestrator invocation for HITL (webhook or n8n REST)."""
+"""Orchestrator invocation for HITL and task start (webhook or n8n REST)."""
 
 from __future__ import annotations
 
 import asyncio
+import base64
 import json
 import os
 import time
@@ -13,6 +14,9 @@ import httpx
 FORMAT_NODE = "Format orchestrator response"
 TRIGGER_NODE = "When called by another workflow"
 DEFAULT_ORCH_WF = "ba8ba59f-e4e4-5ff6-b22c-63ceae883271"
+
+# field_name -> (filename, bytes, mime_type)
+BinaryMap = dict[str, tuple[str, bytes, str]]
 
 _cookie: str | None = None
 _cookie_at = 0.0
@@ -100,22 +104,61 @@ def extract_orchestrator_response(execution_payload: dict[str, Any]) -> dict[str
     return None
 
 
-async def invoke_orchestrator(payload: dict[str, Any], *, timeout_s: float = 90.0) -> dict[str, Any]:
+async def invoke_orchestrator(
+    payload: dict[str, Any],
+    *,
+    files: BinaryMap | None = None,
+    timeout_s: float = 90.0,
+) -> dict[str, Any]:
     backend = hitl_backend()
     if backend == "local":
         raise OrchestratorError("Orchestrator backend not configured", status_code=503)
     if backend == "webhook":
-        return await _invoke_webhook(payload, timeout_s=timeout_s)
-    return await _invoke_n8n_rest(payload, timeout_s=timeout_s)
+        return await _invoke_webhook(payload, files=files, timeout_s=timeout_s)
+    return await _invoke_n8n_rest(payload, files=files, timeout_s=timeout_s)
 
 
-async def _invoke_webhook(payload: dict[str, Any], *, timeout_s: float) -> dict[str, Any]:
+def _binary_to_n8n(files: BinaryMap | None) -> dict[str, dict[str, str]] | None:
+    if not files:
+        return None
+    out: dict[str, dict[str, str]] = {}
+    for key, (filename, content, mime) in files.items():
+        out[key] = {
+            "data": base64.b64encode(content).decode("ascii"),
+            "mimeType": mime or "application/octet-stream",
+            "fileName": filename,
+        }
+    return out
+
+
+async def _invoke_webhook(
+    payload: dict[str, Any],
+    *,
+    files: BinaryMap | None = None,
+    timeout_s: float,
+) -> dict[str, Any]:
     cfg = _cfg()
-    headers = {"Content-Type": "application/json"}
+    headers: dict[str, str] = {}
     if cfg["auth_header"] and cfg["auth_value"]:
         headers[cfg["auth_header"]] = cfg["auth_value"]
     async with httpx.AsyncClient(timeout=timeout_s) as client:
-        res = await client.post(cfg["webhook_url"], json=payload, headers=headers)
+        if files:
+            form: dict[str, Any] = {}
+            for key, value in payload.items():
+                if value is None:
+                    continue
+                if isinstance(value, (dict, list)):
+                    form[key] = json.dumps(value, ensure_ascii=False)
+                else:
+                    form[key] = str(value)
+            upload = [
+                (key, (filename, content, mime or "application/octet-stream"))
+                for key, (filename, content, mime) in files.items()
+            ]
+            res = await client.post(cfg["webhook_url"], data=form, files=upload, headers=headers)
+        else:
+            headers = {**headers, "Content-Type": "application/json"}
+            res = await client.post(cfg["webhook_url"], json=payload, headers=headers)
     if res.status_code >= 400:
         raise OrchestratorError(
             f"Orchestrator webhook HTTP {res.status_code}",
@@ -146,10 +189,20 @@ async def _login(client: httpx.AsyncClient, cfg: dict[str, str]) -> str:
     return _cookie
 
 
-async def _invoke_n8n_rest(payload: dict[str, Any], *, timeout_s: float) -> dict[str, Any]:
+async def _invoke_n8n_rest(
+    payload: dict[str, Any],
+    *,
+    files: BinaryMap | None = None,
+    timeout_s: float,
+) -> dict[str, Any]:
     cfg = _cfg()
     if not (cfg["n8n_base"] and cfg["n8n_user"] and cfg["n8n_password"]):
         raise OrchestratorError("N8N_BASE_URL/N8N_USERNAME/N8N_PASSWORD required", status_code=503)
+
+    item: dict[str, Any] = {"json": payload}
+    binary = _binary_to_n8n(files)
+    if binary:
+        item["binary"] = binary
 
     body = {
         "triggerToStartFrom": {
@@ -159,7 +212,7 @@ async def _invoke_n8n_rest(payload: dict[str, Any], *, timeout_s: float) -> dict
                 "executionIndex": 0,
                 "executionTime": 0,
                 "source": [],
-                "data": {"main": [[{"json": payload}]]},
+                "data": {"main": [[item]]},
             },
         },
         "destinationNode": {"nodeName": FORMAT_NODE, "mode": "inclusive"},

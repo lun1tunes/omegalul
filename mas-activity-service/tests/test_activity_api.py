@@ -194,12 +194,14 @@ def test_rejects_bad_task_id_and_oversized_declared_body() -> None:
 
 def test_ready_health_and_static_assets() -> None:
     health = client.get("/health").json()
-    assert health["version"] == "0.3.0"
+    assert health["version"] == "0.4.0"
     assert "hitl_backend" in health
     assert client.get("/ready").status_code == 200
     index = client.get("/")
     assert index.status_code == 200
     assert "composer" in index.text
+    assert "startComposer" in index.text
+    assert "newTaskBtn" in index.text
     assert "taskRail" in index.text
     assert "cancelBtn" in index.text
     assert "taskSelect" not in index.text
@@ -208,12 +210,15 @@ def test_ready_health_and_static_assets() -> None:
     assert "brief" in js_text
     assert "duration_label" in js_text
     assert "submitHitl" in js_text
+    assert "submitStart" in js_text
+    assert "/v1/tasks/start" in js_text
     assert "showFlash" in js_text
     assert "alert(" not in js_text
     assert "human_gate ?? data.gate" in js_text
     assert "at_abs" in js_text
     css = (STATIC / "app.css").read_text(encoding="utf-8")
     assert ".brief" in css
+    assert ".dropzone" in css
     assert "outcome-ok" in css
     assert "--blue-900" in css
     assert ".flash" in css
@@ -221,6 +226,82 @@ def test_ready_health_and_static_assets() -> None:
     js = client.get("/static/app.js")
     assert js.status_code == 200
     assert "duration_label" in js.text
+
+
+def test_local_start_task_with_files(tmp_path: Path, monkeypatch) -> None:
+    monkeypatch.setenv("HITL_MODE", "local")
+    # Reload backend detection is env-based per call — no reload needed.
+    schedule = tmp_path / "schedule.inc"
+    schedule.write_text("DATES\n1 JAN 2020 /\n/\n", encoding="utf-8")
+    excel = tmp_path / "dates.xlsx"
+    excel.write_bytes(b"PK\x03\x04fake-xlsx")
+
+    res = client.post(
+        "/v1/tasks/start",
+        headers=KEY,
+        data={
+            "task_description": "REVISE даты ввода по Excel",
+            "requested_by": "И. Иванов",
+            "schedule_root": "schedule.inc",
+        },
+        files=[
+            ("schedule_files", ("schedule.inc", schedule.read_bytes(), "text/plain")),
+            ("file", ("dates.xlsx", excel.read_bytes(), "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet")),
+        ],
+    )
+    assert res.status_code == 200, res.text
+    body = res.json()
+    assert body["ok"] is True
+    assert body["backend"] == "local"
+    assert body["file_count"] == 2
+    assert body["awaiting_human"] is True
+    assert body["human_gate"]["gate_id"]
+    task_id = body["task_id"]
+    feed = client.get(f"/v1/tasks/{task_id}").json()
+    assert feed["title"].startswith("REVISE")
+    assert feed["activity"][0]["status"] == "TASK_STARTED"
+    assert feed["awaiting_human"] is True
+
+
+def test_start_requires_named_engineer() -> None:
+    res = client.post(
+        "/v1/tasks/start",
+        headers=KEY,
+        data={"task_description": "x", "requested_by": "anonymous"},
+    )
+    assert res.status_code == 400
+
+
+def test_live_start_forwards_files(monkeypatch) -> None:
+    monkeypatch.setenv("HITL_MODE", "webhook")
+    monkeypatch.setenv("ORCHESTRATOR_WEBHOOK_URL", "http://orch.test/hook")
+    captured: dict = {}
+
+    async def fake_invoke(payload, *, files=None, timeout_s=90.0):
+        captured["payload"] = payload
+        captured["files"] = files
+        return {
+            "contract": "orchestrator_response",
+            "task_id": "eng_live_1",
+            "version": 1,
+            "status": "planning",
+            "human_gate": None,
+            "message": "started",
+        }
+
+    monkeypatch.setattr("app.main.invoke_orchestrator", fake_invoke)
+    res = client.post(
+        "/v1/tasks/start",
+        headers=KEY,
+        data={"task_description": "CREATE schedule", "requested_by": "П. Петров"},
+        files=[("schedule_files", ("root.inc", b"WELSPECS\n/", "text/plain"))],
+    )
+    assert res.status_code == 200, res.text
+    assert captured["payload"]["action"] == "start"
+    assert captured["payload"]["request"]["build_mode"] == "AUTO"
+    assert "schedule_files" in captured["files"]
+    assert res.json()["task_id"] == "eng_live_1"
+    assert res.json()["awaiting_human"] is False
 
 
 def test_demo_seed_has_duration_brief_and_hitl_gate() -> None:

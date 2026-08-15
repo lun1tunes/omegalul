@@ -76,6 +76,10 @@ BRIEF_TEMPLATES: dict[str, str] = {
         "Resume Builder запрещён: correlation/snapshot Excel-результата не совпали с ожидаемыми. "
         "Это fail-closed защита от подмены evidence mid-loop."
     ),
+    "TASK_STARTED": (
+        "Инженер создал новую задачу из Activity UI. "
+        "Оркестратор принимает objective и вложения и начинает intake/planning."
+    ),
     "AWAITING_HUMAN": (
         "Задача ждёт человека: нужны факты, решение или утверждение выпуска. "
         "Ответьте в чате — reply, approve или reject."
@@ -137,6 +141,7 @@ def outcome_for(status: str | None) -> str:
         "RESUME_SCHEDULE",
         "HUMAN_APPROVED",
         "COMPLETED",
+        "TASK_STARTED",
     }:
         return "ok"
     if s == "DELEGATED":

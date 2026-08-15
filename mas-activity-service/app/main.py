@@ -13,13 +13,13 @@ from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any, Literal
 
-from fastapi import Depends, FastAPI, Header, HTTPException, Query, Request
+from fastapi import Depends, FastAPI, File, Form, Header, HTTPException, Query, Request, UploadFile
 from fastapi.responses import FileResponse, JSONResponse, StreamingResponse
 from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel, Field, field_validator
 
 from app.enrich import enrich_turn
-from app.orchestrator import OrchestratorError, hitl_backend, invoke_orchestrator
+from app.orchestrator import BinaryMap, OrchestratorError, hitl_backend, invoke_orchestrator
 from app import knowledge as knowledge_store
 
 STATIC = Path(__file__).resolve().parents[1] / "static"
@@ -27,14 +27,21 @@ ACTIVITY_KEY = os.getenv("MAS_ACTIVITY_KEY", "dev-local")
 MAX_TURNS_PER_TASK = 500
 MAX_TASKS = 200
 MAX_BODY_BYTES = 256_000
+MAX_START_BODY_BYTES = 12_000_000
+MAX_START_FILE_BYTES = 2_097_152
+MAX_START_FILES = 40
 TASK_ID_RE = re.compile(r"^[A-Za-z0-9_.:-]{1,200}$")
 HITL_ACTIONS = frozenset({"status", "reply", "approve", "reject", "cancel"})
 ANON = frozenset({"", "anonymous", "anon", "n/a", "na", "unknown"})
+SCHEDULE_EXT = re.compile(r"\.(?:data|inc|sch|txt|grdecl)$", re.I)
+EXCEL_EXT = re.compile(r"\.(?:xlsx|xls)$", re.I)
+TRAJECTORY_EXT = re.compile(r"\.dev$", re.I)
+SURFACE_EXT = re.compile(r"\.(?:cps3|grd|grid|txt)$", re.I)
 
 app = FastAPI(
     title="MAS Activity Service",
-    version="0.3.0",
-    description="Live handoff transcript + HITL composer for Petroleum Engineering MAS.",
+    version="0.4.0",
+    description="Live handoff transcript + HITL composer + new-task start for Petroleum Engineering MAS.",
 )
 
 
@@ -417,7 +424,8 @@ def _local_apply_hitl(
 async def security_headers(request: Request, call_next):
     if request.method in {"POST", "PUT", "PATCH"} and request.url.path.startswith("/v1/"):
         content_length = request.headers.get("content-length")
-        if content_length and content_length.isdigit() and int(content_length) > MAX_BODY_BYTES:
+        limit = MAX_START_BODY_BYTES if request.url.path.rstrip("/") == "/v1/tasks/start" else MAX_BODY_BYTES
+        if content_length and content_length.isdigit() and int(content_length) > limit:
             return JSONResponse({"detail": "Request body too large"}, status_code=413)
     response = await call_next(request)
     response.headers["X-Content-Type-Options"] = "nosniff"
@@ -431,7 +439,7 @@ def health() -> dict[str, Any]:
     return {
         "status": "ok",
         "service": "mas-activity",
-        "version": "0.3.0",
+        "version": "0.4.0",
         "hitl_backend": hitl_backend(),
         "tasks": len(_tasks),
         "time": _now(),
@@ -572,6 +580,237 @@ async def get_gate(task_id: str, refresh: bool = Query(default=False)) -> dict[s
         "human_gate": _gate_payload(task),
         "hitl_backend": backend,
         "orchestrator": orch,
+    }
+
+
+def _local_start_response(
+    *,
+    task_id: str,
+    description: str,
+    requested_by: str,
+    file_names: list[str],
+) -> dict[str, Any]:
+    gate = {
+        "gate_id": f"gate_{task_id}_local_start",
+        "kind": "needs_input",
+        "reason": (
+            "Локальный режим Activity: задача создана в морде без Orchestrator. "
+            "Для реального MAS-запуска настройте HITL_MODE=webhook|n8n_rest и credentials."
+        ),
+        "questions": [
+            {
+                "id": "objective",
+                "text": "Проверьте формулировку и вложения, затем перезапустите со live backend.",
+                "expected_format": "свободный текст",
+                "required": False,
+            }
+        ],
+        "expected_version": 1,
+    }
+    return {
+        "contract": "orchestrator_response",
+        "contract_version": "1.0",
+        "task_id": task_id,
+        "version": 1,
+        "status": "awaiting_human",
+        "message": "Local Activity start (presentation only).",
+        "human_gate": gate,
+        "result": {
+            "action": "start",
+            "requested_by": requested_by,
+            "objective": description[:500],
+            "files": file_names,
+            "local": True,
+        },
+        "backend": "local",
+    }
+
+
+def _start_turn(*, requested_by: str, description: str, file_names: list[str], backend: str) -> dict[str, Any]:
+    files_note = f" Вложений: {len(file_names)}." if file_names else ""
+    brief = (
+        f"{requested_by} создал новую задачу из Activity.{files_note} "
+        + (
+            "Локальный demo-start — Orchestrator не вызван."
+            if backend == "local"
+            else "Запрос передан Orchestrator (action=start)."
+        )
+    )
+    return _normalize_turn(
+        {
+            "status": "TASK_STARTED",
+            "stage": "intake",
+            "summary": f"{requested_by} started a new MAS task.",
+            "brief": f"{brief} «{description[:240]}»",
+            "from_role": requested_by,
+            "to_role": "Orchestrator",
+            "from_specialist": "human_operator",
+            "to_specialist": "universal_orchestrator",
+            "details": {
+                "action": "start",
+                "requested_by": requested_by,
+                "file_count": len(file_names),
+                "files": ", ".join(file_names[:12]) if file_names else None,
+                "backend": backend,
+            },
+            "event_type": "hitl",
+        }
+    )
+
+
+async def _read_upload(upload: UploadFile, *, field: str) -> tuple[str, bytes, str]:
+    filename = (upload.filename or field).strip() or field
+    raw = await upload.read(MAX_START_FILE_BYTES + 1)
+    if len(raw) > MAX_START_FILE_BYTES:
+        raise HTTPException(
+            status_code=413,
+            detail=f"File too large (max {MAX_START_FILE_BYTES} bytes): {filename}",
+        )
+    mime = (upload.content_type or "application/octet-stream").strip()
+    return filename, raw, mime
+
+
+def _assign_upload_key(field: str, filename: str, counters: dict[str, int]) -> str:
+    """Map multipart fields to Orchestrator/Entry binary keys."""
+    name = filename.lower()
+    if field == "file" or EXCEL_EXT.search(name):
+        return "file"
+    if field == "surface_file" or (SURFACE_EXT.search(name) and not SCHEDULE_EXT.search(name)):
+        return "surface_file"
+    if field.startswith("trajectory") or TRAJECTORY_EXT.search(name):
+        n = counters.get("trajectory", 0)
+        counters["trajectory"] = n + 1
+        return "trajectory_files" if n == 0 else f"trajectory_files{n}"
+    if field.startswith("schedule") or SCHEDULE_EXT.search(name):
+        n = counters.get("schedule", 0)
+        counters["schedule"] = n + 1
+        return "schedule_files" if n == 0 else f"schedule_files{n}"
+    # Default: treat unknown as schedule fragment if text-like, else reject later via count
+    n = counters.get("schedule", 0)
+    counters["schedule"] = n + 1
+    return "schedule_files" if n == 0 else f"schedule_files{n}"
+
+
+@app.post("/v1/tasks/start")
+async def post_start_task(
+    _: None = Depends(_require_key),
+    task_description: str = Form(...),
+    requested_by: str = Form(...),
+    schedule_root: str = Form(default=""),
+    file: UploadFile | None = File(default=None),
+    surface_file: UploadFile | None = File(default=None),
+    schedule_files: list[UploadFile] | None = File(default=None),
+    trajectory_files: list[UploadFile] | None = File(default=None),
+    attachments: list[UploadFile] | None = File(default=None),
+) -> dict[str, Any]:
+    """Start a new Orchestrator task (Entry-shaped). Multipart mirrors Form — MAS Entry."""
+    description = (task_description or "").strip()
+    if not description:
+        raise HTTPException(status_code=400, detail="task_description is required")
+    by = (requested_by or "").strip()
+    if by.lower() in ANON:
+        raise HTTPException(status_code=400, detail="requested_by must be a named engineer (not anonymous)")
+    root = (schedule_root or "").strip()
+
+    binary: BinaryMap = {}
+    counters: dict[str, int] = {}
+    file_names: list[str] = []
+
+    async def take(upload: UploadFile | None, field_hint: str) -> None:
+        nonlocal binary, file_names
+        if upload is None or not (upload.filename or "").strip():
+            return
+        if len(binary) >= MAX_START_FILES:
+            raise HTTPException(status_code=400, detail=f"Too many files (max {MAX_START_FILES})")
+        filename, content, mime = await _read_upload(upload, field=field_hint)
+        key = _assign_upload_key(field_hint, filename, counters)
+        if key == "file" and "file" in binary:
+            raise HTTPException(status_code=400, detail="Only one Excel workbook (file) allowed")
+        if key == "surface_file" and "surface_file" in binary:
+            raise HTTPException(status_code=400, detail="Only one surface_file allowed")
+        binary[key] = (filename, content, mime)
+        file_names.append(filename)
+
+    await take(file, "file")
+    await take(surface_file, "surface_file")
+    for item in schedule_files or []:
+        await take(item, "schedule_files")
+    for item in trajectory_files or []:
+        await take(item, "trajectory_files")
+    for item in attachments or []:
+        await take(item, "attachments")
+
+    input_files = [
+        {"field": key, "filename": name, "mime_type": mime}
+        for key, (name, _content, mime) in binary.items()
+    ]
+    request: dict[str, Any] = {
+        "objective": description,
+        "problem_statement": description,
+        "task_description": description,
+        "input_files": input_files,
+    }
+    if root:
+        request["schedule_root"] = root
+    if any(k.startswith("schedule_file") for k in binary):
+        request["build_mode"] = "AUTO"
+
+    client_task_id = f"act_{int(time.time() * 1000):x}_{secrets.token_hex(4)}"
+    payload = {
+        "entrypoint": "activity_ui",
+        "action": "start",
+        "task_id": client_task_id,
+        "task_description": description,
+        "request_text": description,
+        "request": request,
+        "schedule_root": root or None,
+        "context": {"source": "mas-activity-start", "submitted_task_id": client_task_id},
+        "requested_by": by,
+    }
+
+    backend = hitl_backend()
+    if backend == "local":
+        orch = _local_start_response(
+            task_id=client_task_id,
+            description=description,
+            requested_by=by,
+            file_names=file_names,
+        )
+    else:
+        try:
+            orch = await invoke_orchestrator(payload, files=binary or None, timeout_s=180.0)
+        except OrchestratorError as exc:
+            raise HTTPException(status_code=exc.status_code, detail=str(exc)) from exc
+
+    task_id = str(orch.get("task_id") or client_task_id).strip()
+    if not TASK_ID_RE.match(task_id):
+        raise HTTPException(status_code=502, detail="Orchestrator returned invalid task_id")
+
+    title = description[:80] + ("…" if len(description) > 80 else "")
+    turn = _start_turn(requested_by=by, description=description, file_names=file_names, backend=backend)
+    await _append_turns(task_id, [turn], title=title)
+
+    gate = orch.get("human_gate") if isinstance(orch.get("human_gate"), dict) else None
+    status = orch.get("status")
+    version = orch.get("version")
+    await _set_gate(
+        task_id,
+        status=status,
+        version=version if isinstance(version, int) else None,
+        gate=gate,
+        clear_gate=not gate,
+    )
+
+    return {
+        "ok": True,
+        "task_id": task_id,
+        "ui": f"/t/{task_id}",
+        "backend": backend,
+        "orchestrator": orch,
+        "awaiting_human": _is_awaiting_status(status) and bool(gate and gate.get("gate_id")),
+        "human_gate": gate,
+        "turn": turn,
+        "file_count": len(file_names),
     }
 
 

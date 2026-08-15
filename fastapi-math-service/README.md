@@ -2,16 +2,20 @@
 
 Геометрический сервис MAS: batch intersection `.dev` × ASCII CPS3/ZMAP. Полная установка — [`docs.md`](../docs.md); n8n Adapter — `calculation-specialist-adapter.workflow.json`.
 
+Два режима: **локальный Windows CMD** (типичный полевой) и Docker/ручной uvicorn при необходимости.
+
 ## Windows CMD
 
 ```bat
 cd fastapi-math-service
-py -m venv .venv
-.venv\Scripts\python.exe -m pip install -r requirements.txt
-.venv\Scripts\python.exe -m uvicorn app.main:app --host 127.0.0.1 --port 8100
+setup-windows.bat
+copy math-service.env.example math-service.env
+start-windows.bat
 ```
 
-Проверка: `http://127.0.0.1:8100/health`.
+Проверка во втором CMD: `check-windows.bat`.
+
+Локально: `http://127.0.0.1:8100/health`. Для удалённого n8n: `MATH_SERVICE_HOST=0.0.0.0` и `http://<IP-Windows>:8100/api/v1/math`.
 
 ## Endpoint
 

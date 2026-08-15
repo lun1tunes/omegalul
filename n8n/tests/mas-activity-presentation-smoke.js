@@ -110,8 +110,21 @@ function request(port, method, urlPath, body, headers = {}) {
   const port = 18200 + Math.floor(Math.random() * 200);
   let stderrBuf = '';
   let stdoutBuf = '';
-  const child = spawn(
+  const activityPyCandidates = [
+    process.env.MAS_ACTIVITY_PYTHON,
+    path.join(workspace, 'mas-activity-service', '.venv', 'bin', 'python'),
+    '/tmp/mas-act-venv/bin/python',
     'python3',
+  ].filter(Boolean);
+  let activityPython = 'python3';
+  for (const candidate of activityPyCandidates) {
+    try {
+      const probe = require('node:child_process').spawnSync(candidate, ['-c', 'import uvicorn'], { encoding: 'utf8' });
+      if (probe.status === 0) { activityPython = candidate; break; }
+    } catch {}
+  }
+  const child = spawn(
+    activityPython,
     ['-m', 'uvicorn', 'app.main:app', '--host', '127.0.0.1', '--port', String(port)],
     {
       cwd: path.join(workspace, 'mas-activity-service'),
@@ -176,7 +189,7 @@ function request(port, method, urlPath, body, headers = {}) {
     assert.equal(feed.json.contract_version, '1.1');
     const excelTurn = feed.json.activity.find((t) => t.status === 'EXCEL_EVIDENCE_READY');
     assert.ok(excelTurn.brief.length > 20);
-    assert.ok(excelTurn.at_abs.includes('UTC'));
+    assert.ok(/UTC|Тюмень|\+0?5|GMT/i.test(excelTurn.at_abs), excelTurn.at_abs);
     assert.ok(excelTurn.duration_label);
     assert.ok(['ok', 'info', 'wait', 'block'].includes(excelTurn.outcome));
 

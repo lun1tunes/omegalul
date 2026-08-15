@@ -17,8 +17,9 @@ const src = (wf, name) => {
   return n.parameters.jsCode;
 };
 async function ingest(json) {
-  const fn = new AsyncFunction('$json', src(ingestion, 'Normalize approved SCHEDULE knowledge'));
-  const r = await fn(json);
+  const fn = new AsyncFunction('$json', '$input', src(ingestion, 'Normalize approved SCHEDULE knowledge'));
+  const items = [{ json }];
+  const r = await fn(json, { all: () => items, first: () => items[0] });
   return r[0].json;
 }
 

@@ -7,7 +7,8 @@
 **Целевая версия:** строго n8n `2.30.8`.  
 **Машинный контракт имён/bindings:** [`n8n/import-manifest.json`](n8n/import-manifest.json).  
 **CSV шаблоны Data Tables:** [`n8n/data-tables/`](n8n/data-tables/).  
-**Проверка связности:** `Form — MAS Deployment Health Check`.
+**Проверка связности:** `Form — MAS Deployment Health Check` (+ хост `scripts/mas_stack_health.py`).  
+**Снимок readiness:** [`docs/architecture/production-readiness-review-2026-08-16.md`](docs/architecture/production-readiness-review-2026-08-16.md).
 
 Требования: PostgreSQL + PGVector, OpenAI/OpenAI-compatible credentials, Python 3.11–3.13 на Windows. Global Variables, `$env`, PowerShell и доступ к серверной файловой системе в workflow не используются.
 
@@ -110,7 +111,7 @@ flowchart TB
   SRetr <--> Pg
 ```
 
-**MVP runtime (активировать forms только после Health Check):** Entry, Human Gate, Health Check, Orchestrator, `CAS — Persist Task State`, Trace, Excel Adapter+Agent, `MAS — Knowledge Ingestion` / `MAS — Knowledge Retrieval`, `SCHEDULE — Builder`, Calculation Adapter. Презентация handoff’ов — опциональный `mas-activity-service` (`:8200`), питается от Trace Writer после durable insert.
+**MVP runtime (активировать forms только после Health Check):** Entry, Human Gate, Health Check, Orchestrator, `CAS — Persist Task State`, Trace, Excel Adapter+Agent, `MAS — Knowledge Ingestion` / `MAS — Knowledge Retrieval`, `SCHEDULE — Builder`, Calculation Adapter. Презентация handoff’ов — `mas-activity-service` (`:8200`, Compose-сервис или локальный uvicorn), питается от Trace Writer после durable insert. Commissioning REVISE дат ввода: deterministic timeline path в Builder (`parse → shift/remove/new-well HITL → emit`).
 
 **Не активировать:** `Adapter — Excel Form`, `Template — Engineering Specialist`, `Reference — AI Components`. `CAS — Persist Task State` остаётся inactive (его вызывает Orchestrator). `MAS — Knowledge Ingestion` не Publish: первый пакет — Manual-триггер, дальше — вставка всей простыни `excel-agent-operating-guide.documents.json`.
 
@@ -146,9 +147,10 @@ SCHEDULE delivery — три workflow + shared Trace Writer. Отдельных 
 | **CAS persist** | Единственная запись `engineering_orchestrator_tasks_v1`: insert + optimistic update |
 | **Excel** | Adapter → Agent (LLM + governed `excel_protocol` RAG + 7 tool-нод) → `excel-agent-tools` |
 | **MAS Knowledge** | `MAS — Knowledge Ingestion` / `MAS — Knowledge Retrieval` — общий RAG всех агентов (`target_base`) |
-| **SCHEDULE** | `SCHEDULE — Builder` (Code stages + 2 LLM); знания берёт из MAS Knowledge, namespace `schedule_mvp` |
+| **SCHEDULE** | `SCHEDULE — Builder` (Code stages + 2 LLM); знания берёт из MAS Knowledge, namespace `schedule_mvp`; commissioning timeline keep/remove/new-well HITL |
 | **Calculation** | Adapter → `fastapi-math-service` (DEV × CPS3/ZMAP) |
-| **Infra** | Data Tables + PostgreSQL/PGVector + Trace Writer |
+| **Activity UI** | `mas-activity-service` (`:8200`) — chat handoffs + HITL composer; sync из Trace Writer |
+| **Infra** | Compose: Data Tables + PostgreSQL/PGVector + Trace Writer + excel-tools + n8n-runners + mas-activity |
 
 ---
 
@@ -161,10 +163,13 @@ SCHEDULE delivery — три workflow + shared Trace Writer. Отдельных 
 | n8n **2.30.8** | Не новее/не старше для этих JSON |
 | PostgreSQL + PGVector | memory + SCHEDULE/Excel RAG; credential SSL = Disable для локального Postgres без TLS |
 | OpenAI-compatible chat + embeddings | Planner, Verifier, SCHEDULE, Excel Agent; **Dimensions в embeddings не задавать** |
-| Excel Tools на Windows | `http://<windows-ip>:8000/api/v1` + API key |
-| Math Service | `http://<windows-ip>:8100/api/v1/math` |
+| Excel Tools на Windows | `http://<windows-ip>:8000/api/v1` + API key (в Compose — `excel-tools:8000`) |
+| Math Service | `http://<windows-ip>:8100/api/v1/math` (обычно только Windows CMD) |
+| MAS Activity | Windows CMD `:8200` или Compose `mas-activity:8200`; `MAS_ACTIVITY_KEY` |
 
 ### Step 0b — Локальные сервисы (Windows CMD)
+
+В полевых условиях (Windows, только CMD, без Docker) все три FastAPI поднимаются одинаково: `setup-windows.bat` → `.env` → `start-windows.bat` → `check-windows.bat`. Compose остаётся альтернативой для Excel Tools и MAS Activity, когда Docker доступен.
 
 **Excel Tools**
 
@@ -182,22 +187,43 @@ start-windows.bat
 
 ```bat
 cd fastapi-math-service
-py -m venv .venv
-.venv\Scripts\python.exe -m pip install -r requirements.txt
-.venv\Scripts\python.exe -m uvicorn app.main:app --host 127.0.0.1 --port 8100
+setup-windows.bat
+copy math-service.env.example math-service.env
+start-windows.bat
 ```
 
-Проверка: `http://127.0.0.1:8100/health`. Batch: одна ASCII CPS3/ZMAP + до 256 `.dev` (`MD X Y Z`), одинаковые CRS/единицы/datum/Z.
+Проверка: `check-windows.bat` → `http://127.0.0.1:8100/health`. Batch: одна ASCII CPS3/ZMAP + до 256 `.dev` (`MD X Y Z`), одинаковые CRS/единицы/datum/Z.
 
 **MAS Activity (chat-морда handoff’ов)**
 
-```bash
+Windows CMD (без Docker):
+
+```bat
 cd mas-activity-service
-python3 -m pip install -r requirements.txt
-MAS_ACTIVITY_KEY=dev-local PYTHONPATH=. python3 -m uvicorn app.main:app --host 127.0.0.1 --port 8200
+setup-windows.bat
+copy mas-activity.env.example mas-activity.env
+notepad mas-activity.env
+start-windows.bat
 ```
 
-UI: `http://127.0.0.1:8200/` (кнопка **Seed demo**). В ленте: краткий `brief` (1–4 предложения), абсолютное время UTC, длительность specialist, статус/outcome. После импорта в Code node `Prepare MAS activity sync` у `Writer — MAS Trace` выставьте `ACTIVITY_BASE_URL` / `ACTIVITY_KEY` (для n8n в Docker часто `http://host.docker.internal:8200`).
+Задайте уникальный `MAS_ACTIVITY_KEY`. Проверка: `check-windows.bat`. UI: `http://127.0.0.1:8200/` — **Новая задача** (drag-and-drop) или deep-link `/t/<task_id>`. Для n8n на другой машине: `MAS_ACTIVITY_HOST=0.0.0.0`.
+
+Альтернатива — Compose:
+
+```bash
+cp .env.example .env   # задать MAS_ACTIVITY_KEY
+docker compose up -d --build mas-activity
+curl -sS http://127.0.0.1:8200/health
+```
+
+HITL composer открывается при `awaiting_human` / `AWAITING_HUMAN` + непустой `human_gate`.  
+`POST /v1/tasks/start` (multipart) → Orchestrator `action=start` при live backend; в `HITL_MODE=local` — только presentation task в морде.  
+После импорта в Code node `Prepare MAS activity sync` у `Writer — MAS Trace` выставьте `ACTIVITY_BASE_URL` / `ACTIVITY_KEY`:
+- n8n в Docker → activity в Compose: `http://mas-activity:8200`
+- n8n в Docker → activity на Windows-хосте: `http://host.docker.internal:8200`
+- n8n → activity на полевом Windows: `http://<IP-Windows>:8200`
+
+`POST /v1/sync` не должен сбрасывать открытый gate от routine handoff-статусов (`EXCEL_EVIDENCE_READY` и т.п.) — только top-level `status`/`human_gate` или event с gate / `AWAITING_HUMAN`.
 
 ### Step 1 — Import workflows (точный порядок)
 
@@ -338,15 +364,21 @@ Dropped vs older drafts: `phase`, `task_type`, `history_json`, `last_error_json`
    - **FAIL** — исправить по `where_to_fix`
    - **PASS** — live probe ок
    - **TODO** — чеклист bindings/smoke; нормально при 0 FAIL  
-5. «Зелёный» control-plane = **0 FAIL** (часто `PASS_WITH_TODO`).  
-6. При 0 FAIL активируйте `Form — MAS Entry` и `Form — MAS Human Gate`.
+5. Live probes (0 FAIL = control-plane зелёный; часто overall `PASS_WITH_TODO`):
+   - Data Tables: task + trace get
+   - Orchestrator `action=status`
+   - Trace Writer `mas_trace_ack`
+   - Docker HTTP (из n8n DNS): `excel-tools:8000/health`, `n8n-runners:5680/healthz`, `mas-activity:8200/health`, `n8n:5678/healthz`
+6. Хост-проверка без Form: `python3 scripts/mas_stack_health.py` → `overall: PASS`.  
+7. При 0 FAIL активируйте `Form — MAS Entry` и `Form — MAS Human Gate`.
 
 ### Step 8 — Пользовательский запуск
 
 1. Production Form URL Entry.  
 2. `Task Description` + Excel / `.data/.inc` / `.dev` / CPS3.  
 3. Completion: `schedule.inc` или HITL с `task_id`.  
-4. Продолжение: `Form — MAS Human Gate` → `task_id` → `reply` / `approve` / `reject`. Форма сама подставляет `expected_version` / `gate_id`.
+4. Продолжение: `Form — MAS Human Gate` → `task_id` → `reply` / `approve` / `reject`. Форма сама подставляет `expected_version` / `gate_id`.  
+5. Для commissioning HITL (новые скважины) можно прикрепить `hitl_files` / `trajectory_files` / `supplemental_xlsx` и в `human_response` передать JSON с `new_well_defs` (см. combat cases).
 
 ---
 
@@ -383,36 +415,45 @@ Dropped vs older drafts: `phase`, `task_type`, `history_json`, `last_error_json`
 ## 5. Проверка репозитория и Docker
 
 ```bash
-WORKSPACE_ROOT="$PWD" node n8n/tests/cas-persist-runtime-smoke.js
-WORKSPACE_ROOT="$PWD" node n8n/tests/schedule-intake-runtime-smoke.js
-# …остальные n8n/tests/*.js (187 scenarios, вкл. mas-handoff + mas-activity-presentation)
+export WORKSPACE_ROOT="$PWD"
+for f in n8n/tests/*-smoke.js; do node "$f" || exit 1; done
+# ~192 scenarios across 17 smoke files
 
-cd mas-activity-service && PYTHONPATH=. python3 -m pytest -q tests/test_activity_api.py   # 8 passed
+cd mas-activity-service && PYTHONPATH=. python3 -m pytest -q   # 19 passed
 
-cd excel-agent-tools
+cd ../excel-agent-tools
 python -m pip install -r requirements-dev.txt
 python -m pytest tests   # 70 passed (incl. workflow contracts)
+
+# Commissioning integration (4 cases: full + keep + remove + HITL/apply)
+python3 simulation-model-example/combat-dates-revise/run_integration_cases.py
+
+# Host stack health (compose DNS + ports)
+python3 scripts/mas_stack_health.py
 ```
 
 Ожидание: smoke и pytest зелёные; clean import `n8nio/n8n:2.30.8` принимает все 15 JSON, `active=0`.
 
-Опционально локально:
-
 ```bash
-cp .env.example .env
+cp .env.example .env   # POSTGRES_*, N8N_*, EXCEL_TOOLS_API_KEY, MAS_ACTIVITY_KEY
 docker compose up --build -d
+docker compose ps   # postgres, excel-tools, n8n, n8n-runners, mas-activity → healthy
 ```
 
-Compose: n8n `2.30.8`, PostgreSQL/PGVector, Excel Tools. На Windows для FastAPI Docker не обязателен. n8n по умолчанию слушает `127.0.0.1:<N8N_HOST_PORT>`.
+Compose: n8n `2.30.8` (+ runners), PostgreSQL/PGVector, Excel Tools, MAS Activity (`127.0.0.1:8200`). В полевых условиях Excel / Math / Activity поднимаются через Windows CMD (`.bat`) без Docker. Math service по умолчанию — Windows/uvicorn (`:8100`). n8n слушает `127.0.0.1:<N8N_HOST_PORT>`.
+
+Свежий review-снимок: [`docs/architecture/production-readiness-review-2026-08-16.md`](docs/architecture/production-readiness-review-2026-08-16.md).
 
 ### Структура репозитория
 
-- `n8n/` — 15 workflow JSON (`workflows/core` runtime, `workflows/support` вспомогательные), import-manifest, data-tables CSV, генераторы, smoke-тесты (~187), contracts в `n8n/contracts/`
-- `mas-activity-service/` — chat-морда handoff’ов (`brief` / абсолютное UTC / duration specialist), SSE, sync из Trace Writer
+- `n8n/` — 15 workflow JSON (`workflows/core` runtime, `workflows/support` вспомогательные), import-manifest, data-tables CSV, генераторы (`schedule_timeline_runtime.py` — commissioning parse→mutate→emit), smoke-тесты (~192), contracts в `n8n/contracts/`
+- `mas-activity-service/` — chat-морда handoff’ов + Dockerfile (Compose); SSE, sync из Trace Writer, HITL composer
 - `excel-agent-tools/` — Excel FastAPI + workflow contract pytest
 - `fastapi-math-service/` — NumPy geometry FastAPI
+- `scripts/mas_stack_health.py` — хост-пинг compose-сервисов
+- `simulation-model-example/combat-dates-revise/` — commissioning combat + интеграционные кейсы 0–3
 - `context-seeder/` — опциональный прямой seeder (для UI-only не нужен)
 - `postgres-init/` — init PostgreSQL/PGVector
-- `docs/architecture/petroleum-mas-research-and-roadmap.md` — длинный research/roadmap
+- `docs/architecture/` — research/roadmap + production-readiness review
 
 Секреты не должны попадать в JSON, Data Tables или git. В MVP нет Artifact Store и автоматического tNavigator runner: SCHEDULE остаётся ограниченным текстом внутри n8n.

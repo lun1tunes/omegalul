@@ -56,7 +56,9 @@
         "path": "engineering-orchestrator",
         "authentication": "headerAuth",
         "responseMode": "lastNode",
-        "options": {}
+        "options": {
+          "binaryPropertyName": ""
+        }
       },
       "id": "f80d912b-7ad4-5c1a-b636-d2ad661b06ed",
       "name": "Authenticated engineering webhook",

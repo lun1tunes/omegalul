@@ -7,7 +7,7 @@
   <link rel="preconnect" href="https://fonts.googleapis.com" />
   <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
   <link href="https://fonts.googleapis.com/css2?family=IBM+Plex+Sans:wght@400;500;600;700&family=IBM+Plex+Mono:wght@400;500&display=swap" rel="stylesheet" />
-  <link rel="stylesheet" href="/static/app.css?v=9" />
+  <link rel="stylesheet" href="/static/app.css?v=10" />
 </head>
 <body>
   <div class="atmosphere" aria-hidden="true"></div>
@@ -17,6 +17,7 @@
       <span class="product">Activity</span>
     </a>
     <div class="top-actions">
+      <button type="button" class="btn btn-quiet" id="newTaskBtn">Новая задача</button>
       <a class="btn btn-quiet" href="/knowledge">База знаний</a>
     </div>
   </header>
@@ -25,7 +26,7 @@
 
   <main class="stage">
     <aside class="rail" id="taskRail" aria-label="Недавние задачи">
-      <p class="rail-empty" id="railEmpty">Нет задач. Дождитесь handoff от Trace Writer или откройте /t/&lt;task_id&gt;.</p>
+      <p class="rail-empty" id="railEmpty">Нет задач. Создайте новую или дождитесь handoff от Trace Writer.</p>
     </aside>
     <section class="workspace">
       <div class="transcript" aria-live="polite">
@@ -42,7 +43,7 @@
           </div>
         </div>
         <ol class="thread" id="thread"></ol>
-        <p class="empty" id="empty">Нет turns. Выберите задачу слева или откройте deep-link /t/&lt;task_id&gt;.</p>
+        <p class="empty" id="empty">Нет turns. Создайте задачу кнопкой «Новая задача» или откройте /t/&lt;task_id&gt;.</p>
       </div>
 
       <aside class="gate-panel" id="gatePanel" hidden>
@@ -53,6 +54,46 @@
         <p class="gate-reason" id="gateReason"></p>
         <ul class="gate-questions" id="gateQuestions"></ul>
       </aside>
+
+      <form class="composer start-composer" id="startComposer" autocomplete="off" hidden>
+        <div class="composer-top">
+          <label class="who-field">
+            <span>requested_by</span>
+            <input id="startRequestedBy" type="text" required maxlength="120" placeholder="И. Иванов" />
+          </label>
+          <div class="composer-actions" role="group" aria-label="Действия новой задачи">
+            <button type="button" class="btn btn-cancel" id="startCancelBtn">Закрыть</button>
+            <button type="submit" class="btn btn-approve" id="startSubmitBtn">Создать задачу</button>
+          </div>
+        </div>
+        <label class="reply-field">
+          <span>Описание задачи</span>
+          <textarea id="taskDescription" rows="3" required placeholder="Цель, acceptance criteria, что сделать с SCHEDULE / Excel…"></textarea>
+        </label>
+        <label class="who-field schedule-root-field">
+          <span>SCHEDULE root (optional)</span>
+          <input id="scheduleRoot" type="text" maxlength="260" placeholder="schedule.inc" />
+        </label>
+        <div
+          class="dropzone"
+          id="startDropzone"
+          tabindex="0"
+          role="button"
+          aria-label="Прикрепить файлы drag-and-drop"
+        >
+          <input
+            id="startFileInput"
+            type="file"
+            multiple
+            hidden
+            accept=".xlsx,.xls,.data,.inc,.sch,.txt,.grdecl,.dev,.cps3,.grd,.grid"
+          />
+          <p class="dropzone-title">Перетащите файлы сюда или нажмите, чтобы выбрать</p>
+          <p class="dropzone-hint">Excel · SCHEDULE (.data/.inc/…) · .dev · CPS3 surface</p>
+          <ul class="file-chips" id="startFileList" hidden></ul>
+        </div>
+        <p class="composer-hint" id="startHint">Как Form — MAS Entry: objective + вложения. Live backend отправит start в Orchestrator.</p>
+      </form>
 
       <form class="composer" id="composer" autocomplete="off" hidden>
         <div class="composer-top">
@@ -76,6 +117,6 @@
     </section>
   </main>
 
-  <script src="/static/app.js?v=8"></script>
+  <script src="/static/app.js?v=9"></script>
 </body>
 </html>

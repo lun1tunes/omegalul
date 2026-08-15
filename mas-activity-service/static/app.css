@@ -107,6 +107,11 @@ a.btn {
   background: rgba(47, 111, 181, 0.08);
   color: var(--blue-900);
 }
+.btn-quiet.active-start {
+  background: rgba(47, 111, 181, 0.14);
+  border-color: rgba(47, 111, 181, 0.45);
+  color: var(--blue-900);
+}
 
 .who-field,
 .reply-field {
@@ -509,6 +514,83 @@ body:has(.flash:not([hidden])) .stage {
   color: var(--blue-700);
 }
 .composer.busy { opacity: 0.72; pointer-events: none; }
+
+.start-composer {
+  border-top-color: rgba(47, 111, 181, 0.35);
+  background: rgba(232, 241, 250, 0.96);
+}
+.schedule-root-field input { width: min(280px, 80vw); }
+
+.dropzone {
+  border: 1px dashed rgba(27, 79, 138, 0.35);
+  background: rgba(255, 255, 255, 0.72);
+  border-radius: var(--radius);
+  padding: 0.85rem 1rem;
+  cursor: pointer;
+  transition: border-color 160ms ease, background 160ms ease, box-shadow 160ms ease;
+}
+.dropzone:hover,
+.dropzone:focus-visible {
+  border-color: rgba(47, 111, 181, 0.7);
+  box-shadow: 0 0 0 3px rgba(47, 111, 181, 0.1);
+  outline: none;
+}
+.dropzone.dragover {
+  border-color: var(--blue-500);
+  background: rgba(215, 230, 246, 0.85);
+}
+.dropzone-title {
+  margin: 0;
+  font: 600 0.9rem/1.35 var(--sans);
+  color: var(--blue-900);
+}
+.dropzone-hint {
+  margin: 0.25rem 0 0;
+  font-size: 0.78rem;
+  color: var(--muted);
+}
+.file-chips {
+  list-style: none;
+  margin: 0.7rem 0 0;
+  padding: 0;
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.35rem;
+}
+.file-chips li {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.35rem;
+  max-width: 100%;
+  padding: 0.28rem 0.45rem 0.28rem 0.55rem;
+  border: 1px solid var(--line);
+  background: rgba(255, 255, 255, 0.95);
+  border-radius: var(--radius);
+  font-family: var(--mono);
+  font-size: 0.72rem;
+  color: var(--ink);
+}
+.file-chips li .kind {
+  color: var(--blue-700);
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+  font-size: 0.62rem;
+}
+.file-chips li .name {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  max-width: 14rem;
+}
+.file-chips li button {
+  border: 0;
+  background: transparent;
+  color: var(--muted);
+  cursor: pointer;
+  padding: 0 0.15rem;
+  font: 600 0.85rem/1 var(--sans);
+}
+.file-chips li button:hover { color: var(--block); }
 
 @media (max-width: 900px) {
   .stage {

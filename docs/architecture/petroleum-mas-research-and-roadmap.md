@@ -1,7 +1,7 @@
 # Petroleum Engineering MAS: SCHEDULE-first research и roadmap
 
 **Целевая платформа:** n8n **2.30.8**.
-**Дата ревизии:** 2026-08-09 (implementation status синхронизирован после smoke).
+**Дата ревизии:** 2026-08-16 (implementation status синхронизирован после production-readiness review: compose `mas-activity`, Health Check HTTP probes, commissioning timeline cases 0–3).
 **Текущий предметный scope:** создание, проверка и выпуск файлов секции `SCHEDULE` для tNavigator/ECLIPSE-совместимых моделей в двух равноправных режимах: `CREATE` с нуля и `REVISE` с безопасным изменением существующего Schedule.
 **Вне текущего scope:** построение сеток, 3D grid, геологическое моделирование и генерация `GRID`/`PROPS`/`REGIONS`/`SOLUTION`. При необходимости существующий `.data/.inc` передаётся в n8n как обычный bounded UTF-8 text.
 **Статус документа:** живой roadmap серьёзного внутреннего MVP с заделом на дальнейшее развитие. Реализованы Orchestrator, Excel specialist, SCHEDULE planner/lossless baseline/catalogue decoder/targeted query/typed renderer/semantic replay/atomic merge/validator/verifier/release и redacted trace. Knowledge Ingestion и Hybrid Retrieval используют expert-authored blocks, lexical + semantic + exact tags + RRF и full-parent hydration. В `REVISE` Builder строит hash-bound `PRE_CHANGE_BOUNDARY`, а mutation authority получает отдельный полный query slice с target/hash guards. Этот документ не является техническим справочником keyword layouts.
@@ -650,7 +650,7 @@ error_code, safe_message, created_at
 
 1. штатный **Executions UI** показывает граф, входы/выходы нод, ошибки и дочерние Execute Sub-workflow executions;
 2. явный trace ledger показывает сквозной `trace_id`, handoff между workflow, tool name/result summary, latency, retries, score и gate decision даже после завершения отдельных execution;
-3. **MAS Activity UI** (`mas-activity-service`, порт `8200`) — лёгкая chat-лента handoff’ов для демо/презентации: контракт `mas_activity_feed/v1.1` с полями `brief` (1–4 предложения), `at_abs` (абсолютное UTC), `duration_ms`/`duration_label` (wall time specialist до handoff), `outcome` и allowlisted chips. Питание — batch `POST /v1/sync` из `Writer — MAS Trace` после durable insert (`continueOnFail`: Trace остаётся источником истины, UI — presentation sink). Сырые prompts/секреты в ленту не попадают.
+3. **MAS Activity UI** (`mas-activity-service`, порт `8200`, Compose-сервис `mas-activity`) — лёгкая chat-лента handoff’ов для демо/презентации: контракт `mas_activity_feed/v1.1` с полями `brief` (1–4 предложения), `at_abs` (абсолютное время с меткой зоны, напр. «Тюмень»), `duration_ms`/`duration_label` (wall time specialist до handoff), `outcome` и allowlisted chips. Питание — batch `POST /v1/sync` из `Writer — MAS Trace` после durable insert (`continueOnFail`: Trace остаётся источником истины, UI — presentation sink). `POST /v1/sync` не сбрасывает открытый gate от routine handoff-статусов (`EXCEL_EVIDENCE_READY` и т.п.); composer открывается при `awaiting_human` / `AWAITING_HUMAN` + непустой `human_gate`. Сырые prompts/секреты в ленту не попадают.
 
 Для QA/демо у Excel tool-using AI Agent включается `returnIntermediateSteps=true`, поэтому в execution видны вызовы FastAPI tools и их результаты. SCHEDULE Planner/Builder также экспортированы с этим флагом для безопасного будущего подключения allowlisted tools; в текущем foundation их фактические действия — отдельные детерминированные Code/IF/Switch stages, видимые прямо на canvas и в execution. Это **операторская диагностика**, а не источник authoritative state: production trace хранит только redacted summaries/IDs/hashes. Для Planner/Verifier показываются их bounded structured outputs: decomposition, rationale, criteria, findings и gate reason codes — не скрытый внутренний монолог. Для production сохраняем structured summaries и метаданные, а не весь prompt/tool payload; retention и redaction обязательны. Нативный execution UI не является durable audit log: его retention/настройки могут удалить execution, поэтому критические события дублируются в ledger. Внешний LangSmith/OpenTelemetry допускается как дополнительный sink только после отдельной проверки credentials, data residency и совместимости с 2.30.8.
 
@@ -1290,7 +1290,7 @@ Entrypoints соответствуют роли workflow: user-facing Orchestrat
 
 CLI import не проверяет корпоративную сеть, credentials, PostgreSQL rights и реальный UI round-trip — UI/infrastructure smoke обязателен отдельно.
 
-**Последний полный repository gate на официальном n8n 2.30.8:** 121 runtime-сценарий; pytest (`excel-agent-tools/tests`); generator emits only 4 SCHEDULE/trace JSON; native HITL forms + Deployment Health Check; UI runbook `docs.md`; clean import/export 15/15, активных после импорта — 0. Целевой UI всё равно требует ручного round-trip с реальными credentials, Data Tables и сетью.
+**Последний полный repository gate на официальном n8n 2.30.8 (2026-08-16):** ~192 smoke-сценария (17 файлов); `excel-agent-tools` pytest 70; `mas-activity-service` pytest 16; `scripts/mas_stack_health.py` PASS; commissioning integration cases 0–3 PASS; native HITL forms + Deployment Health Check (Data Tables + Orchestrator/Trace + Docker HTTP probes); UI runbook `docs.md`; clean import/export 15/15, активных после импорта — 0. Снимок: [`production-readiness-review-2026-08-16.md`](production-readiness-review-2026-08-16.md). Целевой UI всё равно требует ручного round-trip с реальными credentials, Data Tables и сетью.
 
 ## 12. Ревизия текущего репозитория
 
@@ -1305,6 +1305,9 @@ CLI import не проверяет корпоративную сеть, credenti
 | Конкретный Schedule Builder agent | importable foundation с automatic pre-change snapshot, targeted mutation authority и inline `.INC` result реализован | заполнить expert catalogue для keywords рабочего сценария и провести UI end-to-end smoke |
 | SCHEDULE parser/decoder/query/renderer/merge/validator | block-preserving baseline/merge, catalogue decoder, targeted query, two-phase replay и generic lifecycle/numeric/interval/wildcard mechanisms реализованы | уточнять expert schema/policy по мере добавления keywords |
 | Calculation Adapter + Math Service | реализованы: `calculation-specialist-adapter.workflow.json` вызывает `fastapi-math-service` для DEV + CPS3/ZMAP intersections | использовать как отдельную deterministic capability; simulator-backed verification остаётся вне текущего SCHEDULE slice |
+| MAS Activity + Trace sync | Compose `mas-activity`, HITL composer, sync без clear gate на routine handoffs | UI: `ACTIVITY_BASE_URL`/`ACTIVITY_KEY` в Trace Writer; GETs пока без auth beyond localhost |
+| Commissioning REVISE timeline | `schedule_timeline_runtime.py`: keep/remove unlisted + new-well HITL (`schedule-builder-hitl-attachment-v1`); Human Gate file attach; combat cases 0–3 | live Orch→Builder E2E с LLM/RAG на корпоративных Excel |
+| Deployment Health Check | Data Tables + Orchestrator/Trace + HTTP probes (excel-tools, runners, mas-activity, n8n) + `mas_stack_health.py` | после wipe volume — ручной re-import bindings |
 | Full DATA/grid generation | отсутствует | явно вне scope |
 ### 12.1. Requirement-by-requirement completion audit
 
@@ -1325,7 +1328,7 @@ CLI import не проверяет корпоративную сеть, credenti
 
 ## 13. Источники и примененные выводы
 
-Доступ к первичным web-источникам по MAS/n8n повторно проверен 2026-08-09; implementation status обновлён в ту же дату. Online-документация может описывать более новую версию, поэтому runtime grammar всегда version-pinned, а node registry/typeVersion фиксируются smoke-прогоном официального image `n8nio/n8n:2.30.8`.
+Доступ к первичным web-источникам по MAS/n8n повторно проверен 2026-08-09; implementation status обновлён 2026-08-16 (production-readiness review). Online-документация может описывать более новую версию, поэтому runtime grammar всегда version-pinned, а node registry/typeVersion фиксируются smoke-прогоном официального image `n8nio/n8n:2.30.8`.
 
 ### SCHEDULE/tNavigator
 

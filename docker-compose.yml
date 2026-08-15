@@ -66,6 +66,16 @@ services:
         condition: service_healthy
       excel-tools:
         condition: service_healthy
+    healthcheck:
+      test:
+        [
+          "CMD-SHELL",
+          "wget -q -O /dev/null http://127.0.0.1:5678/healthz || wget -q -O /dev/null http://127.0.0.1:5678/healthz/ || exit 1",
+        ]
+      interval: 15s
+      timeout: 5s
+      retries: 20
+      start_period: 40s
     environment:
       DB_TYPE: postgresdb
       DB_POSTGRESDB_HOST: postgres
@@ -158,6 +168,40 @@ services:
       retries: 12
     networks:
       - backend
+
+  mas-activity:
+    build:
+      context: ./mas-activity-service
+    restart: unless-stopped
+    environment:
+      MAS_ACTIVITY_KEY: ${MAS_ACTIVITY_KEY:?Set MAS_ACTIVITY_KEY in .env}
+      # Optional live Orchestrator proxy. Leave HITL_MODE=local for offline UI.
+      # webhook: set ORCHESTRATOR_WEBHOOK_URL (+ auth). n8n_rest: set N8N_* + ORCHESTRATOR_WORKFLOW_ID.
+      HITL_MODE: ${HITL_MODE:-local}
+      ORCHESTRATOR_WEBHOOK_URL: ${ORCHESTRATOR_WEBHOOK_URL:-}
+      ORCHESTRATOR_AUTH_HEADER: ${ORCHESTRATOR_AUTH_HEADER:-}
+      ORCHESTRATOR_AUTH_VALUE: ${ORCHESTRATOR_AUTH_VALUE:-}
+      N8N_BASE_URL: ${N8N_ACTIVITY_N8N_BASE_URL:-http://n8n:5678}
+      N8N_USERNAME: ${N8N_USERNAME:-}
+      N8N_PASSWORD: ${N8N_PASSWORD:-}
+      ORCHESTRATOR_WORKFLOW_ID: ${ORCHESTRATOR_WORKFLOW_ID:-}
+    mem_limit: ${MAS_ACTIVITY_MEMORY_LIMIT:-256m}
+    cpus: ${MAS_ACTIVITY_CPUS:-0.5}
+    pids_limit: 128
+    cap_drop:
+      - ALL
+    security_opt:
+      - no-new-privileges:true
+    healthcheck:
+      test: ["CMD", "python", "-c", "import urllib.request; urllib.request.urlopen('http://127.0.0.1:8200/health')"]
+      interval: 10s
+      timeout: 5s
+      retries: 12
+    ports:
+      - "127.0.0.1:${MAS_ACTIVITY_HOST_PORT:-8200}:8200"
+    networks:
+      - backend
+      - ingress
 
 volumes:
   postgres_data:
