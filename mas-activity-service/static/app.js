@@ -3,50 +3,164 @@
   const empty = document.getElementById("empty");
   const title = document.getElementById("title");
   const subtitle = document.getElementById("subtitle");
-  const taskInput = document.getElementById("taskInput");
-  const openBtn = document.getElementById("openBtn");
-  const demoBtn = document.getElementById("demoBtn");
   const taskRail = document.getElementById("taskRail");
   const liveDot = document.getElementById("liveDot");
   const liveLabel = document.getElementById("liveLabel");
+  const backendLabel = document.getElementById("backendLabel");
+  const flashEl = document.getElementById("flash");
+  const gatePanel = document.getElementById("gatePanel");
+  const gateKind = document.getElementById("gateKind");
+  const gateMeta = document.getElementById("gateMeta");
+  const gateReason = document.getElementById("gateReason");
+  const gateQuestions = document.getElementById("gateQuestions");
+  const composer = document.getElementById("composer");
+  const requestedBy = document.getElementById("requestedBy");
+  const humanResponse = document.getElementById("humanResponse");
+  const composerHint = document.getElementById("composerHint");
+  const approveBtn = document.getElementById("approveBtn");
+  const rejectBtn = document.getElementById("rejectBtn");
+  const replyBtn = document.getElementById("replyBtn");
+  const cancelBtn = document.getElementById("cancelBtn");
+  const hitlButtons = [approveBtn, rejectBtn, replyBtn, cancelBtn];
 
   const ACTIVITY_KEY = localStorage.getItem("mas_activity_key") || "dev-local";
+  const storedBy = localStorage.getItem("mas_requested_by") || "";
+  if (storedBy) requestedBy.value = storedBy;
+
+  const LIVE_LABELS = {
+    idle: "ожидание",
+    connecting: "подключение",
+    live: "онлайн",
+    reconnecting: "переподключение",
+  };
+
   let currentTask = null;
   let source = null;
   let rendered = new Set();
+  let gateState = null;
+  let awaitingHuman = false;
+  let submitAction = "reply";
+  let taskCatalog = [];
+  let flashTimer = null;
 
   function pathTaskId() {
     const m = location.pathname.match(/^\/t\/([^/]+)/);
     return m ? decodeURIComponent(m[1]) : null;
   }
 
+  function showFlash(message, { ok = false } = {}) {
+    if (flashTimer) {
+      clearTimeout(flashTimer);
+      flashTimer = null;
+    }
+    const text = String(message || "").trim();
+    if (!text) {
+      flashEl.hidden = true;
+      flashEl.textContent = "";
+      flashEl.classList.remove("flash-ok");
+      return;
+    }
+    flashEl.hidden = false;
+    flashEl.textContent = text;
+    flashEl.classList.toggle("flash-ok", Boolean(ok));
+    flashTimer = setTimeout(() => {
+      flashEl.hidden = true;
+      flashEl.textContent = "";
+      flashEl.classList.remove("flash-ok");
+      flashTimer = null;
+    }, ok ? 3200 : 8000);
+  }
+
   function setLive(state) {
     liveDot.hidden = state !== "live";
-    liveLabel.textContent = state;
+    liveLabel.textContent = LIVE_LABELS[state] || state;
   }
 
   function roleClass(role) {
+    if (/human|инженер|operator/i.test(role || "")) return "human";
     return /orchestrator/i.test(role || "") ? "orch" : "spec";
   }
 
+  function questionText(q) {
+    if (!q || typeof q !== "object") return String(q || "");
+    return String(q.text || q.question || q.message || q.id || "").trim();
+  }
+
+  function setComposerArmed(armed) {
+    awaitingHuman = Boolean(armed);
+    composer.hidden = !awaitingHuman;
+    composer.classList.toggle("armed", awaitingHuman);
+    for (const btn of hitlButtons) btn.disabled = !awaitingHuman;
+  }
+
+  function renderGate(gate, { status, version, awaiting } = {}) {
+    gateState = gate && typeof gate === "object" ? gate : null;
+    const armed = Boolean(awaiting && gateState && gateState.gate_id);
+    setComposerArmed(armed);
+
+    if (!gateState) {
+      gatePanel.hidden = true;
+      return;
+    }
+
+    gatePanel.hidden = false;
+    gateKind.textContent = gateState.kind || "human_gate";
+    gateMeta.textContent = [
+      gateState.gate_id ? `gate ${gateState.gate_id}` : null,
+      version != null ? `v${version}` : gateState.expected_version != null ? `v${gateState.expected_version}` : null,
+      status || null,
+    ].filter(Boolean).join(" · ");
+    gateReason.textContent = gateState.reason || "Требуется решение человека.";
+    gateQuestions.innerHTML = "";
+    const questions = Array.isArray(gateState.questions) ? gateState.questions : [];
+    for (const q of questions) {
+      const li = document.createElement("li");
+      const text = questionText(q);
+      li.append(document.createTextNode(text || "Вопрос"));
+      if (q.expected_format || q.required) {
+        const meta = document.createElement("span");
+        meta.className = "q-meta";
+        meta.textContent = [
+          q.required ? "обязательно" : "необязательно",
+          q.expected_format ? `формат: ${q.expected_format}` : null,
+        ].filter(Boolean).join(" · ");
+        li.append(meta);
+      }
+      gateQuestions.append(li);
+    }
+    composerHint.textContent = armed
+      ? "Утвердить / отклонить / ответить / отменить — gate_id и version подставятся сами."
+      : "Gate закрыт. Можно открыть другую задачу или дождаться следующего HITL.";
+  }
+
   function renderTurn(turn, { animate = true } = {}) {
-    const id = `${turn.turn_id}:${turn.at}:${turn.status}:${turn.duration_ms || ""}`;
+    const id = `${turn.turn_id}:${turn.at}:${turn.status}:${turn.duration_ms || ""}:${turn.kind || ""}`;
     if (rendered.has(id)) return;
     rendered.add(id);
     empty.hidden = true;
 
     const li = document.createElement("li");
-    li.className = `turn outcome-${turn.outcome || "info"}`;
+    const fromRole = turn.from?.role || "Orchestrator";
+    const toRole = turn.to?.role || "Specialist";
+    const isHuman = turn.kind === "hitl" || /human/i.test(fromRole) || /^HUMAN_/.test(turn.status || "");
+    li.className = `turn outcome-${turn.outcome || "info"}${isHuman ? " human" : ""}`;
     if (!animate) {
       li.style.animation = "none";
       li.style.opacity = "1";
     }
 
-    const fromRole = turn.from?.role || "Orchestrator";
-    const toRole = turn.to?.role || "Specialist";
     const who = document.createElement("div");
     who.className = `who ${roleClass(fromRole)}`;
-    who.innerHTML = `<span class="role">${escapeHtml(fromRole)}</span><span class="arrow">→</span><span class="role">${escapeHtml(toRole)}</span>`;
+    const fromEl = document.createElement("span");
+    fromEl.className = "role";
+    fromEl.textContent = fromRole;
+    const arrow = document.createElement("span");
+    arrow.className = "arrow";
+    arrow.textContent = "→";
+    const toEl = document.createElement("span");
+    toEl.className = "role";
+    toEl.textContent = toRole;
+    who.append(fromEl, arrow, toEl);
 
     const bubble = document.createElement("div");
     bubble.className = "bubble";
@@ -84,7 +198,9 @@
       for (const chip of turn.chips) {
         const el = document.createElement("span");
         el.className = "chip";
-        el.innerHTML = `<b>${escapeHtml(chip.label)}</b> ${escapeHtml(String(chip.value))}`;
+        const b = document.createElement("b");
+        b.textContent = chip.label;
+        el.append(b, document.createTextNode(` ${String(chip.value)}`));
         chips.append(el);
       }
       bubble.append(chips);
@@ -100,23 +216,38 @@
     thread.scrollTop = thread.scrollHeight;
   }
 
-  function escapeHtml(value) {
-    return String(value)
-      .replaceAll("&", "&amp;")
-      .replaceAll("<", "&lt;")
-      .replaceAll(">", "&gt;")
-      .replaceAll('"', "&quot;");
-  }
-
   async function refreshRail() {
     const res = await fetch("/v1/tasks");
     const data = await res.json();
+    taskCatalog = Array.isArray(data.tasks) ? data.tasks : [];
+
     taskRail.innerHTML = "";
-    for (const task of data.tasks || []) {
+    if (!taskCatalog.length) {
+      const emptyMsg = document.createElement("p");
+      emptyMsg.className = "rail-empty";
+      emptyMsg.id = "railEmpty";
+      emptyMsg.textContent = "Нет задач. Дождитесь handoff от Trace Writer или откройте /t/<task_id>.";
+      taskRail.append(emptyMsg);
+      return;
+    }
+
+    for (const task of taskCatalog) {
       const btn = document.createElement("button");
       btn.type = "button";
       btn.className = task.task_id === currentTask ? "active" : "";
-      btn.innerHTML = `<span class="id">${escapeHtml(task.task_id)}</span><span class="meta">${task.turn_count} turns · ${escapeHtml(task.last_at_abs || task.updated_at || "")}</span>`;
+      const id = document.createElement("span");
+      id.className = "id";
+      id.textContent = task.task_id;
+      const meta = document.createElement("span");
+      meta.className = "meta";
+      meta.textContent = `${task.turn_count} turns · ${task.last_at_abs || task.updated_at || ""}`;
+      btn.append(id, meta);
+      if (task.awaiting_human) {
+        const flag = document.createElement("span");
+        flag.className = "hitl-flag";
+        flag.textContent = "HITL";
+        btn.append(flag);
+      }
       btn.addEventListener("click", () => openTask(task.task_id));
       taskRail.append(btn);
     }
@@ -129,24 +260,42 @@
     }
   }
 
+  function applyFeedMeta(data) {
+    if (data.hitl_backend) backendLabel.textContent = `HITL: ${data.hitl_backend}`;
+    // REST + SSE snapshots use human_gate; accept legacy gate alias if present.
+    renderGate(data.human_gate ?? data.gate ?? null, {
+      status: data.status,
+      version: data.version,
+      awaiting: data.awaiting_human,
+    });
+  }
+
   async function openTask(taskId) {
     if (!taskId) return;
     currentTask = taskId;
-    taskInput.value = taskId;
     history.replaceState({}, "", `/t/${encodeURIComponent(taskId)}`);
     rendered = new Set();
     thread.innerHTML = "";
     empty.hidden = false;
     title.textContent = taskId;
-    subtitle.textContent = "Краткий ход работы: кто → кому, абсолютное время и длительность specialist.";
+    subtitle.textContent = "Краткий ход работы и HITL: утвердить / отклонить / ответить / отменить без ручного копирования CAS-полей.";
     closeStream();
     setLive("connecting");
+    renderGate(null, { awaiting: false });
+    showFlash("");
 
-    const snap = await fetch(`/v1/tasks/${encodeURIComponent(taskId)}`);
-    if (snap.ok) {
-      const data = await snap.json();
-      title.textContent = data.title || taskId;
-      for (const turn of data.activity || []) renderTurn(turn, { animate: false });
+    try {
+      const snap = await fetch(`/v1/tasks/${encodeURIComponent(taskId)}`);
+      if (snap.ok) {
+        const data = await snap.json();
+        title.textContent = data.title || taskId;
+        applyFeedMeta(data);
+        for (const turn of data.activity || []) renderTurn(turn, { animate: false });
+      } else {
+        showFlash(`Не удалось загрузить задачу (${snap.status}).`);
+      }
+    } catch (_) {
+      showFlash("Сеть недоступна при загрузке задачи.");
     }
 
     source = new EventSource(`/v1/tasks/${encodeURIComponent(taskId)}/stream`);
@@ -159,35 +308,108 @@
           thread.innerHTML = "";
           rendered = new Set();
           empty.hidden = !(msg.activity || []).length;
+          applyFeedMeta(msg);
           for (const turn of msg.activity || []) renderTurn(turn, { animate: false });
         } else if (msg.type === "turn") {
           renderTurn(msg.turn, { animate: true });
+        } else if (msg.type === "gate") {
+          applyFeedMeta(msg);
         }
       } catch (_) { /* ignore malformed SSE */ }
     };
     await refreshRail();
   }
 
-  async function seedDemo() {
-    const res = await fetch("/v1/demo/seed", {
-      method: "POST",
-      headers: { "X-Activity-Key": ACTIVITY_KEY },
-    });
-    if (!res.ok) {
-      alert("Demo seed failed. Check MAS_ACTIVITY_KEY (default dev-local).");
+  async function submitHitl(action) {
+    if (!currentTask) {
+      showFlash("Сначала выберите задачу в списке слева.");
       return;
     }
-    const data = await res.json();
-    await openTask(data.task_id);
+    const by = requestedBy.value.trim();
+    if (!by) {
+      requestedBy.focus();
+      showFlash("Укажите requested_by — именной accountable инженер.");
+      return;
+    }
+    localStorage.setItem("mas_requested_by", by);
+    const responseText = humanResponse.value.trim();
+    if (action === "reply" && !responseText) {
+      humanResponse.focus();
+      showFlash("Для ответа нужен текст указаний.");
+      return;
+    }
+    if (action === "cancel" && !window.confirm("Отменить задачу на HITL-gate?")) {
+      return;
+    }
+
+    composer.classList.add("busy");
+    composerHint.textContent = "Отправляем HITL…";
+    try {
+      const res = await fetch(`/v1/tasks/${encodeURIComponent(currentTask)}/hitl`, {
+        method: "POST",
+        headers: {
+          "Content-Type": "application/json",
+          "X-Activity-Key": ACTIVITY_KEY,
+        },
+        body: JSON.stringify({
+          action,
+          requested_by: by,
+          human_response: responseText || null,
+          gate_id: gateState?.gate_id || null,
+          expected_version: gateState?.expected_version ?? null,
+        }),
+      });
+      const data = await res.json().catch(() => ({}));
+      if (!res.ok) {
+        const detail = typeof data.detail === "string"
+          ? data.detail
+          : `HITL не принят (${res.status})`;
+        showFlash(detail);
+        composerHint.textContent = "Не удалось отправить. Проверьте статус задачи и backend.";
+        return;
+      }
+      if (data.turn) renderTurn(data.turn, { animate: true });
+      applyFeedMeta({
+        human_gate: data.human_gate,
+        status: data.orchestrator?.status,
+        version: data.orchestrator?.version,
+        awaiting_human: data.awaiting_human,
+        hitl_backend: data.backend,
+      });
+      if (action === "reply") humanResponse.value = "";
+      showFlash(
+        action === "approve" ? "Утверждено."
+          : action === "reject" ? "Отклонено."
+            : action === "cancel" ? "Задача отменена."
+              : "Ответ отправлен.",
+        { ok: true },
+      );
+      await refreshRail();
+    } catch (_) {
+      showFlash("Сеть недоступна при отправке HITL.");
+      composerHint.textContent = "Не удалось отправить. Проверьте сеть и backend.";
+    } finally {
+      composer.classList.remove("busy");
+    }
   }
 
-  openBtn.addEventListener("click", () => openTask(taskInput.value.trim()));
-  demoBtn.addEventListener("click", seedDemo);
-  taskInput.addEventListener("keydown", (e) => {
-    if (e.key === "Enter") openTask(taskInput.value.trim());
+  for (const btn of hitlButtons) {
+    btn.addEventListener("click", () => {
+      submitAction = btn.dataset.action || "reply";
+    });
+  }
+
+  composer.addEventListener("submit", (e) => {
+    e.preventDefault();
+    submitHitl(submitAction || "reply");
   });
 
   const initial = pathTaskId();
   if (initial) openTask(initial);
-  else refreshRail();
+  else {
+    refreshRail();
+    fetch("/health").then((r) => r.json()).then((h) => {
+      if (h.hitl_backend) backendLabel.textContent = `HITL: ${h.hitl_backend}`;
+    }).catch(() => {});
+  }
 })();

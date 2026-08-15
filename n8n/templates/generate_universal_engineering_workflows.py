@@ -4,6 +4,7 @@ import json
 import uuid
 from pathlib import Path
 
+from schedule_package_materialize import build_materialize_uploads_node_js
 from mas_handoff_contracts import (
     APPEND_HANDOFF_JS,
     NORMALIZE_SOURCE_FACTS_JS,
@@ -234,6 +235,10 @@ PLANNER_SCHEMA = {
         "task_type": {"type": "string"},
         "risk_class": {"enum": ["low", "high", "critical"]},
         "reason": {"type": "string"},
+        "user_message": {
+            "type": "string",
+            "description": "1-3 short Russian sentences for Activity/HITL UI; keep keyword/field names in Latin.",
+        },
         "questions": {"type": "array", "items": {"type": "object"}},
         "plan": {"type": "object"},
         "specialist_packet": {
@@ -290,6 +295,10 @@ SPECIALIST_WORK_SCHEMA = {
             ]
         },
         "summary": {"type": "string"},
+        "user_message": {
+            "type": "string",
+            "description": "1-3 short Russian sentences for Activity/HITL UI; keep keyword/field names in Latin.",
+        },
         "deliverables": {"type": "array", "items": {"type": "object"}},
         "artifact_refs": {
             "type": "array",
@@ -364,7 +373,23 @@ const requestFallback = clean(body.request_text) ? { problem_statement: clean(bo
 const requestParsed = parseStructured(requestCandidate, requestFallback, 'request_json');
 const contextParsed = parseStructured(firstValue(body.runtime, body.runtime_json, body.context, body.context_json), {}, 'runtime_json');
 const uploadedSchedule=typeof body.baseline_schedule_text==='string'?body.baseline_schedule_text:null;
-const request = uploadedSchedule===null?requestParsed.value:{...requestParsed.value,baseline_schedule_text:uploadedSchedule,baseline_filename:String(item.binary?.schedule_file?.fileName||'schedule.inc'),build_mode:String(requestParsed.value.build_mode||'AUTO')};
+const materializedOk=body.schedule_materialize_ok===true;
+const materializeError=clean(body.schedule_materialize_error,1000);
+const rawIncludes=body.include_files;
+const includeFiles=(Array.isArray(rawIncludes)?rawIncludes:(typeof rawIncludes==='string'&&rawIncludes.trim()?(()=>{try{const parsed=JSON.parse(rawIncludes);return Array.isArray(parsed)?parsed:[]}catch{return[]}})():[])).filter(f=>f&&typeof f==='object'&&typeof f.path==='string'&&typeof f.text==='string');
+const rootPath=clean(body.root_path||body.baseline_filename||'',512);
+let request = requestParsed.value;
+if(materializedOk||uploadedSchedule!==null||includeFiles.length){
+  request={
+    ...request,
+    baseline_schedule_text:typeof body.baseline_schedule_text==='string'?body.baseline_schedule_text:(uploadedSchedule||request.baseline_schedule_text),
+    baseline_filename:clean(body.baseline_filename||item.binary?.schedule_file?.fileName||item.binary?.schedule_files?.fileName||'schedule.inc',512)||'schedule.inc',
+    root_path:rootPath||clean(request.root_path||'',512)||undefined,
+    include_files:includeFiles.length?includeFiles:(Array.isArray(request.include_files)?request.include_files:[]),
+    baseline_package:body.baseline_package&&typeof body.baseline_package==='object'?body.baseline_package:request.baseline_package,
+    build_mode:String(request.build_mode||'AUTO'),
+  };
+}
 const runtime = contextParsed.value; const context = runtime;
 const parseHumanResponse = value => {
   if (!hasValue(value)) return null;
@@ -381,13 +406,17 @@ const expected = Number(body.expected_version);
 const retryCandidate = Number(body.max_retries ?? 2);
 const maxRetries = Number.isFinite(retryCandidate) ? Math.min(5, Math.max(0, Math.trunc(retryCandidate))) : 2;
 const jsonSize = value => { try { return JSON.stringify(value).length; } catch { return Number.MAX_SAFE_INTEGER; } };
-const baselineBytes=uploadedSchedule===null?0:new TextEncoder().encode(uploadedSchedule).length;
-const filename=String(item.binary?.schedule_file?.fileName||'');const scheduleFileValid=!filename||/\.(?:data|inc|sch|txt)$/i.test(filename);
-const requestLimit=uploadedSchedule===null?262144:2359296;
-const payloadValid = jsonSize(request) <= requestLimit && baselineBytes<=2097152 && jsonSize(context) <= 262144 && jsonSize(humanResponse) <= 65536;
+const baselineBytes=typeof request.baseline_schedule_text==='string'?new TextEncoder().encode(request.baseline_schedule_text).length:0;
+const includeBytes=(Array.isArray(request.include_files)?request.include_files:[]).reduce((n,f)=>n+new TextEncoder().encode(String(f?.text||'')).length,0);
+const scheduleBinaryKeys=Object.keys(item.binary||{}).filter(k=>/^(schedule_file|schedule_files)\d*$/i.test(k));
+const scheduleNames=scheduleBinaryKeys.map(k=>String(item.binary[k]?.fileName||'')).filter(Boolean);
+const scheduleFileValid=!scheduleNames.length||scheduleNames.every(name=>/\.(?:data|inc|sch|txt|grdecl)$/i.test(name));
+const requestLimit=(baselineBytes||includeBytes)?2359296:262144;
+const payloadValid = jsonSize(request) <= requestLimit && baselineBytes<=2097152 && includeBytes<=4194304 && jsonSize(context) <= 262144 && jsonSize(humanResponse) <= 65536;
 const inputErrors = [!allowed.has(action) ? 'Unsupported action.' : null, requestParsed.error, contextParsed.error,
-  !scheduleFileValid?'SCHEDULE upload must use .data, .inc, .sch or .txt.':null,
-  !payloadValid ? 'Payload is too large; SCHEDULE text is limited to 2 MiB in the MVP.' : null].filter(Boolean);
+  body.schedule_materialize_ok===false?(materializeError||'SCHEDULE multi-file materialize failed.'):null,
+  !scheduleFileValid?'SCHEDULE upload must use .data, .inc, .sch, .txt or .grdecl.':null,
+  !payloadValid ? 'Payload is too large; SCHEDULE package is limited to ~4 MiB in the MVP.' : null].filter(Boolean);
 return [{json:{
   entrypoint,
   action: allowed.has(action) ? action : 'invalid',
@@ -417,7 +446,7 @@ const runtime = x.runtime && typeof x.runtime === 'object' ? x.runtime : (x.cont
 return [{json:{...x,task_id:taskId,version:1,status:hasObjective?'planning':'awaiting_human',risk_class:'low',
   request_json:JSON.stringify(request),runtime_json:JSON.stringify(runtime),
   plan_json:'{}',packet_json:'{}',result_json:'{}',verification_json:'{}',
-  gate_json:hasObjective?'{}':JSON.stringify({gate_id:`gate_${taskId}_intake`,kind:'needs_input',questions:[{id:'objective',text:'Specify a measurable engineering objective and required deliverables.'}],expected_version:1}),
+  gate_json:hasObjective?'{}':JSON.stringify({gate_id:`gate_${taskId}_intake`,kind:'needs_input',reason:'Нужна формулировка задачи.',questions:[{id:'objective',text:'Сформулируйте измеримую инженерную цель и требуемый результат (deliverable).',expected_format:'свободный текст',required:true}],expected_version:1}),
   retry_count:0,max_retries:x.max_retries,created_at:x.received_at,updated_at:x.received_at,
   should_plan:hasObjective,
 }}];
@@ -485,10 +514,11 @@ return [{json:{...x,route,terminal:terminal.has(x.status)}}];
 
 
 CHECK_LOADED = r"""
-const req=$('Normalize invocation').first().json;
+const reqItem=$('Normalize invocation').first();
+const req=reqItem.json;
 const rows=$input.all().map(i=>i.json).filter(r=>r && r.task_id);
-if(rows.length===0) return [{json:{...req,state_found:false,status:'not_found'}}];
-if(rows.length!==1) return [{json:{...req,state_found:false,status:'conflict',message:'State invariant failed: duplicate task_id.'}}];
+if(rows.length===0) return [{json:{...req,state_found:false,status:'not_found'},...(reqItem.binary?{binary:reqItem.binary}:{})}];
+if(rows.length!==1) return [{json:{...req,state_found:false,status:'conflict',message:'State invariant failed: duplicate task_id.'},...(reqItem.binary?{binary:reqItem.binary}:{})}];
 const row=rows[0];
 const invalid=[];
 const parseExpected=(field)=>{
@@ -505,13 +535,14 @@ if(!Number.isInteger(retryCount)||retryCount<0) invalid.push('retry_count');
 if(!Number.isInteger(maxRetries)||maxRetries<0||maxRetries>5) invalid.push('max_retries');
 if(!new Set(['planning','awaiting_human','delegated','retryable_error','completed','failed','rejected','cancelled']).has(row.status)) invalid.push('status');
 if(!new Set(['low','high','critical']).has(row.risk_class)) invalid.push('risk_class');
-if(invalid.length) return [{json:{...req,state_found:false,status:'conflict',message:`Stored task state is malformed (${[...new Set(invalid)].join(', ')}); manual recovery is required.`}}];
-return [{json:{...req,...row,state_found:true,stored_version:version,stored_status:row.status}}];
+if(invalid.length) return [{json:{...req,state_found:false,status:'conflict',message:`Stored task state is malformed (${[...new Set(invalid)].join(', ')}); manual recovery is required.`},...(reqItem.binary?{binary:reqItem.binary}:{})}];
+return [{json:{...req,...row,state_found:true,stored_version:version,stored_status:row.status},...(reqItem.binary?{binary:reqItem.binary}:{})}];
 """.strip()
 
 
 APPLY_ACTION = r"""
-const x=$json;
+const item=$input.first();
+const x={...item.json,binary:item.binary||item.json.binary||{}};
 const parse=(v,f)=>{try{return typeof v==='string'?JSON.parse(v):v??f}catch{return f}};
 const pending=parse(x.gate_json,{});
 let nextPending=null;
@@ -524,7 +555,7 @@ else if(x.action==='cancel'){nextStatus='cancelled';outcome='persist';}
 else if(['reply','approve','reject'].includes(x.action)){
   if(!pending.gate_id || x.gate_id!==pending.gate_id){nextStatus='conflict';message='gate_id does not match the active human gate.';}
   else if(['approve','reject'].includes(x.action) && x.requested_by==='anonymous'){nextStatus='conflict';message='An accountable requested_by identity is required for approval or rejection.';}
-  else if(x.action==='reply' && !x.human_response){nextStatus='conflict';message='human_response is required for a reply action.';}
+  else if(x.action==='reply' && !x.human_response && !Object.keys(x.binary||{}).some(k=>/hitl|trajectory|supplemental|file|workbook/i.test(k))){nextStatus='conflict';message='human_response is required for a reply action.';}
   else if(x.action==='reject'){nextStatus='rejected';outcome='persist';}
   else if(x.action==='approve' && pending.kind==='pre_delegation_approval'){
     const packet=parse(x.packet_json,{});
@@ -551,6 +582,19 @@ else if(['reply','approve','reject'].includes(x.action)){
     nextStatus='planning';shouldPlan=true;outcome='persist_plan';
   } else if(x.action==='reply' && ['needs_input','needs_decision'].includes(pending.kind)){
     const previousResult=parse(x.result_json,{});const packet=parse(x.packet_json,{});
+    const hr=x.human_response&&typeof x.human_response==='object'?x.human_response:null;
+    const req=parse(x.request_json,{});
+    if(hr){
+      if(Array.isArray(hr.new_well_defs)&&hr.new_well_defs.length)req.new_well_defs=hr.new_well_defs;
+      if(hr.unlisted_wells_policy)req.unlisted_wells_policy=String(hr.unlisted_wells_policy);
+      if(typeof hr.text==='string'&&hr.text&&!req.hitl_reply_text)req.hitl_reply_text=hr.text;
+      x.request_json=JSON.stringify(req);
+    }
+    const binaryKeys=Object.keys(x.binary||{}).filter(Boolean);
+    if(binaryKeys.length){
+      const runtime=parse(x.runtime_json,{});
+      x.runtime_json=JSON.stringify({...runtime,hitl_binary_keys:binaryKeys,hitl_attachments_pending:true});
+    }
     const canContinue=Boolean(previousResult.continuation&&typeof previousResult.continuation==='object'&&packet.specialist_id&&previousResult.task_id===x.task_id&&previousResult.specialist_id===packet.specialist_id);
     if(canContinue){nextStatus='delegated';shouldDelegate=true;outcome='persist_plan';}
     else{nextStatus='planning';shouldPlan=true;outcome='persist_plan';}
@@ -573,7 +617,8 @@ if(outcome.startsWith('persist')){
   x.gate_json=JSON.stringify(nextPending||{});
 }
 const responseStatus=outcome==='respond'&&nextStatus?nextStatus:x.status;
-return [{json:{...x,status:responseStatus,outcome,message,should_plan:shouldPlan,should_delegate:shouldDelegate,previous_version:x.stored_version}}];
+const {binary:binOut,...jsonOut}=x;
+return [{json:{...jsonOut,status:responseStatus,outcome,message,should_plan:shouldPlan,should_delegate:shouldDelegate,previous_version:x.stored_version},...(binOut&&Object.keys(binOut).length?{binary:binOut}:{})}];
 """.strip()
 
 
@@ -582,7 +627,8 @@ const x=$json;
 const parse=(v,f)=>{try{return typeof v==='string'?JSON.parse(v):v??f}catch{return f}};
 const specialist_catalog=SPECIALIST_CATALOG_PLACEHOLDER;
 const fullRequest=parse(x.request_json,{}),request={...fullRequest};
-if(typeof request.baseline_schedule_text==='string'){request.baseline_schedule={present:true,filename:request.baseline_filename||'schedule.inc',byte_length:new TextEncoder().encode(request.baseline_schedule_text).length};delete request.baseline_schedule_text;}
+if(typeof request.baseline_schedule_text==='string'){request.baseline_schedule={present:true,filename:request.baseline_filename||request.root_path||'schedule.inc',byte_length:new TextEncoder().encode(request.baseline_schedule_text).length,root_path:request.root_path||null,include_file_count:Array.isArray(request.include_files)?request.include_files.length:0,package_hash:request.baseline_package?.package_hash||null};delete request.baseline_schedule_text;}
+if(Array.isArray(request.include_files)){request.include_files=request.include_files.slice(0,100).map(f=>({path:String(f?.path||''),byte_length:new TextEncoder().encode(String(f?.text||'')).length,sha_hint:null}));}
 const payload={contract:'orchestrator_planning_request',contract_version:'1.0',task_id:x.task_id,attempt:Number(x.retry_count)+1,
  request,context:parse(x.runtime_json,{}),previous_plan:parse(x.plan_json,{}),last_error:(()=>{const r=parse(x.runtime_json,{});return r.last_error&&typeof r.last_error==='object'?r.last_error:{}})(),
  previous_specialist_result:parse(x.result_json,{}),previous_verification:parse(x.verification_json,{}),specialist_catalog,
@@ -612,11 +658,12 @@ const packetObject=plan.specialist_packet&&typeof plan.specialist_packet==='obje
 const packetComplete=packetObject&&typeof plan.specialist_packet.objective==='string'&&plan.specialist_packet.objective.trim()&&plan.specialist_packet.inputs&&typeof plan.specialist_packet.inputs==='object'&&!Array.isArray(plan.specialist_packet.inputs)&&plan.specialist_packet.controls&&typeof plan.specialist_packet.controls==='object'&&!Array.isArray(plan.specialist_packet.controls)&&Array.isArray(plan.specialist_packet.acceptance_criteria)&&Array.isArray(plan.specialist_packet.artifact_refs);
 if(decision==='delegate' && packetObject && !allowed.has(plan.specialist_packet.specialist_id)) decision='unsupported';
 else if(decision==='delegate' && !packetComplete){decision='needs_input';plan.reason='Planner could not produce a complete specialist_packet v1.0; review the task inputs and acceptance criteria.';plan.questions=Array.isArray(plan.questions)?plan.questions:[];}
-if(!decisionRecordValid){decision='needs_input';plan.reason='Planner did not provide a valid observable decision_record/v1.';plan.questions=arr(plan.questions)?plan.questions:[];}
+// Model decision_record is advisory; Validate and apply plan always emits a deterministic decision_record below.
+if(!decisionRecordValid && decision==='delegate' && !packetComplete){decision='needs_input';plan.reason='Planner did not provide a complete specialist packet with an observable decision trail.';plan.questions=arr(plan.questions)?plan.questions:[];}
 const criticalDelegation=decision==='delegate'&&risk==='critical';
 let packetCandidate=decision==='delegate'?{...plan.specialist_packet,contract:'specialist_packet',contract_version:'1.0',task_id:base.task_id,attempt:Number(base.retry_count)+1,controls:{...(obj(plan.specialist_packet.controls)?plan.specialist_packet.controls:{}),expected_version:Number(base.version)+1,idempotency_key:`${base.task_id}:specialist:${plan.specialist_packet.specialist_id}:${Number(base.retry_count)+1}:${Number(base.version)+1}`,policy_version:'petroleum-schedule-policy-v1'}}:{};
 const scheduleTask=packetCandidate.specialist_id==='schedule_builder_specialist'||request?.task_type==='schedule_build'||Boolean(request?.schedule_request||request?.build_mode||request?.requested_keyword_scope)||/(schedule|wconprod|wconhist|welspecs|compdatmd|gruptree|welltrack|t-?navigator)/i.test(JSON.stringify(request));
-if(decision==='delegate'&&packetCandidate.specialist_id==='schedule_builder_specialist'){const modelInputs=obj(packetCandidate.inputs)?packetCandidate.inputs:{},modelSchedule=obj(modelInputs.schedule_request)?modelInputs.schedule_request:modelInputs,originalSchedule=obj(request.schedule_request)?request.schedule_request:request;packetCandidate={...packetCandidate,inputs:{...modelInputs,schedule_request:{...originalSchedule,...modelSchedule,baseline_schedule_text:typeof originalSchedule.baseline_schedule_text==='string'?originalSchedule.baseline_schedule_text:modelSchedule.baseline_schedule_text}}};}
+if(decision==='delegate'&&packetCandidate.specialist_id==='schedule_builder_specialist'){const modelInputs=obj(packetCandidate.inputs)?packetCandidate.inputs:{},modelSchedule=obj(modelInputs.schedule_request)?modelInputs.schedule_request:modelInputs,originalSchedule=obj(request.schedule_request)?request.schedule_request:request;packetCandidate={...packetCandidate,inputs:{...modelInputs,schedule_request:{...originalSchedule,...modelSchedule,baseline_schedule_text:typeof originalSchedule.baseline_schedule_text==='string'?originalSchedule.baseline_schedule_text:modelSchedule.baseline_schedule_text,include_files:Array.isArray(originalSchedule.include_files)?originalSchedule.include_files:(Array.isArray(modelSchedule.include_files)?modelSchedule.include_files:[]),root_path:typeof originalSchedule.root_path==='string'&&originalSchedule.root_path?originalSchedule.root_path:(modelSchedule.root_path||originalSchedule.baseline_filename||modelSchedule.baseline_filename||null),baseline_package:originalSchedule.baseline_package||modelSchedule.baseline_package||null}}};}
 if(scheduleTask&&riskRank[risk]<riskRank.high)risk='high';
 if(criticalDelegation) decision='needs_approval';
 const petroleumControls=controls=>{const c=obj(controls)?controls:{};return{...c,access_scope:clean(c.access_scope)||'petroleum-engineering',unit_system:clean(c.unit_system)||'METRIC',simulator:clean(c.simulator)||'tNavigator',simulator_version:clean(c.simulator_version)||'22.2'};};
@@ -628,10 +675,131 @@ const excelOwnedQuestion=q=>/workbook|\.xlsx|\.xls\b|excel|таблиц|лист
 const intendedSpecialist=clean((obj(packetCandidate)&&packetCandidate.specialist_id)||(packetObject&&plan.specialist_packet.specialist_id)||'');
 const excelDelegation=intendedSpecialist==='excel_extraction_specialist';
 const calcDelegation=intendedSpecialist==='engineering_calculation_specialist';
-const blockingQuestions=questions.filter(q=>{if(profileQuestion(q))return false;if(excelDelegation&&excelOwnedQuestion(q))return false;return true;});
+const previousSpecialistResult=(()=>{try{return typeof base.result_json==='string'?JSON.parse(base.result_json):(base.specialist_result||{})}catch{return {}}})();
+const persistedPacket=(()=>{try{return typeof base.packet_json==='string'?JSON.parse(base.packet_json):(base.specialist_packet||{})}catch{return {}}})();
+const persistedSchedule=obj(persistedPacket.inputs)&&obj(persistedPacket.inputs.schedule_request)?persistedPacket.inputs.schedule_request:{};
+const monthMap={JAN:'01',FEB:'02',MAR:'03',APR:'04',MAY:'05',JUN:'06',JUL:'07',AUG:'08',SEP:'09',OCT:'10',NOV:'11',DEC:'12'};
+const parseBaselineDates=text=>{const out=[];const re=/\b(\d{1,2})\s+(JAN|FEB|MAR|APR|MAY|JUN|JUL|AUG|SEP|OCT|NOV|DEC)\s+(\d{4})\b/gi;let m;while((m=re.exec(String(text||'')))){out.push(`${m[3]}-${monthMap[m[2].toUpperCase()]}-${String(m[1]).padStart(2,'0')}`);}return out;};
+const withReviseIntakeDefaults=(sr,facts)=>{
+  const cur=obj(sr)?sr:{};const text=typeof cur.baseline_schedule_text==='string'?cur.baseline_schedule_text:'';
+  const dates=parseBaselineDates(text);const first=dates[0]||null;const last=dates.length?dates[dates.length-1]:null;
+  const shiftDay=(iso,delta)=>{if(!iso)return null;const d=new Date(`${iso}T00:00:00Z`);if(!Number.isFinite(d.getTime()))return null;d.setUTCDate(d.getUTCDate()+delta);return d.toISOString().slice(0,10)};
+  const profileIn=obj(cur.simulator_profile)?cur.simulator_profile:{};
+  const wellsFromFacts=[...new Set((arr(facts?.facts)?facts.facts:[]).map(f=>{const ent=obj(f)?(f.entity||f.well||f.well_name||f.values?.['Скважина']||f.values?.скважина||f.row?.['Скважина']):null;return clean(ent);}).filter(Boolean))];
+  const scope=obj(cur.requested_change_scope)?cur.requested_change_scope:{intent:'shift_commissioning_dates',source:'excel:Дата ввода',keywords:['DATES','WELOPEN','WCONPROD'],wells:wellsFromFacts};
+  const modelStart=clean(cur.model_start_date)||shiftDay(first,-1)||'2019-06-30';
+  const forecastStart=clean(cur.forecast_start)||first||'2019-07-01';
+  const changeFrom=clean(cur.change_effective_from)||forecastStart||first||'2019-07-01';
+  return{
+    ...cur,
+    build_mode:clean(cur.build_mode)||'REVISE',
+    preservation_policy:clean(cur.preservation_policy)||'preserve_unmentioned',
+    simulator_profile:{...profileIn,vendor:clean(profileIn.vendor)||'Rock Flow Dynamics',simulator:clean(profileIn.simulator)||'tNavigator',version:clean(profileIn.version)||'22.2',unit_system:(clean(profileIn.unit_system).toUpperCase()||'METRIC')},
+    model_start_date:modelStart,
+    forecast_start:forecastStart,
+    forecast_end:clean(cur.forecast_end)||last||'2071-01-01',
+    change_effective_from:changeFrom,
+    requested_keyword_scope:arr(cur.requested_keyword_scope)&&cur.requested_keyword_scope.length?cur.requested_keyword_scope:['DATES','WELOPEN','WCONPROD','WEFAC','INCLUDE'],
+    requested_change_scope:scope,
+  };
+};
+const excelEvidenceReady=previousSpecialistResult&&previousSpecialistResult.specialist_id==='excel_extraction_specialist'&&['succeeded','partial'].includes(String(previousSpecialistResult.status||''));
+const factsFromPersisted=obj(persistedSchedule.source_facts_packet)?persistedSchedule.source_facts_packet:null;
+const builderIntakeRetry=previousSpecialistResult&&previousSpecialistResult.specialist_id==='schedule_builder_specialist'&&String(previousSpecialistResult.status||'')==='needs_input'&&Boolean(factsFromPersisted)&&(typeof request.baseline_schedule_text==='string'||typeof persistedSchedule.baseline_schedule_text==='string');
+const excelAnsweredQuestion=q=>/скважин|дат[аыеу]\s*ввод|commission|well\b|дата ввода|исходн|baseline|schedule|\.inc\b/.test(questionBlob(q));
+let blockingQuestions=questions.filter(q=>{if(profileQuestion(q))return false;if(excelDelegation&&excelOwnedQuestion(q))return false;if((excelEvidenceReady||builderIntakeRetry)&&excelAnsweredQuestion(q))return false;return true;});
 if(decision==='needs_input'&&excelDelegation&&packetComplete&&allowed.has(intendedSpecialist)&&blockingQuestions.length===0){
   decision='delegate';
   packetCandidate={...plan.specialist_packet,contract:'specialist_packet',contract_version:'1.0',task_id:base.task_id,attempt:Number(base.retry_count)+1,controls:{...petroleumControls(plan.specialist_packet.controls),expected_version:Number(base.version)+1,idempotency_key:`${base.task_id}:specialist:${plan.specialist_packet.specialist_id}:${Number(base.retry_count)+1}:${Number(base.version)+1}`,policy_version:'petroleum-schedule-policy-v1'}};
+}
+// If planner returned needs_input / empty packet but the task already carries workbook+SCHEDULE baseline,
+// force the Excel hop instead of parking on a routing gate.
+const requestBlob=JSON.stringify(request).toLowerCase();
+const wantsExcel=/(xlsx|\.xls\b|excel|workbook|таблиц|дата ввода)/.test(requestBlob)||Boolean(request.baseline_schedule_text)||Boolean(base.binary&&(base.binary.file||base.binary.workbook));
+const hasScheduleBaseline=typeof request.baseline_schedule_text==='string'&&request.baseline_schedule_text.length>0;
+if(!packetComplete&&!excelEvidenceReady&&!builderIntakeRetry&&wantsExcel&&hasScheduleBaseline&&allowed.has('excel_extraction_specialist')&&decision!=='delegate'){
+  decision='delegate';
+  packetCandidate={
+    contract:'specialist_packet',contract_version:'1.0',task_id:base.task_id,specialist_id:'excel_extraction_specialist',
+    attempt:Number(base.retry_count)+1,
+    objective:'Извлечь из Excel лист Wells ОБЕ колонки: Скважина и Дата ввода. Каждая строка facts.values ОБЯЗАНА содержать ключи «Скважина» и «Дата ввода». Нельзя возвращать только даты без имени скважины.',
+    inputs:{workflow_kind:'schedule',sheet_hint:'Wells',required_columns:['Скважина','Дата ввода'],prompt:'On sheet Wells select columns Скважина and Дата ввода together. Export every data row with BOTH fields. Reject any result that omits Скважина.'},
+    controls:petroleumControls({bounded_request:true,max_rows:10000,max_cells:200000}),
+    acceptance_criteria:[{id:'dates_extracted',criterion:'Return one row per well with Дата ввода',required:true,expected:'8 wells'}],
+    artifact_refs:arr(request.artifact_refs)?request.artifact_refs:[],
+  };
+  blockingQuestions=[];
+}
+// After Excel facts are ready (or Builder intake HITL retry with persisted facts), force Schedule Builder
+// with deterministic REVISE intake defaults so combat REVISE is not blocked on profile/dates/scope.
+if((excelEvidenceReady||builderIntakeRetry)&&allowed.has('schedule_builder_specialist')){
+  const compact=obj(previousSpecialistResult.compact_data)?previousSpecialistResult.compact_data:{};
+  const factsPacket=excelEvidenceReady&&obj(compact)?{
+    contract:'source_facts_packet',
+    contract_version:'1.0',
+    source_snapshot_hash:clean(compact.source_snapshot_hash),
+    correlation_id:clean(compact.correlation_id),
+    facts:arr(compact.facts)?compact.facts:[],
+    conflicts:arr(compact.conflicts)?compact.conflicts:[],
+  }:(factsFromPersisted||null);
+  const factWells=(arr(factsPacket?.facts)?factsPacket.facts:[]).filter(f=>{
+    const values=obj(f?.values)?f.values:{};
+    return Boolean(clean(f?.well||f?.entity||f?.entity_id||values['Скважина']||values.скважина||values.WELL||values.well||values['Группа']||values.GROUP||values.group));
+  });
+  // Fail closed on identity: never invent well/group ids and never seed facts from the caller.
+  // Re-delegate Excel so agents coordinate on SCHEDULE names (Скважина/Группа as in .INC).
+  if(excelEvidenceReady&&factsPacket&&!factWells.length&&allowed.has('excel_extraction_specialist')){
+    decision='delegate';
+    packetCandidate={
+      contract:'specialist_packet',contract_version:'1.0',task_id:base.task_id,specialist_id:'excel_extraction_specialist',
+      attempt:Number(base.retry_count)+1,
+      objective:'Повторный extract: каждая строка facts ОБЯЗАНА содержать имя объекта SCHEDULE (колонка Скважина или Группа) плюс Дата ввода. Идентификация скважин/групп между агентами — только по имени как в .INC, не по индексу строки.',
+      inputs:{workflow_kind:'schedule',sheet_hint:'Wells',required_columns:['Скважина','Дата ввода'],prompt:'Export BOTH Скважина and Дата ввода for every row. Reject date-only rows. Well names must match SCHEDULE identifiers exactly.'},
+      controls:petroleumControls({bounded_request:true,max_rows:10000,max_cells:200000}),
+      acceptance_criteria:[{id:'entity_identity',criterion:'Every fact row includes Скважина (or Группа) matching schedule object name',required:true,expected:'non-empty names'},{id:'dates_extracted',criterion:'Every fact row includes Дата ввода',required:true,expected:'dates present'}],
+      artifact_refs:arr(request.artifact_refs)?request.artifact_refs:[],
+    };
+    blockingQuestions=[];
+  } else if(factWells.length||(!excelEvidenceReady&&builderIntakeRetry&&factsPacket)){
+  const effectiveFactsPacket=factsPacket;
+  const baseSchedule=obj(request.schedule_request)?request.schedule_request:request;
+  let builderPacket=(packetObject&&plan.specialist_packet.specialist_id==='schedule_builder_specialist'&&packetComplete)?plan.specialist_packet:(obj(persistedPacket)&&persistedPacket.specialist_id==='schedule_builder_specialist'?persistedPacket:null);
+  if(!builderPacket){
+    builderPacket={
+      contract:'specialist_packet',contract_version:'1.0',task_id:base.task_id,specialist_id:'schedule_builder_specialist',
+      attempt:Number(base.retry_count)+1,
+      objective:clean(request.objective||request.problem_statement||request.request_text)||'REVISE tNavigator SCHEDULE commissioning dates from Excel source facts.',
+      inputs:{
+        schedule_request:withReviseIntakeDefaults({
+          build_mode:'REVISE',
+          root_path:clean(baseSchedule.root_path||baseSchedule.schedule_root||request.schedule_root||persistedSchedule.root_path)||null,
+          baseline_schedule_text:typeof baseSchedule.baseline_schedule_text==='string'?baseSchedule.baseline_schedule_text:(typeof persistedSchedule.baseline_schedule_text==='string'?persistedSchedule.baseline_schedule_text:undefined),
+          include_files:arr(baseSchedule.include_files)?baseSchedule.include_files:(arr(persistedSchedule.include_files)?persistedSchedule.include_files:[]),
+          baseline_package:baseSchedule.baseline_package||persistedSchedule.baseline_package||null,
+          source_facts_packet:effectiveFactsPacket,
+        }, effectiveFactsPacket),
+      },
+      controls:petroleumControls({}),
+      acceptance_criteria:[
+        {id:'dates_shifted',criterion:'WELOPEN/first WCONPROD for Excel wells land on DATES matching Дата ввода',required:true,expected:'all mapped wells'},
+        {id:'preserve_unmentioned',criterion:'Unrelated baseline blocks/rates preserved',required:true,expected:'GRAT/WEFAC/INCLUDE unchanged where not in Excel'},
+      ],
+      artifact_refs:arr(previousSpecialistResult.artifact_refs)?previousSpecialistResult.artifact_refs:(arr(persistedPacket.artifact_refs)?persistedPacket.artifact_refs:(arr(request.artifact_refs)?request.artifact_refs:[])),
+    };
+  }
+  decision='delegate';
+  packetCandidate={...builderPacket,contract:'specialist_packet',contract_version:'1.0',task_id:base.task_id,attempt:Number(base.retry_count)+1,specialist_id:'schedule_builder_specialist',controls:{...petroleumControls(builderPacket.controls),expected_version:Number(base.version)+1,idempotency_key:`${base.task_id}:specialist:schedule_builder_specialist:${Number(base.retry_count)+1}:${Number(base.version)+1}`,policy_version:'petroleum-schedule-policy-v1'}};
+  const modelInputs=obj(packetCandidate.inputs)?packetCandidate.inputs:{};const modelSchedule=obj(modelInputs.schedule_request)?modelInputs.schedule_request:modelInputs;const originalSchedule=obj(request.schedule_request)?request.schedule_request:request;
+  const mergedSchedule=withReviseIntakeDefaults({...persistedSchedule,...originalSchedule,...modelSchedule,source_facts_packet:effectiveFactsPacket||modelSchedule.source_facts_packet||persistedSchedule.source_facts_packet||null,baseline_schedule_text:typeof originalSchedule.baseline_schedule_text==='string'?originalSchedule.baseline_schedule_text:(typeof persistedSchedule.baseline_schedule_text==='string'?persistedSchedule.baseline_schedule_text:modelSchedule.baseline_schedule_text),include_files:arr(originalSchedule.include_files)?originalSchedule.include_files:(arr(persistedSchedule.include_files)?persistedSchedule.include_files:(arr(modelSchedule.include_files)?modelSchedule.include_files:[])),root_path:clean(originalSchedule.root_path)||clean(persistedSchedule.root_path)||clean(modelSchedule.root_path)||clean(originalSchedule.baseline_filename)||clean(modelSchedule.baseline_filename)||null,baseline_package:originalSchedule.baseline_package||persistedSchedule.baseline_package||modelSchedule.baseline_package||null}, effectiveFactsPacket||modelSchedule.source_facts_packet||persistedSchedule.source_facts_packet||null);
+  packetCandidate={...packetCandidate,inputs:{...modelInputs,schedule_request:mergedSchedule}};
+  blockingQuestions=[];
+  }
+}
+const scheduleDelegation=clean(packetCandidate.specialist_id)==='schedule_builder_specialist';
+const excelDelegationFinal=clean(packetCandidate.specialist_id)==='excel_extraction_specialist';
+const calcDelegationFinal=clean(packetCandidate.specialist_id)==='engineering_calculation_specialist';
+if(obj(packetCandidate)&&packetCandidate.specialist_id){
+  packetCandidate={...packetCandidate,contract:'specialist_packet',contract_version:'1.0',task_id:base.task_id,attempt:Number(base.retry_count)+1,controls:{...petroleumControls(packetCandidate.controls),expected_version:Number(base.version)+1,idempotency_key:`${base.task_id}:specialist:${packetCandidate.specialist_id}:${Number(base.retry_count)+1}:${Number(base.version)+1}`,policy_version:'petroleum-schedule-policy-v1'}};
 }
 plan.questions=blockingQuestions;
 const requiredCriteria=criteria.filter(c=>c.required!==false),measurableCriteria=requiredCriteria.filter(c=>clean(c.check||c.metric||c.criterion||c.description)&&('expected' in c||'threshold' in c||'pass_condition' in c||'expected_result' in c));
@@ -645,19 +813,22 @@ const hasEntity=Boolean(packetInputs.entity||packetInputs.entities||packetInputs
 const scopeFit=Math.min(100,Math.round(100*Math.min(3,scopeSignals)/3));
 const evidenceCompleteness=Math.min(100,Math.round(100*(measurableCriteria.length+(evidenceSignals?1:0))/(Math.max(1,requiredCriteria.length)+1)));
 const sourceAuthority=Math.min(100,Math.round(100*Math.min(2,(sourceRefs.length?1:0)+(citations.length?1:0))/2));
-const entityTemporalConsistency=hasEntity&&hasTemporal?100:0;
-const deterministicValidationHealth=decisionRecordValid&&packetComplete&&allowed.has(packetCandidate.specialist_id)?100:0;
+// Evidence-gathering hops (Excel/calc) and the immediate Excel→Builder hop may proceed before full entity/temporal scoring.
+const entityTemporalConsistency=(hasEntity&&hasTemporal)||excelDelegationFinal||calcDelegationFinal||(scheduleDelegation&&(excelEvidenceReady||builderIntakeRetry))?100:0;
+const packetReady=Boolean(clean(packetCandidate.objective)&&obj(packetCandidate.inputs)&&obj(packetCandidate.controls)&&arr(packetCandidate.acceptance_criteria)&&allowed.has(packetCandidate.specialist_id));
+const deterministicValidationHealth=(decisionRecordValid||excelDelegationFinal||(scheduleDelegation&&(excelEvidenceReady||builderIntakeRetry)))&&packetReady?100:0;
 const stageScore=Math.round(.25*scopeFit+.25*evidenceCompleteness+.20*sourceAuthority+.15*entityTemporalConsistency+.15*deterministicValidationHealth);
-const hardBlockers=[];if(!decisionRecordValid)hardBlockers.push('DECISION_RECORD_INVALID');if(plan.decision==='delegate'&&!packetComplete)hardBlockers.push('SPECIALIST_PACKET_INCOMPLETE');if(decision==='unsupported')hardBlockers.push('SPECIALIST_NOT_ALLOWLISTED');if(blockingQuestions.length)hardBlockers.push('PLANNER_UNRESOLVED_QUESTIONS');if(scheduleTask&&(!hasEntity||!hasTemporal)&&!excelDelegation&&!calcDelegation)hardBlockers.push('ENTITY_TEMPORAL_SCOPE_INCOMPLETE');
+const hardBlockers=[];if(!decisionRecordValid&&!excelDelegationFinal&&!(scheduleDelegation&&(excelEvidenceReady||builderIntakeRetry)))hardBlockers.push('DECISION_RECORD_INVALID');if(decision==='delegate'&&!packetReady)hardBlockers.push('SPECIALIST_PACKET_INCOMPLETE');if(decision==='unsupported')hardBlockers.push('SPECIALIST_NOT_ALLOWLISTED');if(blockingQuestions.length)hardBlockers.push('PLANNER_UNRESOLVED_QUESTIONS');if(scheduleTask&&(!hasEntity||!hasTemporal)&&!excelDelegationFinal&&!calcDelegationFinal&&!(scheduleDelegation&&(excelEvidenceReady||builderIntakeRetry)))hardBlockers.push('ENTITY_TEMPORAL_SCOPE_INCOMPLETE');
 const scoreDecision=hardBlockers.length||stageScore<70?'hitl':stageScore<85?'attention':'continue';
-if(scoreDecision==='hitl'&&decision==='delegate'){decision='needs_input';plan.reason='Deterministic planner readiness gate requires targeted human input before delegation.';}
+// Do not bounce a complete Excel/calc/Builder-after-Excel delegation back to HITL solely on provisional readiness score.
+if(scoreDecision==='hitl'&&decision==='delegate'&&!((excelDelegationFinal||calcDelegationFinal||(scheduleDelegation&&(excelEvidenceReady||builderIntakeRetry)))&&packetReady)){decision='needs_input';plan.reason='Deterministic planner readiness gate requires targeted human input before delegation.';}
 const reasonCodes=hardBlockers.length?hardBlockers:[scoreDecision==='continue'?'READINESS_CONTINUE':scoreDecision==='attention'?'READINESS_ATTENTION':'READINESS_HITL'];
 const deterministicDecision={contract:'decision_record',contract_version:'1.0',objective:clean(request.objective||request.problem_statement||packetCandidate.objective),considered_inputs:[{kind:'engineering_request',artifact_ref_count:requestRefs.length,required_output_count:requestedDeliverables.length},{kind:'specialist_catalogue',selected_specialist_id:packetCandidate.specialist_id||null}],proposed_actions:[{action:clean(plan.decision),specialist_id:packetCandidate.specialist_id||null,task_type:clean(plan.task_type)}],selected_action:{action:decision,reason_codes:reasonCodes},rejected_actions:hardBlockers.map(code=>({action:'delegate',reason_codes:[code]})),assumptions:arr(modelDecision.assumptions)?modelDecision.assumptions.map(String).slice(0,100):[],evidence_refs:sourceRefs.slice(0,100),citations:citations.slice(0,100),tool_call_ids:arr(modelDecision.tool_call_ids)?modelDecision.tool_call_ids.map(String).slice(0,100):[],unresolved_questions:blockingQuestions,acceptance_check_results:[{check:'scope_fit',score:scopeFit,passed:scopeFit===100},{check:'evidence_completeness',score:evidenceCompleteness,passed:evidenceCompleteness===100},{check:'source_authority_and_citation',score:sourceAuthority,passed:sourceAuthority===100},{check:'entity_temporal_consistency',score:entityTemporalConsistency,passed:entityTemporalConsistency===100},{check:'deterministic_validation_health',score:deterministicValidationHealth,passed:deterministicValidationHealth===100}]};
 plan.decision_record=deterministicDecision;plan.score={stage_score:stageScore,components:{scope_fit:scopeFit,evidence_completeness:evidenceCompleteness,source_authority_and_citation:sourceAuthority,entity_temporal_consistency:entityTemporalConsistency,deterministic_validation_health:deterministicValidationHealth},raw_counts:{request_artifact_refs:requestRefs.length,required_outputs:requestedDeliverables.length,required_acceptance_criteria:requiredCriteria.length,measurable_acceptance_criteria:measurableCriteria.length,evidence_refs:sourceRefs.length,citations:citations.length,questions:blockingQuestions.length,planner_questions:questions.length,hard_blockers:hardBlockers.length},thresholds:{attention:85,hitl:70},decision:scoreDecision,provisional:true};
 const gateNeeded=['needs_input','needs_decision','needs_approval','unsupported'].includes(decision);
 const kind=decision==='needs_decision'||decision==='unsupported'?'needs_decision':decision==='needs_approval'?(criticalDelegation?'pre_delegation_approval':'needs_approval'):'needs_input';
 const gateId=gateNeeded?`gate_${base.task_id}_${Number(base.version)+1}_${kind}`:null;
-const pending=gateNeeded?{gate_id:gateId,kind,reason:plan.reason,questions:blockingQuestions,expected_version:Number(base.version)+1}:{};
+const pending=gateNeeded?{gate_id:gateId,kind,reason:clean(plan.user_message)||clean(plan.reason)||'Нужно решение человека.',questions:blockingQuestions.map(q=>{const text=clean(q.text||q.question||q.message);return {...q,...(text?{text}:{})}}),expected_version:Number(base.version)+1}:{};
 const packet=(decision==='delegate'||criticalDelegation)?packetCandidate:{};
 const planBody={...((obj(plan.plan)?plan.plan:{})),task_type:plan.task_type||null,decision_record:plan.decision_record,score:plan.score,planner_decision:decision};
 return [{json:{...base,version:Number(base.version)+1,previous_version:Number(base.version),status:gateNeeded?'awaiting_human':'delegated',
@@ -734,11 +905,13 @@ const runtime=(()=>{try{return JSON.parse(x.runtime_json||'{}')}catch{return{}}}
 
 
 PREPARE_EXCEL_RAG = r"""
-const x=$json,packet=x.specialist_packet&&typeof x.specialist_packet==='object'?x.specialist_packet:{};
+const item=$input.first();
+const x=item.json||{},packet=x.specialist_packet&&typeof x.specialist_packet==='object'?x.specialist_packet:{};
 const continuation=x.previous_specialist_result&&x.previous_specialist_result.continuation;
 const tags=continuation?['TRUST-BOUNDARY','CLARIFICATION','CLARIFICATION-CONTINUATION']:['TRUST-BOUNDARY','DISCOVERY-AND-TABLES','QUERY-RESULT-PROTOCOL','RAG-AND-OPERATIONS'];
 const query=[String(packet.objective||''),'Excel Extractor operating protocol',tags.join(' ')].filter(Boolean).join('\n');
-return[{json:{...x,schedule_retrieval_request:{query,filters:{target_base:'excel_protocol',access_scope:'petroleum-engineering',knowledge_types:['protocol_instruction'],keyword_families:tags,topics:['протокол','clarification'],task_patterns:[]},top_k:8}}}];
+// Keep workbook binary on the item so Call Excel Adapter still sees binary.file after RAG hops.
+return[{json:{...x,schedule_retrieval_request:{query,filters:{target_base:'excel_protocol',access_scope:'petroleum-engineering',knowledge_types:['protocol_instruction'],keyword_families:tags,topics:['протокол','clarification'],task_patterns:[]},top_k:8}},...(item.binary?{binary:item.binary}:{})}];
 """.strip()
 
 
@@ -750,7 +923,12 @@ const valid=result&&result.contract==='schedule_retrieval_result'&&result.contra
 const inputs=packet.inputs&&typeof packet.inputs==='object'?packet.inputs:{};
 const evidence={contract:'mas_rag_evidence',contract_version:'1.0',target_base:'excel_protocol',query:result.query||state.schedule_retrieval_request?.query,filters:result.filters||state.schedule_retrieval_request?.filters,citations:Array.isArray(result.citations)?result.citations:[],results:Array.isArray(result.results)?result.results:[],retrieval:result.retrieval||{},findings:Array.isArray(result.findings)?result.findings:[]};
 const nextPacket={...packet,inputs:{...inputs,rag_evidence:evidence}};
-return[{json:{...state,specialist_packet:nextPacket,excel_rag_result:result,excel_rag_ready:valid}}];
+// Hybrid Retrieval returns JSON only — reattach workbook from the pre-RAG item (or Normalize fallback).
+const binary=$('Prepare governed Excel protocol RAG request').first().binary
+  || $('Prepare specialist invocation context').first().binary
+  || $('Normalize invocation').first().binary
+  || null;
+return[{json:{...state,specialist_packet:nextPacket,excel_rag_result:result,excel_rag_ready:valid},...(binary?{binary}:{})}];
 """.strip()
 
 
@@ -855,7 +1033,7 @@ if(excelToSchedule){
   handoff={code:'CALCULATION_DATA_READY',next_specialist:'schedule_builder_specialist',calculation:result.compact_data?.calculation||{},warnings:result.warnings||[]};
   runtimeBase=appendHandoffEvent(runtimeBase,{stage:'builder',status:'CALCULATION_DATA_READY',from_specialist:'engineering_calculation_specialist',to_specialist:'schedule_builder_specialist',from_role:chatRoles.engineering_calculation_specialist,to_role:chatRoles.schedule_builder_specialist,summary:'Calculation specialist returned geometry data for Schedule Builder.',details:{warning_count:Array.isArray(result.warnings)?result.warnings.length:0}});
 }else if(scheduleSuccess){
-  runtimeBase=appendHandoffEvent(runtimeBase,{stage:'builder',status:String(result.status||'succeeded'),from_specialist:'schedule_builder_specialist',to_specialist:'universal_orchestrator',from_role:chatRoles.schedule_builder_specialist,to_role:'Orchestrator',summary:String(result.summary||'Schedule Builder finished.').slice(0,500),details:{release_ready:Boolean(result.compact_data?.release_ready)}});
+  runtimeBase=appendHandoffEvent(runtimeBase,{stage:'builder',status:String(result.status||'succeeded'),from_specialist:'schedule_builder_specialist',to_specialist:'universal_orchestrator',from_role:chatRoles.schedule_builder_specialist,to_role:'Orchestrator',summary:String(result.summary||'Schedule Builder finished.').slice(0,500),brief:String(result.user_message||result.summary||'').slice(0,800),details:{release_ready:Boolean(result.compact_data?.release_ready)}});
 }
 return [{json:{...x,specialist_result:nextResult,result_json:JSON.stringify(nextResult),post_specialist_route:route,runtime_json:JSON.stringify({...runtimeBase,last_error:handoff||runtimeBase.last_error||null})}}];
 """.strip()
@@ -870,7 +1048,9 @@ const chatRoles=CHAT_ROLE_MAP_PLACEHOLDER;
 const rawGaps=Array.isArray(continuation.evidence_gap)?continuation.evidence_gap:[];
 const gaps=typedEvidenceGaps(rawGaps);
 const protocolOk=continuation.protocol==='schedule-builder-evidence-gap-v1';
-const isGap=x.specialist_id==='schedule_builder_specialist'&&result.status==='needs_input'&&protocolOk&&gaps.length>0;
+const hitlAttachOnly=continuation.protocol==='schedule-builder-hitl-attachment-v1';
+const isGap=x.specialist_id==='schedule_builder_specialist'&&result.status==='needs_input'&&protocolOk&&gaps.length>0&&!hitlAttachOnly;
+if(hitlAttachOnly)return[{json:{...x,schedule_evidence_retry:false}}];
 const signature=String(continuation.gap_signature||'');const snapshot=String(continuation.source_snapshot_hash||'none');
 const excelIterations=Number(prior.excel_iterations||0),builderIterations=Number(prior.builder_iterations||1);const maxExcel=Math.min(5,Math.max(1,Number(continuation.max_excel_iterations||prior.max_excel_iterations||2))),maxBuilder=Math.min(5,Math.max(1,Number(continuation.max_builder_iterations||prior.max_builder_iterations||3)));
 let retryAllowed=isGap,reason='';
@@ -951,10 +1131,15 @@ return [{json:{...base,version:Number(base.version)+1,previous_version:Number(ba
 
 BUILD_DIRECT_GATE = r"""
 const x=$json;const r=x.specialist_result;const exhausted=Number(x.retry_count)>=Number(x.max_retries);
-let status='awaiting_human',kind=r.status,reason=r.summary,questions=r.human_request?.questions||[];
+const clean=v=>typeof v==='string'?v.trim():'';
+let status='awaiting_human',kind=r.status,reason=clean(r.user_message)||clean(r.summary)||'Нужно решение человека.';
+const questions=(Array.isArray(r.human_request?.questions)?r.human_request.questions:[]).map(q=>{
+  const text=clean(q?.text||q?.question||q?.message);
+  return {...(q&&typeof q==='object'?q:{}),...(text?{text}:{})};
+});
 if(r.status==='fatal_error'){status='failed';}
 else if(r.status==='retryable_error'&&!exhausted){status='retryable_error';}
-else if(r.status==='retryable_error'){kind='needs_decision';reason='Bounded retry budget exhausted.';}
+else if(r.status==='retryable_error'){kind='needs_decision';reason='Исчерпан лимит автоматических повторов. Нужно решение человека.';}
 const pending=status==='awaiting_human'?{gate_id:`gate_${x.task_id}_${Number(x.version)+1}_${kind}`,kind,reason,questions,expected_version:Number(x.version)+1}:{};
 const runtime=(()=>{try{return JSON.parse(x.runtime_json||'{}')}catch{return{}}})();
 return [{json:{...x,version:Number(x.version)+1,previous_version:Number(x.version),status,gate_json:JSON.stringify(pending),runtime_json:JSON.stringify({...runtime,last_error:r.error||null}),retry_count:r.status==='retryable_error'&&!exhausted?Number(x.retry_count)+1:Number(x.retry_count),updated_at:new Date().toISOString(),direct_route:r.status==='retryable_error'&&!exhausted?'replan':'respond'}}];
@@ -1038,8 +1223,8 @@ def build_orchestrator() -> dict:
     nodes: list[dict] = []
     c: dict = {}
     nodes += [
-        note("README — setup", (-1260, -900), "## UI-only setup (n8n 2.30.8)\n1. Create task-state and trace Data Tables using `docs.md` in the repository root.\n2. Select them in CAS persist (insert+update) and Orchestrator Load task.\n3. Assign Planner/Verifier credentials.\n4. Bind CAS persist, Excel adapter/agent, SCHEDULE Retrieval/Builder and MAS Trace Writer.\n5. Load expert keyword instructions/schema JSON into `schedule_mvp`.\n6. Test start → HITL → delegation → validation → verification → inline .INC.\n\nSCHEDULE input and result remain bounded text inside n8n. The control-plane uses UI credentials/bindings and Data Tables; no global-variable expressions, shell or server filesystem is used.", 500, 440, 5),
-        note("Architecture", (-720, -900), "## Serious MVP control plane\n- Data Table is authoritative durable state.\n- Insert/update CAS lives in `CAS — Persist Task State`; Orchestrator only loads by task_id.\n- LLM plans; deterministic nodes own transitions.\n- Optimistic concurrency is `task_id + version`.\n- Human gates resume via a fresh invocation.\n- Model selects logical `specialist_id` only.\n- Independent Verifier is separated from Planner and Specialist.\n- One bounded baseline copy may live in task state; Planner/trace receive metadata only.\n- SCHEDULE result is returned as bounded inline `.INC` text.", 470, 360, 4),
+        note("README — setup", (-1260, -900), "## UI-only setup (n8n 2.30.8)\n1. Create task-state and trace Data Tables using `docs.md` in the repository root.\n2. Select them in CAS persist (insert+update) and Orchestrator Load task.\n3. Assign Planner/Verifier credentials.\n4. Bind CAS persist, Excel adapter/agent, SCHEDULE Retrieval/Builder and MAS Trace Writer.\n5. Load expert keyword instructions/schema JSON into `schedule_mvp`.\n6. Test start → HITL → delegation → validation → verification → inline .INC.\n\nSCHEDULE input and result remain bounded text inside n8n. Multi-file: drag-and-drop several `.inc/.data/.grdecl` into `schedule_files` (optional `schedule_root`); materializer builds `root_path` + `include_files` for Builder. No ZIP, no host filesystem scan.", 500, 440, 5),
+        note("Architecture", (-720, -900), "## Serious MVP control plane\n- Data Table is authoritative durable state.\n- Insert/update CAS lives in `CAS — Persist Task State`; Orchestrator only loads by task_id.\n- LLM plans; deterministic nodes own transitions.\n- Optimistic concurrency is `task_id + version`.\n- Human gates resume via a fresh invocation.\n- Model selects logical `specialist_id` only.\n- Independent Verifier is separated from Planner and Specialist.\n- One bounded baseline package may live in task state; Planner/trace receive metadata only.\n- SCHEDULE result is returned as bounded inline `.INC` text.", 470, 360, 4),
         note("Extension point", (440, -900), "## Add a specialist safely\n1. Clone the universal specialist template.\n2. Preserve `specialist_packet` / `specialist_result` v1.0.\n3. Add one row to `n8n/contracts/specialist_registry.v1.json` (catalogue + allowlist + chat_role).\n4. Bind its workflow only in a static `Call … Specialist` node and set `configured:true` + route index.\n5. Add contract, failure, HITL and verification tests.\n\nNever put a workflow ID in an LLM prompt or result. Domain handoffs must emit `runtime_json.handoff_events` for the chat activity feed.", 460, 360, 3),
         node("Authenticated engineering webhook", "n8n-nodes-base.webhook", 2.1, (-1260, -400), {"httpMethod": "POST", "path": "engineering-orchestrator", "authentication": "headerAuth", "responseMode": "lastNode", "options": {}}, credentials={"httpHeaderAuth": {"id": "REPLACE_IN_UI", "name": "REPLACE: engineering orchestrator inbound key"}}),
         set_fields("Mark HTTP entrypoint", (-1040, -400), [("entrypoint", "={{ 'http' }}", "string")]),
@@ -1049,7 +1234,8 @@ def build_orchestrator() -> dict:
             {"fieldName": "request_json", "fieldLabel": "Structured task JSON (optional; overrides text)", "fieldType": "textarea", "requiredField": False},
             {"fieldName": "runtime_json", "fieldLabel": "Optional runtime JSON (loops, human replies scratch)", "fieldType": "textarea", "requiredField": False},
             {"fieldName": "file", "fieldLabel": "Excel file (.xlsx or .xls; upload again when an approval gate precedes delegation)", "fieldType": "file", "multipleFiles": False, "acceptFileTypes": ".xlsx, .xls", "requiredField": False},
-            {"fieldName": "schedule_file", "fieldLabel": "Baseline SCHEDULE (.data/.inc/.sch/.txt, max 2 MiB)", "fieldType": "file", "multipleFiles": False, "acceptFileTypes": ".data, .inc, .sch, .txt", "requiredField": False},
+            {"fieldName": "schedule_files", "fieldLabel": "SCHEDULE files (drag-and-drop root .inc/.data + INCLUDE fragments; .grdecl ok)", "fieldType": "file", "multipleFiles": True, "acceptFileTypes": ".data, .inc, .sch, .txt, .grdecl", "requiredField": False},
+            {"fieldName": "schedule_root", "fieldLabel": "SCHEDULE root filename (optional if only one root / unique INCLUDE file)", "fieldType": "text", "requiredField": False},
             {"fieldName": "trajectory_files", "fieldLabel": "Well trajectories (.dev) for Calculation Specialist", "fieldType": "file", "multipleFiles": True, "acceptFileTypes": ".dev", "requiredField": False},
             {"fieldName": "surface_file", "fieldLabel": "ASCII CPS3 surface (.cps3/.grd/.grid/.txt) for Calculation Specialist", "fieldType": "file", "multipleFiles": False, "acceptFileTypes": ".cps3, .grd, .grid, .txt", "requiredField": False},
             {"fieldName": "task_id", "fieldLabel": "Task ID (resume/status)", "fieldType": "text", "requiredField": False},
@@ -1059,8 +1245,8 @@ def build_orchestrator() -> dict:
             {"fieldName": "requested_by", "fieldLabel": "Engineering role", "fieldType": "text", "requiredField": True},
         ]}, "responseMode": "lastNode", "options": {"path": "engineering-orchestrator-form", "appendAttribution": False, "buttonLabel": "Submit controlled action", "ignoreBots": True, "includeUserInOutput": True}}),
         set_fields("Mark Form entrypoint", (-1040, -120), [("entrypoint", "={{ 'form' }}", "string")]),
-        if_node("Form has SCHEDULE upload?", (-900, -220), "={{ Boolean($binary.schedule_file) }}", True, "boolean"),
-        node("Extract SCHEDULE upload as UTF-8 text", "n8n-nodes-base.extractFromFile", 1.1, (-900, -80), {"operation": "text", "binaryPropertyName": "schedule_file", "destinationKey": "baseline_schedule_text", "options": {"encoding": "utf8", "stripBOM": True, "keepSource": "both"}}),
+        if_node("Form has SCHEDULE upload?", (-900, -220), "={{ Boolean($binary.schedule_files || $binary.schedule_file || $binary.schedule_files0 || $binary.schedule_files1) }}", True, "boolean"),
+        code("Materialize SCHEDULE uploads", (-900, -80), build_materialize_uploads_node_js()),
         node("When called by another workflow", "n8n-nodes-base.executeWorkflowTrigger", 1.2, (-1260, 160), {"inputSource": "passthrough"}),
         set_fields("Mark Sub-workflow entrypoint", (-1040, 160), [("entrypoint", "={{ 'subworkflow' }}", "string")]),
         code("Normalize invocation", (-800, -120), NORMALIZE),
@@ -1138,13 +1324,13 @@ def build_orchestrator() -> dict:
     ]
 
     for source in ["Mark HTTP entrypoint", "Mark Sub-workflow entrypoint"]:
-        connect(c, source, "Normalize invocation")
+        connect(c, source, "Materialize SCHEDULE uploads")
     connect(c, "Authenticated engineering webhook", "Mark HTTP entrypoint")
     connect(c, "Engineering task form", "Mark Form entrypoint")
     connect(c, "Mark Form entrypoint", "Form has SCHEDULE upload?")
-    connect(c, "Form has SCHEDULE upload?", "Extract SCHEDULE upload as UTF-8 text", source_index=0)
-    connect(c, "Form has SCHEDULE upload?", "Normalize invocation", source_index=1)
-    connect(c, "Extract SCHEDULE upload as UTF-8 text", "Normalize invocation")
+    connect(c, "Form has SCHEDULE upload?", "Materialize SCHEDULE uploads", source_index=0)
+    connect(c, "Form has SCHEDULE upload?", "Materialize SCHEDULE uploads", source_index=1)
+    connect(c, "Materialize SCHEDULE uploads", "Normalize invocation")
     connect(c, "When called by another workflow", "Mark Sub-workflow entrypoint")
     connect(c, "Normalize invocation", "Route invocation action")
     connect(c, "Route invocation action", "Action router")
@@ -1288,7 +1474,16 @@ else if(hasContinuation){
  if(!answers.length) gate='missing_answers';
  else {ready=true;nativeJson={session_id:opaque.execution_ref,clarification_response:{token:opaque.clarification_ref,answers}};}
 } else if(!item.binary?.file) gate='missing_file';
-else {ready=true;nativeJson={request:{...packet.inputs,prompt:packet.objective,controls:packet.controls,acceptance_criteria:packet.acceptance_criteria,artifact_refs:packet.artifact_refs}};}
+else {
+  ready=true;
+  const reqCols=Array.isArray(packet.inputs?.required_columns)?packet.inputs.required_columns.map(v=>String(v||'').trim()).filter(Boolean):[];
+  const reqFields=Array.isArray(packet.inputs?.requested_fields)?packet.inputs.requested_fields.map(v=>String(v||'').trim()).filter(Boolean):[];
+  const identityHint=reqCols.length||reqFields.length
+    ?` REQUIRED COLUMNS (every row must include these keys exactly): ${(reqCols.length?reqCols:reqFields).join(', ')}. For SCHEDULE handoffs, object identity is the schedule name (Скважина/WELL or Группа/GROUP) — never omit names and never invent row indices as ids.`
+    :'';
+  const promptText=`${String(packet.objective||'').trim()}${identityHint}${packet.inputs?.prompt?`\n${String(packet.inputs.prompt).trim()}`:''}`.trim();
+  nativeJson={request:{...packet.inputs,prompt:promptText,required_columns:reqCols.length?reqCols:(packet.inputs?.required_columns||undefined),controls:packet.controls,acceptance_criteria:packet.acceptance_criteria,artifact_refs:packet.artifact_refs}};
+}
 return [{json:{...nativeJson,specialist_packet:packet,previous_specialist_result:previous,latest_human_response:latest,native_request_ready:ready,adapter_gate:gate},...(item.binary?{binary:item.binary}:{})}];
 """.strip()
 
@@ -1340,20 +1535,35 @@ const rowCount=Number.isFinite(Number(data.row_count))?Number(data.row_count):0,
 // Stable compact snapshot for deterministic duplicate-gap detection.  It is
 // content-derived and intentionally excludes ephemeral result/artifact IDs.
 const snapshotPayload={columns,preview_records:preview,row_count:rowCount,returned_count:returnedCount,truncated:Boolean(data.truncated),filters_applied:filters,field_mapping:mapping,provenance:evidence};let h=2166136261;for(const ch of JSON.stringify(snapshotPayload)){h^=ch.charCodeAt(0);h=Math.imul(h,16777619)}const sourceSnapshotHash=`fnv1a32:${(h>>>0).toString(16).padStart(8,'0')}`;
-const correlationId=typeof packet.controls?.correlation_id==='string'?packet.controls.correlation_id:'';
+// Always mint a stable correlation_id for first-hop Excel→Builder handoff when planner did not supply one.
+const correlationId=(typeof packet.controls?.correlation_id==='string'&&packet.controls.correlation_id.trim())
+  ?packet.controls.correlation_id.trim()
+  :`excel_${String(packet.task_id||'task')}_${sourceSnapshotHash}`.slice(0,240);
 const inputs=packet.inputs&&typeof packet.inputs==='object'&&!Array.isArray(packet.inputs)?packet.inputs:{},gap=Array.isArray(inputs.schedule_evidence_gap)?inputs.schedule_evidence_gap:[];
-const requested=[...(Array.isArray(inputs.requested_fields)?inputs.requested_fields:[]),...gap.map(g=>g&&typeof g==='object'?g.field:null)].map(v=>String(v||'').trim()).filter(Boolean),available=new Set([...columns,...Object.keys(mapping)].map(v=>String(v).trim().toLowerCase()));
+// required_columns from Orchestrator packet must participate in coverage scoring (not only requested_fields).
+const requiredColumns=[...(Array.isArray(inputs.required_columns)?inputs.required_columns:[]),...(Array.isArray(inputs.requested_fields)?inputs.requested_fields:[])].map(v=>String(v||'').trim()).filter(Boolean);
+const requested=[...new Set([...requiredColumns,...gap.map(g=>g&&typeof g==='object'?g.field:null).map(v=>String(v||'').trim()).filter(Boolean)])];
+const available=new Set([...columns,...Object.keys(mapping)].map(v=>String(v).trim().toLowerCase()));
 const covered=requested.filter(field=>available.has(field.toLowerCase())),conflicts=Array.isArray(data.conflicts)?data.conflicts:Array.isArray(native.conflicts)?native.conflicts:[];
 const scopeFit=requested.length?Math.round(100*covered.length/requested.length):100,evidenceCompleteness=rowCount>0||returnedCount>0?100:0,sourceAuthority=evidence.length?100:0,entityTemporalConsistency=conflicts.length?0:100,deterministicValidationHealth=selfPassed?100:0;
+// Normalize facts BEFORE readiness scoring so SCHEDULE object names are in the handoff contract.
+const factRows=Array.isArray(data.records)?data.records.filter(r=>r&&typeof r==='object'&&!Array.isArray(r)).slice(0,500):[];
+const pickIdentity=(row,keys)=>{if(!row||typeof row!=='object')return '';for(const k of keys){const v=row[k];if(v!==undefined&&v!==null&&String(v).trim()!=='')return String(v).trim()}return ''};
+const wellKeys=['Скважина','скважина','WELL','Well','well','WellName','well_name'];
+const groupKeys=['Группа','группа','GROUP','Group','group','GroupName'];
+const normalizeFactRow=(row,i)=>{const values=row&&typeof row==='object'&&!Array.isArray(row)?Object.fromEntries(Object.entries(row).slice(0,100).map(([k,v])=>[String(k).slice(0,256),cleanValue(v)])):{value:cleanValue(row)};const well=pickIdentity(values,wellKeys);const group=pickIdentity(values,groupKeys);const missingRequired=requiredColumns.filter(col=>values[col]===undefined||values[col]===null||String(values[col]).trim()==='');return {fact_id:`row_${i+1}`,well:well||null,entity:well||group||null,entity_type:well?'well':(group?'group':null),group:group||null,values,missing_required:missingRequired,provenance:{kind:factRows.length?'excel_result_row':'excel_preview_row',index:i}};};
+const factsForHandoff=(factRows.length?factRows:preview).map((row,i)=>normalizeFactRow(row,i));
+const identityMissing=factsForHandoff.length>0&&factsForHandoff.every(f=>!f.entity);
+const requiredMissingInRows=requiredColumns.length>0&&factsForHandoff.some(f=>Array.isArray(f.missing_required)&&f.missing_required.length>0);
 const stageScore=Math.round(.25*scopeFit+.25*evidenceCompleteness+.20*sourceAuthority+.15*entityTemporalConsistency+.15*deterministicValidationHealth),hardBlockers=[];
-if(requested.length&&covered.length<requested.length)hardBlockers.push('EXCEL_REQUESTED_FIELDS_MISSING');if(['succeeded','partial'].includes(status)&&!rowCount&&!returnedCount)hardBlockers.push('EXCEL_NO_FACT_ROWS');if(['succeeded','partial'].includes(status)&&!evidence.length)hardBlockers.push('EXCEL_PROVENANCE_REQUIRED');if(conflicts.length)hardBlockers.push('EXCEL_SOURCE_CONFLICT');if(!selfPassed&&['succeeded','partial'].includes(status))hardBlockers.push('EXCEL_SELF_CHECK_FAILED');
+if(requested.length&&covered.length<requested.length)hardBlockers.push('EXCEL_REQUESTED_FIELDS_MISSING');if(['succeeded','partial'].includes(status)&&!rowCount&&!returnedCount)hardBlockers.push('EXCEL_NO_FACT_ROWS');if(['succeeded','partial'].includes(status)&&!evidence.length)hardBlockers.push('EXCEL_PROVENANCE_REQUIRED');if(conflicts.length)hardBlockers.push('EXCEL_SOURCE_CONFLICT');if(!selfPassed&&['succeeded','partial'].includes(status))hardBlockers.push('EXCEL_SELF_CHECK_FAILED');if(identityMissing&&['succeeded','partial'].includes(status))hardBlockers.push('EXCEL_ENTITY_IDENTITY_MISSING');if(requiredMissingInRows&&['succeeded','partial'].includes(status))hardBlockers.push('EXCEL_REQUIRED_COLUMNS_INCOMPLETE');
 const scoreDecision=hardBlockers.length||stageScore<70?'hitl':stageScore<85?'attention':'continue';
 if(scoreDecision==='hitl'&&['succeeded','partial'].includes(status))status='needs_input';
 const reasonCodes=hardBlockers.length?hardBlockers:[scoreDecision==='continue'?'READINESS_CONTINUE':scoreDecision==='attention'?'READINESS_ATTENTION':'READINESS_HITL'];
-const missing=requested.filter(field=>!available.has(field.toLowerCase())),scoreQuestions=[...(status==='needs_input'?questions:[])];if(missing.length)scoreQuestions.push({id:'excel_missing_requested_fields',question:`Provide or identify workbook columns for: ${missing.join(', ')}.`,type:'text'});if(hardBlockers.includes('EXCEL_NO_FACT_ROWS'))scoreQuestions.push({id:'excel_no_fact_rows',question:'Confirm the target table, entity/date filters and whether an empty result is expected.',type:'text'});if(hardBlockers.includes('EXCEL_PROVENANCE_REQUIRED'))scoreQuestions.push({id:'excel_provenance',question:'Select a governed table/query that returns row-level workbook provenance.',type:'text'});
+const missing=requested.filter(field=>!available.has(field.toLowerCase())),scoreQuestions=[...(status==='needs_input'?questions:[])];if(missing.length)scoreQuestions.push({id:'excel_missing_requested_fields',question:`Provide or identify workbook columns for: ${missing.join(', ')}.`,type:'text'});if(hardBlockers.includes('EXCEL_NO_FACT_ROWS'))scoreQuestions.push({id:'excel_no_fact_rows',question:'Confirm the target table, entity/date filters and whether an empty result is expected.',type:'text'});if(hardBlockers.includes('EXCEL_ENTITY_IDENTITY_MISSING'))scoreQuestions.push({id:'excel_entity_identity',question:'Export must include schedule object names (column Скважина / WELL or Группа / GROUP) so specialists match entities by name in the SCHEDULE file.',type:'text'});if(hardBlockers.includes('EXCEL_REQUIRED_COLUMNS_INCOMPLETE'))scoreQuestions.push({id:'excel_required_columns',question:`Every exported row must include required columns: ${requiredColumns.join(', ')}.`,type:'text'});if(hardBlockers.includes('EXCEL_PROVENANCE_REQUIRED'))scoreQuestions.push({id:'excel_provenance',question:'Select a governed table/query that returns row-level workbook provenance.',type:'text'});
 const decisionRecord={contract:'decision_record',contract_version:'1.0',objective:String(packet.objective||'Extract governed workbook facts.'),considered_inputs:[{kind:'excel_specialist_packet',requested_fields:requested,correlation_id:correlationId||null},{kind:'native_excel_result',source_snapshot_hash:sourceSnapshotHash,row_count:rowCount,returned_count:returnedCount}],proposed_actions:[{action:'accept_source_snapshot'},{action:'request_targeted_excel_input'},{action:'retry_extraction'}],selected_action:{action:status,reason_codes:reasonCodes},rejected_actions:hardBlockers.map(code=>({action:'accept_source_snapshot',reason_codes:[code]})),assumptions:strings(native.assumptions),evidence_refs:[...refs,...evidence].slice(0,100),citations:[],tool_call_ids:Array.isArray(native.meta?.tool_call_ids)?native.meta.tool_call_ids.map(String).slice(0,100):[],unresolved_questions:scoreQuestions,acceptance_check_results:[{check:'scope_fit',score:scopeFit,passed:scopeFit===100},{check:'evidence_completeness',score:evidenceCompleteness,passed:evidenceCompleteness===100},{check:'source_authority_and_citation',score:sourceAuthority,passed:sourceAuthority===100},{check:'entity_temporal_consistency',score:entityTemporalConsistency,passed:entityTemporalConsistency===100},{check:'deterministic_validation_health',score:deterministicValidationHealth,passed:deterministicValidationHealth===100}]};
 const score={stage_score:stageScore,components:{scope_fit:scopeFit,evidence_completeness:evidenceCompleteness,source_authority_and_citation:sourceAuthority,entity_temporal_consistency:entityTemporalConsistency,deterministic_validation_health:deterministicValidationHealth},raw_counts:{requested_fields:requested.length,covered_fields:covered.length,row_count:rowCount,returned_count:returnedCount,provenance_entries:evidence.length,conflicts:conflicts.length,hard_blockers:hardBlockers.length},thresholds:{attention:85,hitl:70},decision:scoreDecision,provisional:true};
-return [{json:{specialist_result:{contract:'specialist_result',contract_version:'1.0',task_id:packet.task_id,specialist_id:'excel_extraction_specialist',attempt:packet.attempt,status,summary,deliverables:refs.length?[{kind:'excel_extraction',description:summary,artifact_refs:refs.map(ref=>ref.ref)}]:[],artifact_refs:refs,compact_data:{source_snapshot_hash:sourceSnapshotHash,correlation_id:correlationId,columns,preview_records:preview,row_count:rowCount,returned_count:returnedCount,truncated:Boolean(data.truncated),filters_applied:filters,field_mapping:mapping,conflicts,next_action:String(native.next_action||'handle_error'),decision_record:decisionRecord,stage_scores:[{stage:'excel_evidence',...score}],overall_score:stageScore,gate_decisions:[{stage:'excel_evidence',decision:scoreDecision,score:stageScore,reason_codes:reasonCodes}],agent_tool_trace:agentToolTrace,trace_summary:[{stage:'excel',status,score,decision_record:decisionRecord,tool_calls:agentToolTrace}]},assumptions:strings(native.assumptions),warnings:strings(native.warnings),evidence,self_check:{performed:['succeeded','partial','needs_input'].includes(status),passed:selfPassed&&hardBlockers.length===0,checks:[{check:'native_result_contract',passed:Boolean(statusMap[native.status])},{check:'native_error_list_empty',passed:errors.length===0},{check:'bounded_compact_preview',passed:preview.length<=5},{check:'source_snapshot_hash',passed:Boolean(sourceSnapshotHash)},{check:'requested_fields_covered',passed:scopeFit===100},{check:'provenance_present',passed:sourceAuthority===100}],reproducibility:refs.length?'Use the governed artifact/result references, source_snapshot_hash and recorded provenance.':'Use source_snapshot_hash and the recorded compact evidence.'},human_request:status==='needs_input'?{kind:'needs_input',questions:scoreQuestions}:null,error:['retryable_error','fatal_error'].includes(status)?{code:'EXCEL_SPECIALIST_ERROR',details:errors.slice(0,20),native_error:nativeError}:null,continuation}}}];
+return [{json:{specialist_result:{contract:'specialist_result',contract_version:'1.0',task_id:packet.task_id,specialist_id:'excel_extraction_specialist',attempt:packet.attempt,status,summary,deliverables:refs.length?[{kind:'excel_extraction',description:summary,artifact_refs:refs.map(ref=>ref.ref)}]:[],artifact_refs:refs,compact_data:{source_snapshot_hash:sourceSnapshotHash,correlation_id:correlationId,columns,preview_records:preview,facts:factsForHandoff,row_count:rowCount,returned_count:returnedCount,truncated:Boolean(data.truncated),filters_applied:filters,field_mapping:mapping,conflicts,next_action:String(native.next_action||'handle_error'),decision_record:decisionRecord,stage_scores:[{stage:'excel_evidence',...score}],overall_score:stageScore,gate_decisions:[{stage:'excel_evidence',decision:scoreDecision,score:stageScore,reason_codes:reasonCodes}],agent_tool_trace:agentToolTrace,trace_summary:[{stage:'excel',status,score,decision_record:decisionRecord,tool_calls:agentToolTrace}]},assumptions:strings(native.assumptions),warnings:strings(native.warnings),evidence,self_check:{performed:['succeeded','partial','needs_input'].includes(status),passed:selfPassed&&hardBlockers.length===0,checks:[{check:'native_result_contract',passed:Boolean(statusMap[native.status])},{check:'native_error_list_empty',passed:errors.length===0},{check:'bounded_compact_preview',passed:preview.length<=5},{check:'source_snapshot_hash',passed:Boolean(sourceSnapshotHash)},{check:'correlation_id',passed:Boolean(correlationId)},{check:'requested_fields_covered',passed:scopeFit===100},{check:'provenance_present',passed:sourceAuthority===100},{check:'entity_identity_present',passed:!identityMissing}],reproducibility:refs.length?'Use the governed artifact/result references, source_snapshot_hash and recorded provenance.':'Use source_snapshot_hash and the recorded compact evidence.'},human_request:status==='needs_input'?{kind:'needs_input',questions:scoreQuestions}:null,error:['retryable_error','fatal_error'].includes(status)?{code:'EXCEL_SPECIALIST_ERROR',details:errors.slice(0,20),native_error:nativeError}:null,continuation}}}];
 """.strip()
 
 

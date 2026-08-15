@@ -38,7 +38,7 @@ def test_enrich_adds_brief_abs_time_duration_and_filters_secrets() -> None:
             },
         }
     )
-    assert turn["at_abs"] == "2026-08-15 01:02:03 UTC"
+    assert turn["at_abs"] == "2026-08-15 06:02:03 Тюмень"
     assert turn["duration_label"] == "12.5 s"
     assert turn["outcome"] == "ok"
     assert "snapshot" in turn["brief"].lower() or "факт" in turn["brief"].lower()
@@ -90,7 +90,7 @@ def test_sync_preserves_presentation_fields() -> None:
     assert res.status_code == 200
     turn = res.json()["turns"][0]
     assert turn["brief"].startswith("Excel Extractor")
-    assert turn["at_abs"] == "2026-08-15 10:11:12 UTC"
+    assert turn["at_abs"] == "2026-08-15 15:11:12 Тюмень"
     assert turn["duration_ms"] == 9400
     assert turn["duration_label"] == "9.4 s"
 
@@ -116,31 +116,214 @@ def test_rejects_bad_task_id_and_oversized_declared_body() -> None:
 
 
 def test_ready_health_and_static_assets() -> None:
-    assert client.get("/health").json()["version"] == "0.2.0"
+    health = client.get("/health").json()
+    assert health["version"] == "0.3.0"
+    assert "hitl_backend" in health
     assert client.get("/ready").status_code == 200
     index = client.get("/")
     assert index.status_code == 200
-    assert "brief" in (STATIC / "app.js").read_text(encoding="utf-8")
-    assert "duration_label" in (STATIC / "app.js").read_text(encoding="utf-8")
-    assert "at_abs" in (STATIC / "app.js").read_text(encoding="utf-8")
-    assert ".brief" in (STATIC / "app.css").read_text(encoding="utf-8")
-    assert "outcome-ok" in (STATIC / "app.css").read_text(encoding="utf-8")
+    assert "composer" in index.text
+    assert "taskRail" in index.text
+    assert "cancelBtn" in index.text
+    assert "taskSelect" not in index.text
+    assert "openBtn" not in index.text
+    js_text = (STATIC / "app.js").read_text(encoding="utf-8")
+    assert "brief" in js_text
+    assert "duration_label" in js_text
+    assert "submitHitl" in js_text
+    assert "showFlash" in js_text
+    assert "alert(" not in js_text
+    assert "human_gate ?? data.gate" in js_text
+    assert "at_abs" in js_text
+    css = (STATIC / "app.css").read_text(encoding="utf-8")
+    assert ".brief" in css
+    assert "outcome-ok" in css
+    assert "--blue-900" in css
+    assert ".flash" in css
+    assert ".rail { display: none; }" not in css
     js = client.get("/static/app.js")
     assert js.status_code == 200
     assert "duration_label" in js.text
 
 
-def test_demo_seed_has_duration_and_brief() -> None:
+def test_demo_seed_has_duration_brief_and_hitl_gate() -> None:
     res = client.post("/v1/demo/seed", headers=KEY)
     assert res.status_code == 200
-    task_id = res.json()["task_id"]
-    activity = client.get(f"/v1/tasks/{task_id}").json()["activity"]
-    assert len(activity) >= 5
+    body = res.json()
+    task_id = body["task_id"]
+    assert body["awaiting_human"] is True
+    assert body["human_gate"]["gate_id"]
+    feed = client.get(f"/v1/tasks/{task_id}").json()
+    activity = feed["activity"]
+    assert len(activity) >= 6
+    assert feed["awaiting_human"] is True
+    assert feed["human_gate"]["kind"] == "needs_approval"
     assert all(item.get("brief") for item in activity)
     assert any(item.get("duration_ms") for item in activity)
     assert any(item.get("at_abs") for item in activity)
+    assert any(item.get("status") == "AWAITING_HUMAN" for item in activity)
+
+
+def test_local_hitl_approve_reply_reject(monkeypatch) -> None:
+    monkeypatch.setenv("HITL_MODE", "local")
+    seed = client.post("/v1/demo/seed", headers=KEY).json()
+    task_id = seed["task_id"]
+
+    bad = client.post(
+        f"/v1/tasks/{task_id}/hitl",
+        headers=KEY,
+        json={"action": "approve", "requested_by": "anonymous"},
+    )
+    assert bad.status_code == 400
+
+    reply_missing = client.post(
+        f"/v1/tasks/{task_id}/hitl",
+        headers=KEY,
+        json={"action": "reply", "requested_by": "И. Иванов"},
+    )
+    assert reply_missing.status_code == 400
+
+    reply = client.post(
+        f"/v1/tasks/{task_id}/hitl",
+        headers=KEY,
+        json={
+            "action": "reply",
+            "requested_by": "И. Иванов",
+            "human_response": "Добавьте WCONPROD BHP=180 bar из того же snapshot.",
+        },
+    )
+    assert reply.status_code == 200
+    payload = reply.json()
+    assert payload["ok"] is True
+    assert payload["turn"]["status"] == "HUMAN_REPLY"
+    assert payload["awaiting_human"] is False
+    assert payload["orchestrator"]["status"] == "planning"
+
+    seed2 = client.post("/v1/demo/seed", headers=KEY).json()
+    approve = client.post(
+        f"/v1/tasks/{seed2['task_id']}/hitl",
+        headers=KEY,
+        json={"action": "approve", "requested_by": "П. Петров"},
+    )
+    assert approve.status_code == 200
+    assert approve.json()["orchestrator"]["status"] == "completed"
+    assert approve.json()["turn"]["status"] == "HUMAN_APPROVED"
+
+    seed3 = client.post("/v1/demo/seed", headers=KEY).json()
+    reject = client.post(
+        f"/v1/tasks/{seed3['task_id']}/hitl",
+        headers=KEY,
+        json={"action": "reject", "requested_by": "П. Петров", "human_response": "Scope слишком широкий"},
+    )
+    assert reject.status_code == 200
+    assert reject.json()["orchestrator"]["status"] == "rejected"
 
 
 def test_unauthorized_and_missing_task() -> None:
     assert client.post("/v1/demo/seed").status_code == 401
     assert client.get("/v1/tasks/missing_task_zzz").status_code == 404
+
+
+def test_set_gate_sse_publishes_human_gate() -> None:
+    import asyncio
+    from app.main import _set_gate, _subscribers
+
+    task_id = "sse_gate_field"
+    queue: asyncio.Queue = asyncio.Queue(maxsize=8)
+    _subscribers[task_id].append(queue)
+
+    async def run() -> dict:
+        return await _set_gate(
+            task_id,
+            status="awaiting_human",
+            version=42,
+            gate={
+                "gate_id": "g-sse-1",
+                "kind": "needs_approval",
+                "expected_version": 42,
+                "reason": "SSE field check",
+            },
+        )
+
+    snapshot = asyncio.run(run())
+    assert snapshot["human_gate"]["gate_id"] == "g-sse-1"
+    assert "gate" not in snapshot
+    msg = queue.get_nowait()
+    assert msg["type"] == "gate"
+    assert msg["awaiting_human"] is True
+    assert msg["human_gate"]["gate_id"] == "g-sse-1"
+    assert "gate" not in msg
+    _subscribers[task_id].remove(queue)
+
+
+def test_live_hitl_status_failure_does_not_local_apply(monkeypatch) -> None:
+    monkeypatch.setenv("HITL_MODE", "webhook")
+    monkeypatch.setenv("ORCHESTRATOR_WEBHOOK_URL", "http://example.invalid/orch")
+
+    from app.orchestrator import OrchestratorError
+
+    async def boom(_payload):
+        raise OrchestratorError("orchestrator unreachable", status_code=502)
+
+    monkeypatch.setattr("app.main.invoke_orchestrator", boom)
+
+    seed = client.post("/v1/demo/seed", headers=KEY).json()
+    task_id = seed["task_id"]
+    before = client.get(f"/v1/tasks/{task_id}").json()
+    assert before["awaiting_human"] is True
+
+    res = client.post(
+        f"/v1/tasks/{task_id}/hitl",
+        headers=KEY,
+        json={"action": "approve", "requested_by": "И. Иванов", "gate_id": before["human_gate"]["gate_id"]},
+    )
+    assert res.status_code == 502
+    detail = str(res.json()["detail"]).lower()
+    assert "unreachable" in detail or "orchestrator" in detail
+
+    after = client.get(f"/v1/tasks/{task_id}").json()
+    assert after["awaiting_human"] is True
+    assert after["human_gate"]["gate_id"] == before["human_gate"]["gate_id"]
+
+
+def test_live_hitl_prefers_fresh_status_cas_over_body(monkeypatch) -> None:
+    monkeypatch.setenv("HITL_MODE", "webhook")
+    monkeypatch.setenv("ORCHESTRATOR_WEBHOOK_URL", "http://example.invalid/orch")
+
+    calls: list[dict] = []
+
+    async def fake_invoke(payload):
+        calls.append(dict(payload))
+        if payload.get("action") == "status":
+            return {
+                "status": "awaiting_human",
+                "version": 7,
+                "human_gate": {
+                    "gate_id": "fresh-gate",
+                    "kind": "needs_approval",
+                    "expected_version": 7,
+                    "reason": "fresh",
+                },
+            }
+        return {"status": "completed", "version": 8, "human_gate": None}
+
+    monkeypatch.setattr("app.main.invoke_orchestrator", fake_invoke)
+
+    seed = client.post("/v1/demo/seed", headers=KEY).json()
+    task_id = seed["task_id"]
+    res = client.post(
+        f"/v1/tasks/{task_id}/hitl",
+        headers=KEY,
+        json={
+            "action": "approve",
+            "requested_by": "И. Иванов",
+            "gate_id": "stale-gate",
+            "expected_version": 1,
+        },
+    )
+    assert res.status_code == 200
+    assert len(calls) == 2
+    assert calls[0]["action"] == "status"
+    assert calls[1]["action"] == "approve"
+    assert calls[1]["gate_id"] == "fresh-gate"
+    assert calls[1]["expected_version"] == 7

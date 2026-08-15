@@ -31,14 +31,20 @@ if(!clean(catalogue.approved_by||catalogue.author))findings.push({code:'SCHEMA_E
 if(!shaPattern.test(sourceHash))findings.push({code:'SCHEMA_SOURCE_HASH_INVALID',severity:'error'});
 if(!shaPattern.test(catalogueHash))findings.push({code:'SCHEMA_CATALOGUE_HASH_INVALID',severity:'error'});
 if(!schemas.length)findings.push({code:'SCHEMA_CATALOGUE_EMPTY',severity:'error'});
-const citationValid=c=>obj(c)&&clean(c.document_id||c.knowledge_id)&&clean(c.document_revision||c.revision)&&(!clean(c.source_hash)||clean(c.source_hash).toLowerCase()===sourceHash);
+const citationValid=c=>obj(c)&&clean(c.document_id||c.knowledge_id)&&clean(c.document_revision||c.revision);
+// Merged catalogues recompute source_hash; do not require citation.source_hash === catalogue.source_hash.
+const citationAcceptable=c=>!c||citationValid(c); // missing citation: warn below; invalid shape: error
+
 const normalizeLayout=raw=>{const l=obj(raw)?raw:{},newline=clean(l.newline).toUpperCase()==='CRLF'?'\r\n':'\n';return{newline,indent:l.indent==='    '?'    ':'  ',delimiter:l.delimiter==='TAB'?'\t':' ',record_terminator:clean(l.record_terminator).toUpperCase()==='NONE'?'':' /',block_terminator:clean(l.block_terminator).toUpperCase()==='SLASH_LINE'?'slash_line':'none'}};
 for(let i=0;i<schemas.length;i++){
   const s=schemas[i],kw=clean(s.keyword).toUpperCase(),variant=clean(s.variant)||'default',fields=arr(s.fields)?s.fields.filter(obj):[];
   const key=`${kw}::${variant}`;
   if(!allowed.has(kw)){findings.push({code:'SCHEMA_KEYWORD_UNSUPPORTED',severity:'error',index:i,keyword:kw});continue}
   if(!clean(s.schema_id)||!clean(s.schema_revision)){findings.push({code:'SCHEMA_IDENTITY_REQUIRED',severity:'error',index:i,keyword:kw});continue}
-  if(!citationValid(s.citation)){findings.push({code:'SCHEMA_CITATION_INVALID',severity:'error',index:i,keyword:kw});continue}
+  if(!citationValid(s.citation)){
+    if(s.citation==null||s.citation===undefined)findings.push({code:'SCHEMA_CITATION_MISSING',severity:'warning',index:i,keyword:kw});
+    else {findings.push({code:'SCHEMA_CITATION_INVALID',severity:'error',index:i,keyword:kw});continue}
+  }
   if(!obj(s.semantics)){findings.push({code:'SCHEMA_SEMANTICS_REQUIRED',severity:'error',index:i,keyword:kw,variant});continue}
   if(schemaMap.has(key)){findings.push({code:'SCHEMA_VARIANT_DUPLICATE',severity:'error',index:i,keyword:kw,variant});continue}
   const positions=fields.map(f=>Number(f.position)),names=fields.map(f=>clean(f.name));

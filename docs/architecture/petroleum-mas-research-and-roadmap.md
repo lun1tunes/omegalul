@@ -96,6 +96,8 @@ approved_by             ответственный инженер-гидроди
 | `WNETDP` | перепад давления / network DP на скважине или ветви | well/network endpoint exists, pressure units, NETWORK feature, consistency with BRANPROP/NODEPROP | tNavigator 22.2 manual |
 | `WPIMULT` | множитель connection factor (CF/PI) перфорации | well exists, factor >0, optional IJK/COMPLUMP filter, cumulative across DATES, reset by COMPDAT recompute | tNavigator manual; OPM cross-check |
 | `WDFAC` | D-фактор скважины (rate-dependent skin для газа) | well exists, Dwell ≥0, interaction with COMPDATMD/COMPDAT per-completion D, non-Darcy gas | tNavigator 22.2 manual |
+| `WEFAC` | коэффициент эксплуатации скважины (uptime fraction) | WELL/`*LIST`/`'*'`, FACTOR ≥0 (обычно ≤1), NETWORK_AVG YES|NO; vs GEFAC | tNavigator 22.2 manual §12.20.86 |
+| `WELOPEN` | открытие/закрытие скважины или перфораций | WELL, STATUS OPEN|STOP|SHUT|AUTO|POPN, optional IJK/COMPLUMP; LGR → WELOPENL (вне allowlist) | tNavigator 22.2 manual §12.20.131 |
 | `WELDRAW` | макс. депрессия добывающих скважин/групп | DMax, PHASE LIQ/GAS, YES/NO в потенциале, AVG/MAX; QMax vs WCONPROD/WELTARG; §5.6.7 | tNavigator 22.2 manual |
 | `WLIST` | именованный список скважин для batch-keywords | list name starts with `*`, NEW/ADD/MOVE/DEL, members via WELSPECS, no dual-list membership on NEW/ADD | tNavigator 22.2 manual |
 | `WFRACP` | плоскостной ГРП (расширение WFRAC) | well/completions exist, azimuth/zenith, half-lengths/heights/width or proppant volume, optional flow/time decay, bounding box | tNavigator 22.2 manual |
@@ -188,6 +190,10 @@ Baseline сначала обрабатывает детерминированн�
 6. сохраняет неизвестные/неподдержанные конструкции как opaque CST nodes: их нельзя генерировать или редактировать автоматически, но они не должны пропасть.
 
 Lossless CST необходим: обычный parse-and-render может незаметно изменить комментарии, defaults, форматирование или include layout даже там, где задача ничего не просила менять.
+
+**Комментарии `--` в `.data` / `.inc`.** В keyword-файлах ECLIPSE/tNavigator `--` начинает комментарий до конца строки. Детерминированный analyzer/validator **структурно пропускает** `--…` (не keyword, не record, не поле). Planner/Builder при этом **обязаны читать текст комментария** как уточняющий контекст (cutover, алиасы, единицы, «не трогать», ссылки на источники) — но комментарий **не authority факта**: не выводить из него ORAT/даты/имена против `source_facts` / schema / baseline; конфликт → `needs_input`. В REVISE комментарии preserve (`preserve_unmentioned`). Канон: system messages Schedule Planner/Builder + RAG-карточка `schedule-model-file-comments-v1` (и перекрёстно в INCLUDE).
+
+**INCLUDE — дата и чтение тела.** Call-site INCLUDE preserve на той же DATES-позиции, что в baseline, кроме явной инструкции по конкретному файлу. Тело included-файла читается, если оно есть в package/`include_files`; иначе KEEP вызова без выдуманного содержимого. Детали — §4.7.
 
 #### 4.3.2. Анализ задачи и новых данных
 
@@ -339,6 +345,12 @@ schedule-package/
 ```
 
 В `CREATE` renderer создает стабильный canonical layout. В `REVISE` исходный include layout сохраняется по умолчанию; новый canonical layout требует отдельного approved refactor, потому что реорганизация файлов сама является изменением. Package paths — виртуальные `file_ref` внутри пакета, не host filesystem: разрешены только package-relative пути, которые после collapse остаются внутри корня пакета (в том числе безопасный `subdir/../sibling.inc`). Запрещены escape через `..`, absolute paths, URL-схемы, пустой/NUL PATH (`INCLUDE_PATH_INVALID` / `ROOT_PATH_INVALID`), duplicate/cyclic includes и незарегистрированные files без evidence в package (`INCLUDE_PATH_UNSAFE` / `INCLUDE_NOT_FOUND`). Manifest фиксирует hashes, encoding, line endings, profile и include graph.
+
+**Дата вызова INCLUDE.** Сам `INCLUDE` не двигает simulation clock: вставка идёт на текущей позиции SCHEDULE. Поэтому call-site сохраняется **на той же дате**, где он стоит в baseline/source, пока нет явной инструкции по **конкретному** INCLUDE (пример: «`INCLUDE GRUPTREE_BASE` синхронизируй с датой ввода первой скважины»). Без такой инструкции Planner/Builder не сдвигают INCLUDE к cutover / первой скважине / началу файла.
+
+**Чтение тела.** Если файл из PATH есть в исходных данных пакета (`include_files` / manifest) — Analyzer/Planner/Builder **обязаны** зайти в него и считывать содержимое (CST/decode, вложенные INCLUDE, комментарии) наравне с корневым `.inc`. Если файла нет в evidence — KEEP вызов INCLUDE, не выдумывать тело; правка содержимого без файла → `needs_input`. Канон: RAG `include-schedule-package-v1` (rev ≥4) + system messages Schedule Planner/Builder.
+
+**Upload (Orchestrator).** Multi-file package принимается drag-and-drop полем `schedule_files` (несколько `.inc/.data/.sch/.txt/.grdecl`, без ZIP). Optional `schedule_root` при неоднозначном корне. Materializer (`schedule_package_materialize`) собирает `root_path` + `baseline_schedule_text` + `include_files`: INCLUDE-текст не переписывается; тела матчятся по уникальному basename на resolved package path (Petrel `../../…` → virtual layout). Один файл и явный JSON `include_files` остаются валидными входами.
 
 ### 4.8. Stateful semantics и conflict analysis
 

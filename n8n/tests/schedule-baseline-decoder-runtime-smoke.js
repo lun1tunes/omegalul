@@ -224,9 +224,32 @@ async function main() {
   assert(codes(beforeBoundary).has('SEMANTIC_EVENT_BEFORE_CHANGE_BOUNDARY'));
 
   const ambiguousSchemas = catalogue();
-  ambiguousSchemas.schemas = ambiguousSchemas.schemas.map((schema) => schema.keyword === 'WCONPROD' ? { ...schema, parser: {} } : schema);
+  ambiguousSchemas.schemas = [
+    ...ambiguousSchemas.schemas.filter((schema) => schema.keyword !== 'WCONPROD'),
+    { ...ambiguousSchemas.schemas.find((schema) => schema.keyword === 'WCONPROD'), variant: 'twin-a', schema_id: 'expert:WCONPROD:twin-a', parser: {} },
+    { ...ambiguousSchemas.schemas.find((schema) => schema.keyword === 'WCONPROD'), variant: 'twin-b', schema_id: 'expert:WCONPROD:twin-b', parser: {} },
+  ];
   const ambiguous = await decode(analysis, ambiguousSchemas);
   assert(codes(ambiguous).has('BASELINE_RECORD_VARIANT_AMBIGUOUS'));
+
+  const preferred = catalogue();
+  preferred.schemas = preferred.schemas.map((schema) => (
+    schema.keyword === 'WCONPROD'
+      ? { ...schema, parser: { ...(schema.parser || {}), allow_trailing_omission: true, token_width: 20 } }
+      : schema
+  ));
+  // Add a competing WCONPROD variant with a mismatched CONTROL enum so scoring keeps the original.
+  preferred.schemas.push({
+    ...preferred.schemas.find((schema) => schema.keyword === 'WCONPROD'),
+    variant: 'wrat',
+    schema_id: 'expert:WCONPROD:wrat',
+    fields: preferred.schemas.find((schema) => schema.keyword === 'WCONPROD').fields.map((field) => (
+      field.name === 'CONTROL' ? { ...field, enum: ['WRAT'] } : field
+    )),
+  });
+  const disambiguated = await decode(analysis, preferred);
+  assert.equal(disambiguated.status, 'decoded');
+  assert(!codes(disambiguated).has('BASELINE_RECORD_VARIANT_AMBIGUOUS'));
 
   const malformedAnalysis = await analyze(baseText.replace("'FIELD' 'ROOT' /", "'FIELD' 'ROOT' EXTRA /"));
   const malformed = await decode(malformedAnalysis);

@@ -5,6 +5,10 @@ from __future__ import annotations
 import re
 from datetime import datetime, timezone
 from typing import Any
+from zoneinfo import ZoneInfo
+
+# Tyumen shares Asia/Yekaterinburg (UTC+5, no DST).
+TYUMEN_TZ = ZoneInfo("Asia/Yekaterinburg")
 
 MAX_BRIEF_CHARS = 800
 MAX_SUMMARY_CHARS = 500
@@ -20,6 +24,10 @@ SAFE_CHIP_KEYS = (
     "source_snapshot_hash",
     "correlation_id",
     "dropped_gap_count",
+    "action",
+    "requested_by",
+    "gate_id",
+    "gate_kind",
 )
 SECRETISH = re.compile(r"(prompt|secret|token|password|authorization|api[_-]?key|binary|content|session)", re.I)
 
@@ -68,6 +76,22 @@ BRIEF_TEMPLATES: dict[str, str] = {
         "Resume Builder запрещён: correlation/snapshot Excel-результата не совпали с ожидаемыми. "
         "Это fail-closed защита от подмены evidence mid-loop."
     ),
+    "AWAITING_HUMAN": (
+        "Задача ждёт человека: нужны факты, решение или утверждение выпуска. "
+        "Ответьте в чате — reply, approve или reject."
+    ),
+    "HUMAN_REPLY": (
+        "Инженер отправил ответ в HITL-gate. "
+        "Оркестратор применит ответ к текущей версии задачи и продолжит маршрут."
+    ),
+    "HUMAN_APPROVED": (
+        "Инженер утвердил результат на HITL-gate. "
+        "Задача продолжается как approved resume без повторного планирования с нуля."
+    ),
+    "HUMAN_REJECTED": (
+        "Инженер отклонил результат на HITL-gate. "
+        "Оркестратор фиксирует reject и не выпускает draft как approved."
+    ),
 }
 
 
@@ -85,7 +109,8 @@ def parse_iso(value: Any) -> datetime | None:
 
 
 def format_abs(dt: datetime) -> str:
-    return dt.strftime("%Y-%m-%d %H:%M:%S UTC")
+    local = dt.astimezone(TYUMEN_TZ) if dt.tzinfo else dt.replace(tzinfo=timezone.utc).astimezone(TYUMEN_TZ)
+    return local.strftime("%Y-%m-%d %H:%M:%S") + " Тюмень"
 
 
 def format_duration(ms: int | None) -> str | None:
@@ -105,14 +130,21 @@ def format_duration(ms: int | None) -> str | None:
 
 def outcome_for(status: str | None) -> str:
     s = (status or "").upper()
-    if s in {"SUCCEEDED", "EXCEL_EVIDENCE_READY", "CALCULATION_DATA_READY", "RESUME_SCHEDULE", "DELEGATED"}:
-        return "ok" if s != "DELEGATED" else "info"
-    if s in {"SCHEDULE_EVIDENCE_GAP", "PARTIAL"}:
+    if s in {
+        "SUCCEEDED",
+        "EXCEL_EVIDENCE_READY",
+        "CALCULATION_DATA_READY",
+        "RESUME_SCHEDULE",
+        "HUMAN_APPROVED",
+        "COMPLETED",
+    }:
+        return "ok"
+    if s == "DELEGATED":
+        return "info"
+    if s in {"SCHEDULE_EVIDENCE_GAP", "PARTIAL", "AWAITING_HUMAN", "HUMAN_REPLY", "NEEDS_INPUT", "NEEDS_DECISION", "NEEDS_APPROVAL"}:
         return "wait"
-    if any(x in s for x in ("INVALID", "MALFORMED", "STALLED", "EXHAUSTED", "FATAL", "FAILED", "ERROR")):
+    if any(x in s for x in ("INVALID", "MALFORMED", "STALLED", "EXHAUSTED", "FATAL", "FAILED", "ERROR", "REJECT")):
         return "block"
-    if s in {"NEEDS_INPUT", "NEEDS_DECISION", "NEEDS_APPROVAL"}:
-        return "wait"
     return "info"
 
 

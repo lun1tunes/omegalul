@@ -6,42 +6,76 @@
   <title>MAS Activity</title>
   <link rel="preconnect" href="https://fonts.googleapis.com" />
   <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
-  <link href="https://fonts.googleapis.com/css2?family=DM+Sans:opsz,wght@9..40,450;9..40,600;9..40,700&family=IBM+Plex+Mono:wght@400;500&display=swap" rel="stylesheet" />
-  <link rel="stylesheet" href="/static/app.css" />
+  <link href="https://fonts.googleapis.com/css2?family=IBM+Plex+Sans:wght@400;500;600;700&family=IBM+Plex+Mono:wght@400;500&display=swap" rel="stylesheet" />
+  <link rel="stylesheet" href="/static/app.css?v=9" />
 </head>
 <body>
   <div class="atmosphere" aria-hidden="true"></div>
   <header class="top">
-    <div class="brand">
+    <a class="brand" href="/" aria-label="MAS Activity — главная">
       <span class="mark">MAS</span>
       <span class="product">Activity</span>
-    </div>
+    </a>
     <div class="top-actions">
-      <label class="task-field">
-        <span>task_id</span>
-        <input id="taskInput" type="text" spellcheck="false" placeholder="eng_…" />
-      </label>
-      <button type="button" id="openBtn" class="btn">Open</button>
-      <button type="button" id="demoBtn" class="btn btn-quiet">Seed demo</button>
+      <a class="btn btn-quiet" href="/knowledge">База знаний</a>
     </div>
   </header>
 
+  <div id="flash" class="flash" hidden role="alert"></div>
+
   <main class="stage">
-    <aside class="rail" id="taskRail" aria-label="Recent tasks"></aside>
-    <section class="transcript" aria-live="polite">
-      <div class="transcript-head">
-        <h1 id="title">Select a task</h1>
-        <p id="subtitle">Handoffs between Orchestrator and specialists appear here as a live chat.</p>
-        <div class="live-row">
-          <span class="pulse" id="liveDot" hidden></span>
-          <span id="liveLabel">idle</span>
+    <aside class="rail" id="taskRail" aria-label="Недавние задачи">
+      <p class="rail-empty" id="railEmpty">Нет задач. Дождитесь handoff от Trace Writer или откройте /t/&lt;task_id&gt;.</p>
+    </aside>
+    <section class="workspace">
+      <div class="transcript" aria-live="polite">
+        <div class="transcript-head">
+          <div class="head-copy">
+            <h1 id="title">Выберите задачу</h1>
+            <p id="subtitle">Handoff и HITL в одном потоке: кто → кому, время, длительность, решение инженера.</p>
+          </div>
+          <div class="live-row">
+            <span class="pulse" id="liveDot" hidden></span>
+            <span id="liveLabel">ожидание</span>
+            <span class="sep" aria-hidden="true">·</span>
+            <span id="backendLabel">HITL: local</span>
+          </div>
         </div>
+        <ol class="thread" id="thread"></ol>
+        <p class="empty" id="empty">Нет turns. Выберите задачу слева или откройте deep-link /t/&lt;task_id&gt;.</p>
       </div>
-      <ol class="thread" id="thread"></ol>
-      <p class="empty" id="empty">No turns yet. Run the Orchestrator or seed a demo.</p>
+
+      <aside class="gate-panel" id="gatePanel" hidden>
+        <div class="gate-head">
+          <span class="gate-badge" id="gateKind">needs_approval</span>
+          <span class="gate-meta" id="gateMeta"></span>
+        </div>
+        <p class="gate-reason" id="gateReason"></p>
+        <ul class="gate-questions" id="gateQuestions"></ul>
+      </aside>
+
+      <form class="composer" id="composer" autocomplete="off" hidden>
+        <div class="composer-top">
+          <label class="who-field">
+            <span>requested_by</span>
+            <input id="requestedBy" type="text" required maxlength="120" placeholder="И. Иванов" />
+          </label>
+          <div class="composer-actions" role="group" aria-label="Действия HITL">
+            <button type="submit" class="btn btn-approve" data-action="approve" id="approveBtn">Утвердить</button>
+            <button type="submit" class="btn btn-reject" data-action="reject" id="rejectBtn">Отклонить</button>
+            <button type="submit" class="btn" data-action="reply" id="replyBtn">Ответить</button>
+            <button type="submit" class="btn btn-cancel" data-action="cancel" id="cancelBtn">Отменить</button>
+          </div>
+        </div>
+        <label class="reply-field">
+          <span>Дальнейшие указания</span>
+          <textarea id="humanResponse" rows="2" placeholder="Условия, недостающие факты, scope правки…"></textarea>
+        </label>
+        <p class="composer-hint" id="composerHint">Утвердить / отклонить / ответить / отменить — gate_id и version подставятся сами.</p>
+      </form>
     </section>
   </main>
 
-  <script src="/static/app.js"></script>
+  <script src="/static/app.js?v=8"></script>
 </body>
 </html>

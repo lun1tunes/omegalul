@@ -1,0 +1,77 @@
+<!DOCTYPE html>
+<html lang="ru">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>MAS — База знаний</title>
+  <link rel="preconnect" href="https://fonts.googleapis.com" />
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+  <link href="https://fonts.googleapis.com/css2?family=IBM+Plex+Sans:wght@400;500;600;700&family=IBM+Plex+Mono:wght@400;500&display=swap" rel="stylesheet" />
+  <link rel="stylesheet" href="/static/app.css?v=9" />
+  <link rel="stylesheet" href="/static/knowledge.css?v=5" />
+  <script src="https://cdn.jsdelivr.net/npm/marked@15.0.7/marked.min.js" defer></script>
+</head>
+<body class="knowledge-page">
+  <div class="atmosphere" aria-hidden="true"></div>
+  <header class="top">
+    <a class="brand" href="/" aria-label="MAS Activity — главная">
+      <span class="mark">MAS</span>
+      <span class="product">Knowledge</span>
+    </a>
+    <div class="top-actions">
+      <a class="btn btn-quiet" href="/">Activity</a>
+    </div>
+  </header>
+
+  <div id="flash" class="flash" hidden role="alert"></div>
+
+  <main class="kb-stage">
+    <section class="kb-toolbar">
+      <label class="who-field kb-agent">
+        <span>Агент / target_base</span>
+        <select id="agentSelect" aria-label="Выбор агента">
+          <option value="">Загрузка…</option>
+        </select>
+      </label>
+      <p class="kb-hint" id="agentHint">Выберите агента, чтобы увидеть карточки RAG.</p>
+      <button type="button" class="btn" id="addBtn" disabled>+ Создать новое знание</button>
+    </section>
+
+    <section class="kb-create" id="createPanel" hidden>
+      <h2 class="kb-create-title">Новая карточка</h2>
+      <p class="kb-create-note">
+        Пишется в <code>excel-agent-operating-guide.documents.json</code>.
+        Keywords / topics / task_patterns попадают в tag-ветку RAG после Knowledge Ingestion.
+      </p>
+      <div class="kb-create-grid">
+        <label class="who-field">
+          <span>knowledge_id</span>
+          <input id="createId" type="text" maxlength="119" placeholder="dates-schedule-clock-v1" />
+        </label>
+        <label class="who-field">
+          <span>knowledge_type</span>
+          <select id="createType"></select>
+        </label>
+        <label class="who-field kb-create-wide">
+          <span>title</span>
+          <input id="createTitle" type="text" maxlength="300" placeholder="Человекочитаемый заголовок" />
+        </label>
+      </div>
+      <div id="createTagFields" class="kb-tag-fields"></div>
+      <label class="who-field kb-create-text">
+        <span>text (markdown)</span>
+        <textarea id="createText" class="kb-editor" rows="10" placeholder="Полная самодостаточная инструкция…"></textarea>
+      </label>
+      <div class="kb-actions">
+        <button type="button" class="btn btn-approve" id="createSave">Создать</button>
+        <button type="button" class="btn btn-cancel" id="createCancel">Отмена</button>
+      </div>
+    </section>
+
+    <section class="kb-list" id="cardList" aria-live="polite"></section>
+    <p class="empty" id="listEmpty" hidden>Нет карточек для этого агента.</p>
+  </main>
+
+  <script src="/static/knowledge.js?v=5"></script>
+</body>
+</html>

@@ -18,7 +18,7 @@ from schedule_semantic_runtime import build_schedule_validator_js
 ROOT = Path(__file__).resolve().parents[2]
 WORKFLOWS=ROOT/'n8n'/'workflows'
 CORE=WORKFLOWS/'core'
-KEYWORDS=['DATES','INCLUDE','GRUPTREE','WELSPECS','WELLTRACK','COMPDATMD','WCONHIST','WCONPROD','WCONINJE','GCONPROD','GCONINJE','GUIDERAT','GSATPROD','GSATINJE','WELLSTRE','WINJGAS','GINJGAS','BRANPROP','NODEPROP','GNETDP','NETBALAN','FRACTURE_TEMPLATE','FRACTURE_SPECS','FRACTURE_STAGE','WECON','WTEST','WELTARG','WNETDP','WPIMULT','WDFAC','WELDRAW','WLIST','WFRACP','WFRACPL','VFPPROD','WVFPDP','ACTIONX','DELAYACT','ENDACTIO','UDQ','UDT','APPLYSCRIPT']
+KEYWORDS=['DATES','INCLUDE','GRUPTREE','WELSPECS','WELLTRACK','COMPDATMD','WCONHIST','WCONPROD','WCONINJE','GCONPROD','GCONINJE','GUIDERAT','GSATPROD','GSATINJE','WELLSTRE','WINJGAS','GINJGAS','BRANPROP','NODEPROP','GNETDP','NETBALAN','FRACTURE_TEMPLATE','FRACTURE_SPECS','FRACTURE_STAGE','WECON','WTEST','WELTARG','WNETDP','WPIMULT','WDFAC','WEFAC','WELOPEN','WELDRAW','WLIST','WFRACP','WFRACPL','VFPPROD','WVFPDP','ACTIONX','DELAYACT','ENDACTIO','UDQ','UDT','APPLYSCRIPT']
 def uid(name): return str(uuid.uuid5(uuid.NAMESPACE_URL,'omegalul/schedule-foundation/'+name))
 def node(name,type_,version,pos,parameters,**extra):
  v={'parameters':parameters,'id':uid(name),'name':name,'type':type_,'typeVersion':version,'position':list(pos)};v.update(extra);return v
@@ -47,10 +47,10 @@ if(!text)return[{{json:{{contract:'baseline_analysis',contract_version:'1.0',sta
 """
 PLANNER_SCHEMA = {
     'type': 'object',
-    'additionalProperties': False,
+    'additionalProperties': True,
     'required': [
-        'status', 'build_mode', 'keyword_scope', 'stages', 'questions',
-        'preservation_policy', 'rationale', 'decision_record',
+        'status', 'build_mode', 'keyword_scope', 'stages',
+        'preservation_policy', 'rationale',
     ],
     'properties': {
         'status': {'enum': ['proposed', 'needs_input', 'needs_decision']},
@@ -58,30 +58,13 @@ PLANNER_SCHEMA = {
         'keyword_scope': {'type': 'array', 'items': {'type': 'string'}},
         'stages': {
             'type': 'array',
-            'items': {
-                'type': 'object',
-                'additionalProperties': False,
-                'required': [
-                    'stage_id', 'capability', 'keywords', 'required_evidence',
-                    'dependencies', 'entity_scope', 'temporal_scope',
-                    'acceptance_checks',
-                ],
-                'properties': {
-                    'stage_id': {'type': 'string'},
-                    'capability': {'type': 'string'},
-                    'keywords': {'type': 'array', 'items': {'type': 'string'}},
-                    'required_evidence': {'type': 'array', 'items': {'type': 'object'}},
-                    'dependencies': {'type': 'array', 'items': {'type': 'string'}},
-                    'entity_scope': {'type': 'array', 'items': {'type': 'string'}},
-                    'temporal_scope': {'type': 'array', 'items': {'type': 'string'}},
-                    'acceptance_checks': {'type': 'array', 'items': {'type': 'object'}},
-                },
-            },
+            'items': {'type': 'object'},
         },
         'questions': {'type': 'array', 'items': {'type': 'object'}},
         'preservation_policy': {'enum': ['preserve_unmentioned', 'not_applicable']},
         'rationale': {'type': 'string'},
-        'decision_record': DECISION_RECORD_SCHEMA,
+        # Loose: Code synthesizes decision_record; nested strict schema breaks LLM parse.
+        'decision_record': {'type': 'object'},
     },
 }
 PLANNER_SYS = """# tNavigator SCHEDULE Planner
@@ -94,12 +77,24 @@ Readiness/confidence scores are computed by deterministic Code after you — do 
 ## Modes
 - CREATE if no baseline; REVISE if baseline present (`preservation_policy=preserve_unmentioned`).
 
+## Comments in `.data` / `.inc` / model keyword files (`--`)
+In ECLIPSE / tNavigator text, `--` starts a comment through end-of-line (full-line or trailing after a keyword/record).
+- **Skip structurally:** do not treat `--…` as a keyword, record, field value, or evidence of an allowlisted construct. Empty/comment-only lines are not records.
+- **Still read the text:** comments often hold useful engineer notes (cutover rationale, well aliases, units reminders, “do not touch”, temporary shut-in reasons, sheet/source refs). Use them as clarifying context for scope, gaps, and questions.
+- **Not fact authority:** comments never override `source_facts`, schema_catalogue, or decoded baseline records. If a comment conflicts with facts/schema → prefer facts/schema and ask (`needs_input`); do not invent rates/dates/names from comments alone.
+- **REVISE:** preserve existing comments (`preserve_unmentioned`); do not strip or rewrite comments as a side effect of an unrelated MODIFY.
+
+## INCLUDE call sites and included files
+- **Same date by default:** keep each INCLUDE on the same DATES slot as in the baseline/source. INCLUDE does not set the clock; do not move includes to cutover/first-well/file-top “for cleanliness”.
+- **Explicit exception only:** relocate/rebind an INCLUDE when the task/facts give clear instructions for that specific include (e.g. “INCLUDE GRUPTREE_BASE sync with first-well intro date”). All other includes stay put.
+- **Read when present:** if the referenced file is in package/`include_files`, you must open and read it (keywords, nested INCLUDE, comments) — same discipline as the root `.inc`. Missing body → KEEP the call site; do not invent file contents. Editing that fragment requires the body in evidence.
+
 ## Domain (§12.20) — plan only allowlisted keywords
 Allowlist: """ + ", ".join(KEYWORDS) + """
 
 File order matters. Typical DAG dependencies:
 1. DATES (clock) before events on that date.
-2. INCLUDE only for package structure facts you are given — do not invent paths.
+2. INCLUDE only for package structure facts you are given — do not invent paths; preserve call-site date unless an explicit per-INCLUDE instruction says otherwise; read included bodies that exist in the package.
 3. GRUPTREE before leaf WELSPECS groups (non-FIELD) and before GCONPROD/GCONINJE on those groups; satellite groups for GSATPROD should appear in GRUPTREE first (else they attach under FIELD).
 4. WELSPECS before WELLTRACK/COMPDATMD/controls on that well; WELSPECS↔WELLTRACK free; COMPDATMD after both.
 5. WLIST after member WELSPECS; before consumers that reference `*LIST` (WCONPROD/WCONHIST/WECON/…).
@@ -108,7 +103,7 @@ File order matters. Typical DAG dependencies:
 8. GSATPROD / GSATINJE for satellite production/injection sources (no wells); GSATCOMP still outside allowlist.
 9. WELLSTRE before WINJGAS/GINJGAS (and before GSATCOMP if it appears in baseline); E3/tN only; mole fractions from facts (Σ=1). WINJGAS wires well inject composition after WCONINJE GAS; GINJGAS after GCONINJE GAS; GSATCOMP/WINJMIX/WELLSTRW still outside allowlist.
 10. VFPPROD table **number** must exist in baseline/facts before WCONPROD/WCONHIST reference it (THP/ALQ paths); never invent VFP table body. WVFPDP (BHP add-on / tubing ΔP scale) after the well exists and typically with VFP in use; not a synonym of inventing VFPDP — emit `WVFPDP` only.
-11. WECON/WTEST/WELTARG/WPIMULT/WDFAC/WELDRAW after the well (or group/FIELD for WELDRAW) exists; WELTARG after a prior control exists when changing a target.
+11. WECON/WTEST/WELTARG/WPIMULT/WDFAC/WEFAC/WELOPEN/WELDRAW after the well (or group/FIELD for WELDRAW) exists; WELTARG after a prior control exists when changing a target.
 12. BRANPROP→NODEPROP→WNETDP only if NETWORK already in evidence/baseline; GNETDP for fixed-pressure group/node rate band (after group/node exists); NETBALAN for NETWORK balance solver tolerances (NETWORK required); GNETINJE still outside allowlist.
 13. Fractures — pick one path: WFRACP|WFRACPL **or** FRACTURE_TEMPLATE→FRACTURE_SPECS→FRACTURE_STAGE (do not mix without facts).
 14. LGR plane frac → WFRACPL (needs LGR + WELSPECL/COMPDATL in baseline); never plan WELSPECL/COMPDAT/ACTION/property edits (SATNUM/PORO/MULT*/…).
@@ -119,46 +114,58 @@ File order matters. Typical DAG dependencies:
 Out of allowlist → omit from keyword_scope and add a concrete question (do not substitute a “similar” keyword).
 
 ## Stages
-Every stage: keywords ⊆ allowlist, required_evidence, entity_scope, temporal_scope, observable acceptance_checks, dependencies forming a DAG (no cycles).
+Every stage: keywords ⊆ allowlist, required_evidence, entity_scope (string[]), temporal_scope (string[]), observable acceptance_checks.
+`dependencies` must list other stage_id values only (or []). Unknown names are dropped.
 
 ## Output
-decision_record/v1 from observables only: input refs, proposed actions, policy reason codes, citations, unresolved questions, acceptance checks.
+Return top-level fields only. Leave `questions=[]` when Excel/source_facts already give commissioning dates.
+`decision_record` is optional — deterministic Code synthesizes it after you.
+Human-facing: optional `user_message` — 1–3 short Russian sentences for Activity/HITL; keep keyword/field names in Latin; no English filler in Russian prose.
 """
 PLAN_VALIDATE=rf"""
 let plan=$json.output??$json;if(typeof plan==='string'){{try{{plan=JSON.parse(plan)}}catch{{plan={{}}}}}}
 const arr=Array.isArray,obj=v=>v&&typeof v==='object'&&!arr(v),clean=v=>typeof v==='string'?v.trim():'',allowed=new Set({K}),findings=[];
+const asList=v=>arr(v)?v.map(clean).filter(Boolean):(clean(v)?[clean(v)]:[]);
 let request={{}};try{{const prepared=$('Prepare SCHEDULE planner input').first().json;request=prepared.planner_request??prepared??{{}}}}catch{{try{{const prepared=$('Prepare SCHEDULE pipeline plan').first().json;request=prepared.planner_request??prepared??{{}}}}catch{{request={{}}}}}}
 const mode=clean(plan.build_mode).toUpperCase(),scope=arr(plan.keyword_scope)?[...new Set(plan.keyword_scope.map(k=>clean(k).toUpperCase()).filter(Boolean))]:[];
 if(!['CREATE','REVISE'].includes(mode))findings.push({{code:'PLAN_MODE_INVALID',severity:'error'}});
 const unsupported=scope.filter(k=>!allowed.has(k));if(unsupported.length)findings.push({{code:'PLAN_KEYWORD_UNSUPPORTED',severity:'error',keywords:unsupported}});
-if(mode==='REVISE'&&plan.preservation_policy!=='preserve_unmentioned')findings.push({{code:'PRESERVATION_POLICY_MISSING',severity:'error'}});
-const stages=arr(plan.stages)?plan.stages.filter(obj).map((s,i)=>({{stage_id:clean(s.stage_id)||`stage_${{i+1}}`,capability:clean(s.capability),keywords:arr(s.keywords)?[...new Set(s.keywords.map(k=>clean(k).toUpperCase()).filter(k=>allowed.has(k)))]:[],required_evidence:arr(s.required_evidence)?s.required_evidence.filter(obj):[],dependencies:arr(s.dependencies)?s.dependencies.map(clean).filter(Boolean):[],entity_scope:arr(s.entity_scope)?s.entity_scope.map(clean).filter(Boolean):[],temporal_scope:arr(s.temporal_scope)?s.temporal_scope.map(clean).filter(Boolean):[],acceptance_checks:arr(s.acceptance_checks)?s.acceptance_checks.filter(obj):[]}})):[];
+if(mode==='REVISE'&&clean(plan.preservation_policy)&&plan.preservation_policy!=='preserve_unmentioned')findings.push({{code:'PRESERVATION_POLICY_MISSING',severity:'error'}});
+const stagesRaw=arr(plan.stages)?plan.stages.filter(obj).map((s,i)=>({{stage_id:clean(s.stage_id)||`stage_${{i+1}}`,capability:clean(s.capability),keywords:arr(s.keywords)?[...new Set(s.keywords.map(k=>clean(k).toUpperCase()).filter(k=>allowed.has(k)))]:[],required_evidence:arr(s.required_evidence)?s.required_evidence.filter(obj).map(r=>({{...r,required:r.required===true,status:clean(r.status)||'supported'}})):(obj(s.required_evidence)?[s.required_evidence]:[]),dependencies:asList(s.dependencies),entity_scope:asList(s.entity_scope).filter(v=>v&&!/^(wells?|groups?|blocks?|entities|field|all|any|global)$/i.test(v)),temporal_scope:asList(s.temporal_scope),acceptance_checks:arr(s.acceptance_checks)?s.acceptance_checks.filter(obj):(obj(s.acceptance_checks)?[s.acceptance_checks]:[])}})):[];
+const factWells=(()=>{{const packet=obj(request.source_facts_packet)?request.source_facts_packet:(obj(request.evidence)?{{}}:null);const facts=arr(packet?.facts)?packet.facts:(arr(request.evidence)?request.evidence.flatMap(e=>arr(e?.value?.facts)?e.value.facts:[]):[]);const change=obj(request.requested_change_scope)?request.requested_change_scope:{{}};const fromChange=[...(arr(change.wells)?change.wells:[]),...(arr(change.groups)?change.groups:[])];const fromFacts=facts.map(f=>{{const values=obj(f?.values)?f.values:{{}};return clean(f?.well||f?.entity||f?.entity_id||values['Скважина']||values.WELL||values.well||values['Группа']||values.GROUP)}}).filter(Boolean);return [...new Set([...fromChange,...fromFacts].map(v=>clean(String(v))).filter(Boolean))];}})();
+const stagesFilled=stagesRaw.map(s=>({{...s,entity_scope:s.entity_scope.length?s.entity_scope:factWells.slice(0,50),temporal_scope:s.temporal_scope.length?s.temporal_scope:['forecast']}}));
+const stageIds=new Set(stagesFilled.map(s=>s.stage_id));
+const droppedDeps=stagesFilled.flatMap(s=>s.dependencies.filter(d=>d===s.stage_id||!stageIds.has(d)).map(d=>({{stage_id:s.stage_id,dependency:d}})));
+const stages=stagesFilled.map(s=>({{...s,dependencies:s.dependencies.filter(d=>d!==s.stage_id&&stageIds.has(d))}}));
+if(droppedDeps.length)findings.push({{code:'PLAN_DEPENDENCY_DROPPED',severity:'warning',dependencies:droppedDeps}});
 if(!stages.length)findings.push({{code:'PLAN_STAGES_MISSING',severity:'error'}});
-const stageIds=new Set(stages.map(s=>s.stage_id));if(stageIds.size!==stages.length)findings.push({{code:'PLAN_STAGE_ID_DUPLICATE',severity:'error'}});
-const invalidDeps=stages.flatMap(s=>s.dependencies.filter(d=>d===s.stage_id||!stageIds.has(d)).map(d=>({{stage_id:s.stage_id,dependency:d}})));if(invalidDeps.length)findings.push({{code:'PLAN_DEPENDENCY_INVALID',severity:'error',dependencies:invalidDeps}});
+if(stageIds.size!==stages.length)findings.push({{code:'PLAN_STAGE_ID_DUPLICATE',severity:'error'}});
+const invalidDeps=[];
 const visiting=new Set(),visited=new Set();let cycle=false;const visit=id=>{{if(visiting.has(id)){{cycle=true;return}}if(visited.has(id))return;visiting.add(id);const s=stages.find(v=>v.stage_id===id);for(const d of(s?.dependencies||[]))visit(d);visiting.delete(id);visited.add(id)}};for(const s of stages)visit(s.stage_id);if(cycle)findings.push({{code:'PLAN_DEPENDENCY_CYCLE',severity:'error'}});
 const requested=arr(request.requested_keyword_scope)?[...new Set(request.requested_keyword_scope.map(k=>clean(k).toUpperCase()).filter(k=>allowed.has(k)))]:scope;
 const plannedKeywords=new Set(stages.flatMap(s=>s.keywords));const coveredScope=requested.filter(k=>scope.includes(k)&&plannedKeywords.has(k));
-const requirements=stages.flatMap(s=>s.required_evidence),supported=r=>r.required===false||['supported','covered','resolved','approved','available'].includes(clean(r.status).toLowerCase())||clean(r.source_ref)||clean(r.fact_id)||(arr(r.source_refs)&&r.source_refs.length>0);
-const required=requirements.filter(r=>r.required!==false),requiredSupported=required.filter(supported).length;
+const requirements=stages.flatMap(s=>s.required_evidence),supported=r=>r.required===false||['supported','covered','resolved','approved','available'].includes(clean(r.status).toLowerCase())||clean(r.source_ref)||clean(r.fact_id)||(arr(r.source_refs)&&r.source_refs.length>0)||clean(r.type)||clean(r.details);
+const required=requirements.filter(r=>r.required===true),requiredSupported=required.filter(supported).length;
 const evidence=arr(request.evidence)?request.evidence:[],ragPackets=evidence.map(e=>obj(e)&&obj(e.value)?e.value:e).filter(obj),citations=ragPackets.flatMap(e=>arr(e.citations)?e.citations:[]).filter(obj);
-const tags=v=>{{const m=obj(v.metadata)?v.metadata:{{}},raw=v.keyword_families??v.keyword_family??v.keyword??m.keyword_families??m.keyword_family??m.keyword??[];if(arr(raw))return raw.map(x=>clean(x).toUpperCase()).filter(Boolean);if(typeof raw==='string'){{try{{const p=JSON.parse(raw);if(arr(p))return p.map(x=>clean(x).toUpperCase()).filter(Boolean)}}catch{{}}return raw.split(/[,;|\s]+/).map(x=>clean(x).toUpperCase()).filter(Boolean)}}return[]}};
+const tags=v=>{{const m=obj(v.metadata)?v.metadata:{{}},raw=v.keyword_families??v.keyword_family??v.keyword??v.keywords??m.keyword_families??m.keyword_family??m.keyword??[];if(arr(raw))return raw.map(x=>clean(x).toUpperCase()).filter(Boolean);if(typeof raw==='string'){{try{{const p=JSON.parse(raw);if(arr(p))return p.map(x=>clean(x).toUpperCase()).filter(Boolean)}}catch{{}}return raw.split(/[,;|\s]+/).map(x=>clean(x).toUpperCase()).filter(Boolean)}}return[]}};
 const citedKeywords=new Set(ragPackets.flatMap(e=>[...(arr(e.results)?e.results:[]),...(arr(e.citations)?e.citations:[])]).flatMap(tags));
 const conflictCount=ragPackets.reduce((n,e)=>n+(arr(e.conflicts)?e.conflicts.length:0),0),questions=arr(plan.questions)?plan.questions.filter(obj):[];
-const modelDecision=obj(plan.decision_record)?plan.decision_record:{{}};if(modelDecision.contract!=='decision_record'||modelDecision.contract_version!=='1.0'||!clean(modelDecision.objective)||!obj(modelDecision.selected_action)||!arr(modelDecision.selected_action.reason_codes))findings.push({{code:'DECISION_RECORD_INVALID',severity:'error'}});
+const hasSourceFacts=evidence.some(e=>clean(e?.kind).includes('source_fact')||(obj(e?.value)&&((arr(e.value.facts)&&e.value.facts.length)||Number(e.value.fact_count)>0)));
+const modelDecision=obj(plan.decision_record)?plan.decision_record:{{}};if(modelDecision.contract&&(modelDecision.contract!=='decision_record'||modelDecision.contract_version!=='1.0'||!clean(modelDecision.objective)||!obj(modelDecision.selected_action)||!arr(modelDecision.selected_action?.reason_codes)))findings.push({{code:'DECISION_RECORD_INVALID',severity:'warning'}});
 if(requested.length&&!coveredScope.length)findings.push({{code:'PLAN_SCOPE_UNCOVERED',severity:'error',keywords:requested}});
-if(required.length>requiredSupported||questions.length)findings.push({{code:'PLAN_MANDATORY_EVIDENCE_GAP',severity:'error',required:required.length,supported:requiredSupported,questions:questions.length}});
+if(required.length>requiredSupported||(questions.length&&!hasSourceFacts))findings.push({{code:'PLAN_MANDATORY_EVIDENCE_GAP',severity:'error',required:required.length,supported:requiredSupported,questions:questions.length}});
 if(conflictCount)findings.push({{code:'PLAN_SOURCE_CONFLICT',severity:'error',count:conflictCount}});
 const scopeFit=requested.length?Math.round(100*coveredScope.length/requested.length):0;
 const evidenceCompleteness=required.length?Math.round(100*requiredSupported/required.length):(stages.length?100:0);
-const sourceAuthority=scope.length?Math.round(100*scope.filter(k=>citedKeywords.has(k)).length/scope.length):(citations.length?100:0);
-const entityTemporalConsistency=stages.length&&!invalidDeps.length&&!cycle&&stages.every(s=>s.entity_scope.length&&s.temporal_scope.length)&&!conflictCount?100:0;
-const deterministicValidationHealth=findings.length?0:100;
+const sourceAuthority=scope.length?Math.round(100*scope.filter(k=>citedKeywords.has(k)).length/scope.length):(citations.length||hasSourceFacts?100:0);
+const entityTemporalConsistency=stages.length&&!cycle&&stages.every(s=>s.entity_scope.length&&s.temporal_scope.length)&&!conflictCount?100:0;
+const hardFindings=findings.filter(f=>f.severity==='error');
+const deterministicValidationHealth=hardFindings.length?0:100;
 const stageScore=Math.round(.25*scopeFit+.25*evidenceCompleteness+.20*sourceAuthority+.15*entityTemporalConsistency+.15*deterministicValidationHealth);
 const hardBlockers=[...new Set(findings.filter(f=>f.severity==='error').map(f=>f.code))],decision=hardBlockers.length||stageScore<70?'hitl':stageScore<85?'attention':'continue';
 const reasonCodes=hardBlockers.length?hardBlockers:[decision==='continue'?'READINESS_CONTINUE':decision==='attention'?'READINESS_ATTENTION':'READINESS_HITL'];
 const decisionRecord={{contract:'decision_record',contract_version:'1.0',objective:clean(request.task?.objective||request.objective),considered_inputs:[{{kind:'planner_request',build_mode:mode,requested_keyword_scope:requested,evidence_packet_count:evidence.length}},{{kind:'baseline_inventory',package_hash:request.baseline_analysis?.package_hash||null}}],proposed_actions:stages.map(s=>({{stage_id:s.stage_id,capability:s.capability,keywords:s.keywords,depends_on:s.dependencies}})),selected_action:{{action:decision,reason_codes:reasonCodes}},rejected_actions:findings.map(f=>({{action:'schedule_plan',reason_codes:[f.code]}})),assumptions:arr(modelDecision.assumptions)?modelDecision.assumptions.map(String).slice(0,100):[],evidence_refs:arr(modelDecision.evidence_refs)?modelDecision.evidence_refs.filter(obj).slice(0,100):[],citations:citations.slice(0,100),tool_call_ids:arr(modelDecision.tool_call_ids)?modelDecision.tool_call_ids.map(String).slice(0,100):[],unresolved_questions:questions,acceptance_check_results:[{{check:'scope_fit',score:scopeFit,passed:scopeFit===100}},{{check:'evidence_completeness',score:evidenceCompleteness,passed:evidenceCompleteness===100}},{{check:'source_authority_and_citation',score:sourceAuthority,passed:sourceAuthority===100}},{{check:'entity_temporal_consistency',score:entityTemporalConsistency,passed:entityTemporalConsistency===100}},{{check:'deterministic_validation_health',score:deterministicValidationHealth,passed:deterministicValidationHealth===100}}]}};
-return[{{json:{{contract:'schedule_plan',contract_version:'1.0',status:hardBlockers.length?'needs_input':plan.status||'proposed',build_mode:mode,keyword_scope:scope,stages,questions,preservation_policy:mode==='REVISE'?'preserve_unmentioned':'not_applicable',rationale:clean(plan.rationale).slice(0,4000),decision_record:decisionRecord,findings,hard_blockers:hardBlockers,score:{{stage_score:stageScore,components:{{scope_fit:scopeFit,evidence_completeness:evidenceCompleteness,source_authority_and_citation:sourceAuthority,entity_temporal_consistency:entityTemporalConsistency,deterministic_validation_health:deterministicValidationHealth}},raw_counts:{{requested_keywords:requested.length,covered_keywords:coveredScope.length,required_evidence:required.length,supported_evidence:requiredSupported,citations:citations.length,invalid_dependencies:invalidDeps.length,conflicts:conflictCount,questions:questions.length,findings:findings.length}},thresholds:{{attention:85,hitl:70}},decision,provisional:true}}}}}}];
+return[{{json:{{contract:'schedule_plan',contract_version:'1.0',status:hardBlockers.length?'needs_input':plan.status||'proposed',build_mode:mode,keyword_scope:scope,stages,questions,preservation_policy:mode==='REVISE'?'preserve_unmentioned':'not_applicable',rationale:clean(plan.rationale).slice(0,4000),decision_record:decisionRecord,findings,hard_blockers:hardBlockers,score:{{stage_score:stageScore,components:{{scope_fit:scopeFit,evidence_completeness:evidenceCompleteness,source_authority_and_citation:sourceAuthority,entity_temporal_consistency:entityTemporalConsistency,deterministic_validation_health:deterministicValidationHealth}},raw_counts:{{requested_keywords:requested.length,covered_keywords:coveredScope.length,required_evidence:required.length,supported_evidence:requiredSupported,citations:citations.length,invalid_dependencies:droppedDeps.length,conflicts:conflictCount,questions:questions.length,findings:findings.length}},thresholds:{{attention:85,hitl:70}},decision,provisional:true}}}}}}];
 """
 MERGE=f"""
 const x=$json.merge_request??$json,arr=Array.isArray,clean=v=>typeof v==='string'?v.trim():'',allowed=new Set({K});const mode=clean(x.mode).toUpperCase(),baseline=typeof x.baseline_schedule_text==='string'?x.baseline_schedule_text:'',changes=arr(x.changes)?x.changes:[],findings=[];const hash=v=>{{let h=2166136261;for(const ch of String(v??'')){{h^=ch.charCodeAt(0);h=Math.imul(h,16777619)}}return(h>>>0).toString(16).padStart(8,'0')}};if(mode==='REVISE'&&!baseline)findings.push({{code:'BASELINE_REQUIRED',severity:'error'}});if(!['CREATE','REVISE'].includes(mode))findings.push({{code:'MODE_INVALID',severity:'error'}});let output=mode==='REVISE'?baseline:'',applied=[];for(const c of changes){{const op=clean(c.operation).toUpperCase(),kw=clean(c.keyword).toUpperCase();if(op==='KEEP'){{applied.push({{...c,operation:'KEEP'}});continue}}if(!['ADD','MODIFY','REMOVE'].includes(op)||!allowed.has(kw)){{findings.push({{code:'CHANGE_INVALID',severity:'error'}});continue}}if(op==='REMOVE'&&!x.explicit_remove_approved){{findings.push({{code:'REMOVE_REQUIRES_APPROVAL',severity:'error',keyword:kw}});continue}}const rendered=typeof c.rendered_text==='string'?c.rendered_text.trim():'';if(op==='ADD'){{if(!rendered){{findings.push({{code:'ADD_TEXT_REQUIRED',severity:'error'}});continue}}output=(output.trimEnd()?output.trimEnd()+'\\n':'')+rendered+(rendered.endsWith('/')?'':'\\n/')+'\\n';applied.push({{...c,operation:'ADD'}});continue}}const selector=clean(c.selector?.contains||c.selector||kw);const escaped=selector.replace(/[.*+?^${{}}()|[\\]\\\\]/g,'\\\\$&');const re=new RegExp('(^|\\n)([\\s\\S]*?'+escaped+'[\\s\\S]*?\\n\\s*\\/)','i');const m=output.match(re);if(!m){{findings.push({{code:'TARGET_NOT_FOUND',severity:'error',keyword:kw,selector}});continue}}if(op==='MODIFY'){{if(!rendered){{findings.push({{code:'MODIFY_TEXT_REQUIRED',severity:'error'}});continue}}output=output.replace(m[2],rendered+(rendered.endsWith('/')?'':'\\n/'));applied.push({{...c,operation:'MODIFY'}})}}else{{output=output.replace(m[2],'');applied.push({{...c,operation:'REMOVE'}})}}}}const mutations=changes.filter(c=>clean(c.operation).toUpperCase()!=='KEEP').length;return[{{json:{{contract:'schedule_merge_result',contract_version:'1.0',status:findings.some(f=>f.severity==='error')?'needs_input':'merged',mode,baseline_hash:hash(baseline),output_hash:hash(output),generated_schedule:output,applied_changes:applied,preservation_report:mode==='REVISE'?{{policy:'preserve_unmentioned',zero_change_byte_identical:mutations===0?output===baseline:null,removed_count:applied.filter(c=>c.operation==='REMOVE').length,modified_count:applied.filter(c=>c.operation==='MODIFY').length,added_count:applied.filter(c=>c.operation==='ADD').length}}:{{policy:'not_applicable'}},semantic_diff:{{changed_keywords:[...new Set(applied.filter(c=>c.operation!=='KEEP').map(c=>c.keyword))]}},findings}}}}];
@@ -191,7 +198,7 @@ return[{{json:{{contract:'schedule_validation_result',contract_version:'1.0',sta
 # The old lexical-only validator above is retained as migration context for
 # reviewers of previous exports.  Delivery workflows use stateful replay.
 VALIDATE=build_schedule_validator_js(KEYWORDS)
-VERIFY="""const x=$json,obj=v=>v&&typeof v==='object'&&!Array.isArray(v),val=obj(x.validation_result)?x.validation_result:{},render=obj(x.render_result)?x.render_result:{},merge=obj(x.merge_result)?x.merge_result:{},builder=obj(x.builder_result)?x.builder_result:{},findings=[];if(render.status!=='rendered')findings.push({code:'DETERMINISTIC_RENDER_NOT_PASSED',severity:'error'});if(val.status!=='valid')findings.push({code:'VALIDATION_NOT_PASSED',severity:'error'});if(builder.status==='succeeded'&&!builder.self_check?.passed)findings.push({code:'SPECIALIST_SELF_CHECK_FAILED',severity:'error'});if(merge.mode==='REVISE'&&merge.preservation_report?.policy!=='preserve_unmentioned')findings.push({code:'PRESERVATION_POLICY_MISSING',severity:'error'});if(merge.mode==='REVISE'&&merge.preservation_report?.zero_change_byte_identical===false) findings.push({code:'ZERO_CHANGE_NOT_IDEMPOTENT',severity:'error'});const score=Math.min(render.status==='rendered'?100:0,Number(val.score?.stage_score??0),Number(builder.score?.stage_score??100)),verdict=findings.length?'reject':score<70?'needs_input':score<85?'pass_with_warnings':'pass';return[{json:{contract:'schedule_verifier_result',contract_version:'1.0',verdict,summary:findings.length?'Hard blockers found.':'Independent review completed.',findings,score:{stage_score:score,thresholds:{attention:85,hitl:70}},required_corrections:findings.map(f=>f.code),approval_required:true,can_release:verdict==='pass'}}];"""
+VERIFY="""const x=$json,obj=v=>v&&typeof v==='object'&&!Array.isArray(v),val=obj(x.validation_result)?x.validation_result:{},render=obj(x.render_result)?x.render_result:{},merge=obj(x.merge_result)?x.merge_result:{},builder=obj(x.builder_result)?x.builder_result:{},findings=[];if(render.status!=='rendered')findings.push({code:'DETERMINISTIC_RENDER_NOT_PASSED',severity:'error'});if(val.status!=='valid')findings.push({code:'VALIDATION_NOT_PASSED',severity:'error'});if(builder.status==='succeeded'&&!builder.self_check?.passed)findings.push({code:'SPECIALIST_SELF_CHECK_FAILED',severity:'error'});if(merge.mode==='REVISE'&&merge.preservation_report?.policy!=='preserve_unmentioned')findings.push({code:'PRESERVATION_POLICY_MISSING',severity:'error'});const commissioningApplied=merge.commissioning_revise?.status==='applied'||merge.preservation_report?.commissioning_shift_applied===true;if(merge.mode==='REVISE'&&!commissioningApplied&&merge.preservation_report?.zero_change_byte_identical===false&&!(Array.isArray(merge.applied_changes)&&merge.applied_changes.some(c=>String(c.operation||'').toUpperCase()!=='KEEP'))) findings.push({code:'ZERO_CHANGE_NOT_IDEMPOTENT',severity:'error'});if(commissioningApplied&&merge.commissioning_revise?.monthly_dates_check&&merge.commissioning_revise.monthly_dates_check.ok===false)findings.push({code:'MONTHLY_DATES_GAP',severity:'error'});const score=Math.min(render.status==='rendered'?100:0,Number(val.score?.stage_score??0),Number(builder.score?.stage_score??100)),verdict=findings.length?'reject':score<70?'needs_input':score<85?'pass_with_warnings':'pass';return[{json:{contract:'schedule_verifier_result',contract_version:'1.0',verdict,summary:findings.length?'Hard blockers found.':'Independent review completed.',findings,score:{stage_score:score,thresholds:{attention:85,hitl:70}},required_corrections:findings.map(f=>f.code),approval_required:true,can_release:verdict==='pass'}}];"""
 RELEASE="""const x=$json,action=String(x.action||'request').toLowerCase(),v=x.verifier_result||{},d=x.validation_result||{},a=x.approval||{},scheduleText=String(x.schedule_text||''),findings=[];if(!['request','approve','reject'].includes(action))findings.push({code:'ACTION_INVALID'});if(d.status!=='valid')findings.push({code:'VALIDATION_REQUIRED'});if(v.verdict!=='pass')findings.push({code:'INDEPENDENT_REVIEW_REQUIRED'});if(!scheduleText.trim())findings.push({code:'SCHEDULE_TEXT_REQUIRED'});if(scheduleText.length>10485760)findings.push({code:'SCHEDULE_TEXT_TOO_LARGE'});if(action==='approve'&&(!String(a.actor||'').trim()||!String(a.gate_id||'').trim()))findings.push({code:'ACCOUNTABLE_APPROVAL_REQUIRED'});if(action==='approve'&&a.gate_id!==x.gate_id)findings.push({code:'GATE_MISMATCH'});const status=action==='reject'?'rejected':findings.length?'blocked':action==='approve'?'approved':'pending_approval';return[{json:{contract:'schedule_release_result',contract_version:'1.0',status,filename:String(x.filename||'schedule.inc'),schedule_text:status==='approved'?scheduleText:null,approval:{actor:a.actor||null,at:status==='approved'?new Date().toISOString():null,gate_id:a.gate_id||null},findings}}];"""
 TRACE=r"""
 const root=$json,obj=v=>v&&typeof v==='object'&&!Array.isArray(v),arr=Array.isArray,clean=v=>typeof v==='string'?v.trim():'',allowed=new Set(['intake','plan','rag','baseline','excel','builder','merge','validate','verify','hitl','release','error']);

@@ -13,7 +13,7 @@
       "parameters": {
         "authentication": "n8nUserAuth",
         "formTitle": "MAS — Human Gate",
-        "formDescription": "Resume a controlled engineering task that is waiting for human input. Enter the Task ID from Form — MAS Entry. Choose status to only inspect the gate, or reply/approve/reject to continue. Version and gate_id are loaded automatically from Orchestrator status.",
+        "formDescription": "Resume a controlled engineering task that is waiting for human input. Enter the Task ID from Form — MAS Entry. Choose status to only inspect the gate, or reply/approve/reject to continue. For new wells you can attach WELLTRACK files and an xlsx with perforation MD + gas rates. Version and gate_id are loaded automatically.",
         "formFields": {
           "values": [
             {
@@ -56,6 +56,30 @@
               "requiredField": false
             },
             {
+              "fieldName": "hitl_files",
+              "fieldLabel": "HITL attachments (WELLTRACK .inc/.dev, supplemental .xlsx) — multiple",
+              "fieldType": "file",
+              "multipleFiles": true,
+              "acceptFileTypes": ".inc,.dev,.xlsx,.xls,.txt,.grdecl",
+              "requiredField": false
+            },
+            {
+              "fieldName": "trajectory_files",
+              "fieldLabel": "WELLTRACK / trajectory files (optional alias)",
+              "fieldType": "file",
+              "multipleFiles": true,
+              "acceptFileTypes": ".inc,.dev,.txt",
+              "requiredField": false
+            },
+            {
+              "fieldName": "supplemental_xlsx",
+              "fieldLabel": "Supplemental well params xlsx (COMPDATMD + GRAT)",
+              "fieldType": "file",
+              "multipleFiles": false,
+              "acceptFileTypes": ".xlsx,.xls",
+              "requiredField": false
+            },
+            {
               "fieldName": "requested_by",
               "fieldLabel": "Engineering role / accountable identity",
               "fieldType": "text",
@@ -85,7 +109,7 @@
     },
     {
       "parameters": {
-        "jsCode": "const item = $input.first();\nconst input = item.json || {};\nconst clean = (value) => typeof value === 'string' ? value.trim() : '';\nconst taskId = clean(input.task_id);\nconst action = clean(input.action).toLowerCase() || 'status';\nconst humanResponse = clean(input.human_response);\nconst requestedBy = clean(input.requested_by) || 'anonymous';\nconst allowed = new Set(['status', 'reply', 'approve', 'reject', 'cancel']);\nif (!taskId) {\n  return [{ json: { entrypoint: 'human_gate_form', input_valid: false, status: 'invalid', message: 'task_id is required.', form_action: action, human_response: humanResponse, requested_by: requestedBy } }];\n}\nif (!allowed.has(action)) {\n  return [{ json: { entrypoint: 'human_gate_form', input_valid: false, status: 'invalid', message: 'Unsupported action.', form_action: action, task_id: taskId, human_response: humanResponse, requested_by: requestedBy } }];\n}\nreturn [{ json: {\n  entrypoint: 'human_gate_form',\n  action: 'status',\n  task_id: taskId,\n  requested_by: requestedBy,\n  form_action: action,\n  human_response: humanResponse,\n}}];"
+        "jsCode": "const item = $input.first();\nconst input = item.json || {};\nconst clean = (value) => typeof value === 'string' ? value.trim() : '';\nconst taskId = clean(input.task_id);\nconst action = clean(input.action).toLowerCase() || 'status';\nconst humanResponse = clean(input.human_response);\nconst requestedBy = clean(input.requested_by) || 'anonymous';\nconst allowed = new Set(['status', 'reply', 'approve', 'reject', 'cancel']);\nconst binary = item.binary && typeof item.binary === 'object' ? item.binary : null;\nconst binaryKeys = binary ? Object.keys(binary) : [];\nif (!taskId) {\n  return [{ json: { entrypoint: 'human_gate_form', input_valid: false, status: 'invalid', message: 'task_id is required.', form_action: action, human_response: humanResponse, requested_by: requestedBy, hitl_binary_keys: binaryKeys }, ...(binary ? { binary } : {}) }];\n}\nif (!allowed.has(action)) {\n  return [{ json: { entrypoint: 'human_gate_form', input_valid: false, status: 'invalid', message: 'Unsupported action.', form_action: action, task_id: taskId, human_response: humanResponse, requested_by: requestedBy, hitl_binary_keys: binaryKeys }, ...(binary ? { binary } : {}) }];\n}\nreturn [{ json: {\n  entrypoint: 'human_gate_form',\n  action: 'status',\n  task_id: taskId,\n  requested_by: requestedBy,\n  form_action: action,\n  human_response: humanResponse,\n  hitl_binary_keys: binaryKeys,\n}, ...(binary ? { binary } : {}) }];"
       },
       "id": "b1000001-0001-4000-8000-000000000002",
       "name": "Prepare status lookup",
@@ -121,7 +145,7 @@
     },
     {
       "parameters": {
-        "jsCode": "const prepared = $('Prepare status lookup').first().json || {};\nconst statusResponse = $input.first().json || {};\nconst formAction = String(prepared.form_action || 'status').toLowerCase();\nconst humanResponse = String(prepared.human_response || '').trim();\nconst requestedBy = String(prepared.requested_by || 'anonymous').trim();\nconst gate = statusResponse.human_gate && typeof statusResponse.human_gate === 'object' ? statusResponse.human_gate : null;\nconst awaiting = statusResponse.status === 'awaiting_human' && gate && gate.gate_id;\nconst mutating = ['reply', 'approve', 'reject', 'cancel'].includes(formAction);\nlet shouldResume = false;\nlet blockReason = '';\nif (prepared.input_valid === false) {\n  blockReason = prepared.message || 'Invalid form input.';\n} else if (!mutating) {\n  blockReason = 'status_only';\n} else if (!awaiting) {\n  blockReason = statusResponse.status === 'not_found'\n    ? 'Task not found. Check Task ID.'\n    : `Task status is ${statusResponse.status || 'unknown'}; there is no open human_gate to answer.`;\n} else if (formAction === 'reply' && !humanResponse) {\n  blockReason = 'human_response is required for reply.';\n} else if (!requestedBy || requestedBy === 'anonymous') {\n  blockReason = 'requested_by must be a named accountable engineering identity.';\n} else {\n  shouldResume = true;\n}\nconst expectedVersion = Number(gate?.expected_version ?? statusResponse.version);\nif (shouldResume && (!Number.isInteger(expectedVersion) || expectedVersion < 1 || !gate?.gate_id)) {\n  shouldResume = false;\n  blockReason = 'Open human_gate is missing integer expected_version or gate_id; reload status or re-open the gate.';\n}\nconst resumePayload = shouldResume ? {\n  entrypoint: 'human_gate_form',\n  action: formAction,\n  task_id: statusResponse.task_id || prepared.task_id,\n  expected_version: expectedVersion,\n  gate_id: String(gate.gate_id),\n  human_response: humanResponse,\n  requested_by: requestedBy,\n} : null;\nreturn [{ json: {\n  should_resume: shouldResume,\n  block_reason: blockReason,\n  form_action: formAction,\n  human_response: humanResponse,\n  requested_by: requestedBy,\n  status_response: statusResponse,\n  human_gate: gate,\n  resume_payload: resumePayload,\n  ...(resumePayload || {}),\n}}];"
+        "jsCode": "const prepared = $('Prepare status lookup').first().json || {};\nconst preparedItem = $('Prepare status lookup').first();\nconst statusResponse = $input.first().json || {};\nconst formAction = String(prepared.form_action || 'status').toLowerCase();\nconst humanResponse = String(prepared.human_response || '').trim();\nconst requestedBy = String(prepared.requested_by || 'anonymous').trim();\nconst gate = statusResponse.human_gate && typeof statusResponse.human_gate === 'object' ? statusResponse.human_gate : null;\nconst awaiting = statusResponse.status === 'awaiting_human' && gate && gate.gate_id;\nconst mutating = ['reply', 'approve', 'reject', 'cancel'].includes(formAction);\nconst binary = preparedItem.binary && typeof preparedItem.binary === 'object' ? preparedItem.binary : null;\nconst binaryKeys = binary ? Object.keys(binary) : (Array.isArray(prepared.hitl_binary_keys) ? prepared.hitl_binary_keys : []);\nlet shouldResume = false;\nlet blockReason = '';\nif (prepared.input_valid === false) {\n  blockReason = prepared.message || 'Invalid form input.';\n} else if (!mutating) {\n  blockReason = 'status_only';\n} else if (!awaiting) {\n  blockReason = statusResponse.status === 'not_found'\n    ? 'Task not found. Check Task ID.'\n    : `Task status is ${statusResponse.status || 'unknown'}; there is no open human_gate to answer.`;\n} else if (formAction === 'reply' && !humanResponse && !binaryKeys.length) {\n  blockReason = 'human_response is required for reply (or attach HITL files with a short reply).';\n} else if (!requestedBy || requestedBy === 'anonymous') {\n  blockReason = 'requested_by must be a named accountable engineering identity.';\n} else {\n  shouldResume = true;\n}\nconst expectedVersion = Number(gate?.expected_version ?? statusResponse.version);\nif (shouldResume && (!Number.isInteger(expectedVersion) || expectedVersion < 1 || !gate?.gate_id)) {\n  shouldResume = false;\n  blockReason = 'Open human_gate is missing integer expected_version or gate_id; reload status or re-open the gate.';\n}\nconst effectiveResponse = humanResponse || (binaryKeys.length ? JSON.stringify({text:'Attached HITL files for new-well definitions.',hitl_files:binaryKeys}) : '');\nconst resumePayload = shouldResume ? {\n  entrypoint: 'human_gate_form',\n  action: formAction,\n  task_id: statusResponse.task_id || prepared.task_id,\n  expected_version: expectedVersion,\n  gate_id: String(gate.gate_id),\n  human_response: effectiveResponse,\n  requested_by: requestedBy,\n  hitl_binary_keys: binaryKeys,\n} : null;\nreturn [{ json: {\n  should_resume: shouldResume,\n  block_reason: blockReason,\n  form_action: formAction,\n  human_response: effectiveResponse,\n  requested_by: requestedBy,\n  status_response: statusResponse,\n  human_gate: gate,\n  resume_payload: resumePayload,\n  hitl_binary_keys: binaryKeys,\n  ...(resumePayload || {}),\n}, ...(binary ? { binary } : {}) }];"
       },
       "id": "b1000001-0001-4000-8000-000000000004",
       "name": "Decide resume from status",
@@ -167,7 +191,7 @@
     },
     {
       "parameters": {
-        "jsCode": "const decision = $('Decide resume from status').first().json || {};\nconst payload = decision.resume_payload && typeof decision.resume_payload === 'object' ? decision.resume_payload : {};\nreturn [{ json: payload }];"
+        "jsCode": "const decisionItem = $('Decide resume from status').first();\nconst decision = decisionItem.json || {};\nconst payload = decision.resume_payload && typeof decision.resume_payload === 'object' ? decision.resume_payload : {};\nconst binary = decisionItem.binary && typeof decisionItem.binary === 'object' ? decisionItem.binary : null;\nreturn [{ json: { ...payload }, ...(binary ? { binary } : {}) }];"
       },
       "id": "b1000001-0001-4000-8000-000000000006",
       "name": "Prepare resume payload",
@@ -328,11 +352,11 @@
       ]
     }
   },
-  "versionId": "mas-human-gate-form-v1",
+  "versionId": "mas-human-gate-form-v1.1",
   "meta": {
     "templateCredsSetupCompleted": false,
     "targetN8nVersion": "2.30.8",
-    "contractVersion": "mas_human_gate_form/v1"
+    "contractVersion": "mas_human_gate_form/v1.1"
   },
   "tags": []
 }

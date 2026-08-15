@@ -15,7 +15,7 @@ KEYWORDS = [
     "DATES", "INCLUDE", "GRUPTREE", "WELSPECS", "WELLTRACK", "COMPDATMD",
     "WCONHIST", "WCONPROD", "WCONINJE", "GCONPROD", "GCONINJE", "GUIDERAT", "GSATPROD", "GSATINJE", "WELLSTRE", "WINJGAS", "GINJGAS", "BRANPROP", "NODEPROP", "GNETDP", "NETBALAN",
     "FRACTURE_TEMPLATE", "FRACTURE_SPECS", "FRACTURE_STAGE", "WECON", "WTEST",
-    "WELTARG", "WNETDP", "WPIMULT", "WDFAC", "WELDRAW", "WLIST", "WFRACP", "WFRACPL",
+    "WELTARG", "WNETDP", "WPIMULT", "WDFAC", "WEFAC", "WELOPEN", "WELDRAW", "WLIST", "WFRACP", "WFRACPL",
     "VFPPROD", "WVFPDP", "ACTIONX", "DELAYACT", "ENDACTIO", "UDQ", "UDT", "APPLYSCRIPT",
 ]
 
@@ -35,13 +35,17 @@ def _embedding_credential(name: str) -> dict:
 
 
 INGEST_NORMALIZE = (NAMESPACES_JS + r"""
-const incoming=$json.schedule_knowledge_block??$json.mas_knowledge_block??$json.schedule_knowledge_document??$json;
+// Code v2 defaults to run-once-for-all-items; normalize every incoming block.
 const obj=v=>v&&typeof v==='object'&&!Array.isArray(v),arr=Array.isArray,clean=v=>typeof v==='string'?v.trim():'';
 const parse=v=>{if(obj(v))return v;if(typeof v!=='string'||!v.trim())return{};try{const x=JSON.parse(v);return obj(x)?x:{}}catch{return{}}};
 const list=v=>arr(v)?[...new Set(v.map(clean).filter(Boolean))]:typeof v==='string'?(()=>{try{const x=JSON.parse(v);return arr(x)?list(x):v.split(/[,;|]/).map(clean).filter(Boolean)}catch{return v.split(/[,;|]/).map(clean).filter(Boolean)}})():[];
+const allowed=new Set(KEYWORDS_PLACEHOLDER);
+const hash=s=>{let h=2166136261;for(const ch of String(s)){h^=ch.charCodeAt(0);h=Math.imul(h,16777619)}return(h>>>0).toString(16).padStart(8,'0')};
+const normalizeOne=(wrapper)=>{
+const incoming=wrapper.schedule_knowledge_block??wrapper.mas_knowledge_block??wrapper.schedule_knowledge_document??wrapper;
 const raw=obj(incoming)?incoming:{};
 const m={...parse(raw.metadata_json),...(obj(raw.metadata)?raw.metadata:{})},catalogue=parse(raw.schema_catalogue_json??raw.schema_catalogue),catalogueProvided=Object.keys(catalogue).length>0,findings=[];
-const allowed=new Set(KEYWORDS_PLACEHOLDER),targetBase=clean(raw.target_base||m.target_base||'schedule_mvp'),ns=NAMESPACES[targetBase]||{};
+const targetBase=clean(raw.target_base||m.target_base||'schedule_mvp'),ns=NAMESPACES[targetBase]||{};
 const knowledgeType=clean(raw.knowledge_type||m.knowledge_type).toLowerCase(),allowTypes=new Set(ns.types||[]);
 const knowledgeId=clean(raw.knowledge_id||raw.document_id||m.knowledge_id||m.document_id),revision=clean(raw.revision||raw.document_revision||m.revision||m.document_revision||'1'),status=clean(raw.status||raw.knowledge_status||m.status||m.knowledge_status||'active').toLowerCase();
 const rawKeywords=list(raw.keywords||raw.keyword_families||m.keywords||m.keyword_families);
@@ -61,14 +65,16 @@ if(knowledgeType==='protocol_instruction'&&!text)findings.push({code:'PROTOCOL_I
 if(knowledgeType==='routing_card'&&!text)findings.push({code:'ROUTING_CARD_TEXT_REQUIRED',severity:'error'});
 if(knowledgeType==='capability_instruction'&&!text)findings.push({code:'CAPABILITY_INSTRUCTION_REQUIRED',severity:'error'});
 if(knowledgeType==='worked_example'&&!examples.length&&!text)findings.push({code:'WORKED_EXAMPLE_REQUIRED',severity:'error'});
-const hash=s=>{let h=2166136261;for(const ch of String(s)){h^=ch.charCodeAt(0);h=Math.imul(h,16777619)}return(h>>>0).toString(16).padStart(8,'0')},contentHash=sourceHash||`fnv1a32:${hash(JSON.stringify(body))}`,documentId=knowledgeId,documentRevision=revision;
+const contentHash=sourceHash||`fnv1a32:${hash(JSON.stringify(body))}`,documentId=knowledgeId,documentRevision=revision;
 if(catalogueProvided){const cp=obj(catalogue.simulator_profile)?catalogue.simulator_profile:{},schemas=arr(catalogue.schemas)?catalogue.schemas:[];
  if(catalogue.contract!=='schedule_schema_catalogue'||catalogue.contract_version!=='1.0')findings.push({code:'SCHEMA_CATALOGUE_CONTRACT_INVALID',severity:'error'});if(!/^sha256:[a-f0-9]{64}$/i.test(clean(catalogue.catalogue_hash)))findings.push({code:'SCHEMA_CATALOGUE_HASH_INVALID',severity:'error'});if(!/^sha256:[a-f0-9]{64}$/i.test(clean(catalogue.source_hash)))findings.push({code:'SCHEMA_SOURCE_HASH_INVALID',severity:'error'});if(clean(cp.simulator).toLowerCase()!=='tnavigator'||clean(cp.version)!=='22.2')findings.push({code:'SCHEMA_PROFILE_NOT_APPROVED',severity:'error'});if(!schemas.length)findings.push({code:'SCHEMA_CATALOGUE_EMPTY',severity:'error'});
  for(const entry of schemas){const kw=clean(entry.keyword).toUpperCase(),fields=arr(entry.fields)?entry.fields:[],names=new Set(fields.map(f=>clean(f?.name)).filter(Boolean)),sem=obj(entry.semantics)?entry.semantics:null,fieldOk=f=>clean(f)&&names.has(clean(f));if(!allowed.has(kw)||!clean(entry.schema_id)||!clean(entry.schema_revision)||!fields.length)findings.push({code:'SCHEMA_ENTRY_INVALID',severity:'error',keyword:kw});if(!sem)findings.push({code:'SCHEMA_SEMANTICS_REQUIRED',severity:'error',keyword:kw});else{for(const d of(arr(sem.definitions)?sem.definitions:[]))if(!obj(d)||!clean(d.entity_type)||!fieldOk(d.id_field))findings.push({code:'SEMANTIC_DEFINITION_INVALID',severity:'error',keyword:kw});for(const r of(arr(sem.references)?sem.references:[]))if(!obj(r)||!clean(r.entity_type)||!fieldOk(r.id_field))findings.push({code:'SEMANTIC_REFERENCE_INVALID',severity:'error',keyword:kw});}}
 }
 const normalizedCatalogue=catalogueProvided?{...catalogue,approved:catalogue.approved!==false,approved_by:clean(catalogue.approved_by||catalogue.author||author),author:clean(catalogue.author||catalogue.approved_by||author),approval_gate_id:clean(catalogue.approval_gate_id||`expert:${knowledgeId}:${revision}`),access_scope:clean(catalogue.access_scope||accessScope)}:null;
 const isSchedule=targetBase==='schedule_mvp';
-return[{json:{contract:'schedule_knowledge_document',contract_version:'1.0',status:findings.length?'needs_input':'approved_for_ingestion',text:searchable,knowledge_block:{...body,schema_catalogue:normalizedCatalogue},metadata:{document_id:documentId,document_revision:documentRevision,source_hash:contentHash,target_base:targetBase,knowledge_type:knowledgeType,knowledge_id:knowledgeId,revision,status:'active',access_scope:accessScope,author,approved_by:author,authority_level:authority,approval_status:'approved',section:ns.section||'KNOWLEDGE',knowledge_status:'current',title,page,heading,keyword_families:keywords,topics,task_patterns:taskPatterns,parent_key:`${targetBase}:${knowledgeId}:${revision}`,ingest_key:`${targetBase}:${knowledgeId}:${revision}:${hash(searchable)}`,vendor:'department',simulator:isSchedule?'tNavigator':'',simulator_version:isSchedule?'22.2':''},schema_catalogue:normalizedCatalogue,catalogue_present:catalogueProvided,findings}}];
+return{json:{contract:'schedule_knowledge_document',contract_version:'1.0',status:findings.length?'needs_input':'approved_for_ingestion',text:searchable,knowledge_block:{...body,schema_catalogue:normalizedCatalogue},metadata:{document_id:documentId,document_revision:documentRevision,source_hash:contentHash,target_base:targetBase,knowledge_type:knowledgeType,knowledge_id:knowledgeId,revision,status:'active',access_scope:accessScope,author,approved_by:author,authority_level:authority,approval_status:'approved',section:ns.section||'KNOWLEDGE',knowledge_status:'current',title,page,heading,keyword_families:keywords,topics,task_patterns:taskPatterns,parent_key:`${targetBase}:${knowledgeId}:${revision}`,ingest_key:`${targetBase}:${knowledgeId}:${revision}:${hash(searchable)}`,vendor:'department',simulator:isSchedule?'tNavigator':'',simulator_version:isSchedule?'22.2':''},schema_catalogue:normalizedCatalogue,catalogue_present:catalogueProvided,findings}};
+};
+return $input.all().map(item=>normalizeOne(item.json||{}));
 """).replace("KEYWORDS_PLACEHOLDER", json.dumps(KEYWORDS))
 
 
@@ -160,8 +166,10 @@ if(!query)findings.push({code:'QUERY_REQUIRED',severity:'error'});if(query.lengt
 const allowed=new Set(KEYWORDS_PLACEHOLDER);
 const supplied=Array.isArray(f.keyword_families)?f.keyword_families.map(v=>clean(v)).filter(Boolean):[];
 const exactSchedule=[...new Set((query.match(/\b[A-Z][A-Z0-9_]+\b/g)||[]).filter(k=>allowed.has(k)))];
+// Coverage must follow the retrieval scope. Do not treat every ALLCAPS token in the
+// query as required evidence (e.g. "do not invent WELSPECS" must not force WELSPECS RAG).
 const tags=ns.keywordMode==='schedule'?(supplied.length?supplied.map(v=>v.toUpperCase()).filter(v=>allowed.has(v)):exactSchedule):supplied.map(v=>v.toUpperCase());
-const exact=ns.keywordMode==='schedule'?exactSchedule:tags.slice();
+const exact=tags.slice();
 const allowTypes=new Set(ns.types||[]);
 const types=Array.isArray(f.knowledge_types)?[...new Set(f.knowledge_types.map(v=>clean(v).toLowerCase()).filter(v=>allowTypes.has(v)))]:[...allowTypes];
 const topics=Array.isArray(f.topics)?[...new Set(f.topics.map(clean).filter(Boolean))]:[],patterns=Array.isArray(f.task_patterns)?[...new Set(f.task_patterns.map(clean).filter(Boolean))]:[];
@@ -201,13 +209,39 @@ return[{json:{...e,status:hard?'abstain':'succeeded',results:hard?[]:results,cit
 """
 
 
-PREPARE_SCHEMA_LOOKUP = r"""const e=$json||{},hashes=[...new Set((Array.isArray(e.results)?e.results:[]).map(r=>String(r.content_hash||'')).filter(Boolean))];return[{json:{evidence:e,sql_parameters:[String(e.filters?.target_base||''),String(e.filters?.access_scope||''),JSON.stringify(hashes)]}}];"""
-CATALOGUE_LOOKUP_SQL = """SELECT catalogue_hash,catalogue_ref,source_hash,access_scope,approved_by,approval_gate_id,schema_catalogue FROM tnavigator_schedule_schema_catalogue_v1 WHERE target_base=$1 AND access_scope=$2 ORDER BY stored_at DESC,catalogue_hash LIMIT 20"""
+PREPARE_SCHEMA_LOOKUP = r"""const e=$json||{},requested=[...new Set((Array.isArray(e.filters?.keyword_families)?e.filters.keyword_families:[]).map(v=>String(v||'').trim().toUpperCase()).filter(Boolean))];return[{json:{evidence:e,sql_parameters:[String(e.filters?.target_base||''),String(e.filters?.access_scope||''),JSON.stringify(requested)]}}];"""
+CATALOGUE_LOOKUP_SQL = """SELECT catalogue_hash,catalogue_ref,source_hash,access_scope,approved_by,approval_gate_id,schema_catalogue FROM tnavigator_schedule_schema_catalogue_v1 WHERE target_base=$1 AND access_scope=$2 AND ($3::jsonb='[]'::jsonb OR EXISTS (SELECT 1 FROM jsonb_array_elements(coalesce(schema_catalogue->'schemas','[]'::jsonb)) s JOIN jsonb_array_elements_text($3::jsonb) q ON upper(trim(coalesce(s->>'keyword','')))=upper(trim(q.value)))) ORDER BY stored_at DESC,catalogue_hash LIMIT 100"""
 ATTACH_SCHEMA_CATALOGUE = r"""
-const prepared=$('Prepare approved schema catalogue lookup').first().json,e=prepared.evidence||{},obj=v=>v&&typeof v==='object'&&!Array.isArray(v),arr=Array.isArray,clean=v=>typeof v==='string'?v.trim():'',parse=v=>{if(obj(v))return v;if(typeof v==='string'){try{const x=JSON.parse(v);return obj(x)?x:{}}catch{return{}}}return{}},findings=arr(e.findings)?e.findings.slice():[],requested=arr(e.filters?.keyword_families)?e.filters.keyword_families.map(v=>clean(v).toUpperCase()):[],valid=[];
+const prepared=$('Prepare approved schema catalogue lookup').first().json,e=prepared.evidence||{},obj=v=>v&&typeof v==='object'&&!Array.isArray(v),arr=Array.isArray,clean=v=>typeof v==='string'?v.trim():'',parse=v=>{if(obj(v))return v;if(typeof v==='string'){try{const x=JSON.parse(v);return obj(x)?x:{}}catch{return{}}}return{}},findings=arr(e.findings)?e.findings.slice():[],requested=arr(e.filters?.keyword_families)?e.filters.keyword_families.map(v=>clean(v).toUpperCase()).filter(Boolean):[];
 if(e.filters?.require_schema!==true){const hard=findings.some(f=>f.severity==='error')||e.status==='abstain';return[{json:{...e,status:hard?'abstain':(e.status||'succeeded'),results:hard?[]:e.results,citations:hard?[]:e.citations,findings,evidence_ready:!hard&&e.evidence_ready!==false,schema_catalogue:null,retrieval:{...(e.retrieval||{}),full_parent_hydration:true,schema_catalogue_lookup:false,catalogue_hash:null}}}];}
-for(const row of $input.all().map(i=>i.json||{})){const c=parse(row.schema_catalogue),p=obj(c.simulator_profile)?c.simulator_profile:{},schemas=arr(c.schemas)?c.schemas:[],covered=new Set(schemas.map(s=>clean(s.keyword).toUpperCase())),okay=c.contract==='schedule_schema_catalogue'&&c.contract_version==='1.0'&&clean(p.simulator).toLowerCase()==='tnavigator'&&clean(p.version)==='22.2'&&/^sha256:[a-f0-9]{64}$/i.test(clean(c.catalogue_hash))&&requested.every(k=>covered.has(k))&&schemas.every(s=>obj(s.semantics)&&arr(s.fields)&&s.fields.length);if(okay)valid.push(c)}
-if(!requested.length)findings.push({code:'SCHEMA_KEYWORD_SCOPE_REQUIRED',severity:'error'});if(!valid.length)findings.push({code:'EXPERT_SCHEMA_CATALOGUE_NOT_FOUND',severity:'error',keywords:requested});if(valid.length>1&&new Set(valid.map(c=>clean(c.catalogue_hash))).size>1)findings.push({code:'SCHEMA_CATALOGUE_AMBIGUOUS',severity:'error'});const hard=findings.some(f=>f.severity==='error'),selected=hard?null:valid[0];return[{json:{...e,status:hard?'abstain':'succeeded',results:hard?[]:e.results,citations:hard?[]:e.citations,findings,evidence_ready:!hard,schema_catalogue:selected,retrieval:{...(e.retrieval||{}),full_parent_hydration:true,schema_catalogue_lookup:true,catalogue_hash:selected?.catalogue_hash||null}}}];
+const shaRotr=(x,n)=>((x>>>n)|(x<<(32-n)))>>>0,shaUtf8=s=>{const out=[];for(let i=0;i<String(s).length;i++){let c=String(s).charCodeAt(i);if(c<0x80)out.push(c);else if(c<0x800)out.push(0xc0|(c>>6),0x80|(c&63));else if(c>=0xd800&&c<=0xdbff){const u=0x10000+((c&1023)<<10)|(String(s).charCodeAt(++i)&1023);out.push(0xf0|(u>>18),0x80|((u>>12)&63),0x80|((u>>6)&63),0x80|(u&63));}else out.push(0xe0|(c>>12),0x80|((c>>6)&63),0x80|(c&63));}return out;};
+const SHA_K=[0x428a2f98,0x71374491,0xb5c0fbcf,0xe9b5dba5,0x3956c25b,0x59f111f1,0x923f82a4,0xab1c5ed5,0xd807aa98,0x12835b01,0x243185be,0x550c7dc3,0x72be5d74,0x80deb1fe,0x9bdc0a7f,0xc19bf174,0xe49b69c1,0xefbe4786,0x0fc19dc6,0x240ca1cc,0x2de92c6f,0x4a7484aa,0x5cb0a9dc,0x76f988da,0x983e5152,0xa831c66d,0xb00327c8,0xbf597fc7,0xc6e00bf3,0xd5a79147,0x06ca6351,0x14292967,0x27b70a85,0x2e1b2138,0x4d2c6dfc,0x53380d13,0x650a7354,0x766a0abb,0x81c2c92e,0x92722c85,0xa2bfe8a1,0xa81a664b,0xc24b8b70,0xc76c51a3,0xd192e819,0xd6990624,0xf40e3585,0x106aa070,0x19a4c116,0x1e376c08,0x2748774c,0x34b0bcb5,0x391c0cb3,0x4ed8aa4a,0x5b9cca4f,0x682e6ff3,0x748f82ee,0x78a5636f,0x84c87814,0x8cc70208,0x90befffa,0xa4506ceb,0xbef9a3f7,0xc67178f2];
+const sha256=s=>{const b=shaUtf8(s),bit=b.length*8,b2=b.slice();b2.push(0x80);while((b2.length%64)!==56)b2.push(0);for(let i=7;i>=0;i--)b2.push((bit/Math.pow(2,i*8))&255);let h0=0x6a09e667,h1=0xbb67ae85,h2=0x3c6ef372,h3=0xa54ff53a,h4=0x510e527f,h5=0x9b05688c,h6=0x1f83d9ab,h7=0x5be0cd19;for(let off=0;off<b2.length;off+=64){const w=new Array(64);for(let i=0;i<16;i++){const p=off+i*4;w[i]=((b2[p]<<24)|(b2[p+1]<<16)|(b2[p+2]<<8)|b2[p+3])>>>0}for(let i=16;i<64;i++){const a=w[i-15],c=w[i-2],s0=(shaRotr(a,7)^shaRotr(a,18)^(a>>>3))>>>0,s1=(shaRotr(c,17)^shaRotr(c,19)^(c>>>10))>>>0;w[i]=(w[i-16]+s0+w[i-7]+s1)>>>0}let a=h0,bv=h1,c=h2,d=h3,e=h4,f=h5,g=h6,hh=h7;for(let i=0;i<64;i++){const S1=(shaRotr(e,6)^shaRotr(e,11)^shaRotr(e,25))>>>0,ch=((e&f)^((~e)&g))>>>0,t1=(hh+S1+ch+SHA_K[i]+w[i])>>>0,S0=(shaRotr(a,2)^shaRotr(a,13)^shaRotr(a,22))>>>0,maj=((a&bv)^(a&c)^(bv&c))>>>0,t2=(S0+maj)>>>0;hh=g;g=f;f=e;e=(d+t1)>>>0;d=c;c=bv;bv=a;a=(t1+t2)>>>0}h0=(h0+a)>>>0;h1=(h1+bv)>>>0;h2=(h2+c)>>>0;h3=(h3+d)>>>0;h4=(h4+e)>>>0;h5=(h5+f)>>>0;h6=(h6+g)>>>0;h7=(h7+hh)>>>0}return[h0,h1,h2,h3,h4,h5,h6,h7].map(x=>x.toString(16).padStart(8,'0')).join('')};
+const mergeHash=vals=>{const uniq=[...new Set(vals.map(clean).filter(Boolean))].sort();if(!uniq.length)return null;if(uniq.length===1)return uniq[0].toLowerCase();return `sha256:${sha256(uniq.join('|'))}`;};
+const byKeyword=new Map(),sourceHashes=[],catalogueHashes=[],approvers=[],gateIds=[];
+for(const row of $input.all().map(i=>i.json||{})){
+  const c=parse(row.schema_catalogue),p=obj(c.simulator_profile)?c.simulator_profile:{},schemas=arr(c.schemas)?c.schemas:[];
+  const baseOk=c.contract==='schedule_schema_catalogue'&&c.contract_version==='1.0'&&clean(p.simulator).toLowerCase()==='tnavigator'&&clean(p.version)==='22.2'&&/^sha256:[a-f0-9]{64}$/i.test(clean(c.catalogue_hash))&&/^sha256:[a-f0-9]{64}$/i.test(clean(c.source_hash));
+  if(!baseOk||!schemas.length)continue;
+  const approver=clean(row.approved_by||c.approved_by||c.author);
+  const gate=clean(row.approval_gate_id||c.approval_gate_id||'schedule-schema-catalogue-approved');
+  for(const entry of schemas){
+    const kw=clean(entry.keyword).toUpperCase();
+    if(!requested.includes(kw))continue;
+    const fields=arr(entry.fields)?entry.fields:[],sem=obj(entry.semantics)?entry.semantics:null;
+    if(!clean(entry.schema_id)||!clean(entry.schema_revision)||!fields.length||!sem)continue;
+    const variant=clean(entry.variant)||'default';
+    const list=byKeyword.get(kw)||[];
+    if(list.some(e=> (clean(e.variant)||'default')===variant))continue;
+    list.push(entry);byKeyword.set(kw,list);catalogueHashes.push(clean(c.catalogue_hash));sourceHashes.push(clean(c.source_hash));if(approver)approvers.push(approver);if(gate)gateIds.push(gate);
+  }
+}
+const missing=requested.filter(k=>!byKeyword.has(k));
+if(!requested.length)findings.push({code:'SCHEMA_KEYWORD_SCOPE_REQUIRED',severity:'error'});
+if(missing.length)findings.push({code:'EXPERT_SCHEMA_CATALOGUE_NOT_FOUND',severity:'error',keywords:missing});
+const hard=findings.some(f=>f.severity==='error');
+const selected=hard?null:{contract:'schedule_schema_catalogue',contract_version:'1.0',catalogue_ref:`catalogue://tnavigator/22.2/merged/${requested.slice().sort().join('+')||'empty'}`,simulator_profile:{vendor:'Rock Flow Dynamics',simulator:'tNavigator',version:'22.2'},catalogue_hash:mergeHash(catalogueHashes),source_hash:mergeHash(sourceHashes),schemas:requested.flatMap(k=>byKeyword.get(k)||[]),approved:true,approved_by:approvers[0]||'department-hydrodynamic-expert',approval_gate_id:gateIds[0]||'schedule-schema-catalogue-approved',access_scope:clean(e.filters?.access_scope||'petroleum-engineering')};
+return[{json:{...e,status:hard?'abstain':'succeeded',results:hard?[]:e.results,citations:hard?[]:e.citations,findings,evidence_ready:!hard,schema_catalogue:selected,retrieval:{...(e.retrieval||{}),full_parent_hydration:true,schema_catalogue_lookup:true,catalogue_hash:selected?.catalogue_hash||null,merged_catalogue_hashes:catalogueHashes}}}];
 """
 
 
