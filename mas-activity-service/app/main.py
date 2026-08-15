@@ -195,8 +195,22 @@ def _gate_payload(task: dict[str, Any]) -> dict[str, Any] | None:
     return dict(gate)
 
 
+def _is_awaiting_status(status: Any) -> bool:
+    """Orchestrator uses awaiting_human; Trace Writer / handoffs often emit AWAITING_HUMAN."""
+    return str(status or "").strip().lower() == "awaiting_human"
+
+
+def _normalize_task_status(status: Any) -> str | None:
+    if status is None:
+        return None
+    text = str(status).strip()
+    if not text:
+        return None
+    return "awaiting_human" if _is_awaiting_status(text) else text
+
+
 def _awaiting(task: dict[str, Any]) -> bool:
-    return (task.get("status") == "awaiting_human") and bool(_gate_payload(task))
+    return _is_awaiting_status(task.get("status")) and bool(_gate_payload(task))
 
 
 async def _publish(task_id: str, message: dict[str, Any]) -> None:
@@ -240,7 +254,7 @@ async def _set_gate(
     async with _lock:
         task = _touch(task_id)
         if status is not None:
-            task["status"] = status
+            task["status"] = _normalize_task_status(status) or status
         if version is not None:
             task["version"] = version
         if clear_gate:
@@ -443,20 +457,29 @@ async def post_turn(body: TurnPost, _: None = Depends(_require_key)) -> dict[str
 async def post_sync(body: SyncPost, _: None = Depends(_require_key)) -> dict[str, Any]:
     turns = [_normalize_turn(t, trace_id=body.trace_id) for t in body.turns]
     turns.extend(_events_to_turns(body.events, trace_id=body.trace_id))
-    gate = body.human_gate
+    gate = body.human_gate if isinstance(body.human_gate, dict) else None
+    explicit_status = body.status is not None
     status = body.status
     for event in body.events:
-        if event.human_gate and not gate:
-            gate = event.human_gate
-        if event.status and not status:
+        event_gate = event.human_gate if isinstance(event.human_gate, dict) else None
+        if event_gate and not gate:
+            gate = event_gate
+        # Promote event status only when it opens/arms a gate — never routine handoff codes
+        # like EXCEL_EVIDENCE_READY (those would clear_gate and hide the HITL composer).
+        if event.status and status is None and (event_gate or _is_awaiting_status(event.status)):
             status = event.status
-    if gate or status is not None or body.version is not None:
+    if gate is not None and status is None:
+        status = "awaiting_human"
+    status = _normalize_task_status(status)
+    # Update gate/status only from top-level orch fields or an event that carried human_gate /
+    # AWAITING_HUMAN. Trace Writer handoff batches alone must not clear an open gate.
+    if gate is not None or explicit_status or body.version is not None:
         await _set_gate(
             body.task_id,
-            status=status,
+            status=status if (gate is not None or explicit_status) else None,
             version=body.version,
             gate=gate,
-            clear_gate=gate is None and status is not None and status != "awaiting_human",
+            clear_gate=gate is None and explicit_status and not _is_awaiting_status(status),
         )
     if not turns:
         return {"stored": False, "task_id": body.task_id, "count": 0, "reason": "no_handoff_events"}
@@ -587,7 +610,7 @@ async def post_hitl(task_id: str, body: HitlPost, _: None = Depends(_require_key
             raise HTTPException(status_code=exc.status_code, detail=str(exc)) from exc
         else:
             gate = status_payload.get("human_gate") if isinstance(status_payload.get("human_gate"), dict) else None
-            awaiting = status_payload.get("status") == "awaiting_human" and gate and gate.get("gate_id")
+            awaiting = _is_awaiting_status(status_payload.get("status")) and gate and gate.get("gate_id")
             await _set_gate(
                 task_id,
                 status=status_payload.get("status"),
@@ -645,7 +668,7 @@ async def post_hitl(task_id: str, body: HitlPost, _: None = Depends(_require_key
     else:
         stored = []
 
-    clear = orch.get("status") != "awaiting_human" or not orch.get("human_gate")
+    clear = (not _is_awaiting_status(orch.get("status"))) or not orch.get("human_gate")
     gate_out = orch.get("human_gate") if isinstance(orch.get("human_gate"), dict) else None
     await _set_gate(
         task_id,
@@ -662,7 +685,7 @@ async def post_hitl(task_id: str, body: HitlPost, _: None = Depends(_require_key
         "backend": orch.get("backend") or backend,
         "orchestrator": orch,
         "turn": stored[0] if stored else None,
-        "awaiting_human": orch.get("status") == "awaiting_human" and bool(gate_out),
+        "awaiting_human": _is_awaiting_status(orch.get("status")) and bool(gate_out),
         "human_gate": gate_out,
         "local_version_hint": local_version,
     }

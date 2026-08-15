@@ -99,6 +99,83 @@ def test_sync_preserves_presentation_fields() -> None:
     assert feed["activity"][0]["duration_label"] == "9.4 s"
 
 
+def test_awaiting_accepts_uppercase_status_from_sync_gate_event() -> None:
+    """Bug 1: AWAITING_HUMAN + human_gate must arm awaiting_human for the HITL composer."""
+    gate = {
+        "gate_id": "gate_upper_1",
+        "kind": "needs_input",
+        "reason": "Need WELLTRACK",
+        "questions": [{"id": "q1", "text": "Attach WELLTRACK", "required": True}],
+        "expected_version": 3,
+    }
+    res = client.post(
+        "/v1/sync",
+        headers=KEY,
+        json={
+            "task_id": "eng_await_case",
+            "events": [
+                {
+                    "event_type": "handoff",
+                    "status": "AWAITING_HUMAN",
+                    "summary": "Waiting on human",
+                    "from_role": "Orchestrator",
+                    "to_role": "Human",
+                    "human_gate": gate,
+                    "handoff": {
+                        "from_role": "Orchestrator",
+                        "to_role": "Human",
+                        "from_specialist": "universal_orchestrator",
+                        "to_specialist": "human_operator",
+                    },
+                }
+            ],
+        },
+    )
+    assert res.status_code == 200
+    feed = client.get("/v1/tasks/eng_await_case").json()
+    assert feed["status"] == "awaiting_human"
+    assert feed["awaiting_human"] is True
+    assert feed["human_gate"]["gate_id"] == "gate_upper_1"
+
+
+def test_sync_handoff_does_not_clear_open_gate() -> None:
+    """Bug 2: routine Trace Writer statuses must not drop an open gate or un-arm HITL."""
+    seed = client.post("/v1/demo/seed", headers=KEY).json()
+    task_id = seed["task_id"]
+    before = client.get(f"/v1/tasks/{task_id}").json()
+    assert before["awaiting_human"] is True
+    gate_id = before["human_gate"]["gate_id"]
+
+    res = client.post(
+        "/v1/sync",
+        headers=KEY,
+        json={
+            "task_id": task_id,
+            "events": [
+                {
+                    "event_type": "handoff",
+                    "at": "2026-08-15T12:00:00Z",
+                    "status": "EXCEL_EVIDENCE_READY",
+                    "summary": "Excel returned facts",
+                    "handoff": {
+                        "from_role": "Excel Extractor",
+                        "to_role": "Schedule Builder",
+                        "from_specialist": "excel_extraction_specialist",
+                        "to_specialist": "schedule_builder_specialist",
+                        "details": {"fact_count": 2},
+                    },
+                }
+            ],
+        },
+    )
+    assert res.status_code == 200
+    after = client.get(f"/v1/tasks/{task_id}").json()
+    assert after["awaiting_human"] is True
+    assert after["human_gate"]["gate_id"] == gate_id
+    assert after["status"] == "awaiting_human"
+    assert any(t.get("status") == "EXCEL_EVIDENCE_READY" for t in after["activity"])
+
+
 def test_rejects_bad_task_id_and_oversized_declared_body() -> None:
     bad = client.post(
         "/v1/turns",
