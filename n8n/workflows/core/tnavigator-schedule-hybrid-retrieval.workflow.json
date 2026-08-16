@@ -5,6 +5,22 @@
   "nodes": [
     {
       "parameters": {
+        "content": "## edit after import\n\n**MAS — Knowledge Retrieval** — after UI import, complete bindings before activate:\n\n- Set Postgres credentials on **PostgreSQL lexical + exact candidates**\n- Set Postgres credentials on **PostgreSQL tag candidates**\n- Set vector/memory credentials on **PGVector semantic candidates**\n- Set OpenAI credentials on **SCHEDULE Retrieval Embeddings — same model as ingestion**\n- Set Postgres credentials on **PostgreSQL full parent knowledge**\n- Set Postgres credentials on **PostgreSQL approved schema catalogue**\n\nDo not rely on env()/Globals for corporate UI import.",
+        "height": 328,
+        "width": 440,
+        "color": 1
+      },
+      "id": "f78deb72-5da6-5372-8ace-5e1094e8d900",
+      "name": "edit after import",
+      "type": "n8n-nodes-base.stickyNote",
+      "typeVersion": 1,
+      "position": [
+        -40,
+        -728
+      ]
+    },
+    {
+      "parameters": {
         "content": "## Hybrid retrieval + full parent hydration — n8n 2.30.8\n\nPostgreSQL full-text + PGVector semantic + exact tags → deterministic RRF per parent block → full active parent hydration. `target_base` isolates corpora in one physical table. Schema catalogue lookup is required only for `schedule_mvp`. Empty tag filters do not match the whole namespace. Missing required instruction coverage causes `abstain`.",
         "width": 610,
         "height": 450,
@@ -15,8 +31,8 @@
       "type": "n8n-nodes-base.stickyNote",
       "typeVersion": 1,
       "position": [
-        -1280,
-        -700
+        -690,
+        -830
       ]
     },
     {
@@ -29,8 +45,8 @@
       "type": "n8n-nodes-base.executeWorkflowTrigger",
       "typeVersion": 1.2,
       "position": [
-        -1240,
-        -80
+        0,
+        0
       ]
     },
     {
@@ -42,8 +58,8 @@
       "type": "n8n-nodes-base.code",
       "typeVersion": 2,
       "position": [
-        -1000,
-        -80
+        280,
+        0
       ]
     },
     {
@@ -75,8 +91,8 @@
       "type": "n8n-nodes-base.if",
       "typeVersion": 2.2,
       "position": [
-        -760,
-        -80
+        560,
+        0
       ]
     },
     {
@@ -88,8 +104,8 @@
       "type": "n8n-nodes-base.code",
       "typeVersion": 2,
       "position": [
-        -520,
-        -320
+        840,
+        -340
       ]
     },
     {
@@ -108,8 +124,8 @@
       "type": "n8n-nodes-base.postgres",
       "typeVersion": 2.6,
       "position": [
-        -280,
-        -320
+        1120,
+        -170
       ],
       "credentials": {
         "postgres": {
@@ -129,8 +145,8 @@
       "type": "n8n-nodes-base.code",
       "typeVersion": 2,
       "position": [
-        -20,
-        -320
+        1400,
+        -85
       ]
     },
     {
@@ -142,8 +158,8 @@
       "type": "n8n-nodes-base.code",
       "typeVersion": 2,
       "position": [
-        -520,
-        40
+        840,
+        -170
       ]
     },
     {
@@ -162,8 +178,8 @@
       "type": "n8n-nodes-base.postgres",
       "typeVersion": 2.6,
       "position": [
-        -280,
-        40
+        1120,
+        0
       ],
       "credentials": {
         "postgres": {
@@ -183,8 +199,8 @@
       "type": "n8n-nodes-base.code",
       "typeVersion": 2,
       "position": [
-        -20,
-        40
+        1400,
+        85
       ]
     },
     {
@@ -227,8 +243,8 @@
       "type": "@n8n/n8n-nodes-langchain.vectorStorePGVector",
       "typeVersion": 1.3,
       "position": [
-        -280,
-        -140
+        840,
+        170
       ],
       "credentials": {
         "postgres": {
@@ -254,8 +270,8 @@
       "type": "@n8n/n8n-nodes-langchain.embeddingsOpenAi",
       "typeVersion": 1.2,
       "position": [
-        -280,
-        -500
+        840,
+        0
       ],
       "credentials": {
         "openAiApi": {
@@ -273,8 +289,8 @@
       "type": "n8n-nodes-base.code",
       "typeVersion": 2,
       "position": [
-        -20,
-        -140
+        1120,
+        170
       ]
     },
     {
@@ -287,8 +303,8 @@
       "type": "n8n-nodes-base.merge",
       "typeVersion": 3.2,
       "position": [
-        220,
-        -140
+        1680,
+        0
       ]
     },
     {
@@ -300,8 +316,8 @@
       "type": "n8n-nodes-base.code",
       "typeVersion": 2,
       "position": [
-        480,
-        -140
+        1960,
+        0
       ]
     },
     {
@@ -313,8 +329,8 @@
       "type": "n8n-nodes-base.code",
       "typeVersion": 2,
       "position": [
-        720,
-        -140
+        2240,
+        0
       ]
     },
     {
@@ -333,8 +349,8 @@
       "type": "n8n-nodes-base.postgres",
       "typeVersion": 2.6,
       "position": [
-        960,
-        -140
+        2520,
+        0
       ],
       "credentials": {
         "postgres": {
@@ -354,8 +370,8 @@
       "type": "n8n-nodes-base.code",
       "typeVersion": 2,
       "position": [
-        1200,
-        -140
+        2800,
+        0
       ]
     },
     {
@@ -367,8 +383,8 @@
       "type": "n8n-nodes-base.code",
       "typeVersion": 2,
       "position": [
-        1440,
-        -140
+        3080,
+        0
       ]
     },
     {
@@ -387,8 +403,8 @@
       "type": "n8n-nodes-base.postgres",
       "typeVersion": 2.6,
       "position": [
-        1680,
-        -140
+        3360,
+        0
       ],
       "credentials": {
         "postgres": {
@@ -408,8 +424,8 @@
       "type": "n8n-nodes-base.code",
       "typeVersion": 2,
       "position": [
-        1920,
-        -140
+        3640,
+        0
       ]
     },
     {
@@ -421,8 +437,8 @@
       "type": "n8n-nodes-base.code",
       "typeVersion": 2,
       "position": [
-        -520,
-        240
+        840,
+        340
       ]
     }
   ],

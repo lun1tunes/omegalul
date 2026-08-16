@@ -11,6 +11,22 @@
   "nodes": [
     {
       "parameters": {
+        "content": "## edit after import\n\n**Form — MAS Human Gate** — after UI import, complete bindings before activate:\n\n- Bind sub-workflow on **Call Orchestrator status**\n- Bind sub-workflow on **Call Orchestrator resume**\n\nDo not rely on env()/Globals for corporate UI import.",
+        "height": 216,
+        "width": 440,
+        "color": 1
+      },
+      "id": "d0bdb2a7-6395-585d-a762-89d2d789fe5b",
+      "name": "edit after import",
+      "type": "n8n-nodes-base.stickyNote",
+      "typeVersion": 1,
+      "position": [
+        -40,
+        -276
+      ]
+    },
+    {
+      "parameters": {
         "authentication": "n8nUserAuth",
         "formTitle": "MAS — Human Gate",
         "formDescription": "Resume a controlled engineering task that is waiting for human input. Enter the Task ID from Form — MAS Entry. Choose status to only inspect the gate, or reply/approve/reject to continue. For new wells you can attach WELLTRACK files and an xlsx with perforation MD + gas rates. Version and gate_id are loaded automatically.",
@@ -199,7 +215,7 @@
       "typeVersion": 2,
       "position": [
         1400,
-        -120
+        0
       ]
     },
     {
@@ -222,7 +238,7 @@
       "typeVersion": 1.3,
       "position": [
         1680,
-        -120
+        0
       ]
     },
     {

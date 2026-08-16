@@ -1,12 +1,12 @@
 .knowledge-page .kb-stage {
   position: relative;
   z-index: 1;
-  height: calc(100svh - 70px);
+  height: calc(100svh - 88px);
   overflow: auto;
   padding: 1rem clamp(1rem, 2.8vw, 2.2rem) 2rem;
 }
 body.knowledge-page:has(.flash:not([hidden])) .kb-stage {
-  height: calc(100svh - 70px - 2.6rem);
+  height: calc(100svh - 88px - 2.6rem);
 }
 
 .kb-toolbar {

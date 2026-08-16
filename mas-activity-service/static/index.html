@@ -3,18 +3,23 @@
 <head>
   <meta charset="utf-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1" />
-  <title>MAS Activity</title>
+  <title>NOVATEK RE MAS Workspace</title>
   <link rel="preconnect" href="https://fonts.googleapis.com" />
   <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
   <link href="https://fonts.googleapis.com/css2?family=IBM+Plex+Sans:wght@400;500;600;700&family=IBM+Plex+Mono:wght@400;500&display=swap" rel="stylesheet" />
-  <link rel="stylesheet" href="/static/app.css?v=25" />
+  <link rel="stylesheet" href="/static/app.css?v=40" />
 </head>
 <body>
   <div class="atmosphere" aria-hidden="true"></div>
   <header class="top">
-    <a class="brand" href="/" id="brandHome" title="Обновить список задач из n8n Data Tables" aria-label="MAS Activity — обновить список задач">
-      <span class="mark">MAS</span>
-      <span class="product">Activity</span>
+    <a class="brand" href="/" id="brandHome" title="Обновить список задач из n8n Data Tables" aria-label="NOVATEK RE MAS Workspace — обновить список задач">
+      <span class="brand-lockup">
+        <span class="brand-row">
+          <span class="mark">NOVATEK RE MAS</span>
+          <span class="product">Workspace</span>
+        </span>
+        <span class="brand-sub">Novatek STC reservoir engineering multi-agent system</span>
+      </span>
     </a>
     <div class="top-actions">
       <a class="btn btn-quiet" href="/knowledge">База знаний</a>
@@ -22,6 +27,13 @@
   </header>
 
   <div id="flash" class="flash" hidden role="alert"></div>
+  <div id="waitBar" class="wait-bar" hidden role="status" aria-live="polite" aria-busy="false">
+    <span class="wait-spinner" aria-hidden="true"></span>
+    <span class="wait-copy">
+      <span class="wait-label" id="waitLabel">Ждём ответ…</span>
+      <span class="wait-elapsed" id="waitElapsed" hidden></span>
+    </span>
+  </div>
 
   <main class="stage">
     <aside class="rail" id="taskRail" aria-label="Недавние задачи">
@@ -50,12 +62,16 @@
           <div class="request-label">Исходный запрос</div>
           <p class="request-text" id="requestText"></p>
         </aside>
+        <aside class="status-banner" id="statusBanner" hidden>
+          <div class="status-banner-label" id="statusBannerLabel">Статус</div>
+          <p class="status-banner-text" id="statusBannerText"></p>
+        </aside>
         <ol class="thread" id="thread"></ol>
-        <p class="empty" id="empty">Нет turns. Создайте задачу кнопкой «Новая задача» или откройте /t/&lt;task_id&gt;.</p>
+        <p class="empty" id="empty" hidden></p>
         <div class="not-found" id="notFound" hidden>
           <p class="not-found-title">Задача не найдена</p>
           <p class="not-found-id" id="notFoundId"></p>
-          <p class="not-found-copy">Нет такой задачи в памяти Activity и в Data Tables.</p>
+          <p class="not-found-copy">Нет такой задачи в памяти Workspace и в Data Tables.</p>
           <a class="btn btn-quiet" href="/" id="notFoundHome">Вернуться на главную</a>
         </div>
       </div>
@@ -84,10 +100,6 @@
           <span>Описание задачи</span>
           <textarea id="taskDescription" rows="3" required placeholder="Например: во вложении Excel с новыми датами ввода — обновите прогнозный schedule"></textarea>
         </label>
-        <label class="who-field schedule-root-field">
-          <span>Главный файл schedule (необязательно)</span>
-          <input id="scheduleRoot" type="text" maxlength="260" placeholder="например schedule.inc" />
-        </label>
         <div
           class="dropzone"
           id="startDropzone"
@@ -106,7 +118,12 @@
           <p class="dropzone-hint">Excel, schedule (.data / .inc), траектории (.dev), поверхности CPS3</p>
           <ul class="file-chips" id="startFileList" hidden></ul>
         </div>
-        <p class="composer-hint" id="startHint">Прикрепите Excel и schedule — задача уйдёт в работу.</p>
+        <label class="who-field schedule-root-field" id="scheduleRootField" hidden>
+          <select id="scheduleRoot" aria-label="Главный schedule файл среди вложений">
+            <option value="">Какой .data / .INC главный?</option>
+          </select>
+        </label>
+        <p class="composer-hint" id="startHint" hidden></p>
       </form>
 
       <form class="composer" id="composer" autocomplete="off" hidden>
@@ -131,6 +148,6 @@
     </section>
   </main>
 
-  <script src="/static/app.js?v=25"></script>
+  <script src="/static/app.js?v=40"></script>
 </body>
 </html>

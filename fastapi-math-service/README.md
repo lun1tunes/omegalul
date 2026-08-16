@@ -1,10 +1,9 @@
 # FastAPI Math Service (MVP)
 
-Геометрический сервис MAS: batch intersection `.dev` × ASCII CPS3/ZMAP. Полная установка — [`docs.md`](../docs.md); n8n Adapter — `calculation-specialist-adapter.workflow.json`.
+Геометрический сервис MAS: batch intersection `.dev` × ASCII CPS3/ZMAP.  
+**На работе:** только Windows CMD. Полная установка — [`docs.md`](../docs.md) §3; n8n Adapter — UI-импорт `calculation-specialist-adapter.workflow.json`.
 
-Два режима: **локальный Windows CMD** (типичный полевой) и Docker/ручной uvicorn при необходимости.
-
-## Windows CMD
+## Windows CMD (канон)
 
 ```bat
 cd fastapi-math-service
@@ -15,7 +14,7 @@ start-windows.bat
 
 Проверка во втором CMD: `check-windows.bat`.
 
-Локально: `http://127.0.0.1:8100/health`. Для удалённого n8n: `MATH_SERVICE_HOST=0.0.0.0` и `http://<IP-Windows>:8100/api/v1/math`.
+Локально: `http://127.0.0.1:8100/health`. Для корпоративного n8n: `MATH_SERVICE_HOST=0.0.0.0` и в Adapter — `http://<IP-Windows>:8100/api/v1/math`.
 
 ## Endpoint
 
@@ -27,3 +26,5 @@ start-windows.bat
 Calculation Adapter n8n `2.30.8` шлёт до 256 DEV за вызов; пустые reserved slots сервис игнорирует. Ответ — первое пересечение по MD на каждый файл. CRS/единицы/datum/знак Z должны совпадать на входе; сервис координаты не пересчитывает.
 
 Auth и tNavigator runner в MVP отсутствуют: только математика → JSON.
+
+Docker/ручной uvicorn — лаборатория, не полевой канон.

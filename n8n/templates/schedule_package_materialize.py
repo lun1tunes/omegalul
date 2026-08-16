@@ -138,7 +138,9 @@ function materializeSchedulePackage(input){
         if(list.length===1)upload=list[0];
         else if(list.length>1){errors.push(`Ambiguous upload for INCLUDE ${rel} (basename ${basename(target)})`);continue;}
       }
-      if(!upload){errors.push(`Missing uploaded body for INCLUDE ${rel} → ${target}`);continue;}
+      // Missing INCLUDE bodies are warnings: root + present siblings still form a usable
+      // package (commissioning revise / DATES work often only needs the root .INC).
+      if(!upload){warnings.push(`Missing uploaded body for INCLUDE ${rel} → ${target}`);continue;}
       upload.used=true;
       assigned.set(target,{text:upload.text,from:upload.fileName});
       queue.push(target);

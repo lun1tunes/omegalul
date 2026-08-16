@@ -5,6 +5,22 @@
   "nodes": [
     {
       "parameters": {
+        "content": "## edit after import\n\n**Agent — Excel Extractor** — after UI import, complete bindings before activate:\n\n- Confirm model wiring for agent **Excel Extractor AI Agent**\n- Set OpenAI credentials on **OpenAI Chat Model — gpt-4.1-nano**\n- Set vector/memory credentials on **Postgres Chat Memory — session scoped**\n- Bind sub-workflow on **Call Excel protocol Hybrid Retrieval**\n\nDo not rely on env()/Globals for corporate UI import.",
+        "height": 272,
+        "width": 440,
+        "color": 1
+      },
+      "id": "3811e9fd-acb8-529b-835c-ea40bfa9c57c",
+      "name": "edit after import",
+      "type": "n8n-nodes-base.stickyNote",
+      "typeVersion": 1,
+      "position": [
+        -40,
+        -757
+      ]
+    },
+    {
+      "parameters": {
         "httpMethod": "POST",
         "path": "excel-extract",
         "responseMode": "lastNode",
@@ -18,7 +34,7 @@
       "typeVersion": 2,
       "position": [
         0,
-        0
+        -85
       ],
       "webhookId": "0faac0c7-01e9-451f-87a8-000000000001"
     },
@@ -42,8 +58,8 @@
       "type": "n8n-nodes-base.set",
       "typeVersion": 3.4,
       "position": [
-        190,
-        -100
+        280,
+        -85
       ]
     },
     {
@@ -66,8 +82,8 @@
       "type": "n8n-nodes-base.set",
       "typeVersion": 3.4,
       "position": [
-        190,
-        820
+        280,
+        85
       ]
     },
     {
@@ -102,8 +118,8 @@
       "type": "n8n-nodes-base.set",
       "typeVersion": 3.4,
       "position": [
-        430,
-        360
+        560,
+        0
       ],
       "notesInFlow": true,
       "notes": "EDIT ONLY THIS NODE AFTER IMPORT. Set a FastAPI URL reachable FROM the n8n server (ending in /api/v1), its X-API-Key value, and the HTTP webhook key. This keeps the free/UI-only edition independent of Global Variables."
@@ -152,8 +168,8 @@
       "type": "n8n-nodes-base.httpRequest",
       "typeVersion": 4.4,
       "position": [
-        920,
-        140
+        2240,
+        85
       ]
     },
     {
@@ -165,7 +181,7 @@
       "type": "n8n-nodes-base.code",
       "typeVersion": 2,
       "position": [
-        210,
+        840,
         0
       ]
     },
@@ -198,8 +214,8 @@
       "type": "n8n-nodes-base.if",
       "typeVersion": 2.3,
       "position": [
-        690,
-        70
+        1960,
+        85
       ]
     },
     {
@@ -222,8 +238,8 @@
       "type": "n8n-nodes-base.set",
       "typeVersion": 3.4,
       "position": [
-        920,
-        0
+        2240,
+        -85
       ]
     },
     {
@@ -255,8 +271,8 @@
       "type": "n8n-nodes-base.if",
       "typeVersion": 2.3,
       "position": [
-        430,
-        0
+        1680,
+        -85
       ]
     },
     {
@@ -268,8 +284,8 @@
       "type": "n8n-nodes-base.code",
       "typeVersion": 2,
       "position": [
-        690,
-        -130
+        1960,
+        -85
       ]
     },
     {
@@ -301,7 +317,7 @@
       "type": "n8n-nodes-base.if",
       "typeVersion": 2.3,
       "position": [
-        430,
+        1400,
         0
       ]
     },
@@ -314,8 +330,8 @@
       "type": "n8n-nodes-base.code",
       "typeVersion": 2,
       "position": [
-        680,
-        100
+        1680,
+        85
       ]
     },
     {
@@ -328,7 +344,7 @@
       "typeVersion": 1.2,
       "position": [
         0,
-        920
+        85
       ]
     },
     {
@@ -360,7 +376,7 @@
       "type": "n8n-nodes-base.if",
       "typeVersion": 2.3,
       "position": [
-        430,
+        1120,
         0
       ]
     },
@@ -381,8 +397,8 @@
       "type": "n8n-nodes-base.merge",
       "typeVersion": 3.2,
       "position": [
-        1160,
-        140
+        2520,
+        0
       ]
     },
     {
@@ -394,8 +410,8 @@
       "type": "n8n-nodes-base.code",
       "typeVersion": 2,
       "position": [
-        1180,
-        70
+        2800,
+        0
       ]
     },
     {
@@ -427,8 +443,8 @@
       "type": "n8n-nodes-base.if",
       "typeVersion": 2.3,
       "position": [
-        1400,
-        70
+        5320,
+        85
       ]
     },
     {
@@ -463,8 +479,8 @@
       "type": "n8n-nodes-base.httpRequest",
       "typeVersion": 4.4,
       "position": [
-        1620,
-        -10
+        5600,
+        85
       ]
     },
     {
@@ -496,8 +512,8 @@
       "type": "n8n-nodes-base.if",
       "typeVersion": 2.3,
       "position": [
-        1840,
-        -10
+        5880,
+        0
       ]
     },
     {
@@ -509,8 +525,8 @@
       "type": "n8n-nodes-base.code",
       "typeVersion": 2,
       "position": [
-        2060,
-        110
+        6160,
+        85
       ]
     },
     {
@@ -533,8 +549,8 @@
       "type": "@n8n/n8n-nodes-langchain.agent",
       "typeVersion": 3.1,
       "position": [
-        2300,
-        20
+        7560,
+        425
       ]
     },
     {
@@ -563,8 +579,8 @@
       "type": "n8n-nodes-base.httpRequest",
       "typeVersion": 4.4,
       "position": [
-        2750,
-        20
+        8120,
+        0
       ]
     },
     {
@@ -576,8 +592,8 @@
       "type": "n8n-nodes-base.code",
       "typeVersion": 2,
       "position": [
-        3630,
-        20
+        10080,
+        85
       ]
     },
     {
@@ -599,8 +615,8 @@
       "type": "@n8n/n8n-nodes-langchain.lmChatOpenAi",
       "typeVersion": 1.3,
       "position": [
-        2200,
-        280
+        7560,
+        255
       ],
       "credentials": {
         "openAiApi": {
@@ -621,8 +637,8 @@
       "type": "@n8n/n8n-nodes-langchain.memoryPostgresChat",
       "typeVersion": 1.4,
       "position": [
-        2370,
-        280
+        7280,
+        255
       ],
       "credentials": {
         "postgres": {
@@ -640,8 +656,8 @@
       "type": "n8n-nodes-base.code",
       "typeVersion": 2,
       "position": [
-        2520,
-        20
+        7840,
+        0
       ]
     },
     {
@@ -653,8 +669,8 @@
       "type": "n8n-nodes-base.code",
       "typeVersion": 2,
       "position": [
-        2970,
-        20
+        8400,
+        0
       ]
     },
     {
@@ -688,8 +704,8 @@
       "type": "n8n-nodes-base.httpRequest",
       "typeVersion": 4.4,
       "position": [
-        3190,
-        20
+        9520,
+        0
       ]
     },
     {
@@ -730,8 +746,8 @@
       "type": "n8n-nodes-base.if",
       "typeVersion": 2.3,
       "position": [
-        2970,
-        20
+        9240,
+        85
       ]
     },
     {
@@ -765,8 +781,8 @@
       "type": "n8n-nodes-base.httpRequest",
       "typeVersion": 4.4,
       "position": [
-        3190,
-        20
+        9520,
+        170
       ]
     },
     {
@@ -795,8 +811,8 @@
       "type": "n8n-nodes-base.httpRequest",
       "typeVersion": 4.4,
       "position": [
-        3410,
-        20
+        9800,
+        85
       ]
     },
     {
@@ -830,8 +846,8 @@
       "type": "n8n-nodes-base.httpRequest",
       "typeVersion": 4.4,
       "position": [
-        1400,
-        260
+        4480,
+        0
       ]
     },
     {
@@ -843,8 +859,8 @@
       "type": "n8n-nodes-base.code",
       "typeVersion": 2,
       "position": [
-        1620,
-        260
+        4760,
+        0
       ]
     },
     {
@@ -876,8 +892,8 @@
       "type": "n8n-nodes-base.if",
       "typeVersion": 2.3,
       "position": [
-        1840,
-        260
+        5040,
+        0
       ]
     },
     {
@@ -911,8 +927,8 @@
       "type": "n8n-nodes-base.httpRequest",
       "typeVersion": 4.4,
       "position": [
-        2060,
-        200
+        5320,
+        -85
       ]
     },
     {
@@ -924,8 +940,8 @@
       "type": "n8n-nodes-base.code",
       "typeVersion": 2,
       "position": [
-        2280,
-        200
+        5600,
+        -85
       ]
     },
     {
@@ -957,8 +973,8 @@
       "type": "n8n-nodes-base.if",
       "typeVersion": 2.3,
       "position": [
-        1400,
-        140
+        4200,
+        -85
       ]
     },
     {
@@ -970,8 +986,8 @@
       "type": "n8n-nodes-base.code",
       "typeVersion": 2,
       "position": [
-        2060,
-        -10
+        6160,
+        -85
       ]
     },
     {
@@ -1013,8 +1029,8 @@
       "type": "@n8n/n8n-nodes-langchain.toolHttpRequest",
       "typeVersion": 1.1,
       "position": [
-        2140,
-        500
+        7560,
+        85
       ]
     },
     {
@@ -1097,8 +1113,8 @@
       "type": "@n8n/n8n-nodes-langchain.toolHttpRequest",
       "typeVersion": 1.1,
       "position": [
-        2500,
-        500
+        7280,
+        85
       ]
     },
     {
@@ -1161,8 +1177,8 @@
       "type": "@n8n/n8n-nodes-langchain.toolHttpRequest",
       "typeVersion": 1.1,
       "position": [
-        2140,
-        700
+        7560,
+        -85
       ]
     },
     {
@@ -1225,8 +1241,8 @@
       "type": "@n8n/n8n-nodes-langchain.toolHttpRequest",
       "typeVersion": 1.1,
       "position": [
-        2500,
-        700
+        7280,
+        -85
       ]
     },
     {
@@ -1299,8 +1315,8 @@
       "type": "@n8n/n8n-nodes-langchain.toolHttpRequest",
       "typeVersion": 1.1,
       "position": [
-        2140,
-        900
+        7560,
+        -255
       ]
     },
     {
@@ -1393,8 +1409,8 @@
       "type": "@n8n/n8n-nodes-langchain.toolHttpRequest",
       "typeVersion": 1.1,
       "position": [
-        2500,
-        900
+        7280,
+        -255
       ]
     },
     {
@@ -1517,8 +1533,8 @@
       "type": "@n8n/n8n-nodes-langchain.toolHttpRequest",
       "typeVersion": 1.1,
       "position": [
-        2320,
-        1100
+        7560,
+        -425
       ]
     },
     {
@@ -1530,8 +1546,8 @@
       "type": "n8n-nodes-base.code",
       "typeVersion": 2,
       "position": [
-        4100,
-        120
+        6440,
+        85
       ]
     },
     {
@@ -1565,8 +1581,8 @@
       "type": "n8n-nodes-base.httpRequest",
       "typeVersion": 4.4,
       "position": [
-        3410,
-        20
+        9800,
+        -85
       ]
     },
     {
@@ -1578,8 +1594,8 @@
       "type": "n8n-nodes-base.code",
       "typeVersion": 2,
       "position": [
-        3630,
-        20
+        10080,
+        -85
       ]
     },
     {
@@ -1608,8 +1624,8 @@
       "type": "n8n-nodes-base.httpRequest",
       "typeVersion": 4.4,
       "position": [
-        2180,
-        -80
+        6440,
+        -85
       ],
       "notesInFlow": true,
       "notes": "Deterministic continuation state load. It runs after clarification resolution, so the model never transports a session ID or invokes get_session_state."
@@ -1623,8 +1639,8 @@
       "type": "n8n-nodes-base.code",
       "typeVersion": 2,
       "position": [
-        2560,
-        -80
+        7280,
+        425
       ],
       "notesInFlow": true,
       "notes": "Builds compact, verified continuation context from FastAPI state. No workbook bytes, credentials or paths are supplied to the model."
@@ -1638,8 +1654,8 @@
       "type": "n8n-nodes-base.code",
       "typeVersion": 2,
       "position": [
-        3190,
-        180
+        8680,
+        0
       ],
       "notesInFlow": true,
       "notes": "Bounded recovery: unique non-ambiguous table with no query, or a query whose columns are a superset of match_tables suggested_select. Re-queries with suggested_select/limit/tail/filters."
@@ -1673,8 +1689,8 @@
       "type": "n8n-nodes-base.if",
       "typeVersion": 2.3,
       "position": [
-        3410,
-        180
+        8960,
+        0
       ]
     },
     {
@@ -1708,8 +1724,8 @@
       "type": "n8n-nodes-base.httpRequest",
       "typeVersion": 4.4,
       "position": [
-        3630,
-        100
+        9240,
+        -85
       ],
       "notesInFlow": true,
       "notes": "Deterministic one-shot query repair. It is only reachable when the saved plan contains exactly one table and an explicit select projection."
@@ -1740,8 +1756,8 @@
       "type": "n8n-nodes-base.httpRequest",
       "typeVersion": 4.4,
       "position": [
-        3850,
-        100
+        9520,
+        -170
       ],
       "notesInFlow": true,
       "notes": "Reloads the session after the repair so the normal validation/export/finalization tail remains the single source of truth."
@@ -1755,8 +1771,8 @@
       "type": "n8n-nodes-base.code",
       "typeVersion": 2,
       "position": [
-        1180,
-        -160
+        3080,
+        0
       ]
     },
     {
@@ -1788,8 +1804,8 @@
       "type": "n8n-nodes-base.executeWorkflow",
       "typeVersion": 1.3,
       "position": [
-        1400,
-        -160
+        3360,
+        0
       ],
       "onError": "continueRegularOutput"
     },
@@ -1802,8 +1818,8 @@
       "type": "n8n-nodes-base.code",
       "typeVersion": 2,
       "position": [
-        1620,
-        -160
+        3640,
+        0
       ]
     },
     {
@@ -1835,8 +1851,8 @@
       "type": "n8n-nodes-base.if",
       "typeVersion": 2.2,
       "position": [
-        1840,
-        -160
+        3920,
+        0
       ]
     },
     {
@@ -1848,8 +1864,8 @@
       "type": "n8n-nodes-base.code",
       "typeVersion": 2,
       "position": [
-        1840,
-        40
+        4200,
+        85
       ]
     },
     {
@@ -1861,8 +1877,8 @@
       "type": "n8n-nodes-base.code",
       "typeVersion": 2,
       "position": [
-        2300,
-        -80
+        6720,
+        0
       ],
       "notesInFlow": true,
       "notes": "Builds a compact match_tables query from the original prompt plus resolved clarification answers. No workbook bytes."
@@ -1898,8 +1914,8 @@
       "type": "n8n-nodes-base.httpRequest",
       "typeVersion": 4.4,
       "position": [
-        2420,
-        -80
+        7000,
+        0
       ],
       "notesInFlow": true,
       "notes": "Pins the table from the user's clarification answer without loading the workbook into the model."
@@ -1974,8 +1990,8 @@
       "type": "@n8n/n8n-nodes-langchain.toolHttpRequest",
       "typeVersion": 1.1,
       "position": [
-        1780,
-        900
+        7280,
+        -425
       ]
     }
   ],

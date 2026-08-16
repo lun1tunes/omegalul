@@ -135,6 +135,8 @@ services:
       - no-new-privileges:true
     ports:
       - "127.0.0.1:${N8N_HOST_PORT:-5678}:5678"
+    extra_hosts:
+      - "host.docker.internal:host-gateway"
     networks:
       - backend
       - egress

@@ -298,17 +298,21 @@
     }
     namespaces = Array.isArray(data.namespaces) ? data.namespaces : [];
     agentSelect.innerHTML = "";
-    const placeholder = document.createElement("option");
-    placeholder.value = "";
-    placeholder.textContent = "Выберите агента…";
-    agentSelect.append(placeholder);
+    if (!namespaces.length) {
+      agentSelect.innerHTML = '<option value="">Нет данных</option>';
+      agentHint.textContent = "В corpus нет namespaces.";
+      syncAddButton();
+      return;
+    }
     for (const ns of namespaces) {
       const opt = document.createElement("option");
       opt.value = ns.id;
       opt.textContent = `${ns.label} (${ns.id})`;
       agentSelect.append(opt);
     }
-    agentHint.textContent = "Выберите агента, чтобы увидеть карточки RAG.";
+    const first = namespaces[0].id;
+    agentSelect.value = first;
+    await loadDocuments(first);
   }
 
   async function fetchDetail(base, id) {
@@ -548,7 +552,7 @@
     }
 
     if (!base) {
-      agentHint.textContent = "Выберите агента, чтобы увидеть карточки RAG.";
+      agentHint.textContent = "Нет выбранного агента.";
       return;
     }
 

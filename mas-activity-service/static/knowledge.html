@@ -7,19 +7,24 @@
   <link rel="preconnect" href="https://fonts.googleapis.com" />
   <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
   <link href="https://fonts.googleapis.com/css2?family=IBM+Plex+Sans:wght@400;500;600;700&family=IBM+Plex+Mono:wght@400;500&display=swap" rel="stylesheet" />
-  <link rel="stylesheet" href="/static/app.css?v=9" />
-  <link rel="stylesheet" href="/static/knowledge.css?v=5" />
+  <link rel="stylesheet" href="/static/app.css?v=36" />
+  <link rel="stylesheet" href="/static/knowledge.css?v=6" />
   <script src="https://cdn.jsdelivr.net/npm/marked@15.0.7/marked.min.js" defer></script>
 </head>
 <body class="knowledge-page">
   <div class="atmosphere" aria-hidden="true"></div>
   <header class="top">
-    <a class="brand" href="/" aria-label="MAS Activity — главная">
-      <span class="mark">MAS</span>
-      <span class="product">Knowledge</span>
+    <a class="brand" href="/" aria-label="NOVATEK RE MAS — главная">
+      <span class="brand-lockup">
+        <span class="brand-row">
+          <span class="mark">NOVATEK RE MAS</span>
+          <span class="product">Knowledge</span>
+        </span>
+        <span class="brand-sub">Novatek STC reservoir engineering multi-agent system</span>
+      </span>
     </a>
     <div class="top-actions">
-      <a class="btn btn-quiet" href="/">Activity</a>
+      <a class="btn btn-quiet" href="/">Workspace</a>
     </div>
   </header>
 
@@ -33,7 +38,7 @@
           <option value="">Загрузка…</option>
         </select>
       </label>
-      <p class="kb-hint" id="agentHint">Выберите агента, чтобы увидеть карточки RAG.</p>
+      <p class="kb-hint" id="agentHint">Загрузка агентов…</p>
       <button type="button" class="btn" id="addBtn" disabled>+ Создать новое знание</button>
     </section>
 
@@ -72,6 +77,6 @@
     <p class="empty" id="listEmpty" hidden>Нет карточек для этого агента.</p>
   </main>
 
-  <script src="/static/knowledge.js?v=5"></script>
+  <script src="/static/knowledge.js?v=6"></script>
 </body>
 </html>

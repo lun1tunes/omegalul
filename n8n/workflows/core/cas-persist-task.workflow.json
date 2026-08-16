@@ -4,6 +4,22 @@
   "nodes": [
     {
       "parameters": {
+        "content": "## edit after import\n\n**CAS — Persist Task State** — after UI import, complete bindings before activate:\n\n- Bind Data Table on **Insert durable task row**\n- Bind Data Table on **Update durable task row**\n\nDo not rely on env()/Globals for corporate UI import.",
+        "height": 216,
+        "width": 440,
+        "color": 1
+      },
+      "id": "f269a42e-a0f0-5207-9358-e038a166429b",
+      "name": "edit after import",
+      "type": "n8n-nodes-base.stickyNote",
+      "typeVersion": 1,
+      "position": [
+        -40,
+        -361
+      ]
+    },
+    {
+      "parameters": {
         "content": "## CAS — Persist Task State (n8n 2.30.8)\nSingle Data Table binding for insert + optimistic update.\nOrchestrator passes `{cas_operation, attempted}` and receives the attempted in-memory state merged with the persisted row plus `cas_succeeded`.\nFail closed on invalid request, 0/N matched rows, or echoed input (alwaysOutputData).",
         "height": 280,
         "width": 520,
@@ -14,8 +30,8 @@
       "type": "n8n-nodes-base.stickyNote",
       "typeVersion": 1,
       "position": [
-        -40,
-        -40
+        -600,
+        -405
       ]
     },
     {
@@ -29,7 +45,7 @@
       "typeVersion": 1.2,
       "position": [
         0,
-        280
+        0
       ]
     },
     {
@@ -42,7 +58,7 @@
       "typeVersion": 2,
       "position": [
         280,
-        280
+        0
       ]
     },
     {
@@ -75,7 +91,7 @@
       "typeVersion": 2.2,
       "position": [
         560,
-        280
+        0
       ]
     },
     {
@@ -90,7 +106,7 @@
       "typeVersion": 3.4,
       "position": [
         840,
-        200
+        -85
       ]
     },
     {
@@ -133,7 +149,7 @@
       "typeVersion": 1.1,
       "position": [
         1120,
-        80
+        -85
       ],
       "alwaysOutputData": true
     },
@@ -192,7 +208,7 @@
       "typeVersion": 1.1,
       "position": [
         1120,
-        320
+        85
       ],
       "alwaysOutputData": true
     },
@@ -206,7 +222,7 @@
       "typeVersion": 2,
       "position": [
         1400,
-        200
+        0
       ],
       "executeOnce": true
     },
@@ -220,7 +236,7 @@
       "typeVersion": 2,
       "position": [
         840,
-        440
+        85
       ]
     }
   ],

@@ -10,6 +10,22 @@
   "nodes": [
     {
       "parameters": {
+        "content": "## edit after import\n\n**Activity — List Tasks (Data Table)** — after UI import, complete bindings before activate:\n\n- Bind Data Table on **Load recent tasks**\n\nDo not rely on env()/Globals for corporate UI import.",
+        "height": 188,
+        "width": 440,
+        "color": 1
+      },
+      "id": "881d9e84-0406-5700-8b04-d6f5f1e1a690",
+      "name": "edit after import",
+      "type": "n8n-nodes-base.stickyNote",
+      "typeVersion": 1,
+      "position": [
+        -40,
+        -248
+      ]
+    },
+    {
+      "parameters": {
         "content": "## Activity — List Tasks\n1. Select Data Table `engineering_orchestrator_tasks_v1` in **Load recent tasks**.\n2. Activate webhook (or Test) after import.\n3. In mas-activity `.env` / Compose set `ACTIVITY_LIST_URL=http://<n8n>/webhook/mas-activity-list-tasks`.\n\nNo n8n env()/Globals. Corporate UI import only.",
         "height": 280,
         "width": 460,
@@ -20,8 +36,8 @@
       "type": "n8n-nodes-base.stickyNote",
       "typeVersion": 1,
       "position": [
-        -520,
-        -220
+        -540,
+        -320
       ]
     },
     {
@@ -36,7 +52,7 @@
       "type": "n8n-nodes-base.webhook",
       "typeVersion": 2.1,
       "position": [
-        -200,
+        0,
         0
       ],
       "webhookId": "a1000001-list-wh-0001-8000-000000000002"
@@ -58,7 +74,7 @@
       "type": "n8n-nodes-base.dataTable",
       "typeVersion": 1.1,
       "position": [
-        80,
+        280,
         0
       ],
       "alwaysOutputData": true
@@ -72,7 +88,7 @@
       "type": "n8n-nodes-base.code",
       "typeVersion": 2,
       "position": [
-        360,
+        560,
         0
       ]
     }

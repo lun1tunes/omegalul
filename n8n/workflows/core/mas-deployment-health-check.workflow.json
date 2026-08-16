@@ -11,6 +11,22 @@
   "nodes": [
     {
       "parameters": {
+        "content": "## edit after import\n\n**Form — MAS Deployment Health Check** — after UI import, complete bindings before activate:\n\n- Bind Data Table on **Probe task Data Table**\n- Bind Data Table on **Probe trace Data Table**\n- Bind sub-workflow on **Call Orchestrator probe**\n- Bind sub-workflow on **Call Trace Writer probe**\n\nDo not rely on env()/Globals for corporate UI import.",
+        "height": 272,
+        "width": 440,
+        "color": 1
+      },
+      "id": "f9247a2c-2ac1-5814-8d62-451a6d266c89",
+      "name": "edit after import",
+      "type": "n8n-nodes-base.stickyNote",
+      "typeVersion": 1,
+      "position": [
+        -40,
+        -332
+      ]
+    },
+    {
+      "parameters": {
         "content": "## MAS Deployment Health Check (n8n 2.30.8)\n1. Select task + trace Data Tables in the two Probe nodes.\n2. Bind Call Orchestrator probe → Orchestrator — Engineering MAS.\n3. Bind Call Trace Writer probe → Writer — MAS Trace.\n4. Live HTTP pings: excel-tools, n8n-runners, mas-activity, n8n /healthz (Docker DNS).\n5. Publish/Test this form and read the HTML report.\n6. Every FAIL line includes where_to_fix.\n\nFull runbook: docs.md",
         "width": 520,
         "height": 320,
@@ -21,8 +37,8 @@
       "type": "n8n-nodes-base.stickyNote",
       "typeVersion": 1,
       "position": [
-        -200,
-        -420
+        -600,
+        -360
       ]
     },
     {
@@ -237,7 +253,7 @@
       "type": "n8n-nodes-base.code",
       "typeVersion": 2,
       "position": [
-        3360,
+        3640,
         0
       ]
     },
@@ -252,7 +268,7 @@
       "type": "n8n-nodes-base.form",
       "typeVersion": 2.5,
       "position": [
-        3640,
+        3920,
         0
       ]
     },
@@ -276,8 +292,8 @@
       "type": "n8n-nodes-base.httpRequest",
       "typeVersion": 4.2,
       "position": [
-        2240,
-        220
+        2520,
+        0
       ],
       "continueOnFail": true,
       "alwaysOutputData": true
@@ -302,8 +318,8 @@
       "type": "n8n-nodes-base.httpRequest",
       "typeVersion": 4.2,
       "position": [
-        2520,
-        220
+        2800,
+        0
       ],
       "continueOnFail": true,
       "alwaysOutputData": true
@@ -328,8 +344,8 @@
       "type": "n8n-nodes-base.httpRequest",
       "typeVersion": 4.2,
       "position": [
-        2800,
-        220
+        3080,
+        0
       ],
       "continueOnFail": true,
       "alwaysOutputData": true
@@ -354,8 +370,8 @@
       "type": "n8n-nodes-base.httpRequest",
       "typeVersion": 4.2,
       "position": [
-        3080,
-        220
+        3360,
+        0
       ],
       "continueOnFail": true,
       "alwaysOutputData": true

@@ -10,6 +10,22 @@
   "nodes": [
     {
       "parameters": {
+        "content": "## edit after import\n\n**Activity — Load Feed (Data Tables)** — after UI import, complete bindings before activate:\n\n- Bind Data Table on **Load task row**\n- Bind Data Table on **Load trace rows**\n\nDo not rely on env()/Globals for corporate UI import.",
+        "height": 216,
+        "width": 440,
+        "color": 1
+      },
+      "id": "c38ceaf6-3349-507c-a61b-34e34a4d6fb8",
+      "name": "edit after import",
+      "type": "n8n-nodes-base.stickyNote",
+      "typeVersion": 1,
+      "position": [
+        -40,
+        -276
+      ]
+    },
+    {
+      "parameters": {
         "content": "## Activity — Load Feed\n1. Bind **Load task row** → `engineering_orchestrator_tasks_v1`.\n2. Bind **Load trace rows** → `mas_trace_events_v1`.\n3. Activate webhook. Body: `{ \"task_id\": \"eng_…\" }`.\n4. Activity: `ACTIVITY_FEED_URL=http://<n8n>/webhook/mas-activity-load-feed`.\n\nReturns status/version/human_gate + handoff events for `/v1/hydrate`.",
         "height": 300,
         "width": 480,
@@ -20,8 +36,8 @@
       "type": "n8n-nodes-base.stickyNote",
       "typeVersion": 1,
       "position": [
-        -640,
-        -240
+        -560,
+        -340
       ]
     },
     {
@@ -36,7 +52,7 @@
       "type": "n8n-nodes-base.webhook",
       "typeVersion": 2.1,
       "position": [
-        -280,
+        0,
         0
       ],
       "webhookId": "a1000002-feed-wh-0001-8000-000000000002"
@@ -50,7 +66,7 @@
       "type": "n8n-nodes-base.code",
       "typeVersion": 2,
       "position": [
-        0,
+        280,
         0
       ]
     },
@@ -81,7 +97,7 @@
       "type": "n8n-nodes-base.dataTable",
       "typeVersion": 1.1,
       "position": [
-        280,
+        560,
         0
       ],
       "alwaysOutputData": true
@@ -95,7 +111,7 @@
       "type": "n8n-nodes-base.code",
       "typeVersion": 2,
       "position": [
-        560,
+        840,
         0
       ]
     },
@@ -129,7 +145,7 @@
       "type": "n8n-nodes-base.dataTable",
       "typeVersion": 1.1,
       "position": [
-        840,
+        1120,
         0
       ],
       "alwaysOutputData": true
@@ -143,7 +159,7 @@
       "type": "n8n-nodes-base.code",
       "typeVersion": 2,
       "position": [
-        1120,
+        1400,
         0
       ]
     }

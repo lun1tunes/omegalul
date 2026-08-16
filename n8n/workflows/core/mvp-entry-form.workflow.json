@@ -11,6 +11,22 @@
   "nodes": [
     {
       "parameters": {
+        "content": "## edit after import\n\n**Form — MAS Entry** — after UI import, complete bindings before activate:\n\n- Bind sub-workflow on **Call Universal Engineering Orchestrator**\n\nDo not rely on env()/Globals for corporate UI import.",
+        "height": 188,
+        "width": 440,
+        "color": 1
+      },
+      "id": "c6377312-2866-5dd2-95fa-545ee11ce5c7",
+      "name": "edit after import",
+      "type": "n8n-nodes-base.stickyNote",
+      "typeVersion": 1,
+      "position": [
+        -40,
+        -248
+      ]
+    },
+    {
+      "parameters": {
         "formTitle": "MAS MVP — Engineering Task",
         "formDescription": "Describe the engineering task and attach the input files required by the MAS orchestrator. If the orchestrator needs clarification, this form shows what is wrong and which task_id to resume in Form — MAS Human Gate.",
         "formFields": {

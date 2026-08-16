@@ -101,12 +101,13 @@ async function main() {
   assert.equal(dup.ok, false);
   assert.match(dup.errors.join(' '), /Duplicate basename/i);
 
-  // Missing include body fails.
+  // Missing INCLUDE body is a warning — package still materializes from root.
   const missing = materialize({
     uploads: [{ fileName: 'root.inc', text: "INCLUDE\n'missing.inc' /\n/\n" }],
   });
-  assert.equal(missing.ok, false);
-  assert.match(missing.errors.join(' '), /Missing uploaded body/i);
+  assert.equal(missing.ok, true);
+  assert.equal(missing.package.file_count, 1);
+  assert.match(missing.warnings.join(' '), /Missing uploaded body/i);
 
   console.log(JSON.stringify({
     ok: true,

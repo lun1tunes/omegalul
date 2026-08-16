@@ -303,4 +303,7 @@ return[{json:{
 def main():
  CORE.mkdir(parents=True,exist_ok=True)
  for fn,w in build_all().items(): (CORE/fn).write_text(json.dumps(w,ensure_ascii=False,indent=2)+'\n');print(fn,len(w['nodes']))
+ # Compact canvas + yellow "edit after import" stickies for UI import
+ import subprocess,sys
+ subprocess.check_call([sys.executable,str(Path(__file__).resolve().parent/'relayout_core_workflows.py')])
 if __name__=='__main__':main()

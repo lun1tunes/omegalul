@@ -2,20 +2,10 @@
 
 Live chat-style presentation of Orchestrator ↔ specialist handoffs with in-chat HITL and **new-task start** (Entry-shaped, drag-and-drop files).
 
-Два равноправных режима: **Docker Compose** и **терминал** (Linux/macOS `./start-linux.sh` или Windows CMD `.bat`).
+**На работе:** только Windows CMD (ниже). n8n — корпоративный UI-импорт; Activity не поднимают из Docker на полевом ПК.  
+Полный порядок развёртывания: [`../docs.md`](../docs.md) §3.
 
-## Linux / macOS (терминал)
-
-```bash
-cd mas-activity-service
-./setup-linux.sh          # один раз: .venv + зависимости
-# отредактируйте mas-activity.env (ключ, ACTIVITY_* URL на ваш n8n)
-./start-linux.sh          # http://127.0.0.1:8200/
-```
-
-Если Compose уже держит `:8200`, остановите сервис: `docker compose stop mas-activity`.
-
-## Windows CMD
+## Windows CMD (канон)
 
 ```bat
 cd mas-activity-service
@@ -38,7 +28,20 @@ start-windows.bat
 | `ACTIVITY_FEED_URL` | n8n webhook `mas-activity-load-feed` (CAS + trace → feed) |
 | `ACTIVITY_DURABLE_AUTH_*` | optional header auth if webhooks are protected |
 
-## Docker Compose
+После UI-импорта hydrate-workflow и биндинга Data Tables задайте `ACTIVITY_LIST_URL` / `ACTIVITY_FEED_URL` на **URL корпоративного n8n** (не `http://n8n:5678` — это только Compose DNS).
+
+## Linux / macOS (лаборатория)
+
+```bash
+cd mas-activity-service
+./setup-linux.sh
+# отредактируйте mas-activity.env
+./start-linux.sh
+```
+
+Если Compose уже держит `:8200`: `docker compose stop mas-activity`.
+
+## Docker Compose (лаборатория, не полевой канон)
 
 ```bash
 # from repo root; requires MAS_ACTIVITY_KEY in .env
@@ -67,7 +70,7 @@ HITL composer arms when status is `awaiting_human` / `AWAITING_HUMAN` and `human
 Knowledge UI: [http://127.0.0.1:8200/knowledge](http://127.0.0.1:8200/knowledge). Edits write authoring JSON only; re-run n8n **Knowledge Ingestion** to refresh PG / PGVector.
 
 ```bat
-REM optional local uvicorn without .bat (Linux/macOS style)
+REM optional local uvicorn without .bat
 set MAS_ACTIVITY_KEY=dev-local
 set HITL_MODE=local
 .venv\Scripts\python.exe -m uvicorn app.main:app --host 127.0.0.1 --port 8200
@@ -118,11 +121,11 @@ Default key in code fallback: `dev-local` (`MAS_ACTIVITY_KEY`). Windows `.env` r
 
 ## n8n wiring
 
-After import, edit Code node **Prepare MAS activity sync**:
+После UI-импорта отредактируйте Code node **Prepare MAS activity sync**:
 
-- Compose DNS: `http://mas-activity:8200`
-- Windows host from n8n Docker: `http://host.docker.internal:8200`
-- Windows field PC IP: `http://<IP-Windows>:8200`
+- Полевой Windows: `http://<IP-Windows>:8200`
+- Compose DNS (лаборатория): `http://mas-activity:8200`
+- n8n в Docker → Activity на хосте (лаборатория): `http://host.docker.internal:8200` (нужен доступ docker→host)
 
 `ACTIVITY_KEY` must match `MAS_ACTIVITY_KEY`.
 
@@ -130,9 +133,9 @@ After import, edit Code node **Prepare MAS activity sync**:
 
 | Field | Meaning |
 |---|---|
-| `brief` | 1–4 предложения по-русски |
+| `brief` | лаконичный русский шаблон по `status` (presentation layer) |
 | `at_abs` | Absolute local time with UTC offset (`Asia/Yekaterinburg` → `UTC+5`) |
-| `duration_ms` / `duration_label` | Specialist wall time until handoff |
+| `duration_ms` / `duration_label` | Wall time until handoff |
 | `outcome` | `ok` / `wait` / `block` / `info` |
 | `chips` | Allowlisted detail keys only |
 

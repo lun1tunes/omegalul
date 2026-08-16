@@ -5,6 +5,22 @@
   "nodes": [
     {
       "parameters": {
+        "content": "## edit after import\n\n**MAS — Knowledge Ingestion** — after UI import, complete bindings before activate:\n\n- Set Postgres credentials on **Ensure parent knowledge tables**\n- Set Postgres credentials on **Lookup existing knowledge keys**\n- Set vector/memory credentials on **PGVector — insert approved SCHEDULE knowledge**\n- Set OpenAI credentials on **SCHEDULE Embeddings — configure same model in retrieval**\n- Set Postgres credentials on **Finalize indexes and deduplicate chunks**\n- Set Postgres credentials on **PostgreSQL — upsert full parent knowledge**\n- Set Postgres credentials on **PostgreSQL — upsert approved schema catalogue**\n- Set Postgres credentials on **Postgres — inspect RAG table contents**\n\nDo not rely on env()/Globals for corporate UI import.",
+        "height": 384,
+        "width": 440,
+        "color": 1
+      },
+      "id": "256c1ebe-356b-51f0-aed6-c29b1cfcaadb",
+      "name": "edit after import",
+      "type": "n8n-nodes-base.stickyNote",
+      "typeVersion": 1,
+      "position": [
+        -40,
+        -784
+      ]
+    },
+    {
+      "parameters": {
         "content": "## MAS Knowledge Ingestion — n8n 2.30.8\n\nOne ingest for Excel, Orchestrator, and Schedule (`target_base`). Edit `excel-agent-operating-guide.documents.json`, paste the whole file into the form `corpus_json` field or this Execute Sub-workflow input. The workflow skips `target_base` + `knowledge_id` + `revision` rows that already exist and ignores the last `injection_template` element. Manual trigger syncs the packaged snapshot from import time.\n\nTo update text of an existing card, bump `revision`. Use one embedding model/dimensions in ingestion and retrieval.",
         "width": 620,
         "height": 560,
@@ -15,8 +31,8 @@
       "type": "n8n-nodes-base.stickyNote",
       "typeVersion": 1,
       "position": [
-        -1240,
-        -700
+        -700,
+        -940
       ]
     },
     {
@@ -29,8 +45,8 @@
       "type": "n8n-nodes-base.executeWorkflowTrigger",
       "typeVersion": 1.2,
       "position": [
-        -1200,
-        100
+        0,
+        -170
       ]
     },
     {
@@ -134,8 +150,8 @@
       "type": "n8n-nodes-base.formTrigger",
       "typeVersion": 2.6,
       "position": [
-        -1200,
-        -80
+        0,
+        0
       ]
     },
     {
@@ -145,8 +161,8 @@
       "type": "n8n-nodes-base.manualTrigger",
       "typeVersion": 1,
       "position": [
-        -1200,
-        280
+        0,
+        170
       ],
       "notesInFlow": true,
       "notes": "First-time sync of the packaged snapshot. Later knowledge: paste the whole sheet. Existing keys are skipped."
@@ -160,8 +176,8 @@
       "type": "n8n-nodes-base.code",
       "typeVersion": 2,
       "position": [
-        -920,
-        80
+        280,
+        0
       ]
     },
     {
@@ -179,8 +195,8 @@
       "type": "n8n-nodes-base.postgres",
       "typeVersion": 2.6,
       "position": [
-        -700,
-        80
+        560,
+        0
       ],
       "credentials": {
         "postgres": {
@@ -206,8 +222,8 @@
       "type": "n8n-nodes-base.postgres",
       "typeVersion": 2.6,
       "position": [
-        -480,
-        80
+        840,
+        0
       ],
       "credentials": {
         "postgres": {
@@ -228,8 +244,8 @@
       "type": "n8n-nodes-base.code",
       "typeVersion": 2,
       "position": [
-        -260,
-        80
+        1120,
+        0
       ],
       "executeOnce": true
     },
@@ -262,8 +278,8 @@
       "type": "n8n-nodes-base.if",
       "typeVersion": 2.2,
       "position": [
-        -40,
-        80
+        1400,
+        0
       ]
     },
     {
@@ -275,8 +291,8 @@
       "type": "n8n-nodes-base.code",
       "typeVersion": 2,
       "position": [
-        200,
-        -40
+        1680,
+        0
       ]
     },
     {
@@ -308,8 +324,8 @@
       "type": "n8n-nodes-base.if",
       "typeVersion": 2.2,
       "position": [
-        440,
-        -40
+        1960,
+        0
       ]
     },
     {
@@ -333,8 +349,8 @@
       "type": "@n8n/n8n-nodes-langchain.vectorStorePGVector",
       "typeVersion": 1.3,
       "position": [
-        700,
-        -180
+        2240,
+        170
       ],
       "credentials": {
         "postgres": {
@@ -461,8 +477,8 @@
       "type": "@n8n/n8n-nodes-langchain.documentDefaultDataLoader",
       "typeVersion": 1.1,
       "position": [
-        680,
-        -500
+        2240,
+        0
       ]
     },
     {
@@ -478,8 +494,8 @@
       "type": "@n8n/n8n-nodes-langchain.textSplitterRecursiveCharacterTextSplitter",
       "typeVersion": 1,
       "position": [
-        400,
-        -500
+        2140,
+        -340
       ]
     },
     {
@@ -497,8 +513,8 @@
       "type": "@n8n/n8n-nodes-langchain.embeddingsOpenAi",
       "typeVersion": 1.2,
       "position": [
-        940,
-        -500
+        2240,
+        -170
       ],
       "credentials": {
         "openAiApi": {
@@ -522,8 +538,8 @@
       "type": "n8n-nodes-base.postgres",
       "typeVersion": 2.6,
       "position": [
-        980,
-        -180
+        2520,
+        0
       ],
       "credentials": {
         "postgres": {
@@ -542,8 +558,8 @@
       "type": "n8n-nodes-base.code",
       "typeVersion": 2,
       "position": [
-        1220,
-        -180
+        2800,
+        0
       ],
       "executeOnce": true
     },
@@ -563,8 +579,8 @@
       "type": "n8n-nodes-base.postgres",
       "typeVersion": 2.6,
       "position": [
-        1460,
-        -180
+        3080,
+        0
       ],
       "credentials": {
         "postgres": {
@@ -582,8 +598,8 @@
       "type": "n8n-nodes-base.code",
       "typeVersion": 2,
       "position": [
-        1700,
-        -180
+        3360,
+        0
       ],
       "executeOnce": true
     },
@@ -603,8 +619,8 @@
       "type": "n8n-nodes-base.postgres",
       "typeVersion": 2.6,
       "position": [
-        1940,
-        -180
+        3640,
+        0
       ],
       "credentials": {
         "postgres": {
@@ -623,8 +639,8 @@
       "type": "n8n-nodes-base.code",
       "typeVersion": 2,
       "position": [
-        1220,
-        80
+        3920,
+        0
       ],
       "executeOnce": true
     },
@@ -643,8 +659,8 @@
       "type": "n8n-nodes-base.postgres",
       "typeVersion": 2.6,
       "position": [
-        1460,
-        80
+        4200,
+        0
       ],
       "credentials": {
         "postgres": {
@@ -664,8 +680,8 @@
       "type": "n8n-nodes-base.code",
       "typeVersion": 2,
       "position": [
-        1700,
-        80
+        4480,
+        0
       ],
       "executeOnce": true,
       "notesInFlow": true,
@@ -680,8 +696,8 @@
       "type": "n8n-nodes-base.code",
       "typeVersion": 2,
       "position": [
-        440,
-        140
+        2240,
+        340
       ]
     }
   ],

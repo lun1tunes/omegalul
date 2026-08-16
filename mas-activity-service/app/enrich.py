@@ -31,73 +31,53 @@ SAFE_CHIP_KEYS = (
     "file_count",
     "backend",
 )
+CHIP_LABELS: dict[str, str] = {
+    "attempt": "Попытка",
+    "fact_count": "Фактов",
+    "gap_count": "Пропусков",
+    "conflict_count": "Конфликтов",
+    "warning_count": "Предупреждений",
+    "release_ready": "К выпуску",
+    "fields": "Поля",
+    "source_snapshot_hash": "Снимок",
+    "correlation_id": "Связка",
+    "dropped_gap_count": "Отброшено",
+    "action": "Действие",
+    "requested_by": "Запросил",
+    "gate_id": "Шлюз",
+    "gate_kind": "Тип шлюза",
+    "file_count": "Файлов",
+    "backend": "Бэкенд",
+}
 SECRETISH = re.compile(r"(prompt|secret|token|password|authorization|api[_-]?key|binary|content|session)", re.I)
 
+# Presentation authority: one short RU sentence per known status.
 BRIEF_TEMPLATES: dict[str, str] = {
-    "DELEGATED": (
-        "Оркестратор выбрал следующего специалиста и передал ему ограниченный пакет задачи. "
-        "Дальше работа идёт внутри этого specialist; оркестратор ждёт структурированный результат."
-    ),
-    "EXCEL_EVIDENCE_READY": (
-        "Excel Extractor завершил извлечение и сформировал пакет фактов со snapshot/correlation. "
-        "Пакет передаётся Schedule Builder для CREATE/REVISE без прямого доступа к workbook."
-    ),
-    "INVALID_SOURCE_FACTS_PACKET": (
-        "Handoff в Schedule Builder заблокирован: в Excel-результате нет обязательных "
-        "source_snapshot_hash и correlation_id. Нужен повторный governed extract, а не угадывание."
-    ),
-    "CALCULATION_DATA_READY": (
-        "Calculation Specialist вернул геометрический результат. "
-        "Оркестратор передаёт его дальше только как компактные данные для Schedule Builder."
-    ),
-    "SCHEDULE_EVIDENCE_GAP": (
-        "Schedule Builder остановился на typed evidence_gap: не хватает конкретных полей. "
-        "Оркестратор запускает узкий Excel-запрос только по этим полям, без полного переразбора книги."
-    ),
-    "MALFORMED_EVIDENCE_GAP": (
-        "Цикл evidence остановлен: gap пришёл без обязательных полей "
-        "(entity/effective_at/keyword/field/reason/expected_format). Бюджет Excel не тратится."
-    ),
-    "STALLED_EVIDENCE_LOOP": (
-        "Тот же gap и тот же snapshot повторились — петля остановлена политикой. "
-        "Нужен человек: новые факты, другой источник или смена scope."
-    ),
-    "EXCEL_EVIDENCE_BUDGET_EXHAUSTED": (
-        "Исчерпан бюджет Excel-итераций в evidence loop. "
-        "Дальше только HITL: дать факты вручную, сменить источник или отклонить задачу."
-    ),
-    "BUILDER_ITERATION_BUDGET_EXHAUSTED": (
-        "Исчерпан бюджет итераций Schedule Builder. "
-        "Автоматический Excel-retry больше не запускается до решения человека."
-    ),
-    "RESUME_SCHEDULE": (
-        "Excel вернул недостающие факты с тем же correlation. "
-        "Schedule Builder возобновляется на новой версии пакета, без повторной загрузки workbook."
-    ),
-    "INVALID_EXCEL_EVIDENCE_SNAPSHOT": (
-        "Resume Builder запрещён: correlation/snapshot Excel-результата не совпали с ожидаемыми. "
-        "Это fail-closed защита от подмены evidence mid-loop."
-    ),
-    "TASK_STARTED": (
-        "Инженер создал новую задачу из Activity UI. "
-        "Оркестратор принимает objective и вложения и начинает intake/planning."
-    ),
-    "AWAITING_HUMAN": (
-        "Задача ждёт человека: нужны факты, решение или утверждение выпуска. "
-        "Ответьте в чате — reply, approve или reject."
-    ),
-    "HUMAN_REPLY": (
-        "Инженер отправил ответ в HITL-gate. "
-        "Оркестратор применит ответ к текущей версии задачи и продолжит маршрут."
-    ),
-    "HUMAN_APPROVED": (
-        "Инженер утвердил результат на HITL-gate. "
-        "Задача продолжается как approved resume без повторного планирования с нуля."
-    ),
-    "HUMAN_REJECTED": (
-        "Инженер отклонил результат на HITL-gate. "
-        "Оркестратор фиксирует reject и не выпускает draft как approved."
-    ),
+    "DELEGATED": "Задачу передали специалисту — ждём результат.",
+    "EXCEL_EVIDENCE_READY": "Из Excel собрали факты и передали в Schedule Builder.",
+    "INVALID_SOURCE_FACTS_PACKET": "Пакет из Excel неполный — Builder не запускаем, нужен повторный разбор.",
+    "CALCULATION_DATA_READY": "Расчёт готов — данные уходят в Schedule Builder.",
+    "SCHEDULE_EVIDENCE_GAP": "В schedule не хватает полей — узкий запрос к Excel.",
+    "MALFORMED_EVIDENCE_GAP": "Запрос к Excel остановлен: в пропуске нет обязательных полей.",
+    "STALLED_EVIDENCE_LOOP": "Тот же пропуск повторился — нужен человек.",
+    "EXCEL_EVIDENCE_BUDGET_EXHAUSTED": "Лимит обращений к Excel исчерпан — нужен человек.",
+    "BUILDER_ITERATION_BUDGET_EXHAUSTED": "Лимит итераций Builder исчерпан — нужен человек.",
+    "RESUME_SCHEDULE": "Недостающие факты получены — продолжаем сборку schedule.",
+    "INVALID_EXCEL_EVIDENCE_SNAPSHOT": "Снимок Excel не совпал — продолжение запрещено.",
+    "TASK_STARTED": "Задача создана — оркестратор принимает ввод и вложения.",
+    "AWAITING_HUMAN": "Ждём ваш ответ: факты, решение или утверждение.",
+    "HUMAN_REPLY": "Ответ принят — продолжаем задачу.",
+    "HUMAN_APPROVED": "Выпуск утверждён — задача продолжается.",
+    "HUMAN_REJECTED": "Результат отклонён — выпуск не делаем.",
+    "SCHEDULE_DRAFT_READY": "Черновик schedule готов.",
+    "VERIFIED": "Проверка пройдена.",
+    "SUCCEEDED": "Шаг выполнен успешно.",
+    "COMPLETED": "Задача завершена.",
+    "NEEDS_INPUT": "Нужны дополнительные данные от вас.",
+    "NEEDS_DECISION": "Нужно ваше решение, чтобы продолжить.",
+    "NEEDS_APPROVAL": "Нужно ваше утверждение выпуска.",
+    "ORCH_CONFLICT": "Оркестратор отклонил запрос — смотрите причину в ленте.",
+    "CONFLICT": "Конфликт состояния — обновите статус и повторите с актуальной версией.",
 }
 
 
@@ -149,11 +129,21 @@ def outcome_for(status: str | None) -> str:
         "HUMAN_APPROVED",
         "COMPLETED",
         "TASK_STARTED",
+        "SCHEDULE_DRAFT_READY",
+        "VERIFIED",
     }:
         return "ok"
     if s == "DELEGATED":
         return "info"
-    if s in {"SCHEDULE_EVIDENCE_GAP", "PARTIAL", "AWAITING_HUMAN", "HUMAN_REPLY", "NEEDS_INPUT", "NEEDS_DECISION", "NEEDS_APPROVAL"}:
+    if s in {
+        "SCHEDULE_EVIDENCE_GAP",
+        "PARTIAL",
+        "AWAITING_HUMAN",
+        "HUMAN_REPLY",
+        "NEEDS_INPUT",
+        "NEEDS_DECISION",
+        "NEEDS_APPROVAL",
+    }:
         return "wait"
     if any(x in s for x in ("INVALID", "MALFORMED", "STALLED", "EXHAUSTED", "FATAL", "FAILED", "ERROR", "REJECT")):
         return "block"
@@ -161,18 +151,18 @@ def outcome_for(status: str | None) -> str:
 
 
 def build_brief(*, status: str | None, summary: str | None, brief: str | None, details: dict[str, Any]) -> str:
-    raw = (brief or "").strip()
+    """Known status → laconic RU template wins over producer brief/summary (presentation layer)."""
+    status_key = (status or "").upper()
+    raw = BRIEF_TEMPLATES.get(status_key, "").strip()
     if not raw:
-        raw = BRIEF_TEMPLATES.get((status or "").upper(), "").strip()
+        raw = (brief or "").strip()
     if not raw:
         raw = (summary or "").strip()
     if not raw:
-        raw = "Специалист завершил шаг; оркестратор фиксирует handoff в ленте активности."
-    # Keep 1–4 short sentences visually: collapse whitespace, hard-cap chars.
+        raw = "Шаг зафиксирован в ленте активности."
     raw = re.sub(r"\s+", " ", raw).strip()
     if len(raw) > MAX_BRIEF_CHARS:
         raw = raw[: MAX_BRIEF_CHARS - 1].rstrip() + "…"
-    # Light contextual second sentence from safe details when brief is a template one-liner.
     extras = []
     if isinstance(details.get("fact_count"), (int, float)):
         extras.append(f"Фактов в пакете: {int(details['fact_count'])}.")
@@ -201,7 +191,13 @@ def safe_chips(details: dict[str, Any]) -> list[dict[str, Any]]:
         text = str(value)
         if len(text) > 120:
             text = text[:119] + "…"
-        chips.append({"id": key, "label": key, "value": text if not isinstance(value, bool) else value})
+        chips.append(
+            {
+                "id": key,
+                "label": CHIP_LABELS.get(key, key),
+                "value": text if not isinstance(value, bool) else value,
+            }
+        )
     return chips[:6]
 
 
@@ -244,7 +240,7 @@ def enrich_turn(raw: dict[str, Any], *, received_at: str | None = None) -> dict[
         },
         "to": {
             "specialist_id": data.get("to_specialist") or handoff.get("to_specialist"),
-            "role": data.get("to_role") or handoff.get("to_role") or "Specialist",
+            "role": data.get("to_role") or handoff.get("to_role") or "User",
         },
         "details": details,
         "chips": safe_chips(details),

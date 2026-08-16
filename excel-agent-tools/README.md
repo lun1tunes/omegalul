@@ -1,10 +1,11 @@
 # FastAPI Excel tools
 
-Детерминированный сервис без LLM: принимает Excel, держит дисковую сессию и отдаёт tools для schema/query/extract/validate/export. Развёртывание MAS целиком — в [`docs.md`](../docs.md).
+Детерминированный сервис без LLM: принимает Excel, держит дисковую сессию и отдаёт tools для schema/query/extract/validate/export.  
+**На работе:** только Windows CMD ниже. Полный MAS — [`docs.md`](../docs.md) §3 (n8n — только UI-импорт).
 
 Каждый запрос к `/api/v1/*` требует `X-API-Key`; исключение — `/health`.
 
-## Windows CMD
+## Windows CMD (канон)
 
 Нужен 64-bit Python 3.11–3.13.
 
@@ -18,7 +19,7 @@ start-windows.bat
 
 Проверка во втором CMD: `check-windows.bat`.
 
-Локальный URL для n8n на том же ПК: `http://127.0.0.1:8000/api/v1`. Для удалённого n8n задайте `EXCEL_TOOLS_HOST=0.0.0.0` и разрешите TCP/8000 только от сервера n8n.
+Локальный URL для n8n на том же ПК: `http://127.0.0.1:8000/api/v1`. Для корпоративного n8n на другом хосте: `EXCEL_TOOLS_HOST=0.0.0.0` и в Agent Runtime — `http://<IP-Windows>:8000/api/v1` (тот же `API_KEY`).
 
 ## Переменные (`excel-tools.env`)
 
@@ -35,9 +36,9 @@ start-windows.bat
 
 Формат файла: `ИМЯ=значение` без `set`, кавычек и пробелов вокруг `=`.
 
-## Docker / тесты
+## Docker / тесты (лаборатория)
 
-Сервис входит в корневой `docker-compose.yml` (env из корневого `.env`, не из `excel-tools.env`).
+Сервис входит в корневой `docker-compose.yml` (env из корневого `.env`, не из `excel-tools.env`) — не полевой канон. Тесты: `python -m pytest tests`.
 
 ```bash
 python -m pip install -r requirements-dev.txt

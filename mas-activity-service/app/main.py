@@ -339,10 +339,22 @@ def _parse_ts(value: Any) -> datetime | None:
     return dt.astimezone(timezone.utc)
 
 
-def _merge_updated_at(task: dict[str, Any], incoming: str | None) -> None:
-    """Keep the newer of local vs CAS timestamps so hydrate cannot demote live tasks."""
+def _merge_updated_at(
+    task: dict[str, Any],
+    incoming: str | None,
+    *,
+    prefer_incoming: bool = False,
+) -> None:
+    """Keep the newer of local vs CAS timestamps so hydrate cannot demote live tasks.
+
+    ``prefer_incoming`` is for first catalog sighting: the shell's placeholder ``_now()``
+    must not beat the CAS ``updated_at`` and scramble newest-first ordering.
+    """
     incoming_ts = _parse_ts(incoming)
     if incoming_ts is None:
+        return
+    if prefer_incoming:
+        task["updated_at"] = incoming_ts.isoformat()
         return
     local_ts = _parse_ts(task.get("updated_at"))
     if local_ts is None or incoming_ts >= local_ts:
@@ -502,6 +514,7 @@ async def _set_gate(
     version: int | None = None,
     gate: dict[str, Any] | None = None,
     clear_gate: bool = False,
+    message: str | None = None,
 ) -> dict[str, Any]:
     async with _lock:
         task = _touch(task_id)
@@ -513,12 +526,19 @@ async def _set_gate(
             task["gate"] = None
         elif gate is not None:
             task["gate"] = dict(gate)
+        if message is not None:
+            text = str(message).strip()
+            task["status_message"] = text[:1200] if text else None
+        elif status is not None:
+            # Status refresh without a message must not keep a stale conflict/error banner.
+            task["status_message"] = None
         task["updated_at"] = _now()
         snapshot = {
             "status": task.get("status"),
             "version": task.get("version"),
             "human_gate": _gate_payload(task),
             "awaiting_human": _awaiting(task),
+            "status_message": task.get("status_message"),
             "updated_at": task["updated_at"],
         }
         _persist()
@@ -839,6 +859,7 @@ async def _apply_list_hydrate(payload: dict[str, Any], *, prune_missing: bool = 
             if not TASK_ID_RE.match(task_id):
                 continue
             # No mid-loop MAX_TASKS eviction — trim once after reorder/prune.
+            first_sighting = task_id not in _tasks
             task = _ensure_task(task_id)
             title = str(raw.get("title") or "").strip() or None
             if title:
@@ -855,7 +876,7 @@ async def _apply_list_hydrate(payload: dict[str, Any], *, prune_missing: bool = 
                 task["status"] = status
             _merge_version(task, raw.get("version"))
             updated = str(raw.get("updated_at") or "").strip() or None
-            _merge_updated_at(task, updated)
+            _merge_updated_at(task, updated, prefer_incoming=first_sighting)
             if gate_ok:
                 task["gate"] = dict(gate)
             elif status and not _is_awaiting_status(status):
@@ -987,6 +1008,7 @@ def _task_feed(task_id: str) -> dict[str, Any]:
         "objective": _task_objective(task),
         "updated_at": task["updated_at"],
         "status": task.get("status"),
+        "status_message": task.get("status_message"),
         "version": task.get("version"),
         "awaiting_human": _awaiting(task),
         "human_gate": _gate_payload(task),
@@ -1073,6 +1095,7 @@ async def get_gate(task_id: str, refresh: bool = Query(default=False)) -> dict[s
             version=orch.get("version"),
             gate=orch.get("human_gate") if isinstance(orch.get("human_gate"), dict) else None,
             clear_gate=not orch.get("human_gate"),
+            message=str(orch.get("message") or "").strip() or None,
         )
         task = _tasks[task_id]
     elif not task:
@@ -1289,6 +1312,11 @@ async def post_start_task(
         except OrchestratorError as exc:
             raise HTTPException(status_code=exc.status_code, detail=str(exc)) from exc
 
+    orch_status = str(orch.get("status") or "").strip().lower()
+    if orch_status in {"error", "fatal_error", "failed"} or not orch.get("task_id"):
+        detail = str(orch.get("message") or "").strip() or f"Orchestrator start failed (status={orch.get('status')!r})"
+        raise HTTPException(status_code=502, detail=detail)
+
     task_id = str(orch.get("task_id") or client_task_id).strip()
     if not TASK_ID_RE.match(task_id):
         raise HTTPException(status_code=502, detail="Orchestrator returned invalid task_id")
@@ -1300,13 +1328,37 @@ async def post_start_task(
     gate = orch.get("human_gate") if isinstance(orch.get("human_gate"), dict) else None
     status = orch.get("status")
     version = orch.get("version")
+    orch_message = str(orch.get("message") or "").strip() or None
     await _set_gate(
         task_id,
         status=status,
         version=version if isinstance(version, int) else None,
         gate=gate,
         clear_gate=not gate,
+        message=orch_message,
     )
+
+    status_norm = str(status or "").strip().lower()
+    if status_norm == "conflict" and orch_message:
+        conflict_turn = _normalize_turn(
+            {
+                "status": "ORCH_CONFLICT",
+                "stage": "intake",
+                "summary": orch_message[:500],
+                "brief": (
+                    "Оркестратор не принял старт: неполный пакет schedule "
+                    "(часто не хватает файлов из INCLUDE). "
+                    f"{orch_message[:420]}"
+                ),
+                "from_role": "Orchestrator",
+                "to_role": by,
+                "from_specialist": "universal_orchestrator",
+                "to_specialist": "human_operator",
+                "details": {"action": "start", "status": "conflict"},
+                "event_type": "handoff",
+            }
+        )
+        await _append_turns(task_id, [conflict_turn])
 
     return {
         "ok": True,
@@ -1316,6 +1368,7 @@ async def post_start_task(
         "orchestrator": orch,
         "awaiting_human": _is_awaiting_status(status) and bool(gate and gate.get("gate_id")),
         "human_gate": gate,
+        "status_message": orch_message,
         "turn": turn,
         "file_count": len(file_names),
     }
@@ -1363,6 +1416,7 @@ async def post_hitl(task_id: str, body: HitlPost, _: None = Depends(_require_key
                 version=status_payload.get("version"),
                 gate=gate,
                 clear_gate=not gate,
+                message=str(status_payload.get("message") or "").strip() or None,
             )
             if action == "status":
                 return {
@@ -1422,6 +1476,7 @@ async def post_hitl(task_id: str, body: HitlPost, _: None = Depends(_require_key
         version=orch.get("version"),
         gate=gate_out,
         clear_gate=clear,
+        message=str(orch.get("message") or "").strip() or None,
     )
 
     schedule_meta = None

@@ -4,6 +4,22 @@
   "nodes": [
     {
       "parameters": {
+        "content": "## edit after import\n\n**Orchestrator — Engineering MAS** — after UI import, complete bindings before activate:\n\n- Set webhook auth credentials on **Authenticated engineering webhook**\n- Bind sub-workflow on **Call CAS persist — insert new task**\n- Bind Data Table on **Load task by ID**\n- Bind sub-workflow on **Call CAS persist — human action then plan**\n- Bind sub-workflow on **Call CAS persist — terminal human action**\n- Bind sub-workflow on **Call routing Hybrid Retrieval**\n- Confirm model wiring for agent **Engineering Planner Agent**\n- Set OpenAI credentials on **Planner Chat Model — configure in UI**\n- Bind sub-workflow on **Call CAS persist — plan or human gate**\n- Bind sub-workflow on **Call Excel protocol Hybrid Retrieval**\n- Bind sub-workflow on **Call Excel Extraction Specialist Adapter**\n- Bind sub-workflow on **Call SCHEDULE Hybrid Retrieval**\n- Bind sub-workflow on **Call SCHEDULE Builder Specialist**\n- Bind sub-workflow on **Call Calculation Specialist**\n- …and 10 more credential/bind steps in this graph\n\nDo not rely on env()/Globals for corporate UI import.",
+        "height": 520,
+        "width": 440,
+        "color": 1
+      },
+      "id": "8b854d21-1769-5694-be8e-cef360c91b44",
+      "name": "edit after import",
+      "type": "n8n-nodes-base.stickyNote",
+      "typeVersion": 1,
+      "position": [
+        -40,
+        -1090
+      ]
+    },
+    {
+      "parameters": {
         "content": "## UI-only setup (n8n 2.30.8)\n1. Create task-state and trace Data Tables using `docs.md` in the repository root.\n2. Select them in CAS persist (insert+update) and Orchestrator Load task.\n3. Assign Planner/Verifier credentials.\n4. Bind CAS persist, Excel adapter/agent, SCHEDULE Retrieval/Builder and MAS Trace Writer.\n5. Load expert keyword instructions/schema JSON into `schedule_mvp`.\n6. Test start → HITL → delegation → validation → verification → inline .INC.\n\nSCHEDULE input and result remain bounded text inside n8n. Multi-file: drag-and-drop several `.inc/.data/.grdecl` into `schedule_files` (optional `schedule_root`); materializer builds `root_path` + `include_files` for Builder. No ZIP, no host filesystem scan.",
         "height": 440,
         "width": 500,
@@ -14,8 +30,8 @@
       "type": "n8n-nodes-base.stickyNote",
       "typeVersion": 1,
       "position": [
-        -1260,
-        -900
+        -580,
+        -990
       ]
     },
     {
@@ -30,8 +46,8 @@
       "type": "n8n-nodes-base.stickyNote",
       "typeVersion": 1,
       "position": [
-        -720,
-        -900
+        -550,
+        -1390
       ]
     },
     {
@@ -46,8 +62,8 @@
       "type": "n8n-nodes-base.stickyNote",
       "typeVersion": 1,
       "position": [
-        440,
-        -900
+        -540,
+        -1790
       ]
     },
     {
@@ -56,17 +72,15 @@
         "path": "engineering-orchestrator",
         "authentication": "headerAuth",
         "responseMode": "lastNode",
-        "options": {
-          "binaryPropertyName": ""
-        }
+        "options": {}
       },
       "id": "f80d912b-7ad4-5c1a-b636-d2ad661b06ed",
       "name": "Authenticated engineering webhook",
       "type": "n8n-nodes-base.webhook",
       "typeVersion": 2.1,
       "position": [
-        -1260,
-        -400
+        0,
+        -170
       ],
       "credentials": {
         "httpHeaderAuth": {
@@ -95,8 +109,8 @@
       "type": "n8n-nodes-base.set",
       "typeVersion": 3.4,
       "position": [
-        -1040,
-        -400
+        280,
+        -170
       ]
     },
     {
@@ -239,8 +253,8 @@
       "type": "n8n-nodes-base.formTrigger",
       "typeVersion": 2.6,
       "position": [
-        -1260,
-        -120
+        0,
+        0
       ]
     },
     {
@@ -263,8 +277,8 @@
       "type": "n8n-nodes-base.set",
       "typeVersion": 3.4,
       "position": [
-        -1040,
-        -120
+        280,
+        0
       ]
     },
     {
@@ -296,21 +310,21 @@
       "type": "n8n-nodes-base.if",
       "typeVersion": 2.2,
       "position": [
-        -900,
-        -220
+        560,
+        0
       ]
     },
     {
       "parameters": {
-        "jsCode": "\nconst SCHEDULE_EXT=/\\.(?:data|inc|sch|txt|grdecl)$/i;\nconst MAX_SCHEDULE_FILES=100,MAX_SCHEDULE_FILE_BYTES=2097152,MAX_SCHEDULE_TOTAL_BYTES=4194304;\nconst cleanPath=v=>typeof v==='string'?v.trim():'';\nconst pathMalformed=p=>{const v=cleanPath(p);return !v||v.includes('\\0')};\nconst normalizeSeparators=p=>cleanPath(p).replace(/\\\\/g,'/');\nconst isAbsOrUrl=p=>/^[A-Za-z][A-Za-z0-9+.-]*:\\/\\//.test(p)||p.startsWith('/')||/^[A-Za-z]:\\//.test(p);\nconst dirname=p=>{const i=p.lastIndexOf('/');return i<0?'':p.slice(0,i)};\nconst basename=p=>{const n=normalizeSeparators(p);const i=n.lastIndexOf('/');return i<0?n:n.slice(i+1)};\nconst collapsePath=v=>{const parts=[];for(const bit of String(v).split('/')){if(!bit||bit==='.')continue;if(bit==='..'){if(!parts.length)return null;parts.pop();continue}parts.push(bit)}return parts.join('/')};\nconst classifyPackagePath=p=>{if(pathMalformed(p))return{error:'invalid'};const n=normalizeSeparators(p);if(isAbsOrUrl(n))return{error:'unsafe'};const collapsed=collapsePath(n);if(collapsed===null||collapsed==='')return{error:'unsafe'};return{path:collapsed}};\nconst resolvePath=(base,rel)=>{if(pathMalformed(rel))return{error:'invalid'};const r=normalizeSeparators(rel);if(isAbsOrUrl(r))return{error:'unsafe'};const baseClass=classifyPackagePath(base);const b=baseClass.path||'';const d=dirname(b);const joined=d?`${d}/${r}`:r;const collapsed=collapsePath(joined);if(collapsed===null||collapsed===''||isAbsOrUrl(collapsed))return{error:'unsafe'};return{path:collapsed}};\nconst utf8Bytes=s=>{try{return new TextEncoder().encode(String(s??'')).length;}catch{let n=0;const t=String(s??'');for(let i=0;i<t.length;i++){const cp=t.charCodeAt(i);n+=cp<=0x7f?1:cp<=0x7ff?2:cp>=0xd800&&cp<=0xdbff?4:3;if(cp>=0xd800&&cp<=0xdbff)i++;}return n;}};\nconst extractIncludes=text=>{const out=[];const re=/INCLUDE\\b[\\s\\S]*?['\"]([^'\"\\r\\n]+)['\"]/gi;let m;while((m=re.exec(String(text??''))))out.push(m[1]);return out;};\nconst hasIncludeKeyword=text=>/^\\s*INCLUDE\\b/mi.test(String(text??''));\nfunction materializeSchedulePackage(input){\n  const uploads=Array.isArray(input?.uploads)?input.uploads:[];\n  const preferred=cleanPath(input?.preferred_root||input?.root_path||'');\n  const errors=[],warnings=[];\n  if(!uploads.length)return{ok:false,errors:['No SCHEDULE files uploaded.'],warnings,package:null};\n  if(uploads.length>MAX_SCHEDULE_FILES)return{ok:false,errors:[`Too many SCHEDULE files (max ${MAX_SCHEDULE_FILES}).`],warnings,package:null};\n  const normalized=[];\n  for(const raw of uploads){\n    const text=typeof raw?.text==='string'?raw.text:null;\n    const fileName=cleanPath(raw?.fileName||raw?.filename||'');\n    const relativePath=cleanPath(raw?.relativePath||raw?.relative_path||'');\n    if(text===null){errors.push(`Invalid upload payload for ${fileName||'file'}.`);continue;}\n    const bytes=utf8Bytes(text);\n    if(bytes>MAX_SCHEDULE_FILE_BYTES){errors.push(`${fileName||'file'} exceeds 2 MiB.`);continue;}\n    const candidatePath=relativePath||fileName;\n    if(!candidatePath){errors.push('Upload missing fileName.');continue;}\n    if(!SCHEDULE_EXT.test(candidatePath)){errors.push(`${candidatePath} must be .data/.inc/.sch/.txt/.grdecl.`);continue;}\n    let pathHint=null;\n    if(relativePath){\n      const c=classifyPackagePath(relativePath);\n      if(c.error){errors.push(`Unsafe relative path for ${fileName}: ${relativePath}`);continue;}\n      pathHint=c.path;\n    }else if(fileName.includes('/')||fileName.includes('\\\\')){\n      const c=classifyPackagePath(fileName);\n      if(c.error){errors.push(`Unsafe fileName path: ${fileName}`);continue;}\n      pathHint=c.path;\n    }\n    normalized.push({fileName:basename(fileName||candidatePath),text,bytes,pathHint,base:basename(fileName||candidatePath).toLowerCase()});\n  }\n  if(errors.length)return{ok:false,errors,warnings,package:null};\n  const total=normalized.reduce((n,f)=>n+f.bytes,0);\n  if(total>MAX_SCHEDULE_TOTAL_BYTES)return{ok:false,errors:[`Unpacked SCHEDULE package exceeds ${MAX_SCHEDULE_TOTAL_BYTES} bytes.`],warnings,package:null};\n\n  const byBase=new Map();\n  for(const f of normalized){\n    const list=byBase.get(f.base)||[];\n    list.push(f);\n    byBase.set(f.base,list);\n  }\n  for(const [base,list] of byBase){\n    if(list.length>1){\n      const hints=list.map(x=>x.pathHint).filter(Boolean);\n      if(hints.length!==list.length||new Set(hints).size!==list.length){\n        errors.push(`Duplicate basename among uploads: ${base}`);\n      }\n    }\n  }\n  if(errors.length)return{ok:false,errors,warnings,package:null};\n\n  const pickUpload=baseLower=>{\n    const list=byBase.get(baseLower)||[];\n    const free=list.filter(x=>!x.used);\n    if(free.length===1)return free[0];\n    return null;\n  };\n\n  let rootUpload=null,rootPath=null;\n  if(preferred){\n    const prefBase=basename(preferred).toLowerCase();\n    if(preferred.includes('/')||preferred.includes('\\\\')){\n      const prefClass=classifyPackagePath(preferred);\n      if(prefClass.error)errors.push(`preferred root_path unsafe: ${preferred}`);\n      else{\n        rootPath=prefClass.path;\n        rootUpload=normalized.find(f=>(f.pathHint&&f.pathHint.toLowerCase()===rootPath.toLowerCase())||f.base===prefBase)||null;\n      }\n    }else{\n      rootUpload=pickUpload(prefBase);\n      if(rootUpload)rootPath=rootUpload.pathHint||rootUpload.fileName;\n    }\n    if(!errors.length&&!rootUpload)errors.push(`preferred root not found among uploads: ${preferred}`);\n  }else if(normalized.length===1){\n    rootUpload=normalized[0];\n    rootPath=rootUpload.pathHint||rootUpload.fileName;\n  }else{\n    const withInclude=normalized.filter(f=>hasIncludeKeyword(f.text));\n    const candidates=withInclude.length?withInclude:normalized;\n    if(candidates.length===1){\n      rootUpload=candidates[0];\n      rootPath=rootUpload.pathHint||rootUpload.fileName;\n    }else{\n      errors.push(`Ambiguous SCHEDULE root among uploads; set schedule_root. Candidates: ${candidates.map(f=>f.pathHint||f.fileName).join(', ')}`);\n    }\n  }\n  if(errors.length||!rootUpload||!rootPath)return{ok:false,errors:errors.length?errors:['Could not select SCHEDULE root.'],warnings,package:null};\n\n  const rootClass=classifyPackagePath(rootPath);\n  if(rootClass.error||!rootClass.path)return{ok:false,errors:[`Root path invalid/unsafe: ${rootPath}`],warnings,package:null};\n  rootPath=rootClass.path;\n  rootUpload.used=true;\n\n  // Flat basename roots need depth so Petrel `../../INCLUDE/...` collapses inside the package.\n  if(!rootPath.includes('/')&&extractIncludes(rootUpload.text).some(p=>String(p).includes('..'))){\n    rootPath=`SCHEDULE/FORECAST/${rootPath}`;\n  }\n\n  const assigned=new Map([[rootPath,{text:rootUpload.text,from:rootUpload.fileName}]]);\n  const queue=[rootPath];\n  while(queue.length){\n    const current=queue.shift();\n    const body=assigned.get(current)?.text||'';\n    for(const rel of extractIncludes(body)){\n      const resolved=resolvePath(current,rel);\n      if(resolved.error==='invalid'){errors.push(`INCLUDE path invalid from ${current}: ${rel}`);continue;}\n      if(resolved.error==='unsafe'||!resolved.path){errors.push(`INCLUDE path unsafe from ${current}: ${rel}`);continue;}\n      const target=resolved.path;\n      if(assigned.has(target))continue;\n      const base=basename(target).toLowerCase();\n      let upload=normalized.find(f=>!f.used&&f.pathHint&&f.pathHint.toLowerCase()===target.toLowerCase())||null;\n      if(!upload){\n        const list=(byBase.get(base)||[]).filter(f=>!f.used);\n        if(list.length===1)upload=list[0];\n        else if(list.length>1){errors.push(`Ambiguous upload for INCLUDE ${rel} (basename ${basename(target)})`);continue;}\n      }\n      if(!upload){errors.push(`Missing uploaded body for INCLUDE ${rel} → ${target}`);continue;}\n      upload.used=true;\n      assigned.set(target,{text:upload.text,from:upload.fileName});\n      queue.push(target);\n    }\n  }\n  if(errors.length)return{ok:false,errors,warnings,package:null};\n\n  for(const f of normalized){\n    if(f.used)continue;\n    if(f.pathHint&&!assigned.has(f.pathHint)){\n      warnings.push(`Unreferenced upload kept unreachable: ${f.pathHint}`);\n      assigned.set(f.pathHint,{text:f.text,from:f.fileName});\n      f.used=true;\n    }else warnings.push(`Unreferenced upload ignored: ${f.fileName}`);\n  }\n\n  const include_files=[];\n  for(const [path,meta] of assigned){\n    if(path===rootPath)continue;\n    include_files.push({path,text:meta.text});\n  }\n  include_files.sort((a,b)=>a.path.localeCompare(b.path));\n  const byte_length=[...assigned.values()].reduce((n,m)=>n+utf8Bytes(m.text),0);\n  const package_hash_seed=[rootPath,...include_files.map(f=>f.path)].join('|')+`|${byte_length}|${assigned.size}`;\n  let h=2166136261;for(const ch of package_hash_seed){h^=ch.charCodeAt(0);h=Math.imul(h,16777619);}\n  return{\n    ok:true,\n    errors:[],\n    warnings,\n    package:{\n      kind:assigned.size>1?'multi':'single',\n      root_path:rootPath,\n      baseline_schedule_text:assigned.get(rootPath).text,\n      baseline_filename:basename(rootPath),\n      include_files,\n      file_count:assigned.size,\n      byte_length,\n      package_hash:`fnv1a32:${(h>>>0).toString(16).padStart(8,'0')}`,\n      warnings,\n    }\n  };\n}\nconst item=$input.first();\nconst binary=item.binary&&typeof item.binary==='object'?item.binary:{};\nconst json=item.json&&typeof item.json==='object'?item.json:{};\n// n8n webhook/form multi-file keys may be schedule_files, schedule_files0, schedule_files[0], etc.\nconst isScheduleKey=k=>/(?:^|_)schedule_files?(?:\\[\\d+\\])?\\d*$/i.test(String(k||'').replace(/\\s+/g,''))||/^(schedule_file|schedule_files)\\d*$/i.test(String(k||''));\nconst keys=Object.keys(binary).filter(isScheduleKey).sort((a,b)=>a.localeCompare(b,undefined,{numeric:true}));\nconst uploads=[];\nfor(const key of keys){\n  const meta=binary[key]||{};\n  const fileName=String(meta.fileName||meta.filename||'');\n  let text='';\n  try{\n    const buf=await this.helpers.getBinaryDataBuffer(0,key);\n    text=Buffer.from(buf).toString('utf8');\n    if(text.charCodeAt(0)===0xfeff)text=text.slice(1);\n  }catch(err){\n    return[{json:{...json,schedule_materialize_ok:false,schedule_materialize_error:`Failed to read ${key}: ${String(err?.message||err)}`},binary}];\n  }\n  const directory=String(meta.directory||'').replace(/\\\\/g,'/').replace(/\\/$/,'');\n  uploads.push({fileName,text,relativePath:directory?`${directory}/${fileName}`:''});\n}\nif(!uploads.length&&Array.isArray(json.schedule_upload_texts)){\n  for(const row of json.schedule_upload_texts){\n    if(row&&typeof row.text==='string')uploads.push({fileName:String(row.fileName||row.filename||'schedule.inc'),text:row.text,relativePath:String(row.relativePath||row.relative_path||'')});\n  }\n}\nif(!uploads.length&&typeof json.baseline_schedule_text==='string'&&json.baseline_schedule_text.length){\n  uploads.push({fileName:String(json.baseline_filename||binary.schedule_file?.fileName||'schedule.inc'),text:json.baseline_schedule_text,relativePath:''});\n}\nif(!uploads.length){\n  return[{json:{...json,schedule_materialize_ok:null,schedule_materialize_error:null},binary}];\n}\nconst preferred=String(json.schedule_root||json.root_path||(json.body&&json.body.schedule_root)||'').trim();\nconst result=materializeSchedulePackage({uploads,preferred_root:preferred});\nif(!result.ok){\n  return[{json:{...json,schedule_materialize_ok:false,schedule_materialize_error:result.errors.join(' '),schedule_materialize_warnings:result.warnings},binary}];\n}\nconst pkg=result.package;\nreturn[{json:{\n  ...json,\n  schedule_materialize_ok:true,\n  schedule_materialize_error:null,\n  schedule_materialize_warnings:pkg.warnings||[],\n  baseline_schedule_text:pkg.baseline_schedule_text,\n  baseline_filename:pkg.baseline_filename,\n  root_path:pkg.root_path,\n  include_files:pkg.include_files,\n  baseline_package:{kind:pkg.kind,file_count:pkg.file_count,byte_length:pkg.byte_length,package_hash:pkg.package_hash,root_path:pkg.root_path},\n},binary}];"
+        "jsCode": "\nconst SCHEDULE_EXT=/\\.(?:data|inc|sch|txt|grdecl)$/i;\nconst MAX_SCHEDULE_FILES=100,MAX_SCHEDULE_FILE_BYTES=2097152,MAX_SCHEDULE_TOTAL_BYTES=4194304;\nconst cleanPath=v=>typeof v==='string'?v.trim():'';\nconst pathMalformed=p=>{const v=cleanPath(p);return !v||v.includes('\\0')};\nconst normalizeSeparators=p=>cleanPath(p).replace(/\\\\/g,'/');\nconst isAbsOrUrl=p=>/^[A-Za-z][A-Za-z0-9+.-]*:\\/\\//.test(p)||p.startsWith('/')||/^[A-Za-z]:\\//.test(p);\nconst dirname=p=>{const i=p.lastIndexOf('/');return i<0?'':p.slice(0,i)};\nconst basename=p=>{const n=normalizeSeparators(p);const i=n.lastIndexOf('/');return i<0?n:n.slice(i+1)};\nconst collapsePath=v=>{const parts=[];for(const bit of String(v).split('/')){if(!bit||bit==='.')continue;if(bit==='..'){if(!parts.length)return null;parts.pop();continue}parts.push(bit)}return parts.join('/')};\nconst classifyPackagePath=p=>{if(pathMalformed(p))return{error:'invalid'};const n=normalizeSeparators(p);if(isAbsOrUrl(n))return{error:'unsafe'};const collapsed=collapsePath(n);if(collapsed===null||collapsed==='')return{error:'unsafe'};return{path:collapsed}};\nconst resolvePath=(base,rel)=>{if(pathMalformed(rel))return{error:'invalid'};const r=normalizeSeparators(rel);if(isAbsOrUrl(r))return{error:'unsafe'};const baseClass=classifyPackagePath(base);const b=baseClass.path||'';const d=dirname(b);const joined=d?`${d}/${r}`:r;const collapsed=collapsePath(joined);if(collapsed===null||collapsed===''||isAbsOrUrl(collapsed))return{error:'unsafe'};return{path:collapsed}};\nconst utf8Bytes=s=>{try{return new TextEncoder().encode(String(s??'')).length;}catch{let n=0;const t=String(s??'');for(let i=0;i<t.length;i++){const cp=t.charCodeAt(i);n+=cp<=0x7f?1:cp<=0x7ff?2:cp>=0xd800&&cp<=0xdbff?4:3;if(cp>=0xd800&&cp<=0xdbff)i++;}return n;}};\nconst extractIncludes=text=>{const out=[];const re=/INCLUDE\\b[\\s\\S]*?['\"]([^'\"\\r\\n]+)['\"]/gi;let m;while((m=re.exec(String(text??''))))out.push(m[1]);return out;};\nconst hasIncludeKeyword=text=>/^\\s*INCLUDE\\b/mi.test(String(text??''));\nfunction materializeSchedulePackage(input){\n  const uploads=Array.isArray(input?.uploads)?input.uploads:[];\n  const preferred=cleanPath(input?.preferred_root||input?.root_path||'');\n  const errors=[],warnings=[];\n  if(!uploads.length)return{ok:false,errors:['No SCHEDULE files uploaded.'],warnings,package:null};\n  if(uploads.length>MAX_SCHEDULE_FILES)return{ok:false,errors:[`Too many SCHEDULE files (max ${MAX_SCHEDULE_FILES}).`],warnings,package:null};\n  const normalized=[];\n  for(const raw of uploads){\n    const text=typeof raw?.text==='string'?raw.text:null;\n    const fileName=cleanPath(raw?.fileName||raw?.filename||'');\n    const relativePath=cleanPath(raw?.relativePath||raw?.relative_path||'');\n    if(text===null){errors.push(`Invalid upload payload for ${fileName||'file'}.`);continue;}\n    const bytes=utf8Bytes(text);\n    if(bytes>MAX_SCHEDULE_FILE_BYTES){errors.push(`${fileName||'file'} exceeds 2 MiB.`);continue;}\n    const candidatePath=relativePath||fileName;\n    if(!candidatePath){errors.push('Upload missing fileName.');continue;}\n    if(!SCHEDULE_EXT.test(candidatePath)){errors.push(`${candidatePath} must be .data/.inc/.sch/.txt/.grdecl.`);continue;}\n    let pathHint=null;\n    if(relativePath){\n      const c=classifyPackagePath(relativePath);\n      if(c.error){errors.push(`Unsafe relative path for ${fileName}: ${relativePath}`);continue;}\n      pathHint=c.path;\n    }else if(fileName.includes('/')||fileName.includes('\\\\')){\n      const c=classifyPackagePath(fileName);\n      if(c.error){errors.push(`Unsafe fileName path: ${fileName}`);continue;}\n      pathHint=c.path;\n    }\n    normalized.push({fileName:basename(fileName||candidatePath),text,bytes,pathHint,base:basename(fileName||candidatePath).toLowerCase()});\n  }\n  if(errors.length)return{ok:false,errors,warnings,package:null};\n  const total=normalized.reduce((n,f)=>n+f.bytes,0);\n  if(total>MAX_SCHEDULE_TOTAL_BYTES)return{ok:false,errors:[`Unpacked SCHEDULE package exceeds ${MAX_SCHEDULE_TOTAL_BYTES} bytes.`],warnings,package:null};\n\n  const byBase=new Map();\n  for(const f of normalized){\n    const list=byBase.get(f.base)||[];\n    list.push(f);\n    byBase.set(f.base,list);\n  }\n  for(const [base,list] of byBase){\n    if(list.length>1){\n      const hints=list.map(x=>x.pathHint).filter(Boolean);\n      if(hints.length!==list.length||new Set(hints).size!==list.length){\n        errors.push(`Duplicate basename among uploads: ${base}`);\n      }\n    }\n  }\n  if(errors.length)return{ok:false,errors,warnings,package:null};\n\n  const pickUpload=baseLower=>{\n    const list=byBase.get(baseLower)||[];\n    const free=list.filter(x=>!x.used);\n    if(free.length===1)return free[0];\n    return null;\n  };\n\n  let rootUpload=null,rootPath=null;\n  if(preferred){\n    const prefBase=basename(preferred).toLowerCase();\n    if(preferred.includes('/')||preferred.includes('\\\\')){\n      const prefClass=classifyPackagePath(preferred);\n      if(prefClass.error)errors.push(`preferred root_path unsafe: ${preferred}`);\n      else{\n        rootPath=prefClass.path;\n        rootUpload=normalized.find(f=>(f.pathHint&&f.pathHint.toLowerCase()===rootPath.toLowerCase())||f.base===prefBase)||null;\n      }\n    }else{\n      rootUpload=pickUpload(prefBase);\n      if(rootUpload)rootPath=rootUpload.pathHint||rootUpload.fileName;\n    }\n    if(!errors.length&&!rootUpload)errors.push(`preferred root not found among uploads: ${preferred}`);\n  }else if(normalized.length===1){\n    rootUpload=normalized[0];\n    rootPath=rootUpload.pathHint||rootUpload.fileName;\n  }else{\n    const withInclude=normalized.filter(f=>hasIncludeKeyword(f.text));\n    const candidates=withInclude.length?withInclude:normalized;\n    if(candidates.length===1){\n      rootUpload=candidates[0];\n      rootPath=rootUpload.pathHint||rootUpload.fileName;\n    }else{\n      errors.push(`Ambiguous SCHEDULE root among uploads; set schedule_root. Candidates: ${candidates.map(f=>f.pathHint||f.fileName).join(', ')}`);\n    }\n  }\n  if(errors.length||!rootUpload||!rootPath)return{ok:false,errors:errors.length?errors:['Could not select SCHEDULE root.'],warnings,package:null};\n\n  const rootClass=classifyPackagePath(rootPath);\n  if(rootClass.error||!rootClass.path)return{ok:false,errors:[`Root path invalid/unsafe: ${rootPath}`],warnings,package:null};\n  rootPath=rootClass.path;\n  rootUpload.used=true;\n\n  // Flat basename roots need depth so Petrel `../../INCLUDE/...` collapses inside the package.\n  if(!rootPath.includes('/')&&extractIncludes(rootUpload.text).some(p=>String(p).includes('..'))){\n    rootPath=`SCHEDULE/FORECAST/${rootPath}`;\n  }\n\n  const assigned=new Map([[rootPath,{text:rootUpload.text,from:rootUpload.fileName}]]);\n  const queue=[rootPath];\n  while(queue.length){\n    const current=queue.shift();\n    const body=assigned.get(current)?.text||'';\n    for(const rel of extractIncludes(body)){\n      const resolved=resolvePath(current,rel);\n      if(resolved.error==='invalid'){errors.push(`INCLUDE path invalid from ${current}: ${rel}`);continue;}\n      if(resolved.error==='unsafe'||!resolved.path){errors.push(`INCLUDE path unsafe from ${current}: ${rel}`);continue;}\n      const target=resolved.path;\n      if(assigned.has(target))continue;\n      const base=basename(target).toLowerCase();\n      let upload=normalized.find(f=>!f.used&&f.pathHint&&f.pathHint.toLowerCase()===target.toLowerCase())||null;\n      if(!upload){\n        const list=(byBase.get(base)||[]).filter(f=>!f.used);\n        if(list.length===1)upload=list[0];\n        else if(list.length>1){errors.push(`Ambiguous upload for INCLUDE ${rel} (basename ${basename(target)})`);continue;}\n      }\n      // Missing INCLUDE bodies are warnings: root + present siblings still form a usable\n      // package (commissioning revise / DATES work often only needs the root .INC).\n      if(!upload){warnings.push(`Missing uploaded body for INCLUDE ${rel} → ${target}`);continue;}\n      upload.used=true;\n      assigned.set(target,{text:upload.text,from:upload.fileName});\n      queue.push(target);\n    }\n  }\n  if(errors.length)return{ok:false,errors,warnings,package:null};\n\n  for(const f of normalized){\n    if(f.used)continue;\n    if(f.pathHint&&!assigned.has(f.pathHint)){\n      warnings.push(`Unreferenced upload kept unreachable: ${f.pathHint}`);\n      assigned.set(f.pathHint,{text:f.text,from:f.fileName});\n      f.used=true;\n    }else warnings.push(`Unreferenced upload ignored: ${f.fileName}`);\n  }\n\n  const include_files=[];\n  for(const [path,meta] of assigned){\n    if(path===rootPath)continue;\n    include_files.push({path,text:meta.text});\n  }\n  include_files.sort((a,b)=>a.path.localeCompare(b.path));\n  const byte_length=[...assigned.values()].reduce((n,m)=>n+utf8Bytes(m.text),0);\n  const package_hash_seed=[rootPath,...include_files.map(f=>f.path)].join('|')+`|${byte_length}|${assigned.size}`;\n  let h=2166136261;for(const ch of package_hash_seed){h^=ch.charCodeAt(0);h=Math.imul(h,16777619);}\n  return{\n    ok:true,\n    errors:[],\n    warnings,\n    package:{\n      kind:assigned.size>1?'multi':'single',\n      root_path:rootPath,\n      baseline_schedule_text:assigned.get(rootPath).text,\n      baseline_filename:basename(rootPath),\n      include_files,\n      file_count:assigned.size,\n      byte_length,\n      package_hash:`fnv1a32:${(h>>>0).toString(16).padStart(8,'0')}`,\n      warnings,\n    }\n  };\n}\nconst item=$input.first();\nconst binary=item.binary&&typeof item.binary==='object'?item.binary:{};\nconst json=item.json&&typeof item.json==='object'?item.json:{};\n// n8n webhook/form multi-file keys may be schedule_files, schedule_files0, schedule_files[0], etc.\nconst isScheduleKey=k=>/(?:^|_)schedule_files?(?:\\[\\d+\\])?\\d*$/i.test(String(k||'').replace(/\\s+/g,''))||/^(schedule_file|schedule_files)\\d*$/i.test(String(k||''));\nconst keys=Object.keys(binary).filter(isScheduleKey).sort((a,b)=>a.localeCompare(b,undefined,{numeric:true}));\nconst uploads=[];\nfor(const key of keys){\n  const meta=binary[key]||{};\n  const fileName=String(meta.fileName||meta.filename||'');\n  let text='';\n  try{\n    const buf=await this.helpers.getBinaryDataBuffer(0,key);\n    text=Buffer.from(buf).toString('utf8');\n    if(text.charCodeAt(0)===0xfeff)text=text.slice(1);\n  }catch(err){\n    return[{json:{...json,schedule_materialize_ok:false,schedule_materialize_error:`Failed to read ${key}: ${String(err?.message||err)}`},binary}];\n  }\n  const directory=String(meta.directory||'').replace(/\\\\/g,'/').replace(/\\/$/,'');\n  uploads.push({fileName,text,relativePath:directory?`${directory}/${fileName}`:''});\n}\nif(!uploads.length&&Array.isArray(json.schedule_upload_texts)){\n  for(const row of json.schedule_upload_texts){\n    if(row&&typeof row.text==='string')uploads.push({fileName:String(row.fileName||row.filename||'schedule.inc'),text:row.text,relativePath:String(row.relativePath||row.relative_path||'')});\n  }\n}\nif(!uploads.length&&typeof json.baseline_schedule_text==='string'&&json.baseline_schedule_text.length){\n  uploads.push({fileName:String(json.baseline_filename||binary.schedule_file?.fileName||'schedule.inc'),text:json.baseline_schedule_text,relativePath:''});\n}\nif(!uploads.length){\n  return[{json:{...json,schedule_materialize_ok:null,schedule_materialize_error:null},binary}];\n}\nconst preferred=String(json.schedule_root||json.root_path||(json.body&&json.body.schedule_root)||'').trim();\nconst result=materializeSchedulePackage({uploads,preferred_root:preferred});\nif(!result.ok){\n  return[{json:{...json,schedule_materialize_ok:false,schedule_materialize_error:result.errors.join(' '),schedule_materialize_warnings:result.warnings},binary}];\n}\nconst pkg=result.package;\nreturn[{json:{\n  ...json,\n  schedule_materialize_ok:true,\n  schedule_materialize_error:null,\n  schedule_materialize_warnings:pkg.warnings||[],\n  baseline_schedule_text:pkg.baseline_schedule_text,\n  baseline_filename:pkg.baseline_filename,\n  root_path:pkg.root_path,\n  include_files:pkg.include_files,\n  baseline_package:{kind:pkg.kind,file_count:pkg.file_count,byte_length:pkg.byte_length,package_hash:pkg.package_hash,root_path:pkg.root_path},\n},binary}];"
       },
       "id": "68ce6d71-f34e-5864-a949-c571258aa6f6",
       "name": "Materialize SCHEDULE uploads",
       "type": "n8n-nodes-base.code",
       "typeVersion": 2,
       "position": [
-        -900,
-        -80
+        840,
+        0
       ]
     },
     {
@@ -322,8 +336,8 @@
       "type": "n8n-nodes-base.executeWorkflowTrigger",
       "typeVersion": 1.2,
       "position": [
-        -1260,
-        160
+        0,
+        170
       ]
     },
     {
@@ -346,8 +360,8 @@
       "type": "n8n-nodes-base.set",
       "typeVersion": 3.4,
       "position": [
-        -1040,
-        160
+        280,
+        170
       ]
     },
     {
@@ -359,8 +373,8 @@
       "type": "n8n-nodes-base.code",
       "typeVersion": 2,
       "position": [
-        -800,
-        -120
+        1120,
+        0
       ]
     },
     {
@@ -372,8 +386,8 @@
       "type": "n8n-nodes-base.code",
       "typeVersion": 2,
       "position": [
-        -580,
-        -120
+        1400,
+        0
       ]
     },
     {
@@ -387,8 +401,8 @@
       "type": "n8n-nodes-base.switch",
       "typeVersion": 3.4,
       "position": [
-        -360,
-        -120
+        1680,
+        0
       ]
     },
     {
@@ -400,8 +414,8 @@
       "type": "n8n-nodes-base.code",
       "typeVersion": 2,
       "position": [
-        -120,
-        -360
+        1960,
+        -170
       ]
     },
     {
@@ -434,8 +448,8 @@
       "type": "n8n-nodes-base.executeWorkflow",
       "typeVersion": 1.3,
       "position": [
-        120,
-        -360
+        2240,
+        -85
       ],
       "onError": "continueRegularOutput"
     },
@@ -468,8 +482,8 @@
       "type": "n8n-nodes-base.if",
       "typeVersion": 2.2,
       "position": [
-        340,
-        -360
+        2520,
+        -85
       ]
     },
     {
@@ -499,36 +513,36 @@
       "type": "n8n-nodes-base.dataTable",
       "typeVersion": 1.1,
       "position": [
-        -120,
-        -40
+        1960,
+        0
       ],
       "alwaysOutputData": true
     },
     {
       "parameters": {
-        "jsCode": "const req=$('Normalize invocation').first().json;\nconst rows=$input.all().map(i=>i.json).filter(r=>r && r.task_id);\nif(rows.length===0) return [{json:{...req,state_found:false,status:'not_found'}}];\nif(rows.length!==1) return [{json:{...req,state_found:false,status:'conflict',message:'State invariant failed: duplicate task_id.'}}];\nconst row=rows[0];\nconst invalid=[];\nconst parseExpected=(field)=>{\n  const value=row[field];\n  try {\n    const parsed=typeof value==='string'?JSON.parse(value):value;\n    if(!(parsed&&typeof parsed==='object'&&!Array.isArray(parsed))) invalid.push(field);\n  } catch { invalid.push(field); }\n};\n['request_json','runtime_json','plan_json','packet_json','result_json','verification_json','gate_json'].forEach(parseExpected);\nconst version=Number(row.version),retryCount=Number(row.retry_count),maxRetries=Number(row.max_retries);\nif(!Number.isInteger(version)||version<1) invalid.push('version');\nif(!Number.isInteger(retryCount)||retryCount<0) invalid.push('retry_count');\nif(!Number.isInteger(maxRetries)||maxRetries<0||maxRetries>5) invalid.push('max_retries');\nif(!new Set(['planning','awaiting_human','delegated','retryable_error','completed','failed','rejected','cancelled']).has(row.status)) invalid.push('status');\nif(!new Set(['low','high','critical']).has(row.risk_class)) invalid.push('risk_class');\nif(invalid.length) return [{json:{...req,state_found:false,status:'conflict',message:`Stored task state is malformed (${[...new Set(invalid)].join(', ')}); manual recovery is required.`}}];\nreturn [{json:{...req,...row,state_found:true,stored_version:version,stored_status:row.status}}];"
+        "jsCode": "const reqItem=$('Normalize invocation').first();\nconst req=reqItem.json;\nconst rows=$input.all().map(i=>i.json).filter(r=>r && r.task_id);\nif(rows.length===0) return [{json:{...req,state_found:false,status:'not_found'},...(reqItem.binary?{binary:reqItem.binary}:{})}];\nif(rows.length!==1) return [{json:{...req,state_found:false,status:'conflict',message:'State invariant failed: duplicate task_id.'},...(reqItem.binary?{binary:reqItem.binary}:{})}];\nconst row=rows[0];\nconst invalid=[];\nconst parseExpected=(field)=>{\n  const value=row[field];\n  try {\n    const parsed=typeof value==='string'?JSON.parse(value):value;\n    if(!(parsed&&typeof parsed==='object'&&!Array.isArray(parsed))) invalid.push(field);\n  } catch { invalid.push(field); }\n};\n['request_json','runtime_json','plan_json','packet_json','result_json','verification_json','gate_json'].forEach(parseExpected);\nconst version=Number(row.version),retryCount=Number(row.retry_count),maxRetries=Number(row.max_retries);\nif(!Number.isInteger(version)||version<1) invalid.push('version');\nif(!Number.isInteger(retryCount)||retryCount<0) invalid.push('retry_count');\nif(!Number.isInteger(maxRetries)||maxRetries<0||maxRetries>5) invalid.push('max_retries');\nif(!new Set(['planning','awaiting_human','delegated','retryable_error','completed','failed','rejected','cancelled']).has(row.status)) invalid.push('status');\nif(!new Set(['low','high','critical']).has(row.risk_class)) invalid.push('risk_class');\nif(invalid.length) return [{json:{...req,state_found:false,status:'conflict',message:`Stored task state is malformed (${[...new Set(invalid)].join(', ')}); manual recovery is required.`},...(reqItem.binary?{binary:reqItem.binary}:{})}];\nreturn [{json:{...req,...row,state_found:true,stored_version:version,stored_status:row.status},...(reqItem.binary?{binary:reqItem.binary}:{})}];"
       },
       "id": "a816e04f-9931-5fc0-ba43-c1be7e065969",
       "name": "Validate loaded task state",
       "type": "n8n-nodes-base.code",
       "typeVersion": 2,
       "position": [
-        120,
-        -40
+        2240,
+        85
       ],
       "executeOnce": true
     },
     {
       "parameters": {
-        "jsCode": "const x=$json;\nconst parse=(v,f)=>{try{return typeof v==='string'?JSON.parse(v):v??f}catch{return f}};\nconst pending=parse(x.gate_json,{});\nlet nextPending=null;\nlet outcome='respond', message='', nextStatus=x.stored_status, shouldPlan=false, shouldDelegate=false;\nif(!x.state_found){outcome='respond';nextStatus=x.status||'not_found';message=x.message||'Task not found.';}\nelse if(x.action==='status'){outcome='respond';}\nelse if(['completed','failed','rejected','cancelled'].includes(x.stored_status)){nextStatus=x.stored_status;message='Task is terminal; create a new task or inspect status.';}\nelse if(x.expected_version!==x.stored_version){nextStatus='conflict';message='Stale expected_version. Reload task state and resubmit against the current version.';}\nelse if(x.action==='cancel'){nextStatus='cancelled';outcome='persist';}\nelse if(['reply','approve','reject'].includes(x.action)){\n  if(!pending.gate_id || x.gate_id!==pending.gate_id){nextStatus='conflict';message='gate_id does not match the active human gate.';}\n  else if(['approve','reject'].includes(x.action) && x.requested_by==='anonymous'){nextStatus='conflict';message='An accountable requested_by identity is required for approval or rejection.';}\n  else if(x.action==='reply' && !x.human_response){nextStatus='conflict';message='human_response is required for a reply action.';}\n  else if(x.action==='reject'){nextStatus='rejected';outcome='persist';}\n  else if(x.action==='approve' && pending.kind==='pre_delegation_approval'){\n    const packet=parse(x.packet_json,{});\n    if(!packet.specialist_id){nextStatus='conflict';message='Approved task has no persisted specialist packet. Reload status or request a replan.';}\n    else{nextStatus='delegated';shouldDelegate=true;outcome='persist_plan';}\n  } else if(x.action==='approve' && pending.kind==='result_approval'){\n    const result=parse(x.result_json,{});const verification=parse(x.verification_json,{});\n    const isSchedule=result.specialist_id==='schedule_builder_specialist';\n    const releaseReady=result.compact_data&&result.compact_data.release_ready===true;\n    const merge=result.compact_data?.merge_result||{};const outputPackage=merge.output_package||{};\n    const inlineText=String(merge.generated_schedule||result.compact_data?.generated_schedule||'');\n    const inlineReady=releaseReady&&merge.status==='merged'&&outputPackage.contract==='schedule_package'&&inlineText.length>0&&inlineText.length<=10485760;\n    const verifierPassed=['pass','pass_with_warnings'].includes(verification.verdict);\n    if(isSchedule&&(!inlineReady||!verifierPassed)){\n      nextStatus='conflict';message='SCHEDULE release is blocked: merged bounded inline .INC, release_ready and independent verification are required.';\n    }else{\n      if(isSchedule){\n        result.release={contract:'schedule_release_result',contract_version:'1.0',status:'approved',filename:String(outputPackage.root_path||'schedule.inc'),schedule_text:inlineText,approval:{actor:x.requested_by,at:new Date().toISOString(),gate_id:x.gate_id}};\n        x.result_json=JSON.stringify(result);\n      }\n      nextStatus='completed';outcome='persist';\n    }\n  } else if(x.action==='approve' && pending.kind==='needs_approval'){\n    nextStatus='planning';shouldPlan=true;outcome='persist_plan';\n  } else if(x.action==='reply' && ['needs_input','needs_decision'].includes(pending.kind)){\n    const previousResult=parse(x.result_json,{});const packet=parse(x.packet_json,{});\n    const canContinue=Boolean(previousResult.continuation&&typeof previousResult.continuation==='object'&&packet.specialist_id&&previousResult.task_id===x.task_id&&previousResult.specialist_id===packet.specialist_id);\n    if(canContinue){nextStatus='delegated';shouldDelegate=true;outcome='persist_plan';}\n    else{nextStatus='planning';shouldPlan=true;outcome='persist_plan';}\n  } else {nextStatus='conflict';message='Action is not valid for the active gate kind.';}\n} else if(x.action==='retry'){\n  if(x.stored_status!=='retryable_error'){\n    nextStatus='conflict';message='Retry is allowed only for a persisted retryable_error; use the active human gate for needs_decision or approval states.';\n  } else if(Number(x.retry_count)>=Number(x.max_retries)){\n    nextStatus='awaiting_human';message='Retry budget exhausted; human decision required.';outcome='persist';\n    nextPending={gate_id:`gate_${x.task_id}_${x.stored_version+1}_retry_exhausted`,kind:'needs_decision',reason:message,questions:[{id:'retry_decision',text:'Provide corrected inputs, authorize a revised scope, or reject the task.'}],expected_version:x.stored_version+1};\n  }\n  else{nextStatus='planning';shouldPlan=true;outcome='persist_plan';}\n} else {message='Unsupported action for current state.';}\nif(outcome.startsWith('persist')){\n  x.version=x.stored_version+1;x.status=nextStatus;x.updated_at=new Date().toISOString();\n  const runtime=parse(x.runtime_json,{});const responses=Array.isArray(runtime.human_responses)?runtime.human_responses:[];\n  responses.push({at:x.updated_at,actor:x.requested_by,action:x.action,gate_id:x.gate_id||null,response:x.human_response});\n  if(responses.length>50) responses.splice(0,responses.length-50);\n  x.runtime_json=JSON.stringify({...runtime,human_response:x.human_response,human_responses:responses,last_error:null});\n  x.gate_json=JSON.stringify(nextPending||{});\n}\nconst responseStatus=outcome==='respond'&&nextStatus?nextStatus:x.status;\nreturn [{json:{...x,status:responseStatus,outcome,message,should_plan:shouldPlan,should_delegate:shouldDelegate,previous_version:x.stored_version}}];"
+        "jsCode": "const item=$input.first();\nconst x={...item.json,binary:item.binary||item.json.binary||{}};\nconst parse=(v,f)=>{try{return typeof v==='string'?JSON.parse(v):v??f}catch{return f}};\nconst pending=parse(x.gate_json,{});\nlet nextPending=null;\nlet outcome='respond', message='', nextStatus=x.stored_status, shouldPlan=false, shouldDelegate=false;\nif(!x.state_found){outcome='respond';nextStatus=x.status||'not_found';message=x.message||'Task not found.';}\nelse if(x.action==='status'){outcome='respond';}\nelse if(['completed','failed','rejected','cancelled'].includes(x.stored_status)){nextStatus=x.stored_status;message='Task is terminal; create a new task or inspect status.';}\nelse if(x.expected_version!==x.stored_version){nextStatus='conflict';message='Stale expected_version. Reload task state and resubmit against the current version.';}\nelse if(x.action==='cancel'){nextStatus='cancelled';outcome='persist';}\nelse if(['reply','approve','reject'].includes(x.action)){\n  if(!pending.gate_id || x.gate_id!==pending.gate_id){nextStatus='conflict';message='gate_id does not match the active human gate.';}\n  else if(['approve','reject'].includes(x.action) && x.requested_by==='anonymous'){nextStatus='conflict';message='An accountable requested_by identity is required for approval or rejection.';}\n  else if(x.action==='reply' && !x.human_response && !Object.keys(x.binary||{}).some(k=>/hitl|trajectory|supplemental|file|workbook/i.test(k))){nextStatus='conflict';message='human_response is required for a reply action.';}\n  else if(x.action==='reject'){nextStatus='rejected';outcome='persist';}\n  else if(x.action==='approve' && pending.kind==='pre_delegation_approval'){\n    const packet=parse(x.packet_json,{});\n    if(!packet.specialist_id){nextStatus='conflict';message='Approved task has no persisted specialist packet. Reload status or request a replan.';}\n    else{nextStatus='delegated';shouldDelegate=true;outcome='persist_plan';}\n  } else if(x.action==='approve' && pending.kind==='result_approval'){\n    const result=parse(x.result_json,{});const verification=parse(x.verification_json,{});\n    const isSchedule=result.specialist_id==='schedule_builder_specialist';\n    const releaseReady=result.compact_data&&result.compact_data.release_ready===true;\n    const merge=result.compact_data?.merge_result||{};const outputPackage=merge.output_package||{};\n    const inlineText=String(merge.generated_schedule||result.compact_data?.generated_schedule||'');\n    const inlineReady=releaseReady&&merge.status==='merged'&&outputPackage.contract==='schedule_package'&&inlineText.length>0&&inlineText.length<=10485760;\n    const verifierPassed=['pass','pass_with_warnings'].includes(verification.verdict);\n    if(isSchedule&&(!inlineReady||!verifierPassed)){\n      nextStatus='conflict';message='SCHEDULE release is blocked: merged bounded inline .INC, release_ready and independent verification are required.';\n    }else{\n      if(isSchedule){\n        result.release={contract:'schedule_release_result',contract_version:'1.0',status:'approved',filename:String(outputPackage.root_path||'schedule.inc'),schedule_text:inlineText,approval:{actor:x.requested_by,at:new Date().toISOString(),gate_id:x.gate_id}};\n        x.result_json=JSON.stringify(result);\n      }\n      nextStatus='completed';outcome='persist';\n    }\n  } else if(x.action==='approve' && pending.kind==='needs_approval'){\n    nextStatus='planning';shouldPlan=true;outcome='persist_plan';\n  } else if(x.action==='reply' && ['needs_input','needs_decision'].includes(pending.kind)){\n    const previousResult=parse(x.result_json,{});const packet=parse(x.packet_json,{});\n    const hr=x.human_response&&typeof x.human_response==='object'?x.human_response:null;\n    const req=parse(x.request_json,{});\n    if(hr){\n      if(Array.isArray(hr.new_well_defs)&&hr.new_well_defs.length)req.new_well_defs=hr.new_well_defs;\n      if(hr.unlisted_wells_policy)req.unlisted_wells_policy=String(hr.unlisted_wells_policy);\n      if(typeof hr.text==='string'&&hr.text&&!req.hitl_reply_text)req.hitl_reply_text=hr.text;\n      x.request_json=JSON.stringify(req);\n    }\n    const binaryKeys=Object.keys(x.binary||{}).filter(Boolean);\n    if(binaryKeys.length){\n      const runtime=parse(x.runtime_json,{});\n      x.runtime_json=JSON.stringify({...runtime,hitl_binary_keys:binaryKeys,hitl_attachments_pending:true});\n    }\n    const canContinue=Boolean(previousResult.continuation&&typeof previousResult.continuation==='object'&&packet.specialist_id&&previousResult.task_id===x.task_id&&previousResult.specialist_id===packet.specialist_id);\n    if(canContinue){nextStatus='delegated';shouldDelegate=true;outcome='persist_plan';}\n    else{nextStatus='planning';shouldPlan=true;outcome='persist_plan';}\n  } else {nextStatus='conflict';message='Action is not valid for the active gate kind.';}\n} else if(x.action==='retry'){\n  if(x.stored_status!=='retryable_error'){\n    nextStatus='conflict';message='Retry is allowed only for a persisted retryable_error; use the active human gate for needs_decision or approval states.';\n  } else if(Number(x.retry_count)>=Number(x.max_retries)){\n    nextStatus='awaiting_human';message='Retry budget exhausted; human decision required.';outcome='persist';\n    nextPending={gate_id:`gate_${x.task_id}_${x.stored_version+1}_retry_exhausted`,kind:'needs_decision',reason:message,questions:[{id:'retry_decision',text:'Provide corrected inputs, authorize a revised scope, or reject the task.'}],expected_version:x.stored_version+1};\n  }\n  else{nextStatus='planning';shouldPlan=true;outcome='persist_plan';}\n} else {message='Unsupported action for current state.';}\nif(outcome.startsWith('persist')){\n  x.version=x.stored_version+1;x.status=nextStatus;x.updated_at=new Date().toISOString();\n  const runtime=parse(x.runtime_json,{});const responses=Array.isArray(runtime.human_responses)?runtime.human_responses:[];\n  responses.push({at:x.updated_at,actor:x.requested_by,action:x.action,gate_id:x.gate_id||null,response:x.human_response});\n  if(responses.length>50) responses.splice(0,responses.length-50);\n  x.runtime_json=JSON.stringify({...runtime,human_response:x.human_response,human_responses:responses,last_error:null});\n  x.gate_json=JSON.stringify(nextPending||{});\n}\nconst responseStatus=outcome==='respond'&&nextStatus?nextStatus:x.status;\nconst {binary:binOut,...jsonOut}=x;\nreturn [{json:{...jsonOut,status:responseStatus,outcome,message,should_plan:shouldPlan,should_delegate:shouldDelegate,previous_version:x.stored_version},...(binOut&&Object.keys(binOut).length?{binary:binOut}:{})}];"
       },
       "id": "a4a6e490-6916-5bc7-985d-95901fd54870",
       "name": "Apply action and version guard",
       "type": "n8n-nodes-base.code",
       "typeVersion": 2,
       "position": [
-        340,
-        -40
+        2520,
+        85
       ]
     },
     {
@@ -542,8 +556,8 @@
       "type": "n8n-nodes-base.switch",
       "typeVersion": 3.4,
       "position": [
-        560,
-        -40
+        2800,
+        0
       ]
     },
     {
@@ -576,8 +590,8 @@
       "type": "n8n-nodes-base.executeWorkflow",
       "typeVersion": 1.3,
       "position": [
-        800,
-        -180
+        3080,
+        -85
       ],
       "onError": "continueRegularOutput"
     },
@@ -611,8 +625,8 @@
       "type": "n8n-nodes-base.executeWorkflow",
       "typeVersion": 1.3,
       "position": [
-        800,
-        80
+        3080,
+        85
       ],
       "onError": "continueRegularOutput"
     },
@@ -645,8 +659,8 @@
       "type": "n8n-nodes-base.if",
       "typeVersion": 2.2,
       "position": [
-        1240,
-        -180
+        3360,
+        0
       ]
     },
     {
@@ -678,8 +692,8 @@
       "type": "n8n-nodes-base.if",
       "typeVersion": 2.2,
       "position": [
-        1460,
-        -180
+        3640,
+        -85
       ]
     },
     {
@@ -691,8 +705,8 @@
       "type": "n8n-nodes-base.code",
       "typeVersion": 2,
       "position": [
-        160,
-        -420
+        3920,
+        0
       ]
     },
     {
@@ -724,8 +738,8 @@
       "type": "n8n-nodes-base.executeWorkflow",
       "typeVersion": 1.3,
       "position": [
-        340,
-        -420
+        4200,
+        0
       ],
       "onError": "continueRegularOutput"
     },
@@ -738,8 +752,8 @@
       "type": "n8n-nodes-base.code",
       "typeVersion": 2,
       "position": [
-        460,
-        -420
+        4480,
+        85
       ]
     },
     {
@@ -771,8 +785,8 @@
       "type": "n8n-nodes-base.if",
       "typeVersion": 2.2,
       "position": [
-        520,
-        -420
+        4760,
+        170
       ]
     },
     {
@@ -784,8 +798,8 @@
       "type": "n8n-nodes-base.code",
       "typeVersion": 2,
       "position": [
-        520,
-        -260
+        5040,
+        510
       ]
     },
     {
@@ -797,8 +811,8 @@
       "type": "n8n-nodes-base.code",
       "typeVersion": 2,
       "position": [
-        580,
-        -420
+        5040,
+        340
       ]
     },
     {
@@ -819,19 +833,19 @@
       "type": "@n8n/n8n-nodes-langchain.agent",
       "typeVersion": 3.1,
       "position": [
-        820,
-        -420
+        5320,
+        425
       ]
     },
     {
       "parameters": {
         "model": {
           "mode": "id",
-          "value": "gpt-4.1-nano"
+          "value": "gpt-4.1-mini"
         },
         "options": {
-          "maxTokens": 3000,
-          "timeout": 120000,
+          "maxTokens": 8000,
+          "timeout": 180000,
           "maxRetries": 2,
           "temperature": 0
         },
@@ -842,8 +856,8 @@
       "type": "@n8n/n8n-nodes-langchain.lmChatOpenAi",
       "typeVersion": 1.3,
       "position": [
-        700,
-        -660
+        5320,
+        255
       ],
       "credentials": {
         "openAiApi": {
@@ -856,15 +870,15 @@
       "parameters": {
         "schemaType": "manual",
         "inputSchema": "{\"type\": \"object\", \"additionalProperties\": false, \"required\": [\"decision\", \"task_type\", \"risk_class\", \"reason\", \"questions\", \"plan\", \"specialist_packet\", \"decision_record\"], \"properties\": {\"decision\": {\"enum\": [\"delegate\", \"needs_input\", \"needs_decision\", \"needs_approval\", \"unsupported\"]}, \"task_type\": {\"type\": \"string\"}, \"risk_class\": {\"enum\": [\"low\", \"high\", \"critical\"]}, \"reason\": {\"type\": \"string\"}, \"user_message\": {\"type\": \"string\", \"description\": \"1-3 short Russian sentences for Activity/HITL UI; keep keyword/field names in Latin.\"}, \"questions\": {\"type\": \"array\", \"items\": {\"type\": \"object\"}}, \"plan\": {\"type\": \"object\"}, \"specialist_packet\": {\"type\": [\"object\", \"null\"], \"additionalProperties\": false, \"required\": [\"contract\", \"contract_version\", \"specialist_id\", \"objective\", \"inputs\", \"controls\", \"acceptance_criteria\", \"artifact_refs\"], \"properties\": {\"contract\": {\"const\": \"specialist_packet\"}, \"contract_version\": {\"const\": \"1.0\"}, \"specialist_id\": {\"type\": \"string\"}, \"objective\": {\"type\": \"string\", \"minLength\": 1}, \"inputs\": {\"type\": \"object\"}, \"controls\": {\"type\": \"object\"}, \"acceptance_criteria\": {\"type\": \"array\", \"items\": {\"type\": \"object\"}}, \"artifact_refs\": {\"type\": \"array\", \"items\": {\"type\": \"object\"}}}}, \"decision_record\": {\"type\": \"object\", \"additionalProperties\": false, \"required\": [\"contract\", \"contract_version\", \"objective\", \"considered_inputs\", \"proposed_actions\", \"selected_action\", \"rejected_actions\", \"assumptions\", \"evidence_refs\", \"citations\", \"tool_call_ids\", \"unresolved_questions\", \"acceptance_check_results\"], \"properties\": {\"contract\": {\"enum\": [\"decision_record\"]}, \"contract_version\": {\"enum\": [\"1.0\"]}, \"objective\": {\"type\": \"string\"}, \"considered_inputs\": {\"type\": \"array\", \"items\": {\"type\": \"object\"}}, \"proposed_actions\": {\"type\": \"array\", \"items\": {\"type\": \"object\"}}, \"selected_action\": {\"type\": \"object\", \"additionalProperties\": false, \"required\": [\"action\", \"reason_codes\"], \"properties\": {\"action\": {\"type\": \"string\"}, \"reason_codes\": {\"type\": \"array\", \"items\": {\"type\": \"string\"}}}}, \"rejected_actions\": {\"type\": \"array\", \"items\": {\"type\": \"object\"}}, \"assumptions\": {\"type\": \"array\", \"items\": {\"type\": \"string\"}}, \"evidence_refs\": {\"type\": \"array\", \"items\": {\"type\": \"object\"}}, \"citations\": {\"type\": \"array\", \"items\": {\"type\": \"object\"}}, \"tool_call_ids\": {\"type\": \"array\", \"items\": {\"type\": \"string\"}}, \"unresolved_questions\": {\"type\": \"array\", \"items\": {\"type\": \"object\"}}, \"acceptance_check_results\": {\"type\": \"array\", \"items\": {\"type\": \"object\"}}}}}}",
-        "autoFix": false
+        "autoFix": true
       },
       "id": "8afca9e1-a9d1-51c3-a9dc-06ddb432fc0a",
       "name": "Planner Structured Output",
       "type": "@n8n/n8n-nodes-langchain.outputParserStructured",
       "typeVersion": 1.3,
       "position": [
-        940,
-        -660
+        5320,
+        -85
       ]
     },
     {
@@ -876,8 +890,8 @@
       "type": "n8n-nodes-base.code",
       "typeVersion": 2,
       "position": [
-        1060,
-        -420
+        5600,
+        255
       ]
     },
     {
@@ -910,8 +924,8 @@
       "type": "n8n-nodes-base.executeWorkflow",
       "typeVersion": 1.3,
       "position": [
-        1280,
-        -420
+        5880,
+        340
       ],
       "onError": "continueRegularOutput"
     },
@@ -944,21 +958,21 @@
       "type": "n8n-nodes-base.if",
       "typeVersion": 2.2,
       "position": [
-        1720,
-        -420
+        6160,
+        510
       ]
     },
     {
       "parameters": {
-        "jsCode": "const x=$json;\n// TRUST BOUNDARY: allowlist is generated from n8n/contracts/specialist_registry.v1.json.\n// The model sees only logical specialist_id values and can never choose workflow_id.\nlet packet={};try{packet=typeof x.packet_json==='string'?JSON.parse(x.packet_json):(x.specialist_packet||{})}catch{packet={}}\nconst specialistId=String(packet.specialist_id||x.specialist_id||'');\nconst allowlist={\n excel_extraction_specialist:{route:0,configured:true},\n schedule_builder_specialist:{route:1,configured:true},\n engineering_calculation_specialist:{route:2,configured:true},\n engineering_data_specialist:{route:3,configured:false},\n engineering_document_specialist:{route:4,configured:false},\n};\nconst chatRoles={\"excel_extraction_specialist\": \"Excel Extractor\", \"schedule_builder_specialist\": \"Schedule Builder\", \"engineering_calculation_specialist\": \"Calculation Specialist\", \"engineering_data_specialist\": \"Data Specialist\", \"engineering_document_specialist\": \"Document Specialist\"};\nconst appendHandoffEvent=(runtime,evt)=>{\n  const r=runtime&&typeof runtime==='object'&&!Array.isArray(runtime)?runtime:{};\n  const prev=Array.isArray(r.handoff_events)?r.handoff_events:[];\n  const now=new Date().toISOString();\n  const details=evt.details&&typeof evt.details==='object'&&!Array.isArray(evt.details)?{...evt.details}:{};\n  const timer=r.specialist_timer&&typeof r.specialist_timer==='object'?r.specialist_timer:null;\n  let duration_ms=Number.isFinite(Number(evt.duration_ms))?Math.max(0,Math.trunc(Number(evt.duration_ms))):null;\n  const closesSpecialist=Boolean(timer&&timer.specialist_id&&evt.from_specialist&&evt.from_specialist===timer.specialist_id&&evt.from_specialist!=='universal_orchestrator');\n  if(duration_ms==null&&closesSpecialist&&timer.started_at){\n    const started=Date.parse(String(timer.started_at));\n    const ended=Date.parse(now);\n    if(Number.isFinite(started)&&Number.isFinite(ended)) duration_ms=Math.max(0,ended-started);\n  }\n  if(duration_ms!=null) details.duration_ms=duration_ms;\n  const brief=String(evt.brief||evt.summary||'').slice(0,800);\n  const event={\n    contract:'mas_activity_turn',\n    contract_version:'1.1',\n    event_type:'handoff',\n    at:now,\n    stage:String(evt.stage||'plan'),\n    status:String(evt.status||'observed'),\n    from_specialist:evt.from_specialist||null,\n    to_specialist:evt.to_specialist||null,\n    from_role:evt.from_role||null,\n    to_role:evt.to_role||null,\n    summary:String(evt.summary||'').slice(0,500),\n    brief,\n    duration_ms,\n    details\n  };\n  let nextTimer=timer;\n  if(String(evt.status||'')==='DELEGATED'&&evt.to_specialist&&evt.to_specialist!=='universal_orchestrator'){\n    nextTimer={specialist_id:evt.to_specialist,started_at:now,from_status:'DELEGATED'};\n  }else if(closesSpecialist){\n    nextTimer=null;\n  }else if(evt.to_specialist&&evt.to_specialist!=='universal_orchestrator'&&evt.to_specialist!==(timer&&timer.specialist_id)){\n    nextTimer={specialist_id:evt.to_specialist,started_at:now,from_status:String(evt.status||'handoff')};\n  }\n  return {...r,handoff_events:[...prev,event].slice(-50),specialist_timer:nextTimer||null};\n};\nconst binding=allowlist[specialistId];\nconst runtimeBase=(()=>{try{return JSON.parse(x.runtime_json||'{}')}catch{return{}}})();\nif(!binding){return [{json:{...x,specialist_id:specialistId,specialist_packet:packet,delegation_allowed:false,status:'awaiting_human',runtime_json:JSON.stringify({...runtimeBase,last_error:{code:'SPECIALIST_NOT_ALLOWLISTED',specialist_id:specialistId}}),gate_json:JSON.stringify({gate_id:`gate_${x.task_id}_${Number(x.version)+1}_routing`,kind:'needs_decision',reason:'Specialist is not allowlisted.',questions:[],expected_version:Number(x.version)+1})}}];}\nif(!binding.configured){return [{json:{...x,specialist_id:specialistId,specialist_packet:packet,delegation_allowed:false,specialist_route:binding.route,runtime_json:JSON.stringify(runtimeBase)}}];}\nconst delegatedRuntime=appendHandoffEvent(runtimeBase,{stage:'plan',status:'DELEGATED',from_specialist:'universal_orchestrator',to_specialist:specialistId,from_role:'Orchestrator',to_role:chatRoles[specialistId]||specialistId,summary:`Orchestrator delegates to ${chatRoles[specialistId]||specialistId}.`,details:{attempt:packet.attempt||null,objective:String(packet.objective||'').slice(0,300)}});\nreturn [{json:{...x,specialist_id:specialistId,specialist_packet:packet,delegation_allowed:true,specialist_route:binding.route,runtime_json:JSON.stringify(delegatedRuntime)}}];"
+        "jsCode": "const x=$json;\n// TRUST BOUNDARY: allowlist is generated from n8n/contracts/specialist_registry.v1.json.\n// The model sees only logical specialist_id values and can never choose workflow_id.\nlet packet={};try{packet=typeof x.packet_json==='string'?JSON.parse(x.packet_json):(x.specialist_packet||{})}catch{packet={}}\nconst specialistId=String(packet.specialist_id||x.specialist_id||'');\nconst allowlist={\n excel_extraction_specialist:{route:0,configured:true},\n schedule_builder_specialist:{route:1,configured:true},\n engineering_calculation_specialist:{route:2,configured:true},\n engineering_data_specialist:{route:3,configured:false},\n engineering_document_specialist:{route:4,configured:false},\n};\nconst chatRoles={\"excel_extraction_specialist\": \"Excel Extractor\", \"schedule_builder_specialist\": \"Schedule Builder\", \"engineering_calculation_specialist\": \"Calculation Specialist\", \"engineering_data_specialist\": \"Data Specialist\", \"engineering_document_specialist\": \"Document Specialist\"};\nconst appendHandoffEvent=(runtime,evt)=>{\n  const r=runtime&&typeof runtime==='object'&&!Array.isArray(runtime)?runtime:{};\n  const prev=Array.isArray(r.handoff_events)?r.handoff_events:[];\n  const now=new Date().toISOString();\n  const details=evt.details&&typeof evt.details==='object'&&!Array.isArray(evt.details)?{...evt.details}:{};\n  const timer=r.specialist_timer&&typeof r.specialist_timer==='object'?r.specialist_timer:null;\n  let duration_ms=Number.isFinite(Number(evt.duration_ms))?Math.max(0,Math.trunc(Number(evt.duration_ms))):null;\n  const closesSpecialist=Boolean(timer&&timer.specialist_id&&evt.from_specialist&&evt.from_specialist===timer.specialist_id&&evt.from_specialist!=='universal_orchestrator');\n  if(duration_ms==null&&closesSpecialist&&timer.started_at){\n    const started=Date.parse(String(timer.started_at));\n    const ended=Date.parse(now);\n    if(Number.isFinite(started)&&Number.isFinite(ended)) duration_ms=Math.max(0,ended-started);\n  }\n  if(duration_ms!=null) details.duration_ms=duration_ms;\n  const brief=String(evt.brief||evt.summary||'').slice(0,800);\n  const event={\n    contract:'mas_activity_turn',\n    contract_version:'1.1',\n    event_type:'handoff',\n    at:now,\n    stage:String(evt.stage||'plan'),\n    status:String(evt.status||'observed'),\n    from_specialist:evt.from_specialist||null,\n    to_specialist:evt.to_specialist||null,\n    from_role:evt.from_role||null,\n    to_role:evt.to_role||null,\n    summary:String(evt.summary||'').slice(0,500),\n    brief,\n    duration_ms,\n    details\n  };\n  let nextTimer=timer;\n  if(String(evt.status||'')==='DELEGATED'&&evt.to_specialist&&evt.to_specialist!=='universal_orchestrator'){\n    nextTimer={specialist_id:evt.to_specialist,started_at:now,from_status:'DELEGATED'};\n  }else if(closesSpecialist){\n    nextTimer=null;\n  }else if(evt.to_specialist&&evt.to_specialist!=='universal_orchestrator'&&evt.to_specialist!==(timer&&timer.specialist_id)){\n    nextTimer={specialist_id:evt.to_specialist,started_at:now,from_status:String(evt.status||'handoff')};\n  }\n  return {...r,handoff_events:[...prev,event].slice(-50),specialist_timer:nextTimer||null};\n};\nconst binding=allowlist[specialistId];\nconst runtimeBase=(()=>{try{return JSON.parse(x.runtime_json||'{}')}catch{return{}}})();\nif(!binding){return [{json:{...x,specialist_id:specialistId,specialist_packet:packet,delegation_allowed:false,status:'awaiting_human',runtime_json:JSON.stringify({...runtimeBase,last_error:{code:'SPECIALIST_NOT_ALLOWLISTED',specialist_id:specialistId}}),gate_json:JSON.stringify({gate_id:`gate_${x.task_id}_${Number(x.version)+1}_routing`,kind:'needs_decision',reason:'Специалист не в allowlist — маршрут запрещён.',questions:[],expected_version:Number(x.version)+1})}}];}\nif(!binding.configured){return [{json:{...x,specialist_id:specialistId,specialist_packet:packet,delegation_allowed:false,specialist_route:binding.route,runtime_json:JSON.stringify(runtimeBase)}}];}\nconst delegatedRuntime=appendHandoffEvent(runtimeBase,{stage:'plan',status:'DELEGATED',from_specialist:'universal_orchestrator',to_specialist:specialistId,from_role:'Orchestrator',to_role:chatRoles[specialistId]||specialistId,summary:`Передано специалисту: ${chatRoles[specialistId]||specialistId}.`,details:{attempt:packet.attempt||null,objective:String(packet.objective||'').slice(0,300)}});\nreturn [{json:{...x,specialist_id:specialistId,specialist_packet:packet,delegation_allowed:true,specialist_route:binding.route,runtime_json:JSON.stringify(delegatedRuntime)}}];"
       },
       "id": "0873e770-a485-5685-bdb0-410ce659b851",
       "name": "Resolve allowlisted specialist",
       "type": "n8n-nodes-base.code",
       "typeVersion": 2,
       "position": [
-        1720,
-        -540
+        3920,
+        -170
       ]
     },
     {
@@ -990,8 +1004,8 @@
       "type": "n8n-nodes-base.if",
       "typeVersion": 2.2,
       "position": [
-        1940,
-        -540
+        4200,
+        -170
       ]
     },
     {
@@ -1003,8 +1017,8 @@
       "type": "n8n-nodes-base.code",
       "typeVersion": 2,
       "position": [
-        2160,
-        -660
+        4480,
+        -255
       ]
     },
     {
@@ -1018,8 +1032,8 @@
       "type": "n8n-nodes-base.switch",
       "typeVersion": 3.4,
       "position": [
-        2380,
-        -660
+        4760,
+        -170
       ]
     },
     {
@@ -1031,8 +1045,8 @@
       "type": "n8n-nodes-base.code",
       "typeVersion": 2,
       "position": [
-        2480,
-        -1080
+        5040,
+        -510
       ]
     },
     {
@@ -1064,8 +1078,8 @@
       "type": "n8n-nodes-base.executeWorkflow",
       "typeVersion": 1.3,
       "position": [
-        2600,
-        -1080
+        5320,
+        -425
       ],
       "onError": "continueRegularOutput"
     },
@@ -1078,8 +1092,8 @@
       "type": "n8n-nodes-base.code",
       "typeVersion": 2,
       "position": [
-        2820,
-        -1080
+        5600,
+        -255
       ]
     },
     {
@@ -1111,8 +1125,8 @@
       "type": "n8n-nodes-base.if",
       "typeVersion": 2.2,
       "position": [
-        3040,
-        -1080
+        5880,
+        -340
       ]
     },
     {
@@ -1124,8 +1138,8 @@
       "type": "n8n-nodes-base.code",
       "typeVersion": 2,
       "position": [
-        3260,
-        -1080
+        6160,
+        -340
       ]
     },
     {
@@ -1159,8 +1173,8 @@
       "type": "n8n-nodes-base.executeWorkflow",
       "typeVersion": 1.3,
       "position": [
-        3260,
-        -940
+        6160,
+        -510
       ],
       "onError": "continueRegularOutput"
     },
@@ -1173,8 +1187,8 @@
       "type": "n8n-nodes-base.code",
       "typeVersion": 2,
       "position": [
-        2600,
-        -800
+        5040,
+        -340
       ]
     },
     {
@@ -1206,8 +1220,8 @@
       "type": "n8n-nodes-base.executeWorkflow",
       "typeVersion": 1.3,
       "position": [
-        2820,
-        -800
+        5320,
+        -255
       ],
       "onError": "continueRegularOutput"
     },
@@ -1220,8 +1234,8 @@
       "type": "n8n-nodes-base.code",
       "typeVersion": 2,
       "position": [
-        3040,
-        -800
+        5600,
+        -85
       ]
     },
     {
@@ -1253,8 +1267,8 @@
       "type": "n8n-nodes-base.if",
       "typeVersion": 2.2,
       "position": [
-        3260,
-        -800
+        5880,
+        -170
       ]
     },
     {
@@ -1288,8 +1302,8 @@
       "type": "n8n-nodes-base.executeWorkflow",
       "typeVersion": 1.3,
       "position": [
-        3480,
-        -860
+        6160,
+        -170
       ],
       "onError": "continueRegularOutput"
     },
@@ -1302,8 +1316,8 @@
       "type": "n8n-nodes-base.code",
       "typeVersion": 2,
       "position": [
-        3480,
-        -720
+        6160,
+        0
       ]
     },
     {
@@ -1335,8 +1349,8 @@
       "type": "n8n-nodes-base.executeWorkflow",
       "typeVersion": 1.3,
       "position": [
-        2600,
-        -660
+        5040,
+        -170
       ],
       "onError": "continueRegularOutput"
     },
@@ -1369,8 +1383,8 @@
       "type": "n8n-nodes-base.executeWorkflow",
       "typeVersion": 1.3,
       "position": [
-        2600,
-        -520
+        5040,
+        0
       ],
       "onError": "continueRegularOutput"
     },
@@ -1403,8 +1417,8 @@
       "type": "n8n-nodes-base.executeWorkflow",
       "typeVersion": 1.3,
       "position": [
-        2600,
-        -380
+        5040,
+        170
       ],
       "onError": "continueRegularOutput"
     },
@@ -1417,8 +1431,8 @@
       "type": "n8n-nodes-base.code",
       "typeVersion": 2,
       "position": [
-        2820,
-        -660
+        5320,
+        85
       ]
     },
     {
@@ -1450,21 +1464,21 @@
       "type": "n8n-nodes-base.if",
       "typeVersion": 2.2,
       "position": [
-        2820,
-        -660
+        5600,
+        85
       ]
     },
     {
       "parameters": {
-        "jsCode": "const x=$json;\nconst result=x.specialist_result||{};\nconst packet=x.specialist_packet||{};\nconst inputs=packet.inputs&&typeof packet.inputs==='object'&&!Array.isArray(packet.inputs)?packet.inputs:{};\nconst request=(()=>{try{return JSON.parse(x.request_json||'{}')}catch{return {}}})();\nconst requestText=JSON.stringify(request).toLowerCase();\nconst scheduleRequested=Boolean(inputs.schedule_request||request.schedule_request||request.task_type==='schedule_build'||request.build_mode||request.requested_keyword_scope||/(schedule|wconprod|wconhist|welspecs|compdatmd|gruptree|welltrack|t-navigator)/.test(requestText));\nconst successful=['succeeded','partial'].includes(result.status);\nconst excelToSchedule=successful&&x.specialist_id==='excel_extraction_specialist'&&scheduleRequested;\nconst calculationToSchedule=successful&&x.specialist_id==='engineering_calculation_specialist'&&scheduleRequested;\nconst normalizeSourceFactsPacket=(compact)=>{\n  const c=compact&&typeof compact==='object'&&!Array.isArray(compact)?compact:null;\n  if(!c)return null;\n  const snapshot=String(c.source_snapshot_hash||'').trim();\n  const correlation=String(c.correlation_id||'').trim();\n  if(!snapshot||!correlation)return null;\n  const preview=Array.isArray(c.preview_records)?c.preview_records.filter(v=>v&&typeof v==='object').slice(0,200):[];\n  const facts=Array.isArray(c.facts)&&c.facts.length\n    ?c.facts.filter(v=>v&&typeof v==='object').slice(0,500)\n    :preview.map((row,i)=>({fact_id:`preview_${i+1}`,values:row,provenance:{kind:'excel_preview_row',index:i}}));\n  return{\n    contract:'source_facts_packet',\n    contract_version:'1.0',\n    source_snapshot_hash:snapshot,\n    correlation_id:correlation,\n    facts,\n    conflicts:Array.isArray(c.conflicts)?c.conflicts.filter(v=>v&&typeof v==='object').slice(0,100):[],\n    columns:Array.isArray(c.columns)?c.columns.slice(0,500):[],\n    row_count:Number.isFinite(Number(c.row_count))?Number(c.row_count):facts.length,\n    returned_count:Number.isFinite(Number(c.returned_count))?Number(c.returned_count):preview.length,\n    truncated:Boolean(c.truncated),\n    decision_record:c.decision_record&&typeof c.decision_record==='object'?c.decision_record:undefined,\n    trace_summary:Array.isArray(c.trace_summary)?c.trace_summary:undefined,\n    stage_scores:Array.isArray(c.stage_scores)?c.stage_scores:undefined,\n    gate_decisions:Array.isArray(c.gate_decisions)?c.gate_decisions:undefined,\n    agent_tool_trace:Array.isArray(c.agent_tool_trace)?c.agent_tool_trace:undefined,\n    overall_score:c.overall_score\n  };\n};\nconst appendHandoffEvent=(runtime,evt)=>{\n  const r=runtime&&typeof runtime==='object'&&!Array.isArray(runtime)?runtime:{};\n  const prev=Array.isArray(r.handoff_events)?r.handoff_events:[];\n  const now=new Date().toISOString();\n  const details=evt.details&&typeof evt.details==='object'&&!Array.isArray(evt.details)?{...evt.details}:{};\n  const timer=r.specialist_timer&&typeof r.specialist_timer==='object'?r.specialist_timer:null;\n  let duration_ms=Number.isFinite(Number(evt.duration_ms))?Math.max(0,Math.trunc(Number(evt.duration_ms))):null;\n  const closesSpecialist=Boolean(timer&&timer.specialist_id&&evt.from_specialist&&evt.from_specialist===timer.specialist_id&&evt.from_specialist!=='universal_orchestrator');\n  if(duration_ms==null&&closesSpecialist&&timer.started_at){\n    const started=Date.parse(String(timer.started_at));\n    const ended=Date.parse(now);\n    if(Number.isFinite(started)&&Number.isFinite(ended)) duration_ms=Math.max(0,ended-started);\n  }\n  if(duration_ms!=null) details.duration_ms=duration_ms;\n  const brief=String(evt.brief||evt.summary||'').slice(0,800);\n  const event={\n    contract:'mas_activity_turn',\n    contract_version:'1.1',\n    event_type:'handoff',\n    at:now,\n    stage:String(evt.stage||'plan'),\n    status:String(evt.status||'observed'),\n    from_specialist:evt.from_specialist||null,\n    to_specialist:evt.to_specialist||null,\n    from_role:evt.from_role||null,\n    to_role:evt.to_role||null,\n    summary:String(evt.summary||'').slice(0,500),\n    brief,\n    duration_ms,\n    details\n  };\n  let nextTimer=timer;\n  if(String(evt.status||'')==='DELEGATED'&&evt.to_specialist&&evt.to_specialist!=='universal_orchestrator'){\n    nextTimer={specialist_id:evt.to_specialist,started_at:now,from_status:'DELEGATED'};\n  }else if(closesSpecialist){\n    nextTimer=null;\n  }else if(evt.to_specialist&&evt.to_specialist!=='universal_orchestrator'&&evt.to_specialist!==(timer&&timer.specialist_id)){\n    nextTimer={specialist_id:evt.to_specialist,started_at:now,from_status:String(evt.status||'handoff')};\n  }\n  return {...r,handoff_events:[...prev,event].slice(-50),specialist_timer:nextTimer||null};\n};\nconst chatRoles={\"excel_extraction_specialist\": \"Excel Extractor\", \"schedule_builder_specialist\": \"Schedule Builder\", \"engineering_calculation_specialist\": \"Calculation Specialist\", \"engineering_data_specialist\": \"Data Specialist\", \"engineering_document_specialist\": \"Document Specialist\"};\nconst context=(()=>{try{return JSON.parse(x.runtime_json||'{}')}catch{return {}}})();\nconst loop=context.schedule_evidence_loop&&typeof context.schedule_evidence_loop==='object'?context.schedule_evidence_loop:{};\nconst resumeSchedule=excelToSchedule&&loop.active===true&&loop.builder_packet&&typeof loop.builder_packet==='object';\nconst scheduleSuccess=successful&&x.specialist_id==='schedule_builder_specialist';\nlet runtimeBase={...context};\nlet nextResult=result;\nlet route=resumeSchedule?'resume_schedule':(excelToSchedule||calculationToSchedule)?'replan':'verify';\nlet handoff=null;\nif(excelToSchedule){\n  const packetFacts=normalizeSourceFactsPacket(result.compact_data||{});\n  if(!packetFacts){\n    nextResult={...result,status:'retryable_error',summary:'Excel evidence cannot hand off to SCHEDULE Builder: source_facts_packet requires source_snapshot_hash and correlation_id.',error:{code:'INVALID_SOURCE_FACTS_PACKET',previous_error:result.error},human_request:null};\n    route='verify';\n    runtimeBase=appendHandoffEvent(runtimeBase,{stage:'excel',status:'INVALID_SOURCE_FACTS_PACKET',from_specialist:'excel_extraction_specialist',to_specialist:'schedule_builder_specialist',from_role:chatRoles.excel_extraction_specialist,to_role:chatRoles.schedule_builder_specialist,summary:'Handoff blocked: Excel compact_data missing snapshot/correlation.',details:{fact_count:0}});\n  }else{\n    handoff={code:'EXCEL_EVIDENCE_READY',next_specialist:'schedule_builder_specialist',source_facts_packet:packetFacts,artifact_refs:result.artifact_refs||[],evidence:result.evidence||[]};\n    runtimeBase=appendHandoffEvent(runtimeBase,{stage:'excel',status:'EXCEL_EVIDENCE_READY',from_specialist:'excel_extraction_specialist',to_specialist:'schedule_builder_specialist',from_role:chatRoles.excel_extraction_specialist,to_role:chatRoles.schedule_builder_specialist,summary:`Excel returned ${packetFacts.facts.length} fact(s) for Schedule Builder.`,details:{source_snapshot_hash:packetFacts.source_snapshot_hash,correlation_id:packetFacts.correlation_id,fact_count:packetFacts.facts.length,conflict_count:packetFacts.conflicts.length}});\n  }\n}else if(calculationToSchedule){\n  handoff={code:'CALCULATION_DATA_READY',next_specialist:'schedule_builder_specialist',calculation:result.compact_data?.calculation||{},warnings:result.warnings||[]};\n  runtimeBase=appendHandoffEvent(runtimeBase,{stage:'builder',status:'CALCULATION_DATA_READY',from_specialist:'engineering_calculation_specialist',to_specialist:'schedule_builder_specialist',from_role:chatRoles.engineering_calculation_specialist,to_role:chatRoles.schedule_builder_specialist,summary:'Calculation specialist returned geometry data for Schedule Builder.',details:{warning_count:Array.isArray(result.warnings)?result.warnings.length:0}});\n}else if(scheduleSuccess){\n  runtimeBase=appendHandoffEvent(runtimeBase,{stage:'builder',status:String(result.status||'succeeded'),from_specialist:'schedule_builder_specialist',to_specialist:'universal_orchestrator',from_role:chatRoles.schedule_builder_specialist,to_role:'Orchestrator',summary:String(result.summary||'Schedule Builder finished.').slice(0,500),brief:String(result.user_message||result.summary||'').slice(0,800),details:{release_ready:Boolean(result.compact_data?.release_ready)}});\n}\nreturn [{json:{...x,specialist_result:nextResult,result_json:JSON.stringify(nextResult),post_specialist_route:route,runtime_json:JSON.stringify({...runtimeBase,last_error:handoff||runtimeBase.last_error||null})}}];"
+        "jsCode": "const x=$json;\nconst result=x.specialist_result||{};\nconst packet=x.specialist_packet||{};\nconst inputs=packet.inputs&&typeof packet.inputs==='object'&&!Array.isArray(packet.inputs)?packet.inputs:{};\nconst request=(()=>{try{return JSON.parse(x.request_json||'{}')}catch{return {}}})();\nconst requestText=JSON.stringify(request).toLowerCase();\nconst scheduleRequested=Boolean(inputs.schedule_request||request.schedule_request||request.task_type==='schedule_build'||request.build_mode||request.requested_keyword_scope||/(schedule|wconprod|wconhist|welspecs|compdatmd|gruptree|welltrack|t-navigator)/.test(requestText));\nconst successful=['succeeded','partial'].includes(result.status);\nconst excelToSchedule=successful&&x.specialist_id==='excel_extraction_specialist'&&scheduleRequested;\nconst calculationToSchedule=successful&&x.specialist_id==='engineering_calculation_specialist'&&scheduleRequested;\nconst normalizeSourceFactsPacket=(compact)=>{\n  const c=compact&&typeof compact==='object'&&!Array.isArray(compact)?compact:null;\n  if(!c)return null;\n  const snapshot=String(c.source_snapshot_hash||'').trim();\n  const correlation=String(c.correlation_id||'').trim();\n  if(!snapshot||!correlation)return null;\n  const preview=Array.isArray(c.preview_records)?c.preview_records.filter(v=>v&&typeof v==='object').slice(0,200):[];\n  const facts=Array.isArray(c.facts)&&c.facts.length\n    ?c.facts.filter(v=>v&&typeof v==='object').slice(0,500)\n    :preview.map((row,i)=>({fact_id:`preview_${i+1}`,values:row,provenance:{kind:'excel_preview_row',index:i}}));\n  return{\n    contract:'source_facts_packet',\n    contract_version:'1.0',\n    source_snapshot_hash:snapshot,\n    correlation_id:correlation,\n    facts,\n    conflicts:Array.isArray(c.conflicts)?c.conflicts.filter(v=>v&&typeof v==='object').slice(0,100):[],\n    columns:Array.isArray(c.columns)?c.columns.slice(0,500):[],\n    row_count:Number.isFinite(Number(c.row_count))?Number(c.row_count):facts.length,\n    returned_count:Number.isFinite(Number(c.returned_count))?Number(c.returned_count):preview.length,\n    truncated:Boolean(c.truncated),\n    decision_record:c.decision_record&&typeof c.decision_record==='object'?c.decision_record:undefined,\n    trace_summary:Array.isArray(c.trace_summary)?c.trace_summary:undefined,\n    stage_scores:Array.isArray(c.stage_scores)?c.stage_scores:undefined,\n    gate_decisions:Array.isArray(c.gate_decisions)?c.gate_decisions:undefined,\n    agent_tool_trace:Array.isArray(c.agent_tool_trace)?c.agent_tool_trace:undefined,\n    overall_score:c.overall_score\n  };\n};\nconst appendHandoffEvent=(runtime,evt)=>{\n  const r=runtime&&typeof runtime==='object'&&!Array.isArray(runtime)?runtime:{};\n  const prev=Array.isArray(r.handoff_events)?r.handoff_events:[];\n  const now=new Date().toISOString();\n  const details=evt.details&&typeof evt.details==='object'&&!Array.isArray(evt.details)?{...evt.details}:{};\n  const timer=r.specialist_timer&&typeof r.specialist_timer==='object'?r.specialist_timer:null;\n  let duration_ms=Number.isFinite(Number(evt.duration_ms))?Math.max(0,Math.trunc(Number(evt.duration_ms))):null;\n  const closesSpecialist=Boolean(timer&&timer.specialist_id&&evt.from_specialist&&evt.from_specialist===timer.specialist_id&&evt.from_specialist!=='universal_orchestrator');\n  if(duration_ms==null&&closesSpecialist&&timer.started_at){\n    const started=Date.parse(String(timer.started_at));\n    const ended=Date.parse(now);\n    if(Number.isFinite(started)&&Number.isFinite(ended)) duration_ms=Math.max(0,ended-started);\n  }\n  if(duration_ms!=null) details.duration_ms=duration_ms;\n  const brief=String(evt.brief||evt.summary||'').slice(0,800);\n  const event={\n    contract:'mas_activity_turn',\n    contract_version:'1.1',\n    event_type:'handoff',\n    at:now,\n    stage:String(evt.stage||'plan'),\n    status:String(evt.status||'observed'),\n    from_specialist:evt.from_specialist||null,\n    to_specialist:evt.to_specialist||null,\n    from_role:evt.from_role||null,\n    to_role:evt.to_role||null,\n    summary:String(evt.summary||'').slice(0,500),\n    brief,\n    duration_ms,\n    details\n  };\n  let nextTimer=timer;\n  if(String(evt.status||'')==='DELEGATED'&&evt.to_specialist&&evt.to_specialist!=='universal_orchestrator'){\n    nextTimer={specialist_id:evt.to_specialist,started_at:now,from_status:'DELEGATED'};\n  }else if(closesSpecialist){\n    nextTimer=null;\n  }else if(evt.to_specialist&&evt.to_specialist!=='universal_orchestrator'&&evt.to_specialist!==(timer&&timer.specialist_id)){\n    nextTimer={specialist_id:evt.to_specialist,started_at:now,from_status:String(evt.status||'handoff')};\n  }\n  return {...r,handoff_events:[...prev,event].slice(-50),specialist_timer:nextTimer||null};\n};\nconst chatRoles={\"excel_extraction_specialist\": \"Excel Extractor\", \"schedule_builder_specialist\": \"Schedule Builder\", \"engineering_calculation_specialist\": \"Calculation Specialist\", \"engineering_data_specialist\": \"Data Specialist\", \"engineering_document_specialist\": \"Document Specialist\"};\nconst context=(()=>{try{return JSON.parse(x.runtime_json||'{}')}catch{return {}}})();\nconst loop=context.schedule_evidence_loop&&typeof context.schedule_evidence_loop==='object'?context.schedule_evidence_loop:{};\nconst resumeSchedule=excelToSchedule&&loop.active===true&&loop.builder_packet&&typeof loop.builder_packet==='object';\nconst scheduleSuccess=successful&&x.specialist_id==='schedule_builder_specialist';\nlet runtimeBase={...context};\nlet nextResult=result;\nlet route=resumeSchedule?'resume_schedule':(excelToSchedule||calculationToSchedule)?'replan':'verify';\nlet handoff=null;\nif(excelToSchedule){\n  const packetFacts=normalizeSourceFactsPacket(result.compact_data||{});\n  if(!packetFacts){\n    nextResult={...result,status:'retryable_error',summary:'Пакет Excel неполный: нет source_snapshot_hash или correlation_id — в Schedule Builder не передаём.',error:{code:'INVALID_SOURCE_FACTS_PACKET',previous_error:result.error},human_request:null};\n    route='verify';\n    runtimeBase=appendHandoffEvent(runtimeBase,{stage:'excel',status:'INVALID_SOURCE_FACTS_PACKET',from_specialist:'excel_extraction_specialist',to_specialist:'schedule_builder_specialist',from_role:chatRoles.excel_extraction_specialist,to_role:chatRoles.schedule_builder_specialist,summary:'Пакет из Excel неполный — Builder не запускаем.',details:{fact_count:0}});\n  }else{\n    handoff={code:'EXCEL_EVIDENCE_READY',next_specialist:'schedule_builder_specialist',source_facts_packet:packetFacts,artifact_refs:result.artifact_refs||[],evidence:result.evidence||[]};\n    runtimeBase=appendHandoffEvent(runtimeBase,{stage:'excel',status:'EXCEL_EVIDENCE_READY',from_specialist:'excel_extraction_specialist',to_specialist:'schedule_builder_specialist',from_role:chatRoles.excel_extraction_specialist,to_role:chatRoles.schedule_builder_specialist,summary:`Из Excel: ${packetFacts.facts.length} факт(ов) для Schedule Builder.`,details:{source_snapshot_hash:packetFacts.source_snapshot_hash,correlation_id:packetFacts.correlation_id,fact_count:packetFacts.facts.length,conflict_count:packetFacts.conflicts.length}});\n  }\n}else if(calculationToSchedule){\n  handoff={code:'CALCULATION_DATA_READY',next_specialist:'schedule_builder_specialist',calculation:result.compact_data?.calculation||{},warnings:result.warnings||[]};\n  runtimeBase=appendHandoffEvent(runtimeBase,{stage:'builder',status:'CALCULATION_DATA_READY',from_specialist:'engineering_calculation_specialist',to_specialist:'schedule_builder_specialist',from_role:chatRoles.engineering_calculation_specialist,to_role:chatRoles.schedule_builder_specialist,summary:'Расчёт готов — данные уходят в Schedule Builder.',details:{warning_count:Array.isArray(result.warnings)?result.warnings.length:0}});\n}else if(scheduleSuccess){\n  runtimeBase=appendHandoffEvent(runtimeBase,{stage:'builder',status:String(result.status||'succeeded'),from_specialist:'schedule_builder_specialist',to_specialist:'universal_orchestrator',from_role:chatRoles.schedule_builder_specialist,to_role:'Orchestrator',summary:String(result.summary||'Schedule Builder завершил шаг.').slice(0,500),brief:String(result.user_message||result.summary||'').slice(0,800),details:{release_ready:Boolean(result.compact_data?.release_ready)}});\n}\nreturn [{json:{...x,specialist_result:nextResult,result_json:JSON.stringify(nextResult),post_specialist_route:route,runtime_json:JSON.stringify({...runtimeBase,last_error:handoff||runtimeBase.last_error||null})}}];"
       },
       "id": "b9cb4e06-4561-5a23-8e37-c521ccab710c",
       "name": "Route successful specialist handoff",
       "type": "n8n-nodes-base.code",
       "typeVersion": 2,
       "position": [
-        3040,
-        -660
+        5880,
+        0
       ]
     },
     {
@@ -1478,21 +1492,21 @@
       "type": "n8n-nodes-base.switch",
       "typeVersion": 3.4,
       "position": [
-        3260,
-        -660
+        6160,
+        170
       ]
     },
     {
       "parameters": {
-        "jsCode": "const x=$json;const result=x.specialist_result||{};const continuation=result.continuation&&typeof result.continuation==='object'?result.continuation:{};\nconst context=(()=>{try{return JSON.parse(x.runtime_json||'{}')}catch{return {}}})();const prior=context.schedule_evidence_loop&&typeof context.schedule_evidence_loop==='object'?context.schedule_evidence_loop:{};\nconst EVIDENCE_GAP_REQUIRED=['entity','effective_at','keyword','field','reason','expected_format'];\nconst typedEvidenceGaps=(gaps)=>{\n  const arr=Array.isArray(gaps)?gaps:[];\n  return arr.filter(g=>g&&typeof g==='object'&&!Array.isArray(g)&&EVIDENCE_GAP_REQUIRED.every(k=>String(g[k]||'').trim())).map(g=>({\n    entity:String(g.entity).trim(),\n    effective_at:String(g.effective_at).trim(),\n    keyword:String(g.keyword).trim().toUpperCase(),\n    field:String(g.field).trim(),\n    reason:String(g.reason).trim(),\n    expected_format:String(g.expected_format).trim(),\n    ...(typeof g.question==='string'&&g.question.trim()?{question:g.question.trim()}:{})\n  })).slice(0,100);\n};\nconst appendHandoffEvent=(runtime,evt)=>{\n  const r=runtime&&typeof runtime==='object'&&!Array.isArray(runtime)?runtime:{};\n  const prev=Array.isArray(r.handoff_events)?r.handoff_events:[];\n  const now=new Date().toISOString();\n  const details=evt.details&&typeof evt.details==='object'&&!Array.isArray(evt.details)?{...evt.details}:{};\n  const timer=r.specialist_timer&&typeof r.specialist_timer==='object'?r.specialist_timer:null;\n  let duration_ms=Number.isFinite(Number(evt.duration_ms))?Math.max(0,Math.trunc(Number(evt.duration_ms))):null;\n  const closesSpecialist=Boolean(timer&&timer.specialist_id&&evt.from_specialist&&evt.from_specialist===timer.specialist_id&&evt.from_specialist!=='universal_orchestrator');\n  if(duration_ms==null&&closesSpecialist&&timer.started_at){\n    const started=Date.parse(String(timer.started_at));\n    const ended=Date.parse(now);\n    if(Number.isFinite(started)&&Number.isFinite(ended)) duration_ms=Math.max(0,ended-started);\n  }\n  if(duration_ms!=null) details.duration_ms=duration_ms;\n  const brief=String(evt.brief||evt.summary||'').slice(0,800);\n  const event={\n    contract:'mas_activity_turn',\n    contract_version:'1.1',\n    event_type:'handoff',\n    at:now,\n    stage:String(evt.stage||'plan'),\n    status:String(evt.status||'observed'),\n    from_specialist:evt.from_specialist||null,\n    to_specialist:evt.to_specialist||null,\n    from_role:evt.from_role||null,\n    to_role:evt.to_role||null,\n    summary:String(evt.summary||'').slice(0,500),\n    brief,\n    duration_ms,\n    details\n  };\n  let nextTimer=timer;\n  if(String(evt.status||'')==='DELEGATED'&&evt.to_specialist&&evt.to_specialist!=='universal_orchestrator'){\n    nextTimer={specialist_id:evt.to_specialist,started_at:now,from_status:'DELEGATED'};\n  }else if(closesSpecialist){\n    nextTimer=null;\n  }else if(evt.to_specialist&&evt.to_specialist!=='universal_orchestrator'&&evt.to_specialist!==(timer&&timer.specialist_id)){\n    nextTimer={specialist_id:evt.to_specialist,started_at:now,from_status:String(evt.status||'handoff')};\n  }\n  return {...r,handoff_events:[...prev,event].slice(-50),specialist_timer:nextTimer||null};\n};\nconst chatRoles={\"excel_extraction_specialist\": \"Excel Extractor\", \"schedule_builder_specialist\": \"Schedule Builder\", \"engineering_calculation_specialist\": \"Calculation Specialist\", \"engineering_data_specialist\": \"Data Specialist\", \"engineering_document_specialist\": \"Document Specialist\"};\nconst rawGaps=Array.isArray(continuation.evidence_gap)?continuation.evidence_gap:[];\nconst gaps=typedEvidenceGaps(rawGaps);\nconst protocolOk=continuation.protocol==='schedule-builder-evidence-gap-v1';\nconst isGap=x.specialist_id==='schedule_builder_specialist'&&result.status==='needs_input'&&protocolOk&&gaps.length>0;\nconst signature=String(continuation.gap_signature||'');const snapshot=String(continuation.source_snapshot_hash||'none');\nconst excelIterations=Number(prior.excel_iterations||0),builderIterations=Number(prior.builder_iterations||1);const maxExcel=Math.min(5,Math.max(1,Number(continuation.max_excel_iterations||prior.max_excel_iterations||2))),maxBuilder=Math.min(5,Math.max(1,Number(continuation.max_builder_iterations||prior.max_builder_iterations||3)));\nlet retryAllowed=isGap,reason='';\nif(x.specialist_id==='schedule_builder_specialist'&&result.status==='needs_input'&&protocolOk&&rawGaps.length&&!gaps.length){retryAllowed=false;reason='MALFORMED_EVIDENCE_GAP';}\nelse if(isGap&&prior.last_gap_signature===signature&&prior.last_source_snapshot===snapshot){retryAllowed=false;reason='STALLED_EVIDENCE_LOOP';}\nelse if(isGap&&excelIterations>=maxExcel){retryAllowed=false;reason='EXCEL_EVIDENCE_BUDGET_EXHAUSTED';}\nelse if(isGap&&builderIterations>=maxBuilder){retryAllowed=false;reason='BUILDER_ITERATION_BUDGET_EXHAUSTED';}\nif(!isGap&&reason!=='MALFORMED_EVIDENCE_GAP')return[{json:{...x,schedule_evidence_retry:false}}];\nif(!retryAllowed){const stalled={...result,status:'needs_decision',summary:'SCHEDULE evidence loop stopped by deterministic policy.',human_request:{kind:'needs_decision',questions:[{id:'schedule_evidence_loop',question:`${reason}. Provide the missing facts directly, select another source, revise scope, or reject the task.`,type:'text'}]},error:{code:reason,gap_signature:signature,source_snapshot_hash:snapshot,dropped_gap_count:Math.max(0,rawGaps.length-gaps.length)},continuation:null};const runtime=appendHandoffEvent(context,{stage:'builder',status:reason,from_specialist:'schedule_builder_specialist',to_specialist:'universal_orchestrator',from_role:chatRoles.schedule_builder_specialist,to_role:'Orchestrator',summary:`Evidence loop stopped: ${reason}.`,details:{gap_count:gaps.length,dropped_gap_count:Math.max(0,rawGaps.length-gaps.length)}});return[{json:{...x,specialist_result:stalled,result_json:JSON.stringify(stalled),runtime_json:JSON.stringify(runtime),schedule_evidence_retry:false}}];}\nconst fields=gaps;const builderPacket=x.specialist_packet||{};const correlationId=`schedule_gap_${x.task_id}_${signature}_${excelIterations+1}`.slice(0,240);const excelPacket={contract:'specialist_packet',contract_version:'1.0',task_id:x.task_id,specialist_id:'excel_extraction_specialist',attempt:Number(x.retry_count)+1,objective:'Extract only the missing SCHEDULE evidence fields from the governed workbook.',inputs:{workflow_kind:'schedule',schedule_evidence_gap:fields,requested_fields:[...new Set(fields.map(f=>f.field).filter(Boolean))],target_entities:[...new Set(fields.map(f=>f.entity).filter(Boolean))],date_scope:[...new Set(fields.map(f=>f.effective_at).filter(Boolean))],prompt:`Extract only these missing SCHEDULE facts: ${JSON.stringify(fields)}`},controls:{bounded_request:true,max_rows:10000,max_cells:200000,source_snapshot_hash:snapshot,correlation_id:correlationId},acceptance_criteria:fields.map((f,i)=>({id:`gap_${i+1}`,criterion:`Return ${f.field||'requested field'} for ${f.entity||'the requested entity'} at ${f.effective_at||'the requested date'} with units and row provenance.`})),artifact_refs:Array.isArray(builderPacket.artifact_refs)?builderPacket.artifact_refs:[]};\nconst loop={active:true,excel_iterations:excelIterations,builder_iterations:builderIterations,max_excel_iterations:maxExcel,max_builder_iterations:maxBuilder,last_gap_signature:signature,last_source_snapshot:snapshot,expected_correlation_id:correlationId,builder_packet:builderPacket,last_builder_result:result};\nconst runtime=appendHandoffEvent(context,{stage:'builder',status:'SCHEDULE_EVIDENCE_GAP',from_specialist:'schedule_builder_specialist',to_specialist:'excel_extraction_specialist',from_role:chatRoles.schedule_builder_specialist,to_role:chatRoles.excel_extraction_specialist,summary:`Schedule Builder requests ${fields.length} missing field(s) from Excel.`,details:{gap_count:fields.length,gap_signature:signature,source_snapshot_hash:snapshot,fields:fields.map(f=>f.field)}});\nreturn[{json:{...x,version:Number(x.version)+1,previous_version:Number(x.version),status:'delegated',specialist_id:'excel_extraction_specialist',specialist_packet:excelPacket,packet_json:JSON.stringify(excelPacket),result_json:JSON.stringify(result),runtime_json:JSON.stringify({...runtime,schedule_evidence_loop:loop,last_error:{code:'SCHEDULE_EVIDENCE_GAP',gap_signature:signature,gaps:fields}}),updated_at:new Date().toISOString(),schedule_evidence_retry:true}}];"
+        "jsCode": "const x=$json;const result=x.specialist_result||{};const continuation=result.continuation&&typeof result.continuation==='object'?result.continuation:{};\nconst context=(()=>{try{return JSON.parse(x.runtime_json||'{}')}catch{return {}}})();const prior=context.schedule_evidence_loop&&typeof context.schedule_evidence_loop==='object'?context.schedule_evidence_loop:{};\nconst EVIDENCE_GAP_REQUIRED=['entity','effective_at','keyword','field','reason','expected_format'];\nconst typedEvidenceGaps=(gaps)=>{\n  const arr=Array.isArray(gaps)?gaps:[];\n  return arr.filter(g=>g&&typeof g==='object'&&!Array.isArray(g)&&EVIDENCE_GAP_REQUIRED.every(k=>String(g[k]||'').trim())).map(g=>({\n    entity:String(g.entity).trim(),\n    effective_at:String(g.effective_at).trim(),\n    keyword:String(g.keyword).trim().toUpperCase(),\n    field:String(g.field).trim(),\n    reason:String(g.reason).trim(),\n    expected_format:String(g.expected_format).trim(),\n    ...(typeof g.question==='string'&&g.question.trim()?{question:g.question.trim()}:{})\n  })).slice(0,100);\n};\nconst appendHandoffEvent=(runtime,evt)=>{\n  const r=runtime&&typeof runtime==='object'&&!Array.isArray(runtime)?runtime:{};\n  const prev=Array.isArray(r.handoff_events)?r.handoff_events:[];\n  const now=new Date().toISOString();\n  const details=evt.details&&typeof evt.details==='object'&&!Array.isArray(evt.details)?{...evt.details}:{};\n  const timer=r.specialist_timer&&typeof r.specialist_timer==='object'?r.specialist_timer:null;\n  let duration_ms=Number.isFinite(Number(evt.duration_ms))?Math.max(0,Math.trunc(Number(evt.duration_ms))):null;\n  const closesSpecialist=Boolean(timer&&timer.specialist_id&&evt.from_specialist&&evt.from_specialist===timer.specialist_id&&evt.from_specialist!=='universal_orchestrator');\n  if(duration_ms==null&&closesSpecialist&&timer.started_at){\n    const started=Date.parse(String(timer.started_at));\n    const ended=Date.parse(now);\n    if(Number.isFinite(started)&&Number.isFinite(ended)) duration_ms=Math.max(0,ended-started);\n  }\n  if(duration_ms!=null) details.duration_ms=duration_ms;\n  const brief=String(evt.brief||evt.summary||'').slice(0,800);\n  const event={\n    contract:'mas_activity_turn',\n    contract_version:'1.1',\n    event_type:'handoff',\n    at:now,\n    stage:String(evt.stage||'plan'),\n    status:String(evt.status||'observed'),\n    from_specialist:evt.from_specialist||null,\n    to_specialist:evt.to_specialist||null,\n    from_role:evt.from_role||null,\n    to_role:evt.to_role||null,\n    summary:String(evt.summary||'').slice(0,500),\n    brief,\n    duration_ms,\n    details\n  };\n  let nextTimer=timer;\n  if(String(evt.status||'')==='DELEGATED'&&evt.to_specialist&&evt.to_specialist!=='universal_orchestrator'){\n    nextTimer={specialist_id:evt.to_specialist,started_at:now,from_status:'DELEGATED'};\n  }else if(closesSpecialist){\n    nextTimer=null;\n  }else if(evt.to_specialist&&evt.to_specialist!=='universal_orchestrator'&&evt.to_specialist!==(timer&&timer.specialist_id)){\n    nextTimer={specialist_id:evt.to_specialist,started_at:now,from_status:String(evt.status||'handoff')};\n  }\n  return {...r,handoff_events:[...prev,event].slice(-50),specialist_timer:nextTimer||null};\n};\nconst chatRoles={\"excel_extraction_specialist\": \"Excel Extractor\", \"schedule_builder_specialist\": \"Schedule Builder\", \"engineering_calculation_specialist\": \"Calculation Specialist\", \"engineering_data_specialist\": \"Data Specialist\", \"engineering_document_specialist\": \"Document Specialist\"};\nconst rawGaps=Array.isArray(continuation.evidence_gap)?continuation.evidence_gap:[];\nconst gaps=typedEvidenceGaps(rawGaps);\nconst protocolOk=continuation.protocol==='schedule-builder-evidence-gap-v1';\nconst hitlAttachOnly=continuation.protocol==='schedule-builder-hitl-attachment-v1';\nconst isGap=x.specialist_id==='schedule_builder_specialist'&&result.status==='needs_input'&&protocolOk&&gaps.length>0&&!hitlAttachOnly;\nif(hitlAttachOnly)return[{json:{...x,schedule_evidence_retry:false}}];\nconst signature=String(continuation.gap_signature||'');const snapshot=String(continuation.source_snapshot_hash||'none');\nconst excelIterations=Number(prior.excel_iterations||0),builderIterations=Number(prior.builder_iterations||1);const maxExcel=Math.min(5,Math.max(1,Number(continuation.max_excel_iterations||prior.max_excel_iterations||2))),maxBuilder=Math.min(5,Math.max(1,Number(continuation.max_builder_iterations||prior.max_builder_iterations||3)));\nlet retryAllowed=isGap,reason='';\nif(x.specialist_id==='schedule_builder_specialist'&&result.status==='needs_input'&&protocolOk&&rawGaps.length&&!gaps.length){retryAllowed=false;reason='MALFORMED_EVIDENCE_GAP';}\nelse if(isGap&&prior.last_gap_signature===signature&&prior.last_source_snapshot===snapshot){retryAllowed=false;reason='STALLED_EVIDENCE_LOOP';}\nelse if(isGap&&excelIterations>=maxExcel){retryAllowed=false;reason='EXCEL_EVIDENCE_BUDGET_EXHAUSTED';}\nelse if(isGap&&builderIterations>=maxBuilder){retryAllowed=false;reason='BUILDER_ITERATION_BUDGET_EXHAUSTED';}\nif(!isGap&&reason!=='MALFORMED_EVIDENCE_GAP')return[{json:{...x,schedule_evidence_retry:false}}];\nif(!retryAllowed){const stalled={...result,status:'needs_decision',summary:'Цикл уточнения по Excel остановлен политикой.',human_request:{kind:'needs_decision',questions:[{id:'schedule_evidence_loop',question:`${reason}. Укажите недостающие факты вручную, смените источник, сузьте задачу или отклоните её.`,type:'text'}]},error:{code:reason,gap_signature:signature,source_snapshot_hash:snapshot,dropped_gap_count:Math.max(0,rawGaps.length-gaps.length)},continuation:null};const runtime=appendHandoffEvent(context,{stage:'builder',status:reason,from_specialist:'schedule_builder_specialist',to_specialist:'universal_orchestrator',from_role:chatRoles.schedule_builder_specialist,to_role:'Orchestrator',summary:`Уточнение по Excel остановлено (${reason}).`,details:{gap_count:gaps.length,dropped_gap_count:Math.max(0,rawGaps.length-gaps.length)}});return[{json:{...x,specialist_result:stalled,result_json:JSON.stringify(stalled),runtime_json:JSON.stringify(runtime),schedule_evidence_retry:false}}];}\nconst fields=gaps;const builderPacket=x.specialist_packet||{};const correlationId=`schedule_gap_${x.task_id}_${signature}_${excelIterations+1}`.slice(0,240);const excelPacket={contract:'specialist_packet',contract_version:'1.0',task_id:x.task_id,specialist_id:'excel_extraction_specialist',attempt:Number(x.retry_count)+1,objective:'Extract only the missing SCHEDULE evidence fields from the governed workbook.',inputs:{workflow_kind:'schedule',schedule_evidence_gap:fields,requested_fields:[...new Set(fields.map(f=>f.field).filter(Boolean))],target_entities:[...new Set(fields.map(f=>f.entity).filter(Boolean))],date_scope:[...new Set(fields.map(f=>f.effective_at).filter(Boolean))],prompt:`Extract only these missing SCHEDULE facts: ${JSON.stringify(fields)}`},controls:{bounded_request:true,max_rows:10000,max_cells:200000,source_snapshot_hash:snapshot,correlation_id:correlationId},acceptance_criteria:fields.map((f,i)=>({id:`gap_${i+1}`,criterion:`Return ${f.field||'requested field'} for ${f.entity||'the requested entity'} at ${f.effective_at||'the requested date'} with units and row provenance.`})),artifact_refs:Array.isArray(builderPacket.artifact_refs)?builderPacket.artifact_refs:[]};\nconst loop={active:true,excel_iterations:excelIterations,builder_iterations:builderIterations,max_excel_iterations:maxExcel,max_builder_iterations:maxBuilder,last_gap_signature:signature,last_source_snapshot:snapshot,expected_correlation_id:correlationId,builder_packet:builderPacket,last_builder_result:result};\nconst runtime=appendHandoffEvent(context,{stage:'builder',status:'SCHEDULE_EVIDENCE_GAP',from_specialist:'schedule_builder_specialist',to_specialist:'excel_extraction_specialist',from_role:chatRoles.schedule_builder_specialist,to_role:chatRoles.excel_extraction_specialist,summary:`В schedule не хватает ${fields.length} поле(й) — узкий запрос к Excel.`,details:{gap_count:fields.length,gap_signature:signature,source_snapshot_hash:snapshot,fields:fields.map(f=>f.field)}});\nreturn[{json:{...x,version:Number(x.version)+1,previous_version:Number(x.version),status:'delegated',specialist_id:'excel_extraction_specialist',specialist_packet:excelPacket,packet_json:JSON.stringify(excelPacket),result_json:JSON.stringify(result),runtime_json:JSON.stringify({...runtime,schedule_evidence_loop:loop,last_error:{code:'SCHEDULE_EVIDENCE_GAP',gap_signature:signature,gaps:fields}}),updated_at:new Date().toISOString(),schedule_evidence_retry:true}}];"
       },
       "id": "4892ee40-1106-5d31-94f6-4622eb1803fa",
       "name": "Prepare SCHEDULE evidence retry",
       "type": "n8n-nodes-base.code",
       "typeVersion": 2,
       "position": [
-        3040,
-        -400
+        5880,
+        170
       ]
     },
     {
@@ -1524,8 +1538,8 @@
       "type": "n8n-nodes-base.if",
       "typeVersion": 2.2,
       "position": [
-        3260,
-        -400
+        6160,
+        340
       ]
     },
     {
@@ -1558,22 +1572,22 @@
       "type": "n8n-nodes-base.executeWorkflow",
       "typeVersion": 1.3,
       "position": [
-        3480,
-        -400
+        6440,
+        85
       ],
       "onError": "continueRegularOutput"
     },
     {
       "parameters": {
-        "jsCode": "const x=$json;const result=x.specialist_result||{};const context=(()=>{try{return JSON.parse(x.runtime_json||'{}')}catch{return {}}})();const loop=context.schedule_evidence_loop&&typeof context.schedule_evidence_loop==='object'?context.schedule_evidence_loop:{};const original=loop.builder_packet&&typeof loop.builder_packet==='object'?loop.builder_packet:{};\nconst normalizeSourceFactsPacket=(compact)=>{\n  const c=compact&&typeof compact==='object'&&!Array.isArray(compact)?compact:null;\n  if(!c)return null;\n  const snapshot=String(c.source_snapshot_hash||'').trim();\n  const correlation=String(c.correlation_id||'').trim();\n  if(!snapshot||!correlation)return null;\n  const preview=Array.isArray(c.preview_records)?c.preview_records.filter(v=>v&&typeof v==='object').slice(0,200):[];\n  const facts=Array.isArray(c.facts)&&c.facts.length\n    ?c.facts.filter(v=>v&&typeof v==='object').slice(0,500)\n    :preview.map((row,i)=>({fact_id:`preview_${i+1}`,values:row,provenance:{kind:'excel_preview_row',index:i}}));\n  return{\n    contract:'source_facts_packet',\n    contract_version:'1.0',\n    source_snapshot_hash:snapshot,\n    correlation_id:correlation,\n    facts,\n    conflicts:Array.isArray(c.conflicts)?c.conflicts.filter(v=>v&&typeof v==='object').slice(0,100):[],\n    columns:Array.isArray(c.columns)?c.columns.slice(0,500):[],\n    row_count:Number.isFinite(Number(c.row_count))?Number(c.row_count):facts.length,\n    returned_count:Number.isFinite(Number(c.returned_count))?Number(c.returned_count):preview.length,\n    truncated:Boolean(c.truncated),\n    decision_record:c.decision_record&&typeof c.decision_record==='object'?c.decision_record:undefined,\n    trace_summary:Array.isArray(c.trace_summary)?c.trace_summary:undefined,\n    stage_scores:Array.isArray(c.stage_scores)?c.stage_scores:undefined,\n    gate_decisions:Array.isArray(c.gate_decisions)?c.gate_decisions:undefined,\n    agent_tool_trace:Array.isArray(c.agent_tool_trace)?c.agent_tool_trace:undefined,\n    overall_score:c.overall_score\n  };\n};\nconst appendHandoffEvent=(runtime,evt)=>{\n  const r=runtime&&typeof runtime==='object'&&!Array.isArray(runtime)?runtime:{};\n  const prev=Array.isArray(r.handoff_events)?r.handoff_events:[];\n  const now=new Date().toISOString();\n  const details=evt.details&&typeof evt.details==='object'&&!Array.isArray(evt.details)?{...evt.details}:{};\n  const timer=r.specialist_timer&&typeof r.specialist_timer==='object'?r.specialist_timer:null;\n  let duration_ms=Number.isFinite(Number(evt.duration_ms))?Math.max(0,Math.trunc(Number(evt.duration_ms))):null;\n  const closesSpecialist=Boolean(timer&&timer.specialist_id&&evt.from_specialist&&evt.from_specialist===timer.specialist_id&&evt.from_specialist!=='universal_orchestrator');\n  if(duration_ms==null&&closesSpecialist&&timer.started_at){\n    const started=Date.parse(String(timer.started_at));\n    const ended=Date.parse(now);\n    if(Number.isFinite(started)&&Number.isFinite(ended)) duration_ms=Math.max(0,ended-started);\n  }\n  if(duration_ms!=null) details.duration_ms=duration_ms;\n  const brief=String(evt.brief||evt.summary||'').slice(0,800);\n  const event={\n    contract:'mas_activity_turn',\n    contract_version:'1.1',\n    event_type:'handoff',\n    at:now,\n    stage:String(evt.stage||'plan'),\n    status:String(evt.status||'observed'),\n    from_specialist:evt.from_specialist||null,\n    to_specialist:evt.to_specialist||null,\n    from_role:evt.from_role||null,\n    to_role:evt.to_role||null,\n    summary:String(evt.summary||'').slice(0,500),\n    brief,\n    duration_ms,\n    details\n  };\n  let nextTimer=timer;\n  if(String(evt.status||'')==='DELEGATED'&&evt.to_specialist&&evt.to_specialist!=='universal_orchestrator'){\n    nextTimer={specialist_id:evt.to_specialist,started_at:now,from_status:'DELEGATED'};\n  }else if(closesSpecialist){\n    nextTimer=null;\n  }else if(evt.to_specialist&&evt.to_specialist!=='universal_orchestrator'&&evt.to_specialist!==(timer&&timer.specialist_id)){\n    nextTimer={specialist_id:evt.to_specialist,started_at:now,from_status:String(evt.status||'handoff')};\n  }\n  return {...r,handoff_events:[...prev,event].slice(-50),specialist_timer:nextTimer||null};\n};\nconst chatRoles={\"excel_extraction_specialist\": \"Excel Extractor\", \"schedule_builder_specialist\": \"Schedule Builder\", \"engineering_calculation_specialist\": \"Calculation Specialist\", \"engineering_data_specialist\": \"Data Specialist\", \"engineering_document_specialist\": \"Document Specialist\"};\nconst facts=normalizeSourceFactsPacket(result.compact_data||{});\nconst snapshot=String(facts?.source_snapshot_hash||'');const correlation=String(facts?.correlation_id||'');\nlet valid=loop.active===true&&original.specialist_id==='schedule_builder_specialist'&&result.specialist_id==='excel_extraction_specialist'&&['succeeded','partial'].includes(result.status)&&Boolean(facts)&&snapshot&&correlation&&correlation===String(loop.expected_correlation_id||'');\nif(!valid){const failed={...result,status:'retryable_error',summary:'Excel evidence result cannot resume SCHEDULE Builder because source_facts_packet, correlation or snapshot metadata is missing.',error:{code:'INVALID_EXCEL_EVIDENCE_SNAPSHOT'},human_request:null};const runtime=appendHandoffEvent(context,{stage:'excel',status:'INVALID_EXCEL_EVIDENCE_SNAPSHOT',from_specialist:'excel_extraction_specialist',to_specialist:'schedule_builder_specialist',from_role:chatRoles.excel_extraction_specialist,to_role:chatRoles.schedule_builder_specialist,summary:'Resume blocked: invalid Excel evidence snapshot.',details:{}});return[{json:{...x,specialist_result:failed,result_json:JSON.stringify(failed),runtime_json:JSON.stringify(runtime),schedule_resume_ready:false}}];}\nconst priorReq=original.inputs?.schedule_request&&typeof original.inputs.schedule_request==='object'?original.inputs.schedule_request:{};const nextAttempt=Number(x.retry_count)+1,nextVersion=Number(x.version)+1;const builderPacket={...original,attempt:nextAttempt,controls:{...(original.controls&&typeof original.controls==='object'?original.controls:{}),expected_version:nextVersion,idempotency_key:`${x.task_id}:specialist:schedule_builder_specialist:${nextAttempt}:${nextVersion}`,policy_version:'petroleum-schedule-policy-v1'},inputs:{...original.inputs,schedule_request:{...priorReq,source_facts_packet:facts,source_snapshot_hash:snapshot,previous_builder_findings:loop.last_builder_result?.error?.findings||[],evidence_iteration:Number(loop.excel_iterations||0)+1}}};\nconst nextLoop={...loop,excel_iterations:Number(loop.excel_iterations||0)+1,builder_iterations:Number(loop.builder_iterations||1)+1,last_source_snapshot:snapshot};\nconst runtime=appendHandoffEvent(context,{stage:'excel',status:'RESUME_SCHEDULE',from_specialist:'excel_extraction_specialist',to_specialist:'schedule_builder_specialist',from_role:chatRoles.excel_extraction_specialist,to_role:chatRoles.schedule_builder_specialist,summary:`Resuming Schedule Builder with ${facts.facts.length} fact(s).`,details:{source_snapshot_hash:snapshot,correlation_id:correlation,fact_count:facts.facts.length}});\nreturn[{json:{...x,version:Number(x.version)+1,previous_version:Number(x.version),status:'delegated',specialist_id:'schedule_builder_specialist',specialist_packet:builderPacket,packet_json:JSON.stringify(builderPacket),result_json:JSON.stringify(result),runtime_json:JSON.stringify({...runtime,schedule_evidence_loop:nextLoop,last_error:null}),updated_at:new Date().toISOString(),schedule_resume_ready:true}}];"
+        "jsCode": "const x=$json;const result=x.specialist_result||{};const context=(()=>{try{return JSON.parse(x.runtime_json||'{}')}catch{return {}}})();const loop=context.schedule_evidence_loop&&typeof context.schedule_evidence_loop==='object'?context.schedule_evidence_loop:{};const original=loop.builder_packet&&typeof loop.builder_packet==='object'?loop.builder_packet:{};\nconst normalizeSourceFactsPacket=(compact)=>{\n  const c=compact&&typeof compact==='object'&&!Array.isArray(compact)?compact:null;\n  if(!c)return null;\n  const snapshot=String(c.source_snapshot_hash||'').trim();\n  const correlation=String(c.correlation_id||'').trim();\n  if(!snapshot||!correlation)return null;\n  const preview=Array.isArray(c.preview_records)?c.preview_records.filter(v=>v&&typeof v==='object').slice(0,200):[];\n  const facts=Array.isArray(c.facts)&&c.facts.length\n    ?c.facts.filter(v=>v&&typeof v==='object').slice(0,500)\n    :preview.map((row,i)=>({fact_id:`preview_${i+1}`,values:row,provenance:{kind:'excel_preview_row',index:i}}));\n  return{\n    contract:'source_facts_packet',\n    contract_version:'1.0',\n    source_snapshot_hash:snapshot,\n    correlation_id:correlation,\n    facts,\n    conflicts:Array.isArray(c.conflicts)?c.conflicts.filter(v=>v&&typeof v==='object').slice(0,100):[],\n    columns:Array.isArray(c.columns)?c.columns.slice(0,500):[],\n    row_count:Number.isFinite(Number(c.row_count))?Number(c.row_count):facts.length,\n    returned_count:Number.isFinite(Number(c.returned_count))?Number(c.returned_count):preview.length,\n    truncated:Boolean(c.truncated),\n    decision_record:c.decision_record&&typeof c.decision_record==='object'?c.decision_record:undefined,\n    trace_summary:Array.isArray(c.trace_summary)?c.trace_summary:undefined,\n    stage_scores:Array.isArray(c.stage_scores)?c.stage_scores:undefined,\n    gate_decisions:Array.isArray(c.gate_decisions)?c.gate_decisions:undefined,\n    agent_tool_trace:Array.isArray(c.agent_tool_trace)?c.agent_tool_trace:undefined,\n    overall_score:c.overall_score\n  };\n};\nconst appendHandoffEvent=(runtime,evt)=>{\n  const r=runtime&&typeof runtime==='object'&&!Array.isArray(runtime)?runtime:{};\n  const prev=Array.isArray(r.handoff_events)?r.handoff_events:[];\n  const now=new Date().toISOString();\n  const details=evt.details&&typeof evt.details==='object'&&!Array.isArray(evt.details)?{...evt.details}:{};\n  const timer=r.specialist_timer&&typeof r.specialist_timer==='object'?r.specialist_timer:null;\n  let duration_ms=Number.isFinite(Number(evt.duration_ms))?Math.max(0,Math.trunc(Number(evt.duration_ms))):null;\n  const closesSpecialist=Boolean(timer&&timer.specialist_id&&evt.from_specialist&&evt.from_specialist===timer.specialist_id&&evt.from_specialist!=='universal_orchestrator');\n  if(duration_ms==null&&closesSpecialist&&timer.started_at){\n    const started=Date.parse(String(timer.started_at));\n    const ended=Date.parse(now);\n    if(Number.isFinite(started)&&Number.isFinite(ended)) duration_ms=Math.max(0,ended-started);\n  }\n  if(duration_ms!=null) details.duration_ms=duration_ms;\n  const brief=String(evt.brief||evt.summary||'').slice(0,800);\n  const event={\n    contract:'mas_activity_turn',\n    contract_version:'1.1',\n    event_type:'handoff',\n    at:now,\n    stage:String(evt.stage||'plan'),\n    status:String(evt.status||'observed'),\n    from_specialist:evt.from_specialist||null,\n    to_specialist:evt.to_specialist||null,\n    from_role:evt.from_role||null,\n    to_role:evt.to_role||null,\n    summary:String(evt.summary||'').slice(0,500),\n    brief,\n    duration_ms,\n    details\n  };\n  let nextTimer=timer;\n  if(String(evt.status||'')==='DELEGATED'&&evt.to_specialist&&evt.to_specialist!=='universal_orchestrator'){\n    nextTimer={specialist_id:evt.to_specialist,started_at:now,from_status:'DELEGATED'};\n  }else if(closesSpecialist){\n    nextTimer=null;\n  }else if(evt.to_specialist&&evt.to_specialist!=='universal_orchestrator'&&evt.to_specialist!==(timer&&timer.specialist_id)){\n    nextTimer={specialist_id:evt.to_specialist,started_at:now,from_status:String(evt.status||'handoff')};\n  }\n  return {...r,handoff_events:[...prev,event].slice(-50),specialist_timer:nextTimer||null};\n};\nconst chatRoles={\"excel_extraction_specialist\": \"Excel Extractor\", \"schedule_builder_specialist\": \"Schedule Builder\", \"engineering_calculation_specialist\": \"Calculation Specialist\", \"engineering_data_specialist\": \"Data Specialist\", \"engineering_document_specialist\": \"Document Specialist\"};\nconst facts=normalizeSourceFactsPacket(result.compact_data||{});\nconst snapshot=String(facts?.source_snapshot_hash||'');const correlation=String(facts?.correlation_id||'');\nlet valid=loop.active===true&&original.specialist_id==='schedule_builder_specialist'&&result.specialist_id==='excel_extraction_specialist'&&['succeeded','partial'].includes(result.status)&&Boolean(facts)&&snapshot&&correlation&&correlation===String(loop.expected_correlation_id||'');\nif(!valid){const failed={...result,status:'retryable_error',summary:'Нельзя продолжить Schedule Builder: в ответе Excel нет корректного снимка или связки.',error:{code:'INVALID_EXCEL_EVIDENCE_SNAPSHOT'},human_request:null};const runtime=appendHandoffEvent(context,{stage:'excel',status:'INVALID_EXCEL_EVIDENCE_SNAPSHOT',from_specialist:'excel_extraction_specialist',to_specialist:'schedule_builder_specialist',from_role:chatRoles.excel_extraction_specialist,to_role:chatRoles.schedule_builder_specialist,summary:'Снимок Excel не совпал — продолжение запрещено.',details:{}});return[{json:{...x,specialist_result:failed,result_json:JSON.stringify(failed),runtime_json:JSON.stringify(runtime),schedule_resume_ready:false}}];}\nconst priorReq=original.inputs?.schedule_request&&typeof original.inputs.schedule_request==='object'?original.inputs.schedule_request:{};const nextAttempt=Number(x.retry_count)+1,nextVersion=Number(x.version)+1;const builderPacket={...original,attempt:nextAttempt,controls:{...(original.controls&&typeof original.controls==='object'?original.controls:{}),expected_version:nextVersion,idempotency_key:`${x.task_id}:specialist:schedule_builder_specialist:${nextAttempt}:${nextVersion}`,policy_version:'petroleum-schedule-policy-v1'},inputs:{...original.inputs,schedule_request:{...priorReq,source_facts_packet:facts,source_snapshot_hash:snapshot,previous_builder_findings:loop.last_builder_result?.error?.findings||[],evidence_iteration:Number(loop.excel_iterations||0)+1}}};\nconst nextLoop={...loop,excel_iterations:Number(loop.excel_iterations||0)+1,builder_iterations:Number(loop.builder_iterations||1)+1,last_source_snapshot:snapshot};\nconst runtime=appendHandoffEvent(context,{stage:'excel',status:'RESUME_SCHEDULE',from_specialist:'excel_extraction_specialist',to_specialist:'schedule_builder_specialist',from_role:chatRoles.excel_extraction_specialist,to_role:chatRoles.schedule_builder_specialist,summary:`Недостающие факты получены (${facts.facts.length}) — продолжаем schedule.`,details:{source_snapshot_hash:snapshot,correlation_id:correlation,fact_count:facts.facts.length}});\nreturn[{json:{...x,version:Number(x.version)+1,previous_version:Number(x.version),status:'delegated',specialist_id:'schedule_builder_specialist',specialist_packet:builderPacket,packet_json:JSON.stringify(builderPacket),result_json:JSON.stringify(result),runtime_json:JSON.stringify({...runtime,schedule_evidence_loop:nextLoop,last_error:null}),updated_at:new Date().toISOString(),schedule_resume_ready:true}}];"
       },
       "id": "ed668c93-9e32-5e7e-ae36-8095393e9402",
       "name": "Prepare SCHEDULE resume after Excel",
       "type": "n8n-nodes-base.code",
       "typeVersion": 2,
       "position": [
-        3480,
-        -660
+        6440,
+        -255
       ]
     },
     {
@@ -1605,8 +1619,8 @@
       "type": "n8n-nodes-base.if",
       "typeVersion": 2.2,
       "position": [
-        3700,
-        -660
+        6720,
+        -170
       ]
     },
     {
@@ -1639,8 +1653,8 @@
       "type": "n8n-nodes-base.executeWorkflow",
       "typeVersion": 1.3,
       "position": [
-        3920,
-        -660
+        7000,
+        -170
       ],
       "onError": "continueRegularOutput"
     },
@@ -1653,8 +1667,8 @@
       "type": "n8n-nodes-base.code",
       "typeVersion": 2,
       "position": [
-        3040,
-        -780
+        6440,
+        -85
       ]
     },
     {
@@ -1675,8 +1689,8 @@
       "type": "@n8n/n8n-nodes-langchain.agent",
       "typeVersion": 3.1,
       "position": [
-        3260,
-        -780
+        6720,
+        170
       ]
     },
     {
@@ -1698,8 +1712,8 @@
       "type": "@n8n/n8n-nodes-langchain.lmChatOpenAi",
       "typeVersion": 1.3,
       "position": [
-        3140,
-        -1020
+        6720,
+        0
       ],
       "credentials": {
         "openAiApi": {
@@ -1719,8 +1733,8 @@
       "type": "@n8n/n8n-nodes-langchain.outputParserStructured",
       "typeVersion": 1.3,
       "position": [
-        3380,
-        -1020
+        6720,
+        -340
       ]
     },
     {
@@ -1732,8 +1746,8 @@
       "type": "n8n-nodes-base.code",
       "typeVersion": 2,
       "position": [
-        3500,
-        -780
+        7000,
+        0
       ]
     },
     {
@@ -1766,8 +1780,8 @@
       "type": "n8n-nodes-base.executeWorkflow",
       "typeVersion": 1.3,
       "position": [
-        3720,
-        -780
+        7280,
+        0
       ],
       "onError": "continueRegularOutput"
     },
@@ -1800,8 +1814,8 @@
       "type": "n8n-nodes-base.if",
       "typeVersion": 2.2,
       "position": [
-        4160,
-        -780
+        7560,
+        0
       ]
     },
     {
@@ -1813,8 +1827,8 @@
       "type": "n8n-nodes-base.code",
       "typeVersion": 2,
       "position": [
-        3040,
-        -500
+        6440,
+        255
       ]
     },
     {
@@ -1847,8 +1861,8 @@
       "type": "n8n-nodes-base.executeWorkflow",
       "typeVersion": 1.3,
       "position": [
-        3260,
-        -500
+        6720,
+        340
       ],
       "onError": "continueRegularOutput"
     },
@@ -1881,8 +1895,8 @@
       "type": "n8n-nodes-base.if",
       "typeVersion": 2.2,
       "position": [
-        3700,
-        -500
+        7000,
+        170
       ]
     },
     {
@@ -1894,8 +1908,8 @@
       "type": "n8n-nodes-base.code",
       "typeVersion": 2,
       "position": [
-        2160,
-        -380
+        4480,
+        -85
       ]
     },
     {
@@ -1928,8 +1942,8 @@
       "type": "n8n-nodes-base.executeWorkflow",
       "typeVersion": 1.3,
       "position": [
-        2380,
-        -380
+        4760,
+        0
       ],
       "onError": "continueRegularOutput"
     },
@@ -1942,8 +1956,8 @@
       "type": "n8n-nodes-base.code",
       "typeVersion": 2,
       "position": [
-        -120,
-        260
+        1960,
+        170
       ]
     },
     {
@@ -1955,8 +1969,8 @@
       "type": "n8n-nodes-base.code",
       "typeVersion": 2,
       "position": [
-        3960,
-        -80
+        3640,
+        85
       ],
       "executeOnce": true
     },
@@ -1991,8 +2005,8 @@
       "type": "n8n-nodes-base.executeWorkflow",
       "typeVersion": 1.3,
       "position": [
-        4180,
-        -80
+        3920,
+        170
       ],
       "onError": "continueRegularOutput"
     },
@@ -2005,8 +2019,8 @@
       "type": "n8n-nodes-base.code",
       "typeVersion": 2,
       "position": [
-        4400,
-        -80
+        4200,
+        170
       ],
       "executeOnce": true
     },
@@ -2019,8 +2033,8 @@
       "type": "n8n-nodes-base.code",
       "typeVersion": 2,
       "position": [
-        4180,
-        -200
+        4480,
+        255
       ],
       "executeOnce": true
     }

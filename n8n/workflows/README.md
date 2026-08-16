@@ -1,4 +1,5 @@
 # n8n workflows
 
-- `core/` — production MAS runtime. Import in `runtime_import_order` from `n8n/import-manifest.json`.
-- `support/` — not on the live user path: specialist template, AI-components reference, standalone Excel form, one-shot Excel RAG seed.
+- `core/` — production MAS runtime. **Import only via n8n UI** (Import from File), порядок — `runtime_import_order` в [`../import-manifest.json`](../import-manifest.json). Канон: [`../../docs.md`](../../docs.md) §3.
+- `support/` — не на live user path: specialist template, AI-components reference, standalone Excel form.
+

@@ -258,19 +258,63 @@ async def _invoke_n8n_rest(
             last = ex.json()
             status = (last.get("data") or last).get("status")
             if status in {"success", "error", "crashed", "canceled"}:
+                # Fail closed: a crashed/canceled/error n8n run must never surface as a
+                # successful orchestrator_response, even if a response blob was parsed.
                 if status != "success":
                     raise OrchestratorError(
-                        f"Orchestrator execution {status}",
+                        _execution_error_message(last, status=status),
                         status_code=502,
                         detail={"execution_id": execution_id, "status": status},
                     )
                 parsed = extract_orchestrator_response(last)
-                if not parsed:
-                    raise OrchestratorError(
-                        "Could not parse orchestrator_response from execution",
-                        status_code=502,
-                        detail={"execution_id": execution_id},
-                    )
-                return parsed
+                if parsed:
+                    return parsed
+                raise OrchestratorError(
+                    "Could not parse orchestrator_response from execution",
+                    status_code=502,
+                    detail={"execution_id": execution_id},
+                )
             await asyncio.sleep(0.6)
         raise OrchestratorError("Orchestrator execution timed out", status_code=504, detail=last.get("data"))
+
+
+def _execution_error_message(execution_payload: dict[str, Any], *, status: str) -> str:
+    """Best-effort human message from a failed n8n execution payload."""
+    data = execution_payload.get("data", execution_payload)
+    inner = data.get("data")
+    err: Any = None
+    last_node = None
+    if isinstance(inner, str):
+        try:
+            flat = json.loads(inner)
+        except json.JSONDecodeError:
+            flat = None
+        if isinstance(flat, list):
+            for item in flat:
+                if isinstance(item, dict) and item.get("error") is not None and "runData" in item:
+                    err = _deref_flat(flat, item.get("error"))
+                    last_node = _deref_flat(flat, item.get("lastNodeExecuted"))
+                    break
+    elif isinstance(inner, dict):
+        result = inner.get("resultData") or {}
+        err = result.get("error")
+        last_node = result.get("lastNodeExecuted")
+    node_name = ""
+    if isinstance(err, dict):
+        node = err.get("node") if isinstance(err.get("node"), dict) else {}
+        node_name = str(node.get("name") or last_node or "").strip()
+        reason = ""
+        ctx = err.get("context") if isinstance(err.get("context"), dict) else {}
+        if ctx.get("outputParserFailReason"):
+            reason = str(ctx["outputParserFailReason"])
+        elif err.get("description"):
+            reason = str(err["description"])
+        elif err.get("message"):
+            reason = str(err["message"])
+        if node_name and reason:
+            return f"Orchestrator node «{node_name}»: {reason[:400]}"
+        if reason:
+            return f"Orchestrator execution {status}: {reason[:400]}"
+    if last_node:
+        return f"Orchestrator execution {status} at «{last_node}»"
+    return f"Orchestrator execution {status}"

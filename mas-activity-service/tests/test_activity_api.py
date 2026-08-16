@@ -25,6 +25,8 @@ def _isolate_activity_store(monkeypatch) -> None:
     """Reset memory and ignore host ACTIVITY_*_URL so hydrate stays offline in unit tests."""
     monkeypatch.delenv("ACTIVITY_LIST_URL", raising=False)
     monkeypatch.delenv("ACTIVITY_FEED_URL", raising=False)
+    # Do not share on-disk state with a live Activity process on :8200.
+    monkeypatch.delenv("ACTIVITY_STATE_PATH", raising=False)
     reset_store()
 
 
@@ -47,17 +49,36 @@ def test_enrich_adds_brief_abs_time_duration_and_filters_secrets() -> None:
     assert turn["at_abs"] == "2026-08-15 06:02:03 UTC+5"
     assert turn["duration_label"] == "12.5 s"
     assert turn["outcome"] == "ok"
-    assert "snapshot" in turn["brief"].lower() or "факт" in turn["brief"].lower()
+    assert turn["brief"].startswith(BRIEF_TEMPLATES["EXCEL_EVIDENCE_READY"])
     assert "Фактов в пакете: 3" in turn["brief"]
+    assert turn["text"] == "Excel returned 3 fact(s)."
     assert all(c["id"] != "api_key" for c in turn["chips"])
-    assert any(c["id"] == "fact_count" for c in turn["chips"])
+    fact_chip = next(c for c in turn["chips"] if c["id"] == "fact_count")
+    assert fact_chip["label"] == "Фактов"
+
+
+def test_enrich_default_to_role_is_user() -> None:
+    turn = enrich_turn({"status": "DELEGATED", "summary": "go"})
+    assert turn["to"]["role"] == "User"
+    assert turn["from"]["role"] == "Orchestrator"
 
 
 def test_brief_templates_cover_core_statuses() -> None:
-    for status in ("DELEGATED", "SCHEDULE_EVIDENCE_GAP", "STALLED_EVIDENCE_LOOP"):
+    for status in ("DELEGATED", "SCHEDULE_EVIDENCE_GAP", "STALLED_EVIDENCE_LOOP", "SCHEDULE_DRAFT_READY", "VERIFIED"):
         assert status in BRIEF_TEMPLATES
         brief = build_brief(status=status, summary="", brief=None, details={})
-        assert 20 < len(brief) <= 800
+        assert 10 < len(brief) <= 800
+
+
+def test_known_status_brief_wins_over_english_summary_and_brief() -> None:
+    brief = build_brief(
+        status="SCHEDULE_DRAFT_READY",
+        summary="KEEP unlisted; shifted listed wells",
+        brief="Timeline revise applied (8 shifts, keep)",
+        details={},
+    )
+    assert brief == BRIEF_TEMPLATES["SCHEDULE_DRAFT_READY"]
+    assert "KEEP" not in brief
 
 
 def test_format_duration_and_outcome() -> None:
@@ -66,6 +87,7 @@ def test_format_duration_and_outcome() -> None:
     assert format_duration(65000).startswith("1m")
     assert outcome_for("INVALID_SOURCE_FACTS_PACKET") == "block"
     assert outcome_for("SCHEDULE_EVIDENCE_GAP") == "wait"
+    assert outcome_for("SCHEDULE_DRAFT_READY") == "ok"
 
 
 def test_sync_preserves_presentation_fields() -> None:
@@ -95,7 +117,8 @@ def test_sync_preserves_presentation_fields() -> None:
     )
     assert res.status_code == 200
     turn = res.json()["turns"][0]
-    assert turn["brief"].startswith("Excel Extractor")
+    assert turn["brief"].startswith(BRIEF_TEMPLATES["EXCEL_EVIDENCE_READY"])
+    assert "Фактов в пакете: 4" in turn["brief"]
     assert turn["at_abs"] == "2026-08-15 15:11:12 UTC+5"
     assert turn["duration_ms"] == 9400
     assert turn["duration_label"] == "9.4 s"
@@ -343,6 +366,9 @@ def test_ready_health_and_static_assets() -> None:
     assert "rail-new-task" in index.text
     assert "railList" in index.text
     assert "brandHome" in index.text
+    assert "NOVATEK RE MAS" in index.text
+    assert "Workspace" in index.text
+    assert "Novatek STC reservoir engineering multi-agent system" in index.text
     assert "reloadDurableBtn" not in index.text
     assert "Из Data Tables" not in index.text
     assert "requestPanel" in index.text
@@ -358,6 +384,11 @@ def test_ready_health_and_static_assets() -> None:
     assert "duration_label" in js_text
     assert "submitHitl" in js_text
     assert "submitStart" in js_text
+    assert "clearWorkspaceView" in js_text
+    assert "startResumeTask" in js_text
+    assert "displayRole" in js_text
+    assert 'return "User"' in js_text
+    assert "syncScheduleRootField" in js_text
     assert "hydrateFromDataTables" in js_text
     assert "setTaskHeader" in js_text
     assert "showLoadError" in js_text
@@ -587,6 +618,123 @@ def test_set_gate_sse_publishes_human_gate() -> None:
     assert msg["human_gate"]["gate_id"] == "g-sse-1"
     assert "gate" not in msg
     _subscribers[task_id].remove(queue)
+
+
+def test_set_gate_clears_stale_status_message_on_status_refresh() -> None:
+    import asyncio
+    from app.main import _set_gate, _tasks
+
+    task_id = "stale_status_msg"
+
+    async def conflict_then_running() -> tuple[dict, dict]:
+        first = await _set_gate(
+            task_id,
+            status="conflict",
+            message="Missing INCLUDE bodies",
+        )
+        second = await _set_gate(task_id, status="running")
+        return first, second
+
+    first, second = asyncio.run(conflict_then_running())
+    assert first["status_message"] == "Missing INCLUDE bodies"
+    assert second["status"] == "running"
+    assert second["status_message"] is None
+    assert _tasks[task_id].get("status_message") is None
+
+
+def test_n8n_rest_failed_execution_never_returns_parsed_response(monkeypatch) -> None:
+    """Bugbot: error/crashed/canceled must fail closed even if orch JSON is parseable."""
+    import asyncio
+    from app.orchestrator import OrchestratorError, _invoke_n8n_rest
+
+    class FakeResp:
+        def __init__(self, status_code: int, payload: dict):
+            self.status_code = status_code
+            self._payload = payload
+            self.text = json.dumps(payload)
+
+        def json(self) -> dict:
+            return self._payload
+
+    class FakeClient:
+        def __init__(self, *args, **kwargs):
+            pass
+
+        async def __aenter__(self):
+            return self
+
+        async def __aexit__(self, *args):
+            return None
+
+        async def post(self, url, json=None):
+            return FakeResp(200, {"data": {"executionId": "exec-fail-1"}})
+
+        async def get(self, url, params=None):
+            return FakeResp(
+                200,
+                {
+                    "data": {
+                        "status": "error",
+                        "data": {
+                            "resultData": {
+                                "runData": {
+                                    "Format orchestrator response": [
+                                        {
+                                            "data": {
+                                                "main": [
+                                                    [
+                                                        {
+                                                            "json": {
+                                                                "orchestrator_response": {
+                                                                    "status": "ok",
+                                                                    "task_id": "should-not-leak",
+                                                                    "message": "parsed but run failed",
+                                                                }
+                                                            }
+                                                        }
+                                                    ]
+                                                ]
+                                            }
+                                        }
+                                    ]
+                                }
+                            }
+                        },
+                    }
+                },
+            )
+
+    monkeypatch.setenv("HITL_MODE", "n8n_rest")
+    monkeypatch.setenv("N8N_BASE_URL", "http://n8n.test")
+    monkeypatch.setenv("N8N_USERNAME", "u")
+    monkeypatch.setenv("N8N_PASSWORD", "p")
+    monkeypatch.setenv("ORCHESTRATOR_WORKFLOW_ID", "wf-test")
+    monkeypatch.setattr("app.orchestrator.httpx.AsyncClient", FakeClient)
+
+    async def _login_ok(client, cfg):
+        return None
+
+    monkeypatch.setattr("app.orchestrator._login", _login_ok)
+
+    async def run():
+        return await _invoke_n8n_rest({"action": "status", "task_id": "t1"}, timeout_s=5)
+
+    with pytest.raises(OrchestratorError) as exc:
+        asyncio.run(run())
+    assert exc.value.status_code == 502
+    assert "should-not-leak" not in str(exc.value)
+
+
+def test_static_ui_requires_schedule_root_and_generic_conflict_banner() -> None:
+    js = (STATIC / "app.js").read_text(encoding="utf-8")
+    assert "Выберите корневой schedule" in js
+    assert "schedules.length >= 2 && !root" in js
+    assert "полным пакетом schedule или без лишних INCLUDE" not in js
+    assert "в ленте выше обычно есть причина" in js
+    assert "startSubmitBtn.disabled = true" in js
+    assert 'startSubmitBtn.setAttribute("aria-busy", "true")' in js
+    assert "formatStartError" in js
+    assert "emptyFeedMessage" in js
 
 
 def test_live_hitl_status_failure_does_not_local_apply(monkeypatch) -> None:

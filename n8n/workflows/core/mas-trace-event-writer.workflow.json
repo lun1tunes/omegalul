@@ -5,6 +5,22 @@
   "nodes": [
     {
       "parameters": {
+        "content": "## edit after import\n\n**Writer — MAS Trace** — after UI import, complete bindings before activate:\n\n- Bind Data Table on **Insert MAS trace event**\n\nDo not rely on env()/Globals for corporate UI import.",
+        "height": 188,
+        "width": 440,
+        "color": 1
+      },
+      "id": "0e26ff9e-347f-5a44-9b68-b3c7a2aa9ee6",
+      "name": "edit after import",
+      "type": "n8n-nodes-base.stickyNote",
+      "typeVersion": 1,
+      "position": [
+        -40,
+        -248
+      ]
+    },
+    {
+      "parameters": {
         "content": "Structured redacted trace only; no raw prompts, secrets, binary or hidden chain-of-thought. Accepts one event or a bounded event batch. Select Data Table in UI.\n\nOptional: after insert, handoff events POST to mas-activity-service (`/v1/sync`) for the chat presentation UI. Set URL/key in “Prepare MAS activity sync”. continueOnFail keeps Trace durable even if the UI service is down.",
         "width": 620,
         "height": 420,
@@ -15,8 +31,8 @@
       "type": "n8n-nodes-base.stickyNote",
       "typeVersion": 1,
       "position": [
-        -920,
-        -480
+        -700,
+        -460
       ]
     },
     {
@@ -29,8 +45,8 @@
       "type": "n8n-nodes-base.executeWorkflowTrigger",
       "typeVersion": 1.2,
       "position": [
-        -920,
-        -80
+        0,
+        0
       ]
     },
     {
@@ -42,8 +58,8 @@
       "type": "n8n-nodes-base.code",
       "typeVersion": 2,
       "position": [
-        -640,
-        -80
+        280,
+        0
       ]
     },
     {
@@ -80,8 +96,8 @@
       "type": "n8n-nodes-base.dataTable",
       "typeVersion": 1.1,
       "position": [
-        -300,
-        -80
+        560,
+        0
       ]
     },
     {
@@ -93,8 +109,8 @@
       "type": "n8n-nodes-base.code",
       "typeVersion": 2,
       "position": [
-        20,
-        -80
+        840,
+        0
       ]
     },
     {
@@ -126,8 +142,8 @@
       "type": "n8n-nodes-base.if",
       "typeVersion": 2.2,
       "position": [
-        260,
-        -80
+        1120,
+        0
       ]
     },
     {
@@ -164,8 +180,8 @@
       "type": "n8n-nodes-base.httpRequest",
       "typeVersion": 4.4,
       "position": [
-        520,
-        -200
+        1400,
+        0
       ],
       "onError": "continueRegularOutput"
     },
@@ -178,8 +194,8 @@
       "type": "n8n-nodes-base.code",
       "typeVersion": 2,
       "position": [
-        780,
-        -80
+        1680,
+        0
       ]
     }
   ],

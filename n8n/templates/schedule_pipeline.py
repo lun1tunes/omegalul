@@ -341,7 +341,7 @@ if(useTimelineCommissioning){
   irEvents=[];
   if(['needs_input','retryable_error','partial',''].includes(clean(work.status)))work.status='succeeded';
   sourceMap=wellFacts.map(f=>({keyword:'WCONPROD',entity:f.well,fact_id:f.fact_id||null,source:`source_facts_packet:${f.fact_id||f.well}`,value:f.date,commissioning_date:toTnavDate(f.date),path:'timeline_commissioning_revise'}));
-  findings.push({code:'COMMISSIONING_TIMELINE_PATH',severity:'warning',wells:wellFacts.map(f=>f.well).slice(0,20),note:'parse→shift first WELOPEN/WCONPROD/WEFAC→emit; DATES steps preserved'});
+  findings.push({code:'COMMISSIONING_TIMELINE_PATH',severity:'warning',wells:wellFacts.map(f=>f.well).slice(0,20),note:'parse→edit retarget first WCONPROD(+WELOPEN/WEFAC) onto target DATES→emit; DATES steps preserved'});
   if(!obj(work.self_check)||!work.self_check.passed)work.self_check={performed:true,passed:true,checks:[{check:'timeline_commissioning_path',passed:true}],reproducibility:'Excel wells by SCHEDULE name drive deterministic timeline revise after merge.'};
 }
 let operations=irEvents.length?irEvents:changes;

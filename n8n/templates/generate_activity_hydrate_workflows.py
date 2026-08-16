@@ -17,6 +17,15 @@ def _wf(payload: dict) -> None:
     print("wrote", path.relative_to(ROOT.parent))
 
 
+def _relayout_written() -> None:
+    """Keep core canvas compact + yellow edit-after-import notes after regen."""
+    import subprocess
+    import sys
+
+    script = Path(__file__).resolve().parent / "relayout_core_workflows.py"
+    subprocess.check_call([sys.executable, str(script)], cwd=str(ROOT.parent))
+
+
 LIST_CODE = r"""const rows=$input.all().map(i=>i.json||{}).filter(r=>r&&r.task_id);
 const parse=(v,f)=>{try{const p=typeof v==='string'?JSON.parse(v):v;return p&&typeof p==='object'&&!Array.isArray(p)?p:f}catch{return f}};
 const awaitingStatus=s=>String(s||'').trim().toLowerCase()==='awaiting_human';
@@ -345,3 +354,4 @@ def main() -> None:
 
 if __name__ == "__main__":
     main()
+    _relayout_written()
