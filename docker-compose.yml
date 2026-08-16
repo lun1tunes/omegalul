@@ -123,10 +123,12 @@ services:
         n8n-nodes-base.e2eTest,
         n8n-nodes-base.dynamicCredentialCheck,
         n8n-nodes-base.readWriteFile
+      # Default Node heap (~512MiB) OOMs on golden SCHEDULE packages when serving includeData.
+      NODE_OPTIONS: ${N8N_NODE_OPTIONS:---max-old-space-size=1536}
     volumes:
       - n8n_data:/home/node/.n8n
       - ./n8n/workflows:/workflows:ro
-    mem_limit: ${N8N_MEMORY_LIMIT:-1g}
+    mem_limit: ${N8N_MEMORY_LIMIT:-2g}
     cpus: ${N8N_CPUS:-2.0}
     pids_limit: 512
     cap_drop:

@@ -54,22 +54,31 @@ def hitl_backend() -> str:
     return "local"
 
 
-def _deref_flat(flat: list[Any], value: Any, *, depth: int = 0) -> Any:
+def _deref_flat(
+    flat: list[Any],
+    value: Any,
+    *,
+    depth: int = 0,
+    seen: frozenset[int] | None = None,
+) -> Any:
+    """Resolve n8n flatted JSON refs.
+
+    Flatted encodes pointers as *digit strings* (\"12\"). Bare ints are real values
+    (e.g. version=4) and must never be followed — doing so walks the wrong graph and
+    can hang / OOM on large execution payloads.
+    """
     if depth > 40:
         return value
+    seen = seen or frozenset()
     if isinstance(value, str) and value.isdigit():
         idx = int(value)
-        if 0 <= idx < len(flat):
-            return _deref_flat(flat, flat[idx], depth=depth + 1)
-    if isinstance(value, int) and 0 <= value < len(flat) and not isinstance(flat[value], (int, float)):
-        # only follow int refs when target is container/string commonly used by flatted
-        target = flat[value]
-        if isinstance(target, (dict, list, str)) or target is None:
-            return _deref_flat(flat, target, depth=depth + 1)
+        if 0 <= idx < len(flat) and idx not in seen:
+            return _deref_flat(flat, flat[idx], depth=depth + 1, seen=seen | {idx})
+        return value
     if isinstance(value, dict):
-        return {k: _deref_flat(flat, v, depth=depth + 1) for k, v in value.items()}
+        return {k: _deref_flat(flat, v, depth=depth + 1, seen=seen) for k, v in value.items()}
     if isinstance(value, list):
-        return [_deref_flat(flat, v, depth=depth + 1) for v in value]
+        return [_deref_flat(flat, v, depth=depth + 1, seen=seen) for v in value]
     return value
 
 
@@ -189,6 +198,46 @@ async def _login(client: httpx.AsyncClient, cfg: dict[str, str]) -> str:
     return _cookie
 
 
+def _load_execution_data_via_postgres(execution_id: str) -> str | None:
+    """Read flatted n8n execution_data from the compose Postgres (avoids n8n includeData OOM)."""
+    import re
+    import subprocess
+    from pathlib import Path
+
+    if not re.fullmatch(r"\d{1,18}", str(execution_id)):
+        return None
+    root = Path(__file__).resolve().parents[2]
+    try:
+        cp = subprocess.run(
+            [
+                "docker",
+                "compose",
+                "exec",
+                "-T",
+                "postgres",
+                "psql",
+                "-U",
+                "n8n",
+                "-d",
+                "n8n",
+                "-At",
+                "-c",
+                f'SELECT data FROM execution_data WHERE "executionId"={execution_id};',
+            ],
+            cwd=str(root),
+            capture_output=True,
+            text=True,
+            timeout=180,
+            check=False,
+        )
+    except (OSError, subprocess.SubprocessError):
+        return None
+    raw = (cp.stdout or "").strip()
+    if cp.returncode != 0 or not raw.startswith("["):
+        return None
+    return raw
+
+
 async def _invoke_n8n_rest(
     payload: dict[str, Any],
     *,
@@ -244,10 +293,11 @@ async def _invoke_n8n_rest(
 
         deadline = time.time() + timeout_s
         last: dict[str, Any] = {}
+        # Poll metadata only — full includeData every 0.6s OOMs this host on long orch runs.
         while time.time() < deadline:
             ex = await client.get(
                 f"{cfg['n8n_base']}/rest/executions/{execution_id}",
-                params={"includeData": "true"},
+                params={"includeData": "false"},
             )
             if ex.status_code >= 400:
                 raise OrchestratorError(
@@ -258,6 +308,30 @@ async def _invoke_n8n_rest(
             last = ex.json()
             status = (last.get("data") or last).get("status")
             if status in {"success", "error", "crashed", "canceled"}:
+                # Prefer Postgres for the payload: includeData of golden SCHEDULE runs
+                # has repeatedly heap-OOM'd n8n (~512MiB) while serializing the response.
+                pg = await asyncio.to_thread(_load_execution_data_via_postgres, str(execution_id))
+                if pg is not None:
+                    last = {"data": {"data": pg, "status": status}}
+                else:
+                    try:
+                        full = await client.get(
+                            f"{cfg['n8n_base']}/rest/executions/{execution_id}",
+                            params={"includeData": "true"},
+                        )
+                    except httpx.HTTPError as exc:
+                        raise OrchestratorError(
+                            f"n8n execution fetch failed: {exc}",
+                            status_code=502,
+                            detail={"execution_id": execution_id},
+                        ) from exc
+                    if full.status_code >= 400:
+                        raise OrchestratorError(
+                            f"n8n execution fetch HTTP {full.status_code}",
+                            status_code=502,
+                            detail=full.text[:400],
+                        )
+                    last = full.json()
                 # Fail closed: a crashed/canceled/error n8n run must never surface as a
                 # successful orchestrator_response, even if a response blob was parsed.
                 if status != "success":

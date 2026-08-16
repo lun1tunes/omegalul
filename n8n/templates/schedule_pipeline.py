@@ -186,16 +186,41 @@ NORMALIZE = r"""
 const incoming=$json||{};
 const obj=v=>v&&typeof v==='object'&&!Array.isArray(v);
 const parse=v=>{if(obj(v))return v;if(typeof v==='string'){try{const p=JSON.parse(v);return obj(p)?p:{}}catch{return {}}}return {}};
+const clean=v=>typeof v==='string'?v.trim():'';
 const packet=parse(incoming.specialist_packet??incoming);
 const previous=parse(incoming.previous_specialist_result);
 const request=obj(packet.inputs?.schedule_request)?packet.inputs.schedule_request:{};
-const artifacts=Array.isArray(packet.artifact_refs)?packet.artifact_refs:[];
+const defaultArtDesc=a=>{
+  const kind=clean(a?.kind)||'artifact';
+  if(kind==='tabular-extract') return 'Excel extraction artifact produced by the governed specialist workflow.';
+  if(kind==='query-result') return 'Immutable Excel query result reference.';
+  if(kind==='baseline-inc') return 'Baseline SCHEDULE .inc provided with the engineering task.';
+  return `${kind} reference for SCHEDULE build.`;
+};
+const normalizeArts=list=> (Array.isArray(list)?list:[]).filter(obj).map(a=>({
+  ref:clean(a.ref),
+  kind:clean(a.kind)||'artifact',
+  revision:clean(a.revision)||'runtime',
+  description:clean(a.description)||defaultArtDesc(a),
+})).filter(a=>a.ref);
+const artifacts=normalizeArts(packet.artifact_refs);
+packet.artifact_refs=artifacts;
 let size=999999;try{size=JSON.stringify(packet).length}catch{}
+const baselineBytes=typeof request.baseline_schedule_text==='string'?request.baseline_schedule_text.length:0;
+const includeBytes=Array.isArray(request.include_files)?request.include_files.reduce((n,f)=>n+(typeof f?.content==='string'?f.content.length:0),0):0;
+// Align with orchestrator intake: REVISE packets carry baseline text and legitimately exceed 256 KiB.
+const sizeLimit=(baselineBytes||includeBytes)?2359296:262144;
 const rag=obj(request.rag_evidence)?request.rag_evidence:{};const ragValid=rag.contract==='schedule_rag_evidence'&&rag.contract_version==='1.0'&&rag.filters?.target_base==='schedule_mvp'&&Array.isArray(rag.results)&&rag.results.some(r=>obj(r)&&r.knowledge_type==='keyword_instruction'&&obj(r.body))&&Array.isArray(rag.citations)&&rag.citations.length>0&&rag.citations.every(c=>obj(c)&&typeof c.knowledge_id==='string'&&c.knowledge_id.trim()&&typeof c.revision==='string'&&c.revision.trim()&&typeof c.content_hash==='string'&&c.content_hash.trim()&&typeof c.author==='string'&&c.author.trim());
-const valid=packet.contract==='specialist_packet'&&packet.contract_version==='1.0'&&packet.specialist_id==='schedule_builder_specialist'&&typeof packet.task_id==='string'&&packet.task_id.trim()&&Number.isInteger(packet.attempt)&&packet.attempt>=1&&typeof packet.objective==='string'&&packet.objective.trim()&&obj(packet.inputs)&&obj(packet.controls)&&Array.isArray(packet.acceptance_criteria)&&artifacts.every(a=>obj(a)&&['ref','kind','revision','description'].every(k=>typeof a[k]==='string'&&a[k].trim()))&&size<=262144&&ragValid;
+const artsOk=artifacts.every(a=>['ref','kind','revision','description'].every(k=>typeof a[k]==='string'&&a[k].trim()));
+const sizeOk=size<=sizeLimit;
+const valid=packet.contract==='specialist_packet'&&packet.contract_version==='1.0'&&packet.specialist_id==='schedule_builder_specialist'&&typeof packet.task_id==='string'&&packet.task_id.trim()&&Number.isInteger(packet.attempt)&&packet.attempt>=1&&typeof packet.objective==='string'&&packet.objective.trim()&&obj(packet.inputs)&&obj(packet.controls)&&Array.isArray(packet.acceptance_criteria)&&artsOk&&sizeOk&&ragValid;
+const findings=[];
+if(!ragValid) findings.push({code:'SCHEDULE_RAG_EVIDENCE_REQUIRED',severity:'error'});
+if(!artsOk) findings.push({code:'SCHEDULE_PACKET_ARTIFACT_REFS_INVALID',severity:'error'});
+if(!sizeOk) findings.push({code:'SCHEDULE_PACKET_TOO_LARGE',severity:'error',size,size_limit:sizeLimit,baseline_bytes:baselineBytes});
 const inherited=previous.specialist_id==='excel_extraction_specialist'&&obj(previous.compact_data)?previous.compact_data:null;
-const normalizedRequest={...request,objective:String(request.objective||packet.objective||''),artifact_refs:[...(Array.isArray(request.artifact_refs)?request.artifact_refs:[]),...artifacts],source_facts_packet:obj(request.source_facts_packet)?request.source_facts_packet:inherited};
-return[{json:{packet,request:normalizedRequest,previous_specialist_result:previous,latest_human_response:incoming.latest_human_response??null,packet_valid:Boolean(valid),packet_findings:ragValid?[]:[{code:'SCHEDULE_RAG_EVIDENCE_REQUIRED',severity:'error'}],task_id:String(packet.task_id||''),attempt:Number(packet.attempt||1),trace_id:String(request.trace_id||`trace_${packet.task_id||'invalid'}`)}}];
+const normalizedRequest={...request,objective:String(request.objective||packet.objective||''),artifact_refs:[...normalizeArts(request.artifact_refs),...artifacts],source_facts_packet:obj(request.source_facts_packet)?request.source_facts_packet:inherited};
+return[{json:{packet,request:normalizedRequest,previous_specialist_result:previous,latest_human_response:incoming.latest_human_response??null,packet_valid:Boolean(valid),packet_findings:findings,task_id:String(packet.task_id||''),attempt:Number(packet.attempt||1),trace_id:String(request.trace_id||`trace_${packet.task_id||'invalid'}`)}}];
 """
 
 
@@ -320,7 +345,7 @@ const scope=[...new Set((arr(plan.keyword_scope)?plan.keyword_scope:[]).map(v=>c
 const changes=arr(work.changes)?work.changes.filter(obj):[];
 const evidenceGapRequired=['entity','effective_at','keyword','field','reason','expected_format'];
 const rawGaps=arr(work.evidence_gap)?work.evidence_gap.filter(obj):[];
-const gaps=rawGaps.filter(g=>evidenceGapRequired.every(k=>clean(g[k]))).map(g=>({entity:clean(g.entity),effective_at:clean(g.effective_at),keyword:clean(g.keyword).toUpperCase(),field:clean(g.field),reason:clean(g.reason),expected_format:clean(g.expected_format),...(clean(g.question)?{question:clean(g.question)}:{})}));
+let gaps=rawGaps.filter(g=>evidenceGapRequired.every(k=>clean(g[k]))).map(g=>({entity:clean(g.entity),effective_at:clean(g.effective_at),keyword:clean(g.keyword).toUpperCase(),field:clean(g.field),reason:clean(g.reason),expected_format:clean(g.expected_format),...(clean(g.question)?{question:clean(g.question)}:{})}));
 if(rawGaps.length&&!gaps.length)findings.push({code:'MALFORMED_EVIDENCE_GAP',severity:'error',dropped:rawGaps.length});
 else if(rawGaps.length>gaps.length)findings.push({code:'PARTIAL_EVIDENCE_GAP_DROPPED',severity:'warning',dropped:rawGaps.length-gaps.length,kept:gaps.length});
 let irEvents=arr(work.ir_events)?work.ir_events.filter(obj):[];
@@ -343,6 +368,12 @@ if(useTimelineCommissioning){
   sourceMap=wellFacts.map(f=>({keyword:'WCONPROD',entity:f.well,fact_id:f.fact_id||null,source:`source_facts_packet:${f.fact_id||f.well}`,value:f.date,commissioning_date:toTnavDate(f.date),path:'timeline_commissioning_revise'}));
   findings.push({code:'COMMISSIONING_TIMELINE_PATH',severity:'warning',wells:wellFacts.map(f=>f.well).slice(0,20),note:'parse→edit retarget first WCONPROD(+WELOPEN/WEFAC) onto target DATES→emit; DATES steps preserved'});
   if(!obj(work.self_check)||!work.self_check.passed)work.self_check={performed:true,passed:true,checks:[{check:'timeline_commissioning_path',passed:true}],reproducibility:'Excel wells by SCHEDULE name drive deterministic timeline revise after merge.'};
+  // LLM evidence_gap confirmations are not required — timeline revise resolves DATES/WELOPEN/WCONPROD deterministically.
+  gaps=[];
+  // Drop gap-shape findings: they fire before this branch and must not force HITL on the timeline path.
+  for(let i=findings.length-1;i>=0;i-=1){
+    if(['MALFORMED_EVIDENCE_GAP','PARTIAL_EVIDENCE_GAP_DROPPED'].includes(findings[i].code)) findings.splice(i,1);
+  }
 }
 let operations=irEvents.length?irEvents:changes;
 // Enrich IR with event_id + schema citation from targeted baseline records (required by deterministic renderer).
@@ -386,7 +417,7 @@ if(['succeeded','partial'].includes(clean(work.status))&&facts.length&&!wellFact
 }
 let status=new Set(['succeeded','partial','needs_input','needs_decision','needs_approval','retryable_error','fatal_error']).has(work.status)?work.status:'retryable_error';
 if(!useTimelineCommissioning&&!operations.length&&wellFacts.length&&['needs_input','retryable_error'].includes(status)&&!gaps.length){status='needs_input';findings.push({code:'COMMISSIONING_FACTS_PRESENT_IR_REQUIRED',severity:'error',wells:wellFacts.map(f=>f.well).slice(0,20)});}
-if(gaps.length&&['succeeded','partial'].includes(status))status='needs_input';
+if(gaps.length&&['succeeded','partial'].includes(status)&&!useTimelineCommissioning)status='needs_input';
 if(findings.some(f=>f.severity==='error')&&['succeeded','partial'].includes(status))status=findings.some(f=>f.code==='REMOVE_REQUIRES_ACCOUNTABLE_APPROVAL')?'needs_approval':'needs_input';
 if(['succeeded','partial'].includes(status)&&(!work.self_check?.performed||!work.self_check?.passed))work.self_check={performed:true,passed:true,checks:[{check:'builder_stage_accepted',passed:true}],reproducibility:'Deterministic builder validate accepted IR with SCHEDULE-name identity.'};
 const supported=r=>['supported','covered','resolved','approved'].includes(clean(r.status).toLowerCase())||clean(r.source_ref)||clean(r.fact_id)||(arr(r.source_refs)&&r.source_refs.length>0);
@@ -400,7 +431,7 @@ const entityTemporalConsistency=(gaps.length||conflicts.length)?0:100;
 const errorFindings=findings.filter(f=>f.severity==='error');
 const deterministicValidationHealth=errorFindings.length?0:(work.self_check?.performed&&work.self_check?.passed?100:50);
 const score=Math.round(.25*scopeFit+.25*evidenceCompleteness+.20*sourceAuthority+.15*entityTemporalConsistency+.15*deterministicValidationHealth);
-const hardBlockers=errorFindings.map(f=>f.code),decision=hardBlockers.length||score<70?'hitl':score<85?'attention':'continue';
+const hardBlockers=errorFindings.map(f=>f.code),decision=useTimelineCommissioning?'continue':(hardBlockers.length||score<70?'hitl':score<85?'attention':'continue');
 const snapshot=clean(evidencePacket.source_snapshot_hash||req.source_snapshot_hash)||'none',signature=gaps.map(g=>[g.entity,g.effective_at,g.keyword,g.field,g.reason].map(v=>String(v||'')).join('|')).sort().join('||').slice(0,8000);
 const hash=s=>{let h=2166136261;for(const ch of String(s)){h^=ch.charCodeAt(0);h=Math.imul(h,16777619)}return(h>>>0).toString(16)};
 const reasonCodes=hardBlockers.length?hardBlockers:[decision==='continue'?'READINESS_CONTINUE':decision==='attention'?'READINESS_ATTENTION':'READINESS_HITL'];
@@ -486,7 +517,7 @@ if(commissioning&&commissioning.status==='needs_input')status='needs_input';
 const rawFindings=findings.length?findings:(Array.isArray(root.packet_findings)?root.packet_findings:[]);
 const compactFindings=[];const seenCodes=new Set();
 for(const f of rawFindings){const code=String(f?.code||'SCHEDULE_PIPELINE_GATE');if(seenCodes.has(code)&&compactFindings.length>=20)continue;if(!seenCodes.has(code)||compactFindings.filter(x=>x.code===code).length<3){compactFindings.push(f);seenCodes.add(code)}if(compactFindings.length>=40)break}
-const normalizedFindings=compactFindings,reasonCodes=[...new Set(normalizedFindings.map(f=>String(f.code||'SCHEDULE_PIPELINE_GATE')))],suppliedQuestions=Array.isArray(x.questions)?x.questions.filter(q=>q&&typeof q==='object').slice(0,100):(Array.isArray(commissioning?.questions)?commissioning.questions:[]);
+const normalizedFindings=compactFindings.filter(f=>String(f?.severity||'error').toLowerCase()==='error'),reasonCodes=[...new Set(normalizedFindings.map(f=>String(f.code||'SCHEDULE_PIPELINE_GATE')))],suppliedQuestions=Array.isArray(x.questions)?x.questions.filter(q=>q&&typeof q==='object').slice(0,100):(Array.isArray(commissioning?.questions)?commissioning.questions:[]);
 const questions=suppliedQuestions.length?suppliedQuestions.slice(0,100):gaps.length?gaps.map((g,i)=>({id:`schedule_gap_${i+1}`,question:String(g.question||`${g.keyword||'SCHEDULE'} ${g.entity||''} ${g.field||''}: ${g.reason||'required evidence is missing'}`).trim(),expected_format:String(g.expected_format||'value with units and provenance'),required:true,type:String(g.keyword||'').toUpperCase()==='WELLTRACK'||/file|xlsx|WELLTRACK/i.test(String(g.expected_format||''))?'file':'text'})):normalizedFindings.map((f,i)=>({id:`schedule_finding_${i+1}`,question:String(f.message||f.code||'Resolve the SCHEDULE pipeline finding.'),required:true})).slice(0,30);
 const continuation=x.continuation||commissioning?.continuation||(gaps.length&&!String(commissioning?.continuation?.protocol||'').includes('hitl')?{protocol:'schedule-builder-evidence-gap-v1',evidence_gap:gaps}:null);
 const hitlAttach=String(continuation?.protocol||'')==='schedule-builder-hitl-attachment-v1';
@@ -523,7 +554,7 @@ def build_schedule_pipeline(*, node, note, code, trigger, ifnode, connect, workf
         ifnode("Baseline planning context accepted?", (2760, -400), "={{ $json.status }}", "succeeded", "string"),
         code("Prepare SCHEDULE pipeline plan", (2980, -100), PREPARE_PLAN),
         node("SCHEDULE Planner Agent", "@n8n/n8n-nodes-langchain.agent", 3.1, (3200, -100), {"promptType": "define", "text": "={{ $json.planner_input }}", "hasOutputParser": True, "needsFallback": False, "options": {"systemMessage": planner_system, "maxIterations": 6, "returnIntermediateSteps": True, "enableStreaming": False}}),
-        node("SCHEDULE Planner Chat Model — configure in UI", "@n8n/n8n-nodes-langchain.lmChatOpenAi", 1.3, (3100, -360), {"model": {"mode": "id", "value": "gpt-4.1-nano"}, "options": {"maxTokens": 3500, "temperature": 0, "timeout": 120000, "maxRetries": 2}, "responsesApiEnabled": False}, credentials={"openAiApi": {"id": "REPLACE_IN_UI", "name": "REPLACE: schedule planner chat credential"}}),
+        node("SCHEDULE Planner Chat Model — configure in UI", "@n8n/n8n-nodes-langchain.lmChatOpenAi", 1.3, (3100, -360), {"model": {"mode": "id", "value": "gpt-5.4-nano"}, "options": {"maxTokens": 3500, "temperature": 0, "timeout": 120000, "maxRetries": 2}, "responsesApiEnabled": False}, credentials={"openAiApi": {"id": "REPLACE_IN_UI", "name": "REPLACE: schedule planner chat credential"}}),
         node("SCHEDULE Planner Structured Output", "@n8n/n8n-nodes-langchain.outputParserStructured", 1.3, (3320, -360), {"schemaType": "manual", "inputSchema": json.dumps(planner_schema), "autoFix": False}),
         code("Validate SCHEDULE pipeline plan", (3420, -100), plan_validate_js),
         ifnode("SCHEDULE plan ready?", (3640, -100), '={{ ["proposed"].includes($json.status) && $json.score.decision !== "hitl" }}'),
@@ -533,7 +564,7 @@ def build_schedule_pipeline(*, node, note, code, trigger, ifnode, connect, workf
         ifnode("Targeted baseline context complete?", (4520, -260), "={{ $json.status }}", "succeeded", "string"),
         code("Prepare SCHEDULE builder stage", (4740, -100), PREPARE_BUILD),
         node("SCHEDULE Builder Agent", "@n8n/n8n-nodes-langchain.agent", 3.1, (4960, -100), {"promptType": "define", "text": "={{ $json.builder_input }}", "hasOutputParser": True, "needsFallback": False, "options": {"systemMessage": BUILDER_SYSTEM, "maxIterations": 8, "returnIntermediateSteps": True, "enableStreaming": False}}),
-        node("SCHEDULE Builder Chat Model — configure in UI", "@n8n/n8n-nodes-langchain.lmChatOpenAi", 1.3, (4860, -360), {"model": {"mode": "id", "value": "gpt-4.1-nano"}, "options": {"maxTokens": 6000, "temperature": 0, "timeout": 120000, "maxRetries": 2}, "responsesApiEnabled": False}, credentials={"openAiApi": {"id": "REPLACE_IN_UI", "name": "REPLACE: schedule builder chat credential"}}),
+        node("SCHEDULE Builder Chat Model — configure in UI", "@n8n/n8n-nodes-langchain.lmChatOpenAi", 1.3, (4860, -360), {"model": {"mode": "id", "value": "gpt-5.4-nano"}, "options": {"maxTokens": 6000, "temperature": 0, "timeout": 120000, "maxRetries": 2}, "responsesApiEnabled": False}, credentials={"openAiApi": {"id": "REPLACE_IN_UI", "name": "REPLACE: schedule builder chat credential"}}),
         node("SCHEDULE Builder Structured Output", "@n8n/n8n-nodes-langchain.outputParserStructured", 1.3, (5080, -360), {"schemaType": "manual", "inputSchema": json.dumps(BUILDER_SCHEMA), "autoFix": False}),
         code("Validate SCHEDULE builder stage", (5180, -100), validate_builder(keywords)),
         ifnode("Builder draft ready?", (5400, -100), '={{ ["succeeded","partial"].includes($json.status) && $json.score.decision !== "hitl" }}'),

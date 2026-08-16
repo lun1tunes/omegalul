@@ -841,7 +841,7 @@
       "parameters": {
         "model": {
           "mode": "id",
-          "value": "gpt-4.1-mini"
+          "value": "gpt-5.4-nano"
         },
         "options": {
           "maxTokens": 8000,
@@ -869,7 +869,7 @@
     {
       "parameters": {
         "schemaType": "manual",
-        "inputSchema": "{\"type\": \"object\", \"additionalProperties\": false, \"required\": [\"decision\", \"task_type\", \"risk_class\", \"reason\", \"questions\", \"plan\", \"specialist_packet\", \"decision_record\"], \"properties\": {\"decision\": {\"enum\": [\"delegate\", \"needs_input\", \"needs_decision\", \"needs_approval\", \"unsupported\"]}, \"task_type\": {\"type\": \"string\"}, \"risk_class\": {\"enum\": [\"low\", \"high\", \"critical\"]}, \"reason\": {\"type\": \"string\"}, \"user_message\": {\"type\": \"string\", \"description\": \"1-3 short Russian sentences for Activity/HITL UI; keep keyword/field names in Latin.\"}, \"questions\": {\"type\": \"array\", \"items\": {\"type\": \"object\"}}, \"plan\": {\"type\": \"object\"}, \"specialist_packet\": {\"type\": [\"object\", \"null\"], \"additionalProperties\": false, \"required\": [\"contract\", \"contract_version\", \"specialist_id\", \"objective\", \"inputs\", \"controls\", \"acceptance_criteria\", \"artifact_refs\"], \"properties\": {\"contract\": {\"const\": \"specialist_packet\"}, \"contract_version\": {\"const\": \"1.0\"}, \"specialist_id\": {\"type\": \"string\"}, \"objective\": {\"type\": \"string\", \"minLength\": 1}, \"inputs\": {\"type\": \"object\"}, \"controls\": {\"type\": \"object\"}, \"acceptance_criteria\": {\"type\": \"array\", \"items\": {\"type\": \"object\"}}, \"artifact_refs\": {\"type\": \"array\", \"items\": {\"type\": \"object\"}}}}, \"decision_record\": {\"type\": \"object\", \"additionalProperties\": false, \"required\": [\"contract\", \"contract_version\", \"objective\", \"considered_inputs\", \"proposed_actions\", \"selected_action\", \"rejected_actions\", \"assumptions\", \"evidence_refs\", \"citations\", \"tool_call_ids\", \"unresolved_questions\", \"acceptance_check_results\"], \"properties\": {\"contract\": {\"enum\": [\"decision_record\"]}, \"contract_version\": {\"enum\": [\"1.0\"]}, \"objective\": {\"type\": \"string\"}, \"considered_inputs\": {\"type\": \"array\", \"items\": {\"type\": \"object\"}}, \"proposed_actions\": {\"type\": \"array\", \"items\": {\"type\": \"object\"}}, \"selected_action\": {\"type\": \"object\", \"additionalProperties\": false, \"required\": [\"action\", \"reason_codes\"], \"properties\": {\"action\": {\"type\": \"string\"}, \"reason_codes\": {\"type\": \"array\", \"items\": {\"type\": \"string\"}}}}, \"rejected_actions\": {\"type\": \"array\", \"items\": {\"type\": \"object\"}}, \"assumptions\": {\"type\": \"array\", \"items\": {\"type\": \"string\"}}, \"evidence_refs\": {\"type\": \"array\", \"items\": {\"type\": \"object\"}}, \"citations\": {\"type\": \"array\", \"items\": {\"type\": \"object\"}}, \"tool_call_ids\": {\"type\": \"array\", \"items\": {\"type\": \"string\"}}, \"unresolved_questions\": {\"type\": \"array\", \"items\": {\"type\": \"object\"}}, \"acceptance_check_results\": {\"type\": \"array\", \"items\": {\"type\": \"object\"}}}}}}",
+        "inputSchema": "{\"type\": \"object\", \"additionalProperties\": true, \"required\": [\"decision\", \"task_type\", \"risk_class\", \"reason\", \"questions\", \"plan\", \"specialist_packet\"], \"properties\": {\"decision\": {\"enum\": [\"delegate\", \"needs_input\", \"needs_decision\", \"needs_approval\", \"unsupported\"]}, \"task_type\": {\"type\": \"string\"}, \"risk_class\": {\"enum\": [\"low\", \"high\", \"critical\"]}, \"reason\": {\"type\": \"string\"}, \"user_message\": {\"type\": \"string\", \"description\": \"1-3 short Russian sentences for Activity/HITL UI; keep keyword/field names in Latin.\"}, \"questions\": {\"type\": \"array\", \"items\": {\"type\": \"object\"}}, \"plan\": {\"type\": \"object\"}, \"specialist_packet\": {\"type\": [\"object\", \"null\"], \"additionalProperties\": true, \"properties\": {\"contract\": {\"type\": \"string\"}, \"contract_version\": {\"type\": \"string\"}, \"specialist_id\": {\"type\": \"string\"}, \"objective\": {\"type\": \"string\"}, \"inputs\": {\"type\": \"object\"}, \"controls\": {\"type\": \"object\"}, \"acceptance_criteria\": {\"type\": \"array\", \"items\": {\"type\": \"object\"}}, \"artifact_refs\": {\"type\": \"array\", \"items\": {\"type\": \"object\"}}}}, \"decision_record\": {\"type\": [\"object\", \"null\"]}}}",
         "autoFix": true
       },
       "id": "8afca9e1-a9d1-51c3-a9dc-06ddb432fc0a",
@@ -1697,7 +1697,7 @@
       "parameters": {
         "model": {
           "mode": "id",
-          "value": "gpt-4.1-nano"
+          "value": "gpt-5.4-nano"
         },
         "options": {
           "maxTokens": 3000,
@@ -1725,7 +1725,7 @@
     {
       "parameters": {
         "schemaType": "manual",
-        "inputSchema": "{\"type\": \"object\", \"additionalProperties\": false, \"required\": [\"verdict\", \"summary\", \"criteria\", \"findings\", \"required_corrections\", \"human_gate_reason\", \"decision_record\"], \"properties\": {\"verdict\": {\"enum\": [\"pass\", \"pass_with_warnings\", \"retry\", \"needs_input\", \"needs_decision\", \"reject\"]}, \"summary\": {\"type\": \"string\"}, \"criteria\": {\"type\": \"array\", \"items\": {\"type\": \"object\"}}, \"findings\": {\"type\": \"array\", \"items\": {\"type\": \"object\"}}, \"required_corrections\": {\"type\": \"array\", \"items\": {\"type\": \"string\"}}, \"human_gate_reason\": {\"type\": [\"string\", \"null\"]}, \"decision_record\": {\"type\": \"object\", \"additionalProperties\": false, \"required\": [\"contract\", \"contract_version\", \"objective\", \"considered_inputs\", \"proposed_actions\", \"selected_action\", \"rejected_actions\", \"assumptions\", \"evidence_refs\", \"citations\", \"tool_call_ids\", \"unresolved_questions\", \"acceptance_check_results\"], \"properties\": {\"contract\": {\"enum\": [\"decision_record\"]}, \"contract_version\": {\"enum\": [\"1.0\"]}, \"objective\": {\"type\": \"string\"}, \"considered_inputs\": {\"type\": \"array\", \"items\": {\"type\": \"object\"}}, \"proposed_actions\": {\"type\": \"array\", \"items\": {\"type\": \"object\"}}, \"selected_action\": {\"type\": \"object\", \"additionalProperties\": false, \"required\": [\"action\", \"reason_codes\"], \"properties\": {\"action\": {\"type\": \"string\"}, \"reason_codes\": {\"type\": \"array\", \"items\": {\"type\": \"string\"}}}}, \"rejected_actions\": {\"type\": \"array\", \"items\": {\"type\": \"object\"}}, \"assumptions\": {\"type\": \"array\", \"items\": {\"type\": \"string\"}}, \"evidence_refs\": {\"type\": \"array\", \"items\": {\"type\": \"object\"}}, \"citations\": {\"type\": \"array\", \"items\": {\"type\": \"object\"}}, \"tool_call_ids\": {\"type\": \"array\", \"items\": {\"type\": \"string\"}}, \"unresolved_questions\": {\"type\": \"array\", \"items\": {\"type\": \"object\"}}, \"acceptance_check_results\": {\"type\": \"array\", \"items\": {\"type\": \"object\"}}}}}}",
+        "inputSchema": "{\"type\": \"object\", \"additionalProperties\": true, \"required\": [\"verdict\", \"summary\", \"criteria\", \"findings\", \"required_corrections\"], \"properties\": {\"verdict\": {\"enum\": [\"pass\", \"pass_with_warnings\", \"retry\", \"needs_input\", \"needs_decision\", \"reject\"]}, \"summary\": {\"type\": \"string\"}, \"criteria\": {\"type\": \"array\", \"items\": {\"type\": \"object\"}}, \"findings\": {\"type\": \"array\", \"items\": {\"type\": \"object\"}}, \"required_corrections\": {\"type\": \"array\", \"items\": {\"type\": \"string\"}}, \"human_gate_reason\": {\"type\": [\"string\", \"null\"]}, \"decision_record\": {\"type\": [\"object\", \"null\"]}}}",
         "autoFix": false
       },
       "id": "86e6bc14-ee3f-54f0-9bf6-e40b025ab894",
@@ -2424,6 +2424,11 @@
         [
           {
             "node": "Engineering Planner Agent",
+            "type": "ai_languageModel",
+            "index": 0
+          },
+          {
+            "node": "Planner Structured Output",
             "type": "ai_languageModel",
             "index": 0
           }

@@ -25,6 +25,7 @@ from app import knowledge as knowledge_store
 from app.commissioning import extract_schedule_from_orchestrator
 from app.durable import durable_enabled, fetch_task_feed, fetch_task_list
 from app.persist import load_state, persist_enabled, save_state
+from app.task_binaries import load_task_binaries, save_task_binaries
 
 STATIC = Path(__file__).resolve().parents[1] / "static"
 ACTIVITY_KEY = os.getenv("MAS_ACTIVITY_KEY", "dev-local")
@@ -168,9 +169,29 @@ _lock = asyncio.Lock()
 _tasks: dict[str, dict[str, Any]] = {}
 _subscribers: dict[str, list[asyncio.Queue]] = defaultdict(list)
 _order: list[str] = []
+# Process-local fallback when ACTIVITY_STATE_PATH / ACTIVITY_BINARIES_PATH unset.
+_task_binaries: dict[str, BinaryMap] = {}
 _started_at = datetime.now(timezone.utc).isoformat()
 # One-shot empty-rail list pull so inactive webhooks cannot spam every GET /v1/tasks.
 _empty_rail_list_attempted = False
+
+
+def _remember_binaries(task_id: str, files: BinaryMap | None) -> None:
+    if not files:
+        return
+    _task_binaries[task_id] = dict(files)
+    save_task_binaries(task_id, files)
+
+
+def _binaries_for(task_id: str) -> BinaryMap | None:
+    cached = _task_binaries.get(task_id)
+    if cached:
+        return dict(cached)
+    loaded = load_task_binaries(task_id)
+    if loaded:
+        _task_binaries[task_id] = loaded
+        return dict(loaded)
+    return None
 
 
 def _now() -> str:
@@ -183,6 +204,7 @@ def reset_store() -> None:
     _tasks.clear()
     _subscribers.clear()
     _order.clear()
+    _task_binaries.clear()
     _empty_rail_list_attempted = False
     _persist()
 
@@ -1308,7 +1330,8 @@ async def post_start_task(
         )
     else:
         try:
-            orch = await invoke_orchestrator(payload, files=binary or None, timeout_s=180.0)
+            # Golden / multi-file SCHEDULE+Excel can exceed 3–6 min before first HITL.
+            orch = await invoke_orchestrator(payload, files=binary or None, timeout_s=600.0)
         except OrchestratorError as exc:
             raise HTTPException(status_code=exc.status_code, detail=str(exc)) from exc
 
@@ -1320,6 +1343,9 @@ async def post_start_task(
     task_id = str(orch.get("task_id") or client_task_id).strip()
     if not TASK_ID_RE.match(task_id):
         raise HTTPException(status_code=502, detail="Orchestrator returned invalid task_id")
+
+    # Keep start binaries for HITL resume (Excel re-delegate needs workbook field `file`).
+    _remember_binaries(task_id, binary or None)
 
     title = description[:80] + ("…" if len(description) > 80 else "")
     turn = _start_turn(requested_by=by, description=description, file_names=file_names, backend=backend)
@@ -1453,7 +1479,7 @@ async def post_hitl(task_id: str, body: HitlPost, _: None = Depends(_require_key
                 "requested_by": requested_by,
             }
             try:
-                orch = await invoke_orchestrator(resume)
+                orch = await invoke_orchestrator(resume, files=_binaries_for(task_id))
             except OrchestratorError as exc:
                 raise HTTPException(status_code=exc.status_code, detail=str(exc)) from exc
 

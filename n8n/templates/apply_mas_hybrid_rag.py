@@ -273,7 +273,7 @@ return[{json:{
     upsert_node(wf, code_node("Build excel protocol RAG gate", "0faac0c7-01e9-451f-87a8-000000000094", [1840, 40], gate))
 
     wf["description"] = (
-        "Production Excel extractor. Three entry points normalize to one OpenAI gpt-4.1-nano "
+        "Production Excel extractor. Three entry points normalize to one OpenAI gpt-5.4-nano "
         "AI Agent with PostgreSQL session memory, governed Hybrid Retrieval (excel_protocol), "
         "and one constrained FastAPI tool node per Excel tool. Files remain in FastAPI; only "
         "compact tool results enter the model."

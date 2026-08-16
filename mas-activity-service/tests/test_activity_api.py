@@ -743,7 +743,7 @@ def test_live_hitl_status_failure_does_not_local_apply(monkeypatch) -> None:
 
     from app.orchestrator import OrchestratorError
 
-    async def boom(_payload):
+    async def boom(_payload, *, files=None, timeout_s=90.0):
         raise OrchestratorError("orchestrator unreachable", status_code=502)
 
     monkeypatch.setattr("app.main.invoke_orchestrator", boom)
@@ -773,8 +773,8 @@ def test_live_hitl_prefers_fresh_status_cas_over_body(monkeypatch) -> None:
 
     calls: list[dict] = []
 
-    async def fake_invoke(payload):
-        calls.append(dict(payload))
+    async def fake_invoke(payload, *, files=None, timeout_s=90.0):
+        calls.append({"payload": dict(payload), "files": files})
         if payload.get("action") == "status":
             return {
                 "status": "awaiting_human",
@@ -804,10 +804,79 @@ def test_live_hitl_prefers_fresh_status_cas_over_body(monkeypatch) -> None:
     )
     assert res.status_code == 200
     assert len(calls) == 2
-    assert calls[0]["action"] == "status"
-    assert calls[1]["action"] == "approve"
-    assert calls[1]["gate_id"] == "fresh-gate"
-    assert calls[1]["expected_version"] == 7
+    assert calls[0]["payload"]["action"] == "status"
+    assert calls[1]["payload"]["action"] == "approve"
+    assert calls[1]["payload"]["gate_id"] == "fresh-gate"
+    assert calls[1]["payload"]["expected_version"] == 7
+
+
+def test_live_hitl_reattaches_start_binaries(tmp_path: Path, monkeypatch) -> None:
+    monkeypatch.setenv("HITL_MODE", "webhook")
+    monkeypatch.setenv("ORCHESTRATOR_WEBHOOK_URL", "http://orch.test/hook")
+    monkeypatch.setenv("ACTIVITY_BINARIES_PATH", str(tmp_path / "bins"))
+
+    calls: list[dict] = []
+
+    async def fake_invoke(payload, *, files=None, timeout_s=90.0):
+        calls.append({"action": payload.get("action"), "files": files})
+        if payload.get("action") == "start":
+            return {
+                "task_id": "eng_bin_1",
+                "version": 1,
+                "status": "awaiting_human",
+                "human_gate": {
+                    "gate_id": "g1",
+                    "kind": "needs_input",
+                    "expected_version": 1,
+                    "questions": [
+                        {
+                            "id": "column_selection",
+                            "question": "Which column(s)? (Скважина; Дата ввода)",
+                        }
+                    ],
+                },
+                "message": "need columns",
+            }
+        if payload.get("action") == "status":
+            return {
+                "status": "awaiting_human",
+                "version": 1,
+                "human_gate": {
+                    "gate_id": "g1",
+                    "kind": "needs_input",
+                    "expected_version": 1,
+                },
+            }
+        return {"status": "planning", "version": 2, "human_gate": None}
+
+    monkeypatch.setattr("app.main.invoke_orchestrator", fake_invoke)
+
+    started = client.post(
+        "/v1/tasks/start",
+        headers=KEY,
+        data={"task_description": "REVISE dates", "requested_by": "П. Петров"},
+        files=[
+            ("file", ("dates.xlsx", b"PK\x03\x04xlsx", "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet")),
+            ("schedule_files", ("root.inc", b"DATES\n/", "text/plain")),
+        ],
+    )
+    assert started.status_code == 200, started.text
+    task_id = started.json()["task_id"]
+    assert task_id == "eng_bin_1"
+
+    res = client.post(
+        f"/v1/tasks/{task_id}/hitl",
+        headers=KEY,
+        json={"action": "reply", "requested_by": "П. Петров", "human_response": "Скважина; Дата ввода"},
+    )
+    assert res.status_code == 200, res.text
+    resume_calls = [c for c in calls if c["action"] == "reply"]
+    assert resume_calls
+    files = resume_calls[0]["files"] or {}
+    assert "file" in files
+    assert files["file"][0] == "dates.xlsx"
+    assert files["file"][1].startswith(b"PK")
+    assert any(k.startswith("schedule_file") for k in files)
 
 
 def test_state_persist_survives_reload(tmp_path: Path, monkeypatch) -> None:

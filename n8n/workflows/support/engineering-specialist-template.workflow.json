@@ -210,7 +210,7 @@
       "parameters": {
         "model": {
           "mode": "id",
-          "value": "gpt-4.1-nano"
+          "value": "gpt-5.4-nano"
         },
         "options": {
           "maxTokens": 4000,
