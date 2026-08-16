@@ -4,7 +4,7 @@
   "nodes": [
     {
       "parameters": {
-        "content": "## edit after import\n\n**Orchestrator — Engineering MAS** — after UI import, complete bindings before activate:\n\n- Set webhook auth credentials on **Authenticated engineering webhook**\n- Bind sub-workflow on **Call CAS persist — insert new task**\n- Bind Data Table on **Load task by ID**\n- Bind sub-workflow on **Call CAS persist — human action then plan**\n- Bind sub-workflow on **Call CAS persist — terminal human action**\n- Bind sub-workflow on **Call routing Hybrid Retrieval**\n- Confirm model wiring for agent **Engineering Planner Agent**\n- Set OpenAI credentials on **Planner Chat Model — configure in UI**\n- Bind sub-workflow on **Call CAS persist — plan or human gate**\n- Bind sub-workflow on **Call Excel protocol Hybrid Retrieval**\n- Bind sub-workflow on **Call Excel Extraction Specialist Adapter**\n- Bind sub-workflow on **Call SCHEDULE Hybrid Retrieval**\n- Bind sub-workflow on **Call SCHEDULE Builder Specialist**\n- Bind sub-workflow on **Call Calculation Specialist**\n- …and 10 more credential/bind steps in this graph\n\nDo not rely on env()/Globals for corporate UI import.",
+        "content": "## edit after import\n\n**Orchestrator — Engineering MAS** — after UI import, complete bindings before activate:\n\n- Set webhook auth credentials on **Authenticated engineering webhook**\n- Bind sub-workflow on **Call CAS persist — insert new task**\n- Bind Data Table on **Load task by ID**\n- Bind sub-workflow on **Call CAS persist — human action then plan**\n- Bind sub-workflow on **Call CAS persist — terminal human action**\n- Bind sub-workflow on **Call routing Hybrid Retrieval**\n- Confirm model wiring for agent **Engineering Planner Agent**\n- Set OpenAI credentials on **Planner Chat Model — configure in UI**\n- Bind sub-workflow on **Call CAS persist — plan or human gate**\n- Bind sub-workflow on **Call Excel protocol Hybrid Retrieval**\n- Bind sub-workflow on **Call Excel Extraction Specialist Adapter**\n- Bind sub-workflow on **Call SCHEDULE Hybrid Retrieval**\n- Bind sub-workflow on **Call SCHEDULE Builder Specialist**\n- Bind sub-workflow on **Call Calculation Specialist**\n- …and 12 more credential/bind steps in this graph\n\nDo not rely on env()/Globals for corporate UI import.",
         "height": 520,
         "width": 440,
         "color": 1
@@ -20,7 +20,7 @@
     },
     {
       "parameters": {
-        "content": "## UI-only setup (n8n 2.30.8)\n1. Create task-state and trace Data Tables using `docs.md` in the repository root.\n2. Select them in CAS persist (insert+update) and Orchestrator Load task.\n3. Assign Planner/Verifier credentials.\n4. Bind CAS persist, Excel adapter/agent, SCHEDULE Retrieval/Builder and MAS Trace Writer.\n5. Load expert keyword instructions/schema JSON into `schedule_mvp`.\n6. Test start → HITL → delegation → validation → verification → inline .INC.\n\nSCHEDULE input and result remain bounded text inside n8n. Multi-file: drag-and-drop several `.inc/.data/.grdecl` into `schedule_files` (optional `schedule_root`); materializer builds `root_path` + `include_files` for Builder. No ZIP, no host filesystem scan.",
+        "content": "## UI-only setup (n8n 2.30.8)\n1. Create task-state and trace Data Tables using `docs.md` in the repository root.\n2. Select them in CAS persist (insert+update) and Orchestrator Load task.\n3. Assign Planner/Verifier credentials.\n4. Bind CAS persist, Excel adapter/agent, SCHEDULE Retrieval/Builder, MAS Trace Writer, and **Error — MAS Case Handler**.\n5. Load expert keyword instructions/schema JSON into `schedule_mvp`.\n6. Test start → HITL → delegation → validation → verification → inline .INC.\n\nSCHEDULE input and result remain bounded text inside n8n. Multi-file: drag-and-drop several `.inc/.data/.grdecl` into `schedule_files` (optional `schedule_root`); materializer builds `root_path` + `include_files` for Builder. No ZIP, no host filesystem scan.",
         "height": 440,
         "width": 500,
         "color": 5
@@ -534,7 +534,7 @@
     },
     {
       "parameters": {
-        "jsCode": "const item=$input.first();\nconst x={...item.json,binary:item.binary||item.json.binary||{}};\nconst parse=(v,f)=>{try{return typeof v==='string'?JSON.parse(v):v??f}catch{return f}};\nconst pending=parse(x.gate_json,{});\nlet nextPending=null;\nlet outcome='respond', message='', nextStatus=x.stored_status, shouldPlan=false, shouldDelegate=false;\nif(!x.state_found){outcome='respond';nextStatus=x.status||'not_found';message=x.message||'Task not found.';}\nelse if(x.action==='status'){outcome='respond';}\nelse if(['completed','failed','rejected','cancelled'].includes(x.stored_status)){nextStatus=x.stored_status;message='Task is terminal; create a new task or inspect status.';}\nelse if(x.expected_version!==x.stored_version){nextStatus='conflict';message='Stale expected_version. Reload task state and resubmit against the current version.';}\nelse if(x.action==='cancel'){nextStatus='cancelled';outcome='persist';}\nelse if(['reply','approve','reject'].includes(x.action)){\n  if(!pending.gate_id || x.gate_id!==pending.gate_id){nextStatus='conflict';message='gate_id does not match the active human gate.';}\n  else if(['approve','reject'].includes(x.action) && x.requested_by==='anonymous'){nextStatus='conflict';message='An accountable requested_by identity is required for approval or rejection.';}\n  else if(x.action==='reply' && !x.human_response && !Object.keys(x.binary||{}).some(k=>/hitl|trajectory|supplemental|file|workbook/i.test(k))){nextStatus='conflict';message='human_response is required for a reply action.';}\n  else if(x.action==='reject'){nextStatus='rejected';outcome='persist';}\n  else if(x.action==='approve' && pending.kind==='pre_delegation_approval'){\n    const packet=parse(x.packet_json,{});\n    if(!packet.specialist_id){nextStatus='conflict';message='Approved task has no persisted specialist packet. Reload status or request a replan.';}\n    else{nextStatus='delegated';shouldDelegate=true;outcome='persist_plan';}\n  } else if(x.action==='approve' && pending.kind==='result_approval'){\n    const result=parse(x.result_json,{});const verification=parse(x.verification_json,{});\n    const isSchedule=result.specialist_id==='schedule_builder_specialist';\n    const releaseReady=result.compact_data&&result.compact_data.release_ready===true;\n    const merge=result.compact_data?.merge_result||{};const outputPackage=merge.output_package||{};\n    const inlineText=String(merge.generated_schedule||result.compact_data?.generated_schedule||'');\n    const inlineReady=releaseReady&&merge.status==='merged'&&outputPackage.contract==='schedule_package'&&inlineText.length>0&&inlineText.length<=10485760;\n    const verifierPassed=['pass','pass_with_warnings'].includes(verification.verdict);\n    if(isSchedule&&(!inlineReady||!verifierPassed)){\n      nextStatus='conflict';message='SCHEDULE release is blocked: merged bounded inline .INC, release_ready and independent verification are required.';\n    }else{\n      if(isSchedule){\n        result.release={contract:'schedule_release_result',contract_version:'1.0',status:'approved',filename:String(outputPackage.root_path||'schedule.inc'),schedule_text:inlineText,approval:{actor:x.requested_by,at:new Date().toISOString(),gate_id:x.gate_id}};\n        x.result_json=JSON.stringify(result);\n      }\n      nextStatus='completed';outcome='persist';\n    }\n  } else if(x.action==='approve' && pending.kind==='needs_approval'){\n    nextStatus='planning';shouldPlan=true;outcome='persist_plan';\n  } else if(x.action==='reply' && ['needs_input','needs_decision'].includes(pending.kind)){\n    const previousResult=parse(x.result_json,{});const packet=parse(x.packet_json,{});\n    const hr=x.human_response&&typeof x.human_response==='object'?x.human_response:null;\n    const req=parse(x.request_json,{});\n    if(hr){\n      if(Array.isArray(hr.new_well_defs)&&hr.new_well_defs.length)req.new_well_defs=hr.new_well_defs;\n      if(hr.unlisted_wells_policy)req.unlisted_wells_policy=String(hr.unlisted_wells_policy);\n      if(typeof hr.text==='string'&&hr.text&&!req.hitl_reply_text)req.hitl_reply_text=hr.text;\n      x.request_json=JSON.stringify(req);\n    }\n    const binaryKeys=Object.keys(x.binary||{}).filter(Boolean);\n    if(binaryKeys.length){\n      const runtime=parse(x.runtime_json,{});\n      x.runtime_json=JSON.stringify({...runtime,hitl_binary_keys:binaryKeys,hitl_attachments_pending:true});\n    }\n    const canContinue=Boolean(previousResult.continuation&&typeof previousResult.continuation==='object'&&packet.specialist_id&&previousResult.task_id===x.task_id&&previousResult.specialist_id===packet.specialist_id);\n    if(canContinue){nextStatus='delegated';shouldDelegate=true;outcome='persist_plan';}\n    else{nextStatus='planning';shouldPlan=true;outcome='persist_plan';}\n  } else {nextStatus='conflict';message='Action is not valid for the active gate kind.';}\n} else if(x.action==='retry'){\n  if(x.stored_status!=='retryable_error'){\n    nextStatus='conflict';message='Retry is allowed only for a persisted retryable_error; use the active human gate for needs_decision or approval states.';\n  } else if(Number(x.retry_count)>=Number(x.max_retries)){\n    nextStatus='awaiting_human';message='Retry budget exhausted; human decision required.';outcome='persist';\n    nextPending={gate_id:`gate_${x.task_id}_${x.stored_version+1}_retry_exhausted`,kind:'needs_decision',reason:message,questions:[{id:'retry_decision',text:'Provide corrected inputs, authorize a revised scope, or reject the task.'}],expected_version:x.stored_version+1};\n  }\n  else{nextStatus='planning';shouldPlan=true;outcome='persist_plan';}\n} else {message='Unsupported action for current state.';}\nif(outcome.startsWith('persist')){\n  x.version=x.stored_version+1;x.status=nextStatus;x.updated_at=new Date().toISOString();\n  const runtime=parse(x.runtime_json,{});const responses=Array.isArray(runtime.human_responses)?runtime.human_responses:[];\n  responses.push({at:x.updated_at,actor:x.requested_by,action:x.action,gate_id:x.gate_id||null,response:x.human_response});\n  if(responses.length>50) responses.splice(0,responses.length-50);\n  x.runtime_json=JSON.stringify({...runtime,human_response:x.human_response,human_responses:responses,last_error:null});\n  x.gate_json=JSON.stringify(nextPending||{});\n}\nconst responseStatus=outcome==='respond'&&nextStatus?nextStatus:x.status;\nconst {binary:binOut,...jsonOut}=x;\nreturn [{json:{...jsonOut,status:responseStatus,outcome,message,should_plan:shouldPlan,should_delegate:shouldDelegate,previous_version:x.stored_version},...(binOut&&Object.keys(binOut).length?{binary:binOut}:{})}];"
+        "jsCode": "const item=$input.first();\nconst x={...item.json,binary:item.binary||item.json.binary||{}};\nconst parse=(v,f)=>{try{return typeof v==='string'?JSON.parse(v):v??f}catch{return f}};\nconst pending=parse(x.gate_json,{});\nlet nextPending=null;\nlet outcome='respond', message='', nextStatus=x.stored_status, shouldPlan=false, shouldDelegate=false;\nif(!x.state_found){outcome='respond';nextStatus=x.status||'not_found';message=x.message||'Task not found.';}\nelse if(x.action==='status'){outcome='respond';}\nelse if(['completed','failed','rejected','cancelled'].includes(x.stored_status)){nextStatus=x.stored_status;message='Task is terminal; create a new task or inspect status.';}\nelse if(x.action!=='status' && x.action!=='retry' && x.expected_version!==x.stored_version){nextStatus='conflict';message='Stale expected_version. Reload task state and resubmit against the current version.';}\nelse if(x.action==='retry' && x.expected_version!=null && x.expected_version!==x.stored_version){nextStatus='conflict';message='Stale expected_version. Reload task state and resubmit against the current version.';}\nelse if(x.action==='cancel'){nextStatus='cancelled';outcome='persist';}\nelse if(['reply','approve','reject'].includes(x.action)){\n  if(!pending.gate_id || x.gate_id!==pending.gate_id){nextStatus='conflict';message='gate_id does not match the active human gate.';}\n  else if(['approve','reject'].includes(x.action) && x.requested_by==='anonymous'){nextStatus='conflict';message='An accountable requested_by identity is required for approval or rejection.';}\n  else if(x.action==='reply' && !x.human_response && !Object.keys(x.binary||{}).some(k=>/hitl|trajectory|supplemental|file|workbook/i.test(k))){nextStatus='conflict';message='human_response is required for a reply action.';}\n  else if(x.action==='reject'){nextStatus='rejected';outcome='persist';}\n  else if(x.action==='approve' && pending.kind==='pre_delegation_approval'){\n    const packet=parse(x.packet_json,{});\n    if(!packet.specialist_id){nextStatus='conflict';message='Approved task has no persisted specialist packet. Reload status or request a replan.';}\n    else{nextStatus='delegated';shouldDelegate=true;outcome='persist_plan';}\n  } else if(x.action==='approve' && pending.kind==='result_approval'){\n    const result=parse(x.result_json,{});const verification=parse(x.verification_json,{});\n    const isSchedule=result.specialist_id==='schedule_builder_specialist';\n    const releaseReady=result.compact_data&&result.compact_data.release_ready===true;\n    const merge=result.compact_data?.merge_result||{};const outputPackage=merge.output_package||{};\n    const inlineText=String(merge.generated_schedule||result.compact_data?.generated_schedule||'');\n    const inlineReady=releaseReady&&merge.status==='merged'&&outputPackage.contract==='schedule_package'&&inlineText.length>0&&inlineText.length<=10485760;\n    const verifierPassed=['pass','pass_with_warnings'].includes(verification.verdict);\n    if(isSchedule&&(!inlineReady||!verifierPassed)){\n      nextStatus='conflict';message='SCHEDULE release is blocked: merged bounded inline .INC, release_ready and independent verification are required.';\n    }else{\n      if(isSchedule){\n        result.release={contract:'schedule_release_result',contract_version:'1.0',status:'approved',filename:String(outputPackage.root_path||'schedule.inc'),schedule_text:inlineText,approval:{actor:x.requested_by,at:new Date().toISOString(),gate_id:x.gate_id}};\n        x.result_json=JSON.stringify(result);\n      }\n      nextStatus='completed';outcome='persist';\n    }\n  } else if(x.action==='approve' && pending.kind==='needs_approval'){\n    nextStatus='planning';shouldPlan=true;outcome='persist_plan';\n  } else if(x.action==='reply' && ['needs_input','needs_decision'].includes(pending.kind)){\n    const previousResult=parse(x.result_json,{});const packet=parse(x.packet_json,{});\n    const hr=x.human_response&&typeof x.human_response==='object'?x.human_response:null;\n    const req=parse(x.request_json,{});\n    if(hr){\n      if(Array.isArray(hr.new_well_defs)&&hr.new_well_defs.length)req.new_well_defs=hr.new_well_defs;\n      if(hr.unlisted_wells_policy)req.unlisted_wells_policy=String(hr.unlisted_wells_policy);\n      if(typeof hr.text==='string'&&hr.text&&!req.hitl_reply_text)req.hitl_reply_text=hr.text;\n      x.request_json=JSON.stringify(req);\n    }\n    const binaryKeys=Object.keys(x.binary||{}).filter(Boolean);\n    if(binaryKeys.length){\n      const runtime=parse(x.runtime_json,{});\n      x.runtime_json=JSON.stringify({...runtime,hitl_binary_keys:binaryKeys,hitl_attachments_pending:true});\n    }\n    const canContinue=Boolean(previousResult.continuation&&typeof previousResult.continuation==='object'&&packet.specialist_id&&previousResult.task_id===x.task_id&&previousResult.specialist_id===packet.specialist_id);\n    if(canContinue){nextStatus='delegated';shouldDelegate=true;outcome='persist_plan';}\n    else{nextStatus='planning';shouldPlan=true;outcome='persist_plan';}\n  } else {nextStatus='conflict';message='Action is not valid for the active gate kind.';}\n} else if(x.action==='retry'){\n  if(x.stored_status!=='retryable_error'){\n    nextStatus='conflict';message='Retry is allowed only for a persisted retryable_error; use the active human gate for needs_decision or approval states.';\n  } else if(Number(x.retry_count)>=Number(x.max_retries)){\n    nextStatus='awaiting_human';message='Retry budget exhausted; human decision required.';outcome='persist';\n    nextPending={gate_id:`gate_${x.task_id}_${x.stored_version+1}_retry_exhausted`,kind:'needs_decision',reason:message,questions:[{id:'retry_decision',text:'Provide corrected inputs, authorize a revised scope, or reject the task.'}],expected_version:x.stored_version+1};\n  }\n  else{nextStatus='planning';shouldPlan=true;outcome='persist_plan';}\n} else {message='Unsupported action for current state.';}\nif(outcome.startsWith('persist')){\n  x.version=x.stored_version+1;x.status=nextStatus;x.updated_at=new Date().toISOString();\n  const runtime=parse(x.runtime_json,{});const responses=Array.isArray(runtime.human_responses)?runtime.human_responses:[];\n  responses.push({at:x.updated_at,actor:x.requested_by,action:x.action,gate_id:x.gate_id||null,response:x.human_response});\n  if(responses.length>50) responses.splice(0,responses.length-50);\n  x.runtime_json=JSON.stringify({...runtime,human_response:x.human_response,human_responses:responses,last_error:null});\n  x.gate_json=JSON.stringify(nextPending||{});\n}\nconst responseStatus=outcome==='respond'&&nextStatus?nextStatus:x.status;\nconst {binary:binOut,...jsonOut}=x;\nreturn [{json:{...jsonOut,status:responseStatus,outcome,message,should_plan:shouldPlan,should_delegate:shouldDelegate,previous_version:x.stored_version},...(binOut&&Object.keys(binOut).length?{binary:binOut}:{})}];"
       },
       "id": "a4a6e490-6916-5bc7-985d-95901fd54870",
       "name": "Apply action and version guard",
@@ -1781,9 +1781,105 @@
       "typeVersion": 1.3,
       "position": [
         7280,
-        0
+        -85
       ],
       "onError": "continueRegularOutput"
+    },
+    {
+      "parameters": {
+        "jsCode": "const x=$json;\nconst parse=(v,f)=>{try{return typeof v==='string'?JSON.parse(v):v??f}catch{return f}};\nconst obj=v=>v&&typeof v==='object'&&!Array.isArray(v);\nconst clean=v=>typeof v==='string'?v.trim():'';\nconst runtime=parse(x.runtime_json,{});\nconst result=obj(x.specialist_result)?x.specialist_result:parse(x.result_json,{});\nconst verification=parse(x.verification_json,{});\nconst last=obj(runtime.last_error)?runtime.last_error:(obj(result.error)?result.error:{});\nconst code=clean(last.code||result.error?.code||'').toUpperCase();\nconst status=clean(x.status);\nconst specialistStatus=clean(result.status);\nconst critical=['retryable_error','failed'].includes(status)\n  ||['retryable_error','fatal_error'].includes(specialistStatus)\n  ||Boolean(code)\n  ||(status==='awaiting_human'&&['needs_decision'].includes(clean(parse(x.gate_json,{}).kind))&&Boolean(code||last.safe_message));\nif(!critical||!clean(x.task_id)){\n  return[{json:{...x,invoke_error_handler:false,cas_already_persisted:true,mas_error_event:null}}];\n}\nconst findings=[...(Array.isArray(last.findings)?last.findings:[]),...(Array.isArray(verification.findings)?verification.findings:[])].filter(obj).slice(0,20);\nlet safeMessage=clean(last.safe_message||last.message||result.user_message||result.summary||verification.summary||'');\nif(!safeMessage) safeMessage=`Критическая ошибка case ${x.task_id}`;\nif(!safeMessage.includes(x.task_id)) safeMessage=`${safeMessage} (case_id=${x.task_id})`;\nconst cas_snapshot={\n  task_id:x.task_id,\n  version:Number(x.version)||1,\n  previous_version:Number(x.previous_version)||Number(x.version)||0,\n  status,\n  risk_class:clean(x.risk_class)||'high',\n  request_json:typeof x.request_json==='string'?x.request_json:JSON.stringify(x.request_json||{}),\n  runtime_json:typeof x.runtime_json==='string'?x.runtime_json:JSON.stringify(runtime),\n  plan_json:typeof x.plan_json==='string'?x.plan_json:JSON.stringify(x.plan_json||{}),\n  packet_json:typeof x.packet_json==='string'?x.packet_json:JSON.stringify(x.packet_json||{}),\n  result_json:typeof x.result_json==='string'?x.result_json:JSON.stringify(result||{}),\n  verification_json:typeof x.verification_json==='string'?x.verification_json:JSON.stringify(verification||{}),\n  gate_json:typeof x.gate_json==='string'?x.gate_json:JSON.stringify(x.gate_json||{}),\n  retry_count:Number(x.retry_count)||0,\n  max_retries:Number(x.max_retries)||2,\n  created_at:clean(x.created_at)||new Date().toISOString(),\n  updated_at:clean(x.updated_at)||new Date().toISOString(),\n};\nconst mas_error_event={\n  contract:'mas_error_event',\n  contract_version:'1.0',\n  task_id:x.task_id,\n  code:code||undefined,\n  stage:status==='retryable_error'?'plan':(status==='awaiting_human'?'hitl':'error'),\n  safe_message:safeMessage,\n  findings,\n  cas_already_persisted:true,\n  cas_snapshot,\n};\nreturn[{json:{...x,invoke_error_handler:true,cas_already_persisted:true,mas_error_event,passthrough:{source:'orchestrator',status,task_id:x.task_id}}}];"
+      },
+      "id": "55b7c7c1-f572-5abe-93eb-eccbcff26482",
+      "name": "Prepare MAS error event (verification)",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        7560,
+        -170
+      ]
+    },
+    {
+      "parameters": {
+        "conditions": {
+          "options": {
+            "caseSensitive": true,
+            "leftValue": "",
+            "typeValidation": "strict",
+            "version": 2
+          },
+          "conditions": [
+            {
+              "id": "ad814ece-fed4-5bab-a162-be029164ee72",
+              "leftValue": "={{ $json.invoke_error_handler }}",
+              "rightValue": true,
+              "operator": {
+                "type": "boolean",
+                "operation": "equals"
+              }
+            }
+          ],
+          "combinator": "and"
+        },
+        "options": {}
+      },
+      "id": "33efab50-6e6a-5fa0-9df3-74975f1c03c7",
+      "name": "Invoke Error Handler (verification)?",
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2.2,
+      "position": [
+        7840,
+        -85
+      ]
+    },
+    {
+      "parameters": {
+        "source": "database",
+        "workflowId": {
+          "__rl": true,
+          "value": "REPLACE_ERROR_HANDLER_IN_UI",
+          "mode": "list",
+          "cachedResultName": "Error — MAS Case Handler"
+        },
+        "workflowInputs": {
+          "mappingMode": "defineBelow",
+          "value": {
+            "mas_error_event": "={{ $json.mas_error_event }}",
+            "cas_already_persisted": "={{ $json.cas_already_persisted }}",
+            "passthrough": "={{ $json.passthrough || {} }}",
+            "task_id": "={{ $json.task_id }}"
+          },
+          "matchingColumns": [],
+          "schema": [],
+          "attemptToConvertTypes": false,
+          "convertFieldsToString": false
+        },
+        "mode": "once",
+        "options": {
+          "waitForSubWorkflow": true
+        }
+      },
+      "id": "b717a6af-08c8-563d-83a1-8767f719138f",
+      "name": "Call Error — MAS Case Handler (verification)",
+      "type": "n8n-nodes-base.executeWorkflow",
+      "typeVersion": 1.3,
+      "position": [
+        8120,
+        -85
+      ],
+      "onError": "continueRegularOutput"
+    },
+    {
+      "parameters": {
+        "jsCode": "let before={};\ntry{before=$('Call CAS persist — verification').first().json||{}}catch{before={}}\nreturn[{json:before&&typeof before==='object'?before:{status:'error',message:'Missing orchestrator state after error handler.'}}];"
+      },
+      "id": "58e880be-0f9c-55ef-ab31-560d40bccbb2",
+      "name": "Restore after verification error handler",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        8120,
+        85
+      ]
     },
     {
       "parameters": {
@@ -1814,7 +1910,7 @@
       "type": "n8n-nodes-base.if",
       "typeVersion": 2.2,
       "position": [
-        7560,
+        8400,
         0
       ]
     },
@@ -1868,6 +1964,102 @@
     },
     {
       "parameters": {
+        "jsCode": "const x=$json;\nconst parse=(v,f)=>{try{return typeof v==='string'?JSON.parse(v):v??f}catch{return f}};\nconst obj=v=>v&&typeof v==='object'&&!Array.isArray(v);\nconst clean=v=>typeof v==='string'?v.trim():'';\nconst runtime=parse(x.runtime_json,{});\nconst result=obj(x.specialist_result)?x.specialist_result:parse(x.result_json,{});\nconst verification=parse(x.verification_json,{});\nconst last=obj(runtime.last_error)?runtime.last_error:(obj(result.error)?result.error:{});\nconst code=clean(last.code||result.error?.code||'').toUpperCase();\nconst status=clean(x.status);\nconst specialistStatus=clean(result.status);\nconst critical=['retryable_error','failed'].includes(status)\n  ||['retryable_error','fatal_error'].includes(specialistStatus)\n  ||Boolean(code)\n  ||(status==='awaiting_human'&&['needs_decision'].includes(clean(parse(x.gate_json,{}).kind))&&Boolean(code||last.safe_message));\nif(!critical||!clean(x.task_id)){\n  return[{json:{...x,invoke_error_handler:false,cas_already_persisted:true,mas_error_event:null}}];\n}\nconst findings=[...(Array.isArray(last.findings)?last.findings:[]),...(Array.isArray(verification.findings)?verification.findings:[])].filter(obj).slice(0,20);\nlet safeMessage=clean(last.safe_message||last.message||result.user_message||result.summary||verification.summary||'');\nif(!safeMessage) safeMessage=`Критическая ошибка case ${x.task_id}`;\nif(!safeMessage.includes(x.task_id)) safeMessage=`${safeMessage} (case_id=${x.task_id})`;\nconst cas_snapshot={\n  task_id:x.task_id,\n  version:Number(x.version)||1,\n  previous_version:Number(x.previous_version)||Number(x.version)||0,\n  status,\n  risk_class:clean(x.risk_class)||'high',\n  request_json:typeof x.request_json==='string'?x.request_json:JSON.stringify(x.request_json||{}),\n  runtime_json:typeof x.runtime_json==='string'?x.runtime_json:JSON.stringify(runtime),\n  plan_json:typeof x.plan_json==='string'?x.plan_json:JSON.stringify(x.plan_json||{}),\n  packet_json:typeof x.packet_json==='string'?x.packet_json:JSON.stringify(x.packet_json||{}),\n  result_json:typeof x.result_json==='string'?x.result_json:JSON.stringify(result||{}),\n  verification_json:typeof x.verification_json==='string'?x.verification_json:JSON.stringify(verification||{}),\n  gate_json:typeof x.gate_json==='string'?x.gate_json:JSON.stringify(x.gate_json||{}),\n  retry_count:Number(x.retry_count)||0,\n  max_retries:Number(x.max_retries)||2,\n  created_at:clean(x.created_at)||new Date().toISOString(),\n  updated_at:clean(x.updated_at)||new Date().toISOString(),\n};\nconst mas_error_event={\n  contract:'mas_error_event',\n  contract_version:'1.0',\n  task_id:x.task_id,\n  code:code||undefined,\n  stage:status==='retryable_error'?'plan':(status==='awaiting_human'?'hitl':'error'),\n  safe_message:safeMessage,\n  findings,\n  cas_already_persisted:true,\n  cas_snapshot,\n};\nreturn[{json:{...x,invoke_error_handler:true,cas_already_persisted:true,mas_error_event,passthrough:{source:'orchestrator',status,task_id:x.task_id}}}];"
+      },
+      "id": "6ec069e2-c8d6-522b-aa1a-64884d44071b",
+      "name": "Prepare MAS error event (specialist)",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        7000,
+        170
+      ]
+    },
+    {
+      "parameters": {
+        "conditions": {
+          "options": {
+            "caseSensitive": true,
+            "leftValue": "",
+            "typeValidation": "strict",
+            "version": 2
+          },
+          "conditions": [
+            {
+              "id": "98d2eb93-a937-5590-b378-7164650a0296",
+              "leftValue": "={{ $json.invoke_error_handler }}",
+              "rightValue": true,
+              "operator": {
+                "type": "boolean",
+                "operation": "equals"
+              }
+            }
+          ],
+          "combinator": "and"
+        },
+        "options": {}
+      },
+      "id": "0ff0de81-1f52-5105-b555-526b4b51ecb5",
+      "name": "Invoke Error Handler (specialist)?",
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2.2,
+      "position": [
+        7280,
+        85
+      ]
+    },
+    {
+      "parameters": {
+        "source": "database",
+        "workflowId": {
+          "__rl": true,
+          "value": "REPLACE_ERROR_HANDLER_IN_UI",
+          "mode": "list",
+          "cachedResultName": "Error — MAS Case Handler"
+        },
+        "workflowInputs": {
+          "mappingMode": "defineBelow",
+          "value": {
+            "mas_error_event": "={{ $json.mas_error_event }}",
+            "cas_already_persisted": "={{ $json.cas_already_persisted }}",
+            "passthrough": "={{ $json.passthrough || {} }}",
+            "task_id": "={{ $json.task_id }}"
+          },
+          "matchingColumns": [],
+          "schema": [],
+          "attemptToConvertTypes": false,
+          "convertFieldsToString": false
+        },
+        "mode": "once",
+        "options": {
+          "waitForSubWorkflow": true
+        }
+      },
+      "id": "d26ec155-98fc-5cca-a8e2-499fc6ab6355",
+      "name": "Call Error — MAS Case Handler (specialist)",
+      "type": "n8n-nodes-base.executeWorkflow",
+      "typeVersion": 1.3,
+      "position": [
+        7560,
+        0
+      ],
+      "onError": "continueRegularOutput"
+    },
+    {
+      "parameters": {
+        "jsCode": "let before={};\ntry{before=$('Call CAS persist — specialist gate or error').first().json||{}}catch{before={}}\nreturn[{json:before&&typeof before==='object'?before:{status:'error',message:'Missing orchestrator state after error handler.'}}];"
+      },
+      "id": "ef24077b-b2c8-563e-a3f3-fbd857438ce9",
+      "name": "Restore after specialist error handler",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        7560,
+        170
+      ]
+    },
+    {
+      "parameters": {
         "conditions": {
           "options": {
             "caseSensitive": true,
@@ -1895,8 +2087,8 @@
       "type": "n8n-nodes-base.if",
       "typeVersion": 2.2,
       "position": [
-        7000,
-        170
+        7840,
+        85
       ]
     },
     {
@@ -2981,6 +3173,57 @@
       "main": [
         [
           {
+            "node": "Prepare MAS error event (verification)",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Prepare MAS error event (verification)": {
+      "main": [
+        [
+          {
+            "node": "Invoke Error Handler (verification)?",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Invoke Error Handler (verification)?": {
+      "main": [
+        [
+          {
+            "node": "Call Error — MAS Case Handler (verification)",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Restore after verification error handler",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Call Error — MAS Case Handler (verification)": {
+      "main": [
+        [
+          {
+            "node": "Restore after verification error handler",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Restore after verification error handler": {
+      "main": [
+        [
+          {
             "node": "Verification requests replan?",
             "type": "main",
             "index": 0
@@ -3018,6 +3261,57 @@
       ]
     },
     "Call CAS persist — specialist gate or error": {
+      "main": [
+        [
+          {
+            "node": "Prepare MAS error event (specialist)",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Prepare MAS error event (specialist)": {
+      "main": [
+        [
+          {
+            "node": "Invoke Error Handler (specialist)?",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Invoke Error Handler (specialist)?": {
+      "main": [
+        [
+          {
+            "node": "Call Error — MAS Case Handler (specialist)",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Restore after specialist error handler",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Call Error — MAS Case Handler (specialist)": {
+      "main": [
+        [
+          {
+            "node": "Restore after specialist error handler",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Restore after specialist error handler": {
       "main": [
         [
           {

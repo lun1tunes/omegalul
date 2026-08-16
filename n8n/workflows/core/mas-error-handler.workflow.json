@@ -1,0 +1,501 @@
+{
+  "id": "e1f0a7c2-9b4d-5e8f-a123-4567890abcde",
+  "name": "Error — MAS Case Handler",
+  "active": false,
+  "isArchived": false,
+  "nodes": [
+    {
+      "parameters": {
+        "content": "## edit after import\n\n**Error — MAS Case Handler** — after UI import:\n\n- Bind **Call CAS persist — error case** → `CAS — Persist Task State`\n- Bind **Call Writer — MAS Trace (error)** → `Writer — MAS Trace`\n- Confirm Activity URL/key in **Prepare Activity error sync**\n\nNever notify Activity without `task_id`/`case_id`.",
+        "width": 520,
+        "height": 260,
+        "color": 1
+      },
+      "id": "ff9de545-10b7-5756-a494-82335c246bc5",
+      "name": "edit after import",
+      "type": "n8n-nodes-base.stickyNote",
+      "typeVersion": 1,
+      "position": [
+        -40,
+        -320
+      ]
+    },
+    {
+      "parameters": {
+        "content": "## Error — MAS Case Handler\n\nCritical scenarios → structured log + CAS status + Activity notify + restartable ack.\n\nTaxonomy: LLM / invalid JSON / calc timeout / missing data / validator / RAG / document access / approval.\n\nPreserves `request_json` and other CAS payload fields. Fail-closed without case_id.",
+        "width": 620,
+        "height": 360,
+        "color": 5
+      },
+      "id": "f6a2874a-e149-577d-a393-3404933e5a28",
+      "name": "Error handler README",
+      "type": "n8n-nodes-base.stickyNote",
+      "typeVersion": 1,
+      "position": [
+        -700,
+        -420
+      ]
+    },
+    {
+      "parameters": {
+        "inputSource": "jsonExample",
+        "jsonExample": "{\"mas_error_event\": {\"contract\": \"mas_error_event\", \"contract_version\": \"1.0\", \"task_id\": \"eng_example\", \"scenario\": \"llm_error\", \"stage\": \"plan\", \"safe_message\": \"Модель не вернула ответ. Case eng_example.\", \"findings\": [{\"code\": \"LLM_CALL_FAILED\"}], \"cas_snapshot\": {\"task_id\": \"eng_example\", \"version\": 2, \"status\": \"planning\", \"risk_class\": \"high\", \"request_json\": \"{\\\"objective\\\":\\\"example\\\"}\", \"runtime_json\": \"{}\", \"plan_json\": \"{}\", \"packet_json\": \"{}\", \"result_json\": \"{}\", \"verification_json\": \"{}\", \"gate_json\": \"{}\", \"retry_count\": 0, \"max_retries\": 2, \"created_at\": \"2026-01-01T00:00:00.000Z\", \"updated_at\": \"2026-01-01T00:00:00.000Z\"}}}"
+      },
+      "id": "ceb83e52-aa6e-5e82-a9c9-e007302145df",
+      "name": "Receive MAS error event",
+      "type": "n8n-nodes-base.executeWorkflowTrigger",
+      "typeVersion": 1.2,
+      "position": [
+        0,
+        0
+      ]
+    },
+    {
+      "parameters": {
+        "jsCode": "const root=$json;\nconst obj=v=>v&&typeof v==='object'&&!Array.isArray(v);\nconst clean=v=>typeof v==='string'?v.trim():'';\nconst arr=Array.isArray;\nconst event=obj(root.mas_error_event)?root.mas_error_event:(obj(root)&&root.contract==='mas_error_event'?root:{});\nconst taskId=clean(event.task_id||root.task_id);\nconst scenarioRaw=clean(event.scenario||event.error_scenario||'').toLowerCase();\nconst codeIn=clean(event.code||event.error_code||'').toUpperCase();\nconst stage=clean(event.stage||'error')||'error';\nconst findings=arr(event.findings)?event.findings.filter(obj).slice(0,40):[];\nconst executionId=clean(String(event.execution_id||event.executionId||''))||null;\nconst snap=obj(event.cas_snapshot)?event.cas_snapshot:(obj(root.cas_snapshot)?root.cas_snapshot:null);\nconst passthrough=obj(root.passthrough)?root.passthrough:{};\n\nconst TAXONOMY={\n  llm_error:{code:'LLM_CALL_FAILED',cas_status:'retryable_error',restartable:true,label:'Ошибка LLM'},\n  invalid_json:{code:'INVALID_STRUCTURED_OUTPUT',cas_status:'retryable_error',restartable:true,label:'Невалидный JSON / structured output'},\n  calc_timeout:{code:'CALC_SERVICE_TIMEOUT',cas_status:'retryable_error',restartable:true,label:'Timeout расчётного сервиса'},\n  missing_data:{code:'MISSING_MANDATORY_DATA',cas_status:'awaiting_human',restartable:false,label:'Нет обязательных данных'},\n  validator_reject:{code:'VALIDATOR_REJECTED',cas_status:'awaiting_human',restartable:false,label:'Отказ валидатора'},\n  rag_error:{code:'RAG_UNAVAILABLE',cas_status:'awaiting_human',restartable:false,label:'Ошибка RAG'},\n  document_access:{code:'DOCUMENT_ACCESS_DENIED',cas_status:'awaiting_human',restartable:false,label:'Нет доступа к документу'},\n  approval_error:{code:'APPROVAL_GATE_FAILED',cas_status:'awaiting_human',restartable:false,label:'Ошибка согласования'},\n};\n\nconst CODE_TO_SCENARIO={\n  LLM_CALL_FAILED:'llm_error',\n  INVALID_STRUCTURED_OUTPUT:'invalid_json',\n  INVALID_SPECIALIST_CONTRACT:'invalid_json',\n  DECISION_RECORD_REQUIRED:'invalid_json',\n  CALC_SERVICE_TIMEOUT:'calc_timeout',\n  MISSING_MANDATORY_DATA:'missing_data',\n  VALIDATOR_REJECTED:'validator_reject',\n  RAG_UNAVAILABLE:'rag_error',\n  SCHEDULE_RAG_UNAVAILABLE:'rag_error',\n  ORCHESTRATOR_ROUTING_RAG_REQUIRED:'rag_error',\n  DOCUMENT_ACCESS_DENIED:'document_access',\n  APPROVAL_GATE_FAILED:'approval_error',\n  CAS_CONFLICT:'approval_error',\n};\n\nlet scenario=scenarioRaw;\nif(!TAXONOMY[scenario]&&codeIn&&CODE_TO_SCENARIO[codeIn]) scenario=CODE_TO_SCENARIO[codeIn];\nif(!TAXONOMY[scenario]){\n  const blob=JSON.stringify({code:codeIn,findings,msg:event.safe_message||event.message||''}).toLowerCase();\n  if(/llm|model|openai|chat/.test(blob)) scenario='llm_error';\n  else if(/json|structured|schema|parse/.test(blob)) scenario='invalid_json';\n  else if(/timeout|timed out|etimedout|calc|math_service/.test(blob)) scenario='calc_timeout';\n  else if(/missing|required data|обязательн/.test(blob)) scenario='missing_data';\n  else if(/validat|reject|self_check/.test(blob)) scenario='validator_reject';\n  else if(/rag|retrieval|abstain/.test(blob)) scenario='rag_error';\n  else if(/access|denied|forbidden|acl|unauthorized/.test(blob)) scenario='document_access';\n  else if(/approv|gate|conflict|version/.test(blob)) scenario='approval_error';\n  else scenario='llm_error';\n}\n\nconst tax=TAXONOMY[scenario];\nconst code=codeIn&&Object.values(TAXONOMY).some(t=>t.code===codeIn)?codeIn:tax.code;\nlet restartable=event.restartable===true||event.restartable===false?Boolean(event.restartable):tax.restartable;\nlet casStatus=clean(event.cas_status)||tax.cas_status;\nconst snapStatus=clean(snap&&snap.status);\n// Never override a terminal CAS row into restartable UI state.\nif(['failed','rejected','cancelled','completed'].includes(snapStatus)){\n  casStatus=snapStatus;\n  restartable=false;\n} else if(['failed','rejected','cancelled','completed'].includes(casStatus)){\n  restartable=false;\n} else if(casStatus==='awaiting_human'){\n  // keep taxonomy restartable flag (usually false)\n} else if(casStatus==='retryable_error' && event.restartable===false){\n  restartable=false;\n}\n\n// Fail closed: never notify UI without case_id.\nif(!taskId){\n  return[{json:{\n    contract:'mas_error_ack',\n    contract_version:'1.0',\n    accepted:false,\n    code:'CASE_ID_REQUIRED',\n    message:'Error workflow refused anonymous failure: task_id/case_id is required.',\n    taxonomy_scenario:scenario,\n    error_code:code,\n    restartable:false,\n    cas_persisted:false,\n    activity_notified:false,\n    passthrough,\n  }}];\n}\n\nlet safeMessage=clean(event.safe_message||event.user_message||event.message||'');\nif(!safeMessage) safeMessage=`${tax.label}. Case ${taskId}.`;\nif(!safeMessage.includes(taskId)) safeMessage=`${safeMessage} (case_id=${taskId})`;\n// Strip secretish fragments from message surface.\nsafeMessage=safeMessage.replace(/(sk-[A-Za-z0-9]+|Bearer\\s+\\S+|api[_-]?key\\s*[:=]\\s*\\S+)/gi,'[redacted]').slice(0,800);\n\nconst lastError={\n  code,\n  scenario,\n  stage,\n  safe_message:safeMessage,\n  findings:findings.slice(0,20),\n  execution_id:executionId,\n  restartable,\n  at:new Date().toISOString(),\n};\n\nreturn[{json:{\n  contract:'mas_error_event',\n  contract_version:'1.0',\n  task_id:taskId,\n  taxonomy_scenario:scenario,\n  error_code:code,\n  stage,\n  cas_status:casStatus,\n  restartable,\n  safe_message:safeMessage,\n  last_error:lastError,\n  findings,\n  execution_id:executionId,\n  cas_snapshot:snap,\n  cas_already_persisted:event.cas_already_persisted===true||root.cas_already_persisted===true,\n  skip_cas:event.skip_cas===true||root.skip_cas===true,\n  passthrough,\n  has_task_id:true,\n}}];"
+      },
+      "id": "19e087f2-b022-5606-abc2-625d712637da",
+      "name": "Classify MAS error event",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        280,
+        0
+      ]
+    },
+    {
+      "parameters": {
+        "conditions": {
+          "options": {
+            "caseSensitive": true,
+            "leftValue": "",
+            "typeValidation": "strict",
+            "version": 2
+          },
+          "conditions": [
+            {
+              "id": "cb496677-0f11-5a80-bba4-b1dfd395bcdb",
+              "leftValue": "={{ $json.has_task_id }}",
+              "rightValue": true,
+              "operator": {
+                "type": "boolean",
+                "operation": "equals"
+              }
+            }
+          ],
+          "combinator": "and"
+        },
+        "options": {}
+      },
+      "id": "04f852dc-e894-5087-a51a-667da12e75c4",
+      "name": "Has case_id?",
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2.2,
+      "position": [
+        560,
+        0
+      ]
+    },
+    {
+      "parameters": {
+        "jsCode": "const x=$json;\nconst obj=v=>v&&typeof v==='object'&&!Array.isArray(v);\nconst clean=v=>typeof v==='string'?v.trim():'';\nconst parse=(v,f)=>{try{const p=typeof v==='string'?JSON.parse(v):v;return obj(p)?p:f}catch{return f}};\nif(!x.has_task_id) return[{json:x}];\nif(x.skip_cas||x.cas_already_persisted){\n  return[{json:{...x,cas_operation:null,should_persist_cas:false,attempted:null}}];\n}\nconst snap=obj(x.cas_snapshot)?x.cas_snapshot:{};\nconst now=new Date().toISOString();\nconst storedVersion=Number.isInteger(Number(snap.version))?Number(snap.version):1;\nconst previousVersion=Number.isInteger(Number(snap.previous_version))?Number(snap.previous_version):(Number.isInteger(Number(snap.version))?Number(snap.version):0);\nconst nextVersion=x.cas_already_persisted?storedVersion:storedVersion+1;\nconst runtime=parse(snap.runtime_json,{});\nconst preservedRequest=typeof snap.request_json==='string'?snap.request_json:JSON.stringify(obj(snap.request)?snap.request:{});\nconst preservedPlan=typeof snap.plan_json==='string'?snap.plan_json:(snap.plan_json!=null?JSON.stringify(snap.plan_json):'{}');\nconst preservedPacket=typeof snap.packet_json==='string'?snap.packet_json:(snap.packet_json!=null?JSON.stringify(snap.packet_json):'{}');\nconst preservedResult=typeof snap.result_json==='string'?snap.result_json:(snap.result_json!=null?JSON.stringify(snap.result_json):'{}');\nconst preservedVerification=typeof snap.verification_json==='string'?snap.verification_json:(snap.verification_json!=null?JSON.stringify(snap.verification_json):'{}');\n\nconst gateNeeded=x.cas_status==='awaiting_human'||(x.cas_status==='retryable_error'&&x.restartable);\nconst gate=gateNeeded?{\n  gate_id:`gate_${x.task_id}_${nextVersion}_error_${String(x.error_code||'ERR').toLowerCase()}`,\n  kind:x.cas_status==='retryable_error'?'needs_decision':'needs_input',\n  reason:x.safe_message,\n  questions:x.restartable?[{id:'error_restart',text:`Перезапустить case ${x.task_id} с сохранёнными входными данными?`,required:true,type:'enum',enum:['restart','cancel']}]:[{id:'error_input',text:x.safe_message,required:true,type:'text'}],\n  expected_version:nextVersion,\n  restartable:Boolean(x.restartable),\n  error_code:x.error_code,\n  taxonomy_scenario:x.taxonomy_scenario,\n}:{};\n\nconst attempted={\n  task_id:x.task_id,\n  version:nextVersion,\n  previous_version:previousVersion||storedVersion,\n  status:x.cas_status,\n  risk_class:clean(snap.risk_class)||'high',\n  request_json:preservedRequest||'{}',\n  runtime_json:JSON.stringify({...runtime,last_error:x.last_error,error_preserved_inputs:true}),\n  plan_json:preservedPlan||'{}',\n  packet_json:preservedPacket||'{}',\n  result_json:preservedResult||'{}',\n  verification_json:preservedVerification||'{}',\n  gate_json:JSON.stringify(gate),\n  retry_count:Number.isInteger(Number(snap.retry_count))?Number(snap.retry_count):0,\n  max_retries:Number.isInteger(Number(snap.max_retries))?Number(snap.max_retries):2,\n  created_at:clean(snap.created_at)||now,\n  updated_at:now,\n};\n\nreturn[{json:{\n  ...x,\n  should_persist_cas:true,\n  cas_operation:'update',\n  attempted,\n  human_gate:Object.keys(gate).length?gate:null,\n}}];"
+      },
+      "id": "67e6f6fc-a2f3-5a64-9b42-ed4c97a39412",
+      "name": "Build CAS error patch",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        840,
+        -120
+      ]
+    },
+    {
+      "parameters": {
+        "conditions": {
+          "options": {
+            "caseSensitive": true,
+            "leftValue": "",
+            "typeValidation": "strict",
+            "version": 2
+          },
+          "conditions": [
+            {
+              "id": "2d8aff02-0b9f-5ce3-b643-cf9cf5894ad7",
+              "leftValue": "={{ $json.should_persist_cas }}",
+              "rightValue": true,
+              "operator": {
+                "type": "boolean",
+                "operation": "equals"
+              }
+            }
+          ],
+          "combinator": "and"
+        },
+        "options": {}
+      },
+      "id": "b8fa7113-397c-5d28-a245-414e0321d3d7",
+      "name": "Should persist CAS?",
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2.2,
+      "position": [
+        1120,
+        -120
+      ]
+    },
+    {
+      "parameters": {
+        "source": "database",
+        "workflowId": {
+          "__rl": true,
+          "value": "REPLACE_CAS_PERSIST_IN_UI",
+          "mode": "list",
+          "cachedResultName": "CAS — Persist Task State"
+        },
+        "workflowInputs": {
+          "mappingMode": "defineBelow",
+          "value": {
+            "cas_operation": "={{ $json.cas_operation }}",
+            "attempted": "={{ $json.attempted }}"
+          },
+          "matchingColumns": [],
+          "schema": [],
+          "attemptToConvertTypes": false,
+          "convertFieldsToString": false
+        },
+        "mode": "once",
+        "options": {
+          "waitForSubWorkflow": true
+        }
+      },
+      "id": "ff1c40f6-3fa8-59aa-9e7f-f3d71de7f9ca",
+      "name": "Call CAS persist — error case",
+      "type": "n8n-nodes-base.executeWorkflow",
+      "typeVersion": 1.3,
+      "position": [
+        1400,
+        -220
+      ],
+      "onError": "continueRegularOutput"
+    },
+    {
+      "parameters": {
+        "jsCode": "const built=$('Build CAS error patch').first().json||{};\nconst incoming=$json||{};\nconst x={...built,...incoming,has_task_id:built.has_task_id!==false,task_id:built.task_id||incoming.task_id,safe_message:built.safe_message||incoming.safe_message,error_code:built.error_code||incoming.error_code,taxonomy_scenario:built.taxonomy_scenario||incoming.taxonomy_scenario,cas_status:built.cas_status||incoming.status||incoming.cas_status,restartable:built.restartable,human_gate:built.human_gate||null,last_error:built.last_error||null,findings:built.findings||[],stage:built.stage||'error',execution_id:built.execution_id||null,attempted:built.attempted||null,passthrough:built.passthrough||{}};\nconst obj=v=>v&&typeof v==='object'&&!Array.isArray(v);\nif(!x.has_task_id||!x.task_id){\n  return[{json:{...x,activity_sync_ready:false,skip_trace:true}}];\n}\nconst cas=obj(x.attempted)?x.attempted:(obj(x.cas_snapshot)?x.cas_snapshot:{});\nconst version=Number(cas.version||x.human_gate?.expected_version||0)||null;\nconst statusLabel=x.cas_status==='retryable_error'?'RETRYABLE_ERROR':x.cas_status==='failed'?'FATAL_ERROR':'CASE_ERROR';\nconst summary=x.safe_message;\nconst details={\n  error_code:x.error_code,\n  taxonomy_scenario:x.taxonomy_scenario,\n  restartable:Boolean(x.restartable),\n  stage:x.stage,\n  execution_id:x.execution_id||null,\n  case_id:x.task_id,\n  version,\n  findings_count:Array.isArray(x.findings)?x.findings.length:0,\n};\nconst handoff={\n  event_type:'handoff',\n  stage:'error',\n  status:statusLabel,\n  summary,\n  brief:summary,\n  actor:'error_handler',\n  handoff:{\n    from_specialist:'universal_orchestrator',\n    to_specialist:'human_operator',\n    from_role:'Orchestrator',\n    to_role:'Engineer',\n    details,\n  },\n  human_gate:x.human_gate||null,\n};\nconst mas_trace_event={\n  trace_id:`trace_${x.task_id}_${Date.now().toString(36)}`,\n  task_id:x.task_id,\n  stage:'error',\n  event_type:'handoff',\n  actor:'error_handler',\n  status:statusLabel,\n  summary,\n  error_code:x.error_code,\n  safe_message:summary,\n  redacted_args:details,\n};\nreturn[{json:{\n  ...x,\n  skip_trace:false,\n  mas_trace_event,\n  passthrough:{...(obj(x.passthrough)?x.passthrough:{}),skip_activity_sync:true,task_id:x.task_id},\n  activity_status:x.cas_status,\n  activity_version:version,\n  activity_human_gate:x.human_gate||null,\n  activity_status_message:summary,\n  activity_event:handoff,\n}}];"
+      },
+      "id": "1b29c5d2-cc2c-5560-b87f-88c7a5ac5a52",
+      "name": "Prepare structured error trace",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        1680,
+        -120
+      ]
+    },
+    {
+      "parameters": {
+        "source": "database",
+        "workflowId": {
+          "__rl": true,
+          "value": "REPLACE_MAS_TRACE_WRITER_IN_UI",
+          "mode": "list",
+          "cachedResultName": "Writer — MAS Trace"
+        },
+        "workflowInputs": {
+          "mappingMode": "defineBelow",
+          "value": {
+            "mas_trace_event": "={{ $json.mas_trace_event }}",
+            "passthrough": "={{ $json.passthrough || { skip_activity_sync: true } }}"
+          },
+          "matchingColumns": [],
+          "schema": [],
+          "attemptToConvertTypes": false,
+          "convertFieldsToString": false
+        },
+        "mode": "once",
+        "options": {
+          "waitForSubWorkflow": true
+        }
+      },
+      "id": "b7912faa-d7f9-502a-b583-c2e4ce13f9aa",
+      "name": "Call Writer — MAS Trace (error)",
+      "type": "n8n-nodes-base.executeWorkflow",
+      "typeVersion": 1.3,
+      "position": [
+        1960,
+        -120
+      ],
+      "onError": "continueRegularOutput"
+    },
+    {
+      "parameters": {
+        "jsCode": "const x=$json;\nif(!x.has_task_id||x.skip_trace){\n  return[{json:{...x,activity_sync_ready:false}}];\n}\nconst ACTIVITY_BASE_URL='http://127.0.0.1:8200';\nconst ACTIVITY_KEY='dev-local';\nconst body={\n  task_id:x.task_id,\n  trace_id:x.mas_trace_event?.trace_id||null,\n  status:x.activity_status||x.cas_status||null,\n  version:x.activity_version||null,\n  human_gate:x.activity_human_gate||x.human_gate||null,\n  events:[x.activity_event].filter(Boolean),\n};\nreturn[{json:{\n  ...x,\n  activity_sync_ready:true,\n  activity_url:`${String(ACTIVITY_BASE_URL).replace(/\\\\/$/,'')}/v1/sync`,\n  activity_key:ACTIVITY_KEY,\n  activity_body:body,\n}}];"
+      },
+      "id": "aa10c14a-9338-52fd-9c40-e9ae67304707",
+      "name": "Prepare Activity error sync",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        2240,
+        -120
+      ]
+    },
+    {
+      "parameters": {
+        "conditions": {
+          "options": {
+            "caseSensitive": true,
+            "leftValue": "",
+            "typeValidation": "strict",
+            "version": 2
+          },
+          "conditions": [
+            {
+              "id": "26b9ab9b-ec9e-5c5c-841d-b84bef6eb6e9",
+              "leftValue": "={{ $json.activity_sync_ready }}",
+              "rightValue": true,
+              "operator": {
+                "type": "boolean",
+                "operation": "equals"
+              }
+            }
+          ],
+          "combinator": "and"
+        },
+        "options": {}
+      },
+      "id": "278475e3-23d5-5c8c-a897-e7b3f77b03b9",
+      "name": "Activity sync ready?",
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2.2,
+      "position": [
+        2520,
+        -120
+      ]
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "={{ $json.activity_url }}",
+        "sendHeaders": true,
+        "headerParameters": {
+          "parameters": [
+            {
+              "name": "Content-Type",
+              "value": "application/json"
+            },
+            {
+              "name": "X-Activity-Key",
+              "value": "={{ $json.activity_key }}"
+            }
+          ]
+        },
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "={{ $json.activity_body }}",
+        "options": {
+          "timeout": 15000
+        }
+      },
+      "id": "83cc341b-8c1f-5a56-9a6a-c92154d27eb9",
+      "name": "POST error handoff to MAS Activity",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [
+        2800,
+        -220
+      ],
+      "onError": "continueRegularOutput",
+      "continueOnFail": true
+    },
+    {
+      "parameters": {
+        "jsCode": "const built=(()=>{try{return $('Build CAS error patch').first().json||{}}catch{return {}}})();\nconst classified=(()=>{try{return $('Classify MAS error event').first().json||{}}catch{return {}}})();\nconst x={...classified,...built,...($json||{})};\nconst obj=v=>v&&typeof v==='object'&&!Array.isArray(v);\nif(x.accepted===false||x.code==='CASE_ID_REQUIRED'||!x.task_id){\n  return[{json:{\n    contract:'mas_error_ack',\n    contract_version:'1.0',\n    accepted:false,\n    code:x.code||'CASE_ID_REQUIRED',\n    message:x.message||'Error workflow refused anonymous failure: task_id/case_id is required.',\n    task_id:null,\n    restartable:false,\n    cas_persisted:false,\n    activity_notified:false,\n    passthrough:x.passthrough||null,\n  }}];\n}\nlet activity={attempted:false,stored:false};\ntry{\n  const http=$('POST error handoff to MAS Activity').first().json||{};\n  activity={attempted:true,stored:Boolean(http.stored||http.ok),count:Number(http.count||0),task_id:http.task_id||x.task_id};\n}catch(_){\n  activity={attempted:false,stored:false,note:'activity_post_skipped_or_failed'};\n}\nlet casOk=Boolean(x.cas_already_persisted||x.skip_cas||!x.should_persist_cas);\ntry{\n  if(x.should_persist_cas){\n    const persisted=$('Call CAS persist — error case').first().json||{};\n    casOk=persisted.cas_succeeded===true||String(persisted.status||'')===String(x.cas_status||'');\n  }\n}catch(_){ /* keep casOk */ }\n\nreturn[{json:{\n  contract:'mas_error_ack',\n  contract_version:'1.0',\n  accepted:true,\n  task_id:x.task_id,\n  version:x.activity_version||x.attempted?.version||null,\n  status:x.cas_status,\n  error_code:x.error_code,\n  taxonomy_scenario:x.taxonomy_scenario,\n  safe_message:x.safe_message,\n  restartable:Boolean(x.restartable),\n  human_gate:x.human_gate||x.activity_human_gate||null,\n  cas_persisted:casOk,\n  activity_notified:Boolean(activity.stored||activity.attempted),\n  activity,\n  last_error:x.last_error||null,\n  passthrough:x.passthrough||null,\n}}];"
+      },
+      "id": "74b00395-7de5-5687-add4-b9510c4c54ac",
+      "name": "Format MAS error ack",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        3080,
+        -120
+      ]
+    },
+    {
+      "parameters": {
+        "jsCode": "const x=$json;return[{json:{contract:'mas_error_ack',contract_version:'1.0',accepted:false,code:'CASE_ID_REQUIRED',message:x.message||'Error workflow refused anonymous failure: task_id/case_id is required.',task_id:null,restartable:false,cas_persisted:false,activity_notified:false,passthrough:x.passthrough||null}}];"
+      },
+      "id": "92094de4-eb10-51a3-8304-d35fba84a492",
+      "name": "Reject without case_id",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        840,
+        160
+      ]
+    }
+  ],
+  "connections": {
+    "Receive MAS error event": {
+      "main": [
+        [
+          {
+            "node": "Classify MAS error event",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Classify MAS error event": {
+      "main": [
+        [
+          {
+            "node": "Has case_id?",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Has case_id?": {
+      "main": [
+        [
+          {
+            "node": "Build CAS error patch",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Reject without case_id",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Build CAS error patch": {
+      "main": [
+        [
+          {
+            "node": "Should persist CAS?",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Should persist CAS?": {
+      "main": [
+        [
+          {
+            "node": "Call CAS persist — error case",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Prepare structured error trace",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Call CAS persist — error case": {
+      "main": [
+        [
+          {
+            "node": "Prepare structured error trace",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Prepare structured error trace": {
+      "main": [
+        [
+          {
+            "node": "Call Writer — MAS Trace (error)",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Call Writer — MAS Trace (error)": {
+      "main": [
+        [
+          {
+            "node": "Prepare Activity error sync",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Prepare Activity error sync": {
+      "main": [
+        [
+          {
+            "node": "Activity sync ready?",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Activity sync ready?": {
+      "main": [
+        [
+          {
+            "node": "POST error handoff to MAS Activity",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Format MAS error ack",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "POST error handoff to MAS Activity": {
+      "main": [
+        [
+          {
+            "node": "Format MAS error ack",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Reject without case_id": {
+      "main": [
+        [
+          {
+            "node": "Format MAS error ack",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    }
+  },
+  "settings": {
+    "executionOrder": "v1",
+    "callerPolicy": "workflowsFromSameOwner"
+  },
+  "meta": {
+    "templateCredsSetupCompleted": true
+  },
+  "tags": [],
+  "pinData": {},
+  "versionId": "2b048597-1c41-4963-a88c-da7cca98e29a"
+}

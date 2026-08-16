@@ -38,7 +38,7 @@ MAX_START_BODY_BYTES = 12_000_000
 MAX_START_FILE_BYTES = 2_097_152
 MAX_START_FILES = 40
 TASK_ID_RE = re.compile(r"^[A-Za-z0-9_.:-]{1,200}$")
-HITL_ACTIONS = frozenset({"status", "reply", "approve", "reject", "cancel"})
+HITL_ACTIONS = frozenset({"status", "reply", "approve", "reject", "cancel", "retry"})
 ANON = frozenset({"", "anonymous", "anon", "n/a", "na", "unknown"})
 SCHEDULE_EXT = re.compile(r"\.(?:data|inc|sch|txt|grdecl)$", re.I)
 EXCEL_EXT = re.compile(r"\.(?:xlsx|xls)$", re.I)
@@ -127,7 +127,7 @@ class SyncPost(BaseModel):
 
 
 class HitlPost(BaseModel):
-    action: Literal["reply", "approve", "reject", "cancel", "status"] = "reply"
+    action: Literal["reply", "approve", "reject", "cancel", "status", "retry"] = "reply"
     human_response: str | None = None
     requested_by: str = Field(min_length=1, max_length=120)
     gate_id: str | None = None
@@ -439,6 +439,22 @@ def _awaiting(task: dict[str, Any]) -> bool:
     return _is_awaiting_status(task.get("status")) and bool(_gate_payload(task))
 
 
+def _restartable(task: dict[str, Any]) -> bool:
+    """Manual restart is allowed for retryable_error or an explicit restartable error gate."""
+    status = str(task.get("status") or "").strip().lower()
+    if status == "retryable_error":
+        return True
+    gate = _gate_payload(task) or {}
+    if gate.get("restartable") is True:
+        return True
+    if status == "awaiting_human" and str(gate.get("kind") or "") == "needs_decision":
+        questions = gate.get("questions") if isinstance(gate.get("questions"), list) else []
+        for q in questions:
+            if isinstance(q, dict) and str(q.get("id") or "") == "error_restart":
+                return True
+    return False
+
+
 def _turn_fingerprint(turn: dict[str, Any]) -> tuple[Any, ...]:
     """Stable key so Trace sync after durable hydrate does not duplicate handoffs."""
     frm = turn.get("from") if isinstance(turn.get("from"), dict) else {}
@@ -560,6 +576,7 @@ async def _set_gate(
             "version": task.get("version"),
             "human_gate": _gate_payload(task),
             "awaiting_human": _awaiting(task),
+            "restartable": _restartable(task),
             "status_message": task.get("status_message"),
             "updated_at": task["updated_at"],
         }
@@ -615,6 +632,7 @@ def _human_turn(*, action: str, requested_by: str, human_response: str | None, g
         "approve": "HUMAN_APPROVED",
         "reject": "HUMAN_REJECTED",
         "cancel": "HUMAN_REJECTED",
+        "retry": "HUMAN_RETRY",
     }
     status = status_map.get(action, "HUMAN_REPLY")
     summary = {
@@ -622,12 +640,14 @@ def _human_turn(*, action: str, requested_by: str, human_response: str | None, g
         "approve": f"{requested_by} approved the gate result.",
         "reject": f"{requested_by} rejected the gate result.",
         "cancel": f"{requested_by} cancelled the task.",
+        "retry": f"{requested_by} restarted case after error.",
     }.get(action, f"{requested_by} submitted HITL action.")
     brief = {
         "reply": f"{requested_by} отправил инструкции в HITL. Оркестратор продолжит с этим ответом.",
         "approve": f"{requested_by} утвердил результат. Задача возобновляется как approve.",
         "reject": f"{requested_by} отклонил результат. Релиз не выдаётся.",
         "cancel": f"{requested_by} отменил задачу на HITL-gate.",
+        "retry": f"{requested_by} перезапустил case с сохранёнными входными данными.",
     }.get(action, summary)
     details: dict[str, Any] = {
         "action": action,
@@ -672,6 +692,29 @@ def _local_apply_hitl(
             "message": "Local activity status.",
             "human_gate": gate or None,
             "next_action": "resume_with_task_id_expected_version_gate_id_and_action" if _awaiting(task) else None,
+            "backend": "local",
+        }
+    if action == "retry":
+        if not _restartable(task):
+            return {
+                "contract": "orchestrator_response",
+                "contract_version": "1.0",
+                "task_id": task["task_id"],
+                "version": version,
+                "status": task.get("status") or "conflict",
+                "message": "Local retry refused: task is not restartable.",
+                "human_gate": gate or None,
+                "backend": "local",
+            }
+        return {
+            "contract": "orchestrator_response",
+            "contract_version": "1.0",
+            "task_id": task["task_id"],
+            "version": version + 1,
+            "status": "planning",
+            "message": "Local HITL retry accepted; planning resumes with preserved inputs.",
+            "human_gate": None,
+            "result": {"action": "retry", "requested_by": requested_by, "human_response": human_response},
             "backend": "local",
         }
     if not _awaiting(task):
@@ -1033,6 +1076,7 @@ def _task_feed(task_id: str) -> dict[str, Any]:
         "status_message": task.get("status_message"),
         "version": task.get("version"),
         "awaiting_human": _awaiting(task),
+        "restartable": _restartable(task),
         "human_gate": _gate_payload(task),
         "hitl_backend": hitl_backend(),
         "durable_hydrate": durable_enabled(),
@@ -1128,6 +1172,7 @@ async def get_gate(task_id: str, refresh: bool = Query(default=False)) -> dict[s
         "status": task.get("status"),
         "version": task.get("version"),
         "awaiting_human": _awaiting(task),
+        "restartable": _restartable(task),
         "human_gate": _gate_payload(task),
         "hitl_backend": backend,
         "orchestrator": orch,
@@ -1420,6 +1465,100 @@ async def post_hitl(task_id: str, body: HitlPost, _: None = Depends(_require_key
         local_version = task.get("version") or (local_gate or {}).get("expected_version")
         snapshot = dict(task)
 
+    # Manual restart: orch action=retry (does not require awaiting_human gate).
+    if action == "retry":
+        if not _restartable(snapshot):
+            raise HTTPException(
+                status_code=409,
+                detail=f"Task {task_id} is not restartable (status={snapshot.get('status')})",
+            )
+        backend = hitl_backend()
+        if backend == "local":
+            orch = _local_apply_hitl(snapshot, action="retry", human_response=human_response, requested_by=requested_by)
+        else:
+            expected_version = body.expected_version
+            if expected_version is None:
+                expected_version = local_version
+            if expected_version is None:
+                try:
+                    status_payload = await invoke_orchestrator(
+                        {"action": "status", "task_id": task_id, "requested_by": requested_by}
+                    )
+                except OrchestratorError as exc:
+                    raise HTTPException(status_code=exc.status_code, detail=str(exc)) from exc
+                expected_version = status_payload.get("version")
+                gate = status_payload.get("human_gate") if isinstance(status_payload.get("human_gate"), dict) else None
+                await _set_gate(
+                    task_id,
+                    status=status_payload.get("status"),
+                    version=status_payload.get("version"),
+                    gate=gate,
+                    clear_gate=not gate,
+                    message=str(status_payload.get("message") or "").strip() or None,
+                )
+                async with _lock:
+                    snapshot = dict(_tasks.get(task_id) or snapshot)
+                if not _restartable(snapshot):
+                    raise HTTPException(
+                        status_code=409,
+                        detail=(
+                            status_payload.get("message")
+                            or f"Task {task_id} is not restartable (status={snapshot.get('status')})"
+                        ),
+                    )
+            try:
+                expected_version = int(expected_version)
+            except (TypeError, ValueError) as exc:
+                raise HTTPException(
+                    status_code=400,
+                    detail=f"expected_version required for restart of case {task_id}",
+                ) from exc
+            try:
+                orch = await invoke_orchestrator(
+                    {
+                        "action": "retry",
+                        "task_id": task_id,
+                        "requested_by": requested_by,
+                        "expected_version": expected_version,
+                    },
+                    files=_binaries_for(task_id),
+                )
+            except OrchestratorError as exc:
+                raise HTTPException(status_code=exc.status_code, detail=str(exc)) from exc
+        orch_status = str(orch.get("status") or "").strip().lower()
+        if orch_status in {"conflict", "failed", "rejected", "cancelled", "not_found", "error"}:
+            raise HTTPException(
+                status_code=409,
+                detail=(
+                    str(orch.get("message") or "").strip()
+                    or f"Restart refused for case {task_id} (status={orch_status})"
+                ),
+            )
+        turn = _human_turn(action="retry", requested_by=requested_by, human_response=human_response, gate=local_gate)
+        stored = await _append_turns(task_id, [turn])
+        gate_out = orch.get("human_gate") if isinstance(orch.get("human_gate"), dict) else None
+        clear = (not _is_awaiting_status(orch.get("status"))) or not orch.get("human_gate")
+        await _set_gate(
+            task_id,
+            status=orch.get("status"),
+            version=orch.get("version"),
+            gate=gate_out,
+            clear_gate=clear,
+            message=str(orch.get("message") or "").strip() or None,
+        )
+        return {
+            "ok": True,
+            "task_id": task_id,
+            "action": "retry",
+            "backend": orch.get("backend") or backend,
+            "orchestrator": orch,
+            "turn": stored[0] if stored else None,
+            "awaiting_human": _is_awaiting_status(orch.get("status")) and bool(gate_out),
+            "restartable": _restartable({"status": orch.get("status"), "gate": gate_out}),
+            "human_gate": gate_out,
+            "local_version_hint": local_version,
+        }
+
     backend = hitl_backend()
     orch: dict[str, Any]
 
@@ -1452,6 +1591,9 @@ async def post_hitl(task_id: str, body: HitlPost, _: None = Depends(_require_key
                     "backend": backend,
                     "orchestrator": status_payload,
                     "awaiting_human": bool(awaiting),
+                    "restartable": _restartable(
+                        {"status": status_payload.get("status"), "gate": gate}
+                    ),
                     "human_gate": gate,
                 }
             if not awaiting:
@@ -1521,10 +1663,26 @@ async def post_hitl(task_id: str, body: HitlPost, _: None = Depends(_require_key
         "orchestrator": orch,
         "turn": stored[0] if stored else None,
         "awaiting_human": _is_awaiting_status(orch.get("status")) and bool(gate_out),
+        "restartable": _restartable({"status": orch.get("status"), "gate": gate_out}),
         "human_gate": gate_out,
         "local_version_hint": local_version,
         "schedule_artifact": schedule_meta,
     }
+
+
+@app.post("/v1/tasks/{task_id}/restart")
+async def post_restart(task_id: str, body: HitlPost, _: None = Depends(_require_key)) -> dict[str, Any]:
+    """Explicit Activity UI restart — always carries task_id; never anonymous."""
+    if not TASK_ID_RE.match(task_id):
+        raise HTTPException(status_code=400, detail="Invalid task_id")
+    restart_body = HitlPost(
+        action="retry",
+        requested_by=body.requested_by,
+        human_response=body.human_response or "restart",
+        gate_id=body.gate_id,
+        expected_version=body.expected_version,
+    )
+    return await post_hitl(task_id, restart_body)
 
 
 @app.get("/v1/tasks/{task_id}/schedule")

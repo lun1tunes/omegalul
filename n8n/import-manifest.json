@@ -11,6 +11,7 @@
     "workflows/core/mas-activity-list-tasks.workflow.json",
     "workflows/core/mas-activity-load-feed.workflow.json",
     "workflows/core/mas-deployment-health-check.workflow.json",
+    "workflows/core/mas-error-handler.workflow.json",
     "workflows/core/mas-human-gate-form.workflow.json",
     "workflows/core/mas-trace-event-writer.workflow.json",
     "workflows/core/mvp-entry-form.workflow.json",
@@ -31,6 +32,7 @@
     "workflows/core/tnavigator-schedule-builder.workflow.json",
     "workflows/core/mas-trace-event-writer.workflow.json",
     "workflows/core/cas-persist-task.workflow.json",
+    "workflows/core/mas-error-handler.workflow.json",
     "workflows/core/universal-engineering-orchestrator.workflow.json",
     "workflows/core/mvp-entry-form.workflow.json",
     "workflows/core/mas-human-gate-form.workflow.json",
@@ -197,6 +199,30 @@
     {
       "owner": "Orchestrator — Engineering MAS",
       "node": "Call MAS Trace Event Writer",
+      "target": "Writer — MAS Trace",
+      "placeholder": "REPLACE_MAS_TRACE_WRITER_IN_UI"
+    },
+    {
+      "owner": "Orchestrator — Engineering MAS",
+      "node": "Call Error — MAS Case Handler (specialist)",
+      "target": "Error — MAS Case Handler",
+      "placeholder": "REPLACE_ERROR_HANDLER_IN_UI"
+    },
+    {
+      "owner": "Orchestrator — Engineering MAS",
+      "node": "Call Error — MAS Case Handler (verification)",
+      "target": "Error — MAS Case Handler",
+      "placeholder": "REPLACE_ERROR_HANDLER_IN_UI"
+    },
+    {
+      "owner": "Error — MAS Case Handler",
+      "node": "Call CAS persist — error case",
+      "target": "CAS — Persist Task State",
+      "placeholder": "REPLACE_CAS_PERSIST_IN_UI"
+    },
+    {
+      "owner": "Error — MAS Case Handler",
+      "node": "Call Writer — MAS Trace (error)",
       "target": "Writer — MAS Trace",
       "placeholder": "REPLACE_MAS_TRACE_WRITER_IN_UI"
     },

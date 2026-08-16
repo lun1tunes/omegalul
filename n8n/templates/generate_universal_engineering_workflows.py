@@ -184,6 +184,40 @@ def call_hybrid_retrieval(name: str, position: tuple[int, int]) -> dict:
     )
 
 
+def call_error_handler(name: str, position: tuple[int, int]) -> dict:
+    return node(
+        name,
+        "n8n-nodes-base.executeWorkflow",
+        1.3,
+        position,
+        {
+            "source": "database",
+            "workflowId": {
+                "__rl": True,
+                "value": "REPLACE_ERROR_HANDLER_IN_UI",
+                "mode": "list",
+                "cachedResultName": "Error — MAS Case Handler",
+            },
+            "workflowInputs": {
+                "mappingMode": "defineBelow",
+                "value": {
+                    "mas_error_event": "={{ $json.mas_error_event }}",
+                    "cas_already_persisted": "={{ $json.cas_already_persisted }}",
+                    "passthrough": "={{ $json.passthrough || {} }}",
+                    "task_id": "={{ $json.task_id }}",
+                },
+                "matchingColumns": [],
+                "schema": [],
+                "attemptToConvertTypes": False,
+                "convertFieldsToString": False,
+            },
+            "mode": "once",
+            "options": {"waitForSubWorkflow": True},
+        },
+        onError="continueRegularOutput",
+    )
+
+
 def connect(connections: dict, source: str, target: str, source_output: str = "main", source_index: int = 0, target_input: str = "main", target_index: int = 0) -> None:
     groups = connections.setdefault(source, {})
     outputs = groups.setdefault(source_output, [])
@@ -550,7 +584,8 @@ let outcome='respond', message='', nextStatus=x.stored_status, shouldPlan=false,
 if(!x.state_found){outcome='respond';nextStatus=x.status||'not_found';message=x.message||'Task not found.';}
 else if(x.action==='status'){outcome='respond';}
 else if(['completed','failed','rejected','cancelled'].includes(x.stored_status)){nextStatus=x.stored_status;message='Task is terminal; create a new task or inspect status.';}
-else if(x.expected_version!==x.stored_version){nextStatus='conflict';message='Stale expected_version. Reload task state and resubmit against the current version.';}
+else if(x.action!=='status' && x.action!=='retry' && x.expected_version!==x.stored_version){nextStatus='conflict';message='Stale expected_version. Reload task state and resubmit against the current version.';}
+else if(x.action==='retry' && x.expected_version!=null && x.expected_version!==x.stored_version){nextStatus='conflict';message='Stale expected_version. Reload task state and resubmit against the current version.';}
 else if(x.action==='cancel'){nextStatus='cancelled';outcome='persist';}
 else if(['reply','approve','reject'].includes(x.action)){
   if(!pending.gate_id || x.gate_id!==pending.gate_id){nextStatus='conflict';message='gate_id does not match the active human gate.';}
@@ -1146,6 +1181,76 @@ return [{json:{...x,version:Number(x.version)+1,previous_version:Number(x.versio
 """.strip()
 
 
+PREPARE_MAS_ERROR_EVENT = r"""
+const x=$json;
+const parse=(v,f)=>{try{return typeof v==='string'?JSON.parse(v):v??f}catch{return f}};
+const obj=v=>v&&typeof v==='object'&&!Array.isArray(v);
+const clean=v=>typeof v==='string'?v.trim():'';
+const runtime=parse(x.runtime_json,{});
+const result=obj(x.specialist_result)?x.specialist_result:parse(x.result_json,{});
+const verification=parse(x.verification_json,{});
+const last=obj(runtime.last_error)?runtime.last_error:(obj(result.error)?result.error:{});
+const code=clean(last.code||result.error?.code||'').toUpperCase();
+const status=clean(x.status);
+const specialistStatus=clean(result.status);
+const critical=['retryable_error','failed'].includes(status)
+  ||['retryable_error','fatal_error'].includes(specialistStatus)
+  ||Boolean(code)
+  ||(status==='awaiting_human'&&['needs_decision'].includes(clean(parse(x.gate_json,{}).kind))&&Boolean(code||last.safe_message));
+if(!critical||!clean(x.task_id)){
+  return[{json:{...x,invoke_error_handler:false,cas_already_persisted:true,mas_error_event:null}}];
+}
+const findings=[...(Array.isArray(last.findings)?last.findings:[]),...(Array.isArray(verification.findings)?verification.findings:[])].filter(obj).slice(0,20);
+let safeMessage=clean(last.safe_message||last.message||result.user_message||result.summary||verification.summary||'');
+if(!safeMessage) safeMessage=`Критическая ошибка case ${x.task_id}`;
+if(!safeMessage.includes(x.task_id)) safeMessage=`${safeMessage} (case_id=${x.task_id})`;
+const cas_snapshot={
+  task_id:x.task_id,
+  version:Number(x.version)||1,
+  previous_version:Number(x.previous_version)||Number(x.version)||0,
+  status,
+  risk_class:clean(x.risk_class)||'high',
+  request_json:typeof x.request_json==='string'?x.request_json:JSON.stringify(x.request_json||{}),
+  runtime_json:typeof x.runtime_json==='string'?x.runtime_json:JSON.stringify(runtime),
+  plan_json:typeof x.plan_json==='string'?x.plan_json:JSON.stringify(x.plan_json||{}),
+  packet_json:typeof x.packet_json==='string'?x.packet_json:JSON.stringify(x.packet_json||{}),
+  result_json:typeof x.result_json==='string'?x.result_json:JSON.stringify(result||{}),
+  verification_json:typeof x.verification_json==='string'?x.verification_json:JSON.stringify(verification||{}),
+  gate_json:typeof x.gate_json==='string'?x.gate_json:JSON.stringify(x.gate_json||{}),
+  retry_count:Number(x.retry_count)||0,
+  max_retries:Number(x.max_retries)||2,
+  created_at:clean(x.created_at)||new Date().toISOString(),
+  updated_at:clean(x.updated_at)||new Date().toISOString(),
+};
+const mas_error_event={
+  contract:'mas_error_event',
+  contract_version:'1.0',
+  task_id:x.task_id,
+  code:code||undefined,
+  stage:status==='retryable_error'?'plan':(status==='awaiting_human'?'hitl':'error'),
+  safe_message:safeMessage,
+  findings,
+  cas_already_persisted:true,
+  cas_snapshot,
+};
+return[{json:{...x,invoke_error_handler:true,cas_already_persisted:true,mas_error_event,passthrough:{source:'orchestrator',status,task_id:x.task_id}}}];
+""".strip()
+
+
+RESTORE_AFTER_SPECIALIST_ERROR_HANDLER = r"""
+let before={};
+try{before=$('Call CAS persist — specialist gate or error').first().json||{}}catch{before={}}
+return[{json:before&&typeof before==='object'?before:{status:'error',message:'Missing orchestrator state after error handler.'}}];
+""".strip()
+
+
+RESTORE_AFTER_VERIFICATION_ERROR_HANDLER = r"""
+let before={};
+try{before=$('Call CAS persist — verification').first().json||{}}catch{before={}}
+return[{json:before&&typeof before==='object'?before:{status:'error',message:'Missing orchestrator state after error handler.'}}];
+""".strip()
+
+
 PREPARE_FINAL_TRACE = r"""
 const x=$json;const parse=(v,f)=>{try{return typeof v==='string'?JSON.parse(v):v??f}catch{return f}};
 const pending=parse(x.gate_json,{}),result=parse(x.result_json,{}),verification=parse(x.verification_json,{}),runtime=parse(x.runtime_json,{}),error=(runtime.last_error&&typeof runtime.last_error==='object'?runtime.last_error:{}),plan=parse(x.plan_json,{});
@@ -1223,7 +1328,7 @@ def build_orchestrator() -> dict:
     nodes: list[dict] = []
     c: dict = {}
     nodes += [
-        note("README — setup", (-1260, -900), "## UI-only setup (n8n 2.30.8)\n1. Create task-state and trace Data Tables using `docs.md` in the repository root.\n2. Select them in CAS persist (insert+update) and Orchestrator Load task.\n3. Assign Planner/Verifier credentials.\n4. Bind CAS persist, Excel adapter/agent, SCHEDULE Retrieval/Builder and MAS Trace Writer.\n5. Load expert keyword instructions/schema JSON into `schedule_mvp`.\n6. Test start → HITL → delegation → validation → verification → inline .INC.\n\nSCHEDULE input and result remain bounded text inside n8n. Multi-file: drag-and-drop several `.inc/.data/.grdecl` into `schedule_files` (optional `schedule_root`); materializer builds `root_path` + `include_files` for Builder. No ZIP, no host filesystem scan.", 500, 440, 5),
+        note("README — setup", (-1260, -900), "## UI-only setup (n8n 2.30.8)\n1. Create task-state and trace Data Tables using `docs.md` in the repository root.\n2. Select them in CAS persist (insert+update) and Orchestrator Load task.\n3. Assign Planner/Verifier credentials.\n4. Bind CAS persist, Excel adapter/agent, SCHEDULE Retrieval/Builder, MAS Trace Writer, and **Error — MAS Case Handler**.\n5. Load expert keyword instructions/schema JSON into `schedule_mvp`.\n6. Test start → HITL → delegation → validation → verification → inline .INC.\n\nSCHEDULE input and result remain bounded text inside n8n. Multi-file: drag-and-drop several `.inc/.data/.grdecl` into `schedule_files` (optional `schedule_root`); materializer builds `root_path` + `include_files` for Builder. No ZIP, no host filesystem scan.", 500, 440, 5),
         note("Architecture", (-720, -900), "## Serious MVP control plane\n- Data Table is authoritative durable state.\n- Insert/update CAS lives in `CAS — Persist Task State`; Orchestrator only loads by task_id.\n- LLM plans; deterministic nodes own transitions.\n- Optimistic concurrency is `task_id + version`.\n- Human gates resume via a fresh invocation.\n- Model selects logical `specialist_id` only.\n- Independent Verifier is separated from Planner and Specialist.\n- One bounded baseline package may live in task state; Planner/trace receive metadata only.\n- SCHEDULE result is returned as bounded inline `.INC` text.", 470, 360, 4),
         note("Extension point", (440, -900), "## Add a specialist safely\n1. Clone the universal specialist template.\n2. Preserve `specialist_packet` / `specialist_result` v1.0.\n3. Add one row to `n8n/contracts/specialist_registry.v1.json` (catalogue + allowlist + chat_role).\n4. Bind its workflow only in a static `Call … Specialist` node and set `configured:true` + route index.\n5. Add contract, failure, HITL and verification tests.\n\nNever put a workflow ID in an LLM prompt or result. Domain handoffs must emit `runtime_json.handoff_events` for the chat activity feed.", 460, 360, 3),
         node("Authenticated engineering webhook", "n8n-nodes-base.webhook", 2.1, (-1260, -400), {"httpMethod": "POST", "path": "engineering-orchestrator", "authentication": "headerAuth", "responseMode": "lastNode", "options": {}}, credentials={"httpHeaderAuth": {"id": "REPLACE_IN_UI", "name": "REPLACE: engineering orchestrator inbound key"}}),
@@ -1310,10 +1415,18 @@ def build_orchestrator() -> dict:
         node("Verifier Structured Output", "@n8n/n8n-nodes-langchain.outputParserStructured", 1.3, (3380, -1020), {"schemaType": "manual", "inputSchema": json.dumps(VERIFIER_SCHEMA, ensure_ascii=False), "autoFix": False}),
         code("Apply verification policy", (3500, -780), APPLY_VERIFICATION),
         call_cas_persist("Call CAS persist — verification", (3720, -780), "update"),
-        if_node("Verification requests replan?", (4160, -780), "={{ $json.status }}", "retryable_error"),
+        code("Prepare MAS error event (verification)", (3880, -780), PREPARE_MAS_ERROR_EVENT),
+        if_node("Invoke Error Handler (verification)?", (4040, -780), "={{ $json.invoke_error_handler }}", True, "boolean"),
+        call_error_handler("Call Error — MAS Case Handler (verification)", (4200, -900)),
+        code("Restore after verification error handler", (4360, -780), RESTORE_AFTER_VERIFICATION_ERROR_HANDLER),
+        if_node("Verification requests replan?", (4520, -780), "={{ $json.status }}", "retryable_error"),
         code("Build specialist gate or error", (3040, -500), BUILD_DIRECT_GATE),
         call_cas_persist("Call CAS persist — specialist gate or error", (3260, -500), "update"),
-        if_node("Specialist error requests replan?", (3700, -500), "={{ $json.status }}", "retryable_error"),
+        code("Prepare MAS error event (specialist)", (3480, -500), PREPARE_MAS_ERROR_EVENT),
+        if_node("Invoke Error Handler (specialist)?", (3700, -500), "={{ $json.invoke_error_handler }}", True, "boolean"),
+        call_error_handler("Call Error — MAS Case Handler (specialist)", (3920, -620)),
+        code("Restore after specialist error handler", (4140, -500), RESTORE_AFTER_SPECIALIST_ERROR_HANDLER),
+        if_node("Specialist error requests replan?", (4360, -500), "={{ $json.status }}", "retryable_error"),
         code("Build allowlist configuration gate", (2160, -380), "const x=$json;const pending={gate_id:`gate_${x.task_id}_${Number(x.version)+1}_routing`,kind:'needs_decision',reason:'Specialist binding is not configured in deterministic allowlist.',questions:[{id:'routing',text:'An n8n owner must configure the allowlisted specialist workflow binding.'}],expected_version:Number(x.version)+1};return [{json:{...x,version:Number(x.version)+1,previous_version:Number(x.version),status:'awaiting_human',gate_json:JSON.stringify(pending),updated_at:new Date().toISOString()}}];"),
         call_cas_persist("Call CAS persist — routing gate", (2380, -380), "update"),
         code("Build invalid invocation response", (-120, 260), "return [{json:{...$json,status:'conflict',message:$json.input_error||'Invalid action or missing task_id for a resume action.'}}];"),
@@ -1417,11 +1530,21 @@ def build_orchestrator() -> dict:
     connect(c, "Verifier Structured Output", "Independent Verifier Agent", source_output="ai_outputParser", target_input="ai_outputParser")
     connect(c, "Independent Verifier Agent", "Apply verification policy")
     connect(c, "Apply verification policy", "Call CAS persist — verification")
-    connect(c, "Call CAS persist — verification", "Verification requests replan?")
+    connect(c, "Call CAS persist — verification", "Prepare MAS error event (verification)")
+    connect(c, "Prepare MAS error event (verification)", "Invoke Error Handler (verification)?")
+    connect(c, "Invoke Error Handler (verification)?", "Call Error — MAS Case Handler (verification)", source_index=0)
+    connect(c, "Invoke Error Handler (verification)?", "Restore after verification error handler", source_index=1)
+    connect(c, "Call Error — MAS Case Handler (verification)", "Restore after verification error handler")
+    connect(c, "Restore after verification error handler", "Verification requests replan?")
     connect(c, "Verification requests replan?", "Prepare governed routing RAG request", source_index=0)
     connect(c, "Verification requests replan?", "Prepare final MAS trace event", source_index=1)
     connect(c, "Build specialist gate or error", "Call CAS persist — specialist gate or error")
-    connect(c, "Call CAS persist — specialist gate or error", "Specialist error requests replan?")
+    connect(c, "Call CAS persist — specialist gate or error", "Prepare MAS error event (specialist)")
+    connect(c, "Prepare MAS error event (specialist)", "Invoke Error Handler (specialist)?")
+    connect(c, "Invoke Error Handler (specialist)?", "Call Error — MAS Case Handler (specialist)", source_index=0)
+    connect(c, "Invoke Error Handler (specialist)?", "Restore after specialist error handler", source_index=1)
+    connect(c, "Call Error — MAS Case Handler (specialist)", "Restore after specialist error handler")
+    connect(c, "Restore after specialist error handler", "Specialist error requests replan?")
     connect(c, "Specialist error requests replan?", "Prepare governed routing RAG request", source_index=0)
     connect(c, "Specialist error requests replan?", "Prepare final MAS trace event", source_index=1)
     connect(c, "Build invalid invocation response", "Prepare final MAS trace event")

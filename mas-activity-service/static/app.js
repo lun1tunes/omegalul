@@ -30,7 +30,10 @@
   const rejectBtn = document.getElementById("rejectBtn");
   const replyBtn = document.getElementById("replyBtn");
   const cancelBtn = document.getElementById("cancelBtn");
+  const restartBtn = document.getElementById("restartBtn");
   const hitlButtons = [approveBtn, rejectBtn, replyBtn, cancelBtn];
+
+  let restartableCase = false;
 
   const newTaskBtn = document.getElementById("newTaskBtn");
   const brandHome = document.getElementById("brandHome");
@@ -112,6 +115,7 @@
   let source = null;
   let rendered = new Set();
   let gateState = null;
+  let taskVersion = null;
   let awaitingHuman = false;
   let submitAction = "reply";
   let taskCatalog = [];
@@ -338,9 +342,19 @@
   function setComposerArmed(armed) {
     awaitingHuman = Boolean(armed);
     // Start composer takes the bottom slot when open.
-    composer.hidden = startOpen || !awaitingHuman;
+    const showComposer = !startOpen && (awaitingHuman || restartableCase);
+    composer.hidden = !showComposer;
     composer.classList.toggle("armed", awaitingHuman && !startOpen);
     for (const btn of hitlButtons) btn.disabled = !awaitingHuman || startOpen;
+    if (restartBtn) {
+      restartBtn.hidden = !restartableCase || startOpen;
+      restartBtn.disabled = !restartableCase || startOpen || !currentTask;
+    }
+  }
+
+  function setRestartable(flag) {
+    restartableCase = Boolean(flag);
+    setComposerArmed(awaitingHuman);
   }
 
   function clearWorkspaceView({ titleLabel = "Выберите задачу" } = {}) {
@@ -351,6 +365,7 @@
     hideNotFound();
     renderRequest(null);
     renderGate(null, { awaiting: false });
+    setRestartable(false);
     renderStatusBanner(null, null);
     setScheduleArtifact(null);
     setComposerArmed(false);
@@ -784,6 +799,9 @@
       renderRequest(data.objective);
     }
     renderStatusBanner(data.status, data.status_message || data.message);
+    setRestartable(Boolean(data.restartable) || Boolean(data.human_gate?.restartable) || String(data.status || "").toLowerCase() === "retryable_error");
+    if (data.version != null) taskVersion = data.version;
+    else if (data.human_gate?.expected_version != null) taskVersion = data.human_gate.expected_version;
     renderGate(data.human_gate ?? data.gate ?? null, {
       status: data.status,
       version: data.version,
@@ -803,6 +821,7 @@
     empty.hidden = true;
     renderRequest(null);
     renderGate(null, { awaiting: false });
+    setRestartable(false);
     setComposerArmed(false);
     setScheduleArtifact(null);
     title.classList.remove("task-line");
@@ -836,6 +855,7 @@
     if (taskId) setTaskHeader(taskId, "ошибка");
     renderRequest(null);
     renderGate(null, { awaiting: false });
+    setRestartable(false);
     setComposerArmed(false);
     showFlash(message || "Не удалось загрузить задачу.");
   }
@@ -857,6 +877,7 @@
     closeStream();
     setLive("connecting");
     renderGate(null, { awaiting: false });
+    setRestartable(false);
     setScheduleArtifact(null);
     showFlash("");
     showWait("Загружаем задачу…");
@@ -1130,6 +1151,63 @@
   for (const btn of hitlButtons) {
     btn.addEventListener("click", () => {
       submitAction = btn.dataset.action || "reply";
+    });
+  }
+
+  if (restartBtn) {
+    restartBtn.addEventListener("click", async () => {
+      if (!currentTask) {
+        showFlash("Сначала выберите задачу с case_id.");
+        return;
+      }
+      const by = requestedBy.value.trim();
+      if (!by) {
+        requestedBy.focus();
+        showFlash("Укажите ФИО инженера перед перезапуском.");
+        return;
+      }
+      if (!window.confirm(`Перезапустить case ${currentTask} с сохранёнными входными данными?`)) {
+        return;
+      }
+      composer.classList.add("busy");
+      showWait("Перезапускаем case…");
+      try {
+        const res = await fetch(`/v1/tasks/${encodeURIComponent(currentTask)}/restart`, {
+          method: "POST",
+          headers: {
+            "Content-Type": "application/json",
+            "X-Activity-Key": ACTIVITY_KEY,
+          },
+          body: JSON.stringify({
+            action: "retry",
+            requested_by: by,
+            human_response: "restart",
+            gate_id: gateState?.gate_id || null,
+            expected_version: gateState?.expected_version ?? taskVersion ?? null,
+          }),
+        });
+        const data = await res.json().catch(() => ({}));
+        if (!res.ok) {
+          const detail = typeof data.detail === "string" ? data.detail : `HTTP ${res.status}`;
+          showFlash(detail.includes(currentTask) ? detail : `${detail} (case_id=${currentTask})`);
+          return;
+        }
+        applyFeedMeta({
+          status: data.orchestrator?.status || data.status,
+          version: data.orchestrator?.version || data.version,
+          awaiting_human: data.awaiting_human,
+          restartable: data.restartable,
+          human_gate: data.human_gate,
+          status_message: data.orchestrator?.message,
+        });
+        if (data.turn) renderTurn(data.turn);
+        showFlash(`Перезапуск case ${currentTask} принят.`);
+      } catch (err) {
+        showFlash(`Не удалось перезапустить case ${currentTask}: ${err}`);
+      } finally {
+        composer.classList.remove("busy");
+        hideWait();
+      }
     });
   }
 

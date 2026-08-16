@@ -78,6 +78,18 @@ BRIEF_TEMPLATES: dict[str, str] = {
     "NEEDS_APPROVAL": "Нужно ваше утверждение выпуска.",
     "ORCH_CONFLICT": "Оркестратор отклонил запрос — смотрите причину в ленте.",
     "CONFLICT": "Конфликт состояния — обновите статус и повторите с актуальной версией.",
+    "CASE_ERROR": "Критическая ошибка case — детали в ленте; входные данные сохранены.",
+    "RETRYABLE_ERROR": "Ошибка с возможностью перезапуска — можно повторить с теми же входами.",
+    "FATAL_ERROR": "Фатальная ошибка case — перезапуск недоступен без новой задачи.",
+    "LLM_CALL_FAILED": "Ошибка вызова LLM — входные данные сохранены; доступен перезапуск.",
+    "INVALID_STRUCTURED_OUTPUT": "Невалидный JSON / structured output — входные данные сохранены.",
+    "CALC_SERVICE_TIMEOUT": "Timeout расчётного сервиса — можно перезапустить case.",
+    "MISSING_MANDATORY_DATA": "Нет обязательных данных — дополните ответ в HITL.",
+    "VALIDATOR_REJECTED": "Валидатор отклонил результат — нужен ответ человека.",
+    "RAG_UNAVAILABLE": "RAG недоступен — case остановлен до восстановления доступа.",
+    "DOCUMENT_ACCESS_DENIED": "Нет доступа к документу — проверьте права и повторите.",
+    "APPROVAL_GATE_FAILED": "Ошибка согласования — обновите статус или повторите gate.",
+    "HUMAN_RETRY": "Перезапуск принят — оркестратор продолжает с сохранёнными входами.",
 }
 
 
@@ -140,9 +152,11 @@ def outcome_for(status: str | None) -> str:
         "PARTIAL",
         "AWAITING_HUMAN",
         "HUMAN_REPLY",
+        "HUMAN_RETRY",
         "NEEDS_INPUT",
         "NEEDS_DECISION",
         "NEEDS_APPROVAL",
+        "RETRYABLE_ERROR",
     }:
         return "wait"
     if any(x in s for x in ("INVALID", "MALFORMED", "STALLED", "EXHAUSTED", "FATAL", "FAILED", "ERROR", "REJECT")):
@@ -153,13 +167,20 @@ def outcome_for(status: str | None) -> str:
 def build_brief(*, status: str | None, summary: str | None, brief: str | None, details: dict[str, Any]) -> str:
     """Known status → laconic RU template wins over producer brief/summary (presentation layer)."""
     status_key = (status or "").upper()
-    raw = BRIEF_TEMPLATES.get(status_key, "").strip()
+    code_key = str(details.get("error_code") or "").strip().upper()
+    raw = BRIEF_TEMPLATES.get(code_key, "").strip() if code_key else ""
+    if not raw:
+        raw = BRIEF_TEMPLATES.get(status_key, "").strip()
     if not raw:
         raw = (brief or "").strip()
     if not raw:
         raw = (summary or "").strip()
     if not raw:
         raw = "Шаг зафиксирован в ленте активности."
+    # Never present a generic failure without case identity when available.
+    case_id = str(details.get("case_id") or details.get("task_id") or "").strip()
+    if case_id and "что-то пошло не так" in raw.lower() and case_id not in raw:
+        raw = f"{raw} Case {case_id}."
     raw = re.sub(r"\s+", " ", raw).strip()
     if len(raw) > MAX_BRIEF_CHARS:
         raw = raw[: MAX_BRIEF_CHARS - 1].rstrip() + "…"
@@ -170,6 +191,8 @@ def build_brief(*, status: str | None, summary: str | None, brief: str | None, d
         extras.append(f"Недостающих полей: {int(details['gap_count'])}.")
     if details.get("fields"):
         extras.append(f"Поля: {details['fields']}.")
+    if case_id and code_key and case_id not in raw:
+        extras.append(f"case_id={case_id}.")
     if extras and len(raw) < 280:
         joined = f"{raw} {' '.join(extras[:2])}"
         raw = joined if len(joined) <= MAX_BRIEF_CHARS else raw

@@ -120,7 +120,7 @@ flowchart TB
   SRetr <--> Pg
 ```
 
-**MVP runtime:** Orchestrator, `CAS — Persist Task State`, Trace, Excel Adapter+Agent, `MAS — Knowledge Retrieval`, `SCHEDULE — Builder`, Calculation Adapter, Activity hydrate (`List Tasks` / `Load Feed`), Health Check. Презентация handoff’ов — локальный `mas-activity-service` на Windows (`:8200`): live sync из Trace Writer (`ACTIVITY_BASE_URL` = IP этой Windows-машины); список задач — F5 / клик по бренду **MAS Activity** (hydrate из Data Tables). Commissioning REVISE дат ввода: deterministic timeline (`parse → shift / keep|remove / new-well HITL → emit`). Деструктивный `remove` скважин вне Excel — **только** typed enum `unlisted_wells_policy`, не prose.
+**MVP runtime:** Orchestrator, `CAS — Persist Task State`, `Error — MAS Case Handler`, Trace, Excel Adapter+Agent, `MAS — Knowledge Retrieval`, `SCHEDULE — Builder`, Calculation Adapter, Activity hydrate (`List Tasks` / `Load Feed`), Health Check. Презентация handoff’ов — локальный `mas-activity-service` на Windows (`:8200`): live sync из Trace Writer (`ACTIVITY_BASE_URL` = IP этой Windows-машины); список задач — F5 / клик по бренду **MAS Activity** (hydrate из Data Tables). Commissioning REVISE дат ввода: deterministic timeline (`parse → shift / keep|remove / new-well HITL → emit`). Деструктивный `remove` скважин вне Excel — **только** typed enum `unlisted_wells_policy`, не prose.
 
 **Активация:** после импорта всё `active: false`. Сначала биндинги + credentials + RAG → Health Check → при 0 FAIL активируйте runtime (Orchestrator, CAS, Trace, specialists, Activity hydrate) и **только потом** Entry / Human Gate.  
 **Не активировать / не Publish как пользовательский вход:** `Adapter — Excel Form`, `Template — Engineering Specialist`, `Reference — AI Components`.  
@@ -259,15 +259,16 @@ UI: `http://127.0.0.1:8200/` — **Новая задача**, бренд **MAS A
 | 6 | `n8n/workflows/core/tnavigator-schedule-builder.workflow.json` | `SCHEDULE — Builder` |
 | 7 | `n8n/workflows/core/mas-trace-event-writer.workflow.json` | `Writer — MAS Trace` |
 | 8 | `n8n/workflows/core/cas-persist-task.workflow.json` | `CAS — Persist Task State` |
-| 9 | `n8n/workflows/core/universal-engineering-orchestrator.workflow.json` | `Orchestrator — Engineering MAS` |
-| 10 | `n8n/workflows/core/mvp-entry-form.workflow.json` | `Form — MAS Entry` |
-| 11 | `n8n/workflows/core/mas-human-gate-form.workflow.json` | `Form — MAS Human Gate` |
-| 12 | `n8n/workflows/core/mas-activity-list-tasks.workflow.json` | `Activity — List Tasks (Data Table)` |
-| 13 | `n8n/workflows/core/mas-activity-load-feed.workflow.json` | `Activity — Load Feed (Data Tables)` |
-| 14 | `n8n/workflows/core/mas-deployment-health-check.workflow.json` | `Form — MAS Deployment Health Check` |
+| 9 | `n8n/workflows/core/mas-error-handler.workflow.json` | `Error — MAS Case Handler` |
+| 10 | `n8n/workflows/core/universal-engineering-orchestrator.workflow.json` | `Orchestrator — Engineering MAS` |
+| 11 | `n8n/workflows/core/mvp-entry-form.workflow.json` | `Form — MAS Entry` |
+| 12 | `n8n/workflows/core/mas-human-gate-form.workflow.json` | `Form — MAS Human Gate` |
+| 13 | `n8n/workflows/core/mas-activity-list-tasks.workflow.json` | `Activity — List Tasks (Data Table)` |
+| 14 | `n8n/workflows/core/mas-activity-load-feed.workflow.json` | `Activity — Load Feed (Data Tables)` |
+| 15 | `n8n/workflows/core/mas-deployment-health-check.workflow.json` | `Form — MAS Deployment Health Check` |
 
 Опционально из `n8n/workflows/support/`: Excel Form adapter, AI components, specialist template.  
-Полный clean-import набор — **17** JSON (`full_clean_import_set`). Все приходят с `active: false`. `CAS — Persist Task State` импортируется **до** Orchestrator.
+Полный clean-import набор — **18** JSON (`full_clean_import_set`). Все приходят с `active: false`. `CAS — Persist Task State` и `Error — MAS Case Handler` импортируются **до** Orchestrator.
 
 ### Step 2 — Create Data Tables
 
@@ -327,7 +328,7 @@ ACTIVITY_FEED_URL=http://<хост-n8n>:<порт>/webhook/mas-activity-load-fee
 
 Без этих URL морда живёт только на локальном `ACTIVITY_STATE_PATH`. С ними F5 / бренд подтягивают CAS + trace.
 
-### Step 4 — Bind Execute Workflow nodes (24 обязательных)
+### Step 4 — Bind Execute Workflow nodes (28 обязательных)
 
 | Open workflow | Node on canvas | Select this workflow |
 |---|---|---|
@@ -347,6 +348,10 @@ ACTIVITY_FEED_URL=http://<хост-n8n>:<порт>/webhook/mas-activity-load-fee
 | `Orchestrator — Engineering MAS` | `Call SCHEDULE Builder Specialist` | `SCHEDULE — Builder` |
 | `Orchestrator — Engineering MAS` | `Call Calculation Specialist` | `Adapter — Calculation (Math Service)` |
 | `Orchestrator — Engineering MAS` | `Call MAS Trace Event Writer` | `Writer — MAS Trace` |
+| `Orchestrator — Engineering MAS` | `Call Error — MAS Case Handler (specialist)` | `Error — MAS Case Handler` |
+| `Orchestrator — Engineering MAS` | `Call Error — MAS Case Handler (verification)` | `Error — MAS Case Handler` |
+| `Error — MAS Case Handler` | `Call CAS persist — error case` | `CAS — Persist Task State` |
+| `Error — MAS Case Handler` | `Call Writer — MAS Trace (error)` | `Writer — MAS Trace` |
 | `Agent — Excel Extractor` | `Call Excel protocol Hybrid Retrieval` | `MAS — Knowledge Retrieval` |
 | `Template — Engineering Specialist` | `Call specialist Hybrid Retrieval` | `MAS — Knowledge Retrieval` |
 | `Adapter — Excel Extraction` | `Call native Excel Extraction Agent` | `Agent — Excel Extractor` |

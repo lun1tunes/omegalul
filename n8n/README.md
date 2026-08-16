@@ -1,7 +1,7 @@
 # n8n package
 
 - Workflows: [`workflows/`](workflows/) — `core/` runtime + `support/` templates/reference.
-- Import contract: [`import-manifest.json`](import-manifest.json) (`full_clean_import_set` = 17 JSON, target **2.30.8**).
+- Import contract: [`import-manifest.json`](import-manifest.json) (`full_clean_import_set` = 18 JSON, target **2.30.8**).
 - Activity hydrate (UI import): `Activity — List Tasks` / `Activity — Load Feed` → bind Data Tables → set `ACTIVITY_LIST_URL` / `ACTIVITY_FEED_URL` on mas-activity.
 - Data Tables CSV: [`data-tables/`](data-tables/) — lean `engineering_orchestrator_tasks_v1` + `mas_trace_events_v1`.
 - Generators: [`templates/`](templates/).

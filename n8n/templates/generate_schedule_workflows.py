@@ -253,7 +253,8 @@ const traceId=String(events[0]?.trace_id||source.mas_trace_event?.trace_id||'').
 // UI-only config: change these two strings in the Code node after import.
 const ACTIVITY_BASE_URL='http://127.0.0.1:8200';
 const ACTIVITY_KEY='dev-local';
-const ready=Boolean(taskId&&events.length&&ACTIVITY_BASE_URL);
+const skipActivity=source.passthrough?.skip_activity_sync===true||source.skip_activity_sync===true;
+const ready=Boolean(!skipActivity&&taskId&&events.length&&ACTIVITY_BASE_URL);
 return[{json:{
   activity_sync_ready:ready,
   activity_url:`${String(ACTIVITY_BASE_URL).replace(/\/$/,'')}/v1/sync`,
@@ -264,7 +265,8 @@ return[{json:{
   event_id:rows[0]?.trace_event?.event_id||null,
   trace_id:traceId||null,
   redaction:rows[0]?.trace_event?.redaction||null,
-  passthrough:source.passthrough??null
+  passthrough:source.passthrough??null,
+  activity_sync_skipped:skipActivity
 }}];
 """),
   ifnode('Activity sync needed?',(260,-80),"={{ $json.activity_sync_ready }}",True,'boolean'),
