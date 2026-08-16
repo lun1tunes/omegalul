@@ -126,7 +126,7 @@ def test_knowledge_namespaces_list_get_patch(tmp_path: Path) -> None:
         assert doc["revision"] == "2"
         assert doc["text"].startswith("DATES — updated")
         assert doc["source_hash"].startswith("sha256:")
-        assert "Knowledge Ingestion" in patched.json()["ingest_hint"]
+        assert "ingest_hint" not in patched.json()
 
         saved = json.loads(corpus.read_text(encoding="utf-8"))
         card = next(d for d in saved["documents"] if d.get("knowledge_id") == "dates-test-v1")

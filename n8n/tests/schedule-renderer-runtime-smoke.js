@@ -109,7 +109,7 @@ async function main() {
   assert.equal(rendered.status, 'rendered');
   assert.equal(rendered.changes.length, 2);
   assert.equal(rendered.changes[0].rendered_text, 'DATES\n  1 JAN 2025 /\n');
-  assert.equal(rendered.changes[1].rendered_text, "WCONPROD\n  'WELL-1' OPEN ORAT 1000.5 * /\n/\n");
+  assert.equal(rendered.changes[1].rendered_text, "WCONPROD\n  'WELL-1' OPEN ORAT 1000.5 * /\n/\n\n");
   assert(rendered.changes.every((change) => /^sha256:[a-f0-9]{64}$/.test(change.render_hash)));
 
   const noExpertAuthor = await execute(

@@ -126,7 +126,7 @@ def main() -> None:
             "nodes": [
                 {
                     "parameters": {
-                        "content": "## Activity — List Tasks\n1. Select Data Table `engineering_orchestrator_tasks_v1` in **Load recent tasks**.\n2. Activate webhook (or Test) after import.\n3. In mas-activity `.env` / Compose set `ACTIVITY_LIST_URL=http://<n8n>/webhook/mas-activity-list-tasks`.\n\nNo `$env` / Globals. Corporate UI import only.",
+                        "content": "## Activity — List Tasks\n1. Select Data Table `engineering_orchestrator_tasks_v1` in **Load recent tasks**.\n2. Activate webhook (or Test) after import.\n3. In mas-activity `.env` / Compose set `ACTIVITY_LIST_URL=http://<n8n>/webhook/mas-activity-list-tasks`.\n\nNo n8n env()/Globals. Corporate UI import only.",
                         "height": 280,
                         "width": 460,
                         "color": 4,

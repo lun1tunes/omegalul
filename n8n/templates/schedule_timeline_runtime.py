@@ -394,10 +394,14 @@ const orderBlocksWithinDate=blocks=>{
 };
 const emitScheduleFromTimeline=model=>{
   const out=[];
+  const ensureBareSlash=()=>{if(tlClean(out[out.length-1])!=='/')out.push('/');};
+  // Visual gap after block-closing '/' so keyword tables do not run into the next header.
+  const ensureBlankAfterBlock=()=>{if(out.length&&out[out.length-1]!=='')out.push('');};
   for(const step of model.steps||[]){
     if(step.dates_header){
       out.push(step.dates_header);
       for(const line of(step.dates_body||[]))out.push(line);
+      ensureBlankAfterBlock();
     }
     for(const blk of orderBlocksWithinDate(step.blocks||[])){
       if(blk.kind==='trivia'){
@@ -407,14 +411,22 @@ const emitScheduleFromTimeline=model=>{
       if(blk.kind==='keyword'){
         out.push(blk.header||blk.keyword);
         if(blk.records&&blk.records.length){
+          // Records omit the bare block-closing '/'; always emit it for ECLIPSE/tNav.
+          // Do not gate on body containing '/' — body is not re-emitted on this path.
           for(const rec of blk.records)out.push(rec.raw_line);
-          if(!blk.records.some(r=>tlClean(r.raw_line)==='/')&&!(blk.body||[]).some(l=>tlClean(l)==='/'))out.push('/');
+          ensureBareSlash();
+          ensureBlankAfterBlock();
         }else{
           for(const line of(blk.body||[]))out.push(line);
+          const nonempty=(blk.body||[]).map(tlClean).filter(Boolean);
+          if(nonempty.length&&nonempty[nonempty.length-1]!=='/')out.push('/');
+          if(nonempty.length)ensureBlankAfterBlock();
         }
       }
     }
   }
+  // Drop a single trailing blank so files end on the last '/' line + final newline from join.
+  while(out.length&&out[out.length-1]==='')out.pop();
   return out.join('\n');
 };
 

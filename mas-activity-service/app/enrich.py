@@ -7,8 +7,9 @@ from datetime import datetime, timezone
 from typing import Any
 from zoneinfo import ZoneInfo
 
-# Tyumen shares Asia/Yekaterinburg (UTC+5, no DST).
-TYUMEN_TZ = ZoneInfo("Asia/Yekaterinburg")
+# Display clock: Asia/Yekaterinburg (UTC+5, no DST). Label as UTC offset, not city name.
+DISPLAY_TZ = ZoneInfo("Asia/Yekaterinburg")
+TYUMEN_TZ = DISPLAY_TZ  # backwards-compatible alias
 
 MAX_BRIEF_CHARS = 800
 MAX_SUMMARY_CHARS = 500
@@ -114,8 +115,13 @@ def parse_iso(value: Any) -> datetime | None:
 
 
 def format_abs(dt: datetime) -> str:
-    local = dt.astimezone(TYUMEN_TZ) if dt.tzinfo else dt.replace(tzinfo=timezone.utc).astimezone(TYUMEN_TZ)
-    return local.strftime("%Y-%m-%d %H:%M:%S") + " Тюмень"
+    local = dt.astimezone(DISPLAY_TZ) if dt.tzinfo else dt.replace(tzinfo=timezone.utc).astimezone(DISPLAY_TZ)
+    offset = local.utcoffset()
+    total_minutes = int((offset.total_seconds() if offset else 0) // 60)
+    sign = "+" if total_minutes >= 0 else "-"
+    hours, minutes = divmod(abs(total_minutes), 60)
+    utc_label = f"UTC{sign}{hours}" if minutes == 0 else f"UTC{sign}{hours:02d}:{minutes:02d}"
+    return local.strftime("%Y-%m-%d %H:%M:%S") + f" {utc_label}"
 
 
 def format_duration(ms: int | None) -> str | None:

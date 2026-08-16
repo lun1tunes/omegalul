@@ -15,19 +15,22 @@ from pathlib import Path
 from typing import Any, Literal
 
 from fastapi import Depends, FastAPI, File, Form, Header, HTTPException, Query, Request, UploadFile
-from fastapi.responses import FileResponse, JSONResponse, StreamingResponse
+from fastapi.responses import FileResponse, JSONResponse, Response, StreamingResponse
 from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel, Field, field_validator
 
 from app.enrich import enrich_turn
 from app.orchestrator import BinaryMap, OrchestratorError, hitl_backend, invoke_orchestrator
 from app import knowledge as knowledge_store
+from app.commissioning import extract_schedule_from_orchestrator
 from app.durable import durable_enabled, fetch_task_feed, fetch_task_list
 from app.persist import load_state, persist_enabled, save_state
 
 STATIC = Path(__file__).resolve().parents[1] / "static"
 ACTIVITY_KEY = os.getenv("MAS_ACTIVITY_KEY", "dev-local")
 MAX_TURNS_PER_TASK = 500
+MAX_SCHEDULE_ARTIFACT_BYTES = 10 * 1024 * 1024
+SCHEDULE_NAME_RE = re.compile(r"^[A-Za-z0-9._-]{1,200}$")
 MAX_TASKS = 200
 MAX_BODY_BYTES = 256_000
 MAX_START_BODY_BYTES = 12_000_000
@@ -204,7 +207,84 @@ def _new_task_shell(task_id: str) -> dict[str, Any]:
         "version": None,
         "gate": None,
         "transcript_loaded": False,
+        "schedule_artifact": None,
     }
+
+
+def _safe_schedule_filename(name: str | None) -> str:
+    raw = str(name or "schedule.inc").strip().replace("\\", "/").split("/")[-1]
+    if not SCHEDULE_NAME_RE.match(raw):
+        return "schedule.inc"
+    lower = raw.lower()
+    if not lower.endswith((".inc", ".data", ".sch", ".txt", ".grdecl")):
+        return f"{raw}.inc" if "." not in raw else "schedule.inc"
+    return raw
+
+
+def _schedule_artifact_meta(task: dict[str, Any]) -> dict[str, Any] | None:
+    art = task.get("schedule_artifact")
+    if not isinstance(art, dict):
+        return None
+    text = art.get("text")
+    if not isinstance(text, str) or not text.strip():
+        return None
+    filename = _safe_schedule_filename(art.get("filename"))
+    return {
+        "available": True,
+        "filename": filename,
+        "byte_length": len(text.encode("utf-8")),
+        "updated_at": art.get("updated_at") or task.get("updated_at"),
+        "download_path": f"/v1/tasks/{task['task_id']}/schedule",
+    }
+
+
+def _store_schedule_artifact(task: dict[str, Any], filename: str | None, text: str) -> bool:
+    """Persist bounded SCHEDULE text for UI download. Returns True if stored."""
+    body = str(text or "")
+    if not body.strip():
+        return False
+    encoded = body.encode("utf-8")
+    if len(encoded) > MAX_SCHEDULE_ARTIFACT_BYTES:
+        return False
+    task["schedule_artifact"] = {
+        "filename": _safe_schedule_filename(filename),
+        "text": body,
+        "updated_at": _now(),
+        "byte_length": len(encoded),
+    }
+    return True
+
+
+def _maybe_capture_schedule(task: dict[str, Any], payload: dict[str, Any] | None) -> bool:
+    """Pull .INC from Orchestrator/Builder/hydrate payloads when present."""
+    if not isinstance(payload, dict):
+        return False
+    extracted = extract_schedule_from_orchestrator(payload)
+    if extracted:
+        return _store_schedule_artifact(task, extracted[0], extracted[1])
+
+    # Build candidates lazily — never chain .get on a value that may be None
+    # (e.g. merge_result.output_package: null would AttributeError on .get("root_path")).
+    candidates: list[tuple[Any, Any]] = [
+        (payload.get("filename"), payload.get("schedule_text")),
+        (payload.get("filename"), payload.get("generated_schedule")),
+    ]
+    release = payload.get("release")
+    if isinstance(release, dict):
+        candidates.append((release.get("filename"), release.get("schedule_text")))
+    compact = payload.get("compact_data")
+    if isinstance(compact, dict):
+        candidates.append((None, compact.get("generated_schedule")))
+        merge = compact.get("merge_result")
+        if isinstance(merge, dict):
+            pkg = merge.get("output_package")
+            root = pkg.get("root_path") if isinstance(pkg, dict) else None
+            candidates.append((root if isinstance(root, str) else None, merge.get("generated_schedule")))
+
+    for filename, text in candidates:
+        if isinstance(text, str) and text.strip():
+            return _store_schedule_artifact(task, filename if isinstance(filename, str) else None, text)
+    return False
 
 
 def _is_local_presentation_task(task_id: str) -> bool:
@@ -834,7 +914,13 @@ async def _apply_feed_hydrate(payload: dict[str, Any]) -> dict[str, Any]:
     title = str(payload.get("title") or "").strip() or None
     objective = str(payload.get("objective") or "").strip() or None
     # Replace transcript atomically inside _ingest_sync/_append_turns (no empty window on failure).
-    return await _ingest_sync(body, title=title, objective=objective, replace_turns=True)
+    result = await _ingest_sync(body, title=title, objective=objective, replace_turns=True)
+    async with _lock:
+        task = _tasks.get(task_id)
+        if task and _maybe_capture_schedule(task, payload):
+            _persist()
+            result = {**result, "schedule_artifact": True}
+    return result
 
 
 @app.post("/v1/hydrate")
@@ -906,6 +992,7 @@ def _task_feed(task_id: str) -> dict[str, Any]:
         "human_gate": _gate_payload(task),
         "hitl_backend": hitl_backend(),
         "durable_hydrate": durable_enabled(),
+        "schedule_artifact": _schedule_artifact_meta(task),
         "activity": task["turns"],
     }
 
@@ -1337,6 +1424,14 @@ async def post_hitl(task_id: str, body: HitlPost, _: None = Depends(_require_key
         clear_gate=clear,
     )
 
+    schedule_meta = None
+    async with _lock:
+        task = _tasks.get(task_id)
+        if task and _maybe_capture_schedule(task, orch if isinstance(orch, dict) else None):
+            _persist()
+        if task:
+            schedule_meta = _schedule_artifact_meta(task)
+
     return {
         "ok": True,
         "task_id": task_id,
@@ -1347,7 +1442,31 @@ async def post_hitl(task_id: str, body: HitlPost, _: None = Depends(_require_key
         "awaiting_human": _is_awaiting_status(orch.get("status")) and bool(gate_out),
         "human_gate": gate_out,
         "local_version_hint": local_version,
+        "schedule_artifact": schedule_meta,
     }
+
+
+@app.get("/v1/tasks/{task_id}/schedule")
+async def download_schedule(task_id: str) -> Response:
+    """Download the bounded SCHEDULE .INC artifact for a task (if captured)."""
+    if not TASK_ID_RE.match(task_id):
+        raise HTTPException(status_code=400, detail="Invalid task_id")
+    task = _tasks.get(task_id)
+    if not task:
+        raise HTTPException(status_code=404, detail="Task not found")
+    art = task.get("schedule_artifact")
+    if not isinstance(art, dict) or not isinstance(art.get("text"), str) or not str(art["text"]).strip():
+        raise HTTPException(status_code=404, detail="Schedule artifact not available for this task")
+    filename = _safe_schedule_filename(art.get("filename"))
+    body = str(art["text"]).encode("utf-8")
+    return Response(
+        content=body,
+        media_type="text/plain; charset=utf-8",
+        headers={
+            "Content-Disposition": f'attachment; filename="{filename}"',
+            "Cache-Control": "no-store",
+        },
+    )
 
 
 @app.get("/v1/tasks/{task_id}/stream")
@@ -1373,6 +1492,7 @@ async def stream_task(task_id: str) -> StreamingResponse:
                     "awaiting_human": _awaiting(task),
                     "human_gate": _gate_payload(task),
                     "hitl_backend": hitl_backend(),
+                    "schedule_artifact": _schedule_artifact_meta(task),
                 }
                 yield f"data: {json.dumps(payload, ensure_ascii=False)}\n\n"
             else:
@@ -1561,7 +1681,6 @@ def knowledge_namespaces() -> dict[str, Any]:
             "contract_version": "1.0",
             "corpus_path": str(knowledge_store.corpus_path()),
             "namespaces": knowledge_store.list_namespaces(),
-            "ingest_hint": "После сохранения поднимите Knowledge Ingestion (n8n), чтобы PG/RAG подхватил новую revision.",
         }
     except FileNotFoundError as exc:
         raise HTTPException(status_code=503, detail=str(exc)) from exc
@@ -1596,7 +1715,6 @@ def knowledge_document(target_base: str, knowledge_id: str) -> dict[str, Any]:
         "contract": "mas_knowledge_document",
         "contract_version": "1.0",
         "document": doc,
-        "ingest_hint": "После сохранения поднимите Knowledge Ingestion (n8n), чтобы PG/RAG подхватил новую revision.",
     }
 
 
@@ -1628,7 +1746,6 @@ def knowledge_create_document(
         "contract_version": "1.0",
         "status": "created",
         "document": doc,
-        "ingest_hint": "Создано в JSON corpus. Запустите MAS — Knowledge Ingestion, чтобы runtime RAG увидел карточку.",
     }
 
 
@@ -1662,8 +1779,6 @@ def knowledge_patch_document(
         "contract_version": "1.0",
         "status": "saved",
         "document": doc,
-        "ingest_hint": "Сохранено в JSON corpus. Запустите MAS — Knowledge Ingestion, чтобы runtime RAG увидел revision "
-        + str(doc.get("revision")),
     }
 
 

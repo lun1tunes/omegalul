@@ -7,7 +7,7 @@
   <link rel="preconnect" href="https://fonts.googleapis.com" />
   <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
   <link href="https://fonts.googleapis.com/css2?family=IBM+Plex+Sans:wght@400;500;600;700&family=IBM+Plex+Mono:wght@400;500&display=swap" rel="stylesheet" />
-  <link rel="stylesheet" href="/static/app.css?v=21" />
+  <link rel="stylesheet" href="/static/app.css?v=24" />
 </head>
 <body>
   <div class="atmosphere" aria-hidden="true"></div>
@@ -75,7 +75,7 @@
       <form class="composer start-composer" id="startComposer" autocomplete="off" hidden>
         <div class="composer-top">
           <label class="who-field">
-            <span>requested_by</span>
+            <span>Кто ставит задачу</span>
             <input id="startRequestedBy" type="text" required maxlength="120" placeholder="И. Иванов" />
           </label>
           <div class="composer-actions" role="group" aria-label="Действия новой задачи">
@@ -85,18 +85,18 @@
         </div>
         <label class="reply-field">
           <span>Описание задачи</span>
-          <textarea id="taskDescription" rows="3" required placeholder="Цель, acceptance criteria, что сделать с SCHEDULE / Excel…"></textarea>
+          <textarea id="taskDescription" rows="3" required placeholder="Например: во вложении Excel с новыми датами ввода — обновите прогнозный schedule"></textarea>
         </label>
         <label class="who-field schedule-root-field">
-          <span>SCHEDULE root (optional)</span>
-          <input id="scheduleRoot" type="text" maxlength="260" placeholder="schedule.inc" />
+          <span>Главный файл schedule (необязательно)</span>
+          <input id="scheduleRoot" type="text" maxlength="260" placeholder="например schedule.inc" />
         </label>
         <div
           class="dropzone"
           id="startDropzone"
           tabindex="0"
           role="button"
-          aria-label="Прикрепить файлы drag-and-drop"
+          aria-label="Прикрепить файлы"
         >
           <input
             id="startFileInput"
@@ -106,19 +106,19 @@
             accept=".xlsx,.xls,.data,.inc,.sch,.txt,.grdecl,.dev,.cps3,.grd,.grid"
           />
           <p class="dropzone-title">Перетащите файлы сюда или нажмите, чтобы выбрать</p>
-          <p class="dropzone-hint">Excel · SCHEDULE (.data/.inc/…) · .dev · CPS3 surface</p>
+          <p class="dropzone-hint">Excel, schedule (.data / .inc), траектории (.dev), поверхности CPS3</p>
           <ul class="file-chips" id="startFileList" hidden></ul>
         </div>
-        <p class="composer-hint" id="startHint">Как Form — MAS Entry: objective + вложения. Live backend отправит start в Orchestrator.</p>
+        <p class="composer-hint" id="startHint">Прикрепите Excel и schedule — задача уйдёт в работу.</p>
       </form>
 
       <form class="composer" id="composer" autocomplete="off" hidden>
         <div class="composer-top">
           <label class="who-field">
-            <span>requested_by</span>
+            <span>Ваше ФИО</span>
             <input id="requestedBy" type="text" required maxlength="120" placeholder="И. Иванов" />
           </label>
-          <div class="composer-actions" role="group" aria-label="Действия HITL">
+          <div class="composer-actions" role="group" aria-label="Действия по запросу системы">
             <button type="submit" class="btn btn-approve" data-action="approve" id="approveBtn">Утвердить</button>
             <button type="submit" class="btn btn-reject" data-action="reject" id="rejectBtn">Отклонить</button>
             <button type="submit" class="btn" data-action="reply" id="replyBtn">Ответить</button>
@@ -126,14 +126,14 @@
           </div>
         </div>
         <label class="reply-field">
-          <span>Дальнейшие указания</span>
-          <textarea id="humanResponse" rows="2" placeholder="Условия, недостающие факты, scope правки…"></textarea>
+          <span>Ваш ответ</span>
+          <textarea id="humanResponse" rows="2" placeholder="Уточнения, недостающие данные, что ещё поправить…"></textarea>
         </label>
         <p class="composer-hint" id="composerHint" hidden></p>
       </form>
     </section>
   </main>
 
-  <script src="/static/app.js?v=21"></script>
+  <script src="/static/app.js?v=24"></script>
 </body>
 </html>

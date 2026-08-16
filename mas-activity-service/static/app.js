@@ -62,8 +62,20 @@
   let taskCatalog = [];
   let flashTimer = null;
   let startOpen = false;
+  /** @type {{ available?: boolean, filename?: string, byte_length?: number, download_path?: string } | null} */
+  let scheduleArtifact = null;
   /** @type {{ file: File, kind: string }[]} */
   let pendingFiles = [];
+
+  // Turns where engineer should inspect the current SCHEDULE .INC.
+  const SCHEDULE_FILE_REVIEW_STATUSES = new Set([
+    "SCHEDULE_DRAFT_READY",
+    "VERIFIED",
+    "HUMAN_APPROVED",
+    "RELEASE_APPROVED",
+    "SCHEDULE_RELEASE_READY",
+    "succeeded",
+  ]);
 
   function pathTaskId() {
     const m = location.pathname.match(/^\/t\/([^/]+)/);
@@ -245,7 +257,7 @@
       composerHint.textContent = "";
     } else {
       composerHint.hidden = false;
-      composerHint.textContent = "Gate закрыт. Можно открыть другую задачу или дождаться следующего HITL.";
+      composerHint.textContent = "Сейчас отвечать не нужно. Можно открыть другую задачу или дождаться следующего запроса.";
     }
   }
 
@@ -260,6 +272,7 @@
     const toRole = turn.to?.role || "Specialist";
     const isHuman = turn.kind === "hitl" || /human/i.test(fromRole) || /^HUMAN_/.test(turn.status || "") || turn.status === "TASK_STARTED";
     li.className = `turn outcome-${turn.outcome || "info"}${isHuman ? " human" : ""}`;
+    li._masTurn = turn;
     if (!animate) {
       li.style.animation = "none";
       li.style.opacity = "1";
@@ -321,6 +334,8 @@
       }
       bubble.append(chips);
     }
+
+    appendScheduleDownload(bubble, turn);
 
     const meta = document.createElement("div");
     meta.className = "meta-line";
@@ -407,6 +422,63 @@
     title.textContent = `task_id: ${taskId} · status: ${st}`;
   }
 
+  function setScheduleArtifact(meta) {
+    const prevPath = scheduleArtifact && scheduleArtifact.download_path;
+    const art = meta && typeof meta === "object" && meta.available && meta.download_path ? meta : null;
+    scheduleArtifact = art;
+    if (art && art.download_path !== prevPath) {
+      refreshScheduleDownloadsOnThread();
+    }
+  }
+
+  function turnWantsScheduleDownload(turn) {
+    if (!scheduleArtifact) return false;
+    const status = String(turn.status || "").trim();
+    if (SCHEDULE_FILE_REVIEW_STATUSES.has(status)) return true;
+    if (/SCHEDULE_.*READY|RELEASE|VERIF/i.test(status)) return true;
+    const chips = Array.isArray(turn.chips) ? turn.chips : [];
+    if (chips.some((c) => c && (c.id === "release_ready" || c.label === "release_ready") && (c.value === true || c.value === "true" || c.value === "yes"))) {
+      return true;
+    }
+    // HITL approval gate for schedule release
+    if (/^AWAITING_HUMAN$/i.test(status) && chips.some((c) => c && c.id === "gate_kind" && /approval|release/i.test(String(c.value || "")))) {
+      return true;
+    }
+    return false;
+  }
+
+  function appendScheduleDownload(bubble, turn) {
+    if (!turnWantsScheduleDownload(turn)) return;
+    if (bubble.querySelector(".schedule-download-row")) return;
+    const art = scheduleArtifact;
+    const name = String(art.filename || "schedule.inc");
+    const kb = art.byte_length ? ` · ${Math.max(1, Math.round(art.byte_length / 1024))} KB` : "";
+    const row = document.createElement("div");
+    row.className = "schedule-download-row";
+    const link = document.createElement("a");
+    link.className = "btn btn-quiet schedule-download";
+    link.href = art.download_path;
+    link.setAttribute("download", name);
+    link.textContent = `Скачать ${name}${kb}`;
+    link.title = "Проверить текущий SCHEDULE .INC для этого события";
+    row.append(link);
+    // Insert before meta-line when present so late refresh keeps layout.
+    const meta = bubble.querySelector(".meta-line");
+    if (meta) bubble.insertBefore(row, meta);
+    else bubble.append(row);
+  }
+
+  /** After HITL/SSE captures schedule_artifact, paint download on already-rendered review turns. */
+  function refreshScheduleDownloadsOnThread() {
+    if (!scheduleArtifact) return;
+    for (const li of thread.querySelectorAll("li.turn")) {
+      const turn = li._masTurn;
+      const bubble = li.querySelector(".bubble");
+      if (!turn || !bubble) continue;
+      appendScheduleDownload(bubble, turn);
+    }
+  }
+
   function applyFeedMeta(data) {
     if (data.hitl_backend) backendLabel.textContent = `HITL: ${data.hitl_backend}`;
     if (currentTask) {
@@ -420,6 +492,9 @@
       version: data.version,
       awaiting: data.awaiting_human,
     });
+    if (Object.prototype.hasOwnProperty.call(data, "schedule_artifact")) {
+      setScheduleArtifact(data.schedule_artifact);
+    }
   }
 
   function showNotFound(taskId) {
@@ -432,6 +507,7 @@
     renderRequest(null);
     renderGate(null, { awaiting: false });
     setComposerArmed(false);
+    setScheduleArtifact(null);
     title.classList.remove("task-line");
     title.textContent = "Задача не найдена";
     if (notFoundId) notFoundId.textContent = taskId ? `id: ${taskId}` : "";
@@ -480,6 +556,7 @@
     closeStream();
     setLive("connecting");
     renderGate(null, { awaiting: false });
+    setScheduleArtifact(null);
     showFlash("");
 
     try {
@@ -502,7 +579,8 @@
       for (const turn of data.activity || []) renderTurn(turn, { animate: false });
       if (!(data.activity || []).length) empty.hidden = false;
       if (data.hydrate?.ok === false) {
-        showFlash(formatHydrateError(data.hydrate.error || "hydrate_failed"));
+        const msg = formatHydrateError(data.hydrate.error || "hydrate_failed");
+        if (msg) showFlash(msg);
       } else if (data.hydrate?.truncated) {
         showFlash("Транскрипт усечён: в Data Tables больше лимита handoff (500). Показаны последние turns.");
       }
@@ -543,7 +621,7 @@
     const by = requestedBy.value.trim();
     if (!by) {
       requestedBy.focus();
-      showFlash("Укажите requested_by — именной accountable инженер.");
+      showFlash("Укажите, кто ставит задачу — ФИО инженера.");
       return;
     }
     localStorage.setItem("mas_requested_by", by);
@@ -554,13 +632,13 @@
       showFlash("Для ответа нужен текст указаний.");
       return;
     }
-    if (action === "cancel" && !window.confirm("Отменить задачу на HITL-gate?")) {
+    if (action === "cancel" && !window.confirm("Отменить задачу? Система больше не будет ждать ответа по этому запросу.")) {
       return;
     }
 
     composer.classList.add("busy");
     composerHint.hidden = false;
-    composerHint.textContent = "Отправляем HITL…";
+    composerHint.textContent = "Отправляем ответ…";
     try {
       const res = await fetch(`/v1/tasks/${encodeURIComponent(currentTask)}/hitl`, {
         method: "POST",
@@ -580,10 +658,10 @@
       if (!res.ok) {
         const detail = typeof data.detail === "string"
           ? data.detail
-          : `HITL не принят (${res.status})`;
+          : `Не удалось принять ответ (${res.status})`;
         showFlash(detail);
         composerHint.hidden = false;
-        composerHint.textContent = "Не удалось отправить. Проверьте статус задачи и backend.";
+        composerHint.textContent = "Не удалось отправить. Проверьте статус задачи и соединение.";
         return;
       }
       if (data.turn) renderTurn(data.turn, { animate: true });
@@ -593,6 +671,7 @@
         version: data.orchestrator?.version,
         awaiting_human: data.awaiting_human,
         hitl_backend: data.backend,
+        schedule_artifact: data.schedule_artifact,
       });
       if (action === "reply") humanResponse.value = "";
       showFlash(
@@ -604,9 +683,9 @@
       );
       await refreshRail();
     } catch (_) {
-      showFlash("Сеть недоступна при отправке HITL.");
+      showFlash("Сеть недоступна при отправке ответа.");
       composerHint.hidden = false;
-      composerHint.textContent = "Не удалось отправить. Проверьте сеть и backend.";
+      composerHint.textContent = "Не удалось отправить. Проверьте сеть и соединение с сервером.";
     } finally {
       composer.classList.remove("busy");
     }
@@ -618,7 +697,7 @@
     const description = taskDescription.value.trim();
     if (!by) {
       startRequestedBy.focus();
-      showFlash("Укажите requested_by — именной accountable инженер.");
+      showFlash("Укажите, кто ставит задачу — ФИО инженера.");
       return;
     }
     if (!description) {
@@ -666,7 +745,7 @@
             ? data.detail.map((d) => d.msg || d).join("; ")
             : `Старт не принят (${res.status})`;
         showFlash(detail);
-        startHint.textContent = "Не удалось создать. Проверьте backend и вложения.";
+        startHint.textContent = "Не удалось создать. Проверьте соединение и вложения.";
         return;
       }
       pendingFiles = [];
@@ -676,17 +755,17 @@
       setStartOpen(false);
       showFlash(
         data.backend === "local"
-          ? `Локальная задача ${data.task_id} (Orchestrator не вызван).`
+          ? `Задача ${data.task_id} создана (локальный режим).`
           : `Задача ${data.task_id} создана.`,
         { ok: true },
       );
       await openTask(data.task_id);
     } catch (_) {
       showFlash("Сеть недоступна при создании задачи.");
-      startHint.textContent = "Не удалось создать. Проверьте сеть и backend.";
+      startHint.textContent = "Не удалось создать. Проверьте сеть и соединение с сервером.";
     } finally {
       startComposer.classList.remove("busy");
-      startHint.textContent = "Как Form — MAS Entry: objective + вложения. Live backend отправит start в Orchestrator.";
+      startHint.textContent = "Прикрепите Excel и schedule — задача уйдёт в работу.";
     }
   }
 
@@ -707,6 +786,10 @@
     const text = String(err || "");
     if (/webhook .* is not registered|not registered/i.test(text) || /HTTP 404/.test(text)) {
       return "Workflow «Activity — List Tasks» не активирован в n8n (webhook mas-activity-list-tasks). Обновите страницу после активации.";
+    }
+    // Local presentation tasks (act_/demo_) are not CAS rows — DT miss is expected.
+    if (/task not found in Data Table/i.test(text)) {
+      return "";
     }
     if (text.length > 220) return `${text.slice(0, 220)}…`;
     return text;

@@ -99,12 +99,13 @@ def extract_schedule_from_orchestrator(orch: dict[str, Any]) -> tuple[str, str] 
     result = orch.get("result") if isinstance(orch.get("result"), dict) else {}
     release = result.get("release") if isinstance(result.get("release"), dict) else {}
     compact = result.get("compact_data") if isinstance(result.get("compact_data"), dict) else {}
+    top_name = orch.get("filename") if isinstance(orch.get("filename"), str) else None
     candidates = [
         (release.get("filename"), release.get("schedule_text")),
         (orch.get("filename"), orch.get("schedule_text")),
-        (compact.get("filename"), compact.get("generated_schedule")),
-        ("schedule.inc", result.get("generated_schedule")),
-        ("schedule.inc", orch.get("generated_schedule")),
+        (compact.get("filename") or top_name, compact.get("generated_schedule")),
+        (top_name, orch.get("generated_schedule")),
+        (top_name, result.get("generated_schedule")),
     ]
     for filename, text in candidates:
         if isinstance(text, str) and text.strip():

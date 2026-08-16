@@ -44,4 +44,33 @@ const out = sandbox.emitScheduleFromTimeline(model);
 const headers = out.split('\n').filter((line) => /^(DATES|WELSPECS|WCONPROD|APPLYSCRIPT)\b/.test(line.trim()));
 assert.deepEqual(headers, ['DATES', 'WELSPECS', 'WCONPROD', 'APPLYSCRIPT', 'DATES', 'WCONPROD']);
 
+// ECLIPSE/tNav: every keyword table with records must end with a bare '/' before the next keyword/DATES.
+function assertBareBlockSlash(scheduleText) {
+  const lines = scheduleText.split('\n');
+  const isHeader = (t) => /^[A-Za-z][A-Za-z0-9_]*\b/.test(t) && t !== '/';
+  for (let i = 0; i < lines.length; i++) {
+    const t = lines[i].trim();
+    if (!t || t.startsWith('--') || !isHeader(t)) continue;
+    const kw = t.split(/\s+/)[0].toUpperCase();
+    if (kw === 'DATES') continue; // DATES emitted via dates_header/body
+    let sawRecord = false;
+    let bare = false;
+    for (let j = i + 1; j < lines.length; j++) {
+      const u = lines[j].trim();
+      if (!u || u.startsWith('--')) continue;
+      if (isHeader(u)) break;
+      if (u === '/') {
+        bare = true;
+        break;
+      }
+      sawRecord = true;
+    }
+    if (sawRecord) {
+      assert.equal(bare, true, `missing bare block-closing '/' after ${kw} at line ${i + 1}`);
+    }
+  }
+}
+assertBareBlockSlash(out);
+assertBareBlockSlash(text); // round-trip input already had them
+
 console.log('SCHEDULE timeline within-date emit order smoke: passed');

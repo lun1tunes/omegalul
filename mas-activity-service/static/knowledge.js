@@ -308,8 +308,7 @@
       opt.textContent = `${ns.label} (${ns.id})`;
       agentSelect.append(opt);
     }
-    agentHint.textContent = data.ingest_hint
-      || "Выберите агента, чтобы увидеть карточки RAG.";
+    agentHint.textContent = "Выберите агента, чтобы увидеть карточки RAG.";
   }
 
   async function fetchDetail(base, id) {
@@ -377,7 +376,7 @@
 
       const hint = document.createElement("p");
       hint.className = "kb-ingest";
-      hint.textContent = "Сохранение пишет в JSON corpus и поднимает revision. Затем нужен Knowledge Ingestion в n8n.";
+      hint.textContent = "Сохранение пишет в JSON corpus и поднимает revision.";
 
       body.append(actions, titleField, tagWrap, textLabel, hint);
 
@@ -426,7 +425,7 @@
           detailCache.set(`${updated.target_base}/${updated.knowledge_id}`, updated);
           editingId = null;
           draft = null;
-          showFlash(data.ingest_hint || `Сохранено, revision ${updated.revision}.`, { ok: true });
+          showFlash(`Сохранено, revision ${updated.revision}.`, { ok: true });
           await loadDocuments(currentBase, { keepOpen: updated.knowledge_id });
         } catch (_) {
           showFlash("Сеть недоступна при сохранении.");
@@ -626,7 +625,7 @@
         return;
       }
       closeCreatePanel();
-      showFlash(data.ingest_hint || "Карточка создана.", { ok: true });
+      showFlash("Карточка создана.", { ok: true });
       await loadDocuments(currentBase, { keepOpen: data.document.knowledge_id });
     } catch (_) {
       showFlash("Сеть недоступна при создании.");

@@ -56,6 +56,8 @@ Durable list hydrate (`?durable=1`) merges the newest CAS rows from Data Tables.
 
 Open [http://127.0.0.1:8200/](http://127.0.0.1:8200/) → **Новая задача** or seed via API, or `/t/<task_id>`.
 
+When a task has a captured SCHEDULE result (Orchestrator `release.schedule_text` / Builder `generated_schedule`), the feed shows **Скачать .INC** → `GET /v1/tasks/{id}/schedule`.
+
 **MAS / Activity** (бренд слева) — обновляет rail (+ открытый feed) из n8n Data Tables. То же происходит при обычной перезагрузке страницы (`?durable=1` на старте).
 
 **Новая задача** — Entry-like composer (description + drag-and-drop Excel / SCHEDULE / `.dev` / CPS3). Live backends call Orchestrator `action=start`; `local` creates a presentation-only task.
@@ -82,6 +84,7 @@ Tests: `.venv\Scripts\python.exe -m pytest -q` (22 passed).
 | `POST` | `/v1/hydrate` | key | apply list/feed payload from n8n hydrate workflows |
 | `GET` | `/v1/tasks` | — | rail catalog; `?durable=1` pulls list webhook |
 | `GET` | `/v1/tasks/{id}` | — | snapshot + gate; `?durable=1` or miss → feed webhook |
+| `GET` | `/v1/tasks/{id}/schedule` | — | download captured SCHEDULE `.INC` (attachment) |
 | `GET` | `/v1/tasks/{id}/gate` | — | gate; `?refresh=1` pulls Orchestrator status when configured |
 | `POST` | `/v1/tasks/start` | `X-Activity-Key` | multipart start (Entry fields + files) |
 | `POST` | `/v1/tasks/{id}/hitl` | `X-Activity-Key` | `reply` / `approve` / `reject` / `cancel` / `status` |
@@ -128,7 +131,7 @@ After import, edit Code node **Prepare MAS activity sync**:
 | Field | Meaning |
 |---|---|
 | `brief` | 1–4 предложения по-русски |
-| `at_abs` | Absolute Tyumen time (`Asia/Yekaterinburg`) |
+| `at_abs` | Absolute local time with UTC offset (`Asia/Yekaterinburg` → `UTC+5`) |
 | `duration_ms` / `duration_label` | Specialist wall time until handoff |
 | `outcome` | `ok` / `wait` / `block` / `info` |
 | `chips` | Allowlisted detail keys only |

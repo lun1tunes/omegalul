@@ -24,6 +24,8 @@ MVP_ENTRY_WORKFLOWS = {
     "mvp-entry-form.workflow.json",
     "mas-human-gate-form.workflow.json",
     "mas-deployment-health-check.workflow.json",
+    "mas-activity-list-tasks.workflow.json",
+    "mas-activity-load-feed.workflow.json",
 }
 DATA_TABLE_CSV = ROOT / "n8n" / "data-tables"
 SCHEDULE_FOUNDATION_WORKFLOWS = {
@@ -1228,6 +1230,7 @@ def test_universal_engineering_instruction_templates_are_portable() -> None:
         "specialist-workflow-instruction.template.md",
         "generate_universal_engineering_workflows.py",
         "generate_schedule_workflows.py",
+        "generate_activity_hydrate_workflows.py",
         "apply_mas_hybrid_rag.py",
         "schedule_lossless_runtime.py",
         "schedule_baseline_decoder.py",
@@ -1239,6 +1242,7 @@ def test_universal_engineering_instruction_templates_are_portable() -> None:
         "schedule_intake_runtime.py",
         "schedule_schema_runtime.py",
         "schedule_semantic_runtime.py",
+        "schedule_emit_order.py",
         "mas_handoff_contracts.py",
     }
     assert {path.name for path in TEMPLATES.iterdir() if path.is_file()} == expected

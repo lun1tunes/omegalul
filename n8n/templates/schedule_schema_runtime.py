@@ -37,7 +37,7 @@ const citationValid=c=>obj(c)&&clean(c.document_id||c.knowledge_id)&&clean(c.doc
 // Merged catalogues recompute source_hash; do not require citation.source_hash === catalogue.source_hash.
 const citationAcceptable=c=>!c||citationValid(c); // missing citation: warn below; invalid shape: error
 
-const normalizeLayout=raw=>{const l=obj(raw)?raw:{},newline=clean(l.newline).toUpperCase()==='CRLF'?'\r\n':'\n';return{newline,indent:l.indent==='    '?'    ':'  ',delimiter:l.delimiter==='TAB'?'\t':' ',record_terminator:clean(l.record_terminator).toUpperCase()==='NONE'?'':' /',block_terminator:clean(l.block_terminator).toUpperCase()==='SLASH_LINE'?'slash_line':'none'}};
+const normalizeLayout=raw=>{const l=obj(raw)?raw:{},newline=clean(l.newline).toUpperCase()==='CRLF'?'\r\n':'\n';return{newline,indent:l.indent==='    '?'    ':'  ',delimiter:l.delimiter==='TAB'?'\t':' ',record_terminator:clean(l.record_terminator).toUpperCase()==='NONE'?'':' /',block_terminator:clean(l.block_terminator).toUpperCase()==='NONE'?'none':'slash_line'}};
 for(let i=0;i<schemas.length;i++){
   const s=schemas[i],kw=clean(s.keyword).toUpperCase(),variant=clean(s.variant)||'default',fields=arr(s.fields)?s.fields.filter(obj):[];
   const key=`${kw}::${variant}`;
@@ -78,7 +78,7 @@ for(let i=0;i<events.length;i++){
   if(!base.provenance.length){findings.push({code:'IR_PROVENANCE_REQUIRED',severity:'error',index:i,event_id:eventId});continue}
   const values=obj(e.fields)?e.fields:{},known=new Set(schema.fields.map(f=>clean(f.name))),unknown=Object.keys(values).filter(k=>!known.has(k));if(unknown.length){findings.push({code:'IR_UNKNOWN_FIELD',severity:'error',index:i,event_id:eventId,fields:unknown});continue}
   const tokens=[];let fieldError=false;for(const f of schema.fields){const name=clean(f.name),present=Object.prototype.hasOwnProperty.call(values,name);if(!present){if(f.required===true){findings.push({code:'IR_REQUIRED_FIELD_MISSING',severity:'error',index:i,event_id:eventId,keyword:kw,field:name});fieldError=true;continue}if(f.default_allowed===true){tokens.push('*');continue}findings.push({code:'IR_OPTIONAL_FIELD_HAS_NO_DEFAULT_POLICY',severity:'error',index:i,event_id:eventId,keyword:kw,field:name});fieldError=true;continue}const token=renderValue(values[name],f,e);if(token===null){fieldError=true;continue}tokens.push(token)}if(fieldError)continue;
-  const l=schema.layout,record=`${l.indent}${tokens.join(l.delimiter)}${l.record_terminator}`,text=`${kw}${l.newline}${record}${l.newline}${l.block_terminator==='slash_line'?'/'+l.newline:''}`;
+  const l=schema.layout,record=`${l.indent}${tokens.join(l.delimiter)}${l.record_terminator}`,text=`${kw}${l.newline}${record}${l.newline}${l.block_terminator==='slash_line'?'/'+l.newline+l.newline:''}`;
   const change={...base,rendered_text:text,schema_id:schema.schema_id,schema_revision:schema.schema_revision,citation:schema.citation,render_hash:hash(text)};renderedChanges.push(change);renderedRecords.push({event_id:eventId,keyword:kw,variant,field_count:tokens.length,render_hash:change.render_hash,schema_id:schema.schema_id,_ir_index:i});
 }
 // CREATE: assemble by DATES segments, then within-date keyword order (stage-3 algorithm — not RAG).

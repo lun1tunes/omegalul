@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import json
 import os
 from pathlib import Path
 
@@ -43,7 +44,7 @@ def test_enrich_adds_brief_abs_time_duration_and_filters_secrets() -> None:
             },
         }
     )
-    assert turn["at_abs"] == "2026-08-15 06:02:03 Тюмень"
+    assert turn["at_abs"] == "2026-08-15 06:02:03 UTC+5"
     assert turn["duration_label"] == "12.5 s"
     assert turn["outcome"] == "ok"
     assert "snapshot" in turn["brief"].lower() or "факт" in turn["brief"].lower()
@@ -95,7 +96,7 @@ def test_sync_preserves_presentation_fields() -> None:
     assert res.status_code == 200
     turn = res.json()["turns"][0]
     assert turn["brief"].startswith("Excel Extractor")
-    assert turn["at_abs"] == "2026-08-15 15:11:12 Тюмень"
+    assert turn["at_abs"] == "2026-08-15 15:11:12 UTC+5"
     assert turn["duration_ms"] == 9400
     assert turn["duration_label"] == "9.4 s"
 
@@ -197,6 +198,91 @@ def test_rejects_bad_task_id_and_oversized_declared_body() -> None:
     assert huge.status_code == 413
 
 
+def test_schedule_artifact_download_from_hydrate() -> None:
+    body = "DATES\n  1 JAN 2025 /\n/\nWCONPROD\n  'W1' OPEN ORAT 10 * /\n/\n"
+    res = client.post(
+        "/v1/hydrate",
+        headers=KEY,
+        json={
+            "contract": "mas_activity_feed_hydrate",
+            "ok": True,
+            "task_id": "act_sched_dl_1",
+            "title": "Downloadable",
+            "status": "completed",
+            "filename": "FORECAST.INC",
+            "generated_schedule": body,
+            "events": [
+                {
+                    "event_type": "handoff",
+                    "task_id": "act_sched_dl_1",
+                    "at": "2026-08-16T12:00:00+00:00",
+                    "status": "VERIFIED",
+                    "summary": "done",
+                    "from_role": "Verifier",
+                    "to_role": "Release",
+                }
+            ],
+        },
+    )
+    assert res.status_code == 200
+    feed = client.get("/v1/tasks/act_sched_dl_1").json()
+    assert feed["schedule_artifact"]["available"] is True
+    assert feed["schedule_artifact"]["filename"] == "FORECAST.INC"
+    assert feed["schedule_artifact"]["download_path"] == "/v1/tasks/act_sched_dl_1/schedule"
+    assert feed["schedule_artifact"]["byte_length"] == len(body.encode("utf-8"))
+    # Full text must not bloat the feed JSON.
+    assert "DATES" not in json.dumps(feed["schedule_artifact"])
+
+    dl = client.get("/v1/tasks/act_sched_dl_1/schedule")
+    assert dl.status_code == 200
+    assert dl.text == body
+    assert "attachment" in dl.headers.get("content-disposition", "")
+    assert "FORECAST.INC" in dl.headers.get("content-disposition", "")
+
+    missing = client.get("/v1/tasks/act_no_sched/schedule")
+    assert missing.status_code == 404
+
+
+def test_maybe_capture_schedule_null_output_package() -> None:
+    """merge_result.output_package: null must not AttributeError during capture."""
+    from app.main import _maybe_capture_schedule, _new_task_shell
+
+    body = "DATES\n  1 JAN 2025 /\n/\n"
+    task = _new_task_shell("act_null_pkg")
+    # extract_schedule_from_orchestrator misses merge_result; for-loop must still store text.
+    ok = _maybe_capture_schedule(
+        task,
+        {
+            "compact_data": {
+                "merge_result": {
+                    "output_package": None,
+                    "generated_schedule": body,
+                }
+            }
+        },
+    )
+    assert ok is True
+    assert task["schedule_artifact"]["text"] == body
+
+    # Top-level still wins when extract finds it, even with a null package sibling.
+    task2 = _new_task_shell("act_null_pkg2")
+    ok2 = _maybe_capture_schedule(
+        task2,
+        {
+            "filename": "TOP.INC",
+            "generated_schedule": body,
+            "compact_data": {
+                "merge_result": {
+                    "output_package": None,
+                    "generated_schedule": "OTHER",
+                }
+            },
+        },
+    )
+    assert ok2 is True
+    assert task2["schedule_artifact"]["filename"] == "TOP.INC"
+
+
 def test_ready_health_and_static_assets() -> None:
     health = client.get("/health").json()
     assert health["version"] == "0.5.1"
@@ -235,8 +321,16 @@ def test_ready_health_and_static_assets() -> None:
     assert "showLoadError(taskId, `Не удалось загрузить задачу (${snap.status}).`)" in js_text
     assert "showLoadError(taskId, \"Сеть недоступна при загрузке задачи.\")" in js_text
     assert "/v1/tasks/start" in js_text
+    assert "scheduleDownload" not in index.text
+    assert "appendScheduleDownload" in js_text
+    assert "SCHEDULE_FILE_REVIEW_STATUSES" in js_text
+    assert "Скачать" in js_text
+    assert "schedule_artifact: data.schedule_artifact" in js_text
+    assert "refreshScheduleDownloadsOnThread" in js_text
+    assert "li._masTurn = turn" in js_text
     css_text = (STATIC / "app.css").read_text(encoding="utf-8")
     assert "task-line" in css_text
+    assert "schedule-download-row" in css_text
     assert "minmax(16rem" in css_text
     assert "showFlash" in js_text
     assert "alert(" not in js_text

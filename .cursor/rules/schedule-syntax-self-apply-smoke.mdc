@@ -1,0 +1,17 @@
+---
+description: After SCHEDULE emit/syntax fixes — regenerate, smoke, combat; do not wait for the user
+alwaysApply: true
+---
+
+# Schedule syntax / emit — self-apply + smoke gate
+
+When changing anything that affects **generated SCHEDULE / `.INC` text** (timeline emit, schema renderer, lossless merge, commissioning revise, block terminators, keyword order, allowlist emit targets):
+
+1. **Apply fully in-repo** — edit templates under `n8n/templates/`, then regenerate:
+   - `python3 generate_schedule_workflows.py` from `n8n/templates`
+2. **Do not stop at “fix ready”** — run verification in the same turn before reporting done:
+   - At minimum: `node n8n/tests/schedule-timeline-emit-order-smoke.js` and `node n8n/tests/schedule-block-terminator-smoke.js`
+   - Prefer full gate: `for f in n8n/tests/*-smoke.js; do node "$f" || exit 1; done`
+   - If commissioning/emit touched: `PUBLISH_ACTIVITY=0 python3 simulation-model-example/combat-dates-revise/run_integration_cases.py`
+3. **ECLIPSE/tNav table keywords** must end with a **bare block-closing `/`** after record lines (in addition to per-record `/`). Missing block `/` is a production blocker — treat like a parse failure. After that `/`, emit one **blank line** before the next keyword/DATES (readable spacing; not required by the simulator).
+4. Report smoke/combat results briefly; only ask the user when a check needs live n8n UI credentials or a destructive wipe they did not authorize.
