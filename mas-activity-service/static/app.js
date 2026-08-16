@@ -4,13 +4,12 @@
   const notFound = document.getElementById("notFound");
   const notFoundId = document.getElementById("notFoundId");
   const title = document.getElementById("title");
+  const titleText = document.getElementById("titleText");
+  const statusDot = document.getElementById("statusDot");
   const requestPanel = document.getElementById("requestPanel");
   const requestText = document.getElementById("requestText");
   const taskRail = document.getElementById("taskRail");
   const railList = document.getElementById("railList");
-  const liveDot = document.getElementById("liveDot");
-  const liveLabel = document.getElementById("liveLabel");
-  const backendLabel = document.getElementById("backendLabel");
   const flashEl = document.getElementById("flash");
   const gatePanel = document.getElementById("gatePanel");
   const gateKind = document.getElementById("gateKind");
@@ -52,6 +51,7 @@
     live: "онлайн",
     reconnecting: "переподключение",
   };
+  let streamState = "idle";
 
   let currentTask = null;
   let source = null;
@@ -105,9 +105,41 @@
     }, ok ? 3200 : 8000);
   }
 
+  function statusTone(status, awaiting) {
+    const s = String(status || "").trim();
+    const lower = s.toLowerCase();
+    if (
+      awaiting
+      || /^AWAITING_HUMAN$/i.test(s)
+      || /needs_input|needs_approval|awaiting|human_gate|hitl/i.test(lower)
+    ) {
+      return "hitl";
+    }
+    if (/ошибк/i.test(s) || /error|fail|reject|cancel|denied|stall|abort/i.test(lower)) {
+      return "error";
+    }
+    if (!s || s === "—" || s === "…" || /idle|select|выбер/i.test(lower)) {
+      return "idle";
+    }
+    return "ok";
+  }
+
   function setLive(state) {
-    liveDot.hidden = state !== "live";
-    liveLabel.textContent = LIVE_LABELS[state] || state;
+    // Connection state kept for a11y title; the visible pulse follows task status.
+    streamState = state || "idle";
+    if (title) title.title = LIVE_LABELS[streamState] || streamState;
+  }
+
+  function setStatusDot(tone) {
+    if (!statusDot) return;
+    const t = tone || "idle";
+    if (t === "idle" && !currentTask) {
+      statusDot.hidden = true;
+      statusDot.className = "status-dot";
+      return;
+    }
+    statusDot.hidden = false;
+    statusDot.className = `status-dot pulse tone-${t}`;
   }
 
   function roleClass(role) {
@@ -411,15 +443,23 @@
     requestPanel.hidden = false;
   }
 
-  function setTaskHeader(taskId, status) {
+  function setTaskHeader(taskId, status, opts = {}) {
+    const awaiting = Object.prototype.hasOwnProperty.call(opts, "awaiting")
+      ? Boolean(opts.awaiting)
+      : awaitingHuman;
     if (!taskId) {
       title.classList.remove("task-line");
-      title.textContent = "Выберите задачу";
+      if (titleText) titleText.textContent = "Выберите задачу";
+      else title.textContent = "Выберите задачу";
+      setStatusDot("idle");
       return;
     }
     title.classList.add("task-line");
     const st = String(status || "").trim() || "—";
-    title.textContent = `task_id: ${taskId} · status: ${st}`;
+    const line = `task_id: ${taskId} · status: ${st}`;
+    if (titleText) titleText.textContent = line;
+    else title.textContent = line;
+    setStatusDot(statusTone(st, awaiting));
   }
 
   function setScheduleArtifact(meta) {
@@ -480,9 +520,8 @@
   }
 
   function applyFeedMeta(data) {
-    if (data.hitl_backend) backendLabel.textContent = `HITL: ${data.hitl_backend}`;
     if (currentTask) {
-      setTaskHeader(currentTask, data.status);
+      setTaskHeader(currentTask, data.status, { awaiting: data.awaiting_human });
     }
     if (Object.prototype.hasOwnProperty.call(data, "objective")) {
       renderRequest(data.objective);
@@ -509,7 +548,9 @@
     setComposerArmed(false);
     setScheduleArtifact(null);
     title.classList.remove("task-line");
-    title.textContent = "Задача не найдена";
+    if (titleText) titleText.textContent = "Задача не найдена";
+    else title.textContent = "Задача не найдена";
+    setStatusDot("error");
     if (notFoundId) notFoundId.textContent = taskId ? `id: ${taskId}` : "";
     if (notFound) notFound.hidden = false;
     const list = railList || taskRail;
@@ -574,7 +615,7 @@
       const data = await snap.json();
       empty.hidden = true;
       empty.textContent = "Нет turns. Создайте задачу карточкой «Новая задача» или откройте /t/<task_id>.";
-      setTaskHeader(taskId, data.status);
+      setTaskHeader(taskId, data.status, { awaiting: data.awaiting_human });
       applyFeedMeta(data);
       for (const turn of data.activity || []) renderTurn(turn, { animate: false });
       if (!(data.activity || []).length) empty.hidden = false;
@@ -808,7 +849,7 @@
           const body = await snap.json();
           rendered = new Set();
           thread.innerHTML = "";
-          setTaskHeader(currentTask, body.status);
+          setTaskHeader(currentTask, body.status, { awaiting: body.awaiting_human });
           applyFeedMeta(body);
           for (const turn of body.activity || []) renderTurn(turn, { animate: false });
           if (body.hydrate?.ok === false) {
@@ -877,8 +918,5 @@
     openTask(initial).then(() => hydrateFromDataTables({ flash: false, reloadFeed: false }));
   } else {
     hydrateFromDataTables({ flash: false, reloadFeed: false });
-    fetch("/health").then((r) => r.json()).then((h) => {
-      if (h.hitl_backend) backendLabel.textContent = `HITL: ${h.hitl_backend}`;
-    }).catch(() => {});
   }
 })();

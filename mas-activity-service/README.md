@@ -56,7 +56,7 @@ Durable list hydrate (`?durable=1`) merges the newest CAS rows from Data Tables.
 
 Open [http://127.0.0.1:8200/](http://127.0.0.1:8200/) → **Новая задача** or seed via API, or `/t/<task_id>`.
 
-When a task has a captured SCHEDULE result (Orchestrator `release.schedule_text` / Builder `generated_schedule`), the feed shows **Скачать .INC** → `GET /v1/tasks/{id}/schedule`.
+When a task has a captured SCHEDULE result (Builder `deliverables[].schedule_text`, Orchestrator `release.schedule_text`, or `generated_schedule`), the feed shows **Скачать .INC** → `GET /v1/tasks/{id}/schedule`.
 
 **MAS / Activity** (бренд слева) — обновляет rail (+ открытый feed) из n8n Data Tables. То же происходит при обычной перезагрузке страницы (`?durable=1` на старте).
 

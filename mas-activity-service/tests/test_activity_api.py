@@ -283,6 +283,52 @@ def test_maybe_capture_schedule_null_output_package() -> None:
     assert task2["schedule_artifact"]["filename"] == "TOP.INC"
 
 
+def test_extract_schedule_from_builder_deliverables() -> None:
+    """Draft/review Builder result stores full .INC in deliverables[], not compact preview."""
+    from app.commissioning import extract_schedule_from_orchestrator
+    from app.main import _maybe_capture_schedule, _new_task_shell
+
+    full = "DATES\n  1 JAN 2025 /\n/\n" + ("WCONPROD\n  'W1' OPEN ORAT 1 * /\n/\n\n" * 400)
+    preview = full[:4000]
+    assert len(full) > len(preview)
+
+    orch = {
+        "result": {
+            "contract": "specialist_result",
+            "status": "needs_approval",
+            "deliverables": [
+                {
+                    "kind": "schedule_inc_text",
+                    "filename": "FORECAST.INC",
+                    "description": "Validated SCHEDULE text",
+                    "schedule_text": full,
+                }
+            ],
+            "compact_data": {
+                "release_ready": True,
+                "generated_schedule_bytes": len(full),
+                "generated_schedule_preview": preview,
+                "merge_result": {"output_package": {"root_path": "FORECAST.INC"}},
+            },
+        }
+    }
+    extracted = extract_schedule_from_orchestrator(orch)
+    assert extracted is not None
+    assert extracted[0] == "FORECAST.INC"
+    assert extracted[1] == full
+    assert extracted[1] != preview
+
+    task = _new_task_shell("act_deliv_sched")
+    assert _maybe_capture_schedule(task, orch) is True
+    assert task["schedule_artifact"]["text"] == full
+    assert task["schedule_artifact"]["filename"] == "FORECAST.INC"
+
+    # Bare specialist_result (no wrapping result) also works.
+    bare = orch["result"]
+    got_bare = extract_schedule_from_orchestrator(bare)
+    assert got_bare is not None and got_bare[1] == full
+
+
 def test_ready_health_and_static_assets() -> None:
     health = client.get("/health").json()
     assert health["version"] == "0.5.1"
@@ -328,8 +374,15 @@ def test_ready_health_and_static_assets() -> None:
     assert "schedule_artifact: data.schedule_artifact" in js_text
     assert "refreshScheduleDownloadsOnThread" in js_text
     assert "li._masTurn = turn" in js_text
+    assert "statusDot" in index.text
+    assert "titleText" in index.text
+    assert "backendLabel" not in index.text
+    assert "liveLabel" not in index.text
+    assert "statusTone" in js_text
     css_text = (STATIC / "app.css").read_text(encoding="utf-8")
     assert "task-line" in css_text
+    assert "tone-hitl" in css_text
+    assert "tone-error" in css_text
     assert "schedule-download-row" in css_text
     assert "minmax(16rem" in css_text
     assert "showFlash" in js_text
