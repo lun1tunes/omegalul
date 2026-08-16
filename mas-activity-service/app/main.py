@@ -230,6 +230,7 @@ def _new_task_shell(task_id: str) -> dict[str, Any]:
         "gate": None,
         "transcript_loaded": False,
         "schedule_artifact": None,
+        "semantic_diff": None,
     }
 
 
@@ -275,6 +276,72 @@ def _store_schedule_artifact(task: dict[str, Any], filename: str | None, text: s
         "byte_length": len(encoded),
     }
     return True
+
+
+def _semantic_diff_public(diff: Any) -> dict[str, Any] | None:
+    """Bounded semantic_diff for Activity expander (no schedule body)."""
+    if not isinstance(diff, dict) or not diff:
+        return None
+    keywords = [
+        str(x).strip()
+        for x in (diff.get("changed_keywords") if isinstance(diff.get("changed_keywords"), list) else [])
+        if str(x).strip()
+    ][:40]
+    wells = [
+        str(x).strip()
+        for x in (diff.get("commissioning_wells") if isinstance(diff.get("commissioning_wells"), list) else [])
+        if str(x).strip()
+    ][:40]
+    edits_out: list[dict[str, Any]] = []
+    for raw in (diff.get("edits") if isinstance(diff.get("edits"), list) else [])[:40]:
+        if isinstance(raw, str) and raw.strip():
+            edits_out.append({"summary": raw.strip()[:400]})
+            continue
+        if not isinstance(raw, dict):
+            continue
+        item = {
+            k: raw[k]
+            for k in ("keyword", "well", "entity", "operation", "op", "summary", "message")
+            if k in raw and raw[k] is not None and str(raw[k]).strip()
+        }
+        if item:
+            edits_out.append(item)
+    summary = str(diff.get("summary") or diff.get("message") or "").strip()[:800]
+    if not summary and not keywords and not edits_out and not wells:
+        return None
+    out: dict[str, Any] = {}
+    if summary:
+        out["summary"] = summary
+    if keywords:
+        out["changed_keywords"] = keywords
+    if wells:
+        out["commissioning_wells"] = wells
+    if edits_out:
+        out["edits"] = edits_out
+    if diff.get("include_graph_changed") is True:
+        out["include_graph_changed"] = True
+    return out or None
+
+
+def _extract_semantic_diff(payload: dict[str, Any]) -> dict[str, Any] | None:
+    compact = payload.get("compact_data") if isinstance(payload.get("compact_data"), dict) else None
+    if compact is None:
+        result = payload.get("result") if isinstance(payload.get("result"), dict) else {}
+        compact = result.get("compact_data") if isinstance(result.get("compact_data"), dict) else None
+    if not isinstance(compact, dict):
+        return None
+    return _semantic_diff_public(compact.get("semantic_diff"))
+
+
+def _maybe_capture_semantic_diff(task: dict[str, Any], payload: dict[str, Any] | None) -> bool:
+    if not isinstance(payload, dict):
+        return False
+    diff = _extract_semantic_diff(payload)
+    if not diff:
+        return False
+    prev = task.get("semantic_diff")
+    task["semantic_diff"] = {**diff, "updated_at": _now()}
+    return prev != task["semantic_diff"]
 
 
 def _maybe_capture_schedule(task: dict[str, Any], payload: dict[str, Any] | None) -> bool:
@@ -1003,9 +1070,15 @@ async def _apply_feed_hydrate(payload: dict[str, Any]) -> dict[str, Any]:
     result = await _ingest_sync(body, title=title, objective=objective, replace_turns=True)
     async with _lock:
         task = _tasks.get(task_id)
+        changed = False
         if task and _maybe_capture_schedule(task, payload):
-            _persist()
+            changed = True
             result = {**result, "schedule_artifact": True}
+        if task and _maybe_capture_semantic_diff(task, payload):
+            changed = True
+            result = {**result, "semantic_diff": True}
+        if changed:
+            _persist()
     return result
 
 
@@ -1081,6 +1154,7 @@ def _task_feed(task_id: str) -> dict[str, Any]:
         "hitl_backend": hitl_backend(),
         "durable_hydrate": durable_enabled(),
         "schedule_artifact": _schedule_artifact_meta(task),
+        "semantic_diff": task.get("semantic_diff") if isinstance(task.get("semantic_diff"), dict) else None,
         "activity": task["turns"],
     }
 
@@ -1163,6 +1237,12 @@ async def get_gate(task_id: str, refresh: bool = Query(default=False)) -> dict[s
             clear_gate=not orch.get("human_gate"),
             message=str(orch.get("message") or "").strip() or None,
         )
+        async with _lock:
+            task = _tasks.get(task_id)
+            if task and orch:
+                _maybe_capture_schedule(task, orch)
+                _maybe_capture_semantic_diff(task, orch)
+                _persist()
         task = _tasks[task_id]
     elif not task:
         raise HTTPException(status_code=404, detail="Task not found")
@@ -1176,6 +1256,8 @@ async def get_gate(task_id: str, refresh: bool = Query(default=False)) -> dict[s
         "human_gate": _gate_payload(task),
         "hitl_backend": backend,
         "orchestrator": orch,
+        "schedule_artifact": _schedule_artifact_meta(task),
+        "semantic_diff": task.get("semantic_diff") if isinstance(task.get("semantic_diff"), dict) else None,
     }
 
 
@@ -1431,6 +1513,17 @@ async def post_start_task(
         )
         await _append_turns(task_id, [conflict_turn])
 
+    schedule_meta = None
+    semantic_diff = None
+    async with _lock:
+        task = _tasks.get(task_id)
+        if task:
+            _maybe_capture_schedule(task, orch if isinstance(orch, dict) else None)
+            _maybe_capture_semantic_diff(task, orch if isinstance(orch, dict) else None)
+            _persist()
+            schedule_meta = _schedule_artifact_meta(task)
+            semantic_diff = task.get("semantic_diff") if isinstance(task.get("semantic_diff"), dict) else None
+
     return {
         "ok": True,
         "task_id": task_id,
@@ -1442,6 +1535,8 @@ async def post_start_task(
         "status_message": orch_message,
         "turn": turn,
         "file_count": len(file_names),
+        "schedule_artifact": schedule_meta,
+        "semantic_diff": semantic_diff,
     }
 
 
@@ -1648,12 +1743,15 @@ async def post_hitl(task_id: str, body: HitlPost, _: None = Depends(_require_key
     )
 
     schedule_meta = None
+    semantic_diff = None
     async with _lock:
         task = _tasks.get(task_id)
-        if task and _maybe_capture_schedule(task, orch if isinstance(orch, dict) else None):
-            _persist()
         if task:
+            _maybe_capture_schedule(task, orch if isinstance(orch, dict) else None)
+            _maybe_capture_semantic_diff(task, orch if isinstance(orch, dict) else None)
+            _persist()
             schedule_meta = _schedule_artifact_meta(task)
+            semantic_diff = task.get("semantic_diff") if isinstance(task.get("semantic_diff"), dict) else None
 
     return {
         "ok": True,
@@ -1667,6 +1765,7 @@ async def post_hitl(task_id: str, body: HitlPost, _: None = Depends(_require_key
         "human_gate": gate_out,
         "local_version_hint": local_version,
         "schedule_artifact": schedule_meta,
+        "semantic_diff": semantic_diff,
     }
 
 
@@ -1732,6 +1831,9 @@ async def stream_task(task_id: str) -> StreamingResponse:
                     "human_gate": _gate_payload(task),
                     "hitl_backend": hitl_backend(),
                     "schedule_artifact": _schedule_artifact_meta(task),
+                    "semantic_diff": task.get("semantic_diff")
+                    if isinstance(task.get("semantic_diff"), dict)
+                    else None,
                 }
                 yield f"data: {json.dumps(payload, ensure_ascii=False)}\n\n"
             else:
@@ -1885,6 +1987,32 @@ async def seed_demo(_: None = Depends(_require_key)) -> dict[str, Any]:
         "expected_version": 6,
     }
     await _set_gate(task_id, status="awaiting_human", version=6, gate=gate)
+    demo_diff = {
+        "summary": "Сдвинуты даты ввода скважин; обновлены блоки WELOPEN / WCONPROD / WEFAC.",
+        "changed_keywords": ["WELOPEN", "WCONPROD", "WEFAC", "DATES"],
+        "commissioning_wells": ["W-101", "W-205"],
+        "edits": [
+            {
+                "keyword": "WELOPEN",
+                "well": "W-101",
+                "operation": "move",
+                "summary": "1 JAN 2025 → 15 MAR 2025",
+            },
+            {
+                "keyword": "WCONPROD",
+                "well": "W-205",
+                "operation": "move",
+                "summary": "1 FEB 2025 → 1 APR 2025",
+            },
+        ],
+        "include_graph_changed": False,
+        "updated_at": _now(),
+    }
+    async with _lock:
+        task = _tasks.get(task_id)
+        if task:
+            task["semantic_diff"] = demo_diff
+            _persist()
     return {
         "task_id": task_id,
         "count": len(stored),
@@ -1892,6 +2020,7 @@ async def seed_demo(_: None = Depends(_require_key)) -> dict[str, Any]:
         "awaiting_human": True,
         "human_gate": gate,
         "hitl_backend": hitl_backend(),
+        "semantic_diff": demo_diff,
     }
 
 

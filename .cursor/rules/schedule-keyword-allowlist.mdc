@@ -12,7 +12,7 @@ When the user names a SCHEDULE/tNavigator keyword for a RAG card or Builder work
    - `n8n/templates/schedule_rag_workflows.py` → `KEYWORDS`
    - `n8n/templates/generate_schedule_workflows.py` → `KEYWORDS`
    - regenerate workflows via `python3 generate_schedule_workflows.py` from `n8n/templates`
-   - update the keyword table in `docs/architecture/petroleum-mas-research-and-roadmap.md` §3
+   - update the keyword allowlist section in `docs.md` (§3.2)
 3. **Then** insert a `schedule_mvp` `keyword_instruction` card into `n8n/rag/excel-agent-operating-guide.documents.json` (before `injection_template`), following existing card style.
 4. **If the exact name does not exist** — do not invent it. Tell the user the closest real keywords from the manual and offer those (add + card) instead. Example: `VFPDP` → `WVFPDP`.
 5. Do not emit/allowlist synonyms as separate emit targets when the manual says they are synonyms (e.g. emit `WELTARG`, not `WELLTARG`).

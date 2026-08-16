@@ -109,7 +109,9 @@ a.brand.busy { opacity: 0.55; pointer-events: none; }
   line-height: 1.25;
   color: var(--muted);
   letter-spacing: 0.01em;
-  max-width: min(36rem, 52vw);
+  max-width: min(42rem, calc(100vw - 12rem));
+  white-space: normal;
+  overflow-wrap: anywhere;
 }
 
 .top-actions {
@@ -294,7 +296,7 @@ a.btn {
 
 .stage {
   display: grid;
-  grid-template-columns: 232px 1fr;
+  grid-template-columns: 280px 1fr;
   height: calc(100svh - 88px);
 }
 body:has(.flash:not([hidden])) .stage {
@@ -385,8 +387,24 @@ body:has(.flash:not([hidden])) .stage {
   background: rgba(255, 255, 255, 0.62);
   border-left-color: var(--blue-500);
 }
-.rail .id { display: block; font-family: var(--mono); font-size: 0.76rem; color: var(--ink); }
-.rail .meta { display: block; color: var(--muted); font-size: 0.7rem; margin-top: 0.18rem; }
+.rail .id {
+  display: block;
+  font-family: var(--mono);
+  font-size: 0.76rem;
+  color: var(--ink);
+  overflow-wrap: anywhere;
+  word-break: break-word;
+}
+.rail .meta {
+  display: block;
+  color: var(--muted);
+  font-size: 0.7rem;
+  margin-top: 0.18rem;
+  line-height: 1.35;
+  white-space: normal;
+  overflow-wrap: anywhere;
+  word-break: break-word;
+}
 .rail .hitl-flag {
   display: inline-block;
   margin-top: 0.28rem;
@@ -824,6 +842,90 @@ a.btn.schedule-download:hover:not(:disabled),
   font-family: var(--mono);
   font-size: 0.66rem;
   color: var(--muted);
+}
+
+.diff-expander {
+  margin: 0 clamp(1rem, 2.8vw, 2.2rem);
+  padding: 0.55rem 0.9rem;
+  border: 1px solid rgba(47, 111, 181, 0.22);
+  background: rgba(255, 255, 255, 0.65);
+  border-radius: var(--radius);
+  max-height: 32vh;
+  overflow: auto;
+  min-height: 0;
+}
+.diff-expander[hidden] { display: none !important; }
+.diff-expander > summary {
+  cursor: pointer;
+  font-size: 0.9rem;
+  font-weight: 500;
+  color: var(--blue-900);
+  list-style: none;
+}
+.diff-expander > summary::-webkit-details-marker { display: none; }
+.diff-expander > summary::before {
+  content: "▸";
+  display: inline-block;
+  margin-right: 0.4rem;
+  color: var(--muted);
+  transition: transform 120ms ease;
+}
+.diff-expander[open] > summary::before { transform: rotate(90deg); }
+.diff-body {
+  margin-top: 0.55rem;
+  display: grid;
+  gap: 0.45rem;
+}
+.diff-summary {
+  margin: 0;
+  font-size: 0.88rem;
+  line-height: 1.4;
+  color: var(--ink);
+}
+.diff-row {
+  display: grid;
+  gap: 0.25rem;
+}
+.diff-label {
+  font-family: var(--mono);
+  font-size: 0.66rem;
+  letter-spacing: 0.04em;
+  text-transform: uppercase;
+  color: var(--muted);
+}
+.diff-chips {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.3rem;
+}
+.diff-chip {
+  font-family: var(--mono);
+  font-size: 0.72rem;
+  padding: 0.15rem 0.4rem;
+  background: var(--blue-100);
+  color: var(--blue-900);
+  border-radius: 0.2rem;
+}
+.diff-note {
+  margin: 0;
+  font-size: 0.82rem;
+  color: var(--muted);
+}
+.diff-edits {
+  margin: 0;
+  padding: 0;
+  list-style: none;
+  display: grid;
+  gap: 0.28rem;
+}
+.diff-edits li {
+  font-family: var(--mono);
+  font-size: 0.74rem;
+  line-height: 1.35;
+  padding: 0.28rem 0.45rem;
+  background: rgba(215, 230, 246, 0.45);
+  border-left: 2px solid var(--blue-500);
+  color: var(--ink);
 }
 
 .composer {

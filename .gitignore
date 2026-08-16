@@ -9,8 +9,16 @@ __pycache__/
 *.py[cod]
 .pytest_cache/
 .venv/
+.venv-check/
 excel-agent-tools/.coverage
 codex-sale-credentials.md
 tech_task.md
 tNavUserManualRussian.pdf
-simulation-model-example
+
+# project_pack transfer artifacts (do not commit)
+/all.txt
+/all[1-9]
+/all[1-9][0-9]*
+
+# Local combat / golden fixtures only — never pack or commit
+simulation-model-example/

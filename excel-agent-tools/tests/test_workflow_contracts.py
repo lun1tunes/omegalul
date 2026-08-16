@@ -1264,15 +1264,13 @@ def test_schedule_generator_and_architecture_decisions_are_portable_and_explicit
     assert "Path(__file__).resolve().parents[2]" in generator
     assert "/home/" not in generator
 
-    roadmap = (ROOT / "docs" / "architecture" / "petroleum-mas-research-and-roadmap.md").read_text(
-        encoding="utf-8"
-    )
-    assert "Прямой вызов Excel Extractor из Schedule Builder запрещён" in roadmap
-    assert "returnIntermediateSteps=true" in roadmap
-    assert "attention_threshold = 85" in roadmap
-    assert "hitl_threshold      = 70" in roadmap
-    assert "`CREATE`: создание SCHEDULE с нуля" in roadmap
-    assert "Excel→RAG→Builder handoff" in roadmap
+    docs = (ROOT / "docs.md").read_text(encoding="utf-8")
+    assert "Прямой вызов Excel Extractor из Schedule Builder запрещён" in docs
+    assert "returnIntermediateSteps=true" in docs
+    assert "attention_threshold = 85" in docs
+    assert "hitl_threshold      = 70" in docs
+    assert "`CREATE`: создание SCHEDULE с нуля" in docs
+    assert "Excel→RAG→Builder handoff" in docs
 
 
 def ingestible_operating_guide_documents() -> list[dict]:

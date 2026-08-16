@@ -22,6 +22,8 @@
   const gateMeta = document.getElementById("gateMeta");
   const gateReason = document.getElementById("gateReason");
   const gateQuestions = document.getElementById("gateQuestions");
+  const diffExpander = document.getElementById("diffExpander");
+  const diffBody = document.getElementById("diffBody");
   const composer = document.getElementById("composer");
   const requestedBy = document.getElementById("requestedBy");
   const humanResponse = document.getElementById("humanResponse");
@@ -64,35 +66,43 @@
   };
   /** Raw status code → short RU badge; title keeps the code for debug. */
   const STATUS_LABELS = {
-    DELEGATED: "Передано специалисту",
-    EXCEL_EVIDENCE_READY: "Факты из Excel",
-    INVALID_SOURCE_FACTS_PACKET: "Пакет Excel неполный",
+    DELEGATED: "Передано",
+    EXCEL_EVIDENCE_READY: "Факты Excel",
+    INVALID_SOURCE_FACTS_PACKET: "Пакет неполный",
     CALCULATION_DATA_READY: "Расчёт готов",
     SCHEDULE_EVIDENCE_GAP: "Не хватает полей",
-    MALFORMED_EVIDENCE_GAP: "Некорректный пропуск",
-    STALLED_EVIDENCE_LOOP: "Петля остановлена",
+    MALFORMED_EVIDENCE_GAP: "Пропуск битый",
+    STALLED_EVIDENCE_LOOP: "Петля",
     EXCEL_EVIDENCE_BUDGET_EXHAUSTED: "Лимит Excel",
     BUILDER_ITERATION_BUDGET_EXHAUSTED: "Лимит Builder",
-    RESUME_SCHEDULE: "Продолжаем schedule",
-    INVALID_EXCEL_EVIDENCE_SNAPSHOT: "Снимок не совпал",
-    TASK_STARTED: "Задача создана",
+    RESUME_SCHEDULE: "Продолжаем",
+    INVALID_EXCEL_EVIDENCE_SNAPSHOT: "Снимок",
+    TASK_STARTED: "Создана",
     AWAITING_HUMAN: "Ждём вас",
     HUMAN_REPLY: "Ваш ответ",
     HUMAN_APPROVED: "Утверждено",
     HUMAN_REJECTED: "Отклонено",
-    SCHEDULE_DRAFT_READY: "Черновик schedule",
+    SCHEDULE_DRAFT_READY: "Черновик",
     VERIFIED: "Проверено",
     SUCCEEDED: "Успешно",
-    COMPLETED: "Завершено",
+    COMPLETED: "Готово",
     NEEDS_INPUT: "Нужны данные",
     NEEDS_DECISION: "Нужно решение",
-    NEEDS_APPROVAL: "Нужно утверждение",
-    ORCH_CONFLICT: "Отклонено оркестратором",
+    NEEDS_APPROVAL: "На утверждении",
+    ORCH_CONFLICT: "Конфликт",
     CONFLICT: "Конфликт",
     conflict: "Конфликт",
-    planning: "Планирование",
-    PLANNING: "Планирование",
+    planning: "План",
+    PLANNING: "План",
     handoff: "Handoff",
+    running: "В работе",
+    RUNNING: "В работе",
+    retryable_error: "Ошибка",
+    RETRYABLE_ERROR: "Ошибка",
+    fatal_error: "Сбой",
+    FATAL_ERROR: "Сбой",
+    error: "Ошибка",
+    ERROR: "Ошибка",
   };
   const CYRILLIC_RE = /[А-Яа-яЁё]/;
   function statusLabel(code) {
@@ -125,6 +135,8 @@
   let waitStartedAt = 0;
   /** @type {{ available?: boolean, filename?: string, byte_length?: number, download_path?: string } | null} */
   let scheduleArtifact = null;
+  /** @type {{ summary?: string, changed_keywords?: string[], commissioning_wells?: string[], edits?: object[], include_graph_changed?: boolean } | null} */
+  let semanticDiff = null;
   /** @type {{ file: File, kind: string }[]} */
   let pendingFiles = [];
 
@@ -368,6 +380,7 @@
     setRestartable(false);
     renderStatusBanner(null, null);
     setScheduleArtifact(null);
+    setSemanticDiff(null);
     setComposerArmed(false);
     setTaskHeader(null);
     if (titleText) titleText.textContent = titleLabel;
@@ -673,11 +686,16 @@
       id.textContent = task.task_id;
       const meta = document.createElement("span");
       meta.className = "meta";
-      const turnsLabel =
-        task.turn_count == null ? "лента…" : `${task.turn_count} turns`;
       const stLabel = statusLabel(task.status || task.last_status || "");
-      meta.textContent = `${stLabel || "—"} · ${turnsLabel}`;
-      btn.title = `${task.task_id}\n${task.title || ""}\n${task.updated_at || ""}`;
+      const parts = [stLabel || "—"];
+      if (task.turn_count != null) parts.push(`${task.turn_count} ход.`);
+      meta.textContent = parts.join(" · ");
+      btn.title = [
+        task.task_id,
+        task.title || "",
+        `${stLabel || "—"}${task.turn_count != null ? ` · ${task.turn_count} ход.` : ""}`,
+        task.updated_at || "",
+      ].filter(Boolean).join("\n");
       btn.append(id, meta);
       if (task.awaiting_human) {
         const flag = document.createElement("span");
@@ -741,6 +759,96 @@
     if (art && art.download_path !== prevPath) {
       refreshScheduleDownloadsOnThread();
     }
+  }
+
+  function editLine(edit) {
+    if (!edit || typeof edit !== "object") return "";
+    if (edit.summary) return String(edit.summary);
+    const parts = [edit.keyword, edit.well || edit.entity, edit.operation || edit.op, edit.message]
+      .map((x) => (x == null ? "" : String(x).trim()))
+      .filter(Boolean);
+    return parts.join(" · ");
+  }
+
+  function renderSemanticDiff() {
+    if (!diffExpander || !diffBody) return;
+    const diff = semanticDiff;
+    const keywords = Array.isArray(diff?.changed_keywords) ? diff.changed_keywords.filter(Boolean) : [];
+    const wells = Array.isArray(diff?.commissioning_wells) ? diff.commissioning_wells.filter(Boolean) : [];
+    const edits = Array.isArray(diff?.edits) ? diff.edits : [];
+    const summary = String(diff?.summary || "").trim();
+    const hasContent = Boolean(summary || keywords.length || wells.length || edits.length || diff?.include_graph_changed);
+    if (!hasContent) {
+      diffExpander.hidden = true;
+      diffBody.replaceChildren();
+      return;
+    }
+    diffExpander.hidden = false;
+    diffBody.replaceChildren();
+
+    if (summary) {
+      const p = document.createElement("p");
+      p.className = "diff-summary";
+      p.textContent = summary;
+      diffBody.append(p);
+    }
+    if (keywords.length) {
+      const row = document.createElement("div");
+      row.className = "diff-row";
+      const label = document.createElement("span");
+      label.className = "diff-label";
+      label.textContent = "Keywords";
+      const chips = document.createElement("div");
+      chips.className = "diff-chips";
+      for (const kw of keywords) {
+        const chip = document.createElement("span");
+        chip.className = "diff-chip";
+        chip.textContent = kw;
+        chips.append(chip);
+      }
+      row.append(label, chips);
+      diffBody.append(row);
+    }
+    if (wells.length) {
+      const row = document.createElement("div");
+      row.className = "diff-row";
+      const label = document.createElement("span");
+      label.className = "diff-label";
+      label.textContent = "Скважины";
+      const chips = document.createElement("div");
+      chips.className = "diff-chips";
+      for (const w of wells) {
+        const chip = document.createElement("span");
+        chip.className = "diff-chip";
+        chip.textContent = w;
+        chips.append(chip);
+      }
+      row.append(label, chips);
+      diffBody.append(row);
+    }
+    if (diff?.include_graph_changed) {
+      const note = document.createElement("p");
+      note.className = "diff-note";
+      note.textContent = "Изменён граф INCLUDE.";
+      diffBody.append(note);
+    }
+    if (edits.length) {
+      const list = document.createElement("ul");
+      list.className = "diff-edits";
+      for (const ed of edits) {
+        const line = typeof ed === "string" ? ed.trim() : editLine(ed);
+        if (!line) continue;
+        const li = document.createElement("li");
+        li.textContent = line;
+        list.append(li);
+      }
+      if (list.childNodes.length) diffBody.append(list);
+    }
+  }
+
+  function setSemanticDiff(diff) {
+    semanticDiff = diff && typeof diff === "object" ? diff : null;
+    renderSemanticDiff();
   }
 
   function turnWantsScheduleDownload(turn) {
@@ -810,6 +918,9 @@
     if (Object.prototype.hasOwnProperty.call(data, "schedule_artifact")) {
       setScheduleArtifact(data.schedule_artifact);
     }
+    if (Object.prototype.hasOwnProperty.call(data, "semantic_diff")) {
+      setSemanticDiff(data.semantic_diff);
+    }
   }
 
   function showNotFound(taskId) {
@@ -824,6 +935,7 @@
     setRestartable(false);
     setComposerArmed(false);
     setScheduleArtifact(null);
+    setSemanticDiff(null);
     title.classList.remove("task-line");
     if (titleText) titleText.textContent = "Задача не найдена";
     else title.textContent = "Задача не найдена";
@@ -857,6 +969,7 @@
     renderGate(null, { awaiting: false });
     setRestartable(false);
     setComposerArmed(false);
+    setSemanticDiff(null);
     showFlash(message || "Не удалось загрузить задачу.");
   }
 
@@ -879,6 +992,7 @@
     renderGate(null, { awaiting: false });
     setRestartable(false);
     setScheduleArtifact(null);
+    setSemanticDiff(null);
     showFlash("");
     showWait("Загружаем задачу…");
 
@@ -1010,6 +1124,7 @@
         awaiting_human: data.awaiting_human,
         hitl_backend: data.backend,
         schedule_artifact: data.schedule_artifact,
+        semantic_diff: data.semantic_diff,
         status_message: data.orchestrator?.message || data.status_message,
       });
       if (action === "reply") humanResponse.value = "";
@@ -1199,6 +1314,8 @@
           restartable: data.restartable,
           human_gate: data.human_gate,
           status_message: data.orchestrator?.message,
+          schedule_artifact: data.schedule_artifact,
+          semantic_diff: data.semantic_diff,
         });
         if (data.turn) renderTurn(data.turn);
         showFlash(`Перезапуск case ${currentTask} принят.`);

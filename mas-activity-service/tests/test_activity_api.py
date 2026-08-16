@@ -266,6 +266,55 @@ def test_schedule_artifact_download_from_hydrate() -> None:
     assert missing.status_code == 404
 
 
+def test_semantic_diff_from_hydrate_and_demo() -> None:
+    res = client.post(
+        "/v1/hydrate",
+        headers=KEY,
+        json={
+            "contract": "mas_activity_feed_hydrate",
+            "ok": True,
+            "task_id": "act_sem_diff_1",
+            "title": "Diff",
+            "status": "awaiting_human",
+            "compact_data": {
+                "semantic_diff": {
+                    "changed_keywords": ["WELOPEN", "WCONPROD"],
+                    "commissioning_wells": ["P1"],
+                    "edits": [
+                        {"keyword": "WELOPEN", "well": "P1", "operation": "move", "summary": "1 JAN → 1 MAR"},
+                    ],
+                    "include_graph_changed": True,
+                }
+            },
+            "events": [
+                {
+                    "event_type": "handoff",
+                    "task_id": "act_sem_diff_1",
+                    "at": "2026-08-16T12:00:00+00:00",
+                    "status": "AWAITING_HUMAN",
+                    "summary": "review",
+                    "from_role": "Orchestrator",
+                    "to_role": "Human",
+                }
+            ],
+        },
+    )
+    assert res.status_code == 200
+    assert res.json().get("feed", {}).get("semantic_diff") is True
+    feed = client.get("/v1/tasks/act_sem_diff_1").json()
+    diff = feed["semantic_diff"]
+    assert diff["changed_keywords"] == ["WELOPEN", "WCONPROD"]
+    assert diff["commissioning_wells"] == ["P1"]
+    assert diff["edits"][0]["summary"] == "1 JAN → 1 MAR"
+    assert diff["include_graph_changed"] is True
+    assert "updated_at" in diff
+
+    seed = client.post("/v1/demo/seed", headers=KEY).json()
+    assert seed["semantic_diff"]["changed_keywords"]
+    demo_feed = client.get(f"/v1/tasks/{seed['task_id']}").json()
+    assert demo_feed["semantic_diff"]["edits"]
+
+
 def test_maybe_capture_schedule_null_output_package() -> None:
     """merge_result.output_package: null must not AttributeError during capture."""
     from app.main import _maybe_capture_schedule, _new_task_shell
@@ -403,6 +452,10 @@ def test_ready_health_and_static_assets() -> None:
     assert "SCHEDULE_FILE_REVIEW_STATUSES" in js_text
     assert "Скачать" in js_text
     assert "schedule_artifact: data.schedule_artifact" in js_text
+    assert "semantic_diff: data.semantic_diff" in js_text
+    assert "renderSemanticDiff" in js_text
+    assert "diffExpander" in index.text
+    assert "Изменения между версиями" in index.text
     assert "refreshScheduleDownloadsOnThread" in js_text
     assert "li._masTurn = turn" in js_text
     assert "statusDot" in index.text
@@ -415,6 +468,7 @@ def test_ready_health_and_static_assets() -> None:
     assert "tone-hitl" in css_text
     assert "tone-error" in css_text
     assert "schedule-download-row" in css_text
+    assert "diff-expander" in css_text
     assert "minmax(16rem" in css_text
     assert "showFlash" in js_text
     assert "alert(" not in js_text
@@ -526,6 +580,8 @@ def test_demo_seed_has_duration_brief_and_hitl_gate() -> None:
     assert any(item.get("duration_ms") for item in activity)
     assert any(item.get("at_abs") for item in activity)
     assert any(item.get("status") == "AWAITING_HUMAN" for item in activity)
+    assert feed["semantic_diff"]["changed_keywords"]
+    assert body["semantic_diff"]["edits"]
 
 
 def test_local_hitl_approve_reply_reject(monkeypatch) -> None:

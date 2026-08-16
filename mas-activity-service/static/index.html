@@ -7,7 +7,7 @@
   <link rel="preconnect" href="https://fonts.googleapis.com" />
   <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
   <link href="https://fonts.googleapis.com/css2?family=IBM+Plex+Sans:wght@400;500;600;700&family=IBM+Plex+Mono:wght@400;500&display=swap" rel="stylesheet" />
-  <link rel="stylesheet" href="/static/app.css?v=40" />
+  <link rel="stylesheet" href="/static/app.css?v=41" />
 </head>
 <body>
   <div class="atmosphere" aria-hidden="true"></div>
@@ -74,6 +74,11 @@
           <a class="btn btn-quiet" href="/" id="notFoundHome">Вернуться на главную</a>
         </div>
       </div>
+
+      <details class="diff-expander" id="diffExpander" hidden>
+        <summary>Изменения между версиями</summary>
+        <div class="diff-body" id="diffBody"></div>
+      </details>
 
       <aside class="gate-panel" id="gatePanel" hidden>
         <div class="gate-head">
@@ -148,6 +153,6 @@
     </section>
   </main>
 
-  <script src="/static/app.js?v=42"></script>
+  <script src="/static/app.js?v=44"></script>
 </body>
 </html>
