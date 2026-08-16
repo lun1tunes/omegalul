@@ -17,12 +17,10 @@ from __future__ import annotations
 
 import json
 
-from schedule_emit_order import within_date_order_js
-
 
 def timeline_core_js() -> str:
     """Pure helpers shared by n8n Code nodes (no $json / $('…'))."""
-    return within_date_order_js() + "\n" + r"""
+    return r"""
 const MONTH={JAN:0,FEB:1,MAR:2,APR:3,MAY:4,JUN:5,JUL:6,AUG:7,SEP:8,OCT:9,NOV:10,DEC:11};
 const MONTHS=['JAN','FEB','MAR','APR','MAY','JUN','JUL','AUG','SEP','OCT','NOV','DEC'];
 const MOVE_KEYWORDS=new Set(['WELOPEN','WCONPROD','WEFAC']);
@@ -382,16 +380,6 @@ const checkMonthlyDatesContinuity=dates=>{
 };
 
 /** (3) Emit SCHEDULE.INC text from timeline model */
-const orderBlocksWithinDate=blocks=>{
-  const leading=[],keywords=[],trailing=[];
-  let seenKw=false;
-  (blocks||[]).forEach((blk,i)=>{
-    if(blk.kind==='keyword'){seenKw=true;keywords.push({blk,i});return}
-    if(!seenKw)leading.push(blk);else trailing.push(blk);
-  });
-  keywords.sort((a,b)=>compareWithinDateKeywords(a.blk.keyword,b.blk.keyword,a.i,b.i));
-  return [...leading,...keywords.map(x=>x.blk),...trailing];
-};
 const emitScheduleFromTimeline=model=>{
   const out=[];
   for(const step of model.steps||[]){
@@ -399,7 +387,7 @@ const emitScheduleFromTimeline=model=>{
       out.push(step.dates_header);
       for(const line of(step.dates_body||[]))out.push(line);
     }
-    for(const blk of orderBlocksWithinDate(step.blocks||[])){
+    for(const blk of step.blocks||[]){
       if(blk.kind==='trivia'){
         for(const line of(blk.lines||[]))out.push(line);
         continue;

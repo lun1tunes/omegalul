@@ -6,6 +6,7 @@ and renders typed IR only after validating every field against that catalogue.
 """
 from __future__ import annotations
 
+from schedule_emit_order import within_date_order_js
 from schedule_lossless_runtime import SHA256_JS
 
 
@@ -19,6 +20,7 @@ const obj=v=>v&&typeof v==='object'&&!Array.isArray(v),arr=Array.isArray,clean=v
 const allowed=new Set(__KEYWORDS__),findings=[];
 const mode=clean(x.mode||x.build_mode).toUpperCase(),catalogue=obj(x.schema_catalogue)?x.schema_catalogue:{},events=arr(x.ir_events)?x.ir_events.filter(obj):[];
 __SHA256_JS__
+__WITHIN_DATE_ORDER_JS__
 const hash=contentHash,shaPattern=/^sha256:[a-f0-9]{64}$/i;
 const profile=obj(catalogue.simulator_profile)?catalogue.simulator_profile:{};
 const schemas=arr(catalogue.schemas)?catalogue.schemas.filter(obj):[];
@@ -70,15 +72,42 @@ for(let i=0;i<events.length;i++){
   if(!allowed.has(kw)){findings.push({code:'IR_KEYWORD_UNSUPPORTED',severity:'error',index:i,event_id:eventId,keyword:kw});continue}
   if(mode==='CREATE'&&op!=='ADD'){findings.push({code:'CREATE_REQUIRES_ADD_ONLY',severity:'error',index:i,event_id:eventId,operation:op});continue}
   if(mode==='REVISE'&&['MODIFY','REMOVE'].includes(op)&&(!clean(e.target_node_id)||!shaPattern.test(clean(e.expected_raw_hash)))){findings.push({code:'IR_TARGET_IDENTITY_REQUIRED',severity:'error',index:i,event_id:eventId});continue}
-  const base={event_id:eventId,operation:op,keyword:kw,variant,target_node_id:clean(e.target_node_id)||null,expected_raw_hash:clean(e.expected_raw_hash)||null,file_ref:clean(e.file_ref)||null,before_node_id:clean(e.before_node_id)||null,after_node_id:clean(e.after_node_id)||null,provenance:arr(e.provenance)?e.provenance.slice(0,100):[]};
+  const base={event_id:eventId,operation:op,keyword:kw,variant,target_node_id:clean(e.target_node_id)||null,expected_raw_hash:clean(e.expected_raw_hash)||null,file_ref:clean(e.file_ref)||null,before_node_id:clean(e.before_node_id)||null,after_node_id:clean(e.after_node_id)||null,provenance:arr(e.provenance)?e.provenance.slice(0,100):[],_ir_index:i};
   if(['KEEP','REMOVE'].includes(op)){renderedChanges.push(base);continue}
   const schema=schemaMap.get(`${kw}::${variant}`);if(!schema){findings.push({code:'IR_SCHEMA_VARIANT_NOT_FOUND',severity:'error',index:i,event_id:eventId,keyword:kw,variant});continue}
   if(!base.provenance.length){findings.push({code:'IR_PROVENANCE_REQUIRED',severity:'error',index:i,event_id:eventId});continue}
   const values=obj(e.fields)?e.fields:{},known=new Set(schema.fields.map(f=>clean(f.name))),unknown=Object.keys(values).filter(k=>!known.has(k));if(unknown.length){findings.push({code:'IR_UNKNOWN_FIELD',severity:'error',index:i,event_id:eventId,fields:unknown});continue}
   const tokens=[];let fieldError=false;for(const f of schema.fields){const name=clean(f.name),present=Object.prototype.hasOwnProperty.call(values,name);if(!present){if(f.required===true){findings.push({code:'IR_REQUIRED_FIELD_MISSING',severity:'error',index:i,event_id:eventId,keyword:kw,field:name});fieldError=true;continue}if(f.default_allowed===true){tokens.push('*');continue}findings.push({code:'IR_OPTIONAL_FIELD_HAS_NO_DEFAULT_POLICY',severity:'error',index:i,event_id:eventId,keyword:kw,field:name});fieldError=true;continue}const token=renderValue(values[name],f,e);if(token===null){fieldError=true;continue}tokens.push(token)}if(fieldError)continue;
   const l=schema.layout,record=`${l.indent}${tokens.join(l.delimiter)}${l.record_terminator}`,text=`${kw}${l.newline}${record}${l.newline}${l.block_terminator==='slash_line'?'/'+l.newline:''}`;
-  const change={...base,rendered_text:text,schema_id:schema.schema_id,schema_revision:schema.schema_revision,citation:schema.citation,render_hash:hash(text)};renderedChanges.push(change);renderedRecords.push({event_id:eventId,keyword:kw,variant,field_count:tokens.length,render_hash:change.render_hash,schema_id:schema.schema_id});
+  const change={...base,rendered_text:text,schema_id:schema.schema_id,schema_revision:schema.schema_revision,citation:schema.citation,render_hash:hash(text)};renderedChanges.push(change);renderedRecords.push({event_id:eventId,keyword:kw,variant,field_count:tokens.length,render_hash:change.render_hash,schema_id:schema.schema_id,_ir_index:i});
+}
+// CREATE: assemble by DATES segments, then within-date keyword order (stage-3 algorithm — not RAG).
+if(mode==='CREATE'&&!findings.some(f=>f.severity==='error')&&renderedChanges.length){
+  const segments=[];let cur={dates:null,items:[]};
+  const flush=()=>{if(cur.dates||cur.items.length)segments.push(cur);cur={dates:null,items:[]}};
+  for(let i=0;i<renderedChanges.length;i++){
+    const c=renderedChanges[i];
+    if(c.keyword==='DATES'){flush();cur={dates:c,items:[]};continue}
+    cur.items.push({change:c,orig:c._ir_index??i});
+  }
+  flush();
+  const ordered=[];
+  for(const seg of segments){
+    if(seg.dates)ordered.push(seg.dates);
+    seg.items.sort((a,b)=>compareWithinDateKeywords(a.change.keyword,b.change.keyword,a.orig,b.orig));
+    for(const it of seg.items)ordered.push(it.change);
+  }
+  renderedChanges.length=0;for(const c of ordered){const{_ir_index,...rest}=c;renderedChanges.push(rest)}
+  const byId=new Map(renderedRecords.map(r=>[r.event_id,r]));
+  const orderedRecords=[];
+  for(const c of renderedChanges){const r=byId.get(c.event_id);if(r){const{_ir_index,...rest}=r;orderedRecords.push(rest)}}
+  renderedRecords.length=0;for(const r of orderedRecords)renderedRecords.push(r);
+}else{
+  for(const c of renderedChanges)delete c._ir_index;
+  for(const r of renderedRecords)delete r._ir_index;
 }
 const hard=findings.filter(f=>f.severity==='error'),catalogueFingerprint=hash(schemas.slice().sort((a,b)=>`${a.keyword}:${a.variant||'default'}`.localeCompare(`${b.keyword}:${b.variant||'default'}`)).map(s=>`${s.schema_id}|${s.schema_revision}|${s.keyword}|${s.variant||'default'}`).join('\n'));
 return[{json:{contract:'schedule_render_result',contract_version:'1.0',status:hard.length?'needs_input':'rendered',mode,changes:hard.length?[]:renderedChanges,rendered_records:hard.length?[]:renderedRecords,catalogue_ref:clean(catalogue.catalogue_ref)||null,catalogue_hash:catalogueHash||null,catalogue_fingerprint:catalogueFingerprint,source_hash:sourceHash||null,findings,hard_blockers:hard.map(f=>f.code),metrics:{ir_events:events.length,schemas:schemas.length,rendered_records:hard.length?0:renderedRecords.length,passed:hard.length===0}}}];
-""".replace("__KEYWORDS__", allowed).replace("__SHA256_JS__", SHA256_JS)
+""".replace("__KEYWORDS__", allowed).replace("__SHA256_JS__", SHA256_JS).replace(
+        "__WITHIN_DATE_ORDER_JS__", within_date_order_js()
+    )

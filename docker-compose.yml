@@ -185,6 +185,13 @@ services:
       N8N_USERNAME: ${N8N_USERNAME:-}
       N8N_PASSWORD: ${N8N_PASSWORD:-}
       ORCHESTRATOR_WORKFLOW_ID: ${ORCHESTRATOR_WORKFLOW_ID:-}
+      # Pull catalog/feed from n8n Data Table hydrate webhooks (UI-importable; bind tables in n8n).
+      ACTIVITY_LIST_URL: ${ACTIVITY_LIST_URL:-http://n8n:5678/webhook/mas-activity-list-tasks}
+      ACTIVITY_FEED_URL: ${ACTIVITY_FEED_URL:-http://n8n:5678/webhook/mas-activity-load-feed}
+      ACTIVITY_DURABLE_AUTH_HEADER: ${ACTIVITY_DURABLE_AUTH_HEADER:-}
+      ACTIVITY_DURABLE_AUTH_VALUE: ${ACTIVITY_DURABLE_AUTH_VALUE:-}
+      ACTIVITY_STATE_PATH: ${ACTIVITY_STATE_PATH:-/data/activity_state.json}
+      MAS_KNOWLEDGE_CORPUS: ${MAS_KNOWLEDGE_CORPUS:-/corpus/rag/excel-agent-operating-guide.documents.json}
     mem_limit: ${MAS_ACTIVITY_MEMORY_LIMIT:-256m}
     cpus: ${MAS_ACTIVITY_CPUS:-0.5}
     pids_limit: 128
@@ -199,6 +206,9 @@ services:
       retries: 12
     ports:
       - "127.0.0.1:${MAS_ACTIVITY_HOST_PORT:-8200}:8200"
+    volumes:
+      - activity_data:/data
+      - ./n8n/rag:/corpus/rag:rw
     networks:
       - backend
       - ingress
@@ -207,6 +217,7 @@ volumes:
   postgres_data:
   n8n_data:
   excel_sessions:
+  activity_data:
 
 networks:
   backend:

@@ -111,7 +111,7 @@ flowchart TB
   SRetr <--> Pg
 ```
 
-**MVP runtime (активировать forms только после Health Check):** Entry, Human Gate, Health Check, Orchestrator, `CAS — Persist Task State`, Trace, Excel Adapter+Agent, `MAS — Knowledge Ingestion` / `MAS — Knowledge Retrieval`, `SCHEDULE — Builder`, Calculation Adapter. Презентация handoff’ов — `mas-activity-service` (`:8200`, Compose-сервис или локальный uvicorn), питается от Trace Writer после durable insert. Commissioning REVISE дат ввода: deterministic timeline path в Builder (`parse → shift/remove/new-well HITL → emit`).
+**MVP runtime (активировать forms только после Health Check):** Entry, Human Gate, Health Check, Orchestrator, `CAS — Persist Task State`, Trace, Excel Adapter+Agent, `MAS — Knowledge Ingestion` / `MAS — Knowledge Retrieval`, `SCHEDULE — Builder`, Calculation Adapter, Activity hydrate (`List Tasks` / `Load Feed`). Презентация handoff’ов — `mas-activity-service` (`:8200`, Compose-сервис или локальный uvicorn): live sync из Trace Writer; список задач подтягивается при загрузке страницы / клике на бренд **MAS Activity**. Commissioning REVISE дат ввода: deterministic timeline path в Builder (`parse → shift/remove/new-well HITL → emit`).
 
 **Не активировать:** `Adapter — Excel Form`, `Template — Engineering Specialist`, `Reference — AI Components`. `CAS — Persist Task State` остаётся inactive (его вызывает Orchestrator). `MAS — Knowledge Ingestion` не Publish: первый пакет — Manual-триггер, дальше — вставка всей простыни `excel-agent-operating-guide.documents.json`.
 
@@ -206,7 +206,7 @@ notepad mas-activity.env
 start-windows.bat
 ```
 
-Задайте уникальный `MAS_ACTIVITY_KEY`. Проверка: `check-windows.bat`. UI: `http://127.0.0.1:8200/` — **Новая задача** (drag-and-drop) или deep-link `/t/<task_id>`. Для n8n на другой машине: `MAS_ACTIVITY_HOST=0.0.0.0`.
+Задайте уникальный `MAS_ACTIVITY_KEY`. Для восстановления ленты после рестарта — `ACTIVITY_LIST_URL` / `ACTIVITY_FEED_URL` на webhook’и Activity hydrate (см. Step 3). Проверка: `check-windows.bat`. UI: `http://127.0.0.1:8200/` — **Новая задача**, клик по бренду **MAS Activity** (или F5) для обновления списка из Data Tables, deep-link `/t/<task_id>`. Для n8n на другой машине: `MAS_ACTIVITY_HOST=0.0.0.0`.
 
 Альтернатива — Compose:
 
@@ -242,10 +242,12 @@ HITL composer открывается при `awaiting_human` / `AWAITING_HUMAN` 
 | 9 | `n8n/workflows/core/universal-engineering-orchestrator.workflow.json` | `Orchestrator — Engineering MAS` |
 | 10 | `n8n/workflows/core/mvp-entry-form.workflow.json` | `Form — MAS Entry` |
 | 11 | `n8n/workflows/core/mas-human-gate-form.workflow.json` | `Form — MAS Human Gate` |
-| 12 | `n8n/workflows/core/mas-deployment-health-check.workflow.json` | `Form — MAS Deployment Health Check` |
+| 12 | `n8n/workflows/core/mas-activity-list-tasks.workflow.json` | `Activity — List Tasks (Data Table)` |
+| 13 | `n8n/workflows/core/mas-activity-load-feed.workflow.json` | `Activity — Load Feed (Data Tables)` |
+| 14 | `n8n/workflows/core/mas-deployment-health-check.workflow.json` | `Form — MAS Deployment Health Check` |
 
 Опционально из `n8n/workflows/support/`: Excel Form adapter, AI components, specialist template.  
-Полный clean-import набор — **15** JSON (`full_clean_import_set`). Все приходят с `active: false`. `CAS — Persist Task State` импортируется **до** Orchestrator.
+Полный clean-import набор — **17** JSON (`full_clean_import_set`). Все приходят с `active: false`. `CAS — Persist Task State` импортируется **до** Orchestrator.
 
 ### Step 2 — Create Data Tables
 
@@ -291,6 +293,16 @@ Dropped vs older drafts: `phase`, `task_type`, `history_json`, `last_error_json`
 | `Orchestrator — Engineering MAS` | `Load task by ID` | `engineering_orchestrator_tasks_v1` |
 | `Form — MAS Deployment Health Check` | `Probe task Data Table` | `engineering_orchestrator_tasks_v1` |
 | `Form — MAS Deployment Health Check` | `Probe trace Data Table` | `mas_trace_events_v1` |
+| `Activity — List Tasks (Data Table)` | `Load recent tasks` | `engineering_orchestrator_tasks_v1` |
+| `Activity — Load Feed (Data Tables)` | `Load task row` | `engineering_orchestrator_tasks_v1` |
+| `Activity — Load Feed (Data Tables)` | `Load trace rows` | `mas_trace_events_v1` |
+
+После биндинга активируйте оба Activity webhook (или Test URL). В Compose / `mas-activity.env`:
+
+- `ACTIVITY_LIST_URL=http://n8n:5678/webhook/mas-activity-list-tasks` (с хоста: `http://127.0.0.1:<N8N_HOST_PORT>/webhook/...`)
+- `ACTIVITY_FEED_URL=http://n8n:5678/webhook/mas-activity-load-feed`
+
+В UI Activity список подтягивается при загрузке страницы и по клику на бренд **MAS Activity**. Без этих URL морда остаётся на локальном store (`ACTIVITY_STATE_PATH` / volume).
 
 ### Step 4 — Bind Execute Workflow nodes (24 обязательных)
 
@@ -419,7 +431,7 @@ export WORKSPACE_ROOT="$PWD"
 for f in n8n/tests/*-smoke.js; do node "$f" || exit 1; done
 # ~192 scenarios across 17 smoke files
 
-cd mas-activity-service && PYTHONPATH=. python3 -m pytest -q   # 19 passed
+cd mas-activity-service && PYTHONPATH=. python3 -m pytest -q   # 22 passed
 
 cd ../excel-agent-tools
 python -m pip install -r requirements-dev.txt
@@ -432,7 +444,7 @@ python3 simulation-model-example/combat-dates-revise/run_integration_cases.py
 python3 scripts/mas_stack_health.py
 ```
 
-Ожидание: smoke и pytest зелёные; clean import `n8nio/n8n:2.30.8` принимает все 15 JSON, `active=0`.
+Ожидание: smoke и pytest зелёные; clean import `n8nio/n8n:2.30.8` принимает все 17 JSON, `active=0`.
 
 ```bash
 cp .env.example .env   # POSTGRES_*, N8N_*, EXCEL_TOOLS_API_KEY, MAS_ACTIVITY_KEY
@@ -446,7 +458,7 @@ Compose: n8n `2.30.8` (+ runners), PostgreSQL/PGVector, Excel Tools, MAS Activit
 
 ### Структура репозитория
 
-- `n8n/` — 15 workflow JSON (`workflows/core` runtime, `workflows/support` вспомогательные), import-manifest, data-tables CSV, генераторы (`schedule_timeline_runtime.py` — commissioning parse→mutate→emit), smoke-тесты (~192), contracts в `n8n/contracts/`
+- `n8n/` — 17 workflow JSON (`workflows/core` runtime + Activity Data Table hydrate, `workflows/support` вспомогательные), import-manifest, data-tables CSV, генераторы (`schedule_timeline_runtime.py` — commissioning parse→mutate→emit), smoke-тесты (~192), contracts в `n8n/contracts/`
 - `mas-activity-service/` — chat-морда handoff’ов + Dockerfile (Compose); SSE, sync из Trace Writer, HITL composer
 - `excel-agent-tools/` — Excel FastAPI + workflow contract pytest
 - `fastapi-math-service/` — NumPy geometry FastAPI

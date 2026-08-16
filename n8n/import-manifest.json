@@ -8,6 +8,8 @@
     "workflows/core/cas-persist-task.workflow.json",
     "workflows/core/excel-engineering-specialist-adapter.workflow.json",
     "workflows/core/excel-extraction-agent.workflow.json",
+    "workflows/core/mas-activity-list-tasks.workflow.json",
+    "workflows/core/mas-activity-load-feed.workflow.json",
     "workflows/core/mas-deployment-health-check.workflow.json",
     "workflows/core/mas-human-gate-form.workflow.json",
     "workflows/core/mas-trace-event-writer.workflow.json",
@@ -32,6 +34,8 @@
     "workflows/core/universal-engineering-orchestrator.workflow.json",
     "workflows/core/mvp-entry-form.workflow.json",
     "workflows/core/mas-human-gate-form.workflow.json",
+    "workflows/core/mas-activity-list-tasks.workflow.json",
+    "workflows/core/mas-activity-load-feed.workflow.json",
     "workflows/core/mas-deployment-health-check.workflow.json"
   ],
   "optional_or_non_runtime": [
@@ -291,6 +295,7 @@
   ],
   "ui_configuration": [
     "Select both Data Tables in every matching Data Table node. Task-state insert/update are only in CAS — Persist Task State; Orchestrator keeps Load task by ID.",
+    "Bind Activity — List Tasks / Load Feed Data Table nodes, activate their webhooks, set ACTIVITY_LIST_URL and ACTIVITY_FEED_URL on mas-activity (Compose defaults to http://n8n:5678/webhook/...).",
     "Apply all mandatory Execute Workflow bindings (CAS persist fan-in, Entry, Human Gate, Health Check, Orchestrator specialists) — see docs.md Step 4.",
     "Create Data Tables from docs.md or n8n/data-tables/*.header.csv, then bind every Data Table node listed in Step 3.",
     "Run Form — MAS Deployment Health Check before activating user forms; fix every FAIL using where_to_fix.",

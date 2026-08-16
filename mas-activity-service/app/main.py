@@ -9,6 +9,7 @@ import re
 import secrets
 import time
 from collections import defaultdict
+from contextlib import asynccontextmanager
 from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any, Literal
@@ -21,6 +22,8 @@ from pydantic import BaseModel, Field, field_validator
 from app.enrich import enrich_turn
 from app.orchestrator import BinaryMap, OrchestratorError, hitl_backend, invoke_orchestrator
 from app import knowledge as knowledge_store
+from app.durable import durable_enabled, fetch_task_feed, fetch_task_list
+from app.persist import load_state, persist_enabled, save_state
 
 STATIC = Path(__file__).resolve().parents[1] / "static"
 ACTIVITY_KEY = os.getenv("MAS_ACTIVITY_KEY", "dev-local")
@@ -38,10 +41,23 @@ EXCEL_EXT = re.compile(r"\.(?:xlsx|xls)$", re.I)
 TRAJECTORY_EXT = re.compile(r"\.dev$", re.I)
 SURFACE_EXT = re.compile(r"\.(?:cps3|grd|grid|txt)$", re.I)
 
+
+@asynccontextmanager
+async def lifespan(_app: FastAPI):
+    tasks, order = load_state()
+    _tasks.clear()
+    _order.clear()
+    _subscribers.clear()
+    _tasks.update(tasks)
+    _order.extend(order)
+    yield
+
+
 app = FastAPI(
     title="MAS Activity Service",
-    version="0.4.0",
-    description="Live handoff transcript + HITL composer + new-task start for Petroleum Engineering MAS.",
+    version="0.5.1",
+    description="Live handoff transcript + HITL + Data Table hydrate for Petroleum Engineering MAS.",
+    lifespan=lifespan,
 )
 
 
@@ -85,6 +101,7 @@ class EventIn(BaseModel):
     handoff: dict[str, Any] | None = None
     task_id: str | None = None
     trace_id: str | None = None
+    event_id: str | None = None
     human_gate: dict[str, Any] | None = None
 
 
@@ -137,7 +154,7 @@ class TaskMeta(BaseModel):
     task_id: str
     title: str | None = None
     updated_at: str
-    turn_count: int
+    turn_count: int | None = None
     last_status: str | None = None
     last_at_abs: str | None = None
     status: str | None = None
@@ -149,6 +166,8 @@ _tasks: dict[str, dict[str, Any]] = {}
 _subscribers: dict[str, list[asyncio.Queue]] = defaultdict(list)
 _order: list[str] = []
 _started_at = datetime.now(timezone.utc).isoformat()
+# One-shot empty-rail list pull so inactive webhooks cannot spam every GET /v1/tasks.
+_empty_rail_list_attempted = False
 
 
 def _now() -> str:
@@ -157,9 +176,16 @@ def _now() -> str:
 
 def reset_store() -> None:
     """Test helper — clears in-memory state."""
+    global _empty_rail_list_attempted
     _tasks.clear()
     _subscribers.clear()
     _order.clear()
+    _empty_rail_list_attempted = False
+    _persist()
+
+
+def _persist() -> None:
+    save_state(_tasks, _order)
 
 
 def _require_key(x_activity_key: str | None = Header(default=None, alias="X-Activity-Key")) -> None:
@@ -167,23 +193,102 @@ def _require_key(x_activity_key: str | None = Header(default=None, alias="X-Acti
         raise HTTPException(status_code=401, detail="Invalid or missing X-Activity-Key")
 
 
-def _touch(task_id: str) -> dict[str, Any]:
+def _new_task_shell(task_id: str) -> dict[str, Any]:
+    return {
+        "task_id": task_id,
+        "title": None,
+        "objective": None,
+        "updated_at": _now(),
+        "turns": [],
+        "status": None,
+        "version": None,
+        "gate": None,
+        "transcript_loaded": False,
+    }
+
+
+def _is_local_presentation_task(task_id: str) -> bool:
+    """Local Activity starts / demo seeds are not CAS catalog rows."""
+    return task_id.startswith("act_") or task_id.startswith("demo_")
+
+
+def _trim_to_max_tasks() -> None:
+    """Evict oldest entries, preferring CAS/catalog ids so act_*/demo_* stay on the rail."""
+    while len(_order) > MAX_TASKS:
+        evict_at = next(
+            (i for i, tid in enumerate(_order) if not _is_local_presentation_task(tid)),
+            0,
+        )
+        old = _order.pop(evict_at)
+        _tasks.pop(old, None)
+        _subscribers.pop(old, None)
+
+
+def _ensure_task(task_id: str) -> dict[str, Any]:
+    """Create a task shell without MAX_TASKS eviction (caller must trim)."""
     if task_id not in _tasks:
-        _tasks[task_id] = {
-            "task_id": task_id,
-            "title": None,
-            "updated_at": _now(),
-            "turns": [],
-            "status": None,
-            "version": None,
-            "gate": None,
-        }
+        _tasks[task_id] = _new_task_shell(task_id)
         _order.append(task_id)
-        while len(_order) > MAX_TASKS:
-            old = _order.pop(0)
-            _tasks.pop(old, None)
-            _subscribers.pop(old, None)
     return _tasks[task_id]
+
+
+def _touch(task_id: str) -> dict[str, Any]:
+    _ensure_task(task_id)
+    _trim_to_max_tasks()
+    return _tasks[task_id]
+
+
+def _set_objective(task: dict[str, Any], objective: str | None) -> None:
+    """Store objective from CAS/start. Non-empty incoming always wins (CAS is authoritative)."""
+    text = str(objective or "").strip()
+    if not text:
+        return
+    task["objective"] = text[:8000]
+
+
+def _parse_ts(value: Any) -> datetime | None:
+    if not isinstance(value, str) or not value.strip():
+        return None
+    text = value.strip().replace("Z", "+00:00")
+    try:
+        dt = datetime.fromisoformat(text)
+    except ValueError:
+        return None
+    if dt.tzinfo is None:
+        dt = dt.replace(tzinfo=timezone.utc)
+    return dt.astimezone(timezone.utc)
+
+
+def _merge_updated_at(task: dict[str, Any], incoming: str | None) -> None:
+    """Keep the newer of local vs CAS timestamps so hydrate cannot demote live tasks."""
+    incoming_ts = _parse_ts(incoming)
+    if incoming_ts is None:
+        return
+    local_ts = _parse_ts(task.get("updated_at"))
+    if local_ts is None or incoming_ts >= local_ts:
+        task["updated_at"] = incoming_ts.isoformat()
+
+
+def _merge_version(task: dict[str, Any], version: Any) -> None:
+    """Keep the higher of local vs CAS version so hydrate cannot regress HITL expected_version."""
+    if not isinstance(version, int):
+        return
+    prior = task.get("version")
+    if not isinstance(prior, int) or version >= prior:
+        task["version"] = version
+
+
+def _task_objective(task: dict[str, Any]) -> str | None:
+    direct = str(task.get("objective") or "").strip()
+    if direct:
+        return direct
+    for turn in task.get("turns") or []:
+        details = turn.get("details") if isinstance(turn.get("details"), dict) else {}
+        for key in ("objective", "task_description", "request_text", "problem_statement"):
+            val = details.get(key)
+            if isinstance(val, str) and val.strip():
+                return val.strip()[:8000]
+    return None
 
 
 def _normalize_turn(raw: TurnIn | dict[str, Any], *, trace_id: str | None = None) -> dict[str, Any]:
@@ -220,6 +325,23 @@ def _awaiting(task: dict[str, Any]) -> bool:
     return _is_awaiting_status(task.get("status")) and bool(_gate_payload(task))
 
 
+def _turn_fingerprint(turn: dict[str, Any]) -> tuple[Any, ...]:
+    """Stable key so Trace sync after durable hydrate does not duplicate handoffs."""
+    frm = turn.get("from") if isinstance(turn.get("from"), dict) else {}
+    details = turn.get("details") if isinstance(turn.get("details"), dict) else {}
+    event_id = details.get("event_id") or turn.get("event_id")
+    return (
+        str(event_id or ""),
+        str(turn.get("trace_id") or ""),
+        str(turn.get("at") or ""),
+        str(turn.get("status") or ""),
+        str(turn.get("summary") or turn.get("text") or "")[:240],
+        str(turn.get("brief") or "")[:240],
+        str(frm.get("role") or turn.get("from_role") or ""),
+        str(turn.get("stage") or ""),
+    )
+
+
 async def _publish(task_id: str, message: dict[str, Any]) -> None:
     queues = list(_subscribers.get(task_id, []))
     for queue in queues:
@@ -229,22 +351,65 @@ async def _publish(task_id: str, message: dict[str, Any]) -> None:
             pass
 
 
-async def _append_turns(task_id: str, turns: list[dict[str, Any]], *, title: str | None = None) -> list[dict[str, Any]]:
+async def _append_turns(
+    task_id: str,
+    turns: list[dict[str, Any]],
+    *,
+    title: str | None = None,
+    objective: str | None = None,
+    replace: bool = False,
+    source: str = "live",
+) -> list[dict[str, Any]]:
+    """Append turns. source='cas' for Data Table hydrate; 'live' for Trace/SSE/HITL.
+
+    replace=True clears prior CAS-sourced turns, then merges incoming CAS rows and
+    keeps live-only turns so durable refresh cannot wipe fresher Trace Writer sync.
+    """
     async with _lock:
         task = _touch(task_id)
+        live_keep: list[dict[str, Any]] = []
+        if replace:
+            live_keep = [
+                dict(t)
+                for t in task["turns"]
+                if isinstance(t, dict) and str(t.get("source") or "") == "live"
+            ]
+            task["turns"] = []
         if title:
             task["title"] = title
+        _set_objective(task, objective)
+        existing = {_turn_fingerprint(t) for t in task["turns"] if isinstance(t, dict)}
         stored = []
         for turn in turns:
             turn = dict(turn)
+            turn["source"] = source
+            key = _turn_fingerprint(turn)
+            if key in existing:
+                continue
+            existing.add(key)
             turn["turn_id"] = len(task["turns"]) + 1
             task["turns"].append(turn)
             stored.append(turn)
+        if replace and live_keep:
+            for turn in live_keep:
+                key = _turn_fingerprint(turn)
+                if key in existing:
+                    continue
+                existing.add(key)
+                turn["source"] = "live"
+                turn["turn_id"] = len(task["turns"]) + 1
+                task["turns"].append(turn)
+            task["turns"].sort(key=lambda t: str(t.get("at") or ""))
+            for index, item in enumerate(task["turns"], start=1):
+                item["turn_id"] = index
         if len(task["turns"]) > MAX_TURNS_PER_TASK:
             task["turns"] = task["turns"][-MAX_TURNS_PER_TASK :]
             for index, item in enumerate(task["turns"], start=1):
                 item["turn_id"] = index
-        task["updated_at"] = _now()
+        task["transcript_loaded"] = True
+        if stored or title or objective or replace:
+            task["updated_at"] = _now()
+        _persist()
     for turn in stored:
         await _publish(task_id, {"type": "turn", "task_id": task_id, "turn": turn})
     return stored
@@ -263,7 +428,7 @@ async def _set_gate(
         if status is not None:
             task["status"] = _normalize_task_status(status) or status
         if version is not None:
-            task["version"] = version
+            _merge_version(task, version)
         if clear_gate:
             task["gate"] = None
         elif gate is not None:
@@ -276,6 +441,7 @@ async def _set_gate(
             "awaiting_human": _awaiting(task),
             "updated_at": task["updated_at"],
         }
+        _persist()
     await _publish(
         task_id,
         {
@@ -296,6 +462,8 @@ def _events_to_turns(events: list[EventIn], *, trace_id: str | None) -> list[dic
         details = handoff.get("details") if isinstance(handoff.get("details"), dict) else {}
         if event.duration_ms is not None:
             details = {**details, "duration_ms": event.duration_ms}
+        if event.event_id:
+            details = {**details, "event_id": event.event_id}
         out.append(
             _normalize_turn(
                 {
@@ -439,8 +607,10 @@ def health() -> dict[str, Any]:
     return {
         "status": "ok",
         "service": "mas-activity",
-        "version": "0.4.0",
+        "version": "0.5.1",
         "hitl_backend": hitl_backend(),
+        "durable_hydrate": durable_enabled(),
+        "state_persist": persist_enabled(),
         "tasks": len(_tasks),
         "time": _now(),
         "started_at": _started_at,
@@ -451,7 +621,7 @@ def health() -> dict[str, Any]:
 def ready() -> dict[str, Any]:
     if not STATIC.exists() or not (STATIC / "index.html").exists():
         raise HTTPException(status_code=503, detail="UI assets missing")
-    return {"status": "ready", "hitl_backend": hitl_backend()}
+    return {"status": "ready", "hitl_backend": hitl_backend(), "durable_hydrate": durable_enabled()}
 
 
 @app.post("/v1/turns")
@@ -461,61 +631,262 @@ async def post_turn(body: TurnPost, _: None = Depends(_require_key)) -> dict[str
     return {"stored": True, "task_id": body.task_id, "turn": stored[0]}
 
 
-@app.post("/v1/sync")
-async def post_sync(body: SyncPost, _: None = Depends(_require_key)) -> dict[str, Any]:
+async def _ingest_sync(
+    body: SyncPost,
+    *,
+    title: str | None = None,
+    objective: str | None = None,
+    replace_turns: bool = False,
+) -> dict[str, Any]:
     turns = [_normalize_turn(t, trace_id=body.trace_id) for t in body.turns]
     turns.extend(_events_to_turns(body.events, trace_id=body.trace_id))
     gate = body.human_gate if isinstance(body.human_gate, dict) else None
+    gate_ok = bool(gate and gate.get("gate_id"))
+    if gate and not gate_ok:
+        gate = None
     explicit_status = body.status is not None
     status = body.status
     for event in body.events:
         event_gate = event.human_gate if isinstance(event.human_gate, dict) else None
-        if event_gate and not gate:
+        if event_gate and event_gate.get("gate_id") and not gate:
             gate = event_gate
-        # Promote event status only when it opens/arms a gate — never routine handoff codes
-        # like EXCEL_EVIDENCE_READY (those would clear_gate and hide the HITL composer).
+            gate_ok = True
         if event.status and status is None and (event_gate or _is_awaiting_status(event.status)):
             status = event.status
-    if gate is not None and status is None:
+    if gate_ok and status is None:
         status = "awaiting_human"
     status = _normalize_task_status(status)
-    # Update gate/status only from top-level orch fields or an event that carried human_gate /
-    # AWAITING_HUMAN. Trace Writer handoff batches alone must not clear an open gate.
-    if gate is not None or explicit_status or body.version is not None:
+    # Durable feed: CAS gate is authoritative (omit → clear). Never leave orphan awaiting.
+    if replace_turns and _is_awaiting_status(status) and not gate_ok:
+        status = "running"
+    if gate_ok or explicit_status or body.version is not None or replace_turns:
+        clear_gate = (not gate_ok) if replace_turns else (
+            gate is None and explicit_status and not _is_awaiting_status(status)
+        )
         await _set_gate(
             body.task_id,
-            status=status if (gate is not None or explicit_status) else None,
+            status=status if (gate_ok or explicit_status or replace_turns) else None,
             version=body.version,
-            gate=gate,
-            clear_gate=gate is None and explicit_status and not _is_awaiting_status(status),
+            gate=gate if gate_ok else None,
+            clear_gate=clear_gate,
         )
-    if not turns:
-        return {"stored": False, "task_id": body.task_id, "count": 0, "reason": "no_handoff_events"}
-    stored = await _append_turns(body.task_id, turns)
-    return {"stored": True, "task_id": body.task_id, "count": len(stored), "turns": stored}
+    stored: list[dict[str, Any]] = []
+    if turns or replace_turns:
+        stored = await _append_turns(
+            body.task_id,
+            turns,
+            title=title,
+            objective=objective,
+            replace=replace_turns,
+            source="cas" if replace_turns else "live",
+        )
+    else:
+        async with _lock:
+            task = _touch(body.task_id)
+            if title:
+                task["title"] = title
+            _set_objective(task, objective)
+            if title or objective:
+                task["updated_at"] = _now()
+            _persist()
+    return {
+        "stored": bool(stored) or bool(title) or bool(objective) or gate_ok or explicit_status or replace_turns,
+        "task_id": body.task_id,
+        "count": len(stored),
+        "turns": stored,
+    }
 
 
-@app.get("/v1/tasks")
-def list_tasks(limit: int = Query(default=30, ge=1, le=200)) -> dict[str, Any]:
+@app.post("/v1/sync")
+async def post_sync(body: SyncPost, _: None = Depends(_require_key)) -> dict[str, Any]:
+    result = await _ingest_sync(body)
+    if not result["stored"] and result["count"] == 0 and not body.events and not body.turns:
+        result["reason"] = "no_handoff_events"
+    return result
+
+
+def _catalog_rows(limit: int) -> list[dict[str, Any]]:
     rows = []
-    for task_id in reversed(_order[-limit:]):
+    for task_id in _order:
         task = _tasks.get(task_id)
         if not task:
             continue
         last = task["turns"][-1] if task["turns"] else {}
+        loaded = bool(task.get("transcript_loaded")) or bool(task["turns"])
         rows.append(
             TaskMeta(
                 task_id=task_id,
                 title=task.get("title"),
                 updated_at=task["updated_at"],
-                turn_count=len(task["turns"]),
-                last_status=last.get("status"),
+                turn_count=len(task["turns"]) if loaded else None,
+                last_status=last.get("status") or task.get("status"),
                 last_at_abs=last.get("at_abs"),
                 status=task.get("status"),
                 awaiting_human=_awaiting(task),
             ).model_dump()
         )
-    return {"tasks": rows}
+    # Newest first regardless of _touch append order (list hydrate is newest-first).
+    rows.sort(key=lambda row: str(row.get("updated_at") or ""), reverse=True)
+    return rows[:limit]
+
+
+def _list_catalog_complete(payload: dict[str, Any], returned_n: int) -> bool:
+    """True when list hydrate includes the full CAS catalog (safe to prune ghosts).
+
+    List webhook caps at 200 newest rows but reports total in ``count``. A truncated
+    page must not evict older in-memory tasks that still exist in Data Tables.
+    """
+    raw = payload.get("count")
+    if not isinstance(raw, (int, float)) or isinstance(raw, bool):
+        return False
+    total = int(raw)
+    if total < 0:
+        return False
+    return total <= returned_n
+
+
+async def _apply_list_hydrate(payload: dict[str, Any], *, prune_missing: bool = False) -> dict[str, Any]:
+    tasks = payload.get("tasks") if isinstance(payload.get("tasks"), list) else []
+    applied = 0
+    do_prune = False
+    catalog_complete = False
+    async with _lock:
+        touched: list[str] = []
+        for raw in tasks:
+            if not isinstance(raw, dict):
+                continue
+            task_id = str(raw.get("task_id") or "").strip()
+            if not TASK_ID_RE.match(task_id):
+                continue
+            # No mid-loop MAX_TASKS eviction — trim once after reorder/prune.
+            task = _ensure_task(task_id)
+            title = str(raw.get("title") or "").strip() or None
+            if title:
+                task["title"] = title
+            objective = str(raw.get("objective") or "").strip() or None
+            _set_objective(task, objective)
+            status = _normalize_task_status(raw.get("status"))
+            gate = raw.get("human_gate") if isinstance(raw.get("human_gate"), dict) else None
+            gate_ok = bool(gate and gate.get("gate_id"))
+            # Orphan awaiting (status says HITL, no gate_id) → do not arm the composer.
+            if status and _is_awaiting_status(status) and not gate_ok:
+                status = "running"
+            if status:
+                task["status"] = status
+            _merge_version(task, raw.get("version"))
+            updated = str(raw.get("updated_at") or "").strip() or None
+            _merge_updated_at(task, updated)
+            if gate_ok:
+                task["gate"] = dict(gate)
+            elif status and not _is_awaiting_status(status):
+                task["gate"] = None
+            elif raw.get("awaiting_human") is False:
+                task["gate"] = None
+            touched.append(task_id)
+            applied += 1
+        touched_set = set(touched)
+        catalog_complete = _list_catalog_complete(payload, len(touched))
+        # Only prune when the webhook returned a complete catalog (count ≤ returned rows).
+        do_prune = bool(prune_missing and catalog_complete)
+        if do_prune:
+            # Drop CAS ghosts missing from catalog; keep local act_*/demo_* presentation tasks.
+            for tid in list(_tasks):
+                if tid not in touched_set and not _is_local_presentation_task(tid):
+                    _tasks.pop(tid, None)
+                    _subscribers.pop(tid, None)
+            local_rest = [tid for tid in _order if tid in _tasks and tid not in touched_set]
+            # CAS oldest→newest first; locals last so MAX_TASKS trim prefers dropping old CAS.
+            cas_order = list(reversed(touched)) if touched else []
+            _order[:] = cas_order + local_rest
+        elif touched:
+            rest = [tid for tid in _order if tid not in touched_set]
+            local_rest = [tid for tid in rest if _is_local_presentation_task(tid)]
+            other_rest = [tid for tid in rest if not _is_local_presentation_task(tid)]
+            _order[:] = other_rest + list(reversed(touched)) + local_rest
+        _trim_to_max_tasks()
+        _persist()
+    return {"applied": applied, "pruned": do_prune, "catalog_complete": catalog_complete}
+
+
+async def _apply_feed_hydrate(payload: dict[str, Any]) -> dict[str, Any]:
+    if not payload.get("ok", True):
+        return {"stored": False, "reason": payload.get("error") or "hydrate_failed"}
+    task_id = str(payload.get("task_id") or "").strip()
+    if not TASK_ID_RE.match(task_id):
+        raise HTTPException(status_code=400, detail="Invalid task_id in hydrate payload")
+    events_raw = payload.get("events") if isinstance(payload.get("events"), list) else []
+    events: list[EventIn] = []
+    for item in events_raw:
+        if isinstance(item, EventIn):
+            events.append(item)
+        elif isinstance(item, dict):
+            try:
+                events.append(EventIn.model_validate(item))
+            except Exception:  # noqa: BLE001
+                continue
+    body = SyncPost(
+        task_id=task_id,
+        status=payload.get("status"),
+        version=payload.get("version") if isinstance(payload.get("version"), int) else None,
+        human_gate=payload.get("human_gate") if isinstance(payload.get("human_gate"), dict) else None,
+        events=events,
+    )
+    title = str(payload.get("title") or "").strip() or None
+    objective = str(payload.get("objective") or "").strip() or None
+    # Replace transcript atomically inside _ingest_sync/_append_turns (no empty window on failure).
+    return await _ingest_sync(body, title=title, objective=objective, replace_turns=True)
+
+
+@app.post("/v1/hydrate")
+async def post_hydrate(request: Request, _: None = Depends(_require_key)) -> dict[str, Any]:
+    """Accept list and/or feed payloads from n8n Data Table hydrate workflows."""
+    raw = await request.json()
+    if not isinstance(raw, dict):
+        raise HTTPException(status_code=400, detail="JSON object required")
+    result: dict[str, Any] = {"ok": True}
+    if isinstance(raw.get("tasks"), list) or raw.get("contract") == "mas_activity_task_list":
+        result["list_applied"] = (await _apply_list_hydrate(raw))["applied"]
+    if raw.get("task_id") and (raw.get("events") is not None or raw.get("contract") == "mas_activity_feed_hydrate"):
+        result["feed"] = await _apply_feed_hydrate(raw)
+    return result
+
+
+@app.get("/v1/tasks")
+async def list_tasks(
+    limit: int = Query(default=30, ge=1, le=200),
+    durable: bool = Query(default=False),
+) -> dict[str, Any]:
+    global _empty_rail_list_attempted
+    hydrate_meta = None
+    auto_empty = (
+        not durable
+        and not _order
+        and durable_enabled()
+        and not _empty_rail_list_attempted
+    )
+    if durable or auto_empty:
+        if auto_empty:
+            _empty_rail_list_attempted = True
+        try:
+            payload = await fetch_task_list()
+            if payload:
+                # Prune ghosts only on explicit durable refresh when the list page is complete
+                # (list WF returns at most 200 newest; truncated pages must not evict older CAS).
+                applied_meta = await _apply_list_hydrate(payload, prune_missing=durable)
+                hydrate_meta = {
+                    "applied": applied_meta["applied"],
+                    "pruned": applied_meta["pruned"],
+                    "catalog_complete": applied_meta["catalog_complete"],
+                    "source": payload.get("source"),
+                    "auto_empty": auto_empty,
+                }
+        except Exception as exc:  # noqa: BLE001
+            hydrate_meta = {"error": str(exc)[:300], "auto_empty": auto_empty}
+    rows = _catalog_rows(limit)
+    out: dict[str, Any] = {"tasks": rows, "durable_hydrate": durable_enabled()}
+    if hydrate_meta is not None:
+        out["hydrate"] = hydrate_meta
+    return out
 
 
 def _task_feed(task_id: str) -> dict[str, Any]:
@@ -527,21 +898,60 @@ def _task_feed(task_id: str) -> dict[str, Any]:
         "contract_version": "1.1",
         "task_id": task_id,
         "title": task.get("title"),
+        "objective": _task_objective(task),
         "updated_at": task["updated_at"],
         "status": task.get("status"),
         "version": task.get("version"),
         "awaiting_human": _awaiting(task),
         "human_gate": _gate_payload(task),
         "hitl_backend": hitl_backend(),
+        "durable_hydrate": durable_enabled(),
         "activity": task["turns"],
     }
 
 
 @app.get("/v1/tasks/{task_id}")
-def get_task(task_id: str) -> dict[str, Any]:
+async def get_task(
+    task_id: str,
+    durable: bool = Query(default=False),
+) -> dict[str, Any]:
     if not TASK_ID_RE.match(task_id):
         raise HTTPException(status_code=400, detail="Invalid task_id")
-    return _task_feed(task_id)
+    task = _tasks.get(task_id)
+    need = durable or task is None or not task.get("turns")
+    hydrate_meta: dict[str, Any] | None = None
+    if need and durable_enabled():
+        try:
+            payload = await fetch_task_feed(task_id)
+            if payload:
+                result = await _apply_feed_hydrate(payload)
+                if isinstance(result, dict) and result.get("stored") is False:
+                    reason = str(result.get("reason") or "hydrate_failed")
+                    if _tasks.get(task_id) is None:
+                        raise HTTPException(status_code=404, detail="Task not found")
+                    if durable:
+                        hydrate_meta = {"ok": False, "error": reason}
+                elif isinstance(result, dict):
+                    src = payload.get("source") if isinstance(payload.get("source"), dict) else {}
+                    hydrate_meta = {
+                        "ok": True,
+                        "truncated": bool(src.get("truncated")),
+                        "trace_rows": src.get("trace_rows"),
+                        "handoff_events": src.get("handoff_events"),
+                    }
+            elif durable and task is None:
+                raise HTTPException(status_code=404, detail="Task not found")
+        except HTTPException:
+            raise
+        except Exception as exc:  # noqa: BLE001
+            if task is None:
+                raise HTTPException(status_code=502, detail=f"Durable hydrate failed: {exc}") from exc
+            if durable:
+                hydrate_meta = {"ok": False, "error": str(exc)[:300]}
+    out = _task_feed(task_id)
+    if hydrate_meta is not None:
+        out["hydrate"] = hydrate_meta
+    return out
 
 
 @app.get("/v1/tasks/{task_id}/gate")
@@ -550,7 +960,16 @@ async def get_gate(task_id: str, refresh: bool = Query(default=False)) -> dict[s
         raise HTTPException(status_code=400, detail="Invalid task_id")
     task = _tasks.get(task_id)
     if not task and not refresh:
-        raise HTTPException(status_code=404, detail="Task not found")
+        if durable_enabled():
+            try:
+                payload = await fetch_task_feed(task_id)
+                if payload:
+                    await _apply_feed_hydrate(payload)
+                    task = _tasks.get(task_id)
+            except Exception:  # noqa: BLE001
+                pass
+        if not task:
+            raise HTTPException(status_code=404, detail="Task not found")
 
     backend = hitl_backend()
     orch: dict[str, Any] | None = None
@@ -641,7 +1060,7 @@ def _start_turn(*, requested_by: str, description: str, file_names: list[str], b
             "status": "TASK_STARTED",
             "stage": "intake",
             "summary": f"{requested_by} started a new MAS task.",
-            "brief": f"{brief} «{description[:240]}»",
+            "brief": brief,
             "from_role": requested_by,
             "to_role": "Orchestrator",
             "from_specialist": "human_operator",
@@ -649,6 +1068,7 @@ def _start_turn(*, requested_by: str, description: str, file_names: list[str], b
             "details": {
                 "action": "start",
                 "requested_by": requested_by,
+                "objective": description[:4000],
                 "file_count": len(file_names),
                 "files": ", ".join(file_names[:12]) if file_names else None,
                 "backend": backend,
@@ -788,7 +1208,7 @@ async def post_start_task(
 
     title = description[:80] + ("…" if len(description) > 80 else "")
     turn = _start_turn(requested_by=by, description=description, file_names=file_names, backend=backend)
-    await _append_turns(task_id, [turn], title=title)
+    await _append_turns(task_id, [turn], title=title, objective=description)
 
     gate = orch.get("human_gate") if isinstance(orch.get("human_gate"), dict) else None
     status = orch.get("status")
@@ -944,16 +1364,19 @@ async def stream_task(task_id: str) -> StreamingResponse:
                 payload = {
                     "type": "snapshot",
                     "task_id": task_id,
+                    "title": task.get("title"),
+                    "objective": _task_objective(task),
                     "activity": task["turns"],
                     "updated_at": task["updated_at"],
                     "status": task.get("status"),
                     "version": task.get("version"),
                     "awaiting_human": _awaiting(task),
                     "human_gate": _gate_payload(task),
+                    "hitl_backend": hitl_backend(),
                 }
                 yield f"data: {json.dumps(payload, ensure_ascii=False)}\n\n"
             else:
-                yield f"data: {json.dumps({'type': 'snapshot', 'task_id': task_id, 'activity': [], 'awaiting_human': False, 'human_gate': None})}\n\n"
+                yield f"data: {json.dumps({'type': 'snapshot', 'task_id': task_id, 'activity': [], 'awaiting_human': False, 'human_gate': None, 'objective': None})}\n\n"
             while True:
                 try:
                     msg = await asyncio.wait_for(queue.get(), timeout=15.0)
@@ -1073,7 +1496,15 @@ async def seed_demo(_: None = Depends(_require_key)) -> dict[str, Any]:
             duration_ms=None,
         ),
     ]
-    stored = await _append_turns(task_id, [_normalize_turn(t) for t in demo], title="Demo presentation run")
+    stored = await _append_turns(
+        task_id,
+        [_normalize_turn(t) for t in demo],
+        title="Demo presentation run",
+        objective=(
+            "REVISE прогнозных WCONPROD: извлечь ORAT/BHP из Excel и выпустить "
+            "ограниченный schedule-черновик с HITL на утверждение."
+        ),
+    )
     gate = {
         "gate_id": f"gate_{task_id}_6_needs_approval",
         "kind": "needs_approval",

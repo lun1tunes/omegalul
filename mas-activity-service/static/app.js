@@ -1,9 +1,13 @@
 (() => {
   const thread = document.getElementById("thread");
   const empty = document.getElementById("empty");
+  const notFound = document.getElementById("notFound");
+  const notFoundId = document.getElementById("notFoundId");
   const title = document.getElementById("title");
-  const subtitle = document.getElementById("subtitle");
+  const requestPanel = document.getElementById("requestPanel");
+  const requestText = document.getElementById("requestText");
   const taskRail = document.getElementById("taskRail");
+  const railList = document.getElementById("railList");
   const liveDot = document.getElementById("liveDot");
   const liveLabel = document.getElementById("liveLabel");
   const backendLabel = document.getElementById("backendLabel");
@@ -24,6 +28,7 @@
   const hitlButtons = [approveBtn, rejectBtn, replyBtn, cancelBtn];
 
   const newTaskBtn = document.getElementById("newTaskBtn");
+  const brandHome = document.getElementById("brandHome");
   const startComposer = document.getElementById("startComposer");
   const startRequestedBy = document.getElementById("startRequestedBy");
   const taskDescription = document.getElementById("taskDescription");
@@ -235,9 +240,13 @@
       }
       gateQuestions.append(li);
     }
-    composerHint.textContent = armed
-      ? "Утвердить / отклонить / ответить / отменить — gate_id и version подставятся сами."
-      : "Gate закрыт. Можно открыть другую задачу или дождаться следующего HITL.";
+    if (armed) {
+      composerHint.hidden = true;
+      composerHint.textContent = "";
+    } else {
+      composerHint.hidden = false;
+      composerHint.textContent = "Gate закрыт. Можно открыть другую задачу или дождаться следующего HITL.";
+    }
   }
 
   function renderTurn(turn, { animate = true } = {}) {
@@ -323,19 +332,21 @@
     thread.scrollTop = thread.scrollHeight;
   }
 
-  async function refreshRail() {
-    const res = await fetch("/v1/tasks");
+  async function refreshRail({ durable = false } = {}) {
+    const res = await fetch(`/v1/tasks${durable ? "?durable=1" : ""}`);
     const data = await res.json();
     taskCatalog = Array.isArray(data.tasks) ? data.tasks : [];
 
-    taskRail.innerHTML = "";
+    const list = railList || taskRail;
+    list.innerHTML = "";
     if (!taskCatalog.length) {
       const emptyMsg = document.createElement("p");
       emptyMsg.className = "rail-empty";
       emptyMsg.id = "railEmpty";
-      emptyMsg.textContent = "Нет задач. Создайте новую или дождитесь handoff от Trace Writer.";
-      taskRail.append(emptyMsg);
-      return;
+      emptyMsg.textContent = "Пока нет задач — создайте первую карточкой выше.";
+      list.append(emptyMsg);
+      if (newTaskBtn) newTaskBtn.classList.toggle("active-start", startOpen);
+      return data;
     }
 
     for (const task of taskCatalog) {
@@ -347,7 +358,9 @@
       id.textContent = task.task_id;
       const meta = document.createElement("span");
       meta.className = "meta";
-      meta.textContent = `${task.turn_count} turns · ${task.last_at_abs || task.updated_at || ""}`;
+      const turnsLabel =
+        task.turn_count == null ? "лента…" : `${task.turn_count} turns`;
+      meta.textContent = `${turnsLabel} · ${task.last_at_abs || task.updated_at || ""}`;
       btn.append(id, meta);
       if (task.awaiting_human) {
         const flag = document.createElement("span");
@@ -355,9 +368,14 @@
         flag.textContent = "HITL";
         btn.append(flag);
       }
-      btn.addEventListener("click", () => openTask(task.task_id));
-      taskRail.append(btn);
+      btn.addEventListener("click", () => {
+        setStartOpen(false);
+        openTask(task.task_id);
+      });
+      list.append(btn);
     }
+    if (newTaskBtn) newTaskBtn.classList.toggle("active-start", startOpen);
+    return data;
   }
 
   function closeStream() {
@@ -367,8 +385,36 @@
     }
   }
 
+  function renderRequest(objective) {
+    const text = String(objective || "").trim();
+    if (!text) {
+      requestText.textContent = "";
+      requestPanel.hidden = true;
+      return;
+    }
+    requestText.textContent = text;
+    requestPanel.hidden = false;
+  }
+
+  function setTaskHeader(taskId, status) {
+    if (!taskId) {
+      title.classList.remove("task-line");
+      title.textContent = "Выберите задачу";
+      return;
+    }
+    title.classList.add("task-line");
+    const st = String(status || "").trim() || "—";
+    title.textContent = `task_id: ${taskId} · status: ${st}`;
+  }
+
   function applyFeedMeta(data) {
     if (data.hitl_backend) backendLabel.textContent = `HITL: ${data.hitl_backend}`;
+    if (currentTask) {
+      setTaskHeader(currentTask, data.status);
+    }
+    if (Object.prototype.hasOwnProperty.call(data, "objective")) {
+      renderRequest(data.objective);
+    }
     renderGate(data.human_gate ?? data.gate ?? null, {
       status: data.status,
       version: data.version,
@@ -376,32 +422,94 @@
     });
   }
 
+  function showNotFound(taskId) {
+    currentTask = null;
+    closeStream();
+    setLive("idle");
+    rendered = new Set();
+    thread.innerHTML = "";
+    empty.hidden = true;
+    renderRequest(null);
+    renderGate(null, { awaiting: false });
+    setComposerArmed(false);
+    title.classList.remove("task-line");
+    title.textContent = "Задача не найдена";
+    if (notFoundId) notFoundId.textContent = taskId ? `id: ${taskId}` : "";
+    if (notFound) notFound.hidden = false;
+    const list = railList || taskRail;
+    if (list) {
+      for (const btn of list.querySelectorAll("button.active")) btn.classList.remove("active");
+    }
+  }
+
+  function hideNotFound() {
+    if (notFound) notFound.hidden = true;
+    if (notFoundId) notFoundId.textContent = "";
+  }
+
+  /** Infrastructure / network failure — not a missing task (keep /t/<id> for retry). */
+  function showLoadError(taskId, message) {
+    hideNotFound();
+    currentTask = taskId || currentTask;
+    closeStream();
+    setLive("idle");
+    rendered = new Set();
+    thread.innerHTML = "";
+    empty.hidden = false;
+    empty.textContent =
+      "Не удалось загрузить задачу (сервер или n8n временно недоступны). Повторите через бренд MAS / Activity или обновите страницу.";
+    if (taskId) setTaskHeader(taskId, "ошибка");
+    renderRequest(null);
+    renderGate(null, { awaiting: false });
+    setComposerArmed(false);
+    showFlash(message || "Не удалось загрузить задачу.");
+  }
+
   async function openTask(taskId) {
     if (!taskId) return;
+    setStartOpen(false);
+    hideNotFound();
     currentTask = taskId;
     history.replaceState({}, "", `/t/${encodeURIComponent(taskId)}`);
     rendered = new Set();
     thread.innerHTML = "";
     empty.hidden = false;
-    title.textContent = taskId;
-    subtitle.textContent = "Краткий ход работы и HITL: утвердить / отклонить / ответить / отменить без ручного копирования CAS-полей.";
+    empty.textContent = "Загрузка задачи…";
+    setTaskHeader(taskId, "…");
+    renderRequest(null);
     closeStream();
     setLive("connecting");
     renderGate(null, { awaiting: false });
     showFlash("");
 
     try {
-      const snap = await fetch(`/v1/tasks/${encodeURIComponent(taskId)}`);
-      if (snap.ok) {
-        const data = await snap.json();
-        title.textContent = data.title || taskId;
-        applyFeedMeta(data);
-        for (const turn of data.activity || []) renderTurn(turn, { animate: false });
-      } else {
-        showFlash(`Не удалось загрузить задачу (${snap.status}).`);
+      const snap = await fetch(`/v1/tasks/${encodeURIComponent(taskId)}?durable=1`);
+      if (snap.status === 404) {
+        showNotFound(taskId);
+        await refreshRail();
+        return;
+      }
+      if (!snap.ok) {
+        showLoadError(taskId, `Не удалось загрузить задачу (${snap.status}).`);
+        await refreshRail();
+        return;
+      }
+      const data = await snap.json();
+      empty.hidden = true;
+      empty.textContent = "Нет turns. Создайте задачу карточкой «Новая задача» или откройте /t/<task_id>.";
+      setTaskHeader(taskId, data.status);
+      applyFeedMeta(data);
+      for (const turn of data.activity || []) renderTurn(turn, { animate: false });
+      if (!(data.activity || []).length) empty.hidden = false;
+      if (data.hydrate?.ok === false) {
+        showFlash(formatHydrateError(data.hydrate.error || "hydrate_failed"));
+      } else if (data.hydrate?.truncated) {
+        showFlash("Транскрипт усечён: в Data Tables больше лимита handoff (500). Показаны последние turns.");
       }
     } catch (_) {
-      showFlash("Сеть недоступна при загрузке задачи.");
+      showLoadError(taskId, "Сеть недоступна при загрузке задачи.");
+      await refreshRail();
+      return;
     }
 
     source = new EventSource(`/v1/tasks/${encodeURIComponent(taskId)}/stream`);
@@ -411,6 +519,7 @@
       try {
         const msg = JSON.parse(ev.data);
         if (msg.type === "snapshot") {
+          hideNotFound();
           thread.innerHTML = "";
           rendered = new Set();
           empty.hidden = !(msg.activity || []).length;
@@ -450,6 +559,7 @@
     }
 
     composer.classList.add("busy");
+    composerHint.hidden = false;
     composerHint.textContent = "Отправляем HITL…";
     try {
       const res = await fetch(`/v1/tasks/${encodeURIComponent(currentTask)}/hitl`, {
@@ -472,6 +582,7 @@
           ? data.detail
           : `HITL не принят (${res.status})`;
         showFlash(detail);
+        composerHint.hidden = false;
         composerHint.textContent = "Не удалось отправить. Проверьте статус задачи и backend.";
         return;
       }
@@ -494,6 +605,7 @@
       await refreshRail();
     } catch (_) {
       showFlash("Сеть недоступна при отправке HITL.");
+      composerHint.hidden = false;
       composerHint.textContent = "Не удалось отправить. Проверьте сеть и backend.";
     } finally {
       composer.classList.remove("busy");
@@ -590,6 +702,61 @@
   });
 
   newTaskBtn.addEventListener("click", () => setStartOpen(!startOpen));
+
+  function formatHydrateError(err) {
+    const text = String(err || "");
+    if (/webhook .* is not registered|not registered/i.test(text) || /HTTP 404/.test(text)) {
+      return "Workflow «Activity — List Tasks» не активирован в n8n (webhook mas-activity-list-tasks). Обновите страницу после активации.";
+    }
+    if (text.length > 220) return `${text.slice(0, 220)}…`;
+    return text;
+  }
+
+  async function hydrateFromDataTables({ flash = false, reloadFeed = true } = {}) {
+    try {
+      const data = await refreshRail({ durable: true });
+      if (data?.hydrate?.error) {
+        if (flash) showFlash(formatHydrateError(data.hydrate.error));
+        return data;
+      }
+      if (reloadFeed && currentTask) {
+        const snap = await fetch(`/v1/tasks/${encodeURIComponent(currentTask)}?durable=1`);
+        if (snap.ok) {
+          const body = await snap.json();
+          rendered = new Set();
+          thread.innerHTML = "";
+          setTaskHeader(currentTask, body.status);
+          applyFeedMeta(body);
+          for (const turn of body.activity || []) renderTurn(turn, { animate: false });
+          if (body.hydrate?.ok === false) {
+            showFlash(formatHydrateError(body.hydrate.error || "hydrate_failed"));
+          } else if (body.hydrate?.truncated) {
+            showFlash("Транскрипт усечён: в Data Tables больше лимита handoff (500). Показаны последние turns.");
+          }
+        } else if (flash) {
+          showFlash(`Не удалось обновить ленту (${snap.status}).`);
+        }
+      }
+      return data;
+    } catch (_) {
+      if (flash) showFlash("Не удалось обратиться к n8n Data Tables.");
+      return null;
+    }
+  }
+
+  if (brandHome) {
+    brandHome.addEventListener("click", async (e) => {
+      e.preventDefault();
+      brandHome.classList.add("busy");
+      try {
+        await hydrateFromDataTables({ flash: false, reloadFeed: true });
+        if (!currentTask) history.replaceState({}, "", "/");
+      } finally {
+        brandHome.classList.remove("busy");
+      }
+    });
+  }
+
   startCancelBtn.addEventListener("click", () => setStartOpen(false));
   startComposer.addEventListener("submit", submitStart);
 
@@ -623,9 +790,10 @@
   });
 
   const initial = pathTaskId();
-  if (initial) openTask(initial);
-  else {
-    refreshRail();
+  if (initial) {
+    openTask(initial).then(() => hydrateFromDataTables({ flash: false, reloadFeed: false }));
+  } else {
+    hydrateFromDataTables({ flash: false, reloadFeed: false });
     fetch("/health").then((r) => r.json()).then((h) => {
       if (h.hitl_backend) backendLabel.textContent = `HITL: ${h.hitl_backend}`;
     }).catch(() => {});

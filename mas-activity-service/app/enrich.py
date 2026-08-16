@@ -20,7 +20,6 @@ SAFE_CHIP_KEYS = (
     "warning_count",
     "release_ready",
     "fields",
-    "objective",
     "source_snapshot_hash",
     "correlation_id",
     "dropped_gap_count",
@@ -28,6 +27,8 @@ SAFE_CHIP_KEYS = (
     "requested_by",
     "gate_id",
     "gate_kind",
+    "file_count",
+    "backend",
 )
 SECRETISH = re.compile(r"(prompt|secret|token|password|authorization|api[_-]?key|binary|content|session)", re.I)
 
@@ -173,8 +174,6 @@ def build_brief(*, status: str | None, summary: str | None, brief: str | None, d
         extras.append(f"Недостающих полей: {int(details['gap_count'])}.")
     if details.get("fields"):
         extras.append(f"Поля: {details['fields']}.")
-    if details.get("objective") and "objective" not in raw.lower():
-        extras.append(f"Цель: {str(details['objective'])[:160]}.")
     if extras and len(raw) < 280:
         joined = f"{raw} {' '.join(extras[:2])}"
         raw = joined if len(joined) <= MAX_BRIEF_CHARS else raw

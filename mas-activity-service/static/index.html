@@ -7,17 +7,16 @@
   <link rel="preconnect" href="https://fonts.googleapis.com" />
   <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
   <link href="https://fonts.googleapis.com/css2?family=IBM+Plex+Sans:wght@400;500;600;700&family=IBM+Plex+Mono:wght@400;500&display=swap" rel="stylesheet" />
-  <link rel="stylesheet" href="/static/app.css?v=10" />
+  <link rel="stylesheet" href="/static/app.css?v=21" />
 </head>
 <body>
   <div class="atmosphere" aria-hidden="true"></div>
   <header class="top">
-    <a class="brand" href="/" aria-label="MAS Activity — главная">
+    <a class="brand" href="/" id="brandHome" title="Обновить список задач из n8n Data Tables" aria-label="MAS Activity — обновить список задач">
       <span class="mark">MAS</span>
       <span class="product">Activity</span>
     </a>
     <div class="top-actions">
-      <button type="button" class="btn btn-quiet" id="newTaskBtn">Новая задача</button>
       <a class="btn btn-quiet" href="/knowledge">База знаний</a>
     </div>
   </header>
@@ -26,14 +25,22 @@
 
   <main class="stage">
     <aside class="rail" id="taskRail" aria-label="Недавние задачи">
-      <p class="rail-empty" id="railEmpty">Нет задач. Создайте новую или дождитесь handoff от Trace Writer.</p>
+      <button type="button" class="rail-new-task" id="newTaskBtn" title="Создать задачу">
+        <span class="rail-new-icon" aria-hidden="true">+</span>
+        <span class="rail-new-copy">
+          <span class="id">Новая задача</span>
+          <span class="meta">objective + вложения</span>
+        </span>
+      </button>
+      <div class="rail-list" id="railList">
+        <p class="rail-empty" id="railEmpty">Нет задач. Создайте новую или дождитесь handoff от Trace Writer.</p>
+      </div>
     </aside>
     <section class="workspace">
       <div class="transcript" aria-live="polite">
         <div class="transcript-head">
           <div class="head-copy">
             <h1 id="title">Выберите задачу</h1>
-            <p id="subtitle">Handoff и HITL в одном потоке: кто → кому, время, длительность, решение инженера.</p>
           </div>
           <div class="live-row">
             <span class="pulse" id="liveDot" hidden></span>
@@ -42,8 +49,18 @@
             <span id="backendLabel">HITL: local</span>
           </div>
         </div>
+        <aside class="request-panel" id="requestPanel" hidden>
+          <div class="request-label">Исходный запрос</div>
+          <p class="request-text" id="requestText"></p>
+        </aside>
         <ol class="thread" id="thread"></ol>
         <p class="empty" id="empty">Нет turns. Создайте задачу кнопкой «Новая задача» или откройте /t/&lt;task_id&gt;.</p>
+        <div class="not-found" id="notFound" hidden>
+          <p class="not-found-title">Задача не найдена</p>
+          <p class="not-found-id" id="notFoundId"></p>
+          <p class="not-found-copy">Нет такой задачи в памяти Activity и в Data Tables.</p>
+          <a class="btn btn-quiet" href="/" id="notFoundHome">Вернуться на главную</a>
+        </div>
       </div>
 
       <aside class="gate-panel" id="gatePanel" hidden>
@@ -112,11 +129,11 @@
           <span>Дальнейшие указания</span>
           <textarea id="humanResponse" rows="2" placeholder="Условия, недостающие факты, scope правки…"></textarea>
         </label>
-        <p class="composer-hint" id="composerHint">Утвердить / отклонить / ответить / отменить — gate_id и version подставятся сами.</p>
+        <p class="composer-hint" id="composerHint" hidden></p>
       </form>
     </section>
   </main>
 
-  <script src="/static/app.js?v=9"></script>
+  <script src="/static/app.js?v=21"></script>
 </body>
 </html>

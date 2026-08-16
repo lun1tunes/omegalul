@@ -95,7 +95,7 @@ def test_ui_import_manifest_is_complete_and_matches_static_bindings() -> None:
     assert manifest["target_n8n_version"] == "2.30.8"
     imported = {Path(value).name for value in manifest["full_clean_import_set"]}
     assert imported == {path.name for path in workflow_files()}
-    assert len(imported) == 15
+    assert len(imported) == 17
     assert {path.name for path in CORE.glob("*.workflow.json")} == {
         Path(value).name for value in manifest["runtime_import_order"]
     }

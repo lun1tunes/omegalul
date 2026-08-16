@@ -1,0 +1,109 @@
+{
+  "id": "mas-activity-list-tasks-v1",
+  "name": "Activity — List Tasks (Data Table)",
+  "description": "UI-importable hydrate: read engineering_orchestrator_tasks_v1 and return Activity rail catalog. Bind Data Table in UI. Webhook path mas-activity-list-tasks.",
+  "active": false,
+  "settings": {
+    "executionOrder": "v1",
+    "callerPolicy": "workflowsFromSameOwner"
+  },
+  "nodes": [
+    {
+      "parameters": {
+        "content": "## Activity — List Tasks\n1. Select Data Table `engineering_orchestrator_tasks_v1` in **Load recent tasks**.\n2. Activate webhook (or Test) after import.\n3. In mas-activity `.env` / Compose set `ACTIVITY_LIST_URL=http://<n8n>/webhook/mas-activity-list-tasks`.\n\nNo `$env` / Globals. Corporate UI import only.",
+        "height": 280,
+        "width": 460,
+        "color": 4
+      },
+      "id": "a1000001-list-note-0001-8000-000000000001",
+      "name": "Setup note",
+      "type": "n8n-nodes-base.stickyNote",
+      "typeVersion": 1,
+      "position": [
+        -520,
+        -220
+      ]
+    },
+    {
+      "parameters": {
+        "httpMethod": "POST",
+        "path": "mas-activity-list-tasks",
+        "responseMode": "lastNode",
+        "options": {}
+      },
+      "id": "a1000001-list-wh-0001-8000-000000000002",
+      "name": "Webhook list tasks",
+      "type": "n8n-nodes-base.webhook",
+      "typeVersion": 2.1,
+      "position": [
+        -200,
+        0
+      ],
+      "webhookId": "a1000001-list-wh-0001-8000-000000000002"
+    },
+    {
+      "parameters": {
+        "operation": "get",
+        "dataTableId": {
+          "__rl": true,
+          "mode": "list",
+          "value": "REPLACE_IN_UI",
+          "cachedResultName": "Engineering orchestrator task state"
+        },
+        "returnAll": true,
+        "limit": 200
+      },
+      "id": "a1000001-list-dt-0001-8000-000000000003",
+      "name": "Load recent tasks",
+      "type": "n8n-nodes-base.dataTable",
+      "typeVersion": 1.1,
+      "position": [
+        80,
+        0
+      ],
+      "alwaysOutputData": true
+    },
+    {
+      "parameters": {
+        "jsCode": "const rows=$input.all().map(i=>i.json||{}).filter(r=>r&&r.task_id);\nconst parse=(v,f)=>{try{const p=typeof v==='string'?JSON.parse(v):v;return p&&typeof p==='object'&&!Array.isArray(p)?p:f}catch{return f}};\nconst awaitingStatus=s=>String(s||'').trim().toLowerCase()==='awaiting_human';\nconst tasks=rows.map(row=>{\n  const request=parse(row.request_json,{});\n  const gateRaw=parse(row.gate_json,null);\n  const gate=gateRaw&&typeof gateRaw==='object'&&!Array.isArray(gateRaw)?gateRaw:null;\n  const objective=String(request.objective||request.problem_statement||request.task_description||'').trim();\n  const status=String(row.status||'').trim()||null;\n  const awaiting=awaitingStatus(status)&&gate&&gate.gate_id;\n  return{\n    task_id:String(row.task_id).trim(),\n    title:objective?objective.slice(0,120):String(row.task_id).trim(),\n    objective:objective?objective.slice(0,8000):null,\n    updated_at:String(row.updated_at||row.created_at||new Date().toISOString()),\n    status,\n    version:Number.isFinite(Number(row.version))?Number(row.version):null,\n    awaiting_human:Boolean(awaiting),\n    human_gate:awaiting?gate:null,\n    turn_count:0,\n    last_status:status,\n    last_at_abs:null,\n  };\n}).filter(t=>t.task_id);\ntasks.sort((a,b)=>String(b.updated_at).localeCompare(String(a.updated_at)));\n// count = full CAS total before the 200-row page cap (Activity prunes ghosts only when count ≤ returned).\nreturn[{json:{\n  contract:'mas_activity_task_list',\n  contract_version:'1.0',\n  source:'engineering_orchestrator_tasks_v1',\n  count:tasks.length,\n  tasks:tasks.slice(0,200),\n}}];"
+      },
+      "id": "a1000001-list-code-0001-8000-000000000004",
+      "name": "Format Activity task list",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        360,
+        0
+      ]
+    }
+  ],
+  "connections": {
+    "Webhook list tasks": {
+      "main": [
+        [
+          {
+            "node": "Load recent tasks",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Load recent tasks": {
+      "main": [
+        [
+          {
+            "node": "Format Activity task list",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    }
+  },
+  "pinData": {},
+  "meta": {
+    "templateCredsSetupCompleted": false
+  },
+  "tags": []
+}

@@ -1,6 +1,8 @@
 .env
 excel-agent-tools/excel-tools.env
 mas-activity-service/mas-activity.env
+mas-activity-service/data/
+mas-activity-service/data/**
 fastapi-math-service/math-service.env
 context-seeder/context-seeder.env
 __pycache__/

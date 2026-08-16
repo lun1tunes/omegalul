@@ -243,7 +243,69 @@ async function main() {
   );
   assert(codes(noTargetRender).has('IR_TARGET_IDENTITY_REQUIRED'));
 
-  console.log('SCHEDULE catalogue renderer runtime smoke: 12 scenarios passed');
+  // Stage-3 CREATE: within each DATES block, keywords emit in fixed algorithm order (not IR order).
+  const orderSchemas = [
+    catalogue().schemas[0], // DATES
+    {
+      schema_id: 'fixture:APPLYSCRIPT:v1', schema_revision: 'fixture-1', keyword: 'APPLYSCRIPT', variant: 'default', citation,
+      fields: [
+        { name: 'SCRIPT_FILE', position: 1, type: 'string', required: true, quote: 'single' },
+        { name: 'FUNCTION_NAME', position: 2, type: 'string', required: true, quote: 'single' },
+      ],
+      semantics: { period: 'ANY', clock: { uses_current: true } },
+      layout: { newline: 'LF', indent: '  ', delimiter: 'SPACE', record_terminator: 'SLASH', block_terminator: 'SLASH_LINE' },
+    },
+    {
+      schema_id: 'fixture:WELSPECS:v1', schema_revision: 'fixture-1', keyword: 'WELSPECS', variant: 'default', citation,
+      fields: [
+        { name: 'WELL', position: 1, type: 'string', required: true, quote: 'single' },
+        { name: 'GROUP', position: 2, type: 'string', required: true, quote: 'single' },
+      ],
+      semantics: { period: 'ANY', clock: { uses_current: true } },
+      layout: { newline: 'LF', indent: '  ', delimiter: 'SPACE', record_terminator: 'SLASH', block_terminator: 'SLASH_LINE' },
+    },
+    catalogue().schemas[1], // WCONPROD
+  ];
+  const scrambled = [
+    {
+      event_id: 'd1', operation: 'ADD', keyword: 'DATES', variant: 'default',
+      fields: { DATE: '2025-01-01' }, provenance: [{ source_ref: 'task://order' }],
+    },
+    {
+      event_id: 'a1', operation: 'ADD', keyword: 'APPLYSCRIPT', variant: 'default',
+      fields: { SCRIPT_FILE: 'hook.py', FUNCTION_NAME: 'on_step' }, provenance: [{ source_ref: 'task://order' }],
+    },
+    {
+      event_id: 'w1', operation: 'ADD', keyword: 'WCONPROD', variant: 'default',
+      fields: { WELL: 'WELL-1', STATUS: 'OPEN', CONTROL: 'ORAT', ORAT: '10', BHP: { state: 'default' } },
+      provenance: [{ source_ref: 'task://order' }],
+    },
+    {
+      event_id: 's1', operation: 'ADD', keyword: 'WELSPECS', variant: 'default',
+      fields: { WELL: 'WELL-1', GROUP: 'G1' }, provenance: [{ source_ref: 'task://order' }],
+    },
+    {
+      event_id: 'd2', operation: 'ADD', keyword: 'DATES', variant: 'default',
+      fields: { DATE: '2025-02-01' }, provenance: [{ source_ref: 'task://order' }],
+    },
+    {
+      event_id: 'w2', operation: 'ADD', keyword: 'WCONPROD', variant: 'default',
+      fields: { WELL: 'WELL-2', STATUS: 'OPEN', CONTROL: 'ORAT', ORAT: '20', BHP: { state: 'default' } },
+      provenance: [{ source_ref: 'task://order' }],
+    },
+  ];
+  const ordered = await execute(
+    'tnavigator-schedule-builder.workflow.json',
+    'Render typed SCHEDULE IR deterministically',
+    { schedule_render_request: { mode: 'CREATE', schema_catalogue: catalogue({ schemas: orderSchemas }), ir_events: scrambled } },
+  );
+  assert.equal(ordered.status, 'rendered');
+  assert.deepEqual(
+    ordered.changes.map((c) => c.keyword),
+    ['DATES', 'WELSPECS', 'WCONPROD', 'APPLYSCRIPT', 'DATES', 'WCONPROD'],
+  );
+
+  console.log('SCHEDULE catalogue renderer runtime smoke: 13 scenarios passed');
 }
 
 main().catch((error) => {

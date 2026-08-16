@@ -17,11 +17,12 @@ NAMESPACE_LABELS = {
     "specialist_template": "Specialist template",
 }
 
-_DEFAULT_CORPUS = (
-    Path(__file__).resolve().parents[2]
-    / "n8n"
-    / "rag"
-    / "excel-agent-operating-guide.documents.json"
+_DEFAULT_NAME = "excel-agent-operating-guide.documents.json"
+_DEFAULT_CORPUS = Path(__file__).resolve().parents[2] / "n8n" / "rag" / _DEFAULT_NAME
+_CORPUS_CANDIDATES = (
+    _DEFAULT_CORPUS,
+    Path("/corpus/rag") / _DEFAULT_NAME,
+    Path("/app/n8n/rag") / _DEFAULT_NAME,
 )
 
 _lock = threading.Lock()
@@ -32,7 +33,12 @@ def corpus_path() -> Path:
     if _corpus_override is not None:
         return _corpus_override
     env = os.getenv("MAS_KNOWLEDGE_CORPUS", "").strip()
-    return Path(env) if env else _DEFAULT_CORPUS
+    if env:
+        return Path(env)
+    for candidate in _CORPUS_CANDIDATES:
+        if candidate.is_file():
+            return candidate
+    return _DEFAULT_CORPUS
 
 
 def set_corpus_path(path: Path | None) -> None:

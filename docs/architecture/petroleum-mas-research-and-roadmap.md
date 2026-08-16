@@ -1290,7 +1290,7 @@ Entrypoints соответствуют роли workflow: user-facing Orchestrat
 
 CLI import не проверяет корпоративную сеть, credentials, PostgreSQL rights и реальный UI round-trip — UI/infrastructure smoke обязателен отдельно.
 
-**Последний полный repository gate на официальном n8n 2.30.8 (2026-08-16):** ~192 smoke-сценария (17 файлов); `excel-agent-tools` pytest 70; `mas-activity-service` pytest 16; `scripts/mas_stack_health.py` PASS; commissioning integration cases 0–3 PASS; native HITL forms + Deployment Health Check (Data Tables + Orchestrator/Trace + Docker HTTP probes); UI runbook `docs.md`; clean import/export 15/15, активных после импорта — 0. Снимок: [`production-readiness-review-2026-08-16.md`](production-readiness-review-2026-08-16.md). Целевой UI всё равно требует ручного round-trip с реальными credentials, Data Tables и сетью.
+**Последний полный repository gate на официальном n8n 2.30.8 (2026-08-16):** ~192 smoke-сценария (17 файлов); `excel-agent-tools` pytest 70; `mas-activity-service` pytest 22; `scripts/mas_stack_health.py` PASS; commissioning integration cases 0–3 PASS; native HITL forms + Deployment Health Check (Data Tables + Orchestrator/Trace + Docker HTTP probes); Activity Data Table hydrate webhooks (UI import); UI runbook `docs.md`; clean import/export 17/17, активных после импорта — 0. Снимок: [`production-readiness-review-2026-08-16.md`](production-readiness-review-2026-08-16.md). Целевой UI всё равно требует ручного round-trip с реальными credentials, Data Tables и сетью.
 
 ## 12. Ревизия текущего репозитория
 
@@ -1305,7 +1305,7 @@ CLI import не проверяет корпоративную сеть, credenti
 | Конкретный Schedule Builder agent | importable foundation с automatic pre-change snapshot, targeted mutation authority и inline `.INC` result реализован | заполнить expert catalogue для keywords рабочего сценария и провести UI end-to-end smoke |
 | SCHEDULE parser/decoder/query/renderer/merge/validator | block-preserving baseline/merge, catalogue decoder, targeted query, two-phase replay и generic lifecycle/numeric/interval/wildcard mechanisms реализованы | уточнять expert schema/policy по мере добавления keywords |
 | Calculation Adapter + Math Service | реализованы: `calculation-specialist-adapter.workflow.json` вызывает `fastapi-math-service` для DEV + CPS3/ZMAP intersections | использовать как отдельную deterministic capability; simulator-backed verification остаётся вне текущего SCHEDULE slice |
-| MAS Activity + Trace sync | Compose `mas-activity`, HITL composer, sync без clear gate на routine handoffs | UI: `ACTIVITY_BASE_URL`/`ACTIVITY_KEY` в Trace Writer; GETs пока без auth beyond localhost |
+| MAS Activity + Trace sync | Compose `mas-activity`, HITL composer, sync без clear gate на routine handoffs; Data Table hydrate (`ACTIVITY_LIST_URL`/`ACTIVITY_FEED_URL`) | UI: bind Activity List/Feed Data Tables; Trace Writer `ACTIVITY_BASE_URL`/`ACTIVITY_KEY`; GETs пока без auth beyond localhost |
 | Commissioning REVISE timeline | `schedule_timeline_runtime.py`: keep/remove unlisted + new-well HITL (`schedule-builder-hitl-attachment-v1`); Human Gate file attach; combat cases 0–3 | live Orch→Builder E2E с LLM/RAG на корпоративных Excel |
 | Deployment Health Check | Data Tables + Orchestrator/Trace + HTTP probes (excel-tools, runners, mas-activity, n8n) + `mas_stack_health.py` | после wipe volume — ручной re-import bindings |
 | Full DATA/grid generation | отсутствует | явно вне scope |

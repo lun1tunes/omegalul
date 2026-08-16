@@ -8,6 +8,7 @@ from pathlib import Path
 os.environ.setdefault("MAS_ACTIVITY_KEY", "dev-local")
 
 from fastapi.testclient import TestClient
+import pytest
 
 from app.enrich import BRIEF_TEMPLATES, build_brief, enrich_turn, format_duration, outcome_for
 from app.main import app, reset_store
@@ -18,7 +19,11 @@ client = TestClient(app)
 KEY = {"X-Activity-Key": "dev-local"}
 
 
-def setup_function() -> None:
+@pytest.fixture(autouse=True)
+def _isolate_activity_store(monkeypatch) -> None:
+    """Reset memory and ignore host ACTIVITY_*_URL so hydrate stays offline in unit tests."""
+    monkeypatch.delenv("ACTIVITY_LIST_URL", raising=False)
+    monkeypatch.delenv("ACTIVITY_FEED_URL", raising=False)
     reset_store()
 
 
@@ -194,14 +199,24 @@ def test_rejects_bad_task_id_and_oversized_declared_body() -> None:
 
 def test_ready_health_and_static_assets() -> None:
     health = client.get("/health").json()
-    assert health["version"] == "0.4.0"
+    assert health["version"] == "0.5.1"
     assert "hitl_backend" in health
+    assert "state_persist" in health
     assert client.get("/ready").status_code == 200
     index = client.get("/")
     assert index.status_code == 200
     assert "composer" in index.text
     assert "startComposer" in index.text
     assert "newTaskBtn" in index.text
+    assert "rail-new-task" in index.text
+    assert "railList" in index.text
+    assert "brandHome" in index.text
+    assert "reloadDurableBtn" not in index.text
+    assert "Из Data Tables" not in index.text
+    assert "requestPanel" in index.text
+    assert "notFound" in index.text
+    assert "Задача не найдена" in index.text
+    assert "Вернуться на главную" in index.text
     assert "taskRail" in index.text
     assert "cancelBtn" in index.text
     assert "taskSelect" not in index.text
@@ -211,7 +226,18 @@ def test_ready_health_and_static_assets() -> None:
     assert "duration_label" in js_text
     assert "submitHitl" in js_text
     assert "submitStart" in js_text
+    assert "hydrateFromDataTables" in js_text
+    assert "setTaskHeader" in js_text
+    assert "showLoadError" in js_text
+    assert "showNotFound(taskId)" in js_text
+    # Non-404 / network failures must not claim the task is missing from Activity+DT.
+    assert "showNotFound(taskId);\n        showFlash" not in js_text
+    assert "showLoadError(taskId, `Не удалось загрузить задачу (${snap.status}).`)" in js_text
+    assert "showLoadError(taskId, \"Сеть недоступна при загрузке задачи.\")" in js_text
     assert "/v1/tasks/start" in js_text
+    css_text = (STATIC / "app.css").read_text(encoding="utf-8")
+    assert "task-line" in css_text
+    assert "minmax(16rem" in css_text
     assert "showFlash" in js_text
     assert "alert(" not in js_text
     assert "human_gate ?? data.gate" in js_text
@@ -259,7 +285,9 @@ def test_local_start_task_with_files(tmp_path: Path, monkeypatch) -> None:
     task_id = body["task_id"]
     feed = client.get(f"/v1/tasks/{task_id}").json()
     assert feed["title"].startswith("REVISE")
+    assert feed["objective"] == "REVISE даты ввода по Excel"
     assert feed["activity"][0]["status"] == "TASK_STARTED"
+    assert feed["activity"][0]["details"]["objective"] == "REVISE даты ввода по Excel"
     assert feed["awaiting_human"] is True
 
 
@@ -485,3 +513,967 @@ def test_live_hitl_prefers_fresh_status_cas_over_body(monkeypatch) -> None:
     assert calls[1]["action"] == "approve"
     assert calls[1]["gate_id"] == "fresh-gate"
     assert calls[1]["expected_version"] == 7
+
+
+def test_state_persist_survives_reload(tmp_path: Path, monkeypatch) -> None:
+    path = tmp_path / "activity_state.json"
+    monkeypatch.setenv("ACTIVITY_STATE_PATH", str(path))
+    # reload path resolution
+    import app.persist as persist_mod
+    import app.main as main_mod
+
+    monkeypatch.setattr(persist_mod, "state_path", lambda: path)
+    monkeypatch.setattr(main_mod, "save_state", persist_mod.save_state)
+    monkeypatch.setattr(main_mod, "load_state", persist_mod.load_state)
+
+    seed = client.post("/v1/demo/seed", headers=KEY).json()
+    task_id = seed["task_id"]
+    assert path.is_file()
+
+    # Simulate process restart: clear memory then load from disk.
+    main_mod._tasks.clear()
+    main_mod._order.clear()
+    tasks, order = persist_mod.load_state()
+    main_mod._tasks.update(tasks)
+    main_mod._order.extend(order)
+
+    feed = client.get(f"/v1/tasks/{task_id}").json()
+    assert feed["task_id"] == task_id
+    assert feed["objective"]
+    assert len(feed["activity"]) >= 1
+
+
+def test_hydrate_list_and_feed_from_payload() -> None:
+    listed = client.post(
+        "/v1/hydrate",
+        headers=KEY,
+        json={
+            "contract": "mas_activity_task_list",
+            "tasks": [
+                {
+                    "task_id": "eng_hydrate_1",
+                    "title": "Hydrate demo",
+                    "status": "running",
+                    "version": 2,
+                    "updated_at": "2026-08-16T10:00:00+00:00",
+                }
+            ],
+        },
+    )
+    assert listed.status_code == 200
+    assert listed.json()["list_applied"] == 1
+    catalog = client.get("/v1/tasks").json()
+    assert any(t["task_id"] == "eng_hydrate_1" for t in catalog["tasks"])
+
+    fed = client.post(
+        "/v1/hydrate",
+        headers=KEY,
+        json={
+            "contract": "mas_activity_feed_hydrate",
+            "ok": True,
+            "task_id": "eng_hydrate_1",
+            "title": "Hydrate demo",
+            "objective": "Full hydrate objective text for the Activity request panel.",
+            "status": "awaiting_human",
+            "version": 3,
+            "human_gate": {
+                "gate_id": "g1",
+                "expected_version": 3,
+                "question": "Approve?",
+                "options": ["approve", "reject"],
+            },
+            "events": [
+                {
+                    "event_type": "handoff",
+                    "task_id": "eng_hydrate_1",
+                    "at": "2026-08-16T10:01:00+00:00",
+                    "status": "EXCEL_EVIDENCE_READY",
+                    "summary": "Excel ready",
+                    "brief": "Excel вернул факты.",
+                    "from_role": "Excel",
+                    "to_role": "Builder",
+                }
+            ],
+        },
+    )
+    assert fed.status_code == 200
+    assert fed.json()["feed"]["stored"] is True
+    snap = client.get("/v1/tasks/eng_hydrate_1").json()
+    assert snap["title"] == "Hydrate demo"
+    assert snap["objective"] == "Full hydrate objective text for the Activity request panel."
+    assert snap["awaiting_human"] is True
+    assert len(snap["activity"]) >= 1
+
+
+def test_durable_list_pulls_webhook(monkeypatch) -> None:
+    async def fake_list():
+        return {
+            "contract": "mas_activity_task_list",
+            "source": "engineering_orchestrator_tasks_v1",
+            "count": 1,
+            "tasks": [
+                {
+                    "task_id": "eng_from_dt",
+                    "title": "From Data Table",
+                    "status": "completed",
+                    "updated_at": "2026-08-16T12:00:00+00:00",
+                }
+            ],
+        }
+
+    monkeypatch.setenv("ACTIVITY_LIST_URL", "http://n8n.test/webhook/mas-activity-list-tasks")
+    monkeypatch.setattr("app.main.fetch_task_list", fake_list)
+    monkeypatch.setattr("app.main.durable_enabled", lambda: True)
+
+    res = client.get("/v1/tasks?durable=1")
+    assert res.status_code == 200
+    body = res.json()
+    assert body["durable_hydrate"] is True
+    assert body["hydrate"]["applied"] == 1
+    assert body["hydrate"]["pruned"] is True
+    assert body["hydrate"]["catalog_complete"] is True
+    assert any(t["task_id"] == "eng_from_dt" for t in body["tasks"])
+
+
+def test_durable_feed_pulls_webhook(monkeypatch) -> None:
+    async def fake_feed(task_id: str):
+        assert task_id == "eng_feed_dt"
+        return {
+            "contract": "mas_activity_feed_hydrate",
+            "ok": True,
+            "task_id": "eng_feed_dt",
+            "title": "Feed from DT",
+            "status": "running",
+            "events": [
+                {
+                    "event_type": "handoff",
+                    "task_id": "eng_feed_dt",
+                    "at": "2026-08-16T12:01:00+00:00",
+                    "status": "PLAN_READY",
+                    "summary": "Plan ready",
+                    "from_role": "Orchestrator",
+                    "to_role": "Builder",
+                }
+            ],
+        }
+
+    monkeypatch.setenv("ACTIVITY_FEED_URL", "http://n8n.test/webhook/mas-activity-load-feed")
+    monkeypatch.setattr("app.main.fetch_task_feed", fake_feed)
+    monkeypatch.setattr("app.main.durable_enabled", lambda: True)
+
+    res = client.get("/v1/tasks/eng_feed_dt?durable=1")
+    assert res.status_code == 200
+    body = res.json()
+    assert body["title"] == "Feed from DT"
+    assert len(body["activity"]) >= 1
+    assert body["durable_hydrate"] is True
+
+
+def test_list_hydrate_preserves_newest_first_and_hitl_flag() -> None:
+    listed = client.post(
+        "/v1/hydrate",
+        headers=KEY,
+        json={
+            "contract": "mas_activity_task_list",
+            "tasks": [
+                {
+                    "task_id": "eng_new_1",
+                    "title": "Newest",
+                    "status": "awaiting_human",
+                    "updated_at": "2026-08-16T15:00:00+00:00",
+                    "awaiting_human": True,
+                    "human_gate": {
+                        "gate_id": "g_new",
+                        "expected_version": 2,
+                        "kind": "needs_approval",
+                        "reason": "Approve?",
+                    },
+                },
+                {
+                    "task_id": "eng_old_1",
+                    "title": "Oldest",
+                    "status": "completed",
+                    "updated_at": "2026-08-16T10:00:00+00:00",
+                    "awaiting_human": False,
+                },
+            ],
+        },
+    )
+    assert listed.status_code == 200
+    catalog = client.get("/v1/tasks").json()["tasks"]
+    ids = [t["task_id"] for t in catalog if t["task_id"] in {"eng_new_1", "eng_old_1"}]
+    assert ids[0] == "eng_new_1"
+    newest = next(t for t in catalog if t["task_id"] == "eng_new_1")
+    assert newest["awaiting_human"] is True
+
+
+def test_sync_dedupes_after_feed_hydrate() -> None:
+    event = {
+        "event_type": "handoff",
+        "event_id": "evt_dup_1",
+        "task_id": "eng_dedupe_1",
+        "trace_id": "tr_1",
+        "at": "2026-08-16T12:00:00+00:00",
+        "status": "EXCEL_EVIDENCE_READY",
+        "summary": "Excel ready",
+        "brief": "Excel вернул факты.",
+        "handoff": {
+            "from_role": "Excel",
+            "to_role": "Builder",
+            "details": {"event_id": "evt_dup_1"},
+        },
+    }
+    hydrate = client.post(
+        "/v1/hydrate",
+        headers=KEY,
+        json={
+            "contract": "mas_activity_feed_hydrate",
+            "ok": True,
+            "task_id": "eng_dedupe_1",
+            "title": "Dedupe",
+            "status": "running",
+            "events": [event],
+        },
+    )
+    assert hydrate.status_code == 200
+    before = client.get("/v1/tasks/eng_dedupe_1").json()
+    assert len(before["activity"]) == 1
+
+    synced = client.post(
+        "/v1/sync",
+        headers=KEY,
+        json={"task_id": "eng_dedupe_1", "trace_id": "tr_1", "events": [event]},
+    )
+    assert synced.status_code == 200
+    assert synced.json()["count"] == 0
+    after = client.get("/v1/tasks/eng_dedupe_1").json()
+    assert len(after["activity"]) == 1
+
+
+def test_request_panel_script_does_not_wipe_label() -> None:
+    js = (STATIC / "app.js").read_text(encoding="utf-8")
+    assert "requestPanel.textContent" not in js
+    assert "requestText.textContent" in js
+
+
+def test_list_hydrate_replaces_shorter_cas_objective() -> None:
+    client.post(
+        "/v1/hydrate",
+        headers=KEY,
+        json={
+            "contract": "mas_activity_task_list",
+            "tasks": [
+                {
+                    "task_id": "eng_obj_1",
+                    "title": "Long local",
+                    "objective": "Very long local objective from demo seed that should be replaceable",
+                    "status": "running",
+                    "updated_at": "2026-08-16T10:00:00+00:00",
+                }
+            ],
+        },
+    )
+    client.post(
+        "/v1/hydrate",
+        headers=KEY,
+        json={
+            "contract": "mas_activity_task_list",
+            "tasks": [
+                {
+                    "task_id": "eng_obj_1",
+                    "title": "CAS short",
+                    "objective": "CAS short",
+                    "status": "running",
+                    "updated_at": "2026-08-16T11:00:00+00:00",
+                }
+            ],
+        },
+    )
+    snap = client.get("/v1/tasks/eng_obj_1").json()
+    assert snap["objective"] == "CAS short"
+
+
+def test_durable_list_prunes_ghost_tasks(monkeypatch) -> None:
+    client.post(
+        "/v1/hydrate",
+        headers=KEY,
+        json={
+            "contract": "mas_activity_task_list",
+            "tasks": [
+                {
+                    "task_id": "eng_ghost_1",
+                    "title": "Ghost",
+                    "status": "completed",
+                    "updated_at": "2026-08-16T09:00:00+00:00",
+                }
+            ],
+        },
+    )
+    assert any(t["task_id"] == "eng_ghost_1" for t in client.get("/v1/tasks").json()["tasks"])
+
+    async def fake_list():
+        return {
+            "contract": "mas_activity_task_list",
+            "source": "engineering_orchestrator_tasks_v1",
+            # count ≤ returned rows → full catalog, safe to prune ghosts
+            "count": 1,
+            "tasks": [
+                {
+                    "task_id": "eng_alive_1",
+                    "title": "Alive",
+                    "status": "running",
+                    "updated_at": "2026-08-16T12:00:00+00:00",
+                }
+            ],
+        }
+
+    monkeypatch.setenv("ACTIVITY_LIST_URL", "http://n8n.test/webhook/mas-activity-list-tasks")
+    monkeypatch.setattr("app.main.fetch_task_list", fake_list)
+    monkeypatch.setattr("app.main.durable_enabled", lambda: True)
+
+    body = client.get("/v1/tasks?durable=1").json()
+    ids = {t["task_id"] for t in body["tasks"]}
+    assert "eng_alive_1" in ids
+    assert "eng_ghost_1" not in ids
+    assert body["hydrate"]["pruned"] is True
+    assert body["hydrate"]["catalog_complete"] is True
+
+
+def test_durable_list_keeps_tasks_when_page_truncated(monkeypatch) -> None:
+    """List WF returns ≤200 newest; older CAS still in DT must not be treated as ghosts."""
+    client.post(
+        "/v1/hydrate",
+        headers=KEY,
+        json={
+            "contract": "mas_activity_task_list",
+            "tasks": [
+                {
+                    "task_id": "eng_old_1",
+                    "title": "Older than page",
+                    "status": "completed",
+                    "updated_at": "2026-08-01T09:00:00+00:00",
+                    "version": 3,
+                }
+            ],
+        },
+    )
+    # Seed a turn/gate so eviction would be user-visible loss.
+    client.post(
+        "/v1/sync",
+        headers=KEY,
+        json={
+            "task_id": "eng_old_1",
+            "status": "awaiting_human",
+            "human_gate": {"gate_id": "g_old", "question": "keep me"},
+            "events": [
+                {
+                    "event_type": "handoff",
+                    "task_id": "eng_old_1",
+                    "at": "2026-08-01T09:01:00+00:00",
+                    "status": "AWAITING_HUMAN",
+                    "summary": "old turn",
+                    "from_role": "Orchestrator",
+                    "to_role": "Human",
+                }
+            ],
+        },
+    )
+
+    async def fake_list():
+        return {
+            "contract": "mas_activity_task_list",
+            "source": "engineering_orchestrator_tasks_v1",
+            "count": 250,  # more than returned page → truncated
+            "tasks": [
+                {
+                    "task_id": "eng_new_1",
+                    "title": "Newest page",
+                    "status": "running",
+                    "updated_at": "2026-08-16T12:00:00+00:00",
+                }
+            ],
+        }
+
+    monkeypatch.setenv("ACTIVITY_LIST_URL", "http://n8n.test/webhook/mas-activity-list-tasks")
+    monkeypatch.setattr("app.main.fetch_task_list", fake_list)
+    monkeypatch.setattr("app.main.durable_enabled", lambda: True)
+
+    body = client.get("/v1/tasks?durable=1").json()
+    ids = {t["task_id"] for t in body["tasks"]}
+    assert "eng_new_1" in ids
+    assert "eng_old_1" in ids
+    assert body["hydrate"]["pruned"] is False
+    assert body["hydrate"]["catalog_complete"] is False
+    feed = client.get("/v1/tasks/eng_old_1").json()
+    assert len(feed["activity"]) >= 1
+    assert feed["human_gate"]["gate_id"] == "g_old"
+
+def test_durable_list_keeps_local_presentation_tasks(monkeypatch) -> None:
+    seed = client.post("/v1/demo/seed", headers=KEY).json()
+    local_id = seed["task_id"]
+    assert local_id.startswith("demo_")
+
+    async def fake_list():
+        return {
+            "contract": "mas_activity_task_list",
+            "source": "engineering_orchestrator_tasks_v1",
+            "tasks": [
+                {
+                    "task_id": "eng_cas_only",
+                    "title": "CAS",
+                    "status": "running",
+                    "updated_at": "2026-08-16T12:00:00+00:00",
+                }
+            ],
+        }
+
+    monkeypatch.setenv("ACTIVITY_LIST_URL", "http://n8n.test/webhook/mas-activity-list-tasks")
+    monkeypatch.setattr("app.main.fetch_task_list", fake_list)
+    monkeypatch.setattr("app.main.durable_enabled", lambda: True)
+
+    body = client.get("/v1/tasks?durable=1").json()
+    ids = {t["task_id"] for t in body["tasks"]}
+    assert "eng_cas_only" in ids
+    assert local_id in ids
+
+
+def test_list_hydrate_does_not_evict_mid_catalog(monkeypatch) -> None:
+    import app.main as main_mod
+
+    monkeypatch.setattr(main_mod, "MAX_TASKS", 2)
+    # Newest-first payload larger than MAX_TASKS. Mid-loop eviction would drop eng_a
+    # before final reorder, leaving a hole; deferred trim keeps the newest two.
+    listed = client.post(
+        "/v1/hydrate",
+        headers=KEY,
+        json={
+            "contract": "mas_activity_task_list",
+            "tasks": [
+                {"task_id": "eng_a", "title": "A", "status": "running", "updated_at": "2026-08-16T13:00:00+00:00"},
+                {"task_id": "eng_b", "title": "B", "status": "running", "updated_at": "2026-08-16T12:00:00+00:00"},
+                {"task_id": "eng_c", "title": "C", "status": "running", "updated_at": "2026-08-16T11:00:00+00:00"},
+            ],
+        },
+    )
+    assert listed.status_code == 200
+    assert listed.json()["list_applied"] == 3
+    catalog = client.get("/v1/tasks").json()["tasks"]
+    ids = [t["task_id"] for t in catalog]
+    assert ids == ["eng_a", "eng_b"]
+    assert "eng_c" not in ids
+
+
+def test_list_hydrate_clears_stale_gate_on_non_awaiting_status() -> None:
+    client.post(
+        "/v1/hydrate",
+        headers=KEY,
+        json={
+            "contract": "mas_activity_task_list",
+            "tasks": [
+                {
+                    "task_id": "eng_gate_1",
+                    "title": "Gate",
+                    "status": "awaiting_human",
+                    "updated_at": "2026-08-16T10:00:00+00:00",
+                    "awaiting_human": True,
+                    "human_gate": {
+                        "gate_id": "stale-gate",
+                        "expected_version": 2,
+                        "question": "Old question?",
+                    },
+                }
+            ],
+        },
+    )
+    assert client.get("/v1/tasks/eng_gate_1").json()["awaiting_human"] is True
+
+    client.post(
+        "/v1/hydrate",
+        headers=KEY,
+        json={
+            "contract": "mas_activity_task_list",
+            "tasks": [
+                {
+                    "task_id": "eng_gate_1",
+                    "title": "Gate",
+                    "status": "running",
+                    "updated_at": "2026-08-16T11:00:00+00:00",
+                }
+            ],
+        },
+    )
+    snap = client.get("/v1/tasks/eng_gate_1").json()
+    assert snap["status"] == "running"
+    assert snap["awaiting_human"] is False
+    assert snap.get("human_gate") in (None, {})
+
+
+def test_feed_hydrate_clears_turns_when_events_empty() -> None:
+    client.post(
+        "/v1/hydrate",
+        headers=KEY,
+        json={
+            "contract": "mas_activity_feed_hydrate",
+            "ok": True,
+            "task_id": "eng_empty_feed",
+            "title": "Had turns",
+            "status": "running",
+            "events": [
+                {
+                    "event_type": "handoff",
+                    "task_id": "eng_empty_feed",
+                    "at": "2026-08-16T12:00:00+00:00",
+                    "status": "PLAN_READY",
+                    "summary": "Old turn",
+                    "from_role": "Orchestrator",
+                    "to_role": "Builder",
+                }
+            ],
+        },
+    )
+    assert len(client.get("/v1/tasks/eng_empty_feed").json()["activity"]) == 1
+
+    cleared = client.post(
+        "/v1/hydrate",
+        headers=KEY,
+        json={
+            "contract": "mas_activity_feed_hydrate",
+            "ok": True,
+            "task_id": "eng_empty_feed",
+            "title": "Cleared",
+            "status": "completed",
+            "events": [],
+        },
+    )
+    assert cleared.status_code == 200
+    snap = client.get("/v1/tasks/eng_empty_feed").json()
+    assert snap["status"] == "completed"
+    assert snap["activity"] == []
+
+
+def test_feed_hydrate_keeps_live_sync_turns() -> None:
+    client.post(
+        "/v1/sync",
+        headers=KEY,
+        json={
+            "task_id": "eng_live_keep",
+            "events": [
+                {
+                    "event_type": "handoff",
+                    "event_id": "live_1",
+                    "task_id": "eng_live_keep",
+                    "at": "2026-08-16T12:05:00+00:00",
+                    "status": "PLAN_READY",
+                    "summary": "Live only",
+                    "from_role": "Orchestrator",
+                    "to_role": "Builder",
+                }
+            ],
+        },
+    )
+    client.post(
+        "/v1/hydrate",
+        headers=KEY,
+        json={
+            "contract": "mas_activity_feed_hydrate",
+            "ok": True,
+            "task_id": "eng_live_keep",
+            "title": "CAS",
+            "status": "running",
+            "version": 1,
+            "events": [
+                {
+                    "event_type": "handoff",
+                    "event_id": "cas_1",
+                    "task_id": "eng_live_keep",
+                    "at": "2026-08-16T12:00:00+00:00",
+                    "status": "DELEGATED",
+                    "summary": "From CAS",
+                    "from_role": "Orchestrator",
+                    "to_role": "Excel",
+                }
+            ],
+        },
+    )
+    snap = client.get("/v1/tasks/eng_live_keep").json()
+    summaries = [t.get("summary") or t.get("text") for t in snap["activity"]]
+    assert any("From CAS" in str(s) for s in summaries)
+    assert any("Live only" in str(s) for s in summaries)
+
+
+def test_feed_hydrate_does_not_regress_version() -> None:
+    client.post(
+        "/v1/sync",
+        headers=KEY,
+        json={"task_id": "eng_feed_ver", "version": 9, "status": "running", "events": []},
+    )
+    client.post(
+        "/v1/hydrate",
+        headers=KEY,
+        json={
+            "contract": "mas_activity_feed_hydrate",
+            "ok": True,
+            "task_id": "eng_feed_ver",
+            "status": "running",
+            "version": 3,
+            "events": [],
+        },
+    )
+    assert client.get("/v1/tasks/eng_feed_ver").json()["version"] == 9
+
+
+def test_feed_hydrate_clears_stale_gate_when_cas_omits() -> None:
+    client.post(
+        "/v1/hydrate",
+        headers=KEY,
+        json={
+            "contract": "mas_activity_feed_hydrate",
+            "ok": True,
+            "task_id": "eng_gate_clear",
+            "status": "awaiting_human",
+            "version": 2,
+            "human_gate": {"gate_id": "old", "expected_version": 2, "question": "Old?"},
+            "events": [],
+        },
+    )
+    assert client.get("/v1/tasks/eng_gate_clear").json()["awaiting_human"] is True
+    client.post(
+        "/v1/hydrate",
+        headers=KEY,
+        json={
+            "contract": "mas_activity_feed_hydrate",
+            "ok": True,
+            "task_id": "eng_gate_clear",
+            "status": "awaiting_human",
+            "version": 2,
+            "human_gate": None,
+            "events": [],
+        },
+    )
+    snap = client.get("/v1/tasks/eng_gate_clear").json()
+    assert snap["awaiting_human"] is False
+    assert snap.get("human_gate") in (None, {})
+    assert snap["status"] == "running"
+
+
+def test_list_hydrate_no_orphan_awaiting_without_gate() -> None:
+    client.post(
+        "/v1/hydrate",
+        headers=KEY,
+        json={
+            "contract": "mas_activity_task_list",
+            "tasks": [
+                {
+                    "task_id": "eng_orphan_hitl",
+                    "title": "Orphan",
+                    "status": "awaiting_human",
+                    "awaiting_human": False,
+                    "updated_at": "2026-08-16T10:00:00+00:00",
+                }
+            ],
+        },
+    )
+    snap = client.get("/v1/tasks/eng_orphan_hitl").json()
+    assert snap["status"] == "running"
+    assert snap["awaiting_human"] is False
+    row = next(t for t in client.get("/v1/tasks").json()["tasks"] if t["task_id"] == "eng_orphan_hitl")
+    assert row["turn_count"] is None
+
+
+def test_runtime_activity_state_not_in_repo() -> None:
+    gitignore = (ROOT.parent / ".gitignore").read_text(encoding="utf-8")
+    assert "mas-activity-service/data/" in gitignore
+    # Runtime may recreate the file locally; it must stay untracked.
+    import subprocess
+
+    tracked = subprocess.check_output(
+        ["git", "-C", str(ROOT.parent), "ls-files", "mas-activity-service/data/activity_state.json"],
+        text=True,
+    ).strip()
+    assert tracked == ""
+
+
+def test_list_hydrate_does_not_regress_version() -> None:
+    client.post(
+        "/v1/hydrate",
+        headers=KEY,
+        json={
+            "contract": "mas_activity_task_list",
+            "tasks": [
+                {
+                    "task_id": "eng_ver_1",
+                    "title": "V",
+                    "status": "awaiting_human",
+                    "version": 5,
+                    "updated_at": "2026-08-16T10:00:00+00:00",
+                    "human_gate": {"gate_id": "g", "expected_version": 5},
+                }
+            ],
+        },
+    )
+    # Trace Writer advanced version locally after CAS row snapshot.
+    client.post(
+        "/v1/sync",
+        headers=KEY,
+        json={"task_id": "eng_ver_1", "version": 7, "status": "awaiting_human", "events": []},
+    )
+    assert client.get("/v1/tasks/eng_ver_1").json()["version"] == 7
+
+    client.post(
+        "/v1/hydrate",
+        headers=KEY,
+        json={
+            "contract": "mas_activity_task_list",
+            "tasks": [
+                {
+                    "task_id": "eng_ver_1",
+                    "title": "V",
+                    "status": "awaiting_human",
+                    "version": 5,
+                    "updated_at": "2026-08-16T09:00:00+00:00",
+                    "human_gate": {"gate_id": "g", "expected_version": 5},
+                }
+            ],
+        },
+    )
+    assert client.get("/v1/tasks/eng_ver_1").json()["version"] == 7
+
+
+def test_trim_prefers_evicting_cas_over_local(monkeypatch) -> None:
+    import app.main as main_mod
+
+    monkeypatch.setattr(main_mod, "MAX_TASKS", 2)
+    seed = client.post("/v1/demo/seed", headers=KEY).json()
+    local_id = seed["task_id"]
+    client.post(
+        "/v1/hydrate",
+        headers=KEY,
+        json={
+            "contract": "mas_activity_task_list",
+            "tasks": [
+                {"task_id": "eng_x", "title": "X", "status": "running", "updated_at": "2026-08-16T13:00:00+00:00"},
+                {"task_id": "eng_y", "title": "Y", "status": "running", "updated_at": "2026-08-16T12:00:00+00:00"},
+            ],
+        },
+    )
+    ids = {t["task_id"] for t in client.get("/v1/tasks").json()["tasks"]}
+    assert local_id in ids
+    assert len(ids) == 2
+    assert "eng_y" not in ids or "eng_x" in ids
+
+
+def test_empty_rail_auto_list_hydrate_is_oneshot(monkeypatch) -> None:
+    calls = {"n": 0}
+
+    async def fake_list():
+        calls["n"] += 1
+        return {"contract": "mas_activity_task_list", "tasks": []}
+
+    monkeypatch.setenv("ACTIVITY_LIST_URL", "http://n8n.test/webhook/mas-activity-list-tasks")
+    monkeypatch.setattr("app.main.fetch_task_list", fake_list)
+    monkeypatch.setattr("app.main.durable_enabled", lambda: True)
+
+    first = client.get("/v1/tasks").json()
+    second = client.get("/v1/tasks").json()
+    assert calls["n"] == 1
+    assert first.get("hydrate", {}).get("auto_empty") is True
+    assert "hydrate" not in second
+
+    client.get("/v1/tasks?durable=1")
+    assert calls["n"] == 2
+
+
+def test_feed_hydrate_failure_keeps_prior_turns(monkeypatch) -> None:
+    client.post(
+        "/v1/hydrate",
+        headers=KEY,
+        json={
+            "contract": "mas_activity_feed_hydrate",
+            "ok": True,
+            "task_id": "eng_keep_turns",
+            "title": "Keep",
+            "status": "running",
+            "events": [
+                {
+                    "event_type": "handoff",
+                    "task_id": "eng_keep_turns",
+                    "at": "2026-08-16T12:00:00+00:00",
+                    "status": "PLAN_READY",
+                    "summary": "Prior",
+                    "from_role": "Orchestrator",
+                    "to_role": "Builder",
+                }
+            ],
+        },
+    )
+    assert len(client.get("/v1/tasks/eng_keep_turns").json()["activity"]) == 1
+
+    async def boom(*_a, **_k):
+        raise RuntimeError("append failed")
+
+    monkeypatch.setattr("app.main._append_turns", boom)
+    with pytest.raises(RuntimeError, match="append failed"):
+        client.post(
+            "/v1/hydrate",
+            headers=KEY,
+            json={
+                "contract": "mas_activity_feed_hydrate",
+                "ok": True,
+                "task_id": "eng_keep_turns",
+                "title": "Keep",
+                "status": "completed",
+                "events": [
+                    {
+                        "event_type": "handoff",
+                        "task_id": "eng_keep_turns",
+                        "at": "2026-08-16T13:00:00+00:00",
+                        "status": "DONE",
+                        "summary": "New",
+                        "from_role": "Builder",
+                        "to_role": "Orchestrator",
+                    }
+                ],
+            },
+        )
+    snap = client.get("/v1/tasks/eng_keep_turns").json()
+    assert len(snap["activity"]) == 1
+    prior = snap["activity"][0]
+    assert "Prior" in str(prior.get("summary") or prior.get("text") or prior.get("brief") or "")
+
+
+def test_list_hydrate_keeps_newer_local_updated_at() -> None:
+    client.post(
+        "/v1/hydrate",
+        headers=KEY,
+        json={
+            "contract": "mas_activity_task_list",
+            "tasks": [
+                {
+                    "task_id": "eng_hot_1",
+                    "title": "Hot",
+                    "status": "running",
+                    "updated_at": "2026-08-16T18:00:00+00:00",
+                },
+                {
+                    "task_id": "eng_quiet_1",
+                    "title": "Quiet",
+                    "status": "completed",
+                    "updated_at": "2026-08-16T17:00:00+00:00",
+                },
+            ],
+        },
+    )
+    # CAS returns older stamp for the hot task (stale row) while quiet is unchanged.
+    client.post(
+        "/v1/hydrate",
+        headers=KEY,
+        json={
+            "contract": "mas_activity_task_list",
+            "tasks": [
+                {
+                    "task_id": "eng_quiet_1",
+                    "title": "Quiet",
+                    "status": "completed",
+                    "updated_at": "2026-08-16T17:00:00+00:00",
+                },
+                {
+                    "task_id": "eng_hot_1",
+                    "title": "Hot",
+                    "status": "running",
+                    "updated_at": "2026-08-16T12:00:00+00:00",
+                },
+            ],
+        },
+    )
+    catalog = client.get("/v1/tasks").json()["tasks"]
+    ids = [t["task_id"] for t in catalog if t["task_id"] in {"eng_hot_1", "eng_quiet_1"}]
+    assert ids[0] == "eng_hot_1"
+    hot = next(t for t in catalog if t["task_id"] == "eng_hot_1")
+    assert hot["updated_at"].startswith("2026-08-16T18:00:00")
+
+
+def test_durable_feed_surfaces_ok_false(monkeypatch) -> None:
+    client.post(
+        "/v1/hydrate",
+        headers=KEY,
+        json={
+            "contract": "mas_activity_feed_hydrate",
+            "ok": True,
+            "task_id": "eng_stale_1",
+            "title": "Cached",
+            "status": "running",
+            "events": [
+                {
+                    "event_type": "handoff",
+                    "task_id": "eng_stale_1",
+                    "at": "2026-08-16T12:00:00+00:00",
+                    "status": "PLAN_READY",
+                    "summary": "Cached turn",
+                    "from_role": "Orchestrator",
+                    "to_role": "Builder",
+                }
+            ],
+        },
+    )
+
+    async def fake_feed(task_id: str):
+        return {
+            "contract": "mas_activity_feed_hydrate",
+            "ok": False,
+            "task_id": task_id,
+            "error": "task not found in Data Table",
+        }
+
+    monkeypatch.setenv("ACTIVITY_FEED_URL", "http://n8n.test/webhook/mas-activity-load-feed")
+    monkeypatch.setattr("app.main.fetch_task_feed", fake_feed)
+    monkeypatch.setattr("app.main.durable_enabled", lambda: True)
+
+    res = client.get("/v1/tasks/eng_stale_1?durable=1")
+    assert res.status_code == 200
+    body = res.json()
+    assert body["hydrate"]["ok"] is False
+    assert "not found" in body["hydrate"]["error"]
+    assert len(body["activity"]) >= 1
+
+
+def test_durable_feed_surfaces_webhook_error(monkeypatch) -> None:
+    client.post(
+        "/v1/hydrate",
+        headers=KEY,
+        json={
+            "contract": "mas_activity_feed_hydrate",
+            "ok": True,
+            "task_id": "eng_err_1",
+            "title": "Cached",
+            "status": "running",
+            "events": [],
+        },
+    )
+
+    async def boom(task_id: str):
+        raise RuntimeError("Activity feed hydrate HTTP 500: boom")
+
+    monkeypatch.setenv("ACTIVITY_FEED_URL", "http://n8n.test/webhook/mas-activity-load-feed")
+    monkeypatch.setattr("app.main.fetch_task_feed", boom)
+    monkeypatch.setattr("app.main.durable_enabled", lambda: True)
+
+    res = client.get("/v1/tasks/eng_err_1?durable=1")
+    assert res.status_code == 200
+    body = res.json()
+    assert body["hydrate"]["ok"] is False
+    assert "HTTP 500" in body["hydrate"]["error"]
+
+
+def test_feed_hydrate_workflow_limit_matches_max_turns() -> None:
+    gen = Path(__file__).resolve().parents[2] / "n8n" / "templates" / "generate_activity_hydrate_workflows.py"
+    text = gen.read_text(encoding="utf-8")
+    assert '"limit": 500' in text or '"limit":500' in text
+    assert "truncated" in text
+    assert '"orderBy": True' in text or '"orderBy":True' in text
+    assert 'orderByDirection": "DESC"' in text or "orderByDirection\": \"DESC\"" in text
+    wf = Path(__file__).resolve().parents[2] / "n8n" / "workflows" / "core" / "mas-activity-load-feed.workflow.json"
+    assert wf.is_file()
+    wf_text = wf.read_text(encoding="utf-8")
+    assert '"limit": 500' in wf_text
+    assert '"orderBy": true' in wf_text
+    assert '"orderByDirection": "DESC"' in wf_text
