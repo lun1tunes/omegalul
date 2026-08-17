@@ -81,7 +81,7 @@
     TASK_STARTED: "Создана",
     AWAITING_HUMAN: "Ждём вас",
     HUMAN_REPLY: "Ваш ответ",
-    HUMAN_APPROVED: "Утверждено",
+    HUMAN_APPROVED: "Одобрено",
     HUMAN_REJECTED: "Отклонено",
     SCHEDULE_DRAFT_READY: "Черновик",
     VERIFIED: "Проверено",
@@ -89,7 +89,11 @@
     COMPLETED: "Готово",
     NEEDS_INPUT: "Нужны данные",
     NEEDS_DECISION: "Нужно решение",
-    NEEDS_APPROVAL: "На утверждении",
+    NEEDS_APPROVAL: "Ждёт подтверждения",
+    result_approval: "Ждёт подтверждения",
+    RESULT_APPROVAL: "Ждёт подтверждения",
+    pre_delegation_approval: "Согласование",
+    PRE_DELEGATION_APPROVAL: "Согласование",
     ORCH_CONFLICT: "Конфликт",
     CONFLICT: "Конфликт",
     conflict: "Конфликт",
@@ -316,8 +320,16 @@
 
   function displayRole(role) {
     const raw = String(role || "").trim();
-    if (!raw || /^specialist$/i.test(raw)) return "User";
-    return raw;
+    if (!raw || /^specialist$/i.test(raw)) return "Вы";
+    const labels = {
+      User: "Вы",
+      Engineer: "Вы",
+      human_operator: "Вы",
+      Orchestrator: "Оркестратор",
+      universal_orchestrator: "Оркестратор",
+      error_handler: "Обработчик ошибок",
+    };
+    return labels[raw] || raw;
   }
 
   function roleClass(role) {
@@ -538,13 +550,23 @@
     }
 
     gatePanel.hidden = false;
-    gateKind.textContent = gateState.kind || "human_gate";
+    const GATE_KIND_LABELS = {
+      needs_input: "Нужны данные",
+      needs_decision: "Нужно решение",
+      needs_approval: "Ждёт подтверждения",
+      result_approval: "Ждёт подтверждения",
+      pre_delegation_approval: "Согласование",
+      human_gate: "Запрос к вам",
+    };
+    const rawKind = String(gateState.kind || "human_gate");
+    gateKind.textContent = GATE_KIND_LABELS[rawKind] || GATE_KIND_LABELS[rawKind.toLowerCase()] || "Запрос к вам";
+    gateKind.title = rawKind;
     gateMeta.textContent = [
       gateState.gate_id ? `gate ${gateState.gate_id}` : null,
       version != null ? `v${version}` : gateState.expected_version != null ? `v${gateState.expected_version}` : null,
       status || null,
     ].filter(Boolean).join(" · ");
-    gateReason.textContent = gateState.reason || "Требуется решение человека.";
+    gateReason.textContent = gateState.reason || "Ожидается ваше решение.";
     gateQuestions.innerHTML = "";
     const questions = Array.isArray(gateState.questions) ? gateState.questions : [];
     for (const q of questions) {
@@ -567,7 +589,7 @@
       composerHint.textContent = "";
     } else {
       composerHint.hidden = false;
-      composerHint.textContent = "Сейчас отвечать не нужно. Можно открыть другую задачу или дождаться следующего запроса.";
+      composerHint.textContent = "Ответ пока не требуется. Можно подождать или открыть другую задачу.";
     }
   }
 
@@ -580,7 +602,8 @@
     const li = document.createElement("li");
     const fromRole = displayRole(turn.from?.role || "Orchestrator");
     const toRole = displayRole(turn.to?.role || "User");
-    const isHuman = turn.kind === "hitl" || /human|^user$/i.test(fromRole) || /^HUMAN_/.test(turn.status || "") || turn.status === "TASK_STARTED";
+    const isHuman = turn.kind === "hitl" || /human|^вы$/i.test(fromRole) || /^HUMAN_/.test(turn.status || "") || turn.status === "TASK_STARTED";
+    const isHitlAsk = /NEEDS_|AWAITING_HUMAN|RESULT_APPROVAL|PRE_DELEGATION/i.test(String(turn.status || "")) || String(turn.stage || "") === "hitl";
     li.className = `turn outcome-${turn.outcome || "info"}${isHuman ? " human" : ""}`;
     li._masTurn = turn;
 
@@ -589,7 +612,7 @@
     who.title = `${fromRole} → ${toRole}`;
     const kicker = document.createElement("span");
     kicker.className = "who-kicker";
-    kicker.textContent = isHuman ? "Ответ" : "Handoff";
+    kicker.textContent = isHuman ? "Ответ" : isHitlAsk ? "Запрос к вам" : "Handoff";
     const fromEl = document.createElement("span");
     fromEl.className = "role from";
     fromEl.textContent = fromRole;
@@ -681,7 +704,7 @@
       const emptyMsg = document.createElement("p");
       emptyMsg.className = "rail-empty";
       emptyMsg.id = "railEmpty";
-      emptyMsg.textContent = "Пока нет задач — создайте первую, нажав на кнопку выше.";
+      emptyMsg.textContent = "Пока нет задач — создайте первую.";
       list.append(emptyMsg);
       if (newTaskBtn) newTaskBtn.classList.toggle("active-start", startOpen);
       return data;
@@ -1023,7 +1046,7 @@
     thread.innerHTML = "";
     empty.hidden = false;
     empty.textContent =
-      "Не удалось загрузить задачу (сервер или n8n временно недоступны). Повторите через бренд NOVATEK RE MAS / Workspace или обновите страницу.";
+      "Не удалось загрузить задачу. Возможно, сервер временно недоступен. Попробуйте обновить страницу.";
     if (taskId) setTaskHeader(taskId, "ошибка");
     renderRequest(null);
     renderGate(null, { awaiting: false });
@@ -1043,7 +1066,7 @@
     rendered = new Set();
     thread.innerHTML = "";
     empty.hidden = false;
-    empty.textContent = "Загрузка задачи…";
+    empty.textContent = "Загружаем задачу…";
     setTaskHeader(taskId, "…");
     renderRequest(null);
     renderStatusBanner(null, null);
@@ -1189,7 +1212,7 @@
       });
       if (action === "reply") humanResponse.value = "";
       showFlash(
-        action === "approve" ? "Утверждено."
+        action === "approve" ? "Одобрено."
           : action === "reject" ? "Отклонено."
             : action === "cancel" ? "Задача отменена."
               : "Ответ отправлен.",
@@ -1400,7 +1423,7 @@
   function formatHydrateError(err) {
     const text = String(err || "");
     if (/webhook .* is not registered|not registered/i.test(text) || /HTTP 404/.test(text)) {
-      return "Workflow «Activity — List Tasks» не активирован в n8n (webhook mas-activity-list-tasks). Обновите страницу после активации.";
+      return "Система пока не готова. Убедитесь, что все рабочие процессы активированы.";
     }
     // Local presentation tasks (act_/demo_) are not CAS rows — DT miss is expected.
     if (/task not found in Data Table/i.test(text)) {
@@ -1429,7 +1452,7 @@
           if (body.hydrate?.ok === false) {
             showFlash(formatHydrateError(body.hydrate.error || "hydrate_failed"));
           } else if (body.hydrate?.truncated) {
-            showFlash("Транскрипт усечён: в Data Tables больше лимита handoff (500). Показаны последние turns.");
+            showFlash("История обрезана: показаны только самые свежие сообщения.");
           }
         } else if (flash) {
           showFlash(`Не удалось обновить ленту (${snap.status}).`);

@@ -659,7 +659,16 @@ def test_universal_orchestrator_enterprise_control_plane() -> None:
         next(node for node in nodes if node["name"] == "Engineering Planner Agent"),
         ensure_ascii=False,
     ).lower()
-    assert "Bounded retry budget exhausted" in text
+    assert "Лимит автоматических повторов исчерпан" in text
+    assert "Уточните ввод" in text
+    assert "to_role:'User'" in text
+    assert "from_role:'Orchestrator'" in text
+    assert "status:'NEEDS_DECISION'" in text or "status:hitlStatus" in text
+    assert "can_release?'succeeded'" not in text
+    pipeline = Path("/home/lun1z/omegalul/n8n/templates/schedule_pipeline.py").read_text(encoding="utf-8")
+    assert "status:releaseReady?'needs_approval':'needs_input'" in pipeline
+    assert "kind:releaseReady?'needs_approval':'needs_input'" in pipeline
+    assert "kind='result_approval'" in text
     assert "expected_version" in text
     assert "gate_id" in text
     assert "pre_delegation_approval" in text
@@ -1274,6 +1283,8 @@ def test_universal_engineering_instruction_templates_are_portable() -> None:
         "schedule_semantic_runtime.py",
         "schedule_emit_order.py",
         "mas_handoff_contracts.py",
+        "generate_mas_error_handler.py",
+        "relayout_core_workflows.py",
     }
     assert {path.name for path in TEMPLATES.iterdir() if path.is_file()} == expected
     contract = load_json(TEMPLATES / "specialist-result-contract.schema.json")

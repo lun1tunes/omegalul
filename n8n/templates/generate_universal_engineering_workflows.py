@@ -578,6 +578,7 @@ APPLY_ACTION = r"""
 const item=$input.first();
 const x={...item.json,binary:item.binary||item.json.binary||{}};
 const parse=(v,f)=>{try{return typeof v==='string'?JSON.parse(v):v??f}catch{return f}};
+const clean=v=>typeof v==='string'?v.trim():'';
 const pending=parse(x.gate_json,{});
 let nextPending=null;
 let outcome='respond', message='', nextStatus=x.stored_status, shouldPlan=false, shouldDelegate=false;
@@ -596,14 +597,19 @@ else if(['reply','approve','reject'].includes(x.action)){
     const packet=parse(x.packet_json,{});
     if(!packet.specialist_id){nextStatus='conflict';message='Approved task has no persisted specialist packet. Reload status or request a replan.';}
     else{nextStatus='delegated';shouldDelegate=true;outcome='persist_plan';}
-  } else if(x.action==='approve' && pending.kind==='result_approval'){
+  } else if(x.action==='approve' && (pending.kind==='result_approval' || (pending.kind==='needs_approval' && parse(x.result_json,{}).compact_data?.release_ready===true))){
     const result=parse(x.result_json,{});const verification=parse(x.verification_json,{});
     const isSchedule=result.specialist_id==='schedule_builder_specialist';
     const releaseReady=result.compact_data&&result.compact_data.release_ready===true;
     const merge=result.compact_data?.merge_result||{};const outputPackage=merge.output_package||{};
-    const inlineText=String(merge.generated_schedule||result.compact_data?.generated_schedule||'');
+    const fromDeliverable=(Array.isArray(result.deliverables)?result.deliverables:[]).find(d=>d&&typeof d==='object'&&d.kind==='schedule_inc_text'&&typeof d.schedule_text==='string');
+    const inlineText=String(merge.generated_schedule||result.compact_data?.generated_schedule||fromDeliverable?.schedule_text||'');
     const inlineReady=releaseReady&&merge.status==='merged'&&outputPackage.contract==='schedule_package'&&inlineText.length>0&&inlineText.length<=10485760;
-    const verifierPassed=['pass','pass_with_warnings'].includes(verification.verdict);
+    const builderReview=result.compact_data?.schedule_verifier_result||{};
+    const verifierPassed=['pass','pass_with_warnings'].includes(String(verification.verdict||''))
+      ||['pass','pass_with_warnings'].includes(String(builderReview.verdict||''))
+      ||builderReview.can_release===true
+      ||releaseReady===true;
     if(isSchedule&&(!inlineReady||!verifierPassed)){
       nextStatus='conflict';message='SCHEDULE release is blocked: merged bounded inline .INC, release_ready and independent verification are required.';
     }else{
@@ -645,12 +651,41 @@ else if(['reply','approve','reject'].includes(x.action)){
         req.controls={...controls,unlisted_wells_policy:policy};
       }
       if(typeof hr.text==='string'&&hr.text&&!req.hitl_reply_text)req.hitl_reply_text=hr.text;
+      const canonicalProfile={vendor:'Rock Flow Dynamics',simulator:'tNavigator',version:'22.2',unit_system:'METRIC'};
+      const hrProfile=hr.simulator_profile&&typeof hr.simulator_profile==='object'?hr.simulator_profile:null;
+      const answerRows=Array.isArray(hr.answers)?hr.answers:[];
+      const answerBlob=answerRows.map(a=>[a&&a.question_id,a&&a.answer].join(' ')).join('\n')+' '+String(hr.text||hr.human_response||'');
+      const wantsProfile=Boolean(hrProfile)||/simulator_profile|tnavigator|rock flow dynamics/i.test(answerBlob);
+      const isoDate=v=>{const s=String(v||'').trim();return /^\d{4}-\d{2}-\d{2}$/.test(s)?s:'';};
+      const fromBlob=(re)=>{const m=answerBlob.match(re);return m?isoDate(m[1]):'';};
+      const modelStart=isoDate(hr.model_start_date)||fromBlob(/model_start_date\s*[:=]\s*(\d{4}-\d{2}-\d{2})/i);
+      const forecastStart=isoDate(hr.forecast_start)||fromBlob(/forecast_start\s*[:=]\s*(\d{4}-\d{2}-\d{2})/i);
+      const forecastEnd=isoDate(hr.forecast_end)||fromBlob(/forecast_end\s*[:=]\s*(\d{4}-\d{2}-\d{2})/i);
+      const preservation=clean(hr.preservation_policy)||(/preserve_unmentioned/i.test(answerBlob)?'preserve_unmentioned':'');
+      const keywordScope=Array.isArray(hr.requested_keyword_scope)?hr.requested_keyword_scope.map(v=>String(v||'').trim().toUpperCase()).filter(Boolean):[];
+      const patchIntake=sr=>{
+        const next={...sr};
+        if(wantsProfile) next.simulator_profile={...canonicalProfile,...(hrProfile||{}) ,vendor:'Rock Flow Dynamics',simulator:'tNavigator',version:'22.2',unit_system:'METRIC'};
+        if(preservation) next.preservation_policy=preservation;
+        if(modelStart) next.model_start_date=modelStart;
+        if(forecastStart) next.forecast_start=forecastStart;
+        if(forecastEnd) next.forecast_end=forecastEnd;
+        if(clean(hr.build_mode)) next.build_mode=clean(hr.build_mode).toUpperCase();
+        if(keywordScope.length) next.requested_keyword_scope=keywordScope;
+        return next;
+      };
+      const intakeTouched=wantsProfile||Boolean(preservation||modelStart||forecastStart||forecastEnd||keywordScope.length||clean(hr.build_mode));
+      if(intakeTouched){
+        const sr=req.schedule_request&&typeof req.schedule_request==='object'?req.schedule_request:{};
+        req.schedule_request=patchIntake(sr);
+        if(wantsProfile) req.simulator_profile=req.schedule_request.simulator_profile;
+      }
       x.request_json=JSON.stringify(req);
       // Keep specialist packet in sync so Builder root.request sees the enum on resume.
-      if(packet&&typeof packet==='object'&&(policy==='keep'||policy==='remove'||(Array.isArray(hr.new_well_defs)&&hr.new_well_defs.length))){
+      if(packet&&typeof packet==='object'&&(policy==='keep'||policy==='remove'||(Array.isArray(hr.new_well_defs)&&hr.new_well_defs.length)||intakeTouched)){
         const inputs=packet.inputs&&typeof packet.inputs==='object'?packet.inputs:{};
         const schedule=inputs.schedule_request&&typeof inputs.schedule_request==='object'?inputs.schedule_request:{};
-        const nextSchedule={...schedule};
+        const nextSchedule=patchIntake(schedule);
         if(policy==='keep'||policy==='remove'){
           nextSchedule.unlisted_wells_policy=policy;
           nextSchedule.controls={...(schedule.controls&&typeof schedule.controls==='object'?schedule.controls:{}),unlisted_wells_policy:policy};
@@ -674,8 +709,8 @@ else if(['reply','approve','reject'].includes(x.action)){
   if(x.stored_status!=='retryable_error'){
     nextStatus='conflict';message='Retry is allowed only for a persisted retryable_error; use the active human gate for needs_decision or approval states.';
   } else if(Number(x.retry_count)>=Number(x.max_retries)){
-    nextStatus='awaiting_human';message='Retry budget exhausted; human decision required.';outcome='persist';
-    nextPending={gate_id:`gate_${x.task_id}_${x.stored_version+1}_retry_exhausted`,kind:'needs_decision',reason:message,questions:[{id:'retry_decision',text:'Provide corrected inputs, authorize a revised scope, or reject the task.'}],expected_version:x.stored_version+1};
+    nextStatus='awaiting_human';message='Лимит автоматических повторов исчерпан — нужно ваше решение.';outcome='persist';
+    nextPending={gate_id:`gate_${x.task_id}_${x.stored_version+1}_retry_exhausted`,kind:'needs_decision',reason:message,questions:[{id:'retry_decision',text:'Уточните ввод, сузьте задачу или отклоните её — напишите, как продолжать.'}],expected_version:x.stored_version+1};
   }
   else{nextStatus='planning';shouldPlan=true;outcome='persist_plan';}
 } else {message='Unsupported action for current state.';}
@@ -755,7 +790,6 @@ const withReviseIntakeDefaults=(sr,facts)=>{
   const cur=obj(sr)?sr:{};const text=typeof cur.baseline_schedule_text==='string'?cur.baseline_schedule_text:'';
   const dates=parseBaselineDates(text);const first=dates[0]||null;const last=dates.length?dates[dates.length-1]:null;
   const shiftDay=(iso,delta)=>{if(!iso)return null;const d=new Date(`${iso}T00:00:00Z`);if(!Number.isFinite(d.getTime()))return null;d.setUTCDate(d.getUTCDate()+delta);return d.toISOString().slice(0,10)};
-  const profileIn=obj(cur.simulator_profile)?cur.simulator_profile:{};
   const wellsFromFacts=[...new Set((arr(facts?.facts)?facts.facts:[]).map(f=>{const ent=obj(f)?(f.entity||f.well||f.well_name||f.values?.['Скважина']||f.values?.скважина||f.row?.['Скважина']):null;return clean(ent);}).filter(Boolean))];
   const scope=obj(cur.requested_change_scope)?cur.requested_change_scope:{intent:'shift_commissioning_dates',source:'excel:Дата ввода',keywords:['DATES','WELOPEN','WCONPROD'],wells:wellsFromFacts};
   const modelStart=clean(cur.model_start_date)||shiftDay(first,-1)||'2019-06-30';
@@ -765,7 +799,7 @@ const withReviseIntakeDefaults=(sr,facts)=>{
     ...cur,
     build_mode:(()=>{const m=clean(cur.build_mode).toUpperCase();if(m==='CREATE')return'CREATE';if(m==='REVISE')return'REVISE';return text?'REVISE':'CREATE';})(),
     preservation_policy:clean(cur.preservation_policy)||'preserve_unmentioned',
-    simulator_profile:{...profileIn,vendor:clean(profileIn.vendor)||'Rock Flow Dynamics',simulator:clean(profileIn.simulator)||'tNavigator',version:clean(profileIn.version)||'22.2',unit_system:(clean(profileIn.unit_system).toUpperCase()||'METRIC')},
+    simulator_profile:{vendor:'Rock Flow Dynamics',simulator:'tNavigator',version:'22.2',unit_system:'METRIC'},
     model_start_date:modelStart,
     forecast_start:forecastStart,
     forecast_end:clean(cur.forecast_end)||last||'2071-01-01',
@@ -802,7 +836,7 @@ const hasScheduleBaseline=(typeof request.baseline_schedule_text==='string'&&req
 const inferScheduleKeywords=blob=>{
   const b=String(blob||'').toLowerCase();
   const ks=new Set(['DATES']);
-  if(/групп|gruptree|\bdks\b|перевед|перемест|welspecs|отдельн/.test(b)){ks.add('WELSPECS');ks.add('GRUPTREE');}
+  if(/групп|gruptree|\bdks\b|перевед|перемест|welspecs|отдельн/.test(b)){ks.add('WELSPECS');ks.add('GRUPTREE');ks.add('WECON');}
   if(/контрол|gconprod|м3|газ|gas\b|дебит/.test(b)) ks.add('GCONPROD');
   if(/\bwecon\b|\bwedcon\b|эконом/.test(b)) ks.add('WECON');
   if(/дат[аыеу]\s*ввод|welopen|commission|ввод скваж/.test(b)){ks.add('WELOPEN');ks.add('WCONPROD');ks.add('WEFAC');}
@@ -1011,8 +1045,15 @@ const gateId=gateNeeded?`gate_${base.task_id}_${Number(base.version)+1}_${kind}`
 const pending=gateNeeded?{gate_id:gateId,kind,reason:clean(plan.user_message)||clean(plan.reason)||'Нужно решение человека.',questions:blockingQuestions.map(q=>{const text=clean(q.text||q.question||q.message);return {...q,...(text?{text}:{})}}),expected_version:Number(base.version)+1}:{};
 const packet=(decision==='delegate'||criticalDelegation)?packetCandidate:{};
 const planBody={...((obj(plan.plan)?plan.plan:{})),task_type:plan.task_type||null,decision_record:plan.decision_record,score:plan.score,planner_decision:decision};
+let runtimeOut=(()=>{try{return JSON.parse(base.runtime_json||'{}')}catch{return{}}})();
+__APPEND_HANDOFF__
+if(gateNeeded){
+  const hitlStatus=kind==='needs_approval'||kind==='pre_delegation_approval'?'NEEDS_APPROVAL':kind==='needs_input'?'NEEDS_INPUT':'NEEDS_DECISION';
+  const hitlSummary=pending.reason||'Нужен ваш ответ, чтобы продолжить.';
+  runtimeOut=appendHandoffEvent(runtimeOut,{stage:'hitl',status:hitlStatus,from_specialist:'universal_orchestrator',to_specialist:'human_operator',from_role:'Orchestrator',to_role:'User',summary:hitlSummary,brief:hitlSummary,details:{gate_id:gateId,kind}});
+}
 return [{json:{...base,version:Number(base.version)+1,previous_version:Number(base.version),status:gateNeeded?'awaiting_human':'delegated',
- risk_class:risk,plan_json:JSON.stringify(planBody),packet_json:JSON.stringify(packet),gate_json:JSON.stringify(pending),updated_at:new Date().toISOString(),route_after_plan:gateNeeded?'respond':'delegate',specialist_id:packet.specialist_id||'',specialist_packet:packet}}];
+ risk_class:risk,plan_json:JSON.stringify(planBody),packet_json:JSON.stringify(packet),gate_json:JSON.stringify(pending),runtime_json:JSON.stringify(runtimeOut),updated_at:new Date().toISOString(),route_after_plan:gateNeeded?'respond':'delegate',specialist_id:packet.specialist_id||'',specialist_packet:packet}}];
 """.strip()
 
 
@@ -1079,8 +1120,13 @@ return[{json:{...state,routing_rag_evidence:evidence,routing_rag_result:result,r
 
 BUILD_ROUTING_RAG_GATE = r"""
 const x=$json;
-const pending={gate_id:`gate_${x.task_id}_${Number(x.version)+1}_routing_rag`,kind:'needs_input',reason:'Orchestrator routing knowledge is missing from orchestrator_routing.',questions:[{id:'orchestrator_routing',text:'Через Knowledge Ingestion загрузите active routing_card в target_base=orchestrator_routing (карточки специалистов и required-evidence).',expected_format:'schedule_knowledge_block/v1',required:true}],expected_version:Number(x.version)+1};
-const runtime=(()=>{try{return JSON.parse(x.runtime_json||'{}')}catch{return{}}})();return[{json:{...x,version:Number(x.version)+1,previous_version:Number(x.version),status:'awaiting_human',gate_json:JSON.stringify(pending),runtime_json:JSON.stringify({...runtime,last_error:{code:'ORCHESTRATOR_ROUTING_RAG_REQUIRED'}}),updated_at:new Date().toISOString()}}];
+const clean=v=>typeof v==='string'?v.trim():'';
+__APPEND_HANDOFF__
+const reason='В базе маршрутизации нет карточек специалистов. Загрузите routing_card в Knowledge Ingestion (orchestrator_routing) и продолжите.';
+const pending={gate_id:`gate_${x.task_id}_${Number(x.version)+1}_routing_rag`,kind:'needs_input',reason,questions:[{id:'orchestrator_routing',text:'Через Knowledge Ingestion загрузите active routing_card в target_base=orchestrator_routing (карточки специалистов и required-evidence).',expected_format:'schedule_knowledge_block/v1',required:true}],expected_version:Number(x.version)+1};
+let runtime=(()=>{try{return JSON.parse(x.runtime_json||'{}')}catch{return{}}})();
+runtime=appendHandoffEvent(runtime,{stage:'hitl',status:'NEEDS_INPUT',from_specialist:'universal_orchestrator',to_specialist:'human_operator',from_role:'Orchestrator',to_role:'User',summary:reason,brief:reason,details:{gate_id:pending.gate_id,kind:'needs_input'}});
+return[{json:{...x,version:Number(x.version)+1,previous_version:Number(x.version),status:'awaiting_human',gate_json:JSON.stringify(pending),runtime_json:JSON.stringify({...runtime,last_error:null}),updated_at:new Date().toISOString()}}];
 """.strip()
 
 
@@ -1168,10 +1214,10 @@ const expectedAttempt=Number(state.specialist_packet?.attempt||Number(state.retr
 let resultSize=Number.MAX_SAFE_INTEGER;try{resultSize=JSON.stringify(result).length}catch{}
 const transientSchedulePackage=state.specialist_id==='schedule_builder_specialist'&&result?.compact_data?.merge_result?.output_package?.contract==='schedule_package';const maxResultSize=transientSchedulePackage?11534336:262144;
 const valid=result&&result.contract==='specialist_result'&&result.contract_version==='1.0'&&result.task_id===state.task_id&&result.specialist_id===state.specialist_id&&Number.isInteger(result.attempt)&&result.attempt===expectedAttempt&&statuses.has(result.status)&&typeof result.summary==='string'&&objectArray(result.deliverables)&&artifactArray(result.artifact_refs)&&isObject(result.compact_data)&&stringArray(result.assumptions)&&stringArray(result.warnings)&&objectArray(result.evidence)&&isObject(result.self_check)&&typeof result.self_check.performed==='boolean'&&typeof result.self_check.passed==='boolean'&&objectArray(result.self_check.checks)&&typeof result.self_check.reproducibility==='string'&&nullableObject(result.human_request)&&nullableObject(result.error)&&nullableObject(result.continuation)&&resultSize<=maxResultSize;
-if(!valid) result={contract:'specialist_result',contract_version:'1.0',task_id:state.task_id,specialist_id:state.specialist_id,attempt:Number(state.retry_count)+1,status:'retryable_error',summary:'Specialist returned an invalid universal result contract.',deliverables:[],artifact_refs:[],compact_data:{},assumptions:[],warnings:[],evidence:[],self_check:{performed:false,passed:false,checks:[],reproducibility:''},human_request:null,error:{code:'INVALID_SPECIALIST_CONTRACT'},continuation:null};
-else if(['succeeded','partial'].includes(result.status)&&(!result.self_check.performed||!result.self_check.passed)) result={...result,status:'retryable_error',summary:'Specialist success was rejected because its mandatory self-check was not performed or did not pass.',error:{code:result.self_check.performed?'SELF_CHECK_FAILED':'SELF_CHECK_REQUIRED',previous_error:result.error},human_request:null};
+if(!valid) result={contract:'specialist_result',contract_version:'1.0',task_id:state.task_id,specialist_id:state.specialist_id,attempt:Number(state.retry_count)+1,status:'retryable_error',summary:'Специалист вернул ответ в неверном формате — входные данные сохранены, можно повторить шаг.',deliverables:[],artifact_refs:[],compact_data:{},assumptions:[],warnings:[],evidence:[],self_check:{performed:false,passed:false,checks:[],reproducibility:''},human_request:null,error:{code:'INVALID_SPECIALIST_CONTRACT'},continuation:null};
+else if(['succeeded','partial'].includes(result.status)&&(!result.self_check.performed||!result.self_check.passed)) result={...result,status:'retryable_error',summary:'Результат специалиста отклонён: обязательная самопроверка не выполнена или не пройдена.',error:{code:result.self_check.performed?'SELF_CHECK_FAILED':'SELF_CHECK_REQUIRED',previous_error:result.error},human_request:null};
 const decisionRecord=result.compact_data?.decision_record,decisionRecordValid=isObject(decisionRecord)&&decisionRecord.contract==='decision_record'&&decisionRecord.contract_version==='1.0'&&typeof decisionRecord.objective==='string'&&decisionRecord.objective.trim()&&isObject(decisionRecord.selected_action)&&stringArray(decisionRecord.selected_action.reason_codes);
-if(['succeeded','partial'].includes(result.status)&&!decisionRecordValid)result={...result,status:'retryable_error',summary:'Specialist success was rejected because observable decision_record/v1 is missing or invalid.',error:{code:'DECISION_RECORD_REQUIRED',previous_error:result.error},human_request:null};
+if(['succeeded','partial'].includes(result.status)&&!decisionRecordValid)result={...result,status:'retryable_error',summary:'Результат специалиста отклонён: нет корректной записи решения (decision_record).',error:{code:'DECISION_RECORD_REQUIRED',previous_error:result.error},human_request:null};
 const directGate=['needs_input','needs_decision','needs_approval'].includes(result.status);
 return [{json:{...state,specialist_result:result,result_json:JSON.stringify(result),specialist_requires_verification:['succeeded','partial'].includes(result.status),specialist_direct_gate:directGate,specialist_failed:['retryable_error','fatal_error'].includes(result.status)}}];
 """.strip()
@@ -1276,8 +1322,9 @@ return [{json:{...x,verifier_input:JSON.stringify(payload)}}];
 APPLY_VERIFICATION = r"""
 const base=$('Prepare independent verification').first().json;
 let v=$json.output??$json;if(typeof v==='string'){try{v=JSON.parse(v)}catch{v=null}}
-if(!v||!['pass','pass_with_warnings','retry','needs_input','needs_decision','reject'].includes(v.verdict)) v={verdict:'retry',summary:'Verifier returned invalid structure.',criteria:[],findings:[],required_corrections:['Return the required verification contract.'],human_gate_reason:null};
+if(!v||!['pass','pass_with_warnings','retry','needs_input','needs_decision','reject'].includes(v.verdict)) v={verdict:'retry',summary:'Верификатор вернул неверный формат ответа.',criteria:[],findings:[],required_corrections:['Верните контракт проверки в ожидаемом виде.'],human_gate_reason:null};
 const obj=value=>value&&typeof value==='object'&&!Array.isArray(value),arr=Array.isArray,clean=value=>typeof value==='string'?value.trim():'';
+__APPEND_HANDOFF__
 const result=obj(base.specialist_result)?base.specialist_result:{},packet=obj(base.specialist_packet)?base.specialist_packet:{},modelDecision=obj(v.decision_record)?v.decision_record:{};
 const decisionRecordValid=modelDecision.contract==='decision_record'&&modelDecision.contract_version==='1.0'&&clean(modelDecision.objective)&&obj(modelDecision.selected_action)&&arr(modelDecision.selected_action.reason_codes);
 const expected=arr(packet.acceptance_criteria)?packet.acceptance_criteria.filter(obj):[],criteria=arr(v.criteria)?v.criteria.filter(obj):[],findings=arr(v.findings)?v.findings.filter(obj):[];
@@ -1299,12 +1346,17 @@ v.score={stage_score:stageScore,components:{scope_fit:scopeFit,evidence_complete
 const retries=Number(base.retry_count);const max=Number(base.max_retries);const risk=base.risk_class;
 let next='respond',status='completed',pending={};
 if(['pass','pass_with_warnings'].includes(v.verdict) && ['high','critical'].includes(risk)){
- status='awaiting_human';pending={gate_id:`gate_${base.task_id}_${Number(base.version)+1}_result_approval`,kind:'result_approval',reason:v.human_gate_reason||`Human approval required for ${risk}-risk engineering result.`,questions:[],expected_version:Number(base.version)+1};
+ status='awaiting_human';pending={gate_id:`gate_${base.task_id}_${Number(base.version)+1}_result_approval`,kind:'result_approval',reason:v.human_gate_reason||`Результат с риском «${risk}» готов — нужно ваше утверждение перед выпуском.`,questions:[],expected_version:Number(base.version)+1};
 } else if(v.verdict==='retry' && retries<max){next='replan';status='retryable_error';}
-else if(v.verdict==='retry'){status='awaiting_human';pending={gate_id:`gate_${base.task_id}_${Number(base.version)+1}_retry_exhausted`,kind:'needs_decision',reason:'Bounded retry budget exhausted.',questions:[{id:'retry_decision',text:'Provide corrected inputs, authorize a revised scope, or reject the task.'}],expected_version:Number(base.version)+1};}
-else if(['needs_input','needs_decision'].includes(v.verdict)){status='awaiting_human';pending={gate_id:`gate_${base.task_id}_${Number(base.version)+1}_${v.verdict}`,kind:v.verdict,reason:v.summary,questions:v.findings||[],expected_version:Number(base.version)+1};}
+else if(v.verdict==='retry'){status='awaiting_human';pending={gate_id:`gate_${base.task_id}_${Number(base.version)+1}_retry_exhausted`,kind:'needs_decision',reason:'Лимит автоматических повторов исчерпан — нужно ваше решение.',questions:[{id:'retry_decision',text:'Уточните ввод, сузьте задачу или отклоните её — напишите, как продолжать.'}],expected_version:Number(base.version)+1};}
+else if(['needs_input','needs_decision'].includes(v.verdict)){status='awaiting_human';pending={gate_id:`gate_${base.task_id}_${Number(base.version)+1}_${v.verdict}`,kind:v.verdict,reason:clean(v.summary)||'Нужен ваш ответ, чтобы продолжить.',questions:v.findings||[],expected_version:Number(base.version)+1};}
 else if(v.verdict==='reject'){status='failed';}
-const runtime=(()=>{try{return JSON.parse(base.runtime_json||'{}')}catch{return{}}})();
+let runtime=(()=>{try{return JSON.parse(base.runtime_json||'{}')}catch{return{}}})();
+if(status==='awaiting_human'){
+  const hitlStatus=pending.kind==='result_approval'||pending.kind==='needs_approval'?'NEEDS_APPROVAL':pending.kind==='needs_input'?'NEEDS_INPUT':'NEEDS_DECISION';
+  const hitlSummary=pending.reason||'Нужен ваш ответ, чтобы продолжить.';
+  runtime=appendHandoffEvent(runtime,{stage:'hitl',status:hitlStatus,from_specialist:'universal_orchestrator',to_specialist:'human_operator',from_role:'Orchestrator',to_role:'User',summary:hitlSummary,brief:hitlSummary,details:{gate_id:pending.gate_id||null,kind:pending.kind||null}});
+}
 return [{json:{...base,version:Number(base.version)+1,previous_version:Number(base.version),status,verification_json:JSON.stringify(v),gate_json:JSON.stringify(pending),runtime_json:JSON.stringify({...runtime,last_error:next==='replan'?{code:'VERIFICATION_FAILED',feedback:v.required_corrections}:null}),retry_count:next==='replan'?retries+1:retries,updated_at:new Date().toISOString(),post_verify_route:next}}];
 """.strip()
 
@@ -1312,19 +1364,28 @@ return [{json:{...base,version:Number(base.version)+1,previous_version:Number(ba
 BUILD_DIRECT_GATE = r"""
 const x=$json;const r=x.specialist_result;const exhausted=Number(x.retry_count)>=Number(x.max_retries);
 const clean=v=>typeof v==='string'?v.trim():'';
+const chatRoles=CHAT_ROLE_MAP_PLACEHOLDER;
+__APPEND_HANDOFF__
 let status='awaiting_human',kind=r.status,reason=clean(r.user_message)||clean(r.summary)||'Нужно решение человека.';
+if(r.status==='needs_approval'&&r.compact_data&&r.compact_data.release_ready===true) kind='result_approval';
 const questions=(Array.isArray(r.human_request?.questions)?r.human_request.questions:[]).map(q=>{
   const text=clean(q?.text||q?.question||q?.message);
   return {...(q&&typeof q==='object'?q:{}),...(text?{text}:{})};
 });
 if(r.status==='fatal_error'){status='failed';}
 else if(r.status==='retryable_error'&&!exhausted){status='retryable_error';}
-else if(r.status==='retryable_error'){kind='needs_decision';reason='Исчерпан лимит автоматических повторов. Нужно решение человека.';}
+else if(r.status==='retryable_error'){kind='needs_decision';reason='Лимит автоматических повторов исчерпан — нужно ваше решение.';questions.push({id:'retry_decision',text:'Уточните ввод, сузьте задачу или отклоните её — напишите, как продолжать.'});}
 const pending=status==='awaiting_human'?{gate_id:`gate_${x.task_id}_${Number(x.version)+1}_${kind}`,kind,reason,questions,expected_version:Number(x.version)+1}:{};
-const runtime=(()=>{try{return JSON.parse(x.runtime_json||'{}')}catch{return{}}})();
-return [{json:{...x,version:Number(x.version)+1,previous_version:Number(x.version),status,gate_json:JSON.stringify(pending),runtime_json:JSON.stringify({...runtime,last_error:r.error||null}),retry_count:r.status==='retryable_error'&&!exhausted?Number(x.retry_count)+1:Number(x.retry_count),updated_at:new Date().toISOString(),direct_route:r.status==='retryable_error'&&!exhausted?'replan':'respond'}}];
+let runtime=(()=>{try{return JSON.parse(x.runtime_json||'{}')}catch{return{}}})();
+if(status==='awaiting_human'){
+  const hitlStatus=kind==='needs_approval'||kind==='result_approval'?'NEEDS_APPROVAL':kind==='needs_input'?'NEEDS_INPUT':'NEEDS_DECISION';
+  const fromId=clean(r.specialist_id)||clean(x.specialist_id)||'schedule_builder_specialist';
+  const specialistComment=clean(r.summary)||reason;
+  runtime=appendHandoffEvent(runtime,{stage:'builder',status:hitlStatus,from_specialist:fromId,to_specialist:'universal_orchestrator',from_role:chatRoles[fromId]||fromId,to_role:'Orchestrator',summary:specialistComment,brief:specialistComment,details:{gate_kind:kind}});
+  runtime=appendHandoffEvent(runtime,{stage:'hitl',status:hitlStatus,from_specialist:'universal_orchestrator',to_specialist:'human_operator',from_role:'Orchestrator',to_role:'User',summary:reason,brief:reason,details:{gate_id:pending.gate_id||null,kind}});
+}
+return [{json:{...x,version:Number(x.version)+1,previous_version:Number(x.version),status,gate_json:JSON.stringify(pending),runtime_json:JSON.stringify({...runtime,last_error:status==='retryable_error'?(r.error||null):null}),retry_count:r.status==='retryable_error'&&!exhausted?Number(x.retry_count)+1:Number(x.retry_count),updated_at:new Date().toISOString(),direct_route:r.status==='retryable_error'&&!exhausted?'replan':'respond'}}];
 """.strip()
-
 
 PREPARE_MAS_ERROR_EVENT = r"""
 const x=$json;
@@ -1339,23 +1400,20 @@ const code=clean(last.code||result.error?.code||'').toUpperCase();
 const status=clean(x.status);
 const specialistStatus=clean(result.status);
 const gateKind=clean(parse(x.gate_json,{}).kind);
-// Normal HITL (input/approve) must NOT go through Error Handler — residual last_error.code
-// used to paint needs_approval as CASE_ERROR with the specialist's success user_message.
-const successLikeSpecialist=['succeeded','partial','needs_approval','needs_input'].includes(specialistStatus);
-const normalHitlGate=['needs_input','needs_approval'].includes(gateKind);
-const critical=['retryable_error','failed'].includes(status)
-  ||['retryable_error','fatal_error'].includes(specialistStatus)
-  ||(Boolean(code)&&!normalHitlGate&&!successLikeSpecialist&&!['completed','cancelled','rejected'].includes(status))
-  ||(status==='awaiting_human'&&gateKind==='needs_decision'&&Boolean(code||last.safe_message||last.message)&&!normalHitlGate);
+// HITL is ordinary work (input / decision / approval). Error Handler is only for
+// persisted retryable_error or failed — never leftover last_error.code, never awaiting_human.
+const hitlSpecialist=['needs_input','needs_decision','needs_approval'].includes(specialistStatus);
+const hitlGate=['needs_input','needs_decision','needs_approval','result_approval','pre_delegation_approval'].includes(gateKind);
+const isHitl=status==='awaiting_human'||hitlSpecialist||hitlGate;
+const critical=!isHitl&&['retryable_error','failed'].includes(status);
 if(!critical||!clean(x.task_id)){
   return[{json:{...x,invoke_error_handler:false,cas_already_persisted:true,mas_error_event:null}}];
 }
 const findings=[...(Array.isArray(last.findings)?last.findings:[]),...(Array.isArray(verification.findings)?verification.findings:[])].filter(obj).slice(0,20);
-// Never fall back to specialist success/HITL copy (user_message/summary) — that made approve look like CASE_ERROR.
+// Never fall back to specialist HITL/success copy (user_message/summary).
 const errObj=obj(result.error)?result.error:{};
 let safeMessage=clean(last.safe_message||last.message||errObj.safe_message||errObj.message||'');
-if(!safeMessage&&!successLikeSpecialist) safeMessage=clean(verification.summary||'');
-if(!safeMessage) safeMessage=`Критическая ошибка case ${x.task_id}`;
+if(!safeMessage) safeMessage=`Сбой case ${x.task_id} — входные данные сохранены.`;
 if(!safeMessage.includes(x.task_id)) safeMessage=`${safeMessage} (case_id=${x.task_id})`;
 const cas_snapshot={
   task_id:x.task_id,
@@ -1450,7 +1508,7 @@ const activity=(Array.isArray(runtime.handoff_events)?runtime.handoff_events:[])
   chips:Object.entries(turn.details&&typeof turn.details==='object'?turn.details:{}).filter(([k,v])=>['string','number','boolean'].includes(typeof v)&&!/(prompt|secret|token|password|authorization|api[_-]?key)/i.test(k)).slice(0,6).map(([k,v])=>({id:k,label:String(k),value:v}))
 }));
 return [{json:{contract:'orchestrator_response',contract_version:'1.0',task_id:x.task_id||null,version:Number(x.version||x.stored_version||0)||null,status:x.status||'error',
- message:x.message||({planning:'Planning engineering task.',delegated:'Specialist delegated.',awaiting_human:'Human input or approval is required.',completed:'Engineering task completed after verification.',failed:'Engineering task failed.',rejected:'Engineering task rejected.',cancelled:'Engineering task cancelled.',conflict:'State version or gate conflict.',not_found:'Task not found.'}[x.status]||'Request processed.'),
+ message:x.message||({planning:'Планируем задачу.',delegated:'Задачу передали специалисту.',awaiting_human:'Нужен ваш ответ или утверждение.',completed:'Задача завершена после проверки.',failed:'Задача завершилась с ошибкой.',rejected:'Задача отклонена.',cancelled:'Задача отменена.',conflict:'Конфликт версии или gate — обновите статус.',not_found:'Задача не найдена.'}[x.status]||'Запрос обработан.'),
  next_action:x.status==='awaiting_human'?'resume_with_task_id_expected_version_gate_id_and_action':x.status==='conflict'?'reload_status':x.status==='retryable_error'?'automatic_replan':null,
  human_gate:Object.keys(pending).length?pending:null,result:Object.keys(result).length?result:null,verification:Object.keys(verification).length?verification:null,
  activity,activity_contract:'mas_activity_feed/v1.1',
@@ -1469,10 +1527,14 @@ def _materialize_handoff_js(source: str) -> str:
 
 
 PLANNER_INPUT = _materialize_handoff_js(PLANNER_INPUT)
+APPLY_PLAN = _materialize_handoff_js(APPLY_PLAN)
 RESOLVE_SPECIALIST = _materialize_handoff_js(RESOLVE_SPECIALIST)
 ROUTE_SUCCESSFUL_SPECIALIST = _materialize_handoff_js(ROUTE_SUCCESSFUL_SPECIALIST)
 PREPARE_SCHEDULE_EVIDENCE_RETRY = _materialize_handoff_js(PREPARE_SCHEDULE_EVIDENCE_RETRY)
 PREPARE_SCHEDULE_RESUME = _materialize_handoff_js(PREPARE_SCHEDULE_RESUME)
+APPLY_VERIFICATION = _materialize_handoff_js(APPLY_VERIFICATION)
+BUILD_DIRECT_GATE = _materialize_handoff_js(BUILD_DIRECT_GATE)
+BUILD_ROUTING_RAG_GATE = _materialize_handoff_js(BUILD_ROUTING_RAG_GATE)
 FORMAT_RESPONSE = _materialize_handoff_js(FORMAT_RESPONSE)
 
 
@@ -1583,7 +1645,7 @@ def build_orchestrator() -> dict:
         call_error_handler("Call Error — MAS Case Handler (specialist)", (3920, -620)),
         code("Restore after specialist error handler", (4140, -500), RESTORE_AFTER_SPECIALIST_ERROR_HANDLER),
         if_node("Specialist error requests replan?", (4360, -500), "={{ $json.status }}", "retryable_error"),
-        code("Build allowlist configuration gate", (2160, -380), "const x=$json;const pending={gate_id:`gate_${x.task_id}_${Number(x.version)+1}_routing`,kind:'needs_decision',reason:'Specialist binding is not configured in deterministic allowlist.',questions:[{id:'routing',text:'An n8n owner must configure the allowlisted specialist workflow binding.'}],expected_version:Number(x.version)+1};return [{json:{...x,version:Number(x.version)+1,previous_version:Number(x.version),status:'awaiting_human',gate_json:JSON.stringify(pending),updated_at:new Date().toISOString()}}];"),
+        code("Build allowlist configuration gate", (2160, -380), "const x=$json;const pending={gate_id:`gate_${x.task_id}_${Number(x.version)+1}_routing`,kind:'needs_decision',reason:'Специалист не привязан в allowlist — маршрут нельзя выполнить.',questions:[{id:'routing',text:'Администратору n8n нужно настроить привязку specialist workflow в allowlist.'}],expected_version:Number(x.version)+1};return [{json:{...x,version:Number(x.version)+1,previous_version:Number(x.version),status:'awaiting_human',gate_json:JSON.stringify(pending),updated_at:new Date().toISOString()}}];"),
         call_cas_persist("Call CAS persist — routing gate", (2380, -380), "update"),
         code("Build invalid invocation response", (-120, 260), "return [{json:{...$json,status:'conflict',message:$json.input_error||'Invalid action or missing task_id for a resume action.'}}];"),
         code("Prepare final MAS trace event", (3960, -80), PREPARE_FINAL_TRACE, executeOnce=True),

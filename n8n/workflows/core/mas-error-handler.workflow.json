@@ -6,18 +6,18 @@
   "nodes": [
     {
       "parameters": {
-        "content": "## edit after import\n\n**Error — MAS Case Handler** — after UI import:\n\n- Bind **Call CAS persist — error case** → `CAS — Persist Task State`\n- Bind **Call Writer — MAS Trace (error)** → `Writer — MAS Trace`\n- Confirm Activity URL/key in **Prepare Activity error sync**\n\nNever notify Activity without `task_id`/`case_id`.",
-        "width": 520,
-        "height": 260,
+        "content": "## edit after import\n\n**Error — MAS Case Handler** — after UI import, complete bindings before activate:\n\n- Bind sub-workflow on **Call CAS persist — error case**\n- Bind sub-workflow on **Call Writer — MAS Trace (error)**\n\nDo not rely on env()/Globals for corporate UI import.",
+        "height": 216,
+        "width": 440,
         "color": 1
       },
-      "id": "ff9de545-10b7-5756-a494-82335c246bc5",
+      "id": "7e318fd7-bc14-5505-9de7-239a448574a8",
       "name": "edit after import",
       "type": "n8n-nodes-base.stickyNote",
       "typeVersion": 1,
       "position": [
         -40,
-        -320
+        -361
       ]
     },
     {
@@ -33,7 +33,7 @@
       "typeVersion": 1,
       "position": [
         -700,
-        -420
+        -485
       ]
     },
     {
@@ -52,7 +52,7 @@
     },
     {
       "parameters": {
-        "jsCode": "const root=$json;\nconst obj=v=>v&&typeof v==='object'&&!Array.isArray(v);\nconst clean=v=>typeof v==='string'?v.trim():'';\nconst arr=Array.isArray;\nconst event=obj(root.mas_error_event)?root.mas_error_event:(obj(root)&&root.contract==='mas_error_event'?root:{});\nconst taskId=clean(event.task_id||root.task_id);\nconst scenarioRaw=clean(event.scenario||event.error_scenario||'').toLowerCase();\nconst codeIn=clean(event.code||event.error_code||'').toUpperCase();\nconst stage=clean(event.stage||'error')||'error';\nconst findings=arr(event.findings)?event.findings.filter(obj).slice(0,40):[];\nconst executionId=clean(String(event.execution_id||event.executionId||''))||null;\nconst snap=obj(event.cas_snapshot)?event.cas_snapshot:(obj(root.cas_snapshot)?root.cas_snapshot:null);\nconst passthrough=obj(root.passthrough)?root.passthrough:{};\n\nconst TAXONOMY={\n  llm_error:{code:'LLM_CALL_FAILED',cas_status:'retryable_error',restartable:true,label:'Ошибка LLM'},\n  invalid_json:{code:'INVALID_STRUCTURED_OUTPUT',cas_status:'retryable_error',restartable:true,label:'Невалидный JSON / structured output'},\n  calc_timeout:{code:'CALC_SERVICE_TIMEOUT',cas_status:'retryable_error',restartable:true,label:'Timeout расчётного сервиса'},\n  missing_data:{code:'MISSING_MANDATORY_DATA',cas_status:'awaiting_human',restartable:false,label:'Нет обязательных данных'},\n  validator_reject:{code:'VALIDATOR_REJECTED',cas_status:'awaiting_human',restartable:false,label:'Отказ валидатора'},\n  rag_error:{code:'RAG_UNAVAILABLE',cas_status:'awaiting_human',restartable:false,label:'Ошибка RAG'},\n  document_access:{code:'DOCUMENT_ACCESS_DENIED',cas_status:'awaiting_human',restartable:false,label:'Нет доступа к документу'},\n  approval_error:{code:'APPROVAL_GATE_FAILED',cas_status:'awaiting_human',restartable:false,label:'Ошибка согласования'},\n};\n\nconst CODE_TO_SCENARIO={\n  LLM_CALL_FAILED:'llm_error',\n  INVALID_STRUCTURED_OUTPUT:'invalid_json',\n  INVALID_SPECIALIST_CONTRACT:'invalid_json',\n  DECISION_RECORD_REQUIRED:'invalid_json',\n  CALC_SERVICE_TIMEOUT:'calc_timeout',\n  MISSING_MANDATORY_DATA:'missing_data',\n  VALIDATOR_REJECTED:'validator_reject',\n  RAG_UNAVAILABLE:'rag_error',\n  SCHEDULE_RAG_UNAVAILABLE:'rag_error',\n  ORCHESTRATOR_ROUTING_RAG_REQUIRED:'rag_error',\n  DOCUMENT_ACCESS_DENIED:'document_access',\n  APPROVAL_GATE_FAILED:'approval_error',\n  CAS_CONFLICT:'approval_error',\n};\n\nlet scenario=scenarioRaw;\nif(!TAXONOMY[scenario]&&codeIn&&CODE_TO_SCENARIO[codeIn]) scenario=CODE_TO_SCENARIO[codeIn];\nif(!TAXONOMY[scenario]){\n  const blob=JSON.stringify({code:codeIn,findings,msg:event.safe_message||event.message||''}).toLowerCase();\n  if(/llm|model|openai|chat/.test(blob)) scenario='llm_error';\n  else if(/json|structured|schema|parse/.test(blob)) scenario='invalid_json';\n  else if(/timeout|timed out|etimedout|calc|math_service/.test(blob)) scenario='calc_timeout';\n  else if(/missing|required data|обязательн/.test(blob)) scenario='missing_data';\n  else if(/validat|reject|self_check/.test(blob)) scenario='validator_reject';\n  else if(/rag|retrieval|abstain/.test(blob)) scenario='rag_error';\n  else if(/access|denied|forbidden|acl|unauthorized/.test(blob)) scenario='document_access';\n  else if(/approv|gate|conflict|version/.test(blob)) scenario='approval_error';\n  else scenario='llm_error';\n}\n\nconst tax=TAXONOMY[scenario];\nconst code=codeIn&&Object.values(TAXONOMY).some(t=>t.code===codeIn)?codeIn:tax.code;\nlet restartable=event.restartable===true||event.restartable===false?Boolean(event.restartable):tax.restartable;\nlet casStatus=clean(event.cas_status)||tax.cas_status;\nconst snapStatus=clean(snap&&snap.status);\n// Never override a terminal CAS row into restartable UI state.\nif(['failed','rejected','cancelled','completed'].includes(snapStatus)){\n  casStatus=snapStatus;\n  restartable=false;\n} else if(['failed','rejected','cancelled','completed'].includes(casStatus)){\n  restartable=false;\n} else if(casStatus==='awaiting_human'){\n  // keep taxonomy restartable flag (usually false)\n} else if(casStatus==='retryable_error' && event.restartable===false){\n  restartable=false;\n}\n\n// Fail closed: never notify UI without case_id.\nif(!taskId){\n  return[{json:{\n    contract:'mas_error_ack',\n    contract_version:'1.0',\n    accepted:false,\n    code:'CASE_ID_REQUIRED',\n    message:'Error workflow refused anonymous failure: task_id/case_id is required.',\n    taxonomy_scenario:scenario,\n    error_code:code,\n    restartable:false,\n    cas_persisted:false,\n    activity_notified:false,\n    passthrough,\n  }}];\n}\n\nlet safeMessage=clean(event.safe_message||event.user_message||event.message||'');\nif(!safeMessage) safeMessage=`${tax.label}. Case ${taskId}.`;\nif(!safeMessage.includes(taskId)) safeMessage=`${safeMessage} (case_id=${taskId})`;\n// Strip secretish fragments from message surface.\nsafeMessage=safeMessage.replace(/(sk-[A-Za-z0-9]+|Bearer\\s+\\S+|api[_-]?key\\s*[:=]\\s*\\S+)/gi,'[redacted]').slice(0,800);\n\nconst lastError={\n  code,\n  scenario,\n  stage,\n  safe_message:safeMessage,\n  findings:findings.slice(0,20),\n  execution_id:executionId,\n  restartable,\n  at:new Date().toISOString(),\n};\n\nreturn[{json:{\n  contract:'mas_error_event',\n  contract_version:'1.0',\n  task_id:taskId,\n  taxonomy_scenario:scenario,\n  error_code:code,\n  stage,\n  cas_status:casStatus,\n  restartable,\n  safe_message:safeMessage,\n  last_error:lastError,\n  findings,\n  execution_id:executionId,\n  cas_snapshot:snap,\n  cas_already_persisted:event.cas_already_persisted===true||root.cas_already_persisted===true,\n  skip_cas:event.skip_cas===true||root.skip_cas===true,\n  passthrough,\n  has_task_id:true,\n}}];"
+        "jsCode": "const root=$json;\nconst obj=v=>v&&typeof v==='object'&&!Array.isArray(v);\nconst clean=v=>typeof v==='string'?v.trim():'';\nconst arr=Array.isArray;\nconst event=obj(root.mas_error_event)?root.mas_error_event:(obj(root)&&root.contract==='mas_error_event'?root:{});\nconst taskId=clean(event.task_id||root.task_id);\nconst scenarioRaw=clean(event.scenario||event.error_scenario||'').toLowerCase();\nconst codeIn=clean(event.code||event.error_code||'').toUpperCase();\nconst stage=clean(event.stage||'error')||'error';\nconst findings=arr(event.findings)?event.findings.filter(obj).slice(0,40):[];\nconst executionId=clean(String(event.execution_id||event.executionId||''))||null;\nconst snap=obj(event.cas_snapshot)?event.cas_snapshot:(obj(root.cas_snapshot)?root.cas_snapshot:null);\nconst passthrough=obj(root.passthrough)?root.passthrough:{};\n\nconst TAXONOMY={\n  llm_error:{code:'LLM_CALL_FAILED',cas_status:'retryable_error',restartable:true,label:'Ошибка LLM'},\n  invalid_json:{code:'INVALID_STRUCTURED_OUTPUT',cas_status:'retryable_error',restartable:true,label:'Невалидный JSON / structured output'},\n  calc_timeout:{code:'CALC_SERVICE_TIMEOUT',cas_status:'retryable_error',restartable:true,label:'Timeout расчётного сервиса'},\n  missing_data:{code:'MISSING_MANDATORY_DATA',cas_status:'awaiting_human',restartable:false,label:'Нет обязательных данных'},\n  validator_reject:{code:'VALIDATOR_REJECTED',cas_status:'awaiting_human',restartable:false,label:'Отказ валидатора'},\n  rag_error:{code:'RAG_UNAVAILABLE',cas_status:'awaiting_human',restartable:false,label:'Ошибка RAG'},\n  document_access:{code:'DOCUMENT_ACCESS_DENIED',cas_status:'awaiting_human',restartable:false,label:'Нет доступа к документу'},\n  approval_error:{code:'APPROVAL_GATE_FAILED',cas_status:'awaiting_human',restartable:false,label:'Ошибка согласования'},\n};\n\nconst CODE_TO_SCENARIO={\n  LLM_CALL_FAILED:'llm_error',\n  INVALID_STRUCTURED_OUTPUT:'invalid_json',\n  INVALID_SPECIALIST_CONTRACT:'invalid_json',\n  DECISION_RECORD_REQUIRED:'invalid_json',\n  CALC_SERVICE_TIMEOUT:'calc_timeout',\n  MISSING_MANDATORY_DATA:'missing_data',\n  VALIDATOR_REJECTED:'validator_reject',\n  RAG_UNAVAILABLE:'rag_error',\n  SCHEDULE_RAG_UNAVAILABLE:'rag_error',\n  ORCHESTRATOR_ROUTING_RAG_REQUIRED:'rag_error',\n  DOCUMENT_ACCESS_DENIED:'document_access',\n  APPROVAL_GATE_FAILED:'approval_error',\n  CAS_CONFLICT:'approval_error',\n};\n\nlet scenario=scenarioRaw;\nif(!TAXONOMY[scenario]&&codeIn&&CODE_TO_SCENARIO[codeIn]) scenario=CODE_TO_SCENARIO[codeIn];\nif(!TAXONOMY[scenario]&&clean(snap&&snap.status)==='conflict') scenario='approval_error';\nif(!TAXONOMY[scenario]){\n  const blob=JSON.stringify({code:codeIn,findings,msg:event.safe_message||event.message||'',snap_status:snap&&snap.status,snap_message:snap&&snap.message}).toLowerCase();\n  if(/llm|model|openai|chat/.test(blob)) scenario='llm_error';\n  else if(/json|structured|schema|parse/.test(blob)) scenario='invalid_json';\n  else if(/timeout|timed out|etimedout|calc|math_service/.test(blob)) scenario='calc_timeout';\n  else if(/missing|required data|обязательн/.test(blob)) scenario='missing_data';\n  else if(/validat|reject|self_check/.test(blob)) scenario='validator_reject';\n  else if(/rag|retrieval|abstain/.test(blob)) scenario='rag_error';\n  else if(/access|denied|forbidden|acl|unauthorized/.test(blob)) scenario='document_access';\n  else if(/cas[_-]?conflict|stale expected_version|gate_id does not match|optimistic concurrency|concurrent or non-unique|current expected_version/.test(blob)) scenario='approval_error';\n  else scenario='llm_error';\n}\n\nconst tax=TAXONOMY[scenario];\nconst code=codeIn&&Object.values(TAXONOMY).some(t=>t.code===codeIn)?codeIn:tax.code;\nlet restartable=event.restartable===true||event.restartable===false?Boolean(event.restartable):tax.restartable;\nlet casStatus=clean(event.cas_status)||tax.cas_status;\nconst snapStatus=clean(snap&&snap.status);\n// Never override a terminal CAS row into restartable UI state.\nif(['failed','rejected','cancelled','completed'].includes(snapStatus)){\n  casStatus=snapStatus;\n  restartable=false;\n} else if(['failed','rejected','cancelled','completed'].includes(casStatus)){\n  restartable=false;\n} else if(casStatus==='awaiting_human'){\n  // keep taxonomy restartable flag (usually false)\n} else if(casStatus==='retryable_error' && event.restartable===false){\n  restartable=false;\n}\n\n// Fail closed: never notify UI without case_id.\nif(!taskId){\n  return[{json:{\n    contract:'mas_error_ack',\n    contract_version:'1.0',\n    accepted:false,\n    code:'CASE_ID_REQUIRED',\n    message:'Error workflow refused anonymous failure: task_id/case_id is required.',\n    taxonomy_scenario:scenario,\n    error_code:code,\n    restartable:false,\n    cas_persisted:false,\n    activity_notified:false,\n    passthrough,\n  }}];\n}\n\nlet safeMessage=clean(event.safe_message||event.message||'');\nif(!safeMessage) safeMessage=`${tax.label}. Case ${taskId}.`;\nif(!safeMessage.includes(taskId)) safeMessage=`${safeMessage} (case_id=${taskId})`;\n// Strip secretish fragments from message surface.\nsafeMessage=safeMessage.replace(/(sk-[A-Za-z0-9]+|Bearer\\s+\\S+|api[_-]?key\\s*[:=]\\s*\\S+)/gi,'[redacted]').slice(0,800);\n\nconst lastError={\n  code,\n  scenario,\n  stage,\n  safe_message:safeMessage,\n  findings:findings.slice(0,20),\n  execution_id:executionId,\n  restartable,\n  at:new Date().toISOString(),\n};\n\nreturn[{json:{\n  contract:'mas_error_event',\n  contract_version:'1.0',\n  task_id:taskId,\n  taxonomy_scenario:scenario,\n  error_code:code,\n  stage,\n  cas_status:casStatus,\n  restartable,\n  safe_message:safeMessage,\n  last_error:lastError,\n  findings,\n  execution_id:executionId,\n  cas_snapshot:snap,\n  cas_already_persisted:event.cas_already_persisted===true||root.cas_already_persisted===true,\n  skip_cas:event.skip_cas===true||root.skip_cas===true,\n  passthrough,\n  has_task_id:true,\n}}];"
       },
       "id": "19e087f2-b022-5606-abc2-625d712637da",
       "name": "Classify MAS error event",
@@ -106,7 +106,7 @@
       "typeVersion": 2,
       "position": [
         840,
-        -120
+        -85
       ]
     },
     {
@@ -139,7 +139,7 @@
       "typeVersion": 2.2,
       "position": [
         1120,
-        -120
+        0
       ]
     },
     {
@@ -173,13 +173,13 @@
       "typeVersion": 1.3,
       "position": [
         1400,
-        -220
+        0
       ],
       "onError": "continueRegularOutput"
     },
     {
       "parameters": {
-        "jsCode": "const built=$('Build CAS error patch').first().json||{};\nconst incoming=$json||{};\nconst x={...built,...incoming,has_task_id:built.has_task_id!==false,task_id:built.task_id||incoming.task_id,safe_message:built.safe_message||incoming.safe_message,error_code:built.error_code||incoming.error_code,taxonomy_scenario:built.taxonomy_scenario||incoming.taxonomy_scenario,cas_status:built.cas_status||incoming.status||incoming.cas_status,restartable:built.restartable,human_gate:built.human_gate||null,last_error:built.last_error||null,findings:built.findings||[],stage:built.stage||'error',execution_id:built.execution_id||null,attempted:built.attempted||null,passthrough:built.passthrough||{}};\nconst obj=v=>v&&typeof v==='object'&&!Array.isArray(v);\nconst clean=v=>typeof v==='string'?v.trim():'';\nif(!x.has_task_id||!x.task_id){\n  return[{json:{...x,activity_sync_ready:false,skip_trace:true}}];\n}\nconst cas=obj(x.attempted)?x.attempted:(obj(x.cas_snapshot)?x.cas_snapshot:{});\nconst version=Number(cas.version||x.human_gate?.expected_version||0)||null;\n// awaiting_human from error path is HITL (wait), not a red CASE_ERROR block.\nconst statusLabel=x.cas_status==='retryable_error'?'RETRYABLE_ERROR'\n  :x.cas_status==='failed'?'FATAL_ERROR'\n  :x.cas_status==='awaiting_human'?(clean(x.error_code)||'NEEDS_DECISION')\n  :'CASE_ERROR';\nconst summary=x.safe_message;\nconst details={\n  error_code:x.error_code,\n  taxonomy_scenario:x.taxonomy_scenario,\n  restartable:Boolean(x.restartable),\n  stage:x.stage,\n  execution_id:x.execution_id||null,\n  case_id:x.task_id,\n  version,\n  findings_count:Array.isArray(x.findings)?x.findings.length:0,\n};\nconst handoff={\n  event_type:'handoff',\n  stage:'error',\n  status:statusLabel,\n  summary,\n  brief:summary,\n  actor:'error_handler',\n  handoff:{\n    from_specialist:'universal_orchestrator',\n    to_specialist:'human_operator',\n    from_role:'Orchestrator',\n    to_role:'Engineer',\n    details,\n  },\n  human_gate:x.human_gate||null,\n};\nconst mas_trace_event={\n  trace_id:`trace_${x.task_id}_${Date.now().toString(36)}`,\n  task_id:x.task_id,\n  stage:'error',\n  event_type:'handoff',\n  actor:'error_handler',\n  status:statusLabel,\n  summary,\n  error_code:x.error_code,\n  safe_message:summary,\n  redacted_args:details,\n};\nreturn[{json:{\n  ...x,\n  skip_trace:false,\n  mas_trace_event,\n  passthrough:{...(obj(x.passthrough)?x.passthrough:{}),skip_activity_sync:true,task_id:x.task_id},\n  activity_status:x.cas_status,\n  activity_version:version,\n  activity_human_gate:x.human_gate||null,\n  activity_status_message:summary,\n  activity_event:handoff,\n}}];"
+        "jsCode": "const built=$('Build CAS error patch').first().json||{};\nconst incoming=$json||{};\nconst x={...built,...incoming,has_task_id:built.has_task_id!==false,task_id:built.task_id||incoming.task_id,safe_message:built.safe_message||incoming.safe_message,error_code:built.error_code||incoming.error_code,taxonomy_scenario:built.taxonomy_scenario||incoming.taxonomy_scenario,cas_status:built.cas_status||incoming.status||incoming.cas_status,restartable:built.restartable,human_gate:built.human_gate||null,last_error:built.last_error||null,findings:built.findings||[],stage:built.stage||'error',execution_id:built.execution_id||null,attempted:built.attempted||null,passthrough:built.passthrough||{}};\nconst obj=v=>v&&typeof v==='object'&&!Array.isArray(v);\nconst clean=v=>typeof v==='string'?v.trim():'';\nif(!x.has_task_id||!x.task_id){\n  return[{json:{...x,activity_sync_ready:false,skip_trace:true}}];\n}\nconst cas=obj(x.attempted)?x.attempted:(obj(x.cas_snapshot)?x.cas_snapshot:{});\nconst version=Number(cas.version||x.human_gate?.expected_version||0)||null;\n// awaiting_human from error path is HITL (wait), not a red CASE_ERROR block.\nconst statusLabel=x.cas_status==='retryable_error'?'RETRYABLE_ERROR'\n  :x.cas_status==='failed'?'FATAL_ERROR'\n  :x.cas_status==='awaiting_human'?(clean(x.error_code)||'NEEDS_DECISION')\n  :'CASE_ERROR';\nconst summary=x.safe_message;\nconst details={\n  error_code:x.error_code,\n  taxonomy_scenario:x.taxonomy_scenario,\n  restartable:Boolean(x.restartable),\n  stage:x.stage,\n  execution_id:x.execution_id||null,\n  case_id:x.task_id,\n  version,\n  findings_count:Array.isArray(x.findings)?x.findings.length:0,\n};\nconst handoff={\n  event_type:'handoff',\n  stage:'error',\n  status:statusLabel,\n  summary,\n  brief:summary,\n  actor:'error_handler',\n  handoff:{\n    from_specialist:'universal_orchestrator',\n    to_specialist:'human_operator',\n    from_role:'Orchestrator',\n    to_role:'User',\n    details,\n  },\n  human_gate:x.human_gate||null,\n};\nconst mas_trace_event={\n  trace_id:`trace_${x.task_id}_${Date.now().toString(36)}`,\n  task_id:x.task_id,\n  stage:'error',\n  event_type:'handoff',\n  actor:'error_handler',\n  status:statusLabel,\n  summary,\n  error_code:x.error_code,\n  safe_message:summary,\n  redacted_args:details,\n};\nreturn[{json:{\n  ...x,\n  skip_trace:false,\n  mas_trace_event,\n  passthrough:{...(obj(x.passthrough)?x.passthrough:{}),skip_activity_sync:true,task_id:x.task_id},\n  activity_status:x.cas_status,\n  activity_version:version,\n  activity_human_gate:x.human_gate||null,\n  activity_status_message:summary,\n  activity_event:handoff,\n}}];"
       },
       "id": "1b29c5d2-cc2c-5560-b87f-88c7a5ac5a52",
       "name": "Prepare structured error trace",
@@ -187,7 +187,7 @@
       "typeVersion": 2,
       "position": [
         1680,
-        -120
+        0
       ]
     },
     {
@@ -221,7 +221,7 @@
       "typeVersion": 1.3,
       "position": [
         1960,
-        -120
+        0
       ],
       "onError": "continueRegularOutput"
     },
@@ -235,7 +235,7 @@
       "typeVersion": 2,
       "position": [
         2240,
-        -120
+        0
       ]
     },
     {
@@ -268,7 +268,7 @@
       "typeVersion": 2.2,
       "position": [
         2520,
-        -120
+        0
       ]
     },
     {
@@ -301,7 +301,7 @@
       "typeVersion": 4.2,
       "position": [
         2800,
-        -220
+        0
       ],
       "onError": "continueRegularOutput",
       "continueOnFail": true
@@ -316,7 +316,7 @@
       "typeVersion": 2,
       "position": [
         3080,
-        -120
+        0
       ]
     },
     {
@@ -329,7 +329,7 @@
       "typeVersion": 2,
       "position": [
         840,
-        160
+        85
       ]
     }
   ],
@@ -497,5 +497,5 @@
   },
   "tags": [],
   "pinData": {},
-  "versionId": "76a789d8-c4a2-45a0-9f27-7ec454b69617"
+  "versionId": "e6283cbc-561b-4a0d-bbc8-c4dc162417c8"
 }

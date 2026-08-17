@@ -232,6 +232,97 @@ async function main() {
   assert.equal(accountableRemove.hard_blockers.length, 0);
   assert.equal(accountableRemove.score.decision, 'continue');
 
+  const assembleNodes = {
+    'Normalize SCHEDULE pipeline packet': { task_id: 'eng-1', attempt: 1 },
+    'Validate SCHEDULE builder stage': {
+      status: 'succeeded',
+      build_mode: 'CREATE',
+      score: { stage_score: 100, decision: 'continue' },
+      decision_record: decisionRecord(),
+      artifact_refs: [],
+      requirements_matrix: [],
+      source_map: [],
+      completeness_report: { complete: true },
+      assumptions: [],
+      warnings: [],
+      evidence: [],
+      agent_tool_trace: [],
+    },
+    'Render typed SCHEDULE IR deterministically': { status: 'rendered', hard_blockers: [], catalogue_hash: 'h' },
+    'Apply commissioning timeline revise': {
+      status: 'merged',
+      generated_schedule: 'DATES\n  1 JAN 2025 /\n/\n',
+      output_package: {
+        contract: 'schedule_package',
+        contract_version: '1.0',
+        root_path: 'schedule.inc',
+        package_hash: 'abc',
+        files: [{ file_ref: 'schedule.inc', text: 'DATES\n  1 JAN 2025 /\n/\n' }],
+      },
+    },
+    'Validate merged SCHEDULE package': {
+      status: 'valid',
+      score: { stage_score: 100 },
+      findings: [],
+      hard_blockers: [],
+    },
+    'Validate SCHEDULE pipeline plan': {
+      status: 'proposed',
+      score: { decision: 'continue', stage_score: 100 },
+      decision_record: decisionRecord(),
+    },
+  };
+  const releaseReady = await run(
+    builderWorkflow,
+    'Build release-ready specialist result',
+    {
+      verdict: 'pass',
+      can_release: true,
+      score: { stage_score: 100 },
+      findings: [],
+      required_corrections: [],
+    },
+    assembleNodes,
+  );
+  assert.equal(releaseReady.specialist_result.status, 'needs_approval');
+  assert.equal(releaseReady.specialist_result.compact_data.release_ready, true);
+  assert.equal(releaseReady.specialist_result.human_request.kind, 'needs_approval');
+  assert.equal(releaseReady.specialist_result.human_request.questions[0].id, 'release_approval');
+  assert.equal(typeof releaseReady.specialist_result.human_request.questions[0].question, 'string');
+
+  const notReady = await run(
+    builderWorkflow,
+    'Build release-ready specialist result',
+    {
+      verdict: 'reject',
+      can_release: false,
+      score: { stage_score: 40 },
+      findings: [{ code: 'DATES_TERMINATOR', severity: 'error' }],
+      required_corrections: ['Закройте блок DATES символом /'],
+    },
+    assembleNodes,
+  );
+  assert.equal(notReady.specialist_result.status, 'needs_input');
+  assert.equal(notReady.specialist_result.compact_data.release_ready, false);
+  assert.equal(notReady.specialist_result.human_request.kind, 'needs_input');
+  assert.equal(notReady.specialist_result.human_request.questions[0].question, 'Закройте блок DATES символом /');
+  assert.equal(notReady.specialist_result.human_request.questions[0].required, true);
+
+  const emptyCorrections = await run(
+    builderWorkflow,
+    'Build release-ready specialist result',
+    {
+      verdict: 'reject',
+      can_release: false,
+      score: { stage_score: 40 },
+      findings: [],
+      required_corrections: [],
+    },
+    assembleNodes,
+  );
+  assert.equal(emptyCorrections.specialist_result.status, 'needs_input');
+  assert.equal(emptyCorrections.specialist_result.human_request.questions[0].id, 'schedule_not_release_ready');
+
   const trace = await run(traceWorkflow, 'Normalize MAS trace event', {
     mas_trace_event: {
       trace_id: 'trace-1',
@@ -250,7 +341,7 @@ async function main() {
   assert(!trace.trace_row.details_json.includes('licensed text'));
   assert(!trace.trace_row.details_json.includes('raw_prompt'));
 
-  console.log('SCHEDULE decision runtime smoke: 9 scenarios passed');
+  console.log('SCHEDULE decision runtime smoke: 12 scenarios passed');
 }
 
 main().catch((error) => {

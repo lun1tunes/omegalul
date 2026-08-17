@@ -412,10 +412,61 @@ async function main() {
   assert.equal(released.status, 'completed');
   assert.equal(JSON.parse(released.result_json).release.filename, 'schedule.inc');
   assert.equal(JSON.parse(released.result_json).release.schedule_text, scheduleText);
+
+  const builderApproved = (await execute(orchestrator, 'Apply action and version guard', {
+    ...releaseBase,
+    gate_json: JSON.stringify({ gate_id: 'gate-release', kind: 'needs_approval' }),
+    verification_json: '{}',
+    result_json: JSON.stringify({
+      ...scheduleResult,
+      compact_data: {
+        ...scheduleResult.compact_data,
+        schedule_verifier_result: { verdict: 'pass', can_release: true },
+      },
+    }),
+  }))[0].json;
+  assert.equal(builderApproved.status, 'completed');
+  assert.equal(builderApproved.should_plan, false);
+  assert.equal(JSON.parse(builderApproved.result_json).release.schedule_text, scheduleText);
+
+  const deliverableOnly = (await execute(orchestrator, 'Apply action and version guard', {
+    ...releaseBase,
+    verification_json: '{}',
+    result_json: JSON.stringify({
+      ...scheduleResult,
+      compact_data: {
+        release_ready: true,
+        merge_result: {
+          status: 'merged',
+          output_package: {
+            contract: 'schedule_package',
+            contract_version: '1.0',
+            root_path: 'schedule.inc',
+          },
+        },
+        schedule_verifier_result: { verdict: 'pass', can_release: true },
+      },
+    }),
+  }))[0].json;
+  assert.equal(deliverableOnly.status, 'completed');
+  assert.equal(JSON.parse(deliverableOnly.result_json).release.schedule_text, scheduleText);
+
+  const correctionApprove = (await execute(orchestrator, 'Apply action and version guard', {
+    ...releaseBase,
+    gate_json: JSON.stringify({ gate_id: 'gate-release', kind: 'needs_approval' }),
+    result_json: JSON.stringify({
+      ...scheduleResult,
+      compact_data: { ...scheduleResult.compact_data, release_ready: false },
+    }),
+  }))[0].json;
+  assert.equal(correctionApprove.status, 'planning');
+  assert.equal(correctionApprove.should_plan, true);
+
   const releaseBlocked = (await execute(orchestrator, 'Apply action and version guard', {
     ...releaseBase,
     result_json: JSON.stringify({
       ...scheduleResult,
+      deliverables: [{ kind: 'schedule_inc_text', filename: 'schedule.inc', schedule_text: '' }],
       compact_data: { ...scheduleResult.compact_data, generated_schedule: '', merge_result: { ...scheduleResult.compact_data.merge_result, generated_schedule: '' } },
     }),
   }))[0].json;
@@ -446,7 +497,7 @@ async function main() {
   assert.equal(traceRows.length, preparedTrace.mas_trace_events.length);
   assert(traceRows.every((row) => !row.json.trace_row.details_json.includes('raw_prompt')));
 
-  console.log('Universal decision runtime smoke: 17 scenarios passed');
+  console.log('Universal decision runtime smoke: 20 scenarios passed');
 }
 
 main().catch((error) => {

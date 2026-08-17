@@ -173,6 +173,107 @@ async function run(name, json) {
   assert.equal(approveSkip[0].json.invoke_error_handler, false);
   assert.equal(approveSkip[0].json.mas_error_event, null);
 
+  const leftoverHitl = await prepareFn(
+    {
+      task_id: 'eng_hitl_leftover',
+      status: 'awaiting_human',
+      version: 5,
+      risk_class: 'high',
+      retry_count: 2,
+      max_retries: 2,
+      created_at: '2026-01-01T00:00:00.000Z',
+      updated_at: '2026-01-01T00:00:00.000Z',
+      request_json: '{}',
+      runtime_json: JSON.stringify({ last_error: { code: 'LLM_CALL_FAILED', safe_message: 'old' } }),
+      plan_json: '{}',
+      packet_json: '{}',
+      result_json: JSON.stringify({ status: 'succeeded', user_message: 'Черновик готов.' }),
+      verification_json: '{}',
+      gate_json: JSON.stringify({ kind: 'result_approval' }),
+    },
+    () => ({ first: () => ({ json: {} }) }),
+  );
+  assert.equal(leftoverHitl[0].json.invoke_error_handler, false);
+
+  const gateFn = new AsyncFunction('$json', '$', source(orch, 'Build specialist gate or error'));
+  const hitlGate = await gateFn(
+    {
+      task_id: 'eng_hitl_gate',
+      version: 3,
+      retry_count: 0,
+      max_retries: 2,
+      runtime_json: '{}',
+      specialist_id: 'schedule_builder_specialist',
+      specialist_result: {
+        specialist_id: 'schedule_builder_specialist',
+        status: 'needs_approval',
+        user_message: 'Черновик прогнозного schedule файла готов. Нужно ваше утверждение перед выпуском.',
+        summary: 'Черновик прогнозного schedule файла прошёл проверки и готов к утверждению.',
+        human_request: { kind: 'needs_approval', questions: [{ id: 'release_approval', question: 'Утвердите выпуск.' }] },
+        error: null,
+      },
+    },
+    () => ({ first: () => ({ json: {} }) }),
+  );
+  const hitlOut = hitlGate[0].json;
+  assert.equal(hitlOut.status, 'awaiting_human');
+  const runtime = JSON.parse(hitlOut.runtime_json);
+  const hops = runtime.handoff_events || [];
+  assert.ok(hops.some((e) => e.from_role === 'Orchestrator' && e.to_role === 'User' && /утвержден/i.test(e.summary)));
+  assert.ok(hops.some((e) => e.to_role === 'Orchestrator'));
+  assert.equal(runtime.last_error, null);
+  assert.equal(JSON.parse(hitlOut.gate_json).kind, 'needs_approval');
+
+  const releaseGate = await gateFn(
+    {
+      task_id: 'eng_release_gate',
+      version: 3,
+      retry_count: 0,
+      max_retries: 2,
+      runtime_json: '{}',
+      specialist_id: 'schedule_builder_specialist',
+      specialist_result: {
+        specialist_id: 'schedule_builder_specialist',
+        status: 'needs_approval',
+        user_message: 'Черновик прогнозного schedule файла готов. Нужно ваше утверждение перед выпуском.',
+        summary: 'Черновик прогнозного schedule файла прошёл проверки и готов к утверждению.',
+        compact_data: { release_ready: true },
+        human_request: { kind: 'needs_approval', questions: [{ id: 'release_approval', question: 'Утвердите выпуск.' }] },
+        error: null,
+      },
+    },
+    () => ({ first: () => ({ json: {} }) }),
+  );
+  assert.equal(JSON.parse(releaseGate[0].json.gate_json).kind, 'result_approval');
+
+  const casConflict = await run('Classify MAS error event', {
+    mas_error_event: {
+      task_id: 'eng_conflict_smoke',
+      safe_message: 'Stale expected_version. Reload task state and resubmit against the current version.',
+      cas_snapshot: { status: 'conflict', version: 4 },
+    },
+  });
+  assert.equal(casConflict.taxonomy_scenario, 'approval_error');
+  assert.equal(casConflict.error_code, 'APPROVAL_GATE_FAILED');
+  assert.notEqual(casConflict.taxonomy_scenario, 'llm_error');
+
+  const casConflictSnapOnly = await run('Classify MAS error event', {
+    mas_error_event: {
+      task_id: 'eng_conflict_snap',
+      cas_snapshot: { status: 'conflict', message: 'Concurrent or non-unique state update detected.' },
+    },
+  });
+  assert.equal(casConflictSnapOnly.taxonomy_scenario, 'approval_error');
+
+  const casConflictMessageOnly = await run('Classify MAS error event', {
+    mas_error_event: {
+      task_id: 'eng_conflict_msg',
+      safe_message: 'Stale expected_version. Reload task state and resubmit against the current version.',
+    },
+  });
+  assert.equal(casConflictMessageOnly.taxonomy_scenario, 'approval_error');
+  assert.notEqual(casConflictMessageOnly.taxonomy_scenario, 'llm_error');
+
   const realErr = await prepareFn(
     {
       task_id: 'eng_err_smoke',

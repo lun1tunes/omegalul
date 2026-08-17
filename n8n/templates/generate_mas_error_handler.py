@@ -115,8 +115,9 @@ const CODE_TO_SCENARIO={
 
 let scenario=scenarioRaw;
 if(!TAXONOMY[scenario]&&codeIn&&CODE_TO_SCENARIO[codeIn]) scenario=CODE_TO_SCENARIO[codeIn];
+if(!TAXONOMY[scenario]&&clean(snap&&snap.status)==='conflict') scenario='approval_error';
 if(!TAXONOMY[scenario]){
-  const blob=JSON.stringify({code:codeIn,findings,msg:event.safe_message||event.message||''}).toLowerCase();
+  const blob=JSON.stringify({code:codeIn,findings,msg:event.safe_message||event.message||'',snap_status:snap&&snap.status,snap_message:snap&&snap.message}).toLowerCase();
   if(/llm|model|openai|chat/.test(blob)) scenario='llm_error';
   else if(/json|structured|schema|parse/.test(blob)) scenario='invalid_json';
   else if(/timeout|timed out|etimedout|calc|math_service/.test(blob)) scenario='calc_timeout';
@@ -124,7 +125,7 @@ if(!TAXONOMY[scenario]){
   else if(/validat|reject|self_check/.test(blob)) scenario='validator_reject';
   else if(/rag|retrieval|abstain/.test(blob)) scenario='rag_error';
   else if(/access|denied|forbidden|acl|unauthorized/.test(blob)) scenario='document_access';
-  else if(/approv|gate|conflict|version/.test(blob)) scenario='approval_error';
+  else if(/cas[_-]?conflict|stale expected_version|gate_id does not match|optimistic concurrency|concurrent or non-unique|current expected_version/.test(blob)) scenario='approval_error';
   else scenario='llm_error';
 }
 
@@ -162,7 +163,7 @@ if(!taskId){
   }}];
 }
 
-let safeMessage=clean(event.safe_message||event.user_message||event.message||'');
+let safeMessage=clean(event.safe_message||event.message||'');
 if(!safeMessage) safeMessage=`${tax.label}. Case ${taskId}.`;
 if(!safeMessage.includes(taskId)) safeMessage=`${safeMessage} (case_id=${taskId})`;
 // Strip secretish fragments from message surface.
@@ -301,7 +302,7 @@ const handoff={
     from_specialist:'universal_orchestrator',
     to_specialist:'human_operator',
     from_role:'Orchestrator',
-    to_role:'Engineer',
+    to_role:'User',
     details,
   },
   human_gate:x.human_gate||null,

@@ -81,6 +81,19 @@ def test_known_status_brief_wins_over_english_summary_and_brief() -> None:
     assert "KEEP" not in brief
 
 
+def test_hitl_brief_uses_agent_russian_comment() -> None:
+    brief = build_brief(
+        status="NEEDS_APPROVAL",
+        summary="Черновик прогнозного schedule файла готов. Нужно ваше утверждение перед выпуском.",
+        brief="Черновик прогнозного schedule файла готов. Нужно ваше утверждение перед выпуском.",
+        details={"error_code": "CASE_ERROR", "case_id": "eng_x"},
+    )
+    assert "утверждение" in brief
+    assert "Критическая ошибка" not in brief
+    assert outcome_for("NEEDS_APPROVAL") == "wait"
+    assert outcome_for("RESULT_APPROVAL") == "wait"
+
+
 def test_format_duration_and_outcome() -> None:
     assert format_duration(250) == "250 ms"
     assert format_duration(1500) == "1.5 s"

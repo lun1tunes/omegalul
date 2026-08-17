@@ -156,6 +156,7 @@ def outcome_for(status: str | None) -> str:
         "NEEDS_INPUT",
         "NEEDS_DECISION",
         "NEEDS_APPROVAL",
+        "RESULT_APPROVAL",
         "RETRYABLE_ERROR",
     }:
         return "wait"
@@ -165,16 +166,27 @@ def outcome_for(status: str | None) -> str:
 
 
 def build_brief(*, status: str | None, summary: str | None, brief: str | None, details: dict[str, Any]) -> str:
-    """Known status → laconic RU template wins over producer brief/summary (presentation layer)."""
+    """HITL: show the agent's Russian comment. Errors: status template. Else producer text."""
     status_key = (status or "").upper()
     code_key = str(details.get("error_code") or "").strip().upper()
-    raw = BRIEF_TEMPLATES.get(code_key, "").strip() if code_key else ""
-    if not raw:
-        raw = BRIEF_TEMPLATES.get(status_key, "").strip()
-    if not raw:
-        raw = (brief or "").strip()
-    if not raw:
-        raw = (summary or "").strip()
+    producer = (brief or "").strip() or (summary or "").strip()
+    hitl = status_key in {
+        "NEEDS_INPUT",
+        "NEEDS_DECISION",
+        "NEEDS_APPROVAL",
+        "AWAITING_HUMAN",
+        "RESULT_APPROVAL",
+        "PRE_DELEGATION_APPROVAL",
+        "HUMAN_REPLY",
+    }
+    if hitl:
+        raw = producer if producer and re.search(r"[А-Яа-яЁё]", producer) else BRIEF_TEMPLATES.get(status_key, "").strip() or producer
+    else:
+        raw = BRIEF_TEMPLATES.get(code_key, "").strip() if code_key else ""
+        if not raw:
+            raw = BRIEF_TEMPLATES.get(status_key, "").strip()
+        if not raw:
+            raw = producer
     if not raw:
         raw = "Шаг зафиксирован в ленте активности."
     # Never present a generic failure without case identity when available.

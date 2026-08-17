@@ -724,6 +724,145 @@ const runCommissioningRevise=(text,wellFacts,fileRef='schedule.inc',options={})=
     continuation:null,
   };
 };
+
+/** Wells that already have a WCONPROD record (commissioning identity). */
+const listWconprodWells=model=>{
+  const wells=new Set();
+  for(const rec of model.records||[]){
+    if(rec.keyword==='WCONPROD'&&rec.entity)wells.add(tlClean(rec.entity));
+  }
+  return wells;
+};
+
+/**
+ * Infer text-only group/GCONPROD rebind from the task + HITL blob.
+ * Requires: wells that exist in baseline WCONPROD, a parent group name, a gas rate.
+ */
+const inferGroupRebindSpec=(blob,model)=>{
+  const text=String(blob||'');
+  const avail=listWconprodWells(model);
+  const tokens=[...text.matchAll(/\b([A-Za-z0-9_.\-]{2,16})\b/g)].map(m=>m[1]);
+  const wells=[...new Set(tokens.filter(w=>avail.has(w)))];
+  let parent='';
+  const quoted=text.match(/["«„]([A-Za-z][A-Za-z0-9_]{0,15})["»“]/);
+  if(quoted)parent=quoted[1].toUpperCase();
+  if(!parent){
+    const after=text.match(/групп[аеуы]?\s*[-–—:]?\s*["«]?\s*([A-Za-z][A-Za-z0-9_]{1,15})/i);
+    if(after)parent=after[1].toUpperCase();
+  }
+  if(!parent&&/\bdks\b/i.test(text))parent='DKS';
+  const reserved=new Set(['FIELD','GRAT','OPEN','WELL','RATE','DATES','WELSPECS','GRUPTREE','GCONPROD','WECON','WCONPROD','INCLUDE','SCHEDULE','NORTH','CENTR','METRIC']);
+  if(reserved.has(parent))parent='';
+  let rate=null;
+  const tys=text.match(/(\d+(?:[ \u00a0]\d{3})*)\s*тыс/i);
+  if(tys)rate=Number(String(tys[1]).replace(/\s+/g,''))*1000;
+  if(rate==null){
+    const near=text.match(/(?:grat|gconprod|контрол\w*)[^\d]{0,40}(\d[\d\s]{3,8}\d)/i);
+    if(near)rate=Number(String(near[1]).replace(/\s+/g,''));
+  }
+  if(rate==null){
+    const raw=text.match(/\b(\d{5,7})\b/);
+    if(raw)rate=Number(raw[1]);
+  }
+  if(!wells.length||!parent||!Number.isFinite(rate)||rate<=0)return null;
+  const well_groups={};
+  for(const w of wells)well_groups[w]=`G${w}`;
+  return{wells,parent_group:parent,parent_of_parent:'FIELD',well_groups,gas_rate:rate,control:'GRAT'};
+};
+
+const firstCommissioningDateForWells=(model,wells)=>{
+  const set=new Set((wells||[]).map(tlClean).filter(Boolean));
+  let best=null;
+  for(const step of model.steps||[]){
+    if(!step.date)continue;
+    for(const blk of step.blocks||[]){
+      if(blk.keyword!=='WCONPROD')continue;
+      for(const rec of blk.records||[]){
+        if(!set.has(tlClean(rec.entity)))continue;
+        if(!best||step.date.epoch_ms<best.epoch_ms)best=step.date;
+      }
+    }
+  }
+  return best;
+};
+
+const copyFirstKeywordRecords=(model,keyword,wells)=>{
+  const set=new Set((wells||[]).map(tlClean).filter(Boolean));
+  const seen=new Set();
+  const out=[];
+  for(const rec of model.records||[]){
+    const w=tlClean(rec.entity);
+    if(rec.keyword!==keyword||!set.has(w)||seen.has(w))continue;
+    seen.add(w);
+    out.push({entity:w,raw_line:rec.raw_line});
+  }
+  return out;
+};
+
+/**
+ * On the first WCONPROD DATES of the named wells, ADD WELSPECS/GRUPTREE/GCONPROD
+ * and re-emit existing WECON/WPIMULT rows for those wells (MAS golden_case_2).
+ */
+const applyGroupRebindOnTimeline=(model,spec)=>{
+  const wells=(spec.wells||[]).map(tlClean).filter(Boolean);
+  const parent=tlClean(spec.parent_group).toUpperCase();
+  const rate=Number(spec.gas_rate);
+  const findings=[];
+  if(!wells.length||!parent||!Number.isFinite(rate)||rate<=0){
+    return{status:'noop',model,findings:[{code:'GROUP_REBIND_SPEC_INVALID',severity:'error'}],edits:[]};
+  }
+  const date=spec.effective_at?parseScheduleDate(spec.effective_at):firstCommissioningDateForWells(model,wells);
+  if(!date){
+    return{status:'needs_input',model,findings:[{code:'GROUP_REBIND_COMMISSIONING_DATE_MISSING',severity:'error',wells}],edits:[]};
+  }
+  const wecon=copyFirstKeywordRecords(model,'WECON',wells);
+  const wpimult=copyFirstKeywordRecords(model,'WPIMULT',wells);
+  const step=ensureDatesStep(model,date);
+  const groups=wells.map(w=>(spec.well_groups&&spec.well_groups[w])||`G${w}`);
+  const edits=[];
+  upsertKeywordRecords(step,'WELSPECS',wells.map((w,i)=>({entity:w,raw_line:`${w} ${groups[i]} /`})));
+  edits.push({op:'add',keyword:'WELSPECS',entities:wells.slice()});
+  upsertKeywordRecords(step,'GRUPTREE',[{entity:parent,raw_line:`${parent} FIELD /`},...wells.map((w,i)=>({entity:groups[i],raw_line:`${groups[i]} ${parent} /`}))]);
+  edits.push({op:'add',keyword:'GRUPTREE',entity:parent});
+  upsertKeywordRecords(step,'GCONPROD',[{entity:parent,raw_line:`${parent} GRAT 2* ${rate} /`}]);
+  edits.push({op:'add',keyword:'GCONPROD',entity:parent,gas_rate:rate});
+  if(wecon.length){upsertKeywordRecords(step,'WECON',wecon);edits.push({op:'reemit',keyword:'WECON',entities:wecon.map(x=>x.entity)});}
+  if(wpimult.length){upsertKeywordRecords(step,'WPIMULT',wpimult);edits.push({op:'reemit',keyword:'WPIMULT',entities:wpimult.map(x=>x.entity)});}
+  refreshTimelineFlat(model);
+  return{status:'applied',model,findings,edits,effective_at:step.effective_at,dates_tnav:step.dates_tnav,wells,parent_group:parent,gas_rate:rate};
+};
+
+const runGroupRebindRevise=(text,spec,fileRef='schedule.inc')=>{
+  const model=parseScheduleTimeline(text,fileRef);
+  const beforeDates=model.dates.map(d=>d.iso);
+  const edited=applyGroupRebindOnTimeline(model,spec||{});
+  const continuity=checkMonthlyDatesContinuity(edited.model.dates);
+  const findings=[...(edited.findings||[])];
+  if(!continuity.ok)findings.push({code:'MONTHLY_DATES_GAP',severity:'error',gaps:continuity.gaps.slice(0,24),checked_from:continuity.checked_from,gap_count:continuity.gaps.length});
+  const after=new Set(edited.model.dates.map(d=>d.iso));
+  const missingBaseline=beforeDates.filter(iso=>!after.has(iso));
+  if(missingBaseline.length)findings.push({code:'DATES_STEP_REMOVED',severity:'error',missing:missingBaseline.slice(0,24)});
+  const hard=findings.filter(f=>f.severity==='error');
+  const generated=hard.length?'':emitScheduleFromTimeline(edited.model);
+  return{
+    contract:'schedule_group_rebind_revise_result',
+    contract_version:'1.0',
+    kind:'group_rebind',
+    status:hard.length?'needs_input':edited.status,
+    generated_schedule:generated,
+    timeline:edited.model,
+    edits:edited.edits||[],
+    wells:edited.wells||spec.wells||[],
+    parent_group:edited.parent_group||spec.parent_group||null,
+    gas_rate:edited.gas_rate??spec.gas_rate??null,
+    effective_at:edited.effective_at||null,
+    dates_tnav:edited.dates_tnav||null,
+    monthly_dates_check:continuity,
+    findings,
+    evidence_gap:[],
+    continuation:null,
+  };
+};
 """
 
 
@@ -768,6 +907,33 @@ try{
 if(!baselineText)baselineText=String(req.baseline_schedule_text||m.generated_schedule||'');
 
 if(intake.build_mode!=='REVISE'||!wellFacts.length){
+  if(intake.build_mode==='REVISE'&&!wellFacts.length&&baselineText){
+    const spec=inferGroupRebindSpec(instructionBlob,parseScheduleTimeline(baselineText,rootPath));
+    if(spec){
+      const result=runGroupRebindRevise(baselineText,spec,rootPath);
+      if(result.status==='applied'){
+        const contentHash=s=>{let h=2166136261;for(const ch of String(s??'')){h^=ch.charCodeAt(0);h=Math.imul(h,16777619)}return`fnv1a32:${(h>>>0).toString(16).padStart(8,'0')}`};
+        const hash=contentHash;
+        const text=result.generated_schedule;
+        const files=arr(m.output_package?.files)?m.output_package.files.map(f=>{
+          if(tlClean(f.file_ref)!==rootPath)return f;
+          return{...f,text,manifest:{...(obj(f.manifest)?f.manifest:{}),file_ref:rootPath,sha256:hash(text),char_length:text.length,line_count:text.split(/\r\n|\n|\r/).length}};
+        }):[{file_ref:rootPath,text,manifest:{file_ref:rootPath,sha256:hash(text)}}];
+        const packageHash=hash(files.slice().sort((a,b)=>String(a.file_ref).localeCompare(String(b.file_ref))).map(f=>`${f.file_ref}|${f.manifest?.sha256||hash(f.text)}`).join('\n'));
+        return[{json:{
+          ...m,
+          status:'merged',
+          generated_schedule:text,
+          output_hash:hash(text),
+          output_package:{...(obj(m.output_package)?m.output_package:{}),root_path:rootPath,package_hash:packageHash,files},
+          commissioning_revise:result,
+          preservation_report:{...(obj(m.preservation_report)?m.preservation_report:{}),policy:'preserve_unmentioned',zero_change_byte_identical:false,group_rebind_applied:true,edit_count:(result.edits||[]).length},
+          semantic_diff:{changed_keywords:[...new Set((result.edits||[]).map(x=>x.keyword).filter(Boolean))],include_graph_changed:false,group_rebind_wells:result.wells||[],edits:(result.edits||[]).slice(0,40)},
+          findings:[...(arr(m.findings)?m.findings:[]),{code:'GROUP_REBIND_TIMELINE_REVISE_APPLIED',severity:'warning',edits:(result.edits||[]).length,wells:result.wells,parent_group:result.parent_group,gas_rate:result.gas_rate},...((result.findings||[]).filter(f=>f.severity==='warning'))],
+        }}];
+      }
+    }
+  }
   return[{json:{...m,commissioning_revise:{status:'skipped',reason:!wellFacts.length?'no_well_facts':'not_revise'},monthly_dates_check:checkMonthlyDatesContinuity(parseScheduleTimeline(m.generated_schedule||baselineText).dates)}}];
 }
 
