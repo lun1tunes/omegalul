@@ -29,6 +29,94 @@ def _headers(cfg: dict[str, str]) -> dict[str, str]:
     return headers
 
 
+def _json_object(response: httpx.Response) -> dict[str, Any] | None:
+    try:
+        value = response.json()
+    except ValueError:
+        return None
+    if isinstance(value, list) and value:
+        value = value[0]
+    return value if isinstance(value, dict) else None
+
+
+async def probe_durable_connectivity(
+    *, task_id: str | None = None, timeout_s: float = 10.0
+) -> dict[str, Any]:
+    """Probe the n8n webhook bridges used to read Data Tables.
+
+    Activity does not connect to n8n's database directly.  These webhooks are
+    the supported Data Table boundary, so the diagnostic intentionally probes
+    them instead of making assumptions about the n8n database.
+    """
+    cfg = durable_cfg()
+    result: dict[str, Any] = {
+        "configured": bool(cfg["list_url"] or cfg["feed_url"]),
+        "list": {"configured": bool(cfg["list_url"])},
+        "feed": {"configured": bool(cfg["feed_url"]), "checked": False},
+    }
+
+    async with httpx.AsyncClient(timeout=timeout_s) as client:
+        if cfg["list_url"]:
+            try:
+                response = await client.post(
+                    cfg["list_url"], json={"action": "list"}, headers=_headers(cfg)
+                )
+                body = _json_object(response)
+                result["list"].update(
+                    {
+                        "reachable": True,
+                        "ok": 200 <= response.status_code < 300 and body is not None,
+                        "http_status": response.status_code,
+                        "contract": body.get("contract") if body else None,
+                        "task_count": len(body.get("tasks", []))
+                        if isinstance(body, dict) and isinstance(body.get("tasks"), list)
+                        else None,
+                    }
+                )
+                if body is None:
+                    result["list"]["error"] = "Response was not a JSON object"
+            except httpx.HTTPError as exc:
+                result["list"].update(
+                    {"reachable": False, "ok": False, "error": str(exc)[:300]}
+                )
+
+        if cfg["feed_url"] and task_id:
+            result["feed"]["checked"] = True
+            try:
+                response = await client.post(
+                    cfg["feed_url"], json={"task_id": task_id}, headers=_headers(cfg)
+                )
+                body = _json_object(response)
+                result["feed"].update(
+                    {
+                        "reachable": True,
+                        "ok": 200 <= response.status_code < 300 and body is not None,
+                        "http_status": response.status_code,
+                        "contract": body.get("contract") if body else None,
+                        "task_id": task_id,
+                    }
+                )
+                if body is None:
+                    result["feed"]["error"] = "Response was not a JSON object"
+            except httpx.HTTPError as exc:
+                result["feed"].update(
+                    {
+                        "reachable": False,
+                        "ok": False,
+                        "task_id": task_id,
+                        "error": str(exc)[:300],
+                    }
+                )
+        elif cfg["feed_url"]:
+            result["feed"]["note"] = "Provide ?task_id=... to probe the trace/feed Data Table."
+
+    result["ok"] = bool(
+        result["list"].get("ok")
+        and (not result["feed"].get("checked") or result["feed"].get("ok"))
+    )
+    return result
+
+
 async def fetch_task_list(*, timeout_s: float = 30.0) -> dict[str, Any] | None:
     cfg = durable_cfg()
     if not cfg["list_url"]:

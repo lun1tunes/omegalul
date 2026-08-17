@@ -54,6 +54,81 @@ def hitl_backend() -> str:
     return "local"
 
 
+def orchestrator_config_summary() -> dict[str, Any]:
+    """Return safe runtime configuration facts for the diagnostics endpoint."""
+    cfg = _cfg()
+    backend = hitl_backend()
+    return {
+        "backend": backend,
+        "webhook_configured": bool(cfg["webhook_url"]),
+        "auth_configured": bool(cfg["auth_header"] and cfg["auth_value"]),
+        "n8n_rest_configured": bool(
+            cfg["n8n_base"] and cfg["n8n_user"] and cfg["n8n_password"]
+        ),
+    }
+
+
+async def probe_orchestrator_connectivity(*, timeout_s: float = 10.0) -> dict[str, Any]:
+    """Safely probe the live orchestrator boundary without creating a task."""
+    cfg = _cfg()
+    backend = hitl_backend()
+    result: dict[str, Any] = {
+        **orchestrator_config_summary(),
+        "checked": False,
+    }
+    if backend == "local":
+        result.update(
+            {
+                "ok": False,
+                "note": "HITL backend is local or no live orchestrator endpoint is configured.",
+            }
+        )
+        return result
+    if backend != "webhook" or not cfg["webhook_url"]:
+        result.update(
+            {
+                "ok": False,
+                "note": "Connectivity probe currently supports the webhook backend only.",
+            }
+        )
+        return result
+
+    # `status` for a deliberately missing task exercises the webhook and its
+    # n8n bindings without inserting a task or invoking an LLM route.
+    probe_payload = {
+        "action": "status",
+        "task_id": "activity_connectivity_probe",
+        "requested_by": "activity-diagnostics",
+    }
+    headers: dict[str, str] = {}
+    if cfg["auth_header"] and cfg["auth_value"]:
+        headers[cfg["auth_header"]] = cfg["auth_value"]
+    try:
+        async with httpx.AsyncClient(timeout=timeout_s) as client:
+            response = await client.post(cfg["webhook_url"], json=probe_payload, headers=headers)
+        result.update(
+            {
+                "checked": True,
+                "reachable": True,
+                "ok": 200 <= response.status_code < 300,
+                "http_status": response.status_code,
+            }
+        )
+        try:
+            body = response.json()
+            if isinstance(body, list) and body:
+                body = body[0]
+            if isinstance(body, dict):
+                result["response_contract"] = body.get("contract")
+                result["response_status"] = body.get("status")
+                result["response_message"] = str(body.get("message") or "")[:300] or None
+        except ValueError:
+            result["response_preview"] = response.text[:300]
+    except httpx.HTTPError as exc:
+        result.update({"checked": True, "reachable": False, "ok": False, "error": str(exc)[:300]})
+    return result
+
+
 def _deref_flat(
     flat: list[Any],
     value: Any,

@@ -20,10 +20,22 @@ from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel, Field, field_validator
 
 from app.enrich import enrich_turn
-from app.orchestrator import BinaryMap, OrchestratorError, hitl_backend, invoke_orchestrator
+from app.orchestrator import (
+    BinaryMap,
+    OrchestratorError,
+    hitl_backend,
+    invoke_orchestrator,
+    orchestrator_config_summary,
+    probe_orchestrator_connectivity,
+)
 from app import knowledge as knowledge_store
 from app.commissioning import extract_schedule_from_orchestrator
-from app.durable import durable_enabled, fetch_task_feed, fetch_task_list
+from app.durable import (
+    durable_enabled,
+    fetch_task_feed,
+    fetch_task_list,
+    probe_durable_connectivity,
+)
 from app.persist import load_state, persist_enabled, save_state
 from app.task_binaries import load_task_binaries, save_task_binaries
 
@@ -214,6 +226,14 @@ def _persist() -> None:
 
 
 def _require_key(x_activity_key: str | None = Header(default=None, alias="X-Activity-Key")) -> None:
+    disabled = (os.getenv("MAS_ACTIVITY_AUTH_DISABLED") or "").strip().lower() in {
+        "1",
+        "true",
+        "yes",
+        "on",
+    }
+    if disabled:
+        return
     if not secrets.compare_digest(str(x_activity_key or ""), ACTIVITY_KEY):
         raise HTTPException(status_code=401, detail="Invalid or missing X-Activity-Key")
 
@@ -962,6 +982,7 @@ def health() -> dict[str, Any]:
         "hitl_backend": hitl_backend(),
         "durable_hydrate": durable_enabled(),
         "state_persist": persist_enabled(),
+        "auth_required": not _auth_disabled(),
         "tasks": len(_tasks),
         "time": _now(),
         "started_at": _started_at,
@@ -972,7 +993,45 @@ def health() -> dict[str, Any]:
 def ready() -> dict[str, Any]:
     if not STATIC.exists() or not (STATIC / "index.html").exists():
         raise HTTPException(status_code=503, detail="UI assets missing")
-    return {"status": "ready", "hitl_backend": hitl_backend(), "durable_hydrate": durable_enabled()}
+    return {
+        "status": "ready",
+        "hitl_backend": hitl_backend(),
+        "durable_hydrate": durable_enabled(),
+        "auth_required": not _auth_disabled(),
+    }
+
+
+def _auth_disabled() -> bool:
+    return (os.getenv("MAS_ACTIVITY_AUTH_DISABLED") or "").strip().lower() in {
+        "1",
+        "true",
+        "yes",
+        "on",
+    }
+
+
+@app.get("/v1/diagnostics/connectivity")
+async def diagnostics_connectivity(
+    task_id: str | None = Query(default=None, max_length=200),
+    _: None = Depends(_require_key),
+) -> dict[str, Any]:
+    """Check Activity → n8n Data Table webhooks and the MAS Orchestrator webhook.
+
+    No secrets or response bodies are returned. With ``?task_id=...`` the feed
+    webhook is also checked, which exercises the trace Data Table binding.
+    """
+    durable, orchestrator = await asyncio.gather(
+        probe_durable_connectivity(task_id=task_id),
+        probe_orchestrator_connectivity(),
+    )
+    return {
+        "status": "ok" if durable.get("ok") and orchestrator.get("ok") else "degraded",
+        "auth_required": not _auth_disabled(),
+        "data_tables": durable,
+        "orchestrator": orchestrator,
+        "config": {"hitl_backend": hitl_backend(), "orchestrator": orchestrator_config_summary()},
+        "note": "Data Table access is checked through the configured n8n hydrate webhooks.",
+    }
 
 
 @app.post("/v1/turns")

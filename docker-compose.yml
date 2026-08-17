@@ -179,6 +179,7 @@ services:
     restart: unless-stopped
     environment:
       MAS_ACTIVITY_KEY: ${MAS_ACTIVITY_KEY:?Set MAS_ACTIVITY_KEY in .env}
+      MAS_ACTIVITY_AUTH_DISABLED: ${MAS_ACTIVITY_AUTH_DISABLED:-false}
       # Optional live Orchestrator proxy. Leave HITL_MODE=local for offline UI.
       # webhook: set ORCHESTRATOR_WEBHOOK_URL (+ auth). n8n_rest: set N8N_* + ORCHESTRATOR_WORKFLOW_ID.
       HITL_MODE: ${HITL_MODE:-local}

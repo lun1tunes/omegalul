@@ -22,6 +22,7 @@ start-windows.bat
 | Env | Purpose |
 |---|---|
 | `MAS_ACTIVITY_KEY` | `X-Activity-Key` (обязательно сменить пример) |
+| `MAS_ACTIVITY_AUTH_DISABLED` | local development only; set `true` to disable `X-Activity-Key` checks |
 | `MAS_ACTIVITY_HOST`, `MAS_ACTIVITY_PORT` | listen address (`.bat`) |
 | `HITL_MODE` | `local` / `webhook` / `n8n_rest` / `auto` |
 | `ACTIVITY_LIST_URL` | n8n webhook `mas-activity-list-tasks` (Data Table catalog) |
@@ -118,6 +119,12 @@ Default key in code fallback: `dev-local` (`MAS_ACTIVITY_KEY`). Windows `.env` r
 | `local` | in-memory gate + local start (demo / offline UI) |
 | `webhook` | `ORCHESTRATOR_WEBHOOK_URL` (+ optional auth); start uses multipart when files attached |
 | `n8n_rest` | `N8N_BASE_URL` + user/password + `ORCHESTRATOR_WORKFLOW_ID`; binaries as base64 on trigger item |
+
+## Connectivity diagnostics
+
+`GET /v1/diagnostics/connectivity` checks Activity → n8n Data Table hydrate webhooks and the configured MAS Orchestrator webhook without creating a task. Add `?task_id=<existing-task-id>` to also check the feed/trace Data Table webhook.
+
+When `MAS_ACTIVITY_AUTH_DISABLED=true`, the endpoint and the rest of the Activity API can be called without `X-Activity-Key`. This is for local development only; keep it `false` on any shared or corporate-facing instance.
 
 ## n8n wiring
 

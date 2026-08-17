@@ -565,6 +565,20 @@ def test_ready_health_and_static_assets() -> None:
     assert "duration_label" in js.text
 
 
+def test_local_dev_can_disable_activity_auth_and_run_diagnostics(monkeypatch) -> None:
+    monkeypatch.setenv("MAS_ACTIVITY_AUTH_DISABLED", "true")
+    health = client.get("/health")
+    assert health.status_code == 200
+    assert health.json()["auth_required"] is False
+
+    diagnostics = client.get("/v1/diagnostics/connectivity")
+    assert diagnostics.status_code == 200
+    body = diagnostics.json()
+    assert body["auth_required"] is False
+    assert body["data_tables"]["configured"] is False
+    assert body["orchestrator"]["ok"] is False
+
+
 def test_local_start_task_with_files(tmp_path: Path, monkeypatch) -> None:
     monkeypatch.setenv("HITL_MODE", "local")
     # Reload backend detection is env-based per call — no reload needed.
