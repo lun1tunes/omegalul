@@ -1,3 +1,48 @@
+      "id": "bcc3b736-d20f-5d8c-adbb-0c425ec9eef5",
+      "name": "Prepare governed Excel protocol RAG request",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        5040,
+        -765
+      ]
+    },
+    {
+      "parameters": {
+        "source": "database",
+        "workflowId": {
+          "__rl": true,
+          "value": "REPLACE_SCHEDULE_RAG_RETRIEVAL_IN_UI",
+          "mode": "list",
+          "cachedResultName": "MAS — Knowledge Retrieval"
+        },
+        "workflowInputs": {
+          "mappingMode": "defineBelow",
+          "value": {
+            "schedule_retrieval_request": "={{ $json.schedule_retrieval_request }}"
+          },
+          "matchingColumns": [],
+          "schema": [],
+          "attemptToConvertTypes": false,
+          "convertFieldsToString": false
+        },
+        "mode": "once",
+        "options": {
+          "waitForSubWorkflow": true
+        }
+      },
+      "id": "940e9c7b-1b4e-54cf-9483-4ae14db21d1d",
+      "name": "Call Excel protocol Hybrid Retrieval",
+      "type": "n8n-nodes-base.executeWorkflow",
+      "typeVersion": 1.3,
+      "position": [
+        5320,
+        -425
+      ],
+      "onError": "continueRegularOutput"
+    },
+    {
+      "parameters": {
         "jsCode": "const state=$('Prepare governed Excel protocol RAG request').first().json;\nconst result=$json.schedule_retrieval_result??$json;\nconst packet=state.specialist_packet&&typeof state.specialist_packet==='object'?state.specialist_packet:{};\nconst valid=result&&result.contract==='schedule_retrieval_result'&&result.contract_version==='1.0'&&result.status==='succeeded'&&result.evidence_ready===true&&Array.isArray(result.results)&&result.results.length>0&&result.results.some(v=>v&&v.knowledge_type==='protocol_instruction'&&v.body);\nconst inputs=packet.inputs&&typeof packet.inputs==='object'?packet.inputs:{};\nconst evidence={contract:'mas_rag_evidence',contract_version:'1.0',target_base:'excel_protocol',query:result.query||state.schedule_retrieval_request?.query,filters:result.filters||state.schedule_retrieval_request?.filters,citations:Array.isArray(result.citations)?result.citations:[],results:Array.isArray(result.results)?result.results:[],retrieval:result.retrieval||{},findings:Array.isArray(result.findings)?result.findings:[]};\nconst nextPacket={...packet,inputs:{...inputs,rag_evidence:evidence}};\n// Hybrid Retrieval returns JSON only — reattach workbook from the pre-RAG item (or Normalize fallback).\nconst binary=$('Prepare governed Excel protocol RAG request').first().binary\n  || $('Prepare specialist invocation context').first().binary\n  || $('Normalize invocation').first().binary\n  || null;\nreturn[{json:{...state,specialist_packet:nextPacket,excel_rag_result:result,excel_rag_ready:valid},...(binary?{binary}:{})}];"
       },
       "id": "443c86eb-a879-513b-b94b-19d598b3dbc4",

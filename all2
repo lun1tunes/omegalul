@@ -1,3 +1,307 @@
+      "text": "FRACTURE_TEMPLATE — шаблон трещины ГРП (геометрия / LGR / свойства).\n\nНазначение. Задаёт именованный шаблон трещины: измельчение, плоскость/путь, UP/DOWN, SRV, ширины, проницаемости зоны FZ/NFZ и пр. Форматы: tN, E1, E3. Секция: прежде всего GRID (не SCHEDULE). Это не FRACTURE_SPECS (привязка к стволу; в новых мануалах FRACTURE_WELL), не FRACTURE_STAGE (активация в SCHEDULE).\n\nКогда применять. Пакет ГРП через LGR (§5.8). Нужны FRACTURE_PLANE/PATH для PLANE. WELLTRACK в GRID для последующего FRACTURE_SPECS. Неструктурированное измельчение по умолчанию (TNAVCTRL FRACTURE_BUILD_LOGIC); тогда NX/NY/NZ, REFINEMENT, LEVEL_* недоступны.\n\nRecord layout. Keyword; каждый параметр на своей строке с `/`; блок — `/` на отдельной строке.\n\nОбязательные/ключевые параметры (§12.2.130):\n1. NAME [NX NY NZ] — имя; при отключённом unstructured — счётчики refine по X Y Z.\n2. PLANE <plane_or_path_name> — FRACTURE_PLANE или одиночный FRACTURE_PATH.\n3. UP <m> — высота против оси Z от anchor.\n4. DOWN <m> — высота по оси Z.\n5–6. STIMULATED_WIDTH_R / _L — SRV по Y.\nДалее опционально WIDTH, PERM_FZ, EFFECTIVE_WIDTH, … (см. мануал; GEOMECH-only поля — только с GEOMECH FE + ROCKFAIL).\n\nКанон render MVP.\n- `unstructured_basic` — default path: NAME (без NX/NY/NZ) + PLANE + UP + DOWN + STIMULATED_WIDTH_R/L + EFFECTIVE_WIDTH. NX/NY/NZ недоступны при unstructured LGR (TNAVCTRL FRACTURE_BUILD_LOGIC).\n- `refine_basic` — только если unstructured отключён: NAME NX NY NZ + PLANE + UP + DOWN + STIMULATED_WIDTH_R/L + EFFECTIVE_WIDTH (паттерн TEMPLATE_ONE).\nПолный tagged dump без фактов не выдумывайте; REVISE KEEP baseline template при сложной геометрии.\n\nIR / semantics.\n- period=ANY; definitions UPSERT fracture_template NAME.\n- references fracture_plane/path via PLANE.\n- numeric: NX/NY/NZ ≥1 только на refine_basic; lengths ≥0.\n\nТеория (§5.8 — ГРП с помощью LGR; §2.29.3 — геомеханика).\n- §5.8 описывает построение трещин через локальное измельчение: шаблон (TEMPLATE) задаёт геометрию/refine/свойства зоны FZ/NFZ.\n- Для геомеханического моделирования трещин см. §2.29.3 (GEOMECH FE + ROCKFAIL); ряд параметров TEMPLATE в чистой гидродинамике игнорируется/ограничен — не включайте geomech-only поля без факта.\n\nНехватка факта → needs_input: нет имени; нет PLANE/UP/DOWN; нужен GEOMECH path без base options.\n\nКарточка самодостаточна.",
+      "examples": [
+        {
+          "title": "Шаблон 5×5×5 — канон мануала",
+          "task": "TEMPLATE_ONE refine 5 5 5, PLANE_ONE, UP/DOWN 150, SRV 130, EFFECTIVE_WIDTH 10.",
+          "schedule_text": "FRACTURE_TEMPLATE\nTEMPLATE_ONE 5 5 5 /\nPLANE PLANE_ONE /\nUP 150 /\nDOWN 150 /\nSTIMULATED_WIDTH_R 130 /\nSTIMULATED_WIDTH_L 130 /\nEFFECTIVE_WIDTH 10 /\n/\n",
+          "explanation": "§12.2.130 с. 863. Variant refine_basic. Обычно GRID. Учебные имена."
+        }
+      ],
+      "schema_catalogue": {
+        "contract": "schedule_schema_catalogue",
+        "contract_version": "1.0",
+        "catalogue_ref": "catalogue://tnavigator/22.2/fracture-template-v1",
+        "catalogue_hash": "sha256:8e4c773d6d7d77b77f3809e000f577eb581cdf406fe9434d7260f51a3c711062",
+        "source_hash": "sha256:c22362bf3af506f93d54989f25459b6248a756bb7f722be42cdf8572639a6318",
+        "access_scope": "petroleum-engineering",
+        "simulator_profile": {
+          "vendor": "Rock Flow Dynamics",
+          "simulator": "tNavigator",
+          "version": "22.2",
+          "unit_system": "METRIC"
+        },
+        "approved": true,
+        "approved_by": "department-hydrodynamic-expert",
+        "author": "department-hydrodynamic-expert",
+        "approval_gate_id": "expert:fracture-template-v1:2",
+        "schemas": [
+          {
+            "schema_id": "expert:FRACTURE_TEMPLATE:unstructured_basic",
+            "schema_revision": "1",
+            "keyword": "FRACTURE_TEMPLATE",
+            "variant": "unstructured_basic",
+            "citation": {
+              "document_id": "tnav-user-manual-russian",
+              "document_revision": "19.4",
+              "page": "12.2.130 / 852-863",
+              "heading": "FRACTURE_TEMPLATE",
+              "source_hash": "sha256:c22362bf3af506f93d54989f25459b6248a756bb7f722be42cdf8572639a6318"
+            },
+            "parser": {
+              "token_width": 8,
+              "allow_trailing_omission": true,
+              "allow_unquoted_strings": true,
+              "layout_style": "tagged_lines"
+            },
+            "fields": [
+              {
+                "name": "NAME",
+                "position": 1,
+                "type": "string",
+                "required": true,
+                "quote": "single"
+              },
+              {
+                "name": "PLANE",
+                "position": 2,
+                "type": "string",
+                "required": true,
+                "quote": "single"
+              },
+              {
+                "name": "UP",
+                "position": 3,
+                "type": "number",
+                "required": true
+              },
+              {
+                "name": "DOWN",
+                "position": 4,
+                "type": "number",
+                "required": true
+              },
+              {
+                "name": "STIMULATED_WIDTH_R",
+                "position": 5,
+                "type": "number",
+                "required": true
+              },
+              {
+                "name": "STIMULATED_WIDTH_L",
+                "position": 6,
+                "type": "number",
+                "required": true
+              },
+              {
+                "name": "EFFECTIVE_WIDTH",
+                "position": 7,
+                "type": "number",
+                "required": false,
+                "default_allowed": true
+              }
+            ],
+            "layout": {
+              "newline": "LF",
+              "indent": "  ",
+              "delimiter": "SPACE",
+              "record_terminator": "SLASH",
+              "block_terminator": "SLASH_LINE",
+              "record_style": "TAGGED_LINES"
+            },
+            "semantics": {
+              "period": "ANY",
+              "clock": {
+                "uses_current": true
+              },
+              "definitions": [
+                {
+                  "entity_type": "fracture_template",
+                  "id_field": "NAME",
+                  "action": "UPSERT"
+                }
+              ],
+              "references": [
+                {
+                  "entity_type": "fracture_plane",
+                  "id_field": "PLANE",
+                  "required": true
+                }
+              ],
+              "numeric_constraints": [
+                {
+                  "field": "NX",
+                  "min": 1
+                },
+                {
+                  "field": "NY",
+                  "min": 1
+                },
+                {
+                  "field": "NZ",
+                  "min": 1
+                },
+                {
+                  "field": "UP",
+                  "min": 0
+                },
+                {
+                  "field": "DOWN",
+                  "min": 0
+                },
+                {
+                  "field": "STIMULATED_WIDTH_R",
+                  "min": 0
+                },
+                {
+                  "field": "STIMULATED_WIDTH_L",
+                  "min": 0
+                },
+                {
+                  "field": "EFFECTIVE_WIDTH",
+                  "min": 0
+                }
+              ]
+            }
+          },
+          {
+            "schema_id": "expert:FRACTURE_TEMPLATE:refine_basic",
+            "schema_revision": "1",
+            "keyword": "FRACTURE_TEMPLATE",
+            "variant": "refine_basic",
+            "citation": {
+              "document_id": "tnav-user-manual-russian",
+              "document_revision": "19.4",
+              "page": "12.2.130 / 852-863",
+              "heading": "FRACTURE_TEMPLATE",
+              "source_hash": "sha256:c22362bf3af506f93d54989f25459b6248a756bb7f722be42cdf8572639a6318"
+            },
+            "parser": {
+              "token_width": 8,
+              "allow_trailing_omission": true,
+              "allow_unquoted_strings": true,
+              "layout_style": "tagged_lines"
+            },
+            "fields": [
+              {
+                "name": "NAME",
+                "position": 1,
+                "type": "string",
+                "required": true,
+                "quote": "single"
+              },
+              {
+                "name": "NX",
+                "position": 2,
+                "type": "integer",
+                "required": true
+              },
+              {
+                "name": "NY",
+                "position": 3,
+                "type": "integer",
+                "required": true
+              },
+              {
+                "name": "NZ",
+                "position": 4,
+                "type": "integer",
+                "required": true
+              },
+              {
+                "name": "PLANE",
+                "position": 5,
+                "type": "string",
+                "required": true,
+                "quote": "single"
+              },
+              {
+                "name": "UP",
+                "position": 6,
+                "type": "number",
+                "required": true
+              },
+              {
+                "name": "DOWN",
+                "position": 7,
+                "type": "number",
+                "required": true
+              },
+              {
+                "name": "STIMULATED_WIDTH_R",
+                "position": 8,
+                "type": "number",
+                "required": true
+              },
+              {
+                "name": "STIMULATED_WIDTH_L",
+                "position": 9,
+                "type": "number",
+                "required": true
+              },
+              {
+                "name": "EFFECTIVE_WIDTH",
+                "position": 10,
+                "type": "number",
+                "required": false,
+                "default_allowed": true
+              }
+            ],
+            "layout": {
+              "newline": "LF",
+              "indent": "  ",
+              "delimiter": "SPACE",
+              "record_terminator": "SLASH",
+              "block_terminator": "SLASH_LINE",
+              "record_style": "TAGGED_LINES"
+            },
+            "semantics": {
+              "period": "ANY",
+              "clock": {
+                "uses_current": true
+              },
+              "definitions": [
+                {
+                  "entity_type": "fracture_template",
+                  "id_field": "NAME",
+                  "action": "UPSERT"
+                }
+              ],
+              "references": [
+                {
+                  "entity_type": "fracture_plane",
+                  "id_field": "PLANE",
+                  "required": true
+                }
+              ],
+              "numeric_constraints": [
+                {
+                  "field": "NX",
+                  "min": 1
+                },
+                {
+                  "field": "NY",
+                  "min": 1
+                },
+                {
+                  "field": "NZ",
+                  "min": 1
+                },
+                {
+                  "field": "UP",
+                  "min": 0
+                },
+                {
+                  "field": "DOWN",
+                  "min": 0
+                },
+                {
+                  "field": "STIMULATED_WIDTH_R",
+                  "min": 0
+                },
+                {
+                  "field": "STIMULATED_WIDTH_L",
+                  "min": 0
+                },
+                {
+                  "field": "EFFECTIVE_WIDTH",
+                  "min": 0
+                }
+              ]
+            }
+          }
+        ]
+      },
+      "source_hash": "sha256:c22362bf3af506f93d54989f25459b6248a756bb7f722be42cdf8572639a6318",
       "page": "12.2.130 FRACTURE_TEMPLATE (с. 852–863); PLANE/PATH; WELL 12.2.131; теория 5.8 / 2.29.3",
       "heading": "FRACTURE_TEMPLATE — шаблон трещины",
       "id": "fracture-template-v1",
@@ -17308,67 +17612,3 @@ irEvents=operations.filter(c=>clean(c.operation));
 if(!['CREATE','REVISE'].includes(mode))findings.push({code:'INVALID_BUILD_MODE',severity:'error'});
 if(mode==='REVISE'&&clean(work.preservation_report?.policy)&&work.preservation_report.policy!=='preserve_unmentioned')findings.push({code:'PRESERVATION_POLICY_REQUIRED',severity:'error'});
 if(mode==='REVISE'&&baselineQuery&&baselineQuery.status&&baselineQuery.status!=='succeeded'&&['succeeded','partial'].includes(clean(work.status)))findings.push({code:'TARGETED_BASELINE_QUERY_REQUIRED',severity:'error',status:baselineQuery?.status||'missing'});
-for(const c of operations){const op=clean(c.operation).toUpperCase(),kw=clean(c.keyword).toUpperCase();if(!['KEEP','MODIFY','ADD','REMOVE'].includes(op))findings.push({code:'INVALID_CHANGE_OPERATION',severity:'error',operation:op});if(!allowed.has(kw))findings.push({code:'UNSUPPORTED_KEYWORD',severity:'error',keyword:kw});if(op==='REMOVE'&&!accountableRemove)findings.push({code:'REMOVE_REQUIRES_ACCOUNTABLE_APPROVAL',severity:'error',keyword:kw});if(mode==='REVISE'&&['MODIFY','REMOVE'].includes(op)){const id=clean(c.target_node_id||c.source_node_id||c.node_id),hit=targetMap.get(id);if(!id||!hit)findings.push({code:'CHANGE_TARGET_OUTSIDE_BASELINE_QUERY',severity:'error',keyword:kw,target_node_id:id||null});else if(clean(c.expected_raw_hash).toLowerCase()!==clean(hit.expected_raw_hash).toLowerCase())findings.push({code:'CHANGE_TARGET_HASH_MISMATCH',severity:'error',keyword:kw,target_node_id:id})}}
-const nonKeep=operations.filter(c=>clean(c.operation).toUpperCase()!=='KEEP'),represented=new Set([...operations,...requirements].map(v=>clean(v.keyword).toUpperCase()).filter(Boolean));
-if((obj(req.schema_catalogue)||obj(req.rag_evidence?.schema_catalogue))&&!irEvents.length&&changes.length&&!useDeterministicRevise)findings.push({code:'TYPED_IR_REQUIRED_FOR_CATALOGUE_RENDER',severity:'error'});
-if(mode==='CREATE'&&['succeeded','partial'].includes(work.status)&&!requirements.length)findings.push({code:'REQUIRED_DATA_MATRIX_MISSING',severity:'error'});
-if(!sourceMap.length){sourceMap=irEvents.flatMap((c,i)=>{if(obj(c.source_map))return[{...c.source_map,keyword:clean(c.keyword).toUpperCase()||null,target_node_id:c.target_node_id||c.node_id||null,index:i}];if(arr(c.source_map))return c.source_map.filter(obj).map(s=>({...s,keyword:clean(c.keyword).toUpperCase()||null,target_node_id:c.target_node_id||c.node_id||null,index:i}));return[]})}
-if(nonKeep.length&&sourceMap.length<nonKeep.length){
-  sourceMap=nonKeep.map((c,i)=>{const id=clean(c.target_node_id||c.source_node_id||c.node_id);const hit=targetMap.get(id)||{};const fields=obj(hit.fields)?hit.fields:{};const well=clean(fields.WELL||fields.well||c.entity||c.well||(obj(c.fields)?(c.fields.WELL||c.fields.well||c.fields.GROUP||c.fields.CHILD):''));const fact=wellFacts.find(f=>f.well===well)||wellFacts[i]||null;return{keyword:clean(c.keyword).toUpperCase(),target_node_id:id||null,entity:well||fact?.well||(groupRevise?clean(c.keyword):null),fact_id:fact?.fact_id||c.fact_id||null,source:fact?`source_facts_packet:${fact.fact_id||well||'excel'}`:(clean(c.fact_id)?`change:${clean(c.fact_id)}`:(groupRevise?`hitl:group_revise:${clean(c.keyword).toUpperCase()||i}`:null)),value:fact?.date??c.commissioning_date??null}});
-  findings.push({code:'SOURCE_MAP_SYNTHESIZED_FROM_FACTS',severity:'warning',mapped:sourceMap.length});
-}
-const groundedSourceMap=sourceMap.filter(s=>clean(s.fact_id)||clean(s.source)||clean(s.source_ref)||clean(s.entity));
-if(nonKeep.length&&groundedSourceMap.length<nonKeep.length)findings.push({code:'SOURCE_MAP_INCOMPLETE',severity:'error',required:nonKeep.length,mapped:groundedSourceMap.length});
-const missingCitationScope=scope.filter(k=>!citedKeywords.has(k));if(missingCitationScope.length&&['succeeded','partial'].includes(clean(work.status))&&!useDeterministicRevise)findings.push({code:'RAG_KEYWORD_COVERAGE_MISSING',severity:'error',keywords:missingCitationScope});
-if(conflicts.length)findings.push({code:'CONFLICTING_SOURCE_FACTS',severity:'error',count:conflicts.length});
-const modelDecision=obj(work.decision_record)?work.decision_record:{};if(modelDecision.contract&&(modelDecision.contract!=='decision_record'||modelDecision.contract_version!=='1.0'||!clean(modelDecision.objective)||!obj(modelDecision.selected_action)||!arr(modelDecision.selected_action?.reason_codes)))findings.push({code:'DECISION_RECORD_INVALID',severity:'warning'});
-if(['succeeded','partial'].includes(clean(work.status))&&facts.length&&!wellFacts.length){
-  const looksCommissioning=facts.some(f=>{
-    const values=obj(f.values)?f.values:{};
-    const date=f.value??f.raw_value??values['Дата ввода']??values.date??values.commissioning_date??null;
-    const field=clean(f.field||f.column||'');
-    return (date!==null&&date!==undefined&&String(date).trim()!=='')||/дата|date|commission/i.test(field);
-  });
-  if(looksCommissioning)findings.push({code:'SOURCE_FACTS_WELL_IDENTITY_MISSING',severity:'error',fact_count:facts.length});
-}
-let status=new Set(['succeeded','partial','needs_input','needs_decision','needs_approval','retryable_error','fatal_error']).has(work.status)?work.status:'retryable_error';
-if(!useTimelineCommissioning&&!operations.length&&wellFacts.length&&['needs_input','retryable_error'].includes(status)&&!gaps.length){status='needs_input';findings.push({code:'COMMISSIONING_FACTS_PRESENT_IR_REQUIRED',severity:'error',wells:wellFacts.map(f=>f.well).slice(0,20)});}
-if(gaps.length&&['succeeded','partial'].includes(status)&&!useDeterministicRevise)status='needs_input';
-if(findings.some(f=>f.severity==='error')&&['succeeded','partial'].includes(status))status=findings.some(f=>f.code==='REMOVE_REQUIRES_ACCOUNTABLE_APPROVAL')?'needs_approval':'needs_input';
-if(['succeeded','partial'].includes(status)&&(!work.self_check?.performed||!work.self_check?.passed))work.self_check={performed:true,passed:true,checks:[{check:'builder_stage_accepted',passed:true}],reproducibility:'Deterministic builder validate accepted IR with SCHEDULE-name identity.'};
-const supported=r=>['supported','covered','resolved','approved'].includes(clean(r.status).toLowerCase())||clean(r.source_ref)||clean(r.fact_id)||(arr(r.source_refs)&&r.source_refs.length>0);
-const required=requirements.filter(r=>r.required!==false),requiredSupported=required.filter(supported).length;
-const requirementCoverage=required.length?Math.round(100*requiredSupported/required.length):(nonKeep.length?Math.min(100,Math.round(100*sourceMap.length/nonKeep.length)):100);
-const sourceCoverage=useDeterministicRevise?100:(nonKeep.length?Math.min(100,Math.round(100*sourceMap.length/nonKeep.length)):100);
-const scopeFit=useDeterministicRevise?100:(scope.length?Math.round(100*scope.filter(k=>represented.has(k)).length/scope.length):0);
-const evidenceCompleteness=Math.round(.6*requirementCoverage+.4*sourceCoverage);
-const sourceAuthority=useDeterministicRevise?100:(scope.length?Math.round(100*scope.filter(k=>citedKeywords.has(k)).length/scope.length):0);
-const entityTemporalConsistency=(gaps.length||conflicts.length)?0:100;
-const errorFindings=findings.filter(f=>f.severity==='error');
-const deterministicValidationHealth=errorFindings.length?0:(work.self_check?.performed&&work.self_check?.passed?100:50);
-const score=Math.round(.25*scopeFit+.25*evidenceCompleteness+.20*sourceAuthority+.15*entityTemporalConsistency+.15*deterministicValidationHealth);
-const hardBlockers=errorFindings.map(f=>f.code),decision=useDeterministicRevise?'continue':(hardBlockers.length||score<70?'hitl':score<85?'attention':'continue');
-const snapshot=clean(evidencePacket.source_snapshot_hash||req.source_snapshot_hash)||'none',signature=gaps.map(g=>[g.entity,g.effective_at,g.keyword,g.field,g.reason].map(v=>String(v||'')).join('|')).sort().join('||').slice(0,8000);
-const hash=s=>{let h=2166136261;for(const ch of String(s)){h^=ch.charCodeAt(0);h=Math.imul(h,16777619)}return(h>>>0).toString(16)};
-const reasonCodes=hardBlockers.length?hardBlockers:[decision==='continue'?'READINESS_CONTINUE':decision==='attention'?'READINESS_ATTENTION':'READINESS_HITL'];
-const decisionRecord={contract:'decision_record',contract_version:'1.0',objective:clean(root.packet?.objective||req.objective),considered_inputs:[{kind:'approved_plan',contract:plan.contract||null,keyword_scope:scope},{kind:'source_snapshot',source_snapshot_hash:snapshot,fact_count:facts.length,conflict_count:conflicts.length},{kind:'rag_evidence',citation_count:citations.length,covered_keywords:[...citedKeywords].sort()},{kind:'baseline',package_hash:req.baseline_manifest_hash||req.baseline_schedule_package_ref?.manifest_hash||null}],proposed_actions:operations.slice(0,100).map(c=>({operation:clean(c.operation).toUpperCase(),keyword:clean(c.keyword).toUpperCase(),target_node_id:c.target_node_id||c.node_id||null})),selected_action:{action:status,reason_codes:reasonCodes},rejected_actions:findings.map(f=>({action:f.keyword||f.operation||'builder_output',reason_codes:[f.code]})),assumptions:arr(work.assumptions)?work.assumptions.map(String).slice(0,100):[],evidence_refs:arr(work.evidence)?work.evidence.filter(obj).slice(0,100):[],citations,tool_call_ids:arr(modelDecision.tool_call_ids)?modelDecision.tool_call_ids.map(String).slice(0,100):[],unresolved_questions:gaps.slice(0,100),acceptance_check_results:[{check:'scope_fit',score:scopeFit,passed:scopeFit===100},{check:'evidence_completeness',score:evidenceCompleteness,passed:evidenceCompleteness===100},{check:'source_authority_and_citation',score:sourceAuthority,passed:sourceAuthority===100},{check:'entity_temporal_consistency',score:entityTemporalConsistency,passed:entityTemporalConsistency===100},{check:'deterministic_validation_health',score:deterministicValidationHealth,passed:deterministicValidationHealth===100}]};
-return[{json:{contract:'schedule_builder_stage_result',contract_version:'1.0',status,summary:String(work.summary||'').slice(0,4000),build_mode:mode,generated_schedule:typeof work.generated_schedule==='string'?work.generated_schedule.slice(0,200000):'',ir_events:irEvents,changes,requirements_matrix:requirements,source_map:sourceMap,completeness_report:obj(work.completeness_report)?work.completeness_report:{},preservation_report:obj(work.preservation_report)?work.preservation_report:{},evidence_gap:gaps,deliverables:arr(work.deliverables)?work.deliverables:[],artifact_refs:arr(work.artifact_refs)?work.artifact_refs:[],assumptions:arr(work.assumptions)?work.assumptions:[],warnings:arr(work.warnings)?work.warnings:[],evidence:arr(work.evidence)?work.evidence:[],agent_tool_trace:agentToolTrace,decision_record:decisionRecord,self_check:obj(work.self_check)?work.self_check:{performed:false,passed:false,checks:[],reproducibility:''},human_request:work.human_request??null,error:findings.length?{code:'BUILDER_POLICY_GATE',findings}:work.error??null,hard_blockers:hardBlockers,score:{stage_score:score,components:{scope_fit:scopeFit,evidence_completeness:evidenceCompleteness,source_authority_and_citation:sourceAuthority,entity_temporal_consistency:entityTemporalConsistency,deterministic_validation_health:deterministicValidationHealth},raw_counts:{scope_required:scope.length,scope_represented:scope.filter(k=>represented.has(k)).length,requirements_required:required.length,requirements_supported:requiredSupported,non_keep_changes:nonKeep.length,source_map_entries:sourceMap.length,citations:citations.length,source_conflicts:conflicts.length,evidence_gaps:gaps.length,findings:findings.length,agent_tool_calls:agentToolTrace.length},thresholds:{attention:85,hitl:70},decision,provisional:true},continuation:gaps.length?{protocol:'schedule-builder-evidence-gap-v1',gap_signature:hash(signature),source_snapshot_hash:snapshot,evidence_gap:gaps,max_excel_iterations:Math.min(5,Math.max(1,Number(req.max_excel_iterations)||2)),max_builder_iterations:Math.min(5,Math.max(1,Number(req.max_builder_iterations)||3))}:work.continuation??null}}];
-""".replace("__KEYWORDS__", allowed).strip()
-
-
-PREPARE_RENDER = r"""
-const root=$('Normalize SCHEDULE pipeline packet').first().json,intake=$('Run deterministic SCHEDULE intake').first().json,b=$('Validate SCHEDULE builder stage').first().json;
-const catalogue=root.request.schema_catalogue||root.request.rag_evidence?.schema_catalogue||{};
-return[{json:{schedule_render_request:{mode:intake.build_mode,schema_catalogue:catalogue,ir_events:b.ir_events||[]}}}];
-"""
-
-
-PREPARE_MERGE = r"""
-const root=$('Normalize SCHEDULE pipeline packet').first().json,intake=$('Run deterministic SCHEDULE intake').first().json,r=$('Render typed SCHEDULE IR deterministically').first().json;
-const b=$('Validate SCHEDULE builder stage').first().json;
-let baseline=null;try{baseline=$('Analyze lossless baseline inventory').first().json}catch{}
-const obj=v=>v&&typeof v==='object'&&!Array.isArray(v),arr=Array.isArray,clean=v=>typeof v==='string'?v.trim():'';
-const packet=obj(root.request?.source_facts_packet)?root.request.source_facts_packet:{};
-const facts=arr(packet.facts)?packet.facts:[];
-const wellFacts=facts.map(f=>{const values=obj(f.values)?f.values:{};const well=clean(f.well||f.entity||values['Скважина']||values.WELL||values.well);const date=f.value??f.raw_value??values['Дата ввода']??values.date??null;return{well,date}}).filter(f=>f.well&&f.date!=null);
-const timelinePath=intake.build_mode==='REVISE'&&(wellFacts.length>0||arr(b.source_map)&&b.source_map.some(s=>['timeline_commissioning_revise','timeline_group_revise'].includes(clean(s.path))));

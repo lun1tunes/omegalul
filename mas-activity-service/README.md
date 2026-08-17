@@ -77,6 +77,11 @@ set HITL_MODE=local
 .venv\Scripts\python.exe -m uvicorn app.main:app --host 127.0.0.1 --port 8200
 ```
 
+При прямом запуске `python -m uvicorn app.main:app` сервис автоматически читает
+`mas-activity-service/mas-activity.env`, затем `mas-activity-service/.env`, и не
+перезаписывает переменные, уже переданные процессу. Это тот же подход, что и в
+`excel-agent-tools`; корневой `.env` используется Docker Compose.
+
 Tests: `.venv\Scripts\python.exe -m pytest -q` (22 passed).
 
 ## API
@@ -123,6 +128,10 @@ Default key in code fallback: `dev-local` (`MAS_ACTIVITY_KEY`). Windows `.env` r
 ## Connectivity diagnostics
 
 `GET /v1/diagnostics/connectivity` checks Activity → n8n Data Table hydrate webhooks and the configured MAS Orchestrator webhook without creating a task. Add `?task_id=<existing-task-id>` to also check the feed/trace Data Table webhook.
+
+Проверить, что запущен именно новый процесс и env прочитан, можно через
+`GET /health`: поле `auth_required` должно быть `false`, а `hitl_backend` —
+`webhook` или `n8n_rest`.
 
 When `MAS_ACTIVITY_AUTH_DISABLED=true`, the endpoint and the rest of the Activity API can be called without `X-Activity-Key`. This is for local development only; keep it `false` on any shared or corporate-facing instance.
 

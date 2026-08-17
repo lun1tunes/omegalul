@@ -18,6 +18,13 @@ from fastapi import Depends, FastAPI, File, Form, Header, HTTPException, Query, 
 from fastapi.responses import FileResponse, JSONResponse, Response, StreamingResponse
 from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel, Field, field_validator
+from dotenv import load_dotenv
+
+# Match the Excel tools service: direct Uvicorn launches load service-local
+# env files before any module-level settings are evaluated.
+SERVICE_ROOT = Path(__file__).resolve().parents[1]
+load_dotenv(SERVICE_ROOT / "mas-activity.env", override=False)
+load_dotenv(SERVICE_ROOT / ".env", override=False)
 
 from app.enrich import enrich_turn
 from app.orchestrator import (
@@ -39,7 +46,7 @@ from app.durable import (
 from app.persist import load_state, persist_enabled, save_state
 from app.task_binaries import load_task_binaries, save_task_binaries
 
-STATIC = Path(__file__).resolve().parents[1] / "static"
+STATIC = SERVICE_ROOT / "static"
 ACTIVITY_KEY = os.getenv("MAS_ACTIVITY_KEY", "dev-local")
 MAX_TURNS_PER_TASK = 500
 MAX_SCHEDULE_ARTIFACT_BYTES = 10 * 1024 * 1024

@@ -66,7 +66,7 @@ ACTIVITY_STATE_PATH=/data/activity_state.json
 MAS_KNOWLEDGE_CORPUS=/corpus/rag/excel-agent-operating-guide.documents.json
 
 ===END_FILE===
-===BEGIN_FILE===	.gitignore	530	utf8
+===BEGIN_FILE===	.gitignore	495	utf8
 .env
 excel-agent-tools/excel-tools.env
 mas-activity-service/mas-activity.env
@@ -85,9 +85,6 @@ tech_task.md
 tNavUserManualRussian.pdf
 
 # project_pack transfer artifacts (do not commit)
-/all.txt
-/all[1-9]
-/all[1-9][0-9]*
 
 # Local combat / golden fixtures only — never pack or commit
 simulation-model-example/
@@ -118,7 +115,7 @@ python3 scripts/test_project_pack.py
 ```
 
 ===END_FILE===
-===BEGIN_FILE===	docker-compose.yml	8846	utf8
+===BEGIN_FILE===	docker-compose.yml	8917	utf8
 services:
   postgres:
     image: pgvector/pgvector:pg16@sha256:a36250871de0833b8757561c72f2477ef1ddd1101afa4e617fb552e0de514c6b
@@ -300,6 +297,7 @@ services:
     restart: unless-stopped
     environment:
       MAS_ACTIVITY_KEY: ${MAS_ACTIVITY_KEY:?Set MAS_ACTIVITY_KEY in .env}
+      MAS_ACTIVITY_AUTH_DISABLED: ${MAS_ACTIVITY_AUTH_DISABLED:-false}
       # Optional live Orchestrator proxy. Leave HITL_MODE=local for offline UI.
       # webhook: set ORCHESTRATOR_WEBHOOK_URL (+ auth). n8n_rest: set N8N_* + ORCHESTRATOR_WORKFLOW_ID.
       HITL_MODE: ${HITL_MODE:-local}
@@ -4095,7 +4093,7 @@ EXPOSE 8200
 CMD ["python", "-m", "uvicorn", "app.main:app", "--host", "0.0.0.0", "--port", "8200"]
 
 ===END_FILE===
-===BEGIN_FILE===	mas-activity-service/README.md	6818	utf8
+===BEGIN_FILE===	mas-activity-service/README.md	7895	utf8
 # MAS Activity Service
 
 Live chat-style presentation of Orchestrator ↔ specialist handoffs with in-chat HITL and **new-task start** (Entry-shaped, drag-and-drop files).
@@ -4120,6 +4118,7 @@ start-windows.bat
 | Env | Purpose |
 |---|---|
 | `MAS_ACTIVITY_KEY` | `X-Activity-Key` (обязательно сменить пример) |
+| `MAS_ACTIVITY_AUTH_DISABLED` | local development only; set `true` to disable `X-Activity-Key` checks |
 | `MAS_ACTIVITY_HOST`, `MAS_ACTIVITY_PORT` | listen address (`.bat`) |
 | `HITL_MODE` | `local` / `webhook` / `n8n_rest` / `auto` |
 | `ACTIVITY_LIST_URL` | n8n webhook `mas-activity-list-tasks` (Data Table catalog) |
@@ -4174,6 +4173,11 @@ set HITL_MODE=local
 .venv\Scripts\python.exe -m uvicorn app.main:app --host 127.0.0.1 --port 8200
 ```
 
+При прямом запуске `python -m uvicorn app.main:app` сервис автоматически читает
+`mas-activity-service/mas-activity.env`, затем `mas-activity-service/.env`, и не
+перезаписывает переменные, уже переданные процессу. Это тот же подход, что и в
+`excel-agent-tools`; корневой `.env` используется Docker Compose.
+
 Tests: `.venv\Scripts\python.exe -m pytest -q` (22 passed).
 
 ## API
@@ -4216,6 +4220,16 @@ Default key in code fallback: `dev-local` (`MAS_ACTIVITY_KEY`). Windows `.env` r
 | `local` | in-memory gate + local start (demo / offline UI) |
 | `webhook` | `ORCHESTRATOR_WEBHOOK_URL` (+ optional auth); start uses multipart when files attached |
 | `n8n_rest` | `N8N_BASE_URL` + user/password + `ORCHESTRATOR_WORKFLOW_ID`; binaries as base64 on trigger item |
+
+## Connectivity diagnostics
+
+`GET /v1/diagnostics/connectivity` checks Activity → n8n Data Table hydrate webhooks and the configured MAS Orchestrator webhook without creating a task. Add `?task_id=<existing-task-id>` to also check the feed/trace Data Table webhook.
+
+Проверить, что запущен именно новый процесс и env прочитан, можно через
+`GET /health`: поле `auth_required` должно быть `false`, а `hitl_backend` —
+`webhook` или `n8n_rest`.
+
+When `MAS_ACTIVITY_AUTH_DISABLED=true`, the endpoint and the rest of the Activity API can be called without `X-Activity-Key`. This is for local development only; keep it `false` on any shared or corporate-facing instance.
 
 ## n8n wiring
 
@@ -4423,7 +4437,7 @@ def extract_schedule_from_orchestrator(orch: dict[str, Any]) -> tuple[str, str] 
     return None
 
 ===END_FILE===
-===BEGIN_FILE===	mas-activity-service/app/durable.py	2243	utf8
+===BEGIN_FILE===	mas-activity-service/app/durable.py	5759	utf8
 """Pull durable task catalog / feed from n8n Data Table hydrate webhooks."""
 
 from __future__ import annotations
@@ -4453,6 +4467,94 @@ def _headers(cfg: dict[str, str]) -> dict[str, str]:
     if cfg["auth_header"] and cfg["auth_value"]:
         headers[cfg["auth_header"]] = cfg["auth_value"]
     return headers
+
+
+def _json_object(response: httpx.Response) -> dict[str, Any] | None:
+    try:
+        value = response.json()
+    except ValueError:
+        return None
+    if isinstance(value, list) and value:
+        value = value[0]
+    return value if isinstance(value, dict) else None
+
+
+async def probe_durable_connectivity(
+    *, task_id: str | None = None, timeout_s: float = 10.0
+) -> dict[str, Any]:
+    """Probe the n8n webhook bridges used to read Data Tables.
+
+    Activity does not connect to n8n's database directly.  These webhooks are
+    the supported Data Table boundary, so the diagnostic intentionally probes
+    them instead of making assumptions about the n8n database.
+    """
+    cfg = durable_cfg()
+    result: dict[str, Any] = {
+        "configured": bool(cfg["list_url"] or cfg["feed_url"]),
+        "list": {"configured": bool(cfg["list_url"])},
+        "feed": {"configured": bool(cfg["feed_url"]), "checked": False},
+    }
+
+    async with httpx.AsyncClient(timeout=timeout_s) as client:
+        if cfg["list_url"]:
+            try:
+                response = await client.post(
+                    cfg["list_url"], json={"action": "list"}, headers=_headers(cfg)
+                )
+                body = _json_object(response)
+                result["list"].update(
+                    {
+                        "reachable": True,
+                        "ok": 200 <= response.status_code < 300 and body is not None,
+                        "http_status": response.status_code,
+                        "contract": body.get("contract") if body else None,
+                        "task_count": len(body.get("tasks", []))
+                        if isinstance(body, dict) and isinstance(body.get("tasks"), list)
+                        else None,
+                    }
+                )
+                if body is None:
+                    result["list"]["error"] = "Response was not a JSON object"
+            except httpx.HTTPError as exc:
+                result["list"].update(
+                    {"reachable": False, "ok": False, "error": str(exc)[:300]}
+                )
+
+        if cfg["feed_url"] and task_id:
+            result["feed"]["checked"] = True
+            try:
+                response = await client.post(
+                    cfg["feed_url"], json={"task_id": task_id}, headers=_headers(cfg)
+                )
+                body = _json_object(response)
+                result["feed"].update(
+                    {
+                        "reachable": True,
+                        "ok": 200 <= response.status_code < 300 and body is not None,
+                        "http_status": response.status_code,
+                        "contract": body.get("contract") if body else None,
+                        "task_id": task_id,
+                    }
+                )
+                if body is None:
+                    result["feed"]["error"] = "Response was not a JSON object"
+            except httpx.HTTPError as exc:
+                result["feed"].update(
+                    {
+                        "reachable": False,
+                        "ok": False,
+                        "task_id": task_id,
+                        "error": str(exc)[:300],
+                    }
+                )
+        elif cfg["feed_url"]:
+            result["feed"]["note"] = "Provide ?task_id=... to probe the trace/feed Data Table."
+
+    result["ok"] = bool(
+        result["list"].get("ok")
+        and (not result["feed"].get("checked") or result["feed"].get("ok"))
+    )
+    return result
 
 
 async def fetch_task_list(*, timeout_s: float = 30.0) -> dict[str, Any] | None:
@@ -5195,7 +5297,7 @@ def create_document(
         return get_document(target_base, kid)
 
 ===END_FILE===
-===BEGIN_FILE===	mas-activity-service/app/main.py	89942	utf8
+===BEGIN_FILE===	mas-activity-service/app/main.py	91886	utf8
 """In-memory MAS activity feed for chat-style handoff presentation + HITL."""
 
 from __future__ import annotations
@@ -5216,16 +5318,35 @@ from fastapi import Depends, FastAPI, File, Form, Header, HTTPException, Query, 
 from fastapi.responses import FileResponse, JSONResponse, Response, StreamingResponse
 from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel, Field, field_validator
+from dotenv import load_dotenv
+
+# Match the Excel tools service: direct Uvicorn launches load service-local
+# env files before any module-level settings are evaluated.
+SERVICE_ROOT = Path(__file__).resolve().parents[1]
+load_dotenv(SERVICE_ROOT / "mas-activity.env", override=False)
+load_dotenv(SERVICE_ROOT / ".env", override=False)
 
 from app.enrich import enrich_turn
-from app.orchestrator import BinaryMap, OrchestratorError, hitl_backend, invoke_orchestrator
+from app.orchestrator import (
+    BinaryMap,
+    OrchestratorError,
+    hitl_backend,
+    invoke_orchestrator,
+    orchestrator_config_summary,
+    probe_orchestrator_connectivity,
+)
 from app import knowledge as knowledge_store
 from app.commissioning import extract_schedule_from_orchestrator
-from app.durable import durable_enabled, fetch_task_feed, fetch_task_list
+from app.durable import (
+    durable_enabled,
+    fetch_task_feed,
+    fetch_task_list,
+    probe_durable_connectivity,
+)
 from app.persist import load_state, persist_enabled, save_state
 from app.task_binaries import load_task_binaries, save_task_binaries
 
-STATIC = Path(__file__).resolve().parents[1] / "static"
+STATIC = SERVICE_ROOT / "static"
 ACTIVITY_KEY = os.getenv("MAS_ACTIVITY_KEY", "dev-local")
 MAX_TURNS_PER_TASK = 500
 MAX_SCHEDULE_ARTIFACT_BYTES = 10 * 1024 * 1024
@@ -5412,6 +5533,14 @@ def _persist() -> None:
 
 
 def _require_key(x_activity_key: str | None = Header(default=None, alias="X-Activity-Key")) -> None:
+    disabled = (os.getenv("MAS_ACTIVITY_AUTH_DISABLED") or "").strip().lower() in {
+        "1",
+        "true",
+        "yes",
+        "on",
+    }
+    if disabled:
+        return
     if not secrets.compare_digest(str(x_activity_key or ""), ACTIVITY_KEY):
         raise HTTPException(status_code=401, detail="Invalid or missing X-Activity-Key")
 
@@ -6160,6 +6289,7 @@ def health() -> dict[str, Any]:
         "hitl_backend": hitl_backend(),
         "durable_hydrate": durable_enabled(),
         "state_persist": persist_enabled(),
+        "auth_required": not _auth_disabled(),
         "tasks": len(_tasks),
         "time": _now(),
         "started_at": _started_at,
@@ -6170,7 +6300,45 @@ def health() -> dict[str, Any]:
 def ready() -> dict[str, Any]:
     if not STATIC.exists() or not (STATIC / "index.html").exists():
         raise HTTPException(status_code=503, detail="UI assets missing")
-    return {"status": "ready", "hitl_backend": hitl_backend(), "durable_hydrate": durable_enabled()}
+    return {
+        "status": "ready",
+        "hitl_backend": hitl_backend(),
+        "durable_hydrate": durable_enabled(),
+        "auth_required": not _auth_disabled(),
+    }
+
+
+def _auth_disabled() -> bool:
+    return (os.getenv("MAS_ACTIVITY_AUTH_DISABLED") or "").strip().lower() in {
+        "1",
+        "true",
+        "yes",
+        "on",
+    }
+
+
+@app.get("/v1/diagnostics/connectivity")
+async def diagnostics_connectivity(
+    task_id: str | None = Query(default=None, max_length=200),
+    _: None = Depends(_require_key),
+) -> dict[str, Any]:
+    """Check Activity → n8n Data Table webhooks and the MAS Orchestrator webhook.
+
+    No secrets or response bodies are returned. With ``?task_id=...`` the feed
+    webhook is also checked, which exercises the trace Data Table binding.
+    """
+    durable, orchestrator = await asyncio.gather(
+        probe_durable_connectivity(task_id=task_id),
+        probe_orchestrator_connectivity(),
+    )
+    return {
+        "status": "ok" if durable.get("ok") and orchestrator.get("ok") else "degraded",
+        "auth_required": not _auth_disabled(),
+        "data_tables": durable,
+        "orchestrator": orchestrator,
+        "config": {"hitl_backend": hitl_backend(), "orchestrator": orchestrator_config_summary()},
+        "note": "Data Table access is checked through the configured n8n hydrate webhooks.",
+    }
 
 
 @app.post("/v1/turns")
@@ -7519,7 +7687,7 @@ def knowledge_patch_document(
 app.mount("/static", StaticFiles(directory=STATIC), name="static")
 
 ===END_FILE===
-===BEGIN_FILE===	mas-activity-service/app/orchestrator.py	14903	utf8
+===BEGIN_FILE===	mas-activity-service/app/orchestrator.py	17676	utf8
 """Orchestrator invocation for HITL and task start (webhook or n8n REST)."""
 
 from __future__ import annotations
@@ -7574,6 +7742,81 @@ def hitl_backend() -> str:
     if cfg["n8n_base"] and cfg["n8n_user"] and cfg["n8n_password"]:
         return "n8n_rest"
     return "local"
+
+
+def orchestrator_config_summary() -> dict[str, Any]:
+    """Return safe runtime configuration facts for the diagnostics endpoint."""
+    cfg = _cfg()
+    backend = hitl_backend()
+    return {
+        "backend": backend,
+        "webhook_configured": bool(cfg["webhook_url"]),
+        "auth_configured": bool(cfg["auth_header"] and cfg["auth_value"]),
+        "n8n_rest_configured": bool(
+            cfg["n8n_base"] and cfg["n8n_user"] and cfg["n8n_password"]
+        ),
+    }
+
+
+async def probe_orchestrator_connectivity(*, timeout_s: float = 10.0) -> dict[str, Any]:
+    """Safely probe the live orchestrator boundary without creating a task."""
+    cfg = _cfg()
+    backend = hitl_backend()
+    result: dict[str, Any] = {
+        **orchestrator_config_summary(),
+        "checked": False,
+    }
+    if backend == "local":
+        result.update(
+            {
+                "ok": False,
+                "note": "HITL backend is local or no live orchestrator endpoint is configured.",
+            }
+        )
+        return result
+    if backend != "webhook" or not cfg["webhook_url"]:
+        result.update(
+            {
+                "ok": False,
+                "note": "Connectivity probe currently supports the webhook backend only.",
+            }
+        )
+        return result
+
+    # `status` for a deliberately missing task exercises the webhook and its
+    # n8n bindings without inserting a task or invoking an LLM route.
+    probe_payload = {
+        "action": "status",
+        "task_id": "activity_connectivity_probe",
+        "requested_by": "activity-diagnostics",
+    }
+    headers: dict[str, str] = {}
+    if cfg["auth_header"] and cfg["auth_value"]:
+        headers[cfg["auth_header"]] = cfg["auth_value"]
+    try:
+        async with httpx.AsyncClient(timeout=timeout_s) as client:
+            response = await client.post(cfg["webhook_url"], json=probe_payload, headers=headers)
+        result.update(
+            {
+                "checked": True,
+                "reachable": True,
+                "ok": 200 <= response.status_code < 300,
+                "http_status": response.status_code,
+            }
+        )
+        try:
+            body = response.json()
+            if isinstance(body, list) and body:
+                body = body[0]
+            if isinstance(body, dict):
+                result["response_contract"] = body.get("contract")
+                result["response_status"] = body.get("status")
+                result["response_message"] = str(body.get("message") or "")[:300] or None
+        except ValueError:
+            result["response_preview"] = response.text[:300]
+    except httpx.HTTPError as exc:
+        result.update({"checked": True, "reachable": False, "ok": False, "error": str(exc)[:300]})
+    return result
 
 
 def _deref_flat(
@@ -7914,6 +8157,7 @@ def _execution_error_message(execution_payload: dict[str, Any], *, status: str) 
     if last_node:
         return f"Orchestrator execution {status} at «{last_node}»"
     return f"Orchestrator execution {status}"
+
 ===END_FILE===
 ===BEGIN_FILE===	mas-activity-service/app/persist.py	2569	utf8
 """Optional on-disk Activity store so container recreate does not wipe the rail."""
@@ -8146,9 +8390,13 @@ echo MAS Activity health check passed.
 exit /b 0
 
 ===END_FILE===
-===BEGIN_FILE===	mas-activity-service/mas-activity.env.example	1549	utf8
+===BEGIN_FILE===	mas-activity-service/mas-activity.env.example	1704	utf8
 # MAS Activity UI. Copy to mas-activity.env and replace the key.
 MAS_ACTIVITY_KEY=change-me-activity-key
+
+# Local development only: set true to disable X-Activity-Key checks.
+# Keep false on a shared/corporate-facing instance.
+MAS_ACTIVITY_AUTH_DISABLED=false
 
 # 127.0.0.1: only this Windows PC. 0.0.0.0: allow an approved remote n8n host.
 MAS_ACTIVITY_HOST=127.0.0.1
@@ -8184,9 +8432,10 @@ HITL_MODE=local
 # ACTIVITY_STATE_PATH=/home/you/mas-activity/activity_state.json
 
 ===END_FILE===
-===BEGIN_FILE===	mas-activity-service/requirements.txt	119	utf8
+===BEGIN_FILE===	mas-activity-service/requirements.txt	139	utf8
 fastapi>=0.115.14,<0.116
 uvicorn[standard]>=0.30,<1.0
+python-dotenv>=1,<2
 pydantic>=2.7,<3.0
 httpx>=0.27,<1.0
 python-multipart>=0.0.9,<1.0
