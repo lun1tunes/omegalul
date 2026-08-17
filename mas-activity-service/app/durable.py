@@ -2,18 +2,20 @@
 
 from __future__ import annotations
 
-import os
 from typing import Any
 
 import httpx
 
+from app.settings import get_settings
+
 
 def durable_cfg() -> dict[str, str]:
+    settings = get_settings()
     return {
-        "list_url": (os.getenv("ACTIVITY_LIST_URL") or "").strip(),
-        "feed_url": (os.getenv("ACTIVITY_FEED_URL") or "").strip(),
-        "auth_header": (os.getenv("ACTIVITY_DURABLE_AUTH_HEADER") or "").strip(),
-        "auth_value": (os.getenv("ACTIVITY_DURABLE_AUTH_VALUE") or "").strip(),
+        "list_url": settings.resolved_list_url,
+        "feed_url": settings.resolved_feed_url,
+        "auth_header": settings.activity_durable_auth_header,
+        "auth_value": settings.activity_durable_auth_value,
     }
 
 

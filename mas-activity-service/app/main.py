@@ -4,28 +4,32 @@ from __future__ import annotations
 
 import asyncio
 import json
-import os
+import logging
 import re
 import secrets
 import time
 from collections import defaultdict
 from contextlib import asynccontextmanager
 from datetime import datetime, timezone
-from pathlib import Path
-from typing import Any, Literal
+from typing import Any
 
-from fastapi import Depends, FastAPI, File, Form, Header, HTTPException, Query, Request, UploadFile
+from fastapi import FastAPI, File, Form, HTTPException, Query, Request, UploadFile
+from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import FileResponse, JSONResponse, Response, StreamingResponse
 from fastapi.staticfiles import StaticFiles
-from pydantic import BaseModel, Field, field_validator
-from dotenv import load_dotenv
 
-# Match the Excel tools service: direct Uvicorn launches load service-local
-# env files before any module-level settings are evaluated.
-SERVICE_ROOT = Path(__file__).resolve().parents[1]
-load_dotenv(SERVICE_ROOT / "mas-activity.env", override=False)
-load_dotenv(SERVICE_ROOT / ".env", override=False)
-
+from app.settings import STATIC, VERSION, configure_logging, get_settings
+from app.models import (
+    EventIn,
+    HitlPost,
+    KnowledgeDocumentCreate,
+    KnowledgeDocumentPatch,
+    SyncPost,
+    TASK_ID_RE,
+    TaskMeta,
+    TurnIn,
+    TurnPost,
+)
 from app.enrich import enrich_turn
 from app.orchestrator import (
     BinaryMap,
@@ -44,10 +48,12 @@ from app.durable import (
     probe_durable_connectivity,
 )
 from app.persist import load_state, persist_enabled, save_state
+from app.readiness import probe_n8n_stack
 from app.task_binaries import load_task_binaries, save_task_binaries
 
-STATIC = SERVICE_ROOT / "static"
-ACTIVITY_KEY = os.getenv("MAS_ACTIVITY_KEY", "dev-local")
+configure_logging()
+logger = logging.getLogger("mas-activity")
+
 MAX_TURNS_PER_TASK = 500
 MAX_SCHEDULE_ARTIFACT_BYTES = 10 * 1024 * 1024
 SCHEDULE_NAME_RE = re.compile(r"^[A-Za-z0-9._-]{1,200}$")
@@ -56,7 +62,6 @@ MAX_BODY_BYTES = 256_000
 MAX_START_BODY_BYTES = 12_000_000
 MAX_START_FILE_BYTES = 2_097_152
 MAX_START_FILES = 40
-TASK_ID_RE = re.compile(r"^[A-Za-z0-9_.:-]{1,200}$")
 HITL_ACTIONS = frozenset({"status", "reply", "approve", "reject", "cancel", "retry"})
 ANON = frozenset({"", "anonymous", "anon", "n/a", "na", "unknown"})
 SCHEDULE_EXT = re.compile(r"\.(?:data|inc|sch|txt|grdecl)$", re.I)
@@ -78,110 +83,21 @@ async def lifespan(_app: FastAPI):
 
 app = FastAPI(
     title="MAS Activity Service",
-    version="0.5.1",
+    version=VERSION,
     description="Live handoff transcript + HITL + Data Table hydrate for Petroleum Engineering MAS.",
     lifespan=lifespan,
 )
 
-
-class TurnIn(BaseModel):
-    at: str | None = None
-    stage: str | None = None
-    status: str | None = None
-    summary: str | None = None
-    brief: str | None = None
-    duration_ms: int | None = None
-    from_specialist: str | None = None
-    to_specialist: str | None = None
-    from_role: str | None = None
-    to_role: str | None = None
-    details: dict[str, Any] = Field(default_factory=dict)
-    event_type: str = "handoff"
-
-
-class TurnPost(BaseModel):
-    task_id: str = Field(min_length=1, max_length=200)
-    trace_id: str | None = None
-    turn: TurnIn
-
-    @field_validator("task_id")
-    @classmethod
-    def _task_id(cls, value: str) -> str:
-        if not TASK_ID_RE.match(value):
-            raise ValueError("task_id has invalid characters")
-        return value
-
-
-class EventIn(BaseModel):
-    event_type: str | None = None
-    stage: str | None = None
-    status: str | None = None
-    summary: str | None = None
-    brief: str | None = None
-    duration_ms: int | None = None
-    actor: str | None = None
-    at: str | None = None
-    handoff: dict[str, Any] | None = None
-    task_id: str | None = None
-    trace_id: str | None = None
-    event_id: str | None = None
-    human_gate: dict[str, Any] | None = None
-
-
-class SyncPost(BaseModel):
-    task_id: str = Field(min_length=1, max_length=200)
-    trace_id: str | None = None
-    status: str | None = None
-    version: int | None = None
-    human_gate: dict[str, Any] | None = None
-    events: list[EventIn] = Field(default_factory=list)
-    turns: list[TurnIn] = Field(default_factory=list)
-
-    @field_validator("task_id")
-    @classmethod
-    def _task_id(cls, value: str) -> str:
-        if not TASK_ID_RE.match(value):
-            raise ValueError("task_id has invalid characters")
-        return value
-
-
-class HitlPost(BaseModel):
-    action: Literal["reply", "approve", "reject", "cancel", "status", "retry"] = "reply"
-    human_response: str | None = None
-    requested_by: str = Field(min_length=1, max_length=120)
-    gate_id: str | None = None
-    expected_version: int | None = None
-
-
-class KnowledgeDocumentPatch(BaseModel):
-    text: str | None = Field(default=None, min_length=1)
-    title: str | None = Field(default=None, min_length=1)
-    keywords: list[str] | None = None
-    topics: list[str] | None = None
-    task_patterns: list[str] | None = None
-
-
-class KnowledgeDocumentCreate(BaseModel):
-    target_base: str = Field(min_length=1, max_length=120)
-    knowledge_id: str = Field(min_length=2, max_length=119)
-    knowledge_type: str = Field(min_length=1, max_length=120)
-    title: str = Field(min_length=1, max_length=300)
-    text: str = Field(min_length=1)
-    keywords: list[str] = Field(default_factory=list)
-    topics: list[str] = Field(default_factory=list)
-    task_patterns: list[str] = Field(default_factory=list)
-    author: str | None = Field(default=None, max_length=120)
-
-
-class TaskMeta(BaseModel):
-    task_id: str
-    title: str | None = None
-    updated_at: str
-    turn_count: int | None = None
-    last_status: str | None = None
-    last_at_abs: str | None = None
-    status: str | None = None
-    awaiting_human: bool = False
+# Last add_middleware so CORS wraps errors/SSE. Do not set allow_credentials=True with "*".
+# If the browser blocks: see README «CORS». To lock down, replace "*" with exact UI origins.
+app.add_middleware(
+    CORSMiddleware,
+    allow_origins=["*"],
+    allow_credentials=False,
+    allow_methods=["*"],
+    allow_headers=["*"],
+    expose_headers=["Content-Disposition"],
+)
 
 
 _lock = asyncio.Lock()
@@ -232,17 +148,9 @@ def _persist() -> None:
     save_state(_tasks, _order)
 
 
-def _require_key(x_activity_key: str | None = Header(default=None, alias="X-Activity-Key")) -> None:
-    disabled = (os.getenv("MAS_ACTIVITY_AUTH_DISABLED") or "").strip().lower() in {
-        "1",
-        "true",
-        "yes",
-        "on",
-    }
-    if disabled:
-        return
-    if not secrets.compare_digest(str(x_activity_key or ""), ACTIVITY_KEY):
-        raise HTTPException(status_code=401, detail="Invalid or missing X-Activity-Key")
+def _raise_orch(exc: OrchestratorError) -> HTTPException:
+    logger.error("n8n/orchestrator error HTTP %s: %s", exc.status_code, exc)
+    return HTTPException(status_code=exc.status_code, detail=str(exc))
 
 
 def _new_task_shell(task_id: str) -> dict[str, Any]:
@@ -554,6 +462,8 @@ def _task_attached_files(task: dict[str, Any]) -> list[str]:
             continue
         details = turn.get("details") if isinstance(turn.get("details"), dict) else {}
         status = str(turn.get("status") or "").upper()
+        # Same OR as static/app.js attachedFilesFromFeed: start turns from Activity
+        # always have both, but CAS/hydrate rows may only have one of the two signals.
         if status != "TASK_STARTED" and details.get("action") != "start":
             continue
         names = _normalize_filenames(details.get("files") or details.get("attached_files"))
@@ -749,27 +659,30 @@ async def _set_gate(
     message: str | None = None,
 ) -> dict[str, Any]:
     async with _lock:
+        existed = task_id in _tasks
+        order_before = list(_order)
         task = _touch(task_id)
+        catalog_changed = (not existed) or order_before != _order
         changed = False
-        
+
         norm_status = _normalize_task_status(status) or status
         if status is not None and task.get("status") != norm_status:
             task["status"] = norm_status
             changed = True
-            
+
         if version is not None:
             prior_version = task.get("version")
             _merge_version(task, version)
             if task.get("version") != prior_version:
                 changed = True
-                
+
         if clear_gate and task.get("gate") is not None:
             task["gate"] = None
             changed = True
         elif gate is not None and task.get("gate") != dict(gate):
             task["gate"] = dict(gate)
             changed = True
-            
+
         if message is not None:
             text = str(message).strip()
             norm_message = text[:1200] if text else None
@@ -780,11 +693,9 @@ async def _set_gate(
             # Status refresh without a message must not keep a stale conflict/error banner.
             task["status_message"] = None
             changed = True
-            
+
         if changed:
             task["updated_at"] = _now()
-            _persist()
-            
         snapshot = {
             "status": task.get("status"),
             "version": task.get("version"),
@@ -794,14 +705,17 @@ async def _set_gate(
             "status_message": task.get("status_message"),
             "updated_at": task["updated_at"],
         }
-    await _publish(
-        task_id,
-        {
-            "type": "gate",
-            "task_id": task_id,
-            **snapshot,
-        },
-    )
+        if changed or catalog_changed:
+            _persist()
+    if changed:
+        await _publish(
+            task_id,
+            {
+                "type": "gate",
+                "task_id": task_id,
+                **snapshot,
+            },
+        )
     return snapshot
 
 
@@ -886,94 +800,27 @@ def _human_turn(*, action: str, requested_by: str, human_response: str | None, g
     )
 
 
-def _local_apply_hitl(
-    task: dict[str, Any],
-    *,
-    action: str,
-    human_response: str | None,
-    requested_by: str,
-) -> dict[str, Any]:
-    gate = _gate_payload(task) or {}
-    version = int(task.get("version") or gate.get("expected_version") or 1)
-    if action == "status":
-        return {
-            "contract": "orchestrator_response",
-            "contract_version": "1.0",
-            "task_id": task["task_id"],
-            "version": version,
-            "status": task.get("status") or "unknown",
-            "message": "Local activity status.",
-            "human_gate": gate or None,
-            "next_action": "resume_with_task_id_expected_version_gate_id_and_action" if _awaiting(task) else None,
-            "backend": "local",
-        }
-    if action == "retry":
-        if not _restartable(task):
-            return {
-                "contract": "orchestrator_response",
-                "contract_version": "1.0",
-                "task_id": task["task_id"],
-                "version": version,
-                "status": task.get("status") or "conflict",
-                "message": "Local retry refused: task is not restartable.",
-                "human_gate": gate or None,
-                "backend": "local",
-            }
-        return {
-            "contract": "orchestrator_response",
-            "contract_version": "1.0",
-            "task_id": task["task_id"],
-            "version": version + 1,
-            "status": "planning",
-            "message": "Local HITL retry accepted; planning resumes with preserved inputs.",
-            "human_gate": None,
-            "result": {"action": "retry", "requested_by": requested_by, "human_response": human_response},
-            "backend": "local",
-        }
-    if not _awaiting(task):
-        return {
-            "contract": "orchestrator_response",
-            "contract_version": "1.0",
-            "task_id": task["task_id"],
-            "version": version,
-            "status": task.get("status") or "conflict",
-            "message": "Task is not awaiting human input.",
-            "human_gate": gate or None,
-            "backend": "local",
-        }
-    if action == "reply":
-        status = "planning"
-        message = "Local HITL reply accepted; gate closed for demo resume."
-    elif action == "approve":
-        status = "completed"
-        message = "Local HITL approve accepted."
-    elif action == "reject":
-        status = "rejected"
-        message = "Local HITL reject accepted."
-    else:
-        status = "cancelled"
-        message = "Local HITL cancel accepted."
-    return {
-        "contract": "orchestrator_response",
-        "contract_version": "1.0",
-        "task_id": task["task_id"],
-        "version": version + 1,
-        "status": status,
-        "message": message,
-        "human_gate": None,
-        "result": {"action": action, "requested_by": requested_by, "human_response": human_response},
-        "backend": "local",
-    }
-
-
 @app.middleware("http")
 async def security_headers(request: Request, call_next):
+    started = time.perf_counter()
     if request.method in {"POST", "PUT", "PATCH"} and request.url.path.startswith("/v1/"):
         content_length = request.headers.get("content-length")
         limit = MAX_START_BODY_BYTES if request.url.path.rstrip("/") == "/v1/tasks/start" else MAX_BODY_BYTES
         if content_length and content_length.isdigit() and int(content_length) > limit:
             return JSONResponse({"detail": "Request body too large"}, status_code=413)
-    response = await call_next(request)
+    try:
+        response = await call_next(request)
+    except Exception:
+        logger.exception(
+            "%s %s crashed after %.0fms",
+            request.method,
+            request.url.path,
+            (time.perf_counter() - started) * 1000,
+        )
+        raise
+    elapsed_ms = (time.perf_counter() - started) * 1000
+    if request.url.path.startswith("/v1/") or request.url.path in {"/health", "/ready"}:
+        logger.info("%s %s %s %.0fms", request.method, request.url.path, response.status_code, elapsed_ms)
     response.headers["X-Content-Type-Options"] = "nosniff"
     response.headers["Referrer-Policy"] = "no-referrer"
     response.headers["Cache-Control"] = "no-store" if request.url.path.startswith("/v1/") else response.headers.get("Cache-Control", "")
@@ -982,67 +829,60 @@ async def security_headers(request: Request, call_next):
 
 @app.get("/health")
 def health() -> dict[str, Any]:
+    settings = get_settings()
     return {
         "status": "ok",
         "service": "mas-activity",
-        "version": "0.5.1",
-        "hitl_backend": hitl_backend(),
+        "version": VERSION,
+        "n8n_transport": settings.n8n_transport,
         "durable_hydrate": durable_enabled(),
         "state_persist": persist_enabled(),
-        "auth_required": not _auth_disabled(),
         "tasks": len(_tasks),
         "time": _now(),
         "started_at": _started_at,
+        "config": settings.public_summary(),
     }
 
 
 @app.get("/ready")
-def ready() -> dict[str, Any]:
-    if not STATIC.exists() or not (STATIC / "index.html").exists():
-        raise HTTPException(status_code=503, detail="UI assets missing")
-    return {
-        "status": "ready",
-        "hitl_backend": hitl_backend(),
-        "durable_hydrate": durable_enabled(),
-        "auth_required": not _auth_disabled(),
-    }
-
-
-def _auth_disabled() -> bool:
-    return (os.getenv("MAS_ACTIVITY_AUTH_DISABLED") or "").strip().lower() in {
-        "1",
-        "true",
-        "yes",
-        "on",
-    }
+async def ready() -> dict[str, Any]:
+    report = await probe_n8n_stack()
+    if not report.get("ready"):
+        raise HTTPException(status_code=503, detail=report)
+    return report
 
 
 @app.get("/v1/diagnostics/connectivity")
 async def diagnostics_connectivity(
     task_id: str | None = Query(default=None, max_length=200),
-    _: None = Depends(_require_key),
 ) -> dict[str, Any]:
-    """Check Activity → n8n Data Table webhooks and the MAS Orchestrator webhook.
+    """Check Activity → n8n Data Table webhooks, Orchestrator, and extra n8n webhooks.
 
-    No secrets or response bodies are returned. With ``?task_id=...`` the feed
-    webhook is also checked, which exercises the trace Data Table binding.
+    No secrets are returned. With ``?task_id=...`` the feed webhook is also checked
+    against a real task id.
     """
-    durable, orchestrator = await asyncio.gather(
+    durable, orchestrator, stack = await asyncio.gather(
         probe_durable_connectivity(task_id=task_id),
         probe_orchestrator_connectivity(),
+        probe_n8n_stack(),
     )
+    ok = bool(stack.get("ready"))
     return {
-        "status": "ok" if durable.get("ok") and orchestrator.get("ok") else "degraded",
-        "auth_required": not _auth_disabled(),
+        "status": "ok" if ok else "degraded",
+        "ready": ok,
         "data_tables": durable,
         "orchestrator": orchestrator,
-        "config": {"hitl_backend": hitl_backend(), "orchestrator": orchestrator_config_summary()},
-        "note": "Data Table access is checked through the configured n8n hydrate webhooks.",
+        "n8n": stack,
+        "config": {
+            "n8n_transport": hitl_backend(),
+            "orchestrator": orchestrator_config_summary(),
+        },
+        "note": "n8n /healthz, orchestrator, list/feed hydrates, and extra webhook paths.",
     }
 
 
 @app.post("/v1/turns")
-async def post_turn(body: TurnPost, _: None = Depends(_require_key)) -> dict[str, Any]:
+async def post_turn(body: TurnPost) -> dict[str, Any]:
     turn = _normalize_turn(body.turn, trace_id=body.trace_id)
     stored = await _append_turns(body.task_id, [turn])
     return {"stored": True, "task_id": body.task_id, "turn": stored[0]}
@@ -1132,7 +972,7 @@ async def _ingest_sync(
 
 
 @app.post("/v1/sync")
-async def post_sync(body: SyncPost, _: None = Depends(_require_key)) -> dict[str, Any]:
+async def post_sync(body: SyncPost) -> dict[str, Any]:
     result = await _ingest_sync(body)
     if not result["stored"] and result["count"] == 0 and not body.events and not body.turns:
         result["reason"] = "no_handoff_events"
@@ -1294,7 +1134,7 @@ async def _apply_feed_hydrate(payload: dict[str, Any]) -> dict[str, Any]:
 
 
 @app.post("/v1/hydrate")
-async def post_hydrate(request: Request, _: None = Depends(_require_key)) -> dict[str, Any]:
+async def post_hydrate(request: Request) -> dict[str, Any]:
     """Accept list and/or feed payloads from n8n Data Table hydrate workflows."""
     raw = await request.json()
     if not isinstance(raw, dict):
@@ -1434,13 +1274,13 @@ async def get_gate(task_id: str, refresh: bool = Query(default=False)) -> dict[s
 
     backend = hitl_backend()
     orch: dict[str, Any] | None = None
-    if refresh and backend != "local":
+    if refresh:
         try:
             orch = await invoke_orchestrator(
                 {"action": "status", "task_id": task_id, "requested_by": "mas-activity"}
             )
         except OrchestratorError as exc:
-            raise HTTPException(status_code=exc.status_code, detail=str(exc)) from exc
+            raise _raise_orch(exc) from exc
         await _set_gate(
             task_id,
             status=orch.get("status"),
@@ -1478,58 +1318,11 @@ async def get_gate(task_id: str, refresh: bool = Query(default=False)) -> dict[s
     }
 
 
-def _local_start_response(
-    *,
-    task_id: str,
-    description: str,
-    requested_by: str,
-    file_names: list[str],
-) -> dict[str, Any]:
-    gate = {
-        "gate_id": f"gate_{task_id}_local_start",
-        "kind": "needs_input",
-        "reason": (
-            "Локальный режим Activity: задача создана в морде без Orchestrator. "
-            "Для реального MAS-запуска настройте HITL_MODE=webhook|n8n_rest и credentials."
-        ),
-        "questions": [
-            {
-                "id": "objective",
-                "text": "Проверьте формулировку и вложения, затем перезапустите со live backend.",
-                "expected_format": "свободный текст",
-                "required": False,
-            }
-        ],
-        "expected_version": 1,
-    }
-    return {
-        "contract": "orchestrator_response",
-        "contract_version": "1.0",
-        "task_id": task_id,
-        "version": 1,
-        "status": "awaiting_human",
-        "message": "Local Activity start (presentation only).",
-        "human_gate": gate,
-        "result": {
-            "action": "start",
-            "requested_by": requested_by,
-            "objective": description[:500],
-            "files": file_names,
-            "local": True,
-        },
-        "backend": "local",
-    }
-
-
 def _start_turn(*, requested_by: str, description: str, file_names: list[str], backend: str) -> dict[str, Any]:
     files_note = f" Вложений: {len(file_names)}." if file_names else ""
     brief = (
         f"{requested_by} создал новую задачу из Activity.{files_note} "
-        + (
-            "Локальный demo-start — Orchestrator не вызван."
-            if backend == "local"
-            else "Запрос передан Orchestrator (action=start)."
-        )
+        "Запрос передан Orchestrator (action=start)."
     )
     return _normalize_turn(
         {
@@ -1589,7 +1382,6 @@ def _assign_upload_key(field: str, filename: str, counters: dict[str, int]) -> s
 
 @app.post("/v1/tasks/start")
 async def post_start_task(
-    _: None = Depends(_require_key),
     task_description: str = Form(...),
     requested_by: str = Form(...),
     schedule_root: str = Form(default=""),
@@ -1665,19 +1457,11 @@ async def post_start_task(
     }
 
     backend = hitl_backend()
-    if backend == "local":
-        orch = _local_start_response(
-            task_id=client_task_id,
-            description=description,
-            requested_by=by,
-            file_names=file_names,
-        )
-    else:
-        try:
-            # Golden / multi-file SCHEDULE+Excel can exceed 3–6 min before first HITL.
-            orch = await invoke_orchestrator(payload, files=binary or None, timeout_s=600.0)
-        except OrchestratorError as exc:
-            raise HTTPException(status_code=exc.status_code, detail=str(exc)) from exc
+    try:
+        # Golden / multi-file SCHEDULE+Excel can exceed 3–6 min before first HITL.
+        orch = await invoke_orchestrator(payload, files=binary or None, timeout_s=600.0)
+    except OrchestratorError as exc:
+        raise _raise_orch(exc) from exc
 
     orch_status = str(orch.get("status") or "").strip().lower()
     if orch_status in {"error", "fatal_error", "failed"} or not orch.get("task_id"):
@@ -1769,7 +1553,7 @@ async def post_start_task(
 
 
 @app.post("/v1/tasks/{task_id}/hitl")
-async def post_hitl(task_id: str, body: HitlPost, _: None = Depends(_require_key)) -> dict[str, Any]:
+async def post_hitl(task_id: str, body: HitlPost) -> dict[str, Any]:
     if not TASK_ID_RE.match(task_id):
         raise HTTPException(status_code=400, detail="Invalid task_id")
     action = body.action.lower()
@@ -1796,58 +1580,55 @@ async def post_hitl(task_id: str, body: HitlPost, _: None = Depends(_require_key
                 detail=f"Task {task_id} is not restartable (status={snapshot.get('status')})",
             )
         backend = hitl_backend()
-        if backend == "local":
-            orch = _local_apply_hitl(snapshot, action="retry", human_response=human_response, requested_by=requested_by)
-        else:
-            expected_version = body.expected_version
-            if expected_version is None:
-                expected_version = local_version
-            if expected_version is None:
-                try:
-                    status_payload = await invoke_orchestrator(
-                        {"action": "status", "task_id": task_id, "requested_by": requested_by}
-                    )
-                except OrchestratorError as exc:
-                    raise HTTPException(status_code=exc.status_code, detail=str(exc)) from exc
-                expected_version = status_payload.get("version")
-                gate = status_payload.get("human_gate") if isinstance(status_payload.get("human_gate"), dict) else None
-                await _set_gate(
-                    task_id,
-                    status=status_payload.get("status"),
-                    version=status_payload.get("version"),
-                    gate=gate,
-                    clear_gate=not gate,
-                    message=str(status_payload.get("message") or "").strip() or None,
-                )
-                async with _lock:
-                    snapshot = dict(_tasks.get(task_id) or snapshot)
-                if not _restartable(snapshot):
-                    raise HTTPException(
-                        status_code=409,
-                        detail=(
-                            status_payload.get("message")
-                            or f"Task {task_id} is not restartable (status={snapshot.get('status')})"
-                        ),
-                    )
+        expected_version = body.expected_version
+        if expected_version is None:
+            expected_version = local_version
+        if expected_version is None:
             try:
-                expected_version = int(expected_version)
-            except (TypeError, ValueError) as exc:
-                raise HTTPException(
-                    status_code=400,
-                    detail=f"expected_version required for restart of case {task_id}",
-                ) from exc
-            try:
-                orch = await invoke_orchestrator(
-                    {
-                        "action": "retry",
-                        "task_id": task_id,
-                        "requested_by": requested_by,
-                        "expected_version": expected_version,
-                    },
-                    files=_binaries_for(task_id),
+                status_payload = await invoke_orchestrator(
+                    {"action": "status", "task_id": task_id, "requested_by": requested_by}
                 )
             except OrchestratorError as exc:
-                raise HTTPException(status_code=exc.status_code, detail=str(exc)) from exc
+                raise _raise_orch(exc) from exc
+            expected_version = status_payload.get("version")
+            gate = status_payload.get("human_gate") if isinstance(status_payload.get("human_gate"), dict) else None
+            await _set_gate(
+                task_id,
+                status=status_payload.get("status"),
+                version=status_payload.get("version"),
+                gate=gate,
+                clear_gate=not gate,
+                message=str(status_payload.get("message") or "").strip() or None,
+            )
+            async with _lock:
+                snapshot = dict(_tasks.get(task_id) or snapshot)
+            if not _restartable(snapshot):
+                raise HTTPException(
+                    status_code=409,
+                    detail=(
+                        status_payload.get("message")
+                        or f"Task {task_id} is not restartable (status={snapshot.get('status')})"
+                    ),
+                )
+        try:
+            expected_version = int(expected_version)
+        except (TypeError, ValueError) as exc:
+            raise HTTPException(
+                status_code=400,
+                detail=f"expected_version required for restart of case {task_id}",
+            ) from exc
+        try:
+            orch = await invoke_orchestrator(
+                {
+                    "action": "retry",
+                    "task_id": task_id,
+                    "requested_by": requested_by,
+                    "expected_version": expected_version,
+                },
+                files=_binaries_for(task_id),
+            )
+        except OrchestratorError as exc:
+            raise _raise_orch(exc) from exc
         orch_status = str(orch.get("status") or "").strip().lower()
         if orch_status in {"conflict", "failed", "rejected", "cancelled", "not_found", "error"}:
             raise HTTPException(
@@ -1883,81 +1664,72 @@ async def post_hitl(task_id: str, body: HitlPost, _: None = Depends(_require_key
         }
 
     backend = hitl_backend()
-    orch: dict[str, Any]
-
-    if backend == "local":
-        orch = _local_apply_hitl(snapshot, action=action, human_response=human_response, requested_by=requested_by)
-    else:
-        try:
-            status_payload = await invoke_orchestrator(
-                {"action": "status", "task_id": task_id, "requested_by": requested_by}
-            )
-        except OrchestratorError as exc:
-            # Live backends must fail closed: never pretend local apply succeeded.
-            raise HTTPException(status_code=exc.status_code, detail=str(exc)) from exc
-        else:
-            gate = status_payload.get("human_gate") if isinstance(status_payload.get("human_gate"), dict) else None
-            awaiting = _is_awaiting_status(status_payload.get("status")) and gate and gate.get("gate_id")
-            await _set_gate(
-                task_id,
-                status=status_payload.get("status"),
-                version=status_payload.get("version"),
-                gate=gate,
-                clear_gate=not gate,
-                message=str(status_payload.get("message") or "").strip() or None,
-            )
-            if action == "status":
-                return {
-                    "ok": True,
-                    "task_id": task_id,
-                    "action": action,
-                    "backend": backend,
-                    "orchestrator": status_payload,
-                    "awaiting_human": bool(awaiting),
-                    "restartable": _restartable(
-                        {"status": status_payload.get("status"), "gate": gate}
-                    ),
-                    "human_gate": gate,
-                }
-            if not awaiting:
-                raise HTTPException(
-                    status_code=409,
-                    detail=status_payload.get("message") or f"Task status is {status_payload.get('status')}",
-                )
-            # Prefer fresh status/CAS over client-cached body fields.
-            gate_id = str(gate.get("gate_id") or "").strip() or (body.gate_id or "").strip()
-            expected_version = gate.get("expected_version")
-            if expected_version is None:
-                expected_version = status_payload.get("version")
-            if expected_version is None:
-                expected_version = body.expected_version
-            try:
-                expected_version = int(expected_version)
-            except (TypeError, ValueError) as exc:
-                raise HTTPException(status_code=400, detail="expected_version must be an integer") from exc
-            resume = {
-                "action": action,
-                "task_id": task_id,
-                "expected_version": expected_version,
-                "gate_id": gate_id,
-                "human_response": human_response,
-                "requested_by": requested_by,
-            }
-            try:
-                orch = await invoke_orchestrator(resume, files=_binaries_for(task_id))
-            except OrchestratorError as exc:
-                raise HTTPException(status_code=exc.status_code, detail=str(exc)) from exc
-
-    if action != "status":
-        turn = _human_turn(
-            action=action,
-            requested_by=requested_by,
-            human_response=human_response,
-            gate=local_gate or (orch.get("human_gate") if isinstance(orch.get("human_gate"), dict) else None),
+    try:
+        status_payload = await invoke_orchestrator(
+            {"action": "status", "task_id": task_id, "requested_by": requested_by}
         )
-        stored = await _append_turns(task_id, [turn])
-    else:
-        stored = []
+    except OrchestratorError as exc:
+        raise _raise_orch(exc) from exc
+
+    gate = status_payload.get("human_gate") if isinstance(status_payload.get("human_gate"), dict) else None
+    awaiting = _is_awaiting_status(status_payload.get("status")) and gate and gate.get("gate_id")
+    await _set_gate(
+        task_id,
+        status=status_payload.get("status"),
+        version=status_payload.get("version"),
+        gate=gate,
+        clear_gate=not gate,
+        message=str(status_payload.get("message") or "").strip() or None,
+    )
+    if action == "status":
+        return {
+            "ok": True,
+            "task_id": task_id,
+            "action": action,
+            "backend": backend,
+            "orchestrator": status_payload,
+            "awaiting_human": bool(awaiting),
+            "restartable": _restartable(
+                {"status": status_payload.get("status"), "gate": gate}
+            ),
+            "human_gate": gate,
+        }
+    if not awaiting:
+        raise HTTPException(
+            status_code=409,
+            detail=status_payload.get("message") or f"Task status is {status_payload.get('status')}",
+        )
+    # Prefer fresh status/CAS over client-cached body fields.
+    gate_id = str(gate.get("gate_id") or "").strip() or (body.gate_id or "").strip()
+    expected_version = gate.get("expected_version")
+    if expected_version is None:
+        expected_version = status_payload.get("version")
+    if expected_version is None:
+        expected_version = body.expected_version
+    try:
+        expected_version = int(expected_version)
+    except (TypeError, ValueError) as exc:
+        raise HTTPException(status_code=400, detail="expected_version must be an integer") from exc
+    resume = {
+        "action": action,
+        "task_id": task_id,
+        "expected_version": expected_version,
+        "gate_id": gate_id,
+        "human_response": human_response,
+        "requested_by": requested_by,
+    }
+    try:
+        orch = await invoke_orchestrator(resume, files=_binaries_for(task_id))
+    except OrchestratorError as exc:
+        raise _raise_orch(exc) from exc
+
+    turn = _human_turn(
+        action=action,
+        requested_by=requested_by,
+        human_response=human_response,
+        gate=local_gate or (orch.get("human_gate") if isinstance(orch.get("human_gate"), dict) else None),
+    )
+    stored = await _append_turns(task_id, [turn])
 
     clear = (not _is_awaiting_status(orch.get("status"))) or not orch.get("human_gate")
     gate_out = orch.get("human_gate") if isinstance(orch.get("human_gate"), dict) else None
@@ -2003,7 +1775,7 @@ async def post_hitl(task_id: str, body: HitlPost, _: None = Depends(_require_key
 
 
 @app.post("/v1/tasks/{task_id}/restart")
-async def post_restart(task_id: str, body: HitlPost, _: None = Depends(_require_key)) -> dict[str, Any]:
+async def post_restart(task_id: str, body: HitlPost) -> dict[str, Any]:
     """Explicit Activity UI restart — always carries task_id; never anonymous."""
     if not TASK_ID_RE.match(task_id):
         raise HTTPException(status_code=400, detail="Invalid task_id")
@@ -2090,7 +1862,7 @@ async def stream_task(task_id: str) -> StreamingResponse:
 
 
 @app.post("/v1/demo/seed")
-async def seed_demo(_: None = Depends(_require_key)) -> dict[str, Any]:
+async def seed_demo() -> dict[str, Any]:
     task_id = f"demo_{datetime.now(timezone.utc).strftime('%H%M%S')}"
     base = datetime.now(timezone.utc)
     demo = [
@@ -2323,7 +2095,6 @@ def knowledge_document(target_base: str, knowledge_id: str) -> dict[str, Any]:
 @app.post("/v1/knowledge/documents")
 def knowledge_create_document(
     body: KnowledgeDocumentCreate,
-    _: None = Depends(_require_key),
 ) -> dict[str, Any]:
     try:
         doc = knowledge_store.create_document(
@@ -2356,7 +2127,6 @@ def knowledge_patch_document(
     target_base: str,
     knowledge_id: str,
     body: KnowledgeDocumentPatch,
-    _: None = Depends(_require_key),
 ) -> dict[str, Any]:
     try:
         doc = knowledge_store.patch_document(

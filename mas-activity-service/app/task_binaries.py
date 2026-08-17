@@ -7,13 +7,13 @@ original workbook and INCLUDE stubs on every resume that re-delegates.
 from __future__ import annotations
 
 import json
-import os
 import re
 import shutil
 from pathlib import Path
 from typing import Any
 
 from app.persist import state_path
+from app.settings import get_settings
 
 BinaryMap = dict[str, tuple[str, bytes, str]]
 
@@ -22,7 +22,7 @@ _MAX_TASKS_ON_DISK = 80
 
 
 def binaries_root() -> Path | None:
-    raw = (os.getenv("ACTIVITY_BINARIES_PATH") or "").strip()
+    raw = get_settings().activity_binaries_path.strip()
     if raw:
         return Path(raw).expanduser()
     sp = state_path()

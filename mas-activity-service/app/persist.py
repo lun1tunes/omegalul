@@ -8,13 +8,18 @@ import tempfile
 from pathlib import Path
 from typing import Any
 
+from app.settings import get_settings
+
+
+from app.settings import get_settings
+
 
 CONTRACT = "mas_activity_state"
 CONTRACT_VERSION = "1.0"
 
 
 def state_path() -> Path | None:
-    raw = (os.getenv("ACTIVITY_STATE_PATH") or "").strip()
+    raw = get_settings().activity_state_path.strip()
     if not raw:
         return None
     return Path(raw).expanduser()

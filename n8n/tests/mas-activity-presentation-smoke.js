@@ -12,6 +12,9 @@ const workspace = process.env.WORKSPACE_ROOT || '/workspace';
 const orchestrator = JSON.parse(
   fs.readFileSync(path.join(workspace, 'n8n/workflows/core/universal-engineering-orchestrator.workflow.json'), 'utf8'),
 );
+const traceWf = JSON.parse(
+  fs.readFileSync(path.join(workspace, 'n8n/workflows/core/mas-trace-event-writer.workflow.json'), 'utf8'),
+);
 const AsyncFunction = Object.getPrototypeOf(async function () {}).constructor;
 
 function source(name) {
@@ -63,6 +66,16 @@ function request(port, method, urlPath, body, headers = {}) {
 
 (async () => {
   let passed = 0;
+
+  const activityConnection = traceWf.nodes.find((n) => n.name === 'Activity connection');
+  assert.ok(activityConnection && activityConnection.type === 'n8n-nodes-base.set');
+  const urlField = (activityConnection.parameters.assignments.assignments || []).find(
+    (a) => a.name === 'activity_base_url',
+  );
+  assert.ok(urlField && String(urlField.value).includes('8200'));
+  assert.equal(JSON.stringify(traceWf).includes('X-Activity-Key'), false);
+  assert.equal(JSON.stringify(traceWf).includes('ACTIVITY_KEY'), false);
+  passed += 1;
 
   // 1) Duration is computed between DELEGATED and specialist return.
   const first = await run('Resolve allowlisted specialist', {
@@ -128,7 +141,7 @@ function request(port, method, urlPath, body, headers = {}) {
     ['-m', 'uvicorn', 'app.main:app', '--host', '127.0.0.1', '--port', String(port)],
     {
       cwd: path.join(workspace, 'mas-activity-service'),
-      env: { ...process.env, PYTHONPATH: path.join(workspace, 'mas-activity-service'), MAS_ACTIVITY_KEY: 'dev-local' },
+      env: { ...process.env, PYTHONPATH: path.join(workspace, 'mas-activity-service') },
       stdio: ['ignore', 'pipe', 'pipe'],
     },
   );
@@ -179,7 +192,6 @@ function request(port, method, urlPath, body, headers = {}) {
           },
         })),
       },
-      { 'X-Activity-Key': 'dev-local' },
     );
     assert.equal(sync.status, 200);
     assert.ok(sync.json.count >= 2);

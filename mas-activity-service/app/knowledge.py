@@ -4,11 +4,12 @@ from __future__ import annotations
 
 import hashlib
 import json
-import os
 import re
 import threading
 from pathlib import Path
 from typing import Any
+
+from app.settings import get_settings
 
 NAMESPACE_LABELS = {
     "schedule_mvp": "Schedule Builder",
@@ -32,7 +33,7 @@ _corpus_override: Path | None = None
 def corpus_path() -> Path:
     if _corpus_override is not None:
         return _corpus_override
-    env = os.getenv("MAS_KNOWLEDGE_CORPUS", "").strip()
+    env = get_settings().mas_knowledge_corpus.strip()
     if env:
         return Path(env)
     for candidate in _CORPUS_CANDIDATES:

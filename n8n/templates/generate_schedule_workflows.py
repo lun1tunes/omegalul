@@ -240,25 +240,23 @@ def build_all():
  d['tnavigator-schedule-hybrid-retrieval.workflow.json']=build_retrieval(node=node,note=note,code=code,trigger=trigger,ifnode=ifnode,connect=connect,workflow=workflow)
  d['tnavigator-schedule-builder.workflow.json']=build_schedule_pipeline(node=node,note=note,code=code,trigger=trigger,ifnode=ifnode,connect=connect,workflow=workflow,keywords=KEYWORDS,planner_schema=PLANNER_SCHEMA,planner_system=PLANNER_SYS,intake_js=INTAKE,baseline_js=BASELINE,baseline_decode_js=BASELINE_DECODE,baseline_query_js=BASELINE_QUERY,plan_validate_js=PLAN_VALIDATE,render_js=RENDER,merge_js=MERGE,validate_js=VALIDATE,verify_js=VERIFY)
  ns=[
-  note('Trace writer README',(-920,-480),'Structured redacted trace only; no raw prompts, secrets, binary or hidden chain-of-thought. Accepts one event or a bounded event batch. Select Data Table in UI.\n\nOptional: after insert, handoff events POST to mas-activity-service (`/v1/sync`) for the chat presentation UI. Set URL/key in “Prepare MAS activity sync”. continueOnFail keeps Trace durable even if the UI service is down.',620,420),
+  note('Trace writer README',(-920,-480),'Structured redacted trace only; no raw prompts, secrets, binary or hidden chain-of-thought. Accepts one event or a bounded event batch. Select Data Table in UI.\n\nOptional: after insert, handoff events POST to mas-activity-service (`/v1/sync`) for the chat presentation UI. Set `activity_base_url` in the **Activity connection** Set node (n8n free — no Variables). continueOnFail keeps Trace durable even if the UI service is down.',620,420),
   trigger('Receive MAS trace event',(-920,-80),{'mas_trace_event':{'trace_id':'trace_example','task_id':'eng_example','stage':'builder','event_type':'stage_completed','summary':'Draft produced'},'mas_trace_events':[],'passthrough':{}}),
   code('Normalize MAS trace event',(-640,-80),TRACE),
   node('Insert MAS trace event','n8n-nodes-base.dataTable',1.1,(-300,-80),{'operation':'insert','dataTableId':{'__rl':True,'mode':'list','value':'REPLACE_IN_UI','cachedResultName':'MAS trace events v1'},'columns':{'mappingMode':'defineBelow','value':{k:'={{ $json.trace_row.'+k+' }}' for k in ['event_id','trace_id','task_id','at','stage','event_type','actor','status','summary','details_json']},'matchingColumns':[],'schema':[],'attemptToConvertTypes':False,'convertFieldsToString':False}}),
-  code('Prepare MAS activity sync',(20,-80),r"""
+  set_fields('Activity connection',(-40,-80),[('activity_base_url','http://127.0.0.1:8200','string')]),
+  code('Prepare MAS activity sync',(220,-80),r"""
 const source=$('Receive MAS trace event').first().json||{};
 const rows=$('Normalize MAS trace event').all().map(i=>i.json||{});
 const events=rows.map(r=>r.trace_event).filter(e=>e&&e.event_type==='handoff');
 const taskId=String(events[0]?.task_id||source.mas_trace_event?.task_id||source.passthrough?.task_id||'').trim();
 const traceId=String(events[0]?.trace_id||source.mas_trace_event?.trace_id||'').trim();
-// UI-only config: change these two strings in the Code node after import.
-const ACTIVITY_BASE_URL='http://127.0.0.1:8200';
-const ACTIVITY_KEY='dev-local';
+const ACTIVITY_BASE_URL=String($('Activity connection').first().json.activity_base_url||'').trim();
 const skipActivity=source.passthrough?.skip_activity_sync===true||source.skip_activity_sync===true;
 const ready=Boolean(!skipActivity&&taskId&&events.length&&ACTIVITY_BASE_URL);
 return[{json:{
   activity_sync_ready:ready,
   activity_url:`${String(ACTIVITY_BASE_URL).replace(/\/$/,'')}/v1/sync`,
-  activity_key:ACTIVITY_KEY,
   activity_body:{task_id:taskId,trace_id:traceId||null,events},
   stored_count:rows.length,
   handoff_count:events.length,
@@ -276,7 +274,6 @@ return[{json:{
     'sendHeaders':True,
     'headerParameters':{'parameters':[
       {'name':'Content-Type','value':'application/json'},
-      {'name':'X-Activity-Key','value':'={{ $json.activity_key }}'},
     ]},
     'sendBody':True,
     'specifyBody':'json',
@@ -307,7 +304,8 @@ return[{json:{
  c={}
  connect(c,'Receive MAS trace event','Normalize MAS trace event')
  connect(c,'Normalize MAS trace event','Insert MAS trace event')
- connect(c,'Insert MAS trace event','Prepare MAS activity sync')
+ connect(c,'Insert MAS trace event','Activity connection')
+ connect(c,'Activity connection','Prepare MAS activity sync')
  connect(c,'Prepare MAS activity sync','Activity sync needed?')
  connect(c,'Activity sync needed?','POST handoffs to MAS Activity',idx=0)
  connect(c,'Activity sync needed?','Return trace acknowledgement',idx=1)

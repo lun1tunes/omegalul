@@ -128,18 +128,15 @@ END$$;
         ],
         check=False,
     )
-    key = env.get("MAS_ACTIVITY_KEY", "")
-    if key:
-        req = urllib.request.Request(
-            f"http://127.0.0.1:{env.get('MAS_ACTIVITY_HOST_PORT', '8200')}/v1/tasks",
-            headers={"X-MAS-Activity-Key": key},
-        )
-        try:
-            with urllib.request.urlopen(req, timeout=5) as resp:
-                body = json.loads(resp.read().decode())
-            print("activity tasks", len(body.get("tasks") or []))
-        except Exception as exc:  # noqa: BLE001
-            print("activity probe", exc)
+    req = urllib.request.Request(
+        f"http://127.0.0.1:{env.get('MAS_ACTIVITY_HOST_PORT', '8200')}/v1/tasks",
+    )
+    try:
+        with urllib.request.urlopen(req, timeout=5) as resp:
+            body = json.loads(resp.read().decode())
+        print("activity tasks", len(body.get("tasks") or []))
+    except Exception as exc:  # noqa: BLE001
+        print("activity probe", exc)
 
 
 def import_workflows() -> None:
@@ -216,7 +213,7 @@ def save_nodes(wid: str, nodes) -> None:
 def patch_nodes(nodes, name_to_id: dict[str, str], env: dict[str, str]) -> int:
     changed = 0
     activity_url = "http://mas-activity:8200"
-    activity_key = env.get("MAS_ACTIVITY_KEY", "dev-local")
+    excel_url = env.get("EXCEL_TOOLS_URL", "http://excel-tools:8000")
     excel_url = "http://excel-tools:8000/api/v1"
     excel_key = env.get("EXCEL_TOOLS_API_KEY") or env.get("excel_tools_api_key") or ""
     placeholders = dict(PLACEHOLDERS)
@@ -283,17 +280,17 @@ def patch_nodes(nodes, name_to_id: dict[str, str], env: dict[str, str]) -> int:
                 elif key == "excel_tools_api_key":
                     assignment["value"] = "={{ " + json.dumps(excel_key) + " }}"
                     changed += 1
+        if node.get("name") == "Activity connection":
+            for assignment in (((params.get("assignments") or {}).get("assignments")) or []):
+                if assignment.get("name") == "activity_base_url":
+                    assignment["value"] = activity_url
+                    changed += 1
         js = params.get("jsCode")
-        if isinstance(js, str) and "ACTIVITY_BASE_URL" in js:
+        if isinstance(js, str) and "ACTIVITY_BASE_URL" in js and "Activity connection" not in js:
             js2 = re.sub(
                 r"const ACTIVITY_BASE_URL=['\"][^'\"]*['\"]",
                 f"const ACTIVITY_BASE_URL={json.dumps(activity_url)}",
                 js,
-            )
-            js2 = re.sub(
-                r"const ACTIVITY_KEY=['\"][^'\"]*['\"]",
-                f"const ACTIVITY_KEY={json.dumps(activity_key)}",
-                js2,
             )
             if js2 != js:
                 params["jsCode"] = js2
@@ -537,15 +534,15 @@ def main() -> int:
             time.sleep(10)
             overall = run_health_form()
     # final activity emptiness
-    key = env.get("MAS_ACTIVITY_KEY", "")
     tasks = -1
-    if key:
+    try:
         req = urllib.request.Request(
             f"http://127.0.0.1:{env.get('MAS_ACTIVITY_HOST_PORT', '8200')}/v1/tasks",
-            headers={"X-MAS-Activity-Key": key},
         )
         with urllib.request.urlopen(req, timeout=5) as resp:
             tasks = len(json.loads(resp.read().decode()).get("tasks") or [])
+    except Exception as exc:  # noqa: BLE001
+        print("activity probe", exc)
     elapsed = round(time.time() - t0, 1)
     print(json.dumps({"overall": overall, "activity_tasks": tasks, "elapsed_s": elapsed}, ensure_ascii=False))
     if overall == "FAIL" or overall is None:

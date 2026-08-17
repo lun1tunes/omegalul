@@ -6,27 +6,41 @@ import json
 import os
 from pathlib import Path
 
-os.environ.setdefault("MAS_ACTIVITY_KEY", "dev-local")
+os.environ.setdefault("LOG_LEVEL", "WARNING")
 
 from fastapi.testclient import TestClient
 import pytest
 
 from app.enrich import BRIEF_TEMPLATES, build_brief, enrich_turn, format_duration, outcome_for
 from app.main import app, reset_store
+from app.settings import VERSION
 
 ROOT = Path(__file__).resolve().parents[1]
 STATIC = ROOT / "static"
 client = TestClient(app)
-KEY = {"X-Activity-Key": "dev-local"}
+KEY = {}
 
 
 @pytest.fixture(autouse=True)
 def _isolate_activity_store(monkeypatch) -> None:
-    """Reset memory and ignore host ACTIVITY_*_URL so hydrate stays offline in unit tests."""
-    monkeypatch.delenv("ACTIVITY_LIST_URL", raising=False)
-    monkeypatch.delenv("ACTIVITY_FEED_URL", raising=False)
-    # Do not share on-disk state with a live Activity process on :8200.
-    monkeypatch.delenv("ACTIVITY_STATE_PATH", raising=False)
+    """Reset memory and ignore host n8n/Activity URLs so unit tests stay offline."""
+    for key in (
+        "ACTIVITY_LIST_URL",
+        "ACTIVITY_FEED_URL",
+        "ACTIVITY_STATE_PATH",
+        "ACTIVITY_BINARIES_PATH",
+        "ORCHESTRATOR_WEBHOOK_URL",
+        "ORCHESTRATOR_AUTH_HEADER",
+        "ORCHESTRATOR_AUTH_VALUE",
+        "N8N_BASE_URL",
+        "N8N_HOST",
+        "N8N_USERNAME",
+        "N8N_PASSWORD",
+        "HITL_MODE",
+        "MAS_ACTIVITY_KEY",
+        "MAS_ACTIVITY_AUTH_DISABLED",
+    ):
+        monkeypatch.delenv(key, raising=False)
     reset_store()
 
 
@@ -482,10 +496,15 @@ def test_extract_schedule_from_builder_deliverables() -> None:
 
 def test_ready_health_and_static_assets() -> None:
     health = client.get("/health").json()
-    assert health["version"] == "0.5.1"
-    assert "hitl_backend" in health
+    assert health["version"] == VERSION
+    assert health["n8n_transport"] == "unconfigured"
     assert "state_persist" in health
-    assert client.get("/ready").status_code == 200
+    assert "auth_required" not in health
+    ready = client.get("/ready")
+    assert ready.status_code == 503
+    detail = ready.json()["detail"]
+    assert detail["ready"] is False
+    assert "ORCHESTRATOR_WEBHOOK_URL" in " ".join(detail.get("missing_config") or [])
     index = client.get("/")
     assert index.status_code == 200
     assert "composer" in index.text
@@ -508,6 +527,8 @@ def test_ready_health_and_static_assets() -> None:
     assert "taskSelect" not in index.text
     assert "openBtn" not in index.text
     js_text = (STATIC / "app.js").read_text(encoding="utf-8")
+    assert "X-Activity-Key" not in js_text
+    assert "mas_activity_key" not in js_text
     assert "brief" in js_text
     assert "duration_label" in js_text
     assert "submitHitl" in js_text
@@ -515,7 +536,7 @@ def test_ready_health_and_static_assets() -> None:
     assert "clearWorkspaceView" in js_text
     assert "startResumeTask" in js_text
     assert "displayRole" in js_text
-    assert 'return "User"' in js_text
+    assert 'User: "Вы"' in js_text
     assert "syncScheduleRootField" in js_text
     assert "hydrateFromDataTables" in js_text
     assert "setTaskHeader" in js_text
@@ -565,23 +586,66 @@ def test_ready_health_and_static_assets() -> None:
     assert "duration_label" in js.text
 
 
-def test_local_dev_can_disable_activity_auth_and_run_diagnostics(monkeypatch) -> None:
-    monkeypatch.setenv("MAS_ACTIVITY_AUTH_DISABLED", "true")
+def test_cors_preflight_and_get_allow_any_origin() -> None:
+    origin = "http://localhost:4173"
+    preflight = client.options(
+        "/v1/tasks",
+        headers={
+            "Origin": origin,
+            "Access-Control-Request-Method": "POST",
+            "Access-Control-Request-Headers": "content-type",
+        },
+    )
+    assert preflight.status_code in {200, 204}
+    assert preflight.headers.get("access-control-allow-origin") == "*"
+    assert preflight.headers.get("access-control-allow-credentials") != "true"
+    health = client.get("/health", headers={"Origin": origin})
+    assert health.status_code == 200
+    assert health.headers.get("access-control-allow-origin") == "*"
+    assert health.headers.get("access-control-allow-credentials") != "true"
+
+
+def test_diagnostics_without_n8n_is_degraded() -> None:
     health = client.get("/health")
     assert health.status_code == 200
-    assert health.json()["auth_required"] is False
+    assert health.json()["n8n_transport"] == "unconfigured"
 
     diagnostics = client.get("/v1/diagnostics/connectivity")
     assert diagnostics.status_code == 200
     body = diagnostics.json()
-    assert body["auth_required"] is False
+    assert body["ready"] is False
+    assert body["status"] == "degraded"
     assert body["data_tables"]["configured"] is False
     assert body["orchestrator"]["ok"] is False
 
 
-def test_local_start_task_with_files(tmp_path: Path, monkeypatch) -> None:
-    monkeypatch.setenv("HITL_MODE", "local")
-    # Reload backend detection is env-based per call — no reload needed.
+def test_start_fails_fast_when_n8n_unconfigured() -> None:
+    res = client.post(
+        "/v1/tasks/start",
+        data={"task_description": "REVISE dates", "requested_by": "И. Иванов"},
+    )
+    assert res.status_code == 503
+    assert "n8n" in str(res.json()["detail"]).lower() or "ORCHESTRATOR" in str(res.json()["detail"])
+
+
+def test_start_task_with_files(tmp_path: Path, monkeypatch) -> None:
+    monkeypatch.setenv("ORCHESTRATOR_WEBHOOK_URL", "http://orch.test/hook")
+
+    async def fake_invoke(payload, *, files=None, timeout_s=90.0):
+        return {
+            "contract": "orchestrator_response",
+            "task_id": payload["task_id"],
+            "version": 1,
+            "status": "awaiting_human",
+            "human_gate": {
+                "gate_id": "gate_start_files",
+                "kind": "needs_input",
+                "expected_version": 1,
+            },
+            "message": "started",
+        }
+
+    monkeypatch.setattr("app.main.invoke_orchestrator", fake_invoke)
     schedule = tmp_path / "schedule.inc"
     schedule.write_text("DATES\n1 JAN 2020 /\n/\n", encoding="utf-8")
     excel = tmp_path / "dates.xlsx"
@@ -603,7 +667,7 @@ def test_local_start_task_with_files(tmp_path: Path, monkeypatch) -> None:
     assert res.status_code == 200, res.text
     body = res.json()
     assert body["ok"] is True
-    assert body["backend"] == "local"
+    assert body["backend"] == "webhook"
     assert body["file_count"] == 2
     assert body["awaiting_human"] is True
     assert body["human_gate"]["gate_id"]
@@ -628,7 +692,6 @@ def test_start_requires_named_engineer() -> None:
 
 
 def test_live_start_forwards_files(monkeypatch) -> None:
-    monkeypatch.setenv("HITL_MODE", "webhook")
     monkeypatch.setenv("ORCHESTRATOR_WEBHOOK_URL", "http://orch.test/hook")
     captured: dict = {}
 
@@ -679,8 +742,30 @@ def test_demo_seed_has_duration_brief_and_hitl_gate() -> None:
     assert body["semantic_diff"]["edits"]
 
 
-def test_local_hitl_approve_reply_reject(monkeypatch) -> None:
-    monkeypatch.setenv("HITL_MODE", "local")
+def test_hitl_approve_reply_reject(monkeypatch) -> None:
+    monkeypatch.setenv("ORCHESTRATOR_WEBHOOK_URL", "http://orch.test/hook")
+
+    async def fake_invoke(payload, *, files=None, timeout_s=90.0):
+        action = payload.get("action")
+        if action == "status":
+            return {
+                "status": "awaiting_human",
+                "version": 1,
+                "human_gate": {
+                    "gate_id": "g-seed",
+                    "kind": "needs_approval",
+                    "expected_version": 1,
+                },
+            }
+        if action == "reply":
+            return {"status": "planning", "version": 2, "human_gate": None}
+        if action == "approve":
+            return {"status": "completed", "version": 2, "human_gate": None}
+        if action == "reject":
+            return {"status": "rejected", "version": 2, "human_gate": None}
+        return {"status": "planning", "version": 2, "human_gate": None}
+
+    monkeypatch.setattr("app.main.invoke_orchestrator", fake_invoke)
     seed = client.post("/v1/demo/seed", headers=KEY).json()
     task_id = seed["task_id"]
 
@@ -734,8 +819,7 @@ def test_local_hitl_approve_reply_reject(monkeypatch) -> None:
     assert reject.json()["orchestrator"]["status"] == "rejected"
 
 
-def test_unauthorized_and_missing_task() -> None:
-    assert client.post("/v1/demo/seed").status_code == 401
+def test_missing_task() -> None:
     assert client.get("/v1/tasks/missing_task_zzz").status_code == 404
 
 
@@ -791,6 +875,60 @@ def test_set_gate_clears_stale_status_message_on_status_refresh() -> None:
     assert second["status"] == "running"
     assert second["status_message"] is None
     assert _tasks[task_id].get("status_message") is None
+
+
+def test_set_gate_noop_does_not_republish() -> None:
+    import asyncio
+    from app.main import _set_gate, _subscribers
+
+    task_id = "sse_gate_noop"
+    queue: asyncio.Queue = asyncio.Queue(maxsize=8)
+    _subscribers[task_id].append(queue)
+
+    async def run() -> None:
+        await _set_gate(task_id, status="running", version=1)
+        await _set_gate(task_id, status="running", version=1)
+
+    asyncio.run(run())
+    assert queue.get_nowait()["type"] == "gate"
+    with pytest.raises(asyncio.QueueEmpty):
+        queue.get_nowait()
+    _subscribers[task_id].remove(queue)
+
+
+def test_task_attached_files_accepts_either_start_signal() -> None:
+    from app.main import _task_attached_files
+
+    by_status = {
+        "attached_files": [],
+        "turns": [
+            {
+                "status": "TASK_STARTED",
+                "details": {"files": ["a.inc"]},
+            }
+        ],
+    }
+    by_action = {
+        "attached_files": [],
+        "turns": [
+            {
+                "status": "ORCH_CONFLICT",
+                "details": {"action": "start", "files": ["b.inc"]},
+            }
+        ],
+    }
+    specialist = {
+        "attached_files": [],
+        "turns": [
+            {
+                "status": "EXCEL_EVIDENCE_READY",
+                "details": {"files": ["not-start.xlsx"]},
+            }
+        ],
+    }
+    assert _task_attached_files(by_status) == ["a.inc"]
+    assert _task_attached_files(by_action) == ["b.inc"]
+    assert _task_attached_files(specialist) == []
 
 
 def test_n8n_rest_failed_execution_never_returns_parsed_response(monkeypatch) -> None:
@@ -855,7 +993,6 @@ def test_n8n_rest_failed_execution_never_returns_parsed_response(monkeypatch) ->
                 },
             )
 
-    monkeypatch.setenv("HITL_MODE", "n8n_rest")
     monkeypatch.setenv("N8N_BASE_URL", "http://n8n.test")
     monkeypatch.setenv("N8N_USERNAME", "u")
     monkeypatch.setenv("N8N_PASSWORD", "p")
@@ -889,7 +1026,6 @@ def test_static_ui_requires_schedule_root_and_generic_conflict_banner() -> None:
 
 
 def test_live_hitl_status_failure_does_not_local_apply(monkeypatch) -> None:
-    monkeypatch.setenv("HITL_MODE", "webhook")
     monkeypatch.setenv("ORCHESTRATOR_WEBHOOK_URL", "http://example.invalid/orch")
 
     from app.orchestrator import OrchestratorError
@@ -919,7 +1055,6 @@ def test_live_hitl_status_failure_does_not_local_apply(monkeypatch) -> None:
 
 
 def test_live_hitl_prefers_fresh_status_cas_over_body(monkeypatch) -> None:
-    monkeypatch.setenv("HITL_MODE", "webhook")
     monkeypatch.setenv("ORCHESTRATOR_WEBHOOK_URL", "http://example.invalid/orch")
 
     calls: list[dict] = []
@@ -962,7 +1097,6 @@ def test_live_hitl_prefers_fresh_status_cas_over_body(monkeypatch) -> None:
 
 
 def test_live_hitl_reattaches_start_binaries(tmp_path: Path, monkeypatch) -> None:
-    monkeypatch.setenv("HITL_MODE", "webhook")
     monkeypatch.setenv("ORCHESTRATOR_WEBHOOK_URL", "http://orch.test/hook")
     monkeypatch.setenv("ACTIVITY_BINARIES_PATH", str(tmp_path / "bins"))
 

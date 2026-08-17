@@ -52,7 +52,6 @@
   const startCancelBtn = document.getElementById("startCancelBtn");
   const startSubmitBtn = document.getElementById("startSubmitBtn");
 
-  const ACTIVITY_KEY = localStorage.getItem("mas_activity_key") || "dev-local";
   const storedBy = localStorage.getItem("mas_requested_by") || "";
   if (storedBy) {
     requestedBy.value = storedBy;
@@ -1179,7 +1178,6 @@
         method: "POST",
         headers: {
           "Content-Type": "application/json",
-          "X-Activity-Key": ACTIVITY_KEY,
         },
         body: JSON.stringify({
           action,
@@ -1287,7 +1285,6 @@
     try {
       const res = await fetch("/v1/tasks/start", {
         method: "POST",
-        headers: { "X-Activity-Key": ACTIVITY_KEY },
         body: form,
       });
       const data = await res.json().catch(() => ({}));
@@ -1319,9 +1316,9 @@
         renderStatusBanner("conflict", orchMsg || null);
       } else {
         showFlash(
-          data.backend === "local"
-            ? `Задача ${data.task_id} создана (локальный режим).`
-            : `Задача ${data.task_id} создана.`,
+          data.task_id
+            ? `Задача ${data.task_id} создана.`
+            : "Задача создана.",
           { ok: true },
         );
       }
@@ -1376,7 +1373,6 @@
           method: "POST",
           headers: {
             "Content-Type": "application/json",
-            "X-Activity-Key": ACTIVITY_KEY,
           },
           body: JSON.stringify({
             action: "retry",

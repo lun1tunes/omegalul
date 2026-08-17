@@ -665,7 +665,7 @@ def test_universal_orchestrator_enterprise_control_plane() -> None:
     assert "from_role:'Orchestrator'" in text
     assert "status:'NEEDS_DECISION'" in text or "status:hitlStatus" in text
     assert "can_release?'succeeded'" not in text
-    pipeline = Path("/home/lun1z/omegalul/n8n/templates/schedule_pipeline.py").read_text(encoding="utf-8")
+    pipeline = (TEMPLATES / "schedule_pipeline.py").read_text(encoding="utf-8")
     assert "status:releaseReady?'needs_approval':'needs_input'" in pipeline
     assert "kind:releaseReady?'needs_approval':'needs_input'" in pipeline
     assert "kind='result_approval'" in text

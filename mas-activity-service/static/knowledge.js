@@ -14,8 +14,6 @@
   const createSave = document.getElementById("createSave");
   const createCancel = document.getElementById("createCancel");
 
-  const ACTIVITY_KEY = localStorage.getItem("mas_activity_key") || "dev-local";
-
   const TAG_GROUPS = [
     {
       key: "keywords",
@@ -409,7 +407,6 @@
               method: "PATCH",
               headers: {
                 "Content-Type": "application/json",
-                "X-Activity-Key": ACTIVITY_KEY,
               },
               body: JSON.stringify({
                 text,
@@ -619,7 +616,6 @@
         method: "POST",
         headers: {
           "Content-Type": "application/json",
-          "X-Activity-Key": ACTIVITY_KEY,
         },
         body: JSON.stringify(payload),
       });

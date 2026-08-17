@@ -34,9 +34,20 @@ async function run(name, json) {
     'Call Writer — MAS Trace (error)',
     'POST error handoff to MAS Activity',
     'Format MAS error ack',
+    'Activity connection',
   ]) {
     assert.ok(wf.nodes.some((n) => n.name === need), `missing node ${need}`);
   }
+  const activityConnection = wf.nodes.find((n) => n.name === 'Activity connection');
+  assert.equal(activityConnection.type, 'n8n-nodes-base.set');
+  const activityUrl = (activityConnection.parameters.assignments.assignments || []).find(
+    (a) => a.name === 'activity_base_url',
+  );
+  assert.ok(activityUrl && String(activityUrl.value).includes('8200'));
+  const postActivity = wf.nodes.find((n) => n.name === 'POST error handoff to MAS Activity');
+  const headers = JSON.stringify(postActivity.parameters.headerParameters || {});
+  assert.equal(headers.includes('X-Activity-Key'), false);
+  assert.equal(JSON.stringify(wf).includes('ACTIVITY_KEY'), false);
   for (const need of [
     'Call Error — MAS Case Handler (specialist)',
     'Call Error — MAS Case Handler (verification)',

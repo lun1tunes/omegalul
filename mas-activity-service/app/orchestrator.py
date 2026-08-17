@@ -5,18 +5,21 @@ from __future__ import annotations
 import asyncio
 import base64
 import json
-import os
+import logging
 import time
 from typing import Any
 
 import httpx
 
+from app.settings import UNCONFIGURED_N8N, Settings, get_settings
+
 FORMAT_NODE = "Format orchestrator response"
 TRIGGER_NODE = "When called by another workflow"
-DEFAULT_ORCH_WF = "ba8ba59f-e4e4-5ff6-b22c-63ceae883271"
 
 # field_name -> (filename, bytes, mime_type)
 BinaryMap = dict[str, tuple[str, bytes, str]]
+
+logger = logging.getLogger(__name__)
 
 _cookie: str | None = None
 _cookie_at = 0.0
@@ -29,104 +32,59 @@ class OrchestratorError(RuntimeError):
         self.detail = detail
 
 
-def _cfg() -> dict[str, str]:
-    return {
-        "webhook_url": (os.getenv("ORCHESTRATOR_WEBHOOK_URL") or "").strip(),
-        "auth_header": (os.getenv("ORCHESTRATOR_AUTH_HEADER") or "").strip(),
-        "auth_value": (os.getenv("ORCHESTRATOR_AUTH_VALUE") or "").strip(),
-        "n8n_base": (os.getenv("N8N_BASE_URL") or os.getenv("N8N_HOST") or "").rstrip("/"),
-        "n8n_user": (os.getenv("N8N_USERNAME") or "").strip(),
-        "n8n_password": (os.getenv("N8N_PASSWORD") or "").strip(),
-        "workflow_id": (os.getenv("ORCHESTRATOR_WORKFLOW_ID") or DEFAULT_ORCH_WF).strip(),
-        "mode": (os.getenv("HITL_MODE") or "auto").strip().lower(),
-    }
+class N8nClient:
+    """Single production path to n8n: webhook if URL is known, otherwise REST."""
+
+    def __init__(self, settings: Settings | None = None):
+        self.settings = settings or get_settings()
+
+    @property
+    def transport(self) -> str:
+        return self.settings.n8n_transport
+
+    def require_configured(self) -> None:
+        if self.transport == "unconfigured":
+            raise OrchestratorError(UNCONFIGURED_N8N, status_code=503)
+
+
+def _cfg() -> Settings:
+    return get_settings()
 
 
 def hitl_backend() -> str:
-    cfg = _cfg()
-    mode = cfg["mode"]
-    if mode in {"local", "webhook", "n8n_rest"}:
-        return mode
-    if cfg["webhook_url"]:
-        return "webhook"
-    if cfg["n8n_base"] and cfg["n8n_user"] and cfg["n8n_password"]:
-        return "n8n_rest"
-    return "local"
+    """Return ``webhook`` / ``n8n_rest`` / ``unconfigured``. There is no local mode."""
+    return get_settings().n8n_transport
 
 
 def orchestrator_config_summary() -> dict[str, Any]:
     """Return safe runtime configuration facts for the diagnostics endpoint."""
-    cfg = _cfg()
-    backend = hitl_backend()
+    settings = get_settings()
     return {
-        "backend": backend,
-        "webhook_configured": bool(cfg["webhook_url"]),
-        "auth_configured": bool(cfg["auth_header"] and cfg["auth_value"]),
+        "backend": settings.n8n_transport,
+        "webhook_configured": bool(settings.resolved_orchestrator_webhook),
+        "auth_configured": bool(settings.orchestrator_auth_header and settings.orchestrator_auth_value),
         "n8n_rest_configured": bool(
-            cfg["n8n_base"] and cfg["n8n_user"] and cfg["n8n_password"]
+            settings.n8n_base and settings.n8n_username and settings.n8n_password
         ),
     }
 
 
 async def probe_orchestrator_connectivity(*, timeout_s: float = 10.0) -> dict[str, Any]:
     """Safely probe the live orchestrator boundary without creating a task."""
-    cfg = _cfg()
-    backend = hitl_backend()
-    result: dict[str, Any] = {
-        **orchestrator_config_summary(),
-        "checked": False,
-    }
-    if backend == "local":
-        result.update(
-            {
-                "ok": False,
-                "note": "HITL backend is local or no live orchestrator endpoint is configured.",
-            }
-        )
-        return result
-    if backend != "webhook" or not cfg["webhook_url"]:
-        result.update(
-            {
-                "ok": False,
-                "note": "Connectivity probe currently supports the webhook backend only.",
-            }
-        )
-        return result
+    from app.readiness import probe_n8n_stack
 
-    # `status` for a deliberately missing task exercises the webhook and its
-    # n8n bindings without inserting a task or invoking an LLM route.
-    probe_payload = {
-        "action": "status",
-        "task_id": "activity_connectivity_probe",
-        "requested_by": "activity-diagnostics",
+    stack = await probe_n8n_stack(timeout_s=timeout_s)
+    orch = stack.get("checks", {}).get("orchestrator") or {}
+    return {
+        **orchestrator_config_summary(),
+        "checked": True,
+        "ok": bool(orch.get("ok")),
+        "reachable": orch.get("reachable"),
+        "http_status": orch.get("http_status"),
+        "error": orch.get("error"),
+        "note": orch.get("note") or orch.get("error"),
+        "transport": stack.get("n8n_transport"),
     }
-    headers: dict[str, str] = {}
-    if cfg["auth_header"] and cfg["auth_value"]:
-        headers[cfg["auth_header"]] = cfg["auth_value"]
-    try:
-        async with httpx.AsyncClient(timeout=timeout_s) as client:
-            response = await client.post(cfg["webhook_url"], json=probe_payload, headers=headers)
-        result.update(
-            {
-                "checked": True,
-                "reachable": True,
-                "ok": 200 <= response.status_code < 300,
-                "http_status": response.status_code,
-            }
-        )
-        try:
-            body = response.json()
-            if isinstance(body, list) and body:
-                body = body[0]
-            if isinstance(body, dict):
-                result["response_contract"] = body.get("contract")
-                result["response_status"] = body.get("status")
-                result["response_message"] = str(body.get("message") or "")[:300] or None
-        except ValueError:
-            result["response_preview"] = response.text[:300]
-    except httpx.HTTPError as exc:
-        result.update({"checked": True, "reachable": False, "ok": False, "error": str(exc)[:300]})
-    return result
 
 
 def _deref_flat(
@@ -194,12 +152,33 @@ async def invoke_orchestrator(
     files: BinaryMap | None = None,
     timeout_s: float = 90.0,
 ) -> dict[str, Any]:
-    backend = hitl_backend()
-    if backend == "local":
-        raise OrchestratorError("Orchestrator backend not configured", status_code=503)
-    if backend == "webhook":
-        return await _invoke_webhook(payload, files=files, timeout_s=timeout_s)
-    return await _invoke_n8n_rest(payload, files=files, timeout_s=timeout_s)
+    client = N8nClient()
+    client.require_configured()
+    action = str(payload.get("action") or "").strip() or "unknown"
+    logger.info(
+        "n8n invoke transport=%s action=%s task_id=%s files=%s timeout=%ss",
+        client.transport,
+        action,
+        payload.get("task_id"),
+        len(files or {}),
+        timeout_s,
+    )
+    try:
+        if client.transport == "webhook":
+            result = await _invoke_webhook(payload, files=files, timeout_s=timeout_s)
+        else:
+            result = await _invoke_n8n_rest(payload, files=files, timeout_s=timeout_s)
+    except OrchestratorError:
+        logger.exception("n8n invoke failed transport=%s action=%s", client.transport, action)
+        raise
+    logger.info(
+        "n8n invoke ok transport=%s action=%s status=%s task_id=%s",
+        client.transport,
+        action,
+        result.get("status"),
+        result.get("task_id"),
+    )
+    return result
 
 
 def _binary_to_n8n(files: BinaryMap | None) -> dict[str, dict[str, str]] | None:
@@ -221,10 +200,12 @@ async def _invoke_webhook(
     files: BinaryMap | None = None,
     timeout_s: float,
 ) -> dict[str, Any]:
-    cfg = _cfg()
-    headers: dict[str, str] = {}
-    if cfg["auth_header"] and cfg["auth_value"]:
-        headers[cfg["auth_header"]] = cfg["auth_value"]
+    settings = _cfg()
+    url = settings.resolved_orchestrator_webhook
+    if not url:
+        raise OrchestratorError(UNCONFIGURED_N8N, status_code=503)
+    headers: dict[str, str] = dict(settings.orchestrator_headers())
+    started = time.perf_counter()
     async with httpx.AsyncClient(timeout=timeout_s) as client:
         if files:
             form: dict[str, Any] = {}
@@ -239,10 +220,16 @@ async def _invoke_webhook(
                 (key, (filename, content, mime or "application/octet-stream"))
                 for key, (filename, content, mime) in files.items()
             ]
-            res = await client.post(cfg["webhook_url"], data=form, files=upload, headers=headers)
+            res = await client.post(url, data=form, files=upload, headers=headers)
         else:
             headers = {**headers, "Content-Type": "application/json"}
-            res = await client.post(cfg["webhook_url"], json=payload, headers=headers)
+            res = await client.post(url, json=payload, headers=headers)
+    logger.info(
+        "n8n webhook POST %s -> %s in %.0fms",
+        url.split("?", 1)[0],
+        res.status_code,
+        (time.perf_counter() - started) * 1000,
+    )
     if res.status_code >= 400:
         raise OrchestratorError(
             f"Orchestrator webhook HTTP {res.status_code}",
@@ -257,13 +244,13 @@ async def _invoke_webhook(
     return data
 
 
-async def _login(client: httpx.AsyncClient, cfg: dict[str, str]) -> str:
+async def _login(client: httpx.AsyncClient, cfg: Settings) -> str:
     global _cookie, _cookie_at
     if _cookie and (time.time() - _cookie_at) < 25 * 60:
         return _cookie
     res = await client.post(
-        f"{cfg['n8n_base']}/rest/login",
-        json={"emailOrLdapLoginId": cfg["n8n_user"], "password": cfg["n8n_password"]},
+        f"{cfg.n8n_base}/rest/login",
+        json={"emailOrLdapLoginId": cfg.n8n_username, "password": cfg.n8n_password},
     )
     if res.status_code >= 400:
         raise OrchestratorError("n8n login failed", status_code=502, detail=res.text[:400])
@@ -320,7 +307,7 @@ async def _invoke_n8n_rest(
     timeout_s: float,
 ) -> dict[str, Any]:
     cfg = _cfg()
-    if not (cfg["n8n_base"] and cfg["n8n_user"] and cfg["n8n_password"]):
+    if not (cfg.n8n_base and cfg.n8n_username and cfg.n8n_password):
         raise OrchestratorError("N8N_BASE_URL/N8N_USERNAME/N8N_PASSWORD required", status_code=503)
 
     item: dict[str, Any] = {"json": payload}
@@ -345,7 +332,7 @@ async def _invoke_n8n_rest(
     async with httpx.AsyncClient(timeout=timeout_s, follow_redirects=True) as client:
         await _login(client, cfg)
         run = await client.post(
-            f"{cfg['n8n_base']}/rest/workflows/{cfg['workflow_id']}/run",
+            f"{cfg.n8n_base}/rest/workflows/{cfg.orchestrator_workflow_id}/run",
             json=body,
         )
         if run.status_code >= 400:
@@ -353,7 +340,7 @@ async def _invoke_n8n_rest(
             _cookie_at = 0
             await _login(client, cfg)
             run = await client.post(
-                f"{cfg['n8n_base']}/rest/workflows/{cfg['workflow_id']}/run",
+                f"{cfg.n8n_base}/rest/workflows/{cfg.orchestrator_workflow_id}/run",
                 json=body,
             )
         if run.status_code >= 400:
@@ -371,7 +358,7 @@ async def _invoke_n8n_rest(
         # Poll metadata only — full includeData every 0.6s OOMs this host on long orch runs.
         while time.time() < deadline:
             ex = await client.get(
-                f"{cfg['n8n_base']}/rest/executions/{execution_id}",
+                f"{cfg.n8n_base}/rest/executions/{execution_id}",
                 params={"includeData": "false"},
             )
             if ex.status_code >= 400:
@@ -391,7 +378,7 @@ async def _invoke_n8n_rest(
                 else:
                     try:
                         full = await client.get(
-                            f"{cfg['n8n_base']}/rest/executions/{execution_id}",
+                            f"{cfg.n8n_base}/rest/executions/{execution_id}",
                             params={"includeData": "true"},
                         )
                     except httpx.HTTPError as exc:

@@ -227,14 +227,38 @@
     },
     {
       "parameters": {
-        "jsCode": "const x=$json;\nif(!x.has_task_id||x.skip_trace){\n  return[{json:{...x,activity_sync_ready:false}}];\n}\nconst ACTIVITY_BASE_URL='http://127.0.0.1:8200';\nconst ACTIVITY_KEY='dev-local';\nconst body={\n  task_id:x.task_id,\n  trace_id:x.mas_trace_event?.trace_id||null,\n  status:x.activity_status||x.cas_status||null,\n  version:x.activity_version||null,\n  human_gate:x.activity_human_gate||x.human_gate||null,\n  events:[x.activity_event].filter(Boolean),\n};\nreturn[{json:{\n  ...x,\n  activity_sync_ready:true,\n  activity_url:`${String(ACTIVITY_BASE_URL).replace(/\\\\/$/,'')}/v1/sync`,\n  activity_key:ACTIVITY_KEY,\n  activity_body:body,\n}}];"
+        "assignments": {
+          "assignments": [
+            {
+              "id": "5199ed54-7e7f-57ad-b9d3-777854a32112",
+              "name": "activity_base_url",
+              "value": "http://127.0.0.1:8200",
+              "type": "string"
+            }
+          ]
+        },
+        "options": {},
+        "includeOtherFields": true
+      },
+      "id": "ac31f164-81f3-5adc-b23c-1c85c3de2936",
+      "name": "Activity connection",
+      "type": "n8n-nodes-base.set",
+      "typeVersion": 3.4,
+      "position": [
+        2240,
+        0
+      ]
+    },
+    {
+      "parameters": {
+        "jsCode": "const x=$json;\nif(!x.has_task_id||x.skip_trace){\n  return[{json:{...x,activity_sync_ready:false}}];\n}\nconst ACTIVITY_BASE_URL=String($('Activity connection').first().json.activity_base_url||'').trim();\nconst body={\n  task_id:x.task_id,\n  trace_id:x.mas_trace_event?.trace_id||null,\n  status:x.activity_status||x.cas_status||null,\n  version:x.activity_version||null,\n  human_gate:x.activity_human_gate||x.human_gate||null,\n  events:[x.activity_event].filter(Boolean),\n};\nreturn[{json:{\n  ...x,\n  activity_sync_ready:Boolean(ACTIVITY_BASE_URL),\n  activity_url:`${String(ACTIVITY_BASE_URL).replace(/\\\\/$/,'')}/v1/sync`,\n  activity_body:body,\n}}];"
       },
       "id": "aa10c14a-9338-52fd-9c40-e9ae67304707",
       "name": "Prepare Activity error sync",
       "type": "n8n-nodes-base.code",
       "typeVersion": 2,
       "position": [
-        2240,
+        2520,
         0
       ]
     },
@@ -267,7 +291,7 @@
       "type": "n8n-nodes-base.if",
       "typeVersion": 2.2,
       "position": [
-        2520,
+        2800,
         0
       ]
     },
@@ -281,10 +305,6 @@
             {
               "name": "Content-Type",
               "value": "application/json"
-            },
-            {
-              "name": "X-Activity-Key",
-              "value": "={{ $json.activity_key }}"
             }
           ]
         },
@@ -300,7 +320,7 @@
       "type": "n8n-nodes-base.httpRequest",
       "typeVersion": 4.2,
       "position": [
-        2800,
+        3080,
         0
       ],
       "onError": "continueRegularOutput",
@@ -315,7 +335,7 @@
       "type": "n8n-nodes-base.code",
       "typeVersion": 2,
       "position": [
-        3080,
+        3360,
         0
       ]
     },
@@ -429,6 +449,17 @@
       "main": [
         [
           {
+            "node": "Activity connection",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Activity connection": {
+      "main": [
+        [
+          {
             "node": "Prepare Activity error sync",
             "type": "main",
             "index": 0
@@ -497,5 +528,5 @@
   },
   "tags": [],
   "pinData": {},
-  "versionId": "e6283cbc-561b-4a0d-bbc8-c4dc162417c8"
+  "versionId": "2cb3d83d-0c6c-4cdd-9a95-72ded655dc0a"
 }

@@ -12,21 +12,7 @@ if not exist "mas-activity.env" (
   exit /b 1
 )
 
-for /f "usebackq eol=# tokens=1,* delims==" %%A in ("mas-activity.env") do if not "%%A"=="" set "%%A=%%B"
-
-if not defined MAS_ACTIVITY_KEY (
-  echo ERROR: MAS_ACTIVITY_KEY is not configured in mas-activity.env.
-  exit /b 1
-)
-if /I "%MAS_ACTIVITY_KEY%"=="change-me-activity-key" (
-  echo ERROR: Replace the example MAS_ACTIVITY_KEY in mas-activity.env.
-  exit /b 1
-)
-if not defined MAS_ACTIVITY_HOST set "MAS_ACTIVITY_HOST=127.0.0.1"
-if not defined MAS_ACTIVITY_PORT set "MAS_ACTIVITY_PORT=8200"
-if not defined HITL_MODE set "HITL_MODE=local"
-
-echo Starting MAS Activity at http://%MAS_ACTIVITY_HOST%:%MAS_ACTIVITY_PORT%
+echo Starting MAS Activity. Env is loaded from mas-activity.env by Python, not by this .bat.
 echo Keep this window open. Press Ctrl+C to stop.
-".venv\Scripts\python.exe" -m uvicorn app.main:app --host "%MAS_ACTIVITY_HOST%" --port "%MAS_ACTIVITY_PORT%"
+".venv\Scripts\python.exe" -m app
 exit /b %errorlevel%

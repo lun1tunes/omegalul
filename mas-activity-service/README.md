@@ -3,7 +3,7 @@
 Live chat-style presentation of Orchestrator ↔ specialist handoffs with in-chat HITL and **new-task start** (Entry-shaped, drag-and-drop files).
 
 **На работе:** только Windows CMD (ниже). n8n — корпоративный UI-импорт; Activity не поднимают из Docker на полевом ПК.  
-Полный порядок развёртывания: [`../docs.md`](../docs.md) §3.
+Полный порядок развёртывания: [`../docs.md`](../docs.md) §0.
 
 ## Windows CMD (канон)
 
@@ -15,21 +15,24 @@ notepad mas-activity.env
 start-windows.bat
 ```
 
-Проверка во втором CMD: `check-windows.bat`.
+Проверка во втором CMD: `check-windows.bat` (`/health` + `/ready`).
 
-Локально: `http://127.0.0.1:8200/`. Для удалённого n8n: `MAS_ACTIVITY_HOST=0.0.0.0` и в Trace Writer `ACTIVITY_BASE_URL=http://<IP-Windows>:8200`.
+Локально: `http://127.0.0.1:8200/`. Для удалённого n8n: `MAS_ACTIVITY_HOST=0.0.0.0`. В n8n откройте ноду **Activity connection** и поставьте `activity_base_url=http://<IP-Windows>:8200`.
+
+`start-windows.bat` **не парсит** env. Python читает `mas-activity.env` сам (как excel-tools), плюс `mas-activity-service/.env` и корневой `.env`, без перезаписи уже заданных переменных процесса.
 
 | Env | Purpose |
 |---|---|
-| `MAS_ACTIVITY_KEY` | `X-Activity-Key` (обязательно сменить пример) |
-| `MAS_ACTIVITY_AUTH_DISABLED` | local development only; set `true` to disable `X-Activity-Key` checks |
-| `MAS_ACTIVITY_HOST`, `MAS_ACTIVITY_PORT` | listen address (`.bat`) |
-| `HITL_MODE` | `local` / `webhook` / `n8n_rest` / `auto` |
-| `ACTIVITY_LIST_URL` | n8n webhook `mas-activity-list-tasks` (Data Table catalog) |
-| `ACTIVITY_FEED_URL` | n8n webhook `mas-activity-load-feed` (CAS + trace → feed) |
-| `ACTIVITY_DURABLE_AUTH_*` | optional header auth if webhooks are protected |
+| `MAS_ACTIVITY_HOST`, `MAS_ACTIVITY_PORT` | listen address (`python -m app`) |
+| `LOG_LEVEL` | `INFO` / `DEBUG` |
+| `ORCHESTRATOR_WEBHOOK_URL` | боевой вызов оркестратора (предпочтительно) |
+| `ORCHESTRATOR_AUTH_*` | inbound header auth **n8n webhook**, не Activity |
+| `N8N_BASE_URL` + `N8N_USERNAME` / `N8N_PASSWORD` | REST-фолбэк, если webhook не задан |
+| `ACTIVITY_LIST_URL` / `ACTIVITY_FEED_URL` | hydrate Data Tables; иначе выводятся из хоста webhook/`N8N_BASE_URL` |
 
-После UI-импорта hydrate-workflow и биндинга Data Tables задайте `ACTIVITY_LIST_URL` / `ACTIVITY_FEED_URL` на **URL корпоративного n8n** (не `http://n8n:5678` — это только Compose DNS).
+Авторизации внутри Activity **нет**. ФИО инженера (`requested_by`) — поле формы, не ключ.
+
+После UI-импорта hydrate-workflow и биндинга Data Tables задайте webhook URL на **корпоративный n8n** (не `http://n8n:5678` — это только Compose DNS).
 
 ## Linux / macOS (лаборатория)
 
@@ -45,64 +48,55 @@ cd mas-activity-service
 ## Docker Compose (лаборатория, не полевой канон)
 
 ```bash
-# from repo root; requires MAS_ACTIVITY_KEY in .env
 docker compose up -d --build mas-activity
 curl -sS http://127.0.0.1:8200/health
+curl -sS http://127.0.0.1:8200/ready
 ```
 
-Compose defaults `ACTIVITY_LIST_URL` / `ACTIVITY_FEED_URL` to `http://n8n:5678/webhook/...`. Import + bind Data Tables in n8n UI, then activate the two Activity hydrate workflows.
+Compose по умолчанию бьёт в `http://n8n:5678/webhook/...`. Импорт + bind Data Tables в n8n UI, затем activate hydrate-workflow.
 
-Activity also writes `/data/activity_state.json` (Compose volume `activity_data`) so **recreate/restart keeps the rail** even when hydrate webhooks are not active yet. That file is **runtime-only** — never commit it (`mas-activity-service/data/` is gitignored). Local Linux uses `ACTIVITY_STATE_PATH` in `mas-activity.env`.
-
-Durable list hydrate (`?durable=1`) merges the newest CAS rows from Data Tables. Ghost prune runs only when the list page is **complete** (`count` ≤ returned tasks; the list workflow caps at 200). Truncated pages never evict older in-memory CAS tasks. Local `act_*` / `demo_*` presentation tasks are always kept (trim prefers dropping CAS rows when over `MAX_TASKS`). An empty in-memory rail triggers at most **one** automatic list pull without `?durable=1`; use brand click / page load (`durable=1`) to refresh again.
+Activity пишет `/data/activity_state.json` (volume `activity_data`), чтобы recreate не обнулял rail. Файл runtime-only — не коммитить.
 
 ## UI
 
-Open [http://127.0.0.1:8200/](http://127.0.0.1:8200/) → **Новая задача** or seed via API, or `/t/<task_id>`.
+Open [http://127.0.0.1:8200/](http://127.0.0.1:8200/) → **Новая задача** или `/t/<task_id>`.
 
-When a task has a captured SCHEDULE result (Builder `deliverables[].schedule_text`, Orchestrator `release.schedule_text`, or `generated_schedule`), the feed shows **Скачать .INC** → `GET /v1/tasks/{id}/schedule`.
+Когда у задачи есть SCHEDULE, в ленте **Скачать .INC** → `GET /v1/tasks/{id}/schedule`.
 
-**MAS / Activity** (бренд слева) — обновляет rail (+ открытый feed) из n8n Data Tables. То же происходит при обычной перезагрузке страницы (`?durable=1` на старте).
+**MAS / Activity** (бренд слева) — обновляет rail из n8n Data Tables. То же при перезагрузке (`?durable=1`).
 
-**Новая задача** — Entry-like composer (description + drag-and-drop Excel / SCHEDULE / `.dev` / CPS3). Live backends call Orchestrator `action=start`; `local` creates a presentation-only task.
+**Новая задача** всегда зовёт Orchestrator `action=start`. Если n8n не задан, старт отвечает **503** с текстом, что прописать в `mas-activity.env`.
 
-HITL composer arms when status is `awaiting_human` / `AWAITING_HUMAN` and `human_gate` is set.
+HITL composer открывается при `awaiting_human` и заполненном `human_gate`.
 
-Knowledge UI: [http://127.0.0.1:8200/knowledge](http://127.0.0.1:8200/knowledge). Edits write authoring JSON only; re-run n8n **Knowledge Ingestion** to refresh PG / PGVector.
+Knowledge UI: [http://127.0.0.1:8200/knowledge](http://127.0.0.1:8200/knowledge).
 
 ```bat
-REM optional local uvicorn without .bat
-set MAS_ACTIVITY_KEY=dev-local
-set HITL_MODE=local
-.venv\Scripts\python.exe -m uvicorn app.main:app --host 127.0.0.1 --port 8200
+REM прямой запуск без .bat — тот же load mas-activity.env
+.venv\Scripts\python.exe -m app
 ```
 
-При прямом запуске `python -m uvicorn app.main:app` сервис автоматически читает
-`mas-activity-service/mas-activity.env`, затем `mas-activity-service/.env`, и не
-перезаписывает переменные, уже переданные процессу. Это тот же подход, что и в
-`excel-agent-tools`; корневой `.env` используется Docker Compose.
-
-Tests: `.venv\Scripts\python.exe -m pytest -q` (22 passed).
+Tests: `.venv\Scripts\python.exe -m pytest -q`.
 
 ## API
 
-| Method | Path | Auth | Purpose |
-|---|---|---|---|
-| `POST` | `/v1/turns` | `X-Activity-Key` | one handoff turn |
-| `POST` | `/v1/sync` | key | batch (from Trace Writer); optional `human_gate`/`status` |
-| `POST` | `/v1/hydrate` | key | apply list/feed payload from n8n hydrate workflows |
-| `GET` | `/v1/tasks` | — | rail catalog; `?durable=1` pulls list webhook |
-| `GET` | `/v1/tasks/{id}` | — | snapshot + gate; `?durable=1` or miss → feed webhook |
-| `GET` | `/v1/tasks/{id}/schedule` | — | download captured SCHEDULE `.INC` (attachment) |
-| `GET` | `/v1/tasks/{id}/gate` | — | gate; `?refresh=1` pulls Orchestrator status when configured |
-| `POST` | `/v1/tasks/start` | `X-Activity-Key` | multipart start (Entry fields + files) |
-| `POST` | `/v1/tasks/{id}/hitl` | `X-Activity-Key` | `reply` / `approve` / `reject` / `cancel` / `status` |
-| `GET` | `/v1/tasks/{id}/stream` | — | SSE |
-| `POST` | `/v1/demo/seed` | `X-Activity-Key` | presentation fixture with open HITL gate |
+| Method | Path | Purpose |
+|---|---|---|
+| `GET` | `/health` | процесс жив (liveness), без прозвона n8n |
+| `GET` | `/ready` | UI + n8n `/healthz` + orchestrator + list/feed webhooks; иначе 503 |
+| `GET` | `/v1/diagnostics/connectivity` | подробный отчёт тех же проб |
+| `POST` | `/v1/turns` | one handoff turn |
+| `POST` | `/v1/sync` | batch (from Trace Writer) |
+| `POST` | `/v1/hydrate` | list/feed payload from n8n |
+| `GET` | `/v1/tasks` | rail; `?durable=1` pulls list webhook |
+| `GET` | `/v1/tasks/{id}` | snapshot + gate |
+| `GET` | `/v1/tasks/{id}/schedule` | download captured SCHEDULE |
+| `POST` | `/v1/tasks/start` | multipart start |
+| `POST` | `/v1/tasks/{id}/hitl` | `reply` / `approve` / `reject` / `cancel` / `status` |
+| `GET` | `/v1/tasks/{id}/stream` | SSE |
+| `POST` | `/v1/demo/seed` | presentation fixture |
 
-Default key in code fallback: `dev-local` (`MAS_ACTIVITY_KEY`). Windows `.env` requires a non-example key.
-
-`POST /v1/sync` does **not** promote routine handoff statuses (e.g. `EXCEL_EVIDENCE_READY`) to task status or clear an open gate.
+`POST /v1/sync` не продвигает routine handoff-статусы в статус задачи и не закрывает открытый gate.
 
 ### Start body (multipart)
 
@@ -116,43 +110,37 @@ Default key in code fallback: `dev-local` (`MAS_ACTIVITY_KEY`). Windows `.env` r
 | `trajectory_files` | no | multi `.dev` |
 | `surface_file` | no | CPS3 surface |
 
-## HITL backends
-
-| `HITL_MODE` | Behavior |
-|---|---|
-| `auto` (default) | webhook → n8n REST → local |
-| `local` | in-memory gate + local start (demo / offline UI) |
-| `webhook` | `ORCHESTRATOR_WEBHOOK_URL` (+ optional auth); start uses multipart when files attached |
-| `n8n_rest` | `N8N_BASE_URL` + user/password + `ORCHESTRATOR_WORKFLOW_ID`; binaries as base64 on trigger item |
-
-## Connectivity diagnostics
-
-`GET /v1/diagnostics/connectivity` checks Activity → n8n Data Table hydrate webhooks and the configured MAS Orchestrator webhook without creating a task. Add `?task_id=<existing-task-id>` to also check the feed/trace Data Table webhook.
-
-Проверить, что запущен именно новый процесс и env прочитан, можно через
-`GET /health`: поле `auth_required` должно быть `false`, а `hitl_backend` —
-`webhook` или `n8n_rest`.
-
-When `MAS_ACTIVITY_AUTH_DISABLED=true`, the endpoint and the rest of the Activity API can be called without `X-Activity-Key`. This is for local development only; keep it `false` on any shared or corporate-facing instance.
+Старт/HITL идут в n8n: webhook, если задан `ORCHESTRATOR_WEBHOOK_URL` (или выведен из `N8N_BASE_URL`); иначе REST при `N8N_BASE_URL` + user/password. Иначе 503, без «локального» режима.
 
 ## n8n wiring
 
-После UI-импорта отредактируйте Code node **Prepare MAS activity sync**:
+После UI-импорта откройте **Activity connection** (Set node) в `Writer — MAS Trace` и в `Error — MAS Case Handler`:
 
 - Полевой Windows: `http://<IP-Windows>:8200`
 - Compose DNS (лаборатория): `http://mas-activity:8200`
-- n8n в Docker → Activity на хосте (лаборатория): `http://host.docker.internal:8200` (нужен доступ docker→host)
+- n8n в Docker → Activity на хосте: `http://host.docker.internal:8200`
 
-`ACTIVITY_KEY` must match `MAS_ACTIVITY_KEY`.
+Ключ Activity не нужен.
+
+## CORS
+
+Морда бьёт в те же `/v1/...` (тот же origin) — CORS не нужен, пока UI открыт с `:8200`. Middleware стоит, чтобы не ломались превью/другой хост.
+
+Starlette/FastAPI: **`allow_origins=["*"]` нельзя сочетать с `allow_credentials=True`** — процесс падает или браузер игнорирует заголовки. Сейчас credentials выключены (куков нет).
+
+Если в консоли браузера `blocked by CORS policy`:
+
+1. Перезапусти Activity после правки `app/main.py`.
+2. Блок `CORSMiddleware` должен остаться сразу после `app = FastAPI()`, и это должен быть **последний** `add_middleware` (он становится внешним слоем).
+3. В ошибке смотри `Access-Control-Allow-Origin`. Чтобы пустить только морду: замени `"*"` на точный origin из сообщения (`http://127.0.0.1:8200`, без слэша в конце). Тогда можно `allow_credentials=True`.
+4. Браузер морды **не** ходит в n8n webhook. Галочка CORS на ноде Webhook в n8n для Activity не нужна (Code-ноды зовут Activity с сервера).
 
 ## Presentation fields (v1.1)
 
 | Field | Meaning |
 |---|---|
-| `brief` | лаконичный русский шаблон по `status` (presentation layer) |
-| `at_abs` | Absolute local time with UTC offset (`Asia/Yekaterinburg` → `UTC+5`) |
+| `brief` | лаконичный русский шаблон по `status` |
+| `at_abs` | Absolute local time with UTC offset |
 | `duration_ms` / `duration_label` | Wall time until handoff |
 | `outcome` | `ok` / `wait` / `block` / `info` |
 | `chips` | Allowlisted detail keys only |
-
-Human turns: `TASK_STARTED` / `HUMAN_REPLY` / `HUMAN_APPROVED` / `HUMAN_REJECTED`.

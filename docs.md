@@ -134,10 +134,12 @@ notepad mas-activity.env
 start-windows.bat
 ```
 *Настройки для `mas-activity.env`:*
-- `MAS_ACTIVITY_KEY`: Ваш уникальный ключ доступа.
-- `HITL_MODE`: Сначала установите `local`.
-- `ACTIVITY_LIST_URL`: `http://<URL-n8n>/webhook/mas-activity-list-tasks`
-- `ACTIVITY_FEED_URL`: `http://<URL-n8n>/webhook/mas-activity-load-feed`
+- `ORCHESTRATOR_WEBHOOK_URL`: `http://<URL-n8n>/webhook/engineering-orchestrator`
+- `ACTIVITY_LIST_URL` / `ACTIVITY_FEED_URL` можно не задавать — они выводятся из того же хоста n8n
+- `MAS_ACTIVITY_HOST=0.0.0.0`, если n8n на другой машине
+- Авторизации в Activity нет. ФИО инженера вводится в форме.
+
+Проверка: `check-windows.bat` должен показать `/health` и `/ready`. Если `/ready` = 503, в JSON будет видно, какой webhook n8n не отвечает.
 
 > **Как полностью очистить базу задач:**
 > Зайдите в n8n Data tables и очистите таблицы `engineering_orchestrator_tasks_v1` и `mas_trace_events_v1`. Затем остановите консоль MAS Activity, удалите файл `data\activity_state.json` и запустите `.bat` снова.
@@ -247,7 +249,7 @@ CSV: [`n8n/data-tables/mas_trace_events_v1.header.csv`](n8n/data-tables/mas_trac
 - **Агент Excel Extractor:** В нодах HTTP укажите URL к локальному сервису Excel Tools и заданный `API_KEY`. Выберите нужное подключение к базе Postgres.
 - **RAG (Знания):** Выберите подключение к Postgres и единый профиль генерации эмбеддингов. (Важно: не заполняйте поле `Dimensions` в настройках эмбеддингов).
 - **Адаптер вычислений:** В ноде HTTP-запроса пропишите `math_service_url` (`http://<IP-вашего-ПК>:8100/api/v1/math`).
-- **Trace Writer (Prepare activity sync):** Укажите `ACTIVITY_BASE_URL` (`http://<IP-вашего-ПК>:8200`) и заданный вами `MAS_ACTIVITY_KEY`.
+- **Trace Writer / Error Handler:** нода **Activity connection** — поле `activity_base_url` (`http://<IP-вашего-ПК>:8200`). Ключ не нужен.
 - Убедитесь, что в настройках подключения к PostgreSQL отключена проверка сертификатов (`SSL = Disable`), если сервер работает без TLS.
 
 ### Шаг 6. Наполнение базы знаний (RAG)
@@ -315,6 +317,7 @@ CSV: [`n8n/data-tables/mas_trace_events_v1.header.csv`](n8n/data-tables/mas_trac
 | Система не отдаёт готовый SCHEDULE | Оркестратор не может связаться со специалистами (например, с Excel Extractor). Проверьте URL локальных сервисов. |
 | История (Trace) пустая | Проверьте, привязаны ли Data Tables в процессе `Writer — MAS Trace`. |
 | Интерфейс Activity пуст | Не настроены URL в локальном сервисе MAS Activity (`ACTIVITY_FEED_URL` и `ACTIVITY_LIST_URL`). |
+| Браузер: `blocked by CORS policy` | `mas-activity-service/app/main.py`: CORSMiddleware. Не ставить `allow_credentials=True` вместе с `allow_origins=["*"]`. Перезапустить Activity. См. README «CORS». |
 | Ошибка Excel 401 | Неверный `API_KEY` в ноде HTTP-запроса, либо закрыт порт 8000. |
 | При выгрузке JSON видны строки `REPLACE_...` | Вы пропустили привязку каких-то узлов на Шагах 3 или 4. |
 

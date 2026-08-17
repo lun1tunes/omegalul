@@ -178,19 +178,15 @@ services:
       context: ./mas-activity-service
     restart: unless-stopped
     environment:
-      MAS_ACTIVITY_KEY: ${MAS_ACTIVITY_KEY:?Set MAS_ACTIVITY_KEY in .env}
-      MAS_ACTIVITY_AUTH_DISABLED: ${MAS_ACTIVITY_AUTH_DISABLED:-false}
-      # Optional live Orchestrator proxy. Leave HITL_MODE=local for offline UI.
-      # webhook: set ORCHESTRATOR_WEBHOOK_URL (+ auth). n8n_rest: set N8N_* + ORCHESTRATOR_WORKFLOW_ID.
-      HITL_MODE: ${HITL_MODE:-local}
-      ORCHESTRATOR_WEBHOOK_URL: ${ORCHESTRATOR_WEBHOOK_URL:-}
+      MAS_ACTIVITY_HOST: 0.0.0.0
+      LOG_LEVEL: ${LOG_LEVEL:-INFO}
+      ORCHESTRATOR_WEBHOOK_URL: ${ORCHESTRATOR_WEBHOOK_URL:-http://n8n:5678/webhook/engineering-orchestrator}
       ORCHESTRATOR_AUTH_HEADER: ${ORCHESTRATOR_AUTH_HEADER:-}
       ORCHESTRATOR_AUTH_VALUE: ${ORCHESTRATOR_AUTH_VALUE:-}
       N8N_BASE_URL: ${N8N_ACTIVITY_N8N_BASE_URL:-http://n8n:5678}
       N8N_USERNAME: ${N8N_USERNAME:-}
       N8N_PASSWORD: ${N8N_PASSWORD:-}
       ORCHESTRATOR_WORKFLOW_ID: ${ORCHESTRATOR_WORKFLOW_ID:-}
-      # Pull catalog/feed from n8n Data Table hydrate webhooks (UI-importable; bind tables in n8n).
       ACTIVITY_LIST_URL: ${ACTIVITY_LIST_URL:-http://n8n:5678/webhook/mas-activity-list-tasks}
       ACTIVITY_FEED_URL: ${ACTIVITY_FEED_URL:-http://n8n:5678/webhook/mas-activity-load-feed}
       ACTIVITY_DURABLE_AUTH_HEADER: ${ACTIVITY_DURABLE_AUTH_HEADER:-}

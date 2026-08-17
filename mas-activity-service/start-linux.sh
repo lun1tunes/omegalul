@@ -12,20 +12,7 @@ if [[ ! -f mas-activity.env ]]; then
   exit 1
 fi
 
-set -a
-# shellcheck disable=SC1091
-source mas-activity.env
-set +a
-
-if [[ -z "${MAS_ACTIVITY_KEY:-}" || "${MAS_ACTIVITY_KEY}" == "change-me-activity-key" ]]; then
-  echo "ERROR: set a real MAS_ACTIVITY_KEY in mas-activity.env"
-  exit 1
-fi
-
-HOST="${MAS_ACTIVITY_HOST:-127.0.0.1}"
-PORT="${MAS_ACTIVITY_PORT:-8200}"
 mkdir -p data
-
-echo "Starting MAS Activity at http://${HOST}:${PORT}"
+echo "Starting MAS Activity. Env is loaded from mas-activity.env by Python."
 echo "Keep this terminal open. Ctrl+C to stop."
-exec .venv/bin/python -m uvicorn app.main:app --host "$HOST" --port "$PORT"
+exec .venv/bin/python -m app

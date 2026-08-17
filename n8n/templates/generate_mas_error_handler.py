@@ -39,6 +39,25 @@ def code(name, pos, js):
     return node(name, "n8n-nodes-base.code", 2, pos, {"jsCode": js})
 
 
+def set_fields(name, pos, fields):
+    assignments = [
+        {
+            "id": nid(f"{name}/field/{i}"),
+            "name": field,
+            "value": value,
+            "type": type_,
+        }
+        for i, (field, value, type_) in enumerate(fields, 1)
+    ]
+    return node(
+        name,
+        "n8n-nodes-base.set",
+        3.4,
+        pos,
+        {"assignments": {"assignments": assignments}, "options": {}, "includeOtherFields": True},
+    )
+
+
 def ifnode(name, pos, left, right=True, op="boolean"):
     return node(
         name,
@@ -393,8 +412,7 @@ const x=$json;
 if(!x.has_task_id||x.skip_trace){
   return[{json:{...x,activity_sync_ready:false}}];
 }
-const ACTIVITY_BASE_URL='http://127.0.0.1:8200';
-const ACTIVITY_KEY='dev-local';
+const ACTIVITY_BASE_URL=String($('Activity connection').first().json.activity_base_url||'').trim();
 const body={
   task_id:x.task_id,
   trace_id:x.mas_trace_event?.trace_id||null,
@@ -405,9 +423,8 @@ const body={
 };
 return[{json:{
   ...x,
-  activity_sync_ready:true,
+  activity_sync_ready:Boolean(ACTIVITY_BASE_URL),
   activity_url:`${String(ACTIVITY_BASE_URL).replace(/\\/$/,'')}/v1/sync`,
-  activity_key:ACTIVITY_KEY,
   activity_body:body,
 }}];
 """.strip()
@@ -421,7 +438,7 @@ def main() -> None:
             "## edit after import\n\n**Error — MAS Case Handler** — after UI import:\n\n"
             "- Bind **Call CAS persist — error case** → `CAS — Persist Task State`\n"
             "- Bind **Call Writer — MAS Trace (error)** → `Writer — MAS Trace`\n"
-            "- Confirm Activity URL/key in **Prepare Activity error sync**\n\n"
+            "- Set Activity URL in **Activity connection** (`activity_base_url`)\n\n"
             "Never notify Activity without `task_id`/`case_id`.",
             520,
             260,
@@ -540,6 +557,11 @@ def main() -> None:
             },
             onError="continueRegularOutput",
         ),
+        set_fields(
+            "Activity connection",
+            (2100, -120),
+            [("activity_base_url", "http://127.0.0.1:8200", "string")],
+        ),
         code("Prepare Activity error sync", (2240, -120), PREPARE_ACTIVITY),
         ifnode("Activity sync ready?", (2520, -120), "={{ $json.activity_sync_ready }}", True, "boolean"),
         node(
@@ -554,7 +576,6 @@ def main() -> None:
                 "headerParameters": {
                     "parameters": [
                         {"name": "Content-Type", "value": "application/json"},
-                        {"name": "X-Activity-Key", "value": "={{ $json.activity_key }}"},
                     ]
                 },
                 "sendBody": True,
@@ -583,7 +604,8 @@ def main() -> None:
     connect(connections, "Should persist CAS?", "Prepare structured error trace", si=1)
     connect(connections, "Call CAS persist — error case", "Prepare structured error trace")
     connect(connections, "Prepare structured error trace", "Call Writer — MAS Trace (error)")
-    connect(connections, "Call Writer — MAS Trace (error)", "Prepare Activity error sync")
+    connect(connections, "Call Writer — MAS Trace (error)", "Activity connection")
+    connect(connections, "Activity connection", "Prepare Activity error sync")
     connect(connections, "Prepare Activity error sync", "Activity sync ready?")
     connect(connections, "Activity sync ready?", "POST error handoff to MAS Activity", si=0)
     connect(connections, "Activity sync ready?", "Format MAS error ack", si=1)

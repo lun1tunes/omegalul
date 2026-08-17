@@ -21,7 +21,7 @@
     },
     {
       "parameters": {
-        "content": "Structured redacted trace only; no raw prompts, secrets, binary or hidden chain-of-thought. Accepts one event or a bounded event batch. Select Data Table in UI.\n\nOptional: after insert, handoff events POST to mas-activity-service (`/v1/sync`) for the chat presentation UI. Set URL/key in “Prepare MAS activity sync”. continueOnFail keeps Trace durable even if the UI service is down.",
+        "content": "Structured redacted trace only; no raw prompts, secrets, binary or hidden chain-of-thought. Accepts one event or a bounded event batch. Select Data Table in UI.\n\nOptional: after insert, handoff events POST to mas-activity-service (`/v1/sync`) for the chat presentation UI. Set `activity_base_url` in the **Activity connection** Set node (n8n free — no Variables). continueOnFail keeps Trace durable even if the UI service is down.",
         "width": 620,
         "height": 420,
         "color": 5
@@ -102,14 +102,38 @@
     },
     {
       "parameters": {
-        "jsCode": "const source=$('Receive MAS trace event').first().json||{};\nconst rows=$('Normalize MAS trace event').all().map(i=>i.json||{});\nconst events=rows.map(r=>r.trace_event).filter(e=>e&&e.event_type==='handoff');\nconst taskId=String(events[0]?.task_id||source.mas_trace_event?.task_id||source.passthrough?.task_id||'').trim();\nconst traceId=String(events[0]?.trace_id||source.mas_trace_event?.trace_id||'').trim();\n// UI-only config: change these two strings in the Code node after import.\nconst ACTIVITY_BASE_URL='http://127.0.0.1:8200';\nconst ACTIVITY_KEY='dev-local';\nconst skipActivity=source.passthrough?.skip_activity_sync===true||source.skip_activity_sync===true;\nconst ready=Boolean(!skipActivity&&taskId&&events.length&&ACTIVITY_BASE_URL);\nreturn[{json:{\n  activity_sync_ready:ready,\n  activity_url:`${String(ACTIVITY_BASE_URL).replace(/\\/$/,'')}/v1/sync`,\n  activity_key:ACTIVITY_KEY,\n  activity_body:{task_id:taskId,trace_id:traceId||null,events},\n  stored_count:rows.length,\n  handoff_count:events.length,\n  event_id:rows[0]?.trace_event?.event_id||null,\n  trace_id:traceId||null,\n  redaction:rows[0]?.trace_event?.redaction||null,\n  passthrough:source.passthrough??null,\n  activity_sync_skipped:skipActivity\n}}];"
+        "assignments": {
+          "assignments": [
+            {
+              "id": "7980a704-3c14-5718-8ba2-be35caf7f005",
+              "name": "activity_base_url",
+              "value": "http://127.0.0.1:8200",
+              "type": "string"
+            }
+          ]
+        },
+        "options": {},
+        "includeOtherFields": true
+      },
+      "id": "1167429f-7b85-57c5-872c-508a5d80ff47",
+      "name": "Activity connection",
+      "type": "n8n-nodes-base.set",
+      "typeVersion": 3.4,
+      "position": [
+        840,
+        0
+      ]
+    },
+    {
+      "parameters": {
+        "jsCode": "const source=$('Receive MAS trace event').first().json||{};\nconst rows=$('Normalize MAS trace event').all().map(i=>i.json||{});\nconst events=rows.map(r=>r.trace_event).filter(e=>e&&e.event_type==='handoff');\nconst taskId=String(events[0]?.task_id||source.mas_trace_event?.task_id||source.passthrough?.task_id||'').trim();\nconst traceId=String(events[0]?.trace_id||source.mas_trace_event?.trace_id||'').trim();\nconst ACTIVITY_BASE_URL=String($('Activity connection').first().json.activity_base_url||'').trim();\nconst skipActivity=source.passthrough?.skip_activity_sync===true||source.skip_activity_sync===true;\nconst ready=Boolean(!skipActivity&&taskId&&events.length&&ACTIVITY_BASE_URL);\nreturn[{json:{\n  activity_sync_ready:ready,\n  activity_url:`${String(ACTIVITY_BASE_URL).replace(/\\/$/,'')}/v1/sync`,\n  activity_body:{task_id:taskId,trace_id:traceId||null,events},\n  stored_count:rows.length,\n  handoff_count:events.length,\n  event_id:rows[0]?.trace_event?.event_id||null,\n  trace_id:traceId||null,\n  redaction:rows[0]?.trace_event?.redaction||null,\n  passthrough:source.passthrough??null,\n  activity_sync_skipped:skipActivity\n}}];"
       },
       "id": "93fee35b-b294-5e35-b2e8-765ef14e0de8",
       "name": "Prepare MAS activity sync",
       "type": "n8n-nodes-base.code",
       "typeVersion": 2,
       "position": [
-        840,
+        1120,
         0
       ]
     },
@@ -142,7 +166,7 @@
       "type": "n8n-nodes-base.if",
       "typeVersion": 2.2,
       "position": [
-        1120,
+        1400,
         0
       ]
     },
@@ -156,10 +180,6 @@
             {
               "name": "Content-Type",
               "value": "application/json"
-            },
-            {
-              "name": "X-Activity-Key",
-              "value": "={{ $json.activity_key }}"
             }
           ]
         },
@@ -180,7 +200,7 @@
       "type": "n8n-nodes-base.httpRequest",
       "typeVersion": 4.4,
       "position": [
-        1400,
+        1680,
         0
       ],
       "onError": "continueRegularOutput"
@@ -194,7 +214,7 @@
       "type": "n8n-nodes-base.code",
       "typeVersion": 2,
       "position": [
-        1680,
+        1960,
         0
       ]
     }
@@ -224,6 +244,17 @@
       ]
     },
     "Insert MAS trace event": {
+      "main": [
+        [
+          {
+            "node": "Activity connection",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Activity connection": {
       "main": [
         [
           {

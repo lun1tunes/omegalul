@@ -4,8 +4,6 @@ cd /d "%~dp0"
 
 set "MAS_ACTIVITY_HOST=127.0.0.1"
 set "MAS_ACTIVITY_PORT=8200"
-if exist "mas-activity.env" for /f "usebackq eol=# tokens=1,* delims==" %%A in ("mas-activity.env") do if not "%%A"=="" set "%%A=%%B"
-if "%MAS_ACTIVITY_HOST%"=="0.0.0.0" set "MAS_ACTIVITY_HOST=127.0.0.1"
 
 where curl.exe >nul 2>nul
 if errorlevel 1 (
@@ -13,6 +11,7 @@ if errorlevel 1 (
   exit /b 1
 )
 
+echo == /health ==
 curl.exe --fail --silent --show-error "http://%MAS_ACTIVITY_HOST%:%MAS_ACTIVITY_PORT%/health"
 if errorlevel 1 (
   echo.
@@ -20,5 +19,7 @@ if errorlevel 1 (
   exit /b 1
 )
 echo.
-echo MAS Activity health check passed.
+echo == /ready (n8n webhooks) ==
+curl.exe --silent --show-error -w " HTTP %%{http_code}" "http://%MAS_ACTIVITY_HOST%:%MAS_ACTIVITY_PORT%/ready"
+echo.
 exit /b 0

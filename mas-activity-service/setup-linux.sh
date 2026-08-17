@@ -14,7 +14,7 @@ fi
 
 if [[ ! -f mas-activity.env ]]; then
   cp mas-activity.env.example mas-activity.env
-  echo "Created mas-activity.env — edit MAS_ACTIVITY_KEY before start."
+  echo "Created mas-activity.env — set ORCHESTRATOR_WEBHOOK_URL (or N8N_BASE_URL) before start."
 fi
 mkdir -p data
 echo "OK. Next: ./start-linux.sh"

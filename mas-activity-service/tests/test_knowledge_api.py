@@ -6,7 +6,7 @@ import json
 import os
 from pathlib import Path
 
-os.environ.setdefault("MAS_ACTIVITY_KEY", "dev-local")
+os.environ.setdefault("LOG_LEVEL", "WARNING")
 
 from fastapi.testclient import TestClient
 
@@ -14,7 +14,7 @@ from app import knowledge as knowledge_store
 from app.main import app
 
 client = TestClient(app)
-KEY = {"X-Activity-Key": "dev-local"}
+KEY = {}
 
 SAMPLE = {
     "schema_version": "1.1.0",
@@ -109,12 +109,6 @@ def test_knowledge_namespaces_list_get_patch(tmp_path: Path) -> None:
         assert detail.status_code == 200
         assert detail.json()["document"]["text"].startswith("DATES")
         assert detail.json()["document"]["has_schema_catalogue"] is True
-
-        unauth = client.patch(
-            "/v1/knowledge/documents/schedule_mvp/dates-test-v1",
-            json={"text": "x"},
-        )
-        assert unauth.status_code == 401
 
         patched = client.patch(
             "/v1/knowledge/documents/schedule_mvp/dates-test-v1",
