@@ -382,8 +382,90 @@
       "contract_version": "1.0",
       "target_base": "orchestrator_routing",
       "knowledge_type": "routing_card",
+      "knowledge_id": "route-cluster-calculation",
+      "revision": "1",
+      "title": "Cluster calculation specialist routing card",
+      "keywords": [
+        "CLUSTER_CALCULATION_SPECIALIST",
+        "SSH",
+        "JOB"
+      ],
+      "topics": [
+        "маршрутизация",
+        "cluster",
+        "job"
+      ],
+      "task_patterns": [
+        "запуск расчёта на кластере",
+        "статус расчётной задачи"
+      ],
+      "status": "active",
+      "author": "orchestrator-routing-maintainer",
+      "access_scope": "petroleum-engineering",
+      "text": "Делегируйте cluster_calculation_specialist только когда allowlist configured:true и нужен submit/poll удалённой расчётной задачи (SSH/job API). Возвращает job_id/status/log refs — не сырой SSH transcript и не SCHEDULE. После успеха обычно следует binary_results_specialist (через Orchestrator), не прямой Call. Пока configured:false — needs_decision владельцу n8n, не HITL инженеру за credentials.",
+      "id": "route-cluster-calculation"
+    },
+    {
+      "contract": "schedule_knowledge_block",
+      "contract_version": "1.0",
+      "target_base": "orchestrator_routing",
+      "knowledge_type": "routing_card",
+      "knowledge_id": "route-binary-results",
+      "revision": "1",
+      "title": "Binary results specialist routing card",
+      "keywords": [
+        "BINARY_RESULTS_SPECIALIST",
+        "REPORT_FACTS"
+      ],
+      "topics": [
+        "маршрутизация",
+        "binary",
+        "report"
+      ],
+      "task_patterns": [
+        "извлечь данные из бинарных результатов",
+        "собрать факты для отчёта"
+      ],
+      "status": "active",
+      "author": "orchestrator-routing-maintainer",
+      "access_scope": "petroleum-engineering",
+      "text": "Делегируйте binary_results_specialist когда нужны typed report facts из бинарных результатов кластерного расчёта. Вход: binaries + previous_specialist_result с job refs. Выход: report_facts_packet (snapshot+correlation). Не перезапускает job и не собирает презентацию. Пока configured:false — routing gate владельцу.",
+      "id": "route-binary-results"
+    },
+    {
+      "contract": "schedule_knowledge_block",
+      "contract_version": "1.0",
+      "target_base": "orchestrator_routing",
+      "knowledge_type": "routing_card",
+      "knowledge_id": "route-presentation",
+      "revision": "1",
+      "title": "Presentation specialist routing card",
+      "keywords": [
+        "PRESENTATION_SPECIALIST",
+        "VISUALIZATION"
+      ],
+      "topics": [
+        "маршрутизация",
+        "presentation",
+        "visualization"
+      ],
+      "task_patterns": [
+        "собрать презентацию",
+        "визуализация результатов"
+      ],
+      "status": "active",
+      "author": "orchestrator-routing-maintainer",
+      "access_scope": "petroleum-engineering",
+      "text": "Делегируйте presentation_specialist после готовых report facts / artifact_refs. Собирает deck/charts; не парсит binaries и не ходит на кластер. Release/approve остаётся у Orchestrator/Human Gate. Пока configured:false — routing gate владельцу.",
+      "id": "route-presentation"
+    },
+    {
+      "contract": "schedule_knowledge_block",
+      "contract_version": "1.0",
+      "target_base": "orchestrator_routing",
+      "knowledge_type": "routing_card",
       "knowledge_id": "route-hitl-required-evidence",
-      "revision": "2",
+      "revision": "3",
       "title": "HITL and required-evidence matrix",
       "keywords": [
         "HITL",
@@ -399,7 +481,7 @@
       "status": "active",
       "author": "orchestrator-routing-maintainer",
       "access_scope": "petroleum-engineering",
-      "text": "Petroleum defaults уже заданы: access_scope=petroleum-engineering, unit_system=METRIC, simulator=tNavigator 22.2. HITL только для фактов, без которых нельзя выбрать специалиста или отдать пакет в Builder: нет objective/deliverable; REVISE без baseline .inc/.data; идём в Builder без requested_keyword_scope; идём в Calculation без .dev и ровно одной ASCII CPS3; critical risk (needs_approval до delegation); Data/Document specialists (needs_decision). Отсутствующий workbook → delegate excel_extraction_specialist, не HITL. Не спрашивайте units, CRS, access_scope, simulator. Пробел schedule_mvp keyword_instruction/schema_catalogue — Builder RAG evidence gate после routing, не вопрос планировщика. Verifier не получает domain RAG.",
+      "text": "Petroleum defaults уже заданы: access_scope=petroleum-engineering, unit_system=METRIC, simulator=tNavigator 22.2. HITL только для фактов, без которых нельзя выбрать специалиста или отдать пакет в Builder: нет objective/deliverable; REVISE без baseline .inc/.data; идём в Builder без requested_keyword_scope; идём в Calculation без .dev и ровно одной ASCII CPS3; critical risk (needs_approval до delegation). Data/Document и Cluster/Binary/Presentation при configured:false → needs_decision владельцу (binding), не инженеру. Отсутствующий workbook → delegate excel_extraction_specialist, не HITL. Не спрашивайте units, CRS, access_scope, simulator. Пробел schedule_mvp keyword_instruction/schema_catalogue — Builder RAG evidence gate после routing, не вопрос планировщика. Verifier не получает domain RAG.",
       "id": "route-hitl-required-evidence"
     },
     {

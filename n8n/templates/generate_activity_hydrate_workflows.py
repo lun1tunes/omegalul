@@ -34,12 +34,15 @@ const tasks=rows.map(row=>{
   const gateRaw=parse(row.gate_json,null);
   const gate=gateRaw&&typeof gateRaw==='object'&&!Array.isArray(gateRaw)?gateRaw:null;
   const objective=String(request.objective||request.problem_statement||request.task_description||'').trim();
+  const inputFiles=Array.isArray(request.input_files)?request.input_files:[];
+  const attached_files=[...new Set(inputFiles.map(f=>String((f&&(f.filename||f.name))||f||'').trim().replace(/^.*[\\/]/,'')).filter(Boolean))].slice(0,32);
   const status=String(row.status||'').trim()||null;
   const awaiting=awaitingStatus(status)&&gate&&gate.gate_id;
   return{
     task_id:String(row.task_id).trim(),
     title:objective?objective.slice(0,120):String(row.task_id).trim(),
     objective:objective?objective.slice(0,8000):null,
+    attached_files:attached_files.length?attached_files:null,
     updated_at:String(row.updated_at||row.created_at||new Date().toISOString()),
     status,
     version:Number.isFinite(Number(row.version))?Number(row.version):null,
@@ -72,6 +75,8 @@ const gateRaw=parse(taskItem.gate_json,null);
 const gate=gateRaw&&typeof gateRaw==='object'&&!Array.isArray(gateRaw)?gateRaw:null;
 const request=parse(taskItem.request_json,{});
 const objective=String(request.objective||request.problem_statement||request.task_description||'').trim();
+const inputFiles=Array.isArray(request.input_files)?request.input_files:[];
+const attached_files=[...new Set(inputFiles.map(f=>String((f&&(f.filename||f.name))||f||'').trim().replace(/^.*[\\/]/,'')).filter(Boolean))].slice(0,32);
 const status=String(taskItem.status||'').trim()||null;
 const version=Number.isFinite(Number(taskItem.version))?Number(taskItem.version):null;
 const traceRows=$('Load trace rows').all().map(i=>i.json||{}).filter(r=>r&&String(r.task_id||'').trim()===taskId);
@@ -114,6 +119,7 @@ return[{json:{
   task_id:taskId,
   title:objective?objective.slice(0,120):taskId,
   objective:objective?objective.slice(0,8000):null,
+  attached_files:attached_files.length?attached_files:null,
   status,
   version,
   human_gate:gate&&gate.gate_id?gate:null,

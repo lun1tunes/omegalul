@@ -196,8 +196,8 @@ services:
       ACTIVITY_DURABLE_AUTH_VALUE: ${ACTIVITY_DURABLE_AUTH_VALUE:-}
       ACTIVITY_STATE_PATH: ${ACTIVITY_STATE_PATH:-/data/activity_state.json}
       MAS_KNOWLEDGE_CORPUS: ${MAS_KNOWLEDGE_CORPUS:-/corpus/rag/excel-agent-operating-guide.documents.json}
-    mem_limit: ${MAS_ACTIVITY_MEMORY_LIMIT:-256m}
-    cpus: ${MAS_ACTIVITY_CPUS:-0.5}
+    mem_limit: ${MAS_ACTIVITY_MEMORY_LIMIT:-1g}
+    cpus: ${MAS_ACTIVITY_CPUS:-1.0}
     pids_limit: 128
     cap_drop:
       - ALL

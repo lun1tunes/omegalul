@@ -620,10 +620,46 @@ else if(['reply','approve','reject'].includes(x.action)){
     const hr=x.human_response&&typeof x.human_response==='object'?x.human_response:null;
     const req=parse(x.request_json,{});
     if(hr){
+      const answerPolicy=(()=>{
+        const answers=Array.isArray(hr.answers)?hr.answers:[];
+        for(const a of answers){
+          if(!a||typeof a!=='object')continue;
+          const id=String(a.question_id||a.id||'').toLowerCase();
+          const ans=String(a.answer||a.value||'').trim();
+          if(id.includes('unlisted_wells_policy')||/^unlisted/.test(id)){
+            const m=ans.match(/\b(keep|remove)\b/i);
+            if(m)return m[1].toLowerCase();
+          }
+        }
+        const text=String(hr.text||hr.human_response||'');
+        const tm=text.match(/unlisted_wells_policy\s*[:=]\s*(keep|remove)/i)||text.match(/\b(keep|remove)\b/i);
+        return tm?tm[1].toLowerCase():'';
+      })();
+      const policy=String(hr.unlisted_wells_policy||answerPolicy||'').trim().toLowerCase();
       if(Array.isArray(hr.new_well_defs)&&hr.new_well_defs.length)req.new_well_defs=hr.new_well_defs;
-      if(hr.unlisted_wells_policy)req.unlisted_wells_policy=String(hr.unlisted_wells_policy);
+      if(policy==='keep'||policy==='remove'){
+        req.unlisted_wells_policy=policy;
+        const sr=req.schedule_request&&typeof req.schedule_request==='object'?req.schedule_request:{};
+        req.schedule_request={...sr,unlisted_wells_policy:policy};
+        const controls=req.controls&&typeof req.controls==='object'?req.controls:{};
+        req.controls={...controls,unlisted_wells_policy:policy};
+      }
       if(typeof hr.text==='string'&&hr.text&&!req.hitl_reply_text)req.hitl_reply_text=hr.text;
       x.request_json=JSON.stringify(req);
+      // Keep specialist packet in sync so Builder root.request sees the enum on resume.
+      if(packet&&typeof packet==='object'&&(policy==='keep'||policy==='remove'||(Array.isArray(hr.new_well_defs)&&hr.new_well_defs.length))){
+        const inputs=packet.inputs&&typeof packet.inputs==='object'?packet.inputs:{};
+        const schedule=inputs.schedule_request&&typeof inputs.schedule_request==='object'?inputs.schedule_request:{};
+        const nextSchedule={...schedule};
+        if(policy==='keep'||policy==='remove'){
+          nextSchedule.unlisted_wells_policy=policy;
+          nextSchedule.controls={...(schedule.controls&&typeof schedule.controls==='object'?schedule.controls:{}),unlisted_wells_policy:policy};
+        }
+        if(Array.isArray(hr.new_well_defs)&&hr.new_well_defs.length)nextSchedule.new_well_defs=hr.new_well_defs;
+        packet.inputs={...inputs,schedule_request:nextSchedule,unlisted_wells_policy:policy||inputs.unlisted_wells_policy,new_well_defs:hr.new_well_defs||inputs.new_well_defs};
+        packet.controls={...(packet.controls&&typeof packet.controls==='object'?packet.controls:{}),...(policy?{unlisted_wells_policy:policy}:{})};
+        x.packet_json=JSON.stringify(packet);
+      }
     }
     const binaryKeys=Object.keys(x.binary||{}).filter(Boolean);
     if(binaryKeys.length){
@@ -727,7 +763,7 @@ const withReviseIntakeDefaults=(sr,facts)=>{
   const changeFrom=clean(cur.change_effective_from)||forecastStart||first||'2019-07-01';
   return{
     ...cur,
-    build_mode:clean(cur.build_mode)||'REVISE',
+    build_mode:(()=>{const m=clean(cur.build_mode).toUpperCase();if(m==='CREATE')return'CREATE';if(m==='REVISE')return'REVISE';return text?'REVISE':'CREATE';})(),
     preservation_policy:clean(cur.preservation_policy)||'preserve_unmentioned',
     simulator_profile:{...profileIn,vendor:clean(profileIn.vendor)||'Rock Flow Dynamics',simulator:clean(profileIn.simulator)||'tNavigator',version:clean(profileIn.version)||'22.2',unit_system:(clean(profileIn.unit_system).toUpperCase()||'METRIC')},
     model_start_date:modelStart,
@@ -740,18 +776,41 @@ const withReviseIntakeDefaults=(sr,facts)=>{
 };
 const excelEvidenceReady=previousSpecialistResult&&previousSpecialistResult.specialist_id==='excel_extraction_specialist'&&['succeeded','partial'].includes(String(previousSpecialistResult.status||''));
 const factsFromPersisted=obj(persistedSchedule.source_facts_packet)?persistedSchedule.source_facts_packet:null;
-const builderIntakeRetry=previousSpecialistResult&&previousSpecialistResult.specialist_id==='schedule_builder_specialist'&&String(previousSpecialistResult.status||'')==='needs_input'&&Boolean(factsFromPersisted)&&(typeof request.baseline_schedule_text==='string'||typeof persistedSchedule.baseline_schedule_text==='string');
+// Detect workbook early — builderIntakeRetry must not reference hasExcelBinary before init (TDZ).
+const inputFiles=arr(request.input_files)?request.input_files:[];
+const excelName=v=>/\.xlsx?$/i.test(String(v||''));
+const hasExcelBinary=Boolean(
+  (base.binary&&(base.binary.file||base.binary.workbook))
+  || Object.values(base.binary||{}).some(b=>b&&excelName(b.fileName||b.filename))
+  || inputFiles.some(f=>excelName(f?.filename||f?.name)||/^(file|workbook)$/i.test(String(f?.field||'')))
+);
+// Text-only REVISE (no Excel facts) must also retry Builder intake with defaults after HITL.
+const hasBaselineForRetry=(typeof request.baseline_schedule_text==='string'&&request.baseline_schedule_text.length>0)||(typeof persistedSchedule.baseline_schedule_text==='string'&&persistedSchedule.baseline_schedule_text.length>0);
+const builderIntakeRetry=previousSpecialistResult&&previousSpecialistResult.specialist_id==='schedule_builder_specialist'&&String(previousSpecialistResult.status||'')==='needs_input'&&hasBaselineForRetry&&(Boolean(factsFromPersisted)||!hasExcelBinary);
 const excelAnsweredQuestion=q=>/скважин|дат[аыеу]\s*ввод|commission|well\b|дата ввода|исходн|baseline|schedule|\.inc\b/.test(questionBlob(q));
 let blockingQuestions=questions.filter(q=>{if(profileQuestion(q))return false;if(excelDelegation&&excelOwnedQuestion(q))return false;if((excelEvidenceReady||builderIntakeRetry)&&excelAnsweredQuestion(q))return false;return true;});
 if(decision==='needs_input'&&excelDelegation&&packetComplete&&allowed.has(intendedSpecialist)&&blockingQuestions.length===0){
   decision='delegate';
   packetCandidate={...plan.specialist_packet,contract:'specialist_packet',contract_version:'1.0',task_id:base.task_id,attempt:Number(base.retry_count)+1,controls:{...petroleumControls(plan.specialist_packet.controls),expected_version:Number(base.version)+1,idempotency_key:`${base.task_id}:specialist:${plan.specialist_packet.specialist_id}:${Number(base.retry_count)+1}:${Number(base.version)+1}`,policy_version:'petroleum-schedule-policy-v1'}};
 }
-// If planner returned needs_input / empty packet but the task already carries workbook+SCHEDULE baseline,
-// force the Excel hop instead of parking on a routing gate.
+// Force Excel only when a workbook binary / input_files entry is actually present.
+// Do NOT scan full requestBlob — HITL replies may mention «Excel» and falsely re-trigger the hop.
+const objectiveBlob=clean(request.objective||request.problem_statement||request.task_description||request.request_text);
+const objectiveMentionsExcel=/(xlsx|\.xls\b|\bexcel\b|workbook)/i.test(objectiveBlob);
+const wantsExcel=hasExcelBinary;
+const hasScheduleBaseline=(typeof request.baseline_schedule_text==='string'&&request.baseline_schedule_text.length>0)||(typeof persistedSchedule.baseline_schedule_text==='string'&&persistedSchedule.baseline_schedule_text.length>0);
+const inferScheduleKeywords=blob=>{
+  const b=String(blob||'').toLowerCase();
+  const ks=new Set(['DATES']);
+  if(/групп|gruptree|\bdks\b|перевед|перемест|welspecs|отдельн/.test(b)){ks.add('WELSPECS');ks.add('GRUPTREE');}
+  if(/контрол|gconprod|м3|газ|gas\b|дебит/.test(b)) ks.add('GCONPROD');
+  if(/\bwecon\b|\bwedcon\b|эконом/.test(b)) ks.add('WECON');
+  if(/дат[аыеу]\s*ввод|welopen|commission|ввод скваж/.test(b)){ks.add('WELOPEN');ks.add('WCONPROD');ks.add('WEFAC');}
+  if(/\bwconprod\b/.test(b)) ks.add('WCONPROD');
+  if(/include/.test(b)) ks.add('INCLUDE');
+  return [...ks];
+};
 const requestBlob=JSON.stringify(request).toLowerCase();
-const wantsExcel=/(xlsx|\.xls\b|excel|workbook|таблиц|дата ввода)/.test(requestBlob)||Boolean(request.baseline_schedule_text)||Boolean(base.binary&&(base.binary.file||base.binary.workbook));
-const hasScheduleBaseline=typeof request.baseline_schedule_text==='string'&&request.baseline_schedule_text.length>0;
 if(!packetComplete&&!excelEvidenceReady&&!builderIntakeRetry&&wantsExcel&&hasScheduleBaseline&&allowed.has('excel_extraction_specialist')&&decision!=='delegate'){
   decision='delegate';
   packetCandidate={
@@ -764,6 +823,69 @@ if(!packetComplete&&!excelEvidenceReady&&!builderIntakeRetry&&wantsExcel&&hasSch
     artifact_refs:arr(request.artifact_refs)?request.artifact_refs:[],
   };
   blockingQuestions=[];
+}
+// Text + baseline, no workbook: skip Excel and open Schedule Builder directly.
+if(!packetComplete&&!excelEvidenceReady&&!builderIntakeRetry&&!hasExcelBinary&&hasScheduleBaseline&&allowed.has('schedule_builder_specialist')&&decision!=='delegate'){
+  const baseSchedule=obj(request.schedule_request)?request.schedule_request:request;
+  const inferred=inferScheduleKeywords(objectiveBlob+' '+requestBlob);
+  decision='delegate';
+  packetCandidate={
+    contract:'specialist_packet',contract_version:'1.0',task_id:base.task_id,specialist_id:'schedule_builder_specialist',
+    attempt:Number(base.retry_count)+1,
+    objective:objectiveBlob||'REVISE tNavigator SCHEDULE from task text and attached baseline.',
+    inputs:{
+      schedule_request:withReviseIntakeDefaults({
+        build_mode:clean(baseSchedule.build_mode)||'REVISE',
+        root_path:clean(baseSchedule.root_path||baseSchedule.schedule_root||request.schedule_root)||null,
+        baseline_schedule_text:typeof baseSchedule.baseline_schedule_text==='string'?baseSchedule.baseline_schedule_text:undefined,
+        include_files:arr(baseSchedule.include_files)?baseSchedule.include_files:[],
+        baseline_package:baseSchedule.baseline_package||null,
+        requested_keyword_scope:arr(baseSchedule.requested_keyword_scope)&&baseSchedule.requested_keyword_scope.length?baseSchedule.requested_keyword_scope:inferred,
+        requested_change_scope:obj(baseSchedule.requested_change_scope)?baseSchedule.requested_change_scope:{intent:'revise_from_task_text',source:'task_objective',keywords:inferred},
+      }, null),
+    },
+    controls:petroleumControls({}),
+    acceptance_criteria:[
+      {id:'task_text_applied',criterion:'Apply wells/groups/controls stated in the objective to the baseline schedule',required:true,expected:'matches task text'},
+      {id:'preserve_unmentioned',criterion:'Unrelated baseline blocks preserved',required:true,expected:'preserve_unmentioned'},
+    ],
+    artifact_refs:arr(request.artifact_refs)?request.artifact_refs:[],
+  };
+  blockingQuestions=[];
+}
+// Planner chose Excel without a workbook: require upload only if objective named Excel; else redirect to Builder.
+if(decision==='delegate'&&clean(packetCandidate.specialist_id)==='excel_extraction_specialist'&&!hasExcelBinary){
+  if(objectiveMentionsExcel){
+    decision='needs_input';
+    blockingQuestions=[{id:'excel_file',question:'Прикрепите workbook (.xlsx/.xls) в поле file — в задаче указан Excel, но файл не приложен.',text:'Прикрепите workbook (.xlsx/.xls) в поле file — в задаче указан Excel, но файл не приложен.',type:'file',required:true}];
+    packetCandidate={};
+  } else if(hasScheduleBaseline&&allowed.has('schedule_builder_specialist')){
+    const baseSchedule=obj(request.schedule_request)?request.schedule_request:request;
+    const inferred=inferScheduleKeywords(objectiveBlob+' '+requestBlob);
+    packetCandidate={
+      contract:'specialist_packet',contract_version:'1.0',task_id:base.task_id,specialist_id:'schedule_builder_specialist',
+      attempt:Number(base.retry_count)+1,
+      objective:objectiveBlob||'REVISE tNavigator SCHEDULE from task text and attached baseline.',
+      inputs:{
+        schedule_request:withReviseIntakeDefaults({
+          build_mode:clean(baseSchedule.build_mode)||'REVISE',
+          root_path:clean(baseSchedule.root_path||baseSchedule.schedule_root||request.schedule_root)||null,
+          baseline_schedule_text:typeof baseSchedule.baseline_schedule_text==='string'?baseSchedule.baseline_schedule_text:undefined,
+          include_files:arr(baseSchedule.include_files)?baseSchedule.include_files:[],
+          baseline_package:baseSchedule.baseline_package||null,
+          requested_keyword_scope:inferred,
+          requested_change_scope:{intent:'revise_from_task_text',source:'task_objective',keywords:inferred},
+        }, null),
+      },
+      controls:petroleumControls({}),
+      acceptance_criteria:[
+        {id:'task_text_applied',criterion:'Apply wells/groups/controls stated in the objective to the baseline schedule',required:true,expected:'matches task text'},
+        {id:'preserve_unmentioned',criterion:'Unrelated baseline blocks preserved',required:true,expected:'preserve_unmentioned'},
+      ],
+      artifact_refs:arr(request.artifact_refs)?request.artifact_refs:[],
+    };
+    blockingQuestions=[];
+  }
 }
 // After Excel facts are ready (or Builder intake HITL retry with persisted facts), force Schedule Builder
 // with deterministic REVISE intake defaults so combat REVISE is not blocked on profile/dates/scope.
@@ -795,7 +917,7 @@ if((excelEvidenceReady||builderIntakeRetry)&&allowed.has('schedule_builder_speci
       artifact_refs:arr(request.artifact_refs)?request.artifact_refs:[],
     };
     blockingQuestions=[];
-  } else if(factWells.length||(!excelEvidenceReady&&builderIntakeRetry&&factsPacket)){
+  } else if(factWells.length||(!excelEvidenceReady&&builderIntakeRetry&&(factsPacket||!hasExcelBinary))){
   const effectiveFactsPacket=factsPacket;
   const baseSchedule=obj(request.schedule_request)?request.schedule_request:request;
   let builderPacket=(packetObject&&plan.specialist_packet.specialist_id==='schedule_builder_specialist'&&packetComplete)?plan.specialist_packet:(obj(persistedPacket)&&persistedPacket.specialist_id==='schedule_builder_specialist'?persistedPacket:null);
@@ -833,11 +955,34 @@ if((excelEvidenceReady||builderIntakeRetry)&&allowed.has('schedule_builder_speci
 const scheduleDelegation=clean(packetCandidate.specialist_id)==='schedule_builder_specialist';
 const excelDelegationFinal=clean(packetCandidate.specialist_id)==='excel_extraction_specialist';
 const calcDelegationFinal=clean(packetCandidate.specialist_id)==='engineering_calculation_specialist';
+// Always re-apply REVISE intake defaults on Builder handoff so planner/HITL packets cannot drop profile/dates/policy.
+if(scheduleDelegation&&(hasScheduleBaseline||hasBaselineForRetry||typeof (obj(packetCandidate.inputs)?.schedule_request||{}).baseline_schedule_text==='string')){
+  const modelInputs=obj(packetCandidate.inputs)?packetCandidate.inputs:{};
+  const modelSchedule=obj(modelInputs.schedule_request)?modelInputs.schedule_request:modelInputs;
+  const originalSchedule=obj(request.schedule_request)?request.schedule_request:request;
+  const factsForDefaults=obj(modelSchedule.source_facts_packet)?modelSchedule.source_facts_packet:(obj(persistedSchedule.source_facts_packet)?persistedSchedule.source_facts_packet:null);
+  const ensuredSchedule=withReviseIntakeDefaults({
+    ...persistedSchedule,
+    ...originalSchedule,
+    ...modelSchedule,
+    baseline_schedule_text:typeof originalSchedule.baseline_schedule_text==='string'?originalSchedule.baseline_schedule_text:(typeof persistedSchedule.baseline_schedule_text==='string'?persistedSchedule.baseline_schedule_text:modelSchedule.baseline_schedule_text),
+    include_files:arr(originalSchedule.include_files)?originalSchedule.include_files:(arr(persistedSchedule.include_files)?persistedSchedule.include_files:(arr(modelSchedule.include_files)?modelSchedule.include_files:[])),
+    root_path:clean(originalSchedule.root_path)||clean(persistedSchedule.root_path)||clean(modelSchedule.root_path)||clean(originalSchedule.baseline_filename)||clean(modelSchedule.baseline_filename)||null,
+    baseline_package:originalSchedule.baseline_package||persistedSchedule.baseline_package||modelSchedule.baseline_package||null,
+    source_facts_packet:factsForDefaults,
+    requested_keyword_scope:arr(modelSchedule.requested_keyword_scope)&&modelSchedule.requested_keyword_scope.length?modelSchedule.requested_keyword_scope:(arr(originalSchedule.requested_keyword_scope)&&originalSchedule.requested_keyword_scope.length?originalSchedule.requested_keyword_scope:inferScheduleKeywords(objectiveBlob+' '+requestBlob)),
+  }, factsForDefaults);
+  packetCandidate={...packetCandidate,inputs:{...modelInputs,schedule_request:ensuredSchedule}};
+}
+// Baseline + task text (no workbook binary): allow direct Builder without Excel evidence hop.
+const scheduleDirectOk=scheduleDelegation&&hasScheduleBaseline&&!hasExcelBinary;
+const scheduleHopOk=excelEvidenceReady||builderIntakeRetry||scheduleDirectOk;
 if(obj(packetCandidate)&&packetCandidate.specialist_id){
   packetCandidate={...packetCandidate,contract:'specialist_packet',contract_version:'1.0',task_id:base.task_id,attempt:Number(base.retry_count)+1,controls:{...petroleumControls(packetCandidate.controls),expected_version:Number(base.version)+1,idempotency_key:`${base.task_id}:specialist:${packetCandidate.specialist_id}:${Number(base.retry_count)+1}:${Number(base.version)+1}`,policy_version:'petroleum-schedule-policy-v1'}};
 }
+const criteriaFinal=arr(packetCandidate.acceptance_criteria)?packetCandidate.acceptance_criteria.filter(obj):criteria;
 plan.questions=blockingQuestions;
-const requiredCriteria=criteria.filter(c=>c.required!==false),measurableCriteria=requiredCriteria.filter(c=>clean(c.check||c.metric||c.criterion||c.description)&&('expected' in c||'threshold' in c||'pass_condition' in c||'expected_result' in c));
+const requiredCriteria=criteriaFinal.filter(c=>c.required!==false),measurableCriteria=requiredCriteria.filter(c=>clean(c.check||c.metric||c.criterion||c.description)&&('expected' in c||'threshold' in c||'pass_condition' in c||'expected_result' in c));
 const requestedDeliverables=arr(request.required_outputs)?request.required_outputs:arr(request.deliverables)?request.deliverables:[];
 const packetInputs=obj(packetCandidate.inputs)?packetCandidate.inputs:{},packetControls=obj(packetCandidate.controls)?packetCandidate.controls:{};
 const scopeSignals=[clean(packetCandidate.objective),clean(plan.task_type),clean(plan.plan?.workflow_kind)].filter(Boolean).length;
@@ -848,15 +993,15 @@ const hasEntity=Boolean(packetInputs.entity||packetInputs.entities||packetInputs
 const scopeFit=Math.min(100,Math.round(100*Math.min(3,scopeSignals)/3));
 const evidenceCompleteness=Math.min(100,Math.round(100*(measurableCriteria.length+(evidenceSignals?1:0))/(Math.max(1,requiredCriteria.length)+1)));
 const sourceAuthority=Math.min(100,Math.round(100*Math.min(2,(sourceRefs.length?1:0)+(citations.length?1:0))/2));
-// Evidence-gathering hops (Excel/calc) and the immediate Excel→Builder hop may proceed before full entity/temporal scoring.
-const entityTemporalConsistency=(hasEntity&&hasTemporal)||excelDelegationFinal||calcDelegationFinal||(scheduleDelegation&&(excelEvidenceReady||builderIntakeRetry))?100:0;
+// Evidence-gathering hops (Excel/calc), Excel→Builder, and text-only baseline REVISE may proceed before full scoring.
+const entityTemporalConsistency=(hasEntity&&hasTemporal)||excelDelegationFinal||calcDelegationFinal||(scheduleDelegation&&scheduleHopOk)?100:0;
 const packetReady=Boolean(clean(packetCandidate.objective)&&obj(packetCandidate.inputs)&&obj(packetCandidate.controls)&&arr(packetCandidate.acceptance_criteria)&&allowed.has(packetCandidate.specialist_id));
-const deterministicValidationHealth=(decisionRecordValid||excelDelegationFinal||(scheduleDelegation&&(excelEvidenceReady||builderIntakeRetry)))&&packetReady?100:0;
+const deterministicValidationHealth=(decisionRecordValid||excelDelegationFinal||(scheduleDelegation&&scheduleHopOk))&&packetReady?100:0;
 const stageScore=Math.round(.25*scopeFit+.25*evidenceCompleteness+.20*sourceAuthority+.15*entityTemporalConsistency+.15*deterministicValidationHealth);
-const hardBlockers=[];if(!decisionRecordValid&&!excelDelegationFinal&&!(scheduleDelegation&&(excelEvidenceReady||builderIntakeRetry)))hardBlockers.push('DECISION_RECORD_INVALID');if(decision==='delegate'&&!packetReady)hardBlockers.push('SPECIALIST_PACKET_INCOMPLETE');if(decision==='unsupported')hardBlockers.push('SPECIALIST_NOT_ALLOWLISTED');if(blockingQuestions.length)hardBlockers.push('PLANNER_UNRESOLVED_QUESTIONS');if(scheduleTask&&(!hasEntity||!hasTemporal)&&!excelDelegationFinal&&!calcDelegationFinal&&!(scheduleDelegation&&(excelEvidenceReady||builderIntakeRetry)))hardBlockers.push('ENTITY_TEMPORAL_SCOPE_INCOMPLETE');
+const hardBlockers=[];if(!decisionRecordValid&&!excelDelegationFinal&&!(scheduleDelegation&&scheduleHopOk))hardBlockers.push('DECISION_RECORD_INVALID');if(decision==='delegate'&&!packetReady)hardBlockers.push('SPECIALIST_PACKET_INCOMPLETE');if(decision==='unsupported')hardBlockers.push('SPECIALIST_NOT_ALLOWLISTED');if(blockingQuestions.length)hardBlockers.push('PLANNER_UNRESOLVED_QUESTIONS');if(scheduleTask&&(!hasEntity||!hasTemporal)&&!excelDelegationFinal&&!calcDelegationFinal&&!(scheduleDelegation&&scheduleHopOk))hardBlockers.push('ENTITY_TEMPORAL_SCOPE_INCOMPLETE');
 const scoreDecision=hardBlockers.length||stageScore<70?'hitl':stageScore<85?'attention':'continue';
-// Do not bounce a complete Excel/calc/Builder-after-Excel delegation back to HITL solely on provisional readiness score.
-if(scoreDecision==='hitl'&&decision==='delegate'&&!((excelDelegationFinal||calcDelegationFinal||(scheduleDelegation&&(excelEvidenceReady||builderIntakeRetry)))&&packetReady)){decision='needs_input';plan.reason='Deterministic planner readiness gate requires targeted human input before delegation.';}
+// Do not bounce a complete Excel/calc/direct-Builder delegation back to HITL solely on provisional readiness score.
+if(scoreDecision==='hitl'&&decision==='delegate'&&!((excelDelegationFinal||calcDelegationFinal||(scheduleDelegation&&scheduleHopOk))&&packetReady)){decision='needs_input';plan.reason='Deterministic planner readiness gate requires targeted human input before delegation.';}
 const reasonCodes=hardBlockers.length?hardBlockers:[scoreDecision==='continue'?'READINESS_CONTINUE':scoreDecision==='attention'?'READINESS_ATTENTION':'READINESS_HITL'];
 const deterministicDecision={contract:'decision_record',contract_version:'1.0',objective:clean(request.objective||request.problem_statement||packetCandidate.objective),considered_inputs:[{kind:'engineering_request',artifact_ref_count:requestRefs.length,required_output_count:requestedDeliverables.length},{kind:'specialist_catalogue',selected_specialist_id:packetCandidate.specialist_id||null}],proposed_actions:[{action:clean(plan.decision),specialist_id:packetCandidate.specialist_id||null,task_type:clean(plan.task_type)}],selected_action:{action:decision,reason_codes:reasonCodes},rejected_actions:hardBlockers.map(code=>({action:'delegate',reason_codes:[code]})),assumptions:arr(modelDecision.assumptions)?modelDecision.assumptions.map(String).slice(0,100):[],evidence_refs:sourceRefs.slice(0,100),citations:citations.slice(0,100),tool_call_ids:arr(modelDecision.tool_call_ids)?modelDecision.tool_call_ids.map(String).slice(0,100):[],unresolved_questions:blockingQuestions,acceptance_check_results:[{check:'scope_fit',score:scopeFit,passed:scopeFit===100},{check:'evidence_completeness',score:evidenceCompleteness,passed:evidenceCompleteness===100},{check:'source_authority_and_citation',score:sourceAuthority,passed:sourceAuthority===100},{check:'entity_temporal_consistency',score:entityTemporalConsistency,passed:entityTemporalConsistency===100},{check:'deterministic_validation_health',score:deterministicValidationHealth,passed:deterministicValidationHealth===100}]};
 plan.decision_record=deterministicDecision;plan.score={stage_score:stageScore,components:{scope_fit:scopeFit,evidence_completeness:evidenceCompleteness,source_authority_and_citation:sourceAuthority,entity_temporal_consistency:entityTemporalConsistency,deterministic_validation_health:deterministicValidationHealth},raw_counts:{request_artifact_refs:requestRefs.length,required_outputs:requestedDeliverables.length,required_acceptance_criteria:requiredCriteria.length,measurable_acceptance_criteria:measurableCriteria.length,evidence_refs:sourceRefs.length,citations:citations.length,questions:blockingQuestions.length,planner_questions:questions.length,hard_blockers:hardBlockers.length},thresholds:{attention:85,hitl:70},decision:scoreDecision,provisional:true};
@@ -983,7 +1128,7 @@ const accessScope=String(req.access_scope||packet.controls?.access_scope||'').tr
 const objective=String(packet.objective||'').trim();
 const topics=Array.isArray(req.topics)?req.topics:[],patterns=Array.isArray(req.task_patterns)?req.task_patterns:[];
 const query=[objective,scope.length?`Keywords: ${scope.join(', ')}`:'',topics.length?`Topics: ${topics.join(', ')}`:'',patterns.length?`Task patterns: ${patterns.join(', ')}`:'','SCHEDULE parameters prerequisites dependencies and worked examples'].filter(Boolean).join('\n');
-return[{json:{...x,schedule_retrieval_request:{query,filters:{target_base:String(req.target_base||'schedule_mvp'),access_scope:accessScope||'petroleum-engineering',knowledge_types:['keyword_instruction','worked_example'],keyword_families:scope,topics,task_patterns:patterns},top_k:Math.min(20,Math.max(5,scope.length*3||10))}}}];
+return[{json:{...x,schedule_retrieval_request:{query,filters:{target_base:String(req.target_base||'schedule_mvp'),access_scope:accessScope||'petroleum-engineering',knowledge_types:['keyword_instruction','worked_example'],keyword_families:scope,topics,task_patterns:patterns},top_k:Math.min(40,Math.max(12,scope.length*4||12))}}}];
 """.strip()
 
 
@@ -1193,15 +1338,23 @@ const last=obj(runtime.last_error)?runtime.last_error:(obj(result.error)?result.
 const code=clean(last.code||result.error?.code||'').toUpperCase();
 const status=clean(x.status);
 const specialistStatus=clean(result.status);
+const gateKind=clean(parse(x.gate_json,{}).kind);
+// Normal HITL (input/approve) must NOT go through Error Handler — residual last_error.code
+// used to paint needs_approval as CASE_ERROR with the specialist's success user_message.
+const successLikeSpecialist=['succeeded','partial','needs_approval','needs_input'].includes(specialistStatus);
+const normalHitlGate=['needs_input','needs_approval'].includes(gateKind);
 const critical=['retryable_error','failed'].includes(status)
   ||['retryable_error','fatal_error'].includes(specialistStatus)
-  ||Boolean(code)
-  ||(status==='awaiting_human'&&['needs_decision'].includes(clean(parse(x.gate_json,{}).kind))&&Boolean(code||last.safe_message));
+  ||(Boolean(code)&&!normalHitlGate&&!successLikeSpecialist&&!['completed','cancelled','rejected'].includes(status))
+  ||(status==='awaiting_human'&&gateKind==='needs_decision'&&Boolean(code||last.safe_message||last.message)&&!normalHitlGate);
 if(!critical||!clean(x.task_id)){
   return[{json:{...x,invoke_error_handler:false,cas_already_persisted:true,mas_error_event:null}}];
 }
 const findings=[...(Array.isArray(last.findings)?last.findings:[]),...(Array.isArray(verification.findings)?verification.findings:[])].filter(obj).slice(0,20);
-let safeMessage=clean(last.safe_message||last.message||result.user_message||result.summary||verification.summary||'');
+// Never fall back to specialist success/HITL copy (user_message/summary) — that made approve look like CASE_ERROR.
+const errObj=obj(result.error)?result.error:{};
+let safeMessage=clean(last.safe_message||last.message||errObj.safe_message||errObj.message||'');
+if(!safeMessage&&!successLikeSpecialist) safeMessage=clean(verification.summary||'');
 if(!safeMessage) safeMessage=`Критическая ошибка case ${x.task_id}`;
 if(!safeMessage.includes(x.task_id)) safeMessage=`${safeMessage} (case_id=${x.task_id})`;
 const cas_snapshot={
@@ -1330,7 +1483,7 @@ def build_orchestrator() -> dict:
     nodes += [
         note("README — setup", (-1260, -900), "## UI-only setup (n8n 2.30.8)\n1. Create task-state and trace Data Tables using `docs.md` in the repository root.\n2. Select them in CAS persist (insert+update) and Orchestrator Load task.\n3. Assign Planner/Verifier credentials.\n4. Bind CAS persist, Excel adapter/agent, SCHEDULE Retrieval/Builder, MAS Trace Writer, and **Error — MAS Case Handler**.\n5. Load expert keyword instructions/schema JSON into `schedule_mvp`.\n6. Test start → HITL → delegation → validation → verification → inline .INC.\n\nSCHEDULE input and result remain bounded text inside n8n. Multi-file: drag-and-drop several `.inc/.data/.grdecl` into `schedule_files` (optional `schedule_root`); materializer builds `root_path` + `include_files` for Builder. No ZIP, no host filesystem scan.", 500, 440, 5),
         note("Architecture", (-720, -900), "## Serious MVP control plane\n- Data Table is authoritative durable state.\n- Insert/update CAS lives in `CAS — Persist Task State`; Orchestrator only loads by task_id.\n- LLM plans; deterministic nodes own transitions.\n- Optimistic concurrency is `task_id + version`.\n- Human gates resume via a fresh invocation.\n- Model selects logical `specialist_id` only.\n- Independent Verifier is separated from Planner and Specialist.\n- One bounded baseline package may live in task state; Planner/trace receive metadata only.\n- SCHEDULE result is returned as bounded inline `.INC` text.", 470, 360, 4),
-        note("Extension point", (440, -900), "## Add a specialist safely\n1. Clone the universal specialist template.\n2. Preserve `specialist_packet` / `specialist_result` v1.0.\n3. Add one row to `n8n/contracts/specialist_registry.v1.json` (catalogue + allowlist + chat_role).\n4. Bind its workflow only in a static `Call … Specialist` node and set `configured:true` + route index.\n5. Add contract, failure, HITL and verification tests.\n\nNever put a workflow ID in an LLM prompt or result. Domain handoffs must emit `runtime_json.handoff_events` for the chat activity feed.", 460, 360, 3),
+        note("Extension point", (440, -900), "## Add a specialist safely\n1. Clone a support template (`Template — Engineering Specialist` or `Template — Cluster/Binary/Presentation Adapter`).\n2. Preserve `specialist_packet` / `specialist_result` v1.0.\n3. Add one row to `n8n/contracts/specialist_registry.v1.json` (catalogue + allowlist + chat_role + route).\n4. Bind its workflow only in a static `Call … Specialist` node and set `configured:true` + matching route index.\n5. Add RAG `routing_card` + contract/HITL tests.\n6. See docs.md §6 for the full field guide.\n\nNever put a workflow ID in an LLM prompt or result. Domain handoffs must emit `runtime_json.handoff_events` for the chat activity feed. Do not bind Data/Document stubs unless you intentionally own those routes.", 460, 420, 3),
         node("Authenticated engineering webhook", "n8n-nodes-base.webhook", 2.1, (-1260, -400), {"httpMethod": "POST", "path": "engineering-orchestrator", "authentication": "headerAuth", "responseMode": "lastNode", "options": {}}, credentials={"httpHeaderAuth": {"id": "REPLACE_IN_UI", "name": "REPLACE: engineering orchestrator inbound key"}}),
         set_fields("Mark HTTP entrypoint", (-1040, -400), [("entrypoint", "={{ 'http' }}", "string")]),
         node("Engineering task form", "n8n-nodes-base.formTrigger", 2.6, (-1260, -120), {"authentication": "n8nUserAuth", "formTitle": "Engineering task orchestrator", "formDescription": "Create or resume a controlled engineering task. For resume actions, provide task ID, expected version and gate ID exactly as returned.", "formFields": {"values": [
@@ -1383,7 +1536,7 @@ def build_orchestrator() -> dict:
         code("Resolve allowlisted specialist", (1720, -540), RESOLVE_SPECIALIST),
         if_node("Delegation allowlisted?", (1940, -540), "={{ $json.delegation_allowed }}", True, "boolean"),
         code("Prepare specialist invocation context", (2160, -660), PREPARE_DELEGATION),
-        node("Configured specialist router", "n8n-nodes-base.switch", 3.4, (2380, -660), {"mode": "expression", "numberOutputs": 5, "output": "={{ $json.specialist_route }}"}),
+        node("Configured specialist router", "n8n-nodes-base.switch", 3.4, (2380, -660), {"mode": "expression", "numberOutputs": 8, "output": "={{ $json.specialist_route }}"}),
         code("Prepare governed Excel protocol RAG request", (2480, -1080), PREPARE_EXCEL_RAG),
         call_hybrid_retrieval("Call Excel protocol Hybrid Retrieval", (2600, -1080)),
         code("Attach governed Excel protocol RAG evidence", (2820, -1080), ATTACH_EXCEL_RAG),
@@ -1399,6 +1552,9 @@ def build_orchestrator() -> dict:
         node("Call Calculation Specialist", "n8n-nodes-base.executeWorkflow", 1.3, (2600, -660), {"source": "database", "workflowId": {"__rl": True, "value": "REPLACE_CALCULATION_ADAPTER_IN_UI", "mode": "list", "cachedResultName": "Adapter — Calculation (Math Service)"}, "workflowInputs": {"mappingMode": "defineBelow", "value": {"specialist_packet": "={{ $json.specialist_packet }}"}, "matchingColumns": [], "schema": [], "attemptToConvertTypes": False, "convertFieldsToString": False}, "mode": "once", "options": {"waitForSubWorkflow": True}}, onError="continueRegularOutput"),
         node("Call Data Specialist", "n8n-nodes-base.executeWorkflow", 1.3, (2600, -520), {"source": "database", "workflowId": {"__rl": True, "value": "REPLACE_DATA_SPECIALIST_IN_UI", "mode": "list", "cachedResultName": "Engineering Data Specialist"}, "workflowInputs": {"mappingMode": "defineBelow", "value": {"specialist_packet": "={{ $json.specialist_packet }}"}, "matchingColumns": [], "schema": [], "attemptToConvertTypes": False, "convertFieldsToString": False}, "mode": "once", "options": {"waitForSubWorkflow": True}}, onError="continueRegularOutput"),
         node("Call Document Specialist", "n8n-nodes-base.executeWorkflow", 1.3, (2600, -380), {"source": "database", "workflowId": {"__rl": True, "value": "REPLACE_DOCUMENT_SPECIALIST_IN_UI", "mode": "list", "cachedResultName": "Engineering Document Specialist"}, "workflowInputs": {"mappingMode": "defineBelow", "value": {"specialist_packet": "={{ $json.specialist_packet }}"}, "matchingColumns": [], "schema": [], "attemptToConvertTypes": False, "convertFieldsToString": False}, "mode": "once", "options": {"waitForSubWorkflow": True}}, onError="continueRegularOutput"),
+        node("Call Cluster Calculation Specialist", "n8n-nodes-base.executeWorkflow", 1.3, (2600, -240), {"source": "database", "workflowId": {"__rl": True, "value": "REPLACE_CLUSTER_CALC_ADAPTER_IN_UI", "mode": "list", "cachedResultName": "Template — Cluster Calculation Adapter"}, "workflowInputs": {"mappingMode": "defineBelow", "value": {"specialist_packet": "={{ $json.specialist_packet }}"}, "matchingColumns": [], "schema": [], "attemptToConvertTypes": False, "convertFieldsToString": False}, "mode": "once", "options": {"waitForSubWorkflow": True}}, onError="continueRegularOutput"),
+        node("Call Binary Results Specialist", "n8n-nodes-base.executeWorkflow", 1.3, (2600, -100), {"source": "database", "workflowId": {"__rl": True, "value": "REPLACE_BINARY_RESULTS_ADAPTER_IN_UI", "mode": "list", "cachedResultName": "Template — Binary Results Adapter"}, "workflowInputs": {"mappingMode": "defineBelow", "value": {"specialist_packet": "={{ $json.specialist_packet }}", "previous_specialist_result": "={{ $json.previous_specialist_result }}", "latest_human_response": "={{ $json.latest_human_response }}"}, "matchingColumns": [], "schema": [], "attemptToConvertTypes": False, "convertFieldsToString": False}, "mode": "once", "options": {"waitForSubWorkflow": True}}, onError="continueRegularOutput"),
+        node("Call Presentation Specialist", "n8n-nodes-base.executeWorkflow", 1.3, (2600, 40), {"source": "database", "workflowId": {"__rl": True, "value": "REPLACE_PRESENTATION_ADAPTER_IN_UI", "mode": "list", "cachedResultName": "Template — Presentation Assembler"}, "workflowInputs": {"mappingMode": "defineBelow", "value": {"specialist_packet": "={{ $json.specialist_packet }}", "previous_specialist_result": "={{ $json.previous_specialist_result }}", "latest_human_response": "={{ $json.latest_human_response }}"}, "matchingColumns": [], "schema": [], "attemptToConvertTypes": False, "convertFieldsToString": False}, "mode": "once", "options": {"waitForSubWorkflow": True}}, onError="continueRegularOutput"),
         code("Normalize specialist result", (2820, -660), NORMALIZE_SPECIALIST),
         if_node("Specialist result is verifiable?", (2820, -660), "={{ $json.specialist_requires_verification }}", True, "boolean"),
         code("Route successful specialist handoff", (3040, -660), ROUTE_SUCCESSFUL_SPECIALIST),
@@ -1493,6 +1649,9 @@ def build_orchestrator() -> dict:
     connect(c, "Configured specialist router", "Call Calculation Specialist", source_index=2)
     connect(c, "Configured specialist router", "Call Data Specialist", source_index=3)
     connect(c, "Configured specialist router", "Call Document Specialist", source_index=4)
+    connect(c, "Configured specialist router", "Call Cluster Calculation Specialist", source_index=5)
+    connect(c, "Configured specialist router", "Call Binary Results Specialist", source_index=6)
+    connect(c, "Configured specialist router", "Call Presentation Specialist", source_index=7)
     connect(c, "Prepare governed Excel protocol RAG request", "Call Excel protocol Hybrid Retrieval")
     connect(c, "Call Excel protocol Hybrid Retrieval", "Attach governed Excel protocol RAG evidence")
     connect(c, "Attach governed Excel protocol RAG evidence", "Excel protocol RAG evidence ready?")
@@ -1510,6 +1669,9 @@ def build_orchestrator() -> dict:
     connect(c, "Call Calculation Specialist", "Normalize specialist result")
     connect(c, "Call Data Specialist", "Normalize specialist result")
     connect(c, "Call Document Specialist", "Normalize specialist result")
+    connect(c, "Call Cluster Calculation Specialist", "Normalize specialist result")
+    connect(c, "Call Binary Results Specialist", "Normalize specialist result")
+    connect(c, "Call Presentation Specialist", "Normalize specialist result")
     connect(c, "Normalize specialist result", "Specialist result is verifiable?")
     connect(c, "Specialist result is verifiable?", "Route successful specialist handoff", source_index=0)
     connect(c, "Specialist result is verifiable?", "Prepare SCHEDULE evidence retry", source_index=1)
@@ -1925,6 +2087,163 @@ def build_cas_persist() -> dict:
     }
 
 
+def build_extension_stub_adapter(
+    *,
+    slug: str,
+    ui_name: str,
+    specialist_id: str,
+    readme: str,
+    implement_steps: list[str],
+    compact_kind: str,
+    accept_previous: bool = False,
+) -> dict:
+    """Deterministic support stub: validates packet, returns needs_decision scaffold."""
+    packet_example = {
+        "specialist_packet": {
+            "contract": "specialist_packet",
+            "contract_version": "1.0",
+            "task_id": "eng_example",
+            "specialist_id": specialist_id,
+            "attempt": 1,
+            "objective": f"Stub objective for {specialist_id}",
+            "inputs": {},
+            "controls": {},
+            "acceptance_criteria": [],
+            "artifact_refs": [],
+        }
+    }
+    if accept_previous:
+        packet_example["previous_specialist_result"] = {}
+        packet_example["latest_human_response"] = {}
+    steps_js = json.dumps(implement_steps, ensure_ascii=False)
+    stub_js = f"""
+const item=$input.first();const incoming=item.json||{{}};
+const object=v=>v&&typeof v==='object'&&!Array.isArray(v);
+const parse=v=>{{if(object(v))return v;if(typeof v==='string'){{try{{const p=JSON.parse(v);return object(p)?p:{{}}}}catch{{return {{}}}}}}return {{}}}};
+const packet=parse(incoming.specialist_packet);
+const expectedId={json.dumps(specialist_id)};
+const packetValid=packet.contract==='specialist_packet'&&packet.contract_version==='1.0'&&typeof packet.task_id==='string'&&packet.task_id.trim()&&packet.specialist_id===expectedId&&Number.isInteger(packet.attempt)&&packet.attempt>=1&&typeof packet.objective==='string'&&packet.objective.trim()&&object(packet.inputs)&&object(packet.controls)&&Array.isArray(packet.acceptance_criteria)&&Array.isArray(packet.artifact_refs);
+const implementSteps={steps_js};
+const binaryNames=Object.values(item.binary||{{}}).map(f=>String(f?.fileName||'')).filter(Boolean).slice(0,40);
+const result={{
+  contract:'specialist_result',
+  contract_version:'1.0',
+  task_id:String(packet.task_id||''),
+  specialist_id:expectedId,
+  attempt:Number(packet.attempt||1),
+  status:packetValid?'needs_decision':'fatal_error',
+  summary:packetValid
+    ?('Stub adapter only — implement SSH/tool nodes before setting configured:true in specialist_registry.v1.json.')
+    :('Invalid specialist_packet for '+expectedId),
+  deliverables:[],
+  artifact_refs:[],
+  compact_data:{{
+    contract:{json.dumps(compact_kind)},
+    contract_version:'1.0',
+    stub:true,
+    implement_steps:implementSteps,
+    attached_filenames:binaryNames
+  }},
+  assumptions:[],
+  warnings:packetValid?['This support template is not a live specialist.']:['Packet contract failed.'],
+  evidence:[],
+  self_check:{{performed:true,passed:false,checks:[{{id:'stub_not_implemented',passed:false,detail:'Replace stub Code with real adapter logic'}}],reproducibility:'stub'}},
+  human_request:packetValid?{{
+    kind:'needs_decision',
+    reason:'Specialist workflow is still the support stub. Complete implement_steps, bind Orchestrator Call node, set configured:true.',
+    questions:implementSteps.map((text,i)=>({{id:'step_'+(i+1),text}}))
+  }}:null,
+  error:packetValid?null:{{code:'INVALID_SPECIALIST_PACKET',message:'Packet failed validation for '+expectedId}},
+  continuation:null,
+  decision_record:{{decision:'stub',policy_reason_codes:['EXTENSION_STUB']}},
+  user_message:packetValid?'Заглушка специалиста — см. implement_steps в compact_data.':'Ошибка контракта specialist_packet.'
+}};
+return [{{json:{{specialist_result:result,specialist_packet:packet}},binary:item.binary||{{}}}}];
+""".strip()
+    nodes = [
+        note(f"{ui_name} README", (-520, -360), readme, 520, 360, 5),
+        node(
+            f"Receive {specialist_id} packet",
+            "n8n-nodes-base.executeWorkflowTrigger",
+            1.2,
+            (0, 0),
+            {"inputSource": "jsonExample", "jsonExample": json.dumps(packet_example, ensure_ascii=False)},
+        ),
+        code(f"Build stub result — {specialist_id}", (280, 0), stub_js),
+    ]
+    c: dict = {}
+    connect(c, f"Receive {specialist_id} packet", f"Build stub result — {specialist_id}")
+    return {
+        "id": uid(slug),
+        "name": ui_name,
+        "nodes": nodes,
+        "pinData": {},
+        "connections": c,
+        "active": False,
+        "settings": {"executionOrder": "v1", "saveManualExecutions": True, "callerPolicy": "workflowsFromSameOwner", "errorWorkflow": ""},
+        "versionId": uid(slug + "/version"),
+        "meta": {
+            "templateCredsSetupCompleted": False,
+            "targetN8nVersion": "2.30.8",
+            "contractVersion": "1.0",
+            "extensionStub": True,
+            "specialistId": specialist_id,
+        },
+        "tags": [],
+    }
+
+
+def build_cluster_calc_stub() -> dict:
+    return build_extension_stub_adapter(
+        slug="cluster-calc-specialist-adapter",
+        ui_name="Template — Cluster Calculation Adapter",
+        specialist_id="cluster_calculation_specialist",
+        compact_kind="cluster_job_compact",
+        readme="## Template — Cluster Calculation Adapter\n\nPattern: **Adapter — Calculation** (deterministic external job), not the LLM specialist template.\n\nReplace the stub Code node with:\n1. Config Set node (cluster host / queue URL — no `$env` in UI-only mode)\n2. Submit job (SSH / HTTP job API)\n3. Poll status → map to `specialist_result`\n4. Use `continuation` + `retryable_error` / `needs_input` for async jobs\n\nOrchestrator Call node: `Call Cluster Calculation Specialist` → bind this workflow, then set `configured:true` for `cluster_calculation_specialist` in `specialist_registry.v1.json` and regenerate.\n\nNever put SSH keys in LLM prompts. Keep binaries/logs as `artifact_refs`.",
+        implement_steps=[
+            "Add cluster endpoint config Set node (host, queue, workdir)",
+            "Wire SSH credential or job-API auth on Execute Command / HTTP Request",
+            "Implement submit + poll; map terminal status to specialist_result.status",
+            "Return compact_data.cluster_job_compact {job_id,status,log_ref,artifact_refs}",
+            "Bind Orchestrator Call Cluster Calculation Specialist; set configured:true; regen",
+        ],
+    )
+
+
+def build_binary_results_stub() -> dict:
+    return build_extension_stub_adapter(
+        slug="binary-results-specialist-adapter",
+        ui_name="Template — Binary Results Adapter",
+        specialist_id="binary_results_specialist",
+        compact_kind="report_facts_packet",
+        accept_previous=True,
+        readme="## Template — Binary Results Adapter\n\nPattern: Excel Adapter anti-corruption layer — validate packet, extract from binaries, return typed `report_facts_packet`.\n\nInputs: `specialist_packet` + optional `previous_specialist_result` (cluster job refs) + binary result files on the item.\n\nDo not dump binaries into CAS JSON. Prefer local Code/Python runner or a small FastAPI sidecar (like excel-tools / math-service).\n\nDownstream: Presentation Assembler consumes `compact_data` + `artifact_refs`.",
+        implement_steps=[
+            "Validate attached binary result files (extensions, size bounds)",
+            "Parse previous_specialist_result.artifact_refs / cluster job refs when present",
+            "Extract typed fields into report_facts_packet (snapshot hash + correlation_id)",
+            "Bind Orchestrator Call Binary Results Specialist; set configured:true; regen",
+        ],
+    )
+
+
+def build_presentation_stub() -> dict:
+    return build_extension_stub_adapter(
+        slug="presentation-specialist-adapter",
+        ui_name="Template — Presentation Assembler",
+        specialist_id="presentation_specialist",
+        compact_kind="presentation_compact",
+        accept_previous=True,
+        readme="## Template — Presentation Assembler\n\nAssemble slides/charts from **already extracted** report facts — do not re-run cluster jobs or re-parse binaries.\n\nPrefer deterministic assembly (Calc-style adapter). Clone `Template — Engineering Specialist` only if narrative layout needs an LLM, and keep tools allowlisted.\n\nOutput: `deliverables` + `artifact_refs` (pptx/png/html) + `compact_data.presentation_compact` (slide index / chart specs).",
+        implement_steps=[
+            "Read report_facts_packet from previous_specialist_result.compact_data",
+            "Build slide index + chart specs; render or call a deck service",
+            "Return artifact_refs for the deck/images; keep compact_data small",
+            "Bind Orchestrator Call Presentation Specialist; set configured:true; regen",
+        ],
+    )
+
+
 def main() -> None:
     # Regenerates only the Python-owned engineering/SCHEDULE Builder surfaces.
     # HITL Entry / Human Gate / Deployment Health Check remain hand-authored
@@ -1939,6 +2258,9 @@ def main() -> None:
         CORE / "universal-engineering-orchestrator.workflow.json": build_orchestrator(),
         CORE / "excel-engineering-specialist-adapter.workflow.json": build_excel_adapter(),
         SUPPORT / "engineering-specialist-template.workflow.json": build_specialist(),
+        SUPPORT / "cluster-calc-specialist-adapter.workflow.json": build_cluster_calc_stub(),
+        SUPPORT / "binary-results-specialist-adapter.workflow.json": build_binary_results_stub(),
+        SUPPORT / "presentation-specialist-adapter.workflow.json": build_presentation_stub(),
         CORE / "tnavigator-schedule-builder.workflow.json": build_schedule_builder(),
     }
     for path, workflow in outputs.items():

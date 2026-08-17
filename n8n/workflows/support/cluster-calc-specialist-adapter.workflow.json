@@ -1,0 +1,79 @@
+{
+  "id": "786c9b6a-1ede-592d-92be-81163704cbb5",
+  "name": "Template — Cluster Calculation Adapter",
+  "nodes": [
+    {
+      "parameters": {
+        "content": "## Template — Cluster Calculation Adapter\n\nPattern: **Adapter — Calculation** (deterministic external job), not the LLM specialist template.\n\nReplace the stub Code node with:\n1. Config Set node (cluster host / queue URL — no `$env` in UI-only mode)\n2. Submit job (SSH / HTTP job API)\n3. Poll status → map to `specialist_result`\n4. Use `continuation` + `retryable_error` / `needs_input` for async jobs\n\nOrchestrator Call node: `Call Cluster Calculation Specialist` → bind this workflow, then set `configured:true` for `cluster_calculation_specialist` in `specialist_registry.v1.json` and regenerate.\n\nNever put SSH keys in LLM prompts. Keep binaries/logs as `artifact_refs`.",
+        "height": 360,
+        "width": 520,
+        "color": 5
+      },
+      "id": "de2c5fa1-6636-5a92-a120-739c56acbfa5",
+      "name": "Template — Cluster Calculation Adapter README",
+      "type": "n8n-nodes-base.stickyNote",
+      "typeVersion": 1,
+      "position": [
+        -520,
+        -360
+      ]
+    },
+    {
+      "parameters": {
+        "inputSource": "jsonExample",
+        "jsonExample": "{\"specialist_packet\": {\"contract\": \"specialist_packet\", \"contract_version\": \"1.0\", \"task_id\": \"eng_example\", \"specialist_id\": \"cluster_calculation_specialist\", \"attempt\": 1, \"objective\": \"Stub objective for cluster_calculation_specialist\", \"inputs\": {}, \"controls\": {}, \"acceptance_criteria\": [], \"artifact_refs\": []}}"
+      },
+      "id": "878c8cb9-109b-512a-8db4-95697d3f57a8",
+      "name": "Receive cluster_calculation_specialist packet",
+      "type": "n8n-nodes-base.executeWorkflowTrigger",
+      "typeVersion": 1.2,
+      "position": [
+        0,
+        0
+      ]
+    },
+    {
+      "parameters": {
+        "jsCode": "const item=$input.first();const incoming=item.json||{};\nconst object=v=>v&&typeof v==='object'&&!Array.isArray(v);\nconst parse=v=>{if(object(v))return v;if(typeof v==='string'){try{const p=JSON.parse(v);return object(p)?p:{}}catch{return {}}}return {}};\nconst packet=parse(incoming.specialist_packet);\nconst expectedId=\"cluster_calculation_specialist\";\nconst packetValid=packet.contract==='specialist_packet'&&packet.contract_version==='1.0'&&typeof packet.task_id==='string'&&packet.task_id.trim()&&packet.specialist_id===expectedId&&Number.isInteger(packet.attempt)&&packet.attempt>=1&&typeof packet.objective==='string'&&packet.objective.trim()&&object(packet.inputs)&&object(packet.controls)&&Array.isArray(packet.acceptance_criteria)&&Array.isArray(packet.artifact_refs);\nconst implementSteps=[\"Add cluster endpoint config Set node (host, queue, workdir)\", \"Wire SSH credential or job-API auth on Execute Command / HTTP Request\", \"Implement submit + poll; map terminal status to specialist_result.status\", \"Return compact_data.cluster_job_compact {job_id,status,log_ref,artifact_refs}\", \"Bind Orchestrator Call Cluster Calculation Specialist; set configured:true; regen\"];\nconst binaryNames=Object.values(item.binary||{}).map(f=>String(f?.fileName||'')).filter(Boolean).slice(0,40);\nconst result={\n  contract:'specialist_result',\n  contract_version:'1.0',\n  task_id:String(packet.task_id||''),\n  specialist_id:expectedId,\n  attempt:Number(packet.attempt||1),\n  status:packetValid?'needs_decision':'fatal_error',\n  summary:packetValid\n    ?('Stub adapter only — implement SSH/tool nodes before setting configured:true in specialist_registry.v1.json.')\n    :('Invalid specialist_packet for '+expectedId),\n  deliverables:[],\n  artifact_refs:[],\n  compact_data:{\n    contract:\"cluster_job_compact\",\n    contract_version:'1.0',\n    stub:true,\n    implement_steps:implementSteps,\n    attached_filenames:binaryNames\n  },\n  assumptions:[],\n  warnings:packetValid?['This support template is not a live specialist.']:['Packet contract failed.'],\n  evidence:[],\n  self_check:{performed:true,passed:false,checks:[{id:'stub_not_implemented',passed:false,detail:'Replace stub Code with real adapter logic'}],reproducibility:'stub'},\n  human_request:packetValid?{\n    kind:'needs_decision',\n    reason:'Specialist workflow is still the support stub. Complete implement_steps, bind Orchestrator Call node, set configured:true.',\n    questions:implementSteps.map((text,i)=>({id:'step_'+(i+1),text}))\n  }:null,\n  error:packetValid?null:{code:'INVALID_SPECIALIST_PACKET',message:'Packet failed validation for '+expectedId},\n  continuation:null,\n  decision_record:{decision:'stub',policy_reason_codes:['EXTENSION_STUB']},\n  user_message:packetValid?'Заглушка специалиста — см. implement_steps в compact_data.':'Ошибка контракта specialist_packet.'\n};\nreturn [{json:{specialist_result:result,specialist_packet:packet},binary:item.binary||{}}];"
+      },
+      "id": "2686a1bd-cee5-574c-a0e2-89c74b678072",
+      "name": "Build stub result — cluster_calculation_specialist",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        280,
+        0
+      ]
+    }
+  ],
+  "pinData": {},
+  "connections": {
+    "Receive cluster_calculation_specialist packet": {
+      "main": [
+        [
+          {
+            "node": "Build stub result — cluster_calculation_specialist",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    }
+  },
+  "active": false,
+  "settings": {
+    "executionOrder": "v1",
+    "saveManualExecutions": true,
+    "callerPolicy": "workflowsFromSameOwner",
+    "errorWorkflow": ""
+  },
+  "versionId": "b2c10800-f09c-5b6e-bf13-ba634fdb3fa6",
+  "meta": {
+    "templateCredsSetupCompleted": false,
+    "targetN8nVersion": "2.30.8",
+    "contractVersion": "1.0",
+    "extensionStub": true,
+    "specialistId": "cluster_calculation_specialist"
+  },
+  "tags": []
+}

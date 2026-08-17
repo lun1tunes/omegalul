@@ -268,12 +268,17 @@ const built=$('Build CAS error patch').first().json||{};
 const incoming=$json||{};
 const x={...built,...incoming,has_task_id:built.has_task_id!==false,task_id:built.task_id||incoming.task_id,safe_message:built.safe_message||incoming.safe_message,error_code:built.error_code||incoming.error_code,taxonomy_scenario:built.taxonomy_scenario||incoming.taxonomy_scenario,cas_status:built.cas_status||incoming.status||incoming.cas_status,restartable:built.restartable,human_gate:built.human_gate||null,last_error:built.last_error||null,findings:built.findings||[],stage:built.stage||'error',execution_id:built.execution_id||null,attempted:built.attempted||null,passthrough:built.passthrough||{}};
 const obj=v=>v&&typeof v==='object'&&!Array.isArray(v);
+const clean=v=>typeof v==='string'?v.trim():'';
 if(!x.has_task_id||!x.task_id){
   return[{json:{...x,activity_sync_ready:false,skip_trace:true}}];
 }
 const cas=obj(x.attempted)?x.attempted:(obj(x.cas_snapshot)?x.cas_snapshot:{});
 const version=Number(cas.version||x.human_gate?.expected_version||0)||null;
-const statusLabel=x.cas_status==='retryable_error'?'RETRYABLE_ERROR':x.cas_status==='failed'?'FATAL_ERROR':'CASE_ERROR';
+// awaiting_human from error path is HITL (wait), not a red CASE_ERROR block.
+const statusLabel=x.cas_status==='retryable_error'?'RETRYABLE_ERROR'
+  :x.cas_status==='failed'?'FATAL_ERROR'
+  :x.cas_status==='awaiting_human'?(clean(x.error_code)||'NEEDS_DECISION')
+  :'CASE_ERROR';
 const summary=x.safe_message;
 const details={
   error_code:x.error_code,

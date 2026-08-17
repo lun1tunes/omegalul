@@ -1,0 +1,79 @@
+{
+  "id": "e2590c64-c8c0-506f-b874-bed9e873bcc5",
+  "name": "Template — Binary Results Adapter",
+  "nodes": [
+    {
+      "parameters": {
+        "content": "## Template — Binary Results Adapter\n\nPattern: Excel Adapter anti-corruption layer — validate packet, extract from binaries, return typed `report_facts_packet`.\n\nInputs: `specialist_packet` + optional `previous_specialist_result` (cluster job refs) + binary result files on the item.\n\nDo not dump binaries into CAS JSON. Prefer local Code/Python runner or a small FastAPI sidecar (like excel-tools / math-service).\n\nDownstream: Presentation Assembler consumes `compact_data` + `artifact_refs`.",
+        "height": 360,
+        "width": 520,
+        "color": 5
+      },
+      "id": "76037635-623a-5bfb-b037-3d500e43d159",
+      "name": "Template — Binary Results Adapter README",
+      "type": "n8n-nodes-base.stickyNote",
+      "typeVersion": 1,
+      "position": [
+        -520,
+        -360
+      ]
+    },
+    {
+      "parameters": {
+        "inputSource": "jsonExample",
+        "jsonExample": "{\"specialist_packet\": {\"contract\": \"specialist_packet\", \"contract_version\": \"1.0\", \"task_id\": \"eng_example\", \"specialist_id\": \"binary_results_specialist\", \"attempt\": 1, \"objective\": \"Stub objective for binary_results_specialist\", \"inputs\": {}, \"controls\": {}, \"acceptance_criteria\": [], \"artifact_refs\": []}, \"previous_specialist_result\": {}, \"latest_human_response\": {}}"
+      },
+      "id": "1aa2c3ce-7d29-5ae7-a7fb-a6868cc3d4d1",
+      "name": "Receive binary_results_specialist packet",
+      "type": "n8n-nodes-base.executeWorkflowTrigger",
+      "typeVersion": 1.2,
+      "position": [
+        0,
+        0
+      ]
+    },
+    {
+      "parameters": {
+        "jsCode": "const item=$input.first();const incoming=item.json||{};\nconst object=v=>v&&typeof v==='object'&&!Array.isArray(v);\nconst parse=v=>{if(object(v))return v;if(typeof v==='string'){try{const p=JSON.parse(v);return object(p)?p:{}}catch{return {}}}return {}};\nconst packet=parse(incoming.specialist_packet);\nconst expectedId=\"binary_results_specialist\";\nconst packetValid=packet.contract==='specialist_packet'&&packet.contract_version==='1.0'&&typeof packet.task_id==='string'&&packet.task_id.trim()&&packet.specialist_id===expectedId&&Number.isInteger(packet.attempt)&&packet.attempt>=1&&typeof packet.objective==='string'&&packet.objective.trim()&&object(packet.inputs)&&object(packet.controls)&&Array.isArray(packet.acceptance_criteria)&&Array.isArray(packet.artifact_refs);\nconst implementSteps=[\"Validate attached binary result files (extensions, size bounds)\", \"Parse previous_specialist_result.artifact_refs / cluster job refs when present\", \"Extract typed fields into report_facts_packet (snapshot hash + correlation_id)\", \"Bind Orchestrator Call Binary Results Specialist; set configured:true; regen\"];\nconst binaryNames=Object.values(item.binary||{}).map(f=>String(f?.fileName||'')).filter(Boolean).slice(0,40);\nconst result={\n  contract:'specialist_result',\n  contract_version:'1.0',\n  task_id:String(packet.task_id||''),\n  specialist_id:expectedId,\n  attempt:Number(packet.attempt||1),\n  status:packetValid?'needs_decision':'fatal_error',\n  summary:packetValid\n    ?('Stub adapter only — implement SSH/tool nodes before setting configured:true in specialist_registry.v1.json.')\n    :('Invalid specialist_packet for '+expectedId),\n  deliverables:[],\n  artifact_refs:[],\n  compact_data:{\n    contract:\"report_facts_packet\",\n    contract_version:'1.0',\n    stub:true,\n    implement_steps:implementSteps,\n    attached_filenames:binaryNames\n  },\n  assumptions:[],\n  warnings:packetValid?['This support template is not a live specialist.']:['Packet contract failed.'],\n  evidence:[],\n  self_check:{performed:true,passed:false,checks:[{id:'stub_not_implemented',passed:false,detail:'Replace stub Code with real adapter logic'}],reproducibility:'stub'},\n  human_request:packetValid?{\n    kind:'needs_decision',\n    reason:'Specialist workflow is still the support stub. Complete implement_steps, bind Orchestrator Call node, set configured:true.',\n    questions:implementSteps.map((text,i)=>({id:'step_'+(i+1),text}))\n  }:null,\n  error:packetValid?null:{code:'INVALID_SPECIALIST_PACKET',message:'Packet failed validation for '+expectedId},\n  continuation:null,\n  decision_record:{decision:'stub',policy_reason_codes:['EXTENSION_STUB']},\n  user_message:packetValid?'Заглушка специалиста — см. implement_steps в compact_data.':'Ошибка контракта specialist_packet.'\n};\nreturn [{json:{specialist_result:result,specialist_packet:packet},binary:item.binary||{}}];"
+      },
+      "id": "06305879-e382-5049-9482-c61c928bb878",
+      "name": "Build stub result — binary_results_specialist",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        280,
+        0
+      ]
+    }
+  ],
+  "pinData": {},
+  "connections": {
+    "Receive binary_results_specialist packet": {
+      "main": [
+        [
+          {
+            "node": "Build stub result — binary_results_specialist",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    }
+  },
+  "active": false,
+  "settings": {
+    "executionOrder": "v1",
+    "saveManualExecutions": true,
+    "callerPolicy": "workflowsFromSameOwner",
+    "errorWorkflow": ""
+  },
+  "versionId": "8e4809bd-22d4-5766-a62d-217413c82eab",
+  "meta": {
+    "templateCredsSetupCompleted": false,
+    "targetN8nVersion": "2.30.8",
+    "contractVersion": "1.0",
+    "extensionStub": true,
+    "specialistId": "binary_results_specialist"
+  },
+  "tags": []
+}

@@ -128,6 +128,33 @@ def test_sync_preserves_presentation_fields() -> None:
     assert feed["activity"][0]["duration_label"] == "9.4 s"
 
 
+def test_ingest_sync_stored_false_when_title_unchanged_no_turns() -> None:
+    """No-turns meta path: stored mirrors actual persist, not mere presence of title/objective."""
+    import asyncio
+
+    from app.main import SyncPost, _ingest_sync, _tasks
+
+    task_id = "act_meta_noop_1"
+
+    async def _run() -> None:
+        body = SyncPost(task_id=task_id, turns=[], events=[])
+        first = await _ingest_sync(body, title="Same title", objective="Same objective")
+        assert first["stored"] is True
+        assert first["count"] == 0
+        assert _tasks[task_id]["title"] == "Same title"
+
+        second = await _ingest_sync(body, title="Same title", objective="Same objective")
+        assert second["stored"] is False
+        assert second["count"] == 0
+
+        third = await _ingest_sync(body, title="Changed title", objective="Same objective")
+        assert third["stored"] is True
+        assert third["count"] == 0
+        assert _tasks[task_id]["title"] == "Changed title"
+
+    asyncio.run(_run())
+
+
 def test_awaiting_accepts_uppercase_status_from_sync_gate_event() -> None:
     """Bug 1: AWAITING_HUMAN + human_gate must arm awaiting_human for the HITL composer."""
     gate = {
@@ -315,6 +342,45 @@ def test_semantic_diff_from_hydrate_and_demo() -> None:
     assert demo_feed["semantic_diff"]["edits"]
 
 
+def test_semantic_diff_include_graph_only() -> None:
+    """INCLUDE-graph-only diffs must survive public shaping for the expander."""
+    from app.main import _semantic_diff_public
+
+    assert _semantic_diff_public({"include_graph_changed": True}) == {"include_graph_changed": True}
+    assert _semantic_diff_public({"include_graph_changed": False}) is None
+    assert _semantic_diff_public({}) is None
+
+    res = client.post(
+        "/v1/hydrate",
+        headers=KEY,
+        json={
+            "contract": "mas_activity_feed_hydrate",
+            "ok": True,
+            "task_id": "act_sem_diff_include_only",
+            "title": "Include only",
+            "status": "awaiting_human",
+            "compact_data": {"semantic_diff": {"include_graph_changed": True}},
+            "events": [
+                {
+                    "event_type": "handoff",
+                    "task_id": "act_sem_diff_include_only",
+                    "at": "2026-08-16T12:00:00+00:00",
+                    "status": "AWAITING_HUMAN",
+                    "summary": "review",
+                    "from_role": "Orchestrator",
+                    "to_role": "Human",
+                }
+            ],
+        },
+    )
+    assert res.status_code == 200
+    assert res.json().get("feed", {}).get("semantic_diff") is True
+    feed = client.get("/v1/tasks/act_sem_diff_include_only").json()
+    assert feed["semantic_diff"]["include_graph_changed"] is True
+    assert feed["semantic_diff"].get("summary") in (None, "")
+    assert "changed_keywords" not in feed["semantic_diff"]
+
+
 def test_maybe_capture_schedule_null_output_package() -> None:
     """merge_result.output_package: null must not AttributeError during capture."""
     from app.main import _maybe_capture_schedule, _new_task_shell
@@ -469,7 +535,7 @@ def test_ready_health_and_static_assets() -> None:
     assert "tone-error" in css_text
     assert "schedule-download-row" in css_text
     assert "diff-expander" in css_text
-    assert "minmax(16rem" in css_text
+    assert "grid-template-columns: 280px 1fr" in css_text
     assert "showFlash" in js_text
     assert "alert(" not in js_text
     assert "human_gate ?? data.gate" in js_text
@@ -518,8 +584,10 @@ def test_local_start_task_with_files(tmp_path: Path, monkeypatch) -> None:
     feed = client.get(f"/v1/tasks/{task_id}").json()
     assert feed["title"].startswith("REVISE")
     assert feed["objective"] == "REVISE даты ввода по Excel"
+    assert feed["attached_files"] == ["dates.xlsx", "schedule.inc"]
     assert feed["activity"][0]["status"] == "TASK_STARTED"
     assert feed["activity"][0]["details"]["objective"] == "REVISE даты ввода по Excel"
+    assert feed["activity"][0]["details"]["files"] == ["dates.xlsx", "schedule.inc"]
     assert feed["awaiting_human"] is True
 
 

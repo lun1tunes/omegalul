@@ -21,6 +21,9 @@
     "workflows/core/universal-engineering-orchestrator.workflow.json",
     "workflows/support/ai-components.workflow.json",
     "workflows/support/engineering-specialist-template.workflow.json",
+    "workflows/support/cluster-calc-specialist-adapter.workflow.json",
+    "workflows/support/binary-results-specialist-adapter.workflow.json",
+    "workflows/support/presentation-specialist-adapter.workflow.json",
     "workflows/support/excel-extraction-form-adapter.workflow.json"
   ],
   "runtime_import_order": [
@@ -47,7 +50,19 @@
     },
     {
       "workflow": "workflows/support/engineering-specialist-template.workflow.json",
-      "reason": "extension template"
+      "reason": "extension template (LLM specialist clone)"
+    },
+    {
+      "workflow": "workflows/support/cluster-calc-specialist-adapter.workflow.json",
+      "reason": "extension stub — cluster SSH/job adapter (configured:false)"
+    },
+    {
+      "workflow": "workflows/support/binary-results-specialist-adapter.workflow.json",
+      "reason": "extension stub — binary results extractor (configured:false)"
+    },
+    {
+      "workflow": "workflows/support/presentation-specialist-adapter.workflow.json",
+      "reason": "extension stub — presentation assembler (configured:false)"
     },
     {
       "workflow": "workflows/support/ai-components.workflow.json",
@@ -298,11 +313,34 @@
   "optional_execute_workflow_bindings": [
     {
       "node": "Call Data Specialist",
-      "placeholder": "REPLACE_DATA_SPECIALIST_IN_UI"
+      "placeholder": "REPLACE_DATA_SPECIALIST_IN_UI",
+      "note": "legacy stub — do not bind unless you own this route"
     },
     {
       "node": "Call Document Specialist",
-      "placeholder": "REPLACE_DOCUMENT_SPECIALIST_IN_UI"
+      "placeholder": "REPLACE_DOCUMENT_SPECIALIST_IN_UI",
+      "note": "legacy stub — do not bind unless you own this route"
+    },
+    {
+      "owner": "Orchestrator — Engineering MAS",
+      "node": "Call Cluster Calculation Specialist",
+      "target": "Template — Cluster Calculation Adapter",
+      "placeholder": "REPLACE_CLUSTER_CALC_ADAPTER_IN_UI",
+      "note": "support stub; set configured:true after real implementation"
+    },
+    {
+      "owner": "Orchestrator — Engineering MAS",
+      "node": "Call Binary Results Specialist",
+      "target": "Template — Binary Results Adapter",
+      "placeholder": "REPLACE_BINARY_RESULTS_ADAPTER_IN_UI",
+      "note": "support stub; set configured:true after real implementation"
+    },
+    {
+      "owner": "Orchestrator — Engineering MAS",
+      "node": "Call Presentation Specialist",
+      "target": "Template — Presentation Assembler",
+      "placeholder": "REPLACE_PRESENTATION_ADAPTER_IN_UI",
+      "note": "support stub; set configured:true after real implementation"
     }
   ],
   "required_credentials": [

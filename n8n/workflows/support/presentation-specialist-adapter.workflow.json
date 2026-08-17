@@ -1,0 +1,79 @@
+{
+  "id": "6a328299-5712-5005-8d93-df1d462a40ef",
+  "name": "Template — Presentation Assembler",
+  "nodes": [
+    {
+      "parameters": {
+        "content": "## Template — Presentation Assembler\n\nAssemble slides/charts from **already extracted** report facts — do not re-run cluster jobs or re-parse binaries.\n\nPrefer deterministic assembly (Calc-style adapter). Clone `Template — Engineering Specialist` only if narrative layout needs an LLM, and keep tools allowlisted.\n\nOutput: `deliverables` + `artifact_refs` (pptx/png/html) + `compact_data.presentation_compact` (slide index / chart specs).",
+        "height": 360,
+        "width": 520,
+        "color": 5
+      },
+      "id": "636fcdef-3376-5799-9e11-2de277580f00",
+      "name": "Template — Presentation Assembler README",
+      "type": "n8n-nodes-base.stickyNote",
+      "typeVersion": 1,
+      "position": [
+        -520,
+        -360
+      ]
+    },
+    {
+      "parameters": {
+        "inputSource": "jsonExample",
+        "jsonExample": "{\"specialist_packet\": {\"contract\": \"specialist_packet\", \"contract_version\": \"1.0\", \"task_id\": \"eng_example\", \"specialist_id\": \"presentation_specialist\", \"attempt\": 1, \"objective\": \"Stub objective for presentation_specialist\", \"inputs\": {}, \"controls\": {}, \"acceptance_criteria\": [], \"artifact_refs\": []}, \"previous_specialist_result\": {}, \"latest_human_response\": {}}"
+      },
+      "id": "b5b8238c-83be-5054-95c6-e1a91d584fad",
+      "name": "Receive presentation_specialist packet",
+      "type": "n8n-nodes-base.executeWorkflowTrigger",
+      "typeVersion": 1.2,
+      "position": [
+        0,
+        0
+      ]
+    },
+    {
+      "parameters": {
+        "jsCode": "const item=$input.first();const incoming=item.json||{};\nconst object=v=>v&&typeof v==='object'&&!Array.isArray(v);\nconst parse=v=>{if(object(v))return v;if(typeof v==='string'){try{const p=JSON.parse(v);return object(p)?p:{}}catch{return {}}}return {}};\nconst packet=parse(incoming.specialist_packet);\nconst expectedId=\"presentation_specialist\";\nconst packetValid=packet.contract==='specialist_packet'&&packet.contract_version==='1.0'&&typeof packet.task_id==='string'&&packet.task_id.trim()&&packet.specialist_id===expectedId&&Number.isInteger(packet.attempt)&&packet.attempt>=1&&typeof packet.objective==='string'&&packet.objective.trim()&&object(packet.inputs)&&object(packet.controls)&&Array.isArray(packet.acceptance_criteria)&&Array.isArray(packet.artifact_refs);\nconst implementSteps=[\"Read report_facts_packet from previous_specialist_result.compact_data\", \"Build slide index + chart specs; render or call a deck service\", \"Return artifact_refs for the deck/images; keep compact_data small\", \"Bind Orchestrator Call Presentation Specialist; set configured:true; regen\"];\nconst binaryNames=Object.values(item.binary||{}).map(f=>String(f?.fileName||'')).filter(Boolean).slice(0,40);\nconst result={\n  contract:'specialist_result',\n  contract_version:'1.0',\n  task_id:String(packet.task_id||''),\n  specialist_id:expectedId,\n  attempt:Number(packet.attempt||1),\n  status:packetValid?'needs_decision':'fatal_error',\n  summary:packetValid\n    ?('Stub adapter only — implement SSH/tool nodes before setting configured:true in specialist_registry.v1.json.')\n    :('Invalid specialist_packet for '+expectedId),\n  deliverables:[],\n  artifact_refs:[],\n  compact_data:{\n    contract:\"presentation_compact\",\n    contract_version:'1.0',\n    stub:true,\n    implement_steps:implementSteps,\n    attached_filenames:binaryNames\n  },\n  assumptions:[],\n  warnings:packetValid?['This support template is not a live specialist.']:['Packet contract failed.'],\n  evidence:[],\n  self_check:{performed:true,passed:false,checks:[{id:'stub_not_implemented',passed:false,detail:'Replace stub Code with real adapter logic'}],reproducibility:'stub'},\n  human_request:packetValid?{\n    kind:'needs_decision',\n    reason:'Specialist workflow is still the support stub. Complete implement_steps, bind Orchestrator Call node, set configured:true.',\n    questions:implementSteps.map((text,i)=>({id:'step_'+(i+1),text}))\n  }:null,\n  error:packetValid?null:{code:'INVALID_SPECIALIST_PACKET',message:'Packet failed validation for '+expectedId},\n  continuation:null,\n  decision_record:{decision:'stub',policy_reason_codes:['EXTENSION_STUB']},\n  user_message:packetValid?'Заглушка специалиста — см. implement_steps в compact_data.':'Ошибка контракта specialist_packet.'\n};\nreturn [{json:{specialist_result:result,specialist_packet:packet},binary:item.binary||{}}];"
+      },
+      "id": "c6f99bfe-0bd6-5bf0-b3a9-748a9199f28f",
+      "name": "Build stub result — presentation_specialist",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        280,
+        0
+      ]
+    }
+  ],
+  "pinData": {},
+  "connections": {
+    "Receive presentation_specialist packet": {
+      "main": [
+        [
+          {
+            "node": "Build stub result — presentation_specialist",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    }
+  },
+  "active": false,
+  "settings": {
+    "executionOrder": "v1",
+    "saveManualExecutions": true,
+    "callerPolicy": "workflowsFromSameOwner",
+    "errorWorkflow": ""
+  },
+  "versionId": "71e11a47-2241-5a70-9e21-72cf705cfc2e",
+  "meta": {
+    "templateCredsSetupCompleted": false,
+    "targetN8nVersion": "2.30.8",
+    "contractVersion": "1.0",
+    "extensionStub": true,
+    "specialistId": "presentation_specialist"
+  },
+  "tags": []
+}

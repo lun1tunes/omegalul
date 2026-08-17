@@ -223,6 +223,7 @@ def _new_task_shell(task_id: str) -> dict[str, Any]:
         "task_id": task_id,
         "title": None,
         "objective": None,
+        "attached_files": [],
         "updated_at": _now(),
         "turns": [],
         "status": None,
@@ -269,6 +270,11 @@ def _store_schedule_artifact(task: dict[str, Any], filename: str | None, text: s
     encoded = body.encode("utf-8")
     if len(encoded) > MAX_SCHEDULE_ARTIFACT_BYTES:
         return False
+        
+    prev = task.get("schedule_artifact")
+    if prev and prev.get("text") == body:
+        return False
+        
     task["schedule_artifact"] = {
         "filename": _safe_schedule_filename(filename),
         "text": body,
@@ -307,7 +313,8 @@ def _semantic_diff_public(diff: Any) -> dict[str, Any] | None:
         if item:
             edits_out.append(item)
     summary = str(diff.get("summary") or diff.get("message") or "").strip()[:800]
-    if not summary and not keywords and not edits_out and not wells:
+    include_graph_changed = diff.get("include_graph_changed") is True
+    if not summary and not keywords and not edits_out and not wells and not include_graph_changed:
         return None
     out: dict[str, Any] = {}
     if summary:
@@ -318,7 +325,7 @@ def _semantic_diff_public(diff: Any) -> dict[str, Any] | None:
         out["commissioning_wells"] = wells
     if edits_out:
         out["edits"] = edits_out
-    if diff.get("include_graph_changed") is True:
+    if include_graph_changed:
         out["include_graph_changed"] = True
     return out or None
 
@@ -340,8 +347,13 @@ def _maybe_capture_semantic_diff(task: dict[str, Any], payload: dict[str, Any] |
     if not diff:
         return False
     prev = task.get("semantic_diff")
+    if prev:
+        # Compare without updated_at
+        prev_data = {k: v for k, v in prev.items() if k != "updated_at"}
+        if prev_data == diff:
+            return False
     task["semantic_diff"] = {**diff, "updated_at": _now()}
-    return prev != task["semantic_diff"]
+    return True
 
 
 def _maybe_capture_schedule(task: dict[str, Any], payload: dict[str, Any] | None) -> bool:
@@ -415,6 +427,40 @@ def _set_objective(task: dict[str, Any], objective: str | None) -> None:
     task["objective"] = text[:8000]
 
 
+def _normalize_filenames(raw: Any) -> list[str]:
+    """Accept list[str], list[{filename}], or comma-separated string → unique basenames."""
+    names: list[str] = []
+
+    def add(name: str) -> None:
+        text = str(name or "").strip().replace("\\", "/").split("/")[-1]
+        if not text or text in names:
+            return
+        names.append(text[:512])
+
+    if isinstance(raw, list):
+        for item in raw:
+            if isinstance(item, dict):
+                add(str(item.get("filename") or item.get("name") or ""))
+            else:
+                add(str(item or ""))
+            if len(names) >= 32:
+                break
+    elif isinstance(raw, str) and raw.strip():
+        for part in raw.split(","):
+            add(part)
+            if len(names) >= 32:
+                break
+    return names
+
+
+def _set_attached_files(task: dict[str, Any], raw: Any) -> None:
+    """Store start/CAS attachment names. Non-empty incoming replaces prior list."""
+    names = _normalize_filenames(raw)
+    if not names:
+        return
+    task["attached_files"] = names
+
+
 def _parse_ts(value: Any) -> datetime | None:
     if not isinstance(value, str) or not value.strip():
         return None
@@ -470,6 +516,23 @@ def _task_objective(task: dict[str, Any]) -> str | None:
             if isinstance(val, str) and val.strip():
                 return val.strip()[:8000]
     return None
+
+
+def _task_attached_files(task: dict[str, Any]) -> list[str]:
+    stored = _normalize_filenames(task.get("attached_files"))
+    if stored:
+        return stored
+    for turn in task.get("turns") or []:
+        if not isinstance(turn, dict):
+            continue
+        details = turn.get("details") if isinstance(turn.get("details"), dict) else {}
+        status = str(turn.get("status") or "").upper()
+        if status != "TASK_STARTED" and details.get("action") != "start":
+            continue
+        names = _normalize_filenames(details.get("files") or details.get("attached_files"))
+        if names:
+            return names
+    return []
 
 
 def _normalize_turn(raw: TurnIn | dict[str, Any], *, trace_id: str | None = None) -> dict[str, Any]:
@@ -554,6 +617,7 @@ async def _append_turns(
     *,
     title: str | None = None,
     objective: str | None = None,
+    attached_files: Any = None,
     replace: bool = False,
     source: str = "live",
 ) -> list[dict[str, Any]]:
@@ -565,6 +629,9 @@ async def _append_turns(
     async with _lock:
         task = _touch(task_id)
         live_keep: list[dict[str, Any]] = []
+        
+        existing = {_turn_fingerprint(t) for t in task["turns"] if isinstance(t, dict)}
+        
         if replace:
             live_keep = [
                 dict(t)
@@ -572,41 +639,74 @@ async def _append_turns(
                 if isinstance(t, dict) and str(t.get("source") or "") == "live"
             ]
             task["turns"] = []
-        if title:
+            
+        title_changed = False
+        if title and task.get("title") != title:
             task["title"] = title
+            title_changed = True
+            
+        prior_objective = task.get("objective")
         _set_objective(task, objective)
-        existing = {_turn_fingerprint(t) for t in task["turns"] if isinstance(t, dict)}
+        objective_changed = prior_objective != task.get("objective")
+
+        prior_files = list(task.get("attached_files") or [])
+        _set_attached_files(task, attached_files)
+        files_changed = prior_files != list(task.get("attached_files") or [])
+        
         stored = []
+        seen_in_this_batch = set()
+        
         for turn in turns:
             turn = dict(turn)
             turn["source"] = source
             key = _turn_fingerprint(turn)
-            if key in existing:
+            
+            if key in seen_in_this_batch:
                 continue
-            existing.add(key)
+            seen_in_this_batch.add(key)
+            
+            # If we are not replacing and it exists, skip entirely
+            if not replace and key in existing:
+                continue
+                
             turn["turn_id"] = len(task["turns"]) + 1
             task["turns"].append(turn)
-            stored.append(turn)
+            
+            # Only broadcast and count as "new" if it wasn't in existing
+            if key not in existing:
+                stored.append(turn)
+                existing.add(key)
+                
         if replace and live_keep:
             for turn in live_keep:
                 key = _turn_fingerprint(turn)
-                if key in existing:
+                if key in seen_in_this_batch:
                     continue
-                existing.add(key)
+                seen_in_this_batch.add(key)
+                
                 turn["source"] = "live"
                 turn["turn_id"] = len(task["turns"]) + 1
                 task["turns"].append(turn)
+                
+                if key not in existing:
+                    stored.append(turn)
+                    existing.add(key)
+                    
             task["turns"].sort(key=lambda t: str(t.get("at") or ""))
             for index, item in enumerate(task["turns"], start=1):
                 item["turn_id"] = index
+                
         if len(task["turns"]) > MAX_TURNS_PER_TASK:
             task["turns"] = task["turns"][-MAX_TURNS_PER_TASK :]
             for index, item in enumerate(task["turns"], start=1):
                 item["turn_id"] = index
+                
         task["transcript_loaded"] = True
-        if stored or title or objective or replace:
+        
+        if stored or title_changed or objective_changed or files_changed:
             task["updated_at"] = _now()
         _persist()
+        
     for turn in stored:
         await _publish(task_id, {"type": "turn", "task_id": task_id, "turn": turn})
     return stored
@@ -623,21 +723,41 @@ async def _set_gate(
 ) -> dict[str, Any]:
     async with _lock:
         task = _touch(task_id)
-        if status is not None:
-            task["status"] = _normalize_task_status(status) or status
+        changed = False
+        
+        norm_status = _normalize_task_status(status) or status
+        if status is not None and task.get("status") != norm_status:
+            task["status"] = norm_status
+            changed = True
+            
         if version is not None:
+            prior_version = task.get("version")
             _merge_version(task, version)
-        if clear_gate:
+            if task.get("version") != prior_version:
+                changed = True
+                
+        if clear_gate and task.get("gate") is not None:
             task["gate"] = None
-        elif gate is not None:
+            changed = True
+        elif gate is not None and task.get("gate") != dict(gate):
             task["gate"] = dict(gate)
+            changed = True
+            
         if message is not None:
             text = str(message).strip()
-            task["status_message"] = text[:1200] if text else None
-        elif status is not None:
+            norm_message = text[:1200] if text else None
+            if task.get("status_message") != norm_message:
+                task["status_message"] = norm_message
+                changed = True
+        elif status is not None and task.get("status_message") is not None:
             # Status refresh without a message must not keep a stale conflict/error banner.
             task["status_message"] = None
-        task["updated_at"] = _now()
+            changed = True
+            
+        if changed:
+            task["updated_at"] = _now()
+            _persist()
+            
         snapshot = {
             "status": task.get("status"),
             "version": task.get("version"),
@@ -647,7 +767,6 @@ async def _set_gate(
             "status_message": task.get("status_message"),
             "updated_at": task["updated_at"],
         }
-        _persist()
     await _publish(
         task_id,
         {
@@ -868,6 +987,7 @@ async def _ingest_sync(
     *,
     title: str | None = None,
     objective: str | None = None,
+    attached_files: Any = None,
     replace_turns: bool = False,
 ) -> dict[str, Any]:
     turns = [_normalize_turn(t, trace_id=body.trace_id) for t in body.turns]
@@ -903,26 +1023,42 @@ async def _ingest_sync(
             clear_gate=clear_gate,
         )
     stored: list[dict[str, Any]] = []
+    meta_written = False
     if turns or replace_turns:
         stored = await _append_turns(
             body.task_id,
             turns,
             title=title,
             objective=objective,
+            attached_files=attached_files,
             replace=replace_turns,
             source="cas" if replace_turns else "live",
         )
     else:
         async with _lock:
             task = _touch(body.task_id)
-            if title:
+            changed = False
+
+            if title and task.get("title") != title:
                 task["title"] = title
+                changed = True
+
+            prior_objective = task.get("objective")
             _set_objective(task, objective)
-            if title or objective:
+            if prior_objective != task.get("objective"):
+                changed = True
+
+            prior_files = list(task.get("attached_files") or [])
+            _set_attached_files(task, attached_files)
+            if prior_files != list(task.get("attached_files") or []):
+                changed = True
+
+            if changed:
                 task["updated_at"] = _now()
-            _persist()
+                _persist()
+                meta_written = True
     return {
-        "stored": bool(stored) or bool(title) or bool(objective) or gate_ok or explicit_status or replace_turns,
+        "stored": bool(stored) or meta_written or gate_ok or explicit_status or replace_turns,
         "task_id": body.task_id,
         "count": len(stored),
         "turns": stored,
@@ -957,9 +1093,9 @@ def _catalog_rows(limit: int) -> list[dict[str, Any]]:
                 awaiting_human=_awaiting(task),
             ).model_dump()
         )
-    # Newest first regardless of _touch append order (list hydrate is newest-first).
+    # Newest-first rail: index 0 is the most recently updated task (contract + UI).
     rows.sort(key=lambda row: str(row.get("updated_at") or ""), reverse=True)
-    return rows[:limit]
+    return rows[:limit] if limit else rows
 
 
 def _list_catalog_complete(payload: dict[str, Any], returned_n: int) -> bool:
@@ -998,6 +1134,7 @@ async def _apply_list_hydrate(payload: dict[str, Any], *, prune_missing: bool = 
                 task["title"] = title
             objective = str(raw.get("objective") or "").strip() or None
             _set_objective(task, objective)
+            _set_attached_files(task, raw.get("attached_files") or raw.get("input_files"))
             status = _normalize_task_status(raw.get("status"))
             gate = raw.get("human_gate") if isinstance(raw.get("human_gate"), dict) else None
             gate_ok = bool(gate and gate.get("gate_id"))
@@ -1066,8 +1203,15 @@ async def _apply_feed_hydrate(payload: dict[str, Any]) -> dict[str, Any]:
     )
     title = str(payload.get("title") or "").strip() or None
     objective = str(payload.get("objective") or "").strip() or None
+    attached = payload.get("attached_files") or payload.get("input_files")
     # Replace transcript atomically inside _ingest_sync/_append_turns (no empty window on failure).
-    result = await _ingest_sync(body, title=title, objective=objective, replace_turns=True)
+    result = await _ingest_sync(
+        body,
+        title=title,
+        objective=objective,
+        attached_files=attached,
+        replace_turns=True,
+    )
     async with _lock:
         task = _tasks.get(task_id)
         changed = False
@@ -1078,6 +1222,7 @@ async def _apply_feed_hydrate(payload: dict[str, Any]) -> dict[str, Any]:
             changed = True
             result = {**result, "semantic_diff": True}
         if changed:
+            task["updated_at"] = _now()
             _persist()
     return result
 
@@ -1144,6 +1289,7 @@ def _task_feed(task_id: str) -> dict[str, Any]:
         "task_id": task_id,
         "title": task.get("title"),
         "objective": _task_objective(task),
+        "attached_files": _task_attached_files(task),
         "updated_at": task["updated_at"],
         "status": task.get("status"),
         "status_message": task.get("status_message"),
@@ -1240,9 +1386,14 @@ async def get_gate(task_id: str, refresh: bool = Query(default=False)) -> dict[s
         async with _lock:
             task = _tasks.get(task_id)
             if task and orch:
-                _maybe_capture_schedule(task, orch)
-                _maybe_capture_semantic_diff(task, orch)
-                _persist()
+                changed = False
+                if _maybe_capture_schedule(task, orch):
+                    changed = True
+                if _maybe_capture_semantic_diff(task, orch):
+                    changed = True
+                if changed:
+                    task["updated_at"] = _now()
+                    _persist()
         task = _tasks[task_id]
     elif not task:
         raise HTTPException(status_code=404, detail="Task not found")
@@ -1329,7 +1480,7 @@ def _start_turn(*, requested_by: str, description: str, file_names: list[str], b
                 "requested_by": requested_by,
                 "objective": description[:4000],
                 "file_count": len(file_names),
-                "files": ", ".join(file_names[:12]) if file_names else None,
+                "files": file_names[:12],
                 "backend": backend,
             },
             "event_type": "hitl",
@@ -1476,7 +1627,13 @@ async def post_start_task(
 
     title = description[:80] + ("…" if len(description) > 80 else "")
     turn = _start_turn(requested_by=by, description=description, file_names=file_names, backend=backend)
-    await _append_turns(task_id, [turn], title=title, objective=description)
+    await _append_turns(
+        task_id,
+        [turn],
+        title=title,
+        objective=description,
+        attached_files=file_names,
+    )
 
     gate = orch.get("human_gate") if isinstance(orch.get("human_gate"), dict) else None
     status = orch.get("status")
@@ -1518,8 +1675,13 @@ async def post_start_task(
     async with _lock:
         task = _tasks.get(task_id)
         if task:
-            _maybe_capture_schedule(task, orch if isinstance(orch, dict) else None)
-            _maybe_capture_semantic_diff(task, orch if isinstance(orch, dict) else None)
+            changed = False
+            if _maybe_capture_schedule(task, orch if isinstance(orch, dict) else None):
+                changed = True
+            if _maybe_capture_semantic_diff(task, orch if isinstance(orch, dict) else None):
+                changed = True
+            if changed:
+                task["updated_at"] = _now()
             _persist()
             schedule_meta = _schedule_artifact_meta(task)
             semantic_diff = task.get("semantic_diff") if isinstance(task.get("semantic_diff"), dict) else None
@@ -1747,8 +1909,13 @@ async def post_hitl(task_id: str, body: HitlPost, _: None = Depends(_require_key
     async with _lock:
         task = _tasks.get(task_id)
         if task:
-            _maybe_capture_schedule(task, orch if isinstance(orch, dict) else None)
-            _maybe_capture_semantic_diff(task, orch if isinstance(orch, dict) else None)
+            changed = False
+            if _maybe_capture_schedule(task, orch if isinstance(orch, dict) else None):
+                changed = True
+            if _maybe_capture_semantic_diff(task, orch if isinstance(orch, dict) else None):
+                changed = True
+            if changed:
+                task["updated_at"] = _now()
             _persist()
             schedule_meta = _schedule_artifact_meta(task)
             semantic_diff = task.get("semantic_diff") if isinstance(task.get("semantic_diff"), dict) else None
@@ -1823,6 +1990,7 @@ async def stream_task(task_id: str) -> StreamingResponse:
                     "task_id": task_id,
                     "title": task.get("title"),
                     "objective": _task_objective(task),
+                    "attached_files": _task_attached_files(task),
                     "activity": task["turns"],
                     "updated_at": task["updated_at"],
                     "status": task.get("status"),
@@ -1837,7 +2005,7 @@ async def stream_task(task_id: str) -> StreamingResponse:
                 }
                 yield f"data: {json.dumps(payload, ensure_ascii=False)}\n\n"
             else:
-                yield f"data: {json.dumps({'type': 'snapshot', 'task_id': task_id, 'activity': [], 'awaiting_human': False, 'human_gate': None, 'objective': None})}\n\n"
+                yield f"data: {json.dumps({'type': 'snapshot', 'task_id': task_id, 'activity': [], 'awaiting_human': False, 'human_gate': None, 'objective': None, 'attached_files': []})}\n\n"
             while True:
                 try:
                     msg = await asyncio.wait_for(queue.get(), timeout=15.0)

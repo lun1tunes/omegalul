@@ -1,53 +1,50 @@
-# Petroleum Engineering MAS — развёртывание (n8n 2.30.8)
+# Руководство по развёртыванию Petroleum Engineering MAS (n8n 2.30.8)
 
-**Единственный канонический документ.** Пошаговый гайд: что поднять, что настроить, в каком порядке.
+Это основной и единственный документ по развертыванию мультиагентной системы. Здесь описан пошаговый процесс: что нужно запустить, как настроить и в каком порядке это делать.
 
-MVP строит и проверяет `SCHEDULE` (`CREATE` / preserve-by-default `REVISE`). Входы: `.data/.inc`, Excel, `.dev`, CPS3. Выход: текст `schedule.inc`.
+Наша система (MVP) предназначена для сборки и проверки файлов `SCHEDULE` (создание с нуля или безопасное редактирование). На вход мы подаем данные (`.data/.inc`, Excel-файлы, `.dev`, поверхности CPS3), а на выходе получаем готовый текстовый файл `schedule.inc`.
 
-| Артефакт | Роль |
-|---|---|
-| Этот файл | Runbook: Windows-сервисы → UI-импорт → bindings → RAG → Health → activate |
-| [`n8n/import-manifest.json`](n8n/import-manifest.json) | Имена workflow, 28 bindings, credentials |
-| [`n8n/data-tables/`](n8n/data-tables/) | CSV lean CAS + trace |
-| [`n8n/workflows/`](n8n/workflows/) | JSON для Import from File |
-
-### Жёсткие правила (работа)
-
-| Что | Как только так |
-|---|---|
-| **n8n** | Только **UI**: Import from File, Data Tables, credentials, bindings, Activate. Без REST-импорта workflow и без Compose-n8n на полевом ПК. |
-| **Excel / Math / Activity** | Только **Windows** `setup-windows.bat` → `.env` → `start-windows.bat`. |
-| **Postgres + PGVector** | Тот, что у корпоративного n8n; credential SSL = Disable, если без TLS. |
-| **Секреты** | Не в workflow / `$env` / Global Variables. URL и ключи — в нодах, credentials, Windows `*.env`. |
-
-Лабораторный Compose — §6, не полевой канон.
+### Главные правила работы
+Пожалуйста, придерживайтесь следующих ограничений, чтобы избежать проблем:
+- **n8n:** Используйте только графический интерфейс (UI) корпоративного n8n. Все процессы импортируются вручную ("Import from File"), там же настраиваются Data Tables, Credentials и Bindings. Никакого REST-импорта или Docker Compose на рабочем (полевом) компьютере.
+- **Внешние сервисы (Excel / Math / Activity):** Запускаются строго под Windows через `.bat` скрипты. Мы настраиваем `.env` файлы и запускаем их вручную.
+- **База данных (PostgreSQL + PGVector):** Используем ту базу, что уже подключена к вашему корпоративному n8n. Если в сети нет TLS-сертификатов, не забудьте отключить проверку SSL (`SSL = Disable`).
+- **Безопасность (Секреты):** Никаких паролей или токенов внутри workflows, глобальных переменных или `$env`. Все ключи должны храниться либо в защищенных credentials внутри n8n, либо в файлах `.env` на стороне Windows.
 
 ---
 
-## 0. Перенос репозитория на работу (`all.txt`)
+## 0. Перенос проекта на рабочую машину
 
-На машине с git:
+Поскольку на рабочих компьютерах может не быть доступа к git или интернету, мы переносим проект архивом.
 
+**На вашем компьютере с интернетом и git:**
 ```bash
-python3 scripts/project_pack.py pack          # → all.txt (gitignore / .venv / *.env не входят)
-python3 scripts/project_pack.py split         # опционально: all1, all2, … если лимит на файл
+# Упаковываем весь проект в один текстовый файл (без секретов и кэша)
+python3 scripts/project_pack.py pack
+
+# Если есть ограничения на размер переносимого файла, можно разбить архив:
+python3 scripts/project_pack.py split
 ```
 
-На работу копируете **`scripts/project_pack.py`** + **`all.txt`** (или чанки `all1…`).
-
+**На рабочем компьютере:**
+Перенесите скрипт `scripts/project_pack.py` и получившийся файл `all.txt` (или его части).
 ```bash
-python3 project_pack.py join                  # только если принесли чанки
-python3 project_pack.py unpack                # восстанавливает дерево рядом со скриптом
-```
+# Если вы разбивали архив на части, сначала склейте его:
+python3 project_pack.py join
 
-В архив входят: `excel-agent-tools/`, `fastapi-math-service/`, `mas-activity-service/`, `n8n/`, `scripts/`, плюс корневые `.env.example`, `docs.md`, `README.md`, `docker-compose.yml`, `.gitignore`. Секреты и прочие gitignored файлы **не** пакуются. Дальше — Step 0 ниже.
+# Распаковываем проект:
+python3 project_pack.py unpack
+```
+После распаковки вы получите все необходимые папки (`n8n`, `excel-agent-tools`, `mas-activity-service` и т.д.). Пароли и секреты переносить не нужно — они задаются заново.
 
 ---
 
-## 1. Карта системы
+## 1. Архитектура системы
 
-Имена — `n8n/import-manifest.json` и поле `name` в JSON.  
-Цвет: **оранжевый = LLM**, **зелёный = RAG**, **синий = FastAPI**.
+Ниже представлена схема взаимодействия компонентов.
+- **Синие блоки:** Локальные FastAPI-сервисы (Activity, Math, Excel-tools).
+- **Оранжевые блоки:** LLM-компоненты (Оркестратор, Планировщик).
+- **Зеленые блоки:** База знаний (RAG).
 
 ```mermaid
 flowchart TB
@@ -59,23 +56,23 @@ flowchart TB
   classDef data fill:#f9fafb,stroke:#9ca3af,color:#374151
 
   User[Инженер]:::entry
-  Entry[Entry]:::entry
+  Entry[Входная форма]:::entry
   Gate[Human Gate]:::entry
   Health[Health Check]:::entry
-  Orch[Orchestrator]:::box
+  Orch[Оркестратор]:::box
   OrchLLM[LLM]:::llm
   CasPersist[CAS Persist]:::box
-  TaskDT[(tasks)]:::data
+  TaskDT[(Задачи)]:::data
   Trace[Trace Writer]:::box
-  TraceDT[(trace)]:::data
+  TraceDT[(История)]:::data
   Activity[Activity UI]:::svc
-  ExcelAdapt[Excel Adapter]:::box
+  ExcelAdapt[Адаптер Excel]:::box
   ExcelAgent[Excel Extractor]:::box
-  ExcelTools[excel-agent-tools]:::svc
-  SRetr[Knowledge Retrieval]:::rag
+  ExcelTools[Инструменты Excel]:::svc
+  SRetr[Retrieval Knowledge]:::rag
   SBuilder[SCHEDULE Builder]:::box
-  CalcAdapt[Calculation Adapter]:::box
-  MathSvc[fastapi-math]:::svc
+  CalcAdapt[Адаптер вычислений]:::box
+  MathSvc[Math Service]:::svc
   Pg[(Postgres+PGVector)]:::data
 
   User --> Entry --> Orch
@@ -93,33 +90,23 @@ flowchart TB
   SRetr <--> Pg
 ```
 
-**Поток:** Form/webhook → Orchestrator (HITL + Verifier) → CAS → Excel / Knowledge Retrieval / Calculation → Builder → release gate → `schedule.inc`.
+**Как это работает:** Пользователь отправляет запрос через форму (или UI Activity). Оркестратор принимает задачу, сохраняет состояние в базу данных (CAS) и распределяет работу между специализированными агентами (Excel, Math, SCHEDULE). В конце формируется готовый файл расписания.
 
-**Активация:** после импорта всё `active: false`. Сначала bindings + credentials + RAG → Health Check → при 0 FAIL активируйте runtime, **потом** Entry / Human Gate.  
-Не Publish как вход: Excel Form adapter, Specialist template, AI Components. Knowledge Ingestion — не Publish; первый пакет — Manual Test.
+> **Важно:** После первичного импорта все workflows находятся в статусе `active: false`. Сначала нужно настроить связи с базами данных (bindings), ключи (credentials) и базу знаний (RAG). Затем запустить проверку системы (Health Check), и только если ошибок нет (0 FAIL) — активировать оркестратор и остальные процессы.
 
 ---
 
-## 2. Развёртывание с нуля (Windows + UI n8n)
+## 2. Пошаговое развёртывание с нуля
 
-Порядок: **три Windows-сервиса** → **UI-импорт** → Data Tables → bindings → credentials → RAG → Health → activate → пользовательский запуск.
+Этот процесс состоит из нескольких этапов: запуск локальных Windows-сервисов, импорт workflows в n8n, настройка Data Tables, связывание таблиц с нодами, ввод ключей, загрузка базы знаний и итоговая проверка.
 
-### Step 0 — Preconditions
+### Шаг 0. Подготовка и запуск локальных сервисов
 
-| Need | Notes |
-|---|---|
-| n8n **2.30.8** | Корпоративный UI; JSON из репо под эту версию |
-| PostgreSQL + PGVector | Уже за n8n |
-| OpenAI-compatible chat + embeddings | Planner, Verifier, Builder, Excel; **Dimensions в embeddings не задавать** |
-| Windows 64-bit, Python 3.11–3.13 | Три FastAPI |
-| Сеть | n8n → Windows `:8000` / `:8100` / `:8200`; Windows → URL n8n (hydrate) |
+Убедитесь, что у вас установлен **n8n версии 2.30.8**, есть доступ к PostgreSQL с расширением PGVector, а также установлен Python 3.11-3.13.
 
-### Step 0b — Windows-сервисы (три окна CMD)
+Вам нужно запустить три сервиса в отдельных окнах командной строки (CMD). Для каждого сервиса процесс одинаков: скопировать `.env.example`, переименовать в `.env`, вписать настройки и запустить скрипт.
 
-Шаблон: `setup-windows.bat` → скопировать `*.env.example` → `*.env` → править → `start-windows.bat` → во втором CMD `check-windows.bat`.
-
-**1) Excel Tools** (`:8000`)
-
+**1. Инструменты Excel (порт 8000)**
 ```bat
 cd excel-agent-tools
 setup-windows.bat
@@ -127,23 +114,18 @@ copy excel-tools.env.example excel-tools.env
 notepad excel-tools.env
 start-windows.bat
 ```
+*Впишите уникальный `API_KEY`. Если n8n находится на другом компьютере, укажите `EXCEL_TOOLS_HOST=0.0.0.0`.*
 
-- `API_KEY` — уникальный; тот же ключ в Agent Runtime в n8n.  
-- n8n на другом хосте: `EXCEL_TOOLS_HOST=0.0.0.0`, URL = `http://<IP-Windows>:8000/api/v1`.
-
-**2) Math Service** (`:8100`)
-
+**2. Вычислительный сервис (Math Service, порт 8100)**
 ```bat
 cd fastapi-math-service
 setup-windows.bat
 copy math-service.env.example math-service.env
 start-windows.bat
 ```
+*Этот сервис будет доступен по адресу `http://<Ваш-IP>:8100/api/v1/math`.*
 
-В Adapter — Calculation: `math_service_url` = `http://<IP-Windows>:8100/api/v1/math` (не `$env`).
-
-**3) MAS Activity** (`:8200`)
-
+**3. Пользовательский интерфейс MAS Activity (порт 8200)**
 ```bat
 cd mas-activity-service
 setup-windows.bat
@@ -151,53 +133,40 @@ copy mas-activity.env.example mas-activity.env
 notepad mas-activity.env
 start-windows.bat
 ```
+*Настройки для `mas-activity.env`:*
+- `MAS_ACTIVITY_KEY`: Ваш уникальный ключ доступа.
+- `HITL_MODE`: Сначала установите `local`.
+- `ACTIVITY_LIST_URL`: `http://<URL-n8n>/webhook/mas-activity-list-tasks`
+- `ACTIVITY_FEED_URL`: `http://<URL-n8n>/webhook/mas-activity-load-feed`
 
-| Переменная | На работе |
-|---|---|
-| `MAS_ACTIVITY_KEY` | Свой ключ (не `change-me-…`) |
-| `MAS_ACTIVITY_HOST` | `0.0.0.0` если n8n с другой машины |
-| `HITL_MODE` | Сначала `local`; live — `webhook` / `n8n_rest` / `auto` |
-| `ACTIVITY_LIST_URL` | `http://<URL-n8n>/webhook/mas-activity-list-tasks` (после Step 3) |
-| `ACTIVITY_FEED_URL` | `http://<URL-n8n>/webhook/mas-activity-load-feed` |
+> **Как полностью очистить базу задач:**
+> Зайдите в n8n Data tables и очистите таблицы `engineering_orchestrator_tasks_v1` и `mas_trace_events_v1`. Затем остановите консоль MAS Activity, удалите файл `data\activity_state.json` и запустите `.bat` снова.
 
-UI: `http://127.0.0.1:8200/` — **Новая задача**, F5 / бренд тянет список из Data Tables, deep-link `/t/<task_id>`. Diff версий SCHEDULE — expander в чате.  
-После импорта Trace (Step 5): в **Prepare MAS activity sync** — `ACTIVITY_BASE_URL=http://<IP-Windows>:8200`, `ACTIVITY_KEY` = `MAS_ACTIVITY_KEY`.
+### Шаг 1. Импорт Workflows в n8n
 
-### Step 0c — Wipe задач (переустановка)
+Зайдите в UI n8n, выберите "Import from File" и загрузите следующие 15 файлов строго в указанном порядке. **Ничего пока не активируйте!**
 
-В UI Data tables очистить строки `engineering_orchestrator_tasks_v1` и `mas_trace_events_v1`.  
-На Windows: стоп Activity → удалить `data\activity_state.json` → снова `start-windows.bat`.
+1. `n8n/workflows/core/calculation-specialist-adapter.workflow.json`
+2. `n8n/workflows/core/excel-extraction-agent.workflow.json`
+3. `n8n/workflows/core/excel-engineering-specialist-adapter.workflow.json`
+4. `n8n/workflows/core/tnavigator-schedule-knowledge-ingestion.workflow.json`
+5. `n8n/workflows/core/tnavigator-schedule-hybrid-retrieval.workflow.json`
+6. `n8n/workflows/core/tnavigator-schedule-builder.workflow.json`
+7. `n8n/workflows/core/mas-trace-event-writer.workflow.json`
+8. `n8n/workflows/core/cas-persist-task.workflow.json`
+9. `n8n/workflows/core/mas-error-handler.workflow.json`
+10. `n8n/workflows/core/universal-engineering-orchestrator.workflow.json`
+11. `n8n/workflows/core/mvp-entry-form.workflow.json`
+12. `n8n/workflows/core/mas-human-gate-form.workflow.json`
+13. `n8n/workflows/core/mas-activity-list-tasks.workflow.json`
+14. `n8n/workflows/core/mas-activity-load-feed.workflow.json`
+15. `n8n/workflows/core/mas-deployment-health-check.workflow.json`
 
-### Step 1 — Import workflows (UI, точный порядок)
+### Шаг 2. Создание таблиц данных (Data Tables)
 
-**Workflows → Import from File:**
+В n8n перейдите в раздел "Data tables" и создайте две таблицы.
 
-| # | File | UI name |
-|---:|---|---|
-| 1 | `n8n/workflows/core/calculation-specialist-adapter.workflow.json` | `Adapter — Calculation (Math Service)` |
-| 2 | `n8n/workflows/core/excel-extraction-agent.workflow.json` | `Agent — Excel Extractor` |
-| 3 | `n8n/workflows/core/excel-engineering-specialist-adapter.workflow.json` | `Adapter — Excel Extraction` |
-| 4 | `n8n/workflows/core/tnavigator-schedule-knowledge-ingestion.workflow.json` | `MAS — Knowledge Ingestion` |
-| 5 | `n8n/workflows/core/tnavigator-schedule-hybrid-retrieval.workflow.json` | `MAS — Knowledge Retrieval` |
-| 6 | `n8n/workflows/core/tnavigator-schedule-builder.workflow.json` | `SCHEDULE — Builder` |
-| 7 | `n8n/workflows/core/mas-trace-event-writer.workflow.json` | `Writer — MAS Trace` |
-| 8 | `n8n/workflows/core/cas-persist-task.workflow.json` | `CAS — Persist Task State` |
-| 9 | `n8n/workflows/core/mas-error-handler.workflow.json` | `Error — MAS Case Handler` |
-| 10 | `n8n/workflows/core/universal-engineering-orchestrator.workflow.json` | `Orchestrator — Engineering MAS` |
-| 11 | `n8n/workflows/core/mvp-entry-form.workflow.json` | `Form — MAS Entry` |
-| 12 | `n8n/workflows/core/mas-human-gate-form.workflow.json` | `Form — MAS Human Gate` |
-| 13 | `n8n/workflows/core/mas-activity-list-tasks.workflow.json` | `Activity — List Tasks (Data Table)` |
-| 14 | `n8n/workflows/core/mas-activity-load-feed.workflow.json` | `Activity — Load Feed (Data Tables)` |
-| 15 | `n8n/workflows/core/mas-deployment-health-check.workflow.json` | `Form — MAS Deployment Health Check` |
-
-Clean-import set — **18** JSON (`full_clean_import_set` в manifest). Все `active: false`. CAS + Error Handler — **до** Orchestrator.  
-Опционально `n8n/workflows/support/` (Form Excel, template, AI components) — не пользовательский вход.
-
-### Step 2 — Data Tables
-
-Вкладка **Data tables** → From scratch (или Import CSV из `n8n/data-tables/*.header.csv`).
-
-**`engineering_orchestrator_tasks_v1`**
+**1. `engineering_orchestrator_tasks_v1` (Состояние задач)**
 
 | Column | Type | Column | Type |
 |---|---|---|---|
@@ -210,16 +179,18 @@ Clean-import set — **18** JSON (`full_clean_import_set` в manifest). Все `
 | `max_retries` | Number | `created_at` | String |
 | `updated_at` | String | | |
 
-После CSV: `version`, `retry_count`, `max_retries` → **Number**.
+`version`, `retry_count`, `max_retries` — обязательно **Number** (не String).  
+Ускорение: CSV [`n8n/data-tables/engineering_orchestrator_tasks_v1.header.csv`](n8n/data-tables/engineering_orchestrator_tasks_v1.header.csv), затем сменить типы Number.
 
-**`mas_trace_events_v1`** — все String:  
-`event_id`, `trace_id`, `task_id`, `at`, `stage`, `event_type`, `actor`, `status`, `summary`, `details_json`
+**2. `mas_trace_events_v1` (История событий)**
+Все колонки имеют тип **String**: `event_id`, `trace_id`, `task_id`, `at`, `stage`, `event_type`, `actor`, `status`, `summary`, `details_json`.  
+CSV: [`n8n/data-tables/mas_trace_events_v1.header.csv`](n8n/data-tables/mas_trace_events_v1.header.csv).
 
-### Step 3 — Bind Data Table nodes
+### Шаг 3. Привязка Data Table nodes
 
 Не оставляйте `REPLACE_IN_UI`.
 
-| Workflow | Node | Table |
+| Open workflow | Node name | Select table |
 |---|---|---|
 | `Writer — MAS Trace` | `Insert MAS trace event` | `mas_trace_events_v1` |
 | `CAS — Persist Task State` | `Insert durable task row` | `engineering_orchestrator_tasks_v1` |
@@ -231,171 +202,164 @@ Clean-import set — **18** JSON (`full_clean_import_set` в manifest). Все `
 | `Activity — Load Feed (Data Tables)` | `Load task row` | `engineering_orchestrator_tasks_v1` |
 | `Activity — Load Feed (Data Tables)` | `Load trace rows` | `mas_trace_events_v1` |
 
-Активируйте оба Activity webhook. В `mas-activity.env`:
+После биндинга активируйте Activity webhook-и (`Activity — List Tasks`, `Activity — Load Feed`).
 
-```bat
-ACTIVITY_LIST_URL=http://<хост-n8n>:<порт>/webhook/mas-activity-list-tasks
-ACTIVITY_FEED_URL=http://<хост-n8n>:<порт>/webhook/mas-activity-load-feed
-```
+### Шаг 4. Bind Execute Workflow nodes (28 обязательных)
 
-### Step 4 — Bind Execute Workflow (28 обязательных)
-
-| Open workflow | Node | Select workflow |
+| Open workflow | Node on canvas | Select this workflow |
 |---|---|---|
-| Orchestrator | `Call CAS persist — insert new task` | `CAS — Persist Task State` |
-| Orchestrator | `Call CAS persist — human action then plan` | `CAS — Persist Task State` |
-| Orchestrator | `Call CAS persist — terminal human action` | `CAS — Persist Task State` |
-| Orchestrator | `Call CAS persist — plan or human gate` | `CAS — Persist Task State` |
-| Orchestrator | `Call CAS persist — SCHEDULE evidence retry` | `CAS — Persist Task State` |
-| Orchestrator | `Call CAS persist — SCHEDULE resume` | `CAS — Persist Task State` |
-| Orchestrator | `Call CAS persist — verification` | `CAS — Persist Task State` |
-| Orchestrator | `Call CAS persist — specialist gate or error` | `CAS — Persist Task State` |
-| Orchestrator | `Call CAS persist — routing gate` | `CAS — Persist Task State` |
-| Orchestrator | `Call Excel Extraction Specialist Adapter` | `Adapter — Excel Extraction` |
-| Orchestrator | `Call routing Hybrid Retrieval` | `MAS — Knowledge Retrieval` |
-| Orchestrator | `Call Excel protocol Hybrid Retrieval` | `MAS — Knowledge Retrieval` |
-| Orchestrator | `Call SCHEDULE Hybrid Retrieval` | `MAS — Knowledge Retrieval` |
-| Orchestrator | `Call SCHEDULE Builder Specialist` | `SCHEDULE — Builder` |
-| Orchestrator | `Call Calculation Specialist` | `Adapter — Calculation (Math Service)` |
-| Orchestrator | `Call MAS Trace Event Writer` | `Writer — MAS Trace` |
-| Orchestrator | `Call Error — MAS Case Handler (specialist)` | `Error — MAS Case Handler` |
-| Orchestrator | `Call Error — MAS Case Handler (verification)` | `Error — MAS Case Handler` |
-| Error Handler | `Call CAS persist — error case` | `CAS — Persist Task State` |
-| Error Handler | `Call Writer — MAS Trace (error)` | `Writer — MAS Trace` |
-| Agent — Excel Extractor | `Call Excel protocol Hybrid Retrieval` | `MAS — Knowledge Retrieval` |
-| Template — Engineering Specialist | `Call specialist Hybrid Retrieval` | `MAS — Knowledge Retrieval` |
-| Adapter — Excel Extraction | `Call native Excel Extraction Agent` | `Agent — Excel Extractor` |
-| Form — MAS Entry | `Call Universal Engineering Orchestrator` | `Orchestrator — Engineering MAS` |
-| Form — MAS Human Gate | `Call Orchestrator status` | `Orchestrator — Engineering MAS` |
-| Form — MAS Human Gate | `Call Orchestrator resume` | `Orchestrator — Engineering MAS` |
-| Health Check | `Call Orchestrator probe` | `Orchestrator — Engineering MAS` |
-| Health Check | `Call Trace Writer probe` | `Writer — MAS Trace` |
+| `Orchestrator — Engineering MAS` | `Call CAS persist — insert new task` | `CAS — Persist Task State` |
+| `Orchestrator — Engineering MAS` | `Call CAS persist — human action then plan` | `CAS — Persist Task State` |
+| `Orchestrator — Engineering MAS` | `Call CAS persist — terminal human action` | `CAS — Persist Task State` |
+| `Orchestrator — Engineering MAS` | `Call CAS persist — plan or human gate` | `CAS — Persist Task State` |
+| `Orchestrator — Engineering MAS` | `Call CAS persist — SCHEDULE evidence retry` | `CAS — Persist Task State` |
+| `Orchestrator — Engineering MAS` | `Call CAS persist — SCHEDULE resume` | `CAS — Persist Task State` |
+| `Orchestrator — Engineering MAS` | `Call CAS persist — verification` | `CAS — Persist Task State` |
+| `Orchestrator — Engineering MAS` | `Call CAS persist — specialist gate or error` | `CAS — Persist Task State` |
+| `Orchestrator — Engineering MAS` | `Call CAS persist — routing gate` | `CAS — Persist Task State` |
+| `Orchestrator — Engineering MAS` | `Call Excel Extraction Specialist Adapter` | `Adapter — Excel Extraction` |
+| `Orchestrator — Engineering MAS` | `Call SCHEDULE Hybrid Retrieval` | `MAS — Knowledge Retrieval` |
+| `Orchestrator — Engineering MAS` | `Call routing Hybrid Retrieval` | `MAS — Knowledge Retrieval` |
+| `Orchestrator — Engineering MAS` | `Call Excel protocol Hybrid Retrieval` | `MAS — Knowledge Retrieval` |
+| `Agent — Excel Extractor` | `Call Excel protocol Hybrid Retrieval` | `MAS — Knowledge Retrieval` |
+| `Template — Engineering Specialist` | `Call specialist Hybrid Retrieval` | `MAS — Knowledge Retrieval` |
+| `Orchestrator — Engineering MAS` | `Call SCHEDULE Builder Specialist` | `SCHEDULE — Builder` |
+| `Orchestrator — Engineering MAS` | `Call Calculation Specialist` | `Adapter — Calculation (Math Service)` |
+| `Orchestrator — Engineering MAS` | `Call MAS Trace Event Writer` | `Writer — MAS Trace` |
+| `Orchestrator — Engineering MAS` | `Call Error — MAS Case Handler (specialist)` | `Error — MAS Case Handler` |
+| `Orchestrator — Engineering MAS` | `Call Error — MAS Case Handler (verification)` | `Error — MAS Case Handler` |
+| `Error — MAS Case Handler` | `Call CAS persist — error case` | `CAS — Persist Task State` |
+| `Error — MAS Case Handler` | `Call Writer — MAS Trace (error)` | `Writer — MAS Trace` |
+| `Adapter — Excel Extraction` | `Call native Excel Extraction Agent` | `Agent — Excel Extractor` |
+| `Form — MAS Entry` | `Call Universal Engineering Orchestrator` | `Orchestrator — Engineering MAS` |
+| `Form — MAS Human Gate` | `Call Orchestrator status` | `Orchestrator — Engineering MAS` |
+| `Form — MAS Human Gate` | `Call Orchestrator resume` | `Orchestrator — Engineering MAS` |
+| `Form — MAS Deployment Health Check` | `Call Orchestrator probe` | `Orchestrator — Engineering MAS` |
+| `Form — MAS Deployment Health Check` | `Call Trace Writer probe` | `Writer — MAS Trace` |
 
-Не настраивать: `Call Data Specialist`, `Call Document Specialist`.  
-Контроль: экспорт JSON → поиск `REPLACE_` = незавершённый binding.
+**Не настраивать:** `Call Data Specialist`, `Call Document Specialist` (заглушки).  
+Подсказка: экспорт JSON → поиск `REPLACE_` = незавершённый binding. Канон также в `n8n/import-manifest.json` → `mandatory_execute_workflow_bindings`.
 
-### Step 5 — Credentials и URL
+### Шаг 5. Настройка доступов (Credentials)
 
-| Where | What |
-|---|---|
-| Orchestrator | `Planner Chat Model`, `Verifier Chat Model` |
-| SCHEDULE — Builder | Planner + Builder chat |
-| Agent — Excel Extractor | `excel_tools_url` + `excel_tools_api_key`; chat; Postgres memory; Call → Knowledge Retrieval |
-| Knowledge Ingestion / Retrieval | Postgres + **один** embedding credential |
-| Adapter — Calculation | `math_service_url` = `http://<IP-Windows>:8100/api/v1/math` |
-| Trace → Prepare activity sync | `ACTIVITY_BASE_URL`, `ACTIVITY_KEY` |
-| Postgres | SSL = **Disable**, если без TLS |
+Вам потребуется указать ключи для нейросетей, баз данных и локальных сервисов:
+- **Оркестратор и SCHEDULE Builder:** Создайте подключения к вашей совместимой с OpenAI модели (`Planner Chat Model`, `Verifier Chat Model`).
+- **Агент Excel Extractor:** В нодах HTTP укажите URL к локальному сервису Excel Tools и заданный `API_KEY`. Выберите нужное подключение к базе Postgres.
+- **RAG (Знания):** Выберите подключение к Postgres и единый профиль генерации эмбеддингов. (Важно: не заполняйте поле `Dimensions` в настройках эмбеддингов).
+- **Адаптер вычислений:** В ноде HTTP-запроса пропишите `math_service_url` (`http://<IP-вашего-ПК>:8100/api/v1/math`).
+- **Trace Writer (Prepare activity sync):** Укажите `ACTIVITY_BASE_URL` (`http://<IP-вашего-ПК>:8200`) и заданный вами `MAS_ACTIVITY_KEY`.
+- Убедитесь, что в настройках подключения к PostgreSQL отключена проверка сертификатов (`SSL = Disable`), если сервер работает без TLS.
 
-### Step 6 — Hybrid RAG
+### Шаг 6. Наполнение базы знаний (RAG)
 
-Одна пара таблиц: `tnavigator_schedule_knowledge_v1` + `tnavigator_schedule_knowledge_documents_v1`. Изоляция — `target_base`, не динамическое SQL-имя.
+База знаний хранится в таблицах `tnavigator_schedule_knowledge_v1` и `tnavigator_schedule_knowledge_documents_v1`. (Имена таблиц изолируются через `target_base`).
 
-| Namespace | Кто читает | Карточки |
-|---|---|---|
-| `schedule_mvp` | Builder | `keyword_instruction`, `worked_example` (+ schema catalogue) |
-| `excel_protocol` | Excel lane | `protocol_instruction` |
-| `orchestrator_routing` | Planner | `routing_card` |
-| `specialist_template` | Template clones | `capability_instruction` |
+1. Откройте workflow `MAS — Knowledge Ingestion` и убедитесь, что credentials заполнены.
+2. Запустите ноду **Sync packaged MAS knowledge** (кнопка Test workflow).
+3. Нода `Summarize RAG inventory` должна показать успешный результат (`rag_inventory_ok`).
+4. Если вы вносили правки в файл `n8n/rag/excel-agent-operating-guide.documents.json` (не забудьте увеличить поле `revision`), просто скопируйте его содержимое, вставьте в ноду "Paste the full knowledge sheet" и запустите процесс снова.
 
-1. `MAS — Knowledge Ingestion` → credentials.  
-2. Триггер **Sync packaged MAS knowledge** → **Test workflow**.  
-3. `Summarize RAG inventory` = `rag_inventory_ok`.  
-4. Дальше правки в `n8n/rag/excel-agent-operating-guide.documents.json` → вставка в **Paste the full knowledge sheet**. Новые ключи пишутся; для замены текста — поднять `revision`.  
-5. Проверка: `MAS — Knowledge Retrieval`.
+### Шаг 7. Проверка здоровья (Health Check) и Активация
 
-### Step 7 — Health Check → activate
-
-1. Bind таблицы (Step 3) и Orch/Trace (Step 4) в Health Check.  
-2. Publish/Test только этот form → Submit.  
-3. HTML-отчёт: **FAIL** → `where_to_fix`; Docker DNS TODO на полевом контуре — норма (сервисы на Windows).  
-4. Зелёные live probes: DT get, Orch `status`, Trace `mas_trace_ack`; Windows `check-windows.bat` + `/health` на `:8000`/`:8100`/`:8200`.  
-5. При 0 FAIL: активируйте Orchestrator, CAS, Trace, specialists, Activity hydrate → затем Entry и Human Gate.
-
-### Step 8 — Пользовательский запуск
-
-1. Form Entry **или** Activity → **Новая задача**.  
-2. Описание + Excel / `.data/.inc` / `.dev` / CPS3.  
-3. Результат: скачать `.INC` в морде или HITL.  
-4. Продолжение: composer / Human Gate → `reply` / `approve` / `reject` / restart.  
-5. Commissioning: новые скважины — HITL с файлами; `unlisted_wells_policy` = `keep` \| `remove` только типизированно.
+1. Откройте `Form — MAS Deployment Health Check` и запустите тестовый прогон (Test workflow → затем заполните форму и нажмите Submit).
+2. Вы получите сводный HTML-отчёт. Если в нём написано **0 FAIL** — система настроена верно! Сообщения `PASS_WITH_TODO` — это просто рекомендации (например, о настройке DNS в Docker), они не критичны.
+3. Если есть статус `FAIL`, обратите внимание на колонку `where_to_fix`, чтобы понять, что пошло не так.
+4. **Важно:** Только после успешной проверки активируйте (переведите в "Active") Оркестратор, CAS, Trace, агентов-специалистов и Activity API. 
+5. В самую последнюю очередь активируйте входную форму (Entry Form) и форму согласования (Human Gate).
 
 ---
 
-## 3. Инженерные правила MVP (кратко)
+## 3. Инженерные правила MVP
 
-Нужны оператору и при расширении allowlist. Источник имён keywords в коде: `KEYWORDS` в `n8n/templates/generate_schedule_workflows.py` (+ regenerate).
+Эти правила определяют работу системы с файлами `SCHEDULE`. Разрешенные ключевые слова (keywords) строго прописаны в коде. Пожалуйста, не добавляйте ключевые слова, которых нет в официальном руководстве tNavigator (секция 12.x.y).
 
-### 3.1. Режимы
+### Основные режимы работы
+- **`CREATE`:** Создание нового файла SCHEDULE с чистого листа на основе постановки задачи.
+- **`REVISE`:** Бережное редактирование существующего файла. Система изменяет только те строки, которые прямо указаны в задаче, сохраняя остальную структуру и комментарии нетронутыми.
+- **Handoff фактов:** Агент-сборщик расписаний никогда не читает Excel-файлы напрямую. Извлечением фактов занимается специализированный Excel-агент, после чего "чистые" факты передаются сборщику.
 
-- **`CREATE`: создание SCHEDULE с нуля** из objective + evidence.  
-- **`REVISE`:** lossless baseline + preserve-by-default; менять только согласованный scope.  
-- Commissioning дат ввода: timeline `parse → shift / keep|remove / new-well HITL → emit`.  
-- Канонический handoff фактов: **Excel→RAG→Builder handoff** (пакет `source_facts`, не сырой workbook в Builder).  
-- **Прямой вызов Excel Extractor из Schedule Builder запрещён** — только через Orchestrator.
+### Правила работы с пакетами INCLUDE
+- Вызовы `INCLUDE` должны оставаться на той же позиции относительно дат (`DATES`), где они находились в исходном файле, если в задаче не указано иное (не сдвигайте их самовольно).
+- Содержимое подключаемого файла должно быть прочитано, только если этот файл был передан системе (`include_files`). Если файла нет, просто оставляйте вызов `INCLUDE` без изменений (`KEEP`), ничего не выдумывая.
+- Пути к подключаемым файлам должны быть относительными (внутри папки проекта). Запрещено использовать абсолютные пути, адреса URL или выходы на уровень вверх (`..`).
+- При загрузке нескольких файлов используйте параметры `schedule_files` и опционально `schedule_root`.
 
-### 3.2. Keyword allowlist (emit targets)
+### Наблюдаемость и контроль (Scoring / Observability)
+- Метрики внимания: `attention_threshold = 85` (внимание), `hitl_threshold = 70` (обязательное подтверждение человеком). Однако даже высокие баллы не отменяют жестких блокировок (если неизвестное ключевое слово, отсутствует факт из Excel, небезопасный INCLUDE или деструктивные действия без подтверждения).
+- Для Агента Excel включен режим отображения промежуточных шагов (`returnIntermediateSteps=true`) для диагностики выполнения. При этом главный достоверный журнал аудита — это история в интерфейсе Activity (Trace ledger), которая не содержит секретных токенов и сырых промптов.
 
+### Добавление новых ключевых слов (keywords)
+Базовый список поддерживаемых ключевых слов:
 `DATES`, `INCLUDE`, `GRUPTREE`, `WELSPECS`, `WELLTRACK`, `COMPDATMD`, `WCONHIST`, `WCONPROD`, `WCONINJE`, `GCONPROD`, `GCONINJE`, `GUIDERAT`, `GSATPROD`, `GSATINJE`, `WELLSTRE`, `WINJGAS`, `GINJGAS`, `BRANPROP`, `NODEPROP`, `GNETDP`, `NETBALAN`, `FRACTURE_TEMPLATE`, `FRACTURE_SPECS`, `FRACTURE_STAGE`, `WECON`, `WTEST`, `WELTARG`, `WNETDP`, `WPIMULT`, `WDFAC`, `WEFAC`, `WELOPEN`, `WELDRAW`, `WLIST`, `WFRACP`, `WFRACPL`, `VFPPROD`, `WVFPDP`, `ACTIONX`, `DELAYACT`, `ENDACTIO`, `UDQ`, `UDT`, `APPLYSCRIPT`.
 
-Правила: keyword должен быть в tNav manual (`12.x.y.`); синонимы не дублировать (`WELTARG`, не `WELLTARG`); legacy emit `FRACTURE_SPECS` (не `FRACTURE_WELL`). После добавления — regenerate Builder + RAG-карточка `schedule_mvp`. Табличные keyword-блоки закрывать голым `/` + пустая строка перед следующим keyword/DATES.
+**Правила работы с ключевыми словами:**
+- Ключевое слово должно существовать в официальном руководстве tNavigator (раздел 12.x.y).
+- Не дублируйте синонимы (например, используйте `WELTARG`, а не `WELLTARG`). Для старых версий используйте `FRACTURE_SPECS`, а не `FRACTURE_WELL`.
+- Табличные блоки данных (внутри keyword-ов) всегда должны закрываться отдельным символом `/` на новой строке, после чего обязательно должна идти пустая строка перед следующим блоком или `DATES`.
 
-### 3.3. INCLUDE package
-
-- Call-site `INCLUDE` на той же DATES-позиции, что в baseline (без явной инструкции не сдвигать).  
-- Тело читать, если файл в `include_files`; иначе KEEP вызов, не выдумывать.  
-- Только package-relative paths; без `..` escape, URL, absolute.  
-- Multi-file upload: `schedule_files` + optional `schedule_root`.
-
-### 3.4. Scoring / observability
-
-- `attention_threshold = 85`, `hitl_threshold      = 70` — score не отменяет hard blockers (unknown keyword, missing fact, unsafe INCLUDE, destructive без approval).  
-- Excel Agent: `returnIntermediateSteps=true` для диагностики execution; authoritative audit — Trace ledger без секретов/raw prompts.
+Если вам нужно, чтобы система научилась писать новое ключевое слово:
+1. Добавьте его в список `KEYWORDS` в файле `n8n/templates/generate_schedule_workflows.py`.
+2. Запустите скрипт `python3 generate_schedule_workflows.py`.
+3. Добавьте описание нового ключевого слова в карточку `schedule_mvp` в базе знаний (`excel-agent-operating-guide.documents.json`) и обновите RAG (Шаг 6).
 
 ---
 
-## 4. Smoke и диагностика
+## 4. Диагностика неисправностей
 
-**После 0 FAIL:** Entry без objective → HITL; Human Gate status/reply; CREATE/REVISE при RAG; Excel evidence; `.dev`+CPS3; stale version → conflict; CAS fail closed; Trace без секретов; Activity F5 + русский brief + expander diff.
+Если что-то пошло не так в рабочей системе, сверьтесь с этой таблицей:
 
-| Symptom | Where |
+| Симптом | Где искать причину |
 |---|---|
-| Entry «workflow not found» | Entry → Call Orchestrator |
-| Gate не грузит status | Human Gate → Call Orchestrator status |
-| Нет Excel / SCHEDULE | Orchestrator Call Excel / Retrieval / Builder |
-| Trace пустой | Trace Data Table + Orch → Trace Call |
-| CAS / Load task | CAS insert+update **и** Load task by ID |
-| Activity пустая | Trace `ACTIVITY_BASE_URL`; hydrate URL; F5 |
-| Excel 401 | Agent URL/key; `0.0.0.0` + firewall |
-| Export содержит `REPLACE_` | Step 3–4 |
+| При отправке задачи пишет «workflow not found» | Во Входной Форме (Entry) не выбран процесс Оркестратора. Проверьте связи (Bindings). |
+| Human Gate не загружает текущий статус | Форме не привязан процесс проверки статуса Оркестратора. |
+| Система не отдаёт готовый SCHEDULE | Оркестратор не может связаться со специалистами (например, с Excel Extractor). Проверьте URL локальных сервисов. |
+| История (Trace) пустая | Проверьте, привязаны ли Data Tables в процессе `Writer — MAS Trace`. |
+| Интерфейс Activity пуст | Не настроены URL в локальном сервисе MAS Activity (`ACTIVITY_FEED_URL` и `ACTIVITY_LIST_URL`). |
+| Ошибка Excel 401 | Неверный `API_KEY` в ноде HTTP-запроса, либо закрыт порт 8000. |
+| При выгрузке JSON видны строки `REPLACE_...` | Вы пропустили привязку каких-то узлов на Шагах 3 или 4. |
 
 ---
 
-## 5. Лаборатория / CI (не полевой канон)
+## 5. Лаборатория и автотесты (Для разработчиков)
+
+Если вы вносите изменения в код (например, дописываете генераторы или тестируете новые интеграции), вы можете прогонять дымовые тесты локально.
 
 ```bash
 export WORKSPACE_ROOT="$PWD"
+
+# Запуск smoke-тестов парсинга расписаний
 for f in n8n/tests/*-smoke.js; do node "$f" || exit 1; done
+
+# Тестирование Activity Service
 cd mas-activity-service && PYTHONPATH=. python3 -m pytest -q
+
+# Тестирование Excel Tools
 cd ../excel-agent-tools && python -m pytest tests
-python3 simulation-model-example/combat-dates-revise/run_integration_cases.py
 ```
 
+Для быстрого перезапуска тестового полигона в Docker (сбрасывает таблицы задач, но сохраняет ключи):
 ```bash
-cp .env.example .env
-docker compose up --build -d
-python3 scripts/mas_stack_health.py
+python3 scripts/lab_soft_redeploy.py
 ```
 
-На работе Activity / Excel / Math — Windows `.bat`; n8n — только UI в корпоративный инстанс.
+---
 
-### Структура репозитория
+## 6. Добавление нового агента-специалиста
 
-- `n8n/` — workflows, manifest, data-tables, generators, smokes, RAG sheet  
-- `mas-activity-service/` · `excel-agent-tools/` · `fastapi-math-service/` — Windows `.bat`  
-- `scripts/mas_stack_health.py` — пинг Compose  
-- `scripts/project_pack.py` — упаковка в `all.txt` для переноса на работу  
-- `simulation-model-example/` — локальные combat/golden (весь каталог в `.gitignore`, в `all.txt` не входит)  
-- `context-seeder/` — опционально (UI-only не нужен)  
-- `postgres-init/` — lab Postgres/PGVector  
+Если вам нужно добавить нового агента (например, для работы с SSH кластером или парсинга бинарных файлов), следуйте этому алгоритму.
 
-Секреты не в JSON / Data Tables / git. Нет Artifact Store и авто-tNavigator runner: SCHEDULE остаётся bounded text внутри n8n.
+> **Главное правило:** LLM-модели никогда не должны сами выбирать `workflow_id`. Также агенты никогда не вызывают друг друга напрямую. Любая коммуникация проходит строго через Оркестратор по жестким шаблонам данных (`specialist_packet` и `specialist_result`).
+
+**Входящий пакет (`specialist_packet` v1.0):** (не более 256 КБ)
+Обязан содержать ключи: `contract`, `contract_version`, `task_id`, `specialist_id`, `attempt`, `objective`, `inputs`, `controls`, `acceptance_criteria`, `artifact_refs`.
+
+**Исходящий пакет (`specialist_result` v1.0):**
+Обязан возвращать `status` (один из: `succeeded`, `partial`, `needs_input`, `needs_decision`, `needs_approval`, `retryable_error`, `fatal_error`), а также содержать ключи с результатами работы: `summary`, `deliverables`, `artifact_refs`, `compact_data`, `assumptions`, `warnings`, `evidence`, `self_check`, `human_request`, `error`, `continuation` (и `decision_record` / `user_message` для логирования в Activity).
+
+### Как это сделать:
+1. **Выберите шаблон:** В папке `n8n/workflows/support/` есть готовые шаблоны (для вызова LLM, для работы с кластером, для работы с бинарниками). Склонируйте нужный шаблон и пропишите свою логику. Запомните `specialist_id` вашего агента.
+2. **Зарегистрируйте агента:** Добавьте его в реестр `n8n/contracts/specialist_registry.v1.json`. Укажите новый `route` (индекс маршрута) и поставьте `configured: false`, пока логика агента не будет полностью готова.
+3. **Обновите Оркестратора:** Запустите скрипт `python3 n8n/templates/generate_universal_engineering_workflows.py`. Это автоматически обновит код маршрутизатора в Оркестраторе.
+4. **Привяжите процесс:** Импортируйте обновленного Оркестратора в n8n и визуально привяжите созданную новую ноду `Call ... Specialist` к вашему workflow.
+5. **Обучите Планировщик:** Чтобы Оркестратор знал о новом агенте, добавьте его описание в карточку `routing_card` в базе знаний (`excel-agent-operating-guide.documents.json`). Затем заново запустите процесс Knowledge Ingestion.
+6. **Активация:** Поставьте `configured: true` в реестре, снова сгенерируйте Оркестратора и ре-импортируйте его. Проведите `Execute Workflow` с тестовым пакетом данных, чтобы убедиться, что агент возвращает правильный статус и корректно отображается в Activity UI.

@@ -750,10 +750,12 @@ const wellFacts=facts.map(f=>{
   return{well,date,fact_id:f.fact_id||null};
 }).filter(f=>f.well&&f.date!==null&&f.date!==undefined);
 
-const instructionBlob=[req.objective,req.problem_statement,req.user_goal,req.task,req.instruction,intake.objective,root.packet?.objective,JSON.stringify(req.requested_change_scope||{}),JSON.stringify(req.controls||{})].filter(Boolean).join('\n');
+const instructionBlob=[req.objective,req.problem_statement,req.user_goal,req.task,req.instruction,intake.objective,root.packet?.objective,JSON.stringify(req.requested_change_scope||{}),JSON.stringify(req.controls||{}),JSON.stringify(root.latest_human_response||{})].filter(Boolean).join('\n');
 // Explicit enum only — prose remove is resolved inside runCommissioningRevise as needs_input.
-const unlistedPolicy=normalizeUnlistedWellsPolicy(req.unlisted_wells_policy)||normalizeUnlistedWellsPolicy(req.controls?.unlisted_wells_policy)||'';
-const newWellDefs=arr(req.new_well_defs)?req.new_well_defs:(arr(req.hitl_new_well_defs)?req.hitl_new_well_defs:(arr(packet.new_well_defs)?packet.new_well_defs:[]));
+const hr=obj(root.latest_human_response)?root.latest_human_response:{};
+const hrAnswerPolicy=(()=>{const answers=arr(hr.answers)?hr.answers:[];for(const a of answers){const id=tlClean(a?.question_id||a?.id).toLowerCase();const ans=tlClean(a?.answer||a?.value);if(id.includes('unlisted')&&/\b(keep|remove)\b/i.test(ans)){const m=ans.match(/\b(keep|remove)\b/i);return m?m[1].toLowerCase():''}}return ''})();
+const unlistedPolicy=normalizeUnlistedWellsPolicy(req.unlisted_wells_policy)||normalizeUnlistedWellsPolicy(req.controls?.unlisted_wells_policy)||normalizeUnlistedWellsPolicy(hr.unlisted_wells_policy)||normalizeUnlistedWellsPolicy(hrAnswerPolicy)||normalizeUnlistedWellsPolicy(hr.text)||'';
+const newWellDefs=arr(req.new_well_defs)?req.new_well_defs:(arr(hr.new_well_defs)?hr.new_well_defs:(arr(req.hitl_new_well_defs)?req.hitl_new_well_defs:(arr(packet.new_well_defs)?packet.new_well_defs:[])));
 
 const rootPath=tlClean(m.output_package?.root_path||req.root_path||'schedule.inc')||'schedule.inc';
 let baselineText='';

@@ -8,6 +8,7 @@
 |---|---|
 | **n8n 2.30.8** | Только UI: Import from File, Data Tables, credentials, bindings |
 | **Excel / Math / Activity** | Windows CMD: `setup-windows.bat` → `start-windows.bat` |
+| **Lab soft-redeploy** | `python3 scripts/lab_soft_redeploy.py` (см. `docs.md` §5–§6) |
 
 Машинный контракт имён: [`n8n/import-manifest.json`](n8n/import-manifest.json). Compose / REST-импорт — только лаборатория (§5 в `docs.md`).
 

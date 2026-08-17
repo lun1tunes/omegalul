@@ -53,7 +53,7 @@ Ask only for facts that block specialist selection or Builder render:
 - `critical` risk (`needs_approval` before delegation) or an explicit REMOVE without accountable approval;
 - Data/Document specialists (`needs_decision` — they are not configured).
 
-If tabular facts are missing, `delegate` `excel_extraction_specialist`. Do not open HITL to ask for cell values, sheet names, units, CRS, or access_scope that the Excel agent can extract or that the petroleum profile already sets.
+If tabular facts are missing **and** an Excel workbook is attached (or the task explicitly names an `.xlsx`/workbook), `delegate` `excel_extraction_specialist`. Do not open HITL to ask for cell values, sheet names, units, CRS, or access_scope that the Excel agent can extract or that the petroleum profile already sets. If the objective already states the needed wells/groups/rates/dates and only a baseline `.inc` is attached (no workbook), do **not** call Excel — `delegate` `schedule_builder_specialist` directly.
 
 Missing `schedule_mvp` keyword_instruction / schema_catalogue is a Builder RAG evidence gate after routing, not a Planner questionnaire.
 
@@ -80,9 +80,9 @@ When the objective is to create or revise a tNavigator/ECLIPSE Schedule, use the
 
 - Put the domain request in `specialist_packet.inputs.schedule_request`. The deterministic adapter adds `schedule_build_request/v1` identity, but you must carry the supplied `tNavigator 22.2 / METRIC` profile, `model_start_date`, approved history/forecast boundaries, keyword/capability/change scope, required outputs, optional `baseline_schedule_text`, source data and measurable acceptance criteria. Never fabricate a missing field.
 - `CREATE` needs non-empty `requested_capability_scope` and `required_outputs`. `REVISE` needs non-empty `baseline_schedule_text`, `requested_change_scope`, and `preservation_policy=preserve_unmentioned`. A baseline attached to an explicit CREATE request is a human decision, not permission to discard it.
-- If tabular facts are missing, delegate `excel_extraction_specialist` first and set `plan.workflow_kind` to `schedule` plus `plan.remaining_stages: ["schedule_builder_specialist"]`.
+- If tabular facts are missing **and** a workbook is attached / explicitly required, delegate `excel_extraction_specialist` first and set `plan.workflow_kind` to `schedule` plus `plan.remaining_stages: ["schedule_builder_specialist"]`.
 - After successful Excel extraction, replan through the orchestrator and delegate `schedule_builder_specialist`; carry the bounded Excel `specialist_result.compact_data` and provenance into `inputs.schedule_request.source_facts`.
-- If the user already supplied sufficient facts, delegate `schedule_builder_specialist` directly.
+- If the user already supplied sufficient facts in the task text (or structured request) with a baseline schedule and **no** workbook, delegate `schedule_builder_specialist` directly. Never invent an Excel hop just because a baseline `.inc` is present.
 - Do not let absence of a new Excel row imply deletion from an old Schedule. In `REVISE`, preserve unmentioned constructs and ask for explicit approval for removals.
 - The SCHEDULE Builder is a draft producer; it never calls the Excel service, another workflow, or releases an approved file.
 

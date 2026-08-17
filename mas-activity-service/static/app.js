@@ -8,6 +8,7 @@
   const statusDot = document.getElementById("statusDot");
   const requestPanel = document.getElementById("requestPanel");
   const requestText = document.getElementById("requestText");
+  const requestFiles = document.getElementById("requestFiles");
   const taskRail = document.getElementById("taskRail");
   const railList = document.getElementById("railList");
   const flashEl = document.getElementById("flash");
@@ -420,6 +421,8 @@
     }
     startOpen = next;
     startComposer.hidden = !startOpen;
+    startHint.hidden = true;
+    startHint.textContent = "";
     newTaskBtn.classList.toggle("active-start", startOpen);
     setComposerArmed(awaitingHuman);
     if (startOpen) {
@@ -580,10 +583,6 @@
     const isHuman = turn.kind === "hitl" || /human|^user$/i.test(fromRole) || /^HUMAN_/.test(turn.status || "") || turn.status === "TASK_STARTED";
     li.className = `turn outcome-${turn.outcome || "info"}${isHuman ? " human" : ""}`;
     li._masTurn = turn;
-    if (!animate) {
-      li.style.animation = "none";
-      li.style.opacity = "1";
-    }
 
     const who = document.createElement("div");
     who.className = `who ${roleClass(turn.from?.role || fromRole)}`;
@@ -597,6 +596,7 @@
     const arrow = document.createElement("span");
     arrow.className = "arrow";
     arrow.setAttribute("aria-hidden", "true");
+    arrow.textContent = "→";
     const toEl = document.createElement("span");
     toEl.className = "role to";
     toEl.textContent = toRole;
@@ -656,8 +656,18 @@
     bubble.append(meta);
 
     li.append(who, bubble);
+    
+    // Auto-scroll logic: only scroll if we were already near the bottom
+    // We check the scroll position *before* appending
+    const transcript = thread.closest('.transcript');
+    let isAtBottom = true;
+    if (transcript) {
+      isAtBottom = transcript.scrollHeight - transcript.scrollTop - transcript.clientHeight < 50;
+    }
     thread.append(li);
-    thread.scrollTop = thread.scrollHeight;
+    if (isAtBottom && transcript) {
+      transcript.scrollTop = transcript.scrollHeight;
+    }
   }
 
   async function refreshRail({ durable = false } = {}) {
@@ -688,12 +698,12 @@
       meta.className = "meta";
       const stLabel = statusLabel(task.status || task.last_status || "");
       const parts = [stLabel || "—"];
-      if (task.turn_count != null) parts.push(`${task.turn_count} ход.`);
+      if (task.turn_count != null) parts.push(`${task.turn_count} шаг`);
       meta.textContent = parts.join(" · ");
       btn.title = [
         task.task_id,
         task.title || "",
-        `${stLabel || "—"}${task.turn_count != null ? ` · ${task.turn_count} ход.` : ""}`,
+        `${stLabel || "—"}${task.turn_count != null ? ` · ${task.turn_count} шаг` : ""}`,
         task.updated_at || "",
       ].filter(Boolean).join("\n");
       btn.append(id, meta);
@@ -709,6 +719,10 @@
         openTask(task.task_id);
       });
       list.append(btn);
+      
+      if (task.task_id === currentTask) {
+        setTimeout(() => btn.scrollIntoView({ behavior: "smooth", block: "nearest", inline: "nearest" }), 50);
+      }
     }
     if (newTaskBtn) newTaskBtn.classList.toggle("active-start", startOpen);
     return data;
@@ -721,14 +735,53 @@
     }
   }
 
-  function renderRequest(objective) {
+  function attachedFilesFromFeed(data) {
+    if (!data || typeof data !== "object") return [];
+    if (Array.isArray(data.attached_files) && data.attached_files.length) {
+      return data.attached_files.map((f) => String(f || "").trim()).filter(Boolean);
+    }
+    const turns = Array.isArray(data.activity) ? data.activity : [];
+    for (const turn of turns) {
+      if (!turn || typeof turn !== "object") continue;
+      const details = turn.details && typeof turn.details === "object" ? turn.details : null;
+      if (!details) continue;
+      const started =
+        String(turn.status || "").toUpperCase() === "TASK_STARTED" || details.action === "start";
+      if (!started) continue;
+      if (Array.isArray(details.files)) {
+        return details.files.map((f) => String(f || "").trim()).filter(Boolean);
+      }
+      if (typeof details.files === "string" && details.files.trim()) {
+        return details.files.split(",").map((s) => s.trim()).filter(Boolean);
+      }
+    }
+    return [];
+  }
+
+  function renderRequest(objective, attached) {
     const text = String(objective || "").trim();
-    if (!text) {
+    const files = Array.isArray(attached)
+      ? attached.map((f) => String(f || "").trim()).filter(Boolean)
+      : [];
+    if (!text && !files.length) {
       requestText.textContent = "";
+      if (requestFiles) {
+        requestFiles.textContent = "";
+        requestFiles.hidden = true;
+      }
       requestPanel.hidden = true;
       return;
     }
     requestText.textContent = text;
+    if (requestFiles) {
+      if (files.length) {
+        requestFiles.textContent = files.join(" · ");
+        requestFiles.hidden = false;
+      } else {
+        requestFiles.textContent = "";
+        requestFiles.hidden = true;
+      }
+    }
     requestPanel.hidden = false;
   }
 
@@ -903,8 +956,15 @@
     if (currentTask) {
       setTaskHeader(currentTask, data.status, { awaiting: data.awaiting_human });
     }
-    if (Object.prototype.hasOwnProperty.call(data, "objective")) {
-      renderRequest(data.objective);
+    if (
+      Object.prototype.hasOwnProperty.call(data, "objective")
+      || Object.prototype.hasOwnProperty.call(data, "attached_files")
+      || Array.isArray(data.activity)
+    ) {
+      const objective = Object.prototype.hasOwnProperty.call(data, "objective")
+        ? data.objective
+        : (requestText.textContent || null);
+      renderRequest(objective, attachedFilesFromFeed(data));
     }
     renderStatusBanner(data.status, data.status_message || data.message);
     setRestartable(Boolean(data.restartable) || Boolean(data.human_gate?.restartable) || String(data.status || "").toLowerCase() === "retryable_error");
@@ -1226,6 +1286,8 @@
       renderPendingFiles();
       taskDescription.value = "";
       scheduleRoot.value = "";
+      startHint.hidden = true;
+      startHint.textContent = "";
       setStartOpen(false, { resume: false });
       const orchStatus = String(data.orchestrator?.status || "").toLowerCase();
       const orchMsg = String(data.status_message || data.orchestrator?.message || "").trim();
@@ -1256,10 +1318,10 @@
         startSubmitBtn.removeAttribute("aria-busy");
       }
       if (startCancelBtn) startCancelBtn.disabled = false;
-      if (!startHint.textContent || startHint.textContent === "Создаём задачу…") {
-        startHint.hidden = true;
-        startHint.textContent = "";
-      }
+  if (startHint.textContent === "Создаём задачу…") {
+    startHint.hidden = true;
+    startHint.textContent = "";
+  }
     }
   }
 

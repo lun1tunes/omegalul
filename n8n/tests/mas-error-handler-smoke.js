@@ -127,7 +127,88 @@ async function run(name, json) {
   assert.equal(failedSnap.cas_status, 'failed');
   assert.equal(failedSnap.restartable, false);
 
-  console.log(`mas-error-handler-smoke: ok (${scenarios.length} taxonomy + CASE_ID_REQUIRED + preserve inputs)`);
+  // awaiting_human error path must not paint as CASE_ERROR in the Activity feed.
+  const hitlTrace = await run('Prepare structured error trace', {
+    has_task_id: true,
+    task_id: 'eng_error_smoke_1',
+    safe_message: 'Нужно решение по retry budget (case_id=eng_error_smoke_1)',
+    error_code: 'VALIDATOR_REJECTED',
+    cas_status: 'awaiting_human',
+    taxonomy_scenario: 'validator_reject',
+    human_gate: { kind: 'needs_decision' },
+    findings: [],
+    stage: 'hitl',
+    passthrough: {},
+  });
+  assert.equal(hitlTrace.activity_event.status, 'VALIDATOR_REJECTED');
+  assert.notEqual(hitlTrace.activity_event.status, 'CASE_ERROR');
+
+  // Orchestrator: normal needs_approval must not invoke Error Handler / must not steal user_message.
+  const orchPrepare = source(orch, 'Prepare MAS error event (specialist)');
+  const prepareFn = new AsyncFunction('$json', '$', orchPrepare);
+  const approveSkip = await prepareFn(
+    {
+      task_id: 'eng_approve_smoke',
+      status: 'awaiting_human',
+      version: 4,
+      risk_class: 'high',
+      retry_count: 0,
+      max_retries: 2,
+      created_at: '2026-01-01T00:00:00.000Z',
+      updated_at: '2026-01-01T00:00:00.000Z',
+      request_json: '{}',
+      runtime_json: JSON.stringify({ last_error: { code: 'LLM_CALL_FAILED' } }),
+      plan_json: '{}',
+      packet_json: '{}',
+      result_json: JSON.stringify({
+        status: 'needs_approval',
+        user_message: 'Черновик прогнозного schedule файла готов. Нужно ваше утверждение перед выпуском.',
+        summary: 'Черновик прогнозного schedule файла прошёл проверки и готов к утверждению.',
+      }),
+      verification_json: '{}',
+      gate_json: JSON.stringify({ kind: 'needs_approval', gate_id: 'gate_approve' }),
+    },
+    () => ({ first: () => ({ json: {} }) }),
+  );
+  assert.equal(approveSkip[0].json.invoke_error_handler, false);
+  assert.equal(approveSkip[0].json.mas_error_event, null);
+
+  const realErr = await prepareFn(
+    {
+      task_id: 'eng_err_smoke',
+      status: 'retryable_error',
+      version: 2,
+      risk_class: 'high',
+      retry_count: 1,
+      max_retries: 2,
+      created_at: '2026-01-01T00:00:00.000Z',
+      updated_at: '2026-01-01T00:00:00.000Z',
+      request_json: '{}',
+      runtime_json: JSON.stringify({
+        last_error: { code: 'LLM_CALL_FAILED', safe_message: 'LLM timeout' },
+      }),
+      plan_json: '{}',
+      packet_json: '{}',
+      result_json: JSON.stringify({
+        status: 'retryable_error',
+        user_message: 'Черновик прогнозного schedule файла готов. Нужно ваше утверждение перед выпуском.',
+        summary: 'should-not-leak',
+      }),
+      verification_json: '{}',
+      gate_json: '{}',
+    },
+    () => ({ first: () => ({ json: {} }) }),
+  );
+  assert.equal(realErr[0].json.invoke_error_handler, true);
+  assert.match(String(realErr[0].json.mas_error_event.safe_message), /LLM timeout/);
+  assert.doesNotMatch(
+    String(realErr[0].json.mas_error_event.safe_message),
+    /утверждение|Черновик/,
+  );
+
+  console.log(
+    `mas-error-handler-smoke: ok (${scenarios.length} taxonomy + CASE_ID_REQUIRED + preserve inputs + hitl-not-CASE_ERROR + approve-skip)`,
+  );
 })().catch((err) => {
   console.error(err);
   process.exit(1);

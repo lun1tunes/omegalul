@@ -839,7 +839,7 @@ def test_universal_orchestrator_has_a_static_excel_specialist_route() -> None:
     assert "excel_extraction_specialist" in text
     resolve_code = by_name["Resolve allowlisted specialist"]["parameters"]["jsCode"]
     assert "excel_extraction_specialist:{route:0,configured:true}" in resolve_code
-    assert by_name["Configured specialist router"]["parameters"]["numberOutputs"] == 5
+    assert by_name["Configured specialist router"]["parameters"]["numberOutputs"] == 8
 
     call = by_name["Call Excel Extraction Specialist Adapter"]
     assert call["type"] == "n8n-nodes-base.executeWorkflow"
@@ -952,6 +952,7 @@ def test_schedule_flow_is_orchestrator_mediated_and_multi_stage() -> None:
     workflow = load_json(workflow_path("universal-engineering-orchestrator.workflow.json"))
     by_name = {node["name"]: node for node in workflow["nodes"]}
     connections = workflow["connections"]
+    resolve_code = by_name["Resolve allowlisted specialist"]["parameters"]["jsCode"]
     handoff_code = by_name["Route successful specialist handoff"]["parameters"]["jsCode"]
 
     assert "EXCEL_EVIDENCE_READY" in handoff_code
@@ -975,7 +976,36 @@ def test_schedule_flow_is_orchestrator_mediated_and_multi_stage() -> None:
         "engineering_calculation_specialist",
         "engineering_data_specialist",
         "engineering_document_specialist",
+        "cluster_calculation_specialist",
+        "binary_results_specialist",
+        "presentation_specialist",
     }
+    assert {s["specialist_id"] for s in registry["specialists"] if s.get("configured")} == {
+        "excel_extraction_specialist",
+        "schedule_builder_specialist",
+        "engineering_calculation_specialist",
+    }
+    for sid, route in (
+        ("cluster_calculation_specialist", 5),
+        ("binary_results_specialist", 6),
+        ("presentation_specialist", 7),
+    ):
+        row = next(s for s in registry["specialists"] if s["specialist_id"] == sid)
+        assert row["configured"] is False
+        assert row["route"] == route
+    assert "Call Cluster Calculation Specialist" in by_name
+    assert by_name["Call Cluster Calculation Specialist"]["parameters"]["workflowId"]["value"] == (
+        "REPLACE_CLUSTER_CALC_ADAPTER_IN_UI"
+    )
+    assert set(by_name["Call Binary Results Specialist"]["parameters"]["workflowInputs"]["value"]) == {
+        "specialist_packet",
+        "previous_specialist_result",
+        "latest_human_response",
+    }
+    assert "cluster_calculation_specialist:{route:5,configured:false}" in resolve_code
+    assert connections["Configured specialist router"]["main"][5][0]["node"] == "Call Cluster Calculation Specialist"
+    assert connections["Configured specialist router"]["main"][6][0]["node"] == "Call Binary Results Specialist"
+    assert connections["Configured specialist router"]["main"][7][0]["node"] == "Call Presentation Specialist"
     next_stage = connections["Successful specialist next stage"]["main"]
     expected_routes = [
         "Prepare governed routing RAG request",
@@ -1067,7 +1097,7 @@ def test_schedule_flow_is_orchestrator_mediated_and_multi_stage() -> None:
         for document in ingestible_operating_guide_documents()
         if document.get("knowledge_id") == "route-hitl-required-evidence"
     )
-    assert hitl_card["revision"] == "2"
+    assert hitl_card["revision"] == "3"
     assert "delegate excel_extraction_specialist, не HITL" in hitl_card["text"]
     assert "Builder RAG evidence gate" in hitl_card["text"]
 

@@ -107,6 +107,72 @@
       ],
       "compact_data_kind": "generic_compact",
       "inputs_kind": "generic_inputs"
+    },
+    {
+      "specialist_id": "cluster_calculation_specialist",
+      "chat_role": "Cluster Calculation",
+      "route": 5,
+      "configured": false,
+      "capabilities": [
+        "submit calculation jobs on a remote cluster",
+        "poll job status until terminal",
+        "return job_id / status / log refs without embedding raw SSH transcripts"
+      ],
+      "depends_on": [
+        "job_spec in specialist_packet.inputs and/or attached scripts; SSH or job-API credential configured in the adapter"
+      ],
+      "constraints": [
+        "never exposes SSH credentials or private keys in specialist_result",
+        "never calls Binary Results or Presentation specialists directly",
+        "async work uses continuation + retryable_error / needs_input"
+      ],
+      "compact_data_kind": "cluster_job_compact",
+      "inputs_kind": "cluster_job_inputs",
+      "template_workflow": "workflows/support/cluster-calc-specialist-adapter.workflow.json"
+    },
+    {
+      "specialist_id": "binary_results_specialist",
+      "chat_role": "Binary Results Extractor",
+      "route": 6,
+      "configured": false,
+      "capabilities": [
+        "read binary calculation result files",
+        "extract typed fields needed for reports",
+        "assemble a compact report_facts packet for Presentation"
+      ],
+      "depends_on": [
+        "binary result artifacts from Cluster Calculation (or equivalent) attached to the execution or referenced in artifact_refs"
+      ],
+      "constraints": [
+        "never stores raw binaries in CAS JSON columns",
+        "never invents numeric values missing from the binary",
+        "never calls Cluster or Presentation specialists directly"
+      ],
+      "compact_data_kind": "report_facts_packet",
+      "inputs_kind": "binary_results_inputs",
+      "template_workflow": "workflows/support/binary-results-specialist-adapter.workflow.json"
+    },
+    {
+      "specialist_id": "presentation_specialist",
+      "chat_role": "Presentation Assembler",
+      "route": 7,
+      "configured": false,
+      "capabilities": [
+        "assemble presentation / visualization from report facts",
+        "produce slide index and chart specs as compact_data",
+        "return deck/image/HTML refs in artifact_refs"
+      ],
+      "depends_on": [
+        "report_facts_packet (or equivalent) from Binary Results Extractor / prior specialist_result"
+      ],
+      "constraints": [
+        "does not re-run cluster jobs or re-parse binaries",
+        "does not approve release — Orchestrator / Human Gate decide",
+        "never calls other specialists directly"
+      ],
+      "compact_data_kind": "presentation_compact",
+      "inputs_kind": "presentation_inputs",
+      "template_workflow": "workflows/support/presentation-specialist-adapter.workflow.json"
     }
   ]
 }
