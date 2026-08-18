@@ -548,6 +548,10 @@ def test_ready_health_and_static_assets() -> None:
     assert "syncScheduleRootField" in js_text
     assert "hydrateFromDataTables" in js_text
     assert "setTaskHeader" in js_text
+    assert "attachLive" in js_text
+    assert "pollFeed" in js_text
+    assert "applyFeedMeta(msg)" in js_text
+    assert "EventSource" in js_text
     assert "showLoadError" in js_text
     assert "showNotFound(taskId)" in js_text
     # Non-404 / network failures must not claim the task is missing from Activity+DT.
@@ -675,11 +679,14 @@ def test_start_task_with_files(tmp_path: Path, monkeypatch) -> None:
     assert res.status_code == 200, res.text
     body = res.json()
     assert body["ok"] is True
+    assert body["accepted"] is True
+    assert body["orchestrator_pending"] is True
     assert body["backend"] == "webhook"
     assert body["file_count"] == 2
-    assert body["awaiting_human"] is True
-    assert body["human_gate"]["gate_id"]
+    assert body["awaiting_human"] is False
+    assert body["human_gate"] is None
     task_id = body["task_id"]
+    assert str(task_id).startswith("act_")
     feed = client.get(f"/v1/tasks/{task_id}").json()
     assert feed["title"].startswith("REVISE")
     assert feed["objective"] == "REVISE даты ввода по Excel"
@@ -687,7 +694,9 @@ def test_start_task_with_files(tmp_path: Path, monkeypatch) -> None:
     assert feed["activity"][0]["status"] == "TASK_STARTED"
     assert feed["activity"][0]["details"]["objective"] == "REVISE даты ввода по Excel"
     assert feed["activity"][0]["details"]["files"] == ["dates.xlsx", "schedule.inc"]
+    assert any(t.get("status") == "ORCH_DISPATCHED" for t in feed["activity"])
     assert feed["awaiting_human"] is True
+    assert feed["human_gate"]["gate_id"]
 
 
 def test_start_requires_named_engineer() -> None:
@@ -723,11 +732,208 @@ def test_live_start_forwards_files(monkeypatch) -> None:
         files=[("schedule_files", ("root.inc", b"WELSPECS\n/", "text/plain"))],
     )
     assert res.status_code == 200, res.text
+    body = res.json()
     assert captured["payload"]["action"] == "start"
     assert captured["payload"]["request"]["build_mode"] == "AUTO"
     assert "schedule_files" in captured["files"]
-    assert res.json()["task_id"] == "eng_live_1"
-    assert res.json()["awaiting_human"] is False
+    assert str(body["task_id"]).startswith("act_")
+    assert captured["payload"]["task_id"] == body["task_id"]
+    assert body["accepted"] is True
+    assert body["awaiting_human"] is False
+    feed = client.get(f"/v1/tasks/{body['task_id']}").json()
+    assert feed["status"] == "planning"
+
+
+def test_sync_handoffs_follow_orch_alias_to_act_task(monkeypatch) -> None:
+    monkeypatch.setenv("ORCHESTRATOR_WEBHOOK_URL", "http://orch.test/hook")
+
+    async def fake_invoke(payload, *, files=None, timeout_s=90.0):
+        return {
+            "contract": "orchestrator_response",
+            "task_id": "eng_alias_1",
+            "version": 1,
+            "status": "planning",
+            "human_gate": None,
+            "message": "started",
+        }
+
+    monkeypatch.setattr("app.main.invoke_orchestrator", fake_invoke)
+    started = client.post(
+        "/v1/tasks/start",
+        headers=KEY,
+        data={"task_description": "CREATE schedule", "requested_by": "П. Петров"},
+    )
+    assert started.status_code == 200, started.text
+    act_id = started.json()["task_id"]
+
+    sync = client.post(
+        "/v1/sync",
+        headers=KEY,
+        json={
+            "task_id": "eng_alias_1",
+            "events": [
+                {
+                    "event_type": "handoff",
+                    "at": "2026-08-18T12:00:00Z",
+                    "status": "EXCEL_EVIDENCE_READY",
+                    "summary": "Excel returned facts",
+                    "handoff": {
+                        "from_role": "Excel Extractor",
+                        "to_role": "Schedule Builder",
+                        "from_specialist": "excel_extraction_specialist",
+                        "to_specialist": "schedule_builder_specialist",
+                        "details": {"fact_count": 2},
+                    },
+                }
+            ],
+        },
+    )
+    assert sync.status_code == 200, sync.text
+    assert sync.json()["task_id"] == act_id
+    feed = client.get(f"/v1/tasks/{act_id}").json()
+    assert any(t.get("status") == "EXCEL_EVIDENCE_READY" for t in feed["activity"])
+    alias = client.get("/v1/tasks/eng_alias_1")
+    assert alias.status_code == 200
+    assert alias.json()["task_id"] == act_id
+    rail_ids = [row["task_id"] for row in client.get("/v1/tasks").json()["tasks"]]
+    assert act_id in rail_ids
+    assert "eng_alias_1" not in rail_ids
+
+
+def test_sync_before_start_bind_merges_into_act_task(monkeypatch) -> None:
+    monkeypatch.setenv("ORCHESTRATOR_WEBHOOK_URL", "http://orch.test/hook")
+
+    async def fake_invoke(payload, *, files=None, timeout_s=90.0):
+        return {
+            "task_id": "eng_early_1",
+            "version": 1,
+            "status": "planning",
+            "human_gate": None,
+        }
+
+    monkeypatch.setattr("app.main.invoke_orchestrator", fake_invoke)
+    early = client.post(
+        "/v1/sync",
+        headers=KEY,
+        json={
+            "task_id": "eng_early_1",
+            "events": [
+                {
+                    "event_type": "handoff",
+                    "at": "2026-08-18T11:00:00Z",
+                    "status": "DELEGATED",
+                    "summary": "Planner delegated Excel",
+                    "handoff": {
+                        "from_role": "Orchestrator",
+                        "to_role": "Excel Extractor",
+                    },
+                }
+            ],
+        },
+    )
+    assert early.status_code == 200
+    started = client.post(
+        "/v1/tasks/start",
+        headers=KEY,
+        data={"task_description": "CREATE schedule", "requested_by": "П. Петров"},
+    )
+    act_id = started.json()["task_id"]
+    feed = client.get(f"/v1/tasks/{act_id}").json()
+    assert any(t.get("status") == "DELEGATED" for t in feed["activity"])
+    assert any(t.get("status") == "TASK_STARTED" for t in feed["activity"])
+    rail_ids = [row["task_id"] for row in client.get("/v1/tasks").json()["tasks"]]
+    assert "eng_early_1" not in rail_ids
+
+
+def test_sync_does_not_reopen_completed_task() -> None:
+    hydrate = client.post(
+        "/v1/hydrate",
+        headers=KEY,
+        json={
+            "contract": "mas_activity_feed_hydrate",
+            "ok": True,
+            "task_id": "eng_done_1",
+            "title": "Done",
+            "status": "completed",
+            "events": [
+                {
+                    "event_type": "handoff",
+                    "at": "2026-08-18T10:00:00Z",
+                    "status": "VERIFIED",
+                    "summary": "done",
+                    "handoff": {"from_role": "Verifier", "to_role": "Release"},
+                }
+            ],
+        },
+    )
+    assert hydrate.status_code == 200, hydrate.text
+    before = client.get("/v1/tasks/eng_done_1").json()
+    assert before["status"] == "completed"
+    sync = client.post(
+        "/v1/sync",
+        headers=KEY,
+        json={
+            "task_id": "eng_done_1",
+            "events": [
+                {
+                    "event_type": "handoff",
+                    "at": "2026-08-18T10:05:00Z",
+                    "status": "EXCEL_EVIDENCE_READY",
+                    "summary": "late handoff",
+                    "handoff": {
+                        "from_role": "Excel Extractor",
+                        "to_role": "Schedule Builder",
+                    },
+                }
+            ],
+        },
+    )
+    assert sync.status_code == 200
+    after = client.get("/v1/tasks/eng_done_1").json()
+    assert after["status"] == "completed"
+    assert any(t.get("status") == "EXCEL_EVIDENCE_READY" for t in after["activity"])
+
+
+def test_start_empty_orchestrator_payload_records_failure(monkeypatch) -> None:
+    monkeypatch.setenv("ORCHESTRATOR_WEBHOOK_URL", "http://orch.test/hook")
+
+    async def fake_invoke(payload, *, files=None, timeout_s=90.0):
+        return {}
+
+    monkeypatch.setattr("app.main.invoke_orchestrator", fake_invoke)
+    res = client.post(
+        "/v1/tasks/start",
+        headers=KEY,
+        data={"task_description": "CREATE schedule", "requested_by": "П. Петров"},
+    )
+    assert res.status_code == 200, res.text
+    feed = client.get(f"/v1/tasks/{res.json()['task_id']}").json()
+    assert feed["status"] == "error"
+    assert any(t.get("status") == "ORCH_FAILED" for t in feed["activity"])
+    assert feed["awaiting_human"] is False
+
+
+def test_hitl_409_does_not_record_dispatch(monkeypatch) -> None:
+    monkeypatch.setenv("ORCHESTRATOR_WEBHOOK_URL", "http://orch.test/hook")
+
+    async def fake_invoke(payload, *, files=None, timeout_s=90.0):
+        if payload.get("action") == "status":
+            return {"status": "planning", "version": 2, "human_gate": None}
+        raise AssertionError("resume must not run when status is not awaiting")
+
+    monkeypatch.setattr("app.main.invoke_orchestrator", fake_invoke)
+    seed = client.post("/v1/demo/seed", headers=KEY).json()
+    task_id = seed["task_id"]
+    before = client.get(f"/v1/tasks/{task_id}").json()
+    res = client.post(
+        f"/v1/tasks/{task_id}/hitl",
+        headers=KEY,
+        json={"action": "approve", "requested_by": "И. Иванов", "gate_id": before["human_gate"]["gate_id"]},
+    )
+    assert res.status_code == 409
+    after = client.get(f"/v1/tasks/{task_id}").json()
+    assert not any(t.get("status") == "HUMAN_APPROVED" for t in after["activity"])
+    assert not any(t.get("status") == "ORCH_DISPATCHED" for t in after["activity"])
 
 
 def test_demo_seed_has_duration_brief_and_hitl_gate() -> None:
@@ -1060,6 +1266,9 @@ def test_live_hitl_status_failure_does_not_local_apply(monkeypatch) -> None:
     after = client.get(f"/v1/tasks/{task_id}").json()
     assert after["awaiting_human"] is True
     assert after["human_gate"]["gate_id"] == before["human_gate"]["gate_id"]
+    assert not any(t.get("status") == "HUMAN_APPROVED" for t in after["activity"])
+    assert not any(t.get("status") == "ORCH_DISPATCHED" for t in after["activity"])
+    assert any(t.get("status") == "ORCH_FAILED" for t in after["activity"])
 
 
 def test_live_hitl_prefers_fresh_status_cas_over_body(monkeypatch) -> None:
@@ -1111,7 +1320,11 @@ def test_live_hitl_reattaches_start_binaries(tmp_path: Path, monkeypatch) -> Non
     calls: list[dict] = []
 
     async def fake_invoke(payload, *, files=None, timeout_s=90.0):
-        calls.append({"action": payload.get("action"), "files": files})
+        calls.append({
+            "action": payload.get("action"),
+            "files": files,
+            "task_id": payload.get("task_id"),
+        })
         if payload.get("action") == "start":
             return {
                 "task_id": "eng_bin_1",
@@ -1155,7 +1368,9 @@ def test_live_hitl_reattaches_start_binaries(tmp_path: Path, monkeypatch) -> Non
     )
     assert started.status_code == 200, started.text
     task_id = started.json()["task_id"]
-    assert task_id == "eng_bin_1"
+    assert str(task_id).startswith("act_")
+    start_calls = [c for c in calls if c["action"] == "start"]
+    assert start_calls and start_calls[0]["task_id"] == task_id
 
     res = client.post(
         f"/v1/tasks/{task_id}/hitl",
@@ -1165,6 +1380,7 @@ def test_live_hitl_reattaches_start_binaries(tmp_path: Path, monkeypatch) -> Non
     assert res.status_code == 200, res.text
     resume_calls = [c for c in calls if c["action"] == "reply"]
     assert resume_calls
+    assert resume_calls[0]["task_id"] == "eng_bin_1"
     files = resume_calls[0]["files"] or {}
     assert "file" in files
     assert files["file"][0] == "dates.xlsx"

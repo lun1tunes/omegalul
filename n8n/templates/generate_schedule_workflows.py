@@ -278,7 +278,7 @@ return[{json:{
     'sendBody':True,
     'specifyBody':'json',
     'jsonBody':'={{ $json.activity_body }}',
-    'options':{'timeout':5000,'response':{'response':{'neverError':True}}},
+    'options':{'timeout':30000,'response':{'response':{'neverError':True}}},
   }, onError='continueRegularOutput'),
   code('Return trace acknowledgement',(780,-80),r"""
 const prepared=$('Prepare MAS activity sync').first().json||{};

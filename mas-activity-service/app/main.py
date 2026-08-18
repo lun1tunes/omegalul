@@ -13,12 +13,12 @@ from contextlib import asynccontextmanager
 from datetime import datetime, timezone
 from typing import Any
 
-from fastapi import FastAPI, File, Form, HTTPException, Query, Request, UploadFile
+from fastapi import BackgroundTasks, FastAPI, File, Form, HTTPException, Query, Request, UploadFile
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import FileResponse, JSONResponse, Response, StreamingResponse
 from fastapi.staticfiles import StaticFiles
 
-from app.settings import STATIC, VERSION, configure_logging, get_settings
+from app.settings import STATIC, UNCONFIGURED_N8N, VERSION, configure_logging, get_settings
 from app.models import (
     EventIn,
     HitlPost,
@@ -340,8 +340,21 @@ def _trim_to_max_tasks() -> None:
         _subscribers.pop(old, None)
 
 
+def _canonical_task_id(task_id: str) -> str:
+    """Map orchestrator/CAS ids (eng_…) onto the Activity presentation task (act_…)."""
+    if not task_id:
+        return task_id
+    for tid, task in _tasks.items():
+        if tid == task_id:
+            continue
+        if str(task.get("orch_task_id") or "").strip() == task_id:
+            return tid
+    return task_id
+
+
 def _ensure_task(task_id: str) -> dict[str, Any]:
     """Create a task shell without MAX_TASKS eviction (caller must trim)."""
+    task_id = _canonical_task_id(task_id)
     if task_id not in _tasks:
         _tasks[task_id] = _new_task_shell(task_id)
         _order.append(task_id)
@@ -349,9 +362,10 @@ def _ensure_task(task_id: str) -> dict[str, Any]:
 
 
 def _touch(task_id: str) -> dict[str, Any]:
-    _ensure_task(task_id)
+    task = _ensure_task(task_id)
     _trim_to_max_tasks()
-    return _tasks[task_id]
+    owner = str(task.get("task_id") or _canonical_task_id(task_id))
+    return _tasks.get(owner) or task
 
 
 def _set_objective(task: dict[str, Any], objective: str | None) -> None:
@@ -506,6 +520,28 @@ def _awaiting(task: dict[str, Any]) -> bool:
     return _is_awaiting_status(task.get("status")) and bool(_gate_payload(task))
 
 
+_TERMINAL_TASK_STATUSES = frozenset({
+    "completed",
+    "succeeded",
+    "failed",
+    "cancelled",
+    "canceled",
+    "rejected",
+    "error",
+    "fatal_error",
+    "conflict",
+    "retryable_error",
+})
+
+
+def _is_open_work_status(status: Any) -> bool:
+    """True when a routine Trace Writer handoff may mark the task as still running."""
+    text = str(status or "").strip().lower()
+    if not text:
+        return True
+    return text not in _TERMINAL_TASK_STATUSES
+
+
 def _restartable(task: dict[str, Any]) -> bool:
     """Manual restart is allowed for retryable_error or an explicit restartable error gate."""
     status = str(task.get("status") or "").strip().lower()
@@ -564,6 +600,7 @@ async def _append_turns(
     keeps live-only turns so durable refresh cannot wipe fresher Trace Writer sync.
     """
     async with _lock:
+        task_id = _canonical_task_id(task_id)
         task = _touch(task_id)
         live_keep: list[dict[str, Any]] = []
         
@@ -643,9 +680,21 @@ async def _append_turns(
         if stored or title_changed or objective_changed or files_changed:
             task["updated_at"] = _now()
         _persist()
-        
+        live_meta = {
+            "status": task.get("status"),
+            "status_message": task.get("status_message"),
+            "version": task.get("version"),
+            "awaiting_human": _awaiting(task),
+            "restartable": _restartable(task),
+            "human_gate": _gate_payload(task),
+            "schedule_artifact": _schedule_artifact_meta(task),
+            "semantic_diff": task.get("semantic_diff")
+            if isinstance(task.get("semantic_diff"), dict)
+            else None,
+        }
+
     for turn in stored:
-        await _publish(task_id, {"type": "turn", "task_id": task_id, "turn": turn})
+        await _publish(task_id, {"type": "turn", "task_id": task_id, "turn": turn, **live_meta})
     return stored
 
 
@@ -659,6 +708,7 @@ async def _set_gate(
     message: str | None = None,
 ) -> dict[str, Any]:
     async with _lock:
+        task_id = _canonical_task_id(task_id)
         existed = task_id in _tasks
         order_before = list(_order)
         task = _touch(task_id)
@@ -885,7 +935,7 @@ async def diagnostics_connectivity(
 async def post_turn(body: TurnPost) -> dict[str, Any]:
     turn = _normalize_turn(body.turn, trace_id=body.trace_id)
     stored = await _append_turns(body.task_id, [turn])
-    return {"stored": True, "task_id": body.task_id, "turn": stored[0]}
+    return {"stored": True, "task_id": _canonical_task_id(body.task_id), "turn": stored[0]}
 
 
 async def _ingest_sync(
@@ -898,6 +948,7 @@ async def _ingest_sync(
 ) -> dict[str, Any]:
     turns = [_normalize_turn(t, trace_id=body.trace_id) for t in body.turns]
     turns.extend(_events_to_turns(body.events, trace_id=body.trace_id))
+    task_id = _canonical_task_id(body.task_id)
     gate = body.human_gate if isinstance(body.human_gate, dict) else None
     gate_ok = bool(gate and gate.get("gate_id"))
     if gate and not gate_ok:
@@ -922,7 +973,7 @@ async def _ingest_sync(
             gate is None and explicit_status and not _is_awaiting_status(status)
         )
         await _set_gate(
-            body.task_id,
+            task_id,
             status=status if (gate_ok or explicit_status or replace_turns) else None,
             version=body.version,
             gate=gate if gate_ok else None,
@@ -932,7 +983,7 @@ async def _ingest_sync(
     meta_written = False
     if turns or replace_turns:
         stored = await _append_turns(
-            body.task_id,
+            task_id,
             turns,
             title=title,
             objective=objective,
@@ -940,9 +991,22 @@ async def _ingest_sync(
             replace=replace_turns,
             source="cas" if replace_turns else "live",
         )
+        if stored and not gate_ok and not explicit_status and not replace_turns:
+            async with _lock:
+                current = _tasks.get(task_id) or _tasks.get(_canonical_task_id(task_id)) or {}
+                gated = _awaiting(current)
+                open_work = _is_open_work_status(current.get("status"))
+            if not gated and open_work:
+                last = stored[-1]
+                brief = str(last.get("brief") or last.get("summary") or "").strip()
+                await _set_gate(
+                    task_id,
+                    status="running",
+                    message=brief[:1200] if brief else None,
+                )
     else:
         async with _lock:
-            task = _touch(body.task_id)
+            task = _touch(task_id)
             changed = False
 
             if title and task.get("title") != title:
@@ -965,7 +1029,7 @@ async def _ingest_sync(
                 meta_written = True
     return {
         "stored": bool(stored) or meta_written or gate_ok or explicit_status or replace_turns,
-        "task_id": body.task_id,
+        "task_id": _canonical_task_id(task_id),
         "count": len(stored),
         "turns": stored,
     }
@@ -1032,6 +1096,7 @@ async def _apply_list_hydrate(payload: dict[str, Any], *, prune_missing: bool = 
             task_id = str(raw.get("task_id") or "").strip()
             if not TASK_ID_RE.match(task_id):
                 continue
+            task_id = _canonical_task_id(task_id)
             # No mid-loop MAX_TASKS eviction — trim once after reorder/prune.
             first_sighting = task_id not in _tasks
             task = _ensure_task(task_id)
@@ -1090,6 +1155,7 @@ async def _apply_feed_hydrate(payload: dict[str, Any]) -> dict[str, Any]:
     task_id = str(payload.get("task_id") or "").strip()
     if not TASK_ID_RE.match(task_id):
         raise HTTPException(status_code=400, detail="Invalid task_id in hydrate payload")
+    task_id = _canonical_task_id(task_id)
     events_raw = payload.get("events") if isinstance(payload.get("events"), list) else []
     events: list[EventIn] = []
     for item in events_raw:
@@ -1218,12 +1284,16 @@ async def get_task(
 ) -> dict[str, Any]:
     if not TASK_ID_RE.match(task_id):
         raise HTTPException(status_code=400, detail="Invalid task_id")
+    task_id = _canonical_task_id(task_id)
     task = _tasks.get(task_id)
     need = durable or task is None or not task.get("turns")
     hydrate_meta: dict[str, Any] | None = None
     if need and durable_enabled():
         try:
-            payload = await fetch_task_feed(task_id)
+            feed_lookup = _n8n_task_id(task_id) if task else task_id
+            payload = await fetch_task_feed(feed_lookup)
+            if not payload and feed_lookup != task_id:
+                payload = await fetch_task_feed(task_id)
             if payload:
                 result = await _apply_feed_hydrate(payload)
                 if isinstance(result, dict) and result.get("stored") is False:
@@ -1259,14 +1329,15 @@ async def get_task(
 async def get_gate(task_id: str, refresh: bool = Query(default=False)) -> dict[str, Any]:
     if not TASK_ID_RE.match(task_id):
         raise HTTPException(status_code=400, detail="Invalid task_id")
+    task_id = _canonical_task_id(task_id)
     task = _tasks.get(task_id)
     if not task and not refresh:
         if durable_enabled():
             try:
-                payload = await fetch_task_feed(task_id)
+                payload = await fetch_task_feed(_n8n_task_id(task_id))
                 if payload:
                     await _apply_feed_hydrate(payload)
-                    task = _tasks.get(task_id)
+                    task = _tasks.get(_canonical_task_id(task_id))
             except Exception:  # noqa: BLE001
                 pass
         if not task:
@@ -1277,7 +1348,7 @@ async def get_gate(task_id: str, refresh: bool = Query(default=False)) -> dict[s
     if refresh:
         try:
             orch = await invoke_orchestrator(
-                {"action": "status", "task_id": task_id, "requested_by": "mas-activity"}
+                {"action": "status", "task_id": _n8n_task_id(task_id), "requested_by": "mas-activity"}
             )
         except OrchestratorError as exc:
             raise _raise_orch(exc) from exc
@@ -1347,6 +1418,227 @@ def _start_turn(*, requested_by: str, description: str, file_names: list[str], b
     )
 
 
+def _n8n_task_id(task_id: str) -> str:
+    owner = _canonical_task_id(task_id)
+    task = _tasks.get(owner) or {}
+    alt = str(task.get("orch_task_id") or "").strip()
+    return alt if alt and TASK_ID_RE.match(alt) else owner
+
+
+def _orch_dispatch_turn(*, action: str, requested_by: str) -> dict[str, Any]:
+    return _normalize_turn(
+        {
+            "status": "ORCH_DISPATCHED",
+            "stage": "intake" if action == "start" else "hitl",
+            "summary": f"Orchestrator {action} dispatched.",
+            "brief": "Запрос записан в ленту и уходит в оркестратор. Хэндоффы появятся здесь по мере работы.",
+            "from_role": "Activity",
+            "to_role": "Orchestrator",
+            "from_specialist": "mas_activity",
+            "to_specialist": "universal_orchestrator",
+            "details": {"action": action, "requested_by": requested_by},
+            "event_type": "handoff",
+        }
+    )
+
+
+def _orch_failed_turn(*, action: str, detail: str) -> dict[str, Any]:
+    text = (detail or "Orchestrator failed").strip()[:800]
+    return _normalize_turn(
+        {
+            "status": "ORCH_FAILED",
+            "stage": "error",
+            "summary": f"Orchestrator {action} failed.",
+            "brief": text,
+            "from_role": "Orchestrator",
+            "to_role": "Human",
+            "from_specialist": "universal_orchestrator",
+            "to_specialist": "human_operator",
+            "details": {"action": action, "status": "error"},
+            "event_type": "handoff",
+        }
+    )
+
+
+async def _mark_orch_settled(task_id: str) -> None:
+    async with _lock:
+        task = _tasks.get(task_id)
+        if task:
+            task["orch_pending"] = False
+            task["updated_at"] = _now()
+            _persist()
+
+
+async def _bind_orch_alias(task_id: str, orch_id: str) -> None:
+    """Remember eng_* as the CAS/orchestrator id and fold premature Trace Writer rows."""
+    if not orch_id or orch_id == task_id or not TASK_ID_RE.match(orch_id):
+        return
+    orphan_turns: list[dict[str, Any]] = []
+    orphan_meta: dict[str, Any] | None = None
+    async with _lock:
+        task = _tasks.get(task_id)
+        if not task:
+            return
+        task["orch_task_id"] = orch_id
+        orphan = _tasks.get(orch_id)
+        if orphan is not None:
+            orphan_turns = [dict(t) for t in (orphan.get("turns") or []) if isinstance(t, dict)]
+            orphan_meta = {
+                "status": orphan.get("status"),
+                "status_message": orphan.get("status_message"),
+                "version": orphan.get("version"),
+                "gate": dict(orphan["gate"]) if isinstance(orphan.get("gate"), dict) else None,
+                "title": orphan.get("title"),
+                "objective": orphan.get("objective"),
+                "attached_files": list(orphan.get("attached_files") or []),
+            }
+            if orphan.get("schedule_artifact") and not task.get("schedule_artifact"):
+                task["schedule_artifact"] = orphan.get("schedule_artifact")
+            if orphan.get("semantic_diff") and not task.get("semantic_diff"):
+                task["semantic_diff"] = orphan.get("semantic_diff")
+            _tasks.pop(orch_id, None)
+            if orch_id in _order:
+                _order.remove(orch_id)
+            orphan_queues = _subscribers.pop(orch_id, [])
+            if orphan_queues:
+                _subscribers[task_id].extend(orphan_queues)
+            bins = _task_binaries.pop(orch_id, None)
+            if bins and task_id not in _task_binaries:
+                _task_binaries[task_id] = bins
+        task["updated_at"] = _now()
+        _persist()
+    if orphan_turns:
+        await _append_turns(
+            task_id,
+            orphan_turns,
+            title=(orphan_meta or {}).get("title"),
+            objective=(orphan_meta or {}).get("objective"),
+            attached_files=(orphan_meta or {}).get("attached_files"),
+        )
+    if not orphan_meta:
+        return
+    owner = _tasks.get(task_id) or {}
+    orphan_gate = orphan_meta.get("gate") if isinstance(orphan_meta.get("gate"), dict) else None
+    if orphan_gate and orphan_gate.get("gate_id") and not _awaiting(owner):
+        await _set_gate(
+            task_id,
+            status=orphan_meta.get("status") or "awaiting_human",
+            version=orphan_meta.get("version") if isinstance(orphan_meta.get("version"), int) else None,
+            gate=orphan_gate,
+            message=orphan_meta.get("status_message"),
+        )
+    elif (
+        orphan_meta.get("status")
+        and str(owner.get("status") or "").strip().lower() in {"", "planning"}
+        and _is_open_work_status(orphan_meta.get("status"))
+    ):
+        await _set_gate(
+            task_id,
+            status=orphan_meta.get("status"),
+            message=orphan_meta.get("status_message"),
+        )
+
+
+async def _fail_orch_apply(task_id: str, *, action: str, detail: str) -> None:
+    text = (detail or "Orchestrator failed").strip()[:800]
+    await _mark_orch_settled(task_id)
+    await _append_turns(task_id, [_orch_failed_turn(action=action, detail=text)])
+    await _set_gate(task_id, status="error", clear_gate=True, message=text[:1200])
+
+
+async def _apply_orch_payload(task_id: str, orch: dict[str, Any], *, action: str) -> None:
+    if not isinstance(orch, dict) or not orch:
+        await _fail_orch_apply(task_id, action=action, detail="Orchestrator returned an empty response")
+        return
+
+    orch_id = str(orch.get("task_id") or "").strip()
+    if orch_id and not TASK_ID_RE.match(orch_id):
+        await _fail_orch_apply(task_id, action=action, detail=f"Orchestrator returned invalid task_id {orch_id!r}")
+        return
+
+    gate = orch.get("human_gate") if isinstance(orch.get("human_gate"), dict) else None
+    status = orch.get("status")
+    if not str(status or "").strip():
+        if gate and gate.get("gate_id"):
+            status = "awaiting_human"
+        else:
+            await _fail_orch_apply(task_id, action=action, detail="Orchestrator response missing status")
+            return
+
+    await _mark_orch_settled(task_id)
+    await _bind_orch_alias(task_id, orch_id)
+
+    orch_status = str(status or "").strip().lower()
+    orch_message = str(orch.get("message") or "").strip() or None
+    if orch_status in {"error", "fatal_error", "failed"}:
+        await _append_turns(task_id, [_orch_failed_turn(action=action, detail=orch_message or orch_status)])
+        await _set_gate(
+            task_id,
+            status=status or "error",
+            version=orch.get("version") if isinstance(orch.get("version"), int) else None,
+            gate=None,
+            clear_gate=True,
+            message=orch_message,
+        )
+        return
+
+    version = orch.get("version")
+    await _set_gate(
+        task_id,
+        status=status,
+        version=version if isinstance(version, int) else None,
+        gate=gate,
+        clear_gate=not gate,
+        message=orch_message,
+    )
+
+    if orch_status == "conflict" and orch_message:
+        conflict_turn = _normalize_turn(
+            {
+                "status": "ORCH_CONFLICT",
+                "stage": "intake",
+                "summary": orch_message[:500],
+                "brief": (
+                    "Оркестратор не принял запрос: неполный пакет schedule "
+                    "(часто не хватает файлов из INCLUDE). "
+                    f"{orch_message[:420]}"
+                ),
+                "from_role": "Orchestrator",
+                "to_role": "Human",
+                "from_specialist": "universal_orchestrator",
+                "to_specialist": "human_operator",
+                "details": {"action": action, "status": "conflict"},
+                "event_type": "handoff",
+            }
+        )
+        await _append_turns(task_id, [conflict_turn])
+
+    async with _lock:
+        task = _tasks.get(task_id)
+        if task:
+            changed = False
+            if _maybe_capture_schedule(task, orch if isinstance(orch, dict) else None):
+                changed = True
+            if _maybe_capture_semantic_diff(task, orch if isinstance(orch, dict) else None):
+                changed = True
+            if changed:
+                task["updated_at"] = _now()
+                _persist()
+
+
+async def _finish_start(task_id: str, payload: dict[str, Any], binary: BinaryMap | None) -> None:
+    logger.info("background orchestrator start task_id=%s", task_id)
+    try:
+        orch = await invoke_orchestrator(payload, files=binary or None, timeout_s=600.0)
+    except OrchestratorError as exc:
+        logger.exception("background orchestrator start failed task_id=%s", task_id)
+        await _mark_orch_settled(task_id)
+        await _append_turns(task_id, [_orch_failed_turn(action="start", detail=str(exc))])
+        await _set_gate(task_id, status="error", clear_gate=True, message=str(exc)[:1200])
+        return
+    await _apply_orch_payload(task_id, orch if isinstance(orch, dict) else {}, action="start")
+
+
 async def _read_upload(upload: UploadFile, *, field: str) -> tuple[str, bytes, str]:
     filename = (upload.filename or field).strip() or field
     raw = await upload.read(MAX_START_FILE_BYTES + 1)
@@ -1391,6 +1683,7 @@ def _assign_upload_key(field: str, filename: str, counters: dict[str, int]) -> s
 
 @app.post("/v1/tasks/start")
 async def post_start_task(
+    background_tasks: BackgroundTasks,
     task_description: str = Form(...),
     requested_by: str = Form(...),
     schedule_root: str = Form(default=""),
@@ -1466,98 +1759,46 @@ async def post_start_task(
     }
 
     backend = hitl_backend()
-    try:
-        # Golden / multi-file SCHEDULE+Excel can exceed 3–6 min before first HITL.
-        orch = await invoke_orchestrator(payload, files=binary or None, timeout_s=600.0)
-    except OrchestratorError as exc:
-        raise _raise_orch(exc) from exc
-
-    orch_status = str(orch.get("status") or "").strip().lower()
-    if orch_status in {"error", "fatal_error", "failed"} or not orch.get("task_id"):
-        detail = str(orch.get("message") or "").strip() or f"Orchestrator start failed (status={orch.get('status')!r})"
-        raise HTTPException(status_code=502, detail=detail)
-
-    task_id = str(orch.get("task_id") or client_task_id).strip()
-    if not TASK_ID_RE.match(task_id):
-        raise HTTPException(status_code=502, detail="Orchestrator returned invalid task_id")
-
-    # Keep start binaries for HITL resume (Excel re-delegate needs workbook field `file`).
-    _remember_binaries(task_id, binary or None)
+    if get_settings().n8n_transport == "unconfigured":
+        raise HTTPException(status_code=503, detail=UNCONFIGURED_N8N)
 
     title = description[:80] + ("…" if len(description) > 80 else "")
     turn = _start_turn(requested_by=by, description=description, file_names=file_names, backend=backend)
+    dispatch = _orch_dispatch_turn(action="start", requested_by=by)
+    await _set_gate(
+        client_task_id,
+        status="planning",
+        message="Оркестратор принял задачу. Хэндоффы появятся в ленте.",
+    )
     await _append_turns(
-        task_id,
-        [turn],
+        client_task_id,
+        [turn, dispatch],
         title=title,
         objective=description,
         attached_files=file_names,
     )
-
-    gate = orch.get("human_gate") if isinstance(orch.get("human_gate"), dict) else None
-    status = orch.get("status")
-    version = orch.get("version")
-    orch_message = str(orch.get("message") or "").strip() or None
-    await _set_gate(
-        task_id,
-        status=status,
-        version=version if isinstance(version, int) else None,
-        gate=gate,
-        clear_gate=not gate,
-        message=orch_message,
-    )
-
-    status_norm = str(status or "").strip().lower()
-    if status_norm == "conflict" and orch_message:
-        conflict_turn = _normalize_turn(
-            {
-                "status": "ORCH_CONFLICT",
-                "stage": "intake",
-                "summary": orch_message[:500],
-                "brief": (
-                    "Оркестратор не принял старт: неполный пакет schedule "
-                    "(часто не хватает файлов из INCLUDE). "
-                    f"{orch_message[:420]}"
-                ),
-                "from_role": "Orchestrator",
-                "to_role": by,
-                "from_specialist": "universal_orchestrator",
-                "to_specialist": "human_operator",
-                "details": {"action": "start", "status": "conflict"},
-                "event_type": "handoff",
-            }
-        )
-        await _append_turns(task_id, [conflict_turn])
-
-    schedule_meta = None
-    semantic_diff = None
     async with _lock:
-        task = _tasks.get(task_id)
+        task = _tasks.get(client_task_id)
         if task:
-            changed = False
-            if _maybe_capture_schedule(task, orch if isinstance(orch, dict) else None):
-                changed = True
-            if _maybe_capture_semantic_diff(task, orch if isinstance(orch, dict) else None):
-                changed = True
-            if changed:
-                task["updated_at"] = _now()
+            task["orch_pending"] = True
             _persist()
-            schedule_meta = _schedule_artifact_meta(task)
-            semantic_diff = task.get("semantic_diff") if isinstance(task.get("semantic_diff"), dict) else None
+    _remember_binaries(client_task_id, binary or None)
+    background_tasks.add_task(_finish_start, client_task_id, payload, binary or None)
 
     return {
         "ok": True,
-        "task_id": task_id,
-        "ui": f"/t/{task_id}",
+        "accepted": True,
+        "orchestrator_pending": True,
+        "task_id": client_task_id,
+        "ui": f"/t/{client_task_id}",
         "backend": backend,
-        "orchestrator": orch,
-        "awaiting_human": _is_awaiting_status(status) and bool(gate and gate.get("gate_id")),
-        "human_gate": gate,
-        "status_message": orch_message,
+        "awaiting_human": False,
+        "human_gate": None,
+        "status_message": "Оркестратор принял задачу. Хэндоффы появятся в ленте.",
         "turn": turn,
         "file_count": len(file_names),
-        "schedule_artifact": schedule_meta,
-        "semantic_diff": semantic_diff,
+        "schedule_artifact": None,
+        "semantic_diff": None,
     }
 
 
@@ -1565,6 +1806,7 @@ async def post_start_task(
 async def post_hitl(task_id: str, body: HitlPost) -> dict[str, Any]:
     if not TASK_ID_RE.match(task_id):
         raise HTTPException(status_code=400, detail="Invalid task_id")
+    task_id = _canonical_task_id(task_id)
     action = body.action.lower()
     if action not in HITL_ACTIONS:
         raise HTTPException(status_code=400, detail="Unsupported action")
@@ -1595,7 +1837,7 @@ async def post_hitl(task_id: str, body: HitlPost) -> dict[str, Any]:
         if expected_version is None:
             try:
                 status_payload = await invoke_orchestrator(
-                    {"action": "status", "task_id": task_id, "requested_by": requested_by}
+                    {"action": "status", "task_id": _n8n_task_id(task_id), "requested_by": requested_by}
                 )
             except OrchestratorError as exc:
                 raise _raise_orch(exc) from exc
@@ -1626,20 +1868,35 @@ async def post_hitl(task_id: str, body: HitlPost) -> dict[str, Any]:
                 status_code=400,
                 detail=f"expected_version required for restart of case {task_id}",
             ) from exc
+        retry_turn = _human_turn(
+            action="retry",
+            requested_by=requested_by,
+            human_response=human_response,
+            gate=local_gate,
+        )
+        stored = await _append_turns(
+            task_id,
+            [retry_turn, _orch_dispatch_turn(action="retry", requested_by=requested_by)],
+        )
         try:
             orch = await invoke_orchestrator(
                 {
                     "action": "retry",
-                    "task_id": task_id,
+                    "task_id": _n8n_task_id(task_id),
                     "requested_by": requested_by,
                     "expected_version": expected_version,
                 },
                 files=_binaries_for(task_id),
             )
         except OrchestratorError as exc:
+            await _append_turns(task_id, [_orch_failed_turn(action="retry", detail=str(exc))])
             raise _raise_orch(exc) from exc
         orch_status = str(orch.get("status") or "").strip().lower()
         if orch_status in {"conflict", "failed", "rejected", "cancelled", "not_found", "error"}:
+            await _append_turns(
+                task_id,
+                [_orch_failed_turn(action="retry", detail=str(orch.get("message") or orch_status))],
+            )
             raise HTTPException(
                 status_code=409,
                 detail=(
@@ -1647,8 +1904,6 @@ async def post_hitl(task_id: str, body: HitlPost) -> dict[str, Any]:
                     or f"Restart refused for case {task_id} (status={orch_status})"
                 ),
             )
-        turn = _human_turn(action="retry", requested_by=requested_by, human_response=human_response, gate=local_gate)
-        stored = await _append_turns(task_id, [turn])
         gate_out = orch.get("human_gate") if isinstance(orch.get("human_gate"), dict) else None
         clear = (not _is_awaiting_status(orch.get("status"))) or not orch.get("human_gate")
         await _set_gate(
@@ -1673,11 +1928,13 @@ async def post_hitl(task_id: str, body: HitlPost) -> dict[str, Any]:
         }
 
     backend = hitl_backend()
+    n8n_id = _n8n_task_id(task_id)
     try:
         status_payload = await invoke_orchestrator(
-            {"action": "status", "task_id": task_id, "requested_by": requested_by}
+            {"action": "status", "task_id": n8n_id, "requested_by": requested_by}
         )
     except OrchestratorError as exc:
+        await _append_turns(task_id, [_orch_failed_turn(action=action, detail=str(exc))])
         raise _raise_orch(exc) from exc
 
     gate = status_payload.get("human_gate") if isinstance(status_payload.get("human_gate"), dict) else None
@@ -1708,6 +1965,19 @@ async def post_hitl(task_id: str, body: HitlPost) -> dict[str, Any]:
             status_code=409,
             detail=status_payload.get("message") or f"Task status is {status_payload.get('status')}",
         )
+    stored_early = await _append_turns(
+        task_id,
+        [
+            _human_turn(
+                action=action,
+                requested_by=requested_by,
+                human_response=human_response,
+                gate=local_gate or gate,
+            ),
+            _orch_dispatch_turn(action=action, requested_by=requested_by),
+        ],
+    )
+    early_turn = stored_early[0] if stored_early else None
     # Prefer fresh status/CAS over client-cached body fields.
     gate_id = str(gate.get("gate_id") or "").strip() or (body.gate_id or "").strip()
     expected_version = gate.get("expected_version")
@@ -1721,7 +1991,7 @@ async def post_hitl(task_id: str, body: HitlPost) -> dict[str, Any]:
         raise HTTPException(status_code=400, detail="expected_version must be an integer") from exc
     resume = {
         "action": action,
-        "task_id": task_id,
+        "task_id": n8n_id,
         "expected_version": expected_version,
         "gate_id": gate_id,
         "human_response": human_response,
@@ -1730,15 +2000,19 @@ async def post_hitl(task_id: str, body: HitlPost) -> dict[str, Any]:
     try:
         orch = await invoke_orchestrator(resume, files=_binaries_for(task_id))
     except OrchestratorError as exc:
+        await _append_turns(task_id, [_orch_failed_turn(action=action, detail=str(exc))])
         raise _raise_orch(exc) from exc
 
-    turn = _human_turn(
-        action=action,
-        requested_by=requested_by,
-        human_response=human_response,
-        gate=local_gate or (orch.get("human_gate") if isinstance(orch.get("human_gate"), dict) else None),
-    )
-    stored = await _append_turns(task_id, [turn])
+    if early_turn is None:
+        turn = _human_turn(
+            action=action,
+            requested_by=requested_by,
+            human_response=human_response,
+            gate=local_gate or (orch.get("human_gate") if isinstance(orch.get("human_gate"), dict) else None),
+        )
+        stored = await _append_turns(task_id, [turn])
+    else:
+        stored = [early_turn]
 
     clear = (not _is_awaiting_status(orch.get("status"))) or not orch.get("human_gate")
     gate_out = orch.get("human_gate") if isinstance(orch.get("human_gate"), dict) else None
@@ -1803,6 +2077,7 @@ async def download_schedule(task_id: str) -> Response:
     """Download the bounded SCHEDULE .INC artifact for a task (if captured)."""
     if not TASK_ID_RE.match(task_id):
         raise HTTPException(status_code=400, detail="Invalid task_id")
+    task_id = _canonical_task_id(task_id)
     task = _tasks.get(task_id)
     if not task:
         raise HTTPException(status_code=404, detail="Task not found")
@@ -1825,6 +2100,7 @@ async def download_schedule(task_id: str) -> Response:
 async def stream_task(task_id: str) -> StreamingResponse:
     if not TASK_ID_RE.match(task_id):
         raise HTTPException(status_code=400, detail="Invalid task_id")
+    task_id = _canonical_task_id(task_id)
     queue: asyncio.Queue = asyncio.Queue(maxsize=200)
     _subscribers[task_id].append(queue)
 
@@ -1843,8 +2119,10 @@ async def stream_task(task_id: str) -> StreamingResponse:
                     "status": task.get("status"),
                     "version": task.get("version"),
                     "awaiting_human": _awaiting(task),
+                    "restartable": _restartable(task),
                     "human_gate": _gate_payload(task),
                     "hitl_backend": hitl_backend(),
+                    "status_message": task.get("status_message"),
                     "schedule_artifact": _schedule_artifact_meta(task),
                     "semantic_diff": task.get("semantic_diff")
                     if isinstance(task.get("semantic_diff"), dict)

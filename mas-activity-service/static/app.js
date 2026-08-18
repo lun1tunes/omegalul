@@ -87,6 +87,8 @@
     pre_delegation_approval: "Согласование",
     PRE_DELEGATION_APPROVAL: "Согласование",
     ORCH_CONFLICT: "Конфликт",
+    ORCH_DISPATCHED: "В оркестратор",
+    ORCH_FAILED: "Сбой оркестратора",
     CONFLICT: "Конфликт",
     conflict: "Конфликт",
     planning: "План",
@@ -120,6 +122,7 @@
   let currentTask = null;
   let startResumeTask = null;
   let source = null;
+  let feedPollTimer = null;
   let rendered = new Set();
   let gateState = null;
   let taskVersion = null;
@@ -214,6 +217,20 @@
     const m = Math.floor(sec / 60);
     const s = sec % 60;
     return `${m}:${String(s).padStart(2, "0")}`;
+  }
+
+  /** HH:MM of last turn (or task updated_at fallback) for the rail. */
+  function railLastTime(task) {
+    const abs = String(task?.last_at_abs || "").trim();
+    if (abs) {
+      const m = abs.match(/\b(\d{2}:\d{2})(?::\d{2})?\b/);
+      if (m) return m[1];
+    }
+    const iso = String(task?.updated_at || "").trim();
+    if (!iso) return "";
+    const d = new Date(iso);
+    if (Number.isNaN(d.getTime())) return "";
+    return d.toLocaleTimeString(undefined, { hour: "2-digit", minute: "2-digit", hour12: false });
   }
 
   function showWait(label) {
@@ -700,13 +717,15 @@
       meta.className = "meta";
       const stLabel = statusLabel(task.status || task.last_status || "");
       const parts = [stLabel || "—"];
-      if (task.turn_count != null) parts.push(`${task.turn_count} шаг`);
+      if (task.turn_count != null) parts.push(`${task.turn_count} turn`);
+      const lastTime = railLastTime(task);
+      if (lastTime) parts.push(lastTime);
       meta.textContent = parts.join(" · ");
       btn.title = [
         task.task_id,
         task.title || "",
-        `${stLabel || "—"}${task.turn_count != null ? ` · ${task.turn_count} шаг` : ""}`,
-        task.updated_at || "",
+        parts.join(" · "),
+        task.last_at_abs || task.updated_at || "",
       ].filter(Boolean).join("\n");
       btn.append(id, meta);
       if (task.awaiting_human) {
@@ -731,10 +750,73 @@
   }
 
   function closeStream() {
+    if (feedPollTimer) {
+      clearInterval(feedPollTimer);
+      feedPollTimer = null;
+    }
     if (source) {
       source.close();
       source = null;
     }
+  }
+
+  function mergeFeed(data, { animateTurns = false } = {}) {
+    if (!data || typeof data !== "object") return;
+    applyFeedMeta(data);
+    const turns = Array.isArray(data.activity) ? data.activity : [];
+    for (const turn of turns) renderTurn(turn, { animate: animateTurns });
+    if (turns.length) {
+      empty.hidden = true;
+      empty.textContent = "";
+    }
+  }
+
+  async function pollFeed({ durable = false } = {}) {
+    if (!currentTask) return;
+    try {
+      const res = await fetch(
+        `/v1/tasks/${encodeURIComponent(currentTask)}${durable ? "?durable=1" : ""}`,
+      );
+      if (!res.ok) return;
+      mergeFeed(await res.json(), { animateTurns: true });
+    } catch (_) { /* keep SSE as source of truth */ }
+  }
+
+  function attachLive(taskId) {
+    if (source) {
+      source.close();
+      source = null;
+    }
+    if (feedPollTimer) {
+      clearInterval(feedPollTimer);
+      feedPollTimer = null;
+    }
+    source = new EventSource(`/v1/tasks/${encodeURIComponent(taskId)}/stream`);
+    source.onopen = () => setLive("live");
+    source.onerror = () => setLive("reconnecting");
+    source.onmessage = (ev) => {
+      if (currentTask !== taskId) return;
+      try {
+        const msg = JSON.parse(ev.data);
+        if (msg.type === "ping") return;
+        if (msg.type === "snapshot") {
+          hideNotFound();
+          applyFeedMeta(msg);
+          const turns = Array.isArray(msg.activity) ? msg.activity : [];
+          for (const turn of turns) renderTurn(turn, { animate: false });
+          if (!turns.length && !thread.querySelector("li.turn")) {
+            empty.hidden = false;
+            empty.textContent = emptyFeedMessage(msg);
+          }
+        } else if (msg.type === "turn") {
+          renderTurn(msg.turn, { animate: true });
+          applyFeedMeta(msg);
+        } else if (msg.type === "gate") {
+          applyFeedMeta(msg);
+        }
+      } catch (_) { /* ignore malformed SSE */ }
+    };
+    feedPollTimer = setInterval(() => pollFeed({ durable: false }), 2500);
   }
 
   function attachedFilesFromFeed(data) {
@@ -1056,13 +1138,31 @@
     setScheduleArtifact(null);
     setSemanticDiff(null);
     showFlash("");
-    showWait("Загружаем задачу…");
+    attachLive(taskId);
 
     try {
-      const snap = await fetch(`/v1/tasks/${encodeURIComponent(taskId)}?durable=1`);
+      const snap = await fetch(`/v1/tasks/${encodeURIComponent(taskId)}`);
       if (snap.status === 404) {
-        showNotFound(taskId);
-        await refreshRail();
+        const durable = await fetch(`/v1/tasks/${encodeURIComponent(taskId)}?durable=1`);
+        if (durable.status === 404) {
+          showNotFound(taskId);
+          await refreshRail();
+          return;
+        }
+        if (!durable.ok) {
+          showLoadError(taskId, `Не удалось загрузить задачу (${durable.status}).`);
+          await refreshRail();
+          return;
+        }
+        const data = await durable.json();
+        hideNotFound();
+        mergeFeed(data, { animateTurns: false });
+        if (data.hydrate?.ok === false) {
+          const msg = formatHydrateError(data.hydrate.error || "hydrate_failed");
+          if (msg) showFlash(msg, { sticky: true });
+        } else if (data.hydrate?.truncated) {
+          showFlash("Транскрипт усечён: в Data Tables больше лимита передач (500). Показаны последние turns.");
+        }
         return;
       }
       if (!snap.ok) {
@@ -1071,11 +1171,9 @@
         return;
       }
       const data = await snap.json();
-      const turns = Array.isArray(data.activity) ? data.activity : [];
-      setTaskHeader(taskId, data.status, { awaiting: data.awaiting_human });
-      applyFeedMeta(data);
-      for (const turn of turns) renderTurn(turn, { animate: false });
-      if (!turns.length) {
+      hideNotFound();
+      mergeFeed(data, { animateTurns: false });
+      if (!Array.isArray(data.activity) || !data.activity.length) {
         empty.hidden = false;
         empty.textContent = emptyFeedMessage(data);
         renderStatusBanner(
@@ -1085,16 +1183,20 @@
               ? "Планирование не завершилось — лента пустая."
               : null),
         );
-      } else {
-        empty.hidden = true;
-        empty.textContent = "";
       }
-      if (data.hydrate?.ok === false) {
-        const msg = formatHydrateError(data.hydrate.error || "hydrate_failed");
-        if (msg) showFlash(msg, { sticky: true });
-      } else if (data.hydrate?.truncated) {
-        showFlash("Транскрипт усечён: в Data Tables больше лимита передач (500). Показаны последние turns.");
-      }
+      fetch(`/v1/tasks/${encodeURIComponent(taskId)}?durable=1`)
+        .then((res) => (res.ok ? res.json() : null))
+        .then((feed) => {
+          if (!feed || currentTask !== taskId) return;
+          mergeFeed(feed, { animateTurns: true });
+          if (feed.hydrate?.ok === false) {
+            const msg = formatHydrateError(feed.hydrate.error || "hydrate_failed");
+            if (msg) showFlash(msg, { sticky: true });
+          } else if (feed.hydrate?.truncated) {
+            showFlash("Транскрипт усечён: в Data Tables больше лимита передач (500). Показаны последние turns.");
+          }
+        })
+        .catch(() => {});
     } catch (_) {
       showLoadError(taskId, "Сеть недоступна при загрузке задачи.");
       await refreshRail();
@@ -1103,27 +1205,7 @@
       hideWait();
     }
 
-    source = new EventSource(`/v1/tasks/${encodeURIComponent(taskId)}/stream`);
-    source.onopen = () => setLive("live");
-    source.onerror = () => setLive("reconnecting");
-    source.onmessage = (ev) => {
-      try {
-        const msg = JSON.parse(ev.data);
-        if (msg.type === "snapshot") {
-          hideNotFound();
-          thread.innerHTML = "";
-          rendered = new Set();
-          empty.hidden = true;
-          applyFeedMeta(msg);
-          for (const turn of msg.activity || []) renderTurn(turn, { animate: false });
-        } else if (msg.type === "turn") {
-          renderTurn(msg.turn, { animate: true });
-        } else if (msg.type === "gate") {
-          applyFeedMeta(msg);
-        }
-      } catch (_) { /* ignore malformed SSE */ }
-    };
-    await refreshRail();
+    refreshRail();
   }
 
   async function submitHitl(action) {
@@ -1145,7 +1227,7 @@
     composer.classList.add("busy");
     composerHint.hidden = false;
     composerHint.textContent = "Отправляем ответ…";
-    showWait("Отправляем ответ оркестратору…");
+    pollFeed({ durable: false });
     try {
       const res = await fetch(`/v1/tasks/${encodeURIComponent(currentTask)}/hitl`, {
         method: "POST",
@@ -1195,7 +1277,6 @@
       composerHint.hidden = false;
       composerHint.textContent = "Не удалось отправить. Проверьте сеть и соединение с сервером.";
     } finally {
-      hideWait();
       composer.classList.remove("busy");
     }
   }
@@ -1247,7 +1328,7 @@
     if (startCancelBtn) startCancelBtn.disabled = true;
     startHint.hidden = false;
     startHint.textContent = "Создаём задачу…";
-    showWait("Создаём задачу — оркестратор принимает ввод и вложения…");
+    showWait("Записываем задачу…");
     try {
       const res = await fetch("/v1/tasks/start", {
         method: "POST",
@@ -1265,7 +1346,7 @@
         startHint.hidden = false;
         startHint.textContent = msg;
         renderStatusBanner("error", msg);
-        await refreshRail({ durable: true });
+        refreshRail();
         return;
       }
       pendingFiles = [];
@@ -1275,20 +1356,14 @@
       startHint.hidden = true;
       startHint.textContent = "";
       setStartOpen(false, { resume: false });
-      const orchStatus = String(data.orchestrator?.status || "").toLowerCase();
-      const orchMsg = String(data.status_message || data.orchestrator?.message || "").trim();
-      if (orchStatus === "conflict") {
-        showFlash(orchMsg || "Оркестратор отклонил старт (conflict).", { sticky: true });
-        renderStatusBanner("conflict", orchMsg || null);
-      } else {
-        showFlash(
-          data.task_id
-            ? `Задача ${data.task_id} создана.`
-            : "Задача создана.",
-          { ok: true },
-        );
-      }
-      await refreshRail({ durable: true });
+      showFlash(
+        data.task_id
+          ? `Задача ${data.task_id} создана — оркестратор работает, лента обновляется сама.`
+          : "Задача создана — оркестратор работает, лента обновляется сама.",
+        { ok: true },
+      );
+      hideWait();
+      refreshRail();
       await openTask(data.task_id);
     } catch (_) {
       const msg = "Сеть недоступна при создании задачи.";
@@ -1304,10 +1379,10 @@
         startSubmitBtn.removeAttribute("aria-busy");
       }
       if (startCancelBtn) startCancelBtn.disabled = false;
-  if (startHint.textContent === "Создаём задачу…") {
-    startHint.hidden = true;
-    startHint.textContent = "";
-  }
+      if (startHint.textContent === "Создаём задачу…") {
+        startHint.hidden = true;
+        startHint.textContent = "";
+      }
     }
   }
 
