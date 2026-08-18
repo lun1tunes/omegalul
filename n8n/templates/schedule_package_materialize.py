@@ -22,7 +22,54 @@ const collapsePath=v=>{const parts=[];for(const bit of String(v).split('/')){if(
 const classifyPackagePath=p=>{if(pathMalformed(p))return{error:'invalid'};const n=normalizeSeparators(p);if(isAbsOrUrl(n))return{error:'unsafe'};const collapsed=collapsePath(n);if(collapsed===null||collapsed==='')return{error:'unsafe'};return{path:collapsed}};
 const resolvePath=(base,rel)=>{if(pathMalformed(rel))return{error:'invalid'};const r=normalizeSeparators(rel);if(isAbsOrUrl(r))return{error:'unsafe'};const baseClass=classifyPackagePath(base);const b=baseClass.path||'';const d=dirname(b);const joined=d?`${d}/${r}`:r;const collapsed=collapsePath(joined);if(collapsed===null||collapsed===''||isAbsOrUrl(collapsed))return{error:'unsafe'};return{path:collapsed}};
 const utf8Bytes=s=>{try{return new TextEncoder().encode(String(s??'')).length;}catch{let n=0;const t=String(s??'');for(let i=0;i<t.length;i++){const cp=t.charCodeAt(i);n+=cp<=0x7f?1:cp<=0x7ff?2:cp>=0xd800&&cp<=0xdbff?4:3;if(cp>=0xd800&&cp<=0xdbff)i++;}return n;}};
-const extractIncludes=text=>{const out=[];const re=/INCLUDE\b[\s\S]*?['"]([^'"\r\n]+)['"]/gi;let m;while((m=re.exec(String(text??''))))out.push(m[1]);return out;};
+// Only a real INCLUDE directive at the beginning of a logical line is an
+// include.  The old cross-line regex also matched words in comments or quoted
+// prose (for example `-- do not INCLUDE "..."`), which could manufacture an
+// invalid path even when the simulator-facing deck had no INCLUDE directive.
+const extractIncludes=text=>{
+  const out=[],source=String(text??'');
+  const wordChar=c=>!!c&&/[A-Za-z0-9_]/.test(c);
+  let i=0,lineStart=true;
+  while(i<source.length){
+    const c=source[i];
+    if(c==='\r'||c==='\n'){
+      if(c==='\r'&&source[i+1]==='\n')i++;
+      i++;lineStart=true;continue;
+    }
+    if(c===' '||c==='\t'||c==='\f'||c==='\uFEFF'){i++;continue;}
+    if(c==='-'&&source[i+1]==='-'){
+      const nl=source.indexOf('\n',i+2);
+      i=nl<0?source.length:nl;
+      continue;
+    }
+    if(lineStart&&source.slice(i,i+7).toUpperCase()==='INCLUDE'&&!wordChar(source[i+7])){
+      i+=7;
+      let j=i,quote='';
+      while(j<source.length){
+        while(j<source.length&&/[ \t\r\n\f]/.test(source[j]))j++;
+        if(source[j]==='-'&&source[j+1]==='-'){
+          const nl=source.indexOf('\n',j+2);
+          j=nl<0?source.length:nl;
+          continue;
+        }
+        if(source[j]==='\''||source[j]==='"'){quote=source[j];break;}
+        break;
+      }
+      if(!quote){out.push('');i=j;lineStart=false;continue;}
+      const start=j+1;let end=start,closed=false;
+      while(end<source.length){
+        if(source[end]===quote){closed=true;break;}
+        if(source[end]==='\r'||source[end]==='\n')break;
+        end++;
+      }
+      out.push(closed?source.slice(start,end):'');
+      i=closed?end+1:source.length;
+      lineStart=false;continue;
+    }
+    lineStart=false;i++;
+  }
+  return out;
+};
 const hasIncludeKeyword=text=>/^\s*INCLUDE\b/mi.test(String(text??''));
 function materializeSchedulePackage(input){
   const uploads=Array.isArray(input?.uploads)?input.uploads:[];

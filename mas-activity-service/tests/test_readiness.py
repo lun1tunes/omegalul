@@ -16,6 +16,7 @@ def _clear_n8n_env(monkeypatch) -> None:
         "N8N_PASSWORD",
         "ACTIVITY_LIST_URL",
         "ACTIVITY_FEED_URL",
+        "KNOWLEDGE_INGEST_URL",
         "N8N_WEBHOOK_CHECKS",
         "ACTIVITY_TLS_VERIFY",
         "ACTIVITY_CA_BUNDLE",

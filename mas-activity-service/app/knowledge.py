@@ -4,12 +4,18 @@ from __future__ import annotations
 
 import hashlib
 import json
+import logging
 import re
 import threading
 from pathlib import Path
 from typing import Any
 
-from app.settings import get_settings
+import httpx
+
+from app.settings import UNCONFIGURED_INGEST, get_settings
+
+logger = logging.getLogger(__name__)
+INGEST_TIMEOUT_S = 600.0
 
 NAMESPACE_LABELS = {
     "schedule_mvp": "Schedule Builder",
@@ -413,3 +419,114 @@ def create_document(
         docs.insert(insert_at, new_doc)
         save_corpus(data)
         return get_document(target_base, kid)
+
+
+class KnowledgeIngestUnavailable(Exception):
+    def __init__(self, status_code: int, detail: str) -> None:
+        self.status_code = status_code
+        self.detail = detail
+        super().__init__(detail)
+
+
+def ingestible_documents() -> list[dict[str, Any]]:
+    data = load_corpus()
+    return [doc for doc in data["documents"] if isinstance(doc, dict) and _is_ingestible(doc)]
+
+
+def _nonneg(value: object) -> int:
+    try:
+        number = int(value)  # type: ignore[arg-type]
+    except (TypeError, ValueError):
+        return 0
+    return max(0, number)
+
+
+def _unwrap_n8n_json(raw: object) -> dict[str, Any] | None:
+    value: object = raw
+    if isinstance(value, list) and value:
+        value = value[0]
+    if isinstance(value, dict) and isinstance(value.get("json"), dict):
+        if not any(key in value for key in ("ok", "added", "status", "message")):
+            value = value["json"]
+    return value if isinstance(value, dict) else None
+
+
+def normalize_ingest_response(raw: object, *, sent_count: int) -> dict[str, Any]:
+    body = _unwrap_n8n_json(raw) or {}
+    added = _nonneg(body.get("added", body.get("inserted")))
+    skipped = _nonneg(body.get("skipped"))
+    skipped_list = body.get("skipped_existing") or body.get("skipped_ids") or []
+    if skipped == 0 and isinstance(skipped_list, list):
+        skipped = len(skipped_list)
+    total_sent = max(sent_count, added + skipped, _nonneg(body.get("total_sent")))
+    total_in_rag = _nonneg(body.get("total_in_rag", body.get("distinct_documents")))
+    findings = body.get("findings") if isinstance(body.get("findings"), list) else []
+    status = str(body.get("status") or "")
+    ok = body.get("ok")
+    if not isinstance(ok, bool):
+        has_error = any(isinstance(item, dict) and item.get("severity") == "error" for item in findings)
+        ok = (not has_error) and status not in {"needs_input", "collect_failed", "lookup_failed"}
+    message = str(body.get("message") or "").strip()
+    if not message:
+        message = (
+            f"Добавлено {added}, пропущено (уже есть) {skipped}, "
+            f"всего в RAG {total_in_rag} карточек."
+        )
+    return {
+        "ok": bool(ok),
+        "added": added,
+        "skipped": skipped,
+        "total_sent": total_sent,
+        "total_in_rag": total_in_rag,
+        "status": status or ("ingested" if ok else "failed"),
+        "message": message,
+        "findings": findings,
+    }
+
+
+async def push_corpus_to_n8n() -> dict[str, Any]:
+    settings = get_settings()
+    url = settings.resolved_knowledge_ingest_url
+    if not url:
+        raise KnowledgeIngestUnavailable(503, UNCONFIGURED_INGEST)
+    documents = ingestible_documents()
+    if not documents:
+        raise KnowledgeIngestUnavailable(
+            400,
+            "В корпусе нет карточек для ingest (все пропущены как injection_template).",
+        )
+    timeout = httpx.Timeout(INGEST_TIMEOUT_S, connect=15.0)
+    logger.info("knowledge ingest POST %s (%s documents)", url, len(documents))
+    try:
+        async with httpx.AsyncClient(timeout=timeout, verify=settings.httpx_verify) as client:
+            response = await client.post(
+                url,
+                json={"documents": documents},
+                headers={"Content-Type": "application/json", "Accept": "application/json"},
+            )
+    except httpx.TimeoutException as exc:
+        raise KnowledgeIngestUnavailable(
+            504,
+            "n8n ingest не успел за 10 минут (эмбеддинги). "
+            "Проверьте, что workflow MAS — Knowledge Ingestion Active.",
+        ) from exc
+    except httpx.HTTPError as exc:
+        raise KnowledgeIngestUnavailable(502, f"n8n ingest недоступен: {exc}") from exc
+
+    if response.status_code == 404:
+        raise KnowledgeIngestUnavailable(
+            502,
+            "Webhook mas-knowledge-ingest не зарегистрирован. "
+            "Импортируйте и активируйте workflow MAS — Knowledge Ingestion.",
+        )
+    if not (200 <= response.status_code < 300):
+        preview = (response.text or "")[:300]
+        raise KnowledgeIngestUnavailable(
+            502,
+            f"n8n ingest HTTP {response.status_code}: {preview or 'empty body'}",
+        )
+    try:
+        raw = response.json()
+    except ValueError as exc:
+        raise KnowledgeIngestUnavailable(502, "n8n ingest вернул не JSON") from exc
+    return normalize_ingest_response(raw, sent_count=len(documents))

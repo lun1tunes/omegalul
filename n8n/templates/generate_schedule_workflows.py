@@ -236,7 +236,7 @@ def build_all():
  #   mas-deployment-health-check.workflow.json
  # Clean import reads those files directly; it does not run this generator.
  d={}
- d['tnavigator-schedule-knowledge-ingestion.workflow.json']=build_ingestion(node=node,note=note,code=code,trigger=trigger,ifnode=ifnode,connect=connect,workflow=workflow)
+ d['tnavigator-schedule-knowledge-ingestion.workflow.json']=build_ingestion(node=node,note=note,code=code,trigger=trigger,ifnode=ifnode,connect=connect,workflow=workflow,set_fields=set_fields)
  d['tnavigator-schedule-hybrid-retrieval.workflow.json']=build_retrieval(node=node,note=note,code=code,trigger=trigger,ifnode=ifnode,connect=connect,workflow=workflow)
  d['tnavigator-schedule-builder.workflow.json']=build_schedule_pipeline(node=node,note=note,code=code,trigger=trigger,ifnode=ifnode,connect=connect,workflow=workflow,keywords=KEYWORDS,planner_schema=PLANNER_SCHEMA,planner_system=PLANNER_SYS,intake_js=INTAKE,baseline_js=BASELINE,baseline_decode_js=BASELINE_DECODE,baseline_query_js=BASELINE_QUERY,plan_validate_js=PLAN_VALIDATE,render_js=RENDER,merge_js=MERGE,validate_js=VALIDATE,verify_js=VERIFY)
  ns=[

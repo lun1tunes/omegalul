@@ -50,5 +50,54 @@ const catalogue=()=>({contract:'schedule_schema_catalogue',contract_version:'1.0
  const emptyTags=await run('Validate SCHEDULE retrieval request',{json:{mas_retrieval_request:{query:'routing cards',filters:{target_base:'orchestrator_routing',keyword_families:[],topics:['маршрутизация']}}}});
  assert.equal(emptyTags.status,'query_ready');assert.equal(emptyTags.filters.require_coverage,false);assert.deepEqual(emptyTags.filters.keyword_families,[]);
  const retrievalJson=JSON.stringify(workflow);assert.ok(retrievalJson.includes("$3::jsonb<>'[]'::jsonb"));
- console.log('SCHEDULE RAG runtime smoke: 19 scenarios passed');
+ const collectSrc=src(ingestion,'Collect MAS knowledge blocks');
+ assert.equal(collectSrc.includes('const packaged=['), false);
+ const setNode=ingestion.nodes.find(n=>n.name==='Packaged MAS corpus');
+ assert.ok(setNode && setNode.type==='n8n-nodes-base.set');
+ const docsAssign=(setNode.parameters.assignments.assignments||[]).find(a=>a.name==='documents');
+ assert.ok(docsAssign);
+ const packaged=typeof docsAssign.value==='string'?JSON.parse(docsAssign.value):docsAssign.value;
+ assert.ok(Array.isArray(packaged) && packaged.length>10);
+ const webhook=ingestion.nodes.find(n=>n.name==='Activity knowledge ingest webhook');
+ assert.ok(webhook);
+ assert.equal(webhook.typeVersion, 2.1);
+ assert.equal(webhook.parameters.path, 'mas-knowledge-ingest');
+ assert.equal(webhook.parameters.httpMethod, 'POST');
+ assert.equal(webhook.parameters.responseMode, 'lastNode');
+ assert.ok(ingestion.nodes.find(n=>n.name==='Shape MAS ingest response'));
+ const webhookTargets=(ingestion.connections['Activity knowledge ingest webhook'].main[0]||[]).map(c=>c.node);
+ assert.deepEqual(webhookTargets, ['Collect MAS knowledge blocks']);
+ const manualTargets=(ingestion.connections['Sync packaged MAS knowledge'].main[0]||[]).map(c=>c.node);
+ assert.deepEqual(manualTargets, ['Packaged MAS corpus']);
+ const setTargets=(ingestion.connections['Packaged MAS corpus'].main[0]||[]).map(c=>c.node);
+ assert.deepEqual(setTargets, ['Collect MAS knowledge blocks']);
+ async function collect(json){
+  const fn=new AsyncFunction('$json', collectSrc);
+  return fn(json);
+ }
+ const empty=await collect({});
+ assert.equal(empty[0].json.collect_error, 'CORPUS_EMPTY');
+ const fromSheet=await collect({documents:[{contract:'schedule_knowledge_block',knowledge_id:'x',text:'hello',target_base:'schedule_mvp'}]});
+ assert.equal(fromSheet.length, 1);
+ assert.equal(fromSheet[0].json.knowledge_id, 'x');
+ const fromWebhook=await collect({body:{documents:[{contract:'schedule_knowledge_block',knowledge_id:'y',text:'hello',target_base:'excel_protocol'}]}});
+ assert.equal(fromWebhook[0].json.knowledge_id, 'y');
+ const skipTmpl=await collect({documents:[{role:'injection_template',do_not_ingest:true,knowledge_id:'tmpl',text:'x',target_base:'schedule_mvp'}]});
+ assert.equal(skipTmpl[0].json.collect_error, 'CORPUS_EMPTY');
+ async function shape(json, diff){
+  const fn=new AsyncFunction('$json','$', src(ingestion,'Shape MAS ingest response'));
+  const result=await fn(json, {first:()=>({json: diff||{}})});
+  return result[0].json;
+ }
+ const shaped=await shape({status:'rag_inventory_ok',inserted:3,skipped:40,distinct_documents:43,skipped_existing:[]},{inserted:3,skipped:40,skipped_ids:[]});
+ assert.equal(shaped.ok, true);
+ assert.equal(shaped.added, 3);
+ assert.equal(shaped.skipped, 40);
+ assert.equal(shaped.total_sent, 43);
+ assert.equal(shaped.total_in_rag, 43);
+ assert.ok(String(shaped.message).includes('Добавлено 3'));
+ const shapedFail=await shape({status:'needs_input',findings:[{code:'CORPUS_EMPTY',severity:'error'}],vector_write_allowed:false},{ingest_action:'collect_failed',status:'needs_input',inserted:0,skipped:0});
+ assert.equal(shapedFail.ok, false);
+ assert.equal(shapedFail.added, 0);
+ console.log('SCHEDULE RAG runtime smoke: 21 scenarios passed');
 })().catch(e=>{console.error(e.stack||e);process.exit(1)});

@@ -6,6 +6,7 @@ Credentials are selected in UI; knowledge itself never enters the workflow expor
 from __future__ import annotations
 
 import json
+import uuid
 from pathlib import Path
 
 RAG_DIR = Path(__file__).resolve().parents[1] / "rag"
@@ -289,26 +290,61 @@ def packaged_knowledge_blocks() -> list[dict]:
     return ingestible_blocks_from_payload(payload)
 
 
-def _collect_knowledge_js(blocks: list[dict]) -> str:
-    return (
-        "const packaged=" + json.dumps(blocks, ensure_ascii=False) + ";\n"
-        "const obj=v=>v&&typeof v==='object'&&!Array.isArray(v);const arr=Array.isArray;const clean=v=>typeof v==='string'?v.trim():'';\n"
-        "const skipDoc=d=>!d||d.role==='injection_template'||d.do_not_ingest===true;\n"
-        "const asBlock=v=>{if(!obj(v))return null;if(obj(v.schedule_knowledge_block))return v.schedule_knowledge_block;if(v.contract==='schedule_knowledge_block'||clean(v.knowledge_id))return v;return null;};\n"
-        "const parseJson=v=>{if(obj(v)||arr(v))return v;if(typeof v!=='string'||!v.trim())return null;try{let x=JSON.parse(v.replace(/^\\uFEFF/,''));if(typeof x==='string'){try{x=JSON.parse(x)}catch{}}return (obj(x)||arr(x))?x:null;}catch{return null;}};\n"
-        "const fromPayload=p=>{if(!p)return[];let docs;if(arr(p.documents))docs=p.documents;else if(arr(p.schedule_knowledge_blocks))docs=p.schedule_knowledge_blocks;else if(arr(p))docs=p;else if(obj(p)&&(obj(p.schedule_knowledge_block)||p.contract==='schedule_knowledge_block'||clean(p.knowledge_id)))docs=[p];else docs=[];return docs.filter(d=>!skipDoc(d)).map(asBlock).filter(b=>b&&!skipDoc(b)&&clean(b.knowledge_id)&&clean(b.text||b.document_text));};\n"
-        "const canon=b=>{const target_base=clean(b.target_base||(obj(b.metadata)&&b.metadata.target_base)||'schedule_mvp');const revision=clean(b.revision||b.document_revision||(obj(b.metadata)&&b.metadata.revision)||'1');return {...b,target_base,revision};};\n"
-        "const dedupe=list=>{const by=new Map();for(const b of list){const x=canon(b);by.set(`${x.target_base}|${x.knowledge_id}|${x.revision}`,x);}return [...by.values()];};\n"
-        "const raw=$json||{};const corpusRaw=clean(raw.corpus_json);const pasted=corpusRaw?parseJson(corpusRaw):null;const corpusInvalid=Boolean(corpusRaw)&&pasted==null;\n"
-        "if(corpusInvalid)return[{json:{ingest_error:'CORPUS_JSON_INVALID',collect_error:'CORPUS_JSON_INVALID'}}];\n"
-        "const explicit=pasted!=null||arr(raw.documents)||arr(raw.schedule_knowledge_blocks);\n"
-        "let blocks=fromPayload(pasted||raw);\n"
-        "if(!blocks.length&&!explicit){const one=asBlock(raw);if(one&&!skipDoc(one)&&clean(one.knowledge_id)&&clean(one.text||one.document_text))blocks=[one];}\n"
-        "if(!blocks.length&&!explicit)blocks=packaged.slice();\n"
-        "blocks=dedupe(blocks);\n"
-        "if(!blocks.length)return[{json:{collect_empty:true}}];\n"
-        "return blocks.map(b=>({json:canon(b)}));\n"
-    )
+INGEST_WEBHOOK_ID = str(uuid.uuid5(uuid.NAMESPACE_URL, "omegalul/schedule-foundation/mas-knowledge-ingest-webhook"))
+
+
+COLLECT_KNOWLEDGE_JS = r"""
+const obj=v=>v&&typeof v==='object'&&!Array.isArray(v);const arr=Array.isArray;const clean=v=>typeof v==='string'?v.trim():'';
+const skipDoc=d=>!d||d.role==='injection_template'||d.do_not_ingest===true;
+const asBlock=v=>{if(!obj(v))return null;if(obj(v.schedule_knowledge_block))return v.schedule_knowledge_block;if(v.contract==='schedule_knowledge_block'||clean(v.knowledge_id))return v;return null;};
+const parseJson=v=>{if(obj(v)||arr(v))return v;if(typeof v!=='string'||!v.trim())return null;try{let x=JSON.parse(v.replace(/^\uFEFF/,''));if(typeof x==='string'){try{x=JSON.parse(x)}catch{}}return (obj(x)||arr(x))?x:null;}catch{return null;}};
+const fromPayload=p=>{if(!p)return[];let docs;if(arr(p.documents))docs=p.documents;else if(arr(p.schedule_knowledge_blocks))docs=p.schedule_knowledge_blocks;else if(arr(p))docs=p;else if(obj(p)&&(obj(p.schedule_knowledge_block)||p.contract==='schedule_knowledge_block'||clean(p.knowledge_id)))docs=[p];else docs=[];return docs.filter(d=>!skipDoc(d)).map(asBlock).filter(b=>b&&!skipDoc(b)&&clean(b.knowledge_id)&&clean(b.text||b.document_text));};
+const canon=b=>{const target_base=clean(b.target_base||(obj(b.metadata)&&b.metadata.target_base)||'schedule_mvp');const revision=clean(b.revision||b.document_revision||(obj(b.metadata)&&b.metadata.revision)||'1');return {...b,target_base,revision};};
+const dedupe=list=>{const by=new Map();for(const b of list){const x=canon(b);by.set(`${x.target_base}|${x.knowledge_id}|${x.revision}`,x);}return [...by.values()];};
+const raw0=$json||{};
+const inner=obj(raw0.body)||arr(raw0.body)||typeof raw0.body==='string'?raw0.body:raw0;
+const raw=typeof inner==='string'?(parseJson(inner)||{}):inner;
+const corpusRaw=clean((obj(raw)?raw.corpus_json:'')||raw0.corpus_json);
+const pasted=corpusRaw?parseJson(corpusRaw):null;
+const corpusInvalid=Boolean(corpusRaw)&&pasted==null;
+if(corpusInvalid)return[{json:{ingest_error:'CORPUS_JSON_INVALID',collect_error:'CORPUS_JSON_INVALID'}}];
+const explicit=pasted!=null||arr(raw.documents)||arr(raw.schedule_knowledge_blocks)||arr(raw0.documents)||arr(raw0.schedule_knowledge_blocks)||arr(raw);
+let blocks=fromPayload(pasted||raw);
+if(!blocks.length)blocks=fromPayload(raw0);
+if(!blocks.length&&!explicit){const one=asBlock(raw);if(one&&!skipDoc(one)&&clean(one.knowledge_id)&&clean(one.text||one.document_text))blocks=[one];}
+blocks=dedupe(blocks);
+if(!blocks.length)return[{json:{collect_empty:true,collect_error:'CORPUS_EMPTY',ingest_error:'CORPUS_EMPTY'}}];
+return blocks.map(b=>({json:canon(b)}));
+""".strip()
+
+
+SHAPE_INGEST_RESPONSE_JS = r"""
+const obj=v=>v&&typeof v==='object'&&!Array.isArray(v);
+const x=$json||{};
+let diff={};
+try{diff=$('Select new MAS knowledge').first().json||{};}catch(_){diff={};}
+if(!obj(diff))diff={};
+const findings=Array.isArray(x.findings)?x.findings:(Array.isArray(diff.findings)?diff.findings:[]);
+const skippedList=Array.isArray(x.skipped_existing)?x.skipped_existing:(Array.isArray(diff.skipped_ids)?diff.skipped_ids:[]);
+const ingestAction=String(x.ingest_action||diff.ingest_action||'');
+const status=String(x.status||diff.status||'unknown');
+const gateBlocked=x.vector_write_allowed===false||status==='needs_input'||['collect_failed','lookup_failed'].includes(ingestAction);
+const added=gateBlocked?0:Math.max(0,Number(x.inserted??x.added??diff.inserted)||0);
+const skipped=Math.max(0,Number(x.skipped??diff.skipped)||skippedList.length||0);
+const totalSent=Math.max(added+skipped,Number(x.total_sent)||0);
+const totalInRag=Math.max(0,Number(x.distinct_documents??x.total_in_rag)||0);
+const hasError=findings.some(f=>f&&f.severity==='error')||['collect_failed','lookup_failed','needs_input'].includes(ingestAction)||status==='needs_input';
+const ok=!hasError;
+const missing=Array.isArray(x.missing_document_ids)?x.missing_document_ids.filter(Boolean):[];
+let message=`Добавлено ${added}, пропущено (уже есть) ${skipped}, всего в RAG ${totalInRag} карточек.`;
+if(!ok){
+  const code=(findings[0]&&findings[0].code)||status||ingestAction||'INGEST_FAILED';
+  message=`Ошибка ingest (${code}). Добавлено ${added}, пропущено ${skipped}, в RAG ${totalInRag}.`;
+}else if(status==='rag_inventory_incomplete'&&missing.length){
+  message+=` Не найдены в RAG: ${missing.slice(0,8).join(', ')}${missing.length>8?'…':''}.`;
+}
+return[{json:{ok,added,skipped,total_sent:totalSent,total_in_rag:totalInRag,status,message,findings}}];
+""".strip()
 
 
 SELECT_NEW_KNOWLEDGE_JS = r"""
@@ -413,6 +449,8 @@ if (diff.ingest_action === 'lookup_failed' || diff.ingest_action === 'collect_fa
     rag_table_name: prepared.rag_table_name,
     ingest_action: diff.ingest_action,
     findings: Array.isArray(diff.findings) ? diff.findings : [],
+    inserted: Number(diff.inserted) || 0,
+    skipped: Number(diff.skipped) || skipped.length,
     skipped_existing: skipped,
     warnings: [diff.ingest_action],
     note: 'Ingest refused to insert because collect or existing-key lookup failed. Existing rows were not treated as absent.',
@@ -439,6 +477,8 @@ return [{ json: {
   expected_document_ids: expected,
   found_document_ids: found.sort(),
   missing_document_ids: missing,
+  inserted: Number(diff.inserted) || 0,
+  skipped: Number(diff.skipped) || skipped.length,
   skipped_existing: skipped,
   embedding_type: embeddingType,
   duplicate_ingest_suspected: duplicateIngestSuspected,
@@ -456,7 +496,7 @@ return [{ json: {
 """
 
 
-def build_ingestion(*, node, note, code, trigger, ifnode, connect, workflow):
+def build_ingestion(*, node, note, code, trigger, ifnode, connect, workflow, set_fields):
     packaged = packaged_knowledge_blocks()
     expected_ids = [block["knowledge_id"] for block in packaged]
     pg = _credential("REPLACE: SCHEDULE PostgreSQL / PGVector credential")
@@ -465,7 +505,7 @@ def build_ingestion(*, node, note, code, trigger, ifnode, connect, workflow):
         {
             "authentication": "n8nUserAuth",
             "formTitle": "MAS knowledge ingestion",
-            "formDescription": "Paste the whole excel-agent-operating-guide.documents.json sheet. Existing target_base+knowledge_id+revision rows are skipped; the last injection_template element is ignored. One-card fields below are optional.",
+            "formDescription": "Field path: Activity Knowledge → Загрузить в RAG. Or paste the whole excel-agent-operating-guide.documents.json sheet. Existing target_base+knowledge_id+revision rows are skipped; injection_template is ignored. One-card fields below are optional.",
             "formFields": {"values": [
                 {"fieldName": "corpus_json", "fieldLabel": "Paste the full knowledge sheet (excel-agent-operating-guide.documents.json)", "fieldType": "textarea", "requiredField": False},
                 {"fieldName": "target_base", "fieldLabel": "Optional one-card: target_base (schedule_mvp | excel_protocol | orchestrator_routing | specialist_template)", "fieldType": "text", "requiredField": False},
@@ -487,11 +527,27 @@ def build_ingestion(*, node, note, code, trigger, ifnode, connect, workflow):
     )
     example = {"schema_version": "1.1.0", "title": "MAS knowledge corpus", "documents": [{"contract": "schedule_knowledge_block", "contract_version": "1.0", "target_base": "schedule_mvp", "knowledge_type": "keyword_instruction", "knowledge_id": "wconprod-forecast-v1", "revision": "1", "title": "WCONPROD forecast control", "keywords": ["WCONPROD"], "topics": ["Контроль по скважинам", "Прогноз"], "task_patterns": ["задать лимит по воде"], "status": "active", "author": "department-hydrodynamic-expert", "access_scope": "petroleum-engineering", "text": "Полная самодостаточная инструкция."}]}
     ns = [
-        note("MAS ingestion README", (-1240, -700), "## MAS Knowledge Ingestion — n8n 2.30.8\n\nOne ingest for Excel, Orchestrator, and Schedule (`target_base`). Edit `excel-agent-operating-guide.documents.json`, paste the whole file into the form `corpus_json` field or this Execute Sub-workflow input. The workflow skips `target_base` + `knowledge_id` + `revision` rows that already exist and ignores the last `injection_template` element. Manual trigger syncs the packaged snapshot from import time.\n\nTo update text of an existing card, bump `revision`. Use one embedding model/dimensions in ingestion and retrieval.", 620, 560),
+        note("MAS ingestion README", (-1240, -700), "## MAS Knowledge Ingestion — n8n 2.30.8\n\nOne ingest for Excel, Orchestrator, and Schedule (`target_base`). Field path: Activity Knowledge → **Загрузить в RAG** (`POST /webhook/mas-knowledge-ingest`). That posts the live `excel-agent-operating-guide.documents.json` sheet. Form paste and Execute Sub-workflow still work. Manual trigger uses the **Packaged MAS corpus** Set snapshot from import time (not the live file).\n\nThe workflow skips `target_base` + `knowledge_id` + `revision` rows that already exist and ignores `injection_template`. To update text of an existing card, bump `revision`. Use one embedding model/dimensions in ingestion and retrieval. Activate this workflow so the Activity webhook is registered.", 620, 620),
+        node(
+            "Activity knowledge ingest webhook",
+            "n8n-nodes-base.webhook",
+            2.1,
+            (-1200, -260),
+            {
+                "httpMethod": "POST",
+                "path": "mas-knowledge-ingest",
+                "responseMode": "lastNode",
+                "options": {},
+            },
+            webhookId=INGEST_WEBHOOK_ID,
+            notesInFlow=True,
+            notes="POST from MAS Activity Knowledge. Live corpus in body.documents — does not use the packaged Set snapshot.",
+        ),
         trigger("Receive SCHEDULE knowledge document", (-1200, 100), example),
         form,
-        node("Sync packaged MAS knowledge", "n8n-nodes-base.manualTrigger", 1, (-1200, 280), {}, notesInFlow=True, notes="First-time sync of the packaged snapshot. Later knowledge: paste the whole sheet. Existing keys are skipped."),
-        code("Collect MAS knowledge blocks", (-920, 80), _collect_knowledge_js(packaged)),
+        node("Sync packaged MAS knowledge", "n8n-nodes-base.manualTrigger", 1, (-1200, 280), {}, notesInFlow=True, notes="Uses Packaged MAS corpus (import-time snapshot). Activity Knowledge posts the live file instead."),
+        set_fields("Packaged MAS corpus", (-920, 280), [("documents", packaged, "array")]),
+        code("Collect MAS knowledge blocks", (-920, 80), COLLECT_KNOWLEDGE_JS),
         node("Ensure parent knowledge tables", "n8n-nodes-base.postgres", 2.6, (-700, 80), {"operation": "executeQuery", "query": ENSURE_PARENT_SQL, "options": {"queryBatching": "single", "largeNumbersOutput": "text", "replaceEmptyStrings": False}}, credentials=pg, executeOnce=True, alwaysOutputData=True),
         node("Lookup existing knowledge keys", "n8n-nodes-base.postgres", 2.6, (-480, 80), {"operation": "executeQuery", "query": LOOKUP_EXISTING_SQL, "options": {"queryBatching": "single", "largeNumbersOutput": "text", "replaceEmptyStrings": False}}, credentials=pg, executeOnce=True, alwaysOutputData=True, onError="continueRegularOutput"),
         code("Select new MAS knowledge", (-260, 80), SELECT_NEW_KNOWLEDGE_JS, executeOnce=True),
@@ -511,11 +567,14 @@ def build_ingestion(*, node, note, code, trigger, ifnode, connect, workflow):
         node("Postgres — inspect RAG table contents", "n8n-nodes-base.postgres", 2.6, (1460, 80), {"operation": "executeQuery", "query": "={{ $json.query }}", "options": {"queryBatching": "single", "largeNumbersOutput": "text", "replaceEmptyStrings": False}}, credentials=pg, executeOnce=True, alwaysOutputData=True),
         code("Summarize RAG inventory", (1700, 80), INVENTORY_SUMMARIZE_JS, executeOnce=True, notesInFlow=True, notes="status=rag_inventory_ok means every packaged knowledge_id is present. skipped_existing lists keys that were already in the parent table."),
         code("Return SCHEDULE ingestion gate", (440, 140), "return [{json:{contract:'schedule_knowledge_ingest_result',contract_version:'1.0',status:$json.status,findings:$json.findings,vector_write_allowed:false}}];"),
+        code("Shape MAS ingest response", (1940, 80), SHAPE_INGEST_RESPONSE_JS, executeOnce=True, notesInFlow=True, notes="Webhook lastNode: added / skipped / total_in_rag. Keep this the terminal node."),
     ]
     c = {}
+    connect(c, "Activity knowledge ingest webhook", "Collect MAS knowledge blocks")
     connect(c, "Receive SCHEDULE knowledge document", "Collect MAS knowledge blocks")
     connect(c, "SCHEDULE manual ingestion form", "Collect MAS knowledge blocks")
-    connect(c, "Sync packaged MAS knowledge", "Collect MAS knowledge blocks")
+    connect(c, "Sync packaged MAS knowledge", "Packaged MAS corpus")
+    connect(c, "Packaged MAS corpus", "Collect MAS knowledge blocks")
     connect(c, "Collect MAS knowledge blocks", "Ensure parent knowledge tables")
     connect(c, "Ensure parent knowledge tables", "Lookup existing knowledge keys")
     connect(c, "Lookup existing knowledge keys", "Select new MAS knowledge")
@@ -536,7 +595,9 @@ def build_ingestion(*, node, note, code, trigger, ifnode, connect, workflow):
     connect(c, "PostgreSQL — upsert approved schema catalogue", "Prepare RAG inventory query")
     connect(c, "Prepare RAG inventory query", "Postgres — inspect RAG table contents")
     connect(c, "Postgres — inspect RAG table contents", "Summarize RAG inventory")
-    return workflow("MAS — Knowledge Ingestion", "Single MAS ingest: paste the whole knowledge sheet or sync the packaged snapshot. Skips target_base+knowledge_id+revision rows that already exist; ignores injection_template.", ns, c, "schedule_knowledge_ingest/v1")
+    connect(c, "Summarize RAG inventory", "Shape MAS ingest response")
+    connect(c, "Return SCHEDULE ingestion gate", "Shape MAS ingest response")
+    return workflow("MAS — Knowledge Ingestion", "Single MAS ingest: Activity Knowledge webhook, form paste, or packaged Set snapshot. Skips target_base+knowledge_id+revision rows that already exist; ignores injection_template.", ns, c, "schedule_knowledge_ingest/v1")
 
 
 def _postgres(name, pos, query, params):

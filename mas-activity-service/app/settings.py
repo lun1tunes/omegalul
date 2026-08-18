@@ -18,16 +18,22 @@ DEFAULT_ORCHESTRATOR_WORKFLOW_ID = "ba8ba59f-e4e4-5ff6-b22c-63ceae883271"
 ORCHESTRATOR_WEBHOOK_PATH = "engineering-orchestrator"
 LIST_WEBHOOK_PATH = "mas-activity-list-tasks"
 FEED_WEBHOOK_PATH = "mas-activity-load-feed"
+INGEST_WEBHOOK_PATH = "mas-knowledge-ingest"
 DEFAULT_WEBHOOK_CHECKS = (
     ORCHESTRATOR_WEBHOOK_PATH,
     LIST_WEBHOOK_PATH,
     FEED_WEBHOOK_PATH,
+    INGEST_WEBHOOK_PATH,
     "mas-deployment-health-check",
 )
 
 UNCONFIGURED_N8N = (
     "n8n не настроен. В mas-activity.env задайте ORCHESTRATOR_WEBHOOK_URL "
     "или N8N_BASE_URL (для REST ещё N8N_USERNAME и N8N_PASSWORD)."
+)
+UNCONFIGURED_INGEST = (
+    "n8n Knowledge Ingestion webhook не настроен. "
+    "Задайте ORCHESTRATOR_WEBHOOK_URL или N8N_BASE_URL, либо KNOWLEDGE_INGEST_URL."
 )
 
 
@@ -94,6 +100,7 @@ class Settings(BaseSettings):
 
     activity_list_url: str = Field(default="", validation_alias="ACTIVITY_LIST_URL")
     activity_feed_url: str = Field(default="", validation_alias="ACTIVITY_FEED_URL")
+    knowledge_ingest_url: str = Field(default="", validation_alias="KNOWLEDGE_INGEST_URL")
     activity_durable_auth_header: str = Field(
         default="", validation_alias="ACTIVITY_DURABLE_AUTH_HEADER"
     )
@@ -112,6 +119,7 @@ class Settings(BaseSettings):
         "orchestrator_webhook_url",
         "activity_list_url",
         "activity_feed_url",
+        "knowledge_ingest_url",
         "host",
         "n8n_username",
         "orchestrator_workflow_id",
@@ -188,6 +196,13 @@ class Settings(BaseSettings):
         return _webhook_url(self.n8n_base, FEED_WEBHOOK_PATH)
 
     @property
+    def resolved_knowledge_ingest_url(self) -> str:
+        if self.knowledge_ingest_url:
+            url = self.knowledge_ingest_url.strip()
+            return url if _is_absolute_http_url(url) else ""
+        return _webhook_url(self.n8n_base, INGEST_WEBHOOK_PATH)
+
+    @property
     def n8n_health_url(self) -> str:
         if not self.n8n_base:
             return ""
@@ -232,6 +247,7 @@ class Settings(BaseSettings):
             "n8n_rest_configured": bool(self.n8n_base and self.n8n_username and self.n8n_password),
             "activity_list_configured": bool(self.resolved_list_url),
             "activity_feed_configured": bool(self.resolved_feed_url),
+            "knowledge_ingest_configured": bool(self.resolved_knowledge_ingest_url),
             "state_persist": bool(self.activity_state_path.strip()),
             "env_files": [str(path) for path in LOADED_ENV_FILES],
             "log_level": self.log_level,

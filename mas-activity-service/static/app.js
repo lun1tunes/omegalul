@@ -26,7 +26,7 @@
   const diffExpander = document.getElementById("diffExpander");
   const diffBody = document.getElementById("diffBody");
   const composer = document.getElementById("composer");
-  const requestedBy = document.getElementById("requestedBy");
+  const REQUESTED_BY = "mas activity user";
   const humanResponse = document.getElementById("humanResponse");
   const composerHint = document.getElementById("composerHint");
   const approveBtn = document.getElementById("approveBtn");
@@ -41,7 +41,6 @@
   const newTaskBtn = document.getElementById("newTaskBtn");
   const brandHome = document.getElementById("brandHome");
   const startComposer = document.getElementById("startComposer");
-  const startRequestedBy = document.getElementById("startRequestedBy");
   const taskDescription = document.getElementById("taskDescription");
   const scheduleRoot = document.getElementById("scheduleRoot");
   const scheduleRootField = document.getElementById("scheduleRootField");
@@ -51,12 +50,6 @@
   const startHint = document.getElementById("startHint");
   const startCancelBtn = document.getElementById("startCancelBtn");
   const startSubmitBtn = document.getElementById("startSubmitBtn");
-
-  const storedBy = localStorage.getItem("mas_requested_by") || "";
-  if (storedBy) {
-    requestedBy.value = storedBy;
-    startRequestedBy.value = storedBy;
-  }
 
   const LIVE_LABELS = {
     idle: "ожидание",
@@ -98,7 +91,7 @@
     conflict: "Конфликт",
     planning: "План",
     PLANNING: "План",
-    handoff: "Handoff",
+    handoff: "Передача",
     running: "В работе",
     RUNNING: "В работе",
     retryable_error: "Ошибка",
@@ -111,7 +104,7 @@
   const CYRILLIC_RE = /[А-Яа-яЁё]/;
   function statusLabel(code) {
     const raw = String(code || "").trim();
-    if (!raw) return "handoff";
+    if (!raw) return "Передача";
     return STATUS_LABELS[raw] || STATUS_LABELS[raw.toUpperCase()] || raw;
   }
   /** Hide muted secondary line when it is English machine jargon (no Cyrillic). */
@@ -204,15 +197,15 @@
     if (st === "planning") {
       return (
         "Лента пустая: задача зависла на planning. "
-        + "Оркестратор успел завести eng_* в каталоге, но handoff ещё не записал (часто после сбоя Planner). "
+        + "Оркестратор успел завести eng_* в каталоге, но передача ещё не записалась (часто после сбоя Planner). "
         + "Это не результат — попробуйте создать задачу снова, когда Planner починен."
       );
     }
     if (/conflict|error|fail|cancel|reject/.test(st)) {
       return data?.status_message
-        || "Задача завершилась с ошибкой/конфликтом, а handoff в ленту не пришёл. Смотрите баннер статуса выше.";
+        || "Задача завершилась с ошибкой/конфликтом, а передача в ленту не пришла. Смотрите баннер статуса выше.";
     }
-    return "Лента пока пуста — ждём первые handoff от оркестратора.";
+    return "Лента пока пуста — ждём первые передачи от оркестратора.";
   }
 
   function formatElapsed(ms) {
@@ -437,9 +430,6 @@
     newTaskBtn.classList.toggle("active-start", startOpen);
     setComposerArmed(awaitingHuman);
     if (startOpen) {
-      if (!startRequestedBy.value.trim() && requestedBy.value.trim()) {
-        startRequestedBy.value = requestedBy.value.trim();
-      }
       taskDescription.focus();
     }
   }
@@ -555,10 +545,10 @@
       needs_approval: "Ждёт подтверждения",
       result_approval: "Ждёт подтверждения",
       pre_delegation_approval: "Согласование",
-      human_gate: "Запрос к вам",
+      human_gate: "Запрос",
     };
     const rawKind = String(gateState.kind || "human_gate");
-    gateKind.textContent = GATE_KIND_LABELS[rawKind] || GATE_KIND_LABELS[rawKind.toLowerCase()] || "Запрос к вам";
+    gateKind.textContent = GATE_KIND_LABELS[rawKind] || GATE_KIND_LABELS[rawKind.toLowerCase()] || "Запрос";
     gateKind.title = rawKind;
     gateMeta.textContent = [
       gateState.gate_id ? `gate ${gateState.gate_id}` : null,
@@ -611,7 +601,7 @@
     who.title = `${fromRole} → ${toRole}`;
     const kicker = document.createElement("span");
     kicker.className = "who-kicker";
-    kicker.textContent = isHuman ? "Ответ" : isHitlAsk ? "Запрос к вам" : "Handoff";
+    kicker.textContent = isHuman ? "Ответ" : isHitlAsk ? "Запрос" : "Передача";
     const fromEl = document.createElement("span");
     fromEl.className = "role from";
     fromEl.textContent = fromRole;
@@ -623,26 +613,16 @@
     toEl.className = "role to";
     toEl.textContent = toRole;
     who.append(kicker, fromEl, arrow, toEl);
-
-    const bubble = document.createElement("div");
-    bubble.className = "bubble";
-
-    const top = document.createElement("div");
-    top.className = "turn-top";
-    const status = document.createElement("div");
-    status.className = "status";
-    const rawStatus = turn.status || turn.kind || "handoff";
-    status.textContent = statusLabel(rawStatus);
-    status.title = String(rawStatus);
-    top.append(status);
     if (turn.duration_label) {
       const dur = document.createElement("span");
       dur.className = "duration";
       dur.textContent = turn.duration_label;
-      dur.title = "Время работы до этого handoff";
-      top.append(dur);
+      dur.title = "Время работы до этой передачи";
+      who.append(dur);
     }
-    bubble.append(top);
+
+    const bubble = document.createElement("div");
+    bubble.className = "bubble";
 
     const brief = document.createElement("p");
     brief.className = "brief";
@@ -1113,7 +1093,7 @@
         const msg = formatHydrateError(data.hydrate.error || "hydrate_failed");
         if (msg) showFlash(msg, { sticky: true });
       } else if (data.hydrate?.truncated) {
-        showFlash("Транскрипт усечён: в Data Tables больше лимита handoff (500). Показаны последние turns.");
+        showFlash("Транскрипт усечён: в Data Tables больше лимита передач (500). Показаны последние turns.");
       }
     } catch (_) {
       showLoadError(taskId, "Сеть недоступна при загрузке задачи.");
@@ -1151,14 +1131,7 @@
       showFlash("Сначала выберите задачу в списке слева.");
       return;
     }
-    const by = requestedBy.value.trim();
-    if (!by) {
-      requestedBy.focus();
-      showFlash("Укажите, кто ставит задачу — ФИО инженера.");
-      return;
-    }
-    localStorage.setItem("mas_requested_by", by);
-    startRequestedBy.value = by;
+    const by = REQUESTED_BY;
     const responseText = humanResponse.value.trim();
     if (action === "reply" && !responseText) {
       humanResponse.focus();
@@ -1229,20 +1202,13 @@
 
   async function submitStart(e) {
     e.preventDefault();
-    const by = startRequestedBy.value.trim();
+    const by = REQUESTED_BY;
     const description = taskDescription.value.trim();
-    if (!by) {
-      startRequestedBy.focus();
-      showFlash("Укажите, кто ставит задачу — ФИО инженера.");
-      return;
-    }
     if (!description) {
       taskDescription.focus();
       showFlash("Нужно описание задачи.");
       return;
     }
-    localStorage.setItem("mas_requested_by", by);
-    requestedBy.value = by;
 
     const form = new FormData();
     form.append("task_description", description);
@@ -1357,12 +1323,7 @@
         showFlash("Сначала выберите задачу с case_id.");
         return;
       }
-      const by = requestedBy.value.trim();
-      if (!by) {
-        requestedBy.focus();
-        showFlash("Укажите ФИО инженера перед перезапуском.");
-        return;
-      }
+      const by = REQUESTED_BY;
       if (!window.confirm(`Перезапустить case ${currentTask} с сохранёнными входными данными?`)) {
         return;
       }

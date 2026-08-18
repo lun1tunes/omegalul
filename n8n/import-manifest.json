@@ -368,11 +368,11 @@
     "Edit Math Service Configuration in the Calculation Adapter; its default is http://127.0.0.1:8100/api/v1/math and it uses no credential.",
     "Configure one embedding model/dimension consistently for MAS — Knowledge Ingestion and MAS — Knowledge Retrieval.",
     "Use MAS — Knowledge Ingestion to load expert-authored keyword_instruction and worked_example text into target_base=schedule_mvp; include schema_catalogue JSON only when deterministic rendering needs it.",
-    "Seed the packaged MAS corpus (excel_protocol / orchestrator_routing / specialist_template) via MAS — Knowledge Ingestion Manual trigger; existing target_base+knowledge_id+revision rows are skipped. Empty tag filters never match the whole namespace.",
+    "Seed the MAS corpus via Activity Knowledge → Загрузить в RAG (live excel-agent-operating-guide.documents.json) or MAS — Knowledge Ingestion Manual trigger (Packaged MAS corpus snapshot). Existing target_base+knowledge_id+revision rows are skipped. Empty tag filters never match the whole namespace.",
     "Keep every workflow inactive until placeholders and credentials are resolved. Activate only required user-facing entrypoints."
   ],
   "activation_order": [
-    "Run MAS — Knowledge Ingestion (Manual trigger Sync packaged MAS knowledge) and verify through MAS — Knowledge Retrieval.",
+    "Run MAS — Knowledge Ingestion (Activity Knowledge → Загрузить в RAG, or Manual trigger Sync packaged MAS knowledge) and verify through MAS — Knowledge Retrieval.",
     "Smoke-test Excel Agent and the inline .data/.inc path while inactive.",
     "Smoke-test Universal Orchestrator through Execute Workflow, then Form, then authenticated HTTP.",
     "Activate Universal Orchestrator web entrypoints only after all gates pass."

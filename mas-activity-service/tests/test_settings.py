@@ -14,6 +14,7 @@ def test_settings_reads_monkeypatched_env(monkeypatch) -> None:
         "N8N_BASE_URL",
         "ACTIVITY_LIST_URL",
         "ACTIVITY_FEED_URL",
+        "KNOWLEDGE_INGEST_URL",
         "ACTIVITY_CA_BUNDLE",
     ):
         monkeypatch.delenv(key, raising=False)
@@ -26,6 +27,7 @@ def test_settings_reads_monkeypatched_env(monkeypatch) -> None:
     assert settings.n8n_base == "http://n8n.example"
     assert settings.resolved_list_url.endswith("/webhook/mas-activity-list-tasks")
     assert settings.resolved_feed_url.endswith("/webhook/mas-activity-load-feed")
+    assert settings.resolved_knowledge_ingest_url.endswith("/webhook/mas-knowledge-ingest")
     assert settings.n8n_health_url == "http://n8n.example/healthz"
     assert settings.log_level == "DEBUG"
     assert settings.port == 8201
@@ -44,6 +46,7 @@ def test_unconfigured_without_n8n_urls(monkeypatch) -> None:
         "N8N_PASSWORD",
         "ACTIVITY_LIST_URL",
         "ACTIVITY_FEED_URL",
+        "KNOWLEDGE_INGEST_URL",
         "ACTIVITY_TLS_VERIFY",
         "ACTIVITY_CA_BUNDLE",
     ):
@@ -55,6 +58,7 @@ def test_unconfigured_without_n8n_urls(monkeypatch) -> None:
     assert settings.n8n_health_url == ""
     assert settings.tls_verify is True
     assert settings.httpx_verify is True
+    assert settings.resolved_knowledge_ingest_url == ""
 
 
 def test_relative_webhook_urls_are_unconfigured(monkeypatch) -> None:
@@ -62,6 +66,7 @@ def test_relative_webhook_urls_are_unconfigured(monkeypatch) -> None:
         "N8N_BASE_URL",
         "ACTIVITY_LIST_URL",
         "ACTIVITY_FEED_URL",
+        "KNOWLEDGE_INGEST_URL",
         "N8N_USERNAME",
         "N8N_PASSWORD",
         "ACTIVITY_TLS_VERIFY",
@@ -75,6 +80,7 @@ def test_relative_webhook_urls_are_unconfigured(monkeypatch) -> None:
     assert settings.resolved_orchestrator_webhook == ""
     assert settings.resolved_list_url == ""
     assert settings.resolved_feed_url == ""
+    assert settings.resolved_knowledge_ingest_url == ""
     assert settings.n8n_health_url == ""
 
 
@@ -116,5 +122,6 @@ def test_env_candidates_include_service_file() -> None:
     assert "MAS_ACTIVITY_KEY" not in text
     assert "HITL_MODE" not in text
     assert "ORCHESTRATOR_WEBHOOK_URL" in text
+    assert "KNOWLEDGE_INGEST_URL" in text
     loaded = _load_env_files()
     assert all(isinstance(path, Path) for path in loaded)

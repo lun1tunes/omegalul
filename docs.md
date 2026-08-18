@@ -258,9 +258,11 @@ CSV: [`n8n/data-tables/mas_trace_events_v1.header.csv`](n8n/data-tables/mas_trac
 
 1. Откройте workflow `MAS — Knowledge Ingestion`. Credentials: **тот же** Postgres/PGVector и **тот же** OpenAI embedding credential, что у Retrieval / Excel Agent. Модель: `text-embedding-3-small`. Поле **Dimensions** не заполняйте.
 2. На ноде embeddings: `batchSize=16`, `timeout=600` (при `batchSize=128` ingest часто падает `Request timed out`).
-3. Запустите **Sync packaged MAS knowledge** (Test workflow / Execute). Это заливает packaged snapshot из workflow (включая `routing_card`).
-4. Нода `Summarize RAG inventory` → `rag_inventory_ok`. Ожидайте ненулевые `orchestrator_routing` / `routing_card` и `excel_protocol` / `protocol_instruction`.
-5. Если правили `n8n/rag/excel-agent-operating-guide.documents.json` — увеличьте `revision`, вставьте весь JSON в поле формы `corpus_json` (или обновите packaged snapshot генератором) и прогоните ingest снова.
+3. Активируйте workflow (нужен production webhook `mas-knowledge-ingest`).
+4. Полевой путь: Activity → **База знаний** → **Загрузить в RAG**. Activity POST’ит живой `n8n/rag/excel-agent-operating-guide.documents.json` (без `injection_template`). Ответ: сколько **добавлено**, сколько **уже было**, **всего в RAG**.
+5. Запасной путь в n8n: **Sync packaged MAS knowledge** — заливает snapshot из ноды **Packaged MAS corpus** (состояние файла на момент generate/import, не live-правки Activity). Форма `corpus_json` — вставка всего JSON вручную.
+6. Нода `Summarize RAG inventory` / webhook lastNode `Shape MAS ingest response` → `ok` и ненулевые `orchestrator_routing` / `routing_card` и `excel_protocol` / `protocol_instruction`.
+7. Если правили уже залитую карточку — увеличьте `revision` и снова **Загрузить в RAG**. Без bump revision ключ `target_base+knowledge_id+revision` считается существующим и пропускается.
 
 > Пустые таблицы после wipe Postgres/volume = снова Шаг 6. Без RAG нельзя переходить к combat/golden кейсам.
 
@@ -321,8 +323,9 @@ CSV: [`n8n/data-tables/mas_trace_events_v1.header.csv`](n8n/data-tables/mas_trac
 | История (Trace) пустая | Проверьте, привязаны ли Data Tables в процессе `Writer — MAS Trace`. |
 | Интерфейс Activity пуст | Не настроены URL в локальном сервисе MAS Activity (`ACTIVITY_FEED_URL` и `ACTIVITY_LIST_URL`). |
 | Браузер: `blocked by CORS policy` | `mas-activity-service/app/main.py`: CORSMiddleware. Не ставить `allow_credentials=True` вместе с `allow_origins=["*"]`. Перезапустить Activity. См. README «CORS». |
-| Оркестратор сразу просит загрузить `routing_card` / `orchestrator_routing` | RAG пуст или не прогнан Шаг 6. Проверьте `Summarize RAG inventory` и строки `routing_card`. |
-| Knowledge Ingestion: `Request timed out` на embeddings | Уменьшите `batchSize` до 16 и поднимите `timeout` до 600 на ноде Embeddings; проверьте доступ к OpenAI из хоста n8n. |
+| Оркестратор сразу просит загрузить `routing_card` / `orchestrator_routing` | RAG пуст или не прогнан Шаг 6. Activity → База знаний → Загрузить в RAG; либо `Summarize RAG inventory`. |
+| Knowledge Ingestion: `Request timed out` на embeddings | Уменьшите `batchSize` до 16 и поднимите `timeout` до 600 на ноде Embeddings; проверьте доступ к OpenAI из хоста n8n. Activity ждёт webhook до 10 минут. |
+| Activity «Загрузить в RAG» → webhook 404 | Workflow `MAS — Knowledge Ingestion` не импортирован или не Active. Production path: `/webhook/mas-knowledge-ingest`. |
 | `/webhook/mas-deployment-health-check` → 404 | Это **Form**, не webhook. Открывайте `/form/mas-deployment-health-check` (нужна сессия n8n). Activity `/ready` может показывать extra webhook 404 — на core path это не блокер. |
 | Builder считает все скважины «новыми», хотя они есть в baseline | После Materialize поля лежат на корне item, а webhook кладёт payload в nested `body`. Normalize должен читать `schedule_materialize_ok` / `baseline_schedule_text` с корня. Симптом в CAS: `baseline_schedule_text` = `"baseline.inc"` (имя файла). |
 | Builder снова просит `BASELINE_REQUIRED` / `intake_1_baseline_required`, хотя baseline уже в задаче | HITL записал stub в `request.schedule_request` (часто только `unlisted_wells_policy`), и Apply Plan брал nested stub вместо top-level `baseline_schedule_text`. Нужен `resolveRequestSchedule`: nested + fallback на корень request. В CAS: `request.baseline_schedule_text` длинный, а `packet.inputs.schedule_request` без текста. |
@@ -373,5 +376,5 @@ python3 scripts/lab_soft_redeploy.py
 2. **Зарегистрируйте агента:** Добавьте его в реестр `n8n/contracts/specialist_registry.v1.json`. Укажите новый `route` (индекс маршрута) и поставьте `configured: false`, пока логика агента не будет полностью готова.
 3. **Обновите Оркестратора:** Запустите скрипт `python3 n8n/templates/generate_universal_engineering_workflows.py`. Это автоматически обновит код маршрутизатора в Оркестраторе.
 4. **Привяжите процесс:** Импортируйте обновленного Оркестратора в n8n и визуально привяжите созданную новую ноду `Call ... Specialist` к вашему workflow.
-5. **Обучите Планировщик:** Чтобы Оркестратор знал о новом агенте, добавьте его описание в карточку `routing_card` в базе знаний (`excel-agent-operating-guide.documents.json`). Затем заново запустите процесс Knowledge Ingestion.
+5. **Обучите Планировщик:** Чтобы Оркестратор знал о новом агенте, добавьте его описание в карточку `routing_card` в базе знаний (`excel-agent-operating-guide.documents.json`). Затем снова **Загрузить в RAG** (или Knowledge Ingestion).
 6. **Активация:** Поставьте `configured: true` в реестре, снова сгенерируйте Оркестратора и ре-импортируйте его. Проведите `Execute Workflow` с тестовым пакетом данных, чтобы убедиться, что агент возвращает правильный статус и корректно отображается в Activity UI.

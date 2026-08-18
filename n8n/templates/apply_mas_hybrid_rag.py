@@ -21,6 +21,7 @@ from generate_schedule_workflows import (  # noqa: E402
     ifnode,
     node,
     note,
+    set_fields,
     trigger,
     workflow,
 )
@@ -467,7 +468,7 @@ def patch_excel_ingestion(blocks: dict[str, list[dict]]) -> None:
 
 
 def main() -> None:
-    ingest = build_ingestion(node=node, note=note, code=code, trigger=trigger, ifnode=ifnode, connect=connect, workflow=workflow)
+    ingest = build_ingestion(node=node, note=note, code=code, trigger=trigger, ifnode=ifnode, connect=connect, workflow=workflow, set_fields=set_fields)
     retrieval = build_retrieval(node=node, note=note, code=code, trigger=trigger, ifnode=ifnode, connect=connect, workflow=workflow)
     _dump(CORE / "tnavigator-schedule-knowledge-ingestion.workflow.json", ingest)
     _dump(CORE / "tnavigator-schedule-hybrid-retrieval.workflow.json", retrieval)

@@ -71,7 +71,7 @@ Open [http://127.0.0.1:8200/](http://127.0.0.1:8200/) → **Новая зада�
 
 HITL composer открывается при `awaiting_human` и заполненном `human_gate`.
 
-Knowledge UI: [http://127.0.0.1:8200/knowledge](http://127.0.0.1:8200/knowledge).
+Knowledge UI: [http://127.0.0.1:8200/knowledge](http://127.0.0.1:8200/knowledge) — правка `excel-agent-operating-guide.documents.json`. Кнопка **Загрузить в RAG** шлёт весь корпус в n8n `POST /webhook/mas-knowledge-ingest` (workflow `MAS — Knowledge Ingestion` должен быть Active). Ответ: сколько добавлено / уже было / всего в RAG. Чтобы обновить уже залитую карточку, поднимите `revision`.
 
 ```bat
 REM прямой запуск без .bat — тот же load mas-activity.env
@@ -96,7 +96,7 @@ Tests: `.venv\Scripts\python.exe -m pytest -q`.
 | `POST` | `/v1/tasks/start` | multipart start |
 | `POST` | `/v1/tasks/{id}/hitl` | `reply` / `approve` / `reject` / `cancel` / `status` |
 | `GET` | `/v1/tasks/{id}/stream` | SSE |
-| `POST` | `/v1/demo/seed` | presentation fixture |
+| `POST` | `/v1/knowledge/ingest` | live corpus → n8n Knowledge Ingestion webhook |
 
 `POST /v1/sync` не продвигает routine handoff-статусы в статус задачи и не закрывает открытый gate.
 

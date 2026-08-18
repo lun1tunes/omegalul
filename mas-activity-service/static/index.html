@@ -45,7 +45,7 @@
         </span>
       </button>
       <div class="rail-list" id="railList">
-        <p class="rail-empty" id="railEmpty">Нет задач. Создайте новую или дождитесь handoff от Trace Writer.</p>
+        <p class="rail-empty" id="railEmpty">Нет задач. Создайте новую или дождитесь передачи от Trace Writer.</p>
       </div>
     </aside>
     <section class="workspace">
@@ -93,10 +93,6 @@
 
       <form class="composer start-composer" id="startComposer" autocomplete="off" hidden>
         <div class="composer-top">
-          <label class="who-field">
-            <span>Кто ставит задачу</span>
-            <input id="startRequestedBy" type="text" required maxlength="120" placeholder="И. Иванов" />
-          </label>
           <div class="composer-actions" role="group" aria-label="Действия новой задачи">
             <button type="button" class="btn btn-cancel" id="startCancelBtn">Закрыть</button>
             <button type="submit" class="btn btn-approve" id="startSubmitBtn">Создать задачу</button>
@@ -134,10 +130,6 @@
 
       <form class="composer" id="composer" autocomplete="off" hidden>
         <div class="composer-top">
-          <label class="who-field">
-            <span>Ваше ФИО</span>
-            <input id="requestedBy" type="text" required maxlength="120" placeholder="И. Иванов" />
-          </label>
           <div class="composer-actions" role="group" aria-label="Действия по запросу системы">
             <button type="submit" class="btn btn-approve" data-action="approve" id="approveBtn">Утвердить</button>
             <button type="submit" class="btn btn-reject" data-action="reject" id="rejectBtn">Отклонить</button>
@@ -155,6 +147,6 @@
     </section>
   </main>
 
-  <script src="/static/app.js?v=57"></script>
+  <script src="/static/app.js?v=58"></script>
 </body>
 </html>

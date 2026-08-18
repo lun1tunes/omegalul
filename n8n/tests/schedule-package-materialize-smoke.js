@@ -109,9 +109,27 @@ async function main() {
   assert.equal(missing.package.file_count, 1);
   assert.match(missing.warnings.join(' '), /Missing uploaded body/i);
 
+  // INCLUDE in a comment/string is not a directive and must not manufacture
+  // the `INCLUDE path invalid` error.
+  const prose = materialize({
+    uploads: [{
+      fileName: 'MVP1_schedule_IN.INC',
+      text: "-- do not INCLUDE 'ghost.inc'\nMESSAGE 'INCLUDE \\\"ghost.inc\\\"' /\nDATES\n  1 JAN 2025 /\n",
+    }],
+  });
+  assert.equal(prose.ok, true, prose.errors?.join('; '));
+  assert.equal(prose.package.file_count, 1);
+
+  // A root with no INCLUDE directive is a valid single-file package.
+  const noInclude = materialize({
+    uploads: [{ fileName: 'MVP1_schedule_IN.INC', text: 'DATES\n  1 JAN 2025 /\n' }],
+  });
+  assert.equal(noInclude.ok, true, noInclude.errors?.join('; '));
+  assert.equal(noInclude.package.file_count, 1);
+
   console.log(JSON.stringify({
     ok: true,
-    scenarios: 4,
+    scenarios: 6,
     flat_root: flat.package.root_path,
     flat_files: flat.package.file_count,
     analyze_status: analysis.status,

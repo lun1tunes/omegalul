@@ -205,12 +205,111 @@ def test_knowledge_namespaces_list_get_patch(tmp_path: Path) -> None:
         assert "База знаний" in page.text
         assert "knowledge.js" in page.text
         assert "Создать новое знание" in page.text
+        assert "Загрузить в RAG" in page.text
     finally:
         knowledge_store.set_corpus_path(None)
 
 
+def test_knowledge_ingest_unconfigured(monkeypatch, tmp_path: Path) -> None:
+    corpus = tmp_path / "corpus.json"
+    corpus.write_text(json.dumps(SAMPLE, ensure_ascii=False), encoding="utf-8")
+    knowledge_store.set_corpus_path(corpus)
+    for key in (
+        "ORCHESTRATOR_WEBHOOK_URL",
+        "N8N_BASE_URL",
+        "KNOWLEDGE_INGEST_URL",
+        "ACTIVITY_LIST_URL",
+        "ACTIVITY_FEED_URL",
+    ):
+        monkeypatch.setenv(key, "")
+    try:
+        res = client.post("/v1/knowledge/ingest")
+        assert res.status_code == 503
+        assert "Knowledge Ingestion" in res.json()["detail"]
+    finally:
+        knowledge_store.set_corpus_path(None)
+
+
+def test_knowledge_ingest_posts_live_corpus(monkeypatch, tmp_path: Path) -> None:
+    corpus = tmp_path / "corpus.json"
+    corpus.write_text(json.dumps(SAMPLE, ensure_ascii=False), encoding="utf-8")
+    knowledge_store.set_corpus_path(corpus)
+    captured: dict[str, object] = {}
+
+    class FakeResponse:
+        status_code = 200
+        text = '{"ok":true}'
+
+        def json(self) -> dict[str, object]:
+            return {
+                "ok": True,
+                "added": 2,
+                "skipped": 0,
+                "total_sent": 2,
+                "total_in_rag": 2,
+                "status": "rag_inventory_ok",
+                "message": "Добавлено 2, пропущено (уже есть) 0, всего в RAG 2 карточек.",
+                "findings": [],
+            }
+
+    class FakeClient:
+        def __init__(self, *args: object, **kwargs: object) -> None:
+            captured["timeout"] = kwargs.get("timeout")
+            captured["verify"] = kwargs.get("verify")
+
+        async def __aenter__(self) -> "FakeClient":
+            return self
+
+        async def __aexit__(self, *args: object) -> None:
+            return None
+
+        async def post(self, url: str, *, json: object = None, headers: object = None) -> FakeResponse:
+            captured["url"] = url
+            captured["json"] = json
+            captured["headers"] = headers
+            return FakeResponse()
+
+    monkeypatch.setenv("KNOWLEDGE_INGEST_URL", "http://n8n.test/webhook/mas-knowledge-ingest")
+    monkeypatch.setattr("app.knowledge.httpx.AsyncClient", FakeClient)
+    try:
+        res = client.post("/v1/knowledge/ingest")
+        assert res.status_code == 200
+        body = res.json()
+        assert body["ok"] is True
+        assert body["added"] == 2
+        assert body["skipped"] == 0
+        assert body["total_sent"] == 2
+        assert body["total_in_rag"] == 2
+        assert "Добавлено 2" in body["message"]
+        payload = captured["json"]
+        assert isinstance(payload, dict)
+        docs = payload["documents"]
+        assert isinstance(docs, list)
+        assert len(docs) == 2
+        assert all(item.get("role") != "injection_template" for item in docs)
+        assert any(item.get("schema_catalogue") for item in docs)
+        assert captured["url"] == "http://n8n.test/webhook/mas-knowledge-ingest"
+    finally:
+        knowledge_store.set_corpus_path(None)
+
+
+def test_normalize_ingest_response_unwraps_n8n_list() -> None:
+    shaped = knowledge_store.normalize_ingest_response(
+        [{"json": {"inserted": 3, "skipped": 40, "distinct_documents": 43, "status": "rag_inventory_ok"}}],
+        sent_count=43,
+    )
+    assert shaped["added"] == 3
+    assert shaped["skipped"] == 40
+    assert shaped["total_sent"] == 43
+    assert shaped["total_in_rag"] == 43
+    assert shaped["ok"] is True
+
+
 def test_knowledge_page_assets() -> None:
-    assert client.get("/static/knowledge.js").status_code == 200
+    js = client.get("/static/knowledge.js")
+    assert js.status_code == 200
+    assert "persistPendingBeforeIngest" in js.text
+    assert "Загрузить в RAG" in client.get("/knowledge").text
     assert client.get("/static/knowledge.css").status_code == 200
     index = client.get("/")
     assert index.status_code == 200

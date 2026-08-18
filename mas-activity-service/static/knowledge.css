@@ -18,8 +18,15 @@ body.knowledge-page:has(.flash:not([hidden])) .kb-stage {
   margin-bottom: 1.5rem;
   width: 100%;
 }
-.kb-toolbar .btn {
+.kb-toolbar-actions {
   margin-left: auto;
+  display: flex;
+  gap: 0.75rem;
+  flex-wrap: wrap;
+  align-items: center;
+}
+.kb-toolbar .btn {
+  margin-left: 0;
 }
 
 .kb-create {

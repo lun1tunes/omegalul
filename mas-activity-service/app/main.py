@@ -2163,4 +2163,19 @@ def knowledge_patch_document(
     }
 
 
+@app.post("/v1/knowledge/ingest")
+async def knowledge_ingest() -> dict[str, Any]:
+    try:
+        result = await knowledge_store.push_corpus_to_n8n()
+    except FileNotFoundError as exc:
+        raise HTTPException(status_code=503, detail=str(exc)) from exc
+    except knowledge_store.KnowledgeIngestUnavailable as exc:
+        raise HTTPException(status_code=exc.status_code, detail=exc.detail) from exc
+    return {
+        "contract": "mas_knowledge_ingest_result",
+        "contract_version": "1.0",
+        **result,
+    }
+
+
 app.mount("/static", StaticFiles(directory=STATIC), name="static")

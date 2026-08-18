@@ -5,6 +5,7 @@
   const listEmpty = document.getElementById("listEmpty");
   const flashEl = document.getElementById("flash");
   const addBtn = document.getElementById("addBtn");
+  const ingestBtn = document.getElementById("ingestBtn");
   const createPanel = document.getElementById("createPanel");
   const createId = document.getElementById("createId");
   const createType = document.getElementById("createType");
@@ -41,7 +42,7 @@
   let detailCache = new Map();
   let createDraft = { keywords: [], topics: [], task_patterns: [] };
 
-  function showFlash(message, { ok = false } = {}) {
+  function showFlash(message, { ok = false, ms } = {}) {
     if (flashTimer) {
       clearTimeout(flashTimer);
       flashTimer = null;
@@ -56,12 +57,30 @@
     flashEl.hidden = false;
     flashEl.textContent = text;
     flashEl.classList.toggle("flash-ok", Boolean(ok));
+    if (ms === 0) {
+      return;
+    }
     flashTimer = setTimeout(() => {
       flashEl.hidden = true;
       flashEl.textContent = "";
       flashEl.classList.remove("flash-ok");
       flashTimer = null;
-    }, ok ? 4000 : 9000);
+    }, typeof ms === "number" ? ms : (ok ? 4000 : 9000));
+  }
+
+  function detailMessage(data, fallback) {
+    if (typeof data?.detail === "string" && data.detail.trim()) {
+      return data.detail;
+    }
+    if (Array.isArray(data?.detail) && data.detail.length) {
+      const first = data.detail[0];
+      if (typeof first === "string" && first.trim()) return first;
+      if (first && typeof first.msg === "string" && first.msg.trim()) return first.msg;
+    }
+    if (typeof data?.message === "string" && data.message.trim()) {
+      return data.message;
+    }
+    return fallback;
   }
 
   function escapeHtml(value) {
@@ -325,6 +344,153 @@
     return data.document;
   }
 
+  function sameList(left, right) {
+    const a = Array.isArray(left) ? left : [];
+    const b = Array.isArray(right) ? right : [];
+    return a.length === b.length && a.every((item, idx) => item === b[idx]);
+  }
+
+  function createDraftDirty() {
+    if (!createPanel || createPanel.hidden) return false;
+    return Boolean(
+      createId.value.trim()
+        || createTitle.value.trim()
+        || createText.value.trim()
+        || (createDraft.keywords || []).length
+        || (createDraft.topics || []).length
+        || (createDraft.task_patterns || []).length,
+    );
+  }
+
+  function editingCardEl() {
+    if (!editingId) return null;
+    return [...cardList.querySelectorAll(".kb-card")].find((el) => el.dataset.id === editingId) || null;
+  }
+
+  function readEditingFields() {
+    if (!editingId || !currentBase) return null;
+    const card = editingCardEl();
+    const titleInput = card && card.querySelector(".kb-body input[type='text']");
+    const editor = card && card.querySelector(".kb-body textarea.kb-editor");
+    return {
+      knowledge_id: editingId,
+      title: titleInput ? titleInput.value.trim() : String((draft && draft.title) || "").trim(),
+      text: editor ? editor.value : String((draft && draft.text) || ""),
+      keywords: (draft && draft.keywords) || [],
+      topics: (draft && draft.topics) || [],
+      task_patterns: (draft && draft.task_patterns) || [],
+    };
+  }
+
+  function editingDirty() {
+    const fields = readEditingFields();
+    if (!fields) return false;
+    const saved = detailCache.get(`${currentBase}/${fields.knowledge_id}`) || {};
+    return (
+      fields.title !== String(saved.title || "").trim()
+      || fields.text !== String(saved.text || "")
+      || !sameList(fields.keywords, saved.keywords)
+      || !sameList(fields.topics, saved.topics)
+      || !sameList(fields.task_patterns, saved.task_patterns)
+    );
+  }
+
+  async function persistOpenEdit({ force = false } = {}) {
+    const fields = readEditingFields();
+    if (!fields) return { ok: true, saved: false };
+    if (!fields.title) {
+      showFlash("Заголовок не может быть пустым.");
+      return { ok: false, saved: false };
+    }
+    if (!fields.text.trim()) {
+      showFlash("Текст не может быть пустым.");
+      return { ok: false, saved: false };
+    }
+    if (!editingDirty() && !force) return { ok: true, saved: false };
+    try {
+      const res = await fetch(
+        `/v1/knowledge/documents/${encodeURIComponent(currentBase)}/${encodeURIComponent(fields.knowledge_id)}`,
+        {
+          method: "PATCH",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({
+            text: fields.text,
+            title: fields.title,
+            keywords: fields.keywords,
+            topics: fields.topics,
+            task_patterns: fields.task_patterns,
+          }),
+        },
+      );
+      const data = await res.json().catch(() => ({}));
+      if (!res.ok) {
+        showFlash(detailMessage(data, `Сохранение не удалось (${res.status})`));
+        return { ok: false, saved: false };
+      }
+      const updated = data.document;
+      detailCache.set(`${updated.target_base}/${updated.knowledge_id}`, updated);
+      editingId = null;
+      draft = null;
+      return { ok: true, saved: true, document: updated };
+    } catch (_) {
+      showFlash("Сеть недоступна при сохранении.");
+      return { ok: false, saved: false };
+    }
+  }
+
+  async function persistCreateDraft({ incompleteMessage } = {}) {
+    if (!createDraftDirty()) return { ok: true, saved: false };
+    if (!currentBase) {
+      showFlash("Сначала выберите агента.");
+      return { ok: false, saved: false };
+    }
+    const payload = {
+      target_base: currentBase,
+      knowledge_id: createId.value.trim(),
+      knowledge_type: createType.value.trim(),
+      title: createTitle.value.trim(),
+      text: createText.value,
+      keywords: createDraft.keywords,
+      topics: createDraft.topics,
+      task_patterns: createDraft.task_patterns,
+    };
+    if (!payload.knowledge_id || !payload.title || !payload.text.trim()) {
+      showFlash(incompleteMessage || "Нужны knowledge_id, title и text.");
+      return { ok: false, saved: false };
+    }
+    try {
+      const res = await fetch("/v1/knowledge/documents", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify(payload),
+      });
+      const data = await res.json().catch(() => ({}));
+      if (!res.ok) {
+        showFlash(detailMessage(data, `Создание не удалось (${res.status})`));
+        return { ok: false, saved: false };
+      }
+      closeCreatePanel();
+      return { ok: true, saved: true, document: data.document };
+    } catch (_) {
+      showFlash("Сеть недоступна при создании.");
+      return { ok: false, saved: false };
+    }
+  }
+
+  async function persistPendingBeforeIngest() {
+    if (editingDirty()) {
+      const edited = await persistOpenEdit();
+      if (!edited.ok) return false;
+    }
+    if (createDraftDirty()) {
+      const created = await persistCreateDraft({
+        incompleteMessage: "Сначала сохраните или отмените новую карточку (нужны knowledge_id, title и text).",
+      });
+      if (!created.ok) return false;
+    }
+    return true;
+  }
+
   function renderBody(cardEl, doc, { editing = false } = {}) {
     let body = cardEl.querySelector(".kb-body");
     if (!body) {
@@ -388,48 +554,13 @@
         renderBody(cardEl, doc, { editing: false });
       });
       saveBtn.addEventListener("click", async () => {
-        const text = editor.value;
-        const title = titleInput.value.trim();
-        if (!title) {
-          showFlash("Заголовок не может быть пустым.");
-          return;
-        }
-        if (!text.trim()) {
-          showFlash("Текст не может быть пустым.");
-          return;
-        }
         saveBtn.disabled = true;
         cancelBtn.disabled = true;
         try {
-          const res = await fetch(
-            `/v1/knowledge/documents/${encodeURIComponent(doc.target_base)}/${encodeURIComponent(doc.knowledge_id)}`,
-            {
-              method: "PATCH",
-              headers: {
-                "Content-Type": "application/json",
-              },
-              body: JSON.stringify({
-                text,
-                title,
-                keywords: draft.keywords,
-                topics: draft.topics,
-                task_patterns: draft.task_patterns,
-              }),
-            },
-          );
-          const data = await res.json().catch(() => ({}));
-          if (!res.ok) {
-            showFlash(typeof data.detail === "string" ? data.detail : `Сохранение не удалось (${res.status})`);
-            return;
-          }
-          const updated = data.document;
-          detailCache.set(`${updated.target_base}/${updated.knowledge_id}`, updated);
-          editingId = null;
-          draft = null;
-          showFlash(`Сохранено, revision ${updated.revision}.`, { ok: true });
-          await loadDocuments(currentBase, { keepOpen: updated.knowledge_id });
-        } catch (_) {
-          showFlash("Сеть недоступна при сохранении.");
+          const result = await persistOpenEdit({ force: true });
+          if (!result.ok || !result.saved) return;
+          showFlash(`Сохранено, revision ${result.document.revision}.`, { ok: true });
+          await loadDocuments(currentBase, { keepOpen: result.document.knowledge_id });
         } finally {
           saveBtn.disabled = false;
           cancelBtn.disabled = false;
@@ -590,45 +721,42 @@
   });
 
   addBtn.addEventListener("click", () => openCreatePanel());
-  createCancel.addEventListener("click", () => closeCreatePanel());
-  createSave.addEventListener("click", async () => {
-    if (!currentBase) {
-      showFlash("Сначала выберите агента.");
-      return;
-    }
-    const payload = {
-      target_base: currentBase,
-      knowledge_id: createId.value.trim(),
-      knowledge_type: createType.value.trim(),
-      title: createTitle.value.trim(),
-      text: createText.value,
-      keywords: createDraft.keywords,
-      topics: createDraft.topics,
-      task_patterns: createDraft.task_patterns,
-    };
-    if (!payload.knowledge_id || !payload.title || !payload.text.trim()) {
-      showFlash("Нужны knowledge_id, title и text.");
-      return;
-    }
-    createSave.disabled = true;
+
+  ingestBtn.addEventListener("click", async () => {
+    ingestBtn.disabled = true;
     try {
-      const res = await fetch("/v1/knowledge/documents", {
-        method: "POST",
-        headers: {
-          "Content-Type": "application/json",
-        },
-        body: JSON.stringify(payload),
-      });
+      const ready = await persistPendingBeforeIngest();
+      if (!ready) return;
+      showFlash("Загрузка в RAG… это может занять несколько минут.", { ok: true, ms: 0 });
+      const res = await fetch("/v1/knowledge/ingest", { method: "POST" });
       const data = await res.json().catch(() => ({}));
       if (!res.ok) {
-        showFlash(typeof data.detail === "string" ? data.detail : `Создание не удалось (${res.status})`);
+        showFlash(detailMessage(data, `Загрузка в RAG не удалась (${res.status})`));
         return;
       }
-      closeCreatePanel();
-      showFlash("Карточка создана.", { ok: true });
-      await loadDocuments(currentBase, { keepOpen: data.document.knowledge_id });
+      const message = String(data.message || "").trim()
+        || `Добавлено ${data.added ?? 0}, пропущено ${data.skipped ?? 0}, всего в RAG ${data.total_in_rag ?? "—"}.`;
+      showFlash(message, { ok: Boolean(data.ok), ms: 12000 });
+      if (currentBase) await loadDocuments(currentBase);
     } catch (_) {
-      showFlash("Сеть недоступна при создании.");
+      showFlash("Сеть недоступна при загрузке в RAG.");
+    } finally {
+      ingestBtn.disabled = false;
+    }
+  });
+  createCancel.addEventListener("click", () => closeCreatePanel());
+  createSave.addEventListener("click", async () => {
+    createSave.disabled = true;
+    try {
+      const result = await persistCreateDraft();
+      if (!result.ok || !result.saved) {
+        if (result.ok && !result.saved && !createDraftDirty()) {
+          showFlash("Нужны knowledge_id, title и text.");
+        }
+        return;
+      }
+      showFlash("Карточка создана.", { ok: true });
+      await loadDocuments(currentBase, { keepOpen: result.document.knowledge_id });
     } finally {
       createSave.disabled = false;
     }

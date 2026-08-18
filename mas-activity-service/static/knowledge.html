@@ -9,7 +9,7 @@
   <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
   <link href="https://fonts.googleapis.com/css2?family=IBM+Plex+Sans:wght@400;500;600;700&family=IBM+Plex+Mono:wght@400;500&display=swap" rel="stylesheet" />
   <link rel="stylesheet" href="/static/app.css?v=57" />
-  <link rel="stylesheet" href="/static/knowledge.css?v=11" />
+  <link rel="stylesheet" href="/static/knowledge.css?v=12" />
   <script src="https://cdn.jsdelivr.net/npm/marked@15.0.7/marked.min.js" defer></script>
 </head>
 <body class="knowledge-page">
@@ -40,7 +40,10 @@
         </select>
       </label>
       <p class="kb-hint" id="agentHint">Загрузка агентов…</p>
-      <button type="button" class="btn" id="addBtn" disabled>+ Создать новое знание</button>
+      <div class="kb-toolbar-actions">
+        <button type="button" class="btn btn-quiet" id="ingestBtn">Загрузить в RAG</button>
+        <button type="button" class="btn" id="addBtn" disabled>+ Создать новое знание</button>
+      </div>
     </section>
 
     <section class="kb-create" id="createPanel" hidden>
@@ -78,6 +81,6 @@
     <p class="empty" id="listEmpty" hidden>Нет карточек для этого агента.</p>
   </main>
 
-  <script src="/static/knowledge.js?v=6"></script>
+  <script src="/static/knowledge.js?v=8"></script>
 </body>
 </html>
