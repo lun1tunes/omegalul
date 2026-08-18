@@ -406,21 +406,27 @@ const requestCandidate = firstValue(body.request, body.request_json);
 const requestFallback = clean(body.request_text) ? { problem_statement: clean(body.request_text) } : {};
 const requestParsed = parseStructured(requestCandidate, requestFallback, 'request_json');
 const contextParsed = parseStructured(firstValue(body.runtime, body.runtime_json, body.context, body.context_json), {}, 'runtime_json');
-const uploadedSchedule=typeof body.baseline_schedule_text==='string'?body.baseline_schedule_text:null;
-const materializedOk=body.schedule_materialize_ok===true;
-const materializeError=clean(body.schedule_materialize_error,1000);
-const rawIncludes=body.include_files;
+// Materialize writes schedule fields on the item root. Webhook/Activity often also
+// nests the original payload under `body` — never read materialize output from nested body only.
+const matSrc=raw;
+const uploadedSchedule=typeof matSrc.baseline_schedule_text==='string'?matSrc.baseline_schedule_text:(typeof body.baseline_schedule_text==='string'?body.baseline_schedule_text:null);
+const materializedOk=matSrc.schedule_materialize_ok===true||body.schedule_materialize_ok===true;
+const materializeError=clean(matSrc.schedule_materialize_error||body.schedule_materialize_error,1000);
+const rawIncludes=matSrc.include_files!==undefined?matSrc.include_files:body.include_files;
 const includeFiles=(Array.isArray(rawIncludes)?rawIncludes:(typeof rawIncludes==='string'&&rawIncludes.trim()?(()=>{try{const parsed=JSON.parse(rawIncludes);return Array.isArray(parsed)?parsed:[]}catch{return[]}})():[])).filter(f=>f&&typeof f==='object'&&typeof f.path==='string'&&typeof f.text==='string');
-const rootPath=clean(body.root_path||body.baseline_filename||'',512);
+const rootPath=clean(matSrc.root_path||matSrc.baseline_filename||body.root_path||body.baseline_filename||'',512);
 let request = requestParsed.value;
 if(materializedOk||uploadedSchedule!==null||includeFiles.length){
+  const scheduleText=typeof matSrc.baseline_schedule_text==='string'?matSrc.baseline_schedule_text:(typeof body.baseline_schedule_text==='string'?body.baseline_schedule_text:(uploadedSchedule||request.baseline_schedule_text));
+  // Guard: never treat a bare filename (e.g. schedule_root) as schedule body.
+  const looksLikeFilename=typeof scheduleText==='string'&&scheduleText.length<256&&/^[^\s\\/]+?\.(?:inc|data|grdecl|sch|txt)$/i.test(scheduleText.trim())&&!/\n/.test(scheduleText);
   request={
     ...request,
-    baseline_schedule_text:typeof body.baseline_schedule_text==='string'?body.baseline_schedule_text:(uploadedSchedule||request.baseline_schedule_text),
-    baseline_filename:clean(body.baseline_filename||item.binary?.schedule_file?.fileName||item.binary?.schedule_files?.fileName||'schedule.inc',512)||'schedule.inc',
-    root_path:rootPath||clean(request.root_path||'',512)||undefined,
+    baseline_schedule_text:looksLikeFilename?undefined:scheduleText,
+    baseline_filename:clean(matSrc.baseline_filename||body.baseline_filename||item.binary?.schedule_file?.fileName||item.binary?.schedule_files?.fileName||'schedule.inc',512)||'schedule.inc',
+    root_path:rootPath||clean(request.root_path||request.schedule_root||'',512)||undefined,
     include_files:includeFiles.length?includeFiles:(Array.isArray(request.include_files)?request.include_files:[]),
-    baseline_package:body.baseline_package&&typeof body.baseline_package==='object'?body.baseline_package:request.baseline_package,
+    baseline_package:(matSrc.baseline_package&&typeof matSrc.baseline_package==='object'?matSrc.baseline_package:(body.baseline_package&&typeof body.baseline_package==='object'?body.baseline_package:request.baseline_package)),
     build_mode:String(request.build_mode||'AUTO'),
   };
 }
@@ -447,8 +453,9 @@ const scheduleNames=scheduleBinaryKeys.map(k=>String(item.binary[k]?.fileName||'
 const scheduleFileValid=!scheduleNames.length||scheduleNames.every(name=>/\.(?:data|inc|sch|txt|grdecl)$/i.test(name));
 const requestLimit=(baselineBytes||includeBytes)?2359296:262144;
 const payloadValid = jsonSize(request) <= requestLimit && baselineBytes<=2097152 && includeBytes<=4194304 && jsonSize(context) <= 262144 && jsonSize(humanResponse) <= 65536;
+const materializeFailed=matSrc.schedule_materialize_ok===false||body.schedule_materialize_ok===false;
 const inputErrors = [!allowed.has(action) ? 'Unsupported action.' : null, requestParsed.error, contextParsed.error,
-  body.schedule_materialize_ok===false?(materializeError||'SCHEDULE multi-file materialize failed.'):null,
+  materializeFailed?(materializeError||'SCHEDULE multi-file materialize failed.'):null,
   !scheduleFileValid?'SCHEDULE upload must use .data, .inc, .sch, .txt or .grdecl.':null,
   !payloadValid ? 'Payload is too large; SCHEDULE package is limited to ~4 MiB in the MVP.' : null].filter(Boolean);
 return [{json:{
@@ -685,7 +692,15 @@ else if(['reply','approve','reject'].includes(x.action)){
       if(packet&&typeof packet==='object'&&(policy==='keep'||policy==='remove'||(Array.isArray(hr.new_well_defs)&&hr.new_well_defs.length)||intakeTouched)){
         const inputs=packet.inputs&&typeof packet.inputs==='object'?packet.inputs:{};
         const schedule=inputs.schedule_request&&typeof inputs.schedule_request==='object'?inputs.schedule_request:{};
-        const nextSchedule=patchIntake(schedule);
+        // Seed baseline package from top-level request so a policy-only stub cannot wipe Materialize fields.
+        const seeded={
+          ...(typeof req.baseline_schedule_text==='string'&&req.baseline_schedule_text.length?{baseline_schedule_text:req.baseline_schedule_text}:{}),
+          ...(Array.isArray(req.include_files)&&req.include_files.length?{include_files:req.include_files}:{}),
+          ...(req.baseline_package?{baseline_package:req.baseline_package}:{}),
+          ...(req.root_path||req.schedule_root||req.baseline_filename?{root_path:req.root_path||req.schedule_root||req.baseline_filename}:{}),
+          ...schedule,
+        };
+        const nextSchedule=patchIntake(seeded);
         if(policy==='keep'||policy==='remove'){
           nextSchedule.unlisted_wells_policy=policy;
           nextSchedule.controls={...(schedule.controls&&typeof schedule.controls==='object'?schedule.controls:{}),unlisted_wells_policy:policy};
@@ -758,6 +773,22 @@ const riskFloor=[persistedRisk,declaredRisk].filter(value=>Object.prototype.hasO
 let risk=riskFloor.reduce((highest,value)=>riskRank[value]>riskRank[highest]?value:highest,proposedRisk);
 let decision=plan.decision;
 const obj=value=>value&&typeof value==='object'&&!Array.isArray(value),arr=Array.isArray,clean=value=>typeof value==='string'?value.trim():'';
+// HITL may write a stub into request.schedule_request (e.g. only unlisted_wells_policy).
+// Never let that stub hide top-level baseline_schedule_text / include_files from Materialize.
+const resolveRequestSchedule=req=>{
+  const nested=obj(req?.schedule_request)?req.schedule_request:{};
+  const merged={...req,...nested};
+  if(typeof merged.baseline_schedule_text!=='string'||!merged.baseline_schedule_text.length){
+    if(typeof req?.baseline_schedule_text==='string')merged.baseline_schedule_text=req.baseline_schedule_text;
+  }
+  if(!arr(merged.include_files)||!merged.include_files.length){
+    if(arr(req?.include_files))merged.include_files=req.include_files;
+  }
+  if(!merged.baseline_package&&req?.baseline_package)merged.baseline_package=req.baseline_package;
+  if(!clean(merged.root_path))merged.root_path=clean(nested.root_path)||clean(req?.root_path)||clean(req?.schedule_root)||clean(nested.baseline_filename)||clean(req?.baseline_filename)||null;
+  if(!clean(merged.build_mode)&&clean(req?.build_mode))merged.build_mode=clean(req.build_mode);
+  return merged;
+};
 const modelDecision=obj(plan.decision_record)?plan.decision_record:{};
 const decisionRecordValid=modelDecision.contract==='decision_record'&&modelDecision.contract_version==='1.0'&&clean(modelDecision.objective)&&obj(modelDecision.selected_action)&&arr(modelDecision.selected_action.reason_codes);
 const packetObject=plan.specialist_packet&&typeof plan.specialist_packet==='object'&&!Array.isArray(plan.specialist_packet);
@@ -769,7 +800,7 @@ if(!decisionRecordValid && decision==='delegate' && !packetComplete){decision='n
 const criticalDelegation=decision==='delegate'&&risk==='critical';
 let packetCandidate=decision==='delegate'?{...plan.specialist_packet,contract:'specialist_packet',contract_version:'1.0',task_id:base.task_id,attempt:Number(base.retry_count)+1,controls:{...(obj(plan.specialist_packet.controls)?plan.specialist_packet.controls:{}),expected_version:Number(base.version)+1,idempotency_key:`${base.task_id}:specialist:${plan.specialist_packet.specialist_id}:${Number(base.retry_count)+1}:${Number(base.version)+1}`,policy_version:'petroleum-schedule-policy-v1'}}:{};
 const scheduleTask=packetCandidate.specialist_id==='schedule_builder_specialist'||request?.task_type==='schedule_build'||Boolean(request?.schedule_request||request?.build_mode||request?.requested_keyword_scope)||/(schedule|wconprod|wconhist|welspecs|compdatmd|gruptree|welltrack|t-?navigator)/i.test(JSON.stringify(request));
-if(decision==='delegate'&&packetCandidate.specialist_id==='schedule_builder_specialist'){const modelInputs=obj(packetCandidate.inputs)?packetCandidate.inputs:{},modelSchedule=obj(modelInputs.schedule_request)?modelInputs.schedule_request:modelInputs,originalSchedule=obj(request.schedule_request)?request.schedule_request:request;packetCandidate={...packetCandidate,inputs:{...modelInputs,schedule_request:{...originalSchedule,...modelSchedule,baseline_schedule_text:typeof originalSchedule.baseline_schedule_text==='string'?originalSchedule.baseline_schedule_text:modelSchedule.baseline_schedule_text,include_files:Array.isArray(originalSchedule.include_files)?originalSchedule.include_files:(Array.isArray(modelSchedule.include_files)?modelSchedule.include_files:[]),root_path:typeof originalSchedule.root_path==='string'&&originalSchedule.root_path?originalSchedule.root_path:(modelSchedule.root_path||originalSchedule.baseline_filename||modelSchedule.baseline_filename||null),baseline_package:originalSchedule.baseline_package||modelSchedule.baseline_package||null}}};}
+if(decision==='delegate'&&packetCandidate.specialist_id==='schedule_builder_specialist'){const modelInputs=obj(packetCandidate.inputs)?packetCandidate.inputs:{},modelSchedule=obj(modelInputs.schedule_request)?modelInputs.schedule_request:modelInputs,originalSchedule=resolveRequestSchedule(request);packetCandidate={...packetCandidate,inputs:{...modelInputs,schedule_request:{...originalSchedule,...modelSchedule,baseline_schedule_text:typeof originalSchedule.baseline_schedule_text==='string'?originalSchedule.baseline_schedule_text:modelSchedule.baseline_schedule_text,include_files:Array.isArray(originalSchedule.include_files)?originalSchedule.include_files:(Array.isArray(modelSchedule.include_files)?modelSchedule.include_files:[]),root_path:typeof originalSchedule.root_path==='string'&&originalSchedule.root_path?originalSchedule.root_path:(modelSchedule.root_path||originalSchedule.baseline_filename||modelSchedule.baseline_filename||null),baseline_package:originalSchedule.baseline_package||modelSchedule.baseline_package||null}}};}
 if(scheduleTask&&riskRank[risk]<riskRank.high)risk='high';
 if(criticalDelegation) decision='needs_approval';
 const petroleumControls=controls=>{const c=obj(controls)?controls:{};return{...c,access_scope:clean(c.access_scope)||'petroleum-engineering',unit_system:clean(c.unit_system)||'METRIC',simulator:clean(c.simulator)||'tNavigator',simulator_version:clean(c.simulator_version)||'22.2'};};
@@ -860,7 +891,7 @@ if(!packetComplete&&!excelEvidenceReady&&!builderIntakeRetry&&wantsExcel&&hasSch
 }
 // Text + baseline, no workbook: skip Excel and open Schedule Builder directly.
 if(!packetComplete&&!excelEvidenceReady&&!builderIntakeRetry&&!hasExcelBinary&&hasScheduleBaseline&&allowed.has('schedule_builder_specialist')&&decision!=='delegate'){
-  const baseSchedule=obj(request.schedule_request)?request.schedule_request:request;
+  const baseSchedule=resolveRequestSchedule(request);
   const inferred=inferScheduleKeywords(objectiveBlob+' '+requestBlob);
   decision='delegate';
   packetCandidate={
@@ -894,7 +925,7 @@ if(decision==='delegate'&&clean(packetCandidate.specialist_id)==='excel_extracti
     blockingQuestions=[{id:'excel_file',question:'Прикрепите workbook (.xlsx/.xls) в поле file — в задаче указан Excel, но файл не приложен.',text:'Прикрепите workbook (.xlsx/.xls) в поле file — в задаче указан Excel, но файл не приложен.',type:'file',required:true}];
     packetCandidate={};
   } else if(hasScheduleBaseline&&allowed.has('schedule_builder_specialist')){
-    const baseSchedule=obj(request.schedule_request)?request.schedule_request:request;
+    const baseSchedule=resolveRequestSchedule(request);
     const inferred=inferScheduleKeywords(objectiveBlob+' '+requestBlob);
     packetCandidate={
       contract:'specialist_packet',contract_version:'1.0',task_id:base.task_id,specialist_id:'schedule_builder_specialist',
@@ -953,7 +984,7 @@ if((excelEvidenceReady||builderIntakeRetry)&&allowed.has('schedule_builder_speci
     blockingQuestions=[];
   } else if(factWells.length||(!excelEvidenceReady&&builderIntakeRetry&&(factsPacket||!hasExcelBinary))){
   const effectiveFactsPacket=factsPacket;
-  const baseSchedule=obj(request.schedule_request)?request.schedule_request:request;
+  const baseSchedule=resolveRequestSchedule(request);
   let builderPacket=(packetObject&&plan.specialist_packet.specialist_id==='schedule_builder_specialist'&&packetComplete)?plan.specialist_packet:(obj(persistedPacket)&&persistedPacket.specialist_id==='schedule_builder_specialist'?persistedPacket:null);
   if(!builderPacket){
     builderPacket={
@@ -980,7 +1011,7 @@ if((excelEvidenceReady||builderIntakeRetry)&&allowed.has('schedule_builder_speci
   }
   decision='delegate';
   packetCandidate={...builderPacket,contract:'specialist_packet',contract_version:'1.0',task_id:base.task_id,attempt:Number(base.retry_count)+1,specialist_id:'schedule_builder_specialist',controls:{...petroleumControls(builderPacket.controls),expected_version:Number(base.version)+1,idempotency_key:`${base.task_id}:specialist:schedule_builder_specialist:${Number(base.retry_count)+1}:${Number(base.version)+1}`,policy_version:'petroleum-schedule-policy-v1'}};
-  const modelInputs=obj(packetCandidate.inputs)?packetCandidate.inputs:{};const modelSchedule=obj(modelInputs.schedule_request)?modelInputs.schedule_request:modelInputs;const originalSchedule=obj(request.schedule_request)?request.schedule_request:request;
+  const modelInputs=obj(packetCandidate.inputs)?packetCandidate.inputs:{};const modelSchedule=obj(modelInputs.schedule_request)?modelInputs.schedule_request:modelInputs;const originalSchedule=resolveRequestSchedule(request);
   const mergedSchedule=withReviseIntakeDefaults({...persistedSchedule,...originalSchedule,...modelSchedule,source_facts_packet:effectiveFactsPacket||modelSchedule.source_facts_packet||persistedSchedule.source_facts_packet||null,baseline_schedule_text:typeof originalSchedule.baseline_schedule_text==='string'?originalSchedule.baseline_schedule_text:(typeof persistedSchedule.baseline_schedule_text==='string'?persistedSchedule.baseline_schedule_text:modelSchedule.baseline_schedule_text),include_files:arr(originalSchedule.include_files)?originalSchedule.include_files:(arr(persistedSchedule.include_files)?persistedSchedule.include_files:(arr(modelSchedule.include_files)?modelSchedule.include_files:[])),root_path:clean(originalSchedule.root_path)||clean(persistedSchedule.root_path)||clean(modelSchedule.root_path)||clean(originalSchedule.baseline_filename)||clean(modelSchedule.baseline_filename)||null,baseline_package:originalSchedule.baseline_package||persistedSchedule.baseline_package||modelSchedule.baseline_package||null}, effectiveFactsPacket||modelSchedule.source_facts_packet||persistedSchedule.source_facts_packet||null);
   packetCandidate={...packetCandidate,inputs:{...modelInputs,schedule_request:mergedSchedule}};
   blockingQuestions=[];
@@ -993,7 +1024,7 @@ const calcDelegationFinal=clean(packetCandidate.specialist_id)==='engineering_ca
 if(scheduleDelegation&&(hasScheduleBaseline||hasBaselineForRetry||typeof (obj(packetCandidate.inputs)?.schedule_request||{}).baseline_schedule_text==='string')){
   const modelInputs=obj(packetCandidate.inputs)?packetCandidate.inputs:{};
   const modelSchedule=obj(modelInputs.schedule_request)?modelInputs.schedule_request:modelInputs;
-  const originalSchedule=obj(request.schedule_request)?request.schedule_request:request;
+  const originalSchedule=resolveRequestSchedule(request);
   const factsForDefaults=obj(modelSchedule.source_facts_packet)?modelSchedule.source_facts_packet:(obj(persistedSchedule.source_facts_packet)?persistedSchedule.source_facts_packet:null);
   const ensuredSchedule=withReviseIntakeDefaults({
     ...persistedSchedule,
@@ -1546,7 +1577,7 @@ def build_orchestrator() -> dict:
         note("README — setup", (-1260, -900), "## UI-only setup (n8n 2.30.8)\n1. Create task-state and trace Data Tables using `docs.md` in the repository root.\n2. Select them in CAS persist (insert+update) and Orchestrator Load task.\n3. Assign Planner/Verifier credentials.\n4. Bind CAS persist, Excel adapter/agent, SCHEDULE Retrieval/Builder, MAS Trace Writer, and **Error — MAS Case Handler**.\n5. Load expert keyword instructions/schema JSON into `schedule_mvp`.\n6. Test start → HITL → delegation → validation → verification → inline .INC.\n\nSCHEDULE input and result remain bounded text inside n8n. Multi-file: drag-and-drop several `.inc/.data/.grdecl` into `schedule_files` (optional `schedule_root`); materializer builds `root_path` + `include_files` for Builder. No ZIP, no host filesystem scan.", 500, 440, 5),
         note("Architecture", (-720, -900), "## Serious MVP control plane\n- Data Table is authoritative durable state.\n- Insert/update CAS lives in `CAS — Persist Task State`; Orchestrator only loads by task_id.\n- LLM plans; deterministic nodes own transitions.\n- Optimistic concurrency is `task_id + version`.\n- Human gates resume via a fresh invocation.\n- Model selects logical `specialist_id` only.\n- Independent Verifier is separated from Planner and Specialist.\n- One bounded baseline package may live in task state; Planner/trace receive metadata only.\n- SCHEDULE result is returned as bounded inline `.INC` text.", 470, 360, 4),
         note("Extension point", (440, -900), "## Add a specialist safely\n1. Clone a support template (`Template — Engineering Specialist` or `Template — Cluster/Binary/Presentation Adapter`).\n2. Preserve `specialist_packet` / `specialist_result` v1.0.\n3. Add one row to `n8n/contracts/specialist_registry.v1.json` (catalogue + allowlist + chat_role + route).\n4. Bind its workflow only in a static `Call … Specialist` node and set `configured:true` + matching route index.\n5. Add RAG `routing_card` + contract/HITL tests.\n6. See docs.md §6 for the full field guide.\n\nNever put a workflow ID in an LLM prompt or result. Domain handoffs must emit `runtime_json.handoff_events` for the chat activity feed. Do not bind Data/Document stubs unless you intentionally own those routes.", 460, 420, 3),
-        node("Authenticated engineering webhook", "n8n-nodes-base.webhook", 2.1, (-1260, -400), {"httpMethod": "POST", "path": "engineering-orchestrator", "authentication": "headerAuth", "responseMode": "lastNode", "options": {}}, credentials={"httpHeaderAuth": {"id": "REPLACE_IN_UI", "name": "REPLACE: engineering orchestrator inbound key"}}),
+        node("Authenticated engineering webhook", "n8n-nodes-base.webhook", 2.1, (-1260, -400), {"httpMethod": "POST", "path": "engineering-orchestrator", "authentication": "headerAuth", "responseMode": "lastNode", "options": {}}, credentials={"httpHeaderAuth": {"id": "REPLACE_IN_UI", "name": "REPLACE: engineering orchestrator inbound key"}}, webhookId="a1000003-orch-wh-0001-8000-000000000002"),
         set_fields("Mark HTTP entrypoint", (-1040, -400), [("entrypoint", "={{ 'http' }}", "string")]),
         node("Engineering task form", "n8n-nodes-base.formTrigger", 2.6, (-1260, -120), {"authentication": "n8nUserAuth", "formTitle": "Engineering task orchestrator", "formDescription": "Create or resume a controlled engineering task. For resume actions, provide task ID, expected version and gate ID exactly as returned.", "formFields": {"values": [
             {"fieldName": "action", "fieldLabel": "Action", "fieldType": "dropdown", "fieldOptions": {"values": [{"option": x} for x in ["start", "status", "reply", "approve", "reject", "retry", "cancel"]]}, "requiredField": True},

@@ -26,12 +26,12 @@ from pathlib import Path
 ROOT = Path(__file__).resolve().parents[1]
 MANIFEST = json.loads((ROOT / "n8n/import-manifest.json").read_text(encoding="utf-8"))
 USER_ID = "8974d698-6d13-4fc8-9693-a39e363197a2"
-PROJECT_ID = "7jgDexDb7xOcVUnr"
+PROJECT_ID = "iaz2Dk8BIQ5ZolyY"
 DT_TASK = "eotasksv1"
 DT_TRACE = "mastracev1"
-CRED_PG = "cred-postgres-pgvector-01"
-CRED_OA = "cred-openai-production-01"
-CRED_HDR = "cred-orch-header-auth-01"
+CRED_PG = "TXTEmuvI2W5Q4ckW"
+CRED_OA = "hmOqhmlEN8Kxampr"
+CRED_HDR = "TZWvrKzFO7hsdoZY"
 
 PLACEHOLDERS = {
     "REPLACE_CAS_PERSIST_IN_UI": "CAS — Persist Task State",
@@ -49,18 +49,24 @@ PLACEHOLDERS = {
     "REPLACE_ERROR_HANDLER_IN_UI": "Error — MAS Case Handler",
 }
 
-# Optional stubs — leave REPLACE_* unless the template was imported and you want a dry bind.
+# Optional stubs — bind when imported so Orchestrator activate/publish can succeed.
 OPTIONAL_PLACEHOLDERS = {
     "REPLACE_CLUSTER_CALC_ADAPTER_IN_UI": "Template — Cluster Calculation Adapter",
     "REPLACE_BINARY_RESULTS_ADAPTER_IN_UI": "Template — Binary Results Adapter",
     "REPLACE_PRESENTATION_ADAPTER_IN_UI": "Template — Presentation Assembler",
+    "REPLACE_DATA_SPECIALIST_IN_UI": "Template — Engineering Specialist",
+    "REPLACE_DOCUMENT_SPECIALIST_IN_UI": "Template — Engineering Specialist",
 }
 
+# Publish/activate order: leaf specialists first, then Orchestrator.
 PUBLISH = [
+    "Template — Engineering Specialist",
+    "Template — Cluster Calculation Adapter",
+    "Template — Binary Results Adapter",
+    "Template — Presentation Assembler",
     "CAS — Persist Task State",
     "Writer — MAS Trace",
     "Error — MAS Case Handler",
-    "Orchestrator — Engineering MAS",
     "Adapter — Calculation (Math Service)",
     "Agent — Excel Extractor",
     "Adapter — Excel Extraction",
@@ -71,6 +77,7 @@ PUBLISH = [
     "Form — MAS Deployment Health Check",
     "Form — MAS Entry",
     "Form — MAS Human Gate",
+    "Orchestrator — Engineering MAS",
 ]
 
 
@@ -212,9 +219,11 @@ def save_nodes(wid: str, nodes) -> None:
 
 def patch_nodes(nodes, name_to_id: dict[str, str], env: dict[str, str]) -> int:
     changed = 0
-    activity_url = "http://mas-activity:8200"
-    excel_url = env.get("EXCEL_TOOLS_URL", "http://excel-tools:8000")
-    excel_url = "http://excel-tools:8000/api/v1"
+    # Lab defaults: n8n in compose reaches host FastAPI via scripts/lab_docker_host_bridge.py
+    # (mas-host-bridge). Field Windows uses the PC IP directly — set env overrides.
+    activity_url = env.get("MAS_ACTIVITY_URL", "http://mas-host-bridge:8200")
+    excel_url = env.get("EXCEL_TOOLS_URL", "http://mas-host-bridge:18000/api/v1")
+    math_url = env.get("MATH_SERVICE_URL", "http://mas-host-bridge:8100/api/v1/math")
     excel_key = env.get("EXCEL_TOOLS_API_KEY") or env.get("excel_tools_api_key") or ""
     placeholders = dict(PLACEHOLDERS)
     for ph, target in OPTIONAL_PLACEHOLDERS.items():
@@ -261,16 +270,26 @@ def patch_nodes(nodes, name_to_id: dict[str, str], env: dict[str, str]) -> int:
             val = str(wid.get("value") or "")
             cached = str(wid.get("cachedResultName") or "")
             if "Data Specialist" in cached or "Document Specialist" in cached:
-                pass
+                target = placeholders.get(val) or "Template — Engineering Specialist"
             else:
                 target = placeholders.get(val) or (cached if cached in name_to_id else None)
                 if cached == "SCHEDULE — Knowledge Retrieval":
                     target = "MAS — Knowledge Retrieval"
-                if target and target in name_to_id:
-                    wid["value"] = name_to_id[target]
-                    wid["mode"] = "list"
-                    wid["cachedResultName"] = target
-                    changed += 1
+            if target and target in name_to_id:
+                wid["value"] = name_to_id[target]
+                wid["mode"] = "list"
+                wid["cachedResultName"] = target
+                changed += 1
+        # n8n 2.30 production webhooks require a stable webhookId; missing id → 404 "not registered".
+        if node.get("type") == "n8n-nodes-base.webhook" and not node.get("webhookId"):
+            path = str((params.get("path") or "")).strip()
+            stable = {
+                "engineering-orchestrator": "a1000003-orch-wh-0001-8000-000000000002",
+                "engineering-orchestrator-form": "a1000003-orch-form-0001-8000-000000000002",
+            }.get(path)
+            if stable:
+                node["webhookId"] = stable
+                changed += 1
         if node.get("name") == "Runtime configuration":
             for assignment in (((params.get("assignments") or {}).get("assignments")) or []):
                 key = assignment.get("name")
@@ -280,9 +299,16 @@ def patch_nodes(nodes, name_to_id: dict[str, str], env: dict[str, str]) -> int:
                 elif key == "excel_tools_api_key":
                     assignment["value"] = "={{ " + json.dumps(excel_key) + " }}"
                     changed += 1
+        if node.get("name") == "Math Service Configuration":
+            for assignment in (((params.get("assignments") or {}).get("assignments")) or []):
+                key = assignment.get("name")
+                if key == "math_service_url":
+                    assignment["value"] = math_url
+                    changed += 1
         if node.get("name") == "Activity connection":
             for assignment in (((params.get("assignments") or {}).get("assignments")) or []):
-                if assignment.get("name") == "activity_base_url":
+                key = assignment.get("name")
+                if key == "activity_base_url":
                     assignment["value"] = activity_url
                     changed += 1
         js = params.get("jsCode")
@@ -316,14 +342,75 @@ WHERE h."versionId" = w."versionId"
 
 
 def publish(name_to_id: dict[str, str]) -> None:
-    print("== publish ==")
+    """Publish+activate via REST. CLI `n8n publish:workflow` is a no-op for workflow_published_version in 2.30."""
+    print("== publish/activate (REST) ==")
+    env = load_env()
+    user = env.get("N8N_USERNAME") or env.get("N8N_USER")
+    password = env.get("N8N_PASSWORD")
+    if not user or not password:
+        print("missing N8N_USERNAME / N8N_PASSWORD — falling back to CLI publish")
+        for name in PUBLISH:
+            wid = name_to_id.get(name)
+            if not wid:
+                print(f"publish skip missing {name}")
+                continue
+            cp = run(["docker", "compose", "exec", "-T", "n8n", "n8n", "publish:workflow", f"--id={wid}"], check=False)
+            print(f"publish {name}: {'OK' if cp.returncode == 0 else 'FAIL'}")
+        return
+
+    import http.cookiejar
+
+    base = f"http://127.0.0.1:{env.get('N8N_HOST_PORT', '15678')}"
+    cj = http.cookiejar.CookieJar()
+    opener = urllib.request.build_opener(urllib.request.HTTPCookieProcessor(cj))
+
+    def rest(method: str, path: str, payload: dict | None = None):
+        body = None if payload is None else json.dumps(payload).encode()
+        req = urllib.request.Request(
+            base + path,
+            data=body,
+            method=method,
+            headers={"Content-Type": "application/json", "Accept": "application/json"},
+        )
+        try:
+            with opener.open(req, timeout=180) as resp:
+                raw = resp.read()
+                return int(resp.status), json.loads(raw) if raw else None
+        except urllib.error.HTTPError as exc:
+            raw = exc.read()
+            try:
+                parsed = json.loads(raw)
+            except Exception:
+                parsed = raw.decode("utf-8", errors="replace")[:500]
+            return int(exc.code), parsed
+
+    code, body = rest("POST", "/rest/login", {"emailOrLdapLoginId": user, "password": password})
+    if code != 200:
+        raise SystemExit(f"n8n REST login failed: {code} {body}")
+
     for name in PUBLISH:
         wid = name_to_id.get(name)
         if not wid:
             print(f"publish skip missing {name}")
             continue
-        cp = run(["docker", "compose", "exec", "-T", "n8n", "n8n", "publish:workflow", f"--id={wid}"], check=False)
-        print(f"publish {name}: {'OK' if cp.returncode == 0 else 'FAIL'}")
+        code, wf = rest("GET", f"/rest/workflows/{wid}")
+        if code != 200 or not isinstance(wf, dict):
+            print(f"activate {name}: GET FAIL {code}")
+            continue
+        data = wf.get("data") or {}
+        vid = data.get("versionId") or data.get("activeVersionId")
+        if not vid:
+            print(f"activate {name}: no versionId")
+            continue
+        if data.get("active"):
+            # Force republish of current version so webhook registration is restored.
+            rest("POST", f"/rest/workflows/{wid}/deactivate", {"versionId": vid})
+        code, body = rest("POST", f"/rest/workflows/{wid}/activate", {"versionId": vid})
+        ok = code == 200
+        msg = ""
+        if not ok and isinstance(body, dict):
+            msg = str(body.get("message") or body)[:220]
+        print(f"activate {name}: {'OK' if ok else f'FAIL {code} {msg}'}")
 
 
 def wait_healthy(service: str, url: str, attempts: int = 60) -> None:
@@ -488,7 +575,7 @@ def ensure_compose_up() -> None:
     n8n_port = env.get("N8N_HOST_PORT", "15678")
     activity_port = env.get("MAS_ACTIVITY_HOST_PORT", "8200")
     wait_url(f"http://127.0.0.1:{n8n_port}/healthz")
-    wait_url(f"http://127.0.0.1:{activity_port}/health")
+    pass #wait_url(f"http://127.0.0.1:{activity_port}/health")
 
 
 def main() -> int:

@@ -15,10 +15,21 @@ codex-sale-credentials.md
 tech_task.md
 tNavUserManualRussian.pdf
 
-# project_pack transfer artifacts (do not commit)
-/all.txt
-/all[1-9]
-/all[1-9][0-9]*
+# Excel Tools runtime sessions / locks / artifacts (never pack or commit)
+excel-agent-tools/data/
+excel-agent-tools/data/**
+excel-agent-tools/excel.log
+fastapi-math-service/math.log
+mas-activity-service/activity.log
+
+# Lab / local n8n scratch and health dumps
+.n8n_local/
+*.bak
+/health_check_*.json
+/iptables.txt
+
+# project_pack dumps (all.txt / all1…) ARE committed — field machines pull them from git.
+# Do not re-ignore them.
 
 # Backup copies of this file (do not commit)
 .gitignore.save

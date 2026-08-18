@@ -275,7 +275,7 @@
     {
       "parameters": {
         "method": "GET",
-        "url": "http://excel-tools:8000/health",
+        "url": "http://excel-tools:18000/health",
         "options": {
           "timeout": 5000,
           "response": {

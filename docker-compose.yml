@@ -1,4 +1,39 @@
 services:
+  excel-tools:
+    image: python:3.11-slim
+    command: >
+      sh -c "pip install -r requirements.txt && python3 -m uvicorn app.main:app --host 0.0.0.0 --port 18000"
+    working_dir: /app
+    volumes:
+      - ./excel-agent-tools:/app
+    environment:
+      - EXCEL_TOOLS_API_KEY=local-dev-excel-tools-api-key
+      - OPENAI_API_KEY=${OPENAI_API_KEY:-}
+    networks:
+      - backend
+      - egress
+  mas-activity:
+    image: python:3.11-slim
+    command: >
+      sh -c "pip install -r requirements.txt && python3 -m uvicorn app.main:app --host 0.0.0.0 --port 8200"
+    working_dir: /app
+    volumes:
+      - ./mas-activity-service:/app
+      - ./n8n/rag:/rag
+    environment:
+      - ORCHESTRATOR_WEBHOOK_URL=http://n8n:5678/webhook/engineering-orchestrator
+      - ORCHESTRATOR_AUTH_HEADER=Authorization
+      - ORCHESTRATOR_AUTH_VALUE=test
+      - N8N_BASE_URL=http://n8n:5678
+      - ACTIVITY_LIST_URL=http://n8n:5678/webhook/mas-activity-list-tasks
+      - ACTIVITY_FEED_URL=http://n8n:5678/webhook/mas-activity-load-feed
+      - ORCHESTRATOR_WORKFLOW_ID=ba8ba59f-e4e4-5ff6-b22c-63ceae883271
+      - HITL_MODE=n8n_rest
+      - ACTIVITY_STATE_PATH=/app/data/activity_state.json
+      - MAS_KNOWLEDGE_CORPUS=/rag/excel-agent-operating-guide.documents.json
+    networks:
+      - backend
+      - egress
   postgres:
     image: pgvector/pgvector:pg16@sha256:a36250871de0833b8757561c72f2477ef1ddd1101afa4e617fb552e0de514c6b
     restart: unless-stopped
@@ -7,71 +42,31 @@ services:
       POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:?Set POSTGRES_PASSWORD in .env}
       POSTGRES_DB: ${POSTGRES_DB:-n8n}
     volumes:
-      - postgres_data:/var/lib/postgresql/data
-      - ./postgres-init:/docker-entrypoint-initdb.d:ro
+    - postgres_data:/var/lib/postgresql/data
+    - ./postgres-init:/docker-entrypoint-initdb.d:ro
     mem_limit: ${POSTGRES_MEMORY_LIMIT:-1g}
     cpus: ${POSTGRES_CPUS:-2.0}
     pids_limit: 256
     healthcheck:
-      test: ["CMD-SHELL", "pg_isready -U $$POSTGRES_USER -d $$POSTGRES_DB"]
+      test:
+      - CMD-SHELL
+      - pg_isready -U $$POSTGRES_USER -d $$POSTGRES_DB
       interval: 5s
       timeout: 5s
       retries: 20
     networks:
-      - backend
-
-  excel-tools:
-    build:
-      context: ./excel-agent-tools
-      target: runtime
-    restart: unless-stopped
-    environment:
-      API_KEY: ${EXCEL_TOOLS_API_KEY:?Set EXCEL_TOOLS_API_KEY in .env}
-      SESSION_DIR: /data/sessions
-      SESSION_TTL_HOURS: ${SESSION_TTL_HOURS:-24}
-      MAX_FILE_SIZE_MB: ${MAX_FILE_SIZE_MB:-200}
-      MAX_EXCEL_ZIP_ENTRIES: ${MAX_EXCEL_ZIP_ENTRIES:-10000}
-      MAX_EXCEL_UNCOMPRESSED_MB: ${MAX_EXCEL_UNCOMPRESSED_MB:-500}
-      # Join only short visual gaps inside one table. A finite cap prevents
-      # unrelated report blocks separated by whitespace from being stitched.
-      MAX_INTERNAL_BLANK_ROWS: ${MAX_INTERNAL_BLANK_ROWS:-5}
-      EXCEL_TOOLS_ENABLE_DOCS: ${EXCEL_TOOLS_ENABLE_DOCS:-false}
-      MAX_PREVIEW_ROWS: 100
-      MAX_QUERY_PREVIEW_ROWS: 100
-    volumes:
-      - excel_sessions:/data/sessions
-    read_only: true
-    tmpfs:
-      - /tmp:rw,noexec,nosuid,size=${EXCEL_TOOLS_TMPFS_SIZE:-256m}
-    mem_limit: ${EXCEL_TOOLS_MEMORY_LIMIT:-2g}
-    cpus: ${EXCEL_TOOLS_CPUS:-2.0}
-    pids_limit: 256
-    cap_drop:
-      - ALL
-    security_opt:
-      - no-new-privileges:true
-    healthcheck:
-      test: ["CMD", "python", "-c", "import urllib.request; urllib.request.urlopen('http://127.0.0.1:8000/health')"]
-      interval: 10s
-      timeout: 5s
-      retries: 12
-    networks:
-      - backend
-
+    - backend
   n8n:
     image: n8nio/n8n:2.30.8@sha256:11524034450080bd0032754892b23ff20be43d72cf320ce75640f7c5475fdca8
     restart: unless-stopped
     depends_on:
       postgres:
         condition: service_healthy
-      excel-tools:
-        condition: service_healthy
     healthcheck:
       test:
-        [
-          "CMD-SHELL",
-          "wget -q -O /dev/null http://127.0.0.1:5678/healthz || wget -q -O /dev/null http://127.0.0.1:5678/healthz/ || exit 1",
-        ]
+      - CMD-SHELL
+      - wget -q -O /dev/null http://127.0.0.1:5678/healthz || wget -q -O /dev/null
+        http://127.0.0.1:5678/healthz/ || exit 1
       interval: 15s
       timeout: 5s
       retries: 20
@@ -79,149 +74,102 @@ services:
     environment:
       DB_TYPE: postgresdb
       DB_POSTGRESDB_HOST: postgres
-      DB_POSTGRESDB_PORT: 5432
+      DB_POSTGRESDB_PORT: '5432'
       DB_POSTGRESDB_DATABASE: ${POSTGRES_DB:-n8n}
       DB_POSTGRESDB_USER: ${POSTGRES_USER:-n8n}
       DB_POSTGRESDB_PASSWORD: ${POSTGRES_PASSWORD:?Set POSTGRES_PASSWORD in .env}
       N8N_ENCRYPTION_KEY: ${N8N_ENCRYPTION_KEY:?Set N8N_ENCRYPTION_KEY in .env}
-      N8N_USER_MANAGEMENT_JWT_SECRET: ${N8N_USER_MANAGEMENT_JWT_SECRET:?Set N8N_USER_MANAGEMENT_JWT_SECRET in .env}
+      N8N_USER_MANAGEMENT_JWT_SECRET: ${N8N_USER_MANAGEMENT_JWT_SECRET:?Set N8N_USER_MANAGEMENT_JWT_SECRET
+        in .env}
       N8N_HOST: ${N8N_HOST:-localhost}
       N8N_PROTOCOL: ${N8N_PROTOCOL:-http}
       N8N_PORT: 5678
       N8N_EDITOR_BASE_URL: ${N8N_EDITOR_BASE_URL:-http://localhost:5678/}
       N8N_WEBHOOK_URL: ${N8N_WEBHOOK_URL:-http://localhost:5678/}
       N8N_SECURE_COOKIE: ${N8N_SECURE_COOKIE:-true}
-      N8N_ENFORCE_SETTINGS_FILE_PERMISSIONS: "true"
-      # Imported workflows are configured through UI nodes and credentials.
-      # They do not require environment or Global Variables access.
-      N8N_BLOCK_ENV_ACCESS_IN_NODE: "true"
-      EXECUTIONS_DATA_PRUNE: "true"
+      N8N_ENFORCE_SETTINGS_FILE_PERMISSIONS: 'true'
+      N8N_BLOCK_ENV_ACCESS_IN_NODE: 'true'
+      EXECUTIONS_DATA_PRUNE: 'true'
       EXECUTIONS_DATA_MAX_AGE: ${EXECUTIONS_DATA_MAX_AGE:-168}
       EXECUTIONS_DATA_SAVE_ON_ERROR: ${EXECUTIONS_DATA_SAVE_ON_ERROR:-all}
-      # Keep terminal status and a short-lived audit trail. `none` leaves
-      # in-flight tombstones with status=running, which breaks monitoring.
       EXECUTIONS_DATA_SAVE_ON_SUCCESS: ${EXECUTIONS_DATA_SAVE_ON_SUCCESS:-all}
-      N8N_DIAGNOSTICS_ENABLED: "false"
-      N8N_PERSONALIZATION_ENABLED: "false"
-      N8N_TEMPLATES_ENABLED: "false"
-      N8N_VERSION_NOTIFICATIONS_ENABLED: "false"
-      N8N_PUBLIC_API_DISABLED: "true"
-      N8N_COMMUNITY_PACKAGES_ENABLED: "false"
-      N8N_UNVERIFIED_PACKAGES_ENABLED: "false"
-      # Code nodes run in a separate, hardened n8nio/runners container.
+      N8N_DIAGNOSTICS_ENABLED: 'false'
+      N8N_PERSONALIZATION_ENABLED: 'false'
+      N8N_TEMPLATES_ENABLED: 'false'
+      N8N_VERSION_NOTIFICATIONS_ENABLED: 'false'
+      N8N_PUBLIC_API_DISABLED: 'true'
+      N8N_COMMUNITY_PACKAGES_ENABLED: 'false'
+      N8N_UNVERIFIED_PACKAGES_ENABLED: 'false'
       N8N_RUNNERS_MODE: external
-      N8N_RUNNERS_AUTH_TOKEN: ${N8N_RUNNERS_AUTH_TOKEN:?Set N8N_RUNNERS_AUTH_TOKEN in .env}
+      N8N_RUNNERS_AUTH_TOKEN: ${N8N_RUNNERS_AUTH_TOKEN:?Set N8N_RUNNERS_AUTH_TOKEN
+        in .env}
       N8N_RUNNERS_BROKER_LISTEN_ADDRESS: 0.0.0.0
       N8N_RUNNERS_BROKER_PORT: 5679
       N8N_RUNNERS_TASK_TIMEOUT: ${N8N_RUNNERS_TASK_TIMEOUT:-120}
       N8N_RUNNERS_MAX_CONCURRENCY: ${N8N_RUNNERS_MAX_CONCURRENCY:-10}
       N8N_COMPRESSION_NODE_MAX_DECOMPRESSED_SIZE_BYTES: ${N8N_COMPRESSION_NODE_MAX_DECOMPRESSED_SIZE_BYTES:-268435456}
       N8N_COMPRESSION_NODE_MAX_ZIP_ENTRIES: ${N8N_COMPRESSION_NODE_MAX_ZIP_ENTRIES:-1000}
-      N8N_NODES_EXCLUDE: >-
-        n8n-nodes-base.executeCommand,
-        n8n-nodes-base.localFileTrigger,
-        n8n-nodes-base.e2eTest,
-        n8n-nodes-base.dynamicCredentialCheck,
-        n8n-nodes-base.readWriteFile
-      # Default Node heap (~512MiB) OOMs on golden SCHEDULE packages when serving includeData.
+      N8N_NODES_EXCLUDE: n8n-nodes-base.executeCommand, n8n-nodes-base.localFileTrigger,
+        n8n-nodes-base.e2eTest, n8n-nodes-base.dynamicCredentialCheck, n8n-nodes-base.readWriteFile
       NODE_OPTIONS: ${N8N_NODE_OPTIONS:---max-old-space-size=1536}
     volumes:
-      - n8n_data:/home/node/.n8n
-      - ./n8n/workflows:/workflows:ro
+    - n8n_data:/home/node/.n8n
+    - ./n8n/workflows:/workflows:ro
     mem_limit: ${N8N_MEMORY_LIMIT:-2g}
     cpus: ${N8N_CPUS:-2.0}
     pids_limit: 512
     cap_drop:
-      - ALL
+    - ALL
     security_opt:
-      - no-new-privileges:true
+    - no-new-privileges:true
     ports:
-      - "127.0.0.1:${N8N_HOST_PORT:-5678}:5678"
+    - 127.0.0.1:${N8N_HOST_PORT:-5678}:5678
     extra_hosts:
-      - "host.docker.internal:host-gateway"
+    - host.docker.internal:host-gateway
     networks:
-      - backend
-      - egress
-      - ingress
-
+    - backend
+    - egress
+    - ingress
   n8n-runners:
     image: n8nio/runners:2.30.8@sha256:dd8531c425cd2c60481cafcb145a8c810f628f176bcb8d41f4c75d79272f7d2a
     restart: unless-stopped
     depends_on:
-      - n8n
+    - n8n
     environment:
-      N8N_RUNNERS_AUTH_TOKEN: ${N8N_RUNNERS_AUTH_TOKEN:?Set N8N_RUNNERS_AUTH_TOKEN in .env}
+      N8N_RUNNERS_AUTH_TOKEN: ${N8N_RUNNERS_AUTH_TOKEN:?Set N8N_RUNNERS_AUTH_TOKEN
+        in .env}
       N8N_RUNNERS_TASK_BROKER_URI: http://n8n:5679
       N8N_RUNNERS_TASK_TIMEOUT: ${N8N_RUNNERS_TASK_TIMEOUT:-120}
       N8N_RUNNERS_MAX_CONCURRENCY: ${N8N_RUNNERS_MAX_CONCURRENCY:-10}
       N8N_RUNNERS_AUTO_SHUTDOWN_TIMEOUT: 0
     read_only: true
     tmpfs:
-      - /tmp:rw,noexec,nosuid,size=${N8N_RUNNERS_TMPFS_SIZE:-128m}
+    - /tmp:rw,noexec,nosuid,size=${N8N_RUNNERS_TMPFS_SIZE:-128m}
     mem_limit: ${N8N_RUNNERS_MEMORY_LIMIT:-512m}
     cpus: ${N8N_RUNNERS_CPUS:-1.0}
     pids_limit: 256
     cap_drop:
-      - ALL
+    - ALL
     security_opt:
-      - no-new-privileges:true
+    - no-new-privileges:true
     healthcheck:
-      test: ["CMD", "sh", "-c", "wget -q -O - http://127.0.0.1:5680/healthz >/dev/null"]
+      test:
+      - CMD
+      - sh
+      - -c
+      - wget -q -O - http://127.0.0.1:5680/healthz >/dev/null
       interval: 10s
       timeout: 5s
       retries: 12
     networks:
-      - backend
-
-  mas-activity:
-    build:
-      context: ./mas-activity-service
-    restart: unless-stopped
-    environment:
-      MAS_ACTIVITY_HOST: 0.0.0.0
-      LOG_LEVEL: ${LOG_LEVEL:-INFO}
-      ORCHESTRATOR_WEBHOOK_URL: ${ORCHESTRATOR_WEBHOOK_URL:-http://n8n:5678/webhook/engineering-orchestrator}
-      ORCHESTRATOR_AUTH_HEADER: ${ORCHESTRATOR_AUTH_HEADER:-}
-      ORCHESTRATOR_AUTH_VALUE: ${ORCHESTRATOR_AUTH_VALUE:-}
-      N8N_BASE_URL: ${N8N_ACTIVITY_N8N_BASE_URL:-http://n8n:5678}
-      N8N_USERNAME: ${N8N_USERNAME:-}
-      N8N_PASSWORD: ${N8N_PASSWORD:-}
-      ORCHESTRATOR_WORKFLOW_ID: ${ORCHESTRATOR_WORKFLOW_ID:-}
-      ACTIVITY_LIST_URL: ${ACTIVITY_LIST_URL:-http://n8n:5678/webhook/mas-activity-list-tasks}
-      ACTIVITY_FEED_URL: ${ACTIVITY_FEED_URL:-http://n8n:5678/webhook/mas-activity-load-feed}
-      ACTIVITY_DURABLE_AUTH_HEADER: ${ACTIVITY_DURABLE_AUTH_HEADER:-}
-      ACTIVITY_DURABLE_AUTH_VALUE: ${ACTIVITY_DURABLE_AUTH_VALUE:-}
-      ACTIVITY_STATE_PATH: ${ACTIVITY_STATE_PATH:-/data/activity_state.json}
-      MAS_KNOWLEDGE_CORPUS: ${MAS_KNOWLEDGE_CORPUS:-/corpus/rag/excel-agent-operating-guide.documents.json}
-    mem_limit: ${MAS_ACTIVITY_MEMORY_LIMIT:-1g}
-    cpus: ${MAS_ACTIVITY_CPUS:-1.0}
-    pids_limit: 128
-    cap_drop:
-      - ALL
-    security_opt:
-      - no-new-privileges:true
-    healthcheck:
-      test: ["CMD", "python", "-c", "import urllib.request; urllib.request.urlopen('http://127.0.0.1:8200/health')"]
-      interval: 10s
-      timeout: 5s
-      retries: 12
-    ports:
-      - "127.0.0.1:${MAS_ACTIVITY_HOST_PORT:-8200}:8200"
-    volumes:
-      - activity_data:/data
-      - ./n8n/rag:/corpus/rag:rw
-    networks:
-      - backend
-      - ingress
-
+    - backend
 volumes:
-  postgres_data:
-  n8n_data:
-  excel_sessions:
-  activity_data:
-
+  postgres_data: null
+  n8n_data: null
+  excel_sessions: null
+  activity_data: null
 networks:
   backend:
     internal: true
-  egress:
-  ingress:
+  egress: null
+  ingress: null

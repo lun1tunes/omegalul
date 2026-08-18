@@ -502,9 +502,9 @@
       "parameters": {
         "model": "text-embedding-3-small",
         "options": {
-          "batchSize": 128,
+          "batchSize": 16,
           "stripNewLines": true,
-          "timeout": 180,
+          "timeout": 600,
           "encodingFormat": "float"
         }
       },

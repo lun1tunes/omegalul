@@ -252,14 +252,17 @@ CSV: [`n8n/data-tables/mas_trace_events_v1.header.csv`](n8n/data-tables/mas_trac
 - **Trace Writer / Error Handler:** нода **Activity connection** — поле `activity_base_url` (`http://<IP-вашего-ПК>:8200`). Ключ не нужен.
 - Убедитесь, что в настройках подключения к PostgreSQL отключена проверка сертификатов (`SSL = Disable`), если сервер работает без TLS.
 
-### Шаг 6. Наполнение базы знаний (RAG)
+### Шаг 6. Наполнение базы знаний (RAG) — обязательно до первой задачи
 
-База знаний хранится в таблицах `tnavigator_schedule_knowledge_v1` и `tnavigator_schedule_knowledge_documents_v1`. (Имена таблиц изолируются через `target_base`).
+Без этого шага Оркестратор остановится на Human Gate `orchestrator_routing` («нет карточек специалистов»). База знаний хранится в `tnavigator_schedule_knowledge_v1` (векторы) и `tnavigator_schedule_knowledge_documents_v1` (parent-документы). Изоляция через `target_base`: `schedule_mvp`, `excel_protocol`, `orchestrator_routing`, `specialist_template`.
 
-1. Откройте workflow `MAS — Knowledge Ingestion` и убедитесь, что credentials заполнены.
-2. Запустите ноду **Sync packaged MAS knowledge** (кнопка Test workflow).
-3. Нода `Summarize RAG inventory` должна показать успешный результат (`rag_inventory_ok`).
-4. Если вы вносили правки в файл `n8n/rag/excel-agent-operating-guide.documents.json` (не забудьте увеличить поле `revision`), просто скопируйте его содержимое, вставьте в ноду "Paste the full knowledge sheet" и запустите процесс снова.
+1. Откройте workflow `MAS — Knowledge Ingestion`. Credentials: **тот же** Postgres/PGVector и **тот же** OpenAI embedding credential, что у Retrieval / Excel Agent. Модель: `text-embedding-3-small`. Поле **Dimensions** не заполняйте.
+2. На ноде embeddings: `batchSize=16`, `timeout=600` (при `batchSize=128` ingest часто падает `Request timed out`).
+3. Запустите **Sync packaged MAS knowledge** (Test workflow / Execute). Это заливает packaged snapshot из workflow (включая `routing_card`).
+4. Нода `Summarize RAG inventory` → `rag_inventory_ok`. Ожидайте ненулевые `orchestrator_routing` / `routing_card` и `excel_protocol` / `protocol_instruction`.
+5. Если правили `n8n/rag/excel-agent-operating-guide.documents.json` — увеличьте `revision`, вставьте весь JSON в поле формы `corpus_json` (или обновите packaged snapshot генератором) и прогоните ingest снова.
+
+> Пустые таблицы после wipe Postgres/volume = снова Шаг 6. Без RAG нельзя переходить к combat/golden кейсам.
 
 ### Шаг 7. Проверка здоровья (Health Check) и Активация
 
@@ -318,7 +321,13 @@ CSV: [`n8n/data-tables/mas_trace_events_v1.header.csv`](n8n/data-tables/mas_trac
 | История (Trace) пустая | Проверьте, привязаны ли Data Tables в процессе `Writer — MAS Trace`. |
 | Интерфейс Activity пуст | Не настроены URL в локальном сервисе MAS Activity (`ACTIVITY_FEED_URL` и `ACTIVITY_LIST_URL`). |
 | Браузер: `blocked by CORS policy` | `mas-activity-service/app/main.py`: CORSMiddleware. Не ставить `allow_credentials=True` вместе с `allow_origins=["*"]`. Перезапустить Activity. См. README «CORS». |
-| Ошибка Excel 401 | Неверный `API_KEY` в ноде HTTP-запроса, либо закрыт порт 8000. |
+| Оркестратор сразу просит загрузить `routing_card` / `orchestrator_routing` | RAG пуст или не прогнан Шаг 6. Проверьте `Summarize RAG inventory` и строки `routing_card`. |
+| Knowledge Ingestion: `Request timed out` на embeddings | Уменьшите `batchSize` до 16 и поднимите `timeout` до 600 на ноде Embeddings; проверьте доступ к OpenAI из хоста n8n. |
+| `/webhook/mas-deployment-health-check` → 404 | Это **Form**, не webhook. Открывайте `/form/mas-deployment-health-check` (нужна сессия n8n). Activity `/ready` может показывать extra webhook 404 — на core path это не блокер. |
+| Builder считает все скважины «новыми», хотя они есть в baseline | После Materialize поля лежат на корне item, а webhook кладёт payload в nested `body`. Normalize должен читать `schedule_materialize_ok` / `baseline_schedule_text` с корня. Симптом в CAS: `baseline_schedule_text` = `"baseline.inc"` (имя файла). |
+| Builder снова просит `BASELINE_REQUIRED` / `intake_1_baseline_required`, хотя baseline уже в задаче | HITL записал stub в `request.schedule_request` (часто только `unlisted_wells_policy`), и Apply Plan брал nested stub вместо top-level `baseline_schedule_text`. Нужен `resolveRequestSchedule`: nested + fallback на корень request. В CAS: `request.baseline_schedule_text` длинный, а `packet.inputs.schedule_request` без текста. |
+| `/webhook/engineering-orchestrator` → 404 «not registered», workflow active | В n8n 2.30 у webhook-ноды должен быть стабильный `webhookId`. Без него production path не регистрируется. Также `activate` через REST (не CLI `publish:workflow` — он не пишет `workflow_published_version`). Перед activate опубликуйте leaf stubs (`Template — *`) и забиндите `REPLACE_DATA/DOCUMENT_SPECIALIST`. |
+| Ошибка Excel 401 | Неверный `API_KEY` в ноде HTTP-запроса, либо закрыт порт Excel Tools (по умолчанию **8000**; в lab иногда **18000**). |
 | При выгрузке JSON видны строки `REPLACE_...` | Вы пропустили привязку каких-то узлов на Шагах 3 или 4. |
 
 ---

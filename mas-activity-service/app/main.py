@@ -1362,10 +1362,15 @@ async def _read_upload(upload: UploadFile, *, field: str) -> tuple[str, bytes, s
 def _assign_upload_key(field: str, filename: str, counters: dict[str, int]) -> str:
     """Map multipart fields to Orchestrator/Entry binary keys."""
     name = filename.lower()
-    if field == "file" or EXCEL_EXT.search(name):
+    # Honour explicit field slots first — supplemental .xlsx must not steal the primary `file` key.
+    if field == "file":
         return "file"
-    if field == "surface_file" or (SURFACE_EXT.search(name) and not SCHEDULE_EXT.search(name)):
+    if field == "surface_file":
         return "surface_file"
+    if field == "attachments" or field.startswith("attachments"):
+        n = counters.get("attachments", 0)
+        counters["attachments"] = n + 1
+        return "attachments" if n == 0 else f"attachments{n}"
     if field.startswith("trajectory") or TRAJECTORY_EXT.search(name):
         n = counters.get("trajectory", 0)
         counters["trajectory"] = n + 1
@@ -1374,6 +1379,10 @@ def _assign_upload_key(field: str, filename: str, counters: dict[str, int]) -> s
         n = counters.get("schedule", 0)
         counters["schedule"] = n + 1
         return "schedule_files" if n == 0 else f"schedule_files{n}"
+    if EXCEL_EXT.search(name):
+        return "file"
+    if SURFACE_EXT.search(name) and not SCHEDULE_EXT.search(name):
+        return "surface_file"
     # Default: treat unknown as schedule fragment if text-like, else reject later via count
     n = counters.get("schedule", 0)
     counters["schedule"] = n + 1
