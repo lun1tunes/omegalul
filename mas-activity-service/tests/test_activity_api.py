@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import importlib.util
 import json
 import os
 from pathlib import Path
@@ -17,7 +18,12 @@ from app.settings import VERSION
 
 ROOT = Path(__file__).resolve().parents[1]
 STATIC = ROOT / "static"
-client = TestClient(app)
+_TESTCLIENT_OPTIONS = (
+    {"backend_options": {"use_uvloop": True}}
+    if importlib.util.find_spec("uvloop")
+    else {}
+)
+client = TestClient(app, **_TESTCLIENT_OPTIONS)
 KEY = {}
 
 
@@ -39,6 +45,8 @@ def _isolate_activity_store(monkeypatch) -> None:
         "HITL_MODE",
         "MAS_ACTIVITY_KEY",
         "MAS_ACTIVITY_AUTH_DISABLED",
+        "ACTIVITY_TLS_VERIFY",
+        "ACTIVITY_CA_BUNDLE",
     ):
         monkeypatch.delenv(key, raising=False)
     reset_store()

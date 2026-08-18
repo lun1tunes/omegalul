@@ -17,6 +17,8 @@ def _clear_n8n_env(monkeypatch) -> None:
         "ACTIVITY_LIST_URL",
         "ACTIVITY_FEED_URL",
         "N8N_WEBHOOK_CHECKS",
+        "ACTIVITY_TLS_VERIFY",
+        "ACTIVITY_CA_BUNDLE",
     ):
         monkeypatch.delenv(key, raising=False)
 
@@ -24,6 +26,7 @@ def _clear_n8n_env(monkeypatch) -> None:
 class _RecordingClient:
     def __init__(self, *args, **kwargs) -> None:
         self.urls: list[str] = kwargs.pop("urls")
+        self.verify = kwargs.get("verify")
 
     async def __aenter__(self):
         return self
@@ -64,3 +67,33 @@ def test_probe_skips_relative_orchestrator_webhook(monkeypatch) -> None:
     assert seen == []
     assert report["checks"]["orchestrator"].get("configured") is False
     assert "extra_webhooks" not in report["checks"]
+
+
+def test_probe_passes_tls_verify_to_httpx(monkeypatch) -> None:
+    _clear_n8n_env(monkeypatch)
+    monkeypatch.setenv("N8N_BASE_URL", "https://n8n.example")
+    monkeypatch.setenv("ACTIVITY_TLS_VERIFY", "false")
+    clients: list[_RecordingClient] = []
+
+    class _ProbeClient(_RecordingClient):
+        async def request(self, method, url, **kwargs):
+            self.urls.append(url)
+            return type(
+                "Response",
+                (),
+                {
+                    "status_code": 503,
+                    "text": "offline",
+                    "json": lambda _self: {},
+                },
+            )()
+
+    def _client(*args, **kwargs):
+        client = _ProbeClient(*args, urls=[], **kwargs)
+        clients.append(client)
+        return client
+
+    monkeypatch.setattr("app.readiness.httpx.AsyncClient", _client)
+    report = asyncio.run(probe_n8n_stack(Settings(), timeout_s=1.0))
+    assert clients and clients[0].verify is False
+    assert report["ready"] is False

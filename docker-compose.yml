@@ -29,6 +29,8 @@ services:
       - ACTIVITY_FEED_URL=http://n8n:5678/webhook/mas-activity-load-feed
       - ORCHESTRATOR_WORKFLOW_ID=ba8ba59f-e4e4-5ff6-b22c-63ceae883271
       - HITL_MODE=n8n_rest
+      - ACTIVITY_TLS_VERIFY=${ACTIVITY_TLS_VERIFY:-true}
+      - ACTIVITY_CA_BUNDLE=${ACTIVITY_CA_BUNDLE:-}
       - ACTIVITY_STATE_PATH=/app/data/activity_state.json
       - MAS_KNOWLEDGE_CORPUS=/rag/excel-agent-operating-guide.documents.json
     networks:

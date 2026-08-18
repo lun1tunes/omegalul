@@ -9,13 +9,14 @@ import httpx
 from app.settings import get_settings
 
 
-def durable_cfg() -> dict[str, str]:
+def durable_cfg() -> dict[str, Any]:
     settings = get_settings()
     return {
         "list_url": settings.resolved_list_url,
         "feed_url": settings.resolved_feed_url,
         "auth_header": settings.activity_durable_auth_header,
         "auth_value": settings.activity_durable_auth_value,
+        "tls_verify": settings.httpx_verify,
     }
 
 
@@ -24,7 +25,7 @@ def durable_enabled() -> bool:
     return bool(cfg["list_url"] or cfg["feed_url"])
 
 
-def _headers(cfg: dict[str, str]) -> dict[str, str]:
+def _headers(cfg: dict[str, Any]) -> dict[str, str]:
     headers = {"Content-Type": "application/json", "Accept": "application/json"}
     if cfg["auth_header"] and cfg["auth_value"]:
         headers[cfg["auth_header"]] = cfg["auth_value"]
@@ -57,7 +58,7 @@ async def probe_durable_connectivity(
         "feed": {"configured": bool(cfg["feed_url"]), "checked": False},
     }
 
-    async with httpx.AsyncClient(timeout=timeout_s) as client:
+    async with httpx.AsyncClient(timeout=timeout_s, verify=cfg["tls_verify"]) as client:
         if cfg["list_url"]:
             try:
                 response = await client.post(
@@ -123,7 +124,7 @@ async def fetch_task_list(*, timeout_s: float = 30.0) -> dict[str, Any] | None:
     cfg = durable_cfg()
     if not cfg["list_url"]:
         return None
-    async with httpx.AsyncClient(timeout=timeout_s) as client:
+    async with httpx.AsyncClient(timeout=timeout_s, verify=cfg["tls_verify"]) as client:
         res = await client.post(cfg["list_url"], json={"action": "list"}, headers=_headers(cfg))
     if res.status_code >= 400:
         raise RuntimeError(f"Activity list hydrate HTTP {res.status_code}: {res.text[:400]}")
@@ -139,7 +140,7 @@ async def fetch_task_feed(task_id: str, *, timeout_s: float = 45.0) -> dict[str,
     cfg = durable_cfg()
     if not cfg["feed_url"]:
         return None
-    async with httpx.AsyncClient(timeout=timeout_s) as client:
+    async with httpx.AsyncClient(timeout=timeout_s, verify=cfg["tls_verify"]) as client:
         res = await client.post(
             cfg["feed_url"],
             json={"task_id": task_id},

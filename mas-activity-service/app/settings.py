@@ -7,7 +7,7 @@ from pathlib import Path
 from typing import Any
 
 from dotenv import load_dotenv
-from pydantic import Field, field_validator
+from pydantic import Field, field_validator, model_validator
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
 SERVICE_ROOT = Path(__file__).resolve().parents[1]
@@ -74,6 +74,12 @@ class Settings(BaseSettings):
     host: str = Field(default="127.0.0.1", validation_alias="MAS_ACTIVITY_HOST")
     port: int = Field(default=8200, validation_alias="MAS_ACTIVITY_PORT")
     log_level: str = Field(default="INFO", validation_alias="LOG_LEVEL")
+    # Keep certificate verification enabled by default. Set
+    # ACTIVITY_TLS_VERIFY=false only for a trusted local/self-signed endpoint.
+    tls_verify: bool = Field(default=True, validation_alias="ACTIVITY_TLS_VERIFY")
+    # Prefer installing the corporate CA and pointing to it over disabling TLS
+    # verification. This is passed to httpx as its CA bundle path.
+    ca_bundle: str = Field(default="", validation_alias="ACTIVITY_CA_BUNDLE")
 
     n8n_base_url: str = Field(default="", validation_alias="N8N_BASE_URL")
     n8n_username: str = Field(default="", validation_alias="N8N_USERNAME")
@@ -110,6 +116,7 @@ class Settings(BaseSettings):
         "n8n_username",
         "orchestrator_workflow_id",
         "n8n_health_path",
+        "ca_bundle",
         mode="before",
     )
     @classmethod
@@ -125,6 +132,14 @@ class Settings(BaseSettings):
             return value.strip().upper()
         return value
 
+    @model_validator(mode="after")
+    def _validate_tls_bundle(self) -> "Settings":
+        if self.tls_verify and self.ca_bundle:
+            path = Path(self.ca_bundle).expanduser()
+            if not path.is_file():
+                raise ValueError(f"ACTIVITY_CA_BUNDLE does not point to a file: {path}")
+        return self
+
     @property
     def n8n_base(self) -> str:
         if self.n8n_base_url:
@@ -134,6 +149,22 @@ class Settings(BaseSettings):
             marker = "/webhook/"
             root = webhook.split(marker, 1)[0] if marker in webhook else ""
         return root if _is_absolute_http_url(root) else ""
+
+    @property
+    def httpx_verify(self) -> bool | str:
+        """Return the httpx ``verify`` value for outbound n8n requests.
+
+        ``False`` is an explicit local-development escape hatch. In the normal
+        verified mode a configured CA bundle is used, which keeps certificate
+        verification enabled for corporate/self-signed PKI.
+        """
+        if not self.tls_verify:
+            return False
+        bundle = self.ca_bundle.strip()
+        if not bundle:
+            return True
+        path = Path(bundle).expanduser()
+        return str(path)
 
     @property
     def resolved_orchestrator_webhook(self) -> str:
@@ -204,6 +235,8 @@ class Settings(BaseSettings):
             "state_persist": bool(self.activity_state_path.strip()),
             "env_files": [str(path) for path in LOADED_ENV_FILES],
             "log_level": self.log_level,
+            "tls_verify": self.tls_verify,
+            "tls_ca_bundle_configured": bool(self.ca_bundle.strip()),
         }
 
 

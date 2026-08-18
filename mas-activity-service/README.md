@@ -25,6 +25,8 @@ start-windows.bat
 |---|---|
 | `MAS_ACTIVITY_HOST`, `MAS_ACTIVITY_PORT` | listen address (`python -m app`) |
 | `LOG_LEVEL` | `INFO` / `DEBUG` |
+| `ACTIVITY_TLS_VERIFY` | `true` by default; set `false` only for a trusted local/self-signed HTTPS endpoint |
+| `ACTIVITY_CA_BUNDLE` | optional CA PEM path; preferred over disabling verification for corporate PKI |
 | `ORCHESTRATOR_WEBHOOK_URL` | боевой вызов оркестратора (предпочтительно) |
 | `ORCHESTRATOR_AUTH_*` | inbound header auth **n8n webhook**, не Activity |
 | `N8N_BASE_URL` + `N8N_USERNAME` / `N8N_PASSWORD` | REST-фолбэк, если webhook не задан |

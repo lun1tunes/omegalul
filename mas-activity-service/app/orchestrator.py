@@ -22,7 +22,9 @@ BinaryMap = dict[str, tuple[str, bytes, str]]
 logger = logging.getLogger(__name__)
 
 _cookie: str | None = None
+_cookie_base: str | None = None
 _cookie_at = 0.0
+_cookie_lock = asyncio.Lock()
 
 
 class OrchestratorError(RuntimeError):
@@ -171,6 +173,12 @@ async def invoke_orchestrator(
     except OrchestratorError:
         logger.exception("n8n invoke failed transport=%s action=%s", client.transport, action)
         raise
+    except (httpx.HTTPError, ValueError) as exc:
+        logger.exception("n8n invoke failed transport=%s action=%s", client.transport, action)
+        raise OrchestratorError(
+            f"n8n request failed: {type(exc).__name__}: {str(exc)[:300]}",
+            status_code=502,
+        ) from exc
     logger.info(
         "n8n invoke ok transport=%s action=%s status=%s task_id=%s",
         client.transport,
@@ -206,24 +214,30 @@ async def _invoke_webhook(
         raise OrchestratorError(UNCONFIGURED_N8N, status_code=503)
     headers: dict[str, str] = dict(settings.orchestrator_headers())
     started = time.perf_counter()
-    async with httpx.AsyncClient(timeout=timeout_s) as client:
-        if files:
-            form: dict[str, Any] = {}
-            for key, value in payload.items():
-                if value is None:
-                    continue
-                if isinstance(value, (dict, list)):
-                    form[key] = json.dumps(value, ensure_ascii=False)
-                else:
-                    form[key] = str(value)
-            upload = [
-                (key, (filename, content, mime or "application/octet-stream"))
-                for key, (filename, content, mime) in files.items()
-            ]
-            res = await client.post(url, data=form, files=upload, headers=headers)
-        else:
-            headers = {**headers, "Content-Type": "application/json"}
-            res = await client.post(url, json=payload, headers=headers)
+    try:
+        async with httpx.AsyncClient(timeout=timeout_s, verify=settings.httpx_verify) as client:
+            if files:
+                form: dict[str, Any] = {}
+                for key, value in payload.items():
+                    if value is None:
+                        continue
+                    if isinstance(value, (dict, list)):
+                        form[key] = json.dumps(value, ensure_ascii=False)
+                    else:
+                        form[key] = str(value)
+                upload = [
+                    (key, (filename, content, mime or "application/octet-stream"))
+                    for key, (filename, content, mime) in files.items()
+                ]
+                res = await client.post(url, data=form, files=upload, headers=headers)
+            else:
+                headers = {**headers, "Content-Type": "application/json"}
+                res = await client.post(url, json=payload, headers=headers)
+    except httpx.HTTPError as exc:
+        raise OrchestratorError(
+            f"Orchestrator webhook request failed: {type(exc).__name__}: {str(exc)[:300]}",
+            status_code=502,
+        ) from exc
     logger.info(
         "n8n webhook POST %s -> %s in %.0fms",
         url.split("?", 1)[0],
@@ -236,7 +250,12 @@ async def _invoke_webhook(
             status_code=502,
             detail=res.text[:800],
         )
-    data = res.json()
+    try:
+        data = res.json()
+    except ValueError as exc:
+        raise OrchestratorError(
+            "Orchestrator webhook returned invalid JSON", status_code=502
+        ) from exc
     if isinstance(data, list) and data:
         data = data[0]
     if not isinstance(data, dict):
@@ -245,19 +264,31 @@ async def _invoke_webhook(
 
 
 async def _login(client: httpx.AsyncClient, cfg: Settings) -> str:
-    global _cookie, _cookie_at
-    if _cookie and (time.time() - _cookie_at) < 25 * 60:
+    global _cookie, _cookie_base, _cookie_at
+    async with _cookie_lock:
+        if (
+            _cookie
+            and _cookie_base == cfg.n8n_base
+            and (time.time() - _cookie_at) < 25 * 60
+        ):
+            # Each invocation owns a fresh AsyncClient. Re-apply the cached
+            # cookie to that client's jar; returning it alone does not send it.
+            for pair in _cookie.split(";"):
+                name, separator, value = pair.partition("=")
+                if separator and name.strip():
+                    client.cookies.set(name.strip(), value.strip())
+            return _cookie
+        res = await client.post(
+            f"{cfg.n8n_base}/rest/login",
+            json={"emailOrLdapLoginId": cfg.n8n_username, "password": cfg.n8n_password},
+        )
+        if res.status_code >= 400:
+            raise OrchestratorError("n8n login failed", status_code=502, detail=res.text[:400])
+        jar = "; ".join(f"{c.name}={c.value}" for c in client.cookies.jar)
+        _cookie = jar or (res.headers.get("set-cookie") or "").split(";")[0]
+        _cookie_base = cfg.n8n_base
+        _cookie_at = time.time()
         return _cookie
-    res = await client.post(
-        f"{cfg.n8n_base}/rest/login",
-        json={"emailOrLdapLoginId": cfg.n8n_username, "password": cfg.n8n_password},
-    )
-    if res.status_code >= 400:
-        raise OrchestratorError("n8n login failed", status_code=502, detail=res.text[:400])
-    jar = "; ".join(f"{c.name}={c.value}" for c in client.cookies.jar)
-    _cookie = jar or (res.headers.get("set-cookie") or "").split(";")[0]
-    _cookie_at = time.time()
-    return _cookie
 
 
 def _load_execution_data_via_postgres(execution_id: str) -> str | None:
@@ -329,7 +360,11 @@ async def _invoke_n8n_rest(
         "destinationNode": {"nodeName": FORMAT_NODE, "mode": "inclusive"},
     }
 
-    async with httpx.AsyncClient(timeout=timeout_s, follow_redirects=True) as client:
+    async with httpx.AsyncClient(
+        timeout=timeout_s,
+        follow_redirects=True,
+        verify=cfg.httpx_verify,
+    ) as client:
         await _login(client, cfg)
         run = await client.post(
             f"{cfg.n8n_base}/rest/workflows/{cfg.orchestrator_workflow_id}/run",
@@ -370,6 +405,17 @@ async def _invoke_n8n_rest(
             last = ex.json()
             status = (last.get("data") or last).get("status")
             if status in {"success", "error", "crashed", "canceled"}:
+                # Failed runs do not need their potentially huge execution blob.
+                # More importantly, do not invoke the optional local Docker/Postgres
+                # fallback for an already-failed run: in a corporate/Windows
+                # deployment Docker may not exist and the fallback can block for its
+                # full subprocess timeout while we only need to fail closed.
+                if status != "success":
+                    raise OrchestratorError(
+                        _execution_error_message(last, status=status),
+                        status_code=502,
+                        detail={"execution_id": execution_id, "status": status},
+                    )
                 # Prefer Postgres for the payload: includeData of golden SCHEDULE runs
                 # has repeatedly heap-OOM'd n8n (~512MiB) while serializing the response.
                 pg = await asyncio.to_thread(_load_execution_data_via_postgres, str(execution_id))
@@ -394,14 +440,6 @@ async def _invoke_n8n_rest(
                             detail=full.text[:400],
                         )
                     last = full.json()
-                # Fail closed: a crashed/canceled/error n8n run must never surface as a
-                # successful orchestrator_response, even if a response blob was parsed.
-                if status != "success":
-                    raise OrchestratorError(
-                        _execution_error_message(last, status=status),
-                        status_code=502,
-                        detail={"execution_id": execution_id, "status": status},
-                    )
                 parsed = extract_orchestrator_response(last)
                 if parsed:
                     return parsed

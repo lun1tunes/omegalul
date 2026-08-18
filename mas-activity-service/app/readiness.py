@@ -101,7 +101,11 @@ async def probe_n8n_stack(
     if transport == "unconfigured":
         missing.append("ORCHESTRATOR_WEBHOOK_URL or N8N_BASE_URL")
 
-    async with httpx.AsyncClient(timeout=timeout_s, follow_redirects=True) as client:
+    async with httpx.AsyncClient(
+        timeout=timeout_s,
+        follow_redirects=True,
+        verify=settings.httpx_verify,
+    ) as client:
         if settings.n8n_health_url:
             checks["n8n_healthz"] = await _request(client, "GET", settings.n8n_health_url)
         elif settings.n8n_base:

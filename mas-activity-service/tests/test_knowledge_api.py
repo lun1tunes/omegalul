@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import importlib.util
 import json
 import os
 from pathlib import Path
@@ -13,7 +14,12 @@ from fastapi.testclient import TestClient
 from app import knowledge as knowledge_store
 from app.main import app
 
-client = TestClient(app)
+_TESTCLIENT_OPTIONS = (
+    {"backend_options": {"use_uvloop": True}}
+    if importlib.util.find_spec("uvloop")
+    else {}
+)
+client = TestClient(app, **_TESTCLIENT_OPTIONS)
 KEY = {}
 
 SAMPLE = {
