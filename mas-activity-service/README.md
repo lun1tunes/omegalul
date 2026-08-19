@@ -67,7 +67,7 @@ Open [http://127.0.0.1:8200/](http://127.0.0.1:8200/) → **Новая зада�
 
 **MAS / Activity** (бренд слева) — обновляет rail из n8n Data Tables. То же при перезагрузке (`?durable=1`).
 
-**Новая задача** сразу пишет `TASK_STARTED` / `ORCH_DISPATCHED` в ленту Activity и отвечает `accepted` (id `act_…`). Вызов Orchestrator `action=start` идёт в фоне. Если n8n не задан, старт отвечает **503** с текстом, что прописать в `mas-activity.env`. Живой чат: SSE `GET /v1/tasks/{id}/stream` плюс Trace Writer `POST /v1/sync` — без перезагрузки страницы.
+**Новая задача** сразу пишет `TASK_STARTED` в ленту Activity и отвечает `accepted` (id `act_…`). Вызов Orchestrator `action=start` идёт в фоне. Если n8n не задан, старт отвечает **503** с текстом, что прописать в `mas-activity.env`. Живой чат: SSE `GET /v1/tasks/{id}/stream` плюс Trace Writer `POST /v1/sync` — без перезагрузки страницы.
 
 HITL composer открывается при `awaiting_human` и заполненном `human_gate`. Ответ человека пишется в ленту **до** вызова n8n.
 

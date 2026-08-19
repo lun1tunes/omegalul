@@ -124,7 +124,8 @@ function searchableFromBlock(b) {
 
   let structureOk = 0;
   for (const [kid, b] of Object.entries(live)) {
-    assert.equal(String(b.revision), '4', kid);
+    const expectedRevision = kid === 'excel-agent-discovery-and-tables' ? '5' : '4';
+    assert.equal(String(b.revision), expectedRevision, kid);
     assert.ok(/[А-Яа-яA-Z]/.test(String(b.title)), kid);
     assert.ok(!/^excel agent /i.test(String(b.title)), `slug title still present: ${kid}`);
     assert.ok((b.task_patterns || []).length >= 4, kid);

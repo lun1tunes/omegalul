@@ -1,6 +1,6 @@
 'use strict';
 
-// Text-only DKS/GCONPROD rebind: infer from task prose, mutate timeline, match golden_case_2 MAS_result.
+// Group rebind: explicit structured spec only. Prose inference is not a production path.
 const assert = require('node:assert/strict');
 const { execFileSync } = require('node:child_process');
 const fs = require('node:fs');
@@ -26,11 +26,19 @@ const sandbox = {};
 vm.runInNewContext(
   `${coreJs}
 this.parseScheduleTimeline=parseScheduleTimeline;
-this.inferGroupRebindSpec=inferGroupRebindSpec;
 this.runGroupRebindRevise=runGroupRebindRevise;
-this.emitScheduleFromTimeline=emitScheduleFromTimeline;`,
+this.applyGroupRebindOnTimeline=applyGroupRebindOnTimeline;
+this.applyNewWellDefinitions=applyNewWellDefinitions;
+this.emitScheduleFromTimeline=emitScheduleFromTimeline;
+this.readGroupRebindSpec=readGroupRebindSpec;
+this.collectCapabilityTokens=collectCapabilityTokens;
+this.wantsCommissioningCapability=wantsCommissioningCapability;
+this.wantsGroupRebindCapability=wantsGroupRebindCapability;
+this.inferGroupRebindSpec=typeof inferGroupRebindSpec==='function'?inferGroupRebindSpec:undefined;`,
   sandbox,
 );
+
+assert.equal(sandbox.inferGroupRebindSpec, undefined, 'prose inferGroupRebindSpec must not exist in production core');
 
 const fixture = [
   'GRUPTREE',
@@ -55,13 +63,31 @@ const fixture = [
 
 const task =
   'На основе старого прогнозного schedule - скважины 1601 и 1602 помести в отдельную группу - "DKS", и задай этим скважинам групповой контроль 200 тыс. м3 газа в сут. (с момента даты ввода этих скважин).';
-const model = sandbox.parseScheduleTimeline(fixture, 'schedule.inc');
-const spec = sandbox.inferGroupRebindSpec(task, model);
-assert.ok(spec, 'inferGroupRebindSpec must parse golden_case_2 task text');
-assert.equal(spec.wells.slice().sort().join(','), '1601,1602');
-assert.equal(spec.parent_group, 'DKS');
-assert.equal(spec.gas_rate, 200000);
-assert.equal(spec.well_groups['1601'], 'G1601');
+
+const spec = {
+  wells: ['1601', '1602'],
+  parent_group: 'DKS',
+  parent_of_parent: 'FIELD',
+  well_groups: { 1601: 'G1601', 1602: 'G1602' },
+  gas_rate: 200000,
+  control: 'GRAT',
+};
+
+assert.equal(sandbox.readGroupRebindSpec({ objective: task }).ok, false, 'task prose alone is not a group-rebind spec');
+assert.equal(sandbox.wantsGroupRebindCapability(sandbox.collectCapabilityTokens({ objective: task }, {})), false);
+
+const parsedSpec = sandbox.readGroupRebindSpec({
+  capability_id: 'group_membership_rebind',
+  group_rebind: spec,
+});
+assert.equal(parsedSpec.ok, true);
+assert.equal(parsedSpec.spec.parent_group, 'DKS');
+assert.equal(parsedSpec.spec.parent_of_parent, 'FIELD');
+assert.equal(parsedSpec.spec.well_groups['1601'], 'G1601');
+assert.ok(sandbox.wantsGroupRebindCapability(sandbox.collectCapabilityTokens({
+  capability_id: 'group_membership_rebind',
+  group_rebind: spec,
+}, {})));
 
 const applied = sandbox.runGroupRebindRevise(fixture, spec, 'schedule.inc');
 assert.equal(applied.status, 'applied');
@@ -71,20 +97,29 @@ assert.match(applied.generated_schedule, /GCONPROD[\s\S]*DKS GRAT 2\* 200000 \//
 assert.match(applied.generated_schedule, /WECON[\s\S]*1601/);
 assert.match(applied.generated_schedule, /WPIMULT[\s\S]*1601/);
 
-const noSpec = sandbox.inferGroupRebindSpec(
-  'На основе старого прогнозного schedule и Excel с новыми датами ввода собрать новый schedule.inc',
-  model,
+const model = sandbox.parseScheduleTimeline(fixture, 'schedule.inc');
+const incomplete = sandbox.applyGroupRebindOnTimeline(model, {
+  wells: ['1601', '1602'],
+  parent_group: 'DKS',
+  gas_rate: 200000,
+});
+assert.equal(incomplete.status, 'needs_input');
+assert.ok((incomplete.findings || []).some((f) => f.code === 'GROUP_REBIND_SPEC_REQUIRED'));
+
+const newWells = sandbox.applyNewWellDefinitions(
+  sandbox.parseScheduleTimeline(fixture, 'schedule.inc'),
+  [{ well: '9999', date: '2020-01-01', welspecs_line: '9999 G9999 /' }],
 );
-assert.equal(noSpec, null, 'commissioning-only task must not infer a group rebind');
+assert.ok((newWells.findings || []).some((f) => f.code === 'NEW_WELL_CONTROL_LINE_REQUIRED'));
+const emitted = sandbox.emitScheduleFromTimeline(newWells.model);
+assert.equal(/GRAT 1\* 1\* 100000/.test(emitted), false, 'must not fabricate default GRAT 100000');
+assert.equal(/9999 OPEN GRAT/.test(emitted), false);
 
 const basePath = path.join(golden2, 'MONITORING_1_2_2_1_4q25_3_NORTH1_6_FDP.INC');
 const masPath = path.join(golden2, 'MONITORING_1_2_2_1_4q25_3_NORTH1_6_FDP_MAS_result.INC');
 if (fs.existsSync(basePath) && fs.existsSync(masPath)) {
   const base = fs.readFileSync(basePath, 'utf8');
-  const fullModel = sandbox.parseScheduleTimeline(base, 'schedule.inc');
-  const fullSpec = sandbox.inferGroupRebindSpec(task, fullModel);
-  assert.ok(fullSpec, 'infer from real MONITORING baseline');
-  const full = sandbox.runGroupRebindRevise(base, fullSpec, 'schedule.inc');
+  const full = sandbox.runGroupRebindRevise(base, spec, 'schedule.inc');
   assert.equal(full.status, 'applied');
   const cmp = execFileSync(
     path.join(workspace, 'mas-activity-service', '.venv', 'bin', 'python'),

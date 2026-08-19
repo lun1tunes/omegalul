@@ -4,6 +4,10 @@ Drag-and-drop often yields flat basenames while INCLUDE keeps Petrel-relative
 paths (`../../INCLUDE/.../X.GRDECL`). We never rewrite INCLUDE text: instead we
 place each uploaded body at the package-relative path that Builder resolvePath
 would compute from the root INCLUDE string, matching uploads by unique basename.
+
+INCLUDE string matching is package binding (basename → path, unsafe paths, size).
+It is not keyword-grammar validation; missing INCLUDE is a warning, not an
+orchestrator HITL.
 """
 from __future__ import annotations
 

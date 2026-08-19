@@ -268,6 +268,12 @@ async function main() {
   const unknownAnalysis = await analyze(baseText.replace('WELSPECS', 'UNKNOWNKW'));
   const unknown = await decode(unknownAnalysis);
   assert(codes(unknown).has('OPAQUE_BASELINE_SEMANTICS_UNAVAILABLE'));
+  assert.equal(unknown.status, 'decoded');
+  assert.equal(unknown.findings.find((f) => f.code === 'OPAQUE_BASELINE_SEMANTICS_UNAVAILABLE').severity, 'warning');
+  assert.equal(unknown.hard_blockers.includes('OPAQUE_BASELINE_SEMANTICS_UNAVAILABLE'), false);
+  const targetedOpaque = await decode(unknownAnalysis, catalogue(), { requested_keyword_scope: ['UNKNOWNKW'] });
+  assert.equal(targetedOpaque.status, 'needs_input');
+  assert.equal(targetedOpaque.findings.find((f) => f.code === 'OPAQUE_BASELINE_SEMANTICS_UNAVAILABLE').severity, 'error');
 
   const lf = await analyze(baseText, [{ path: 'controls.inc', text: includedText }]);
   const crlf = await analyze(baseText.replace(/\n/g, '\r\n'), [{ path: 'controls.inc', text: includedText.replace(/\n/g, '\r\n') }]);
@@ -279,7 +285,7 @@ async function main() {
   assert(lf.package.files[0].nodes.some((n) => n.raw.includes('\n')));
   assert(crlf.package.files[0].nodes.some((n) => n.raw.includes('\r\n')));
 
-  console.log('SCHEDULE baseline decoder and two-phase replay smoke: 15 scenarios passed');
+  console.log('SCHEDULE baseline decoder and two-phase replay smoke: 16 scenarios passed');
 }
 
 main().catch((error) => {

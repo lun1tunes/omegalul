@@ -62,6 +62,30 @@ def chat_role_map_js(registry: dict | None = None) -> str:
 
 
 # Shared JS fragments injected into Orchestrator / Builder Code nodes.
+EXPLICIT_SCHEDULE_CONSUMER_JS = r"""
+const SCHEDULE_CAPABILITY_IDS=new Set(['commissioning_date_retarget','shift_commissioning_dates','commissioning_revise','timeline_revise','group_membership_rebind','group_rebind']);
+const explicitScheduleConsumer=(req,inputs)=>{
+  const r=req&&typeof req==='object'&&!Array.isArray(req)?req:{};
+  const inn=inputs&&typeof inputs==='object'&&!Array.isArray(inputs)?inputs:{};
+  const sr=inn.schedule_request&&typeof inn.schedule_request==='object'&&!Array.isArray(inn.schedule_request)?inn.schedule_request:(r.schedule_request&&typeof r.schedule_request==='object'&&!Array.isArray(r.schedule_request)?r.schedule_request:{});
+  const cap=String(r.capability_id||inn.capability_id||sr.capability_id||(r.requested_change_scope&&r.requested_change_scope.capability_id)||(inn.requested_change_scope&&inn.requested_change_scope.capability_id)||'').trim();
+  const consumer=String(r.consumer||inn.consumer||sr.consumer||'').trim().toLowerCase();
+  const gap=Array.isArray(inn.schedule_evidence_gap)?inn.schedule_evidence_gap:[];
+  const keywordScope=Array.isArray(r.requested_keyword_scope)?r.requested_keyword_scope:(Array.isArray(sr.requested_keyword_scope)?sr.requested_keyword_scope:[]);
+  return Boolean(
+    (r.schedule_request&&typeof r.schedule_request==='object'&&!Array.isArray(r.schedule_request))
+    ||(inn.schedule_request&&typeof inn.schedule_request==='object'&&!Array.isArray(inn.schedule_request))
+    ||r.task_type==='schedule_build'
+    ||String(r.build_mode||inn.build_mode||sr.build_mode||'').trim()
+    ||keywordScope.length
+    ||consumer==='schedule_builder'||consumer==='schedule_builder_specialist'
+    ||SCHEDULE_CAPABILITY_IDS.has(cap)
+    ||gap.length>0
+    ||String(inn.workflow_kind||r.workflow_kind||'').trim()==='schedule'
+  );
+};
+""".strip()
+
 TYPED_GAP_FILTER_JS = r"""
 const EVIDENCE_GAP_REQUIRED=['entity','effective_at','keyword','field','reason','expected_format'];
 const typedEvidenceGaps=(gaps)=>{

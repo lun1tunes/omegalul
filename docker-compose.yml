@@ -22,8 +22,8 @@ services:
       - ./n8n/rag:/rag
     environment:
       - ORCHESTRATOR_WEBHOOK_URL=http://n8n:5678/webhook/engineering-orchestrator
-      - ORCHESTRATOR_AUTH_HEADER=Authorization
-      - ORCHESTRATOR_AUTH_VALUE=test
+      - ORCHESTRATOR_AUTH_HEADER=${ORCHESTRATOR_AUTH_HEADER:-Authorization}
+      - ORCHESTRATOR_AUTH_VALUE=${ORCHESTRATOR_AUTH_VALUE:-local-orch-inbound}
       - N8N_BASE_URL=http://n8n:5678
       - ACTIVITY_LIST_URL=http://n8n:5678/webhook/mas-activity-list-tasks
       - ACTIVITY_FEED_URL=http://n8n:5678/webhook/mas-activity-load-feed

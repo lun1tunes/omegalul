@@ -531,7 +531,13 @@ def test_ready_health_and_static_assets() -> None:
     assert "Задача не найдена" in index.text
     assert "Вернуться на главную" in index.text
     assert "taskRail" in index.text
-    assert "cancelBtn" in index.text
+    assert "id=\"cancelBtn\"" not in index.text
+    assert "id=\"approveBtn\"" not in index.text
+    assert "id=\"rejectBtn\"" not in index.text
+    assert "id=\"replyBtn\"" in index.text
+    assert "hitlDropzone" in index.text
+    assert "Утвердить" not in index.text
+    assert "Отклонить" not in index.text
     assert "taskSelect" not in index.text
     assert "openBtn" not in index.text
     js_text = (STATIC / "app.js").read_text(encoding="utf-8")
@@ -540,6 +546,12 @@ def test_ready_health_and_static_assets() -> None:
     assert "brief" in js_text
     assert "duration_label" in js_text
     assert "submitHitl" in js_text
+    assert "humanizeGateReason" in js_text
+    assert "humanizeQuestion" in js_text
+    assert "looksMachineAsk" in js_text
+    assert 'q.required ? "обязательно"' not in js_text
+    assert "формат: ${q.expected_format}" not in js_text
+    assert "app.js?v=65" in index.text
     assert "submitStart" in js_text
     assert "clearWorkspaceView" in js_text
     assert "startResumeTask" in js_text
@@ -694,7 +706,8 @@ def test_start_task_with_files(tmp_path: Path, monkeypatch) -> None:
     assert feed["activity"][0]["status"] == "TASK_STARTED"
     assert feed["activity"][0]["details"]["objective"] == "REVISE даты ввода по Excel"
     assert feed["activity"][0]["details"]["files"] == ["dates.xlsx", "schedule.inc"]
-    assert any(t.get("status") == "ORCH_DISPATCHED" for t in feed["activity"])
+    assert sum(1 for t in feed["activity"] if t.get("status") in {"TASK_STARTED", "ORCH_DISPATCHED"}) == 1
+    assert not any(t.get("status") == "ORCH_DISPATCHED" for t in feed["activity"])
     assert feed["awaiting_human"] is True
     assert feed["human_gate"]["gate_id"]
 
@@ -1237,6 +1250,8 @@ def test_static_ui_requires_schedule_root_and_generic_conflict_banner() -> None:
     assert 'startSubmitBtn.setAttribute("aria-busy", "true")' in js
     assert "formatStartError" in js
     assert "emptyFeedMessage" in js
+    assert "hitlDropzone" in js
+    assert "Нужен текст ответа или вложение." in js
 
 
 def test_live_hitl_status_failure_does_not_local_apply(monkeypatch) -> None:
@@ -1324,6 +1339,7 @@ def test_live_hitl_reattaches_start_binaries(tmp_path: Path, monkeypatch) -> Non
             "action": payload.get("action"),
             "files": files,
             "task_id": payload.get("task_id"),
+            "hitl_new_attachments": payload.get("hitl_new_attachments"),
         })
         if payload.get("action") == "start":
             return {
@@ -1386,6 +1402,144 @@ def test_live_hitl_reattaches_start_binaries(tmp_path: Path, monkeypatch) -> Non
     assert files["file"][0] == "dates.xlsx"
     assert files["file"][1].startswith(b"PK")
     assert any(k.startswith("schedule_file") for k in files)
+    assert str(resume_calls[0]["hitl_new_attachments"]).lower() == "false"
+
+
+def test_hitl_multipart_adds_schedule_file_to_resume(tmp_path: Path, monkeypatch) -> None:
+    monkeypatch.setenv("ORCHESTRATOR_WEBHOOK_URL", "http://orch.test/hook")
+    monkeypatch.setenv("ACTIVITY_BINARIES_PATH", str(tmp_path / "bins"))
+    calls: list[dict] = []
+
+    async def fake_invoke(payload, *, files=None, timeout_s=90.0):
+        calls.append({
+            "action": payload.get("action"),
+            "files": files,
+            "task_id": payload.get("task_id"),
+            "hitl_new_attachments": payload.get("hitl_new_attachments"),
+        })
+        if payload.get("action") == "start":
+            return {
+                "task_id": "eng_hitl_file_1",
+                "version": 1,
+                "status": "awaiting_human",
+                "human_gate": {
+                    "gate_id": "g_inc",
+                    "kind": "needs_input",
+                    "expected_version": 1,
+                },
+            }
+        if payload.get("action") == "status":
+            return {
+                "status": "awaiting_human",
+                "version": 1,
+                "human_gate": {
+                    "gate_id": "g_inc",
+                    "kind": "needs_input",
+                    "expected_version": 1,
+                },
+            }
+        return {"status": "planning", "version": 2, "human_gate": None}
+
+    monkeypatch.setattr("app.main.invoke_orchestrator", fake_invoke)
+    started = client.post(
+        "/v1/tasks/start",
+        headers=KEY,
+        data={"task_description": "REVISE dates", "requested_by": "П. Петров"},
+        files=[
+            ("file", ("dates.xlsx", b"PK\x03\x04xlsx", "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet")),
+            ("schedule_files", ("root.inc", b"DATES\n/", "text/plain")),
+        ],
+    )
+    task_id = started.json()["task_id"]
+    res = client.post(
+        f"/v1/tasks/{task_id}/hitl",
+        headers=KEY,
+        data={
+            "action": "reply",
+            "requested_by": "П. Петров",
+            "human_response": "Добавлен недостающий INCLUDE.",
+        },
+        files=[("schedule_files", ("WELLS.INC", b"WELSPECS\n/", "text/plain"))],
+    )
+    assert res.status_code == 200, res.text
+    reply = [c for c in calls if c["action"] == "reply"][0]
+    files = reply["files"] or {}
+    assert files["file"][0] == "dates.xlsx"
+    names = {v[0] for v in files.values()}
+    assert "root.inc" in names
+    assert "WELLS.INC" in names
+    assert str(reply["hitl_new_attachments"]).lower() == "true"
+
+
+def test_hitl_multipart_files_only_reply(tmp_path: Path, monkeypatch) -> None:
+    monkeypatch.setenv("ORCHESTRATOR_WEBHOOK_URL", "http://orch.test/hook")
+    monkeypatch.setenv("ACTIVITY_BINARIES_PATH", str(tmp_path / "bins"))
+    calls: list[dict] = []
+
+    async def fake_invoke(payload, *, files=None, timeout_s=90.0):
+        calls.append({
+            "action": payload.get("action"),
+            "files": files,
+            "hitl_new_attachments": payload.get("hitl_new_attachments"),
+        })
+        if payload.get("action") == "start":
+            return {
+                "task_id": "eng_hitl_file_2",
+                "version": 1,
+                "status": "awaiting_human",
+                "human_gate": {
+                    "gate_id": "g_inc2",
+                    "kind": "needs_input",
+                    "expected_version": 1,
+                },
+            }
+        if payload.get("action") == "status":
+            return {
+                "status": "awaiting_human",
+                "version": 1,
+                "human_gate": {
+                    "gate_id": "g_inc2",
+                    "kind": "needs_input",
+                    "expected_version": 1,
+                },
+            }
+        return {"status": "planning", "version": 2, "human_gate": None}
+
+    monkeypatch.setattr("app.main.invoke_orchestrator", fake_invoke)
+    started = client.post(
+        "/v1/tasks/start",
+        headers=KEY,
+        data={"task_description": "REVISE dates", "requested_by": "П. Петров"},
+        files=[("schedule_files", ("root.inc", b"DATES\n/", "text/plain"))],
+    )
+    task_id = started.json()["task_id"]
+    res = client.post(
+        f"/v1/tasks/{task_id}/hitl",
+        headers=KEY,
+        data={"action": "reply", "requested_by": "П. Петров"},
+        files=[("schedule_files", ("WELLS.INC", b"WELSPECS\n/", "text/plain"))],
+    )
+    assert res.status_code == 200, res.text
+    reply = [c for c in calls if c["action"] == "reply"][0]
+    names = {v[0] for v in (reply["files"] or {}).values()}
+    assert "root.inc" in names
+    assert "WELLS.INC" in names
+    assert str(reply["hitl_new_attachments"]).lower() == "true"
+
+
+def test_merge_binaries_keeps_start_schedule_and_adds_hitl() -> None:
+    from app.main import _merge_binaries
+
+    base = {
+        "file": ("dates.xlsx", b"PK", "application/xlsx"),
+        "schedule_files": ("root.inc", b"DATES\n/", "text/plain"),
+    }
+    extra = {"schedule_files": ("WELLS.INC", b"WELSPECS\n/", "text/plain")}
+    out = _merge_binaries(base, extra)
+    names = {v[0] for v in out.values()}
+    assert "dates.xlsx" in names
+    assert "root.inc" in names
+    assert "WELLS.INC" in names
 
 
 def test_state_persist_survives_reload(tmp_path: Path, monkeypatch) -> None:

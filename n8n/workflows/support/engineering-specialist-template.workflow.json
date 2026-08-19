@@ -214,9 +214,9 @@
         },
         "options": {
           "maxTokens": 4000,
-          "timeout": 120000,
-          "maxRetries": 2,
-          "temperature": 0
+          "temperature": 0,
+          "timeout": 300000,
+          "maxRetries": 5
         },
         "responsesApiEnabled": false
       },
@@ -239,7 +239,9 @@
       "parameters": {
         "schemaType": "manual",
         "inputSchema": "{\"type\": \"object\", \"additionalProperties\": false, \"required\": [\"status\", \"summary\", \"deliverables\", \"artifact_refs\", \"compact_data\", \"assumptions\", \"warnings\", \"evidence\", \"self_check\", \"human_request\", \"error\", \"continuation\", \"decision_record\"], \"properties\": {\"status\": {\"enum\": [\"succeeded\", \"partial\", \"needs_input\", \"needs_decision\", \"needs_approval\", \"retryable_error\", \"fatal_error\"]}, \"summary\": {\"type\": \"string\"}, \"user_message\": {\"type\": \"string\", \"description\": \"1-3 short Russian sentences for Activity/HITL UI; keep keyword/field names in Latin.\"}, \"deliverables\": {\"type\": \"array\", \"items\": {\"type\": \"object\"}}, \"artifact_refs\": {\"type\": \"array\", \"items\": {\"type\": \"object\", \"required\": [\"ref\", \"kind\", \"revision\", \"description\"], \"properties\": {\"ref\": {\"type\": \"string\"}, \"kind\": {\"type\": \"string\"}, \"revision\": {\"type\": \"string\"}, \"description\": {\"type\": \"string\"}}}}, \"compact_data\": {\"type\": \"object\"}, \"assumptions\": {\"type\": \"array\", \"items\": {\"type\": \"string\"}}, \"warnings\": {\"type\": \"array\", \"items\": {\"type\": \"string\"}}, \"evidence\": {\"type\": \"array\", \"items\": {\"type\": \"object\"}}, \"self_check\": {\"type\": \"object\", \"additionalProperties\": false, \"required\": [\"performed\", \"passed\", \"checks\", \"reproducibility\"], \"properties\": {\"performed\": {\"type\": \"boolean\"}, \"passed\": {\"type\": \"boolean\"}, \"checks\": {\"type\": \"array\", \"items\": {\"type\": \"object\"}}, \"reproducibility\": {\"type\": \"string\"}}}, \"human_request\": {\"type\": [\"object\", \"null\"]}, \"error\": {\"type\": [\"object\", \"null\"]}, \"continuation\": {\"type\": [\"object\", \"null\"]}, \"decision_record\": {\"type\": \"object\", \"additionalProperties\": false, \"required\": [\"contract\", \"contract_version\", \"objective\", \"considered_inputs\", \"proposed_actions\", \"selected_action\", \"rejected_actions\", \"assumptions\", \"evidence_refs\", \"citations\", \"tool_call_ids\", \"unresolved_questions\", \"acceptance_check_results\"], \"properties\": {\"contract\": {\"enum\": [\"decision_record\"]}, \"contract_version\": {\"enum\": [\"1.0\"]}, \"objective\": {\"type\": \"string\"}, \"considered_inputs\": {\"type\": \"array\", \"items\": {\"type\": \"object\"}}, \"proposed_actions\": {\"type\": \"array\", \"items\": {\"type\": \"object\"}}, \"selected_action\": {\"type\": \"object\", \"additionalProperties\": false, \"required\": [\"action\", \"reason_codes\"], \"properties\": {\"action\": {\"type\": \"string\"}, \"reason_codes\": {\"type\": \"array\", \"items\": {\"type\": \"string\"}}}}, \"rejected_actions\": {\"type\": \"array\", \"items\": {\"type\": \"object\"}}, \"assumptions\": {\"type\": \"array\", \"items\": {\"type\": \"string\"}}, \"evidence_refs\": {\"type\": \"array\", \"items\": {\"type\": \"object\"}}, \"citations\": {\"type\": \"array\", \"items\": {\"type\": \"object\"}}, \"tool_call_ids\": {\"type\": \"array\", \"items\": {\"type\": \"string\"}}, \"unresolved_questions\": {\"type\": \"array\", \"items\": {\"type\": \"object\"}}, \"acceptance_check_results\": {\"type\": \"array\", \"items\": {\"type\": \"object\"}}}}}}",
-        "autoFix": false
+        "autoFix": true,
+        "customizeRetryPrompt": true,
+        "prompt": "You are repairing structured JSON for an n8n output parser.\n\nInstructions:\n{instructions}\n\nPrevious completion (may contain markdown, <think> tags, or extra prose):\n{completion}\n\nParser error:\n{error}\n\nReply with ONLY one JSON object that matches the schema. No markdown fences, no <think> tags, no commentary."
       },
       "id": "e2067e09-2a15-5886-bca5-c5c72a7c471c",
       "name": "Specialist Work Output",

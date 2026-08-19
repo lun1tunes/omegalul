@@ -29,12 +29,8 @@
   const REQUESTED_BY = "mas activity user";
   const humanResponse = document.getElementById("humanResponse");
   const composerHint = document.getElementById("composerHint");
-  const approveBtn = document.getElementById("approveBtn");
-  const rejectBtn = document.getElementById("rejectBtn");
   const replyBtn = document.getElementById("replyBtn");
-  const cancelBtn = document.getElementById("cancelBtn");
   const restartBtn = document.getElementById("restartBtn");
-  const hitlButtons = [approveBtn, rejectBtn, replyBtn, cancelBtn];
 
   let restartableCase = false;
 
@@ -50,6 +46,9 @@
   const startHint = document.getElementById("startHint");
   const startCancelBtn = document.getElementById("startCancelBtn");
   const startSubmitBtn = document.getElementById("startSubmitBtn");
+  const hitlDropzone = document.getElementById("hitlDropzone");
+  const hitlFileInput = document.getElementById("hitlFileInput");
+  const hitlFileList = document.getElementById("hitlFileList");
 
   const LIVE_LABELS = {
     idle: "ожидание",
@@ -127,7 +126,6 @@
   let gateState = null;
   let taskVersion = null;
   let awaitingHuman = false;
-  let submitAction = "reply";
   let taskCatalog = [];
   let flashTimer = null;
   let startOpen = false;
@@ -139,6 +137,8 @@
   let semanticDiff = null;
   /** @type {{ file: File, kind: string }[]} */
   let pendingFiles = [];
+  /** @type {{ file: File, kind: string }[]} */
+  let hitlFiles = [];
 
   // Turns where engineer should inspect the current SCHEDULE .INC.
   const SCHEDULE_FILE_REVIEW_STATUSES = new Set([
@@ -219,18 +219,26 @@
     return `${m}:${String(s).padStart(2, "0")}`;
   }
 
-  /** HH:MM of last turn (or task updated_at fallback) for the rail. */
-  function railLastTime(task) {
+  /** HH:MM and DD.MM.YY of last turn (or task updated_at fallback) for the rail. */
+  function railLastStamp(task) {
     const abs = String(task?.last_at_abs || "").trim();
     if (abs) {
-      const m = abs.match(/\b(\d{2}:\d{2})(?::\d{2})?\b/);
-      if (m) return m[1];
+      const m = abs.match(/(\d{4})-(\d{2})-(\d{2})\s+(\d{2}:\d{2})/);
+      if (m) {
+        return { time: m[4], date: `${m[3]}.${m[2]}.${m[1].slice(2)}` };
+      }
+      const t = abs.match(/\b(\d{2}:\d{2})(?::\d{2})?\b/);
+      if (t) return { time: t[1], date: "" };
     }
     const iso = String(task?.updated_at || "").trim();
-    if (!iso) return "";
+    if (!iso) return { time: "", date: "" };
     const d = new Date(iso);
-    if (Number.isNaN(d.getTime())) return "";
-    return d.toLocaleTimeString(undefined, { hour: "2-digit", minute: "2-digit", hour12: false });
+    if (Number.isNaN(d.getTime())) return { time: "", date: "" };
+    const dd = String(d.getDate()).padStart(2, "0");
+    const mm = String(d.getMonth() + 1).padStart(2, "0");
+    const yy = String(d.getFullYear()).slice(2);
+    const time = d.toLocaleTimeString(undefined, { hour: "2-digit", minute: "2-digit", hour12: false });
+    return { time, date: `${dd}.${mm}.${yy}` };
   }
 
   function showWait(label) {
@@ -354,6 +362,64 @@
     return String(q.text || q.question || q.message || q.id || "").trim();
   }
 
+  const MACHINE_CODE_RE = /^[A-Z][A-Z0-9_]{3,}$/;
+  const GATE_GENERIC_REASON = "Проверка остановила задачу: не хватает исходных данных. Прикрепите недостающие файлы или напишите, как продолжать, и нажмите Ответить.";
+  const GATE_GENERIC_ITEM = "Нужны исходные данные. Прикрепите недостающие файлы или напишите, как продолжать.";
+
+  function looksMachineAsk(text) {
+    const t = String(text || "").trim();
+    if (!t) return true;
+    if (MACHINE_CODE_RE.test(t)) return true;
+    if (!CYRILLIC_RE.test(t)) return true;
+    return false;
+  }
+
+  function fileBaseName(value) {
+    const s = String(value || "").trim().replace(/\\/g, "/");
+    if (!s) return "";
+    const parts = s.split("/").filter(Boolean);
+    return parts[parts.length - 1] || s;
+  }
+
+  function humanizeGateReason(reason, questions) {
+    if (!looksMachineAsk(reason)) return String(reason || "").trim() || GATE_GENERIC_REASON;
+    const blob = [reason, ...(Array.isArray(questions) ? questions.map((q) => q && (q.code || q.id)) : [])].join(" ");
+    if (/INCLUDE_NOT_FOUND/.test(blob)) {
+      return "В пакете нет тел файлов, на которые ссылается INCLUDE. Прикрепите недостающие .inc и нажмите Ответить.";
+    }
+    if (/EXCEL_WORKBOOK_REQUIRED|xlsx|workbook/i.test(blob)) {
+      return "Нет книги Excel. Прикрепите файл .xlsx к ответу.";
+    }
+    return GATE_GENERIC_REASON;
+  }
+
+  function humanizeQuestion(q) {
+    const raw = questionText(q);
+    const code = String(q && (q.code || (MACHINE_CODE_RE.test(raw) ? raw : "")) || "").trim();
+    if (!looksMachineAsk(raw)) return raw;
+    const path = fileBaseName(q && (q.path || q.target_file_ref));
+    const from = fileBaseName(q && (q.file_ref || q.from || q.source_file_ref));
+    const keyword = String(q && (q.keyword || "") || "").trim();
+    const entity = String(q && (q.entity || q.well || "") || "").trim();
+    if (code === "INCLUDE_NOT_FOUND" || raw === "INCLUDE_NOT_FOUND") {
+      if (path) {
+        return `Нет файла «${path}»${from ? `, на него ссылается «${from}»` : ""}. Прикрепите этот .inc к ответу.`;
+      }
+      return "В пакете нет файла INCLUDE. Прикрепите недостающий .inc к ответу.";
+    }
+    if (code === "EXCEL_WORKBOOK_REQUIRED" || /xlsx|workbook/i.test(raw)) {
+      return "Прикрепите книгу Excel (.xlsx или .xls) к ответу.";
+    }
+    if (code === "BASELINE_REQUIRED") {
+      return "Прикрепите предыдущий schedule (.inc / .data) для режима REVISE.";
+    }
+    const bits = [path, from, keyword, entity].filter(Boolean);
+    if (bits.length) {
+      return `Нужны данные: ${bits.join(", ")}. Прикрепите файл или напишите уточнение.`;
+    }
+    return GATE_GENERIC_ITEM;
+  }
+
   function classifyFile(file) {
     const name = (file.name || "").toLowerCase();
     if (/\.(xlsx|xls)$/.test(name)) return "excel";
@@ -379,7 +445,7 @@
     const showComposer = !startOpen && (awaitingHuman || restartableCase);
     composer.hidden = !showComposer;
     composer.classList.toggle("armed", awaitingHuman && !startOpen);
-    for (const btn of hitlButtons) btn.disabled = !awaitingHuman || startOpen;
+    if (replyBtn) replyBtn.disabled = !awaitingHuman || startOpen;
     if (restartBtn) {
       restartBtn.hidden = !restartableCase || startOpen;
       restartBtn.disabled = !restartableCase || startOpen || !currentTask;
@@ -486,15 +552,41 @@
     }
   }
 
-  function renderPendingFiles() {
-    startFileList.innerHTML = "";
-    if (!pendingFiles.length) {
-      startFileList.hidden = true;
-      syncScheduleRootField();
+  function addToBucket(bucket, fileList) {
+    const incoming = Array.from(fileList || []);
+    for (const file of incoming) {
+      if (!file || !file.name) continue;
+      const kind = classifyFile(file);
+      if (kind === "other") {
+        showFlash(`Неизвестный тип файла: ${file.name}`);
+        continue;
+      }
+      if (kind === "excel" && bucket.some((f) => f.kind === "excel")) {
+        showFlash("Можно прикрепить только один Excel workbook.");
+        continue;
+      }
+      if (kind === "surface" && bucket.some((f) => f.kind === "surface")) {
+        showFlash("Можно прикрепить только один surface файл.");
+        continue;
+      }
+      if (bucket.some((f) => f.file.name === file.name && f.file.size === file.size)) continue;
+      if (bucket.length >= 40) {
+        showFlash("Слишком много файлов (макс. 40).");
+        break;
+      }
+      bucket.push({ file, kind });
+    }
+  }
+
+  function renderFileChips(listEl, bucket, onMutate) {
+    if (!listEl) return;
+    listEl.innerHTML = "";
+    if (!bucket.length) {
+      listEl.hidden = true;
       return;
     }
-    startFileList.hidden = false;
-    pendingFiles.forEach((entry, index) => {
+    listEl.hidden = false;
+    bucket.forEach((entry, index) => {
       const li = document.createElement("li");
       const kind = document.createElement("span");
       kind.className = "kind";
@@ -509,40 +601,31 @@
       remove.textContent = "×";
       remove.addEventListener("click", (e) => {
         e.stopPropagation();
-        pendingFiles.splice(index, 1);
-        renderPendingFiles();
+        bucket.splice(index, 1);
+        onMutate();
       });
       li.append(kind, name, remove);
-      startFileList.append(li);
+      listEl.append(li);
     });
+  }
+
+  function renderPendingFiles() {
+    renderFileChips(startFileList, pendingFiles, renderPendingFiles);
     syncScheduleRootField();
   }
 
+  function renderHitlFiles() {
+    renderFileChips(hitlFileList, hitlFiles, renderHitlFiles);
+  }
+
   function addFiles(fileList) {
-    const incoming = Array.from(fileList || []);
-    for (const file of incoming) {
-      if (!file || !file.name) continue;
-      const kind = classifyFile(file);
-      if (kind === "other") {
-        showFlash(`Неизвестный тип файла: ${file.name}`);
-        continue;
-      }
-      if (kind === "excel" && pendingFiles.some((f) => f.kind === "excel")) {
-        showFlash("Можно прикрепить только один Excel workbook.");
-        continue;
-      }
-      if (kind === "surface" && pendingFiles.some((f) => f.kind === "surface")) {
-        showFlash("Можно прикрепить только один surface файл.");
-        continue;
-      }
-      if (pendingFiles.some((f) => f.file.name === file.name && f.file.size === file.size)) continue;
-      if (pendingFiles.length >= 40) {
-        showFlash("Слишком много файлов (макс. 40).");
-        break;
-      }
-      pendingFiles.push({ file, kind });
-    }
+    addToBucket(pendingFiles, fileList);
     renderPendingFiles();
+  }
+
+  function addHitlFiles(fileList) {
+    addToBucket(hitlFiles, fileList);
+    renderHitlFiles();
   }
 
   function renderGate(gate, { status, version, awaiting } = {}) {
@@ -568,31 +651,27 @@
     gateKind.textContent = GATE_KIND_LABELS[rawKind] || GATE_KIND_LABELS[rawKind.toLowerCase()] || "Запрос";
     gateKind.title = rawKind;
     gateMeta.textContent = [
-      gateState.gate_id ? `gate ${gateState.gate_id}` : null,
       version != null ? `v${version}` : gateState.expected_version != null ? `v${gateState.expected_version}` : null,
-      status || null,
     ].filter(Boolean).join(" · ");
-    gateReason.textContent = gateState.reason || "Ожидается ваше решение.";
-    gateQuestions.innerHTML = "";
     const questions = Array.isArray(gateState.questions) ? gateState.questions : [];
+    gateReason.textContent = humanizeGateReason(gateState.reason, questions) || "Ожидается ваше решение.";
+    gateQuestions.innerHTML = "";
+    const seenAsk = new Set();
     for (const q of questions) {
+      const text = humanizeQuestion(q);
+      if (!text || seenAsk.has(text)) continue;
+      seenAsk.add(text);
       const li = document.createElement("li");
-      const text = questionText(q);
-      li.append(document.createTextNode(text || "Вопрос"));
-      if (q.expected_format || q.required) {
-        const meta = document.createElement("span");
-        meta.className = "q-meta";
-        meta.textContent = [
-          q.required ? "обязательно" : "необязательно",
-          q.expected_format ? `формат: ${q.expected_format}` : null,
-        ].filter(Boolean).join(" · ");
-        li.append(meta);
-      }
+      li.append(document.createTextNode(text));
       gateQuestions.append(li);
     }
     if (armed) {
       composerHint.hidden = true;
       composerHint.textContent = "";
+      const kind = String(gateState.kind || "").toLowerCase();
+      humanResponse.placeholder = (kind === "result_approval" || kind === "needs_approval")
+        ? "Своими словами: выпуск принять — или что проверить / доработать"
+        : "Уточнения, недостающие данные, что ещё поправить…";
     } else {
       composerHint.hidden = false;
       composerHint.textContent = "Ответ пока не требуется. Можно подождать или открыть другую задачу.";
@@ -620,14 +699,14 @@
     kicker.className = "who-kicker";
     kicker.textContent = isHuman ? "Ответ" : isHitlAsk ? "Запрос" : "Передача";
     const fromEl = document.createElement("span");
-    fromEl.className = "role from";
+    fromEl.className = "role from" + (/^вы$/i.test(fromRole) ? " you" : "");
     fromEl.textContent = fromRole;
     const arrow = document.createElement("span");
     arrow.className = "arrow";
     arrow.setAttribute("aria-hidden", "true");
     arrow.textContent = "→";
     const toEl = document.createElement("span");
-    toEl.className = "role to";
+    toEl.className = "role to" + (/^вы$/i.test(toRole) ? " you" : "");
     toEl.textContent = toRole;
     who.append(kicker, fromEl, arrow, toEl);
     if (turn.duration_label) {
@@ -654,17 +733,23 @@
     }
 
     if (Array.isArray(turn.chips) && turn.chips.length) {
-      const chips = document.createElement("div");
-      chips.className = "chips";
-      for (const chip of turn.chips) {
-        const el = document.createElement("span");
-        el.className = "chip";
-        const b = document.createElement("b");
-        b.textContent = chip.label;
-        el.append(b, document.createTextNode(` ${String(chip.value)}`));
-        chips.append(el);
+      const HIDDEN_CHIP_IDS = new Set([
+        "action", "requested_by", "gate_id", "gate_kind", "file_count", "backend",
+      ]);
+      const visible = turn.chips.filter((c) => c && !HIDDEN_CHIP_IDS.has(String(c.id || "")));
+      if (visible.length) {
+        const chips = document.createElement("div");
+        chips.className = "chips";
+        for (const chip of visible) {
+          const el = document.createElement("span");
+          el.className = "chip";
+          const b = document.createElement("b");
+          b.textContent = chip.label;
+          el.append(b, document.createTextNode(` ${String(chip.value)}`));
+          chips.append(el);
+        }
+        bubble.append(chips);
       }
-      bubble.append(chips);
     }
 
     appendScheduleDownload(bubble, turn);
@@ -697,11 +782,6 @@
     const list = railList || taskRail;
     list.innerHTML = "";
     if (!taskCatalog.length) {
-      const emptyMsg = document.createElement("p");
-      emptyMsg.className = "rail-empty";
-      emptyMsg.id = "railEmpty";
-      emptyMsg.textContent = "Пока нет задач — создайте первую.";
-      list.append(emptyMsg);
       if (newTaskBtn) newTaskBtn.classList.toggle("active-start", startOpen);
       return data;
     }
@@ -718,8 +798,9 @@
       const stLabel = statusLabel(task.status || task.last_status || "");
       const parts = [stLabel || "—"];
       if (task.turn_count != null) parts.push(`${task.turn_count} turn`);
-      const lastTime = railLastTime(task);
-      if (lastTime) parts.push(lastTime);
+      const stamp = railLastStamp(task);
+      if (stamp.time) parts.push(stamp.time);
+      if (stamp.date) parts.push(stamp.date);
       meta.textContent = parts.join(" · ");
       btn.title = [
         task.task_id,
@@ -1208,19 +1289,16 @@
     refreshRail();
   }
 
-  async function submitHitl(action) {
+  async function submitHitl() {
     if (!currentTask) {
       showFlash("Сначала выберите задачу в списке слева.");
       return;
     }
     const by = REQUESTED_BY;
     const responseText = humanResponse.value.trim();
-    if (action === "reply" && !responseText) {
+    if (!responseText && !hitlFiles.length) {
       humanResponse.focus();
-      showFlash("Для ответа нужен текст указаний.");
-      return;
-    }
-    if (action === "cancel" && !window.confirm("Отменить задачу? Система больше не будет ждать ответа по этому запросу.")) {
+      showFlash("Нужен текст ответа или вложение.");
       return;
     }
 
@@ -1229,18 +1307,22 @@
     composerHint.textContent = "Отправляем ответ…";
     pollFeed({ durable: false });
     try {
+      const form = new FormData();
+      form.append("action", "reply");
+      form.append("requested_by", by);
+      if (responseText) form.append("human_response", responseText);
+      if (gateState?.gate_id) form.append("gate_id", gateState.gate_id);
+      const ver = gateState?.expected_version ?? taskVersion;
+      if (ver != null && ver !== "") form.append("expected_version", String(ver));
+      for (const entry of hitlFiles) {
+        if (entry.kind === "excel") form.append("file", entry.file, entry.file.name);
+        else if (entry.kind === "surface") form.append("surface_file", entry.file, entry.file.name);
+        else if (entry.kind === "trajectory") form.append("trajectory_files", entry.file, entry.file.name);
+        else form.append("schedule_files", entry.file, entry.file.name);
+      }
       const res = await fetch(`/v1/tasks/${encodeURIComponent(currentTask)}/hitl`, {
         method: "POST",
-        headers: {
-          "Content-Type": "application/json",
-        },
-        body: JSON.stringify({
-          action,
-          requested_by: by,
-          human_response: responseText || null,
-          gate_id: gateState?.gate_id || null,
-          expected_version: gateState?.expected_version ?? null,
-        }),
+        body: form,
       });
       const data = await res.json().catch(() => ({}));
       if (!res.ok) {
@@ -1263,14 +1345,10 @@
         semantic_diff: data.semantic_diff,
         status_message: data.orchestrator?.message || data.status_message,
       });
-      if (action === "reply") humanResponse.value = "";
-      showFlash(
-        action === "approve" ? "Одобрено."
-          : action === "reject" ? "Отклонено."
-            : action === "cancel" ? "Задача отменена."
-              : "Ответ отправлен.",
-        { ok: true },
-      );
+      humanResponse.value = "";
+      hitlFiles = [];
+      renderHitlFiles();
+      showFlash("Ответ отправлен.", { ok: true });
       await refreshRail();
     } catch (_) {
       showFlash("Сеть недоступна при отправке ответа.");
@@ -1386,12 +1464,6 @@
     }
   }
 
-  for (const btn of hitlButtons) {
-    btn.addEventListener("click", () => {
-      submitAction = btn.dataset.action || "reply";
-    });
-  }
-
   if (restartBtn) {
     restartBtn.addEventListener("click", async () => {
       if (!currentTask) {
@@ -1447,7 +1519,7 @@
 
   composer.addEventListener("submit", (e) => {
     e.preventDefault();
-    submitHitl(submitAction || "reply");
+    submitHitl();
   });
 
   newTaskBtn.addEventListener("click", () => setStartOpen(!startOpen));
@@ -1541,6 +1613,39 @@
   startDropzone.addEventListener("drop", (e) => {
     addFiles(e.dataTransfer?.files);
   });
+
+  function wireDropzone(zone, input, onFiles) {
+    if (!zone || !input) return;
+    zone.addEventListener("click", () => input.click());
+    zone.addEventListener("keydown", (e) => {
+      if (e.key === "Enter" || e.key === " ") {
+        e.preventDefault();
+        input.click();
+      }
+    });
+    input.addEventListener("change", () => {
+      onFiles(input.files);
+      input.value = "";
+    });
+    ["dragenter", "dragover"].forEach((evt) => {
+      zone.addEventListener(evt, (e) => {
+        e.preventDefault();
+        e.stopPropagation();
+        zone.classList.add("dragover");
+      });
+    });
+    ["dragleave", "drop"].forEach((evt) => {
+      zone.addEventListener(evt, (e) => {
+        e.preventDefault();
+        e.stopPropagation();
+        zone.classList.remove("dragover");
+      });
+    });
+    zone.addEventListener("drop", (e) => {
+      onFiles(e.dataTransfer?.files);
+    });
+  }
+  wireDropzone(hitlDropzone, hitlFileInput, addHitlFiles);
 
   const initial = pathTaskId();
   if (initial) {

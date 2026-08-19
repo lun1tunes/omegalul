@@ -58,26 +58,28 @@ OPTIONAL_PLACEHOLDERS = {
     "REPLACE_DOCUMENT_SPECIALIST_IN_UI": "Template — Engineering Specialist",
 }
 
-# Publish/activate order: leaf specialists first, then Orchestrator.
+# Publish/activate order: leaves with no Execute Workflow deps first,
+# then RAG, then specialists that call RAG, then Orchestrator, then forms.
 PUBLISH = [
-    "Template — Engineering Specialist",
+    "CAS — Persist Task State",
+    "Writer — MAS Trace",
+    "MAS — Knowledge Retrieval",
+    "MAS — Knowledge Ingestion",
+    "Adapter — Calculation (Math Service)",
+    "SCHEDULE — Builder",
     "Template — Cluster Calculation Adapter",
     "Template — Binary Results Adapter",
     "Template — Presentation Assembler",
-    "CAS — Persist Task State",
-    "Writer — MAS Trace",
-    "Error — MAS Case Handler",
-    "Adapter — Calculation (Math Service)",
+    "Template — Engineering Specialist",
     "Agent — Excel Extractor",
     "Adapter — Excel Extraction",
-    "MAS — Knowledge Retrieval",
-    "SCHEDULE — Builder",
+    "Error — MAS Case Handler",
     "Activity — List Tasks (Data Table)",
     "Activity — Load Feed (Data Tables)",
+    "Orchestrator — Engineering MAS",
     "Form — MAS Deployment Health Check",
     "Form — MAS Entry",
     "Form — MAS Human Gate",
-    "Orchestrator — Engineering MAS",
 ]
 
 
@@ -131,7 +133,7 @@ END$$;
             "mas-activity",
             "python",
             "-c",
-            "from pathlib import Path; p=Path('/data/activity_state.json'); p.parent.mkdir(parents=True, exist_ok=True); p.write_text('{\"tasks\":{}}')",
+            "from pathlib import Path; p=Path('/app/data/activity_state.json'); p.parent.mkdir(parents=True, exist_ok=True); p.write_text('{\"tasks\":{}}')",
         ],
         check=False,
     )
@@ -222,9 +224,12 @@ def patch_nodes(nodes, name_to_id: dict[str, str], env: dict[str, str]) -> int:
     # Lab defaults: n8n in compose reaches host FastAPI via scripts/lab_docker_host_bridge.py
     # (mas-host-bridge). Field Windows uses the PC IP directly — set env overrides.
     activity_url = env.get("MAS_ACTIVITY_URL", "http://mas-host-bridge:8200")
-    excel_url = env.get("EXCEL_TOOLS_URL", "http://mas-host-bridge:18000/api/v1")
+    # Compose `excel-tools` listens on 18000 inside Docker DNS. Host :18000 is
+    # only up if a second uvicorn is started; mas-host-bridge then works.
+    excel_url = env.get("EXCEL_TOOLS_URL", "http://excel-tools:18000/api/v1")
     math_url = env.get("MATH_SERVICE_URL", "http://mas-host-bridge:8100/api/v1/math")
     excel_key = env.get("EXCEL_TOOLS_API_KEY") or env.get("excel_tools_api_key") or ""
+    webhook_key = env.get("EXCEL_WEBHOOK_API_KEY") or env.get("excel_webhook_api_key") or excel_key
     placeholders = dict(PLACEHOLDERS)
     for ph, target in OPTIONAL_PLACEHOLDERS.items():
         if target in name_to_id:
@@ -298,6 +303,9 @@ def patch_nodes(nodes, name_to_id: dict[str, str], env: dict[str, str]) -> int:
                     changed += 1
                 elif key == "excel_tools_api_key":
                     assignment["value"] = "={{ " + json.dumps(excel_key) + " }}"
+                    changed += 1
+                elif key == "excel_webhook_api_key":
+                    assignment["value"] = "={{ " + json.dumps(webhook_key) + " }}"
                     changed += 1
         if node.get("name") == "Math Service Configuration":
             for assignment in (((params.get("assignments") or {}).get("assignments")) or []):
@@ -387,6 +395,32 @@ def publish(name_to_id: dict[str, str]) -> None:
     code, body = rest("POST", "/rest/login", {"emailOrLdapLoginId": user, "password": password})
     if code != 200:
         raise SystemExit(f"n8n REST login failed: {code} {body}")
+
+    orch_header = env.get("ORCHESTRATOR_AUTH_HEADER") or "Authorization"
+    orch_value = env.get("ORCHESTRATOR_AUTH_VALUE") or "local-orch-inbound"
+    code, cred_body = rest(
+        "PATCH",
+        f"/rest/credentials/{CRED_HDR}",
+        {
+            "name": "Engineering orchestrator inbound key",
+            "type": "httpHeaderAuth",
+            "data": {"name": orch_header, "value": orch_value},
+        },
+    )
+    if code >= 400:
+        code, cred_body = rest(
+            "PUT",
+            f"/rest/credentials/{CRED_HDR}",
+            {
+                "name": "Engineering orchestrator inbound key",
+                "type": "httpHeaderAuth",
+                "data": {"name": orch_header, "value": orch_value},
+            },
+        )
+    print(
+        f"sync orchestrator inbound key: {'OK' if code < 400 else f'FAIL {code}'} "
+        f"(header={orch_header}, value_len={len(orch_value)})"
+    )
 
     for name in PUBLISH:
         wid = name_to_id.get(name)

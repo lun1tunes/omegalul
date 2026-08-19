@@ -180,12 +180,41 @@ async function main() {
     { output: schedule },
     { 'Prepare planner input': basePlannerRequest({ task_type: 'schedule_build' }) },
   ))[0].json;
-  const scheduleScore = JSON.parse(scheduleGate.plan_json).score;
-  assert.equal(scheduleGate.status, 'awaiting_human');
-  assert.equal(scheduleScore.decision, 'hitl');
-  assert(JSON.parse(scheduleGate.plan_json).decision_record.selected_action.reason_codes.includes(
+  const scheduleGatePacket = JSON.parse(scheduleGate.packet_json);
+  assert.equal(scheduleGate.status, 'delegated');
+  assert.equal(scheduleGatePacket.specialist_id, 'schedule_builder_specialist');
+  assert.equal(JSON.stringify(scheduleGatePacket).includes('2019-06-30'), false);
+  assert.equal(JSON.stringify(scheduleGatePacket).includes('shift_commissioning'), false);
+  assert.equal(JSON.parse(scheduleGate.plan_json).decision_record.selected_action.reason_codes.includes(
     'ENTITY_TEMPORAL_SCOPE_INCOMPLETE',
-  ));
+  ), false);
+
+  const createScratch = (await execute(
+    orchestrator,
+    'Validate and apply plan',
+    {
+      output: plannerOutput({
+        decision: 'delegate',
+        task_type: 'schedule_build',
+        plan: { workflow_kind: 'schedule' },
+        specialist_packet: {
+          ...plannerOutput().specialist_packet,
+          specialist_id: 'schedule_builder_specialist',
+          objective: 'Create a forecast SCHEDULE from scratch',
+          inputs: { schedule_request: { build_mode: 'CREATE' } },
+        },
+      }),
+    },
+    { 'Prepare planner input': basePlannerRequest({ task_type: 'schedule_build', build_mode: 'CREATE' }) },
+  ))[0].json;
+  const createScratchPacket = JSON.parse(createScratch.packet_json);
+  assert.equal(createScratch.status, 'delegated');
+  assert.equal(createScratchPacket.inputs.schedule_request.build_mode, 'CREATE');
+  assert.equal(JSON.stringify(createScratchPacket).includes('2019-06-30'), false);
+  assert.equal(JSON.stringify(createScratchPacket).includes('2071-01-01'), false);
+  assert.equal(JSON.stringify(createScratchPacket).includes('shift_commissioning'), false);
+  assert.equal(Boolean(createScratchPacket.inputs.schedule_request.simulator_profile), false);
+  assert.equal(JSON.stringify(createScratchPacket).includes('Rock Flow Dynamics'), false);
 
   const excelQuestions = [
     { id: 'units', text: 'Какая unit system / METRIC?' },
@@ -215,10 +244,11 @@ async function main() {
   assert.equal(excelPlan.decision_record.unresolved_questions.length, 0);
   assert.equal(excelPlan.decision_record.selected_action.reason_codes.includes('PLANNER_UNRESOLVED_QUESTIONS'), false);
   assert.equal(excelPlan.decision_record.selected_action.reason_codes.includes('ENTITY_TEMPORAL_SCOPE_INCOMPLETE'), false);
-  assert.equal(excelPacketOut.controls.access_scope, 'petroleum-engineering');
-  assert.equal(excelPacketOut.controls.unit_system, 'METRIC');
-  assert.equal(excelPacketOut.controls.simulator, 'tNavigator');
-  assert.equal(excelPacketOut.controls.simulator_version, '22.2');
+  assert.equal(excelPacketOut.controls.access_scope, undefined);
+  assert.equal(excelPacketOut.controls.simulator, undefined);
+  assert.equal(excelPacketOut.controls.simulator_version, undefined);
+  assert.equal(excelPacketOut.controls.policy_version, undefined);
+  assert.equal(excelPacketOut.controls.bounded_request, true);
 
   const excelFlip = (await execute(
     orchestrator,
@@ -267,12 +297,12 @@ async function main() {
     { 'Prepare planner input': basePlannerRequest({ task_type: 'schedule_build' }) },
   ))[0].json;
   const builderBlockedPlan = JSON.parse(builderBlocked.plan_json);
-  assert.equal(builderBlocked.status, 'awaiting_human');
-  assert(builderBlockedPlan.decision_record.selected_action.reason_codes.includes(
+  assert.equal(builderBlocked.status, 'delegated');
+  assert.equal(JSON.parse(builderBlocked.packet_json).specialist_id, 'schedule_builder_specialist');
+  assert.equal(builderBlockedPlan.decision_record.selected_action.reason_codes.includes(
     'PLANNER_UNRESOLVED_QUESTIONS',
-  ));
-  assert.equal(JSON.parse(builderBlocked.gate_json).questions.length, 1);
-  assert.equal(JSON.parse(builderBlocked.gate_json).questions[0].id, 'keyword_scope');
+  ), false);
+  assert.equal(JSON.parse(builderBlocked.gate_json).questions, undefined);
 
   const packet = {
     contract: 'specialist_packet',
@@ -310,12 +340,131 @@ async function main() {
   assert.equal(excelResult.status, 'succeeded');
   assert.equal(excelResult.compact_data.overall_score, 100);
   assert.equal(excelResult.compact_data.decision_record.contract, 'decision_record');
+  assert.equal(excelResult.compact_data.result_kind, 'tabular_extract');
+  assert.equal(excelResult.compact_data.consumer, 'none');
 
   const noProvenance = JSON.parse(JSON.stringify(native));
   noProvenance.data.provenance = [];
-  const blockedExcel = (await execute(excel, 'Adapt native Excel result', noProvenance, excelNodes))[0].json.specialist_result;
+  const genericNoProvenance = (await execute(excel, 'Adapt native Excel result', noProvenance, excelNodes))[0].json.specialist_result;
+  assert.equal(genericNoProvenance.status, 'succeeded');
+  assert.equal(genericNoProvenance.compact_data.gate_decisions[0].reason_codes.includes('EXCEL_PROVENANCE_REQUIRED'), false);
+
+  const scheduleExcelNodes = { 'Prepare native Excel invocation': { specialist_packet: { ...packet, inputs: { ...packet.inputs, consumer: 'schedule_builder', capability_id: 'commissioning_date_retarget' } } } };
+  const blockedExcel = (await execute(excel, 'Adapt native Excel result', noProvenance, scheduleExcelNodes))[0].json.specialist_result;
   assert.equal(blockedExcel.status, 'needs_input');
   assert(blockedExcel.compact_data.gate_decisions[0].reason_codes.includes('EXCEL_PROVENANCE_REQUIRED'));
+
+  const priceNative = JSON.parse(JSON.stringify(native));
+  priceNative.data.columns = ['Date', 'Price'];
+  priceNative.data.records = [{ Date: '2024-01-01', Price: 80 }];
+  priceNative.data.row_count = 1;
+  priceNative.data.returned_count = 1;
+  priceNative.field_mapping = { Date: 'Date', Price: 'Price' };
+  const genericPriceNodes = { 'Prepare native Excel invocation': { specialist_packet: { ...packet, inputs: { requested_fields: ['Date', 'Price'] } } } };
+  const genericPrice = (await execute(excel, 'Adapt native Excel result', priceNative, genericPriceNodes))[0].json.specialist_result;
+  assert.equal(genericPrice.status, 'succeeded');
+  assert.equal(genericPrice.compact_data.result_kind, 'tabular_extract');
+  assert.equal(genericPrice.compact_data.gate_decisions[0].reason_codes.includes('EXCEL_ENTITY_IDENTITY_MISSING'), false);
+
+  const identityNodes = { 'Prepare native Excel invocation': { specialist_packet: { ...packet, inputs: { requested_fields: ['Date', 'Price'], consumer: 'schedule_builder', capability_id: 'commissioning_date_retarget' } } } };
+  const missingIdentity = (await execute(excel, 'Adapt native Excel result', priceNative, identityNodes))[0].json.specialist_result;
+  assert.equal(missingIdentity.status, 'needs_input');
+  assert(missingIdentity.compact_data.gate_decisions[0].reason_codes.includes('EXCEL_ENTITY_IDENTITY_MISSING'));
+
+  const emptyNative = JSON.parse(JSON.stringify(native));
+  emptyNative.data.records = [];
+  emptyNative.data.row_count = 0;
+  emptyNative.data.returned_count = 0;
+  emptyNative.data.columns = ['Date', 'Price'];
+  const emptyNodes = { 'Prepare native Excel invocation': { specialist_packet: { ...packet, inputs: { requested_fields: ['Date', 'Price'], empty_result_policy: 'expected_empty' } } } };
+  const expectedEmpty = (await execute(excel, 'Adapt native Excel result', emptyNative, emptyNodes))[0].json.specialist_result;
+  assert.equal(expectedEmpty.status, 'succeeded');
+  assert.equal(expectedEmpty.compact_data.gate_decisions[0].reason_codes.includes('EXCEL_NO_FACT_ROWS'), false);
+
+  const caseNative = JSON.parse(JSON.stringify(native));
+  caseNative.data.columns = ['well', 'orat'];
+  caseNative.data.records = [{ well: 'WELL-1', orat: 100 }];
+  caseNative.field_mapping = { well: 'well', orat: 'orat' };
+  const caseNodes = { 'Prepare native Excel invocation': { specialist_packet: { ...packet, inputs: { required_columns: ['WELL', 'ORAT'] } } } };
+  const caseOk = (await execute(excel, 'Adapt native Excel result', caseNative, caseNodes))[0].json.specialist_result;
+  assert.equal(caseOk.status, 'succeeded');
+  assert.equal(caseOk.compact_data.gate_decisions[0].reason_codes.includes('EXCEL_REQUIRED_COLUMNS_INCOMPLETE'), false);
+
+  const excelOnlyAfterFacts = (await execute(
+    orchestrator,
+    'Validate and apply plan',
+    {
+      output: plannerOutput({
+        decision: 'delegate',
+        task_type: 'excel_extraction',
+        specialist_packet: plannerOutput().specialist_packet,
+      }),
+    },
+    {
+      'Prepare planner input': {
+        ...basePlannerRequest({ objective: 'Extract oil prices from the workbook', task_type: 'excel_extraction' }),
+        result_json: JSON.stringify({
+          contract: 'specialist_result',
+          contract_version: '1.0',
+          task_id: 'eng-1',
+          specialist_id: 'excel_extraction_specialist',
+          attempt: 1,
+          status: 'succeeded',
+          summary: 'Extracted prices.',
+          compact_data: {
+            source_snapshot_hash: 'fnv1a32:abcd1234',
+            correlation_id: 'corr-price',
+            facts: [{ values: { Date: '2024-01-01', Price: 80 } }],
+            columns: ['Date', 'Price'],
+            row_count: 1,
+          },
+        }),
+      },
+    },
+  ))[0].json;
+  assert.equal(excelOnlyAfterFacts.status, 'delegated');
+  assert.equal(JSON.parse(excelOnlyAfterFacts.packet_json).specialist_id, 'engineering_calculation_specialist');
+  assert.equal(JSON.stringify(excelOnlyAfterFacts.packet_json).includes('entity_identity'), false);
+
+  const excelThenSchedule = (await execute(
+    orchestrator,
+    'Validate and apply plan',
+    {
+      output: plannerOutput({
+        decision: 'delegate',
+        task_type: 'schedule_build',
+        specialist_packet: plannerOutput().specialist_packet,
+      }),
+    },
+    {
+      'Prepare planner input': {
+        ...basePlannerRequest({
+          objective: 'Shift commissioning dates from the workbook',
+          task_type: 'schedule_build',
+          baseline_schedule_text: 'DATES\n  1 JAN 2025 /\n/\n',
+        }),
+        result_json: JSON.stringify({
+          contract: 'specialist_result',
+          contract_version: '1.0',
+          task_id: 'eng-1',
+          specialist_id: 'excel_extraction_specialist',
+          attempt: 1,
+          status: 'succeeded',
+          summary: 'Extracted wells.',
+          compact_data: {
+            source_snapshot_hash: 'fnv1a32:abcd1234',
+            correlation_id: 'corr-wells',
+            facts: [{ well: '304R', values: { Скважина: '304R', 'Дата ввода': '2019-07-01' } }],
+            columns: ['Скважина', 'Дата ввода'],
+            row_count: 1,
+          },
+        }),
+      },
+    },
+  ))[0].json;
+  assert.equal(excelThenSchedule.status, 'delegated');
+  assert.equal(JSON.parse(excelThenSchedule.packet_json).specialist_id, 'schedule_builder_specialist');
+  assert.equal(JSON.parse(excelThenSchedule.packet_json).inputs.schedule_request.source_facts_packet.facts.length, 1);
 
   const verifierBase = {
     ...base,
@@ -390,7 +539,8 @@ async function main() {
   assert.equal(JSON.parse(routedSchedule.result_json).compact_data.generated_schedule, scheduleText);
   const verifierHandoff = (await execute(orchestrator, 'Prepare independent verification', routedSchedule))[0].json;
   assert.match(verifierHandoff.verifier_input, /schedule\.inc/);
-  assert.match(verifierHandoff.verifier_input, /WCONPROD|DATES/);
+  assert.match(verifierHandoff.verifier_input, /release_ready/);
+  assert.doesNotMatch(verifierHandoff.verifier_input, /1 JAN 2025/);
 
   const releaseBase = {
     task_id: 'eng-1',
@@ -473,6 +623,257 @@ async function main() {
   assert.equal(releaseBlocked.status, 'conflict');
   assert.match(releaseBlocked.message, /inline \.INC/);
 
+  const replyOnApproval = (await execute(orchestrator, 'Apply action and version guard', {
+    ...releaseBase,
+    action: 'reply',
+    human_response: { text: 'INCLUDE во вложении, продолжайте.' },
+    gate_json: JSON.stringify({ gate_id: 'gate-release', kind: 'needs_approval' }),
+    packet_json: '{}',
+    result_json: JSON.stringify({
+      ...scheduleResult,
+      compact_data: { ...scheduleResult.compact_data, release_ready: false },
+    }),
+  }))[0].json;
+  assert.equal(replyOnApproval.status, 'planning');
+  assert.equal(replyOnApproval.should_plan, true);
+
+  const replyOnResultApproval = (await execute(orchestrator, 'Apply action and version guard', {
+    ...releaseBase,
+    action: 'reply',
+    human_response: { text: 'Не выпускайте: верните ORAT из Excel.' },
+    gate_json: JSON.stringify({ gate_id: 'gate-release', kind: 'result_approval' }),
+    packet_json: '{}',
+  }))[0].json;
+  assert.equal(replyOnResultApproval.status, 'planning');
+  assert.equal(replyOnResultApproval.should_plan, true);
+  assert.equal(replyOnResultApproval.status === 'completed', false);
+  const replyRuntime = JSON.parse(replyOnResultApproval.runtime_json);
+  assert.equal(replyRuntime.last_hitl_gate.kind, 'result_approval');
+  assert.equal(replyRuntime.last_hitl_gate.release_ready, true);
+
+  const replyStartBinaries = (await execute(orchestrator, 'Apply action and version guard', {
+    ...releaseBase,
+    action: 'reply',
+    human_response: { text: 'принято' },
+    hitl_new_attachments: false,
+    binary: { schedule_files: { fileName: 'root.inc' } },
+    gate_json: JSON.stringify({ gate_id: 'gate-release', kind: 'result_approval' }),
+  }))[0].json;
+  assert.equal(replyStartBinaries.should_plan, true);
+  assert.equal(JSON.parse(replyStartBinaries.runtime_json).hitl_attachments_pending, false);
+
+  const replyFormFalse = (await execute(orchestrator, 'Apply action and version guard', {
+    ...releaseBase,
+    action: 'reply',
+    human_response: { text: 'принято' },
+    hitl_new_attachments: 'False',
+    binary: { file: { fileName: 'dates.xlsx' }, schedule_files: { fileName: 'root.inc' } },
+    gate_json: JSON.stringify({ gate_id: 'gate-release', kind: 'result_approval' }),
+  }))[0].json;
+  assert.equal(JSON.parse(replyFormFalse.runtime_json).hitl_attachments_pending, false);
+
+  const replyNewHitlFile = (await execute(orchestrator, 'Apply action and version guard', {
+    ...releaseBase,
+    action: 'reply',
+    human_response: { text: 'прикладываю недостающий INCLUDE' },
+    hitl_new_attachments: true,
+    binary: { schedule_files: { fileName: 'WELLS.INC' } },
+    gate_json: JSON.stringify({ gate_id: 'gate-release', kind: 'needs_input' }),
+  }))[0].json;
+  assert.equal(JSON.parse(replyNewHitlFile.runtime_json).hitl_attachments_pending, true);
+
+  const plannerIn = (await execute(orchestrator, 'Prepare planner input', {
+    task_id: 'eng-1',
+    retry_count: 0,
+    request_json: JSON.stringify({
+      objective: 'Revise forecast schedule',
+      hitl_reply_text: 'принято, но проверь DATES',
+    }),
+    runtime_json: JSON.stringify({
+      last_hitl_gate: { kind: 'result_approval', gate_id: 'gate-release', release_ready: true },
+      human_response: { text: 'принято, но проверь DATES' },
+    }),
+    result_json: JSON.stringify(scheduleResult),
+    verification_json: JSON.stringify({ verdict: 'pass' }),
+    plan_json: '{}',
+  }))[0].json;
+  const plannerPayload = JSON.parse(plannerIn.planner_input);
+  assert.equal(plannerPayload.active_human_gate.kind, 'result_approval');
+  assert.equal(plannerPayload.active_human_gate.release_ready, true);
+  assert.match(plannerPayload.latest_human_reply.text, /DATES/);
+  assert.match(plannerPayload.instruction, /human_intent/);
+  assert.doesNotMatch(plannerIn.planner_input, /1 JAN 2025/);
+  assert.equal(plannerPayload.previous_specialist_result.compact_data.release_ready, true);
+  assert.equal(plannerPayload.previous_specialist_result.deliverables[0].schedule_text, undefined);
+
+  const releaseReadySchedule = specialistResult({
+    specialist_id: 'schedule_builder_specialist',
+    status: 'needs_approval',
+    artifact_refs: [{ ref: 'artifact://result/1', kind: 'result', revision: '1', description: 'result' }],
+    deliverables: [{ kind: 'schedule_inc_text', filename: 'schedule.inc', schedule_text: scheduleText }],
+    compact_data: {
+      release_ready: true,
+      generated_schedule: scheduleText,
+      merge_result: {
+        status: 'merged',
+        generated_schedule: scheduleText,
+        output_package: {
+          contract: 'schedule_package',
+          contract_version: '1.0',
+          root_path: 'schedule.inc',
+          files: [{ file_ref: 'schedule.inc', text: scheduleText }],
+        },
+      },
+      decision_record: decisionRecord('Build SCHEDULE'),
+    },
+  });
+  const normalizedRelease = (await execute(
+    orchestrator,
+    'Normalize specialist result',
+    { specialist_result: releaseReadySchedule },
+    {
+      'Resolve allowlisted specialist': {
+        task_id: 'eng-1',
+        specialist_id: 'schedule_builder_specialist',
+        retry_count: 0,
+        specialist_packet: { attempt: 1 },
+      },
+    },
+  ))[0].json;
+  assert.equal(normalizedRelease.specialist_requires_verification, true);
+  assert.equal(normalizedRelease.specialist_direct_gate, false);
+
+  const schedulePacket = {
+    contract: 'specialist_packet',
+    contract_version: '1.0',
+    specialist_id: 'schedule_builder_specialist',
+    objective: 'Revise forecast schedule',
+    inputs: { schedule_request: { requested_keyword_scope: ['WCONPROD', 'DATES'] } },
+    controls: { unit_system: 'METRIC' },
+    acceptance_criteria: [{ id: 'c1', required: true, check: 'ORAT preserved', expected: 'finite' }],
+    artifact_refs: [{ ref: 'artifact://input/1', kind: 'input', revision: '1', description: 'input' }],
+  };
+  const releasePlanBase = {
+    ...basePlannerRequest({
+      objective: 'Revise forecast schedule',
+      task_type: 'schedule_build',
+      hitl_reply_text: 'принято',
+      artifact_refs: [{ ref: 'artifact://input/1', kind: 'input', revision: '1', description: 'input' }],
+    }),
+    result_json: JSON.stringify(scheduleResult),
+    verification_json: JSON.stringify({ verdict: 'pass' }),
+    packet_json: JSON.stringify(schedulePacket),
+    runtime_json: JSON.stringify({
+      last_hitl_gate: { kind: 'result_approval', gate_id: 'gate-release', release_ready: true },
+      human_response: { text: 'принято' },
+    }),
+  };
+  const acceptRelease = (await execute(
+    orchestrator,
+    'Validate and apply plan',
+    {
+      output: plannerOutput({
+        human_intent: 'accept_release',
+        decision: 'needs_approval',
+        task_type: 'schedule_build',
+        specialist_packet: schedulePacket,
+      }),
+    },
+    { 'Prepare planner input': releasePlanBase },
+  ))[0].json;
+  assert.equal(acceptRelease.status, 'completed');
+  assert.equal(JSON.parse(acceptRelease.result_json).release.schedule_text, scheduleText);
+
+  const acceptBlockedByNewFile = (await execute(
+    orchestrator,
+    'Validate and apply plan',
+    {
+      output: plannerOutput({
+        human_intent: 'accept_release',
+        decision: 'needs_approval',
+        task_type: 'schedule_build',
+        specialist_packet: schedulePacket,
+      }),
+    },
+    {
+      'Prepare planner input': {
+        ...releasePlanBase,
+        runtime_json: JSON.stringify({
+          last_hitl_gate: { kind: 'result_approval', gate_id: 'gate-release', release_ready: true },
+          human_response: { text: 'принято' },
+          hitl_attachments_pending: true,
+        }),
+      },
+    },
+  ))[0].json;
+  assert.notEqual(acceptBlockedByNewFile.status, 'completed');
+
+  const includeAccept = (await execute(
+    orchestrator,
+    'Validate and apply plan',
+    {
+      output: plannerOutput({
+        human_intent: 'accept_release',
+        decision: 'needs_input',
+        task_type: 'schedule_build',
+        specialist_packet: schedulePacket,
+      }),
+    },
+    {
+      'Prepare planner input': {
+        ...basePlannerRequest({
+          objective: 'Revise forecast schedule',
+          task_type: 'schedule_build',
+          hitl_reply_text: 'принято',
+        }),
+        result_json: JSON.stringify({
+          specialist_id: 'schedule_builder_specialist',
+          compact_data: { release_ready: false, failed_stage: 'baseline_analysis' },
+        }),
+        packet_json: JSON.stringify(schedulePacket),
+        runtime_json: JSON.stringify({
+          last_hitl_gate: { kind: 'needs_input', gate_id: 'gate-include', release_ready: false },
+          human_response: { text: 'принято' },
+        }),
+      },
+    },
+  ))[0].json;
+  assert.notEqual(includeAccept.status, 'completed');
+
+  const reviseDraft = (await execute(
+    orchestrator,
+    'Validate and apply plan',
+    {
+      output: plannerOutput({
+        human_intent: 'revise',
+        decision: 'delegate',
+        task_type: 'schedule_build',
+        reason: 'Engineer asked to rework ORAT.',
+        specialist_packet: schedulePacket,
+      }),
+    },
+    {
+      'Prepare planner input': {
+        ...releasePlanBase,
+        request_json: JSON.stringify({
+          objective: 'Revise forecast schedule',
+          task_type: 'schedule_build',
+          hitl_reply_text: 'неправильно. доработай ORAT',
+          artifact_refs: [{ ref: 'artifact://input/1', kind: 'input', revision: '1', description: 'input' }],
+        }),
+        runtime_json: JSON.stringify({
+          last_hitl_gate: { kind: 'result_approval', gate_id: 'gate-release', release_ready: true },
+          human_response: { text: 'неправильно. доработай ORAT' },
+        }),
+      },
+    },
+  ))[0].json;
+  assert.equal(reviseDraft.status, 'delegated');
+  assert.notEqual(reviseDraft.status, 'completed');
+  const revisePacket = JSON.parse(reviseDraft.packet_json);
+  assert.match(String(revisePacket.inputs.human_instruction || ''), /ORAT/);
+  assert.match(String(revisePacket.inputs.schedule_request.human_instruction || ''), /ORAT/);
+
   const traceState = {
     task_id: 'eng-1',
     trace_id: 'trace-1',
@@ -497,7 +898,7 @@ async function main() {
   assert.equal(traceRows.length, preparedTrace.mas_trace_events.length);
   assert(traceRows.every((row) => !row.json.trace_row.details_json.includes('raw_prompt')));
 
-  console.log('Universal decision runtime smoke: 20 scenarios passed');
+  console.log('Universal decision runtime smoke: 41 scenarios passed');
 }
 
 main().catch((error) => {

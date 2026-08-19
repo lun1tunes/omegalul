@@ -341,7 +341,145 @@ async function main() {
   assert(!trace.trace_row.details_json.includes('licensed text'));
   assert(!trace.trace_row.details_json.includes('raw_prompt'));
 
-  console.log('SCHEDULE decision runtime smoke: 12 scenarios passed');
+  const wellDateFacts = [{
+    fact_id: 'w1',
+    well: '1601',
+    value: '2025-01-01',
+    values: { Скважина: '1601', 'Дата ввода': '2025-01-01' },
+  }];
+  const reviseFactsNodes = (requestExtra = {}) => ({
+    'Normalize SCHEDULE pipeline packet': {
+      packet: { objective: 'Revise schedule' },
+      request: {
+        objective: 'Revise schedule',
+        build_mode: 'REVISE',
+        source_facts_packet: { source_snapshot_hash: 'sha256:facts', facts: wellDateFacts, conflicts: [] },
+        rag_evidence: { citations: [citation(['WCONPROD'])], results: [citation(['WCONPROD'])] },
+        ...requestExtra,
+      },
+    },
+    'Validate SCHEDULE pipeline plan': { contract: 'schedule_plan', build_mode: 'REVISE', keyword_scope: ['WCONPROD'] },
+    'Query targeted baseline records': {
+      contract: 'baseline_inventory_query_result',
+      contract_version: '1.0',
+      status: 'succeeded',
+      records: [],
+    },
+  });
+  const emptyReviseWork = builderWork({
+    build_mode: 'REVISE',
+    ir_events: [],
+    changes: [],
+    source_map: [{ keyword: 'WCONPROD', source_ref: 'fact:w1', entity: '1601' }],
+    preservation_report: { policy: 'preserve_unmentioned' },
+  });
+  const noCap = await run(builderWorkflow, 'Validate SCHEDULE builder stage', { output: emptyReviseWork }, reviseFactsNodes());
+  assert.equal(noCap.hard_blockers.includes('COMMISSIONING_CAPABILITY_REQUIRED'), false);
+  assert.equal((noCap.error?.findings || []).some((f) => f.code === 'COMMISSIONING_TIMELINE_PATH'), false);
+
+  const withCap = await run(
+    builderWorkflow,
+    'Validate SCHEDULE builder stage',
+    { output: emptyReviseWork },
+    reviseFactsNodes({ capability_id: 'commissioning_date_retarget' }),
+  );
+  assert.ok((withCap.error?.findings || []).some((f) => f.code === 'COMMISSIONING_TIMELINE_PATH'));
+  assert.equal(withCap.hard_blockers.includes('COMMISSIONING_CAPABILITY_REQUIRED'), false);
+  assert.equal((withCap.source_map || []).some((s) => s.path === 'timeline_commissioning_revise'), true);
+
+  const groupKwNodes = (requestExtra = {}, scope = ['WELSPECS', 'GRUPTREE', 'GCONPROD', 'WECON']) => ({
+    'Normalize SCHEDULE pipeline packet': {
+      packet: { objective: 'Group rebind' },
+      request: {
+        objective: 'Group rebind',
+        build_mode: 'REVISE',
+        source_facts_packet: { facts: [], conflicts: [] },
+        rag_evidence: { citations: [citation(scope)], results: [citation(scope)] },
+        ...requestExtra,
+      },
+    },
+    'Validate SCHEDULE pipeline plan': { contract: 'schedule_plan', build_mode: 'REVISE', keyword_scope: scope },
+    'Query targeted baseline records': {
+      contract: 'baseline_inventory_query_result',
+      contract_version: '1.0',
+      status: 'succeeded',
+      records: [],
+    },
+  });
+  const groupIrWork = builderWork({
+    build_mode: 'REVISE',
+    ir_events: [{ operation: 'ADD', keyword: 'WELSPECS', entity: '1601', fields: { WELL: '1601' } }],
+    changes: [],
+    source_map: [{ keyword: 'WELSPECS', source_ref: 'plan', entity: '1601' }],
+    requirements_matrix: [{ keyword: 'WELSPECS', required: true, status: 'supported', source_ref: 'plan' }],
+    preservation_report: { policy: 'preserve_unmentioned' },
+  });
+  const groupKwOnly = await run(builderWorkflow, 'Validate SCHEDULE builder stage', { output: groupIrWork }, groupKwNodes());
+  assert.equal((groupKwOnly.error?.findings || []).some((f) => f.code === 'GROUP_REBIND_TIMELINE_PATH'), false);
+
+  const groupSpec = {
+    wells: ['1601', '1602'],
+    parent_group: 'DKS',
+    parent_of_parent: 'FIELD',
+    well_groups: { 1601: 'G1601', 1602: 'G1602' },
+    gas_rate: 200000,
+    control: 'GRAT',
+  };
+  const groupExplicit = await run(
+    builderWorkflow,
+    'Validate SCHEDULE builder stage',
+    { output: groupIrWork },
+    groupKwNodes({ capability_id: 'group_membership_rebind', group_rebind: groupSpec }),
+  );
+  assert.ok((groupExplicit.error?.findings || []).some((f) => f.code === 'GROUP_REBIND_TIMELINE_PATH'));
+  assert.equal((groupExplicit.source_map || []).some((s) => s.path === 'timeline_group_revise'), true);
+
+  const emptyPlanRevise = plan({
+    build_mode: 'REVISE',
+    stages: [],
+    keyword_scope: ['DATES', 'WCONPROD'],
+    preservation_policy: 'preserve_unmentioned',
+  });
+  const planFactsNoCap = await run(
+    plannerWorkflow,
+    'Validate SCHEDULE pipeline plan',
+    { output: emptyPlanRevise },
+    {
+      'Prepare SCHEDULE planner input': {
+        planner_request: {
+          task: { objective: 'Revise dates' },
+          build_mode: 'REVISE',
+          requested_keyword_scope: ['DATES', 'WCONPROD'],
+          source_facts_packet: { facts: wellDateFacts },
+          evidence: [{ kind: 'source_facts_packet', value: { facts: wellDateFacts } }],
+        },
+      },
+    },
+  );
+  assert.ok(planFactsNoCap.hard_blockers.includes('PLAN_STAGES_MISSING'));
+  assert.equal((planFactsNoCap.stages || []).some((s) => s.stage_id === 'commissioning_dates'), false);
+
+  const planFactsWithCap = await run(
+    plannerWorkflow,
+    'Validate SCHEDULE pipeline plan',
+    { output: emptyPlanRevise },
+    {
+      'Prepare SCHEDULE planner input': {
+        planner_request: {
+          task: { objective: 'Revise dates' },
+          build_mode: 'REVISE',
+          capability_id: 'commissioning_date_retarget',
+          requested_keyword_scope: ['DATES', 'WCONPROD'],
+          source_facts_packet: { facts: wellDateFacts },
+          evidence: [{ kind: 'source_facts_packet', value: { facts: wellDateFacts } }],
+        },
+      },
+    },
+  );
+  assert.ok((planFactsWithCap.stages || []).some((s) => s.stage_id === 'commissioning_dates'));
+  assert.equal(planFactsWithCap.hard_blockers.includes('PLAN_STAGES_MISSING'), false);
+
+  console.log('SCHEDULE decision runtime smoke: passed');
 }
 
 main().catch((error) => {

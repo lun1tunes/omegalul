@@ -129,6 +129,32 @@ async function normalizeTrace(events) {
   assert.equal(excelReady.contract_version, '1.1');
   passed += 1;
 
+  const excelOnly = await run('Route successful specialist handoff', {
+    task_id: 'eng-handoff-1',
+    specialist_id: 'excel_extraction_specialist',
+    request_json: JSON.stringify({
+      objective: 'Extract WCONPROD-like rates and t-navigator dates from the workbook',
+      task_type: 'excel_extraction',
+    }),
+    specialist_packet: { inputs: { requested_fields: ['Date', 'Price'] } },
+    specialist_result: {
+      status: 'succeeded',
+      summary: 'extracted',
+      compact_data: {
+        source_snapshot_hash: 'fnv1a32:abcd1234',
+        correlation_id: 'corr-price',
+        preview_records: [{ Date: '2024-01-01', Price: 80 }],
+        conflicts: [],
+      },
+      artifact_refs: [],
+      evidence: [],
+    },
+    runtime_json: delegated.runtime_json,
+  });
+  assert.equal(excelOnly.post_specialist_route, 'verify');
+  assert.notEqual(JSON.parse(excelOnly.runtime_json).last_error?.code, 'EXCEL_EVIDENCE_READY');
+  passed += 1;
+
   // Factor: typed evidence_gap — malformed gaps do not open Excel loop.
   const malformed = await run('Prepare SCHEDULE evidence retry', {
     task_id: 'eng-handoff-1',
@@ -149,6 +175,13 @@ async function normalizeTrace(events) {
   });
   assert.equal(malformed.schedule_evidence_retry, false);
   assert.equal(malformed.specialist_result.error.code, 'MALFORMED_EVIDENCE_GAP');
+  const malformedAsk = String(
+    malformed.specialist_result.human_request?.questions?.[0]?.text
+    || malformed.specialist_result.human_request?.questions?.[0]?.question
+    || '',
+  );
+  assert(/[А-Яа-яЁё]/.test(malformedAsk), malformedAsk);
+  assert(!/^MALFORMED_EVIDENCE_GAP/.test(malformedAsk));
   passed += 1;
 
   const typed = await run('Prepare SCHEDULE evidence retry', {

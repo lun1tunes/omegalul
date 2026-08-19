@@ -1729,7 +1729,8 @@ def validate_result(ctx: dict[str, Any], args: dict[str, Any]) -> dict[str, Any]
     min_rows = args.get("min_rows", 1)
     if not isinstance(required_columns, list) or not all(isinstance(value, str) for value in required_columns) or not isinstance(min_rows, int) or min_rows < 0:
         raise ToolError("INVALID_ARGUMENTS", "Invalid required_columns or min_rows")
-    missing = [column for column in required_columns if column not in result["columns"]]
+    columns_lower = {str(column).strip().lower() for column in result["columns"]}
+    missing = [column for column in required_columns if str(column).strip().lower() not in columns_lower]
     enough_rows = result["row_count"] >= min_rows
     valid = not missing and enough_rows
     # Validation is an explicit, server-side fact about this immutable query

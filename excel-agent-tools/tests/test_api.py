@@ -146,6 +146,9 @@ def test_full_excel_tool_flow_and_artifact(client: TestClient) -> None:
         "enough_rows": True,
         "row_count": 2,
     }
+    case_insensitive = tool(client, session_id, "validate_result", {"result_id": queried["result_id"], "required_columns": ["заказ №"]})
+    assert case_insensitive["valid"] is True
+    assert case_insensitive["missing_columns"] == []
 
 
 def test_successful_finalization_requires_successful_result_validation(client: TestClient) -> None:

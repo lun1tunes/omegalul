@@ -8,7 +8,7 @@
   <link rel="preconnect" href="https://fonts.googleapis.com" />
   <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
   <link href="https://fonts.googleapis.com/css2?family=IBM+Plex+Sans:wght@400;500;600;700&family=IBM+Plex+Mono:wght@400;500&display=swap" rel="stylesheet" />
-  <link rel="stylesheet" href="/static/app.css?v=57" />
+  <link rel="stylesheet" href="/static/app.css?v=64" />
 </head>
 <body>
   <div class="atmosphere" aria-hidden="true"></div>
@@ -44,9 +44,7 @@
           <span class="id">Новая задача</span>
         </span>
       </button>
-      <div class="rail-list" id="railList">
-        <p class="rail-empty" id="railEmpty">Нет задач. Создайте новую или дождитесь передачи от Trace Writer.</p>
-      </div>
+        <div class="rail-list" id="railList"></div>
     </aside>
     <section class="workspace">
       <div class="transcript" aria-live="polite">
@@ -129,24 +127,39 @@
       </form>
 
       <form class="composer" id="composer" autocomplete="off" hidden>
-        <div class="composer-top">
-          <div class="composer-actions" role="group" aria-label="Действия по запросу системы">
-            <button type="submit" class="btn btn-approve" data-action="approve" id="approveBtn">Утвердить</button>
-            <button type="submit" class="btn btn-reject" data-action="reject" id="rejectBtn">Отклонить</button>
-            <button type="submit" class="btn" data-action="reply" id="replyBtn">Ответить</button>
-            <button type="button" class="btn" id="restartBtn" hidden>Перезапустить</button>
-            <button type="submit" class="btn btn-cancel" data-action="cancel" id="cancelBtn">Отменить</button>
-          </div>
-        </div>
         <label class="reply-field">
           <span>Ваш ответ</span>
           <textarea id="humanResponse" rows="2" placeholder="Уточнения, недостающие данные, что ещё поправить…"></textarea>
         </label>
+        <div class="composer-attach-row">
+          <div
+            class="dropzone dropzone-compact"
+            id="hitlDropzone"
+            tabindex="0"
+            role="button"
+            aria-label="Прикрепить файлы к ответу"
+          >
+            <input
+              id="hitlFileInput"
+              type="file"
+              multiple
+              hidden
+              accept=".xlsx,.xls,.data,.inc,.sch,.txt,.grdecl,.dev,.cps3,.grd,.grid"
+            />
+            <p class="dropzone-title">Перетащите файлы сюда или нажмите, чтобы выбрать</p>
+            <p class="dropzone-hint">Недостающий INCLUDE, Excel, schedule, траектории</p>
+            <ul class="file-chips" id="hitlFileList" hidden></ul>
+          </div>
+          <div class="composer-actions" role="group" aria-label="Ответ системе">
+            <button type="submit" class="btn" id="replyBtn">Ответить</button>
+            <button type="button" class="btn" id="restartBtn" hidden>Перезапустить</button>
+          </div>
+        </div>
         <p class="composer-hint" id="composerHint" hidden></p>
       </form>
     </section>
   </main>
 
-  <script src="/static/app.js?v=60"></script>
+  <script src="/static/app.js?v=67"></script>
 </body>
 </html>

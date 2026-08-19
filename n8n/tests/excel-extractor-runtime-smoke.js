@@ -61,6 +61,23 @@ async function run(name, { json = {}, nodes = {} } = {}) {
     nodes: { 'Prepare AI Agent input': prepared },
   });
   assert.equal(unique.preflight_needs_clarification, false);
+  assert.equal(unique.selected_table_authoritative, false);
+
+  const locked = await run('Assess deterministic clarification need', {
+    json: {
+      result: {
+        selected: { table_id: 'tbl_1', sheet: 'Monthly Prices', range: 'A5:E8', columns: ['Natural gas, Europe'] },
+        candidates: [{ table_id: 'tbl_1' }],
+        sheet_candidates: [],
+        column_candidates: [],
+        suggested_select: ['Natural gas, Europe'],
+        ambiguous: false,
+        reason: 'unique_table',
+      },
+    },
+    nodes: { 'Prepare AI Agent input': { ...prepared, request: { prompt: 'Give me the oil price.', table_selector: 'Monthly Prices' } } },
+  });
+  assert.equal(locked.selected_table_authoritative, true);
 
   const repair = await run('Prepare deterministic query repair', {
     json: { session_id: 'sess_test', final_args: { status: 'error' } },
@@ -135,9 +152,9 @@ async function run(name, { json = {}, nodes = {} } = {}) {
       },
     },
   });
-  assert.equal(extras.needs_query_repair, true);
-  assert.deepEqual(extras.repair_args.select, ['Column A', 'Natural gas, Europe']);
-  console.log('excel-extractor-runtime-smoke: 6 scenarios passed');
+  assert.equal(extras.needs_query_repair, false);
+  assert.equal(extras.repair_args, null);
+  console.log('excel-extractor-runtime-smoke: 7 scenarios passed');
 })().catch((error) => {
   console.error(error);
   process.exit(1);

@@ -68,8 +68,34 @@ def main() -> int:
     code, body = http_get(f"http://127.0.0.1:{activity_port}/health")
     push("host mas-activity /health", code == 200 and "ok" in body.lower(), f"{code} {body}")
 
+    orch_url = os.getenv(
+        "ORCHESTRATOR_WEBHOOK_URL",
+        f"http://127.0.0.1:{n8n_port}/webhook/engineering-orchestrator",
+    )
+    try:
+        req = urllib.request.Request(
+            orch_url,
+            data=b"{}",
+            method="POST",
+            headers={"Content-Type": "application/json"},
+        )
+        with urllib.request.urlopen(req, timeout=10) as resp:
+            orch_code = int(resp.status)
+            orch_body = resp.read().decode("utf-8", errors="replace")[:180]
+    except urllib.error.HTTPError as exc:
+        orch_code = int(exc.code)
+        orch_body = exc.read().decode("utf-8", errors="replace")[:180]
+    except Exception as exc:  # noqa: BLE001
+        orch_code = 0
+        orch_body = str(exc)[:180]
+    push(
+        "host orchestrator webhook registered (unauth 403)",
+        orch_code == 403 and "Authorization data is wrong" in orch_body,
+        f"{orch_code} {orch_body.replace(chr(10), ' ')}",
+    )
+
     for name, url in [
-        ("compose excel-tools via n8n DNS", "http://excel-tools:8000/health"),
+        ("compose excel-tools via n8n DNS", "http://excel-tools:18000/health"),
         ("compose n8n-runners via n8n DNS", "http://n8n-runners:5680/healthz"),
         ("compose mas-activity via n8n DNS", "http://mas-activity:8200/health"),
         ("compose n8n self via n8n DNS", "http://n8n:5678/healthz"),

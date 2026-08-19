@@ -129,6 +129,34 @@ def _binaries_for(task_id: str) -> BinaryMap | None:
     return None
 
 
+def _next_binary_key(existing: BinaryMap, prefix: str) -> str:
+    if prefix not in existing:
+        return prefix
+    index = 1
+    while f"{prefix}{index}" in existing:
+        index += 1
+    return f"{prefix}{index}"
+
+
+def _merge_binaries(base: BinaryMap | None, extra: BinaryMap | None) -> BinaryMap | None:
+    """Keep start files; HITL attachments add/replace. Excel/surface overwrite the same slot."""
+    if not extra:
+        return dict(base) if base else None
+    out: BinaryMap = dict(base or {})
+    for key, val in extra.items():
+        if key in {"file", "surface_file"}:
+            out[key] = val
+        elif key.startswith("schedule_file"):
+            out[_next_binary_key(out, "schedule_files")] = val
+        elif key.startswith("trajectory"):
+            out[_next_binary_key(out, "trajectory_files")] = val
+        elif key.startswith("attachment"):
+            out[_next_binary_key(out, "attachments")] = val
+        else:
+            out[key] = val
+    return out
+
+
 def _now() -> str:
     return datetime.now(timezone.utc).isoformat()
 
@@ -803,7 +831,14 @@ def _events_to_turns(events: list[EventIn], *, trace_id: str | None) -> list[dic
     return out
 
 
-def _human_turn(*, action: str, requested_by: str, human_response: str | None, gate: dict[str, Any] | None) -> dict[str, Any]:
+def _human_turn(
+    *,
+    action: str,
+    requested_by: str,
+    human_response: str | None,
+    gate: dict[str, Any] | None,
+    file_names: list[str] | None = None,
+) -> dict[str, Any]:
     status_map = {
         "reply": "HUMAN_REPLY",
         "approve": "HUMAN_APPROVED",
@@ -834,12 +869,18 @@ def _human_turn(*, action: str, requested_by: str, human_response: str | None, g
     }
     if human_response:
         details["fields"] = human_response[:120]
+    names = [str(n).strip() for n in (file_names or []) if str(n).strip()]
+    if names:
+        details["file_count"] = len(names)
+        details["files"] = names[:12]
+    files_note = f" Вложений: {len(names)}." if names else ""
+    quoted = f" «{human_response[:240]}»" if human_response else ""
     return _normalize_turn(
         {
             "status": status,
             "stage": "hitl",
             "summary": summary,
-            "brief": brief if not human_response else f"{brief} «{human_response[:240]}»",
+            "brief": f"{brief}{files_note}{quoted}".strip(),
             "from_role": requested_by,
             "to_role": "Orchestrator",
             "from_specialist": "human_operator",
@@ -1764,7 +1805,6 @@ async def post_start_task(
 
     title = description[:80] + ("…" if len(description) > 80 else "")
     turn = _start_turn(requested_by=by, description=description, file_names=file_names, backend=backend)
-    dispatch = _orch_dispatch_turn(action="start", requested_by=by)
     await _set_gate(
         client_task_id,
         status="planning",
@@ -1772,7 +1812,7 @@ async def post_start_task(
     )
     await _append_turns(
         client_task_id,
-        [turn, dispatch],
+        [turn],
         title=title,
         objective=description,
         attached_files=file_names,
@@ -1802,11 +1842,85 @@ async def post_start_task(
     }
 
 
+async def _collect_form_binaries(form: Any) -> tuple[BinaryMap, list[str]]:
+    binary: BinaryMap = {}
+    counters: dict[str, int] = {}
+    file_names: list[str] = []
+
+    async def take(upload: Any, field_hint: str) -> None:
+        if upload is None or isinstance(upload, (str, bytes)) or not getattr(upload, "filename", None):
+            return
+        if not str(upload.filename).strip():
+            return
+        if len(binary) >= MAX_START_FILES:
+            raise HTTPException(status_code=400, detail=f"Too many files (max {MAX_START_FILES})")
+        filename, content, mime = await _read_upload(upload, field=field_hint)
+        key = _assign_upload_key(field_hint, filename, counters)
+        if key == "file" and "file" in binary:
+            raise HTTPException(status_code=400, detail="Only one Excel workbook (file) allowed")
+        if key == "surface_file" and "surface_file" in binary:
+            raise HTTPException(status_code=400, detail="Only one surface_file allowed")
+        binary[key] = (filename, content, mime)
+        file_names.append(filename)
+
+    await take(form.get("file"), "file")
+    await take(form.get("surface_file"), "surface_file")
+    for item in form.getlist("schedule_files"):
+        await take(item, "schedule_files")
+    for item in form.getlist("trajectory_files"):
+        await take(item, "trajectory_files")
+    for item in form.getlist("attachments"):
+        await take(item, "attachments")
+    return binary, file_names
+
+
+async def _parse_hitl_request(request: Request) -> tuple[HitlPost, BinaryMap, list[str]]:
+    ctype = (request.headers.get("content-type") or "").lower()
+    if "multipart/form-data" in ctype:
+        form = await request.form()
+        extra, names = await _collect_form_binaries(form)
+        raw_ver = str(form.get("expected_version") or "").strip()
+        try:
+            expected = int(raw_ver) if raw_ver else None
+        except ValueError:
+            expected = None
+        action = str(form.get("action") or "reply").strip().lower() or "reply"
+        body = HitlPost(
+            action=action,  # type: ignore[arg-type]
+            requested_by=str(form.get("requested_by") or ""),
+            human_response=str(form.get("human_response") or "").strip() or None,
+            gate_id=str(form.get("gate_id") or "").strip() or None,
+            expected_version=expected,
+        )
+        return body, extra, names
+    payload = await request.json()
+    if not isinstance(payload, dict):
+        raise HTTPException(status_code=400, detail="JSON object required")
+    return HitlPost.model_validate(payload), {}, []
+
+
 @app.post("/v1/tasks/{task_id}/hitl")
-async def post_hitl(task_id: str, body: HitlPost) -> dict[str, Any]:
+async def post_hitl(task_id: str, request: Request) -> dict[str, Any]:
+    if not TASK_ID_RE.match(task_id):
+        raise HTTPException(status_code=400, detail="Invalid task_id")
+    body, extra_files, extra_names = await _parse_hitl_request(request)
+    return await _execute_hitl(
+        task_id, body, extra_files=extra_files, extra_names=extra_names
+    )
+
+
+async def _execute_hitl(
+    task_id: str,
+    body: HitlPost,
+    *,
+    extra_files: BinaryMap | None = None,
+    extra_names: list[str] | None = None,
+) -> dict[str, Any]:
     if not TASK_ID_RE.match(task_id):
         raise HTTPException(status_code=400, detail="Invalid task_id")
     task_id = _canonical_task_id(task_id)
+    extra_files = extra_files or {}
+    extra_names = extra_names or []
     action = body.action.lower()
     if action not in HITL_ACTIONS:
         raise HTTPException(status_code=400, detail="Unsupported action")
@@ -1814,7 +1928,7 @@ async def post_hitl(task_id: str, body: HitlPost) -> dict[str, Any]:
     if requested_by.lower() in ANON:
         raise HTTPException(status_code=400, detail="requested_by must be a named engineer (not anonymous)")
     human_response = (body.human_response or "").strip() or None
-    if action == "reply" and not human_response:
+    if action == "reply" and not human_response and not extra_files:
         raise HTTPException(status_code=400, detail="human_response is required for reply")
 
     async with _lock:
@@ -1973,6 +2087,7 @@ async def post_hitl(task_id: str, body: HitlPost) -> dict[str, Any]:
                 requested_by=requested_by,
                 human_response=human_response,
                 gate=local_gate or gate,
+                file_names=extra_names,
             ),
             _orch_dispatch_turn(action=action, requested_by=requested_by),
         ],
@@ -1996,9 +2111,14 @@ async def post_hitl(task_id: str, body: HitlPost) -> dict[str, Any]:
         "gate_id": gate_id,
         "human_response": human_response,
         "requested_by": requested_by,
+        # Start binaries are re-attached for specialist hops; only extra_files are new HITL uploads.
+        "hitl_new_attachments": bool(extra_files),
     }
+    merged_files = _merge_binaries(_binaries_for(task_id), extra_files)
+    if extra_files:
+        _remember_binaries(task_id, merged_files)
     try:
-        orch = await invoke_orchestrator(resume, files=_binaries_for(task_id))
+        orch = await invoke_orchestrator(resume, files=merged_files)
     except OrchestratorError as exc:
         await _append_turns(task_id, [_orch_failed_turn(action=action, detail=str(exc))])
         raise _raise_orch(exc) from exc
@@ -2009,6 +2129,7 @@ async def post_hitl(task_id: str, body: HitlPost) -> dict[str, Any]:
             requested_by=requested_by,
             human_response=human_response,
             gate=local_gate or (orch.get("human_gate") if isinstance(orch.get("human_gate"), dict) else None),
+            file_names=extra_names,
         )
         stored = await _append_turns(task_id, [turn])
     else:
@@ -2069,7 +2190,7 @@ async def post_restart(task_id: str, body: HitlPost) -> dict[str, Any]:
         gate_id=body.gate_id,
         expected_version=body.expected_version,
     )
-    return await post_hitl(task_id, restart_body)
+    return await _execute_hitl(task_id, restart_body)
 
 
 @app.get("/v1/tasks/{task_id}/schedule")

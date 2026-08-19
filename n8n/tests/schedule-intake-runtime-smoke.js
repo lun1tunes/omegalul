@@ -76,6 +76,16 @@ async function main() {
   const noForecast = await execute(request({ forecast_start: '', forecast_end: '' }));
   assert(codes(noForecast).has('FORECAST_START_DATE_REQUIRED'));
   assert(codes(noForecast).has('FORECAST_END_DATE_REQUIRED'));
+  const reviseDatesFromBaseline = await execute(request({
+    ...reviseFields,
+    model_start_date: '',
+    forecast_start: '',
+    forecast_end: '',
+  }));
+  assert.equal(reviseDatesFromBaseline.status, 'accepted');
+  assert.equal(reviseDatesFromBaseline.forecast_start, '2025-01-01');
+  assert.equal(reviseDatesFromBaseline.forecast_end, '2025-01-01');
+  assert.equal(reviseDatesFromBaseline.model_start_date, '2024-12-31');
   const overlap = await execute(request({ history_start: '2020-01-01', history_end: '2026-01-01' }));
   assert(codes(overlap).has('HISTORY_FORECAST_OVERLAP'));
   const historyScope = await execute(request({ requested_keyword_scope: ['DATES', 'WCONHIST'], rag_evidence: rag(['DATES', 'WCONHIST']) }));
@@ -88,6 +98,11 @@ async function main() {
   assert(codes(reviseNoBaseline).has('BASELINE_REQUIRED'));
   assert(codes(reviseNoBaseline).has('PRESERVATION_POLICY_REQUIRED'));
   assert(codes(reviseNoBaseline).has('REVISE_CHANGE_SCOPE_REQUIRED'));
+  const baselineAsk = (reviseNoBaseline.questions || []).find((q) => q.code === 'BASELINE_REQUIRED')
+    || (reviseNoBaseline.questions || [])[0];
+  assert(baselineAsk, 'REVISE without baseline must emit a human question');
+  assert(/[А-Яа-яЁё]/.test(String(baselineAsk.text || baselineAsk.question || '')), 'intake question must be Russian');
+  assert(!/^INCLUDE_NOT_FOUND$|^BASELINE_REQUIRED$/.test(String(baselineAsk.text || baselineAsk.question || '')));
 
   const citationGap = await execute(request({ rag_evidence: rag(['DATES']) }));
   assert(codes(citationGap).has('KEYWORD_INSTRUCTION_SCOPE_INCOMPLETE'));
@@ -101,7 +116,7 @@ async function main() {
   const badGatePolicy = await execute(request({ stage_gate_policy: { attention_threshold: 80, hitl_threshold: 60, hard_blockers: [] } }));
   assert(codes(badGatePolicy).has('STAGE_GATE_POLICY_INVALID'));
 
-  console.log('SCHEDULE governed intake runtime smoke: 17 scenarios passed');
+  console.log('SCHEDULE governed intake runtime smoke: 18 scenarios passed');
 }
 
 main().catch((error) => {

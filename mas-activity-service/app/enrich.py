@@ -24,12 +24,6 @@ SAFE_CHIP_KEYS = (
     "source_snapshot_hash",
     "correlation_id",
     "dropped_gap_count",
-    "action",
-    "requested_by",
-    "gate_id",
-    "gate_kind",
-    "file_count",
-    "backend",
 )
 CHIP_LABELS: dict[str, str] = {
     "attempt": "Попытка",
@@ -42,12 +36,6 @@ CHIP_LABELS: dict[str, str] = {
     "source_snapshot_hash": "Снимок",
     "correlation_id": "Связка",
     "dropped_gap_count": "Отброшено",
-    "action": "Действие",
-    "requested_by": "Запросил",
-    "gate_id": "Шлюз",
-    "gate_kind": "Тип шлюза",
-    "file_count": "Файлов",
-    "backend": "Бэкенд",
 }
 SECRETISH = re.compile(r"(prompt|secret|token|password|authorization|api[_-]?key|binary|content|session)", re.I)
 
@@ -64,7 +52,7 @@ BRIEF_TEMPLATES: dict[str, str] = {
     "BUILDER_ITERATION_BUDGET_EXHAUSTED": "Лимит итераций Builder исчерпан — нужен человек.",
     "RESUME_SCHEDULE": "Недостающие факты получены — продолжаем сборку schedule.",
     "INVALID_EXCEL_EVIDENCE_SNAPSHOT": "Снимок Excel не совпал — продолжение запрещено.",
-    "TASK_STARTED": "Задача создана — оркестратор принимает ввод и вложения.",
+    "TASK_STARTED": "Задача создана — запрос ушёл в оркестратор.",
     "ORCH_DISPATCHED": "Запрос ушёл в оркестратор — хэндоффы появятся в ленте по мере работы.",
     "ORCH_FAILED": "Оркестратор не ответил — смотрите причину в ленте.",
     "AWAITING_HUMAN": "Ждём ваш ответ: факты, решение или утверждение.",

@@ -58,7 +58,9 @@
       "parameters": {
         "model": "qwen3.6-plus",
         "options": {
-          "temperature": 0
+          "temperature": 0,
+          "timeout": 300000,
+          "maxRetries": 5
         }
       },
       "id": "cae00001-0000-4000-8000-000000000005",
