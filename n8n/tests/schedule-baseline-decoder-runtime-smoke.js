@@ -275,6 +275,51 @@ async function main() {
   assert.equal(targetedOpaque.status, 'needs_input');
   assert.equal(targetedOpaque.findings.find((f) => f.code === 'OPAQUE_BASELINE_SEMANTICS_UNAVAILABLE').severity, 'error');
 
+  const missingBodyAnalysis = await analyze(baseText, []);
+  assert.equal(missingBodyAnalysis.status, 'analyzed');
+  const missingBodyFinding = (missingBodyAnalysis.findings || []).find((f) => f.code === 'INCLUDE_NOT_FOUND');
+  assert.equal(missingBodyFinding.severity, 'warning');
+  const missingBody = await decode(missingBodyAnalysis);
+  assert.equal(missingBody.status, 'decoded');
+  assert.equal(missingBody.findings.find((f) => f.code === 'INCLUDE_NOT_FOUND').severity, 'warning');
+  assert.equal(missingBody.hard_blockers.includes('INCLUDE_NOT_FOUND'), false);
+  assert.deepEqual(missingBody.decoded_records.map((r) => r.keyword), ['DATES', 'GRUPTREE', 'WELSPECS']);
+
+  const noDates = await decode(analysis, catalogue(), { change_effective_from: '', model_start_date: '' });
+  assert.equal(noDates.status, 'decoded');
+  assert(!codes(noDates).has('CHANGE_EFFECTIVE_FROM_REQUIRED'));
+  assert(!codes(noDates).has('MODEL_START_DATE_REQUIRED'));
+  assert.equal(noDates.change_effective_from, null);
+  assert.equal(noDates.model_start_date, null);
+  const noDatesReplay = await replayPrefix(noDates);
+  assert.equal(noDatesReplay.status, 'valid', JSON.stringify(noDatesReplay.hard_blockers || noDatesReplay.findings));
+
+  const preDatesText = [
+    'SCHEDULE',
+    'GRUPTREE',
+    "  'FIELD' 'ROOT' /",
+    'DATES',
+    '  1 JAN 2024 /',
+    'WELSPECS',
+    "  'WELL''A' 'FIELD' /",
+    'WCONPROD',
+    "  'WELL''A' ORAT 100 * /",
+    '',
+  ].join('\n');
+  const preDatesAnalysis = await analyze(preDatesText, []);
+  assert.equal(preDatesAnalysis.status, 'analyzed');
+  const preDates = await decode(preDatesAnalysis, catalogue(), { change_effective_from: '', model_start_date: '' });
+  assert.equal(preDates.status, 'decoded', JSON.stringify(preDates.hard_blockers || preDates.findings));
+  assert(!codes(preDates).has('BASELINE_EFFECTIVE_DATE_REQUIRED'));
+  const grup = preDates.decoded_records.find((r) => r.keyword === 'GRUPTREE');
+  assert.equal(grup.effective_at, null);
+  assert.equal(grup.clock_state, 'pre_first_dates');
+  const wcon = preDates.decoded_records.find((r) => r.keyword === 'WCONPROD');
+  assert.equal(wcon.effective_at, '2024-01-01');
+  assert.equal(wcon.clock_state, 'dated');
+  const preReplay = await replayPrefix(preDates);
+  assert.equal(preReplay.status, 'valid', JSON.stringify(preReplay.hard_blockers || preReplay.findings));
+
   const lf = await analyze(baseText, [{ path: 'controls.inc', text: includedText }]);
   const crlf = await analyze(baseText.replace(/\n/g, '\r\n'), [{ path: 'controls.inc', text: includedText.replace(/\n/g, '\r\n') }]);
   assert.equal(lf.package.files[0].manifest.line_endings, 'LF');
@@ -285,7 +330,7 @@ async function main() {
   assert(lf.package.files[0].nodes.some((n) => n.raw.includes('\n')));
   assert(crlf.package.files[0].nodes.some((n) => n.raw.includes('\r\n')));
 
-  console.log('SCHEDULE baseline decoder and two-phase replay smoke: 16 scenarios passed');
+  console.log('SCHEDULE baseline decoder and two-phase replay smoke: 19 scenarios passed');
 }
 
 main().catch((error) => {

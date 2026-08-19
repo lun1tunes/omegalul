@@ -96,8 +96,12 @@ In ECLIPSE / tNavigator text, `--` starts a comment through end-of-line (full-li
 ### INCLUDE call sites and included files
 - **Same date by default:** each INCLUDE stays on the same DATES position as in the baseline/source schedule. INCLUDE inherits the current clock (`uses_current`); do not shift includes to cutover, first-well date, or file top without authority.
 - **Explicit exception only:** move/rebind an INCLUDE when the task or source_facts give clear instructions for that specific include (example: “INCLUDE GRUPTREE_BASE sync with the date the first well is introduced”). Unmentioned includes → KEEP path, order, and date slot.
-- **Read when present:** if the PATH resolves to a file in package/`include_files`, open and decode that body too (allowlisted keywords, nested INCLUDE, `--` comments) before planning/emitting changes that touch its scope. If the file is absent from source data, KEEP the INCLUDE call and do not invent contents; need body edits without evidence → `needs_input`.
+- **Read when present:** if the PATH resolves to a file in package/`include_files`, open and decode that body too (allowlisted keywords, nested INCLUDE, `--` comments) before planning/emitting changes that touch its scope. Attaching INCLUDE bodies is optional. If the file is absent, KEEP the INCLUDE call on the same DATES and do not invent contents — do not HITL for the missing body. Ask (`needs_input`) only when the task explicitly requires editing that included file's contents and the body is still missing. Date moves apply to the INCLUDE call-site in the attached root, not to an unattached child.
 - **REVISE:** preserve include layout + call-site dates under `preserve_unmentioned`; do not inline included files into the root unless an approved package refactor says so.
+
+### Keywords before the first DATES
+Header records before the first DATES stay in place. Do not invent `model_start_date`. Do not HITL for missing model start or `change_effective_from` when the task did not give them.
+Keyword-wide REMOVE applies to every matching block, including pre-DATES. MOVE a pre-DATES keyword only when the task explicitly says to move that keyword.
 
 ### Preferred well path (tN §11.2)
 1. `WELSPECS` — well + group (group default FIELD).
@@ -241,10 +245,11 @@ return[{json:{baseline_request:{root_path:String(root.request.root_path||root.re
 
 
 PREPARE_BASELINE_DECODE = r"""
-const root=$('Normalize SCHEDULE pipeline packet').first().json,baseline=$('Analyze lossless baseline inventory').first().json,req=root.request;
+const root=$('Normalize SCHEDULE pipeline packet').first().json,baseline=$('Analyze lossless baseline inventory').first().json,req=root.request||{};
+let intake={};try{intake=$('Run deterministic SCHEDULE intake').first().json||{}}catch{}
 const catalogue=req.schema_catalogue||req.rag_evidence?.schema_catalogue||{};
-const scope=Array.isArray(req.requested_keyword_scope)?req.requested_keyword_scope:[];
-return[{json:{baseline_decode_request:{baseline_analysis:baseline,schema_catalogue:catalogue,change_effective_from:String(req.change_effective_from||req.forecast_start||''),model_start_date:String(req.model_start_date||''),requested_keyword_scope:scope,initial_semantic_snapshot:req.initial_semantic_snapshot||null}}}];
+const scope=[...new Set([...(Array.isArray(intake.requested_keyword_scope)?intake.requested_keyword_scope:[]),...(Array.isArray(req.requested_keyword_scope)?req.requested_keyword_scope:[])].map(v=>String(v||'').trim().toUpperCase()).filter(Boolean))];
+return[{json:{baseline_decode_request:{baseline_analysis:baseline,schema_catalogue:catalogue,change_effective_from:String(req.change_effective_from||''),model_start_date:String(req.model_start_date||intake.model_start_date||''),requested_keyword_scope:scope,initial_semantic_snapshot:req.initial_semantic_snapshot||null}}}];
 """
 
 
@@ -274,10 +279,11 @@ const factsPacket=obj(req.source_facts_packet)?req.source_facts_packet:{},facts=
 const factWells=facts.map(f=>{const values=obj(f.values)?f.values:{};return clean(f.well||f.entity||f.entity_id||values['Скважина']||values.скважина||values.WELL||values.well||values['Группа']||values.GROUP||values.group)}).filter(Boolean);
 const changeWells=[...(arr(change.wells)?change.wells:[]),...(arr(change.groups)?change.groups:[]),...(arr(change.entities)?change.entities:[])].map(v=>clean(String(v))).filter(Boolean);
 const explicitEntities=arr(explicit.entity_values)?explicit.entity_values:entries.flatMap(v=>[v.entity,v.well,v.group,v.entity_id]).filter(Boolean);
-const plannedEntities=(arr(plan.stages)?plan.stages:[]).flatMap(s=>arr(s.entity_scope)?s.entity_scope:[]).map(clean).filter(v=>v&&!isClassToken(v));
+const plannedEntities=(arr(plan.stages)?plan.stages:[]).flatMap(s=>arr(s.entity_scope)?s.entity_scope:[]).map(clean).filter(v=>v&&!isClassToken(v)&&/^[A-Za-z0-9][A-Za-z0-9_.\-]{0,39}$/.test(v));
 // Prefer concrete SCHEDULE object names from Excel/change scope. Never treat class labels like "wells" as entity ids.
-const preferred=[...factWells,...changeWells,...explicitEntities,...plannedEntities].map(v=>clean(String(v))).filter(v=>v&&!isClassToken(v));
-const entityValues=[...new Set(preferred)];
+const preferred=[...factWells,...changeWells,...explicitEntities,...plannedEntities].map(v=>clean(String(v))).filter(v=>v&&!isClassToken(v)&&/^[A-Za-z0-9][A-Za-z0-9_.\-]{0,39}$/.test(v));
+const taskRemove=clean(change.operation).toLowerCase()==='remove'||(arr(change.must_remove)&&change.must_remove.length>0);
+const entityValues=taskRemove&&!factWells.length&&!changeWells.length&&!(arr(explicit.entity_values)&&explicit.entity_values.length)?[]:[...new Set(preferred)];
 const explicitNodes=arr(explicit.source_node_ids)?explicit.source_node_ids:entries.flatMap(v=>[v.source_node_id,v.target_node_id,v.node_id]).filter(Boolean);
 const temporal=(arr(plan.stages)?plan.stages:[]).flatMap(s=>arr(s.temporal_scope)?s.temporal_scope:[]),dates=temporal.flatMap(v=>String(v).match(/\b\d{4}-\d{2}-\d{2}\b/g)||[]).sort();
 const requestedLimit=Number(req.baseline_query_limit||explicit.limit||2000),limit=Number.isInteger(requestedLimit)&&requestedLimit>0&&requestedLimit<=2000?requestedLimit:2000;
@@ -294,7 +300,7 @@ let replay=null;try{replay=$('Replay baseline prefix into semantic boundary').fi
 let baselineQuery=null;try{baselineQuery=$('Query baseline planning context').first().json}catch{}
 const req=root.request;const obj=v=>v&&typeof v==='object'&&!Array.isArray(v),arr=Array.isArray,clean=v=>typeof v==='string'?v.trim():'';
 const slimFacts=packet=>{if(!obj(packet))return packet;const pick=(row,keys)=>{if(!obj(row))return null;for(const k of keys){if(row[k]!==undefined&&row[k]!==null&&String(row[k]).trim()!=='')return row[k]}return null};const facts=arr(packet.facts)?packet.facts.slice(0,200).map(f=>{const values=obj(f.values)?f.values:(obj(f.row)?f.row:null);const well=f.well||f.entity_id||f.object_id||pick(values,['Скважина','скважина','WELL','Well','well','WellName'])||null;const value=f.value??f.raw_value??pick(values,['Дата ввода','дата ввода','Date','date','commissioning_date','value'])??null;const field=f.field||f.column||(value!==null?'Дата ввода':null);return {fact_id:f.fact_id||f.id||null,well,field,value,unit:f.unit||null,sheet:f.sheet||null,values:values||undefined}}):[];return {contract:packet.contract||null,contract_version:packet.contract_version||null,source_snapshot_hash:packet.source_snapshot_hash||null,correlation_id:packet.correlation_id||null,fact_count:facts.length||Number(packet.fact_count)||0,facts,conflicts:arr(packet.conflicts)?packet.conflicts.slice(0,20):[],columns:arr(packet.columns)?packet.columns.slice(0,50):undefined}};
-const slimRag=rag=>{if(!obj(rag))return rag;const catalogue=obj(rag.schema_catalogue)?{contract:rag.schema_catalogue.contract,catalogue_ref:rag.schema_catalogue.catalogue_ref||null,catalogue_hash:rag.schema_catalogue.catalogue_hash||null,approved:rag.schema_catalogue.approved===true,schemas:(arr(rag.schema_catalogue.schemas)?rag.schema_catalogue.schemas:[]).slice(0,40).map(s=>({keyword:s.keyword,variant:s.variant||null,schema_id:s.schema_id||null,field_count:arr(s.fields)?s.fields.length:0,fields:(arr(s.fields)?s.fields:[]).slice(0,40).map(f=>({name:f.name||null,type:f.type||null,required:f.required===true,position:f.position||null})),semantics:obj(s.semantics)?{period:s.semantics.period||null,clock:s.semantics.clock||null}:null}))}:null;const results=(arr(rag.results)?rag.results:[]).slice(0,20).map(r=>{const meta=obj(r.metadata)?r.metadata:{};const bodyObj=obj(r.body)?r.body:null;const bodyText=clean(typeof r.body==='string'?r.body:(bodyObj?String(bodyObj.text||bodyObj.instruction||bodyObj.body||''):'')||r.page_content||r.text||r.content||'');return {knowledge_id:r.knowledge_id||meta.knowledge_id||null,knowledge_type:r.knowledge_type||meta.knowledge_type||null,title:r.title||meta.title||null,keywords:r.keywords||meta.keyword_families||meta.keywords||[],score:r.score??r.rrf_score??null,snippet:bodyText.slice(0,4000),body:bodyText.slice(0,8000)||undefined}};return {contract:rag.contract,contract_version:rag.contract_version,query:clean(rag.query).slice(0,500),filters:rag.filters||null,citations:(arr(rag.citations)?rag.citations:[]).slice(0,30),results,schema_catalogue:catalogue,retrieval:rag.retrieval||null,findings:(arr(rag.findings)?rag.findings:[]).slice(0,20)}};
+const slimRag=rag=>{if(!obj(rag))return rag;const catalogue=obj(rag.schema_catalogue)?{contract:rag.schema_catalogue.contract,catalogue_ref:rag.schema_catalogue.catalogue_ref||null,catalogue_hash:rag.schema_catalogue.catalogue_hash||null,approved:rag.schema_catalogue.approved===true,schemas:(arr(rag.schema_catalogue.schemas)?rag.schema_catalogue.schemas:[]).slice(0,40).map(s=>({keyword:s.keyword,variant:s.variant||null,schema_id:s.schema_id||null,field_count:arr(s.fields)?s.fields.length:0,fields:(arr(s.fields)?s.fields:[]).slice(0,40).map(f=>({name:f.name||null,type:f.type||null,required:f.required===true,position:f.position||null})),semantics:obj(s.semantics)?{period:s.semantics.period||null,clock:s.semantics.clock||null}:null}))}:null;const results=(arr(rag.results)?rag.results:[]).slice(0,20).map(r=>{const meta=obj(r.metadata)?r.metadata:{};const bodyObj=obj(r.body)?r.body:null;const bodyText=clean(typeof r.body==='string'?r.body:(bodyObj?String(bodyObj.text||bodyObj.instruction||bodyObj.body||''):'')||r.page_content||r.text||r.content||'');return {knowledge_id:r.knowledge_id||meta.knowledge_id||null,knowledge_type:r.knowledge_type||meta.knowledge_type||null,title:r.title||meta.title||null,keywords:r.keywords||meta.keyword_families||meta.keywords||[],score:r.score??r.rrf_score??null,snippet:bodyText.slice(0,4000),body:bodyText.slice(0,8000)||undefined}});return {contract:rag.contract,contract_version:rag.contract_version,query:clean(rag.query).slice(0,500),filters:rag.filters||null,citations:(arr(rag.citations)?rag.citations:[]).slice(0,30),results,schema_catalogue:catalogue,retrieval:rag.retrieval||null,findings:(arr(rag.findings)?rag.findings:[]).slice(0,20)}};
 const slimInventory=inv=>{if(!obj(inv))return null;const files=(arr(inv.files)?inv.files:[]).slice(0,50).map(f=>{const nodes=arr(f.nodes)?f.nodes:[];const keyword_counts={};for(const n of nodes){const kw=clean(n.keyword).toUpperCase();if(kw)keyword_counts[kw]=(keyword_counts[kw]||0)+1}return {file_ref:f.file_ref||f.path||null,byte_length:f.manifest?.byte_length||f.byte_length||null,node_count:nodes.length,keyword_counts}});return {root_path:inv.root_path||null,package_hash:inv.package_hash||null,keyword_inventory:inv.keyword_inventory||null,opaque_keywords:inv.opaque_keywords||[],files}};
 const evidence=[];
 if(req.source_facts_packet)evidence.push({kind:'source_facts_packet',value:slimFacts(req.source_facts_packet)});
@@ -307,7 +313,13 @@ const compactBaseline=baseline&&typeof baseline==='object'?{contract:baseline.co
 const decodedInventory=baselineQuery&&typeof baselineQuery==='object'?{contract:baselineQuery.contract,status:baselineQuery.status,query_hash:baselineQuery.query_hash||null,decoded_hash:baselineQuery.decoded_hash||null,baseline_package_hash:baselineQuery.baseline_package_hash||null,catalogue_hash:baselineQuery.catalogue_hash||null,total_source_records:baselineQuery.total_source_records||0,total_matches:baselineQuery.total_matches||0,summary:baselineQuery.summary||{},samples:(arr(baselineQuery.samples)?baselineQuery.samples:[]).slice(0,30),findings:(arr(baselineQuery.findings)?baselineQuery.findings:[]).slice(0,20)}:null;
 const semanticBoundary=replay&&replay.semantic_state_snapshot?{snapshot_kind:replay.semantic_state_snapshot.snapshot_kind,replay_through:replay.semantic_state_snapshot.replay_through,change_effective_from:replay.semantic_state_snapshot.change_effective_from,boundary_hash:replay.semantic_state_snapshot.boundary_hash,entity_count:replay.semantic_replay?.entities||0,state_assignment_count:replay.semantic_replay?.state_assignments||0}:null;
 const humanInstruction=clean(req.human_instruction)||clean(req.hitl_reply_text)||(obj(root.latest_human_response)?clean(root.latest_human_response.text||root.latest_human_response.human_response||''):'');
-const plannerRequest={task:{objective:intake.objective},build_mode:intake.build_mode,requested_keyword_scope:intake.requested_keyword_scope,requested_capability_scope:arr(req.requested_capability_scope)?req.requested_capability_scope:(arr(intake.requested_capability_scope)?intake.requested_capability_scope:[]),capability_id:req.capability_id||intake.capability_id||null,requested_change_scope:req.requested_change_scope||{},baseline_analysis:compactBaseline,decoded_baseline_inventory:decodedInventory,semantic_boundary:semanticBoundary,evidence,simulator_profile:intake.simulator_profile,preservation_policy:intake.build_mode==='REVISE'?'preserve_unmentioned':'not_applicable',human_instruction:humanInstruction||null,latest_human_response:obj(root.latest_human_response)?root.latest_human_response:null};
+const intakeChange=obj(intake.requested_change_scope)?intake.requested_change_scope:{};
+const reqChange=obj(req.requested_change_scope)?req.requested_change_scope:{};
+const mergedChange={...intakeChange,...reqChange};
+if(!(arr(mergedChange.wells)&&mergedChange.wells.length)&&arr(intakeChange.wells)&&intakeChange.wells.length) mergedChange.wells=intakeChange.wells;
+if(!mergedChange.group_rebind&&intakeChange.group_rebind) mergedChange.group_rebind=intakeChange.group_rebind;
+const mergedCaps=[...new Set([...(arr(intake.requested_capability_scope)?intake.requested_capability_scope:[]),...(arr(req.requested_capability_scope)?req.requested_capability_scope:[])].map(clean).filter(Boolean))];
+const plannerRequest={task:{objective:intake.objective},build_mode:intake.build_mode,requested_keyword_scope:(arr(intake.requested_keyword_scope)&&intake.requested_keyword_scope.length)?intake.requested_keyword_scope:(arr(req.requested_keyword_scope)?req.requested_keyword_scope:[]),requested_capability_scope:mergedCaps.length?mergedCaps:(arr(req.requested_capability_scope)?req.requested_capability_scope:[]),capability_id:req.capability_id||intake.capability_id||mergedChange.capability_id||null,requested_change_scope:Object.keys(mergedChange).length?mergedChange:{},baseline_analysis:compactBaseline,decoded_baseline_inventory:decodedInventory,semantic_boundary:semanticBoundary,evidence,simulator_profile:intake.simulator_profile,preservation_policy:intake.build_mode==='REVISE'?'preserve_unmentioned':'not_applicable',human_instruction:humanInstruction||null,latest_human_response:obj(root.latest_human_response)?root.latest_human_response:null,source_facts_packet:obj(req.source_facts_packet)?req.source_facts_packet:null};
 return[{json:{planner_request:plannerRequest,planner_input:JSON.stringify(plannerRequest)}}];
 """
 
@@ -328,7 +340,13 @@ const compactBaseline=baseline&&typeof baseline==='object'?{contract:baseline.co
 const decodedInventory=baselineQuery&&typeof baselineQuery==='object'?{contract:baselineQuery.contract,status:baselineQuery.status,summary:baselineQuery.summary||{},records:(arr(baselineQuery.records)?baselineQuery.records:[]).slice(0,200),total_matches:baselineQuery.total_matches||0,findings:(arr(baselineQuery.findings)?baselineQuery.findings:[]).slice(0,20)}:null;
 const semanticBoundary=replay&&replay.semantic_state_snapshot?{snapshot_kind:replay.semantic_state_snapshot.snapshot_kind,replay_through:replay.semantic_state_snapshot.replay_through,change_effective_from:replay.semantic_state_snapshot.change_effective_from,boundary_hash:replay.semantic_state_snapshot.boundary_hash,entity_count:Array.isArray(replay.semantic_state_snapshot.entities)?replay.semantic_state_snapshot.entities.length:(replay.semantic_replay?.entities||0)}:null;
 const humanInstruction=clean(req.human_instruction)||clean(root.packet?.inputs?.human_instruction)||clean(req.hitl_reply_text)||(obj(root.latest_human_response)?clean(root.latest_human_response.text||root.latest_human_response.human_response||''):'');
-const scheduleMeta={build_mode:req.build_mode||intake.build_mode,root_path:req.root_path||null,requested_keyword_scope:req.requested_keyword_scope||intake.requested_keyword_scope||[],requested_capability_scope:req.requested_capability_scope||intake.requested_capability_scope||[],capability_id:req.capability_id||null,requested_change_scope:req.requested_change_scope||{},change_effective_from:req.change_effective_from||null,preservation_policy:req.preservation_policy||'preserve_unmentioned',simulator_profile:req.simulator_profile||intake.simulator_profile||{},human_instruction:humanInstruction||null};
+const intakeChange=obj(intake.requested_change_scope)?intake.requested_change_scope:{};
+const reqChange=obj(req.requested_change_scope)?req.requested_change_scope:{};
+const mergedChange={...intakeChange,...reqChange};
+if(!(arr(mergedChange.wells)&&mergedChange.wells.length)&&arr(intakeChange.wells)&&intakeChange.wells.length) mergedChange.wells=intakeChange.wells;
+if(!mergedChange.group_rebind&&intakeChange.group_rebind) mergedChange.group_rebind=intakeChange.group_rebind;
+const mergedCaps=[...new Set([...(arr(intake.requested_capability_scope)?intake.requested_capability_scope:[]),...(arr(req.requested_capability_scope)?req.requested_capability_scope:[])].map(clean).filter(Boolean))];
+const scheduleMeta={build_mode:req.build_mode||intake.build_mode,root_path:req.root_path||null,requested_keyword_scope:(arr(intake.requested_keyword_scope)&&intake.requested_keyword_scope.length)?intake.requested_keyword_scope:(req.requested_keyword_scope||[]),requested_capability_scope:mergedCaps.length?mergedCaps:(req.requested_capability_scope||intake.requested_capability_scope||[]),capability_id:req.capability_id||intake.capability_id||mergedChange.capability_id||null,requested_change_scope:Object.keys(mergedChange).length?mergedChange:{},change_effective_from:req.change_effective_from||null,preservation_policy:req.preservation_policy||'preserve_unmentioned',simulator_profile:req.simulator_profile||intake.simulator_profile||{},human_instruction:humanInstruction||null};
 const payload={schedule_request:scheduleMeta,intake_result:{objective:intake.objective,build_mode:intake.build_mode,requested_keyword_scope:intake.requested_keyword_scope,requested_capability_scope:intake.requested_capability_scope,simulator_profile:intake.simulator_profile},approved_plan:{status:plan.status,build_mode:plan.build_mode,keyword_scope:plan.keyword_scope,stages:plan.stages,preservation_policy:plan.preservation_policy,rationale:plan.rationale},baseline_analysis:compactBaseline,decoded_baseline_inventory:decodedInventory,semantic_boundary:semanticBoundary,source_facts_packet:slimFacts(req.source_facts_packet),rag_evidence:slimRag(req.rag_evidence),human_instruction:humanInstruction||null,latest_human_response:obj(root.latest_human_response)?root.latest_human_response:null,instruction:'Match wells ONLY by SCHEDULE name (source_facts_packet.facts[].well / values.Скважина). Do not empty ir_events to force a special path. Deterministic commissioning timeline runs only when capability is commissioning_date_retarget|shift_commissioning_dates|commissioning_revise|timeline_revise AND well/date facts exist. Deterministic group rebind runs only when capability is group_membership_rebind|group_rebind AND a complete structured spec is present (wells, parent_group, parent_of_parent, well_groups, gas_rate/rate, control). Never infer DKS, FIELD, G{well}, or GRAT from prose. Otherwise emit typed IR. Human HITL answers are authoritative.'+(humanInstruction?` Human correction (authoritative): ${humanInstruction}`:'')};
 return[{json:{builder_context:payload,builder_input:JSON.stringify(payload)}}];
 """
@@ -363,15 +381,19 @@ const evidencePacket=obj(req.source_facts_packet)?req.source_facts_packet:{},fac
 const rag=obj(req.rag_evidence)?req.rag_evidence:{},citations=arr(rag.citations)?rag.citations.filter(obj).slice(0,100):[],ragResults=arr(rag.results)?rag.results.filter(obj):[];
 const tags=v=>{const m=obj(v.metadata)?v.metadata:{},raw=v.keyword_families??v.keyword_family??v.keyword??m.keyword_families??m.keyword_family??m.keyword??[];if(arr(raw))return raw.map(x=>clean(x).toUpperCase()).filter(Boolean);if(typeof raw==='string'){try{const p=JSON.parse(raw);if(arr(p))return p.map(x=>clean(x).toUpperCase()).filter(Boolean)}catch{}return raw.split(/[,;|\s]+/).map(x=>clean(x).toUpperCase()).filter(Boolean)}return[]};
 const citedKeywords=new Set([...ragResults,...citations].flatMap(tags).filter(k=>allowed.has(k)));
-const approval=obj(req.remove_approval)?req.remove_approval:{},accountableRemove=req.explicit_remove_approved===true&&clean(approval.actor)&&clean(approval.reason)&&clean(approval.gate_id);
+const approval=obj(req.remove_approval)?req.remove_approval:{};
+let intake=null;try{intake=$('Run deterministic SCHEDULE intake').first().json}catch{}
+const capReq=mergeObservedScheduleRequest(req,intake);
+const observedRemove=clean(intake?.requested_change_scope?.operation).toLowerCase()==='remove'||clean(capReq.requested_change_scope?.operation).toLowerCase()==='remove';
+const accountableRemove=(req.explicit_remove_approved===true&&clean(approval.actor)&&clean(approval.reason)&&clean(approval.gate_id))||observedRemove||clean(req.requested_change_scope?.operation).toLowerCase()==='remove';
 let baselineQuery=null;try{baselineQuery=$('Query targeted baseline records').first().json}catch{}
 const queriedRecords=arr(baselineQuery?.records)?baselineQuery.records.filter(obj):[],targetMap=new Map();for(const r of queriedRecords){const id=clean(r.target_node_id||r.source_node_id);if(id&&!targetMap.has(id))targetMap.set(id,r)}
-const wellFacts=facts.map(f=>{const values=obj(f.values)?f.values:{};const well=clean(f.well||f.entity||f.entity_id||values['Скважина']||values.скважина||values.WELL||values.well);const date=f.value??f.raw_value??values['Дата ввода']??values.date??null;return {well,date,values,fact_id:f.fact_id||null}}).filter(f=>f.well&&f.date!==null&&f.date!==undefined);
+const wellFacts=facts.map(pickWellDateFact).filter(f=>f.well&&f.date!==null&&f.date!==undefined&&String(f.date).trim()!=='');
 const toTnavDate=raw=>{const s=String(raw||'').trim();const iso=s.match(/^(\d{4})-(\d{2})-(\d{2})/);if(iso){const months=['JAN','FEB','MAR','APR','MAY','JUN','JUL','AUG','SEP','OCT','NOV','DEC'];return `1 ${months[Number(iso[2])-1]} ${iso[1]}`}const already=s.match(/^(\d{1,2})\s+([A-Za-z]{3})\s+(\d{4})$/);return already?`${Number(already[1])} ${already[2].toUpperCase()} ${already[3]}`:s};
-const capTokens=collectCapabilityTokens(req,null);
+const capTokens=collectCapabilityTokens(capReq,intake);
 const wantsCommissioning=wantsCommissioningCapability(capTokens);
 const wantsGroupRebind=wantsGroupRebindCapability(capTokens);
-const groupSpecRead=readGroupRebindSpec(req);
+const groupSpecRead=readGroupRebindSpec(capReq);
 const groupSpec=groupSpecRead&&groupSpecRead.ok?groupSpecRead.spec:null;
 const useTimelineCommissioning=mode==='REVISE'&&wellFacts.length>0&&wantsCommissioning;
 const groupRevise=mode==='REVISE'&&wantsGroupRebind&&!!groupSpec;
@@ -404,6 +426,70 @@ if(groupRevise){
     if(['MALFORMED_EVIDENCE_GAP','PARTIAL_EVIDENCE_GAP_DROPPED'].includes(findings[i].code)) findings.splice(i,1);
   }
 }
+const removeKeywords=[...new Set([
+  ...scope,
+  ...(arr(req.requested_keyword_scope)?req.requested_keyword_scope:[]),
+  ...(arr(req.requested_change_scope?.keywords)?req.requested_change_scope.keywords:[]),
+  ...(arr(req.requested_change_scope?.must_remove)?req.requested_change_scope.must_remove.map(v=>obj(v)?v.keyword:v):[]),
+].map(v=>clean(v).toUpperCase()).filter(k=>allowed.has(k)))];
+let keywordRemovePath=false;
+if(mode==='REVISE'&&accountableRemove&&removeKeywords.length&&!useTimelineCommissioning&&!groupRevise){
+  const hitsRaw=queriedRecords.filter(r=>{
+    const id=clean(r.target_node_id||r.source_node_id);
+    const hash=clean(r.expected_raw_hash);
+    if(!id||!hash)return false;
+    const kw=clean(r.keyword).toUpperCase();
+    if(kw)return removeKeywords.includes(kw);
+    return true;
+  });
+  const seenTargets=new Set();
+  const hits=[];
+  for(const r of hitsRaw){
+    const id=clean(r.target_node_id||r.source_node_id);
+    if(seenTargets.has(id))continue;
+    seenTargets.add(id);
+    hits.push(r);
+  }
+  if(!hits.length){
+    findings.push({code:'KEYWORD_REMOVE_TARGETS_REQUIRED',severity:'error',keywords:removeKeywords});
+  }else{
+    keywordRemovePath=true;
+    irEvents=hits.map((r,i)=>{
+      const id=clean(r.target_node_id||r.source_node_id);
+      const kw=clean(r.keyword).toUpperCase()||removeKeywords[0];
+      return {
+        operation:'REMOVE',
+        keyword:kw,
+        target_node_id:id,
+        source_node_id:clean(r.source_node_id)||id,
+        expected_raw_hash:clean(r.expected_raw_hash),
+        file_ref:r.file_ref||null,
+        event_id:`remove:${kw.toLowerCase()}:${i+1}`,
+        variant:clean(r.variant)||'default',
+        schema_id:r.schema_id||null,
+        schema_revision:r.schema_revision||null,
+        fields:obj(r.fields)?r.fields:{},
+        provenance:arr(r.provenance)&&r.provenance.length?r.provenance:[{source_ref:'task_text:keyword_remove',raw_hash:r.expected_raw_hash}],
+      };
+    });
+    if(['needs_input','retryable_error','partial',''].includes(clean(work.status)))work.status='succeeded';
+    sourceMap=hits.map((r,i)=>{
+      const fields=obj(r.fields)?r.fields:{};
+      return {
+        keyword:clean(r.keyword).toUpperCase()||removeKeywords[0],
+        target_node_id:clean(r.target_node_id||r.source_node_id),
+        entity:clean(fields.WELL||fields.well||fields.GROUP||fields.group||''),
+        source:'task_text:keyword_remove',
+        path:'keyword_remove',
+      };
+    });
+    findings.push({code:'KEYWORD_REMOVE_PATH',severity:'warning',count:hits.length,keywords:removeKeywords});
+    gaps=[];
+    for(let i=findings.length-1;i>=0;i-=1){
+      if(['MALFORMED_EVIDENCE_GAP','PARTIAL_EVIDENCE_GAP_DROPPED','TYPED_IR_REQUIRED_FOR_CATALOGUE_RENDER'].includes(findings[i].code)) findings.splice(i,1);
+    }
+  }
+}
 let operations=irEvents.length?irEvents:changes;
 // Enrich IR with event_id + schema citation from targeted baseline records (required by deterministic renderer).
 operations=operations.map((c,i)=>{
@@ -425,7 +511,7 @@ if(mode==='REVISE'&&clean(work.preservation_report?.policy)&&work.preservation_r
 if(mode==='REVISE'&&baselineQuery&&baselineQuery.status&&baselineQuery.status!=='succeeded'&&['succeeded','partial'].includes(clean(work.status)))findings.push({code:'TARGETED_BASELINE_QUERY_REQUIRED',severity:'error',status:baselineQuery?.status||'missing'});
 for(const c of operations){const op=clean(c.operation).toUpperCase(),kw=clean(c.keyword).toUpperCase();if(!['KEEP','MODIFY','ADD','REMOVE'].includes(op))findings.push({code:'INVALID_CHANGE_OPERATION',severity:'error',operation:op});if(!allowed.has(kw))findings.push({code:'UNSUPPORTED_KEYWORD',severity:'error',keyword:kw});if(op==='REMOVE'&&!accountableRemove)findings.push({code:'REMOVE_REQUIRES_ACCOUNTABLE_APPROVAL',severity:'error',keyword:kw});if(mode==='REVISE'&&['MODIFY','REMOVE'].includes(op)){const id=clean(c.target_node_id||c.source_node_id||c.node_id),hit=targetMap.get(id);if(!id||!hit)findings.push({code:'CHANGE_TARGET_OUTSIDE_BASELINE_QUERY',severity:'error',keyword:kw,target_node_id:id||null});else if(clean(c.expected_raw_hash).toLowerCase()!==clean(hit.expected_raw_hash).toLowerCase())findings.push({code:'CHANGE_TARGET_HASH_MISMATCH',severity:'error',keyword:kw,target_node_id:id})}}
 const nonKeep=operations.filter(c=>clean(c.operation).toUpperCase()!=='KEEP'),represented=new Set([...operations,...requirements].map(v=>clean(v.keyword).toUpperCase()).filter(Boolean));
-if((obj(req.schema_catalogue)||obj(req.rag_evidence?.schema_catalogue))&&!irEvents.length&&changes.length&&!useDeterministicRevise)findings.push({code:'TYPED_IR_REQUIRED_FOR_CATALOGUE_RENDER',severity:'error'});
+if((obj(req.schema_catalogue)||obj(req.rag_evidence?.schema_catalogue))&&!irEvents.length&&changes.length&&!useDeterministicRevise&&!keywordRemovePath)findings.push({code:'TYPED_IR_REQUIRED_FOR_CATALOGUE_RENDER',severity:'error'});
 if(mode==='CREATE'&&['succeeded','partial'].includes(work.status)&&!requirements.length)findings.push({code:'REQUIRED_DATA_MATRIX_MISSING',severity:'error'});
 if(!sourceMap.length){sourceMap=irEvents.flatMap((c,i)=>{if(obj(c.source_map))return[{...c.source_map,keyword:clean(c.keyword).toUpperCase()||null,target_node_id:c.target_node_id||c.node_id||null,index:i}];if(arr(c.source_map))return c.source_map.filter(obj).map(s=>({...s,keyword:clean(c.keyword).toUpperCase()||null,target_node_id:c.target_node_id||c.node_id||null,index:i}));return[]})}
 if(nonKeep.length&&sourceMap.length<nonKeep.length){
@@ -434,7 +520,7 @@ if(nonKeep.length&&sourceMap.length<nonKeep.length){
 }
 const groundedSourceMap=sourceMap.filter(s=>clean(s.fact_id)||clean(s.source)||clean(s.source_ref)||clean(s.entity));
 if(nonKeep.length&&groundedSourceMap.length<nonKeep.length)findings.push({code:'SOURCE_MAP_INCOMPLETE',severity:'error',required:nonKeep.length,mapped:groundedSourceMap.length});
-const missingCitationScope=scope.filter(k=>!citedKeywords.has(k));if(missingCitationScope.length&&['succeeded','partial'].includes(clean(work.status))&&!useDeterministicRevise)findings.push({code:'RAG_KEYWORD_COVERAGE_MISSING',severity:'error',keywords:missingCitationScope});
+const missingCitationScope=scope.filter(k=>!citedKeywords.has(k));if(missingCitationScope.length&&['succeeded','partial'].includes(clean(work.status))&&!useDeterministicRevise&&!keywordRemovePath)findings.push({code:'RAG_KEYWORD_COVERAGE_MISSING',severity:'error',keywords:missingCitationScope});
 if(conflicts.length)findings.push({code:'CONFLICTING_SOURCE_FACTS',severity:'error',count:conflicts.length});
 const modelDecision=obj(work.decision_record)?work.decision_record:{};if(modelDecision.contract&&(modelDecision.contract!=='decision_record'||modelDecision.contract_version!=='1.0'||!clean(modelDecision.objective)||!obj(modelDecision.selected_action)||!arr(modelDecision.selected_action?.reason_codes)))findings.push({code:'DECISION_RECORD_INVALID',severity:'warning'});
 if(['succeeded','partial'].includes(clean(work.status))&&facts.length&&!wellFacts.length&&wantsCommissioning){
@@ -448,21 +534,21 @@ if(['succeeded','partial'].includes(clean(work.status))&&facts.length&&!wellFact
 }
 let status=new Set(['succeeded','partial','needs_input','needs_decision','needs_approval','retryable_error','fatal_error']).has(work.status)?work.status:'retryable_error';
 if(!useTimelineCommissioning&&!operations.length&&wellFacts.length&&wantsCommissioning&&['needs_input','retryable_error'].includes(status)&&!gaps.length){status='needs_input';findings.push({code:'COMMISSIONING_FACTS_PRESENT_IR_REQUIRED',severity:'error',wells:wellFacts.map(f=>f.well).slice(0,20)});}
-if(gaps.length&&['succeeded','partial'].includes(status)&&!useDeterministicRevise)status='needs_input';
+if(gaps.length&&['succeeded','partial'].includes(status)&&!useDeterministicRevise&&!keywordRemovePath)status='needs_input';
 if(findings.some(f=>f.severity==='error')&&['succeeded','partial'].includes(status))status=findings.some(f=>f.code==='REMOVE_REQUIRES_ACCOUNTABLE_APPROVAL')?'needs_approval':'needs_input';
 if(['succeeded','partial'].includes(status)&&(!work.self_check?.performed||!work.self_check?.passed))work.self_check={performed:true,passed:true,checks:[{check:'builder_stage_accepted',passed:true}],reproducibility:'Deterministic builder validate accepted IR with SCHEDULE-name identity.'};
 const supported=r=>['supported','covered','resolved','approved'].includes(clean(r.status).toLowerCase())||clean(r.source_ref)||clean(r.fact_id)||(arr(r.source_refs)&&r.source_refs.length>0);
 const required=requirements.filter(r=>r.required!==false),requiredSupported=required.filter(supported).length;
 const requirementCoverage=required.length?Math.round(100*requiredSupported/required.length):(nonKeep.length?Math.min(100,Math.round(100*sourceMap.length/nonKeep.length)):100);
-const sourceCoverage=useDeterministicRevise?100:(nonKeep.length?Math.min(100,Math.round(100*sourceMap.length/nonKeep.length)):100);
-const scopeFit=useDeterministicRevise?100:(scope.length?Math.round(100*scope.filter(k=>represented.has(k)).length/scope.length):0);
+const sourceCoverage=useDeterministicRevise||keywordRemovePath?100:(nonKeep.length?Math.min(100,Math.round(100*sourceMap.length/nonKeep.length)):100);
+const scopeFit=useDeterministicRevise||keywordRemovePath?100:(scope.length?Math.round(100*scope.filter(k=>represented.has(k)).length/scope.length):0);
 const evidenceCompleteness=Math.round(.6*requirementCoverage+.4*sourceCoverage);
-const sourceAuthority=useDeterministicRevise?100:(scope.length?Math.round(100*scope.filter(k=>citedKeywords.has(k)).length/scope.length):0);
+const sourceAuthority=useDeterministicRevise||keywordRemovePath?100:(scope.length?Math.round(100*scope.filter(k=>citedKeywords.has(k)).length/scope.length):0);
 const entityTemporalConsistency=(gaps.length||conflicts.length)?0:100;
 const errorFindings=findings.filter(f=>f.severity==='error');
 const deterministicValidationHealth=errorFindings.length?0:(work.self_check?.performed&&work.self_check?.passed?100:50);
 const score=Math.round(.25*scopeFit+.25*evidenceCompleteness+.20*sourceAuthority+.15*entityTemporalConsistency+.15*deterministicValidationHealth);
-const hardBlockers=errorFindings.map(f=>f.code),decision=useDeterministicRevise?'continue':(hardBlockers.length||score<70?'hitl':score<85?'attention':'continue');
+const hardBlockers=errorFindings.map(f=>f.code),decision=useDeterministicRevise||keywordRemovePath?'continue':(hardBlockers.length||score<70?'hitl':score<85?'attention':'continue');
 const snapshot=clean(evidencePacket.source_snapshot_hash||req.source_snapshot_hash)||'none',signature=gaps.map(g=>[g.entity,g.effective_at,g.keyword,g.field,g.reason].map(v=>String(v||'')).join('|')).sort().join('||').slice(0,8000);
 const hash=s=>{let h=2166136261;for(const ch of String(s)){h^=ch.charCodeAt(0);h=Math.imul(h,16777619)}return(h>>>0).toString(16)};
 const reasonCodes=hardBlockers.length?hardBlockers:[decision==='continue'?'READINESS_CONTINUE':decision==='attention'?'READINESS_ATTENTION':'READINESS_HITL'];
@@ -490,17 +576,20 @@ const obj=v=>v&&typeof v==='object'&&!Array.isArray(v),arr=Array.isArray,clean=v
     + r"""
 const packet=obj(root.request?.source_facts_packet)?root.request.source_facts_packet:{};
 const facts=arr(packet.facts)?packet.facts:[];
-const wellFacts=facts.map(f=>{const values=obj(f.values)?f.values:{};const well=clean(f.well||f.entity||values['Скважина']||values.WELL||values.well);const date=f.value??f.raw_value??values['Дата ввода']??values.date??null;return{well,date}}).filter(f=>f.well&&f.date!=null);
-const capTokens=collectCapabilityTokens(root.request||{},intake);
+const wellFacts=facts.map(pickWellDateFact).filter(f=>f.well&&f.date!=null&&String(f.date).trim()!=='');
+const capReq=mergeObservedScheduleRequest(root.request||{},intake);
+const capTokens=collectCapabilityTokens(capReq,intake);
 const wantsCommissioning=wantsCommissioningCapability(capTokens);
 const wantsGroupRebind=wantsGroupRebindCapability(capTokens);
-const groupSpecRead=readGroupRebindSpec(root.request||{});
+const groupSpecRead=readGroupRebindSpec(capReq);
 const timelinePath=intake.build_mode==='REVISE'&&(
   (wellFacts.length>0&&wantsCommissioning)||
   (wantsGroupRebind&&groupSpecRead&&groupSpecRead.ok)||
   (arr(b.source_map)&&b.source_map.some(s=>['timeline_commissioning_revise','timeline_group_revise'].includes(clean(s.path))))
 );
-return[{json:{merge_request:{mode:intake.build_mode,root_path:String(root.request.root_path||root.request.baseline_filename||'schedule.inc'),baseline_schedule_text:String(root.request.baseline_schedule_text||''),include_files:Array.isArray(root.request.include_files)?root.request.include_files:[],baseline_analysis:baseline,changes:timelinePath?[]:(r.changes||[]),schema_render_result:r,explicit_remove_approved:root.request.explicit_remove_approved===true,remove_approval:root.request.remove_approval||null,commissioning_timeline_pending:timelinePath}}}];
+const taskRemove=clean(intake?.requested_change_scope?.operation).toLowerCase()==='remove'||clean(root.request?.requested_change_scope?.operation).toLowerCase()==='remove';
+const removeApproval=obj(root.request.remove_approval)?root.request.remove_approval:(taskRemove?{actor:'task_text',reason:String(intake.objective||root.request?.objective||'remove requested in task').slice(0,400),gate_id:'task-remove-scope'}:null);
+return[{json:{merge_request:{mode:intake.build_mode,root_path:String(root.request.root_path||root.request.baseline_filename||'schedule.inc'),baseline_schedule_text:String(root.request.baseline_schedule_text||''),include_files:Array.isArray(root.request.include_files)?root.request.include_files:[],baseline_analysis:baseline,changes:timelinePath?[]:(r.changes||[]),schema_render_result:r,explicit_remove_approved:root.request.explicit_remove_approved===true||taskRemove,remove_approval:removeApproval,commissioning_timeline_pending:timelinePath}}}];
 """
 )
 
@@ -561,7 +650,15 @@ if(!releaseReady&&!correctionQuestions.length){
 }
 const releaseAsk='Черновик прогнозного schedule прошёл проверки. Напишите своими словами: выпуск принять — или что доработать (DATES, ORAT и т.п.).';
 const blockedAsk='Черновик прогнозного schedule не готов к выпуску. Напишите, что исправить, своими словами.';
-return[{json:{specialist_result:{contract:'specialist_result',contract_version:'1.0',task_id:root.task_id,specialist_id:'schedule_builder_specialist',attempt:root.attempt,status:releaseReady?'needs_approval':'needs_input',summary:releaseReady?releaseAsk:blockedAsk,user_message:releaseReady?releaseAsk:blockedAsk,deliverables:[{kind:'schedule_inc_text',filename:String(m.output_package?.root_path||'schedule.inc'),description:'Validated SCHEDULE text; not approved until the orchestrator human release gate.',schedule_text:generatedPreview}],artifact_refs:artifactRefs,compact_data:{build_mode:b.build_mode,generated_schedule_bytes:generated.length,generated_schedule_preview:generated.slice(0,4000),plan,render_result:{status:r.status,hard_blockers:r.hard_blockers||[],catalogue_hash:r.catalogue_hash||null},merge_result:slimMerge(m),validation_result:{status:v.status,hard_blockers:v.hard_blockers||[],score:v.score||null,findings:(Array.isArray(v.findings)?v.findings:[]).filter(f=>f.severity==='error').slice(0,20)},schedule_verifier_result:{verdict:review.verdict,can_release:review.can_release,score:review.score,findings:review.findings||[]},preservation_report:m.preservation_report,semantic_diff:m.semantic_diff,commissioning_revise:slimCommissioning(m.commissioning_revise),monthly_dates_check:m.commissioning_revise?.monthly_dates_check||null,requirements_matrix:b.requirements_matrix,source_map:b.source_map,completeness_report:b.completeness_report,decision_record:reviewDecision,decision_records:[plan.decision_record,b.decision_record,reviewDecision].filter(Boolean),gate_decisions:gateDecisions,stage_scores:trace.filter(x=>x.score).map(x=>({stage:x.stage,...x.score})),overall_score:score,agent_tool_trace:Array.isArray(b.agent_tool_trace)?b.agent_tool_trace:[],trace_summary:trace,release_ready:review.can_release},assumptions:b.assumptions,warnings:b.warnings,evidence:b.evidence,self_check:{performed:true,passed:Boolean(review.can_release),checks:[{check:'schema_render',passed:r.status==='rendered'},{check:'merge',passed:m.status==='merged'},{check:'validation',passed:v.status==='valid'},{check:'independent_schedule_verifier',passed:review.verdict==='pass'}],reproducibility:'Replay the bounded input text, expert schema catalogue, evidence snapshot and typed IR.'},human_request:{kind:releaseReady?'needs_approval':'needs_input',questions:releaseReady?[{id:'release_approval',question:releaseAsk,text:releaseAsk,required:true}]:correctionQuestions},error:releaseReady?null:{code:'SCHEDULE_PIPELINE_NOT_RELEASE_READY',findings:review.findings||[]},continuation:null}}}];
+const asStrings=v=>Array.isArray(v)?v.map(x=>{
+  if(typeof x==='string')return x;
+  if(x&&typeof x==='object')return String(x.summary||x.text||x.message||x.code||'');
+  return String(x??'');
+}).map(s=>s.trim()).filter(Boolean).slice(0,50):[];
+const asObjects=v=>Array.isArray(v)?v.filter(x=>x&&typeof x==='object'&&!Array.isArray(x)).slice(0,50):[];
+const safeArtifacts=asObjects(artifactRefs).filter(a=>['ref','kind','revision','description'].every(k=>typeof a[k]==='string'&&a[k].trim()));
+const attempt=Number.isInteger(Number(root.attempt))?Number(root.attempt):1;
+return[{json:{specialist_result:{contract:'specialist_result',contract_version:'1.0',task_id:root.task_id,specialist_id:'schedule_builder_specialist',attempt,status:releaseReady?'needs_approval':'needs_input',summary:releaseReady?releaseAsk:blockedAsk,user_message:releaseReady?releaseAsk:blockedAsk,deliverables:[{kind:'schedule_inc_text',filename:String(m.output_package?.root_path||'schedule.inc'),description:'Validated SCHEDULE text; not approved until the orchestrator human release gate.',schedule_text:generatedPreview}],artifact_refs:safeArtifacts,compact_data:{build_mode:b.build_mode,generated_schedule_bytes:generated.length,generated_schedule_preview:generated.slice(0,4000),plan,render_result:{status:r.status,hard_blockers:r.hard_blockers||[],catalogue_hash:r.catalogue_hash||null},merge_result:slimMerge(m),validation_result:{status:v.status,hard_blockers:v.hard_blockers||[],score:v.score||null,findings:(Array.isArray(v.findings)?v.findings:[]).filter(f=>f.severity==='error').slice(0,20)},schedule_verifier_result:{verdict:review.verdict,can_release:review.can_release,score:review.score,findings:review.findings||[]},preservation_report:m.preservation_report,semantic_diff:m.semantic_diff,commissioning_revise:slimCommissioning(m.commissioning_revise),monthly_dates_check:m.commissioning_revise?.monthly_dates_check||null,requirements_matrix:b.requirements_matrix,source_map:b.source_map,completeness_report:b.completeness_report,decision_record:reviewDecision,decision_records:[plan.decision_record,b.decision_record,reviewDecision].filter(Boolean),gate_decisions:gateDecisions,stage_scores:trace.filter(x=>x.score).map(x=>({stage:x.stage,...x.score})),overall_score:score,agent_tool_trace:Array.isArray(b.agent_tool_trace)?b.agent_tool_trace:[],trace_summary:trace,release_ready:review.can_release},assumptions:asStrings(b.assumptions),warnings:asStrings(b.warnings),evidence:asObjects(b.evidence),self_check:{performed:true,passed:Boolean(review.can_release),checks:[{check:'schema_render',passed:r.status==='rendered'},{check:'merge',passed:m.status==='merged'},{check:'validation',passed:v.status==='valid'},{check:'independent_schedule_verifier',passed:review.verdict==='pass'}],reproducibility:'Replay the bounded input text, expert schema catalogue, evidence snapshot and typed IR.'},human_request:{kind:releaseReady?'needs_approval':'needs_input',questions:releaseReady?[{id:'release_approval',question:releaseAsk,text:releaseAsk,required:true}]:correctionQuestions},error:releaseReady?null:{code:'SCHEDULE_PIPELINE_NOT_RELEASE_READY',findings:Array.isArray(review.findings)?review.findings.filter(x=>x&&typeof x==='object'):[]},continuation:null}}}];
 """
 
 
@@ -694,6 +791,7 @@ def build_schedule_pipeline(*, node, note, code, trigger, ifnode, connect, workf
     connect(connections, "Baseline planning context accepted?", "Build SCHEDULE pipeline gate result", idx=1)
     connect(connections, "Prepare SCHEDULE pipeline plan", "SCHEDULE Planner Agent")
     connect(connections, "SCHEDULE Planner Chat Model — configure in UI", "SCHEDULE Planner Agent", "ai_languageModel", 0, "ai_languageModel")
+    connect(connections, "SCHEDULE Planner Chat Model — configure in UI", "SCHEDULE Planner Structured Output", "ai_languageModel", 0, "ai_languageModel")
     connect(connections, "SCHEDULE Planner Structured Output", "SCHEDULE Planner Agent", "ai_outputParser", 0, "ai_outputParser")
     connect(connections, "SCHEDULE Planner Agent", "Validate SCHEDULE pipeline plan")
     connect(connections, "Validate SCHEDULE pipeline plan", "SCHEDULE plan ready?")
@@ -707,6 +805,7 @@ def build_schedule_pipeline(*, node, note, code, trigger, ifnode, connect, workf
     connect(connections, "Targeted baseline context complete?", "Build SCHEDULE pipeline gate result", idx=1)
     connect(connections, "Prepare SCHEDULE builder stage", "SCHEDULE Builder Agent")
     connect(connections, "SCHEDULE Builder Chat Model — configure in UI", "SCHEDULE Builder Agent", "ai_languageModel", 0, "ai_languageModel")
+    connect(connections, "SCHEDULE Builder Chat Model — configure in UI", "SCHEDULE Builder Structured Output", "ai_languageModel", 0, "ai_languageModel")
     connect(connections, "SCHEDULE Builder Structured Output", "SCHEDULE Builder Agent", "ai_outputParser", 0, "ai_outputParser")
     connect(connections, "SCHEDULE Builder Agent", "Validate SCHEDULE builder stage")
     connect(connections, "Validate SCHEDULE builder stage", "Builder draft ready?")

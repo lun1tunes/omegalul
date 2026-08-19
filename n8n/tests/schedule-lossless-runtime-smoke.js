@@ -180,8 +180,11 @@ async function main() {
       baseline_schedule_text: "INCLUDE\n 'missing.inc' /\n",
     },
   });
-  assert.equal(missingInclude.status, 'needs_input');
+  assert.equal(missingInclude.status, 'analyzed');
   assert(findingCodes(missingInclude).has('INCLUDE_NOT_FOUND'));
+  const missingFinding = (missingInclude.findings || []).find((f) => f.code === 'INCLUDE_NOT_FOUND');
+  assert.equal(missingFinding.severity, 'warning');
+  assert((missingInclude.package.files[0].nodes || []).some((n) => n.keyword === 'INCLUDE'));
 
   const unsafeInclude = await runCode(analyzeCode, {
     baseline_request: {

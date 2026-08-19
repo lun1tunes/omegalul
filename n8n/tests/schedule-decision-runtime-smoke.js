@@ -127,7 +127,18 @@ function builderWork(overrides = {}) {
   };
 }
 
+function assertModelWiredToParser(workflow, modelName, parserName) {
+  const targets = (workflow.connections[modelName]?.ai_languageModel || []).flat().map((c) => c.node);
+  assert.ok(
+    targets.includes(parserName),
+    `${modelName} must also feed ${parserName} (autoFix requires a model sub-node)`,
+  );
+}
+
 async function main() {
+  new AsyncFunction('$json', '$', source(plannerWorkflow, 'Prepare SCHEDULE pipeline plan'));
+  assertModelWiredToParser(plannerWorkflow, 'SCHEDULE Planner Chat Model — configure in UI', 'SCHEDULE Planner Structured Output');
+  assertModelWiredToParser(plannerWorkflow, 'SCHEDULE Builder Chat Model — configure in UI', 'SCHEDULE Builder Structured Output');
   const plannerNodes = { 'Prepare SCHEDULE planner input': plannerRequest() };
   const fullPlan = await run(plannerWorkflow, 'Validate SCHEDULE pipeline plan', { output: plan() }, plannerNodes);
   assert.equal(fullPlan.score.stage_score, 100);
@@ -168,6 +179,50 @@ async function main() {
   const blockedCycle = await run(plannerWorkflow, 'Validate SCHEDULE pipeline plan', { output: cyclic }, plannerNodes);
   assert.equal(blockedCycle.score.decision, 'hitl');
   assert(blockedCycle.hard_blockers.includes('PLAN_DEPENDENCY_CYCLE'));
+
+  const llmAliasPlan = {
+    status: 'proposed',
+    build_mode: 'REVISE',
+    keyword_scope: ['WCONPROD'],
+    stages: [{
+      stage_id: 'remove_wconprod',
+      keywords_to_modify: ['WCONPROD'],
+      operations: [{ operation: 'REMOVE', keyword: 'WCONPROD' }],
+      dependencies: [],
+      required_evidence: ['baseline contains WCONPROD'],
+      entity_scope: ['all WCONPROD blocks'],
+      temporal_scope: ['all DATES slots and pre-DATES header blocks'],
+    }],
+    questions: [],
+    preservation_policy: 'preserve_unmentioned',
+    rationale: 'Remove every WCONPROD.',
+  };
+  const aliasOut = await run(
+    plannerWorkflow,
+    'Validate SCHEDULE pipeline plan',
+    { output: llmAliasPlan },
+    {
+      'Prepare SCHEDULE planner input': {
+        planner_request: {
+          task: { objective: 'Убери все кл. слова WCONPROD из датника' },
+          build_mode: 'REVISE',
+          requested_keyword_scope: ['WCONPROD'],
+          requested_change_scope: {
+            operation: 'remove',
+            keywords: ['WCONPROD'],
+            must_remove: [{ keyword: 'WCONPROD' }],
+          },
+          evidence: [{
+            kind: 'schedule_rag_evidence',
+            value: { citations: [citation(['WCONPROD'])], results: [citation(['WCONPROD'])] },
+          }],
+        },
+      },
+    },
+  );
+  assert.equal(aliasOut.status, 'proposed');
+  assert.ok(aliasOut.stages[0].keywords.includes('WCONPROD'));
+  assert.equal(aliasOut.hard_blockers.includes('PLAN_SCOPE_UNCOVERED'), false);
 
   const root = {
     packet: { objective: 'Build WCONPROD' },
@@ -232,6 +287,56 @@ async function main() {
   assert.equal(accountableRemove.hard_blockers.length, 0);
   assert.equal(accountableRemove.score.decision, 'continue');
 
+  const keywordRemoveNodes = {
+    'Normalize SCHEDULE pipeline packet': {
+      packet: { objective: 'Убери все кл. слова WCONPROD из датника' },
+      request: {
+        objective: 'Убери все кл. слова WCONPROD из датника',
+        requested_change_scope: { operation: 'remove', keywords: ['WCONPROD'], must_remove: [{ keyword: 'WCONPROD' }] },
+        rag_evidence: { citations: [citation(['WCONPROD'])], results: [citation(['WCONPROD'])], schema_catalogue: { approved: true } },
+      },
+    },
+    'Validate SCHEDULE pipeline plan': { contract: 'schedule_plan', build_mode: 'REVISE', keyword_scope: ['WCONPROD'] },
+    'Query targeted baseline records': {
+      contract: 'baseline_inventory_query_result',
+      contract_version: '1.0',
+      status: 'succeeded',
+      records: [
+        { keyword: 'WCONPROD', target_node_id: 'schedule.inc:81', expected_raw_hash: `sha256:${'e'.repeat(64)}`, fields: { WELL: '1601' } },
+        { keyword: 'WCONPROD', target_node_id: 'schedule.inc:81', expected_raw_hash: `sha256:${'e'.repeat(64)}`, fields: { WELL: '1601B' } },
+        { keyword: 'WCONPROD', target_node_id: 'schedule.inc:103', expected_raw_hash: `sha256:${'f'.repeat(64)}`, fields: { WELL: '1602' } },
+      ],
+    },
+  };
+  const keywordRemoveOut = await run(
+    builderWorkflow,
+    'Validate SCHEDULE builder stage',
+    { output: builderWork({ build_mode: 'REVISE', ir_events: [], changes: [{ note: 'remove all WCONPROD' }], preservation_report: { policy: 'preserve_unmentioned' } }) },
+    keywordRemoveNodes,
+  );
+  assert.equal(keywordRemoveOut.status, 'succeeded');
+  assert.equal(keywordRemoveOut.ir_events.length, 2);
+  assert.ok(keywordRemoveOut.ir_events.every((e) => e.operation === 'REMOVE' && e.keyword === 'WCONPROD' && e.target_node_id));
+  assert.equal(keywordRemoveOut.hard_blockers.includes('TYPED_IR_REQUIRED_FOR_CATALOGUE_RENDER'), false);
+
+  const queryPrep = await run(
+    builderWorkflow,
+    'Prepare targeted baseline query',
+    {},
+    {
+      'Normalize SCHEDULE pipeline packet': {
+        request: { requested_change_scope: { operation: 'remove', keywords: ['WCONPROD'] } },
+      },
+      'Validate SCHEDULE pipeline plan': {
+        keyword_scope: ['WCONPROD'],
+        stages: [{ entity_scope: ['SCHEDULE INC root and any included fragments where WCONPROD appears'], temporal_scope: ['all DATES'] }],
+      },
+      'Decode typed baseline records': { decoded_hash: `sha256:${'a'.repeat(64)}` },
+    },
+  );
+  assert.deepEqual(queryPrep.baseline_query_request.query.entity_values, []);
+  assert.deepEqual(queryPrep.baseline_query_request.query.keywords, ['WCONPROD']);
+
   const assembleNodes = {
     'Normalize SCHEDULE pipeline packet': { task_id: 'eng-1', attempt: 1 },
     'Validate SCHEDULE builder stage': {
@@ -243,9 +348,9 @@ async function main() {
       requirements_matrix: [],
       source_map: [],
       completeness_report: { complete: true },
-      assumptions: [],
-      warnings: [],
-      evidence: [],
+      assumptions: [{ note: 'INCLUDE bodies were not attached' }, 'Root INC only'],
+      warnings: [{ code: 'INCLUDE_NOT_FOUND', text: '13 INCLUDE call-sites kept' }],
+      evidence: [{ source_ref: 'baseline', revision: '1' }],
       agent_tool_trace: [],
     },
     'Render typed SCHEDULE IR deterministically': { status: 'rendered', hard_blockers: [], catalogue_hash: 'h' },
@@ -289,6 +394,10 @@ async function main() {
   assert.equal(releaseReady.specialist_result.human_request.kind, 'needs_approval');
   assert.equal(releaseReady.specialist_result.human_request.questions[0].id, 'release_approval');
   assert.equal(typeof releaseReady.specialist_result.human_request.questions[0].question, 'string');
+  assert.equal(typeof releaseReady.specialist_result.attempt, 'number');
+  assert.ok(releaseReady.specialist_result.assumptions.every((v) => typeof v === 'string'));
+  assert.ok(releaseReady.specialist_result.warnings.every((v) => typeof v === 'string'));
+  assert.ok(releaseReady.specialist_result.evidence.every((v) => v && typeof v === 'object' && !Array.isArray(v)));
 
   const notReady = await run(
     builderWorkflow,

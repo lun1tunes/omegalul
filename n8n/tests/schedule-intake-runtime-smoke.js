@@ -68,6 +68,13 @@ async function main() {
   assert.equal(createConflict.status, 'needs_decision');
   assert(codes(createConflict).has('CREATE_BASELINE_CONFLICT_REQUIRES_DECISION'));
 
+  const missingUnits = await execute(request({ simulator_profile: { vendor: 'Rock Flow Dynamics', simulator: 'tNavigator', version: '22.2' } }));
+  assert.equal(missingUnits.status, 'accepted');
+  assert.equal(missingUnits.simulator_profile.unit_system, 'METRIC');
+  const missingProfile = await execute(request({ simulator_profile: {} }));
+  assert.equal(missingProfile.status, 'accepted');
+  assert.equal(missingProfile.simulator_profile.simulator, 'tNavigator');
+  assert.equal(missingProfile.simulator_profile.unit_system, 'METRIC');
   const wrongUnits = await execute(request({ simulator_profile: { ...request().simulator_profile, unit_system: 'FIELD' } }));
   assert(codes(wrongUnits).has('METRIC_UNIT_SYSTEM_REQUIRED'));
   const wrongProfile = await execute(request({ simulator_profile: { ...request().simulator_profile, version: '26.2' } }));
@@ -85,7 +92,9 @@ async function main() {
   assert.equal(reviseDatesFromBaseline.status, 'accepted');
   assert.equal(reviseDatesFromBaseline.forecast_start, '2025-01-01');
   assert.equal(reviseDatesFromBaseline.forecast_end, '2025-01-01');
-  assert.equal(reviseDatesFromBaseline.model_start_date, '2024-12-31');
+  assert.equal(reviseDatesFromBaseline.model_start_date, null);
+  assert(!codes(reviseDatesFromBaseline).has('MODEL_START_DATE_REQUIRED'));
+  assert(!codes(reviseDatesFromBaseline).has('FORECAST_START_DATE_REQUIRED'));
   const overlap = await execute(request({ history_start: '2020-01-01', history_end: '2026-01-01' }));
   assert(codes(overlap).has('HISTORY_FORECAST_OVERLAP'));
   const historyScope = await execute(request({ requested_keyword_scope: ['DATES', 'WCONHIST'], rag_evidence: rag(['DATES', 'WCONHIST']) }));
@@ -96,8 +105,44 @@ async function main() {
   assert(codes(createScope).has('CREATE_REQUIRED_OUTPUTS_REQUIRED'));
   const reviseNoBaseline = await execute(request({ build_mode: 'REVISE', requested_change_scope: null, preservation_policy: '' }));
   assert(codes(reviseNoBaseline).has('BASELINE_REQUIRED'));
-  assert(codes(reviseNoBaseline).has('PRESERVATION_POLICY_REQUIRED'));
-  assert(codes(reviseNoBaseline).has('REVISE_CHANGE_SCOPE_REQUIRED'));
+  assert(!codes(reviseNoBaseline).has('PRESERVATION_POLICY_REQUIRED'));
+  assert(!codes(reviseNoBaseline).has('REVISE_CHANGE_SCOPE_REQUIRED'));
+
+  const removeFromText = await execute(request({
+    ...reviseFields,
+    requested_keyword_scope: [],
+    requested_change_scope: null,
+    simulator_profile: {},
+    objective: 'Убери все кл. слова WCONPROD из датника',
+    rag_evidence: rag(['WCONPROD']),
+  }));
+  assert.equal(removeFromText.status, 'accepted');
+  assert.deepEqual(removeFromText.requested_keyword_scope, ['WCONPROD']);
+  assert.equal(removeFromText.requested_change_scope.operation, 'remove');
+  assert.equal(removeFromText.simulator_profile.unit_system, 'METRIC');
+  assert.equal(removeFromText.simulator_profile.simulator, 'tNavigator');
+
+  const noKeywordInProse = await execute(request({
+    ...reviseFields,
+    requested_keyword_scope: [],
+    requested_change_scope: null,
+    objective: 'Нужно посмотреть файл schedule',
+  }));
+  assert(codes(noKeywordInProse).has('KEYWORD_SCOPE_UNRESOLVED'));
+  assert.equal(noKeywordInProse.findings.find((f) => f.code === 'KEYWORD_SCOPE_UNRESOLVED')?.severity, 'warning');
+  assert.equal(noKeywordInProse.status, 'accepted');
+  assert.equal(noKeywordInProse.requested_keyword_scope.includes('DATES'), false);
+
+  const baselineHasOtherKeywords = await execute(request({
+    ...reviseFields,
+    requested_keyword_scope: [],
+    requested_change_scope: null,
+    objective: 'Убери WCONPROD',
+    baseline_schedule_text: 'DATES\n  1 JAN 2025 /\n/\nWELSPECS\n WELL1 /\n/\nWCONPROD\n WELL1 OPEN /\n/\n',
+    rag_evidence: rag(['WCONPROD']),
+  }));
+  assert.equal(baselineHasOtherKeywords.status, 'accepted');
+  assert.deepEqual(baselineHasOtherKeywords.requested_keyword_scope, ['WCONPROD']);
   const baselineAsk = (reviseNoBaseline.questions || []).find((q) => q.code === 'BASELINE_REQUIRED')
     || (reviseNoBaseline.questions || [])[0];
   assert(baselineAsk, 'REVISE without baseline must emit a human question');
@@ -106,6 +151,8 @@ async function main() {
 
   const citationGap = await execute(request({ rag_evidence: rag(['DATES']) }));
   assert(codes(citationGap).has('KEYWORD_INSTRUCTION_SCOPE_INCOMPLETE'));
+  assert.equal(citationGap.findings.find((f) => f.code === 'KEYWORD_INSTRUCTION_SCOPE_INCOMPLETE')?.severity, 'warning');
+  assert.equal(citationGap.status, 'accepted');
   const stalePolicy = await execute(request({ policy_version: 'petroleum-schedule-policy-v0' }));
   assert(codes(stalePolicy).has('SCHEDULE_POLICY_VERSION_NOT_APPROVED'));
   const taskMismatch = await execute(request({ orchestrator_task_id: 'task-2' }));
@@ -114,9 +161,60 @@ async function main() {
   assert(!codes(inlineWithoutHash).has('INLINE_BASELINE_SOURCE_HASH_REQUIRED'));
   assert.strictEqual(inlineWithoutHash.baseline_present, true);
   const badGatePolicy = await execute(request({ stage_gate_policy: { attention_threshold: 80, hitl_threshold: 60, hard_blockers: [] } }));
-  assert(codes(badGatePolicy).has('STAGE_GATE_POLICY_INVALID'));
+  assert(codes(badGatePolicy).has('STAGE_GATE_POLICY_NORMALIZED'));
+  assert.equal(badGatePolicy.findings.find((f) => f.code === 'STAGE_GATE_POLICY_NORMALIZED')?.severity, 'warning');
+  assert(!codes(badGatePolicy).has('STAGE_GATE_POLICY_INVALID'));
+  assert.equal(badGatePolicy.status, 'accepted');
 
-  console.log('SCHEDULE governed intake runtime smoke: 18 scenarios passed');
+  const commissioningObserve = await execute(request({
+    ...reviseFields,
+    requested_keyword_scope: [],
+    requested_change_scope: null,
+    requested_capability_scope: [],
+    objective: 'На основе старого прогнозного schedule и Excel с новыми датами ввода собрать новый schedule.inc',
+    source_facts_packet: {
+      facts: [
+        { well: '1601', values: { Скважина: '1601', 'Дата ввода': '2020-02-23' } },
+        { well: '1602', values: { Скважина: '1602', 'Дата ввода': '2020-02-23' } },
+      ],
+    },
+    rag_evidence: rag(['DATES', 'WELOPEN', 'WCONPROD', 'WEFAC']),
+  }));
+  assert.equal(commissioningObserve.status, 'accepted');
+  assert.equal(commissioningObserve.requested_change_scope.capability_id, 'commissioning_date_retarget');
+  assert(commissioningObserve.requested_capability_scope.includes('commissioning_date_retarget'));
+  assert(commissioningObserve.requested_keyword_scope.includes('DATES'));
+  assert(commissioningObserve.requested_keyword_scope.includes('WCONPROD'));
+
+  const groupObserve = await execute(request({
+    ...reviseFields,
+    requested_keyword_scope: [],
+    requested_change_scope: null,
+    requested_capability_scope: [],
+    objective: 'На основе старого прогнозного schedule - скважины 1601 и 1602 помести в отдельную группу - "DKS", и задай этим скважинам групповой контроль 200 тыс. м3 газа в сут. (с момента даты ввода этих скважин).',
+    rag_evidence: rag(['WELSPECS', 'GRUPTREE', 'GCONPROD', 'WECON', 'WPIMULT']),
+  }));
+  assert.equal(groupObserve.status, 'accepted');
+  assert.equal(groupObserve.requested_change_scope.capability_id, 'group_membership_rebind');
+  assert.deepEqual(groupObserve.requested_change_scope.wells, ['1601', '1602']);
+  assert.equal(groupObserve.requested_change_scope.parent_group, 'DKS');
+  assert.equal(groupObserve.requested_change_scope.parent_of_parent, 'FIELD');
+  assert.equal(groupObserve.requested_change_scope.rate, 200000);
+  assert.equal(groupObserve.requested_change_scope.control, 'GRAT');
+  assert.equal(groupObserve.requested_change_scope.well_groups['1601'], 'G1601');
+  assert(groupObserve.requested_capability_scope.includes('group_membership_rebind'));
+
+  const unrelatedGroup = await execute(request({
+    ...reviseFields,
+    requested_keyword_scope: [],
+    requested_change_scope: null,
+    requested_capability_scope: [],
+    objective: 'Посмотри группу 5 в schedule без смены контроля',
+  }));
+  assert.notEqual(unrelatedGroup.requested_change_scope?.capability_id, 'group_membership_rebind');
+  assert.equal(unrelatedGroup.requested_change_scope?.parent_group == null, true);
+
+  console.log('SCHEDULE governed intake runtime smoke: 25 scenarios passed');
 }
 
 main().catch((error) => {

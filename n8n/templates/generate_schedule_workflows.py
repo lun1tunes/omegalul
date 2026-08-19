@@ -87,7 +87,12 @@ In ECLIPSE / tNavigator text, `--` starts a comment through end-of-line (full-li
 ## INCLUDE call sites and included files
 - **Same date by default:** keep each INCLUDE on the same DATES slot as in the baseline/source. INCLUDE does not set the clock; do not move includes to cutover/first-well/file-top “for cleanliness”.
 - **Explicit exception only:** relocate/rebind an INCLUDE when the task/facts give clear instructions for that specific include (e.g. “INCLUDE GRUPTREE_BASE sync with first-well intro date”). All other includes stay put.
-- **Read when present:** if the referenced file is in package/`include_files`, you must open and read it (keywords, nested INCLUDE, comments) — same discipline as the root `.inc`. Missing body → KEEP the call site; do not invent file contents. Editing that fragment requires the body in evidence.
+- **Read when present:** if the referenced file is in package/`include_files`, you must open and read it (keywords, nested INCLUDE, comments) — same discipline as the root `.inc`. Attaching INCLUDE bodies is optional. Missing body → KEEP the call site on the same DATES; do not invent contents and do not HITL for the missing file. Ask only when the task explicitly requires editing that included file's contents. Date moves apply to the INCLUDE call-site in the attached root, not to an unattached child.
+
+## Keywords before the first DATES
+Records above the first DATES have no calendar clock. Default: KEEP that header as-is. Do not invent `model_start_date`. Do not ask for `model_start_date` or `change_effective_from` unless the task itself gives those dates.
+Keyword-wide REMOVE (example: remove every WCONPROD) applies to every matching block, including the pre-DATES header — no change boundary required.
+MOVE a pre-DATES keyword onto a DATES slot only when the task explicitly says to move that keyword.
 
 ## Domain (§12.20) — plan only allowlisted keywords
 Allowlist: """ + ", ".join(KEYWORDS) + """
@@ -114,7 +119,7 @@ File order matters. Typical DAG dependencies:
 Out of allowlist → omit from keyword_scope and add a concrete question (do not substitute a “similar” keyword).
 
 ## Stages
-Every stage: keywords ⊆ allowlist, required_evidence, entity_scope (string[]), temporal_scope (string[]), observable acceptance_checks.
+Every stage MUST set `keywords` to allowlisted tokens (not `keywords_to_modify`). Also include required_evidence, entity_scope (string[]), temporal_scope (string[]), observable acceptance_checks.
 `dependencies` must list other stage_id values only (or []). Unknown names are dropped.
 
 ## Output
@@ -126,12 +131,19 @@ PLAN_VALIDATE=rf"""
 let plan=$json.output??$json;if(typeof plan==='string'){{try{{plan=JSON.parse(plan)}}catch{{plan={{}}}}}}
 const arr=Array.isArray,obj=v=>v&&typeof v==='object'&&!arr(v),clean=v=>typeof v==='string'?v.trim():'',allowed=new Set({K}),findings=[];
 const asList=v=>arr(v)?v.map(clean).filter(Boolean):(clean(v)?[clean(v)]:[]);
+const collectStageKeywords=s=>{{
+  const from=arr(s.keywords)?s.keywords:[];
+  const alias=arr(s.keywords_to_modify)?s.keywords_to_modify:[];
+  const scopeKw=arr(s.keyword_scope)?s.keyword_scope:[];
+  const ops=arr(s.operations)?s.operations.filter(obj).map(o=>o.keyword):[];
+  return [...new Set([...from,...alias,...scopeKw,...ops].map(k=>clean(k).toUpperCase()).filter(k=>allowed.has(k)))];
+}};
 let request={{}};try{{const prepared=$('Prepare SCHEDULE planner input').first().json;request=prepared.planner_request??prepared??{{}}}}catch{{try{{const prepared=$('Prepare SCHEDULE pipeline plan').first().json;request=prepared.planner_request??prepared??{{}}}}catch{{request={{}}}}}}
 const mode=clean(plan.build_mode).toUpperCase(),scope=arr(plan.keyword_scope)?[...new Set(plan.keyword_scope.map(k=>clean(k).toUpperCase()).filter(Boolean))]:[];
 if(!['CREATE','REVISE'].includes(mode))findings.push({{code:'PLAN_MODE_INVALID',severity:'error'}});
 const unsupported=scope.filter(k=>!allowed.has(k));if(unsupported.length)findings.push({{code:'PLAN_KEYWORD_UNSUPPORTED',severity:'error',keywords:unsupported}});
 if(mode==='REVISE'&&clean(plan.preservation_policy)&&plan.preservation_policy!=='preserve_unmentioned')findings.push({{code:'PRESERVATION_POLICY_MISSING',severity:'error'}});
-const stagesRaw=arr(plan.stages)?plan.stages.filter(obj).map((s,i)=>({{stage_id:clean(s.stage_id)||`stage_${{i+1}}`,capability:clean(s.capability),keywords:arr(s.keywords)?[...new Set(s.keywords.map(k=>clean(k).toUpperCase()).filter(k=>allowed.has(k)))]:[],required_evidence:arr(s.required_evidence)?s.required_evidence.filter(obj).map(r=>({{...r,required:r.required===true,status:clean(r.status)||'supported'}})):(obj(s.required_evidence)?[s.required_evidence]:[]),dependencies:asList(s.dependencies),entity_scope:asList(s.entity_scope).filter(v=>v&&!/^(wells?|groups?|blocks?|entities|field|all|any|global)$/i.test(v)),temporal_scope:asList(s.temporal_scope),acceptance_checks:arr(s.acceptance_checks)?s.acceptance_checks.filter(obj):(obj(s.acceptance_checks)?[s.acceptance_checks]:[])}})):[];
+const stagesRaw=arr(plan.stages)?plan.stages.filter(obj).map((s,i)=>({{stage_id:clean(s.stage_id)||`stage_${{i+1}}`,capability:clean(s.capability),keywords:collectStageKeywords(s),required_evidence:arr(s.required_evidence)?s.required_evidence.filter(obj).map(r=>({{...r,required:r.required===true,status:clean(r.status)||'supported'}})):(obj(s.required_evidence)?[s.required_evidence]:[]),dependencies:asList(s.dependencies),entity_scope:asList(s.entity_scope).filter(v=>v&&!/^(wells?|groups?|blocks?|entities|field|all|any|global)$/i.test(v)),temporal_scope:asList(s.temporal_scope),acceptance_checks:arr(s.acceptance_checks)?s.acceptance_checks.filter(obj):(obj(s.acceptance_checks)?[s.acceptance_checks]:[])}})):[];
 const factWells=(()=>{{const packet=obj(request.source_facts_packet)?request.source_facts_packet:(obj(request.evidence)?{{}}:null);const facts=arr(packet?.facts)?packet.facts:(arr(request.evidence)?request.evidence.flatMap(e=>arr(e?.value?.facts)?e.value.facts:[]):[]);const change=obj(request.requested_change_scope)?request.requested_change_scope:{{}};const fromChange=[...(arr(change.wells)?change.wells:[]),...(arr(change.groups)?change.groups:[])];const fromFacts=facts.map(f=>{{const values=obj(f?.values)?f.values:{{}};return clean(f?.well||f?.entity||f?.entity_id||values['Скважина']||values.WELL||values.well||values['Группа']||values.GROUP)}}).filter(Boolean);return [...new Set([...fromChange,...fromFacts].map(v=>clean(String(v))).filter(Boolean))];}})();
 const stagesFilled=stagesRaw.map(s=>({{...s,entity_scope:s.entity_scope.length?s.entity_scope:factWells.slice(0,50),temporal_scope:s.temporal_scope.length?s.temporal_scope:['forecast']}}));
 const stageIds=new Set(stagesFilled.map(s=>s.stage_id));
@@ -168,21 +180,45 @@ if(commissioningRevise){{
   questions=[];
   for(let i=findings.length-1;i>=0;i--){{ if(['PLAN_STAGES_MISSING','PLAN_SCOPE_UNCOVERED','PLAN_MANDATORY_EVIDENCE_GAP'].includes(findings[i].code)) findings.splice(i,1); }}
 }}
+const change=obj(request.requested_change_scope)?request.requested_change_scope:{{}};
+const groupRebindRevise=mode==='REVISE'&&capTokens.some(t=>['group_membership_rebind','group_rebind'].includes(t));
+if(groupRebindRevise){{
+  const fallbackKw=(requested.length?requested:(scope.length?scope:['WELSPECS','GRUPTREE','GCONPROD','WECON','WPIMULT'])).filter(k=>allowed.has(k));
+  const groupWells=[...new Set([...(arr(change.wells)?change.wells.map(v=>clean(String(v))):[]),...factWells])].filter(Boolean);
+  if(!stages.length){{
+    stages=[{{stage_id:'group_rebind',capability:'group_membership_rebind',keywords:fallbackKw,required_evidence:[],dependencies:[],entity_scope:(groupWells.length?groupWells:['group']).slice(0,50),temporal_scope:['forecast'],acceptance_checks:[{{check:'group_rebind_applied'}}]}}];
+  }}
+  for(const s of stages){{ if(!s.keywords.length) s.keywords=fallbackKw; if(!s.entity_scope.length) s.entity_scope=(groupWells.length?groupWells:['group']).slice(0,50); if(!s.temporal_scope.length) s.temporal_scope=['forecast']; }}
+  coveredScope=requested.length?requested.filter(k=>stages.some(s=>s.keywords.includes(k))):fallbackKw;
+  questions=[];
+  for(let i=findings.length-1;i>=0;i--){{ if(['PLAN_STAGES_MISSING','PLAN_SCOPE_UNCOVERED','PLAN_MANDATORY_EVIDENCE_GAP'].includes(findings[i].code)) findings.splice(i,1); }}
+}}
+const keywordWideRemove=mode==='REVISE'&&(clean(change.operation).toLowerCase()==='remove'||arr(change.must_remove).length>0)&&(requested.length||scope.length);
+if(keywordWideRemove){{
+  const fallbackKw=(requested.length?requested:(scope.length?scope:[])).filter(k=>allowed.has(k));
+  if(!stages.length){{
+    stages=[{{stage_id:'keyword_remove',capability:'keyword_remove',keywords:fallbackKw,required_evidence:[],dependencies:[],entity_scope:['keyword'],temporal_scope:['all'],acceptance_checks:[{{check:'keyword_absent_from_schedule'}}]}}];
+  }}
+  for(const s of stages){{ if(!s.keywords.length) s.keywords=fallbackKw; if(!s.temporal_scope.length) s.temporal_scope=['all']; }}
+  coveredScope=requested.length?requested.filter(k=>stages.some(s=>s.keywords.includes(k))):fallbackKw;
+  questions=[];
+  for(let i=findings.length-1;i>=0;i--){{ if(['PLAN_STAGES_MISSING','PLAN_SCOPE_UNCOVERED','PLAN_MANDATORY_EVIDENCE_GAP'].includes(findings[i].code)) findings.splice(i,1); }}
+}}
 if(requested.length&&!coveredScope.length)findings.push({{code:'PLAN_SCOPE_UNCOVERED',severity:'error',keywords:requested}});
 if(required.length>requiredSupported||(questions.length&&!hasSourceFacts))findings.push({{code:'PLAN_MANDATORY_EVIDENCE_GAP',severity:'error',required:required.length,supported:requiredSupported,questions:questions.length}});
 if(conflictCount)findings.push({{code:'PLAN_SOURCE_CONFLICT',severity:'error',count:conflictCount}});
-const scopeFit=requested.length?Math.round(100*coveredScope.length/requested.length):(commissioningRevise?100:0);
-const evidenceCompleteness=required.length?Math.round(100*requiredSupported/required.length):(stages.length||commissioningRevise?100:0);
+const scopeFit=requested.length?Math.round(100*coveredScope.length/requested.length):(commissioningRevise||groupRebindRevise||keywordWideRemove?100:0);
+const evidenceCompleteness=required.length?Math.round(100*requiredSupported/required.length):(stages.length||commissioningRevise||groupRebindRevise||keywordWideRemove?100:0);
 const sourceAuthority=scope.length?Math.round(100*scope.filter(k=>citedKeywords.has(k)).length/scope.length):(citations.length||hasSourceFacts?100:0);
-const entityTemporalConsistency=(stages.length||commissioningRevise)&&!cycle&&(stages.length?stages.every(s=>s.entity_scope.length&&s.temporal_scope.length):true)&&!conflictCount?100:0;
+const entityTemporalConsistency=(stages.length||commissioningRevise||groupRebindRevise||keywordWideRemove)&&!cycle&&(stages.length?stages.every(s=>s.entity_scope.length&&s.temporal_scope.length):true)&&!conflictCount?100:0;
 const hardFindings=findings.filter(f=>f.severity==='error');
 const deterministicValidationHealth=hardFindings.length?0:100;
 const stageScore=Math.round(.25*scopeFit+.25*evidenceCompleteness+.20*sourceAuthority+.15*entityTemporalConsistency+.15*deterministicValidationHealth);
 const hardBlockers=[...new Set(findings.filter(f=>f.severity==='error').map(f=>f.code))],decision=hardBlockers.length||stageScore<70?'hitl':stageScore<85?'attention':'continue';
 const reasonCodes=hardBlockers.length?hardBlockers:[decision==='continue'?'READINESS_CONTINUE':decision==='attention'?'READINESS_ATTENTION':'READINESS_HITL'];
 const decisionRecord={{contract:'decision_record',contract_version:'1.0',objective:clean(request.task?.objective||request.objective),considered_inputs:[{{kind:'planner_request',build_mode:mode,requested_keyword_scope:requested,evidence_packet_count:evidence.length}},{{kind:'baseline_inventory',package_hash:request.baseline_analysis?.package_hash||null}}],proposed_actions:stages.map(s=>({{stage_id:s.stage_id,capability:s.capability,keywords:s.keywords,depends_on:s.dependencies}})),selected_action:{{action:decision,reason_codes:reasonCodes}},rejected_actions:findings.map(f=>({{action:'schedule_plan',reason_codes:[f.code]}})),assumptions:arr(modelDecision.assumptions)?modelDecision.assumptions.map(String).slice(0,100):[],evidence_refs:arr(modelDecision.evidence_refs)?modelDecision.evidence_refs.filter(obj).slice(0,100):[],citations:citations.slice(0,100),tool_call_ids:arr(modelDecision.tool_call_ids)?modelDecision.tool_call_ids.map(String).slice(0,100):[],unresolved_questions:questions,acceptance_check_results:[{{check:'scope_fit',score:scopeFit,passed:scopeFit===100}},{{check:'evidence_completeness',score:evidenceCompleteness,passed:evidenceCompleteness===100}},{{check:'source_authority_and_citation',score:sourceAuthority,passed:sourceAuthority===100}},{{check:'entity_temporal_consistency',score:entityTemporalConsistency,passed:entityTemporalConsistency===100}},{{check:'deterministic_validation_health',score:deterministicValidationHealth,passed:deterministicValidationHealth===100}}]}};
-const outStatus=hardBlockers.length?'needs_input':(commissioningRevise?'proposed':(plan.status||'proposed'));
-return[{{json:{{contract:'schedule_plan',contract_version:'1.0',status:outStatus,build_mode:mode,keyword_scope:scope.length?scope:(commissioningRevise?coveredScope:scope),stages,questions,preservation_policy:mode==='REVISE'?'preserve_unmentioned':'not_applicable',rationale:clean(plan.rationale).slice(0,4000),decision_record:decisionRecord,findings,hard_blockers:hardBlockers,score:{{stage_score:stageScore,components:{{scope_fit:scopeFit,evidence_completeness:evidenceCompleteness,source_authority_and_citation:sourceAuthority,entity_temporal_consistency:entityTemporalConsistency,deterministic_validation_health:deterministicValidationHealth}},raw_counts:{{requested_keywords:requested.length,covered_keywords:coveredScope.length,required_evidence:required.length,supported_evidence:requiredSupported,citations:citations.length,invalid_dependencies:droppedDeps.length,conflicts:conflictCount,questions:questions.length,findings:findings.length}},thresholds:{{attention:85,hitl:70}},decision,provisional:true}}}}}}];
+const outStatus=hardBlockers.length?'needs_input':(commissioningRevise||groupRebindRevise||keywordWideRemove?'proposed':(plan.status||'proposed'));
+return[{{json:{{contract:'schedule_plan',contract_version:'1.0',status:outStatus,build_mode:mode,keyword_scope:scope.length?scope:((commissioningRevise||groupRebindRevise||keywordWideRemove)?coveredScope:scope),stages,questions,preservation_policy:mode==='REVISE'?'preserve_unmentioned':'not_applicable',rationale:clean(plan.rationale).slice(0,4000),decision_record:decisionRecord,findings,hard_blockers:hardBlockers,score:{{stage_score:stageScore,components:{{scope_fit:scopeFit,evidence_completeness:evidenceCompleteness,source_authority_and_citation:sourceAuthority,entity_temporal_consistency:entityTemporalConsistency,deterministic_validation_health:deterministicValidationHealth}},raw_counts:{{requested_keywords:requested.length,covered_keywords:coveredScope.length,required_evidence:required.length,supported_evidence:requiredSupported,citations:citations.length,invalid_dependencies:droppedDeps.length,conflicts:conflictCount,questions:questions.length,findings:findings.length}},thresholds:{{attention:85,hitl:70}},decision,provisional:true}}}}}}];
 """
 MERGE=f"""
 const x=$json.merge_request??$json,arr=Array.isArray,clean=v=>typeof v==='string'?v.trim():'',allowed=new Set({K});const mode=clean(x.mode).toUpperCase(),baseline=typeof x.baseline_schedule_text==='string'?x.baseline_schedule_text:'',changes=arr(x.changes)?x.changes:[],findings=[];const hash=v=>{{let h=2166136261;for(const ch of String(v??'')){{h^=ch.charCodeAt(0);h=Math.imul(h,16777619)}}return(h>>>0).toString(16).padStart(8,'0')}};if(mode==='REVISE'&&!baseline)findings.push({{code:'BASELINE_REQUIRED',severity:'error'}});if(!['CREATE','REVISE'].includes(mode))findings.push({{code:'MODE_INVALID',severity:'error'}});let output=mode==='REVISE'?baseline:'',applied=[];for(const c of changes){{const op=clean(c.operation).toUpperCase(),kw=clean(c.keyword).toUpperCase();if(op==='KEEP'){{applied.push({{...c,operation:'KEEP'}});continue}}if(!['ADD','MODIFY','REMOVE'].includes(op)||!allowed.has(kw)){{findings.push({{code:'CHANGE_INVALID',severity:'error'}});continue}}if(op==='REMOVE'&&!x.explicit_remove_approved){{findings.push({{code:'REMOVE_REQUIRES_APPROVAL',severity:'error',keyword:kw}});continue}}const rendered=typeof c.rendered_text==='string'?c.rendered_text.trim():'';if(op==='ADD'){{if(!rendered){{findings.push({{code:'ADD_TEXT_REQUIRED',severity:'error'}});continue}}output=(output.trimEnd()?output.trimEnd()+'\\n':'')+rendered+(rendered.endsWith('/')?'':'\\n/')+'\\n';applied.push({{...c,operation:'ADD'}});continue}}const selector=clean(c.selector?.contains||c.selector||kw);const escaped=selector.replace(/[.*+?^${{}}()|[\\]\\\\]/g,'\\\\$&');const re=new RegExp('(^|\\n)([\\s\\S]*?'+escaped+'[\\s\\S]*?\\n\\s*\\/)','i');const m=output.match(re);if(!m){{findings.push({{code:'TARGET_NOT_FOUND',severity:'error',keyword:kw,selector}});continue}}if(op==='MODIFY'){{if(!rendered){{findings.push({{code:'MODIFY_TEXT_REQUIRED',severity:'error'}});continue}}output=output.replace(m[2],rendered+(rendered.endsWith('/')?'':'\\n/'));applied.push({{...c,operation:'MODIFY'}})}}else{{output=output.replace(m[2],'');applied.push({{...c,operation:'REMOVE'}})}}}}const mutations=changes.filter(c=>clean(c.operation).toUpperCase()!=='KEEP').length;return[{{json:{{contract:'schedule_merge_result',contract_version:'1.0',status:findings.some(f=>f.severity==='error')?'needs_input':'merged',mode,baseline_hash:hash(baseline),output_hash:hash(output),generated_schedule:output,applied_changes:applied,preservation_report:mode==='REVISE'?{{policy:'preserve_unmentioned',zero_change_byte_identical:mutations===0?output===baseline:null,removed_count:applied.filter(c=>c.operation==='REMOVE').length,modified_count:applied.filter(c=>c.operation==='MODIFY').length,added_count:applied.filter(c=>c.operation==='ADD').length}}:{{policy:'not_applicable'}},semantic_diff:{{changed_keywords:[...new Set(applied.filter(c=>c.operation!=='KEEP').map(c=>c.keyword))]}},findings}}}}];

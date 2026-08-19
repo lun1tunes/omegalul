@@ -285,6 +285,24 @@ async function run(name, json) {
   assert.equal(casConflictMessageOnly.taxonomy_scenario, 'approval_error');
   assert.notEqual(casConflictMessageOnly.taxonomy_scenario, 'llm_error');
 
+  const activitySyncFn = new AsyncFunction('$json', '$', source(wf, 'Prepare Activity error sync'));
+  const activitySync = await activitySyncFn(
+    {
+      has_task_id: true,
+      task_id: 'eng_error_smoke_1',
+      skip_trace: false,
+      activity_status: 'retryable_error',
+      activity_event: { status: 'RETRYABLE_ERROR' },
+    },
+    (name) => ({
+      first: () => ({
+        json: name === 'Activity connection' ? { activity_base_url: 'http://127.0.0.1:8200/' } : {},
+      }),
+    }),
+  );
+  assert.equal(activitySync[0].json.activity_sync_ready, true);
+  assert.equal(activitySync[0].json.activity_url, 'http://127.0.0.1:8200/v1/sync');
+
   const realErr = await prepareFn(
     {
       task_id: 'eng_err_smoke',

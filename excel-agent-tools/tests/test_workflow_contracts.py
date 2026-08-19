@@ -1124,7 +1124,7 @@ def test_schedule_flow_is_orchestrator_mediated_and_multi_stage() -> None:
         for document in ingestible_operating_guide_documents()
         if document.get("knowledge_id") == "route-hitl-required-evidence"
     )
-    assert hitl_card["revision"] == "3"
+    assert hitl_card["revision"] == "4"
     assert "delegate excel_extraction_specialist, не HITL" in hitl_card["text"]
     assert "Builder RAG evidence gate" in hitl_card["text"]
 
@@ -1302,6 +1302,7 @@ def test_universal_engineering_instruction_templates_are_portable() -> None:
         "schedule_package_materialize.py",
         "schedule_rag_workflows.py",
         "schedule_intake_runtime.py",
+        "schedule_task_facts.py",
         "schedule_schema_runtime.py",
         "schedule_semantic_runtime.py",
         "schedule_emit_order.py",

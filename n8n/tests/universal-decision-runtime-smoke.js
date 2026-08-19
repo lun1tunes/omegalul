@@ -137,6 +137,12 @@ function specialistResult(overrides = {}) {
 }
 
 async function main() {
+  const modelToParser = (modelName, parserName) => {
+    const targets = (orchestrator.connections[modelName]?.ai_languageModel || []).flat().map((c) => c.node);
+    assert.ok(targets.includes(parserName), `${modelName} must feed ${parserName} (autoFix requires a model)`);
+  };
+  modelToParser('Planner Chat Model — configure in UI', 'Planner Structured Output');
+  modelToParser('Verifier Chat Model — separate credential', 'Verifier Structured Output');
   const base = basePlannerRequest();
   const applied = (await execute(
     orchestrator,
@@ -213,8 +219,44 @@ async function main() {
   assert.equal(JSON.stringify(createScratchPacket).includes('2019-06-30'), false);
   assert.equal(JSON.stringify(createScratchPacket).includes('2071-01-01'), false);
   assert.equal(JSON.stringify(createScratchPacket).includes('shift_commissioning'), false);
-  assert.equal(Boolean(createScratchPacket.inputs.schedule_request.simulator_profile), false);
-  assert.equal(JSON.stringify(createScratchPacket).includes('Rock Flow Dynamics'), false);
+  assert.equal(createScratchPacket.inputs.schedule_request.simulator_profile.unit_system, 'METRIC');
+  assert.equal(createScratchPacket.inputs.schedule_request.simulator_profile.simulator, 'tNavigator');
+  assert.equal(JSON.stringify(createScratchPacket).includes('2019-07-01'), false);
+
+  const removeWconprod = (await execute(
+    orchestrator,
+    'Validate and apply plan',
+    {
+      output: plannerOutput({
+        decision: 'needs_input',
+        reason: 'Need profile and keywords.',
+        questions: [
+          { id: 'units', text: 'Confirm unit_system METRIC' },
+          { id: 'kw', text: 'Какой requested_keyword_scope нужен для Builder?' },
+        ],
+        specialist_packet: null,
+      }),
+    },
+    {
+      'Prepare planner input': basePlannerRequest({
+        objective: 'Убери все кл. слова WCONPROD из датника',
+        task_type: 'schedule_build',
+        baseline_schedule_text: 'DATES\n  1 JAN 2025 /\n/\nWCONPROD\n WELL1 OPEN /\n/\nWELSPECS\n WELL1 G1 1 1 1 1 OIL /\n/\n',
+        baseline_filename: 'MONITORING_1_2_2_1_4q25_3_NORTH1_6_FDP.INC',
+      }),
+    },
+  ))[0].json;
+  const removePacket = JSON.parse(removeWconprod.packet_json);
+  const removeScope = removePacket.inputs.schedule_request;
+  assert.equal(removeWconprod.status, 'delegated');
+  assert.equal(removePacket.specialist_id, 'schedule_builder_specialist');
+  assert.deepEqual(removeScope.requested_keyword_scope, ['WCONPROD']);
+  assert.equal(removeScope.requested_change_scope.operation, 'remove');
+  assert.equal(removeScope.simulator_profile.unit_system, 'METRIC');
+  assert.equal(removeScope.simulator_profile.simulator, 'tNavigator');
+  assert.equal(removeScope.requested_keyword_scope.includes('WELSPECS'), false);
+  assert.equal(JSON.stringify(removePacket).includes('shift_commissioning'), false);
+  assert.equal(JSON.stringify(removePacket).includes('2019-06-30'), false);
 
   const excelQuestions = [
     { id: 'units', text: 'Какая unit system / METRIC?' },
@@ -515,16 +557,23 @@ async function main() {
     compact_data: {
       release_ready: true,
       generated_schedule: scheduleText,
+      generated_schedule_bytes: scheduleText.length,
       merge_result: {
         status: 'merged',
         generated_schedule: scheduleText,
+        generated_schedule_bytes: scheduleText.length,
         output_package: {
           contract: 'schedule_package',
           contract_version: '1.0',
           root_path: 'schedule.inc',
-          files: [{ file_ref: 'schedule.inc', text: scheduleText }],
+          package_hash: 'sha256:abc',
+          file_count: 1,
         },
       },
+      validation_result: { status: 'valid', hard_blockers: [] },
+      schedule_verifier_result: { verdict: 'pass', can_release: true },
+      semantic_diff: { changed_keywords: ['WCONPROD'] },
+      preservation_report: { policy: 'preserve_unmentioned' },
       decision_record: decisionRecord('Build SCHEDULE'),
     },
   });
@@ -538,9 +587,57 @@ async function main() {
   assert.equal(routedSchedule.post_specialist_route, 'verify');
   assert.equal(JSON.parse(routedSchedule.result_json).compact_data.generated_schedule, scheduleText);
   const verifierHandoff = (await execute(orchestrator, 'Prepare independent verification', routedSchedule))[0].json;
+  const verifierPayload = JSON.parse(verifierHandoff.verifier_input);
   assert.match(verifierHandoff.verifier_input, /schedule\.inc/);
   assert.match(verifierHandoff.verifier_input, /release_ready/);
   assert.doesNotMatch(verifierHandoff.verifier_input, /1 JAN 2025/);
+  assert.deepEqual(verifierPayload.specialist_result.compact_data.semantic_diff.changed_keywords, ['WCONPROD']);
+  assert.equal(verifierPayload.specialist_result.compact_data.merge_result.output_package.file_count, 1);
+  assert.equal(verifierPayload.specialist_result.deliverables[0].schedule_text, undefined);
+
+  const scheduleRetryBlocked = (await execute(
+    orchestrator,
+    'Apply verification policy',
+    {
+      output: {
+        verdict: 'retry',
+        summary: 'Cannot confirm WCONPROD removal without INC body.',
+        criteria: [{ id: 'AC1', passed: false }],
+        findings: [{ code: 'WCONPROD_UNVERIFIED', severity: 'high', summary: 'schedule_text omitted' }],
+        required_corrections: ['Provide INC diff'],
+        human_gate_reason: null,
+        decision_record: { objective: 'verify' },
+      },
+    },
+    {
+      'Prepare independent verification': {
+        ...verifierBase,
+        task_id: 'eng-1',
+        version: 2,
+        retry_count: 0,
+        max_retries: 2,
+        risk_class: 'high',
+        runtime_json: '{}',
+        specialist_id: 'schedule_builder_specialist',
+        specialist_packet: {
+          ...plannerOutput().specialist_packet,
+          specialist_id: 'schedule_builder_specialist',
+          objective: 'Убери все кл. слова WCONPROD из датника',
+        },
+        specialist_result: {
+          ...scheduleResult,
+          status: 'needs_approval',
+          self_check: { performed: true, passed: true, checks: [{ id: 'c1', passed: true }], reproducibility: 'fixture' },
+        },
+      },
+    },
+  ))[0].json;
+  assert.equal(scheduleRetryBlocked.status, 'awaiting_human');
+  assert.equal(scheduleRetryBlocked.post_verify_route, 'respond');
+  assert.notEqual(scheduleRetryBlocked.status, 'retryable_error');
+  const retryGate = JSON.parse(scheduleRetryBlocked.gate_json);
+  assert.equal(retryGate.kind, 'result_approval');
+  assert.equal(JSON.parse(scheduleRetryBlocked.verification_json).verdict, 'pass_with_warnings');
 
   const releaseBase = {
     task_id: 'eng-1',

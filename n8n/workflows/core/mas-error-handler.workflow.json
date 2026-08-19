@@ -251,7 +251,7 @@
     },
     {
       "parameters": {
-        "jsCode": "const x=$json;\nif(!x.has_task_id||x.skip_trace){\n  return[{json:{...x,activity_sync_ready:false}}];\n}\nconst ACTIVITY_BASE_URL=String($('Activity connection').first().json.activity_base_url||'').trim();\nconst body={\n  task_id:x.task_id,\n  trace_id:x.mas_trace_event?.trace_id||null,\n  status:x.activity_status||x.cas_status||null,\n  version:x.activity_version||null,\n  human_gate:x.activity_human_gate||x.human_gate||null,\n  events:[x.activity_event].filter(Boolean),\n};\nreturn[{json:{\n  ...x,\n  activity_sync_ready:Boolean(ACTIVITY_BASE_URL),\n  activity_url:`${String(ACTIVITY_BASE_URL).replace(/\\\\/$/,'')}/v1/sync`,\n  activity_body:body,\n}}];"
+        "jsCode": "const x=$json;\nif(!x.has_task_id||x.skip_trace){\n  return[{json:{...x,activity_sync_ready:false}}];\n}\nconst ACTIVITY_BASE_URL=String($('Activity connection').first().json.activity_base_url||'').trim();\nconst activityBase=ACTIVITY_BASE_URL.endsWith('/')?ACTIVITY_BASE_URL.slice(0,-1):ACTIVITY_BASE_URL;\nconst body={\n  task_id:x.task_id,\n  trace_id:x.mas_trace_event?.trace_id||null,\n  status:x.activity_status||x.cas_status||null,\n  version:x.activity_version||null,\n  human_gate:x.activity_human_gate||x.human_gate||null,\n  events:[x.activity_event].filter(Boolean),\n};\nreturn[{json:{\n  ...x,\n  activity_sync_ready:Boolean(ACTIVITY_BASE_URL),\n  activity_url:`${activityBase}/v1/sync`,\n  activity_body:body,\n}}];"
       },
       "id": "aa10c14a-9338-52fd-9c40-e9ae67304707",
       "name": "Prepare Activity error sync",
@@ -528,5 +528,5 @@
   },
   "tags": [],
   "pinData": {},
-  "versionId": "2cb3d83d-0c6c-4cdd-9a95-72ded655dc0a"
+  "versionId": "352d2ac9-f797-4883-a837-27d3150a92e4"
 }

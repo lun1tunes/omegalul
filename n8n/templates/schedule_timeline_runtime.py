@@ -40,7 +40,9 @@ const GROUP_REBIND_CAPABILITIES=new Set(['group_membership_rebind','group_rebind
 const collectCapabilityTokens=(req,intake)=>{
   const r=req&&typeof req==='object'&&!Array.isArray(req)?req:{};
   const inn=intake&&typeof intake==='object'&&!Array.isArray(intake)?intake:{};
-  const change=(r.requested_change_scope&&typeof r.requested_change_scope==='object'&&!Array.isArray(r.requested_change_scope))?r.requested_change_scope:{};
+  const changeR=(r.requested_change_scope&&typeof r.requested_change_scope==='object'&&!Array.isArray(r.requested_change_scope))?r.requested_change_scope:{};
+  const changeI=(inn.requested_change_scope&&typeof inn.requested_change_scope==='object'&&!Array.isArray(inn.requested_change_scope))?inn.requested_change_scope:{};
+  const change={...changeI,...changeR};
   const bag=[
     ...(Array.isArray(r.requested_capability_scope)?r.requested_capability_scope:[]),
     ...(Array.isArray(inn.requested_capability_scope)?inn.requested_capability_scope:[]),
@@ -48,6 +50,24 @@ const collectCapabilityTokens=(req,intake)=>{
     r.capability_id,inn.capability_id,change.capability_id,change.intent,change.kind,change.operation,change.capability,
   ];
   return [...new Set(bag.map(capabilityToken).filter(Boolean))];
+};
+const mergeObservedScheduleRequest=(req,intake)=>{
+  const r=req&&typeof req==='object'&&!Array.isArray(req)?req:{};
+  const inn=intake&&typeof intake==='object'&&!Array.isArray(intake)?intake:{};
+  const change={
+    ...(inn.requested_change_scope&&typeof inn.requested_change_scope==='object'&&!Array.isArray(inn.requested_change_scope)?inn.requested_change_scope:{}),
+    ...(r.requested_change_scope&&typeof r.requested_change_scope==='object'&&!Array.isArray(r.requested_change_scope)?r.requested_change_scope:{}),
+  };
+  const caps=[...new Set([
+    ...(Array.isArray(inn.requested_capability_scope)?inn.requested_capability_scope:[]),
+    ...(Array.isArray(r.requested_capability_scope)?r.requested_capability_scope:[]),
+  ].map(capabilityToken).filter(Boolean))];
+  return {
+    ...r,
+    requested_change_scope:Object.keys(change).length?change:r.requested_change_scope,
+    requested_capability_scope:caps.length?caps:(r.requested_capability_scope||inn.requested_capability_scope||[]),
+    capability_id:r.capability_id||inn.capability_id||change.capability_id||null,
+  };
 };
 const wantsCommissioningCapability=tokens=>(Array.isArray(tokens)?tokens:[]).some(t=>COMMISSIONING_CAPABILITIES.has(t));
 const wantsGroupRebindCapability=tokens=>(Array.isArray(tokens)?tokens:[]).some(t=>GROUP_REBIND_CAPABILITIES.has(t));
@@ -97,6 +117,19 @@ const readGroupRebindSpec=req=>{
     control,
     effective_at:spec.effective_at||null,
   }};
+};
+const pickWellDateFact=f=>{
+  const row=f&&typeof f==='object'&&!Array.isArray(f)?f:{};
+  const values=(row.values&&typeof row.values==='object'&&!Array.isArray(row.values))?row.values:((row.row&&typeof row.row==='object'&&!Array.isArray(row.row))?row.row:{});
+  const well=String(row.well||row.entity||row.entity_id||values['Скважина']||values.скважина||values.WELL||values.well||'').trim();
+  let date=row.value??row.raw_value??values['Дата ввода']??values['дата ввода']??values.date??values.Date??values.commissioning_date??null;
+  let field=String(row.field||row.column||'').trim();
+  if((date==null||String(date).trim()==='')&&values&&typeof values==='object'){
+    const hit=Object.keys(values).find(k=>/дата|date|commission|ввод/i.test(String(k||'')));
+    if(hit!=null&&values[hit]!=null&&String(values[hit]).trim()!==''){date=values[hit];field=field||String(hit);}
+  }
+  if(!field&&date!=null&&String(date).trim()!=='') field='Дата ввода';
+  return {well,date,field,values,fact_id:row.fact_id||null};
 };
 """.strip()
 
@@ -924,15 +957,10 @@ const obj=v=>v&&typeof v==='object'&&!Array.isArray(v),arr=Array.isArray;
 """
         + core
         + r"""
-const req=root.request||{};
+const req=mergeObservedScheduleRequest(root.request||{},intake);
 const packet=obj(req.source_facts_packet)?req.source_facts_packet:{};
 const facts=arr(packet.facts)?packet.facts:(arr(req.source_facts)?req.source_facts:[]);
-const wellFacts=facts.map(f=>{
-  const values=obj(f.values)?f.values:{};
-  const well=tlClean(f.well||f.entity||f.entity_id||values['Скважина']||values.скважина||values.WELL||values.well);
-  const date=f.value??f.raw_value??values['Дата ввода']??values.date??null;
-  return{well,date,fact_id:f.fact_id||null};
-}).filter(f=>f.well&&f.date!==null&&f.date!==undefined);
+const wellFacts=facts.map(pickWellDateFact).filter(f=>f.well&&f.date!==null&&f.date!==undefined&&String(f.date).trim()!=='');
 
 const instructionBlob=[req.objective,req.problem_statement,req.user_goal,req.task,req.instruction,intake.objective,root.packet?.objective,JSON.stringify(req.requested_change_scope||{}),JSON.stringify(req.controls||{}),JSON.stringify(root.latest_human_response||{})].filter(Boolean).join('\n');
 // Explicit enum only — prose remove is resolved inside runCommissioningRevise as needs_input.

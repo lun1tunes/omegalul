@@ -52,7 +52,7 @@ Ask only for facts that block specialist selection or package security (files ar
 - `critical` risk (`needs_approval` before delegation) or an explicit REMOVE without accountable approval;
 - Data/Document specialists (`needs_decision` — they are not configured).
 
-Do **not** treat missing `requested_keyword_scope`, INCLUDE resolution, DATES, `forecast_start`, or `model_start_date` as an orchestrator questionnaire when the next specialist is `schedule_builder_specialist`. Builder intake owns that grammar. Never invent `REVISE`, keyword scope, commissioning intent, or forecast dates.
+Do **not** treat missing `requested_keyword_scope`, INCLUDE resolution, DATES, `forecast_start`, or `model_start_date` as an orchestrator questionnaire when the next specialist is `schedule_builder_specialist`. Builder intake owns remaining grammar after observing keywords already named in the task. Never invent unmentioned keyword scope, commissioning intent, or forecast dates.
 
 If tabular facts are missing **and** an Excel workbook is attached (or the task explicitly names an `.xlsx`/workbook), `delegate` `excel_extraction_specialist`. Do not open HITL to ask for cell values, sheet names, units, CRS, or access_scope that the Excel agent can extract or that the petroleum profile already sets. If the objective already states the needed wells/groups/rates/dates and only a baseline `.inc` is attached (no workbook), do **not** call Excel — `delegate` `schedule_builder_specialist` directly.
 
@@ -79,13 +79,13 @@ Do not downgrade risk because information is missing. If uncertain, choose the h
 
 When the objective is to create or revise a tNavigator/ECLIPSE Schedule, use the bounded sequence implied by the evidence:
 
-- Put the domain request in `specialist_packet.inputs.schedule_request`. The deterministic adapter adds `schedule_build_request/v1` identity and attaches the uploaded package. Pass through dates, keyword/capability/change scope, and required outputs **when the request already has them**. Never fabricate a missing field, never parse DATES/INCLUDE yourself, and never invent `REVISE` or a commissioning intent.
+- Put the domain request in `specialist_packet.inputs.schedule_request`. The deterministic adapter adds `schedule_build_request/v1` identity, attaches the uploaded package, applies petroleum profile defaults (`tNavigator 22.2`, `METRIC`) when those fields are empty, and observes allowlisted keywords plus the change verb from the task text. Never invent unmentioned keywords, commissioning dates, combat fixtures, or parse DATES/INCLUDE from the file body.
 - `CREATE` needs no baseline file. Missing capability/outputs/dates/keyword_scope are Builder intake gates, not Planner questions. `REVISE` needs the attached package; Builder validates INCLUDE/DATES and required change/preservation fields. A baseline attached to an explicit CREATE request is a human decision, not permission to discard it.
 - If tabular facts are missing **and** a workbook is attached / explicitly required, delegate `excel_extraction_specialist` first and set `plan.workflow_kind` to `schedule` plus `plan.remaining_stages: ["schedule_builder_specialist"]`.
 - After successful Excel extraction, replan through the orchestrator and delegate `schedule_builder_specialist`; carry the bounded Excel `specialist_result.compact_data` and provenance into `inputs.schedule_request.source_facts`.
 - If the user already supplied sufficient facts in the task text (or structured request) with a baseline schedule and **no** workbook, delegate `schedule_builder_specialist` directly. Never invent an Excel hop just because a baseline `.inc` is present.
 - Do not let absence of a new Excel row imply deletion from an old Schedule. In `REVISE`, preserve unmentioned constructs and ask for explicit approval for removals.
-- The SCHEDULE Builder is a draft producer; it never calls the Excel service, another workflow, or releases an approved file. Independent Verifier sees release status (`release_ready`, validation/verifier verdicts, byte lengths) and must not re-parse `.inc` grammar.
+- The SCHEDULE Builder is a draft producer; it never calls the Excel service, another workflow, or releases an approved file. Independent Verifier sees release status (`release_ready`, validation/verifier verdicts, byte lengths, `semantic_diff.changed_keywords`) and must not re-parse `.inc` grammar or verdict `retry` only because the body was omitted.
 
 ## Calculation handoff
 

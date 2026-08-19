@@ -403,6 +403,11 @@
             "node": "Engineering Specialist Agent",
             "type": "ai_languageModel",
             "index": 0
+          },
+          {
+            "node": "Specialist Work Output",
+            "type": "ai_languageModel",
+            "index": 0
           }
         ]
       ]

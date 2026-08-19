@@ -69,7 +69,8 @@ function askText(q) {
   const qText = askText(sr.human_request.questions[0]);
   assert(hasCyrillic(qText), qText);
   assert(/JAN2025\.inc/.test(qText), qText);
-  assert(/Проверка INCLUDE/.test(qText), qText);
+  assert(/той же дате/.test(qText), qText);
+  assert(!/Прикрепите этот \.inc к ответу/.test(qText), qText);
   assert(!/^INCLUDE_NOT_FOUND$/.test(qText));
   assert(!sr.human_request.questions.some((item) => askText(item) === 'INCLUDE_NOT_FOUND'));
   assert((sr.compact_data.findings || []).every((f) => f.code === 'INCLUDE_NOT_FOUND'));

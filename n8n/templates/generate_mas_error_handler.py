@@ -413,6 +413,7 @@ if(!x.has_task_id||x.skip_trace){
   return[{json:{...x,activity_sync_ready:false}}];
 }
 const ACTIVITY_BASE_URL=String($('Activity connection').first().json.activity_base_url||'').trim();
+const activityBase=ACTIVITY_BASE_URL.endsWith('/')?ACTIVITY_BASE_URL.slice(0,-1):ACTIVITY_BASE_URL;
 const body={
   task_id:x.task_id,
   trace_id:x.mas_trace_event?.trace_id||null,
@@ -424,7 +425,7 @@ const body={
 return[{json:{
   ...x,
   activity_sync_ready:Boolean(ACTIVITY_BASE_URL),
-  activity_url:`${String(ACTIVITY_BASE_URL).replace(/\\/$/,'')}/v1/sync`,
+  activity_url:`${activityBase}/v1/sync`,
   activity_body:body,
 }}];
 """.strip()

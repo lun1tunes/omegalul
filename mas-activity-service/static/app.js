@@ -338,10 +338,12 @@
   function displayRole(role) {
     const raw = String(role || "").trim();
     if (!raw || /^specialist$/i.test(raw)) return "Вы";
+    if (/^mas activity user$/i.test(raw)) return "Вы";
     const labels = {
       User: "Вы",
       Engineer: "Вы",
       human_operator: "Вы",
+      "mas activity user": "Вы",
       Orchestrator: "Оркестратор",
       universal_orchestrator: "Оркестратор",
       error_handler: "Обработчик ошибок",
@@ -351,7 +353,11 @@
 
   function roleClass(role) {
     const label = displayRole(role);
-    if (/human|инженер|operator|^user$/i.test(label) || /human|инженер|operator|^user$/i.test(role || "")) {
+    if (
+      /^вы$/i.test(label)
+      || /human|инженер|operator|^user$/i.test(label)
+      || /human|инженер|operator|^user$|mas activity user/i.test(role || "")
+    ) {
       return "human";
     }
     return /orchestrator/i.test(role || "") ? "orch" : "spec";
@@ -385,7 +391,7 @@
     if (!looksMachineAsk(reason)) return String(reason || "").trim() || GATE_GENERIC_REASON;
     const blob = [reason, ...(Array.isArray(questions) ? questions.map((q) => q && (q.code || q.id)) : [])].join(" ");
     if (/INCLUDE_NOT_FOUND/.test(blob)) {
-      return "В пакете нет тел файлов, на которые ссылается INCLUDE. Прикрепите недостающие .inc и нажмите Ответить.";
+      return "Тела INCLUDE не приложены — ссылки в корне оставляем как есть на той же дате.";
     }
     if (/EXCEL_WORKBOOK_REQUIRED|xlsx|workbook/i.test(blob)) {
       return "Нет книги Excel. Прикрепите файл .xlsx к ответу.";
@@ -403,9 +409,15 @@
     const entity = String(q && (q.entity || q.well || "") || "").trim();
     if (code === "INCLUDE_NOT_FOUND" || raw === "INCLUDE_NOT_FOUND") {
       if (path) {
-        return `Нет файла «${path}»${from ? `, на него ссылается «${from}»` : ""}. Прикрепите этот .inc к ответу.`;
+        return `INCLUDE «${path}» без тела${from ? `, ссылка из «${from}»` : ""}: оставляем вызов на той же дате. Приложите файл, только если нужно править его содержимое.`;
       }
-      return "В пакете нет файла INCLUDE. Прикрепите недостающий .inc к ответу.";
+      return "INCLUDE без тела: оставляем вызов на той же дате. Приложите файл, только если нужно править содержимое.";
+    }
+    if (code === "INCLUDE_BODY_REQUIRED" || raw === "INCLUDE_BODY_REQUIRED") {
+      if (path) {
+        return `Нужно тело INCLUDE «${path}»${from ? `, ссылка из «${from}»` : ""}: приложите этот .inc, иначе содержимое нечем править.`;
+      }
+      return "Нужно тело INCLUDE. Приложите этот .inc, иначе содержимое нечем править.";
     }
     if (code === "EXCEL_WORKBOOK_REQUIRED" || /xlsx|workbook/i.test(raw)) {
       return "Прикрепите книгу Excel (.xlsx или .xls) к ответу.";
@@ -1572,10 +1584,14 @@
   if (brandHome) {
     brandHome.addEventListener("click", async (e) => {
       e.preventDefault();
+      startResumeTask = null;
+      setStartOpen(false, { resume: false });
+      currentTask = null;
+      history.replaceState({}, "", "/");
+      clearWorkspaceView();
       brandHome.classList.add("busy");
       try {
-        await hydrateFromDataTables({ flash: false, reloadFeed: true });
-        if (!currentTask) history.replaceState({}, "", "/");
+        await hydrateFromDataTables({ flash: false, reloadFeed: false });
       } finally {
         brandHome.classList.remove("busy");
       }
