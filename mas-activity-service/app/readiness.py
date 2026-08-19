@@ -153,35 +153,28 @@ async def probe_n8n_stack(
                 "error": "Orchestrator webhook/REST is not configured",
             }
 
-        if settings.resolved_list_url:
-            checks["activity_list"] = await _request(
+        if settings.resolved_hydrate_url:
+            hydrate = await _request(
                 client,
                 "POST",
-                settings.resolved_list_url,
+                settings.resolved_hydrate_url,
                 headers=settings.durable_headers(),
                 json_body={"action": "list"},
             )
+            checks["activity_list"] = hydrate
+            checks["activity_feed"] = {
+                **hydrate,
+                "note": "same webhook as activity_list (mas-activity-hydrate)",
+            }
         else:
-            missing.append("ACTIVITY_LIST_URL or N8N_BASE_URL")
+            missing.append("ACTIVITY_HYDRATE_URL or N8N_BASE_URL")
             checks["activity_list"] = {"ok": False, "configured": False}
-
-        if settings.resolved_feed_url:
-            checks["activity_feed"] = await _request(
-                client,
-                "POST",
-                settings.resolved_feed_url,
-                headers=settings.durable_headers(),
-                json_body={"task_id": "activity_connectivity_probe"},
-            )
-        else:
-            missing.append("ACTIVITY_FEED_URL or N8N_BASE_URL")
             checks["activity_feed"] = {"ok": False, "configured": False}
 
         extras: list[dict[str, Any]] = []
         seen = {
             settings.resolved_orchestrator_webhook.rstrip("/"),
-            settings.resolved_list_url.rstrip("/"),
-            settings.resolved_feed_url.rstrip("/"),
+            settings.resolved_hydrate_url.rstrip("/"),
         }
         for path in settings.webhook_check_paths:
             url = _webhook_url(settings.n8n_base, path)

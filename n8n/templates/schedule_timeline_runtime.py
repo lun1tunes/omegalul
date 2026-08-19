@@ -51,26 +51,8 @@ const collectCapabilityTokens=(req,intake)=>{
   ];
   return [...new Set(bag.map(capabilityToken).filter(Boolean))];
 };
-const mergeObservedScheduleRequest=(req,intake)=>{
-  const r=req&&typeof req==='object'&&!Array.isArray(req)?req:{};
-  const inn=intake&&typeof intake==='object'&&!Array.isArray(intake)?intake:{};
-  const change={
-    ...(inn.requested_change_scope&&typeof inn.requested_change_scope==='object'&&!Array.isArray(inn.requested_change_scope)?inn.requested_change_scope:{}),
-    ...(r.requested_change_scope&&typeof r.requested_change_scope==='object'&&!Array.isArray(r.requested_change_scope)?r.requested_change_scope:{}),
-  };
-  const caps=[...new Set([
-    ...(Array.isArray(inn.requested_capability_scope)?inn.requested_capability_scope:[]),
-    ...(Array.isArray(r.requested_capability_scope)?r.requested_capability_scope:[]),
-  ].map(capabilityToken).filter(Boolean))];
-  return {
-    ...r,
-    requested_change_scope:Object.keys(change).length?change:r.requested_change_scope,
-    requested_capability_scope:caps.length?caps:(r.requested_capability_scope||inn.requested_capability_scope||[]),
-    capability_id:r.capability_id||inn.capability_id||change.capability_id||null,
-  };
-};
-const wantsCommissioningCapability=tokens=>(Array.isArray(tokens)?tokens:[]).some(t=>COMMISSIONING_CAPABILITIES.has(t));
-const wantsGroupRebindCapability=tokens=>(Array.isArray(tokens)?tokens:[]).some(t=>GROUP_REBIND_CAPABILITIES.has(t));
+const wantsCommissioningCapability=tokens=>(Array.isArray(tokens)?tokens:[]).some(t=>COMMISSIONING_CAPABILITIES.has(capabilityToken(t)));
+const wantsGroupRebindCapability=tokens=>(Array.isArray(tokens)?tokens:[]).some(t=>GROUP_REBIND_CAPABILITIES.has(capabilityToken(t)));
 const readGroupRebindSpec=req=>{
   const r=req&&typeof req==='object'&&!Array.isArray(req)?req:{};
   const change=(r.requested_change_scope&&typeof r.requested_change_scope==='object'&&!Array.isArray(r.requested_change_scope))?r.requested_change_scope:{};
@@ -118,17 +100,108 @@ const readGroupRebindSpec=req=>{
     effective_at:spec.effective_at||null,
   }};
 };
+const exclusiveScheduleCaps=(tokens,change,groupSpecOk)=>{
+  const list=(Array.isArray(tokens)?tokens:[]).map(capabilityToken).filter(Boolean);
+  const scope=change&&typeof change==='object'&&!Array.isArray(change)?change:{};
+  const primary=capabilityToken(scope.capability_id||scope.intent||'');
+  const groupWanted=GROUP_REBIND_CAPABILITIES.has(primary)||list.some(t=>GROUP_REBIND_CAPABILITIES.has(t));
+  const commissioningWanted=COMMISSIONING_CAPABILITIES.has(primary)||list.some(t=>COMMISSIONING_CAPABILITIES.has(t));
+  if(groupWanted&&groupSpecOk) return {wantsGroupRebind:true,wantsCommissioning:false,primary:'group_rebind'};
+  if(groupWanted&&!commissioningWanted) return {wantsGroupRebind:true,wantsCommissioning:false,primary:'group_rebind'};
+  if(groupWanted&&commissioningWanted){
+    if(GROUP_REBIND_CAPABILITIES.has(primary)||groupSpecOk) return {wantsGroupRebind:true,wantsCommissioning:false,primary:'group_rebind'};
+    if(COMMISSIONING_CAPABILITIES.has(primary)) return {wantsGroupRebind:false,wantsCommissioning:true,primary:'commissioning'};
+    return {wantsGroupRebind:true,wantsCommissioning:false,primary:'group_rebind'};
+  }
+  if(commissioningWanted) return {wantsGroupRebind:false,wantsCommissioning:true,primary:'commissioning'};
+  return {wantsGroupRebind:false,wantsCommissioning:false,primary:''};
+};
+const mergeObservedScheduleRequest=(req,intake)=>{
+  const r=req&&typeof req==='object'&&!Array.isArray(req)?req:{};
+  const inn=intake&&typeof intake==='object'&&!Array.isArray(intake)?intake:{};
+  const changeI=(inn.requested_change_scope&&typeof inn.requested_change_scope==='object'&&!Array.isArray(inn.requested_change_scope))?inn.requested_change_scope:{};
+  const changeR=(r.requested_change_scope&&typeof r.requested_change_scope==='object'&&!Array.isArray(r.requested_change_scope))?r.requested_change_scope:{};
+  let change={...changeI,...changeR};
+  if(!(Array.isArray(change.wells)&&change.wells.length)&&Array.isArray(changeI.wells)&&changeI.wells.length) change.wells=changeI.wells;
+  if(!change.group_rebind&&changeI.group_rebind) change.group_rebind=changeI.group_rebind;
+  const intakePrimary=capabilityToken(changeI.capability_id||changeI.intent||inn.capability_id||'');
+  if(GROUP_REBIND_CAPABILITIES.has(intakePrimary)){
+    change={
+      ...change,
+      capability_id:changeI.capability_id||'group_membership_rebind',
+      intent:changeI.intent||'group_membership_rebind',
+      wells:(Array.isArray(changeI.wells)&&changeI.wells.length)?changeI.wells:change.wells,
+      parent_group:changeI.parent_group||change.parent_group,
+      parent_of_parent:changeI.parent_of_parent||change.parent_of_parent,
+      well_groups:changeI.well_groups||change.well_groups,
+      rate:changeI.rate??change.rate,
+      gas_rate:changeI.gas_rate??change.gas_rate,
+      control:changeI.control||change.control,
+      group_rebind:changeI.group_rebind||change.group_rebind,
+    };
+  }else if(COMMISSIONING_CAPABILITIES.has(intakePrimary)){
+    change={...change,capability_id:changeI.capability_id||'commissioning_date_retarget',intent:changeI.intent||'shift_commissioning_dates'};
+    if(change.group_rebind) delete change.group_rebind;
+  }
+  let caps=[...new Set([
+    ...(Array.isArray(inn.requested_capability_scope)?inn.requested_capability_scope:[]),
+    ...(Array.isArray(r.requested_capability_scope)?r.requested_capability_scope:[]),
+    change.capability_id,r.capability_id,inn.capability_id,
+  ].map(capabilityToken).filter(Boolean))];
+  const groupOk=readGroupRebindSpec({requested_change_scope:change,group_rebind:change.group_rebind}).ok;
+  const exclusive=exclusiveScheduleCaps(caps,change,groupOk);
+  if(exclusive.wantsGroupRebind&&!exclusive.wantsCommissioning){
+    caps=caps.filter(t=>!COMMISSIONING_CAPABILITIES.has(t));
+    if(!caps.some(t=>GROUP_REBIND_CAPABILITIES.has(t))) caps.push('group_membership_rebind');
+    change.capability_id=GROUP_REBIND_CAPABILITIES.has(capabilityToken(change.capability_id))?change.capability_id:'group_membership_rebind';
+    change.intent=GROUP_REBIND_CAPABILITIES.has(capabilityToken(change.intent))?change.intent:'group_membership_rebind';
+  }else if(exclusive.wantsCommissioning){
+    caps=caps.filter(t=>!GROUP_REBIND_CAPABILITIES.has(t));
+    if(!caps.some(t=>COMMISSIONING_CAPABILITIES.has(t))) caps.push('commissioning_date_retarget');
+    if(change.group_rebind) delete change.group_rebind;
+  }
+  const capability_id=exclusive.wantsGroupRebind
+    ?(GROUP_REBIND_CAPABILITIES.has(capabilityToken(change.capability_id))?change.capability_id:'group_membership_rebind')
+    :(exclusive.wantsCommissioning
+      ?(COMMISSIONING_CAPABILITIES.has(capabilityToken(change.capability_id||r.capability_id||inn.capability_id))? (change.capability_id||r.capability_id||inn.capability_id):'commissioning_date_retarget')
+      :(r.capability_id||inn.capability_id||change.capability_id||null));
+  return {
+    ...r,
+    requested_change_scope:Object.keys(change).length?change:r.requested_change_scope,
+    requested_capability_scope:caps.length?caps:(r.requested_capability_scope||inn.requested_capability_scope||[]),
+    capability_id,
+  };
+};
 const pickWellDateFact=f=>{
   const row=f&&typeof f==='object'&&!Array.isArray(f)?f:{};
   const values=(row.values&&typeof row.values==='object'&&!Array.isArray(row.values))?row.values:((row.row&&typeof row.row==='object'&&!Array.isArray(row.row))?row.row:{});
   const well=String(row.well||row.entity||row.entity_id||values['Скважина']||values.скважина||values.WELL||values.well||'').trim();
-  let date=row.value??row.raw_value??values['Дата ввода']??values['дата ввода']??values.date??values.Date??values.commissioning_date??null;
+  const coerce=v=>{
+    if(v==null||v==='') return null;
+    if(v instanceof Date&&!Number.isNaN(v.getTime())) return v.toISOString().slice(0,10);
+    if(typeof v==='object'&&!Array.isArray(v)){
+      if(Number.isFinite(Number(v.year))&&Number.isFinite(Number(v.month))&&Number.isFinite(Number(v.day))){
+        const y=String(Number(v.year)).padStart(4,'0'),m=String(Number(v.month)).padStart(2,'0'),d=String(Number(v.day)).padStart(2,'0');
+        return `${y}-${m}-${d}`;
+      }
+      if(v.value!=null&&v.value!==v) return coerce(v.value);
+      if(v.iso) return coerce(v.iso);
+      if(v.tnav) return coerce(v.tnav);
+    }
+    const s=String(v).trim();
+    return s===''?null:s;
+  };
+  let date=coerce(row.value??row.raw_value??values['Дата ввода']??values['дата ввода']??values.date??values.Date??values.commissioning_date??null);
   let field=String(row.field||row.column||'').trim();
-  if((date==null||String(date).trim()==='')&&values&&typeof values==='object'){
+  if(!date){
     const hit=Object.keys(values).find(k=>/дата|date|commission|ввод/i.test(String(k||'')));
-    if(hit!=null&&values[hit]!=null&&String(values[hit]).trim()!==''){date=values[hit];field=field||String(hit);}
+    if(hit!=null){date=coerce(values[hit]);field=field||String(hit);}
   }
-  if(!field&&date!=null&&String(date).trim()!=='') field='Дата ввода';
+  if(!date){
+    const others=Object.keys(values).filter(k=>!/скважин|well|групп|group|факт|id$/i.test(String(k||'')));
+    if(others.length===1){date=coerce(values[others[0]]);field=field||String(others[0]);}
+  }
+  if(!field&&date) field='Дата ввода';
   return {well,date,field,values,fact_id:row.fact_id||null};
 };
 """.strip()
@@ -179,8 +252,16 @@ const scheduleDateFromJsDate=(dt,sourceRaw=null)=>{
 };
 /** Parse DATES / Excel / ISO into schedule_datetime. */
 const parseScheduleDate=raw=>{
-  if(raw&&typeof raw==='object'&&raw.contract==='schedule_datetime'&&Number.isFinite(raw.epoch_ms)){
-    return makeScheduleDate(raw.year,raw.month,raw.day,raw.source_raw||raw.tnav)||null;
+  if(raw&&typeof raw==='object'&&!Array.isArray(raw)){
+    if(raw.contract==='schedule_datetime'&&Number.isFinite(raw.epoch_ms)){
+      return makeScheduleDate(raw.year,raw.month,raw.day,raw.source_raw||raw.tnav)||null;
+    }
+    if(Number.isFinite(Number(raw.year))&&Number.isFinite(Number(raw.month))&&Number.isFinite(Number(raw.day))){
+      return makeScheduleDate(Number(raw.year),Number(raw.month),Number(raw.day),raw.source_raw||raw.iso||raw.tnav||null);
+    }
+    if(raw.value!=null&&raw.value!==raw) return parseScheduleDate(raw.value);
+    if(raw.iso) return parseScheduleDate(raw.iso);
+    if(raw.tnav) return parseScheduleDate(raw.tnav);
   }
   if(raw instanceof Date)return scheduleDateFromJsDate(raw);
   const s=tlClean(raw);
@@ -199,6 +280,12 @@ const parseScheduleDate=raw=>{
       const value=new Date(Date.UTC(1899,11,30)+serial*86400000);
       return scheduleDateFromJsDate(value,s);
     }
+  }
+  // Locale day.month.year or day/month/year
+  m=s.match(/^(\d{1,2})[./](\d{1,2})[./](\d{4})/);
+  if(m){
+    const d=Number(m[1]),mo=Number(m[2]),y=Number(m[3]);
+    if(mo>=1&&mo<=12&&d>=1&&d<=31) return makeScheduleDate(y,mo,d,s);
   }
   return null;
 };
@@ -980,10 +1067,11 @@ try{
 if(!baselineText)baselineText=String(req.baseline_schedule_text||m.generated_schedule||'');
 
 const capTokens=collectCapabilityTokens(req,intake);
-const wantsCommissioning=wantsCommissioningCapability(capTokens);
-const wantsGroupRebind=wantsGroupRebindCapability(capTokens);
 const groupSpecRead=readGroupRebindSpec(req);
 const groupSpec=groupSpecRead&&groupSpecRead.ok?groupSpecRead.spec:null;
+const exclusive=exclusiveScheduleCaps(capTokens,req.requested_change_scope||{},!!(groupSpecRead&&groupSpecRead.ok));
+const wantsCommissioning=exclusive.wantsCommissioning;
+const wantsGroupRebind=exclusive.wantsGroupRebind;
 const packHash=s=>{let h=2166136261;for(const ch of String(s??'')){h^=ch.charCodeAt(0);h=Math.imul(h,16777619)}return`fnv1a32:${(h>>>0).toString(16).padStart(8,'0')}`};
 const skip=reason=>[{json:{...m,commissioning_revise:{status:'skipped',reason},monthly_dates_check:checkMonthlyDatesContinuity(parseScheduleTimeline(m.generated_schedule||baselineText).dates)}}];
 const hitl=(code,extra={})=>[{json:{
@@ -995,11 +1083,9 @@ const hitl=(code,extra={})=>[{json:{
 }}];
 
 if(intake.build_mode!=='REVISE')return skip('not_revise');
-if(!(wantsCommissioning&&wellFacts.length)){
-  if(wantsCommissioning&&!wellFacts.length)return hitl('COMMISSIONING_FACTS_REQUIRED');
-  if(wantsGroupRebind){
-    if(!groupSpec)return hitl('GROUP_REBIND_SPEC_REQUIRED',{missing:groupSpecRead&&groupSpecRead.missing||[]});
-    const result=runGroupRebindRevise(baselineText,groupSpec,rootPath);
+if(wantsGroupRebind){
+  if(!groupSpec)return hitl('GROUP_REBIND_SPEC_REQUIRED',{missing:groupSpecRead&&groupSpecRead.missing||[]});
+  const result=runGroupRebindRevise(baselineText,groupSpec,rootPath);
     if(result.status==='applied'){
       const hash=packHash;
       const text=result.generated_schedule;
@@ -1027,9 +1113,9 @@ if(!(wantsCommissioning&&wellFacts.length)){
       commissioning_revise:result,
       findings:[...(arr(m.findings)?m.findings:[]),...(arr(result.findings)?result.findings:[])],
     }}];
-  }
-  return skip(wellFacts.length?'no_capability':'no_well_facts');
 }
+if(wantsCommissioning&&!wellFacts.length)return hitl('COMMISSIONING_FACTS_REQUIRED');
+if(!(wantsCommissioning&&wellFacts.length))return skip(wellFacts.length?'no_capability':'no_well_facts');
 
 const result=runCommissioningRevise(baselineText,wellFacts,rootPath,{unlisted_wells_policy:unlistedPolicy,new_well_defs:newWellDefs,instruction_blob:instructionBlob});
 if(result.status!=='applied'){

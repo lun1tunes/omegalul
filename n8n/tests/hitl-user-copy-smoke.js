@@ -12,7 +12,7 @@ const read = (name) => JSON.parse(fs.readFileSync(
 ));
 const builder = read('tnavigator-schedule-builder.workflow.json');
 const orch = read('universal-engineering-orchestrator.workflow.json');
-const excel = read('excel-engineering-specialist-adapter.workflow.json');
+const excel = read('excel-extraction-agent.workflow.json');
 const AsyncFunction = Object.getPrototypeOf(async function () {}).constructor;
 
 function source(wf, name) {

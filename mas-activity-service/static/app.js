@@ -1277,19 +1277,21 @@
               : null),
         );
       }
-      fetch(`/v1/tasks/${encodeURIComponent(taskId)}?durable=1`)
-        .then((res) => (res.ok ? res.json() : null))
-        .then((feed) => {
-          if (!feed || currentTask !== taskId) return;
-          mergeFeed(feed, { animateTurns: true });
-          if (feed.hydrate?.ok === false) {
-            const msg = formatHydrateError(feed.hydrate.error || "hydrate_failed");
-            if (msg) showFlash(msg, { sticky: true });
-          } else if (feed.hydrate?.truncated) {
-            showFlash("Транскрипт усечён: в Data Tables больше лимита передач (500). Показаны последние turns.");
+      try {
+        const durableRes = await fetch(`/v1/tasks/${encodeURIComponent(taskId)}?durable=1`);
+        if (durableRes.ok) {
+          const feed = await durableRes.json();
+          if (feed && currentTask === taskId) {
+            mergeFeed(feed, { animateTurns: true });
+            if (feed.hydrate?.ok === false) {
+              const msg = formatHydrateError(feed.hydrate.error || "hydrate_failed");
+              if (msg) showFlash(msg, { sticky: true });
+            } else if (feed.hydrate?.truncated) {
+              showFlash("Транскрипт усечён: в Data Tables больше лимита передач (500). Показаны последние turns.");
+            }
           }
-        })
-        .catch(() => {});
+        }
+      } catch (_) { /* memory snapshot already shown */ }
     } catch (_) {
       showLoadError(taskId, "Сеть недоступна при загрузке задачи.");
       await refreshRail();
@@ -1298,7 +1300,7 @@
       hideWait();
     }
 
-    refreshRail();
+    await refreshRail();
   }
 
   async function submitHitl() {
@@ -1551,11 +1553,6 @@
 
   async function hydrateFromDataTables({ flash = false, reloadFeed = true } = {}) {
     try {
-      const data = await refreshRail({ durable: true });
-      if (data?.hydrate?.error) {
-        if (flash) showFlash(formatHydrateError(data.hydrate.error));
-        return data;
-      }
       if (reloadFeed && currentTask) {
         const snap = await fetch(`/v1/tasks/${encodeURIComponent(currentTask)}?durable=1`);
         if (snap.ok) {
@@ -1573,6 +1570,12 @@
         } else if (flash) {
           showFlash(`Не удалось обновить ленту (${snap.status}).`);
         }
+        const data = await refreshRail({ durable: !snap.ok });
+        return data;
+      }
+      const data = await refreshRail({ durable: true });
+      if (data?.hydrate?.error) {
+        if (flash) showFlash(formatHydrateError(data.hydrate.error));
       }
       return data;
     } catch (_) {
@@ -1665,7 +1668,7 @@
 
   const initial = pathTaskId();
   if (initial) {
-    openTask(initial).then(() => hydrateFromDataTables({ flash: false, reloadFeed: false }));
+    openTask(initial);
   } else {
     hydrateFromDataTables({ flash: false, reloadFeed: false });
   }

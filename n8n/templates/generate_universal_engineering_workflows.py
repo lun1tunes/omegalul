@@ -25,6 +25,7 @@ WORKFLOWS = ROOT / "n8n" / "workflows"
 CORE = WORKFLOWS / "core"
 SUPPORT = WORKFLOWS / "support"
 TEMPLATES = ROOT / "n8n" / "templates"
+ERROR_HANDLER_WF_ID = "e1f0a7c2-9b4d-5e8f-a123-4567890abcde"
 _SPECIALIST_CATALOG_JSON = specialist_catalog_js()
 _SPECIALIST_ALLOWLIST_JS = allowlist_js()
 _CHAT_ROLE_MAP_JSON = chat_role_map_js()
@@ -1006,7 +1007,7 @@ if(!packetComplete&&!excelEvidenceReady&&!builderIntakeRetry&&wantsExcel&&hasSch
     contract:'specialist_packet',contract_version:'1.0',task_id:base.task_id,specialist_id:'excel_extraction_specialist',
     attempt:Number(base.retry_count)+1,
     objective:objectiveBlob||'Extract the table described in the task from the attached workbook.',
-    inputs:{prompt:objectiveBlob||'Extract bounded rows with entity identity from the attached workbook.',consumer:'schedule_builder',workflow_kind:'schedule'},
+    inputs:{prompt:objectiveBlob||'Extract bounded rows with entity identity from the attached workbook. Export every column of the matched table. Do not drop date or numeric columns.',consumer:'schedule_builder',workflow_kind:'schedule'},
     controls:{bounded_request:true,max_rows:10000,max_cells:200000},
     acceptance_criteria:[{id:'rows_extracted',criterion:'Return bounded rows with entity identity from the workbook',required:true,expected:'finite rows'}],
     artifact_refs:arr(request.artifact_refs)?request.artifact_refs:[],
@@ -1152,7 +1153,7 @@ if(scheduleDelegation&&hasExcelBinary&&!excelEvidenceReady&&allowed.has('excel_e
       contract:'specialist_packet',contract_version:'1.0',task_id:base.task_id,specialist_id:'excel_extraction_specialist',
       attempt:Number(base.retry_count)+1,
       objective:objectiveBlob||'Extract the table described in the task from the attached workbook.',
-      inputs:{prompt:objectiveBlob||'Extract bounded rows with entity identity from the attached workbook.',consumer:'schedule_builder',workflow_kind:'schedule'},
+      inputs:{prompt:objectiveBlob||'Extract bounded rows with entity identity from the attached workbook. Export every column of the matched table. Do not drop date or numeric columns.',consumer:'schedule_builder',workflow_kind:'schedule'},
       controls:{bounded_request:true,max_rows:10000,max_cells:200000},
       acceptance_criteria:[{id:'rows_extracted',criterion:'Return bounded rows with entity identity from the workbook',required:true,expected:'finite rows'}],
       artifact_refs:arr(request.artifact_refs)?request.artifact_refs:[],
@@ -1327,7 +1328,7 @@ const x=item.json||{},packet=x.specialist_packet&&typeof x.specialist_packet==='
 const continuation=x.previous_specialist_result&&x.previous_specialist_result.continuation;
 const tags=continuation?['TRUST-BOUNDARY','CLARIFICATION','CLARIFICATION-CONTINUATION']:['TRUST-BOUNDARY','DISCOVERY-AND-TABLES','QUERY-RESULT-PROTOCOL','RAG-AND-OPERATIONS'];
 const query=[String(packet.objective||''),'Excel Extractor operating protocol',tags.join(' ')].filter(Boolean).join('\n');
-// Keep workbook binary on the item so Call Excel Adapter still sees binary.file after RAG hops.
+// Keep workbook binary on the item so Call Excel Extraction Specialist still sees binary.file after RAG hops.
 return[{json:{...x,schedule_retrieval_request:{query,filters:{target_base:'excel_protocol',access_scope:'petroleum-engineering',knowledge_types:['protocol_instruction'],keyword_families:tags,topics:['протокол','clarification'],task_patterns:[]},top_k:8}},...(item.binary?{binary:item.binary}:{})}];
 """.strip()
 
@@ -1491,7 +1492,7 @@ if(!retryAllowed){
   const runtime=appendHandoffEvent(context,{stage:'builder',status:reason,from_specialist:'schedule_builder_specialist',to_specialist:'universal_orchestrator',from_role:chatRoles.schedule_builder_specialist,to_role:'Orchestrator',summary:compiledHitl.user_message,brief:compiledHitl.user_message,details:{code:reason,gap_count:gaps.length,dropped_gap_count:Math.max(0,rawGaps.length-gaps.length)}});
   return[{json:{...x,specialist_result:stalled,result_json:JSON.stringify(stalled),runtime_json:JSON.stringify(runtime),schedule_evidence_retry:false}}];
 }
-const fields=gaps;const builderPacket=x.specialist_packet||{};const correlationId=`schedule_gap_${x.task_id}_${signature}_${excelIterations+1}`.slice(0,240);const excelPacket={contract:'specialist_packet',contract_version:'1.0',task_id:x.task_id,specialist_id:'excel_extraction_specialist',attempt:Number(x.retry_count)+1,objective:'Extract only the missing SCHEDULE evidence fields from the governed workbook.',inputs:{workflow_kind:'schedule',schedule_evidence_gap:fields,requested_fields:[...new Set(fields.map(f=>f.field).filter(Boolean))],target_entities:[...new Set(fields.map(f=>f.entity).filter(Boolean))],date_scope:[...new Set(fields.map(f=>f.effective_at).filter(Boolean))],prompt:`Extract only these missing SCHEDULE facts: ${JSON.stringify(fields)}`},controls:{bounded_request:true,max_rows:10000,max_cells:200000,source_snapshot_hash:snapshot,correlation_id:correlationId},acceptance_criteria:fields.map((f,i)=>({id:`gap_${i+1}`,criterion:`Return ${f.field||'requested field'} for ${f.entity||'the requested entity'} at ${f.effective_at||'the requested date'} with units and row provenance.`})),artifact_refs:Array.isArray(builderPacket.artifact_refs)?builderPacket.artifact_refs:[]};
+const fields=gaps;const builderPacket=x.specialist_packet||{};const correlationId=`schedule_gap_${x.task_id}_${signature}_${excelIterations+1}`.slice(0,240);const entities=[...new Set(fields.map(f=>f.entity).filter(Boolean))];const excelPrompt=['Export every column of the matched table. Do not drop date or numeric columns. Missing schedule facts (advisory, not required column names): ',JSON.stringify(fields),entities.length?(' Target objects: '+entities.join(', ')+'.'):''].join('');const excelPacket={contract:'specialist_packet',contract_version:'1.0',task_id:x.task_id,specialist_id:'excel_extraction_specialist',attempt:Number(x.retry_count)+1,objective:'Extract the missing SCHEDULE evidence from the governed workbook.',inputs:{workflow_kind:'schedule',consumer:'schedule_builder',schedule_evidence_gap:fields,target_entities:entities,date_scope:[...new Set(fields.map(f=>f.effective_at).filter(Boolean))],prompt:excelPrompt},controls:{bounded_request:true,max_rows:10000,max_cells:200000,source_snapshot_hash:snapshot,correlation_id:correlationId},acceptance_criteria:[{id:'rows_extracted',criterion:'Return bounded rows with entity identity and the columns that exist in the workbook',required:true,expected:'finite rows'}],artifact_refs:Array.isArray(builderPacket.artifact_refs)?builderPacket.artifact_refs:[]};
 const loop={active:true,excel_iterations:excelIterations,builder_iterations:builderIterations,max_excel_iterations:maxExcel,max_builder_iterations:maxBuilder,last_gap_signature:signature,last_source_snapshot:snapshot,expected_correlation_id:correlationId,builder_packet:builderPacket,last_builder_result:result};
 const runtime=appendHandoffEvent(context,{stage:'builder',status:'SCHEDULE_EVIDENCE_GAP',from_specialist:'schedule_builder_specialist',to_specialist:'excel_extraction_specialist',from_role:chatRoles.schedule_builder_specialist,to_role:chatRoles.excel_extraction_specialist,summary:`В schedule не хватает ${fields.length} поле(й) — узкий запрос к Excel.`,details:{gap_count:fields.length,gap_signature:signature,source_snapshot_hash:snapshot,fields:fields.map(f=>f.field)}});
 return[{json:{...x,version:Number(x.version)+1,previous_version:Number(x.version),status:'delegated',specialist_id:'excel_extraction_specialist',specialist_packet:excelPacket,packet_json:JSON.stringify(excelPacket),result_json:JSON.stringify(result),runtime_json:JSON.stringify({...runtime,schedule_evidence_loop:loop,last_error:{code:'SCHEDULE_EVIDENCE_GAP',gap_signature:signature,gaps:fields}}),updated_at:new Date().toISOString(),schedule_evidence_retry:true}}];
@@ -1505,9 +1506,26 @@ __APPEND_HANDOFF__
 const chatRoles=CHAT_ROLE_MAP_PLACEHOLDER;
 const facts=normalizeSourceFactsPacket(result.compact_data||{});
 const snapshot=String(facts?.source_snapshot_hash||'');const correlation=String(facts?.correlation_id||'');
-let valid=loop.active===true&&original.specialist_id==='schedule_builder_specialist'&&result.specialist_id==='excel_extraction_specialist'&&['succeeded','partial'].includes(result.status)&&Boolean(facts)&&snapshot&&correlation&&correlation===String(loop.expected_correlation_id||'');
+const expectedCorr=String(loop.expected_correlation_id||'');
+const factCount=Array.isArray(facts?.facts)?facts.facts.length:0;
+const corrOk=!expectedCorr||correlation===expectedCorr||factCount>0;
+let valid=loop.active===true&&original.specialist_id==='schedule_builder_specialist'&&result.specialist_id==='excel_extraction_specialist'&&['succeeded','partial'].includes(result.status)&&Boolean(facts)&&snapshot&&(correlation||factCount>0)&&corrOk;
 if(!valid){const failed={...result,status:'retryable_error',summary:'Нельзя продолжить Schedule Builder: в ответе Excel нет корректного снимка или связки.',error:{code:'INVALID_EXCEL_EVIDENCE_SNAPSHOT'},human_request:null};const runtime=appendHandoffEvent(context,{stage:'excel',status:'INVALID_EXCEL_EVIDENCE_SNAPSHOT',from_specialist:'excel_extraction_specialist',to_specialist:'schedule_builder_specialist',from_role:chatRoles.excel_extraction_specialist,to_role:chatRoles.schedule_builder_specialist,summary:'Снимок Excel не совпал — продолжение запрещено.',details:{}});return[{json:{...x,specialist_result:failed,result_json:JSON.stringify(failed),runtime_json:JSON.stringify(runtime),schedule_resume_ready:false}}];}
-const priorReq=original.inputs?.schedule_request&&typeof original.inputs.schedule_request==='object'?original.inputs.schedule_request:{};const nextAttempt=Number(x.retry_count)+1,nextVersion=Number(x.version)+1;const builderPacket={...original,attempt:nextAttempt,controls:{...(original.controls&&typeof original.controls==='object'?original.controls:{}),expected_version:nextVersion,idempotency_key:`${x.task_id}:specialist:schedule_builder_specialist:${nextAttempt}:${nextVersion}`,policy_version:'petroleum-schedule-policy-v1'},inputs:{...original.inputs,schedule_request:{...priorReq,source_facts_packet:facts,source_snapshot_hash:snapshot,previous_builder_findings:loop.last_builder_result?.error?.findings||[],evidence_iteration:Number(loop.excel_iterations||0)+1}}};
+const priorReq=original.inputs?.schedule_request&&typeof original.inputs.schedule_request==='object'?original.inputs.schedule_request:{};
+const priorFacts=Array.isArray(priorReq.source_facts_packet?.facts)?priorReq.source_facts_packet.facts.filter(v=>v&&typeof v==='object'):[];
+const nextFacts=Array.isArray(facts.facts)?facts.facts:[];
+const mergedMap=new Map();
+for(const f of [...priorFacts,...nextFacts]){
+  const values=(f.values&&typeof f.values==='object'&&!Array.isArray(f.values))?f.values:{};
+  const well=String(f.well||f.entity||f.entity_id||values['Скважина']||values.WELL||values.well||'').trim();
+  const key=well||String(f.fact_id||'');
+  if(!key) continue;
+  const prev=mergedMap.get(key)||{};
+  const prevValues=(prev.values&&typeof prev.values==='object'&&!Array.isArray(prev.values))?prev.values:{};
+  mergedMap.set(key,{...prev,...f,well:well||prev.well||null,entity:f.entity||prev.entity||well||null,values:{...prevValues,...values},value:f.value??f.raw_value??prev.value??prev.raw_value??null,field:f.field||prev.field||null});
+}
+const mergedPacket={...facts,facts:[...mergedMap.values()].slice(0,500),row_count:mergedMap.size};
+const nextAttempt=Number(x.retry_count)+1,nextVersion=Number(x.version)+1;const builderPacket={...original,attempt:nextAttempt,controls:{...(original.controls&&typeof original.controls==='object'?original.controls:{}),expected_version:nextVersion,idempotency_key:`${x.task_id}:specialist:schedule_builder_specialist:${nextAttempt}:${nextVersion}`,policy_version:'petroleum-schedule-policy-v1'},inputs:{...original.inputs,schedule_request:{...priorReq,source_facts_packet:mergedPacket,source_snapshot_hash:snapshot,previous_builder_findings:loop.last_builder_result?.error?.findings||[],evidence_iteration:Number(loop.excel_iterations||0)+1}}};
 const nextLoop={...loop,excel_iterations:Number(loop.excel_iterations||0)+1,builder_iterations:Number(loop.builder_iterations||1)+1,last_source_snapshot:snapshot};
 const runtime=appendHandoffEvent(context,{stage:'excel',status:'RESUME_SCHEDULE',from_specialist:'excel_extraction_specialist',to_specialist:'schedule_builder_specialist',from_role:chatRoles.excel_extraction_specialist,to_role:chatRoles.schedule_builder_specialist,summary:`Недостающие факты получены (${facts.facts.length}) — продолжаем schedule.`,details:{source_snapshot_hash:snapshot,correlation_id:correlation,fact_count:facts.facts.length}});
 return[{json:{...x,version:Number(x.version)+1,previous_version:Number(x.version),status:'delegated',specialist_id:'schedule_builder_specialist',specialist_packet:builderPacket,packet_json:JSON.stringify(builderPacket),result_json:JSON.stringify(result),runtime_json:JSON.stringify({...runtime,schedule_evidence_loop:nextLoop,last_error:null}),updated_at:new Date().toISOString(),schedule_resume_ready:true}}];
@@ -1840,14 +1858,14 @@ def build_orchestrator() -> dict:
         code("Attach governed Excel protocol RAG evidence", (2820, -1080), ATTACH_EXCEL_RAG),
         if_node("Excel protocol RAG evidence ready?", (3040, -1080), "={{ $json.excel_rag_ready }}", True, "boolean"),
         code("Build Excel protocol RAG evidence gate", (3260, -1080), BUILD_EXCEL_RAG_GATE),
-        node("Call Excel Extraction Specialist Adapter", "n8n-nodes-base.executeWorkflow", 1.3, (3260, -940), {"source": "database", "workflowId": {"__rl": True, "value": "REPLACE_EXCEL_ADAPTER_IN_UI", "mode": "list", "cachedResultName": "Adapter — Excel Extraction"}, "workflowInputs": {"mappingMode": "defineBelow", "value": {"specialist_packet": "={{ $json.specialist_packet }}", "previous_specialist_result": "={{ $json.previous_specialist_result }}", "latest_human_response": "={{ $json.latest_human_response }}"}, "matchingColumns": [], "schema": [], "attemptToConvertTypes": False, "convertFieldsToString": False}, "mode": "once", "options": {"waitForSubWorkflow": True}}, onError="continueRegularOutput"),
+        node("Call Excel Extraction Specialist", "n8n-nodes-base.executeWorkflow", 1.3, (3260, -940), {"source": "database", "workflowId": {"__rl": True, "value": "REPLACE_EXCEL_EXTRACTION_AGENT_IN_UI", "mode": "list", "cachedResultName": "Agent — Excel Extractor"}, "workflowInputs": {"mappingMode": "defineBelow", "value": {"specialist_packet": "={{ $json.specialist_packet }}", "previous_specialist_result": "={{ $json.previous_specialist_result }}", "latest_human_response": "={{ $json.latest_human_response }}"}, "matchingColumns": [], "schema": [], "attemptToConvertTypes": False, "convertFieldsToString": False}, "mode": "once", "options": {"waitForSubWorkflow": True}}, onError="continueRegularOutput"),
         code("Prepare governed SCHEDULE RAG request", (2600, -800), PREPARE_SCHEDULE_RAG),
         node("Call SCHEDULE Hybrid Retrieval", "n8n-nodes-base.executeWorkflow", 1.3, (2820, -800), {"source": "database", "workflowId": {"__rl": True, "value": "REPLACE_SCHEDULE_RAG_RETRIEVAL_IN_UI", "mode": "list", "cachedResultName": "MAS — Knowledge Retrieval"}, "workflowInputs": {"mappingMode": "defineBelow", "value": {"schedule_retrieval_request": "={{ $json.schedule_retrieval_request }}"}, "matchingColumns": [], "schema": [], "attemptToConvertTypes": False, "convertFieldsToString": False}, "mode": "once", "options": {"waitForSubWorkflow": True}}, onError="continueRegularOutput"),
         code("Attach governed SCHEDULE RAG evidence", (3040, -800), ATTACH_SCHEDULE_RAG),
         if_node("SCHEDULE RAG evidence ready?", (3260, -800), "={{ $json.schedule_rag_ready }}", True, "boolean"),
         node("Call SCHEDULE Builder Specialist", "n8n-nodes-base.executeWorkflow", 1.3, (3480, -860), {"source": "database", "workflowId": {"__rl": True, "value": "REPLACE_SCHEDULE_BUILDER_IN_UI", "mode": "list", "cachedResultName": "SCHEDULE — Builder"}, "workflowInputs": {"mappingMode": "defineBelow", "value": {"specialist_packet": "={{ $json.specialist_packet }}", "previous_specialist_result": "={{ $json.previous_specialist_result }}", "latest_human_response": "={{ $json.latest_human_response }}"}, "matchingColumns": [], "schema": [], "attemptToConvertTypes": False, "convertFieldsToString": False}, "mode": "once", "options": {"waitForSubWorkflow": True}}, onError="continueRegularOutput"),
         code("Build SCHEDULE RAG evidence gate", (3480, -720), BUILD_SCHEDULE_RAG_GATE),
-        node("Call Calculation Specialist", "n8n-nodes-base.executeWorkflow", 1.3, (2600, -660), {"source": "database", "workflowId": {"__rl": True, "value": "REPLACE_CALCULATION_ADAPTER_IN_UI", "mode": "list", "cachedResultName": "Adapter — Calculation (Math Service)"}, "workflowInputs": {"mappingMode": "defineBelow", "value": {"specialist_packet": "={{ $json.specialist_packet }}"}, "matchingColumns": [], "schema": [], "attemptToConvertTypes": False, "convertFieldsToString": False}, "mode": "once", "options": {"waitForSubWorkflow": True}}, onError="continueRegularOutput"),
+        node("Call Calculation Specialist", "n8n-nodes-base.executeWorkflow", 1.3, (2600, -660), {"source": "database", "workflowId": {"__rl": True, "value": "REPLACE_CALCULATION_AGENT_IN_UI", "mode": "list", "cachedResultName": "Agent — Calculation (Math Service)"}, "workflowInputs": {"mappingMode": "defineBelow", "value": {"specialist_packet": "={{ $json.specialist_packet }}"}, "matchingColumns": [], "schema": [], "attemptToConvertTypes": False, "convertFieldsToString": False}, "mode": "once", "options": {"waitForSubWorkflow": True}}, onError="continueRegularOutput"),
         node("Call Data Specialist", "n8n-nodes-base.executeWorkflow", 1.3, (2600, -520), {"source": "database", "workflowId": {"__rl": True, "value": "REPLACE_DATA_SPECIALIST_IN_UI", "mode": "list", "cachedResultName": "Engineering Data Specialist"}, "workflowInputs": {"mappingMode": "defineBelow", "value": {"specialist_packet": "={{ $json.specialist_packet }}"}, "matchingColumns": [], "schema": [], "attemptToConvertTypes": False, "convertFieldsToString": False}, "mode": "once", "options": {"waitForSubWorkflow": True}}, onError="continueRegularOutput"),
         node("Call Document Specialist", "n8n-nodes-base.executeWorkflow", 1.3, (2600, -380), {"source": "database", "workflowId": {"__rl": True, "value": "REPLACE_DOCUMENT_SPECIALIST_IN_UI", "mode": "list", "cachedResultName": "Engineering Document Specialist"}, "workflowInputs": {"mappingMode": "defineBelow", "value": {"specialist_packet": "={{ $json.specialist_packet }}"}, "matchingColumns": [], "schema": [], "attemptToConvertTypes": False, "convertFieldsToString": False}, "mode": "once", "options": {"waitForSubWorkflow": True}}, onError="continueRegularOutput"),
         node("Call Cluster Calculation Specialist", "n8n-nodes-base.executeWorkflow", 1.3, (2600, -240), {"source": "database", "workflowId": {"__rl": True, "value": "REPLACE_CLUSTER_CALC_ADAPTER_IN_UI", "mode": "list", "cachedResultName": "Template — Cluster Calculation Adapter"}, "workflowInputs": {"mappingMode": "defineBelow", "value": {"specialist_packet": "={{ $json.specialist_packet }}"}, "matchingColumns": [], "schema": [], "attemptToConvertTypes": False, "convertFieldsToString": False}, "mode": "once", "options": {"waitForSubWorkflow": True}}, onError="continueRegularOutput"),
@@ -1953,10 +1971,10 @@ def build_orchestrator() -> dict:
     connect(c, "Prepare governed Excel protocol RAG request", "Call Excel protocol Hybrid Retrieval")
     connect(c, "Call Excel protocol Hybrid Retrieval", "Attach governed Excel protocol RAG evidence")
     connect(c, "Attach governed Excel protocol RAG evidence", "Excel protocol RAG evidence ready?")
-    connect(c, "Excel protocol RAG evidence ready?", "Call Excel Extraction Specialist Adapter", source_index=0)
+    connect(c, "Excel protocol RAG evidence ready?", "Call Excel Extraction Specialist", source_index=0)
     connect(c, "Excel protocol RAG evidence ready?", "Build Excel protocol RAG evidence gate", source_index=1)
     connect(c, "Build Excel protocol RAG evidence gate", "Normalize specialist result")
-    connect(c, "Call Excel Extraction Specialist Adapter", "Normalize specialist result")
+    connect(c, "Call Excel Extraction Specialist", "Normalize specialist result")
     connect(c, "Prepare governed SCHEDULE RAG request", "Call SCHEDULE Hybrid Retrieval")
     connect(c, "Call SCHEDULE Hybrid Retrieval", "Attach governed SCHEDULE RAG evidence")
     connect(c, "Attach governed SCHEDULE RAG evidence", "SCHEDULE RAG evidence ready?")
@@ -2020,7 +2038,7 @@ def build_orchestrator() -> dict:
         "pinData": {},
         "connections": c,
         "active": False,
-        "settings": {"executionOrder": "v1", "saveManualExecutions": True, "callerPolicy": "workflowsFromSameOwner", "errorWorkflow": ""},
+        "settings": {"executionOrder": "v1", "saveManualExecutions": True, "callerPolicy": "workflowsFromSameOwner", "errorWorkflow": ERROR_HANDLER_WF_ID},
         "versionId": uid("universal-engineering-orchestrator/version"),
         "meta": {"templateCredsSetupCompleted": False, "targetN8nVersion": "2.30.8", "contractVersion": "1.0"},
         "tags": [],
@@ -2034,6 +2052,7 @@ const parseObject=value=>{if(isObject(value)) return value;if(typeof value==='st
 const packet=parseObject(incoming.specialist_packet);
 const previous=parseObject(incoming.previous_specialist_result);
 const latest=isObject(incoming.latest_human_response)?incoming.latest_human_response:{};
+if(!packet.contract)return [{json:{...incoming,native_request_ready:true,adapter_gate:'',specialist_packet:null},...(item.binary?{binary:item.binary}:{})}];
 const packetValid=packet.contract==='specialist_packet'&&packet.contract_version==='1.0'&&typeof packet.task_id==='string'&&packet.task_id.trim()&&packet.specialist_id==='excel_extraction_specialist'&&Number.isInteger(packet.attempt)&&packet.attempt>=1&&typeof packet.objective==='string'&&packet.objective.trim()&&isObject(packet.inputs)&&isObject(packet.controls)&&Array.isArray(packet.acceptance_criteria)&&Array.isArray(packet.artifact_refs);
 const previousMatches=!Object.keys(previous).length||(previous.contract==='specialist_result'&&previous.contract_version==='1.0'&&previous.task_id===packet.task_id&&previous.specialist_id===packet.specialist_id);
 const continuation=isObject(previous.continuation)?previous.continuation:{};
@@ -2065,7 +2084,7 @@ else {
   const reqFields=Array.isArray(packet.inputs?.requested_fields)?packet.inputs.requested_fields.map(v=>String(v||'').trim()).filter(Boolean):[];
   const scheduleHandoff=explicitScheduleConsumer(packet.inputs||{},packet.inputs||{});
   const identityHint=scheduleHandoff
-    ?` For SCHEDULE handoffs, object identity is the schedule name (Скважина/WELL or Группа/GROUP) — never omit names and never invent row indices as ids.${reqCols.length||reqFields.length?` REQUIRED COLUMNS (every row must include these keys): ${(reqCols.length?reqCols:reqFields).join(', ')}.`:' If the task names commissioning dates, export the well-name column together with the commissioning-date column that actually exists in the workbook.'}`
+    ?` For SCHEDULE handoffs, object identity is the schedule name (Скважина/WELL or Группа/GROUP) — never omit names and never invent row indices as ids. query_table MUST use select {} (all columns of the matched table) unless the user named exact columns; do not drop date/numeric columns.${reqCols.length||reqFields.length?` REQUIRED COLUMNS (every row must include these keys): ${(reqCols.length?reqCols:reqFields).join(', ')}.`:' If the task names commissioning dates, each exported row must include both the well-name column and the commissioning-date column that actually exists in the workbook.'}`
     :(reqCols.length||reqFields.length?` REQUIRED COLUMNS (every row must include these keys): ${(reqCols.length?reqCols:reqFields).join(', ')}.`:'');
   const promptText=`${String(packet.objective||'').trim()}${identityHint}${packet.inputs?.prompt?`\n${String(packet.inputs.prompt).trim()}`:''}`.trim();
   nativeJson={request:{...packet.inputs,prompt:promptText,required_columns:reqCols.length?reqCols:(packet.inputs?.required_columns||undefined),controls:packet.controls,acceptance_criteria:packet.acceptance_criteria,artifact_refs:packet.artifact_refs}};
@@ -2093,7 +2112,8 @@ return [{json:{specialist_result:{contract:'specialist_result',contract_version:
 
 
 ADAPT_EXCEL_RESULT = EXPLICIT_SCHEDULE_CONSUMER_JS + "\n" + r"""
-const prepared=$('Prepare native Excel invocation').first().json||{};const packet=prepared.specialist_packet||{};
+let prepared={};try{prepared=$('Prepare native Excel invocation').first().json||{};}catch(_){prepared={};}if(!prepared.specialist_packet||prepared.specialist_packet.contract!=='specialist_packet')return $input.all();
+const packet=prepared.specialist_packet||{};
 let native=$json;if(native&&native.json&&typeof native.json==='object') native=native.json;
 if(typeof native==='string'){try{native=JSON.parse(native)}catch{native={}}}if(!native||typeof native!=='object'||Array.isArray(native)) native={};
 const strings=value=>Array.isArray(value)?value.map(entry=>typeof entry==='string'?entry:String(entry?.message??entry?.code??entry)).filter(Boolean):[];
@@ -2149,7 +2169,7 @@ const pickIdentity=(row,keys)=>{if(!row||typeof row!=='object')return '';for(con
 const wellKeys=['Скважина','скважина','WELL','Well','well','WellName','well_name'];
 const groupKeys=['Группа','группа','GROUP','Group','group','GroupName'];
 const rowValue=(row,col)=>{if(!row||typeof row!=='object')return undefined;if(Object.prototype.hasOwnProperty.call(row,col))return row[col];const hit=Object.keys(row).find(k=>String(k).toLowerCase()===String(col).toLowerCase());return hit===undefined?undefined:row[hit]};
-const normalizeFactRow=(row,i)=>{const values=row&&typeof row==='object'&&!Array.isArray(row)?Object.fromEntries(Object.entries(row).slice(0,100).map(([k,v])=>[String(k).slice(0,256),cleanValue(v)])):{value:cleanValue(row)};const well=pickIdentity(values,wellKeys);const group=pickIdentity(values,groupKeys);const missingRequired=requiredColumns.filter(col=>{const v=rowValue(values,col);return v===undefined||v===null||String(v).trim()===''});return {fact_id:`row_${i+1}`,well:well||null,entity:well||group||null,entity_type:well?'well':(group?'group':null),group:group||null,values,missing_required:missingRequired,provenance:{kind:factRows.length?'excel_result_row':'excel_preview_row',index:i}};};
+const normalizeFactRow=(row,i)=>{const values=row&&typeof row==='object'&&!Array.isArray(row)?Object.fromEntries(Object.entries(row).slice(0,100).map(([k,v])=>[String(k).slice(0,256),cleanValue(v)])):{value:cleanValue(row)};const well=pickIdentity(values,wellKeys);const group=pickIdentity(values,groupKeys);const dateHit=Object.keys(values).find(k=>/дата|date|commission|ввод/i.test(String(k||'')));const others=Object.keys(values).filter(k=>!wellKeys.includes(k)&&!groupKeys.includes(k)&&!/факт|id$/i.test(String(k||'')));const dateVal=dateHit!=null?values[dateHit]:(others.length===1?values[others[0]]:undefined);const missingRequired=requiredColumns.filter(col=>{const v=rowValue(values,col);return v===undefined||v===null||String(v).trim()===''});return {fact_id:`row_${i+1}`,well:well||null,entity:well||group||null,entity_type:well?'well':(group?'group':null),group:group||null,field:dateHit||(dateVal!==undefined&&others.length===1?others[0]:null),value:dateVal!==undefined?dateVal:null,values,missing_required:missingRequired,provenance:{kind:factRows.length?'excel_result_row':'excel_preview_row',index:i}};};
 const factsForHandoff=(factRows.length?factRows:preview).map((row,i)=>normalizeFactRow(row,i));
 const identityMissing=factsForHandoff.length>0&&factsForHandoff.every(f=>!f.entity);
 const requiredMissingInRows=requiredColumns.length>0&&factsForHandoff.some(f=>Array.isArray(f.missing_required)&&f.missing_required.length>0);
@@ -2165,34 +2185,73 @@ return [{json:{specialist_result:{contract:'specialist_result',contract_version:
 """.strip()
 
 
-def build_excel_adapter() -> dict:
-    nodes = [
-        note("Excel adapter README", (-920, -520), "## UI-only binding (n8n 2.30.8)\n1. Import `excel-extraction-agent.workflow.json`.\n2. In `Call native Excel Extraction Agent`, select that workflow from the UI.\n3. Keep this adapter inactive until the native agent is fully configured.\n\nThis workflow is a bounded anti-corruption layer: the universal orchestrator sees only specialist_packet/result v1.0. Native continuation identifiers remain opaque to the control-plane. Binary workbook data passes directly between executions and is never stored in orchestrator state.", 500, 360, 5),
-        node("Receive Excel specialist packet", "n8n-nodes-base.executeWorkflowTrigger", 1.2, (-920, -80), {"inputSource": "jsonExample", "jsonExample": json.dumps({"specialist_packet": {"contract": "specialist_packet", "contract_version": "1.0", "task_id": "eng_example", "specialist_id": "excel_extraction_specialist", "attempt": 1, "objective": "Extract the requested governed table", "inputs": {}, "controls": {}, "acceptance_criteria": [], "artifact_refs": []}, "previous_specialist_result": {}, "latest_human_response": {}}, ensure_ascii=False)}),
-        code("Prepare native Excel invocation", (-660, -80), PREPARE_EXCEL_ADAPTER),
-        if_node("Native Excel invocation ready?", (-400, -80), "={{ $json.native_request_ready }}", True, "boolean"),
-        node("Call native Excel Extraction Agent", "n8n-nodes-base.executeWorkflow", 1.3, (-140, -200), {"source": "database", "workflowId": {"__rl": True, "value": "REPLACE_EXCEL_EXTRACTION_AGENT_IN_UI", "mode": "list", "cachedResultName": "Agent — Excel Extractor"}, "mode": "once", "options": {"waitForSubWorkflow": True}}, onError="continueRegularOutput"),
-        code("Adapt native Excel result", (120, -200), ADAPT_EXCEL_RESULT),
-        code("Build Excel adapter input gate", (-140, 80), BUILD_EXCEL_ADAPTER_GATE),
+def _upsert_named_node(wf: dict, new_node: dict) -> None:
+    nodes = wf["nodes"]
+    for index, existing in enumerate(nodes):
+        if existing.get("name") == new_node["name"]:
+            new_node["id"] = existing.get("id", new_node["id"])
+            new_node["position"] = existing.get("position", new_node["position"])
+            nodes[index] = new_node
+            return
+    nodes.append(new_node)
+
+
+def _set_main(wf: dict, source: str, *groups: list[str]) -> None:
+    conns = wf.setdefault("connections", {})
+    existing = conns.get(source, {})
+    existing["main"] = [
+        [{"node": name, "type": "main", "index": 0} for name in group]
+        for group in groups
     ]
-    c: dict = {}
-    connect(c, "Receive Excel specialist packet", "Prepare native Excel invocation")
-    connect(c, "Prepare native Excel invocation", "Native Excel invocation ready?")
-    connect(c, "Native Excel invocation ready?", "Call native Excel Extraction Agent", source_index=0)
-    connect(c, "Native Excel invocation ready?", "Build Excel adapter input gate", source_index=1)
-    connect(c, "Call native Excel Extraction Agent", "Adapt native Excel result")
-    return {
-        "id": uid("excel-engineering-specialist-adapter"),
-        "name": "Adapter — Excel Extraction",
-        "nodes": nodes,
-        "pinData": {},
-        "connections": c,
-        "active": False,
-        "settings": {"executionOrder": "v1", "saveManualExecutions": True, "callerPolicy": "workflowsFromSameOwner", "errorWorkflow": ""},
-        "versionId": uid("excel-engineering-specialist-adapter/version"),
-        "meta": {"templateCredsSetupCompleted": False, "targetN8nVersion": "2.30.8", "contractVersion": "1.0"},
-        "tags": [],
-    }
+    conns[source] = existing
+
+
+def embed_excel_specialist_boundary() -> None:
+    """Fold the former Excel adapter ACL into Agent — Excel Extractor.
+
+    Orchestrator specialist_packet is prepared/adapted here. HTTP webhook and
+    Adapter — Excel Form keep sending native {request, session_id, binary};
+    Prepare/Adapt passthrough those callers.
+    """
+    path = CORE / "excel-extraction-agent.workflow.json"
+    wf = json.loads(path.read_text(encoding="utf-8"))
+    by_name = {item["name"]: item for item in wf["nodes"]}
+    for required in (
+        "When executed by another workflow",
+        "Mark Execute Sub-workflow entrypoint",
+        "Return workflow result",
+    ):
+        if required not in by_name:
+            raise ValueError(f"Excel Extractor missing required node {required!r}")
+    by_name["When executed by another workflow"]["parameters"] = {"inputSource": "passthrough"}
+    _upsert_named_node(wf, code("Prepare native Excel invocation", (280, 85), PREPARE_EXCEL_ADAPTER))
+    _upsert_named_node(
+        wf,
+        if_node("Native Excel invocation ready?", (560, 85), "={{ $json.native_request_ready }}", True, "boolean"),
+    )
+    _upsert_named_node(wf, code("Build Excel adapter input gate", (560, 220), BUILD_EXCEL_ADAPTER_GATE))
+    _upsert_named_node(wf, code("Adapt native Excel result", (6720, 85), ADAPT_EXCEL_RESULT))
+    _set_main(wf, "When executed by another workflow", ["Prepare native Excel invocation"])
+    _set_main(wf, "Prepare native Excel invocation", ["Native Excel invocation ready?"])
+    _set_main(
+        wf,
+        "Native Excel invocation ready?",
+        ["Mark Execute Sub-workflow entrypoint"],
+        ["Build Excel adapter input gate"],
+    )
+    _set_main(wf, "Return workflow result", ["Adapt native Excel result"])
+    description = str(wf.get("description") or "")
+    if "specialist_packet" not in description:
+        wf["description"] = (
+            "Production Excel extractor. HTTP, Form, and Orchestrator specialist_packet "
+            "share one OpenAI gpt-5.4-nano AI Agent with PostgreSQL session memory, "
+            "governed Hybrid Retrieval (excel_protocol), and one constrained FastAPI tool "
+            "node per Excel tool. Orchestrator packets are adapted at the executeWorkflow "
+            "boundary; native Form/HTTP requests pass through. Files remain in FastAPI; "
+            "only compact tool results enter the model."
+        )
+    path.write_text(json.dumps(wf, ensure_ascii=False, indent=2) + "\n", encoding="utf-8")
+    print(path.relative_to(ROOT), "excel specialist boundary embedded")
 
 
 NORMALIZE_PACKET = r"""
@@ -2302,7 +2361,7 @@ def build_specialist() -> dict:
         "pinData": {},
         "connections": c,
         "active": False,
-        "settings": {"executionOrder": "v1", "saveManualExecutions": True, "callerPolicy": "workflowsFromSameOwner", "errorWorkflow": ""},
+        "settings": {"executionOrder": "v1", "saveManualExecutions": True, "callerPolicy": "workflowsFromSameOwner", "errorWorkflow": ERROR_HANDLER_WF_ID},
         "versionId": uid("engineering-specialist-template/version"),
         "meta": {"templateCredsSetupCompleted": False, "targetN8nVersion": "2.30.8", "contractVersion": "1.0"},
         "tags": [],
@@ -2493,7 +2552,7 @@ return [{{json:{{specialist_result:result,specialist_packet:packet}},binary:item
         "pinData": {},
         "connections": c,
         "active": False,
-        "settings": {"executionOrder": "v1", "saveManualExecutions": True, "callerPolicy": "workflowsFromSameOwner", "errorWorkflow": ""},
+        "settings": {"executionOrder": "v1", "saveManualExecutions": True, "callerPolicy": "workflowsFromSameOwner", "errorWorkflow": ERROR_HANDLER_WF_ID},
         "versionId": uid(slug + "/version"),
         "meta": {
             "templateCredsSetupCompleted": False,
@@ -2512,7 +2571,7 @@ def build_cluster_calc_stub() -> dict:
         ui_name="Template — Cluster Calculation Adapter",
         specialist_id="cluster_calculation_specialist",
         compact_kind="cluster_job_compact",
-        readme="## Template — Cluster Calculation Adapter\n\nPattern: **Adapter — Calculation** (deterministic external job), not the LLM specialist template.\n\nReplace the stub Code node with:\n1. Config Set node (cluster host / queue URL — no `$env` in UI-only mode)\n2. Submit job (SSH / HTTP job API)\n3. Poll status → map to `specialist_result`\n4. Use `continuation` + `retryable_error` / `needs_input` for async jobs\n\nOrchestrator Call node: `Call Cluster Calculation Specialist` → bind this workflow, then set `configured:true` for `cluster_calculation_specialist` in `specialist_registry.v1.json` and regenerate.\n\nNever put SSH keys in LLM prompts. Keep binaries/logs as `artifact_refs`.",
+        readme="## Template — Cluster Calculation Adapter\n\nPattern: **Agent — Calculation (Math Service)** (deterministic external job), not the LLM specialist template.\n\nReplace the stub Code node with:\n1. Config Set node (cluster host / queue URL — no `$env` in UI-only mode)\n2. Submit job (SSH / HTTP job API)\n3. Poll status → map to `specialist_result`\n4. Use `continuation` + `retryable_error` / `needs_input` for async jobs\n\nOrchestrator Call node: `Call Cluster Calculation Specialist` → bind this workflow, then set `configured:true` for `cluster_calculation_specialist` in `specialist_registry.v1.json` and regenerate.\n\nNever put SSH keys in LLM prompts. Keep binaries/logs as `artifact_refs`.",
         implement_steps=[
             "Add cluster endpoint config Set node (host, queue, workdir)",
             "Wire SSH credential or job-API auth on Execute Command / HTTP Request",
@@ -2530,7 +2589,7 @@ def build_binary_results_stub() -> dict:
         specialist_id="binary_results_specialist",
         compact_kind="report_facts_packet",
         accept_previous=True,
-        readme="## Template — Binary Results Adapter\n\nPattern: Excel Adapter anti-corruption layer — validate packet, extract from binaries, return typed `report_facts_packet`.\n\nInputs: `specialist_packet` + optional `previous_specialist_result` (cluster job refs) + binary result files on the item.\n\nDo not dump binaries into CAS JSON. Prefer local Code/Python runner or a small FastAPI sidecar (like excel-tools / math-service).\n\nDownstream: Presentation Assembler consumes `compact_data` + `artifact_refs`.",
+        readme="## Template — Binary Results Adapter\n\nPattern: Excel Extractor specialist boundary — validate packet, extract from binaries, return typed `report_facts_packet`.\n\nInputs: `specialist_packet` + optional `previous_specialist_result` (cluster job refs) + binary result files on the item.\n\nDo not dump binaries into CAS JSON. Prefer local Code/Python runner or a small FastAPI sidecar (like excel-tools / math-service).\n\nDownstream: Presentation Assembler consumes `compact_data` + `artifact_refs`.",
         implement_steps=[
             "Validate attached binary result files (extensions, size bounds)",
             "Parse previous_specialist_result.artifact_refs / cluster job refs when present",
@@ -2547,7 +2606,7 @@ def build_presentation_stub() -> dict:
         specialist_id="presentation_specialist",
         compact_kind="presentation_compact",
         accept_previous=True,
-        readme="## Template — Presentation Assembler\n\nAssemble slides/charts from **already extracted** report facts — do not re-run cluster jobs or re-parse binaries.\n\nPrefer deterministic assembly (Calc-style adapter). Clone `Template — Engineering Specialist` only if narrative layout needs an LLM, and keep tools allowlisted.\n\nOutput: `deliverables` + `artifact_refs` (pptx/png/html) + `compact_data.presentation_compact` (slide index / chart specs).",
+        readme="## Template — Presentation Assembler\n\nAssemble slides/charts from **already extracted** report facts — do not re-run cluster jobs or re-parse binaries.\n\nPrefer deterministic assembly (Calc-style agent). Clone `Template — Engineering Specialist` only if narrative layout needs an LLM, and keep tools allowlisted.\n\nOutput: `deliverables` + `artifact_refs` (pptx/png/html) + `compact_data.presentation_compact` (slide index / chart specs).",
         implement_steps=[
             "Read report_facts_packet from previous_specialist_result.compact_data",
             "Build slide index + chart specs; render or call a deck service",
@@ -2569,7 +2628,6 @@ def main() -> None:
     outputs = {
         CORE / "cas-persist-task.workflow.json": build_cas_persist(),
         CORE / "universal-engineering-orchestrator.workflow.json": build_orchestrator(),
-        CORE / "excel-engineering-specialist-adapter.workflow.json": build_excel_adapter(),
         SUPPORT / "engineering-specialist-template.workflow.json": build_specialist(),
         SUPPORT / "cluster-calc-specialist-adapter.workflow.json": build_cluster_calc_stub(),
         SUPPORT / "binary-results-specialist-adapter.workflow.json": build_binary_results_stub(),
@@ -2579,6 +2637,11 @@ def main() -> None:
     for path, workflow in outputs.items():
         path.write_text(json.dumps(workflow, ensure_ascii=False, indent=2) + "\n", encoding="utf-8")
         print(path.relative_to(ROOT), len(workflow["nodes"]), "nodes")
+    embed_excel_specialist_boundary()
+    stale_excel_adapter = CORE / "excel-engineering-specialist-adapter.workflow.json"
+    if stale_excel_adapter.exists():
+        stale_excel_adapter.unlink()
+        print("removed", stale_excel_adapter.relative_to(ROOT))
     # Canonical compact layout + yellow edit-after-import notes (all core/).
     import subprocess
     import sys

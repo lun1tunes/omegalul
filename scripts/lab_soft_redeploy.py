@@ -35,10 +35,9 @@ CRED_HDR = "TZWvrKzFO7hsdoZY"
 
 PLACEHOLDERS = {
     "REPLACE_CAS_PERSIST_IN_UI": "CAS — Persist Task State",
-    "REPLACE_EXCEL_ADAPTER_IN_UI": "Adapter — Excel Extraction",
     "REPLACE_SCHEDULE_RAG_RETRIEVAL_IN_UI": "MAS — Knowledge Retrieval",
     "REPLACE_SCHEDULE_BUILDER_IN_UI": "SCHEDULE — Builder",
-    "REPLACE_CALCULATION_ADAPTER_IN_UI": "Adapter — Calculation (Math Service)",
+    "REPLACE_CALCULATION_AGENT_IN_UI": "Agent — Calculation (Math Service)",
     "REPLACE_MAS_TRACE_WRITER_IN_UI": "Writer — MAS Trace",
     "REPLACE_EXCEL_EXTRACTION_AGENT_IN_UI": "Agent — Excel Extractor",
     "REPLACE_HEALTH_ORCHESTRATOR_IN_UI": "Orchestrator — Engineering MAS",
@@ -65,22 +64,31 @@ PUBLISH = [
     "Writer — MAS Trace",
     "MAS — Knowledge Retrieval",
     "MAS — Knowledge Ingestion",
-    "Adapter — Calculation (Math Service)",
+    "Agent — Calculation (Math Service)",
     "SCHEDULE — Builder",
     "Template — Cluster Calculation Adapter",
     "Template — Binary Results Adapter",
     "Template — Presentation Assembler",
     "Template — Engineering Specialist",
     "Agent — Excel Extractor",
-    "Adapter — Excel Extraction",
     "Error — MAS Case Handler",
-    "Activity — List Tasks (Data Table)",
-    "Activity — Load Feed (Data Tables)",
+    "Activity — Hydrate (Data Tables)",
     "Orchestrator — Engineering MAS",
     "Form — MAS Deployment Health Check",
     "Form — MAS Entry",
     "Form — MAS Human Gate",
 ]
+
+STALE_WORKFLOW_NAMES = (
+    "Activity — List Tasks (Data Table)",
+    "Activity — Load Feed (Data Tables)",
+)
+
+ERROR_WORKFLOW_SKIP = (
+    "Error — MAS Case Handler",
+    "Writer — MAS Trace",
+    "CAS — Persist Task State",
+)
 
 
 def run(cmd: list[str], check: bool = True, timeout: int | None = 120) -> subprocess.CompletedProcess:
@@ -219,6 +227,25 @@ def save_nodes(wid: str, nodes) -> None:
         sql_path.unlink(missing_ok=True)
 
 
+def bind_error_workflow(name_to_id: dict[str, str]) -> None:
+    """Point Settings → Error workflow at Error — MAS Case Handler (live n8n IDs)."""
+    hid = name_to_id.get("Error — MAS Case Handler")
+    if not hid:
+        print("bind errorWorkflow skip: handler missing")
+        return
+    print("== bind n8n Error workflow ==")
+    for name, wid in sorted(name_to_id.items()):
+        target = "" if name in ERROR_WORKFLOW_SKIP else hid
+        escaped = target.replace("'", "''")
+        psql(
+            "UPDATE workflow_entity "
+            "SET settings = jsonb_set(COALESCE(settings::jsonb, '{}'::jsonb), "
+            f"'{{errorWorkflow}}', to_jsonb('{escaped}'::text)) "
+            f"WHERE id = '{wid}';"
+        )
+        print(f"errorWorkflow {name}: {target or '(empty)'}")
+
+
 def patch_nodes(nodes, name_to_id: dict[str, str], env: dict[str, str]) -> int:
     changed = 0
     # Lab defaults: n8n in compose reaches host FastAPI via scripts/lab_docker_host_bridge.py
@@ -291,6 +318,7 @@ def patch_nodes(nodes, name_to_id: dict[str, str], env: dict[str, str]) -> int:
             stable = {
                 "engineering-orchestrator": "a1000003-orch-wh-0001-8000-000000000002",
                 "engineering-orchestrator-form": "a1000003-orch-form-0001-8000-000000000002",
+                "mas-activity-hydrate": "a1000003-hyd-wh-0001-8000-000000000002",
             }.get(path)
             if stable:
                 node["webhookId"] = stable
@@ -445,6 +473,23 @@ def publish(name_to_id: dict[str, str]) -> None:
         if not ok and isinstance(body, dict):
             msg = str(body.get("message") or body)[:220]
         print(f"activate {name}: {'OK' if ok else f'FAIL {code} {msg}'}")
+
+    for name in STALE_WORKFLOW_NAMES:
+        wid = name_to_id.get(name)
+        if not wid:
+            print(f"retire skip missing {name}")
+            continue
+        code, wf = rest("GET", f"/rest/workflows/{wid}")
+        data = wf.get("data") if isinstance(wf, dict) and isinstance(wf.get("data"), dict) else (wf or {})
+        vid = data.get("versionId") or data.get("activeVersionId")
+        if data.get("active") and vid:
+            rest("POST", f"/rest/workflows/{wid}/deactivate", {"versionId": vid})
+        code, body = rest("POST", f"/rest/workflows/{wid}/archive", {})
+        if code >= 400:
+            print(f"archive {name}: FAIL {code} {str(body)[:180]}")
+            continue
+        code, body = rest("DELETE", f"/rest/workflows/{wid}")
+        print(f"retire {name}: {'OK' if code < 400 else f'FAIL {code} {str(body)[:180]}'}")
 
 
 def wait_healthy(service: str, url: str, attempts: int = 60) -> None:
@@ -633,6 +678,7 @@ def main() -> int:
         if n:
             save_nodes(wid, nodes)
         print(f"patched {name}: {n}")
+    bind_error_workflow(name_to_id)
     # share with project if missing
     if PROJECT_ID:
         for wid in name_to_id.values():
@@ -647,6 +693,8 @@ def main() -> int:
     wait_url(f"http://127.0.0.1:{env.get('N8N_HOST_PORT', '5678')}/healthz")
     # Forms/webhooks register after active workflows finish loading.
     time.sleep(8)
+    run(["docker", "compose", "restart", "mas-activity"])
+    wait_url(f"http://127.0.0.1:{env.get('MAS_ACTIVITY_HOST_PORT', '8200')}/health")
     overall = None
     if not args.skip_health:
         overall = run_health_form()

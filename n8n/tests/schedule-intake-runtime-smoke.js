@@ -203,6 +203,31 @@ async function main() {
   assert.equal(groupObserve.requested_change_scope.control, 'GRAT');
   assert.equal(groupObserve.requested_change_scope.well_groups['1601'], 'G1601');
   assert(groupObserve.requested_capability_scope.includes('group_membership_rebind'));
+  assert.equal(groupObserve.requested_capability_scope.includes('commissioning_date_retarget'), false);
+
+  const staleCommissioning = await execute(request({
+    ...reviseFields,
+    requested_keyword_scope: [],
+    requested_change_scope: {
+      capability_id: 'commissioning_date_retarget',
+      intent: 'shift_commissioning_dates',
+      source: 'planner',
+    },
+    requested_capability_scope: ['commissioning_date_retarget'],
+    objective: 'На основе старого прогнозного schedule - скважины 1601 и 1602 помести в отдельную группу - "DKS", и задай этим скважинам групповой контроль 200 тыс. м3 газа в сут. (с момента даты ввода этих скважин).',
+    source_facts_packet: {
+      facts: [
+        { well: '1601', values: { Скважина: '1601', 'Дата ввода': '2020-02-23' } },
+        { well: '1602', values: { Скважина: '1602', 'Дата ввода': '2020-02-23' } },
+      ],
+    },
+    rag_evidence: rag(['WELSPECS', 'GRUPTREE', 'GCONPROD', 'WECON', 'WPIMULT']),
+  }));
+  assert.equal(staleCommissioning.status, 'accepted');
+  assert.equal(staleCommissioning.requested_change_scope.capability_id, 'group_membership_rebind');
+  assert(staleCommissioning.requested_capability_scope.includes('group_membership_rebind'));
+  assert.equal(staleCommissioning.requested_capability_scope.includes('commissioning_date_retarget'), false);
+  assert.equal(staleCommissioning.requested_change_scope.parent_group, 'DKS');
 
   const unrelatedGroup = await execute(request({
     ...reviseFields,
@@ -214,7 +239,7 @@ async function main() {
   assert.notEqual(unrelatedGroup.requested_change_scope?.capability_id, 'group_membership_rebind');
   assert.equal(unrelatedGroup.requested_change_scope?.parent_group == null, true);
 
-  console.log('SCHEDULE governed intake runtime smoke: 25 scenarios passed');
+  console.log('SCHEDULE governed intake runtime smoke: 26 scenarios passed');
 }
 
 main().catch((error) => {

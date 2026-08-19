@@ -12,6 +12,7 @@ from app.settings import Settings, SERVICE_ROOT, _load_env_files
 def test_settings_reads_monkeypatched_env(monkeypatch) -> None:
     for key in (
         "N8N_BASE_URL",
+        "ACTIVITY_HYDRATE_URL",
         "ACTIVITY_LIST_URL",
         "ACTIVITY_FEED_URL",
         "KNOWLEDGE_INGEST_URL",
@@ -25,8 +26,9 @@ def test_settings_reads_monkeypatched_env(monkeypatch) -> None:
     settings = Settings()
     assert settings.n8n_transport == "webhook"
     assert settings.n8n_base == "http://n8n.example"
-    assert settings.resolved_list_url.endswith("/webhook/mas-activity-list-tasks")
-    assert settings.resolved_feed_url.endswith("/webhook/mas-activity-load-feed")
+    assert settings.resolved_list_url.endswith("/webhook/mas-activity-hydrate")
+    assert settings.resolved_feed_url.endswith("/webhook/mas-activity-hydrate")
+    assert settings.resolved_hydrate_url.endswith("/webhook/mas-activity-hydrate")
     assert settings.resolved_knowledge_ingest_url.endswith("/webhook/mas-knowledge-ingest")
     assert settings.n8n_health_url == "http://n8n.example/healthz"
     assert settings.log_level == "DEBUG"
@@ -38,12 +40,30 @@ def test_settings_reads_monkeypatched_env(monkeypatch) -> None:
     assert settings.n8n_password == "" or "password" not in settings.public_summary()
 
 
+def test_legacy_list_feed_urls_are_rewritten_to_hydrate(monkeypatch) -> None:
+    for key in (
+        "ACTIVITY_HYDRATE_URL",
+        "ACTIVITY_LIST_URL",
+        "ACTIVITY_FEED_URL",
+        "ACTIVITY_CA_BUNDLE",
+    ):
+        monkeypatch.delenv(key, raising=False)
+    monkeypatch.setenv("N8N_BASE_URL", "http://127.0.0.1:15678")
+    monkeypatch.setenv("ACTIVITY_LIST_URL", "http://n8n:5678/webhook/mas-activity-list-tasks")
+    monkeypatch.setenv("ACTIVITY_FEED_URL", "http://n8n:5678/webhook/mas-activity-load-feed")
+    settings = Settings()
+    assert settings.resolved_hydrate_url == "http://127.0.0.1:15678/webhook/mas-activity-hydrate"
+    assert settings.resolved_list_url == settings.resolved_hydrate_url
+    assert settings.resolved_feed_url == settings.resolved_hydrate_url
+
+
 def test_unconfigured_without_n8n_urls(monkeypatch) -> None:
     for key in (
         "ORCHESTRATOR_WEBHOOK_URL",
         "N8N_BASE_URL",
         "N8N_USERNAME",
         "N8N_PASSWORD",
+        "ACTIVITY_HYDRATE_URL",
         "ACTIVITY_LIST_URL",
         "ACTIVITY_FEED_URL",
         "KNOWLEDGE_INGEST_URL",
@@ -64,6 +84,7 @@ def test_unconfigured_without_n8n_urls(monkeypatch) -> None:
 def test_relative_webhook_urls_are_unconfigured(monkeypatch) -> None:
     for key in (
         "N8N_BASE_URL",
+        "ACTIVITY_HYDRATE_URL",
         "ACTIVITY_LIST_URL",
         "ACTIVITY_FEED_URL",
         "KNOWLEDGE_INGEST_URL",

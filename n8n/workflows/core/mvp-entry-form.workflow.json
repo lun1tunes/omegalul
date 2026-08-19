@@ -6,7 +6,8 @@
   "settings": {
     "executionOrder": "v1",
     "saveManualExecutions": true,
-    "callerPolicy": "workflowsFromSameOwner"
+    "callerPolicy": "workflowsFromSameOwner",
+    "errorWorkflow": "e1f0a7c2-9b4d-5e8f-a123-4567890abcde"
   },
   "nodes": [
     {

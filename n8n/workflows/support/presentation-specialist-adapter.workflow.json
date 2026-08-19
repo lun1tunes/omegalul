@@ -4,7 +4,7 @@
   "nodes": [
     {
       "parameters": {
-        "content": "## Template — Presentation Assembler\n\nAssemble slides/charts from **already extracted** report facts — do not re-run cluster jobs or re-parse binaries.\n\nPrefer deterministic assembly (Calc-style adapter). Clone `Template — Engineering Specialist` only if narrative layout needs an LLM, and keep tools allowlisted.\n\nOutput: `deliverables` + `artifact_refs` (pptx/png/html) + `compact_data.presentation_compact` (slide index / chart specs).",
+        "content": "## Template — Presentation Assembler\n\nAssemble slides/charts from **already extracted** report facts — do not re-run cluster jobs or re-parse binaries.\n\nPrefer deterministic assembly (Calc-style agent). Clone `Template — Engineering Specialist` only if narrative layout needs an LLM, and keep tools allowlisted.\n\nOutput: `deliverables` + `artifact_refs` (pptx/png/html) + `compact_data.presentation_compact` (slide index / chart specs).",
         "height": 360,
         "width": 520,
         "color": 5
@@ -65,7 +65,7 @@
     "executionOrder": "v1",
     "saveManualExecutions": true,
     "callerPolicy": "workflowsFromSameOwner",
-    "errorWorkflow": ""
+    "errorWorkflow": "e1f0a7c2-9b4d-5e8f-a123-4567890abcde"
   },
   "versionId": "71e11a47-2241-5a70-9e21-72cf705cfc2e",
   "meta": {

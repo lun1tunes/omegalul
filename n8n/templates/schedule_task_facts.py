@@ -51,6 +51,10 @@ const taskProseBlob=x=>{
 };
 const COMMISSIONING_KEYWORDS=['DATES','WELOPEN','WCONPROD','WEFAC'];
 const GROUP_REBIND_KEYWORDS=['WELSPECS','GRUPTREE','GCONPROD','WECON','WPIMULT'];
+const COMMISSIONING_CAP_IDS=['commissioning_date_retarget','shift_commissioning_dates','commissioning_revise','timeline_revise'];
+const GROUP_REBIND_CAP_IDS=['group_membership_rebind','group_rebind'];
+const capToken=v=>String(v==null?'':v).trim().toLowerCase().replace(/-/g,'_');
+const withoutCapIds=(list,drop)=>list.filter(v=>!drop.includes(capToken(v)));
 const inferChangeOperation=text=>{
   const t=String(text||'');
   if(/(убер[а-яё]*|удал[а-яё]*|вырез[а-яё]*|исключ[а-яё]*|\bremove\b|\bdelete\b|\bstrip\b|\bdrop\b)/i.test(t)) return 'remove';
@@ -121,10 +125,33 @@ const observeGroupRebindFromProse=t=>{
   };
 };
 const pickDateFromFactRow=(row,values)=>{
-  const named=row.value??row.raw_value??values['Дата ввода']??values['дата ввода']??values.date??values.Date??values.commissioning_date??null;
-  if(named!=null&&String(named).trim()!=='') return {date:named,field:String(row.field||row.column||'Дата ввода')};
+  const coerce=v=>{
+    if(v==null||v==='') return null;
+    if(v instanceof Date&&!Number.isNaN(v.getTime())) return v.toISOString().slice(0,10);
+    if(typeof v==='object'&&!Array.isArray(v)){
+      if(Number.isFinite(Number(v.year))&&Number.isFinite(Number(v.month))&&Number.isFinite(Number(v.day))){
+        const y=String(Number(v.year)).padStart(4,'0'),m=String(Number(v.month)).padStart(2,'0'),d=String(Number(v.day)).padStart(2,'0');
+        return `${y}-${m}-${d}`;
+      }
+      if(v.value!=null&&v.value!==v) return coerce(v.value);
+      if(v.iso) return coerce(v.iso);
+      if(v.tnav) return coerce(v.tnav);
+    }
+    const s=String(v).trim();
+    return s===''?null:s;
+  };
+  const named=coerce(row.value??row.raw_value??values['Дата ввода']??values['дата ввода']??values.date??values.Date??values.commissioning_date??null);
+  if(named) return {date:named,field:String(row.field||row.column||'Дата ввода')};
   const hit=Object.keys(values).find(k=>/дата|date|commission|ввод/i.test(String(k||'')));
-  if(hit!=null&&values[hit]!=null&&String(values[hit]).trim()!=='') return {date:values[hit],field:String(hit)};
+  if(hit!=null){
+    const d=coerce(values[hit]);
+    if(d) return {date:d,field:String(hit)};
+  }
+  const others=Object.keys(values).filter(k=>!/скважин|well|групп|group|факт|id$/i.test(String(k||'')));
+  if(others.length===1){
+    const d=coerce(values[others[0]]);
+    if(d) return {date:d,field:String(others[0])};
+  }
   return {date:null,field:String(row.field||row.column||'')};
 };
 const commissioningFactsFromPacket=packet=>{
@@ -172,15 +199,15 @@ const observeSchedulePacketFacts=x=>{
   let requested_capability_scope=(Array.isArray(src.requested_capability_scope)?src.requested_capability_scope:[]).map(v=>String(v||'').trim()).filter(Boolean);
   let requested_change_scope=src.requested_change_scope&&changeScopeMeaningful(src.requested_change_scope)?src.requested_change_scope:null;
   if(groupSpec){
-    requested_capability_scope=[...new Set([...requested_capability_scope,'group_membership_rebind'])];
+    requested_capability_scope=[...new Set([...withoutCapIds(requested_capability_scope,COMMISSIONING_CAP_IDS),'group_membership_rebind'])];
     requested_keyword_scope=[...new Set([...requested_keyword_scope,...GROUP_REBIND_KEYWORDS.filter(k=>SCHEDULE_ALLOWLIST.has(k))])];
     const prev=requested_change_scope&&typeof requested_change_scope==='object'&&!Array.isArray(requested_change_scope)?requested_change_scope:{};
     const prevGroups=prev.well_groups&&typeof prev.well_groups==='object'&&!Array.isArray(prev.well_groups)?prev.well_groups:null;
     requested_change_scope={
       ...prev,
       source:prev.source||'task_text',
-      capability_id:prev.capability_id||'group_membership_rebind',
-      intent:prev.intent||'group_membership_rebind',
+      capability_id:'group_membership_rebind',
+      intent:'group_membership_rebind',
       operation:prev.operation||'change',
       keywords:[...new Set([...(Array.isArray(prev.keywords)?prev.keywords:[]),...GROUP_REBIND_KEYWORDS.filter(k=>SCHEDULE_ALLOWLIST.has(k))])],
       summary:prev.summary||prose.slice(0,500),
@@ -194,18 +221,20 @@ const observeSchedulePacketFacts=x=>{
       group_rebind:prev.group_rebind||groupSpec,
     };
   }else if(commissioning){
-    requested_capability_scope=[...new Set([...requested_capability_scope,'commissioning_date_retarget'])];
+    requested_capability_scope=[...new Set([...withoutCapIds(requested_capability_scope,GROUP_REBIND_CAP_IDS),'commissioning_date_retarget'])];
     requested_keyword_scope=[...new Set([...requested_keyword_scope,...COMMISSIONING_KEYWORDS.filter(k=>SCHEDULE_ALLOWLIST.has(k))])];
     const prev=requested_change_scope&&typeof requested_change_scope==='object'&&!Array.isArray(requested_change_scope)?requested_change_scope:{};
+    const prevCap=capToken(prev.capability_id);
     requested_change_scope={
       ...prev,
       source:prev.source||'task_text',
-      capability_id:prev.capability_id||'commissioning_date_retarget',
-      intent:prev.intent||'shift_commissioning_dates',
+      capability_id:COMMISSIONING_CAP_IDS.includes(prevCap)?prev.capability_id:'commissioning_date_retarget',
+      intent:COMMISSIONING_CAP_IDS.includes(capToken(prev.intent))?prev.intent:'shift_commissioning_dates',
       operation:prev.operation||'change',
       keywords:[...new Set([...(Array.isArray(prev.keywords)?prev.keywords:[]),...COMMISSIONING_KEYWORDS.filter(k=>SCHEDULE_ALLOWLIST.has(k))])],
       summary:prev.summary||prose.slice(0,500),
     };
+    delete requested_change_scope.group_rebind;
   }else if(!requested_change_scope){
     requested_change_scope=observeChangeScope(src,requested_keyword_scope);
   }

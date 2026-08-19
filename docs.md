@@ -66,12 +66,11 @@ flowchart TB
   Trace[Trace Writer]:::box
   TraceDT[(История)]:::data
   Activity[Activity UI]:::svc
-  ExcelAdapt[Адаптер Excel]:::box
   ExcelAgent[Excel Extractor]:::box
   ExcelTools[Инструменты Excel]:::svc
   SRetr[Retrieval Knowledge]:::rag
   SBuilder[SCHEDULE Builder]:::box
-  CalcAdapt[Адаптер вычислений]:::box
+  CalcAgent[Агент вычислений]:::box
   MathSvc[Math Service]:::svc
   Pg[(Postgres+PGVector)]:::data
 
@@ -83,9 +82,9 @@ flowchart TB
   Orch --> CasPersist --> TaskDT
   Orch --> Trace --> TraceDT
   Trace -.-> Activity
-  Orch --> ExcelAdapt --> ExcelAgent --> ExcelTools
+  Orch --> ExcelAgent --> ExcelTools
   Orch --> SRetr --> SBuilder
-  Orch --> CalcAdapt --> MathSvc
+  Orch --> CalcAgent --> MathSvc
   ExcelAgent <--> Pg
   SRetr <--> Pg
 ```
@@ -135,7 +134,7 @@ start-windows.bat
 ```
 *Настройки для `mas-activity.env`:*
 - `ORCHESTRATOR_WEBHOOK_URL`: `http://<URL-n8n>/webhook/engineering-orchestrator`
-- `ACTIVITY_LIST_URL` / `ACTIVITY_FEED_URL` можно не задавать — они выводятся из того же хоста n8n
+- `ACTIVITY_HYDRATE_URL` можно не задавать — выводится из того же хоста n8n (`/webhook/mas-activity-hydrate`)
 - `MAS_ACTIVITY_HOST=0.0.0.0`, если n8n на другой машине
 - Авторизации в Activity нет. ФИО инженера вводится в форме.
 
@@ -146,23 +145,21 @@ start-windows.bat
 
 ### Шаг 1. Импорт Workflows в n8n
 
-Зайдите в UI n8n, выберите "Import from File" и загрузите следующие 15 файлов строго в указанном порядке. **Ничего пока не активируйте!**
+Зайдите в UI n8n, выберите "Import from File" и загрузите следующие 13 файлов строго в указанном порядке. **Ничего пока не активируйте!**
 
-1. `n8n/workflows/core/calculation-specialist-adapter.workflow.json`
+1. `n8n/workflows/core/calculation-specialist-agent.workflow.json`
 2. `n8n/workflows/core/excel-extraction-agent.workflow.json`
-3. `n8n/workflows/core/excel-engineering-specialist-adapter.workflow.json`
-4. `n8n/workflows/core/tnavigator-schedule-knowledge-ingestion.workflow.json`
-5. `n8n/workflows/core/tnavigator-schedule-hybrid-retrieval.workflow.json`
-6. `n8n/workflows/core/tnavigator-schedule-builder.workflow.json`
-7. `n8n/workflows/core/mas-trace-event-writer.workflow.json`
-8. `n8n/workflows/core/cas-persist-task.workflow.json`
-9. `n8n/workflows/core/mas-error-handler.workflow.json`
-10. `n8n/workflows/core/universal-engineering-orchestrator.workflow.json`
-11. `n8n/workflows/core/mvp-entry-form.workflow.json`
-12. `n8n/workflows/core/mas-human-gate-form.workflow.json`
-13. `n8n/workflows/core/mas-activity-list-tasks.workflow.json`
-14. `n8n/workflows/core/mas-activity-load-feed.workflow.json`
-15. `n8n/workflows/core/mas-deployment-health-check.workflow.json`
+3. `n8n/workflows/core/tnavigator-schedule-knowledge-ingestion.workflow.json`
+4. `n8n/workflows/core/tnavigator-schedule-hybrid-retrieval.workflow.json`
+5. `n8n/workflows/core/tnavigator-schedule-builder.workflow.json`
+6. `n8n/workflows/core/mas-trace-event-writer.workflow.json`
+7. `n8n/workflows/core/cas-persist-task.workflow.json`
+8. `n8n/workflows/core/mas-error-handler.workflow.json`
+9. `n8n/workflows/core/universal-engineering-orchestrator.workflow.json`
+10. `n8n/workflows/core/mvp-entry-form.workflow.json`
+11. `n8n/workflows/core/mas-human-gate-form.workflow.json`
+12. `n8n/workflows/core/mas-activity-hydrate.workflow.json`
+13. `n8n/workflows/core/mas-deployment-health-check.workflow.json`
 
 ### Шаг 2. Создание таблиц данных (Data Tables)
 
@@ -200,13 +197,13 @@ CSV: [`n8n/data-tables/mas_trace_events_v1.header.csv`](n8n/data-tables/mas_trac
 | `Orchestrator — Engineering MAS` | `Load task by ID` | `engineering_orchestrator_tasks_v1` |
 | `Form — MAS Deployment Health Check` | `Probe task Data Table` | `engineering_orchestrator_tasks_v1` |
 | `Form — MAS Deployment Health Check` | `Probe trace Data Table` | `mas_trace_events_v1` |
-| `Activity — List Tasks (Data Table)` | `Load recent tasks` | `engineering_orchestrator_tasks_v1` |
-| `Activity — Load Feed (Data Tables)` | `Load task row` | `engineering_orchestrator_tasks_v1` |
-| `Activity — Load Feed (Data Tables)` | `Load trace rows` | `mas_trace_events_v1` |
+| `Activity — Hydrate (Data Tables)` | `Load recent tasks` | `engineering_orchestrator_tasks_v1` |
+| `Activity — Hydrate (Data Tables)` | `Load task row` | `engineering_orchestrator_tasks_v1` |
+| `Activity — Hydrate (Data Tables)` | `Load trace rows` | `mas_trace_events_v1` |
 
-После биндинга активируйте Activity webhook-и (`Activity — List Tasks`, `Activity — Load Feed`).
+После биндинга активируйте Activity webhook (`Activity — Hydrate`).
 
-### Шаг 4. Bind Execute Workflow nodes (28 обязательных)
+### Шаг 4. Bind Execute Workflow nodes (27 обязательных)
 
 | Open workflow | Node on canvas | Select this workflow |
 |---|---|---|
@@ -219,20 +216,19 @@ CSV: [`n8n/data-tables/mas_trace_events_v1.header.csv`](n8n/data-tables/mas_trac
 | `Orchestrator — Engineering MAS` | `Call CAS persist — verification` | `CAS — Persist Task State` |
 | `Orchestrator — Engineering MAS` | `Call CAS persist — specialist gate or error` | `CAS — Persist Task State` |
 | `Orchestrator — Engineering MAS` | `Call CAS persist — routing gate` | `CAS — Persist Task State` |
-| `Orchestrator — Engineering MAS` | `Call Excel Extraction Specialist Adapter` | `Adapter — Excel Extraction` |
+| `Orchestrator — Engineering MAS` | `Call Excel Extraction Specialist` | `Agent — Excel Extractor` |
 | `Orchestrator — Engineering MAS` | `Call SCHEDULE Hybrid Retrieval` | `MAS — Knowledge Retrieval` |
 | `Orchestrator — Engineering MAS` | `Call routing Hybrid Retrieval` | `MAS — Knowledge Retrieval` |
 | `Orchestrator — Engineering MAS` | `Call Excel protocol Hybrid Retrieval` | `MAS — Knowledge Retrieval` |
 | `Agent — Excel Extractor` | `Call Excel protocol Hybrid Retrieval` | `MAS — Knowledge Retrieval` |
 | `Template — Engineering Specialist` | `Call specialist Hybrid Retrieval` | `MAS — Knowledge Retrieval` |
 | `Orchestrator — Engineering MAS` | `Call SCHEDULE Builder Specialist` | `SCHEDULE — Builder` |
-| `Orchestrator — Engineering MAS` | `Call Calculation Specialist` | `Adapter — Calculation (Math Service)` |
+| `Orchestrator — Engineering MAS` | `Call Calculation Specialist` | `Agent — Calculation (Math Service)` |
 | `Orchestrator — Engineering MAS` | `Call MAS Trace Event Writer` | `Writer — MAS Trace` |
 | `Orchestrator — Engineering MAS` | `Call Error — MAS Case Handler (specialist)` | `Error — MAS Case Handler` |
 | `Orchestrator — Engineering MAS` | `Call Error — MAS Case Handler (verification)` | `Error — MAS Case Handler` |
 | `Error — MAS Case Handler` | `Call CAS persist — error case` | `CAS — Persist Task State` |
 | `Error — MAS Case Handler` | `Call Writer — MAS Trace (error)` | `Writer — MAS Trace` |
-| `Adapter — Excel Extraction` | `Call native Excel Extraction Agent` | `Agent — Excel Extractor` |
 | `Form — MAS Entry` | `Call Universal Engineering Orchestrator` | `Orchestrator — Engineering MAS` |
 | `Form — MAS Human Gate` | `Call Orchestrator status` | `Orchestrator — Engineering MAS` |
 | `Form — MAS Human Gate` | `Call Orchestrator resume` | `Orchestrator — Engineering MAS` |
@@ -242,13 +238,29 @@ CSV: [`n8n/data-tables/mas_trace_events_v1.header.csv`](n8n/data-tables/mas_trac
 **Не настраивать:** `Call Data Specialist`, `Call Document Specialist` (заглушки).  
 Подсказка: экспорт JSON → поиск `REPLACE_` = незавершённый binding. Канон также в `n8n/import-manifest.json` → `mandatory_execute_workflow_bindings`.
 
+### Шаг 4b. n8n Error workflow (неперехваченные сбои)
+
+Это **другая** механика, чем ветка `Invoke Error Handler?` на холсте оркестратора.
+
+| | Ветка `Call Error — MAS Case Handler` | Settings → **Error workflow** |
+|---|---|---|
+| Когда | Оркестратор **сам** классифицировал доменную ошибку (LLM, нет данных, валидатор) | Узел **упал** (exception, timeout, падение Code) |
+| Родительский прогон | Живой, ждёт `mas_error_ack` (HITL / restartable) | Уже мёртв |
+| Как включить | Binding из таблицы Шага 4 | Три точки → Settings → Error workflow → `Error — MAS Case Handler` |
+
+Один и тот же workflow `Error — MAS Case Handler`: вход **Receive MAS error event** (Execute Workflow) и вход **Error Trigger** (нативный n8n). Дальше общий путь CAS + Trace + Activity. Без `task_id` — fail-closed, Activity не трогаем.
+
+В JSON это поле `settings.errorWorkflow`. Не ставить обработчик на сам Case Handler, `Writer — MAS Trace` и `CAS — Persist Task State` — иначе петля, если упал persist/trace во время обработки ошибки.
+
+После UI-импорта проверьте Settings у: Orchestrator, Excel Extractor, Calculation, SCHEDULE Builder, Knowledge Retrieval/Ingestion, форм Entry/Gate/Health, Activity Hydrate, Template — Engineering Specialist.
+
 ### Шаг 5. Настройка доступов (Credentials)
 
 Вам потребуется указать ключи для нейросетей, баз данных и локальных сервисов:
 - **Оркестратор и SCHEDULE Builder:** Создайте подключения к вашей совместимой с OpenAI модели (`Planner Chat Model`, `Verifier Chat Model`).
 - **Агент Excel Extractor:** В нодах HTTP укажите URL к локальному сервису Excel Tools и заданный `API_KEY`. Выберите нужное подключение к базе Postgres.
 - **RAG (Знания):** Выберите подключение к Postgres и единый профиль генерации эмбеддингов. (Важно: не заполняйте поле `Dimensions` в настройках эмбеддингов).
-- **Адаптер вычислений:** В ноде HTTP-запроса пропишите `math_service_url` (`http://<IP-вашего-ПК>:8100/api/v1/math`).
+- **Агент вычислений:** В ноде HTTP-запроса пропишите `math_service_url` (`http://<IP-вашего-ПК>:8100/api/v1/math`).
 - **Trace Writer / Error Handler:** нода **Activity connection** — поле `activity_base_url` (`http://<IP-вашего-ПК>:8200`). Ключ не нужен.
 - Убедитесь, что в настройках подключения к PostgreSQL отключена проверка сертификатов (`SSL = Disable`), если сервер работает без TLS.
 
@@ -321,7 +333,7 @@ CSV: [`n8n/data-tables/mas_trace_events_v1.header.csv`](n8n/data-tables/mas_trac
 | Human Gate не загружает текущий статус | Форме не привязан процесс проверки статуса Оркестратора. |
 | Система не отдаёт готовый SCHEDULE | Оркестратор не может связаться со специалистами (например, с Excel Extractor). Проверьте URL локальных сервисов. |
 | История (Trace) пустая | Проверьте, привязаны ли Data Tables в процессе `Writer — MAS Trace`. |
-| Интерфейс Activity пуст | Не настроены URL в локальном сервисе MAS Activity (`ACTIVITY_FEED_URL` и `ACTIVITY_LIST_URL`). |
+| Интерфейс Activity пуст | Не настроен hydrate webhook в MAS Activity (`ACTIVITY_HYDRATE_URL` или `N8N_BASE_URL`). Workflow `Activity — Hydrate` должен быть Active. |
 | Браузер: `blocked by CORS policy` | `mas-activity-service/app/main.py`: CORSMiddleware. Не ставить `allow_credentials=True` вместе с `allow_origins=["*"]`. Перезапустить Activity. См. README «CORS». |
 | Оркестратор сразу просит загрузить `routing_card` / `orchestrator_routing` | RAG пуст или не прогнан Шаг 6. Activity → База знаний → Загрузить в RAG; либо `Summarize RAG inventory`. |
 | Knowledge Ingestion: `Request timed out` на embeddings | Уменьшите `batchSize` до 16 и поднимите `timeout` до 600 на ноде Embeddings; проверьте доступ к OpenAI из хоста n8n. Activity ждёт webhook до 10 минут. |

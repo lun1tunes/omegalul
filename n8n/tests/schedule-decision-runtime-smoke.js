@@ -543,6 +543,27 @@ async function main() {
   assert.ok((groupExplicit.error?.findings || []).some((f) => f.code === 'GROUP_REBIND_TIMELINE_PATH'));
   assert.equal((groupExplicit.source_map || []).some((s) => s.path === 'timeline_group_revise'), true);
 
+  const staleBoth = await run(
+    builderWorkflow,
+    'Validate SCHEDULE builder stage',
+    { output: groupIrWork },
+    groupKwNodes({
+      capability_id: 'commissioning_date_retarget',
+      requested_capability_scope: ['commissioning_date_retarget', 'group_membership_rebind'],
+      requested_change_scope: {
+        capability_id: 'commissioning_date_retarget',
+        intent: 'shift_commissioning_dates',
+        ...groupSpec,
+        group_rebind: groupSpec,
+      },
+      source_facts_packet: { source_snapshot_hash: 'sha256:facts', facts: wellDateFacts, conflicts: [] },
+    }),
+  );
+  assert.ok((staleBoth.error?.findings || []).some((f) => f.code === 'GROUP_REBIND_TIMELINE_PATH'));
+  assert.equal((staleBoth.error?.findings || []).some((f) => f.code === 'COMMISSIONING_TIMELINE_PATH'), false);
+  assert.equal((staleBoth.source_map || []).some((s) => s.path === 'timeline_group_revise'), true);
+  assert.equal((staleBoth.source_map || []).some((s) => s.path === 'timeline_commissioning_revise'), false);
+
   const emptyPlanRevise = plan({
     build_mode: 'REVISE',
     stages: [],
@@ -587,6 +608,29 @@ async function main() {
   );
   assert.ok((planFactsWithCap.stages || []).some((s) => s.stage_id === 'commissioning_dates'));
   assert.equal(planFactsWithCap.hard_blockers.includes('PLAN_STAGES_MISSING'), false);
+
+  const planStaleBoth = await run(
+    plannerWorkflow,
+    'Validate SCHEDULE pipeline plan',
+    { output: emptyPlanRevise },
+    {
+      'Prepare SCHEDULE planner input': {
+        planner_request: {
+          task: { objective: 'Group rebind' },
+          build_mode: 'REVISE',
+          capability_id: 'commissioning_date_retarget',
+          requested_capability_scope: ['commissioning_date_retarget', 'group_membership_rebind'],
+          requested_keyword_scope: ['WELSPECS', 'GRUPTREE', 'GCONPROD'],
+          requested_change_scope: { capability_id: 'group_membership_rebind', wells: ['1601', '1602'] },
+          source_facts_packet: { facts: wellDateFacts },
+          evidence: [{ kind: 'source_facts_packet', value: { facts: wellDateFacts } }],
+        },
+      },
+    },
+  );
+  assert.ok((planStaleBoth.stages || []).some((s) => s.stage_id === 'group_rebind'));
+  assert.equal((planStaleBoth.stages || []).some((s) => s.stage_id === 'commissioning_dates'), false);
+  assert.equal(planStaleBoth.hard_blockers.includes('PLAN_STAGES_MISSING'), false);
 
   console.log('SCHEDULE decision runtime smoke: passed');
 }

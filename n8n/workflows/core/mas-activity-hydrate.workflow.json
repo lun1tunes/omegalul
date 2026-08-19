@@ -1,0 +1,351 @@
+{
+  "id": "mas-activity-hydrate-v1",
+  "name": "Activity — Hydrate (Data Tables)",
+  "description": "UI-importable hydrate: one webhook for the Activity rail catalog and optional task feed. POST {action:'list'} for catalog; POST {task_id} for catalog + traces. Bind both Data Tables in UI. Webhook path mas-activity-hydrate.",
+  "active": false,
+  "settings": {
+    "executionOrder": "v1",
+    "callerPolicy": "workflowsFromSameOwner",
+    "errorWorkflow": "e1f0a7c2-9b4d-5e8f-a123-4567890abcde"
+  },
+  "nodes": [
+    {
+      "parameters": {
+        "content": "## edit after import\n\n**Activity — Hydrate (Data Tables)** — after UI import, complete bindings before activate:\n\n- Bind Data Table on **Load recent tasks**\n- Bind Data Table on **Load task row**\n- Bind Data Table on **Load trace rows**\n\nDo not rely on env()/Globals for corporate UI import.",
+        "height": 244,
+        "width": 440,
+        "color": 1
+      },
+      "id": "b56fc0eb-bbd1-53b4-b42e-d072dc3681c5",
+      "name": "edit after import",
+      "type": "n8n-nodes-base.stickyNote",
+      "typeVersion": 1,
+      "position": [
+        -40,
+        -389
+      ]
+    },
+    {
+      "parameters": {
+        "content": "## Activity — Hydrate\n1. Bind **Load recent tasks** and **Load task row** → `engineering_orchestrator_tasks_v1`.\n2. Bind **Load trace rows** → `mas_trace_events_v1`.\n3. Activate webhook. Body: `{ \"action\": \"list\" }` or `{ \"task_id\": \"eng_…\" }`.\n4. Activity derives `ACTIVITY_HYDRATE_URL` from n8n host (`/webhook/mas-activity-hydrate`).\n\nOne execution per UI refresh. Feed responses also include the rail catalog.",
+        "height": 320,
+        "width": 500,
+        "color": 4
+      },
+      "id": "a1000003-hyd-note-0001-8000-000000000001",
+      "name": "Setup note",
+      "type": "n8n-nodes-base.stickyNote",
+      "typeVersion": 1,
+      "position": [
+        -580,
+        -445
+      ]
+    },
+    {
+      "parameters": {
+        "httpMethod": "POST",
+        "path": "mas-activity-hydrate",
+        "responseMode": "lastNode",
+        "options": {}
+      },
+      "id": "a1000003-hyd-wh-0001-8000-000000000002",
+      "name": "Webhook hydrate",
+      "type": "n8n-nodes-base.webhook",
+      "typeVersion": 2.1,
+      "position": [
+        0,
+        0
+      ],
+      "webhookId": "a1000003-hyd-wh-0001-8000-000000000002"
+    },
+    {
+      "parameters": {
+        "jsCode": "const raw=$input.first().json||{};\nconst body=raw.body&&typeof raw.body==='object'?raw.body:raw;\nconst taskId=String(body.task_id||body.taskId||'').trim();\nconst action=String(body.action||'').trim().toLowerCase();\nconst wantFeed=Boolean(taskId)&&action!=='list';\nreturn[{json:{task_id:taskId,want_feed:wantFeed}}];"
+      },
+      "id": "a1000003-hyd-norm-0001-8000-000000000003",
+      "name": "Normalize hydrate request",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        280,
+        0
+      ]
+    },
+    {
+      "parameters": {
+        "operation": "get",
+        "dataTableId": {
+          "__rl": true,
+          "mode": "list",
+          "value": "REPLACE_IN_UI",
+          "cachedResultName": "Engineering orchestrator task state"
+        },
+        "returnAll": true,
+        "limit": 200
+      },
+      "id": "a1000003-hyd-list-0001-8000-000000000004",
+      "name": "Load recent tasks",
+      "type": "n8n-nodes-base.dataTable",
+      "typeVersion": 1.1,
+      "position": [
+        560,
+        0
+      ],
+      "alwaysOutputData": true
+    },
+    {
+      "parameters": {
+        "jsCode": "const req=$('Normalize hydrate request').first().json||{};\nconst rows=$input.all().map(i=>i.json||{}).filter(r=>r&&r.task_id);\nconst parse=(v,f)=>{try{const p=typeof v==='string'?JSON.parse(v):v;return p&&typeof p==='object'&&!Array.isArray(p)?p:f}catch{return f}};\nconst awaitingStatus=s=>String(s||'').trim().toLowerCase()==='awaiting_human';\nconst tasks=rows.map(row=>{\n  const request=parse(row.request_json,{});\n  const gateRaw=parse(row.gate_json,null);\n  const gate=gateRaw&&typeof gateRaw==='object'&&!Array.isArray(gateRaw)?gateRaw:null;\n  const objective=String(request.objective||request.problem_statement||request.task_description||'').trim();\n  const inputFiles=Array.isArray(request.input_files)?request.input_files:[];\n  const attached_files=[...new Set(inputFiles.map(f=>String((f&&(f.filename||f.name))||f||'').trim().replace(/^.*[\\\\/]/,'')).filter(Boolean))].slice(0,32);\n  const status=String(row.status||'').trim()||null;\n  const awaiting=awaitingStatus(status)&&gate&&gate.gate_id;\n  return{\n    task_id:String(row.task_id).trim(),\n    title:objective?objective.slice(0,120):String(row.task_id).trim(),\n    objective:objective?objective.slice(0,8000):null,\n    attached_files:attached_files.length?attached_files:null,\n    updated_at:String(row.updated_at||row.created_at||new Date().toISOString()),\n    status,\n    version:Number.isFinite(Number(row.version))?Number(row.version):null,\n    awaiting_human:Boolean(awaiting),\n    human_gate:awaiting?gate:null,\n    turn_count:0,\n    last_status:status,\n    last_at_abs:null,\n  };\n}).filter(t=>t.task_id);\ntasks.sort((a,b)=>String(b.updated_at).localeCompare(String(a.updated_at)));\n// count = full CAS total before the 200-row page cap (Activity prunes ghosts only when count ≤ returned).\nreturn[{json:{\n  contract:'mas_activity_task_list',\n  contract_version:'1.0',\n  source:'engineering_orchestrator_tasks_v1',\n  count:tasks.length,\n  tasks:tasks.slice(0,200),\n  task_id:String(req.task_id||''),\n  want_feed:Boolean(req.want_feed),\n}}];"
+      },
+      "id": "a1000003-hyd-fmt-list-0001-8000-000000000005",
+      "name": "Format Activity task list",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        840,
+        0
+      ]
+    },
+    {
+      "parameters": {
+        "conditions": {
+          "options": {
+            "caseSensitive": true,
+            "leftValue": "",
+            "typeValidation": "strict",
+            "version": 2
+          },
+          "conditions": [
+            {
+              "id": "a1000003-hyd-if-0001-8000-000000000006",
+              "leftValue": "={{ $json.want_feed }}",
+              "rightValue": true,
+              "operator": {
+                "type": "boolean",
+                "operation": "true"
+              }
+            }
+          ],
+          "combinator": "and"
+        },
+        "options": {}
+      },
+      "id": "a1000003-hyd-if-node-0001-8000-000000000006",
+      "name": "Need feed?",
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2.3,
+      "position": [
+        1120,
+        0
+      ]
+    },
+    {
+      "parameters": {
+        "jsCode": "const x=$json||{};\nreturn[{json:{\n  contract:'mas_activity_task_list',\n  contract_version:'1.0',\n  source:x.source||'engineering_orchestrator_tasks_v1',\n  count:Number(x.count||0),\n  tasks:Array.isArray(x.tasks)?x.tasks:[],\n}}];"
+      },
+      "id": "a1000003-hyd-ret-0001-8000-000000000007",
+      "name": "Return list hydrate",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        1400,
+        85
+      ]
+    },
+    {
+      "parameters": {
+        "operation": "get",
+        "dataTableId": {
+          "__rl": true,
+          "mode": "list",
+          "value": "REPLACE_IN_UI",
+          "cachedResultName": "Engineering orchestrator task state"
+        },
+        "matchType": "allConditions",
+        "filters": {
+          "conditions": [
+            {
+              "keyName": "task_id",
+              "condition": "eq",
+              "keyValue": "={{ $json.task_id }}"
+            }
+          ]
+        },
+        "returnAll": false,
+        "limit": 1
+      },
+      "id": "a1000003-hyd-task-0001-8000-000000000008",
+      "name": "Load task row",
+      "type": "n8n-nodes-base.dataTable",
+      "typeVersion": 1.1,
+      "position": [
+        1400,
+        -85
+      ],
+      "alwaysOutputData": true
+    },
+    {
+      "parameters": {
+        "jsCode": "const req=$('Normalize hydrate request').first().json||{};\nreturn[{json:{task_id:req.task_id}}];"
+      },
+      "id": "a1000003-hyd-pass-0001-8000-000000000009",
+      "name": "Pass task_id to traces",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        1680,
+        0
+      ]
+    },
+    {
+      "parameters": {
+        "operation": "get",
+        "dataTableId": {
+          "__rl": true,
+          "mode": "list",
+          "value": "REPLACE_IN_UI",
+          "cachedResultName": "MAS trace events v1"
+        },
+        "matchType": "allConditions",
+        "filters": {
+          "conditions": [
+            {
+              "keyName": "task_id",
+              "condition": "eq",
+              "keyValue": "={{ $json.task_id }}"
+            }
+          ]
+        },
+        "returnAll": false,
+        "limit": 500,
+        "orderBy": true,
+        "orderByColumn": "at",
+        "orderByDirection": "DESC"
+      },
+      "id": "a1000003-hyd-tr-0001-8000-00000000000a",
+      "name": "Load trace rows",
+      "type": "n8n-nodes-base.dataTable",
+      "typeVersion": 1.1,
+      "position": [
+        1960,
+        0
+      ],
+      "alwaysOutputData": true
+    },
+    {
+      "parameters": {
+        "jsCode": "const req=$('Normalize hydrate request').first().json||{};\nconst listPart=$('Format Activity task list').first().json||{};\nconst list={\n  contract:'mas_activity_task_list',\n  contract_version:'1.0',\n  source:listPart.source||'engineering_orchestrator_tasks_v1',\n  count:Number(listPart.count||0),\n  tasks:Array.isArray(listPart.tasks)?listPart.tasks:[],\n};\nconst wrap=feed=>[{json:{contract:'mas_activity_hydrate',contract_version:'1.0',list,feed}}];\nconst taskId=String(req.task_id||'').trim();\nif(!taskId) return wrap({contract:'mas_activity_feed_hydrate',contract_version:'1.0',ok:false,error:'task_id missing'});\nconst parse=(v,f)=>{try{const p=typeof v==='string'?JSON.parse(v):v;return p&&typeof p==='object'?p:f}catch{return f}};\nconst awaitingStatus=s=>String(s||'').trim().toLowerCase()==='awaiting_human';\nconst taskRows=$('Load task row').all().map(i=>i.json||{}).filter(r=>r&&String(r.task_id||'').trim()===taskId);\nif(!taskRows.length) return wrap({contract:'mas_activity_feed_hydrate',contract_version:'1.0',ok:false,task_id:taskId,error:'task not found in Data Table'});\nconst taskItem=taskRows[0];\nconst gateRaw=parse(taskItem.gate_json,null);\nconst gate=gateRaw&&typeof gateRaw==='object'&&!Array.isArray(gateRaw)?gateRaw:null;\nconst request=parse(taskItem.request_json,{});\nconst objective=String(request.objective||request.problem_statement||request.task_description||'').trim();\nconst inputFiles=Array.isArray(request.input_files)?request.input_files:[];\nconst attached_files=[...new Set(inputFiles.map(f=>String((f&&(f.filename||f.name))||f||'').trim().replace(/^.*[\\\\/]/,'')).filter(Boolean))].slice(0,32);\nconst status=String(taskItem.status||'').trim()||null;\nconst version=Number.isFinite(Number(taskItem.version))?Number(taskItem.version):null;\nconst traceRows=$('Load trace rows').all().map(i=>i.json||{}).filter(r=>r&&String(r.task_id||'').trim()===taskId);\nconst events=[];\nfor(const row of traceRows){\n  const et=String(row.event_type||'').trim().toLowerCase();\n  if(et&&et!=='handoff'&&et!=='mas_activity_turn') continue;\n  const details=parse(row.details_json,{});\n  const handoff=details&&typeof details.handoff==='object'?details.handoff:details;\n  events.push({\n    event_type:'handoff',\n    task_id:taskId,\n    event_id:row.event_id||null,\n    trace_id:row.trace_id||null,\n    at:row.at||null,\n    stage:row.stage||null,\n    status:row.status||null,\n    summary:row.summary||null,\n    brief:handoff?.brief||details?.brief||null,\n    duration_ms:handoff?.duration_ms??details?.duration_ms??null,\n    actor:row.actor||null,\n    handoff:{\n      from_role:handoff?.from_role||row.actor||null,\n      to_role:handoff?.to_role||null,\n      from_specialist:handoff?.from_specialist||null,\n      to_specialist:handoff?.to_specialist||null,\n      brief:handoff?.brief||details?.brief||null,\n      details:Object.assign({}, (handoff?.details&&typeof handoff.details==='object'?handoff.details:(details||{})), row.event_id?{event_id:row.event_id}:{}),\n    },\n  });\n}\nevents.sort((a,b)=>String(a.at||'').localeCompare(String(b.at||'')));\nconst handoffCount=events.length;\n// DT node loads newest 500 by `at` DESC; Code keeps chronological last 500.\nconst truncated=Boolean(traceRows.length>=500||handoffCount>500);\nreturn wrap({\n  contract:'mas_activity_feed_hydrate',\n  contract_version:'1.0',\n  ok:true,\n  task_id:taskId,\n  title:objective?objective.slice(0,120):taskId,\n  objective:objective?objective.slice(0,8000):null,\n  attached_files:attached_files.length?attached_files:null,\n  status,\n  version,\n  human_gate:gate&&gate.gate_id?gate:null,\n  awaiting_human:Boolean(awaitingStatus(status)&&gate&&gate.gate_id),\n  events:events.slice(-500),\n  source:{task_table:'engineering_orchestrator_tasks_v1',trace_table:'mas_trace_events_v1',trace_rows:traceRows.length,handoff_events:Math.min(handoffCount,500),truncated},\n});"
+      },
+      "id": "a1000003-hyd-fmt-feed-0001-8000-00000000000b",
+      "name": "Format Activity feed hydrate",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        2240,
+        0
+      ]
+    }
+  ],
+  "connections": {
+    "Webhook hydrate": {
+      "main": [
+        [
+          {
+            "node": "Normalize hydrate request",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Normalize hydrate request": {
+      "main": [
+        [
+          {
+            "node": "Load recent tasks",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Load recent tasks": {
+      "main": [
+        [
+          {
+            "node": "Format Activity task list",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Format Activity task list": {
+      "main": [
+        [
+          {
+            "node": "Need feed?",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Need feed?": {
+      "main": [
+        [
+          {
+            "node": "Load task row",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Return list hydrate",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Load task row": {
+      "main": [
+        [
+          {
+            "node": "Pass task_id to traces",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Pass task_id to traces": {
+      "main": [
+        [
+          {
+            "node": "Load trace rows",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Load trace rows": {
+      "main": [
+        [
+          {
+            "node": "Format Activity feed hydrate",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    }
+  },
+  "pinData": {},
+  "meta": {
+    "templateCredsSetupCompleted": false
+  },
+  "tags": []
+}

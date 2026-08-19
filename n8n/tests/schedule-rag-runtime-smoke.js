@@ -15,6 +15,11 @@ const query={contract:'schedule_retrieval_query',contract_version:'1.0',query:'W
 const catalogue=()=>({contract:'schedule_schema_catalogue',contract_version:'1.0',catalogue_hash:`sha256:${'b'.repeat(64)}`,source_hash:`sha256:${'c'.repeat(64)}`,approved_by:'expert',simulator_profile:{vendor:'Rock Flow Dynamics',simulator:'tNavigator',version:'22.2'},schemas:[{schema_id:'expert:WCONPROD',schema_revision:'1',keyword:'WCONPROD',fields:[{name:'WELL',position:1,type:'string',required:true}],semantics:{period:'FORECAST'}}]});
 (async()=>{
  const valid=await ingest(block());assert.equal(valid.status,'approved_for_ingestion');assert.equal(valid.metadata.target_base,'schedule_mvp');assert.equal(valid.metadata.knowledge_type,'keyword_instruction');assert.equal(valid.knowledge_block.text,'Полная инструкция по WCONPROD.');
+ const endactioCat={contract:'schedule_schema_catalogue',contract_version:'1.0',catalogue_hash:`sha256:${'b'.repeat(64)}`,source_hash:`sha256:${'c'.repeat(64)}`,simulator_profile:{vendor:'Rock Flow Dynamics',simulator:'tNavigator',version:'22.2'},schemas:[{schema_id:'expert:ENDACTIO:end',schema_revision:'1',keyword:'ENDACTIO',variant:'end',parser:{token_width:0},fields:[],layout:{record_terminator:'NONE',block_terminator:'NONE'},semantics:{period:'ANY',clock:{uses_current:true}}}]};
+ const endactio=await ingest(block({knowledge_id:'endactio-action-close-v1',keywords:['ENDACTIO'],title:'ENDACTIO',text:'ENDACTIO закрывает ACTIONX без параметров.',schema_catalogue:endactioCat}));
+ assert.equal(endactio.status,'approved_for_ingestion');
+ const emptyFields=await ingest(block({schema_catalogue:{...endactioCat,schemas:[{schema_id:'expert:WCONPROD',schema_revision:'1',keyword:'WCONPROD',fields:[],semantics:{period:'FORECAST'}}]}}));
+ assert(emptyFields.findings.some(x=>x.code==='SCHEMA_ENTRY_INVALID'&&x.keyword==='WCONPROD'));
  const example=await ingest(block({knowledge_type:'worked_example',knowledge_id:'water-limit-example',text:'',examples:[{task:'лимит воды',schedule_text:'WCONPROD ... /',explanation:'пример'}]}));assert.equal(example.status,'approved_for_ingestion');
  const badBase=await ingest(block({target_base:'arbitrary_sql_table'}));assert(badBase.findings.some(x=>x.code==='TARGET_BASE_NOT_ALLOWLISTED'));
  const inactive=await ingest(block({status:'inactive'}));assert(inactive.findings.some(x=>x.code==='ACTIVE_KNOWLEDGE_REQUIRED'));
@@ -99,5 +104,10 @@ const catalogue=()=>({contract:'schedule_schema_catalogue',contract_version:'1.0
  const shapedFail=await shape({status:'needs_input',findings:[{code:'CORPUS_EMPTY',severity:'error'}],vector_write_allowed:false},{ingest_action:'collect_failed',status:'needs_input',inserted:0,skipped:0});
  assert.equal(shapedFail.ok, false);
  assert.equal(shapedFail.added, 0);
- console.log('SCHEDULE RAG runtime smoke: 21 scenarios passed');
+ assert.ok(String(shapedFail.message).includes('CORPUS_EMPTY'));
+ assert.equal(String(shapedFail.message).includes('в RAG 0'), false);
+ const shapedSchema=await shape({status:'needs_input',findings:[{code:'SCHEMA_ENTRY_INVALID',severity:'error',keyword:'ENDACTIO',knowledge_id:'endactio-action-close-v1'}],vector_write_allowed:false},{ingest_action:'insert',status:'needs_input',inserted:1,skipped:1});
+ assert.ok(String(shapedSchema.message).includes('endactio-action-close-v1'));
+ assert.ok(String(shapedSchema.message).includes('ENDACTIO'));
+ console.log('SCHEDULE RAG runtime smoke: 24 scenarios passed');
 })().catch(e=>{console.error(e.stack||e);process.exit(1)});

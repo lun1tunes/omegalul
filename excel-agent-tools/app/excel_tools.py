@@ -934,6 +934,28 @@ def _is_date_stub_column(column: str) -> bool:
     return folded.startswith("column ") or any(token in folded for token in ("date", "period", "month", "year", "time"))
 
 
+def _is_well_identity_column(column: str) -> bool:
+    folded = (column or "").casefold()
+    return any(token in folded for token in ("скважин", "well"))
+
+
+def _is_commissioning_date_column(column: str) -> bool:
+    folded = (column or "").casefold()
+    if _is_date_stub_column(column):
+        return True
+    return any(token in folded for token in ("дата", "ввод", "commission"))
+
+
+def _looks_schedule_fact_query(query: str) -> bool:
+    return bool(
+        re.search(
+            r"дат[а-яё]*\s*ввод|commissioning|\bschedule\b|\.inc\b|скважин",
+            query or "",
+            flags=re.IGNORECASE,
+        )
+    )
+
+
 def _phrase_in_text(phrase: str, text: str) -> bool:
     if not phrase or len(phrase) < 4:
         return False
@@ -987,6 +1009,13 @@ def _suggested_select(query: str, columns: list[str]) -> list[str]:
         last = parts[-1]
         if family in families and last in query_tokens and last not in _GENERIC_COLUMN_TOKENS:
             matched.append(column)
+    if _looks_schedule_fact_query(query):
+        well_cols = [column for column in columns if _is_well_identity_column(column)]
+        date_cols = [column for column in columns if _is_commissioning_date_column(column)]
+        if well_cols and date_cols:
+            for column in (*well_cols, *date_cols):
+                if column not in matched:
+                    matched.append(column)
     if not matched:
         return []
     first = columns[0] if columns else ""

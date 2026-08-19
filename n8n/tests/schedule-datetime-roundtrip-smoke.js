@@ -32,6 +32,8 @@ for (const [raw, iso, tnav] of [
   ['23 FEB 2020', '2020-02-23', '23 FEB 2020'],
   ['2020-02-23', '2020-02-23', '23 FEB 2020'],
   ['43884', '2020-02-23', '23 FEB 2020'], // Excel serial
+  ['23.02.2020', '2020-02-23', '23 FEB 2020'],
+  ['2020-02-23T00:00:00.000Z', '2020-02-23', '23 FEB 2020'],
 ]) {
   const d = sandbox.parseScheduleDate(raw);
   assert.ok(d, `parse ${raw}`);

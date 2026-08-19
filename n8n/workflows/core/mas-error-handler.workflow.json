@@ -22,7 +22,7 @@
     },
     {
       "parameters": {
-        "content": "## Error — MAS Case Handler\n\nCritical scenarios → structured log + CAS status + Activity notify + restartable ack.\n\nTaxonomy: LLM / invalid JSON / calc timeout / missing data / validator / RAG / document access / approval.\n\nPreserves `request_json` and other CAS payload fields. Fail-closed without case_id.",
+        "content": "## Error — MAS Case Handler\n\nTwo entries, one CAS/Trace/Activity path:\n1. **Execute Workflow** — Orchestrator branch for classified domain errors (LLM, missing data, validator). Returns `mas_error_ack` in the same run.\n2. **Error Trigger** — n8n Settings → Error workflow. Fires on uncaught node crash/timeout. Parent execution is already dead; we persist if `task_id` can be recovered.\n\nTaxonomy: LLM / invalid JSON / calc timeout / missing data / validator / RAG / document access / approval / uncaught.\nFail-closed without case_id. Never attach this handler to CAS Persist or Trace Writer (loop).",
         "width": 620,
         "height": 360,
         "color": 5
@@ -37,6 +37,30 @@
       ]
     },
     {
+      "parameters": {},
+      "id": "3438e36b-881a-5c01-9668-b9a96adbbab2",
+      "name": "Error Trigger",
+      "type": "n8n-nodes-base.errorTrigger",
+      "typeVersion": 1,
+      "position": [
+        0,
+        -85
+      ]
+    },
+    {
+      "parameters": {
+        "jsCode": "const root=$json||{};\nconst obj=v=>v&&typeof v==='object'&&!Array.isArray(v);\nconst clean=v=>typeof v==='string'?v.trim():'';\nconst exec=obj(root.execution)?root.execution:{};\nconst wf=obj(root.workflow)?root.workflow:{};\nconst err=obj(exec.error)?exec.error:(obj(root.error)?root.error:{});\nconst msg=clean(err.message||err.description||root.message||'');\nconst lastNode=clean(exec.lastNodeExecuted||(obj(err.node)?err.node.name:'')||'');\nconst executionId=clean(String(exec.id||root.executionId||''))||null;\nconst TASK_RE=/\\b((?:eng|act)_[A-Za-z0-9._-]{4,80})\\b/;\nfunction findTaskId(v, depth){\n  if(depth>8||v==null) return '';\n  if(typeof v==='string'){\n    const m=v.match(TASK_RE);\n    return m?m[1]:'';\n  }\n  if(Array.isArray(v)){\n    for(const x of v){const t=findTaskId(x,depth+1); if(t) return t;}\n    return '';\n  }\n  if(typeof v==='object'){\n    for(const k of ['task_id','taskId','case_id','caseId']){\n      const t=clean(v[k]); if(t) return t;\n    }\n    for(const x of Object.values(v)){const t=findTaskId(x,depth+1); if(t) return t;}\n  }\n  return '';\n}\nconst taskId=findTaskId(root,0);\nconst blob=`${msg} ${lastNode} ${clean(wf.name)}`.toLowerCase();\nlet scenario='uncaught';\nif(/timeout|timed out|etimedout/.test(blob)) scenario='calc_timeout';\nelse if(/json|parse|structured/.test(blob)) scenario='invalid_json';\nelse if(/llm|openai|model/.test(blob)) scenario='llm_error';\nconst safe=[\n  lastNode?`Узел «${lastNode}» упал.`:'Неперехваченный сбой n8n.',\n  msg?msg.slice(0,400):'',\n  wf.name?`Workflow: ${wf.name}.`:'',\n  executionId?`execution ${executionId}.`:'',\n].filter(Boolean).join(' ');\nreturn[{json:{\n  mas_error_event:{\n    contract:'mas_error_event',\n    contract_version:'1.0',\n    task_id:taskId||null,\n    scenario,\n    code:scenario==='uncaught'?'UNCAUGHT_NODE_FAILURE':undefined,\n    stage:'uncaught',\n    safe_message:safe,\n    execution_id:executionId,\n    findings:[{code:'UNCAUGHT_NODE_FAILURE',node:lastNode||null,workflow:wf.name||null,message:msg.slice(0,400)||null}],\n  },\n  passthrough:{source:'n8n_error_trigger',workflow_id:wf.id||null,workflow_name:wf.name||null,last_node:lastNode||null,execution_id:executionId},\n}}];"
+      },
+      "id": "2632562a-1112-5ab3-8f5d-c81d6a6d04f2",
+      "name": "Normalize n8n error trigger",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        280,
+        0
+      ]
+    },
+    {
       "parameters": {
         "inputSource": "jsonExample",
         "jsonExample": "{\"mas_error_event\": {\"contract\": \"mas_error_event\", \"contract_version\": \"1.0\", \"task_id\": \"eng_example\", \"scenario\": \"llm_error\", \"stage\": \"plan\", \"safe_message\": \"Модель не вернула ответ. Case eng_example.\", \"findings\": [{\"code\": \"LLM_CALL_FAILED\"}], \"cas_snapshot\": {\"task_id\": \"eng_example\", \"version\": 2, \"status\": \"planning\", \"risk_class\": \"high\", \"request_json\": \"{\\\"objective\\\":\\\"example\\\"}\", \"runtime_json\": \"{}\", \"plan_json\": \"{}\", \"packet_json\": \"{}\", \"result_json\": \"{}\", \"verification_json\": \"{}\", \"gate_json\": \"{}\", \"retry_count\": 0, \"max_retries\": 2, \"created_at\": \"2026-01-01T00:00:00.000Z\", \"updated_at\": \"2026-01-01T00:00:00.000Z\"}}}"
@@ -47,19 +71,19 @@
       "typeVersion": 1.2,
       "position": [
         0,
-        0
+        85
       ]
     },
     {
       "parameters": {
-        "jsCode": "const root=$json;\nconst obj=v=>v&&typeof v==='object'&&!Array.isArray(v);\nconst clean=v=>typeof v==='string'?v.trim():'';\nconst arr=Array.isArray;\nconst event=obj(root.mas_error_event)?root.mas_error_event:(obj(root)&&root.contract==='mas_error_event'?root:{});\nconst taskId=clean(event.task_id||root.task_id);\nconst scenarioRaw=clean(event.scenario||event.error_scenario||'').toLowerCase();\nconst codeIn=clean(event.code||event.error_code||'').toUpperCase();\nconst stage=clean(event.stage||'error')||'error';\nconst findings=arr(event.findings)?event.findings.filter(obj).slice(0,40):[];\nconst executionId=clean(String(event.execution_id||event.executionId||''))||null;\nconst snap=obj(event.cas_snapshot)?event.cas_snapshot:(obj(root.cas_snapshot)?root.cas_snapshot:null);\nconst passthrough=obj(root.passthrough)?root.passthrough:{};\n\nconst TAXONOMY={\n  llm_error:{code:'LLM_CALL_FAILED',cas_status:'retryable_error',restartable:true,label:'Ошибка LLM'},\n  invalid_json:{code:'INVALID_STRUCTURED_OUTPUT',cas_status:'retryable_error',restartable:true,label:'Невалидный JSON / structured output'},\n  calc_timeout:{code:'CALC_SERVICE_TIMEOUT',cas_status:'retryable_error',restartable:true,label:'Timeout расчётного сервиса'},\n  missing_data:{code:'MISSING_MANDATORY_DATA',cas_status:'awaiting_human',restartable:false,label:'Нет обязательных данных'},\n  validator_reject:{code:'VALIDATOR_REJECTED',cas_status:'awaiting_human',restartable:false,label:'Отказ валидатора'},\n  rag_error:{code:'RAG_UNAVAILABLE',cas_status:'awaiting_human',restartable:false,label:'Ошибка RAG'},\n  document_access:{code:'DOCUMENT_ACCESS_DENIED',cas_status:'awaiting_human',restartable:false,label:'Нет доступа к документу'},\n  approval_error:{code:'APPROVAL_GATE_FAILED',cas_status:'awaiting_human',restartable:false,label:'Ошибка согласования'},\n};\n\nconst CODE_TO_SCENARIO={\n  LLM_CALL_FAILED:'llm_error',\n  INVALID_STRUCTURED_OUTPUT:'invalid_json',\n  INVALID_SPECIALIST_CONTRACT:'invalid_json',\n  DECISION_RECORD_REQUIRED:'invalid_json',\n  CALC_SERVICE_TIMEOUT:'calc_timeout',\n  MISSING_MANDATORY_DATA:'missing_data',\n  VALIDATOR_REJECTED:'validator_reject',\n  RAG_UNAVAILABLE:'rag_error',\n  SCHEDULE_RAG_UNAVAILABLE:'rag_error',\n  ORCHESTRATOR_ROUTING_RAG_REQUIRED:'rag_error',\n  DOCUMENT_ACCESS_DENIED:'document_access',\n  APPROVAL_GATE_FAILED:'approval_error',\n  CAS_CONFLICT:'approval_error',\n};\n\nlet scenario=scenarioRaw;\nif(!TAXONOMY[scenario]&&codeIn&&CODE_TO_SCENARIO[codeIn]) scenario=CODE_TO_SCENARIO[codeIn];\nif(!TAXONOMY[scenario]&&clean(snap&&snap.status)==='conflict') scenario='approval_error';\nif(!TAXONOMY[scenario]){\n  const blob=JSON.stringify({code:codeIn,findings,msg:event.safe_message||event.message||'',snap_status:snap&&snap.status,snap_message:snap&&snap.message}).toLowerCase();\n  if(/llm|model|openai|chat/.test(blob)) scenario='llm_error';\n  else if(/json|structured|schema|parse/.test(blob)) scenario='invalid_json';\n  else if(/timeout|timed out|etimedout|calc|math_service/.test(blob)) scenario='calc_timeout';\n  else if(/missing|required data|обязательн/.test(blob)) scenario='missing_data';\n  else if(/validat|reject|self_check/.test(blob)) scenario='validator_reject';\n  else if(/rag|retrieval|abstain/.test(blob)) scenario='rag_error';\n  else if(/access|denied|forbidden|acl|unauthorized/.test(blob)) scenario='document_access';\n  else if(/cas[_-]?conflict|stale expected_version|gate_id does not match|optimistic concurrency|concurrent or non-unique|current expected_version/.test(blob)) scenario='approval_error';\n  else scenario='llm_error';\n}\n\nconst tax=TAXONOMY[scenario];\nconst code=codeIn&&Object.values(TAXONOMY).some(t=>t.code===codeIn)?codeIn:tax.code;\nlet restartable=event.restartable===true||event.restartable===false?Boolean(event.restartable):tax.restartable;\nlet casStatus=clean(event.cas_status)||tax.cas_status;\nconst snapStatus=clean(snap&&snap.status);\n// Never override a terminal CAS row into restartable UI state.\nif(['failed','rejected','cancelled','completed'].includes(snapStatus)){\n  casStatus=snapStatus;\n  restartable=false;\n} else if(['failed','rejected','cancelled','completed'].includes(casStatus)){\n  restartable=false;\n} else if(casStatus==='awaiting_human'){\n  // keep taxonomy restartable flag (usually false)\n} else if(casStatus==='retryable_error' && event.restartable===false){\n  restartable=false;\n}\n\n// Fail closed: never notify UI without case_id.\nif(!taskId){\n  return[{json:{\n    contract:'mas_error_ack',\n    contract_version:'1.0',\n    accepted:false,\n    code:'CASE_ID_REQUIRED',\n    message:'Error workflow refused anonymous failure: task_id/case_id is required.',\n    taxonomy_scenario:scenario,\n    error_code:code,\n    restartable:false,\n    cas_persisted:false,\n    activity_notified:false,\n    passthrough,\n  }}];\n}\n\nlet safeMessage=clean(event.safe_message||event.message||'');\nif(!safeMessage) safeMessage=`${tax.label}. Case ${taskId}.`;\nif(!safeMessage.includes(taskId)) safeMessage=`${safeMessage} (case_id=${taskId})`;\n// Strip secretish fragments from message surface.\nsafeMessage=safeMessage.replace(/(sk-[A-Za-z0-9]+|Bearer\\s+\\S+|api[_-]?key\\s*[:=]\\s*\\S+)/gi,'[redacted]').slice(0,800);\n\nconst lastError={\n  code,\n  scenario,\n  stage,\n  safe_message:safeMessage,\n  findings:findings.slice(0,20),\n  execution_id:executionId,\n  restartable,\n  at:new Date().toISOString(),\n};\n\nreturn[{json:{\n  contract:'mas_error_event',\n  contract_version:'1.0',\n  task_id:taskId,\n  taxonomy_scenario:scenario,\n  error_code:code,\n  stage,\n  cas_status:casStatus,\n  restartable,\n  safe_message:safeMessage,\n  last_error:lastError,\n  findings,\n  execution_id:executionId,\n  cas_snapshot:snap,\n  cas_already_persisted:event.cas_already_persisted===true||root.cas_already_persisted===true,\n  skip_cas:event.skip_cas===true||root.skip_cas===true,\n  passthrough,\n  has_task_id:true,\n}}];"
+        "jsCode": "const root=$json;\nconst obj=v=>v&&typeof v==='object'&&!Array.isArray(v);\nconst clean=v=>typeof v==='string'?v.trim():'';\nconst arr=Array.isArray;\nconst event=obj(root.mas_error_event)?root.mas_error_event:(obj(root)&&root.contract==='mas_error_event'?root:{});\nconst taskId=clean(event.task_id||root.task_id);\nconst scenarioRaw=clean(event.scenario||event.error_scenario||'').toLowerCase();\nconst codeIn=clean(event.code||event.error_code||'').toUpperCase();\nconst stage=clean(event.stage||'error')||'error';\nconst findings=arr(event.findings)?event.findings.filter(obj).slice(0,40):[];\nconst executionId=clean(String(event.execution_id||event.executionId||''))||null;\nconst snap=obj(event.cas_snapshot)?event.cas_snapshot:(obj(root.cas_snapshot)?root.cas_snapshot:null);\nconst passthrough=obj(root.passthrough)?root.passthrough:{};\n\nconst TAXONOMY={\n  llm_error:{code:'LLM_CALL_FAILED',cas_status:'retryable_error',restartable:true,label:'Ошибка LLM'},\n  invalid_json:{code:'INVALID_STRUCTURED_OUTPUT',cas_status:'retryable_error',restartable:true,label:'Невалидный JSON / structured output'},\n  calc_timeout:{code:'CALC_SERVICE_TIMEOUT',cas_status:'retryable_error',restartable:true,label:'Timeout расчётного сервиса'},\n  missing_data:{code:'MISSING_MANDATORY_DATA',cas_status:'awaiting_human',restartable:false,label:'Нет обязательных данных'},\n  validator_reject:{code:'VALIDATOR_REJECTED',cas_status:'awaiting_human',restartable:false,label:'Отказ валидатора'},\n  rag_error:{code:'RAG_UNAVAILABLE',cas_status:'awaiting_human',restartable:false,label:'Ошибка RAG'},\n  document_access:{code:'DOCUMENT_ACCESS_DENIED',cas_status:'awaiting_human',restartable:false,label:'Нет доступа к документу'},\n  approval_error:{code:'APPROVAL_GATE_FAILED',cas_status:'awaiting_human',restartable:false,label:'Ошибка согласования'},\n  uncaught:{code:'UNCAUGHT_NODE_FAILURE',cas_status:'retryable_error',restartable:true,label:'Неперехваченный сбой n8n'},\n};\n\nconst CODE_TO_SCENARIO={\n  LLM_CALL_FAILED:'llm_error',\n  INVALID_STRUCTURED_OUTPUT:'invalid_json',\n  INVALID_SPECIALIST_CONTRACT:'invalid_json',\n  DECISION_RECORD_REQUIRED:'invalid_json',\n  CALC_SERVICE_TIMEOUT:'calc_timeout',\n  MISSING_MANDATORY_DATA:'missing_data',\n  VALIDATOR_REJECTED:'validator_reject',\n  RAG_UNAVAILABLE:'rag_error',\n  SCHEDULE_RAG_UNAVAILABLE:'rag_error',\n  ORCHESTRATOR_ROUTING_RAG_REQUIRED:'rag_error',\n  DOCUMENT_ACCESS_DENIED:'document_access',\n  APPROVAL_GATE_FAILED:'approval_error',\n  CAS_CONFLICT:'approval_error',\n  UNCAUGHT_NODE_FAILURE:'uncaught',\n};\n\nlet scenario=scenarioRaw;\nif(!TAXONOMY[scenario]&&codeIn&&CODE_TO_SCENARIO[codeIn]) scenario=CODE_TO_SCENARIO[codeIn];\nif(!TAXONOMY[scenario]&&clean(snap&&snap.status)==='conflict') scenario='approval_error';\nif(!TAXONOMY[scenario]){\n  const blob=JSON.stringify({code:codeIn,findings,msg:event.safe_message||event.message||'',snap_status:snap&&snap.status,snap_message:snap&&snap.message}).toLowerCase();\n  if(/llm|model|openai|chat/.test(blob)) scenario='llm_error';\n  else if(/json|structured|schema|parse/.test(blob)) scenario='invalid_json';\n  else if(/timeout|timed out|etimedout|calc|math_service/.test(blob)) scenario='calc_timeout';\n  else if(/missing|required data|обязательн/.test(blob)) scenario='missing_data';\n  else if(/validat|reject|self_check/.test(blob)) scenario='validator_reject';\n  else if(/rag|retrieval|abstain/.test(blob)) scenario='rag_error';\n  else if(/access|denied|forbidden|acl|unauthorized/.test(blob)) scenario='document_access';\n  else if(/cas[_-]?conflict|stale expected_version|gate_id does not match|optimistic concurrency|concurrent or non-unique|current expected_version/.test(blob)) scenario='approval_error';\n  else scenario='llm_error';\n}\n\nconst tax=TAXONOMY[scenario];\nconst code=codeIn&&Object.values(TAXONOMY).some(t=>t.code===codeIn)?codeIn:tax.code;\nlet restartable=event.restartable===true||event.restartable===false?Boolean(event.restartable):tax.restartable;\nlet casStatus=clean(event.cas_status)||tax.cas_status;\nconst snapStatus=clean(snap&&snap.status);\n// Never override a terminal CAS row into restartable UI state.\nif(['failed','rejected','cancelled','completed'].includes(snapStatus)){\n  casStatus=snapStatus;\n  restartable=false;\n} else if(['failed','rejected','cancelled','completed'].includes(casStatus)){\n  restartable=false;\n} else if(casStatus==='awaiting_human'){\n  // keep taxonomy restartable flag (usually false)\n} else if(casStatus==='retryable_error' && event.restartable===false){\n  restartable=false;\n}\n\n// Fail closed: never notify UI without case_id.\nif(!taskId){\n  return[{json:{\n    contract:'mas_error_ack',\n    contract_version:'1.0',\n    accepted:false,\n    code:'CASE_ID_REQUIRED',\n    message:'Error workflow refused anonymous failure: task_id/case_id is required.',\n    taxonomy_scenario:scenario,\n    error_code:code,\n    restartable:false,\n    cas_persisted:false,\n    activity_notified:false,\n    passthrough,\n  }}];\n}\n\nlet safeMessage=clean(event.safe_message||event.message||'');\nif(!safeMessage) safeMessage=`${tax.label}. Case ${taskId}.`;\nif(!safeMessage.includes(taskId)) safeMessage=`${safeMessage} (case_id=${taskId})`;\n// Strip secretish fragments from message surface.\nsafeMessage=safeMessage.replace(/(sk-[A-Za-z0-9]+|Bearer\\s+\\S+|api[_-]?key\\s*[:=]\\s*\\S+)/gi,'[redacted]').slice(0,800);\n\nconst lastError={\n  code,\n  scenario,\n  stage,\n  safe_message:safeMessage,\n  findings:findings.slice(0,20),\n  execution_id:executionId,\n  restartable,\n  at:new Date().toISOString(),\n};\n\nreturn[{json:{\n  contract:'mas_error_event',\n  contract_version:'1.0',\n  task_id:taskId,\n  taxonomy_scenario:scenario,\n  error_code:code,\n  stage,\n  cas_status:casStatus,\n  restartable,\n  safe_message:safeMessage,\n  last_error:lastError,\n  findings,\n  execution_id:executionId,\n  cas_snapshot:snap,\n  cas_already_persisted:event.cas_already_persisted===true||root.cas_already_persisted===true,\n  skip_cas:event.skip_cas===true||root.skip_cas===true,\n  passthrough,\n  has_task_id:true,\n}}];"
       },
       "id": "19e087f2-b022-5606-abc2-625d712637da",
       "name": "Classify MAS error event",
       "type": "n8n-nodes-base.code",
       "typeVersion": 2,
       "position": [
-        280,
+        560,
         0
       ]
     },
@@ -92,7 +116,7 @@
       "type": "n8n-nodes-base.if",
       "typeVersion": 2.2,
       "position": [
-        560,
+        840,
         0
       ]
     },
@@ -105,7 +129,7 @@
       "type": "n8n-nodes-base.code",
       "typeVersion": 2,
       "position": [
-        840,
+        1120,
         -85
       ]
     },
@@ -138,7 +162,7 @@
       "type": "n8n-nodes-base.if",
       "typeVersion": 2.2,
       "position": [
-        1120,
+        1400,
         0
       ]
     },
@@ -172,7 +196,7 @@
       "type": "n8n-nodes-base.executeWorkflow",
       "typeVersion": 1.3,
       "position": [
-        1400,
+        1680,
         0
       ],
       "onError": "continueRegularOutput"
@@ -186,7 +210,7 @@
       "type": "n8n-nodes-base.code",
       "typeVersion": 2,
       "position": [
-        1680,
+        1960,
         0
       ]
     },
@@ -220,7 +244,7 @@
       "type": "n8n-nodes-base.executeWorkflow",
       "typeVersion": 1.3,
       "position": [
-        1960,
+        2240,
         0
       ],
       "onError": "continueRegularOutput"
@@ -245,7 +269,7 @@
       "type": "n8n-nodes-base.set",
       "typeVersion": 3.4,
       "position": [
-        2240,
+        2520,
         0
       ]
     },
@@ -258,7 +282,7 @@
       "type": "n8n-nodes-base.code",
       "typeVersion": 2,
       "position": [
-        2520,
+        2800,
         0
       ]
     },
@@ -291,7 +315,7 @@
       "type": "n8n-nodes-base.if",
       "typeVersion": 2.2,
       "position": [
-        2800,
+        3080,
         0
       ]
     },
@@ -318,9 +342,9 @@
       "id": "83cc341b-8c1f-5a56-9a6a-c92154d27eb9",
       "name": "POST error handoff to MAS Activity",
       "type": "n8n-nodes-base.httpRequest",
-      "typeVersion": 4.2,
+      "typeVersion": 4.4,
       "position": [
-        3080,
+        3360,
         0
       ],
       "onError": "continueRegularOutput",
@@ -335,7 +359,7 @@
       "type": "n8n-nodes-base.code",
       "typeVersion": 2,
       "position": [
-        3360,
+        3640,
         0
       ]
     },
@@ -348,12 +372,34 @@
       "type": "n8n-nodes-base.code",
       "typeVersion": 2,
       "position": [
-        840,
+        1120,
         85
       ]
     }
   ],
   "connections": {
+    "Error Trigger": {
+      "main": [
+        [
+          {
+            "node": "Normalize n8n error trigger",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Normalize n8n error trigger": {
+      "main": [
+        [
+          {
+            "node": "Classify MAS error event",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
     "Receive MAS error event": {
       "main": [
         [
@@ -521,12 +567,13 @@
   },
   "settings": {
     "executionOrder": "v1",
-    "callerPolicy": "workflowsFromSameOwner"
+    "callerPolicy": "workflowsFromSameOwner",
+    "errorWorkflow": ""
   },
   "meta": {
     "templateCredsSetupCompleted": true
   },
   "tags": [],
   "pinData": {},
-  "versionId": "352d2ac9-f797-4883-a837-27d3150a92e4"
+  "versionId": "97262842-dbe0-4e0a-9b89-262554843c15"
 }

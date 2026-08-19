@@ -4,7 +4,7 @@
   "nodes": [
     {
       "parameters": {
-        "content": "## Template — Binary Results Adapter\n\nPattern: Excel Adapter anti-corruption layer — validate packet, extract from binaries, return typed `report_facts_packet`.\n\nInputs: `specialist_packet` + optional `previous_specialist_result` (cluster job refs) + binary result files on the item.\n\nDo not dump binaries into CAS JSON. Prefer local Code/Python runner or a small FastAPI sidecar (like excel-tools / math-service).\n\nDownstream: Presentation Assembler consumes `compact_data` + `artifact_refs`.",
+        "content": "## Template — Binary Results Adapter\n\nPattern: Excel Extractor specialist boundary — validate packet, extract from binaries, return typed `report_facts_packet`.\n\nInputs: `specialist_packet` + optional `previous_specialist_result` (cluster job refs) + binary result files on the item.\n\nDo not dump binaries into CAS JSON. Prefer local Code/Python runner or a small FastAPI sidecar (like excel-tools / math-service).\n\nDownstream: Presentation Assembler consumes `compact_data` + `artifact_refs`.",
         "height": 360,
         "width": 520,
         "color": 5
@@ -65,7 +65,7 @@
     "executionOrder": "v1",
     "saveManualExecutions": true,
     "callerPolicy": "workflowsFromSameOwner",
-    "errorWorkflow": ""
+    "errorWorkflow": "e1f0a7c2-9b4d-5e8f-a123-4567890abcde"
   },
   "versionId": "8e4809bd-22d4-5766-a62d-217413c82eab",
   "meta": {

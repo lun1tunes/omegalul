@@ -31,6 +31,7 @@ KEY = {}
 def _isolate_activity_store(monkeypatch) -> None:
     """Reset memory and ignore host n8n/Activity URLs so unit tests stay offline."""
     for key in (
+        "ACTIVITY_HYDRATE_URL",
         "ACTIVITY_LIST_URL",
         "ACTIVITY_FEED_URL",
         "ACTIVITY_STATE_PATH",
@@ -551,7 +552,7 @@ def test_ready_health_and_static_assets() -> None:
     assert "looksMachineAsk" in js_text
     assert 'q.required ? "обязательно"' not in js_text
     assert "формат: ${q.expected_format}" not in js_text
-    assert "app.js?v=65" in index.text
+    assert "app.js?v=70" in index.text
     assert "submitStart" in js_text
     assert "clearWorkspaceView" in js_text
     assert "startResumeTask" in js_text
@@ -559,6 +560,8 @@ def test_ready_health_and_static_assets() -> None:
     assert 'User: "Вы"' in js_text
     assert "syncScheduleRootField" in js_text
     assert "hydrateFromDataTables" in js_text
+    assert "reloadFeed && currentTask" in js_text
+    assert "refreshRail({ durable: !snap.ok })" in js_text
     assert "setTaskHeader" in js_text
     assert "attachLive" in js_text
     assert "pollFeed" in js_text
@@ -1648,7 +1651,7 @@ def test_durable_list_pulls_webhook(monkeypatch) -> None:
             ],
         }
 
-    monkeypatch.setenv("ACTIVITY_LIST_URL", "http://n8n.test/webhook/mas-activity-list-tasks")
+    monkeypatch.setenv("ACTIVITY_LIST_URL", "http://n8n.test/webhook/mas-activity-hydrate")
     monkeypatch.setattr("app.main.fetch_task_list", fake_list)
     monkeypatch.setattr("app.main.durable_enabled", lambda: True)
 
@@ -1684,7 +1687,7 @@ def test_durable_feed_pulls_webhook(monkeypatch) -> None:
             ],
         }
 
-    monkeypatch.setenv("ACTIVITY_FEED_URL", "http://n8n.test/webhook/mas-activity-load-feed")
+    monkeypatch.setenv("ACTIVITY_FEED_URL", "http://n8n.test/webhook/mas-activity-hydrate")
     monkeypatch.setattr("app.main.fetch_task_feed", fake_feed)
     monkeypatch.setattr("app.main.durable_enabled", lambda: True)
 
@@ -1694,6 +1697,115 @@ def test_durable_feed_pulls_webhook(monkeypatch) -> None:
     assert body["title"] == "Feed from DT"
     assert len(body["activity"]) >= 1
     assert body["durable_hydrate"] is True
+
+
+def test_split_hydrate_combined_and_legacy_contracts() -> None:
+    from app.durable import split_hydrate
+
+    list_p, feed_p = split_hydrate(
+        {
+            "contract": "mas_activity_hydrate",
+            "list": {"contract": "mas_activity_task_list", "tasks": [{"task_id": "eng_a"}]},
+            "feed": {"contract": "mas_activity_feed_hydrate", "ok": True, "task_id": "eng_a"},
+        }
+    )
+    assert list_p["contract"] == "mas_activity_task_list"
+    assert feed_p["ok"] is True
+    assert split_hydrate({"contract": "mas_activity_task_list", "tasks": []})[1] is None
+    assert split_hydrate({"contract": "mas_activity_feed_hydrate", "ok": True})[0] is None
+    legacy_list, legacy_feed = split_hydrate({"tasks": [{"task_id": "eng_b"}]})
+    assert legacy_list["tasks"][0]["task_id"] == "eng_b"
+    assert legacy_feed is None
+
+
+def test_durable_combined_hydrate_applies_list_and_feed(monkeypatch) -> None:
+    async def fake_feed(task_id: str):
+        assert task_id == "eng_combo_1"
+        return {
+            "contract": "mas_activity_hydrate",
+            "list": {
+                "contract": "mas_activity_task_list",
+                "source": "engineering_orchestrator_tasks_v1",
+                "count": 1,
+                "tasks": [
+                    {
+                        "task_id": "eng_combo_1",
+                        "title": "Combo list",
+                        "status": "running",
+                        "updated_at": "2026-08-16T12:00:00+00:00",
+                    }
+                ],
+            },
+            "feed": {
+                "contract": "mas_activity_feed_hydrate",
+                "ok": True,
+                "task_id": "eng_combo_1",
+                "title": "Combo feed",
+                "status": "running",
+                "source": {"truncated": False, "trace_rows": 1, "handoff_events": 1},
+                "events": [
+                    {
+                        "event_type": "handoff",
+                        "task_id": "eng_combo_1",
+                        "at": "2026-08-16T12:01:00+00:00",
+                        "status": "PLAN_READY",
+                        "summary": "Plan ready",
+                        "from_role": "Orchestrator",
+                        "to_role": "Builder",
+                    }
+                ],
+            },
+        }
+
+    monkeypatch.setenv("ACTIVITY_HYDRATE_URL", "http://n8n.test/webhook/mas-activity-hydrate")
+    monkeypatch.setattr("app.main.fetch_task_feed", fake_feed)
+    monkeypatch.setattr("app.main.durable_enabled", lambda: True)
+
+    res = client.get("/v1/tasks/eng_combo_1?durable=1")
+    assert res.status_code == 200
+    body = res.json()
+    assert body["title"] == "Combo feed"
+    assert len(body["activity"]) >= 1
+    assert body["hydrate"]["ok"] is True
+    assert body["hydrate"]["truncated"] is False
+    listed = client.get("/v1/tasks").json()
+    assert any(t["task_id"] == "eng_combo_1" for t in listed["tasks"])
+
+
+def test_post_hydrate_combined_contract() -> None:
+    res = client.post(
+        "/v1/hydrate",
+        headers=KEY,
+        json={
+            "contract": "mas_activity_hydrate",
+            "list": {
+                "contract": "mas_activity_task_list",
+                "tasks": [
+                    {
+                        "task_id": "eng_post_combo",
+                        "title": "Posted list",
+                        "status": "running",
+                        "updated_at": "2026-08-16T12:00:00+00:00",
+                    }
+                ],
+            },
+            "feed": {
+                "contract": "mas_activity_feed_hydrate",
+                "ok": True,
+                "task_id": "eng_post_combo",
+                "title": "Posted feed",
+                "status": "running",
+                "events": [],
+            },
+        },
+    )
+    assert res.status_code == 200
+    body = res.json()
+    assert body["ok"] is True
+    assert body["list_applied"] == 1
+    assert body["feed"]["stored"] is not False
+    snap = client.get("/v1/tasks/eng_post_combo").json()
+    assert snap["title"] == "Posted feed"
 
 
 def test_list_hydrate_preserves_newest_first_and_hitl_flag() -> None:
@@ -1854,7 +1966,7 @@ def test_durable_list_prunes_ghost_tasks(monkeypatch) -> None:
             ],
         }
 
-    monkeypatch.setenv("ACTIVITY_LIST_URL", "http://n8n.test/webhook/mas-activity-list-tasks")
+    monkeypatch.setenv("ACTIVITY_LIST_URL", "http://n8n.test/webhook/mas-activity-hydrate")
     monkeypatch.setattr("app.main.fetch_task_list", fake_list)
     monkeypatch.setattr("app.main.durable_enabled", lambda: True)
 
@@ -1921,7 +2033,7 @@ def test_durable_list_keeps_tasks_when_page_truncated(monkeypatch) -> None:
             ],
         }
 
-    monkeypatch.setenv("ACTIVITY_LIST_URL", "http://n8n.test/webhook/mas-activity-list-tasks")
+    monkeypatch.setenv("ACTIVITY_LIST_URL", "http://n8n.test/webhook/mas-activity-hydrate")
     monkeypatch.setattr("app.main.fetch_task_list", fake_list)
     monkeypatch.setattr("app.main.durable_enabled", lambda: True)
 
@@ -1954,7 +2066,7 @@ def test_durable_list_keeps_local_presentation_tasks(monkeypatch) -> None:
             ],
         }
 
-    monkeypatch.setenv("ACTIVITY_LIST_URL", "http://n8n.test/webhook/mas-activity-list-tasks")
+    monkeypatch.setenv("ACTIVITY_LIST_URL", "http://n8n.test/webhook/mas-activity-hydrate")
     monkeypatch.setattr("app.main.fetch_task_list", fake_list)
     monkeypatch.setattr("app.main.durable_enabled", lambda: True)
 
@@ -2296,7 +2408,7 @@ def test_empty_rail_auto_list_hydrate_is_oneshot(monkeypatch) -> None:
         calls["n"] += 1
         return {"contract": "mas_activity_task_list", "tasks": []}
 
-    monkeypatch.setenv("ACTIVITY_LIST_URL", "http://n8n.test/webhook/mas-activity-list-tasks")
+    monkeypatch.setenv("ACTIVITY_LIST_URL", "http://n8n.test/webhook/mas-activity-hydrate")
     monkeypatch.setattr("app.main.fetch_task_list", fake_list)
     monkeypatch.setattr("app.main.durable_enabled", lambda: True)
 
@@ -2451,7 +2563,7 @@ def test_durable_feed_surfaces_ok_false(monkeypatch) -> None:
             "error": "task not found in Data Table",
         }
 
-    monkeypatch.setenv("ACTIVITY_FEED_URL", "http://n8n.test/webhook/mas-activity-load-feed")
+    monkeypatch.setenv("ACTIVITY_FEED_URL", "http://n8n.test/webhook/mas-activity-hydrate")
     monkeypatch.setattr("app.main.fetch_task_feed", fake_feed)
     monkeypatch.setattr("app.main.durable_enabled", lambda: True)
 
@@ -2480,7 +2592,7 @@ def test_durable_feed_surfaces_webhook_error(monkeypatch) -> None:
     async def boom(task_id: str):
         raise RuntimeError("Activity feed hydrate HTTP 500: boom")
 
-    monkeypatch.setenv("ACTIVITY_FEED_URL", "http://n8n.test/webhook/mas-activity-load-feed")
+    monkeypatch.setenv("ACTIVITY_FEED_URL", "http://n8n.test/webhook/mas-activity-hydrate")
     monkeypatch.setattr("app.main.fetch_task_feed", boom)
     monkeypatch.setattr("app.main.durable_enabled", lambda: True)
 
@@ -2498,7 +2610,7 @@ def test_feed_hydrate_workflow_limit_matches_max_turns() -> None:
     assert "truncated" in text
     assert '"orderBy": True' in text or '"orderBy":True' in text
     assert 'orderByDirection": "DESC"' in text or "orderByDirection\": \"DESC\"" in text
-    wf = Path(__file__).resolve().parents[2] / "n8n" / "workflows" / "core" / "mas-activity-load-feed.workflow.json"
+    wf = Path(__file__).resolve().parents[2] / "n8n" / "workflows" / "core" / "mas-activity-hydrate.workflow.json"
     assert wf.is_file()
     wf_text = wf.read_text(encoding="utf-8")
     assert '"limit": 500' in wf_text

@@ -34,6 +34,7 @@ this.readGroupRebindSpec=readGroupRebindSpec;
 this.collectCapabilityTokens=collectCapabilityTokens;
 this.wantsCommissioningCapability=wantsCommissioningCapability;
 this.wantsGroupRebindCapability=wantsGroupRebindCapability;
+this.exclusiveScheduleCaps=exclusiveScheduleCaps;
 this.inferGroupRebindSpec=typeof inferGroupRebindSpec==='function'?inferGroupRebindSpec:undefined;`,
   sandbox,
 );
@@ -75,6 +76,13 @@ const spec = {
 
 assert.equal(sandbox.readGroupRebindSpec({ objective: task }).ok, false, 'task prose alone is not a group-rebind spec');
 assert.equal(sandbox.wantsGroupRebindCapability(sandbox.collectCapabilityTokens({ objective: task }, {})), false);
+const exclusiveStale = sandbox.exclusiveScheduleCaps(
+  ['commissioning_date_retarget', 'group_membership_rebind'],
+  { capability_id: 'commissioning_date_retarget', ...spec, group_rebind: spec },
+  true,
+);
+assert.equal(exclusiveStale.wantsGroupRebind, true);
+assert.equal(exclusiveStale.wantsCommissioning, false);
 
 const parsedSpec = sandbox.readGroupRebindSpec({
   capability_id: 'group_membership_rebind',

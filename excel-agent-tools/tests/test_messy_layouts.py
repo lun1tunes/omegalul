@@ -239,6 +239,20 @@ def test_match_tables_pins_named_sheet_and_keeps_employment_ambiguous(client: Te
     assert len(ambiguous["sheet_candidates"]) >= 3
 
 
+def test_suggested_select_keeps_well_and_commissioning_date() -> None:
+    from app.excel_tools import _looks_schedule_fact_query, _suggested_select
+
+    query = (
+        "На основе старого прогнозного schedule и Excel с новыми датами ввода "
+        "собрать новый schedule.inc"
+    )
+    suggested = _suggested_select(query, ["Скважина", "Дата ввода"])
+    assert "Скважина" in suggested
+    assert "Дата ввода" in suggested
+    assert _looks_schedule_fact_query("Give me the oil price.") is False
+    assert _suggested_select("Give me the oil price.", ["Date", "Crude oil, Brent", "Crude oil, WTI"]) == []
+
+
 def test_na_is_a_value_n_a_is_empty() -> None:
     from app.excel_tools import _is_empty
 

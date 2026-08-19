@@ -440,7 +440,7 @@
     "executionOrder": "v1",
     "saveManualExecutions": true,
     "callerPolicy": "workflowsFromSameOwner",
-    "errorWorkflow": ""
+    "errorWorkflow": "e1f0a7c2-9b4d-5e8f-a123-4567890abcde"
   },
   "versionId": "b74932e4-f4cd-55f0-9f13-b3ef13af22fb",
   "meta": {

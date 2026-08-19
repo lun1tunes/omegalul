@@ -1,16 +1,16 @@
 {
   "id": "864e068c-d406-51c0-aa1c-345415210d25",
-  "name": "Adapter — Calculation (Math Service)",
+  "name": "Agent — Calculation (Math Service)",
   "nodes": [
     {
       "parameters": {
-        "content": "## Calculation Adapter — n8n 2.30.8\n\nAccepts `specialist_packet/v1.0`, every attached `.dev` binary and one ASCII CPS3 surface. Edit the local Math Service URL in the visible configuration node, then bind this workflow in the Orchestrator's `Call Calculation Specialist` node.\n\nAll DEV files are sent in one multipart request as repeated `trajectory_files` fields. The Math Service parses the surface once, performs bilinear interpolation and returns one first-in-MD intersection per source filename.\n\nThe portable UI-only adapter reserves 256 multipart trajectory slots because n8n 2.30.8 does not evaluate a dynamic fixedCollection array in HTTP Request. Empty slots use tiny reserved sentinel uploads ignored by Math Service; occupied slots are repeated `trajectory_files`.",
+        "content": "## Calculation Agent — n8n 2.30.8\n\nAccepts `specialist_packet/v1.0`, every attached `.dev` binary and one ASCII CPS3 surface. Edit the local Math Service URL in the visible configuration node, then bind this workflow in the Orchestrator's `Call Calculation Specialist` node.\n\nAll DEV files are sent in one multipart request as repeated `trajectory_files` fields. The Math Service parses the surface once, performs bilinear interpolation and returns one first-in-MD intersection per source filename.\n\nThe portable UI-only agent reserves 256 multipart trajectory slots because n8n 2.30.8 does not evaluate a dynamic fixedCollection array in HTTP Request. Empty slots use tiny reserved sentinel uploads ignored by Math Service; occupied slots are repeated `trajectory_files`.",
         "height": 300,
         "width": 500,
         "color": 5
       },
       "id": "ad1cae65-5ba0-5848-b31e-cba74bca51a4",
-      "name": "Calculation adapter README",
+      "name": "Calculation Agent README",
       "type": "n8n-nodes-base.stickyNote",
       "typeVersion": 1,
       "position": [
@@ -1513,7 +1513,7 @@
     "executionOrder": "v1",
     "saveManualExecutions": true,
     "callerPolicy": "workflowsFromSameOwner",
-    "errorWorkflow": ""
+    "errorWorkflow": "e1f0a7c2-9b4d-5e8f-a123-4567890abcde"
   },
   "versionId": "c207e25c-d8d9-4a93-83ed-7a4f40f5547d",
   "meta": {

@@ -59,6 +59,18 @@ async function run(name, json) {
     JSON.stringify(orch.nodes).includes('REPLACE_ERROR_HANDLER_IN_UI'),
     'orch must bind Error Handler placeholder',
   );
+  const errorTrigger = wf.nodes.find((n) => n.name === 'Error Trigger');
+  assert.equal(errorTrigger.type, 'n8n-nodes-base.errorTrigger');
+  assert.equal(errorTrigger.typeVersion, 1);
+  assert.ok(wf.nodes.some((n) => n.name === 'Normalize n8n error trigger'));
+  assert.ok(wf.connections['Error Trigger']);
+  assert.ok(wf.connections['Receive MAS error event']);
+  assert.equal(wf.settings.errorWorkflow || '', '');
+  assert.equal(orch.settings.errorWorkflow, wf.id);
+  const cas = read('n8n/workflows/core/cas-persist-task.workflow.json');
+  assert.equal(cas.settings.errorWorkflow || '', '');
+  const trace = read('n8n/workflows/core/mas-trace-event-writer.workflow.json');
+  assert.equal(trace.settings.errorWorkflow || '', '');
 
   const scenarios = [
     ['llm_error', 'LLM_CALL_FAILED', 'retryable_error', true],
@@ -69,6 +81,7 @@ async function run(name, json) {
     ['rag_error', 'RAG_UNAVAILABLE', 'awaiting_human', false],
     ['document_access', 'DOCUMENT_ACCESS_DENIED', 'awaiting_human', false],
     ['approval_error', 'APPROVAL_GATE_FAILED', 'awaiting_human', false],
+    ['uncaught', 'UNCAUGHT_NODE_FAILURE', 'retryable_error', true],
   ];
 
   for (const [scenario, code, casStatus, restartable] of scenarios) {
@@ -302,6 +315,33 @@ async function run(name, json) {
   );
   assert.equal(activitySync[0].json.activity_sync_ready, true);
   assert.equal(activitySync[0].json.activity_url, 'http://127.0.0.1:8200/v1/sync');
+
+  const n8nErr = await run('Normalize n8n error trigger', {
+    execution: {
+      id: '231',
+      error: { message: 'Node crashed', context: { task_id: 'eng_uncaught_1' } },
+      lastNodeExecuted: 'Planner Chat Model',
+    },
+    workflow: { id: '1', name: 'Orchestrator — Engineering MAS' },
+  });
+  assert.equal(n8nErr.mas_error_event.task_id, 'eng_uncaught_1');
+  assert.equal(n8nErr.mas_error_event.scenario, 'llm_error');
+  const classifiedUncaught = await run('Classify MAS error event', n8nErr);
+  assert.equal(classifiedUncaught.has_task_id, true);
+  assert.equal(classifiedUncaught.task_id, 'eng_uncaught_1');
+
+  const anonUncaught = await run('Normalize n8n error trigger', {
+    execution: {
+      id: '232',
+      error: { message: 'Example Error Message' },
+      lastNodeExecuted: 'Node With Error',
+    },
+    workflow: { id: '1', name: 'Example Workflow' },
+  });
+  assert.equal(anonUncaught.mas_error_event.task_id, null);
+  const classifiedAnon = await run('Classify MAS error event', anonUncaught);
+  assert.equal(classifiedAnon.accepted, false);
+  assert.equal(classifiedAnon.code, 'CASE_ID_REQUIRED');
 
   const realErr = await prepareFn(
     {

@@ -14,6 +14,7 @@ def _clear_n8n_env(monkeypatch) -> None:
         "N8N_BASE_URL",
         "N8N_USERNAME",
         "N8N_PASSWORD",
+        "ACTIVITY_HYDRATE_URL",
         "ACTIVITY_LIST_URL",
         "ACTIVITY_FEED_URL",
         "KNOWLEDGE_INGEST_URL",

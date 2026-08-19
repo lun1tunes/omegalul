@@ -50,7 +50,9 @@ for(let i=0;i<schemas.length;i++){
   if(!obj(s.semantics)){findings.push({code:'SCHEMA_SEMANTICS_REQUIRED',severity:'error',index:i,keyword:kw,variant});continue}
   if(schemaMap.has(key)){findings.push({code:'SCHEMA_VARIANT_DUPLICATE',severity:'error',index:i,keyword:kw,variant});continue}
   const positions=fields.map(f=>Number(f.position)),names=fields.map(f=>clean(f.name));
-  if(!fields.length||positions.some((p,j)=>!Number.isInteger(p)||p!==j+1)||names.some(v=>!v)||new Set(names).size!==names.length){findings.push({code:'SCHEMA_FIELDS_INVALID',severity:'error',index:i,keyword:kw});continue}
+  const parser=obj(s.parser)?s.parser:{},layoutRaw=obj(s.layout)?s.layout:{};
+  const recordless=!fields.length&&Number(parser.token_width)===0&&clean(layoutRaw.record_terminator).toUpperCase()==='NONE'&&clean(layoutRaw.block_terminator).toUpperCase()==='NONE';
+  if(!recordless&&(!fields.length||positions.some((p,j)=>!Number.isInteger(p)||p!==j+1)||names.some(v=>!v)||new Set(names).size!==names.length)){findings.push({code:'SCHEMA_FIELDS_INVALID',severity:'error',index:i,keyword:kw});continue}
   const badType=fields.find(f=>!['string','integer','number','date','enum','boolean'].includes(clean(f.type).toLowerCase()));
   if(badType){findings.push({code:'SCHEMA_FIELD_TYPE_UNSUPPORTED',severity:'error',index:i,keyword:kw,field:badType.name});continue}
   schemaMap.set(key,{...s,keyword:kw,variant,fields:fields.slice().sort((a,b)=>Number(a.position)-Number(b.position)),layout:normalizeLayout(s.layout)});
@@ -78,7 +80,7 @@ for(let i=0;i<events.length;i++){
   if(!base.provenance.length){findings.push({code:'IR_PROVENANCE_REQUIRED',severity:'error',index:i,event_id:eventId});continue}
   const values=obj(e.fields)?e.fields:{},known=new Set(schema.fields.map(f=>clean(f.name))),unknown=Object.keys(values).filter(k=>!known.has(k));if(unknown.length){findings.push({code:'IR_UNKNOWN_FIELD',severity:'error',index:i,event_id:eventId,fields:unknown});continue}
   const tokens=[];let fieldError=false;for(const f of schema.fields){const name=clean(f.name),present=Object.prototype.hasOwnProperty.call(values,name);if(!present){if(f.required===true){findings.push({code:'IR_REQUIRED_FIELD_MISSING',severity:'error',index:i,event_id:eventId,keyword:kw,field:name});fieldError=true;continue}if(f.default_allowed===true){tokens.push('*');continue}findings.push({code:'IR_OPTIONAL_FIELD_HAS_NO_DEFAULT_POLICY',severity:'error',index:i,event_id:eventId,keyword:kw,field:name});fieldError=true;continue}const token=renderValue(values[name],f,e);if(token===null){fieldError=true;continue}tokens.push(token)}if(fieldError)continue;
-  const l=schema.layout,record=`${l.indent}${tokens.join(l.delimiter)}${l.record_terminator}`,text=`${kw}${l.newline}${record}${l.newline}${l.block_terminator==='slash_line'?'/'+l.newline+l.newline:''}`;
+  const l=schema.layout,text=!schema.fields.length?`${kw}${l.newline}`:`${kw}${l.newline}${l.indent}${tokens.join(l.delimiter)}${l.record_terminator}${l.newline}${l.block_terminator==='slash_line'?'/'+l.newline+l.newline:''}`;
   const change={...base,rendered_text:text,schema_id:schema.schema_id,schema_revision:schema.schema_revision,citation:schema.citation,render_hash:hash(text)};renderedChanges.push(change);renderedRecords.push({event_id:eventId,keyword:kw,variant,field_count:tokens.length,render_hash:change.render_hash,schema_id:schema.schema_id,_ir_index:i});
 }
 // CREATE: assemble by DATES segments, then within-date keyword order (stage-3 algorithm — not RAG).

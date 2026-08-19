@@ -25,6 +25,24 @@ def durable_enabled() -> bool:
     return bool(cfg["list_url"] or cfg["feed_url"])
 
 
+def split_hydrate(data: dict[str, Any] | None) -> tuple[dict[str, Any] | None, dict[str, Any] | None]:
+    """Split a combined hydrate payload into list and/or feed contracts."""
+    if not isinstance(data, dict):
+        return None, None
+    contract = str(data.get("contract") or "")
+    if contract == "mas_activity_hydrate":
+        list_p = data.get("list") if isinstance(data.get("list"), dict) else None
+        feed_p = data.get("feed") if isinstance(data.get("feed"), dict) else None
+        return list_p, feed_p
+    if contract == "mas_activity_task_list":
+        return data, None
+    if contract == "mas_activity_feed_hydrate":
+        return None, data
+    if isinstance(data.get("tasks"), list) and data.get("events") is None:
+        return data, None
+    return None, data
+
+
 def _headers(cfg: dict[str, Any]) -> dict[str, str]:
     headers = {"Content-Type": "application/json", "Accept": "application/json"}
     if cfg["auth_header"] and cfg["auth_value"]:

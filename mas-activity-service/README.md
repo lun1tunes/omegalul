@@ -30,7 +30,7 @@ start-windows.bat
 | `ORCHESTRATOR_WEBHOOK_URL` | боевой вызов оркестратора (предпочтительно) |
 | `ORCHESTRATOR_AUTH_*` | inbound header auth **n8n webhook**, не Activity |
 | `N8N_BASE_URL` + `N8N_USERNAME` / `N8N_PASSWORD` | REST-фолбэк, если webhook не задан |
-| `ACTIVITY_LIST_URL` / `ACTIVITY_FEED_URL` | hydrate Data Tables; иначе выводятся из хоста webhook/`N8N_BASE_URL` |
+| `ACTIVITY_HYDRATE_URL` | hydrate Data Tables (list+feed); иначе выводится из хоста webhook/`N8N_BASE_URL` |
 
 Авторизации внутри Activity **нет**. ФИО инженера (`requested_by`) — поле формы, не ключ.
 

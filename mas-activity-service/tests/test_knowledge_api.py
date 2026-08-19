@@ -218,6 +218,7 @@ def test_knowledge_ingest_unconfigured(monkeypatch, tmp_path: Path) -> None:
         "ORCHESTRATOR_WEBHOOK_URL",
         "N8N_BASE_URL",
         "KNOWLEDGE_INGEST_URL",
+        "ACTIVITY_HYDRATE_URL",
         "ACTIVITY_LIST_URL",
         "ACTIVITY_FEED_URL",
     ):

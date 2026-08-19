@@ -46,6 +46,7 @@ from app.durable import (
     fetch_task_feed,
     fetch_task_list,
     probe_durable_connectivity,
+    split_hydrate,
 )
 from app.persist import load_state, persist_enabled, save_state
 from app.readiness import probe_n8n_stack
@@ -1190,6 +1191,18 @@ async def _apply_list_hydrate(payload: dict[str, Any], *, prune_missing: bool = 
     return {"applied": applied, "pruned": do_prune, "catalog_complete": catalog_complete}
 
 
+async def _apply_split_hydrate(
+    payload: dict[str, Any], *, prune_list: bool = False
+) -> dict[str, Any]:
+    list_p, feed_p = split_hydrate(payload)
+    out: dict[str, Any] = {}
+    if list_p:
+        out["list"] = await _apply_list_hydrate(list_p, prune_missing=prune_list)
+    if feed_p:
+        out["feed"] = await _apply_feed_hydrate(feed_p)
+    return out
+
+
 async def _apply_feed_hydrate(payload: dict[str, Any]) -> dict[str, Any]:
     if not payload.get("ok", True):
         return {"stored": False, "reason": payload.get("error") or "hydrate_failed"}
@@ -1246,7 +1259,15 @@ async def post_hydrate(request: Request) -> dict[str, Any]:
     raw = await request.json()
     if not isinstance(raw, dict):
         raise HTTPException(status_code=400, detail="JSON object required")
-    result: dict[str, Any] = {"ok": True}
+    if raw.get("contract") == "mas_activity_hydrate":
+        applied = await _apply_split_hydrate(raw)
+        result: dict[str, Any] = {"ok": True}
+        if "list" in applied:
+            result["list_applied"] = applied["list"]["applied"]
+        if "feed" in applied:
+            result["feed"] = applied["feed"]
+        return result
+    result = {"ok": True}
     if isinstance(raw.get("tasks"), list) or raw.get("contract") == "mas_activity_task_list":
         result["list_applied"] = (await _apply_list_hydrate(raw))["applied"]
     if raw.get("task_id") and (raw.get("events") is not None or raw.get("contract") == "mas_activity_feed_hydrate"):
@@ -1273,14 +1294,16 @@ async def list_tasks(
         try:
             payload = await fetch_task_list()
             if payload:
+                list_p, _ = split_hydrate(payload)
+                use = list_p or payload
                 # Prune ghosts only on explicit durable refresh when the list page is complete
-                # (list WF returns at most 200 newest; truncated pages must not evict older CAS).
-                applied_meta = await _apply_list_hydrate(payload, prune_missing=durable)
+                # (hydrate list page is at most 200 newest; truncated pages must not evict older CAS).
+                applied_meta = await _apply_list_hydrate(use, prune_missing=durable)
                 hydrate_meta = {
                     "applied": applied_meta["applied"],
                     "pruned": applied_meta["pruned"],
                     "catalog_complete": applied_meta["catalog_complete"],
-                    "source": payload.get("source"),
+                    "source": use.get("source"),
                     "auto_empty": auto_empty,
                 }
         except Exception as exc:  # noqa: BLE001
@@ -1336,7 +1359,10 @@ async def get_task(
             if not payload and feed_lookup != task_id:
                 payload = await fetch_task_feed(task_id)
             if payload:
-                result = await _apply_feed_hydrate(payload)
+                applied = await _apply_split_hydrate(payload)
+                result = applied.get("feed")
+                if result is None and "list" not in applied:
+                    result = await _apply_feed_hydrate(payload)
                 if isinstance(result, dict) and result.get("stored") is False:
                     reason = str(result.get("reason") or "hydrate_failed")
                     if _tasks.get(task_id) is None:
@@ -1344,7 +1370,9 @@ async def get_task(
                     if durable:
                         hydrate_meta = {"ok": False, "error": reason}
                 elif isinstance(result, dict):
-                    src = payload.get("source") if isinstance(payload.get("source"), dict) else {}
+                    _, feed_p = split_hydrate(payload)
+                    src_raw = (feed_p or payload).get("source")
+                    src = src_raw if isinstance(src_raw, dict) else {}
                     hydrate_meta = {
                         "ok": True,
                         "truncated": bool(src.get("truncated")),
@@ -1377,7 +1405,9 @@ async def get_gate(task_id: str, refresh: bool = Query(default=False)) -> dict[s
             try:
                 payload = await fetch_task_feed(_n8n_task_id(task_id))
                 if payload:
-                    await _apply_feed_hydrate(payload)
+                    applied = await _apply_split_hydrate(payload)
+                    if "feed" not in applied:
+                        await _apply_feed_hydrate(payload)
                     task = _tasks.get(_canonical_task_id(task_id))
             except Exception:  # noqa: BLE001
                 pass

@@ -291,7 +291,9 @@ return[{json:{baseline_query_request:{baseline_decode_result:decoded,expected_de
 """
 
 
-PREPARE_PLAN = r"""
+PREPARE_PLAN = (
+    capability_dispatch_js()
+    + r"""
 const root=$('Normalize SCHEDULE pipeline packet').first().json;
 const intake=$('Run deterministic SCHEDULE intake').first().json;
 let baseline=null;try{baseline=$('Analyze lossless baseline inventory').first().json}catch{}
@@ -315,16 +317,20 @@ const semanticBoundary=replay&&replay.semantic_state_snapshot?{snapshot_kind:rep
 const humanInstruction=clean(req.human_instruction)||clean(req.hitl_reply_text)||(obj(root.latest_human_response)?clean(root.latest_human_response.text||root.latest_human_response.human_response||''):'');
 const intakeChange=obj(intake.requested_change_scope)?intake.requested_change_scope:{};
 const reqChange=obj(req.requested_change_scope)?req.requested_change_scope:{};
-const mergedChange={...intakeChange,...reqChange};
+const merged=mergeObservedScheduleRequest(req,intake);
+const mergedChange=obj(merged.requested_change_scope)?merged.requested_change_scope:{...intakeChange,...reqChange};
 if(!(arr(mergedChange.wells)&&mergedChange.wells.length)&&arr(intakeChange.wells)&&intakeChange.wells.length) mergedChange.wells=intakeChange.wells;
 if(!mergedChange.group_rebind&&intakeChange.group_rebind) mergedChange.group_rebind=intakeChange.group_rebind;
-const mergedCaps=[...new Set([...(arr(intake.requested_capability_scope)?intake.requested_capability_scope:[]),...(arr(req.requested_capability_scope)?req.requested_capability_scope:[])].map(clean).filter(Boolean))];
-const plannerRequest={task:{objective:intake.objective},build_mode:intake.build_mode,requested_keyword_scope:(arr(intake.requested_keyword_scope)&&intake.requested_keyword_scope.length)?intake.requested_keyword_scope:(arr(req.requested_keyword_scope)?req.requested_keyword_scope:[]),requested_capability_scope:mergedCaps.length?mergedCaps:(arr(req.requested_capability_scope)?req.requested_capability_scope:[]),capability_id:req.capability_id||intake.capability_id||mergedChange.capability_id||null,requested_change_scope:Object.keys(mergedChange).length?mergedChange:{},baseline_analysis:compactBaseline,decoded_baseline_inventory:decodedInventory,semantic_boundary:semanticBoundary,evidence,simulator_profile:intake.simulator_profile,preservation_policy:intake.build_mode==='REVISE'?'preserve_unmentioned':'not_applicable',human_instruction:humanInstruction||null,latest_human_response:obj(root.latest_human_response)?root.latest_human_response:null,source_facts_packet:obj(req.source_facts_packet)?req.source_facts_packet:null};
+const mergedCaps=arr(merged.requested_capability_scope)?merged.requested_capability_scope:[...new Set([...(arr(intake.requested_capability_scope)?intake.requested_capability_scope:[]),...(arr(req.requested_capability_scope)?req.requested_capability_scope:[])].map(clean).filter(Boolean))];
+const plannerRequest={task:{objective:intake.objective},build_mode:intake.build_mode,requested_keyword_scope:(arr(intake.requested_keyword_scope)&&intake.requested_keyword_scope.length)?intake.requested_keyword_scope:(arr(req.requested_keyword_scope)?req.requested_keyword_scope:[]),requested_capability_scope:mergedCaps.length?mergedCaps:(arr(req.requested_capability_scope)?req.requested_capability_scope:[]),capability_id:merged.capability_id||req.capability_id||intake.capability_id||mergedChange.capability_id||null,requested_change_scope:Object.keys(mergedChange).length?mergedChange:{},baseline_analysis:compactBaseline,decoded_baseline_inventory:decodedInventory,semantic_boundary:semanticBoundary,evidence,simulator_profile:intake.simulator_profile,preservation_policy:intake.build_mode==='REVISE'?'preserve_unmentioned':'not_applicable',human_instruction:humanInstruction||null,latest_human_response:obj(root.latest_human_response)?root.latest_human_response:null,source_facts_packet:obj(req.source_facts_packet)?req.source_facts_packet:null};
 return[{json:{planner_request:plannerRequest,planner_input:JSON.stringify(plannerRequest)}}];
 """
+)
 
 
-PREPARE_BUILD = r"""
+PREPARE_BUILD = (
+    capability_dispatch_js()
+    + r"""
 const root=$('Normalize SCHEDULE pipeline packet').first().json;
 const intake=$('Run deterministic SCHEDULE intake').first().json;
 const plan=$('Validate SCHEDULE pipeline plan').first().json;
@@ -342,14 +348,16 @@ const semanticBoundary=replay&&replay.semantic_state_snapshot?{snapshot_kind:rep
 const humanInstruction=clean(req.human_instruction)||clean(root.packet?.inputs?.human_instruction)||clean(req.hitl_reply_text)||(obj(root.latest_human_response)?clean(root.latest_human_response.text||root.latest_human_response.human_response||''):'');
 const intakeChange=obj(intake.requested_change_scope)?intake.requested_change_scope:{};
 const reqChange=obj(req.requested_change_scope)?req.requested_change_scope:{};
-const mergedChange={...intakeChange,...reqChange};
+const merged=mergeObservedScheduleRequest(req,intake);
+const mergedChange=obj(merged.requested_change_scope)?merged.requested_change_scope:{...intakeChange,...reqChange};
 if(!(arr(mergedChange.wells)&&mergedChange.wells.length)&&arr(intakeChange.wells)&&intakeChange.wells.length) mergedChange.wells=intakeChange.wells;
 if(!mergedChange.group_rebind&&intakeChange.group_rebind) mergedChange.group_rebind=intakeChange.group_rebind;
-const mergedCaps=[...new Set([...(arr(intake.requested_capability_scope)?intake.requested_capability_scope:[]),...(arr(req.requested_capability_scope)?req.requested_capability_scope:[])].map(clean).filter(Boolean))];
-const scheduleMeta={build_mode:req.build_mode||intake.build_mode,root_path:req.root_path||null,requested_keyword_scope:(arr(intake.requested_keyword_scope)&&intake.requested_keyword_scope.length)?intake.requested_keyword_scope:(req.requested_keyword_scope||[]),requested_capability_scope:mergedCaps.length?mergedCaps:(req.requested_capability_scope||intake.requested_capability_scope||[]),capability_id:req.capability_id||intake.capability_id||mergedChange.capability_id||null,requested_change_scope:Object.keys(mergedChange).length?mergedChange:{},change_effective_from:req.change_effective_from||null,preservation_policy:req.preservation_policy||'preserve_unmentioned',simulator_profile:req.simulator_profile||intake.simulator_profile||{},human_instruction:humanInstruction||null};
+const mergedCaps=arr(merged.requested_capability_scope)?merged.requested_capability_scope:[...new Set([...(arr(intake.requested_capability_scope)?intake.requested_capability_scope:[]),...(arr(req.requested_capability_scope)?req.requested_capability_scope:[])].map(clean).filter(Boolean))];
+const scheduleMeta={build_mode:req.build_mode||intake.build_mode,root_path:req.root_path||null,requested_keyword_scope:(arr(intake.requested_keyword_scope)&&intake.requested_keyword_scope.length)?intake.requested_keyword_scope:(req.requested_keyword_scope||[]),requested_capability_scope:mergedCaps.length?mergedCaps:(req.requested_capability_scope||intake.requested_capability_scope||[]),capability_id:merged.capability_id||req.capability_id||intake.capability_id||mergedChange.capability_id||null,requested_change_scope:Object.keys(mergedChange).length?mergedChange:{},change_effective_from:req.change_effective_from||null,preservation_policy:req.preservation_policy||'preserve_unmentioned',simulator_profile:req.simulator_profile||intake.simulator_profile||{},human_instruction:humanInstruction||null};
 const payload={schedule_request:scheduleMeta,intake_result:{objective:intake.objective,build_mode:intake.build_mode,requested_keyword_scope:intake.requested_keyword_scope,requested_capability_scope:intake.requested_capability_scope,simulator_profile:intake.simulator_profile},approved_plan:{status:plan.status,build_mode:plan.build_mode,keyword_scope:plan.keyword_scope,stages:plan.stages,preservation_policy:plan.preservation_policy,rationale:plan.rationale},baseline_analysis:compactBaseline,decoded_baseline_inventory:decodedInventory,semantic_boundary:semanticBoundary,source_facts_packet:slimFacts(req.source_facts_packet),rag_evidence:slimRag(req.rag_evidence),human_instruction:humanInstruction||null,latest_human_response:obj(root.latest_human_response)?root.latest_human_response:null,instruction:'Match wells ONLY by SCHEDULE name (source_facts_packet.facts[].well / values.Скважина). Do not empty ir_events to force a special path. Deterministic commissioning timeline runs only when capability is commissioning_date_retarget|shift_commissioning_dates|commissioning_revise|timeline_revise AND well/date facts exist. Deterministic group rebind runs only when capability is group_membership_rebind|group_rebind AND a complete structured spec is present (wells, parent_group, parent_of_parent, well_groups, gas_rate/rate, control). Never infer DKS, FIELD, G{well}, or GRAT from prose. Otherwise emit typed IR. Human HITL answers are authoritative.'+(humanInstruction?` Human correction (authoritative): ${humanInstruction}`:'')};
 return[{json:{builder_context:payload,builder_input:JSON.stringify(payload)}}];
 """
+)
 
 
 def validate_builder(keywords: list[str]) -> str:
@@ -391,11 +399,12 @@ const queriedRecords=arr(baselineQuery?.records)?baselineQuery.records.filter(ob
 const wellFacts=facts.map(pickWellDateFact).filter(f=>f.well&&f.date!==null&&f.date!==undefined&&String(f.date).trim()!=='');
 const toTnavDate=raw=>{const s=String(raw||'').trim();const iso=s.match(/^(\d{4})-(\d{2})-(\d{2})/);if(iso){const months=['JAN','FEB','MAR','APR','MAY','JUN','JUL','AUG','SEP','OCT','NOV','DEC'];return `1 ${months[Number(iso[2])-1]} ${iso[1]}`}const already=s.match(/^(\d{1,2})\s+([A-Za-z]{3})\s+(\d{4})$/);return already?`${Number(already[1])} ${already[2].toUpperCase()} ${already[3]}`:s};
 const capTokens=collectCapabilityTokens(capReq,intake);
-const wantsCommissioning=wantsCommissioningCapability(capTokens);
-const wantsGroupRebind=wantsGroupRebindCapability(capTokens);
 const groupSpecRead=readGroupRebindSpec(capReq);
 const groupSpec=groupSpecRead&&groupSpecRead.ok?groupSpecRead.spec:null;
-const useTimelineCommissioning=mode==='REVISE'&&wellFacts.length>0&&wantsCommissioning;
+const exclusive=exclusiveScheduleCaps(capTokens,capReq.requested_change_scope||{},!!(groupSpecRead&&groupSpecRead.ok));
+const wantsCommissioning=exclusive.wantsCommissioning;
+const wantsGroupRebind=exclusive.wantsGroupRebind;
+const useTimelineCommissioning=mode==='REVISE'&&wellFacts.length>0&&wantsCommissioning&&!wantsGroupRebind;
 const groupRevise=mode==='REVISE'&&wantsGroupRebind&&!!groupSpec;
 const useDeterministicRevise=useTimelineCommissioning||groupRevise;
 if(mode==='REVISE'&&wantsCommissioning&&!wellFacts.length){
@@ -404,23 +413,22 @@ if(mode==='REVISE'&&wantsCommissioning&&!wellFacts.length){
 if(mode==='REVISE'&&wantsGroupRebind&&!groupSpec){
   findings.push({code:'GROUP_REBIND_SPEC_REQUIRED',severity:'error',missing:groupSpecRead&&groupSpecRead.missing||[],field:(groupSpecRead&&groupSpecRead.missing||[]).join(', ')});
 }
-if(useTimelineCommissioning){
-  irEvents=[];
-  if(['needs_input','retryable_error','partial',''].includes(clean(work.status)))work.status='succeeded';
-  sourceMap=wellFacts.map(f=>({keyword:'WCONPROD',entity:f.well,fact_id:f.fact_id||null,source:`source_facts_packet:${f.fact_id||f.well}`,value:f.date,commissioning_date:toTnavDate(f.date),path:'timeline_commissioning_revise'}));
-  findings.push({code:'COMMISSIONING_TIMELINE_PATH',severity:'warning',wells:wellFacts.map(f=>f.well).slice(0,20),note:'parse→edit retarget first WCONPROD(+WELOPEN/WEFAC) onto target DATES→emit; DATES steps preserved'});
-  if(!obj(work.self_check)||!work.self_check.passed)work.self_check={performed:true,passed:true,checks:[{check:'timeline_commissioning_path',passed:true}],reproducibility:'Explicit commissioning capability + Excel wells by SCHEDULE name drive deterministic timeline revise after merge.'};
-  gaps=[];
-  for(let i=findings.length-1;i>=0;i-=1){
-    if(['MALFORMED_EVIDENCE_GAP','PARTIAL_EVIDENCE_GAP_DROPPED'].includes(findings[i].code)) findings.splice(i,1);
-  }
-}
 if(groupRevise){
   irEvents=[];
   if(['needs_input','retryable_error','partial',''].includes(clean(work.status)))work.status='succeeded';
   sourceMap=[{keyword:'WELSPECS',entity:'group_rebind',source:'group_rebind_spec',path:'timeline_group_revise'}];
   findings.push({code:'GROUP_REBIND_TIMELINE_PATH',severity:'warning',note:'parse→ADD WELSPECS/GRUPTREE/GCONPROD + re-emit WECON/WPIMULT on first WCONPROD DATES→emit'});
   if(!obj(work.self_check)||!work.self_check.passed)work.self_check={performed:true,passed:true,checks:[{check:'timeline_group_rebind_path',passed:true}],reproducibility:'Explicit group_membership_rebind spec drives deterministic group rebind after merge.'};
+  gaps=[];
+  for(let i=findings.length-1;i>=0;i-=1){
+    if(['MALFORMED_EVIDENCE_GAP','PARTIAL_EVIDENCE_GAP_DROPPED','COMMISSIONING_FACTS_REQUIRED','COMMISSIONING_TIMELINE_PATH'].includes(findings[i].code)) findings.splice(i,1);
+  }
+}else if(useTimelineCommissioning){
+  irEvents=[];
+  if(['needs_input','retryable_error','partial',''].includes(clean(work.status)))work.status='succeeded';
+  sourceMap=wellFacts.map(f=>({keyword:'WCONPROD',entity:f.well,fact_id:f.fact_id||null,source:`source_facts_packet:${f.fact_id||f.well}`,value:f.date,commissioning_date:toTnavDate(f.date),path:'timeline_commissioning_revise'}));
+  findings.push({code:'COMMISSIONING_TIMELINE_PATH',severity:'warning',wells:wellFacts.map(f=>f.well).slice(0,20),note:'parse→edit retarget first WCONPROD(+WELOPEN/WEFAC) onto target DATES→emit; DATES steps preserved'});
+  if(!obj(work.self_check)||!work.self_check.passed)work.self_check={performed:true,passed:true,checks:[{check:'timeline_commissioning_path',passed:true}],reproducibility:'Explicit commissioning capability + Excel wells by SCHEDULE name drive deterministic timeline revise after merge.'};
   gaps=[];
   for(let i=findings.length-1;i>=0;i-=1){
     if(['MALFORMED_EVIDENCE_GAP','PARTIAL_EVIDENCE_GAP_DROPPED'].includes(findings[i].code)) findings.splice(i,1);
@@ -579,9 +587,10 @@ const facts=arr(packet.facts)?packet.facts:[];
 const wellFacts=facts.map(pickWellDateFact).filter(f=>f.well&&f.date!=null&&String(f.date).trim()!=='');
 const capReq=mergeObservedScheduleRequest(root.request||{},intake);
 const capTokens=collectCapabilityTokens(capReq,intake);
-const wantsCommissioning=wantsCommissioningCapability(capTokens);
-const wantsGroupRebind=wantsGroupRebindCapability(capTokens);
 const groupSpecRead=readGroupRebindSpec(capReq);
+const exclusive=exclusiveScheduleCaps(capTokens,capReq.requested_change_scope||{},!!(groupSpecRead&&groupSpecRead.ok));
+const wantsCommissioning=exclusive.wantsCommissioning;
+const wantsGroupRebind=exclusive.wantsGroupRebind;
 const timelinePath=intake.build_mode==='REVISE'&&(
   (wellFacts.length>0&&wantsCommissioning)||
   (wantsGroupRebind&&groupSpecRead&&groupSpecRead.ok)||

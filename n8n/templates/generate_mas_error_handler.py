@@ -12,6 +12,15 @@ OUT = ROOT / "workflows/core/mas-error-handler.workflow.json"
 
 WF_ID = "e1f0a7c2-9b4d-5e8f-a123-4567890abcde"
 WF_NAME = "Error — MAS Case Handler"
+# Do not attach n8n Error workflow to the handler or its callees — that loops
+# when CAS/Trace fail while handling an uncaught error.
+ERROR_WORKFLOW_SKIP = frozenset(
+    {
+        WF_NAME,
+        "Writer — MAS Trace",
+        "CAS — Persist Task State",
+    }
+)
 
 
 def nid(name: str) -> str:
@@ -114,6 +123,7 @@ const TAXONOMY={
   rag_error:{code:'RAG_UNAVAILABLE',cas_status:'awaiting_human',restartable:false,label:'Ошибка RAG'},
   document_access:{code:'DOCUMENT_ACCESS_DENIED',cas_status:'awaiting_human',restartable:false,label:'Нет доступа к документу'},
   approval_error:{code:'APPROVAL_GATE_FAILED',cas_status:'awaiting_human',restartable:false,label:'Ошибка согласования'},
+  uncaught:{code:'UNCAUGHT_NODE_FAILURE',cas_status:'retryable_error',restartable:true,label:'Неперехваченный сбой n8n'},
 };
 
 const CODE_TO_SCENARIO={
@@ -130,6 +140,7 @@ const CODE_TO_SCENARIO={
   DOCUMENT_ACCESS_DENIED:'document_access',
   APPROVAL_GATE_FAILED:'approval_error',
   CAS_CONFLICT:'approval_error',
+  UNCAUGHT_NODE_FAILURE:'uncaught',
 };
 
 let scenario=scenarioRaw;
@@ -407,6 +418,64 @@ return[{json:{
 """.strip()
 
 
+NORMALIZE_N8N_ERROR = r"""
+const root=$json||{};
+const obj=v=>v&&typeof v==='object'&&!Array.isArray(v);
+const clean=v=>typeof v==='string'?v.trim():'';
+const exec=obj(root.execution)?root.execution:{};
+const wf=obj(root.workflow)?root.workflow:{};
+const err=obj(exec.error)?exec.error:(obj(root.error)?root.error:{});
+const msg=clean(err.message||err.description||root.message||'');
+const lastNode=clean(exec.lastNodeExecuted||(obj(err.node)?err.node.name:'')||'');
+const executionId=clean(String(exec.id||root.executionId||''))||null;
+const TASK_RE=/\b((?:eng|act)_[A-Za-z0-9._-]{4,80})\b/;
+function findTaskId(v, depth){
+  if(depth>8||v==null) return '';
+  if(typeof v==='string'){
+    const m=v.match(TASK_RE);
+    return m?m[1]:'';
+  }
+  if(Array.isArray(v)){
+    for(const x of v){const t=findTaskId(x,depth+1); if(t) return t;}
+    return '';
+  }
+  if(typeof v==='object'){
+    for(const k of ['task_id','taskId','case_id','caseId']){
+      const t=clean(v[k]); if(t) return t;
+    }
+    for(const x of Object.values(v)){const t=findTaskId(x,depth+1); if(t) return t;}
+  }
+  return '';
+}
+const taskId=findTaskId(root,0);
+const blob=`${msg} ${lastNode} ${clean(wf.name)}`.toLowerCase();
+let scenario='uncaught';
+if(/timeout|timed out|etimedout/.test(blob)) scenario='calc_timeout';
+else if(/json|parse|structured/.test(blob)) scenario='invalid_json';
+else if(/llm|openai|model/.test(blob)) scenario='llm_error';
+const safe=[
+  lastNode?`Узел «${lastNode}» упал.`:'Неперехваченный сбой n8n.',
+  msg?msg.slice(0,400):'',
+  wf.name?`Workflow: ${wf.name}.`:'',
+  executionId?`execution ${executionId}.`:'',
+].filter(Boolean).join(' ');
+return[{json:{
+  mas_error_event:{
+    contract:'mas_error_event',
+    contract_version:'1.0',
+    task_id:taskId||null,
+    scenario,
+    code:scenario==='uncaught'?'UNCAUGHT_NODE_FAILURE':undefined,
+    stage:'uncaught',
+    safe_message:safe,
+    execution_id:executionId,
+    findings:[{code:'UNCAUGHT_NODE_FAILURE',node:lastNode||null,workflow:wf.name||null,message:msg.slice(0,400)||null}],
+  },
+  passthrough:{source:'n8n_error_trigger',workflow_id:wf.id||null,workflow_name:wf.name||null,last_node:lastNode||null,execution_id:executionId},
+}}];
+""".strip()
+
+
 PREPARE_ACTIVITY = r"""
 const x=$json;
 if(!x.has_task_id||x.skip_trace){
@@ -431,6 +500,32 @@ return[{json:{
 """.strip()
 
 
+def bind_error_workflow_settings() -> None:
+    """Stamp Settings.errorWorkflow on portable JSON (skip handler + its callees)."""
+    root = ROOT / "workflows"
+    for path in sorted(root.glob("**/*.workflow.json")):
+        data = json.loads(path.read_text(encoding="utf-8"))
+        name = str(data.get("name") or "")
+        settings = data.get("settings")
+        if not isinstance(settings, dict):
+            settings = {}
+            data["settings"] = settings
+        wanted = "" if name in ERROR_WORKFLOW_SKIP else WF_ID
+        if str(settings.get("errorWorkflow") or "") == wanted:
+            continue
+        settings["errorWorkflow"] = wanted
+        path.write_text(json.dumps(data, ensure_ascii=False, indent=2) + "\n", encoding="utf-8")
+        print(f"errorWorkflow {path.relative_to(ROOT)} → {wanted or '(empty)'}")
+
+
+def _relayout_core() -> None:
+    import subprocess
+    import sys
+
+    script = Path(__file__).resolve().parent / "relayout_core_workflows.py"
+    subprocess.check_call([sys.executable, str(script)], cwd=str(ROOT.parent))
+
+
 def main() -> None:
     nodes = [
         note(
@@ -439,8 +534,9 @@ def main() -> None:
             "## edit after import\n\n**Error — MAS Case Handler** — after UI import:\n\n"
             "- Bind **Call CAS persist — error case** → `CAS — Persist Task State`\n"
             "- Bind **Call Writer — MAS Trace (error)** → `Writer — MAS Trace`\n"
-            "- Set Activity URL in **Activity connection** (`activity_base_url`)\n\n"
-            "Never notify Activity without `task_id`/`case_id`.",
+            "- Set Activity URL in **Activity connection** (`activity_base_url`)\n"
+            "- On other workflows: Settings → **Error workflow** → this handler (uncaught node crashes).\n\n"
+            "Never notify Activity without `task_id`/`case_id`. Do not set this workflow's own Error workflow field.",
             520,
             260,
             1,
@@ -448,13 +544,24 @@ def main() -> None:
         note(
             "Error handler README",
             (-700, -420),
-            "## Error — MAS Case Handler\n\nCritical scenarios → structured log + CAS status + Activity notify + restartable ack.\n\n"
-            "Taxonomy: LLM / invalid JSON / calc timeout / missing data / validator / RAG / document access / approval.\n\n"
-            "Preserves `request_json` and other CAS payload fields. Fail-closed without case_id.",
+            "## Error — MAS Case Handler\n\n"
+            "Two entries, one CAS/Trace/Activity path:\n"
+            "1. **Execute Workflow** — Orchestrator branch for classified domain errors (LLM, missing data, validator). Returns `mas_error_ack` in the same run.\n"
+            "2. **Error Trigger** — n8n Settings → Error workflow. Fires on uncaught node crash/timeout. Parent execution is already dead; we persist if `task_id` can be recovered.\n\n"
+            "Taxonomy: LLM / invalid JSON / calc timeout / missing data / validator / RAG / document access / approval / uncaught.\n"
+            "Fail-closed without case_id. Never attach this handler to CAS Persist or Trace Writer (loop).",
             620,
             360,
             5,
         ),
+        node(
+            "Error Trigger",
+            "n8n-nodes-base.errorTrigger",
+            1,
+            (0, -220),
+            {},
+        ),
+        code("Normalize n8n error trigger", (280, -220), NORMALIZE_N8N_ERROR),
         node(
             "Receive MAS error event",
             "n8n-nodes-base.executeWorkflowTrigger",
@@ -568,7 +675,7 @@ def main() -> None:
         node(
             "POST error handoff to MAS Activity",
             "n8n-nodes-base.httpRequest",
-            4.2,
+            4.4,
             (2800, -220),
             {
                 "method": "POST",
@@ -596,6 +703,8 @@ def main() -> None:
     ]
 
     connections = {}
+    connect(connections, "Error Trigger", "Normalize n8n error trigger")
+    connect(connections, "Normalize n8n error trigger", "Classify MAS error event")
     connect(connections, "Receive MAS error event", "Classify MAS error event")
     connect(connections, "Classify MAS error event", "Has case_id?")
     connect(connections, "Has case_id?", "Build CAS error patch", si=0)
@@ -620,7 +729,7 @@ def main() -> None:
         "isArchived": False,
         "nodes": nodes,
         "connections": connections,
-        "settings": {"executionOrder": "v1", "callerPolicy": "workflowsFromSameOwner"},
+        "settings": {"executionOrder": "v1", "callerPolicy": "workflowsFromSameOwner", "errorWorkflow": ""},
         "meta": {"templateCredsSetupCompleted": True},
         "tags": [],
         "pinData": {},
@@ -629,6 +738,8 @@ def main() -> None:
     OUT.parent.mkdir(parents=True, exist_ok=True)
     OUT.write_text(json.dumps(wf, ensure_ascii=False, indent=2) + "\n", encoding="utf-8")
     print(f"wrote {OUT} ({len(nodes)} nodes)")
+    bind_error_workflow_settings()
+    _relayout_core()
 
 
 if __name__ == "__main__":

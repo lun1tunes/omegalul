@@ -40,8 +40,9 @@ const changeKeywords=new Set((arr(x.requested_keyword_scope)?x.requested_keyword
 const names=s=>new Set((arr(s.fields)?s.fields:[]).map(f=>clean(f?.name)).filter(Boolean));
 for(let i=0;i<schemas.length;i++){
   const s=schemas[i],kw=clean(s.keyword).toUpperCase(),variant=clean(s.variant)||'default',fields=arr(s.fields)?s.fields.filter(obj):[],sem=obj(s.semantics)?s.semantics:null,key=`${kw}::${variant}`;
-  if(!allowed.has(kw)||!clean(s.schema_id)||!clean(s.schema_revision)||!fields.length||!sem){findings.push({code:'BASELINE_SCHEMA_INVALID',severity:'error',keyword:kw,variant,index:i});continue}
-  const positions=fields.map(f=>Number(f.position));if(positions.some((p,j)=>!Number.isInteger(p)||p!==j+1)){findings.push({code:'BASELINE_SCHEMA_FIELDS_INVALID',severity:'error',keyword:kw,variant});continue}
+  const recordless=!fields.length&&Number((obj(s.parser)?s.parser:{}).token_width)===0&&clean((obj(s.layout)?s.layout:{}).record_terminator).toUpperCase()==='NONE'&&clean((obj(s.layout)?s.layout:{}).block_terminator).toUpperCase()==='NONE';
+  if(!allowed.has(kw)||!clean(s.schema_id)||!clean(s.schema_revision)||!(fields.length||recordless)||!sem){findings.push({code:'BASELINE_SCHEMA_INVALID',severity:'error',keyword:kw,variant,index:i});continue}
+  const positions=fields.map(f=>Number(f.position));if(fields.length&&positions.some((p,j)=>!Number.isInteger(p)||p!==j+1)){findings.push({code:'BASELINE_SCHEMA_FIELDS_INVALID',severity:'error',keyword:kw,variant});continue}
   if(schemaMap.has(kw)&&schemaMap.get(kw).some(v=>v.variant===variant)){findings.push({code:'BASELINE_SCHEMA_VARIANT_DUPLICATE',severity:'error',keyword:kw,variant});continue}
   const n=names(s),clock=obj(sem.clock)?sem.clock:{};for(const f of [clock.sets_from_field,clock.effective_date_field].filter(Boolean))if(!n.has(clean(f)))findings.push({code:'SEMANTIC_FIELD_UNKNOWN',severity:'error',keyword:kw,variant,field:f});
   if(!clean(clock.sets_from_field)&&!clean(clock.effective_date_field)&&clock.uses_current!==true){findings.push({code:'BASELINE_CLOCK_POLICY_REQUIRED',severity:'error',keyword:kw,variant});continue}

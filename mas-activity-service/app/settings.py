@@ -16,13 +16,13 @@ STATIC = SERVICE_ROOT / "static"
 VERSION = "0.6.0"
 DEFAULT_ORCHESTRATOR_WORKFLOW_ID = "ba8ba59f-e4e4-5ff6-b22c-63ceae883271"
 ORCHESTRATOR_WEBHOOK_PATH = "engineering-orchestrator"
-LIST_WEBHOOK_PATH = "mas-activity-list-tasks"
-FEED_WEBHOOK_PATH = "mas-activity-load-feed"
+HYDRATE_WEBHOOK_PATH = "mas-activity-hydrate"
+LIST_WEBHOOK_PATH = HYDRATE_WEBHOOK_PATH
+FEED_WEBHOOK_PATH = HYDRATE_WEBHOOK_PATH
 INGEST_WEBHOOK_PATH = "mas-knowledge-ingest"
 DEFAULT_WEBHOOK_CHECKS = (
     ORCHESTRATOR_WEBHOOK_PATH,
-    LIST_WEBHOOK_PATH,
-    FEED_WEBHOOK_PATH,
+    HYDRATE_WEBHOOK_PATH,
     INGEST_WEBHOOK_PATH,
     "mas-deployment-health-check",
 )
@@ -68,6 +68,12 @@ def _webhook_url(base: str, path: str) -> str:
     return f"{root}/webhook/{slug}"
 
 
+def _legacy_split_hydrate_url(url: str) -> bool:
+    """Old list/feed webhook paths — ignore leftover env after the merge."""
+    tail = url.rstrip("/").rsplit("/", 1)[-1]
+    return tail in {"mas-activity-list-tasks", "mas-activity-load-feed"}
+
+
 class Settings(BaseSettings):
     """All process configuration. Import ``get_settings`` — do not scatter ``os.getenv``."""
 
@@ -98,6 +104,7 @@ class Settings(BaseSettings):
     orchestrator_auth_header: str = Field(default="", validation_alias="ORCHESTRATOR_AUTH_HEADER")
     orchestrator_auth_value: str = Field(default="", validation_alias="ORCHESTRATOR_AUTH_VALUE")
 
+    activity_hydrate_url: str = Field(default="", validation_alias="ACTIVITY_HYDRATE_URL")
     activity_list_url: str = Field(default="", validation_alias="ACTIVITY_LIST_URL")
     activity_feed_url: str = Field(default="", validation_alias="ACTIVITY_FEED_URL")
     knowledge_ingest_url: str = Field(default="", validation_alias="KNOWLEDGE_INGEST_URL")
@@ -117,6 +124,7 @@ class Settings(BaseSettings):
     @field_validator(
         "n8n_base_url",
         "orchestrator_webhook_url",
+        "activity_hydrate_url",
         "activity_list_url",
         "activity_feed_url",
         "knowledge_ingest_url",
@@ -182,18 +190,20 @@ class Settings(BaseSettings):
         return _webhook_url(self.n8n_base, ORCHESTRATOR_WEBHOOK_PATH)
 
     @property
+    def resolved_hydrate_url(self) -> str:
+        for candidate in (self.activity_hydrate_url, self.activity_list_url, self.activity_feed_url):
+            url = candidate.strip()
+            if url and _is_absolute_http_url(url) and not _legacy_split_hydrate_url(url):
+                return url
+        return _webhook_url(self.n8n_base, HYDRATE_WEBHOOK_PATH)
+
+    @property
     def resolved_list_url(self) -> str:
-        if self.activity_list_url:
-            url = self.activity_list_url.strip()
-            return url if _is_absolute_http_url(url) else ""
-        return _webhook_url(self.n8n_base, LIST_WEBHOOK_PATH)
+        return self.resolved_hydrate_url
 
     @property
     def resolved_feed_url(self) -> str:
-        if self.activity_feed_url:
-            url = self.activity_feed_url.strip()
-            return url if _is_absolute_http_url(url) else ""
-        return _webhook_url(self.n8n_base, FEED_WEBHOOK_PATH)
+        return self.resolved_hydrate_url
 
     @property
     def resolved_knowledge_ingest_url(self) -> str:
@@ -245,6 +255,7 @@ class Settings(BaseSettings):
             "n8n_base_url": self.n8n_base or None,
             "orchestrator_webhook_configured": bool(self.resolved_orchestrator_webhook),
             "n8n_rest_configured": bool(self.n8n_base and self.n8n_username and self.n8n_password),
+            "activity_hydrate_configured": bool(self.resolved_hydrate_url),
             "activity_list_configured": bool(self.resolved_list_url),
             "activity_feed_configured": bool(self.resolved_feed_url),
             "knowledge_ingest_configured": bool(self.resolved_knowledge_ingest_url),

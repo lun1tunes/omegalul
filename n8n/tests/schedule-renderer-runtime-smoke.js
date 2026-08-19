@@ -305,7 +305,35 @@ async function main() {
     ['DATES', 'WELSPECS', 'WCONPROD', 'APPLYSCRIPT', 'DATES', 'WCONPROD'],
   );
 
-  console.log('SCHEDULE catalogue renderer runtime smoke: 13 scenarios passed');
+  const endactioSchema = {
+    schema_id: 'fixture:ENDACTIO:end',
+    schema_revision: 'fixture-1',
+    keyword: 'ENDACTIO',
+    variant: 'end',
+    citation,
+    parser: { token_width: 0 },
+    fields: [],
+    semantics: { period: 'ANY', clock: { uses_current: true } },
+    layout: { newline: 'LF', indent: '', delimiter: 'SPACE', record_terminator: 'NONE', block_terminator: 'NONE' },
+  };
+  const endactio = await execute(
+    'tnavigator-schedule-builder.workflow.json',
+    'Render typed SCHEDULE IR deterministically',
+    {
+      schedule_render_request: {
+        mode: 'CREATE',
+        schema_catalogue: catalogue({ schemas: [endactioSchema] }),
+        ir_events: [{
+          event_id: 'end-1', operation: 'ADD', keyword: 'ENDACTIO', variant: 'end',
+          fields: {}, provenance: [{ source_ref: 'task://action-close' }],
+        }],
+      },
+    },
+  );
+  assert.equal(endactio.status, 'rendered');
+  assert.equal(endactio.changes[0].rendered_text, 'ENDACTIO\n');
+
+  console.log('SCHEDULE catalogue renderer runtime smoke: 14 scenarios passed');
 }
 
 main().catch((error) => {

@@ -154,7 +154,27 @@ async function run(name, { json = {}, nodes = {} } = {}) {
   });
   assert.equal(extras.needs_query_repair, false);
   assert.equal(extras.repair_args, null);
-  console.log('excel-extractor-runtime-smoke: 7 scenarios passed');
+
+  const droppedSuggested = await run('Prepare deterministic query repair', {
+    json: { session_id: 'sess_test', final_args: { status: 'success' } },
+    nodes: {
+      'Get deterministic session state': {
+        session_id: 'sess_test',
+        tables: { tbl_1: { table_id: 'tbl_1' } },
+        result_sets: { res_1: { result_id: 'res_1', columns: ['Скважина'] } },
+        tool_history: [{ tool: 'query_table', ok: true }],
+        table_match: {
+          selected_table_id: 'tbl_1',
+          ambiguous: false,
+          candidate_ids: ['tbl_1'],
+          suggested_select: ['Скважина', 'Дата ввода'],
+        },
+      },
+    },
+  });
+  assert.equal(droppedSuggested.needs_query_repair, true);
+  assert.deepEqual(droppedSuggested.repair_args.select, ['Скважина', 'Дата ввода']);
+  console.log('excel-extractor-runtime-smoke: 8 scenarios passed');
 })().catch((error) => {
   console.error(error);
   process.exit(1);

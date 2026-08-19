@@ -3,13 +3,11 @@
   "contract_version": "1.0",
   "target_n8n_version": "2.30.8",
   "deployment_mode": "ui_only_no_global_variables",
-  "full_clean_import_set": [
-    "workflows/core/calculation-specialist-adapter.workflow.json",
+    "full_clean_import_set": [
+    "workflows/core/calculation-specialist-agent.workflow.json",
     "workflows/core/cas-persist-task.workflow.json",
-    "workflows/core/excel-engineering-specialist-adapter.workflow.json",
     "workflows/core/excel-extraction-agent.workflow.json",
-    "workflows/core/mas-activity-list-tasks.workflow.json",
-    "workflows/core/mas-activity-load-feed.workflow.json",
+    "workflows/core/mas-activity-hydrate.workflow.json",
     "workflows/core/mas-deployment-health-check.workflow.json",
     "workflows/core/mas-error-handler.workflow.json",
     "workflows/core/mas-human-gate-form.workflow.json",
@@ -27,9 +25,8 @@
     "workflows/support/excel-extraction-form-adapter.workflow.json"
   ],
   "runtime_import_order": [
-    "workflows/core/calculation-specialist-adapter.workflow.json",
+    "workflows/core/calculation-specialist-agent.workflow.json",
     "workflows/core/excel-extraction-agent.workflow.json",
-    "workflows/core/excel-engineering-specialist-adapter.workflow.json",
     "workflows/core/tnavigator-schedule-knowledge-ingestion.workflow.json",
     "workflows/core/tnavigator-schedule-hybrid-retrieval.workflow.json",
     "workflows/core/tnavigator-schedule-builder.workflow.json",
@@ -39,8 +36,7 @@
     "workflows/core/universal-engineering-orchestrator.workflow.json",
     "workflows/core/mvp-entry-form.workflow.json",
     "workflows/core/mas-human-gate-form.workflow.json",
-    "workflows/core/mas-activity-list-tasks.workflow.json",
-    "workflows/core/mas-activity-load-feed.workflow.json",
+    "workflows/core/mas-activity-hydrate.workflow.json",
     "workflows/core/mas-deployment-health-check.workflow.json"
   ],
   "optional_or_non_runtime": [
@@ -165,9 +161,9 @@
     },
     {
       "owner": "Orchestrator — Engineering MAS",
-      "node": "Call Excel Extraction Specialist Adapter",
-      "target": "Adapter — Excel Extraction",
-      "placeholder": "REPLACE_EXCEL_ADAPTER_IN_UI"
+      "node": "Call Excel Extraction Specialist",
+      "target": "Agent — Excel Extractor",
+      "placeholder": "REPLACE_EXCEL_EXTRACTION_AGENT_IN_UI"
     },
     {
       "owner": "Orchestrator — Engineering MAS",
@@ -208,8 +204,8 @@
     {
       "owner": "Orchestrator — Engineering MAS",
       "node": "Call Calculation Specialist",
-      "target": "Adapter — Calculation (Math Service)",
-      "placeholder": "REPLACE_CALCULATION_ADAPTER_IN_UI"
+      "target": "Agent — Calculation (Math Service)",
+      "placeholder": "REPLACE_CALCULATION_AGENT_IN_UI"
     },
     {
       "owner": "Orchestrator — Engineering MAS",
@@ -240,12 +236,6 @@
       "node": "Call Writer — MAS Trace (error)",
       "target": "Writer — MAS Trace",
       "placeholder": "REPLACE_MAS_TRACE_WRITER_IN_UI"
-    },
-    {
-      "owner": "Adapter — Excel Extraction",
-      "node": "Call native Excel Extraction Agent",
-      "target": "Agent — Excel Extractor",
-      "placeholder": "REPLACE_EXCEL_EXTRACTION_AGENT_IN_UI"
     },
     {
       "owner": "Form — MAS Entry",
@@ -305,7 +295,7 @@
     "host_health_script": "scripts/mas_stack_health.py",
     "does_not_call": [
       "LLM Planner/Verifier",
-      "Excel Adapter/Agent",
+      "Excel Extractor",
       "SCHEDULE Builder, MAS Knowledge Retrieval"
     ]
   },
@@ -359,13 +349,14 @@
   ],
   "ui_configuration": [
     "Select both Data Tables in every matching Data Table node. Task-state insert/update are only in CAS — Persist Task State; Orchestrator keeps Load task by ID.",
-    "Bind Activity — List Tasks / Load Feed Data Table nodes, activate their webhooks, set ACTIVITY_LIST_URL and ACTIVITY_FEED_URL on mas-activity (Compose defaults to http://n8n:5678/webhook/...).",
+    "Bind Activity — Hydrate Data Table nodes, activate the webhook, set ACTIVITY_HYDRATE_URL on mas-activity if it is not derived from N8N_BASE_URL (Compose default http://n8n:5678/webhook/mas-activity-hydrate).",
     "Apply all mandatory Execute Workflow bindings (CAS persist fan-in, Entry, Human Gate, Health Check, Orchestrator specialists) — see docs.md Step 4.",
+    "Set Settings → Error workflow to Error — MAS Case Handler on runtime workflows (not on the handler itself, nor CAS Persist / Trace Writer). Uncaught node crashes then enter Error Trigger; classified domain errors still use the Orchestrator Execute Workflow branch.",
     "Create Data Tables from docs.md or n8n/data-tables/*.header.csv, then bind every Data Table node listed in Step 3.",
     "Run Form — MAS Deployment Health Check before activating user forms; fix every FAIL using where_to_fix.",
     "Activate Form — MAS Entry for new tasks and Form — MAS Human Gate for transparent HITL resume; engineers answer questions in the form without copying expected_version/gate_id.",
     "Configure Excel Tools base URL/API key; 127.0.0.1 is valid only when n8n runs on the same Windows host.",
-    "Edit Math Service Configuration in the Calculation Adapter; its default is http://127.0.0.1:8100/api/v1/math and it uses no credential.",
+    "Edit Math Service Configuration in Agent — Calculation (Math Service); its default is http://127.0.0.1:8100/api/v1/math and it uses no credential.",
     "Configure one embedding model/dimension consistently for MAS — Knowledge Ingestion and MAS — Knowledge Retrieval.",
     "Use MAS — Knowledge Ingestion to load expert-authored keyword_instruction and worked_example text into target_base=schedule_mvp; include schema_catalogue JSON only when deterministic rendering needs it.",
     "Seed the MAS corpus via Activity Knowledge → Загрузить в RAG (live excel-agent-operating-guide.documents.json) or MAS — Knowledge Ingestion Manual trigger (Packaged MAS corpus snapshot). Existing target_base+knowledge_id+revision rows are skipped. Empty tag filters never match the whole namespace.",
@@ -379,7 +370,7 @@
   ],
   "smoke_expectations": [
     "start without objective returns a bounded HITL request",
-    "Calculation Adapter asks for one or more DEV trajectories plus exactly one surface when they are absent and otherwise posts every DEV as repeated trajectory_files fields in one Math Service request",
+    "Calculation Agent asks for one or more DEV trajectories plus exactly one surface when they are absent and otherwise posts every DEV as repeated trajectory_files fields in one Math Service request",
     "Excel clarification resumes with the same controlled task and correlated evidence snapshot",
     "CREATE and REVISE stop when an affected keyword lacks an active expert instruction or schema JSON needed for deterministic rendering",
     "Hybrid Retrieval combines lexical, semantic and exact tags with RRF and returns full active parent knowledge blocks per target_base (schedule_mvp, excel_protocol, orchestrator_routing, specialist_template)",

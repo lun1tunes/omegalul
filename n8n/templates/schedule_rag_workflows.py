@@ -42,6 +42,7 @@ const parse=v=>{if(obj(v))return v;if(typeof v!=='string'||!v.trim())return{};tr
 const list=v=>arr(v)?[...new Set(v.map(clean).filter(Boolean))]:typeof v==='string'?(()=>{try{const x=JSON.parse(v);return arr(x)?list(x):v.split(/[,;|]/).map(clean).filter(Boolean)}catch{return v.split(/[,;|]/).map(clean).filter(Boolean)}})():[];
 const allowed=new Set(KEYWORDS_PLACEHOLDER);
 const hash=s=>{let h=2166136261;for(const ch of String(s)){h^=ch.charCodeAt(0);h=Math.imul(h,16777619)}return(h>>>0).toString(16).padStart(8,'0')};
+const recordless=e=>{const p=obj(e.parser)?e.parser:{},l=obj(e.layout)?e.layout:{},fs=arr(e.fields)?e.fields:[];return!fs.length&&Number(p.token_width)===0&&clean(l.record_terminator).toUpperCase()==='NONE'&&clean(l.block_terminator).toUpperCase()==='NONE'};
 const normalizeOne=(wrapper)=>{
 const incoming=wrapper.schedule_knowledge_block??wrapper.mas_knowledge_block??wrapper.schedule_knowledge_document??wrapper;
 const raw=obj(incoming)?incoming:{};
@@ -69,7 +70,7 @@ if(knowledgeType==='worked_example'&&!examples.length&&!text)findings.push({code
 const contentHash=sourceHash||`fnv1a32:${hash(JSON.stringify(body))}`,documentId=knowledgeId,documentRevision=revision;
 if(catalogueProvided){const cp=obj(catalogue.simulator_profile)?catalogue.simulator_profile:{},schemas=arr(catalogue.schemas)?catalogue.schemas:[];
  if(catalogue.contract!=='schedule_schema_catalogue'||catalogue.contract_version!=='1.0')findings.push({code:'SCHEMA_CATALOGUE_CONTRACT_INVALID',severity:'error'});if(!/^sha256:[a-f0-9]{64}$/i.test(clean(catalogue.catalogue_hash)))findings.push({code:'SCHEMA_CATALOGUE_HASH_INVALID',severity:'error'});if(!/^sha256:[a-f0-9]{64}$/i.test(clean(catalogue.source_hash)))findings.push({code:'SCHEMA_SOURCE_HASH_INVALID',severity:'error'});if(clean(cp.simulator).toLowerCase()!=='tnavigator'||clean(cp.version)!=='22.2')findings.push({code:'SCHEMA_PROFILE_NOT_APPROVED',severity:'error'});if(!schemas.length)findings.push({code:'SCHEMA_CATALOGUE_EMPTY',severity:'error'});
- for(const entry of schemas){const kw=clean(entry.keyword).toUpperCase(),fields=arr(entry.fields)?entry.fields:[],names=new Set(fields.map(f=>clean(f?.name)).filter(Boolean)),sem=obj(entry.semantics)?entry.semantics:null,fieldOk=f=>clean(f)&&names.has(clean(f));if(!allowed.has(kw)||!clean(entry.schema_id)||!clean(entry.schema_revision)||!fields.length)findings.push({code:'SCHEMA_ENTRY_INVALID',severity:'error',keyword:kw});if(!sem)findings.push({code:'SCHEMA_SEMANTICS_REQUIRED',severity:'error',keyword:kw});else{for(const d of(arr(sem.definitions)?sem.definitions:[]))if(!obj(d)||!clean(d.entity_type)||!fieldOk(d.id_field))findings.push({code:'SEMANTIC_DEFINITION_INVALID',severity:'error',keyword:kw});for(const r of(arr(sem.references)?sem.references:[]))if(!obj(r)||!clean(r.entity_type)||!fieldOk(r.id_field))findings.push({code:'SEMANTIC_REFERENCE_INVALID',severity:'error',keyword:kw});}}
+ for(const entry of schemas){const kw=clean(entry.keyword).toUpperCase(),fields=arr(entry.fields)?entry.fields:[],names=new Set(fields.map(f=>clean(f?.name)).filter(Boolean)),sem=obj(entry.semantics)?entry.semantics:null,fieldOk=f=>clean(f)&&names.has(clean(f));if(!allowed.has(kw)||!clean(entry.schema_id)||!clean(entry.schema_revision)||!(fields.length||recordless(entry)))findings.push({code:'SCHEMA_ENTRY_INVALID',severity:'error',keyword:kw,knowledge_id:knowledgeId});if(!sem)findings.push({code:'SCHEMA_SEMANTICS_REQUIRED',severity:'error',keyword:kw});else{for(const d of(arr(sem.definitions)?sem.definitions:[]))if(!obj(d)||!clean(d.entity_type)||!fieldOk(d.id_field))findings.push({code:'SEMANTIC_DEFINITION_INVALID',severity:'error',keyword:kw});for(const r of(arr(sem.references)?sem.references:[]))if(!obj(r)||!clean(r.entity_type)||!fieldOk(r.id_field))findings.push({code:'SEMANTIC_REFERENCE_INVALID',severity:'error',keyword:kw});}}
 }
 const normalizedCatalogue=catalogueProvided?{...catalogue,approved:catalogue.approved!==false,approved_by:clean(catalogue.approved_by||catalogue.author||author),author:clean(catalogue.author||catalogue.approved_by||author),approval_gate_id:clean(catalogue.approval_gate_id||`expert:${knowledgeId}:${revision}`),access_scope:clean(catalogue.access_scope||accessScope)}:null;
 const isSchedule=targetBase==='schedule_mvp';
@@ -227,11 +228,12 @@ for(const row of $input.all().map(i=>i.json||{})){
   if(!baseOk||!schemas.length)continue;
   const approver=clean(row.approved_by||c.approved_by||c.author);
   const gate=clean(row.approval_gate_id||c.approval_gate_id||'schedule-schema-catalogue-approved');
+  const recordless=e=>{const p=obj(e.parser)?e.parser:{},l=obj(e.layout)?e.layout:{},fs=arr(e.fields)?e.fields:[];return!fs.length&&Number(p.token_width)===0&&clean(l.record_terminator).toUpperCase()==='NONE'&&clean(l.block_terminator).toUpperCase()==='NONE'};
   for(const entry of schemas){
     const kw=clean(entry.keyword).toUpperCase();
     if(!requested.includes(kw))continue;
     const fields=arr(entry.fields)?entry.fields:[],sem=obj(entry.semantics)?entry.semantics:null;
-    if(!clean(entry.schema_id)||!clean(entry.schema_revision)||!fields.length||!sem)continue;
+    if(!clean(entry.schema_id)||!clean(entry.schema_revision)||!(fields.length||recordless(entry))||!sem)continue;
     const variant=clean(entry.variant)||'default';
     const list=byKeyword.get(kw)||[];
     if(list.some(e=> (clean(e.variant)||'default')===variant))continue;
@@ -338,8 +340,11 @@ const ok=!hasError;
 const missing=Array.isArray(x.missing_document_ids)?x.missing_document_ids.filter(Boolean):[];
 let message=`Добавлено ${added}, пропущено (уже есть) ${skipped}, всего в RAG ${totalInRag} карточек.`;
 if(!ok){
-  const code=(findings[0]&&findings[0].code)||status||ingestAction||'INGEST_FAILED';
-  message=`Ошибка ingest (${code}). Добавлено ${added}, пропущено ${skipped}, в RAG ${totalInRag}.`;
+  const f0=findings[0]||{};
+  const code=f0.code||status||ingestAction||'INGEST_FAILED';
+  const who=[f0.knowledge_id,f0.keyword].filter(Boolean).join(' / ');
+  message=`Ошибка ingest (${code}${who?': '+who:''}). Добавлено ${added}, пропущено ${skipped}.`;
+  if(totalInRag>0) message+=` Всего в RAG ${totalInRag}.`;
 }else if(status==='rag_inventory_incomplete'&&missing.length){
   message+=` Не найдены в RAG: ${missing.slice(0,8).join(', ')}${missing.length>8?'…':''}.`;
 }

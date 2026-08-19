@@ -54,7 +54,10 @@ if(validDate(forecastStart)&&validDate(forecastEnd)&&forecastEnd<forecastStart)a
 if(Boolean(historyStart)!==Boolean(historyEnd))add('HISTORY_INTERVAL_INCOMPLETE');if(historyStart&&(!validDate(historyStart)||!validDate(historyEnd)))add('HISTORY_INTERVAL_INVALID');if(validDate(historyStart)&&validDate(historyEnd)&&historyEnd<historyStart)add('HISTORY_INTERVAL_INVALID');if(validDate(modelStart)&&validDate(historyStart)&&historyStart<modelStart)add('HISTORY_BEFORE_MODEL_START');if(validDate(historyEnd)&&validDate(forecastStart)&&forecastStart<historyEnd)add('HISTORY_FORECAST_OVERLAP');
 if(scope.includes('WCONHIST')&&(!validDate(historyStart)||!validDate(historyEnd)))add('HISTORY_SCOPE_REQUIRES_INTERVAL');
 if(!scope.length)add('KEYWORD_SCOPE_UNRESOLVED','warning');const requestedRaw=arr(x.requested_keyword_scope)?x.requested_keyword_scope.map(v=>clean(v).toUpperCase()).filter(Boolean):[];const unsupported=requestedRaw.filter(k=>!allowed.has(k));if(unsupported.length)add('UNSUPPORTED_KEYWORD','error',{keywords:unsupported});
-const capabilities=[...new Set([...(arr(x.requested_capability_scope)?x.requested_capability_scope.map(clean).filter(Boolean):[]),...(arr(observed.requested_capability_scope)?observed.requested_capability_scope.map(clean).filter(Boolean):[])])];
+const exclusiveCapIds=new Set([...COMMISSIONING_CAP_IDS,...GROUP_REBIND_CAP_IDS]);
+const incomingCaps=(arr(x.requested_capability_scope)?x.requested_capability_scope.map(clean).filter(Boolean):[]);
+const observedCaps=(arr(observed.requested_capability_scope)?observed.requested_capability_scope.map(clean).filter(Boolean):[]);
+const capabilities=[...new Set([...incomingCaps.filter(c=>!exclusiveCapIds.has(capToken(c))),...observedCaps])];
 const outputs=arr(x.required_outputs)?x.required_outputs.filter(v=>typeof v==='string'?clean(v):obj(v)):[];
 if(mode==='CREATE'&&!capabilities.length)add('CREATE_CAPABILITY_SCOPE_REQUIRED');if(mode==='CREATE'&&!outputs.length)add('CREATE_REQUIRED_OUTPUTS_REQUIRED');
 if(mode==='REVISE'&&!obj(changeScope))add('REVISE_CHANGE_SCOPE_REQUIRED','warning');

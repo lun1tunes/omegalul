@@ -25,8 +25,6 @@ services:
       - ORCHESTRATOR_AUTH_HEADER=${ORCHESTRATOR_AUTH_HEADER:-Authorization}
       - ORCHESTRATOR_AUTH_VALUE=${ORCHESTRATOR_AUTH_VALUE:-local-orch-inbound}
       - N8N_BASE_URL=http://n8n:5678
-      - ACTIVITY_LIST_URL=http://n8n:5678/webhook/mas-activity-list-tasks
-      - ACTIVITY_FEED_URL=http://n8n:5678/webhook/mas-activity-load-feed
       - KNOWLEDGE_INGEST_URL=http://n8n:5678/webhook/mas-knowledge-ingest
       - ORCHESTRATOR_WORKFLOW_ID=ba8ba59f-e4e4-5ff6-b22c-63ceae883271
       - HITL_MODE=n8n_rest

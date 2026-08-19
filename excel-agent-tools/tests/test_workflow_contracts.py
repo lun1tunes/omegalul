@@ -13,19 +13,17 @@ RAG_SOURCE = ROOT / "n8n" / "rag" / "excel-agent-operating-guide.documents.json"
 IMPORT_MANIFEST = ROOT / "n8n" / "import-manifest.json"
 EXCEL_DELIVERY_WORKFLOWS = {
     "ai-components.workflow.json",
-    "excel-engineering-specialist-adapter.workflow.json",
     "excel-extraction-agent.workflow.json",
     "excel-extraction-form-adapter.workflow.json",
 }
 MATH_DELIVERY_WORKFLOWS = {
-    "calculation-specialist-adapter.workflow.json",
+    "calculation-specialist-agent.workflow.json",
 }
 MVP_ENTRY_WORKFLOWS = {
     "mvp-entry-form.workflow.json",
     "mas-human-gate-form.workflow.json",
     "mas-deployment-health-check.workflow.json",
-    "mas-activity-list-tasks.workflow.json",
-    "mas-activity-load-feed.workflow.json",
+    "mas-activity-hydrate.workflow.json",
 }
 DATA_TABLE_CSV = ROOT / "n8n" / "data-tables"
 SCHEDULE_FOUNDATION_WORKFLOWS = {
@@ -76,6 +74,7 @@ N8N_2_30_8_PORTABLE_NODE_VERSIONS = {
     "n8n-nodes-base.executeWorkflow": {1.3},
     "n8n-nodes-base.executeWorkflowTrigger": {1.2},
     "n8n-nodes-base.extractFromFile": {1.1},
+    "n8n-nodes-base.errorTrigger": {1},
     "n8n-nodes-base.form": {2.5},
     "n8n-nodes-base.formTrigger": {2.6},
     "n8n-nodes-base.httpRequest": {4.4},
@@ -103,7 +102,7 @@ def test_ui_import_manifest_is_complete_and_matches_static_bindings() -> None:
     assert manifest["target_n8n_version"] == "2.30.8"
     imported = {Path(value).name for value in manifest["full_clean_import_set"]}
     assert imported == {path.name for path in workflow_files()}
-    assert len(imported) == 21
+    assert len(imported) == 19
     assert {path.name for path in CORE.glob("*.workflow.json")} == {
         Path(value).name for value in manifest["runtime_import_order"]
     }
@@ -120,7 +119,7 @@ def test_ui_import_manifest_is_complete_and_matches_static_bindings() -> None:
     workflow_names = set(workflows_by_name)
     bindings = manifest["mandatory_execute_workflow_bindings"]
     future_bindings = manifest["future_enterprise_or_optional_bindings"]
-    assert len(bindings) == 28
+    assert len(bindings) == 27
     assert future_bindings == []
     assert manifest["health_check"]["ui_name"] == "Form — MAS Deployment Health Check"
     assert (ROOT / "docs.md").is_file()
@@ -318,7 +317,7 @@ def test_delivery_workflow_graph_references_are_importable() -> None:
 
 def test_core_has_no_disabled_legacy_or_orphan_nodes() -> None:
     workflow = load_json(workflow_path("excel-extraction-agent.workflow.json"))
-    assert len(workflow["nodes"]) == 63
+    assert len(workflow["nodes"]) == 67
     assert not [node["name"] for node in workflow["nodes"] if node.get("disabled") is True]
     names = {node["name"] for node in workflow["nodes"]}
     assert not names.intersection(
@@ -365,6 +364,7 @@ def test_excel_agent_repair_and_preflight_lock_column_ambiguity() -> None:
     assert "matchAmbiguous" in repair
     assert "missingQuery" in repair
     assert "missingRequired" in repair
+    assert "missingSuggested" in repair
     assert "hasExtra" not in repair
     assert "suggested_tail" in repair
     assert "candidate_ids" in repair
@@ -579,8 +579,8 @@ def test_universal_engineering_orchestrator_has_no_service_or_excel_contract() -
 
 
 def test_calculation_adapter_posts_dev_batch_and_surface_and_is_statically_bound() -> None:
-    adapter = load_json(workflow_path("calculation-specialist-adapter.workflow.json"))
-    assert adapter["name"] == "Adapter — Calculation (Math Service)"
+    adapter = load_json(workflow_path("calculation-specialist-agent.workflow.json"))
+    assert adapter["name"] == "Agent — Calculation (Math Service)"
     assert adapter["active"] is False
     by_name = {node["name"]: node for node in adapter["nodes"]}
     trigger = by_name["Receive calculation specialist packet"]
@@ -622,7 +622,7 @@ def test_calculation_adapter_posts_dev_batch_and_surface_and_is_statically_bound
     orchestrator = load_json(workflow_path("universal-engineering-orchestrator.workflow.json"))
     orchestrator_by_name = {node["name"]: node for node in orchestrator["nodes"]}
     call = orchestrator_by_name["Call Calculation Specialist"]
-    assert call["parameters"]["workflowId"]["value"] == "REPLACE_CALCULATION_ADAPTER_IN_UI"
+    assert call["parameters"]["workflowId"]["value"] == "REPLACE_CALCULATION_AGENT_IN_UI"
     assert call["parameters"]["workflowId"]["cachedResultName"] == adapter["name"]
     allowlist_code = orchestrator_by_name["Resolve allowlisted specialist"]["parameters"]["jsCode"]
     assert "engineering_calculation_specialist:{route:2,configured:true}" in allowlist_code
@@ -885,10 +885,10 @@ def test_universal_orchestrator_has_a_static_excel_specialist_route() -> None:
     assert "excel_extraction_specialist:{route:0,configured:true}" in resolve_code
     assert by_name["Configured specialist router"]["parameters"]["numberOutputs"] == 8
 
-    call = by_name["Call Excel Extraction Specialist Adapter"]
+    call = by_name["Call Excel Extraction Specialist"]
     assert call["type"] == "n8n-nodes-base.executeWorkflow"
     assert call["typeVersion"] == 1.3
-    assert call["parameters"]["workflowId"]["value"] == "REPLACE_EXCEL_ADAPTER_IN_UI"
+    assert call["parameters"]["workflowId"]["value"] == "REPLACE_EXCEL_EXTRACTION_AGENT_IN_UI"
     assert call["parameters"]["mode"] == "once"
     assert call["parameters"]["options"]["waitForSubWorkflow"] is True
     assert call["onError"] == "continueRegularOutput"
@@ -940,7 +940,7 @@ def test_universal_orchestrator_has_a_static_schedule_builder_route() -> None:
     assert "excel_protocol" in by_name["Prepare governed Excel protocol RAG request"]["parameters"]["jsCode"]
     connections = workflow["connections"]
     assert connections["Configured specialist router"]["main"][0][0]["node"] == "Prepare governed Excel protocol RAG request"
-    assert connections["Excel protocol RAG evidence ready?"]["main"][0][0]["node"] == "Call Excel Extraction Specialist Adapter"
+    assert connections["Excel protocol RAG evidence ready?"]["main"][0][0]["node"] == "Call Excel Extraction Specialist"
     assert connections["Routing RAG evidence ready?"]["main"][0][0]["node"] == "Prepare planner input"
     assert rag_call["type"] == "n8n-nodes-base.executeWorkflow"
     assert rag_call["typeVersion"] == 1.3
@@ -1087,7 +1087,8 @@ def test_schedule_flow_is_orchestrator_mediated_and_multi_stage() -> None:
     assert "schedule_evidence_gap" in retry_code
     assert "source_snapshot_hash" in resume_code
     assert "expected_correlation_id" in retry_code
-    assert "correlation===String(loop.expected_correlation_id" in resume_code
+    assert "corrOk=!expectedCorr||correlation===expectedCorr||factCount>0" in resume_code
+    assert "mergedMap" in resume_code
     assert "schedule_builder_specialist" in resume_code
 
     apply_action = by_name["Apply action and version guard"]["parameters"]["jsCode"]
@@ -1210,23 +1211,23 @@ def test_schedule_builder_is_bounded_and_orchestrator_mediated() -> None:
 
 
 def test_excel_specialist_adapter_is_a_bounded_native_contract_boundary() -> None:
-    workflow = load_json(workflow_path("excel-engineering-specialist-adapter.workflow.json"))
+    workflow = load_json(workflow_path("excel-extraction-agent.workflow.json"))
     by_name = {node["name"]: node for node in workflow["nodes"]}
+    names = {node["name"] for node in workflow["nodes"]}
 
-    assert workflow["name"] == "Adapter — Excel Extraction"
+    assert workflow["name"] == "Agent — Excel Extractor"
     assert workflow["active"] is False
-    trigger = by_name["Receive Excel specialist packet"]
+    assert "Call native Excel Extraction Agent" not in names
+    assert "Receive Excel specialist packet" not in names
+    trigger = by_name["When executed by another workflow"]
     assert trigger["type"] == "n8n-nodes-base.executeWorkflowTrigger"
     assert trigger["typeVersion"] == 1.2
-
-    call = by_name["Call native Excel Extraction Agent"]
-    assert call["type"] == "n8n-nodes-base.executeWorkflow"
-    assert call["typeVersion"] == 1.3
-    assert call["parameters"]["workflowId"]["value"] == "REPLACE_EXCEL_EXTRACTION_AGENT_IN_UI"
-    assert call["parameters"]["mode"] == "once"
-    assert call["parameters"]["options"]["waitForSubWorkflow"] is True
-    assert call["onError"] == "continueRegularOutput"
-    assert call.get("retryOnFail") is not True
+    assert trigger["parameters"]["inputSource"] == "passthrough"
+    connections = workflow["connections"]
+    assert connections["When executed by another workflow"]["main"][0][0]["node"] == "Prepare native Excel invocation"
+    assert connections["Native Excel invocation ready?"]["main"][0][0]["node"] == "Mark Execute Sub-workflow entrypoint"
+    assert connections["Native Excel invocation ready?"]["main"][1][0]["node"] == "Build Excel adapter input gate"
+    assert connections["Return workflow result"]["main"][0][0]["node"] == "Adapt native Excel result"
 
     prepare_code = by_name["Prepare native Excel invocation"]["parameters"]["jsCode"]
     assert "const previous=parseObject(incoming.previous_specialist_result)" in prepare_code
@@ -1236,6 +1237,8 @@ def test_excel_specialist_adapter_is_a_bounded_native_contract_boundary() -> Non
     assert "nativeJson={session_id:opaque.execution_ref" in prepare_code
     assert "packet.session_id" not in prepare_code
     assert "item.binary?.file" in prepare_code
+    assert "if(!packet.contract)" in prepare_code
+    assert "native_request_ready:true" in prepare_code
 
     adapt_code = by_name["Adapt native Excel result"]["parameters"]["jsCode"]
     assert "excel-extraction-continuation-v1" in adapt_code
@@ -1254,10 +1257,36 @@ def test_excel_specialist_adapter_is_a_bounded_native_contract_boundary() -> Non
     assert "result_kind" in adapt_code
     assert "decision_record:decisionRecord" in adapt_code
     assert "trace_summary" in adapt_code
+    assert "return $input.all()" in adapt_code
 
 
 def test_legacy_excel_mas_workflow_is_removed() -> None:
     assert not (workflow_path("excel-mas-orchestrator.workflow.json")).exists()
+    assert not (CORE / "excel-engineering-specialist-adapter.workflow.json").exists()
+    assert not (CORE / "mas-activity-list-tasks.workflow.json").exists()
+    assert not (CORE / "mas-activity-load-feed.workflow.json").exists()
+    hydrate = load_json(CORE / "mas-activity-hydrate.workflow.json")
+    assert hydrate["name"] == "Activity — Hydrate (Data Tables)"
+    webhooks = [n for n in hydrate["nodes"] if n["type"] == "n8n-nodes-base.webhook"]
+    assert len(webhooks) == 1
+    assert webhooks[0]["parameters"]["path"] == "mas-activity-hydrate"
+    assert any(n.get("name") == "Need feed?" for n in hydrate["nodes"])
+
+
+def test_mas_error_handler_is_n8n_error_workflow_and_execute_subworkflow() -> None:
+    handler = load_json(CORE / "mas-error-handler.workflow.json")
+    orch = load_json(CORE / "universal-engineering-orchestrator.workflow.json")
+    cas = load_json(CORE / "cas-persist-task.workflow.json")
+    trace = load_json(CORE / "mas-trace-event-writer.workflow.json")
+    types = {node["type"] for node in handler["nodes"]}
+    assert "n8n-nodes-base.errorTrigger" in types
+    assert "n8n-nodes-base.executeWorkflowTrigger" in types
+    trigger = next(n for n in handler["nodes"] if n["type"] == "n8n-nodes-base.errorTrigger")
+    assert trigger["typeVersion"] == 1
+    assert (handler.get("settings") or {}).get("errorWorkflow") in ("", None)
+    assert (orch.get("settings") or {}).get("errorWorkflow") == handler["id"]
+    assert (cas.get("settings") or {}).get("errorWorkflow") in ("", None)
+    assert (trace.get("settings") or {}).get("errorWorkflow") in ("", None)
 
 
 def test_specialist_template_uses_only_universal_boundary() -> None:
@@ -1788,10 +1817,10 @@ def test_hybrid_rag_is_the_only_agent_knowledge_path() -> None:
     assert template_connections["Specialist RAG evidence ready?"]["main"][0][0]["node"] == "Prepare specialist work"
     assert template_connections["Specialist RAG evidence ready?"]["main"][1][0]["node"] == "Build specialist RAG evidence gate"
 
-    adapter = load_json(workflow_path("excel-engineering-specialist-adapter.workflow.json"))
+    excel_agent = load_json(workflow_path("excel-extraction-agent.workflow.json"))
     adapter_code = next(
         node["parameters"]["jsCode"]
-        for node in adapter["nodes"]
+        for node in excel_agent["nodes"]
         if node["name"] == "Prepare native Excel invocation"
     )
     assert "...packet.inputs" in adapter_code

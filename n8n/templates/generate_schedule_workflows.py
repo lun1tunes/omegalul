@@ -33,7 +33,9 @@ def connect(c,s,t,out='main',idx=0,itype='main',target_idx=0):
  a=c.setdefault(s,{}).setdefault(out,[])
  while len(a)<=idx:a.append([])
  a[idx].append({'node':t,'type':itype,'index':target_idx})
-def workflow(name,description,nodes,c,contract): return {'id':uid(name),'name':name,'description':description,'nodes':nodes,'pinData':{},'connections':c,'active':False,'settings':{'executionOrder':'v1','saveManualExecutions':True,'callerPolicy':'workflowsFromSameOwner'},'versionId':uid(name+'/version'),'meta':{'templateCredsSetupCompleted':False,'targetN8nVersion':'2.30.8','contractVersion':contract},'tags':[]}
+def workflow(name,description,nodes,c,contract):
+ settings={'executionOrder':'v1','saveManualExecutions':True,'callerPolicy':'workflowsFromSameOwner','errorWorkflow':'' if name=='Writer — MAS Trace' else 'e1f0a7c2-9b4d-5e8f-a123-4567890abcde'}
+ return {'id':uid(name),'name':name,'description':description,'nodes':nodes,'pinData':{},'connections':c,'active':False,'settings':settings,'versionId':uid(name+'/version'),'meta':{'templateCredsSetupCompleted':False,'targetN8nVersion':'2.30.8','contractVersion':contract},'tags':[]}
 K=json.dumps(KEYWORDS)
 INTAKE=f"""
 const raw=$json.schedule_intake_request??$json;const obj=v=>v&&typeof v==='object'&&!Array.isArray(v);const arr=Array.isArray;const clean=v=>typeof v==='string'?v.trim():'';const allowed=new Set({K});const request=obj(raw)?raw:{{}};const modeRaw=clean(request.build_mode||'AUTO').toUpperCase();const baseline=obj(request.baseline_schedule_package_ref)||clean(request.baseline_schedule_text);const mode=modeRaw==='AUTO'?(baseline?'REVISE':'CREATE'):modeRaw;const profile=obj(request.simulator_profile)?request.simulator_profile:{{}};const scope=arr(request.requested_keyword_scope)?[...new Set(request.requested_keyword_scope.map(v=>clean(v).toUpperCase()).filter(Boolean))]:[];const refs=arr(request.artifact_refs)?request.artifact_refs:[];const findings=[];
@@ -169,7 +171,7 @@ const capTokens=[...new Set([
   request.capability_id,
   ...((obj(request.requested_change_scope)?[request.requested_change_scope.capability_id,request.requested_change_scope.intent,request.requested_change_scope.kind,request.requested_change_scope.operation,request.requested_change_scope.capability]:[]))
 ].map(v=>clean(v).toLowerCase().replace(/-/g,'_')).filter(Boolean))];
-const commissioningRevise=mode==='REVISE'&&factWells.length>0&&capTokens.some(t=>['commissioning_date_retarget','shift_commissioning_dates','commissioning_revise','timeline_revise'].includes(t));
+const commissioningRevise=mode==='REVISE'&&factWells.length>0&&capTokens.some(t=>['commissioning_date_retarget','shift_commissioning_dates','commissioning_revise','timeline_revise'].includes(t))&&!capTokens.some(t=>['group_membership_rebind','group_rebind'].includes(t));
 if(commissioningRevise){{
   const fallbackKw=(requested.length?requested:(scope.length?scope:[])).filter(k=>allowed.has(k));
   if(!stages.length){{

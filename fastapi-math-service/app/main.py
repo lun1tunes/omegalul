@@ -1,4 +1,4 @@
-"""Small NumPy geometry API used by the n8n Calculation Adapter."""
+"""Small NumPy geometry API used by the n8n Calculation Agent."""
 
 from __future__ import annotations
 

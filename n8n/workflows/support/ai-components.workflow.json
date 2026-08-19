@@ -214,7 +214,8 @@
   },
   "active": false,
   "settings": {
-    "executionOrder": "v1"
+    "executionOrder": "v1",
+    "errorWorkflow": "e1f0a7c2-9b4d-5e8f-a123-4567890abcde"
   },
   "versionId": "6a677188-4ab7-4943-9dd3-624adc8d46be",
   "meta": {

@@ -4,7 +4,8 @@
   "description": "Thin authenticated n8n Form entry point. It normalizes form data and calls the single Excel Extractor Agent core workflow through Execute Sub-workflow; no model, workbook parsing, memory, or FastAPI tool logic is duplicated here.",
   "active": false,
   "settings": {
-    "executionOrder": "v1"
+    "executionOrder": "v1",
+    "errorWorkflow": "e1f0a7c2-9b4d-5e8f-a123-4567890abcde"
   },
   "nodes": [
     {

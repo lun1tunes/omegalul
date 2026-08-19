@@ -4,7 +4,7 @@
   "nodes": [
     {
       "parameters": {
-        "content": "## Template — Cluster Calculation Adapter\n\nPattern: **Adapter — Calculation** (deterministic external job), not the LLM specialist template.\n\nReplace the stub Code node with:\n1. Config Set node (cluster host / queue URL — no `$env` in UI-only mode)\n2. Submit job (SSH / HTTP job API)\n3. Poll status → map to `specialist_result`\n4. Use `continuation` + `retryable_error` / `needs_input` for async jobs\n\nOrchestrator Call node: `Call Cluster Calculation Specialist` → bind this workflow, then set `configured:true` for `cluster_calculation_specialist` in `specialist_registry.v1.json` and regenerate.\n\nNever put SSH keys in LLM prompts. Keep binaries/logs as `artifact_refs`.",
+        "content": "## Template — Cluster Calculation Adapter\n\nPattern: **Agent — Calculation (Math Service)** (deterministic external job), not the LLM specialist template.\n\nReplace the stub Code node with:\n1. Config Set node (cluster host / queue URL — no `$env` in UI-only mode)\n2. Submit job (SSH / HTTP job API)\n3. Poll status → map to `specialist_result`\n4. Use `continuation` + `retryable_error` / `needs_input` for async jobs\n\nOrchestrator Call node: `Call Cluster Calculation Specialist` → bind this workflow, then set `configured:true` for `cluster_calculation_specialist` in `specialist_registry.v1.json` and regenerate.\n\nNever put SSH keys in LLM prompts. Keep binaries/logs as `artifact_refs`.",
         "height": 360,
         "width": 520,
         "color": 5
@@ -65,7 +65,7 @@
     "executionOrder": "v1",
     "saveManualExecutions": true,
     "callerPolicy": "workflowsFromSameOwner",
-    "errorWorkflow": ""
+    "errorWorkflow": "e1f0a7c2-9b4d-5e8f-a123-4567890abcde"
   },
   "versionId": "b2c10800-f09c-5b6e-bf13-ba634fdb3fa6",
   "meta": {

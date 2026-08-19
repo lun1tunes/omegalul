@@ -1,7 +1,7 @@
 'use strict';
 
 // Executes the exact exported Code-node JavaScript for Universal Planner,
-// Excel adapter, independent Verifier and batched trace preparation.
+// Excel Extractor specialist boundary, independent Verifier and batched trace preparation.
 const assert = require('node:assert/strict');
 const fs = require('node:fs');
 const path = require('node:path');
@@ -12,7 +12,7 @@ const read = (name) => JSON.parse(fs.readFileSync(
   'utf8',
 ));
 const orchestrator = read('universal-engineering-orchestrator.workflow.json');
-const excel = read('excel-engineering-specialist-adapter.workflow.json');
+const excel = read('excel-extraction-agent.workflow.json');
 const trace = read('mas-trace-event-writer.workflow.json');
 const AsyncFunction = Object.getPrototypeOf(async function () {}).constructor;
 

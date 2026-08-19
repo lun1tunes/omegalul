@@ -36,6 +36,7 @@ from generate_universal_engineering_workflows import (  # noqa: E402
     build_specialist,
     call_hybrid_retrieval,
     code as u_code,
+    embed_excel_specialist_boundary,
     if_node,
     uid,
 )
@@ -147,7 +148,7 @@ def patch_orchestrator() -> None:
     if lane5:
         lane5["parameters"]["width"] = 1400
         lane5["parameters"]["height"] = 420
-        lane5["parameters"]["content"] = "## 5. Excel\nHybrid Retrieval `excel_protocol`, then Adapter. Binary workbook is not stored in task state."
+        lane5["parameters"]["content"] = "## 5. Excel\nHybrid Retrieval `excel_protocol`, then Excel Extractor. Binary workbook is not stored in task state."
 
     upsert_node(wf, u_code("Prepare governed routing RAG request", (-880, 1680), PREPARE_ROUTING_RAG), position=[-880, 1680])
     upsert_node(wf, call_hybrid_retrieval("Call routing Hybrid Retrieval", (-660, 1680)), position=[-660, 1680])
@@ -183,13 +184,14 @@ def patch_orchestrator() -> None:
     add_main(wf, "Build routing RAG evidence gate", "Call CAS persist — routing gate")
 
     replace_target(wf, "Configured specialist router", "Call Excel Extraction Specialist Adapter", "Prepare governed Excel protocol RAG request")
+    replace_target(wf, "Configured specialist router", "Call Excel Extraction Specialist", "Prepare governed Excel protocol RAG request")
     set_main(wf, "Prepare governed Excel protocol RAG request", ["Call Excel protocol Hybrid Retrieval"])
     set_main(wf, "Call Excel protocol Hybrid Retrieval", ["Attach governed Excel protocol RAG evidence"])
     set_main(wf, "Attach governed Excel protocol RAG evidence", ["Excel protocol RAG evidence ready?"])
     set_main(
         wf,
         "Excel protocol RAG evidence ready?",
-        ["Call Excel Extraction Specialist Adapter"],
+        ["Call Excel Extraction Specialist"],
         ["Build Excel protocol RAG evidence gate"],
     )
     add_main(wf, "Build Excel protocol RAG evidence gate", "Normalize specialist result")
@@ -475,6 +477,7 @@ def main() -> None:
     _dump(SUPPORT / "engineering-specialist-template.workflow.json", build_specialist())
     patch_orchestrator()
     patch_excel_agent()
+    embed_excel_specialist_boundary()
     print("MAS hybrid RAG wiring applied")
 
 
