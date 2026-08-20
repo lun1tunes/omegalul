@@ -8,6 +8,7 @@ ROOT = Path(__file__).resolve().parents[2]
 WORKFLOWS = ROOT / "n8n" / "workflows"
 CORE = WORKFLOWS / "core"
 SUPPORT = WORKFLOWS / "support"
+RETIRED = WORKFLOWS / "retired"
 TEMPLATES = ROOT / "n8n" / "templates"
 RAG_SOURCE = ROOT / "n8n" / "rag" / "excel-agent-operating-guide.documents.json"
 IMPORT_MANIFEST = ROOT / "n8n" / "import-manifest.json"
@@ -39,6 +40,10 @@ UNIVERSAL_ENGINEERING_WORKFLOWS = {
 } | SCHEDULE_FOUNDATION_WORKFLOWS
 ERROR_AND_STUB_WORKFLOWS = {
     "mas-error-handler.workflow.json",
+    "mas-error-traces.workflow.json",
+    "mas-ensure-control-plane.workflow.json",
+    "mas-orchestrator.workflow.json",
+    "schedule-builder-agent.workflow.json",
     "cluster-calc-specialist-adapter.workflow.json",
     "binary-results-specialist-adapter.workflow.json",
     "presentation-specialist-adapter.workflow.json",
@@ -49,8 +54,12 @@ def workflow_files() -> list[Path]:
     return sorted(WORKFLOWS.glob("**/*.workflow.json"))
 
 
+def importable_workflow_files() -> list[Path]:
+    return sorted(path for path in workflow_files() if "retired" not in path.parts)
+
+
 def workflow_path(name: str) -> Path:
-    for folder in (CORE, SUPPORT, WORKFLOWS):
+    for folder in (CORE, SUPPORT, RETIRED, WORKFLOWS):
         candidate = folder / name
         if candidate.is_file():
             return candidate
@@ -61,6 +70,7 @@ def workflow_path(name: str) -> Path:
 # the shorter labels shown by the node picker UI.
 N8N_2_30_8_PORTABLE_NODE_VERSIONS = {
     "@n8n/n8n-nodes-langchain.agent": {3.1},
+    "@n8n/n8n-nodes-langchain.chainLlm": {1.9},
     "@n8n/n8n-nodes-langchain.documentDefaultDataLoader": {1.1},
     "@n8n/n8n-nodes-langchain.embeddingsOpenAi": {1.2},
     "@n8n/n8n-nodes-langchain.lmChatOpenAi": {1.3},
@@ -101,14 +111,17 @@ def test_ui_import_manifest_is_complete_and_matches_static_bindings() -> None:
     assert manifest["contract"] == "n8n_ui_import_manifest"
     assert manifest["target_n8n_version"] == "2.30.8"
     imported = {Path(value).name for value in manifest["full_clean_import_set"]}
-    assert imported == {path.name for path in workflow_files()}
-    assert len(imported) == 19
+    assert imported == {path.name for path in importable_workflow_files()}
+    assert len(imported) == 13
     assert {path.name for path in CORE.glob("*.workflow.json")} == {
         Path(value).name for value in manifest["runtime_import_order"]
     }
     assert {path.name for path in SUPPORT.glob("*.workflow.json")} == {
         Path(item["workflow"]).name for item in manifest["optional_or_non_runtime"]
     }
+    retired = {Path(value).name for value in manifest["retired_not_imported"]}
+    assert retired == {path.name for path in RETIRED.glob("*.workflow.json")}
+    assert retired.isdisjoint(imported)
     assert not list(WORKFLOWS.glob("*.workflow.json"))
 
     workflows_by_name = {
@@ -119,13 +132,13 @@ def test_ui_import_manifest_is_complete_and_matches_static_bindings() -> None:
     workflow_names = set(workflows_by_name)
     bindings = manifest["mandatory_execute_workflow_bindings"]
     future_bindings = manifest["future_enterprise_or_optional_bindings"]
-    assert len(bindings) == 27
+    assert len(bindings) == 26
     assert future_bindings == []
     assert manifest["health_check"]["ui_name"] == "Form — MAS Deployment Health Check"
     assert (ROOT / "docs.md").is_file()
     runtime_order = [Path(value).name for value in manifest["runtime_import_order"]]
-    assert runtime_order.index("cas-persist-task.workflow.json") < runtime_order.index(
-        "universal-engineering-orchestrator.workflow.json"
+    assert runtime_order.index("schedule-builder-agent.workflow.json") < runtime_order.index(
+        "mas-orchestrator.workflow.json"
     )
     all_static_bindings = bindings + future_bindings
     placeholder_targets: dict[str, tuple[str, str]] = {}
@@ -253,6 +266,10 @@ def test_workflows_use_current_n8n_2_30_8_ai_node_versions() -> None:
                 assert node["typeVersion"] == 3.1, (path.name, node["name"])
                 expected_parser = path.name in UNIVERSAL_ENGINEERING_WORKFLOWS
                 assert node["parameters"].get("hasOutputParser") is expected_parser
+            elif node["type"] == "@n8n/n8n-nodes-langchain.chainLlm":
+                assert node["typeVersion"] == 1.9, (path.name, node["name"])
+                if path.name == "mas-orchestrator.workflow.json":
+                    assert node["parameters"].get("hasOutputParser") is True
             elif node["type"] == "@n8n/n8n-nodes-langchain.lmChatOpenAi":
                 assert node["typeVersion"] == 1.3, (path.name, node["name"])
                 options = node["parameters"].get("options") or {}
@@ -412,17 +429,20 @@ def test_hitl_and_health_forms_are_hand_authored_not_generator_emitted() -> None
     assert hand_authored.isdisjoint(schedule_emitted)
 
     universal_source = (TEMPLATES / "generate_universal_engineering_workflows.py").read_text(encoding="utf-8")
-    universal_emitted = set(re.findall(r'(?:WORKFLOWS|CORE|SUPPORT) / "([^"]+\.workflow\.json)"', universal_source))
-    universal_emitted |= set(re.findall(r"(?:WORKFLOWS|CORE|SUPPORT) / '([^']+\.workflow\.json)'", universal_source))
+    universal_emitted = set(re.findall(r'(?:WORKFLOWS|CORE|SUPPORT|RETIRED) / "([^"]+\.workflow\.json)"', universal_source))
+    universal_emitted |= set(re.findall(r"(?:WORKFLOWS|CORE|SUPPORT|RETIRED) / '([^']+\.workflow\.json)'", universal_source))
     assert hand_authored.isdisjoint(universal_emitted)
 
+    health = "workflows/core/mas-deployment-health-check.workflow.json"
+    assert health in load_json(IMPORT_MANIFEST)["full_clean_import_set"]
+    assert health in load_json(IMPORT_MANIFEST)["runtime_import_order"]
     for rel in (
-        "workflows/core/mvp-entry-form.workflow.json",
-        "workflows/core/mas-human-gate-form.workflow.json",
-        "workflows/core/mas-deployment-health-check.workflow.json",
+        "workflows/retired/mvp-entry-form.workflow.json",
+        "workflows/retired/mas-human-gate-form.workflow.json",
+        "workflows/retired/mas-activity-hydrate.workflow.json",
     ):
-        assert rel in load_json(IMPORT_MANIFEST)["full_clean_import_set"]
-        assert rel in load_json(IMPORT_MANIFEST)["runtime_import_order"]
+        assert rel not in load_json(IMPORT_MANIFEST)["full_clean_import_set"]
+        assert (ROOT / "n8n" / rel).is_file()
 
 
 def test_mas_entry_and_human_gate_forms_are_native_hitl_ux() -> None:
@@ -492,13 +512,10 @@ def test_mas_deployment_health_check_is_native_and_reports_where_to_fix() -> Non
     assert by_name["Show health report"]["parameters"]["operation"] == "completion"
     assert by_name["Probe task Data Table"]["type"] == "n8n-nodes-base.dataTable"
     assert by_name["Probe trace Data Table"]["typeVersion"] == 1.1
-    assert by_name["Call Orchestrator probe"]["typeVersion"] == 1.3
-    assert by_name["Call Trace Writer probe"]["parameters"]["workflowId"]["value"] == (
-        "REPLACE_HEALTH_TRACE_IN_UI"
-    )
-    assert by_name["Call Orchestrator probe"]["parameters"]["workflowId"]["value"] == (
-        "REPLACE_HEALTH_ORCHESTRATOR_IN_UI"
-    )
+    assert "Call Orchestrator probe" not in by_name
+    assert "Call Trace Writer probe" not in by_name
+    assert by_name["Probe math-service /health"]["parameters"]["url"] == "http://math-service:8100/health"
+    assert by_name["Probe schedule-builder /health"]["parameters"]["url"] == "http://schedule-builder:8090/health"
     report = by_name["Build health report"]["parameters"]["jsCode"]
     assert "where_to_fix" in report
     assert "Form — MAS Entry" in report
@@ -548,6 +565,28 @@ def test_delivery_workflows_are_inactive_until_ui_configuration() -> None:
     for path in paths:
         workflow = load_json(path)
         assert workflow.get("active") is False, path.name
+
+
+def test_mas_ensure_control_plane_is_additive_postgres_ddl() -> None:
+    workflow = load_json(workflow_path("mas-ensure-control-plane.workflow.json"))
+    assert workflow["name"] == "MAS — Ensure Control Plane"
+    assert workflow.get("active") is False
+    assert workflow["settings"].get("errorWorkflow") in ("", None)
+    pg = [node for node in workflow["nodes"] if node["type"] == "n8n-nodes-base.postgres"]
+    assert len(pg) >= 8
+    sql = "\n".join(str(node["parameters"].get("query") or "") for node in pg)
+    for table in ("cases", "events", "error_traces", "executions", "agent_registry"):
+        assert f"CREATE TABLE IF NOT EXISTS {table}" in sql
+    assert any(node["name"] == "Ensure table cases" for node in pg)
+    assert any(node["name"] == "Seed agent_registry schedule_builder" for node in pg)
+    assert not any(str(node["name"]).startswith("Ensure statement ") for node in pg)
+    seed = next(node for node in pg if node["name"] == "Seed agent_registry schedule_builder")
+    assert "GRUPTREE" in str(seed["parameters"].get("query") or "")
+    assert "agent_id TEXT" in sql
+    assert "schedule_builder" in sql
+    assert "DROP TABLE" not in sql
+    assert "DROP SCHEMA" not in sql
+    assert "CREATE EXTENSION" not in sql
 
 
 def test_universal_engineering_orchestrator_has_no_service_or_excel_contract() -> None:
@@ -870,7 +909,7 @@ def test_cas_persist_task_is_the_single_fail_closed_write_path() -> None:
     generator = (TEMPLATES / "generate_universal_engineering_workflows.py").read_text(encoding="utf-8")
     assert "def call_cas_persist(" in generator
     assert "def build_cas_persist(" in generator
-    assert 'CORE / "cas-persist-task.workflow.json"' in generator
+    assert 'RETIRED / "cas-persist-task.workflow.json"' in generator
     assert "Insert durable task state" not in generator
     assert "CAS persist human action then plan" not in generator
 
@@ -1265,7 +1304,7 @@ def test_legacy_excel_mas_workflow_is_removed() -> None:
     assert not (CORE / "excel-engineering-specialist-adapter.workflow.json").exists()
     assert not (CORE / "mas-activity-list-tasks.workflow.json").exists()
     assert not (CORE / "mas-activity-load-feed.workflow.json").exists()
-    hydrate = load_json(CORE / "mas-activity-hydrate.workflow.json")
+    hydrate = load_json(workflow_path("mas-activity-hydrate.workflow.json"))
     assert hydrate["name"] == "Activity — Hydrate (Data Tables)"
     webhooks = [n for n in hydrate["nodes"] if n["type"] == "n8n-nodes-base.webhook"]
     assert len(webhooks) == 1
@@ -1274,10 +1313,10 @@ def test_legacy_excel_mas_workflow_is_removed() -> None:
 
 
 def test_mas_error_handler_is_n8n_error_workflow_and_execute_subworkflow() -> None:
-    handler = load_json(CORE / "mas-error-handler.workflow.json")
-    orch = load_json(CORE / "universal-engineering-orchestrator.workflow.json")
-    cas = load_json(CORE / "cas-persist-task.workflow.json")
-    trace = load_json(CORE / "mas-trace-event-writer.workflow.json")
+    handler = load_json(workflow_path("mas-error-handler.workflow.json"))
+    orch = load_json(workflow_path("universal-engineering-orchestrator.workflow.json"))
+    cas = load_json(workflow_path("cas-persist-task.workflow.json"))
+    trace = load_json(workflow_path("mas-trace-event-writer.workflow.json"))
     types = {node["type"] for node in handler["nodes"]}
     assert "n8n-nodes-base.errorTrigger" in types
     assert "n8n-nodes-base.executeWorkflowTrigger" in types
@@ -1337,6 +1376,10 @@ def test_universal_engineering_instruction_templates_are_portable() -> None:
         "schedule_emit_order.py",
         "mas_handoff_contracts.py",
         "generate_mas_error_handler.py",
+        "generate_mas_error_traces.py",
+        "generate_mas_orchestrator.py",
+        "generate_mas_ensure_control_plane.py",
+        "generate_schedule_builder_agent.py",
         "relayout_core_workflows.py",
     }
     assert {path.name for path in TEMPLATES.iterdir() if path.is_file()} == expected
@@ -1781,9 +1824,11 @@ def test_schedule_rag_and_trace_foundations_enforce_governance() -> None:
     assert "/v1/sync" in trace_text
     assert "event_type==='handoff'" in trace_text
     health = load_json(workflow_path("mas-deployment-health-check.workflow.json"))
-    probe = next(n for n in health["nodes"] if n["name"] == "Prepare Trace Writer probe")
-    assert "mas_trace_event:" in probe["parameters"]["jsCode"]
-    assert "mas_trace_events: []" not in probe["parameters"]["jsCode"]
+    health_names = {node["name"] for node in health["nodes"]}
+    assert "Prepare Trace Writer probe" not in health_names
+    assert "Call Trace Writer probe" not in health_names
+    assert "Probe math-service /health" in health_names
+    assert not any(node["type"] == "n8n-nodes-base.executeWorkflow" for node in health["nodes"])
 
 
 def test_hybrid_rag_is_the_only_agent_knowledge_path() -> None:

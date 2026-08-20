@@ -13,18 +13,16 @@ from pydantic_settings import BaseSettings, SettingsConfigDict
 SERVICE_ROOT = Path(__file__).resolve().parents[1]
 REPO_ROOT = SERVICE_ROOT.parent
 STATIC = SERVICE_ROOT / "static"
-VERSION = "0.6.0"
-DEFAULT_ORCHESTRATOR_WORKFLOW_ID = "ba8ba59f-e4e4-5ff6-b22c-63ceae883271"
-ORCHESTRATOR_WEBHOOK_PATH = "engineering-orchestrator"
+VERSION = "0.7.0"
+DEFAULT_ORCHESTRATOR_WORKFLOW_ID = "e9bbdb6e-3b7c-5dc0-851a-30bd9f2eb0d6"
+ORCHESTRATOR_WEBHOOK_PATH = "mas-orchestrator-step"
 HYDRATE_WEBHOOK_PATH = "mas-activity-hydrate"
 LIST_WEBHOOK_PATH = HYDRATE_WEBHOOK_PATH
 FEED_WEBHOOK_PATH = HYDRATE_WEBHOOK_PATH
 INGEST_WEBHOOK_PATH = "mas-knowledge-ingest"
 DEFAULT_WEBHOOK_CHECKS = (
     ORCHESTRATOR_WEBHOOK_PATH,
-    HYDRATE_WEBHOOK_PATH,
     INGEST_WEBHOOK_PATH,
-    "mas-deployment-health-check",
 )
 
 UNCONFIGURED_N8N = (
@@ -115,6 +113,7 @@ class Settings(BaseSettings):
         default="", validation_alias="ACTIVITY_DURABLE_AUTH_VALUE"
     )
 
+    database_url: str = Field(default="", validation_alias="DATABASE_URL")
     activity_state_path: str = Field(default="", validation_alias="ACTIVITY_STATE_PATH")
     activity_binaries_path: str = Field(default="", validation_alias="ACTIVITY_BINARIES_PATH")
     mas_knowledge_corpus: str = Field(default="", validation_alias="MAS_KNOWLEDGE_CORPUS")
@@ -123,6 +122,7 @@ class Settings(BaseSettings):
 
     @field_validator(
         "n8n_base_url",
+        "database_url",
         "orchestrator_webhook_url",
         "activity_hydrate_url",
         "activity_list_url",

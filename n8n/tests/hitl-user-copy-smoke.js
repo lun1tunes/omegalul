@@ -2,17 +2,10 @@
 
 // Human-facing HITL copy: findings stay machine codes; Activity/gate text is Russian.
 const assert = require('node:assert/strict');
-const fs = require('node:fs');
-const path = require('node:path');
-
-const workspace = process.env.WORKSPACE_ROOT || path.resolve(__dirname, '..', '..');
-const read = (name) => JSON.parse(fs.readFileSync(
-  path.join(workspace, 'n8n', 'workflows', 'core', name),
-  'utf8',
-));
-const builder = read('tnavigator-schedule-builder.workflow.json');
-const orch = read('universal-engineering-orchestrator.workflow.json');
-const excel = read('excel-extraction-agent.workflow.json');
+const { readWorkflow } = require('./_workflow');
+const builder = readWorkflow('tnavigator-schedule-builder.workflow.json');
+const orch = readWorkflow('universal-engineering-orchestrator.workflow.json');
+const excel = readWorkflow('excel-extraction-agent.workflow.json');
 const AsyncFunction = Object.getPrototypeOf(async function () {}).constructor;
 
 function source(wf, name) {

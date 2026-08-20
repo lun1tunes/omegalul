@@ -7,7 +7,7 @@ const path = require('node:path');
 const { spawnSync } = require('node:child_process');
 const vm = require('node:vm');
 
-const workspace = process.env.WORKSPACE_ROOT || path.resolve(__dirname, '..', '..');
+const { workspace, workflowFile } = require('./_workflow');
 const AsyncFunction = Object.getPrototypeOf(async function () {}).constructor;
 
 function loadMaterializeFn() {
@@ -37,8 +37,7 @@ function walkPackage(dir, out = []) {
 }
 
 async function analyzeWithBuilder(pkg) {
-  const workflows = path.join(workspace, 'n8n', 'workflows', 'core');
-  const workflow = JSON.parse(fs.readFileSync(path.join(workflows, 'tnavigator-schedule-builder.workflow.json'), 'utf8'));
+  const workflow = JSON.parse(fs.readFileSync(workflowFile('tnavigator-schedule-builder.workflow.json'), 'utf8'));
   const node = workflow.nodes.find((n) => n.name === 'Analyze lossless baseline inventory');
   assert(node);
   const fn = new AsyncFunction('$json', node.parameters.jsCode);

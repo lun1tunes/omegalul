@@ -51,6 +51,8 @@ from app.durable import (
 from app.persist import load_state, persist_enabled, save_state
 from app.readiness import probe_n8n_stack
 from app.task_binaries import load_task_binaries, save_task_binaries
+from app import control_plane
+from app.cases_api import router as cases_router, case_feed, case_rail_item
 
 configure_logging()
 logger = logging.getLogger("mas-activity")
@@ -79,6 +81,12 @@ async def lifespan(_app: FastAPI):
     _subscribers.clear()
     _tasks.update(tasks)
     _order.extend(order)
+    try:
+        schema = control_plane.ensure_schema()
+        logger.info("control plane schema %s", schema)
+    except Exception:
+        logger.exception("control plane schema ensure failed")
+        raise
     yield
 
 
@@ -99,6 +107,7 @@ app.add_middleware(
     allow_headers=["*"],
     expose_headers=["Content-Disposition"],
 )
+app.include_router(cases_router)
 
 
 _lock = asyncio.Lock()
@@ -170,6 +179,7 @@ def reset_store() -> None:
     _order.clear()
     _task_binaries.clear()
     _empty_rail_list_attempted = False
+    control_plane.reset_memory()
     _persist()
 
 

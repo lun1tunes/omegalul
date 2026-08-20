@@ -17,11 +17,13 @@ def _safe_url(url: str) -> str:
     return url.split("?", 1)[0]
 
 
-def _ok_http(status: int) -> bool:
+def _ok_http(status: int, *, webhook: bool = False) -> bool:
     if 200 <= status < 300:
         return True
-    # Webhook exists but inbound auth is on, or probe task is missing.
-    return status in {400, 401, 403, 409, 422}
+    # Webhook is registered: inbound auth or a validation error. HTTP 500 is not healthy.
+    if webhook:
+        return status in {400, 401, 403, 409, 422}
+    return False
 
 
 async def _request(
@@ -31,6 +33,7 @@ async def _request(
     *,
     headers: dict[str, str] | None = None,
     json_body: dict[str, Any] | None = None,
+    webhook: bool = False,
 ) -> dict[str, Any]:
     if not _is_absolute_http_url(url):
         return {
@@ -71,7 +74,7 @@ async def _request(
     except ValueError:
         preview = response.text[:200] or None
     return {
-        "ok": _ok_http(response.status_code),
+        "ok": _ok_http(response.status_code, webhook=webhook),
         "reachable": True,
         "http_status": response.status_code,
         "contract": body_contract,
@@ -125,10 +128,11 @@ async def probe_n8n_stack(
                 orch_url,
                 headers=settings.orchestrator_headers() or {"Content-Type": "application/json"},
                 json_body={
-                    "action": "status",
-                    "task_id": "activity_connectivity_probe",
+                    "action": "probe",
+                    "case_id": "CASE-readiness-probe",
                     "requested_by": "activity-diagnostics",
                 },
+                webhook=True,
             )
             checks["orchestrator"]["transport"] = "webhook"
         elif transport == "n8n_rest" and settings.n8n_base:
@@ -167,9 +171,8 @@ async def probe_n8n_stack(
                 "note": "same webhook as activity_list (mas-activity-hydrate)",
             }
         else:
-            missing.append("ACTIVITY_HYDRATE_URL or N8N_BASE_URL")
-            checks["activity_list"] = {"ok": False, "configured": False}
-            checks["activity_feed"] = {"ok": False, "configured": False}
+            checks["activity_list"] = {"ok": True, "configured": False, "note": "hydrate retired; cases live in Postgres"}
+            checks["activity_feed"] = {"ok": True, "configured": False, "note": "hydrate retired; cases live in Postgres"}
 
         extras: list[dict[str, Any]] = []
         seen = {
@@ -184,11 +187,11 @@ async def probe_n8n_stack(
             if key in seen:
                 continue
             seen.add(key)
-            extras.append({"path": path, **(await _request(client, "GET", url))})
+            extras.append({"path": path, **(await _request(client, "GET", url, webhook=True))})
         if extras:
             checks["extra_webhooks"] = extras
 
-    required = ("ui", "n8n_healthz", "orchestrator", "activity_list", "activity_feed")
+    required = ("ui", "n8n_healthz", "orchestrator")
     ready = not missing and all(checks.get(name, {}).get("ok") for name in required)
     extras_failed = [
         item["path"]

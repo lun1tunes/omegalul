@@ -7,8 +7,49 @@ services:
     volumes:
       - ./excel-agent-tools:/app
     environment:
-      - EXCEL_TOOLS_API_KEY=local-dev-excel-tools-api-key
+      - API_KEY=${EXCEL_TOOLS_API_KEY:-local-dev-excel-tools-api-key}
+      - EXCEL_TOOLS_API_KEY=${EXCEL_TOOLS_API_KEY:-local-dev-excel-tools-api-key}
       - OPENAI_API_KEY=${OPENAI_API_KEY:-}
+      - ACTIVITY_BASE_URL=${ACTIVITY_BASE_URL:-http://mas-activity:8200}
+      - MAX_QUERY_PREVIEW_ROWS=10000
+    extra_hosts:
+      - host.docker.internal:host-gateway
+    depends_on:
+      - mas-activity
+    networks:
+      - backend
+      - egress
+  math-service:
+    image: python:3.11-slim
+    command: >
+      sh -c "pip install -r requirements.txt && python3 -m uvicorn app.main:app --host 0.0.0.0 --port 8100"
+    working_dir: /app
+    volumes:
+      - ./fastapi-math-service:/app
+    environment:
+      - ACTIVITY_BASE_URL=${ACTIVITY_BASE_URL:-http://mas-activity:8200}
+    extra_hosts:
+      - host.docker.internal:host-gateway
+    depends_on:
+      - mas-activity
+    networks:
+      - backend
+      - egress
+  schedule-builder:
+    image: python:3.11-slim
+    command: >
+      sh -c "apt-get update -qq && apt-get install -y -qq --no-install-recommends nodejs >/dev/null && pip install -r requirements.txt && python3 -m uvicorn app.main:app --host 0.0.0.0 --port 8090"
+    working_dir: /app
+    volumes:
+      - ./schedule-builder-service:/app
+      - ./n8n/templates:/templates:ro
+    environment:
+      - ACTIVITY_BASE_URL=${ACTIVITY_BASE_URL:-http://mas-activity:8200}
+      - SCHEDULE_TEMPLATES=/templates
+    extra_hosts:
+      - host.docker.internal:host-gateway
+    depends_on:
+      - mas-activity
     networks:
       - backend
       - egress
@@ -21,17 +62,21 @@ services:
       - ./mas-activity-service:/app
       - ./n8n/rag:/rag
     environment:
-      - ORCHESTRATOR_WEBHOOK_URL=http://n8n:5678/webhook/engineering-orchestrator
+      - ORCHESTRATOR_WEBHOOK_URL=http://n8n:5678/webhook/mas-orchestrator-step
       - ORCHESTRATOR_AUTH_HEADER=${ORCHESTRATOR_AUTH_HEADER:-Authorization}
       - ORCHESTRATOR_AUTH_VALUE=${ORCHESTRATOR_AUTH_VALUE:-local-orch-inbound}
       - N8N_BASE_URL=http://n8n:5678
       - KNOWLEDGE_INGEST_URL=http://n8n:5678/webhook/mas-knowledge-ingest
-      - ORCHESTRATOR_WORKFLOW_ID=ba8ba59f-e4e4-5ff6-b22c-63ceae883271
+      - ORCHESTRATOR_WORKFLOW_ID=e9bbdb6e-3b7c-5dc0-851a-30bd9f2eb0d6
       - HITL_MODE=n8n_rest
       - ACTIVITY_TLS_VERIFY=${ACTIVITY_TLS_VERIFY:-true}
       - ACTIVITY_CA_BUNDLE=${ACTIVITY_CA_BUNDLE:-}
       - ACTIVITY_STATE_PATH=/app/data/activity_state.json
       - MAS_KNOWLEDGE_CORPUS=/rag/excel-agent-operating-guide.documents.json
+      - DATABASE_URL=postgresql://${POSTGRES_USER:-n8n}:${POSTGRES_PASSWORD}@postgres:5432/${POSTGRES_DB:-n8n}
+    depends_on:
+      postgres:
+        condition: service_healthy
     networks:
       - backend
       - egress
@@ -45,6 +90,8 @@ services:
     volumes:
     - postgres_data:/var/lib/postgresql/data
     - ./postgres-init:/docker-entrypoint-initdb.d:ro
+    ports:
+    - 127.0.0.1:${POSTGRES_HOST_PORT:-5432}:5432
     mem_limit: ${POSTGRES_MEMORY_LIMIT:-1g}
     cpus: ${POSTGRES_CPUS:-2.0}
     pids_limit: 256
@@ -57,6 +104,7 @@ services:
       retries: 20
     networks:
     - backend
+    - egress
   n8n:
     image: n8nio/n8n:2.30.8@sha256:11524034450080bd0032754892b23ff20be43d72cf320ce75640f7c5475fdca8
     restart: unless-stopped

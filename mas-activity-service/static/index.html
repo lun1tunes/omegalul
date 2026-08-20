@@ -3,20 +3,20 @@
 <head>
   <meta charset="utf-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1" />
-  <title>NOVATEK RE MAS Workspace</title>
+  <title>NOVATEK RE MASter Workspace</title>
   <link rel="icon" href="data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 100 100'><rect x='14' y='40' width='8' height='20' rx='4' fill='%23001A57'/><rect x='78' y='40' width='8' height='20' rx='4' fill='%23001A57'/><line x1='50' y1='20' x2='50' y2='10' stroke='%230033A0' stroke-width='6' stroke-linecap='round'/><circle cx='50' cy='10' r='6' fill='%2300B8F0'/><rect x='22' y='20' width='56' height='60' rx='12' fill='%230033A0'/><circle cx='36' cy='45' r='7' fill='%2300B8F0'/><circle cx='64' cy='45' r='7' fill='%2300B8F0'/><rect x='36' y='64' width='28' height='6' rx='3' fill='%2300B8F0'/></svg>" />
   <link rel="preconnect" href="https://fonts.googleapis.com" />
   <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
   <link href="https://fonts.googleapis.com/css2?family=IBM+Plex+Sans:wght@400;500;600;700&family=IBM+Plex+Mono:wght@400;500&display=swap" rel="stylesheet" />
-  <link rel="stylesheet" href="/static/app.css?v=64" />
+  <link rel="stylesheet" href="/static/app.css?v=75" />
 </head>
 <body>
   <div class="atmosphere" aria-hidden="true"></div>
   <header class="top">
-    <a class="brand" href="/" id="brandHome" title="На главную" aria-label="NOVATEK RE MAS Workspace — на главную">
+    <a class="brand" href="/" id="brandHome" title="На главную" aria-label="NOVATEK RE MASter Workspace — на главную">
       <span class="brand-lockup">
         <span class="brand-row">
-          <span class="mark">NOVATEK RE MAS</span>
+          <span class="mark">NOVATEK RE MASter</span>
           <span class="product">Workspace</span>
         </span>
         <span class="brand-sub">Novatek STC reservoir engineering multi-agent system</span>
@@ -46,33 +46,63 @@
       </button>
         <div class="rail-list" id="railList"></div>
     </aside>
-    <section class="workspace">
-      <div class="transcript" aria-live="polite">
-        <div class="transcript-head">
-          <div class="head-copy">
-            <h1 id="title">
-              <span class="status-dot" id="statusDot" hidden aria-hidden="true"></span>
-              <span id="titleText">Выберите задачу</span>
-            </h1>
+    <section class="workspace mode-chat" id="workspace">
+      <div class="transcript-head">
+        <div class="head-copy">
+          <h1 id="title">
+            <span class="status-dot" id="statusDot" hidden aria-hidden="true"></span>
+            <span id="titleText">Выберите задачу</span>
+            <input id="renameTaskInput" class="rename-task-input" type="text" maxlength="120" hidden autocomplete="off" aria-label="Название задачи" />
+            <button type="button" id="renameTaskBtn" class="rename-task-btn" hidden title="Переименовать задачу" aria-label="Переименовать задачу">
+              <svg width="14" height="14" viewBox="0 0 16 16" aria-hidden="true">
+                <path fill="currentColor" d="M11.2 1.6 14.4 4.8 5.6 13.6H2.4v-3.2L11.2 1.6Zm1.1-1.1 1.2 1.2c.5.5.5 1.3 0 1.8l-.5.5-3-3 .5-.5c.5-.5 1.3-.5 1.8 0ZM1.6 12.4V14.4h2l.4-.1 8.2-8.2-2.3-2.3L1.7 12c0 .1-.1.3-.1.4Z"/>
+              </svg>
+            </button>
+          </h1>
+        </div>
+        <div class="view-toggle" role="tablist" aria-label="Представление задачи">
+          <button type="button" id="viewChatBtn" class="view-toggle-btn" role="tab" aria-selected="true" aria-controls="chatView">Чат</button>
+          <button type="button" id="viewSchemaBtn" class="view-toggle-btn" role="tab" aria-selected="false" aria-controls="schemaView">Схема</button>
+        </div>
+        <a id="scheduleDownloadHead" class="btn btn-quiet schedule-download" hidden download>Скачать schedule.inc</a>
+      </div>
+      <div class="workspace-main">
+        <div class="transcript chat-pane" id="chatView" aria-live="polite">
+          <aside class="request-panel" id="requestPanel" hidden>
+            <div class="request-label">Исходный запрос</div>
+            <p class="request-text" id="requestText"></p>
+            <p class="request-files" id="requestFiles" hidden></p>
+          </aside>
+          <aside class="status-banner" id="statusBanner" hidden>
+            <div class="status-banner-label" id="statusBannerLabel">Статус</div>
+            <p class="status-banner-text" id="statusBannerText"></p>
+          </aside>
+          <ol class="thread" id="thread"></ol>
+          <p class="empty" id="empty" hidden></p>
+          <div class="not-found" id="notFound" hidden>
+            <p class="not-found-title">Задача не найдена</p>
+            <p class="not-found-id" id="notFoundId"></p>
+            <p class="not-found-copy">Нет такой задачи в Workspace.</p>
+            <a class="btn btn-quiet" href="/" id="notFoundHome">Вернуться на главную</a>
           </div>
         </div>
-        <aside class="request-panel" id="requestPanel" hidden>
-          <div class="request-label">Исходный запрос</div>
-          <p class="request-text" id="requestText"></p>
-          <p class="request-files" id="requestFiles" hidden></p>
-        </aside>
-        <aside class="status-banner" id="statusBanner" hidden>
-          <div class="status-banner-label" id="statusBannerLabel">Статус</div>
-          <p class="status-banner-text" id="statusBannerText"></p>
-        </aside>
-        <ol class="thread" id="thread"></ol>
-        <p class="empty" id="empty" hidden></p>
-        <div class="not-found" id="notFound" hidden>
-          <p class="not-found-title">Задача не найдена</p>
-          <p class="not-found-id" id="notFoundId"></p>
-          <p class="not-found-copy">Нет такой задачи в памяти Workspace и в Data Tables.</p>
-          <a class="btn btn-quiet" href="/" id="notFoundHome">Вернуться на главную</a>
-        </div>
+        <section class="schema-view" id="schemaView" hidden tabindex="0" aria-label="Схема агентов">
+          <div class="schema-stage" id="schemaStage">
+            <svg class="schema-edges" id="schemaEdges" aria-hidden="true"></svg>
+            <div class="schema-nodes" id="schemaNodes"></div>
+          </div>
+          <div class="schema-timeline" id="schemaTimeline">
+            <button type="button" class="schema-step-btn" id="schemaPrev" aria-label="Предыдущий шаг">‹</button>
+            <div class="schema-track">
+              <span class="schema-track-label" id="schemaStartLabel">Постановка задачи</span>
+              <input id="schemaRange" type="range" min="0" max="0" value="0" aria-label="Шаг схемы" />
+              <span class="schema-track-label" id="schemaEndLabel">Результат</span>
+            </div>
+            <button type="button" class="schema-step-btn" id="schemaNext" aria-label="Следующий шаг">›</button>
+            <p class="schema-step-label" id="schemaStepLabel"></p>
+            <span class="schema-step-count" id="schemaStepCount">0 / 0</span>
+          </div>
+        </section>
       </div>
 
       <details class="diff-expander" id="diffExpander" hidden>
@@ -96,6 +126,10 @@
             <button type="submit" class="btn btn-approve" id="startSubmitBtn">Создать задачу</button>
           </div>
         </div>
+        <label class="reply-field">
+          <span>Название задачи <em class="optional">(необязательно)</em></span>
+          <input id="taskName" type="text" maxlength="120" placeholder="Например: Даты ввода 4кв 2025" />
+        </label>
         <label class="reply-field">
           <span>Описание задачи</span>
           <textarea id="taskDescription" rows="3" required placeholder="Например: во вложении Excel с новыми датами ввода — обновите прогнозный schedule"></textarea>
@@ -160,6 +194,7 @@
     </section>
   </main>
 
-  <script src="/static/app.js?v=70"></script>
+  <script src="/static/schema.js?v=6"></script>
+  <script src="/static/app.js?v=82"></script>
 </body>
 </html>

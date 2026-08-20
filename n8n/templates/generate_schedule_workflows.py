@@ -1,8 +1,9 @@
 """Generate runtime SCHEDULE workflows for n8n 2.30.8.
 
-Emits only Knowledge Ingestion, Hybrid Retrieval, Builder and MAS Trace.
-Stage algorithms live as Code nodes inside Builder; standalone diagnostic
-mirrors are intentionally not generated.
+Emits Knowledge Ingestion + Hybrid Retrieval to core/ (live MAS RAG).
+Builder and MAS Trace go to retired/ (not imported; live emit is FastAPI
+Agent — Schedule Builder). Stage algorithms live as Code nodes inside
+Builder; standalone diagnostic mirrors are intentionally not generated.
 """
 from __future__ import annotations
 import json, uuid
@@ -18,6 +19,11 @@ from schedule_semantic_runtime import build_schedule_validator_js
 ROOT = Path(__file__).resolve().parents[2]
 WORKFLOWS=ROOT/'n8n'/'workflows'
 CORE=WORKFLOWS/'core'
+RETIRED=WORKFLOWS/'retired'
+LIVE_CORE=frozenset({
+ 'tnavigator-schedule-knowledge-ingestion.workflow.json',
+ 'tnavigator-schedule-hybrid-retrieval.workflow.json',
+})
 KEYWORDS=['DATES','INCLUDE','GRUPTREE','WELSPECS','WELLTRACK','COMPDATMD','WCONHIST','WCONPROD','WCONINJE','GCONPROD','GCONINJE','GUIDERAT','GSATPROD','GSATINJE','WELLSTRE','WINJGAS','GINJGAS','BRANPROP','NODEPROP','GNETDP','NETBALAN','FRACTURE_TEMPLATE','FRACTURE_SPECS','FRACTURE_STAGE','WECON','WTEST','WELTARG','WNETDP','WPIMULT','WDFAC','WEFAC','WELOPEN','WELDRAW','WLIST','WFRACP','WFRACPL','VFPPROD','WVFPDP','ACTIONX','DELAYACT','ENDACTIO','UDQ','UDT','APPLYSCRIPT']
 def uid(name): return str(uuid.uuid5(uuid.NAMESPACE_URL,'omegalul/schedule-foundation/'+name))
 def node(name,type_,version,pos,parameters,**extra):
@@ -272,12 +278,9 @@ def build_all():
  # MAS Trace writer. Diagnostic one-node mirrors of Builder stages are not
  # emitted: regenerate must not resurrect dead import surfaces.
  #
- # Hand-authored HITL / deploy forms are NOT generated here and must stay as
- # committed JSON under n8n/workflows/core/ (imported via import-manifest):
- #   mvp-entry-form.workflow.json
- #   mas-human-gate-form.workflow.json
- #   mas-deployment-health-check.workflow.json
- # Clean import reads those files directly; it does not run this generator.
+ # Hand-authored HITL / deploy forms are NOT generated here.
+ # Live import: n8n/workflows/core/mas-deployment-health-check.workflow.json
+ # Retired (not imported): mvp-entry-form, mas-human-gate-form.
  d={}
  d['tnavigator-schedule-knowledge-ingestion.workflow.json']=build_ingestion(node=node,note=note,code=code,trigger=trigger,ifnode=ifnode,connect=connect,workflow=workflow,set_fields=set_fields)
  d['tnavigator-schedule-hybrid-retrieval.workflow.json']=build_retrieval(node=node,note=note,code=code,trigger=trigger,ifnode=ifnode,connect=connect,workflow=workflow)
@@ -358,7 +361,10 @@ return[{json:{
 
 def main():
  CORE.mkdir(parents=True,exist_ok=True)
- for fn,w in build_all().items(): (CORE/fn).write_text(json.dumps(w,ensure_ascii=False,indent=2)+'\n');print(fn,len(w['nodes']))
+ RETIRED.mkdir(parents=True,exist_ok=True)
+ for fn,w in build_all().items():
+  dest=(CORE if fn in LIVE_CORE else RETIRED)/fn
+  dest.write_text(json.dumps(w,ensure_ascii=False,indent=2)+'\n');print(dest.relative_to(ROOT),len(w['nodes']))
  # Compact canvas + yellow "edit after import" stickies for UI import
  import subprocess,sys
  subprocess.check_call([sys.executable,str(Path(__file__).resolve().parent/'relayout_core_workflows.py')])

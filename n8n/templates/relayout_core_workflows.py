@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Relayout n8n core workflows: compact layered positions + yellow edit-after-import notes.
+"""Relayout n8n core and retired workflows: compact layered positions + yellow edit-after-import notes.
 
 Usage (repo root or n8n/templates):
   python3 n8n/templates/relayout_core_workflows.py
@@ -16,6 +16,7 @@ from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[2]
 CORE = ROOT / "n8n" / "workflows" / "core"
+RETIRED = ROOT / "n8n" / "workflows" / "retired"
 
 # Canvas spacing (n8n node ~192x80 visually)
 COL = 280
@@ -506,7 +507,7 @@ def main() -> int:
     ap.add_argument("--only", action="append", default=[], help="Substring filter on filename")
     args = ap.parse_args()
 
-    files = sorted(CORE.glob("*.json"))
+    files = sorted(CORE.glob("*.json")) + sorted(RETIRED.glob("*.json") if RETIRED.is_dir() else [])
     if args.only:
         files = [p for p in files if any(s in p.name for s in args.only)]
 

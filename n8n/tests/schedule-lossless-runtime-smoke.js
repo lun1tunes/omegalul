@@ -6,14 +6,13 @@ const assert = require('node:assert/strict');
 const fs = require('node:fs');
 const path = require('node:path');
 
-const workspace = process.env.WORKSPACE_ROOT || '/workspace';
-const workflows = path.join(workspace, 'n8n', 'workflows', 'core');
+const { workflowFile } = require('./_workflow');
 const AsyncFunction = Object.getPrototypeOf(async function () {}).constructor;
 
-function codeFrom(workflowFile, nodeName) {
-  const workflow = JSON.parse(fs.readFileSync(path.join(workflows, workflowFile), 'utf8'));
+function codeFrom(name, nodeName) {
+  const workflow = JSON.parse(fs.readFileSync(workflowFile(name), 'utf8'));
   const node = workflow.nodes.find((candidate) => candidate.name === nodeName);
-  assert(node, `${workflowFile}: node ${nodeName} is missing`);
+  assert(node, `${name}: node ${nodeName} is missing`);
   assert.equal(node.type, 'n8n-nodes-base.code');
   return node.parameters.jsCode;
 }

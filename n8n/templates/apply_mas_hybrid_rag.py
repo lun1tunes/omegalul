@@ -43,6 +43,7 @@ from generate_universal_engineering_workflows import (  # noqa: E402
 from schedule_rag_workflows import FINALIZE_INGEST_SQL, PARENT_UPSERT_SQL  # noqa: E402
 
 CORE = ROOT / "n8n" / "workflows" / "core"
+RETIRED = ROOT / "n8n" / "workflows" / "retired"
 SUPPORT = ROOT / "n8n" / "workflows" / "support"
 RAG = ROOT / "n8n" / "rag"
 
@@ -136,7 +137,7 @@ def knowledge_blocks() -> dict[str, list[dict]]:
 
 
 def patch_orchestrator() -> None:
-    path = CORE / "universal-engineering-orchestrator.workflow.json"
+    path = RETIRED / "universal-engineering-orchestrator.workflow.json"
     wf = json.loads(path.read_text(encoding="utf-8"))
     by_name = {n["name"]: n for n in wf["nodes"]}
     by_name["Prepare planner input"]["parameters"]["jsCode"] = PLANNER_INPUT
@@ -199,7 +200,7 @@ def patch_orchestrator() -> None:
 
 
 def patch_excel_agent() -> None:
-    path = CORE / "excel-extraction-agent.workflow.json"
+    path = RETIRED / "excel-extraction-agent.workflow.json"
     wf = json.loads(path.read_text(encoding="utf-8"))
     by_name = {n["name"]: n for n in wf["nodes"]}
     prepare = by_name["Prepare AI Agent input"]

@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import os
 import re
 
 import numpy as np
@@ -245,3 +246,187 @@ async def trajectory_intersection(
         except ValueError as exc:
             raise HTTPException(status_code=422, detail=f"{filename}: {exc}") from exc
     return TrajectoryIntersectionBatchResponse(results=results)
+
+
+class AgentTaskBody(BaseModel):
+    case_id: str = ""
+    task_id: str = ""
+    agent_id: str = "calculation_agent"
+    objective: str = ""
+    handoff_message: str = ""
+    inputs: dict = {}
+    context: dict = {}
+    constraints: dict = {}
+
+
+ACTIVITY = os.getenv("ACTIVITY_BASE_URL", "").rstrip("/")
+
+
+def _emit(case_id: str, activity: str, payload: dict) -> None:
+    if not case_id or not activity:
+        return
+    import json
+    from urllib.request import Request, urlopen
+
+    try:
+        req = Request(
+            f"{activity.rstrip('/')}/cases/{case_id}/events",
+            data=json.dumps(payload, ensure_ascii=False).encode("utf-8"),
+            headers={"Content-Type": "application/json"},
+            method="POST",
+        )
+        urlopen(req, timeout=8).read()
+    except Exception:
+        pass
+
+
+def _read_artifact(inputs: dict, slot: str, case_id: str) -> tuple[str, bytes] | None:
+    from pathlib import Path
+    from urllib.request import urlopen
+
+    artifacts = inputs.get("artifacts") if isinstance(inputs.get("artifacts"), dict) else {}
+    meta = artifacts.get(slot) if isinstance(artifacts.get(slot), dict) else {}
+    path = inputs.get(f"{slot}_path") or meta.get("path")
+    url = inputs.get(f"{slot}_url")
+    activity = str(inputs.get("activity_base_url") or ACTIVITY).rstrip("/")
+    artifact_id = meta.get("artifact_id") or slot
+    if path and Path(path).is_file():
+        return Path(path).name, Path(path).read_bytes()
+    if not url and activity and case_id:
+        url = f"{activity}/cases/{case_id}/artifacts/{artifact_id}"
+    if not url:
+        return None
+    with urlopen(url, timeout=30) as resp:
+        data = resp.read()
+    name = str(meta.get("filename") or Path(url).name or slot)
+    return name, data
+
+
+@app.post("/agent/run")
+def agent_run(body: AgentTaskBody) -> dict:
+    inputs = body.inputs if isinstance(body.inputs, dict) else {}
+    activity = str(inputs.get("activity_base_url") or ACTIVITY).rstrip("/")
+    _emit(
+        body.case_id,
+        activity,
+        {
+            "kind": "agent.accepted",
+            "actor": "calculation_agent",
+            "agent_id": "calculation_agent",
+            "task_id": body.task_id,
+            "status_message": "Считаю пересечение поверхности и траектории",
+        },
+    )
+    traj = _read_artifact(inputs, "trajectory", body.case_id)
+    surf = _read_artifact(inputs, "surface", body.case_id)
+    if traj is None or surf is None:
+        result = {
+            "task_id": body.task_id,
+            "status": "needs_input",
+            "message": "Нужны файлы поверхности (CPS3) и траектории (.dev)",
+            "data": {},
+            "artifacts": {},
+            "issues": [{"type": "missing_geometry_files"}],
+            "assumptions": [],
+            "requests": [
+                {
+                    "question_id": "Q-geom",
+                    "question": "Приложите ASCII CPS3 поверхность и DEV-траекторию",
+                    "options": [],
+                }
+            ],
+        }
+        _emit(
+            body.case_id,
+            activity,
+            {
+                "kind": "agent.result",
+                "actor": "calculation_agent",
+                "agent_id": "calculation_agent",
+                "task_id": body.task_id,
+                "status": "needs_input",
+                "status_message": result["message"],
+            },
+        )
+        return result
+    try:
+        x_axis, y_axis, grid = _parse_cps3(_decode_text(surf[1], surf[0]))
+        trajectory = _parse_dev(_decode_text(traj[1], traj[0]))
+        hit = _find_intersection(traj[0], trajectory, x_axis, y_axis, grid)
+    except HTTPException as exc:
+        result = {
+            "task_id": body.task_id,
+            "status": "failed",
+            "message": str(exc.detail),
+            "data": {},
+            "artifacts": {},
+            "issues": [{"type": "geometry_failed", "detail": str(exc.detail)}],
+            "assumptions": [],
+            "requests": [],
+        }
+        _emit(
+            body.case_id,
+            activity,
+            {
+                "kind": "agent.failed",
+                "actor": "calculation_agent",
+                "agent_id": "calculation_agent",
+                "task_id": body.task_id,
+                "status": "failed",
+                "status_message": result["message"],
+            },
+        )
+        return result
+    except ValueError as exc:
+        result = {
+            "task_id": body.task_id,
+            "status": "failed",
+            "message": str(exc),
+            "data": {},
+            "artifacts": {},
+            "issues": [{"type": "geometry_failed", "detail": str(exc)}],
+            "assumptions": [],
+            "requests": [],
+        }
+        _emit(
+            body.case_id,
+            activity,
+            {
+                "kind": "agent.failed",
+                "actor": "calculation_agent",
+                "agent_id": "calculation_agent",
+                "task_id": body.task_id,
+                "status": "failed",
+                "status_message": result["message"],
+            },
+        )
+        return result
+    result = {
+        "task_id": body.task_id,
+        "status": "completed",
+        "message": f"Найдено начало перфорации: MD {hit.intersection_md:.1f}",
+        "data": {
+            "top_perforation_md": hit.intersection_md,
+            "x": hit.x,
+            "y": hit.y,
+            "z": hit.z,
+            "filename": hit.filename,
+        },
+        "artifacts": {},
+        "issues": [],
+        "assumptions": ["METRIC units; trajectory and surface share CRS and Z convention"],
+        "requests": [],
+    }
+    _emit(
+        body.case_id,
+        activity,
+        {
+            "kind": "agent.result",
+            "actor": "calculation_agent",
+            "agent_id": "calculation_agent",
+            "task_id": body.task_id,
+            "status": "completed",
+            "status_message": result["message"],
+        },
+    )
+    return result

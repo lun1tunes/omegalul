@@ -31,6 +31,7 @@ from .tools import TOOL_SCHEMAS, execute_tool
 # Import modules for registration. These modules never invoke an LLM.
 from . import excel_tools as _excel_tools  # noqa: F401
 from . import state_tools as _state_tools  # noqa: F401
+from .agent_run import run_excel_agent
 
 logging.basicConfig(level=os.getenv("LOG_LEVEL", "INFO").upper(), format="%(asctime)s %(levelname)s %(name)s %(message)s")
 logger = logging.getLogger(__name__)
@@ -384,3 +385,20 @@ def download_artifact(session_id: str, artifact_id: str) -> FileResponse:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Artifact file not found")
     media_type = "text/csv; charset=utf-8" if artifact.get("format") == "csv" else "application/x-ndjson"
     return FileResponse(path, media_type=media_type, filename=artifact.get("file_name", path.name))
+
+
+class AgentTaskBody(BaseModel):
+    model_config = ConfigDict(extra="allow")
+    case_id: str = ""
+    task_id: str = ""
+    agent_id: str = "excel_extractor"
+    objective: str = ""
+    handoff_message: str = ""
+    inputs: dict[str, Any] = Field(default_factory=dict)
+    context: dict[str, Any] = Field(default_factory=dict)
+    constraints: dict[str, Any] = Field(default_factory=dict)
+
+
+@app.post("/agent/run", dependencies=[Depends(require_api_key)])
+def agent_run(body: AgentTaskBody) -> dict[str, Any]:
+    return run_excel_agent(body.model_dump())

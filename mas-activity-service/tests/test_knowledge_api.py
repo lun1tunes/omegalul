@@ -8,6 +8,7 @@ import os
 from pathlib import Path
 
 os.environ.setdefault("LOG_LEVEL", "WARNING")
+os.environ.pop("DATABASE_URL", None)
 
 from fastapi.testclient import TestClient
 

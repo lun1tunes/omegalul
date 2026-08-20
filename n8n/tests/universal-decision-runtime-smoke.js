@@ -3,17 +3,10 @@
 // Executes the exact exported Code-node JavaScript for Universal Planner,
 // Excel Extractor specialist boundary, independent Verifier and batched trace preparation.
 const assert = require('node:assert/strict');
-const fs = require('node:fs');
-const path = require('node:path');
-
-const workspace = process.env.WORKSPACE_ROOT || '/workspace';
-const read = (name) => JSON.parse(fs.readFileSync(
-  path.join(workspace, 'n8n', 'workflows', 'core', name),
-  'utf8',
-));
-const orchestrator = read('universal-engineering-orchestrator.workflow.json');
-const excel = read('excel-extraction-agent.workflow.json');
-const trace = read('mas-trace-event-writer.workflow.json');
+const { readWorkflow } = require('./_workflow');
+const orchestrator = readWorkflow('universal-engineering-orchestrator.workflow.json');
+const excel = readWorkflow('excel-extraction-agent.workflow.json');
+const trace = readWorkflow('mas-trace-event-writer.workflow.json');
 const AsyncFunction = Object.getPrototypeOf(async function () {}).constructor;
 
 function source(workflow, name) {

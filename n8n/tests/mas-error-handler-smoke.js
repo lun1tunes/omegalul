@@ -6,10 +6,9 @@ const assert = require('node:assert/strict');
 const fs = require('node:fs');
 const path = require('node:path');
 
-const workspace = process.env.WORKSPACE_ROOT || path.resolve(__dirname, '../..');
-const read = (rel) => JSON.parse(fs.readFileSync(path.join(workspace, rel), 'utf8'));
-const wf = read('n8n/workflows/core/mas-error-handler.workflow.json');
-const orch = read('n8n/workflows/core/universal-engineering-orchestrator.workflow.json');
+const { readWorkflow } = require('./_workflow');
+const wf = readWorkflow('mas-error-handler.workflow.json');
+const orch = readWorkflow('universal-engineering-orchestrator.workflow.json');
 const AsyncFunction = Object.getPrototypeOf(async function () {}).constructor;
 
 function source(workflow, name) {
@@ -67,9 +66,9 @@ async function run(name, json) {
   assert.ok(wf.connections['Receive MAS error event']);
   assert.equal(wf.settings.errorWorkflow || '', '');
   assert.equal(orch.settings.errorWorkflow, wf.id);
-  const cas = read('n8n/workflows/core/cas-persist-task.workflow.json');
+  const cas = readWorkflow('cas-persist-task.workflow.json');
   assert.equal(cas.settings.errorWorkflow || '', '');
-  const trace = read('n8n/workflows/core/mas-trace-event-writer.workflow.json');
+  const trace = readWorkflow('mas-trace-event-writer.workflow.json');
   assert.equal(trace.settings.errorWorkflow || '', '');
 
   const scenarios = [

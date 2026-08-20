@@ -23,6 +23,7 @@ from schedule_task_facts import build_schedule_task_facts_js
 ROOT = Path(__file__).resolve().parents[2]
 WORKFLOWS = ROOT / "n8n" / "workflows"
 CORE = WORKFLOWS / "core"
+RETIRED = WORKFLOWS / "retired"
 SUPPORT = WORKFLOWS / "support"
 TEMPLATES = ROOT / "n8n" / "templates"
 ERROR_HANDLER_WF_ID = "e1f0a7c2-9b4d-5e8f-a123-4567890abcde"
@@ -2213,7 +2214,7 @@ def embed_excel_specialist_boundary() -> None:
     Adapter — Excel Form keep sending native {request, session_id, binary};
     Prepare/Adapt passthrough those callers.
     """
-    path = CORE / "excel-extraction-agent.workflow.json"
+    path = RETIRED / "excel-extraction-agent.workflow.json"
     wf = json.loads(path.read_text(encoding="utf-8"))
     by_name = {item["name"]: item for item in wf["nodes"]}
     for required in (
@@ -2370,7 +2371,7 @@ def build_specialist() -> dict:
 
 def build_schedule_builder() -> dict:
     """Load the generated governed SCHEDULE pipeline without owning MAS state."""
-    source = CORE / "tnavigator-schedule-builder.workflow.json"
+    source = RETIRED / "tnavigator-schedule-builder.workflow.json"
     if not source.exists():
         raise FileNotFoundError(
             "The reviewed concrete Schedule Builder export is missing; "
@@ -2618,21 +2619,22 @@ def build_presentation_stub() -> dict:
 
 def main() -> None:
     # Regenerates only the Python-owned engineering/SCHEDULE Builder surfaces.
-    # HITL Entry / Human Gate / Deployment Health Check remain hand-authored
-    # JSON in n8n/workflows/core/ and are imported via import-manifest (not via
-    # this generator). Do not add them here — Form UX drifts easily under codegen.
+    # Those land in retired/ (not imported). Live MAS is Orchestrator — MAS +
+    # Agent — Schedule Builder in core/. HITL Entry / Human Gate stay
+    # hand-authored in retired/; Deployment Health Check stays in core/.
     # After write, relayout_core_workflows.py compact-packs positions and adds
     # yellow "edit after import" sticky notes for credential/table/workflow binds.
     CORE.mkdir(parents=True, exist_ok=True)
+    RETIRED.mkdir(parents=True, exist_ok=True)
     SUPPORT.mkdir(parents=True, exist_ok=True)
     outputs = {
-        CORE / "cas-persist-task.workflow.json": build_cas_persist(),
-        CORE / "universal-engineering-orchestrator.workflow.json": build_orchestrator(),
+        RETIRED / "cas-persist-task.workflow.json": build_cas_persist(),
+        RETIRED / "universal-engineering-orchestrator.workflow.json": build_orchestrator(),
         SUPPORT / "engineering-specialist-template.workflow.json": build_specialist(),
         SUPPORT / "cluster-calc-specialist-adapter.workflow.json": build_cluster_calc_stub(),
         SUPPORT / "binary-results-specialist-adapter.workflow.json": build_binary_results_stub(),
         SUPPORT / "presentation-specialist-adapter.workflow.json": build_presentation_stub(),
-        CORE / "tnavigator-schedule-builder.workflow.json": build_schedule_builder(),
+        RETIRED / "tnavigator-schedule-builder.workflow.json": build_schedule_builder(),
     }
     for path, workflow in outputs.items():
         path.write_text(json.dumps(workflow, ensure_ascii=False, indent=2) + "\n", encoding="utf-8")
@@ -2642,7 +2644,7 @@ def main() -> None:
     if stale_excel_adapter.exists():
         stale_excel_adapter.unlink()
         print("removed", stale_excel_adapter.relative_to(ROOT))
-    # Canonical compact layout + yellow edit-after-import notes (all core/).
+    # Canonical compact layout + yellow edit-after-import notes (core/ + retired/).
     import subprocess
     import sys
 

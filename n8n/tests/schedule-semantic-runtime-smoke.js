@@ -7,11 +7,8 @@ const assert = require('node:assert/strict');
 const fs = require('node:fs');
 const path = require('node:path');
 
-const workspace = process.env.WORKSPACE_ROOT || '/workspace';
-const workflow = JSON.parse(fs.readFileSync(
-  path.join(workspace, 'n8n', 'workflows', 'core', 'tnavigator-schedule-builder.workflow.json'),
-  'utf8',
-));
+const { readWorkflow } = require('./_workflow');
+const workflow = readWorkflow('tnavigator-schedule-builder.workflow.json');
 const node = workflow.nodes.find((candidate) => candidate.name === 'Validate merged SCHEDULE package');
 assert(node && node.type === 'n8n-nodes-base.code');
 const AsyncFunction = Object.getPrototypeOf(async function () {}).constructor;

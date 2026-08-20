@@ -5,7 +5,15 @@
   const notFoundId = document.getElementById("notFoundId");
   const title = document.getElementById("title");
   const titleText = document.getElementById("titleText");
+  const renameTaskBtn = document.getElementById("renameTaskBtn");
+  const renameTaskInput = document.getElementById("renameTaskInput");
   const statusDot = document.getElementById("statusDot");
+  const workspace = document.getElementById("workspace");
+  const chatView = document.getElementById("chatView");
+  const viewChatBtn = document.getElementById("viewChatBtn");
+  const viewSchemaBtn = document.getElementById("viewSchemaBtn");
+  const scheduleDownloadHead = document.getElementById("scheduleDownloadHead");
+  const schemaView = document.getElementById("schemaView");
   const requestPanel = document.getElementById("requestPanel");
   const requestText = document.getElementById("requestText");
   const requestFiles = document.getElementById("requestFiles");
@@ -38,6 +46,7 @@
   const brandHome = document.getElementById("brandHome");
   const startComposer = document.getElementById("startComposer");
   const taskDescription = document.getElementById("taskDescription");
+  const taskNameInput = document.getElementById("taskName");
   const scheduleRoot = document.getElementById("scheduleRoot");
   const scheduleRootField = document.getElementById("scheduleRootField");
   const startDropzone = document.getElementById("startDropzone");
@@ -95,6 +104,10 @@
     handoff: "Передача",
     running: "В работе",
     RUNNING: "В работе",
+    new: "Новая",
+    done: "Готово",
+    failed: "Сбой",
+    waiting_user: "Ждём вас",
     retryable_error: "Ошибка",
     RETRYABLE_ERROR: "Ошибка",
     fatal_error: "Сбой",
@@ -105,7 +118,7 @@
   const CYRILLIC_RE = /[А-Яа-яЁё]/;
   function statusLabel(code) {
     const raw = String(code || "").trim();
-    if (!raw) return "Передача";
+    if (!raw) return "—";
     return STATUS_LABELS[raw] || STATUS_LABELS[raw.toUpperCase()] || raw;
   }
   /** Hide muted secondary line when it is English machine jargon (no Cyrillic). */
@@ -117,8 +130,13 @@
     return true;
   }
   let streamState = "idle";
-
   let currentTask = null;
+  let currentTaskName = "";
+  let renamingTask = false;
+  let feedGeneration = 0;
+
+  let lastCaseFeed = { events: [], activity: [], status: "", objective: "", attached_files: [], state: {} };
+  let workspaceView = "chat";
   let startResumeTask = null;
   let source = null;
   let feedPollTimer = null;
@@ -139,16 +157,6 @@
   let pendingFiles = [];
   /** @type {{ file: File, kind: string }[]} */
   let hitlFiles = [];
-
-  // Turns where engineer should inspect the current SCHEDULE .INC.
-  const SCHEDULE_FILE_REVIEW_STATUSES = new Set([
-    "SCHEDULE_DRAFT_READY",
-    "VERIFIED",
-    "HUMAN_APPROVED",
-    "RELEASE_APPROVED",
-    "SCHEDULE_RELEASE_READY",
-    "succeeded",
-  ]);
 
   function pathTaskId() {
     const m = location.pathname.match(/^\/t\/([^/]+)/);
@@ -183,8 +191,7 @@
     const raw = String(detail || "").trim();
     if (/Planner Structured Output|does not match the expected schema|outputParserFailReason/i.test(raw)) {
       return (
-        "Оркестратор упал на шаге Planner: модель вернула JSON не по схеме. "
-        + "В списке слева могут появиться «фантомные» eng_* со статусом planning и пустой лентой — это не готовая задача. "
+        "Оркестратор не смог разобрать решение модели (JSON не по схеме). "
         + "Исходная ошибка: " + raw
       );
     }
@@ -198,17 +205,13 @@
   function emptyFeedMessage(data) {
     const st = String(data?.status || "").trim().toLowerCase();
     if (st === "planning") {
-      return (
-        "Лента пустая: задача зависла на planning. "
-        + "Оркестратор успел завести eng_* в каталоге, но передача ещё не записалась (часто после сбоя Planner). "
-        + "Это не результат — попробуйте создать задачу снова, когда Planner починен."
-      );
+      return "Лента пустая: задача ещё не получила события от оркестратора.";
     }
     if (/conflict|error|fail|cancel|reject/.test(st)) {
       return data?.status_message
-        || "Задача завершилась с ошибкой/конфликтом, а передача в ленту не пришла. Смотрите баннер статуса выше.";
+        || "Задача завершилась с ошибкой, а события в ленту не пришли. Смотрите баннер статуса выше.";
     }
-    return "Лента пока пуста — ждём первые передачи от оркестратора.";
+    return "Лента пока пуста — ждём первые события оркестратора.";
   }
 
   function formatElapsed(ms) {
@@ -304,6 +307,7 @@
     if (
       awaiting
       || /^AWAITING_HUMAN$/i.test(s)
+      || lower === "waiting_user"
       || /needs_input|needs_approval|awaiting|human_gate|hitl/i.test(lower)
     ) {
       return "hitl";
@@ -341,14 +345,56 @@
     if (/^mas activity user$/i.test(raw)) return "Вы";
     const labels = {
       User: "Вы",
+      user: "Вы",
       Engineer: "Вы",
       human_operator: "Вы",
       "mas activity user": "Вы",
       Orchestrator: "Оркестратор",
+      orchestrator: "Оркестратор",
       universal_orchestrator: "Оркестратор",
+      excel_extractor: "Excel",
+      calculation_agent: "Расчёт",
+      schedule_builder: "Schedule",
       error_handler: "Обработчик ошибок",
     };
     return labels[raw] || raw;
+  }
+
+  function bumpFeedGeneration() {
+    feedGeneration += 1;
+    return feedGeneration;
+  }
+
+  function feedMatchesOpenTask(data) {
+    if (startOpen || !currentTask) return false;
+    if (!data || typeof data !== "object") return false;
+    const id = String(data.task_id || data.case_id || "").trim();
+    return !id || id === currentTask;
+  }
+
+  function syncSchema(data) {
+    if (startOpen) return;
+    if (window.MasSchema && typeof window.MasSchema.setFeed === "function") {
+      window.MasSchema.setFeed(data || lastCaseFeed);
+    }
+  }
+
+  function setWorkspaceView(mode, { persist = true } = {}) {
+    workspaceView = mode === "schema" ? "schema" : "chat";
+    if (workspace) {
+      workspace.classList.toggle("mode-schema", workspaceView === "schema");
+      workspace.classList.toggle("mode-chat", workspaceView === "chat");
+    }
+    if (chatView) chatView.hidden = workspaceView === "schema";
+    if (schemaView) schemaView.hidden = workspaceView !== "schema";
+    if (viewChatBtn) viewChatBtn.setAttribute("aria-selected", String(workspaceView === "chat"));
+    if (viewSchemaBtn) viewSchemaBtn.setAttribute("aria-selected", String(workspaceView === "schema"));
+    if (persist) {
+      try { sessionStorage.setItem("masActivityView", workspaceView); } catch (_) { /* ignore */ }
+    }
+    if (workspaceView === "schema" && schemaView) {
+      schemaView.focus({ preventScroll: true });
+    }
   }
 
   function roleClass(role) {
@@ -469,7 +515,8 @@
     setComposerArmed(awaitingHuman);
   }
 
-  function clearWorkspaceView({ titleLabel = "Выберите задачу" } = {}) {
+  function clearWorkspaceView({ titleLabel = "Выберите задачу", composing = false } = {}) {
+    bumpFeedGeneration();
     closeStream();
     setLive("idle");
     rendered = new Set();
@@ -485,8 +532,17 @@
     setTaskHeader(null);
     if (titleText) titleText.textContent = titleLabel;
     else title.textContent = titleLabel;
-    empty.hidden = true;
-    empty.textContent = "";
+    if (composing) {
+      empty.hidden = false;
+      empty.textContent = "Опишите задачу в форме ниже — чат и схема этой задачи появятся после создания.";
+    } else {
+      empty.hidden = true;
+      empty.textContent = "";
+    }
+    lastCaseFeed = { events: [], activity: [], status: "", objective: "", attached_files: [], state: {} };
+    if (window.MasSchema && typeof window.MasSchema.reset === "function") {
+      window.MasSchema.reset();
+    }
     const list = railList || taskRail;
     if (list) {
       for (const btn of list.querySelectorAll("button.active")) btn.classList.remove("active");
@@ -500,7 +556,7 @@
       startResumeTask = currentTask;
       currentTask = null;
       history.replaceState({}, "", "/");
-      clearWorkspaceView({ titleLabel: "Новая задача" });
+      clearWorkspaceView({ titleLabel: "Новая задача", composing: true });
     }
     if (!next && startOpen) {
       startOpen = false;
@@ -690,6 +746,23 @@
     }
   }
 
+  function turnEventKind(turn) {
+    return String(turn.event_type || turn.details?.kind || turn.stage || turn.status || "").trim();
+  }
+
+  function turnKicker(eventKind, laneDir, isHitlAsk) {
+    if (/hitl\.answered|TASK_STARTED/i.test(eventKind)) return "Ответ";
+    if (/hitl\.request/i.test(eventKind) || isHitlAsk) return "Запрос";
+    if (/^agent\.handoff$/i.test(eventKind) || /^case\.created$/i.test(eventKind)) return "Передача";
+    if (/^agent\.result$/i.test(eventKind)) return "Результат";
+    if (/^agent\.failed$|^case\.failed$|^system\.node_error$/i.test(eventKind)) return "Ошибка";
+    if (/^agent\.(accepted|progress)$/i.test(eventKind)) return "Сообщение";
+    if (/^orchestrator\.|^case\.finished$/i.test(eventKind)) return "Статус";
+    if (laneDir === "out") return "Передача";
+    if (laneDir === "in") return "Результат";
+    return "Статус";
+  }
+
   function renderTurn(turn, { animate = true } = {}) {
     const id = `${turn.turn_id}:${turn.at}:${turn.status}:${turn.duration_ms || ""}:${turn.kind || ""}`;
     if (rendered.has(id)) return;
@@ -697,35 +770,44 @@
     empty.hidden = true;
 
     const li = document.createElement("li");
+    const eventKind = turnEventKind(turn);
     const fromRole = displayRole(turn.from?.role || "Orchestrator");
-    const toRole = displayRole(turn.to?.role || "User");
+    const toRole = displayRole(turn.to?.role || turn.from?.role || "User");
+    let laneDir = String(turn.lane_dir || turn.details?.lane_dir || "").toLowerCase()
+      || (fromRole === toRole ? "none" : "out");
+    if (/^agent\.(accepted|progress)$/i.test(eventKind)) laneDir = "none";
+    const sameParty = laneDir === "none" && fromRole === toRole;
     const isHuman = turn.kind === "hitl" || /human|^вы$/i.test(fromRole) || /^HUMAN_/.test(turn.status || "") || turn.status === "TASK_STARTED";
     const isHitlAsk = /NEEDS_|AWAITING_HUMAN|RESULT_APPROVAL|PRE_DELEGATION/i.test(String(turn.status || "")) || String(turn.stage || "") === "hitl";
-    li.className = `turn outcome-${turn.outcome || "info"}${isHuman ? " human" : ""}`;
+    li.className = `turn outcome-${turn.outcome || "info"}${isHuman ? " human" : ""} dir-${laneDir}`;
     li._masTurn = turn;
 
     const who = document.createElement("div");
-    who.className = `who ${roleClass(turn.from?.role || fromRole)}`;
-    who.title = `${fromRole} → ${toRole}`;
+    who.className = `who ${roleClass(turn.from?.role || fromRole)} dir-${laneDir}`;
+    who.title = sameParty ? fromRole : (laneDir === "in" ? `${toRole} → ${fromRole}` : `${fromRole} → ${toRole}`);
     const kicker = document.createElement("span");
     kicker.className = "who-kicker";
-    kicker.textContent = isHuman ? "Ответ" : isHitlAsk ? "Запрос" : "Передача";
+    kicker.textContent = turnKicker(eventKind, laneDir, isHitlAsk);
     const fromEl = document.createElement("span");
     fromEl.className = "role from" + (/^вы$/i.test(fromRole) ? " you" : "");
     fromEl.textContent = fromRole;
-    const arrow = document.createElement("span");
-    arrow.className = "arrow";
-    arrow.setAttribute("aria-hidden", "true");
-    arrow.textContent = "→";
-    const toEl = document.createElement("span");
-    toEl.className = "role to" + (/^вы$/i.test(toRole) ? " you" : "");
-    toEl.textContent = toRole;
-    who.append(kicker, fromEl, arrow, toEl);
+    who.append(kicker, fromEl);
+    if (!sameParty) {
+      const arrow = document.createElement("span");
+      arrow.className = "arrow";
+      arrow.setAttribute("aria-hidden", "true");
+      const toEl = document.createElement("span");
+      toEl.className = "role to" + (/^вы$/i.test(toRole) ? " you" : "");
+      toEl.textContent = toRole;
+      who.append(arrow, toEl);
+    }
     if (turn.duration_label) {
       const dur = document.createElement("span");
       dur.className = "duration";
       dur.textContent = turn.duration_label;
-      dur.title = "Время работы до этой передачи";
+      dur.title = /handoff|case\.created/i.test(eventKind)
+        ? "Время работы до этой передачи"
+        : "Время до этого события";
       who.append(dur);
     }
 
@@ -736,6 +818,15 @@
     brief.className = "brief";
     brief.textContent = turn.brief || turn.text || "";
     bubble.append(brief);
+    if (turn.handoff_message) {
+      const handoff = document.createElement("p");
+      handoff.className = "text";
+      handoff.textContent = turn.handoff_message;
+      bubble.append(handoff);
+    }
+    if (String(turn.status || turn.event_type || "") === "system.node_error") {
+      li.classList.add("node-error");
+    }
 
     if (shouldShowMutedText(turn)) {
       const text = document.createElement("p");
@@ -747,6 +838,7 @@
     if (Array.isArray(turn.chips) && turn.chips.length) {
       const HIDDEN_CHIP_IDS = new Set([
         "action", "requested_by", "gate_id", "gate_kind", "file_count", "backend",
+        "kind", "agent_id",
       ]);
       const visible = turn.chips.filter((c) => c && !HIDDEN_CHIP_IDS.has(String(c.id || "")));
       if (visible.length) {
@@ -763,8 +855,6 @@
         bubble.append(chips);
       }
     }
-
-    appendScheduleDownload(bubble, turn);
 
     const meta = document.createElement("div");
     meta.className = "meta-line";
@@ -787,7 +877,7 @@
   }
 
   async function refreshRail({ durable = false } = {}) {
-    const res = await fetch(`/v1/tasks${durable ? "?durable=1" : ""}`);
+    const res = await fetch("/cases");
     const data = await res.json();
     taskCatalog = Array.isArray(data.tasks) ? data.tasks : [];
 
@@ -802,9 +892,10 @@
       const btn = document.createElement("button");
       btn.type = "button";
       btn.className = task.task_id === currentTask ? "active" : "";
+      const name = String(task.task_name || "").trim();
       const id = document.createElement("span");
-      id.className = "id";
-      id.textContent = task.task_id;
+      id.className = name ? "id named" : "id";
+      id.textContent = name || task.task_id;
       const meta = document.createElement("span");
       meta.className = "meta";
       const stLabel = statusLabel(task.status || task.last_status || "");
@@ -815,7 +906,7 @@
       if (stamp.date) parts.push(stamp.date);
       meta.textContent = parts.join(" · ");
       btn.title = [
-        task.task_id,
+        name && task.task_id !== name ? `${name}\n${task.task_id}` : task.task_id,
         task.title || "",
         parts.join(" · "),
         task.last_at_abs || task.updated_at || "",
@@ -854,7 +945,9 @@
   }
 
   function mergeFeed(data, { animateTurns = false } = {}) {
-    if (!data || typeof data !== "object") return;
+    if (!feedMatchesOpenTask(data)) return;
+    lastCaseFeed = { ...lastCaseFeed, ...data };
+    if (Array.isArray(data.events)) lastCaseFeed.events = data.events;
     applyFeedMeta(data);
     const turns = Array.isArray(data.activity) ? data.activity : [];
     for (const turn of turns) renderTurn(turn, { animate: animateTurns });
@@ -862,16 +955,21 @@
       empty.hidden = true;
       empty.textContent = "";
     }
+    syncSchema(lastCaseFeed);
   }
 
   async function pollFeed({ durable = false } = {}) {
-    if (!currentTask) return;
+    if (!currentTask || startOpen) return;
+    const taskId = currentTask;
+    const gen = feedGeneration;
     try {
       const res = await fetch(
-        `/v1/tasks/${encodeURIComponent(currentTask)}${durable ? "?durable=1" : ""}`,
+        `/cases/${encodeURIComponent(taskId)}`,
       );
       if (!res.ok) return;
-      mergeFeed(await res.json(), { animateTurns: true });
+      const data = await res.json();
+      if (currentTask !== taskId || feedGeneration !== gen || startOpen) return;
+      mergeFeed(data, { animateTurns: true });
     } catch (_) { /* keep SSE as source of truth */ }
   }
 
@@ -884,16 +982,17 @@
       clearInterval(feedPollTimer);
       feedPollTimer = null;
     }
-    source = new EventSource(`/v1/tasks/${encodeURIComponent(taskId)}/stream`);
+    source = new EventSource(`/cases/${encodeURIComponent(taskId)}/stream`);
     source.onopen = () => setLive("live");
     source.onerror = () => setLive("reconnecting");
     source.onmessage = (ev) => {
-      if (currentTask !== taskId) return;
+      if (startOpen || currentTask !== taskId) return;
       try {
         const msg = JSON.parse(ev.data);
         if (msg.type === "ping") return;
         if (msg.type === "snapshot") {
           hideNotFound();
+          lastCaseFeed = { ...msg };
           applyFeedMeta(msg);
           const turns = Array.isArray(msg.activity) ? msg.activity : [];
           for (const turn of turns) renderTurn(turn, { animate: false });
@@ -901,9 +1000,21 @@
             empty.hidden = false;
             empty.textContent = emptyFeedMessage(msg);
           }
+          syncSchema(lastCaseFeed);
         } else if (msg.type === "turn") {
           renderTurn(msg.turn, { animate: true });
           applyFeedMeta(msg);
+          if (msg.event && msg.event.event_id != null) {
+            const events = Array.isArray(lastCaseFeed.events) ? lastCaseFeed.events.slice() : [];
+            if (!events.some((row) => row && row.event_id === msg.event.event_id)) events.push(msg.event);
+            lastCaseFeed.events = events;
+          }
+          if (msg.turn) {
+            const activity = Array.isArray(lastCaseFeed.activity) ? lastCaseFeed.activity : [];
+            lastCaseFeed.activity = activity.concat([msg.turn]);
+          }
+          if (msg.status) lastCaseFeed.status = msg.status;
+          syncSchema(lastCaseFeed);
         } else if (msg.type === "gate") {
           applyFeedMeta(msg);
         }
@@ -962,33 +1073,127 @@
     requestPanel.hidden = false;
   }
 
+  function catalogTaskName(taskId) {
+    const row = (taskCatalog || []).find((item) => item && item.task_id === taskId);
+    return String(row?.task_name || "").trim();
+  }
+
   function setTaskHeader(taskId, status, opts = {}) {
     const awaiting = Object.prototype.hasOwnProperty.call(opts, "awaiting")
       ? Boolean(opts.awaiting)
       : awaitingHuman;
+    if (Object.prototype.hasOwnProperty.call(opts, "task_name")) {
+      currentTaskName = String(opts.task_name || "").trim();
+    }
     if (!taskId) {
-      title.classList.remove("task-line");
+      currentTaskName = "";
+      renamingTask = false;
+      title.classList.remove("task-line", "is-renaming");
       if (titleText) titleText.textContent = "Выберите задачу";
       else title.textContent = "Выберите задачу";
       setStatusDot("idle");
+      if (title) title.removeAttribute("title");
+      if (renameTaskBtn) renameTaskBtn.hidden = true;
+      if (renameTaskInput) {
+        renameTaskInput.hidden = true;
+        renameTaskInput.value = "";
+      }
       return;
     }
     title.classList.add("task-line");
     const st = String(status || "").trim() || "—";
     const stRu = statusLabel(st);
-    const line = `task_id: ${taskId} · ${stRu}${stRu !== st ? ` (${st})` : ""}`;
-    if (titleText) titleText.textContent = line;
-    else title.textContent = line;
+    const name = currentTaskName || catalogTaskName(taskId);
+    const ident = name || taskId;
+    const prefix = name ? "task_name" : "task_id";
+    const line = `${prefix}: ${ident} · ${stRu}${stRu !== st ? ` (${st})` : ""}`;
+    if (!renamingTask) {
+      if (titleText) titleText.textContent = line;
+      else title.textContent = line;
+    }
+    if (title) title.title = name && name !== taskId ? `${name}\n${taskId}` : taskId;
     setStatusDot(statusTone(st, awaiting));
+    if (renameTaskBtn) renameTaskBtn.hidden = false;
+  }
+
+  function beginRenameTask() {
+    if (!currentTask || !renameTaskInput || renamingTask) return;
+    renamingTask = true;
+    title.classList.add("is-renaming");
+    renameTaskInput.hidden = false;
+    renameTaskInput.value = currentTaskName || catalogTaskName(currentTask) || "";
+    renameTaskInput.placeholder = "Название задачи";
+    if (renameTaskBtn) renameTaskBtn.hidden = true;
+    renameTaskInput.focus();
+    renameTaskInput.select();
+  }
+
+  function cancelRenameTask() {
+    if (!renamingTask) return;
+    renamingTask = false;
+    title.classList.remove("is-renaming");
+    if (renameTaskInput) {
+      renameTaskInput.hidden = true;
+      renameTaskInput.value = "";
+    }
+    if (currentTask) {
+      setTaskHeader(currentTask, lastCaseFeed.status, {
+        awaiting: awaitingHuman,
+        task_name: currentTaskName,
+      });
+    }
+  }
+
+  async function saveRenameTask() {
+    if (!currentTask || !renameTaskInput || !renamingTask) return;
+    const name = renameTaskInput.value.trim();
+    const taskId = currentTask;
+    renameTaskInput.disabled = true;
+    try {
+      const res = await fetch(`/cases/${encodeURIComponent(taskId)}`, {
+        method: "PATCH",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ task_name: name }),
+      });
+      const data = await res.json().catch(() => ({}));
+      if (!res.ok) {
+        showFlash(data.detail || `Не удалось переименовать задачу (${res.status}).`);
+        return;
+      }
+      currentTaskName = String(data.task_name || "").trim();
+      renamingTask = false;
+      title.classList.remove("is-renaming");
+      renameTaskInput.hidden = true;
+      setTaskHeader(taskId, data.status, { task_name: currentTaskName });
+      await refreshRail();
+    } catch (err) {
+      showFlash(`Не удалось переименовать задачу: ${err}`);
+    } finally {
+      if (renameTaskInput) renameTaskInput.disabled = false;
+    }
+  }
+
+  function paintScheduleDownloadHead() {
+    if (!scheduleDownloadHead) return;
+    const art = scheduleArtifact;
+    if (!art || !art.download_path) {
+      scheduleDownloadHead.hidden = true;
+      scheduleDownloadHead.removeAttribute("href");
+      return;
+    }
+    const name = String(art.filename || "schedule.inc");
+    const kb = art.byte_length ? ` · ${Math.max(1, Math.round(art.byte_length / 1024))} KB` : "";
+    scheduleDownloadHead.hidden = false;
+    scheduleDownloadHead.href = art.download_path;
+    scheduleDownloadHead.setAttribute("download", name);
+    scheduleDownloadHead.textContent = `Скачать ${name}${kb}`;
+    scheduleDownloadHead.title = "Скачать текущий SCHEDULE .INC";
   }
 
   function setScheduleArtifact(meta) {
-    const prevPath = scheduleArtifact && scheduleArtifact.download_path;
     const art = meta && typeof meta === "object" && meta.available && meta.download_path ? meta : null;
     scheduleArtifact = art;
-    if (art && art.download_path !== prevPath) {
-      refreshScheduleDownloadsOnThread();
-    }
+    paintScheduleDownloadHead();
   }
 
   function editLine(edit) {
@@ -1081,57 +1286,14 @@
     renderSemanticDiff();
   }
 
-  function turnWantsScheduleDownload(turn) {
-    if (!scheduleArtifact) return false;
-    const status = String(turn.status || "").trim();
-    if (SCHEDULE_FILE_REVIEW_STATUSES.has(status)) return true;
-    if (/SCHEDULE_.*READY|RELEASE|VERIF/i.test(status)) return true;
-    const chips = Array.isArray(turn.chips) ? turn.chips : [];
-    if (chips.some((c) => c && (c.id === "release_ready" || c.label === "release_ready") && (c.value === true || c.value === "true" || c.value === "yes"))) {
-      return true;
-    }
-    // HITL approval gate for schedule release
-    if (/^AWAITING_HUMAN$/i.test(status) && chips.some((c) => c && c.id === "gate_kind" && /approval|release/i.test(String(c.value || "")))) {
-      return true;
-    }
-    return false;
-  }
-
-  function appendScheduleDownload(bubble, turn) {
-    if (!turnWantsScheduleDownload(turn)) return;
-    if (bubble.querySelector(".schedule-download-row")) return;
-    const art = scheduleArtifact;
-    const name = String(art.filename || "schedule.inc");
-    const kb = art.byte_length ? ` · ${Math.max(1, Math.round(art.byte_length / 1024))} KB` : "";
-    const row = document.createElement("div");
-    row.className = "schedule-download-row";
-    const link = document.createElement("a");
-    link.className = "btn btn-quiet schedule-download";
-    link.href = art.download_path;
-    link.setAttribute("download", name);
-    link.textContent = `Скачать ${name}${kb}`;
-    link.title = "Проверить текущий SCHEDULE .INC для этого события";
-    row.append(link);
-    // Insert before meta-line when present so late refresh keeps layout.
-    const meta = bubble.querySelector(".meta-line");
-    if (meta) bubble.insertBefore(row, meta);
-    else bubble.append(row);
-  }
-
-  /** After HITL/SSE captures schedule_artifact, paint download on already-rendered review turns. */
-  function refreshScheduleDownloadsOnThread() {
-    if (!scheduleArtifact) return;
-    for (const li of thread.querySelectorAll("li.turn")) {
-      const turn = li._masTurn;
-      const bubble = li.querySelector(".bubble");
-      if (!turn || !bubble) continue;
-      appendScheduleDownload(bubble, turn);
-    }
-  }
-
   function applyFeedMeta(data) {
+    if (Object.prototype.hasOwnProperty.call(data, "task_name")) {
+      currentTaskName = String(data.task_name || "").trim();
+    } else if (data.state && typeof data.state === "object" && data.state.task_name) {
+      currentTaskName = String(data.state.task_name || "").trim();
+    }
     if (currentTask) {
-      setTaskHeader(currentTask, data.status, { awaiting: data.awaiting_human });
+      setTaskHeader(currentTask, data.status, { awaiting: data.awaiting_human, task_name: currentTaskName });
     }
     if (
       Object.prototype.hasOwnProperty.call(data, "objective")
@@ -1162,6 +1324,7 @@
 
   function showNotFound(taskId) {
     currentTask = null;
+    currentTaskName = "";
     closeStream();
     setLive("idle");
     rendered = new Set();
@@ -1179,6 +1342,7 @@
     setStatusDot("error");
     if (notFoundId) notFoundId.textContent = taskId ? `id: ${taskId}` : "";
     if (notFound) notFound.hidden = false;
+    setWorkspaceView("chat", { persist: false });
     const list = railList || taskRail;
     if (list) {
       for (const btn of list.querySelectorAll("button.active")) btn.classList.remove("active");
@@ -1216,12 +1380,14 @@
     setStartOpen(false, { resume: false });
     hideNotFound();
     currentTask = taskId;
+    currentTaskName = catalogTaskName(taskId);
+    const gen = bumpFeedGeneration();
     history.replaceState({}, "", `/t/${encodeURIComponent(taskId)}`);
     rendered = new Set();
     thread.innerHTML = "";
     empty.hidden = false;
     empty.textContent = "Загружаем задачу…";
-    setTaskHeader(taskId, "…");
+    setTaskHeader(taskId, "…", { task_name: currentTaskName });
     renderRequest(null);
     renderStatusBanner(null, null);
     closeStream();
@@ -1234,28 +1400,10 @@
     attachLive(taskId);
 
     try {
-      const snap = await fetch(`/v1/tasks/${encodeURIComponent(taskId)}`);
+      const snap = await fetch(`/cases/${encodeURIComponent(taskId)}`);
       if (snap.status === 404) {
-        const durable = await fetch(`/v1/tasks/${encodeURIComponent(taskId)}?durable=1`);
-        if (durable.status === 404) {
-          showNotFound(taskId);
-          await refreshRail();
-          return;
-        }
-        if (!durable.ok) {
-          showLoadError(taskId, `Не удалось загрузить задачу (${durable.status}).`);
-          await refreshRail();
-          return;
-        }
-        const data = await durable.json();
-        hideNotFound();
-        mergeFeed(data, { animateTurns: false });
-        if (data.hydrate?.ok === false) {
-          const msg = formatHydrateError(data.hydrate.error || "hydrate_failed");
-          if (msg) showFlash(msg, { sticky: true });
-        } else if (data.hydrate?.truncated) {
-          showFlash("Транскрипт усечён: в Data Tables больше лимита передач (500). Показаны последние turns.");
-        }
+        showNotFound(taskId);
+        await refreshRail();
         return;
       }
       if (!snap.ok) {
@@ -1264,6 +1412,7 @@
         return;
       }
       const data = await snap.json();
+      if (currentTask !== taskId || feedGeneration !== gen) return;
       hideNotFound();
       mergeFeed(data, { animateTurns: false });
       if (!Array.isArray(data.activity) || !data.activity.length) {
@@ -1272,22 +1421,22 @@
         renderStatusBanner(
           data.status,
           data.status_message
-            || (String(data.status || "").toLowerCase() === "planning"
-              ? "Планирование не завершилось — лента пустая."
+            || (["running", "new"].includes(String(data.status || "").toLowerCase())
+              ? "Оркестратор ещё не прислал события — схема и лента обновятся сами."
               : null),
         );
       }
       try {
-        const durableRes = await fetch(`/v1/tasks/${encodeURIComponent(taskId)}?durable=1`);
+        const durableRes = await fetch(`/cases/${encodeURIComponent(taskId)}`);
         if (durableRes.ok) {
           const feed = await durableRes.json();
-          if (feed && currentTask === taskId) {
+          if (feed && currentTask === taskId && feedGeneration === gen) {
             mergeFeed(feed, { animateTurns: true });
             if (feed.hydrate?.ok === false) {
               const msg = formatHydrateError(feed.hydrate.error || "hydrate_failed");
               if (msg) showFlash(msg, { sticky: true });
             } else if (feed.hydrate?.truncated) {
-              showFlash("Транскрипт усечён: в Data Tables больше лимита передач (500). Показаны последние turns.");
+              showFlash("История обрезана: показаны только самые свежие сообщения.");
             }
           }
         }
@@ -1326,6 +1475,11 @@
       form.append("requested_by", by);
       if (responseText) form.append("human_response", responseText);
       if (gateState?.gate_id) form.append("gate_id", gateState.gate_id);
+      form.append(
+        "question_id",
+        gateState?.gate_id || gateState?.questions?.[0]?.question_id || "Q-1",
+      );
+      form.append("answer", responseText || "(файл)");
       const ver = gateState?.expected_version ?? taskVersion;
       if (ver != null && ver !== "") form.append("expected_version", String(ver));
       for (const entry of hitlFiles) {
@@ -1334,7 +1488,7 @@
         else if (entry.kind === "trajectory") form.append("trajectory_files", entry.file, entry.file.name);
         else form.append("schedule_files", entry.file, entry.file.name);
       }
-      const res = await fetch(`/v1/tasks/${encodeURIComponent(currentTask)}/hitl`, {
+      const res = await fetch(`/cases/${encodeURIComponent(currentTask)}/answer`, {
         method: "POST",
         body: form,
       });
@@ -1363,6 +1517,10 @@
       hitlFiles = [];
       renderHitlFiles();
       showFlash("Ответ отправлен.", { ok: true });
+      const snap = await fetch(`/cases/${encodeURIComponent(currentTask)}`);
+      if (snap.ok) {
+        mergeFeed(await snap.json(), { animateTurns: true });
+      }
       await refreshRail();
     } catch (_) {
       showFlash("Сеть недоступна при отправке ответа.");
@@ -1386,6 +1544,8 @@
     const form = new FormData();
     form.append("task_description", description);
     form.append("requested_by", by);
+    const givenName = taskNameInput ? taskNameInput.value.trim() : "";
+    if (givenName) form.append("task_name", givenName);
 
     let excel = null;
     let surface = null;
@@ -1422,7 +1582,7 @@
     startHint.textContent = "Создаём задачу…";
     showWait("Записываем задачу…");
     try {
-      const res = await fetch("/v1/tasks/start", {
+      const res = await fetch("/cases", {
         method: "POST",
         body: form,
       });
@@ -1444,19 +1604,20 @@
       pendingFiles = [];
       renderPendingFiles();
       taskDescription.value = "";
+      if (taskNameInput) taskNameInput.value = "";
       scheduleRoot.value = "";
       startHint.hidden = true;
       startHint.textContent = "";
       setStartOpen(false, { resume: false });
       showFlash(
         data.task_id
-          ? `Задача ${data.task_id} создана — оркестратор работает, лента обновляется сама.`
+          ? `Задача ${data.task_name || data.task_id} создана — оркестратор работает, лента обновляется сама.`
           : "Задача создана — оркестратор работает, лента обновляется сама.",
         { ok: true },
       );
       hideWait();
       refreshRail();
-      await openTask(data.task_id);
+      await openTask(data.case_id || data.task_id);
     } catch (_) {
       const msg = "Сеть недоступна при создании задачи.";
       showFlash(msg, { sticky: true });
@@ -1491,7 +1652,7 @@
       composer.classList.add("busy");
       showWait("Перезапускаем case…");
       try {
-        const res = await fetch(`/v1/tasks/${encodeURIComponent(currentTask)}/restart`, {
+        const res = await fetch(`/cases/${encodeURIComponent(currentTask)}/run`, {
           method: "POST",
           headers: {
             "Content-Type": "application/json",
@@ -1510,6 +1671,11 @@
           showFlash(detail.includes(currentTask) ? detail : `${detail} (case_id=${currentTask})`);
           return;
         }
+        if (data.ok === false || data.skipped || data.accepted === false) {
+          const detail = data.reason || data.status || "skipped";
+          showFlash(`Перезапуск не выполнен: ${detail} (case_id=${currentTask})`);
+          return;
+        }
         applyFeedMeta({
           status: data.orchestrator?.status || data.status,
           version: data.orchestrator?.version || data.version,
@@ -1522,6 +1688,8 @@
         });
         if (data.turn) renderTurn(data.turn);
         showFlash(`Перезапуск case ${currentTask} принят.`);
+        await pollFeed();
+        await refreshRail();
       } catch (err) {
         showFlash(`Не удалось перезапустить case ${currentTask}: ${err}`);
       } finally {
@@ -1537,6 +1705,22 @@
   });
 
   newTaskBtn.addEventListener("click", () => setStartOpen(!startOpen));
+
+  if (renameTaskBtn) renameTaskBtn.addEventListener("click", beginRenameTask);
+  if (renameTaskInput) {
+    renameTaskInput.addEventListener("keydown", (ev) => {
+      if (ev.key === "Enter") {
+        ev.preventDefault();
+        saveRenameTask();
+      } else if (ev.key === "Escape") {
+        ev.preventDefault();
+        cancelRenameTask();
+      }
+    });
+    renameTaskInput.addEventListener("blur", () => {
+      if (renamingTask && !renameTaskInput.disabled) saveRenameTask();
+    });
+  }
 
   function formatHydrateError(err) {
     const text = String(err || "");
@@ -1554,14 +1738,19 @@
   async function hydrateFromDataTables({ flash = false, reloadFeed = true } = {}) {
     try {
       if (reloadFeed && currentTask) {
-        const snap = await fetch(`/v1/tasks/${encodeURIComponent(currentTask)}?durable=1`);
+        const taskId = currentTask;
+        const gen = feedGeneration;
+        const snap = await fetch(`/cases/${encodeURIComponent(taskId)}`);
         if (snap.ok) {
           const body = await snap.json();
+          if (currentTask !== taskId || feedGeneration !== gen || startOpen) return;
+          lastCaseFeed = body;
           rendered = new Set();
           thread.innerHTML = "";
           setTaskHeader(currentTask, body.status, { awaiting: body.awaiting_human });
           applyFeedMeta(body);
           for (const turn of body.activity || []) renderTurn(turn, { animate: false });
+          syncSchema(body);
           if (body.hydrate?.ok === false) {
             showFlash(formatHydrateError(body.hydrate.error || "hydrate_failed"));
           } else if (body.hydrate?.truncated) {
@@ -1579,7 +1768,7 @@
       }
       return data;
     } catch (_) {
-      if (flash) showFlash("Не удалось обратиться к n8n Data Tables.");
+      if (flash) showFlash("Не удалось обновить ленту задач.");
       return null;
     }
   }
@@ -1603,6 +1792,13 @@
 
   startCancelBtn.addEventListener("click", () => setStartOpen(false));
   startComposer.addEventListener("submit", submitStart);
+  if (viewChatBtn) viewChatBtn.addEventListener("click", () => setWorkspaceView("chat"));
+  if (viewSchemaBtn) viewSchemaBtn.addEventListener("click", () => setWorkspaceView("schema"));
+  try {
+    if (sessionStorage.getItem("masActivityView") === "schema") {
+      setWorkspaceView("schema", { persist: false });
+    }
+  } catch (_) { /* ignore */ }
 
   startDropzone.addEventListener("click", () => startFileInput.click());
   startDropzone.addEventListener("keydown", (e) => {

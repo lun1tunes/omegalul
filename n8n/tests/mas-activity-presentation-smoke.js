@@ -8,13 +8,9 @@ const path = require('node:path');
 const { spawn } = require('node:child_process');
 const http = require('node:http');
 
-const workspace = process.env.WORKSPACE_ROOT || '/workspace';
-const orchestrator = JSON.parse(
-  fs.readFileSync(path.join(workspace, 'n8n/workflows/core/universal-engineering-orchestrator.workflow.json'), 'utf8'),
-);
-const traceWf = JSON.parse(
-  fs.readFileSync(path.join(workspace, 'n8n/workflows/core/mas-trace-event-writer.workflow.json'), 'utf8'),
-);
+const { workspace, readWorkflow } = require('./_workflow');
+const orchestrator = readWorkflow('universal-engineering-orchestrator.workflow.json');
+const traceWf = readWorkflow('mas-trace-event-writer.workflow.json');
 const AsyncFunction = Object.getPrototypeOf(async function () {}).constructor;
 
 function source(name) {

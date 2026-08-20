@@ -1,19 +1,27 @@
 #!/usr/bin/env python3
-"""Generate the UI-importable Activity ↔ Data Table hydrate workflow (n8n 2.30.8)."""
+"""Generate the retired Activity ↔ Data Table hydrate workflow (n8n 2.30.8).
+
+Not imported on the live MAS path (Activity uses Postgres directly).
+"""
 from __future__ import annotations
 
 import json
 from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[1]
-OUT = ROOT / "workflows" / "core"
+CORE = ROOT / "workflows" / "core"
+OUT = ROOT / "workflows" / "retired"
 STALE = (
+    CORE / "mas-activity-list-tasks.workflow.json",
+    CORE / "mas-activity-load-feed.workflow.json",
+    CORE / "mas-activity-hydrate.workflow.json",
     OUT / "mas-activity-list-tasks.workflow.json",
     OUT / "mas-activity-load-feed.workflow.json",
 )
 
 
 def _wf(payload: dict) -> None:
+    OUT.mkdir(parents=True, exist_ok=True)
     path = OUT / f"{payload['file']}"
     body = {k: v for k, v in payload.items() if k != "file"}
     path.write_text(json.dumps(body, ensure_ascii=False, indent=2) + "\n", encoding="utf-8")

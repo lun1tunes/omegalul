@@ -8,17 +8,16 @@ const assert = require('node:assert/strict');
 const fs = require('node:fs');
 const path = require('node:path');
 
-const workspace = process.env.WORKSPACE_ROOT || '/workspace';
-const workflows = path.join(workspace, 'n8n', 'workflows', 'core');
+const { workspace, workflowFile } = require('./_workflow');
 const packageRoot = path.join(workspace, 'simulation-model-example', 'package');
 const rootRel = 'SCHEDULE/FORECAST/MONITORING_1_2_2_1_4q25_3_NORTH1_6_FDP.INC';
 const fixture = path.join(packageRoot, rootRel);
 const AsyncFunction = Object.getPrototypeOf(async function () {}).constructor;
 
-function codeFrom(workflowFile, nodeName) {
-  const workflow = JSON.parse(fs.readFileSync(path.join(workflows, workflowFile), 'utf8'));
+function codeFrom(name, nodeName) {
+  const workflow = JSON.parse(fs.readFileSync(workflowFile(name), 'utf8'));
   const node = workflow.nodes.find((candidate) => candidate.name === nodeName);
-  assert(node, `${workflowFile}: node ${nodeName} is missing`);
+  assert(node, `${name}: node ${nodeName} is missing`);
   return node.parameters.jsCode;
 }
 

@@ -1,9 +1,7 @@
 'use strict';
 const assert = require('node:assert/strict');
-const fs = require('node:fs');
-const path = require('node:path');
-const workspace = process.env.WORKSPACE_ROOT || '/workspace';
-const workflow = JSON.parse(fs.readFileSync(path.join(workspace, 'n8n/workflows/core/excel-extraction-agent.workflow.json'), 'utf8'));
+const { readWorkflow } = require('./_workflow');
+const workflow = readWorkflow('excel-extraction-agent.workflow.json');
 const AsyncFunction = Object.getPrototypeOf(async function () {}).constructor;
 const src = (name) => {
   const node = workflow.nodes.find((item) => item.name === name);

@@ -1,0 +1,530 @@
+{
+  "id": "b7c4e2a1-5d80-5c11-9f4a-0e8d3a6b1c72",
+  "name": "MAS — Ensure Control Plane",
+  "active": false,
+  "isArchived": false,
+  "nodes": [
+    {
+      "parameters": {
+        "content": "## edit after import\n\n**MAS — Ensure Control Plane** — once after UI import when you cannot psql the n8n database:\n\n1. Bind the same Postgres credential as Orchestrator — MAS\n2. Open this workflow → **Execute Workflow**\n3. Last node: `ok: true`, `agent_count` ≥ 3\n\nCREATE IF NOT EXISTS only. Never DROP n8n tables.\nThe DB role used by n8n must be allowed to CREATE TABLE.\npgvector (`CREATE EXTENSION vector`) is a DBA step for RAG, not this workflow.",
+        "height": 400,
+        "width": 520,
+        "color": 1
+      },
+      "id": "8ff2c941-a251-5f9b-a4bf-9dd81d2b27ed",
+      "name": "edit after import",
+      "type": "n8n-nodes-base.stickyNote",
+      "typeVersion": 1,
+      "position": [
+        -220,
+        -440
+      ]
+    },
+    {
+      "parameters": {},
+      "id": "b77961c7-6497-55f8-8f6f-6bc45ffe1043",
+      "name": "When clicking Execute workflow",
+      "type": "n8n-nodes-base.manualTrigger",
+      "typeVersion": 1,
+      "position": [
+        0,
+        0
+      ]
+    },
+    {
+      "parameters": {
+        "operation": "executeQuery",
+        "query": "CREATE TABLE IF NOT EXISTS cases (\n    case_id TEXT PRIMARY KEY,\n    state JSONB NOT NULL DEFAULT '{}'::jsonb,\n    status TEXT NOT NULL,\n    updated_at TIMESTAMPTZ NOT NULL DEFAULT now(),\n    CONSTRAINT cases_status_check CHECK (\n        status IN ('new', 'running', 'waiting_user', 'done', 'failed')\n    )\n)\n",
+        "options": {
+          "queryReplacement": "={{ [] }}",
+          "queryBatching": "single",
+          "largeNumbersOutput": "text",
+          "replaceEmptyStrings": false
+        }
+      },
+      "id": "e4c1fd3f-9277-5a1b-b1e0-64156758d531",
+      "name": "Ensure table cases",
+      "type": "n8n-nodes-base.postgres",
+      "typeVersion": 2.6,
+      "position": [
+        260,
+        0
+      ],
+      "credentials": {
+        "postgres": {
+          "id": "REPLACE_IN_UI",
+          "name": "REPLACE: SCHEDULE PostgreSQL / PGVector credential"
+        }
+      },
+      "alwaysOutputData": true
+    },
+    {
+      "parameters": {
+        "operation": "executeQuery",
+        "query": "CREATE TABLE IF NOT EXISTS events (\n    event_id BIGSERIAL PRIMARY KEY,\n    case_id TEXT NOT NULL REFERENCES cases (case_id) ON DELETE CASCADE,\n    task_id TEXT,\n    kind TEXT NOT NULL,\n    actor TEXT NOT NULL,\n    agent_id TEXT,\n    status TEXT,\n    status_message TEXT,\n    handoff_message TEXT,\n    payload JSONB NOT NULL DEFAULT '{}'::jsonb,\n    created_at TIMESTAMPTZ NOT NULL DEFAULT now()\n)\n",
+        "options": {
+          "queryReplacement": "={{ [] }}",
+          "queryBatching": "single",
+          "largeNumbersOutput": "text",
+          "replaceEmptyStrings": false
+        }
+      },
+      "id": "faa0b776-22f7-5f02-808a-8e18fdb71a75",
+      "name": "Ensure table events",
+      "type": "n8n-nodes-base.postgres",
+      "typeVersion": 2.6,
+      "position": [
+        480,
+        0
+      ],
+      "credentials": {
+        "postgres": {
+          "id": "REPLACE_IN_UI",
+          "name": "REPLACE: SCHEDULE PostgreSQL / PGVector credential"
+        }
+      },
+      "alwaysOutputData": true
+    },
+    {
+      "parameters": {
+        "operation": "executeQuery",
+        "query": "CREATE INDEX IF NOT EXISTS events_case_id_event_id_idx ON events (case_id, event_id)\n",
+        "options": {
+          "queryReplacement": "={{ [] }}",
+          "queryBatching": "single",
+          "largeNumbersOutput": "text",
+          "replaceEmptyStrings": false
+        }
+      },
+      "id": "b045b8be-f21d-5d50-82aa-a23872f50b74",
+      "name": "Ensure index events_case_id_event_id_idx",
+      "type": "n8n-nodes-base.postgres",
+      "typeVersion": 2.6,
+      "position": [
+        700,
+        0
+      ],
+      "credentials": {
+        "postgres": {
+          "id": "REPLACE_IN_UI",
+          "name": "REPLACE: SCHEDULE PostgreSQL / PGVector credential"
+        }
+      },
+      "alwaysOutputData": true
+    },
+    {
+      "parameters": {
+        "operation": "executeQuery",
+        "query": "CREATE TABLE IF NOT EXISTS error_traces (\n    error_id BIGSERIAL PRIMARY KEY,\n    case_id TEXT,\n    execution_id TEXT,\n    workflow_name TEXT,\n    node_name TEXT,\n    error_message TEXT,\n    error_type TEXT,\n    stack TEXT,\n    input_snapshot JSONB,\n    created_at TIMESTAMPTZ NOT NULL DEFAULT now()\n)\n",
+        "options": {
+          "queryReplacement": "={{ [] }}",
+          "queryBatching": "single",
+          "largeNumbersOutput": "text",
+          "replaceEmptyStrings": false
+        }
+      },
+      "id": "635d3129-ba92-57d5-9bc3-317bf76d95d8",
+      "name": "Ensure table error_traces",
+      "type": "n8n-nodes-base.postgres",
+      "typeVersion": 2.6,
+      "position": [
+        920,
+        0
+      ],
+      "credentials": {
+        "postgres": {
+          "id": "REPLACE_IN_UI",
+          "name": "REPLACE: SCHEDULE PostgreSQL / PGVector credential"
+        }
+      },
+      "alwaysOutputData": true
+    },
+    {
+      "parameters": {
+        "operation": "executeQuery",
+        "query": "CREATE INDEX IF NOT EXISTS error_traces_case_id_idx ON error_traces (case_id)\n",
+        "options": {
+          "queryReplacement": "={{ [] }}",
+          "queryBatching": "single",
+          "largeNumbersOutput": "text",
+          "replaceEmptyStrings": false
+        }
+      },
+      "id": "8ba10ba9-b54e-53a2-9e7f-76546cac8e99",
+      "name": "Ensure index error_traces_case_id_idx",
+      "type": "n8n-nodes-base.postgres",
+      "typeVersion": 2.6,
+      "position": [
+        1140,
+        0
+      ],
+      "credentials": {
+        "postgres": {
+          "id": "REPLACE_IN_UI",
+          "name": "REPLACE: SCHEDULE PostgreSQL / PGVector credential"
+        }
+      },
+      "alwaysOutputData": true
+    },
+    {
+      "parameters": {
+        "operation": "executeQuery",
+        "query": "CREATE INDEX IF NOT EXISTS error_traces_execution_id_idx ON error_traces (execution_id)\n",
+        "options": {
+          "queryReplacement": "={{ [] }}",
+          "queryBatching": "single",
+          "largeNumbersOutput": "text",
+          "replaceEmptyStrings": false
+        }
+      },
+      "id": "84c27fa5-f8e1-5378-85f2-9b23d714c186",
+      "name": "Ensure index error_traces_execution_id_idx",
+      "type": "n8n-nodes-base.postgres",
+      "typeVersion": 2.6,
+      "position": [
+        1360,
+        0
+      ],
+      "credentials": {
+        "postgres": {
+          "id": "REPLACE_IN_UI",
+          "name": "REPLACE: SCHEDULE PostgreSQL / PGVector credential"
+        }
+      },
+      "alwaysOutputData": true
+    },
+    {
+      "parameters": {
+        "operation": "executeQuery",
+        "query": "CREATE TABLE IF NOT EXISTS executions (\n    execution_id TEXT PRIMARY KEY,\n    case_id TEXT,\n    workflow_name TEXT,\n    started_at TIMESTAMPTZ NOT NULL DEFAULT now()\n)\n",
+        "options": {
+          "queryReplacement": "={{ [] }}",
+          "queryBatching": "single",
+          "largeNumbersOutput": "text",
+          "replaceEmptyStrings": false
+        }
+      },
+      "id": "c1a9c9e3-8503-506a-8d38-f6293548af80",
+      "name": "Ensure table executions",
+      "type": "n8n-nodes-base.postgres",
+      "typeVersion": 2.6,
+      "position": [
+        1580,
+        0
+      ],
+      "credentials": {
+        "postgres": {
+          "id": "REPLACE_IN_UI",
+          "name": "REPLACE: SCHEDULE PostgreSQL / PGVector credential"
+        }
+      },
+      "alwaysOutputData": true
+    },
+    {
+      "parameters": {
+        "operation": "executeQuery",
+        "query": "CREATE INDEX IF NOT EXISTS executions_case_id_idx ON executions (case_id)\n",
+        "options": {
+          "queryReplacement": "={{ [] }}",
+          "queryBatching": "single",
+          "largeNumbersOutput": "text",
+          "replaceEmptyStrings": false
+        }
+      },
+      "id": "9cdcd3b4-8414-57f3-a6b5-92420c13573c",
+      "name": "Ensure index executions_case_id_idx",
+      "type": "n8n-nodes-base.postgres",
+      "typeVersion": 2.6,
+      "position": [
+        1800,
+        0
+      ],
+      "credentials": {
+        "postgres": {
+          "id": "REPLACE_IN_UI",
+          "name": "REPLACE: SCHEDULE PostgreSQL / PGVector credential"
+        }
+      },
+      "alwaysOutputData": true
+    },
+    {
+      "parameters": {
+        "operation": "executeQuery",
+        "query": "CREATE TABLE IF NOT EXISTS agent_registry (\n    agent_id TEXT PRIMARY KEY,\n    title TEXT,\n    when_to_use TEXT,\n    input_required JSONB NOT NULL DEFAULT '[]'::jsonb,\n    output_provides JSONB NOT NULL DEFAULT '[]'::jsonb\n)\n",
+        "options": {
+          "queryReplacement": "={{ [] }}",
+          "queryBatching": "single",
+          "largeNumbersOutput": "text",
+          "replaceEmptyStrings": false
+        }
+      },
+      "id": "846fc26a-631e-5e6a-ad07-65da906431d0",
+      "name": "Ensure table agent_registry",
+      "type": "n8n-nodes-base.postgres",
+      "typeVersion": 2.6,
+      "position": [
+        2020,
+        0
+      ],
+      "credentials": {
+        "postgres": {
+          "id": "REPLACE_IN_UI",
+          "name": "REPLACE: SCHEDULE PostgreSQL / PGVector credential"
+        }
+      },
+      "alwaysOutputData": true
+    },
+    {
+      "parameters": {
+        "operation": "executeQuery",
+        "query": "INSERT INTO agent_registry (agent_id, title, when_to_use, input_required, output_provides)\nVALUES\n    (\n        'excel_extractor',\n        'Excel Extractor',\n        'Если есть Excel-файл и нужно извлечь скважины, даты, дебиты, управления',\n        '[\"excel\"]'::jsonb,\n        '[\"excel_table\", \"normalized_rows\"]'::jsonb\n    ),\n    (\n        'calculation_agent',\n        'Calculation Agent',\n        'Если есть структурная поверхность и траектория, нужно найти пересечение и начало интервала перфорации',\n        '[\"surface\", \"trajectory\"]'::jsonb,\n        '[\"top_perforation_md\"]'::jsonb\n    )\nON CONFLICT (agent_id) DO UPDATE SET\n    title = EXCLUDED.title,\n    when_to_use = EXCLUDED.when_to_use,\n    input_required = EXCLUDED.input_required,\n    output_provides = EXCLUDED.output_provides\n",
+        "options": {
+          "queryReplacement": "={{ [] }}",
+          "queryBatching": "single",
+          "largeNumbersOutput": "text",
+          "replaceEmptyStrings": false
+        }
+      },
+      "id": "797bcddd-26be-58ba-afe9-3999aef18400",
+      "name": "Seed agent_registry excel+calc",
+      "type": "n8n-nodes-base.postgres",
+      "typeVersion": 2.6,
+      "position": [
+        2240,
+        0
+      ],
+      "credentials": {
+        "postgres": {
+          "id": "REPLACE_IN_UI",
+          "name": "REPLACE: SCHEDULE PostgreSQL / PGVector credential"
+        }
+      },
+      "alwaysOutputData": true
+    },
+    {
+      "parameters": {
+        "operation": "executeQuery",
+        "query": "INSERT INTO agent_registry (agent_id, title, when_to_use, input_required, output_provides)\nVALUES (\n    'schedule_builder',\n    'Schedule Builder',\n    'Исходный SCHEDULE (.inc): сдвиг дат ввода по фактам Excel (скважина+дата); перепривязка скважин в группу (GRUPTREE/GCONPROD) по тексту задачи и baseline. Excel обязателен только для новых дат ввода. Не выдумывает даты и имена, которых нет в задаче, Excel или baseline.',\n    '[\"schedule_source\"]'::jsonb,\n    '[\"schedule_out\", \"diff\"]'::jsonb\n)\nON CONFLICT (agent_id) DO UPDATE SET\n    title = EXCLUDED.title,\n    when_to_use = EXCLUDED.when_to_use,\n    input_required = EXCLUDED.input_required,\n    output_provides = EXCLUDED.output_provides\n",
+        "options": {
+          "queryReplacement": "={{ [] }}",
+          "queryBatching": "single",
+          "largeNumbersOutput": "text",
+          "replaceEmptyStrings": false
+        }
+      },
+      "id": "b64b3ba5-d4ae-5825-9e0b-98e79a3fb0eb",
+      "name": "Seed agent_registry schedule_builder",
+      "type": "n8n-nodes-base.postgres",
+      "typeVersion": 2.6,
+      "position": [
+        2460,
+        0
+      ],
+      "credentials": {
+        "postgres": {
+          "id": "REPLACE_IN_UI",
+          "name": "REPLACE: SCHEDULE PostgreSQL / PGVector credential"
+        }
+      },
+      "alwaysOutputData": true
+    },
+    {
+      "parameters": {
+        "operation": "executeQuery",
+        "query": "SELECT\n  to_regclass('public.cases') IS NOT NULL AS cases_ok,\n  to_regclass('public.events') IS NOT NULL AS events_ok,\n  to_regclass('public.error_traces') IS NOT NULL AS error_traces_ok,\n  to_regclass('public.executions') IS NOT NULL AS executions_ok,\n  to_regclass('public.agent_registry') IS NOT NULL AS agent_registry_ok,\n  (SELECT COUNT(*) FROM agent_registry) AS agent_count\n",
+        "options": {
+          "queryReplacement": "={{ [] }}",
+          "queryBatching": "single",
+          "largeNumbersOutput": "text",
+          "replaceEmptyStrings": false
+        }
+      },
+      "id": "0436e0e3-1e28-5802-b6b8-c2170a54aec4",
+      "name": "Verify control plane",
+      "type": "n8n-nodes-base.postgres",
+      "typeVersion": 2.6,
+      "position": [
+        2680,
+        0
+      ],
+      "credentials": {
+        "postgres": {
+          "id": "REPLACE_IN_UI",
+          "name": "REPLACE: SCHEDULE PostgreSQL / PGVector credential"
+        }
+      },
+      "alwaysOutputData": true
+    },
+    {
+      "parameters": {
+        "jsCode": "const x=$json||{};\nconst flag=k=>x[k]===true||x[k]==='t'||x[k]==='true'||x[k]===1||x[k]==='1';\nconst count=Number(x.agent_count||0);\nconst ok=flag('cases_ok')&&flag('events_ok')&&flag('error_traces_ok')&&flag('executions_ok')&&flag('agent_registry_ok')&&count>=3;\nreturn [{json:{contract:'mas_control_plane_ready',ok,cases_ok:flag('cases_ok'),events_ok:flag('events_ok'),error_traces_ok:flag('error_traces_ok'),executions_ok:flag('executions_ok'),agent_registry_ok:flag('agent_registry_ok'),agent_count:count}}];"
+      },
+      "id": "b0cde13f-de88-5dce-b8ce-5d5f590a8e25",
+      "name": "Format ensure ack",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        2920,
+        0
+      ]
+    }
+  ],
+  "connections": {
+    "When clicking Execute workflow": {
+      "main": [
+        [
+          {
+            "node": "Ensure table cases",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Ensure table cases": {
+      "main": [
+        [
+          {
+            "node": "Ensure table events",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Ensure table events": {
+      "main": [
+        [
+          {
+            "node": "Ensure index events_case_id_event_id_idx",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Ensure index events_case_id_event_id_idx": {
+      "main": [
+        [
+          {
+            "node": "Ensure table error_traces",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Ensure table error_traces": {
+      "main": [
+        [
+          {
+            "node": "Ensure index error_traces_case_id_idx",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Ensure index error_traces_case_id_idx": {
+      "main": [
+        [
+          {
+            "node": "Ensure index error_traces_execution_id_idx",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Ensure index error_traces_execution_id_idx": {
+      "main": [
+        [
+          {
+            "node": "Ensure table executions",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Ensure table executions": {
+      "main": [
+        [
+          {
+            "node": "Ensure index executions_case_id_idx",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Ensure index executions_case_id_idx": {
+      "main": [
+        [
+          {
+            "node": "Ensure table agent_registry",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Ensure table agent_registry": {
+      "main": [
+        [
+          {
+            "node": "Seed agent_registry excel+calc",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Seed agent_registry excel+calc": {
+      "main": [
+        [
+          {
+            "node": "Seed agent_registry schedule_builder",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Seed agent_registry schedule_builder": {
+      "main": [
+        [
+          {
+            "node": "Verify control plane",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Verify control plane": {
+      "main": [
+        [
+          {
+            "node": "Format ensure ack",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    }
+  },
+  "settings": {
+    "executionOrder": "v1",
+    "saveManualExecutions": true,
+    "callerPolicy": "workflowsFromSameOwner",
+    "errorWorkflow": ""
+  },
+  "meta": {
+    "templateCredsSetupCompleted": true,
+    "targetN8nVersion": "2.30.8"
+  },
+  "tags": [],
+  "pinData": {},
+  "versionId": "a6f0c732-82ee-404b-8514-75c6ec62df70"
+}

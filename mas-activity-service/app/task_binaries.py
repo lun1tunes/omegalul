@@ -19,22 +19,21 @@ BinaryMap = dict[str, tuple[str, bytes, str]]
 
 _SAFE = re.compile(r"[^A-Za-z0-9._-]+")
 _MAX_TASKS_ON_DISK = 80
+_MEMORY: dict[str, BinaryMap] = {}
 
 
-def binaries_root() -> Path | None:
+def binaries_root() -> Path:
     raw = get_settings().activity_binaries_path.strip()
     if raw:
         return Path(raw).expanduser()
     sp = state_path()
-    if sp is None:
-        return None
-    return sp.parent / "task_binaries"
+    if sp is not None:
+        return sp.parent / "task_binaries"
+    return Path(__file__).resolve().parents[1] / "data" / "task_binaries"
 
 
-def _task_dir(task_id: str) -> Path | None:
+def _task_dir(task_id: str) -> Path:
     root = binaries_root()
-    if root is None:
-        return None
     safe = _SAFE.sub("_", task_id)[:180] or "task"
     return root / safe
 
@@ -42,9 +41,8 @@ def _task_dir(task_id: str) -> Path | None:
 def save_task_binaries(task_id: str, files: BinaryMap | None) -> None:
     if not files:
         return
+    _MEMORY[task_id] = dict(files)
     dest = _task_dir(task_id)
-    if dest is None:
-        return
     if dest.exists():
         shutil.rmtree(dest, ignore_errors=True)
     dest.mkdir(parents=True, exist_ok=True)
@@ -69,8 +67,11 @@ def save_task_binaries(task_id: str, files: BinaryMap | None) -> None:
 
 
 def load_task_binaries(task_id: str) -> BinaryMap:
+    cached = _MEMORY.get(task_id)
+    if cached:
+        return dict(cached)
     dest = _task_dir(task_id)
-    if dest is None or not dest.is_dir():
+    if not dest.is_dir():
         return {}
     man_path = dest / "manifest.json"
     if not man_path.is_file():
@@ -99,8 +100,9 @@ def load_task_binaries(task_id: str) -> BinaryMap:
 
 
 def clear_task_binaries(task_id: str) -> None:
+    _MEMORY.pop(task_id, None)
     dest = _task_dir(task_id)
-    if dest is None or not dest.exists():
+    if not dest.exists():
         return
     shutil.rmtree(dest, ignore_errors=True)
 

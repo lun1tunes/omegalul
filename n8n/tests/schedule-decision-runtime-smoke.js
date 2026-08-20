@@ -3,14 +3,7 @@
 // Executes the exact exported n8n Code-node JavaScript for the observable
 // decision/readiness contracts. No model-authored percentage is trusted here.
 const assert = require('node:assert/strict');
-const fs = require('node:fs');
-const path = require('node:path');
-
-const workspace = process.env.WORKSPACE_ROOT || '/workspace';
-const readWorkflow = (name) => JSON.parse(fs.readFileSync(
-  path.join(workspace, 'n8n', 'workflows', 'core', name),
-  'utf8',
-));
+const { readWorkflow } = require('./_workflow');
 const plannerWorkflow = readWorkflow('tnavigator-schedule-builder.workflow.json');
 const builderWorkflow = readWorkflow('tnavigator-schedule-builder.workflow.json');
 const traceWorkflow = readWorkflow('mas-trace-event-writer.workflow.json');

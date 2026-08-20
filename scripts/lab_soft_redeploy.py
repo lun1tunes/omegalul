@@ -37,15 +37,16 @@ PLACEHOLDERS = {
     "REPLACE_CAS_PERSIST_IN_UI": "CAS — Persist Task State",
     "REPLACE_SCHEDULE_RAG_RETRIEVAL_IN_UI": "MAS — Knowledge Retrieval",
     "REPLACE_SCHEDULE_BUILDER_IN_UI": "SCHEDULE — Builder",
+    "REPLACE_SCHEDULE_BUILDER_AGENT_IN_UI": "Agent — Schedule Builder",
     "REPLACE_CALCULATION_AGENT_IN_UI": "Agent — Calculation (Math Service)",
     "REPLACE_MAS_TRACE_WRITER_IN_UI": "Writer — MAS Trace",
     "REPLACE_EXCEL_EXTRACTION_AGENT_IN_UI": "Agent — Excel Extractor",
-    "REPLACE_HEALTH_ORCHESTRATOR_IN_UI": "Orchestrator — Engineering MAS",
+    "REPLACE_HEALTH_ORCHESTRATOR_IN_UI": "Orchestrator — MAS",
     "REPLACE_HEALTH_TRACE_IN_UI": "Writer — MAS Trace",
-    "REPLACE_ORCHESTRATOR_ID_IN_UI": "Orchestrator — Engineering MAS",
-    "REPLACE_ORCHESTRATOR_ID_IN_UI_HUMAN_GATE_STATUS": "Orchestrator — Engineering MAS",
-    "REPLACE_ORCHESTRATOR_ID_IN_UI_HUMAN_GATE_RESUME": "Orchestrator — Engineering MAS",
-    "REPLACE_ERROR_HANDLER_IN_UI": "Error — MAS Case Handler",
+    "REPLACE_ORCHESTRATOR_ID_IN_UI": "Orchestrator — MAS",
+    "REPLACE_ORCHESTRATOR_ID_IN_UI_HUMAN_GATE_STATUS": "Orchestrator — MAS",
+    "REPLACE_ORCHESTRATOR_ID_IN_UI_HUMAN_GATE_RESUME": "Orchestrator — MAS",
+    "REPLACE_ERROR_HANDLER_IN_UI": "Error — MAS Node Traces",
 }
 
 # Optional stubs — bind when imported so Orchestrator activate/publish can succeed.
@@ -60,34 +61,35 @@ OPTIONAL_PLACEHOLDERS = {
 # Publish/activate order: leaves with no Execute Workflow deps first,
 # then RAG, then specialists that call RAG, then Orchestrator, then forms.
 PUBLISH = [
-    "CAS — Persist Task State",
-    "Writer — MAS Trace",
     "MAS — Knowledge Retrieval",
     "MAS — Knowledge Ingestion",
-    "Agent — Calculation (Math Service)",
-    "SCHEDULE — Builder",
-    "Template — Cluster Calculation Adapter",
-    "Template — Binary Results Adapter",
-    "Template — Presentation Assembler",
-    "Template — Engineering Specialist",
-    "Agent — Excel Extractor",
-    "Error — MAS Case Handler",
-    "Activity — Hydrate (Data Tables)",
-    "Orchestrator — Engineering MAS",
+    "Error — MAS Node Traces",
+    "Agent — Schedule Builder",
+    "Orchestrator — MAS",
     "Form — MAS Deployment Health Check",
-    "Form — MAS Entry",
-    "Form — MAS Human Gate",
 ]
 
 STALE_WORKFLOW_NAMES = (
     "Activity — List Tasks (Data Table)",
     "Activity — Load Feed (Data Tables)",
+    "Activity — Hydrate (Data Tables)",
+    "Orchestrator — Engineering MAS",
+    "CAS — Persist Task State",
+    "Writer — MAS Trace",
+    "Error — MAS Case Handler",
+    "Form — MAS Entry",
+    "Form — MAS Human Gate",
+    "Agent — Excel Extractor",
+    "Agent — Calculation (Math Service)",
+    "SCHEDULE — Builder",
 )
 
 ERROR_WORKFLOW_SKIP = (
+    "Error — MAS Node Traces",
     "Error — MAS Case Handler",
     "Writer — MAS Trace",
     "CAS — Persist Task State",
+    "MAS — Ensure Control Plane",
 )
 
 
@@ -103,13 +105,15 @@ def run(cmd: list[str], check: bool = True, timeout: int | None = 120) -> subpro
 def load_env() -> dict[str, str]:
     out: dict[str, str] = {}
     path = ROOT / ".env"
-    if not path.is_file():
-        return out
-    for line in path.read_text(encoding="utf-8").splitlines():
-        if not line.strip() or line.startswith("#") or "=" not in line:
-            continue
-        k, _, v = line.partition("=")
-        out[k.strip()] = v.strip().strip('"').strip("'")
+    if path.is_file():
+        for line in path.read_text(encoding="utf-8").splitlines():
+            if not line.strip() or line.startswith("#") or "=" not in line:
+                continue
+            k, _, v = line.partition("=")
+            out[k.strip()] = v.strip().strip('"').strip("'")
+    chat_model = str(os.environ.get("N8N_CHAT_MODEL") or "").strip()
+    if chat_model:
+        out["N8N_CHAT_MODEL"] = chat_model
     return out
 
 
@@ -129,6 +133,10 @@ BEGIN
   IF to_regclass('public.execution_entity') IS NOT NULL THEN TRUNCATE execution_entity CASCADE; END IF;
   IF to_regclass('public.data_table_user_eotasksv1') IS NOT NULL THEN TRUNCATE data_table_user_eotasksv1; END IF;
   IF to_regclass('public.data_table_user_mastracev1') IS NOT NULL THEN TRUNCATE data_table_user_mastracev1; END IF;
+  IF to_regclass('public.events') IS NOT NULL THEN TRUNCATE events CASCADE; END IF;
+  IF to_regclass('public.error_traces') IS NOT NULL THEN TRUNCATE error_traces CASCADE; END IF;
+  IF to_regclass('public.executions') IS NOT NULL THEN TRUNCATE executions CASCADE; END IF;
+  IF to_regclass('public.cases') IS NOT NULL THEN TRUNCATE cases CASCADE; END IF;
 END$$;
 """
     )
@@ -227,9 +235,94 @@ def save_nodes(wid: str, nodes) -> None:
         sql_path.unlink(missing_ok=True)
 
 
+def apply_control_plane_sql() -> None:
+    print("== apply MAS control-plane SQL ==")
+    for name in ("02-mas-control-plane.sql", "03-schedule-builder-registry.sql"):
+        path = ROOT / "postgres-init" / name
+        remote = f"/tmp/{name}"
+        run(["docker", "compose", "cp", str(path), f"postgres:{remote}"])
+        run(
+            [
+                "docker",
+                "compose",
+                "exec",
+                "-T",
+                "postgres",
+                "psql",
+                "-U",
+                "n8n",
+                "-d",
+                "n8n",
+                "-v",
+                "ON_ERROR_STOP=1",
+                "-f",
+                remote,
+            ]
+        )
+        print(f"applied {name}")
+
+
+def ensure_qwen_credential(env: dict[str, str]) -> str:
+    """Create or reuse OpenAI-compatible Qwen credential. Returns live n8n id."""
+    existing = psql("SELECT name || E'\\t' || id FROM credentials_entity;")
+    for line in existing.splitlines():
+        if "\t" not in line:
+            continue
+        name, cid = line.split("\t", 1)
+        if name.strip() == "Qwen OpenAI-compatible":
+            print(f"qwen credential exists id={cid.strip()}")
+            return cid.strip()
+    key = (env.get("QWEN_API_KEY") or "").strip()
+    url = (env.get("QWEN_BASE_URL") or "https://api.openai.com/v1").rstrip("/")
+    if not key:
+        print("qwen credential skip: QWEN_API_KEY missing")
+        return ""
+    import http.cookiejar
+
+    user = env.get("N8N_USERNAME") or env.get("N8N_USER")
+    password = env.get("N8N_PASSWORD")
+    if not user or not password:
+        print("qwen credential skip: no n8n login")
+        return ""
+    base = f"http://127.0.0.1:{env.get('N8N_HOST_PORT', '15678')}"
+    cj = http.cookiejar.CookieJar()
+    opener = urllib.request.build_opener(urllib.request.HTTPCookieProcessor(cj))
+    login = urllib.request.Request(
+        base + "/rest/login",
+        data=json.dumps({"emailOrLdapLoginId": user, "password": password}).encode(),
+        headers={"Content-Type": "application/json"},
+        method="POST",
+    )
+    opener.open(login, timeout=30)
+    payload = {
+        "name": "Qwen OpenAI-compatible",
+        "type": "openAiApi",
+        "data": {"apiKey": key, "url": url},
+    }
+    req = urllib.request.Request(
+        base + "/rest/credentials",
+        data=json.dumps(payload).encode(),
+        headers={"Content-Type": "application/json", "Accept": "application/json"},
+        method="POST",
+    )
+    with opener.open(req, timeout=60) as resp:
+        body = json.loads(resp.read().decode() if resp.length != 0 else b"{}")
+    cred = body.get("data") or body
+    cid = str(cred.get("id") or "").strip()
+    if not cid:
+        raise SystemExit(f"qwen credential create missing id: {list(body)[:8]}")
+    if PROJECT_ID:
+        psql(
+            "INSERT INTO shared_credentials (\"credentialsId\", \"projectId\", role) "
+            f"VALUES ('{cid}', '{PROJECT_ID}', 'credential:owner') ON CONFLICT DO NOTHING;"
+        )
+    print(f"qwen credential created id={cid}")
+    return cid
+
+
 def bind_error_workflow(name_to_id: dict[str, str]) -> None:
-    """Point Settings → Error workflow at Error — MAS Case Handler (live n8n IDs)."""
-    hid = name_to_id.get("Error — MAS Case Handler")
+    """Point Settings → Error workflow at Error — MAS Node Traces (live n8n IDs)."""
+    hid = name_to_id.get("Error — MAS Node Traces") or name_to_id.get("Error — MAS Case Handler")
     if not hid:
         print("bind errorWorkflow skip: handler missing")
         return
@@ -248,13 +341,14 @@ def bind_error_workflow(name_to_id: dict[str, str]) -> None:
 
 def patch_nodes(nodes, name_to_id: dict[str, str], env: dict[str, str]) -> int:
     changed = 0
-    # Lab defaults: n8n in compose reaches host FastAPI via scripts/lab_docker_host_bridge.py
-    # (mas-host-bridge). Field Windows uses the PC IP directly — set env overrides.
-    activity_url = env.get("MAS_ACTIVITY_URL", "http://mas-host-bridge:8200")
+    # Compose DNS: n8n + agent containers reach Activity on the backend network.
+    # Field Windows: set MAS_ACTIVITY_URL=http://<PC-IP>:8200 (corporate n8n is not in compose).
+    activity_url = env.get("MAS_ACTIVITY_URL", "http://mas-activity:8200")
     # Compose `excel-tools` listens on 18000 inside Docker DNS. Host :18000 is
     # only up if a second uvicorn is started; mas-host-bridge then works.
-    excel_url = env.get("EXCEL_TOOLS_URL", "http://excel-tools:18000/api/v1")
-    math_url = env.get("MATH_SERVICE_URL", "http://mas-host-bridge:8100/api/v1/math")
+    excel_url = env.get("EXCEL_TOOLS_URL", "http://excel-tools:18000")
+    math_url = env.get("MATH_SERVICE_URL", "http://math-service:8100")
+    schedule_url = env.get("SCHEDULE_BUILDER_URL", "http://schedule-builder:8090")
     excel_key = env.get("EXCEL_TOOLS_API_KEY") or env.get("excel_tools_api_key") or ""
     webhook_key = env.get("EXCEL_WEBHOOK_API_KEY") or env.get("excel_webhook_api_key") or excel_key
     placeholders = dict(PLACEHOLDERS)
@@ -274,8 +368,9 @@ def patch_nodes(nodes, name_to_id: dict[str, str], env: dict[str, str]) -> int:
                     meta["name"] = "Postgres pgvector"
                     changed += 1
                 elif ctype == "openAiApi":
-                    if "qwen" in cname.lower():
-                        meta["id"] = "cred-qwen-compatible-01"
+                    qwen_id = str(env.get("_N8N_QWEN_CRED_ID") or "").strip()
+                    if "qwen" in cname.lower() and qwen_id:
+                        meta["id"] = qwen_id
                         meta["name"] = "Qwen OpenAI-compatible"
                     else:
                         meta["id"] = CRED_OA
@@ -288,6 +383,16 @@ def patch_nodes(nodes, name_to_id: dict[str, str], env: dict[str, str]) -> int:
         params = node.get("parameters")
         if not isinstance(params, dict):
             continue
+        chat_model = str(env.get("N8N_CHAT_MODEL") or "").strip()
+        if chat_model and node.get("type") == "@n8n/n8n-nodes-langchain.lmChatOpenAi":
+            model = params.get("model")
+            if isinstance(model, dict):
+                model["value"] = chat_model
+                model["mode"] = "id"
+                changed += 1
+            elif model is None or isinstance(model, str):
+                params["model"] = {"mode": "id", "value": chat_model}
+                changed += 1
         dt = params.get("dataTableId")
         if isinstance(dt, dict) and dt.get("__rl"):
             cached = str(dt.get("cachedResultName") or "").lower()
@@ -319,21 +424,47 @@ def patch_nodes(nodes, name_to_id: dict[str, str], env: dict[str, str]) -> int:
                 "engineering-orchestrator": "a1000003-orch-wh-0001-8000-000000000002",
                 "engineering-orchestrator-form": "a1000003-orch-form-0001-8000-000000000002",
                 "mas-activity-hydrate": "a1000003-hyd-wh-0001-8000-000000000002",
+                "mas-orchestrator-step": "a1000003-mas-orch-wh-0001-800000000001",
+                "schedule-builder-agent": "a1000003-sched-agent-wh-0001-8000000001",
             }.get(path)
             if stable:
                 node["webhookId"] = stable
                 changed += 1
-        if node.get("name") == "Runtime configuration":
+        if node.get("name") in {"Runtime configuration", "Runtime endpoints"}:
             for assignment in (((params.get("assignments") or {}).get("assignments")) or []):
                 key = assignment.get("name")
-                if key == "excel_tools_url":
+                if key == "excel_extractor_url":
+                    assignment["value"] = excel_url.rstrip("/") + "/agent/run"
+                    changed += 1
+                elif key == "excel_tools_url":
                     assignment["value"] = "={{ " + json.dumps(excel_url) + " }}"
                     changed += 1
                 elif key == "excel_tools_api_key":
-                    assignment["value"] = "={{ " + json.dumps(excel_key) + " }}"
+                    assignment["value"] = excel_key
                     changed += 1
                 elif key == "excel_webhook_api_key":
                     assignment["value"] = "={{ " + json.dumps(webhook_key) + " }}"
+                    changed += 1
+                elif key == "calculation_agent_url":
+                    assignment["value"] = math_url.rstrip("/") + "/agent/run"
+                    changed += 1
+                elif key == "schedule_builder_url":
+                    assignment["value"] = env.get(
+                        "SCHEDULE_BUILDER_AGENT_URL",
+                        "http://n8n:5678/webhook/schedule-builder-agent",
+                    )
+                    changed += 1
+                elif key == "schedule_service_url":
+                    assignment["value"] = schedule_url.rstrip("/")
+                    changed += 1
+                elif key == "orchestrator_step_url":
+                    assignment["value"] = env.get(
+                        "ORCHESTRATOR_INTERNAL_WEBHOOK_URL",
+                        "http://n8n:5678/webhook/mas-orchestrator-step",
+                    )
+                    changed += 1
+                elif key == "activity_base_url":
+                    assignment["value"] = activity_url
                     changed += 1
         if node.get("name") == "Math Service Configuration":
             for assignment in (((params.get("assignments") or {}).get("assignments")) or []):
@@ -372,7 +503,10 @@ SET nodes = w.nodes,
 FROM workflow_entity w
 WHERE h."versionId" = w."versionId"
   AND h."workflowId" = w.id
-  AND h.nodes::text IS DISTINCT FROM w.nodes::text;
+  AND (
+    h.nodes::text IS DISTINCT FROM w.nodes::text
+    OR h.connections::text IS DISTINCT FROM w.connections::text
+  );
 """
     )
 
@@ -654,7 +788,33 @@ def ensure_compose_up() -> None:
     n8n_port = env.get("N8N_HOST_PORT", "15678")
     activity_port = env.get("MAS_ACTIVITY_HOST_PORT", "8200")
     wait_url(f"http://127.0.0.1:{n8n_port}/healthz")
-    pass #wait_url(f"http://127.0.0.1:{activity_port}/health")
+    wait_url(f"http://127.0.0.1:{activity_port}/health")
+    for service, inner in (
+        ("math-service", "http://127.0.0.1:8100/health"),
+        ("schedule-builder", "http://127.0.0.1:8090/health"),
+        ("excel-tools", "http://127.0.0.1:18000/health"),
+    ):
+        print(f"wait {service} {inner}")
+        for _ in range(90):
+            cp = run(
+                [
+                    "docker",
+                    "compose",
+                    "exec",
+                    "-T",
+                    service,
+                    "python3",
+                    "-c",
+                    f"import urllib.request; urllib.request.urlopen({inner!r}, timeout=3).read()",
+                ],
+                check=False,
+                timeout=20,
+            )
+            if cp.returncode == 0:
+                break
+            time.sleep(2)
+        else:
+            print(f"warn: {service} not healthy yet")
 
 
 def main() -> int:
@@ -666,6 +826,10 @@ def main() -> int:
     t0 = time.time()
     env = load_env()
     ensure_compose_up()
+    apply_control_plane_sql()
+    qwen_id = ensure_qwen_credential(env)
+    if qwen_id:
+        env["_N8N_QWEN_CRED_ID"] = qwen_id
     if not args.skip_wipe:
         wipe_state(env)
     if not args.skip_import:

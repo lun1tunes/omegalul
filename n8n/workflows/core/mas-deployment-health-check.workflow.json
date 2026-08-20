@@ -1,7 +1,7 @@
 {
   "id": "mas-deployment-health-check-v1",
   "name": "Form — MAS Deployment Health Check",
-  "description": "Native n8n 2.30.8 deployment readiness form. Live probes: task/trace Data Tables, Orchestrator status, Trace Writer, and Docker HTTP health for excel-tools, n8n-runners, mas-activity, n8n. Report shows PASS/FAIL with where_to_fix.",
+  "description": "Native n8n 2.30.8 deployment readiness form after MAS cutover. Live FAIL gates: excel-tools, math-service, schedule-builder, n8n-runners, mas-activity, n8n. CAS/Trace/old orchestrator are TODO.",
   "active": false,
   "settings": {
     "executionOrder": "v1",
@@ -12,7 +12,7 @@
   "nodes": [
     {
       "parameters": {
-        "content": "## edit after import\n\n**Form — MAS Deployment Health Check** — after UI import, complete bindings before activate:\n\n- Bind Data Table on **Probe task Data Table**\n- Bind Data Table on **Probe trace Data Table**\n- Bind sub-workflow on **Call Orchestrator probe**\n- Bind sub-workflow on **Call Trace Writer probe**\n\nDo not rely on env()/Globals for corporate UI import.",
+        "content": "## edit after import\n\n**Form — MAS Deployment Health Check** after MAS cutover:\n\n- Live FAIL gates are Docker HTTP: excel-tools, math-service, schedule-builder, n8n-runners, mas-activity, n8n.\n- Data Tables / Trace Writer / old Orchestrator Execute Workflow are TODO (Postgres cases + FastAPI agents).\n- Production orchestrator webhook: `mas-orchestrator-step`.\n",
         "height": 272,
         "width": 440,
         "color": 1
@@ -28,7 +28,7 @@
     },
     {
       "parameters": {
-        "content": "## MAS Deployment Health Check (n8n 2.30.8)\n1. Select task + trace Data Tables in the two Probe nodes.\n2. Bind Call Orchestrator probe → Orchestrator — Engineering MAS.\n3. Bind Call Trace Writer probe → Writer — MAS Trace.\n4. Live HTTP pings: excel-tools, n8n-runners, mas-activity, n8n /healthz (Docker DNS).\n5. Publish/Test this form and read the HTML report.\n6. Every FAIL line includes where_to_fix.\n\nFull runbook: docs.md",
+        "content": "## MAS Deployment Health Check (n8n 2.30.8)\n1. Production path: Orchestrator — MAS webhook `mas-orchestrator-step`.\n2. Live HTTP: excel-tools:18000, math-service:8100, schedule-builder:8090, n8n-runners, mas-activity, n8n.\n3. CAS / Trace / Data Tables / old Engineering MAS are retired — report them as TODO.\n4. `fail_first: 0` with PASS_WITH_TODO is the expected lab result.\n\nFull runbook: docs.md",
         "width": 520,
         "height": 320,
         "color": 5
@@ -171,90 +171,14 @@
     },
     {
       "parameters": {
-        "jsCode": "const prepared = $('Prepare health probes').first().json || {};\nreturn [{ json: {\n  entrypoint: 'health_check',\n  action: 'status',\n  task_id: prepared.probe_task_id,\n  requested_by: prepared.requested_by,\n}}];"
-      },
-      "id": "c1000001-0001-4000-8000-000000000007",
-      "name": "Prepare Orchestrator status probe",
-      "type": "n8n-nodes-base.code",
-      "typeVersion": 2,
-      "position": [
-        1400,
-        0
-      ]
-    },
-    {
-      "parameters": {
-        "source": "database",
-        "workflowId": {
-          "__rl": true,
-          "value": "REPLACE_HEALTH_ORCHESTRATOR_IN_UI",
-          "mode": "list",
-          "cachedResultName": "Orchestrator — Engineering MAS"
-        },
-        "mode": "once",
-        "options": {
-          "waitForSubWorkflow": true
-        }
-      },
-      "id": "c1000001-0001-4000-8000-000000000008",
-      "name": "Call Orchestrator probe",
-      "type": "n8n-nodes-base.executeWorkflow",
-      "typeVersion": 1.3,
-      "position": [
-        1680,
-        0
-      ],
-      "continueOnFail": true,
-      "alwaysOutputData": true
-    },
-    {
-      "parameters": {
-        "jsCode": "const prepared = $('Prepare health probes').first().json || {};\nconst now = new Date().toISOString();\nreturn [{ json: {\n  mas_trace_event: {\n    trace_id: `trace_health_${Date.now().toString(36)}`,\n    task_id: prepared.probe_task_id,\n    stage: 'hitl',\n    event_type: 'health_check',\n    actor: prepared.requested_by || 'mas-health-check',\n    status: 'observed',\n    summary: 'MAS deployment health-check probe (redacted, no secrets).',\n  },\n  passthrough: { health_check: true, at: now },\n}}];"
-      },
-      "id": "c1000001-0001-4000-8000-000000000009",
-      "name": "Prepare Trace Writer probe",
-      "type": "n8n-nodes-base.code",
-      "typeVersion": 2,
-      "position": [
-        1960,
-        0
-      ]
-    },
-    {
-      "parameters": {
-        "source": "database",
-        "workflowId": {
-          "__rl": true,
-          "value": "REPLACE_HEALTH_TRACE_IN_UI",
-          "mode": "list",
-          "cachedResultName": "Writer — MAS Trace"
-        },
-        "mode": "once",
-        "options": {
-          "waitForSubWorkflow": true
-        }
-      },
-      "id": "c1000001-0001-4000-8000-00000000000a",
-      "name": "Call Trace Writer probe",
-      "type": "n8n-nodes-base.executeWorkflow",
-      "typeVersion": 1.3,
-      "position": [
-        2240,
-        0
-      ],
-      "continueOnFail": true,
-      "alwaysOutputData": true
-    },
-    {
-      "parameters": {
-        "jsCode": "const escapeHtml = (value) => String(value ?? '')\n  .replace(/&/g, '&amp;')\n  .replace(/</g, '&lt;')\n  .replace(/>/g, '&gt;')\n  .replace(/\\\"/g, '&quot;')\n  .replace(/'/g, '&#39;');\n\nconst prepared = $('Prepare health probes').first().json || {};\n\nconst readProbe = (nodeName) => {\n  try {\n    const items = $(nodeName).all();\n    if (!items.length) {\n      return { ran: false, items: [], errors: [`Node \"${nodeName}\" produced no items (binding/table likely unresolved).`] };\n    }\n    const errors = [];\n    for (const item of items) {\n      if (item.error) errors.push(String(item.error.message || item.error.description || item.error));\n      const j = item.json || {};\n      if (j.error) errors.push(typeof j.error === 'string' ? j.error : JSON.stringify(j.error));\n      if (typeof j.message === 'string' && /REPLACE_|could not find|doesn't exist|does not exist|not configured|invalid credential|denied|ECONNREFUSED|ENOTFOUND/i.test(j.message)) {\n        errors.push(j.message);\n      }\n      // continueOnFail sometimes surfaces only a string/code on the item root\n      if (typeof item.message === 'string' && /REPLACE_|error|fail/i.test(item.message)) errors.push(item.message);\n    }\n    return { ran: true, items: items.map((i) => i.json || {}), errors };\n  } catch (e) {\n    return { ran: false, items: [], errors: [String(e.message || e)] };\n  }\n};\n\nconst checks = [];\nconst push = (check, status, where_to_fix, detail) => {\n  checks.push({ check, status, where_to_fix, detail });\n};\n\nconst BINDINGS = [\n  { owner: 'Orchestrator — Engineering MAS', node: 'Call Excel Extraction Specialist Adapter', target: 'Adapter — Excel Extraction' },\n  { owner: 'Orchestrator — Engineering MAS', node: 'Call SCHEDULE Hybrid Retrieval', target: 'MAS — Knowledge Retrieval' },\n  { owner: 'Orchestrator — Engineering MAS', node: 'Call SCHEDULE Builder Specialist', target: 'SCHEDULE — Builder' },\n  { owner: 'Orchestrator — Engineering MAS', node: 'Call Calculation Specialist', target: 'Adapter — Calculation (Math Service)' },\n  { owner: 'Orchestrator — Engineering MAS', node: 'Call MAS Trace Event Writer', target: 'Writer — MAS Trace' },\n  { owner: 'Adapter — Excel Extraction', node: 'Call native Excel Extraction Agent', target: 'Agent — Excel Extractor' },\n  { owner: 'Form — MAS Entry', node: 'Call Universal Engineering Orchestrator', target: 'Orchestrator — Engineering MAS' },\n  { owner: 'Form — MAS Human Gate', node: 'Call Orchestrator status', target: 'Orchestrator — Engineering MAS' },\n  { owner: 'Form — MAS Human Gate', node: 'Call Orchestrator resume', target: 'Orchestrator — Engineering MAS' },\n  { owner: 'Form — MAS Deployment Health Check', node: 'Call Orchestrator probe', target: 'Orchestrator — Engineering MAS' },\n  { owner: 'Form — MAS Deployment Health Check', node: 'Call Trace Writer probe', target: 'Writer — MAS Trace' },\n  { owner: 'Orchestrator — Engineering MAS', node: 'Call CAS persist — insert new task', target: 'CAS — Persist Task State' },\n  { owner: 'Orchestrator — Engineering MAS', node: 'Call CAS persist — human action then plan', target: 'CAS — Persist Task State' },\n  { owner: 'Orchestrator — Engineering MAS', node: 'Call CAS persist — terminal human action', target: 'CAS — Persist Task State' },\n  { owner: 'Orchestrator — Engineering MAS', node: 'Call CAS persist — plan or human gate', target: 'CAS — Persist Task State' },\n  { owner: 'Orchestrator — Engineering MAS', node: 'Call CAS persist — SCHEDULE evidence retry', target: 'CAS — Persist Task State' },\n  { owner: 'Orchestrator — Engineering MAS', node: 'Call CAS persist — SCHEDULE resume', target: 'CAS — Persist Task State' },\n  { owner: 'Orchestrator — Engineering MAS', node: 'Call CAS persist — verification', target: 'CAS — Persist Task State' },\n  { owner: 'Orchestrator — Engineering MAS', node: 'Call CAS persist — specialist gate or error', target: 'CAS — Persist Task State' },\n  { owner: 'Orchestrator — Engineering MAS', node: 'Call CAS persist — routing gate', target: 'CAS — Persist Task State' },\n];\n\nconst DT_NODES = [\n  { owner: 'Writer — MAS Trace', node: 'Insert MAS trace event', table: 'mas_trace_events_v1' },\n  { owner: 'CAS — Persist Task State', node: 'Insert durable task row', table: 'engineering_orchestrator_tasks_v1' },\n  { owner: 'CAS — Persist Task State', node: 'Update durable task row', table: 'engineering_orchestrator_tasks_v1' },\n  { owner: 'Orchestrator — Engineering MAS', node: 'Load task by ID', table: 'engineering_orchestrator_tasks_v1' },\n  { owner: 'Form — MAS Deployment Health Check', node: 'Probe task Data Table', table: 'engineering_orchestrator_tasks_v1' },\n  { owner: 'Form — MAS Deployment Health Check', node: 'Probe trace Data Table', table: 'mas_trace_events_v1' },\n];\n\nfor (const b of BINDINGS) {\n  push(\n    `Binding checklist: ${b.owner} → ${b.node}`,\n    'TODO',\n    `${b.owner} → node \"${b.node}\" → select \"${b.target}\"`,\n    'Manual UI binding. Live probes below only cover Health Check → Orchestrator/Trace and Data Tables.',\n  );\n}\nfor (const d of DT_NODES) {\n  push(\n    `Data Table checklist: ${d.owner} → ${d.node}`,\n    'TODO',\n    `${d.owner} → node \"${d.node}\" → select table \"${d.table}\"`,\n    'Select the Data Table in the node resource locator (must not remain REPLACE_IN_UI).',\n  );\n}\n\nconst taskProbe = readProbe('Probe task Data Table');\nif (!taskProbe.ran || taskProbe.errors.length) {\n  push(\n    'Live: task Data Table readable',\n    'FAIL',\n    'Form — MAS Deployment Health Check → Probe task Data Table → select engineering_orchestrator_tasks_v1 (and bind the same table on all Orchestrator Data Table nodes)',\n    taskProbe.errors.join(' | ') || 'Probe node did not run.',\n  );\n} else {\n  push(\n    'Live: task Data Table readable',\n    'PASS',\n    'Form — MAS Deployment Health Check → Probe task Data Table',\n    `get(task_id=${prepared.probe_task_id}) succeeded (empty result is OK).`,\n  );\n}\n\nconst traceProbe = readProbe('Probe trace Data Table');\nif (!traceProbe.ran || traceProbe.errors.length) {\n  push(\n    'Live: trace Data Table readable',\n    'FAIL',\n    'Form — MAS Deployment Health Check → Probe trace Data Table → select mas_trace_events_v1 (and Writer — MAS Trace → Insert MAS trace event)',\n    traceProbe.errors.join(' | ') || 'Probe node did not run.',\n  );\n} else {\n  push(\n    'Live: trace Data Table readable',\n    'PASS',\n    'Form — MAS Deployment Health Check → Probe trace Data Table',\n    `get(task_id=${prepared.probe_task_id}) succeeded (empty result is OK).`,\n  );\n}\n\nconst orchProbe = readProbe('Call Orchestrator probe');\nconst orchJson = orchProbe.items[0] || {};\nconst orchStatus = String(orchJson.status || '');\nconst orchLooksBound = orchProbe.ran && !orchProbe.errors.length && orchJson.input_valid !== false && ['not_found', 'awaiting_human', 'completed', 'failed', 'conflict', 'cancelled', 'rejected'].includes(orchStatus);\nif (!orchLooksBound) {\n  push(\n    'Live: Orchestrator reachable via Execute Workflow',\n    'FAIL',\n    'Form — MAS Deployment Health Check → Call Orchestrator probe → select Orchestrator — Engineering MAS. Also finish Orchestrator Data Table bindings and Form — MAS Entry/Human Gate Orchestrator Call nodes.',\n    orchProbe.errors.join(' | ') || `Unexpected response status=${orchStatus || 'n/a'} message=${orchJson.message || 'n/a'}`,\n  );\n} else {\n  push(\n    'Live: Orchestrator reachable via Execute Workflow',\n    'PASS',\n    'Form — MAS Deployment Health Check → Call Orchestrator probe',\n    `status=${orchStatus}; message=${orchJson.message || ''}. Expected not_found for probe task_id is ideal.`,\n  );\n}\n\nconst writerProbe = readProbe('Call Trace Writer probe');\nconst writerJson = writerProbe.items[0] || {};\nconst writerOk = writerProbe.ran && !writerProbe.errors.length && (writerJson.contract === 'mas_trace_ack' || writerJson.stored === true);\nif (!writerOk) {\n  push(\n    'Live: Trace Writer reachable + insert path',\n    'FAIL',\n    'Form — MAS Deployment Health Check → Call Trace Writer probe → select Writer — MAS Trace; Writer — MAS Trace → Insert MAS trace event → mas_trace_events_v1; Orchestrator → Call MAS Trace Event Writer',\n    writerProbe.errors.join(' | ') || `Unexpected response: ${JSON.stringify(writerJson).slice(0, 500)}`,\n  );\n} else {\n  push(\n    'Live: Trace Writer reachable + insert path',\n    'PASS',\n    'Form — MAS Deployment Health Check → Call Trace Writer probe',\n    `mas_trace_ack event_id=${writerJson.event_id || 'n/a'}.`,\n  );\n}\n\nconst readHttp = (nodeName, expectOk = (j, statusCode) => statusCode >= 200 && statusCode < 300) => {\n  try {\n    const items = $(nodeName).all();\n    if (!items.length) return { ok: false, detail: `Node \"${nodeName}\" produced no items.` };\n    const item = items[0];\n    if (item.error) return { ok: false, detail: String(item.error.message || item.error) };\n    const j = item.json || {};\n    const statusCode = Number(j.statusCode ?? j.status ?? (j.data && j.data.statusCode) ?? 0);\n    // n8n httpRequest fullResponse puts body under j.body or j.data\n    const body = j.body ?? j.data ?? j;\n    const ok = expectOk(body, statusCode) && !(typeof j.message === 'string' && /ECONNREFUSED|ENOTFOUND|timeout|REPLACE_/i.test(j.message));\n    return { ok, detail: `statusCode=${statusCode || 'n/a'} body=${JSON.stringify(body).slice(0, 180)}`, statusCode, body };\n  } catch (e) {\n    return { ok: false, detail: String(e.message || e) };\n  }\n};\n\nconst excelHealth = readHttp('Probe excel-tools /health', (body, code) => code === 200 || (body && (body.status === 'ok' || body.ok === true)));\npush('Live: excel-tools /health', excelHealth.ok ? 'PASS' : 'FAIL',\n  'docker compose → excel-tools healthcheck; from n8n: GET http://excel-tools:8000/health',\n  excelHealth.detail);\n\nconst runnersHealth = readHttp('Probe n8n-runners /healthz', (body, code) => code === 200);\npush('Live: n8n-runners /healthz', runnersHealth.ok ? 'PASS' : 'FAIL',\n  'docker compose → n8n-runners healthcheck; from n8n: GET http://n8n-runners:5680/healthz',\n  runnersHealth.detail);\n\nconst activityHealth = readHttp('Probe mas-activity /health', (body, code) => code === 200 || (body && body.status === 'ok'));\npush('Live: mas-activity /health', activityHealth.ok ? 'PASS' : 'FAIL',\n  'docker compose → mas-activity (optional UI); from n8n: GET http://mas-activity:8200/health',\n  activityHealth.detail);\n\nconst n8nHealth = readHttp('Probe n8n /healthz', (body, code) => code === 200 || (body && body.status === 'ok'));\npush('Live: n8n /healthz', n8nHealth.ok ? 'PASS' : 'FAIL',\n  'docker compose → n8n; GET http://n8n:5678/healthz',\n  n8nHealth.detail);\n\npush(\n  'Manual: specialist routes (Excel / SCHEDULE / Calculation)',\n  'TODO',\n  'docs.md → Manual smoke; Orchestrator Call Excel / Retrieval / Builder / Calculation nodes',\n  'Health Check intentionally does not call LLM or Excel/SCHEDULE Builder.',\n);\npush(\n  'Manual: export Orchestrator JSON and search REPLACE_',\n  'TODO',\n  'Orchestrator — Engineering MAS → export → search REPLACE_EXCEL_ADAPTER_IN_UI, REPLACE_SCHEDULE_*, REPLACE_CALCULATION_*, REPLACE_MAS_TRACE_*',\n  'Any REPLACE_ left means an Execute Workflow binding is unfinished.',\n);\n\nconst fail = checks.filter((c) => c.status === 'FAIL');\nconst pass = checks.filter((c) => c.status === 'PASS');\nconst todo = checks.filter((c) => c.status === 'TODO');\nconst overall = fail.length ? 'FAIL' : 'PASS_WITH_TODO';\n\nconst rowHtml = (c) => `<tr><td><strong>${escapeHtml(c.status)}</strong></td><td>${escapeHtml(c.check)}</td><td><code>${escapeHtml(c.where_to_fix)}</code></td><td>${escapeHtml(c.detail)}</td></tr>`;\nconst section = (title, rows) => rows.length\n  ? `<h2>${escapeHtml(title)} (${rows.length})</h2><table border=\"1\" cellpadding=\"6\" cellspacing=\"0\"><thead><tr><th>status</th><th>check</th><th>where_to_fix</th><th>detail</th></tr></thead><tbody>${rows.map(rowHtml).join('')}</tbody></table>`\n  : '';\n\nconst html = `<main>\n<h1>MAS deployment health check</h1>\n<p>Overall: <strong>${escapeHtml(overall)}</strong></p>\n<p>Started: <code>${escapeHtml(prepared.started_at || '')}</code></p>\n<p>Probe task_id: <code>${escapeHtml(prepared.probe_task_id || '')}</code></p>\n<p>Operator: <code>${escapeHtml(prepared.operator_note || prepared.requested_by || '')}</code></p>\n<p>Live probes cover Data Tables + Orchestrator + Trace Writer + Docker HTTP health (excel-tools, runners, activity, n8n). Finish TODO bindings in UI, then re-run.</p>\n${section('FAIL — fix these first', fail)}\n${section('PASS — live probes', pass)}\n${section('TODO — checklist / manual', todo)}\n<p>Full runbook: <code>docs.md</code></p>\n</main>`;\n\nreturn [{ json: {\n  overall,\n  fail_count: fail.length,\n  pass_count: pass.length,\n  todo_count: todo.length,\n  checks,\n  form_response_html: html,\n  where_to_fix: fail.map((c) => c.where_to_fix),\n}}];"
+        "jsCode": "const escapeHtml = (value) => String(value ?? '')\n  .replace(/&/g, '&amp;')\n  .replace(/</g, '&lt;')\n  .replace(/>/g, '&gt;')\n  .replace(/\\\"/g, '&quot;')\n  .replace(/'/g, '&#39;');\n\nconst prepared = $('Prepare health probes').first().json || {};\n\nconst readProbe = (nodeName) => {\n  try {\n    const items = $(nodeName).all();\n    if (!items.length) {\n      return { ran: false, items: [], errors: [`Node \"${nodeName}\" produced no items (binding/table likely unresolved).`] };\n    }\n    const errors = [];\n    for (const item of items) {\n      if (item.error) errors.push(String(item.error.message || item.error.description || item.error));\n      const j = item.json || {};\n      if (j.error) errors.push(typeof j.error === 'string' ? j.error : JSON.stringify(j.error));\n      if (typeof j.message === 'string' && /REPLACE_|could not find|doesn't exist|does not exist|not configured|invalid credential|denied|ECONNREFUSED|ENOTFOUND/i.test(j.message)) {\n        errors.push(j.message);\n      }\n      // continueOnFail sometimes surfaces only a string/code on the item root\n      if (typeof item.message === 'string' && /REPLACE_|error|fail/i.test(item.message)) errors.push(item.message);\n    }\n    return { ran: true, items: items.map((i) => i.json || {}), errors };\n  } catch (e) {\n    return { ran: false, items: [], errors: [String(e.message || e)] };\n  }\n};\n\nconst checks = [];\nconst push = (check, status, where_to_fix, detail) => {\n  checks.push({ check, status, where_to_fix, detail });\n};\n\nconst BINDINGS = [\n  { owner: 'Orchestrator — Engineering MAS', node: 'Call Excel Extraction Specialist Adapter', target: 'Adapter — Excel Extraction' },\n  { owner: 'Orchestrator — Engineering MAS', node: 'Call SCHEDULE Hybrid Retrieval', target: 'MAS — Knowledge Retrieval' },\n  { owner: 'Orchestrator — Engineering MAS', node: 'Call SCHEDULE Builder Specialist', target: 'SCHEDULE — Builder' },\n  { owner: 'Orchestrator — Engineering MAS', node: 'Call Calculation Specialist', target: 'Adapter — Calculation (Math Service)' },\n  { owner: 'Orchestrator — Engineering MAS', node: 'Call MAS Trace Event Writer', target: 'Writer — MAS Trace' },\n  { owner: 'Adapter — Excel Extraction', node: 'Call native Excel Extraction Agent', target: 'Agent — Excel Extractor' },\n  { owner: 'Form — MAS Entry', node: 'Call Universal Engineering Orchestrator', target: 'Orchestrator — Engineering MAS' },\n  { owner: 'Form — MAS Human Gate', node: 'Call Orchestrator status', target: 'Orchestrator — Engineering MAS' },\n  { owner: 'Form — MAS Human Gate', node: 'Call Orchestrator resume', target: 'Orchestrator — Engineering MAS' },\n  { owner: 'Form — MAS Deployment Health Check', node: 'Call Orchestrator probe', target: 'Orchestrator — Engineering MAS' },\n  { owner: 'Form — MAS Deployment Health Check', node: 'Call Trace Writer probe', target: 'Writer — MAS Trace' },\n  { owner: 'Orchestrator — Engineering MAS', node: 'Call CAS persist — insert new task', target: 'CAS — Persist Task State' },\n  { owner: 'Orchestrator — Engineering MAS', node: 'Call CAS persist — human action then plan', target: 'CAS — Persist Task State' },\n  { owner: 'Orchestrator — Engineering MAS', node: 'Call CAS persist — terminal human action', target: 'CAS — Persist Task State' },\n  { owner: 'Orchestrator — Engineering MAS', node: 'Call CAS persist — plan or human gate', target: 'CAS — Persist Task State' },\n  { owner: 'Orchestrator — Engineering MAS', node: 'Call CAS persist — SCHEDULE evidence retry', target: 'CAS — Persist Task State' },\n  { owner: 'Orchestrator — Engineering MAS', node: 'Call CAS persist — SCHEDULE resume', target: 'CAS — Persist Task State' },\n  { owner: 'Orchestrator — Engineering MAS', node: 'Call CAS persist — verification', target: 'CAS — Persist Task State' },\n  { owner: 'Orchestrator — Engineering MAS', node: 'Call CAS persist — specialist gate or error', target: 'CAS — Persist Task State' },\n  { owner: 'Orchestrator — Engineering MAS', node: 'Call CAS persist — routing gate', target: 'CAS — Persist Task State' },\n];\n\nconst DT_NODES = [\n  { owner: 'Writer — MAS Trace', node: 'Insert MAS trace event', table: 'mas_trace_events_v1' },\n  { owner: 'CAS — Persist Task State', node: 'Insert durable task row', table: 'engineering_orchestrator_tasks_v1' },\n  { owner: 'CAS — Persist Task State', node: 'Update durable task row', table: 'engineering_orchestrator_tasks_v1' },\n  { owner: 'Orchestrator — Engineering MAS', node: 'Load task by ID', table: 'engineering_orchestrator_tasks_v1' },\n  { owner: 'Form — MAS Deployment Health Check', node: 'Probe task Data Table', table: 'engineering_orchestrator_tasks_v1' },\n  { owner: 'Form — MAS Deployment Health Check', node: 'Probe trace Data Table', table: 'mas_trace_events_v1' },\n];\n\nfor (const b of BINDINGS) {\n  push(\n    `Binding checklist: ${b.owner} → ${b.node}`,\n    'TODO',\n    `${b.owner} → node \"${b.node}\" → select \"${b.target}\"`,\n    'Manual UI binding. Live probes below only cover Health Check → Orchestrator/Trace and Data Tables.',\n  );\n}\nfor (const d of DT_NODES) {\n  push(\n    `Data Table checklist: ${d.owner} → ${d.node}`,\n    'TODO',\n    `${d.owner} → node \"${d.node}\" → select table \"${d.table}\"`,\n    'Select the Data Table in the node resource locator (must not remain REPLACE_IN_UI).',\n  );\n}\n\nconst taskProbe = readProbe('Probe task Data Table');\npush(\n  'Live: task Data Table readable',\n  'TODO',\n  'Postgres control plane: cases/events (postgres-init/02-mas-control-plane.sql). Data Table engineering_orchestrator_tasks_v1 is retired from production.',\n  taskProbe.errors.join(' | ') || 'Not a production gate after MAS cutover.',\n);\n\nconst traceProbe = readProbe('Probe trace Data Table');\npush(\n  'Live: trace Data Table readable',\n  'TODO',\n  'Postgres control plane: events + error_traces. Data Table mas_trace_events_v1 is retired from production.',\n  traceProbe.errors.join(' | ') || 'Not a production gate after MAS cutover.',\n);\n\nconst orchProbe = readProbe('Call Orchestrator probe');\nconst orchJson = orchProbe.items[0] || {};\nconst orchStatus = String(orchJson.status || '');\nconst orchLooksBound = orchProbe.ran && !orchProbe.errors.length && orchJson.input_valid !== false && ['not_found', 'awaiting_human', 'completed', 'failed', 'conflict', 'cancelled', 'rejected'].includes(orchStatus);\npush(\n  'Live: Orchestrator reachable via Execute Workflow',\n  'TODO',\n  'Form — MAS Deployment Health Check: production path is webhook /webhook/mas-orchestrator-step (Orchestrator — MAS). Execute Workflow action=status against Orchestrator — Engineering MAS is retired.',\n  orchLooksBound\n    ? `legacy status=${orchStatus} (informational)`\n    : (orchProbe.errors.join(' | ') || `legacy Execute Workflow not used after cutover; status=${orchStatus || 'n/a'}`),\n);\n\nconst writerProbe = readProbe('Call Trace Writer probe');\nconst writerJson = writerProbe.items[0] || {};\nconst writerOk = writerProbe.ran && !writerProbe.errors.length && (writerJson.contract === 'mas_trace_ack' || writerJson.stored === true);\npush(\n  'Live: Trace Writer reachable + insert path',\n  'TODO',\n  'Writer — MAS Trace is STALE. Agents write Activity POST /cases/{id}/events; n8n crashes go to error_traces.',\n  writerOk ? `legacy mas_trace_ack event_id=${writerJson.event_id || 'n/a'}` : (writerProbe.errors.join(' | ') || 'Not a production gate after MAS cutover.'),\n);\n\nconst readHttp = (nodeName, expectOk = (j, statusCode) => statusCode >= 200 && statusCode < 300) => {\n  try {\n    const items = $(nodeName).all();\n    if (!items.length) return { ok: false, detail: `Node \"${nodeName}\" produced no items.` };\n    const item = items[0];\n    if (item.error) return { ok: false, detail: String(item.error.message || item.error) };\n    const j = item.json || {};\n    const statusCode = Number(j.statusCode ?? j.status ?? (j.data && j.data.statusCode) ?? 0);\n    // n8n httpRequest fullResponse puts body under j.body or j.data\n    const body = j.body ?? j.data ?? j;\n    const ok = expectOk(body, statusCode) && !(typeof j.message === 'string' && /ECONNREFUSED|ENOTFOUND|timeout|REPLACE_/i.test(j.message));\n    return { ok, detail: `statusCode=${statusCode || 'n/a'} body=${JSON.stringify(body).slice(0, 180)}`, statusCode, body };\n  } catch (e) {\n    return { ok: false, detail: String(e.message || e) };\n  }\n};\n\nconst excelHealth = readHttp('Probe excel-tools /health', (body, code) => code === 200 || (body && (body.status === 'ok' || body.ok === true)));\npush('Live: excel-tools /health', excelHealth.ok ? 'PASS' : 'FAIL',\n  'docker compose → excel-tools; from n8n: GET http://excel-tools:18000/health',\n  excelHealth.detail);\n\nconst runnersHealth = readHttp('Probe n8n-runners /healthz', (body, code) => code === 200);\npush('Live: n8n-runners /healthz', runnersHealth.ok ? 'PASS' : 'FAIL',\n  'docker compose → n8n-runners healthcheck; from n8n: GET http://n8n-runners:5680/healthz',\n  runnersHealth.detail);\n\nconst activityHealth = readHttp('Probe mas-activity /health', (body, code) => code === 200 || (body && body.status === 'ok'));\npush('Live: mas-activity /health', activityHealth.ok ? 'PASS' : 'FAIL',\n  'docker compose → mas-activity (optional UI); from n8n: GET http://mas-activity:8200/health',\n  activityHealth.detail);\n\nconst n8nHealth = readHttp('Probe n8n /healthz', (body, code) => code === 200 || (body && body.status === 'ok'));\npush('Live: n8n /healthz', n8nHealth.ok ? 'PASS' : 'FAIL',\n  'docker compose → n8n; GET http://n8n:5678/healthz',\n  n8nHealth.detail);\n\nconst mathHealth = readHttp('Probe math-service /health', (body, code) => code === 200 || (body && body.status === 'ok'));\npush('Live: math-service /health', mathHealth.ok ? 'PASS' : 'FAIL',\n  'docker compose → math-service; from n8n: GET http://math-service:8100/health',\n  mathHealth.detail);\n\nconst scheduleHealth = readHttp('Probe schedule-builder /health', (body, code) => code === 200 || (body && body.status === 'ok'));\npush('Live: schedule-builder /health', scheduleHealth.ok ? 'PASS' : 'FAIL',\n  'docker compose → schedule-builder; from n8n: GET http://schedule-builder:8090/health',\n  scheduleHealth.detail);\n\npush(\n  'Manual: specialist routes (Excel / SCHEDULE / Calculation)',\n  'TODO',\n  'docs.md → Manual smoke; Orchestrator Call Excel / Retrieval / Builder / Calculation nodes',\n  'Health Check intentionally does not call LLM or Excel/SCHEDULE Builder.',\n);\npush(\n  'Manual: export Orchestrator JSON and search REPLACE_',\n  'TODO',\n  'Orchestrator — Engineering MAS → export → search REPLACE_EXCEL_ADAPTER_IN_UI, REPLACE_SCHEDULE_*, REPLACE_CALCULATION_*, REPLACE_MAS_TRACE_*',\n  'Any REPLACE_ left means an Execute Workflow binding is unfinished.',\n);\n\nconst fail = checks.filter((c) => c.status === 'FAIL');\nconst pass = checks.filter((c) => c.status === 'PASS');\nconst todo = checks.filter((c) => c.status === 'TODO');\nconst overall = fail.length ? 'FAIL' : 'PASS_WITH_TODO';\n\nconst rowHtml = (c) => `<tr><td><strong>${escapeHtml(c.status)}</strong></td><td>${escapeHtml(c.check)}</td><td><code>${escapeHtml(c.where_to_fix)}</code></td><td>${escapeHtml(c.detail)}</td></tr>`;\nconst section = (title, rows) => rows.length\n  ? `<h2>${escapeHtml(title)} (${rows.length})</h2><table border=\"1\" cellpadding=\"6\" cellspacing=\"0\"><thead><tr><th>status</th><th>check</th><th>where_to_fix</th><th>detail</th></tr></thead><tbody>${rows.map(rowHtml).join('')}</tbody></table>`\n  : '';\n\nconst html = `<main>\n<h1>MAS deployment health check</h1>\n<p>Overall: <strong>${escapeHtml(overall)}</strong></p>\n<p>Started: <code>${escapeHtml(prepared.started_at || '')}</code></p>\n<p>Probe task_id: <code>${escapeHtml(prepared.probe_task_id || '')}</code></p>\n<p>Operator: <code>${escapeHtml(prepared.operator_note || prepared.requested_by || '')}</code></p>\n<p>Live probes cover Docker HTTP health (excel-tools, math-service, schedule-builder, runners, activity, n8n). CAS/Trace/old orchestrator are TODO after control-plane cutover.</p>\n${section('FAIL — fix these first', fail)}\n${section('PASS — live probes', pass)}\n${section('TODO — checklist / manual', todo)}\n<p>Full runbook: <code>docs.md</code></p>\n</main>`;\n\nreturn [{ json: {\n  overall,\n  fail_count: fail.length,\n  pass_count: pass.length,\n  todo_count: todo.length,\n  checks,\n  form_response_html: html,\n  where_to_fix: fail.map((c) => c.where_to_fix),\n}}];"
       },
       "id": "c1000001-0001-4000-8000-00000000000b",
       "name": "Build health report",
       "type": "n8n-nodes-base.code",
       "typeVersion": 2,
       "position": [
-        3640,
+        3920,
         0
       ]
     },
@@ -269,7 +193,7 @@
       "type": "n8n-nodes-base.form",
       "typeVersion": 2.5,
       "position": [
-        3920,
+        4200,
         0
       ]
     },
@@ -376,6 +300,58 @@
       ],
       "continueOnFail": true,
       "alwaysOutputData": true
+    },
+    {
+      "parameters": {
+        "method": "GET",
+        "url": "http://math-service:8100/health",
+        "options": {
+          "timeout": 5000,
+          "response": {
+            "response": {
+              "neverError": true,
+              "responseFormat": "autodetect",
+              "fullResponse": true
+            }
+          }
+        }
+      },
+      "id": "c1000001-0001-4000-8000-000000000014",
+      "name": "Probe math-service /health",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [
+        3500,
+        0
+      ],
+      "continueOnFail": true,
+      "alwaysOutputData": true
+    },
+    {
+      "parameters": {
+        "method": "GET",
+        "url": "http://schedule-builder:8090/health",
+        "options": {
+          "timeout": 5000,
+          "response": {
+            "response": {
+              "neverError": true,
+              "responseFormat": "autodetect",
+              "fullResponse": true
+            }
+          }
+        }
+      },
+      "id": "c1000001-0001-4000-8000-000000000015",
+      "name": "Probe schedule-builder /health",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [
+        3640,
+        0
+      ],
+      "continueOnFail": true,
+      "alwaysOutputData": true
     }
   ],
   "pinData": {},
@@ -425,50 +401,6 @@
       ]
     },
     "Probe trace Data Table": {
-      "main": [
-        [
-          {
-            "node": "Prepare Orchestrator status probe",
-            "type": "main",
-            "index": 0
-          }
-        ]
-      ]
-    },
-    "Prepare Orchestrator status probe": {
-      "main": [
-        [
-          {
-            "node": "Call Orchestrator probe",
-            "type": "main",
-            "index": 0
-          }
-        ]
-      ]
-    },
-    "Call Orchestrator probe": {
-      "main": [
-        [
-          {
-            "node": "Prepare Trace Writer probe",
-            "type": "main",
-            "index": 0
-          }
-        ]
-      ]
-    },
-    "Prepare Trace Writer probe": {
-      "main": [
-        [
-          {
-            "node": "Call Trace Writer probe",
-            "type": "main",
-            "index": 0
-          }
-        ]
-      ]
-    },
-    "Call Trace Writer probe": {
       "main": [
         [
           {
@@ -527,6 +459,28 @@
       "main": [
         [
           {
+            "node": "Probe math-service /health",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Probe math-service /health": {
+      "main": [
+        [
+          {
+            "node": "Probe schedule-builder /health",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Probe schedule-builder /health": {
+      "main": [
+        [
+          {
             "node": "Build health report",
             "type": "main",
             "index": 0
@@ -535,11 +489,11 @@
       ]
     }
   },
-  "versionId": "mas-deployment-health-check-v1.1",
+  "versionId": "mas-deployment-health-check-v1.2",
   "meta": {
     "templateCredsSetupCompleted": false,
     "targetN8nVersion": "2.30.8",
-    "contractVersion": "mas_deployment_health_check/v1.1"
+    "contractVersion": "mas_deployment_health_check/v1.2"
   },
   "tags": []
 }

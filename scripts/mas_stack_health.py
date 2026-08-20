@@ -70,7 +70,7 @@ def main() -> int:
 
     orch_url = os.getenv(
         "ORCHESTRATOR_WEBHOOK_URL",
-        f"http://127.0.0.1:{n8n_port}/webhook/engineering-orchestrator",
+        f"http://127.0.0.1:{n8n_port}/webhook/mas-orchestrator-step",
     )
     try:
         req = urllib.request.Request(

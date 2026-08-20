@@ -8,7 +8,7 @@
 Пожалуйста, придерживайтесь следующих ограничений, чтобы избежать проблем:
 - **n8n:** Используйте только графический интерфейс (UI) корпоративного n8n. Все процессы импортируются вручную ("Import from File"), там же настраиваются Data Tables, Credentials и Bindings. Никакого REST-импорта или Docker Compose на рабочем (полевом) компьютере.
 - **Внешние сервисы (Excel / Math / Activity):** Запускаются строго под Windows через `.bat` скрипты. Мы настраиваем `.env` файлы и запускаем их вручную.
-- **База данных (PostgreSQL + PGVector):** Используем ту базу, что уже подключена к вашему корпоративному n8n. Если в сети нет TLS-сертификатов, не забудьте отключить проверку SSL (`SSL = Disable`).
+- **База данных (PostgreSQL + PGVector):** Используем ту базу, что уже подключена к вашему корпоративному n8n. Если в сети нет TLS-сертификатов, не забудьте отключить проверку SSL (`SSL = Disable`). Таблицы стейта MAS (`cases`, `events`, `error_traces`, `executions`, `agent_registry`) создаются из UI: workflow `MAS — Ensure Control Plane` (Шаг 5b). `CREATE EXTENSION vector` для RAG — отдельный шаг DBA.
 - **Безопасность (Секреты):** Никаких паролей или токенов внутри workflows, глобальных переменных или `$env`. Все ключи должны храниться либо в защищенных credentials внутри n8n, либо в файлах `.env` на стороне Windows.
 
 ---
@@ -145,21 +145,17 @@ start-windows.bat
 
 ### Шаг 1. Импорт Workflows в n8n
 
-Зайдите в UI n8n, выберите "Import from File" и загрузите следующие 13 файлов строго в указанном порядке. **Ничего пока не активируйте!**
+Зайдите в UI n8n, выберите "Import from File" и загрузите файлы из `n8n/import-manifest.json` → `runtime_import_order`. **Ничего пока не активируйте!** Живой MAS-контур в `n8n/workflows/core/` (Excel/Math идут HTTP FastAPI, не n8n-агентами):
 
-1. `n8n/workflows/core/calculation-specialist-agent.workflow.json`
-2. `n8n/workflows/core/excel-extraction-agent.workflow.json`
-3. `n8n/workflows/core/tnavigator-schedule-knowledge-ingestion.workflow.json`
-4. `n8n/workflows/core/tnavigator-schedule-hybrid-retrieval.workflow.json`
-5. `n8n/workflows/core/tnavigator-schedule-builder.workflow.json`
-6. `n8n/workflows/core/mas-trace-event-writer.workflow.json`
-7. `n8n/workflows/core/cas-persist-task.workflow.json`
-8. `n8n/workflows/core/mas-error-handler.workflow.json`
-9. `n8n/workflows/core/universal-engineering-orchestrator.workflow.json`
-10. `n8n/workflows/core/mvp-entry-form.workflow.json`
-11. `n8n/workflows/core/mas-human-gate-form.workflow.json`
-12. `n8n/workflows/core/mas-activity-hydrate.workflow.json`
-13. `n8n/workflows/core/mas-deployment-health-check.workflow.json`
+1. `n8n/workflows/core/tnavigator-schedule-knowledge-ingestion.workflow.json`
+2. `n8n/workflows/core/tnavigator-schedule-hybrid-retrieval.workflow.json`
+3. `n8n/workflows/core/schedule-builder-agent.workflow.json`
+4. `n8n/workflows/core/mas-error-traces.workflow.json`
+5. `n8n/workflows/core/mas-ensure-control-plane.workflow.json`
+6. `n8n/workflows/core/mas-orchestrator.workflow.json`
+7. `n8n/workflows/core/mas-deployment-health-check.workflow.json`
+
+Архив (не импортировать): `n8n/workflows/retired/` — Engineering MAS, CAS, n8n Excel/Calculation, SCHEDULE Builder Code-pipeline, Entry/Human Gate, Trace writer, Activity Hydrate.
 
 ### Шаг 2. Создание таблиц данных (Data Tables)
 
@@ -203,7 +199,7 @@ CSV: [`n8n/data-tables/mas_trace_events_v1.header.csv`](n8n/data-tables/mas_trac
 
 После биндинга активируйте Activity webhook (`Activity — Hydrate`).
 
-### Шаг 4. Bind Execute Workflow nodes (27 обязательных)
+### Шаг 4. Bind Execute Workflow nodes (28 обязательных)
 
 | Open workflow | Node on canvas | Select this workflow |
 |---|---|---|
@@ -223,6 +219,7 @@ CSV: [`n8n/data-tables/mas_trace_events_v1.header.csv`](n8n/data-tables/mas_trac
 | `Agent — Excel Extractor` | `Call Excel protocol Hybrid Retrieval` | `MAS — Knowledge Retrieval` |
 | `Template — Engineering Specialist` | `Call specialist Hybrid Retrieval` | `MAS — Knowledge Retrieval` |
 | `Orchestrator — Engineering MAS` | `Call SCHEDULE Builder Specialist` | `SCHEDULE — Builder` |
+| `Orchestrator — MAS` | `Call Schedule Builder` | `Agent — Schedule Builder` |
 | `Orchestrator — Engineering MAS` | `Call Calculation Specialist` | `Agent — Calculation (Math Service)` |
 | `Orchestrator — Engineering MAS` | `Call MAS Trace Event Writer` | `Writer — MAS Trace` |
 | `Orchestrator — Engineering MAS` | `Call Error — MAS Case Handler (specialist)` | `Error — MAS Case Handler` |
@@ -257,12 +254,28 @@ CSV: [`n8n/data-tables/mas_trace_events_v1.header.csv`](n8n/data-tables/mas_trac
 ### Шаг 5. Настройка доступов (Credentials)
 
 Вам потребуется указать ключи для нейросетей, баз данных и локальных сервисов:
-- **Оркестратор и SCHEDULE Builder:** Создайте подключения к вашей совместимой с OpenAI модели (`Planner Chat Model`, `Verifier Chat Model`).
+- **Orchestrator и SCHEDULE Builder:** Создайте подключения к вашей совместимой с OpenAI модели (`Planner Chat Model`, `Verifier Chat Model`, **Schedule Builder Chat Model — Qwen**). Live-путь оркестратора: `executeWorkflow` `Call Schedule Builder` → `Agent — Schedule Builder` (как Excel Extractor). FastAPI `schedule-builder:8090` — только parse/apply/emit tools, не LLM.
 - **Агент Excel Extractor:** В нодах HTTP укажите URL к локальному сервису Excel Tools и заданный `API_KEY`. Выберите нужное подключение к базе Postgres.
 - **RAG (Знания):** Выберите подключение к Postgres и единый профиль генерации эмбеддингов. (Важно: не заполняйте поле `Dimensions` в настройках эмбеддингов).
 - **Агент вычислений:** В ноде HTTP-запроса пропишите `math_service_url` (`http://<IP-вашего-ПК>:8100/api/v1/math`).
 - **Trace Writer / Error Handler:** нода **Activity connection** — поле `activity_base_url` (`http://<IP-вашего-ПК>:8200`). Ключ не нужен.
 - Убедитесь, что в настройках подключения к PostgreSQL отключена проверка сертификатов (`SSL = Disable`), если сервер работает без TLS.
+- **Orchestrator — MAS** и **MAS — Ensure Control Plane:** тот же Postgres credential, что у RAG.
+
+### Шаг 5b. Таблицы стейтов MAS (без SSH / без psql)
+
+На полевом n8n нет `postgres-init` и нет доступа к серверу БД вне UI. После импорта и привязки Postgres credential:
+
+1. Откройте workflow **`MAS — Ensure Control Plane`** (не активируйте — достаточно ручного Execute).
+2. На каждой Postgres-ноде выберите **тот же** credential, что у `Orchestrator — MAS`.
+3. **Execute Workflow**.
+4. Последняя нода: `contract: mas_control_plane_ready`, `ok: true`, `agent_count` ≥ 3.
+
+Создаются только `CREATE TABLE/INDEX IF NOT EXISTS` и upsert в `agent_registry`. **DROP нет** — таблицы n8n не трогаются.
+
+Роль, под которой ходит n8n, должна уметь `CREATE TABLE`. Если DBA выдал только DML — нужен разовый `GRANT CREATE ON SCHEMA public` (или эквивалент). Расширение `vector` (RAG) этим workflow **не** ставится.
+
+Если у Activity задан `DATABASE_URL` на ту же базу, при старте сервиса выполняется тот же additive DDL (`CREATE IF NOT EXISTS`). Это дубль шага, не замена: полевой канон — Execute в n8n.
 
 ### Шаг 6. Наполнение базы знаний (RAG) — обязательно до первой задачи
 
@@ -339,6 +352,7 @@ CSV: [`n8n/data-tables/mas_trace_events_v1.header.csv`](n8n/data-tables/mas_trac
 | Knowledge Ingestion: `Request timed out` на embeddings | Уменьшите `batchSize` до 16 и поднимите `timeout` до 600 на ноде Embeddings; проверьте доступ к OpenAI из хоста n8n. Activity ждёт webhook до 10 минут. |
 | Activity «Загрузить в RAG» → webhook 404 | Workflow `MAS — Knowledge Ingestion` не импортирован или не Active. Production path: `/webhook/mas-knowledge-ingest`. |
 | `/webhook/mas-deployment-health-check` → 404 | Это **Form**, не webhook. Открывайте `/form/mas-deployment-health-check` (нужна сессия n8n). Activity `/ready` может показывать extra webhook 404 — на core path это не блокер. |
+| `relation "cases" does not exist` / пустой `agent_registry` | Не прогнан Шаг 5b. Откройте `MAS — Ensure Control Plane`, привяжите Postgres, Execute. Либо задайте Activity `DATABASE_URL` и перезапустите сервис. |
 | Builder считает все скважины «новыми», хотя они есть в baseline | После Materialize поля лежат на корне item, а webhook кладёт payload в nested `body`. Normalize должен читать `schedule_materialize_ok` / `baseline_schedule_text` с корня. Симптом в CAS: `baseline_schedule_text` = `"baseline.inc"` (имя файла). |
 | Builder снова просит `BASELINE_REQUIRED` / `intake_1_baseline_required`, хотя baseline уже в задаче | HITL записал stub в `request.schedule_request` (часто только `unlisted_wells_policy`), и Apply Plan брал nested stub вместо top-level `baseline_schedule_text`. Нужен `resolveRequestSchedule`: nested + fallback на корень request. В CAS: `request.baseline_schedule_text` длинный, а `packet.inputs.schedule_request` без текста. |
 | `/webhook/engineering-orchestrator` → 404 «not registered», workflow active | В n8n 2.30 у webhook-ноды должен быть стабильный `webhookId`. Без него production path не регистрируется. Также `activate` через REST (не CLI `publish:workflow` — он не пишет `workflow_published_version`). Перед activate опубликуйте leaf stubs (`Template — *`) и забиндите `REPLACE_DATA/DOCUMENT_SPECIALIST`. |

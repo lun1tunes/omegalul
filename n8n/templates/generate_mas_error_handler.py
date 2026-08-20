@@ -8,7 +8,7 @@ import uuid
 from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[1]
-OUT = ROOT / "workflows/core/mas-error-handler.workflow.json"
+OUT = ROOT / "workflows/retired/mas-error-handler.workflow.json"
 
 WF_ID = "e1f0a7c2-9b4d-5e8f-a123-4567890abcde"
 WF_NAME = "Error — MAS Case Handler"

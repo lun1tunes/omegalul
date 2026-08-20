@@ -1,0 +1,243 @@
+{
+  "id": "63116836-8724-595e-bc5e-dd6e743e2586",
+  "name": "Error — MAS Node Traces",
+  "active": false,
+  "isArchived": false,
+  "nodes": [
+    {
+      "parameters": {},
+      "id": "7a04025f-3654-5c44-a91a-e58c37dd57c7",
+      "name": "Error Trigger",
+      "type": "n8n-nodes-base.errorTrigger",
+      "typeVersion": 1,
+      "position": [
+        0,
+        0
+      ]
+    },
+    {
+      "parameters": {
+        "jsCode": "\nconst root=$json||{};\nconst exec=root.execution&&typeof root.execution==='object'?root.execution:(root);\nconst error=exec.error&&typeof exec.error==='object'?exec.error:(root.error||{});\nconst executionId=String(exec.id||exec.executionId||root.execution_id||'');\nconst workflowName=String((exec.workflow&&exec.workflow.name)||exec.workflowName||root.workflow_name||'');\nconst nodeName=String(exec.lastNodeExecuted||error.node||root.node_name||'');\nconst message=String(error.message||root.message||'n8n node failed');\nconst errorType=String(error.name||error.type||'Error');\nconst stack=String(error.stack||'');\nreturn [{json:{\n  execution_id:executionId,\n  workflow_name:workflowName,\n  node_name:nodeName,\n  error_message:message.slice(0,4000),\n  error_type:errorType.slice(0,200),\n  stack:stack.slice(0,8000),\n  lookup_sql_parameters:[executionId],\n}}];\n"
+      },
+      "id": "593d20c6-a465-57b2-bd54-06ea55e72506",
+      "name": "Normalize n8n error trigger",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        240,
+        0
+      ]
+    },
+    {
+      "parameters": {
+        "operation": "executeQuery",
+        "query": "SELECT case_id FROM executions WHERE execution_id = $1",
+        "options": {
+          "queryReplacement": "={{ $json.lookup_sql_parameters }}",
+          "queryBatching": "single",
+          "largeNumbersOutput": "text",
+          "replaceEmptyStrings": false
+        }
+      },
+      "id": "d71063d0-2b09-5efb-aac1-14bfb581f325",
+      "name": "Lookup case by execution",
+      "type": "n8n-nodes-base.postgres",
+      "typeVersion": 2.6,
+      "position": [
+        480,
+        0
+      ],
+      "credentials": {
+        "postgres": {
+          "id": "REPLACE_IN_UI",
+          "name": "REPLACE: SCHEDULE PostgreSQL / PGVector credential"
+        }
+      },
+      "alwaysOutputData": true
+    },
+    {
+      "parameters": {
+        "jsCode": "\nconst n=$('Normalize n8n error trigger').first().json||{};\nconst look=$json||{};\nconst caseId=String(look.case_id||n.case_id||'').trim()||null;\nreturn [{json:{\n  ...n,\n  case_id:caseId,\n  trace_sql_parameters:[caseId, n.execution_id, n.workflow_name, n.node_name, n.error_message, n.error_type, n.stack, JSON.stringify({execution_id:n.execution_id})],\n}}];\n"
+      },
+      "id": "46d82464-d79a-5d4d-829f-f86748f30d6f",
+      "name": "Attach case_id",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        720,
+        0
+      ]
+    },
+    {
+      "parameters": {
+        "operation": "executeQuery",
+        "query": "INSERT INTO error_traces (case_id, execution_id, workflow_name, node_name, error_message, error_type, stack, input_snapshot) VALUES ($1,$2,$3,$4,$5,$6,$7,$8::jsonb) RETURNING error_id, case_id",
+        "options": {
+          "queryReplacement": "={{ $json.trace_sql_parameters }}",
+          "queryBatching": "single",
+          "largeNumbersOutput": "text",
+          "replaceEmptyStrings": false
+        }
+      },
+      "id": "937c9948-d9ed-5d06-a453-1793bf37ec58",
+      "name": "Insert error_traces",
+      "type": "n8n-nodes-base.postgres",
+      "typeVersion": 2.6,
+      "position": [
+        960,
+        0
+      ],
+      "credentials": {
+        "postgres": {
+          "id": "REPLACE_IN_UI",
+          "name": "REPLACE: SCHEDULE PostgreSQL / PGVector credential"
+        }
+      },
+      "alwaysOutputData": true
+    },
+    {
+      "parameters": {
+        "jsCode": "\nconst x=$json;\nconst errorId=x.error_id||x.errorId||null;\nif(!x.case_id) return [{json:{...x, skip_event:true, event_sql_parameters:null}}];\nreturn [{json:{\n  ...x,\n  skip_event:false,\n  event_sql_parameters:[\n    x.case_id,\n    null,\n    'system.node_error',\n    'n8n',\n    null,\n    'error',\n    `Упал узел ${x.node_name||'unknown'}`,\n    null,\n    JSON.stringify({error_id:errorId, execution_id:x.execution_id, node_name:x.node_name, error_type:x.error_type})\n  ]\n}}];\n"
+      },
+      "id": "2fde5772-876b-5e02-b108-39e0a06cb351",
+      "name": "Prepare system.node_error",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        1200,
+        0
+      ]
+    },
+    {
+      "parameters": {
+        "operation": "executeQuery",
+        "query": "INSERT INTO events(case_id, task_id, kind, actor, agent_id, status, status_message, handoff_message, payload) SELECT $1,$2,$3,$4,$5,$6,$7,$8,$9::jsonb WHERE $1 IS NOT NULL",
+        "options": {
+          "queryReplacement": "={{ $json.event_sql_parameters }}",
+          "queryBatching": "single",
+          "largeNumbersOutput": "text",
+          "replaceEmptyStrings": false
+        }
+      },
+      "id": "23ccfe25-fb9e-5b58-b3f6-6fe317e69d3d",
+      "name": "Insert system.node_error event",
+      "type": "n8n-nodes-base.postgres",
+      "typeVersion": 2.6,
+      "position": [
+        1440,
+        0
+      ],
+      "credentials": {
+        "postgres": {
+          "id": "REPLACE_IN_UI",
+          "name": "REPLACE: SCHEDULE PostgreSQL / PGVector credential"
+        }
+      },
+      "alwaysOutputData": true
+    },
+    {
+      "parameters": {
+        "jsCode": "const x=$('Attach case_id').first().json||{};return[{json:{contract:'mas_error_trace_ack',case_id:x.case_id,execution_id:x.execution_id,node_name:x.node_name}}];"
+      },
+      "id": "c55a6bf0-7975-5bf9-9adf-9e3250dd0285",
+      "name": "Format error trace ack",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        1680,
+        0
+      ]
+    }
+  ],
+  "connections": {
+    "Error Trigger": {
+      "main": [
+        [
+          {
+            "node": "Normalize n8n error trigger",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Normalize n8n error trigger": {
+      "main": [
+        [
+          {
+            "node": "Lookup case by execution",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Lookup case by execution": {
+      "main": [
+        [
+          {
+            "node": "Attach case_id",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Attach case_id": {
+      "main": [
+        [
+          {
+            "node": "Insert error_traces",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Insert error_traces": {
+      "main": [
+        [
+          {
+            "node": "Prepare system.node_error",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Prepare system.node_error": {
+      "main": [
+        [
+          {
+            "node": "Insert system.node_error event",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Insert system.node_error event": {
+      "main": [
+        [
+          {
+            "node": "Format error trace ack",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    }
+  },
+  "settings": {
+    "executionOrder": "v1",
+    "callerPolicy": "workflowsFromSameOwner",
+    "errorWorkflow": ""
+  },
+  "meta": {
+    "templateCredsSetupCompleted": true,
+    "targetN8nVersion": "2.30.8"
+  },
+  "tags": [],
+  "pinData": {},
+  "versionId": "b6e4200f-c34a-4ba1-b905-4f7dbe48e99d"
+}

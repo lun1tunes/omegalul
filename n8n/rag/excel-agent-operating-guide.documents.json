@@ -355,6 +355,36 @@
       "contract_version": "1.0",
       "target_base": "orchestrator_routing",
       "knowledge_type": "routing_card",
+      "knowledge_id": "route-mas-thin-orchestrator",
+      "revision": "1",
+      "title": "Thin Orchestrator — MAS routing",
+      "keywords": [
+        "EXCEL_EXTRACTOR",
+        "SCHEDULE_BUILDER",
+        "INC",
+        "XLSX"
+      ],
+      "topics": [
+        "маршрутизация",
+        "control-plane",
+        "handoff"
+      ],
+      "task_patterns": [
+        "новые даты ввода скважин",
+        "перепривязка скважин в группу",
+        "собрать новый schedule.inc"
+      ],
+      "status": "active",
+      "author": "orchestrator-routing-maintainer",
+      "access_scope": "petroleum-engineering",
+      "text": "Thin Orchestrator — MAS (Postgres cases/events, FastAPI-агенты). excel_extractor вызывай только если в artifacts есть Excel; он возвращает facts[] {well, date} как в baseline .INC, не пишет SCHEDULE. Путь «даты ввода»: excel_extractor → schedule_builder → finish. Путь «группа / GCONPROD / GRUPTREE / помести в группу»: сразу schedule_builder без Excel; даты ввода скважин брать из baseline DATES/WCONPROD, не спрашивать у человека. schedule_builder пишет artifacts.schedule_out. После schedule_out — finish. Не выдумывай даты и имена скважин. Handoff_message — человекопонятое обращение к агенту.",
+      "id": "route-mas-thin-orchestrator"
+    },
+    {
+      "contract": "schedule_knowledge_block",
+      "contract_version": "1.0",
+      "target_base": "orchestrator_routing",
+      "knowledge_type": "routing_card",
       "knowledge_id": "route-calculation",
       "revision": "2",
       "title": "Calculation specialist routing card",

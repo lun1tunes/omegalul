@@ -1,0 +1,1555 @@
+{
+  "id": "e9bbdb6e-3b7c-5dc0-851a-30bd9f2eb0d6",
+  "name": "Orchestrator — MAS",
+  "active": false,
+  "isArchived": false,
+  "nodes": [
+    {
+      "parameters": {
+        "content": "## edit after import\n\n**Orchestrator — MAS** — thin loop:\n- Bind Postgres on load/insert/update\n- Bind **Qwen** OpenAI-compatible credential on Decision Chat Model\n- Bind inbound header auth on webhook (same cred on **POST continue run**)\n- Bind **Call Schedule Builder** → `Agent — Schedule Builder` (executeWorkflow, like Excel Extractor)\n- Runtime endpoints patched by lab_soft_redeploy\n\n`action`: probe | status | start | step | resume\n- **start/step/resume** live path: Activity `/cases` saves files + state; webhook self-POSTs the next `step`\n- **status** loads case and returns `human_gate` without LLM\n- Decision is Basic LLM Chain + Structured Output (no Agent tools)\n\nOne execution = one step.",
+        "width": 480,
+        "height": 420,
+        "color": 1
+      },
+      "id": "3c054325-3735-5c01-ba6f-09738a5c77aa",
+      "name": "edit after import",
+      "type": "n8n-nodes-base.stickyNote",
+      "typeVersion": 1,
+      "position": [
+        -200,
+        -420
+      ]
+    },
+    {
+      "parameters": {
+        "httpMethod": "POST",
+        "path": "mas-orchestrator-step",
+        "authentication": "headerAuth",
+        "responseMode": "lastNode",
+        "options": {}
+      },
+      "id": "d7185c3b-35c9-5728-a448-cb0d5bd4f39b",
+      "name": "Authenticated MAS webhook",
+      "type": "n8n-nodes-base.webhook",
+      "typeVersion": 2.1,
+      "position": [
+        0,
+        0
+      ],
+      "credentials": {
+        "httpHeaderAuth": {
+          "id": "REPLACE_IN_UI",
+          "name": "REPLACE: engineering orchestrator inbound key"
+        }
+      },
+      "webhookId": "a1000003-mas-orch-wh-0001-800000000001"
+    },
+    {
+      "parameters": {
+        "assignments": {
+          "assignments": [
+            {
+              "id": "3c90130b-ac50-548d-932a-664f9e666737",
+              "name": "excel_extractor_url",
+              "value": "http://excel-tools:18000/agent/run",
+              "type": "string"
+            },
+            {
+              "id": "75aea0af-7af2-55a6-acca-850fc42cccc1",
+              "name": "calculation_agent_url",
+              "value": "http://math-service:8100/agent/run",
+              "type": "string"
+            },
+            {
+              "id": "818ebb7e-2212-55be-b9a4-b75a67cca546",
+              "name": "orchestrator_step_url",
+              "value": "http://n8n:5678/webhook/mas-orchestrator-step",
+              "type": "string"
+            },
+            {
+              "id": "cc285755-9359-507f-aa51-e9ac4dbe4e7f",
+              "name": "activity_base_url",
+              "value": "http://mas-activity:8200",
+              "type": "string"
+            },
+            {
+              "id": "31ea8db1-1c4d-59a9-a183-9a5baa148a21",
+              "name": "excel_tools_api_key",
+              "value": "",
+              "type": "string"
+            }
+          ]
+        },
+        "options": {},
+        "includeOtherFields": true
+      },
+      "id": "0255a7a5-fc9a-5d2f-84d3-8634ba4a3de6",
+      "name": "Runtime endpoints",
+      "type": "n8n-nodes-base.set",
+      "typeVersion": 3.4,
+      "position": [
+        240,
+        0
+      ]
+    },
+    {
+      "parameters": {
+        "jsCode": "\nconst raw=$input.first().json||{};\nconst body=raw.body&&typeof raw.body==='object'?raw.body:raw;\nconst action=String(body.action||raw.action||'step').trim().toLowerCase();\nlet caseId=String(body.case_id||raw.case_id||'').trim();\nconst goal=String(body.task_description||body.goal||raw.task_description||raw.goal||'').trim();\nconst taskName=String(body.task_name||raw.task_name||'').trim();\nconst humanResponse=String(body.human_response||raw.human_response||'');\nconst gateId=String(body.gate_id||raw.gate_id||'');\nconst requestedBy=String(body.requested_by||raw.requested_by||'');\nconst executionId=String($execution.id||'');\nconst readinessId=!caseId||caseId==='CASE-readiness-probe';\nif(action==='probe'||(action==='status'&&readinessId)){\n  return [{json:{\n    case_id:caseId||'CASE-readiness-probe',\n    action:'probe',\n    is_probe:true,\n    is_status:false,\n    is_resume:false,\n    needs_create:false,\n    next_status:'probe',\n    status:'probe',\n    action_type:'probe',\n    should_continue:false\n  }}];\n}\nlet needsCreate=false;\nif(!caseId){\n  if(action!=='start') throw new Error('case_id is required');\n  if(!goal) throw new Error('task_description is required for action=start');\n  caseId='CASE-'+Date.now().toString(16)+'-'+Math.random().toString(16).slice(2,8);\n  needsCreate=true;\n}\nreturn [{json:{\n  case_id:caseId,\n  action,\n  goal,\n  task_name:taskName,\n  human_response:humanResponse,\n  gate_id:gateId,\n  requested_by:requestedBy,\n  is_probe:false,\n  is_status:action==='status',\n  is_resume:action==='resume',\n  needs_create:needsCreate,\n  execution_id:executionId,\n  workflow_name:'orchestrator',\n  sql_parameters:[caseId],\n  exec_sql_parameters:[executionId, caseId, 'orchestrator'],\n}}];\n"
+      },
+      "id": "07d3d3cc-a9e7-508a-97d4-17391b86e1e1",
+      "name": "Normalize step request",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        480,
+        0
+      ]
+    },
+    {
+      "parameters": {
+        "conditions": {
+          "options": {
+            "caseSensitive": true,
+            "leftValue": "",
+            "typeValidation": "strict",
+            "version": 2
+          },
+          "conditions": [
+            {
+              "id": "a4eb5865-08ba-5b3b-bb07-0b6bd0bb118c",
+              "leftValue": "={{ Boolean($json.is_probe) }}",
+              "rightValue": true,
+              "operator": {
+                "type": "boolean",
+                "operation": "true"
+              }
+            }
+          ],
+          "combinator": "and"
+        },
+        "options": {}
+      },
+      "id": "6522d240-0bc0-5796-806a-4f24d49f71e7",
+      "name": "Probe ping?",
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2.3,
+      "position": [
+        640,
+        0
+      ]
+    },
+    {
+      "parameters": {
+        "conditions": {
+          "options": {
+            "caseSensitive": true,
+            "leftValue": "",
+            "typeValidation": "strict",
+            "version": 2
+          },
+          "conditions": [
+            {
+              "id": "9b9288b5-cffe-5ab1-8825-ad075b0b3713",
+              "leftValue": "={{ Boolean($json.needs_create) }}",
+              "rightValue": true,
+              "operator": {
+                "type": "boolean",
+                "operation": "true"
+              }
+            }
+          ],
+          "combinator": "and"
+        },
+        "options": {}
+      },
+      "id": "da3ee2c0-b055-55e3-9969-b78d164a8bf1",
+      "name": "Needs create?",
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2.3,
+      "position": [
+        640,
+        160
+      ]
+    },
+    {
+      "parameters": {
+        "jsCode": "\nconst req=$json||{};\nconst goal=String(req.goal||'').trim();\nconst state={\n  case_id:req.case_id,\n  goal,\n  task_name:req.task_name||'',\n  status:'running',\n  plan:[],\n  artifacts:{},\n  data:{},\n  current_task:null,\n  hitl:{pending:false,questions:[],answers:{}},\n  last_error:null,\n  step_count:0\n};\nconst persistEvents=[[req.case_id,'','case.created','user','','new',('Принял задачу: '+goal).slice(0,200),'',JSON.stringify({requested_by:req.requested_by||'',task_name:req.task_name||'',note:'orchestrator start; files belong to Activity /cases'})]];\nreturn [{json:{\n  ...req,\n  state,\n  create_sql_parameters:[req.case_id, JSON.stringify(state), 'running'],\n  persist_events:persistEvents,\n  event_sql_parameters:persistEvents[0]\n}}];\n"
+      },
+      "id": "27ddbd46-3d3a-5c9a-b8ed-7e83bd872f58",
+      "name": "Prepare start case",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        800,
+        280
+      ]
+    },
+    {
+      "parameters": {
+        "operation": "executeQuery",
+        "query": "INSERT INTO cases (case_id, state, status, updated_at) VALUES ($1, $2::jsonb, $3, now()) ON CONFLICT (case_id) DO NOTHING",
+        "options": {
+          "queryReplacement": "={{ $json.create_sql_parameters }}",
+          "queryBatching": "single",
+          "largeNumbersOutput": "text",
+          "replaceEmptyStrings": false
+        }
+      },
+      "id": "4bad0cf5-3b5b-523b-9601-7bb30412e938",
+      "name": "Insert new case",
+      "type": "n8n-nodes-base.postgres",
+      "typeVersion": 2.6,
+      "position": [
+        1000,
+        280
+      ],
+      "credentials": {
+        "postgres": {
+          "id": "REPLACE_IN_UI",
+          "name": "REPLACE: SCHEDULE PostgreSQL / PGVector credential"
+        }
+      },
+      "alwaysOutputData": true
+    },
+    {
+      "parameters": {
+        "jsCode": "\nconst fromParse=(()=>{try{return $('Parse decision').first().json}catch{return null}})();\nconst fromMerge=(()=>{try{return $('Merge agent result').first().json}catch{return null}})();\nconst prev=fromMerge||fromParse||$json||{};\nconst rows=Array.isArray(prev.persist_events)?prev.persist_events:[];\nif(!rows.length) return [{json:{...prev,p1:'',p2:'',p3:'',p4:'',p5:'',p6:'',p7:'',p8:'',p9:'{}'}}];\nreturn rows.map(params=>{\n  const vals=(Array.isArray(params)?params:[]).map(v=>v===null||v===undefined?'':String(v));\n  return {json:{\n    ...prev,\n    p1:vals[0]||'',\n    p2:vals[1]||'',\n    p3:vals[2]||'',\n    p4:vals[3]||'',\n    p5:vals[4]||'',\n    p6:vals[5]||'',\n    p7:vals[6]||'',\n    p8:vals[7]||'',\n    p9:vals[8]||'{}',\n    event_sql_parameters:vals\n  }};\n});\n"
+      },
+      "id": "2d58ea73-2520-5ddf-8dec-77d51c169dfb",
+      "name": "Expand start events",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        1180,
+        280
+      ]
+    },
+    {
+      "parameters": {
+        "operation": "executeQuery",
+        "query": "INSERT INTO events(case_id, task_id, kind, actor, agent_id, status, status_message, handoff_message, payload) SELECT $1,$2,$3,$4,$5,$6,$7,$8,$9::jsonb WHERE NULLIF($3, '') IS NOT NULL",
+        "options": {
+          "queryReplacement": "={{ [$json.p1, $json.p2, $json.p3, $json.p4, $json.p5, $json.p6, $json.p7, $json.p8, $json.p9] }}",
+          "queryBatching": "independently",
+          "largeNumbersOutput": "text",
+          "replaceEmptyStrings": false
+        }
+      },
+      "id": "94ff4f22-7daf-5757-b558-6aa7dee6466e",
+      "name": "Insert start events",
+      "type": "n8n-nodes-base.postgres",
+      "typeVersion": 2.6,
+      "position": [
+        1360,
+        280
+      ],
+      "credentials": {
+        "postgres": {
+          "id": "REPLACE_IN_UI",
+          "name": "REPLACE: SCHEDULE PostgreSQL / PGVector credential"
+        }
+      },
+      "alwaysOutputData": true
+    },
+    {
+      "parameters": {
+        "jsCode": "const prev=$('Prepare start case').first().json||{};\nreturn [{json:prev}];"
+      },
+      "id": "2a0bb29e-6087-549c-8096-b0c810d46ce3",
+      "name": "Restore after start",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        1540,
+        280
+      ],
+      "executeOnce": true
+    },
+    {
+      "parameters": {
+        "operation": "executeQuery",
+        "query": "INSERT INTO executions(execution_id, case_id, workflow_name) VALUES ($1, $2, $3) ON CONFLICT (execution_id) DO UPDATE SET case_id = EXCLUDED.case_id",
+        "options": {
+          "queryReplacement": "={{ $json.exec_sql_parameters }}",
+          "queryBatching": "single",
+          "largeNumbersOutput": "text",
+          "replaceEmptyStrings": false
+        }
+      },
+      "id": "eea71600-efa1-51e6-95a4-434c68809838",
+      "name": "Insert execution map",
+      "type": "n8n-nodes-base.postgres",
+      "typeVersion": 2.6,
+      "position": [
+        720,
+        -120
+      ],
+      "credentials": {
+        "postgres": {
+          "id": "REPLACE_IN_UI",
+          "name": "REPLACE: SCHEDULE PostgreSQL / PGVector credential"
+        }
+      },
+      "alwaysOutputData": true
+    },
+    {
+      "parameters": {
+        "operation": "executeQuery",
+        "query": "SELECT case_id, state, status, updated_at FROM cases WHERE case_id = $1",
+        "options": {
+          "queryReplacement": "={{ $('Normalize step request').first().json.sql_parameters }}",
+          "queryBatching": "single",
+          "largeNumbersOutput": "text",
+          "replaceEmptyStrings": false
+        }
+      },
+      "id": "7b1972c9-04e8-559f-90fb-558bcc264f2c",
+      "name": "Load case",
+      "type": "n8n-nodes-base.postgres",
+      "typeVersion": 2.6,
+      "position": [
+        960,
+        -120
+      ],
+      "credentials": {
+        "postgres": {
+          "id": "REPLACE_IN_UI",
+          "name": "REPLACE: SCHEDULE PostgreSQL / PGVector credential"
+        }
+      },
+      "alwaysOutputData": true
+    },
+    {
+      "parameters": {
+        "jsCode": "\nconst req=$('Normalize step request').first().json||{};\nconst load=$json||{};\nconst parse=v=>{if(v&&typeof v==='object'&&!Array.isArray(v))return v;try{const p=JSON.parse(String(v||'{}'));return p&&typeof p==='object'&&!Array.isArray(p)?p:{}}catch{return {}}};\nconst state=parse(load.state||load.State||{});\nif(req.is_status===true){\n  const hitl=parse(state.hitl);\n  const questions=Array.isArray(hitl.questions)?hitl.questions:[];\n  const status=String(load.status||state.status||'');\n  const version=Number(state.version||state.step_count||0);\n  let human_gate=null;\n  if(status==='waiting_user'&&(hitl.pending===true||questions.length)){\n    const q0=questions[0]&&typeof questions[0]==='object'?questions[0]:{};\n    human_gate={\n      gate_id:q0.question_id||'hitl',\n      kind:'needs_input',\n      reason:q0.question||state.goal||'Нужен ответ',\n      expected_version:version,\n      questions\n    };\n  }\n  return [{json:{\n    ...req,\n    case_id:req.case_id,\n    is_status:true,\n    did_resume:false,\n    next_status:status,\n    status,\n    action_type:'status',\n    should_continue:false,\n    human_gate,\n    version,\n    restartable:status==='done'||status==='failed',\n    has_schedule_out:Boolean(state.artifacts&&state.artifacts.schedule_out)\n  }}];\n}\nif(req.is_resume===true){\n  const answer=String(req.human_response||'').trim();\n  const hitl=parse(state.hitl);\n  const questions=Array.isArray(hitl.questions)?hitl.questions:[];\n  const qid=String(req.gate_id||(questions[0]&&questions[0].question_id)||'Q-1');\n  const answers={...(hitl.answers&&typeof hitl.answers==='object'?hitl.answers:{})};\n  answers[qid]=answer;\n  state.hitl={pending:false,questions,answers};\n  state.status='running';\n  const persistEvents=[[req.case_id,'','hitl.answered','user','','answered',answer?('Пользователь ответил: '+answer):'Пользователь ответил','',JSON.stringify({question_id:qid,answer})]];\n  return [{json:{\n    ...req,\n    state,\n    did_resume:true,\n    is_status:false,\n    next_status:'running',\n    update_sql_parameters:[JSON.stringify(state),'running',req.case_id],\n    persist_events:persistEvents,\n    event_sql_parameters:persistEvents[0]\n  }}];\n}\nreturn [{json:{...req,...load,state,did_resume:false,is_status:false}}];\n"
+      },
+      "id": "02a7795f-d4c0-526f-9eef-762616f8581f",
+      "name": "Apply request extras",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        1120,
+        -120
+      ]
+    },
+    {
+      "parameters": {
+        "conditions": {
+          "options": {
+            "caseSensitive": true,
+            "leftValue": "",
+            "typeValidation": "strict",
+            "version": 2
+          },
+          "conditions": [
+            {
+              "id": "904a7ad2-0690-5b80-a560-611b645ec602",
+              "leftValue": "={{ Boolean($json.is_status) }}",
+              "rightValue": true,
+              "operator": {
+                "type": "boolean",
+                "operation": "true"
+              }
+            }
+          ],
+          "combinator": "and"
+        },
+        "options": {}
+      },
+      "id": "1f953cfd-62a0-540b-b486-daede31f0bd7",
+      "name": "Status only?",
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2.3,
+      "position": [
+        1280,
+        -120
+      ]
+    },
+    {
+      "parameters": {
+        "conditions": {
+          "options": {
+            "caseSensitive": true,
+            "leftValue": "",
+            "typeValidation": "strict",
+            "version": 2
+          },
+          "conditions": [
+            {
+              "id": "a673f98c-2678-5a0f-a9f9-18ce7f890148",
+              "leftValue": "={{ Boolean($json.did_resume) }}",
+              "rightValue": true,
+              "operator": {
+                "type": "boolean",
+                "operation": "true"
+              }
+            }
+          ],
+          "combinator": "and"
+        },
+        "options": {}
+      },
+      "id": "335b816f-7b29-5845-8880-fd62944a1fd3",
+      "name": "Resume persist?",
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2.3,
+      "position": [
+        1280,
+        40
+      ]
+    },
+    {
+      "parameters": {
+        "operation": "executeQuery",
+        "query": "UPDATE cases SET state = $1::jsonb, status = $2, updated_at = now() WHERE case_id = $3",
+        "options": {
+          "queryReplacement": "={{ $json.update_sql_parameters }}",
+          "queryBatching": "single",
+          "largeNumbersOutput": "text",
+          "replaceEmptyStrings": false
+        }
+      },
+      "id": "cc7782eb-9c30-5f87-91b4-d15d2178f6f2",
+      "name": "Update case after resume",
+      "type": "n8n-nodes-base.postgres",
+      "typeVersion": 2.6,
+      "position": [
+        1480,
+        40
+      ],
+      "credentials": {
+        "postgres": {
+          "id": "REPLACE_IN_UI",
+          "name": "REPLACE: SCHEDULE PostgreSQL / PGVector credential"
+        }
+      },
+      "alwaysOutputData": true
+    },
+    {
+      "parameters": {
+        "jsCode": "\nconst fromParse=(()=>{try{return $('Parse decision').first().json}catch{return null}})();\nconst fromMerge=(()=>{try{return $('Merge agent result').first().json}catch{return null}})();\nconst prev=fromMerge||fromParse||$json||{};\nconst rows=Array.isArray(prev.persist_events)?prev.persist_events:[];\nif(!rows.length) return [{json:{...prev,p1:'',p2:'',p3:'',p4:'',p5:'',p6:'',p7:'',p8:'',p9:'{}'}}];\nreturn rows.map(params=>{\n  const vals=(Array.isArray(params)?params:[]).map(v=>v===null||v===undefined?'':String(v));\n  return {json:{\n    ...prev,\n    p1:vals[0]||'',\n    p2:vals[1]||'',\n    p3:vals[2]||'',\n    p4:vals[3]||'',\n    p5:vals[4]||'',\n    p6:vals[5]||'',\n    p7:vals[6]||'',\n    p8:vals[7]||'',\n    p9:vals[8]||'{}',\n    event_sql_parameters:vals\n  }};\n});\n"
+      },
+      "id": "6a60805d-c347-5f6a-8b3b-866dc05c4da9",
+      "name": "Expand resume events",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        1660,
+        40
+      ]
+    },
+    {
+      "parameters": {
+        "operation": "executeQuery",
+        "query": "INSERT INTO events(case_id, task_id, kind, actor, agent_id, status, status_message, handoff_message, payload) SELECT $1,$2,$3,$4,$5,$6,$7,$8,$9::jsonb WHERE NULLIF($3, '') IS NOT NULL",
+        "options": {
+          "queryReplacement": "={{ [$json.p1, $json.p2, $json.p3, $json.p4, $json.p5, $json.p6, $json.p7, $json.p8, $json.p9] }}",
+          "queryBatching": "independently",
+          "largeNumbersOutput": "text",
+          "replaceEmptyStrings": false
+        }
+      },
+      "id": "0bb6f3c0-4098-5431-8b51-6fa4d434dd63",
+      "name": "Insert resume events",
+      "type": "n8n-nodes-base.postgres",
+      "typeVersion": 2.6,
+      "position": [
+        1840,
+        40
+      ],
+      "credentials": {
+        "postgres": {
+          "id": "REPLACE_IN_UI",
+          "name": "REPLACE: SCHEDULE PostgreSQL / PGVector credential"
+        }
+      },
+      "alwaysOutputData": true
+    },
+    {
+      "parameters": {
+        "jsCode": "const prev=$('Apply request extras').first().json||{};\nreturn [{json:prev}];"
+      },
+      "id": "89c72d22-3f7f-5869-be34-20fea9d08895",
+      "name": "Restore after resume",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        2020,
+        40
+      ],
+      "executeOnce": true
+    },
+    {
+      "parameters": {
+        "operation": "executeQuery",
+        "query": "SELECT agent_id, title, when_to_use, input_required, output_provides FROM agent_registry ORDER BY agent_id",
+        "options": {
+          "queryReplacement": "={{ [] }}",
+          "queryBatching": "single",
+          "largeNumbersOutput": "text",
+          "replaceEmptyStrings": false
+        }
+      },
+      "id": "294b1ee2-4c33-5604-9dc5-0b9495c6bf86",
+      "name": "Load agent registry",
+      "type": "n8n-nodes-base.postgres",
+      "typeVersion": 2.6,
+      "position": [
+        960,
+        80
+      ],
+      "credentials": {
+        "postgres": {
+          "id": "REPLACE_IN_UI",
+          "name": "REPLACE: SCHEDULE PostgreSQL / PGVector credential"
+        }
+      },
+      "alwaysOutputData": true
+    },
+    {
+      "parameters": {
+        "jsCode": "\nconst req=$('Normalize step request').first().json||{};\nconst extras=(()=>{try{return $('Apply request extras').first().json}catch{return null}})();\nconst load=$('Load case').first().json||{};\nconst parse=v=>{if(v&&typeof v==='object')return v;try{return JSON.parse(String(v||'{}'))}catch{return {}}};\nconst state=(extras&&extras.state&&typeof extras.state==='object')?extras.state:parse(load.state||load.State||{});\nconst status=String((extras&&extras.next_status)||load.status||state.status||'running');\nconst registry=$('Load agent registry').all().map(i=>i.json||{}).filter(r=>r&&r.agent_id);\nconst artifacts=state.artifacts&&typeof state.artifacts==='object'?state.artifacts:{};\nconst data=state.data&&typeof state.data==='object'?state.data:{};\nconst plan=Array.isArray(state.plan)?state.plan:[];\nconst hitl=state.hitl&&typeof state.hitl==='object'?state.hitl:{};\nconst compact={\n  goal:state.goal||'',\n  artifacts_present:Object.keys(artifacts).filter(k=>artifacts[k]!=null&&artifacts[k]!==''),\n  artifact_files:Object.fromEntries(Object.entries(artifacts).map(([k,v])=>[k,(v&&typeof v==='object'&&v.filename)?v.filename:k])),\n  has_excel:Boolean(artifacts.excel),\n  has_schedule_source:Boolean(artifacts.schedule_source),\n    has_schedule_out:Boolean(artifacts.schedule_out&&String(artifacts.schedule_out).trim()),\n  excel_facts:(data.excel&&Array.isArray(data.excel.facts))?data.excel.facts.length:(Array.isArray(data.facts)?data.facts.length:0),\n  schedule_root:state.schedule_root||'',\n  data_present:Object.fromEntries(Object.keys(data).map(k=>[k,!(data[k]==null||data[k]==={}||data[k]===[])]) ),\n  plan:plan.map(p=>({id:p.id,status:p.status})),\n  current_task:state.current_task||null,\n  hitl_pending:hitl.pending===true,\n  hitl_answers:hitl.answers||{},\n  step_count:Number(state.step_count||0),\n  last_error:state.last_error||null\n};\nconst hint=[];\nif(compact.has_excel&&!data.excel) hint.push('Сначала excel_extractor — в artifacts есть Excel, фактов ещё нет.');\nelse if((compact.excel_facts>0||(data.excel&&data.excel.facts))&&compact.has_schedule_source&&!compact.has_schedule_out) hint.push('Дальше schedule_builder — факты Excel и исходный .inc уже есть.');\nelse if(!compact.has_excel&&compact.has_schedule_source&&!compact.has_schedule_out) hint.push('Excel нет: сразу schedule_builder по тексту задачи и baseline .inc.');\nelse if(compact.has_schedule_out) hint.push('schedule_out уже есть — finish.');\nconst prompt=`Цель:\\n${compact.goal}\\n\\nТекущее состояние:\\n${JSON.stringify(compact,null,2)}\\n\\nПодсказка следующего шага:\\n${hint.join(' ')||'выбери по реестру агентов'}\\n\\nДоступные агенты:\\n${JSON.stringify(registry,null,2)}\\n`;\nconst endpoints=$('Runtime endpoints').first().json||{};\nreturn [{json:{\n  ...req,\n  ...endpoints,\n  case_id:req.case_id,\n  state,\n  status,\n  registry,\n  compact,\n  planner_input:prompt,\n  step_count:compact.step_count\n}}];\n"
+      },
+      "id": "6a3a64b1-8396-5ce1-a233-8bcf6983ec96",
+      "name": "Prepare decision context",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        1200,
+        0
+      ]
+    },
+    {
+      "parameters": {
+        "promptType": "define",
+        "text": "={{ $json.planner_input }}",
+        "hasOutputParser": true,
+        "needsFallback": false,
+        "messages": {
+          "messageValues": [
+            {
+              "type": "SystemMessagePromptTemplate",
+              "message": "Ты оркестратор инженерной задачи.\n\nТы должен выбрать одно действие:\n1. call_agent\n2. ask_user\n3. finish\n\nАгенты в реестре:\n- excel_extractor — Excel: скважины, даты ввода, дебиты. Не пишет SCHEDULE. Вызывай только если в artifacts есть excel.\n- calculation_agent — поверхность + траектория → top_perforation_md.\n- schedule_builder — исходный SCHEDULE (.inc) → новый .INC через свой LLM + FastAPI tools (даты ввода, перепривязка групп). Не пишет .INC сам.\n\nПравила:\n- Если не хватает данных, выбери ask_user. Не придумывай даты, скважины и строки .INC.\n- Типичный путь «новые даты ввода»: excel_extractor, затем schedule_builder, затем finish.\n- Типичный путь «перепривязка в группу / групповой контроль»: сразу schedule_builder (Excel не нужен), затем finish. Даты ввода этих скважин брать из baseline SCHEDULE.\n- Не вызывай excel_extractor, если Excel нет в artifacts.\n- Если в data/artifacts уже есть schedule_out — finish.\n- Имена INCLUDE-файлов (GRUPTREE.GRDECL и т.п.) — это состав пакета, не просьба менять группы. Не пиши в handoff про перепривязку групп, если пользователь об этом не просил.\n- Если следующий шаг очевиден, выбери call_agent.\n- Не вызывай агента, которого нет в реестре.\n- Не разбирай SCHEDULE/.INC сам и не ходи в RAG.\n- Возвращай только JSON.\n- status_message пиши по-русски, коротко, в стиле текущего шага.\n- handoff_message — человекопонятное обращение к агенту, например: «Агент Excel, достань из файла данные по датам ввода скважин.»\n"
+            }
+          ]
+        }
+      },
+      "id": "89fcd942-a71b-5416-aabb-54a31f5eb89f",
+      "name": "Decision LLM",
+      "type": "@n8n/n8n-nodes-langchain.chainLlm",
+      "typeVersion": 1.9,
+      "position": [
+        1440,
+        0
+      ]
+    },
+    {
+      "parameters": {
+        "model": {
+          "mode": "id",
+          "value": "qwen3.6-plus"
+        },
+        "options": {
+          "maxTokens": 1024,
+          "temperature": 0,
+          "timeout": 300000,
+          "maxRetries": 5
+        },
+        "responsesApiEnabled": false
+      },
+      "id": "a13a111e-74c3-57a7-a7e0-a58373b1266b",
+      "name": "Decision Chat Model — configure in UI",
+      "type": "@n8n/n8n-nodes-langchain.lmChatOpenAi",
+      "typeVersion": 1.3,
+      "position": [
+        1440,
+        -180
+      ],
+      "credentials": {
+        "openAiApi": {
+          "id": "REPLACE_IN_UI",
+          "name": "REPLACE: Qwen OpenAI-compatible planner chat credential"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "schemaType": "manual",
+        "inputSchema": "{\"type\": \"object\", \"additionalProperties\": true, \"required\": [\"status_message\", \"action\"], \"properties\": {\"status_message\": {\"type\": \"string\"}, \"plan_update\": {\"type\": \"array\", \"items\": {\"type\": \"object\"}}, \"action\": {\"type\": \"object\", \"required\": [\"type\"], \"properties\": {\"type\": {\"enum\": [\"call_agent\", \"ask_user\", \"finish\"]}, \"agent_id\": {\"type\": \"string\"}, \"task_id\": {\"type\": \"string\"}, \"handoff_message\": {\"type\": \"string\"}, \"task\": {\"type\": \"object\"}, \"question_id\": {\"type\": \"string\"}, \"question\": {\"type\": \"string\"}, \"options\": {\"type\": \"array\", \"items\": {\"type\": \"string\"}}, \"result\": {\"type\": \"object\"}}}}}",
+        "autoFix": true,
+        "customizeRetryPrompt": true,
+        "prompt": "You are repairing structured JSON for an n8n output parser.\n\nInstructions:\n{instructions}\n\nPrevious completion (may contain markdown, <think> tags, or extra prose):\n{completion}\n\nParser error:\n{error}\n\nReply with ONLY one JSON object that matches the schema. No markdown fences, no <think> tags, no commentary."
+      },
+      "id": "5648abd2-587a-5244-ac54-1f820958337e",
+      "name": "Decision Structured Output",
+      "type": "@n8n/n8n-nodes-langchain.outputParserStructured",
+      "typeVersion": 1.3,
+      "position": [
+        1680,
+        -180
+      ]
+    },
+    {
+      "parameters": {
+        "jsCode": "\nconst prev=$('Prepare decision context').first().json||{};\nconst raw=$json;\nconst obj=v=>v&&typeof v==='object'&&!Array.isArray(v);\nconst parse=v=>{if(obj(v))return v;try{const p=JSON.parse(String(v||''));return obj(p)?p:{}}catch{return {}}};\nconst out=parse(raw.output||raw.text||raw);\nconst decision=obj(out.action)?out:(obj(raw)?raw:{});\nconst action=obj(decision.action)?decision.action:{type:'ask_user',question_id:'Q-parse',question:'Не удалось разобрать решение оркестратора',options:[]};\nconst type=String(action.type||'').trim();\nconst state=obj(prev.state)?{...prev.state}:{};\nstate.step_count=Number(state.step_count||0)+1;\nif(Array.isArray(decision.plan_update)){\n  const by=new Map((Array.isArray(state.plan)?state.plan:[]).map(p=>[p.id,p]));\n  for(const item of decision.plan_update){if(item&&item.id) by.set(item.id,{...(by.get(item.id)||{}),...item});}\n  state.plan=[...by.values()];\n}\nconst statusMessage=String(decision.status_message||'').trim()||'Шаг оркестратора';\nconst decisionEvent={\n  kind:'orchestrator.decision',\n  actor:'orchestrator',\n  status_message:statusMessage,\n  payload:{action_type:type,agent_id:action.agent_id||null,step_count:state.step_count}\n};\nconst events=[];\nlet nextStatus='running';\nlet agentTask=null;\nif(type==='call_agent'){\n  const taskId=String(action.task_id||`TASK-${state.step_count}`).trim();\n  agentTask={\n    case_id:prev.case_id,\n    task_id:taskId,\n    agent_id:String(action.agent_id||'').trim(),\n    objective:String(action.task&&action.task.objective||state.goal||''),\n    handoff_message:String(action.handoff_message||''),\n    inputs:{...(obj(action.task)?action.task:{}),artifacts:state.artifacts||{},activity_base_url:prev.activity_base_url,schedule_root:state.schedule_root||(obj(action.task)?action.task.schedule_root:'')},\n    context:{data:state.data||{},hitl:state.hitl||{}},\n    constraints:{units:'METRIC'}\n  };\n  state.current_task=agentTask;\n  events.push(decisionEvent, {\n    kind:'agent.handoff',\n    actor:'orchestrator',\n    agent_id:agentTask.agent_id,\n    task_id:taskId,\n    status_message:statusMessage,\n    handoff_message:agentTask.handoff_message,\n    payload:{task_id:taskId}\n  });\n} else if(type==='ask_user'){\n  nextStatus='waiting_user';\n  const q={question_id:String(action.question_id||`Q-${state.step_count}`),question:String(action.question||'Нужно уточнение'),options:Array.isArray(action.options)?action.options:[]};\n  state.hitl={pending:true,questions:[q],answers:(state.hitl&&state.hitl.answers)||{}};\n  events.push(decisionEvent, {kind:'hitl.request',actor:'orchestrator',status:'waiting_user',status_message:statusMessage,payload:q});\n} else if(type==='finish'){\n  nextStatus='done';\n  state.current_task=null;\n  state.data={...(state.data||{}),result:action.result||{}};\n  events.push({kind:'case.finished',actor:'orchestrator',status:'done',status_message:statusMessage,payload:{...(obj(action.result)?action.result:{}),action_type:'finish'}});\n} else {\n  nextStatus='waiting_user';\n  const q={question_id:'Q-unknown',question:'Оркестратор вернул неизвестное действие',options:[]};\n  state.hitl={pending:true,questions:[q],answers:{}};\n  events.push({kind:'hitl.request',actor:'orchestrator',status:'waiting_user',status_message:statusMessage,payload:q});\n}\nstate.status=nextStatus;\nconst persistEvents=events.map(e=>[\n  prev.case_id,\n  e.task_id||'',\n  e.kind,\n  e.actor,\n  e.agent_id||'',\n  e.status||'',\n  e.status_message||'',\n  e.handoff_message||'',\n  JSON.stringify(e.payload||{})\n]);\nreturn [{json:{\n  ...prev,\n  decision,\n  action_type:type,\n  agent_id:agentTask?agentTask.agent_id:null,\n  agent_task:agentTask,\n  state,\n  next_status:nextStatus,\n  should_call_agent:type==='call_agent'&&Boolean(agentTask&&agentTask.agent_id),\n  should_continue:false,\n  events,\n  update_sql_parameters:[JSON.stringify(state), nextStatus, prev.case_id],\n  event_sql_parameters:persistEvents[0],\n  persist_events:persistEvents\n}}];\n"
+      },
+      "id": "02831c30-dc4e-5669-a2f7-97053e1749c9",
+      "name": "Parse decision",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        1920,
+        0
+      ]
+    },
+    {
+      "parameters": {
+        "operation": "executeQuery",
+        "query": "UPDATE cases SET state = $1::jsonb, status = $2, updated_at = now() WHERE case_id = $3",
+        "options": {
+          "queryReplacement": "={{ $json.update_sql_parameters }}",
+          "queryBatching": "single",
+          "largeNumbersOutput": "text",
+          "replaceEmptyStrings": false
+        }
+      },
+      "id": "c00f2420-1b7c-5314-84be-0f0152c9e03b",
+      "name": "Update case after decision",
+      "type": "n8n-nodes-base.postgres",
+      "typeVersion": 2.6,
+      "position": [
+        2160,
+        -120
+      ],
+      "credentials": {
+        "postgres": {
+          "id": "REPLACE_IN_UI",
+          "name": "REPLACE: SCHEDULE PostgreSQL / PGVector credential"
+        }
+      },
+      "alwaysOutputData": true
+    },
+    {
+      "parameters": {
+        "jsCode": "\nconst fromParse=(()=>{try{return $('Parse decision').first().json}catch{return null}})();\nconst fromMerge=(()=>{try{return $('Merge agent result').first().json}catch{return null}})();\nconst prev=fromMerge||fromParse||$json||{};\nconst rows=Array.isArray(prev.persist_events)?prev.persist_events:[];\nif(!rows.length) return [{json:{...prev,p1:'',p2:'',p3:'',p4:'',p5:'',p6:'',p7:'',p8:'',p9:'{}'}}];\nreturn rows.map(params=>{\n  const vals=(Array.isArray(params)?params:[]).map(v=>v===null||v===undefined?'':String(v));\n  return {json:{\n    ...prev,\n    p1:vals[0]||'',\n    p2:vals[1]||'',\n    p3:vals[2]||'',\n    p4:vals[3]||'',\n    p5:vals[4]||'',\n    p6:vals[5]||'',\n    p7:vals[6]||'',\n    p8:vals[7]||'',\n    p9:vals[8]||'{}',\n    event_sql_parameters:vals\n  }};\n});\n"
+      },
+      "id": "38472b5b-55fa-5dec-9244-7cedd0ac31aa",
+      "name": "Expand decision events",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        2160,
+        80
+      ]
+    },
+    {
+      "parameters": {
+        "operation": "executeQuery",
+        "query": "INSERT INTO events(case_id, task_id, kind, actor, agent_id, status, status_message, handoff_message, payload) SELECT $1,$2,$3,$4,$5,$6,$7,$8,$9::jsonb WHERE NULLIF($3, '') IS NOT NULL",
+        "options": {
+          "queryReplacement": "={{ [$json.p1, $json.p2, $json.p3, $json.p4, $json.p5, $json.p6, $json.p7, $json.p8, $json.p9] }}",
+          "queryBatching": "independently",
+          "largeNumbersOutput": "text",
+          "replaceEmptyStrings": false
+        }
+      },
+      "id": "1c746fbf-0840-5754-b415-85f5c9eee790",
+      "name": "Insert decision events",
+      "type": "n8n-nodes-base.postgres",
+      "typeVersion": 2.6,
+      "position": [
+        2400,
+        80
+      ],
+      "credentials": {
+        "postgres": {
+          "id": "REPLACE_IN_UI",
+          "name": "REPLACE: SCHEDULE PostgreSQL / PGVector credential"
+        }
+      },
+      "alwaysOutputData": true
+    },
+    {
+      "parameters": {
+        "jsCode": "const prev=$('Parse decision').first().json||{};\nreturn [{json:prev}];"
+      },
+      "id": "f6528acf-71cd-59ea-bcf7-62f9dae244aa",
+      "name": "Restore parsed decision",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        2640,
+        0
+      ],
+      "executeOnce": true
+    },
+    {
+      "parameters": {
+        "jsCode": "\nconst x=$json;\nconst id=String(x.agent_id||'').trim();\nlet route='none';\nif(x.should_call_agent!==true) route='none';\nelse if(id==='excel_extractor') route='excel';\nelse if(id==='calculation_agent') route='calc';\nelse if(id==='schedule_builder') route='schedule';\nelse route='unknown';\nreturn [{json:{...x,route}}];\n"
+      },
+      "id": "2180f6cb-aa64-5acc-a646-d4850cbfd592",
+      "name": "Prepare agent call",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        2760,
+        0
+      ]
+    },
+    {
+      "parameters": {
+        "mode": "expression",
+        "numberOutputs": 4,
+        "output": "={{ ({excel:0,calc:1,schedule:2,none:3,unknown:3})[$json.route] ?? 3 }}"
+      },
+      "id": "354369bf-3e92-5b05-9e11-9c3c0d3ee525",
+      "name": "Action router",
+      "type": "n8n-nodes-base.switch",
+      "typeVersion": 3.4,
+      "position": [
+        2880,
+        0
+      ]
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "={{ $json.excel_extractor_url }}",
+        "sendHeaders": true,
+        "headerParameters": {
+          "parameters": [
+            {
+              "name": "Content-Type",
+              "value": "application/json"
+            },
+            {
+              "name": "X-API-Key",
+              "value": "={{ $json.excel_tools_api_key || '' }}"
+            }
+          ]
+        },
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "={{ $json.agent_task }}",
+        "options": {
+          "timeout": 180000,
+          "response": {
+            "response": {
+              "fullResponse": false
+            }
+          }
+        }
+      },
+      "id": "74aa4b60-ae82-5f7d-8711-2c59a5e2e0a2",
+      "name": "Call Excel Extractor",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.4,
+      "position": [
+        3120,
+        -240
+      ],
+      "onError": "continueRegularOutput"
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "={{ $json.calculation_agent_url }}",
+        "sendHeaders": true,
+        "headerParameters": {
+          "parameters": [
+            {
+              "name": "Content-Type",
+              "value": "application/json"
+            },
+            {
+              "name": "X-API-Key",
+              "value": "={{ $json.excel_tools_api_key || '' }}"
+            }
+          ]
+        },
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "={{ $json.agent_task }}",
+        "options": {
+          "timeout": 180000,
+          "response": {
+            "response": {
+              "fullResponse": false
+            }
+          }
+        }
+      },
+      "id": "6c118e22-9c97-55cc-a904-8dd2ebf26316",
+      "name": "Call Calculation Agent",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.4,
+      "position": [
+        3120,
+        -40
+      ],
+      "onError": "continueRegularOutput"
+    },
+    {
+      "parameters": {
+        "source": "database",
+        "workflowId": {
+          "__rl": true,
+          "value": "REPLACE_SCHEDULE_BUILDER_AGENT_IN_UI",
+          "mode": "list",
+          "cachedResultName": "Agent — Schedule Builder"
+        },
+        "workflowInputs": {
+          "mappingMode": "defineBelow",
+          "value": {
+            "agent_task": "={{ $json.agent_task }}"
+          },
+          "matchingColumns": [],
+          "schema": [],
+          "attemptToConvertTypes": false,
+          "convertFieldsToString": false
+        },
+        "mode": "once",
+        "options": {
+          "waitForSubWorkflow": true
+        }
+      },
+      "id": "67c90bac-16e7-5355-bdcc-17ed6c145499",
+      "name": "Call Schedule Builder",
+      "type": "n8n-nodes-base.executeWorkflow",
+      "typeVersion": 1.3,
+      "position": [
+        3120,
+        160
+      ],
+      "onError": "continueRegularOutput"
+    },
+    {
+      "parameters": {
+        "jsCode": "\nconst x=$json;\nconst cont=x.action_type==='finish'?false:false;\nreturn [{json:{...x, should_continue:false, continue_url:String(x.orchestrator_step_url||'http://n8n:5678/webhook/mas-orchestrator-step').replace(/\\/$/,'')}}];\n"
+      },
+      "id": "f605b27f-6506-5968-9cdf-3a84f930282b",
+      "name": "No agent this step",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        3120,
+        360
+      ]
+    },
+    {
+      "parameters": {
+        "jsCode": "\nconst prev=$('Prepare agent call').first().json||$('Parse decision').first().json||{};\nconst http=$json||{};\nconst obj=v=>v&&typeof v==='object'&&!Array.isArray(v);\nconst result=obj(http.body)?http.body:(obj(http)?http:{});\nconst status=String(result.status||(http.error?'failed':'completed'));\nconst state=obj(prev.state)?{...prev.state}:{};\nconst data=obj(state.data)?{...state.data}:{};\nconst artifacts=obj(state.artifacts)?{...state.artifacts}:{};\nconst agentId=String(prev.agent_id||result.agent_id||'');\nconst bucket=agentId==='excel_extractor'?'excel':(agentId==='calculation_agent'?'calc':(agentId==='schedule_builder'?'schedule':'agent'));\nif(status==='completed'){\n  data[bucket]=result.data||result;\n  if(agentId==='excel_extractor'&&result.data&&Array.isArray(result.data.facts)) data.facts=result.data.facts;\n  Object.assign(artifacts, result.artifacts||{});\n  state.current_task=null;\n  state.last_error=null;\n}\nif(Array.isArray(state.plan)){\n  state.plan=state.plan.map(p=>{\n    if(!p||typeof p!=='object') return p;\n    if(status==='completed'&&String(p.status)==='running') return {...p,status:'done'};\n    return p;\n  });\n}\nlet nextStatus='running';\nlet shouldContinue=true;\nconst events=[];\nif(status==='needs_input'){\n  nextStatus='waiting_user';\n  shouldContinue=false;\n  const reqs=Array.isArray(result.requests)?result.requests:[];\n  const q=reqs[0]||{question_id:'Q-agent',question:String(result.message||'Агенту нужны данные'),options:[]};\n  state.hitl={pending:true,questions:reqs.length?reqs:[q],answers:(state.hitl&&state.hitl.answers)||{}};\n  events.push({kind:'hitl.request',actor:'orchestrator',agent_id:agentId,status:'waiting_user',status_message:q.question,payload:q});\n} else if(status==='completed'){\n  events.push({\n    kind:'agent.result',\n    actor:agentId||'agent',\n    agent_id:agentId,\n    task_id:(prev.agent_task&&prev.agent_task.task_id)||'',\n    status:'completed',\n    status_message:String(result.message||'Агент завершил работу'),\n    payload:{data_keys:Object.keys((result.data&&typeof result.data==='object')?result.data:{}),artifacts:Object.keys((result.artifacts&&typeof result.artifacts==='object')?result.artifacts:{})}\n  });\n} else if(status==='failed'||http.error){\n  nextStatus='running';\n  shouldContinue=true;\n  state.last_error={message:String(result.message||http.message||'agent failed'),agent_id:agentId};\n  data[bucket]=result.data||result;\n  events.push({kind:'agent.failed',actor:agentId||'agent',agent_id:agentId,status:'failed',status_message:String(result.message||http.message||'Агент вернул ошибку'),payload:{message:state.last_error.message,issues:result.issues||[]}});\n}\nif(Number(state.step_count||0)>=24){\n  nextStatus='failed';\n  shouldContinue=false;\n  events.push({kind:'case.failed',actor:'orchestrator',status:'failed',status_message:'Превышен лимит шагов оркестратора'});\n}\nstate.data=data;\nstate.artifacts=artifacts;\nstate.status=nextStatus;\nconst persistEvents=events.map(e=>[\n  prev.case_id, e.task_id||'', e.kind, e.actor, e.agent_id||'', e.status||'', e.status_message||'', e.handoff_message||'', JSON.stringify(e.payload||{})\n]);\nreturn [{json:{\n  ...prev,\n  agent_result:result,\n  state,\n  next_status:nextStatus,\n  should_continue:shouldContinue&&nextStatus==='running',\n  update_sql_parameters:[JSON.stringify(state), nextStatus, prev.case_id],\n  persist_events:persistEvents,\n  events,\n  event_sql_parameters:persistEvents[0],\n  continue_url:String(prev.orchestrator_step_url||'http://n8n:5678/webhook/mas-orchestrator-step').replace(/\\/$/,'')\n}}];\n"
+      },
+      "id": "991e54b5-5f3a-5f9b-9ef1-0165be4207d4",
+      "name": "Merge agent result",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        3360,
+        -40
+      ]
+    },
+    {
+      "parameters": {
+        "operation": "executeQuery",
+        "query": "UPDATE cases SET state = $1::jsonb, status = $2, updated_at = now() WHERE case_id = $3",
+        "options": {
+          "queryReplacement": "={{ $json.update_sql_parameters }}",
+          "queryBatching": "single",
+          "largeNumbersOutput": "text",
+          "replaceEmptyStrings": false
+        }
+      },
+      "id": "71ec97c7-d243-5431-8abf-023012a493b5",
+      "name": "Update case after agent",
+      "type": "n8n-nodes-base.postgres",
+      "typeVersion": 2.6,
+      "position": [
+        3600,
+        -160
+      ],
+      "credentials": {
+        "postgres": {
+          "id": "REPLACE_IN_UI",
+          "name": "REPLACE: SCHEDULE PostgreSQL / PGVector credential"
+        }
+      },
+      "alwaysOutputData": true
+    },
+    {
+      "parameters": {
+        "jsCode": "\nconst fromParse=(()=>{try{return $('Parse decision').first().json}catch{return null}})();\nconst fromMerge=(()=>{try{return $('Merge agent result').first().json}catch{return null}})();\nconst prev=fromMerge||fromParse||$json||{};\nconst rows=Array.isArray(prev.persist_events)?prev.persist_events:[];\nif(!rows.length) return [{json:{...prev,p1:'',p2:'',p3:'',p4:'',p5:'',p6:'',p7:'',p8:'',p9:'{}'}}];\nreturn rows.map(params=>{\n  const vals=(Array.isArray(params)?params:[]).map(v=>v===null||v===undefined?'':String(v));\n  return {json:{\n    ...prev,\n    p1:vals[0]||'',\n    p2:vals[1]||'',\n    p3:vals[2]||'',\n    p4:vals[3]||'',\n    p5:vals[4]||'',\n    p6:vals[5]||'',\n    p7:vals[6]||'',\n    p8:vals[7]||'',\n    p9:vals[8]||'{}',\n    event_sql_parameters:vals\n  }};\n});\n"
+      },
+      "id": "8f8e5581-b932-5ec3-b387-923cb96c3494",
+      "name": "Expand agent events",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        3600,
+        40
+      ]
+    },
+    {
+      "parameters": {
+        "operation": "executeQuery",
+        "query": "INSERT INTO events(case_id, task_id, kind, actor, agent_id, status, status_message, handoff_message, payload) SELECT $1,$2,$3,$4,$5,$6,$7,$8,$9::jsonb WHERE NULLIF($3, '') IS NOT NULL",
+        "options": {
+          "queryReplacement": "={{ [$json.p1, $json.p2, $json.p3, $json.p4, $json.p5, $json.p6, $json.p7, $json.p8, $json.p9] }}",
+          "queryBatching": "independently",
+          "largeNumbersOutput": "text",
+          "replaceEmptyStrings": false
+        }
+      },
+      "id": "5f98d39c-f8a0-5a4c-9ba3-8251beeac716",
+      "name": "Insert agent events",
+      "type": "n8n-nodes-base.postgres",
+      "typeVersion": 2.6,
+      "position": [
+        3840,
+        40
+      ],
+      "credentials": {
+        "postgres": {
+          "id": "REPLACE_IN_UI",
+          "name": "REPLACE: SCHEDULE PostgreSQL / PGVector credential"
+        }
+      },
+      "alwaysOutputData": true
+    },
+    {
+      "parameters": {
+        "jsCode": "const prev=$('Merge agent result').first().json||{};\nreturn [{json:prev}];"
+      },
+      "id": "82e54576-9d79-5115-b27b-893733f6d0fd",
+      "name": "Restore after agent events",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        3960,
+        0
+      ],
+      "executeOnce": true
+    },
+    {
+      "parameters": {
+        "conditions": {
+          "options": {
+            "caseSensitive": true,
+            "leftValue": "",
+            "typeValidation": "strict",
+            "version": 2
+          },
+          "conditions": [
+            {
+              "id": "69acd4a9-6332-5d74-b74d-d9f499d36fd5",
+              "leftValue": "={{ $json.should_continue }}",
+              "rightValue": true,
+              "operator": {
+                "type": "boolean",
+                "operation": "true"
+              }
+            }
+          ],
+          "combinator": "and"
+        },
+        "options": {}
+      },
+      "id": "f09ef976-9a4c-5056-9c39-fe2fa333f84c",
+      "name": "Continue loop?",
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2.3,
+      "position": [
+        4080,
+        0
+      ]
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "={{ $json.continue_url }}",
+        "authentication": "genericCredentialType",
+        "genericAuthType": "httpHeaderAuth",
+        "sendHeaders": true,
+        "headerParameters": {
+          "parameters": [
+            {
+              "name": "Content-Type",
+              "value": "application/json"
+            }
+          ]
+        },
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "={{ ({action: 'step', case_id: $json.case_id, source: 'orchestrator'}) }}",
+        "options": {
+          "timeout": 5000
+        }
+      },
+      "id": "3da0e053-3cf8-5575-9d48-54d0bcc62e3f",
+      "name": "POST continue run",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.4,
+      "position": [
+        4320,
+        -80
+      ],
+      "credentials": {
+        "httpHeaderAuth": {
+          "id": "REPLACE_IN_UI",
+          "name": "REPLACE: engineering orchestrator inbound key"
+        }
+      },
+      "onError": "continueRegularOutput"
+    },
+    {
+      "parameters": {
+        "jsCode": "const x=$json;return[{json:{contract:'mas_orchestrator_ack',case_id:x.case_id,status:x.next_status||x.status,action_type:x.action_type||null,should_continue:x.should_continue===true,human_gate:x.human_gate||null,version:x.version??null,restartable:x.restartable===true}}];"
+      },
+      "id": "bc466937-f343-550d-8651-0a6ea6806e40",
+      "name": "Format step ack",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        4320,
+        120
+      ]
+    }
+  ],
+  "connections": {
+    "Authenticated MAS webhook": {
+      "main": [
+        [
+          {
+            "node": "Runtime endpoints",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Runtime endpoints": {
+      "main": [
+        [
+          {
+            "node": "Normalize step request",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Normalize step request": {
+      "main": [
+        [
+          {
+            "node": "Probe ping?",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Probe ping?": {
+      "main": [
+        [
+          {
+            "node": "Format step ack",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Needs create?",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Needs create?": {
+      "main": [
+        [
+          {
+            "node": "Prepare start case",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Insert execution map",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Prepare start case": {
+      "main": [
+        [
+          {
+            "node": "Insert new case",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Insert new case": {
+      "main": [
+        [
+          {
+            "node": "Expand start events",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Expand start events": {
+      "main": [
+        [
+          {
+            "node": "Insert start events",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Insert start events": {
+      "main": [
+        [
+          {
+            "node": "Restore after start",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Restore after start": {
+      "main": [
+        [
+          {
+            "node": "Insert execution map",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Insert execution map": {
+      "main": [
+        [
+          {
+            "node": "Load case",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Load case": {
+      "main": [
+        [
+          {
+            "node": "Apply request extras",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Apply request extras": {
+      "main": [
+        [
+          {
+            "node": "Status only?",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Status only?": {
+      "main": [
+        [
+          {
+            "node": "Format step ack",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Resume persist?",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Resume persist?": {
+      "main": [
+        [
+          {
+            "node": "Update case after resume",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Load agent registry",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Update case after resume": {
+      "main": [
+        [
+          {
+            "node": "Expand resume events",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Expand resume events": {
+      "main": [
+        [
+          {
+            "node": "Insert resume events",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Insert resume events": {
+      "main": [
+        [
+          {
+            "node": "Restore after resume",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Restore after resume": {
+      "main": [
+        [
+          {
+            "node": "Load agent registry",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Load agent registry": {
+      "main": [
+        [
+          {
+            "node": "Prepare decision context",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Prepare decision context": {
+      "main": [
+        [
+          {
+            "node": "Decision LLM",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Decision Chat Model — configure in UI": {
+      "ai_languageModel": [
+        [
+          {
+            "node": "Decision LLM",
+            "type": "ai_languageModel",
+            "index": 0
+          },
+          {
+            "node": "Decision Structured Output",
+            "type": "ai_languageModel",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Decision Structured Output": {
+      "ai_outputParser": [
+        [
+          {
+            "node": "Decision LLM",
+            "type": "ai_outputParser",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Decision LLM": {
+      "main": [
+        [
+          {
+            "node": "Parse decision",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Parse decision": {
+      "main": [
+        [
+          {
+            "node": "Update case after decision",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Update case after decision": {
+      "main": [
+        [
+          {
+            "node": "Expand decision events",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Expand decision events": {
+      "main": [
+        [
+          {
+            "node": "Insert decision events",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Insert decision events": {
+      "main": [
+        [
+          {
+            "node": "Restore parsed decision",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Restore parsed decision": {
+      "main": [
+        [
+          {
+            "node": "Prepare agent call",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Prepare agent call": {
+      "main": [
+        [
+          {
+            "node": "Action router",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Action router": {
+      "main": [
+        [
+          {
+            "node": "Call Excel Extractor",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Call Calculation Agent",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Call Schedule Builder",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "No agent this step",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Call Excel Extractor": {
+      "main": [
+        [
+          {
+            "node": "Merge agent result",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Call Calculation Agent": {
+      "main": [
+        [
+          {
+            "node": "Merge agent result",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Call Schedule Builder": {
+      "main": [
+        [
+          {
+            "node": "Merge agent result",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "No agent this step": {
+      "main": [
+        [
+          {
+            "node": "Format step ack",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Merge agent result": {
+      "main": [
+        [
+          {
+            "node": "Update case after agent",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Update case after agent": {
+      "main": [
+        [
+          {
+            "node": "Expand agent events",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Expand agent events": {
+      "main": [
+        [
+          {
+            "node": "Insert agent events",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Insert agent events": {
+      "main": [
+        [
+          {
+            "node": "Restore after agent events",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Restore after agent events": {
+      "main": [
+        [
+          {
+            "node": "Continue loop?",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Continue loop?": {
+      "main": [
+        [
+          {
+            "node": "POST continue run",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Format step ack",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "POST continue run": {
+      "main": [
+        [
+          {
+            "node": "Format step ack",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    }
+  },
+  "settings": {
+    "executionOrder": "v1",
+    "callerPolicy": "workflowsFromSameOwner",
+    "errorWorkflow": "63116836-8724-595e-bc5e-dd6e743e2586"
+  },
+  "meta": {
+    "templateCredsSetupCompleted": true,
+    "targetN8nVersion": "2.30.8"
+  },
+  "tags": [],
+  "pinData": {},
+  "versionId": "6381f2ec-b186-4a91-8814-96f7b635eb5e"
+}

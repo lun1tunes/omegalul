@@ -1,0 +1,38 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://omegalul.local/schemas/decision.schema.json",
+  "title": "OrchestratorDecision",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["status_message", "action"],
+  "properties": {
+    "status_message": { "type": "string" },
+    "plan_update": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "required": ["id", "status"],
+        "properties": {
+          "id": { "type": "string" },
+          "title": { "type": "string" },
+          "status": { "type": "string" }
+        }
+      }
+    },
+    "action": {
+      "type": "object",
+      "required": ["type"],
+      "properties": {
+        "type": { "enum": ["call_agent", "ask_user", "finish"] },
+        "agent_id": { "type": "string" },
+        "task_id": { "type": "string" },
+        "handoff_message": { "type": "string" },
+        "task": { "type": "object" },
+        "question_id": { "type": "string" },
+        "question": { "type": "string" },
+        "options": { "type": "array", "items": { "type": "string" } },
+        "result": { "type": "object" }
+      }
+    }
+  }
+}

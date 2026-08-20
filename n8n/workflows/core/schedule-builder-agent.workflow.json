@@ -1,0 +1,1095 @@
+{
+  "id": "c8d5f3b2-6e91-5d22-8a7b-1f0c4e9a2d55",
+  "name": "Agent — Schedule Builder",
+  "active": false,
+  "isArchived": false,
+  "nodes": [
+    {
+      "parameters": {
+        "content": "## edit after import\n\n**Agent — Schedule Builder** — один LLM + FastAPI tools.\n\n1. Bind **Qwen** credential on Schedule Builder Chat Model\n2. Runtime configuration: `schedule_service_url` = FastAPI `http://schedule-builder:8090` (field: Windows/host URL)\n3. Orchestrator — MAS вызывает этот workflow через `executeWorkflow` (`Call Schedule Builder`), как Excel Extractor. Webhook не нужен.\n\nLLM не пишет .INC. parse/apply/emit остаются в сервисе.\n`suggested_capability` commissioning/group_rebind идут обычным HTTP `apply_*` (external n8n runners не execute'ят toolHttpRequest). Скважины/даты не хардкодятся — только факты сессии и текст задачи.",
+        "height": 320,
+        "width": 480,
+        "color": 1
+      },
+      "id": "14a99cdb-9d82-5a22-8b43-4ff727bad404",
+      "name": "edit after import",
+      "type": "n8n-nodes-base.stickyNote",
+      "typeVersion": 1,
+      "position": [
+        -220,
+        -360
+      ]
+    },
+    {
+      "parameters": {
+        "inputSource": "jsonExample",
+        "jsonExample": "{\"agent_task\": {\"case_id\": \"CASE-example\", \"task_id\": \"TASK-002\", \"agent_id\": \"schedule_builder\", \"objective\": \"Сдвинь даты ввода по Excel\", \"inputs\": {}, \"context\": {}}}"
+      },
+      "id": "41fb33ca-e522-5fbf-9fc4-70e19009f1b6",
+      "name": "When executed by another workflow",
+      "type": "n8n-nodes-base.executeWorkflowTrigger",
+      "typeVersion": 1.2,
+      "position": [
+        0,
+        0
+      ]
+    },
+    {
+      "parameters": {
+        "assignments": {
+          "assignments": [
+            {
+              "id": "1b4109c5-aae5-5a33-ba7d-b9ad3290f18c",
+              "name": "schedule_service_url",
+              "value": "http://schedule-builder:8090",
+              "type": "string"
+            },
+            {
+              "id": "c9b6d3c3-31da-511e-a018-453a627fd809",
+              "name": "activity_base_url",
+              "value": "http://mas-activity:8200",
+              "type": "string"
+            }
+          ]
+        },
+        "options": {},
+        "includeOtherFields": true
+      },
+      "id": "34ccd1d6-0800-5349-88bf-01da2527973f",
+      "name": "Runtime configuration",
+      "type": "n8n-nodes-base.set",
+      "typeVersion": 3.4,
+      "position": [
+        260,
+        0
+      ]
+    },
+    {
+      "parameters": {
+        "jsCode": "\nconst root=$json||{};\nconst body=root.body&&typeof root.body==='object'?root.body:root;\nconst packet=body.specialist_packet&&typeof body.specialist_packet==='object'?body.specialist_packet:null;\nlet task=body.agent_task&&typeof body.agent_task==='object'?body.agent_task:(body.case_id||body.task_id||body.objective?body:null);\nif(!task||typeof task!=='object') task={};\nif(packet){\n  const inputs=packet.inputs&&typeof packet.inputs==='object'?packet.inputs:{};\n  task={\n    case_id:String(packet.case_id||body.case_id||task.case_id||''),\n    task_id:String(packet.task_id||task.task_id||''),\n    agent_id:'schedule_builder',\n    objective:String(packet.objective||task.objective||''),\n    handoff_message:String(packet.handoff_message||task.handoff_message||packet.objective||''),\n    inputs,\n    context:packet.context&&typeof packet.context==='object'?packet.context:(task.context||{}),\n    constraints:packet.controls&&typeof packet.controls==='object'?packet.controls:(task.constraints||{})\n  };\n}\ntask.agent_id='schedule_builder';\ntask.case_id=String(task.case_id||'');\ntask.task_id=String(task.task_id||'');\ntask.objective=String(task.objective||'');\ntask.handoff_message=String(task.handoff_message||'');\ntask.inputs=task.inputs&&typeof task.inputs==='object'?task.inputs:{};\ntask.context=task.context&&typeof task.context==='object'?task.context:{};\nconst cfg=$('Runtime configuration').first().json||{};\nif(!task.inputs.activity_base_url&&cfg.activity_base_url) task.inputs={...task.inputs, activity_base_url:cfg.activity_base_url};\nreturn [{json:{...cfg, agent_task:task, case_id:task.case_id, task_id:task.task_id}}];\n"
+      },
+      "id": "107fff28-ec6f-5420-a95e-bbf2be2f0f3b",
+      "name": "Normalize schedule task",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        500,
+        0
+      ]
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "={{ $json.schedule_service_url }}/agent-tools/open_session",
+        "sendHeaders": true,
+        "headerParameters": {
+          "parameters": [
+            {
+              "name": "Content-Type",
+              "value": "application/json"
+            }
+          ]
+        },
+        "options": {
+          "timeout": 180000,
+          "response": {
+            "response": {
+              "fullResponse": false,
+              "responseFormat": "json"
+            }
+          }
+        },
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "={{ $json.agent_task }}"
+      },
+      "id": "01b753e2-f2eb-538e-a52b-a2413af75e62",
+      "name": "Open schedule session",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.4,
+      "position": [
+        740,
+        0
+      ],
+      "onError": "continueRegularOutput",
+      "alwaysOutputData": true
+    },
+    {
+      "parameters": {
+        "conditions": {
+          "options": {
+            "caseSensitive": true,
+            "leftValue": "",
+            "typeValidation": "strict",
+            "version": 2
+          },
+          "conditions": [
+            {
+              "id": "f50e3b7e-c002-585b-b759-e91cc079e24a",
+              "leftValue": "={{ $json.ok === true }}",
+              "rightValue": true,
+              "operator": {
+                "type": "boolean",
+                "operation": "true"
+              }
+            }
+          ],
+          "combinator": "and"
+        },
+        "options": {}
+      },
+      "id": "faf84bec-bba0-54f0-aba4-b985c1598a64",
+      "name": "Session ready?",
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2.3,
+      "position": [
+        980,
+        0
+      ]
+    },
+    {
+      "parameters": {
+        "jsCode": "\nconst opened=$json||{};\nconst result=opened.result&&typeof opened.result==='object'?opened.result:{};\nreturn [{json:{\n  task_id:result.task_id||opened.task_id||'',\n  agent_id:'schedule_builder',\n  status:result.status||'needs_input',\n  message:result.message||opened.message||'Нет исходного SCHEDULE',\n  data:result.data||{},\n  artifacts:result.artifacts||{},\n  issues:result.issues||[{type:'missing_schedule_source'}],\n  assumptions:result.assumptions||[],\n  requests:result.requests||[{question_id:'Q-sched',question:'Приложите baseline .inc',options:[]}]\n}}];\n"
+      },
+      "id": "420bab3a-3704-5360-b4c8-f97189511343",
+      "name": "Format missing schedule",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        1220,
+        240
+      ]
+    },
+    {
+      "parameters": {
+        "mode": "expression",
+        "numberOutputs": 3,
+        "output": "={{ ({commissioning:0, group_rebind:1, operations:2})[$json.suggested_capability] ?? 2 }}"
+      },
+      "id": "d925f291-4356-5f16-b0be-96db210a4207",
+      "name": "Capability router",
+      "type": "n8n-nodes-base.switch",
+      "typeVersion": 3.4,
+      "position": [
+        1220,
+        0
+      ]
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "={{ $('Runtime configuration').first().json.schedule_service_url + '/agent-tools/apply_commissioning' }}",
+        "sendHeaders": true,
+        "headerParameters": {
+          "parameters": [
+            {
+              "name": "Content-Type",
+              "value": "application/json"
+            }
+          ]
+        },
+        "options": {
+          "timeout": 180000,
+          "response": {
+            "response": {
+              "fullResponse": false,
+              "responseFormat": "json"
+            }
+          }
+        },
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "={{ ({session_id: $('Open schedule session').first().json.session_id}) }}"
+      },
+      "id": "96dca29d-7b08-5569-b7c0-63b7fc91d937",
+      "name": "Apply commissioning",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.4,
+      "position": [
+        1480,
+        -160
+      ],
+      "onError": "continueRegularOutput",
+      "alwaysOutputData": true
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "={{ $('Runtime configuration').first().json.schedule_service_url + '/agent-tools/apply_group_rebind' }}",
+        "sendHeaders": true,
+        "headerParameters": {
+          "parameters": [
+            {
+              "name": "Content-Type",
+              "value": "application/json"
+            }
+          ]
+        },
+        "options": {
+          "timeout": 180000,
+          "response": {
+            "response": {
+              "fullResponse": false,
+              "responseFormat": "json"
+            }
+          }
+        },
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "={{ ({session_id: $('Open schedule session').first().json.session_id}) }}"
+      },
+      "id": "6f9aabe5-c80a-5f78-90ee-ca806a76fb05",
+      "name": "Apply group rebind",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.4,
+      "position": [
+        1480,
+        0
+      ],
+      "onError": "continueRegularOutput",
+      "alwaysOutputData": true
+    },
+    {
+      "parameters": {
+        "jsCode": "\nconst opened=$json||{};\nconst task=$('Normalize schedule task').first().json.agent_task||{};\nconst agent_input=JSON.stringify({\n  objective:opened.objective||task.objective||'',\n  handoff_message:opened.handoff_message||task.handoff_message||'',\n  inspect:opened.inspect||{},\n  fact_count:opened.fact_count||0,\n  facts_preview:opened.facts_preview||[],\n  suggested_capability:opened.suggested_capability||''\n});\nreturn [{json:{...opened, session_id:opened.session_id, agent_input}}];\n"
+      },
+      "id": "0efd1b65-b426-5dd1-9cdd-2a66eb50c4e3",
+      "name": "Prepare AI Agent input",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        1480,
+        160
+      ]
+    },
+    {
+      "parameters": {
+        "promptType": "define",
+        "text": "={{ $json.agent_input }}",
+        "hasOutputParser": false,
+        "options": {
+          "systemMessage": "Ты — единственный LLM-решатель агента Schedule Builder.\n\nИсходный .INC тебе не показывают. Он лежит в сессии FastAPI. session_id привязан workflow: никогда не передавай session_id и обёртку args/input.\n\nИнструменты:\n- inspect_schedule — скважины, keywords, даты, GRUPTREE (компактно)\n- search_keywords — по intent сервиса вернёт keywords + methods\n- get_keyword — объектная модель полей и методов\n- list_records — компактные записи keyword/well\n- apply_commissioning — сдвиг дат ввода по фактам Excel из сессии. Даты сам не выдумывай.\n- apply_group_rebind — перепривязка групп по тексту задачи и baseline. Скважины только из inspect.\n- apply_operations — точечные MODIFY/ADD по схеме keyword. wells только из inspect.\n- build_schedule — собрать текущий working text, если apply уже менял сессию\n- validate_result — проверки emit\n\nПравила:\n- Не пиши текст SCHEDULE сам. Только инструменты.\n- Не придумывай скважины, даты, группы, дебиты.\n- suggested_capability=commissioning → сразу apply_commissioning, затем STOP.\n- suggested_capability=group_rebind → inspect при необходимости, затем apply_group_rebind, затем STOP.\n- Иначе search_keywords → get_keyword → apply_operations / needs_input.\n- После apply_* со status completed или needs_input — STOP. Не вызывай build, если apply уже вернул результат.\n- Если данных нет — не вызывай apply с пустыми выдуманными полями.\n\nЗаверши одним коротким фактическим предложением по-русски.\n",
+          "maxIterations": 12,
+          "returnIntermediateSteps": true,
+          "passthroughBinaryImages": false,
+          "passthroughBinaryPdfs": false,
+          "enableStreaming": false
+        },
+        "needsFallback": false
+      },
+      "id": "00e68824-41e3-50ff-94b2-0c1d42d861ec",
+      "name": "Schedule Builder AI Agent",
+      "type": "@n8n/n8n-nodes-langchain.agent",
+      "typeVersion": 3.1,
+      "position": [
+        1720,
+        160
+      ]
+    },
+    {
+      "parameters": {
+        "model": {
+          "mode": "id",
+          "value": "qwen3.6-plus"
+        },
+        "options": {
+          "maxTokens": 2048,
+          "temperature": 0,
+          "timeout": 300000,
+          "maxRetries": 5
+        },
+        "responsesApiEnabled": false
+      },
+      "id": "8f927db5-ca53-51cc-b07b-79482ce8fba7",
+      "name": "Schedule Builder Chat Model — Qwen",
+      "type": "@n8n/n8n-nodes-langchain.lmChatOpenAi",
+      "typeVersion": 1.3,
+      "position": [
+        1720,
+        40
+      ],
+      "credentials": {
+        "openAiApi": {
+          "id": "REPLACE_IN_UI",
+          "name": "REPLACE: Qwen OpenAI-compatible schedule builder credential"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "method": "GET",
+        "url": "={{ $('Runtime configuration').first().json.schedule_service_url + '/sessions/' + $('Open schedule session').first().json.session_id + '/result' }}",
+        "sendHeaders": true,
+        "headerParameters": {
+          "parameters": [
+            {
+              "name": "Content-Type",
+              "value": "application/json"
+            }
+          ]
+        },
+        "options": {
+          "timeout": 120000,
+          "response": {
+            "response": {
+              "fullResponse": false,
+              "responseFormat": "json"
+            }
+          }
+        }
+      },
+      "id": "00627c77-4211-5e34-a9c2-fb7cddcf114b",
+      "name": "Fetch schedule result",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.4,
+      "position": [
+        1960,
+        0
+      ],
+      "onError": "continueRegularOutput",
+      "alwaysOutputData": true
+    },
+    {
+      "parameters": {
+        "jsCode": "\nconst fetched=$json||{};\nconst opened=$('Open schedule session').first().json||{};\nif(fetched.status){\n  return [{json:{\n    task_id:fetched.task_id||opened.task_id||'',\n    agent_id:'schedule_builder',\n    status:fetched.status,\n    message:fetched.message||'',\n    data:fetched.data||{},\n    artifacts:fetched.artifacts||{},\n    issues:fetched.issues||[],\n    assumptions:fetched.assumptions||[],\n    requests:fetched.requests||[]\n  }}];\n}\nreturn [{json:{\n  task_id:opened.task_id||'',\n  agent_id:'schedule_builder',\n  status:'failed',\n  message:String(fetched.message||fetched.error||'Schedule Builder не вернул SCHEDULE'),\n  data:{},\n  artifacts:{},\n  issues:[{type:'schedule_agent_no_result'}],\n  assumptions:[],\n  requests:[]\n}}];\n"
+      },
+      "id": "0f545993-1de6-527f-9df0-cf396719357c",
+      "name": "Format schedule result",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        2200,
+        0
+      ]
+    },
+    {
+      "parameters": {
+        "toolDescription": "Компактный осмотр baseline: wells, keywords, даты, GRUPTREE. Без полного .INC.",
+        "method": "POST",
+        "url": "={{ $('Runtime configuration').first().json.schedule_service_url + '/agent-tools/' + \"inspect_schedule\" }}",
+        "authentication": "none",
+        "sendQuery": false,
+        "sendHeaders": true,
+        "specifyHeaders": "keypair",
+        "sendBody": true,
+        "specifyBody": "keypair",
+        "placeholderDefinitions": {
+          "values": []
+        },
+        "optimizeResponse": false,
+        "parametersHeaders": {
+          "values": [
+            {
+              "name": "Content-Type",
+              "valueProvider": "fieldValue",
+              "value": "application/json"
+            }
+          ]
+        },
+        "parametersBody": {
+          "values": [
+            {
+              "name": "session_id",
+              "valueProvider": "fieldValue",
+              "value": "={{ $('Open schedule session').first().json.session_id }}"
+            }
+          ]
+        }
+      },
+      "id": "d95f01de-095e-56ff-99b1-a95c1d6859e4",
+      "name": "inspect_schedule",
+      "type": "@n8n/n8n-nodes-langchain.toolHttpRequest",
+      "typeVersion": 1.1,
+      "position": [
+        760,
+        -420
+      ]
+    },
+    {
+      "parameters": {
+        "toolDescription": "Найти keywords и methods по intent (даты ввода, группы, дебиты, перфорация, ГРП).",
+        "method": "POST",
+        "url": "={{ $('Runtime configuration').first().json.schedule_service_url + '/agent-tools/' + \"search_keywords\" }}",
+        "authentication": "none",
+        "sendQuery": false,
+        "sendHeaders": true,
+        "specifyHeaders": "keypair",
+        "sendBody": true,
+        "specifyBody": "keypair",
+        "placeholderDefinitions": {
+          "values": [
+            {
+              "name": "intent",
+              "description": "Фраза задачи: даты ввода, перепривязка групп, ORAT, ...",
+              "type": "string"
+            }
+          ]
+        },
+        "optimizeResponse": false,
+        "parametersHeaders": {
+          "values": [
+            {
+              "name": "Content-Type",
+              "valueProvider": "fieldValue",
+              "value": "application/json"
+            }
+          ]
+        },
+        "parametersBody": {
+          "values": [
+            {
+              "name": "session_id",
+              "valueProvider": "fieldValue",
+              "value": "={{ $('Open schedule session').first().json.session_id }}"
+            },
+            {
+              "name": "intent",
+              "valueProvider": "modelRequired",
+              "value": ""
+            }
+          ]
+        }
+      },
+      "id": "d48cb3b5-0641-53d1-9cfd-8448c1767b2a",
+      "name": "search_keywords",
+      "type": "@n8n/n8n-nodes-langchain.toolHttpRequest",
+      "typeVersion": 1.1,
+      "position": [
+        980,
+        -420
+      ]
+    },
+    {
+      "parameters": {
+        "toolDescription": "Объектная модель keyword: fields + methods. Бери имена полей отсюда, не выдумывай.",
+        "method": "POST",
+        "url": "={{ $('Runtime configuration').first().json.schedule_service_url + '/agent-tools/' + \"get_keyword\" }}",
+        "authentication": "none",
+        "sendQuery": false,
+        "sendHeaders": true,
+        "specifyHeaders": "keypair",
+        "sendBody": true,
+        "specifyBody": "keypair",
+        "placeholderDefinitions": {
+          "values": [
+            {
+              "name": "keyword",
+              "description": "DATES / WCONPROD / GRUPTREE / ...",
+              "type": "string"
+            }
+          ]
+        },
+        "optimizeResponse": false,
+        "parametersHeaders": {
+          "values": [
+            {
+              "name": "Content-Type",
+              "valueProvider": "fieldValue",
+              "value": "application/json"
+            }
+          ]
+        },
+        "parametersBody": {
+          "values": [
+            {
+              "name": "session_id",
+              "valueProvider": "fieldValue",
+              "value": "={{ $('Open schedule session').first().json.session_id }}"
+            },
+            {
+              "name": "keyword",
+              "valueProvider": "modelRequired",
+              "value": ""
+            }
+          ]
+        }
+      },
+      "id": "9fe3ddd4-c215-588c-bf25-4567bdb13f1c",
+      "name": "get_keyword",
+      "type": "@n8n/n8n-nodes-langchain.toolHttpRequest",
+      "typeVersion": 1.1,
+      "position": [
+        1200,
+        -420
+      ]
+    },
+    {
+      "parameters": {
+        "toolDescription": "Компактные records keyword. well опционален. Не больше 40 строк.",
+        "method": "POST",
+        "url": "={{ $('Runtime configuration').first().json.schedule_service_url + '/agent-tools/' + \"list_records\" }}",
+        "authentication": "none",
+        "sendQuery": false,
+        "sendHeaders": true,
+        "specifyHeaders": "keypair",
+        "sendBody": true,
+        "specifyBody": "keypair",
+        "placeholderDefinitions": {
+          "values": [
+            {
+              "name": "keyword",
+              "description": "Имя keyword",
+              "type": "string"
+            },
+            {
+              "name": "well",
+              "description": "Точное имя скважины из inspect",
+              "type": "string"
+            }
+          ]
+        },
+        "optimizeResponse": false,
+        "parametersHeaders": {
+          "values": [
+            {
+              "name": "Content-Type",
+              "valueProvider": "fieldValue",
+              "value": "application/json"
+            }
+          ]
+        },
+        "parametersBody": {
+          "values": [
+            {
+              "name": "session_id",
+              "valueProvider": "fieldValue",
+              "value": "={{ $('Open schedule session').first().json.session_id }}"
+            },
+            {
+              "name": "keyword",
+              "valueProvider": "modelRequired",
+              "value": ""
+            },
+            {
+              "name": "well",
+              "valueProvider": "modelOptional",
+              "value": ""
+            }
+          ]
+        }
+      },
+      "id": "b4a1c15f-42f0-5d12-9ef5-3147f0249aff",
+      "name": "list_records",
+      "type": "@n8n/n8n-nodes-langchain.toolHttpRequest",
+      "typeVersion": 1.1,
+      "position": [
+        760,
+        -260
+      ]
+    },
+    {
+      "parameters": {
+        "toolDescription": "Сдвинуть даты ввода по фактам Excel, уже лежащим в сессии. Даты в аргументах не передавай.",
+        "method": "POST",
+        "url": "={{ $('Runtime configuration').first().json.schedule_service_url + '/agent-tools/' + \"apply_commissioning\" }}",
+        "authentication": "none",
+        "sendQuery": false,
+        "sendHeaders": true,
+        "specifyHeaders": "keypair",
+        "sendBody": true,
+        "specifyBody": "keypair",
+        "placeholderDefinitions": {
+          "values": []
+        },
+        "optimizeResponse": false,
+        "parametersHeaders": {
+          "values": [
+            {
+              "name": "Content-Type",
+              "valueProvider": "fieldValue",
+              "value": "application/json"
+            }
+          ]
+        },
+        "parametersBody": {
+          "values": [
+            {
+              "name": "session_id",
+              "valueProvider": "fieldValue",
+              "value": "={{ $('Open schedule session').first().json.session_id }}"
+            }
+          ]
+        }
+      },
+      "id": "b5c0306f-34c3-5217-88ca-99786d82893f",
+      "name": "apply_commissioning",
+      "type": "@n8n/n8n-nodes-langchain.toolHttpRequest",
+      "typeVersion": 1.1,
+      "position": [
+        980,
+        -260
+      ]
+    },
+    {
+      "parameters": {
+        "toolDescription": "Перепривязать скважины в группу. Пустые поля сервис возьмёт из objective/baseline. wells только из inspect.",
+        "method": "POST",
+        "url": "={{ $('Runtime configuration').first().json.schedule_service_url + '/agent-tools/' + \"apply_group_rebind\" }}",
+        "authentication": "none",
+        "sendQuery": false,
+        "sendHeaders": true,
+        "specifyHeaders": "keypair",
+        "sendBody": true,
+        "specifyBody": "keypair",
+        "placeholderDefinitions": {
+          "values": [
+            {
+              "name": "parent_group",
+              "description": "Родительская группа, если уже известна",
+              "type": "string"
+            },
+            {
+              "name": "wells",
+              "description": "Имена скважин через пробел, только из inspect",
+              "type": "string"
+            }
+          ]
+        },
+        "optimizeResponse": false,
+        "parametersHeaders": {
+          "values": [
+            {
+              "name": "Content-Type",
+              "valueProvider": "fieldValue",
+              "value": "application/json"
+            }
+          ]
+        },
+        "parametersBody": {
+          "values": [
+            {
+              "name": "session_id",
+              "valueProvider": "fieldValue",
+              "value": "={{ $('Open schedule session').first().json.session_id }}"
+            },
+            {
+              "name": "parent_group",
+              "valueProvider": "modelOptional",
+              "value": ""
+            },
+            {
+              "name": "wells",
+              "valueProvider": "modelOptional",
+              "value": ""
+            }
+          ]
+        }
+      },
+      "id": "14fcbfae-06c6-5193-82d6-a7711208db70",
+      "name": "apply_group_rebind",
+      "type": "@n8n/n8n-nodes-langchain.toolHttpRequest",
+      "typeVersion": 1.1,
+      "position": [
+        1200,
+        -260
+      ]
+    },
+    {
+      "parameters": {
+        "toolDescription": "Применить operations. JSON-объект с числовыми ключами: {\"0\":{keyword,operation,fields}}.",
+        "method": "POST",
+        "url": "={{ $('Runtime configuration').first().json.schedule_service_url + '/agent-tools/' + \"apply_operations\" }}",
+        "authentication": "none",
+        "sendQuery": false,
+        "sendHeaders": true,
+        "specifyHeaders": "keypair",
+        "sendBody": true,
+        "specifyBody": "keypair",
+        "placeholderDefinitions": {
+          "values": [
+            {
+              "name": "operations",
+              "description": "Числовые ключи → {keyword, operation, fields}",
+              "type": "json"
+            }
+          ]
+        },
+        "optimizeResponse": false,
+        "parametersHeaders": {
+          "values": [
+            {
+              "name": "Content-Type",
+              "valueProvider": "fieldValue",
+              "value": "application/json"
+            }
+          ]
+        },
+        "parametersBody": {
+          "values": [
+            {
+              "name": "session_id",
+              "valueProvider": "fieldValue",
+              "value": "={{ $('Open schedule session').first().json.session_id }}"
+            },
+            {
+              "name": "operations",
+              "valueProvider": "modelRequired",
+              "value": ""
+            }
+          ]
+        }
+      },
+      "id": "a26b3abe-cb07-541d-8c8b-73c18c707d63",
+      "name": "apply_operations",
+      "type": "@n8n/n8n-nodes-langchain.toolHttpRequest",
+      "typeVersion": 1.1,
+      "position": [
+        760,
+        -100
+      ]
+    },
+    {
+      "parameters": {
+        "toolDescription": "Собрать текущий working SCHEDULE, если apply уже отработал. Не вызывай вместо commissioning/group_rebind.",
+        "method": "POST",
+        "url": "={{ $('Runtime configuration').first().json.schedule_service_url + '/agent-tools/' + \"build_schedule\" }}",
+        "authentication": "none",
+        "sendQuery": false,
+        "sendHeaders": true,
+        "specifyHeaders": "keypair",
+        "sendBody": true,
+        "specifyBody": "keypair",
+        "placeholderDefinitions": {
+          "values": []
+        },
+        "optimizeResponse": false,
+        "parametersHeaders": {
+          "values": [
+            {
+              "name": "Content-Type",
+              "valueProvider": "fieldValue",
+              "value": "application/json"
+            }
+          ]
+        },
+        "parametersBody": {
+          "values": [
+            {
+              "name": "session_id",
+              "valueProvider": "fieldValue",
+              "value": "={{ $('Open schedule session').first().json.session_id }}"
+            }
+          ]
+        }
+      },
+      "id": "41ff429a-5f48-57e7-9a48-c65950cd81e7",
+      "name": "build_schedule",
+      "type": "@n8n/n8n-nodes-langchain.toolHttpRequest",
+      "typeVersion": 1.1,
+      "position": [
+        980,
+        -100
+      ]
+    },
+    {
+      "parameters": {
+        "toolDescription": "Проверить текущий working text: findings без полного файла.",
+        "method": "POST",
+        "url": "={{ $('Runtime configuration').first().json.schedule_service_url + '/agent-tools/' + \"validate_result\" }}",
+        "authentication": "none",
+        "sendQuery": false,
+        "sendHeaders": true,
+        "specifyHeaders": "keypair",
+        "sendBody": true,
+        "specifyBody": "keypair",
+        "placeholderDefinitions": {
+          "values": []
+        },
+        "optimizeResponse": false,
+        "parametersHeaders": {
+          "values": [
+            {
+              "name": "Content-Type",
+              "valueProvider": "fieldValue",
+              "value": "application/json"
+            }
+          ]
+        },
+        "parametersBody": {
+          "values": [
+            {
+              "name": "session_id",
+              "valueProvider": "fieldValue",
+              "value": "={{ $('Open schedule session').first().json.session_id }}"
+            }
+          ]
+        }
+      },
+      "id": "44ca2762-f875-580c-9366-77bbc65376a3",
+      "name": "validate_result",
+      "type": "@n8n/n8n-nodes-langchain.toolHttpRequest",
+      "typeVersion": 1.1,
+      "position": [
+        1200,
+        -100
+      ]
+    }
+  ],
+  "connections": {
+    "When executed by another workflow": {
+      "main": [
+        [
+          {
+            "node": "Runtime configuration",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Runtime configuration": {
+      "main": [
+        [
+          {
+            "node": "Normalize schedule task",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Normalize schedule task": {
+      "main": [
+        [
+          {
+            "node": "Open schedule session",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Open schedule session": {
+      "main": [
+        [
+          {
+            "node": "Session ready?",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Session ready?": {
+      "main": [
+        [
+          {
+            "node": "Capability router",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Format missing schedule",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Capability router": {
+      "main": [
+        [
+          {
+            "node": "Apply commissioning",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Apply group rebind",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Prepare AI Agent input",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Apply commissioning": {
+      "main": [
+        [
+          {
+            "node": "Fetch schedule result",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Apply group rebind": {
+      "main": [
+        [
+          {
+            "node": "Fetch schedule result",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Prepare AI Agent input": {
+      "main": [
+        [
+          {
+            "node": "Schedule Builder AI Agent",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Schedule Builder Chat Model — Qwen": {
+      "ai_languageModel": [
+        [
+          {
+            "node": "Schedule Builder AI Agent",
+            "type": "ai_languageModel",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "inspect_schedule": {
+      "ai_tool": [
+        [
+          {
+            "node": "Schedule Builder AI Agent",
+            "type": "ai_tool",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "search_keywords": {
+      "ai_tool": [
+        [
+          {
+            "node": "Schedule Builder AI Agent",
+            "type": "ai_tool",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "get_keyword": {
+      "ai_tool": [
+        [
+          {
+            "node": "Schedule Builder AI Agent",
+            "type": "ai_tool",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "list_records": {
+      "ai_tool": [
+        [
+          {
+            "node": "Schedule Builder AI Agent",
+            "type": "ai_tool",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "apply_commissioning": {
+      "ai_tool": [
+        [
+          {
+            "node": "Schedule Builder AI Agent",
+            "type": "ai_tool",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "apply_group_rebind": {
+      "ai_tool": [
+        [
+          {
+            "node": "Schedule Builder AI Agent",
+            "type": "ai_tool",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "apply_operations": {
+      "ai_tool": [
+        [
+          {
+            "node": "Schedule Builder AI Agent",
+            "type": "ai_tool",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "build_schedule": {
+      "ai_tool": [
+        [
+          {
+            "node": "Schedule Builder AI Agent",
+            "type": "ai_tool",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "validate_result": {
+      "ai_tool": [
+        [
+          {
+            "node": "Schedule Builder AI Agent",
+            "type": "ai_tool",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Schedule Builder AI Agent": {
+      "main": [
+        [
+          {
+            "node": "Fetch schedule result",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Fetch schedule result": {
+      "main": [
+        [
+          {
+            "node": "Format schedule result",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    }
+  },
+  "settings": {
+    "executionOrder": "v1",
+    "saveManualExecutions": true,
+    "callerPolicy": "workflowsFromSameOwner",
+    "errorWorkflow": ""
+  },
+  "meta": {
+    "templateCredsSetupCompleted": true,
+    "targetN8nVersion": "2.30.8"
+  },
+  "tags": [],
+  "pinData": {},
+  "versionId": "3570c18a-5529-4cec-a307-d1432eb9dba5"
+}

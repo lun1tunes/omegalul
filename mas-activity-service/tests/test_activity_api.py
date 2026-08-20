@@ -8,6 +8,7 @@ import os
 from pathlib import Path
 
 os.environ.setdefault("LOG_LEVEL", "WARNING")
+os.environ.pop("DATABASE_URL", None)
 
 from fastapi.testclient import TestClient
 import pytest
@@ -40,6 +41,7 @@ def _isolate_activity_store(monkeypatch) -> None:
         "ORCHESTRATOR_AUTH_HEADER",
         "ORCHESTRATOR_AUTH_VALUE",
         "N8N_BASE_URL",
+        "DATABASE_URL",
         "N8N_HOST",
         "N8N_USERNAME",
         "N8N_PASSWORD",
@@ -518,11 +520,13 @@ def test_ready_health_and_static_assets() -> None:
     assert index.status_code == 200
     assert "composer" in index.text
     assert "startComposer" in index.text
+    assert "taskName" in index.text
+    assert "Название задачи" in index.text
     assert "newTaskBtn" in index.text
     assert "rail-new-task" in index.text
     assert "railList" in index.text
     assert "brandHome" in index.text
-    assert "NOVATEK RE MAS" in index.text
+    assert "NOVATEK RE MASter" in index.text
     assert "Workspace" in index.text
     assert "Novatek STC reservoir engineering multi-agent system" in index.text
     assert "reloadDurableBtn" not in index.text
@@ -552,38 +556,95 @@ def test_ready_health_and_static_assets() -> None:
     assert "looksMachineAsk" in js_text
     assert 'q.required ? "обязательно"' not in js_text
     assert "формат: ${q.expected_format}" not in js_text
-    assert "app.js?v=70" in index.text
+    assert "app.js?v=82" in index.text
+    assert "schema.js?v=6" in index.text
+    assert "app.css?v=75" in index.text
+    assert "viewChatBtn" in index.text
+    assert "viewSchemaBtn" in index.text
+    assert ">Чат<" in index.text
+    assert ">Схема<" in index.text
+    assert "schemaView" in index.text
+    assert "schemaTimeline" in index.text
+    assert "Постановка задачи" in index.text
+    assert "Результат" in index.text
+    assert "Нет такой задачи в Workspace." in index.text
+    assert "Data Tables" not in index.text
     assert "submitStart" in js_text
+    assert "form.append(\"task_name\"" in js_text
+    assert "catalogTaskName" in js_text
+    assert "beginRenameTask" in js_text
+    assert 'method: "PATCH"' in js_text
+    assert "renameTaskBtn" in index.text
     assert "clearWorkspaceView" in js_text
     assert "startResumeTask" in js_text
+    assert "turnKicker" in js_text
+    assert '"Сообщение"' in js_text
     assert "displayRole" in js_text
     assert 'User: "Вы"' in js_text
     assert "syncScheduleRootField" in js_text
     assert "hydrateFromDataTables" in js_text
+    assert "let currentTask = null" in js_text
     assert "reloadFeed && currentTask" in js_text
+    assert "JSON.stringify({\n          question_id:" not in js_text
     assert "refreshRail({ durable: !snap.ok })" in js_text
     assert "setTaskHeader" in js_text
     assert "attachLive" in js_text
     assert "pollFeed" in js_text
+    assert "feedMatchesOpenTask" in js_text
+    assert "bumpFeedGeneration" in js_text
+    assert "composing: true" in js_text
     assert "applyFeedMeta(msg)" in js_text
-    assert "EventSource" in js_text
+    assert "data.skipped" in js_text
+    assert "Перезапуск не выполнен" in js_text
+    assert "setWorkspaceView" in js_text
+    assert "syncSchema" in js_text
+    assert "MasSchema" in js_text
+    schema_js = (STATIC / "schema.js").read_text(encoding="utf-8")
+    assert "function buildSchemaFrames" in schema_js
+    assert "handoff_message" in schema_js
+    assert "DRAW_EDGE_KEYS" in schema_js
+    assert "pairVisual" in schema_js
+    assert "dRev" in schema_js
+    assert "excel_orch" in schema_js
+    assert "schema-slip" in (STATIC / "app.css").read_text(encoding="utf-8")
+    assert "schema-status" in (STATIC / "app.css").read_text(encoding="utf-8")
+    assert "schema-caption" in (STATIC / "app.css").read_text(encoding="utf-8")
+    assert "markerUnits=\"userSpaceOnUse\"" in schema_js
+    assert "pathMidpoint" in schema_js
+    assert "getTotalLength" in schema_js
+    assert "getPointAtLength" in schema_js
+    assert "getScreenCTM" in schema_js
+    assert "cubicArcMid" in schema_js
+    assert "translate(-50%, calc(-100% - 8px))" in (STATIC / "app.css").read_text(encoding="utf-8")
+    assert "statusLabel" in schema_js
+    assert "setCaption" in schema_js
+    assert "Ожидает задачу" in schema_js
+    assert "is-live-in" in (STATIC / "app.css").read_text(encoding="utf-8")
+    assert "animateSlips" in schema_js
+    assert "liveNewStep" in schema_js
     assert "showLoadError" in js_text
     assert "showNotFound(taskId)" in js_text
     # Non-404 / network failures must not claim the task is missing from Activity+DT.
     assert "showNotFound(taskId);\n        showFlash" not in js_text
     assert "showLoadError(taskId, `Не удалось загрузить задачу (${snap.status}).`)" in js_text
     assert "showLoadError(taskId, \"Сеть недоступна при загрузке задачи.\")" in js_text
-    assert "/v1/tasks/start" in js_text
-    assert "scheduleDownload" not in index.text
-    assert "appendScheduleDownload" in js_text
-    assert "SCHEDULE_FILE_REVIEW_STATUSES" in js_text
+    assert "/cases" in js_text
+    assert "submitStart" in js_text
+    assert 'id="scheduleDownload"' not in index.text
+    assert 'id="scheduleDownloadHead"' in index.text
+    assert 'user: "Вы"' in js_text
+    assert "who-track" not in js_text
+    assert "who-line" not in js_text
+    assert 'arrow.className = "arrow"' in js_text
+    assert "lane_dir" in js_text
+    assert "paintScheduleDownloadHead" in js_text
+    assert "appendScheduleDownload" not in js_text
     assert "Скачать" in js_text
     assert "schedule_artifact: data.schedule_artifact" in js_text
     assert "semantic_diff: data.semantic_diff" in js_text
     assert "renderSemanticDiff" in js_text
     assert "diffExpander" in index.text
     assert "Изменения между версиями" in index.text
-    assert "refreshScheduleDownloadsOnThread" in js_text
     assert "li._masTurn = turn" in js_text
     assert "statusDot" in index.text
     assert "titleText" in index.text
@@ -593,8 +654,14 @@ def test_ready_health_and_static_assets() -> None:
     css_text = (STATIC / "app.css").read_text(encoding="utf-8")
     assert "task-line" in css_text
     assert "tone-hitl" in css_text
+    assert ".transcript[hidden]" in css_text
+    assert ".workspace.mode-schema .chat-pane" in css_text
     assert "tone-error" in css_text
-    assert "schedule-download-row" in css_text
+    assert "who-track" not in css_text
+    assert "who-line" not in css_text
+    assert ".who .arrow::after" in css_text
+    assert "schedule-download-row" not in css_text
+    assert ".transcript-head .schedule-download" in css_text
     assert "diff-expander" in css_text
     assert "grid-template-columns: 280px 1fr" in css_text
     assert "showFlash" in js_text
@@ -2610,7 +2677,7 @@ def test_feed_hydrate_workflow_limit_matches_max_turns() -> None:
     assert "truncated" in text
     assert '"orderBy": True' in text or '"orderBy":True' in text
     assert 'orderByDirection": "DESC"' in text or "orderByDirection\": \"DESC\"" in text
-    wf = Path(__file__).resolve().parents[2] / "n8n" / "workflows" / "core" / "mas-activity-hydrate.workflow.json"
+    wf = Path(__file__).resolve().parents[2] / "n8n" / "workflows" / "retired" / "mas-activity-hydrate.workflow.json"
     assert wf.is_file()
     wf_text = wf.read_text(encoding="utf-8")
     assert '"limit": 500' in wf_text

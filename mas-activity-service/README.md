@@ -28,6 +28,7 @@ start-windows.bat
 | `ACTIVITY_TLS_VERIFY` | `true` by default; set `false` only for a trusted local/self-signed HTTPS endpoint |
 | `ACTIVITY_CA_BUNDLE` | optional CA PEM path; preferred over disabling verification for corporate PKI |
 | `ORCHESTRATOR_WEBHOOK_URL` | боевой вызов оркестратора (предпочтительно) |
+| `DATABASE_URL` | тот же Postgres, что у n8n; при старте `CREATE IF NOT EXISTS` таблиц стейта (`cases`, `events`, …) |
 | `ORCHESTRATOR_AUTH_*` | inbound header auth **n8n webhook**, не Activity |
 | `N8N_BASE_URL` + `N8N_USERNAME` / `N8N_PASSWORD` | REST-фолбэк, если webhook не задан |
 | `ACTIVITY_HYDRATE_URL` | hydrate Data Tables (list+feed); иначе выводится из хоста webhook/`N8N_BASE_URL` |
@@ -63,7 +64,7 @@ Activity пишет `/data/activity_state.json` (volume `activity_data`), что
 
 Open [http://127.0.0.1:8200/](http://127.0.0.1:8200/) → **Новая задача** или `/t/<task_id>`.
 
-Когда у задачи есть SCHEDULE, в ленте **Скачать .INC** → `GET /v1/tasks/{id}/schedule`.
+Когда у задачи есть SCHEDULE, в шапке чата **Скачать .INC** → `GET /cases/{id}/schedule` (или `/v1/tasks/{id}/schedule`). Не дублируется в пузырях ленты.
 
 **MAS / Activity** (бренд слева) — обновляет rail из n8n Data Tables. То же при перезагрузке (`?durable=1`).
 

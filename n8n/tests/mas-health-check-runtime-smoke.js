@@ -54,11 +54,13 @@ async function run(name, json, nodes) {
     'Probe n8n-runners /healthz': [{ json: { statusCode: 200, body: { status: 'ok' } } }],
     'Probe mas-activity /health': [{ json: { statusCode: 200, body: { status: 'ok', service: 'mas-activity' } } }],
     'Probe n8n /healthz': [{ json: { statusCode: 200, body: { status: 'ok' } } }],
+    'Probe math-service /health': [{ json: { statusCode: 200, body: { status: 'ok', service: 'fastapi-math-service' } } }],
+    'Probe schedule-builder /health': [{ json: { statusCode: 200, body: { status: 'ok', service: 'schedule-builder-service' } } }],
   });
 
   assert.equal(report.overall, 'PASS_WITH_TODO');
   assert.equal(report.fail_count, 0);
-  assert(report.pass_count >= 8, `expected >=8 live PASS, got ${report.pass_count}`);
+  assert(report.pass_count >= 6, `expected >=6 live PASS, got ${report.pass_count}`);
   assert(report.todo_count > 0);
   assert(report.form_response_html.includes('PASS_WITH_TODO'));
   assert(report.checks.some((c) => c.check.includes('Call CAS persist — insert new task')));
@@ -66,6 +68,10 @@ async function run(name, json, nodes) {
   assert(report.checks.some((c) => c.where_to_fix.includes('engineering_orchestrator_tasks_v1')));
   assert(report.checks.some((c) => c.check === 'Live: excel-tools /health' && c.status === 'PASS'));
   assert(report.checks.some((c) => c.check === 'Live: mas-activity /health' && c.status === 'PASS'));
+  assert(report.checks.some((c) => c.check === 'Live: math-service /health' && c.status === 'PASS'));
+  assert(report.checks.some((c) => c.check === 'Live: schedule-builder /health' && c.status === 'PASS'));
+  assert(report.checks.some((c) => c.check.startsWith('Live: task Data Table') && c.status === 'TODO'));
+  assert(report.checks.some((c) => c.check.includes('Orchestrator') && c.status === 'TODO'));
   assert(!report.checks.some((c) => c.where_to_fix.includes('Insert durable task state')));
   assert(!report.checks.some((c) => String(c.target || c.where_to_fix).includes('SCHEDULE — Knowledge Retrieval')));
 
@@ -79,6 +85,8 @@ async function run(name, json, nodes) {
     'Probe n8n-runners /healthz': [{ error: { message: 'ENOTFOUND' } }],
     'Probe mas-activity /health': [{ json: { statusCode: 503 } }],
     'Probe n8n /healthz': [{ json: { statusCode: 500 } }],
+    'Probe math-service /health': [{ json: { statusCode: 0, message: 'ECONNREFUSED' } }],
+    'Probe schedule-builder /health': [{ json: { statusCode: 0, message: 'ECONNREFUSED' } }],
   });
   assert.equal(failReport.overall, 'FAIL');
   assert(failReport.fail_count >= 6);

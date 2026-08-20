@@ -4,13 +4,14 @@
  * Each scenario fails closed if the corresponding value factor is missing.
  */
 const assert = require('node:assert/strict');
+const { readWorkflow } = require('./_workflow');
 const fs = require('node:fs');
 const path = require('node:path');
 
 const workspace = process.env.WORKSPACE_ROOT || '/workspace';
 const read = (rel) => JSON.parse(fs.readFileSync(path.join(workspace, rel), 'utf8'));
-const orchestrator = read('n8n/workflows/core/universal-engineering-orchestrator.workflow.json');
-const traceWf = read('n8n/workflows/core/mas-trace-event-writer.workflow.json');
+const orchestrator = readWorkflow('universal-engineering-orchestrator.workflow.json');
+const traceWf = readWorkflow('mas-trace-event-writer.workflow.json');
 const registry = read('n8n/contracts/specialist_registry.v1.json');
 const AsyncFunction = Object.getPrototypeOf(async function () {}).constructor;
 
