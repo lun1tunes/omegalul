@@ -173,7 +173,7 @@
     },
     {
       "parameters": {
-        "jsCode": "\nconst req=$json||{};\nconst goal=String(req.goal||'').trim();\nconst state={\n  case_id:req.case_id,\n  goal,\n  task_name:req.task_name||'',\n  status:'running',\n  plan:[],\n  artifacts:{},\n  data:{},\n  current_task:null,\n  hitl:{pending:false,questions:[],answers:{}},\n  last_error:null,\n  step_count:0\n};\nconst persistEvents=[[req.case_id,'','case.created','user','','new',('Принял задачу: '+goal).slice(0,200),'',JSON.stringify({requested_by:req.requested_by||'',task_name:req.task_name||'',note:'orchestrator start; files belong to Activity /cases'})]];\nreturn [{json:{\n  ...req,\n  state,\n  create_sql_parameters:[req.case_id, JSON.stringify(state), 'running'],\n  persist_events:persistEvents,\n  event_sql_parameters:persistEvents[0]\n}}];\n"
+        "jsCode": "\nconst req=$json||{};\nconst goal=String(req.goal||'').trim();\nconst inboundBinary=$('Normalize step request').first().binary||{};\nconst inboundArtifacts=Object.fromEntries(Object.entries(inboundBinary).map(([key,file])=>{\n  const name=String(file?.fileName||key);\n  const lower=name.toLowerCase();\n  const artifactKey=key==='file'||lower.endsWith('.xlsx')||lower.endsWith('.xlsm')||lower.endsWith('.xls')?'excel':\n    (key.startsWith('schedule_files')||lower.endsWith('.inc')||lower.endsWith('.sch')?'schedule_source':key);\n  return [artifactKey,{\n  filename:name,\n  mime_type:String(file?.mimeType||'application/octet-stream'),\n  bytes:Number(file?.data?Math.floor(String(file.data).length*0.75):0),\n  artifact_id:artifactKey\n}]}));\nconst state={\n  case_id:req.case_id,\n  goal,\n  task_name:req.task_name||'',\n  status:'running',\n  plan:[],\n  artifacts:inboundArtifacts,\n  data:{},\n  current_task:null,\n  hitl:{pending:false,questions:[],answers:{}},\n  last_error:null,\n  step_count:0\n};\nconst persistEvents=[[req.case_id,'','case.created','user','','new',('Принял задачу: '+goal).slice(0,200),'',JSON.stringify({requested_by:req.requested_by||'',task_name:req.task_name||'',note:'orchestrator start; files belong to Activity /cases'})]];\nreturn [{json:{\n  ...req,\n  state,\n  create_sql_parameters:[req.case_id, JSON.stringify(state), 'running'],\n  persist_events:persistEvents,\n  event_sql_parameters:persistEvents[0]\n},...(Object.keys(inboundBinary).length?{binary:inboundBinary}:{})}];\n"
       },
       "id": "27ddbd46-3d3a-5c9a-b8ed-7e83bd872f58",
       "name": "Prepare start case",
@@ -554,7 +554,7 @@
     },
     {
       "parameters": {
-        "jsCode": "\nconst req=$('Normalize step request').first().json||{};\nconst extras=(()=>{try{return $('Apply request extras').first().json}catch{return null}})();\nconst load=$('Load case').first().json||{};\nconst parse=v=>{if(v&&typeof v==='object')return v;try{return JSON.parse(String(v||'{}'))}catch{return {}}};\nconst state=(extras&&extras.state&&typeof extras.state==='object')?extras.state:parse(load.state||load.State||{});\nconst status=String((extras&&extras.next_status)||load.status||state.status||'running');\nconst registry=$('Load agent registry').all().map(i=>i.json||{}).filter(r=>r&&r.agent_id);\nconst artifacts=state.artifacts&&typeof state.artifacts==='object'?state.artifacts:{};\nconst data=state.data&&typeof state.data==='object'?state.data:{};\nconst plan=Array.isArray(state.plan)?state.plan:[];\nconst hitl=state.hitl&&typeof state.hitl==='object'?state.hitl:{};\nconst compact={\n  goal:state.goal||'',\n  artifacts_present:Object.keys(artifacts).filter(k=>artifacts[k]!=null&&artifacts[k]!==''),\n  artifact_files:Object.fromEntries(Object.entries(artifacts).map(([k,v])=>[k,(v&&typeof v==='object'&&v.filename)?v.filename:k])),\n  has_excel:Boolean(artifacts.excel),\n  has_schedule_source:Boolean(artifacts.schedule_source),\n    has_schedule_out:Boolean(artifacts.schedule_out&&String(artifacts.schedule_out).trim()),\n  excel_facts:(data.excel&&Array.isArray(data.excel.facts))?data.excel.facts.length:(Array.isArray(data.facts)?data.facts.length:0),\n  schedule_root:state.schedule_root||'',\n  data_present:Object.fromEntries(Object.keys(data).map(k=>[k,!(data[k]==null||data[k]==={}||data[k]===[])]) ),\n  plan:plan.map(p=>({id:p.id,status:p.status})),\n  current_task:state.current_task||null,\n  hitl_pending:hitl.pending===true,\n  hitl_answers:hitl.answers||{},\n  step_count:Number(state.step_count||0),\n  last_error:state.last_error||null\n};\nconst hint=[];\nif(compact.has_excel&&!data.excel) hint.push('Сначала excel_extractor — в artifacts есть Excel, фактов ещё нет.');\nelse if((compact.excel_facts>0||(data.excel&&data.excel.facts))&&compact.has_schedule_source&&!compact.has_schedule_out) hint.push('Дальше schedule_builder — факты Excel и исходный .inc уже есть.');\nelse if(!compact.has_excel&&compact.has_schedule_source&&!compact.has_schedule_out) hint.push('Excel нет: сразу schedule_builder по тексту задачи и baseline .inc.');\nelse if(compact.has_schedule_out) hint.push('schedule_out уже есть — finish.');\nconst prompt=`Цель:\\n${compact.goal}\\n\\nТекущее состояние:\\n${JSON.stringify(compact,null,2)}\\n\\nПодсказка следующего шага:\\n${hint.join(' ')||'выбери по реестру агентов'}\\n\\nДоступные агенты:\\n${JSON.stringify(registry,null,2)}\\n`;\nconst endpoints=$('Runtime endpoints').first().json||{};\nconst binary=$('Normalize step request').first().binary||{};\nreturn [{json:{\n  ...req,\n  ...endpoints,\n  case_id:req.case_id,\n  state,\n  status,\n  registry,\n  compact,\n  planner_input:prompt,\n  step_count:compact.step_count\n},...(Object.keys(binary).length?{binary}:{})}];\n"
+        "jsCode": "\nconst req=$('Normalize step request').first().json||{};\nconst extras=(()=>{try{return $('Apply request extras').first().json}catch{return null}})();\nconst load=$('Load case').first().json||{};\nconst parse=v=>{if(v&&typeof v==='object')return v;try{return JSON.parse(String(v||'{}'))}catch{return {}}};\nconst state=(extras&&extras.state&&typeof extras.state==='object')?extras.state:parse(load.state||load.State||{});\nconst inboundBinary=$('Normalize step request').first().binary||{};\nconst inboundArtifacts=Object.fromEntries(Object.entries(inboundBinary).map(([key,file])=>{\n  const name=String(file?.fileName||key);\n  const lower=name.toLowerCase();\n  const artifactKey=key==='file'||lower.endsWith('.xlsx')||lower.endsWith('.xlsm')||lower.endsWith('.xls')?'excel':\n    (key.startsWith('schedule_files')||lower.endsWith('.inc')||lower.endsWith('.sch')?'schedule_source':key);\n  return [artifactKey,{\n  filename:name,\n  mime_type:String(file?.mimeType||'application/octet-stream'),\n  bytes:Number(file?.data?Math.floor(String(file.data).length*0.75):0),\n  artifact_id:artifactKey\n}]}));\nstate.artifacts={...inboundArtifacts,...(state.artifacts&&typeof state.artifacts==='object'?state.artifacts:{})};\nif(state.artifacts.file&&!state.artifacts.excel) state.artifacts.excel=state.artifacts.file;\nif(state.artifacts.schedule_files&&!state.artifacts.schedule_source) state.artifacts.schedule_source=state.artifacts.schedule_files;\nconst status=String((extras&&extras.next_status)||load.status||state.status||'running');\nconst registry=$('Load agent registry').all().map(i=>i.json||{}).filter(r=>r&&r.agent_id);\nconst artifacts=state.artifacts&&typeof state.artifacts==='object'?state.artifacts:{};\nconst data=state.data&&typeof state.data==='object'?state.data:{};\nconst plan=Array.isArray(state.plan)?state.plan:[];\nconst hitl=state.hitl&&typeof state.hitl==='object'?state.hitl:{};\nconst compact={\n  goal:state.goal||'',\n  artifacts_present:Object.keys(artifacts).filter(k=>artifacts[k]!=null&&artifacts[k]!==''),\n  artifact_files:Object.fromEntries(Object.entries(artifacts).map(([k,v])=>[k,(v&&typeof v==='object'&&v.filename)?v.filename:k])),\n  has_excel:Boolean(artifacts.excel),\n  has_schedule_source:Boolean(artifacts.schedule_source),\n    has_schedule_out:Boolean(artifacts.schedule_out&&String(artifacts.schedule_out).trim()),\n  excel_facts:(data.excel&&Array.isArray(data.excel.facts))?data.excel.facts.length:(Array.isArray(data.facts)?data.facts.length:0),\n  schedule_root:state.schedule_root||'',\n  data_present:Object.fromEntries(Object.keys(data).map(k=>[k,!(data[k]==null||data[k]==={}||data[k]===[])]) ),\n  plan:plan.map(p=>({id:p.id,status:p.status})),\n  current_task:state.current_task||null,\n  hitl_pending:hitl.pending===true,\n  hitl_answers:hitl.answers||{},\n  step_count:Number(state.step_count||0),\n  last_error:state.last_error||null\n};\nconst hint=[];\nif(compact.has_excel&&!data.excel) hint.push('Сначала excel_extractor — в artifacts есть Excel, фактов ещё нет.');\nelse if((compact.excel_facts>0||(data.excel&&data.excel.facts))&&compact.has_schedule_source&&!compact.has_schedule_out) hint.push('Дальше schedule_builder — факты Excel и исходный .inc уже есть.');\nelse if(!compact.has_excel&&compact.has_schedule_source&&!compact.has_schedule_out) hint.push('Excel нет: сразу schedule_builder по тексту задачи и baseline .inc.');\nelse if(compact.has_schedule_out) hint.push('schedule_out уже есть — finish.');\nconst prompt=`Цель:\\n${compact.goal}\\n\\nТекущее состояние:\\n${JSON.stringify(compact,null,2)}\\n\\nПодсказка следующего шага:\\n${hint.join(' ')||'выбери по реестру агентов'}\\n\\nДоступные агенты:\\n${JSON.stringify(registry,null,2)}\\n`;\nconst endpoints=$('Runtime endpoints').first().json||{};\nreturn [{json:{\n  ...req,\n  ...endpoints,\n  case_id:req.case_id,\n  state,\n  status,\n  registry,\n  compact,\n  planner_input:prompt,\n  step_count:compact.step_count\n},...(Object.keys(inboundBinary).length?{binary:inboundBinary}:{})}];\n"
       },
       "id": "6a3a64b1-8396-5ce1-a233-8bcf6983ec96",
       "name": "Prepare decision context",
@@ -765,29 +765,25 @@
         "headerParameters": {
           "parameters": [
             {
+              "name": "Content-Type",
+              "value": "application/json"
+            },
+            {
               "name": "X-API-Key",
               "value": "={{ $json.excel_tools_api_key || '' }}"
             }
           ]
         },
         "sendBody": true,
-        "contentType": "multipart-form-data",
-        "bodyParameters": {
-          "parameters": [
-            {
-              "parameterType": "formBinaryData",
-              "name": "file",
-              "inputDataFieldName": "excel"
-            },
-            {
-              "parameterType": "formData",
-              "name": "payload",
-              "value": "={{ JSON.stringify({request: $json.agent_task || {}}) }}"
-            }
-          ]
-        },
+        "specifyBody": "json",
+        "jsonBody": "={{ $json.agent_task }}",
         "options": {
-          "timeout": 180000
+          "timeout": 180000,
+          "response": {
+            "response": {
+              "fullResponse": false
+            }
+          }
         }
       },
       "id": "74aa4b60-ae82-5f7d-8711-2c59a5e2e0a2",
@@ -1738,5 +1734,5 @@
   },
   "tags": [],
   "pinData": {},
-  "versionId": "ab3aea21-d05e-4f78-9bbc-7f1bc79efd5c"
+  "versionId": "c1f6a604-3593-4c7b-a043-8476aa3430e4"
 }

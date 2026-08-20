@@ -325,13 +325,25 @@ return [{json:{
 CREATE_CASE = r"""
 const req=$json||{};
 const goal=String(req.goal||'').trim();
+const inboundBinary=$('Normalize step request').first().binary||{};
+const inboundArtifacts=Object.fromEntries(Object.entries(inboundBinary).map(([key,file])=>{
+  const name=String(file?.fileName||key);
+  const lower=name.toLowerCase();
+  const artifactKey=key==='file'||lower.endsWith('.xlsx')||lower.endsWith('.xlsm')||lower.endsWith('.xls')?'excel':
+    (key.startsWith('schedule_files')||lower.endsWith('.inc')||lower.endsWith('.sch')?'schedule_source':key);
+  return [artifactKey,{
+  filename:name,
+  mime_type:String(file?.mimeType||'application/octet-stream'),
+  bytes:Number(file?.data?Math.floor(String(file.data).length*0.75):0),
+  artifact_id:artifactKey
+}]}));
 const state={
   case_id:req.case_id,
   goal,
   task_name:req.task_name||'',
   status:'running',
   plan:[],
-  artifacts:{},
+  artifacts:inboundArtifacts,
   data:{},
   current_task:null,
   hitl:{pending:false,questions:[],answers:{}},
@@ -345,7 +357,7 @@ return [{json:{
   create_sql_parameters:[req.case_id, JSON.stringify(state), 'running'],
   persist_events:persistEvents,
   event_sql_parameters:persistEvents[0]
-}}];
+},...(Object.keys(inboundBinary).length?{binary:inboundBinary}:{})}];
 """
 
 APPLY_EXTRAS = r"""
@@ -433,6 +445,21 @@ const extras=(()=>{try{return $('Apply request extras').first().json}catch{retur
 const load=$('Load case').first().json||{};
 const parse=v=>{if(v&&typeof v==='object')return v;try{return JSON.parse(String(v||'{}'))}catch{return {}}};
 const state=(extras&&extras.state&&typeof extras.state==='object')?extras.state:parse(load.state||load.State||{});
+const inboundBinary=$('Normalize step request').first().binary||{};
+const inboundArtifacts=Object.fromEntries(Object.entries(inboundBinary).map(([key,file])=>{
+  const name=String(file?.fileName||key);
+  const lower=name.toLowerCase();
+  const artifactKey=key==='file'||lower.endsWith('.xlsx')||lower.endsWith('.xlsm')||lower.endsWith('.xls')?'excel':
+    (key.startsWith('schedule_files')||lower.endsWith('.inc')||lower.endsWith('.sch')?'schedule_source':key);
+  return [artifactKey,{
+  filename:name,
+  mime_type:String(file?.mimeType||'application/octet-stream'),
+  bytes:Number(file?.data?Math.floor(String(file.data).length*0.75):0),
+  artifact_id:artifactKey
+}]}));
+state.artifacts={...inboundArtifacts,...(state.artifacts&&typeof state.artifacts==='object'?state.artifacts:{})};
+if(state.artifacts.file&&!state.artifacts.excel) state.artifacts.excel=state.artifacts.file;
+if(state.artifacts.schedule_files&&!state.artifacts.schedule_source) state.artifacts.schedule_source=state.artifacts.schedule_files;
 const status=String((extras&&extras.next_status)||load.status||state.status||'running');
 const registry=$('Load agent registry').all().map(i=>i.json||{}).filter(r=>r&&r.agent_id);
 const artifacts=state.artifacts&&typeof state.artifacts==='object'?state.artifacts:{};
@@ -463,7 +490,6 @@ else if(!compact.has_excel&&compact.has_schedule_source&&!compact.has_schedule_o
 else if(compact.has_schedule_out) hint.push('schedule_out уже есть — finish.');
 const prompt=`Цель:\n${compact.goal}\n\nТекущее состояние:\n${JSON.stringify(compact,null,2)}\n\nПодсказка следующего шага:\n${hint.join(' ')||'выбери по реестру агентов'}\n\nДоступные агенты:\n${JSON.stringify(registry,null,2)}\n`;
 const endpoints=$('Runtime endpoints').first().json||{};
-const binary=$('Normalize step request').first().binary||{};
 return [{json:{
   ...req,
   ...endpoints,
@@ -474,7 +500,7 @@ return [{json:{
   compact,
   planner_input:prompt,
   step_count:compact.step_count
-},...(Object.keys(binary).length?{binary}:{})}];
+},...(Object.keys(inboundBinary).length?{binary:inboundBinary}:{})}];
 """
 
 PARSE_DECISION = r"""
@@ -866,12 +892,7 @@ def main() -> None:
             (2880, 0),
             {"mode": "expression", "numberOutputs": 4, "output": "={{ ({excel:0,calc:1,schedule:2,none:3,unknown:3})[$json.route] ?? 3 }}"},
         ),
-        http_multipart(
-            "Call Excel Extractor",
-            (3120, -240),
-            "={{ $json.excel_extractor_url }}",
-            [("file", "excel")],
-        ),
+        http_json("Call Excel Extractor", (3120, -240), "={{ $json.excel_extractor_url }}", "={{ $json.agent_task }}"),
         http_json("Call Calculation Agent", (3120, -40), "={{ $json.calculation_agent_url }}", "={{ $json.agent_task }}"),
         execute_workflow(
             "Call Schedule Builder",
