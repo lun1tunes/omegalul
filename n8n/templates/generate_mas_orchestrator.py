@@ -365,6 +365,25 @@ if(req.is_resume===true){
 return [{json:{...req,...load,state,did_resume:false,is_status:false}}];
 """
 
+VALIDATE_CASE = r"""
+const req=$('Normalize step request').first().json||{};
+const row=$json&&typeof $json==='object'?$json:{};
+const requested=String(req.case_id||'').trim();
+const loaded=String(row.case_id||row.Case_id||'').trim();
+if(!requested||loaded!==requested){
+  return [{json:{
+    ...req,
+    status:'not_found',
+    next_status:'not_found',
+    action_type:'not_found',
+    should_continue:false,
+    case_loaded:false,
+    message:`Кейс ${requested||'(без case_id)'} не найден в control plane`
+  }}];
+}
+return [{json:{...req,...row,case_loaded:true}}];
+"""
+
 PREPARE_DECISION = r"""
 const req=$('Normalize step request').first().json||{};
 const extras=(()=>{try{return $('Apply request extras').first().json}catch{return null}})();
@@ -699,6 +718,8 @@ def main() -> None:
             "SELECT case_id, state, status, updated_at FROM cases WHERE case_id = $1",
             "={{ $('Normalize step request').first().json.sql_parameters }}",
         ),
+        code("Validate loaded case", (1120, -240), VALIDATE_CASE),
+        if_true("Case found?", (1280, -240), "={{ Boolean($json.case_loaded) }}"),
         code("Apply request extras", (1120, -120), APPLY_EXTRAS),
         if_true("Status only?", (1280, -120), "={{ Boolean($json.is_status) }}"),
         if_true("Resume persist?", (1280, 40), "={{ Boolean($json.did_resume) }}"),
@@ -852,7 +873,7 @@ def main() -> None:
         code(
             "Format step ack",
             (4320, 120),
-            "const x=$json;return[{json:{contract:'mas_orchestrator_ack',case_id:x.case_id,status:x.next_status||x.status,action_type:x.action_type||null,should_continue:x.should_continue===true,human_gate:x.human_gate||null,version:x.version??null,restartable:x.restartable===true}}];",
+            "const x=$json;return[{json:{contract:'mas_orchestrator_ack',case_id:x.case_id,status:x.next_status||x.status,action_type:x.action_type||null,message:x.message||null,should_continue:x.should_continue===true,human_gate:x.human_gate||null,version:x.version??null,restartable:x.restartable===true}}];",
         ),
     ]
 
@@ -870,7 +891,10 @@ def main() -> None:
     connect(connections, "Insert start events", "Restore after start")
     connect(connections, "Restore after start", "Insert execution map")
     connect(connections, "Insert execution map", "Load case")
-    connect(connections, "Load case", "Apply request extras")
+    connect(connections, "Load case", "Validate loaded case")
+    connect(connections, "Validate loaded case", "Case found?")
+    connect(connections, "Case found?", "Apply request extras", si=0)
+    connect(connections, "Case found?", "Format step ack", si=1)
     connect(connections, "Apply request extras", "Status only?")
     connect(connections, "Status only?", "Format step ack", si=0)
     connect(connections, "Status only?", "Resume persist?", si=1)
