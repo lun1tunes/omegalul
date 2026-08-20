@@ -94,7 +94,7 @@
     },
     {
       "parameters": {
-        "jsCode": "\nconst raw=$input.first().json||{};\nconst body=raw.body&&typeof raw.body==='object'?raw.body:raw;\nconst action=String(body.action||raw.action||'step').trim().toLowerCase();\nlet caseId=String(body.case_id||raw.case_id||'').trim();\nconst goal=String(body.task_description||body.goal||raw.task_description||raw.goal||'').trim();\nconst taskName=String(body.task_name||raw.task_name||'').trim();\nconst humanResponse=String(body.human_response||raw.human_response||'');\nconst gateId=String(body.gate_id||raw.gate_id||'');\nconst requestedBy=String(body.requested_by||raw.requested_by||'');\nconst executionId=String($execution.id||'');\nconst readinessId=!caseId||caseId==='CASE-readiness-probe';\nif(action==='probe'||(action==='status'&&readinessId)){\n  return [{json:{\n    case_id:caseId||'CASE-readiness-probe',\n    action:'probe',\n    is_probe:true,\n    is_status:false,\n    is_resume:false,\n    needs_create:false,\n    next_status:'probe',\n    status:'probe',\n    action_type:'probe',\n    should_continue:false\n  }}];\n}\nlet needsCreate=false;\nif(action==='create'){\n  if(!caseId) caseId='CASE-'+Date.now().toString(16)+'-'+Math.random().toString(16).slice(2,8);\n  if(!goal) throw new Error('task_description is required for action=create');\n  needsCreate=true;\n} else if(!caseId){\n  if(action!=='start') throw new Error('case_id is required');\n  if(!goal) throw new Error('task_description is required for action=start');\n  caseId='CASE-'+Date.now().toString(16)+'-'+Math.random().toString(16).slice(2,8);\n  needsCreate=true;\n}\nreturn [{json:{\n  case_id:caseId,\n  action,\n  goal,\n  task_name:taskName,\n  human_response:humanResponse,\n  gate_id:gateId,\n  requested_by:requestedBy,\n  is_probe:false,\n  is_status:action==='status',\n  is_resume:action==='resume',\n  needs_create:needsCreate,\n  execution_id:executionId,\n  workflow_name:'orchestrator',\n  sql_parameters:[caseId],\n  exec_sql_parameters:[executionId, caseId, 'orchestrator'],\n}}];\n"
+        "jsCode": "\nconst raw=$input.first().json||{};\nconst body=raw.body&&typeof raw.body==='object'?raw.body:raw;\nconst action=String(body.action||raw.action||'step').trim().toLowerCase();\nlet caseId=String(body.case_id||raw.case_id||'').trim();\nconst goal=String(body.task_description||body.goal||raw.task_description||raw.goal||'').trim();\nconst taskName=String(body.task_name||raw.task_name||'').trim();\nconst humanResponse=String(body.human_response||raw.human_response||'');\nconst gateId=String(body.gate_id||raw.gate_id||'');\nconst requestedBy=String(body.requested_by||raw.requested_by||'');\nconst activityBaseUrl=String(raw.activity_base_url||'').trim();\nconst orchestratorStepUrl=String(raw.orchestrator_step_url||'').trim();\nconst executionId=String($execution.id||'');\nconst readinessId=!caseId||caseId==='CASE-readiness-probe';\nif(action==='probe'||(action==='status'&&readinessId)){\n  return [{json:{\n    case_id:caseId||'CASE-readiness-probe',\n    action:'probe',\n    is_probe:true,\n    is_status:false,\n    is_resume:false,\n    needs_create:false,\n    next_status:'probe',\n    status:'probe',\n    action_type:'probe',\n    should_continue:false\n  }}];\n}\nlet needsCreate=false;\nif(action==='create'){\n  if(!caseId) caseId='CASE-'+Date.now().toString(16)+'-'+Math.random().toString(16).slice(2,8);\n  if(!goal) throw new Error('task_description is required for action=create');\n  needsCreate=true;\n} else if(!caseId){\n  if(action!=='start') throw new Error('case_id is required');\n  if(!goal) throw new Error('task_description is required for action=start');\n  caseId='CASE-'+Date.now().toString(16)+'-'+Math.random().toString(16).slice(2,8);\n  needsCreate=true;\n}\nreturn [{json:{\n  case_id:caseId,\n  action,\n  goal,\n  task_name:taskName,\n  human_response:humanResponse,\n  gate_id:gateId,\n  requested_by:requestedBy,\n  activity_base_url:activityBaseUrl,\n  orchestrator_step_url:orchestratorStepUrl,\n  is_probe:false,\n  is_status:action==='status',\n  is_resume:action==='resume',\n  needs_create:needsCreate,\n  execution_id:executionId,\n  workflow_name:'orchestrator',\n  sql_parameters:[caseId],\n  exec_sql_parameters:[executionId, caseId, 'orchestrator'],\n},...(Object.keys($input.first().binary||{}).length?{binary:$input.first().binary}:{} )}];\n"
       },
       "id": "07d3d3cc-a9e7-508a-97d4-17391b86e1e1",
       "name": "Normalize step request",
@@ -213,7 +213,7 @@
     },
     {
       "parameters": {
-        "jsCode": "\nconst fromParse=(()=>{try{return $('Parse decision').first().json}catch{return null}})();\nconst fromMerge=(()=>{try{return $('Merge agent result').first().json}catch{return null}})();\nconst prev=fromMerge||fromParse||$json||{};\nconst rows=Array.isArray(prev.persist_events)?prev.persist_events:[];\nif(!rows.length) return [{json:{...prev,p1:'',p2:'',p3:'',p4:'',p5:'',p6:'',p7:'',p8:'',p9:'{}'}}];\nreturn rows.map(params=>{\n  const vals=(Array.isArray(params)?params:[]).map(v=>v===null||v===undefined?'':String(v));\n  return {json:{\n    ...prev,\n    p1:vals[0]||'',\n    p2:vals[1]||'',\n    p3:vals[2]||'',\n    p4:vals[3]||'',\n    p5:vals[4]||'',\n    p6:vals[5]||'',\n    p7:vals[6]||'',\n    p8:vals[7]||'',\n    p9:vals[8]||'{}',\n    event_sql_parameters:vals\n  }};\n});\n"
+        "jsCode": "\nconst fromParse=(()=>{try{return $('Parse decision').first().json}catch{return null}})();\nconst fromMerge=(()=>{try{return $('Merge agent result').first().json}catch{return null}})();\nconst prev=fromMerge||fromParse||$json||{};\nconst rows=Array.isArray(prev.persist_events)?prev.persist_events:[];\nconst binary=$('Normalize step request').first().binary||{};\nif(!rows.length) return [{json:{...prev,p1:'',p2:'',p3:'',p4:'',p5:'',p6:'',p7:'',p8:'',p9:'{}'},...(Object.keys(binary).length?{binary}:{})}];\nreturn rows.map(params=>{\n  const vals=(Array.isArray(params)?params:[]).map(v=>v===null||v===undefined?'':String(v));\n  return {json:{\n    ...prev,\n    p1:vals[0]||'',\n    p2:vals[1]||'',\n    p3:vals[2]||'',\n    p4:vals[3]||'',\n    p5:vals[4]||'',\n    p6:vals[5]||'',\n    p7:vals[6]||'',\n    p8:vals[7]||'',\n    p9:vals[8]||'{}',\n    event_sql_parameters:vals\n  },...(Object.keys(binary).length?{binary}:{})};\n});\n"
       },
       "id": "2d58ea73-2520-5ddf-8dec-77d51c169dfb",
       "name": "Expand start events",
@@ -253,7 +253,7 @@
     },
     {
       "parameters": {
-        "jsCode": "const prev=$('Prepare start case').first().json||{};\nreturn [{json:prev}];"
+        "jsCode": "const prev=$('Prepare start case').first().json||{};\nconst binary=$('Normalize step request').first().binary||{};\nreturn [{json:prev,...(Object.keys(binary).length?{binary}:{})}];"
       },
       "id": "2a0bb29e-6087-549c-8096-b0c810d46ce3",
       "name": "Restore after start",
@@ -473,7 +473,7 @@
     },
     {
       "parameters": {
-        "jsCode": "\nconst fromParse=(()=>{try{return $('Parse decision').first().json}catch{return null}})();\nconst fromMerge=(()=>{try{return $('Merge agent result').first().json}catch{return null}})();\nconst prev=fromMerge||fromParse||$json||{};\nconst rows=Array.isArray(prev.persist_events)?prev.persist_events:[];\nif(!rows.length) return [{json:{...prev,p1:'',p2:'',p3:'',p4:'',p5:'',p6:'',p7:'',p8:'',p9:'{}'}}];\nreturn rows.map(params=>{\n  const vals=(Array.isArray(params)?params:[]).map(v=>v===null||v===undefined?'':String(v));\n  return {json:{\n    ...prev,\n    p1:vals[0]||'',\n    p2:vals[1]||'',\n    p3:vals[2]||'',\n    p4:vals[3]||'',\n    p5:vals[4]||'',\n    p6:vals[5]||'',\n    p7:vals[6]||'',\n    p8:vals[7]||'',\n    p9:vals[8]||'{}',\n    event_sql_parameters:vals\n  }};\n});\n"
+        "jsCode": "\nconst fromParse=(()=>{try{return $('Parse decision').first().json}catch{return null}})();\nconst fromMerge=(()=>{try{return $('Merge agent result').first().json}catch{return null}})();\nconst prev=fromMerge||fromParse||$json||{};\nconst rows=Array.isArray(prev.persist_events)?prev.persist_events:[];\nconst binary=$('Normalize step request').first().binary||{};\nif(!rows.length) return [{json:{...prev,p1:'',p2:'',p3:'',p4:'',p5:'',p6:'',p7:'',p8:'',p9:'{}'},...(Object.keys(binary).length?{binary}:{})}];\nreturn rows.map(params=>{\n  const vals=(Array.isArray(params)?params:[]).map(v=>v===null||v===undefined?'':String(v));\n  return {json:{\n    ...prev,\n    p1:vals[0]||'',\n    p2:vals[1]||'',\n    p3:vals[2]||'',\n    p4:vals[3]||'',\n    p5:vals[4]||'',\n    p6:vals[5]||'',\n    p7:vals[6]||'',\n    p8:vals[7]||'',\n    p9:vals[8]||'{}',\n    event_sql_parameters:vals\n  },...(Object.keys(binary).length?{binary}:{})};\n});\n"
       },
       "id": "6a60805d-c347-5f6a-8b3b-866dc05c4da9",
       "name": "Expand resume events",
@@ -513,7 +513,7 @@
     },
     {
       "parameters": {
-        "jsCode": "const prev=$('Apply request extras').first().json||{};\nreturn [{json:prev}];"
+        "jsCode": "const prev=$('Apply request extras').first().json||{};\nconst binary=$('Normalize step request').first().binary||{};\nreturn [{json:prev,...(Object.keys(binary).length?{binary}:{})}];"
       },
       "id": "89c72d22-3f7f-5869-be34-20fea9d08895",
       "name": "Restore after resume",
@@ -554,7 +554,7 @@
     },
     {
       "parameters": {
-        "jsCode": "\nconst req=$('Normalize step request').first().json||{};\nconst extras=(()=>{try{return $('Apply request extras').first().json}catch{return null}})();\nconst load=$('Load case').first().json||{};\nconst parse=v=>{if(v&&typeof v==='object')return v;try{return JSON.parse(String(v||'{}'))}catch{return {}}};\nconst state=(extras&&extras.state&&typeof extras.state==='object')?extras.state:parse(load.state||load.State||{});\nconst status=String((extras&&extras.next_status)||load.status||state.status||'running');\nconst registry=$('Load agent registry').all().map(i=>i.json||{}).filter(r=>r&&r.agent_id);\nconst artifacts=state.artifacts&&typeof state.artifacts==='object'?state.artifacts:{};\nconst data=state.data&&typeof state.data==='object'?state.data:{};\nconst plan=Array.isArray(state.plan)?state.plan:[];\nconst hitl=state.hitl&&typeof state.hitl==='object'?state.hitl:{};\nconst compact={\n  goal:state.goal||'',\n  artifacts_present:Object.keys(artifacts).filter(k=>artifacts[k]!=null&&artifacts[k]!==''),\n  artifact_files:Object.fromEntries(Object.entries(artifacts).map(([k,v])=>[k,(v&&typeof v==='object'&&v.filename)?v.filename:k])),\n  has_excel:Boolean(artifacts.excel),\n  has_schedule_source:Boolean(artifacts.schedule_source),\n    has_schedule_out:Boolean(artifacts.schedule_out&&String(artifacts.schedule_out).trim()),\n  excel_facts:(data.excel&&Array.isArray(data.excel.facts))?data.excel.facts.length:(Array.isArray(data.facts)?data.facts.length:0),\n  schedule_root:state.schedule_root||'',\n  data_present:Object.fromEntries(Object.keys(data).map(k=>[k,!(data[k]==null||data[k]==={}||data[k]===[])]) ),\n  plan:plan.map(p=>({id:p.id,status:p.status})),\n  current_task:state.current_task||null,\n  hitl_pending:hitl.pending===true,\n  hitl_answers:hitl.answers||{},\n  step_count:Number(state.step_count||0),\n  last_error:state.last_error||null\n};\nconst hint=[];\nif(compact.has_excel&&!data.excel) hint.push('Сначала excel_extractor — в artifacts есть Excel, фактов ещё нет.');\nelse if((compact.excel_facts>0||(data.excel&&data.excel.facts))&&compact.has_schedule_source&&!compact.has_schedule_out) hint.push('Дальше schedule_builder — факты Excel и исходный .inc уже есть.');\nelse if(!compact.has_excel&&compact.has_schedule_source&&!compact.has_schedule_out) hint.push('Excel нет: сразу schedule_builder по тексту задачи и baseline .inc.');\nelse if(compact.has_schedule_out) hint.push('schedule_out уже есть — finish.');\nconst prompt=`Цель:\\n${compact.goal}\\n\\nТекущее состояние:\\n${JSON.stringify(compact,null,2)}\\n\\nПодсказка следующего шага:\\n${hint.join(' ')||'выбери по реестру агентов'}\\n\\nДоступные агенты:\\n${JSON.stringify(registry,null,2)}\\n`;\nconst endpoints=$('Runtime endpoints').first().json||{};\nreturn [{json:{\n  ...req,\n  ...endpoints,\n  case_id:req.case_id,\n  state,\n  status,\n  registry,\n  compact,\n  planner_input:prompt,\n  step_count:compact.step_count\n}}];\n"
+        "jsCode": "\nconst req=$('Normalize step request').first().json||{};\nconst extras=(()=>{try{return $('Apply request extras').first().json}catch{return null}})();\nconst load=$('Load case').first().json||{};\nconst parse=v=>{if(v&&typeof v==='object')return v;try{return JSON.parse(String(v||'{}'))}catch{return {}}};\nconst state=(extras&&extras.state&&typeof extras.state==='object')?extras.state:parse(load.state||load.State||{});\nconst status=String((extras&&extras.next_status)||load.status||state.status||'running');\nconst registry=$('Load agent registry').all().map(i=>i.json||{}).filter(r=>r&&r.agent_id);\nconst artifacts=state.artifacts&&typeof state.artifacts==='object'?state.artifacts:{};\nconst data=state.data&&typeof state.data==='object'?state.data:{};\nconst plan=Array.isArray(state.plan)?state.plan:[];\nconst hitl=state.hitl&&typeof state.hitl==='object'?state.hitl:{};\nconst compact={\n  goal:state.goal||'',\n  artifacts_present:Object.keys(artifacts).filter(k=>artifacts[k]!=null&&artifacts[k]!==''),\n  artifact_files:Object.fromEntries(Object.entries(artifacts).map(([k,v])=>[k,(v&&typeof v==='object'&&v.filename)?v.filename:k])),\n  has_excel:Boolean(artifacts.excel),\n  has_schedule_source:Boolean(artifacts.schedule_source),\n    has_schedule_out:Boolean(artifacts.schedule_out&&String(artifacts.schedule_out).trim()),\n  excel_facts:(data.excel&&Array.isArray(data.excel.facts))?data.excel.facts.length:(Array.isArray(data.facts)?data.facts.length:0),\n  schedule_root:state.schedule_root||'',\n  data_present:Object.fromEntries(Object.keys(data).map(k=>[k,!(data[k]==null||data[k]==={}||data[k]===[])]) ),\n  plan:plan.map(p=>({id:p.id,status:p.status})),\n  current_task:state.current_task||null,\n  hitl_pending:hitl.pending===true,\n  hitl_answers:hitl.answers||{},\n  step_count:Number(state.step_count||0),\n  last_error:state.last_error||null\n};\nconst hint=[];\nif(compact.has_excel&&!data.excel) hint.push('Сначала excel_extractor — в artifacts есть Excel, фактов ещё нет.');\nelse if((compact.excel_facts>0||(data.excel&&data.excel.facts))&&compact.has_schedule_source&&!compact.has_schedule_out) hint.push('Дальше schedule_builder — факты Excel и исходный .inc уже есть.');\nelse if(!compact.has_excel&&compact.has_schedule_source&&!compact.has_schedule_out) hint.push('Excel нет: сразу schedule_builder по тексту задачи и baseline .inc.');\nelse if(compact.has_schedule_out) hint.push('schedule_out уже есть — finish.');\nconst prompt=`Цель:\\n${compact.goal}\\n\\nТекущее состояние:\\n${JSON.stringify(compact,null,2)}\\n\\nПодсказка следующего шага:\\n${hint.join(' ')||'выбери по реестру агентов'}\\n\\nДоступные агенты:\\n${JSON.stringify(registry,null,2)}\\n`;\nconst endpoints=$('Runtime endpoints').first().json||{};\nconst binary=$('Normalize step request').first().binary||{};\nreturn [{json:{\n  ...req,\n  ...endpoints,\n  case_id:req.case_id,\n  state,\n  status,\n  registry,\n  compact,\n  planner_input:prompt,\n  step_count:compact.step_count\n},...(Object.keys(binary).length?{binary}:{})}];\n"
       },
       "id": "6a3a64b1-8396-5ce1-a233-8bcf6983ec96",
       "name": "Prepare decision context",
@@ -637,7 +637,7 @@
     },
     {
       "parameters": {
-        "jsCode": "\nconst prev=$('Prepare decision context').first().json||{};\nconst raw=$json;\nconst obj=v=>v&&typeof v==='object'&&!Array.isArray(v);\nconst parse=v=>{if(obj(v))return v;try{const p=JSON.parse(String(v||''));return obj(p)?p:{}}catch{return {}}};\nconst out=parse(raw.output||raw.text||raw);\nconst decision=obj(out.action)?out:(obj(raw)?raw:{});\nconst action=obj(decision.action)?decision.action:{type:'ask_user',question_id:'Q-parse',question:'Не удалось разобрать решение оркестратора',options:[]};\nconst type=String(action.type||'').trim();\nconst state=obj(prev.state)?{...prev.state}:{};\nstate.step_count=Number(state.step_count||0)+1;\nif(Array.isArray(decision.plan_update)){\n  const by=new Map((Array.isArray(state.plan)?state.plan:[]).map(p=>[p.id,p]));\n  for(const item of decision.plan_update){if(item&&item.id) by.set(item.id,{...(by.get(item.id)||{}),...item});}\n  state.plan=[...by.values()];\n}\nconst statusMessage=String(decision.status_message||'').trim()||'Шаг оркестратора';\nconst decisionEvent={\n  kind:'orchestrator.decision',\n  actor:'orchestrator',\n  status_message:statusMessage,\n  payload:{action_type:type,agent_id:action.agent_id||null,step_count:state.step_count}\n};\nconst events=[];\nlet nextStatus='running';\nlet agentTask=null;\nif(type==='call_agent'){\n  const taskId=String(action.task_id||`TASK-${state.step_count}`).trim();\n  agentTask={\n    case_id:prev.case_id,\n    task_id:taskId,\n    agent_id:String(action.agent_id||'').trim(),\n    objective:String(action.task&&action.task.objective||state.goal||''),\n    handoff_message:String(action.handoff_message||''),\n    inputs:{...(obj(action.task)?action.task:{}),artifacts:state.artifacts||{},activity_base_url:prev.activity_base_url,schedule_root:state.schedule_root||(obj(action.task)?action.task.schedule_root:'')},\n    context:{data:state.data||{},hitl:state.hitl||{}},\n    constraints:{units:'METRIC'}\n  };\n  state.current_task=agentTask;\n  events.push(decisionEvent, {\n    kind:'agent.handoff',\n    actor:'orchestrator',\n    agent_id:agentTask.agent_id,\n    task_id:taskId,\n    status_message:statusMessage,\n    handoff_message:agentTask.handoff_message,\n    payload:{task_id:taskId}\n  });\n} else if(type==='ask_user'){\n  nextStatus='waiting_user';\n  const q={question_id:String(action.question_id||`Q-${state.step_count}`),question:String(action.question||'Нужно уточнение'),options:Array.isArray(action.options)?action.options:[]};\n  state.hitl={pending:true,questions:[q],answers:(state.hitl&&state.hitl.answers)||{}};\n  events.push(decisionEvent, {kind:'hitl.request',actor:'orchestrator',status:'waiting_user',status_message:statusMessage,payload:q});\n} else if(type==='finish'){\n  nextStatus='done';\n  state.current_task=null;\n  state.data={...(state.data||{}),result:action.result||{}};\n  events.push({kind:'case.finished',actor:'orchestrator',status:'done',status_message:statusMessage,payload:{...(obj(action.result)?action.result:{}),action_type:'finish'}});\n} else {\n  nextStatus='waiting_user';\n  const q={question_id:'Q-unknown',question:'Оркестратор вернул неизвестное действие',options:[]};\n  state.hitl={pending:true,questions:[q],answers:{}};\n  events.push({kind:'hitl.request',actor:'orchestrator',status:'waiting_user',status_message:statusMessage,payload:q});\n}\nstate.status=nextStatus;\nconst persistEvents=events.map(e=>[\n  prev.case_id,\n  e.task_id||'',\n  e.kind,\n  e.actor,\n  e.agent_id||'',\n  e.status||'',\n  e.status_message||'',\n  e.handoff_message||'',\n  JSON.stringify(e.payload||{})\n]);\nreturn [{json:{\n  ...prev,\n  decision,\n  action_type:type,\n  agent_id:agentTask?agentTask.agent_id:null,\n  agent_task:agentTask,\n  state,\n  next_status:nextStatus,\n  should_call_agent:type==='call_agent'&&Boolean(agentTask&&agentTask.agent_id),\n  should_continue:false,\n  events,\n  update_sql_parameters:[JSON.stringify(state), nextStatus, prev.case_id],\n  event_sql_parameters:persistEvents[0],\n  persist_events:persistEvents\n}}];\n"
+        "jsCode": "\nconst prev=$('Prepare decision context').first().json||{};\nconst raw=$json;\nconst obj=v=>v&&typeof v==='object'&&!Array.isArray(v);\nconst parse=v=>{if(obj(v))return v;try{const p=JSON.parse(String(v||''));return obj(p)?p:{}}catch{return {}}};\nconst out=parse(raw.output||raw.text||raw);\nconst decision=obj(out.action)?out:(obj(raw)?raw:{});\nconst action=obj(decision.action)?decision.action:{type:'ask_user',question_id:'Q-parse',question:'Не удалось разобрать решение оркестратора',options:[]};\nconst type=String(action.type||'').trim();\nconst binary=$('Normalize step request').first().binary||{};\nconst state=obj(prev.state)?{...prev.state}:{};\nstate.step_count=Number(state.step_count||0)+1;\nif(Array.isArray(decision.plan_update)){\n  const by=new Map((Array.isArray(state.plan)?state.plan:[]).map(p=>[p.id,p]));\n  for(const item of decision.plan_update){if(item&&item.id) by.set(item.id,{...(by.get(item.id)||{}),...item});}\n  state.plan=[...by.values()];\n}\nconst statusMessage=String(decision.status_message||'').trim()||'Шаг оркестратора';\nconst decisionEvent={\n  kind:'orchestrator.decision',\n  actor:'orchestrator',\n  status_message:statusMessage,\n  payload:{action_type:type,agent_id:action.agent_id||null,step_count:state.step_count}\n};\nconst events=[];\nlet nextStatus='running';\nlet agentTask=null;\nif(type==='call_agent'){\n  const taskId=String(action.task_id||`TASK-${state.step_count}`).trim();\n  agentTask={\n    case_id:prev.case_id,\n    task_id:taskId,\n    agent_id:String(action.agent_id||'').trim(),\n    objective:String(action.task&&action.task.objective||state.goal||''),\n    handoff_message:String(action.handoff_message||''),\n    inputs:{...(obj(action.task)?action.task:{}),artifacts:state.artifacts||{},activity_base_url:prev.activity_base_url,schedule_root:state.schedule_root||(obj(action.task)?action.task.schedule_root:'')},\n    context:{data:state.data||{},hitl:state.hitl||{}},\n    constraints:{units:'METRIC'}\n  };\n  state.current_task=agentTask;\n  events.push(decisionEvent, {\n    kind:'agent.handoff',\n    actor:'orchestrator',\n    agent_id:agentTask.agent_id,\n    task_id:taskId,\n    status_message:statusMessage,\n    handoff_message:agentTask.handoff_message,\n    payload:{task_id:taskId}\n  });\n} else if(type==='ask_user'){\n  nextStatus='waiting_user';\n  const q={question_id:String(action.question_id||`Q-${state.step_count}`),question:String(action.question||'Нужно уточнение'),options:Array.isArray(action.options)?action.options:[]};\n  state.hitl={pending:true,questions:[q],answers:(state.hitl&&state.hitl.answers)||{}};\n  events.push(decisionEvent, {kind:'hitl.request',actor:'orchestrator',status:'waiting_user',status_message:statusMessage,payload:q});\n} else if(type==='finish'){\n  nextStatus='done';\n  state.current_task=null;\n  state.data={...(state.data||{}),result:action.result||{}};\n  events.push({kind:'case.finished',actor:'orchestrator',status:'done',status_message:statusMessage,payload:{...(obj(action.result)?action.result:{}),action_type:'finish'}});\n} else {\n  nextStatus='waiting_user';\n  const q={question_id:'Q-unknown',question:'Оркестратор вернул неизвестное действие',options:[]};\n  state.hitl={pending:true,questions:[q],answers:{}};\n  events.push({kind:'hitl.request',actor:'orchestrator',status:'waiting_user',status_message:statusMessage,payload:q});\n}\nstate.status=nextStatus;\nconst persistEvents=events.map(e=>[\n  prev.case_id,\n  e.task_id||'',\n  e.kind,\n  e.actor,\n  e.agent_id||'',\n  e.status||'',\n  e.status_message||'',\n  e.handoff_message||'',\n  JSON.stringify(e.payload||{})\n]);\nreturn [{json:{\n  ...prev,\n  decision,\n  action_type:type,\n  agent_id:agentTask?agentTask.agent_id:null,\n  agent_task:agentTask,\n  state,\n  next_status:nextStatus,\n  should_call_agent:type==='call_agent'&&Boolean(agentTask&&agentTask.agent_id),\n  should_continue:false,\n  events,\n  update_sql_parameters:[JSON.stringify(state), nextStatus, prev.case_id],\n  event_sql_parameters:persistEvents[0],\n  persist_events:persistEvents\n},...(Object.keys(binary).length?{binary}:{})}];\n"
       },
       "id": "02831c30-dc4e-5669-a2f7-97053e1749c9",
       "name": "Parse decision",
@@ -677,7 +677,7 @@
     },
     {
       "parameters": {
-        "jsCode": "\nconst fromParse=(()=>{try{return $('Parse decision').first().json}catch{return null}})();\nconst fromMerge=(()=>{try{return $('Merge agent result').first().json}catch{return null}})();\nconst prev=fromMerge||fromParse||$json||{};\nconst rows=Array.isArray(prev.persist_events)?prev.persist_events:[];\nif(!rows.length) return [{json:{...prev,p1:'',p2:'',p3:'',p4:'',p5:'',p6:'',p7:'',p8:'',p9:'{}'}}];\nreturn rows.map(params=>{\n  const vals=(Array.isArray(params)?params:[]).map(v=>v===null||v===undefined?'':String(v));\n  return {json:{\n    ...prev,\n    p1:vals[0]||'',\n    p2:vals[1]||'',\n    p3:vals[2]||'',\n    p4:vals[3]||'',\n    p5:vals[4]||'',\n    p6:vals[5]||'',\n    p7:vals[6]||'',\n    p8:vals[7]||'',\n    p9:vals[8]||'{}',\n    event_sql_parameters:vals\n  }};\n});\n"
+        "jsCode": "\nconst fromParse=(()=>{try{return $('Parse decision').first().json}catch{return null}})();\nconst fromMerge=(()=>{try{return $('Merge agent result').first().json}catch{return null}})();\nconst prev=fromMerge||fromParse||$json||{};\nconst rows=Array.isArray(prev.persist_events)?prev.persist_events:[];\nconst binary=$('Normalize step request').first().binary||{};\nif(!rows.length) return [{json:{...prev,p1:'',p2:'',p3:'',p4:'',p5:'',p6:'',p7:'',p8:'',p9:'{}'},...(Object.keys(binary).length?{binary}:{})}];\nreturn rows.map(params=>{\n  const vals=(Array.isArray(params)?params:[]).map(v=>v===null||v===undefined?'':String(v));\n  return {json:{\n    ...prev,\n    p1:vals[0]||'',\n    p2:vals[1]||'',\n    p3:vals[2]||'',\n    p4:vals[3]||'',\n    p5:vals[4]||'',\n    p6:vals[5]||'',\n    p7:vals[6]||'',\n    p8:vals[7]||'',\n    p9:vals[8]||'{}',\n    event_sql_parameters:vals\n  },...(Object.keys(binary).length?{binary}:{})};\n});\n"
       },
       "id": "38472b5b-55fa-5dec-9244-7cedd0ac31aa",
       "name": "Expand decision events",
@@ -717,7 +717,7 @@
     },
     {
       "parameters": {
-        "jsCode": "const prev=$('Parse decision').first().json||{};\nreturn [{json:prev}];"
+        "jsCode": "const prev=$('Parse decision').first().json||{};\nconst binary=$('Normalize step request').first().binary||{};\nreturn [{json:prev,...(Object.keys(binary).length?{binary}:{})}];"
       },
       "id": "f6528acf-71cd-59ea-bcf7-62f9dae244aa",
       "name": "Restore parsed decision",
@@ -731,7 +731,7 @@
     },
     {
       "parameters": {
-        "jsCode": "\nconst x=$json;\nconst id=String(x.agent_id||'').trim();\nlet route='none';\nif(x.should_call_agent!==true) route='none';\nelse if(id==='excel_extractor') route='excel';\nelse if(id==='calculation_agent') route='calc';\nelse if(id==='schedule_builder') route='schedule';\nelse route='unknown';\nreturn [{json:{...x,route}}];\n"
+        "jsCode": "\nconst x=$json;\nconst id=String(x.agent_id||'').trim();\nlet route='none';\nif(x.should_call_agent!==true) route='none';\nelse if(id==='excel_extractor') route='excel';\nelse if(id==='calculation_agent') route='calc';\nelse if(id==='schedule_builder') route='schedule';\nelse route='unknown';\nconst binary=$('Normalize step request').first().binary||{};\nreturn [{json:{...x,route},...(Object.keys(binary).length?{binary}:{})}];\n"
       },
       "id": "2180f6cb-aa64-5acc-a646-d4850cbfd592",
       "name": "Prepare agent call",
@@ -765,25 +765,29 @@
         "headerParameters": {
           "parameters": [
             {
-              "name": "Content-Type",
-              "value": "application/json"
-            },
-            {
               "name": "X-API-Key",
               "value": "={{ $json.excel_tools_api_key || '' }}"
             }
           ]
         },
         "sendBody": true,
-        "specifyBody": "json",
-        "jsonBody": "={{ $json.agent_task }}",
-        "options": {
-          "timeout": 180000,
-          "response": {
-            "response": {
-              "fullResponse": false
+        "contentType": "multipart-form-data",
+        "bodyParameters": {
+          "parameters": [
+            {
+              "parameterType": "formBinaryData",
+              "name": "file",
+              "inputDataFieldName": "excel"
+            },
+            {
+              "parameterType": "formData",
+              "name": "payload",
+              "value": "={{ JSON.stringify({request: $json.agent_task || {}}) }}"
             }
-          }
+          ]
+        },
+        "options": {
+          "timeout": 180000
         }
       },
       "id": "74aa4b60-ae82-5f7d-8711-2c59a5e2e0a2",
@@ -871,7 +875,7 @@
     },
     {
       "parameters": {
-        "jsCode": "\nconst x=$json;\nconst cont=x.action_type==='finish'?false:false;\nreturn [{json:{...x, should_continue:false, continue_url:String(x.orchestrator_step_url||'http://n8n:5678/webhook/mas-orchestrator-step').replace(/\\/$/,'')}}];\n"
+        "jsCode": "\nconst x=$json;\nconst cont=x.action_type==='finish'?false:false;\nreturn [{json:{...x, should_continue:false, continue_url:`${String(x.activity_base_url||'http://mas-activity:8200').replace(/\\/$/,'')}/cases/${encodeURIComponent(String(x.case_id||''))}/run`}}];\n"
       },
       "id": "f605b27f-6506-5968-9cdf-3a84f930282b",
       "name": "No agent this step",
@@ -884,7 +888,7 @@
     },
     {
       "parameters": {
-        "jsCode": "\nconst prev=$('Prepare agent call').first().json||$('Parse decision').first().json||{};\nconst http=$json||{};\nconst obj=v=>v&&typeof v==='object'&&!Array.isArray(v);\nconst result=obj(http.body)?http.body:(obj(http)?http:{});\nconst status=String(result.status||(http.error?'failed':'completed'));\nconst state=obj(prev.state)?{...prev.state}:{};\nconst data=obj(state.data)?{...state.data}:{};\nconst artifacts=obj(state.artifacts)?{...state.artifacts}:{};\nconst agentId=String(prev.agent_id||result.agent_id||'');\nconst bucket=agentId==='excel_extractor'?'excel':(agentId==='calculation_agent'?'calc':(agentId==='schedule_builder'?'schedule':'agent'));\nif(status==='completed'){\n  data[bucket]=result.data||result;\n  if(agentId==='excel_extractor'&&result.data&&Array.isArray(result.data.facts)) data.facts=result.data.facts;\n  Object.assign(artifacts, result.artifacts||{});\n  state.current_task=null;\n  state.last_error=null;\n}\nif(Array.isArray(state.plan)){\n  state.plan=state.plan.map(p=>{\n    if(!p||typeof p!=='object') return p;\n    if(status==='completed'&&String(p.status)==='running') return {...p,status:'done'};\n    return p;\n  });\n}\nlet nextStatus='running';\nlet shouldContinue=true;\nconst events=[];\nif(status==='needs_input'){\n  nextStatus='waiting_user';\n  shouldContinue=false;\n  const reqs=Array.isArray(result.requests)?result.requests:[];\n  const q=reqs[0]||{question_id:'Q-agent',question:String(result.message||'Агенту нужны данные'),options:[]};\n  state.hitl={pending:true,questions:reqs.length?reqs:[q],answers:(state.hitl&&state.hitl.answers)||{}};\n  events.push({kind:'hitl.request',actor:'orchestrator',agent_id:agentId,status:'waiting_user',status_message:q.question,payload:q});\n} else if(status==='completed'){\n  events.push({\n    kind:'agent.result',\n    actor:agentId||'agent',\n    agent_id:agentId,\n    task_id:(prev.agent_task&&prev.agent_task.task_id)||'',\n    status:'completed',\n    status_message:String(result.message||'Агент завершил работу'),\n    payload:{data_keys:Object.keys((result.data&&typeof result.data==='object')?result.data:{}),artifacts:Object.keys((result.artifacts&&typeof result.artifacts==='object')?result.artifacts:{})}\n  });\n} else if(status==='failed'||http.error){\n  nextStatus='running';\n  shouldContinue=true;\n  state.last_error={message:String(result.message||http.message||'agent failed'),agent_id:agentId};\n  data[bucket]=result.data||result;\n  events.push({kind:'agent.failed',actor:agentId||'agent',agent_id:agentId,status:'failed',status_message:String(result.message||http.message||'Агент вернул ошибку'),payload:{message:state.last_error.message,issues:result.issues||[]}});\n}\nif(Number(state.step_count||0)>=24){\n  nextStatus='failed';\n  shouldContinue=false;\n  events.push({kind:'case.failed',actor:'orchestrator',status:'failed',status_message:'Превышен лимит шагов оркестратора'});\n}\nstate.data=data;\nstate.artifacts=artifacts;\nstate.status=nextStatus;\nconst persistEvents=events.map(e=>[\n  prev.case_id, e.task_id||'', e.kind, e.actor, e.agent_id||'', e.status||'', e.status_message||'', e.handoff_message||'', JSON.stringify(e.payload||{})\n]);\nreturn [{json:{\n  ...prev,\n  agent_result:result,\n  state,\n  next_status:nextStatus,\n  should_continue:shouldContinue&&nextStatus==='running',\n  update_sql_parameters:[JSON.stringify(state), nextStatus, prev.case_id],\n  persist_events:persistEvents,\n  events,\n  event_sql_parameters:persistEvents[0],\n  continue_url:String(prev.orchestrator_step_url||'http://n8n:5678/webhook/mas-orchestrator-step').replace(/\\/$/,'')\n}}];\n"
+        "jsCode": "\nconst prev=$('Prepare agent call').first().json||$('Parse decision').first().json||{};\nconst http=$json||{};\nconst obj=v=>v&&typeof v==='object'&&!Array.isArray(v);\nconst result=obj(http.body)?http.body:(obj(http)?http:{});\nconst status=String(result.status||(http.error?'failed':'completed'));\nconst state=obj(prev.state)?{...prev.state}:{};\nconst data=obj(state.data)?{...state.data}:{};\nconst artifacts=obj(state.artifacts)?{...state.artifacts}:{};\nconst agentId=String(prev.agent_id||result.agent_id||'');\nconst bucket=agentId==='excel_extractor'?'excel':(agentId==='calculation_agent'?'calc':(agentId==='schedule_builder'?'schedule':'agent'));\nif(status==='completed'){\n  data[bucket]=result.data||result;\n  if(agentId==='excel_extractor'&&result.data&&Array.isArray(result.data.facts)) data.facts=result.data.facts;\n  Object.assign(artifacts, result.artifacts||{});\n  state.current_task=null;\n  state.last_error=null;\n}\nif(Array.isArray(state.plan)){\n  state.plan=state.plan.map(p=>{\n    if(!p||typeof p!=='object') return p;\n    if(status==='completed'&&String(p.status)==='running') return {...p,status:'done'};\n    return p;\n  });\n}\nlet nextStatus='running';\nlet shouldContinue=true;\nconst events=[];\nif(status==='needs_input'){\n  nextStatus='waiting_user';\n  shouldContinue=false;\n  const reqs=Array.isArray(result.requests)?result.requests:[];\n  const q=reqs[0]||{question_id:'Q-agent',question:String(result.message||'Агенту нужны данные'),options:[]};\n  state.hitl={pending:true,questions:reqs.length?reqs:[q],answers:(state.hitl&&state.hitl.answers)||{}};\n  events.push({kind:'hitl.request',actor:'orchestrator',agent_id:agentId,status:'waiting_user',status_message:q.question,payload:q});\n} else if(status==='completed'){\n  events.push({\n    kind:'agent.result',\n    actor:agentId||'agent',\n    agent_id:agentId,\n    task_id:(prev.agent_task&&prev.agent_task.task_id)||'',\n    status:'completed',\n    status_message:String(result.message||'Агент завершил работу'),\n    payload:{data_keys:Object.keys((result.data&&typeof result.data==='object')?result.data:{}),artifacts:Object.keys((result.artifacts&&typeof result.artifacts==='object')?result.artifacts:{})}\n  });\n} else if(status==='failed'||http.error){\n  nextStatus='running';\n  shouldContinue=true;\n  state.last_error={message:String(result.message||http.message||'agent failed'),agent_id:agentId};\n  data[bucket]=result.data||result;\n  events.push({kind:'agent.failed',actor:agentId||'agent',agent_id:agentId,status:'failed',status_message:String(result.message||http.message||'Агент вернул ошибку'),payload:{message:state.last_error.message,issues:result.issues||[]}});\n}\nif(Number(state.step_count||0)>=24){\n  nextStatus='failed';\n  shouldContinue=false;\n  events.push({kind:'case.failed',actor:'orchestrator',status:'failed',status_message:'Превышен лимит шагов оркестратора'});\n}\nstate.data=data;\nstate.artifacts=artifacts;\nstate.status=nextStatus;\nconst persistEvents=events.map(e=>[\n  prev.case_id, e.task_id||'', e.kind, e.actor, e.agent_id||'', e.status||'', e.status_message||'', e.handoff_message||'', JSON.stringify(e.payload||{})\n]);\nconst binary=$('Normalize step request').first().binary||{};\nreturn [{json:{\n  ...prev,\n  agent_result:result,\n  state,\n  next_status:nextStatus,\n  should_continue:shouldContinue&&nextStatus==='running',\n  update_sql_parameters:[JSON.stringify(state), nextStatus, prev.case_id],\n  persist_events:persistEvents,\n  events,\n  event_sql_parameters:persistEvents[0],\n  continue_url:`${String(prev.activity_base_url||'http://mas-activity:8200').replace(/\\/$/,'')}/cases/${encodeURIComponent(String(prev.case_id||''))}/run`\n},...(Object.keys(binary).length?{binary}:{})}];\n"
       },
       "id": "991e54b5-5f3a-5f9b-9ef1-0165be4207d4",
       "name": "Merge agent result",
@@ -924,7 +928,7 @@
     },
     {
       "parameters": {
-        "jsCode": "\nconst fromParse=(()=>{try{return $('Parse decision').first().json}catch{return null}})();\nconst fromMerge=(()=>{try{return $('Merge agent result').first().json}catch{return null}})();\nconst prev=fromMerge||fromParse||$json||{};\nconst rows=Array.isArray(prev.persist_events)?prev.persist_events:[];\nif(!rows.length) return [{json:{...prev,p1:'',p2:'',p3:'',p4:'',p5:'',p6:'',p7:'',p8:'',p9:'{}'}}];\nreturn rows.map(params=>{\n  const vals=(Array.isArray(params)?params:[]).map(v=>v===null||v===undefined?'':String(v));\n  return {json:{\n    ...prev,\n    p1:vals[0]||'',\n    p2:vals[1]||'',\n    p3:vals[2]||'',\n    p4:vals[3]||'',\n    p5:vals[4]||'',\n    p6:vals[5]||'',\n    p7:vals[6]||'',\n    p8:vals[7]||'',\n    p9:vals[8]||'{}',\n    event_sql_parameters:vals\n  }};\n});\n"
+        "jsCode": "\nconst fromParse=(()=>{try{return $('Parse decision').first().json}catch{return null}})();\nconst fromMerge=(()=>{try{return $('Merge agent result').first().json}catch{return null}})();\nconst prev=fromMerge||fromParse||$json||{};\nconst rows=Array.isArray(prev.persist_events)?prev.persist_events:[];\nconst binary=$('Normalize step request').first().binary||{};\nif(!rows.length) return [{json:{...prev,p1:'',p2:'',p3:'',p4:'',p5:'',p6:'',p7:'',p8:'',p9:'{}'},...(Object.keys(binary).length?{binary}:{})}];\nreturn rows.map(params=>{\n  const vals=(Array.isArray(params)?params:[]).map(v=>v===null||v===undefined?'':String(v));\n  return {json:{\n    ...prev,\n    p1:vals[0]||'',\n    p2:vals[1]||'',\n    p3:vals[2]||'',\n    p4:vals[3]||'',\n    p5:vals[4]||'',\n    p6:vals[5]||'',\n    p7:vals[6]||'',\n    p8:vals[7]||'',\n    p9:vals[8]||'{}',\n    event_sql_parameters:vals\n  },...(Object.keys(binary).length?{binary}:{})};\n});\n"
       },
       "id": "8f8e5581-b932-5ec3-b387-923cb96c3494",
       "name": "Expand agent events",
@@ -964,7 +968,7 @@
     },
     {
       "parameters": {
-        "jsCode": "const prev=$('Merge agent result').first().json||{};\nreturn [{json:prev}];"
+        "jsCode": "const prev=$('Merge agent result').first().json||{};\nconst binary=$('Normalize step request').first().binary||{};\nreturn [{json:prev,...(Object.keys(binary).length?{binary}:{})}];"
       },
       "id": "82e54576-9d79-5115-b27b-893733f6d0fd",
       "name": "Restore after agent events",
@@ -1013,8 +1017,6 @@
       "parameters": {
         "method": "POST",
         "url": "={{ $json.continue_url }}",
-        "authentication": "genericCredentialType",
-        "genericAuthType": "httpHeaderAuth",
         "sendHeaders": true,
         "headerParameters": {
           "parameters": [
@@ -1039,25 +1041,95 @@
         4320,
         -80
       ],
-      "credentials": {
-        "httpHeaderAuth": {
-          "id": "REPLACE_IN_UI",
-          "name": "REPLACE: engineering orchestrator inbound key"
-        }
-      },
       "onError": "continueRegularOutput"
     },
     {
       "parameters": {
-        "jsCode": "const x=$json;return[{json:{contract:'mas_orchestrator_ack',case_id:x.case_id,status:x.next_status||x.status,action_type:x.action_type||null,message:x.message||null,should_continue:x.should_continue===true,human_gate:x.human_gate||null,version:x.version??null,restartable:x.restartable===true}}];"
+        "jsCode": "const x=$json||{};\nconst kind=x.action_type==='finish'?'case.finished':(x.action_type==='ask_user'||x.next_status==='waiting_user'?'hitl.request':'orchestrator.status');\nconst payload={contract:'mas_orchestrator_ack',case_id:x.case_id,status:x.next_status||x.status,action_type:x.action_type||null,message:x.message||null,should_continue:x.should_continue===true,human_gate:x.human_gate||null,version:x.version??null,restartable:x.restartable===true};\nreturn [{json:{...x,activity_sync:Boolean(x.case_id&&!x.is_probe&&x.activity_base_url),activity_url:`${String(x.activity_base_url||'').replace(/\\/$/,'')}/cases/${encodeURIComponent(String(x.case_id||''))}/events`,activity_event:{kind,actor:'orchestrator',status:payload.status,status_message:payload.message||kind,payload}}}];"
+      },
+      "id": "c0b3d0ee-55cf-5db7-b41a-59fb6a219290",
+      "name": "Prepare Activity ack",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        4320,
+        120
+      ]
+    },
+    {
+      "parameters": {
+        "conditions": {
+          "options": {
+            "caseSensitive": true,
+            "leftValue": "",
+            "typeValidation": "strict",
+            "version": 2
+          },
+          "conditions": [
+            {
+              "id": "61259c3f-1328-5450-b8a0-59592cee9533",
+              "leftValue": "={{ Boolean($json.activity_sync) }}",
+              "rightValue": true,
+              "operator": {
+                "type": "boolean",
+                "operation": "true"
+              }
+            }
+          ],
+          "combinator": "and"
+        },
+        "options": {}
+      },
+      "id": "a7b14504-f071-5c03-87ea-70c524da38a1",
+      "name": "Activity sync?",
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2.3,
+      "position": [
+        4480,
+        220
+      ]
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "={{ $json.activity_url }}",
+        "sendHeaders": true,
+        "headerParameters": {
+          "parameters": [
+            {
+              "name": "Content-Type",
+              "value": "application/json"
+            }
+          ]
+        },
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "={{ $json.activity_event }}",
+        "options": {
+          "timeout": 10000
+        }
+      },
+      "id": "096c0425-ab30-5afb-a4f8-c1b723ba0d9c",
+      "name": "POST step ack to MAS Activity",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.4,
+      "position": [
+        4640,
+        120
+      ],
+      "onError": "continueRegularOutput"
+    },
+    {
+      "parameters": {
+        "jsCode": "const source=(()=>{try{return $('Prepare Activity ack').first().json}catch{return $json}})();\nconst x=source||$json;return[{json:{contract:'mas_orchestrator_ack',case_id:x.case_id,status:x.next_status||x.status,action_type:x.action_type||null,message:x.message||null,should_continue:x.should_continue===true,human_gate:x.human_gate||null,version:x.version??null,restartable:x.restartable===true}}];"
       },
       "id": "bc466937-f343-550d-8651-0a6ea6806e40",
       "name": "Format step ack",
       "type": "n8n-nodes-base.code",
       "typeVersion": 2,
       "position": [
-        4320,
-        120
+        4800,
+        220
       ]
     }
   ],
@@ -1099,7 +1171,7 @@
       "main": [
         [
           {
-            "node": "Format step ack",
+            "node": "Prepare Activity ack",
             "type": "main",
             "index": 0
           }
@@ -1230,7 +1302,7 @@
         ],
         [
           {
-            "node": "Format step ack",
+            "node": "Prepare Activity ack",
             "type": "main",
             "index": 0
           }
@@ -1252,7 +1324,7 @@
       "main": [
         [
           {
-            "node": "Format step ack",
+            "node": "Prepare Activity ack",
             "type": "main",
             "index": 0
           }
@@ -1523,7 +1595,7 @@
       "main": [
         [
           {
-            "node": "Format step ack",
+            "node": "Prepare Activity ack",
             "type": "main",
             "index": 0
           }
@@ -1596,7 +1668,7 @@
         ],
         [
           {
-            "node": "Format step ack",
+            "node": "Prepare Activity ack",
             "type": "main",
             "index": 0
           }
@@ -1604,6 +1676,46 @@
       ]
     },
     "POST continue run": {
+      "main": [
+        [
+          {
+            "node": "Prepare Activity ack",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Prepare Activity ack": {
+      "main": [
+        [
+          {
+            "node": "Activity sync?",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Activity sync?": {
+      "main": [
+        [
+          {
+            "node": "POST step ack to MAS Activity",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Format step ack",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "POST step ack to MAS Activity": {
       "main": [
         [
           {
@@ -1626,5 +1738,5 @@
   },
   "tags": [],
   "pinData": {},
-  "versionId": "86fa2467-2041-4429-9590-124408b7fc6d"
+  "versionId": "ab3aea21-d05e-4f78-9bbc-7f1bc79efd5c"
 }

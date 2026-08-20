@@ -104,8 +104,7 @@ async function run(name, json, nodes = {}) {
   const continueNode = wf.nodes.find((n) => n.name === 'POST continue run');
   assert.ok(String(continueNode.parameters.jsonBody).includes("action: 'step'"));
   assert.equal(continueNode.parameters.authentication, 'genericCredentialType');
-  assert.equal(source('Merge agent result').includes('mas-orchestrator-step'), true);
-  assert.equal(source('Merge agent result').includes('/cases/'), false);
+  assert.equal(source('Merge agent result').includes('/cases/'), true);
 
   const probeIf = wf.connections['Probe ping?'];
   assert.equal(probeIf.main[0][0].node, 'Format step ack');
@@ -263,7 +262,7 @@ async function run(name, json, nodes = {}) {
   assert.equal(merged.next_status, 'running');
   assert.equal(merged.should_continue, true);
   assert.ok(merged.state.data.excel);
-  assert.equal(merged.continue_url, 'http://n8n:5678/webhook/mas-orchestrator-step');
+  assert.equal(merged.continue_url, 'http://mas-activity:8200/cases/CASE-1/run');
   assert.deepEqual(merged.events.map((e) => e.kind), ['agent.result']);
   assert.equal(merged.persist_events[0][2], 'agent.result');
 

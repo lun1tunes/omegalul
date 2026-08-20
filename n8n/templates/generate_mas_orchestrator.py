@@ -166,6 +166,41 @@ def http_json(name, pos, url, body, timeout=180000):
     )
 
 
+def http_multipart(name, pos, url, binary_fields, payload_name="payload", timeout=180000):
+    params = [
+        {"parameterType": "formBinaryData", "name": field, "inputDataFieldName": source}
+        for field, source in binary_fields
+    ]
+    params.append(
+        {
+            "parameterType": "formData",
+            "name": payload_name,
+            "value": "={{ JSON.stringify({request: $json.agent_task || {}}) }}",
+        }
+    )
+    return node(
+        name,
+        "n8n-nodes-base.httpRequest",
+        4.4,
+        pos,
+        {
+            "method": "POST",
+            "url": url,
+            "sendHeaders": True,
+            "headerParameters": {
+                "parameters": [
+                    {"name": "X-API-Key", "value": "={{ $json.excel_tools_api_key || '' }}"},
+                ]
+            },
+            "sendBody": True,
+            "contentType": "multipart-form-data",
+            "bodyParameters": {"parameters": params},
+            "options": {"timeout": timeout},
+        },
+        onError="continueRegularOutput",
+    )
+
+
 def execute_workflow(name, pos, placeholder, cached_name, inputs):
     return node(
         name,
@@ -237,6 +272,8 @@ const taskName=String(body.task_name||raw.task_name||'').trim();
 const humanResponse=String(body.human_response||raw.human_response||'');
 const gateId=String(body.gate_id||raw.gate_id||'');
 const requestedBy=String(body.requested_by||raw.requested_by||'');
+const activityBaseUrl=String(raw.activity_base_url||'').trim();
+const orchestratorStepUrl=String(raw.orchestrator_step_url||'').trim();
 const executionId=String($execution.id||'');
 const readinessId=!caseId||caseId==='CASE-readiness-probe';
 if(action==='probe'||(action==='status'&&readinessId)){
@@ -272,6 +309,8 @@ return [{json:{
   human_response:humanResponse,
   gate_id:gateId,
   requested_by:requestedBy,
+  activity_base_url:activityBaseUrl,
+  orchestrator_step_url:orchestratorStepUrl,
   is_probe:false,
   is_status:action==='status',
   is_resume:action==='resume',
@@ -280,7 +319,7 @@ return [{json:{
   workflow_name:'orchestrator',
   sql_parameters:[caseId],
   exec_sql_parameters:[executionId, caseId, 'orchestrator'],
-}}];
+},...(Object.keys($input.first().binary||{}).length?{binary:$input.first().binary}:{} )}];
 """
 
 CREATE_CASE = r"""
@@ -424,6 +463,7 @@ else if(!compact.has_excel&&compact.has_schedule_source&&!compact.has_schedule_o
 else if(compact.has_schedule_out) hint.push('schedule_out уже есть — finish.');
 const prompt=`Цель:\n${compact.goal}\n\nТекущее состояние:\n${JSON.stringify(compact,null,2)}\n\nПодсказка следующего шага:\n${hint.join(' ')||'выбери по реестру агентов'}\n\nДоступные агенты:\n${JSON.stringify(registry,null,2)}\n`;
 const endpoints=$('Runtime endpoints').first().json||{};
+const binary=$('Normalize step request').first().binary||{};
 return [{json:{
   ...req,
   ...endpoints,
@@ -434,7 +474,7 @@ return [{json:{
   compact,
   planner_input:prompt,
   step_count:compact.step_count
-}}];
+},...(Object.keys(binary).length?{binary}:{})}];
 """
 
 PARSE_DECISION = r"""
@@ -446,6 +486,7 @@ const out=parse(raw.output||raw.text||raw);
 const decision=obj(out.action)?out:(obj(raw)?raw:{});
 const action=obj(decision.action)?decision.action:{type:'ask_user',question_id:'Q-parse',question:'Не удалось разобрать решение оркестратора',options:[]};
 const type=String(action.type||'').trim();
+const binary=$('Normalize step request').first().binary||{};
 const state=obj(prev.state)?{...prev.state}:{};
 state.step_count=Number(state.step_count||0)+1;
 if(Array.isArray(decision.plan_update)){
@@ -527,7 +568,7 @@ return [{json:{
   update_sql_parameters:[JSON.stringify(state), nextStatus, prev.case_id],
   event_sql_parameters:persistEvents[0],
   persist_events:persistEvents
-}}];
+},...(Object.keys(binary).length?{binary}:{})}];
 """
 
 WRITE_EVENTS = r"""
@@ -535,7 +576,8 @@ const fromParse=(()=>{try{return $('Parse decision').first().json}catch{return n
 const fromMerge=(()=>{try{return $('Merge agent result').first().json}catch{return null}})();
 const prev=fromMerge||fromParse||$json||{};
 const rows=Array.isArray(prev.persist_events)?prev.persist_events:[];
-if(!rows.length) return [{json:{...prev,p1:'',p2:'',p3:'',p4:'',p5:'',p6:'',p7:'',p8:'',p9:'{}'}}];
+const binary=$('Normalize step request').first().binary||{};
+if(!rows.length) return [{json:{...prev,p1:'',p2:'',p3:'',p4:'',p5:'',p6:'',p7:'',p8:'',p9:'{}'},...(Object.keys(binary).length?{binary}:{})}];
 return rows.map(params=>{
   const vals=(Array.isArray(params)?params:[]).map(v=>v===null||v===undefined?'':String(v));
   return {json:{
@@ -550,7 +592,7 @@ return rows.map(params=>{
     p8:vals[7]||'',
     p9:vals[8]||'{}',
     event_sql_parameters:vals
-  }};
+  },...(Object.keys(binary).length?{binary}:{})};
 });
 """
 
@@ -563,7 +605,8 @@ else if(id==='excel_extractor') route='excel';
 else if(id==='calculation_agent') route='calc';
 else if(id==='schedule_builder') route='schedule';
 else route='unknown';
-return [{json:{...x,route}}];
+const binary=$('Normalize step request').first().binary||{};
+return [{json:{...x,route},...(Object.keys(binary).length?{binary}:{})}];
 """
 
 MERGE = r"""
@@ -629,6 +672,7 @@ state.status=nextStatus;
 const persistEvents=events.map(e=>[
   prev.case_id, e.task_id||'', e.kind, e.actor, e.agent_id||'', e.status||'', e.status_message||'', e.handoff_message||'', JSON.stringify(e.payload||{})
 ]);
+const binary=$('Normalize step request').first().binary||{};
 return [{json:{
   ...prev,
   agent_result:result,
@@ -639,14 +683,14 @@ return [{json:{
   persist_events:persistEvents,
   events,
   event_sql_parameters:persistEvents[0],
-  continue_url:String(prev.orchestrator_step_url||'http://n8n:5678/webhook/mas-orchestrator-step').replace(/\/$/,'')
-}}];
+  continue_url:`${String(prev.activity_base_url||'http://mas-activity:8200').replace(/\/$/,'')}/cases/${encodeURIComponent(String(prev.case_id||''))}/run`
+},...(Object.keys(binary).length?{binary}:{})}];
 """
 
 FINISH_NONE = r"""
 const x=$json;
 const cont=x.action_type==='finish'?false:false;
-return [{json:{...x, should_continue:false, continue_url:String(x.orchestrator_step_url||'http://n8n:5678/webhook/mas-orchestrator-step').replace(/\/$/,'')}}];
+return [{json:{...x, should_continue:false, continue_url:`${String(x.activity_base_url||'http://mas-activity:8200').replace(/\/$/,'')}/cases/${encodeURIComponent(String(x.case_id||''))}/run`}}];
 """
 
 
@@ -707,7 +751,7 @@ def main() -> None:
         code(
             "Restore after start",
             (1540, 280),
-            "const prev=$('Prepare start case').first().json||{};\nreturn [{json:prev}];",
+            "const prev=$('Prepare start case').first().json||{};\nconst binary=$('Normalize step request').first().binary||{};\nreturn [{json:prev,...(Object.keys(binary).length?{binary}:{})}];",
             executeOnce=True,
         ),
         postgres(
@@ -744,7 +788,7 @@ def main() -> None:
         code(
             "Restore after resume",
             (2020, 40),
-            "const prev=$('Apply request extras').first().json||{};\nreturn [{json:prev}];",
+            "const prev=$('Apply request extras').first().json||{};\nconst binary=$('Normalize step request').first().binary||{};\nreturn [{json:prev,...(Object.keys(binary).length?{binary}:{})}];",
             executeOnce=True,
         ),
         postgres(
@@ -811,7 +855,7 @@ def main() -> None:
         code(
             "Restore parsed decision",
             (2640, 0),
-            "const prev=$('Parse decision').first().json||{};\nreturn [{json:prev}];",
+            "const prev=$('Parse decision').first().json||{};\nconst binary=$('Normalize step request').first().binary||{};\nreturn [{json:prev,...(Object.keys(binary).length?{binary}:{})}];",
             executeOnce=True,
         ),
         code("Prepare agent call", (2760, 0), ROUTE),
@@ -822,7 +866,12 @@ def main() -> None:
             (2880, 0),
             {"mode": "expression", "numberOutputs": 4, "output": "={{ ({excel:0,calc:1,schedule:2,none:3,unknown:3})[$json.route] ?? 3 }}"},
         ),
-        http_json("Call Excel Extractor", (3120, -240), "={{ $json.excel_extractor_url }}", "={{ $json.agent_task }}"),
+        http_multipart(
+            "Call Excel Extractor",
+            (3120, -240),
+            "={{ $json.excel_extractor_url }}",
+            [("file", "excel")],
+        ),
         http_json("Call Calculation Agent", (3120, -40), "={{ $json.calculation_agent_url }}", "={{ $json.agent_task }}"),
         execute_workflow(
             "Call Schedule Builder",
@@ -850,7 +899,7 @@ def main() -> None:
         code(
             "Restore after agent events",
             (3960, 0),
-            "const prev=$('Merge agent result').first().json||{};\nreturn [{json:prev}];",
+            "const prev=$('Merge agent result').first().json||{};\nconst binary=$('Normalize step request').first().binary||{};\nreturn [{json:prev,...(Object.keys(binary).length?{binary}:{})}];",
             executeOnce=True,
         ),
         if_true("Continue loop?", (4080, 0), "={{ $json.should_continue }}"),
@@ -862,8 +911,6 @@ def main() -> None:
             {
                 "method": "POST",
                 "url": "={{ $json.continue_url }}",
-                "authentication": "genericCredentialType",
-                "genericAuthType": "httpHeaderAuth",
                 "sendHeaders": True,
                 "headerParameters": {"parameters": [{"name": "Content-Type", "value": "application/json"}]},
                 "sendBody": True,
@@ -871,13 +918,38 @@ def main() -> None:
                 "jsonBody": "={{ ({action: 'step', case_id: $json.case_id, source: 'orchestrator'}) }}",
                 "options": {"timeout": 5000},
             },
-            credentials=HDR,
+            onError="continueRegularOutput",
+        ),
+        code(
+            "Prepare Activity ack",
+            (4320, 120),
+            r"""const x=$json||{};
+const kind=x.action_type==='finish'?'case.finished':(x.action_type==='ask_user'||x.next_status==='waiting_user'?'hitl.request':'orchestrator.status');
+const payload={contract:'mas_orchestrator_ack',case_id:x.case_id,status:x.next_status||x.status,action_type:x.action_type||null,message:x.message||null,should_continue:x.should_continue===true,human_gate:x.human_gate||null,version:x.version??null,restartable:x.restartable===true};
+return [{json:{...x,activity_sync:Boolean(x.case_id&&!x.is_probe&&x.activity_base_url),activity_url:`${String(x.activity_base_url||'').replace(/\/$/,'')}/cases/${encodeURIComponent(String(x.case_id||''))}/events`,activity_event:{kind,actor:'orchestrator',status:payload.status,status_message:payload.message||kind,payload}}}];""",
+        ),
+        if_true("Activity sync?", (4480, 220), "={{ Boolean($json.activity_sync) }}"),
+        node(
+            "POST step ack to MAS Activity",
+            "n8n-nodes-base.httpRequest",
+            4.4,
+            (4640, 120),
+            {
+                "method": "POST",
+                "url": "={{ $json.activity_url }}",
+                "sendHeaders": True,
+                "headerParameters": {"parameters": [{"name": "Content-Type", "value": "application/json"}]},
+                "sendBody": True,
+                "specifyBody": "json",
+                "jsonBody": "={{ $json.activity_event }}",
+                "options": {"timeout": 10000},
+            },
             onError="continueRegularOutput",
         ),
         code(
             "Format step ack",
-            (4320, 120),
-            "const x=$json;return[{json:{contract:'mas_orchestrator_ack',case_id:x.case_id,status:x.next_status||x.status,action_type:x.action_type||null,message:x.message||null,should_continue:x.should_continue===true,human_gate:x.human_gate||null,version:x.version??null,restartable:x.restartable===true}}];",
+            (4800, 220),
+            "const source=(()=>{try{return $('Prepare Activity ack').first().json}catch{return $json}})();\nconst x=source||$json;return[{json:{contract:'mas_orchestrator_ack',case_id:x.case_id,status:x.next_status||x.status,action_type:x.action_type||null,message:x.message||null,should_continue:x.should_continue===true,human_gate:x.human_gate||null,version:x.version??null,restartable:x.restartable===true}}];",
         ),
     ]
 
@@ -885,7 +957,7 @@ def main() -> None:
     connect(connections, "Authenticated MAS webhook", "Runtime endpoints")
     connect(connections, "Runtime endpoints", "Normalize step request")
     connect(connections, "Normalize step request", "Probe ping?")
-    connect(connections, "Probe ping?", "Format step ack", si=0)
+    connect(connections, "Probe ping?", "Prepare Activity ack", si=0)
     connect(connections, "Probe ping?", "Needs create?", si=1)
     connect(connections, "Needs create?", "Prepare start case", si=0)
     connect(connections, "Needs create?", "Insert execution map", si=1)
@@ -898,9 +970,9 @@ def main() -> None:
     connect(connections, "Load case", "Validate loaded case")
     connect(connections, "Validate loaded case", "Case found?")
     connect(connections, "Case found?", "Apply request extras", si=0)
-    connect(connections, "Case found?", "Format step ack", si=1)
+    connect(connections, "Case found?", "Prepare Activity ack", si=1)
     connect(connections, "Apply request extras", "Status only?")
-    connect(connections, "Status only?", "Format step ack", si=0)
+    connect(connections, "Status only?", "Prepare Activity ack", si=0)
     connect(connections, "Status only?", "Resume persist?", si=1)
     connect(connections, "Resume persist?", "Update case after resume", si=0)
     connect(connections, "Resume persist?", "Load agent registry", si=1)
@@ -927,15 +999,19 @@ def main() -> None:
     connect(connections, "Call Excel Extractor", "Merge agent result")
     connect(connections, "Call Calculation Agent", "Merge agent result")
     connect(connections, "Call Schedule Builder", "Merge agent result")
-    connect(connections, "No agent this step", "Format step ack")
+    connect(connections, "No agent this step", "Prepare Activity ack")
     connect(connections, "Merge agent result", "Update case after agent")
     connect(connections, "Update case after agent", "Expand agent events")
     connect(connections, "Expand agent events", "Insert agent events")
     connect(connections, "Insert agent events", "Restore after agent events")
     connect(connections, "Restore after agent events", "Continue loop?")
     connect(connections, "Continue loop?", "POST continue run", si=0)
-    connect(connections, "Continue loop?", "Format step ack", si=1)
-    connect(connections, "POST continue run", "Format step ack")
+    connect(connections, "Continue loop?", "Prepare Activity ack", si=1)
+    connect(connections, "POST continue run", "Prepare Activity ack")
+    connect(connections, "Prepare Activity ack", "Activity sync?", si=0)
+    connect(connections, "Activity sync?", "POST step ack to MAS Activity", si=0)
+    connect(connections, "Activity sync?", "Format step ack", si=1)
+    connect(connections, "POST step ack to MAS Activity", "Format step ack")
 
     wf = {
         "id": WF_ID,
