@@ -120,7 +120,7 @@ def test_create_case_memory_when_webhook_configured(monkeypatch) -> None:
     from app.settings import Settings
 
     monkeypatch.setattr("app.cases_api.get_settings", lambda: Settings())
-    monkeypatch.setattr("app.cases_api._invoke_step", lambda case_id: None)
+    monkeypatch.setattr("app.cases_api._invoke_create", lambda case_id: None)
     res = client.post(
         "/cases",
         data={"task_description": "Извлечь скважины из Excel", "requested_by": "tester"},
@@ -145,12 +145,73 @@ def test_create_case_memory_when_webhook_configured(monkeypatch) -> None:
     assert schema["frames"][0]["nodes"]["input"]["tone"] == "active"
 
 
+def test_create_action_is_sent_to_n8n_for_new_case(monkeypatch) -> None:
+    monkeypatch.setenv("ORCHESTRATOR_WEBHOOK_URL", "http://n8n.test/webhook/mas-orchestrator-step")
+    from app.settings import Settings
+
+    monkeypatch.setattr("app.cases_api.get_settings", lambda: Settings())
+    captured: dict[str, object] = {}
+
+    async def fake_invoke(payload, *, files=None, timeout_s=90.0):
+        captured["payload"] = payload
+        return {"ok": True}
+
+    monkeypatch.setattr("app.cases_api.invoke_orchestrator", fake_invoke)
+    res = client.post(
+        "/cases",
+        data={
+            "task_description": "Создать новую задачу",
+            "task_name": "Новая задача",
+            "requested_by": "tester",
+        },
+    )
+
+    assert res.status_code == 200, res.text
+    payload = captured["payload"]
+    assert payload["action"] == "create"
+    assert payload["case_id"] == res.json()["case_id"]
+    assert payload["task_description"] == "Создать новую задачу"
+    assert payload["task_name"] == "Новая задача"
+
+
+def test_create_action_forwards_case_binaries_to_n8n(monkeypatch) -> None:
+    monkeypatch.setenv("ORCHESTRATOR_WEBHOOK_URL", "http://n8n.test/webhook/mas-orchestrator-step")
+    from app.settings import Settings
+
+    monkeypatch.setattr("app.cases_api.get_settings", lambda: Settings())
+    captured: dict[str, object] = {}
+
+    async def fake_invoke(payload, *, files=None, timeout_s=90.0):
+        captured["payload"] = payload
+        captured["files"] = files
+        return {"ok": True}
+
+    monkeypatch.setattr("app.cases_api.invoke_orchestrator", fake_invoke)
+    res = client.post(
+        "/cases",
+        data={"task_description": "Создать задачу с файлами", "requested_by": "tester"},
+        files=[
+            ("file", ("dates.xlsx", b"xlsx-bytes", "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet")),
+            ("schedule_files", ("base.inc", b"DATES\n/", "text/plain")),
+        ],
+    )
+
+    assert res.status_code == 200, res.text
+    forwarded = captured["files"]
+    assert forwarded["excel"] == (
+        "dates.xlsx",
+        b"xlsx-bytes",
+        "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+    )
+    assert forwarded["schedule_source"] == ("base.inc", b"DATES\n/", "text/plain")
+
+
 def test_create_case_optional_task_name(monkeypatch) -> None:
     monkeypatch.setenv("ORCHESTRATOR_WEBHOOK_URL", "http://127.0.0.1:9/webhook/mas-orchestrator-step")
     from app.settings import Settings
 
     monkeypatch.setattr("app.cases_api.get_settings", lambda: Settings())
-    monkeypatch.setattr("app.cases_api._invoke_step", lambda case_id: None)
+    monkeypatch.setattr("app.cases_api._invoke_create", lambda case_id: None)
     named = client.post(
         "/cases",
         data={
@@ -191,7 +252,7 @@ def test_patch_case_renames_existing_task(monkeypatch) -> None:
     from app.settings import Settings
 
     monkeypatch.setattr("app.cases_api.get_settings", lambda: Settings())
-    monkeypatch.setattr("app.cases_api._invoke_step", lambda case_id: None)
+    monkeypatch.setattr("app.cases_api._invoke_create", lambda case_id: None)
     res = client.post("/cases", data={"task_description": "Старое имя", "requested_by": "tester"})
     assert res.status_code == 200, res.text
     case_id = res.json()["case_id"]
@@ -220,7 +281,7 @@ def test_case_upload_roundtrip_artifact(tmp_path, monkeypatch) -> None:
     from app.settings import Settings
 
     monkeypatch.setattr("app.cases_api.get_settings", lambda: Settings())
-    monkeypatch.setattr("app.cases_api._invoke_step", lambda case_id: None)
+    monkeypatch.setattr("app.cases_api._invoke_create", lambda case_id: None)
     res = client.post(
         "/cases",
         data={"task_description": "INC + Excel", "requested_by": "tester"},
@@ -245,7 +306,7 @@ def test_hitl_answer_and_agent_event(monkeypatch) -> None:
     from app import control_plane
 
     monkeypatch.setattr("app.cases_api.get_settings", lambda: Settings())
-    monkeypatch.setattr("app.cases_api._invoke_step", lambda case_id: None)
+    monkeypatch.setattr("app.cases_api._invoke_create", lambda case_id: None)
     res = client.post("/cases", data={"task_description": "HITL", "requested_by": "tester"})
     case_id = res.json()["case_id"]
     control_plane.update_case(
@@ -283,7 +344,7 @@ def test_hitl_multipart_attaches_schedule(tmp_path, monkeypatch) -> None:
     from app import control_plane
 
     monkeypatch.setattr("app.cases_api.get_settings", lambda: Settings())
-    monkeypatch.setattr("app.cases_api._invoke_step", lambda case_id: None)
+    monkeypatch.setattr("app.cases_api._invoke_create", lambda case_id: None)
     res = client.post(
         "/cases",
         data={"task_description": "HITL files", "requested_by": "tester"},
@@ -359,7 +420,7 @@ def test_schedule_artifact_download_from_state(monkeypatch) -> None:
     from app import control_plane
 
     monkeypatch.setattr("app.cases_api.get_settings", lambda: Settings())
-    monkeypatch.setattr("app.cases_api._invoke_step", lambda case_id: None)
+    monkeypatch.setattr("app.cases_api._invoke_create", lambda case_id: None)
     res = client.post("/cases", data={"task_description": "INC out", "requested_by": "tester"})
     assert res.status_code == 200, res.text
     case_id = res.json()["case_id"]
@@ -416,7 +477,7 @@ def test_agent_result_post_is_idempotent(monkeypatch) -> None:
     from app import control_plane
 
     monkeypatch.setattr("app.cases_api.get_settings", lambda: Settings())
-    monkeypatch.setattr("app.cases_api._invoke_step", lambda case_id: None)
+    monkeypatch.setattr("app.cases_api._invoke_create", lambda case_id: None)
     res = client.post("/cases", data={"task_description": "idem", "requested_by": "tester"})
     case_id = res.json()["case_id"]
     body = {
@@ -522,4 +583,3 @@ def test_post_run_restarts_failed_and_done_cases(monkeypatch) -> None:
     assert again.json()["accepted"] is True
     assert invoked == [case_id]
     assert control_plane.get_case(case_id)["status"] == "running"
-

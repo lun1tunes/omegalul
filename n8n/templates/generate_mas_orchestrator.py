@@ -254,7 +254,11 @@ if(action==='probe'||(action==='status'&&readinessId)){
   }}];
 }
 let needsCreate=false;
-if(!caseId){
+if(action==='create'){
+  if(!caseId) caseId='CASE-'+Date.now().toString(16)+'-'+Math.random().toString(16).slice(2,8);
+  if(!goal) throw new Error('task_description is required for action=create');
+  needsCreate=true;
+} else if(!caseId){
   if(action!=='start') throw new Error('case_id is required');
   if(!goal) throw new Error('task_description is required for action=start');
   caseId='CASE-'+Date.now().toString(16)+'-'+Math.random().toString(16).slice(2,8);

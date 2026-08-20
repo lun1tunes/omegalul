@@ -305,10 +305,31 @@ def _new_case_id() -> str:
 
 
 async def _invoke_step(case_id: str) -> None:
+    await _invoke_action(case_id, action="step")
+
+
+async def _invoke_create(case_id: str) -> None:
+    await _invoke_action(case_id, action="create")
+
+
+async def _invoke_action(case_id: str, *, action: str) -> None:
     try:
-        await invoke_orchestrator({"case_id": case_id, "action": "step"}, timeout_s=180.0)
+        row = control_plane.get_case(case_id)
+        state = dict(row["state"] or {}) if row else {}
+        files = load_task_binaries(case_id)
+        await invoke_orchestrator(
+            {
+                "case_id": case_id,
+                "action": action,
+                "task_description": str(state.get("goal") or ""),
+                "task_name": str(state.get("task_name") or ""),
+                "requested_by": "mas activity user",
+            },
+            files=files or None,
+            timeout_s=180.0,
+        )
     except OrchestratorError as exc:
-        logger.error("orchestrator step failed case_id=%s: %s", case_id, exc)
+        logger.error("orchestrator %s failed case_id=%s: %s", action, case_id, exc)
         control_plane.append_event(
             case_id,
             kind="case.failed",
@@ -405,7 +426,7 @@ async def create_case(
         payload={"requested_by": requested_by, "files": [fname for _s, fname, _c, _m in uploads], "task_name": name},
     )
     control_plane.update_case(case_id, status="running")
-    background_tasks.add_task(_invoke_step, case_id)
+    background_tasks.add_task(_invoke_create, case_id)
     return {"ok": True, "case_id": case_id, "task_id": case_id, "status": "running", "task_name": name}
 
 

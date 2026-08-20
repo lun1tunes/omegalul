@@ -146,6 +146,15 @@ async function run(name, json, nodes = {}) {
   assert.equal(started.goal, 'Сдвинуть даты');
   assert.match(started.case_id, /^CASE-/);
 
+  const created = await run('Normalize step request', {
+    action: 'create',
+    case_id: 'CASE-from-activity',
+    task_description: 'Новая задача из Activity',
+  });
+  assert.equal(created.needs_create, true);
+  assert.equal(created.case_id, 'CASE-from-activity');
+  assert.equal(created.goal, 'Новая задача из Activity');
+
   const resumed = await run('Normalize step request', {
     action: 'resume',
     case_id: 'CASE-1',
