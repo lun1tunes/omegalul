@@ -31,7 +31,7 @@ from .tools import TOOL_SCHEMAS, execute_tool
 # Import modules for registration. These modules never invoke an LLM.
 from . import excel_tools as _excel_tools  # noqa: F401
 from . import state_tools as _state_tools  # noqa: F401
-from .agent_run import run_excel_agent
+from . import agent_run
 
 logging.basicConfig(level=os.getenv("LOG_LEVEL", "INFO").upper(), format="%(asctime)s %(levelname)s %(name)s %(message)s")
 logger = logging.getLogger(__name__)
@@ -272,6 +272,16 @@ def normalize_agent_tool_args(tool_name: str, args: dict[str, Any]) -> dict[str,
         elif isinstance(candidate, dict) and isinstance(candidate.get("table_id"), str):
             normalized["table_id"] = candidate["table_id"]
 
+    if tool_name in {"query_table", "detect_tables", "describe_table", "list_column_values"}:
+        for field in ("limit", "max_tables", "sample_rows"):
+            raw = normalized.get(field)
+            if isinstance(raw, str) and raw.strip().isdigit():
+                normalized[field] = int(raw.strip())
+            elif isinstance(raw, bool):
+                continue
+            elif isinstance(raw, float) and raw.is_integer():
+                normalized[field] = int(raw)
+
     if tool_name == "query_table":
         if "table_id" not in normalized and isinstance(normalized.get("table"), str):
             normalized["table_id"] = normalized["table"]
@@ -399,6 +409,43 @@ class AgentTaskBody(BaseModel):
     constraints: dict[str, Any] = Field(default_factory=dict)
 
 
+class SessionOnlyBody(BaseModel):
+    model_config = ConfigDict(extra="ignore")
+    session_id: str = Field(min_length=1, max_length=128)
+
+
+def _session_http_error(error: Exception) -> HTTPException:
+    detail = str(error)
+    code = status.HTTP_404_NOT_FOUND if detail == "Session not found" else status.HTTP_422_UNPROCESSABLE_ENTITY
+    return HTTPException(status_code=code, detail=detail)
+
+
+@app.post("/agent-tools/open_session", dependencies=[Depends(require_api_key)])
+def open_excel_session(body: AgentTaskBody) -> dict[str, Any]:
+    return agent_run.open_session(body.model_dump())
+
+
+@app.post("/agent-tools/extract_commissioning", dependencies=[Depends(require_api_key)])
+def extract_commissioning(body: SessionOnlyBody) -> dict[str, Any]:
+    try:
+        return agent_run.extract_commissioning(body.session_id)
+    except ValueError as error:
+        raise _session_http_error(error) from error
+
+
+@app.get("/sessions/{session_id}/result", dependencies=[Depends(require_api_key)])
+def get_session_result(session_id: str) -> dict[str, Any]:
+    try:
+        return agent_run.session_result(session_id)
+    except ValueError as error:
+        raise _session_http_error(error) from error
+
+
+@app.post("/agent-tools/{tool_name}", dependencies=[Depends(require_api_key)])
+def call_agent_tool_alias(tool_name: str, body: AgentToolRequest) -> dict[str, Any]:
+    return call_agent_tool(tool_name, body)
+
+
 @app.post("/agent/run", dependencies=[Depends(require_api_key)])
-def agent_run(body: AgentTaskBody) -> dict[str, Any]:
-    return run_excel_agent(body.model_dump())
+def agent_run_endpoint(body: AgentTaskBody) -> dict[str, Any]:
+    return agent_run.run_excel_agent(body.model_dump())

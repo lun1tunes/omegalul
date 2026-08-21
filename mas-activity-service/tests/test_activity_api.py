@@ -556,9 +556,9 @@ def test_ready_health_and_static_assets() -> None:
     assert "looksMachineAsk" in js_text
     assert 'q.required ? "обязательно"' not in js_text
     assert "формат: ${q.expected_format}" not in js_text
-    assert "app.js?v=82" in index.text
-    assert "schema.js?v=6" in index.text
-    assert "app.css?v=75" in index.text
+    assert "app.js?v=83" in index.text
+    assert "schema.js?v=10" in index.text
+    assert "app.css?v=78" in index.text
     assert "viewChatBtn" in index.text
     assert "viewSchemaBtn" in index.text
     assert ">Чат<" in index.text
@@ -607,9 +607,22 @@ def test_ready_health_and_static_assets() -> None:
     assert "dRev" in schema_js
     assert "excel_orch" in schema_js
     assert "schema-slip" in (STATIC / "app.css").read_text(encoding="utf-8")
-    assert "schema-status" in (STATIC / "app.css").read_text(encoding="utf-8")
+    assert "schema-download" in (STATIC / "app.css").read_text(encoding="utf-8")
     assert "schema-caption" in (STATIC / "app.css").read_text(encoding="utf-8")
     assert "markerUnits=\"userSpaceOnUse\"" in schema_js
+    assert "schemaArrowIdle" not in schema_js
+    assert "schemaArrowDone" not in schema_js
+    assert 'markerWidth="2.3"' in schema_js
+    assert "schemaArrowActive" in schema_js
+    assert "removeAttribute(\"marker-end\")" in schema_js
+    assert "schema-download" in schema_js
+    assert "schema-peek" in schema_js
+    assert "markClippedNodes" in schema_js
+    assert "is-clipped" in schema_js
+    assert "schema-peek" in (STATIC / "app.css").read_text(encoding="utf-8")
+    assert "schema-node.is-clipped" in (STATIC / "app.css").read_text(encoding="utf-8")
+    assert "Скачать результат" in schema_js
+    assert "Скачать результат" in js_text
     assert "pathMidpoint" in schema_js
     assert "getTotalLength" in schema_js
     assert "getPointAtLength" in schema_js

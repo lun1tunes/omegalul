@@ -13,6 +13,8 @@ def load_source(inputs: dict[str, Any], case_id: str, activity: str = "") -> str
     path = inputs.get("schedule_source") or inputs.get("schedule_path")
     artifacts = inputs.get("artifacts") if isinstance(inputs.get("artifacts"), dict) else {}
     meta = artifacts.get("schedule_source") if isinstance(artifacts.get("schedule_source"), dict) else {}
+    if not meta and isinstance(artifacts.get("schedule_files"), dict):
+        meta = artifacts.get("schedule_files") or {}
     if path and Path(str(path)).is_file():
         return Path(str(path)).read_text(encoding="utf-8")
     base = str(inputs.get("activity_base_url") or activity).rstrip("/")

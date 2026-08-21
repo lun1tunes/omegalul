@@ -156,7 +156,35 @@ WCONPROD
     assert "GCONPROD" in revised["generated_schedule"]
 
 
-def test_group_intent_ignores_include_filenames() -> None:
+def test_load_source_fetches_from_activity_artifact(monkeypatch) -> None:
+    from app.io import load_source
+
+    class _Resp:
+        def read(self):
+            return b"DATES\n/"
+
+        def __enter__(self):
+            return self
+
+        def __exit__(self, *args):
+            return False
+
+    seen: dict[str, str] = {}
+
+    def fake_urlopen(url, timeout=30):
+        seen["url"] = url
+        return _Resp()
+
+    monkeypatch.setattr("app.io.urlopen", fake_urlopen)
+    text = load_source(
+        {
+            "activity_base_url": "http://mas-activity:8200",
+            "artifacts": {"schedule_source": {"filename": "base.inc", "artifact_id": "schedule_source"}},
+        },
+        "CASE-1",
+    )
+    assert seen["url"] == "http://mas-activity:8200/cases/CASE-1/artifacts/schedule_source"
+    assert "DATES" in text
     from app.group_rebind import wants_group_rebind
 
     objective = "На основе старого прогнозного schedule и Excel с новыми датами ввода собрать новый schedule.inc"

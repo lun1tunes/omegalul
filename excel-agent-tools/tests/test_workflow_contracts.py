@@ -44,6 +44,7 @@ ERROR_AND_STUB_WORKFLOWS = {
     "mas-ensure-control-plane.workflow.json",
     "mas-orchestrator.workflow.json",
     "schedule-builder-agent.workflow.json",
+    "excel-extractor-agent.workflow.json",
     "cluster-calc-specialist-adapter.workflow.json",
     "binary-results-specialist-adapter.workflow.json",
     "presentation-specialist-adapter.workflow.json",
@@ -112,7 +113,7 @@ def test_ui_import_manifest_is_complete_and_matches_static_bindings() -> None:
     assert manifest["target_n8n_version"] == "2.30.8"
     imported = {Path(value).name for value in manifest["full_clean_import_set"]}
     assert imported == {path.name for path in importable_workflow_files()}
-    assert len(imported) == 13
+    assert len(imported) == 14
     assert {path.name for path in CORE.glob("*.workflow.json")} == {
         Path(value).name for value in manifest["runtime_import_order"]
     }
@@ -132,12 +133,15 @@ def test_ui_import_manifest_is_complete_and_matches_static_bindings() -> None:
     workflow_names = set(workflows_by_name)
     bindings = manifest["mandatory_execute_workflow_bindings"]
     future_bindings = manifest["future_enterprise_or_optional_bindings"]
-    assert len(bindings) == 26
+    assert len(bindings) == 27
     assert future_bindings == []
     assert manifest["health_check"]["ui_name"] == "Form — MAS Deployment Health Check"
     assert (ROOT / "docs.md").is_file()
     runtime_order = [Path(value).name for value in manifest["runtime_import_order"]]
     assert runtime_order.index("schedule-builder-agent.workflow.json") < runtime_order.index(
+        "mas-orchestrator.workflow.json"
+    )
+    assert runtime_order.index("excel-extractor-agent.workflow.json") < runtime_order.index(
         "mas-orchestrator.workflow.json"
     )
     all_static_bindings = bindings + future_bindings
@@ -1380,6 +1384,7 @@ def test_universal_engineering_instruction_templates_are_portable() -> None:
         "generate_mas_orchestrator.py",
         "generate_mas_ensure_control_plane.py",
         "generate_schedule_builder_agent.py",
+        "generate_excel_extractor_agent.py",
         "relayout_core_workflows.py",
     }
     assert {path.name for path in TEMPLATES.iterdir() if path.is_file()} == expected

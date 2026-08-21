@@ -68,7 +68,10 @@ def _files_from_state(state: dict[str, Any]) -> list[str]:
     artifacts = state.get("artifacts") if isinstance(state.get("artifacts"), dict) else {}
     names: list[str] = []
     seen: set[str] = set()
+    skip = {"schedule_out", "diff"}
     for key, item in artifacts.items():
+        if key in skip:
+            continue
         name = ""
         if isinstance(item, dict):
             name = _text(item.get("filename") or item.get("artifact_id") or key)

@@ -145,15 +145,16 @@ start-windows.bat
 
 ### Шаг 1. Импорт Workflows в n8n
 
-Зайдите в UI n8n, выберите "Import from File" и загрузите файлы из `n8n/import-manifest.json` → `runtime_import_order`. **Ничего пока не активируйте!** Живой MAS-контур в `n8n/workflows/core/` (Excel/Math идут HTTP FastAPI, не n8n-агентами):
+Зайдите в UI n8n, выберите "Import from File" и загрузите файлы из `n8n/import-manifest.json` → `runtime_import_order`. **Ничего пока не активируйте!** Живой MAS-контур в `n8n/workflows/core/` (Excel Extractor и Schedule Builder — n8n AI + FastAPI tools; Math — HTTP FastAPI):
 
 1. `n8n/workflows/core/tnavigator-schedule-knowledge-ingestion.workflow.json`
 2. `n8n/workflows/core/tnavigator-schedule-hybrid-retrieval.workflow.json`
 3. `n8n/workflows/core/schedule-builder-agent.workflow.json`
-4. `n8n/workflows/core/mas-error-traces.workflow.json`
-5. `n8n/workflows/core/mas-ensure-control-plane.workflow.json`
-6. `n8n/workflows/core/mas-orchestrator.workflow.json`
-7. `n8n/workflows/core/mas-deployment-health-check.workflow.json`
+4. `n8n/workflows/core/excel-extractor-agent.workflow.json`
+5. `n8n/workflows/core/mas-error-traces.workflow.json`
+6. `n8n/workflows/core/mas-ensure-control-plane.workflow.json`
+7. `n8n/workflows/core/mas-orchestrator.workflow.json`
+8. `n8n/workflows/core/mas-deployment-health-check.workflow.json`
 
 Архив (не импортировать): `n8n/workflows/retired/` — Engineering MAS, CAS, n8n Excel/Calculation, SCHEDULE Builder Code-pipeline, Entry/Human Gate, Trace writer, Activity Hydrate.
 
@@ -219,6 +220,7 @@ CSV: [`n8n/data-tables/mas_trace_events_v1.header.csv`](n8n/data-tables/mas_trac
 | `Agent — Excel Extractor` | `Call Excel protocol Hybrid Retrieval` | `MAS — Knowledge Retrieval` |
 | `Template — Engineering Specialist` | `Call specialist Hybrid Retrieval` | `MAS — Knowledge Retrieval` |
 | `Orchestrator — Engineering MAS` | `Call SCHEDULE Builder Specialist` | `SCHEDULE — Builder` |
+| `Orchestrator — MAS` | `Call Excel Extractor` | `Agent — Excel Extractor` |
 | `Orchestrator — MAS` | `Call Schedule Builder` | `Agent — Schedule Builder` |
 | `Orchestrator — Engineering MAS` | `Call Calculation Specialist` | `Agent — Calculation (Math Service)` |
 | `Orchestrator — Engineering MAS` | `Call MAS Trace Event Writer` | `Writer — MAS Trace` |
@@ -254,7 +256,7 @@ CSV: [`n8n/data-tables/mas_trace_events_v1.header.csv`](n8n/data-tables/mas_trac
 ### Шаг 5. Настройка доступов (Credentials)
 
 Вам потребуется указать ключи для нейросетей, баз данных и локальных сервисов:
-- **Orchestrator и SCHEDULE Builder:** Создайте подключения к вашей совместимой с OpenAI модели (`Planner Chat Model`, `Verifier Chat Model`, **Schedule Builder Chat Model — Qwen**). Live-путь оркестратора: `executeWorkflow` `Call Schedule Builder` → `Agent — Schedule Builder` (как Excel Extractor). FastAPI `schedule-builder:8090` — только parse/apply/emit tools, не LLM.
+- **Orchestrator и специалисты:** Создайте подключения к вашей совместимой с OpenAI модели (`Decision Chat Model`, **Excel Extractor Chat Model — Qwen**, **Schedule Builder Chat Model — Qwen**). Live-путь: `executeWorkflow` `Call Excel Extractor` → `Agent — Excel Extractor` (excel-tools FastAPI, файлы через Activity GET) и `Call Schedule Builder` → `Agent — Schedule Builder`. FastAPI не пишет LLM.
 - **Агент Excel Extractor:** В нодах HTTP укажите URL к локальному сервису Excel Tools и заданный `API_KEY`. Выберите нужное подключение к базе Postgres.
 - **RAG (Знания):** Выберите подключение к Postgres и единый профиль генерации эмбеддингов. (Важно: не заполняйте поле `Dimensions` в настройках эмбеддингов).
 - **Агент вычислений:** В ноде HTTP-запроса пропишите `math_service_url` (`http://<IP-вашего-ПК>:8100/api/v1/math`).

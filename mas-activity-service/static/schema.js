@@ -104,6 +104,10 @@
   let resizeTimer = 0;
   let lastSlipsKey = "";
   let lastPaintIndex = -1;
+  let scheduleDownload = null;
+  let peekEl = null;
+  let peekTimer = 0;
+  let peekSource = null;
 
   function text(value) {
     return String(value || "").trim();
@@ -125,7 +129,9 @@
     const artifacts = state && typeof state.artifacts === "object" ? state.artifacts : {};
     const names = [];
     const seen = new Set();
+    const skip = new Set(["schedule_out", "diff"]);
     for (const [key, item] of Object.entries(artifacts)) {
+      if (skip.has(key)) continue;
       let name = "";
       if (item && typeof item === "object") name = text(item.filename || item.artifact_id || key);
       else if (item) name = text(key);
@@ -575,16 +581,10 @@
     edgesEl.setAttribute("preserveAspectRatio", "none");
     edgesEl.innerHTML = `
       <defs>
-        <marker id="schemaArrowIdle" viewBox="0 0 10 10" refX="8.4" refY="5" markerWidth="5.2" markerHeight="5.2" markerUnits="userSpaceOnUse" orient="auto" overflow="visible">
-          <path d="M 0 0.8 L 10 5 L 0 9.2 Z" fill="#94a3b8"></path>
-        </marker>
-        <marker id="schemaArrowDone" viewBox="0 0 10 10" refX="8.4" refY="5" markerWidth="5.2" markerHeight="5.2" markerUnits="userSpaceOnUse" orient="auto" overflow="visible">
-          <path d="M 0 0.8 L 10 5 L 0 9.2 Z" fill="#0033A0"></path>
-        </marker>
-        <marker id="schemaArrowActive" viewBox="0 0 10 10" refX="8.4" refY="5" markerWidth="5.8" markerHeight="5.8" markerUnits="userSpaceOnUse" orient="auto" overflow="visible">
+        <marker id="schemaArrowActive" viewBox="0 0 10 10" refX="8.4" refY="5" markerWidth="2.3" markerHeight="2.3" markerUnits="userSpaceOnUse" orient="auto" overflow="visible">
           <path d="M 0 0.8 L 10 5 L 0 9.2 Z" fill="#00B8F0"></path>
         </marker>
-        <marker id="schemaArrowError" viewBox="0 0 10 10" refX="8.4" refY="5" markerWidth="5.8" markerHeight="5.8" markerUnits="userSpaceOnUse" orient="auto" overflow="visible">
+        <marker id="schemaArrowError" viewBox="0 0 10 10" refX="8.4" refY="5" markerWidth="2.3" markerHeight="2.3" markerUnits="userSpaceOnUse" orient="auto" overflow="visible">
           <path d="M 0 0.8 L 10 5 L 0 9.2 Z" fill="#F90D4B"></path>
         </marker>
       </defs>
@@ -617,9 +617,138 @@
       const body = document.createElement("div");
       body.className = "schema-node-body";
       node.append(kicker, title, body);
+      node.addEventListener("pointerenter", () => {
+        clearTimeout(peekTimer);
+        showPeek(node);
+      });
+      node.addEventListener("pointerleave", hidePeekSoon);
       nodesEl.appendChild(node);
     }
     built = true;
+    bindPeekChrome();
+  }
+
+  function overflowing(el) {
+    if (!el) return false;
+    return el.scrollHeight > el.clientHeight + 1 || el.scrollWidth > el.clientWidth + 1;
+  }
+
+  function markClippedNodes() {
+    if (!nodesEl || !root || root.hidden) return;
+    for (const node of nodesEl.querySelectorAll(".schema-node")) {
+      const body = node.querySelector(".schema-node-body");
+      let clipped = overflowing(body);
+      if (!clipped && body) {
+        for (const el of body.querySelectorAll(".schema-goal, .schema-prompt, .schema-caption, .schema-files li")) {
+          if (overflowing(el)) {
+            clipped = true;
+            break;
+          }
+        }
+      }
+      node.classList.toggle("is-clipped", clipped);
+      if (clipped) node.setAttribute("aria-haspopup", "true");
+      else node.removeAttribute("aria-haspopup");
+    }
+  }
+
+  function ensurePeek() {
+    if (peekEl) return peekEl;
+    peekEl = document.createElement("div");
+    peekEl.id = "schemaPeek";
+    peekEl.className = "schema-peek";
+    peekEl.hidden = true;
+    peekEl.setAttribute("role", "tooltip");
+    peekEl.addEventListener("pointerenter", () => clearTimeout(peekTimer));
+    peekEl.addEventListener("pointerleave", hidePeekSoon);
+    document.body.appendChild(peekEl);
+    return peekEl;
+  }
+
+  function hidePeek() {
+    clearTimeout(peekTimer);
+    if (peekSource) {
+      peekSource.classList.remove("is-peeking");
+      peekSource.removeAttribute("aria-expanded");
+    }
+    peekSource = null;
+    if (peekEl) {
+      peekEl.hidden = true;
+      peekEl.innerHTML = "";
+    }
+  }
+
+  function hidePeekSoon() {
+    clearTimeout(peekTimer);
+    peekTimer = setTimeout(() => {
+      if (peekEl && !peekEl.hidden && peekEl.matches(":hover")) return;
+      if (peekSource && peekSource.matches(":hover")) return;
+      hidePeek();
+    }, 140);
+  }
+
+  function placePeek(node) {
+    const peek = ensurePeek();
+    const gap = 10;
+    const box = node.getBoundingClientRect();
+    peek.style.left = "0px";
+    peek.style.top = "0px";
+    const width = peek.offsetWidth;
+    const height = peek.offsetHeight;
+    let left = box.right + gap;
+    let top = box.top;
+    if (left + width > window.innerWidth - gap) left = box.left - width - gap;
+    if (left < gap) left = Math.max(gap, (window.innerWidth - width) / 2);
+    if (top + height > window.innerHeight - gap) top = window.innerHeight - height - gap;
+    if (top < gap) top = gap;
+    peek.style.left = `${Math.round(left)}px`;
+    peek.style.top = `${Math.round(top)}px`;
+  }
+
+  function showPeek(node) {
+    if (!node || !node.classList.contains("is-clipped")) return;
+    const body = node.querySelector(".schema-node-body");
+    if (!body) return;
+    if (peekSource === node && peekEl && !peekEl.hidden) {
+      placePeek(node);
+      return;
+    }
+    const peek = ensurePeek();
+    peek.innerHTML = "";
+    const kicker = node.querySelector(".schema-kicker");
+    const title = node.querySelector("h2");
+    if (kicker) peek.append(kicker.cloneNode(true));
+    if (title) peek.append(title.cloneNode(true));
+    const clone = body.cloneNode(true);
+    clone.className = "schema-peek-body";
+    peek.append(clone);
+    if (peekSource && peekSource !== node) {
+      peekSource.classList.remove("is-peeking");
+      peekSource.removeAttribute("aria-expanded");
+    }
+    peek.hidden = false;
+    peekSource = node;
+    node.classList.add("is-peeking");
+    node.setAttribute("aria-expanded", "true");
+    placePeek(node);
+  }
+
+  function bindPeekChrome() {
+    document.addEventListener("keydown", (ev) => {
+      if (ev.key === "Escape") hidePeek();
+    });
+    document.addEventListener("pointerdown", (ev) => {
+      if (!peekEl || peekEl.hidden) return;
+      const target = ev.target;
+      if (peekEl.contains(target) || (peekSource && peekSource.contains(target))) return;
+      hidePeek();
+    });
+    if (root) {
+      new MutationObserver(() => {
+        if (root.hidden) hidePeek();
+        else requestAnimationFrame(markClippedNodes);
+      }).observe(root, { attributes: true, attributeFilter: ["hidden"] });
+    }
   }
 
   function bubbleEl(kind, textValue, x, y, from, animate) {
@@ -649,6 +778,8 @@
       files,
       frame.output?.result || "",
       frame.output?.prompt || "",
+      scheduleDownload?.download_path || "",
+      complete ? "1" : "0",
       ...nodes,
       ...edges,
     ].join("\n");
@@ -657,12 +788,15 @@
   function paintChrome(frame) {
     if (stepEl) stepEl.textContent = frame?.label || "";
     if (countEl) {
-      countEl.textContent = frames.length ? `${index + 1} / ${frames.length}` : "0 / 0";
+      countEl.textContent = frames.length ? `шаг ${index + 1} / ${frames.length}` : "шаг 0 / 0";
     }
     if (rangeEl) {
       rangeEl.max = String(Math.max(frames.length - 1, 0));
       rangeEl.value = String(index);
       rangeEl.disabled = frames.length < 2;
+      const max = Math.max(frames.length - 1, 1);
+      const pct = frames.length < 2 ? 0 : (index / max) * 100;
+      rangeEl.style.setProperty("--schema-progress", `${pct}%`);
     }
     if (prevBtn) prevBtn.disabled = index <= 0;
     if (nextBtn) nextBtn.disabled = index >= frames.length - 1;
@@ -700,6 +834,7 @@
           for (const name of files) {
             const li = document.createElement("li");
             li.textContent = name;
+            li.title = name;
             list.append(li);
           }
           body.append(list);
@@ -714,6 +849,16 @@
           prompt.className = "schema-prompt";
           prompt.textContent = frame.output.prompt;
           body.append(prompt);
+        }
+        const showDl = scheduleDownload && ["active", "done", "error"].includes(spec.tone);
+        if (showDl) {
+          const link = document.createElement("a");
+          link.className = "schema-download schedule-download";
+          link.href = scheduleDownload.download_path;
+          link.setAttribute("download", scheduleDownload.filename || "schedule_result.inc");
+          link.textContent = "Скачать результат";
+          link.title = `Скачать результат SCHEDULE (${scheduleDownload.filename || "schedule_result.inc"})`;
+          body.append(link);
         }
       } else {
         const status = document.createElement("span");
@@ -730,9 +875,6 @@
       }
     }
     const marker = {
-      idle: "url(#schemaArrowIdle)",
-      pending: "url(#schemaArrowIdle)",
-      done: "url(#schemaArrowDone)",
       active: "url(#schemaArrowActive)",
       error: "url(#schemaArrowError)",
     };
@@ -745,7 +887,8 @@
       path.setAttribute("d", visual.dir === "back" ? geo.dRev : geo.d);
       path.setAttribute("data-dir", visual.dir);
       path.setAttribute("class", `schema-edge-path is-${tone}${visual.dir === "back" ? " is-back" : ""}`);
-      path.setAttribute("marker-end", marker[tone] || marker.idle);
+      if (marker[tone]) path.setAttribute("marker-end", marker[tone]);
+      else path.removeAttribute("marker-end");
     }
     stage.querySelectorAll(".schema-slip").forEach((el) => el.remove());
     for (const id of DRAW_EDGE_KEYS) {
@@ -757,6 +900,8 @@
       stage.append(bubbleEl("edge", visual.bubble, mid.x, mid.y, "edge", animateSlips));
     }
     paintChrome(frame);
+    hidePeek();
+    requestAnimationFrame(markClippedNodes);
   }
 
   function showIndex(next, { user = false } = {}) {
@@ -777,6 +922,8 @@
       state.artifacts = Object.fromEntries(attached.map((name, i) => [`file_${i}`, { filename: name }]));
     }
     const events = eventsFromFeed(feed);
+    const art = feed.schedule_artifact;
+    scheduleDownload = art && typeof art === "object" && art.available && art.download_path ? art : null;
     const prevIndex = index;
     const prevLen = frames.length;
     frames = buildSchemaFrames(events, state);
@@ -793,8 +940,10 @@
     index = 0;
     followLive = true;
     complete = false;
+    scheduleDownload = null;
     lastSlipsKey = "";
     lastPaintIndex = -1;
+    hidePeek();
     renderFrame(frames[0]);
   }
 

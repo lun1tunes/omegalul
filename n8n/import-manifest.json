@@ -7,6 +7,7 @@
     "workflows/core/tnavigator-schedule-knowledge-ingestion.workflow.json",
     "workflows/core/tnavigator-schedule-hybrid-retrieval.workflow.json",
     "workflows/core/schedule-builder-agent.workflow.json",
+    "workflows/core/excel-extractor-agent.workflow.json",
     "workflows/core/mas-error-traces.workflow.json",
     "workflows/core/mas-ensure-control-plane.workflow.json",
     "workflows/core/mas-orchestrator.workflow.json",
@@ -22,6 +23,7 @@
     "workflows/core/tnavigator-schedule-knowledge-ingestion.workflow.json",
     "workflows/core/tnavigator-schedule-hybrid-retrieval.workflow.json",
     "workflows/core/schedule-builder-agent.workflow.json",
+    "workflows/core/excel-extractor-agent.workflow.json",
     "workflows/core/mas-error-traces.workflow.json",
     "workflows/core/mas-ensure-control-plane.workflow.json",
     "workflows/core/mas-orchestrator.workflow.json",
@@ -158,6 +160,12 @@
       "node": "Call CAS persist — routing gate",
       "target": "CAS — Persist Task State",
       "placeholder": "REPLACE_CAS_PERSIST_IN_UI"
+    },
+    {
+      "owner": "Orchestrator — MAS",
+      "node": "Call Excel Extractor",
+      "target": "Agent — Excel Extractor",
+      "placeholder": "REPLACE_EXCEL_EXTRACTION_AGENT_IN_UI"
     },
     {
       "owner": "Orchestrator — Engineering MAS",

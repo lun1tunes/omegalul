@@ -8,10 +8,9 @@ import logging
 import os
 from pathlib import Path
 from typing import Any
-from urllib.parse import urlparse
 from urllib.request import Request, urlopen
 
-from .sessions import init_state, load_state, locked_session, new_session_id, session_dir, session_file
+from .sessions import init_state, load_state, locked_session, new_session_id, save_state, session_dir, session_file
 from .tools import execute_tool
 from . import excel_tools as _excel_tools  # noqa: F401  # register detect_tables / query_table
 from . import state_tools as _state_tools  # noqa: F401
@@ -53,15 +52,28 @@ def _fetch_bytes(url: str) -> bytes:
         return resp.read()
 
 
+def _artifact_card(artifacts: dict[str, Any], *keys: str) -> dict[str, Any]:
+    for key in keys:
+        item = artifacts.get(key)
+        if isinstance(item, dict) and item:
+            return item
+    return {}
+
+
+def _task_activity(task: dict[str, Any]) -> str:
+    inputs = task.get("inputs") if isinstance(task.get("inputs"), dict) else {}
+    return str(inputs.get("activity_base_url") or ACTIVITY).rstrip("/")
+
+
 def _load_excel(task: dict[str, Any]) -> tuple[str, str]:
     inputs = task.get("inputs") if isinstance(task.get("inputs"), dict) else {}
     artifacts = inputs.get("artifacts") if isinstance(inputs.get("artifacts"), dict) else {}
-    excel = artifacts.get("excel") if isinstance(artifacts.get("excel"), dict) else {}
+    excel = _artifact_card(artifacts, "excel", "file")
     path = inputs.get("excel_path") or excel.get("path")
     url = inputs.get("excel_url") or inputs.get("artifact_url")
-    activity = str(inputs.get("activity_base_url") or ACTIVITY).rstrip("/")
+    activity = _task_activity(task)
     case_id = str(task.get("case_id") or "")
-    artifact_id = excel.get("artifact_id") or "excel"
+    artifact_id = str(excel.get("artifact_id") or "excel")
     if activity and case_id and not url:
         url = f"{activity}/cases/{case_id}/artifacts/{artifact_id}"
     data: bytes | None = None
@@ -70,13 +82,14 @@ def _load_excel(task: dict[str, Any]) -> tuple[str, str]:
         data = Path(path).read_bytes()
         filename = Path(path).name
     elif url:
-        data = _fetch_bytes(url)
-        parsed = urlparse(url)
-        filename = Path(parsed.path).name or filename
+        try:
+            data = _fetch_bytes(url)
+        except Exception as exc:
+            raise FileNotFoundError(f"excel artifact fetch failed: {url}: {exc}") from exc
     if not data:
         raise FileNotFoundError("excel artifact is missing")
     session_id = new_session_id()
-    directory = session_dir(session_id, create=True)
+    session_dir(session_id, create=True)
     suffix = Path(filename).suffix.lower() or ".xlsx"
     relative = f"input{suffix}"
     dest = session_file(session_id, relative)
@@ -88,7 +101,14 @@ def _load_excel(task: dict[str, Any]) -> tuple[str, str]:
         file_name=filename,
         file_hash=f"sha256:{digest}",
         file_size=len(data),
-        payload={"agent_id": "excel_extractor", "case_id": case_id},
+        payload={
+            "agent_id": "excel_extractor",
+            "case_id": case_id,
+            "task_id": str(task.get("task_id") or ""),
+            "objective": str(task.get("objective") or ""),
+            "handoff_message": str(task.get("handoff_message") or ""),
+            "activity_base": activity,
+        },
     )
     return session_id, filename
 
@@ -155,39 +175,82 @@ def _query_rows(state: dict[str, Any], session_id: str, payload: dict[str, Any])
     return columns, rows
 
 
-def commissioning_facts(tables: list[dict[str, Any]]) -> list[dict[str, Any]]:
-    facts: list[dict[str, Any]] = []
-    seen: set[str] = set()
-    for table in tables:
-        preview = table.get("preview") if isinstance(table, dict) else []
-        if not isinstance(preview, list):
+def _agent_result(
+    task_id: str,
+    status: str,
+    message: str,
+    *,
+    data: dict[str, Any] | None = None,
+    artifacts: dict[str, Any] | None = None,
+    issues: list[Any] | None = None,
+    requests: list[Any] | None = None,
+    assumptions: list[Any] | None = None,
+) -> dict[str, Any]:
+    return {
+        "task_id": task_id,
+        "agent_id": "excel_extractor",
+        "status": status,
+        "message": message,
+        "data": data or {},
+        "artifacts": artifacts or {},
+        "issues": issues or [],
+        "assumptions": assumptions or [],
+        "requests": requests or [],
+    }
+
+
+def _store_result(state: dict[str, Any], result: dict[str, Any]) -> dict[str, Any]:
+    state["agent_result"] = result
+    save_state(str(state["session_id"]), state)
+    return result
+
+
+def suggested_capability(objective: str, handoff: str = "") -> str:
+    text = f"{objective} {handoff}".casefold()
+    if any(token in text for token in ("дат", "ввод", "commission", "скважин", "well", "дебит")):
+        return "commissioning"
+    if not text.strip():
+        return "commissioning"
+    return "operations"
+
+
+def _compact_inspect(state: dict[str, Any]) -> dict[str, Any]:
+    intro = execute_tool(state, "workbook_introspect", {})
+    meta = intro.get("result") if isinstance(intro, dict) else {}
+    detect = execute_tool(state, "detect_tables", {"max_tables": 10})
+    raw = detect.get("result") if isinstance(detect, dict) else {}
+    tables = raw.get("tables") if isinstance(raw, dict) else []
+    if not isinstance(tables, list):
+        tables = []
+    compact: list[dict[str, Any]] = []
+    for table in tables[:12]:
+        if not isinstance(table, dict):
             continue
-        for row in preview:
-            if not isinstance(row, dict):
-                continue
-            well = ""
-            date: Any = None
-            for key, value in row.items():
-                if _looks_well_col(str(key)) and not well:
-                    well = _as_well(value)
-                elif _looks_date_col(str(key)) and date in (None, ""):
-                    date = _as_date(value)
-            if not well or date in (None, ""):
-                continue
-            token = f"{well}|{date}"
-            if token in seen:
-                continue
-            seen.add(token)
-            facts.append({"well": well, "date": date, "values": row})
-    return facts
+        cols = table.get("columns") if isinstance(table.get("columns"), list) else []
+        compact.append(
+            {
+                "table_id": table.get("table_id"),
+                "sheet": table.get("sheet"),
+                "range": table.get("range"),
+                "row_count": table.get("row_count"),
+                "columns": cols[:24],
+                "columns_truncated": len(cols) > 24,
+                "title": table.get("title") or "",
+            }
+        )
+    sheets = meta.get("sheets") if isinstance(meta, dict) else []
+    return {
+        "file_name": (meta.get("file_name") if isinstance(meta, dict) else "") or state.get("file_name"),
+        "sheets": sheets[:40] if isinstance(sheets, list) else [],
+        "table_count": len(tables),
+        "tables": compact,
+    }
 
 
-def run_excel_agent(task: dict[str, Any]) -> dict[str, Any]:
+def open_session(task: dict[str, Any]) -> dict[str, Any]:
     case_id = str(task.get("case_id") or "")
     task_id = str(task.get("task_id") or "")
-    activity = ""
-    inputs = task.get("inputs") if isinstance(task.get("inputs"), dict) else {}
-    activity = str(inputs.get("activity_base_url") or ACTIVITY)
+    activity = _task_activity(task)
     _post_event(
         case_id,
         {
@@ -202,16 +265,13 @@ def run_excel_agent(task: dict[str, Any]) -> dict[str, Any]:
     try:
         session_id, filename = _load_excel(task)
     except FileNotFoundError as exc:
-        result = {
-            "task_id": task_id,
-            "status": "needs_input",
-            "message": "Нет Excel-файла для извлечения",
-            "data": {},
-            "artifacts": {},
-            "issues": [{"type": "missing_excel", "detail": str(exc)}],
-            "assumptions": [],
-            "requests": [{"question_id": "Q-excel", "question": "Приложите workbook .xlsx", "options": []}],
-        }
+        result = _agent_result(
+            task_id,
+            "needs_input",
+            "Нет Excel-файла для извлечения",
+            issues=[{"type": "missing_excel", "detail": str(exc)}],
+            requests=[{"question_id": "Q-excel", "question": "Приложите workbook .xlsx", "options": []}],
+        )
         _post_event(
             case_id,
             {
@@ -224,8 +284,14 @@ def run_excel_agent(task: dict[str, Any]) -> dict[str, Any]:
                 "_activity_base": activity,
             },
         )
-        return result
+        return {"ok": False, "status": "needs_input", "task_id": task_id, "result": result}
     except Exception as exc:
+        result = _agent_result(
+            task_id,
+            "failed",
+            str(exc)[:400],
+            issues=[{"type": "excel_load_failed", "detail": str(exc)[:400]}],
+        )
         _post_event(
             case_id,
             {
@@ -238,19 +304,32 @@ def run_excel_agent(task: dict[str, Any]) -> dict[str, Any]:
                 "_activity_base": activity,
             },
         )
-        return {
-            "task_id": task_id,
-            "status": "failed",
-            "message": str(exc)[:400],
-            "data": {},
-            "artifacts": {},
-            "issues": [{"type": "excel_load_failed", "detail": str(exc)[:400]}],
-            "assumptions": [],
-            "requests": [],
-        }
+        return {"ok": False, "status": "failed", "task_id": task_id, "result": result}
 
     with locked_session(session_id):
         state = load_state(session_id)
+        inspect = _compact_inspect(state)
+    capability = suggested_capability(str(task.get("objective") or ""), str(task.get("handoff_message") or ""))
+    return {
+        "ok": True,
+        "session_id": session_id,
+        "task_id": task_id,
+        "file_name": filename,
+        "inspect": inspect,
+        "objective": str(task.get("objective") or ""),
+        "handoff_message": str(task.get("handoff_message") or ""),
+        "suggested_capability": capability,
+    }
+
+
+def extract_commissioning(session_id: str) -> dict[str, Any]:
+    with locked_session(session_id):
+        state = load_state(session_id)
+        payload = state.get("payload") if isinstance(state.get("payload"), dict) else {}
+        case_id = str(payload.get("case_id") or "")
+        task_id = str(payload.get("task_id") or "")
+        activity = str(payload.get("activity_base") or ACTIVITY)
+        filename = str(state.get("file_name") or "workbook.xlsx")
         detect = execute_tool(state, "detect_tables", {})
         tables = []
         raw = detect.get("result") if isinstance(detect, dict) else {}
@@ -279,11 +358,11 @@ def run_excel_agent(task: dict[str, Any]) -> dict[str, Any]:
                 continue
             table_ids.append(table_id)
             queried = execute_tool(state, "query_table", {"table_id": table_id, "limit": 10000})
-            payload = queried.get("result") if isinstance(queried, dict) else queried
+            tool_payload = queried.get("result") if isinstance(queried, dict) else queried
             preview: list[dict[str, Any]] = []
             columns: list[str] = []
-            if isinstance(payload, dict):
-                columns, preview = _query_rows(state, session_id, payload)
+            if isinstance(tool_payload, dict):
+                columns, preview = _query_rows(state, session_id, tool_payload)
             rows_out.append(
                 {
                     "table_id": table_id,
@@ -293,7 +372,6 @@ def run_excel_agent(task: dict[str, Any]) -> dict[str, Any]:
                     "records": preview,
                 }
             )
-        snapshot = load_state(session_id)
     facts = commissioning_facts(
         [
             {"columns": item.get("columns") or [], "preview": item.get("records") or item.get("preview") or []}
@@ -302,14 +380,14 @@ def run_excel_agent(task: dict[str, Any]) -> dict[str, Any]:
     )
     for item in rows_out:
         item.pop("records", None)
-    result = {
-        "task_id": task_id,
-        "status": "completed",
-        "message": (
+    result = _agent_result(
+        task_id,
+        "completed",
+        (
             f"Извлечено таблиц: {len(table_ids)} из {filename}"
             + (f", фактов скважина+дата: {len(facts)}" if facts else "")
         ),
-        "data": {
+        data={
             "excel_table": table_ids[0] if table_ids else None,
             "table_ids": table_ids,
             "normalized_rows": rows_out,
@@ -317,11 +395,11 @@ def run_excel_agent(task: dict[str, Any]) -> dict[str, Any]:
             "session_id": session_id,
             "file_name": filename,
         },
-        "artifacts": {"excel_session": session_id},
-        "issues": [],
-        "assumptions": [],
-        "requests": [],
-    }
+        artifacts={"excel_session": session_id},
+    )
+    with locked_session(session_id):
+        state = load_state(session_id)
+        _store_result(state, result)
     _post_event(
         case_id,
         {
@@ -336,3 +414,54 @@ def run_excel_agent(task: dict[str, Any]) -> dict[str, Any]:
         },
     )
     return result
+
+
+def session_result(session_id: str) -> dict[str, Any]:
+    state = load_state(session_id)
+    result = state.get("agent_result")
+    if isinstance(result, dict) and result.get("status"):
+        return result
+    payload = state.get("payload") if isinstance(state.get("payload"), dict) else {}
+    return _agent_result(
+        str(payload.get("task_id") or ""),
+        "failed",
+        "Агент не вызвал extract_commissioning — факты Excel не собраны",
+        issues=[{"type": "no_extract"}],
+    )
+
+
+def commissioning_facts(tables: list[dict[str, Any]]) -> list[dict[str, Any]]:
+    facts: list[dict[str, Any]] = []
+    seen: set[str] = set()
+    for table in tables:
+        preview = table.get("preview") if isinstance(table, dict) else []
+        if not isinstance(preview, list):
+            continue
+        for row in preview:
+            if not isinstance(row, dict):
+                continue
+            well = ""
+            date: Any = None
+            for key, value in row.items():
+                if _looks_well_col(str(key)) and not well:
+                    well = _as_well(value)
+                elif _looks_date_col(str(key)) and date in (None, ""):
+                    date = _as_date(value)
+            if not well or date in (None, ""):
+                continue
+            token = f"{well}|{date}"
+            if token in seen:
+                continue
+            seen.add(token)
+            facts.append({"well": well, "date": date, "values": row})
+    return facts
+
+
+def run_excel_agent(task: dict[str, Any]) -> dict[str, Any]:
+    opened = open_session(task)
+    if not opened.get("ok"):
+        result = opened.get("result")
+        if isinstance(result, dict):
+            return result
+        return _agent_result(str(task.get("task_id") or ""), "failed", "Excel session failed")
+    return extract_commissioning(str(opened["session_id"]))

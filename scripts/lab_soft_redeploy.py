@@ -65,6 +65,7 @@ PUBLISH = [
     "MAS — Knowledge Ingestion",
     "Error — MAS Node Traces",
     "Agent — Schedule Builder",
+    "Agent — Excel Extractor",
     "Orchestrator — MAS",
     "Form — MAS Deployment Health Check",
 ]
@@ -79,7 +80,6 @@ STALE_WORKFLOW_NAMES = (
     "Error — MAS Case Handler",
     "Form — MAS Entry",
     "Form — MAS Human Gate",
-    "Agent — Excel Extractor",
     "Agent — Calculation (Math Service)",
     "SCHEDULE — Builder",
 )

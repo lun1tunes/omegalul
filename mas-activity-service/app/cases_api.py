@@ -7,6 +7,7 @@ import json
 import logging
 import secrets
 import time
+from pathlib import Path
 from typing import Any
 
 from fastapi import APIRouter, BackgroundTasks, File, Form, HTTPException, Query, Request, UploadFile
@@ -210,6 +211,21 @@ def _schedule_filename(artifacts: dict[str, Any]) -> str:
     return "schedule.inc"
 
 
+def _result_filename(artifacts: dict[str, Any]) -> str:
+    """Never advertise the baseline upload as the generated result."""
+    out = artifacts.get("schedule_out")
+    if isinstance(out, dict):
+        name = str(out.get("filename") or "").strip()
+        if name:
+            return name
+    src = Path(_schedule_filename(artifacts))
+    stem = src.stem.strip() or "schedule"
+    suffix = src.suffix if src.suffix.lower() in {".inc", ".data", ".sch", ".grdecl"} else ".inc"
+    if stem.lower().endswith("_result"):
+        return f"{stem}{suffix}"
+    return f"{stem}_result{suffix}"
+
+
 def _schedule_out_text(artifacts: dict[str, Any]) -> str | None:
     text = artifacts.get("schedule_out")
     if isinstance(text, str) and len(text.strip()) > 20:
@@ -227,10 +243,12 @@ def _schedule_artifact(case_id: str, artifacts: dict[str, Any]) -> dict[str, Any
         return None
     return {
         "available": True,
-        "filename": _schedule_filename(artifacts),
+        "filename": _result_filename(artifacts),
         "byte_length": len(text.encode("utf-8")),
         "inline": True,
         "download_path": f"/cases/{case_id}/schedule",
+        "kind": "result",
+        "label": "Скачать результат",
     }
 
 
@@ -316,7 +334,6 @@ async def _invoke_action(case_id: str, *, action: str) -> None:
     try:
         row = control_plane.get_case(case_id)
         state = dict(row["state"] or {}) if row else {}
-        files = load_task_binaries(case_id)
         await invoke_orchestrator(
             {
                 "case_id": case_id,
@@ -325,7 +342,6 @@ async def _invoke_action(case_id: str, *, action: str) -> None:
                 "task_name": str(state.get("task_name") or ""),
                 "requested_by": "mas activity user",
             },
-            files=files or None,
             timeout_s=180.0,
         )
     except OrchestratorError as exc:
@@ -740,7 +756,7 @@ def get_schedule(case_id: str):
         raise HTTPException(status_code=404, detail="schedule not ready")
     from fastapi.responses import Response
 
-    filename = _schedule_filename(artifacts).replace('"', "")
+    filename = _result_filename(artifacts).replace('"', "")
     return Response(
         content=text.encode("utf-8"),
         media_type="text/plain; charset=utf-8",

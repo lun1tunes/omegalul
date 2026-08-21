@@ -8,7 +8,7 @@
   <link rel="preconnect" href="https://fonts.googleapis.com" />
   <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
   <link href="https://fonts.googleapis.com/css2?family=IBM+Plex+Sans:wght@400;500;600;700&family=IBM+Plex+Mono:wght@400;500&display=swap" rel="stylesheet" />
-  <link rel="stylesheet" href="/static/app.css?v=75" />
+  <link rel="stylesheet" href="/static/app.css?v=78" />
 </head>
 <body>
   <div class="atmosphere" aria-hidden="true"></div>
@@ -92,15 +92,17 @@
             <div class="schema-nodes" id="schemaNodes"></div>
           </div>
           <div class="schema-timeline" id="schemaTimeline">
-            <button type="button" class="schema-step-btn" id="schemaPrev" aria-label="Предыдущий шаг">‹</button>
             <div class="schema-track">
               <span class="schema-track-label" id="schemaStartLabel">Постановка задачи</span>
               <input id="schemaRange" type="range" min="0" max="0" value="0" aria-label="Шаг схемы" />
               <span class="schema-track-label" id="schemaEndLabel">Результат</span>
             </div>
-            <button type="button" class="schema-step-btn" id="schemaNext" aria-label="Следующий шаг">›</button>
+            <div class="schema-nav" role="group" aria-label="Шаги схемы">
+              <button type="button" class="schema-step-btn" id="schemaPrev" aria-label="Предыдущий шаг">‹</button>
+              <button type="button" class="schema-step-btn" id="schemaNext" aria-label="Следующий шаг">›</button>
+            </div>
             <p class="schema-step-label" id="schemaStepLabel"></p>
-            <span class="schema-step-count" id="schemaStepCount">0 / 0</span>
+            <span class="schema-step-count" id="schemaStepCount">шаг 0 / 0</span>
           </div>
         </section>
       </div>
@@ -194,7 +196,7 @@
     </section>
   </main>
 
-  <script src="/static/schema.js?v=6"></script>
-  <script src="/static/app.js?v=82"></script>
+  <script src="/static/schema.js?v=10"></script>
+  <script src="/static/app.js?v=83"></script>
 </body>
 </html>

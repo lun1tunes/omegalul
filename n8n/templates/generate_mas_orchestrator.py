@@ -166,41 +166,6 @@ def http_json(name, pos, url, body, timeout=180000):
     )
 
 
-def http_multipart(name, pos, url, binary_fields, payload_name="payload", timeout=180000):
-    params = [
-        {"parameterType": "formBinaryData", "name": field, "inputDataFieldName": source}
-        for field, source in binary_fields
-    ]
-    params.append(
-        {
-            "parameterType": "formData",
-            "name": payload_name,
-            "value": "={{ JSON.stringify({request: $json.agent_task || {}}) }}",
-        }
-    )
-    return node(
-        name,
-        "n8n-nodes-base.httpRequest",
-        4.4,
-        pos,
-        {
-            "method": "POST",
-            "url": url,
-            "sendHeaders": True,
-            "headerParameters": {
-                "parameters": [
-                    {"name": "X-API-Key", "value": "={{ $json.excel_tools_api_key || '' }}"},
-                ]
-            },
-            "sendBody": True,
-            "contentType": "multipart-form-data",
-            "bodyParameters": {"parameters": params},
-            "options": {"timeout": timeout},
-        },
-        onError="continueRegularOutput",
-    )
-
-
 def execute_workflow(name, pos, placeholder, cached_name, inputs):
     return node(
         name,
@@ -319,45 +284,33 @@ return [{json:{
   workflow_name:'orchestrator',
   sql_parameters:[caseId],
   exec_sql_parameters:[executionId, caseId, 'orchestrator'],
-},...(Object.keys($input.first().binary||{}).length?{binary:$input.first().binary}:{} )}];
+}}];
 """
 
 CREATE_CASE = r"""
 const req=$json||{};
 const goal=String(req.goal||'').trim();
-const inboundBinary=$('Normalize step request').first().binary||{};
-const inboundArtifacts=Object.fromEntries(Object.entries(inboundBinary).map(([key,file])=>{
-  const name=String(file?.fileName||key);
-  const lower=name.toLowerCase();
-  const artifactKey=key==='file'||lower.endsWith('.xlsx')||lower.endsWith('.xlsm')||lower.endsWith('.xls')?'excel':
-    (key.startsWith('schedule_files')||lower.endsWith('.inc')||lower.endsWith('.sch')?'schedule_source':key);
-  return [artifactKey,{
-  filename:name,
-  mime_type:String(file?.mimeType||'application/octet-stream'),
-  bytes:Number(file?.data?Math.floor(String(file.data).length*0.75):0),
-  artifact_id:artifactKey
-}]}));
 const state={
   case_id:req.case_id,
   goal,
   task_name:req.task_name||'',
   status:'running',
   plan:[],
-  artifacts:inboundArtifacts,
+  artifacts:{},
   data:{},
   current_task:null,
   hitl:{pending:false,questions:[],answers:{}},
   last_error:null,
   step_count:0
 };
-const persistEvents=[[req.case_id,'','case.created','user','','new',('Принял задачу: '+goal).slice(0,200),'',JSON.stringify({requested_by:req.requested_by||'',task_name:req.task_name||'',note:'orchestrator start; files belong to Activity /cases'})]];
+const persistEvents=[[req.case_id,'','case.created','user','','new',('Принял задачу: '+goal).slice(0,200),'',JSON.stringify({requested_by:req.requested_by||'',task_name:req.task_name||'',note:'orchestrator start; files stay in Activity /cases/{id}/artifacts'})]];
 return [{json:{
   ...req,
   state,
   create_sql_parameters:[req.case_id, JSON.stringify(state), 'running'],
   persist_events:persistEvents,
   event_sql_parameters:persistEvents[0]
-},...(Object.keys(inboundBinary).length?{binary:inboundBinary}:{})}];
+}}];
 """
 
 APPLY_EXTRAS = r"""
@@ -445,19 +398,7 @@ const extras=(()=>{try{return $('Apply request extras').first().json}catch{retur
 const load=$('Load case').first().json||{};
 const parse=v=>{if(v&&typeof v==='object')return v;try{return JSON.parse(String(v||'{}'))}catch{return {}}};
 const state=(extras&&extras.state&&typeof extras.state==='object')?extras.state:parse(load.state||load.State||{});
-const inboundBinary=$('Normalize step request').first().binary||{};
-const inboundArtifacts=Object.fromEntries(Object.entries(inboundBinary).map(([key,file])=>{
-  const name=String(file?.fileName||key);
-  const lower=name.toLowerCase();
-  const artifactKey=key==='file'||lower.endsWith('.xlsx')||lower.endsWith('.xlsm')||lower.endsWith('.xls')?'excel':
-    (key.startsWith('schedule_files')||lower.endsWith('.inc')||lower.endsWith('.sch')?'schedule_source':key);
-  return [artifactKey,{
-  filename:name,
-  mime_type:String(file?.mimeType||'application/octet-stream'),
-  bytes:Number(file?.data?Math.floor(String(file.data).length*0.75):0),
-  artifact_id:artifactKey
-}]}));
-state.artifacts={...inboundArtifacts,...(state.artifacts&&typeof state.artifacts==='object'?state.artifacts:{})};
+if(!state.artifacts||typeof state.artifacts!=='object') state.artifacts={};
 if(state.artifacts.file&&!state.artifacts.excel) state.artifacts.excel=state.artifacts.file;
 if(state.artifacts.schedule_files&&!state.artifacts.schedule_source) state.artifacts.schedule_source=state.artifacts.schedule_files;
 const status=String((extras&&extras.next_status)||load.status||state.status||'running');
@@ -500,7 +441,7 @@ return [{json:{
   compact,
   planner_input:prompt,
   step_count:compact.step_count
-},...(Object.keys(inboundBinary).length?{binary:inboundBinary}:{})}];
+}}];
 """
 
 PARSE_DECISION = r"""
@@ -512,7 +453,6 @@ const out=parse(raw.output||raw.text||raw);
 const decision=obj(out.action)?out:(obj(raw)?raw:{});
 const action=obj(decision.action)?decision.action:{type:'ask_user',question_id:'Q-parse',question:'Не удалось разобрать решение оркестратора',options:[]};
 const type=String(action.type||'').trim();
-const binary=$('Normalize step request').first().binary||{};
 const state=obj(prev.state)?{...prev.state}:{};
 state.step_count=Number(state.step_count||0)+1;
 if(Array.isArray(decision.plan_update)){
@@ -538,7 +478,7 @@ if(type==='call_agent'){
     agent_id:String(action.agent_id||'').trim(),
     objective:String(action.task&&action.task.objective||state.goal||''),
     handoff_message:String(action.handoff_message||''),
-    inputs:{...(obj(action.task)?action.task:{}),artifacts:state.artifacts||{},activity_base_url:prev.activity_base_url,schedule_root:state.schedule_root||(obj(action.task)?action.task.schedule_root:'')},
+    inputs:{...(obj(action.task)?action.task:{}),artifacts:state.artifacts||{},activity_base_url:String(prev.activity_base_url||'http://mas-activity:8200').replace(/\/$/,''),schedule_root:state.schedule_root||(obj(action.task)?action.task.schedule_root:'')},
     context:{data:state.data||{},hitl:state.hitl||{}},
     constraints:{units:'METRIC'}
   };
@@ -594,7 +534,7 @@ return [{json:{
   update_sql_parameters:[JSON.stringify(state), nextStatus, prev.case_id],
   event_sql_parameters:persistEvents[0],
   persist_events:persistEvents
-},...(Object.keys(binary).length?{binary}:{})}];
+}}];
 """
 
 WRITE_EVENTS = r"""
@@ -602,8 +542,7 @@ const fromParse=(()=>{try{return $('Parse decision').first().json}catch{return n
 const fromMerge=(()=>{try{return $('Merge agent result').first().json}catch{return null}})();
 const prev=fromMerge||fromParse||$json||{};
 const rows=Array.isArray(prev.persist_events)?prev.persist_events:[];
-const binary=$('Normalize step request').first().binary||{};
-if(!rows.length) return [{json:{...prev,p1:'',p2:'',p3:'',p4:'',p5:'',p6:'',p7:'',p8:'',p9:'{}'},...(Object.keys(binary).length?{binary}:{})}];
+if(!rows.length) return [{json:{...prev,p1:'',p2:'',p3:'',p4:'',p5:'',p6:'',p7:'',p8:'',p9:'{}'}}];
 return rows.map(params=>{
   const vals=(Array.isArray(params)?params:[]).map(v=>v===null||v===undefined?'':String(v));
   return {json:{
@@ -618,7 +557,7 @@ return rows.map(params=>{
     p8:vals[7]||'',
     p9:vals[8]||'{}',
     event_sql_parameters:vals
-  },...(Object.keys(binary).length?{binary}:{})};
+  }};
 });
 """
 
@@ -631,8 +570,7 @@ else if(id==='excel_extractor') route='excel';
 else if(id==='calculation_agent') route='calc';
 else if(id==='schedule_builder') route='schedule';
 else route='unknown';
-const binary=$('Normalize step request').first().binary||{};
-return [{json:{...x,route},...(Object.keys(binary).length?{binary}:{})}];
+return [{json:{...x,route}}];
 """
 
 MERGE = r"""
@@ -698,7 +636,6 @@ state.status=nextStatus;
 const persistEvents=events.map(e=>[
   prev.case_id, e.task_id||'', e.kind, e.actor, e.agent_id||'', e.status||'', e.status_message||'', e.handoff_message||'', JSON.stringify(e.payload||{})
 ]);
-const binary=$('Normalize step request').first().binary||{};
 return [{json:{
   ...prev,
   agent_result:result,
@@ -710,7 +647,7 @@ return [{json:{
   events,
   event_sql_parameters:persistEvents[0],
   continue_url:`${String(prev.activity_base_url||'http://mas-activity:8200').replace(/\/$/,'')}/cases/${encodeURIComponent(String(prev.case_id||''))}/run`
-},...(Object.keys(binary).length?{binary}:{})}];
+}}];
 """
 
 FINISH_NONE = r"""
@@ -725,7 +662,7 @@ def main() -> None:
         note(
             "edit after import",
             (-200, -420),
-            "## edit after import\n\n**Orchestrator — MAS** — thin loop:\n- Bind Postgres on load/insert/update\n- Bind **Qwen** OpenAI-compatible credential on Decision Chat Model\n- Bind inbound header auth on webhook (same cred on **POST continue run**)\n- Bind **Call Schedule Builder** → `Agent — Schedule Builder` (executeWorkflow, like Excel Extractor)\n- Runtime endpoints patched by lab_soft_redeploy\n\n`action`: probe | status | start | step | resume\n- **start/step/resume** live path: Activity `/cases` saves files + state; webhook self-POSTs the next `step`\n- **status** loads case and returns `human_gate` without LLM\n- Decision is Basic LLM Chain + Structured Output (no Agent tools)\n\nOne execution = one step.",
+            "## edit after import\n\n**Orchestrator — MAS** — thin loop:\n- Bind Postgres on load/insert/update\n- Bind **Qwen** OpenAI-compatible credential on Decision Chat Model\n- Bind inbound header auth on webhook\n- Bind **Call Excel Extractor** → `Agent — Excel Extractor` (executeWorkflow)\n- Bind **Call Schedule Builder** → `Agent — Schedule Builder` (executeWorkflow)\n- Runtime endpoints patched by lab_soft_redeploy\n\n`action`: probe | status | start | create | step | resume\n- Activity `/cases` stores files; specialists fetch `/cases/{id}/artifacts/{id}` from their FastAPI tools. n8n never carries binaries.\n- **status** loads case and returns `human_gate` without LLM\n- Decision is Basic LLM Chain + Structured Output (no Agent tools)\n\nOne execution = one step.",
             480,
             420,
             1,
@@ -749,7 +686,6 @@ def main() -> None:
             "Runtime endpoints",
             (240, 0),
             [
-                ("excel_extractor_url", "http://excel-tools:18000/agent/run", "string"),
                 ("calculation_agent_url", "http://math-service:8100/agent/run", "string"),
                 ("orchestrator_step_url", "http://n8n:5678/webhook/mas-orchestrator-step", "string"),
                 ("activity_base_url", "http://mas-activity:8200", "string"),
@@ -777,7 +713,7 @@ def main() -> None:
         code(
             "Restore after start",
             (1540, 280),
-            "const prev=$('Prepare start case').first().json||{};\nconst binary=$('Normalize step request').first().binary||{};\nreturn [{json:prev,...(Object.keys(binary).length?{binary}:{})}];",
+            "const prev=$('Prepare start case').first().json||{};\nreturn [{json:prev}];",
             executeOnce=True,
         ),
         postgres(
@@ -814,7 +750,7 @@ def main() -> None:
         code(
             "Restore after resume",
             (2020, 40),
-            "const prev=$('Apply request extras').first().json||{};\nconst binary=$('Normalize step request').first().binary||{};\nreturn [{json:prev,...(Object.keys(binary).length?{binary}:{})}];",
+            "const prev=$('Apply request extras').first().json||{};\nreturn [{json:prev}];",
             executeOnce=True,
         ),
         postgres(
@@ -881,7 +817,7 @@ def main() -> None:
         code(
             "Restore parsed decision",
             (2640, 0),
-            "const prev=$('Parse decision').first().json||{};\nconst binary=$('Normalize step request').first().binary||{};\nreturn [{json:prev,...(Object.keys(binary).length?{binary}:{})}];",
+            "const prev=$('Parse decision').first().json||{};\nreturn [{json:prev}];",
             executeOnce=True,
         ),
         code("Prepare agent call", (2760, 0), ROUTE),
@@ -892,7 +828,13 @@ def main() -> None:
             (2880, 0),
             {"mode": "expression", "numberOutputs": 4, "output": "={{ ({excel:0,calc:1,schedule:2,none:3,unknown:3})[$json.route] ?? 3 }}"},
         ),
-        http_json("Call Excel Extractor", (3120, -240), "={{ $json.excel_extractor_url }}", "={{ $json.agent_task }}"),
+        execute_workflow(
+            "Call Excel Extractor",
+            (3120, -240),
+            "REPLACE_EXCEL_EXTRACTION_AGENT_IN_UI",
+            "Agent — Excel Extractor",
+            {"agent_task": "={{ $json.agent_task }}"},
+        ),
         http_json("Call Calculation Agent", (3120, -40), "={{ $json.calculation_agent_url }}", "={{ $json.agent_task }}"),
         execute_workflow(
             "Call Schedule Builder",
@@ -920,7 +862,7 @@ def main() -> None:
         code(
             "Restore after agent events",
             (3960, 0),
-            "const prev=$('Merge agent result').first().json||{};\nconst binary=$('Normalize step request').first().binary||{};\nreturn [{json:prev,...(Object.keys(binary).length?{binary}:{})}];",
+            "const prev=$('Merge agent result').first().json||{};\nreturn [{json:prev}];",
             executeOnce=True,
         ),
         if_true("Continue loop?", (4080, 0), "={{ $json.should_continue }}"),

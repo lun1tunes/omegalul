@@ -1186,8 +1186,8 @@
     scheduleDownloadHead.hidden = false;
     scheduleDownloadHead.href = art.download_path;
     scheduleDownloadHead.setAttribute("download", name);
-    scheduleDownloadHead.textContent = `Скачать ${name}${kb}`;
-    scheduleDownloadHead.title = "Скачать текущий SCHEDULE .INC";
+    scheduleDownloadHead.textContent = `Скачать результат${kb}`;
+    scheduleDownloadHead.title = `Скачать результат SCHEDULE (${name})`;
   }
 
   function setScheduleArtifact(meta) {

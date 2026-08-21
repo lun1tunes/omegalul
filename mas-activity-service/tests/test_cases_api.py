@@ -174,9 +174,10 @@ def test_create_action_is_sent_to_n8n_for_new_case(monkeypatch) -> None:
     assert payload["task_name"] == "Новая задача"
 
 
-def test_create_action_forwards_case_binaries_to_n8n(monkeypatch) -> None:
+def test_create_keeps_files_in_activity_not_n8n(monkeypatch) -> None:
     monkeypatch.setenv("ORCHESTRATOR_WEBHOOK_URL", "http://n8n.test/webhook/mas-orchestrator-step")
     from app.settings import Settings
+    from app import control_plane
 
     monkeypatch.setattr("app.cases_api.get_settings", lambda: Settings())
     captured: dict[str, object] = {}
@@ -197,13 +198,21 @@ def test_create_action_forwards_case_binaries_to_n8n(monkeypatch) -> None:
     )
 
     assert res.status_code == 200, res.text
-    forwarded = captured["files"]
-    assert forwarded["excel"] == (
-        "dates.xlsx",
-        b"xlsx-bytes",
-        "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
-    )
-    assert forwarded["schedule_source"] == ("base.inc", b"DATES\n/", "text/plain")
+    assert captured["files"] is None
+    payload = captured["payload"]
+    assert payload["action"] == "create"
+    case_id = res.json()["case_id"]
+    row = control_plane.get_case(case_id)
+    artifacts = (row or {}).get("state", {}).get("artifacts") or {}
+    assert artifacts["excel"]["artifact_id"] == "excel"
+    assert artifacts["excel"]["filename"] == "dates.xlsx"
+    assert artifacts["schedule_source"]["artifact_id"] == "schedule_source"
+    inc = client.get(f"/cases/{case_id}/artifacts/schedule_source")
+    assert inc.status_code == 200
+    assert inc.content == b"DATES\n/"
+    xlsx = client.get(f"/cases/{case_id}/artifacts/excel")
+    assert xlsx.status_code == 200
+    assert xlsx.content == b"xlsx-bytes"
 
 
 def test_create_case_optional_task_name(monkeypatch) -> None:
@@ -436,12 +445,21 @@ def test_schedule_artifact_download_from_state(monkeypatch) -> None:
     assert feed.status_code == 200
     art = feed.json()["schedule_artifact"]
     assert art["available"] is True
-    assert art["filename"] == "FORECAST.INC"
+    assert art["filename"] == "FORECAST_result.INC"
     assert art["download_path"] == f"/cases/{case_id}/schedule"
+    assert art["label"] == "Скачать результат"
     dl = client.get(f"/cases/{case_id}/schedule")
     assert dl.status_code == 200
     assert b"DATES" in dl.content
-    assert "FORECAST.INC" in dl.headers.get("content-disposition", "")
+    assert "FORECAST_result.INC" in dl.headers.get("content-disposition", "")
+
+
+def test_result_filename_does_not_reuse_baseline_name() -> None:
+    from app.cases_api import _result_filename
+
+    assert _result_filename({"schedule_source": {"filename": "baseline.inc"}}) == "baseline_result.inc"
+    assert _result_filename({"schedule_source": {"filename": "FORECAST.INC"}}) == "FORECAST_result.INC"
+    assert _result_filename({"schedule_out": {"filename": "custom_out.inc"}}) == "custom_out.inc"
 
 
 def test_collapse_duplicate_status_and_agent_result() -> None:

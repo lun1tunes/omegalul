@@ -18,17 +18,25 @@ function source(name) {
   return node.parameters.jsCode;
 }
 
-async function run(name, json, nodes = {}) {
+function toItem(payload) {
+  if (payload && typeof payload === 'object' && !Array.isArray(payload) && payload.json !== undefined && payload.binary !== undefined) {
+    return payload;
+  }
+  return { json: payload };
+}
+
+async function run(name, json, nodes = {}, binary = {}) {
+  const resolved = { 'Normalize step request': { json, binary }, ...nodes };
   const lookup = (nodeName) => {
-    if (!Object.prototype.hasOwnProperty.call(nodes, nodeName)) {
+    if (!Object.prototype.hasOwnProperty.call(resolved, nodeName)) {
       throw new Error(`node not executed: ${nodeName}`);
     }
-    const payload = nodes[nodeName];
-    const items = Array.isArray(payload) ? payload : [{ json: payload }];
+    const payload = resolved[nodeName];
+    const items = Array.isArray(payload) ? payload.map(toItem) : [toItem(payload)];
     return { first: () => items[0], all: () => items };
   };
   const fn = new AsyncFunction('$json', '$', '$input', '$execution', source(name));
-  const result = await fn(json, lookup, { first: () => ({ json }), all: () => [{ json }] }, { id: 'exec-1' });
+  const result = await fn(json, lookup, { first: () => ({ json, binary }), all: () => [{ json, binary }] }, { id: 'exec-1' });
   assert.ok(Array.isArray(result) && result[0]?.json);
   return result[0].json;
 }
@@ -61,6 +69,9 @@ async function run(name, json, nodes = {}) {
     'Status only?',
     'Resume persist?',
     'POST continue run',
+    'Prepare Activity ack',
+    'Activity sync?',
+    'POST step ack to MAS Activity',
   ]) {
     assert.ok(wf.nodes.some((n) => n.name === need), `missing ${need}`);
   }
@@ -103,14 +114,31 @@ async function run(name, json, nodes = {}) {
   assert.equal(callSchedule.onError, 'continueRegularOutput');
   const continueNode = wf.nodes.find((n) => n.name === 'POST continue run');
   assert.ok(String(continueNode.parameters.jsonBody).includes("action: 'step'"));
-  assert.equal(continueNode.parameters.authentication, 'genericCredentialType');
+  assert.equal(continueNode.parameters.url, "={{ $json.continue_url }}");
+  assert.equal(continueNode.parameters.authentication, undefined);
   assert.equal(source('Merge agent result').includes('/cases/'), true);
+  const callExcel = wf.nodes.find((n) => n.name === 'Call Excel Extractor');
+  assert.equal(callExcel.type, 'n8n-nodes-base.executeWorkflow');
+  assert.equal(callExcel.typeVersion, 1.3);
+  assert.equal(callExcel.parameters.workflowId.value, 'REPLACE_EXCEL_EXTRACTION_AGENT_IN_UI');
+  assert.equal(callExcel.parameters.workflowId.cachedResultName, 'Agent — Excel Extractor');
+  assert.equal(callExcel.parameters.options.waitForSubWorkflow, true);
+  assert.equal(callExcel.onError, 'continueRegularOutput');
+  assert.deepEqual(Object.keys(callExcel.parameters.workflowInputs.value), ['agent_task']);
+  assert.equal(callExcel.parameters.workflowInputs.value.agent_task, '={{ $json.agent_task }}');
+  const excelUrl = (runtime.parameters.assignments.assignments || []).find((a) => a.name === 'excel_extractor_url');
+  assert.equal(excelUrl, undefined, 'no HTTP /agent/run URL — specialist is executeWorkflow');
+  assert.equal(callSchedule.parameters.workflowInputs.value.agent_task, '={{ $json.agent_task }}');
+  assert.equal(text.includes('formBinaryData'), false);
+  assert.equal(text.includes('.first().binary'), false);
+  assert.equal(text.includes('multipart-form-data'), false);
 
   const probeIf = wf.connections['Probe ping?'];
-  assert.equal(probeIf.main[0][0].node, 'Format step ack');
+  assert.equal(probeIf.main[0][0].node, 'Prepare Activity ack');
   assert.equal(probeIf.main[1][0].node, 'Needs create?');
   assert.equal(wf.connections['Normalize step request'].main[0][0].node, 'Probe ping?');
-  assert.equal(wf.connections['Status only?'].main[0][0].node, 'Format step ack');
+  assert.equal(wf.connections['Status only?'].main[0][0].node, 'Prepare Activity ack');
+  assert.equal(wf.connections['Prepare Activity ack'].main[0][0].node, 'Activity sync?');
 
   const probed = await run('Normalize step request', {
     action: 'probe',
@@ -149,10 +177,51 @@ async function run(name, json, nodes = {}) {
     action: 'create',
     case_id: 'CASE-from-activity',
     task_description: 'Новая задача из Activity',
+    activity_base_url: 'http://mas-activity:8200',
   });
   assert.equal(created.needs_create, true);
   assert.equal(created.case_id, 'CASE-from-activity');
   assert.equal(created.goal, 'Новая задача из Activity');
+  assert.equal(created.activity_base_url, 'http://mas-activity:8200');
+
+  const createdCase = await run(
+    'Prepare start case',
+    {
+      case_id: 'CASE-from-activity',
+      goal: 'Новая задача из Activity',
+      task_name: 'Демо',
+      requested_by: 'tester',
+    },
+  );
+  assert.deepEqual(createdCase.state.artifacts, {});
+  assert.match(JSON.stringify(createdCase.persist_events[0]), /Activity/);
+
+  const prepared = await run(
+    'Prepare decision context',
+    { case_id: 'CASE-1' },
+    {
+      'Load case': {
+        state: {
+          goal: 'даты ввода',
+          artifacts: {
+            excel: { filename: 'dates.xlsx', artifact_id: 'excel' },
+            schedule_source: { filename: 'base.inc', artifact_id: 'schedule_source' },
+          },
+          data: {},
+        },
+        status: 'running',
+      },
+      'Load agent registry': { agent_id: 'excel_extractor', title: 'Excel' },
+      'Runtime endpoints': {
+        activity_base_url: 'http://mas-activity:8200',
+        excel_extractor_url: 'http://excel-tools:18000/agent/run',
+      },
+    },
+  );
+  assert.equal(prepared.compact.has_excel, true);
+  assert.equal(prepared.compact.has_schedule_source, true);
+  assert.equal(prepared.activity_base_url, 'http://mas-activity:8200');
+  assert.match(prepared.planner_input, /excel_extractor/);
 
   const resumed = await run('Normalize step request', {
     action: 'resume',
@@ -228,6 +297,8 @@ async function run(name, json, nodes = {}) {
   assert.equal(parsed.action_type, 'call_agent');
   assert.equal(parsed.should_call_agent, true);
   assert.equal(parsed.agent_task.agent_id, 'excel_extractor');
+  assert.equal(parsed.agent_task.inputs.activity_base_url, 'http://activity:8200');
+  assert.deepEqual(parsed.agent_task.inputs.artifacts, { excel: 'a.xlsx' });
   assert.equal(parsed.next_status, 'running');
   assert.deepEqual(parsed.events.map((e) => e.kind), ['orchestrator.decision', 'agent.handoff']);
   assert.equal(parsed.events.some((e) => e.kind === 'orchestrator.status'), false);
@@ -262,7 +333,7 @@ async function run(name, json, nodes = {}) {
   assert.equal(merged.next_status, 'running');
   assert.equal(merged.should_continue, true);
   assert.ok(merged.state.data.excel);
-  assert.equal(merged.continue_url, 'http://mas-activity:8200/cases/CASE-1/run');
+  assert.equal(merged.continue_url, 'http://activity:8200/cases/CASE-1/run');
   assert.deepEqual(merged.events.map((e) => e.kind), ['agent.result']);
   assert.equal(merged.persist_events[0][2], 'agent.result');
 

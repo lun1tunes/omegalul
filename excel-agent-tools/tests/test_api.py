@@ -555,3 +555,44 @@ def test_csv_export_neutralizes_spreadsheet_formulas(client: TestClient, tmp_pat
     header_export = tmp_path / "header.csv"
     _export_csv(header_export, [{"=Formula header": "safe"}], ["=Formula header"])
     assert header_export.read_text(encoding="utf-8-sig").startswith("'=Formula header")
+
+
+def test_n8n_session_endpoints_open_extract_and_tool_alias(client: TestClient) -> None:
+    xlsx = Path("/home/lun1z/omegalul/simulation-model-example/golden-cases/golden_case_1/MONITORING_well_commissioning_dates.xlsx")
+    if not xlsx.is_file():
+        return
+    opened = client.post(
+        "/agent-tools/open_session",
+        headers={"X-API-Key": "test-key"},
+        json={
+            "case_id": "CASE-1",
+            "task_id": "TASK-1",
+            "objective": "даты ввода",
+            "inputs": {"excel_path": str(xlsx)},
+        },
+    )
+    assert opened.status_code == 200, opened.text
+    body = opened.json()
+    assert body["ok"] is True
+    session_id = body["session_id"]
+    alias = client.post(
+        "/agent-tools/detect_tables",
+        headers={"X-API-Key": "test-key"},
+        json={"session_id": session_id},
+    )
+    assert alias.status_code == 200, alias.text
+    assert alias.json()["ok"] is True
+    extracted = client.post(
+        "/agent-tools/extract_commissioning",
+        headers={"X-API-Key": "test-key"},
+        json={"session_id": session_id},
+    )
+    assert extracted.status_code == 200, extracted.text
+    result = extracted.json()
+    assert result["status"] == "completed"
+    wells = {item["well"] for item in result["data"]["facts"]}
+    assert {"1601", "1602"} <= wells
+    fetched = client.get(f"/sessions/{session_id}/result", headers={"X-API-Key": "test-key"})
+    assert fetched.status_code == 200
+    assert fetched.json()["status"] == "completed"
+    assert client.post("/agent-tools/open_session", json={"objective": "даты"}).status_code == 401

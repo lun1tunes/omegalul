@@ -1,0 +1,1075 @@
+{
+  "id": "3774c645-a20d-53df-9288-130173c400c2",
+  "name": "Agent — Excel Extractor",
+  "active": false,
+  "isArchived": false,
+  "nodes": [
+    {
+      "parameters": {
+        "content": "## edit after import\n\n**Agent — Excel Extractor** — один LLM + excel-tools FastAPI.\n\n1. Bind **Qwen** credential on Excel Extractor Chat Model\n2. Runtime configuration: `excel_tools_url` = `http://excel-tools:18000`, API key, `activity_base_url`\n3. Orchestrator — MAS вызывает этот workflow через `executeWorkflow` (`Call Excel Extractor`). Webhook не нужен.\n\nФайлы не грузятся в n8n. Сервис сам GET `/cases/{id}/artifacts/excel`.\n`suggested_capability=commissioning` идёт обычным HTTP `extract_commissioning` (external n8n runners не execute'ят toolHttpRequest). Скважины/даты не хардкодятся.",
+        "height": 340,
+        "width": 480,
+        "color": 1
+      },
+      "id": "c26fad53-147f-5aa7-bca1-070ba39716ca",
+      "name": "edit after import",
+      "type": "n8n-nodes-base.stickyNote",
+      "typeVersion": 1,
+      "position": [
+        -220,
+        -360
+      ]
+    },
+    {
+      "parameters": {
+        "inputSource": "jsonExample",
+        "jsonExample": "{\"agent_task\": {\"case_id\": \"CASE-example\", \"task_id\": \"TASK-001\", \"agent_id\": \"excel_extractor\", \"objective\": \"Достань даты ввода скважин\", \"inputs\": {}, \"context\": {}}}"
+      },
+      "id": "3992e594-d2b8-521e-bea3-3b57ad774d1c",
+      "name": "When executed by another workflow",
+      "type": "n8n-nodes-base.executeWorkflowTrigger",
+      "typeVersion": 1.2,
+      "position": [
+        0,
+        0
+      ]
+    },
+    {
+      "parameters": {
+        "assignments": {
+          "assignments": [
+            {
+              "id": "5d79d338-8464-510f-9563-d5a6fdd1c391",
+              "name": "excel_tools_url",
+              "value": "http://excel-tools:18000",
+              "type": "string"
+            },
+            {
+              "id": "5d222650-435a-598b-888c-3867100e3c3b",
+              "name": "excel_tools_api_key",
+              "value": "",
+              "type": "string"
+            },
+            {
+              "id": "dfff2401-bdc7-5d5d-9363-300e4b785c1c",
+              "name": "activity_base_url",
+              "value": "http://mas-activity:8200",
+              "type": "string"
+            }
+          ]
+        },
+        "options": {},
+        "includeOtherFields": true
+      },
+      "id": "4765d023-1b68-5337-b4a8-2e68c5940499",
+      "name": "Runtime configuration",
+      "type": "n8n-nodes-base.set",
+      "typeVersion": 3.4,
+      "position": [
+        260,
+        0
+      ]
+    },
+    {
+      "parameters": {
+        "jsCode": "\nconst root=$json||{};\nconst body=root.body&&typeof root.body==='object'?root.body:root;\nconst packet=body.specialist_packet&&typeof body.specialist_packet==='object'?body.specialist_packet:null;\nlet task=body.agent_task&&typeof body.agent_task==='object'?body.agent_task:(body.case_id||body.task_id||body.objective?body:null);\nif(!task||typeof task!=='object') task={};\nif(packet){\n  const inputs=packet.inputs&&typeof packet.inputs==='object'?packet.inputs:{};\n  task={\n    case_id:String(packet.case_id||body.case_id||task.case_id||''),\n    task_id:String(packet.task_id||task.task_id||''),\n    agent_id:'excel_extractor',\n    objective:String(packet.objective||task.objective||''),\n    handoff_message:String(packet.handoff_message||task.handoff_message||packet.objective||''),\n    inputs,\n    context:packet.context&&typeof packet.context==='object'?packet.context:(task.context||{}),\n    constraints:packet.controls&&typeof packet.controls==='object'?packet.controls:(task.constraints||{})\n  };\n}\ntask.agent_id='excel_extractor';\ntask.case_id=String(task.case_id||'');\ntask.task_id=String(task.task_id||'');\ntask.objective=String(task.objective||'');\ntask.handoff_message=String(task.handoff_message||'');\ntask.inputs=task.inputs&&typeof task.inputs==='object'?task.inputs:{};\ntask.context=task.context&&typeof task.context==='object'?task.context:{};\nconst cfg=$('Runtime configuration').first().json||{};\nif(!task.inputs.activity_base_url&&cfg.activity_base_url) task.inputs={...task.inputs, activity_base_url:cfg.activity_base_url};\nreturn [{json:{...cfg, agent_task:task, case_id:task.case_id, task_id:task.task_id}}];\n"
+      },
+      "id": "0bee4cdf-a5e6-5a00-be1c-f713ccef0baa",
+      "name": "Normalize excel task",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        500,
+        0
+      ]
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "={{ $json.excel_tools_url }}/agent-tools/open_session",
+        "sendHeaders": true,
+        "headerParameters": {
+          "parameters": [
+            {
+              "name": "Content-Type",
+              "value": "application/json"
+            },
+            {
+              "name": "X-API-Key",
+              "value": "={{ $('Runtime configuration').first().json.excel_tools_api_key || '' }}"
+            }
+          ]
+        },
+        "options": {
+          "timeout": 180000,
+          "response": {
+            "response": {
+              "fullResponse": false,
+              "responseFormat": "json"
+            }
+          }
+        },
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "={{ $json.agent_task }}"
+      },
+      "id": "e6832040-7bd7-5f0a-a498-620deff27695",
+      "name": "Open excel session",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.4,
+      "position": [
+        740,
+        0
+      ],
+      "onError": "continueRegularOutput",
+      "alwaysOutputData": true
+    },
+    {
+      "parameters": {
+        "conditions": {
+          "options": {
+            "caseSensitive": true,
+            "leftValue": "",
+            "typeValidation": "strict",
+            "version": 2
+          },
+          "conditions": [
+            {
+              "id": "9efe4e77-45fd-54bc-9559-eaf2d7dae1d8",
+              "leftValue": "={{ $json.ok === true }}",
+              "rightValue": true,
+              "operator": {
+                "type": "boolean",
+                "operation": "true"
+              }
+            }
+          ],
+          "combinator": "and"
+        },
+        "options": {}
+      },
+      "id": "358f999f-18c4-54b4-918f-f878e7fdfc54",
+      "name": "Session ready?",
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2.3,
+      "position": [
+        980,
+        0
+      ]
+    },
+    {
+      "parameters": {
+        "jsCode": "\nconst opened=$json||{};\nconst result=opened.result&&typeof opened.result==='object'?opened.result:{};\nreturn [{json:{\n  task_id:result.task_id||opened.task_id||'',\n  agent_id:'excel_extractor',\n  status:result.status||'needs_input',\n  message:result.message||opened.message||'Нет Excel-файла для извлечения',\n  data:result.data||{},\n  artifacts:result.artifacts||{},\n  issues:result.issues||[{type:'missing_excel'}],\n  assumptions:result.assumptions||[],\n  requests:result.requests||[{question_id:'Q-excel',question:'Приложите workbook .xlsx',options:[]}]\n}}];\n"
+      },
+      "id": "65375f59-96fa-5c09-8697-c1becec8677a",
+      "name": "Format missing excel",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        1220,
+        240
+      ]
+    },
+    {
+      "parameters": {
+        "mode": "expression",
+        "numberOutputs": 2,
+        "output": "={{ ({commissioning:0, operations:1})[$json.suggested_capability] ?? 1 }}"
+      },
+      "id": "9c4011ef-18c6-5476-a9f5-7d1c8003b0d8",
+      "name": "Capability router",
+      "type": "n8n-nodes-base.switch",
+      "typeVersion": 3.4,
+      "position": [
+        1220,
+        0
+      ]
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "={{ $('Runtime configuration').first().json.excel_tools_url + '/agent-tools/extract_commissioning' }}",
+        "sendHeaders": true,
+        "headerParameters": {
+          "parameters": [
+            {
+              "name": "Content-Type",
+              "value": "application/json"
+            },
+            {
+              "name": "X-API-Key",
+              "value": "={{ $('Runtime configuration').first().json.excel_tools_api_key || '' }}"
+            }
+          ]
+        },
+        "options": {
+          "timeout": 180000,
+          "response": {
+            "response": {
+              "fullResponse": false,
+              "responseFormat": "json"
+            }
+          }
+        },
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "={{ ({session_id: $('Open excel session').first().json.session_id}) }}"
+      },
+      "id": "cc62fbc1-3edb-59dc-a12c-1d7c4a7e2ef1",
+      "name": "Extract commissioning",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.4,
+      "position": [
+        1480,
+        -160
+      ],
+      "onError": "continueRegularOutput",
+      "alwaysOutputData": true
+    },
+    {
+      "parameters": {
+        "jsCode": "\nconst opened=$json||{};\nconst task=$('Normalize excel task').first().json.agent_task||{};\nconst agent_input=JSON.stringify({\n  objective:opened.objective||task.objective||'',\n  handoff_message:opened.handoff_message||task.handoff_message||'',\n  inspect:opened.inspect||{},\n  file_name:opened.file_name||'',\n  suggested_capability:opened.suggested_capability||''\n});\nreturn [{json:{...opened, session_id:opened.session_id, agent_input}}];\n"
+      },
+      "id": "2d5a7eba-bd5e-5ccb-895a-b7ca5109b7cc",
+      "name": "Prepare AI Agent input",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        1480,
+        160
+      ]
+    },
+    {
+      "parameters": {
+        "promptType": "define",
+        "text": "={{ $json.agent_input }}",
+        "hasOutputParser": false,
+        "options": {
+          "systemMessage": "Ты — единственный LLM-решатель агента Excel Extractor.\n\nWorkbook тебе не показывают. Он лежит в сессии FastAPI. session_id привязан workflow: никогда не передавай session_id и обёртку args/input.\n\nИнструменты:\n- workbook_introspect — листы и размеры (компактно)\n- sheet_preview — небольшой прямоугольник одного листа, не весь лист\n- detect_tables — найти таблицы, вернуть table_id / range / columns\n- match_tables — ранжировать таблицы по запросу\n- describe_table — колонки и sample по table_id\n- list_column_values — ограниченные distinct-значения колонки\n- query_table — строки по table_id (limit, фильтры). Не выгружай всю книгу\n- extract_commissioning — скважина+дата ввода из уже открытой сессии. Даты и скважины сам не выдумывай\n\nПравила:\n- Не пиши SCHEDULE / .INC. Только факты из Excel.\n- Не придумывай скважины, даты, дебиты, имена листов и table_id.\n- suggested_capability=commissioning → сразу extract_commissioning, затем STOP.\n- Иначе introspect/detect → query нужных таблиц. Если нужны даты ввода — extract_commissioning.\n- После extract_commissioning со status completed или needs_input — STOP.\n- Если файла/таблиц нет — не выдумывай строки.\n\nЗаверши одним коротким фактическим предложением по-русски.\n",
+          "maxIterations": 12,
+          "returnIntermediateSteps": true,
+          "passthroughBinaryImages": false,
+          "passthroughBinaryPdfs": false,
+          "enableStreaming": false
+        },
+        "needsFallback": false
+      },
+      "id": "2f03ceca-e58c-53ff-8b58-4586a68f08ea",
+      "name": "Excel Extractor AI Agent",
+      "type": "@n8n/n8n-nodes-langchain.agent",
+      "typeVersion": 3.1,
+      "position": [
+        1720,
+        160
+      ]
+    },
+    {
+      "parameters": {
+        "model": {
+          "mode": "id",
+          "value": "qwen3.6-plus"
+        },
+        "options": {
+          "maxTokens": 2048,
+          "temperature": 0,
+          "timeout": 300000,
+          "maxRetries": 5
+        },
+        "responsesApiEnabled": false
+      },
+      "id": "e81706e1-430e-5640-a5c8-2500fb80aa1b",
+      "name": "Excel Extractor Chat Model — Qwen",
+      "type": "@n8n/n8n-nodes-langchain.lmChatOpenAi",
+      "typeVersion": 1.3,
+      "position": [
+        1720,
+        40
+      ],
+      "credentials": {
+        "openAiApi": {
+          "id": "REPLACE_IN_UI",
+          "name": "REPLACE: Qwen OpenAI-compatible excel extractor credential"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "method": "GET",
+        "url": "={{ $('Runtime configuration').first().json.excel_tools_url + '/sessions/' + $('Open excel session').first().json.session_id + '/result' }}",
+        "sendHeaders": true,
+        "headerParameters": {
+          "parameters": [
+            {
+              "name": "Content-Type",
+              "value": "application/json"
+            },
+            {
+              "name": "X-API-Key",
+              "value": "={{ $('Runtime configuration').first().json.excel_tools_api_key || '' }}"
+            }
+          ]
+        },
+        "options": {
+          "timeout": 120000,
+          "response": {
+            "response": {
+              "fullResponse": false,
+              "responseFormat": "json"
+            }
+          }
+        }
+      },
+      "id": "cf896b5f-c322-54db-8650-f141428dbb6e",
+      "name": "Fetch excel result",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.4,
+      "position": [
+        1960,
+        0
+      ],
+      "onError": "continueRegularOutput",
+      "alwaysOutputData": true
+    },
+    {
+      "parameters": {
+        "jsCode": "\nconst fetched=$json||{};\nconst opened=$('Open excel session').first().json||{};\nif(fetched.status){\n  return [{json:{\n    task_id:fetched.task_id||opened.task_id||'',\n    agent_id:'excel_extractor',\n    status:fetched.status,\n    message:fetched.message||'',\n    data:fetched.data||{},\n    artifacts:fetched.artifacts||{},\n    issues:fetched.issues||[],\n    assumptions:fetched.assumptions||[],\n    requests:fetched.requests||[]\n  }}];\n}\nreturn [{json:{\n  task_id:opened.task_id||'',\n  agent_id:'excel_extractor',\n  status:'failed',\n  message:String(fetched.message||fetched.error||'Excel Extractor не вернул факты'),\n  data:{},\n  artifacts:{},\n  issues:[{type:'excel_agent_no_result'}],\n  assumptions:[],\n  requests:[]\n}}];\n"
+      },
+      "id": "76537492-0ad0-514e-9053-8685f3bf04b1",
+      "name": "Format excel result",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        2200,
+        0
+      ]
+    },
+    {
+      "parameters": {
+        "toolDescription": "Компактные листы и размеры workbook. Без файла.",
+        "method": "POST",
+        "url": "={{ $('Runtime configuration').first().json.excel_tools_url + '/agent-tools/' + \"workbook_introspect\" }}",
+        "authentication": "none",
+        "sendQuery": false,
+        "sendHeaders": true,
+        "specifyHeaders": "keypair",
+        "sendBody": true,
+        "specifyBody": "keypair",
+        "placeholderDefinitions": {
+          "values": []
+        },
+        "optimizeResponse": false,
+        "parametersHeaders": {
+          "values": [
+            {
+              "name": "Content-Type",
+              "valueProvider": "fieldValue",
+              "value": "application/json"
+            },
+            {
+              "name": "X-API-Key",
+              "valueProvider": "fieldValue",
+              "value": "={{ $('Runtime configuration').first().json.excel_tools_api_key || '' }}"
+            }
+          ]
+        },
+        "parametersBody": {
+          "values": [
+            {
+              "name": "session_id",
+              "valueProvider": "fieldValue",
+              "value": "={{ $('Open excel session').first().json.session_id }}"
+            }
+          ]
+        }
+      },
+      "id": "71b0ad7a-728c-509e-b23d-b9cdc615e2ae",
+      "name": "workbook_introspect",
+      "type": "@n8n/n8n-nodes-langchain.toolHttpRequest",
+      "typeVersion": 1.1,
+      "position": [
+        760,
+        -420
+      ]
+    },
+    {
+      "parameters": {
+        "toolDescription": "Небольшой preview одного листа. sheet только из introspect.",
+        "method": "POST",
+        "url": "={{ $('Runtime configuration').first().json.excel_tools_url + '/agent-tools/' + \"sheet_preview\" }}",
+        "authentication": "none",
+        "sendQuery": false,
+        "sendHeaders": true,
+        "specifyHeaders": "keypair",
+        "sendBody": true,
+        "specifyBody": "keypair",
+        "placeholderDefinitions": {
+          "values": [
+            {
+              "name": "sheet",
+              "description": "Точное имя листа из introspect",
+              "type": "string"
+            }
+          ]
+        },
+        "optimizeResponse": false,
+        "parametersHeaders": {
+          "values": [
+            {
+              "name": "Content-Type",
+              "valueProvider": "fieldValue",
+              "value": "application/json"
+            },
+            {
+              "name": "X-API-Key",
+              "valueProvider": "fieldValue",
+              "value": "={{ $('Runtime configuration').first().json.excel_tools_api_key || '' }}"
+            }
+          ]
+        },
+        "parametersBody": {
+          "values": [
+            {
+              "name": "session_id",
+              "valueProvider": "fieldValue",
+              "value": "={{ $('Open excel session').first().json.session_id }}"
+            },
+            {
+              "name": "sheet",
+              "valueProvider": "modelRequired",
+              "value": ""
+            }
+          ]
+        }
+      },
+      "id": "669a4f3a-4afd-5a8e-999e-35cfadceb7eb",
+      "name": "sheet_preview",
+      "type": "@n8n/n8n-nodes-langchain.toolHttpRequest",
+      "typeVersion": 1.1,
+      "position": [
+        980,
+        -420
+      ]
+    },
+    {
+      "parameters": {
+        "toolDescription": "Найти таблицы. sheet опционален. Возвращает table_id, range, columns — не workbook.",
+        "method": "POST",
+        "url": "={{ $('Runtime configuration').first().json.excel_tools_url + '/agent-tools/' + \"detect_tables\" }}",
+        "authentication": "none",
+        "sendQuery": false,
+        "sendHeaders": true,
+        "specifyHeaders": "keypair",
+        "sendBody": true,
+        "specifyBody": "keypair",
+        "placeholderDefinitions": {
+          "values": [
+            {
+              "name": "sheet",
+              "description": "Ограничить поиск одним листом",
+              "type": "string"
+            }
+          ]
+        },
+        "optimizeResponse": false,
+        "parametersHeaders": {
+          "values": [
+            {
+              "name": "Content-Type",
+              "valueProvider": "fieldValue",
+              "value": "application/json"
+            },
+            {
+              "name": "X-API-Key",
+              "valueProvider": "fieldValue",
+              "value": "={{ $('Runtime configuration').first().json.excel_tools_api_key || '' }}"
+            }
+          ]
+        },
+        "parametersBody": {
+          "values": [
+            {
+              "name": "session_id",
+              "valueProvider": "fieldValue",
+              "value": "={{ $('Open excel session').first().json.session_id }}"
+            },
+            {
+              "name": "sheet",
+              "valueProvider": "modelOptional",
+              "value": ""
+            }
+          ]
+        }
+      },
+      "id": "3a321bbf-c410-53e2-b000-a99958d37337",
+      "name": "detect_tables",
+      "type": "@n8n/n8n-nodes-langchain.toolHttpRequest",
+      "typeVersion": 1.1,
+      "position": [
+        1200,
+        -420
+      ]
+    },
+    {
+      "parameters": {
+        "toolDescription": "Ранжировать уже найденные или подходящие таблицы по фразе запроса.",
+        "method": "POST",
+        "url": "={{ $('Runtime configuration').first().json.excel_tools_url + '/agent-tools/' + \"match_tables\" }}",
+        "authentication": "none",
+        "sendQuery": false,
+        "sendHeaders": true,
+        "specifyHeaders": "keypair",
+        "sendBody": true,
+        "specifyBody": "keypair",
+        "placeholderDefinitions": {
+          "values": [
+            {
+              "name": "query",
+              "description": "Что искать: даты ввода, дебиты, ...",
+              "type": "string"
+            }
+          ]
+        },
+        "optimizeResponse": false,
+        "parametersHeaders": {
+          "values": [
+            {
+              "name": "Content-Type",
+              "valueProvider": "fieldValue",
+              "value": "application/json"
+            },
+            {
+              "name": "X-API-Key",
+              "valueProvider": "fieldValue",
+              "value": "={{ $('Runtime configuration').first().json.excel_tools_api_key || '' }}"
+            }
+          ]
+        },
+        "parametersBody": {
+          "values": [
+            {
+              "name": "session_id",
+              "valueProvider": "fieldValue",
+              "value": "={{ $('Open excel session').first().json.session_id }}"
+            },
+            {
+              "name": "query",
+              "valueProvider": "modelRequired",
+              "value": ""
+            }
+          ]
+        }
+      },
+      "id": "fd8414df-6c58-5e8d-9f9e-d49bcfa063c1",
+      "name": "match_tables",
+      "type": "@n8n/n8n-nodes-langchain.toolHttpRequest",
+      "typeVersion": 1.1,
+      "position": [
+        1420,
+        -420
+      ]
+    },
+    {
+      "parameters": {
+        "toolDescription": "Колонки, число строк и sample. table_id только из detect/match.",
+        "method": "POST",
+        "url": "={{ $('Runtime configuration').first().json.excel_tools_url + '/agent-tools/' + \"describe_table\" }}",
+        "authentication": "none",
+        "sendQuery": false,
+        "sendHeaders": true,
+        "specifyHeaders": "keypair",
+        "sendBody": true,
+        "specifyBody": "keypair",
+        "placeholderDefinitions": {
+          "values": [
+            {
+              "name": "table_id",
+              "description": "table_id из detect_tables",
+              "type": "string"
+            }
+          ]
+        },
+        "optimizeResponse": false,
+        "parametersHeaders": {
+          "values": [
+            {
+              "name": "Content-Type",
+              "valueProvider": "fieldValue",
+              "value": "application/json"
+            },
+            {
+              "name": "X-API-Key",
+              "valueProvider": "fieldValue",
+              "value": "={{ $('Runtime configuration').first().json.excel_tools_api_key || '' }}"
+            }
+          ]
+        },
+        "parametersBody": {
+          "values": [
+            {
+              "name": "session_id",
+              "valueProvider": "fieldValue",
+              "value": "={{ $('Open excel session').first().json.session_id }}"
+            },
+            {
+              "name": "table_id",
+              "valueProvider": "modelRequired",
+              "value": ""
+            }
+          ]
+        }
+      },
+      "id": "96de5f67-f2d4-5264-a64d-a957f04be6d2",
+      "name": "describe_table",
+      "type": "@n8n/n8n-nodes-langchain.toolHttpRequest",
+      "typeVersion": 1.1,
+      "position": [
+        760,
+        -260
+      ]
+    },
+    {
+      "parameters": {
+        "toolDescription": "Ограниченные distinct-значения одной колонки для точных фильтров.",
+        "method": "POST",
+        "url": "={{ $('Runtime configuration').first().json.excel_tools_url + '/agent-tools/' + \"list_column_values\" }}",
+        "authentication": "none",
+        "sendQuery": false,
+        "sendHeaders": true,
+        "specifyHeaders": "keypair",
+        "sendBody": true,
+        "specifyBody": "keypair",
+        "placeholderDefinitions": {
+          "values": [
+            {
+              "name": "table_id",
+              "description": "table_id из detect_tables",
+              "type": "string"
+            },
+            {
+              "name": "column",
+              "description": "Точное имя колонки из describe/detect",
+              "type": "string"
+            }
+          ]
+        },
+        "optimizeResponse": false,
+        "parametersHeaders": {
+          "values": [
+            {
+              "name": "Content-Type",
+              "valueProvider": "fieldValue",
+              "value": "application/json"
+            },
+            {
+              "name": "X-API-Key",
+              "valueProvider": "fieldValue",
+              "value": "={{ $('Runtime configuration').first().json.excel_tools_api_key || '' }}"
+            }
+          ]
+        },
+        "parametersBody": {
+          "values": [
+            {
+              "name": "session_id",
+              "valueProvider": "fieldValue",
+              "value": "={{ $('Open excel session').first().json.session_id }}"
+            },
+            {
+              "name": "table_id",
+              "valueProvider": "modelRequired",
+              "value": ""
+            },
+            {
+              "name": "column",
+              "valueProvider": "modelRequired",
+              "value": ""
+            }
+          ]
+        }
+      },
+      "id": "217189e1-947c-5e4f-b109-ff47a44e265f",
+      "name": "list_column_values",
+      "type": "@n8n/n8n-nodes-langchain.toolHttpRequest",
+      "typeVersion": 1.1,
+      "position": [
+        980,
+        -260
+      ]
+    },
+    {
+      "parameters": {
+        "toolDescription": "Строки таблицы. select/filters — JSON с числовыми ключами 0,1,2,...",
+        "method": "POST",
+        "url": "={{ $('Runtime configuration').first().json.excel_tools_url + '/agent-tools/' + \"query_table\" }}",
+        "authentication": "none",
+        "sendQuery": false,
+        "sendHeaders": true,
+        "specifyHeaders": "keypair",
+        "sendBody": true,
+        "specifyBody": "keypair",
+        "placeholderDefinitions": {
+          "values": [
+            {
+              "name": "table_id",
+              "description": "table_id из detect_tables",
+              "type": "string"
+            },
+            {
+              "name": "select",
+              "description": "Числовые ключи → имена колонок",
+              "type": "json"
+            },
+            {
+              "name": "filters",
+              "description": "Числовые ключи → {field, operator, value}",
+              "type": "json"
+            },
+            {
+              "name": "limit",
+              "description": "Лимит строк, по умолчанию 200",
+              "type": "string"
+            }
+          ]
+        },
+        "optimizeResponse": false,
+        "parametersHeaders": {
+          "values": [
+            {
+              "name": "Content-Type",
+              "valueProvider": "fieldValue",
+              "value": "application/json"
+            },
+            {
+              "name": "X-API-Key",
+              "valueProvider": "fieldValue",
+              "value": "={{ $('Runtime configuration').first().json.excel_tools_api_key || '' }}"
+            }
+          ]
+        },
+        "parametersBody": {
+          "values": [
+            {
+              "name": "session_id",
+              "valueProvider": "fieldValue",
+              "value": "={{ $('Open excel session').first().json.session_id }}"
+            },
+            {
+              "name": "table_id",
+              "valueProvider": "modelRequired",
+              "value": ""
+            },
+            {
+              "name": "select",
+              "valueProvider": "modelOptional",
+              "value": ""
+            },
+            {
+              "name": "filters",
+              "valueProvider": "modelOptional",
+              "value": ""
+            },
+            {
+              "name": "limit",
+              "valueProvider": "modelOptional",
+              "value": ""
+            }
+          ]
+        }
+      },
+      "id": "11d8897f-cc55-5326-b643-3bd461d3602b",
+      "name": "query_table",
+      "type": "@n8n/n8n-nodes-langchain.toolHttpRequest",
+      "typeVersion": 1.1,
+      "position": [
+        1200,
+        -260
+      ]
+    },
+    {
+      "parameters": {
+        "toolDescription": "Извлечь факты скважина+дата ввода из сессии. Аргументы не передавай.",
+        "method": "POST",
+        "url": "={{ $('Runtime configuration').first().json.excel_tools_url + '/agent-tools/' + \"extract_commissioning\" }}",
+        "authentication": "none",
+        "sendQuery": false,
+        "sendHeaders": true,
+        "specifyHeaders": "keypair",
+        "sendBody": true,
+        "specifyBody": "keypair",
+        "placeholderDefinitions": {
+          "values": []
+        },
+        "optimizeResponse": false,
+        "parametersHeaders": {
+          "values": [
+            {
+              "name": "Content-Type",
+              "valueProvider": "fieldValue",
+              "value": "application/json"
+            },
+            {
+              "name": "X-API-Key",
+              "valueProvider": "fieldValue",
+              "value": "={{ $('Runtime configuration').first().json.excel_tools_api_key || '' }}"
+            }
+          ]
+        },
+        "parametersBody": {
+          "values": [
+            {
+              "name": "session_id",
+              "valueProvider": "fieldValue",
+              "value": "={{ $('Open excel session').first().json.session_id }}"
+            }
+          ]
+        }
+      },
+      "id": "fa55ccb0-944f-55c5-971b-8e216a89245c",
+      "name": "extract_commissioning",
+      "type": "@n8n/n8n-nodes-langchain.toolHttpRequest",
+      "typeVersion": 1.1,
+      "position": [
+        1420,
+        -260
+      ]
+    }
+  ],
+  "connections": {
+    "When executed by another workflow": {
+      "main": [
+        [
+          {
+            "node": "Runtime configuration",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Runtime configuration": {
+      "main": [
+        [
+          {
+            "node": "Normalize excel task",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Normalize excel task": {
+      "main": [
+        [
+          {
+            "node": "Open excel session",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Open excel session": {
+      "main": [
+        [
+          {
+            "node": "Session ready?",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Session ready?": {
+      "main": [
+        [
+          {
+            "node": "Capability router",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Format missing excel",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Capability router": {
+      "main": [
+        [
+          {
+            "node": "Extract commissioning",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Prepare AI Agent input",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Extract commissioning": {
+      "main": [
+        [
+          {
+            "node": "Fetch excel result",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Prepare AI Agent input": {
+      "main": [
+        [
+          {
+            "node": "Excel Extractor AI Agent",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Excel Extractor Chat Model — Qwen": {
+      "ai_languageModel": [
+        [
+          {
+            "node": "Excel Extractor AI Agent",
+            "type": "ai_languageModel",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "workbook_introspect": {
+      "ai_tool": [
+        [
+          {
+            "node": "Excel Extractor AI Agent",
+            "type": "ai_tool",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "sheet_preview": {
+      "ai_tool": [
+        [
+          {
+            "node": "Excel Extractor AI Agent",
+            "type": "ai_tool",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "detect_tables": {
+      "ai_tool": [
+        [
+          {
+            "node": "Excel Extractor AI Agent",
+            "type": "ai_tool",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "match_tables": {
+      "ai_tool": [
+        [
+          {
+            "node": "Excel Extractor AI Agent",
+            "type": "ai_tool",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "describe_table": {
+      "ai_tool": [
+        [
+          {
+            "node": "Excel Extractor AI Agent",
+            "type": "ai_tool",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "list_column_values": {
+      "ai_tool": [
+        [
+          {
+            "node": "Excel Extractor AI Agent",
+            "type": "ai_tool",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "query_table": {
+      "ai_tool": [
+        [
+          {
+            "node": "Excel Extractor AI Agent",
+            "type": "ai_tool",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "extract_commissioning": {
+      "ai_tool": [
+        [
+          {
+            "node": "Excel Extractor AI Agent",
+            "type": "ai_tool",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Excel Extractor AI Agent": {
+      "main": [
+        [
+          {
+            "node": "Fetch excel result",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Fetch excel result": {
+      "main": [
+        [
+          {
+            "node": "Format excel result",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    }
+  },
+  "settings": {
+    "executionOrder": "v1",
+    "saveManualExecutions": true,
+    "callerPolicy": "workflowsFromSameOwner",
+    "errorWorkflow": ""
+  },
+  "meta": {
+    "templateCredsSetupCompleted": true,
+    "targetN8nVersion": "2.30.8"
+  },
+  "tags": [],
+  "pinData": {},
+  "versionId": "c5ddaf5c-330e-4c53-baa9-42abc31b99ea"
+}
