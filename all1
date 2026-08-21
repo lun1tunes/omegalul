@@ -5259,7 +5259,7 @@ async def get(case_id: str, artifact_id: str) -> tuple[str, bytes, str]:
     )
 
 ===END_FILE===
-===BEGIN_FILE===	mas-activity-service/app/cases_api.py	31064	utf8
+===BEGIN_FILE===	mas-activity-service/app/cases_api.py	31169	utf8
 """Case control-plane HTTP API (state, events, SSE, HITL, run)."""
 
 from __future__ import annotations
@@ -5612,6 +5612,7 @@ async def _invoke_action(case_id: str, *, action: str) -> None:
                 "task_description": str(state.get("goal") or ""),
                 "task_name": str(state.get("task_name") or ""),
                 "requested_by": "mas activity user",
+                "artifacts": state.get("artifacts") if isinstance(state.get("artifacts"), dict) else {},
             },
             timeout_s=180.0,
         )
@@ -23842,7 +23843,3 @@ event_id,trace_id,task_id,at,stage,event_type,actor,status,summary,details_json
                   "RATE",
                   "TARG"
                 ]
-              },
-              {
-                "name": "EXCEED_PARENT",
-                "position": 8,

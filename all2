@@ -1,3 +1,7 @@
+              },
+              {
+                "name": "EXCEED_PARENT",
+                "position": 8,
                 "type": "string",
                 "required": true,
                 "enum": [

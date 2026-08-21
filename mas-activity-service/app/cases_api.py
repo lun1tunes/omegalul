@@ -350,6 +350,7 @@ async def _invoke_action(case_id: str, *, action: str) -> None:
                 "task_description": str(state.get("goal") or ""),
                 "task_name": str(state.get("task_name") or ""),
                 "requested_by": "mas activity user",
+                "artifacts": state.get("artifacts") if isinstance(state.get("artifacts"), dict) else {},
             },
             timeout_s=180.0,
         )

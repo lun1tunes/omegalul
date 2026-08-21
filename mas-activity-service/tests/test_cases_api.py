@@ -174,6 +174,45 @@ def test_create_action_is_sent_to_n8n_for_new_case(monkeypatch) -> None:
     assert payload["case_id"] == res.json()["case_id"]
     assert payload["task_description"] == "Создать новую задачу"
     assert payload["task_name"] == "Новая задача"
+    assert payload["artifacts"] == {}
+
+
+def test_create_action_passes_uploaded_artifacts_to_n8n(monkeypatch) -> None:
+    monkeypatch.setenv("ORCHESTRATOR_WEBHOOK_URL", "http://n8n.test/webhook/mas-orchestrator-step")
+    from app import control_plane
+    from app import cases_api
+    import asyncio
+
+    captured: dict[str, object] = {}
+
+    async def fake_invoke(payload, *, files=None, timeout_s=90.0):
+        captured["payload"] = payload
+        return {"ok": True}
+
+    monkeypatch.setattr(cases_api, "invoke_orchestrator", fake_invoke)
+    case_id = "CASE-artifact-payload"
+    control_plane.create_case(
+        case_id,
+        "Excel handoff",
+        {
+            "excel": {
+                "filename": "dates.xlsx",
+                "mime_type": "application/octet-stream",
+                "bytes": 10,
+                "artifact_id": "excel",
+            }
+        },
+    )
+    asyncio.run(cases_api._invoke_action(case_id, action="create"))
+    payload = captured["payload"]  # type: ignore[assignment]
+    assert payload["case_id"] == case_id
+    assert payload["artifacts"]["excel"] == {
+        "filename": "dates.xlsx",
+        "mime_type": "application/octet-stream",
+        "bytes": 10,
+        "artifact_id": "excel",
+    }
+    assert control_plane.get_case(case_id)["state"]["artifacts"]["excel"]["artifact_id"] == "excel"
 
 
 def test_create_keeps_files_in_activity_not_n8n(monkeypatch) -> None:

@@ -1,3 +1,13 @@
+                                "F",
+                                "INCREASE",
+                                "GRDAMP",
+                                "FREE_GAS",
+                                "GRMIN"
+                              ]
+                            }
+                          ],
+                          "numeric_constraints": [
+                            {
                               "field": "INTERVAL",
                               "min": 0
                             },
