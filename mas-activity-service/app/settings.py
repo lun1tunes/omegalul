@@ -113,16 +113,27 @@ class Settings(BaseSettings):
         default="", validation_alias="ACTIVITY_DURABLE_AUTH_VALUE"
     )
 
-    database_url: str = Field(default="", validation_alias="DATABASE_URL")
     activity_state_path: str = Field(default="", validation_alias="ACTIVITY_STATE_PATH")
     activity_binaries_path: str = Field(default="", validation_alias="ACTIVITY_BINARIES_PATH")
+    control_plane_proxy_url: str = Field(default="", validation_alias="CONTROL_PLANE_PROXY_URL")
+    control_plane_proxy_auth_header: str = Field(
+        default="", validation_alias="CONTROL_PLANE_PROXY_AUTH_HEADER"
+    )
+    control_plane_proxy_auth_value: str = Field(
+        default="", validation_alias="CONTROL_PLANE_PROXY_AUTH_VALUE"
+    )
+    control_plane_proxy_timeout_s: float = Field(
+        default=120.0, validation_alias="CONTROL_PLANE_PROXY_TIMEOUT_S"
+    )
     mas_knowledge_corpus: str = Field(default="", validation_alias="MAS_KNOWLEDGE_CORPUS")
     n8n_health_path: str = Field(default="/healthz", validation_alias="N8N_HEALTH_PATH")
     n8n_webhook_checks: str = Field(default="", validation_alias="N8N_WEBHOOK_CHECKS")
 
     @field_validator(
         "n8n_base_url",
-        "database_url",
+        "control_plane_proxy_url",
+        "control_plane_proxy_auth_header",
+        "control_plane_proxy_auth_value",
         "orchestrator_webhook_url",
         "activity_hydrate_url",
         "activity_list_url",

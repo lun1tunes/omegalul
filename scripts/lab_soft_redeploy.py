@@ -89,7 +89,7 @@ ERROR_WORKFLOW_SKIP = (
     "Error — MAS Case Handler",
     "Writer — MAS Trace",
     "CAS — Persist Task State",
-    "MAS — Ensure Control Plane",
+    "MAS — Control Plane Proxy",
 )
 
 

@@ -8,7 +8,7 @@ import os
 from pathlib import Path
 
 os.environ.setdefault("LOG_LEVEL", "WARNING")
-os.environ.pop("DATABASE_URL", None)
+os.environ.pop("CONTROL_PLANE_PROXY_URL", None)
 
 from fastapi.testclient import TestClient
 

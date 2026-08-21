@@ -5733,6 +5733,2381 @@
 }
 
 ===END_FILE===
+===BEGIN_FILE===	schedule-builder-service/app/__init__.py	36	utf8
+from __future__ import annotations
+
+
+===END_FILE===
+===BEGIN_FILE===	schedule-builder-service/app/agent_tools.py	21074	utf8
+"""Deterministic tools for the n8n Schedule Builder LLM. Never invent wells or dates."""
+
+from __future__ import annotations
+
+import json
+import re
+from typing import Any
+
+from .apply import apply_operations
+from .commissioning import run_commissioning_revise
+from .diff import unified_diff
+from .emit import emit_schedule
+from .group_rebind import extract_group_rebind_spec, run_group_rebind_revise, wants_group_rebind
+from .io import commissioning_facts, file_ref, load_source
+from .keywords import keyword_object, search_keywords
+from .parse import parse_schedule, well_names
+from . import sessions
+from .validate import validate_emitted
+
+UNITS = "METRIC"
+MAX_RECORDS = 40
+MAX_WELLS = 200
+
+
+def _compact_inspect(source: str) -> dict[str, Any]:
+    doc = parse_schedule(source)
+    wells = sorted(well_names(doc))
+    dates: list[str] = []
+    keywords: list[str] = []
+    groups: list[dict[str, str]] = []
+    for block in doc.blocks:
+        keywords.append(block.keyword)
+        if block.keyword == "DATES":
+            for rec in block.records:
+                if rec.tokens:
+                    dates.append(rec.tokens[0])
+        if block.keyword == "GRUPTREE":
+            for rec in block.records:
+                if len(rec.tokens) >= 2:
+                    groups.append(
+                        {
+                            "child": rec.tokens[0].strip("'\""),
+                            "parent": rec.tokens[1].strip("'\""),
+                        }
+                    )
+    seen = list(dict.fromkeys(keywords))
+    return {
+        "well_count": len(wells),
+        "wells": wells[:MAX_WELLS],
+        "wells_truncated": len(wells) > MAX_WELLS,
+        "keywords_present": seen,
+        "date_count": len(dates),
+        "dates_preview": dates[:12],
+        "gruptree_preview": groups[:40],
+        "source_bytes": len(source.encode("utf-8")),
+        "units": UNITS,
+    }
+
+
+def _agent_result(
+    task_id: str,
+    status: str,
+    message: str,
+    *,
+    data: dict[str, Any] | None = None,
+    artifacts: dict[str, Any] | None = None,
+    issues: list[Any] | None = None,
+    requests: list[Any] | None = None,
+    assumptions: list[Any] | None = None,
+) -> dict[str, Any]:
+    return {
+        "task_id": task_id,
+        "agent_id": "schedule_builder",
+        "status": status,
+        "message": message,
+        "data": data or {},
+        "artifacts": artifacts or {},
+        "issues": issues or [],
+        "assumptions": assumptions or [{"units": UNITS}],
+        "requests": requests or [],
+    }
+
+
+def _store_result(state: dict[str, Any], result: dict[str, Any]) -> dict[str, Any]:
+    state["result"] = result
+    sessions.save(state)
+    compact = {k: v for k, v in result.items() if k != "artifacts"}
+    arts = result.get("artifacts") if isinstance(result.get("artifacts"), dict) else {}
+    compact["artifacts"] = {
+        "schedule_out": bool(str(arts.get("schedule_out") or "").strip()),
+        "diff_bytes": len(str(arts.get("diff") or "").encode("utf-8")),
+    }
+    return compact
+
+
+def open_session(task: dict[str, Any], *, activity: str = "") -> dict[str, Any]:
+    inputs = task.get("inputs") if isinstance(task.get("inputs"), dict) else {}
+    context = task.get("context") if isinstance(task.get("context"), dict) else {}
+    case_id = str(task.get("case_id") or "")
+    task_id = str(task.get("task_id") or "")
+    try:
+        source = load_source(inputs, case_id, activity)
+    except Exception as exc:
+        return {
+            "ok": False,
+            "status": "needs_input",
+            "result": _agent_result(
+                task_id,
+                "needs_input",
+                f"Нет исходного SCHEDULE: {exc}",
+                issues=[{"type": "missing_schedule_source"}],
+                requests=[{"question_id": "Q-sched", "question": "Приложите baseline .inc", "options": []}],
+                assumptions=[],
+            ),
+        }
+    if not str(source).strip():
+        return {
+            "ok": False,
+            "status": "needs_input",
+            "result": _agent_result(
+                task_id,
+                "needs_input",
+                "Нет исходного SCHEDULE",
+                issues=[{"type": "missing_schedule_source"}],
+                requests=[{"question_id": "Q-sched", "question": "Приложите baseline .inc", "options": []}],
+                assumptions=[],
+            ),
+        }
+    facts = commissioning_facts(context, inputs)
+    inspect = _compact_inspect(source)
+    state = sessions.put(
+        {
+            "session_id": sessions.new_session_id(),
+            "case_id": case_id,
+            "task_id": task_id,
+            "objective": str(task.get("objective") or ""),
+            "handoff_message": str(task.get("handoff_message") or ""),
+            "source_text": source,
+            "working_text": source,
+            "file_ref": file_ref(inputs),
+            "inputs": inputs,
+            "context": context,
+            "facts": facts,
+            "result": None,
+        }
+    )
+    return {
+        "ok": True,
+        "session_id": state["session_id"],
+        "task_id": task_id,
+        "inspect": inspect,
+        "fact_count": len(facts),
+        "facts_preview": [
+            {"well": row.get("well"), "date": row.get("date")} for row in facts[:40]
+        ],
+        "objective": state["objective"],
+        "handoff_message": state["handoff_message"],
+        "suggested_capability": suggested_capability(state),
+    }
+
+
+def session_result(session_id: str) -> dict[str, Any]:
+    state = sessions.get(session_id)
+    result = state.get("result")
+    if isinstance(result, dict) and result.get("status"):
+        return result
+    return _agent_result(
+        str(state.get("task_id") or ""),
+        "failed",
+        "Агент не вызвал apply/build — SCHEDULE не собран",
+        issues=[{"type": "no_build"}],
+    )
+
+
+def _parse_jsonish(value: Any) -> Any:
+    if isinstance(value, (dict, list)):
+        return value
+    if isinstance(value, str) and value.strip()[:1] in "{[":
+        try:
+            return json.loads(value)
+        except json.JSONDecodeError:
+            return None
+    return None
+
+
+def _hitl_payloads(state: dict[str, Any]) -> list[Any]:
+    context = state.get("context") if isinstance(state.get("context"), dict) else {}
+    hitl = context.get("hitl") if isinstance(context.get("hitl"), dict) else {}
+    answers = hitl.get("answers") if isinstance(hitl.get("answers"), dict) else {}
+    out: list[Any] = []
+    for value in answers.values():
+        parsed = _parse_jsonish(value)
+        if parsed is not None:
+            out.append(parsed)
+        elif isinstance(value, str) and value.strip():
+            out.append(value)
+    return out
+
+
+def _unlisted_policy(state: dict[str, Any]) -> str | None:
+    """HITL / inputs enum is authority. Prose in the objective is not.
+
+    Empty means the timeline JS decides: silent keep, or HITL when prose
+    suggests remove. Do not default to keep here — that skips the HITL gate.
+    """
+    inputs = state.get("inputs") if isinstance(state.get("inputs"), dict) else {}
+    raw = str(inputs.get("unlisted_wells_policy") or "").strip().lower()
+    if raw in {"keep", "remove"}:
+        return raw
+    for payload in _hitl_payloads(state):
+        if isinstance(payload, dict):
+            pol = str(payload.get("unlisted_wells_policy") or "").strip().lower()
+            if pol in {"keep", "remove"}:
+                return pol
+        blob = str(payload).lower()
+        if "unlisted_wells_policy=remove" in blob or re.search(r"(^|\s)remove(\s|$)", blob):
+            if "unlisted_wells_policy=keep" not in blob:
+                return "remove"
+        if "unlisted_wells_policy=keep" in blob:
+            return "keep"
+    return None
+
+
+def _new_well_defs(state: dict[str, Any]) -> list[dict[str, Any]]:
+    inputs = state.get("inputs") if isinstance(state.get("inputs"), dict) else {}
+    raw = inputs.get("new_well_defs")
+    if isinstance(raw, list) and raw:
+        return [row for row in raw if isinstance(row, dict)]
+    for payload in _hitl_payloads(state):
+        if isinstance(payload, dict) and isinstance(payload.get("new_well_defs"), list):
+            rows = [row for row in payload["new_well_defs"] if isinstance(row, dict)]
+            if rows:
+                return rows
+        if isinstance(payload, list):
+            rows = [row for row in payload if isinstance(row, dict) and row.get("well")]
+            if rows:
+                return rows
+    return []
+
+
+def _ops_from_model(raw: Any) -> list[dict[str, Any]]:
+    if isinstance(raw, list):
+        return [row for row in raw if isinstance(row, dict)]
+    if isinstance(raw, str) and raw.strip():
+        try:
+            parsed = json.loads(raw)
+        except json.JSONDecodeError:
+            return []
+        return _ops_from_model(parsed)
+    if isinstance(raw, dict):
+        if raw.get("keyword") or raw.get("operation"):
+            return [raw]
+        keys = sorted(raw, key=lambda k: int(k) if str(k).isdigit() else str(k))
+        out: list[dict[str, Any]] = []
+        for key in keys:
+            item = raw[key]
+            if isinstance(item, dict):
+                out.append(item)
+        return out
+    return []
+
+
+def execute_tool(session_id: str, name: str, args: dict[str, Any] | None = None) -> dict[str, Any]:
+    args = args if isinstance(args, dict) else {}
+    state = sessions.get(session_id)
+    source = str(state.get("working_text") or state.get("source_text") or "")
+    task_id = str(state.get("task_id") or "")
+    blob = " ".join([str(state.get("objective") or ""), str(state.get("handoff_message") or "")])
+
+    if name == "inspect_schedule":
+        return {"ok": True, "inspect": _compact_inspect(source), "fact_count": len(state.get("facts") or [])}
+
+    if name == "search_keywords":
+        intent = str(args.get("intent") or blob)
+        hits = search_keywords(intent)
+        return {
+            "ok": True,
+            "intent": intent,
+            "keywords": [
+                {
+                    "keyword": item["keyword"],
+                    "description": item.get("description"),
+                    "fields": [f.get("name") for f in item.get("fields") or []],
+                    "methods": [m.get("name") if isinstance(m, dict) else m for m in item.get("methods") or []],
+                }
+                for item in hits[:20]
+            ],
+        }
+
+    if name == "get_keyword":
+        item = keyword_object(str(args.get("keyword") or ""))
+        if item is None:
+            return {"ok": False, "error": "unknown_keyword", "keyword": args.get("keyword")}
+        return {"ok": True, "keyword": item}
+
+    if name == "list_records":
+        keyword = str(args.get("keyword") or "").strip().upper()
+        well = str(args.get("well") or "").strip().strip("'\"")
+        doc = parse_schedule(source)
+        rows: list[dict[str, Any]] = []
+        for block in doc.blocks:
+            if keyword and block.keyword != keyword:
+                continue
+            for rec in block.records:
+                rec_well = rec.tokens[0].strip("'\"") if rec.tokens else ""
+                if well and rec_well != well:
+                    continue
+                rows.append({"keyword": block.keyword, "well": rec_well, "tokens": rec.tokens[:16]})
+                if len(rows) >= MAX_RECORDS:
+                    break
+            if len(rows) >= MAX_RECORDS:
+                break
+        return {"ok": True, "count": len(rows), "truncated": len(rows) >= MAX_RECORDS, "records": rows}
+
+    if name == "apply_commissioning":
+        facts = list(state.get("facts") or [])
+        if not facts:
+            result = _agent_result(
+                task_id,
+                "needs_input",
+                "Для сдвига дат ввода нужны факты скважина + дата из Excel",
+                issues=[{"type": "commissioning_facts_required"}],
+                requests=[
+                    {
+                        "question_id": "Q-facts",
+                        "question": "Приложите Excel со скважинами и датами ввода",
+                        "options": [],
+                    }
+                ],
+                assumptions=[],
+            )
+            return _store_result(state, result)
+        revised = run_commissioning_revise(
+            source,
+            facts,
+            file_ref=str(state.get("file_ref") or "schedule.inc"),
+            unlisted_wells_policy=_unlisted_policy(state),
+            new_well_defs=_new_well_defs(state),
+            instruction_blob=blob,
+        )
+        status = str(revised.get("status") or "")
+        if status == "needs_input":
+            questions = revised.get("questions") or []
+            result = _agent_result(
+                task_id,
+                "needs_input",
+                (
+                    questions[0].get("question")
+                    if questions and isinstance(questions[0], dict)
+                    else "Нужно уточнение по скважинам вне Excel"
+                ),
+                data={"findings": revised.get("findings") or [], "unlisted_wells": revised.get("unlisted_wells") or []},
+                issues=revised.get("findings") or [],
+                requests=[
+                    {**q, "question_id": q.get("question_id") or q.get("id") or "Q-sched"}
+                    if isinstance(q, dict)
+                    else q
+                    for q in (questions if isinstance(questions, list) else [])
+                ],
+            )
+            return _store_result(state, result)
+        text = str(revised.get("generated_schedule") or "")
+        state["working_text"] = text or source
+        ok = bool(text.strip()) and status in {"applied", "noop"}
+        result = _agent_result(
+            task_id,
+            "completed" if ok else "failed",
+            f"Сдвинул даты ввода для {len(revised.get('shifts') or [])} скважин"
+            if status == "applied"
+            else str(revised.get("status") or "SCHEDULE без изменений"),
+            data={
+                "changed_keywords": ["DATES", "WCONPROD"],
+                "findings": revised.get("findings") or [],
+                "edits": revised.get("edits") or [],
+                "shifts": revised.get("shifts") or [],
+                "records_applied": len(revised.get("edits") or []),
+            },
+            artifacts={"schedule_out": text, "diff": unified_diff(str(state.get("source_text") or ""), text)},
+            issues=revised.get("findings") or [],
+            assumptions=[{"units": UNITS, "unlisted_wells_policy": revised.get("unlisted_wells_policy") or "keep"}],
+        )
+        return _store_result(state, result)
+
+    if name == "apply_group_rebind":
+        wells = well_names(parse_schedule(source))
+        spec, missing = extract_group_rebind_spec(
+            blob,
+            wells,
+            source_text=source,
+            hitl=(state.get("context") or {}).get("hitl")
+            if isinstance((state.get("context") or {}).get("hitl"), dict)
+            else {},
+            inputs=state.get("inputs") or {},
+        )
+        override = args.get("spec") if isinstance(args.get("spec"), dict) else args
+        for key in ("parent_group", "parent_of_parent", "control", "gas_rate", "oil_rate"):
+            if override.get(key) not in (None, ""):
+                spec[key] = override[key]
+        if override.get("wells"):
+            raw_wells = override.get("wells")
+            if isinstance(raw_wells, str):
+                spec["wells"] = [item.strip() for item in raw_wells.replace(",", " ").split() if item.strip()]
+            elif isinstance(raw_wells, list):
+                spec["wells"] = [str(item).strip() for item in raw_wells if str(item).strip()]
+        invented = [name for name in spec.get("wells") or [] if name not in wells]
+        if invented:
+            return {
+                "ok": False,
+                "error": "well_not_in_schedule",
+                "wells": invented,
+                "message": "Нельзя придумывать скважины. Берите имена из inspect_schedule.",
+            }
+        if missing and not spec.get("parent_group"):
+            result = _agent_result(
+                task_id,
+                "needs_input",
+                "Для перепривязки групп нужны: " + ", ".join(missing),
+                data={"group_rebind": spec, "missing": missing},
+                issues=[{"type": "GROUP_REBIND_SPEC_REQUIRED", "missing": missing}],
+                requests=[
+                    {
+                        "question_id": item,
+                        "question": f"Уточните {item} для перепривязки групп.",
+                        "options": [],
+                    }
+                    for item in missing
+                ],
+            )
+            return _store_result(state, result)
+        revised = run_group_rebind_revise(source, spec, file_ref=str(state.get("file_ref") or "schedule.inc"))
+        status = str(revised.get("status") or "")
+        text = str(revised.get("generated_schedule") or "")
+        if status == "needs_input" or not text.strip():
+            result = _agent_result(
+                task_id,
+                "needs_input",
+                "Перепривязка групп требует уточнения по baseline",
+                data={"findings": revised.get("findings") or [], "group_rebind": spec},
+                issues=revised.get("findings") or [],
+                requests=[{"question_id": "group_rebind", "question": "Уточните spec перепривязки групп", "options": []}],
+            )
+            return _store_result(state, result)
+        state["working_text"] = text
+        result = _agent_result(
+            task_id,
+            "completed",
+            f"Перепривязал {len(spec['wells'])} скважин в {spec['parent_group']} (GCONPROD {spec['control']} {spec['gas_rate']})",
+            data={
+                "changed_keywords": ["WELSPECS", "GRUPTREE", "GCONPROD"],
+                "findings": revised.get("findings") or [],
+                "edits": revised.get("edits") or [],
+                "group_rebind": spec,
+            },
+            artifacts={"schedule_out": text, "diff": unified_diff(str(state.get("source_text") or ""), text)},
+            issues=revised.get("findings") or [],
+        )
+        return _store_result(state, result)
+
+    if name == "apply_operations":
+        operations = _ops_from_model(args.get("operations"))
+        wells = well_names(parse_schedule(source))
+        bad = []
+        for op in operations:
+            fields = op.get("fields") if isinstance(op.get("fields"), dict) else {}
+            well = str(fields.get("well") or op.get("well") or "").strip().strip("'\"")
+            if well and well not in wells:
+                bad.append(well)
+        if bad:
+            return {"ok": False, "error": "well_not_in_schedule", "wells": bad}
+        built_doc = parse_schedule(source)
+        applied, findings = apply_operations(built_doc, operations)
+        text = emit_schedule(applied)
+        findings.extend(validate_emitted(text, applied))
+        hard = [f for f in findings if f.get("severity") == "error"]
+        state["working_text"] = text
+        result = _agent_result(
+            task_id,
+            "completed" if not hard else "failed",
+            "SCHEDULE обновлён" if not hard else "Ошибка сборки SCHEDULE",
+            data={
+                "changed_keywords": sorted(
+                    {str(op.get("keyword") or "").upper() for op in operations if op.get("keyword")}
+                ),
+                "findings": findings,
+                "records_applied": len(operations),
+            },
+            artifacts={"schedule_out": text, "diff": unified_diff(str(state.get("source_text") or ""), text)},
+            issues=findings,
+        )
+        return _store_result(state, result)
+
+    if name == "build_schedule":
+        text = source
+        findings = validate_emitted(text, parse_schedule(text))
+        hard = [f for f in findings if f.get("severity") == "error"]
+        result = _agent_result(
+            task_id,
+            "completed" if not hard else "failed",
+            "SCHEDULE собран" if not hard else "Ошибка валидации SCHEDULE",
+            data={"findings": findings, "changed_keywords": []},
+            artifacts={"schedule_out": text, "diff": unified_diff(str(state.get("source_text") or ""), text)},
+            issues=findings,
+        )
+        return _store_result(state, result)
+
+    if name == "validate_result":
+        text = str(state.get("working_text") or "")
+        findings = validate_emitted(text, parse_schedule(text))
+        return {"ok": True, "findings": findings, "error_count": len([f for f in findings if f.get("severity") == "error"])}
+
+    raise KeyError(name)
+
+
+def suggested_capability(state: dict[str, Any]) -> str:
+    blob = " ".join([str(state.get("objective") or ""), str(state.get("handoff_message") or "")])
+    inputs = state.get("inputs") if isinstance(state.get("inputs"), dict) else {}
+    if wants_group_rebind(blob, inputs):
+        return "group_rebind"
+    if state.get("facts"):
+        return "commissioning"
+    return "operations"
+
+===END_FILE===
+===BEGIN_FILE===	schedule-builder-service/app/apply.py	3405	utf8
+"""Apply keyword operations onto a parsed SCHEDULE document."""
+
+from __future__ import annotations
+
+from typing import Any
+
+from .keywords import KEYWORDS, normalize_keyword
+from .parse import Block, Record, ScheduleDoc
+
+
+def _tokens_from_fields(fields: dict[str, Any]) -> list[str]:
+    order = ["well", "status", "ORAT", "WRAT", "GRAT", "LRAT", "RESV", "BHP", "THP", "date", "group", "i", "j"]
+    tokens: list[str] = []
+    seen = set()
+    for key in order:
+        if key in fields and fields[key] not in (None, ""):
+            value = fields[key]
+            token = f"'{value}'" if key in {"well", "status", "group"} and not str(value).startswith("'") else str(value)
+            tokens.append(token)
+            seen.add(key)
+    for key, value in fields.items():
+        if key in seen or value in (None, ""):
+            continue
+        tokens.append(str(value))
+    return tokens
+
+
+def apply_operations(doc: ScheduleDoc, operations: list[dict[str, Any]]) -> tuple[ScheduleDoc, list[dict[str, Any]]]:
+    findings: list[dict[str, Any]] = []
+    blocks = list(doc.blocks)
+    for op in operations or []:
+        if not isinstance(op, dict):
+            continue
+        action = str(op.get("operation") or op.get("op") or "ADD").upper()
+        keyword = normalize_keyword(str(op.get("keyword") or ""))
+        if keyword not in KEYWORDS:
+            findings.append({"code": "KEYWORD_UNSUPPORTED", "keyword": keyword, "severity": "error"})
+            continue
+        fields = op.get("fields") if isinstance(op.get("fields"), dict) else {}
+        well = str(fields.get("well") or op.get("well") or "").strip().strip("'")
+        if action == "ADD":
+            tokens = _tokens_from_fields(fields) if fields else [str(t) for t in (op.get("tokens") or [])]
+            record = Record(tokens=tokens, raw="  " + " ".join(tokens) + " /")
+            target = next((b for b in reversed(blocks) if b.keyword == keyword), None)
+            if target is None:
+                blocks.append(Block(keyword=keyword, records=[record], raw_body="", known=True))
+            else:
+                target.records.append(record)
+        elif action in {"MODIFY", "UPDATE"}:
+            target = next((b for b in reversed(blocks) if b.keyword == keyword), None)
+            if target is None:
+                findings.append({"code": "KEYWORD_BLOCK_MISSING", "keyword": keyword, "severity": "error"})
+                continue
+            updated = False
+            for rec in target.records:
+                rec_well = rec.tokens[0].strip("'") if rec.tokens else ""
+                if well and rec_well == well:
+                    rec.tokens = _tokens_from_fields(fields) or rec.tokens
+                    rec.raw = "  " + " ".join(rec.tokens) + " /"
+                    updated = True
+                    break
+            if not updated:
+                findings.append({"code": "WELL_NOT_FOUND", "keyword": keyword, "well": well, "severity": "error"})
+        elif action == "REMOVE":
+            for block in blocks:
+                if block.keyword != keyword:
+                    continue
+                block.records = [r for r in block.records if not (r.tokens and r.tokens[0].strip("'") == well)]
+        else:
+            findings.append({"code": "OPERATION_UNKNOWN", "operation": action, "severity": "error"})
+    return ScheduleDoc(blocks=blocks, text=doc.text, sha256=doc.sha256), findings
+
+===END_FILE===
+===BEGIN_FILE===	schedule-builder-service/app/commissioning.py	2839	utf8
+"""Commissioning date retarget via the shared timeline JS (same algorithm as combat/golden)."""
+
+from __future__ import annotations
+
+import json
+import os
+import subprocess
+import sys
+import tempfile
+from pathlib import Path
+from typing import Any
+
+TEMPLATES = Path(os.getenv("SCHEDULE_TEMPLATES") or "/templates")
+if not (TEMPLATES / "schedule_timeline_runtime.py").is_file():
+    TEMPLATES = Path(__file__).resolve().parents[2] / "n8n" / "templates"
+
+
+def run_commissioning_revise(
+    source_text: str,
+    well_facts: list[dict[str, Any]],
+    *,
+    file_ref: str = "schedule.inc",
+    unlisted_wells_policy: str | None = "keep",
+    instruction_blob: str = "",
+    new_well_defs: list[dict[str, Any]] | None = None,
+) -> dict[str, Any]:
+    if not (TEMPLATES / "schedule_timeline_runtime.py").is_file():
+        raise RuntimeError(f"timeline templates missing at {TEMPLATES}")
+    sys.path.insert(0, str(TEMPLATES))
+    from schedule_timeline_runtime import timeline_core_js
+
+    payload = {
+        "text": source_text,
+        "facts": well_facts,
+        "file_ref": file_ref,
+        "options": {
+            "unlisted_wells_policy": unlisted_wells_policy,
+            "instruction_blob": instruction_blob or "",
+            "new_well_defs": new_well_defs or [],
+        },
+    }
+    js = (
+        timeline_core_js()
+        + """
+const fs = require('fs');
+const payload = JSON.parse(fs.readFileSync(process.argv[2], 'utf8'));
+const result = runCommissioningRevise(payload.text, payload.facts, payload.file_ref || 'schedule.inc', payload.options || {});
+const slim = {
+  contract: result.contract,
+  contract_version: result.contract_version,
+  status: result.status,
+  generated_schedule: result.generated_schedule || '',
+  edits: result.edits || [],
+  moved: result.moved || [],
+  shifts: result.shifts || [],
+  findings: result.findings || [],
+  questions: result.questions || [],
+  unlisted_wells_policy: result.unlisted_wells_policy,
+  unlisted_wells: result.unlisted_wells || [],
+  new_wells: result.new_wells || [],
+  monthly_dates_check: result.monthly_dates_check || null,
+};
+process.stdout.write(JSON.stringify(slim));
+"""
+    )
+    with tempfile.TemporaryDirectory(prefix="sched-comm-") as tmp:
+        tmp_path = Path(tmp)
+        script = tmp_path / "revise.js"
+        data = tmp_path / "payload.json"
+        script.write_text(js, encoding="utf-8")
+        data.write_text(json.dumps(payload, ensure_ascii=False), encoding="utf-8")
+        proc = subprocess.run(
+            ["node", str(script), str(data)],
+            capture_output=True,
+            check=False,
+            timeout=120,
+        )
+    if proc.returncode != 0:
+        err = proc.stderr.decode("utf-8", errors="replace")[:800]
+        raise RuntimeError(err or "commissioning revise failed")
+    return json.loads(proc.stdout.decode("utf-8"))
+
+===END_FILE===
+===BEGIN_FILE===	schedule-builder-service/app/diff.py	471	utf8
+"""Unified diff for SCHEDULE text."""
+
+from __future__ import annotations
+
+import difflib
+
+
+def unified_diff(before: str, after: str, from_file: str = "schedule.inc", to_file: str = "schedule_out.inc") -> str:
+    return "".join(
+        difflib.unified_diff(
+            before.replace("\r\n", "\n").splitlines(keepends=True),
+            after.replace("\r\n", "\n").splitlines(keepends=True),
+            fromfile=from_file,
+            tofile=to_file,
+        )
+    )
+
+===END_FILE===
+===BEGIN_FILE===	schedule-builder-service/app/emit.py	2027	utf8
+"""Emit SCHEDULE text: within-DATES order, record `/`, bare block `/`, then blank line."""
+
+from __future__ import annotations
+
+from .keywords import TABLE_KEYWORDS, normalize_keyword, within_date_rank
+from .parse import Block, Record, ScheduleDoc, timeline_segments
+
+
+def _record_line(record: Record) -> str:
+    raw = record.raw.strip()
+    if raw.endswith("/"):
+        return raw
+    if record.tokens:
+        return "  " + " ".join(record.tokens) + " /"
+    return "  /"
+
+
+def emit_block(block: Block) -> str:
+    kw = normalize_keyword(block.keyword)
+    lines = [kw]
+    for record in block.records:
+        lines.append(_record_line(record))
+    if kw in TABLE_KEYWORDS:
+        lines.append("/")
+        lines.append("")
+    else:
+        if block.raw_body.strip():
+            body = block.raw_body.rstrip()
+            if not body.endswith("/"):
+                lines.extend(body.split("\n"))
+                lines.append("/")
+                lines.append("")
+            else:
+                lines.extend(body.split("\n"))
+                if not lines[-1].strip():
+                    pass
+                else:
+                    lines.append("")
+        else:
+            lines.append("/")
+            lines.append("")
+    return "\n".join(lines).rstrip() + "\n"
+
+
+def emit_schedule(doc: ScheduleDoc) -> str:
+    segments = timeline_segments(doc)
+    if not segments:
+        return "".join(emit_block(block) for block in doc.blocks)
+    parts: list[str] = []
+    for _index, segment in enumerate(segments):
+        dates_block = segment.get("dates_block")
+        if dates_block is not None:
+            parts.append(emit_block(dates_block))
+        blocks: list[Block] = list(segment.get("blocks") or [])
+        ranked = list(enumerate(blocks))
+        ranked.sort(key=lambda pair: (within_date_rank(pair[1].keyword, pair[0]), pair[0]))
+        for _, block in ranked:
+            parts.append(emit_block(block))
+    text = "".join(parts)
+    if not text.endswith("\n"):
+        text += "\n"
+    return text
+
+===END_FILE===
+===BEGIN_FILE===	schedule-builder-service/app/group_rebind.py	6909	utf8
+"""Group membership rebind via the shared timeline JS (same algorithm as combat/golden)."""
+
+from __future__ import annotations
+
+import json
+import os
+import re
+import subprocess
+import sys
+import tempfile
+from pathlib import Path
+from typing import Any
+
+TEMPLATES = Path(os.getenv("SCHEDULE_TEMPLATES") or "/templates")
+if not (TEMPLATES / "schedule_timeline_runtime.py").is_file():
+    TEMPLATES = Path(__file__).resolve().parents[2] / "n8n" / "templates"
+
+GROUP_INTENT = (
+    "групп",
+    "gruptree",
+    "gconprod",
+    "перепривяз",
+    "group_rebind",
+    "group_membership",
+    "отдельн",
+)
+
+
+def wants_group_rebind(blob: str, inputs: dict[str, Any] | None = None) -> bool:
+    text = (blob or "").lower()
+    if any(token in text for token in GROUP_INTENT):
+        return True
+    caps = (inputs or {}).get("requested_capability_scope") if isinstance(inputs, dict) else None
+    if isinstance(caps, list) and any(
+        "group" in str(item).lower() or "rebind" in str(item).lower() for item in caps
+    ):
+        return True
+    spec = (inputs or {}).get("group_rebind") if isinstance(inputs, dict) else None
+    return isinstance(spec, dict) and bool(spec)
+
+
+def _hitl_blob(hitl: dict[str, Any] | None) -> str:
+    if not isinstance(hitl, dict):
+        return ""
+    parts: list[str] = []
+    answers = hitl.get("answers") or {}
+    if isinstance(answers, dict):
+        parts.extend(str(v) for v in answers.values())
+    elif isinstance(answers, list):
+        parts.extend(str(item) for item in answers)
+    return "\n".join(parts)
+
+
+def _parse_rate(blob: str) -> float | None:
+    text = blob.replace("\u00a0", " ")
+    match = re.search(r"(\d+(?:[.,]\d+)?)\s*тыс", text, re.I)
+    if match:
+        return float(match.group(1).replace(",", ".")) * 1000.0
+    match = re.search(r"(\d{1,3}(?:[ \u00a0]\d{3})+)\s*(?:м3|m3|газ)", text, re.I)
+    if match:
+        return float(match.group(1).replace(" ", "").replace("\u00a0", ""))
+    match = re.search(r"(\d{4,7})\s*(?:м3|m3|газ|сут|grat)", text, re.I)
+    if match:
+        return float(match.group(1))
+    match = re.search(r"(?:grat|gconprod|дебит|контроль)\D{0,12}(\d{4,7})", text, re.I)
+    if match:
+        return float(match.group(1))
+    return None
+
+
+def extract_group_rebind_spec(
+    blob: str,
+    source_wells: set[str],
+    source_text: str = "",
+    hitl: dict[str, Any] | None = None,
+    inputs: dict[str, Any] | None = None,
+) -> tuple[dict[str, Any], list[str]]:
+    """Build a timeline spec from task text + baseline names. Missing fields are listed, not invented from golden fixtures."""
+    merged = "\n".join([blob or "", _hitl_blob(hitl)])
+    incoming = {}
+    if isinstance(inputs, dict) and isinstance(inputs.get("group_rebind"), dict):
+        incoming = dict(inputs["group_rebind"])
+    wells: list[str] = list(incoming.get("wells") or [])
+    if not wells:
+        ordered = sorted((str(w) for w in source_wells), key=len, reverse=True)
+        found: list[str] = []
+        for well in ordered:
+            if not well or well in found:
+                continue
+            if re.search(rf"(?<![\w.]){re.escape(well)}(?![\w.])", merged):
+                found.append(well)
+        wells = found
+    quoted = re.findall(r"[«\"']([A-Za-z][A-Za-z0-9_]{1,16})[»\"']", merged)
+    parent = str(incoming.get("parent_group") or (quoted[0] if quoted else "")).strip().upper()
+    parent_of_parent = str(incoming.get("parent_of_parent") or "").strip().upper()
+    if not parent_of_parent and re.search(r"\bFIELD\b", source_text or ""):
+        parent_of_parent = "FIELD"
+    control = str(incoming.get("control") or "").strip().upper()
+    if not control and re.search(r"газ|grat|м3|m3", merged, re.I):
+        control = "GRAT"
+    elif not control and re.search(r"\borat\b|нефть", merged, re.I):
+        control = "ORAT"
+    rate = incoming.get("rate", incoming.get("gas_rate"))
+    if rate in (None, ""):
+        rate = _parse_rate(merged)
+    try:
+        rate_n = float(rate) if rate not in (None, "") else None
+    except (TypeError, ValueError):
+        rate_n = None
+    groups_in = incoming.get("well_groups") if isinstance(incoming.get("well_groups"), dict) else {}
+    well_groups = {str(k): str(v) for k, v in groups_in.items() if str(v).strip()}
+    if not well_groups and wells and parent:
+        well_groups = {well: f"G{well}" for well in wells}
+    spec = {
+        "wells": wells,
+        "parent_group": parent,
+        "parent_of_parent": parent_of_parent,
+        "well_groups": well_groups,
+        "gas_rate": rate_n,
+        "control": control,
+    }
+    missing: list[str] = []
+    if not wells:
+        missing.append("wells")
+    if not parent:
+        missing.append("parent_group")
+    if not parent_of_parent:
+        missing.append("parent_of_parent")
+    if not control:
+        missing.append("control")
+    if not rate_n or rate_n <= 0:
+        missing.append("rate")
+    if wells and any(not well_groups.get(well) for well in wells):
+        missing.append("well_groups")
+    return spec, missing
+
+
+def run_group_rebind_revise(
+    source_text: str,
+    spec: dict[str, Any],
+    *,
+    file_ref: str = "schedule.inc",
+) -> dict[str, Any]:
+    if not (TEMPLATES / "schedule_timeline_runtime.py").is_file():
+        raise RuntimeError(f"timeline templates missing at {TEMPLATES}")
+    sys.path.insert(0, str(TEMPLATES))
+    from schedule_timeline_runtime import timeline_core_js
+
+    payload = {"text": source_text, "spec": spec, "file_ref": file_ref}
+    js = (
+        timeline_core_js()
+        + """
+const fs = require('fs');
+const payload = JSON.parse(fs.readFileSync(process.argv[2], 'utf8'));
+const result = runGroupRebindRevise(payload.text, payload.spec || {}, payload.file_ref || 'schedule.inc');
+const slim = {
+  contract: result.contract,
+  contract_version: result.contract_version,
+  status: result.status,
+  generated_schedule: result.generated_schedule || '',
+  edits: result.edits || [],
+  findings: result.findings || [],
+  wells: result.wells || [],
+  parent_group: result.parent_group || null,
+  gas_rate: result.gas_rate ?? null,
+  effective_at: result.effective_at || null,
+  dates_tnav: result.dates_tnav || null,
+};
+process.stdout.write(JSON.stringify(slim));
+"""
+    )
+    with tempfile.TemporaryDirectory(prefix="sched-rebind-") as tmp:
+        tmp_path = Path(tmp)
+        script = tmp_path / "rebind.js"
+        data = tmp_path / "payload.json"
+        script.write_text(js, encoding="utf-8")
+        data.write_text(json.dumps(payload, ensure_ascii=False), encoding="utf-8")
+        proc = subprocess.run(
+            ["node", str(script), str(data)],
+            capture_output=True,
+            check=False,
+            timeout=120,
+        )
+    if proc.returncode != 0:
+        err = proc.stderr.decode("utf-8", errors="replace")[:800]
+        raise RuntimeError(err or "group rebind revise failed")
+    return json.loads(proc.stdout.decode("utf-8"))
+
+===END_FILE===
+===BEGIN_FILE===	schedule-builder-service/app/io.py	4102	utf8
+"""Load baseline SCHEDULE and Excel commissioning facts for a case."""
+
+from __future__ import annotations
+
+from pathlib import Path
+from typing import Any
+from urllib.request import urlopen
+
+
+def load_source(inputs: dict[str, Any], case_id: str, activity: str = "") -> str:
+    if inputs.get("schedule_text"):
+        return str(inputs["schedule_text"])
+    path = inputs.get("schedule_source") or inputs.get("schedule_path")
+    artifacts = inputs.get("artifacts") if isinstance(inputs.get("artifacts"), dict) else {}
+    meta = artifacts.get("schedule_source") if isinstance(artifacts.get("schedule_source"), dict) else {}
+    if not meta and isinstance(artifacts.get("schedule_files"), dict):
+        meta = artifacts.get("schedule_files") or {}
+    if path and Path(str(path)).is_file():
+        return Path(str(path)).read_text(encoding="utf-8")
+    base = str(inputs.get("activity_base_url") or activity).rstrip("/")
+    artifact_id = (meta or {}).get("artifact_id") or "schedule_source"
+    if base and case_id:
+        url = f"{base}/cases/{case_id}/artifacts/{artifact_id}"
+        with urlopen(url, timeout=30) as resp:
+            return resp.read().decode("utf-8", errors="replace")
+    return ""
+
+
+def excel_bucket(context: dict[str, Any]) -> dict[str, Any]:
+    if not isinstance(context, dict):
+        return {}
+    data = context.get("data") if isinstance(context.get("data"), dict) else {}
+    excel = data.get("excel") if isinstance(data.get("excel"), dict) else context.get("excel")
+    return excel if isinstance(excel, dict) else {}
+
+
+def _is_well_column(key: str) -> bool:
+    low = str(key or "").lower()
+    return any(token in low for token in ("скважин", "well")) and "дат" not in low
+
+
+def _is_new_date_column(key: str) -> bool:
+    low = str(key or "").lower()
+    if any(skip in low for skip in ("baseline", "старая", "old", ".inc", "исходн")):
+        return False
+    return any(token in low for token in ("дат", "date", "ввод", "commission"))
+
+
+def _uniq_facts(facts: list[dict[str, Any]]) -> list[dict[str, Any]]:
+    """One date per well. First fact wins (Excel specialist facts before preview)."""
+    uniq: list[dict[str, Any]] = []
+    seen: set[str] = set()
+    for fact in facts:
+        well = str(fact.get("well") or fact.get("entity") or "").strip()
+        date = fact.get("date") if fact.get("date") not in (None, "") else fact.get("value")
+        key = well.casefold()
+        if not well or date in (None, "") or key in seen:
+            continue
+        seen.add(key)
+        uniq.append({"well": well, "date": date, "values": fact.get("values") or {}})
+    return uniq
+
+
+def commissioning_facts(context: dict[str, Any], inputs: dict[str, Any]) -> list[dict[str, Any]]:
+    facts: list[dict[str, Any]] = []
+    for bag in (inputs, context, excel_bucket(context)):
+        raw = bag.get("facts") if isinstance(bag, dict) else None
+        if isinstance(raw, list):
+            facts.extend([row for row in raw if isinstance(row, dict)])
+    specialist = _uniq_facts(facts)
+    if specialist:
+        return specialist
+    excel = excel_bucket(context)
+    for table in excel.get("normalized_rows") or []:
+        preview = table.get("preview") if isinstance(table, dict) else []
+        if not isinstance(preview, list):
+            continue
+        for row in preview:
+            if not isinstance(row, dict):
+                continue
+            well = ""
+            date = None
+            for key, value in row.items():
+                if _is_well_column(str(key)):
+                    well = str(value or "").strip()
+                elif _is_new_date_column(str(key)):
+                    date = value
+            if well and date not in (None, ""):
+                facts.append({"well": well, "date": date, "values": row})
+    return _uniq_facts(facts)
+
+
+def file_ref(inputs: dict[str, Any]) -> str:
+    artifacts = inputs.get("artifacts") if isinstance(inputs.get("artifacts"), dict) else {}
+    return str(
+        inputs.get("schedule_root")
+        or (artifacts.get("schedule_source") or {}).get("filename")
+        or "schedule.inc"
+    )
+
+===END_FILE===
+===BEGIN_FILE===	schedule-builder-service/app/keywords.py	9128	utf8
+"""tNavigator 22.2 SCHEDULE keyword catalogue (METRIC). Emit FRACTURE_SPECS, not FRACTURE_WELL."""
+
+from __future__ import annotations
+
+from typing import Any
+
+KEYWORDS: list[str] = [
+    "DATES",
+    "INCLUDE",
+    "GRUPTREE",
+    "WELSPECS",
+    "WELLTRACK",
+    "COMPDATMD",
+    "WCONHIST",
+    "WCONPROD",
+    "WCONINJE",
+    "GCONPROD",
+    "GCONINJE",
+    "GUIDERAT",
+    "GSATPROD",
+    "GSATINJE",
+    "WELLSTRE",
+    "WINJGAS",
+    "GINJGAS",
+    "BRANPROP",
+    "NODEPROP",
+    "GNETDP",
+    "NETBALAN",
+    "FRACTURE_TEMPLATE",
+    "FRACTURE_SPECS",
+    "FRACTURE_STAGE",
+    "WECON",
+    "WTEST",
+    "WELTARG",
+    "WNETDP",
+    "WPIMULT",
+    "WDFAC",
+    "WEFAC",
+    "WELOPEN",
+    "WELDRAW",
+    "WLIST",
+    "WFRACP",
+    "WFRACPL",
+    "VFPPROD",
+    "WVFPDP",
+    "ACTIONX",
+    "DELAYACT",
+    "ENDACTIO",
+    "UDQ",
+    "UDT",
+    "APPLYSCRIPT",
+]
+
+ALIASES = {
+    "WELLSTREE": "WELLSTRE",
+    "FRACTURE_WELL": "FRACTURE_SPECS",
+    "WELLTARG": "WELTARG",
+}
+
+WITHIN_DATE_KEYWORD_ORDER: list[str] = [
+    "WELSPECS",
+    "INCLUDE",
+    "LGROFF",
+    "LGRONN",
+    "WELLTRACK",
+    "COMPDATMD",
+    "WLIST",
+    "GRUPTREE",
+    "BRANPROP",
+    "NODEPROP",
+    "WFRACPL",
+    "FRACTURE_SPECS",
+    "FRACTURE_STAGE",
+    "FRACTURE_PIMULT",
+    "WFRACP",
+    "WELLSTRE",
+    "UDQ",
+    "GSATCOMP",
+    "GSATPROD",
+    "WINJGAS",
+    "GINJGAS",
+    "GCONINJE",
+    "WCONINJE",
+    "WTRACER",
+    "GCONPROD",
+    "WECON",
+    "WTEST",
+    "WELTARG",
+    "WCONHIST",
+    "WCONPROD",
+    "WELOPEN",
+    "WEFAC",
+    "WGRUPCON",
+    "APPLYSCRIPT",
+]
+
+# Table-style keywords: records end with `/`, then a bare block `/` and a blank line.
+TABLE_KEYWORDS = {
+    "WCONPROD",
+    "WCONINJE",
+    "WCONHIST",
+    "WELSPECS",
+    "COMPDATMD",
+    "GRUPTREE",
+    "WELOPEN",
+    "WEFAC",
+    "WELTARG",
+    "WECON",
+    "WTEST",
+    "WPIMULT",
+    "GCONPROD",
+    "GCONINJE",
+    "DATES",
+    "FRACTURE_SPECS",
+    "FRACTURE_STAGE",
+    "WELLTRACK",
+}
+
+FIELDS: dict[str, list[dict[str, Any]]] = {
+    "DATES": [{"name": "date", "type": "date", "required": True, "unit": None, "description": "Clock date"}],
+    "WCONPROD": [
+        {"name": "well", "type": "string", "required": True, "unit": None, "description": "Имя скважины"},
+        {"name": "status", "type": "string", "required": False, "unit": None, "description": "OPEN/SHUT/..."},
+        {"name": "ORAT", "type": "number", "required": False, "unit": "m3/d", "description": "Oil rate"},
+        {"name": "WRAT", "type": "number", "required": False, "unit": "m3/d", "description": "Water rate"},
+        {"name": "GRAT", "type": "number", "required": False, "unit": "sm3/d", "description": "Gas rate"},
+        {"name": "LRAT", "type": "number", "required": False, "unit": "m3/d", "description": "Liquid rate"},
+        {"name": "RESV", "type": "number", "required": False, "unit": None, "description": "Reservoir volume rate"},
+        {"name": "BHP", "type": "number", "required": False, "unit": "bar", "description": "Bottomhole pressure"},
+        {"name": "THP", "type": "number", "required": False, "unit": "bar", "description": "Tubing head pressure"},
+    ],
+    "WCONINJE": [
+        {"name": "well", "type": "string", "required": True, "unit": None, "description": "Имя скважины"},
+        {"name": "type", "type": "string", "required": False, "unit": None, "description": "WATER/GAS"},
+        {"name": "status", "type": "string", "required": False, "unit": None, "description": "OPEN/SHUT"},
+        {"name": "RATE", "type": "number", "required": False, "unit": "m3/d", "description": "Injection rate"},
+        {"name": "BHP", "type": "number", "required": False, "unit": "bar", "description": "BHP"},
+    ],
+    "WELSPECS": [
+        {"name": "well", "type": "string", "required": True, "unit": None, "description": "Имя скважины"},
+        {"name": "group", "type": "string", "required": False, "unit": None, "description": "Группа"},
+        {"name": "i", "type": "integer", "required": False, "unit": None, "description": "I"},
+        {"name": "j", "type": "integer", "required": False, "unit": None, "description": "J"},
+        {"name": "ref_depth", "type": "number", "required": False, "unit": "m", "description": "Ref depth"},
+        {"name": "phase", "type": "string", "required": False, "unit": None, "description": "OIL/WATER/GAS"},
+    ],
+    "WELOPEN": [
+        {"name": "well", "type": "string", "required": True, "unit": None, "description": "Имя скважины"},
+        {"name": "status", "type": "string", "required": False, "unit": None, "description": "OPEN/SHUT"},
+    ],
+    "WEFAC": [
+        {"name": "well", "type": "string", "required": True, "unit": None, "description": "Имя скважины"},
+        {"name": "factor", "type": "number", "required": False, "unit": None, "description": "Efficiency factor"},
+    ],
+    "COMPDATMD": [
+        {"name": "well", "type": "string", "required": True, "unit": None, "description": "Имя скважины"},
+        {"name": "md1", "type": "number", "required": False, "unit": "m", "description": "Top MD"},
+        {"name": "md2", "type": "number", "required": False, "unit": "m", "description": "Bottom MD"},
+        {"name": "status", "type": "string", "required": False, "unit": None, "description": "OPEN/SHUT"},
+    ],
+    "GRUPTREE": [
+        {"name": "child", "type": "string", "required": True, "unit": None, "description": "Child group/well"},
+        {"name": "parent", "type": "string", "required": True, "unit": None, "description": "Parent group"},
+    ],
+    "WELTARG": [
+        {"name": "well", "type": "string", "required": True, "unit": None, "description": "Имя скважины"},
+        {"name": "item", "type": "string", "required": False, "unit": None, "description": "ORAT/BHP/..."},
+        {"name": "value", "type": "number", "required": False, "unit": None, "description": "Target value"},
+    ],
+}
+
+METHODS = ["create_record", "update_field", "validate_record"]
+
+DESCRIPTIONS = {
+    "DATES": "Границы расчётных периодов",
+    "WCONPROD": "Управление добывающей скважиной",
+    "WCONINJE": "Управление нагнетательной скважиной",
+    "WELSPECS": "Спецификация скважины",
+    "WELOPEN": "Открытие/закрытие скважины",
+    "WEFAC": "Коэффициент эксплуатации",
+    "COMPDATMD": "Перфорация по MD",
+    "GRUPTREE": "Иерархия групп",
+    "WELTARG": "Целевое управление скважиной",
+    "FRACTURE_SPECS": "Параметры ГРП скважины (legacy name; layout FRACTURE_WELL §12.2.131)",
+}
+
+
+def normalize_keyword(name: str) -> str:
+    raw = str(name or "").strip().upper()
+    return ALIASES.get(raw, raw)
+
+
+def keyword_object(name: str) -> dict[str, Any] | None:
+    code = normalize_keyword(name)
+    if code not in KEYWORDS:
+        return None
+    fields = FIELDS.get(code, [{"name": "tokens", "type": "string", "required": False, "unit": None, "description": "Raw record tokens"}])
+    return {
+        "keyword": code,
+        "section": "SCHEDULE",
+        "description": DESCRIPTIONS.get(code, f"SCHEDULE keyword {code}"),
+        "fields": fields,
+        "methods": [
+            {"name": method, "description": method, "input_schema": {"type": "object"}}
+            for method in METHODS
+        ],
+        "examples": [],
+        "constraints": {"units": "METRIC", "simulator": "tNavigator 22.2"},
+    }
+
+
+def all_keywords() -> list[dict[str, Any]]:
+    return [keyword_object(name) for name in KEYWORDS]
+
+
+INTENT_ALIASES = {
+    "дат": ["DATES", "WCONPROD"],
+    "ввод": ["DATES", "WCONPROD"],
+    "commission": ["DATES", "WCONPROD"],
+    "групп": ["GRUPTREE", "GCONPROD", "WELSPECS"],
+    "перепривяз": ["GRUPTREE", "GCONPROD", "WELSPECS"],
+    "gruptree": ["GRUPTREE"],
+    "gconprod": ["GCONPROD"],
+    "дебит": ["WCONPROD", "WCONINJE", "WELTARG"],
+    "orat": ["WCONPROD"],
+    "перфор": ["COMPDATMD"],
+    "грп": ["FRACTURE_SPECS", "FRACTURE_STAGE", "WFRACP"],
+    "fracture": ["FRACTURE_SPECS", "FRACTURE_STAGE"],
+}
+
+
+def search_keywords(intent: str) -> list[dict[str, Any]]:
+    q = (intent or "").strip().lower()
+    if not q:
+        return all_keywords()
+    wanted: list[str] = []
+    for token, names in INTENT_ALIASES.items():
+        if token in q:
+            wanted.extend(names)
+    out: list[dict[str, Any]] = []
+    seen: set[str] = set()
+    for name in wanted:
+        item = keyword_object(name)
+        if item and item["keyword"] not in seen:
+            seen.add(item["keyword"])
+            out.append(item)
+    for item in all_keywords():
+        blob = " ".join(
+            [
+                item["keyword"],
+                item.get("description") or "",
+                " ".join(f["name"] for f in item.get("fields") or []),
+            ]
+        ).lower()
+        if q in blob and item["keyword"] not in seen:
+            seen.add(item["keyword"])
+            out.append(item)
+    return out
+
+
+def within_date_rank(keyword: str, orig_index: int = 0) -> float:
+    name = normalize_keyword(keyword)
+    if name == "DATES":
+        return -1
+    try:
+        return float(WITHIN_DATE_KEYWORD_ORDER.index(name))
+    except ValueError:
+        apply_idx = WITHIN_DATE_KEYWORD_ORDER.index("APPLYSCRIPT")
+        return apply_idx + 0.001 * orig_index
+
+===END_FILE===
+===BEGIN_FILE===	schedule-builder-service/app/main.py	20981	utf8
+"""Schedule Builder FastAPI: keyword object model + build/apply/diff + AgentTask."""
+
+from __future__ import annotations
+
+import json
+import os
+from typing import Any
+from urllib.request import Request, urlopen
+
+from fastapi import FastAPI, HTTPException
+from pydantic import BaseModel, Field
+
+from .apply import apply_operations
+from .commissioning import run_commissioning_revise
+from .diff import unified_diff
+from .emit import emit_schedule
+from .group_rebind import extract_group_rebind_spec, run_group_rebind_revise, wants_group_rebind
+from .io import commissioning_facts, file_ref, load_source
+from .keywords import KEYWORDS, all_keywords, keyword_object, search_keywords
+from .parse import parse_schedule, well_names
+from .validate import validate_emitted
+from . import agent_tools
+
+app = FastAPI(title="schedule-builder-service", version="0.1.0")
+ACTIVITY = os.getenv("ACTIVITY_BASE_URL", "").rstrip("/")
+UNITS = "METRIC"
+
+
+class BuildRequest(BaseModel):
+    source_text: str = ""
+    operations: list[dict[str, Any]] = Field(default_factory=list)
+    units: str = UNITS
+
+
+class ApplyRequest(BaseModel):
+    source_text: str
+    operations: list[dict[str, Any]] = Field(default_factory=list)
+
+
+class DiffRequest(BaseModel):
+    before: str
+    after: str
+
+
+class AgentTaskBody(BaseModel):
+    case_id: str = ""
+    task_id: str = ""
+    agent_id: str = "schedule_builder"
+    objective: str = ""
+    handoff_message: str = ""
+    inputs: dict[str, Any] = Field(default_factory=dict)
+    context: dict[str, Any] = Field(default_factory=dict)
+    constraints: dict[str, Any] = Field(default_factory=dict)
+
+
+def _emit(case_id: str, activity: str, payload: dict[str, Any]) -> None:
+    if not case_id or not activity:
+        return
+    try:
+        req = Request(
+            f"{activity.rstrip('/')}/cases/{case_id}/events",
+            data=json.dumps(payload, ensure_ascii=False).encode("utf-8"),
+            headers={"Content-Type": "application/json"},
+            method="POST",
+        )
+        urlopen(req, timeout=8).read()
+    except Exception:
+        pass
+
+
+def _load_source(inputs: dict[str, Any], case_id: str) -> str:
+    return load_source(inputs, case_id, ACTIVITY)
+
+
+def _ops_from_excel(context: dict[str, Any], source_wells: set[str]) -> tuple[list[dict[str, Any]], list[dict[str, Any]]]:
+    excel = (context.get("data") or {}).get("excel") if isinstance(context.get("data"), dict) else context.get("excel")
+    operations: list[dict[str, Any]] = []
+    missing: list[dict[str, Any]] = []
+    tables = []
+    if isinstance(excel, dict):
+        tables = excel.get("normalized_rows") or []
+    for table in tables:
+        preview = table.get("preview") if isinstance(table, dict) else []
+        columns = [str(c).lower() for c in (table.get("columns") or [])] if isinstance(table, dict) else []
+        if any("дат" in col or "date" in col or "ввод" in col for col in columns):
+            continue
+        for index, row in enumerate(preview or []):
+            if not isinstance(row, dict):
+                continue
+            well = str(row.get("well") or row.get("WELL") or row.get("скважина") or "").strip()
+            if not well:
+                continue
+            if source_wells and well not in source_wells:
+                missing.append({"type": "well_not_found", "well": well, "source_row": index})
+                continue
+            fields = {"well": well}
+            for key in ("status", "ORAT", "WRAT", "BHP", "orat", "wrat", "bhp"):
+                if key in row and row[key] not in (None, ""):
+                    fields[key.upper() if key in {"orat", "wrat", "bhp"} else key] = row[key]
+            if len(fields) > 1:
+                operations.append({"keyword": "WCONPROD", "operation": "MODIFY", "fields": fields})
+    return operations, missing
+
+
+def _wants_commissioning(body: AgentTaskBody, facts: list[dict[str, Any]]) -> bool:
+    blob = " ".join(
+        [
+            body.objective or "",
+            body.handoff_message or "",
+        ]
+    ).lower()
+    if any(token in blob for token in ("дат ввод", "даты ввод", "дата ввод", "commissioning", "ввод скваж")):
+        return True
+    caps = body.inputs.get("requested_capability_scope") if isinstance(body.inputs, dict) else None
+    if isinstance(caps, list) and any("commission" in str(item).lower() or "date_retarget" in str(item).lower() for item in caps):
+        return True
+    return bool(facts)
+
+
+@app.get("/health")
+def health() -> dict[str, str]:
+    return {"status": "ok", "service": "schedule-builder-service", "units": UNITS, "keywords": str(len(KEYWORDS))}
+
+
+@app.get("/keywords")
+def get_keywords() -> dict[str, Any]:
+    return {"keywords": all_keywords(), "units": UNITS}
+
+
+@app.get("/keywords/search")
+def get_search(intent: str = "") -> dict[str, Any]:
+    return {"keywords": search_keywords(intent)}
+
+
+@app.get("/keywords/{keyword}")
+def get_keyword(keyword: str) -> dict[str, Any]:
+    item = keyword_object(keyword)
+    if item is None:
+        raise HTTPException(status_code=404, detail="unknown keyword")
+    return item
+
+
+@app.post("/keywords/{keyword}/prepare")
+def prepare_keyword(keyword: str, body: dict[str, Any] | None = None) -> dict[str, Any]:
+    item = keyword_object(keyword)
+    if item is None:
+        raise HTTPException(status_code=404, detail="unknown keyword")
+    return {"keyword": item, "draft": body or {}}
+
+
+def _build(source_text: str, operations: list[dict[str, Any]]) -> dict[str, Any]:
+    doc = parse_schedule(source_text)
+    applied, findings = apply_operations(doc, operations)
+    text = emit_schedule(applied)
+    findings.extend(validate_emitted(text, applied))
+    hard = [f for f in findings if f.get("severity") == "error"]
+    return {
+        "schedule_text": text,
+        "diff": unified_diff(source_text, text),
+        "findings": findings,
+        "changed_keywords": sorted({str(op.get("keyword") or "").upper() for op in operations if op.get("keyword")}),
+        "ok": not hard,
+    }
+
+
+@app.post("/build")
+def build(req: BuildRequest) -> dict[str, Any]:
+    if req.units and req.units.upper() != UNITS:
+        raise HTTPException(status_code=400, detail="units must be METRIC")
+    return _build(req.source_text, req.operations)
+
+
+@app.post("/apply")
+def apply(req: ApplyRequest) -> dict[str, Any]:
+    return _build(req.source_text, req.operations)
+
+
+@app.post("/diff")
+def diff(req: DiffRequest) -> dict[str, Any]:
+    return {"diff": unified_diff(req.before, req.after)}
+
+
+@app.post("/agent/run")
+def agent_run(body: AgentTaskBody) -> dict[str, Any]:
+    inputs = body.inputs if isinstance(body.inputs, dict) else {}
+    activity = str(inputs.get("activity_base_url") or ACTIVITY)
+    _emit(
+        body.case_id,
+        activity,
+        {
+            "kind": "agent.accepted",
+            "actor": "schedule_builder",
+            "agent_id": "schedule_builder",
+            "task_id": body.task_id,
+            "status_message": "Формирую изменения SCHEDULE",
+        },
+    )
+    try:
+        source = _load_source(inputs, body.case_id)
+    except Exception as exc:
+        return {
+            "task_id": body.task_id,
+            "status": "needs_input",
+            "message": f"Нет исходного SCHEDULE: {exc}",
+            "data": {},
+            "artifacts": {},
+            "issues": [{"type": "missing_schedule_source"}],
+            "assumptions": [],
+            "requests": [{"question_id": "Q-sched", "question": "Приложите baseline .inc", "options": []}],
+        }
+    if not source.strip():
+        result = {
+            "task_id": body.task_id,
+            "status": "needs_input",
+            "message": "Нет исходного SCHEDULE",
+            "data": {},
+            "artifacts": {},
+            "issues": [{"type": "missing_schedule_source"}],
+            "assumptions": [],
+            "requests": [{"question_id": "Q-sched", "question": "Приложите baseline .inc", "options": []}],
+        }
+        _emit(body.case_id, activity, {"kind": "agent.result", "actor": "schedule_builder", "agent_id": "schedule_builder", "task_id": body.task_id, "status": "needs_input", "status_message": result["message"]})
+        return result
+    context = body.context if isinstance(body.context, dict) else {}
+    source_name = file_ref(inputs)
+    blob = body.objective or ""
+    if wants_group_rebind(blob, inputs):
+        wells = well_names(parse_schedule(source))
+        spec, missing = extract_group_rebind_spec(
+            blob,
+            wells,
+            source_text=source,
+            hitl=context.get("hitl") if isinstance(context.get("hitl"), dict) else {},
+            inputs=inputs,
+        )
+        if missing:
+            result = {
+                "task_id": body.task_id,
+                "status": "needs_input",
+                "message": "Для перепривязки групп нужны: " + ", ".join(missing),
+                "data": {"group_rebind": spec, "missing": missing},
+                "artifacts": {},
+                "issues": [{"type": "GROUP_REBIND_SPEC_REQUIRED", "missing": missing}],
+                "assumptions": [{"units": UNITS}],
+                "requests": [
+                    {
+                        "question_id": item,
+                        "question": f"Уточните {item} для перепривязки групп (скважины, parent_group, parent_of_parent, well_groups, control, rate).",
+                        "options": [],
+                    }
+                    for item in missing
+                ],
+            }
+            _emit(body.case_id, activity, {"kind": "agent.result", "actor": "schedule_builder", "agent_id": "schedule_builder", "task_id": body.task_id, "status": "needs_input", "status_message": result["message"]})
+            return result
+        _emit(
+            body.case_id,
+            activity,
+            {
+                "kind": "agent.progress",
+                "actor": "schedule_builder",
+                "agent_id": "schedule_builder",
+                "task_id": body.task_id,
+                "status_message": f"Перепривязываю скважины {', '.join(spec['wells'])} в группу {spec['parent_group']}",
+            },
+        )
+        try:
+            revised = run_group_rebind_revise(source, spec, file_ref=source_name)
+        except Exception as exc:
+            result = {
+                "task_id": body.task_id,
+                "status": "failed",
+                "message": f"Не удалось перепривязать группы: {exc}"[:400],
+                "data": {},
+                "artifacts": {},
+                "issues": [{"type": "group_rebind_failed", "detail": str(exc)[:400]}],
+                "assumptions": [{"units": UNITS}],
+                "requests": [],
+            }
+            _emit(body.case_id, activity, {"kind": "agent.failed", "actor": "schedule_builder", "agent_id": "schedule_builder", "task_id": body.task_id, "status": "failed", "status_message": result["message"]})
+            return result
+        status = str(revised.get("status") or "")
+        text = str(revised.get("generated_schedule") or "")
+        if status == "needs_input" or not text.strip():
+            result = {
+                "task_id": body.task_id,
+                "status": "needs_input",
+                "message": "Перепривязка групп требует уточнения по baseline",
+                "data": {"findings": revised.get("findings") or [], "group_rebind": spec},
+                "artifacts": {},
+                "issues": revised.get("findings") or [],
+                "assumptions": [{"units": UNITS}],
+                "requests": [{"question_id": "group_rebind", "question": "Уточните spec перепривязки групп", "options": []}],
+            }
+            _emit(body.case_id, activity, {"kind": "agent.result", "actor": "schedule_builder", "agent_id": "schedule_builder", "task_id": body.task_id, "status": "needs_input", "status_message": result["message"]})
+            return result
+        result = {
+            "task_id": body.task_id,
+            "status": "completed",
+            "message": f"Перепривязал {len(spec['wells'])} скважин в {spec['parent_group']} (GCONPROD {spec['control']} {spec['gas_rate']})",
+            "data": {
+                "changed_keywords": ["WELSPECS", "GRUPTREE", "GCONPROD"],
+                "findings": revised.get("findings") or [],
+                "edits": revised.get("edits") or [],
+                "group_rebind": spec,
+            },
+            "artifacts": {"schedule_out": text, "diff": unified_diff(source, text)},
+            "issues": revised.get("findings") or [],
+            "assumptions": [
+                {"units": UNITS, "well_groups": spec.get("well_groups"), "parent_of_parent": spec.get("parent_of_parent")}
+            ],
+            "requests": [],
+        }
+        _emit(body.case_id, activity, {"kind": "agent.result", "actor": "schedule_builder", "agent_id": "schedule_builder", "task_id": body.task_id, "status": "completed", "status_message": result["message"]})
+        return result
+    facts = commissioning_facts(context, inputs)
+    if _wants_commissioning(body, facts):
+        if not facts:
+            result = {
+                "task_id": body.task_id,
+                "status": "needs_input",
+                "message": "Для сдвига дат ввода нужны факты скважина + дата из Excel",
+                "data": {},
+                "artifacts": {},
+                "issues": [{"type": "commissioning_facts_required"}],
+                "assumptions": [],
+                "requests": [{"question_id": "Q-facts", "question": "Приложите Excel со скважинами и датами ввода", "options": []}],
+            }
+            _emit(body.case_id, activity, {"kind": "agent.result", "actor": "schedule_builder", "agent_id": "schedule_builder", "task_id": body.task_id, "status": "needs_input", "status_message": result["message"]})
+            return result
+        _emit(
+            body.case_id,
+            activity,
+            {
+                "kind": "agent.progress",
+                "actor": "schedule_builder",
+                "agent_id": "schedule_builder",
+                "task_id": body.task_id,
+                "status_message": f"Заменяю даты ввода скважин в исходном файле schedule ({len(facts)} скважин)",
+            },
+        )
+        try:
+            revised = run_commissioning_revise(
+                source,
+                facts,
+                file_ref=source_name,
+                unlisted_wells_policy=agent_tools._unlisted_policy(
+                    {"inputs": inputs, "context": context}
+                )
+                or str(inputs.get("unlisted_wells_policy") or "")
+                or None,
+                new_well_defs=agent_tools._new_well_defs({"inputs": inputs, "context": context}),
+                instruction_blob=" ".join([body.objective or "", body.handoff_message or ""]),
+            )
+        except Exception as exc:
+            result = {
+                "task_id": body.task_id,
+                "status": "failed",
+                "message": f"Не удалось сдвинуть даты ввода: {exc}"[:400],
+                "data": {},
+                "artifacts": {},
+                "issues": [{"type": "commissioning_failed", "detail": str(exc)[:400]}],
+                "assumptions": [{"units": UNITS}],
+                "requests": [],
+            }
+            _emit(body.case_id, activity, {"kind": "agent.failed", "actor": "schedule_builder", "agent_id": "schedule_builder", "task_id": body.task_id, "status": "failed", "status_message": result["message"]})
+            return result
+        status = str(revised.get("status") or "")
+        if status == "needs_input":
+            questions = revised.get("questions") or []
+            result = {
+                "task_id": body.task_id,
+                "status": "needs_input",
+                "message": (questions[0].get("question") if questions and isinstance(questions[0], dict) else "Нужно уточнение по скважинам вне Excel"),
+                "data": {"findings": revised.get("findings") or [], "unlisted_wells": revised.get("unlisted_wells") or []},
+                "artifacts": {},
+                "issues": revised.get("findings") or [],
+                "assumptions": [{"units": UNITS}],
+                "requests": questions if isinstance(questions, list) else [],
+            }
+            _emit(body.case_id, activity, {"kind": "agent.result", "actor": "schedule_builder", "agent_id": "schedule_builder", "task_id": body.task_id, "status": "needs_input", "status_message": result["message"]})
+            return result
+        text = str(revised.get("generated_schedule") or "")
+        result = {
+            "task_id": body.task_id,
+            "status": "completed" if text.strip() and status in {"applied", "noop"} else "failed",
+            "message": f"Сдвинул даты ввода для {len(revised.get('shifts') or [])} скважин" if status == "applied" else (revised.get("status") or "SCHEDULE без изменений"),
+            "data": {
+                "changed_keywords": ["DATES", "WCONPROD"],
+                "findings": revised.get("findings") or [],
+                "edits": revised.get("edits") or [],
+                "shifts": revised.get("shifts") or [],
+                "records_applied": len(revised.get("edits") or []),
+            },
+            "artifacts": {"schedule_out": text, "diff": unified_diff(source, text)},
+            "issues": revised.get("findings") or [],
+            "assumptions": [{"units": UNITS, "unlisted_wells_policy": revised.get("unlisted_wells_policy") or "keep"}],
+            "requests": [],
+        }
+        _emit(
+            body.case_id,
+            activity,
+            {
+                "kind": "agent.result" if result["status"] == "completed" else "agent.failed",
+                "actor": "schedule_builder",
+                "agent_id": "schedule_builder",
+                "task_id": body.task_id,
+                "status": result["status"],
+                "status_message": result["message"],
+            },
+        )
+        return result
+    doc = parse_schedule(source)
+    wells = well_names(doc)
+    operations = list(inputs.get("operations") or [])
+    extra, missing = _ops_from_excel(context, wells)
+    operations.extend(extra)
+    if missing:
+        result = {
+            "task_id": body.task_id,
+            "status": "needs_input",
+            "message": f"Скважина '{missing[0]['well']}' есть в Excel, но не найдена в SCHEDULE",
+            "data": {},
+            "artifacts": {},
+            "issues": missing,
+            "assumptions": [],
+            "requests": [
+                {
+                    "question_id": "Q-well",
+                    "question": f"Скважина '{missing[0]['well']}' не найдена в SCHEDULE. Пропустить или добавить новую?",
+                    "options": ["skip", "add_new"],
+                }
+            ],
+        }
+        _emit(body.case_id, activity, {"kind": "agent.result", "actor": "schedule_builder", "agent_id": "schedule_builder", "task_id": body.task_id, "status": "needs_input", "status_message": result["message"]})
+        return result
+    built = _build(source, operations)
+    result = {
+        "task_id": body.task_id,
+        "status": "completed" if built["ok"] else "failed",
+        "message": "SCHEDULE обновлён" if built["ok"] else "Ошибка сборки SCHEDULE",
+        "data": {
+            "changed_keywords": built["changed_keywords"],
+            "findings": built["findings"],
+            "records_applied": len(operations),
+        },
+        "artifacts": {"schedule_out": built["schedule_text"], "diff": built["diff"]},
+        "issues": built["findings"],
+        "assumptions": [{"units": UNITS}],
+        "requests": [],
+    }
+    _emit(
+        body.case_id,
+        activity,
+        {
+            "kind": "agent.result" if built["ok"] else "agent.failed",
+            "actor": "schedule_builder",
+            "agent_id": "schedule_builder",
+            "task_id": body.task_id,
+            "status": result["status"],
+            "status_message": result["message"],
+        },
+    )
+    return result
+
+
+class AgentToolBody(BaseModel):
+    model_config = {"extra": "allow"}
+    session_id: str = ""
+
+
+@app.post("/agent-tools/open_session")
+def open_session(body: AgentTaskBody) -> dict[str, Any]:
+    return agent_tools.open_session(body.model_dump(), activity=ACTIVITY)
+
+
+@app.post("/agent-tools/{tool_name}")
+def call_agent_tool(tool_name: str, body: AgentToolBody) -> dict[str, Any]:
+    payload = body.model_dump()
+    session_id = str(payload.pop("session_id", "") or "")
+    if not session_id:
+        raise HTTPException(status_code=422, detail="session_id is required")
+    try:
+        return agent_tools.execute_tool(session_id, tool_name, payload)
+    except KeyError as exc:
+        raise HTTPException(status_code=404, detail=str(exc)) from exc
+
+
+@app.get("/sessions/{session_id}/result")
+def get_session_result(session_id: str) -> dict[str, Any]:
+    try:
+        return agent_tools.session_result(session_id)
+    except KeyError as exc:
+        raise HTTPException(status_code=404, detail="session_not_found") from exc
+
+===END_FILE===
+===BEGIN_FILE===	schedule-builder-service/app/parse.py	3170	utf8
+"""Lexical SCHEDULE parser: keyword blocks + record lines. Does not invent field layouts."""
+
+from __future__ import annotations
+
+import hashlib
+import re
+from dataclasses import dataclass, field
+from typing import Any
+
+from .keywords import KEYWORDS, TABLE_KEYWORDS, normalize_keyword
+
+HEADER = re.compile(r"^\s*([A-Za-z][A-Za-z0-9_]*)\s*(?:--.*)?$")
+
+
+@dataclass
+class Record:
+    tokens: list[str]
+    raw: str
+
+
+@dataclass
+class Block:
+    keyword: str
+    records: list[Record] = field(default_factory=list)
+    raw_body: str = ""
+    known: bool = True
+
+
+@dataclass
+class ScheduleDoc:
+    blocks: list[Block]
+    text: str
+    sha256: str
+
+
+def _sha(text: str) -> str:
+    return "sha256:" + hashlib.sha256(text.encode("utf-8")).hexdigest()
+
+
+def parse_schedule(text: str) -> ScheduleDoc:
+    source = str(text or "").replace("\r\n", "\n").replace("\r", "\n")
+    lines = source.split("\n")
+    headers: list[tuple[int, str]] = []
+    for i, line in enumerate(lines):
+        match = HEADER.match(line)
+        if not match:
+            continue
+        token = match.group(1)
+        kw = normalize_keyword(token)
+        if kw in KEYWORDS or (token.isupper() and len(token) >= 3):
+            headers.append((i, kw))
+    blocks: list[Block] = []
+    for idx, (start, kw) in enumerate(headers):
+        end = headers[idx + 1][0] if idx + 1 < len(headers) else len(lines)
+        body_lines = lines[start + 1 : end]
+        records: list[Record] = []
+        for raw in body_lines:
+            stripped = raw.strip()
+            if not stripped or stripped.startswith("--") or stripped == "/":
+                continue
+            cleaned = stripped[:-1].rstrip() if stripped.endswith("/") else stripped
+            tokens = [tok for tok in re.split(r"[,\s]+", cleaned) if tok and tok != "/"]
+            if tokens:
+                records.append(Record(tokens=tokens, raw=raw.rstrip("\n")))
+        blocks.append(
+            Block(
+                keyword=kw,
+                records=records,
+                raw_body="\n".join(body_lines),
+                known=kw in KEYWORDS,
+            )
+        )
+    return ScheduleDoc(blocks=blocks, text=source, sha256=_sha(source))
+
+
+def timeline_segments(doc: ScheduleDoc) -> list[dict[str, Any]]:
+    segments: list[dict[str, Any]] = []
+    current: dict[str, Any] | None = None
+    for block in doc.blocks:
+        if block.keyword == "DATES":
+            if current:
+                segments.append(current)
+            date = block.records[0].tokens[0] if block.records else None
+            current = {"date": date, "dates_block": block, "blocks": []}
+            continue
+        if current is None:
+            current = {"date": None, "dates_block": None, "blocks": []}
+        current["blocks"].append(block)
+    if current:
+        segments.append(current)
+    return segments
+
+
+def well_names(doc: ScheduleDoc) -> set[str]:
+    names: set[str] = set()
+    for block in doc.blocks:
+        if block.keyword in TABLE_KEYWORDS and block.keyword != "DATES":
+            for rec in block.records:
+                if rec.tokens:
+                    names.add(rec.tokens[0].strip("'").strip('"'))
+    return names
+
+===END_FILE===
+===BEGIN_FILE===	schedule-builder-service/app/sessions.py	1325	utf8
+"""In-process schedule sessions. Source text stays here; the LLM never sees the .INC."""
+
+from __future__ import annotations
+
+import threading
+import time
+import uuid
+from typing import Any
+
+_LOCK = threading.Lock()
+_SESSIONS: dict[str, dict[str, Any]] = {}
+TTL_SEC = 60 * 60
+
+
+def new_session_id() -> str:
+    return "sch_" + uuid.uuid4().hex
+
+
+def put(state: dict[str, Any]) -> dict[str, Any]:
+    sid = str(state.get("session_id") or new_session_id())
+    state["session_id"] = sid
+    state["updated_at"] = time.time()
+    with _LOCK:
+        _expire_unlocked()
+        _SESSIONS[sid] = state
+    return state
+
+
+def get(session_id: str) -> dict[str, Any]:
+    with _LOCK:
+        _expire_unlocked()
+        state = _SESSIONS.get(str(session_id or ""))
+        if state is None:
+            raise KeyError("session_not_found")
+        return state
+
+
+def save(state: dict[str, Any]) -> dict[str, Any]:
+    sid = str(state.get("session_id") or "")
+    if not sid:
+        raise KeyError("session_not_found")
+    state["updated_at"] = time.time()
+    with _LOCK:
+        _SESSIONS[sid] = state
+    return state
+
+
+def _expire_unlocked() -> None:
+    now = time.time()
+    dead = [sid for sid, row in _SESSIONS.items() if now - float(row.get("updated_at") or 0) > TTL_SEC]
+    for sid in dead:
+        _SESSIONS.pop(sid, None)
+
+===END_FILE===
+===BEGIN_FILE===	schedule-builder-service/app/validate.py	3161	utf8
+"""SCHEDULE validation: allowlist, DATES order, block terminators."""
+
+from __future__ import annotations
+
+import re
+from typing import Any
+
+from .keywords import KEYWORDS, TABLE_KEYWORDS, normalize_keyword
+from .parse import ScheduleDoc
+
+MONTH = {"JAN": 1, "FEB": 2, "MAR": 3, "APR": 4, "MAY": 5, "JUN": 6, "JUL": 7, "AUG": 8, "SEP": 9, "OCT": 10, "NOV": 11, "DEC": 12}
+
+
+def _parse_date(raw: str) -> tuple[int, int, int] | None:
+    text = raw.strip().upper().replace("'", "")
+    m = re.match(r"^(\d{4})-(\d{2})-(\d{2})$", text)
+    if m:
+        return int(m.group(1)), int(m.group(2)), int(m.group(3))
+    m = re.match(r"^(\d{1,2})\s+([A-Z]{3})\s+(\d{4})$", text)
+    if m and m.group(2) in MONTH:
+        return int(m.group(3)), MONTH[m.group(2)], int(m.group(1))
+    return None
+
+
+def validate_emitted(text: str, doc: ScheduleDoc | None = None) -> list[dict[str, Any]]:
+    findings: list[dict[str, Any]] = []
+    lines = text.replace("\r\n", "\n").split("\n")
+    i = 0
+    dates: list[tuple[int, int, int]] = []
+    while i < len(lines):
+        line = lines[i].strip()
+        if re.match(r"^[A-Z][A-Z0-9_]*$", line):
+            kw = normalize_keyword(line)
+            if kw not in KEYWORDS:
+                findings.append({"code": "KEYWORD_UNSUPPORTED", "keyword": kw, "severity": "error", "line": i + 1})
+            if kw in TABLE_KEYWORDS:
+                j = i + 1
+                saw_block = False
+                while j < len(lines):
+                    nxt = lines[j].strip()
+                    if re.match(r"^[A-Z][A-Z0-9_]*$", nxt):
+                        break
+                    if nxt == "/":
+                        saw_block = True
+                        if j + 1 < len(lines) and lines[j + 1].strip() != "":
+                            findings.append(
+                                {
+                                    "code": "BLOCK_TERMINATOR_SPACING",
+                                    "keyword": kw,
+                                    "severity": "warning",
+                                    "line": j + 1,
+                                }
+                            )
+                        break
+                    j += 1
+                if not saw_block:
+                    findings.append({"code": "BLOCK_TERMINATOR_MISSING", "keyword": kw, "severity": "error", "line": i + 1})
+            if kw == "DATES":
+                j = i + 1
+                while j < len(lines) and not re.match(r"^[A-Z][A-Z0-9_]*$", lines[j].strip()) and lines[j].strip() != "/":
+                    candidate = lines[j].split("--")[0].replace("/", "").strip()
+                    if candidate:
+                        parsed = _parse_date(candidate)
+                        if parsed:
+                            dates.append(parsed)
+                        else:
+                            findings.append({"code": "DATES_VALUE_INVALID", "value": candidate, "severity": "error", "line": j + 1})
+                    j += 1
+        i += 1
+    for a, b in zip(dates, dates[1:]):
+        if b <= a:
+            findings.append({"code": "DATES_NOT_STRICTLY_INCREASING", "severity": "error"})
+            break
+    return findings
+
+===END_FILE===
+===BEGIN_FILE===	schedule-builder-service/requirements.txt	120	utf8
+fastapi>=0.115.14,<0.116
+uvicorn[standard]>=0.30,<1.0
+pydantic>=2.7,<3.0
+python-multipart>=0.0.9,<1.0
+httpx>=0.27,<1.0
+
+
+===END_FILE===
+===BEGIN_FILE===	schedule-builder-service/tests/test_schedule_engine.py	9115	utf8
+from __future__ import annotations
+
+from app.emit import emit_schedule
+from app.keywords import keyword_object, normalize_keyword
+from app.parse import parse_schedule
+from app.validate import validate_emitted
+from app.apply import apply_operations
+
+
+def test_fracture_specs_alias() -> None:
+    assert normalize_keyword("FRACTURE_WELL") == "FRACTURE_SPECS"
+    assert keyword_object("WCONPROD")["fields"][0]["name"] == "well"
+
+
+def test_emit_block_terminator_and_blank_line() -> None:
+    text = """DATES
+  1 JAN 2026 /
+/
+WCONPROD
+  'P1' OPEN 100 / 
+/
+"""
+    doc = parse_schedule(text)
+    out = emit_schedule(doc)
+    assert "WCONPROD" in out
+    assert "\n/\n\n" in out or out.rstrip().endswith("/")
+    findings = validate_emitted(out, doc)
+    assert not [f for f in findings if f.get("code") == "BLOCK_TERMINATOR_MISSING"]
+
+
+def test_apply_wconprod_and_diff() -> None:
+    source = """DATES
+  1 JAN 2026 /
+/
+
+WCONPROD
+  'P1' OPEN 10 /
+/
+"""
+    doc = parse_schedule(source)
+    applied, findings = apply_operations(
+        doc,
+        [{"keyword": "WCONPROD", "operation": "MODIFY", "fields": {"well": "P1", "status": "OPEN", "ORAT": 42}}],
+    )
+    assert not [f for f in findings if f.get("severity") == "error"]
+    out = emit_schedule(applied)
+    assert "42" in out
+
+
+def test_within_date_emit_order_and_weltarg_alias() -> None:
+    source = """DATES
+  1 JAN 2026 /
+/
+
+WCONPROD
+  'P1' OPEN 10 /
+/
+
+WELSPECS
+  'P1' G 1 1 1000 OIL /
+/
+"""
+    out = emit_schedule(parse_schedule(source))
+    assert out.index("WELSPECS") < out.index("WCONPROD")
+    assert normalize_keyword("WELLTARG") == "WELTARG"
+    assert keyword_object("FRACTURE_WELL")["keyword"] == "FRACTURE_SPECS"
+
+
+def test_build_and_keyword_search_endpoints() -> None:
+    from fastapi.testclient import TestClient
+
+    from app.main import app
+
+    client = TestClient(app)
+    found = client.get("/keywords/search", params={"intent": "перфорац"})
+    assert found.status_code == 200
+    names = [item["keyword"] for item in found.json()["keywords"]]
+    assert "COMPDATMD" in names
+    built = client.post(
+        "/build",
+        json={
+            "units": "METRIC",
+            "source_text": "DATES\n  1 JAN 2026 /\n/\n\nWCONPROD\n  'P1' OPEN 10 /\n/\n",
+            "operations": [
+                {"keyword": "WCONPROD", "operation": "MODIFY", "fields": {"well": "P1", "status": "OPEN", "ORAT": 7}}
+            ],
+        },
+    )
+    assert built.status_code == 200
+    body = built.json()
+    assert body["ok"] is True
+    assert "7" in body["schedule_text"]
+    assert "\n/\n" in body["schedule_text"]
+
+
+def test_commissioning_retarget_moves_first_wconprod() -> None:
+    from app.commissioning import run_commissioning_revise
+
+    source = """DATES
+  1 JAN 2020 /
+/
+
+WCONPROD
+  1601 OPEN GRAT 1* 1* 200000 1* 1* 90 /
+/
+
+DATES
+  1 MAR 2020 /
+/
+
+WCONPROD
+  9999 OPEN GRAT 1* 1* 1 /
+/
+"""
+    revised = run_commissioning_revise(source, [{"well": "1601", "date": "23 FEB 2020"}])
+    assert revised["status"] == "applied"
+    text = revised["generated_schedule"]
+    assert "23 FEB 2020" in text
+    feb = text.split("23 FEB 2020")[1]
+    assert "1601 OPEN GRAT" in feb
+    jan = text.split("1 JAN 2020")[1].split("DATES")[0]
+    assert "1601 OPEN GRAT" not in jan
+
+
+def test_group_rebind_spec_from_task_prose() -> None:
+    from app.group_rebind import extract_group_rebind_spec, run_group_rebind_revise
+
+    task = (
+        'На основе старого прогнозного schedule - скважины 1601 и 1602 помести в отдельную группу - "DKS", '
+        "и задай этим скважинам групповой контроль 200 тыс. м3 газа в сут. (с момента даты ввода этих скважин)."
+    )
+    source = """GRUPTREE
+NORTH FIELD /
+/
+
+DATES
+  1 JAN 2020 /
+/
+
+WCONPROD
+  1601 OPEN GRAT 1* 1* 200000 1* 1* 90 /
+  1602 OPEN GRAT 1* 1* 257000 1* 1* 90 /
+/
+"""
+    spec, missing = extract_group_rebind_spec(task, {"1601", "1602", "9999"}, source_text=source)
+    assert missing == []
+    assert spec["wells"] == ["1601", "1602"] or set(spec["wells"]) == {"1601", "1602"}
+    assert spec["parent_group"] == "DKS"
+    assert spec["parent_of_parent"] == "FIELD"
+    assert spec["control"] == "GRAT"
+    assert spec["gas_rate"] == 200000
+    assert spec["well_groups"]["1601"] == "G1601"
+    revised = run_group_rebind_revise(source, spec)
+    assert revised["status"] == "applied"
+    assert "DKS FIELD /" in revised["generated_schedule"]
+    assert "GCONPROD" in revised["generated_schedule"]
+
+
+def test_load_source_fetches_from_activity_artifact(monkeypatch) -> None:
+    from app.io import load_source
+
+    class _Resp:
+        def read(self):
+            return b"DATES\n/"
+
+        def __enter__(self):
+            return self
+
+        def __exit__(self, *args):
+            return False
+
+    seen: dict[str, str] = {}
+
+    def fake_urlopen(url, timeout=30):
+        seen["url"] = url
+        return _Resp()
+
+    monkeypatch.setattr("app.io.urlopen", fake_urlopen)
+    text = load_source(
+        {
+            "activity_base_url": "http://mas-activity:8200",
+            "artifacts": {"schedule_source": {"filename": "base.inc", "artifact_id": "schedule_source"}},
+        },
+        "CASE-1",
+    )
+    assert seen["url"] == "http://mas-activity:8200/cases/CASE-1/artifacts/schedule_source"
+    assert "DATES" in text
+    from app.group_rebind import wants_group_rebind
+
+    objective = "На основе старого прогнозного schedule и Excel с новыми датами ввода собрать новый schedule.inc"
+    assert wants_group_rebind(objective, {"artifacts": {"schedule_source_5": {"filename": "GRUPTREE.GRDECL"}}}) is False
+    group_task = 'скважины 1601 и 1602 помести в отдельную группу - "DKS"'
+    assert wants_group_rebind(group_task, {}) is True
+    polluted_handoff = "перепривязав скважины в нужные группы согласно baseline"
+    assert wants_group_rebind(objective, {"handoff": polluted_handoff}) is False
+
+
+def test_agent_tools_open_inspect_search_and_operations() -> None:
+    from fastapi.testclient import TestClient
+
+    from app.main import app
+
+    client = TestClient(app)
+    opened = client.post(
+        "/agent-tools/open_session",
+        json={
+            "task_id": "t1",
+            "objective": "Поставь ORAT 15 на P1",
+            "inputs": {"schedule_text": "DATES\n  1 JAN 2026 /\n/\n\nWCONPROD\n  'P1' OPEN 10 /\n/\n"},
+        },
+    )
+    assert opened.status_code == 200
+    body = opened.json()
+    assert body["ok"] is True
+    sid = body["session_id"]
+    assert "P1" in body["inspect"]["wells"]
+    search = client.post("/agent-tools/search_keywords", json={"session_id": sid, "intent": "даты ввода"})
+    names = [item["keyword"] for item in search.json()["keywords"]]
+    assert "DATES" in names
+    applied = client.post(
+        "/agent-tools/apply_operations",
+        json={
+            "session_id": sid,
+            "operations": {
+                "0": {"keyword": "WCONPROD", "operation": "MODIFY", "fields": {"well": "P1", "status": "OPEN", "ORAT": 15}}
+            },
+        },
+    )
+    assert applied.status_code == 200
+    assert applied.json()["status"] == "completed"
+    result = client.get(f"/sessions/{sid}/result")
+    assert result.status_code == 200
+    assert "15" in result.json()["artifacts"]["schedule_out"]
+    invented = client.post(
+        "/agent-tools/apply_operations",
+        json={
+            "session_id": sid,
+            "operations": [{"keyword": "WCONPROD", "operation": "MODIFY", "fields": {"well": "NOPE", "ORAT": 1}}],
+        },
+    )
+    assert invented.json()["ok"] is False
+    assert invented.json()["error"] == "well_not_in_schedule"
+
+
+def test_commissioning_facts_prefer_specialist_over_baseline_column() -> None:
+    from app.io import commissioning_facts
+
+    context = {
+        "data": {
+            "excel": {
+                "facts": [{"well": "304R", "date": "2019-08-01T00:00:00"}],
+                "normalized_rows": [
+                    {
+                        "preview": [
+                            {
+                                "Скважина": "304R",
+                                "Дата ввода": "2019-08-01T00:00:00",
+                                "Дата ввода (baseline в .INC)": "2019-07-01T00:00:00",
+                            }
+                        ]
+                    }
+                ],
+            }
+        }
+    }
+    rows = commissioning_facts(context, {})
+    assert len(rows) == 1
+    assert rows[0]["well"] == "304R"
+    assert str(rows[0]["date"]).startswith("2019-08-01")
+
+
+def test_hitl_json_answers_yield_policy_and_new_well_defs() -> None:
+    import json
+
+    from app.agent_tools import _new_well_defs, _unlisted_policy
+
+    defs = [{"well": "N001", "welspecs_line": " N001 GNEW 1 1 1* OIL /"}]
+    state = {
+        "inputs": {},
+        "context": {
+            "hitl": {
+                "answers": {
+                    "new_wells_policy": json.dumps(
+                        {"unlisted_wells_policy": "remove", "new_well_defs": defs},
+                        ensure_ascii=False,
+                    )
+                }
+            }
+        },
+    }
+    assert _unlisted_policy(state) == "remove"
+    assert _new_well_defs(state)[0]["well"] == "N001"
+
+
+
+
+===END_FILE===
 ===BEGIN_FILE===	scripts/_bootstrap_n8n_field.py	9101	utf8
 #!/usr/bin/env python3
 """Lab/field bootstrap: create n8n credentials, rebind URLs, publish workflows.
@@ -6720,7 +9095,7 @@ if __name__ == "__main__":
     raise SystemExit(main())
 
 ===END_FILE===
-===BEGIN_FILE===	scripts/lab_soft_redeploy.py	35337	utf8
+===BEGIN_FILE===	scripts/lab_soft_redeploy.py	35336	utf8
 #!/usr/bin/env python3
 """Fast lab soft-redeploy: keep credentials/DTs, refresh workflows, Health Check.
 
@@ -6812,7 +9187,7 @@ ERROR_WORKFLOW_SKIP = (
     "Error — MAS Case Handler",
     "Writer — MAS Trace",
     "CAS — Persist Task State",
-    "MAS — Ensure Control Plane",
+    "MAS — Control Plane Proxy",
 )
 
 
@@ -7733,23 +10108,9 @@ if __name__ == "__main__":
     sys.exit(main())
 
 ===END_FILE===
-===BEGIN_FILE===	scripts/project_pack.py	15821	utf8
+===BEGIN_FILE===	scripts/project_pack.py	10437	utf8
 #!/usr/bin/env python3
-"""Pack / unpack the MAS field-deploy tree into a single all.txt (pywp-style).
-
-Packs only deploy roots (and a few root files), skips anything matched by
-.gitignore / common junk, then restores the same relative paths on unpack.
-
-Usage (lab / home):
-  python3 scripts/project_pack.py pack
-  python3 scripts/project_pack.py split          # optional: all1, all2, … for transfer
-  # copy scripts/project_pack.py + all.txt (or chunks) to the work machine
-
-Usage (work):
-  python3 project_pack.py join                  # if you brought chunks
-  python3 project_pack.py unpack
-  # then follow docs.md Step 0 → 8
-"""
+"""Pack and unpack the MAS deployment tree into a portable text archive."""
 from __future__ import annotations
 
 import argparse
@@ -7763,220 +10124,114 @@ BEGIN = "===BEGIN_FILE==="
 END = "===END_FILE==="
 DEFAULT_CHUNK_SIZE = 1_000_000
 
-# Field-deploy surface (see docs.md). simulation-model / context-seeder stay out.
 PACK_DIRS = (
     "excel-agent-tools",
     "fastapi-math-service",
     "mas-activity-service",
     "n8n",
+    "schedule-builder-service",
     "scripts",
 )
-
-# Never pack even if someone adds the path by mistake.
-NEVER_PACK_DIR_PREFIXES = (
-    "simulation-model-example/",
-    "context-seeder/",
-)
-
-ROOT_FILES = (
-    ".env.example",
-    "docs.md",
-    "README.md",
-    "docker-compose.yml",
-    ".gitignore",
-)
-
+ROOT_FILES = (".env.example", "docs.md", "README.md", "docker-compose.yml", ".gitignore")
+NEVER_PACK_DIR_PREFIXES = ("simulation-model-example/", "context-seeder/")
 EXCLUDED_DIR_NAMES = {
-    ".git",
-    ".venv",
-    "venv",
-    "__pycache__",
-    ".mypy_cache",
-    ".pytest_cache",
-    ".ruff_cache",
-    ".idea",
-    ".cursor",
-    "node_modules",
-    "data",  # Activity local state
-    "task_binaries",
+    ".git", ".venv", "venv", "__pycache__", ".mypy_cache", ".pytest_cache",
+    ".ruff_cache", ".idea", ".cursor", "node_modules", "data", "task_binaries",
 }
-
-EXCLUDED_FILE_NAMES = {
-    ARCHIVE_FILE,
-    "conftest.py",
-    ".coverage",
-}
-
-# Text / binary / config needed to import workflows and start Windows services.
+EXCLUDED_FILE_NAMES = {ARCHIVE_FILE, "conftest.py", ".coverage"}
 INCLUDED_FILE_EXTENSIONS = {
-    ".py",
-    ".md",
-    ".txt",
-    ".json",
-    ".js",
-    ".css",
-    ".html",
-    ".csv",
-    ".yml",
-    ".yaml",
-    ".toml",
-    ".ini",
-    ".cfg",
-    ".bat",
-    ".sh",
-    ".inc",
-    ".sch",
-    ".grdecl",
-    ".example",
-    ".svg",
+    ".py", ".md", ".txt", ".json", ".js", ".css", ".html", ".csv", ".yml",
+    ".yaml", ".toml", ".ini", ".cfg", ".bat", ".sh", ".inc", ".sch",
+    ".grdecl", ".example", ".svg",
 }
-
 INCLUDED_FILE_NAMES = {
-    "Dockerfile",
-    ".dockerignore",
-    ".gitattributes",
-    ".gitignore",
-    "requirements.txt",
-    "requirements-dev.txt",
+    "Dockerfile", ".dockerignore", ".gitattributes", ".gitignore",
+    "requirements.txt", "requirements-dev.txt",
 }
 
 
 def _is_under_pack_root(rel: Path) -> bool:
     posix = rel.as_posix()
-    if posix.startswith(NEVER_PACK_DIR_PREFIXES) or posix in {
-        p.rstrip("/") for p in NEVER_PACK_DIR_PREFIXES
-    }:
+    if posix.startswith(NEVER_PACK_DIR_PREFIXES):
         return False
     if posix in ROOT_FILES:
         return True
-    if not rel.parts:
-        return False
-    return rel.parts[0] in PACK_DIRS
+    return bool(rel.parts) and rel.parts[0] in PACK_DIRS
 
 
 def should_skip_path(path: Path, root: Path) -> bool:
     rel = path.relative_to(root)
     if not _is_under_pack_root(rel):
         return True
-    parts = set(rel.parts)
-    if parts & EXCLUDED_DIR_NAMES:
+    if set(rel.parts) & EXCLUDED_DIR_NAMES:
         return True
-    # Keep n8n/tests smokes (lab gate); skip other project test trees.
-    if "tests" in rel.parts and rel.parts[0] != "n8n":
+    if "tests" in rel.parts and rel.parts[0] not in {"n8n", "schedule-builder-service"}:
         return True
-    if path.name in EXCLUDED_FILE_NAMES:
+    if path.name in EXCLUDED_FILE_NAMES or path.name.endswith("_test.py"):
         return True
-    if path.name.startswith("test_") and path.suffix.lower() == ".py" and rel.parts[0] != "n8n":
-        return True
-    if path.name.endswith("_test.py"):
-        return True
-    # Local env secrets (also in .gitignore).
-    if path.suffix == ".env" or path.name.endswith(".env"):
-        if path.name.endswith(".env.example"):
-            return False
+    if path.name.startswith("test_") and path.suffix.lower() == ".py":
+        return rel.parts[0] in {"excel-agent-tools", "mas-activity-service"}
+    if path.suffix == ".env" and not path.name.endswith(".env.example"):
         return True
     return False
 
 
 def should_include_path(path: Path) -> bool:
-    if path.name in INCLUDED_FILE_NAMES:
-        return True
-    if path.name.endswith(".env.example"):
-        return True
-    return path.suffix.lower() in INCLUDED_FILE_EXTENSIONS
+    return path.name in INCLUDED_FILE_NAMES or path.name.endswith(".env.example") or path.suffix.lower() in INCLUDED_FILE_EXTENSIONS
 
 
 def _git_list_candidates(root: Path) -> list[Path] | None:
-    """Tracked + untracked non-ignored files under pack roots (None if not a git repo)."""
     if not (root / ".git").exists():
         return None
-    pathspecs = list(PACK_DIRS) + list(ROOT_FILES)
     try:
         proc = subprocess.run(
-            [
-                "git",
-                "-C",
-                str(root),
-                "ls-files",
-                "-z",
-                "--cached",
-                "--others",
-                "--exclude-standard",
-                "--",
-                *pathspecs,
-            ],
-            check=True,
-            capture_output=True,
+            ["git", "-C", str(root), "ls-files", "-z", "--cached", "--others",
+             "--exclude-standard", "--", *PACK_DIRS, *ROOT_FILES],
+            check=True, capture_output=True,
         )
     except (OSError, subprocess.CalledProcessError):
         return None
-    out: list[Path] = []
+    result = []
     for raw in proc.stdout.split(b"\0"):
-        if not raw:
-            continue
-        rel = raw.decode("utf-8", errors="surrogateescape")
-        path = root / rel
-        if path.is_file():
-            out.append(path)
-    return out
+        if raw:
+            path = root / raw.decode("utf-8", errors="surrogateescape")
+            if path.is_file():
+                result.append(path)
+    return result
 
 
 def _git_ignored(root: Path, path: Path) -> bool:
     try:
-        proc = subprocess.run(
-            [
-                "git",
-                "-C",
-                str(root),
-                "check-ignore",
-                "-q",
-                "--",
-                str(path.relative_to(root)),
-            ],
+        return subprocess.run(
+            ["git", "-C", str(root), "check-ignore", "-q", "--", str(path.relative_to(root))],
             capture_output=True,
-        )
-        return proc.returncode == 0
+        ).returncode == 0
     except OSError:
         return False
 
 
 def collect_files(root: Path, *, archive_path: Path | None = None) -> list[Path]:
-    archive_resolved = archive_path.resolve() if archive_path is not None else None
-    default_archive_resolved = (root / ARCHIVE_FILE).resolve()
-
-    git_candidates = _git_list_candidates(root)
-    if git_candidates is None:
+    archive_paths = {(root / ARCHIVE_FILE).resolve()}
+    if archive_path is not None:
+        archive_paths.add(archive_path.resolve())
+    candidates = _git_list_candidates(root)
+    from_git = candidates is not None
+    if candidates is None:
         candidates = [p for p in root.rglob("*") if p.is_file()]
-        use_git_ignore_check = True
-    else:
-        candidates = git_candidates
-        use_git_ignore_check = False
-
-    files: list[Path] = []
+    files = []
     for path in candidates:
-        try:
-            path.relative_to(root)
-        except ValueError:
+        if should_skip_path(path, root) or not should_include_path(path):
             continue
-        if should_skip_path(path, root):
+        if path.resolve() in archive_paths:
             continue
-        if not should_include_path(path):
-            continue
-        resolved = path.resolve()
-        if resolved == default_archive_resolved:
-            continue
-        if archive_resolved is not None and resolved == archive_resolved:
-            continue
-        if use_git_ignore_check and _git_ignored(root, path):
+        if not from_git and _git_ignored(root, path):
             continue
         files.append(path)
-
-    unique = {p.resolve(): p for p in files}
-    return sorted(unique.values(), key=lambda p: p.relative_to(root).as_posix())
+    return sorted({p.resolve(): p for p in files}.values(),
+                  key=lambda p: p.relative_to(root).as_posix())
 
 
 def _read_payload(path: Path) -> tuple[str, str]:
-    """Return (encoding_tag, payload_text). encoding_tag is 'utf8' or 'base64'."""
     raw = path.read_bytes()
     try:
         text = raw.decode("utf-8")
@@ -7989,57 +10244,17 @@ def _read_payload(path: Path) -> tuple[str, str]:
 
 def _write_payload(path: Path, encoding: str, payload: str) -> None:
     path.parent.mkdir(parents=True, exist_ok=True)
-    if encoding == "base64":
-        path.write_bytes(base64.b64decode(payload.encode("ascii")))
-    elif encoding == "utf8":
+    if encoding == "utf8":
         path.write_text(payload, encoding="utf-8")
+    elif encoding == "base64":
+        path.write_bytes(base64.b64decode(payload.encode("ascii")))
     else:
         raise ValueError(f"Unknown payload encoding: {encoding!r}")
 
 
-def _chunk_prefix_for_archive(archive_path: Path) -> str:
-    return archive_path.stem
-
-
-def _chunk_name_pattern(chunk_prefix: str) -> re.Pattern[str]:
-    return re.compile(rf"^{re.escape(chunk_prefix)}([1-9][0-9]*)$")
-
-
-def _remove_existing_chunk_files(chunk_dir: Path, chunk_prefix: str) -> None:
-    pattern = _chunk_name_pattern(chunk_prefix)
-    if not chunk_dir.is_dir():
-        return
-    for path in chunk_dir.iterdir():
-        if path.is_file() and pattern.fullmatch(path.name):
-            path.unlink()
-
-
-def collect_chunk_files(chunk_dir: Path, chunk_prefix: str) -> list[Path]:
-    pattern = _chunk_name_pattern(chunk_prefix)
-    matches: list[tuple[int, Path]] = []
-    for path in chunk_dir.iterdir():
-        if not path.is_file():
-            continue
-        match = pattern.fullmatch(path.name)
-        if match is None:
-            continue
-        matches.append((int(match.group(1)), path))
-    if not matches:
-        raise FileNotFoundError(
-            f"Archive chunks not found in {chunk_dir} with prefix {chunk_prefix!r}"
-        )
-    matches.sort(key=lambda item: item[0])
-    for expected_index, (actual_index, path) in enumerate(matches, start=1):
-        if actual_index != expected_index:
-            raise ValueError(
-                "Archive chunks are incomplete or out of order: expected "
-                f"{chunk_prefix}{expected_index}, found {path.name}"
-            )
-    return [path for _, path in matches]
-
-
 def pack(root: Path, output_file: Path) -> None:
     files = collect_files(root, archive_path=output_file)
+    output_file.parent.mkdir(parents=True, exist_ok=True)
     with output_file.open("w", encoding="utf-8", newline="") as out:
         for path in files:
             rel = path.relative_to(root).as_posix()
@@ -8051,207 +10266,300 @@ def pack(root: Path, output_file: Path) -> None:
     print(f"Packed {len(files)} files into {output_file}")
 
 
-def split_archive(
-    input_file: Path,
-    *,
-    chunk_dir: Path | None = None,
-    chunk_prefix: str | None = None,
-    chunk_size: int = DEFAULT_CHUNK_SIZE,
-) -> list[Path]:
+def _chunk_pattern(prefix: str) -> re.Pattern[str]:
+    return re.compile(rf"^{re.escape(prefix)}([1-9][0-9]*)$")
+
+
+def split_archive(input_file: Path, *, chunk_dir: Path | None = None,
+                   chunk_prefix: str | None = None,
+                   chunk_size: int = DEFAULT_CHUNK_SIZE) -> list[Path]:
     if not input_file.exists():
         raise FileNotFoundError(f"Archive file not found: {input_file}")
     if chunk_size <= 0:
-        raise ValueError("Chunk size must be a positive integer")
-
-    target_dir = input_file.parent if chunk_dir is None else chunk_dir
-    target_dir.mkdir(parents=True, exist_ok=True)
-    prefix = (
-        _chunk_prefix_for_archive(input_file)
-        if chunk_prefix is None
-        else str(chunk_prefix)
-    )
-    _remove_existing_chunk_files(target_dir, prefix)
-
-    chunk_paths: list[Path] = []
-    chunk_file = None
-    chunk_path: Path | None = None
-    chunk_bytes = 0
-    chunk_index = 0
-
-    try:
-        with input_file.open("r", encoding="utf-8", newline="") as src:
-            for line in src:
-                line_bytes = len(line.encode("utf-8"))
-                if chunk_file is None or (
-                    chunk_bytes > 0 and chunk_bytes + line_bytes > chunk_size
-                ):
-                    if chunk_file is not None and chunk_path is not None:
-                        chunk_file.close()
-                        chunk_paths.append(chunk_path)
-                    chunk_index += 1
-                    chunk_path = target_dir / f"{prefix}{chunk_index}"
-                    chunk_file = chunk_path.open("w", encoding="utf-8", newline="")
-                    chunk_bytes = 0
-                assert chunk_file is not None
-                chunk_file.write(line)
-                chunk_bytes += line_bytes
-
-        if chunk_file is None:
-            chunk_index = 1
-            chunk_path = target_dir / f"{prefix}{chunk_index}"
-            chunk_file = chunk_path.open("w", encoding="utf-8", newline="")
-
-        if chunk_file is not None:
-            chunk_file.close()
-            if chunk_path is not None:
-                chunk_paths.append(chunk_path)
-    finally:
-        if chunk_file is not None and not chunk_file.closed:
-            chunk_file.close()
-
-    print(
-        f"Split {input_file} into {len(chunk_paths)} chunks in {target_dir} "
-        f"with prefix {prefix!r}"
-    )
-    return chunk_paths
+        raise ValueError("Chunk size must be positive")
+    target = chunk_dir or input_file.parent
+    target.mkdir(parents=True, exist_ok=True)
+    prefix = chunk_prefix or input_file.stem
+    pattern = _chunk_pattern(prefix)
+    for path in target.iterdir():
+        if path.is_file() and pattern.fullmatch(path.name):
+            path.unlink()
+    chunks: list[Path] = []
+    current = None
+    current_size = 0
+    with input_file.open("r", encoding="utf-8", newline="") as source:
+        for line in source:
+            size = len(line.encode("utf-8"))
+            if current is None or current_size and current_size + size > chunk_size:
+                if current is not None:
+                    current.close()
+                chunk_path = target / f"{prefix}{len(chunks) + 1}"
+                current = chunk_path.open("w", encoding="utf-8", newline="")
+                chunks.append(chunk_path)
+                current_size = 0
+            current.write(line)
+            current_size += size
+    if current is None:
+        path = target / f"{prefix}1"
+        path.write_text("", encoding="utf-8")
+        chunks.append(path)
+    else:
+        current.close()
+    return chunks
 
 
-def join_archive(
-    output_file: Path,
-    *,
-    chunk_dir: Path | None = None,
-    chunk_prefix: str | None = None,
-) -> list[Path]:
-    source_dir = output_file.parent if chunk_dir is None else chunk_dir
-    prefix = (
-        _chunk_prefix_for_archive(output_file)
-        if chunk_prefix is None
-        else str(chunk_prefix)
-    )
-    chunk_paths = collect_chunk_files(source_dir, prefix)
-    with output_file.open("wb") as out:
-        for chunk_path in chunk_paths:
-            out.write(chunk_path.read_bytes())
-    print(f"Joined {len(chunk_paths)} chunks into {output_file}")
-    return chunk_paths
+def _collect_chunks(directory: Path, prefix: str) -> list[Path]:
+    matches = []
+    pattern = _chunk_pattern(prefix)
+    for path in directory.iterdir():
+        match = pattern.fullmatch(path.name)
+        if path.is_file() and match:
+            matches.append((int(match.group(1)), path))
+    matches.sort()
+    if not matches:
+        raise FileNotFoundError(f"Archive chunks not found in {directory} with prefix {prefix!r}")
+    if [n for n, _ in matches] != list(range(1, len(matches) + 1)):
+        raise ValueError("Archive chunks are incomplete or out of order")
+    return [path for _, path in matches]
+
+
+def join_archive(output_file: Path, *, chunk_dir: Path | None = None,
+                 chunk_prefix: str | None = None) -> list[Path]:
+    directory = chunk_dir or output_file.parent
+    chunks = _collect_chunks(directory, chunk_prefix or output_file.stem)
+    output_file.write_bytes(b"".join(path.read_bytes() for path in chunks))
+    return chunks
 
 
 def unpack(root: Path, input_file: Path) -> None:
-    if not input_file.exists():
-        raise FileNotFoundError(f"Archive file not found: {input_file}")
-
     restored = 0
     root_resolved = root.resolve()
-    with input_file.open("r", encoding="utf-8") as src:
+    with input_file.open("r", encoding="utf-8") as source:
         while True:
-            header = src.readline()
+            header = source.readline()
             if not header:
                 break
-            if not header.startswith(f"{BEGIN}\t"):
+            if not header.startswith(BEGIN + "\t"):
                 raise ValueError("Invalid archive format: malformed BEGIN header")
-
-            payload = header.rstrip("\n").split("\t")
-            # New: BEGIN \t rel \t len \t encoding
-            # Old pywp-compatible: BEGIN \t rel \t len  → utf8
-            if len(payload) == 3:
-                _, rel_path, raw_len = payload
+            fields = header.rstrip("\n").split("\t")
+            if len(fields) == 3:
+                _, rel_path, raw_len = fields
                 encoding = "utf8"
-            elif len(payload) == 4:
-                _, rel_path, raw_len, encoding = payload
+            elif len(fields) == 4:
+                _, rel_path, raw_len, encoding = fields
             else:
                 raise ValueError("Invalid archive format: malformed BEGIN payload")
-            content_len = int(raw_len)
-
-            content = src.read(content_len)
-            if len(content) != content_len:
-                raise ValueError("Invalid archive format: truncated file content")
-
-            separator = src.read(1)
-            if separator != "\n":
-                raise ValueError("Invalid archive format: missing content separator")
-
-            end_line = src.readline().rstrip("\n")
-            if end_line != END:
-                raise ValueError("Invalid archive format: missing END marker")
-
+            content = source.read(int(raw_len))
+            if len(content) != int(raw_len) or source.read(1) != "\n" or source.readline().rstrip("\n") != END:
+                raise ValueError("Invalid archive format: truncated file or missing END marker")
             target = (root / rel_path).resolve()
             if root_resolved != target and root_resolved not in target.parents:
                 raise ValueError(f"Refusing to unpack outside root: {rel_path}")
             _write_payload(target, encoding, content)
             restored += 1
-
     print(f"Restored {restored} files from {input_file}")
 
 
-def parse_args() -> argparse.Namespace:
-    parser = argparse.ArgumentParser(
-        description=(
-            "Pack MAS deploy tree (excel-agent-tools, fastapi-math-service, "
-            "mas-activity-service, n8n, scripts, .env.example, docs.md) into all.txt; "
-            "split/join for transfer; unpack on the work machine."
-        )
-    )
-    parser.add_argument(
-        "mode",
-        choices=("pack", "unpack", "split", "join"),
-        help=(
-            "pack: create all.txt; unpack: restore; "
-            "split: chunk all.txt; join: rebuild all.txt from chunks"
-        ),
-    )
-    parser.add_argument("--root", default=".", help="Project root (default: .)")
-    parser.add_argument(
-        "--archive",
-        default=None,
-        help=f"Archive path (default: <root>/{ARCHIVE_FILE})",
-    )
-    parser.add_argument(
-        "--chunk-dir",
-        default=None,
-        help="Chunk directory (default: archive directory)",
-    )
-    parser.add_argument(
-        "--chunk-prefix",
-        default=None,
-        help="Chunk prefix (default: archive stem, e.g. 'all')",
-    )
-    parser.add_argument(
-        "--chunk-size",
-        type=int,
-        default=DEFAULT_CHUNK_SIZE,
-        help=f"Max chunk bytes for split (default: {DEFAULT_CHUNK_SIZE})",
-    )
-    return parser.parse_args()
-
-
 def main() -> None:
-    args = parse_args()
+    parser = argparse.ArgumentParser()
+    parser.add_argument("mode", choices=("pack", "unpack", "split", "join"))
+    parser.add_argument("--root", default=".")
+    parser.add_argument("--archive", default=None)
+    parser.add_argument("--chunk-dir", default=None)
+    parser.add_argument("--chunk-prefix", default=None)
+    parser.add_argument("--chunk-size", type=int, default=DEFAULT_CHUNK_SIZE)
+    args = parser.parse_args()
     root = Path(args.root).resolve()
-    archive = (
-        (root / ARCHIVE_FILE) if args.archive is None else Path(args.archive).resolve()
-    )
-    chunk_dir = archive.parent if args.chunk_dir is None else Path(args.chunk_dir).resolve()
-
+    archive = Path(args.archive).resolve() if args.archive else root / ARCHIVE_FILE
+    chunk_dir = Path(args.chunk_dir).resolve() if args.chunk_dir else archive.parent
     if args.mode == "pack":
         pack(root, archive)
-    elif args.mode == "split":
-        split_archive(
-            archive,
-            chunk_dir=chunk_dir,
-            chunk_prefix=args.chunk_prefix,
-            chunk_size=args.chunk_size,
-        )
-    elif args.mode == "join":
-        join_archive(
-            archive,
-            chunk_dir=chunk_dir,
-            chunk_prefix=args.chunk_prefix,
-        )
-    else:
+    elif args.mode == "unpack":
         unpack(root, archive)
+    elif args.mode == "split":
+        split_archive(archive, chunk_dir=chunk_dir, chunk_prefix=args.chunk_prefix, chunk_size=args.chunk_size)
+    else:
+        join_archive(archive, chunk_dir=chunk_dir, chunk_prefix=args.chunk_prefix)
 
 
 if __name__ == "__main__":
     main()
+
+===END_FILE===
+===BEGIN_FILE===	scripts/test_check_schedule_includes.py	2727	utf8
+#!/usr/bin/env python3
+"""Self-tests for check_schedule_includes.py (no third-party dependencies)."""
+
+from __future__ import annotations
+
+import tempfile
+from pathlib import Path
+
+import check_schedule_includes as checker
+
+
+def test_valid_virtual_package() -> None:
+    with tempfile.TemporaryDirectory() as tmp:
+        package = Path(tmp)
+        root = package / "SCHEDULE" / "FORECAST" / "MVP1_schedule_IN.INC"
+        include = package / "INCLUDE" / "MODEL.INC"
+        root.parent.mkdir(parents=True)
+        include.parent.mkdir(parents=True)
+        root.write_text("INCLUDE\n'../../INCLUDE/MODEL.INC' /\n", encoding="utf-8")
+        include.write_text("DATES\n  1 JAN 2025 /\n", encoding="utf-8")
+        code, result = checker.run(
+            checker.build_parser().parse_args(
+                [str(root), "--package-dir", str(package)]
+            )
+        )
+        assert code == 0, result
+        assert result["ok"] is True
+        assert result["files_checked"] == 2
+        assert result["includes_checked"] == 1
+
+
+def test_invalid_include_and_encoding() -> None:
+    with tempfile.TemporaryDirectory() as tmp:
+        source = Path(tmp) / "MVP1_schedule_IN.INC"
+        source.write_text("INCLUDE\n'' /\nINCLUDE\n'broken\n", encoding="utf-8")
+        code, result = checker.run(
+            checker.build_parser().parse_args([str(source)])
+        )
+        assert code == 1, result
+        codes = {finding["code"] for finding in result["findings"]}
+        assert "INCLUDE_PATH_INVALID" in codes
+        assert "INCLUDE_QUOTE_UNTERMINATED" in codes
+
+        utf16 = Path(tmp) / "utf16.INC"
+        utf16.write_bytes("DATES\n/\n".encode("utf-16"))
+        code, result = checker.run(
+            checker.build_parser().parse_args([str(utf16)])
+        )
+        assert code == 1, result
+        codes = {finding["code"] for finding in result["findings"]}
+        assert "NUL_BYTE" in codes
+        assert "ENCODING_NOT_UTF8" in codes
+
+
+def test_missing_include_body() -> None:
+    with tempfile.TemporaryDirectory() as tmp:
+        package = Path(tmp)
+        root = package / "SCHEDULE" / "FORECAST" / "root.INC"
+        root.parent.mkdir(parents=True)
+        root.write_text("INCLUDE\n'../../INCLUDE/missing.INC' /\n", encoding="utf-8")
+        code, result = checker.run(
+            checker.build_parser().parse_args(
+                [str(root), "--package-dir", str(package)]
+            )
+        )
+        assert code == 1, result
+        assert any(f["code"] == "INCLUDE_NOT_FOUND" for f in result["findings"])
+
+
+if __name__ == "__main__":
+    test_valid_virtual_package()
+    test_invalid_include_and_encoding()
+    test_missing_include_body()
+    print("check_schedule_includes self-tests OK")
+
+===END_FILE===
+===BEGIN_FILE===	scripts/test_project_pack.py	4052	utf8
+#!/usr/bin/env python3
+"""Smoke tests for scripts/project_pack.py (no pytest required)."""
+from __future__ import annotations
+
+import importlib.util
+import sys
+import tempfile
+from pathlib import Path
+
+ROOT = Path(__file__).resolve().parents[1]
+
+
+def _load():
+    spec = importlib.util.spec_from_file_location(
+        "project_pack",
+        ROOT / "scripts" / "project_pack.py",
+    )
+    assert spec and spec.loader
+    mod = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(mod)
+    return mod
+
+
+def test_pack_unpack_roundtrip() -> None:
+    mod = _load()
+    with tempfile.TemporaryDirectory() as tmp:
+        src = Path(tmp) / "src"
+        out = Path(tmp) / "out"
+        archive = Path(tmp) / "all.txt"
+        (src / "n8n" / "workflows").mkdir(parents=True)
+        (src / "excel-agent-tools").mkdir(parents=True)
+        (src / "schedule-builder-service" / "app").mkdir(parents=True)
+        (src / "scripts").mkdir(parents=True)
+        (src / ".venv" / "lib").mkdir(parents=True)
+        (src / "excel-agent-tools" / "tests").mkdir(parents=True)
+
+        (src / "docs.md").write_text("# runbook\n", encoding="utf-8")
+        (src / ".env.example").write_text("KEY=value\n", encoding="utf-8")
+        (src / "n8n" / "workflows" / "a.workflow.json").write_text('{"ok":1}\n', encoding="utf-8")
+        (src / "excel-agent-tools" / "app.py").write_text("print(1)\n", encoding="utf-8")
+        (src / "schedule-builder-service" / "app" / "main.py").write_text("print('schedule')\n", encoding="utf-8")
+        (src / "excel-agent-tools" / "secret.env").write_text("SECRET=1\n", encoding="utf-8")
+        (src / "excel-agent-tools" / "tests" / "test_x.py").write_text("assert True\n", encoding="utf-8")
+        (src / ".venv" / "lib" / "skip.py").write_text("nope\n", encoding="utf-8")
+        (src / "scripts" / "project_pack.py").write_text("# pack\n", encoding="utf-8")
+        # binary sample
+        (src / "n8n" / "blob.bin").write_bytes(b"\x00\xff")
+        # .bin not in include list — skip; use .inc with binary via forced name
+        (src / "n8n" / "sample.inc").write_bytes(b"DATES\n/\n\x00")
+
+        # No .git → walk fallback
+        files = mod.collect_files(src)
+        rels = [p.relative_to(src).as_posix() for p in files]
+        assert "docs.md" in rels
+        assert ".env.example" in rels
+        assert "n8n/workflows/a.workflow.json" in rels
+        assert "excel-agent-tools/app.py" in rels
+        assert "schedule-builder-service/app/main.py" in rels
+        assert "scripts/project_pack.py" in rels
+        assert "excel-agent-tools/secret.env" not in rels
+        assert "excel-agent-tools/tests/test_x.py" not in rels
+        assert ".venv/lib/skip.py" not in rels
+        assert "n8n/sample.inc" in rels
+
+        mod.pack(src, archive)
+        mod.unpack(out, archive)
+        assert (out / "docs.md").read_text(encoding="utf-8") == "# runbook\n"
+        assert (out / "n8n" / "workflows" / "a.workflow.json").read_text(encoding="utf-8") == '{"ok":1}\n'
+        assert (out / "n8n" / "sample.inc").read_bytes() == b"DATES\n/\n\x00"
+        assert (out / "schedule-builder-service" / "app" / "main.py").read_text(encoding="utf-8") == "print('schedule')\n"
+
+
+def test_split_join() -> None:
+    mod = _load()
+    with tempfile.TemporaryDirectory() as tmp:
+        src = Path(tmp) / "src"
+        archive = Path(tmp) / "all.txt"
+        joined = Path(tmp) / "joined.txt"
+        (src / "scripts").mkdir(parents=True)
+        (src / "docs.md").write_text("x" * 5000, encoding="utf-8")
+        (src / "scripts" / "a.py").write_text("print(1)\n", encoding="utf-8")
+        mod.pack(src, archive)
+        chunks = mod.split_archive(archive, chunk_size=800)
+        assert len(chunks) >= 2
+        mod.join_archive(joined, chunk_dir=archive.parent, chunk_prefix="all")
+        assert joined.read_bytes() == archive.read_bytes()
+
+
+def main() -> int:
+    test_pack_unpack_roundtrip()
+    test_split_join()
+    print("project_pack self-tests OK")
+    return 0
+
+
+if __name__ == "__main__":
+    sys.exit(main())
 
 ===END_FILE===

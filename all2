@@ -1,37 +1,3 @@
-                "uses_current": true
-              },
-              "references": [
-                {
-                  "entity_type": "group",
-                  "id_field": "GROUP",
-                  "required": true
-                }
-              ],
-              "state_assignments": [
-                {
-                  "namespace": "group-control",
-                  "entity_type": "group",
-                  "entity_field": "GROUP",
-                  "key_fields": [
-                    "CONTROL"
-                  ],
-                  "value_fields": [
-                    "ORAT",
-                    "WRAT",
-                    "GRAT",
-                    "LRAT",
-                    "EXCEED_ACTION",
-                    "EXCEED_PARENT"
-                  ]
-                }
-              ],
-              "numeric_constraints": [
-                {
-                  "field": "ORAT",
-                  "min": 0
-                },
-                {
-                  "field": "WRAT",
                   "min": 0
                 },
                 {
@@ -18680,256 +18646,6 @@ if __name__ == "__main__":
     main()
 
 ===END_FILE===
-===BEGIN_FILE===	n8n/templates/generate_mas_ensure_control_plane.py	8344	utf8
-#!/usr/bin/env python3
-"""Generate MAS — Ensure Control Plane: CREATE IF NOT EXISTS from n8n UI."""
-
-from __future__ import annotations
-
-import json
-import uuid
-from pathlib import Path
-
-ROOT = Path(__file__).resolve().parents[1]
-REPO = ROOT.parent
-OUT = ROOT / "workflows/core/mas-ensure-control-plane.workflow.json"
-ACTIVITY_SQL = REPO / "mas-activity-service/app/sql/control_plane.sql"
-WF_ID = "b7c4e2a1-5d80-5c11-9f4a-0e8d3a6b1c72"
-WF_NAME = "MAS — Ensure Control Plane"
-PG = {"postgres": {"id": "REPLACE_IN_UI", "name": "REPLACE: SCHEDULE PostgreSQL / PGVector credential"}}
-SQL_DIR = REPO / "postgres-init"
-
-VERIFY_SQL = """SELECT
-  to_regclass('public.cases') IS NOT NULL AS cases_ok,
-  to_regclass('public.events') IS NOT NULL AS events_ok,
-  to_regclass('public.error_traces') IS NOT NULL AS error_traces_ok,
-  to_regclass('public.executions') IS NOT NULL AS executions_ok,
-  to_regclass('public.agent_registry') IS NOT NULL AS agent_registry_ok,
-  (SELECT COUNT(*) FROM agent_registry) AS agent_count
-"""
-
-
-def nid(name: str) -> str:
-    return str(uuid.uuid5(uuid.NAMESPACE_URL, f"mas-ensure-cp:{name}"))
-
-
-def node(name, ntype, ver, pos, params, **extra):
-    out = {
-        "parameters": params,
-        "id": nid(name),
-        "name": name,
-        "type": ntype,
-        "typeVersion": ver,
-        "position": list(pos),
-    }
-    out.update(extra)
-    return out
-
-
-def postgres(name, pos, query):
-    return node(
-        name,
-        "n8n-nodes-base.postgres",
-        2.6,
-        pos,
-        {
-            "operation": "executeQuery",
-            "query": query.strip() + "\n",
-            "options": {
-                "queryReplacement": "={{ [] }}",
-                "queryBatching": "single",
-                "largeNumbersOutput": "text",
-                "replaceEmptyStrings": False,
-            },
-        },
-        credentials=PG,
-        alwaysOutputData=True,
-    )
-
-
-def connect(c, src, dst, out="main", si=0, tin="main", ti=0):
-    groups = c.setdefault(src, {})
-    outputs = groups.setdefault(out, [])
-    while len(outputs) <= si:
-        outputs.append([])
-    outputs[si].append({"node": dst, "type": tin, "index": ti})
-
-
-def sql_statements(sql_text: str) -> list[str]:
-    """Split on ';' outside of SQL string literals. Full-line `--` comments are dropped first."""
-    cleaned = "\n".join(
-        line for line in sql_text.splitlines() if not line.strip().startswith("--")
-    )
-    stmts: list[str] = []
-    buf: list[str] = []
-    in_string = False
-    i = 0
-    while i < len(cleaned):
-        ch = cleaned[i]
-        if ch == "'" and in_string:
-            if i + 1 < len(cleaned) and cleaned[i + 1] == "'":
-                buf.append("''")
-                i += 2
-                continue
-            in_string = False
-            buf.append(ch)
-            i += 1
-            continue
-        if ch == "'" and not in_string:
-            in_string = True
-            buf.append(ch)
-            i += 1
-            continue
-        if ch == ";" and not in_string:
-            stmt = "".join(buf).strip()
-            if stmt:
-                stmts.append(stmt)
-            buf = []
-            i += 1
-            continue
-        buf.append(ch)
-        i += 1
-    tail = "".join(buf).strip()
-    if tail:
-        stmts.append(tail)
-    return stmts
-
-
-
-def init_sql() -> str:
-    return "\n\n".join(
-        [
-            (SQL_DIR / "02-mas-control-plane.sql").read_text(encoding="utf-8").strip(),
-            (SQL_DIR / "03-schedule-builder-registry.sql").read_text(encoding="utf-8").strip(),
-        ]
-    )
-
-
-def bundled_sql() -> str:
-    header = (
-        "-- Additive MAS control plane. Safe on a live n8n database: CREATE IF NOT EXISTS only.\n"
-        "-- Never DROP n8n tables. postgres-init runs only on a fresh volume. Lab also applies this via psql.\n"
-        "-- Generated from postgres-init/02-mas-control-plane.sql + 03-schedule-builder-registry.sql.\n"
-    )
-    return header + "\n" + init_sql() + "\n"
-
-
-def ddl_statements() -> list[str]:
-    return sql_statements(init_sql())
-
-
-def stmt_node_name(stmt: str, index: int) -> str:
-    compact = " ".join(stmt.split())
-    if compact.upper().startswith("CREATE TABLE IF NOT EXISTS "):
-        table = compact.split()[5]
-        return f"Ensure table {table}"
-    if compact.upper().startswith("CREATE INDEX IF NOT EXISTS "):
-        index_name = compact.split()[5]
-        return f"Ensure index {index_name}"
-    if "schedule_builder" in compact:
-        return "Seed agent_registry schedule_builder"
-    if "excel_extractor" in compact:
-        return "Seed agent_registry excel+calc"
-    return f"Ensure statement {index}"
-
-
-def main() -> None:
-    stmts = ddl_statements()
-    if len(stmts) < 8:
-        raise SystemExit(f"expected control-plane DDL statements, got {len(stmts)}")
-    names = [stmt_node_name(stmt, i) for i, stmt in enumerate(stmts, 1)]
-    if len(names) != len(set(names)):
-        raise SystemExit(f"duplicate ensure node names: {names}")
-
-    ACTIVITY_SQL.parent.mkdir(parents=True, exist_ok=True)
-    ACTIVITY_SQL.write_text(bundled_sql(), encoding="utf-8")
-
-    nodes = [
-        node(
-            "edit after import",
-            "n8n-nodes-base.stickyNote",
-            1,
-            (-220, -440),
-            {
-                "content": (
-                    "## edit after import\n\n"
-                    "**MAS — Ensure Control Plane** — once after UI import "
-                    "when you cannot psql the n8n database:\n\n"
-                    "1. Bind the same Postgres credential as Orchestrator — MAS\n"
-                    "2. Open this workflow → **Execute Workflow**\n"
-                    "3. Last node: `ok: true`, `agent_count` ≥ 3\n\n"
-                    "CREATE IF NOT EXISTS only. Never DROP n8n tables.\n"
-                    "The DB role used by n8n must be allowed to CREATE TABLE.\n"
-                    "pgvector (`CREATE EXTENSION vector`) is a DBA step for RAG, not this workflow."
-                ),
-                "height": 400,
-                "width": 520,
-                "color": 1,
-            },
-        ),
-        node("When clicking Execute workflow", "n8n-nodes-base.manualTrigger", 1, (0, 0), {}),
-    ]
-    x = 260
-    for name, stmt in zip(names, stmts):
-        nodes.append(postgres(name, (x, 0), stmt))
-        x += 220
-    nodes.append(postgres("Verify control plane", (x, 0), VERIFY_SQL))
-    x += 240
-    nodes.append(
-        node(
-            "Format ensure ack",
-            "n8n-nodes-base.code",
-            2,
-            (x, 0),
-            {
-                "jsCode": (
-                    "const x=$json||{};\n"
-                    "const flag=k=>x[k]===true||x[k]==='t'||x[k]==='true'||x[k]===1||x[k]==='1';\n"
-                    "const count=Number(x.agent_count||0);\n"
-                    "const ok=flag('cases_ok')&&flag('events_ok')&&flag('error_traces_ok')"
-                    "&&flag('executions_ok')&&flag('agent_registry_ok')&&count>=3;\n"
-                    "return [{json:{contract:'mas_control_plane_ready',ok,"
-                    "cases_ok:flag('cases_ok'),events_ok:flag('events_ok'),"
-                    "error_traces_ok:flag('error_traces_ok'),executions_ok:flag('executions_ok'),"
-                    "agent_registry_ok:flag('agent_registry_ok'),agent_count:count}}];"
-                )
-            },
-        )
-    )
-
-    connections = {}
-    chain = ["When clicking Execute workflow", *names, "Verify control plane", "Format ensure ack"]
-    for src, dst in zip(chain, chain[1:]):
-        connect(connections, src, dst)
-
-    wf = {
-        "id": WF_ID,
-        "name": WF_NAME,
-        "active": False,
-        "isArchived": False,
-        "nodes": nodes,
-        "connections": connections,
-        "settings": {
-            "executionOrder": "v1",
-            "saveManualExecutions": True,
-            "callerPolicy": "workflowsFromSameOwner",
-            "errorWorkflow": "",
-        },
-        "meta": {"templateCredsSetupCompleted": True, "targetN8nVersion": "2.30.8"},
-        "tags": [],
-        "pinData": {},
-        "versionId": str(uuid.uuid4()),
-    }
-    OUT.parent.mkdir(parents=True, exist_ok=True)
-    OUT.write_text(json.dumps(wf, ensure_ascii=False, indent=2) + "\n", encoding="utf-8")
-    print(f"wrote {OUT} ({len(nodes)} nodes)")
-    print(f"wrote {ACTIVITY_SQL}")
-
-
-if __name__ == "__main__":
-    main()
-
-===END_FILE===
 ===BEGIN_FILE===	n8n/templates/generate_mas_error_handler.py	30530	utf8
 #!/usr/bin/env python3
 """Generate Error — MAS Case Handler workflow (critical failure path)."""
@@ -22762,3 +22478,124 @@ if(!packetComplete&&!excelEvidenceReady&&!builderIntakeRetry&&wantsExcel&&hasSch
     objective:objectiveBlob||'Extract the table described in the task from the attached workbook.',
     inputs:{prompt:objectiveBlob||'Extract bounded rows with entity identity from the attached workbook. Export every column of the matched table. Do not drop date or numeric columns.',consumer:'schedule_builder',workflow_kind:'schedule'},
     controls:{bounded_request:true,max_rows:10000,max_cells:200000},
+    acceptance_criteria:[{id:'rows_extracted',criterion:'Return bounded rows with entity identity from the workbook',required:true,expected:'finite rows'}],
+    artifact_refs:arr(request.artifact_refs)?request.artifact_refs:[],
+  };
+  blockingQuestions=[];
+}
+// Attached schedule package, no workbook: open Builder. Domain grammar (DATES/INCLUDE) is Builder's job.
+if(!packetComplete&&!excelEvidenceReady&&!builderIntakeRetry&&!hasExcelBinary&&hasScheduleBaseline&&allowed.has('schedule_builder_specialist')&&decision!=='delegate'){
+  const baseSchedule=resolveRequestSchedule(request);
+  decision='delegate';
+  packetCandidate={
+    contract:'specialist_packet',contract_version:'1.0',task_id:base.task_id,specialist_id:'schedule_builder_specialist',
+    attempt:Number(base.retry_count)+1,
+    objective:objectiveBlob||'Revise the attached SCHEDULE package.',
+    inputs:{schedule_request:attachSchedulePackage(baseSchedule)},
+    controls:{},
+    acceptance_criteria:[
+      {id:'task_applied',criterion:'Apply the requested schedule change',required:true,expected:'matches objective'},
+      {id:'preserve_unmentioned',criterion:'Unrelated baseline constructs preserved',required:true,expected:'preserve_unmentioned'},
+    ],
+    artifact_refs:arr(request.artifact_refs)?request.artifact_refs:[],
+  };
+  blockingQuestions=[];
+}
+// CREATE from scratch: no baseline file, no workbook — still Builder, not orch grammar.
+const scheduleIntended=intendedSpecialist==='schedule_builder_specialist'||/schedule/.test(clean(plan.task_type))||(intendedSpecialist===''&&/(schedule|\.inc\b|wconprod|tnavigator)/i.test(objectiveBlob+' '+clean(plan.task_type)));
+if(!packetComplete&&!excelEvidenceReady&&!builderIntakeRetry&&!hasExcelBinary&&!hasScheduleBaseline&&allowed.has('schedule_builder_specialist')&&scheduleIntended){
+  const baseSchedule=resolveRequestSchedule(request);
+  const prior=obj(plan.specialist_packet)&&obj(plan.specialist_packet.inputs)&&obj(plan.specialist_packet.inputs.schedule_request)?plan.specialist_packet.inputs.schedule_request:{};
+  decision='delegate';
+  packetCandidate={
+    contract:'specialist_packet',contract_version:'1.0',task_id:base.task_id,specialist_id:'schedule_builder_specialist',
+    attempt:Number(base.retry_count)+1,
+    objective:objectiveBlob||clean(plan.specialist_packet&&plan.specialist_packet.objective)||'Create a forecast SCHEDULE from the task.',
+    inputs:{schedule_request:attachSchedulePackage({...baseSchedule,...prior,build_mode:clean(prior.build_mode||baseSchedule.build_mode)||'CREATE'})},
+    controls:{},
+    acceptance_criteria:[{id:'task_applied',criterion:'Emit the requested CREATE schedule',required:true,expected:'matches objective'}],
+    artifact_refs:arr(request.artifact_refs)?request.artifact_refs:[],
+  };
+  blockingQuestions=[];
+}
+// Planner chose Excel without a workbook: require upload only if objective named Excel; else redirect to Builder.
+if(decision==='delegate'&&clean(packetCandidate.specialist_id)==='excel_extraction_specialist'&&!hasExcelBinary){
+  if(objectiveMentionsExcel){
+    decision='needs_input';
+    blockingQuestions=[{id:'excel_file',question:'Прикрепите workbook (.xlsx/.xls) в поле file — в задаче указан Excel, но файл не приложен.',text:'Прикрепите workbook (.xlsx/.xls) в поле file — в задаче указан Excel, но файл не приложен.',type:'file',required:true}];
+    packetCandidate={};
+  } else if(hasScheduleBaseline&&allowed.has('schedule_builder_specialist')){
+    const baseSchedule=resolveRequestSchedule(request);
+    packetCandidate={
+      contract:'specialist_packet',contract_version:'1.0',task_id:base.task_id,specialist_id:'schedule_builder_specialist',
+      attempt:Number(base.retry_count)+1,
+      objective:objectiveBlob||'Revise the attached SCHEDULE package.',
+      inputs:{schedule_request:attachSchedulePackage(baseSchedule)},
+      controls:{},
+      acceptance_criteria:[
+        {id:'task_applied',criterion:'Apply the requested schedule change',required:true,expected:'matches objective'},
+        {id:'preserve_unmentioned',criterion:'Unrelated baseline constructs preserved',required:true,expected:'preserve_unmentioned'},
+      ],
+      artifact_refs:arr(request.artifact_refs)?request.artifact_refs:[],
+    };
+    blockingQuestions=[];
+  }
+}
+// After Excel facts (or Builder intake retry), hand the package + facts to Builder
+// only when the task explicitly consumes Schedule — not because Excel succeeded.
+// Domain DATES/INCLUDE/keyword grammar stays in Builder intake/validation.
+const scheduleConsumer=explicitScheduleConsumer(request,obj(packetCandidate.inputs)?packetCandidate.inputs:{})||explicitScheduleConsumer(request,obj(persistedPacket.inputs)?persistedPacket.inputs:{})||hasScheduleBaseline;
+if((builderIntakeRetry||(excelEvidenceReady&&scheduleConsumer))&&allowed.has('schedule_builder_specialist')){
+  const compact=obj(previousSpecialistResult.compact_data)?previousSpecialistResult.compact_data:{};
+  const factsPacket=excelEvidenceReady&&obj(compact)?{
+    contract:'source_facts_packet',
+    contract_version:'1.0',
+    source_snapshot_hash:clean(compact.source_snapshot_hash),
+    correlation_id:clean(compact.correlation_id),
+    facts:arr(compact.facts)?compact.facts:[],
+    conflicts:arr(compact.conflicts)?compact.conflicts:[],
+  }:(factsFromPersisted||null);
+  const factWells=(arr(factsPacket?.facts)?factsPacket.facts:[]).filter(f=>{
+    const values=obj(f?.values)?f.values:{};
+    return Boolean(clean(f?.well||f?.entity||f?.entity_id||values['Скважина']||values.скважина||values.WELL||values.well||values['Группа']||values.GROUP||values.group));
+  });
+  if(excelEvidenceReady&&factsPacket&&!factWells.length&&allowed.has('excel_extraction_specialist')){
+    decision='delegate';
+    packetCandidate={
+      contract:'specialist_packet',contract_version:'1.0',task_id:base.task_id,specialist_id:'excel_extraction_specialist',
+      attempt:Number(base.retry_count)+1,
+      objective:objectiveBlob||'Повторный extract: у каждой строки должно быть имя объекта (скважина или группа).',
+      inputs:{prompt:objectiveBlob||'Export rows with entity identity. Do not invent well or group names.'},
+      controls:{bounded_request:true,max_rows:10000,max_cells:200000},
+      acceptance_criteria:[{id:'entity_identity',criterion:'Every fact row includes an entity name',required:true,expected:'non-empty names'}],
+      artifact_refs:arr(request.artifact_refs)?request.artifact_refs:[],
+    };
+    blockingQuestions=[];
+  } else if(factWells.length||(!excelEvidenceReady&&builderIntakeRetry&&(factsPacket||!hasExcelBinary))){
+  const effectiveFactsPacket=factsPacket;
+  const baseSchedule=resolveRequestSchedule(request);
+  let builderPacket=(packetObject&&plan.specialist_packet.specialist_id==='schedule_builder_specialist'&&packetComplete)?plan.specialist_packet:(obj(persistedPacket)&&persistedPacket.specialist_id==='schedule_builder_specialist'?persistedPacket:null);
+  if(!builderPacket){
+    builderPacket={
+      contract:'specialist_packet',contract_version:'1.0',task_id:base.task_id,specialist_id:'schedule_builder_specialist',
+      attempt:Number(base.retry_count)+1,
+      objective:clean(request.objective||request.problem_statement||request.request_text)||'Revise the attached SCHEDULE using extracted facts.',
+      inputs:{schedule_request:attachSchedulePackage({...baseSchedule,source_facts_packet:effectiveFactsPacket})},
+      controls:{},
+      acceptance_criteria:[
+        {id:'task_applied',criterion:'Apply extracted facts to the schedule package',required:true,expected:'matches objective'},
+        {id:'preserve_unmentioned',criterion:'Unrelated baseline constructs preserved',required:true,expected:'preserve_unmentioned'},
+      ],
+      artifact_refs:arr(previousSpecialistResult.artifact_refs)?previousSpecialistResult.artifact_refs:(arr(persistedPacket.artifact_refs)?persistedPacket.artifact_refs:(arr(request.artifact_refs)?request.artifact_refs:[])),
+    };
+  }
+  decision='delegate';
+  packetCandidate=withPacketControls({...builderPacket,contract:'specialist_packet',contract_version:'1.0',task_id:base.task_id,attempt:Number(base.retry_count)+1,specialist_id:'schedule_builder_specialist'},{expected_version:Number(base.version)+1,idempotency_key:`${base.task_id}:specialist:schedule_builder_specialist:${Number(base.retry_count)+1}:${Number(base.version)+1}`});
+  const modelInputs=obj(packetCandidate.inputs)?packetCandidate.inputs:{};const modelSchedule=obj(modelInputs.schedule_request)?modelInputs.schedule_request:modelInputs;
+  packetCandidate={...packetCandidate,inputs:{...modelInputs,schedule_request:attachSchedulePackage({...persistedSchedule,...resolveRequestSchedule(request),...modelSchedule,source_facts_packet:effectiveFactsPacket||modelSchedule.source_facts_packet||persistedSchedule.source_facts_packet||null})}};
+  blockingQuestions=[];
+  }
+}
+const scheduleGrammarQuestion=q=>/requested_keyword_scope|keyword_scope|forecast_start|forecast_end|model_start|\bDATES\b|wconprod|welspecs|семантик|порядок keyword/i.test(questionBlob(q));
+const builderFromPlan=packetObject&&plan.specialist_packet.specialist_id==='schedule_builder_specialist';
+if(builderFromPlan||clean(packetCandidate.specialist_id)==='schedule_builder_specialist') blockingQuestions=blockingQuestions.filter(q=>!scheduleGrammarQuestion(q));

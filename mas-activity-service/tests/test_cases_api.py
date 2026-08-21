@@ -6,7 +6,7 @@ import os
 from pathlib import Path
 
 os.environ.setdefault("LOG_LEVEL", "WARNING")
-os.environ.pop("DATABASE_URL", None)
+os.environ.pop("CONTROL_PLANE_PROXY_URL", None)
 
 from fastapi.testclient import TestClient
 import pytest
@@ -20,7 +20,7 @@ ROOT = Path(__file__).resolve().parents[1]
 @pytest.fixture(autouse=True)
 def _isolate(monkeypatch) -> None:
     for key in (
-        "DATABASE_URL",
+        "CONTROL_PLANE_PROXY_URL",
         "ORCHESTRATOR_WEBHOOK_URL",
         "N8N_BASE_URL",
         "ACTIVITY_STATE_PATH",
@@ -213,6 +213,80 @@ def test_create_keeps_files_in_activity_not_n8n(monkeypatch) -> None:
     xlsx = client.get(f"/cases/{case_id}/artifacts/excel")
     assert xlsx.status_code == 200
     assert xlsx.content == b"xlsx-bytes"
+
+
+def test_create_uses_artifact_proxy_when_configured(monkeypatch) -> None:
+    monkeypatch.setenv("ORCHESTRATOR_WEBHOOK_URL", "http://n8n.test/webhook/mas-orchestrator-step")
+    from app import artifact_store
+
+    monkeypatch.setattr(artifact_store, "configured", lambda: True)
+    captured: list[tuple[str, str, str, bytes, str]] = []
+
+    async def fake_put(case_id, artifact_id, filename, content, mime_type):
+        captured.append((case_id, artifact_id, filename, content, mime_type))
+        return {"ok": True, "artifact_id": artifact_id}
+
+    monkeypatch.setattr(artifact_store, "put", fake_put)
+    monkeypatch.setattr("app.cases_api._invoke_create", lambda case_id: None)
+    monkeypatch.setattr("app.cases_api.save_task_binaries", lambda *_args: pytest.fail("local artifact store used"))
+
+    res = client.post(
+        "/cases",
+        data={"task_description": "Proxy upload", "requested_by": "tester"},
+        files=[("file", ("dates.xlsx", b"xlsx-bytes", "application/octet-stream"))],
+    )
+
+    assert res.status_code == 200, res.text
+    assert captured == [
+        (res.json()["case_id"], "excel", "dates.xlsx", b"xlsx-bytes", "application/octet-stream")
+    ]
+
+
+def test_control_plane_proxy_carries_hitl_and_errors(monkeypatch) -> None:
+    from app import control_plane
+
+    calls: list[tuple[str, dict[str, object]]] = []
+
+    def fake_proxy(operation, **payload):
+        calls.append((operation, payload))
+        if operation == "get_case":
+            return {"case_id": "CASE-1", "state": {}, "status": "running"}
+        if operation == "list_events":
+            return []
+        if operation == "list_errors":
+            return [{"error_id": 1, "case_id": "CASE-1"}]
+        return {"event_id": 1, "idempotent": False}
+
+    monkeypatch.setattr(control_plane, "_configured", lambda: True)
+    monkeypatch.setattr(control_plane, "proxy_call", fake_proxy)
+
+    control_plane.append_event(
+        "CASE-1",
+        kind="hitl.answered",
+        actor="user",
+        status="running",
+        payload={"question_id": "Q-1", "answer": "ok"},
+    )
+    control_plane.list_events("CASE-1", after_seq=4)
+    control_plane.append_error_trace(
+        case_id="CASE-1",
+        execution_id="exec-1",
+        workflow_name="Orchestrator",
+        node_name="Decision",
+        error_message="boom",
+        error_type="RuntimeError",
+        stack="trace",
+        input_snapshot={"x": 1},
+    )
+    assert control_plane.list_errors("CASE-1") == [{"error_id": 1, "case_id": "CASE-1"}]
+    assert [name for name, _payload in calls] == [
+        "append_event",
+        "list_events",
+        "append_error",
+        "list_errors",
+    ]
+    assert calls[0][1]["kind"] == "hitl.answered"
+    assert calls[2][1]["error_message"] == "boom"
 
 
 def test_create_case_optional_task_name(monkeypatch) -> None:

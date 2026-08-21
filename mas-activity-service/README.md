@@ -28,7 +28,8 @@ start-windows.bat
 | `ACTIVITY_TLS_VERIFY` | `true` by default; set `false` only for a trusted local/self-signed HTTPS endpoint |
 | `ACTIVITY_CA_BUNDLE` | optional CA PEM path; preferred over disabling verification for corporate PKI |
 | `ORCHESTRATOR_WEBHOOK_URL` | боевой вызов оркестратора (предпочтительно) |
-| `DATABASE_URL` | тот же Postgres, что у n8n; при старте `CREATE IF NOT EXISTS` таблиц стейта (`cases`, `events`, …) |
+| `CONTROL_PLANE_PROXY_URL` | единый n8n webhook для cases, events, HITL, errors, executions, registry и binary artifacts |
+| `CONTROL_PLANE_PROXY_AUTH_*` | header auth для `CONTROL_PLANE_PROXY_URL` |
 | `ORCHESTRATOR_AUTH_*` | inbound header auth **n8n webhook**, не Activity |
 | `N8N_BASE_URL` + `N8N_USERNAME` / `N8N_PASSWORD` | REST-фолбэк, если webhook не задан |
 | `ACTIVITY_HYDRATE_URL` | hydrate Data Tables (list+feed); иначе выводится из хоста webhook/`N8N_BASE_URL` |
@@ -36,6 +37,10 @@ start-windows.bat
 Авторизации внутри Activity **нет**. ФИО инженера (`requested_by`) — поле формы, не ключ.
 
 После UI-импорта hydrate-workflow и биндинга Data Tables задайте webhook URL на **корпоративный n8n** (не `http://n8n:5678` — это только Compose DNS).
+
+Для корпоративного контура импортируйте и активируйте `n8n/workflows/core/mas-control-plane-proxy.workflow.json`.
+При заданном `CONTROL_PLANE_PROXY_URL` Activity не подключается к Postgres вообще: cases/events,
+HITL state, errors, execution mapping, agent registry и бинарные файлы проходят через единый n8n webhook.
 
 ## Linux / macOS (лаборатория)
 

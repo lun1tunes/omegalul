@@ -14,6 +14,7 @@ from fastapi import APIRouter, BackgroundTasks, File, Form, HTTPException, Query
 from fastapi.responses import StreamingResponse
 
 from app import control_plane
+from app import artifact_store
 from app.contracts import AGENT_EVENT_KINDS, CaseAnswerIn, CaseEventIn, CaseNameIn, MAX_STEPS
 from app.orchestrator import OrchestratorError, invoke_orchestrator
 from app.schema_view import FINISHED_RESULT_TEXT, build_schema_model
@@ -433,7 +434,14 @@ async def create_case(
             "bytes": len(content),
             "artifact_id": key,
         }
-    save_task_binaries(case_id, binary or None)
+    if artifact_store.configured():
+        for key, (filename, content, mime) in binary.items():
+            try:
+                await artifact_store.put(case_id, key, filename, content, mime)
+            except Exception as exc:
+                raise HTTPException(status_code=502, detail=f"artifact proxy upload failed: {exc}") from exc
+    else:
+        save_task_binaries(case_id, binary or None)
     control_plane.create_case(case_id, goal, artifacts, task_name=name)
     if (schedule_root or "").strip():
         row = control_plane.get_case(case_id)
@@ -549,10 +557,10 @@ async def _collect_form_uploads(form: Any) -> list[tuple[str, str, bytes, str]]:
     return uploads
 
 
-def _merge_case_uploads(case_id: str, uploads: list[tuple[str, str, bytes, str]]) -> list[str]:
+async def _merge_case_uploads(case_id: str, uploads: list[tuple[str, str, bytes, str]]) -> list[str]:
     if not uploads:
         return []
-    binary = load_task_binaries(case_id)
+    binary = load_task_binaries(case_id) if not artifact_store.configured() else {}
     row = control_plane.get_case(case_id)
     state = dict((row or {}).get("state") or {})
     artifacts = dict(state.get("artifacts") or {})
@@ -563,7 +571,7 @@ def _merge_case_uploads(case_id: str, uploads: list[tuple[str, str, bytes, str]]
         else:
             key = slot
             n = 0
-            while key in binary:
+            while key in binary or key in artifacts:
                 n += 1
                 key = f"{slot}_{n}"
         binary[key] = (filename, content, mime)
@@ -574,7 +582,14 @@ def _merge_case_uploads(case_id: str, uploads: list[tuple[str, str, bytes, str]]
             "artifact_id": key,
         }
         names.append(filename)
-    save_task_binaries(case_id, binary)
+    if artifact_store.configured():
+        for key, (filename, content, mime) in binary.items():
+            try:
+                await artifact_store.put(case_id, key, filename, content, mime)
+            except Exception as exc:
+                raise HTTPException(status_code=502, detail=f"artifact proxy upload failed: {exc}") from exc
+    else:
+        save_task_binaries(case_id, binary)
     if row:
         state["artifacts"] = artifacts
         control_plane.update_case(case_id, state=state)
@@ -593,7 +608,7 @@ async def post_answer(case_id: str, request: Request, background_tasks: Backgrou
         question_id = str(form.get("question_id") or form.get("gate_id") or "Q-1").strip() or "Q-1"
         answer = str(form.get("answer") or form.get("human_response") or "").strip()
         requested_by = str(form.get("requested_by") or "mas activity user")
-        file_names = _merge_case_uploads(case_id, await _collect_form_uploads(form))
+        file_names = await _merge_case_uploads(case_id, await _collect_form_uploads(form))
         if not answer and file_names:
             answer = "(файл)"
         if not answer:
@@ -773,13 +788,21 @@ def get_schedule(case_id: str):
 
 
 @router.get("/cases/{case_id}/artifacts/{artifact_id}")
-def get_artifact(case_id: str, artifact_id: str):
+async def get_artifact(case_id: str, artifact_id: str):
     if control_plane.get_case(case_id) is None:
         raise HTTPException(status_code=404, detail="case not found")
-    files = load_task_binaries(case_id)
-    if artifact_id not in files:
-        raise HTTPException(status_code=404, detail="artifact not found")
-    filename, content, mime = files[artifact_id]
+    if artifact_store.configured():
+        try:
+            filename, content, mime = await artifact_store.get(case_id, artifact_id)
+        except FileNotFoundError as exc:
+            raise HTTPException(status_code=404, detail="artifact not found") from exc
+        except Exception as exc:
+            raise HTTPException(status_code=502, detail=f"artifact proxy download failed: {exc}") from exc
+    else:
+        files = load_task_binaries(case_id)
+        if artifact_id not in files:
+            raise HTTPException(status_code=404, detail="artifact not found")
+        filename, content, mime = files[artifact_id]
     from fastapi.responses import Response
 
     return Response(

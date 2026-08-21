@@ -8,7 +8,7 @@ import os
 from pathlib import Path
 
 os.environ.setdefault("LOG_LEVEL", "WARNING")
-os.environ.pop("DATABASE_URL", None)
+os.environ.pop("CONTROL_PLANE_PROXY_URL", None)
 
 from fastapi.testclient import TestClient
 import pytest
@@ -41,7 +41,7 @@ def _isolate_activity_store(monkeypatch) -> None:
         "ORCHESTRATOR_AUTH_HEADER",
         "ORCHESTRATOR_AUTH_VALUE",
         "N8N_BASE_URL",
-        "DATABASE_URL",
+        "CONTROL_PLANE_PROXY_URL",
         "N8N_HOST",
         "N8N_USERNAME",
         "N8N_PASSWORD",

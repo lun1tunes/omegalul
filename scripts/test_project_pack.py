@@ -29,6 +29,7 @@ def test_pack_unpack_roundtrip() -> None:
         archive = Path(tmp) / "all.txt"
         (src / "n8n" / "workflows").mkdir(parents=True)
         (src / "excel-agent-tools").mkdir(parents=True)
+        (src / "schedule-builder-service" / "app").mkdir(parents=True)
         (src / "scripts").mkdir(parents=True)
         (src / ".venv" / "lib").mkdir(parents=True)
         (src / "excel-agent-tools" / "tests").mkdir(parents=True)
@@ -37,6 +38,7 @@ def test_pack_unpack_roundtrip() -> None:
         (src / ".env.example").write_text("KEY=value\n", encoding="utf-8")
         (src / "n8n" / "workflows" / "a.workflow.json").write_text('{"ok":1}\n', encoding="utf-8")
         (src / "excel-agent-tools" / "app.py").write_text("print(1)\n", encoding="utf-8")
+        (src / "schedule-builder-service" / "app" / "main.py").write_text("print('schedule')\n", encoding="utf-8")
         (src / "excel-agent-tools" / "secret.env").write_text("SECRET=1\n", encoding="utf-8")
         (src / "excel-agent-tools" / "tests" / "test_x.py").write_text("assert True\n", encoding="utf-8")
         (src / ".venv" / "lib" / "skip.py").write_text("nope\n", encoding="utf-8")
@@ -53,6 +55,7 @@ def test_pack_unpack_roundtrip() -> None:
         assert ".env.example" in rels
         assert "n8n/workflows/a.workflow.json" in rels
         assert "excel-agent-tools/app.py" in rels
+        assert "schedule-builder-service/app/main.py" in rels
         assert "scripts/project_pack.py" in rels
         assert "excel-agent-tools/secret.env" not in rels
         assert "excel-agent-tools/tests/test_x.py" not in rels
@@ -64,6 +67,7 @@ def test_pack_unpack_roundtrip() -> None:
         assert (out / "docs.md").read_text(encoding="utf-8") == "# runbook\n"
         assert (out / "n8n" / "workflows" / "a.workflow.json").read_text(encoding="utf-8") == '{"ok":1}\n'
         assert (out / "n8n" / "sample.inc").read_bytes() == b"DATES\n/\n\x00"
+        assert (out / "schedule-builder-service" / "app" / "main.py").read_text(encoding="utf-8") == "print('schedule')\n"
 
 
 def test_split_join() -> None:

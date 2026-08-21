@@ -63,6 +63,9 @@ services:
       - ./n8n/rag:/rag
     environment:
       - ORCHESTRATOR_WEBHOOK_URL=http://n8n:5678/webhook/mas-orchestrator-step
+      - CONTROL_PLANE_PROXY_URL=http://n8n:5678/webhook/mas-control-plane
+      - CONTROL_PLANE_PROXY_AUTH_HEADER=${CONTROL_PLANE_PROXY_AUTH_HEADER:-Authorization}
+      - CONTROL_PLANE_PROXY_AUTH_VALUE=${CONTROL_PLANE_PROXY_AUTH_VALUE:-local-orch-inbound}
       - ORCHESTRATOR_AUTH_HEADER=${ORCHESTRATOR_AUTH_HEADER:-Authorization}
       - ORCHESTRATOR_AUTH_VALUE=${ORCHESTRATOR_AUTH_VALUE:-local-orch-inbound}
       - N8N_BASE_URL=http://n8n:5678
@@ -73,9 +76,8 @@ services:
       - ACTIVITY_CA_BUNDLE=${ACTIVITY_CA_BUNDLE:-}
       - ACTIVITY_STATE_PATH=/app/data/activity_state.json
       - MAS_KNOWLEDGE_CORPUS=/rag/excel-agent-operating-guide.documents.json
-      - DATABASE_URL=postgresql://${POSTGRES_USER:-n8n}:${POSTGRES_PASSWORD}@postgres:5432/${POSTGRES_DB:-n8n}
     depends_on:
-      postgres:
+      n8n:
         condition: service_healthy
     networks:
       - backend

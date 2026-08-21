@@ -9,7 +9,7 @@
     "workflows/core/schedule-builder-agent.workflow.json",
     "workflows/core/excel-extractor-agent.workflow.json",
     "workflows/core/mas-error-traces.workflow.json",
-    "workflows/core/mas-ensure-control-plane.workflow.json",
+    "workflows/core/mas-control-plane-proxy.workflow.json",
     "workflows/core/mas-orchestrator.workflow.json",
     "workflows/core/mas-deployment-health-check.workflow.json",
     "workflows/support/ai-components.workflow.json",
@@ -25,7 +25,7 @@
     "workflows/core/schedule-builder-agent.workflow.json",
     "workflows/core/excel-extractor-agent.workflow.json",
     "workflows/core/mas-error-traces.workflow.json",
-    "workflows/core/mas-ensure-control-plane.workflow.json",
+    "workflows/core/mas-control-plane-proxy.workflow.json",
     "workflows/core/mas-orchestrator.workflow.json",
     "workflows/core/mas-deployment-health-check.workflow.json"
   ],
@@ -344,7 +344,7 @@
     },
     {
       "type": "httpHeaderAuth",
-      "use": "orchestrator inbound webhook and Excel Tools only"
+      "use": "orchestrator inbound webhook, control-plane proxy webhook and Excel Tools"
     }
   ],
   "ui_configuration": [

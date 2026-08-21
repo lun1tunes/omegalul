@@ -1,336 +1,3 @@
-      "type": "n8n-nodes-base.httpRequest",
-      "typeVersion": 4.4,
-      "position": [
-        1960,
-        0
-      ],
-      "onError": "continueRegularOutput",
-      "alwaysOutputData": true
-    },
-    {
-      "parameters": {
-        "jsCode": "\nconst fetched=$json||{};\nconst opened=$('Open excel session').first().json||{};\nif(fetched.status){\n  return [{json:{\n    task_id:fetched.task_id||opened.task_id||'',\n    agent_id:'excel_extractor',\n    status:fetched.status,\n    message:fetched.message||'',\n    data:fetched.data||{},\n    artifacts:fetched.artifacts||{},\n    issues:fetched.issues||[],\n    assumptions:fetched.assumptions||[],\n    requests:fetched.requests||[]\n  }}];\n}\nreturn [{json:{\n  task_id:opened.task_id||'',\n  agent_id:'excel_extractor',\n  status:'failed',\n  message:String(fetched.message||fetched.error||'Excel Extractor не вернул факты'),\n  data:{},\n  artifacts:{},\n  issues:[{type:'excel_agent_no_result'}],\n  assumptions:[],\n  requests:[]\n}}];\n"
-      },
-      "id": "76537492-0ad0-514e-9053-8685f3bf04b1",
-      "name": "Format excel result",
-      "type": "n8n-nodes-base.code",
-      "typeVersion": 2,
-      "position": [
-        2200,
-        0
-      ]
-    },
-    {
-      "parameters": {
-        "toolDescription": "Компактные листы и размеры workbook. Без файла.",
-        "method": "POST",
-        "url": "={{ $('Runtime configuration').first().json.excel_tools_url + '/agent-tools/' + \"workbook_introspect\" }}",
-        "authentication": "none",
-        "sendQuery": false,
-        "sendHeaders": true,
-        "specifyHeaders": "keypair",
-        "sendBody": true,
-        "specifyBody": "keypair",
-        "placeholderDefinitions": {
-          "values": []
-        },
-        "optimizeResponse": false,
-        "parametersHeaders": {
-          "values": [
-            {
-              "name": "Content-Type",
-              "valueProvider": "fieldValue",
-              "value": "application/json"
-            },
-            {
-              "name": "X-API-Key",
-              "valueProvider": "fieldValue",
-              "value": "={{ $('Runtime configuration').first().json.excel_tools_api_key || '' }}"
-            }
-          ]
-        },
-        "parametersBody": {
-          "values": [
-            {
-              "name": "session_id",
-              "valueProvider": "fieldValue",
-              "value": "={{ $('Open excel session').first().json.session_id }}"
-            }
-          ]
-        }
-      },
-      "id": "71b0ad7a-728c-509e-b23d-b9cdc615e2ae",
-      "name": "workbook_introspect",
-      "type": "@n8n/n8n-nodes-langchain.toolHttpRequest",
-      "typeVersion": 1.1,
-      "position": [
-        760,
-        -420
-      ]
-    },
-    {
-      "parameters": {
-        "toolDescription": "Небольшой preview одного листа. sheet только из introspect.",
-        "method": "POST",
-        "url": "={{ $('Runtime configuration').first().json.excel_tools_url + '/agent-tools/' + \"sheet_preview\" }}",
-        "authentication": "none",
-        "sendQuery": false,
-        "sendHeaders": true,
-        "specifyHeaders": "keypair",
-        "sendBody": true,
-        "specifyBody": "keypair",
-        "placeholderDefinitions": {
-          "values": [
-            {
-              "name": "sheet",
-              "description": "Точное имя листа из introspect",
-              "type": "string"
-            }
-          ]
-        },
-        "optimizeResponse": false,
-        "parametersHeaders": {
-          "values": [
-            {
-              "name": "Content-Type",
-              "valueProvider": "fieldValue",
-              "value": "application/json"
-            },
-            {
-              "name": "X-API-Key",
-              "valueProvider": "fieldValue",
-              "value": "={{ $('Runtime configuration').first().json.excel_tools_api_key || '' }}"
-            }
-          ]
-        },
-        "parametersBody": {
-          "values": [
-            {
-              "name": "session_id",
-              "valueProvider": "fieldValue",
-              "value": "={{ $('Open excel session').first().json.session_id }}"
-            },
-            {
-              "name": "sheet",
-              "valueProvider": "modelRequired",
-              "value": ""
-            }
-          ]
-        }
-      },
-      "id": "669a4f3a-4afd-5a8e-999e-35cfadceb7eb",
-      "name": "sheet_preview",
-      "type": "@n8n/n8n-nodes-langchain.toolHttpRequest",
-      "typeVersion": 1.1,
-      "position": [
-        980,
-        -420
-      ]
-    },
-    {
-      "parameters": {
-        "toolDescription": "Найти таблицы. sheet опционален. Возвращает table_id, range, columns — не workbook.",
-        "method": "POST",
-        "url": "={{ $('Runtime configuration').first().json.excel_tools_url + '/agent-tools/' + \"detect_tables\" }}",
-        "authentication": "none",
-        "sendQuery": false,
-        "sendHeaders": true,
-        "specifyHeaders": "keypair",
-        "sendBody": true,
-        "specifyBody": "keypair",
-        "placeholderDefinitions": {
-          "values": [
-            {
-              "name": "sheet",
-              "description": "Ограничить поиск одним листом",
-              "type": "string"
-            }
-          ]
-        },
-        "optimizeResponse": false,
-        "parametersHeaders": {
-          "values": [
-            {
-              "name": "Content-Type",
-              "valueProvider": "fieldValue",
-              "value": "application/json"
-            },
-            {
-              "name": "X-API-Key",
-              "valueProvider": "fieldValue",
-              "value": "={{ $('Runtime configuration').first().json.excel_tools_api_key || '' }}"
-            }
-          ]
-        },
-        "parametersBody": {
-          "values": [
-            {
-              "name": "session_id",
-              "valueProvider": "fieldValue",
-              "value": "={{ $('Open excel session').first().json.session_id }}"
-            },
-            {
-              "name": "sheet",
-              "valueProvider": "modelOptional",
-              "value": ""
-            }
-          ]
-        }
-      },
-      "id": "3a321bbf-c410-53e2-b000-a99958d37337",
-      "name": "detect_tables",
-      "type": "@n8n/n8n-nodes-langchain.toolHttpRequest",
-      "typeVersion": 1.1,
-      "position": [
-        1200,
-        -420
-      ]
-    },
-    {
-      "parameters": {
-        "toolDescription": "Ранжировать уже найденные или подходящие таблицы по фразе запроса.",
-        "method": "POST",
-        "url": "={{ $('Runtime configuration').first().json.excel_tools_url + '/agent-tools/' + \"match_tables\" }}",
-        "authentication": "none",
-        "sendQuery": false,
-        "sendHeaders": true,
-        "specifyHeaders": "keypair",
-        "sendBody": true,
-        "specifyBody": "keypair",
-        "placeholderDefinitions": {
-          "values": [
-            {
-              "name": "query",
-              "description": "Что искать: даты ввода, дебиты, ...",
-              "type": "string"
-            }
-          ]
-        },
-        "optimizeResponse": false,
-        "parametersHeaders": {
-          "values": [
-            {
-              "name": "Content-Type",
-              "valueProvider": "fieldValue",
-              "value": "application/json"
-            },
-            {
-              "name": "X-API-Key",
-              "valueProvider": "fieldValue",
-              "value": "={{ $('Runtime configuration').first().json.excel_tools_api_key || '' }}"
-            }
-          ]
-        },
-        "parametersBody": {
-          "values": [
-            {
-              "name": "session_id",
-              "valueProvider": "fieldValue",
-              "value": "={{ $('Open excel session').first().json.session_id }}"
-            },
-            {
-              "name": "query",
-              "valueProvider": "modelRequired",
-              "value": ""
-            }
-          ]
-        }
-      },
-      "id": "fd8414df-6c58-5e8d-9f9e-d49bcfa063c1",
-      "name": "match_tables",
-      "type": "@n8n/n8n-nodes-langchain.toolHttpRequest",
-      "typeVersion": 1.1,
-      "position": [
-        1420,
-        -420
-      ]
-    },
-    {
-      "parameters": {
-        "toolDescription": "Колонки, число строк и sample. table_id только из detect/match.",
-        "method": "POST",
-        "url": "={{ $('Runtime configuration').first().json.excel_tools_url + '/agent-tools/' + \"describe_table\" }}",
-        "authentication": "none",
-        "sendQuery": false,
-        "sendHeaders": true,
-        "specifyHeaders": "keypair",
-        "sendBody": true,
-        "specifyBody": "keypair",
-        "placeholderDefinitions": {
-          "values": [
-            {
-              "name": "table_id",
-              "description": "table_id из detect_tables",
-              "type": "string"
-            }
-          ]
-        },
-        "optimizeResponse": false,
-        "parametersHeaders": {
-          "values": [
-            {
-              "name": "Content-Type",
-              "valueProvider": "fieldValue",
-              "value": "application/json"
-            },
-            {
-              "name": "X-API-Key",
-              "valueProvider": "fieldValue",
-              "value": "={{ $('Runtime configuration').first().json.excel_tools_api_key || '' }}"
-            }
-          ]
-        },
-        "parametersBody": {
-          "values": [
-            {
-              "name": "session_id",
-              "valueProvider": "fieldValue",
-              "value": "={{ $('Open excel session').first().json.session_id }}"
-            },
-            {
-              "name": "table_id",
-              "valueProvider": "modelRequired",
-              "value": ""
-            }
-          ]
-        }
-      },
-      "id": "96de5f67-f2d4-5264-a64d-a957f04be6d2",
-      "name": "describe_table",
-      "type": "@n8n/n8n-nodes-langchain.toolHttpRequest",
-      "typeVersion": 1.1,
-      "position": [
-        760,
-        -260
-      ]
-    },
-    {
-      "parameters": {
-        "toolDescription": "Ограниченные distinct-значения одной колонки для точных фильтров.",
-        "method": "POST",
-        "url": "={{ $('Runtime configuration').first().json.excel_tools_url + '/agent-tools/' + \"list_column_values\" }}",
-        "authentication": "none",
-        "sendQuery": false,
-        "sendHeaders": true,
-        "specifyHeaders": "keypair",
-        "sendBody": true,
-        "specifyBody": "keypair",
-        "placeholderDefinitions": {
-          "values": [
-            {
-              "name": "table_id",
-              "description": "table_id из detect_tables",
-              "type": "string"
-            },
-            {
-              "name": "column",
-              "description": "Точное имя колонки из describe/detect",
-              "type": "string"
-            }
-          ]
-        },
-        "optimizeResponse": false,
-        "parametersHeaders": {
           "values": [
             {
               "name": "Content-Type",
@@ -749,6 +416,175 @@
   "tags": [],
   "pinData": {},
   "versionId": "c5ddaf5c-330e-4c53-baa9-42abc31b99ea"
+}
+
+===END_FILE===
+===BEGIN_FILE===	n8n/workflows/core/mas-control-plane-proxy.workflow.json	13380	utf8
+{
+  "id": "mas-control-plane-proxy-v1",
+  "name": "MAS — Control Plane Proxy",
+  "active": false,
+  "isArchived": false,
+  "settings": {
+    "executionOrder": "v1"
+  },
+  "nodes": [
+    {
+      "parameters": {
+        "content": "## edit after import\n\nThis is the only database boundary for MAS Activity.\n\n1. Bind the same Postgres credential used by the existing MAS workflows.\n2. Bind Header Auth on the webhook.\n3. Activate this workflow.\n4. Set `CONTROL_PLANE_PROXY_URL=http://n8n:5678/webhook/mas-control-plane` in Activity.\n\nOperations: schema, create_case, get_case, list_cases, update_case, append_event, list_events, append_error, list_errors, record_execution, case_id_for_execution, list_agents, upsert_agent, artifact_put, artifact_get.\n\nActivity contains no database driver and no Postgres connection. HITL state, events and error traces use the same proxy.",
+        "height": 430,
+        "width": 560,
+        "color": 1
+      },
+      "id": "mas-control-plane-note-v1",
+      "name": "edit after import",
+      "type": "n8n-nodes-base.stickyNote",
+      "typeVersion": 1,
+      "position": [
+        -440,
+        -300
+      ]
+    },
+    {
+      "parameters": {
+        "httpMethod": "POST",
+        "path": "mas-control-plane",
+        "authentication": "headerAuth",
+        "responseMode": "responseNode",
+        "options": {}
+      },
+      "id": "mas-control-plane-webhook-v1",
+      "name": "MAS control-plane webhook",
+      "type": "n8n-nodes-base.webhook",
+      "typeVersion": 2.1,
+      "position": [
+        0,
+        0
+      ],
+      "webhookId": "mas-control-plane-proxy-v1",
+      "credentials": {
+        "httpHeaderAuth": {
+          "id": "REPLACE_IN_UI",
+          "name": "REPLACE: MAS Control Plane Header Auth"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "jsCode": "const raw=$json.body&&typeof $json.body==='object'?$json.body:$json;\nconst op=String(raw.operation||'').trim();\nconst allowed=new Set(['schema','create_case','get_case','list_cases','update_case','append_event','list_events','append_error','list_errors','record_execution','case_id_for_execution','list_agents','upsert_agent','artifact_put','artifact_get']);\nif(!allowed.has(op)) throw new Error('unsupported operation');\nconst s=v=>String(v??'');\nconst j=v=>JSON.stringify(v??{});\nconst caseId=s(raw.case_id).trim();\nconst artifactId=s(raw.artifact_id).trim();\nif(['create_case','get_case','update_case','append_event','list_events','list_errors','artifact_put','artifact_get'].includes(op)&&!caseId) throw new Error('case_id is required');\nif(['artifact_put','artifact_get'].includes(op)&&!artifactId) throw new Error('artifact_id is required');\nconst common={operation:op,case_id:caseId,artifact_id:artifactId};\nlet query='',params=[];\nif(op==='schema') query=`CREATE TABLE IF NOT EXISTS cases (case_id TEXT PRIMARY KEY,state JSONB NOT NULL DEFAULT '{}'::jsonb,status TEXT NOT NULL,updated_at TIMESTAMPTZ NOT NULL DEFAULT now(),CONSTRAINT cases_status_check CHECK (status IN ('new','running','waiting_user','done','failed')));CREATE TABLE IF NOT EXISTS events (event_id BIGSERIAL PRIMARY KEY,case_id TEXT NOT NULL REFERENCES cases(case_id) ON DELETE CASCADE,task_id TEXT,kind TEXT NOT NULL,actor TEXT NOT NULL,agent_id TEXT,status TEXT,status_message TEXT,handoff_message TEXT,payload JSONB NOT NULL DEFAULT '{}'::jsonb,created_at TIMESTAMPTZ NOT NULL DEFAULT now());CREATE INDEX IF NOT EXISTS events_case_id_event_id_idx ON events(case_id);CREATE TABLE IF NOT EXISTS error_traces (error_id BIGSERIAL PRIMARY KEY,case_id TEXT,execution_id TEXT,workflow_name TEXT,node_name TEXT,error_message TEXT,error_type TEXT,stack TEXT,input_snapshot JSONB,created_at TIMESTAMPTZ NOT NULL DEFAULT now());CREATE INDEX IF NOT EXISTS error_traces_case_id_idx ON error_traces(case_id);CREATE TABLE IF NOT EXISTS executions (execution_id TEXT PRIMARY KEY,case_id TEXT,workflow_name TEXT,started_at TIMESTAMPTZ NOT NULL DEFAULT now());CREATE INDEX IF NOT EXISTS executions_case_id_idx ON executions(case_id);CREATE TABLE IF NOT EXISTS agent_registry (agent_id TEXT PRIMARY KEY,title TEXT,when_to_use TEXT,input_required JSONB NOT NULL DEFAULT '[]'::jsonb,output_provides JSONB NOT NULL DEFAULT '[]'::jsonb);CREATE TABLE IF NOT EXISTS mas_artifacts (case_id TEXT NOT NULL,artifact_id TEXT NOT NULL,filename TEXT NOT NULL,mime_type TEXT NOT NULL DEFAULT 'application/octet-stream',content BYTEA NOT NULL,created_at TIMESTAMPTZ NOT NULL DEFAULT now(),updated_at TIMESTAMPTZ NOT NULL DEFAULT now(),PRIMARY KEY(case_id,artifact_id));CREATE INDEX IF NOT EXISTS mas_artifacts_case_id_idx ON mas_artifacts(case_id);INSERT INTO agent_registry(agent_id,title,when_to_use,input_required,output_provides) VALUES ('excel_extractor','Excel Extractor','Если есть Excel-файл и нужно извлечь данные','[\"excel\"]'::jsonb,'[\"excel_table\",\"normalized_rows\"]'::jsonb),('calculation_agent','Calculation Agent','Если нужна геометрическая калька','[\"surface\",\"trajectory\"]'::jsonb,'[\"top_perforation_md\"]'::jsonb),('schedule_builder','Schedule Builder','Построение SCHEDULE','[\"schedule_source\"]'::jsonb,'[\"schedule_out\",\"diff\"]'::jsonb) ON CONFLICT(agent_id) DO NOTHING;SELECT true AS schema_ok;`;\nelse if(op==='create_case'){query='INSERT INTO cases(case_id,state,status,updated_at) VALUES($1,$2::jsonb,$3,now()) ON CONFLICT(case_id) DO NOTHING RETURNING case_id,state,status,updated_at';params=[caseId,j(raw.state),s(raw.status||'new')];}\nelse if(op==='get_case'){query='SELECT case_id,state,status,updated_at FROM cases WHERE case_id=$1';params=[caseId];}\nelse if(op==='list_cases'){query='SELECT c.case_id,c.status,c.updated_at,c.state,(SELECT COUNT(*) FROM events e WHERE e.case_id=c.case_id) AS event_count FROM cases c ORDER BY c.updated_at DESC LIMIT $1';params=[Number(raw.limit||80)];}\nelse if(op==='update_case'){query='UPDATE cases SET state=$1::jsonb,status=$2,updated_at=now() WHERE case_id=$3 RETURNING case_id,state,status,updated_at';params=[j(raw.state),s(raw.status),caseId];}\nelse if(op==='append_event'){query=\"WITH locked AS (SELECT case_id FROM cases WHERE case_id=$1 FOR UPDATE), last_event AS (SELECT e.* FROM events e JOIN locked l ON l.case_id=e.case_id WHERE e.case_id=$1 ORDER BY e.event_id DESC LIMIT 1), inserted AS (INSERT INTO events(case_id,task_id,kind,actor,agent_id,status,status_message,handoff_message,payload) SELECT $1,$2,$3,$4,$5,$6,$7,$8,$9::jsonb WHERE NOT EXISTS (SELECT 1 FROM last_event WHERE kind=$3 AND actor=$4 AND COALESCE(agent_id,'')=COALESCE($5,'') AND COALESCE(status,'')=COALESCE($6,'') AND regexp_replace(COALESCE(status_message,''),'\\\\s+',' ','g')=regexp_replace(COALESCE($7,''),'\\\\s+',' ','g') AND regexp_replace(COALESCE(handoff_message,''),'\\\\s+',' ','g')=regexp_replace(COALESCE($8,''),'\\\\s+',' ','g') AND COALESCE(task_id,'')=COALESCE($2,'')) RETURNING event_id,case_id,task_id,kind,actor,agent_id,status,status_message,handoff_message,payload,created_at) SELECT *,false AS idempotent FROM inserted UNION ALL SELECT event_id,case_id,task_id,kind,actor,agent_id,status,status_message,handoff_message,payload,created_at,true AS idempotent FROM last_event WHERE NOT EXISTS (SELECT 1 FROM inserted)\";params=[caseId,s(raw.task_id),s(raw.kind),s(raw.actor),raw.agent_id||null,raw.status||null,raw.status_message||null,raw.handoff_message||null,j(raw.payload)];}\nelse if(op==='list_events'){query='SELECT event_id,case_id,task_id,kind,actor,agent_id,status,status_message,handoff_message,payload,created_at FROM events WHERE case_id=$1 AND event_id>$2 ORDER BY event_id ASC';params=[caseId,Number(raw.after_seq||0)];}\nelse if(op==='append_error'){query='INSERT INTO error_traces(case_id,execution_id,workflow_name,node_name,error_message,error_type,stack,input_snapshot) VALUES($1,$2,$3,$4,$5,$6,$7,$8::jsonb) RETURNING error_id,case_id,execution_id,workflow_name,node_name,error_message,error_type,stack,input_snapshot,created_at';params=[raw.case_id||null,raw.execution_id||null,raw.workflow_name||null,raw.node_name||null,raw.error_message||null,raw.error_type||null,raw.stack||null,j(raw.input_snapshot)];}\nelse if(op==='list_errors'){query='SELECT error_id,case_id,execution_id,workflow_name,node_name,error_message,error_type,stack,input_snapshot,created_at FROM error_traces WHERE case_id=$1 ORDER BY error_id ASC';params=[caseId];}\nelse if(op==='record_execution'){query='INSERT INTO executions(execution_id,case_id,workflow_name) VALUES($1,$2,$3) ON CONFLICT(execution_id) DO UPDATE SET case_id=EXCLUDED.case_id,workflow_name=EXCLUDED.workflow_name RETURNING execution_id,case_id,workflow_name';params=[s(raw.execution_id),caseId,s(raw.workflow_name||'orchestrator')];}\nelse if(op==='case_id_for_execution'){query='SELECT case_id FROM executions WHERE execution_id=$1';params=[s(raw.execution_id)];}\nelse if(op==='list_agents'){query='SELECT agent_id,title,when_to_use,input_required,output_provides FROM agent_registry ORDER BY agent_id';}\nelse if(op==='upsert_agent'){const r=raw.row||{};query='INSERT INTO agent_registry(agent_id,title,when_to_use,input_required,output_provides) VALUES($1,$2,$3,$4::jsonb,$5::jsonb) ON CONFLICT(agent_id) DO UPDATE SET title=EXCLUDED.title,when_to_use=EXCLUDED.when_to_use,input_required=EXCLUDED.input_required,output_provides=EXCLUDED.output_provides RETURNING agent_id,title,when_to_use,input_required,output_provides';params=[s(r.agent_id),r.title||null,r.when_to_use||null,j(r.input_required||[]),j(r.output_provides||[])];}\nelse if(op==='artifact_put'){query=\"INSERT INTO mas_artifacts(case_id,artifact_id,filename,mime_type,content,updated_at) VALUES($1,$2,$3,$4,decode($5,'base64'),now()) ON CONFLICT(case_id,artifact_id) DO UPDATE SET filename=EXCLUDED.filename,mime_type=EXCLUDED.mime_type,content=EXCLUDED.content,updated_at=now() RETURNING case_id,artifact_id,filename,mime_type,octet_length(content)::bigint AS bytes\";params=[caseId,artifactId,s(raw.filename||artifactId).slice(0,512),s(raw.mime_type||'application/octet-stream').slice(0,255),s(raw.content_base64)];}\nelse if(op==='artifact_get'){query=\"SELECT case_id,artifact_id,filename,mime_type,encode(content,'base64') AS content_base64,octet_length(content)::bigint AS bytes FROM mas_artifacts WHERE case_id=$1 AND artifact_id=$2\";params=[caseId,artifactId];}\nreturn [{json:{...common,query,params}}];"
+      },
+      "id": "mas-control-plane-normalize-v1",
+      "name": "Normalize control-plane request",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        240,
+        0
+      ]
+    },
+    {
+      "parameters": {
+        "operation": "executeQuery",
+        "query": "={{ $json.query }}",
+        "options": {
+          "queryReplacement": "={{ $json.params }}",
+          "queryBatching": "single",
+          "largeNumbersOutput": "text",
+          "replaceEmptyStrings": false
+        }
+      },
+      "id": "mas-control-plane-postgres-v1",
+      "name": "Execute control-plane SQL",
+      "type": "n8n-nodes-base.postgres",
+      "typeVersion": 2.6,
+      "position": [
+        540,
+        0
+      ],
+      "alwaysOutputData": true,
+      "credentials": {
+        "postgres": {
+          "id": "REPLACE_IN_UI",
+          "name": "REPLACE: SCHEDULE PostgreSQL / PGVector credential"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "jsCode": "const req=$('Normalize control-plane request').first().json||{};\nconst rows=$input.all().map(x=>x.json||{});\nconst op=req.operation;\nlet result;\nif(op==='list_cases') result=rows;\nelse if(op==='list_events') result=rows;\nelse if(op==='list_errors') result=rows;\nelse if(op==='list_agents') result=rows;\nelse if(op==='case_id_for_execution') result=rows[0]?.case_id||null;\nelse if(op==='artifact_get') result=rows[0]?{found:true,...rows[0]}:{found:false,case_id:req.case_id,artifact_id:req.artifact_id};\nelse result=rows[0]||{};\nreturn [{json:{ok:true,operation:op,result}}];"
+      },
+      "id": "mas-control-plane-format-v1",
+      "name": "Format control-plane response",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        820,
+        0
+      ]
+    },
+    {
+      "parameters": {
+        "respondWith": "json",
+        "responseBody": "={{ $json }}",
+        "options": {}
+      },
+      "id": "mas-control-plane-response-v1",
+      "name": "Respond control-plane",
+      "type": "n8n-nodes-base.respondToWebhook",
+      "typeVersion": 1.4,
+      "position": [
+        1080,
+        0
+      ]
+    }
+  ],
+  "connections": {
+    "MAS control-plane webhook": {
+      "main": [
+        [
+          {
+            "node": "Normalize control-plane request",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Normalize control-plane request": {
+      "main": [
+        [
+          {
+            "node": "Execute control-plane SQL",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Execute control-plane SQL": {
+      "main": [
+        [
+          {
+            "node": "Format control-plane response",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Format control-plane response": {
+      "main": [
+        [
+          {
+            "node": "Respond control-plane",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    }
+  },
+  "pinData": {}
 }
 
 ===END_FILE===
@@ -1251,539 +1087,6 @@
     "contractVersion": "mas_deployment_health_check/v1.2"
   },
   "tags": []
-}
-
-===END_FILE===
-===BEGIN_FILE===	n8n/workflows/core/mas-ensure-control-plane.workflow.json	17399	utf8
-{
-  "id": "b7c4e2a1-5d80-5c11-9f4a-0e8d3a6b1c72",
-  "name": "MAS — Ensure Control Plane",
-  "active": false,
-  "isArchived": false,
-  "nodes": [
-    {
-      "parameters": {
-        "content": "## edit after import\n\n**MAS — Ensure Control Plane** — once after UI import when you cannot psql the n8n database:\n\n1. Bind the same Postgres credential as Orchestrator — MAS\n2. Open this workflow → **Execute Workflow**\n3. Last node: `ok: true`, `agent_count` ≥ 3\n\nCREATE IF NOT EXISTS only. Never DROP n8n tables.\nThe DB role used by n8n must be allowed to CREATE TABLE.\npgvector (`CREATE EXTENSION vector`) is a DBA step for RAG, not this workflow.",
-        "height": 400,
-        "width": 520,
-        "color": 1
-      },
-      "id": "8ff2c941-a251-5f9b-a4bf-9dd81d2b27ed",
-      "name": "edit after import",
-      "type": "n8n-nodes-base.stickyNote",
-      "typeVersion": 1,
-      "position": [
-        -220,
-        -440
-      ]
-    },
-    {
-      "parameters": {},
-      "id": "b77961c7-6497-55f8-8f6f-6bc45ffe1043",
-      "name": "When clicking Execute workflow",
-      "type": "n8n-nodes-base.manualTrigger",
-      "typeVersion": 1,
-      "position": [
-        0,
-        0
-      ]
-    },
-    {
-      "parameters": {
-        "operation": "executeQuery",
-        "query": "CREATE TABLE IF NOT EXISTS cases (\n    case_id TEXT PRIMARY KEY,\n    state JSONB NOT NULL DEFAULT '{}'::jsonb,\n    status TEXT NOT NULL,\n    updated_at TIMESTAMPTZ NOT NULL DEFAULT now(),\n    CONSTRAINT cases_status_check CHECK (\n        status IN ('new', 'running', 'waiting_user', 'done', 'failed')\n    )\n)\n",
-        "options": {
-          "queryReplacement": "={{ [] }}",
-          "queryBatching": "single",
-          "largeNumbersOutput": "text",
-          "replaceEmptyStrings": false
-        }
-      },
-      "id": "e4c1fd3f-9277-5a1b-b1e0-64156758d531",
-      "name": "Ensure table cases",
-      "type": "n8n-nodes-base.postgres",
-      "typeVersion": 2.6,
-      "position": [
-        260,
-        0
-      ],
-      "credentials": {
-        "postgres": {
-          "id": "REPLACE_IN_UI",
-          "name": "REPLACE: SCHEDULE PostgreSQL / PGVector credential"
-        }
-      },
-      "alwaysOutputData": true
-    },
-    {
-      "parameters": {
-        "operation": "executeQuery",
-        "query": "CREATE TABLE IF NOT EXISTS events (\n    event_id BIGSERIAL PRIMARY KEY,\n    case_id TEXT NOT NULL REFERENCES cases (case_id) ON DELETE CASCADE,\n    task_id TEXT,\n    kind TEXT NOT NULL,\n    actor TEXT NOT NULL,\n    agent_id TEXT,\n    status TEXT,\n    status_message TEXT,\n    handoff_message TEXT,\n    payload JSONB NOT NULL DEFAULT '{}'::jsonb,\n    created_at TIMESTAMPTZ NOT NULL DEFAULT now()\n)\n",
-        "options": {
-          "queryReplacement": "={{ [] }}",
-          "queryBatching": "single",
-          "largeNumbersOutput": "text",
-          "replaceEmptyStrings": false
-        }
-      },
-      "id": "faa0b776-22f7-5f02-808a-8e18fdb71a75",
-      "name": "Ensure table events",
-      "type": "n8n-nodes-base.postgres",
-      "typeVersion": 2.6,
-      "position": [
-        480,
-        0
-      ],
-      "credentials": {
-        "postgres": {
-          "id": "REPLACE_IN_UI",
-          "name": "REPLACE: SCHEDULE PostgreSQL / PGVector credential"
-        }
-      },
-      "alwaysOutputData": true
-    },
-    {
-      "parameters": {
-        "operation": "executeQuery",
-        "query": "CREATE INDEX IF NOT EXISTS events_case_id_event_id_idx ON events (case_id, event_id)\n",
-        "options": {
-          "queryReplacement": "={{ [] }}",
-          "queryBatching": "single",
-          "largeNumbersOutput": "text",
-          "replaceEmptyStrings": false
-        }
-      },
-      "id": "b045b8be-f21d-5d50-82aa-a23872f50b74",
-      "name": "Ensure index events_case_id_event_id_idx",
-      "type": "n8n-nodes-base.postgres",
-      "typeVersion": 2.6,
-      "position": [
-        700,
-        0
-      ],
-      "credentials": {
-        "postgres": {
-          "id": "REPLACE_IN_UI",
-          "name": "REPLACE: SCHEDULE PostgreSQL / PGVector credential"
-        }
-      },
-      "alwaysOutputData": true
-    },
-    {
-      "parameters": {
-        "operation": "executeQuery",
-        "query": "CREATE TABLE IF NOT EXISTS error_traces (\n    error_id BIGSERIAL PRIMARY KEY,\n    case_id TEXT,\n    execution_id TEXT,\n    workflow_name TEXT,\n    node_name TEXT,\n    error_message TEXT,\n    error_type TEXT,\n    stack TEXT,\n    input_snapshot JSONB,\n    created_at TIMESTAMPTZ NOT NULL DEFAULT now()\n)\n",
-        "options": {
-          "queryReplacement": "={{ [] }}",
-          "queryBatching": "single",
-          "largeNumbersOutput": "text",
-          "replaceEmptyStrings": false
-        }
-      },
-      "id": "635d3129-ba92-57d5-9bc3-317bf76d95d8",
-      "name": "Ensure table error_traces",
-      "type": "n8n-nodes-base.postgres",
-      "typeVersion": 2.6,
-      "position": [
-        920,
-        0
-      ],
-      "credentials": {
-        "postgres": {
-          "id": "REPLACE_IN_UI",
-          "name": "REPLACE: SCHEDULE PostgreSQL / PGVector credential"
-        }
-      },
-      "alwaysOutputData": true
-    },
-    {
-      "parameters": {
-        "operation": "executeQuery",
-        "query": "CREATE INDEX IF NOT EXISTS error_traces_case_id_idx ON error_traces (case_id)\n",
-        "options": {
-          "queryReplacement": "={{ [] }}",
-          "queryBatching": "single",
-          "largeNumbersOutput": "text",
-          "replaceEmptyStrings": false
-        }
-      },
-      "id": "8ba10ba9-b54e-53a2-9e7f-76546cac8e99",
-      "name": "Ensure index error_traces_case_id_idx",
-      "type": "n8n-nodes-base.postgres",
-      "typeVersion": 2.6,
-      "position": [
-        1140,
-        0
-      ],
-      "credentials": {
-        "postgres": {
-          "id": "REPLACE_IN_UI",
-          "name": "REPLACE: SCHEDULE PostgreSQL / PGVector credential"
-        }
-      },
-      "alwaysOutputData": true
-    },
-    {
-      "parameters": {
-        "operation": "executeQuery",
-        "query": "CREATE INDEX IF NOT EXISTS error_traces_execution_id_idx ON error_traces (execution_id)\n",
-        "options": {
-          "queryReplacement": "={{ [] }}",
-          "queryBatching": "single",
-          "largeNumbersOutput": "text",
-          "replaceEmptyStrings": false
-        }
-      },
-      "id": "84c27fa5-f8e1-5378-85f2-9b23d714c186",
-      "name": "Ensure index error_traces_execution_id_idx",
-      "type": "n8n-nodes-base.postgres",
-      "typeVersion": 2.6,
-      "position": [
-        1360,
-        0
-      ],
-      "credentials": {
-        "postgres": {
-          "id": "REPLACE_IN_UI",
-          "name": "REPLACE: SCHEDULE PostgreSQL / PGVector credential"
-        }
-      },
-      "alwaysOutputData": true
-    },
-    {
-      "parameters": {
-        "operation": "executeQuery",
-        "query": "CREATE TABLE IF NOT EXISTS executions (\n    execution_id TEXT PRIMARY KEY,\n    case_id TEXT,\n    workflow_name TEXT,\n    started_at TIMESTAMPTZ NOT NULL DEFAULT now()\n)\n",
-        "options": {
-          "queryReplacement": "={{ [] }}",
-          "queryBatching": "single",
-          "largeNumbersOutput": "text",
-          "replaceEmptyStrings": false
-        }
-      },
-      "id": "c1a9c9e3-8503-506a-8d38-f6293548af80",
-      "name": "Ensure table executions",
-      "type": "n8n-nodes-base.postgres",
-      "typeVersion": 2.6,
-      "position": [
-        1580,
-        0
-      ],
-      "credentials": {
-        "postgres": {
-          "id": "REPLACE_IN_UI",
-          "name": "REPLACE: SCHEDULE PostgreSQL / PGVector credential"
-        }
-      },
-      "alwaysOutputData": true
-    },
-    {
-      "parameters": {
-        "operation": "executeQuery",
-        "query": "CREATE INDEX IF NOT EXISTS executions_case_id_idx ON executions (case_id)\n",
-        "options": {
-          "queryReplacement": "={{ [] }}",
-          "queryBatching": "single",
-          "largeNumbersOutput": "text",
-          "replaceEmptyStrings": false
-        }
-      },
-      "id": "9cdcd3b4-8414-57f3-a6b5-92420c13573c",
-      "name": "Ensure index executions_case_id_idx",
-      "type": "n8n-nodes-base.postgres",
-      "typeVersion": 2.6,
-      "position": [
-        1800,
-        0
-      ],
-      "credentials": {
-        "postgres": {
-          "id": "REPLACE_IN_UI",
-          "name": "REPLACE: SCHEDULE PostgreSQL / PGVector credential"
-        }
-      },
-      "alwaysOutputData": true
-    },
-    {
-      "parameters": {
-        "operation": "executeQuery",
-        "query": "CREATE TABLE IF NOT EXISTS agent_registry (\n    agent_id TEXT PRIMARY KEY,\n    title TEXT,\n    when_to_use TEXT,\n    input_required JSONB NOT NULL DEFAULT '[]'::jsonb,\n    output_provides JSONB NOT NULL DEFAULT '[]'::jsonb\n)\n",
-        "options": {
-          "queryReplacement": "={{ [] }}",
-          "queryBatching": "single",
-          "largeNumbersOutput": "text",
-          "replaceEmptyStrings": false
-        }
-      },
-      "id": "846fc26a-631e-5e6a-ad07-65da906431d0",
-      "name": "Ensure table agent_registry",
-      "type": "n8n-nodes-base.postgres",
-      "typeVersion": 2.6,
-      "position": [
-        2020,
-        0
-      ],
-      "credentials": {
-        "postgres": {
-          "id": "REPLACE_IN_UI",
-          "name": "REPLACE: SCHEDULE PostgreSQL / PGVector credential"
-        }
-      },
-      "alwaysOutputData": true
-    },
-    {
-      "parameters": {
-        "operation": "executeQuery",
-        "query": "INSERT INTO agent_registry (agent_id, title, when_to_use, input_required, output_provides)\nVALUES\n    (\n        'excel_extractor',\n        'Excel Extractor',\n        'Если есть Excel-файл и нужно извлечь скважины, даты, дебиты, управления',\n        '[\"excel\"]'::jsonb,\n        '[\"excel_table\", \"normalized_rows\"]'::jsonb\n    ),\n    (\n        'calculation_agent',\n        'Calculation Agent',\n        'Если есть структурная поверхность и траектория, нужно найти пересечение и начало интервала перфорации',\n        '[\"surface\", \"trajectory\"]'::jsonb,\n        '[\"top_perforation_md\"]'::jsonb\n    )\nON CONFLICT (agent_id) DO UPDATE SET\n    title = EXCLUDED.title,\n    when_to_use = EXCLUDED.when_to_use,\n    input_required = EXCLUDED.input_required,\n    output_provides = EXCLUDED.output_provides\n",
-        "options": {
-          "queryReplacement": "={{ [] }}",
-          "queryBatching": "single",
-          "largeNumbersOutput": "text",
-          "replaceEmptyStrings": false
-        }
-      },
-      "id": "797bcddd-26be-58ba-afe9-3999aef18400",
-      "name": "Seed agent_registry excel+calc",
-      "type": "n8n-nodes-base.postgres",
-      "typeVersion": 2.6,
-      "position": [
-        2240,
-        0
-      ],
-      "credentials": {
-        "postgres": {
-          "id": "REPLACE_IN_UI",
-          "name": "REPLACE: SCHEDULE PostgreSQL / PGVector credential"
-        }
-      },
-      "alwaysOutputData": true
-    },
-    {
-      "parameters": {
-        "operation": "executeQuery",
-        "query": "INSERT INTO agent_registry (agent_id, title, when_to_use, input_required, output_provides)\nVALUES (\n    'schedule_builder',\n    'Schedule Builder',\n    'Исходный SCHEDULE (.inc): сдвиг дат ввода по фактам Excel (скважина+дата); перепривязка скважин в группу (GRUPTREE/GCONPROD) по тексту задачи и baseline. Excel обязателен только для новых дат ввода. Не выдумывает даты и имена, которых нет в задаче, Excel или baseline.',\n    '[\"schedule_source\"]'::jsonb,\n    '[\"schedule_out\", \"diff\"]'::jsonb\n)\nON CONFLICT (agent_id) DO UPDATE SET\n    title = EXCLUDED.title,\n    when_to_use = EXCLUDED.when_to_use,\n    input_required = EXCLUDED.input_required,\n    output_provides = EXCLUDED.output_provides\n",
-        "options": {
-          "queryReplacement": "={{ [] }}",
-          "queryBatching": "single",
-          "largeNumbersOutput": "text",
-          "replaceEmptyStrings": false
-        }
-      },
-      "id": "b64b3ba5-d4ae-5825-9e0b-98e79a3fb0eb",
-      "name": "Seed agent_registry schedule_builder",
-      "type": "n8n-nodes-base.postgres",
-      "typeVersion": 2.6,
-      "position": [
-        2460,
-        0
-      ],
-      "credentials": {
-        "postgres": {
-          "id": "REPLACE_IN_UI",
-          "name": "REPLACE: SCHEDULE PostgreSQL / PGVector credential"
-        }
-      },
-      "alwaysOutputData": true
-    },
-    {
-      "parameters": {
-        "operation": "executeQuery",
-        "query": "SELECT\n  to_regclass('public.cases') IS NOT NULL AS cases_ok,\n  to_regclass('public.events') IS NOT NULL AS events_ok,\n  to_regclass('public.error_traces') IS NOT NULL AS error_traces_ok,\n  to_regclass('public.executions') IS NOT NULL AS executions_ok,\n  to_regclass('public.agent_registry') IS NOT NULL AS agent_registry_ok,\n  (SELECT COUNT(*) FROM agent_registry) AS agent_count\n",
-        "options": {
-          "queryReplacement": "={{ [] }}",
-          "queryBatching": "single",
-          "largeNumbersOutput": "text",
-          "replaceEmptyStrings": false
-        }
-      },
-      "id": "0436e0e3-1e28-5802-b6b8-c2170a54aec4",
-      "name": "Verify control plane",
-      "type": "n8n-nodes-base.postgres",
-      "typeVersion": 2.6,
-      "position": [
-        2680,
-        0
-      ],
-      "credentials": {
-        "postgres": {
-          "id": "REPLACE_IN_UI",
-          "name": "REPLACE: SCHEDULE PostgreSQL / PGVector credential"
-        }
-      },
-      "alwaysOutputData": true
-    },
-    {
-      "parameters": {
-        "jsCode": "const x=$json||{};\nconst flag=k=>x[k]===true||x[k]==='t'||x[k]==='true'||x[k]===1||x[k]==='1';\nconst count=Number(x.agent_count||0);\nconst ok=flag('cases_ok')&&flag('events_ok')&&flag('error_traces_ok')&&flag('executions_ok')&&flag('agent_registry_ok')&&count>=3;\nreturn [{json:{contract:'mas_control_plane_ready',ok,cases_ok:flag('cases_ok'),events_ok:flag('events_ok'),error_traces_ok:flag('error_traces_ok'),executions_ok:flag('executions_ok'),agent_registry_ok:flag('agent_registry_ok'),agent_count:count}}];"
-      },
-      "id": "b0cde13f-de88-5dce-b8ce-5d5f590a8e25",
-      "name": "Format ensure ack",
-      "type": "n8n-nodes-base.code",
-      "typeVersion": 2,
-      "position": [
-        2920,
-        0
-      ]
-    }
-  ],
-  "connections": {
-    "When clicking Execute workflow": {
-      "main": [
-        [
-          {
-            "node": "Ensure table cases",
-            "type": "main",
-            "index": 0
-          }
-        ]
-      ]
-    },
-    "Ensure table cases": {
-      "main": [
-        [
-          {
-            "node": "Ensure table events",
-            "type": "main",
-            "index": 0
-          }
-        ]
-      ]
-    },
-    "Ensure table events": {
-      "main": [
-        [
-          {
-            "node": "Ensure index events_case_id_event_id_idx",
-            "type": "main",
-            "index": 0
-          }
-        ]
-      ]
-    },
-    "Ensure index events_case_id_event_id_idx": {
-      "main": [
-        [
-          {
-            "node": "Ensure table error_traces",
-            "type": "main",
-            "index": 0
-          }
-        ]
-      ]
-    },
-    "Ensure table error_traces": {
-      "main": [
-        [
-          {
-            "node": "Ensure index error_traces_case_id_idx",
-            "type": "main",
-            "index": 0
-          }
-        ]
-      ]
-    },
-    "Ensure index error_traces_case_id_idx": {
-      "main": [
-        [
-          {
-            "node": "Ensure index error_traces_execution_id_idx",
-            "type": "main",
-            "index": 0
-          }
-        ]
-      ]
-    },
-    "Ensure index error_traces_execution_id_idx": {
-      "main": [
-        [
-          {
-            "node": "Ensure table executions",
-            "type": "main",
-            "index": 0
-          }
-        ]
-      ]
-    },
-    "Ensure table executions": {
-      "main": [
-        [
-          {
-            "node": "Ensure index executions_case_id_idx",
-            "type": "main",
-            "index": 0
-          }
-        ]
-      ]
-    },
-    "Ensure index executions_case_id_idx": {
-      "main": [
-        [
-          {
-            "node": "Ensure table agent_registry",
-            "type": "main",
-            "index": 0
-          }
-        ]
-      ]
-    },
-    "Ensure table agent_registry": {
-      "main": [
-        [
-          {
-            "node": "Seed agent_registry excel+calc",
-            "type": "main",
-            "index": 0
-          }
-        ]
-      ]
-    },
-    "Seed agent_registry excel+calc": {
-      "main": [
-        [
-          {
-            "node": "Seed agent_registry schedule_builder",
-            "type": "main",
-            "index": 0
-          }
-        ]
-      ]
-    },
-    "Seed agent_registry schedule_builder": {
-      "main": [
-        [
-          {
-            "node": "Verify control plane",
-            "type": "main",
-            "index": 0
-          }
-        ]
-      ]
-    },
-    "Verify control plane": {
-      "main": [
-        [
-          {
-            "node": "Format ensure ack",
-            "type": "main",
-            "index": 0
-          }
-        ]
-      ]
-    }
-  },
-  "settings": {
-    "executionOrder": "v1",
-    "saveManualExecutions": true,
-    "callerPolicy": "workflowsFromSameOwner",
-    "errorWorkflow": ""
-  },
-  "meta": {
-    "templateCredsSetupCompleted": true,
-    "targetN8nVersion": "2.30.8"
-  },
-  "tags": [],
-  "pinData": {},
-  "versionId": "a6f0c732-82ee-404b-8514-75c6ec62df70"
 }
 
 ===END_FILE===
@@ -19405,3 +18708,389 @@
                               "field": "B",
                               "min": 0
                             },
+                            {
+                              "field": "C"
+                            },
+                            {
+                              "field": "D"
+                            },
+                            {
+                              "field": "E"
+                            },
+                            {
+                              "field": "F"
+                            },
+                            {
+                              "field": "GRDAMP",
+                              "min_exclusive": 0,
+                              "max": 1
+                            },
+                            {
+                              "field": "GRMIN",
+                              "min_exclusive": 0
+                            }
+                          ]
+                        }
+                      },
+                      {
+                        "schema_id": "expert:GUIDERAT:liq",
+                        "schema_revision": "1",
+                        "keyword": "GUIDERAT",
+                        "variant": "liq",
+                        "citation": {
+                          "document_id": "tnav-user-manual-russian",
+                          "document_revision": "19.4",
+                          "page": "12.20.90 / 1933-1936",
+                          "heading": "GUIDERAT",
+                          "source_hash": "sha256:7d1624e1ea0196383c86dbd2558826c53a5a86eb992c48141eb4e3b66f0353d5"
+                        },
+                        "parser": {
+                          "token_width": 12,
+                          "allow_trailing_omission": true,
+                          "allow_unquoted_strings": true
+                        },
+                        "fields": [
+                          {
+                            "name": "INTERVAL",
+                            "position": 1,
+                            "type": "number",
+                            "required": false
+                          },
+                          {
+                            "name": "PHASE",
+                            "position": 2,
+                            "type": "string",
+                            "required": true,
+                            "enum": [
+                              "LIQ"
+                            ]
+                          },
+                          {
+                            "name": "A",
+                            "position": 3,
+                            "type": "number",
+                            "required": true
+                          },
+                          {
+                            "name": "B",
+                            "position": 4,
+                            "type": "number",
+                            "required": true
+                          },
+                          {
+                            "name": "C",
+                            "position": 5,
+                            "type": "number",
+                            "required": false
+                          },
+                          {
+                            "name": "D",
+                            "position": 6,
+                            "type": "number",
+                            "required": false
+                          },
+                          {
+                            "name": "E",
+                            "position": 7,
+                            "type": "number",
+                            "required": false
+                          },
+                          {
+                            "name": "F",
+                            "position": 8,
+                            "type": "number",
+                            "required": false
+                          },
+                          {
+                            "name": "INCREASE",
+                            "position": 9,
+                            "type": "string",
+                            "required": false,
+                            "enum": [
+                              "YES",
+                              "NO"
+                            ]
+                          },
+                          {
+                            "name": "GRDAMP",
+                            "position": 10,
+                            "type": "number",
+                            "required": false
+                          },
+                          {
+                            "name": "FREE_GAS",
+                            "position": 11,
+                            "type": "string",
+                            "required": false,
+                            "enum": [
+                              "YES",
+                              "NO"
+                            ]
+                          },
+                          {
+                            "name": "GRMIN",
+                            "position": 12,
+                            "type": "number",
+                            "required": false
+                          }
+                        ],
+                        "layout": {
+                          "newline": "LF",
+                          "indent": "  ",
+                          "delimiter": "SPACE",
+                          "record_terminator": "SLASH",
+                          "block_terminator": "SLASH_LINE"
+                        },
+                        "semantics": {
+                          "period": "FORECAST",
+                          "clock": {
+                            "uses_current": true
+                          },
+                          "definitions": [],
+                          "references": [],
+                          "prerequisites": [],
+                          "state_assignments": [
+                            {
+                              "namespace": "guiderat-formula",
+                              "entity_type": "guiderat_formula",
+                              "entity_field": "PHASE",
+                              "key_fields": [
+                                "PHASE"
+                              ],
+                              "value_fields": [
+                                "INTERVAL",
+                                "PHASE",
+                                "A",
+                                "B",
+                                "C",
+                                "D",
+                                "E",
+                                "F",
+                                "INCREASE",
+                                "GRDAMP",
+                                "FREE_GAS",
+                                "GRMIN"
+                              ]
+                            }
+                          ],
+                          "numeric_constraints": [
+                            {
+                              "field": "INTERVAL",
+                              "min": 0
+                            },
+                            {
+                              "field": "A"
+                            },
+                            {
+                              "field": "B",
+                              "min": 0
+                            },
+                            {
+                              "field": "C"
+                            },
+                            {
+                              "field": "D"
+                            },
+                            {
+                              "field": "E"
+                            },
+                            {
+                              "field": "F"
+                            },
+                            {
+                              "field": "GRDAMP",
+                              "min_exclusive": 0,
+                              "max": 1
+                            },
+                            {
+                              "field": "GRMIN",
+                              "min_exclusive": 0
+                            }
+                          ]
+                        }
+                      },
+                      {
+                        "schema_id": "expert:GUIDERAT:gas",
+                        "schema_revision": "1",
+                        "keyword": "GUIDERAT",
+                        "variant": "gas",
+                        "citation": {
+                          "document_id": "tnav-user-manual-russian",
+                          "document_revision": "19.4",
+                          "page": "12.20.90 / 1933-1936",
+                          "heading": "GUIDERAT",
+                          "source_hash": "sha256:7d1624e1ea0196383c86dbd2558826c53a5a86eb992c48141eb4e3b66f0353d5"
+                        },
+                        "parser": {
+                          "token_width": 12,
+                          "allow_trailing_omission": true,
+                          "allow_unquoted_strings": true
+                        },
+                        "fields": [
+                          {
+                            "name": "INTERVAL",
+                            "position": 1,
+                            "type": "number",
+                            "required": false
+                          },
+                          {
+                            "name": "PHASE",
+                            "position": 2,
+                            "type": "string",
+                            "required": true,
+                            "enum": [
+                              "GAS"
+                            ]
+                          },
+                          {
+                            "name": "A",
+                            "position": 3,
+                            "type": "number",
+                            "required": true
+                          },
+                          {
+                            "name": "B",
+                            "position": 4,
+                            "type": "number",
+                            "required": true
+                          },
+                          {
+                            "name": "C",
+                            "position": 5,
+                            "type": "number",
+                            "required": false
+                          },
+                          {
+                            "name": "D",
+                            "position": 6,
+                            "type": "number",
+                            "required": false
+                          },
+                          {
+                            "name": "E",
+                            "position": 7,
+                            "type": "number",
+                            "required": false
+                          },
+                          {
+                            "name": "F",
+                            "position": 8,
+                            "type": "number",
+                            "required": false
+                          },
+                          {
+                            "name": "INCREASE",
+                            "position": 9,
+                            "type": "string",
+                            "required": false,
+                            "enum": [
+                              "YES",
+                              "NO"
+                            ]
+                          },
+                          {
+                            "name": "GRDAMP",
+                            "position": 10,
+                            "type": "number",
+                            "required": false
+                          },
+                          {
+                            "name": "FREE_GAS",
+                            "position": 11,
+                            "type": "string",
+                            "required": false,
+                            "enum": [
+                              "YES",
+                              "NO"
+                            ]
+                          },
+                          {
+                            "name": "GRMIN",
+                            "position": 12,
+                            "type": "number",
+                            "required": false
+                          }
+                        ],
+                        "layout": {
+                          "newline": "LF",
+                          "indent": "  ",
+                          "delimiter": "SPACE",
+                          "record_terminator": "SLASH",
+                          "block_terminator": "SLASH_LINE"
+                        },
+                        "semantics": {
+                          "period": "FORECAST",
+                          "clock": {
+                            "uses_current": true
+                          },
+                          "definitions": [],
+                          "references": [],
+                          "prerequisites": [],
+                          "state_assignments": [
+                            {
+                              "namespace": "guiderat-formula",
+                              "entity_type": "guiderat_formula",
+                              "entity_field": "PHASE",
+                              "key_fields": [
+                                "PHASE"
+                              ],
+                              "value_fields": [
+                                "INTERVAL",
+                                "PHASE",
+                                "A",
+                                "B",
+                                "C",
+                                "D",
+                                "E",
+                                "F",
+                                "INCREASE",
+                                "GRDAMP",
+                                "FREE_GAS",
+                                "GRMIN"
+                              ]
+                            }
+                          ],
+                          "numeric_constraints": [
+                            {
+                              "field": "INTERVAL",
+                              "min": 0
+                            },
+                            {
+                              "field": "A"
+                            },
+                            {
+                              "field": "B",
+                              "min": 0
+                            },
+                            {
+                              "field": "C"
+                            },
+                            {
+                              "field": "D"
+                            },
+                            {
+                              "field": "E"
+                            },
+                            {
+                              "field": "F"
+                            },
+                            {
+                              "field": "GRDAMP",
+                              "min_exclusive": 0,
+                              "max": 1
+                            },
+                            {
+                              "field": "GRMIN",
+                              "min_exclusive": 0
+                            }
+                          ]
+                        }
+                      },
+                      {
+                        "schema_id": "expert:GUIDERAT:full",
+                        "schema_revision": "1",
+                        "keyword": "GUIDERAT",
+                        "variant": "full",
+                        "citation": {
+                          "document_id": "tnav-user-manual-russian",
+                          "document_revision": "19.4",

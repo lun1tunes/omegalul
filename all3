@@ -1,124 +1,3 @@
-    acceptance_criteria:[{id:'rows_extracted',criterion:'Return bounded rows with entity identity from the workbook',required:true,expected:'finite rows'}],
-    artifact_refs:arr(request.artifact_refs)?request.artifact_refs:[],
-  };
-  blockingQuestions=[];
-}
-// Attached schedule package, no workbook: open Builder. Domain grammar (DATES/INCLUDE) is Builder's job.
-if(!packetComplete&&!excelEvidenceReady&&!builderIntakeRetry&&!hasExcelBinary&&hasScheduleBaseline&&allowed.has('schedule_builder_specialist')&&decision!=='delegate'){
-  const baseSchedule=resolveRequestSchedule(request);
-  decision='delegate';
-  packetCandidate={
-    contract:'specialist_packet',contract_version:'1.0',task_id:base.task_id,specialist_id:'schedule_builder_specialist',
-    attempt:Number(base.retry_count)+1,
-    objective:objectiveBlob||'Revise the attached SCHEDULE package.',
-    inputs:{schedule_request:attachSchedulePackage(baseSchedule)},
-    controls:{},
-    acceptance_criteria:[
-      {id:'task_applied',criterion:'Apply the requested schedule change',required:true,expected:'matches objective'},
-      {id:'preserve_unmentioned',criterion:'Unrelated baseline constructs preserved',required:true,expected:'preserve_unmentioned'},
-    ],
-    artifact_refs:arr(request.artifact_refs)?request.artifact_refs:[],
-  };
-  blockingQuestions=[];
-}
-// CREATE from scratch: no baseline file, no workbook — still Builder, not orch grammar.
-const scheduleIntended=intendedSpecialist==='schedule_builder_specialist'||/schedule/.test(clean(plan.task_type))||(intendedSpecialist===''&&/(schedule|\.inc\b|wconprod|tnavigator)/i.test(objectiveBlob+' '+clean(plan.task_type)));
-if(!packetComplete&&!excelEvidenceReady&&!builderIntakeRetry&&!hasExcelBinary&&!hasScheduleBaseline&&allowed.has('schedule_builder_specialist')&&scheduleIntended){
-  const baseSchedule=resolveRequestSchedule(request);
-  const prior=obj(plan.specialist_packet)&&obj(plan.specialist_packet.inputs)&&obj(plan.specialist_packet.inputs.schedule_request)?plan.specialist_packet.inputs.schedule_request:{};
-  decision='delegate';
-  packetCandidate={
-    contract:'specialist_packet',contract_version:'1.0',task_id:base.task_id,specialist_id:'schedule_builder_specialist',
-    attempt:Number(base.retry_count)+1,
-    objective:objectiveBlob||clean(plan.specialist_packet&&plan.specialist_packet.objective)||'Create a forecast SCHEDULE from the task.',
-    inputs:{schedule_request:attachSchedulePackage({...baseSchedule,...prior,build_mode:clean(prior.build_mode||baseSchedule.build_mode)||'CREATE'})},
-    controls:{},
-    acceptance_criteria:[{id:'task_applied',criterion:'Emit the requested CREATE schedule',required:true,expected:'matches objective'}],
-    artifact_refs:arr(request.artifact_refs)?request.artifact_refs:[],
-  };
-  blockingQuestions=[];
-}
-// Planner chose Excel without a workbook: require upload only if objective named Excel; else redirect to Builder.
-if(decision==='delegate'&&clean(packetCandidate.specialist_id)==='excel_extraction_specialist'&&!hasExcelBinary){
-  if(objectiveMentionsExcel){
-    decision='needs_input';
-    blockingQuestions=[{id:'excel_file',question:'Прикрепите workbook (.xlsx/.xls) в поле file — в задаче указан Excel, но файл не приложен.',text:'Прикрепите workbook (.xlsx/.xls) в поле file — в задаче указан Excel, но файл не приложен.',type:'file',required:true}];
-    packetCandidate={};
-  } else if(hasScheduleBaseline&&allowed.has('schedule_builder_specialist')){
-    const baseSchedule=resolveRequestSchedule(request);
-    packetCandidate={
-      contract:'specialist_packet',contract_version:'1.0',task_id:base.task_id,specialist_id:'schedule_builder_specialist',
-      attempt:Number(base.retry_count)+1,
-      objective:objectiveBlob||'Revise the attached SCHEDULE package.',
-      inputs:{schedule_request:attachSchedulePackage(baseSchedule)},
-      controls:{},
-      acceptance_criteria:[
-        {id:'task_applied',criterion:'Apply the requested schedule change',required:true,expected:'matches objective'},
-        {id:'preserve_unmentioned',criterion:'Unrelated baseline constructs preserved',required:true,expected:'preserve_unmentioned'},
-      ],
-      artifact_refs:arr(request.artifact_refs)?request.artifact_refs:[],
-    };
-    blockingQuestions=[];
-  }
-}
-// After Excel facts (or Builder intake retry), hand the package + facts to Builder
-// only when the task explicitly consumes Schedule — not because Excel succeeded.
-// Domain DATES/INCLUDE/keyword grammar stays in Builder intake/validation.
-const scheduleConsumer=explicitScheduleConsumer(request,obj(packetCandidate.inputs)?packetCandidate.inputs:{})||explicitScheduleConsumer(request,obj(persistedPacket.inputs)?persistedPacket.inputs:{})||hasScheduleBaseline;
-if((builderIntakeRetry||(excelEvidenceReady&&scheduleConsumer))&&allowed.has('schedule_builder_specialist')){
-  const compact=obj(previousSpecialistResult.compact_data)?previousSpecialistResult.compact_data:{};
-  const factsPacket=excelEvidenceReady&&obj(compact)?{
-    contract:'source_facts_packet',
-    contract_version:'1.0',
-    source_snapshot_hash:clean(compact.source_snapshot_hash),
-    correlation_id:clean(compact.correlation_id),
-    facts:arr(compact.facts)?compact.facts:[],
-    conflicts:arr(compact.conflicts)?compact.conflicts:[],
-  }:(factsFromPersisted||null);
-  const factWells=(arr(factsPacket?.facts)?factsPacket.facts:[]).filter(f=>{
-    const values=obj(f?.values)?f.values:{};
-    return Boolean(clean(f?.well||f?.entity||f?.entity_id||values['Скважина']||values.скважина||values.WELL||values.well||values['Группа']||values.GROUP||values.group));
-  });
-  if(excelEvidenceReady&&factsPacket&&!factWells.length&&allowed.has('excel_extraction_specialist')){
-    decision='delegate';
-    packetCandidate={
-      contract:'specialist_packet',contract_version:'1.0',task_id:base.task_id,specialist_id:'excel_extraction_specialist',
-      attempt:Number(base.retry_count)+1,
-      objective:objectiveBlob||'Повторный extract: у каждой строки должно быть имя объекта (скважина или группа).',
-      inputs:{prompt:objectiveBlob||'Export rows with entity identity. Do not invent well or group names.'},
-      controls:{bounded_request:true,max_rows:10000,max_cells:200000},
-      acceptance_criteria:[{id:'entity_identity',criterion:'Every fact row includes an entity name',required:true,expected:'non-empty names'}],
-      artifact_refs:arr(request.artifact_refs)?request.artifact_refs:[],
-    };
-    blockingQuestions=[];
-  } else if(factWells.length||(!excelEvidenceReady&&builderIntakeRetry&&(factsPacket||!hasExcelBinary))){
-  const effectiveFactsPacket=factsPacket;
-  const baseSchedule=resolveRequestSchedule(request);
-  let builderPacket=(packetObject&&plan.specialist_packet.specialist_id==='schedule_builder_specialist'&&packetComplete)?plan.specialist_packet:(obj(persistedPacket)&&persistedPacket.specialist_id==='schedule_builder_specialist'?persistedPacket:null);
-  if(!builderPacket){
-    builderPacket={
-      contract:'specialist_packet',contract_version:'1.0',task_id:base.task_id,specialist_id:'schedule_builder_specialist',
-      attempt:Number(base.retry_count)+1,
-      objective:clean(request.objective||request.problem_statement||request.request_text)||'Revise the attached SCHEDULE using extracted facts.',
-      inputs:{schedule_request:attachSchedulePackage({...baseSchedule,source_facts_packet:effectiveFactsPacket})},
-      controls:{},
-      acceptance_criteria:[
-        {id:'task_applied',criterion:'Apply extracted facts to the schedule package',required:true,expected:'matches objective'},
-        {id:'preserve_unmentioned',criterion:'Unrelated baseline constructs preserved',required:true,expected:'preserve_unmentioned'},
-      ],
-      artifact_refs:arr(previousSpecialistResult.artifact_refs)?previousSpecialistResult.artifact_refs:(arr(persistedPacket.artifact_refs)?persistedPacket.artifact_refs:(arr(request.artifact_refs)?request.artifact_refs:[])),
-    };
-  }
-  decision='delegate';
-  packetCandidate=withPacketControls({...builderPacket,contract:'specialist_packet',contract_version:'1.0',task_id:base.task_id,attempt:Number(base.retry_count)+1,specialist_id:'schedule_builder_specialist'},{expected_version:Number(base.version)+1,idempotency_key:`${base.task_id}:specialist:schedule_builder_specialist:${Number(base.retry_count)+1}:${Number(base.version)+1}`});
-  const modelInputs=obj(packetCandidate.inputs)?packetCandidate.inputs:{};const modelSchedule=obj(modelInputs.schedule_request)?modelInputs.schedule_request:modelInputs;
-  packetCandidate={...packetCandidate,inputs:{...modelInputs,schedule_request:attachSchedulePackage({...persistedSchedule,...resolveRequestSchedule(request),...modelSchedule,source_facts_packet:effectiveFactsPacket||modelSchedule.source_facts_packet||persistedSchedule.source_facts_packet||null})}};
-  blockingQuestions=[];
-  }
-}
-const scheduleGrammarQuestion=q=>/requested_keyword_scope|keyword_scope|forecast_start|forecast_end|model_start|\bDATES\b|wconprod|welspecs|семантик|порядок keyword/i.test(questionBlob(q));
-const builderFromPlan=packetObject&&plan.specialist_packet.specialist_id==='schedule_builder_specialist';
-if(builderFromPlan||clean(packetCandidate.specialist_id)==='schedule_builder_specialist') blockingQuestions=blockingQuestions.filter(q=>!scheduleGrammarQuestion(q));
 if(!clean(packetCandidate.specialist_id)&&builderFromPlan&&packetComplete&&!blockingQuestions.length&&['needs_input','needs_decision'].includes(decision)&&!hasExcelBinary){
   decision='delegate';
   packetCandidate={...plan.specialist_packet,contract:'specialist_packet',contract_version:'1.0',task_id:base.task_id,attempt:Number(base.retry_count)+1};
@@ -8208,42 +8087,6 @@ function request(port, method, urlPath, body, headers = {}) {
 });
 
 ===END_FILE===
-===BEGIN_FILE===	n8n/tests/mas-ensure-control-plane-smoke.js	1567	utf8
-'use strict';
-/**
- * MAS — Ensure Control Plane: DDL from n8n UI, no DROP.
- */
-const assert = require('node:assert/strict');
-const fs = require('node:fs');
-const path = require('node:path');
-
-const workspace = process.env.WORKSPACE_ROOT || path.resolve(__dirname, '../..');
-const wf = JSON.parse(
-  fs.readFileSync(path.join(workspace, 'n8n/workflows/core/mas-ensure-control-plane.workflow.json'), 'utf8'),
-);
-
-assert.equal(wf.name, 'MAS — Ensure Control Plane');
-assert.equal(wf.active, false);
-assert.ok(wf.nodes.some((n) => n.type === 'n8n-nodes-base.manualTrigger'));
-const pg = wf.nodes.filter((n) => n.type === 'n8n-nodes-base.postgres');
-assert.ok(pg.length >= 8, `expected DDL nodes, got ${pg.length}`);
-const sql = pg.map((n) => n.parameters.query).join('\n');
-assert.ok(wf.nodes.some((n) => n.name === 'Seed agent_registry schedule_builder'));
-assert.equal(wf.nodes.some((n) => /^Ensure statement /.test(n.name)), false);
-assert.match(sql, /CREATE TABLE IF NOT EXISTS cases/);
-assert.match(sql, /CREATE TABLE IF NOT EXISTS events/);
-assert.match(sql, /CREATE TABLE IF NOT EXISTS error_traces/);
-assert.match(sql, /CREATE TABLE IF NOT EXISTS executions/);
-assert.match(sql, /CREATE TABLE IF NOT EXISTS agent_registry/);
-assert.match(sql, /schedule_builder/);
-assert.match(sql, /agent_id TEXT/);
-assert.equal(sql.includes('DROP TABLE'), false);
-assert.equal(sql.includes('DROP SCHEMA'), false);
-assert.match(sql, /to_regclass\('public.cases'\)/);
-assert.ok(wf.connections['When clicking Execute workflow']);
-console.log('mas-ensure-control-plane-smoke: ok');
-
-===END_FILE===
 ===BEGIN_FILE===	n8n/tests/mas-error-handler-smoke.js	15285	utf8
 'use strict';
 /**
@@ -14005,3 +13848,336 @@ main().catch((error) => {
       },
       "id": "cf896b5f-c322-54db-8650-f141428dbb6e",
       "name": "Fetch excel result",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.4,
+      "position": [
+        1960,
+        0
+      ],
+      "onError": "continueRegularOutput",
+      "alwaysOutputData": true
+    },
+    {
+      "parameters": {
+        "jsCode": "\nconst fetched=$json||{};\nconst opened=$('Open excel session').first().json||{};\nif(fetched.status){\n  return [{json:{\n    task_id:fetched.task_id||opened.task_id||'',\n    agent_id:'excel_extractor',\n    status:fetched.status,\n    message:fetched.message||'',\n    data:fetched.data||{},\n    artifacts:fetched.artifacts||{},\n    issues:fetched.issues||[],\n    assumptions:fetched.assumptions||[],\n    requests:fetched.requests||[]\n  }}];\n}\nreturn [{json:{\n  task_id:opened.task_id||'',\n  agent_id:'excel_extractor',\n  status:'failed',\n  message:String(fetched.message||fetched.error||'Excel Extractor не вернул факты'),\n  data:{},\n  artifacts:{},\n  issues:[{type:'excel_agent_no_result'}],\n  assumptions:[],\n  requests:[]\n}}];\n"
+      },
+      "id": "76537492-0ad0-514e-9053-8685f3bf04b1",
+      "name": "Format excel result",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        2200,
+        0
+      ]
+    },
+    {
+      "parameters": {
+        "toolDescription": "Компактные листы и размеры workbook. Без файла.",
+        "method": "POST",
+        "url": "={{ $('Runtime configuration').first().json.excel_tools_url + '/agent-tools/' + \"workbook_introspect\" }}",
+        "authentication": "none",
+        "sendQuery": false,
+        "sendHeaders": true,
+        "specifyHeaders": "keypair",
+        "sendBody": true,
+        "specifyBody": "keypair",
+        "placeholderDefinitions": {
+          "values": []
+        },
+        "optimizeResponse": false,
+        "parametersHeaders": {
+          "values": [
+            {
+              "name": "Content-Type",
+              "valueProvider": "fieldValue",
+              "value": "application/json"
+            },
+            {
+              "name": "X-API-Key",
+              "valueProvider": "fieldValue",
+              "value": "={{ $('Runtime configuration').first().json.excel_tools_api_key || '' }}"
+            }
+          ]
+        },
+        "parametersBody": {
+          "values": [
+            {
+              "name": "session_id",
+              "valueProvider": "fieldValue",
+              "value": "={{ $('Open excel session').first().json.session_id }}"
+            }
+          ]
+        }
+      },
+      "id": "71b0ad7a-728c-509e-b23d-b9cdc615e2ae",
+      "name": "workbook_introspect",
+      "type": "@n8n/n8n-nodes-langchain.toolHttpRequest",
+      "typeVersion": 1.1,
+      "position": [
+        760,
+        -420
+      ]
+    },
+    {
+      "parameters": {
+        "toolDescription": "Небольшой preview одного листа. sheet только из introspect.",
+        "method": "POST",
+        "url": "={{ $('Runtime configuration').first().json.excel_tools_url + '/agent-tools/' + \"sheet_preview\" }}",
+        "authentication": "none",
+        "sendQuery": false,
+        "sendHeaders": true,
+        "specifyHeaders": "keypair",
+        "sendBody": true,
+        "specifyBody": "keypair",
+        "placeholderDefinitions": {
+          "values": [
+            {
+              "name": "sheet",
+              "description": "Точное имя листа из introspect",
+              "type": "string"
+            }
+          ]
+        },
+        "optimizeResponse": false,
+        "parametersHeaders": {
+          "values": [
+            {
+              "name": "Content-Type",
+              "valueProvider": "fieldValue",
+              "value": "application/json"
+            },
+            {
+              "name": "X-API-Key",
+              "valueProvider": "fieldValue",
+              "value": "={{ $('Runtime configuration').first().json.excel_tools_api_key || '' }}"
+            }
+          ]
+        },
+        "parametersBody": {
+          "values": [
+            {
+              "name": "session_id",
+              "valueProvider": "fieldValue",
+              "value": "={{ $('Open excel session').first().json.session_id }}"
+            },
+            {
+              "name": "sheet",
+              "valueProvider": "modelRequired",
+              "value": ""
+            }
+          ]
+        }
+      },
+      "id": "669a4f3a-4afd-5a8e-999e-35cfadceb7eb",
+      "name": "sheet_preview",
+      "type": "@n8n/n8n-nodes-langchain.toolHttpRequest",
+      "typeVersion": 1.1,
+      "position": [
+        980,
+        -420
+      ]
+    },
+    {
+      "parameters": {
+        "toolDescription": "Найти таблицы. sheet опционален. Возвращает table_id, range, columns — не workbook.",
+        "method": "POST",
+        "url": "={{ $('Runtime configuration').first().json.excel_tools_url + '/agent-tools/' + \"detect_tables\" }}",
+        "authentication": "none",
+        "sendQuery": false,
+        "sendHeaders": true,
+        "specifyHeaders": "keypair",
+        "sendBody": true,
+        "specifyBody": "keypair",
+        "placeholderDefinitions": {
+          "values": [
+            {
+              "name": "sheet",
+              "description": "Ограничить поиск одним листом",
+              "type": "string"
+            }
+          ]
+        },
+        "optimizeResponse": false,
+        "parametersHeaders": {
+          "values": [
+            {
+              "name": "Content-Type",
+              "valueProvider": "fieldValue",
+              "value": "application/json"
+            },
+            {
+              "name": "X-API-Key",
+              "valueProvider": "fieldValue",
+              "value": "={{ $('Runtime configuration').first().json.excel_tools_api_key || '' }}"
+            }
+          ]
+        },
+        "parametersBody": {
+          "values": [
+            {
+              "name": "session_id",
+              "valueProvider": "fieldValue",
+              "value": "={{ $('Open excel session').first().json.session_id }}"
+            },
+            {
+              "name": "sheet",
+              "valueProvider": "modelOptional",
+              "value": ""
+            }
+          ]
+        }
+      },
+      "id": "3a321bbf-c410-53e2-b000-a99958d37337",
+      "name": "detect_tables",
+      "type": "@n8n/n8n-nodes-langchain.toolHttpRequest",
+      "typeVersion": 1.1,
+      "position": [
+        1200,
+        -420
+      ]
+    },
+    {
+      "parameters": {
+        "toolDescription": "Ранжировать уже найденные или подходящие таблицы по фразе запроса.",
+        "method": "POST",
+        "url": "={{ $('Runtime configuration').first().json.excel_tools_url + '/agent-tools/' + \"match_tables\" }}",
+        "authentication": "none",
+        "sendQuery": false,
+        "sendHeaders": true,
+        "specifyHeaders": "keypair",
+        "sendBody": true,
+        "specifyBody": "keypair",
+        "placeholderDefinitions": {
+          "values": [
+            {
+              "name": "query",
+              "description": "Что искать: даты ввода, дебиты, ...",
+              "type": "string"
+            }
+          ]
+        },
+        "optimizeResponse": false,
+        "parametersHeaders": {
+          "values": [
+            {
+              "name": "Content-Type",
+              "valueProvider": "fieldValue",
+              "value": "application/json"
+            },
+            {
+              "name": "X-API-Key",
+              "valueProvider": "fieldValue",
+              "value": "={{ $('Runtime configuration').first().json.excel_tools_api_key || '' }}"
+            }
+          ]
+        },
+        "parametersBody": {
+          "values": [
+            {
+              "name": "session_id",
+              "valueProvider": "fieldValue",
+              "value": "={{ $('Open excel session').first().json.session_id }}"
+            },
+            {
+              "name": "query",
+              "valueProvider": "modelRequired",
+              "value": ""
+            }
+          ]
+        }
+      },
+      "id": "fd8414df-6c58-5e8d-9f9e-d49bcfa063c1",
+      "name": "match_tables",
+      "type": "@n8n/n8n-nodes-langchain.toolHttpRequest",
+      "typeVersion": 1.1,
+      "position": [
+        1420,
+        -420
+      ]
+    },
+    {
+      "parameters": {
+        "toolDescription": "Колонки, число строк и sample. table_id только из detect/match.",
+        "method": "POST",
+        "url": "={{ $('Runtime configuration').first().json.excel_tools_url + '/agent-tools/' + \"describe_table\" }}",
+        "authentication": "none",
+        "sendQuery": false,
+        "sendHeaders": true,
+        "specifyHeaders": "keypair",
+        "sendBody": true,
+        "specifyBody": "keypair",
+        "placeholderDefinitions": {
+          "values": [
+            {
+              "name": "table_id",
+              "description": "table_id из detect_tables",
+              "type": "string"
+            }
+          ]
+        },
+        "optimizeResponse": false,
+        "parametersHeaders": {
+          "values": [
+            {
+              "name": "Content-Type",
+              "valueProvider": "fieldValue",
+              "value": "application/json"
+            },
+            {
+              "name": "X-API-Key",
+              "valueProvider": "fieldValue",
+              "value": "={{ $('Runtime configuration').first().json.excel_tools_api_key || '' }}"
+            }
+          ]
+        },
+        "parametersBody": {
+          "values": [
+            {
+              "name": "session_id",
+              "valueProvider": "fieldValue",
+              "value": "={{ $('Open excel session').first().json.session_id }}"
+            },
+            {
+              "name": "table_id",
+              "valueProvider": "modelRequired",
+              "value": ""
+            }
+          ]
+        }
+      },
+      "id": "96de5f67-f2d4-5264-a64d-a957f04be6d2",
+      "name": "describe_table",
+      "type": "@n8n/n8n-nodes-langchain.toolHttpRequest",
+      "typeVersion": 1.1,
+      "position": [
+        760,
+        -260
+      ]
+    },
+    {
+      "parameters": {
+        "toolDescription": "Ограниченные distinct-значения одной колонки для точных фильтров.",
+        "method": "POST",
+        "url": "={{ $('Runtime configuration').first().json.excel_tools_url + '/agent-tools/' + \"list_column_values\" }}",
+        "authentication": "none",
+        "sendQuery": false,
+        "sendHeaders": true,
+        "specifyHeaders": "keypair",
+        "sendBody": true,
+        "specifyBody": "keypair",
+        "placeholderDefinitions": {
+          "values": [
+            {
+              "name": "table_id",
+              "description": "table_id из detect_tables",
+              "type": "string"
+            },
+            {
+              "name": "column",
+              "description": "Точное имя колонки из describe/detect",
+              "type": "string"
+            }
+          ]
+        },
+        "optimizeResponse": false,
+        "parametersHeaders": {

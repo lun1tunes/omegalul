@@ -41,7 +41,7 @@ UNIVERSAL_ENGINEERING_WORKFLOWS = {
 ERROR_AND_STUB_WORKFLOWS = {
     "mas-error-handler.workflow.json",
     "mas-error-traces.workflow.json",
-    "mas-ensure-control-plane.workflow.json",
+    "mas-control-plane-proxy.workflow.json",
     "mas-orchestrator.workflow.json",
     "schedule-builder-agent.workflow.json",
     "excel-extractor-agent.workflow.json",
@@ -571,26 +571,23 @@ def test_delivery_workflows_are_inactive_until_ui_configuration() -> None:
         assert workflow.get("active") is False, path.name
 
 
-def test_mas_ensure_control_plane_is_additive_postgres_ddl() -> None:
-    workflow = load_json(workflow_path("mas-ensure-control-plane.workflow.json"))
-    assert workflow["name"] == "MAS — Ensure Control Plane"
+def test_mas_control_plane_proxy_contains_all_activity_operations() -> None:
+    workflow = load_json(workflow_path("mas-control-plane-proxy.workflow.json"))
+    assert workflow["name"] == "MAS — Control Plane Proxy"
     assert workflow.get("active") is False
-    assert workflow["settings"].get("errorWorkflow") in ("", None)
-    pg = [node for node in workflow["nodes"] if node["type"] == "n8n-nodes-base.postgres"]
-    assert len(pg) >= 8
-    sql = "\n".join(str(node["parameters"].get("query") or "") for node in pg)
-    for table in ("cases", "events", "error_traces", "executions", "agent_registry"):
-        assert f"CREATE TABLE IF NOT EXISTS {table}" in sql
-    assert any(node["name"] == "Ensure table cases" for node in pg)
-    assert any(node["name"] == "Seed agent_registry schedule_builder" for node in pg)
-    assert not any(str(node["name"]).startswith("Ensure statement ") for node in pg)
-    seed = next(node for node in pg if node["name"] == "Seed agent_registry schedule_builder")
-    assert "GRUPTREE" in str(seed["parameters"].get("query") or "")
-    assert "agent_id TEXT" in sql
-    assert "schedule_builder" in sql
-    assert "DROP TABLE" not in sql
-    assert "DROP SCHEMA" not in sql
-    assert "CREATE EXTENSION" not in sql
+    assert workflow["nodes"][1]["parameters"]["path"] == "mas-control-plane"
+    code = next(
+        node["parameters"]["jsCode"]
+        for node in workflow["nodes"]
+        if node["name"] == "Normalize control-plane request"
+    )
+    for operation in (
+        "schema", "create_case", "get_case", "list_cases", "update_case",
+        "append_event", "list_events", "append_error", "list_errors",
+        "record_execution", "case_id_for_execution", "list_agents",
+        "upsert_agent", "artifact_put", "artifact_get",
+    ):
+        assert f"'{operation}'" in code
 
 
 def test_universal_engineering_orchestrator_has_no_service_or_excel_contract() -> None:
@@ -1971,4 +1968,3 @@ def test_excel_protocol_retrieval_boost_baseline_fixture_is_frozen() -> None:
         assert (row.get("examples") or []) == []
         assert str(row["revision"]) in {"1", "3"}
         assert "searchable" in row and len(row["searchable"]) > 500
-
