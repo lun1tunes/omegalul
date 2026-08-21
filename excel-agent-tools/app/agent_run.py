@@ -47,6 +47,69 @@ def _post_event(case_id: str, payload: dict[str, Any]) -> None:
         logger.exception("failed to emit agent event case_id=%s kind=%s", case_id, payload.get("kind"))
 
 
+def _emit(
+    case_id: str,
+    *,
+    kind: str,
+    task_id: str,
+    activity: str,
+    status_message: str,
+    status: str = "",
+    payload: dict[str, Any] | None = None,
+) -> None:
+    body: dict[str, Any] = {
+        "kind": kind,
+        "actor": "excel_extractor",
+        "agent_id": "excel_extractor",
+        "task_id": task_id,
+        "status_message": status_message,
+        "_activity_base": activity,
+    }
+    if status:
+        body["status"] = status
+    if payload:
+        body["payload"] = payload
+    _post_event(case_id, body)
+
+
+def emit_tool_progress(state: dict[str, Any], tool_name: str, tool_result: dict[str, Any]) -> None:
+    """Live Activity lines when the n8n AI Agent calls excel-tools HTTP tools."""
+    payload = state.get("payload") if isinstance(state.get("payload"), dict) else {}
+    case_id = str(payload.get("case_id") or "")
+    if not case_id:
+        return
+    inner = tool_result.get("result") if isinstance(tool_result.get("result"), dict) else {}
+    message = ""
+    if tool_name == "workbook_introspect":
+        sheets = inner.get("sheets") if isinstance(inner.get("sheets"), list) else []
+        message = f"Смотрю структуру Excel: листов {len(sheets)}"
+    elif tool_name == "detect_tables":
+        tables = inner.get("tables") or inner.get("detected_tables") or []
+        n = len(tables) if isinstance(tables, list) else 0
+        message = f"Нашёл таблиц: {n}"
+    elif tool_name == "match_tables":
+        message = "Подбираю таблицу под запрос"
+    elif tool_name == "describe_table":
+        message = "Смотрю колонки таблицы"
+    elif tool_name == "list_column_values":
+        message = "Читаю значения колонки"
+    elif tool_name == "query_table":
+        rows = inner.get("preview") or inner.get("rows") or inner.get("records") or []
+        n = inner.get("row_count") if isinstance(inner.get("row_count"), int) else (len(rows) if isinstance(rows, list) else 0)
+        message = f"Читаю таблицу: {n} строк"
+    elif tool_name == "sheet_preview":
+        message = "Смотрю фрагмент листа"
+    if not message:
+        return
+    _emit(
+        case_id,
+        kind="agent.progress",
+        task_id=str(payload.get("task_id") or ""),
+        activity=str(payload.get("activity_base") or ACTIVITY),
+        status_message=message,
+    )
+
+
 def _fetch_bytes(url: str) -> bytes:
     with urlopen(url, timeout=30) as resp:
         return resp.read()
@@ -251,16 +314,12 @@ def open_session(task: dict[str, Any]) -> dict[str, Any]:
     case_id = str(task.get("case_id") or "")
     task_id = str(task.get("task_id") or "")
     activity = _task_activity(task)
-    _post_event(
+    _emit(
         case_id,
-        {
-            "kind": "agent.accepted",
-            "actor": "excel_extractor",
-            "agent_id": "excel_extractor",
-            "task_id": task_id,
-            "status_message": "Разбираю Excel",
-            "_activity_base": activity,
-        },
+        kind="agent.accepted",
+        task_id=task_id,
+        activity=activity,
+        status_message="Разбираю Excel",
     )
     try:
         session_id, filename = _load_excel(task)
@@ -272,17 +331,13 @@ def open_session(task: dict[str, Any]) -> dict[str, Any]:
             issues=[{"type": "missing_excel", "detail": str(exc)}],
             requests=[{"question_id": "Q-excel", "question": "Приложите workbook .xlsx", "options": []}],
         )
-        _post_event(
+        _emit(
             case_id,
-            {
-                "kind": "agent.result",
-                "actor": "excel_extractor",
-                "agent_id": "excel_extractor",
-                "task_id": task_id,
-                "status": "needs_input",
-                "status_message": result["message"],
-                "_activity_base": activity,
-            },
+            kind="agent.result",
+            task_id=task_id,
+            activity=activity,
+            status="needs_input",
+            status_message=result["message"],
         )
         return {"ok": False, "status": "needs_input", "task_id": task_id, "result": result}
     except Exception as exc:
@@ -292,23 +347,28 @@ def open_session(task: dict[str, Any]) -> dict[str, Any]:
             str(exc)[:400],
             issues=[{"type": "excel_load_failed", "detail": str(exc)[:400]}],
         )
-        _post_event(
+        _emit(
             case_id,
-            {
-                "kind": "agent.failed",
-                "actor": "excel_extractor",
-                "agent_id": "excel_extractor",
-                "task_id": task_id,
-                "status": "failed",
-                "status_message": str(exc)[:400],
-                "_activity_base": activity,
-            },
+            kind="agent.failed",
+            task_id=task_id,
+            activity=activity,
+            status="failed",
+            status_message=str(exc)[:400],
         )
         return {"ok": False, "status": "failed", "task_id": task_id, "result": result}
 
     with locked_session(session_id):
         state = load_state(session_id)
         inspect = _compact_inspect(state)
+    n_sheets = len(inspect.get("sheets") or [])
+    n_tables = int(inspect.get("table_count") or 0)
+    _emit(
+        case_id,
+        kind="agent.progress",
+        task_id=task_id,
+        activity=activity,
+        status_message=f"Файл {filename}: листов {n_sheets}, таблиц {n_tables}",
+    )
     capability = suggested_capability(str(task.get("objective") or ""), str(task.get("handoff_message") or ""))
     return {
         "ok": True,
@@ -337,16 +397,12 @@ def extract_commissioning(session_id: str) -> dict[str, Any]:
             tables = raw.get("tables") or raw.get("detected_tables") or []
         if not isinstance(tables, list):
             tables = []
-        _post_event(
+        _emit(
             case_id,
-            {
-                "kind": "agent.progress",
-                "actor": "excel_extractor",
-                "agent_id": "excel_extractor",
-                "task_id": task_id,
-                "status_message": f"Нашёл таблиц: {len(tables)}. Читаю скважины и даты",
-                "_activity_base": activity,
-            },
+            kind="agent.progress",
+            task_id=task_id,
+            activity=activity,
+            status_message=f"Нашёл таблиц: {len(tables)}. Читаю скважины и даты",
         )
         rows_out: list[dict[str, Any]] = []
         table_ids: list[str] = []
@@ -380,6 +436,13 @@ def extract_commissioning(session_id: str) -> dict[str, Any]:
     )
     for item in rows_out:
         item.pop("records", None)
+    _emit(
+        case_id,
+        kind="agent.progress",
+        task_id=task_id,
+        activity=activity,
+        status_message=f"Фактов скважина+дата: {len(facts)}",
+    )
     result = _agent_result(
         task_id,
         "completed",
@@ -400,18 +463,14 @@ def extract_commissioning(session_id: str) -> dict[str, Any]:
     with locked_session(session_id):
         state = load_state(session_id)
         _store_result(state, result)
-    _post_event(
+    _emit(
         case_id,
-        {
-            "kind": "agent.result",
-            "actor": "excel_extractor",
-            "agent_id": "excel_extractor",
-            "task_id": task_id,
-            "status": "completed",
-            "status_message": result["message"],
-            "payload": {"tables": len(table_ids)},
-            "_activity_base": activity,
-        },
+        kind="agent.result",
+        task_id=task_id,
+        activity=activity,
+        status="completed",
+        status_message=result["message"],
+        payload={"tables": len(table_ids), "facts": len(facts)},
     )
     return result
 

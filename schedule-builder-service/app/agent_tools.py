@@ -172,6 +172,31 @@ def session_result(session_id: str) -> dict[str, Any]:
     )
 
 
+def _parse_jsonish(value: Any) -> Any:
+    if isinstance(value, (dict, list)):
+        return value
+    if isinstance(value, str) and value.strip()[:1] in "{[":
+        try:
+            return json.loads(value)
+        except json.JSONDecodeError:
+            return None
+    return None
+
+
+def _hitl_payloads(state: dict[str, Any]) -> list[Any]:
+    context = state.get("context") if isinstance(state.get("context"), dict) else {}
+    hitl = context.get("hitl") if isinstance(context.get("hitl"), dict) else {}
+    answers = hitl.get("answers") if isinstance(hitl.get("answers"), dict) else {}
+    out: list[Any] = []
+    for value in answers.values():
+        parsed = _parse_jsonish(value)
+        if parsed is not None:
+            out.append(parsed)
+        elif isinstance(value, str) and value.strip():
+            out.append(value)
+    return out
+
+
 def _unlisted_policy(state: dict[str, Any]) -> str | None:
     """HITL / inputs enum is authority. Prose in the objective is not.
 
@@ -182,17 +207,35 @@ def _unlisted_policy(state: dict[str, Any]) -> str | None:
     raw = str(inputs.get("unlisted_wells_policy") or "").strip().lower()
     if raw in {"keep", "remove"}:
         return raw
-    context = state.get("context") if isinstance(state.get("context"), dict) else {}
-    hitl = context.get("hitl") if isinstance(context.get("hitl"), dict) else {}
-    answers = hitl.get("answers") if isinstance(hitl.get("answers"), dict) else {}
-    parts = [str(k) for k in answers] + [str(v) for v in answers.values()]
-    blob = " ".join(parts).lower()
-    if "unlisted_wells_policy=remove" in blob or re.search(r"(^|\s)remove(\s|$)", blob):
-        if "unlisted_wells_policy=keep" not in blob:
-            return "remove"
-    if "unlisted_wells_policy=keep" in blob:
-        return "keep"
+    for payload in _hitl_payloads(state):
+        if isinstance(payload, dict):
+            pol = str(payload.get("unlisted_wells_policy") or "").strip().lower()
+            if pol in {"keep", "remove"}:
+                return pol
+        blob = str(payload).lower()
+        if "unlisted_wells_policy=remove" in blob or re.search(r"(^|\s)remove(\s|$)", blob):
+            if "unlisted_wells_policy=keep" not in blob:
+                return "remove"
+        if "unlisted_wells_policy=keep" in blob:
+            return "keep"
     return None
+
+
+def _new_well_defs(state: dict[str, Any]) -> list[dict[str, Any]]:
+    inputs = state.get("inputs") if isinstance(state.get("inputs"), dict) else {}
+    raw = inputs.get("new_well_defs")
+    if isinstance(raw, list) and raw:
+        return [row for row in raw if isinstance(row, dict)]
+    for payload in _hitl_payloads(state):
+        if isinstance(payload, dict) and isinstance(payload.get("new_well_defs"), list):
+            rows = [row for row in payload["new_well_defs"] if isinstance(row, dict)]
+            if rows:
+                return rows
+        if isinstance(payload, list):
+            rows = [row for row in payload if isinstance(row, dict) and row.get("well")]
+            if rows:
+                return rows
+    return []
 
 
 def _ops_from_model(raw: Any) -> list[dict[str, Any]]:
@@ -292,6 +335,7 @@ def execute_tool(session_id: str, name: str, args: dict[str, Any] | None = None)
             facts,
             file_ref=str(state.get("file_ref") or "schedule.inc"),
             unlisted_wells_policy=_unlisted_policy(state),
+            new_well_defs=_new_well_defs(state),
             instruction_blob=blob,
         )
         status = str(revised.get("status") or "")

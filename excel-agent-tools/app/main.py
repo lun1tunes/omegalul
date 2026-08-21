@@ -353,7 +353,11 @@ def call_agent_tool(tool_name: str, body: AgentToolRequest) -> dict[str, Any]:
     try:
         with locked_session(body.session_id):
             state = get_loaded_state(body.session_id)
-            return execute_tool(state, tool_name, normalize_agent_tool_args(tool_name, body.tool_args()))
+            result = execute_tool(state, tool_name, normalize_agent_tool_args(tool_name, body.tool_args()))
+        from .agent_run import emit_tool_progress
+
+        emit_tool_progress(state, tool_name, result)
+        return result
     except ValueError as error:
         detail = str(error)
         code = status.HTTP_404_NOT_FOUND if detail == "Session not found" else status.HTTP_422_UNPROCESSABLE_ENTITY

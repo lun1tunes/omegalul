@@ -131,3 +131,60 @@ def test_open_session_then_extract_commissioning_matches_agent_run(tmp_path, mon
     assert {"1601", "1602"} <= wells
     fetched = session_result(opened["session_id"])
     assert fetched["data"]["facts"] == extracted["data"]["facts"]
+
+
+def test_open_and_extract_emit_live_activity_status_lines(tmp_path, monkeypatch) -> None:
+    from pathlib import Path
+
+    from app import agent_run
+
+    xlsx = Path("/home/lun1z/omegalul/simulation-model-example/golden-cases/golden_case_1/MONITORING_well_commissioning_dates.xlsx")
+    if not xlsx.is_file():
+        return
+    monkeypatch.setenv("SESSION_DIR", str(tmp_path))
+    seen: list[tuple[str, str]] = []
+
+    def capture(case_id, payload):
+        seen.append((str(payload.get("kind")), str(payload.get("status_message") or "")))
+
+    monkeypatch.setattr(agent_run, "_post_event", capture)
+    task = {
+        "case_id": "CASE-LIVE",
+        "task_id": "TASK-LIVE",
+        "agent_id": "excel_extractor",
+        "objective": "даты ввода",
+        "inputs": {"excel_path": str(xlsx)},
+        "context": {},
+    }
+    opened = agent_run.open_session(task)
+    assert opened["ok"] is True
+    extracted = agent_run.extract_commissioning(opened["session_id"])
+    assert extracted["status"] == "completed"
+    kinds = [kind for kind, _ in seen]
+    messages = [msg for _, msg in seen]
+    assert "agent.accepted" in kinds
+    assert "Разбираю Excel" in messages
+    assert any(msg.startswith("Файл ") and "таблиц" in msg for msg in messages)
+    assert any(msg.startswith("Нашёл таблиц:") for msg in messages)
+    assert any(msg.startswith("Фактов скважина+дата:") for msg in messages)
+    assert "agent.result" in kinds
+    assert any("Извлечено таблиц" in msg for msg in messages)
+
+
+def test_emit_tool_progress_for_detect_tables() -> None:
+    from app.agent_run import emit_tool_progress
+
+    seen: list[str] = []
+
+    def capture(_case_id, payload):
+        seen.append(str(payload.get("status_message") or ""))
+
+    import app.agent_run as agent_run
+
+    agent_run._post_event = capture  # type: ignore[method-assign]
+    emit_tool_progress(
+        {"payload": {"case_id": "CASE-T", "task_id": "T1", "activity_base": "http://x"}},
+        "detect_tables",
+        {"ok": True, "result": {"tables": [{}, {}]}},
+    )
+    assert seen == ["Нашёл таблиц: 2"]

@@ -344,7 +344,12 @@ def agent_run(body: AgentTaskBody) -> dict[str, Any]:
                 source,
                 facts,
                 file_ref=source_name,
-                unlisted_wells_policy=str(inputs.get("unlisted_wells_policy") or "keep"),
+                unlisted_wells_policy=agent_tools._unlisted_policy(
+                    {"inputs": inputs, "context": context}
+                )
+                or str(inputs.get("unlisted_wells_policy") or "")
+                or None,
+                new_well_defs=agent_tools._new_well_defs({"inputs": inputs, "context": context}),
                 instruction_blob=" ".join([body.objective or "", body.handoff_message or ""]),
             )
         except Exception as exc:

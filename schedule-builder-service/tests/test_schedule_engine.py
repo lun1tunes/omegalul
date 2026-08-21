@@ -269,4 +269,27 @@ def test_commissioning_facts_prefer_specialist_over_baseline_column() -> None:
     assert str(rows[0]["date"]).startswith("2019-08-01")
 
 
+def test_hitl_json_answers_yield_policy_and_new_well_defs() -> None:
+    import json
+
+    from app.agent_tools import _new_well_defs, _unlisted_policy
+
+    defs = [{"well": "N001", "welspecs_line": " N001 GNEW 1 1 1* OIL /"}]
+    state = {
+        "inputs": {},
+        "context": {
+            "hitl": {
+                "answers": {
+                    "new_wells_policy": json.dumps(
+                        {"unlisted_wells_policy": "remove", "new_well_defs": defs},
+                        ensure_ascii=False,
+                    )
+                }
+            }
+        },
+    }
+    assert _unlisted_policy(state) == "remove"
+    assert _new_well_defs(state)[0]["well"] == "N001"
+
+
 
