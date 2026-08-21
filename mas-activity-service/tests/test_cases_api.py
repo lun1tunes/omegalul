@@ -7,6 +7,7 @@ from pathlib import Path
 
 os.environ.setdefault("LOG_LEVEL", "WARNING")
 os.environ.pop("CONTROL_PLANE_PROXY_URL", None)
+os.environ["CONTROL_PLANE_REQUIRED"] = "false"
 
 from fastapi.testclient import TestClient
 import pytest
@@ -21,6 +22,7 @@ ROOT = Path(__file__).resolve().parents[1]
 def _isolate(monkeypatch) -> None:
     for key in (
         "CONTROL_PLANE_PROXY_URL",
+        "CONTROL_PLANE_REQUIRED",
         "ORCHESTRATOR_WEBHOOK_URL",
         "N8N_BASE_URL",
         "ACTIVITY_STATE_PATH",

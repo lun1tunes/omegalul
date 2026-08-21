@@ -1,3 +1,16 @@
+      artifact_refs:arr(previousSpecialistResult.artifact_refs)?previousSpecialistResult.artifact_refs:(arr(persistedPacket.artifact_refs)?persistedPacket.artifact_refs:(arr(request.artifact_refs)?request.artifact_refs:[])),
+    };
+  }
+  decision='delegate';
+  packetCandidate=withPacketControls({...builderPacket,contract:'specialist_packet',contract_version:'1.0',task_id:base.task_id,attempt:Number(base.retry_count)+1,specialist_id:'schedule_builder_specialist'},{expected_version:Number(base.version)+1,idempotency_key:`${base.task_id}:specialist:schedule_builder_specialist:${Number(base.retry_count)+1}:${Number(base.version)+1}`});
+  const modelInputs=obj(packetCandidate.inputs)?packetCandidate.inputs:{};const modelSchedule=obj(modelInputs.schedule_request)?modelInputs.schedule_request:modelInputs;
+  packetCandidate={...packetCandidate,inputs:{...modelInputs,schedule_request:attachSchedulePackage({...persistedSchedule,...resolveRequestSchedule(request),...modelSchedule,source_facts_packet:effectiveFactsPacket||modelSchedule.source_facts_packet||persistedSchedule.source_facts_packet||null})}};
+  blockingQuestions=[];
+  }
+}
+const scheduleGrammarQuestion=q=>/requested_keyword_scope|keyword_scope|forecast_start|forecast_end|model_start|\bDATES\b|wconprod|welspecs|семантик|порядок keyword/i.test(questionBlob(q));
+const builderFromPlan=packetObject&&plan.specialist_packet.specialist_id==='schedule_builder_specialist';
+if(builderFromPlan||clean(packetCandidate.specialist_id)==='schedule_builder_specialist') blockingQuestions=blockingQuestions.filter(q=>!scheduleGrammarQuestion(q));
 if(!clean(packetCandidate.specialist_id)&&builderFromPlan&&packetComplete&&!blockingQuestions.length&&['needs_input','needs_decision'].includes(decision)&&!hasExcelBinary){
   decision='delegate';
   packetCandidate={...plan.specialist_packet,contract:'specialist_packet',contract_version:'1.0',task_id:base.task_id,attempt:Number(base.retry_count)+1};
@@ -14130,54 +14143,3 @@ main().catch((error) => {
             }
           ]
         },
-        "parametersBody": {
-          "values": [
-            {
-              "name": "session_id",
-              "valueProvider": "fieldValue",
-              "value": "={{ $('Open excel session').first().json.session_id }}"
-            },
-            {
-              "name": "table_id",
-              "valueProvider": "modelRequired",
-              "value": ""
-            }
-          ]
-        }
-      },
-      "id": "96de5f67-f2d4-5264-a64d-a957f04be6d2",
-      "name": "describe_table",
-      "type": "@n8n/n8n-nodes-langchain.toolHttpRequest",
-      "typeVersion": 1.1,
-      "position": [
-        760,
-        -260
-      ]
-    },
-    {
-      "parameters": {
-        "toolDescription": "Ограниченные distinct-значения одной колонки для точных фильтров.",
-        "method": "POST",
-        "url": "={{ $('Runtime configuration').first().json.excel_tools_url + '/agent-tools/' + \"list_column_values\" }}",
-        "authentication": "none",
-        "sendQuery": false,
-        "sendHeaders": true,
-        "specifyHeaders": "keypair",
-        "sendBody": true,
-        "specifyBody": "keypair",
-        "placeholderDefinitions": {
-          "values": [
-            {
-              "name": "table_id",
-              "description": "table_id из detect_tables",
-              "type": "string"
-            },
-            {
-              "name": "column",
-              "description": "Точное имя колонки из describe/detect",
-              "type": "string"
-            }
-          ]
-        },
-        "optimizeResponse": false,
-        "parametersHeaders": {

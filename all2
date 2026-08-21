@@ -1,3 +1,55 @@
+                "type": "string",
+                "required": true,
+                "enum": [
+                  "YES",
+                  "NO"
+                ]
+              }
+            ],
+            "layout": {
+              "newline": "LF",
+              "indent": "  ",
+              "delimiter": "SPACE",
+              "record_terminator": "SLASH",
+              "block_terminator": "SLASH_LINE"
+            },
+            "semantics": {
+              "period": "FORECAST",
+              "clock": {
+                "uses_current": true
+              },
+              "references": [
+                {
+                  "entity_type": "group",
+                  "id_field": "GROUP",
+                  "required": true
+                }
+              ],
+              "state_assignments": [
+                {
+                  "namespace": "group-control",
+                  "entity_type": "group",
+                  "entity_field": "GROUP",
+                  "key_fields": [
+                    "CONTROL"
+                  ],
+                  "value_fields": [
+                    "ORAT",
+                    "WRAT",
+                    "GRAT",
+                    "LRAT",
+                    "EXCEED_ACTION",
+                    "EXCEED_PARENT"
+                  ]
+                }
+              ],
+              "numeric_constraints": [
+                {
+                  "field": "ORAT",
+                  "min": 0
+                },
+                {
+                  "field": "WRAT",
                   "min": 0
                 },
                 {
@@ -22586,16 +22638,3 @@ if((builderIntakeRetry||(excelEvidenceReady&&scheduleConsumer))&&allowed.has('sc
         {id:'task_applied',criterion:'Apply extracted facts to the schedule package',required:true,expected:'matches objective'},
         {id:'preserve_unmentioned',criterion:'Unrelated baseline constructs preserved',required:true,expected:'preserve_unmentioned'},
       ],
-      artifact_refs:arr(previousSpecialistResult.artifact_refs)?previousSpecialistResult.artifact_refs:(arr(persistedPacket.artifact_refs)?persistedPacket.artifact_refs:(arr(request.artifact_refs)?request.artifact_refs:[])),
-    };
-  }
-  decision='delegate';
-  packetCandidate=withPacketControls({...builderPacket,contract:'specialist_packet',contract_version:'1.0',task_id:base.task_id,attempt:Number(base.retry_count)+1,specialist_id:'schedule_builder_specialist'},{expected_version:Number(base.version)+1,idempotency_key:`${base.task_id}:specialist:schedule_builder_specialist:${Number(base.retry_count)+1}:${Number(base.version)+1}`});
-  const modelInputs=obj(packetCandidate.inputs)?packetCandidate.inputs:{};const modelSchedule=obj(modelInputs.schedule_request)?modelInputs.schedule_request:modelInputs;
-  packetCandidate={...packetCandidate,inputs:{...modelInputs,schedule_request:attachSchedulePackage({...persistedSchedule,...resolveRequestSchedule(request),...modelSchedule,source_facts_packet:effectiveFactsPacket||modelSchedule.source_facts_packet||persistedSchedule.source_facts_packet||null})}};
-  blockingQuestions=[];
-  }
-}
-const scheduleGrammarQuestion=q=>/requested_keyword_scope|keyword_scope|forecast_start|forecast_end|model_start|\bDATES\b|wconprod|welspecs|семантик|порядок keyword/i.test(questionBlob(q));
-const builderFromPlan=packetObject&&plan.specialist_packet.specialist_id==='schedule_builder_specialist';
-if(builderFromPlan||clean(packetCandidate.specialist_id)==='schedule_builder_specialist') blockingQuestions=blockingQuestions.filter(q=>!scheduleGrammarQuestion(q));

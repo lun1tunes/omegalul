@@ -81,6 +81,18 @@ async def lifespan(_app: FastAPI):
     _subscribers.clear()
     _tasks.update(tasks)
     _order.extend(order)
+    settings = get_settings()
+    logger.info(
+        "control plane required=%s configured=%s url=%s",
+        settings.control_plane_required,
+        control_plane.configured(),
+        bool(settings.control_plane_proxy_url.strip()),
+    )
+    if settings.control_plane_required and not control_plane.configured():
+        raise RuntimeError(
+            "CONTROL_PLANE_PROXY_URL is required. "
+            "Set it to the active n8n /webhook/mas-control-plane endpoint."
+        )
     try:
         schema = control_plane.ensure_schema()
         logger.info("control plane schema %s", schema)
@@ -937,6 +949,9 @@ def health() -> dict[str, Any]:
         "service": "mas-activity",
         "version": VERSION,
         "n8n_transport": settings.n8n_transport,
+        "control_plane_backend": "n8n_proxy" if control_plane.configured() else "memory",
+        "control_plane_required": settings.control_plane_required,
+        "control_plane_proxy_configured": control_plane.configured(),
         "durable_hydrate": durable_enabled(),
         "state_persist": persist_enabled(),
         "tasks": len(_tasks),

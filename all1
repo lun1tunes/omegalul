@@ -130,7 +130,7 @@ python3 scripts/test_project_pack.py
 ```
 
 ===END_FILE===
-===BEGIN_FILE===	docker-compose.yml	8216	utf8
+===BEGIN_FILE===	docker-compose.yml	8252	utf8
 services:
   excel-tools:
     image: python:3.11-slim
@@ -196,6 +196,7 @@ services:
       - ./n8n/rag:/rag
     environment:
       - ORCHESTRATOR_WEBHOOK_URL=http://n8n:5678/webhook/mas-orchestrator-step
+      - CONTROL_PLANE_REQUIRED=true
       - CONTROL_PLANE_PROXY_URL=http://n8n:5678/webhook/mas-control-plane
       - CONTROL_PLANE_PROXY_AUTH_HEADER=${CONTROL_PLANE_PROXY_AUTH_HEADER:-Authorization}
       - CONTROL_PLANE_PROXY_AUTH_VALUE=${CONTROL_PLANE_PROXY_AUTH_VALUE:-local-orch-inbound}
@@ -5005,7 +5006,7 @@ EXPOSE 8200
 CMD ["python", "-m", "uvicorn", "app.main:app", "--host", "0.0.0.0", "--port", "8200"]
 
 ===END_FILE===
-===BEGIN_FILE===	mas-activity-service/README.md	7777	utf8
+===BEGIN_FILE===	mas-activity-service/README.md	7998	utf8
 # MAS Activity Service
 
 Live chat-style presentation of Orchestrator ↔ specialist handoffs with in-chat HITL and **new-task start** (Entry-shaped, drag-and-drop files).
@@ -5036,6 +5037,7 @@ start-windows.bat
 | `ACTIVITY_TLS_VERIFY` | `true` by default; set `false` only for a trusted local/self-signed HTTPS endpoint |
 | `ACTIVITY_CA_BUNDLE` | optional CA PEM path; preferred over disabling verification for corporate PKI |
 | `ORCHESTRATOR_WEBHOOK_URL` | боевой вызов оркестратора (предпочтительно) |
+| `CONTROL_PLANE_REQUIRED` | `true` для production; блокирует запуск без control-plane proxy |
 | `CONTROL_PLANE_PROXY_URL` | единый n8n webhook для cases, events, HITL, errors, executions, registry и binary artifacts |
 | `CONTROL_PLANE_PROXY_AUTH_*` | header auth для `CONTROL_PLANE_PROXY_URL` |
 | `ORCHESTRATOR_AUTH_*` | inbound header auth **n8n webhook**, не Activity |
@@ -5047,7 +5049,9 @@ start-windows.bat
 После UI-импорта hydrate-workflow и биндинга Data Tables задайте webhook URL на **корпоративный n8n** (не `http://n8n:5678` — это только Compose DNS).
 
 Для корпоративного контура импортируйте и активируйте `n8n/workflows/core/mas-control-plane-proxy.workflow.json`.
-При заданном `CONTROL_PLANE_PROXY_URL` Activity не подключается к Postgres вообще: cases/events,
+При `CONTROL_PLANE_REQUIRED=true` Activity не запускается без `CONTROL_PLANE_PROXY_URL`.
+После старта `/health` должен вернуть `control_plane_backend: "n8n_proxy"`.
+Activity не подключается к Postgres вообще: cases/events,
 HITL state, errors, execution mapping, agent registry и бинарные файлы проходят через единый n8n webhook.
 
 ## Linux / macOS (лаборатория)
@@ -5255,7 +5259,7 @@ async def get(case_id: str, artifact_id: str) -> tuple[str, bytes, str]:
     )
 
 ===END_FILE===
-===BEGIN_FILE===	mas-activity-service/app/cases_api.py	30689	utf8
+===BEGIN_FILE===	mas-activity-service/app/cases_api.py	31064	utf8
 """Case control-plane HTTP API (state, events, SSE, HITL, run)."""
 
 from __future__ import annotations
@@ -5654,8 +5658,18 @@ async def create_case(
     goal = (task_description or "").strip()
     if not goal:
         raise HTTPException(status_code=400, detail="task_description is required")
-    if get_settings().n8n_transport == "unconfigured":
+    settings = get_settings()
+    if settings.n8n_transport == "unconfigured":
         raise HTTPException(status_code=503, detail=UNCONFIGURED_N8N)
+    if settings.control_plane_required and not control_plane.configured():
+        raise HTTPException(
+            status_code=503,
+            detail=(
+                "Control-plane proxy is required. Set "
+                "CONTROL_PLANE_PROXY_URL to the active n8n "
+                "/webhook/mas-control-plane endpoint."
+            ),
+        )
     name = _normalize_task_name(task_name)
     case_id = _new_case_id()
     uploads: list[tuple[str, str, bytes, str]] = []
@@ -7773,7 +7787,7 @@ async def push_corpus_to_n8n() -> dict[str, Any]:
     return normalize_ingest_response(raw, sent_count=len(documents))
 
 ===END_FILE===
-===BEGIN_FILE===	mas-activity-service/app/main.py	101113	utf8
+===BEGIN_FILE===	mas-activity-service/app/main.py	101825	utf8
 """In-memory MAS activity feed for chat-style handoff presentation + HITL."""
 
 from __future__ import annotations
@@ -7857,6 +7871,18 @@ async def lifespan(_app: FastAPI):
     _subscribers.clear()
     _tasks.update(tasks)
     _order.extend(order)
+    settings = get_settings()
+    logger.info(
+        "control plane required=%s configured=%s url=%s",
+        settings.control_plane_required,
+        control_plane.configured(),
+        bool(settings.control_plane_proxy_url.strip()),
+    )
+    if settings.control_plane_required and not control_plane.configured():
+        raise RuntimeError(
+            "CONTROL_PLANE_PROXY_URL is required. "
+            "Set it to the active n8n /webhook/mas-control-plane endpoint."
+        )
     try:
         schema = control_plane.ensure_schema()
         logger.info("control plane schema %s", schema)
@@ -8713,6 +8739,9 @@ def health() -> dict[str, Any]:
         "service": "mas-activity",
         "version": VERSION,
         "n8n_transport": settings.n8n_transport,
+        "control_plane_backend": "n8n_proxy" if control_plane.configured() else "memory",
+        "control_plane_required": settings.control_plane_required,
+        "control_plane_proxy_configured": control_plane.configured(),
         "durable_hydrate": durable_enabled(),
         "state_persist": persist_enabled(),
         "tasks": len(_tasks),
@@ -11698,7 +11727,7 @@ def build_schema_model(
     }
 
 ===END_FILE===
-===BEGIN_FILE===	mas-activity-service/app/settings.py	11508	utf8
+===BEGIN_FILE===	mas-activity-service/app/settings.py	11777	utf8
 """Service settings. Env files are loaded from the service directory, like excel-tools."""
 
 from __future__ import annotations
@@ -11825,6 +11854,9 @@ class Settings(BaseSettings):
     )
     control_plane_proxy_timeout_s: float = Field(
         default=120.0, validation_alias="CONTROL_PLANE_PROXY_TIMEOUT_S"
+    )
+    control_plane_required: bool = Field(
+        default=True, validation_alias="CONTROL_PLANE_REQUIRED"
     )
     mas_knowledge_corpus: str = Field(default="", validation_alias="MAS_KNOWLEDGE_CORPUS")
     n8n_health_path: str = Field(default="/healthz", validation_alias="N8N_HEALTH_PATH")
@@ -11971,6 +12003,8 @@ class Settings(BaseSettings):
             "activity_list_configured": bool(self.resolved_list_url),
             "activity_feed_configured": bool(self.resolved_feed_url),
             "knowledge_ingest_configured": bool(self.resolved_knowledge_ingest_url),
+            "control_plane_proxy_configured": bool(self.control_plane_proxy_url.strip()),
+            "control_plane_required": self.control_plane_required,
             "state_persist": bool(self.activity_state_path.strip()),
             "env_files": [str(path) for path in LOADED_ENV_FILES],
             "log_level": self.log_level,
@@ -12141,7 +12175,7 @@ echo.
 exit /b 0
 
 ===END_FILE===
-===BEGIN_FILE===	mas-activity-service/mas-activity.env.example	2604	utf8
+===BEGIN_FILE===	mas-activity-service/mas-activity.env.example	2436	utf8
 # MAS Activity UI. Copy to mas-activity.env.
 # python -m app (start-windows.bat / start-linux.sh) loads this file automatically,
 # same pattern as excel-tools.env. A process environment always wins.
@@ -12160,14 +12194,12 @@ ACTIVITY_TLS_VERIFY=true
 ORCHESTRATOR_WEBHOOK_URL=http://127.0.0.1:15678/webhook/mas-orchestrator-step
 # Unified control-plane proxy. It executes all Postgres nodes inside n8n:
 # cases, events, HITL state, errors, execution mapping, registry and artifacts.
-# Leave empty only for standalone/local mode.
-# CONTROL_PLANE_PROXY_URL=http://127.0.0.1:15678/webhook/mas-control-plane
+# Required for production. Leave false only for standalone/unit-test memory mode.
+CONTROL_PLANE_REQUIRED=true
+CONTROL_PLANE_PROXY_URL=http://127.0.0.1:15678/webhook/mas-control-plane
 # CONTROL_PLANE_PROXY_AUTH_HEADER=Authorization
 # CONTROL_PLANE_PROXY_AUTH_VALUE=
 # CONTROL_PLANE_PROXY_TIMEOUT_S=120
-# Same n8n Postgres as Orchestrator. On startup Activity runs CREATE IF NOT EXISTS
-# for cases/events/error_traces/executions/agent_registry (never DROP).
-# The DB role needs CREATE TABLE. pgvector is a separate DBA step for RAG.
 # ORCHESTRATOR_WORKFLOW_ID=e9bbdb6e-3b7c-5dc0-851a-30bd9f2eb0d6
 # If the webhook uses header auth in n8n:
 # ORCHESTRATOR_AUTH_HEADER=Authorization
@@ -23814,55 +23846,3 @@ event_id,trace_id,task_id,at,stage,event_type,actor,status,summary,details_json
               {
                 "name": "EXCEED_PARENT",
                 "position": 8,
-                "type": "string",
-                "required": true,
-                "enum": [
-                  "YES",
-                  "NO"
-                ]
-              }
-            ],
-            "layout": {
-              "newline": "LF",
-              "indent": "  ",
-              "delimiter": "SPACE",
-              "record_terminator": "SLASH",
-              "block_terminator": "SLASH_LINE"
-            },
-            "semantics": {
-              "period": "FORECAST",
-              "clock": {
-                "uses_current": true
-              },
-              "references": [
-                {
-                  "entity_type": "group",
-                  "id_field": "GROUP",
-                  "required": true
-                }
-              ],
-              "state_assignments": [
-                {
-                  "namespace": "group-control",
-                  "entity_type": "group",
-                  "entity_field": "GROUP",
-                  "key_fields": [
-                    "CONTROL"
-                  ],
-                  "value_fields": [
-                    "ORAT",
-                    "WRAT",
-                    "GRAT",
-                    "LRAT",
-                    "EXCEED_ACTION",
-                    "EXCEED_PARENT"
-                  ]
-                }
-              ],
-              "numeric_constraints": [
-                {
-                  "field": "ORAT",
-                  "min": 0
-                },
-                {
-                  "field": "WRAT",

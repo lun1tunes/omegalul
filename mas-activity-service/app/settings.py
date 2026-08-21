@@ -125,6 +125,9 @@ class Settings(BaseSettings):
     control_plane_proxy_timeout_s: float = Field(
         default=120.0, validation_alias="CONTROL_PLANE_PROXY_TIMEOUT_S"
     )
+    control_plane_required: bool = Field(
+        default=True, validation_alias="CONTROL_PLANE_REQUIRED"
+    )
     mas_knowledge_corpus: str = Field(default="", validation_alias="MAS_KNOWLEDGE_CORPUS")
     n8n_health_path: str = Field(default="/healthz", validation_alias="N8N_HEALTH_PATH")
     n8n_webhook_checks: str = Field(default="", validation_alias="N8N_WEBHOOK_CHECKS")
@@ -270,6 +273,8 @@ class Settings(BaseSettings):
             "activity_list_configured": bool(self.resolved_list_url),
             "activity_feed_configured": bool(self.resolved_feed_url),
             "knowledge_ingest_configured": bool(self.resolved_knowledge_ingest_url),
+            "control_plane_proxy_configured": bool(self.control_plane_proxy_url.strip()),
+            "control_plane_required": self.control_plane_required,
             "state_persist": bool(self.activity_state_path.strip()),
             "env_files": [str(path) for path in LOADED_ENV_FILES],
             "log_level": self.log_level,

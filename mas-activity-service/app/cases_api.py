@@ -396,8 +396,18 @@ async def create_case(
     goal = (task_description or "").strip()
     if not goal:
         raise HTTPException(status_code=400, detail="task_description is required")
-    if get_settings().n8n_transport == "unconfigured":
+    settings = get_settings()
+    if settings.n8n_transport == "unconfigured":
         raise HTTPException(status_code=503, detail=UNCONFIGURED_N8N)
+    if settings.control_plane_required and not control_plane.configured():
+        raise HTTPException(
+            status_code=503,
+            detail=(
+                "Control-plane proxy is required. Set "
+                "CONTROL_PLANE_PROXY_URL to the active n8n "
+                "/webhook/mas-control-plane endpoint."
+            ),
+        )
     name = _normalize_task_name(task_name)
     case_id = _new_case_id()
     uploads: list[tuple[str, str, bytes, str]] = []

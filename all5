@@ -1,3 +1,45 @@
+                              "field": "INTERVAL",
+                              "min": 0
+                            },
+                            {
+                              "field": "A"
+                            },
+                            {
+                              "field": "B",
+                              "min": 0
+                            },
+                            {
+                              "field": "C"
+                            },
+                            {
+                              "field": "D"
+                            },
+                            {
+                              "field": "E"
+                            },
+                            {
+                              "field": "F"
+                            },
+                            {
+                              "field": "GRDAMP",
+                              "min_exclusive": 0,
+                              "max": 1
+                            },
+                            {
+                              "field": "GRMIN",
+                              "min_exclusive": 0
+                            }
+                          ]
+                        }
+                      },
+                      {
+                        "schema_id": "expert:GUIDERAT:full",
+                        "schema_revision": "1",
+                        "keyword": "GUIDERAT",
+                        "variant": "full",
+                        "citation": {
+                          "document_id": "tnav-user-manual-russian",
+                          "document_revision": "19.4",
                           "page": "12.20.90 / 1933-1936",
                           "heading": "GUIDERAT",
                           "source_hash": "sha256:7d1624e1ea0196383c86dbd2558826c53a5a86eb992c48141eb4e3b66f0353d5"

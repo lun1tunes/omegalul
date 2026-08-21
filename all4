@@ -1,3 +1,54 @@
+        "parametersBody": {
+          "values": [
+            {
+              "name": "session_id",
+              "valueProvider": "fieldValue",
+              "value": "={{ $('Open excel session').first().json.session_id }}"
+            },
+            {
+              "name": "table_id",
+              "valueProvider": "modelRequired",
+              "value": ""
+            }
+          ]
+        }
+      },
+      "id": "96de5f67-f2d4-5264-a64d-a957f04be6d2",
+      "name": "describe_table",
+      "type": "@n8n/n8n-nodes-langchain.toolHttpRequest",
+      "typeVersion": 1.1,
+      "position": [
+        760,
+        -260
+      ]
+    },
+    {
+      "parameters": {
+        "toolDescription": "Ограниченные distinct-значения одной колонки для точных фильтров.",
+        "method": "POST",
+        "url": "={{ $('Runtime configuration').first().json.excel_tools_url + '/agent-tools/' + \"list_column_values\" }}",
+        "authentication": "none",
+        "sendQuery": false,
+        "sendHeaders": true,
+        "specifyHeaders": "keypair",
+        "sendBody": true,
+        "specifyBody": "keypair",
+        "placeholderDefinitions": {
+          "values": [
+            {
+              "name": "table_id",
+              "description": "table_id из detect_tables",
+              "type": "string"
+            },
+            {
+              "name": "column",
+              "description": "Точное имя колонки из describe/detect",
+              "type": "string"
+            }
+          ]
+        },
+        "optimizeResponse": false,
+        "parametersHeaders": {
           "values": [
             {
               "name": "Content-Type",
@@ -19052,45 +19103,3 @@
                           ],
                           "numeric_constraints": [
                             {
-                              "field": "INTERVAL",
-                              "min": 0
-                            },
-                            {
-                              "field": "A"
-                            },
-                            {
-                              "field": "B",
-                              "min": 0
-                            },
-                            {
-                              "field": "C"
-                            },
-                            {
-                              "field": "D"
-                            },
-                            {
-                              "field": "E"
-                            },
-                            {
-                              "field": "F"
-                            },
-                            {
-                              "field": "GRDAMP",
-                              "min_exclusive": 0,
-                              "max": 1
-                            },
-                            {
-                              "field": "GRMIN",
-                              "min_exclusive": 0
-                            }
-                          ]
-                        }
-                      },
-                      {
-                        "schema_id": "expert:GUIDERAT:full",
-                        "schema_revision": "1",
-                        "keyword": "GUIDERAT",
-                        "variant": "full",
-                        "citation": {
-                          "document_id": "tnav-user-manual-russian",
-                          "document_revision": "19.4",

@@ -9,6 +9,7 @@ from pathlib import Path
 
 os.environ.setdefault("LOG_LEVEL", "WARNING")
 os.environ.pop("CONTROL_PLANE_PROXY_URL", None)
+os.environ["CONTROL_PLANE_REQUIRED"] = "false"
 
 from fastapi.testclient import TestClient
 import pytest
@@ -42,6 +43,7 @@ def _isolate_activity_store(monkeypatch) -> None:
         "ORCHESTRATOR_AUTH_VALUE",
         "N8N_BASE_URL",
         "CONTROL_PLANE_PROXY_URL",
+        "CONTROL_PLANE_REQUIRED",
         "N8N_HOST",
         "N8N_USERNAME",
         "N8N_PASSWORD",

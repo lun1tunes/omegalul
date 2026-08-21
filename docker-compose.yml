@@ -63,6 +63,7 @@ services:
       - ./n8n/rag:/rag
     environment:
       - ORCHESTRATOR_WEBHOOK_URL=http://n8n:5678/webhook/mas-orchestrator-step
+      - CONTROL_PLANE_REQUIRED=true
       - CONTROL_PLANE_PROXY_URL=http://n8n:5678/webhook/mas-control-plane
       - CONTROL_PLANE_PROXY_AUTH_HEADER=${CONTROL_PLANE_PROXY_AUTH_HEADER:-Authorization}
       - CONTROL_PLANE_PROXY_AUTH_VALUE=${CONTROL_PLANE_PROXY_AUTH_VALUE:-local-orch-inbound}
