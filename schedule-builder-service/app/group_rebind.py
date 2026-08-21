@@ -5,11 +5,10 @@ from __future__ import annotations
 import json
 import os
 import re
-import subprocess
-import sys
-import tempfile
 from pathlib import Path
 from typing import Any
+
+from .timeline_ops import group_rebind_revise
 
 TEMPLATES = Path(os.getenv("SCHEDULE_TEMPLATES") or "/templates")
 if not (TEMPLATES / "schedule_timeline_runtime.py").is_file():
@@ -143,45 +142,4 @@ def run_group_rebind_revise(
 ) -> dict[str, Any]:
     if not (TEMPLATES / "schedule_timeline_runtime.py").is_file():
         raise RuntimeError(f"timeline templates missing at {TEMPLATES}")
-    sys.path.insert(0, str(TEMPLATES))
-    from schedule_timeline_runtime import timeline_core_js
-
-    payload = {"text": source_text, "spec": spec, "file_ref": file_ref}
-    js = (
-        timeline_core_js()
-        + """
-const fs = require('fs');
-const payload = JSON.parse(fs.readFileSync(process.argv[2], 'utf8'));
-const result = runGroupRebindRevise(payload.text, payload.spec || {}, payload.file_ref || 'schedule.inc');
-const slim = {
-  contract: result.contract,
-  contract_version: result.contract_version,
-  status: result.status,
-  generated_schedule: result.generated_schedule || '',
-  edits: result.edits || [],
-  findings: result.findings || [],
-  wells: result.wells || [],
-  parent_group: result.parent_group || null,
-  gas_rate: result.gas_rate ?? null,
-  effective_at: result.effective_at || null,
-  dates_tnav: result.dates_tnav || null,
-};
-process.stdout.write(JSON.stringify(slim));
-"""
-    )
-    with tempfile.TemporaryDirectory(prefix="sched-rebind-") as tmp:
-        tmp_path = Path(tmp)
-        script = tmp_path / "rebind.js"
-        data = tmp_path / "payload.json"
-        script.write_text(js, encoding="utf-8")
-        data.write_text(json.dumps(payload, ensure_ascii=False), encoding="utf-8")
-        proc = subprocess.run(
-            ["node", str(script), str(data)],
-            capture_output=True,
-            check=False,
-            timeout=120,
-        )
-    if proc.returncode != 0:
-        err = proc.stderr.decode("utf-8", errors="replace")[:800]
-        raise RuntimeError(err or "group rebind revise failed")
-    return json.loads(proc.stdout.decode("utf-8"))
+    return group_rebind_revise(source_text, spec, file_ref=file_ref)
