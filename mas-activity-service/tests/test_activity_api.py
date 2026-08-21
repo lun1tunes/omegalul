@@ -556,15 +556,19 @@ def test_ready_health_and_static_assets() -> None:
     assert "looksMachineAsk" in js_text
     assert 'q.required ? "обязательно"' not in js_text
     assert "формат: ${q.expected_format}" not in js_text
-    assert "app.js?v=83" in index.text
-    assert "schema.js?v=10" in index.text
-    assert "app.css?v=78" in index.text
+    assert "app.js?v=84" in index.text
+    assert "schema.js?v=11" in index.text
+    assert "app.css?v=79" in index.text
     assert "viewChatBtn" in index.text
     assert "viewSchemaBtn" in index.text
     assert ">Чат<" in index.text
     assert ">Схема<" in index.text
     assert "schemaView" in index.text
     assert "schemaTimeline" in index.text
+    assert "gatePreview" in index.text
+    assert "<details class=\"gate-panel\"" in index.text
+    assert "Развернуть" in (STATIC / "app.css").read_text(encoding="utf-8")
+    assert "mode-schema .gate-panel[open]" in (STATIC / "app.css").read_text(encoding="utf-8")
     assert "Постановка задачи" in index.text
     assert "Результат" in index.text
     assert "Нет такой задачи в Workspace." in index.text
@@ -622,6 +626,7 @@ def test_ready_health_and_static_assets() -> None:
     assert "schema-peek" in (STATIC / "app.css").read_text(encoding="utf-8")
     assert "schema-node.is-clipped" in (STATIC / "app.css").read_text(encoding="utf-8")
     assert "Скачать результат" in schema_js
+    assert "Задача завершена. Загрузите результаты работы." in schema_js
     assert "Скачать результат" in js_text
     assert "pathMidpoint" in schema_js
     assert "getTotalLength" in schema_js

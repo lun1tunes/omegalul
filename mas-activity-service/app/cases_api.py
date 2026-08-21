@@ -16,7 +16,7 @@ from fastapi.responses import StreamingResponse
 from app import control_plane
 from app.contracts import AGENT_EVENT_KINDS, CaseAnswerIn, CaseEventIn, CaseNameIn, MAX_STEPS
 from app.orchestrator import OrchestratorError, invoke_orchestrator
-from app.schema_view import build_schema_model
+from app.schema_view import FINISHED_RESULT_TEXT, build_schema_model
 from app.settings import UNCONFIGURED_N8N, get_settings
 from app.task_binaries import load_task_binaries, save_task_binaries
 
@@ -137,13 +137,21 @@ def event_to_turn(event: dict[str, Any]) -> dict[str, Any]:
         turn_kind = "event"
     else:
         turn_kind = "status"
+    if kind == "case.finished":
+        summary = FINISHED_RESULT_TEXT
+        text = FINISHED_RESULT_TEXT
+        brief = FINISHED_RESULT_TEXT
+    else:
+        summary = event.get("status_message") or kind
+        text = event.get("status_message") or ""
+        brief = event.get("status_message") or ""
     return {
         "at": _iso(event.get("created_at")),
         "stage": kind,
         "status": kind,
-        "summary": event.get("status_message") or kind,
-        "text": event.get("status_message") or "",
-        "brief": event.get("status_message") or "",
+        "summary": summary,
+        "text": text,
+        "brief": brief,
         "from": {"role": left},
         "to": {"role": right or left},
         "from_role": left,

@@ -357,7 +357,7 @@ networks:
   ingress: null
 
 ===END_FILE===
-===BEGIN_FILE===	docs.md	29271	utf8
+===BEGIN_FILE===	docs.md	29471	utf8
 # Руководство по развёртыванию Petroleum Engineering MAS (n8n 2.30.8)
 
 Это основной и единственный документ по развертыванию мультиагентной системы. Здесь описан пошаговый процесс: что нужно запустить, как настроить и в каком порядке это делать.
@@ -505,15 +505,16 @@ start-windows.bat
 
 ### Шаг 1. Импорт Workflows в n8n
 
-Зайдите в UI n8n, выберите "Import from File" и загрузите файлы из `n8n/import-manifest.json` → `runtime_import_order`. **Ничего пока не активируйте!** Живой MAS-контур в `n8n/workflows/core/` (Excel/Math идут HTTP FastAPI, не n8n-агентами):
+Зайдите в UI n8n, выберите "Import from File" и загрузите файлы из `n8n/import-manifest.json` → `runtime_import_order`. **Ничего пока не активируйте!** Живой MAS-контур в `n8n/workflows/core/` (Excel Extractor и Schedule Builder — n8n AI + FastAPI tools; Math — HTTP FastAPI):
 
 1. `n8n/workflows/core/tnavigator-schedule-knowledge-ingestion.workflow.json`
 2. `n8n/workflows/core/tnavigator-schedule-hybrid-retrieval.workflow.json`
 3. `n8n/workflows/core/schedule-builder-agent.workflow.json`
-4. `n8n/workflows/core/mas-error-traces.workflow.json`
-5. `n8n/workflows/core/mas-ensure-control-plane.workflow.json`
-6. `n8n/workflows/core/mas-orchestrator.workflow.json`
-7. `n8n/workflows/core/mas-deployment-health-check.workflow.json`
+4. `n8n/workflows/core/excel-extractor-agent.workflow.json`
+5. `n8n/workflows/core/mas-error-traces.workflow.json`
+6. `n8n/workflows/core/mas-ensure-control-plane.workflow.json`
+7. `n8n/workflows/core/mas-orchestrator.workflow.json`
+8. `n8n/workflows/core/mas-deployment-health-check.workflow.json`
 
 Архив (не импортировать): `n8n/workflows/retired/` — Engineering MAS, CAS, n8n Excel/Calculation, SCHEDULE Builder Code-pipeline, Entry/Human Gate, Trace writer, Activity Hydrate.
 
@@ -579,6 +580,7 @@ CSV: [`n8n/data-tables/mas_trace_events_v1.header.csv`](n8n/data-tables/mas_trac
 | `Agent — Excel Extractor` | `Call Excel protocol Hybrid Retrieval` | `MAS — Knowledge Retrieval` |
 | `Template — Engineering Specialist` | `Call specialist Hybrid Retrieval` | `MAS — Knowledge Retrieval` |
 | `Orchestrator — Engineering MAS` | `Call SCHEDULE Builder Specialist` | `SCHEDULE — Builder` |
+| `Orchestrator — MAS` | `Call Excel Extractor` | `Agent — Excel Extractor` |
 | `Orchestrator — MAS` | `Call Schedule Builder` | `Agent — Schedule Builder` |
 | `Orchestrator — Engineering MAS` | `Call Calculation Specialist` | `Agent — Calculation (Math Service)` |
 | `Orchestrator — Engineering MAS` | `Call MAS Trace Event Writer` | `Writer — MAS Trace` |
@@ -614,7 +616,7 @@ CSV: [`n8n/data-tables/mas_trace_events_v1.header.csv`](n8n/data-tables/mas_trac
 ### Шаг 5. Настройка доступов (Credentials)
 
 Вам потребуется указать ключи для нейросетей, баз данных и локальных сервисов:
-- **Orchestrator и SCHEDULE Builder:** Создайте подключения к вашей совместимой с OpenAI модели (`Planner Chat Model`, `Verifier Chat Model`, **Schedule Builder Chat Model — Qwen**). Live-путь оркестратора: `executeWorkflow` `Call Schedule Builder` → `Agent — Schedule Builder` (как Excel Extractor). FastAPI `schedule-builder:8090` — только parse/apply/emit tools, не LLM.
+- **Orchestrator и специалисты:** Создайте подключения к вашей совместимой с OpenAI модели (`Decision Chat Model`, **Excel Extractor Chat Model — Qwen**, **Schedule Builder Chat Model — Qwen**). Live-путь: `executeWorkflow` `Call Excel Extractor` → `Agent — Excel Extractor` (excel-tools FastAPI, файлы через Activity GET) и `Call Schedule Builder` → `Agent — Schedule Builder`. FastAPI не пишет LLM.
 - **Агент Excel Extractor:** В нодах HTTP укажите URL к локальному сервису Excel Tools и заданный `API_KEY`. Выберите нужное подключение к базе Postgres.
 - **RAG (Знания):** Выберите подключение к Postgres и единый профиль генерации эмбеддингов. (Важно: не заполняйте поле `Dimensions` в настройках эмбеддингов).
 - **Агент вычислений:** В ноде HTTP-запроса пропишите `math_service_url` (`http://<IP-вашего-ПК>:8100/api/v1/math`).
@@ -857,7 +859,7 @@ python -m pytest tests
 ===BEGIN_FILE===	excel-agent-tools/app/__init__.py	0	utf8
 
 ===END_FILE===
-===BEGIN_FILE===	excel-agent-tools/app/agent_run.py	11758	utf8
+===BEGIN_FILE===	excel-agent-tools/app/agent_run.py	18521	utf8
 """Excel Extractor agent: AgentTask → tools → AgentResult. No SCHEDULE writes."""
 
 from __future__ import annotations
@@ -868,10 +870,9 @@ import logging
 import os
 from pathlib import Path
 from typing import Any
-from urllib.parse import urlparse
 from urllib.request import Request, urlopen
 
-from .sessions import init_state, load_state, locked_session, new_session_id, session_dir, session_file
+from .sessions import init_state, load_state, locked_session, new_session_id, save_state, session_dir, session_file
 from .tools import execute_tool
 from . import excel_tools as _excel_tools  # noqa: F401  # register detect_tables / query_table
 from . import state_tools as _state_tools  # noqa: F401
@@ -908,20 +909,96 @@ def _post_event(case_id: str, payload: dict[str, Any]) -> None:
         logger.exception("failed to emit agent event case_id=%s kind=%s", case_id, payload.get("kind"))
 
 
+def _emit(
+    case_id: str,
+    *,
+    kind: str,
+    task_id: str,
+    activity: str,
+    status_message: str,
+    status: str = "",
+    payload: dict[str, Any] | None = None,
+) -> None:
+    body: dict[str, Any] = {
+        "kind": kind,
+        "actor": "excel_extractor",
+        "agent_id": "excel_extractor",
+        "task_id": task_id,
+        "status_message": status_message,
+        "_activity_base": activity,
+    }
+    if status:
+        body["status"] = status
+    if payload:
+        body["payload"] = payload
+    _post_event(case_id, body)
+
+
+def emit_tool_progress(state: dict[str, Any], tool_name: str, tool_result: dict[str, Any]) -> None:
+    """Live Activity lines when the n8n AI Agent calls excel-tools HTTP tools."""
+    payload = state.get("payload") if isinstance(state.get("payload"), dict) else {}
+    case_id = str(payload.get("case_id") or "")
+    if not case_id:
+        return
+    inner = tool_result.get("result") if isinstance(tool_result.get("result"), dict) else {}
+    message = ""
+    if tool_name == "workbook_introspect":
+        sheets = inner.get("sheets") if isinstance(inner.get("sheets"), list) else []
+        message = f"Смотрю структуру Excel: листов {len(sheets)}"
+    elif tool_name == "detect_tables":
+        tables = inner.get("tables") or inner.get("detected_tables") or []
+        n = len(tables) if isinstance(tables, list) else 0
+        message = f"Нашёл таблиц: {n}"
+    elif tool_name == "match_tables":
+        message = "Подбираю таблицу под запрос"
+    elif tool_name == "describe_table":
+        message = "Смотрю колонки таблицы"
+    elif tool_name == "list_column_values":
+        message = "Читаю значения колонки"
+    elif tool_name == "query_table":
+        rows = inner.get("preview") or inner.get("rows") or inner.get("records") or []
+        n = inner.get("row_count") if isinstance(inner.get("row_count"), int) else (len(rows) if isinstance(rows, list) else 0)
+        message = f"Читаю таблицу: {n} строк"
+    elif tool_name == "sheet_preview":
+        message = "Смотрю фрагмент листа"
+    if not message:
+        return
+    _emit(
+        case_id,
+        kind="agent.progress",
+        task_id=str(payload.get("task_id") or ""),
+        activity=str(payload.get("activity_base") or ACTIVITY),
+        status_message=message,
+    )
+
+
 def _fetch_bytes(url: str) -> bytes:
     with urlopen(url, timeout=30) as resp:
         return resp.read()
 
 
+def _artifact_card(artifacts: dict[str, Any], *keys: str) -> dict[str, Any]:
+    for key in keys:
+        item = artifacts.get(key)
+        if isinstance(item, dict) and item:
+            return item
+    return {}
+
+
+def _task_activity(task: dict[str, Any]) -> str:
+    inputs = task.get("inputs") if isinstance(task.get("inputs"), dict) else {}
+    return str(inputs.get("activity_base_url") or ACTIVITY).rstrip("/")
+
+
 def _load_excel(task: dict[str, Any]) -> tuple[str, str]:
     inputs = task.get("inputs") if isinstance(task.get("inputs"), dict) else {}
     artifacts = inputs.get("artifacts") if isinstance(inputs.get("artifacts"), dict) else {}
-    excel = artifacts.get("excel") if isinstance(artifacts.get("excel"), dict) else {}
+    excel = _artifact_card(artifacts, "excel", "file")
     path = inputs.get("excel_path") or excel.get("path")
     url = inputs.get("excel_url") or inputs.get("artifact_url")
-    activity = str(inputs.get("activity_base_url") or ACTIVITY).rstrip("/")
+    activity = _task_activity(task)
     case_id = str(task.get("case_id") or "")
-    artifact_id = excel.get("artifact_id") or "excel"
+    artifact_id = str(excel.get("artifact_id") or "excel")
     if activity and case_id and not url:
         url = f"{activity}/cases/{case_id}/artifacts/{artifact_id}"
     data: bytes | None = None
@@ -930,13 +1007,14 @@ def _load_excel(task: dict[str, Any]) -> tuple[str, str]:
         data = Path(path).read_bytes()
         filename = Path(path).name
     elif url:
-        data = _fetch_bytes(url)
-        parsed = urlparse(url)
-        filename = Path(parsed.path).name or filename
+        try:
+            data = _fetch_bytes(url)
+        except Exception as exc:
+            raise FileNotFoundError(f"excel artifact fetch failed: {url}: {exc}") from exc
     if not data:
         raise FileNotFoundError("excel artifact is missing")
     session_id = new_session_id()
-    directory = session_dir(session_id, create=True)
+    session_dir(session_id, create=True)
     suffix = Path(filename).suffix.lower() or ".xlsx"
     relative = f"input{suffix}"
     dest = session_file(session_id, relative)
@@ -948,7 +1026,14 @@ def _load_excel(task: dict[str, Any]) -> tuple[str, str]:
         file_name=filename,
         file_hash=f"sha256:{digest}",
         file_size=len(data),
-        payload={"agent_id": "excel_extractor", "case_id": case_id},
+        payload={
+            "agent_id": "excel_extractor",
+            "case_id": case_id,
+            "task_id": str(task.get("task_id") or ""),
+            "objective": str(task.get("objective") or ""),
+            "handoff_message": str(task.get("handoff_message") or ""),
+            "activity_base": activity,
+        },
     )
     return session_id, filename
 
@@ -1015,6 +1100,257 @@ def _query_rows(state: dict[str, Any], session_id: str, payload: dict[str, Any])
     return columns, rows
 
 
+def _agent_result(
+    task_id: str,
+    status: str,
+    message: str,
+    *,
+    data: dict[str, Any] | None = None,
+    artifacts: dict[str, Any] | None = None,
+    issues: list[Any] | None = None,
+    requests: list[Any] | None = None,
+    assumptions: list[Any] | None = None,
+) -> dict[str, Any]:
+    return {
+        "task_id": task_id,
+        "agent_id": "excel_extractor",
+        "status": status,
+        "message": message,
+        "data": data or {},
+        "artifacts": artifacts or {},
+        "issues": issues or [],
+        "assumptions": assumptions or [],
+        "requests": requests or [],
+    }
+
+
+def _store_result(state: dict[str, Any], result: dict[str, Any]) -> dict[str, Any]:
+    state["agent_result"] = result
+    save_state(str(state["session_id"]), state)
+    return result
+
+
+def suggested_capability(objective: str, handoff: str = "") -> str:
+    text = f"{objective} {handoff}".casefold()
+    if any(token in text for token in ("дат", "ввод", "commission", "скважин", "well", "дебит")):
+        return "commissioning"
+    if not text.strip():
+        return "commissioning"
+    return "operations"
+
+
+def _compact_inspect(state: dict[str, Any]) -> dict[str, Any]:
+    intro = execute_tool(state, "workbook_introspect", {})
+    meta = intro.get("result") if isinstance(intro, dict) else {}
+    detect = execute_tool(state, "detect_tables", {"max_tables": 10})
+    raw = detect.get("result") if isinstance(detect, dict) else {}
+    tables = raw.get("tables") if isinstance(raw, dict) else []
+    if not isinstance(tables, list):
+        tables = []
+    compact: list[dict[str, Any]] = []
+    for table in tables[:12]:
+        if not isinstance(table, dict):
+            continue
+        cols = table.get("columns") if isinstance(table.get("columns"), list) else []
+        compact.append(
+            {
+                "table_id": table.get("table_id"),
+                "sheet": table.get("sheet"),
+                "range": table.get("range"),
+                "row_count": table.get("row_count"),
+                "columns": cols[:24],
+                "columns_truncated": len(cols) > 24,
+                "title": table.get("title") or "",
+            }
+        )
+    sheets = meta.get("sheets") if isinstance(meta, dict) else []
+    return {
+        "file_name": (meta.get("file_name") if isinstance(meta, dict) else "") or state.get("file_name"),
+        "sheets": sheets[:40] if isinstance(sheets, list) else [],
+        "table_count": len(tables),
+        "tables": compact,
+    }
+
+
+def open_session(task: dict[str, Any]) -> dict[str, Any]:
+    case_id = str(task.get("case_id") or "")
+    task_id = str(task.get("task_id") or "")
+    activity = _task_activity(task)
+    _emit(
+        case_id,
+        kind="agent.accepted",
+        task_id=task_id,
+        activity=activity,
+        status_message="Разбираю Excel",
+    )
+    try:
+        session_id, filename = _load_excel(task)
+    except FileNotFoundError as exc:
+        result = _agent_result(
+            task_id,
+            "needs_input",
+            "Нет Excel-файла для извлечения",
+            issues=[{"type": "missing_excel", "detail": str(exc)}],
+            requests=[{"question_id": "Q-excel", "question": "Приложите workbook .xlsx", "options": []}],
+        )
+        _emit(
+            case_id,
+            kind="agent.result",
+            task_id=task_id,
+            activity=activity,
+            status="needs_input",
+            status_message=result["message"],
+        )
+        return {"ok": False, "status": "needs_input", "task_id": task_id, "result": result}
+    except Exception as exc:
+        result = _agent_result(
+            task_id,
+            "failed",
+            str(exc)[:400],
+            issues=[{"type": "excel_load_failed", "detail": str(exc)[:400]}],
+        )
+        _emit(
+            case_id,
+            kind="agent.failed",
+            task_id=task_id,
+            activity=activity,
+            status="failed",
+            status_message=str(exc)[:400],
+        )
+        return {"ok": False, "status": "failed", "task_id": task_id, "result": result}
+
+    with locked_session(session_id):
+        state = load_state(session_id)
+        inspect = _compact_inspect(state)
+    n_sheets = len(inspect.get("sheets") or [])
+    n_tables = int(inspect.get("table_count") or 0)
+    _emit(
+        case_id,
+        kind="agent.progress",
+        task_id=task_id,
+        activity=activity,
+        status_message=f"Файл {filename}: листов {n_sheets}, таблиц {n_tables}",
+    )
+    capability = suggested_capability(str(task.get("objective") or ""), str(task.get("handoff_message") or ""))
+    return {
+        "ok": True,
+        "session_id": session_id,
+        "task_id": task_id,
+        "file_name": filename,
+        "inspect": inspect,
+        "objective": str(task.get("objective") or ""),
+        "handoff_message": str(task.get("handoff_message") or ""),
+        "suggested_capability": capability,
+    }
+
+
+def extract_commissioning(session_id: str) -> dict[str, Any]:
+    with locked_session(session_id):
+        state = load_state(session_id)
+        payload = state.get("payload") if isinstance(state.get("payload"), dict) else {}
+        case_id = str(payload.get("case_id") or "")
+        task_id = str(payload.get("task_id") or "")
+        activity = str(payload.get("activity_base") or ACTIVITY)
+        filename = str(state.get("file_name") or "workbook.xlsx")
+        detect = execute_tool(state, "detect_tables", {})
+        tables = []
+        raw = detect.get("result") if isinstance(detect, dict) else {}
+        if isinstance(raw, dict):
+            tables = raw.get("tables") or raw.get("detected_tables") or []
+        if not isinstance(tables, list):
+            tables = []
+        _emit(
+            case_id,
+            kind="agent.progress",
+            task_id=task_id,
+            activity=activity,
+            status_message=f"Нашёл таблиц: {len(tables)}. Читаю скважины и даты",
+        )
+        rows_out: list[dict[str, Any]] = []
+        table_ids: list[str] = []
+        for table in tables[:8]:
+            if not isinstance(table, dict):
+                continue
+            table_id = str(table.get("table_id") or table.get("id") or "")
+            if not table_id:
+                continue
+            table_ids.append(table_id)
+            queried = execute_tool(state, "query_table", {"table_id": table_id, "limit": 10000})
+            tool_payload = queried.get("result") if isinstance(queried, dict) else queried
+            preview: list[dict[str, Any]] = []
+            columns: list[str] = []
+            if isinstance(tool_payload, dict):
+                columns, preview = _query_rows(state, session_id, tool_payload)
+            rows_out.append(
+                {
+                    "table_id": table_id,
+                    "columns": columns,
+                    "preview": preview[:200],
+                    "row_count": len(preview),
+                    "records": preview,
+                }
+            )
+    facts = commissioning_facts(
+        [
+            {"columns": item.get("columns") or [], "preview": item.get("records") or item.get("preview") or []}
+            for item in rows_out
+        ]
+    )
+    for item in rows_out:
+        item.pop("records", None)
+    _emit(
+        case_id,
+        kind="agent.progress",
+        task_id=task_id,
+        activity=activity,
+        status_message=f"Фактов скважина+дата: {len(facts)}",
+    )
+    result = _agent_result(
+        task_id,
+        "completed",
+        (
+            f"Извлечено таблиц: {len(table_ids)} из {filename}"
+            + (f", фактов скважина+дата: {len(facts)}" if facts else "")
+        ),
+        data={
+            "excel_table": table_ids[0] if table_ids else None,
+            "table_ids": table_ids,
+            "normalized_rows": rows_out,
+            "facts": facts,
+            "session_id": session_id,
+            "file_name": filename,
+        },
+        artifacts={"excel_session": session_id},
+    )
+    with locked_session(session_id):
+        state = load_state(session_id)
+        _store_result(state, result)
+    _emit(
+        case_id,
+        kind="agent.result",
+        task_id=task_id,
+        activity=activity,
+        status="completed",
+        status_message=result["message"],
+        payload={"tables": len(table_ids), "facts": len(facts)},
+    )
+    return result
+
+
+def session_result(session_id: str) -> dict[str, Any]:
+    state = load_state(session_id)
+    result = state.get("agent_result")
+    if isinstance(result, dict) and result.get("status"):
+        return result
+    payload = state.get("payload") if isinstance(state.get("payload"), dict) else {}
+    return _agent_result(
+        str(payload.get("task_id") or ""),
+        "failed",
+        "Агент не вызвал extract_commissioning — факты Excel не собраны",
+        issues=[{"type": "no_extract"}],
+    )
+
+
 def commissioning_facts(tables: list[dict[str, Any]]) -> list[dict[str, Any]]:
     facts: list[dict[str, Any]] = []
     seen: set[str] = set()
@@ -1043,159 +1379,13 @@ def commissioning_facts(tables: list[dict[str, Any]]) -> list[dict[str, Any]]:
 
 
 def run_excel_agent(task: dict[str, Any]) -> dict[str, Any]:
-    case_id = str(task.get("case_id") or "")
-    task_id = str(task.get("task_id") or "")
-    activity = ""
-    inputs = task.get("inputs") if isinstance(task.get("inputs"), dict) else {}
-    activity = str(inputs.get("activity_base_url") or ACTIVITY)
-    _post_event(
-        case_id,
-        {
-            "kind": "agent.accepted",
-            "actor": "excel_extractor",
-            "agent_id": "excel_extractor",
-            "task_id": task_id,
-            "status_message": "Разбираю Excel",
-            "_activity_base": activity,
-        },
-    )
-    try:
-        session_id, filename = _load_excel(task)
-    except FileNotFoundError as exc:
-        result = {
-            "task_id": task_id,
-            "status": "needs_input",
-            "message": "Нет Excel-файла для извлечения",
-            "data": {},
-            "artifacts": {},
-            "issues": [{"type": "missing_excel", "detail": str(exc)}],
-            "assumptions": [],
-            "requests": [{"question_id": "Q-excel", "question": "Приложите workbook .xlsx", "options": []}],
-        }
-        _post_event(
-            case_id,
-            {
-                "kind": "agent.result",
-                "actor": "excel_extractor",
-                "agent_id": "excel_extractor",
-                "task_id": task_id,
-                "status": "needs_input",
-                "status_message": result["message"],
-                "_activity_base": activity,
-            },
-        )
-        return result
-    except Exception as exc:
-        _post_event(
-            case_id,
-            {
-                "kind": "agent.failed",
-                "actor": "excel_extractor",
-                "agent_id": "excel_extractor",
-                "task_id": task_id,
-                "status": "failed",
-                "status_message": str(exc)[:400],
-                "_activity_base": activity,
-            },
-        )
-        return {
-            "task_id": task_id,
-            "status": "failed",
-            "message": str(exc)[:400],
-            "data": {},
-            "artifacts": {},
-            "issues": [{"type": "excel_load_failed", "detail": str(exc)[:400]}],
-            "assumptions": [],
-            "requests": [],
-        }
-
-    with locked_session(session_id):
-        state = load_state(session_id)
-        detect = execute_tool(state, "detect_tables", {})
-        tables = []
-        raw = detect.get("result") if isinstance(detect, dict) else {}
-        if isinstance(raw, dict):
-            tables = raw.get("tables") or raw.get("detected_tables") or []
-        if not isinstance(tables, list):
-            tables = []
-        _post_event(
-            case_id,
-            {
-                "kind": "agent.progress",
-                "actor": "excel_extractor",
-                "agent_id": "excel_extractor",
-                "task_id": task_id,
-                "status_message": f"Нашёл таблиц: {len(tables)}. Читаю скважины и даты",
-                "_activity_base": activity,
-            },
-        )
-        rows_out: list[dict[str, Any]] = []
-        table_ids: list[str] = []
-        for table in tables[:8]:
-            if not isinstance(table, dict):
-                continue
-            table_id = str(table.get("table_id") or table.get("id") or "")
-            if not table_id:
-                continue
-            table_ids.append(table_id)
-            queried = execute_tool(state, "query_table", {"table_id": table_id, "limit": 10000})
-            payload = queried.get("result") if isinstance(queried, dict) else queried
-            preview: list[dict[str, Any]] = []
-            columns: list[str] = []
-            if isinstance(payload, dict):
-                columns, preview = _query_rows(state, session_id, payload)
-            rows_out.append(
-                {
-                    "table_id": table_id,
-                    "columns": columns,
-                    "preview": preview[:200],
-                    "row_count": len(preview),
-                    "records": preview,
-                }
-            )
-        snapshot = load_state(session_id)
-    facts = commissioning_facts(
-        [
-            {"columns": item.get("columns") or [], "preview": item.get("records") or item.get("preview") or []}
-            for item in rows_out
-        ]
-    )
-    for item in rows_out:
-        item.pop("records", None)
-    result = {
-        "task_id": task_id,
-        "status": "completed",
-        "message": (
-            f"Извлечено таблиц: {len(table_ids)} из {filename}"
-            + (f", фактов скважина+дата: {len(facts)}" if facts else "")
-        ),
-        "data": {
-            "excel_table": table_ids[0] if table_ids else None,
-            "table_ids": table_ids,
-            "normalized_rows": rows_out,
-            "facts": facts,
-            "session_id": session_id,
-            "file_name": filename,
-        },
-        "artifacts": {"excel_session": session_id},
-        "issues": [],
-        "assumptions": [],
-        "requests": [],
-    }
-    _post_event(
-        case_id,
-        {
-            "kind": "agent.result",
-            "actor": "excel_extractor",
-            "agent_id": "excel_extractor",
-            "task_id": task_id,
-            "status": "completed",
-            "status_message": result["message"],
-            "payload": {"tables": len(table_ids)},
-            "_activity_base": activity,
-        },
-    )
-    return result
+    opened = open_session(task)
+    if not opened.get("ok"):
+        result = opened.get("result")
+        if isinstance(result, dict):
+            return result
+        return _agent_result(str(task.get("task_id") or ""), "failed", "Excel session failed")
+    return extract_commissioning(str(opened["session_id"]))
 
 ===END_FILE===
 ===BEGIN_FILE===	excel-agent-tools/app/excel_tools.py	78496	utf8
@@ -3068,7 +3258,7 @@ def submit_clarification(ctx: dict[str, Any], args: dict[str, Any]) -> dict[str,
     return {"token": token, "status": "clarification_needed", "questions": sanitized}
 
 ===END_FILE===
-===BEGIN_FILE===	excel-agent-tools/app/main.py	18854	utf8
+===BEGIN_FILE===	excel-agent-tools/app/main.py	20879	utf8
 """HTTP API for the Excel tools service; intentionally contains no LLM calls."""
 from __future__ import annotations
 
@@ -3102,7 +3292,7 @@ from .tools import TOOL_SCHEMAS, execute_tool
 # Import modules for registration. These modules never invoke an LLM.
 from . import excel_tools as _excel_tools  # noqa: F401
 from . import state_tools as _state_tools  # noqa: F401
-from .agent_run import run_excel_agent
+from . import agent_run
 
 logging.basicConfig(level=os.getenv("LOG_LEVEL", "INFO").upper(), format="%(asctime)s %(levelname)s %(name)s %(message)s")
 logger = logging.getLogger(__name__)
@@ -3343,6 +3533,16 @@ def normalize_agent_tool_args(tool_name: str, args: dict[str, Any]) -> dict[str,
         elif isinstance(candidate, dict) and isinstance(candidate.get("table_id"), str):
             normalized["table_id"] = candidate["table_id"]
 
+    if tool_name in {"query_table", "detect_tables", "describe_table", "list_column_values"}:
+        for field in ("limit", "max_tables", "sample_rows"):
+            raw = normalized.get(field)
+            if isinstance(raw, str) and raw.strip().isdigit():
+                normalized[field] = int(raw.strip())
+            elif isinstance(raw, bool):
+                continue
+            elif isinstance(raw, float) and raw.is_integer():
+                normalized[field] = int(raw)
+
     if tool_name == "query_table":
         if "table_id" not in normalized and isinstance(normalized.get("table"), str):
             normalized["table_id"] = normalized["table"]
@@ -3414,7 +3614,11 @@ def call_agent_tool(tool_name: str, body: AgentToolRequest) -> dict[str, Any]:
     try:
         with locked_session(body.session_id):
             state = get_loaded_state(body.session_id)
-            return execute_tool(state, tool_name, normalize_agent_tool_args(tool_name, body.tool_args()))
+            result = execute_tool(state, tool_name, normalize_agent_tool_args(tool_name, body.tool_args()))
+        from .agent_run import emit_tool_progress
+
+        emit_tool_progress(state, tool_name, result)
+        return result
     except ValueError as error:
         detail = str(error)
         code = status.HTTP_404_NOT_FOUND if detail == "Session not found" else status.HTTP_422_UNPROCESSABLE_ENTITY
@@ -3470,9 +3674,46 @@ class AgentTaskBody(BaseModel):
     constraints: dict[str, Any] = Field(default_factory=dict)
 
 
+class SessionOnlyBody(BaseModel):
+    model_config = ConfigDict(extra="ignore")
+    session_id: str = Field(min_length=1, max_length=128)
+
+
+def _session_http_error(error: Exception) -> HTTPException:
+    detail = str(error)
+    code = status.HTTP_404_NOT_FOUND if detail == "Session not found" else status.HTTP_422_UNPROCESSABLE_ENTITY
+    return HTTPException(status_code=code, detail=detail)
+
+
+@app.post("/agent-tools/open_session", dependencies=[Depends(require_api_key)])
+def open_excel_session(body: AgentTaskBody) -> dict[str, Any]:
+    return agent_run.open_session(body.model_dump())
+
+
+@app.post("/agent-tools/extract_commissioning", dependencies=[Depends(require_api_key)])
+def extract_commissioning(body: SessionOnlyBody) -> dict[str, Any]:
+    try:
+        return agent_run.extract_commissioning(body.session_id)
+    except ValueError as error:
+        raise _session_http_error(error) from error
+
+
+@app.get("/sessions/{session_id}/result", dependencies=[Depends(require_api_key)])
+def get_session_result(session_id: str) -> dict[str, Any]:
+    try:
+        return agent_run.session_result(session_id)
+    except ValueError as error:
+        raise _session_http_error(error) from error
+
+
+@app.post("/agent-tools/{tool_name}", dependencies=[Depends(require_api_key)])
+def call_agent_tool_alias(tool_name: str, body: AgentToolRequest) -> dict[str, Any]:
+    return call_agent_tool(tool_name, body)
+
+
 @app.post("/agent/run", dependencies=[Depends(require_api_key)])
-def agent_run(body: AgentTaskBody) -> dict[str, Any]:
-    return run_excel_agent(body.model_dump())
+def agent_run_endpoint(body: AgentTaskBody) -> dict[str, Any]:
+    return agent_run.run_excel_agent(body.model_dump())
 
 ===END_FILE===
 ===BEGIN_FILE===	excel-agent-tools/app/sessions.py	7675	utf8
@@ -4953,7 +5194,7 @@ if __name__ == "__main__":
     main()
 
 ===END_FILE===
-===BEGIN_FILE===	mas-activity-service/app/cases_api.py	27929	utf8
+===BEGIN_FILE===	mas-activity-service/app/cases_api.py	29439	utf8
 """Case control-plane HTTP API (state, events, SSE, HITL, run)."""
 
 from __future__ import annotations
@@ -4963,6 +5204,7 @@ import json
 import logging
 import secrets
 import time
+from pathlib import Path
 from typing import Any
 
 from fastapi import APIRouter, BackgroundTasks, File, Form, HTTPException, Query, Request, UploadFile
@@ -4971,7 +5213,7 @@ from fastapi.responses import StreamingResponse
 from app import control_plane
 from app.contracts import AGENT_EVENT_KINDS, CaseAnswerIn, CaseEventIn, CaseNameIn, MAX_STEPS
 from app.orchestrator import OrchestratorError, invoke_orchestrator
-from app.schema_view import build_schema_model
+from app.schema_view import FINISHED_RESULT_TEXT, build_schema_model
 from app.settings import UNCONFIGURED_N8N, get_settings
 from app.task_binaries import load_task_binaries, save_task_binaries
 
@@ -5092,13 +5334,21 @@ def event_to_turn(event: dict[str, Any]) -> dict[str, Any]:
         turn_kind = "event"
     else:
         turn_kind = "status"
+    if kind == "case.finished":
+        summary = FINISHED_RESULT_TEXT
+        text = FINISHED_RESULT_TEXT
+        brief = FINISHED_RESULT_TEXT
+    else:
+        summary = event.get("status_message") or kind
+        text = event.get("status_message") or ""
+        brief = event.get("status_message") or ""
     return {
         "at": _iso(event.get("created_at")),
         "stage": kind,
         "status": kind,
-        "summary": event.get("status_message") or kind,
-        "text": event.get("status_message") or "",
-        "brief": event.get("status_message") or "",
+        "summary": summary,
+        "text": text,
+        "brief": brief,
         "from": {"role": left},
         "to": {"role": right or left},
         "from_role": left,
@@ -5166,6 +5416,21 @@ def _schedule_filename(artifacts: dict[str, Any]) -> str:
     return "schedule.inc"
 
 
+def _result_filename(artifacts: dict[str, Any]) -> str:
+    """Never advertise the baseline upload as the generated result."""
+    out = artifacts.get("schedule_out")
+    if isinstance(out, dict):
+        name = str(out.get("filename") or "").strip()
+        if name:
+            return name
+    src = Path(_schedule_filename(artifacts))
+    stem = src.stem.strip() or "schedule"
+    suffix = src.suffix if src.suffix.lower() in {".inc", ".data", ".sch", ".grdecl"} else ".inc"
+    if stem.lower().endswith("_result"):
+        return f"{stem}{suffix}"
+    return f"{stem}_result{suffix}"
+
+
 def _schedule_out_text(artifacts: dict[str, Any]) -> str | None:
     text = artifacts.get("schedule_out")
     if isinstance(text, str) and len(text.strip()) > 20:
@@ -5183,10 +5448,12 @@ def _schedule_artifact(case_id: str, artifacts: dict[str, Any]) -> dict[str, Any
         return None
     return {
         "available": True,
-        "filename": _schedule_filename(artifacts),
+        "filename": _result_filename(artifacts),
         "byte_length": len(text.encode("utf-8")),
         "inline": True,
         "download_path": f"/cases/{case_id}/schedule",
+        "kind": "result",
+        "label": "Скачать результат",
     }
 
 
@@ -5261,10 +5528,29 @@ def _new_case_id() -> str:
 
 
 async def _invoke_step(case_id: str) -> None:
+    await _invoke_action(case_id, action="step")
+
+
+async def _invoke_create(case_id: str) -> None:
+    await _invoke_action(case_id, action="create")
+
+
+async def _invoke_action(case_id: str, *, action: str) -> None:
     try:
-        await invoke_orchestrator({"case_id": case_id, "action": "step"}, timeout_s=180.0)
+        row = control_plane.get_case(case_id)
+        state = dict(row["state"] or {}) if row else {}
+        await invoke_orchestrator(
+            {
+                "case_id": case_id,
+                "action": action,
+                "task_description": str(state.get("goal") or ""),
+                "task_name": str(state.get("task_name") or ""),
+                "requested_by": "mas activity user",
+            },
+            timeout_s=180.0,
+        )
     except OrchestratorError as exc:
-        logger.error("orchestrator step failed case_id=%s: %s", case_id, exc)
+        logger.error("orchestrator %s failed case_id=%s: %s", action, case_id, exc)
         control_plane.append_event(
             case_id,
             kind="case.failed",
@@ -5361,7 +5647,7 @@ async def create_case(
         payload={"requested_by": requested_by, "files": [fname for _s, fname, _c, _m in uploads], "task_name": name},
     )
     control_plane.update_case(case_id, status="running")
-    background_tasks.add_task(_invoke_step, case_id)
+    background_tasks.add_task(_invoke_create, case_id)
     return {"ok": True, "case_id": case_id, "task_id": case_id, "status": "running", "task_name": name}
 
 
@@ -5675,7 +5961,7 @@ def get_schedule(case_id: str):
         raise HTTPException(status_code=404, detail="schedule not ready")
     from fastapi.responses import Response
 
-    filename = _schedule_filename(artifacts).replace('"', "")
+    filename = _result_filename(artifacts).replace('"', "")
     return Response(
         content=text.encode("utf-8"),
         media_type="text/plain; charset=utf-8",
@@ -11115,7 +11401,7 @@ async def probe_n8n_stack(
     }
 
 ===END_FILE===
-===BEGIN_FILE===	mas-activity-service/app/schema_view.py	13731	utf8
+===BEGIN_FILE===	mas-activity-service/app/schema_view.py	13998	utf8
 """Build scrubbable schema frames from control-plane events.
 
 The Activity UI mirrors this mapping in static/schema.js. Keep both aligned:
@@ -11157,6 +11443,7 @@ RETURN_EDGE = {
 }
 START_LABEL = "Постановка задачи"
 END_LABEL = "Результат"
+FINISHED_RESULT_TEXT = "Задача завершена. Загрузите результаты работы."
 KIND_LABELS = {
     "case.created": START_LABEL,
     "case.finished": END_LABEL,
@@ -11186,7 +11473,10 @@ def _files_from_state(state: dict[str, Any]) -> list[str]:
     artifacts = state.get("artifacts") if isinstance(state.get("artifacts"), dict) else {}
     names: list[str] = []
     seen: set[str] = set()
+    skip = {"schedule_out", "diff"}
     for key, item in artifacts.items():
+        if key in skip:
+            continue
         name = ""
         if isinstance(item, dict):
             name = _text(item.get("filename") or item.get("artifact_id") or key)
@@ -11196,6 +11486,13 @@ def _files_from_state(state: dict[str, Any]) -> list[str]:
             seen.add(name)
             names.append(name)
     return names
+
+
+def _human_status(message: Any) -> str:
+    msg = _text(message)
+    if not msg or msg.lower() in {"case.finished", "case.failed"}:
+        return ""
+    return msg
 
 
 def _result_text(payload: Any, status_message: str) -> str:
@@ -11411,13 +11708,13 @@ def _apply_event(graph: dict[str, Any], event: dict[str, Any]) -> None:
             if node["tone"] in { "active", "pending", "waiting" }:
                 node["tone"] = "done"
             node["bubble"] = None
-        _set_caption(graph, "orchestrator", status_message or graph.get("last_orch_prompt"))
+        _set_caption(graph, "orchestrator", _human_status(status_message) or graph.get("last_orch_prompt"))
         for edge in graph["edges"].values():
             if edge["tone"] == "active":
                 edge["tone"] = "done"
             edge["bubble"] = None
-        graph["output"]["prompt"] = status_message or graph.get("last_orch_prompt") or ""
-        graph["output"]["result"] = _result_text(payload, status_message)
+        graph["output"]["prompt"] = ""
+        graph["output"]["result"] = FINISHED_RESULT_TEXT
         _activate_node(graph, "output", None)
         _set_edge(graph, "orch_out", "active")
         graph["in_flight"] = None
@@ -12164,7 +12461,7 @@ echo Keep this window open. Press Ctrl+C to stop.
 exit /b %errorlevel%
 
 ===END_FILE===
-===BEGIN_FILE===	mas-activity-service/static/app.css	36045	utf8
+===BEGIN_FILE===	mas-activity-service/static/app.css	40097	utf8
 :root {
   --ink: #0f172a;
   --muted: #64748b;
@@ -13004,19 +13301,67 @@ a.btn.schedule-download:hover:not(:disabled),
 
 .gate-panel {
   margin: 0 clamp(1.25rem, 3vw, 3rem) 0.65rem;
-  padding: 0.5rem 0.85rem;
+  padding: 0.45rem 0.85rem;
   border: 1px solid var(--line);
   background: var(--panel);
   border-radius: var(--radius);
   flex: 0 0 auto;
+  min-height: 0;
+  overflow: hidden;
 }
 .gate-panel[hidden] { display: none !important; }
+.gate-panel[open] {
+  max-height: min(28vh, 12.5rem);
+  display: flex;
+  flex-direction: column;
+  overflow: hidden;
+}
+.workspace.mode-schema .gate-panel[open] {
+  max-height: min(22vh, 9.5rem);
+}
 .gate-head {
   display: flex;
   align-items: center;
   justify-content: space-between;
   gap: 0.5rem;
-  margin-bottom: 0.25rem;
+  cursor: pointer;
+  list-style: none;
+  margin: 0;
+}
+.gate-head::-webkit-details-marker { display: none; }
+.gate-preview {
+  flex: 1 1 auto;
+  min-width: 0;
+  font-size: 0.78rem;
+  line-height: 1.3;
+  color: var(--ink);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+.gate-panel[open] .gate-preview { display: none; }
+.gate-toggle {
+  flex: 0 0 auto;
+  font-family: var(--mono);
+  font-size: 0.62rem;
+  letter-spacing: 0.02em;
+  text-transform: uppercase;
+  color: var(--blue-700);
+  white-space: nowrap;
+}
+.gate-toggle::after { content: "Развернуть"; }
+.gate-panel[open] .gate-toggle::after { content: "Свернуть"; }
+.gate-body {
+  display: none;
+  min-height: 0;
+}
+.gate-panel[open] .gate-body {
+  display: block;
+  overflow-y: auto;
+  flex: 1 1 auto;
+  margin-top: 0.35rem;
+  padding-top: 0.2rem;
+  border-top: 1px solid var(--line);
 }
 .gate-badge {
   font-family: var(--mono);
@@ -13492,6 +13837,70 @@ a.btn.schedule-download:hover:not(:disabled),
   display: flex;
   flex-direction: column;
   gap: 0.15rem;
+  position: relative;
+}
+.schema-node.is-clipped {
+  cursor: zoom-in;
+}
+.schema-node.is-clipped:not(.is-peeking) .schema-node-body::after {
+  content: "";
+  position: absolute;
+  left: 0;
+  right: 0;
+  bottom: 0;
+  height: 1.35rem;
+  pointer-events: none;
+  background: linear-gradient(180deg, rgba(255, 255, 255, 0), rgba(255, 255, 255, 0.96) 72%);
+}
+.schema-node.is-peeking {
+  z-index: 6;
+  box-shadow: 0 0 0 3px rgba(0, 184, 240, 0.2);
+}
+.schema-peek {
+  position: fixed;
+  z-index: 40;
+  width: min(22rem, calc(100vw - 1.5rem));
+  max-height: min(22rem, calc(100vh - 1.5rem));
+  overflow: auto;
+  padding: 0.65rem 0.75rem 0.8rem;
+  background: #fff;
+  border: 1px solid var(--line);
+  border-radius: 10px;
+  box-shadow: 0 18px 40px rgba(0, 26, 87, 0.16);
+}
+.schema-peek[hidden] {
+  display: none !important;
+}
+.schema-peek-body {
+  display: flex;
+  flex-direction: column;
+  gap: 0.25rem;
+  margin-top: 0.2rem;
+}
+.schema-peek .schema-goal,
+.schema-peek .schema-prompt,
+.schema-peek .schema-caption {
+  display: block;
+  -webkit-line-clamp: unset;
+  line-clamp: unset;
+  overflow: visible;
+  word-break: break-word;
+}
+.schema-peek .schema-files {
+  margin-top: 0.25rem;
+}
+.schema-peek .schema-files li {
+  white-space: normal;
+  overflow: visible;
+  text-overflow: unset;
+  word-break: break-all;
+}
+.schema-download {
+  margin-top: auto;
+  align-self: flex-start;
+  max-width: 100%;
+  font-size: 0.72rem;
+  padding: 0.28rem 0.55rem;
 }
 .schema-status {
   display: inline-block;
@@ -13651,25 +14060,31 @@ a.btn.schedule-download:hover:not(:disabled),
 }
 .schema-timeline {
   display: grid;
-  grid-template-columns: auto minmax(0, 1fr) auto;
+  grid-template-columns: minmax(0, 1fr) auto;
   grid-template-areas:
-    "prev track next"
-    "copy copy count";
-  gap: 0.35rem 0.55rem;
+    "track nav"
+    "copy count";
+  gap: 0.35rem 0.75rem;
   align-items: center;
   padding: 0.7rem 1rem 0.9rem;
   border-top: 1px solid var(--line);
   background: var(--paper);
   flex: 0 0 auto;
 }
+.schema-nav {
+  grid-area: nav;
+  display: inline-flex;
+  align-items: center;
+  gap: 0.25rem;
+}
 .schema-step-btn {
-  width: 2rem;
-  height: 2rem;
+  width: 1.85rem;
+  height: 1.85rem;
   border: 1px solid var(--line);
   background: #fff;
   color: var(--blue-700);
   border-radius: 999px;
-  font-size: 1.1rem;
+  font-size: 1.05rem;
   line-height: 1;
   cursor: pointer;
 }
@@ -13677,8 +14092,6 @@ a.btn.schedule-download:hover:not(:disabled),
   opacity: 0.35;
   cursor: default;
 }
-#schemaPrev { grid-area: prev; }
-#schemaNext { grid-area: next; }
 .schema-track {
   grid-area: track;
   display: grid;
@@ -13690,25 +14103,96 @@ a.btn.schedule-download:hover:not(:disabled),
 .schema-track-label {
   font-family: var(--mono);
   font-size: 0.68rem;
+  font-weight: 700;
   letter-spacing: 0.01em;
   color: var(--blue-900);
   white-space: nowrap;
 }
 .schema-track-label.is-muted {
   color: var(--muted);
+  font-weight: 600;
 }
 #schemaRange {
+  --schema-progress: 0%;
   width: 100%;
-  accent-color: var(--blue-500);
+  height: 1.35rem;
+  margin: 0;
+  background: transparent;
   cursor: pointer;
+  -webkit-appearance: none;
+  appearance: none;
+}
+#schemaRange:disabled {
+  cursor: default;
+  opacity: 0.65;
+}
+#schemaRange:focus-visible {
+  outline: none;
+}
+#schemaRange:focus-visible::-webkit-slider-thumb {
+  box-shadow: 0 0 0 3px rgba(0, 184, 240, 0.28);
+}
+#schemaRange:focus-visible::-moz-range-thumb {
+  box-shadow: 0 0 0 3px rgba(0, 184, 240, 0.28);
+}
+#schemaRange::-webkit-slider-runnable-track {
+  height: 3px;
+  border-radius: 999px;
+  background: linear-gradient(
+    to right,
+    #94a3b8 0%,
+    #94a3b8 var(--schema-progress),
+    #e2e8f0 var(--schema-progress),
+    #e2e8f0 100%
+  );
+}
+#schemaRange::-webkit-slider-thumb {
+  -webkit-appearance: none;
+  appearance: none;
+  width: 14px;
+  height: 14px;
+  margin-top: -5.5px;
+  border-radius: 50%;
+  border: 2px solid #64748b;
+  background: var(--blue-500);
+  box-shadow: none;
+}
+#schemaRange::-moz-range-track {
+  height: 3px;
+  border: none;
+  border-radius: 999px;
+  background: #e2e8f0;
+}
+#schemaRange::-moz-range-progress {
+  height: 3px;
+  border: none;
+  border-radius: 999px;
+  background: #94a3b8;
+}
+#schemaRange::-moz-range-thumb {
+  width: 14px;
+  height: 14px;
+  border-radius: 50%;
+  border: 2px solid #64748b;
+  background: var(--blue-500);
+  box-shadow: none;
 }
 .schema-step-label {
   grid-area: copy;
-  margin: 0.1rem 0 0 2.4rem;
+  margin: 0.1rem 0 0;
+  padding: 0.28rem 0.55rem;
+  max-width: 100%;
+  width: fit-content;
   font-size: 0.8rem;
+  font-weight: 500;
   line-height: 1.35;
-  color: var(--ink);
+  color: #0284c7;
+  background: #f1f5f9;
+  border-radius: 6px;
   min-height: 1.2em;
+}
+.schema-step-label:empty {
+  display: none;
 }
 .schema-step-count {
   grid-area: count;
@@ -13717,6 +14201,7 @@ a.btn.schedule-download:hover:not(:disabled),
   color: var(--muted);
   justify-self: end;
   padding-right: 0.15rem;
+  white-space: nowrap;
 }
 
 @media (max-width: 900px) {
@@ -13797,7 +14282,7 @@ a.btn.schedule-download:hover:not(:disabled),
 }
 
 ===END_FILE===
-===BEGIN_FILE===	mas-activity-service/static/app.js	68861	utf8
+===BEGIN_FILE===	mas-activity-service/static/app.js	69309	utf8
 (() => {
   const thread = document.getElementById("thread");
   const empty = document.getElementById("empty");
@@ -13829,6 +14314,7 @@ a.btn.schedule-download:hover:not(:disabled),
   const gatePanel = document.getElementById("gatePanel");
   const gateKind = document.getElementById("gateKind");
   const gateMeta = document.getElementById("gateMeta");
+  const gatePreview = document.getElementById("gatePreview");
   const gateReason = document.getElementById("gateReason");
   const gateQuestions = document.getElementById("gateQuestions");
   const diffExpander = document.getElementById("diffExpander");
@@ -14503,6 +14989,7 @@ a.btn.schedule-download:hover:not(:disabled),
 
     if (!gateState) {
       gatePanel.hidden = true;
+      if ("open" in gatePanel) gatePanel.open = false;
       return;
     }
 
@@ -14522,7 +15009,8 @@ a.btn.schedule-download:hover:not(:disabled),
       version != null ? `v${version}` : gateState.expected_version != null ? `v${gateState.expected_version}` : null,
     ].filter(Boolean).join(" · ");
     const questions = Array.isArray(gateState.questions) ? gateState.questions : [];
-    gateReason.textContent = humanizeGateReason(gateState.reason, questions) || "Ожидается ваше решение.";
+    const reason = humanizeGateReason(gateState.reason, questions) || "Ожидается ваше решение.";
+    gateReason.textContent = reason;
     gateQuestions.innerHTML = "";
     const seenAsk = new Set();
     for (const q of questions) {
@@ -14532,6 +15020,12 @@ a.btn.schedule-download:hover:not(:disabled),
       const li = document.createElement("li");
       li.append(document.createTextNode(text));
       gateQuestions.append(li);
+    }
+    if (gatePreview) {
+      const extra = seenAsk.size > 1 ? ` · ${seenAsk.size} пунктов` : "";
+      const line = String(reason).replace(/\s+/g, " ").trim();
+      gatePreview.textContent = (line.length > 140 ? `${line.slice(0, 139)}…` : line) + extra;
+      gatePreview.title = reason;
     }
     if (armed) {
       composerHint.hidden = true;
@@ -14986,8 +15480,8 @@ a.btn.schedule-download:hover:not(:disabled),
     scheduleDownloadHead.hidden = false;
     scheduleDownloadHead.href = art.download_path;
     scheduleDownloadHead.setAttribute("download", name);
-    scheduleDownloadHead.textContent = `Скачать ${name}${kb}`;
-    scheduleDownloadHead.title = "Скачать текущий SCHEDULE .INC";
+    scheduleDownloadHead.textContent = `Скачать результат${kb}`;
+    scheduleDownloadHead.title = `Скачать результат SCHEDULE (${name})`;
   }
 
   function setScheduleArtifact(meta) {
@@ -15671,7 +16165,7 @@ a.btn.schedule-download:hover:not(:disabled),
 })();
 
 ===END_FILE===
-===BEGIN_FILE===	mas-activity-service/static/index.html	10313	utf8
+===BEGIN_FILE===	mas-activity-service/static/index.html	10603	utf8
 <!DOCTYPE html>
 <html lang="ru">
 <head>
@@ -15682,7 +16176,7 @@ a.btn.schedule-download:hover:not(:disabled),
   <link rel="preconnect" href="https://fonts.googleapis.com" />
   <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
   <link href="https://fonts.googleapis.com/css2?family=IBM+Plex+Sans:wght@400;500;600;700&family=IBM+Plex+Mono:wght@400;500&display=swap" rel="stylesheet" />
-  <link rel="stylesheet" href="/static/app.css?v=75" />
+  <link rel="stylesheet" href="/static/app.css?v=79" />
 </head>
 <body>
   <div class="atmosphere" aria-hidden="true"></div>
@@ -15766,15 +16260,17 @@ a.btn.schedule-download:hover:not(:disabled),
             <div class="schema-nodes" id="schemaNodes"></div>
           </div>
           <div class="schema-timeline" id="schemaTimeline">
-            <button type="button" class="schema-step-btn" id="schemaPrev" aria-label="Предыдущий шаг">‹</button>
             <div class="schema-track">
               <span class="schema-track-label" id="schemaStartLabel">Постановка задачи</span>
               <input id="schemaRange" type="range" min="0" max="0" value="0" aria-label="Шаг схемы" />
               <span class="schema-track-label" id="schemaEndLabel">Результат</span>
             </div>
-            <button type="button" class="schema-step-btn" id="schemaNext" aria-label="Следующий шаг">›</button>
+            <div class="schema-nav" role="group" aria-label="Шаги схемы">
+              <button type="button" class="schema-step-btn" id="schemaPrev" aria-label="Предыдущий шаг">‹</button>
+              <button type="button" class="schema-step-btn" id="schemaNext" aria-label="Следующий шаг">›</button>
+            </div>
             <p class="schema-step-label" id="schemaStepLabel"></p>
-            <span class="schema-step-count" id="schemaStepCount">0 / 0</span>
+            <span class="schema-step-count" id="schemaStepCount">шаг 0 / 0</span>
           </div>
         </section>
       </div>
@@ -15784,14 +16280,18 @@ a.btn.schedule-download:hover:not(:disabled),
         <div class="diff-body" id="diffBody"></div>
       </details>
 
-      <aside class="gate-panel" id="gatePanel" hidden>
-        <div class="gate-head">
+      <details class="gate-panel" id="gatePanel" hidden>
+        <summary class="gate-head">
           <span class="gate-badge" id="gateKind">needs_approval</span>
+          <span class="gate-preview" id="gatePreview"></span>
+          <span class="gate-toggle" aria-hidden="true"></span>
           <span class="gate-meta" id="gateMeta"></span>
+        </summary>
+        <div class="gate-body">
+          <p class="gate-reason" id="gateReason"></p>
+          <ul class="gate-questions" id="gateQuestions"></ul>
         </div>
-        <p class="gate-reason" id="gateReason"></p>
-        <ul class="gate-questions" id="gateQuestions"></ul>
-      </aside>
+      </details>
 
       <form class="composer start-composer" id="startComposer" autocomplete="off" hidden>
         <div class="composer-top">
@@ -15868,8 +16368,8 @@ a.btn.schedule-download:hover:not(:disabled),
     </section>
   </main>
 
-  <script src="/static/schema.js?v=6"></script>
-  <script src="/static/app.js?v=82"></script>
+  <script src="/static/schema.js?v=11"></script>
+  <script src="/static/app.js?v=84"></script>
 </body>
 </html>
 
@@ -17069,10 +17569,11 @@ body.knowledge-page:has(.flash:not([hidden])) .kb-stage {
 })();
 
 ===END_FILE===
-===BEGIN_FILE===	mas-activity-service/static/schema.js	31262	utf8
+===BEGIN_FILE===	mas-activity-service/static/schema.js	36432	utf8
 (() => {
   const START_LABEL = "Постановка задачи";
   const END_LABEL = "Результат";
+  const FINISHED_RESULT_TEXT = "Задача завершена. Загрузите результаты работы.";
   const NODE_KEYS = ["input", "orchestrator", "excel", "calc", "schedule", "user", "output"];
   const EDGE_KEYS = [
     "in_orch", "orch_out",
@@ -17176,6 +17677,10 @@ body.knowledge-page:has(.flash:not([hidden])) .kb-stage {
   let resizeTimer = 0;
   let lastSlipsKey = "";
   let lastPaintIndex = -1;
+  let scheduleDownload = null;
+  let peekEl = null;
+  let peekTimer = 0;
+  let peekSource = null;
 
   function text(value) {
     return String(value || "").trim();
@@ -17197,7 +17702,9 @@ body.knowledge-page:has(.flash:not([hidden])) .kb-stage {
     const artifacts = state && typeof state.artifacts === "object" ? state.artifacts : {};
     const names = [];
     const seen = new Set();
+    const skip = new Set(["schedule_out", "diff"]);
     for (const [key, item] of Object.entries(artifacts)) {
+      if (skip.has(key)) continue;
       let name = "";
       if (item && typeof item === "object") name = text(item.filename || item.artifact_id || key);
       else if (item) name = text(key);
@@ -17207,6 +17714,12 @@ body.knowledge-page:has(.flash:not([hidden])) .kb-stage {
       }
     }
     return names;
+  }
+
+  function humanStatus(message) {
+    const msg = text(message);
+    if (!msg || /^(case\.finished|case\.failed)$/i.test(msg)) return "";
+    return msg;
   }
 
   function resultText(payload, statusMessage) {
@@ -17412,13 +17925,13 @@ body.knowledge-page:has(.flash:not([hidden])) .kb-stage {
         if (item.tone === "active" || item.tone === "pending" || item.tone === "waiting") item.tone = "done";
         item.bubble = null;
       }
-      setCaption(graph, "orchestrator", statusMessage || graph.last_orch_prompt);
+      setCaption(graph, "orchestrator", humanStatus(statusMessage) || graph.last_orch_prompt);
       for (const edge of Object.values(graph.edges)) {
         if (edge.tone === "active") edge.tone = "done";
         edge.bubble = null;
       }
-      graph.output.prompt = statusMessage || graph.last_orch_prompt || "";
-      graph.output.result = resultText(payload, statusMessage);
+      graph.output.prompt = "";
+      graph.output.result = FINISHED_RESULT_TEXT;
       activateNode(graph, "output", null);
       setEdge(graph, "orch_out", "active");
       graph.in_flight = null;
@@ -17647,16 +18160,10 @@ body.knowledge-page:has(.flash:not([hidden])) .kb-stage {
     edgesEl.setAttribute("preserveAspectRatio", "none");
     edgesEl.innerHTML = `
       <defs>
-        <marker id="schemaArrowIdle" viewBox="0 0 10 10" refX="8.4" refY="5" markerWidth="5.2" markerHeight="5.2" markerUnits="userSpaceOnUse" orient="auto" overflow="visible">
-          <path d="M 0 0.8 L 10 5 L 0 9.2 Z" fill="#94a3b8"></path>
-        </marker>
-        <marker id="schemaArrowDone" viewBox="0 0 10 10" refX="8.4" refY="5" markerWidth="5.2" markerHeight="5.2" markerUnits="userSpaceOnUse" orient="auto" overflow="visible">
-          <path d="M 0 0.8 L 10 5 L 0 9.2 Z" fill="#0033A0"></path>
-        </marker>
-        <marker id="schemaArrowActive" viewBox="0 0 10 10" refX="8.4" refY="5" markerWidth="5.8" markerHeight="5.8" markerUnits="userSpaceOnUse" orient="auto" overflow="visible">
+        <marker id="schemaArrowActive" viewBox="0 0 10 10" refX="8.4" refY="5" markerWidth="2.3" markerHeight="2.3" markerUnits="userSpaceOnUse" orient="auto" overflow="visible">
           <path d="M 0 0.8 L 10 5 L 0 9.2 Z" fill="#00B8F0"></path>
         </marker>
-        <marker id="schemaArrowError" viewBox="0 0 10 10" refX="8.4" refY="5" markerWidth="5.8" markerHeight="5.8" markerUnits="userSpaceOnUse" orient="auto" overflow="visible">
+        <marker id="schemaArrowError" viewBox="0 0 10 10" refX="8.4" refY="5" markerWidth="2.3" markerHeight="2.3" markerUnits="userSpaceOnUse" orient="auto" overflow="visible">
           <path d="M 0 0.8 L 10 5 L 0 9.2 Z" fill="#F90D4B"></path>
         </marker>
       </defs>
@@ -17689,9 +18196,138 @@ body.knowledge-page:has(.flash:not([hidden])) .kb-stage {
       const body = document.createElement("div");
       body.className = "schema-node-body";
       node.append(kicker, title, body);
+      node.addEventListener("pointerenter", () => {
+        clearTimeout(peekTimer);
+        showPeek(node);
+      });
+      node.addEventListener("pointerleave", hidePeekSoon);
       nodesEl.appendChild(node);
     }
     built = true;
+    bindPeekChrome();
+  }
+
+  function overflowing(el) {
+    if (!el) return false;
+    return el.scrollHeight > el.clientHeight + 1 || el.scrollWidth > el.clientWidth + 1;
+  }
+
+  function markClippedNodes() {
+    if (!nodesEl || !root || root.hidden) return;
+    for (const node of nodesEl.querySelectorAll(".schema-node")) {
+      const body = node.querySelector(".schema-node-body");
+      let clipped = overflowing(body);
+      if (!clipped && body) {
+        for (const el of body.querySelectorAll(".schema-goal, .schema-prompt, .schema-caption, .schema-files li")) {
+          if (overflowing(el)) {
+            clipped = true;
+            break;
+          }
+        }
+      }
+      node.classList.toggle("is-clipped", clipped);
+      if (clipped) node.setAttribute("aria-haspopup", "true");
+      else node.removeAttribute("aria-haspopup");
+    }
+  }
+
+  function ensurePeek() {
+    if (peekEl) return peekEl;
+    peekEl = document.createElement("div");
+    peekEl.id = "schemaPeek";
+    peekEl.className = "schema-peek";
+    peekEl.hidden = true;
+    peekEl.setAttribute("role", "tooltip");
+    peekEl.addEventListener("pointerenter", () => clearTimeout(peekTimer));
+    peekEl.addEventListener("pointerleave", hidePeekSoon);
+    document.body.appendChild(peekEl);
+    return peekEl;
+  }
+
+  function hidePeek() {
+    clearTimeout(peekTimer);
+    if (peekSource) {
+      peekSource.classList.remove("is-peeking");
+      peekSource.removeAttribute("aria-expanded");
+    }
+    peekSource = null;
+    if (peekEl) {
+      peekEl.hidden = true;
+      peekEl.innerHTML = "";
+    }
+  }
+
+  function hidePeekSoon() {
+    clearTimeout(peekTimer);
+    peekTimer = setTimeout(() => {
+      if (peekEl && !peekEl.hidden && peekEl.matches(":hover")) return;
+      if (peekSource && peekSource.matches(":hover")) return;
+      hidePeek();
+    }, 140);
+  }
+
+  function placePeek(node) {
+    const peek = ensurePeek();
+    const gap = 10;
+    const box = node.getBoundingClientRect();
+    peek.style.left = "0px";
+    peek.style.top = "0px";
+    const width = peek.offsetWidth;
+    const height = peek.offsetHeight;
+    let left = box.right + gap;
+    let top = box.top;
+    if (left + width > window.innerWidth - gap) left = box.left - width - gap;
+    if (left < gap) left = Math.max(gap, (window.innerWidth - width) / 2);
+    if (top + height > window.innerHeight - gap) top = window.innerHeight - height - gap;
+    if (top < gap) top = gap;
+    peek.style.left = `${Math.round(left)}px`;
+    peek.style.top = `${Math.round(top)}px`;
+  }
+
+  function showPeek(node) {
+    if (!node || !node.classList.contains("is-clipped")) return;
+    const body = node.querySelector(".schema-node-body");
+    if (!body) return;
+    if (peekSource === node && peekEl && !peekEl.hidden) {
+      placePeek(node);
+      return;
+    }
+    const peek = ensurePeek();
+    peek.innerHTML = "";
+    const kicker = node.querySelector(".schema-kicker");
+    const title = node.querySelector("h2");
+    if (kicker) peek.append(kicker.cloneNode(true));
+    if (title) peek.append(title.cloneNode(true));
+    const clone = body.cloneNode(true);
+    clone.className = "schema-peek-body";
+    peek.append(clone);
+    if (peekSource && peekSource !== node) {
+      peekSource.classList.remove("is-peeking");
+      peekSource.removeAttribute("aria-expanded");
+    }
+    peek.hidden = false;
+    peekSource = node;
+    node.classList.add("is-peeking");
+    node.setAttribute("aria-expanded", "true");
+    placePeek(node);
+  }
+
+  function bindPeekChrome() {
+    document.addEventListener("keydown", (ev) => {
+      if (ev.key === "Escape") hidePeek();
+    });
+    document.addEventListener("pointerdown", (ev) => {
+      if (!peekEl || peekEl.hidden) return;
+      const target = ev.target;
+      if (peekEl.contains(target) || (peekSource && peekSource.contains(target))) return;
+      hidePeek();
+    });
+    if (root) {
+      new MutationObserver(() => {
+        if (root.hidden) hidePeek();
+        else requestAnimationFrame(markClippedNodes);
+      }).observe(root, { attributes: true, attributeFilter: ["hidden"] });
+    }
   }
 
   function bubbleEl(kind, textValue, x, y, from, animate) {
@@ -17721,6 +18357,8 @@ body.knowledge-page:has(.flash:not([hidden])) .kb-stage {
       files,
       frame.output?.result || "",
       frame.output?.prompt || "",
+      scheduleDownload?.download_path || "",
+      complete ? "1" : "0",
       ...nodes,
       ...edges,
     ].join("\n");
@@ -17729,12 +18367,15 @@ body.knowledge-page:has(.flash:not([hidden])) .kb-stage {
   function paintChrome(frame) {
     if (stepEl) stepEl.textContent = frame?.label || "";
     if (countEl) {
-      countEl.textContent = frames.length ? `${index + 1} / ${frames.length}` : "0 / 0";
+      countEl.textContent = frames.length ? `шаг ${index + 1} / ${frames.length}` : "шаг 0 / 0";
     }
     if (rangeEl) {
       rangeEl.max = String(Math.max(frames.length - 1, 0));
       rangeEl.value = String(index);
       rangeEl.disabled = frames.length < 2;
+      const max = Math.max(frames.length - 1, 1);
+      const pct = frames.length < 2 ? 0 : (index / max) * 100;
+      rangeEl.style.setProperty("--schema-progress", `${pct}%`);
     }
     if (prevBtn) prevBtn.disabled = index <= 0;
     if (nextBtn) nextBtn.disabled = index >= frames.length - 1;
@@ -17772,6 +18413,7 @@ body.knowledge-page:has(.flash:not([hidden])) .kb-stage {
           for (const name of files) {
             const li = document.createElement("li");
             li.textContent = name;
+            li.title = name;
             list.append(li);
           }
           body.append(list);
@@ -17786,6 +18428,16 @@ body.knowledge-page:has(.flash:not([hidden])) .kb-stage {
           prompt.className = "schema-prompt";
           prompt.textContent = frame.output.prompt;
           body.append(prompt);
+        }
+        const showDl = scheduleDownload && ["active", "done", "error"].includes(spec.tone);
+        if (showDl) {
+          const link = document.createElement("a");
+          link.className = "schema-download schedule-download";
+          link.href = scheduleDownload.download_path;
+          link.setAttribute("download", scheduleDownload.filename || "schedule_result.inc");
+          link.textContent = "Скачать результат";
+          link.title = `Скачать результат SCHEDULE (${scheduleDownload.filename || "schedule_result.inc"})`;
+          body.append(link);
         }
       } else {
         const status = document.createElement("span");
@@ -17802,9 +18454,6 @@ body.knowledge-page:has(.flash:not([hidden])) .kb-stage {
       }
     }
     const marker = {
-      idle: "url(#schemaArrowIdle)",
-      pending: "url(#schemaArrowIdle)",
-      done: "url(#schemaArrowDone)",
       active: "url(#schemaArrowActive)",
       error: "url(#schemaArrowError)",
     };
@@ -17817,7 +18466,8 @@ body.knowledge-page:has(.flash:not([hidden])) .kb-stage {
       path.setAttribute("d", visual.dir === "back" ? geo.dRev : geo.d);
       path.setAttribute("data-dir", visual.dir);
       path.setAttribute("class", `schema-edge-path is-${tone}${visual.dir === "back" ? " is-back" : ""}`);
-      path.setAttribute("marker-end", marker[tone] || marker.idle);
+      if (marker[tone]) path.setAttribute("marker-end", marker[tone]);
+      else path.removeAttribute("marker-end");
     }
     stage.querySelectorAll(".schema-slip").forEach((el) => el.remove());
     for (const id of DRAW_EDGE_KEYS) {
@@ -17829,6 +18479,8 @@ body.knowledge-page:has(.flash:not([hidden])) .kb-stage {
       stage.append(bubbleEl("edge", visual.bubble, mid.x, mid.y, "edge", animateSlips));
     }
     paintChrome(frame);
+    hidePeek();
+    requestAnimationFrame(markClippedNodes);
   }
 
   function showIndex(next, { user = false } = {}) {
@@ -17849,6 +18501,8 @@ body.knowledge-page:has(.flash:not([hidden])) .kb-stage {
       state.artifacts = Object.fromEntries(attached.map((name, i) => [`file_${i}`, { filename: name }]));
     }
     const events = eventsFromFeed(feed);
+    const art = feed.schedule_artifact;
+    scheduleDownload = art && typeof art === "object" && art.available && art.download_path ? art : null;
     const prevIndex = index;
     const prevLen = frames.length;
     frames = buildSchemaFrames(events, state);
@@ -17865,8 +18519,10 @@ body.knowledge-page:has(.flash:not([hidden])) .kb-stage {
     index = 0;
     followLive = true;
     complete = false;
+    scheduleDownload = null;
     lastSlipsKey = "";
     lastPaintIndex = -1;
+    hidePeek();
     renderFrame(frames[0]);
   }
 
@@ -17910,7 +18566,7 @@ body.knowledge-page:has(.flash:not([hidden])) .kb-stage {
 # n8n package
 
 - Workflows: [`workflows/`](workflows/) — `core/` live MAS + `support/` templates + `retired/` archive (not imported).
-- Import contract: [`import-manifest.json`](import-manifest.json) (`full_clean_import_set` = 13 JSON, target **2.30.8**).
+- Import contract: [`import-manifest.json`](import-manifest.json) (`full_clean_import_set` = 14 JSON, target **2.30.8**).
 - Data Tables CSV: [`data-tables/`](data-tables/) — lean `engineering_orchestrator_tasks_v1` + `mas_trace_events_v1`.
 - Generators: [`templates/`](templates/).
 - Code smokes: [`tests/`](tests/) (~187 scenarios).
@@ -18186,7 +18842,7 @@ task_id,version,status,risk_class,request_json,runtime_json,plan_json,packet_jso
 event_id,trace_id,task_id,at,stage,event_type,actor,status,summary,details_json
 
 ===END_FILE===
-===BEGIN_FILE===	n8n/import-manifest.json	16996	utf8
+===BEGIN_FILE===	n8n/import-manifest.json	17303	utf8
 {
   "contract": "n8n_ui_import_manifest",
   "contract_version": "1.0",
@@ -18196,6 +18852,7 @@ event_id,trace_id,task_id,at,stage,event_type,actor,status,summary,details_json
     "workflows/core/tnavigator-schedule-knowledge-ingestion.workflow.json",
     "workflows/core/tnavigator-schedule-hybrid-retrieval.workflow.json",
     "workflows/core/schedule-builder-agent.workflow.json",
+    "workflows/core/excel-extractor-agent.workflow.json",
     "workflows/core/mas-error-traces.workflow.json",
     "workflows/core/mas-ensure-control-plane.workflow.json",
     "workflows/core/mas-orchestrator.workflow.json",
@@ -18211,6 +18868,7 @@ event_id,trace_id,task_id,at,stage,event_type,actor,status,summary,details_json
     "workflows/core/tnavigator-schedule-knowledge-ingestion.workflow.json",
     "workflows/core/tnavigator-schedule-hybrid-retrieval.workflow.json",
     "workflows/core/schedule-builder-agent.workflow.json",
+    "workflows/core/excel-extractor-agent.workflow.json",
     "workflows/core/mas-error-traces.workflow.json",
     "workflows/core/mas-ensure-control-plane.workflow.json",
     "workflows/core/mas-orchestrator.workflow.json",
@@ -18347,6 +19005,12 @@ event_id,trace_id,task_id,at,stage,event_type,actor,status,summary,details_json
       "node": "Call CAS persist — routing gate",
       "target": "CAS — Persist Task State",
       "placeholder": "REPLACE_CAS_PERSIST_IN_UI"
+    },
+    {
+      "owner": "Orchestrator — MAS",
+      "node": "Call Excel Extractor",
+      "target": "Agent — Excel Extractor",
+      "placeholder": "REPLACE_EXCEL_EXTRACTION_AGENT_IN_UI"
     },
     {
       "owner": "Orchestrator — Engineering MAS",
@@ -23241,707 +23905,3 @@ event_id,trace_id,task_id,at,stage,event_type,actor,status,summary,details_json
             "semantics": {
               "period": "FORECAST",
               "clock": {
-                "uses_current": true
-              },
-              "references": [
-                {
-                  "entity_type": "group",
-                  "id_field": "GROUP",
-                  "required": true
-                }
-              ],
-              "state_assignments": [
-                {
-                  "namespace": "group-control",
-                  "entity_type": "group",
-                  "entity_field": "GROUP",
-                  "key_fields": [
-                    "CONTROL"
-                  ],
-                  "value_fields": [
-                    "ORAT",
-                    "WRAT",
-                    "GRAT",
-                    "LRAT",
-                    "EXCEED_ACTION",
-                    "EXCEED_PARENT"
-                  ]
-                }
-              ],
-              "numeric_constraints": [
-                {
-                  "field": "ORAT",
-                  "min": 0
-                },
-                {
-                  "field": "WRAT",
-                  "min": 0
-                },
-                {
-                  "field": "GRAT",
-                  "min": 0
-                },
-                {
-                  "field": "LRAT",
-                  "min": 0
-                }
-              ]
-            }
-          },
-          {
-            "schema_id": "expert:GCONPROD:lrat",
-            "schema_revision": "1",
-            "keyword": "GCONPROD",
-            "variant": "lrat",
-            "citation": {
-              "document_id": "tnav-user-manual-russian",
-              "document_revision": "19.4",
-              "page": "12.20.89 / 1928-1932",
-              "heading": "GCONPROD",
-              "source_hash": "sha256:858bbd62b39f9f8ae74ec09a9fbbd5b4580fd41977f2677aa3bbb1ab2531bf50"
-            },
-            "parser": {
-              "token_width": 19,
-              "allow_trailing_omission": true,
-              "allow_unquoted_strings": true
-            },
-            "fields": [
-              {
-                "name": "GROUP",
-                "position": 1,
-                "type": "string",
-                "required": true,
-                "quote": "single"
-              },
-              {
-                "name": "CONTROL",
-                "position": 2,
-                "type": "string",
-                "required": true,
-                "enum": [
-                  "LRAT"
-                ]
-              },
-              {
-                "name": "ORAT",
-                "position": 3,
-                "type": "number",
-                "required": false,
-                "default_allowed": true
-              },
-              {
-                "name": "WRAT",
-                "position": 4,
-                "type": "number",
-                "required": false,
-                "default_allowed": true
-              },
-              {
-                "name": "GRAT",
-                "position": 5,
-                "type": "number",
-                "required": false,
-                "default_allowed": true
-              },
-              {
-                "name": "LRAT",
-                "position": 6,
-                "type": "number",
-                "required": true
-              },
-              {
-                "name": "EXCEED_ACTION",
-                "position": 7,
-                "type": "string",
-                "required": true,
-                "enum": [
-                  "NONE",
-                  "CON",
-                  "CON+",
-                  "+CON",
-                  "WELL",
-                  "RATE",
-                  "TARG"
-                ]
-              },
-              {
-                "name": "EXCEED_PARENT",
-                "position": 8,
-                "type": "string",
-                "required": true,
-                "enum": [
-                  "YES",
-                  "NO"
-                ]
-              }
-            ],
-            "layout": {
-              "newline": "LF",
-              "indent": "  ",
-              "delimiter": "SPACE",
-              "record_terminator": "SLASH",
-              "block_terminator": "SLASH_LINE"
-            },
-            "semantics": {
-              "period": "FORECAST",
-              "clock": {
-                "uses_current": true
-              },
-              "references": [
-                {
-                  "entity_type": "group",
-                  "id_field": "GROUP",
-                  "required": true
-                }
-              ],
-              "state_assignments": [
-                {
-                  "namespace": "group-control",
-                  "entity_type": "group",
-                  "entity_field": "GROUP",
-                  "key_fields": [
-                    "CONTROL"
-                  ],
-                  "value_fields": [
-                    "ORAT",
-                    "WRAT",
-                    "GRAT",
-                    "LRAT",
-                    "EXCEED_ACTION",
-                    "EXCEED_PARENT"
-                  ]
-                }
-              ],
-              "numeric_constraints": [
-                {
-                  "field": "ORAT",
-                  "min": 0
-                },
-                {
-                  "field": "WRAT",
-                  "min": 0
-                },
-                {
-                  "field": "GRAT",
-                  "min": 0
-                },
-                {
-                  "field": "LRAT",
-                  "min": 0
-                }
-              ]
-            }
-          },
-          {
-            "schema_id": "expert:GCONPROD:resv",
-            "schema_revision": "1",
-            "keyword": "GCONPROD",
-            "variant": "resv",
-            "citation": {
-              "document_id": "tnav-user-manual-russian",
-              "document_revision": "19.4",
-              "page": "12.20.89 / 1928-1932",
-              "heading": "GCONPROD",
-              "source_hash": "sha256:858bbd62b39f9f8ae74ec09a9fbbd5b4580fd41977f2677aa3bbb1ab2531bf50"
-            },
-            "parser": {
-              "token_width": 19,
-              "allow_trailing_omission": true,
-              "allow_unquoted_strings": true
-            },
-            "fields": [
-              {
-                "name": "GROUP",
-                "position": 1,
-                "type": "string",
-                "required": true,
-                "quote": "single"
-              },
-              {
-                "name": "CONTROL",
-                "position": 2,
-                "type": "string",
-                "required": true,
-                "enum": [
-                  "RESV"
-                ]
-              },
-              {
-                "name": "ORAT",
-                "position": 3,
-                "type": "number",
-                "required": false,
-                "default_allowed": true
-              },
-              {
-                "name": "WRAT",
-                "position": 4,
-                "type": "number",
-                "required": false,
-                "default_allowed": true
-              },
-              {
-                "name": "GRAT",
-                "position": 5,
-                "type": "number",
-                "required": false,
-                "default_allowed": true
-              },
-              {
-                "name": "LRAT",
-                "position": 6,
-                "type": "number",
-                "required": false,
-                "default_allowed": true
-              },
-              {
-                "name": "EXCEED_ACTION",
-                "position": 7,
-                "type": "string",
-                "required": false,
-                "enum": [
-                  "NONE",
-                  "CON",
-                  "CON+",
-                  "+CON",
-                  "WELL",
-                  "RATE",
-                  "TARG"
-                ],
-                "default_allowed": true
-              },
-              {
-                "name": "EXCEED_PARENT",
-                "position": 8,
-                "type": "string",
-                "required": false,
-                "default_allowed": true,
-                "enum": [
-                  "YES",
-                  "NO"
-                ]
-              },
-              {
-                "name": "GUIDE_RATE",
-                "position": 9,
-                "type": "number",
-                "required": false,
-                "default_allowed": true
-              },
-              {
-                "name": "GUIDE_PHASE",
-                "position": 10,
-                "type": "string",
-                "required": false,
-                "default_allowed": true,
-                "enum": [
-                  "OIL",
-                  "WAT",
-                  "GAS",
-                  "LIQ",
-                  "WGA",
-                  "CVAL",
-                  "POTN",
-                  "FORM"
-                ]
-              },
-              {
-                "name": "EXCEED_WRAT",
-                "position": 11,
-                "type": "string",
-                "required": false,
-                "enum": [
-                  "NONE",
-                  "CON",
-                  "CON+",
-                  "+CON",
-                  "WELL",
-                  "RATE",
-                  "TARG"
-                ],
-                "default_allowed": true
-              },
-              {
-                "name": "EXCEED_GRAT",
-                "position": 12,
-                "type": "string",
-                "required": false,
-                "enum": [
-                  "NONE",
-                  "CON",
-                  "CON+",
-                  "+CON",
-                  "WELL",
-                  "RATE",
-                  "TARG"
-                ],
-                "default_allowed": true
-              },
-              {
-                "name": "EXCEED_LRAT",
-                "position": 13,
-                "type": "string",
-                "required": false,
-                "enum": [
-                  "NONE",
-                  "CON",
-                  "CON+",
-                  "+CON",
-                  "WELL",
-                  "RATE",
-                  "TARG"
-                ],
-                "default_allowed": true
-              },
-              {
-                "name": "RESV",
-                "position": 14,
-                "type": "number",
-                "required": true
-              }
-            ],
-            "layout": {
-              "newline": "LF",
-              "indent": "  ",
-              "delimiter": "SPACE",
-              "record_terminator": "SLASH",
-              "block_terminator": "SLASH_LINE"
-            },
-            "semantics": {
-              "period": "FORECAST",
-              "clock": {
-                "uses_current": true
-              },
-              "references": [
-                {
-                  "entity_type": "group",
-                  "id_field": "GROUP",
-                  "required": true
-                }
-              ],
-              "state_assignments": [
-                {
-                  "namespace": "group-control",
-                  "entity_type": "group",
-                  "entity_field": "GROUP",
-                  "key_fields": [
-                    "CONTROL"
-                  ],
-                  "value_fields": [
-                    "RESV",
-                    "EXCEED_ACTION",
-                    "EXCEED_PARENT"
-                  ]
-                }
-              ],
-              "numeric_constraints": [
-                {
-                  "field": "RESV",
-                  "min": 0
-                }
-              ]
-            }
-          },
-          {
-            "schema_id": "expert:GCONPROD:none",
-            "schema_revision": "1",
-            "keyword": "GCONPROD",
-            "variant": "none",
-            "citation": {
-              "document_id": "tnav-user-manual-russian",
-              "document_revision": "19.4",
-              "page": "12.20.89 / 1928-1932",
-              "heading": "GCONPROD",
-              "source_hash": "sha256:858bbd62b39f9f8ae74ec09a9fbbd5b4580fd41977f2677aa3bbb1ab2531bf50"
-            },
-            "parser": {
-              "token_width": 19,
-              "allow_trailing_omission": true,
-              "allow_unquoted_strings": true
-            },
-            "fields": [
-              {
-                "name": "GROUP",
-                "position": 1,
-                "type": "string",
-                "required": true,
-                "quote": "single"
-              },
-              {
-                "name": "CONTROL",
-                "position": 2,
-                "type": "string",
-                "required": true,
-                "enum": [
-                  "NONE"
-                ]
-              }
-            ],
-            "layout": {
-              "newline": "LF",
-              "indent": "  ",
-              "delimiter": "SPACE",
-              "record_terminator": "SLASH",
-              "block_terminator": "SLASH_LINE"
-            },
-            "semantics": {
-              "period": "FORECAST",
-              "clock": {
-                "uses_current": true
-              },
-              "references": [
-                {
-                  "entity_type": "group",
-                  "id_field": "GROUP",
-                  "required": true
-                }
-              ],
-              "state_assignments": [
-                {
-                  "namespace": "group-control",
-                  "entity_type": "group",
-                  "entity_field": "GROUP",
-                  "key_fields": [
-                    "CONTROL"
-                  ],
-                  "value_fields": [
-                    "CONTROL"
-                  ]
-                }
-              ],
-              "numeric_constraints": []
-            }
-          },
-          {
-            "schema_id": "expert:GCONPROD:fld",
-            "schema_revision": "1",
-            "keyword": "GCONPROD",
-            "variant": "fld",
-            "citation": {
-              "document_id": "tnav-user-manual-russian",
-              "document_revision": "19.4",
-              "page": "12.20.89 / 1928-1932",
-              "heading": "GCONPROD",
-              "source_hash": "sha256:858bbd62b39f9f8ae74ec09a9fbbd5b4580fd41977f2677aa3bbb1ab2531bf50"
-            },
-            "parser": {
-              "token_width": 19,
-              "allow_trailing_omission": true,
-              "allow_unquoted_strings": true
-            },
-            "fields": [
-              {
-                "name": "GROUP",
-                "position": 1,
-                "type": "string",
-                "required": true,
-                "quote": "single"
-              },
-              {
-                "name": "CONTROL",
-                "position": 2,
-                "type": "string",
-                "required": true,
-                "enum": [
-                  "FLD"
-                ]
-              },
-              {
-                "name": "ORAT",
-                "position": 3,
-                "type": "number",
-                "required": false,
-                "default_allowed": true
-              },
-              {
-                "name": "WRAT",
-                "position": 4,
-                "type": "number",
-                "required": false,
-                "default_allowed": true
-              },
-              {
-                "name": "GRAT",
-                "position": 5,
-                "type": "number",
-                "required": false,
-                "default_allowed": true
-              },
-              {
-                "name": "LRAT",
-                "position": 6,
-                "type": "number",
-                "required": false,
-                "default_allowed": true
-              },
-              {
-                "name": "EXCEED_ACTION",
-                "position": 7,
-                "type": "string",
-                "required": false,
-                "enum": [
-                  "NONE",
-                  "CON",
-                  "CON+",
-                  "+CON",
-                  "WELL",
-                  "RATE",
-                  "TARG"
-                ],
-                "default_allowed": true
-              },
-              {
-                "name": "EXCEED_PARENT",
-                "position": 8,
-                "type": "string",
-                "required": false,
-                "default_allowed": true,
-                "enum": [
-                  "YES",
-                  "NO"
-                ]
-              },
-              {
-                "name": "GUIDE_RATE",
-                "position": 9,
-                "type": "number",
-                "required": false,
-                "default_allowed": true
-              },
-              {
-                "name": "GUIDE_PHASE",
-                "position": 10,
-                "type": "string",
-                "required": false,
-                "default_allowed": true,
-                "enum": [
-                  "OIL",
-                  "WAT",
-                  "GAS",
-                  "LIQ",
-                  "WGA",
-                  "CVAL",
-                  "POTN",
-                  "FORM"
-                ]
-              }
-            ],
-            "layout": {
-              "newline": "LF",
-              "indent": "  ",
-              "delimiter": "SPACE",
-              "record_terminator": "SLASH",
-              "block_terminator": "SLASH_LINE"
-            },
-            "semantics": {
-              "period": "FORECAST",
-              "clock": {
-                "uses_current": true
-              },
-              "references": [
-                {
-                  "entity_type": "group",
-                  "id_field": "GROUP",
-                  "required": true
-                }
-              ],
-              "state_assignments": [
-                {
-                  "namespace": "group-control",
-                  "entity_type": "group",
-                  "entity_field": "GROUP",
-                  "key_fields": [
-                    "CONTROL"
-                  ],
-                  "value_fields": [
-                    "GUIDE_RATE",
-                    "GUIDE_PHASE",
-                    "EXCEED_ACTION",
-                    "EXCEED_PARENT"
-                  ]
-                }
-              ],
-              "numeric_constraints": [
-                {
-                  "field": "GUIDE_RATE",
-                  "min": 0
-                }
-              ]
-            }
-          }
-        ]
-      },
-      "source_hash": "sha256:858bbd62b39f9f8ae74ec09a9fbbd5b4580fd41977f2677aa3bbb1ab2531bf50",
-      "page": "12.20.89 GCONPROD (с. 1928–1932); GUIDERAT 12.20.90; WCONPROD GRUP 12.20.42; теория 2.14.2 / 5.6.7",
-      "heading": "GCONPROD — ограничения дебитов групп скважин",
-      "id": "gconprod-group-forecast-v1",
-      "metadata": {
-        "document_id": "gconprod-group-forecast-v1",
-        "document_revision": "2",
-        "source_hash": "sha256:858bbd62b39f9f8ae74ec09a9fbbd5b4580fd41977f2677aa3bbb1ab2531bf50",
-        "page": "12.20.89 / 1928-1932; теория 2.14.2 / 5.6.7",
-        "heading": "GCONPROD",
-        "target_base": "schedule_mvp",
-        "knowledge_type": "keyword_instruction",
-        "knowledge_id": "gconprod-group-forecast-v1",
-        "revision": "2",
-        "status": "active",
-        "access_scope": "petroleum-engineering",
-        "author": "department-hydrodynamic-expert",
-        "approved_by": "department-hydrodynamic-expert",
-        "keyword_families": [
-          "GCONPROD"
-        ],
-        "topics": [
-          "групповой контроль добычи",
-          "GCONPROD",
-          "ORAT WRAT GRAT LRAT группы",
-          "FIELD лимит",
-          "FORECAST",
-          "RATE TARG"
-        ],
-        "task_patterns": [
-          "задать групповой лимит нефти",
-          "GCONPROD ORAT",
-          "лимит жидкости группы LRAT",
-          "контроль FIELD",
-          "групповой RATE при превышении",
-          "GCONPROD после GRUPTREE"
-        ]
-      }
-    },
-    {
-      "contract": "schedule_knowledge_block",
-      "contract_version": "1.0",
-      "target_base": "schedule_mvp",
-      "knowledge_type": "keyword_instruction",
-      "knowledge_id": "branprop-network-branch-v1",
-      "revision": "2",
-      "title": "BRANPROP — ветви расширенной сети",
-      "keywords": [
-        "BRANPROP"
-      ],
-      "topics": [
-        "расширенная сеть",
-        "BRANPROP",
-        "ветвь NETWORK",
-        "VFP ветви",
-        "штуцер 9999",
-        "перед NODEPROP"
-      ],
-      "task_patterns": [
-        "задать ветвь сети BRANPROP",
-        "подключить группу к FIELD через сеть",
-        "VFP на ветви сети",
-        "ветвь без потери давления 9999",
-        "закрыть ветвь сети",
-        "сеть после GRUPTREE"
-      ],
-      "simulator_family": [
-        "E100",
-        "E300",
-        "tNavigator"
-      ],
-      "status": "active",
-      "author": "department-hydrodynamic-expert",
-      "access_scope": "petroleum-engineering",

@@ -357,7 +357,7 @@ networks:
   ingress: null
 
 ===END_FILE===
-===BEGIN_FILE===	docs.md	29271	utf8
+===BEGIN_FILE===	docs.md	29471	utf8
 # Руководство по развёртыванию Petroleum Engineering MAS (n8n 2.30.8)
 
 Это основной и единственный документ по развертыванию мультиагентной системы. Здесь описан пошаговый процесс: что нужно запустить, как настроить и в каком порядке это делать.
@@ -505,15 +505,16 @@ start-windows.bat
 
 ### Шаг 1. Импорт Workflows в n8n
 
-Зайдите в UI n8n, выберите "Import from File" и загрузите файлы из `n8n/import-manifest.json` → `runtime_import_order`. **Ничего пока не активируйте!** Живой MAS-контур в `n8n/workflows/core/` (Excel/Math идут HTTP FastAPI, не n8n-агентами):
+Зайдите в UI n8n, выберите "Import from File" и загрузите файлы из `n8n/import-manifest.json` → `runtime_import_order`. **Ничего пока не активируйте!** Живой MAS-контур в `n8n/workflows/core/` (Excel Extractor и Schedule Builder — n8n AI + FastAPI tools; Math — HTTP FastAPI):
 
 1. `n8n/workflows/core/tnavigator-schedule-knowledge-ingestion.workflow.json`
 2. `n8n/workflows/core/tnavigator-schedule-hybrid-retrieval.workflow.json`
 3. `n8n/workflows/core/schedule-builder-agent.workflow.json`
-4. `n8n/workflows/core/mas-error-traces.workflow.json`
-5. `n8n/workflows/core/mas-ensure-control-plane.workflow.json`
-6. `n8n/workflows/core/mas-orchestrator.workflow.json`
-7. `n8n/workflows/core/mas-deployment-health-check.workflow.json`
+4. `n8n/workflows/core/excel-extractor-agent.workflow.json`
+5. `n8n/workflows/core/mas-error-traces.workflow.json`
+6. `n8n/workflows/core/mas-ensure-control-plane.workflow.json`
+7. `n8n/workflows/core/mas-orchestrator.workflow.json`
+8. `n8n/workflows/core/mas-deployment-health-check.workflow.json`
 
 Архив (не импортировать): `n8n/workflows/retired/` — Engineering MAS, CAS, n8n Excel/Calculation, SCHEDULE Builder Code-pipeline, Entry/Human Gate, Trace writer, Activity Hydrate.
 
@@ -579,6 +580,7 @@ CSV: [`n8n/data-tables/mas_trace_events_v1.header.csv`](n8n/data-tables/mas_trac
 | `Agent — Excel Extractor` | `Call Excel protocol Hybrid Retrieval` | `MAS — Knowledge Retrieval` |
 | `Template — Engineering Specialist` | `Call specialist Hybrid Retrieval` | `MAS — Knowledge Retrieval` |
 | `Orchestrator — Engineering MAS` | `Call SCHEDULE Builder Specialist` | `SCHEDULE — Builder` |
+| `Orchestrator — MAS` | `Call Excel Extractor` | `Agent — Excel Extractor` |
 | `Orchestrator — MAS` | `Call Schedule Builder` | `Agent — Schedule Builder` |
 | `Orchestrator — Engineering MAS` | `Call Calculation Specialist` | `Agent — Calculation (Math Service)` |
 | `Orchestrator — Engineering MAS` | `Call MAS Trace Event Writer` | `Writer — MAS Trace` |
@@ -614,7 +616,7 @@ CSV: [`n8n/data-tables/mas_trace_events_v1.header.csv`](n8n/data-tables/mas_trac
 ### Шаг 5. Настройка доступов (Credentials)
 
 Вам потребуется указать ключи для нейросетей, баз данных и локальных сервисов:
-- **Orchestrator и SCHEDULE Builder:** Создайте подключения к вашей совместимой с OpenAI модели (`Planner Chat Model`, `Verifier Chat Model`, **Schedule Builder Chat Model — Qwen**). Live-путь оркестратора: `executeWorkflow` `Call Schedule Builder` → `Agent — Schedule Builder` (как Excel Extractor). FastAPI `schedule-builder:8090` — только parse/apply/emit tools, не LLM.
+- **Orchestrator и специалисты:** Создайте подключения к вашей совместимой с OpenAI модели (`Decision Chat Model`, **Excel Extractor Chat Model — Qwen**, **Schedule Builder Chat Model — Qwen**). Live-путь: `executeWorkflow` `Call Excel Extractor` → `Agent — Excel Extractor` (excel-tools FastAPI, файлы через Activity GET) и `Call Schedule Builder` → `Agent — Schedule Builder`. FastAPI не пишет LLM.
 - **Агент Excel Extractor:** В нодах HTTP укажите URL к локальному сервису Excel Tools и заданный `API_KEY`. Выберите нужное подключение к базе Postgres.
 - **RAG (Знания):** Выберите подключение к Postgres и единый профиль генерации эмбеддингов. (Важно: не заполняйте поле `Dimensions` в настройках эмбеддингов).
 - **Агент вычислений:** В ноде HTTP-запроса пропишите `math_service_url` (`http://<IP-вашего-ПК>:8100/api/v1/math`).
@@ -857,7 +859,7 @@ python -m pytest tests
 ===BEGIN_FILE===	excel-agent-tools/app/__init__.py	0	utf8
 
 ===END_FILE===
-===BEGIN_FILE===	excel-agent-tools/app/agent_run.py	11758	utf8
+===BEGIN_FILE===	excel-agent-tools/app/agent_run.py	18521	utf8
 """Excel Extractor agent: AgentTask → tools → AgentResult. No SCHEDULE writes."""
 
 from __future__ import annotations
@@ -868,10 +870,9 @@ import logging
 import os
 from pathlib import Path
 from typing import Any
-from urllib.parse import urlparse
 from urllib.request import Request, urlopen
 
-from .sessions import init_state, load_state, locked_session, new_session_id, session_dir, session_file
+from .sessions import init_state, load_state, locked_session, new_session_id, save_state, session_dir, session_file
 from .tools import execute_tool
 from . import excel_tools as _excel_tools  # noqa: F401  # register detect_tables / query_table
 from . import state_tools as _state_tools  # noqa: F401
@@ -908,20 +909,96 @@ def _post_event(case_id: str, payload: dict[str, Any]) -> None:
         logger.exception("failed to emit agent event case_id=%s kind=%s", case_id, payload.get("kind"))
 
 
+def _emit(
+    case_id: str,
+    *,
+    kind: str,
+    task_id: str,
+    activity: str,
+    status_message: str,
+    status: str = "",
+    payload: dict[str, Any] | None = None,
+) -> None:
+    body: dict[str, Any] = {
+        "kind": kind,
+        "actor": "excel_extractor",
+        "agent_id": "excel_extractor",
+        "task_id": task_id,
+        "status_message": status_message,
+        "_activity_base": activity,
+    }
+    if status:
+        body["status"] = status
+    if payload:
+        body["payload"] = payload
+    _post_event(case_id, body)
+
+
+def emit_tool_progress(state: dict[str, Any], tool_name: str, tool_result: dict[str, Any]) -> None:
+    """Live Activity lines when the n8n AI Agent calls excel-tools HTTP tools."""
+    payload = state.get("payload") if isinstance(state.get("payload"), dict) else {}
+    case_id = str(payload.get("case_id") or "")
+    if not case_id:
+        return
+    inner = tool_result.get("result") if isinstance(tool_result.get("result"), dict) else {}
+    message = ""
+    if tool_name == "workbook_introspect":
+        sheets = inner.get("sheets") if isinstance(inner.get("sheets"), list) else []
+        message = f"Смотрю структуру Excel: листов {len(sheets)}"
+    elif tool_name == "detect_tables":
+        tables = inner.get("tables") or inner.get("detected_tables") or []
+        n = len(tables) if isinstance(tables, list) else 0
+        message = f"Нашёл таблиц: {n}"
+    elif tool_name == "match_tables":
+        message = "Подбираю таблицу под запрос"
+    elif tool_name == "describe_table":
+        message = "Смотрю колонки таблицы"
+    elif tool_name == "list_column_values":
+        message = "Читаю значения колонки"
+    elif tool_name == "query_table":
+        rows = inner.get("preview") or inner.get("rows") or inner.get("records") or []
+        n = inner.get("row_count") if isinstance(inner.get("row_count"), int) else (len(rows) if isinstance(rows, list) else 0)
+        message = f"Читаю таблицу: {n} строк"
+    elif tool_name == "sheet_preview":
+        message = "Смотрю фрагмент листа"
+    if not message:
+        return
+    _emit(
+        case_id,
+        kind="agent.progress",
+        task_id=str(payload.get("task_id") or ""),
+        activity=str(payload.get("activity_base") or ACTIVITY),
+        status_message=message,
+    )
+
+
 def _fetch_bytes(url: str) -> bytes:
     with urlopen(url, timeout=30) as resp:
         return resp.read()
 
 
+def _artifact_card(artifacts: dict[str, Any], *keys: str) -> dict[str, Any]:
+    for key in keys:
+        item = artifacts.get(key)
+        if isinstance(item, dict) and item:
+            return item
+    return {}
+
+
+def _task_activity(task: dict[str, Any]) -> str:
+    inputs = task.get("inputs") if isinstance(task.get("inputs"), dict) else {}
+    return str(inputs.get("activity_base_url") or ACTIVITY).rstrip("/")
+
+
 def _load_excel(task: dict[str, Any]) -> tuple[str, str]:
     inputs = task.get("inputs") if isinstance(task.get("inputs"), dict) else {}
     artifacts = inputs.get("artifacts") if isinstance(inputs.get("artifacts"), dict) else {}
-    excel = artifacts.get("excel") if isinstance(artifacts.get("excel"), dict) else {}
+    excel = _artifact_card(artifacts, "excel", "file")
     path = inputs.get("excel_path") or excel.get("path")
     url = inputs.get("excel_url") or inputs.get("artifact_url")
-    activity = str(inputs.get("activity_base_url") or ACTIVITY).rstrip("/")
+    activity = _task_activity(task)
     case_id = str(task.get("case_id") or "")
-    artifact_id = excel.get("artifact_id") or "excel"
+    artifact_id = str(excel.get("artifact_id") or "excel")
     if activity and case_id and not url:
         url = f"{activity}/cases/{case_id}/artifacts/{artifact_id}"
     data: bytes | None = None
@@ -930,13 +1007,14 @@ def _load_excel(task: dict[str, Any]) -> tuple[str, str]:
         data = Path(path).read_bytes()
         filename = Path(path).name
     elif url:
-        data = _fetch_bytes(url)
-        parsed = urlparse(url)
-        filename = Path(parsed.path).name or filename
+        try:
+            data = _fetch_bytes(url)
+        except Exception as exc:
+            raise FileNotFoundError(f"excel artifact fetch failed: {url}: {exc}") from exc
     if not data:
         raise FileNotFoundError("excel artifact is missing")
     session_id = new_session_id()
-    directory = session_dir(session_id, create=True)
+    session_dir(session_id, create=True)
     suffix = Path(filename).suffix.lower() or ".xlsx"
     relative = f"input{suffix}"
     dest = session_file(session_id, relative)
@@ -948,7 +1026,14 @@ def _load_excel(task: dict[str, Any]) -> tuple[str, str]:
         file_name=filename,
         file_hash=f"sha256:{digest}",
         file_size=len(data),
-        payload={"agent_id": "excel_extractor", "case_id": case_id},
+        payload={
+            "agent_id": "excel_extractor",
+            "case_id": case_id,
+            "task_id": str(task.get("task_id") or ""),
+            "objective": str(task.get("objective") or ""),
+            "handoff_message": str(task.get("handoff_message") or ""),
+            "activity_base": activity,
+        },
     )
     return session_id, filename
 
@@ -1015,6 +1100,257 @@ def _query_rows(state: dict[str, Any], session_id: str, payload: dict[str, Any])
     return columns, rows
 
 
+def _agent_result(
+    task_id: str,
+    status: str,
+    message: str,
+    *,
+    data: dict[str, Any] | None = None,
+    artifacts: dict[str, Any] | None = None,
+    issues: list[Any] | None = None,
+    requests: list[Any] | None = None,
+    assumptions: list[Any] | None = None,
+) -> dict[str, Any]:
+    return {
+        "task_id": task_id,
+        "agent_id": "excel_extractor",
+        "status": status,
+        "message": message,
+        "data": data or {},
+        "artifacts": artifacts or {},
+        "issues": issues or [],
+        "assumptions": assumptions or [],
+        "requests": requests or [],
+    }
+
+
+def _store_result(state: dict[str, Any], result: dict[str, Any]) -> dict[str, Any]:
+    state["agent_result"] = result
+    save_state(str(state["session_id"]), state)
+    return result
+
+
+def suggested_capability(objective: str, handoff: str = "") -> str:
+    text = f"{objective} {handoff}".casefold()
+    if any(token in text for token in ("дат", "ввод", "commission", "скважин", "well", "дебит")):
+        return "commissioning"
+    if not text.strip():
+        return "commissioning"
+    return "operations"
+
+
+def _compact_inspect(state: dict[str, Any]) -> dict[str, Any]:
+    intro = execute_tool(state, "workbook_introspect", {})
+    meta = intro.get("result") if isinstance(intro, dict) else {}
+    detect = execute_tool(state, "detect_tables", {"max_tables": 10})
+    raw = detect.get("result") if isinstance(detect, dict) else {}
+    tables = raw.get("tables") if isinstance(raw, dict) else []
+    if not isinstance(tables, list):
+        tables = []
+    compact: list[dict[str, Any]] = []
+    for table in tables[:12]:
+        if not isinstance(table, dict):
+            continue
+        cols = table.get("columns") if isinstance(table.get("columns"), list) else []
+        compact.append(
+            {
+                "table_id": table.get("table_id"),
+                "sheet": table.get("sheet"),
+                "range": table.get("range"),
+                "row_count": table.get("row_count"),
+                "columns": cols[:24],
+                "columns_truncated": len(cols) > 24,
+                "title": table.get("title") or "",
+            }
+        )
+    sheets = meta.get("sheets") if isinstance(meta, dict) else []
+    return {
+        "file_name": (meta.get("file_name") if isinstance(meta, dict) else "") or state.get("file_name"),
+        "sheets": sheets[:40] if isinstance(sheets, list) else [],
+        "table_count": len(tables),
+        "tables": compact,
+    }
+
+
+def open_session(task: dict[str, Any]) -> dict[str, Any]:
+    case_id = str(task.get("case_id") or "")
+    task_id = str(task.get("task_id") or "")
+    activity = _task_activity(task)
+    _emit(
+        case_id,
+        kind="agent.accepted",
+        task_id=task_id,
+        activity=activity,
+        status_message="Разбираю Excel",
+    )
+    try:
+        session_id, filename = _load_excel(task)
+    except FileNotFoundError as exc:
+        result = _agent_result(
+            task_id,
+            "needs_input",
+            "Нет Excel-файла для извлечения",
+            issues=[{"type": "missing_excel", "detail": str(exc)}],
+            requests=[{"question_id": "Q-excel", "question": "Приложите workbook .xlsx", "options": []}],
+        )
+        _emit(
+            case_id,
+            kind="agent.result",
+            task_id=task_id,
+            activity=activity,
+            status="needs_input",
+            status_message=result["message"],
+        )
+        return {"ok": False, "status": "needs_input", "task_id": task_id, "result": result}
+    except Exception as exc:
+        result = _agent_result(
+            task_id,
+            "failed",
+            str(exc)[:400],
+            issues=[{"type": "excel_load_failed", "detail": str(exc)[:400]}],
+        )
+        _emit(
+            case_id,
+            kind="agent.failed",
+            task_id=task_id,
+            activity=activity,
+            status="failed",
+            status_message=str(exc)[:400],
+        )
+        return {"ok": False, "status": "failed", "task_id": task_id, "result": result}
+
+    with locked_session(session_id):
+        state = load_state(session_id)
+        inspect = _compact_inspect(state)
+    n_sheets = len(inspect.get("sheets") or [])
+    n_tables = int(inspect.get("table_count") or 0)
+    _emit(
+        case_id,
+        kind="agent.progress",
+        task_id=task_id,
+        activity=activity,
+        status_message=f"Файл {filename}: листов {n_sheets}, таблиц {n_tables}",
+    )
+    capability = suggested_capability(str(task.get("objective") or ""), str(task.get("handoff_message") or ""))
+    return {
+        "ok": True,
+        "session_id": session_id,
+        "task_id": task_id,
+        "file_name": filename,
+        "inspect": inspect,
+        "objective": str(task.get("objective") or ""),
+        "handoff_message": str(task.get("handoff_message") or ""),
+        "suggested_capability": capability,
+    }
+
+
+def extract_commissioning(session_id: str) -> dict[str, Any]:
+    with locked_session(session_id):
+        state = load_state(session_id)
+        payload = state.get("payload") if isinstance(state.get("payload"), dict) else {}
+        case_id = str(payload.get("case_id") or "")
+        task_id = str(payload.get("task_id") or "")
+        activity = str(payload.get("activity_base") or ACTIVITY)
+        filename = str(state.get("file_name") or "workbook.xlsx")
+        detect = execute_tool(state, "detect_tables", {})
+        tables = []
+        raw = detect.get("result") if isinstance(detect, dict) else {}
+        if isinstance(raw, dict):
+            tables = raw.get("tables") or raw.get("detected_tables") or []
+        if not isinstance(tables, list):
+            tables = []
+        _emit(
+            case_id,
+            kind="agent.progress",
+            task_id=task_id,
+            activity=activity,
+            status_message=f"Нашёл таблиц: {len(tables)}. Читаю скважины и даты",
+        )
+        rows_out: list[dict[str, Any]] = []
+        table_ids: list[str] = []
+        for table in tables[:8]:
+            if not isinstance(table, dict):
+                continue
+            table_id = str(table.get("table_id") or table.get("id") or "")
+            if not table_id:
+                continue
+            table_ids.append(table_id)
+            queried = execute_tool(state, "query_table", {"table_id": table_id, "limit": 10000})
+            tool_payload = queried.get("result") if isinstance(queried, dict) else queried
+            preview: list[dict[str, Any]] = []
+            columns: list[str] = []
+            if isinstance(tool_payload, dict):
+                columns, preview = _query_rows(state, session_id, tool_payload)
+            rows_out.append(
+                {
+                    "table_id": table_id,
+                    "columns": columns,
+                    "preview": preview[:200],
+                    "row_count": len(preview),
+                    "records": preview,
+                }
+            )
+    facts = commissioning_facts(
+        [
+            {"columns": item.get("columns") or [], "preview": item.get("records") or item.get("preview") or []}
+            for item in rows_out
+        ]
+    )
+    for item in rows_out:
+        item.pop("records", None)
+    _emit(
+        case_id,
+        kind="agent.progress",
+        task_id=task_id,
+        activity=activity,
+        status_message=f"Фактов скважина+дата: {len(facts)}",
+    )
+    result = _agent_result(
+        task_id,
+        "completed",
+        (
+            f"Извлечено таблиц: {len(table_ids)} из {filename}"
+            + (f", фактов скважина+дата: {len(facts)}" if facts else "")
+        ),
+        data={
+            "excel_table": table_ids[0] if table_ids else None,
+            "table_ids": table_ids,
+            "normalized_rows": rows_out,
+            "facts": facts,
+            "session_id": session_id,
+            "file_name": filename,
+        },
+        artifacts={"excel_session": session_id},
+    )
+    with locked_session(session_id):
+        state = load_state(session_id)
+        _store_result(state, result)
+    _emit(
+        case_id,
+        kind="agent.result",
+        task_id=task_id,
+        activity=activity,
+        status="completed",
+        status_message=result["message"],
+        payload={"tables": len(table_ids), "facts": len(facts)},
+    )
+    return result
+
+
+def session_result(session_id: str) -> dict[str, Any]:
+    state = load_state(session_id)
+    result = state.get("agent_result")
+    if isinstance(result, dict) and result.get("status"):
+        return result
+    payload = state.get("payload") if isinstance(state.get("payload"), dict) else {}
+    return _agent_result(
+        str(payload.get("task_id") or ""),
+        "failed",
+        "Агент не вызвал extract_commissioning — факты Excel не собраны",
+        issues=[{"type": "no_extract"}],
+    )
+
+
 def commissioning_facts(tables: list[dict[str, Any]]) -> list[dict[str, Any]]:
     facts: list[dict[str, Any]] = []
     seen: set[str] = set()
@@ -1043,159 +1379,13 @@ def commissioning_facts(tables: list[dict[str, Any]]) -> list[dict[str, Any]]:
 
 
 def run_excel_agent(task: dict[str, Any]) -> dict[str, Any]:
-    case_id = str(task.get("case_id") or "")
-    task_id = str(task.get("task_id") or "")
-    activity = ""
-    inputs = task.get("inputs") if isinstance(task.get("inputs"), dict) else {}
-    activity = str(inputs.get("activity_base_url") or ACTIVITY)
-    _post_event(
-        case_id,
-        {
-            "kind": "agent.accepted",
-            "actor": "excel_extractor",
-            "agent_id": "excel_extractor",
-            "task_id": task_id,
-            "status_message": "Разбираю Excel",
-            "_activity_base": activity,
-        },
-    )
-    try:
-        session_id, filename = _load_excel(task)
-    except FileNotFoundError as exc:
-        result = {
-            "task_id": task_id,
-            "status": "needs_input",
-            "message": "Нет Excel-файла для извлечения",
-            "data": {},
-            "artifacts": {},
-            "issues": [{"type": "missing_excel", "detail": str(exc)}],
-            "assumptions": [],
-            "requests": [{"question_id": "Q-excel", "question": "Приложите workbook .xlsx", "options": []}],
-        }
-        _post_event(
-            case_id,
-            {
-                "kind": "agent.result",
-                "actor": "excel_extractor",
-                "agent_id": "excel_extractor",
-                "task_id": task_id,
-                "status": "needs_input",
-                "status_message": result["message"],
-                "_activity_base": activity,
-            },
-        )
-        return result
-    except Exception as exc:
-        _post_event(
-            case_id,
-            {
-                "kind": "agent.failed",
-                "actor": "excel_extractor",
-                "agent_id": "excel_extractor",
-                "task_id": task_id,
-                "status": "failed",
-                "status_message": str(exc)[:400],
-                "_activity_base": activity,
-            },
-        )
-        return {
-            "task_id": task_id,
-            "status": "failed",
-            "message": str(exc)[:400],
-            "data": {},
-            "artifacts": {},
-            "issues": [{"type": "excel_load_failed", "detail": str(exc)[:400]}],
-            "assumptions": [],
-            "requests": [],
-        }
-
-    with locked_session(session_id):
-        state = load_state(session_id)
-        detect = execute_tool(state, "detect_tables", {})
-        tables = []
-        raw = detect.get("result") if isinstance(detect, dict) else {}
-        if isinstance(raw, dict):
-            tables = raw.get("tables") or raw.get("detected_tables") or []
-        if not isinstance(tables, list):
-            tables = []
-        _post_event(
-            case_id,
-            {
-                "kind": "agent.progress",
-                "actor": "excel_extractor",
-                "agent_id": "excel_extractor",
-                "task_id": task_id,
-                "status_message": f"Нашёл таблиц: {len(tables)}. Читаю скважины и даты",
-                "_activity_base": activity,
-            },
-        )
-        rows_out: list[dict[str, Any]] = []
-        table_ids: list[str] = []
-        for table in tables[:8]:
-            if not isinstance(table, dict):
-                continue
-            table_id = str(table.get("table_id") or table.get("id") or "")
-            if not table_id:
-                continue
-            table_ids.append(table_id)
-            queried = execute_tool(state, "query_table", {"table_id": table_id, "limit": 10000})
-            payload = queried.get("result") if isinstance(queried, dict) else queried
-            preview: list[dict[str, Any]] = []
-            columns: list[str] = []
-            if isinstance(payload, dict):
-                columns, preview = _query_rows(state, session_id, payload)
-            rows_out.append(
-                {
-                    "table_id": table_id,
-                    "columns": columns,
-                    "preview": preview[:200],
-                    "row_count": len(preview),
-                    "records": preview,
-                }
-            )
-        snapshot = load_state(session_id)
-    facts = commissioning_facts(
-        [
-            {"columns": item.get("columns") or [], "preview": item.get("records") or item.get("preview") or []}
-            for item in rows_out
-        ]
-    )
-    for item in rows_out:
-        item.pop("records", None)
-    result = {
-        "task_id": task_id,
-        "status": "completed",
-        "message": (
-            f"Извлечено таблиц: {len(table_ids)} из {filename}"
-            + (f", фактов скважина+дата: {len(facts)}" if facts else "")
-        ),
-        "data": {
-            "excel_table": table_ids[0] if table_ids else None,
-            "table_ids": table_ids,
-            "normalized_rows": rows_out,
-            "facts": facts,
-            "session_id": session_id,
-            "file_name": filename,
-        },
-        "artifacts": {"excel_session": session_id},
-        "issues": [],
-        "assumptions": [],
-        "requests": [],
-    }
-    _post_event(
-        case_id,
-        {
-            "kind": "agent.result",
-            "actor": "excel_extractor",
-            "agent_id": "excel_extractor",
-            "task_id": task_id,
-            "status": "completed",
-            "status_message": result["message"],
-            "payload": {"tables": len(table_ids)},
-            "_activity_base": activity,
-        },
-    )
-    return result
+    opened = open_session(task)
+    if not opened.get("ok"):
+        result = opened.get("result")
+        if isinstance(result, dict):
+            return result
+        return _agent_result(str(task.get("task_id") or ""), "failed", "Excel session failed")
+    return extract_commissioning(str(opened["session_id"]))
 
 ===END_FILE===
 ===BEGIN_FILE===	excel-agent-tools/app/excel_tools.py	78496	utf8
@@ -3068,7 +3258,7 @@ def submit_clarification(ctx: dict[str, Any], args: dict[str, Any]) -> dict[str,
     return {"token": token, "status": "clarification_needed", "questions": sanitized}
 
 ===END_FILE===
-===BEGIN_FILE===	excel-agent-tools/app/main.py	18854	utf8
+===BEGIN_FILE===	excel-agent-tools/app/main.py	20879	utf8
 """HTTP API for the Excel tools service; intentionally contains no LLM calls."""
 from __future__ import annotations
 
@@ -3102,7 +3292,7 @@ from .tools import TOOL_SCHEMAS, execute_tool
 # Import modules for registration. These modules never invoke an LLM.
 from . import excel_tools as _excel_tools  # noqa: F401
 from . import state_tools as _state_tools  # noqa: F401
-from .agent_run import run_excel_agent
+from . import agent_run
 
 logging.basicConfig(level=os.getenv("LOG_LEVEL", "INFO").upper(), format="%(asctime)s %(levelname)s %(name)s %(message)s")
 logger = logging.getLogger(__name__)
@@ -3343,6 +3533,16 @@ def normalize_agent_tool_args(tool_name: str, args: dict[str, Any]) -> dict[str,
         elif isinstance(candidate, dict) and isinstance(candidate.get("table_id"), str):
             normalized["table_id"] = candidate["table_id"]
 
+    if tool_name in {"query_table", "detect_tables", "describe_table", "list_column_values"}:
+        for field in ("limit", "max_tables", "sample_rows"):
+            raw = normalized.get(field)
+            if isinstance(raw, str) and raw.strip().isdigit():
+                normalized[field] = int(raw.strip())
+            elif isinstance(raw, bool):
+                continue
+            elif isinstance(raw, float) and raw.is_integer():
+                normalized[field] = int(raw)
+
     if tool_name == "query_table":
         if "table_id" not in normalized and isinstance(normalized.get("table"), str):
             normalized["table_id"] = normalized["table"]
@@ -3414,7 +3614,11 @@ def call_agent_tool(tool_name: str, body: AgentToolRequest) -> dict[str, Any]:
     try:
         with locked_session(body.session_id):
             state = get_loaded_state(body.session_id)
-            return execute_tool(state, tool_name, normalize_agent_tool_args(tool_name, body.tool_args()))
+            result = execute_tool(state, tool_name, normalize_agent_tool_args(tool_name, body.tool_args()))
+        from .agent_run import emit_tool_progress
+
+        emit_tool_progress(state, tool_name, result)
+        return result
     except ValueError as error:
         detail = str(error)
         code = status.HTTP_404_NOT_FOUND if detail == "Session not found" else status.HTTP_422_UNPROCESSABLE_ENTITY
@@ -3470,9 +3674,46 @@ class AgentTaskBody(BaseModel):
     constraints: dict[str, Any] = Field(default_factory=dict)
 
 
+class SessionOnlyBody(BaseModel):
+    model_config = ConfigDict(extra="ignore")
+    session_id: str = Field(min_length=1, max_length=128)
+
+
+def _session_http_error(error: Exception) -> HTTPException:
+    detail = str(error)
+    code = status.HTTP_404_NOT_FOUND if detail == "Session not found" else status.HTTP_422_UNPROCESSABLE_ENTITY
+    return HTTPException(status_code=code, detail=detail)
+
+
+@app.post("/agent-tools/open_session", dependencies=[Depends(require_api_key)])
+def open_excel_session(body: AgentTaskBody) -> dict[str, Any]:
+    return agent_run.open_session(body.model_dump())
+
+
+@app.post("/agent-tools/extract_commissioning", dependencies=[Depends(require_api_key)])
+def extract_commissioning(body: SessionOnlyBody) -> dict[str, Any]:
+    try:
+        return agent_run.extract_commissioning(body.session_id)
+    except ValueError as error:
+        raise _session_http_error(error) from error
+
+
+@app.get("/sessions/{session_id}/result", dependencies=[Depends(require_api_key)])
+def get_session_result(session_id: str) -> dict[str, Any]:
+    try:
+        return agent_run.session_result(session_id)
+    except ValueError as error:
+        raise _session_http_error(error) from error
+
+
+@app.post("/agent-tools/{tool_name}", dependencies=[Depends(require_api_key)])
+def call_agent_tool_alias(tool_name: str, body: AgentToolRequest) -> dict[str, Any]:
+    return call_agent_tool(tool_name, body)
+
+
 @app.post("/agent/run", dependencies=[Depends(require_api_key)])
-def agent_run(body: AgentTaskBody) -> dict[str, Any]:
-    return run_excel_agent(body.model_dump())
+def agent_run_endpoint(body: AgentTaskBody) -> dict[str, Any]:
+    return agent_run.run_excel_agent(body.model_dump())
 
 ===END_FILE===
 ===BEGIN_FILE===	excel-agent-tools/app/sessions.py	7675	utf8
@@ -4953,7 +5194,7 @@ if __name__ == "__main__":
     main()
 
 ===END_FILE===
-===BEGIN_FILE===	mas-activity-service/app/cases_api.py	27929	utf8
+===BEGIN_FILE===	mas-activity-service/app/cases_api.py	29439	utf8
 """Case control-plane HTTP API (state, events, SSE, HITL, run)."""
 
 from __future__ import annotations
@@ -4963,6 +5204,7 @@ import json
 import logging
 import secrets
 import time
+from pathlib import Path
 from typing import Any
 
 from fastapi import APIRouter, BackgroundTasks, File, Form, HTTPException, Query, Request, UploadFile
@@ -4971,7 +5213,7 @@ from fastapi.responses import StreamingResponse
 from app import control_plane
 from app.contracts import AGENT_EVENT_KINDS, CaseAnswerIn, CaseEventIn, CaseNameIn, MAX_STEPS
 from app.orchestrator import OrchestratorError, invoke_orchestrator
-from app.schema_view import build_schema_model
+from app.schema_view import FINISHED_RESULT_TEXT, build_schema_model
 from app.settings import UNCONFIGURED_N8N, get_settings
 from app.task_binaries import load_task_binaries, save_task_binaries
 
@@ -5092,13 +5334,21 @@ def event_to_turn(event: dict[str, Any]) -> dict[str, Any]:
         turn_kind = "event"
     else:
         turn_kind = "status"
+    if kind == "case.finished":
+        summary = FINISHED_RESULT_TEXT
+        text = FINISHED_RESULT_TEXT
+        brief = FINISHED_RESULT_TEXT
+    else:
+        summary = event.get("status_message") or kind
+        text = event.get("status_message") or ""
+        brief = event.get("status_message") or ""
     return {
         "at": _iso(event.get("created_at")),
         "stage": kind,
         "status": kind,
-        "summary": event.get("status_message") or kind,
-        "text": event.get("status_message") or "",
-        "brief": event.get("status_message") or "",
+        "summary": summary,
+        "text": text,
+        "brief": brief,
         "from": {"role": left},
         "to": {"role": right or left},
         "from_role": left,
@@ -5166,6 +5416,21 @@ def _schedule_filename(artifacts: dict[str, Any]) -> str:
     return "schedule.inc"
 
 
+def _result_filename(artifacts: dict[str, Any]) -> str:
+    """Never advertise the baseline upload as the generated result."""
+    out = artifacts.get("schedule_out")
+    if isinstance(out, dict):
+        name = str(out.get("filename") or "").strip()
+        if name:
+            return name
+    src = Path(_schedule_filename(artifacts))
+    stem = src.stem.strip() or "schedule"
+    suffix = src.suffix if src.suffix.lower() in {".inc", ".data", ".sch", ".grdecl"} else ".inc"
+    if stem.lower().endswith("_result"):
+        return f"{stem}{suffix}"
+    return f"{stem}_result{suffix}"
+
+
 def _schedule_out_text(artifacts: dict[str, Any]) -> str | None:
     text = artifacts.get("schedule_out")
     if isinstance(text, str) and len(text.strip()) > 20:
@@ -5183,10 +5448,12 @@ def _schedule_artifact(case_id: str, artifacts: dict[str, Any]) -> dict[str, Any
         return None
     return {
         "available": True,
-        "filename": _schedule_filename(artifacts),
+        "filename": _result_filename(artifacts),
         "byte_length": len(text.encode("utf-8")),
         "inline": True,
         "download_path": f"/cases/{case_id}/schedule",
+        "kind": "result",
+        "label": "Скачать результат",
     }
 
 
@@ -5261,10 +5528,29 @@ def _new_case_id() -> str:
 
 
 async def _invoke_step(case_id: str) -> None:
+    await _invoke_action(case_id, action="step")
+
+
+async def _invoke_create(case_id: str) -> None:
+    await _invoke_action(case_id, action="create")
+
+
+async def _invoke_action(case_id: str, *, action: str) -> None:
     try:
-        await invoke_orchestrator({"case_id": case_id, "action": "step"}, timeout_s=180.0)
+        row = control_plane.get_case(case_id)
+        state = dict(row["state"] or {}) if row else {}
+        await invoke_orchestrator(
+            {
+                "case_id": case_id,
+                "action": action,
+                "task_description": str(state.get("goal") or ""),
+                "task_name": str(state.get("task_name") or ""),
+                "requested_by": "mas activity user",
+            },
+            timeout_s=180.0,
+        )
     except OrchestratorError as exc:
-        logger.error("orchestrator step failed case_id=%s: %s", case_id, exc)
+        logger.error("orchestrator %s failed case_id=%s: %s", action, case_id, exc)
         control_plane.append_event(
             case_id,
             kind="case.failed",
@@ -5361,7 +5647,7 @@ async def create_case(
         payload={"requested_by": requested_by, "files": [fname for _s, fname, _c, _m in uploads], "task_name": name},
     )
     control_plane.update_case(case_id, status="running")
-    background_tasks.add_task(_invoke_step, case_id)
+    background_tasks.add_task(_invoke_create, case_id)
     return {"ok": True, "case_id": case_id, "task_id": case_id, "status": "running", "task_name": name}
 
 
@@ -5675,7 +5961,7 @@ def get_schedule(case_id: str):
         raise HTTPException(status_code=404, detail="schedule not ready")
     from fastapi.responses import Response
 
-    filename = _schedule_filename(artifacts).replace('"', "")
+    filename = _result_filename(artifacts).replace('"', "")
     return Response(
         content=text.encode("utf-8"),
         media_type="text/plain; charset=utf-8",
@@ -11115,7 +11401,7 @@ async def probe_n8n_stack(
     }
 
 ===END_FILE===
-===BEGIN_FILE===	mas-activity-service/app/schema_view.py	13731	utf8
+===BEGIN_FILE===	mas-activity-service/app/schema_view.py	13998	utf8
 """Build scrubbable schema frames from control-plane events.
 
 The Activity UI mirrors this mapping in static/schema.js. Keep both aligned:
@@ -11157,6 +11443,7 @@ RETURN_EDGE = {
 }
 START_LABEL = "Постановка задачи"
 END_LABEL = "Результат"
+FINISHED_RESULT_TEXT = "Задача завершена. Загрузите результаты работы."
 KIND_LABELS = {
     "case.created": START_LABEL,
     "case.finished": END_LABEL,
@@ -11186,7 +11473,10 @@ def _files_from_state(state: dict[str, Any]) -> list[str]:
     artifacts = state.get("artifacts") if isinstance(state.get("artifacts"), dict) else {}
     names: list[str] = []
     seen: set[str] = set()
+    skip = {"schedule_out", "diff"}
     for key, item in artifacts.items():
+        if key in skip:
+            continue
         name = ""
         if isinstance(item, dict):
             name = _text(item.get("filename") or item.get("artifact_id") or key)
@@ -11196,6 +11486,13 @@ def _files_from_state(state: dict[str, Any]) -> list[str]:
             seen.add(name)
             names.append(name)
     return names
+
+
+def _human_status(message: Any) -> str:
+    msg = _text(message)
+    if not msg or msg.lower() in {"case.finished", "case.failed"}:
+        return ""
+    return msg
 
 
 def _result_text(payload: Any, status_message: str) -> str:
@@ -11411,13 +11708,13 @@ def _apply_event(graph: dict[str, Any], event: dict[str, Any]) -> None:
             if node["tone"] in { "active", "pending", "waiting" }:
                 node["tone"] = "done"
             node["bubble"] = None
-        _set_caption(graph, "orchestrator", status_message or graph.get("last_orch_prompt"))
+        _set_caption(graph, "orchestrator", _human_status(status_message) or graph.get("last_orch_prompt"))
         for edge in graph["edges"].values():
             if edge["tone"] == "active":
                 edge["tone"] = "done"
             edge["bubble"] = None
-        graph["output"]["prompt"] = status_message or graph.get("last_orch_prompt") or ""
-        graph["output"]["result"] = _result_text(payload, status_message)
+        graph["output"]["prompt"] = ""
+        graph["output"]["result"] = FINISHED_RESULT_TEXT
         _activate_node(graph, "output", None)
         _set_edge(graph, "orch_out", "active")
         graph["in_flight"] = None
@@ -12164,7 +12461,7 @@ echo Keep this window open. Press Ctrl+C to stop.
 exit /b %errorlevel%
 
 ===END_FILE===
-===BEGIN_FILE===	mas-activity-service/static/app.css	36045	utf8
+===BEGIN_FILE===	mas-activity-service/static/app.css	40097	utf8
 :root {
   --ink: #0f172a;
   --muted: #64748b;
@@ -13004,19 +13301,67 @@ a.btn.schedule-download:hover:not(:disabled),
 
 .gate-panel {
   margin: 0 clamp(1.25rem, 3vw, 3rem) 0.65rem;
-  padding: 0.5rem 0.85rem;
+  padding: 0.45rem 0.85rem;
   border: 1px solid var(--line);
   background: var(--panel);
   border-radius: var(--radius);
   flex: 0 0 auto;
+  min-height: 0;
+  overflow: hidden;
 }
 .gate-panel[hidden] { display: none !important; }
+.gate-panel[open] {
+  max-height: min(28vh, 12.5rem);
+  display: flex;
+  flex-direction: column;
+  overflow: hidden;
+}
+.workspace.mode-schema .gate-panel[open] {
+  max-height: min(22vh, 9.5rem);
+}
 .gate-head {
   display: flex;
   align-items: center;
   justify-content: space-between;
   gap: 0.5rem;
-  margin-bottom: 0.25rem;
+  cursor: pointer;
+  list-style: none;
+  margin: 0;
+}
+.gate-head::-webkit-details-marker { display: none; }
+.gate-preview {
+  flex: 1 1 auto;
+  min-width: 0;
+  font-size: 0.78rem;
+  line-height: 1.3;
+  color: var(--ink);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+.gate-panel[open] .gate-preview { display: none; }
+.gate-toggle {
+  flex: 0 0 auto;
+  font-family: var(--mono);
+  font-size: 0.62rem;
+  letter-spacing: 0.02em;
+  text-transform: uppercase;
+  color: var(--blue-700);
+  white-space: nowrap;
+}
+.gate-toggle::after { content: "Развернуть"; }
+.gate-panel[open] .gate-toggle::after { content: "Свернуть"; }
+.gate-body {
+  display: none;
+  min-height: 0;
+}
+.gate-panel[open] .gate-body {
+  display: block;
+  overflow-y: auto;
+  flex: 1 1 auto;
+  margin-top: 0.35rem;
+  padding-top: 0.2rem;
+  border-top: 1px solid var(--line);
 }
 .gate-badge {
   font-family: var(--mono);
@@ -13492,6 +13837,70 @@ a.btn.schedule-download:hover:not(:disabled),
   display: flex;
   flex-direction: column;
   gap: 0.15rem;
+  position: relative;
+}
+.schema-node.is-clipped {
+  cursor: zoom-in;
+}
+.schema-node.is-clipped:not(.is-peeking) .schema-node-body::after {
+  content: "";
+  position: absolute;
+  left: 0;
+  right: 0;
+  bottom: 0;
+  height: 1.35rem;
+  pointer-events: none;
+  background: linear-gradient(180deg, rgba(255, 255, 255, 0), rgba(255, 255, 255, 0.96) 72%);
+}
+.schema-node.is-peeking {
+  z-index: 6;
+  box-shadow: 0 0 0 3px rgba(0, 184, 240, 0.2);
+}
+.schema-peek {
+  position: fixed;
+  z-index: 40;
+  width: min(22rem, calc(100vw - 1.5rem));
+  max-height: min(22rem, calc(100vh - 1.5rem));
+  overflow: auto;
+  padding: 0.65rem 0.75rem 0.8rem;
+  background: #fff;
+  border: 1px solid var(--line);
+  border-radius: 10px;
+  box-shadow: 0 18px 40px rgba(0, 26, 87, 0.16);
+}
+.schema-peek[hidden] {
+  display: none !important;
+}
+.schema-peek-body {
+  display: flex;
+  flex-direction: column;
+  gap: 0.25rem;
+  margin-top: 0.2rem;
+}
+.schema-peek .schema-goal,
+.schema-peek .schema-prompt,
+.schema-peek .schema-caption {
+  display: block;
+  -webkit-line-clamp: unset;
+  line-clamp: unset;
+  overflow: visible;
+  word-break: break-word;
+}
+.schema-peek .schema-files {
+  margin-top: 0.25rem;
+}
+.schema-peek .schema-files li {
+  white-space: normal;
+  overflow: visible;
+  text-overflow: unset;
+  word-break: break-all;
+}
+.schema-download {
+  margin-top: auto;
+  align-self: flex-start;
+  max-width: 100%;
+  font-size: 0.72rem;
+  padding: 0.28rem 0.55rem;
 }
 .schema-status {
   display: inline-block;
@@ -13651,25 +14060,31 @@ a.btn.schedule-download:hover:not(:disabled),
 }
 .schema-timeline {
   display: grid;
-  grid-template-columns: auto minmax(0, 1fr) auto;
+  grid-template-columns: minmax(0, 1fr) auto;
   grid-template-areas:
-    "prev track next"
-    "copy copy count";
-  gap: 0.35rem 0.55rem;
+    "track nav"
+    "copy count";
+  gap: 0.35rem 0.75rem;
   align-items: center;
   padding: 0.7rem 1rem 0.9rem;
   border-top: 1px solid var(--line);
   background: var(--paper);
   flex: 0 0 auto;
 }
+.schema-nav {
+  grid-area: nav;
+  display: inline-flex;
+  align-items: center;
+  gap: 0.25rem;
+}
 .schema-step-btn {
-  width: 2rem;
-  height: 2rem;
+  width: 1.85rem;
+  height: 1.85rem;
   border: 1px solid var(--line);
   background: #fff;
   color: var(--blue-700);
   border-radius: 999px;
-  font-size: 1.1rem;
+  font-size: 1.05rem;
   line-height: 1;
   cursor: pointer;
 }
@@ -13677,8 +14092,6 @@ a.btn.schedule-download:hover:not(:disabled),
   opacity: 0.35;
   cursor: default;
 }
-#schemaPrev { grid-area: prev; }
-#schemaNext { grid-area: next; }
 .schema-track {
   grid-area: track;
   display: grid;
@@ -13690,25 +14103,96 @@ a.btn.schedule-download:hover:not(:disabled),
 .schema-track-label {
   font-family: var(--mono);
   font-size: 0.68rem;
+  font-weight: 700;
   letter-spacing: 0.01em;
   color: var(--blue-900);
   white-space: nowrap;
 }
 .schema-track-label.is-muted {
   color: var(--muted);
+  font-weight: 600;
 }
 #schemaRange {
+  --schema-progress: 0%;
   width: 100%;
-  accent-color: var(--blue-500);
+  height: 1.35rem;
+  margin: 0;
+  background: transparent;
   cursor: pointer;
+  -webkit-appearance: none;
+  appearance: none;
+}
+#schemaRange:disabled {
+  cursor: default;
+  opacity: 0.65;
+}
+#schemaRange:focus-visible {
+  outline: none;
+}
+#schemaRange:focus-visible::-webkit-slider-thumb {
+  box-shadow: 0 0 0 3px rgba(0, 184, 240, 0.28);
+}
+#schemaRange:focus-visible::-moz-range-thumb {
+  box-shadow: 0 0 0 3px rgba(0, 184, 240, 0.28);
+}
+#schemaRange::-webkit-slider-runnable-track {
+  height: 3px;
+  border-radius: 999px;
+  background: linear-gradient(
+    to right,
+    #94a3b8 0%,
+    #94a3b8 var(--schema-progress),
+    #e2e8f0 var(--schema-progress),
+    #e2e8f0 100%
+  );
+}
+#schemaRange::-webkit-slider-thumb {
+  -webkit-appearance: none;
+  appearance: none;
+  width: 14px;
+  height: 14px;
+  margin-top: -5.5px;
+  border-radius: 50%;
+  border: 2px solid #64748b;
+  background: var(--blue-500);
+  box-shadow: none;
+}
+#schemaRange::-moz-range-track {
+  height: 3px;
+  border: none;
+  border-radius: 999px;
+  background: #e2e8f0;
+}
+#schemaRange::-moz-range-progress {
+  height: 3px;
+  border: none;
+  border-radius: 999px;
+  background: #94a3b8;
+}
+#schemaRange::-moz-range-thumb {
+  width: 14px;
+  height: 14px;
+  border-radius: 50%;
+  border: 2px solid #64748b;
+  background: var(--blue-500);
+  box-shadow: none;
 }
 .schema-step-label {
   grid-area: copy;
-  margin: 0.1rem 0 0 2.4rem;
+  margin: 0.1rem 0 0;
+  padding: 0.28rem 0.55rem;
+  max-width: 100%;
+  width: fit-content;
   font-size: 0.8rem;
+  font-weight: 500;
   line-height: 1.35;
-  color: var(--ink);
+  color: #0284c7;
+  background: #f1f5f9;
+  border-radius: 6px;
   min-height: 1.2em;
+}
+.schema-step-label:empty {
+  display: none;
 }
 .schema-step-count {
   grid-area: count;
@@ -13717,6 +14201,7 @@ a.btn.schedule-download:hover:not(:disabled),
   color: var(--muted);
   justify-self: end;
   padding-right: 0.15rem;
+  white-space: nowrap;
 }
 
 @media (max-width: 900px) {
@@ -13797,7 +14282,7 @@ a.btn.schedule-download:hover:not(:disabled),
 }
 
 ===END_FILE===
-===BEGIN_FILE===	mas-activity-service/static/app.js	68861	utf8
+===BEGIN_FILE===	mas-activity-service/static/app.js	69309	utf8
 (() => {
   const thread = document.getElementById("thread");
   const empty = document.getElementById("empty");
@@ -13829,6 +14314,7 @@ a.btn.schedule-download:hover:not(:disabled),
   const gatePanel = document.getElementById("gatePanel");
   const gateKind = document.getElementById("gateKind");
   const gateMeta = document.getElementById("gateMeta");
+  const gatePreview = document.getElementById("gatePreview");
   const gateReason = document.getElementById("gateReason");
   const gateQuestions = document.getElementById("gateQuestions");
   const diffExpander = document.getElementById("diffExpander");
@@ -14503,6 +14989,7 @@ a.btn.schedule-download:hover:not(:disabled),
 
     if (!gateState) {
       gatePanel.hidden = true;
+      if ("open" in gatePanel) gatePanel.open = false;
       return;
     }
 
@@ -14522,7 +15009,8 @@ a.btn.schedule-download:hover:not(:disabled),
       version != null ? `v${version}` : gateState.expected_version != null ? `v${gateState.expected_version}` : null,
     ].filter(Boolean).join(" · ");
     const questions = Array.isArray(gateState.questions) ? gateState.questions : [];
-    gateReason.textContent = humanizeGateReason(gateState.reason, questions) || "Ожидается ваше решение.";
+    const reason = humanizeGateReason(gateState.reason, questions) || "Ожидается ваше решение.";
+    gateReason.textContent = reason;
     gateQuestions.innerHTML = "";
     const seenAsk = new Set();
     for (const q of questions) {
@@ -14532,6 +15020,12 @@ a.btn.schedule-download:hover:not(:disabled),
       const li = document.createElement("li");
       li.append(document.createTextNode(text));
       gateQuestions.append(li);
+    }
+    if (gatePreview) {
+      const extra = seenAsk.size > 1 ? ` · ${seenAsk.size} пунктов` : "";
+      const line = String(reason).replace(/\s+/g, " ").trim();
+      gatePreview.textContent = (line.length > 140 ? `${line.slice(0, 139)}…` : line) + extra;
+      gatePreview.title = reason;
     }
     if (armed) {
       composerHint.hidden = true;
@@ -14986,8 +15480,8 @@ a.btn.schedule-download:hover:not(:disabled),
     scheduleDownloadHead.hidden = false;
     scheduleDownloadHead.href = art.download_path;
     scheduleDownloadHead.setAttribute("download", name);
-    scheduleDownloadHead.textContent = `Скачать ${name}${kb}`;
-    scheduleDownloadHead.title = "Скачать текущий SCHEDULE .INC";
+    scheduleDownloadHead.textContent = `Скачать результат${kb}`;
+    scheduleDownloadHead.title = `Скачать результат SCHEDULE (${name})`;
   }
 
   function setScheduleArtifact(meta) {
@@ -15671,7 +16165,7 @@ a.btn.schedule-download:hover:not(:disabled),
 })();
 
 ===END_FILE===
-===BEGIN_FILE===	mas-activity-service/static/index.html	10313	utf8
+===BEGIN_FILE===	mas-activity-service/static/index.html	10603	utf8
 <!DOCTYPE html>
 <html lang="ru">
 <head>
@@ -15682,7 +16176,7 @@ a.btn.schedule-download:hover:not(:disabled),
   <link rel="preconnect" href="https://fonts.googleapis.com" />
   <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
   <link href="https://fonts.googleapis.com/css2?family=IBM+Plex+Sans:wght@400;500;600;700&family=IBM+Plex+Mono:wght@400;500&display=swap" rel="stylesheet" />
-  <link rel="stylesheet" href="/static/app.css?v=75" />
+  <link rel="stylesheet" href="/static/app.css?v=79" />
 </head>
 <body>
   <div class="atmosphere" aria-hidden="true"></div>
@@ -15766,15 +16260,17 @@ a.btn.schedule-download:hover:not(:disabled),
             <div class="schema-nodes" id="schemaNodes"></div>
           </div>
           <div class="schema-timeline" id="schemaTimeline">
-            <button type="button" class="schema-step-btn" id="schemaPrev" aria-label="Предыдущий шаг">‹</button>
             <div class="schema-track">
               <span class="schema-track-label" id="schemaStartLabel">Постановка задачи</span>
               <input id="schemaRange" type="range" min="0" max="0" value="0" aria-label="Шаг схемы" />
               <span class="schema-track-label" id="schemaEndLabel">Результат</span>
             </div>
-            <button type="button" class="schema-step-btn" id="schemaNext" aria-label="Следующий шаг">›</button>
+            <div class="schema-nav" role="group" aria-label="Шаги схемы">
+              <button type="button" class="schema-step-btn" id="schemaPrev" aria-label="Предыдущий шаг">‹</button>
+              <button type="button" class="schema-step-btn" id="schemaNext" aria-label="Следующий шаг">›</button>
+            </div>
             <p class="schema-step-label" id="schemaStepLabel"></p>
-            <span class="schema-step-count" id="schemaStepCount">0 / 0</span>
+            <span class="schema-step-count" id="schemaStepCount">шаг 0 / 0</span>
           </div>
         </section>
       </div>
@@ -15784,14 +16280,18 @@ a.btn.schedule-download:hover:not(:disabled),
         <div class="diff-body" id="diffBody"></div>
       </details>
 
-      <aside class="gate-panel" id="gatePanel" hidden>
-        <div class="gate-head">
+      <details class="gate-panel" id="gatePanel" hidden>
+        <summary class="gate-head">
           <span class="gate-badge" id="gateKind">needs_approval</span>
+          <span class="gate-preview" id="gatePreview"></span>
+          <span class="gate-toggle" aria-hidden="true"></span>
           <span class="gate-meta" id="gateMeta"></span>
+        </summary>
+        <div class="gate-body">
+          <p class="gate-reason" id="gateReason"></p>
+          <ul class="gate-questions" id="gateQuestions"></ul>
         </div>
-        <p class="gate-reason" id="gateReason"></p>
-        <ul class="gate-questions" id="gateQuestions"></ul>
-      </aside>
+      </details>
 
       <form class="composer start-composer" id="startComposer" autocomplete="off" hidden>
         <div class="composer-top">
@@ -15868,8 +16368,8 @@ a.btn.schedule-download:hover:not(:disabled),
     </section>
   </main>
 
-  <script src="/static/schema.js?v=6"></script>
-  <script src="/static/app.js?v=82"></script>
+  <script src="/static/schema.js?v=11"></script>
+  <script src="/static/app.js?v=84"></script>
 </body>
 </html>
 
@@ -17069,10 +17569,11 @@ body.knowledge-page:has(.flash:not([hidden])) .kb-stage {
 })();
 
 ===END_FILE===
-===BEGIN_FILE===	mas-activity-service/static/schema.js	31262	utf8
+===BEGIN_FILE===	mas-activity-service/static/schema.js	36432	utf8
 (() => {
   const START_LABEL = "Постановка задачи";
   const END_LABEL = "Результат";
+  const FINISHED_RESULT_TEXT = "Задача завершена. Загрузите результаты работы.";
   const NODE_KEYS = ["input", "orchestrator", "excel", "calc", "schedule", "user", "output"];
   const EDGE_KEYS = [
     "in_orch", "orch_out",
@@ -17176,6 +17677,10 @@ body.knowledge-page:has(.flash:not([hidden])) .kb-stage {
   let resizeTimer = 0;
   let lastSlipsKey = "";
   let lastPaintIndex = -1;
+  let scheduleDownload = null;
+  let peekEl = null;
+  let peekTimer = 0;
+  let peekSource = null;
 
   function text(value) {
     return String(value || "").trim();
@@ -17197,7 +17702,9 @@ body.knowledge-page:has(.flash:not([hidden])) .kb-stage {
     const artifacts = state && typeof state.artifacts === "object" ? state.artifacts : {};
     const names = [];
     const seen = new Set();
+    const skip = new Set(["schedule_out", "diff"]);
     for (const [key, item] of Object.entries(artifacts)) {
+      if (skip.has(key)) continue;
       let name = "";
       if (item && typeof item === "object") name = text(item.filename || item.artifact_id || key);
       else if (item) name = text(key);
@@ -17207,6 +17714,12 @@ body.knowledge-page:has(.flash:not([hidden])) .kb-stage {
       }
     }
     return names;
+  }
+
+  function humanStatus(message) {
+    const msg = text(message);
+    if (!msg || /^(case\.finished|case\.failed)$/i.test(msg)) return "";
+    return msg;
   }
 
   function resultText(payload, statusMessage) {
@@ -17412,13 +17925,13 @@ body.knowledge-page:has(.flash:not([hidden])) .kb-stage {
         if (item.tone === "active" || item.tone === "pending" || item.tone === "waiting") item.tone = "done";
         item.bubble = null;
       }
-      setCaption(graph, "orchestrator", statusMessage || graph.last_orch_prompt);
+      setCaption(graph, "orchestrator", humanStatus(statusMessage) || graph.last_orch_prompt);
       for (const edge of Object.values(graph.edges)) {
         if (edge.tone === "active") edge.tone = "done";
         edge.bubble = null;
       }
-      graph.output.prompt = statusMessage || graph.last_orch_prompt || "";
-      graph.output.result = resultText(payload, statusMessage);
+      graph.output.prompt = "";
+      graph.output.result = FINISHED_RESULT_TEXT;
       activateNode(graph, "output", null);
       setEdge(graph, "orch_out", "active");
       graph.in_flight = null;
@@ -17647,16 +18160,10 @@ body.knowledge-page:has(.flash:not([hidden])) .kb-stage {
     edgesEl.setAttribute("preserveAspectRatio", "none");
     edgesEl.innerHTML = `
       <defs>
-        <marker id="schemaArrowIdle" viewBox="0 0 10 10" refX="8.4" refY="5" markerWidth="5.2" markerHeight="5.2" markerUnits="userSpaceOnUse" orient="auto" overflow="visible">
-          <path d="M 0 0.8 L 10 5 L 0 9.2 Z" fill="#94a3b8"></path>
-        </marker>
-        <marker id="schemaArrowDone" viewBox="0 0 10 10" refX="8.4" refY="5" markerWidth="5.2" markerHeight="5.2" markerUnits="userSpaceOnUse" orient="auto" overflow="visible">
-          <path d="M 0 0.8 L 10 5 L 0 9.2 Z" fill="#0033A0"></path>
-        </marker>
-        <marker id="schemaArrowActive" viewBox="0 0 10 10" refX="8.4" refY="5" markerWidth="5.8" markerHeight="5.8" markerUnits="userSpaceOnUse" orient="auto" overflow="visible">
+        <marker id="schemaArrowActive" viewBox="0 0 10 10" refX="8.4" refY="5" markerWidth="2.3" markerHeight="2.3" markerUnits="userSpaceOnUse" orient="auto" overflow="visible">
           <path d="M 0 0.8 L 10 5 L 0 9.2 Z" fill="#00B8F0"></path>
         </marker>
-        <marker id="schemaArrowError" viewBox="0 0 10 10" refX="8.4" refY="5" markerWidth="5.8" markerHeight="5.8" markerUnits="userSpaceOnUse" orient="auto" overflow="visible">
+        <marker id="schemaArrowError" viewBox="0 0 10 10" refX="8.4" refY="5" markerWidth="2.3" markerHeight="2.3" markerUnits="userSpaceOnUse" orient="auto" overflow="visible">
           <path d="M 0 0.8 L 10 5 L 0 9.2 Z" fill="#F90D4B"></path>
         </marker>
       </defs>
@@ -17689,9 +18196,138 @@ body.knowledge-page:has(.flash:not([hidden])) .kb-stage {
       const body = document.createElement("div");
       body.className = "schema-node-body";
       node.append(kicker, title, body);
+      node.addEventListener("pointerenter", () => {
+        clearTimeout(peekTimer);
+        showPeek(node);
+      });
+      node.addEventListener("pointerleave", hidePeekSoon);
       nodesEl.appendChild(node);
     }
     built = true;
+    bindPeekChrome();
+  }
+
+  function overflowing(el) {
+    if (!el) return false;
+    return el.scrollHeight > el.clientHeight + 1 || el.scrollWidth > el.clientWidth + 1;
+  }
+
+  function markClippedNodes() {
+    if (!nodesEl || !root || root.hidden) return;
+    for (const node of nodesEl.querySelectorAll(".schema-node")) {
+      const body = node.querySelector(".schema-node-body");
+      let clipped = overflowing(body);
+      if (!clipped && body) {
+        for (const el of body.querySelectorAll(".schema-goal, .schema-prompt, .schema-caption, .schema-files li")) {
+          if (overflowing(el)) {
+            clipped = true;
+            break;
+          }
+        }
+      }
+      node.classList.toggle("is-clipped", clipped);
+      if (clipped) node.setAttribute("aria-haspopup", "true");
+      else node.removeAttribute("aria-haspopup");
+    }
+  }
+
+  function ensurePeek() {
+    if (peekEl) return peekEl;
+    peekEl = document.createElement("div");
+    peekEl.id = "schemaPeek";
+    peekEl.className = "schema-peek";
+    peekEl.hidden = true;
+    peekEl.setAttribute("role", "tooltip");
+    peekEl.addEventListener("pointerenter", () => clearTimeout(peekTimer));
+    peekEl.addEventListener("pointerleave", hidePeekSoon);
+    document.body.appendChild(peekEl);
+    return peekEl;
+  }
+
+  function hidePeek() {
+    clearTimeout(peekTimer);
+    if (peekSource) {
+      peekSource.classList.remove("is-peeking");
+      peekSource.removeAttribute("aria-expanded");
+    }
+    peekSource = null;
+    if (peekEl) {
+      peekEl.hidden = true;
+      peekEl.innerHTML = "";
+    }
+  }
+
+  function hidePeekSoon() {
+    clearTimeout(peekTimer);
+    peekTimer = setTimeout(() => {
+      if (peekEl && !peekEl.hidden && peekEl.matches(":hover")) return;
+      if (peekSource && peekSource.matches(":hover")) return;
+      hidePeek();
+    }, 140);
+  }
+
+  function placePeek(node) {
+    const peek = ensurePeek();
+    const gap = 10;
+    const box = node.getBoundingClientRect();
+    peek.style.left = "0px";
+    peek.style.top = "0px";
+    const width = peek.offsetWidth;
+    const height = peek.offsetHeight;
+    let left = box.right + gap;
+    let top = box.top;
+    if (left + width > window.innerWidth - gap) left = box.left - width - gap;
+    if (left < gap) left = Math.max(gap, (window.innerWidth - width) / 2);
+    if (top + height > window.innerHeight - gap) top = window.innerHeight - height - gap;
+    if (top < gap) top = gap;
+    peek.style.left = `${Math.round(left)}px`;
+    peek.style.top = `${Math.round(top)}px`;
+  }
+
+  function showPeek(node) {
+    if (!node || !node.classList.contains("is-clipped")) return;
+    const body = node.querySelector(".schema-node-body");
+    if (!body) return;
+    if (peekSource === node && peekEl && !peekEl.hidden) {
+      placePeek(node);
+      return;
+    }
+    const peek = ensurePeek();
+    peek.innerHTML = "";
+    const kicker = node.querySelector(".schema-kicker");
+    const title = node.querySelector("h2");
+    if (kicker) peek.append(kicker.cloneNode(true));
+    if (title) peek.append(title.cloneNode(true));
+    const clone = body.cloneNode(true);
+    clone.className = "schema-peek-body";
+    peek.append(clone);
+    if (peekSource && peekSource !== node) {
+      peekSource.classList.remove("is-peeking");
+      peekSource.removeAttribute("aria-expanded");
+    }
+    peek.hidden = false;
+    peekSource = node;
+    node.classList.add("is-peeking");
+    node.setAttribute("aria-expanded", "true");
+    placePeek(node);
+  }
+
+  function bindPeekChrome() {
+    document.addEventListener("keydown", (ev) => {
+      if (ev.key === "Escape") hidePeek();
+    });
+    document.addEventListener("pointerdown", (ev) => {
+      if (!peekEl || peekEl.hidden) return;
+      const target = ev.target;
+      if (peekEl.contains(target) || (peekSource && peekSource.contains(target))) return;
+      hidePeek();
+    });
+    if (root) {
+      new MutationObserver(() => {
+        if (root.hidden) hidePeek();
+        else requestAnimationFrame(markClippedNodes);
+      }).observe(root, { attributes: true, attributeFilter: ["hidden"] });
+    }
   }
 
   function bubbleEl(kind, textValue, x, y, from, animate) {
@@ -17721,6 +18357,8 @@ body.knowledge-page:has(.flash:not([hidden])) .kb-stage {
       files,
       frame.output?.result || "",
       frame.output?.prompt || "",
+      scheduleDownload?.download_path || "",
+      complete ? "1" : "0",
       ...nodes,
       ...edges,
     ].join("\n");
@@ -17729,12 +18367,15 @@ body.knowledge-page:has(.flash:not([hidden])) .kb-stage {
   function paintChrome(frame) {
     if (stepEl) stepEl.textContent = frame?.label || "";
     if (countEl) {
-      countEl.textContent = frames.length ? `${index + 1} / ${frames.length}` : "0 / 0";
+      countEl.textContent = frames.length ? `шаг ${index + 1} / ${frames.length}` : "шаг 0 / 0";
     }
     if (rangeEl) {
       rangeEl.max = String(Math.max(frames.length - 1, 0));
       rangeEl.value = String(index);
       rangeEl.disabled = frames.length < 2;
+      const max = Math.max(frames.length - 1, 1);
+      const pct = frames.length < 2 ? 0 : (index / max) * 100;
+      rangeEl.style.setProperty("--schema-progress", `${pct}%`);
     }
     if (prevBtn) prevBtn.disabled = index <= 0;
     if (nextBtn) nextBtn.disabled = index >= frames.length - 1;
@@ -17772,6 +18413,7 @@ body.knowledge-page:has(.flash:not([hidden])) .kb-stage {
           for (const name of files) {
             const li = document.createElement("li");
             li.textContent = name;
+            li.title = name;
             list.append(li);
           }
           body.append(list);
@@ -17786,6 +18428,16 @@ body.knowledge-page:has(.flash:not([hidden])) .kb-stage {
           prompt.className = "schema-prompt";
           prompt.textContent = frame.output.prompt;
           body.append(prompt);
+        }
+        const showDl = scheduleDownload && ["active", "done", "error"].includes(spec.tone);
+        if (showDl) {
+          const link = document.createElement("a");
+          link.className = "schema-download schedule-download";
+          link.href = scheduleDownload.download_path;
+          link.setAttribute("download", scheduleDownload.filename || "schedule_result.inc");
+          link.textContent = "Скачать результат";
+          link.title = `Скачать результат SCHEDULE (${scheduleDownload.filename || "schedule_result.inc"})`;
+          body.append(link);
         }
       } else {
         const status = document.createElement("span");
@@ -17802,9 +18454,6 @@ body.knowledge-page:has(.flash:not([hidden])) .kb-stage {
       }
     }
     const marker = {
-      idle: "url(#schemaArrowIdle)",
-      pending: "url(#schemaArrowIdle)",
-      done: "url(#schemaArrowDone)",
       active: "url(#schemaArrowActive)",
       error: "url(#schemaArrowError)",
     };
@@ -17817,7 +18466,8 @@ body.knowledge-page:has(.flash:not([hidden])) .kb-stage {
       path.setAttribute("d", visual.dir === "back" ? geo.dRev : geo.d);
       path.setAttribute("data-dir", visual.dir);
       path.setAttribute("class", `schema-edge-path is-${tone}${visual.dir === "back" ? " is-back" : ""}`);
-      path.setAttribute("marker-end", marker[tone] || marker.idle);
+      if (marker[tone]) path.setAttribute("marker-end", marker[tone]);
+      else path.removeAttribute("marker-end");
     }
     stage.querySelectorAll(".schema-slip").forEach((el) => el.remove());
     for (const id of DRAW_EDGE_KEYS) {
@@ -17829,6 +18479,8 @@ body.knowledge-page:has(.flash:not([hidden])) .kb-stage {
       stage.append(bubbleEl("edge", visual.bubble, mid.x, mid.y, "edge", animateSlips));
     }
     paintChrome(frame);
+    hidePeek();
+    requestAnimationFrame(markClippedNodes);
   }
 
   function showIndex(next, { user = false } = {}) {
@@ -17849,6 +18501,8 @@ body.knowledge-page:has(.flash:not([hidden])) .kb-stage {
       state.artifacts = Object.fromEntries(attached.map((name, i) => [`file_${i}`, { filename: name }]));
     }
     const events = eventsFromFeed(feed);
+    const art = feed.schedule_artifact;
+    scheduleDownload = art && typeof art === "object" && art.available && art.download_path ? art : null;
     const prevIndex = index;
     const prevLen = frames.length;
     frames = buildSchemaFrames(events, state);
@@ -17865,8 +18519,10 @@ body.knowledge-page:has(.flash:not([hidden])) .kb-stage {
     index = 0;
     followLive = true;
     complete = false;
+    scheduleDownload = null;
     lastSlipsKey = "";
     lastPaintIndex = -1;
+    hidePeek();
     renderFrame(frames[0]);
   }
 
@@ -17910,7 +18566,7 @@ body.knowledge-page:has(.flash:not([hidden])) .kb-stage {
 # n8n package
 
 - Workflows: [`workflows/`](workflows/) — `core/` live MAS + `support/` templates + `retired/` archive (not imported).
-- Import contract: [`import-manifest.json`](import-manifest.json) (`full_clean_import_set` = 13 JSON, target **2.30.8**).
+- Import contract: [`import-manifest.json`](import-manifest.json) (`full_clean_import_set` = 14 JSON, target **2.30.8**).
 - Data Tables CSV: [`data-tables/`](data-tables/) — lean `engineering_orchestrator_tasks_v1` + `mas_trace_events_v1`.
 - Generators: [`templates/`](templates/).
 - Code smokes: [`tests/`](tests/) (~187 scenarios).
@@ -18186,7 +18842,7 @@ task_id,version,status,risk_class,request_json,runtime_json,plan_json,packet_jso
 event_id,trace_id,task_id,at,stage,event_type,actor,status,summary,details_json
 
 ===END_FILE===
-===BEGIN_FILE===	n8n/import-manifest.json	16996	utf8
+===BEGIN_FILE===	n8n/import-manifest.json	17303	utf8
 {
   "contract": "n8n_ui_import_manifest",
   "contract_version": "1.0",
@@ -18196,6 +18852,7 @@ event_id,trace_id,task_id,at,stage,event_type,actor,status,summary,details_json
     "workflows/core/tnavigator-schedule-knowledge-ingestion.workflow.json",
     "workflows/core/tnavigator-schedule-hybrid-retrieval.workflow.json",
     "workflows/core/schedule-builder-agent.workflow.json",
+    "workflows/core/excel-extractor-agent.workflow.json",
     "workflows/core/mas-error-traces.workflow.json",
     "workflows/core/mas-ensure-control-plane.workflow.json",
     "workflows/core/mas-orchestrator.workflow.json",
@@ -18211,6 +18868,7 @@ event_id,trace_id,task_id,at,stage,event_type,actor,status,summary,details_json
     "workflows/core/tnavigator-schedule-knowledge-ingestion.workflow.json",
     "workflows/core/tnavigator-schedule-hybrid-retrieval.workflow.json",
     "workflows/core/schedule-builder-agent.workflow.json",
+    "workflows/core/excel-extractor-agent.workflow.json",
     "workflows/core/mas-error-traces.workflow.json",
     "workflows/core/mas-ensure-control-plane.workflow.json",
     "workflows/core/mas-orchestrator.workflow.json",
@@ -18347,6 +19005,12 @@ event_id,trace_id,task_id,at,stage,event_type,actor,status,summary,details_json
       "node": "Call CAS persist — routing gate",
       "target": "CAS — Persist Task State",
       "placeholder": "REPLACE_CAS_PERSIST_IN_UI"
+    },
+    {
+      "owner": "Orchestrator — MAS",
+      "node": "Call Excel Extractor",
+      "target": "Agent — Excel Extractor",
+      "placeholder": "REPLACE_EXCEL_EXTRACTION_AGENT_IN_UI"
     },
     {
       "owner": "Orchestrator — Engineering MAS",
@@ -41411,6 +42075,518 @@ if __name__ == "__main__":
     _relayout_written()
 
 ===END_FILE===
+===BEGIN_FILE===	n8n/templates/generate_excel_extractor_agent.py	19088	utf8
+#!/usr/bin/env python3
+"""Generate Agent — Excel Extractor: one LLM + excel-tools FastAPI tools."""
+
+from __future__ import annotations
+
+import json
+import uuid
+from pathlib import Path
+
+from llm_runtime_options import chat_model_options
+
+ROOT = Path(__file__).resolve().parents[1]
+OUT = ROOT / "workflows/core/excel-extractor-agent.workflow.json"
+WF_ID = str(uuid.uuid5(uuid.NAMESPACE_URL, "mas-excel-extractor-agent"))
+WF_NAME = "Agent — Excel Extractor"
+OA = {
+    "openAiApi": {
+        "id": "REPLACE_IN_UI",
+        "name": "REPLACE: Qwen OpenAI-compatible excel extractor credential",
+    }
+}
+
+SYSTEM = """Ты — единственный LLM-решатель агента Excel Extractor.
+
+Workbook тебе не показывают. Он лежит в сессии FastAPI. session_id привязан workflow: никогда не передавай session_id и обёртку args/input.
+
+Инструменты:
+- workbook_introspect — листы и размеры (компактно)
+- sheet_preview — небольшой прямоугольник одного листа, не весь лист
+- detect_tables — найти таблицы, вернуть table_id / range / columns
+- match_tables — ранжировать таблицы по запросу
+- describe_table — колонки и sample по table_id
+- list_column_values — ограниченные distinct-значения колонки
+- query_table — строки по table_id (limit, фильтры). Не выгружай всю книгу
+- extract_commissioning — скважина+дата ввода из уже открытой сессии. Даты и скважины сам не выдумывай
+
+Правила:
+- Не пиши SCHEDULE / .INC. Только факты из Excel.
+- Не придумывай скважины, даты, дебиты, имена листов и table_id.
+- suggested_capability=commissioning → сразу extract_commissioning, затем STOP.
+- Иначе introspect/detect → query нужных таблиц. Если нужны даты ввода — extract_commissioning.
+- После extract_commissioning со status completed или needs_input — STOP.
+- Если файла/таблиц нет — не выдумывай строки.
+
+Заверши одним коротким фактическим предложением по-русски.
+"""
+
+TOOLS = [
+    ("workbook_introspect", "Компактные листы и размеры workbook. Без файла.", []),
+    (
+        "sheet_preview",
+        "Небольшой preview одного листа. sheet только из introspect.",
+        [("sheet", "string", True, "Точное имя листа из introspect")],
+    ),
+    (
+        "detect_tables",
+        "Найти таблицы. sheet опционален. Возвращает table_id, range, columns — не workbook.",
+        [("sheet", "string", False, "Ограничить поиск одним листом")],
+    ),
+    (
+        "match_tables",
+        "Ранжировать уже найденные или подходящие таблицы по фразе запроса.",
+        [("query", "string", True, "Что искать: даты ввода, дебиты, ...")],
+    ),
+    (
+        "describe_table",
+        "Колонки, число строк и sample. table_id только из detect/match.",
+        [("table_id", "string", True, "table_id из detect_tables")],
+    ),
+    (
+        "list_column_values",
+        "Ограниченные distinct-значения одной колонки для точных фильтров.",
+        [
+            ("table_id", "string", True, "table_id из detect_tables"),
+            ("column", "string", True, "Точное имя колонки из describe/detect"),
+        ],
+    ),
+    (
+        "query_table",
+        "Строки таблицы. select/filters — JSON с числовыми ключами 0,1,2,...",
+        [
+            ("table_id", "string", True, "table_id из detect_tables"),
+            ("select", "json", False, "Числовые ключи → имена колонок"),
+            ("filters", "json", False, "Числовые ключи → {field, operator, value}"),
+            ("limit", "string", False, "Лимит строк, по умолчанию 200"),
+        ],
+    ),
+    (
+        "extract_commissioning",
+        "Извлечь факты скважина+дата ввода из сессии. Аргументы не передавай.",
+        [],
+    ),
+]
+
+
+def nid(name: str) -> str:
+    return str(uuid.uuid5(uuid.NAMESPACE_URL, f"mas-excel-agent:{name}"))
+
+
+def node(name, ntype, ver, pos, params, **extra):
+    out = {
+        "parameters": params,
+        "id": nid(name),
+        "name": name,
+        "type": ntype,
+        "typeVersion": ver,
+        "position": list(pos),
+    }
+    out.update(extra)
+    return out
+
+
+def connect(c, src, dst, out="main", si=0, tin="main", ti=0):
+    groups = c.setdefault(src, {})
+    outputs = groups.setdefault(out, [])
+    while len(outputs) <= si:
+        outputs.append([])
+    outputs[si].append({"node": dst, "type": tin, "index": ti})
+
+
+def http_json(name, pos, method, url, body=None, timeout=180000):
+    params = {
+        "method": method,
+        "url": url,
+        "sendHeaders": True,
+        "headerParameters": {
+            "parameters": [
+                {"name": "Content-Type", "value": "application/json"},
+                {
+                    "name": "X-API-Key",
+                    "value": "={{ $('Runtime configuration').first().json.excel_tools_api_key || '' }}",
+                },
+            ]
+        },
+        "options": {"timeout": timeout, "response": {"response": {"fullResponse": False, "responseFormat": "json"}}},
+    }
+    if body is not None:
+        params["sendBody"] = True
+        params["specifyBody"] = "json"
+        params["jsonBody"] = body
+    return node(name, "n8n-nodes-base.httpRequest", 4.4, pos, params, onError="continueRegularOutput", alwaysOutputData=True)
+
+
+def tool_http(name, pos, description, fields):
+    placeholders = {
+        "values": [{"name": key, "description": desc, "type": typ} for key, typ, _req, desc in fields]
+    }
+    body_values = [
+        {
+            "name": "session_id",
+            "valueProvider": "fieldValue",
+            "value": "={{ $('Open excel session').first().json.session_id }}",
+        }
+    ]
+    for key, _typ, required, _desc in fields:
+        body_values.append(
+            {
+                "name": key,
+                "valueProvider": "modelRequired" if required else "modelOptional",
+                "value": "",
+            }
+        )
+    return node(
+        name,
+        "@n8n/n8n-nodes-langchain.toolHttpRequest",
+        1.1,
+        pos,
+        {
+            "toolDescription": description,
+            "method": "POST",
+            "url": "={{ $('Runtime configuration').first().json.excel_tools_url + '/agent-tools/' + "
+            + json.dumps(name)
+            + " }}",
+            "authentication": "none",
+            "sendQuery": False,
+            "sendHeaders": True,
+            "specifyHeaders": "keypair",
+            "sendBody": True,
+            "specifyBody": "keypair",
+            "placeholderDefinitions": placeholders,
+            "optimizeResponse": False,
+            "parametersHeaders": {
+                "values": [
+                    {"name": "Content-Type", "valueProvider": "fieldValue", "value": "application/json"},
+                    {
+                        "name": "X-API-Key",
+                        "valueProvider": "fieldValue",
+                        "value": "={{ $('Runtime configuration').first().json.excel_tools_api_key || '' }}",
+                    },
+                ]
+            },
+            "parametersBody": {"values": body_values},
+        },
+    )
+
+
+NORMALIZE = r"""
+const root=$json||{};
+const body=root.body&&typeof root.body==='object'?root.body:root;
+const packet=body.specialist_packet&&typeof body.specialist_packet==='object'?body.specialist_packet:null;
+let task=body.agent_task&&typeof body.agent_task==='object'?body.agent_task:(body.case_id||body.task_id||body.objective?body:null);
+if(!task||typeof task!=='object') task={};
+if(packet){
+  const inputs=packet.inputs&&typeof packet.inputs==='object'?packet.inputs:{};
+  task={
+    case_id:String(packet.case_id||body.case_id||task.case_id||''),
+    task_id:String(packet.task_id||task.task_id||''),
+    agent_id:'excel_extractor',
+    objective:String(packet.objective||task.objective||''),
+    handoff_message:String(packet.handoff_message||task.handoff_message||packet.objective||''),
+    inputs,
+    context:packet.context&&typeof packet.context==='object'?packet.context:(task.context||{}),
+    constraints:packet.controls&&typeof packet.controls==='object'?packet.controls:(task.constraints||{})
+  };
+}
+task.agent_id='excel_extractor';
+task.case_id=String(task.case_id||'');
+task.task_id=String(task.task_id||'');
+task.objective=String(task.objective||'');
+task.handoff_message=String(task.handoff_message||'');
+task.inputs=task.inputs&&typeof task.inputs==='object'?task.inputs:{};
+task.context=task.context&&typeof task.context==='object'?task.context:{};
+const cfg=$('Runtime configuration').first().json||{};
+if(!task.inputs.activity_base_url&&cfg.activity_base_url) task.inputs={...task.inputs, activity_base_url:cfg.activity_base_url};
+return [{json:{...cfg, agent_task:task, case_id:task.case_id, task_id:task.task_id}}];
+"""
+
+PREPARE = r"""
+const opened=$json||{};
+const task=$('Normalize excel task').first().json.agent_task||{};
+const agent_input=JSON.stringify({
+  objective:opened.objective||task.objective||'',
+  handoff_message:opened.handoff_message||task.handoff_message||'',
+  inspect:opened.inspect||{},
+  file_name:opened.file_name||'',
+  suggested_capability:opened.suggested_capability||''
+});
+return [{json:{...opened, session_id:opened.session_id, agent_input}}];
+"""
+
+FORMAT_OPEN = r"""
+const opened=$json||{};
+const result=opened.result&&typeof opened.result==='object'?opened.result:{};
+return [{json:{
+  task_id:result.task_id||opened.task_id||'',
+  agent_id:'excel_extractor',
+  status:result.status||'needs_input',
+  message:result.message||opened.message||'Нет Excel-файла для извлечения',
+  data:result.data||{},
+  artifacts:result.artifacts||{},
+  issues:result.issues||[{type:'missing_excel'}],
+  assumptions:result.assumptions||[],
+  requests:result.requests||[{question_id:'Q-excel',question:'Приложите workbook .xlsx',options:[]}]
+}}];
+"""
+
+FORMAT_RESULT = r"""
+const fetched=$json||{};
+const opened=$('Open excel session').first().json||{};
+if(fetched.status){
+  return [{json:{
+    task_id:fetched.task_id||opened.task_id||'',
+    agent_id:'excel_extractor',
+    status:fetched.status,
+    message:fetched.message||'',
+    data:fetched.data||{},
+    artifacts:fetched.artifacts||{},
+    issues:fetched.issues||[],
+    assumptions:fetched.assumptions||[],
+    requests:fetched.requests||[]
+  }}];
+}
+return [{json:{
+  task_id:opened.task_id||'',
+  agent_id:'excel_extractor',
+  status:'failed',
+  message:String(fetched.message||fetched.error||'Excel Extractor не вернул факты'),
+  data:{},
+  artifacts:{},
+  issues:[{type:'excel_agent_no_result'}],
+  assumptions:[],
+  requests:[]
+}}];
+"""
+
+
+def main() -> None:
+    tools = []
+    x = 760
+    y = -420
+    for i, (name, desc, fields) in enumerate(TOOLS):
+        tools.append(tool_http(name, (x + (i % 4) * 220, y + (i // 4) * 160), desc, fields))
+
+    nodes = [
+        node(
+            "edit after import",
+            "n8n-nodes-base.stickyNote",
+            1,
+            (-220, -360),
+            {
+                "content": (
+                    "## edit after import\n\n"
+                    "**Agent — Excel Extractor** — один LLM + excel-tools FastAPI.\n\n"
+                    "1. Bind **Qwen** credential on Excel Extractor Chat Model\n"
+                    "2. Runtime configuration: `excel_tools_url` = "
+                    "`http://excel-tools:18000`, API key, `activity_base_url`\n"
+                    "3. Orchestrator — MAS вызывает этот workflow через "
+                    "`executeWorkflow` (`Call Excel Extractor`). Webhook не нужен.\n\n"
+                    "Файлы не грузятся в n8n. Сервис сам GET "
+                    "`/cases/{id}/artifacts/excel`.\n"
+                    "`suggested_capability=commissioning` идёт обычным HTTP "
+                    "`extract_commissioning` (external n8n runners не execute'ят "
+                    "toolHttpRequest). Скважины/даты не хардкодятся."
+                ),
+                "height": 340,
+                "width": 480,
+                "color": 1,
+            },
+        ),
+        node(
+            "When executed by another workflow",
+            "n8n-nodes-base.executeWorkflowTrigger",
+            1.2,
+            (0, 0),
+            {
+                "inputSource": "jsonExample",
+                "jsonExample": json.dumps(
+                    {
+                        "agent_task": {
+                            "case_id": "CASE-example",
+                            "task_id": "TASK-001",
+                            "agent_id": "excel_extractor",
+                            "objective": "Достань даты ввода скважин",
+                            "inputs": {},
+                            "context": {},
+                        }
+                    },
+                    ensure_ascii=False,
+                ),
+            },
+        ),
+        node(
+            "Runtime configuration",
+            "n8n-nodes-base.set",
+            3.4,
+            (260, 0),
+            {
+                "assignments": {
+                    "assignments": [
+                        {
+                            "id": nid("cfg-svc"),
+                            "name": "excel_tools_url",
+                            "value": "http://excel-tools:18000",
+                            "type": "string",
+                        },
+                        {
+                            "id": nid("cfg-key"),
+                            "name": "excel_tools_api_key",
+                            "value": "",
+                            "type": "string",
+                        },
+                        {
+                            "id": nid("cfg-act"),
+                            "name": "activity_base_url",
+                            "value": "http://mas-activity:8200",
+                            "type": "string",
+                        },
+                    ]
+                },
+                "options": {},
+                "includeOtherFields": True,
+            },
+        ),
+        node("Normalize excel task", "n8n-nodes-base.code", 2, (500, 0), {"jsCode": NORMALIZE}),
+        http_json(
+            "Open excel session",
+            (740, 0),
+            "POST",
+            "={{ $json.excel_tools_url }}/agent-tools/open_session",
+            "={{ $json.agent_task }}",
+        ),
+        node(
+            "Session ready?",
+            "n8n-nodes-base.if",
+            2.3,
+            (980, 0),
+            {
+                "conditions": {
+                    "options": {"caseSensitive": True, "leftValue": "", "typeValidation": "strict", "version": 2},
+                    "conditions": [
+                        {
+                            "id": nid("sess-ok"),
+                            "leftValue": "={{ $json.ok === true }}",
+                            "rightValue": True,
+                            "operator": {"type": "boolean", "operation": "true"},
+                        }
+                    ],
+                    "combinator": "and",
+                },
+                "options": {},
+            },
+        ),
+        node("Format missing excel", "n8n-nodes-base.code", 2, (1220, 240), {"jsCode": FORMAT_OPEN}),
+        node(
+            "Capability router",
+            "n8n-nodes-base.switch",
+            3.4,
+            (1220, 0),
+            {
+                "mode": "expression",
+                "numberOutputs": 2,
+                "output": "={{ ({commissioning:0, operations:1})[$json.suggested_capability] ?? 1 }}",
+            },
+        ),
+        http_json(
+            "Extract commissioning",
+            (1480, -160),
+            "POST",
+            "={{ $('Runtime configuration').first().json.excel_tools_url + '/agent-tools/extract_commissioning' }}",
+            "={{ ({session_id: $('Open excel session').first().json.session_id}) }}",
+            timeout=180000,
+        ),
+        node("Prepare AI Agent input", "n8n-nodes-base.code", 2, (1480, 160), {"jsCode": PREPARE}),
+        node(
+            "Excel Extractor AI Agent",
+            "@n8n/n8n-nodes-langchain.agent",
+            3.1,
+            (1720, 160),
+            {
+                "promptType": "define",
+                "text": "={{ $json.agent_input }}",
+                "hasOutputParser": False,
+                "options": {
+                    "systemMessage": SYSTEM,
+                    "maxIterations": 12,
+                    "returnIntermediateSteps": True,
+                    "passthroughBinaryImages": False,
+                    "passthroughBinaryPdfs": False,
+                    "enableStreaming": False,
+                },
+                "needsFallback": False,
+            },
+        ),
+        node(
+            "Excel Extractor Chat Model — Qwen",
+            "@n8n/n8n-nodes-langchain.lmChatOpenAi",
+            1.3,
+            (1720, 40),
+            {
+                "model": {"mode": "id", "value": "qwen3.6-plus"},
+                "options": chat_model_options(max_tokens=2048, temperature=0),
+                "responsesApiEnabled": False,
+            },
+            credentials=OA,
+        ),
+        http_json(
+            "Fetch excel result",
+            (1960, 0),
+            "GET",
+            "={{ $('Runtime configuration').first().json.excel_tools_url + '/sessions/' + $('Open excel session').first().json.session_id + '/result' }}",
+            None,
+            timeout=120000,
+        ),
+        node("Format excel result", "n8n-nodes-base.code", 2, (2200, 0), {"jsCode": FORMAT_RESULT}),
+        *tools,
+    ]
+
+    connections = {}
+    connect(connections, "When executed by another workflow", "Runtime configuration")
+    connect(connections, "Runtime configuration", "Normalize excel task")
+    connect(connections, "Normalize excel task", "Open excel session")
+    connect(connections, "Open excel session", "Session ready?")
+    connect(connections, "Session ready?", "Capability router", si=0)
+    connect(connections, "Session ready?", "Format missing excel", si=1)
+    connect(connections, "Capability router", "Extract commissioning", si=0)
+    connect(connections, "Capability router", "Prepare AI Agent input", si=1)
+    connect(connections, "Extract commissioning", "Fetch excel result")
+    connect(connections, "Prepare AI Agent input", "Excel Extractor AI Agent")
+    connect(connections, "Excel Extractor Chat Model — Qwen", "Excel Extractor AI Agent", out="ai_languageModel", tin="ai_languageModel")
+    for name, _desc, _fields in TOOLS:
+        connect(connections, name, "Excel Extractor AI Agent", out="ai_tool", tin="ai_tool")
+    connect(connections, "Excel Extractor AI Agent", "Fetch excel result")
+    connect(connections, "Fetch excel result", "Format excel result")
+
+    wf = {
+        "id": WF_ID,
+        "name": WF_NAME,
+        "active": False,
+        "isArchived": False,
+        "nodes": nodes,
+        "connections": connections,
+        "settings": {
+            "executionOrder": "v1",
+            "saveManualExecutions": True,
+            "callerPolicy": "workflowsFromSameOwner",
+            "errorWorkflow": "",
+        },
+        "meta": {"templateCredsSetupCompleted": True, "targetN8nVersion": "2.30.8"},
+        "tags": [],
+        "pinData": {},
+        "versionId": str(uuid.uuid4()),
+    }
+    OUT.parent.mkdir(parents=True, exist_ok=True)
+    OUT.write_text(json.dumps(wf, ensure_ascii=False, indent=2) + "\n", encoding="utf-8")
+    print(f"wrote {OUT} ({len(nodes)} nodes)")
+
+
+if __name__ == "__main__":
+    main()
+
+===END_FILE===
 ===BEGIN_FILE===	n8n/templates/generate_mas_ensure_control_plane.py	8344	utf8
 #!/usr/bin/env python3
 """Generate MAS — Ensure Control Plane: CREATE IF NOT EXISTS from n8n UI."""
@@ -42592,7 +43768,7 @@ if __name__ == "__main__":
     main()
 
 ===END_FILE===
-===BEGIN_FILE===	n8n/templates/generate_mas_orchestrator.py	39177	utf8
+===BEGIN_FILE===	n8n/templates/generate_mas_orchestrator.py	43000	utf8
 #!/usr/bin/env python3
 """Generate the thin MAS orchestrator (one n8n execution = one step)."""
 
@@ -42832,6 +44008,8 @@ const taskName=String(body.task_name||raw.task_name||'').trim();
 const humanResponse=String(body.human_response||raw.human_response||'');
 const gateId=String(body.gate_id||raw.gate_id||'');
 const requestedBy=String(body.requested_by||raw.requested_by||'');
+const activityBaseUrl=String(raw.activity_base_url||'').trim();
+const orchestratorStepUrl=String(raw.orchestrator_step_url||'').trim();
 const executionId=String($execution.id||'');
 const readinessId=!caseId||caseId==='CASE-readiness-probe';
 if(action==='probe'||(action==='status'&&readinessId)){
@@ -42849,7 +44027,11 @@ if(action==='probe'||(action==='status'&&readinessId)){
   }}];
 }
 let needsCreate=false;
-if(!caseId){
+if(action==='create'){
+  if(!caseId) caseId='CASE-'+Date.now().toString(16)+'-'+Math.random().toString(16).slice(2,8);
+  if(!goal) throw new Error('task_description is required for action=create');
+  needsCreate=true;
+} else if(!caseId){
   if(action!=='start') throw new Error('case_id is required');
   if(!goal) throw new Error('task_description is required for action=start');
   caseId='CASE-'+Date.now().toString(16)+'-'+Math.random().toString(16).slice(2,8);
@@ -42863,6 +44045,8 @@ return [{json:{
   human_response:humanResponse,
   gate_id:gateId,
   requested_by:requestedBy,
+  activity_base_url:activityBaseUrl,
+  orchestrator_step_url:orchestratorStepUrl,
   is_probe:false,
   is_status:action==='status',
   is_resume:action==='resume',
@@ -42890,7 +44074,7 @@ const state={
   last_error:null,
   step_count:0
 };
-const persistEvents=[[req.case_id,'','case.created','user','','new',('Принял задачу: '+goal).slice(0,200),'',JSON.stringify({requested_by:req.requested_by||'',task_name:req.task_name||'',note:'orchestrator start; files belong to Activity /cases'})]];
+const persistEvents=[[req.case_id,'','case.created','user','','new',('Принял задачу: '+goal).slice(0,200),'',JSON.stringify({requested_by:req.requested_by||'',task_name:req.task_name||'',note:'orchestrator start; files stay in Activity /cases/{id}/artifacts'})]];
 return [{json:{
   ...req,
   state,
@@ -42960,12 +44144,34 @@ if(req.is_resume===true){
 return [{json:{...req,...load,state,did_resume:false,is_status:false}}];
 """
 
+VALIDATE_CASE = r"""
+const req=$('Normalize step request').first().json||{};
+const row=$json&&typeof $json==='object'?$json:{};
+const requested=String(req.case_id||'').trim();
+const loaded=String(row.case_id||row.Case_id||'').trim();
+if(!requested||loaded!==requested){
+  return [{json:{
+    ...req,
+    status:'not_found',
+    next_status:'not_found',
+    action_type:'not_found',
+    should_continue:false,
+    case_loaded:false,
+    message:`Кейс ${requested||'(без case_id)'} не найден в control plane`
+  }}];
+}
+return [{json:{...req,...row,case_loaded:true}}];
+"""
+
 PREPARE_DECISION = r"""
 const req=$('Normalize step request').first().json||{};
 const extras=(()=>{try{return $('Apply request extras').first().json}catch{return null}})();
 const load=$('Load case').first().json||{};
 const parse=v=>{if(v&&typeof v==='object')return v;try{return JSON.parse(String(v||'{}'))}catch{return {}}};
 const state=(extras&&extras.state&&typeof extras.state==='object')?extras.state:parse(load.state||load.State||{});
+if(!state.artifacts||typeof state.artifacts!=='object') state.artifacts={};
+if(state.artifacts.file&&!state.artifacts.excel) state.artifacts.excel=state.artifacts.file;
+if(state.artifacts.schedule_files&&!state.artifacts.schedule_source) state.artifacts.schedule_source=state.artifacts.schedule_files;
 const status=String((extras&&extras.next_status)||load.status||state.status||'running');
 const registry=$('Load agent registry').all().map(i=>i.json||{}).filter(r=>r&&r.agent_id);
 const artifacts=state.artifacts&&typeof state.artifacts==='object'?state.artifacts:{};
@@ -43043,7 +44249,7 @@ if(type==='call_agent'){
     agent_id:String(action.agent_id||'').trim(),
     objective:String(action.task&&action.task.objective||state.goal||''),
     handoff_message:String(action.handoff_message||''),
-    inputs:{...(obj(action.task)?action.task:{}),artifacts:state.artifacts||{},activity_base_url:prev.activity_base_url,schedule_root:state.schedule_root||(obj(action.task)?action.task.schedule_root:'')},
+    inputs:{...(obj(action.task)?action.task:{}),artifacts:state.artifacts||{},activity_base_url:String(prev.activity_base_url||'http://mas-activity:8200').replace(/\/$/,''),schedule_root:state.schedule_root||(obj(action.task)?action.task.schedule_root:'')},
     context:{data:state.data||{},hitl:state.hitl||{}},
     constraints:{units:'METRIC'}
   };
@@ -43211,14 +44417,14 @@ return [{json:{
   persist_events:persistEvents,
   events,
   event_sql_parameters:persistEvents[0],
-  continue_url:String(prev.orchestrator_step_url||'http://n8n:5678/webhook/mas-orchestrator-step').replace(/\/$/,'')
+  continue_url:`${String(prev.activity_base_url||'http://mas-activity:8200').replace(/\/$/,'')}/cases/${encodeURIComponent(String(prev.case_id||''))}/run`
 }}];
 """
 
 FINISH_NONE = r"""
 const x=$json;
 const cont=x.action_type==='finish'?false:false;
-return [{json:{...x, should_continue:false, continue_url:String(x.orchestrator_step_url||'http://n8n:5678/webhook/mas-orchestrator-step').replace(/\/$/,'')}}];
+return [{json:{...x, should_continue:false, continue_url:`${String(x.activity_base_url||'http://mas-activity:8200').replace(/\/$/,'')}/cases/${encodeURIComponent(String(x.case_id||''))}/run`}}];
 """
 
 
@@ -43227,7 +44433,7 @@ def main() -> None:
         note(
             "edit after import",
             (-200, -420),
-            "## edit after import\n\n**Orchestrator — MAS** — thin loop:\n- Bind Postgres on load/insert/update\n- Bind **Qwen** OpenAI-compatible credential on Decision Chat Model\n- Bind inbound header auth on webhook (same cred on **POST continue run**)\n- Bind **Call Schedule Builder** → `Agent — Schedule Builder` (executeWorkflow, like Excel Extractor)\n- Runtime endpoints patched by lab_soft_redeploy\n\n`action`: probe | status | start | step | resume\n- **start/step/resume** live path: Activity `/cases` saves files + state; webhook self-POSTs the next `step`\n- **status** loads case and returns `human_gate` without LLM\n- Decision is Basic LLM Chain + Structured Output (no Agent tools)\n\nOne execution = one step.",
+            "## edit after import\n\n**Orchestrator — MAS** — thin loop:\n- Bind Postgres on load/insert/update\n- Bind **Qwen** OpenAI-compatible credential on Decision Chat Model\n- Bind inbound header auth on webhook\n- Bind **Call Excel Extractor** → `Agent — Excel Extractor` (executeWorkflow)\n- Bind **Call Schedule Builder** → `Agent — Schedule Builder` (executeWorkflow)\n- Runtime endpoints patched by lab_soft_redeploy\n\n`action`: probe | status | start | create | step | resume\n- Activity `/cases` stores files; specialists fetch `/cases/{id}/artifacts/{id}` from their FastAPI tools. n8n never carries binaries.\n- **status** loads case and returns `human_gate` without LLM\n- Decision is Basic LLM Chain + Structured Output (no Agent tools)\n\nOne execution = one step.",
             480,
             420,
             1,
@@ -43251,7 +44457,6 @@ def main() -> None:
             "Runtime endpoints",
             (240, 0),
             [
-                ("excel_extractor_url", "http://excel-tools:18000/agent/run", "string"),
                 ("calculation_agent_url", "http://math-service:8100/agent/run", "string"),
                 ("orchestrator_step_url", "http://n8n:5678/webhook/mas-orchestrator-step", "string"),
                 ("activity_base_url", "http://mas-activity:8200", "string"),
@@ -43294,6 +44499,8 @@ def main() -> None:
             "SELECT case_id, state, status, updated_at FROM cases WHERE case_id = $1",
             "={{ $('Normalize step request').first().json.sql_parameters }}",
         ),
+        code("Validate loaded case", (1120, -240), VALIDATE_CASE),
+        if_true("Case found?", (1280, -240), "={{ Boolean($json.case_loaded) }}"),
         code("Apply request extras", (1120, -120), APPLY_EXTRAS),
         if_true("Status only?", (1280, -120), "={{ Boolean($json.is_status) }}"),
         if_true("Resume persist?", (1280, 40), "={{ Boolean($json.did_resume) }}"),
@@ -43392,7 +44599,13 @@ def main() -> None:
             (2880, 0),
             {"mode": "expression", "numberOutputs": 4, "output": "={{ ({excel:0,calc:1,schedule:2,none:3,unknown:3})[$json.route] ?? 3 }}"},
         ),
-        http_json("Call Excel Extractor", (3120, -240), "={{ $json.excel_extractor_url }}", "={{ $json.agent_task }}"),
+        execute_workflow(
+            "Call Excel Extractor",
+            (3120, -240),
+            "REPLACE_EXCEL_EXTRACTION_AGENT_IN_UI",
+            "Agent — Excel Extractor",
+            {"agent_task": "={{ $json.agent_task }}"},
+        ),
         http_json("Call Calculation Agent", (3120, -40), "={{ $json.calculation_agent_url }}", "={{ $json.agent_task }}"),
         execute_workflow(
             "Call Schedule Builder",
@@ -43432,8 +44645,6 @@ def main() -> None:
             {
                 "method": "POST",
                 "url": "={{ $json.continue_url }}",
-                "authentication": "genericCredentialType",
-                "genericAuthType": "httpHeaderAuth",
                 "sendHeaders": True,
                 "headerParameters": {"parameters": [{"name": "Content-Type", "value": "application/json"}]},
                 "sendBody": True,
@@ -43441,13 +44652,38 @@ def main() -> None:
                 "jsonBody": "={{ ({action: 'step', case_id: $json.case_id, source: 'orchestrator'}) }}",
                 "options": {"timeout": 5000},
             },
-            credentials=HDR,
+            onError="continueRegularOutput",
+        ),
+        code(
+            "Prepare Activity ack",
+            (4320, 120),
+            r"""const x=$json||{};
+const kind=x.action_type==='finish'?'case.finished':(x.action_type==='ask_user'||x.next_status==='waiting_user'?'hitl.request':'orchestrator.status');
+const payload={contract:'mas_orchestrator_ack',case_id:x.case_id,status:x.next_status||x.status,action_type:x.action_type||null,message:x.message||null,should_continue:x.should_continue===true,human_gate:x.human_gate||null,version:x.version??null,restartable:x.restartable===true};
+return [{json:{...x,activity_sync:Boolean(x.case_id&&!x.is_probe&&x.activity_base_url),activity_url:`${String(x.activity_base_url||'').replace(/\/$/,'')}/cases/${encodeURIComponent(String(x.case_id||''))}/events`,activity_event:{kind,actor:'orchestrator',status:payload.status,status_message:payload.message||kind,payload}}}];""",
+        ),
+        if_true("Activity sync?", (4480, 220), "={{ Boolean($json.activity_sync) }}"),
+        node(
+            "POST step ack to MAS Activity",
+            "n8n-nodes-base.httpRequest",
+            4.4,
+            (4640, 120),
+            {
+                "method": "POST",
+                "url": "={{ $json.activity_url }}",
+                "sendHeaders": True,
+                "headerParameters": {"parameters": [{"name": "Content-Type", "value": "application/json"}]},
+                "sendBody": True,
+                "specifyBody": "json",
+                "jsonBody": "={{ $json.activity_event }}",
+                "options": {"timeout": 10000},
+            },
             onError="continueRegularOutput",
         ),
         code(
             "Format step ack",
-            (4320, 120),
-            "const x=$json;return[{json:{contract:'mas_orchestrator_ack',case_id:x.case_id,status:x.next_status||x.status,action_type:x.action_type||null,should_continue:x.should_continue===true,human_gate:x.human_gate||null,version:x.version??null,restartable:x.restartable===true}}];",
+            (4800, 220),
+            "const source=(()=>{try{return $('Prepare Activity ack').first().json}catch{return $json}})();\nconst x=source||$json;return[{json:{contract:'mas_orchestrator_ack',case_id:x.case_id,status:x.next_status||x.status,action_type:x.action_type||null,message:x.message||null,should_continue:x.should_continue===true,human_gate:x.human_gate||null,version:x.version??null,restartable:x.restartable===true}}];",
         ),
     ]
 
@@ -43455,7 +44691,7 @@ def main() -> None:
     connect(connections, "Authenticated MAS webhook", "Runtime endpoints")
     connect(connections, "Runtime endpoints", "Normalize step request")
     connect(connections, "Normalize step request", "Probe ping?")
-    connect(connections, "Probe ping?", "Format step ack", si=0)
+    connect(connections, "Probe ping?", "Prepare Activity ack", si=0)
     connect(connections, "Probe ping?", "Needs create?", si=1)
     connect(connections, "Needs create?", "Prepare start case", si=0)
     connect(connections, "Needs create?", "Insert execution map", si=1)
@@ -43465,9 +44701,12 @@ def main() -> None:
     connect(connections, "Insert start events", "Restore after start")
     connect(connections, "Restore after start", "Insert execution map")
     connect(connections, "Insert execution map", "Load case")
-    connect(connections, "Load case", "Apply request extras")
+    connect(connections, "Load case", "Validate loaded case")
+    connect(connections, "Validate loaded case", "Case found?")
+    connect(connections, "Case found?", "Apply request extras", si=0)
+    connect(connections, "Case found?", "Prepare Activity ack", si=1)
     connect(connections, "Apply request extras", "Status only?")
-    connect(connections, "Status only?", "Format step ack", si=0)
+    connect(connections, "Status only?", "Prepare Activity ack", si=0)
     connect(connections, "Status only?", "Resume persist?", si=1)
     connect(connections, "Resume persist?", "Update case after resume", si=0)
     connect(connections, "Resume persist?", "Load agent registry", si=1)
@@ -43494,15 +44733,19 @@ def main() -> None:
     connect(connections, "Call Excel Extractor", "Merge agent result")
     connect(connections, "Call Calculation Agent", "Merge agent result")
     connect(connections, "Call Schedule Builder", "Merge agent result")
-    connect(connections, "No agent this step", "Format step ack")
+    connect(connections, "No agent this step", "Prepare Activity ack")
     connect(connections, "Merge agent result", "Update case after agent")
     connect(connections, "Update case after agent", "Expand agent events")
     connect(connections, "Expand agent events", "Insert agent events")
     connect(connections, "Insert agent events", "Restore after agent events")
     connect(connections, "Restore after agent events", "Continue loop?")
     connect(connections, "Continue loop?", "POST continue run", si=0)
-    connect(connections, "Continue loop?", "Format step ack", si=1)
-    connect(connections, "POST continue run", "Format step ack")
+    connect(connections, "Continue loop?", "Prepare Activity ack", si=1)
+    connect(connections, "POST continue run", "Prepare Activity ack")
+    connect(connections, "Prepare Activity ack", "Activity sync?", si=0)
+    connect(connections, "Activity sync?", "POST step ack to MAS Activity", si=0)
+    connect(connections, "Activity sync?", "Format step ack", si=1)
+    connect(connections, "POST step ack to MAS Activity", "Format step ack")
 
     wf = {
         "id": WF_ID,
@@ -52617,6 +53860,98 @@ function tableRow(overrides = {}) {
 });
 
 ===END_FILE===
+===BEGIN_FILE===	n8n/tests/excel-extractor-agent-smoke.js	4416	utf8
+'use strict';
+/**
+ * Agent — Excel Extractor: one LLM + excel-tools FastAPI.
+ * Orchestrator — MAS calls it via executeWorkflow, no webhook adapter.
+ */
+const assert = require('node:assert/strict');
+const fs = require('node:fs');
+const path = require('node:path');
+
+const workspace = process.env.WORKSPACE_ROOT || path.resolve(__dirname, '../..');
+const wf = JSON.parse(
+  fs.readFileSync(path.join(workspace, 'n8n/workflows/core/excel-extractor-agent.workflow.json'), 'utf8'),
+);
+const orch = JSON.parse(
+  fs.readFileSync(path.join(workspace, 'n8n/workflows/core/mas-orchestrator.workflow.json'), 'utf8'),
+);
+
+assert.equal(wf.name, 'Agent — Excel Extractor');
+assert.equal(wf.active, false);
+assert.equal(
+  wf.nodes.some((n) => n.type === 'n8n-nodes-base.webhook'),
+  false,
+  'no webhook adapter — Orchestrator uses executeWorkflow',
+);
+assert.equal(JSON.stringify(wf).includes('Hybrid Retrieval'), false);
+assert.equal(JSON.stringify(wf).includes('formBinaryData'), false);
+assert.equal(JSON.stringify(wf).includes('.first().binary'), false);
+const trigger = wf.nodes.find((n) => n.type === 'n8n-nodes-base.executeWorkflowTrigger');
+assert.ok(trigger);
+assert.equal(trigger.name, 'When executed by another workflow');
+assert.equal(trigger.typeVersion, 1.2);
+const agent = wf.nodes.find((n) => n.name === 'Excel Extractor AI Agent');
+assert.ok(agent);
+assert.equal(agent.type, '@n8n/n8n-nodes-langchain.agent');
+assert.equal(agent.typeVersion, 3.1);
+assert.equal(agent.parameters.hasOutputParser, false);
+const model = wf.nodes.find((n) => n.name === 'Excel Extractor Chat Model — Qwen');
+assert.ok(model);
+assert.equal(model.typeVersion, 1.3);
+assert.equal(model.parameters.options.timeout, 300000);
+const tools = wf.nodes.filter((n) => n.type === '@n8n/n8n-nodes-langchain.toolHttpRequest').map((n) => n.name);
+for (const name of [
+  'workbook_introspect',
+  'sheet_preview',
+  'detect_tables',
+  'match_tables',
+  'describe_table',
+  'list_column_values',
+  'query_table',
+  'extract_commissioning',
+]) {
+  assert.ok(tools.includes(name), name);
+}
+assert.ok(wf.connections['detect_tables'].ai_tool);
+assert.ok(wf.connections['Excel Extractor Chat Model — Qwen'].ai_languageModel);
+assert.equal(wf.connections['When executed by another workflow'].main[0][0].node, 'Runtime configuration');
+const cap = wf.nodes.find((n) => n.name === 'Capability router');
+assert.ok(cap);
+assert.equal(cap.type, 'n8n-nodes-base.switch');
+assert.equal(wf.connections['Session ready?'].main[0][0].node, 'Capability router');
+assert.equal(wf.connections['Capability router'].main[0][0].node, 'Extract commissioning');
+assert.equal(wf.connections['Capability router'].main[1][0].node, 'Prepare AI Agent input');
+const extract = wf.nodes.find((n) => n.name === 'Extract commissioning');
+assert.equal(extract.type, 'n8n-nodes-base.httpRequest');
+assert.ok(String(extract.parameters.url).includes('extract_commissioning'));
+assert.equal(wf.connections['Extract commissioning'].main[0][0].node, 'Fetch excel result');
+assert.equal(wf.connections['Excel Extractor AI Agent'].main[0][0].node, 'Fetch excel result');
+const sessionFields = wf.nodes
+  .filter((n) => n.type === '@n8n/n8n-nodes-langchain.toolHttpRequest')
+  .flatMap((n) => (n.parameters.parametersBody?.values || []).filter((f) => f.name === 'session_id'));
+assert.ok(sessionFields.length >= 8);
+for (const field of sessionFields) {
+  assert.equal(field.valueProvider, 'fieldValue');
+  assert.match(String(field.value), /Open excel session/);
+  assert.equal(String(field.value).includes('$json.session_id'), false);
+}
+
+const cfg = orch.nodes.find((n) => n.name === 'Runtime endpoints');
+const url = (cfg.parameters.assignments.assignments || []).find((a) => a.name === 'excel_extractor_url');
+assert.equal(url, undefined, 'no HTTP /agent/run URL — specialist is executeWorkflow');
+const call = orch.nodes.find((n) => n.name === 'Call Excel Extractor');
+assert.equal(call.type, 'n8n-nodes-base.executeWorkflow');
+assert.equal(call.typeVersion, 1.3);
+assert.equal(call.onError, 'continueRegularOutput');
+assert.equal(call.parameters.workflowId.value, 'REPLACE_EXCEL_EXTRACTION_AGENT_IN_UI');
+assert.equal(call.parameters.workflowId.cachedResultName, 'Agent — Excel Extractor');
+assert.equal(call.parameters.options.waitForSubWorkflow, true);
+assert.deepEqual(Object.keys(call.parameters.workflowInputs.value), ['agent_task']);
+console.log('excel-extractor-agent-smoke: ok');
+
+===END_FILE===
 ===BEGIN_FILE===	n8n/tests/excel-extractor-runtime-smoke.js	6932	utf8
 'use strict';
 const assert = require('node:assert/strict');
@@ -54329,7 +55664,7 @@ async function run(name, json, nodes) {
 });
 
 ===END_FILE===
-===BEGIN_FILE===	n8n/tests/mas-orchestrator-smoke.js	11556	utf8
+===BEGIN_FILE===	n8n/tests/mas-orchestrator-smoke.js	15092	utf8
 'use strict';
 /**
  * Thin Orchestrator — MAS: one step, no RAG/SCHEDULE, errorWorkflow bound.
@@ -54350,17 +55685,25 @@ function source(name) {
   return node.parameters.jsCode;
 }
 
-async function run(name, json, nodes = {}) {
+function toItem(payload) {
+  if (payload && typeof payload === 'object' && !Array.isArray(payload) && payload.json !== undefined && payload.binary !== undefined) {
+    return payload;
+  }
+  return { json: payload };
+}
+
+async function run(name, json, nodes = {}, binary = {}) {
+  const resolved = { 'Normalize step request': { json, binary }, ...nodes };
   const lookup = (nodeName) => {
-    if (!Object.prototype.hasOwnProperty.call(nodes, nodeName)) {
+    if (!Object.prototype.hasOwnProperty.call(resolved, nodeName)) {
       throw new Error(`node not executed: ${nodeName}`);
     }
-    const payload = nodes[nodeName];
-    const items = Array.isArray(payload) ? payload : [{ json: payload }];
+    const payload = resolved[nodeName];
+    const items = Array.isArray(payload) ? payload.map(toItem) : [toItem(payload)];
     return { first: () => items[0], all: () => items };
   };
   const fn = new AsyncFunction('$json', '$', '$input', '$execution', source(name));
-  const result = await fn(json, lookup, { first: () => ({ json }), all: () => [{ json }] }, { id: 'exec-1' });
+  const result = await fn(json, lookup, { first: () => ({ json, binary }), all: () => [{ json, binary }] }, { id: 'exec-1' });
   assert.ok(Array.isArray(result) && result[0]?.json);
   return result[0].json;
 }
@@ -54393,6 +55736,9 @@ async function run(name, json, nodes = {}) {
     'Status only?',
     'Resume persist?',
     'POST continue run',
+    'Prepare Activity ack',
+    'Activity sync?',
+    'POST step ack to MAS Activity',
   ]) {
     assert.ok(wf.nodes.some((n) => n.name === need), `missing ${need}`);
   }
@@ -54435,15 +55781,31 @@ async function run(name, json, nodes = {}) {
   assert.equal(callSchedule.onError, 'continueRegularOutput');
   const continueNode = wf.nodes.find((n) => n.name === 'POST continue run');
   assert.ok(String(continueNode.parameters.jsonBody).includes("action: 'step'"));
-  assert.equal(continueNode.parameters.authentication, 'genericCredentialType');
-  assert.equal(source('Merge agent result').includes('mas-orchestrator-step'), true);
-  assert.equal(source('Merge agent result').includes('/cases/'), false);
+  assert.equal(continueNode.parameters.url, "={{ $json.continue_url }}");
+  assert.equal(continueNode.parameters.authentication, undefined);
+  assert.equal(source('Merge agent result').includes('/cases/'), true);
+  const callExcel = wf.nodes.find((n) => n.name === 'Call Excel Extractor');
+  assert.equal(callExcel.type, 'n8n-nodes-base.executeWorkflow');
+  assert.equal(callExcel.typeVersion, 1.3);
+  assert.equal(callExcel.parameters.workflowId.value, 'REPLACE_EXCEL_EXTRACTION_AGENT_IN_UI');
+  assert.equal(callExcel.parameters.workflowId.cachedResultName, 'Agent — Excel Extractor');
+  assert.equal(callExcel.parameters.options.waitForSubWorkflow, true);
+  assert.equal(callExcel.onError, 'continueRegularOutput');
+  assert.deepEqual(Object.keys(callExcel.parameters.workflowInputs.value), ['agent_task']);
+  assert.equal(callExcel.parameters.workflowInputs.value.agent_task, '={{ $json.agent_task }}');
+  const excelUrl = (runtime.parameters.assignments.assignments || []).find((a) => a.name === 'excel_extractor_url');
+  assert.equal(excelUrl, undefined, 'no HTTP /agent/run URL — specialist is executeWorkflow');
+  assert.equal(callSchedule.parameters.workflowInputs.value.agent_task, '={{ $json.agent_task }}');
+  assert.equal(text.includes('formBinaryData'), false);
+  assert.equal(text.includes('.first().binary'), false);
+  assert.equal(text.includes('multipart-form-data'), false);
 
   const probeIf = wf.connections['Probe ping?'];
-  assert.equal(probeIf.main[0][0].node, 'Format step ack');
+  assert.equal(probeIf.main[0][0].node, 'Prepare Activity ack');
   assert.equal(probeIf.main[1][0].node, 'Needs create?');
   assert.equal(wf.connections['Normalize step request'].main[0][0].node, 'Probe ping?');
-  assert.equal(wf.connections['Status only?'].main[0][0].node, 'Format step ack');
+  assert.equal(wf.connections['Status only?'].main[0][0].node, 'Prepare Activity ack');
+  assert.equal(wf.connections['Prepare Activity ack'].main[0][0].node, 'Activity sync?');
 
   const probed = await run('Normalize step request', {
     action: 'probe',
@@ -54477,6 +55839,56 @@ async function run(name, json, nodes = {}) {
   assert.equal(started.needs_create, true);
   assert.equal(started.goal, 'Сдвинуть даты');
   assert.match(started.case_id, /^CASE-/);
+
+  const created = await run('Normalize step request', {
+    action: 'create',
+    case_id: 'CASE-from-activity',
+    task_description: 'Новая задача из Activity',
+    activity_base_url: 'http://mas-activity:8200',
+  });
+  assert.equal(created.needs_create, true);
+  assert.equal(created.case_id, 'CASE-from-activity');
+  assert.equal(created.goal, 'Новая задача из Activity');
+  assert.equal(created.activity_base_url, 'http://mas-activity:8200');
+
+  const createdCase = await run(
+    'Prepare start case',
+    {
+      case_id: 'CASE-from-activity',
+      goal: 'Новая задача из Activity',
+      task_name: 'Демо',
+      requested_by: 'tester',
+    },
+  );
+  assert.deepEqual(createdCase.state.artifacts, {});
+  assert.match(JSON.stringify(createdCase.persist_events[0]), /Activity/);
+
+  const prepared = await run(
+    'Prepare decision context',
+    { case_id: 'CASE-1' },
+    {
+      'Load case': {
+        state: {
+          goal: 'даты ввода',
+          artifacts: {
+            excel: { filename: 'dates.xlsx', artifact_id: 'excel' },
+            schedule_source: { filename: 'base.inc', artifact_id: 'schedule_source' },
+          },
+          data: {},
+        },
+        status: 'running',
+      },
+      'Load agent registry': { agent_id: 'excel_extractor', title: 'Excel' },
+      'Runtime endpoints': {
+        activity_base_url: 'http://mas-activity:8200',
+        excel_extractor_url: 'http://excel-tools:18000/agent/run',
+      },
+    },
+  );
+  assert.equal(prepared.compact.has_excel, true);
+  assert.equal(prepared.compact.has_schedule_source, true);
+  assert.equal(prepared.activity_base_url, 'http://mas-activity:8200');
+  assert.match(prepared.planner_input, /excel_extractor/);
 
   const resumed = await run('Normalize step request', {
     action: 'resume',
@@ -54552,6 +55964,8 @@ async function run(name, json, nodes = {}) {
   assert.equal(parsed.action_type, 'call_agent');
   assert.equal(parsed.should_call_agent, true);
   assert.equal(parsed.agent_task.agent_id, 'excel_extractor');
+  assert.equal(parsed.agent_task.inputs.activity_base_url, 'http://activity:8200');
+  assert.deepEqual(parsed.agent_task.inputs.artifacts, { excel: 'a.xlsx' });
   assert.equal(parsed.next_status, 'running');
   assert.deepEqual(parsed.events.map((e) => e.kind), ['orchestrator.decision', 'agent.handoff']);
   assert.equal(parsed.events.some((e) => e.kind === 'orchestrator.status'), false);
@@ -54586,7 +56000,7 @@ async function run(name, json, nodes = {}) {
   assert.equal(merged.next_status, 'running');
   assert.equal(merged.should_continue, true);
   assert.ok(merged.state.data.excel);
-  assert.equal(merged.continue_url, 'http://n8n:5678/webhook/mas-orchestrator-step');
+  assert.equal(merged.continue_url, 'http://activity:8200/cases/CASE-1/run');
   assert.deepEqual(merged.events.map((e) => e.kind), ['agent.result']);
   assert.equal(merged.persist_events[0][2], 'agent.result');
 
@@ -58938,6 +60352,1084 @@ main().catch((error) => {
 
 
 ===END_FILE===
+===BEGIN_FILE===	n8n/workflows/core/excel-extractor-agent.workflow.json	33915	utf8
+{
+  "id": "3774c645-a20d-53df-9288-130173c400c2",
+  "name": "Agent — Excel Extractor",
+  "active": false,
+  "isArchived": false,
+  "nodes": [
+    {
+      "parameters": {
+        "content": "## edit after import\n\n**Agent — Excel Extractor** — один LLM + excel-tools FastAPI.\n\n1. Bind **Qwen** credential on Excel Extractor Chat Model\n2. Runtime configuration: `excel_tools_url` = `http://excel-tools:18000`, API key, `activity_base_url`\n3. Orchestrator — MAS вызывает этот workflow через `executeWorkflow` (`Call Excel Extractor`). Webhook не нужен.\n\nФайлы не грузятся в n8n. Сервис сам GET `/cases/{id}/artifacts/excel`.\n`suggested_capability=commissioning` идёт обычным HTTP `extract_commissioning` (external n8n runners не execute'ят toolHttpRequest). Скважины/даты не хардкодятся.",
+        "height": 340,
+        "width": 480,
+        "color": 1
+      },
+      "id": "c26fad53-147f-5aa7-bca1-070ba39716ca",
+      "name": "edit after import",
+      "type": "n8n-nodes-base.stickyNote",
+      "typeVersion": 1,
+      "position": [
+        -220,
+        -360
+      ]
+    },
+    {
+      "parameters": {
+        "inputSource": "jsonExample",
+        "jsonExample": "{\"agent_task\": {\"case_id\": \"CASE-example\", \"task_id\": \"TASK-001\", \"agent_id\": \"excel_extractor\", \"objective\": \"Достань даты ввода скважин\", \"inputs\": {}, \"context\": {}}}"
+      },
+      "id": "3992e594-d2b8-521e-bea3-3b57ad774d1c",
+      "name": "When executed by another workflow",
+      "type": "n8n-nodes-base.executeWorkflowTrigger",
+      "typeVersion": 1.2,
+      "position": [
+        0,
+        0
+      ]
+    },
+    {
+      "parameters": {
+        "assignments": {
+          "assignments": [
+            {
+              "id": "5d79d338-8464-510f-9563-d5a6fdd1c391",
+              "name": "excel_tools_url",
+              "value": "http://excel-tools:18000",
+              "type": "string"
+            },
+            {
+              "id": "5d222650-435a-598b-888c-3867100e3c3b",
+              "name": "excel_tools_api_key",
+              "value": "",
+              "type": "string"
+            },
+            {
+              "id": "dfff2401-bdc7-5d5d-9363-300e4b785c1c",
+              "name": "activity_base_url",
+              "value": "http://mas-activity:8200",
+              "type": "string"
+            }
+          ]
+        },
+        "options": {},
+        "includeOtherFields": true
+      },
+      "id": "4765d023-1b68-5337-b4a8-2e68c5940499",
+      "name": "Runtime configuration",
+      "type": "n8n-nodes-base.set",
+      "typeVersion": 3.4,
+      "position": [
+        260,
+        0
+      ]
+    },
+    {
+      "parameters": {
+        "jsCode": "\nconst root=$json||{};\nconst body=root.body&&typeof root.body==='object'?root.body:root;\nconst packet=body.specialist_packet&&typeof body.specialist_packet==='object'?body.specialist_packet:null;\nlet task=body.agent_task&&typeof body.agent_task==='object'?body.agent_task:(body.case_id||body.task_id||body.objective?body:null);\nif(!task||typeof task!=='object') task={};\nif(packet){\n  const inputs=packet.inputs&&typeof packet.inputs==='object'?packet.inputs:{};\n  task={\n    case_id:String(packet.case_id||body.case_id||task.case_id||''),\n    task_id:String(packet.task_id||task.task_id||''),\n    agent_id:'excel_extractor',\n    objective:String(packet.objective||task.objective||''),\n    handoff_message:String(packet.handoff_message||task.handoff_message||packet.objective||''),\n    inputs,\n    context:packet.context&&typeof packet.context==='object'?packet.context:(task.context||{}),\n    constraints:packet.controls&&typeof packet.controls==='object'?packet.controls:(task.constraints||{})\n  };\n}\ntask.agent_id='excel_extractor';\ntask.case_id=String(task.case_id||'');\ntask.task_id=String(task.task_id||'');\ntask.objective=String(task.objective||'');\ntask.handoff_message=String(task.handoff_message||'');\ntask.inputs=task.inputs&&typeof task.inputs==='object'?task.inputs:{};\ntask.context=task.context&&typeof task.context==='object'?task.context:{};\nconst cfg=$('Runtime configuration').first().json||{};\nif(!task.inputs.activity_base_url&&cfg.activity_base_url) task.inputs={...task.inputs, activity_base_url:cfg.activity_base_url};\nreturn [{json:{...cfg, agent_task:task, case_id:task.case_id, task_id:task.task_id}}];\n"
+      },
+      "id": "0bee4cdf-a5e6-5a00-be1c-f713ccef0baa",
+      "name": "Normalize excel task",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        500,
+        0
+      ]
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "={{ $json.excel_tools_url }}/agent-tools/open_session",
+        "sendHeaders": true,
+        "headerParameters": {
+          "parameters": [
+            {
+              "name": "Content-Type",
+              "value": "application/json"
+            },
+            {
+              "name": "X-API-Key",
+              "value": "={{ $('Runtime configuration').first().json.excel_tools_api_key || '' }}"
+            }
+          ]
+        },
+        "options": {
+          "timeout": 180000,
+          "response": {
+            "response": {
+              "fullResponse": false,
+              "responseFormat": "json"
+            }
+          }
+        },
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "={{ $json.agent_task }}"
+      },
+      "id": "e6832040-7bd7-5f0a-a498-620deff27695",
+      "name": "Open excel session",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.4,
+      "position": [
+        740,
+        0
+      ],
+      "onError": "continueRegularOutput",
+      "alwaysOutputData": true
+    },
+    {
+      "parameters": {
+        "conditions": {
+          "options": {
+            "caseSensitive": true,
+            "leftValue": "",
+            "typeValidation": "strict",
+            "version": 2
+          },
+          "conditions": [
+            {
+              "id": "9efe4e77-45fd-54bc-9559-eaf2d7dae1d8",
+              "leftValue": "={{ $json.ok === true }}",
+              "rightValue": true,
+              "operator": {
+                "type": "boolean",
+                "operation": "true"
+              }
+            }
+          ],
+          "combinator": "and"
+        },
+        "options": {}
+      },
+      "id": "358f999f-18c4-54b4-918f-f878e7fdfc54",
+      "name": "Session ready?",
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2.3,
+      "position": [
+        980,
+        0
+      ]
+    },
+    {
+      "parameters": {
+        "jsCode": "\nconst opened=$json||{};\nconst result=opened.result&&typeof opened.result==='object'?opened.result:{};\nreturn [{json:{\n  task_id:result.task_id||opened.task_id||'',\n  agent_id:'excel_extractor',\n  status:result.status||'needs_input',\n  message:result.message||opened.message||'Нет Excel-файла для извлечения',\n  data:result.data||{},\n  artifacts:result.artifacts||{},\n  issues:result.issues||[{type:'missing_excel'}],\n  assumptions:result.assumptions||[],\n  requests:result.requests||[{question_id:'Q-excel',question:'Приложите workbook .xlsx',options:[]}]\n}}];\n"
+      },
+      "id": "65375f59-96fa-5c09-8697-c1becec8677a",
+      "name": "Format missing excel",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        1220,
+        240
+      ]
+    },
+    {
+      "parameters": {
+        "mode": "expression",
+        "numberOutputs": 2,
+        "output": "={{ ({commissioning:0, operations:1})[$json.suggested_capability] ?? 1 }}"
+      },
+      "id": "9c4011ef-18c6-5476-a9f5-7d1c8003b0d8",
+      "name": "Capability router",
+      "type": "n8n-nodes-base.switch",
+      "typeVersion": 3.4,
+      "position": [
+        1220,
+        0
+      ]
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "={{ $('Runtime configuration').first().json.excel_tools_url + '/agent-tools/extract_commissioning' }}",
+        "sendHeaders": true,
+        "headerParameters": {
+          "parameters": [
+            {
+              "name": "Content-Type",
+              "value": "application/json"
+            },
+            {
+              "name": "X-API-Key",
+              "value": "={{ $('Runtime configuration').first().json.excel_tools_api_key || '' }}"
+            }
+          ]
+        },
+        "options": {
+          "timeout": 180000,
+          "response": {
+            "response": {
+              "fullResponse": false,
+              "responseFormat": "json"
+            }
+          }
+        },
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "={{ ({session_id: $('Open excel session').first().json.session_id}) }}"
+      },
+      "id": "cc62fbc1-3edb-59dc-a12c-1d7c4a7e2ef1",
+      "name": "Extract commissioning",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.4,
+      "position": [
+        1480,
+        -160
+      ],
+      "onError": "continueRegularOutput",
+      "alwaysOutputData": true
+    },
+    {
+      "parameters": {
+        "jsCode": "\nconst opened=$json||{};\nconst task=$('Normalize excel task').first().json.agent_task||{};\nconst agent_input=JSON.stringify({\n  objective:opened.objective||task.objective||'',\n  handoff_message:opened.handoff_message||task.handoff_message||'',\n  inspect:opened.inspect||{},\n  file_name:opened.file_name||'',\n  suggested_capability:opened.suggested_capability||''\n});\nreturn [{json:{...opened, session_id:opened.session_id, agent_input}}];\n"
+      },
+      "id": "2d5a7eba-bd5e-5ccb-895a-b7ca5109b7cc",
+      "name": "Prepare AI Agent input",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        1480,
+        160
+      ]
+    },
+    {
+      "parameters": {
+        "promptType": "define",
+        "text": "={{ $json.agent_input }}",
+        "hasOutputParser": false,
+        "options": {
+          "systemMessage": "Ты — единственный LLM-решатель агента Excel Extractor.\n\nWorkbook тебе не показывают. Он лежит в сессии FastAPI. session_id привязан workflow: никогда не передавай session_id и обёртку args/input.\n\nИнструменты:\n- workbook_introspect — листы и размеры (компактно)\n- sheet_preview — небольшой прямоугольник одного листа, не весь лист\n- detect_tables — найти таблицы, вернуть table_id / range / columns\n- match_tables — ранжировать таблицы по запросу\n- describe_table — колонки и sample по table_id\n- list_column_values — ограниченные distinct-значения колонки\n- query_table — строки по table_id (limit, фильтры). Не выгружай всю книгу\n- extract_commissioning — скважина+дата ввода из уже открытой сессии. Даты и скважины сам не выдумывай\n\nПравила:\n- Не пиши SCHEDULE / .INC. Только факты из Excel.\n- Не придумывай скважины, даты, дебиты, имена листов и table_id.\n- suggested_capability=commissioning → сразу extract_commissioning, затем STOP.\n- Иначе introspect/detect → query нужных таблиц. Если нужны даты ввода — extract_commissioning.\n- После extract_commissioning со status completed или needs_input — STOP.\n- Если файла/таблиц нет — не выдумывай строки.\n\nЗаверши одним коротким фактическим предложением по-русски.\n",
+          "maxIterations": 12,
+          "returnIntermediateSteps": true,
+          "passthroughBinaryImages": false,
+          "passthroughBinaryPdfs": false,
+          "enableStreaming": false
+        },
+        "needsFallback": false
+      },
+      "id": "2f03ceca-e58c-53ff-8b58-4586a68f08ea",
+      "name": "Excel Extractor AI Agent",
+      "type": "@n8n/n8n-nodes-langchain.agent",
+      "typeVersion": 3.1,
+      "position": [
+        1720,
+        160
+      ]
+    },
+    {
+      "parameters": {
+        "model": {
+          "mode": "id",
+          "value": "qwen3.6-plus"
+        },
+        "options": {
+          "maxTokens": 2048,
+          "temperature": 0,
+          "timeout": 300000,
+          "maxRetries": 5
+        },
+        "responsesApiEnabled": false
+      },
+      "id": "e81706e1-430e-5640-a5c8-2500fb80aa1b",
+      "name": "Excel Extractor Chat Model — Qwen",
+      "type": "@n8n/n8n-nodes-langchain.lmChatOpenAi",
+      "typeVersion": 1.3,
+      "position": [
+        1720,
+        40
+      ],
+      "credentials": {
+        "openAiApi": {
+          "id": "REPLACE_IN_UI",
+          "name": "REPLACE: Qwen OpenAI-compatible excel extractor credential"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "method": "GET",
+        "url": "={{ $('Runtime configuration').first().json.excel_tools_url + '/sessions/' + $('Open excel session').first().json.session_id + '/result' }}",
+        "sendHeaders": true,
+        "headerParameters": {
+          "parameters": [
+            {
+              "name": "Content-Type",
+              "value": "application/json"
+            },
+            {
+              "name": "X-API-Key",
+              "value": "={{ $('Runtime configuration').first().json.excel_tools_api_key || '' }}"
+            }
+          ]
+        },
+        "options": {
+          "timeout": 120000,
+          "response": {
+            "response": {
+              "fullResponse": false,
+              "responseFormat": "json"
+            }
+          }
+        }
+      },
+      "id": "cf896b5f-c322-54db-8650-f141428dbb6e",
+      "name": "Fetch excel result",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.4,
+      "position": [
+        1960,
+        0
+      ],
+      "onError": "continueRegularOutput",
+      "alwaysOutputData": true
+    },
+    {
+      "parameters": {
+        "jsCode": "\nconst fetched=$json||{};\nconst opened=$('Open excel session').first().json||{};\nif(fetched.status){\n  return [{json:{\n    task_id:fetched.task_id||opened.task_id||'',\n    agent_id:'excel_extractor',\n    status:fetched.status,\n    message:fetched.message||'',\n    data:fetched.data||{},\n    artifacts:fetched.artifacts||{},\n    issues:fetched.issues||[],\n    assumptions:fetched.assumptions||[],\n    requests:fetched.requests||[]\n  }}];\n}\nreturn [{json:{\n  task_id:opened.task_id||'',\n  agent_id:'excel_extractor',\n  status:'failed',\n  message:String(fetched.message||fetched.error||'Excel Extractor не вернул факты'),\n  data:{},\n  artifacts:{},\n  issues:[{type:'excel_agent_no_result'}],\n  assumptions:[],\n  requests:[]\n}}];\n"
+      },
+      "id": "76537492-0ad0-514e-9053-8685f3bf04b1",
+      "name": "Format excel result",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        2200,
+        0
+      ]
+    },
+    {
+      "parameters": {
+        "toolDescription": "Компактные листы и размеры workbook. Без файла.",
+        "method": "POST",
+        "url": "={{ $('Runtime configuration').first().json.excel_tools_url + '/agent-tools/' + \"workbook_introspect\" }}",
+        "authentication": "none",
+        "sendQuery": false,
+        "sendHeaders": true,
+        "specifyHeaders": "keypair",
+        "sendBody": true,
+        "specifyBody": "keypair",
+        "placeholderDefinitions": {
+          "values": []
+        },
+        "optimizeResponse": false,
+        "parametersHeaders": {
+          "values": [
+            {
+              "name": "Content-Type",
+              "valueProvider": "fieldValue",
+              "value": "application/json"
+            },
+            {
+              "name": "X-API-Key",
+              "valueProvider": "fieldValue",
+              "value": "={{ $('Runtime configuration').first().json.excel_tools_api_key || '' }}"
+            }
+          ]
+        },
+        "parametersBody": {
+          "values": [
+            {
+              "name": "session_id",
+              "valueProvider": "fieldValue",
+              "value": "={{ $('Open excel session').first().json.session_id }}"
+            }
+          ]
+        }
+      },
+      "id": "71b0ad7a-728c-509e-b23d-b9cdc615e2ae",
+      "name": "workbook_introspect",
+      "type": "@n8n/n8n-nodes-langchain.toolHttpRequest",
+      "typeVersion": 1.1,
+      "position": [
+        760,
+        -420
+      ]
+    },
+    {
+      "parameters": {
+        "toolDescription": "Небольшой preview одного листа. sheet только из introspect.",
+        "method": "POST",
+        "url": "={{ $('Runtime configuration').first().json.excel_tools_url + '/agent-tools/' + \"sheet_preview\" }}",
+        "authentication": "none",
+        "sendQuery": false,
+        "sendHeaders": true,
+        "specifyHeaders": "keypair",
+        "sendBody": true,
+        "specifyBody": "keypair",
+        "placeholderDefinitions": {
+          "values": [
+            {
+              "name": "sheet",
+              "description": "Точное имя листа из introspect",
+              "type": "string"
+            }
+          ]
+        },
+        "optimizeResponse": false,
+        "parametersHeaders": {
+          "values": [
+            {
+              "name": "Content-Type",
+              "valueProvider": "fieldValue",
+              "value": "application/json"
+            },
+            {
+              "name": "X-API-Key",
+              "valueProvider": "fieldValue",
+              "value": "={{ $('Runtime configuration').first().json.excel_tools_api_key || '' }}"
+            }
+          ]
+        },
+        "parametersBody": {
+          "values": [
+            {
+              "name": "session_id",
+              "valueProvider": "fieldValue",
+              "value": "={{ $('Open excel session').first().json.session_id }}"
+            },
+            {
+              "name": "sheet",
+              "valueProvider": "modelRequired",
+              "value": ""
+            }
+          ]
+        }
+      },
+      "id": "669a4f3a-4afd-5a8e-999e-35cfadceb7eb",
+      "name": "sheet_preview",
+      "type": "@n8n/n8n-nodes-langchain.toolHttpRequest",
+      "typeVersion": 1.1,
+      "position": [
+        980,
+        -420
+      ]
+    },
+    {
+      "parameters": {
+        "toolDescription": "Найти таблицы. sheet опционален. Возвращает table_id, range, columns — не workbook.",
+        "method": "POST",
+        "url": "={{ $('Runtime configuration').first().json.excel_tools_url + '/agent-tools/' + \"detect_tables\" }}",
+        "authentication": "none",
+        "sendQuery": false,
+        "sendHeaders": true,
+        "specifyHeaders": "keypair",
+        "sendBody": true,
+        "specifyBody": "keypair",
+        "placeholderDefinitions": {
+          "values": [
+            {
+              "name": "sheet",
+              "description": "Ограничить поиск одним листом",
+              "type": "string"
+            }
+          ]
+        },
+        "optimizeResponse": false,
+        "parametersHeaders": {
+          "values": [
+            {
+              "name": "Content-Type",
+              "valueProvider": "fieldValue",
+              "value": "application/json"
+            },
+            {
+              "name": "X-API-Key",
+              "valueProvider": "fieldValue",
+              "value": "={{ $('Runtime configuration').first().json.excel_tools_api_key || '' }}"
+            }
+          ]
+        },
+        "parametersBody": {
+          "values": [
+            {
+              "name": "session_id",
+              "valueProvider": "fieldValue",
+              "value": "={{ $('Open excel session').first().json.session_id }}"
+            },
+            {
+              "name": "sheet",
+              "valueProvider": "modelOptional",
+              "value": ""
+            }
+          ]
+        }
+      },
+      "id": "3a321bbf-c410-53e2-b000-a99958d37337",
+      "name": "detect_tables",
+      "type": "@n8n/n8n-nodes-langchain.toolHttpRequest",
+      "typeVersion": 1.1,
+      "position": [
+        1200,
+        -420
+      ]
+    },
+    {
+      "parameters": {
+        "toolDescription": "Ранжировать уже найденные или подходящие таблицы по фразе запроса.",
+        "method": "POST",
+        "url": "={{ $('Runtime configuration').first().json.excel_tools_url + '/agent-tools/' + \"match_tables\" }}",
+        "authentication": "none",
+        "sendQuery": false,
+        "sendHeaders": true,
+        "specifyHeaders": "keypair",
+        "sendBody": true,
+        "specifyBody": "keypair",
+        "placeholderDefinitions": {
+          "values": [
+            {
+              "name": "query",
+              "description": "Что искать: даты ввода, дебиты, ...",
+              "type": "string"
+            }
+          ]
+        },
+        "optimizeResponse": false,
+        "parametersHeaders": {
+          "values": [
+            {
+              "name": "Content-Type",
+              "valueProvider": "fieldValue",
+              "value": "application/json"
+            },
+            {
+              "name": "X-API-Key",
+              "valueProvider": "fieldValue",
+              "value": "={{ $('Runtime configuration').first().json.excel_tools_api_key || '' }}"
+            }
+          ]
+        },
+        "parametersBody": {
+          "values": [
+            {
+              "name": "session_id",
+              "valueProvider": "fieldValue",
+              "value": "={{ $('Open excel session').first().json.session_id }}"
+            },
+            {
+              "name": "query",
+              "valueProvider": "modelRequired",
+              "value": ""
+            }
+          ]
+        }
+      },
+      "id": "fd8414df-6c58-5e8d-9f9e-d49bcfa063c1",
+      "name": "match_tables",
+      "type": "@n8n/n8n-nodes-langchain.toolHttpRequest",
+      "typeVersion": 1.1,
+      "position": [
+        1420,
+        -420
+      ]
+    },
+    {
+      "parameters": {
+        "toolDescription": "Колонки, число строк и sample. table_id только из detect/match.",
+        "method": "POST",
+        "url": "={{ $('Runtime configuration').first().json.excel_tools_url + '/agent-tools/' + \"describe_table\" }}",
+        "authentication": "none",
+        "sendQuery": false,
+        "sendHeaders": true,
+        "specifyHeaders": "keypair",
+        "sendBody": true,
+        "specifyBody": "keypair",
+        "placeholderDefinitions": {
+          "values": [
+            {
+              "name": "table_id",
+              "description": "table_id из detect_tables",
+              "type": "string"
+            }
+          ]
+        },
+        "optimizeResponse": false,
+        "parametersHeaders": {
+          "values": [
+            {
+              "name": "Content-Type",
+              "valueProvider": "fieldValue",
+              "value": "application/json"
+            },
+            {
+              "name": "X-API-Key",
+              "valueProvider": "fieldValue",
+              "value": "={{ $('Runtime configuration').first().json.excel_tools_api_key || '' }}"
+            }
+          ]
+        },
+        "parametersBody": {
+          "values": [
+            {
+              "name": "session_id",
+              "valueProvider": "fieldValue",
+              "value": "={{ $('Open excel session').first().json.session_id }}"
+            },
+            {
+              "name": "table_id",
+              "valueProvider": "modelRequired",
+              "value": ""
+            }
+          ]
+        }
+      },
+      "id": "96de5f67-f2d4-5264-a64d-a957f04be6d2",
+      "name": "describe_table",
+      "type": "@n8n/n8n-nodes-langchain.toolHttpRequest",
+      "typeVersion": 1.1,
+      "position": [
+        760,
+        -260
+      ]
+    },
+    {
+      "parameters": {
+        "toolDescription": "Ограниченные distinct-значения одной колонки для точных фильтров.",
+        "method": "POST",
+        "url": "={{ $('Runtime configuration').first().json.excel_tools_url + '/agent-tools/' + \"list_column_values\" }}",
+        "authentication": "none",
+        "sendQuery": false,
+        "sendHeaders": true,
+        "specifyHeaders": "keypair",
+        "sendBody": true,
+        "specifyBody": "keypair",
+        "placeholderDefinitions": {
+          "values": [
+            {
+              "name": "table_id",
+              "description": "table_id из detect_tables",
+              "type": "string"
+            },
+            {
+              "name": "column",
+              "description": "Точное имя колонки из describe/detect",
+              "type": "string"
+            }
+          ]
+        },
+        "optimizeResponse": false,
+        "parametersHeaders": {
+          "values": [
+            {
+              "name": "Content-Type",
+              "valueProvider": "fieldValue",
+              "value": "application/json"
+            },
+            {
+              "name": "X-API-Key",
+              "valueProvider": "fieldValue",
+              "value": "={{ $('Runtime configuration').first().json.excel_tools_api_key || '' }}"
+            }
+          ]
+        },
+        "parametersBody": {
+          "values": [
+            {
+              "name": "session_id",
+              "valueProvider": "fieldValue",
+              "value": "={{ $('Open excel session').first().json.session_id }}"
+            },
+            {
+              "name": "table_id",
+              "valueProvider": "modelRequired",
+              "value": ""
+            },
+            {
+              "name": "column",
+              "valueProvider": "modelRequired",
+              "value": ""
+            }
+          ]
+        }
+      },
+      "id": "217189e1-947c-5e4f-b109-ff47a44e265f",
+      "name": "list_column_values",
+      "type": "@n8n/n8n-nodes-langchain.toolHttpRequest",
+      "typeVersion": 1.1,
+      "position": [
+        980,
+        -260
+      ]
+    },
+    {
+      "parameters": {
+        "toolDescription": "Строки таблицы. select/filters — JSON с числовыми ключами 0,1,2,...",
+        "method": "POST",
+        "url": "={{ $('Runtime configuration').first().json.excel_tools_url + '/agent-tools/' + \"query_table\" }}",
+        "authentication": "none",
+        "sendQuery": false,
+        "sendHeaders": true,
+        "specifyHeaders": "keypair",
+        "sendBody": true,
+        "specifyBody": "keypair",
+        "placeholderDefinitions": {
+          "values": [
+            {
+              "name": "table_id",
+              "description": "table_id из detect_tables",
+              "type": "string"
+            },
+            {
+              "name": "select",
+              "description": "Числовые ключи → имена колонок",
+              "type": "json"
+            },
+            {
+              "name": "filters",
+              "description": "Числовые ключи → {field, operator, value}",
+              "type": "json"
+            },
+            {
+              "name": "limit",
+              "description": "Лимит строк, по умолчанию 200",
+              "type": "string"
+            }
+          ]
+        },
+        "optimizeResponse": false,
+        "parametersHeaders": {
+          "values": [
+            {
+              "name": "Content-Type",
+              "valueProvider": "fieldValue",
+              "value": "application/json"
+            },
+            {
+              "name": "X-API-Key",
+              "valueProvider": "fieldValue",
+              "value": "={{ $('Runtime configuration').first().json.excel_tools_api_key || '' }}"
+            }
+          ]
+        },
+        "parametersBody": {
+          "values": [
+            {
+              "name": "session_id",
+              "valueProvider": "fieldValue",
+              "value": "={{ $('Open excel session').first().json.session_id }}"
+            },
+            {
+              "name": "table_id",
+              "valueProvider": "modelRequired",
+              "value": ""
+            },
+            {
+              "name": "select",
+              "valueProvider": "modelOptional",
+              "value": ""
+            },
+            {
+              "name": "filters",
+              "valueProvider": "modelOptional",
+              "value": ""
+            },
+            {
+              "name": "limit",
+              "valueProvider": "modelOptional",
+              "value": ""
+            }
+          ]
+        }
+      },
+      "id": "11d8897f-cc55-5326-b643-3bd461d3602b",
+      "name": "query_table",
+      "type": "@n8n/n8n-nodes-langchain.toolHttpRequest",
+      "typeVersion": 1.1,
+      "position": [
+        1200,
+        -260
+      ]
+    },
+    {
+      "parameters": {
+        "toolDescription": "Извлечь факты скважина+дата ввода из сессии. Аргументы не передавай.",
+        "method": "POST",
+        "url": "={{ $('Runtime configuration').first().json.excel_tools_url + '/agent-tools/' + \"extract_commissioning\" }}",
+        "authentication": "none",
+        "sendQuery": false,
+        "sendHeaders": true,
+        "specifyHeaders": "keypair",
+        "sendBody": true,
+        "specifyBody": "keypair",
+        "placeholderDefinitions": {
+          "values": []
+        },
+        "optimizeResponse": false,
+        "parametersHeaders": {
+          "values": [
+            {
+              "name": "Content-Type",
+              "valueProvider": "fieldValue",
+              "value": "application/json"
+            },
+            {
+              "name": "X-API-Key",
+              "valueProvider": "fieldValue",
+              "value": "={{ $('Runtime configuration').first().json.excel_tools_api_key || '' }}"
+            }
+          ]
+        },
+        "parametersBody": {
+          "values": [
+            {
+              "name": "session_id",
+              "valueProvider": "fieldValue",
+              "value": "={{ $('Open excel session').first().json.session_id }}"
+            }
+          ]
+        }
+      },
+      "id": "fa55ccb0-944f-55c5-971b-8e216a89245c",
+      "name": "extract_commissioning",
+      "type": "@n8n/n8n-nodes-langchain.toolHttpRequest",
+      "typeVersion": 1.1,
+      "position": [
+        1420,
+        -260
+      ]
+    }
+  ],
+  "connections": {
+    "When executed by another workflow": {
+      "main": [
+        [
+          {
+            "node": "Runtime configuration",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Runtime configuration": {
+      "main": [
+        [
+          {
+            "node": "Normalize excel task",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Normalize excel task": {
+      "main": [
+        [
+          {
+            "node": "Open excel session",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Open excel session": {
+      "main": [
+        [
+          {
+            "node": "Session ready?",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Session ready?": {
+      "main": [
+        [
+          {
+            "node": "Capability router",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Format missing excel",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Capability router": {
+      "main": [
+        [
+          {
+            "node": "Extract commissioning",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Prepare AI Agent input",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Extract commissioning": {
+      "main": [
+        [
+          {
+            "node": "Fetch excel result",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Prepare AI Agent input": {
+      "main": [
+        [
+          {
+            "node": "Excel Extractor AI Agent",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Excel Extractor Chat Model — Qwen": {
+      "ai_languageModel": [
+        [
+          {
+            "node": "Excel Extractor AI Agent",
+            "type": "ai_languageModel",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "workbook_introspect": {
+      "ai_tool": [
+        [
+          {
+            "node": "Excel Extractor AI Agent",
+            "type": "ai_tool",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "sheet_preview": {
+      "ai_tool": [
+        [
+          {
+            "node": "Excel Extractor AI Agent",
+            "type": "ai_tool",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "detect_tables": {
+      "ai_tool": [
+        [
+          {
+            "node": "Excel Extractor AI Agent",
+            "type": "ai_tool",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "match_tables": {
+      "ai_tool": [
+        [
+          {
+            "node": "Excel Extractor AI Agent",
+            "type": "ai_tool",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "describe_table": {
+      "ai_tool": [
+        [
+          {
+            "node": "Excel Extractor AI Agent",
+            "type": "ai_tool",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "list_column_values": {
+      "ai_tool": [
+        [
+          {
+            "node": "Excel Extractor AI Agent",
+            "type": "ai_tool",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "query_table": {
+      "ai_tool": [
+        [
+          {
+            "node": "Excel Extractor AI Agent",
+            "type": "ai_tool",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "extract_commissioning": {
+      "ai_tool": [
+        [
+          {
+            "node": "Excel Extractor AI Agent",
+            "type": "ai_tool",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Excel Extractor AI Agent": {
+      "main": [
+        [
+          {
+            "node": "Fetch excel result",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Fetch excel result": {
+      "main": [
+        [
+          {
+            "node": "Format excel result",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    }
+  },
+  "settings": {
+    "executionOrder": "v1",
+    "saveManualExecutions": true,
+    "callerPolicy": "workflowsFromSameOwner",
+    "errorWorkflow": ""
+  },
+  "meta": {
+    "templateCredsSetupCompleted": true,
+    "targetN8nVersion": "2.30.8"
+  },
+  "tags": [],
+  "pinData": {},
+  "versionId": "c5ddaf5c-330e-4c53-baa9-42abc31b99ea"
+}
+
+===END_FILE===
 ===BEGIN_FILE===	n8n/workflows/core/mas-deployment-health-check.workflow.json	25632	utf8
 {
   "id": "mas-deployment-health-check-v1",
@@ -60219,7 +62711,7 @@ main().catch((error) => {
 }
 
 ===END_FILE===
-===BEGIN_FILE===	n8n/workflows/core/mas-orchestrator.workflow.json	60150	utf8
+===BEGIN_FILE===	n8n/workflows/core/mas-orchestrator.workflow.json	66272	utf8
 {
   "id": "e9bbdb6e-3b7c-5dc0-851a-30bd9f2eb0d6",
   "name": "Orchestrator — MAS",
@@ -60228,7 +62720,7 @@ main().catch((error) => {
   "nodes": [
     {
       "parameters": {
-        "content": "## edit after import\n\n**Orchestrator — MAS** — thin loop:\n- Bind Postgres on load/insert/update\n- Bind **Qwen** OpenAI-compatible credential on Decision Chat Model\n- Bind inbound header auth on webhook (same cred on **POST continue run**)\n- Bind **Call Schedule Builder** → `Agent — Schedule Builder` (executeWorkflow, like Excel Extractor)\n- Runtime endpoints patched by lab_soft_redeploy\n\n`action`: probe | status | start | step | resume\n- **start/step/resume** live path: Activity `/cases` saves files + state; webhook self-POSTs the next `step`\n- **status** loads case and returns `human_gate` without LLM\n- Decision is Basic LLM Chain + Structured Output (no Agent tools)\n\nOne execution = one step.",
+        "content": "## edit after import\n\n**Orchestrator — MAS** — thin loop:\n- Bind Postgres on load/insert/update\n- Bind **Qwen** OpenAI-compatible credential on Decision Chat Model\n- Bind inbound header auth on webhook\n- Bind **Call Excel Extractor** → `Agent — Excel Extractor` (executeWorkflow)\n- Bind **Call Schedule Builder** → `Agent — Schedule Builder` (executeWorkflow)\n- Runtime endpoints patched by lab_soft_redeploy\n\n`action`: probe | status | start | create | step | resume\n- Activity `/cases` stores files; specialists fetch `/cases/{id}/artifacts/{id}` from their FastAPI tools. n8n never carries binaries.\n- **status** loads case and returns `human_gate` without LLM\n- Decision is Basic LLM Chain + Structured Output (no Agent tools)\n\nOne execution = one step.",
         "width": 480,
         "height": 420,
         "color": 1
@@ -60272,30 +62764,24 @@ main().catch((error) => {
           "assignments": [
             {
               "id": "3c90130b-ac50-548d-932a-664f9e666737",
-              "name": "excel_extractor_url",
-              "value": "http://excel-tools:18000/agent/run",
-              "type": "string"
-            },
-            {
-              "id": "75aea0af-7af2-55a6-acca-850fc42cccc1",
               "name": "calculation_agent_url",
               "value": "http://math-service:8100/agent/run",
               "type": "string"
             },
             {
-              "id": "818ebb7e-2212-55be-b9a4-b75a67cca546",
+              "id": "75aea0af-7af2-55a6-acca-850fc42cccc1",
               "name": "orchestrator_step_url",
               "value": "http://n8n:5678/webhook/mas-orchestrator-step",
               "type": "string"
             },
             {
-              "id": "cc285755-9359-507f-aa51-e9ac4dbe4e7f",
+              "id": "818ebb7e-2212-55be-b9a4-b75a67cca546",
               "name": "activity_base_url",
               "value": "http://mas-activity:8200",
               "type": "string"
             },
             {
-              "id": "31ea8db1-1c4d-59a9-a183-9a5baa148a21",
+              "id": "cc285755-9359-507f-aa51-e9ac4dbe4e7f",
               "name": "excel_tools_api_key",
               "value": "",
               "type": "string"
@@ -60316,7 +62802,7 @@ main().catch((error) => {
     },
     {
       "parameters": {
-        "jsCode": "\nconst raw=$input.first().json||{};\nconst body=raw.body&&typeof raw.body==='object'?raw.body:raw;\nconst action=String(body.action||raw.action||'step').trim().toLowerCase();\nlet caseId=String(body.case_id||raw.case_id||'').trim();\nconst goal=String(body.task_description||body.goal||raw.task_description||raw.goal||'').trim();\nconst taskName=String(body.task_name||raw.task_name||'').trim();\nconst humanResponse=String(body.human_response||raw.human_response||'');\nconst gateId=String(body.gate_id||raw.gate_id||'');\nconst requestedBy=String(body.requested_by||raw.requested_by||'');\nconst executionId=String($execution.id||'');\nconst readinessId=!caseId||caseId==='CASE-readiness-probe';\nif(action==='probe'||(action==='status'&&readinessId)){\n  return [{json:{\n    case_id:caseId||'CASE-readiness-probe',\n    action:'probe',\n    is_probe:true,\n    is_status:false,\n    is_resume:false,\n    needs_create:false,\n    next_status:'probe',\n    status:'probe',\n    action_type:'probe',\n    should_continue:false\n  }}];\n}\nlet needsCreate=false;\nif(!caseId){\n  if(action!=='start') throw new Error('case_id is required');\n  if(!goal) throw new Error('task_description is required for action=start');\n  caseId='CASE-'+Date.now().toString(16)+'-'+Math.random().toString(16).slice(2,8);\n  needsCreate=true;\n}\nreturn [{json:{\n  case_id:caseId,\n  action,\n  goal,\n  task_name:taskName,\n  human_response:humanResponse,\n  gate_id:gateId,\n  requested_by:requestedBy,\n  is_probe:false,\n  is_status:action==='status',\n  is_resume:action==='resume',\n  needs_create:needsCreate,\n  execution_id:executionId,\n  workflow_name:'orchestrator',\n  sql_parameters:[caseId],\n  exec_sql_parameters:[executionId, caseId, 'orchestrator'],\n}}];\n"
+        "jsCode": "\nconst raw=$input.first().json||{};\nconst body=raw.body&&typeof raw.body==='object'?raw.body:raw;\nconst action=String(body.action||raw.action||'step').trim().toLowerCase();\nlet caseId=String(body.case_id||raw.case_id||'').trim();\nconst goal=String(body.task_description||body.goal||raw.task_description||raw.goal||'').trim();\nconst taskName=String(body.task_name||raw.task_name||'').trim();\nconst humanResponse=String(body.human_response||raw.human_response||'');\nconst gateId=String(body.gate_id||raw.gate_id||'');\nconst requestedBy=String(body.requested_by||raw.requested_by||'');\nconst activityBaseUrl=String(raw.activity_base_url||'').trim();\nconst orchestratorStepUrl=String(raw.orchestrator_step_url||'').trim();\nconst executionId=String($execution.id||'');\nconst readinessId=!caseId||caseId==='CASE-readiness-probe';\nif(action==='probe'||(action==='status'&&readinessId)){\n  return [{json:{\n    case_id:caseId||'CASE-readiness-probe',\n    action:'probe',\n    is_probe:true,\n    is_status:false,\n    is_resume:false,\n    needs_create:false,\n    next_status:'probe',\n    status:'probe',\n    action_type:'probe',\n    should_continue:false\n  }}];\n}\nlet needsCreate=false;\nif(action==='create'){\n  if(!caseId) caseId='CASE-'+Date.now().toString(16)+'-'+Math.random().toString(16).slice(2,8);\n  if(!goal) throw new Error('task_description is required for action=create');\n  needsCreate=true;\n} else if(!caseId){\n  if(action!=='start') throw new Error('case_id is required');\n  if(!goal) throw new Error('task_description is required for action=start');\n  caseId='CASE-'+Date.now().toString(16)+'-'+Math.random().toString(16).slice(2,8);\n  needsCreate=true;\n}\nreturn [{json:{\n  case_id:caseId,\n  action,\n  goal,\n  task_name:taskName,\n  human_response:humanResponse,\n  gate_id:gateId,\n  requested_by:requestedBy,\n  activity_base_url:activityBaseUrl,\n  orchestrator_step_url:orchestratorStepUrl,\n  is_probe:false,\n  is_status:action==='status',\n  is_resume:action==='resume',\n  needs_create:needsCreate,\n  execution_id:executionId,\n  workflow_name:'orchestrator',\n  sql_parameters:[caseId],\n  exec_sql_parameters:[executionId, caseId, 'orchestrator'],\n}}];\n"
       },
       "id": "07d3d3cc-a9e7-508a-97d4-17391b86e1e1",
       "name": "Normalize step request",
@@ -60395,7 +62881,7 @@ main().catch((error) => {
     },
     {
       "parameters": {
-        "jsCode": "\nconst req=$json||{};\nconst goal=String(req.goal||'').trim();\nconst state={\n  case_id:req.case_id,\n  goal,\n  task_name:req.task_name||'',\n  status:'running',\n  plan:[],\n  artifacts:{},\n  data:{},\n  current_task:null,\n  hitl:{pending:false,questions:[],answers:{}},\n  last_error:null,\n  step_count:0\n};\nconst persistEvents=[[req.case_id,'','case.created','user','','new',('Принял задачу: '+goal).slice(0,200),'',JSON.stringify({requested_by:req.requested_by||'',task_name:req.task_name||'',note:'orchestrator start; files belong to Activity /cases'})]];\nreturn [{json:{\n  ...req,\n  state,\n  create_sql_parameters:[req.case_id, JSON.stringify(state), 'running'],\n  persist_events:persistEvents,\n  event_sql_parameters:persistEvents[0]\n}}];\n"
+        "jsCode": "\nconst req=$json||{};\nconst goal=String(req.goal||'').trim();\nconst state={\n  case_id:req.case_id,\n  goal,\n  task_name:req.task_name||'',\n  status:'running',\n  plan:[],\n  artifacts:{},\n  data:{},\n  current_task:null,\n  hitl:{pending:false,questions:[],answers:{}},\n  last_error:null,\n  step_count:0\n};\nconst persistEvents=[[req.case_id,'','case.created','user','','new',('Принял задачу: '+goal).slice(0,200),'',JSON.stringify({requested_by:req.requested_by||'',task_name:req.task_name||'',note:'orchestrator start; files stay in Activity /cases/{id}/artifacts'})]];\nreturn [{json:{\n  ...req,\n  state,\n  create_sql_parameters:[req.case_id, JSON.stringify(state), 'running'],\n  persist_events:persistEvents,\n  event_sql_parameters:persistEvents[0]\n}}];\n"
       },
       "id": "27ddbd46-3d3a-5c9a-b8ed-7e83bd872f58",
       "name": "Prepare start case",
@@ -60540,6 +63026,52 @@ main().catch((error) => {
         }
       },
       "alwaysOutputData": true
+    },
+    {
+      "parameters": {
+        "jsCode": "\nconst req=$('Normalize step request').first().json||{};\nconst row=$json&&typeof $json==='object'?$json:{};\nconst requested=String(req.case_id||'').trim();\nconst loaded=String(row.case_id||row.Case_id||'').trim();\nif(!requested||loaded!==requested){\n  return [{json:{\n    ...req,\n    status:'not_found',\n    next_status:'not_found',\n    action_type:'not_found',\n    should_continue:false,\n    case_loaded:false,\n    message:`Кейс ${requested||'(без case_id)'} не найден в control plane`\n  }}];\n}\nreturn [{json:{...req,...row,case_loaded:true}}];\n"
+      },
+      "id": "551d9232-7174-55dd-9b19-4869cb4c92a1",
+      "name": "Validate loaded case",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        1120,
+        -240
+      ]
+    },
+    {
+      "parameters": {
+        "conditions": {
+          "options": {
+            "caseSensitive": true,
+            "leftValue": "",
+            "typeValidation": "strict",
+            "version": 2
+          },
+          "conditions": [
+            {
+              "id": "929fcea6-6e6d-51d0-a604-d36e4d0c1419",
+              "leftValue": "={{ Boolean($json.case_loaded) }}",
+              "rightValue": true,
+              "operator": {
+                "type": "boolean",
+                "operation": "true"
+              }
+            }
+          ],
+          "combinator": "and"
+        },
+        "options": {}
+      },
+      "id": "9deae189-d53d-523b-a08a-291b913a4fb7",
+      "name": "Case found?",
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2.3,
+      "position": [
+        1280,
+        -240
+      ]
     },
     {
       "parameters": {
@@ -60730,7 +63262,7 @@ main().catch((error) => {
     },
     {
       "parameters": {
-        "jsCode": "\nconst req=$('Normalize step request').first().json||{};\nconst extras=(()=>{try{return $('Apply request extras').first().json}catch{return null}})();\nconst load=$('Load case').first().json||{};\nconst parse=v=>{if(v&&typeof v==='object')return v;try{return JSON.parse(String(v||'{}'))}catch{return {}}};\nconst state=(extras&&extras.state&&typeof extras.state==='object')?extras.state:parse(load.state||load.State||{});\nconst status=String((extras&&extras.next_status)||load.status||state.status||'running');\nconst registry=$('Load agent registry').all().map(i=>i.json||{}).filter(r=>r&&r.agent_id);\nconst artifacts=state.artifacts&&typeof state.artifacts==='object'?state.artifacts:{};\nconst data=state.data&&typeof state.data==='object'?state.data:{};\nconst plan=Array.isArray(state.plan)?state.plan:[];\nconst hitl=state.hitl&&typeof state.hitl==='object'?state.hitl:{};\nconst compact={\n  goal:state.goal||'',\n  artifacts_present:Object.keys(artifacts).filter(k=>artifacts[k]!=null&&artifacts[k]!==''),\n  artifact_files:Object.fromEntries(Object.entries(artifacts).map(([k,v])=>[k,(v&&typeof v==='object'&&v.filename)?v.filename:k])),\n  has_excel:Boolean(artifacts.excel),\n  has_schedule_source:Boolean(artifacts.schedule_source),\n    has_schedule_out:Boolean(artifacts.schedule_out&&String(artifacts.schedule_out).trim()),\n  excel_facts:(data.excel&&Array.isArray(data.excel.facts))?data.excel.facts.length:(Array.isArray(data.facts)?data.facts.length:0),\n  schedule_root:state.schedule_root||'',\n  data_present:Object.fromEntries(Object.keys(data).map(k=>[k,!(data[k]==null||data[k]==={}||data[k]===[])]) ),\n  plan:plan.map(p=>({id:p.id,status:p.status})),\n  current_task:state.current_task||null,\n  hitl_pending:hitl.pending===true,\n  hitl_answers:hitl.answers||{},\n  step_count:Number(state.step_count||0),\n  last_error:state.last_error||null\n};\nconst hint=[];\nif(compact.has_excel&&!data.excel) hint.push('Сначала excel_extractor — в artifacts есть Excel, фактов ещё нет.');\nelse if((compact.excel_facts>0||(data.excel&&data.excel.facts))&&compact.has_schedule_source&&!compact.has_schedule_out) hint.push('Дальше schedule_builder — факты Excel и исходный .inc уже есть.');\nelse if(!compact.has_excel&&compact.has_schedule_source&&!compact.has_schedule_out) hint.push('Excel нет: сразу schedule_builder по тексту задачи и baseline .inc.');\nelse if(compact.has_schedule_out) hint.push('schedule_out уже есть — finish.');\nconst prompt=`Цель:\\n${compact.goal}\\n\\nТекущее состояние:\\n${JSON.stringify(compact,null,2)}\\n\\nПодсказка следующего шага:\\n${hint.join(' ')||'выбери по реестру агентов'}\\n\\nДоступные агенты:\\n${JSON.stringify(registry,null,2)}\\n`;\nconst endpoints=$('Runtime endpoints').first().json||{};\nreturn [{json:{\n  ...req,\n  ...endpoints,\n  case_id:req.case_id,\n  state,\n  status,\n  registry,\n  compact,\n  planner_input:prompt,\n  step_count:compact.step_count\n}}];\n"
+        "jsCode": "\nconst req=$('Normalize step request').first().json||{};\nconst extras=(()=>{try{return $('Apply request extras').first().json}catch{return null}})();\nconst load=$('Load case').first().json||{};\nconst parse=v=>{if(v&&typeof v==='object')return v;try{return JSON.parse(String(v||'{}'))}catch{return {}}};\nconst state=(extras&&extras.state&&typeof extras.state==='object')?extras.state:parse(load.state||load.State||{});\nif(!state.artifacts||typeof state.artifacts!=='object') state.artifacts={};\nif(state.artifacts.file&&!state.artifacts.excel) state.artifacts.excel=state.artifacts.file;\nif(state.artifacts.schedule_files&&!state.artifacts.schedule_source) state.artifacts.schedule_source=state.artifacts.schedule_files;\nconst status=String((extras&&extras.next_status)||load.status||state.status||'running');\nconst registry=$('Load agent registry').all().map(i=>i.json||{}).filter(r=>r&&r.agent_id);\nconst artifacts=state.artifacts&&typeof state.artifacts==='object'?state.artifacts:{};\nconst data=state.data&&typeof state.data==='object'?state.data:{};\nconst plan=Array.isArray(state.plan)?state.plan:[];\nconst hitl=state.hitl&&typeof state.hitl==='object'?state.hitl:{};\nconst compact={\n  goal:state.goal||'',\n  artifacts_present:Object.keys(artifacts).filter(k=>artifacts[k]!=null&&artifacts[k]!==''),\n  artifact_files:Object.fromEntries(Object.entries(artifacts).map(([k,v])=>[k,(v&&typeof v==='object'&&v.filename)?v.filename:k])),\n  has_excel:Boolean(artifacts.excel),\n  has_schedule_source:Boolean(artifacts.schedule_source),\n    has_schedule_out:Boolean(artifacts.schedule_out&&String(artifacts.schedule_out).trim()),\n  excel_facts:(data.excel&&Array.isArray(data.excel.facts))?data.excel.facts.length:(Array.isArray(data.facts)?data.facts.length:0),\n  schedule_root:state.schedule_root||'',\n  data_present:Object.fromEntries(Object.keys(data).map(k=>[k,!(data[k]==null||data[k]==={}||data[k]===[])]) ),\n  plan:plan.map(p=>({id:p.id,status:p.status})),\n  current_task:state.current_task||null,\n  hitl_pending:hitl.pending===true,\n  hitl_answers:hitl.answers||{},\n  step_count:Number(state.step_count||0),\n  last_error:state.last_error||null\n};\nconst hint=[];\nif(compact.has_excel&&!data.excel) hint.push('Сначала excel_extractor — в artifacts есть Excel, фактов ещё нет.');\nelse if((compact.excel_facts>0||(data.excel&&data.excel.facts))&&compact.has_schedule_source&&!compact.has_schedule_out) hint.push('Дальше schedule_builder — факты Excel и исходный .inc уже есть.');\nelse if(!compact.has_excel&&compact.has_schedule_source&&!compact.has_schedule_out) hint.push('Excel нет: сразу schedule_builder по тексту задачи и baseline .inc.');\nelse if(compact.has_schedule_out) hint.push('schedule_out уже есть — finish.');\nconst prompt=`Цель:\\n${compact.goal}\\n\\nТекущее состояние:\\n${JSON.stringify(compact,null,2)}\\n\\nПодсказка следующего шага:\\n${hint.join(' ')||'выбери по реестру агентов'}\\n\\nДоступные агенты:\\n${JSON.stringify(registry,null,2)}\\n`;\nconst endpoints=$('Runtime endpoints').first().json||{};\nreturn [{json:{\n  ...req,\n  ...endpoints,\n  case_id:req.case_id,\n  state,\n  status,\n  registry,\n  compact,\n  planner_input:prompt,\n  step_count:compact.step_count\n}}];\n"
       },
       "id": "6a3a64b1-8396-5ce1-a233-8bcf6983ec96",
       "name": "Prepare decision context",
@@ -60813,7 +63345,7 @@ main().catch((error) => {
     },
     {
       "parameters": {
-        "jsCode": "\nconst prev=$('Prepare decision context').first().json||{};\nconst raw=$json;\nconst obj=v=>v&&typeof v==='object'&&!Array.isArray(v);\nconst parse=v=>{if(obj(v))return v;try{const p=JSON.parse(String(v||''));return obj(p)?p:{}}catch{return {}}};\nconst out=parse(raw.output||raw.text||raw);\nconst decision=obj(out.action)?out:(obj(raw)?raw:{});\nconst action=obj(decision.action)?decision.action:{type:'ask_user',question_id:'Q-parse',question:'Не удалось разобрать решение оркестратора',options:[]};\nconst type=String(action.type||'').trim();\nconst state=obj(prev.state)?{...prev.state}:{};\nstate.step_count=Number(state.step_count||0)+1;\nif(Array.isArray(decision.plan_update)){\n  const by=new Map((Array.isArray(state.plan)?state.plan:[]).map(p=>[p.id,p]));\n  for(const item of decision.plan_update){if(item&&item.id) by.set(item.id,{...(by.get(item.id)||{}),...item});}\n  state.plan=[...by.values()];\n}\nconst statusMessage=String(decision.status_message||'').trim()||'Шаг оркестратора';\nconst decisionEvent={\n  kind:'orchestrator.decision',\n  actor:'orchestrator',\n  status_message:statusMessage,\n  payload:{action_type:type,agent_id:action.agent_id||null,step_count:state.step_count}\n};\nconst events=[];\nlet nextStatus='running';\nlet agentTask=null;\nif(type==='call_agent'){\n  const taskId=String(action.task_id||`TASK-${state.step_count}`).trim();\n  agentTask={\n    case_id:prev.case_id,\n    task_id:taskId,\n    agent_id:String(action.agent_id||'').trim(),\n    objective:String(action.task&&action.task.objective||state.goal||''),\n    handoff_message:String(action.handoff_message||''),\n    inputs:{...(obj(action.task)?action.task:{}),artifacts:state.artifacts||{},activity_base_url:prev.activity_base_url,schedule_root:state.schedule_root||(obj(action.task)?action.task.schedule_root:'')},\n    context:{data:state.data||{},hitl:state.hitl||{}},\n    constraints:{units:'METRIC'}\n  };\n  state.current_task=agentTask;\n  events.push(decisionEvent, {\n    kind:'agent.handoff',\n    actor:'orchestrator',\n    agent_id:agentTask.agent_id,\n    task_id:taskId,\n    status_message:statusMessage,\n    handoff_message:agentTask.handoff_message,\n    payload:{task_id:taskId}\n  });\n} else if(type==='ask_user'){\n  nextStatus='waiting_user';\n  const q={question_id:String(action.question_id||`Q-${state.step_count}`),question:String(action.question||'Нужно уточнение'),options:Array.isArray(action.options)?action.options:[]};\n  state.hitl={pending:true,questions:[q],answers:(state.hitl&&state.hitl.answers)||{}};\n  events.push(decisionEvent, {kind:'hitl.request',actor:'orchestrator',status:'waiting_user',status_message:statusMessage,payload:q});\n} else if(type==='finish'){\n  nextStatus='done';\n  state.current_task=null;\n  state.data={...(state.data||{}),result:action.result||{}};\n  events.push({kind:'case.finished',actor:'orchestrator',status:'done',status_message:statusMessage,payload:{...(obj(action.result)?action.result:{}),action_type:'finish'}});\n} else {\n  nextStatus='waiting_user';\n  const q={question_id:'Q-unknown',question:'Оркестратор вернул неизвестное действие',options:[]};\n  state.hitl={pending:true,questions:[q],answers:{}};\n  events.push({kind:'hitl.request',actor:'orchestrator',status:'waiting_user',status_message:statusMessage,payload:q});\n}\nstate.status=nextStatus;\nconst persistEvents=events.map(e=>[\n  prev.case_id,\n  e.task_id||'',\n  e.kind,\n  e.actor,\n  e.agent_id||'',\n  e.status||'',\n  e.status_message||'',\n  e.handoff_message||'',\n  JSON.stringify(e.payload||{})\n]);\nreturn [{json:{\n  ...prev,\n  decision,\n  action_type:type,\n  agent_id:agentTask?agentTask.agent_id:null,\n  agent_task:agentTask,\n  state,\n  next_status:nextStatus,\n  should_call_agent:type==='call_agent'&&Boolean(agentTask&&agentTask.agent_id),\n  should_continue:false,\n  events,\n  update_sql_parameters:[JSON.stringify(state), nextStatus, prev.case_id],\n  event_sql_parameters:persistEvents[0],\n  persist_events:persistEvents\n}}];\n"
+        "jsCode": "\nconst prev=$('Prepare decision context').first().json||{};\nconst raw=$json;\nconst obj=v=>v&&typeof v==='object'&&!Array.isArray(v);\nconst parse=v=>{if(obj(v))return v;try{const p=JSON.parse(String(v||''));return obj(p)?p:{}}catch{return {}}};\nconst out=parse(raw.output||raw.text||raw);\nconst decision=obj(out.action)?out:(obj(raw)?raw:{});\nconst action=obj(decision.action)?decision.action:{type:'ask_user',question_id:'Q-parse',question:'Не удалось разобрать решение оркестратора',options:[]};\nconst type=String(action.type||'').trim();\nconst state=obj(prev.state)?{...prev.state}:{};\nstate.step_count=Number(state.step_count||0)+1;\nif(Array.isArray(decision.plan_update)){\n  const by=new Map((Array.isArray(state.plan)?state.plan:[]).map(p=>[p.id,p]));\n  for(const item of decision.plan_update){if(item&&item.id) by.set(item.id,{...(by.get(item.id)||{}),...item});}\n  state.plan=[...by.values()];\n}\nconst statusMessage=String(decision.status_message||'').trim()||'Шаг оркестратора';\nconst decisionEvent={\n  kind:'orchestrator.decision',\n  actor:'orchestrator',\n  status_message:statusMessage,\n  payload:{action_type:type,agent_id:action.agent_id||null,step_count:state.step_count}\n};\nconst events=[];\nlet nextStatus='running';\nlet agentTask=null;\nif(type==='call_agent'){\n  const taskId=String(action.task_id||`TASK-${state.step_count}`).trim();\n  agentTask={\n    case_id:prev.case_id,\n    task_id:taskId,\n    agent_id:String(action.agent_id||'').trim(),\n    objective:String(action.task&&action.task.objective||state.goal||''),\n    handoff_message:String(action.handoff_message||''),\n    inputs:{...(obj(action.task)?action.task:{}),artifacts:state.artifacts||{},activity_base_url:String(prev.activity_base_url||'http://mas-activity:8200').replace(/\\/$/,''),schedule_root:state.schedule_root||(obj(action.task)?action.task.schedule_root:'')},\n    context:{data:state.data||{},hitl:state.hitl||{}},\n    constraints:{units:'METRIC'}\n  };\n  state.current_task=agentTask;\n  events.push(decisionEvent, {\n    kind:'agent.handoff',\n    actor:'orchestrator',\n    agent_id:agentTask.agent_id,\n    task_id:taskId,\n    status_message:statusMessage,\n    handoff_message:agentTask.handoff_message,\n    payload:{task_id:taskId}\n  });\n} else if(type==='ask_user'){\n  nextStatus='waiting_user';\n  const q={question_id:String(action.question_id||`Q-${state.step_count}`),question:String(action.question||'Нужно уточнение'),options:Array.isArray(action.options)?action.options:[]};\n  state.hitl={pending:true,questions:[q],answers:(state.hitl&&state.hitl.answers)||{}};\n  events.push(decisionEvent, {kind:'hitl.request',actor:'orchestrator',status:'waiting_user',status_message:statusMessage,payload:q});\n} else if(type==='finish'){\n  nextStatus='done';\n  state.current_task=null;\n  state.data={...(state.data||{}),result:action.result||{}};\n  events.push({kind:'case.finished',actor:'orchestrator',status:'done',status_message:statusMessage,payload:{...(obj(action.result)?action.result:{}),action_type:'finish'}});\n} else {\n  nextStatus='waiting_user';\n  const q={question_id:'Q-unknown',question:'Оркестратор вернул неизвестное действие',options:[]};\n  state.hitl={pending:true,questions:[q],answers:{}};\n  events.push({kind:'hitl.request',actor:'orchestrator',status:'waiting_user',status_message:statusMessage,payload:q});\n}\nstate.status=nextStatus;\nconst persistEvents=events.map(e=>[\n  prev.case_id,\n  e.task_id||'',\n  e.kind,\n  e.actor,\n  e.agent_id||'',\n  e.status||'',\n  e.status_message||'',\n  e.handoff_message||'',\n  JSON.stringify(e.payload||{})\n]);\nreturn [{json:{\n  ...prev,\n  decision,\n  action_type:type,\n  agent_id:agentTask?agentTask.agent_id:null,\n  agent_task:agentTask,\n  state,\n  next_status:nextStatus,\n  should_call_agent:type==='call_agent'&&Boolean(agentTask&&agentTask.agent_id),\n  should_continue:false,\n  events,\n  update_sql_parameters:[JSON.stringify(state), nextStatus, prev.case_id],\n  event_sql_parameters:persistEvents[0],\n  persist_events:persistEvents\n}}];\n"
       },
       "id": "02831c30-dc4e-5669-a2f7-97053e1749c9",
       "name": "Parse decision",
@@ -60935,37 +63467,32 @@ main().catch((error) => {
     },
     {
       "parameters": {
-        "method": "POST",
-        "url": "={{ $json.excel_extractor_url }}",
-        "sendHeaders": true,
-        "headerParameters": {
-          "parameters": [
-            {
-              "name": "Content-Type",
-              "value": "application/json"
-            },
-            {
-              "name": "X-API-Key",
-              "value": "={{ $json.excel_tools_api_key || '' }}"
-            }
-          ]
+        "source": "database",
+        "workflowId": {
+          "__rl": true,
+          "value": "REPLACE_EXCEL_EXTRACTION_AGENT_IN_UI",
+          "mode": "list",
+          "cachedResultName": "Agent — Excel Extractor"
         },
-        "sendBody": true,
-        "specifyBody": "json",
-        "jsonBody": "={{ $json.agent_task }}",
+        "workflowInputs": {
+          "mappingMode": "defineBelow",
+          "value": {
+            "agent_task": "={{ $json.agent_task }}"
+          },
+          "matchingColumns": [],
+          "schema": [],
+          "attemptToConvertTypes": false,
+          "convertFieldsToString": false
+        },
+        "mode": "once",
         "options": {
-          "timeout": 180000,
-          "response": {
-            "response": {
-              "fullResponse": false
-            }
-          }
+          "waitForSubWorkflow": true
         }
       },
       "id": "74aa4b60-ae82-5f7d-8711-2c59a5e2e0a2",
       "name": "Call Excel Extractor",
-      "type": "n8n-nodes-base.httpRequest",
-      "typeVersion": 4.4,
+      "type": "n8n-nodes-base.executeWorkflow",
+      "typeVersion": 1.3,
       "position": [
         3120,
         -240
@@ -61047,7 +63574,7 @@ main().catch((error) => {
     },
     {
       "parameters": {
-        "jsCode": "\nconst x=$json;\nconst cont=x.action_type==='finish'?false:false;\nreturn [{json:{...x, should_continue:false, continue_url:String(x.orchestrator_step_url||'http://n8n:5678/webhook/mas-orchestrator-step').replace(/\\/$/,'')}}];\n"
+        "jsCode": "\nconst x=$json;\nconst cont=x.action_type==='finish'?false:false;\nreturn [{json:{...x, should_continue:false, continue_url:`${String(x.activity_base_url||'http://mas-activity:8200').replace(/\\/$/,'')}/cases/${encodeURIComponent(String(x.case_id||''))}/run`}}];\n"
       },
       "id": "f605b27f-6506-5968-9cdf-3a84f930282b",
       "name": "No agent this step",
@@ -61060,7 +63587,7 @@ main().catch((error) => {
     },
     {
       "parameters": {
-        "jsCode": "\nconst prev=$('Prepare agent call').first().json||$('Parse decision').first().json||{};\nconst http=$json||{};\nconst obj=v=>v&&typeof v==='object'&&!Array.isArray(v);\nconst result=obj(http.body)?http.body:(obj(http)?http:{});\nconst status=String(result.status||(http.error?'failed':'completed'));\nconst state=obj(prev.state)?{...prev.state}:{};\nconst data=obj(state.data)?{...state.data}:{};\nconst artifacts=obj(state.artifacts)?{...state.artifacts}:{};\nconst agentId=String(prev.agent_id||result.agent_id||'');\nconst bucket=agentId==='excel_extractor'?'excel':(agentId==='calculation_agent'?'calc':(agentId==='schedule_builder'?'schedule':'agent'));\nif(status==='completed'){\n  data[bucket]=result.data||result;\n  if(agentId==='excel_extractor'&&result.data&&Array.isArray(result.data.facts)) data.facts=result.data.facts;\n  Object.assign(artifacts, result.artifacts||{});\n  state.current_task=null;\n  state.last_error=null;\n}\nif(Array.isArray(state.plan)){\n  state.plan=state.plan.map(p=>{\n    if(!p||typeof p!=='object') return p;\n    if(status==='completed'&&String(p.status)==='running') return {...p,status:'done'};\n    return p;\n  });\n}\nlet nextStatus='running';\nlet shouldContinue=true;\nconst events=[];\nif(status==='needs_input'){\n  nextStatus='waiting_user';\n  shouldContinue=false;\n  const reqs=Array.isArray(result.requests)?result.requests:[];\n  const q=reqs[0]||{question_id:'Q-agent',question:String(result.message||'Агенту нужны данные'),options:[]};\n  state.hitl={pending:true,questions:reqs.length?reqs:[q],answers:(state.hitl&&state.hitl.answers)||{}};\n  events.push({kind:'hitl.request',actor:'orchestrator',agent_id:agentId,status:'waiting_user',status_message:q.question,payload:q});\n} else if(status==='completed'){\n  events.push({\n    kind:'agent.result',\n    actor:agentId||'agent',\n    agent_id:agentId,\n    task_id:(prev.agent_task&&prev.agent_task.task_id)||'',\n    status:'completed',\n    status_message:String(result.message||'Агент завершил работу'),\n    payload:{data_keys:Object.keys((result.data&&typeof result.data==='object')?result.data:{}),artifacts:Object.keys((result.artifacts&&typeof result.artifacts==='object')?result.artifacts:{})}\n  });\n} else if(status==='failed'||http.error){\n  nextStatus='running';\n  shouldContinue=true;\n  state.last_error={message:String(result.message||http.message||'agent failed'),agent_id:agentId};\n  data[bucket]=result.data||result;\n  events.push({kind:'agent.failed',actor:agentId||'agent',agent_id:agentId,status:'failed',status_message:String(result.message||http.message||'Агент вернул ошибку'),payload:{message:state.last_error.message,issues:result.issues||[]}});\n}\nif(Number(state.step_count||0)>=24){\n  nextStatus='failed';\n  shouldContinue=false;\n  events.push({kind:'case.failed',actor:'orchestrator',status:'failed',status_message:'Превышен лимит шагов оркестратора'});\n}\nstate.data=data;\nstate.artifacts=artifacts;\nstate.status=nextStatus;\nconst persistEvents=events.map(e=>[\n  prev.case_id, e.task_id||'', e.kind, e.actor, e.agent_id||'', e.status||'', e.status_message||'', e.handoff_message||'', JSON.stringify(e.payload||{})\n]);\nreturn [{json:{\n  ...prev,\n  agent_result:result,\n  state,\n  next_status:nextStatus,\n  should_continue:shouldContinue&&nextStatus==='running',\n  update_sql_parameters:[JSON.stringify(state), nextStatus, prev.case_id],\n  persist_events:persistEvents,\n  events,\n  event_sql_parameters:persistEvents[0],\n  continue_url:String(prev.orchestrator_step_url||'http://n8n:5678/webhook/mas-orchestrator-step').replace(/\\/$/,'')\n}}];\n"
+        "jsCode": "\nconst prev=$('Prepare agent call').first().json||$('Parse decision').first().json||{};\nconst http=$json||{};\nconst obj=v=>v&&typeof v==='object'&&!Array.isArray(v);\nconst result=obj(http.body)?http.body:(obj(http)?http:{});\nconst status=String(result.status||(http.error?'failed':'completed'));\nconst state=obj(prev.state)?{...prev.state}:{};\nconst data=obj(state.data)?{...state.data}:{};\nconst artifacts=obj(state.artifacts)?{...state.artifacts}:{};\nconst agentId=String(prev.agent_id||result.agent_id||'');\nconst bucket=agentId==='excel_extractor'?'excel':(agentId==='calculation_agent'?'calc':(agentId==='schedule_builder'?'schedule':'agent'));\nif(status==='completed'){\n  data[bucket]=result.data||result;\n  if(agentId==='excel_extractor'&&result.data&&Array.isArray(result.data.facts)) data.facts=result.data.facts;\n  Object.assign(artifacts, result.artifacts||{});\n  state.current_task=null;\n  state.last_error=null;\n}\nif(Array.isArray(state.plan)){\n  state.plan=state.plan.map(p=>{\n    if(!p||typeof p!=='object') return p;\n    if(status==='completed'&&String(p.status)==='running') return {...p,status:'done'};\n    return p;\n  });\n}\nlet nextStatus='running';\nlet shouldContinue=true;\nconst events=[];\nif(status==='needs_input'){\n  nextStatus='waiting_user';\n  shouldContinue=false;\n  const reqs=Array.isArray(result.requests)?result.requests:[];\n  const q=reqs[0]||{question_id:'Q-agent',question:String(result.message||'Агенту нужны данные'),options:[]};\n  state.hitl={pending:true,questions:reqs.length?reqs:[q],answers:(state.hitl&&state.hitl.answers)||{}};\n  events.push({kind:'hitl.request',actor:'orchestrator',agent_id:agentId,status:'waiting_user',status_message:q.question,payload:q});\n} else if(status==='completed'){\n  events.push({\n    kind:'agent.result',\n    actor:agentId||'agent',\n    agent_id:agentId,\n    task_id:(prev.agent_task&&prev.agent_task.task_id)||'',\n    status:'completed',\n    status_message:String(result.message||'Агент завершил работу'),\n    payload:{data_keys:Object.keys((result.data&&typeof result.data==='object')?result.data:{}),artifacts:Object.keys((result.artifacts&&typeof result.artifacts==='object')?result.artifacts:{})}\n  });\n} else if(status==='failed'||http.error){\n  nextStatus='running';\n  shouldContinue=true;\n  state.last_error={message:String(result.message||http.message||'agent failed'),agent_id:agentId};\n  data[bucket]=result.data||result;\n  events.push({kind:'agent.failed',actor:agentId||'agent',agent_id:agentId,status:'failed',status_message:String(result.message||http.message||'Агент вернул ошибку'),payload:{message:state.last_error.message,issues:result.issues||[]}});\n}\nif(Number(state.step_count||0)>=24){\n  nextStatus='failed';\n  shouldContinue=false;\n  events.push({kind:'case.failed',actor:'orchestrator',status:'failed',status_message:'Превышен лимит шагов оркестратора'});\n}\nstate.data=data;\nstate.artifacts=artifacts;\nstate.status=nextStatus;\nconst persistEvents=events.map(e=>[\n  prev.case_id, e.task_id||'', e.kind, e.actor, e.agent_id||'', e.status||'', e.status_message||'', e.handoff_message||'', JSON.stringify(e.payload||{})\n]);\nreturn [{json:{\n  ...prev,\n  agent_result:result,\n  state,\n  next_status:nextStatus,\n  should_continue:shouldContinue&&nextStatus==='running',\n  update_sql_parameters:[JSON.stringify(state), nextStatus, prev.case_id],\n  persist_events:persistEvents,\n  events,\n  event_sql_parameters:persistEvents[0],\n  continue_url:`${String(prev.activity_base_url||'http://mas-activity:8200').replace(/\\/$/,'')}/cases/${encodeURIComponent(String(prev.case_id||''))}/run`\n}}];\n"
       },
       "id": "991e54b5-5f3a-5f9b-9ef1-0165be4207d4",
       "name": "Merge agent result",
@@ -61189,8 +63716,6 @@ main().catch((error) => {
       "parameters": {
         "method": "POST",
         "url": "={{ $json.continue_url }}",
-        "authentication": "genericCredentialType",
-        "genericAuthType": "httpHeaderAuth",
         "sendHeaders": true,
         "headerParameters": {
           "parameters": [
@@ -61215,25 +63740,95 @@ main().catch((error) => {
         4320,
         -80
       ],
-      "credentials": {
-        "httpHeaderAuth": {
-          "id": "REPLACE_IN_UI",
-          "name": "REPLACE: engineering orchestrator inbound key"
-        }
-      },
       "onError": "continueRegularOutput"
     },
     {
       "parameters": {
-        "jsCode": "const x=$json;return[{json:{contract:'mas_orchestrator_ack',case_id:x.case_id,status:x.next_status||x.status,action_type:x.action_type||null,should_continue:x.should_continue===true,human_gate:x.human_gate||null,version:x.version??null,restartable:x.restartable===true}}];"
+        "jsCode": "const x=$json||{};\nconst kind=x.action_type==='finish'?'case.finished':(x.action_type==='ask_user'||x.next_status==='waiting_user'?'hitl.request':'orchestrator.status');\nconst payload={contract:'mas_orchestrator_ack',case_id:x.case_id,status:x.next_status||x.status,action_type:x.action_type||null,message:x.message||null,should_continue:x.should_continue===true,human_gate:x.human_gate||null,version:x.version??null,restartable:x.restartable===true};\nreturn [{json:{...x,activity_sync:Boolean(x.case_id&&!x.is_probe&&x.activity_base_url),activity_url:`${String(x.activity_base_url||'').replace(/\\/$/,'')}/cases/${encodeURIComponent(String(x.case_id||''))}/events`,activity_event:{kind,actor:'orchestrator',status:payload.status,status_message:payload.message||kind,payload}}}];"
+      },
+      "id": "c0b3d0ee-55cf-5db7-b41a-59fb6a219290",
+      "name": "Prepare Activity ack",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        4320,
+        120
+      ]
+    },
+    {
+      "parameters": {
+        "conditions": {
+          "options": {
+            "caseSensitive": true,
+            "leftValue": "",
+            "typeValidation": "strict",
+            "version": 2
+          },
+          "conditions": [
+            {
+              "id": "61259c3f-1328-5450-b8a0-59592cee9533",
+              "leftValue": "={{ Boolean($json.activity_sync) }}",
+              "rightValue": true,
+              "operator": {
+                "type": "boolean",
+                "operation": "true"
+              }
+            }
+          ],
+          "combinator": "and"
+        },
+        "options": {}
+      },
+      "id": "a7b14504-f071-5c03-87ea-70c524da38a1",
+      "name": "Activity sync?",
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2.3,
+      "position": [
+        4480,
+        220
+      ]
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "={{ $json.activity_url }}",
+        "sendHeaders": true,
+        "headerParameters": {
+          "parameters": [
+            {
+              "name": "Content-Type",
+              "value": "application/json"
+            }
+          ]
+        },
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "={{ $json.activity_event }}",
+        "options": {
+          "timeout": 10000
+        }
+      },
+      "id": "096c0425-ab30-5afb-a4f8-c1b723ba0d9c",
+      "name": "POST step ack to MAS Activity",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.4,
+      "position": [
+        4640,
+        120
+      ],
+      "onError": "continueRegularOutput"
+    },
+    {
+      "parameters": {
+        "jsCode": "const source=(()=>{try{return $('Prepare Activity ack').first().json}catch{return $json}})();\nconst x=source||$json;return[{json:{contract:'mas_orchestrator_ack',case_id:x.case_id,status:x.next_status||x.status,action_type:x.action_type||null,message:x.message||null,should_continue:x.should_continue===true,human_gate:x.human_gate||null,version:x.version??null,restartable:x.restartable===true}}];"
       },
       "id": "bc466937-f343-550d-8651-0a6ea6806e40",
       "name": "Format step ack",
       "type": "n8n-nodes-base.code",
       "typeVersion": 2,
       "position": [
-        4320,
-        120
+        4800,
+        220
       ]
     }
   ],
@@ -61275,7 +63870,7 @@ main().catch((error) => {
       "main": [
         [
           {
-            "node": "Format step ack",
+            "node": "Prepare Activity ack",
             "type": "main",
             "index": 0
           }
@@ -61377,7 +63972,36 @@ main().catch((error) => {
       "main": [
         [
           {
+            "node": "Validate loaded case",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Validate loaded case": {
+      "main": [
+        [
+          {
+            "node": "Case found?",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Case found?": {
+      "main": [
+        [
+          {
             "node": "Apply request extras",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Prepare Activity ack",
             "type": "main",
             "index": 0
           }
@@ -61399,7 +64023,7 @@ main().catch((error) => {
       "main": [
         [
           {
-            "node": "Format step ack",
+            "node": "Prepare Activity ack",
             "type": "main",
             "index": 0
           }
@@ -61670,7 +64294,7 @@ main().catch((error) => {
       "main": [
         [
           {
-            "node": "Format step ack",
+            "node": "Prepare Activity ack",
             "type": "main",
             "index": 0
           }
@@ -61743,7 +64367,7 @@ main().catch((error) => {
         ],
         [
           {
-            "node": "Format step ack",
+            "node": "Prepare Activity ack",
             "type": "main",
             "index": 0
           }
@@ -61751,6 +64375,46 @@ main().catch((error) => {
       ]
     },
     "POST continue run": {
+      "main": [
+        [
+          {
+            "node": "Prepare Activity ack",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Prepare Activity ack": {
+      "main": [
+        [
+          {
+            "node": "Activity sync?",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Activity sync?": {
+      "main": [
+        [
+          {
+            "node": "POST step ack to MAS Activity",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Format step ack",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "POST step ack to MAS Activity": {
       "main": [
         [
           {
@@ -61773,7 +64437,7 @@ main().catch((error) => {
   },
   "tags": [],
   "pinData": {},
-  "versionId": "6381f2ec-b186-4a91-8814-96f7b635eb5e"
+  "versionId": "97ec5d3f-7fae-4b2e-9887-20c89093f549"
 }
 
 ===END_FILE===
@@ -98485,6 +101149,7 @@ PUBLISH = [
     "MAS — Knowledge Ingestion",
     "Error — MAS Node Traces",
     "Agent — Schedule Builder",
+    "Agent — Excel Extractor",
     "Orchestrator — MAS",
     "Form — MAS Deployment Health Check",
 ]
@@ -98499,7 +101164,6 @@ STALE_WORKFLOW_NAMES = (
     "Error — MAS Case Handler",
     "Form — MAS Entry",
     "Form — MAS Human Gate",
-    "Agent — Excel Extractor",
     "Agent — Calculation (Math Service)",
     "SCHEDULE — Builder",
 )

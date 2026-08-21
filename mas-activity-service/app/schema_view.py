@@ -39,6 +39,7 @@ RETURN_EDGE = {
 }
 START_LABEL = "Постановка задачи"
 END_LABEL = "Результат"
+FINISHED_RESULT_TEXT = "Задача завершена. Загрузите результаты работы."
 KIND_LABELS = {
     "case.created": START_LABEL,
     "case.finished": END_LABEL,
@@ -81,6 +82,13 @@ def _files_from_state(state: dict[str, Any]) -> list[str]:
             seen.add(name)
             names.append(name)
     return names
+
+
+def _human_status(message: Any) -> str:
+    msg = _text(message)
+    if not msg or msg.lower() in {"case.finished", "case.failed"}:
+        return ""
+    return msg
 
 
 def _result_text(payload: Any, status_message: str) -> str:
@@ -296,13 +304,13 @@ def _apply_event(graph: dict[str, Any], event: dict[str, Any]) -> None:
             if node["tone"] in { "active", "pending", "waiting" }:
                 node["tone"] = "done"
             node["bubble"] = None
-        _set_caption(graph, "orchestrator", status_message or graph.get("last_orch_prompt"))
+        _set_caption(graph, "orchestrator", _human_status(status_message) or graph.get("last_orch_prompt"))
         for edge in graph["edges"].values():
             if edge["tone"] == "active":
                 edge["tone"] = "done"
             edge["bubble"] = None
-        graph["output"]["prompt"] = status_message or graph.get("last_orch_prompt") or ""
-        graph["output"]["result"] = _result_text(payload, status_message)
+        graph["output"]["prompt"] = ""
+        graph["output"]["result"] = FINISHED_RESULT_TEXT
         _activate_node(graph, "output", None)
         _set_edge(graph, "orch_out", "active")
         graph["in_flight"] = None

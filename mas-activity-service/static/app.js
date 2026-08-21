@@ -29,6 +29,7 @@
   const gatePanel = document.getElementById("gatePanel");
   const gateKind = document.getElementById("gateKind");
   const gateMeta = document.getElementById("gateMeta");
+  const gatePreview = document.getElementById("gatePreview");
   const gateReason = document.getElementById("gateReason");
   const gateQuestions = document.getElementById("gateQuestions");
   const diffExpander = document.getElementById("diffExpander");
@@ -703,6 +704,7 @@
 
     if (!gateState) {
       gatePanel.hidden = true;
+      if ("open" in gatePanel) gatePanel.open = false;
       return;
     }
 
@@ -722,7 +724,8 @@
       version != null ? `v${version}` : gateState.expected_version != null ? `v${gateState.expected_version}` : null,
     ].filter(Boolean).join(" · ");
     const questions = Array.isArray(gateState.questions) ? gateState.questions : [];
-    gateReason.textContent = humanizeGateReason(gateState.reason, questions) || "Ожидается ваше решение.";
+    const reason = humanizeGateReason(gateState.reason, questions) || "Ожидается ваше решение.";
+    gateReason.textContent = reason;
     gateQuestions.innerHTML = "";
     const seenAsk = new Set();
     for (const q of questions) {
@@ -732,6 +735,12 @@
       const li = document.createElement("li");
       li.append(document.createTextNode(text));
       gateQuestions.append(li);
+    }
+    if (gatePreview) {
+      const extra = seenAsk.size > 1 ? ` · ${seenAsk.size} пунктов` : "";
+      const line = String(reason).replace(/\s+/g, " ").trim();
+      gatePreview.textContent = (line.length > 140 ? `${line.slice(0, 139)}…` : line) + extra;
+      gatePreview.title = reason;
     }
     if (armed) {
       composerHint.hidden = true;

@@ -1,6 +1,7 @@
 (() => {
   const START_LABEL = "Постановка задачи";
   const END_LABEL = "Результат";
+  const FINISHED_RESULT_TEXT = "Задача завершена. Загрузите результаты работы.";
   const NODE_KEYS = ["input", "orchestrator", "excel", "calc", "schedule", "user", "output"];
   const EDGE_KEYS = [
     "in_orch", "orch_out",
@@ -141,6 +142,12 @@
       }
     }
     return names;
+  }
+
+  function humanStatus(message) {
+    const msg = text(message);
+    if (!msg || /^(case\.finished|case\.failed)$/i.test(msg)) return "";
+    return msg;
   }
 
   function resultText(payload, statusMessage) {
@@ -346,13 +353,13 @@
         if (item.tone === "active" || item.tone === "pending" || item.tone === "waiting") item.tone = "done";
         item.bubble = null;
       }
-      setCaption(graph, "orchestrator", statusMessage || graph.last_orch_prompt);
+      setCaption(graph, "orchestrator", humanStatus(statusMessage) || graph.last_orch_prompt);
       for (const edge of Object.values(graph.edges)) {
         if (edge.tone === "active") edge.tone = "done";
         edge.bubble = null;
       }
-      graph.output.prompt = statusMessage || graph.last_orch_prompt || "";
-      graph.output.result = resultText(payload, statusMessage);
+      graph.output.prompt = "";
+      graph.output.result = FINISHED_RESULT_TEXT;
       activateNode(graph, "output", null);
       setEdge(graph, "orch_out", "active");
       graph.in_flight = null;

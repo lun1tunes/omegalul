@@ -8,7 +8,7 @@
   <link rel="preconnect" href="https://fonts.googleapis.com" />
   <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
   <link href="https://fonts.googleapis.com/css2?family=IBM+Plex+Sans:wght@400;500;600;700&family=IBM+Plex+Mono:wght@400;500&display=swap" rel="stylesheet" />
-  <link rel="stylesheet" href="/static/app.css?v=78" />
+  <link rel="stylesheet" href="/static/app.css?v=79" />
 </head>
 <body>
   <div class="atmosphere" aria-hidden="true"></div>
@@ -112,14 +112,18 @@
         <div class="diff-body" id="diffBody"></div>
       </details>
 
-      <aside class="gate-panel" id="gatePanel" hidden>
-        <div class="gate-head">
+      <details class="gate-panel" id="gatePanel" hidden>
+        <summary class="gate-head">
           <span class="gate-badge" id="gateKind">needs_approval</span>
+          <span class="gate-preview" id="gatePreview"></span>
+          <span class="gate-toggle" aria-hidden="true"></span>
           <span class="gate-meta" id="gateMeta"></span>
+        </summary>
+        <div class="gate-body">
+          <p class="gate-reason" id="gateReason"></p>
+          <ul class="gate-questions" id="gateQuestions"></ul>
         </div>
-        <p class="gate-reason" id="gateReason"></p>
-        <ul class="gate-questions" id="gateQuestions"></ul>
-      </aside>
+      </details>
 
       <form class="composer start-composer" id="startComposer" autocomplete="off" hidden>
         <div class="composer-top">
@@ -196,7 +200,7 @@
     </section>
   </main>
 
-  <script src="/static/schema.js?v=10"></script>
-  <script src="/static/app.js?v=83"></script>
+  <script src="/static/schema.js?v=11"></script>
+  <script src="/static/app.js?v=84"></script>
 </body>
 </html>

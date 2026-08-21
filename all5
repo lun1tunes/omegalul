@@ -1,3 +1,1973 @@
+                            {
+                              "field": "C"
+                            },
+                            {
+                              "field": "D"
+                            },
+                            {
+                              "field": "E"
+                            },
+                            {
+                              "field": "F"
+                            },
+                            {
+                              "field": "GRDAMP",
+                              "min_exclusive": 0,
+                              "max": 1
+                            },
+                            {
+                              "field": "GRMIN",
+                              "min_exclusive": 0
+                            }
+                          ]
+                        }
+                      },
+                      {
+                        "schema_id": "expert:GUIDERAT:liq",
+                        "schema_revision": "1",
+                        "keyword": "GUIDERAT",
+                        "variant": "liq",
+                        "citation": {
+                          "document_id": "tnav-user-manual-russian",
+                          "document_revision": "19.4",
+                          "page": "12.20.90 / 1933-1936",
+                          "heading": "GUIDERAT",
+                          "source_hash": "sha256:7d1624e1ea0196383c86dbd2558826c53a5a86eb992c48141eb4e3b66f0353d5"
+                        },
+                        "parser": {
+                          "token_width": 12,
+                          "allow_trailing_omission": true,
+                          "allow_unquoted_strings": true
+                        },
+                        "fields": [
+                          {
+                            "name": "INTERVAL",
+                            "position": 1,
+                            "type": "number",
+                            "required": false
+                          },
+                          {
+                            "name": "PHASE",
+                            "position": 2,
+                            "type": "string",
+                            "required": true,
+                            "enum": [
+                              "LIQ"
+                            ]
+                          },
+                          {
+                            "name": "A",
+                            "position": 3,
+                            "type": "number",
+                            "required": true
+                          },
+                          {
+                            "name": "B",
+                            "position": 4,
+                            "type": "number",
+                            "required": true
+                          },
+                          {
+                            "name": "C",
+                            "position": 5,
+                            "type": "number",
+                            "required": false
+                          },
+                          {
+                            "name": "D",
+                            "position": 6,
+                            "type": "number",
+                            "required": false
+                          },
+                          {
+                            "name": "E",
+                            "position": 7,
+                            "type": "number",
+                            "required": false
+                          },
+                          {
+                            "name": "F",
+                            "position": 8,
+                            "type": "number",
+                            "required": false
+                          },
+                          {
+                            "name": "INCREASE",
+                            "position": 9,
+                            "type": "string",
+                            "required": false,
+                            "enum": [
+                              "YES",
+                              "NO"
+                            ]
+                          },
+                          {
+                            "name": "GRDAMP",
+                            "position": 10,
+                            "type": "number",
+                            "required": false
+                          },
+                          {
+                            "name": "FREE_GAS",
+                            "position": 11,
+                            "type": "string",
+                            "required": false,
+                            "enum": [
+                              "YES",
+                              "NO"
+                            ]
+                          },
+                          {
+                            "name": "GRMIN",
+                            "position": 12,
+                            "type": "number",
+                            "required": false
+                          }
+                        ],
+                        "layout": {
+                          "newline": "LF",
+                          "indent": "  ",
+                          "delimiter": "SPACE",
+                          "record_terminator": "SLASH",
+                          "block_terminator": "SLASH_LINE"
+                        },
+                        "semantics": {
+                          "period": "FORECAST",
+                          "clock": {
+                            "uses_current": true
+                          },
+                          "definitions": [],
+                          "references": [],
+                          "prerequisites": [],
+                          "state_assignments": [
+                            {
+                              "namespace": "guiderat-formula",
+                              "entity_type": "guiderat_formula",
+                              "entity_field": "PHASE",
+                              "key_fields": [
+                                "PHASE"
+                              ],
+                              "value_fields": [
+                                "INTERVAL",
+                                "PHASE",
+                                "A",
+                                "B",
+                                "C",
+                                "D",
+                                "E",
+                                "F",
+                                "INCREASE",
+                                "GRDAMP",
+                                "FREE_GAS",
+                                "GRMIN"
+                              ]
+                            }
+                          ],
+                          "numeric_constraints": [
+                            {
+                              "field": "INTERVAL",
+                              "min": 0
+                            },
+                            {
+                              "field": "A"
+                            },
+                            {
+                              "field": "B",
+                              "min": 0
+                            },
+                            {
+                              "field": "C"
+                            },
+                            {
+                              "field": "D"
+                            },
+                            {
+                              "field": "E"
+                            },
+                            {
+                              "field": "F"
+                            },
+                            {
+                              "field": "GRDAMP",
+                              "min_exclusive": 0,
+                              "max": 1
+                            },
+                            {
+                              "field": "GRMIN",
+                              "min_exclusive": 0
+                            }
+                          ]
+                        }
+                      },
+                      {
+                        "schema_id": "expert:GUIDERAT:gas",
+                        "schema_revision": "1",
+                        "keyword": "GUIDERAT",
+                        "variant": "gas",
+                        "citation": {
+                          "document_id": "tnav-user-manual-russian",
+                          "document_revision": "19.4",
+                          "page": "12.20.90 / 1933-1936",
+                          "heading": "GUIDERAT",
+                          "source_hash": "sha256:7d1624e1ea0196383c86dbd2558826c53a5a86eb992c48141eb4e3b66f0353d5"
+                        },
+                        "parser": {
+                          "token_width": 12,
+                          "allow_trailing_omission": true,
+                          "allow_unquoted_strings": true
+                        },
+                        "fields": [
+                          {
+                            "name": "INTERVAL",
+                            "position": 1,
+                            "type": "number",
+                            "required": false
+                          },
+                          {
+                            "name": "PHASE",
+                            "position": 2,
+                            "type": "string",
+                            "required": true,
+                            "enum": [
+                              "GAS"
+                            ]
+                          },
+                          {
+                            "name": "A",
+                            "position": 3,
+                            "type": "number",
+                            "required": true
+                          },
+                          {
+                            "name": "B",
+                            "position": 4,
+                            "type": "number",
+                            "required": true
+                          },
+                          {
+                            "name": "C",
+                            "position": 5,
+                            "type": "number",
+                            "required": false
+                          },
+                          {
+                            "name": "D",
+                            "position": 6,
+                            "type": "number",
+                            "required": false
+                          },
+                          {
+                            "name": "E",
+                            "position": 7,
+                            "type": "number",
+                            "required": false
+                          },
+                          {
+                            "name": "F",
+                            "position": 8,
+                            "type": "number",
+                            "required": false
+                          },
+                          {
+                            "name": "INCREASE",
+                            "position": 9,
+                            "type": "string",
+                            "required": false,
+                            "enum": [
+                              "YES",
+                              "NO"
+                            ]
+                          },
+                          {
+                            "name": "GRDAMP",
+                            "position": 10,
+                            "type": "number",
+                            "required": false
+                          },
+                          {
+                            "name": "FREE_GAS",
+                            "position": 11,
+                            "type": "string",
+                            "required": false,
+                            "enum": [
+                              "YES",
+                              "NO"
+                            ]
+                          },
+                          {
+                            "name": "GRMIN",
+                            "position": 12,
+                            "type": "number",
+                            "required": false
+                          }
+                        ],
+                        "layout": {
+                          "newline": "LF",
+                          "indent": "  ",
+                          "delimiter": "SPACE",
+                          "record_terminator": "SLASH",
+                          "block_terminator": "SLASH_LINE"
+                        },
+                        "semantics": {
+                          "period": "FORECAST",
+                          "clock": {
+                            "uses_current": true
+                          },
+                          "definitions": [],
+                          "references": [],
+                          "prerequisites": [],
+                          "state_assignments": [
+                            {
+                              "namespace": "guiderat-formula",
+                              "entity_type": "guiderat_formula",
+                              "entity_field": "PHASE",
+                              "key_fields": [
+                                "PHASE"
+                              ],
+                              "value_fields": [
+                                "INTERVAL",
+                                "PHASE",
+                                "A",
+                                "B",
+                                "C",
+                                "D",
+                                "E",
+                                "F",
+                                "INCREASE",
+                                "GRDAMP",
+                                "FREE_GAS",
+                                "GRMIN"
+                              ]
+                            }
+                          ],
+                          "numeric_constraints": [
+                            {
+                              "field": "INTERVAL",
+                              "min": 0
+                            },
+                            {
+                              "field": "A"
+                            },
+                            {
+                              "field": "B",
+                              "min": 0
+                            },
+                            {
+                              "field": "C"
+                            },
+                            {
+                              "field": "D"
+                            },
+                            {
+                              "field": "E"
+                            },
+                            {
+                              "field": "F"
+                            },
+                            {
+                              "field": "GRDAMP",
+                              "min_exclusive": 0,
+                              "max": 1
+                            },
+                            {
+                              "field": "GRMIN",
+                              "min_exclusive": 0
+                            }
+                          ]
+                        }
+                      },
+                      {
+                        "schema_id": "expert:GUIDERAT:full",
+                        "schema_revision": "1",
+                        "keyword": "GUIDERAT",
+                        "variant": "full",
+                        "citation": {
+                          "document_id": "tnav-user-manual-russian",
+                          "document_revision": "19.4",
+                          "page": "12.20.90 / 1933-1936",
+                          "heading": "GUIDERAT",
+                          "source_hash": "sha256:7d1624e1ea0196383c86dbd2558826c53a5a86eb992c48141eb4e3b66f0353d5"
+                        },
+                        "parser": {
+                          "token_width": 12,
+                          "allow_trailing_omission": true,
+                          "allow_unquoted_strings": true
+                        },
+                        "fields": [
+                          {
+                            "name": "INTERVAL",
+                            "position": 1,
+                            "type": "number",
+                            "required": false
+                          },
+                          {
+                            "name": "PHASE",
+                            "position": 2,
+                            "type": "string",
+                            "required": true,
+                            "enum": [
+                              "OIL",
+                              "LIQ",
+                              "GAS",
+                              "RES",
+                              "NONE"
+                            ]
+                          },
+                          {
+                            "name": "A",
+                            "position": 3,
+                            "type": "number",
+                            "required": false
+                          },
+                          {
+                            "name": "B",
+                            "position": 4,
+                            "type": "number",
+                            "required": false
+                          },
+                          {
+                            "name": "C",
+                            "position": 5,
+                            "type": "number",
+                            "required": false
+                          },
+                          {
+                            "name": "D",
+                            "position": 6,
+                            "type": "number",
+                            "required": false
+                          },
+                          {
+                            "name": "E",
+                            "position": 7,
+                            "type": "number",
+                            "required": false
+                          },
+                          {
+                            "name": "F",
+                            "position": 8,
+                            "type": "number",
+                            "required": false
+                          },
+                          {
+                            "name": "INCREASE",
+                            "position": 9,
+                            "type": "string",
+                            "required": false,
+                            "enum": [
+                              "YES",
+                              "NO"
+                            ]
+                          },
+                          {
+                            "name": "GRDAMP",
+                            "position": 10,
+                            "type": "number",
+                            "required": false
+                          },
+                          {
+                            "name": "FREE_GAS",
+                            "position": 11,
+                            "type": "string",
+                            "required": false,
+                            "enum": [
+                              "YES",
+                              "NO"
+                            ]
+                          },
+                          {
+                            "name": "GRMIN",
+                            "position": 12,
+                            "type": "number",
+                            "required": false
+                          }
+                        ],
+                        "layout": {
+                          "newline": "LF",
+                          "indent": "  ",
+                          "delimiter": "SPACE",
+                          "record_terminator": "SLASH",
+                          "block_terminator": "SLASH_LINE"
+                        },
+                        "semantics": {
+                          "period": "FORECAST",
+                          "clock": {
+                            "uses_current": true
+                          },
+                          "definitions": [],
+                          "references": [],
+                          "prerequisites": [],
+                          "state_assignments": [
+                            {
+                              "namespace": "guiderat-formula",
+                              "entity_type": "guiderat_formula",
+                              "entity_field": "PHASE",
+                              "key_fields": [
+                                "PHASE"
+                              ],
+                              "value_fields": [
+                                "INTERVAL",
+                                "PHASE",
+                                "A",
+                                "B",
+                                "C",
+                                "D",
+                                "E",
+                                "F",
+                                "INCREASE",
+                                "GRDAMP",
+                                "FREE_GAS",
+                                "GRMIN"
+                              ]
+                            }
+                          ],
+                          "numeric_constraints": [
+                            {
+                              "field": "INTERVAL",
+                              "min": 0
+                            },
+                            {
+                              "field": "A"
+                            },
+                            {
+                              "field": "B",
+                              "min": 0
+                            },
+                            {
+                              "field": "C"
+                            },
+                            {
+                              "field": "D"
+                            },
+                            {
+                              "field": "E"
+                            },
+                            {
+                              "field": "F"
+                            },
+                            {
+                              "field": "GRDAMP",
+                              "min_exclusive": 0,
+                              "max": 1
+                            },
+                            {
+                              "field": "GRMIN",
+                              "min_exclusive": 0
+                            }
+                          ]
+                        }
+                      }
+                    ]
+                  }
+                },
+                {
+                  "contract": "schedule_knowledge_block",
+                  "contract_version": "1.0",
+                  "target_base": "schedule_mvp",
+                  "knowledge_type": "keyword_instruction",
+                  "knowledge_id": "gconinje-group-inject-v1",
+                  "revision": "2",
+                  "title": "GCONINJE — прогнозный контроль закачки группы / FIELD",
+                  "keywords": [
+                    "GCONINJE"
+                  ],
+                  "topics": [
+                    "групповой контроль закачки",
+                    "GCONINJE",
+                    "RATE RESV REIN VREP",
+                    "WATER GAS OIL inject group",
+                    "FORECAST"
+                  ],
+                  "task_patterns": [
+                    "задать групповую закачку воды",
+                    "GCONINJE RATE",
+                    "VREP компенсация отбора",
+                    "REIN повторная закачка группы",
+                    "GCONINJE после GRUPTREE"
+                  ],
+                  "simulator_family": [
+                    "E100",
+                    "E300",
+                    "tNavigator"
+                  ],
+                  "status": "active",
+                  "author": "department-hydrodynamic-expert",
+                  "access_scope": "petroleum-engineering",
+                  "text": "GCONINJE — прогнозный контроль закачки группы / FIELD.\n\nНазначение. Задаёт тип флюида и режим группового контроля нагнетания для группы скважин или FIELD. Симулятор пересчитывает дебиты нагнетательных скважин (пропорционально потенциалам / guide rates), чтобы удержать групповой контроль. Форматы: tN, E1, E3. Секция: только SCHEDULE. Это не скважинный inject (WCONINJE), не добыча группы (GCONPROD), не дерево групп (GRUPTREE), не расход/импорт газа (GCONSUMP; вне allowlist → needs_input).\n\nКогда применять. FORECAST / после cutover: групповые RATE/RESV/REIN/VREP для injectors. Обычно после DATES и после того, как группа существует: FIELD всегда; иначе группа из GRUPTREE и/или leaf-группа со скважинами WELSPECS. Скважины с CONTROL=GRUP в WCONINJE опираются на GCONINJE своей группы. E3 GAS: состав нагнетаемого газа — GINJGAS (§12.20.196; allowlist) или KEEP baseline; кроме случая, когда вышестоящая группа уже задала состав.\n\nRecord layout. Keyword GCONINJE, затем одна или несколько записей `/`. Блок — отдельный `/`.\n\nПоля по порядку (§12.20.98; METRIC):\n\n1. GROUP — имя группы, префикс с `*` (все группы с таким началом), или FIELD. Default симулятора: default-группа WELSPECS. В корпусе пишите GROUP явно. CREATE MVP: не эмитьте префикс-wildcard без детерминированного раскрытия в факты — иначе needs_input / перечислите точные имена. REVISE: KEEP raw wildcard baseline допустим.\n2. FLUID — WATER | GAS | OIL.\n3. CONTROL — тип контроля. Default: NONE.\n   - NONE — нет ограничений.\n   - RATE — контроль по объёму закачки на поверхности (поле 4).\n   - RESV — объём закачки группы в пластовых условиях (поле 5; учитывает WELSPECS param 13); фаза из поля 2 — дополняющая (в каждый момент одна дополняющая фаза).\n   - REIN — закачка = добыча той же фазы группы × коэффициент повторной закачки (поле 6); опционально источник-группа в поле 11.\n   - VREP — закачка в пластовых условиях = добыча группы в пластовых × коэффициент компенсации (поле 7); опционально источник-группа в поле 12.\n4. SURFACE_RATE — объём закачки surface (sm3/day; газ Mscf/day в FIELD). Default: нет ограничения. UDQ допустим в симуляторе; MVP — число из фактов.\n5. RESV_RATE — объём закачки reservoir (rm3/day). Default: нет. Если задано — фаза поля 2 дополняющая.\n6. REIN_RATIO — целевой коэффициент повторной закачки (CONTROL=REIN).\n7. VREP_RATIO — целевой коэффициент компенсации (CONTROL=VREP).\n8. EXCEED_PARENT — YES | NO: может ли вышестоящая группа перехватить контроль. Default: YES.\n9. GUIDE_RATE — безразмерная доля группы в объёме закачки (фаза = FLUID). Должен быть default, если GUIDE_DEF=NETV. E3: 0 → guide = потенциал нагнетания группы на каждом шаге.\n10. GUIDE_DEF — RATE | NETV | VOID.\n    - RATE — guide относится к surface-приемистости.\n    - NETV — guide = чистый потенциал отбора группы (потенциал добычи − потенциал закачки других фаз); поле 9 игнорируется / default.\n    - VOID — guide = дебит жидкости группы в пластовых; поле 9 не учитывается.\n11. REIN_GROUP — группа-источник добычи для REIN. Default: та же GROUP (поле 1).\n12. VREP_GROUP — группа-источник отбора для VREP. Default: та же GROUP.\n\nПоведение. Если CONTROL ≠ NONE, симулятор меняет дебиты inject-скважин/подгрупп. В текущей версии учитывается только лимит активного CONTROL; прочие лимиты игнорируются (§12.20.98). Потенциал скважины = объём закачки без ограничений по дебиту.\n\nКанон render этого корпуса.\n- `none` — GROUP FLUID CONTROL=NONE.\n- `rate` — GROUP FLUID CONTROL=RATE SURFACE_RATE [EXCEED_PARENT].\n- `resv` — GROUP FLUID CONTROL=RESV … RESV_RATE.\n- `rein` — GROUP FLUID CONTROL=REIN … REIN_RATIO [REIN_GROUP].\n- `vrep` — GROUP FLUID CONTROL=VREP … VREP_RATIO [VREP_GROUP] (паттерн `3* 1.1` для defaults полей 4–6).\nНе эмитьте поля вне variant. GROUP quoted (кроме политики unquoted). Дебиты/коэффициенты ≥0 finite (кроме явных фактов). Не копируйте учебные INJ11/GRP1*/253.1/1.1 без фактов.\n\nIR / semantics.\n- period=FORECAST; clock.uses_current=true.\n- references: group GROUP required; optional REIN_GROUP / VREP_GROUP.\n- definitions: UPSERT group-inject-control state на GROUP.\n- prerequisites: для GROUP≠FIELD группа должна уже существовать (GRUPTREE и/или WELSPECS leaf). FIELD всегда валиден.\n- state_assignments: namespace group-inject-control; key CONTROL+FLUID; value_fields = целевые лимиты/отношения variant.\n- numeric_constraints: SURFACE_RATE/RESV_RATE/REIN_RATIO/VREP_RATIO/GUIDE_RATE min 0.\n\nСвязанные keywords (не эмитьте без scope).\n- GRUPTREE — иерархия; EXCEED_PARENT опирается на parent.\n- WELSPECS — скважины в leaf-группах; RESV связан с param 13.\n- WCONINJE CONTROL=GRUP — скважина берёт долю от GCONINJE.\n- GCONPROD — групповая добыча (другая карточка).\n- GINJGAS — состав газа E3 (отдельная карточка).\n- GCONSUMP — потребление/импорт газа при REIN по газу (вне allowlist → needs_input если нужен явный расход/импорт).\n\nТеория (§2.14.2).\n- GCONINJE — групповой контроль для нагнетательных скважин.\n- Групповой целевой объём делится пропорционально потенциалам / guide rates (не «поровну»).\n- Потенциал inject = объём закачки без rate-лимита при текущих условиях.\n\nАнтипаттерны.\n- WCONINJE вместо GCONINJE для группового лимита.\n- CONTROL=RATE без SURFACE_RATE / VREP без VREP_RATIO / REIN без REIN_RATIO.\n- Wildcard GROUP в CREATE без resolved list.\n- E3 GAS без GINJGAS/фактов состава и без baseline.\n- Считать GCONINJE объявлением группы в дереве.\n\nНехватка факта → needs_input: нет GROUP/FLUID/CONTROL; нет целевого лимита/коэффициента; cutover неясен; wildcard без списка; E3 gas composition; нужен GCONSUMP; конфликт с baseline group-inject-control без REVISE target.\n\nКарточка самодостаточна: renderer использует только schema_catalogue этой записи и выбранный variant.",
+                  "examples": [
+                    {
+                      "title": "RATE воды — канон мануала",
+                      "task": "Группа INJ11, WATER, RATE 253.1 sm3/day.",
+                      "schedule_text": "GCONINJE\nINJ11 WATER RATE 253.1 2* /\n/\n",
+                      "explanation": "§12.20.98 с. 1959. Variant rate. RESV/REIN default (2*). Учебные имя/число."
+                    },
+                    {
+                      "title": "VREP компенсации",
+                      "task": "Группа INJ_G1, WATER, VREP коэффициент 1.1.",
+                      "schedule_text": "GCONINJE\n  'INJ_G1' WATER VREP 3* 1.1 /\n/\n",
+                      "explanation": "Variant vrep. В мануале был префикс GRP1*; в CREATE — точное имя из фактов."
+                    },
+                    {
+                      "title": "NONE",
+                      "task": "Группа INJ_G1 без группового inject-контроля.",
+                      "schedule_text": "GCONINJE\n  'INJ_G1' WATER NONE /\n/\n",
+                      "explanation": "Variant none."
+                    }
+                  ],
+                  "schema_catalogue": {
+                    "contract": "schedule_schema_catalogue",
+                    "contract_version": "1.0",
+                    "catalogue_ref": "catalogue://tnavigator/22.2/gconinje-group-inject-v1",
+                    "catalogue_hash": "sha256:9c20662b9d1b2480639f1a5bc2c9820742f387649b2c272c860aabc0889b3ef8",
+                    "source_hash": "sha256:399a8ba7e57ccbb2a527df727b50d06e0b787c969235ffcfdc0ea9aad0dfca31",
+                    "access_scope": "petroleum-engineering",
+                    "simulator_profile": {
+                      "vendor": "Rock Flow Dynamics",
+                      "simulator": "tNavigator",
+                      "version": "22.2",
+                      "unit_system": "METRIC"
+                    },
+                    "approved": true,
+                    "approved_by": "department-hydrodynamic-expert",
+                    "author": "department-hydrodynamic-expert",
+                    "approval_gate_id": "expert:gconinje-group-inject-v1:2",
+                    "schemas": [
+                      {
+                        "schema_id": "expert:GCONINJE:none",
+                        "schema_revision": "1",
+                        "keyword": "GCONINJE",
+                        "variant": "none",
+                        "citation": {
+                          "document_id": "tnav-user-manual-russian",
+                          "document_revision": "19.4",
+                          "page": "12.20.98 / 1957-1960",
+                          "heading": "GCONINJE",
+                          "source_hash": "sha256:399a8ba7e57ccbb2a527df727b50d06e0b787c969235ffcfdc0ea9aad0dfca31"
+                        },
+                        "parser": {
+                          "token_width": 12,
+                          "allow_trailing_omission": true,
+                          "allow_unquoted_strings": true
+                        },
+                        "fields": [
+                          {
+                            "name": "GROUP",
+                            "position": 1,
+                            "type": "string",
+                            "required": true,
+                            "quote": "single"
+                          },
+                          {
+                            "name": "FLUID",
+                            "position": 2,
+                            "type": "string",
+                            "required": true,
+                            "enum": [
+                              "WATER",
+                              "GAS",
+                              "OIL"
+                            ]
+                          },
+                          {
+                            "name": "CONTROL",
+                            "position": 3,
+                            "type": "string",
+                            "required": true,
+                            "enum": [
+                              "NONE"
+                            ]
+                          }
+                        ],
+                        "layout": {
+                          "newline": "LF",
+                          "indent": "  ",
+                          "delimiter": "SPACE",
+                          "record_terminator": "SLASH",
+                          "block_terminator": "SLASH_LINE"
+                        },
+                        "semantics": {
+                          "period": "FORECAST",
+                          "clock": {
+                            "uses_current": true
+                          },
+                          "definitions": [],
+                          "references": [
+                            {
+                              "entity_type": "group",
+                              "id_field": "GROUP",
+                              "required": true
+                            }
+                          ],
+                          "prerequisites": [],
+                          "state_assignments": [
+                            {
+                              "namespace": "group-inject-control",
+                              "entity_type": "group",
+                              "entity_field": "GROUP",
+                              "key_fields": [
+                                "GROUP",
+                                "FLUID",
+                                "CONTROL"
+                              ],
+                              "value_fields": [
+                                "FLUID",
+                                "CONTROL"
+                              ]
+                            }
+                          ],
+                          "numeric_constraints": [
+                            {
+                              "field": "SURFACE_RATE",
+                              "min": 0
+                            },
+                            {
+                              "field": "RESV_RATE",
+                              "min": 0
+                            },
+                            {
+                              "field": "REIN_RATIO",
+                              "min": 0
+                            },
+                            {
+                              "field": "VREP_RATIO",
+                              "min": 0
+                            },
+                            {
+                              "field": "GUIDE_RATE",
+                              "min": 0
+                            }
+                          ]
+                        }
+                      },
+                      {
+                        "schema_id": "expert:GCONINJE:rate",
+                        "schema_revision": "1",
+                        "keyword": "GCONINJE",
+                        "variant": "rate",
+                        "citation": {
+                          "document_id": "tnav-user-manual-russian",
+                          "document_revision": "19.4",
+                          "page": "12.20.98 / 1957-1960",
+                          "heading": "GCONINJE",
+                          "source_hash": "sha256:399a8ba7e57ccbb2a527df727b50d06e0b787c969235ffcfdc0ea9aad0dfca31"
+                        },
+                        "parser": {
+                          "token_width": 12,
+                          "allow_trailing_omission": true,
+                          "allow_unquoted_strings": true
+                        },
+                        "fields": [
+                          {
+                            "name": "GROUP",
+                            "position": 1,
+                            "type": "string",
+                            "required": true,
+                            "quote": "single"
+                          },
+                          {
+                            "name": "FLUID",
+                            "position": 2,
+                            "type": "string",
+                            "required": true,
+                            "enum": [
+                              "WATER",
+                              "GAS",
+                              "OIL"
+                            ]
+                          },
+                          {
+                            "name": "CONTROL",
+                            "position": 3,
+                            "type": "string",
+                            "required": true,
+                            "enum": [
+                              "RATE"
+                            ]
+                          },
+                          {
+                            "name": "SURFACE_RATE",
+                            "position": 4,
+                            "type": "number",
+                            "required": true
+                          },
+                          {
+                            "name": "RESV_RATE",
+                            "position": 5,
+                            "type": "number",
+                            "required": false
+                          },
+                          {
+                            "name": "REIN_RATIO",
+                            "position": 6,
+                            "type": "number",
+                            "required": false
+                          },
+                          {
+                            "name": "VREP_RATIO",
+                            "position": 7,
+                            "type": "number",
+                            "required": false
+                          },
+                          {
+                            "name": "EXCEED_PARENT",
+                            "position": 8,
+                            "type": "string",
+                            "required": false,
+                            "enum": [
+                              "YES",
+                              "NO"
+                            ]
+                          }
+                        ],
+                        "layout": {
+                          "newline": "LF",
+                          "indent": "  ",
+                          "delimiter": "SPACE",
+                          "record_terminator": "SLASH",
+                          "block_terminator": "SLASH_LINE"
+                        },
+                        "semantics": {
+                          "period": "FORECAST",
+                          "clock": {
+                            "uses_current": true
+                          },
+                          "definitions": [],
+                          "references": [
+                            {
+                              "entity_type": "group",
+                              "id_field": "GROUP",
+                              "required": true
+                            }
+                          ],
+                          "prerequisites": [],
+                          "state_assignments": [
+                            {
+                              "namespace": "group-inject-control",
+                              "entity_type": "group",
+                              "entity_field": "GROUP",
+                              "key_fields": [
+                                "GROUP",
+                                "FLUID",
+                                "CONTROL"
+                              ],
+                              "value_fields": [
+                                "FLUID",
+                                "CONTROL",
+                                "SURFACE_RATE",
+                                "EXCEED_PARENT"
+                              ]
+                            }
+                          ],
+                          "numeric_constraints": [
+                            {
+                              "field": "SURFACE_RATE",
+                              "min": 0
+                            },
+                            {
+                              "field": "RESV_RATE",
+                              "min": 0
+                            },
+                            {
+                              "field": "REIN_RATIO",
+                              "min": 0
+                            },
+                            {
+                              "field": "VREP_RATIO",
+                              "min": 0
+                            },
+                            {
+                              "field": "GUIDE_RATE",
+                              "min": 0
+                            }
+                          ]
+                        }
+                      },
+                      {
+                        "schema_id": "expert:GCONINJE:resv",
+                        "schema_revision": "1",
+                        "keyword": "GCONINJE",
+                        "variant": "resv",
+                        "citation": {
+                          "document_id": "tnav-user-manual-russian",
+                          "document_revision": "19.4",
+                          "page": "12.20.98 / 1957-1960",
+                          "heading": "GCONINJE",
+                          "source_hash": "sha256:399a8ba7e57ccbb2a527df727b50d06e0b787c969235ffcfdc0ea9aad0dfca31"
+                        },
+                        "parser": {
+                          "token_width": 12,
+                          "allow_trailing_omission": true,
+                          "allow_unquoted_strings": true
+                        },
+                        "fields": [
+                          {
+                            "name": "GROUP",
+                            "position": 1,
+                            "type": "string",
+                            "required": true,
+                            "quote": "single"
+                          },
+                          {
+                            "name": "FLUID",
+                            "position": 2,
+                            "type": "string",
+                            "required": true,
+                            "enum": [
+                              "WATER",
+                              "GAS",
+                              "OIL"
+                            ]
+                          },
+                          {
+                            "name": "CONTROL",
+                            "position": 3,
+                            "type": "string",
+                            "required": true,
+                            "enum": [
+                              "RESV"
+                            ]
+                          },
+                          {
+                            "name": "SURFACE_RATE",
+                            "position": 4,
+                            "type": "number",
+                            "required": false
+                          },
+                          {
+                            "name": "RESV_RATE",
+                            "position": 5,
+                            "type": "number",
+                            "required": true
+                          },
+                          {
+                            "name": "EXCEED_PARENT",
+                            "position": 8,
+                            "type": "string",
+                            "required": false,
+                            "enum": [
+                              "YES",
+                              "NO"
+                            ]
+                          }
+                        ],
+                        "layout": {
+                          "newline": "LF",
+                          "indent": "  ",
+                          "delimiter": "SPACE",
+                          "record_terminator": "SLASH",
+                          "block_terminator": "SLASH_LINE"
+                        },
+                        "semantics": {
+                          "period": "FORECAST",
+                          "clock": {
+                            "uses_current": true
+                          },
+                          "definitions": [],
+                          "references": [
+                            {
+                              "entity_type": "group",
+                              "id_field": "GROUP",
+                              "required": true
+                            }
+                          ],
+                          "prerequisites": [],
+                          "state_assignments": [
+                            {
+                              "namespace": "group-inject-control",
+                              "entity_type": "group",
+                              "entity_field": "GROUP",
+                              "key_fields": [
+                                "GROUP",
+                                "FLUID",
+                                "CONTROL"
+                              ],
+                              "value_fields": [
+                                "FLUID",
+                                "CONTROL",
+                                "RESV_RATE",
+                                "EXCEED_PARENT"
+                              ]
+                            }
+                          ],
+                          "numeric_constraints": [
+                            {
+                              "field": "SURFACE_RATE",
+                              "min": 0
+                            },
+                            {
+                              "field": "RESV_RATE",
+                              "min": 0
+                            },
+                            {
+                              "field": "REIN_RATIO",
+                              "min": 0
+                            },
+                            {
+                              "field": "VREP_RATIO",
+                              "min": 0
+                            },
+                            {
+                              "field": "GUIDE_RATE",
+                              "min": 0
+                            }
+                          ]
+                        }
+                      },
+                      {
+                        "schema_id": "expert:GCONINJE:rein",
+                        "schema_revision": "1",
+                        "keyword": "GCONINJE",
+                        "variant": "rein",
+                        "citation": {
+                          "document_id": "tnav-user-manual-russian",
+                          "document_revision": "19.4",
+                          "page": "12.20.98 / 1957-1960",
+                          "heading": "GCONINJE",
+                          "source_hash": "sha256:399a8ba7e57ccbb2a527df727b50d06e0b787c969235ffcfdc0ea9aad0dfca31"
+                        },
+                        "parser": {
+                          "token_width": 12,
+                          "allow_trailing_omission": true,
+                          "allow_unquoted_strings": true
+                        },
+                        "fields": [
+                          {
+                            "name": "GROUP",
+                            "position": 1,
+                            "type": "string",
+                            "required": true,
+                            "quote": "single"
+                          },
+                          {
+                            "name": "FLUID",
+                            "position": 2,
+                            "type": "string",
+                            "required": true,
+                            "enum": [
+                              "WATER",
+                              "GAS",
+                              "OIL"
+                            ]
+                          },
+                          {
+                            "name": "CONTROL",
+                            "position": 3,
+                            "type": "string",
+                            "required": true,
+                            "enum": [
+                              "REIN"
+                            ]
+                          },
+                          {
+                            "name": "SURFACE_RATE",
+                            "position": 4,
+                            "type": "number",
+                            "required": false
+                          },
+                          {
+                            "name": "RESV_RATE",
+                            "position": 5,
+                            "type": "number",
+                            "required": false
+                          },
+                          {
+                            "name": "REIN_RATIO",
+                            "position": 6,
+                            "type": "number",
+                            "required": true
+                          },
+                          {
+                            "name": "VREP_RATIO",
+                            "position": 7,
+                            "type": "number",
+                            "required": false
+                          },
+                          {
+                            "name": "EXCEED_PARENT",
+                            "position": 8,
+                            "type": "string",
+                            "required": false,
+                            "enum": [
+                              "YES",
+                              "NO"
+                            ]
+                          },
+                          {
+                            "name": "GUIDE_RATE",
+                            "position": 9,
+                            "type": "number",
+                            "required": false
+                          },
+                          {
+                            "name": "GUIDE_DEF",
+                            "position": 10,
+                            "type": "string",
+                            "required": false,
+                            "enum": [
+                              "RATE",
+                              "NETV",
+                              "VOID"
+                            ]
+                          },
+                          {
+                            "name": "REIN_GROUP",
+                            "position": 11,
+                            "type": "string",
+                            "required": false,
+                            "quote": "single"
+                          }
+                        ],
+                        "layout": {
+                          "newline": "LF",
+                          "indent": "  ",
+                          "delimiter": "SPACE",
+                          "record_terminator": "SLASH",
+                          "block_terminator": "SLASH_LINE"
+                        },
+                        "semantics": {
+                          "period": "FORECAST",
+                          "clock": {
+                            "uses_current": true
+                          },
+                          "definitions": [],
+                          "references": [
+                            {
+                              "entity_type": "group",
+                              "id_field": "GROUP",
+                              "required": true
+                            },
+                            {
+                              "entity_type": "group",
+                              "id_field": "REIN_GROUP",
+                              "required": false
+                            }
+                          ],
+                          "prerequisites": [],
+                          "state_assignments": [
+                            {
+                              "namespace": "group-inject-control",
+                              "entity_type": "group",
+                              "entity_field": "GROUP",
+                              "key_fields": [
+                                "GROUP",
+                                "FLUID",
+                                "CONTROL"
+                              ],
+                              "value_fields": [
+                                "FLUID",
+                                "CONTROL",
+                                "REIN_RATIO",
+                                "EXCEED_PARENT",
+                                "REIN_GROUP"
+                              ]
+                            }
+                          ],
+                          "numeric_constraints": [
+                            {
+                              "field": "SURFACE_RATE",
+                              "min": 0
+                            },
+                            {
+                              "field": "RESV_RATE",
+                              "min": 0
+                            },
+                            {
+                              "field": "REIN_RATIO",
+                              "min": 0
+                            },
+                            {
+                              "field": "VREP_RATIO",
+                              "min": 0
+                            },
+                            {
+                              "field": "GUIDE_RATE",
+                              "min": 0
+                            }
+                          ]
+                        }
+                      },
+                      {
+                        "schema_id": "expert:GCONINJE:vrep",
+                        "schema_revision": "1",
+                        "keyword": "GCONINJE",
+                        "variant": "vrep",
+                        "citation": {
+                          "document_id": "tnav-user-manual-russian",
+                          "document_revision": "19.4",
+                          "page": "12.20.98 / 1957-1960",
+                          "heading": "GCONINJE",
+                          "source_hash": "sha256:399a8ba7e57ccbb2a527df727b50d06e0b787c969235ffcfdc0ea9aad0dfca31"
+                        },
+                        "parser": {
+                          "token_width": 12,
+                          "allow_trailing_omission": true,
+                          "allow_unquoted_strings": true
+                        },
+                        "fields": [
+                          {
+                            "name": "GROUP",
+                            "position": 1,
+                            "type": "string",
+                            "required": true,
+                            "quote": "single"
+                          },
+                          {
+                            "name": "FLUID",
+                            "position": 2,
+                            "type": "string",
+                            "required": true,
+                            "enum": [
+                              "WATER",
+                              "GAS",
+                              "OIL"
+                            ]
+                          },
+                          {
+                            "name": "CONTROL",
+                            "position": 3,
+                            "type": "string",
+                            "required": true,
+                            "enum": [
+                              "VREP"
+                            ]
+                          },
+                          {
+                            "name": "SURFACE_RATE",
+                            "position": 4,
+                            "type": "number",
+                            "required": false
+                          },
+                          {
+                            "name": "RESV_RATE",
+                            "position": 5,
+                            "type": "number",
+                            "required": false
+                          },
+                          {
+                            "name": "REIN_RATIO",
+                            "position": 6,
+                            "type": "number",
+                            "required": false
+                          },
+                          {
+                            "name": "VREP_RATIO",
+                            "position": 7,
+                            "type": "number",
+                            "required": true
+                          },
+                          {
+                            "name": "EXCEED_PARENT",
+                            "position": 8,
+                            "type": "string",
+                            "required": false,
+                            "enum": [
+                              "YES",
+                              "NO"
+                            ]
+                          },
+                          {
+                            "name": "GUIDE_RATE",
+                            "position": 9,
+                            "type": "number",
+                            "required": false
+                          },
+                          {
+                            "name": "GUIDE_DEF",
+                            "position": 10,
+                            "type": "string",
+                            "required": false,
+                            "enum": [
+                              "RATE",
+                              "NETV",
+                              "VOID"
+                            ]
+                          },
+                          {
+                            "name": "REIN_GROUP",
+                            "position": 11,
+                            "type": "string",
+                            "required": false,
+                            "quote": "single"
+                          },
+                          {
+                            "name": "VREP_GROUP",
+                            "position": 12,
+                            "type": "string",
+                            "required": false,
+                            "quote": "single"
+                          }
+                        ],
+                        "layout": {
+                          "newline": "LF",
+                          "indent": "  ",
+                          "delimiter": "SPACE",
+                          "record_terminator": "SLASH",
+                          "block_terminator": "SLASH_LINE"
+                        },
+                        "semantics": {
+                          "period": "FORECAST",
+                          "clock": {
+                            "uses_current": true
+                          },
+                          "definitions": [],
+                          "references": [
+                            {
+                              "entity_type": "group",
+                              "id_field": "GROUP",
+                              "required": true
+                            },
+                            {
+                              "entity_type": "group",
+                              "id_field": "VREP_GROUP",
+                              "required": false
+                            }
+                          ],
+                          "prerequisites": [],
+                          "state_assignments": [
+                            {
+                              "namespace": "group-inject-control",
+                              "entity_type": "group",
+                              "entity_field": "GROUP",
+                              "key_fields": [
+                                "GROUP",
+                                "FLUID",
+                                "CONTROL"
+                              ],
+                              "value_fields": [
+                                "FLUID",
+                                "CONTROL",
+                                "VREP_RATIO",
+                                "EXCEED_PARENT",
+                                "VREP_GROUP"
+                              ]
+                            }
+                          ],
+                          "numeric_constraints": [
+                            {
+                              "field": "SURFACE_RATE",
+                              "min": 0
+                            },
+                            {
+                              "field": "RESV_RATE",
+                              "min": 0
+                            },
+                            {
+                              "field": "REIN_RATIO",
+                              "min": 0
+                            },
+                            {
+                              "field": "VREP_RATIO",
+                              "min": 0
+                            },
+                            {
+                              "field": "GUIDE_RATE",
+                              "min": 0
+                            }
+                          ]
+                        }
+                      }
+                    ]
+                  }
+                },
+                {
+                  "contract": "schedule_knowledge_block",
+                  "contract_version": "1.0",
+                  "target_base": "schedule_mvp",
+                  "knowledge_type": "keyword_instruction",
+                  "knowledge_id": "gsatprod-satellite-prod-v1",
+                  "revision": "2",
+                  "title": "GSATPROD — дебиты вспомогательных групп",
+                  "keywords": [
+                    "GSATPROD"
+                  ],
+                  "topics": [
+                    "вспомогательная группа",
+                    "GSATPROD",
+                    "satellite production",
+                    "внешний offtake",
+                    "не GSATINJE"
+                  ],
+                  "task_patterns": [
+                    "задать GSATPROD",
+                    "дебит вспомогательной группы",
+                    "satellite WRAT",
+                    "внешний отбор в GRUPTREE",
+                    "PRODSAT вода"
+                  ],
+                  "simulator_family": [
+                    "E100",
+                    "E300",
+                    "tNavigator"
+                  ],
+                  "status": "active",
+                  "author": "department-hydrodynamic-expert",
+                  "access_scope": "petroleum-engineering",
+                  "text": "GSATPROD — дебиты вспомогательных (satellite) групп.\n\nНазначение. Задаёт постоянные дебиты нефти/воды/газа/пластового флюида для вспомогательных групп — источников отбора из других пластов/областей, не смоделированных скважинами данной модели. Вспомогательная группа не имеет скважин и дочерних групп; она — источник добывающего потока (и/или сток для закачки через GSATINJE). Форматы: tN, E1, E3. Секция: только SCHEDULE. Это не GCONPROD (контроль обычных well-групп), не WCONPROD, не GSATINJE (закачка satellite — отдельная карточка), не GSATCOMP (E3 состав; вне allowlist → needs_input).\n\nКогда применять. Нужен известный внешний offtake в иерархии групп. Первое появление имени в GSATPROD/GSATINJE объявляет группу вспомогательной. В многоуровневой иерархии сначала объявите её в GRUPTREE (иначе симулятор подвешивает под FIELD). Значения держатся до следующего GSATPROD. Если группа нагнетает — приёмистость задаёт GSATINJE (allowlist). E3: композиционный состав нефти/газа — GSATCOMP (вне allowlist → needs_input без baseline).\n\nRecord layout. Keyword GSATPROD, записи `/`, блок — отдельный `/`.\n\nПоля (§12.20.100; METRIC):\n\n1. GROUP — имя вспомогательной группы или маска с `*` (подмножество с общим началом). CREATE MVP: не эмитьте wildcard без resolved list → needs_input; REVISE KEEP raw wildcard baseline допустим.\n2. ORAT — нефть sm3/day. Default: 0.\n3. WRAT — вода sm3/day. Default: 0.\n4. GRAT — газ sm3/day (FIELD: Mscf/day). Default: 0.\n5. RESV — флюид в пластовых rm3/day. Default: 0.\n\nКанон render.\n- `wrat` — GROUP + WRAT (ORAT default), как пример мануала `PRODSAT1 1* 2000`.\n- `orat` / `grat` / `resv` — целевая фаза заполнена, остальные default/omit по trailing omission.\n- `rates` — несколько фаз явно из фактов.\nНе копируйте PRODSAT1/2000/1000 без фактов. Не вешайте WELSPECS-скважины на satellite-группу.\n\nIR / semantics.\n- period=FORECAST (или ANY на текущих DATES); clock.uses_current=true.\n- definitions: UPSERT satellite_group GROUP (тип satellite; без wells/children).\n- references: group GROUP; рекомендуется GRUPTREE edge до первого использования (иначе parent=FIELD).\n- state_assignments: namespace satellite-prod-rates; value_fields ORAT/WRAT/GRAT/RESV.\n- numeric_constraints: ORAT/WRAT/GRAT/RESV min 0.\n\nСвязанные keywords.\n- GRUPTREE — положение satellite в иерархии.\n- GSATINJE — satellite injection.\n- GSATCOMP — E3 composition (вне allowlist).\n- GCONPROD — не заменяет GSATPROD для групп со скважинами.\n\nТеория / смысл.\n- Satellite = источник/сток известного потока без скважин модели.\n- Дебиты постоянны до переустановки GSATPROD.\n\nАнтипаттерны.\n- GCONPROD вместо GSATPROD для внешней offtake-группы без скважин.\n- Satellite + WELSPECS wells на ту же группу.\n- E3 поток без GSATCOMP/baseline состава.\n- Wildcard GROUP в CREATE без списка.\n- Эмитить GSATCOMP из этой карточки; GSATINJE — своей карточкой.\n\nНехватка факта → needs_input: нет GROUP/дебитов; E3 composition; конфликт иерархии/типа группы с baseline.\n\nКарточка самодостаточна: renderer использует только schema_catalogue этой записи и выбранный variant.",
+                  "examples": [
+                    {
+                      "title": "WRAT двух satellite — канон мануала",
+                      "task": "PRODSAT1 вода 2000; PRODSAT2 вода 1000 sm3/day (нефть default).",
+                      "schedule_text": "GSATPROD\nPRODSAT1 1* 2000 /\nPRODSAT2 1* 1000 /\n/\n",
+                      "explanation": "§12.20.100 с. 1964. Variant wrat. Группы заранее в GRUPTREE под FIELD. Учебные имена/числа."
+                    },
+                    {
+                      "title": "ORAT одной группы",
+                      "task": "SAT_A нефть 500 sm3/day.",
+                      "schedule_text": "GSATPROD\n  'SAT_A' 500 /\n/\n",
+                      "explanation": "Variant orat."
+                    },
+                    {
+                      "title": "Нефть + газ",
+                      "task": "SAT_B: ORAT 100, GRAT 50000.",
+                      "schedule_text": "GSATPROD\n  'SAT_B' 100 1* 50000 /\n/\n",
+                      "explanation": "Variant rates. WRAT default."
+                    }
+                  ],
+                  "schema_catalogue": {
+                    "contract": "schedule_schema_catalogue",
+                    "contract_version": "1.0",
+                    "catalogue_ref": "catalogue://tnavigator/22.2/gsatprod-satellite-prod-v1",
+                    "catalogue_hash": "sha256:f3e53e8f5a6a59899c5cf9053462362c6150021051bce4b73b914c7779d1dfcf",
+                    "source_hash": "sha256:a1e388a03c2d699b1e5a723a4c3c41712ae3c5030490c32c9ea638e34af0e697",
+                    "access_scope": "petroleum-engineering",
+                    "simulator_profile": {
+                      "vendor": "Rock Flow Dynamics",
+                      "simulator": "tNavigator",
+                      "version": "22.2",
+                      "unit_system": "METRIC"
+                    },
+                    "approved": true,
+                    "approved_by": "department-hydrodynamic-expert",
+                    "author": "department-hydrodynamic-expert",
+                    "approval_gate_id": "expert:gsatprod-satellite-prod-v1:2",
+                    "schemas": [
+                      {
+                        "schema_id": "expert:GSATPROD:orat",
+                        "schema_revision": "1",
+                        "keyword": "GSATPROD",
+                        "variant": "orat",
+                        "citation": {
+                          "document_id": "tnav-user-manual-russian",
+                          "document_revision": "19.4",
+                          "page": "12.20.100 / 1963-1964",
+                          "heading": "GSATPROD",
+                          "source_hash": "sha256:a1e388a03c2d699b1e5a723a4c3c41712ae3c5030490c32c9ea638e34af0e697"
+                        },
+                        "parser": {
+                          "token_width": 5,
+                          "allow_trailing_omission": true,
+                          "allow_unquoted_strings": true
+                        },
+                        "fields": [
+                          {
+                            "name": "GROUP",
+                            "position": 1,
+                            "type": "string",
+                            "required": true,
+                            "quote": "single"
+                          },
+                          {
+                            "name": "ORAT",
+                            "position": 2,
+                            "type": "number",
+                            "required": true
+                          }
+                        ],
+                        "layout": {
+                          "newline": "LF",
+                          "indent": "  ",
+                          "delimiter": "SPACE",
+                          "record_terminator": "SLASH",
+                          "block_terminator": "SLASH_LINE"
+                        },
+                        "semantics": {
+                          "period": "FORECAST",
+                          "clock": {
+                            "uses_current": true
+                          },
+                          "definitions": [
+                            {
+                              "entity_type": "satellite_group",
+                              "id_field": "GROUP",
+                              "action": "UPSERT"
+                            }
+                          ],
+                          "references": [
+                            {
+                              "entity_type": "group",
+                              "id_field": "GROUP",
+                              "required": true
+                            }
+                          ],
+                          "prerequisites": [],
+                          "state_assignments": [
+                            {
+                              "namespace": "satellite-prod-rates",
+                              "entity_type": "satellite_group",
+                              "entity_field": "GROUP",
+                              "key_fields": [
+                                "GROUP"
+                              ],
+                              "value_fields": [
+                                "ORAT"
+                              ]
+                            }
+                          ],
+                          "numeric_constraints": [
+                            {
+                              "field": "ORAT",
+                              "min": 0
+                            },
+                            {
+                              "field": "WRAT",
+                              "min": 0
+                            },
+                            {
+                              "field": "GRAT",
+                              "min": 0
+                            },
+                            {
+                              "field": "RESV",
+                              "min": 0
+                            }
+                          ]
+                        }
+                      },
+                      {
+                        "schema_id": "expert:GSATPROD:wrat",
+                        "schema_revision": "1",
+                        "keyword": "GSATPROD",
+                        "variant": "wrat",
+                        "citation": {
+                          "document_id": "tnav-user-manual-russian",
+                          "document_revision": "19.4",
+                          "page": "12.20.100 / 1963-1964",
+                          "heading": "GSATPROD",
+                          "source_hash": "sha256:a1e388a03c2d699b1e5a723a4c3c41712ae3c5030490c32c9ea638e34af0e697"
+                        },
+                        "parser": {
+                          "token_width": 5,
+                          "allow_trailing_omission": true,
+                          "allow_unquoted_strings": true
+                        },
+                        "fields": [
+                          {
+                            "name": "GROUP",
+                            "position": 1,
+                            "type": "string",
+                            "required": true,
+                            "quote": "single"
+                          },
+                          {
+                            "name": "ORAT",
+                            "position": 2,
+                            "type": "number",
+                            "required": false
+                          },
+                          {
+                            "name": "WRAT",
+                            "position": 3,
+                            "type": "number",
+                            "required": true
+                          }
+                        ],
+                        "layout": {
+                          "newline": "LF",
+                          "indent": "  ",
+                          "delimiter": "SPACE",
+                          "record_terminator": "SLASH",
+                          "block_terminator": "SLASH_LINE"
+                        },
+                        "semantics": {
+                          "period": "FORECAST",
+                          "clock": {
+                            "uses_current": true
+                          },
+                          "definitions": [
+                            {
+                              "entity_type": "satellite_group",
+                              "id_field": "GROUP",
+                              "action": "UPSERT"
+                            }
+                          ],
+                          "references": [
+                            {
+                              "entity_type": "group",
+                              "id_field": "GROUP",
+                              "required": true
+                            }
+                          ],
+                          "prerequisites": [],
+                          "state_assignments": [
+                            {
+                              "namespace": "satellite-prod-rates",
+                              "entity_type": "satellite_group",
+                              "entity_field": "GROUP",
+                              "key_fields": [
+                                "GROUP"
+                              ],
+                              "value_fields": [
+                                "ORAT",
+                                "WRAT"
+                              ]
+                            }
+                          ],
+                          "numeric_constraints": [
+                            {
+                              "field": "ORAT",
+                              "min": 0
+                            },
+                            {
+                              "field": "WRAT",
+                              "min": 0
+                            },
+                            {
+                              "field": "GRAT",
+                              "min": 0
+                            },
+                            {
+                              "field": "RESV",
+                              "min": 0
+                            }
+                          ]
+                        }
+                      },
+                      {
+                        "schema_id": "expert:GSATPROD:grat",
+                        "schema_revision": "1",
+                        "keyword": "GSATPROD",
+                        "variant": "grat",
+                        "citation": {
+                          "document_id": "tnav-user-manual-russian",
+                          "document_revision": "19.4",
+                          "page": "12.20.100 / 1963-1964",
+                          "heading": "GSATPROD",
+                          "source_hash": "sha256:a1e388a03c2d699b1e5a723a4c3c41712ae3c5030490c32c9ea638e34af0e697"
+                        },
+                        "parser": {
+                          "token_width": 5,
+                          "allow_trailing_omission": true,
+                          "allow_unquoted_strings": true
+                        },
+                        "fields": [
+                          {
+                            "name": "GROUP",
+                            "position": 1,
+                            "type": "string",
+                            "required": true,
+                            "quote": "single"
+                          },
+                          {
+                            "name": "ORAT",
+                            "position": 2,
+                            "type": "number",
+                            "required": false
+                          },
+                          {
+                            "name": "WRAT",
+                            "position": 3,
+                            "type": "number",
+                            "required": false
+                          },
+                          {
+                            "name": "GRAT",
+                            "position": 4,
+                            "type": "number",
+                            "required": true
+                          }
+                        ],
+                        "layout": {
+                          "newline": "LF",
+                          "indent": "  ",
+                          "delimiter": "SPACE",
+                          "record_terminator": "SLASH",
+                          "block_terminator": "SLASH_LINE"
+                        },
+                        "semantics": {
+                          "period": "FORECAST",
+                          "clock": {
+                            "uses_current": true
+                          },
+                          "definitions": [
+                            {
+                              "entity_type": "satellite_group",
+                              "id_field": "GROUP",
+                              "action": "UPSERT"
+                            }
+                          ],
+                          "references": [
+                            {
+                              "entity_type": "group",
+                              "id_field": "GROUP",
+                              "required": true
+                            }
+                          ],
+                          "prerequisites": [],
+                          "state_assignments": [
+                            {
+                              "namespace": "satellite-prod-rates",
+                              "entity_type": "satellite_group",
+                              "entity_field": "GROUP",
+                              "key_fields": [
+                                "GROUP"
+                              ],
+                              "value_fields": [
+                                "ORAT",
+                                "WRAT",
+                                "GRAT"
+                              ]
+                            }
+                          ],
+                          "numeric_constraints": [
+                            {
+                              "field": "ORAT",
+                              "min": 0
+                            },
+                            {
+                              "field": "WRAT",
+                              "min": 0
+                            },
+                            {
+                              "field": "GRAT",
+                              "min": 0
+                            },
+                            {
+                              "field": "RESV",
+                              "min": 0
+                            }
+                          ]
+                        }
+                      },
+                      {
+                        "schema_id": "expert:GSATPROD:resv",
+                        "schema_revision": "1",
+                        "keyword": "GSATPROD",
+                        "variant": "resv",
+                        "citation": {
+                          "document_id": "tnav-user-manual-russian",
+                          "document_revision": "19.4",
+                          "page": "12.20.100 / 1963-1964",
+                          "heading": "GSATPROD",
+                          "source_hash": "sha256:a1e388a03c2d699b1e5a723a4c3c41712ae3c5030490c32c9ea638e34af0e697"
+                        },
+                        "parser": {
+                          "token_width": 5,
+                          "allow_trailing_omission": true,
+                          "allow_unquoted_strings": true
+                        },
+                        "fields": [
+                          {
+                            "name": "GROUP",
+                            "position": 1,
+                            "type": "string",
+                            "required": true,
+                            "quote": "single"
+                          },
+                          {
+                            "name": "ORAT",
+                            "position": 2,
+                            "type": "number",
+                            "required": false
+                          },
+                          {
+                            "name": "WRAT",
+                            "position": 3,
+                            "type": "number",
+                            "required": false
+                          },
+                          {
+                            "name": "GRAT",
+                            "position": 4,
+                            "type": "number",
+                            "required": false
+                          },
+                          {
+                            "name": "RESV",
+                            "position": 5,
+                            "type": "number",
+                            "required": true
+                          }
+                        ],
+                        "layout": {
+                          "newline": "LF",
+                          "indent": "  ",
+                          "delimiter": "SPACE",
+                          "record_terminator": "SLASH",
+                          "block_terminator": "SLASH_LINE"
+                        },
+                        "semantics": {
+                          "period": "FORECAST",
+                          "clock": {
+                            "uses_current": true
+                          },
+                          "definitions": [
+                            {
+                              "entity_type": "satellite_group",
+                              "id_field": "GROUP",
+                              "action": "UPSERT"
+                            }
+                          ],
+                          "references": [
+                            {
+                              "entity_type": "group",
+                              "id_field": "GROUP",
+                              "required": true
+                            }
+                          ],
+                          "prerequisites": [],
+                          "state_assignments": [
+                            {
+                              "namespace": "satellite-prod-rates",
+                              "entity_type": "satellite_group",
+                              "entity_field": "GROUP",
+                              "key_fields": [
+                                "GROUP"
+                              ],
+                              "value_fields": [
+                                "ORAT",
+                                "WRAT",
+                                "GRAT",
+                                "RESV"
+                              ]
+                            }
+                          ],
+                          "numeric_constraints": [
+                            {
+                              "field": "ORAT",
+                              "min": 0
+                            },
+                            {
+                              "field": "WRAT",
+                              "min": 0
+                            },
+                            {
+                              "field": "GRAT",
+                              "min": 0
+                            },
+                            {
+                              "field": "RESV",
+                              "min": 0
+                            }
+                          ]
+                        }
+                      },
+                      {
+                        "schema_id": "expert:GSATPROD:rates",
+                        "schema_revision": "1",
+                        "keyword": "GSATPROD",
+                        "variant": "rates",
+                        "citation": {
+                          "document_id": "tnav-user-manual-russian",
+                          "document_revision": "19.4",
+                          "page": "12.20.100 / 1963-1964",
+                          "heading": "GSATPROD",
+                          "source_hash": "sha256:a1e388a03c2d699b1e5a723a4c3c41712ae3c5030490c32c9ea638e34af0e697"
+                        },
+                        "parser": {
+                          "token_width": 5,
+                          "allow_trailing_omission": true,
+                          "allow_unquoted_strings": true
+                        },
+                        "fields": [
+                          {
+                            "name": "GROUP",
+                            "position": 1,
+                            "type": "string",
+                            "required": true,
+                            "quote": "single"
+                          },
+                          {
+                            "name": "ORAT",
+                            "position": 2,
+                            "type": "number",
+                            "required": false
+                          },
+                          {
+                            "name": "WRAT",
+                            "position": 3,
+                            "type": "number",
+                            "required": false
+                          },
+                          {
+                            "name": "GRAT",
+                            "position": 4,
+                            "type": "number",
+                            "required": false
+                          },
+                          {
+                            "name": "RESV",
+                            "position": 5,
+                            "type": "number",
+                            "required": false
+                          }
+                        ],
+                        "layout": {
+                          "newline": "LF",
+                          "indent": "  ",
+                          "delimiter": "SPACE",
+                          "record_terminator": "SLASH",
+                          "block_terminator": "SLASH_LINE"
+                        },
+                        "semantics": {
+                          "period": "FORECAST",
+                          "clock": {
+                            "uses_current": true
+                          },
+                          "definitions": [
+                            {
+                              "entity_type": "satellite_group",
+                              "id_field": "GROUP",
+                              "action": "UPSERT"
+                            }
+                          ],
+                          "references": [
+                            {
+                              "entity_type": "group",
+                              "id_field": "GROUP",
+                              "required": true
+                            }
+                          ],
+                          "prerequisites": [],
+                          "state_assignments": [
+                            {
+                              "namespace": "satellite-prod-rates",
+                              "entity_type": "satellite_group",
+                              "entity_field": "GROUP",
+                              "key_fields": [
+                                "GROUP"
+                              ],
+                              "value_fields": [
+                                "ORAT",
+                                "WRAT",
+                                "GRAT",
+                                "RESV"
+                              ]
+                            }
+                          ],
+                          "numeric_constraints": [
+                            {
+                              "field": "ORAT",
+                              "min": 0
+                            },
+                            {
+                              "field": "WRAT",
+                              "min": 0
+                            },
+                            {
+                              "field": "GRAT",
+                              "min": 0
+                            },
+                            {
+                              "field": "RESV",
+                              "min": 0
+                            }
+                          ]
+                        }
+                      }
+                    ]
+                  }
+                },
+                {
                   "contract": "schedule_knowledge_block",
                   "contract_version": "1.0",
                   "target_base": "schedule_mvp",
@@ -12300,170 +14270,6 @@
       "position": [
         7840,
         -170
-      ]
-    },
-    {
-      "parameters": {
-        "jsCode": "const root=$('Normalize SCHEDULE pipeline packet').first().json;\nconst req=root.request,plan=$('Validate SCHEDULE pipeline plan').first().json;\nconst agentEnvelope=$json;let work=$json.output??$json;if(typeof work==='string'){try{work=JSON.parse(work)}catch{work={}}}\nconst obj=v=>v&&typeof v==='object'&&!Array.isArray(v),arr=Array.isArray,clean=v=>typeof v==='string'?v.trim():'';\nconst capabilityToken=v=>String(v==null?'':v).trim().toLowerCase().replace(/-/g,'_');\nconst COMMISSIONING_CAPABILITIES=new Set(['commissioning_date_retarget','shift_commissioning_dates','commissioning_revise','timeline_revise']);\nconst GROUP_REBIND_CAPABILITIES=new Set(['group_membership_rebind','group_rebind']);\nconst collectCapabilityTokens=(req,intake)=>{\n  const r=req&&typeof req==='object'&&!Array.isArray(req)?req:{};\n  const inn=intake&&typeof intake==='object'&&!Array.isArray(intake)?intake:{};\n  const changeR=(r.requested_change_scope&&typeof r.requested_change_scope==='object'&&!Array.isArray(r.requested_change_scope))?r.requested_change_scope:{};\n  const changeI=(inn.requested_change_scope&&typeof inn.requested_change_scope==='object'&&!Array.isArray(inn.requested_change_scope))?inn.requested_change_scope:{};\n  const change={...changeI,...changeR};\n  const bag=[\n    ...(Array.isArray(r.requested_capability_scope)?r.requested_capability_scope:[]),\n    ...(Array.isArray(inn.requested_capability_scope)?inn.requested_capability_scope:[]),\n    ...(Array.isArray(change.requested_capability_scope)?change.requested_capability_scope:[]),\n    r.capability_id,inn.capability_id,change.capability_id,change.intent,change.kind,change.operation,change.capability,\n  ];\n  return [...new Set(bag.map(capabilityToken).filter(Boolean))];\n};\nconst wantsCommissioningCapability=tokens=>(Array.isArray(tokens)?tokens:[]).some(t=>COMMISSIONING_CAPABILITIES.has(capabilityToken(t)));\nconst wantsGroupRebindCapability=tokens=>(Array.isArray(tokens)?tokens:[]).some(t=>GROUP_REBIND_CAPABILITIES.has(capabilityToken(t)));\nconst readGroupRebindSpec=req=>{\n  const r=req&&typeof req==='object'&&!Array.isArray(req)?req:{};\n  const change=(r.requested_change_scope&&typeof r.requested_change_scope==='object'&&!Array.isArray(r.requested_change_scope))?r.requested_change_scope:{};\n  const spec=(r.group_rebind&&typeof r.group_rebind==='object'&&!Array.isArray(r.group_rebind))?r.group_rebind\n    :((change.group_rebind&&typeof change.group_rebind==='object'&&!Array.isArray(change.group_rebind))?change.group_rebind\n    :((change.spec&&typeof change.spec==='object'&&!Array.isArray(change.spec))?change.spec\n    :((change.wells||change.parent_group||change.parent)?change:null)));\n  if(!spec||typeof spec!=='object'||Array.isArray(spec))return {ok:false,missing:['wells','parent_group','parent_of_parent','well_groups','rate','control'],spec:null};\n  const wells=(Array.isArray(spec.wells)?spec.wells:[]).map(v=>String(v==null?'':v).trim()).filter(Boolean);\n  const parent=String(spec.parent_group||spec.parent||'').trim().toUpperCase();\n  const parentOfParent=String(spec.parent_of_parent||'').trim().toUpperCase();\n  const rate=Number(spec.rate??spec.gas_rate);\n  const wellGroups=(spec.well_groups&&typeof spec.well_groups==='object'&&!Array.isArray(spec.well_groups))?spec.well_groups\n    :((spec.well_group_map&&typeof spec.well_group_map==='object'&&!Array.isArray(spec.well_group_map))?spec.well_group_map:null);\n  const control=String(spec.control||'').trim().toUpperCase();\n  const missing=[];\n  if(!wells.length)missing.push('wells');\n  if(!parent)missing.push('parent_group');\n  if(!parentOfParent)missing.push('parent_of_parent');\n  if(!Number.isFinite(rate)||rate<=0)missing.push('rate');\n  if(!control)missing.push('control');\n  if(!wellGroups)missing.push('well_groups');\n  else{\n    const lookup=(map,well)=>{\n      if(map[well]!=null&&String(map[well]).trim())return String(map[well]).trim();\n      const n=Number(well);\n      if(Number.isFinite(n)&&map[n]!=null&&String(map[n]).trim())return String(map[n]).trim();\n      return '';\n    };\n    if(wells.some(w=>!lookup(wellGroups,w)))missing.push('well_groups');\n  }\n  if(missing.length)return {ok:false,missing:[...new Set(missing)],spec:null};\n  const groups={};\n  for(const w of wells){\n    groups[w]=String(wellGroups[w]!=null?wellGroups[w]:wellGroups[Number(w)]).trim();\n  }\n  return {ok:true,missing:[],spec:{\n    wells,\n    parent_group:parent,\n    parent_of_parent:parentOfParent,\n    well_groups:groups,\n    rate,\n    gas_rate:rate,\n    control,\n    effective_at:spec.effective_at||null,\n  }};\n};\nconst exclusiveScheduleCaps=(tokens,change,groupSpecOk)=>{\n  const list=(Array.isArray(tokens)?tokens:[]).map(capabilityToken).filter(Boolean);\n  const scope=change&&typeof change==='object'&&!Array.isArray(change)?change:{};\n  const primary=capabilityToken(scope.capability_id||scope.intent||'');\n  const groupWanted=GROUP_REBIND_CAPABILITIES.has(primary)||list.some(t=>GROUP_REBIND_CAPABILITIES.has(t));\n  const commissioningWanted=COMMISSIONING_CAPABILITIES.has(primary)||list.some(t=>COMMISSIONING_CAPABILITIES.has(t));\n  if(groupWanted&&groupSpecOk) return {wantsGroupRebind:true,wantsCommissioning:false,primary:'group_rebind'};\n  if(groupWanted&&!commissioningWanted) return {wantsGroupRebind:true,wantsCommissioning:false,primary:'group_rebind'};\n  if(groupWanted&&commissioningWanted){\n    if(GROUP_REBIND_CAPABILITIES.has(primary)||groupSpecOk) return {wantsGroupRebind:true,wantsCommissioning:false,primary:'group_rebind'};\n    if(COMMISSIONING_CAPABILITIES.has(primary)) return {wantsGroupRebind:false,wantsCommissioning:true,primary:'commissioning'};\n    return {wantsGroupRebind:true,wantsCommissioning:false,primary:'group_rebind'};\n  }\n  if(commissioningWanted) return {wantsGroupRebind:false,wantsCommissioning:true,primary:'commissioning'};\n  return {wantsGroupRebind:false,wantsCommissioning:false,primary:''};\n};\nconst mergeObservedScheduleRequest=(req,intake)=>{\n  const r=req&&typeof req==='object'&&!Array.isArray(req)?req:{};\n  const inn=intake&&typeof intake==='object'&&!Array.isArray(intake)?intake:{};\n  const changeI=(inn.requested_change_scope&&typeof inn.requested_change_scope==='object'&&!Array.isArray(inn.requested_change_scope))?inn.requested_change_scope:{};\n  const changeR=(r.requested_change_scope&&typeof r.requested_change_scope==='object'&&!Array.isArray(r.requested_change_scope))?r.requested_change_scope:{};\n  let change={...changeI,...changeR};\n  if(!(Array.isArray(change.wells)&&change.wells.length)&&Array.isArray(changeI.wells)&&changeI.wells.length) change.wells=changeI.wells;\n  if(!change.group_rebind&&changeI.group_rebind) change.group_rebind=changeI.group_rebind;\n  const intakePrimary=capabilityToken(changeI.capability_id||changeI.intent||inn.capability_id||'');\n  if(GROUP_REBIND_CAPABILITIES.has(intakePrimary)){\n    change={\n      ...change,\n      capability_id:changeI.capability_id||'group_membership_rebind',\n      intent:changeI.intent||'group_membership_rebind',\n      wells:(Array.isArray(changeI.wells)&&changeI.wells.length)?changeI.wells:change.wells,\n      parent_group:changeI.parent_group||change.parent_group,\n      parent_of_parent:changeI.parent_of_parent||change.parent_of_parent,\n      well_groups:changeI.well_groups||change.well_groups,\n      rate:changeI.rate??change.rate,\n      gas_rate:changeI.gas_rate??change.gas_rate,\n      control:changeI.control||change.control,\n      group_rebind:changeI.group_rebind||change.group_rebind,\n    };\n  }else if(COMMISSIONING_CAPABILITIES.has(intakePrimary)){\n    change={...change,capability_id:changeI.capability_id||'commissioning_date_retarget',intent:changeI.intent||'shift_commissioning_dates'};\n    if(change.group_rebind) delete change.group_rebind;\n  }\n  let caps=[...new Set([\n    ...(Array.isArray(inn.requested_capability_scope)?inn.requested_capability_scope:[]),\n    ...(Array.isArray(r.requested_capability_scope)?r.requested_capability_scope:[]),\n    change.capability_id,r.capability_id,inn.capability_id,\n  ].map(capabilityToken).filter(Boolean))];\n  const groupOk=readGroupRebindSpec({requested_change_scope:change,group_rebind:change.group_rebind}).ok;\n  const exclusive=exclusiveScheduleCaps(caps,change,groupOk);\n  if(exclusive.wantsGroupRebind&&!exclusive.wantsCommissioning){\n    caps=caps.filter(t=>!COMMISSIONING_CAPABILITIES.has(t));\n    if(!caps.some(t=>GROUP_REBIND_CAPABILITIES.has(t))) caps.push('group_membership_rebind');\n    change.capability_id=GROUP_REBIND_CAPABILITIES.has(capabilityToken(change.capability_id))?change.capability_id:'group_membership_rebind';\n    change.intent=GROUP_REBIND_CAPABILITIES.has(capabilityToken(change.intent))?change.intent:'group_membership_rebind';\n  }else if(exclusive.wantsCommissioning){\n    caps=caps.filter(t=>!GROUP_REBIND_CAPABILITIES.has(t));\n    if(!caps.some(t=>COMMISSIONING_CAPABILITIES.has(t))) caps.push('commissioning_date_retarget');\n    if(change.group_rebind) delete change.group_rebind;\n  }\n  const capability_id=exclusive.wantsGroupRebind\n    ?(GROUP_REBIND_CAPABILITIES.has(capabilityToken(change.capability_id))?change.capability_id:'group_membership_rebind')\n    :(exclusive.wantsCommissioning\n      ?(COMMISSIONING_CAPABILITIES.has(capabilityToken(change.capability_id||r.capability_id||inn.capability_id))? (change.capability_id||r.capability_id||inn.capability_id):'commissioning_date_retarget')\n      :(r.capability_id||inn.capability_id||change.capability_id||null));\n  return {\n    ...r,\n    requested_change_scope:Object.keys(change).length?change:r.requested_change_scope,\n    requested_capability_scope:caps.length?caps:(r.requested_capability_scope||inn.requested_capability_scope||[]),\n    capability_id,\n  };\n};\nconst pickWellDateFact=f=>{\n  const row=f&&typeof f==='object'&&!Array.isArray(f)?f:{};\n  const values=(row.values&&typeof row.values==='object'&&!Array.isArray(row.values))?row.values:((row.row&&typeof row.row==='object'&&!Array.isArray(row.row))?row.row:{});\n  const well=String(row.well||row.entity||row.entity_id||values['Скважина']||values.скважина||values.WELL||values.well||'').trim();\n  const coerce=v=>{\n    if(v==null||v==='') return null;\n    if(v instanceof Date&&!Number.isNaN(v.getTime())) return v.toISOString().slice(0,10);\n    if(typeof v==='object'&&!Array.isArray(v)){\n      if(Number.isFinite(Number(v.year))&&Number.isFinite(Number(v.month))&&Number.isFinite(Number(v.day))){\n        const y=String(Number(v.year)).padStart(4,'0'),m=String(Number(v.month)).padStart(2,'0'),d=String(Number(v.day)).padStart(2,'0');\n        return `${y}-${m}-${d}`;\n      }\n      if(v.value!=null&&v.value!==v) return coerce(v.value);\n      if(v.iso) return coerce(v.iso);\n      if(v.tnav) return coerce(v.tnav);\n    }\n    const s=String(v).trim();\n    return s===''?null:s;\n  };\n  let date=coerce(row.value??row.raw_value??values['Дата ввода']??values['дата ввода']??values.date??values.Date??values.commissioning_date??null);\n  let field=String(row.field||row.column||'').trim();\n  if(!date){\n    const hit=Object.keys(values).find(k=>/дата|date|commission|ввод/i.test(String(k||'')));\n    if(hit!=null){date=coerce(values[hit]);field=field||String(hit);}\n  }\n  if(!date){\n    const others=Object.keys(values).filter(k=>!/скважин|well|групп|group|факт|id$/i.test(String(k||'')));\n    if(others.length===1){date=coerce(values[others[0]]);field=field||String(others[0]);}\n  }\n  if(!field&&date) field='Дата ввода';\n  return {well,date,field,values,fact_id:row.fact_id||null};\n};\nconst boundedHash=value=>{let text='';try{text=JSON.stringify(value)}catch{text=String(value??'')}let h=2166136261;for(const ch of text){h^=ch.charCodeAt(0);h=Math.imul(h,16777619)}return{hash:`fnv1a32:${(h>>>0).toString(16).padStart(8,'0')}`,bytes:new TextEncoder().encode(text).length}};\nconst intermediate=arr(agentEnvelope.intermediateSteps)?agentEnvelope.intermediateSteps.slice(0,50):[];const agentToolTrace=intermediate.map((step,index)=>{const action=obj(step?.action)?step.action:{},input=action.toolInput??action.tool_input??step?.toolInput??null,output=step?.observation??step?.output??null,inputMeta=boundedHash(input),outputMeta=boundedHash(output);return{name:clean(action.tool||step?.tool)||'schedule_agent_tool',tool_call_id:clean(action.toolCallId||action.tool_call_id||step?.toolCallId)||null,status:step?.error?'error':'completed',stage:'builder',sequence:index+1,input_hash:inputMeta.hash,input_bytes:inputMeta.bytes,output_hash:outputMeta.hash,output_bytes:outputMeta.bytes}});\nconst allowed=new Set([\"DATES\", \"INCLUDE\", \"GRUPTREE\", \"WELSPECS\", \"WELLTRACK\", \"COMPDATMD\", \"WCONHIST\", \"WCONPROD\", \"WCONINJE\", \"GCONPROD\", \"GCONINJE\", \"GUIDERAT\", \"GSATPROD\", \"GSATINJE\", \"WELLSTRE\", \"WINJGAS\", \"GINJGAS\", \"BRANPROP\", \"NODEPROP\", \"GNETDP\", \"NETBALAN\", \"FRACTURE_TEMPLATE\", \"FRACTURE_SPECS\", \"FRACTURE_STAGE\", \"WECON\", \"WTEST\", \"WELTARG\", \"WNETDP\", \"WPIMULT\", \"WDFAC\", \"WEFAC\", \"WELOPEN\", \"WELDRAW\", \"WLIST\", \"WFRACP\", \"WFRACPL\", \"VFPPROD\", \"WVFPDP\", \"ACTIONX\", \"DELAYACT\", \"ENDACTIO\", \"UDQ\", \"UDT\", \"APPLYSCRIPT\"]),findings=[];\nconst mode=clean(work.build_mode||plan.build_mode).toUpperCase();\nconst scope=[...new Set((arr(plan.keyword_scope)?plan.keyword_scope:[]).map(v=>clean(v).toUpperCase()).filter(Boolean))];\nconst changes=arr(work.changes)?work.changes.filter(obj):[];\nconst evidenceGapRequired=['entity','effective_at','keyword','field','reason','expected_format'];\nconst rawGaps=arr(work.evidence_gap)?work.evidence_gap.filter(obj):[];\nlet gaps=rawGaps.filter(g=>evidenceGapRequired.every(k=>clean(g[k]))).map(g=>({entity:clean(g.entity),effective_at:clean(g.effective_at),keyword:clean(g.keyword).toUpperCase(),field:clean(g.field),reason:clean(g.reason),expected_format:clean(g.expected_format),...(clean(g.question)?{question:clean(g.question)}:{})}));\nif(rawGaps.length&&!gaps.length)findings.push({code:'MALFORMED_EVIDENCE_GAP',severity:'error',dropped:rawGaps.length});\nelse if(rawGaps.length>gaps.length)findings.push({code:'PARTIAL_EVIDENCE_GAP_DROPPED',severity:'warning',dropped:rawGaps.length-gaps.length,kept:gaps.length});\nlet irEvents=arr(work.ir_events)?work.ir_events.filter(obj):[];\nconst requirements=arr(work.requirements_matrix)?work.requirements_matrix.filter(obj):[];\nlet sourceMap=arr(work.source_map)?work.source_map.filter(obj):[];\nconst evidencePacket=obj(req.source_facts_packet)?req.source_facts_packet:{},facts=arr(evidencePacket.facts)?evidencePacket.facts:(arr(req.source_facts)?req.source_facts:[]),conflicts=arr(evidencePacket.conflicts)?evidencePacket.conflicts:[];\nconst rag=obj(req.rag_evidence)?req.rag_evidence:{},citations=arr(rag.citations)?rag.citations.filter(obj).slice(0,100):[],ragResults=arr(rag.results)?rag.results.filter(obj):[];\nconst tags=v=>{const m=obj(v.metadata)?v.metadata:{},raw=v.keyword_families??v.keyword_family??v.keyword??m.keyword_families??m.keyword_family??m.keyword??[];if(arr(raw))return raw.map(x=>clean(x).toUpperCase()).filter(Boolean);if(typeof raw==='string'){try{const p=JSON.parse(raw);if(arr(p))return p.map(x=>clean(x).toUpperCase()).filter(Boolean)}catch{}return raw.split(/[,;|\\s]+/).map(x=>clean(x).toUpperCase()).filter(Boolean)}return[]};\nconst citedKeywords=new Set([...ragResults,...citations].flatMap(tags).filter(k=>allowed.has(k)));\nconst approval=obj(req.remove_approval)?req.remove_approval:{};\nlet intake=null;try{intake=$('Run deterministic SCHEDULE intake').first().json}catch{}\nconst capReq=mergeObservedScheduleRequest(req,intake);\nconst observedRemove=clean(intake?.requested_change_scope?.operation).toLowerCase()==='remove'||clean(capReq.requested_change_scope?.operation).toLowerCase()==='remove';\nconst accountableRemove=(req.explicit_remove_approved===true&&clean(approval.actor)&&clean(approval.reason)&&clean(approval.gate_id))||observedRemove||clean(req.requested_change_scope?.operation).toLowerCase()==='remove';\nlet baselineQuery=null;try{baselineQuery=$('Query targeted baseline records').first().json}catch{}\nconst queriedRecords=arr(baselineQuery?.records)?baselineQuery.records.filter(obj):[],targetMap=new Map();for(const r of queriedRecords){const id=clean(r.target_node_id||r.source_node_id);if(id&&!targetMap.has(id))targetMap.set(id,r)}\nconst wellFacts=facts.map(pickWellDateFact).filter(f=>f.well&&f.date!==null&&f.date!==undefined&&String(f.date).trim()!=='');\nconst toTnavDate=raw=>{const s=String(raw||'').trim();const iso=s.match(/^(\\d{4})-(\\d{2})-(\\d{2})/);if(iso){const months=['JAN','FEB','MAR','APR','MAY','JUN','JUL','AUG','SEP','OCT','NOV','DEC'];return `1 ${months[Number(iso[2])-1]} ${iso[1]}`}const already=s.match(/^(\\d{1,2})\\s+([A-Za-z]{3})\\s+(\\d{4})$/);return already?`${Number(already[1])} ${already[2].toUpperCase()} ${already[3]}`:s};\nconst capTokens=collectCapabilityTokens(capReq,intake);\nconst groupSpecRead=readGroupRebindSpec(capReq);\nconst groupSpec=groupSpecRead&&groupSpecRead.ok?groupSpecRead.spec:null;\nconst exclusive=exclusiveScheduleCaps(capTokens,capReq.requested_change_scope||{},!!(groupSpecRead&&groupSpecRead.ok));\nconst wantsCommissioning=exclusive.wantsCommissioning;\nconst wantsGroupRebind=exclusive.wantsGroupRebind;\nconst useTimelineCommissioning=mode==='REVISE'&&wellFacts.length>0&&wantsCommissioning&&!wantsGroupRebind;\nconst groupRevise=mode==='REVISE'&&wantsGroupRebind&&!!groupSpec;\nconst useDeterministicRevise=useTimelineCommissioning||groupRevise;\nif(mode==='REVISE'&&wantsCommissioning&&!wellFacts.length){\n  findings.push({code:'COMMISSIONING_FACTS_REQUIRED',severity:'error'});\n}\nif(mode==='REVISE'&&wantsGroupRebind&&!groupSpec){\n  findings.push({code:'GROUP_REBIND_SPEC_REQUIRED',severity:'error',missing:groupSpecRead&&groupSpecRead.missing||[],field:(groupSpecRead&&groupSpecRead.missing||[]).join(', ')});\n}\nif(groupRevise){\n  irEvents=[];\n  if(['needs_input','retryable_error','partial',''].includes(clean(work.status)))work.status='succeeded';\n  sourceMap=[{keyword:'WELSPECS',entity:'group_rebind',source:'group_rebind_spec',path:'timeline_group_revise'}];\n  findings.push({code:'GROUP_REBIND_TIMELINE_PATH',severity:'warning',note:'parse→ADD WELSPECS/GRUPTREE/GCONPROD + re-emit WECON/WPIMULT on first WCONPROD DATES→emit'});\n  if(!obj(work.self_check)||!work.self_check.passed)work.self_check={performed:true,passed:true,checks:[{check:'timeline_group_rebind_path',passed:true}],reproducibility:'Explicit group_membership_rebind spec drives deterministic group rebind after merge.'};\n  gaps=[];\n  for(let i=findings.length-1;i>=0;i-=1){\n    if(['MALFORMED_EVIDENCE_GAP','PARTIAL_EVIDENCE_GAP_DROPPED','COMMISSIONING_FACTS_REQUIRED','COMMISSIONING_TIMELINE_PATH'].includes(findings[i].code)) findings.splice(i,1);\n  }\n}else if(useTimelineCommissioning){\n  irEvents=[];\n  if(['needs_input','retryable_error','partial',''].includes(clean(work.status)))work.status='succeeded';\n  sourceMap=wellFacts.map(f=>({keyword:'WCONPROD',entity:f.well,fact_id:f.fact_id||null,source:`source_facts_packet:${f.fact_id||f.well}`,value:f.date,commissioning_date:toTnavDate(f.date),path:'timeline_commissioning_revise'}));\n  findings.push({code:'COMMISSIONING_TIMELINE_PATH',severity:'warning',wells:wellFacts.map(f=>f.well).slice(0,20),note:'parse→edit retarget first WCONPROD(+WELOPEN/WEFAC) onto target DATES→emit; DATES steps preserved'});\n  if(!obj(work.self_check)||!work.self_check.passed)work.self_check={performed:true,passed:true,checks:[{check:'timeline_commissioning_path',passed:true}],reproducibility:'Explicit commissioning capability + Excel wells by SCHEDULE name drive deterministic timeline revise after merge.'};\n  gaps=[];\n  for(let i=findings.length-1;i>=0;i-=1){\n    if(['MALFORMED_EVIDENCE_GAP','PARTIAL_EVIDENCE_GAP_DROPPED'].includes(findings[i].code)) findings.splice(i,1);\n  }\n}\nconst removeKeywords=[...new Set([\n  ...scope,\n  ...(arr(req.requested_keyword_scope)?req.requested_keyword_scope:[]),\n  ...(arr(req.requested_change_scope?.keywords)?req.requested_change_scope.keywords:[]),\n  ...(arr(req.requested_change_scope?.must_remove)?req.requested_change_scope.must_remove.map(v=>obj(v)?v.keyword:v):[]),\n].map(v=>clean(v).toUpperCase()).filter(k=>allowed.has(k)))];\nlet keywordRemovePath=false;\nif(mode==='REVISE'&&accountableRemove&&removeKeywords.length&&!useTimelineCommissioning&&!groupRevise){\n  const hitsRaw=queriedRecords.filter(r=>{\n    const id=clean(r.target_node_id||r.source_node_id);\n    const hash=clean(r.expected_raw_hash);\n    if(!id||!hash)return false;\n    const kw=clean(r.keyword).toUpperCase();\n    if(kw)return removeKeywords.includes(kw);\n    return true;\n  });\n  const seenTargets=new Set();\n  const hits=[];\n  for(const r of hitsRaw){\n    const id=clean(r.target_node_id||r.source_node_id);\n    if(seenTargets.has(id))continue;\n    seenTargets.add(id);\n    hits.push(r);\n  }\n  if(!hits.length){\n    findings.push({code:'KEYWORD_REMOVE_TARGETS_REQUIRED',severity:'error',keywords:removeKeywords});\n  }else{\n    keywordRemovePath=true;\n    irEvents=hits.map((r,i)=>{\n      const id=clean(r.target_node_id||r.source_node_id);\n      const kw=clean(r.keyword).toUpperCase()||removeKeywords[0];\n      return {\n        operation:'REMOVE',\n        keyword:kw,\n        target_node_id:id,\n        source_node_id:clean(r.source_node_id)||id,\n        expected_raw_hash:clean(r.expected_raw_hash),\n        file_ref:r.file_ref||null,\n        event_id:`remove:${kw.toLowerCase()}:${i+1}`,\n        variant:clean(r.variant)||'default',\n        schema_id:r.schema_id||null,\n        schema_revision:r.schema_revision||null,\n        fields:obj(r.fields)?r.fields:{},\n        provenance:arr(r.provenance)&&r.provenance.length?r.provenance:[{source_ref:'task_text:keyword_remove',raw_hash:r.expected_raw_hash}],\n      };\n    });\n    if(['needs_input','retryable_error','partial',''].includes(clean(work.status)))work.status='succeeded';\n    sourceMap=hits.map((r,i)=>{\n      const fields=obj(r.fields)?r.fields:{};\n      return {\n        keyword:clean(r.keyword).toUpperCase()||removeKeywords[0],\n        target_node_id:clean(r.target_node_id||r.source_node_id),\n        entity:clean(fields.WELL||fields.well||fields.GROUP||fields.group||''),\n        source:'task_text:keyword_remove',\n        path:'keyword_remove',\n      };\n    });\n    findings.push({code:'KEYWORD_REMOVE_PATH',severity:'warning',count:hits.length,keywords:removeKeywords});\n    gaps=[];\n    for(let i=findings.length-1;i>=0;i-=1){\n      if(['MALFORMED_EVIDENCE_GAP','PARTIAL_EVIDENCE_GAP_DROPPED','TYPED_IR_REQUIRED_FOR_CATALOGUE_RENDER'].includes(findings[i].code)) findings.splice(i,1);\n    }\n  }\n}\nlet operations=irEvents.length?irEvents:changes;\n// Enrich IR with event_id + schema citation from targeted baseline records (required by deterministic renderer).\noperations=operations.map((c,i)=>{\n  const id=clean(c.target_node_id||c.source_node_id||c.node_id);\n  const hit=id?targetMap.get(id):null;\n  const eventId=clean(c.event_id)&&!String(c.event_id).startsWith('baseline:')?clean(c.event_id):`revise:${clean(c.keyword).toLowerCase()||'kw'}:${clean(c.entity)||(hit&&(hit.fields&&(hit.fields.WELL||hit.fields.well)))||i}:${i+1}`;\n  const schemaId=clean(c.schema_id)||(hit&&clean(hit.schema_id))||'';\n  const schemaRevision=clean(String(c.schema_revision??''))||(hit&&clean(String(hit.schema_revision??'')))||'';\n  const variant=clean(c.variant)||(hit&&clean(hit.variant))||'default';\n  const fields=obj(c.fields)?c.fields:(hit&&obj(hit.fields)?hit.fields:{});\n  const provenance=arr(c.provenance)&&c.provenance.length?c.provenance:(hit&&arr(hit.provenance)?hit.provenance:[{source_ref:`source_facts:${clean(c.fact_id||c.entity)||'excel'}`,raw_hash:c.expected_raw_hash||(hit&&hit.expected_raw_hash)||null}]);\n  return {...c,event_id:eventId,schema_id:schemaId||c.schema_id,schema_revision:schemaRevision||c.schema_revision,variant,fields,provenance,source_node_id:c.source_node_id||(hit&&hit.source_node_id)||id||null,target_node_id:id||c.target_node_id||null,expected_raw_hash:c.expected_raw_hash||(hit&&hit.expected_raw_hash)||null,file_ref:c.file_ref||(hit&&hit.file_ref)||null};\n});\noperations=operations.filter(c=>clean(c.operation)&&clean(c.keyword));\nif(useDeterministicRevise){operations=[];}\nirEvents=operations.filter(c=>clean(c.operation));\nif(!['CREATE','REVISE'].includes(mode))findings.push({code:'INVALID_BUILD_MODE',severity:'error'});\nif(mode==='REVISE'&&clean(work.preservation_report?.policy)&&work.preservation_report.policy!=='preserve_unmentioned')findings.push({code:'PRESERVATION_POLICY_REQUIRED',severity:'error'});\nif(mode==='REVISE'&&baselineQuery&&baselineQuery.status&&baselineQuery.status!=='succeeded'&&['succeeded','partial'].includes(clean(work.status)))findings.push({code:'TARGETED_BASELINE_QUERY_REQUIRED',severity:'error',status:baselineQuery?.status||'missing'});\nfor(const c of operations){const op=clean(c.operation).toUpperCase(),kw=clean(c.keyword).toUpperCase();if(!['KEEP','MODIFY','ADD','REMOVE'].includes(op))findings.push({code:'INVALID_CHANGE_OPERATION',severity:'error',operation:op});if(!allowed.has(kw))findings.push({code:'UNSUPPORTED_KEYWORD',severity:'error',keyword:kw});if(op==='REMOVE'&&!accountableRemove)findings.push({code:'REMOVE_REQUIRES_ACCOUNTABLE_APPROVAL',severity:'error',keyword:kw});if(mode==='REVISE'&&['MODIFY','REMOVE'].includes(op)){const id=clean(c.target_node_id||c.source_node_id||c.node_id),hit=targetMap.get(id);if(!id||!hit)findings.push({code:'CHANGE_TARGET_OUTSIDE_BASELINE_QUERY',severity:'error',keyword:kw,target_node_id:id||null});else if(clean(c.expected_raw_hash).toLowerCase()!==clean(hit.expected_raw_hash).toLowerCase())findings.push({code:'CHANGE_TARGET_HASH_MISMATCH',severity:'error',keyword:kw,target_node_id:id})}}\nconst nonKeep=operations.filter(c=>clean(c.operation).toUpperCase()!=='KEEP'),represented=new Set([...operations,...requirements].map(v=>clean(v.keyword).toUpperCase()).filter(Boolean));\nif((obj(req.schema_catalogue)||obj(req.rag_evidence?.schema_catalogue))&&!irEvents.length&&changes.length&&!useDeterministicRevise&&!keywordRemovePath)findings.push({code:'TYPED_IR_REQUIRED_FOR_CATALOGUE_RENDER',severity:'error'});\nif(mode==='CREATE'&&['succeeded','partial'].includes(work.status)&&!requirements.length)findings.push({code:'REQUIRED_DATA_MATRIX_MISSING',severity:'error'});\nif(!sourceMap.length){sourceMap=irEvents.flatMap((c,i)=>{if(obj(c.source_map))return[{...c.source_map,keyword:clean(c.keyword).toUpperCase()||null,target_node_id:c.target_node_id||c.node_id||null,index:i}];if(arr(c.source_map))return c.source_map.filter(obj).map(s=>({...s,keyword:clean(c.keyword).toUpperCase()||null,target_node_id:c.target_node_id||c.node_id||null,index:i}));return[]})}\nif(nonKeep.length&&sourceMap.length<nonKeep.length){\n  sourceMap=nonKeep.map((c,i)=>{const id=clean(c.target_node_id||c.source_node_id||c.node_id);const hit=targetMap.get(id)||{};const fields=obj(hit.fields)?hit.fields:{};const well=clean(fields.WELL||fields.well||c.entity||c.well||(obj(c.fields)?(c.fields.WELL||c.fields.well||c.fields.GROUP||c.fields.CHILD):''));const fact=wellFacts.find(f=>f.well===well)||wellFacts[i]||null;return{keyword:clean(c.keyword).toUpperCase(),target_node_id:id||null,entity:well||fact?.well||(groupRevise?clean(c.keyword):null),fact_id:fact?.fact_id||c.fact_id||null,source:fact?`source_facts_packet:${fact.fact_id||well||'excel'}`:(clean(c.fact_id)?`change:${clean(c.fact_id)}`:(groupRevise?`hitl:group_revise:${clean(c.keyword).toUpperCase()||i}`:null)),value:fact?.date??c.commissioning_date??null}});\n  findings.push({code:'SOURCE_MAP_SYNTHESIZED_FROM_FACTS',severity:'warning',mapped:sourceMap.length});\n}\nconst groundedSourceMap=sourceMap.filter(s=>clean(s.fact_id)||clean(s.source)||clean(s.source_ref)||clean(s.entity));\nif(nonKeep.length&&groundedSourceMap.length<nonKeep.length)findings.push({code:'SOURCE_MAP_INCOMPLETE',severity:'error',required:nonKeep.length,mapped:groundedSourceMap.length});\nconst missingCitationScope=scope.filter(k=>!citedKeywords.has(k));if(missingCitationScope.length&&['succeeded','partial'].includes(clean(work.status))&&!useDeterministicRevise&&!keywordRemovePath)findings.push({code:'RAG_KEYWORD_COVERAGE_MISSING',severity:'error',keywords:missingCitationScope});\nif(conflicts.length)findings.push({code:'CONFLICTING_SOURCE_FACTS',severity:'error',count:conflicts.length});\nconst modelDecision=obj(work.decision_record)?work.decision_record:{};if(modelDecision.contract&&(modelDecision.contract!=='decision_record'||modelDecision.contract_version!=='1.0'||!clean(modelDecision.objective)||!obj(modelDecision.selected_action)||!arr(modelDecision.selected_action?.reason_codes)))findings.push({code:'DECISION_RECORD_INVALID',severity:'warning'});\nif(['succeeded','partial'].includes(clean(work.status))&&facts.length&&!wellFacts.length&&wantsCommissioning){\n  const looksCommissioning=facts.some(f=>{\n    const values=obj(f.values)?f.values:{};\n    const date=f.value??f.raw_value??values['Дата ввода']??values.date??values.commissioning_date??null;\n    const field=clean(f.field||f.column||'');\n    return (date!==null&&date!==undefined&&String(date).trim()!=='')||/дата|date|commission/i.test(field);\n  });\n  if(looksCommissioning)findings.push({code:'SOURCE_FACTS_WELL_IDENTITY_MISSING',severity:'error',fact_count:facts.length});\n}\nlet status=new Set(['succeeded','partial','needs_input','needs_decision','needs_approval','retryable_error','fatal_error']).has(work.status)?work.status:'retryable_error';\nif(!useTimelineCommissioning&&!operations.length&&wellFacts.length&&wantsCommissioning&&['needs_input','retryable_error'].includes(status)&&!gaps.length){status='needs_input';findings.push({code:'COMMISSIONING_FACTS_PRESENT_IR_REQUIRED',severity:'error',wells:wellFacts.map(f=>f.well).slice(0,20)});}\nif(gaps.length&&['succeeded','partial'].includes(status)&&!useDeterministicRevise&&!keywordRemovePath)status='needs_input';\nif(findings.some(f=>f.severity==='error')&&['succeeded','partial'].includes(status))status=findings.some(f=>f.code==='REMOVE_REQUIRES_ACCOUNTABLE_APPROVAL')?'needs_approval':'needs_input';\nif(['succeeded','partial'].includes(status)&&(!work.self_check?.performed||!work.self_check?.passed))work.self_check={performed:true,passed:true,checks:[{check:'builder_stage_accepted',passed:true}],reproducibility:'Deterministic builder validate accepted IR with SCHEDULE-name identity.'};\nconst supported=r=>['supported','covered','resolved','approved'].includes(clean(r.status).toLowerCase())||clean(r.source_ref)||clean(r.fact_id)||(arr(r.source_refs)&&r.source_refs.length>0);\nconst required=requirements.filter(r=>r.required!==false),requiredSupported=required.filter(supported).length;\nconst requirementCoverage=required.length?Math.round(100*requiredSupported/required.length):(nonKeep.length?Math.min(100,Math.round(100*sourceMap.length/nonKeep.length)):100);\nconst sourceCoverage=useDeterministicRevise||keywordRemovePath?100:(nonKeep.length?Math.min(100,Math.round(100*sourceMap.length/nonKeep.length)):100);\nconst scopeFit=useDeterministicRevise||keywordRemovePath?100:(scope.length?Math.round(100*scope.filter(k=>represented.has(k)).length/scope.length):0);\nconst evidenceCompleteness=Math.round(.6*requirementCoverage+.4*sourceCoverage);\nconst sourceAuthority=useDeterministicRevise||keywordRemovePath?100:(scope.length?Math.round(100*scope.filter(k=>citedKeywords.has(k)).length/scope.length):0);\nconst entityTemporalConsistency=(gaps.length||conflicts.length)?0:100;\nconst errorFindings=findings.filter(f=>f.severity==='error');\nconst deterministicValidationHealth=errorFindings.length?0:(work.self_check?.performed&&work.self_check?.passed?100:50);\nconst score=Math.round(.25*scopeFit+.25*evidenceCompleteness+.20*sourceAuthority+.15*entityTemporalConsistency+.15*deterministicValidationHealth);\nconst hardBlockers=errorFindings.map(f=>f.code),decision=useDeterministicRevise||keywordRemovePath?'continue':(hardBlockers.length||score<70?'hitl':score<85?'attention':'continue');\nconst snapshot=clean(evidencePacket.source_snapshot_hash||req.source_snapshot_hash)||'none',signature=gaps.map(g=>[g.entity,g.effective_at,g.keyword,g.field,g.reason].map(v=>String(v||'')).join('|')).sort().join('||').slice(0,8000);\nconst hash=s=>{let h=2166136261;for(const ch of String(s)){h^=ch.charCodeAt(0);h=Math.imul(h,16777619)}return(h>>>0).toString(16)};\nconst reasonCodes=hardBlockers.length?hardBlockers:[decision==='continue'?'READINESS_CONTINUE':decision==='attention'?'READINESS_ATTENTION':'READINESS_HITL'];\nconst decisionRecord={contract:'decision_record',contract_version:'1.0',objective:clean(root.packet?.objective||req.objective),considered_inputs:[{kind:'approved_plan',contract:plan.contract||null,keyword_scope:scope},{kind:'source_snapshot',source_snapshot_hash:snapshot,fact_count:facts.length,conflict_count:conflicts.length},{kind:'rag_evidence',citation_count:citations.length,covered_keywords:[...citedKeywords].sort()},{kind:'baseline',package_hash:req.baseline_manifest_hash||req.baseline_schedule_package_ref?.manifest_hash||null}],proposed_actions:operations.slice(0,100).map(c=>({operation:clean(c.operation).toUpperCase(),keyword:clean(c.keyword).toUpperCase(),target_node_id:c.target_node_id||c.node_id||null})),selected_action:{action:status,reason_codes:reasonCodes},rejected_actions:findings.map(f=>({action:f.keyword||f.operation||'builder_output',reason_codes:[f.code]})),assumptions:arr(work.assumptions)?work.assumptions.map(String).slice(0,100):[],evidence_refs:arr(work.evidence)?work.evidence.filter(obj).slice(0,100):[],citations,tool_call_ids:arr(modelDecision.tool_call_ids)?modelDecision.tool_call_ids.map(String).slice(0,100):[],unresolved_questions:gaps.slice(0,100),acceptance_check_results:[{check:'scope_fit',score:scopeFit,passed:scopeFit===100},{check:'evidence_completeness',score:evidenceCompleteness,passed:evidenceCompleteness===100},{check:'source_authority_and_citation',score:sourceAuthority,passed:sourceAuthority===100},{check:'entity_temporal_consistency',score:entityTemporalConsistency,passed:entityTemporalConsistency===100},{check:'deterministic_validation_health',score:deterministicValidationHealth,passed:deterministicValidationHealth===100}]};\nreturn[{json:{contract:'schedule_builder_stage_result',contract_version:'1.0',status,summary:String(work.summary||'').slice(0,4000),build_mode:mode,generated_schedule:typeof work.generated_schedule==='string'?work.generated_schedule.slice(0,200000):'',ir_events:irEvents,changes,requirements_matrix:requirements,source_map:sourceMap,completeness_report:obj(work.completeness_report)?work.completeness_report:{},preservation_report:obj(work.preservation_report)?work.preservation_report:{},evidence_gap:gaps,deliverables:arr(work.deliverables)?work.deliverables:[],artifact_refs:arr(work.artifact_refs)?work.artifact_refs:[],assumptions:arr(work.assumptions)?work.assumptions:[],warnings:arr(work.warnings)?work.warnings:[],evidence:arr(work.evidence)?work.evidence:[],agent_tool_trace:agentToolTrace,decision_record:decisionRecord,self_check:obj(work.self_check)?work.self_check:{performed:false,passed:false,checks:[],reproducibility:''},human_request:work.human_request??null,error:findings.length?{code:'BUILDER_POLICY_GATE',findings}:work.error??null,hard_blockers:hardBlockers,score:{stage_score:score,components:{scope_fit:scopeFit,evidence_completeness:evidenceCompleteness,source_authority_and_citation:sourceAuthority,entity_temporal_consistency:entityTemporalConsistency,deterministic_validation_health:deterministicValidationHealth},raw_counts:{scope_required:scope.length,scope_represented:scope.filter(k=>represented.has(k)).length,requirements_required:required.length,requirements_supported:requiredSupported,non_keep_changes:nonKeep.length,source_map_entries:sourceMap.length,citations:citations.length,source_conflicts:conflicts.length,evidence_gaps:gaps.length,findings:findings.length,agent_tool_calls:agentToolTrace.length},thresholds:{attention:85,hitl:70},decision,provisional:true},continuation:gaps.length?{protocol:'schedule-builder-evidence-gap-v1',gap_signature:hash(signature),source_snapshot_hash:snapshot,evidence_gap:gaps,max_excel_iterations:Math.min(5,Math.max(1,Number(req.max_excel_iterations)||2)),max_builder_iterations:Math.min(5,Math.max(1,Number(req.max_builder_iterations)||3))}:work.continuation??null}}];"
-      },
-      "id": "7f807841-65d3-542a-bf9f-a1f9b711c38b",
-      "name": "Validate SCHEDULE builder stage",
-      "type": "n8n-nodes-base.code",
-      "typeVersion": 2,
-      "position": [
-        8120,
-        0
-      ]
-    },
-    {
-      "parameters": {
-        "conditions": {
-          "options": {
-            "caseSensitive": true,
-            "leftValue": "",
-            "typeValidation": "strict",
-            "version": 2
-          },
-          "conditions": [
-            {
-              "id": "b4d64cb4-766c-5137-a80f-65bfb4e13af1",
-              "leftValue": "={{ [\"succeeded\",\"partial\"].includes($json.status) && $json.score.decision !== \"hitl\" }}",
-              "rightValue": true,
-              "operator": {
-                "type": "boolean",
-                "operation": "equals"
-              }
-            }
-          ],
-          "combinator": "and"
-        },
-        "options": {}
-      },
-      "id": "dfb29b4e-f4c8-5542-a944-a23d2237ef38",
-      "name": "Builder draft ready?",
-      "type": "n8n-nodes-base.if",
-      "typeVersion": 2.2,
-      "position": [
-        8400,
-        0
-      ]
-    },
-    {
-      "parameters": {
-        "jsCode": "const root=$('Normalize SCHEDULE pipeline packet').first().json,intake=$('Run deterministic SCHEDULE intake').first().json,b=$('Validate SCHEDULE builder stage').first().json;\nconst catalogue=root.request.schema_catalogue||root.request.rag_evidence?.schema_catalogue||{};\nreturn[{json:{schedule_render_request:{mode:intake.build_mode,schema_catalogue:catalogue,ir_events:b.ir_events||[]}}}];"
-      },
-      "id": "c8f08e5d-1965-596b-9dc0-9dbaf41438ce",
-      "name": "Prepare deterministic schema render",
-      "type": "n8n-nodes-base.code",
-      "typeVersion": 2,
-      "position": [
-        8680,
-        0
-      ]
-    },
-    {
-      "parameters": {
-        "jsCode": "const x=$json.schedule_render_request??$json;\nconst obj=v=>v&&typeof v==='object'&&!Array.isArray(v),arr=Array.isArray,clean=v=>typeof v==='string'?v.trim():'';\nconst allowed=new Set([\"DATES\", \"INCLUDE\", \"GRUPTREE\", \"WELSPECS\", \"WELLTRACK\", \"COMPDATMD\", \"WCONHIST\", \"WCONPROD\", \"WCONINJE\", \"GCONPROD\", \"GCONINJE\", \"GUIDERAT\", \"GSATPROD\", \"GSATINJE\", \"WELLSTRE\", \"WINJGAS\", \"GINJGAS\", \"BRANPROP\", \"NODEPROP\", \"GNETDP\", \"NETBALAN\", \"FRACTURE_TEMPLATE\", \"FRACTURE_SPECS\", \"FRACTURE_STAGE\", \"WECON\", \"WTEST\", \"WELTARG\", \"WNETDP\", \"WPIMULT\", \"WDFAC\", \"WEFAC\", \"WELOPEN\", \"WELDRAW\", \"WLIST\", \"WFRACP\", \"WFRACPL\", \"VFPPROD\", \"WVFPDP\", \"ACTIONX\", \"DELAYACT\", \"ENDACTIO\", \"UDQ\", \"UDT\", \"APPLYSCRIPT\"]),findings=[];\nconst mode=clean(x.mode||x.build_mode).toUpperCase(),catalogue=obj(x.schema_catalogue)?x.schema_catalogue:{},events=arr(x.ir_events)?x.ir_events.filter(obj):[];\n\nconst SHA_K=[\n  0x428a2f98,0x71374491,0xb5c0fbcf,0xe9b5dba5,0x3956c25b,0x59f111f1,0x923f82a4,0xab1c5ed5,\n  0xd807aa98,0x12835b01,0x243185be,0x550c7dc3,0x72be5d74,0x80deb1fe,0x9bdc06a7,0xc19bf174,\n  0xe49b69c1,0xefbe4786,0x0fc19dc6,0x240ca1cc,0x2de92c6f,0x4a7484aa,0x5cb0a9dc,0x76f988da,\n  0x983e5152,0xa831c66d,0xb00327c8,0xbf597fc7,0xc6e00bf3,0xd5a79147,0x06ca6351,0x14292967,\n  0x27b70a85,0x2e1b2138,0x4d2c6dfc,0x53380d13,0x650a7354,0x766a0abb,0x81c2c92e,0x92722c85,\n  0xa2bfe8a1,0xa81a664b,0xc24b8b70,0xc76c51a3,0xd192e819,0xd6990624,0xf40e3585,0x106aa070,\n  0x19a4c116,0x1e376c08,0x2748774c,0x34b0bcb5,0x391c0cb3,0x4ed8aa4a,0x5b9cca4f,0x682e6ff3,\n  0x748f82ee,0x78a5636f,0x84c87814,0x8cc70208,0x90befffa,0xa4506ceb,0xbef9a3f7,0xc67178f2\n];\nconst shaUtf8=s=>{const out=[],t=String(s);for(let i=0;i<t.length;i++){let cp=t.codePointAt(i);if(cp>0xffff)i++;if(cp>=0xd800&&cp<=0xdfff)cp=0xfffd;if(cp<=0x7f)out.push(cp);else if(cp<=0x7ff)out.push(0xc0|(cp>>6),0x80|(cp&63));else if(cp<=0xffff)out.push(0xe0|(cp>>12),0x80|((cp>>6)&63),0x80|(cp&63));else out.push(0xf0|(cp>>18),0x80|((cp>>12)&63),0x80|((cp>>6)&63),0x80|(cp&63))}return out};\nconst shaRotr=(v,n)=>(v>>>n)|(v<<(32-n));\nconst sha256=s=>{const b=shaUtf8(s),bit=b.length*8,b2=b.slice();b2.push(0x80);while((b2.length%64)!==56)b2.push(0);for(let i=7;i>=0;i--)b2.push((bit/Math.pow(2,i*8))&255);let h0=0x6a09e667,h1=0xbb67ae85,h2=0x3c6ef372,h3=0xa54ff53a,h4=0x510e527f,h5=0x9b05688c,h6=0x1f83d9ab,h7=0x5be0cd19;for(let off=0;off<b2.length;off+=64){const w=new Array(64);for(let i=0;i<16;i++){const p=off+i*4;w[i]=((b2[p]<<24)|(b2[p+1]<<16)|(b2[p+2]<<8)|b2[p+3])>>>0}for(let i=16;i<64;i++){const a=w[i-15],c=w[i-2],s0=(shaRotr(a,7)^shaRotr(a,18)^(a>>>3))>>>0,s1=(shaRotr(c,17)^shaRotr(c,19)^(c>>>10))>>>0;w[i]=(w[i-16]+s0+w[i-7]+s1)>>>0}let a=h0,bv=h1,c=h2,d=h3,e=h4,f=h5,g=h6,hh=h7;for(let i=0;i<64;i++){const S1=(shaRotr(e,6)^shaRotr(e,11)^shaRotr(e,25))>>>0,ch=((e&f)^((~e)&g))>>>0,t1=(hh+S1+ch+SHA_K[i]+w[i])>>>0,S0=(shaRotr(a,2)^shaRotr(a,13)^shaRotr(a,22))>>>0,maj=((a&bv)^(a&c)^(bv&c))>>>0,t2=(S0+maj)>>>0;hh=g;g=f;f=e;e=(d+t1)>>>0;d=c;c=bv;bv=a;a=(t1+t2)>>>0}h0=(h0+a)>>>0;h1=(h1+bv)>>>0;h2=(h2+c)>>>0;h3=(h3+d)>>>0;h4=(h4+e)>>>0;h5=(h5+f)>>>0;h6=(h6+g)>>>0;h7=(h7+hh)>>>0}return [h0,h1,h2,h3,h4,h5,h6,h7].map(v=>v.toString(16).padStart(8,'0')).join('')};\nconst contentHash=s=>`sha256:${sha256(String(s??''))}`;\n\nconst WITHIN_DATE_KEYWORD_ORDER=[\"WELSPECS\", \"INCLUDE\", \"LGROFF\", \"LGRONN\", \"WELLTRACK\", \"COMPDATMD\", \"WLIST\", \"GRUPTREE\", \"BRANPROP\", \"NODEPROP\", \"WFRACPL\", \"FRACTURE_SPECS\", \"FRACTURE_STAGE\", \"FRACTURE_PIMULT\", \"WFRACP\", \"WELLSTRE\", \"UDQ\", \"GSATCOMP\", \"GSATPROD\", \"WINJGAS\", \"GINJGAS\", \"GCONINJE\", \"WCONINJE\", \"WTRACER\", \"GCONPROD\", \"WECON\", \"WTEST\", \"WELTARG\", \"WCONHIST\", \"WCONPROD\", \"WELOPEN\", \"WEFAC\", \"WGRUPCON\", \"APPLYSCRIPT\"];\nconst WITHIN_DATE_KEYWORD_ALIASES={\"WELLSTREE\": \"WELLSTRE\", \"FRACTURE_WELL\": \"FRACTURE_SPECS\", \"WELLTARG\": \"WELTARG\"};\nconst normalizeWithinDateKeyword=kw=>{\n  const raw=String(kw||'').trim().toUpperCase();\n  return WITHIN_DATE_KEYWORD_ALIASES[raw]||raw;\n};\nconst withinDateKeywordRank=(kw,origIndex=0)=>{\n  const name=normalizeWithinDateKeyword(kw);\n  if(name==='DATES')return -1;\n  const idx=WITHIN_DATE_KEYWORD_ORDER.indexOf(name);\n  if(idx>=0)return idx;\n  // Unlisted keywords keep relative order between CORE and APPLYSCRIPT.\n  const applyIdx=WITHIN_DATE_KEYWORD_ORDER.indexOf('APPLYSCRIPT');\n  const base=applyIdx>=0?applyIdx:WITHIN_DATE_KEYWORD_ORDER.length;\n  return base+0.001*(Number(origIndex)||0);\n};\nconst compareWithinDateKeywords=(a,b,ai=0,bi=0)=>{\n  const ra=withinDateKeywordRank(a,ai),rb=withinDateKeywordRank(b,bi);\n  if(ra!==rb)return ra-rb;\n  return (Number(ai)||0)-(Number(bi)||0);\n};\nconst hash=contentHash,shaPattern=/^sha256:[a-f0-9]{64}$/i;\nconst profile=obj(catalogue.simulator_profile)?catalogue.simulator_profile:{};\nconst schemas=arr(catalogue.schemas)?catalogue.schemas.filter(obj):[];\nconst schemaMap=new Map(),eventIds=new Set(),renderedChanges=[],renderedRecords=[];\nconst sourceHash=clean(catalogue.source_hash).toLowerCase(),catalogueHash=clean(catalogue.catalogue_hash).toLowerCase();\nif(!['CREATE','REVISE'].includes(mode))findings.push({code:'RENDER_MODE_INVALID',severity:'error'});\nif(catalogue.contract!=='schedule_schema_catalogue'||catalogue.contract_version!=='1.0')findings.push({code:'SCHEMA_CATALOGUE_CONTRACT_INVALID',severity:'error'});\nif(clean(profile.vendor)!=='Rock Flow Dynamics'||clean(profile.simulator).toLowerCase()!=='tnavigator'||clean(profile.version)!=='22.2')findings.push({code:'SCHEMA_PROFILE_NOT_APPROVED',severity:'error'});\nif(!clean(catalogue.approved_by||catalogue.author))findings.push({code:'SCHEMA_EXPERT_AUTHOR_REQUIRED',severity:'error'});\nif(!shaPattern.test(sourceHash))findings.push({code:'SCHEMA_SOURCE_HASH_INVALID',severity:'error'});\nif(!shaPattern.test(catalogueHash))findings.push({code:'SCHEMA_CATALOGUE_HASH_INVALID',severity:'error'});\nif(!schemas.length)findings.push({code:'SCHEMA_CATALOGUE_EMPTY',severity:'error'});\nconst citationValid=c=>obj(c)&&clean(c.document_id||c.knowledge_id)&&clean(c.document_revision||c.revision);\n// Merged catalogues recompute source_hash; do not require citation.source_hash === catalogue.source_hash.\nconst citationAcceptable=c=>!c||citationValid(c); // missing citation: warn below; invalid shape: error\n\nconst normalizeLayout=raw=>{const l=obj(raw)?raw:{},newline=clean(l.newline).toUpperCase()==='CRLF'?'\\r\\n':'\\n';return{newline,indent:l.indent==='    '?'    ':'  ',delimiter:l.delimiter==='TAB'?'\\t':' ',record_terminator:clean(l.record_terminator).toUpperCase()==='NONE'?'':' /',block_terminator:clean(l.block_terminator).toUpperCase()==='NONE'?'none':'slash_line'}};\nfor(let i=0;i<schemas.length;i++){\n  const s=schemas[i],kw=clean(s.keyword).toUpperCase(),variant=clean(s.variant)||'default',fields=arr(s.fields)?s.fields.filter(obj):[];\n  const key=`${kw}::${variant}`;\n  if(!allowed.has(kw)){findings.push({code:'SCHEMA_KEYWORD_UNSUPPORTED',severity:'error',index:i,keyword:kw});continue}\n  if(!clean(s.schema_id)||!clean(s.schema_revision)){findings.push({code:'SCHEMA_IDENTITY_REQUIRED',severity:'error',index:i,keyword:kw});continue}\n  if(!citationValid(s.citation)){\n    if(s.citation==null||s.citation===undefined)findings.push({code:'SCHEMA_CITATION_MISSING',severity:'warning',index:i,keyword:kw});\n    else {findings.push({code:'SCHEMA_CITATION_INVALID',severity:'error',index:i,keyword:kw});continue}\n  }\n  if(!obj(s.semantics)){findings.push({code:'SCHEMA_SEMANTICS_REQUIRED',severity:'error',index:i,keyword:kw,variant});continue}\n  if(schemaMap.has(key)){findings.push({code:'SCHEMA_VARIANT_DUPLICATE',severity:'error',index:i,keyword:kw,variant});continue}\n  const positions=fields.map(f=>Number(f.position)),names=fields.map(f=>clean(f.name));\n  const parser=obj(s.parser)?s.parser:{},layoutRaw=obj(s.layout)?s.layout:{};\n  const recordless=!fields.length&&Number(parser.token_width)===0&&clean(layoutRaw.record_terminator).toUpperCase()==='NONE'&&clean(layoutRaw.block_terminator).toUpperCase()==='NONE';\n  if(!recordless&&(!fields.length||positions.some((p,j)=>!Number.isInteger(p)||p!==j+1)||names.some(v=>!v)||new Set(names).size!==names.length)){findings.push({code:'SCHEMA_FIELDS_INVALID',severity:'error',index:i,keyword:kw});continue}\n  const badType=fields.find(f=>!['string','integer','number','date','enum','boolean'].includes(clean(f.type).toLowerCase()));\n  if(badType){findings.push({code:'SCHEMA_FIELD_TYPE_UNSUPPORTED',severity:'error',index:i,keyword:kw,field:badType.name});continue}\n  schemaMap.set(key,{...s,keyword:kw,variant,fields:fields.slice().sort((a,b)=>Number(a.position)-Number(b.position)),layout:normalizeLayout(s.layout)});\n}\nconst decimal=v=>{if(typeof v==='number')return Number.isFinite(v)?String(v):null;if(typeof v!=='string')return null;const t=v.trim();return /^[-+]?(?:\\d+(?:\\.\\d*)?|\\.\\d+)$/.test(t)?t:null};\nconst integer=v=>{if(typeof v==='number')return Number.isSafeInteger(v)?String(v):null;if(typeof v!=='string')return null;const t=v.trim();return /^[-+]?\\d+$/.test(t)?t:null};\nconst quote=v=>`'${String(v).replace(/'/g,\"''\")}'`;\nconst renderDate=(v,format)=>{const t=clean(v),m=t.match(/^(\\d{4})-(\\d{2})-(\\d{2})$/);if(!m)return null;const y=Number(m[1]),mo=Number(m[2]),d=Number(m[3]),dt=new Date(Date.UTC(y,mo-1,d));if(dt.getUTCFullYear()!==y||dt.getUTCMonth()!==mo-1||dt.getUTCDate()!==d)return null;const months=['JAN','FEB','MAR','APR','MAY','JUN','JUL','AUG','SEP','OCT','NOV','DEC'];return clean(format).toUpperCase()==='DD MON YYYY'?`${d} ${months[mo-1]} ${y}`:t};\nconst defaultToken=(raw,f)=>{if(!(obj(raw)&&clean(raw.state).toLowerCase()==='default'))return null;if(f.default_allowed!==true){findings.push({code:'IR_DEFAULT_NOT_ALLOWED',severity:'error',field:f.name});return null}const n=Number(raw.count||1);return Number.isInteger(n)&&n>1?`${n}*`:'*'};\nconst renderValue=(raw,f,event)=>{const def=defaultToken(raw,f);if(def!==null)return def;const type=clean(f.type).toLowerCase();let out=null;\n  if(type==='integer')out=integer(raw);else if(type==='number')out=decimal(raw);else if(type==='date')out=renderDate(raw,f.format);else if(type==='boolean'){if(raw===true||clean(raw).toLowerCase()==='true')out=clean(f.true_token)||'YES';else if(raw===false||clean(raw).toLowerCase()==='false')out=clean(f.false_token)||'NO'}else if(type==='enum'){const vals=arr(f.enum)?f.enum.map(String):[],candidate=String(raw??''),hit=vals.find(v=>v.toUpperCase()===candidate.toUpperCase());out=hit??null}else if(type==='string'){const candidate=String(raw??'');if(candidate&&!/[\\r\\n\\0]/.test(candidate))out=candidate}\n  if(out===null){findings.push({code:'IR_FIELD_VALUE_INVALID',severity:'error',event_id:event.event_id,keyword:event.keyword,field:f.name,type});return null}\n  if(type==='string'||f.quote==='single')return quote(out);return f.case==='upper'?String(out).toUpperCase():String(out);\n};\nfor(let i=0;i<events.length;i++){\n  const e=events[i],eventId=clean(e.event_id),op=clean(e.operation).toUpperCase(),kw=clean(e.keyword).toUpperCase(),variant=clean(e.variant)||'default';\n  if(!eventId||eventIds.has(eventId)){findings.push({code:'IR_EVENT_ID_INVALID',severity:'error',index:i,event_id:eventId});continue}eventIds.add(eventId);\n  if(!['KEEP','MODIFY','ADD','REMOVE'].includes(op)){findings.push({code:'IR_OPERATION_INVALID',severity:'error',index:i,event_id:eventId});continue}\n  if(!allowed.has(kw)){findings.push({code:'IR_KEYWORD_UNSUPPORTED',severity:'error',index:i,event_id:eventId,keyword:kw});continue}\n  if(mode==='CREATE'&&op!=='ADD'){findings.push({code:'CREATE_REQUIRES_ADD_ONLY',severity:'error',index:i,event_id:eventId,operation:op});continue}\n  if(mode==='REVISE'&&['MODIFY','REMOVE'].includes(op)&&(!clean(e.target_node_id)||!shaPattern.test(clean(e.expected_raw_hash)))){findings.push({code:'IR_TARGET_IDENTITY_REQUIRED',severity:'error',index:i,event_id:eventId});continue}\n  const base={event_id:eventId,operation:op,keyword:kw,variant,target_node_id:clean(e.target_node_id)||null,expected_raw_hash:clean(e.expected_raw_hash)||null,file_ref:clean(e.file_ref)||null,before_node_id:clean(e.before_node_id)||null,after_node_id:clean(e.after_node_id)||null,provenance:arr(e.provenance)?e.provenance.slice(0,100):[],_ir_index:i};\n  if(['KEEP','REMOVE'].includes(op)){renderedChanges.push(base);continue}\n  const schema=schemaMap.get(`${kw}::${variant}`);if(!schema){findings.push({code:'IR_SCHEMA_VARIANT_NOT_FOUND',severity:'error',index:i,event_id:eventId,keyword:kw,variant});continue}\n  if(!base.provenance.length){findings.push({code:'IR_PROVENANCE_REQUIRED',severity:'error',index:i,event_id:eventId});continue}\n  const values=obj(e.fields)?e.fields:{},known=new Set(schema.fields.map(f=>clean(f.name))),unknown=Object.keys(values).filter(k=>!known.has(k));if(unknown.length){findings.push({code:'IR_UNKNOWN_FIELD',severity:'error',index:i,event_id:eventId,fields:unknown});continue}\n  const tokens=[];let fieldError=false;for(const f of schema.fields){const name=clean(f.name),present=Object.prototype.hasOwnProperty.call(values,name);if(!present){if(f.required===true){findings.push({code:'IR_REQUIRED_FIELD_MISSING',severity:'error',index:i,event_id:eventId,keyword:kw,field:name});fieldError=true;continue}if(f.default_allowed===true){tokens.push('*');continue}findings.push({code:'IR_OPTIONAL_FIELD_HAS_NO_DEFAULT_POLICY',severity:'error',index:i,event_id:eventId,keyword:kw,field:name});fieldError=true;continue}const token=renderValue(values[name],f,e);if(token===null){fieldError=true;continue}tokens.push(token)}if(fieldError)continue;\n  const l=schema.layout,text=!schema.fields.length?`${kw}${l.newline}`:`${kw}${l.newline}${l.indent}${tokens.join(l.delimiter)}${l.record_terminator}${l.newline}${l.block_terminator==='slash_line'?'/'+l.newline+l.newline:''}`;\n  const change={...base,rendered_text:text,schema_id:schema.schema_id,schema_revision:schema.schema_revision,citation:schema.citation,render_hash:hash(text)};renderedChanges.push(change);renderedRecords.push({event_id:eventId,keyword:kw,variant,field_count:tokens.length,render_hash:change.render_hash,schema_id:schema.schema_id,_ir_index:i});\n}\n// CREATE: assemble by DATES segments, then within-date keyword order (stage-3 algorithm — not RAG).\nif(mode==='CREATE'&&!findings.some(f=>f.severity==='error')&&renderedChanges.length){\n  const segments=[];let cur={dates:null,items:[]};\n  const flush=()=>{if(cur.dates||cur.items.length)segments.push(cur);cur={dates:null,items:[]}};\n  for(let i=0;i<renderedChanges.length;i++){\n    const c=renderedChanges[i];\n    if(c.keyword==='DATES'){flush();cur={dates:c,items:[]};continue}\n    cur.items.push({change:c,orig:c._ir_index??i});\n  }\n  flush();\n  const ordered=[];\n  for(const seg of segments){\n    if(seg.dates)ordered.push(seg.dates);\n    seg.items.sort((a,b)=>compareWithinDateKeywords(a.change.keyword,b.change.keyword,a.orig,b.orig));\n    for(const it of seg.items)ordered.push(it.change);\n  }\n  renderedChanges.length=0;for(const c of ordered){const{_ir_index,...rest}=c;renderedChanges.push(rest)}\n  const byId=new Map(renderedRecords.map(r=>[r.event_id,r]));\n  const orderedRecords=[];\n  for(const c of renderedChanges){const r=byId.get(c.event_id);if(r){const{_ir_index,...rest}=r;orderedRecords.push(rest)}}\n  renderedRecords.length=0;for(const r of orderedRecords)renderedRecords.push(r);\n}else{\n  for(const c of renderedChanges)delete c._ir_index;\n  for(const r of renderedRecords)delete r._ir_index;\n}\nconst hard=findings.filter(f=>f.severity==='error'),catalogueFingerprint=hash(schemas.slice().sort((a,b)=>`${a.keyword}:${a.variant||'default'}`.localeCompare(`${b.keyword}:${b.variant||'default'}`)).map(s=>`${s.schema_id}|${s.schema_revision}|${s.keyword}|${s.variant||'default'}`).join('\\n'));\nreturn[{json:{contract:'schedule_render_result',contract_version:'1.0',status:hard.length?'needs_input':'rendered',mode,changes:hard.length?[]:renderedChanges,rendered_records:hard.length?[]:renderedRecords,catalogue_ref:clean(catalogue.catalogue_ref)||null,catalogue_hash:catalogueHash||null,catalogue_fingerprint:catalogueFingerprint,source_hash:sourceHash||null,findings,hard_blockers:hard.map(f=>f.code),metrics:{ir_events:events.length,schemas:schemas.length,rendered_records:hard.length?0:renderedRecords.length,passed:hard.length===0}}}];"
-      },
-      "id": "b50cb4c2-1a69-5e10-b891-af9b9b451b1c",
-      "name": "Render typed SCHEDULE IR deterministically",
-      "type": "n8n-nodes-base.code",
-      "typeVersion": 2,
-      "position": [
-        8960,
-        0
-      ]
-    },
-    {
-      "parameters": {
-        "conditions": {
-          "options": {
-            "caseSensitive": true,
-            "leftValue": "",
-            "typeValidation": "strict",
-            "version": 2
-          },
-          "conditions": [
-            {
-              "id": "201655a4-8f5c-50cb-b770-71c693fe6799",
-              "leftValue": "={{ $json.status }}",
-              "rightValue": "rendered",
-              "operator": {
-                "type": "string",
-                "operation": "equals"
-              }
-            }
-          ],
-          "combinator": "and"
-        },
-        "options": {}
-      },
-      "id": "3c4232ea-84e3-5d51-b3e9-038bb9292a1b",
-      "name": "SCHEDULE schema render accepted?",
-      "type": "n8n-nodes-base.if",
-      "typeVersion": 2.2,
-      "position": [
-        9240,
-        0
-      ]
-    },
-    {
-      "parameters": {
-        "jsCode": "const root=$('Normalize SCHEDULE pipeline packet').first().json,intake=$('Run deterministic SCHEDULE intake').first().json,r=$('Render typed SCHEDULE IR deterministically').first().json;\nconst b=$('Validate SCHEDULE builder stage').first().json;\nlet baseline=null;try{baseline=$('Analyze lossless baseline inventory').first().json}catch{}\nconst obj=v=>v&&typeof v==='object'&&!Array.isArray(v),arr=Array.isArray,clean=v=>typeof v==='string'?v.trim():'';\nconst capabilityToken=v=>String(v==null?'':v).trim().toLowerCase().replace(/-/g,'_');\nconst COMMISSIONING_CAPABILITIES=new Set(['commissioning_date_retarget','shift_commissioning_dates','commissioning_revise','timeline_revise']);\nconst GROUP_REBIND_CAPABILITIES=new Set(['group_membership_rebind','group_rebind']);\nconst collectCapabilityTokens=(req,intake)=>{\n  const r=req&&typeof req==='object'&&!Array.isArray(req)?req:{};\n  const inn=intake&&typeof intake==='object'&&!Array.isArray(intake)?intake:{};\n  const changeR=(r.requested_change_scope&&typeof r.requested_change_scope==='object'&&!Array.isArray(r.requested_change_scope))?r.requested_change_scope:{};\n  const changeI=(inn.requested_change_scope&&typeof inn.requested_change_scope==='object'&&!Array.isArray(inn.requested_change_scope))?inn.requested_change_scope:{};\n  const change={...changeI,...changeR};\n  const bag=[\n    ...(Array.isArray(r.requested_capability_scope)?r.requested_capability_scope:[]),\n    ...(Array.isArray(inn.requested_capability_scope)?inn.requested_capability_scope:[]),\n    ...(Array.isArray(change.requested_capability_scope)?change.requested_capability_scope:[]),\n    r.capability_id,inn.capability_id,change.capability_id,change.intent,change.kind,change.operation,change.capability,\n  ];\n  return [...new Set(bag.map(capabilityToken).filter(Boolean))];\n};\nconst wantsCommissioningCapability=tokens=>(Array.isArray(tokens)?tokens:[]).some(t=>COMMISSIONING_CAPABILITIES.has(capabilityToken(t)));\nconst wantsGroupRebindCapability=tokens=>(Array.isArray(tokens)?tokens:[]).some(t=>GROUP_REBIND_CAPABILITIES.has(capabilityToken(t)));\nconst readGroupRebindSpec=req=>{\n  const r=req&&typeof req==='object'&&!Array.isArray(req)?req:{};\n  const change=(r.requested_change_scope&&typeof r.requested_change_scope==='object'&&!Array.isArray(r.requested_change_scope))?r.requested_change_scope:{};\n  const spec=(r.group_rebind&&typeof r.group_rebind==='object'&&!Array.isArray(r.group_rebind))?r.group_rebind\n    :((change.group_rebind&&typeof change.group_rebind==='object'&&!Array.isArray(change.group_rebind))?change.group_rebind\n    :((change.spec&&typeof change.spec==='object'&&!Array.isArray(change.spec))?change.spec\n    :((change.wells||change.parent_group||change.parent)?change:null)));\n  if(!spec||typeof spec!=='object'||Array.isArray(spec))return {ok:false,missing:['wells','parent_group','parent_of_parent','well_groups','rate','control'],spec:null};\n  const wells=(Array.isArray(spec.wells)?spec.wells:[]).map(v=>String(v==null?'':v).trim()).filter(Boolean);\n  const parent=String(spec.parent_group||spec.parent||'').trim().toUpperCase();\n  const parentOfParent=String(spec.parent_of_parent||'').trim().toUpperCase();\n  const rate=Number(spec.rate??spec.gas_rate);\n  const wellGroups=(spec.well_groups&&typeof spec.well_groups==='object'&&!Array.isArray(spec.well_groups))?spec.well_groups\n    :((spec.well_group_map&&typeof spec.well_group_map==='object'&&!Array.isArray(spec.well_group_map))?spec.well_group_map:null);\n  const control=String(spec.control||'').trim().toUpperCase();\n  const missing=[];\n  if(!wells.length)missing.push('wells');\n  if(!parent)missing.push('parent_group');\n  if(!parentOfParent)missing.push('parent_of_parent');\n  if(!Number.isFinite(rate)||rate<=0)missing.push('rate');\n  if(!control)missing.push('control');\n  if(!wellGroups)missing.push('well_groups');\n  else{\n    const lookup=(map,well)=>{\n      if(map[well]!=null&&String(map[well]).trim())return String(map[well]).trim();\n      const n=Number(well);\n      if(Number.isFinite(n)&&map[n]!=null&&String(map[n]).trim())return String(map[n]).trim();\n      return '';\n    };\n    if(wells.some(w=>!lookup(wellGroups,w)))missing.push('well_groups');\n  }\n  if(missing.length)return {ok:false,missing:[...new Set(missing)],spec:null};\n  const groups={};\n  for(const w of wells){\n    groups[w]=String(wellGroups[w]!=null?wellGroups[w]:wellGroups[Number(w)]).trim();\n  }\n  return {ok:true,missing:[],spec:{\n    wells,\n    parent_group:parent,\n    parent_of_parent:parentOfParent,\n    well_groups:groups,\n    rate,\n    gas_rate:rate,\n    control,\n    effective_at:spec.effective_at||null,\n  }};\n};\nconst exclusiveScheduleCaps=(tokens,change,groupSpecOk)=>{\n  const list=(Array.isArray(tokens)?tokens:[]).map(capabilityToken).filter(Boolean);\n  const scope=change&&typeof change==='object'&&!Array.isArray(change)?change:{};\n  const primary=capabilityToken(scope.capability_id||scope.intent||'');\n  const groupWanted=GROUP_REBIND_CAPABILITIES.has(primary)||list.some(t=>GROUP_REBIND_CAPABILITIES.has(t));\n  const commissioningWanted=COMMISSIONING_CAPABILITIES.has(primary)||list.some(t=>COMMISSIONING_CAPABILITIES.has(t));\n  if(groupWanted&&groupSpecOk) return {wantsGroupRebind:true,wantsCommissioning:false,primary:'group_rebind'};\n  if(groupWanted&&!commissioningWanted) return {wantsGroupRebind:true,wantsCommissioning:false,primary:'group_rebind'};\n  if(groupWanted&&commissioningWanted){\n    if(GROUP_REBIND_CAPABILITIES.has(primary)||groupSpecOk) return {wantsGroupRebind:true,wantsCommissioning:false,primary:'group_rebind'};\n    if(COMMISSIONING_CAPABILITIES.has(primary)) return {wantsGroupRebind:false,wantsCommissioning:true,primary:'commissioning'};\n    return {wantsGroupRebind:true,wantsCommissioning:false,primary:'group_rebind'};\n  }\n  if(commissioningWanted) return {wantsGroupRebind:false,wantsCommissioning:true,primary:'commissioning'};\n  return {wantsGroupRebind:false,wantsCommissioning:false,primary:''};\n};\nconst mergeObservedScheduleRequest=(req,intake)=>{\n  const r=req&&typeof req==='object'&&!Array.isArray(req)?req:{};\n  const inn=intake&&typeof intake==='object'&&!Array.isArray(intake)?intake:{};\n  const changeI=(inn.requested_change_scope&&typeof inn.requested_change_scope==='object'&&!Array.isArray(inn.requested_change_scope))?inn.requested_change_scope:{};\n  const changeR=(r.requested_change_scope&&typeof r.requested_change_scope==='object'&&!Array.isArray(r.requested_change_scope))?r.requested_change_scope:{};\n  let change={...changeI,...changeR};\n  if(!(Array.isArray(change.wells)&&change.wells.length)&&Array.isArray(changeI.wells)&&changeI.wells.length) change.wells=changeI.wells;\n  if(!change.group_rebind&&changeI.group_rebind) change.group_rebind=changeI.group_rebind;\n  const intakePrimary=capabilityToken(changeI.capability_id||changeI.intent||inn.capability_id||'');\n  if(GROUP_REBIND_CAPABILITIES.has(intakePrimary)){\n    change={\n      ...change,\n      capability_id:changeI.capability_id||'group_membership_rebind',\n      intent:changeI.intent||'group_membership_rebind',\n      wells:(Array.isArray(changeI.wells)&&changeI.wells.length)?changeI.wells:change.wells,\n      parent_group:changeI.parent_group||change.parent_group,\n      parent_of_parent:changeI.parent_of_parent||change.parent_of_parent,\n      well_groups:changeI.well_groups||change.well_groups,\n      rate:changeI.rate??change.rate,\n      gas_rate:changeI.gas_rate??change.gas_rate,\n      control:changeI.control||change.control,\n      group_rebind:changeI.group_rebind||change.group_rebind,\n    };\n  }else if(COMMISSIONING_CAPABILITIES.has(intakePrimary)){\n    change={...change,capability_id:changeI.capability_id||'commissioning_date_retarget',intent:changeI.intent||'shift_commissioning_dates'};\n    if(change.group_rebind) delete change.group_rebind;\n  }\n  let caps=[...new Set([\n    ...(Array.isArray(inn.requested_capability_scope)?inn.requested_capability_scope:[]),\n    ...(Array.isArray(r.requested_capability_scope)?r.requested_capability_scope:[]),\n    change.capability_id,r.capability_id,inn.capability_id,\n  ].map(capabilityToken).filter(Boolean))];\n  const groupOk=readGroupRebindSpec({requested_change_scope:change,group_rebind:change.group_rebind}).ok;\n  const exclusive=exclusiveScheduleCaps(caps,change,groupOk);\n  if(exclusive.wantsGroupRebind&&!exclusive.wantsCommissioning){\n    caps=caps.filter(t=>!COMMISSIONING_CAPABILITIES.has(t));\n    if(!caps.some(t=>GROUP_REBIND_CAPABILITIES.has(t))) caps.push('group_membership_rebind');\n    change.capability_id=GROUP_REBIND_CAPABILITIES.has(capabilityToken(change.capability_id))?change.capability_id:'group_membership_rebind';\n    change.intent=GROUP_REBIND_CAPABILITIES.has(capabilityToken(change.intent))?change.intent:'group_membership_rebind';\n  }else if(exclusive.wantsCommissioning){\n    caps=caps.filter(t=>!GROUP_REBIND_CAPABILITIES.has(t));\n    if(!caps.some(t=>COMMISSIONING_CAPABILITIES.has(t))) caps.push('commissioning_date_retarget');\n    if(change.group_rebind) delete change.group_rebind;\n  }\n  const capability_id=exclusive.wantsGroupRebind\n    ?(GROUP_REBIND_CAPABILITIES.has(capabilityToken(change.capability_id))?change.capability_id:'group_membership_rebind')\n    :(exclusive.wantsCommissioning\n      ?(COMMISSIONING_CAPABILITIES.has(capabilityToken(change.capability_id||r.capability_id||inn.capability_id))? (change.capability_id||r.capability_id||inn.capability_id):'commissioning_date_retarget')\n      :(r.capability_id||inn.capability_id||change.capability_id||null));\n  return {\n    ...r,\n    requested_change_scope:Object.keys(change).length?change:r.requested_change_scope,\n    requested_capability_scope:caps.length?caps:(r.requested_capability_scope||inn.requested_capability_scope||[]),\n    capability_id,\n  };\n};\nconst pickWellDateFact=f=>{\n  const row=f&&typeof f==='object'&&!Array.isArray(f)?f:{};\n  const values=(row.values&&typeof row.values==='object'&&!Array.isArray(row.values))?row.values:((row.row&&typeof row.row==='object'&&!Array.isArray(row.row))?row.row:{});\n  const well=String(row.well||row.entity||row.entity_id||values['Скважина']||values.скважина||values.WELL||values.well||'').trim();\n  const coerce=v=>{\n    if(v==null||v==='') return null;\n    if(v instanceof Date&&!Number.isNaN(v.getTime())) return v.toISOString().slice(0,10);\n    if(typeof v==='object'&&!Array.isArray(v)){\n      if(Number.isFinite(Number(v.year))&&Number.isFinite(Number(v.month))&&Number.isFinite(Number(v.day))){\n        const y=String(Number(v.year)).padStart(4,'0'),m=String(Number(v.month)).padStart(2,'0'),d=String(Number(v.day)).padStart(2,'0');\n        return `${y}-${m}-${d}`;\n      }\n      if(v.value!=null&&v.value!==v) return coerce(v.value);\n      if(v.iso) return coerce(v.iso);\n      if(v.tnav) return coerce(v.tnav);\n    }\n    const s=String(v).trim();\n    return s===''?null:s;\n  };\n  let date=coerce(row.value??row.raw_value??values['Дата ввода']??values['дата ввода']??values.date??values.Date??values.commissioning_date??null);\n  let field=String(row.field||row.column||'').trim();\n  if(!date){\n    const hit=Object.keys(values).find(k=>/дата|date|commission|ввод/i.test(String(k||'')));\n    if(hit!=null){date=coerce(values[hit]);field=field||String(hit);}\n  }\n  if(!date){\n    const others=Object.keys(values).filter(k=>!/скважин|well|групп|group|факт|id$/i.test(String(k||'')));\n    if(others.length===1){date=coerce(values[others[0]]);field=field||String(others[0]);}\n  }\n  if(!field&&date) field='Дата ввода';\n  return {well,date,field,values,fact_id:row.fact_id||null};\n};\nconst packet=obj(root.request?.source_facts_packet)?root.request.source_facts_packet:{};\nconst facts=arr(packet.facts)?packet.facts:[];\nconst wellFacts=facts.map(pickWellDateFact).filter(f=>f.well&&f.date!=null&&String(f.date).trim()!=='');\nconst capReq=mergeObservedScheduleRequest(root.request||{},intake);\nconst capTokens=collectCapabilityTokens(capReq,intake);\nconst groupSpecRead=readGroupRebindSpec(capReq);\nconst exclusive=exclusiveScheduleCaps(capTokens,capReq.requested_change_scope||{},!!(groupSpecRead&&groupSpecRead.ok));\nconst wantsCommissioning=exclusive.wantsCommissioning;\nconst wantsGroupRebind=exclusive.wantsGroupRebind;\nconst timelinePath=intake.build_mode==='REVISE'&&(\n  (wellFacts.length>0&&wantsCommissioning)||\n  (wantsGroupRebind&&groupSpecRead&&groupSpecRead.ok)||\n  (arr(b.source_map)&&b.source_map.some(s=>['timeline_commissioning_revise','timeline_group_revise'].includes(clean(s.path))))\n);\nconst taskRemove=clean(intake?.requested_change_scope?.operation).toLowerCase()==='remove'||clean(root.request?.requested_change_scope?.operation).toLowerCase()==='remove';\nconst removeApproval=obj(root.request.remove_approval)?root.request.remove_approval:(taskRemove?{actor:'task_text',reason:String(intake.objective||root.request?.objective||'remove requested in task').slice(0,400),gate_id:'task-remove-scope'}:null);\nreturn[{json:{merge_request:{mode:intake.build_mode,root_path:String(root.request.root_path||root.request.baseline_filename||'schedule.inc'),baseline_schedule_text:String(root.request.baseline_schedule_text||''),include_files:Array.isArray(root.request.include_files)?root.request.include_files:[],baseline_analysis:baseline,changes:timelinePath?[]:(r.changes||[]),schema_render_result:r,explicit_remove_approved:root.request.explicit_remove_approved===true||taskRemove,remove_approval:removeApproval,commissioning_timeline_pending:timelinePath}}}];"
-      },
-      "id": "b37ffc4f-ca41-5143-83a6-217ab5072177",
-      "name": "Prepare deterministic merge",
-      "type": "n8n-nodes-base.code",
-      "typeVersion": 2,
-      "position": [
-        9520,
-        0
-      ]
-    },
-    {
-      "parameters": {
-        "jsCode": "const x=$json.merge_request??$json;\nconst obj=v=>v&&typeof v==='object'&&!Array.isArray(v),arr=Array.isArray,clean=v=>typeof v==='string'?v.trim():'';\nconst allowed=new Set([\"DATES\", \"INCLUDE\", \"GRUPTREE\", \"WELSPECS\", \"WELLTRACK\", \"COMPDATMD\", \"WCONHIST\", \"WCONPROD\", \"WCONINJE\", \"GCONPROD\", \"GCONINJE\", \"GUIDERAT\", \"GSATPROD\", \"GSATINJE\", \"WELLSTRE\", \"WINJGAS\", \"GINJGAS\", \"BRANPROP\", \"NODEPROP\", \"GNETDP\", \"NETBALAN\", \"FRACTURE_TEMPLATE\", \"FRACTURE_SPECS\", \"FRACTURE_STAGE\", \"WECON\", \"WTEST\", \"WELTARG\", \"WNETDP\", \"WPIMULT\", \"WDFAC\", \"WEFAC\", \"WELOPEN\", \"WELDRAW\", \"WLIST\", \"WFRACP\", \"WFRACPL\", \"VFPPROD\", \"WVFPDP\", \"ACTIONX\", \"DELAYACT\", \"ENDACTIO\", \"UDQ\", \"UDT\", \"APPLYSCRIPT\"]),findings=[],changes=arr(x.changes)?x.changes:[],mode=clean(x.mode).toUpperCase();\n\nconst SHA_K=[\n  0x428a2f98,0x71374491,0xb5c0fbcf,0xe9b5dba5,0x3956c25b,0x59f111f1,0x923f82a4,0xab1c5ed5,\n  0xd807aa98,0x12835b01,0x243185be,0x550c7dc3,0x72be5d74,0x80deb1fe,0x9bdc06a7,0xc19bf174,\n  0xe49b69c1,0xefbe4786,0x0fc19dc6,0x240ca1cc,0x2de92c6f,0x4a7484aa,0x5cb0a9dc,0x76f988da,\n  0x983e5152,0xa831c66d,0xb00327c8,0xbf597fc7,0xc6e00bf3,0xd5a79147,0x06ca6351,0x14292967,\n  0x27b70a85,0x2e1b2138,0x4d2c6dfc,0x53380d13,0x650a7354,0x766a0abb,0x81c2c92e,0x92722c85,\n  0xa2bfe8a1,0xa81a664b,0xc24b8b70,0xc76c51a3,0xd192e819,0xd6990624,0xf40e3585,0x106aa070,\n  0x19a4c116,0x1e376c08,0x2748774c,0x34b0bcb5,0x391c0cb3,0x4ed8aa4a,0x5b9cca4f,0x682e6ff3,\n  0x748f82ee,0x78a5636f,0x84c87814,0x8cc70208,0x90befffa,0xa4506ceb,0xbef9a3f7,0xc67178f2\n];\nconst shaUtf8=s=>{const out=[],t=String(s);for(let i=0;i<t.length;i++){let cp=t.codePointAt(i);if(cp>0xffff)i++;if(cp>=0xd800&&cp<=0xdfff)cp=0xfffd;if(cp<=0x7f)out.push(cp);else if(cp<=0x7ff)out.push(0xc0|(cp>>6),0x80|(cp&63));else if(cp<=0xffff)out.push(0xe0|(cp>>12),0x80|((cp>>6)&63),0x80|(cp&63));else out.push(0xf0|(cp>>18),0x80|((cp>>12)&63),0x80|((cp>>6)&63),0x80|(cp&63))}return out};\nconst shaRotr=(v,n)=>(v>>>n)|(v<<(32-n));\nconst sha256=s=>{const b=shaUtf8(s),bit=b.length*8,b2=b.slice();b2.push(0x80);while((b2.length%64)!==56)b2.push(0);for(let i=7;i>=0;i--)b2.push((bit/Math.pow(2,i*8))&255);let h0=0x6a09e667,h1=0xbb67ae85,h2=0x3c6ef372,h3=0xa54ff53a,h4=0x510e527f,h5=0x9b05688c,h6=0x1f83d9ab,h7=0x5be0cd19;for(let off=0;off<b2.length;off+=64){const w=new Array(64);for(let i=0;i<16;i++){const p=off+i*4;w[i]=((b2[p]<<24)|(b2[p+1]<<16)|(b2[p+2]<<8)|b2[p+3])>>>0}for(let i=16;i<64;i++){const a=w[i-15],c=w[i-2],s0=(shaRotr(a,7)^shaRotr(a,18)^(a>>>3))>>>0,s1=(shaRotr(c,17)^shaRotr(c,19)^(c>>>10))>>>0;w[i]=(w[i-16]+s0+w[i-7]+s1)>>>0}let a=h0,bv=h1,c=h2,d=h3,e=h4,f=h5,g=h6,hh=h7;for(let i=0;i<64;i++){const S1=(shaRotr(e,6)^shaRotr(e,11)^shaRotr(e,25))>>>0,ch=((e&f)^((~e)&g))>>>0,t1=(hh+S1+ch+SHA_K[i]+w[i])>>>0,S0=(shaRotr(a,2)^shaRotr(a,13)^shaRotr(a,22))>>>0,maj=((a&bv)^(a&c)^(bv&c))>>>0,t2=(S0+maj)>>>0;hh=g;g=f;f=e;e=(d+t1)>>>0;d=c;c=bv;bv=a;a=(t1+t2)>>>0}h0=(h0+a)>>>0;h1=(h1+bv)>>>0;h2=(h2+c)>>>0;h3=(h3+d)>>>0;h4=(h4+e)>>>0;h5=(h5+f)>>>0;h6=(h6+g)>>>0;h7=(h7+hh)>>>0}return [h0,h1,h2,h3,h4,h5,h6,h7].map(v=>v.toString(16).padStart(8,'0')).join('')};\nconst contentHash=s=>`sha256:${sha256(String(s??''))}`;\n\nconst hash=contentHash;\nconst parse=v=>{if(obj(v))return v;if(typeof v==='string'){try{const y=JSON.parse(v);return obj(y)?y:{}}catch{return{}}}return{}};\nconst analysis=parse(x.baseline_analysis),pkg=obj(analysis.package)?analysis.package:(obj(x.baseline_package)?x.baseline_package:null),mutations=changes.filter(c=>clean(c.operation).toUpperCase()!=='KEEP');\nif(!['CREATE','REVISE'].includes(mode))findings.push({code:'MODE_INVALID',severity:'error'});if(mode==='REVISE'&&!pkg)findings.push({code:'BASELINE_ANALYSIS_REQUIRED',severity:'error'});if(mode==='REVISE'&&pkg&&!Array.isArray(pkg.files))findings.push({code:'BASELINE_PACKAGE_INVALID',severity:'error'});\nconst rootPath=clean(pkg?.root_path||x.root_path||'schedule.inc')||'schedule.inc';const baseFiles=(pkg&&Array.isArray(pkg.files)?pkg.files:mode==='CREATE'?[{file_ref:rootPath,text:'',manifest:{file_ref:rootPath,sha256:hash('')}}]:[]).map(f=>({file_ref:String(f.file_ref),text:String(f.text??''),manifest:obj(f.manifest)?f.manifest:{},nodes:arr(f.nodes)?f.nodes:[]}));const byRef=new Map(baseFiles.map(f=>[f.file_ref,f]));\nconst nodeMap=new Map();for(const f of baseFiles)for(const n of f.nodes){if(n.node_id)nodeMap.set(String(n.node_id),{file:f,node:n})};const touched=new Map(),edits=new Map(),validated=[];\nconst targetId=c=>clean(c.target_node_id||c.node_id||c.target?.node_id);const targetFor=c=>{const id=targetId(c);if(!id)return null;return nodeMap.get(id)||null};\nconst firstKeyword=s=>{for(const line of String(s).split(/\\r\\n|\\n|\\r/)){const t=line.trim();if(!t||t.startsWith('--'))continue;const m=t.match(/^([A-Za-z][A-Za-z0-9_]*)\\s*(?:--.*)?$/);return m?m[1].toUpperCase():''}return''};\nconst lineEndings=s=>{const t=String(s),crlf=(t.match(/\\r\\n/g)||[]).length,without=t.replace(/\\r\\n/g,''),cr=(without.match(/\\r/g)||[]).length,lf=(without.match(/\\n/g)||[]).length,k=[crlf&&'CRLF',lf&&'LF',cr&&'CR'].filter(Boolean);return k.length>1?'MIXED':(k[0]||'NONE')};\nfor(let i=0;i<changes.length;i++){const c=changes[i]||{},op=clean(c.operation).toUpperCase(),kw=clean(c.keyword).toUpperCase();if(!['KEEP','MODIFY','ADD','REMOVE'].includes(op)){findings.push({code:'CHANGE_INVALID',severity:'error',index:i});continue}if(op==='KEEP'){validated.push({...c,operation:'KEEP',disposition:'KEEP'});continue}if(!allowed.has(kw)){findings.push({code:'UNSUPPORTED_KEYWORD',severity:'error',keyword:kw,index:i});continue}\n  if(op==='ADD'){const fileRef=clean(c.file_ref||c.target_file_ref||rootPath),file=byRef.get(fileRef);if(!file){findings.push({code:'ADD_FILE_NOT_FOUND',severity:'error',file_ref:fileRef,index:i});continue}const rendered=typeof c.rendered_text==='string'?c.rendered_text:'';if(!rendered){findings.push({code:'ADD_TEXT_REQUIRED',severity:'error',index:i});continue}if(firstKeyword(rendered)!==kw){findings.push({code:'RENDERED_KEYWORD_MISMATCH',severity:'error',keyword:kw,index:i});continue}let at=file.text.length;const before=clean(c.before_node_id),after=clean(c.after_node_id);if(before&&after){findings.push({code:'ADD_ANCHOR_AMBIGUOUS',severity:'error',index:i});continue}if(before||after){const t=nodeMap.get(before||after);if(!t||t.file.file_ref!==fileRef){findings.push({code:'ADD_ANCHOR_NOT_FOUND',severity:'error',index:i});continue}at=before?t.node.start_char:t.node.end_char}const e=edits.get(fileRef)||[];e.push({start:at,end:at,replacement:rendered,change:c,index:i,operation:op});edits.set(fileRef,e);validated.push({...c,operation:'ADD',file_ref:fileRef});continue}\n  const hit=targetFor(c);if(!hit){findings.push({code:'CHANGE_TARGET_NODE_REQUIRED',severity:'error',index:i});continue}const n=hit.node;if(String(n.keyword||'').toUpperCase()!==kw){findings.push({code:'TARGET_KEYWORD_MISMATCH',severity:'error',index:i,node_id:n.node_id});continue}if(n.opaque||n.known===false){findings.push({code:'OPAQUE_NODE_MUTATION_FORBIDDEN',severity:'error',index:i,node_id:n.node_id});continue}if(touched.has(n.node_id)){findings.push({code:'TARGET_MUTATED_TWICE',severity:'error',index:i,node_id:n.node_id});continue}if(!clean(c.expected_raw_hash)||clean(c.expected_raw_hash).toLowerCase()!==clean(n.raw_hash).toLowerCase()){findings.push({code:'TARGET_HASH_REQUIRED_OR_STALE',severity:'error',index:i,node_id:n.node_id});continue}touched.set(n.node_id,op);if(op==='MODIFY'){const rendered=typeof c.rendered_text==='string'?c.rendered_text:'';if(!rendered){findings.push({code:'MODIFY_TEXT_REQUIRED',severity:'error',index:i});continue}if(firstKeyword(rendered)!==kw){findings.push({code:'RENDERED_KEYWORD_MISMATCH',severity:'error',keyword:kw,index:i,node_id:n.node_id});continue}edits.set(hit.file.file_ref,[...(edits.get(hit.file.file_ref)||[]),{start:Number(n.start_char),end:Number(n.end_char),replacement:rendered,change:c,index:i,operation:op}]);validated.push({...c,operation:'MODIFY',target_node_id:n.node_id})}else{const approval=obj(x.remove_approval)?x.remove_approval:{};if(x.explicit_remove_approved!==true||!clean(approval.actor)||!clean(approval.reason)||!clean(approval.gate_id)){findings.push({code:'REMOVE_REQUIRES_ACCOUNTABLE_APPROVAL',severity:'error',index:i,node_id:n.node_id});continue}edits.set(hit.file.file_ref,[...(edits.get(hit.file.file_ref)||[]),{start:Number(n.start_char),end:Number(n.end_char),replacement:'',change:c,index:i,operation:op}]);validated.push({...c,operation:'REMOVE',target_node_id:n.node_id,approval:{actor:approval.actor,reason:approval.reason,gate_id:approval.gate_id}})}}\nif(!byRef.has(rootPath))findings.push({code:'ROOT_FILE_MISSING',severity:'error'});for(const file of baseFiles){const es=(edits.get(file.file_ref)||[]).slice().sort((a,b)=>b.start-a.start||b.index-a.index);let last=Number.MAX_SAFE_INTEGER;for(const e of es){if(!Number.isInteger(e.start)||!Number.isInteger(e.end)||e.start<0||e.end<e.start||e.end>file.text.length){findings.push({code:'EDIT_OFFSET_INVALID',severity:'error',file_ref:file.file_ref,index:e.index});continue}if(e.end>last)findings.push({code:'OVERLAPPING_EDITS',severity:'error',file_ref:file.file_ref,index:e.index});last=Math.min(last,e.start)}}\nconst validationHard=findings.filter(f=>f.severity==='error'),candidateFiles=[];if(!validationHard.length){for(const file of baseFiles){const es=(edits.get(file.file_ref)||[]).slice().sort((a,b)=>b.start-a.start||b.index-a.index);let text=file.text;for(const e of es)text=text.slice(0,e.start)+e.replacement+text.slice(e.end);candidateFiles.push({...file,text,manifest:{...file.manifest,file_ref:file.file_ref,sha256:hash(text),byte_length:shaUtf8(text).length,char_length:text.length,line_count:String(text).split(/\\r\\n|\\n|\\r/).length,line_endings:lineEndings(text),bom:text.charCodeAt(0)===0xfeff}})}}\nconst outFiles=validationHard.length?baseFiles:candidateFiles,applied=validationHard.length?[]:validated,root=outFiles.find(f=>f.file_ref===rootPath);if(!mutations.length&&mode==='REVISE'&&pkg&&outFiles.some((f,i)=>f.text!==baseFiles[i]?.text))findings.push({code:'UNEXPECTED_ZERO_CHANGE_MUTATION',severity:'error'});const packageHash=hash(outFiles.slice().sort((a,b)=>a.file_ref.localeCompare(b.file_ref)).map(f=>`${f.file_ref}|${f.manifest.sha256||hash(f.text)}`).join('\\n'));const hard=findings.filter(f=>f.severity==='error');const zero=mode==='REVISE'&&mutations.length===0&&pkg&&outFiles.length===baseFiles.length&&outFiles.every((f,i)=>f.file_ref===baseFiles[i].file_ref&&f.text===baseFiles[i].text&&clean(f.manifest?.sha256)===clean(baseFiles[i].manifest?.sha256));const changedKeywords=[...new Set(applied.filter(c=>c.operation!=='KEEP').map(c=>clean(c.keyword).toUpperCase()))];return[{json:{contract:'schedule_merge_result',contract_version:'1.0',status:hard.length?'needs_input':'merged',mode,atomic:true,baseline_package_hash:pkg?.package_hash||null,output_package:{contract:'schedule_package',contract_version:'1.0',root_path:rootPath,package_hash:packageHash,files:outFiles.map(f=>({file_ref:f.file_ref,text:f.text,manifest:f.manifest}))},generated_schedule:root?.text||'',output_hash:root?.manifest?.sha256||hash(root?.text||''),applied_changes:applied,rejected_changes:hard.length?changes:[],preservation_report:mode==='REVISE'?{policy:'preserve_unmentioned',zero_change_byte_identical:Boolean(zero),baseline_node_count:nodeMap.size,explicit_mutation_count:mutations.length,modified_count:applied.filter(c=>c.operation==='MODIFY').length,added_count:applied.filter(c=>c.operation==='ADD').length,removed_count:applied.filter(c=>c.operation==='REMOVE').length,all_baseline_nodes_accounted:hard.length===0,unchanged_file_hashes:baseFiles.filter((f,i)=>outFiles[i]?.text===f.text).map(f=>f.file_ref)}:{policy:'not_applicable'},semantic_diff:{changed_keywords:changedKeywords,include_graph_changed:changedKeywords.includes('INCLUDE')},textual_diff:applied.filter(c=>c.operation!=='KEEP').map(c=>({operation:c.operation,keyword:clean(c.keyword).toUpperCase(),target_node_id:c.target_node_id||c.node_id||null})),findings}}];"
-      },
-      "id": "304fc84a-514d-5623-825b-60e5000f5f4b",
-      "name": "Merge SCHEDULE draft deterministically",
-      "type": "n8n-nodes-base.code",
-      "typeVersion": 2,
-      "position": [
-        9800,
-        0
-      ]
-    },
-    {
-      "parameters": {
-        "conditions": {
-          "options": {
-            "caseSensitive": true,
-            "leftValue": "",
-            "typeValidation": "strict",
-            "version": 2
-          },
-          "conditions": [
-            {
-              "id": "1578889e-d4fa-5023-a6be-e83e5b43f40d",
-              "leftValue": "={{ $json.status }}",
-              "rightValue": "merged",
-              "operator": {
-                "type": "string",
-                "operation": "equals"
-              }
-            }
-          ],
-          "combinator": "and"
-        },
-        "options": {}
-      },
-      "id": "bf9b7a02-4649-5957-aa1a-6bf0d95034d3",
-      "name": "SCHEDULE merge accepted?",
-      "type": "n8n-nodes-base.if",
-      "typeVersion": 2.2,
-      "position": [
-        10080,
-        0
       ]
     },
     {

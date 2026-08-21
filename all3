@@ -1,3 +1,442 @@
+    acceptance_criteria:[{id:'rows_extracted',criterion:'Return bounded rows with entity identity from the workbook',required:true,expected:'finite rows'}],
+    artifact_refs:arr(request.artifact_refs)?request.artifact_refs:[],
+  };
+  blockingQuestions=[];
+}
+// Attached schedule package, no workbook: open Builder. Domain grammar (DATES/INCLUDE) is Builder's job.
+if(!packetComplete&&!excelEvidenceReady&&!builderIntakeRetry&&!hasExcelBinary&&hasScheduleBaseline&&allowed.has('schedule_builder_specialist')&&decision!=='delegate'){
+  const baseSchedule=resolveRequestSchedule(request);
+  decision='delegate';
+  packetCandidate={
+    contract:'specialist_packet',contract_version:'1.0',task_id:base.task_id,specialist_id:'schedule_builder_specialist',
+    attempt:Number(base.retry_count)+1,
+    objective:objectiveBlob||'Revise the attached SCHEDULE package.',
+    inputs:{schedule_request:attachSchedulePackage(baseSchedule)},
+    controls:{},
+    acceptance_criteria:[
+      {id:'task_applied',criterion:'Apply the requested schedule change',required:true,expected:'matches objective'},
+      {id:'preserve_unmentioned',criterion:'Unrelated baseline constructs preserved',required:true,expected:'preserve_unmentioned'},
+    ],
+    artifact_refs:arr(request.artifact_refs)?request.artifact_refs:[],
+  };
+  blockingQuestions=[];
+}
+// CREATE from scratch: no baseline file, no workbook — still Builder, not orch grammar.
+const scheduleIntended=intendedSpecialist==='schedule_builder_specialist'||/schedule/.test(clean(plan.task_type))||(intendedSpecialist===''&&/(schedule|\.inc\b|wconprod|tnavigator)/i.test(objectiveBlob+' '+clean(plan.task_type)));
+if(!packetComplete&&!excelEvidenceReady&&!builderIntakeRetry&&!hasExcelBinary&&!hasScheduleBaseline&&allowed.has('schedule_builder_specialist')&&scheduleIntended){
+  const baseSchedule=resolveRequestSchedule(request);
+  const prior=obj(plan.specialist_packet)&&obj(plan.specialist_packet.inputs)&&obj(plan.specialist_packet.inputs.schedule_request)?plan.specialist_packet.inputs.schedule_request:{};
+  decision='delegate';
+  packetCandidate={
+    contract:'specialist_packet',contract_version:'1.0',task_id:base.task_id,specialist_id:'schedule_builder_specialist',
+    attempt:Number(base.retry_count)+1,
+    objective:objectiveBlob||clean(plan.specialist_packet&&plan.specialist_packet.objective)||'Create a forecast SCHEDULE from the task.',
+    inputs:{schedule_request:attachSchedulePackage({...baseSchedule,...prior,build_mode:clean(prior.build_mode||baseSchedule.build_mode)||'CREATE'})},
+    controls:{},
+    acceptance_criteria:[{id:'task_applied',criterion:'Emit the requested CREATE schedule',required:true,expected:'matches objective'}],
+    artifact_refs:arr(request.artifact_refs)?request.artifact_refs:[],
+  };
+  blockingQuestions=[];
+}
+// Planner chose Excel without a workbook: require upload only if objective named Excel; else redirect to Builder.
+if(decision==='delegate'&&clean(packetCandidate.specialist_id)==='excel_extraction_specialist'&&!hasExcelBinary){
+  if(objectiveMentionsExcel){
+    decision='needs_input';
+    blockingQuestions=[{id:'excel_file',question:'Прикрепите workbook (.xlsx/.xls) в поле file — в задаче указан Excel, но файл не приложен.',text:'Прикрепите workbook (.xlsx/.xls) в поле file — в задаче указан Excel, но файл не приложен.',type:'file',required:true}];
+    packetCandidate={};
+  } else if(hasScheduleBaseline&&allowed.has('schedule_builder_specialist')){
+    const baseSchedule=resolveRequestSchedule(request);
+    packetCandidate={
+      contract:'specialist_packet',contract_version:'1.0',task_id:base.task_id,specialist_id:'schedule_builder_specialist',
+      attempt:Number(base.retry_count)+1,
+      objective:objectiveBlob||'Revise the attached SCHEDULE package.',
+      inputs:{schedule_request:attachSchedulePackage(baseSchedule)},
+      controls:{},
+      acceptance_criteria:[
+        {id:'task_applied',criterion:'Apply the requested schedule change',required:true,expected:'matches objective'},
+        {id:'preserve_unmentioned',criterion:'Unrelated baseline constructs preserved',required:true,expected:'preserve_unmentioned'},
+      ],
+      artifact_refs:arr(request.artifact_refs)?request.artifact_refs:[],
+    };
+    blockingQuestions=[];
+  }
+}
+// After Excel facts (or Builder intake retry), hand the package + facts to Builder
+// only when the task explicitly consumes Schedule — not because Excel succeeded.
+// Domain DATES/INCLUDE/keyword grammar stays in Builder intake/validation.
+const scheduleConsumer=explicitScheduleConsumer(request,obj(packetCandidate.inputs)?packetCandidate.inputs:{})||explicitScheduleConsumer(request,obj(persistedPacket.inputs)?persistedPacket.inputs:{})||hasScheduleBaseline;
+if((builderIntakeRetry||(excelEvidenceReady&&scheduleConsumer))&&allowed.has('schedule_builder_specialist')){
+  const compact=obj(previousSpecialistResult.compact_data)?previousSpecialistResult.compact_data:{};
+  const factsPacket=excelEvidenceReady&&obj(compact)?{
+    contract:'source_facts_packet',
+    contract_version:'1.0',
+    source_snapshot_hash:clean(compact.source_snapshot_hash),
+    correlation_id:clean(compact.correlation_id),
+    facts:arr(compact.facts)?compact.facts:[],
+    conflicts:arr(compact.conflicts)?compact.conflicts:[],
+  }:(factsFromPersisted||null);
+  const factWells=(arr(factsPacket?.facts)?factsPacket.facts:[]).filter(f=>{
+    const values=obj(f?.values)?f.values:{};
+    return Boolean(clean(f?.well||f?.entity||f?.entity_id||values['Скважина']||values.скважина||values.WELL||values.well||values['Группа']||values.GROUP||values.group));
+  });
+  if(excelEvidenceReady&&factsPacket&&!factWells.length&&allowed.has('excel_extraction_specialist')){
+    decision='delegate';
+    packetCandidate={
+      contract:'specialist_packet',contract_version:'1.0',task_id:base.task_id,specialist_id:'excel_extraction_specialist',
+      attempt:Number(base.retry_count)+1,
+      objective:objectiveBlob||'Повторный extract: у каждой строки должно быть имя объекта (скважина или группа).',
+      inputs:{prompt:objectiveBlob||'Export rows with entity identity. Do not invent well or group names.'},
+      controls:{bounded_request:true,max_rows:10000,max_cells:200000},
+      acceptance_criteria:[{id:'entity_identity',criterion:'Every fact row includes an entity name',required:true,expected:'non-empty names'}],
+      artifact_refs:arr(request.artifact_refs)?request.artifact_refs:[],
+    };
+    blockingQuestions=[];
+  } else if(factWells.length||(!excelEvidenceReady&&builderIntakeRetry&&(factsPacket||!hasExcelBinary))){
+  const effectiveFactsPacket=factsPacket;
+  const baseSchedule=resolveRequestSchedule(request);
+  let builderPacket=(packetObject&&plan.specialist_packet.specialist_id==='schedule_builder_specialist'&&packetComplete)?plan.specialist_packet:(obj(persistedPacket)&&persistedPacket.specialist_id==='schedule_builder_specialist'?persistedPacket:null);
+  if(!builderPacket){
+    builderPacket={
+      contract:'specialist_packet',contract_version:'1.0',task_id:base.task_id,specialist_id:'schedule_builder_specialist',
+      attempt:Number(base.retry_count)+1,
+      objective:clean(request.objective||request.problem_statement||request.request_text)||'Revise the attached SCHEDULE using extracted facts.',
+      inputs:{schedule_request:attachSchedulePackage({...baseSchedule,source_facts_packet:effectiveFactsPacket})},
+      controls:{},
+      acceptance_criteria:[
+        {id:'task_applied',criterion:'Apply extracted facts to the schedule package',required:true,expected:'matches objective'},
+        {id:'preserve_unmentioned',criterion:'Unrelated baseline constructs preserved',required:true,expected:'preserve_unmentioned'},
+      ],
+      artifact_refs:arr(previousSpecialistResult.artifact_refs)?previousSpecialistResult.artifact_refs:(arr(persistedPacket.artifact_refs)?persistedPacket.artifact_refs:(arr(request.artifact_refs)?request.artifact_refs:[])),
+    };
+  }
+  decision='delegate';
+  packetCandidate=withPacketControls({...builderPacket,contract:'specialist_packet',contract_version:'1.0',task_id:base.task_id,attempt:Number(base.retry_count)+1,specialist_id:'schedule_builder_specialist'},{expected_version:Number(base.version)+1,idempotency_key:`${base.task_id}:specialist:schedule_builder_specialist:${Number(base.retry_count)+1}:${Number(base.version)+1}`});
+  const modelInputs=obj(packetCandidate.inputs)?packetCandidate.inputs:{};const modelSchedule=obj(modelInputs.schedule_request)?modelInputs.schedule_request:modelInputs;
+  packetCandidate={...packetCandidate,inputs:{...modelInputs,schedule_request:attachSchedulePackage({...persistedSchedule,...resolveRequestSchedule(request),...modelSchedule,source_facts_packet:effectiveFactsPacket||modelSchedule.source_facts_packet||persistedSchedule.source_facts_packet||null})}};
+  blockingQuestions=[];
+  }
+}
+const scheduleGrammarQuestion=q=>/requested_keyword_scope|keyword_scope|forecast_start|forecast_end|model_start|\bDATES\b|wconprod|welspecs|семантик|порядок keyword/i.test(questionBlob(q));
+const builderFromPlan=packetObject&&plan.specialist_packet.specialist_id==='schedule_builder_specialist';
+if(builderFromPlan||clean(packetCandidate.specialist_id)==='schedule_builder_specialist') blockingQuestions=blockingQuestions.filter(q=>!scheduleGrammarQuestion(q));
+if(!clean(packetCandidate.specialist_id)&&builderFromPlan&&packetComplete&&!blockingQuestions.length&&['needs_input','needs_decision'].includes(decision)&&!hasExcelBinary){
+  decision='delegate';
+  packetCandidate={...plan.specialist_packet,contract:'specialist_packet',contract_version:'1.0',task_id:base.task_id,attempt:Number(base.retry_count)+1};
+}
+let scheduleDelegation=clean(packetCandidate.specialist_id)==='schedule_builder_specialist';
+if(scheduleDelegation){
+  const modelInputs=obj(packetCandidate.inputs)?packetCandidate.inputs:{};
+  const modelSchedule=obj(modelInputs.schedule_request)?modelInputs.schedule_request:modelInputs;
+  packetCandidate={...packetCandidate,inputs:{...modelInputs,schedule_request:attachSchedulePackage(modelSchedule)}};
+}
+if(scheduleDelegation&&hasExcelBinary&&!excelEvidenceReady&&allowed.has('excel_extraction_specialist')){
+  const sr=obj(packetCandidate.inputs)&&obj(packetCandidate.inputs.schedule_request)?packetCandidate.inputs.schedule_request:{};
+  const facts=obj(sr.source_facts_packet)?sr.source_facts_packet:(obj(persistedSchedule.source_facts_packet)?persistedSchedule.source_facts_packet:{});
+  const hasFactRows=arr(facts.facts)&&facts.facts.some(f=>{
+    const values=obj(f?.values)?f.values:{};
+    return Boolean(clean(f?.well||f?.entity||f?.entity_id||values['Скважина']||values.скважина||values.WELL||values.well||values['Группа']||values.GROUP||values.group));
+  });
+  if(!hasFactRows){
+    decision='delegate';
+    packetCandidate={
+      contract:'specialist_packet',contract_version:'1.0',task_id:base.task_id,specialist_id:'excel_extraction_specialist',
+      attempt:Number(base.retry_count)+1,
+      objective:objectiveBlob||'Extract the table described in the task from the attached workbook.',
+      inputs:{prompt:objectiveBlob||'Extract bounded rows with entity identity from the attached workbook. Export every column of the matched table. Do not drop date or numeric columns.',consumer:'schedule_builder',workflow_kind:'schedule'},
+      controls:{bounded_request:true,max_rows:10000,max_cells:200000},
+      acceptance_criteria:[{id:'rows_extracted',criterion:'Return bounded rows with entity identity from the workbook',required:true,expected:'finite rows'}],
+      artifact_refs:arr(request.artifact_refs)?request.artifact_refs:[],
+    };
+    blockingQuestions=[];
+  }
+}
+scheduleDelegation=clean(packetCandidate.specialist_id)==='schedule_builder_specialist';
+const excelDelegationFinal=clean(packetCandidate.specialist_id)==='excel_extraction_specialist';
+const calcDelegationFinal=clean(packetCandidate.specialist_id)==='engineering_calculation_specialist';
+if(excelDelegationFinal&&(hasScheduleBaseline||scheduleTask||scheduleConsumer)){
+  const inn=obj(packetCandidate.inputs)?packetCandidate.inputs:{};
+  packetCandidate={...packetCandidate,inputs:{...inn,consumer:clean(inn.consumer)||'schedule_builder',workflow_kind:clean(inn.workflow_kind)||'schedule'}};
+}
+const scheduleDirectOk=scheduleDelegation&&!hasExcelBinary;
+const scheduleHopOk=excelEvidenceReady||builderIntakeRetry||scheduleDirectOk;
+if(obj(packetCandidate)&&packetCandidate.specialist_id){
+  packetCandidate=withPacketControls({...packetCandidate,contract:'specialist_packet',contract_version:'1.0',task_id:base.task_id,attempt:Number(base.retry_count)+1},{expected_version:Number(base.version)+1,idempotency_key:`${base.task_id}:specialist:${packetCandidate.specialist_id}:${Number(base.retry_count)+1}:${Number(base.version)+1}`});
+}
+const criteriaFinal=arr(packetCandidate.acceptance_criteria)?packetCandidate.acceptance_criteria.filter(obj):criteria;
+plan.questions=blockingQuestions;
+const requiredCriteria=criteriaFinal.filter(c=>c.required!==false),measurableCriteria=requiredCriteria.filter(c=>clean(c.check||c.metric||c.criterion||c.description)&&('expected' in c||'threshold' in c||'pass_condition' in c||'expected_result' in c));
+const requestedDeliverables=arr(request.required_outputs)?request.required_outputs:arr(request.deliverables)?request.deliverables:[];
+const packetInputs=obj(packetCandidate.inputs)?packetCandidate.inputs:{},packetControls=obj(packetCandidate.controls)?packetCandidate.controls:{};
+const scopeSignals=[clean(packetCandidate.objective),clean(plan.task_type),clean(plan.plan?.workflow_kind)].filter(Boolean).length;
+const evidenceSignals=[requestRefs.length,Object.keys(packetInputs).length,Object.keys(packetControls).length].filter(n=>n>0).length;
+const sourceRefs=[...requestRefs,...(arr(modelDecision.evidence_refs)?modelDecision.evidence_refs.filter(obj):[])],citations=arr(modelDecision.citations)?modelDecision.citations.filter(obj):[];
+const hasTemporal=Boolean(packetInputs.effective_at||packetInputs.date_from||packetInputs.date_to||packetInputs.schedule_request?.history_start||packetInputs.schedule_request?.forecast_start||packetInputs.schedule_request?.requested_change_scope||!scheduleTask);
+const hasEntity=Boolean(packetInputs.entity||packetInputs.entities||packetInputs.wells||packetInputs.groups||packetInputs.schedule_request?.requested_keyword_scope||!scheduleTask);
+const scopeFit=Math.min(100,Math.round(100*Math.min(3,scopeSignals)/3));
+const evidenceCompleteness=Math.min(100,Math.round(100*(measurableCriteria.length+(evidenceSignals?1:0))/(Math.max(1,requiredCriteria.length)+1)));
+const sourceAuthority=Math.min(100,Math.round(100*Math.min(2,(sourceRefs.length?1:0)+(citations.length?1:0))/2));
+// Evidence-gathering hops (Excel/calc), Excel→Builder, and text-only baseline REVISE may proceed before full scoring.
+const entityTemporalConsistency=(hasEntity&&hasTemporal)||excelDelegationFinal||calcDelegationFinal||(scheduleDelegation&&scheduleHopOk)?100:0;
+const packetReady=Boolean(clean(packetCandidate.objective)&&obj(packetCandidate.inputs)&&obj(packetCandidate.controls)&&arr(packetCandidate.acceptance_criteria)&&allowed.has(packetCandidate.specialist_id));
+const deterministicValidationHealth=(decisionRecordValid||excelDelegationFinal||(scheduleDelegation&&scheduleHopOk))&&packetReady?100:0;
+const stageScore=Math.round(.25*scopeFit+.25*evidenceCompleteness+.20*sourceAuthority+.15*entityTemporalConsistency+.15*deterministicValidationHealth);
+const hardBlockers=[];if(!decisionRecordValid&&!excelDelegationFinal&&!(scheduleDelegation&&scheduleHopOk))hardBlockers.push('DECISION_RECORD_INVALID');if(decision==='delegate'&&!packetReady)hardBlockers.push('SPECIALIST_PACKET_INCOMPLETE');if(decision==='unsupported')hardBlockers.push('SPECIALIST_NOT_ALLOWLISTED');if(blockingQuestions.length)hardBlockers.push('PLANNER_UNRESOLVED_QUESTIONS');if(scheduleTask&&(!hasEntity||!hasTemporal)&&!excelDelegationFinal&&!calcDelegationFinal&&!(scheduleDelegation&&scheduleHopOk))hardBlockers.push('ENTITY_TEMPORAL_SCOPE_INCOMPLETE');
+const scoreDecision=hardBlockers.length||stageScore<70?'hitl':stageScore<85?'attention':'continue';
+// Do not bounce a complete Excel/calc/direct-Builder delegation back to HITL solely on provisional readiness score.
+if(scoreDecision==='hitl'&&decision==='delegate'&&!((excelDelegationFinal||calcDelegationFinal||(scheduleDelegation&&scheduleHopOk))&&packetReady)){decision='needs_input';plan.reason='Перед передачей специалисту не хватает исходных данных. Уточните задачу или приложите файлы.';}
+const reasonCodes=hardBlockers.length?hardBlockers:[scoreDecision==='continue'?'READINESS_CONTINUE':scoreDecision==='attention'?'READINESS_ATTENTION':'READINESS_HITL'];
+const deterministicDecision={contract:'decision_record',contract_version:'1.0',objective:clean(request.objective||request.problem_statement||packetCandidate.objective),considered_inputs:[{kind:'engineering_request',artifact_ref_count:requestRefs.length,required_output_count:requestedDeliverables.length},{kind:'specialist_catalogue',selected_specialist_id:packetCandidate.specialist_id||null}],proposed_actions:[{action:clean(plan.decision),specialist_id:packetCandidate.specialist_id||null,task_type:clean(plan.task_type)}],selected_action:{action:decision,reason_codes:reasonCodes},rejected_actions:hardBlockers.map(code=>({action:'delegate',reason_codes:[code]})),assumptions:arr(modelDecision.assumptions)?modelDecision.assumptions.map(String).slice(0,100):[],evidence_refs:sourceRefs.slice(0,100),citations:citations.slice(0,100),tool_call_ids:arr(modelDecision.tool_call_ids)?modelDecision.tool_call_ids.map(String).slice(0,100):[],unresolved_questions:blockingQuestions,acceptance_check_results:[{check:'scope_fit',score:scopeFit,passed:scopeFit===100},{check:'evidence_completeness',score:evidenceCompleteness,passed:evidenceCompleteness===100},{check:'source_authority_and_citation',score:sourceAuthority,passed:sourceAuthority===100},{check:'entity_temporal_consistency',score:entityTemporalConsistency,passed:entityTemporalConsistency===100},{check:'deterministic_validation_health',score:deterministicValidationHealth,passed:deterministicValidationHealth===100}]};
+plan.decision_record=deterministicDecision;plan.score={stage_score:stageScore,components:{scope_fit:scopeFit,evidence_completeness:evidenceCompleteness,source_authority_and_citation:sourceAuthority,entity_temporal_consistency:entityTemporalConsistency,deterministic_validation_health:deterministicValidationHealth},raw_counts:{request_artifact_refs:requestRefs.length,required_outputs:requestedDeliverables.length,required_acceptance_criteria:requiredCriteria.length,measurable_acceptance_criteria:measurableCriteria.length,evidence_refs:sourceRefs.length,citations:citations.length,questions:blockingQuestions.length,planner_questions:questions.length,hard_blockers:hardBlockers.length},thresholds:{attention:85,hitl:70},decision:scoreDecision,provisional:true};
+if(humanIntent==='reject_task'){
+  return finishPlan('rejected',{plan_json:JSON.stringify({...((obj(plan.plan)?plan.plan:{})),task_type:plan.task_type||null,decision_record:plan.decision_record,score:plan.score,planner_decision:'reject_task'}),packet_json:JSON.stringify({}),risk_class:risk});
+}
+if((humanIntent==='accept_release'||humanIntent==='approve_release')&&wasReleaseGate&&!hasNewHitlFiles){
+  const released=mintReleaseResult();
+  if(released){
+    return finishPlan('completed',{result_json:JSON.stringify(released),plan_json:JSON.stringify({...((obj(plan.plan)?plan.plan:{})),task_type:plan.task_type||null,decision_record:plan.decision_record,score:plan.score,planner_decision:'accept_release'}),packet_json:JSON.stringify({}),risk_class:risk});
+  }
+}
+const ignoreAccept=(humanIntent==='accept_release'||humanIntent==='approve_release')&&(!wasReleaseGate||hasNewHitlFiles||!mintReleaseResult());
+const wantsCorrection=humanIntent==='revise'||humanIntent==='provide_input'||ignoreAccept;
+if(wantsCorrection&&replyText){
+  if(!obj(packetCandidate)||!packetCandidate.specialist_id){
+    if(obj(persistedPacket)&&persistedPacket.specialist_id){
+      packetCandidate=withPacketControls({...persistedPacket,contract:'specialist_packet',contract_version:'1.0',task_id:base.task_id,attempt:Number(base.retry_count)+1},{expected_version:Number(base.version)+1,idempotency_key:`${base.task_id}:specialist:${persistedPacket.specialist_id}:${Number(base.retry_count)+1}:${Number(base.version)+1}`});
+    }
+  }
+  if(obj(packetCandidate)&&packetCandidate.specialist_id){
+    packetCandidate=injectHumanInstruction(packetCandidate);
+    packetCandidate=withPacketControls(packetCandidate);
+    if(humanIntent==='revise'||wasReleaseGate) decision='delegate';
+  }
+}
+const gateNeeded=['needs_input','needs_decision','needs_approval','unsupported'].includes(decision);
+const kind=decision==='needs_decision'||decision==='unsupported'?'needs_decision':decision==='needs_approval'?(criticalDelegation?'pre_delegation_approval':'needs_approval'):'needs_input';
+const gateId=gateNeeded?`gate_${base.task_id}_${Number(base.version)+1}_${kind}`:null;
+const compiledHitl=hitlCompileCopy({questions:blockingQuestions, summary:plan.user_message||plan.reason});
+const pending=gateNeeded?{gate_id:gateId,kind,reason:compiledHitl.user_message,questions:compiledHitl.questions,expected_version:Number(base.version)+1}:{};
+const packet=(decision==='delegate'||criticalDelegation)?packetCandidate:{};
+const planBody={...((obj(plan.plan)?plan.plan:{})),task_type:plan.task_type||null,decision_record:plan.decision_record,score:plan.score,planner_decision:decision};
+let runtimeOut=(()=>{try{return JSON.parse(base.runtime_json||'{}')}catch{return{}}})();
+__APPEND_HANDOFF__
+if(gateNeeded){
+  const hitlStatus=kind==='needs_approval'||kind==='pre_delegation_approval'?'NEEDS_APPROVAL':kind==='needs_input'?'NEEDS_INPUT':'NEEDS_DECISION';
+  const hitlSummary=pending.reason||'Нужен ваш ответ, чтобы продолжить.';
+  runtimeOut=appendHandoffEvent(runtimeOut,{stage:'hitl',status:hitlStatus,from_specialist:'universal_orchestrator',to_specialist:'human_operator',from_role:'Orchestrator',to_role:'User',summary:hitlSummary,brief:hitlSummary,details:{gate_id:gateId,kind}});
+}
+runtimeOut={...runtimeOut,human_intent:humanIntent||null};
+return [{json:{...base,version:Number(base.version)+1,previous_version:Number(base.version),status:gateNeeded?'awaiting_human':'delegated',
+ risk_class:risk,plan_json:JSON.stringify(planBody),packet_json:JSON.stringify(packet),gate_json:JSON.stringify(pending),runtime_json:JSON.stringify(runtimeOut),updated_at:new Date().toISOString(),route_after_plan:gateNeeded?'respond':'delegate',specialist_id:packet.specialist_id||'',specialist_packet:packet}}];
+""".strip()
+
+
+RESOLVE_SPECIALIST = r"""
+const x=$json;
+// TRUST BOUNDARY: allowlist is generated from n8n/contracts/specialist_registry.v1.json.
+// The model sees only logical specialist_id values and can never choose workflow_id.
+let packet={};try{packet=typeof x.packet_json==='string'?JSON.parse(x.packet_json):(x.specialist_packet||{})}catch{packet={}}
+const specialistId=String(packet.specialist_id||x.specialist_id||'');
+const allowlist=SPECIALIST_ALLOWLIST_PLACEHOLDER;
+const chatRoles=CHAT_ROLE_MAP_PLACEHOLDER;
+__APPEND_HANDOFF__
+const binding=allowlist[specialistId];
+const runtimeBase=(()=>{try{return JSON.parse(x.runtime_json||'{}')}catch{return{}}})();
+if(!binding){return [{json:{...x,specialist_id:specialistId,specialist_packet:packet,delegation_allowed:false,status:'awaiting_human',runtime_json:JSON.stringify({...runtimeBase,last_error:{code:'SPECIALIST_NOT_ALLOWLISTED',specialist_id:specialistId}}),gate_json:JSON.stringify({gate_id:`gate_${x.task_id}_${Number(x.version)+1}_routing`,kind:'needs_decision',reason:'Специалист не в allowlist — маршрут запрещён.',questions:[],expected_version:Number(x.version)+1})}}];}
+if(!binding.configured){return [{json:{...x,specialist_id:specialistId,specialist_packet:packet,delegation_allowed:false,specialist_route:binding.route,runtime_json:JSON.stringify(runtimeBase)}}];}
+const delegatedRuntime=appendHandoffEvent(runtimeBase,{stage:'plan',status:'DELEGATED',from_specialist:'universal_orchestrator',to_specialist:specialistId,from_role:'Orchestrator',to_role:chatRoles[specialistId]||specialistId,summary:`Передано специалисту: ${chatRoles[specialistId]||specialistId}.`,details:{attempt:packet.attempt||null,objective:String(packet.objective||'').slice(0,300)}});
+return [{json:{...x,specialist_id:specialistId,specialist_packet:packet,delegation_allowed:true,specialist_route:binding.route,runtime_json:JSON.stringify(delegatedRuntime)}}];
+""".strip()
+
+
+PREPARE_DELEGATION = r"""
+const x=$json;
+const parse=(value,fallback)=>{try{const parsed=typeof value==='string'?JSON.parse(value):value;return parsed&&typeof parsed==='object'&&!Array.isArray(parsed)?parsed:fallback}catch{return fallback}};
+const context=parse(x.runtime_json,{});
+const responses=Array.isArray(context.human_responses)?context.human_responses:[];
+const latest=responses.length?responses[responses.length-1].response:null;
+const storedPrevious=parse(x.result_json,{});
+// A result is continuation context only for the same logical specialist.
+// Cross-specialist evidence is carried in the new typed packet, never by
+// leaking one specialist's continuation into another adapter.
+const previous=storedPrevious.specialist_id===x.specialist_id?storedPrevious:{};
+const invocation={...x,previous_specialist_result:previous,latest_human_response:latest};
+const binary=$('Normalize invocation').first().binary;
+return [{json:invocation,...(binary?{binary}:{})}];
+""".strip()
+
+
+PREPARE_ROUTING_RAG = r"""
+const x=$json;
+const parse=(v,f)=>{try{const p=typeof v==='string'?JSON.parse(v):v;return p&&typeof p==='object'&&!Array.isArray(p)?p:f}catch{return f}};
+const request=parse(x.request_json,{}),context=parse(x.runtime_json,{});
+const plan=parse(x.plan_json,{});
+const routingRequest={
+  objective:request.objective||request.problem_statement||request.request_text||'',
+  task_type:request.task_type||plan.task_type||'',
+  build_mode:request.build_mode||null,
+  baseline_present:typeof request.baseline_schedule_text==='string'||(Array.isArray(request.include_files)&&request.include_files.length>0),
+  requested_keyword_scope:request.requested_keyword_scope||request.schedule_request?.requested_keyword_scope||null,
+};
+const blob=JSON.stringify({request:routingRequest,status:x.status,task_type:routingRequest.task_type}).toLowerCase();
+const tags=new Set();
+if(/(xlsx|\.xls\b|excel|workbook|таблиц)/.test(blob)) {tags.add('EXCEL_EXTRACTION_SPECIALIST');tags.add('XLSX');}
+if(routingRequest.baseline_present||/(schedule|\.inc|\.data|wconprod|tnavigator|t-navigator)/.test(blob)) {tags.add('SCHEDULE_BUILDER_SPECIALIST');tags.add('INC');}
+if(/(\.dev\b|cps3|trajectory|траектори)/.test(blob)) {tags.add('ENGINEERING_CALCULATION_SPECIALIST');tags.add('DEV');tags.add('CPS3');}
+if(/(hitl|human gate|уточнен|approval)/.test(blob)) tags.add('HITL');
+const keyword_families=[...tags];
+const objective=String(request.objective||request.problem_statement||request.request_text||request.task_type||plan.task_type||'engineering routing').trim();
+const query=[objective,keyword_families.join(' '),'routing required-evidence specialist selection HITL'].filter(Boolean).join('\n');
+return[{json:{...x,schedule_retrieval_request:{query,filters:{target_base:'orchestrator_routing',access_scope:'petroleum-engineering',knowledge_types:['routing_card'],keyword_families,topics:['маршрутизация','required-evidence','HITL'],task_patterns:[]},top_k:8}}}];
+""".strip()
+
+
+ATTACH_ROUTING_RAG = r"""
+const state=$('Prepare governed routing RAG request').first().json;
+const result=$json.schedule_retrieval_result??$json;
+const valid=result&&result.contract==='schedule_retrieval_result'&&result.contract_version==='1.0'&&result.status==='succeeded'&&result.evidence_ready===true&&Array.isArray(result.results)&&result.results.length>0&&result.results.some(v=>v&&v.knowledge_type==='routing_card'&&(v.body||v.title));
+const evidence={contract:'mas_rag_evidence',contract_version:'1.0',target_base:'orchestrator_routing',query:result.query||state.schedule_retrieval_request?.query,filters:result.filters||state.schedule_retrieval_request?.filters,citations:Array.isArray(result.citations)?result.citations:[],results:Array.isArray(result.results)?result.results:[],retrieval:result.retrieval||{},findings:Array.isArray(result.findings)?result.findings:[]};
+return[{json:{...state,routing_rag_evidence:evidence,routing_rag_result:result,routing_rag_ready:valid}}];
+""".strip()
+
+
+BUILD_ROUTING_RAG_GATE = r"""
+const x=$json;
+const clean=v=>typeof v==='string'?v.trim():'';
+__APPEND_HANDOFF__
+const reason='В базе маршрутизации нет карточек специалистов. Загрузите routing_card в Knowledge Ingestion (orchestrator_routing) и продолжите.';
+const pending={gate_id:`gate_${x.task_id}_${Number(x.version)+1}_routing_rag`,kind:'needs_input',reason,questions:[{id:'orchestrator_routing',text:'Через Knowledge Ingestion загрузите active routing_card в target_base=orchestrator_routing (карточки специалистов и required-evidence).',expected_format:'schedule_knowledge_block/v1',required:true}],expected_version:Number(x.version)+1};
+let runtime=(()=>{try{return JSON.parse(x.runtime_json||'{}')}catch{return{}}})();
+runtime=appendHandoffEvent(runtime,{stage:'hitl',status:'NEEDS_INPUT',from_specialist:'universal_orchestrator',to_specialist:'human_operator',from_role:'Orchestrator',to_role:'User',summary:reason,brief:reason,details:{gate_id:pending.gate_id,kind:'needs_input'}});
+return[{json:{...x,version:Number(x.version)+1,previous_version:Number(x.version),status:'awaiting_human',gate_json:JSON.stringify(pending),runtime_json:JSON.stringify({...runtime,last_error:null}),updated_at:new Date().toISOString()}}];
+""".strip()
+
+
+PREPARE_EXCEL_RAG = r"""
+const item=$input.first();
+const x=item.json||{},packet=x.specialist_packet&&typeof x.specialist_packet==='object'?x.specialist_packet:{};
+const continuation=x.previous_specialist_result&&x.previous_specialist_result.continuation;
+const tags=continuation?['TRUST-BOUNDARY','CLARIFICATION','CLARIFICATION-CONTINUATION']:['TRUST-BOUNDARY','DISCOVERY-AND-TABLES','QUERY-RESULT-PROTOCOL','RAG-AND-OPERATIONS'];
+const query=[String(packet.objective||''),'Excel Extractor operating protocol',tags.join(' ')].filter(Boolean).join('\n');
+// Keep workbook binary on the item so Call Excel Extraction Specialist still sees binary.file after RAG hops.
+return[{json:{...x,schedule_retrieval_request:{query,filters:{target_base:'excel_protocol',access_scope:'petroleum-engineering',knowledge_types:['protocol_instruction'],keyword_families:tags,topics:['протокол','clarification'],task_patterns:[]},top_k:8}},...(item.binary?{binary:item.binary}:{})}];
+""".strip()
+
+
+ATTACH_EXCEL_RAG = r"""
+const state=$('Prepare governed Excel protocol RAG request').first().json;
+const result=$json.schedule_retrieval_result??$json;
+const packet=state.specialist_packet&&typeof state.specialist_packet==='object'?state.specialist_packet:{};
+const valid=result&&result.contract==='schedule_retrieval_result'&&result.contract_version==='1.0'&&result.status==='succeeded'&&result.evidence_ready===true&&Array.isArray(result.results)&&result.results.length>0&&result.results.some(v=>v&&v.knowledge_type==='protocol_instruction'&&v.body);
+const inputs=packet.inputs&&typeof packet.inputs==='object'?packet.inputs:{};
+const evidence={contract:'mas_rag_evidence',contract_version:'1.0',target_base:'excel_protocol',query:result.query||state.schedule_retrieval_request?.query,filters:result.filters||state.schedule_retrieval_request?.filters,citations:Array.isArray(result.citations)?result.citations:[],results:Array.isArray(result.results)?result.results:[],retrieval:result.retrieval||{},findings:Array.isArray(result.findings)?result.findings:[]};
+const nextPacket={...packet,inputs:{...inputs,rag_evidence:evidence}};
+// Hybrid Retrieval returns JSON only — reattach workbook from the pre-RAG item (or Normalize fallback).
+const binary=$('Prepare governed Excel protocol RAG request').first().binary
+  || $('Prepare specialist invocation context').first().binary
+  || $('Normalize invocation').first().binary
+  || null;
+return[{json:{...state,specialist_packet:nextPacket,excel_rag_result:result,excel_rag_ready:valid},...(binary?{binary}:{})}];
+""".strip()
+
+
+BUILD_EXCEL_RAG_GATE = r"""
+const x=$json,packet=x.specialist_packet||{},r=x.excel_rag_result||{},findings=Array.isArray(r.findings)?r.findings:[{code:'EXCEL_PROTOCOL_RAG_UNAVAILABLE',severity:'error'}];
+const questions=[{id:'excel_protocol',text:'Через Knowledge Ingestion загрузите active protocol_instruction в target_base=excel_protocol.',expected_format:'schedule_knowledge_block/v1',required:true}];
+const result={contract:'specialist_result',contract_version:'1.0',task_id:packet.task_id,specialist_id:'excel_extraction_specialist',attempt:packet.attempt,status:'needs_input',summary:'Excel Extractor не запущен: в excel_protocol нет полного operating protocol.',user_message:'Excel Extractor не запущен: в excel_protocol нет полного operating protocol.',deliverables:[],artifact_refs:[],compact_data:{rag_status:r.status||'failed',rag_findings:findings,retrieval_filters:x.schedule_retrieval_request?.filters||{}},assumptions:[],warnings:[],evidence:[],self_check:{performed:false,passed:false,checks:[],reproducibility:'Пополните excel_protocol и повторите тот же task_id.'},human_request:{kind:'needs_input',questions},error:{code:'EXCEL_PROTOCOL_RAG_REQUIRED',findings},continuation:null};
+return[{json:{specialist_result:result}}];
+""".strip()
+
+
+PREPARE_SCHEDULE_RAG = r"""
+const x=$json,packet=x.specialist_packet&&typeof x.specialist_packet==='object'?x.specialist_packet:{};
+const inputs=packet.inputs&&typeof packet.inputs==='object'?packet.inputs:{},req=inputs.schedule_request&&typeof inputs.schedule_request==='object'?inputs.schedule_request:inputs;
+const scope=Array.isArray(req.requested_keyword_scope)?req.requested_keyword_scope:Array.isArray(req.keyword_scope)?req.keyword_scope:[];
+const accessScope=String(req.access_scope||packet.controls?.access_scope||'').trim();
+const objective=String(packet.objective||'').trim();
+const topics=Array.isArray(req.topics)?req.topics:[],patterns=Array.isArray(req.task_patterns)?req.task_patterns:[];
+const query=[objective,scope.length?`Keywords: ${scope.join(', ')}`:'',topics.length?`Topics: ${topics.join(', ')}`:'',patterns.length?`Task patterns: ${patterns.join(', ')}`:'','SCHEDULE parameters prerequisites dependencies and worked examples'].filter(Boolean).join('\n');
+return[{json:{...x,schedule_retrieval_request:{query,filters:{target_base:String(req.target_base||'schedule_mvp'),access_scope:accessScope||'petroleum-engineering',knowledge_types:['keyword_instruction','worked_example'],keyword_families:scope,topics,task_patterns:patterns},top_k:Math.min(40,Math.max(12,scope.length*4||12))}}}];
+""".strip()
+
+
+ATTACH_SCHEDULE_RAG = r"""
+const state=$('Prepare governed SCHEDULE RAG request').first().json;
+const result=$json.schedule_retrieval_result??$json;
+const packet=state.specialist_packet&&typeof state.specialist_packet==='object'?state.specialist_packet:{};
+const valid=result&&result.contract==='schedule_retrieval_result'&&result.contract_version==='1.0'&&result.status==='succeeded'&&result.evidence_ready===true&&Array.isArray(result.citations)&&result.citations.length>0&&Array.isArray(result.results)&&result.results.length>0&&result.results.some(v=>v&&v.knowledge_type==='keyword_instruction'&&v.body)&&result.schema_catalogue&&result.schema_catalogue.contract==='schedule_schema_catalogue';
+const inputs=packet.inputs&&typeof packet.inputs==='object'?packet.inputs:{};
+const original=inputs.schedule_request&&typeof inputs.schedule_request==='object'?inputs.schedule_request:inputs;
+const evidencePacket={contract:'schedule_rag_evidence',contract_version:'1.0',query:result.query||state.schedule_retrieval_request.query,filters:result.filters||state.schedule_retrieval_request.filters,citations:Array.isArray(result.citations)?result.citations:[],results:Array.isArray(result.results)?result.results:[],schema_catalogue:result.schema_catalogue||null,retrieval:result.retrieval||{},findings:Array.isArray(result.findings)?result.findings:[]};
+const nextPacket={...packet,inputs:{...inputs,schedule_request:{...original,rag_evidence:evidencePacket,manual_citations:evidencePacket.citations}}};
+return[{json:{...state,specialist_packet:nextPacket,schedule_rag_result:result,schedule_rag_ready:valid}}];
+""".strip()
+
+
+BUILD_SCHEDULE_RAG_GATE = r"""
+const x=$json,packet=x.specialist_packet||{},r=x.schedule_rag_result||{},findings=Array.isArray(r.findings)?r.findings:[{code:'SCHEDULE_RAG_UNAVAILABLE',severity:'error'}];
+const questions=[];
+questions.push({id:'schedule_rag_evidence',text:'Через MAS — Knowledge Ingestion загрузите в schedule_mvp полную active keyword_instruction и экспертный schema_catalogue для каждого требуемого keyword. Worked examples необязательны.',expected_format:'schedule_knowledge_block/v1 plus expert schema JSON',required:true});
+const result={contract:'specialist_result',contract_version:'1.0',task_id:packet.task_id,specialist_id:'schedule_builder_specialist',attempt:packet.attempt,status:'needs_input',summary:'SCHEDULE Builder не запущен: в выбранной базе не хватает полной экспертной инструкции или schema JSON.',user_message:'SCHEDULE Builder не запущен: в выбранной базе не хватает полной экспертной инструкции или schema JSON.',deliverables:[],artifact_refs:[],compact_data:{rag_status:r.status||'failed',rag_findings:findings,retrieval_filters:x.schedule_retrieval_request?.filters||{}},assumptions:[],warnings:[],evidence:[],self_check:{performed:false,passed:false,checks:[],reproducibility:'Пополните knowledge base и повторите тот же task_id; Builder получит новый versioned evidence packet.'},human_request:{kind:'needs_input',questions},error:{code:'SCHEDULE_RAG_EVIDENCE_REQUIRED',findings},continuation:null};
+return[{json:{specialist_result:result}}];
+""".strip()
+
+
+NORMALIZE_SPECIALIST = r"""
+const state=$('Resolve allowlisted specialist').first().json;
+let result=$json.specialist_result??$json;
+if(typeof result==='string'){try{result=JSON.parse(result)}catch{result=null}}
+const statuses=new Set(['succeeded','partial','needs_input','needs_decision','needs_approval','retryable_error','fatal_error']);
+const isObject=value=>value&&typeof value==='object'&&!Array.isArray(value);
+const nullableObject=value=>value===null||isObject(value);
+const objectArray=value=>Array.isArray(value)&&value.every(isObject);
+const stringArray=value=>Array.isArray(value)&&value.every(item=>typeof item==='string');
+const artifactArray=value=>objectArray(value)&&value.every(item=>['ref','kind','revision','description'].every(key=>typeof item[key]==='string'&&item[key].trim()));
+const expectedAttempt=Number(state.specialist_packet?.attempt||Number(state.retry_count)+1);
+let resultSize=Number.MAX_SAFE_INTEGER;try{resultSize=JSON.stringify(result).length}catch{}
+const transientSchedulePackage=state.specialist_id==='schedule_builder_specialist'&&result?.compact_data?.merge_result?.output_package?.contract==='schedule_package';const maxResultSize=transientSchedulePackage?11534336:262144;
+const valid=result&&result.contract==='specialist_result'&&result.contract_version==='1.0'&&result.task_id===state.task_id&&result.specialist_id===state.specialist_id&&Number.isInteger(result.attempt)&&result.attempt===expectedAttempt&&statuses.has(result.status)&&typeof result.summary==='string'&&objectArray(result.deliverables)&&artifactArray(result.artifact_refs)&&isObject(result.compact_data)&&stringArray(result.assumptions)&&stringArray(result.warnings)&&objectArray(result.evidence)&&isObject(result.self_check)&&typeof result.self_check.performed==='boolean'&&typeof result.self_check.passed==='boolean'&&objectArray(result.self_check.checks)&&typeof result.self_check.reproducibility==='string'&&nullableObject(result.human_request)&&nullableObject(result.error)&&nullableObject(result.continuation)&&resultSize<=maxResultSize;
+if(!valid) result={contract:'specialist_result',contract_version:'1.0',task_id:state.task_id,specialist_id:state.specialist_id,attempt:Number(state.retry_count)+1,status:'retryable_error',summary:'Специалист вернул ответ в неверном формате — входные данные сохранены, можно повторить шаг.',deliverables:[],artifact_refs:[],compact_data:{},assumptions:[],warnings:[],evidence:[],self_check:{performed:false,passed:false,checks:[],reproducibility:''},human_request:null,error:{code:'INVALID_SPECIALIST_CONTRACT'},continuation:null};
+else if(['succeeded','partial'].includes(result.status)&&(!result.self_check.performed||!result.self_check.passed)) result={...result,status:'retryable_error',summary:'Результат специалиста отклонён: обязательная самопроверка не выполнена или не пройдена.',error:{code:result.self_check.performed?'SELF_CHECK_FAILED':'SELF_CHECK_REQUIRED',previous_error:result.error},human_request:null};
+const decisionRecord=result.compact_data?.decision_record,decisionRecordValid=isObject(decisionRecord)&&decisionRecord.contract==='decision_record'&&decisionRecord.contract_version==='1.0'&&typeof decisionRecord.objective==='string'&&decisionRecord.objective.trim()&&isObject(decisionRecord.selected_action)&&stringArray(decisionRecord.selected_action.reason_codes);
+if(['succeeded','partial'].includes(result.status)&&!decisionRecordValid)result={...result,status:'retryable_error',summary:'Результат специалиста отклонён: нет корректной записи решения (decision_record).',error:{code:'DECISION_RECORD_REQUIRED',previous_error:result.error},human_request:null};
+const directGate=['needs_input','needs_decision','needs_approval'].includes(result.status);
+const scheduleReleaseReady=state.specialist_id==='schedule_builder_specialist'&&result.status==='needs_approval'&&result.compact_data?.release_ready===true;
+return [{json:{...state,specialist_result:result,result_json:JSON.stringify(result),specialist_requires_verification:['succeeded','partial'].includes(result.status)||scheduleReleaseReady,specialist_direct_gate:directGate&&!scheduleReleaseReady,specialist_failed:['retryable_error','fatal_error'].includes(result.status)}}];
+""".strip()
+
+
+ROUTE_SUCCESSFUL_SPECIALIST = r"""
+__EXPLICIT_SCHEDULE_CONSUMER__
+const x=$json;
+const result=x.specialist_result||{};
+const packet=x.specialist_packet||{};
+const inputs=packet.inputs&&typeof packet.inputs==='object'&&!Array.isArray(packet.inputs)?packet.inputs:{};
+const request=(()=>{try{return JSON.parse(x.request_json||'{}')}catch{return {}}})();
+const requestMeta={
+  objective:request.objective||request.problem_statement||request.request_text||'',
+  task_type:request.task_type||'',
+  build_mode:request.build_mode||null,
+  baseline_present:typeof request.baseline_schedule_text==='string'||(Array.isArray(request.include_files)&&request.include_files.length>0),
+  requested_keyword_scope:request.requested_keyword_scope||null,
+};
+const scheduleRequested=explicitScheduleConsumer(request,inputs)||requestMeta.baseline_present;
+const successful=['succeeded','partial'].includes(result.status);
+const excelToSchedule=successful&&x.specialist_id==='excel_extraction_specialist'&&scheduleRequested;
+const calculationToSchedule=successful&&x.specialist_id==='engineering_calculation_specialist'&&scheduleRequested;
+__NORMALIZE_SOURCE_FACTS__
+__APPEND_HANDOFF__
+const chatRoles=CHAT_ROLE_MAP_PLACEHOLDER;
+const context=(()=>{try{return JSON.parse(x.runtime_json||'{}')}catch{return {}}})();
+const loop=context.schedule_evidence_loop&&typeof context.schedule_evidence_loop==='object'?context.schedule_evidence_loop:{};
+const resumeSchedule=excelToSchedule&&loop.active===true&&loop.builder_packet&&typeof loop.builder_packet==='object';
+const scheduleSuccess=successful&&x.specialist_id==='schedule_builder_specialist';
+let runtimeBase={...context};
+let nextResult=result;
+let route=resumeSchedule?'resume_schedule':(excelToSchedule||calculationToSchedule)?'replan':'verify';
+let handoff=null;
+if(excelToSchedule){
+  const packetFacts=normalizeSourceFactsPacket(result.compact_data||{});
+  if(!packetFacts){
     nextResult={...result,status:'retryable_error',summary:'Пакет Excel неполный: нет source_snapshot_hash или correlation_id — в Schedule Builder не передаём.',error:{code:'INVALID_SOURCE_FACTS_PACKET',previous_error:result.error},human_request:null};
     route='verify';
     runtimeBase=appendHandoffEvent(runtimeBase,{stage:'excel',status:'INVALID_SOURCE_FACTS_PACKET',from_specialist:'excel_extraction_specialist',to_specialist:'schedule_builder_specialist',from_role:chatRoles.excel_extraction_specialist,to_role:chatRoles.schedule_builder_specialist,summary:'Пакет из Excel неполный — Builder не запускаем.',details:{fact_count:0}});
@@ -6750,6 +7189,98 @@ function tableRow(overrides = {}) {
 });
 
 ===END_FILE===
+===BEGIN_FILE===	n8n/tests/excel-extractor-agent-smoke.js	4416	utf8
+'use strict';
+/**
+ * Agent — Excel Extractor: one LLM + excel-tools FastAPI.
+ * Orchestrator — MAS calls it via executeWorkflow, no webhook adapter.
+ */
+const assert = require('node:assert/strict');
+const fs = require('node:fs');
+const path = require('node:path');
+
+const workspace = process.env.WORKSPACE_ROOT || path.resolve(__dirname, '../..');
+const wf = JSON.parse(
+  fs.readFileSync(path.join(workspace, 'n8n/workflows/core/excel-extractor-agent.workflow.json'), 'utf8'),
+);
+const orch = JSON.parse(
+  fs.readFileSync(path.join(workspace, 'n8n/workflows/core/mas-orchestrator.workflow.json'), 'utf8'),
+);
+
+assert.equal(wf.name, 'Agent — Excel Extractor');
+assert.equal(wf.active, false);
+assert.equal(
+  wf.nodes.some((n) => n.type === 'n8n-nodes-base.webhook'),
+  false,
+  'no webhook adapter — Orchestrator uses executeWorkflow',
+);
+assert.equal(JSON.stringify(wf).includes('Hybrid Retrieval'), false);
+assert.equal(JSON.stringify(wf).includes('formBinaryData'), false);
+assert.equal(JSON.stringify(wf).includes('.first().binary'), false);
+const trigger = wf.nodes.find((n) => n.type === 'n8n-nodes-base.executeWorkflowTrigger');
+assert.ok(trigger);
+assert.equal(trigger.name, 'When executed by another workflow');
+assert.equal(trigger.typeVersion, 1.2);
+const agent = wf.nodes.find((n) => n.name === 'Excel Extractor AI Agent');
+assert.ok(agent);
+assert.equal(agent.type, '@n8n/n8n-nodes-langchain.agent');
+assert.equal(agent.typeVersion, 3.1);
+assert.equal(agent.parameters.hasOutputParser, false);
+const model = wf.nodes.find((n) => n.name === 'Excel Extractor Chat Model — Qwen');
+assert.ok(model);
+assert.equal(model.typeVersion, 1.3);
+assert.equal(model.parameters.options.timeout, 300000);
+const tools = wf.nodes.filter((n) => n.type === '@n8n/n8n-nodes-langchain.toolHttpRequest').map((n) => n.name);
+for (const name of [
+  'workbook_introspect',
+  'sheet_preview',
+  'detect_tables',
+  'match_tables',
+  'describe_table',
+  'list_column_values',
+  'query_table',
+  'extract_commissioning',
+]) {
+  assert.ok(tools.includes(name), name);
+}
+assert.ok(wf.connections['detect_tables'].ai_tool);
+assert.ok(wf.connections['Excel Extractor Chat Model — Qwen'].ai_languageModel);
+assert.equal(wf.connections['When executed by another workflow'].main[0][0].node, 'Runtime configuration');
+const cap = wf.nodes.find((n) => n.name === 'Capability router');
+assert.ok(cap);
+assert.equal(cap.type, 'n8n-nodes-base.switch');
+assert.equal(wf.connections['Session ready?'].main[0][0].node, 'Capability router');
+assert.equal(wf.connections['Capability router'].main[0][0].node, 'Extract commissioning');
+assert.equal(wf.connections['Capability router'].main[1][0].node, 'Prepare AI Agent input');
+const extract = wf.nodes.find((n) => n.name === 'Extract commissioning');
+assert.equal(extract.type, 'n8n-nodes-base.httpRequest');
+assert.ok(String(extract.parameters.url).includes('extract_commissioning'));
+assert.equal(wf.connections['Extract commissioning'].main[0][0].node, 'Fetch excel result');
+assert.equal(wf.connections['Excel Extractor AI Agent'].main[0][0].node, 'Fetch excel result');
+const sessionFields = wf.nodes
+  .filter((n) => n.type === '@n8n/n8n-nodes-langchain.toolHttpRequest')
+  .flatMap((n) => (n.parameters.parametersBody?.values || []).filter((f) => f.name === 'session_id'));
+assert.ok(sessionFields.length >= 8);
+for (const field of sessionFields) {
+  assert.equal(field.valueProvider, 'fieldValue');
+  assert.match(String(field.value), /Open excel session/);
+  assert.equal(String(field.value).includes('$json.session_id'), false);
+}
+
+const cfg = orch.nodes.find((n) => n.name === 'Runtime endpoints');
+const url = (cfg.parameters.assignments.assignments || []).find((a) => a.name === 'excel_extractor_url');
+assert.equal(url, undefined, 'no HTTP /agent/run URL — specialist is executeWorkflow');
+const call = orch.nodes.find((n) => n.name === 'Call Excel Extractor');
+assert.equal(call.type, 'n8n-nodes-base.executeWorkflow');
+assert.equal(call.typeVersion, 1.3);
+assert.equal(call.onError, 'continueRegularOutput');
+assert.equal(call.parameters.workflowId.value, 'REPLACE_EXCEL_EXTRACTION_AGENT_IN_UI');
+assert.equal(call.parameters.workflowId.cachedResultName, 'Agent — Excel Extractor');
+assert.equal(call.parameters.options.waitForSubWorkflow, true);
+assert.deepEqual(Object.keys(call.parameters.workflowInputs.value), ['agent_task']);
+console.log('excel-extractor-agent-smoke: ok');
+
+===END_FILE===
 ===BEGIN_FILE===	n8n/tests/excel-extractor-runtime-smoke.js	6932	utf8
 'use strict';
 const assert = require('node:assert/strict');
@@ -8462,7 +8993,7 @@ async function run(name, json, nodes) {
 });
 
 ===END_FILE===
-===BEGIN_FILE===	n8n/tests/mas-orchestrator-smoke.js	11556	utf8
+===BEGIN_FILE===	n8n/tests/mas-orchestrator-smoke.js	15092	utf8
 'use strict';
 /**
  * Thin Orchestrator — MAS: one step, no RAG/SCHEDULE, errorWorkflow bound.
@@ -8483,17 +9014,25 @@ function source(name) {
   return node.parameters.jsCode;
 }
 
-async function run(name, json, nodes = {}) {
+function toItem(payload) {
+  if (payload && typeof payload === 'object' && !Array.isArray(payload) && payload.json !== undefined && payload.binary !== undefined) {
+    return payload;
+  }
+  return { json: payload };
+}
+
+async function run(name, json, nodes = {}, binary = {}) {
+  const resolved = { 'Normalize step request': { json, binary }, ...nodes };
   const lookup = (nodeName) => {
-    if (!Object.prototype.hasOwnProperty.call(nodes, nodeName)) {
+    if (!Object.prototype.hasOwnProperty.call(resolved, nodeName)) {
       throw new Error(`node not executed: ${nodeName}`);
     }
-    const payload = nodes[nodeName];
-    const items = Array.isArray(payload) ? payload : [{ json: payload }];
+    const payload = resolved[nodeName];
+    const items = Array.isArray(payload) ? payload.map(toItem) : [toItem(payload)];
     return { first: () => items[0], all: () => items };
   };
   const fn = new AsyncFunction('$json', '$', '$input', '$execution', source(name));
-  const result = await fn(json, lookup, { first: () => ({ json }), all: () => [{ json }] }, { id: 'exec-1' });
+  const result = await fn(json, lookup, { first: () => ({ json, binary }), all: () => [{ json, binary }] }, { id: 'exec-1' });
   assert.ok(Array.isArray(result) && result[0]?.json);
   return result[0].json;
 }
@@ -8526,6 +9065,9 @@ async function run(name, json, nodes = {}) {
     'Status only?',
     'Resume persist?',
     'POST continue run',
+    'Prepare Activity ack',
+    'Activity sync?',
+    'POST step ack to MAS Activity',
   ]) {
     assert.ok(wf.nodes.some((n) => n.name === need), `missing ${need}`);
   }
@@ -8568,15 +9110,31 @@ async function run(name, json, nodes = {}) {
   assert.equal(callSchedule.onError, 'continueRegularOutput');
   const continueNode = wf.nodes.find((n) => n.name === 'POST continue run');
   assert.ok(String(continueNode.parameters.jsonBody).includes("action: 'step'"));
-  assert.equal(continueNode.parameters.authentication, 'genericCredentialType');
-  assert.equal(source('Merge agent result').includes('mas-orchestrator-step'), true);
-  assert.equal(source('Merge agent result').includes('/cases/'), false);
+  assert.equal(continueNode.parameters.url, "={{ $json.continue_url }}");
+  assert.equal(continueNode.parameters.authentication, undefined);
+  assert.equal(source('Merge agent result').includes('/cases/'), true);
+  const callExcel = wf.nodes.find((n) => n.name === 'Call Excel Extractor');
+  assert.equal(callExcel.type, 'n8n-nodes-base.executeWorkflow');
+  assert.equal(callExcel.typeVersion, 1.3);
+  assert.equal(callExcel.parameters.workflowId.value, 'REPLACE_EXCEL_EXTRACTION_AGENT_IN_UI');
+  assert.equal(callExcel.parameters.workflowId.cachedResultName, 'Agent — Excel Extractor');
+  assert.equal(callExcel.parameters.options.waitForSubWorkflow, true);
+  assert.equal(callExcel.onError, 'continueRegularOutput');
+  assert.deepEqual(Object.keys(callExcel.parameters.workflowInputs.value), ['agent_task']);
+  assert.equal(callExcel.parameters.workflowInputs.value.agent_task, '={{ $json.agent_task }}');
+  const excelUrl = (runtime.parameters.assignments.assignments || []).find((a) => a.name === 'excel_extractor_url');
+  assert.equal(excelUrl, undefined, 'no HTTP /agent/run URL — specialist is executeWorkflow');
+  assert.equal(callSchedule.parameters.workflowInputs.value.agent_task, '={{ $json.agent_task }}');
+  assert.equal(text.includes('formBinaryData'), false);
+  assert.equal(text.includes('.first().binary'), false);
+  assert.equal(text.includes('multipart-form-data'), false);
 
   const probeIf = wf.connections['Probe ping?'];
-  assert.equal(probeIf.main[0][0].node, 'Format step ack');
+  assert.equal(probeIf.main[0][0].node, 'Prepare Activity ack');
   assert.equal(probeIf.main[1][0].node, 'Needs create?');
   assert.equal(wf.connections['Normalize step request'].main[0][0].node, 'Probe ping?');
-  assert.equal(wf.connections['Status only?'].main[0][0].node, 'Format step ack');
+  assert.equal(wf.connections['Status only?'].main[0][0].node, 'Prepare Activity ack');
+  assert.equal(wf.connections['Prepare Activity ack'].main[0][0].node, 'Activity sync?');
 
   const probed = await run('Normalize step request', {
     action: 'probe',
@@ -8610,6 +9168,56 @@ async function run(name, json, nodes = {}) {
   assert.equal(started.needs_create, true);
   assert.equal(started.goal, 'Сдвинуть даты');
   assert.match(started.case_id, /^CASE-/);
+
+  const created = await run('Normalize step request', {
+    action: 'create',
+    case_id: 'CASE-from-activity',
+    task_description: 'Новая задача из Activity',
+    activity_base_url: 'http://mas-activity:8200',
+  });
+  assert.equal(created.needs_create, true);
+  assert.equal(created.case_id, 'CASE-from-activity');
+  assert.equal(created.goal, 'Новая задача из Activity');
+  assert.equal(created.activity_base_url, 'http://mas-activity:8200');
+
+  const createdCase = await run(
+    'Prepare start case',
+    {
+      case_id: 'CASE-from-activity',
+      goal: 'Новая задача из Activity',
+      task_name: 'Демо',
+      requested_by: 'tester',
+    },
+  );
+  assert.deepEqual(createdCase.state.artifacts, {});
+  assert.match(JSON.stringify(createdCase.persist_events[0]), /Activity/);
+
+  const prepared = await run(
+    'Prepare decision context',
+    { case_id: 'CASE-1' },
+    {
+      'Load case': {
+        state: {
+          goal: 'даты ввода',
+          artifacts: {
+            excel: { filename: 'dates.xlsx', artifact_id: 'excel' },
+            schedule_source: { filename: 'base.inc', artifact_id: 'schedule_source' },
+          },
+          data: {},
+        },
+        status: 'running',
+      },
+      'Load agent registry': { agent_id: 'excel_extractor', title: 'Excel' },
+      'Runtime endpoints': {
+        activity_base_url: 'http://mas-activity:8200',
+        excel_extractor_url: 'http://excel-tools:18000/agent/run',
+      },
+    },
+  );
+  assert.equal(prepared.compact.has_excel, true);
+  assert.equal(prepared.compact.has_schedule_source, true);
+  assert.equal(prepared.activity_base_url, 'http://mas-activity:8200');
+  assert.match(prepared.planner_input, /excel_extractor/);
 
   const resumed = await run('Normalize step request', {
     action: 'resume',
@@ -8685,6 +9293,8 @@ async function run(name, json, nodes = {}) {
   assert.equal(parsed.action_type, 'call_agent');
   assert.equal(parsed.should_call_agent, true);
   assert.equal(parsed.agent_task.agent_id, 'excel_extractor');
+  assert.equal(parsed.agent_task.inputs.activity_base_url, 'http://activity:8200');
+  assert.deepEqual(parsed.agent_task.inputs.artifacts, { excel: 'a.xlsx' });
   assert.equal(parsed.next_status, 'running');
   assert.deepEqual(parsed.events.map((e) => e.kind), ['orchestrator.decision', 'agent.handoff']);
   assert.equal(parsed.events.some((e) => e.kind === 'orchestrator.status'), false);
@@ -8719,7 +9329,7 @@ async function run(name, json, nodes = {}) {
   assert.equal(merged.next_status, 'running');
   assert.equal(merged.should_continue, true);
   assert.ok(merged.state.data.excel);
-  assert.equal(merged.continue_url, 'http://n8n:5678/webhook/mas-orchestrator-step');
+  assert.equal(merged.continue_url, 'http://activity:8200/cases/CASE-1/run');
   assert.deepEqual(merged.events.map((e) => e.kind), ['agent.result']);
   assert.equal(merged.persist_events[0][2], 'agent.result');
 
@@ -13071,1366 +13681,63 @@ main().catch((error) => {
 
 
 ===END_FILE===
-===BEGIN_FILE===	n8n/workflows/core/mas-deployment-health-check.workflow.json	25632	utf8
+===BEGIN_FILE===	n8n/workflows/core/excel-extractor-agent.workflow.json	33915	utf8
 {
-  "id": "mas-deployment-health-check-v1",
-  "name": "Form — MAS Deployment Health Check",
-  "description": "Native n8n 2.30.8 deployment readiness form after MAS cutover. Live FAIL gates: excel-tools, math-service, schedule-builder, n8n-runners, mas-activity, n8n. CAS/Trace/old orchestrator are TODO.",
-  "active": false,
-  "settings": {
-    "executionOrder": "v1",
-    "saveManualExecutions": true,
-    "callerPolicy": "workflowsFromSameOwner",
-    "errorWorkflow": "e1f0a7c2-9b4d-5e8f-a123-4567890abcde"
-  },
-  "nodes": [
-    {
-      "parameters": {
-        "content": "## edit after import\n\n**Form — MAS Deployment Health Check** after MAS cutover:\n\n- Live FAIL gates are Docker HTTP: excel-tools, math-service, schedule-builder, n8n-runners, mas-activity, n8n.\n- Data Tables / Trace Writer / old Orchestrator Execute Workflow are TODO (Postgres cases + FastAPI agents).\n- Production orchestrator webhook: `mas-orchestrator-step`.\n",
-        "height": 272,
-        "width": 440,
-        "color": 1
-      },
-      "id": "f9247a2c-2ac1-5814-8d62-451a6d266c89",
-      "name": "edit after import",
-      "type": "n8n-nodes-base.stickyNote",
-      "typeVersion": 1,
-      "position": [
-        -40,
-        -332
-      ]
-    },
-    {
-      "parameters": {
-        "content": "## MAS Deployment Health Check (n8n 2.30.8)\n1. Production path: Orchestrator — MAS webhook `mas-orchestrator-step`.\n2. Live HTTP: excel-tools:18000, math-service:8100, schedule-builder:8090, n8n-runners, mas-activity, n8n.\n3. CAS / Trace / Data Tables / old Engineering MAS are retired — report them as TODO.\n4. `fail_first: 0` with PASS_WITH_TODO is the expected lab result.\n\nFull runbook: docs.md",
-        "width": 520,
-        "height": 320,
-        "color": 5
-      },
-      "id": "c1000001-0001-4000-8000-000000000001",
-      "name": "Health Check README",
-      "type": "n8n-nodes-base.stickyNote",
-      "typeVersion": 1,
-      "position": [
-        -600,
-        -360
-      ]
-    },
-    {
-      "parameters": {
-        "authentication": "n8nUserAuth",
-        "formTitle": "MAS — Deployment Health Check",
-        "formDescription": "Run control-plane readiness probes. Bind this form's Data Table probes and Execute Workflow probes first (see sticky note / docs.md). Does not call LLM, Excel, or SCHEDULE Builder.",
-        "formFields": {
-          "values": [
-            {
-              "fieldName": "operator_note",
-              "fieldLabel": "Optional note (who runs the check)",
-              "fieldType": "text",
-              "placeholder": "e.g. deploy-ivanov",
-              "requiredField": false
-            }
-          ]
-        },
-        "responseMode": "lastNode",
-        "options": {
-          "path": "mas-deployment-health-check",
-          "appendAttribution": false,
-          "buttonLabel": "Run health check",
-          "ignoreBots": true,
-          "includeUserInOutput": true
-        }
-      },
-      "id": "c1000001-0001-4000-8000-000000000002",
-      "name": "Health check form",
-      "type": "n8n-nodes-base.formTrigger",
-      "typeVersion": 2.6,
-      "position": [
-        0,
-        0
-      ],
-      "webhookId": "c1000001-0001-4000-8000-000000000002"
-    },
-    {
-      "parameters": {
-        "jsCode": "const note = String($json.operator_note || '').trim();\nconst probeTaskId = '__mas_health_probe__';\nreturn [{ json: {\n  probe_task_id: probeTaskId,\n  operator_note: note || null,\n  started_at: new Date().toISOString(),\n  action: 'status',\n  task_id: probeTaskId,\n  entrypoint: 'health_check',\n  requested_by: note || 'mas-health-check',\n}}];"
-      },
-      "id": "c1000001-0001-4000-8000-000000000003",
-      "name": "Prepare health probes",
-      "type": "n8n-nodes-base.code",
-      "typeVersion": 2,
-      "position": [
-        280,
-        0
-      ]
-    },
-    {
-      "parameters": {
-        "operation": "get",
-        "dataTableId": {
-          "__rl": true,
-          "mode": "list",
-          "value": "REPLACE_IN_UI",
-          "cachedResultName": "Engineering orchestrator task state"
-        },
-        "matchType": "allConditions",
-        "filters": {
-          "conditions": [
-            {
-              "keyName": "task_id",
-              "condition": "eq",
-              "keyValue": "={{ $json.probe_task_id }}"
-            }
-          ]
-        },
-        "returnAll": false,
-        "limit": 1
-      },
-      "id": "c1000001-0001-4000-8000-000000000004",
-      "name": "Probe task Data Table",
-      "type": "n8n-nodes-base.dataTable",
-      "typeVersion": 1.1,
-      "position": [
-        560,
-        0
-      ],
-      "continueOnFail": true,
-      "alwaysOutputData": true
-    },
-    {
-      "parameters": {
-        "jsCode": "const prepared = $('Prepare health probes').first().json || {};\nreturn [{ json: { ...prepared, _after: 'task_dt' } }];"
-      },
-      "id": "c1000001-0001-4000-8000-000000000005",
-      "name": "Continue after task probe",
-      "type": "n8n-nodes-base.code",
-      "typeVersion": 2,
-      "position": [
-        840,
-        0
-      ]
-    },
-    {
-      "parameters": {
-        "operation": "get",
-        "dataTableId": {
-          "__rl": true,
-          "mode": "list",
-          "value": "REPLACE_IN_UI",
-          "cachedResultName": "MAS trace events v1"
-        },
-        "matchType": "allConditions",
-        "filters": {
-          "conditions": [
-            {
-              "keyName": "task_id",
-              "condition": "eq",
-              "keyValue": "={{ $json.probe_task_id }}"
-            }
-          ]
-        },
-        "returnAll": false,
-        "limit": 1
-      },
-      "id": "c1000001-0001-4000-8000-000000000006",
-      "name": "Probe trace Data Table",
-      "type": "n8n-nodes-base.dataTable",
-      "typeVersion": 1.1,
-      "position": [
-        1120,
-        0
-      ],
-      "continueOnFail": true,
-      "alwaysOutputData": true
-    },
-    {
-      "parameters": {
-        "jsCode": "const escapeHtml = (value) => String(value ?? '')\n  .replace(/&/g, '&amp;')\n  .replace(/</g, '&lt;')\n  .replace(/>/g, '&gt;')\n  .replace(/\\\"/g, '&quot;')\n  .replace(/'/g, '&#39;');\n\nconst prepared = $('Prepare health probes').first().json || {};\n\nconst readProbe = (nodeName) => {\n  try {\n    const items = $(nodeName).all();\n    if (!items.length) {\n      return { ran: false, items: [], errors: [`Node \"${nodeName}\" produced no items (binding/table likely unresolved).`] };\n    }\n    const errors = [];\n    for (const item of items) {\n      if (item.error) errors.push(String(item.error.message || item.error.description || item.error));\n      const j = item.json || {};\n      if (j.error) errors.push(typeof j.error === 'string' ? j.error : JSON.stringify(j.error));\n      if (typeof j.message === 'string' && /REPLACE_|could not find|doesn't exist|does not exist|not configured|invalid credential|denied|ECONNREFUSED|ENOTFOUND/i.test(j.message)) {\n        errors.push(j.message);\n      }\n      // continueOnFail sometimes surfaces only a string/code on the item root\n      if (typeof item.message === 'string' && /REPLACE_|error|fail/i.test(item.message)) errors.push(item.message);\n    }\n    return { ran: true, items: items.map((i) => i.json || {}), errors };\n  } catch (e) {\n    return { ran: false, items: [], errors: [String(e.message || e)] };\n  }\n};\n\nconst checks = [];\nconst push = (check, status, where_to_fix, detail) => {\n  checks.push({ check, status, where_to_fix, detail });\n};\n\nconst BINDINGS = [\n  { owner: 'Orchestrator — Engineering MAS', node: 'Call Excel Extraction Specialist Adapter', target: 'Adapter — Excel Extraction' },\n  { owner: 'Orchestrator — Engineering MAS', node: 'Call SCHEDULE Hybrid Retrieval', target: 'MAS — Knowledge Retrieval' },\n  { owner: 'Orchestrator — Engineering MAS', node: 'Call SCHEDULE Builder Specialist', target: 'SCHEDULE — Builder' },\n  { owner: 'Orchestrator — Engineering MAS', node: 'Call Calculation Specialist', target: 'Adapter — Calculation (Math Service)' },\n  { owner: 'Orchestrator — Engineering MAS', node: 'Call MAS Trace Event Writer', target: 'Writer — MAS Trace' },\n  { owner: 'Adapter — Excel Extraction', node: 'Call native Excel Extraction Agent', target: 'Agent — Excel Extractor' },\n  { owner: 'Form — MAS Entry', node: 'Call Universal Engineering Orchestrator', target: 'Orchestrator — Engineering MAS' },\n  { owner: 'Form — MAS Human Gate', node: 'Call Orchestrator status', target: 'Orchestrator — Engineering MAS' },\n  { owner: 'Form — MAS Human Gate', node: 'Call Orchestrator resume', target: 'Orchestrator — Engineering MAS' },\n  { owner: 'Form — MAS Deployment Health Check', node: 'Call Orchestrator probe', target: 'Orchestrator — Engineering MAS' },\n  { owner: 'Form — MAS Deployment Health Check', node: 'Call Trace Writer probe', target: 'Writer — MAS Trace' },\n  { owner: 'Orchestrator — Engineering MAS', node: 'Call CAS persist — insert new task', target: 'CAS — Persist Task State' },\n  { owner: 'Orchestrator — Engineering MAS', node: 'Call CAS persist — human action then plan', target: 'CAS — Persist Task State' },\n  { owner: 'Orchestrator — Engineering MAS', node: 'Call CAS persist — terminal human action', target: 'CAS — Persist Task State' },\n  { owner: 'Orchestrator — Engineering MAS', node: 'Call CAS persist — plan or human gate', target: 'CAS — Persist Task State' },\n  { owner: 'Orchestrator — Engineering MAS', node: 'Call CAS persist — SCHEDULE evidence retry', target: 'CAS — Persist Task State' },\n  { owner: 'Orchestrator — Engineering MAS', node: 'Call CAS persist — SCHEDULE resume', target: 'CAS — Persist Task State' },\n  { owner: 'Orchestrator — Engineering MAS', node: 'Call CAS persist — verification', target: 'CAS — Persist Task State' },\n  { owner: 'Orchestrator — Engineering MAS', node: 'Call CAS persist — specialist gate or error', target: 'CAS — Persist Task State' },\n  { owner: 'Orchestrator — Engineering MAS', node: 'Call CAS persist — routing gate', target: 'CAS — Persist Task State' },\n];\n\nconst DT_NODES = [\n  { owner: 'Writer — MAS Trace', node: 'Insert MAS trace event', table: 'mas_trace_events_v1' },\n  { owner: 'CAS — Persist Task State', node: 'Insert durable task row', table: 'engineering_orchestrator_tasks_v1' },\n  { owner: 'CAS — Persist Task State', node: 'Update durable task row', table: 'engineering_orchestrator_tasks_v1' },\n  { owner: 'Orchestrator — Engineering MAS', node: 'Load task by ID', table: 'engineering_orchestrator_tasks_v1' },\n  { owner: 'Form — MAS Deployment Health Check', node: 'Probe task Data Table', table: 'engineering_orchestrator_tasks_v1' },\n  { owner: 'Form — MAS Deployment Health Check', node: 'Probe trace Data Table', table: 'mas_trace_events_v1' },\n];\n\nfor (const b of BINDINGS) {\n  push(\n    `Binding checklist: ${b.owner} → ${b.node}`,\n    'TODO',\n    `${b.owner} → node \"${b.node}\" → select \"${b.target}\"`,\n    'Manual UI binding. Live probes below only cover Health Check → Orchestrator/Trace and Data Tables.',\n  );\n}\nfor (const d of DT_NODES) {\n  push(\n    `Data Table checklist: ${d.owner} → ${d.node}`,\n    'TODO',\n    `${d.owner} → node \"${d.node}\" → select table \"${d.table}\"`,\n    'Select the Data Table in the node resource locator (must not remain REPLACE_IN_UI).',\n  );\n}\n\nconst taskProbe = readProbe('Probe task Data Table');\npush(\n  'Live: task Data Table readable',\n  'TODO',\n  'Postgres control plane: cases/events (postgres-init/02-mas-control-plane.sql). Data Table engineering_orchestrator_tasks_v1 is retired from production.',\n  taskProbe.errors.join(' | ') || 'Not a production gate after MAS cutover.',\n);\n\nconst traceProbe = readProbe('Probe trace Data Table');\npush(\n  'Live: trace Data Table readable',\n  'TODO',\n  'Postgres control plane: events + error_traces. Data Table mas_trace_events_v1 is retired from production.',\n  traceProbe.errors.join(' | ') || 'Not a production gate after MAS cutover.',\n);\n\nconst orchProbe = readProbe('Call Orchestrator probe');\nconst orchJson = orchProbe.items[0] || {};\nconst orchStatus = String(orchJson.status || '');\nconst orchLooksBound = orchProbe.ran && !orchProbe.errors.length && orchJson.input_valid !== false && ['not_found', 'awaiting_human', 'completed', 'failed', 'conflict', 'cancelled', 'rejected'].includes(orchStatus);\npush(\n  'Live: Orchestrator reachable via Execute Workflow',\n  'TODO',\n  'Form — MAS Deployment Health Check: production path is webhook /webhook/mas-orchestrator-step (Orchestrator — MAS). Execute Workflow action=status against Orchestrator — Engineering MAS is retired.',\n  orchLooksBound\n    ? `legacy status=${orchStatus} (informational)`\n    : (orchProbe.errors.join(' | ') || `legacy Execute Workflow not used after cutover; status=${orchStatus || 'n/a'}`),\n);\n\nconst writerProbe = readProbe('Call Trace Writer probe');\nconst writerJson = writerProbe.items[0] || {};\nconst writerOk = writerProbe.ran && !writerProbe.errors.length && (writerJson.contract === 'mas_trace_ack' || writerJson.stored === true);\npush(\n  'Live: Trace Writer reachable + insert path',\n  'TODO',\n  'Writer — MAS Trace is STALE. Agents write Activity POST /cases/{id}/events; n8n crashes go to error_traces.',\n  writerOk ? `legacy mas_trace_ack event_id=${writerJson.event_id || 'n/a'}` : (writerProbe.errors.join(' | ') || 'Not a production gate after MAS cutover.'),\n);\n\nconst readHttp = (nodeName, expectOk = (j, statusCode) => statusCode >= 200 && statusCode < 300) => {\n  try {\n    const items = $(nodeName).all();\n    if (!items.length) return { ok: false, detail: `Node \"${nodeName}\" produced no items.` };\n    const item = items[0];\n    if (item.error) return { ok: false, detail: String(item.error.message || item.error) };\n    const j = item.json || {};\n    const statusCode = Number(j.statusCode ?? j.status ?? (j.data && j.data.statusCode) ?? 0);\n    // n8n httpRequest fullResponse puts body under j.body or j.data\n    const body = j.body ?? j.data ?? j;\n    const ok = expectOk(body, statusCode) && !(typeof j.message === 'string' && /ECONNREFUSED|ENOTFOUND|timeout|REPLACE_/i.test(j.message));\n    return { ok, detail: `statusCode=${statusCode || 'n/a'} body=${JSON.stringify(body).slice(0, 180)}`, statusCode, body };\n  } catch (e) {\n    return { ok: false, detail: String(e.message || e) };\n  }\n};\n\nconst excelHealth = readHttp('Probe excel-tools /health', (body, code) => code === 200 || (body && (body.status === 'ok' || body.ok === true)));\npush('Live: excel-tools /health', excelHealth.ok ? 'PASS' : 'FAIL',\n  'docker compose → excel-tools; from n8n: GET http://excel-tools:18000/health',\n  excelHealth.detail);\n\nconst runnersHealth = readHttp('Probe n8n-runners /healthz', (body, code) => code === 200);\npush('Live: n8n-runners /healthz', runnersHealth.ok ? 'PASS' : 'FAIL',\n  'docker compose → n8n-runners healthcheck; from n8n: GET http://n8n-runners:5680/healthz',\n  runnersHealth.detail);\n\nconst activityHealth = readHttp('Probe mas-activity /health', (body, code) => code === 200 || (body && body.status === 'ok'));\npush('Live: mas-activity /health', activityHealth.ok ? 'PASS' : 'FAIL',\n  'docker compose → mas-activity (optional UI); from n8n: GET http://mas-activity:8200/health',\n  activityHealth.detail);\n\nconst n8nHealth = readHttp('Probe n8n /healthz', (body, code) => code === 200 || (body && body.status === 'ok'));\npush('Live: n8n /healthz', n8nHealth.ok ? 'PASS' : 'FAIL',\n  'docker compose → n8n; GET http://n8n:5678/healthz',\n  n8nHealth.detail);\n\nconst mathHealth = readHttp('Probe math-service /health', (body, code) => code === 200 || (body && body.status === 'ok'));\npush('Live: math-service /health', mathHealth.ok ? 'PASS' : 'FAIL',\n  'docker compose → math-service; from n8n: GET http://math-service:8100/health',\n  mathHealth.detail);\n\nconst scheduleHealth = readHttp('Probe schedule-builder /health', (body, code) => code === 200 || (body && body.status === 'ok'));\npush('Live: schedule-builder /health', scheduleHealth.ok ? 'PASS' : 'FAIL',\n  'docker compose → schedule-builder; from n8n: GET http://schedule-builder:8090/health',\n  scheduleHealth.detail);\n\npush(\n  'Manual: specialist routes (Excel / SCHEDULE / Calculation)',\n  'TODO',\n  'docs.md → Manual smoke; Orchestrator Call Excel / Retrieval / Builder / Calculation nodes',\n  'Health Check intentionally does not call LLM or Excel/SCHEDULE Builder.',\n);\npush(\n  'Manual: export Orchestrator JSON and search REPLACE_',\n  'TODO',\n  'Orchestrator — Engineering MAS → export → search REPLACE_EXCEL_ADAPTER_IN_UI, REPLACE_SCHEDULE_*, REPLACE_CALCULATION_*, REPLACE_MAS_TRACE_*',\n  'Any REPLACE_ left means an Execute Workflow binding is unfinished.',\n);\n\nconst fail = checks.filter((c) => c.status === 'FAIL');\nconst pass = checks.filter((c) => c.status === 'PASS');\nconst todo = checks.filter((c) => c.status === 'TODO');\nconst overall = fail.length ? 'FAIL' : 'PASS_WITH_TODO';\n\nconst rowHtml = (c) => `<tr><td><strong>${escapeHtml(c.status)}</strong></td><td>${escapeHtml(c.check)}</td><td><code>${escapeHtml(c.where_to_fix)}</code></td><td>${escapeHtml(c.detail)}</td></tr>`;\nconst section = (title, rows) => rows.length\n  ? `<h2>${escapeHtml(title)} (${rows.length})</h2><table border=\"1\" cellpadding=\"6\" cellspacing=\"0\"><thead><tr><th>status</th><th>check</th><th>where_to_fix</th><th>detail</th></tr></thead><tbody>${rows.map(rowHtml).join('')}</tbody></table>`\n  : '';\n\nconst html = `<main>\n<h1>MAS deployment health check</h1>\n<p>Overall: <strong>${escapeHtml(overall)}</strong></p>\n<p>Started: <code>${escapeHtml(prepared.started_at || '')}</code></p>\n<p>Probe task_id: <code>${escapeHtml(prepared.probe_task_id || '')}</code></p>\n<p>Operator: <code>${escapeHtml(prepared.operator_note || prepared.requested_by || '')}</code></p>\n<p>Live probes cover Docker HTTP health (excel-tools, math-service, schedule-builder, runners, activity, n8n). CAS/Trace/old orchestrator are TODO after control-plane cutover.</p>\n${section('FAIL — fix these first', fail)}\n${section('PASS — live probes', pass)}\n${section('TODO — checklist / manual', todo)}\n<p>Full runbook: <code>docs.md</code></p>\n</main>`;\n\nreturn [{ json: {\n  overall,\n  fail_count: fail.length,\n  pass_count: pass.length,\n  todo_count: todo.length,\n  checks,\n  form_response_html: html,\n  where_to_fix: fail.map((c) => c.where_to_fix),\n}}];"
-      },
-      "id": "c1000001-0001-4000-8000-00000000000b",
-      "name": "Build health report",
-      "type": "n8n-nodes-base.code",
-      "typeVersion": 2,
-      "position": [
-        3920,
-        0
-      ]
-    },
-    {
-      "parameters": {
-        "operation": "completion",
-        "respondWith": "showText",
-        "responseText": "={{ $json.form_response_html }}"
-      },
-      "id": "c1000001-0001-4000-8000-00000000000c",
-      "name": "Show health report",
-      "type": "n8n-nodes-base.form",
-      "typeVersion": 2.5,
-      "position": [
-        4200,
-        0
-      ]
-    },
-    {
-      "parameters": {
-        "method": "GET",
-        "url": "http://excel-tools:18000/health",
-        "options": {
-          "timeout": 5000,
-          "response": {
-            "response": {
-              "neverError": true,
-              "responseFormat": "autodetect",
-              "fullResponse": true
-            }
-          }
-        }
-      },
-      "id": "c1000001-0001-4000-8000-000000000010",
-      "name": "Probe excel-tools /health",
-      "type": "n8n-nodes-base.httpRequest",
-      "typeVersion": 4.2,
-      "position": [
-        2520,
-        0
-      ],
-      "continueOnFail": true,
-      "alwaysOutputData": true
-    },
-    {
-      "parameters": {
-        "method": "GET",
-        "url": "http://n8n-runners:5680/healthz",
-        "options": {
-          "timeout": 5000,
-          "response": {
-            "response": {
-              "neverError": true,
-              "responseFormat": "autodetect",
-              "fullResponse": true
-            }
-          }
-        }
-      },
-      "id": "c1000001-0001-4000-8000-000000000011",
-      "name": "Probe n8n-runners /healthz",
-      "type": "n8n-nodes-base.httpRequest",
-      "typeVersion": 4.2,
-      "position": [
-        2800,
-        0
-      ],
-      "continueOnFail": true,
-      "alwaysOutputData": true
-    },
-    {
-      "parameters": {
-        "method": "GET",
-        "url": "http://mas-activity:8200/health",
-        "options": {
-          "timeout": 5000,
-          "response": {
-            "response": {
-              "neverError": true,
-              "responseFormat": "autodetect",
-              "fullResponse": true
-            }
-          }
-        }
-      },
-      "id": "c1000001-0001-4000-8000-000000000012",
-      "name": "Probe mas-activity /health",
-      "type": "n8n-nodes-base.httpRequest",
-      "typeVersion": 4.2,
-      "position": [
-        3080,
-        0
-      ],
-      "continueOnFail": true,
-      "alwaysOutputData": true
-    },
-    {
-      "parameters": {
-        "method": "GET",
-        "url": "http://n8n:5678/healthz",
-        "options": {
-          "timeout": 5000,
-          "response": {
-            "response": {
-              "neverError": true,
-              "responseFormat": "autodetect",
-              "fullResponse": true
-            }
-          }
-        }
-      },
-      "id": "c1000001-0001-4000-8000-000000000013",
-      "name": "Probe n8n /healthz",
-      "type": "n8n-nodes-base.httpRequest",
-      "typeVersion": 4.2,
-      "position": [
-        3360,
-        0
-      ],
-      "continueOnFail": true,
-      "alwaysOutputData": true
-    },
-    {
-      "parameters": {
-        "method": "GET",
-        "url": "http://math-service:8100/health",
-        "options": {
-          "timeout": 5000,
-          "response": {
-            "response": {
-              "neverError": true,
-              "responseFormat": "autodetect",
-              "fullResponse": true
-            }
-          }
-        }
-      },
-      "id": "c1000001-0001-4000-8000-000000000014",
-      "name": "Probe math-service /health",
-      "type": "n8n-nodes-base.httpRequest",
-      "typeVersion": 4.2,
-      "position": [
-        3500,
-        0
-      ],
-      "continueOnFail": true,
-      "alwaysOutputData": true
-    },
-    {
-      "parameters": {
-        "method": "GET",
-        "url": "http://schedule-builder:8090/health",
-        "options": {
-          "timeout": 5000,
-          "response": {
-            "response": {
-              "neverError": true,
-              "responseFormat": "autodetect",
-              "fullResponse": true
-            }
-          }
-        }
-      },
-      "id": "c1000001-0001-4000-8000-000000000015",
-      "name": "Probe schedule-builder /health",
-      "type": "n8n-nodes-base.httpRequest",
-      "typeVersion": 4.2,
-      "position": [
-        3640,
-        0
-      ],
-      "continueOnFail": true,
-      "alwaysOutputData": true
-    }
-  ],
-  "pinData": {},
-  "connections": {
-    "Health check form": {
-      "main": [
-        [
-          {
-            "node": "Prepare health probes",
-            "type": "main",
-            "index": 0
-          }
-        ]
-      ]
-    },
-    "Prepare health probes": {
-      "main": [
-        [
-          {
-            "node": "Probe task Data Table",
-            "type": "main",
-            "index": 0
-          }
-        ]
-      ]
-    },
-    "Probe task Data Table": {
-      "main": [
-        [
-          {
-            "node": "Continue after task probe",
-            "type": "main",
-            "index": 0
-          }
-        ]
-      ]
-    },
-    "Continue after task probe": {
-      "main": [
-        [
-          {
-            "node": "Probe trace Data Table",
-            "type": "main",
-            "index": 0
-          }
-        ]
-      ]
-    },
-    "Probe trace Data Table": {
-      "main": [
-        [
-          {
-            "node": "Probe excel-tools /health",
-            "type": "main",
-            "index": 0
-          }
-        ]
-      ]
-    },
-    "Build health report": {
-      "main": [
-        [
-          {
-            "node": "Show health report",
-            "type": "main",
-            "index": 0
-          }
-        ]
-      ]
-    },
-    "Probe excel-tools /health": {
-      "main": [
-        [
-          {
-            "node": "Probe n8n-runners /healthz",
-            "type": "main",
-            "index": 0
-          }
-        ]
-      ]
-    },
-    "Probe n8n-runners /healthz": {
-      "main": [
-        [
-          {
-            "node": "Probe mas-activity /health",
-            "type": "main",
-            "index": 0
-          }
-        ]
-      ]
-    },
-    "Probe mas-activity /health": {
-      "main": [
-        [
-          {
-            "node": "Probe n8n /healthz",
-            "type": "main",
-            "index": 0
-          }
-        ]
-      ]
-    },
-    "Probe n8n /healthz": {
-      "main": [
-        [
-          {
-            "node": "Probe math-service /health",
-            "type": "main",
-            "index": 0
-          }
-        ]
-      ]
-    },
-    "Probe math-service /health": {
-      "main": [
-        [
-          {
-            "node": "Probe schedule-builder /health",
-            "type": "main",
-            "index": 0
-          }
-        ]
-      ]
-    },
-    "Probe schedule-builder /health": {
-      "main": [
-        [
-          {
-            "node": "Build health report",
-            "type": "main",
-            "index": 0
-          }
-        ]
-      ]
-    }
-  },
-  "versionId": "mas-deployment-health-check-v1.2",
-  "meta": {
-    "templateCredsSetupCompleted": false,
-    "targetN8nVersion": "2.30.8",
-    "contractVersion": "mas_deployment_health_check/v1.2"
-  },
-  "tags": []
-}
-
-===END_FILE===
-===BEGIN_FILE===	n8n/workflows/core/mas-ensure-control-plane.workflow.json	17399	utf8
-{
-  "id": "b7c4e2a1-5d80-5c11-9f4a-0e8d3a6b1c72",
-  "name": "MAS — Ensure Control Plane",
+  "id": "3774c645-a20d-53df-9288-130173c400c2",
+  "name": "Agent — Excel Extractor",
   "active": false,
   "isArchived": false,
   "nodes": [
     {
       "parameters": {
-        "content": "## edit after import\n\n**MAS — Ensure Control Plane** — once after UI import when you cannot psql the n8n database:\n\n1. Bind the same Postgres credential as Orchestrator — MAS\n2. Open this workflow → **Execute Workflow**\n3. Last node: `ok: true`, `agent_count` ≥ 3\n\nCREATE IF NOT EXISTS only. Never DROP n8n tables.\nThe DB role used by n8n must be allowed to CREATE TABLE.\npgvector (`CREATE EXTENSION vector`) is a DBA step for RAG, not this workflow.",
-        "height": 400,
-        "width": 520,
+        "content": "## edit after import\n\n**Agent — Excel Extractor** — один LLM + excel-tools FastAPI.\n\n1. Bind **Qwen** credential on Excel Extractor Chat Model\n2. Runtime configuration: `excel_tools_url` = `http://excel-tools:18000`, API key, `activity_base_url`\n3. Orchestrator — MAS вызывает этот workflow через `executeWorkflow` (`Call Excel Extractor`). Webhook не нужен.\n\nФайлы не грузятся в n8n. Сервис сам GET `/cases/{id}/artifacts/excel`.\n`suggested_capability=commissioning` идёт обычным HTTP `extract_commissioning` (external n8n runners не execute'ят toolHttpRequest). Скважины/даты не хардкодятся.",
+        "height": 340,
+        "width": 480,
         "color": 1
       },
-      "id": "8ff2c941-a251-5f9b-a4bf-9dd81d2b27ed",
+      "id": "c26fad53-147f-5aa7-bca1-070ba39716ca",
       "name": "edit after import",
       "type": "n8n-nodes-base.stickyNote",
       "typeVersion": 1,
       "position": [
         -220,
-        -440
+        -360
       ]
     },
     {
-      "parameters": {},
-      "id": "b77961c7-6497-55f8-8f6f-6bc45ffe1043",
-      "name": "When clicking Execute workflow",
-      "type": "n8n-nodes-base.manualTrigger",
-      "typeVersion": 1,
+      "parameters": {
+        "inputSource": "jsonExample",
+        "jsonExample": "{\"agent_task\": {\"case_id\": \"CASE-example\", \"task_id\": \"TASK-001\", \"agent_id\": \"excel_extractor\", \"objective\": \"Достань даты ввода скважин\", \"inputs\": {}, \"context\": {}}}"
+      },
+      "id": "3992e594-d2b8-521e-bea3-3b57ad774d1c",
+      "name": "When executed by another workflow",
+      "type": "n8n-nodes-base.executeWorkflowTrigger",
+      "typeVersion": 1.2,
       "position": [
         0,
         0
       ]
-    },
-    {
-      "parameters": {
-        "operation": "executeQuery",
-        "query": "CREATE TABLE IF NOT EXISTS cases (\n    case_id TEXT PRIMARY KEY,\n    state JSONB NOT NULL DEFAULT '{}'::jsonb,\n    status TEXT NOT NULL,\n    updated_at TIMESTAMPTZ NOT NULL DEFAULT now(),\n    CONSTRAINT cases_status_check CHECK (\n        status IN ('new', 'running', 'waiting_user', 'done', 'failed')\n    )\n)\n",
-        "options": {
-          "queryReplacement": "={{ [] }}",
-          "queryBatching": "single",
-          "largeNumbersOutput": "text",
-          "replaceEmptyStrings": false
-        }
-      },
-      "id": "e4c1fd3f-9277-5a1b-b1e0-64156758d531",
-      "name": "Ensure table cases",
-      "type": "n8n-nodes-base.postgres",
-      "typeVersion": 2.6,
-      "position": [
-        260,
-        0
-      ],
-      "credentials": {
-        "postgres": {
-          "id": "REPLACE_IN_UI",
-          "name": "REPLACE: SCHEDULE PostgreSQL / PGVector credential"
-        }
-      },
-      "alwaysOutputData": true
-    },
-    {
-      "parameters": {
-        "operation": "executeQuery",
-        "query": "CREATE TABLE IF NOT EXISTS events (\n    event_id BIGSERIAL PRIMARY KEY,\n    case_id TEXT NOT NULL REFERENCES cases (case_id) ON DELETE CASCADE,\n    task_id TEXT,\n    kind TEXT NOT NULL,\n    actor TEXT NOT NULL,\n    agent_id TEXT,\n    status TEXT,\n    status_message TEXT,\n    handoff_message TEXT,\n    payload JSONB NOT NULL DEFAULT '{}'::jsonb,\n    created_at TIMESTAMPTZ NOT NULL DEFAULT now()\n)\n",
-        "options": {
-          "queryReplacement": "={{ [] }}",
-          "queryBatching": "single",
-          "largeNumbersOutput": "text",
-          "replaceEmptyStrings": false
-        }
-      },
-      "id": "faa0b776-22f7-5f02-808a-8e18fdb71a75",
-      "name": "Ensure table events",
-      "type": "n8n-nodes-base.postgres",
-      "typeVersion": 2.6,
-      "position": [
-        480,
-        0
-      ],
-      "credentials": {
-        "postgres": {
-          "id": "REPLACE_IN_UI",
-          "name": "REPLACE: SCHEDULE PostgreSQL / PGVector credential"
-        }
-      },
-      "alwaysOutputData": true
-    },
-    {
-      "parameters": {
-        "operation": "executeQuery",
-        "query": "CREATE INDEX IF NOT EXISTS events_case_id_event_id_idx ON events (case_id, event_id)\n",
-        "options": {
-          "queryReplacement": "={{ [] }}",
-          "queryBatching": "single",
-          "largeNumbersOutput": "text",
-          "replaceEmptyStrings": false
-        }
-      },
-      "id": "b045b8be-f21d-5d50-82aa-a23872f50b74",
-      "name": "Ensure index events_case_id_event_id_idx",
-      "type": "n8n-nodes-base.postgres",
-      "typeVersion": 2.6,
-      "position": [
-        700,
-        0
-      ],
-      "credentials": {
-        "postgres": {
-          "id": "REPLACE_IN_UI",
-          "name": "REPLACE: SCHEDULE PostgreSQL / PGVector credential"
-        }
-      },
-      "alwaysOutputData": true
-    },
-    {
-      "parameters": {
-        "operation": "executeQuery",
-        "query": "CREATE TABLE IF NOT EXISTS error_traces (\n    error_id BIGSERIAL PRIMARY KEY,\n    case_id TEXT,\n    execution_id TEXT,\n    workflow_name TEXT,\n    node_name TEXT,\n    error_message TEXT,\n    error_type TEXT,\n    stack TEXT,\n    input_snapshot JSONB,\n    created_at TIMESTAMPTZ NOT NULL DEFAULT now()\n)\n",
-        "options": {
-          "queryReplacement": "={{ [] }}",
-          "queryBatching": "single",
-          "largeNumbersOutput": "text",
-          "replaceEmptyStrings": false
-        }
-      },
-      "id": "635d3129-ba92-57d5-9bc3-317bf76d95d8",
-      "name": "Ensure table error_traces",
-      "type": "n8n-nodes-base.postgres",
-      "typeVersion": 2.6,
-      "position": [
-        920,
-        0
-      ],
-      "credentials": {
-        "postgres": {
-          "id": "REPLACE_IN_UI",
-          "name": "REPLACE: SCHEDULE PostgreSQL / PGVector credential"
-        }
-      },
-      "alwaysOutputData": true
-    },
-    {
-      "parameters": {
-        "operation": "executeQuery",
-        "query": "CREATE INDEX IF NOT EXISTS error_traces_case_id_idx ON error_traces (case_id)\n",
-        "options": {
-          "queryReplacement": "={{ [] }}",
-          "queryBatching": "single",
-          "largeNumbersOutput": "text",
-          "replaceEmptyStrings": false
-        }
-      },
-      "id": "8ba10ba9-b54e-53a2-9e7f-76546cac8e99",
-      "name": "Ensure index error_traces_case_id_idx",
-      "type": "n8n-nodes-base.postgres",
-      "typeVersion": 2.6,
-      "position": [
-        1140,
-        0
-      ],
-      "credentials": {
-        "postgres": {
-          "id": "REPLACE_IN_UI",
-          "name": "REPLACE: SCHEDULE PostgreSQL / PGVector credential"
-        }
-      },
-      "alwaysOutputData": true
-    },
-    {
-      "parameters": {
-        "operation": "executeQuery",
-        "query": "CREATE INDEX IF NOT EXISTS error_traces_execution_id_idx ON error_traces (execution_id)\n",
-        "options": {
-          "queryReplacement": "={{ [] }}",
-          "queryBatching": "single",
-          "largeNumbersOutput": "text",
-          "replaceEmptyStrings": false
-        }
-      },
-      "id": "84c27fa5-f8e1-5378-85f2-9b23d714c186",
-      "name": "Ensure index error_traces_execution_id_idx",
-      "type": "n8n-nodes-base.postgres",
-      "typeVersion": 2.6,
-      "position": [
-        1360,
-        0
-      ],
-      "credentials": {
-        "postgres": {
-          "id": "REPLACE_IN_UI",
-          "name": "REPLACE: SCHEDULE PostgreSQL / PGVector credential"
-        }
-      },
-      "alwaysOutputData": true
-    },
-    {
-      "parameters": {
-        "operation": "executeQuery",
-        "query": "CREATE TABLE IF NOT EXISTS executions (\n    execution_id TEXT PRIMARY KEY,\n    case_id TEXT,\n    workflow_name TEXT,\n    started_at TIMESTAMPTZ NOT NULL DEFAULT now()\n)\n",
-        "options": {
-          "queryReplacement": "={{ [] }}",
-          "queryBatching": "single",
-          "largeNumbersOutput": "text",
-          "replaceEmptyStrings": false
-        }
-      },
-      "id": "c1a9c9e3-8503-506a-8d38-f6293548af80",
-      "name": "Ensure table executions",
-      "type": "n8n-nodes-base.postgres",
-      "typeVersion": 2.6,
-      "position": [
-        1580,
-        0
-      ],
-      "credentials": {
-        "postgres": {
-          "id": "REPLACE_IN_UI",
-          "name": "REPLACE: SCHEDULE PostgreSQL / PGVector credential"
-        }
-      },
-      "alwaysOutputData": true
-    },
-    {
-      "parameters": {
-        "operation": "executeQuery",
-        "query": "CREATE INDEX IF NOT EXISTS executions_case_id_idx ON executions (case_id)\n",
-        "options": {
-          "queryReplacement": "={{ [] }}",
-          "queryBatching": "single",
-          "largeNumbersOutput": "text",
-          "replaceEmptyStrings": false
-        }
-      },
-      "id": "9cdcd3b4-8414-57f3-a6b5-92420c13573c",
-      "name": "Ensure index executions_case_id_idx",
-      "type": "n8n-nodes-base.postgres",
-      "typeVersion": 2.6,
-      "position": [
-        1800,
-        0
-      ],
-      "credentials": {
-        "postgres": {
-          "id": "REPLACE_IN_UI",
-          "name": "REPLACE: SCHEDULE PostgreSQL / PGVector credential"
-        }
-      },
-      "alwaysOutputData": true
-    },
-    {
-      "parameters": {
-        "operation": "executeQuery",
-        "query": "CREATE TABLE IF NOT EXISTS agent_registry (\n    agent_id TEXT PRIMARY KEY,\n    title TEXT,\n    when_to_use TEXT,\n    input_required JSONB NOT NULL DEFAULT '[]'::jsonb,\n    output_provides JSONB NOT NULL DEFAULT '[]'::jsonb\n)\n",
-        "options": {
-          "queryReplacement": "={{ [] }}",
-          "queryBatching": "single",
-          "largeNumbersOutput": "text",
-          "replaceEmptyStrings": false
-        }
-      },
-      "id": "846fc26a-631e-5e6a-ad07-65da906431d0",
-      "name": "Ensure table agent_registry",
-      "type": "n8n-nodes-base.postgres",
-      "typeVersion": 2.6,
-      "position": [
-        2020,
-        0
-      ],
-      "credentials": {
-        "postgres": {
-          "id": "REPLACE_IN_UI",
-          "name": "REPLACE: SCHEDULE PostgreSQL / PGVector credential"
-        }
-      },
-      "alwaysOutputData": true
-    },
-    {
-      "parameters": {
-        "operation": "executeQuery",
-        "query": "INSERT INTO agent_registry (agent_id, title, when_to_use, input_required, output_provides)\nVALUES\n    (\n        'excel_extractor',\n        'Excel Extractor',\n        'Если есть Excel-файл и нужно извлечь скважины, даты, дебиты, управления',\n        '[\"excel\"]'::jsonb,\n        '[\"excel_table\", \"normalized_rows\"]'::jsonb\n    ),\n    (\n        'calculation_agent',\n        'Calculation Agent',\n        'Если есть структурная поверхность и траектория, нужно найти пересечение и начало интервала перфорации',\n        '[\"surface\", \"trajectory\"]'::jsonb,\n        '[\"top_perforation_md\"]'::jsonb\n    )\nON CONFLICT (agent_id) DO UPDATE SET\n    title = EXCLUDED.title,\n    when_to_use = EXCLUDED.when_to_use,\n    input_required = EXCLUDED.input_required,\n    output_provides = EXCLUDED.output_provides\n",
-        "options": {
-          "queryReplacement": "={{ [] }}",
-          "queryBatching": "single",
-          "largeNumbersOutput": "text",
-          "replaceEmptyStrings": false
-        }
-      },
-      "id": "797bcddd-26be-58ba-afe9-3999aef18400",
-      "name": "Seed agent_registry excel+calc",
-      "type": "n8n-nodes-base.postgres",
-      "typeVersion": 2.6,
-      "position": [
-        2240,
-        0
-      ],
-      "credentials": {
-        "postgres": {
-          "id": "REPLACE_IN_UI",
-          "name": "REPLACE: SCHEDULE PostgreSQL / PGVector credential"
-        }
-      },
-      "alwaysOutputData": true
-    },
-    {
-      "parameters": {
-        "operation": "executeQuery",
-        "query": "INSERT INTO agent_registry (agent_id, title, when_to_use, input_required, output_provides)\nVALUES (\n    'schedule_builder',\n    'Schedule Builder',\n    'Исходный SCHEDULE (.inc): сдвиг дат ввода по фактам Excel (скважина+дата); перепривязка скважин в группу (GRUPTREE/GCONPROD) по тексту задачи и baseline. Excel обязателен только для новых дат ввода. Не выдумывает даты и имена, которых нет в задаче, Excel или baseline.',\n    '[\"schedule_source\"]'::jsonb,\n    '[\"schedule_out\", \"diff\"]'::jsonb\n)\nON CONFLICT (agent_id) DO UPDATE SET\n    title = EXCLUDED.title,\n    when_to_use = EXCLUDED.when_to_use,\n    input_required = EXCLUDED.input_required,\n    output_provides = EXCLUDED.output_provides\n",
-        "options": {
-          "queryReplacement": "={{ [] }}",
-          "queryBatching": "single",
-          "largeNumbersOutput": "text",
-          "replaceEmptyStrings": false
-        }
-      },
-      "id": "b64b3ba5-d4ae-5825-9e0b-98e79a3fb0eb",
-      "name": "Seed agent_registry schedule_builder",
-      "type": "n8n-nodes-base.postgres",
-      "typeVersion": 2.6,
-      "position": [
-        2460,
-        0
-      ],
-      "credentials": {
-        "postgres": {
-          "id": "REPLACE_IN_UI",
-          "name": "REPLACE: SCHEDULE PostgreSQL / PGVector credential"
-        }
-      },
-      "alwaysOutputData": true
-    },
-    {
-      "parameters": {
-        "operation": "executeQuery",
-        "query": "SELECT\n  to_regclass('public.cases') IS NOT NULL AS cases_ok,\n  to_regclass('public.events') IS NOT NULL AS events_ok,\n  to_regclass('public.error_traces') IS NOT NULL AS error_traces_ok,\n  to_regclass('public.executions') IS NOT NULL AS executions_ok,\n  to_regclass('public.agent_registry') IS NOT NULL AS agent_registry_ok,\n  (SELECT COUNT(*) FROM agent_registry) AS agent_count\n",
-        "options": {
-          "queryReplacement": "={{ [] }}",
-          "queryBatching": "single",
-          "largeNumbersOutput": "text",
-          "replaceEmptyStrings": false
-        }
-      },
-      "id": "0436e0e3-1e28-5802-b6b8-c2170a54aec4",
-      "name": "Verify control plane",
-      "type": "n8n-nodes-base.postgres",
-      "typeVersion": 2.6,
-      "position": [
-        2680,
-        0
-      ],
-      "credentials": {
-        "postgres": {
-          "id": "REPLACE_IN_UI",
-          "name": "REPLACE: SCHEDULE PostgreSQL / PGVector credential"
-        }
-      },
-      "alwaysOutputData": true
-    },
-    {
-      "parameters": {
-        "jsCode": "const x=$json||{};\nconst flag=k=>x[k]===true||x[k]==='t'||x[k]==='true'||x[k]===1||x[k]==='1';\nconst count=Number(x.agent_count||0);\nconst ok=flag('cases_ok')&&flag('events_ok')&&flag('error_traces_ok')&&flag('executions_ok')&&flag('agent_registry_ok')&&count>=3;\nreturn [{json:{contract:'mas_control_plane_ready',ok,cases_ok:flag('cases_ok'),events_ok:flag('events_ok'),error_traces_ok:flag('error_traces_ok'),executions_ok:flag('executions_ok'),agent_registry_ok:flag('agent_registry_ok'),agent_count:count}}];"
-      },
-      "id": "b0cde13f-de88-5dce-b8ce-5d5f590a8e25",
-      "name": "Format ensure ack",
-      "type": "n8n-nodes-base.code",
-      "typeVersion": 2,
-      "position": [
-        2920,
-        0
-      ]
-    }
-  ],
-  "connections": {
-    "When clicking Execute workflow": {
-      "main": [
-        [
-          {
-            "node": "Ensure table cases",
-            "type": "main",
-            "index": 0
-          }
-        ]
-      ]
-    },
-    "Ensure table cases": {
-      "main": [
-        [
-          {
-            "node": "Ensure table events",
-            "type": "main",
-            "index": 0
-          }
-        ]
-      ]
-    },
-    "Ensure table events": {
-      "main": [
-        [
-          {
-            "node": "Ensure index events_case_id_event_id_idx",
-            "type": "main",
-            "index": 0
-          }
-        ]
-      ]
-    },
-    "Ensure index events_case_id_event_id_idx": {
-      "main": [
-        [
-          {
-            "node": "Ensure table error_traces",
-            "type": "main",
-            "index": 0
-          }
-        ]
-      ]
-    },
-    "Ensure table error_traces": {
-      "main": [
-        [
-          {
-            "node": "Ensure index error_traces_case_id_idx",
-            "type": "main",
-            "index": 0
-          }
-        ]
-      ]
-    },
-    "Ensure index error_traces_case_id_idx": {
-      "main": [
-        [
-          {
-            "node": "Ensure index error_traces_execution_id_idx",
-            "type": "main",
-            "index": 0
-          }
-        ]
-      ]
-    },
-    "Ensure index error_traces_execution_id_idx": {
-      "main": [
-        [
-          {
-            "node": "Ensure table executions",
-            "type": "main",
-            "index": 0
-          }
-        ]
-      ]
-    },
-    "Ensure table executions": {
-      "main": [
-        [
-          {
-            "node": "Ensure index executions_case_id_idx",
-            "type": "main",
-            "index": 0
-          }
-        ]
-      ]
-    },
-    "Ensure index executions_case_id_idx": {
-      "main": [
-        [
-          {
-            "node": "Ensure table agent_registry",
-            "type": "main",
-            "index": 0
-          }
-        ]
-      ]
-    },
-    "Ensure table agent_registry": {
-      "main": [
-        [
-          {
-            "node": "Seed agent_registry excel+calc",
-            "type": "main",
-            "index": 0
-          }
-        ]
-      ]
-    },
-    "Seed agent_registry excel+calc": {
-      "main": [
-        [
-          {
-            "node": "Seed agent_registry schedule_builder",
-            "type": "main",
-            "index": 0
-          }
-        ]
-      ]
-    },
-    "Seed agent_registry schedule_builder": {
-      "main": [
-        [
-          {
-            "node": "Verify control plane",
-            "type": "main",
-            "index": 0
-          }
-        ]
-      ]
-    },
-    "Verify control plane": {
-      "main": [
-        [
-          {
-            "node": "Format ensure ack",
-            "type": "main",
-            "index": 0
-          }
-        ]
-      ]
-    }
-  },
-  "settings": {
-    "executionOrder": "v1",
-    "saveManualExecutions": true,
-    "callerPolicy": "workflowsFromSameOwner",
-    "errorWorkflow": ""
-  },
-  "meta": {
-    "templateCredsSetupCompleted": true,
-    "targetN8nVersion": "2.30.8"
-  },
-  "tags": [],
-  "pinData": {},
-  "versionId": "a6f0c732-82ee-404b-8514-75c6ec62df70"
-}
-
-===END_FILE===
-===BEGIN_FILE===	n8n/workflows/core/mas-error-traces.workflow.json	7716	utf8
-{
-  "id": "63116836-8724-595e-bc5e-dd6e743e2586",
-  "name": "Error — MAS Node Traces",
-  "active": false,
-  "isArchived": false,
-  "nodes": [
-    {
-      "parameters": {},
-      "id": "7a04025f-3654-5c44-a91a-e58c37dd57c7",
-      "name": "Error Trigger",
-      "type": "n8n-nodes-base.errorTrigger",
-      "typeVersion": 1,
-      "position": [
-        0,
-        0
-      ]
-    },
-    {
-      "parameters": {
-        "jsCode": "\nconst root=$json||{};\nconst exec=root.execution&&typeof root.execution==='object'?root.execution:(root);\nconst error=exec.error&&typeof exec.error==='object'?exec.error:(root.error||{});\nconst executionId=String(exec.id||exec.executionId||root.execution_id||'');\nconst workflowName=String((exec.workflow&&exec.workflow.name)||exec.workflowName||root.workflow_name||'');\nconst nodeName=String(exec.lastNodeExecuted||error.node||root.node_name||'');\nconst message=String(error.message||root.message||'n8n node failed');\nconst errorType=String(error.name||error.type||'Error');\nconst stack=String(error.stack||'');\nreturn [{json:{\n  execution_id:executionId,\n  workflow_name:workflowName,\n  node_name:nodeName,\n  error_message:message.slice(0,4000),\n  error_type:errorType.slice(0,200),\n  stack:stack.slice(0,8000),\n  lookup_sql_parameters:[executionId],\n}}];\n"
-      },
-      "id": "593d20c6-a465-57b2-bd54-06ea55e72506",
-      "name": "Normalize n8n error trigger",
-      "type": "n8n-nodes-base.code",
-      "typeVersion": 2,
-      "position": [
-        240,
-        0
-      ]
-    },
-    {
-      "parameters": {
-        "operation": "executeQuery",
-        "query": "SELECT case_id FROM executions WHERE execution_id = $1",
-        "options": {
-          "queryReplacement": "={{ $json.lookup_sql_parameters }}",
-          "queryBatching": "single",
-          "largeNumbersOutput": "text",
-          "replaceEmptyStrings": false
-        }
-      },
-      "id": "d71063d0-2b09-5efb-aac1-14bfb581f325",
-      "name": "Lookup case by execution",
-      "type": "n8n-nodes-base.postgres",
-      "typeVersion": 2.6,
-      "position": [
-        480,
-        0
-      ],
-      "credentials": {
-        "postgres": {
-          "id": "REPLACE_IN_UI",
-          "name": "REPLACE: SCHEDULE PostgreSQL / PGVector credential"
-        }
-      },
-      "alwaysOutputData": true
-    },
-    {
-      "parameters": {
-        "jsCode": "\nconst n=$('Normalize n8n error trigger').first().json||{};\nconst look=$json||{};\nconst caseId=String(look.case_id||n.case_id||'').trim()||null;\nreturn [{json:{\n  ...n,\n  case_id:caseId,\n  trace_sql_parameters:[caseId, n.execution_id, n.workflow_name, n.node_name, n.error_message, n.error_type, n.stack, JSON.stringify({execution_id:n.execution_id})],\n}}];\n"
-      },
-      "id": "46d82464-d79a-5d4d-829f-f86748f30d6f",
-      "name": "Attach case_id",
-      "type": "n8n-nodes-base.code",
-      "typeVersion": 2,
-      "position": [
-        720,
-        0
-      ]
-    },
-    {
-      "parameters": {
-        "operation": "executeQuery",
-        "query": "INSERT INTO error_traces (case_id, execution_id, workflow_name, node_name, error_message, error_type, stack, input_snapshot) VALUES ($1,$2,$3,$4,$5,$6,$7,$8::jsonb) RETURNING error_id, case_id",
-        "options": {
-          "queryReplacement": "={{ $json.trace_sql_parameters }}",
-          "queryBatching": "single",
-          "largeNumbersOutput": "text",
-          "replaceEmptyStrings": false
-        }
-      },
-      "id": "937c9948-d9ed-5d06-a453-1793bf37ec58",
-      "name": "Insert error_traces",
-      "type": "n8n-nodes-base.postgres",
-      "typeVersion": 2.6,
-      "position": [
-        960,
-        0
-      ],
-      "credentials": {
-        "postgres": {
-          "id": "REPLACE_IN_UI",
-          "name": "REPLACE: SCHEDULE PostgreSQL / PGVector credential"
-        }
-      },
-      "alwaysOutputData": true
-    },
-    {
-      "parameters": {
-        "jsCode": "\nconst x=$json;\nconst errorId=x.error_id||x.errorId||null;\nif(!x.case_id) return [{json:{...x, skip_event:true, event_sql_parameters:null}}];\nreturn [{json:{\n  ...x,\n  skip_event:false,\n  event_sql_parameters:[\n    x.case_id,\n    null,\n    'system.node_error',\n    'n8n',\n    null,\n    'error',\n    `Упал узел ${x.node_name||'unknown'}`,\n    null,\n    JSON.stringify({error_id:errorId, execution_id:x.execution_id, node_name:x.node_name, error_type:x.error_type})\n  ]\n}}];\n"
-      },
-      "id": "2fde5772-876b-5e02-b108-39e0a06cb351",
-      "name": "Prepare system.node_error",
-      "type": "n8n-nodes-base.code",
-      "typeVersion": 2,
-      "position": [
-        1200,
-        0
-      ]
-    },
-    {
-      "parameters": {
-        "operation": "executeQuery",
-        "query": "INSERT INTO events(case_id, task_id, kind, actor, agent_id, status, status_message, handoff_message, payload) SELECT $1,$2,$3,$4,$5,$6,$7,$8,$9::jsonb WHERE $1 IS NOT NULL",
-        "options": {
-          "queryReplacement": "={{ $json.event_sql_parameters }}",
-          "queryBatching": "single",
-          "largeNumbersOutput": "text",
-          "replaceEmptyStrings": false
-        }
-      },
-      "id": "23ccfe25-fb9e-5b58-b3f6-6fe317e69d3d",
-      "name": "Insert system.node_error event",
-      "type": "n8n-nodes-base.postgres",
-      "typeVersion": 2.6,
-      "position": [
-        1440,
-        0
-      ],
-      "credentials": {
-        "postgres": {
-          "id": "REPLACE_IN_UI",
-          "name": "REPLACE: SCHEDULE PostgreSQL / PGVector credential"
-        }
-      },
-      "alwaysOutputData": true
-    },
-    {
-      "parameters": {
-        "jsCode": "const x=$('Attach case_id').first().json||{};return[{json:{contract:'mas_error_trace_ack',case_id:x.case_id,execution_id:x.execution_id,node_name:x.node_name}}];"
-      },
-      "id": "c55a6bf0-7975-5bf9-9adf-9e3250dd0285",
-      "name": "Format error trace ack",
-      "type": "n8n-nodes-base.code",
-      "typeVersion": 2,
-      "position": [
-        1680,
-        0
-      ]
-    }
-  ],
-  "connections": {
-    "Error Trigger": {
-      "main": [
-        [
-          {
-            "node": "Normalize n8n error trigger",
-            "type": "main",
-            "index": 0
-          }
-        ]
-      ]
-    },
-    "Normalize n8n error trigger": {
-      "main": [
-        [
-          {
-            "node": "Lookup case by execution",
-            "type": "main",
-            "index": 0
-          }
-        ]
-      ]
-    },
-    "Lookup case by execution": {
-      "main": [
-        [
-          {
-            "node": "Attach case_id",
-            "type": "main",
-            "index": 0
-          }
-        ]
-      ]
-    },
-    "Attach case_id": {
-      "main": [
-        [
-          {
-            "node": "Insert error_traces",
-            "type": "main",
-            "index": 0
-          }
-        ]
-      ]
-    },
-    "Insert error_traces": {
-      "main": [
-        [
-          {
-            "node": "Prepare system.node_error",
-            "type": "main",
-            "index": 0
-          }
-        ]
-      ]
-    },
-    "Prepare system.node_error": {
-      "main": [
-        [
-          {
-            "node": "Insert system.node_error event",
-            "type": "main",
-            "index": 0
-          }
-        ]
-      ]
-    },
-    "Insert system.node_error event": {
-      "main": [
-        [
-          {
-            "node": "Format error trace ack",
-            "type": "main",
-            "index": 0
-          }
-        ]
-      ]
-    }
-  },
-  "settings": {
-    "executionOrder": "v1",
-    "callerPolicy": "workflowsFromSameOwner",
-    "errorWorkflow": ""
-  },
-  "meta": {
-    "templateCredsSetupCompleted": true,
-    "targetN8nVersion": "2.30.8"
-  },
-  "tags": [],
-  "pinData": {},
-  "versionId": "b6e4200f-c34a-4ba1-b905-4f7dbe48e99d"
-}
-
-===END_FILE===
-===BEGIN_FILE===	n8n/workflows/core/mas-orchestrator.workflow.json	60150	utf8
-{
-  "id": "e9bbdb6e-3b7c-5dc0-851a-30bd9f2eb0d6",
-  "name": "Orchestrator — MAS",
-  "active": false,
-  "isArchived": false,
-  "nodes": [
-    {
-      "parameters": {
-        "content": "## edit after import\n\n**Orchestrator — MAS** — thin loop:\n- Bind Postgres on load/insert/update\n- Bind **Qwen** OpenAI-compatible credential on Decision Chat Model\n- Bind inbound header auth on webhook (same cred on **POST continue run**)\n- Bind **Call Schedule Builder** → `Agent — Schedule Builder` (executeWorkflow, like Excel Extractor)\n- Runtime endpoints patched by lab_soft_redeploy\n\n`action`: probe | status | start | step | resume\n- **start/step/resume** live path: Activity `/cases` saves files + state; webhook self-POSTs the next `step`\n- **status** loads case and returns `human_gate` without LLM\n- Decision is Basic LLM Chain + Structured Output (no Agent tools)\n\nOne execution = one step.",
-        "width": 480,
-        "height": 420,
-        "color": 1
-      },
-      "id": "3c054325-3735-5c01-ba6f-09738a5c77aa",
-      "name": "edit after import",
-      "type": "n8n-nodes-base.stickyNote",
-      "typeVersion": 1,
-      "position": [
-        -200,
-        -420
-      ]
-    },
-    {
-      "parameters": {
-        "httpMethod": "POST",
-        "path": "mas-orchestrator-step",
-        "authentication": "headerAuth",
-        "responseMode": "lastNode",
-        "options": {}
-      },
-      "id": "d7185c3b-35c9-5728-a448-cb0d5bd4f39b",
-      "name": "Authenticated MAS webhook",
-      "type": "n8n-nodes-base.webhook",
-      "typeVersion": 2.1,
-      "position": [
-        0,
-        0
-      ],
-      "credentials": {
-        "httpHeaderAuth": {
-          "id": "REPLACE_IN_UI",
-          "name": "REPLACE: engineering orchestrator inbound key"
-        }
-      },
-      "webhookId": "a1000003-mas-orch-wh-0001-800000000001"
     },
     {
       "parameters": {
         "assignments": {
           "assignments": [
             {
-              "id": "3c90130b-ac50-548d-932a-664f9e666737",
-              "name": "excel_extractor_url",
-              "value": "http://excel-tools:18000/agent/run",
+              "id": "5d79d338-8464-510f-9563-d5a6fdd1c391",
+              "name": "excel_tools_url",
+              "value": "http://excel-tools:18000",
               "type": "string"
             },
             {
-              "id": "75aea0af-7af2-55a6-acca-850fc42cccc1",
-              "name": "calculation_agent_url",
-              "value": "http://math-service:8100/agent/run",
-              "type": "string"
-            },
-            {
-              "id": "818ebb7e-2212-55be-b9a4-b75a67cca546",
-              "name": "orchestrator_step_url",
-              "value": "http://n8n:5678/webhook/mas-orchestrator-step",
-              "type": "string"
-            },
-            {
-              "id": "cc285755-9359-507f-aa51-e9ac4dbe4e7f",
-              "name": "activity_base_url",
-              "value": "http://mas-activity:8200",
-              "type": "string"
-            },
-            {
-              "id": "31ea8db1-1c4d-59a9-a183-9a5baa148a21",
+              "id": "5d222650-435a-598b-888c-3867100e3c3b",
               "name": "excel_tools_api_key",
               "value": "",
+              "type": "string"
+            },
+            {
+              "id": "dfff2401-bdc7-5d5d-9363-300e4b785c1c",
+              "name": "activity_base_url",
+              "value": "http://mas-activity:8200",
               "type": "string"
             }
           ]
@@ -14438,27 +13745,68 @@ main().catch((error) => {
         "options": {},
         "includeOtherFields": true
       },
-      "id": "0255a7a5-fc9a-5d2f-84d3-8634ba4a3de6",
-      "name": "Runtime endpoints",
+      "id": "4765d023-1b68-5337-b4a8-2e68c5940499",
+      "name": "Runtime configuration",
       "type": "n8n-nodes-base.set",
       "typeVersion": 3.4,
       "position": [
-        240,
+        260,
         0
       ]
     },
     {
       "parameters": {
-        "jsCode": "\nconst raw=$input.first().json||{};\nconst body=raw.body&&typeof raw.body==='object'?raw.body:raw;\nconst action=String(body.action||raw.action||'step').trim().toLowerCase();\nlet caseId=String(body.case_id||raw.case_id||'').trim();\nconst goal=String(body.task_description||body.goal||raw.task_description||raw.goal||'').trim();\nconst taskName=String(body.task_name||raw.task_name||'').trim();\nconst humanResponse=String(body.human_response||raw.human_response||'');\nconst gateId=String(body.gate_id||raw.gate_id||'');\nconst requestedBy=String(body.requested_by||raw.requested_by||'');\nconst executionId=String($execution.id||'');\nconst readinessId=!caseId||caseId==='CASE-readiness-probe';\nif(action==='probe'||(action==='status'&&readinessId)){\n  return [{json:{\n    case_id:caseId||'CASE-readiness-probe',\n    action:'probe',\n    is_probe:true,\n    is_status:false,\n    is_resume:false,\n    needs_create:false,\n    next_status:'probe',\n    status:'probe',\n    action_type:'probe',\n    should_continue:false\n  }}];\n}\nlet needsCreate=false;\nif(!caseId){\n  if(action!=='start') throw new Error('case_id is required');\n  if(!goal) throw new Error('task_description is required for action=start');\n  caseId='CASE-'+Date.now().toString(16)+'-'+Math.random().toString(16).slice(2,8);\n  needsCreate=true;\n}\nreturn [{json:{\n  case_id:caseId,\n  action,\n  goal,\n  task_name:taskName,\n  human_response:humanResponse,\n  gate_id:gateId,\n  requested_by:requestedBy,\n  is_probe:false,\n  is_status:action==='status',\n  is_resume:action==='resume',\n  needs_create:needsCreate,\n  execution_id:executionId,\n  workflow_name:'orchestrator',\n  sql_parameters:[caseId],\n  exec_sql_parameters:[executionId, caseId, 'orchestrator'],\n}}];\n"
+        "jsCode": "\nconst root=$json||{};\nconst body=root.body&&typeof root.body==='object'?root.body:root;\nconst packet=body.specialist_packet&&typeof body.specialist_packet==='object'?body.specialist_packet:null;\nlet task=body.agent_task&&typeof body.agent_task==='object'?body.agent_task:(body.case_id||body.task_id||body.objective?body:null);\nif(!task||typeof task!=='object') task={};\nif(packet){\n  const inputs=packet.inputs&&typeof packet.inputs==='object'?packet.inputs:{};\n  task={\n    case_id:String(packet.case_id||body.case_id||task.case_id||''),\n    task_id:String(packet.task_id||task.task_id||''),\n    agent_id:'excel_extractor',\n    objective:String(packet.objective||task.objective||''),\n    handoff_message:String(packet.handoff_message||task.handoff_message||packet.objective||''),\n    inputs,\n    context:packet.context&&typeof packet.context==='object'?packet.context:(task.context||{}),\n    constraints:packet.controls&&typeof packet.controls==='object'?packet.controls:(task.constraints||{})\n  };\n}\ntask.agent_id='excel_extractor';\ntask.case_id=String(task.case_id||'');\ntask.task_id=String(task.task_id||'');\ntask.objective=String(task.objective||'');\ntask.handoff_message=String(task.handoff_message||'');\ntask.inputs=task.inputs&&typeof task.inputs==='object'?task.inputs:{};\ntask.context=task.context&&typeof task.context==='object'?task.context:{};\nconst cfg=$('Runtime configuration').first().json||{};\nif(!task.inputs.activity_base_url&&cfg.activity_base_url) task.inputs={...task.inputs, activity_base_url:cfg.activity_base_url};\nreturn [{json:{...cfg, agent_task:task, case_id:task.case_id, task_id:task.task_id}}];\n"
       },
-      "id": "07d3d3cc-a9e7-508a-97d4-17391b86e1e1",
-      "name": "Normalize step request",
+      "id": "0bee4cdf-a5e6-5a00-be1c-f713ccef0baa",
+      "name": "Normalize excel task",
       "type": "n8n-nodes-base.code",
       "typeVersion": 2,
       "position": [
-        480,
+        500,
         0
       ]
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "={{ $json.excel_tools_url }}/agent-tools/open_session",
+        "sendHeaders": true,
+        "headerParameters": {
+          "parameters": [
+            {
+              "name": "Content-Type",
+              "value": "application/json"
+            },
+            {
+              "name": "X-API-Key",
+              "value": "={{ $('Runtime configuration').first().json.excel_tools_api_key || '' }}"
+            }
+          ]
+        },
+        "options": {
+          "timeout": 180000,
+          "response": {
+            "response": {
+              "fullResponse": false,
+              "responseFormat": "json"
+            }
+          }
+        },
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "={{ $json.agent_task }}"
+      },
+      "id": "e6832040-7bd7-5f0a-a498-620deff27695",
+      "name": "Open excel session",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.4,
+      "position": [
+        740,
+        0
+      ],
+      "onError": "continueRegularOutput",
+      "alwaysOutputData": true
     },
     {
       "parameters": {
@@ -14471,8 +13819,8 @@ main().catch((error) => {
           },
           "conditions": [
             {
-              "id": "a4eb5865-08ba-5b3b-bb07-0b6bd0bb118c",
-              "leftValue": "={{ Boolean($json.is_probe) }}",
+              "id": "9efe4e77-45fd-54bc-9559-eaf2d7dae1d8",
+              "leftValue": "={{ $json.ok === true }}",
               "rightValue": true,
               "operator": {
                 "type": "boolean",
@@ -14484,213 +13832,176 @@ main().catch((error) => {
         },
         "options": {}
       },
-      "id": "6522d240-0bc0-5796-806a-4f24d49f71e7",
-      "name": "Probe ping?",
+      "id": "358f999f-18c4-54b4-918f-f878e7fdfc54",
+      "name": "Session ready?",
       "type": "n8n-nodes-base.if",
       "typeVersion": 2.3,
       "position": [
-        640,
+        980,
         0
       ]
     },
     {
       "parameters": {
-        "conditions": {
-          "options": {
-            "caseSensitive": true,
-            "leftValue": "",
-            "typeValidation": "strict",
-            "version": 2
-          },
-          "conditions": [
-            {
-              "id": "9b9288b5-cffe-5ab1-8825-ad075b0b3713",
-              "leftValue": "={{ Boolean($json.needs_create) }}",
-              "rightValue": true,
-              "operator": {
-                "type": "boolean",
-                "operation": "true"
-              }
-            }
-          ],
-          "combinator": "and"
-        },
-        "options": {}
+        "jsCode": "\nconst opened=$json||{};\nconst result=opened.result&&typeof opened.result==='object'?opened.result:{};\nreturn [{json:{\n  task_id:result.task_id||opened.task_id||'',\n  agent_id:'excel_extractor',\n  status:result.status||'needs_input',\n  message:result.message||opened.message||'Нет Excel-файла для извлечения',\n  data:result.data||{},\n  artifacts:result.artifacts||{},\n  issues:result.issues||[{type:'missing_excel'}],\n  assumptions:result.assumptions||[],\n  requests:result.requests||[{question_id:'Q-excel',question:'Приложите workbook .xlsx',options:[]}]\n}}];\n"
       },
-      "id": "da3ee2c0-b055-55e3-9969-b78d164a8bf1",
-      "name": "Needs create?",
-      "type": "n8n-nodes-base.if",
-      "typeVersion": 2.3,
+      "id": "65375f59-96fa-5c09-8697-c1becec8677a",
+      "name": "Format missing excel",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
       "position": [
-        640,
+        1220,
+        240
+      ]
+    },
+    {
+      "parameters": {
+        "mode": "expression",
+        "numberOutputs": 2,
+        "output": "={{ ({commissioning:0, operations:1})[$json.suggested_capability] ?? 1 }}"
+      },
+      "id": "9c4011ef-18c6-5476-a9f5-7d1c8003b0d8",
+      "name": "Capability router",
+      "type": "n8n-nodes-base.switch",
+      "typeVersion": 3.4,
+      "position": [
+        1220,
+        0
+      ]
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "={{ $('Runtime configuration').first().json.excel_tools_url + '/agent-tools/extract_commissioning' }}",
+        "sendHeaders": true,
+        "headerParameters": {
+          "parameters": [
+            {
+              "name": "Content-Type",
+              "value": "application/json"
+            },
+            {
+              "name": "X-API-Key",
+              "value": "={{ $('Runtime configuration').first().json.excel_tools_api_key || '' }}"
+            }
+          ]
+        },
+        "options": {
+          "timeout": 180000,
+          "response": {
+            "response": {
+              "fullResponse": false,
+              "responseFormat": "json"
+            }
+          }
+        },
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "={{ ({session_id: $('Open excel session').first().json.session_id}) }}"
+      },
+      "id": "cc62fbc1-3edb-59dc-a12c-1d7c4a7e2ef1",
+      "name": "Extract commissioning",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.4,
+      "position": [
+        1480,
+        -160
+      ],
+      "onError": "continueRegularOutput",
+      "alwaysOutputData": true
+    },
+    {
+      "parameters": {
+        "jsCode": "\nconst opened=$json||{};\nconst task=$('Normalize excel task').first().json.agent_task||{};\nconst agent_input=JSON.stringify({\n  objective:opened.objective||task.objective||'',\n  handoff_message:opened.handoff_message||task.handoff_message||'',\n  inspect:opened.inspect||{},\n  file_name:opened.file_name||'',\n  suggested_capability:opened.suggested_capability||''\n});\nreturn [{json:{...opened, session_id:opened.session_id, agent_input}}];\n"
+      },
+      "id": "2d5a7eba-bd5e-5ccb-895a-b7ca5109b7cc",
+      "name": "Prepare AI Agent input",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        1480,
         160
       ]
     },
     {
       "parameters": {
-        "jsCode": "\nconst req=$json||{};\nconst goal=String(req.goal||'').trim();\nconst state={\n  case_id:req.case_id,\n  goal,\n  task_name:req.task_name||'',\n  status:'running',\n  plan:[],\n  artifacts:{},\n  data:{},\n  current_task:null,\n  hitl:{pending:false,questions:[],answers:{}},\n  last_error:null,\n  step_count:0\n};\nconst persistEvents=[[req.case_id,'','case.created','user','','new',('Принял задачу: '+goal).slice(0,200),'',JSON.stringify({requested_by:req.requested_by||'',task_name:req.task_name||'',note:'orchestrator start; files belong to Activity /cases'})]];\nreturn [{json:{\n  ...req,\n  state,\n  create_sql_parameters:[req.case_id, JSON.stringify(state), 'running'],\n  persist_events:persistEvents,\n  event_sql_parameters:persistEvents[0]\n}}];\n"
+        "promptType": "define",
+        "text": "={{ $json.agent_input }}",
+        "hasOutputParser": false,
+        "options": {
+          "systemMessage": "Ты — единственный LLM-решатель агента Excel Extractor.\n\nWorkbook тебе не показывают. Он лежит в сессии FastAPI. session_id привязан workflow: никогда не передавай session_id и обёртку args/input.\n\nИнструменты:\n- workbook_introspect — листы и размеры (компактно)\n- sheet_preview — небольшой прямоугольник одного листа, не весь лист\n- detect_tables — найти таблицы, вернуть table_id / range / columns\n- match_tables — ранжировать таблицы по запросу\n- describe_table — колонки и sample по table_id\n- list_column_values — ограниченные distinct-значения колонки\n- query_table — строки по table_id (limit, фильтры). Не выгружай всю книгу\n- extract_commissioning — скважина+дата ввода из уже открытой сессии. Даты и скважины сам не выдумывай\n\nПравила:\n- Не пиши SCHEDULE / .INC. Только факты из Excel.\n- Не придумывай скважины, даты, дебиты, имена листов и table_id.\n- suggested_capability=commissioning → сразу extract_commissioning, затем STOP.\n- Иначе introspect/detect → query нужных таблиц. Если нужны даты ввода — extract_commissioning.\n- После extract_commissioning со status completed или needs_input — STOP.\n- Если файла/таблиц нет — не выдумывай строки.\n\nЗаверши одним коротким фактическим предложением по-русски.\n",
+          "maxIterations": 12,
+          "returnIntermediateSteps": true,
+          "passthroughBinaryImages": false,
+          "passthroughBinaryPdfs": false,
+          "enableStreaming": false
+        },
+        "needsFallback": false
       },
-      "id": "27ddbd46-3d3a-5c9a-b8ed-7e83bd872f58",
-      "name": "Prepare start case",
-      "type": "n8n-nodes-base.code",
-      "typeVersion": 2,
+      "id": "2f03ceca-e58c-53ff-8b58-4586a68f08ea",
+      "name": "Excel Extractor AI Agent",
+      "type": "@n8n/n8n-nodes-langchain.agent",
+      "typeVersion": 3.1,
       "position": [
-        800,
-        280
+        1720,
+        160
       ]
     },
     {
       "parameters": {
-        "operation": "executeQuery",
-        "query": "INSERT INTO cases (case_id, state, status, updated_at) VALUES ($1, $2::jsonb, $3, now()) ON CONFLICT (case_id) DO NOTHING",
+        "model": {
+          "mode": "id",
+          "value": "qwen3.6-plus"
+        },
         "options": {
-          "queryReplacement": "={{ $json.create_sql_parameters }}",
-          "queryBatching": "single",
-          "largeNumbersOutput": "text",
-          "replaceEmptyStrings": false
-        }
+          "maxTokens": 2048,
+          "temperature": 0,
+          "timeout": 300000,
+          "maxRetries": 5
+        },
+        "responsesApiEnabled": false
       },
-      "id": "4bad0cf5-3b5b-523b-9601-7bb30412e938",
-      "name": "Insert new case",
-      "type": "n8n-nodes-base.postgres",
-      "typeVersion": 2.6,
+      "id": "e81706e1-430e-5640-a5c8-2500fb80aa1b",
+      "name": "Excel Extractor Chat Model — Qwen",
+      "type": "@n8n/n8n-nodes-langchain.lmChatOpenAi",
+      "typeVersion": 1.3,
       "position": [
-        1000,
-        280
+        1720,
+        40
       ],
       "credentials": {
-        "postgres": {
+        "openAiApi": {
           "id": "REPLACE_IN_UI",
-          "name": "REPLACE: SCHEDULE PostgreSQL / PGVector credential"
+          "name": "REPLACE: Qwen OpenAI-compatible excel extractor credential"
         }
-      },
-      "alwaysOutputData": true
+      }
     },
     {
       "parameters": {
-        "jsCode": "\nconst fromParse=(()=>{try{return $('Parse decision').first().json}catch{return null}})();\nconst fromMerge=(()=>{try{return $('Merge agent result').first().json}catch{return null}})();\nconst prev=fromMerge||fromParse||$json||{};\nconst rows=Array.isArray(prev.persist_events)?prev.persist_events:[];\nif(!rows.length) return [{json:{...prev,p1:'',p2:'',p3:'',p4:'',p5:'',p6:'',p7:'',p8:'',p9:'{}'}}];\nreturn rows.map(params=>{\n  const vals=(Array.isArray(params)?params:[]).map(v=>v===null||v===undefined?'':String(v));\n  return {json:{\n    ...prev,\n    p1:vals[0]||'',\n    p2:vals[1]||'',\n    p3:vals[2]||'',\n    p4:vals[3]||'',\n    p5:vals[4]||'',\n    p6:vals[5]||'',\n    p7:vals[6]||'',\n    p8:vals[7]||'',\n    p9:vals[8]||'{}',\n    event_sql_parameters:vals\n  }};\n});\n"
-      },
-      "id": "2d58ea73-2520-5ddf-8dec-77d51c169dfb",
-      "name": "Expand start events",
-      "type": "n8n-nodes-base.code",
-      "typeVersion": 2,
-      "position": [
-        1180,
-        280
-      ]
-    },
-    {
-      "parameters": {
-        "operation": "executeQuery",
-        "query": "INSERT INTO events(case_id, task_id, kind, actor, agent_id, status, status_message, handoff_message, payload) SELECT $1,$2,$3,$4,$5,$6,$7,$8,$9::jsonb WHERE NULLIF($3, '') IS NOT NULL",
+        "method": "GET",
+        "url": "={{ $('Runtime configuration').first().json.excel_tools_url + '/sessions/' + $('Open excel session').first().json.session_id + '/result' }}",
+        "sendHeaders": true,
+        "headerParameters": {
+          "parameters": [
+            {
+              "name": "Content-Type",
+              "value": "application/json"
+            },
+            {
+              "name": "X-API-Key",
+              "value": "={{ $('Runtime configuration').first().json.excel_tools_api_key || '' }}"
+            }
+          ]
+        },
         "options": {
-          "queryReplacement": "={{ [$json.p1, $json.p2, $json.p3, $json.p4, $json.p5, $json.p6, $json.p7, $json.p8, $json.p9] }}",
-          "queryBatching": "independently",
-          "largeNumbersOutput": "text",
-          "replaceEmptyStrings": false
+          "timeout": 120000,
+          "response": {
+            "response": {
+              "fullResponse": false,
+              "responseFormat": "json"
+            }
+          }
         }
       },
-      "id": "94ff4f22-7daf-5757-b558-6aa7dee6466e",
-      "name": "Insert start events",
-      "type": "n8n-nodes-base.postgres",
-      "typeVersion": 2.6,
-      "position": [
-        1360,
-        280
-      ],
-      "credentials": {
-        "postgres": {
-          "id": "REPLACE_IN_UI",
-          "name": "REPLACE: SCHEDULE PostgreSQL / PGVector credential"
-        }
-      },
-      "alwaysOutputData": true
-    },
-    {
-      "parameters": {
-        "jsCode": "const prev=$('Prepare start case').first().json||{};\nreturn [{json:prev}];"
-      },
-      "id": "2a0bb29e-6087-549c-8096-b0c810d46ce3",
-      "name": "Restore after start",
-      "type": "n8n-nodes-base.code",
-      "typeVersion": 2,
-      "position": [
-        1540,
-        280
-      ],
-      "executeOnce": true
-    },
-    {
-      "parameters": {
-        "operation": "executeQuery",
-        "query": "INSERT INTO executions(execution_id, case_id, workflow_name) VALUES ($1, $2, $3) ON CONFLICT (execution_id) DO UPDATE SET case_id = EXCLUDED.case_id",
-        "options": {
-          "queryReplacement": "={{ $json.exec_sql_parameters }}",
-          "queryBatching": "single",
-          "largeNumbersOutput": "text",
-          "replaceEmptyStrings": false
-        }
-      },
-      "id": "eea71600-efa1-51e6-95a4-434c68809838",
-      "name": "Insert execution map",
-      "type": "n8n-nodes-base.postgres",
-      "typeVersion": 2.6,
-      "position": [
-        720,
-        -120
-      ],
-      "credentials": {
-        "postgres": {
-          "id": "REPLACE_IN_UI",
-          "name": "REPLACE: SCHEDULE PostgreSQL / PGVector credential"
-        }
-      },
-      "alwaysOutputData": true
-    },
-    {
-      "parameters": {
-        "operation": "executeQuery",
-        "query": "SELECT case_id, state, status, updated_at FROM cases WHERE case_id = $1",
-        "options": {
-          "queryReplacement": "={{ $('Normalize step request').first().json.sql_parameters }}",
-          "queryBatching": "single",
-          "largeNumbersOutput": "text",
-          "replaceEmptyStrings": false
-        }
-      },
-      "id": "7b1972c9-04e8-559f-90fb-558bcc264f2c",
-      "name": "Load case",
-      "type": "n8n-nodes-base.postgres",
-      "typeVersion": 2.6,
-      "position": [
-        960,
-        -120
-      ],
-      "credentials": {
-        "postgres": {
-          "id": "REPLACE_IN_UI",
-          "name": "REPLACE: SCHEDULE PostgreSQL / PGVector credential"
-        }
-      },
-      "alwaysOutputData": true
-    },
-    {
-      "parameters": {
-        "jsCode": "\nconst req=$('Normalize step request').first().json||{};\nconst load=$json||{};\nconst parse=v=>{if(v&&typeof v==='object'&&!Array.isArray(v))return v;try{const p=JSON.parse(String(v||'{}'));return p&&typeof p==='object'&&!Array.isArray(p)?p:{}}catch{return {}}};\nconst state=parse(load.state||load.State||{});\nif(req.is_status===true){\n  const hitl=parse(state.hitl);\n  const questions=Array.isArray(hitl.questions)?hitl.questions:[];\n  const status=String(load.status||state.status||'');\n  const version=Number(state.version||state.step_count||0);\n  let human_gate=null;\n  if(status==='waiting_user'&&(hitl.pending===true||questions.length)){\n    const q0=questions[0]&&typeof questions[0]==='object'?questions[0]:{};\n    human_gate={\n      gate_id:q0.question_id||'hitl',\n      kind:'needs_input',\n      reason:q0.question||state.goal||'Нужен ответ',\n      expected_version:version,\n      questions\n    };\n  }\n  return [{json:{\n    ...req,\n    case_id:req.case_id,\n    is_status:true,\n    did_resume:false,\n    next_status:status,\n    status,\n    action_type:'status',\n    should_continue:false,\n    human_gate,\n    version,\n    restartable:status==='done'||status==='failed',\n    has_schedule_out:Boolean(state.artifacts&&state.artifacts.schedule_out)\n  }}];\n}\nif(req.is_resume===true){\n  const answer=String(req.human_response||'').trim();\n  const hitl=parse(state.hitl);\n  const questions=Array.isArray(hitl.questions)?hitl.questions:[];\n  const qid=String(req.gate_id||(questions[0]&&questions[0].question_id)||'Q-1');\n  const answers={...(hitl.answers&&typeof hitl.answers==='object'?hitl.answers:{})};\n  answers[qid]=answer;\n  state.hitl={pending:false,questions,answers};\n  state.status='running';\n  const persistEvents=[[req.case_id,'','hitl.answered','user','','answered',answer?('Пользователь ответил: '+answer):'Пользователь ответил','',JSON.stringify({question_id:qid,answer})]];\n  return [{json:{\n    ...req,\n    state,\n    did_resume:true,\n    is_status:false,\n    next_status:'running',\n    update_sql_parameters:[JSON.stringify(state),'running',req.case_id],\n    persist_events:persistEvents,\n    event_sql_parameters:persistEvents[0]\n  }}];\n}\nreturn [{json:{...req,...load,state,did_resume:false,is_status:false}}];\n"
-      },
-      "id": "02a7795f-d4c0-526f-9eef-762616f8581f",
-      "name": "Apply request extras",
-      "type": "n8n-nodes-base.code",
-      "typeVersion": 2,
-      "position": [
-        1120,
-        -120
-      ]
-    },
-    {
-      "parameters": {
-        "conditions": {
-          "options": {
-            "caseSensitive": true,
-            "leftValue": "",
-            "typeValidation": "strict",
+      "id": "cf896b5f-c322-54db-8650-f141428dbb6e",
+      "name": "Fetch excel result",

@@ -84,8 +84,8 @@ def test_handoff_lights_edge_and_progress_shows_agent_bubble() -> None:
     done = frames[-1]
     assert done["label"] == END_LABEL
     assert done["nodes"]["output"]["tone"] == "active"
-    assert done["output"]["result"] == "SCHEDULE записан"
-    assert done["output"]["prompt"] == "Готово: даты обновлены"
+    assert done["output"]["result"] == "Задача завершена. Загрузите результаты работы."
+    assert done["output"]["prompt"] == ""
     assert done["edges"]["orch_out"]["tone"] == "active"
     assert done["nodes"]["orchestrator"]["caption"] == "Готово: даты обновлены"
     assert done["nodes"]["excel"]["caption"] == "Таблица готова"
@@ -112,3 +112,15 @@ def test_hitl_uses_user_node() -> None:
     assert answered["nodes"]["orchestrator"]["tone"] == "active"
     assert answered["nodes"]["user"]["caption"] == "Какой корневой INCLUDE главный?"
     assert answered["edges"]["user_orch"]["tone"] == "active"
+
+
+def test_case_finished_uses_user_facing_result_not_kind_name() -> None:
+    events = [
+        _event("case.created", actor="user", status_message="Принял задачу"),
+        _event("case.finished", status_message="case.finished"),
+        _event("case.finished", status_message="case.finished"),
+    ]
+    done = build_schema_frames(events)[-1]
+    assert done["output"]["result"] == "Задача завершена. Загрузите результаты работы."
+    assert done["output"]["prompt"] == ""
+    assert done["nodes"]["output"]["tone"] == "active"

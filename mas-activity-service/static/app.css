@@ -837,19 +837,67 @@ a.btn.schedule-download:hover:not(:disabled),
 
 .gate-panel {
   margin: 0 clamp(1.25rem, 3vw, 3rem) 0.65rem;
-  padding: 0.5rem 0.85rem;
+  padding: 0.45rem 0.85rem;
   border: 1px solid var(--line);
   background: var(--panel);
   border-radius: var(--radius);
   flex: 0 0 auto;
+  min-height: 0;
+  overflow: hidden;
 }
 .gate-panel[hidden] { display: none !important; }
+.gate-panel[open] {
+  max-height: min(28vh, 12.5rem);
+  display: flex;
+  flex-direction: column;
+  overflow: hidden;
+}
+.workspace.mode-schema .gate-panel[open] {
+  max-height: min(22vh, 9.5rem);
+}
 .gate-head {
   display: flex;
   align-items: center;
   justify-content: space-between;
   gap: 0.5rem;
-  margin-bottom: 0.25rem;
+  cursor: pointer;
+  list-style: none;
+  margin: 0;
+}
+.gate-head::-webkit-details-marker { display: none; }
+.gate-preview {
+  flex: 1 1 auto;
+  min-width: 0;
+  font-size: 0.78rem;
+  line-height: 1.3;
+  color: var(--ink);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+.gate-panel[open] .gate-preview { display: none; }
+.gate-toggle {
+  flex: 0 0 auto;
+  font-family: var(--mono);
+  font-size: 0.62rem;
+  letter-spacing: 0.02em;
+  text-transform: uppercase;
+  color: var(--blue-700);
+  white-space: nowrap;
+}
+.gate-toggle::after { content: "Развернуть"; }
+.gate-panel[open] .gate-toggle::after { content: "Свернуть"; }
+.gate-body {
+  display: none;
+  min-height: 0;
+}
+.gate-panel[open] .gate-body {
+  display: block;
+  overflow-y: auto;
+  flex: 1 1 auto;
+  margin-top: 0.35rem;
+  padding-top: 0.2rem;
+  border-top: 1px solid var(--line);
 }
 .gate-badge {
   font-family: var(--mono);
