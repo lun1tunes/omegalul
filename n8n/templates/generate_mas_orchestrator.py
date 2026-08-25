@@ -577,8 +577,24 @@ MERGE = r"""
 const prev=$('Prepare agent call').first().json||$('Parse decision').first().json||{};
 const http=$json||{};
 const obj=v=>v&&typeof v==='object'&&!Array.isArray(v);
-const result=obj(http.body)?http.body:(obj(http)?http:{});
-const status=String(result.status||(http.error?'failed':'completed'));
+const clean=v=>{
+  const s=String(v??'').trim();
+  return /^(none|null|undefined)$/i.test(s)?'':s;
+};
+const unwrap=v=>{
+  if(obj(v)) return v;
+  if(Array.isArray(v)&&v.length&&obj(v[0])) return v[0];
+  return {};
+};
+const result=unwrap(http.body&&typeof http.body==='object'?http.body:http);
+const rawStatus=clean(result.status);
+const status=rawStatus|| (http.error?'failed':'completed');
+const resultMessage=clean(result.message);
+const fallbackMessage=status==='completed'
+  ? 'Schedule Builder завершил обработку schedule.'
+  : status==='needs_input'
+    ? 'Schedule Builder запросил дополнительные данные.'
+    : 'Schedule Builder вернул ошибку.';
 const state=obj(prev.state)?{...prev.state}:{};
 const data=obj(state.data)?{...state.data}:{};
 const artifacts=obj(state.artifacts)?{...state.artifacts}:{};
@@ -605,7 +621,7 @@ if(status==='needs_input'){
   nextStatus='waiting_user';
   shouldContinue=false;
   const reqs=Array.isArray(result.requests)?result.requests:[];
-  const q=reqs[0]||{question_id:'Q-agent',question:String(result.message||'Агенту нужны данные'),options:[]};
+  const q=reqs[0]||{question_id:'Q-agent',question:resultMessage||'Агенту нужны данные',options:[]};
   state.hitl={pending:true,questions:reqs.length?reqs:[q],answers:(state.hitl&&state.hitl.answers)||{}};
   events.push({kind:'hitl.request',actor:'orchestrator',agent_id:agentId,status:'waiting_user',status_message:q.question,payload:q});
 } else if(status==='completed'){
@@ -615,15 +631,15 @@ if(status==='needs_input'){
     agent_id:agentId,
     task_id:(prev.agent_task&&prev.agent_task.task_id)||'',
     status:'completed',
-    status_message:String(result.message||'Агент завершил работу'),
+    status_message:resultMessage||fallbackMessage,
     payload:{data_keys:Object.keys((result.data&&typeof result.data==='object')?result.data:{}),artifacts:Object.keys((result.artifacts&&typeof result.artifacts==='object')?result.artifacts:{})}
   });
 } else if(status==='failed'||http.error){
   nextStatus='running';
   shouldContinue=true;
-  state.last_error={message:String(result.message||http.message||'agent failed'),agent_id:agentId};
+  state.last_error={message:resultMessage||clean(http.message)||fallbackMessage,agent_id:agentId};
   data[bucket]=result.data||result;
-  events.push({kind:'agent.failed',actor:agentId||'agent',agent_id:agentId,status:'failed',status_message:String(result.message||http.message||'Агент вернул ошибку'),payload:{message:state.last_error.message,issues:result.issues||[]}});
+  events.push({kind:'agent.failed',actor:agentId||'agent',agent_id:agentId,status:'failed',status_message:state.last_error.message,payload:{message:state.last_error.message,issues:result.issues||[]}});
 }
 if(Number(state.step_count||0)>=24){
   nextStatus='failed';

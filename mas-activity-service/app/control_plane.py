@@ -19,6 +19,9 @@ from app.contracts import empty_state
 from app.settings import get_settings
 
 _LOCK = threading.Lock()
+_CLIENT_LOCK = threading.Lock()
+_HTTP: httpx.Client | None = None
+_HTTP_KEY: tuple[Any, ...] | None = None
 _CASES: dict[str, dict[str, Any]] = {}
 _EVENTS: dict[str, list[dict[str, Any]]] = {}
 _ERRORS: dict[str, list[dict[str, Any]]] = {}
@@ -76,6 +79,20 @@ def _headers() -> dict[str, str]:
     return headers
 
 
+def _http_client() -> httpx.Client:
+    """Reuse one client: each proxy call used to open a fresh TCP session to n8n."""
+    global _HTTP, _HTTP_KEY
+    cfg = get_settings()
+    key = (_proxy_url(), cfg.control_plane_proxy_timeout_s, cfg.httpx_verify)
+    with _CLIENT_LOCK:
+        if _HTTP is None or _HTTP_KEY != key:
+            if _HTTP is not None:
+                _HTTP.close()
+            _HTTP = httpx.Client(timeout=key[1], verify=key[2])
+            _HTTP_KEY = key
+        return _HTTP
+
+
 def proxy_call(operation: str, **payload: Any) -> Any:
     """Call the single n8n control-plane webhook and unwrap its result."""
     url = _proxy_url()
@@ -83,11 +100,7 @@ def proxy_call(operation: str, **payload: Any) -> Any:
         raise RuntimeError("CONTROL_PLANE_PROXY_URL is not configured")
     body = {"operation": operation, **payload}
     try:
-        with httpx.Client(
-            timeout=get_settings().control_plane_proxy_timeout_s,
-            verify=get_settings().httpx_verify,
-        ) as client:
-            response = client.post(url, json=body, headers=_headers())
+        response = _http_client().post(url, json=body, headers=_headers())
     except httpx.HTTPError as exc:
         raise RuntimeError(f"control-plane proxy request failed: {exc}") from exc
     if response.status_code >= 400:
@@ -169,16 +182,26 @@ def _local_case(case_id: str) -> dict[str, Any] | None:
         return dict(row) if row else None
 
 
-def create_case(case_id: str, goal: str, artifacts: dict[str, Any] | None = None, task_name: str = "") -> dict[str, Any]:
+def create_case(
+    case_id: str,
+    goal: str,
+    artifacts: dict[str, Any] | None = None,
+    task_name: str = "",
+    extra_state: dict[str, Any] | None = None,
+    status: str = "new",
+) -> dict[str, Any]:
     state = empty_state(case_id, goal)
     if task_name:
         state["task_name"] = str(task_name).strip()
     if artifacts:
         state["artifacts"] = artifacts
+    if extra_state:
+        state.update(extra_state)
+    status = str(status or "new").strip() or "new"
     if _configured():
-        return dict(proxy_call("create_case", case_id=case_id, state=state, status="new") or {})
+        return dict(proxy_call("create_case", case_id=case_id, state=state, status=status) or {})
     with _LOCK:
-        row = {"case_id": case_id, "state": state, "status": "new", "updated_at": _now()}
+        row = {"case_id": case_id, "state": state, "status": status, "updated_at": _now()}
         _CASES[case_id] = row
         _EVENTS.setdefault(case_id, [])
         _ERRORS.setdefault(case_id, [])
@@ -188,8 +211,39 @@ def create_case(case_id: str, goal: str, artifacts: dict[str, Any] | None = None
 def get_case(case_id: str) -> dict[str, Any] | None:
     if _configured():
         result = proxy_call("get_case", case_id=case_id)
-        return dict(result) if isinstance(result, dict) else None
+        return dict(result) if isinstance(result, dict) and result.get("case_id") else None
     return _local_case(case_id)
+
+
+def snapshot(case_id: str, after_seq: int = 0) -> dict[str, Any]:
+    """One webhook: case row + events after ``after_seq``.
+
+    Falls back to get_case + list_events if the imported proxy is older
+    and does not yet know ``snapshot``.
+    """
+    after_seq = int(after_seq or 0)
+    if _configured():
+        try:
+            result = proxy_call("snapshot", case_id=case_id, after_seq=after_seq) or {}
+        except RuntimeError as exc:
+            if "unsupported operation" not in str(exc).lower():
+                raise
+            row = get_case(case_id)
+            events = list_events(case_id, after_seq=after_seq) if row else []
+            return {"case": row, "events": events}
+        case = result.get("case") if isinstance(result, dict) else None
+        events = result.get("events") if isinstance(result, dict) else None
+        row = dict(case) if isinstance(case, dict) and case.get("case_id") else None
+        rows = list(events) if isinstance(events, list) else []
+        return {"case": row, "events": rows}
+    row = _local_case(case_id)
+    with _LOCK:
+        events = [
+            dict(item)
+            for item in _EVENTS.get(case_id, [])
+            if int(item["event_id"]) > after_seq
+        ]
+    return {"case": row, "events": events}
 
 
 def list_cases(limit: int = 80) -> list[dict[str, Any]]:
@@ -202,11 +256,15 @@ def list_cases(limit: int = 80) -> list[dict[str, Any]]:
 
 
 def update_case(case_id: str, *, state: dict[str, Any] | None = None, status: str | None = None) -> dict[str, Any]:
-    current = get_case(case_id)
-    if current is None:
-        raise KeyError(case_id)
-    next_state = state if state is not None else current["state"]
-    next_status = status if status is not None else current["status"]
+    if state is None or status is None:
+        current = get_case(case_id)
+        if current is None:
+            raise KeyError(case_id)
+        next_state = state if state is not None else current["state"]
+        next_status = status if status is not None else current["status"]
+    else:
+        next_state = state
+        next_status = status
     if isinstance(next_state, dict):
         next_state = {**next_state, "status": next_status, "case_id": case_id}
     if _configured():

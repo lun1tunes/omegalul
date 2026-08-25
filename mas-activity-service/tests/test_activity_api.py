@@ -43,7 +43,6 @@ def _isolate_activity_store(monkeypatch) -> None:
         "ORCHESTRATOR_AUTH_VALUE",
         "N8N_BASE_URL",
         "CONTROL_PLANE_PROXY_URL",
-        "CONTROL_PLANE_REQUIRED",
         "N8N_HOST",
         "N8N_USERNAME",
         "N8N_PASSWORD",
@@ -54,6 +53,7 @@ def _isolate_activity_store(monkeypatch) -> None:
         "ACTIVITY_CA_BUNDLE",
     ):
         monkeypatch.delenv(key, raising=False)
+    monkeypatch.setenv("CONTROL_PLANE_REQUIRED", "false")
     reset_store()
 
 
@@ -558,7 +558,7 @@ def test_ready_health_and_static_assets() -> None:
     assert "looksMachineAsk" in js_text
     assert 'q.required ? "обязательно"' not in js_text
     assert "формат: ${q.expected_format}" not in js_text
-    assert "app.js?v=84" in index.text
+    assert "app.js?v=85" in index.text
     assert "schema.js?v=11" in index.text
     assert "app.css?v=79" in index.text
     assert "viewChatBtn" in index.text
@@ -596,6 +596,9 @@ def test_ready_health_and_static_assets() -> None:
     assert "setTaskHeader" in js_text
     assert "attachLive" in js_text
     assert "pollFeed" in js_text
+    assert "setInterval(() => pollFeed({ durable: false }), 2500)" not in js_text
+    assert "setInterval(() => pollFeed({ durable: false }), 5000)" in js_text
+    assert 'msg.type === "meta"' in js_text
     assert "feedMatchesOpenTask" in js_text
     assert "bumpFeedGeneration" in js_text
     assert "composing: true" in js_text
@@ -1246,6 +1249,18 @@ def test_task_attached_files_accepts_either_start_signal() -> None:
     assert _task_attached_files(by_status) == ["a.inc"]
     assert _task_attached_files(by_action) == ["b.inc"]
     assert _task_attached_files(specialist) == []
+
+
+def test_activity_never_shells_out_to_postgres() -> None:
+    """Windows field services reach n8n webhooks only — never compose/psql."""
+    text = (ROOT / "app" / "orchestrator.py").read_text(encoding="utf-8")
+    assert "_load_execution_data_via_postgres" not in text
+    assert "execution_data" not in text
+    assert "docker" not in text
+    assert "psql" not in text
+    plane = (ROOT / "app" / "control_plane.py").read_text(encoding="utf-8")
+    assert "psycopg" not in plane
+    assert "subprocess" not in plane
 
 
 def test_n8n_rest_failed_execution_never_returns_parsed_response(monkeypatch) -> None:

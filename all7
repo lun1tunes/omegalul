@@ -1,0 +1,922 @@
+            with opener.open(req, timeout=180) as resp:
+                raw = resp.read()
+                return int(resp.status), json.loads(raw) if raw else None
+        except urllib.error.HTTPError as exc:
+            raw = exc.read()
+            try:
+                parsed = json.loads(raw)
+            except Exception:
+                parsed = raw.decode("utf-8", errors="replace")[:500]
+            return int(exc.code), parsed
+
+    code, body = rest("POST", "/rest/login", {"emailOrLdapLoginId": user, "password": password})
+    if code != 200:
+        raise SystemExit(f"n8n REST login failed: {code} {body}")
+
+    orch_header = env.get("ORCHESTRATOR_AUTH_HEADER") or "Authorization"
+    orch_value = env.get("ORCHESTRATOR_AUTH_VALUE") or "local-orch-inbound"
+    code, cred_body = rest(
+        "PATCH",
+        f"/rest/credentials/{CRED_HDR}",
+        {
+            "name": "Engineering orchestrator inbound key",
+            "type": "httpHeaderAuth",
+            "data": {"name": orch_header, "value": orch_value},
+        },
+    )
+    if code >= 400:
+        code, cred_body = rest(
+            "PUT",
+            f"/rest/credentials/{CRED_HDR}",
+            {
+                "name": "Engineering orchestrator inbound key",
+                "type": "httpHeaderAuth",
+                "data": {"name": orch_header, "value": orch_value},
+            },
+        )
+    print(
+        f"sync orchestrator inbound key: {'OK' if code < 400 else f'FAIL {code}'} "
+        f"(header={orch_header}, value_len={len(orch_value)})"
+    )
+
+    for name in PUBLISH:
+        wid = name_to_id.get(name)
+        if not wid:
+            print(f"publish skip missing {name}")
+            continue
+        code, wf = rest("GET", f"/rest/workflows/{wid}")
+        if code != 200 or not isinstance(wf, dict):
+            print(f"activate {name}: GET FAIL {code}")
+            continue
+        data = wf.get("data") or {}
+        vid = data.get("versionId") or data.get("activeVersionId")
+        if not vid:
+            print(f"activate {name}: no versionId")
+            continue
+        if data.get("active"):
+            # Force republish of current version so webhook registration is restored.
+            rest("POST", f"/rest/workflows/{wid}/deactivate", {"versionId": vid})
+        code, body = rest("POST", f"/rest/workflows/{wid}/activate", {"versionId": vid})
+        ok = code == 200
+        msg = ""
+        if not ok and isinstance(body, dict):
+            msg = str(body.get("message") or body)[:220]
+        print(f"activate {name}: {'OK' if ok else f'FAIL {code} {msg}'}")
+
+    for name in STALE_WORKFLOW_NAMES:
+        wid = name_to_id.get(name)
+        if not wid:
+            print(f"retire skip missing {name}")
+            continue
+        code, wf = rest("GET", f"/rest/workflows/{wid}")
+        data = wf.get("data") if isinstance(wf, dict) and isinstance(wf.get("data"), dict) else (wf or {})
+        vid = data.get("versionId") or data.get("activeVersionId")
+        if data.get("active") and vid:
+            rest("POST", f"/rest/workflows/{wid}/deactivate", {"versionId": vid})
+        code, body = rest("POST", f"/rest/workflows/{wid}/archive", {})
+        if code >= 400:
+            print(f"archive {name}: FAIL {code} {str(body)[:180]}")
+            continue
+        code, body = rest("DELETE", f"/rest/workflows/{wid}")
+        print(f"retire {name}: {'OK' if code < 400 else f'FAIL {code} {str(body)[:180]}'}")
+
+
+def wait_healthy(service: str, url: str, attempts: int = 60) -> None:
+    for _ in range(attempts):
+        if service == "mas-activity":
+            cp = run(
+                [
+                    "docker",
+                    "compose",
+                    "exec",
+                    "-T",
+                    "mas-activity",
+                    "python",
+                    "-c",
+                    f"import urllib.request; urllib.request.urlopen({url!r}, timeout=3)",
+                ],
+                check=False,
+            )
+        else:
+            cp = run(
+                ["docker", "compose", "exec", "-T", service, "wget", "-q", "-O", "/dev/null", url],
+                check=False,
+            )
+        if cp.returncode == 0:
+            return
+        time.sleep(1)
+    raise SystemExit(f"{service} not healthy: {url}")
+
+
+def run_health_form() -> str | None:
+    """POST Health Check form using a real n8n session cookie (REST login)."""
+    print("== health check form ==")
+    env = load_env()
+    user = env.get("N8N_USERNAME") or env.get("N8N_USER")
+    password = env.get("N8N_PASSWORD")
+    if not user or not password:
+        print("missing N8N_USERNAME / N8N_PASSWORD in .env")
+        return None
+    base = f"http://127.0.0.1:{env.get('N8N_HOST_PORT', '5678')}"
+
+    def http_req(method: str, path: str, data: bytes | None = None, content_type: str | None = None, cookie: str = ""):
+        headers = {
+            "Accept": "text/html,application/json,*/*",
+            "User-Agent": "Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36",
+        }
+        if cookie:
+            headers["Cookie"] = cookie
+        if data is not None:
+            headers["Content-Type"] = content_type or "application/json"
+            headers["Content-Length"] = str(len(data))
+        request = urllib.request.Request(base + path, data=data, headers=headers, method=method)
+        try:
+            with urllib.request.urlopen(request, timeout=300) as resp:
+                return int(resp.status), resp.read().decode("utf-8", errors="replace"), resp.headers
+        except urllib.error.HTTPError as exc:
+            return int(exc.code), exc.read().decode("utf-8", errors="replace"), exc.headers
+
+    login_body = json.dumps({"emailOrLdapLoginId": user, "password": password}).encode()
+    status, body, headers = http_req("POST", "/rest/login", login_body, "application/json")
+    if status != 200:
+        print("login failed", status, body[:200])
+        return None
+    cookie = ""
+    set_cookies = []
+    if hasattr(headers, "get_all"):
+        set_cookies = headers.get_all("Set-Cookie") or []
+    elif headers.get("Set-Cookie"):
+        set_cookies = [headers.get("Set-Cookie")]
+    for sc in set_cookies:
+        if "n8n-auth=" in sc:
+            cookie = sc.split(";", 1)[0].strip()
+            if not cookie.startswith("n8n-auth="):
+                # cookie may be in the middle of a combined header
+                for piece in sc.split(","):
+                    piece = piece.strip()
+                    if piece.startswith("n8n-auth="):
+                        cookie = piece.split(";", 1)[0].strip()
+                        break
+            break
+    if not cookie:
+        print("no n8n-auth cookie")
+        return None
+
+    status, body, _ = http_req("GET", "/form/mas-deployment-health-check", cookie=cookie)
+    print("GET form", status, "bytes", len(body))
+    if status != 200:
+        print(body[:300])
+        return None
+
+    boundary = f"----mashealth{int(time.time())}"
+    parts = [
+        f"--{boundary}",
+        'Content-Disposition: form-data; name="operator_note"',
+        "",
+        "lab-soft-redeploy",
+        f"--{boundary}--",
+        "",
+    ]
+    post_body = "\r\n".join(parts).encode()
+    status, body, _ = http_req(
+        "POST",
+        "/form/mas-deployment-health-check",
+        post_body,
+        f"multipart/form-data; boundary={boundary}",
+        cookie=cookie,
+    )
+    print("POST form", status, "bytes", len(body))
+    try:
+        waiting = json.loads(body)
+        waiting_path = re.sub(r"^https?://[^/]+", "", waiting["formWaitingUrl"])
+        exec_id = None
+        m_exec = re.search(r"/form-waiting/(\d+)", waiting_path)
+        if m_exec:
+            exec_id = m_exec.group(1)
+    except Exception:
+        print("no formWaitingUrl", body[:200])
+        return None
+
+    def overall_from_execution(eid: str) -> str | None:
+        raw = psql(f'SELECT data::text FROM execution_data WHERE "executionId"={eid};')
+        m = re.search(r"Overall:\s*<strong>(FAIL|PASS_WITH_TODO|PASS)</strong>", raw)
+        return m.group(1) if m else None
+
+    for i in range(60):
+        if exec_id:
+            overall = overall_from_execution(exec_id)
+            if overall:
+                fail_count = "0"
+                raw = psql(f'SELECT data::text FROM execution_data WHERE "executionId"={exec_id};')
+                fm = re.search(r"FAIL — fix these first \((\d+)\)", raw)
+                if fm:
+                    fail_count = fm.group(1)
+                print(json.dumps({"overall": overall, "fail_first": fail_count, "execution_id": exec_id}))
+                return overall
+            st = psql(f'SELECT status FROM execution_entity WHERE id={exec_id};')
+            if st in {"error", "crashed", "canceled"}:
+                print("health execution", st)
+                return "FAIL"
+        time.sleep(2)
+    print("health wait timeout")
+    return None
+
+
+def wait_url(url: str, attempts: int = 90) -> None:
+    """Host-side health wait — avoids depending on wget inside images."""
+    for i in range(attempts):
+        try:
+            with urllib.request.urlopen(url, timeout=3) as resp:
+                if int(resp.status) == 200:
+                    return
+        except Exception:
+            pass
+        time.sleep(1)
+    raise SystemExit(f"not healthy: {url}")
+
+
+def ensure_compose_up() -> None:
+    print("== compose up ==")
+    # Prefer recreate-without-rebuild when images exist (fast path).
+    run(["docker", "compose", "up", "-d"], timeout=300)
+    env = load_env()
+    n8n_port = env.get("N8N_HOST_PORT", "15678")
+    activity_port = env.get("MAS_ACTIVITY_HOST_PORT", "8200")
+    wait_url(f"http://127.0.0.1:{n8n_port}/healthz")
+    wait_url(f"http://127.0.0.1:{activity_port}/health")
+    for service, inner in (
+        ("math-service", "http://127.0.0.1:8100/health"),
+        ("schedule-builder", "http://127.0.0.1:8090/health"),
+        ("excel-tools", "http://127.0.0.1:18000/health"),
+    ):
+        print(f"wait {service} {inner}")
+        for _ in range(90):
+            cp = run(
+                [
+                    "docker",
+                    "compose",
+                    "exec",
+                    "-T",
+                    service,
+                    "python3",
+                    "-c",
+                    f"import urllib.request; urllib.request.urlopen({inner!r}, timeout=3).read()",
+                ],
+                check=False,
+                timeout=20,
+            )
+            if cp.returncode == 0:
+                break
+            time.sleep(2)
+        else:
+            print(f"warn: {service} not healthy yet")
+
+
+def main() -> int:
+    parser = argparse.ArgumentParser()
+    parser.add_argument("--skip-health", action="store_true")
+    parser.add_argument("--skip-import", action="store_true", help="only rebind/publish existing workflows")
+    parser.add_argument("--skip-wipe", action="store_true", help="do not wipe CAS/trace/Activity state")
+    args = parser.parse_args()
+    t0 = time.time()
+    env = load_env()
+    ensure_compose_up()
+    apply_control_plane_sql()
+    qwen_id = ensure_qwen_credential(env)
+    if qwen_id:
+        env["_N8N_QWEN_CRED_ID"] = qwen_id
+    if not args.skip_wipe:
+        wipe_state(env)
+    if not args.skip_import:
+        import_workflows()
+    name_to_id = wf_map()
+    print(f"workflows {len(name_to_id)}")
+    for name, wid in sorted(name_to_id.items()):
+        nodes = fetch_nodes(wid)
+        n = patch_nodes(nodes, name_to_id, env)
+        if n:
+            save_nodes(wid, nodes)
+        print(f"patched {name}: {n}")
+    bind_error_workflow(name_to_id)
+    # share with project if missing
+    if PROJECT_ID:
+        for wid in name_to_id.values():
+            psql(
+                f"INSERT INTO shared_workflow (\"workflowId\", \"projectId\", role) "
+                f"VALUES ('{wid}', '{PROJECT_ID}', 'workflow:owner') ON CONFLICT DO NOTHING;"
+            )
+    sync_history()
+    publish(name_to_id)
+    run(["docker", "compose", "restart", "n8n"])
+    env = load_env()
+    wait_url(f"http://127.0.0.1:{env.get('N8N_HOST_PORT', '5678')}/healthz")
+    # Forms/webhooks register after active workflows finish loading.
+    time.sleep(8)
+    run(["docker", "compose", "restart", "mas-activity"])
+    wait_url(f"http://127.0.0.1:{env.get('MAS_ACTIVITY_HOST_PORT', '8200')}/health")
+    overall = None
+    if not args.skip_health:
+        overall = run_health_form()
+        if overall is None:
+            print("health form did not return overall — retry once after activate settle")
+            time.sleep(10)
+            overall = run_health_form()
+    # final activity emptiness
+    tasks = -1
+    try:
+        req = urllib.request.Request(
+            f"http://127.0.0.1:{env.get('MAS_ACTIVITY_HOST_PORT', '8200')}/v1/tasks",
+        )
+        with urllib.request.urlopen(req, timeout=5) as resp:
+            tasks = len(json.loads(resp.read().decode()).get("tasks") or [])
+    except Exception as exc:  # noqa: BLE001
+        print("activity probe", exc)
+    elapsed = round(time.time() - t0, 1)
+    print(json.dumps({"overall": overall, "activity_tasks": tasks, "elapsed_s": elapsed}, ensure_ascii=False))
+    if overall == "FAIL" or overall is None:
+        return 2
+    return 0
+
+
+if __name__ == "__main__":
+    raise SystemExit(main())
+
+===END_FILE===
+===BEGIN_FILE===	scripts/mas_stack_health.py	4659	utf8
+#!/usr/bin/env python3
+"""Host-side stack health: ping compose services the Health Check form also probes."""
+from __future__ import annotations
+
+import json
+import os
+import subprocess
+import sys
+import urllib.error
+import urllib.request
+from pathlib import Path
+
+ROOT = Path(__file__).resolve().parents[1]
+
+
+def load_dotenv(path: Path) -> None:
+    """Load KEY=VALUE from .env into os.environ without overriding existing exports."""
+    if not path.is_file():
+        return
+    for raw in path.read_text(encoding="utf-8", errors="replace").splitlines():
+        line = raw.strip()
+        if not line or line.startswith("#") or "=" not in line:
+            continue
+        key, _, value = line.partition("=")
+        key = key.strip()
+        if not key or key in os.environ:
+            continue
+        value = value.strip()
+        if len(value) >= 2 and value[0] == value[-1] and value[0] in {'"', "'"}:
+            value = value[1:-1]
+        os.environ[key] = value
+
+
+def http_get(url: str, timeout: float = 5.0) -> tuple[int, str]:
+    try:
+        with urllib.request.urlopen(url, timeout=timeout) as resp:
+            return int(resp.status), resp.read().decode("utf-8", errors="replace")[:300]
+    except urllib.error.HTTPError as exc:
+        return int(exc.code), str(exc)[:300]
+    except Exception as exc:  # noqa: BLE001
+        return 0, str(exc)[:300]
+
+
+def compose_exec(service: str, *args: str) -> subprocess.CompletedProcess[str]:
+    return subprocess.run(
+        ["docker", "compose", "exec", "-T", service, *args],
+        cwd=str(ROOT),
+        capture_output=True,
+        text=True,
+        timeout=45,
+    )
+
+
+def main() -> int:
+    load_dotenv(ROOT / ".env")
+    # Match docker-compose.yml defaults: N8N_HOST_PORT:-5678, MAS_ACTIVITY_HOST_PORT:-8200
+    n8n_port = os.getenv("N8N_HOST_PORT", "5678")
+    activity_port = os.getenv("MAS_ACTIVITY_HOST_PORT", "8200")
+    checks: list[dict] = []
+
+    def push(name: str, ok: bool, detail: str) -> None:
+        checks.append({"check": name, "ok": ok, "detail": detail})
+        print(("PASS" if ok else "FAIL"), name, "—", detail)
+
+    code, body = http_get(f"http://127.0.0.1:{n8n_port}/healthz")
+    push("host n8n /healthz", code == 200 and "ok" in body.lower(), f"{code} {body}")
+
+    code, body = http_get(f"http://127.0.0.1:{activity_port}/health")
+    push("host mas-activity /health", code == 200 and "ok" in body.lower(), f"{code} {body}")
+
+    orch_url = os.getenv(
+        "ORCHESTRATOR_WEBHOOK_URL",
+        f"http://127.0.0.1:{n8n_port}/webhook/mas-orchestrator-step",
+    )
+    try:
+        req = urllib.request.Request(
+            orch_url,
+            data=b"{}",
+            method="POST",
+            headers={"Content-Type": "application/json"},
+        )
+        with urllib.request.urlopen(req, timeout=10) as resp:
+            orch_code = int(resp.status)
+            orch_body = resp.read().decode("utf-8", errors="replace")[:180]
+    except urllib.error.HTTPError as exc:
+        orch_code = int(exc.code)
+        orch_body = exc.read().decode("utf-8", errors="replace")[:180]
+    except Exception as exc:  # noqa: BLE001
+        orch_code = 0
+        orch_body = str(exc)[:180]
+    push(
+        "host orchestrator webhook registered (unauth 403)",
+        orch_code == 403 and "Authorization data is wrong" in orch_body,
+        f"{orch_code} {orch_body.replace(chr(10), ' ')}",
+    )
+
+    for name, url in [
+        ("compose excel-tools via n8n DNS", "http://excel-tools:18000/health"),
+        ("compose n8n-runners via n8n DNS", "http://n8n-runners:5680/healthz"),
+        ("compose mas-activity via n8n DNS", "http://mas-activity:8200/health"),
+        ("compose n8n self via n8n DNS", "http://n8n:5678/healthz"),
+    ]:
+        r = compose_exec("n8n", "wget", "-q", "-O", "-", url)
+        ok = r.returncode == 0 and bool((r.stdout or "").strip())
+        push(name, ok, ((r.stdout or r.stderr) or "")[:300])
+
+    r = compose_exec("postgres", "pg_isready", "-U", os.getenv("POSTGRES_USER", "n8n"))
+    push("compose postgres pg_isready", r.returncode == 0, ((r.stdout or r.stderr) or "")[:200])
+
+    failed = [c for c in checks if not c["ok"]]
+    report = {"overall": "FAIL" if failed else "PASS", "fail_count": len(failed), "checks": checks}
+    out = ROOT / "simulation-model-example" / "combat-dates-revise" / "stack_health_report.json"
+    out.parent.mkdir(parents=True, exist_ok=True)
+    out.write_text(json.dumps(report, ensure_ascii=False, indent=2) + "\n")
+    print(json.dumps({"overall": report["overall"], "fail_count": report["fail_count"]}, indent=2))
+    return 1 if failed else 0
+
+
+if __name__ == "__main__":
+    sys.exit(main())
+
+===END_FILE===
+===BEGIN_FILE===	scripts/project_pack.py	10437	utf8
+#!/usr/bin/env python3
+"""Pack and unpack the MAS deployment tree into a portable text archive."""
+from __future__ import annotations
+
+import argparse
+import base64
+import re
+import subprocess
+from pathlib import Path
+
+ARCHIVE_FILE = "all.txt"
+BEGIN = "===BEGIN_FILE==="
+END = "===END_FILE==="
+DEFAULT_CHUNK_SIZE = 1_000_000
+
+PACK_DIRS = (
+    "excel-agent-tools",
+    "fastapi-math-service",
+    "mas-activity-service",
+    "n8n",
+    "schedule-builder-service",
+    "scripts",
+)
+ROOT_FILES = (".env.example", "docs.md", "README.md", "docker-compose.yml", ".gitignore")
+NEVER_PACK_DIR_PREFIXES = ("simulation-model-example/", "context-seeder/")
+EXCLUDED_DIR_NAMES = {
+    ".git", ".venv", "venv", "__pycache__", ".mypy_cache", ".pytest_cache",
+    ".ruff_cache", ".idea", ".cursor", "node_modules", "data", "task_binaries",
+}
+EXCLUDED_FILE_NAMES = {ARCHIVE_FILE, "conftest.py", ".coverage"}
+INCLUDED_FILE_EXTENSIONS = {
+    ".py", ".md", ".txt", ".json", ".js", ".css", ".html", ".csv", ".yml",
+    ".yaml", ".toml", ".ini", ".cfg", ".bat", ".sh", ".inc", ".sch",
+    ".grdecl", ".example", ".svg",
+}
+INCLUDED_FILE_NAMES = {
+    "Dockerfile", ".dockerignore", ".gitattributes", ".gitignore",
+    "requirements.txt", "requirements-dev.txt",
+}
+
+
+def _is_under_pack_root(rel: Path) -> bool:
+    posix = rel.as_posix()
+    if posix.startswith(NEVER_PACK_DIR_PREFIXES):
+        return False
+    if posix in ROOT_FILES:
+        return True
+    return bool(rel.parts) and rel.parts[0] in PACK_DIRS
+
+
+def should_skip_path(path: Path, root: Path) -> bool:
+    rel = path.relative_to(root)
+    if not _is_under_pack_root(rel):
+        return True
+    if set(rel.parts) & EXCLUDED_DIR_NAMES:
+        return True
+    if "tests" in rel.parts and rel.parts[0] not in {"n8n", "schedule-builder-service"}:
+        return True
+    if path.name in EXCLUDED_FILE_NAMES or path.name.endswith("_test.py"):
+        return True
+    if path.name.startswith("test_") and path.suffix.lower() == ".py":
+        return rel.parts[0] in {"excel-agent-tools", "mas-activity-service"}
+    if path.suffix == ".env" and not path.name.endswith(".env.example"):
+        return True
+    return False
+
+
+def should_include_path(path: Path) -> bool:
+    return path.name in INCLUDED_FILE_NAMES or path.name.endswith(".env.example") or path.suffix.lower() in INCLUDED_FILE_EXTENSIONS
+
+
+def _git_list_candidates(root: Path) -> list[Path] | None:
+    if not (root / ".git").exists():
+        return None
+    try:
+        proc = subprocess.run(
+            ["git", "-C", str(root), "ls-files", "-z", "--cached", "--others",
+             "--exclude-standard", "--", *PACK_DIRS, *ROOT_FILES],
+            check=True, capture_output=True,
+        )
+    except (OSError, subprocess.CalledProcessError):
+        return None
+    result = []
+    for raw in proc.stdout.split(b"\0"):
+        if raw:
+            path = root / raw.decode("utf-8", errors="surrogateescape")
+            if path.is_file():
+                result.append(path)
+    return result
+
+
+def _git_ignored(root: Path, path: Path) -> bool:
+    try:
+        return subprocess.run(
+            ["git", "-C", str(root), "check-ignore", "-q", "--", str(path.relative_to(root))],
+            capture_output=True,
+        ).returncode == 0
+    except OSError:
+        return False
+
+
+def collect_files(root: Path, *, archive_path: Path | None = None) -> list[Path]:
+    archive_paths = {(root / ARCHIVE_FILE).resolve()}
+    if archive_path is not None:
+        archive_paths.add(archive_path.resolve())
+    candidates = _git_list_candidates(root)
+    from_git = candidates is not None
+    if candidates is None:
+        candidates = [p for p in root.rglob("*") if p.is_file()]
+    files = []
+    for path in candidates:
+        if should_skip_path(path, root) or not should_include_path(path):
+            continue
+        if path.resolve() in archive_paths:
+            continue
+        if not from_git and _git_ignored(root, path):
+            continue
+        files.append(path)
+    return sorted({p.resolve(): p for p in files}.values(),
+                  key=lambda p: p.relative_to(root).as_posix())
+
+
+def _read_payload(path: Path) -> tuple[str, str]:
+    raw = path.read_bytes()
+    try:
+        text = raw.decode("utf-8")
+    except UnicodeDecodeError:
+        return "base64", base64.b64encode(raw).decode("ascii")
+    if "\0" in text:
+        return "base64", base64.b64encode(raw).decode("ascii")
+    return "utf8", text
+
+
+def _write_payload(path: Path, encoding: str, payload: str) -> None:
+    path.parent.mkdir(parents=True, exist_ok=True)
+    if encoding == "utf8":
+        path.write_text(payload, encoding="utf-8")
+    elif encoding == "base64":
+        path.write_bytes(base64.b64decode(payload.encode("ascii")))
+    else:
+        raise ValueError(f"Unknown payload encoding: {encoding!r}")
+
+
+def pack(root: Path, output_file: Path) -> None:
+    files = collect_files(root, archive_path=output_file)
+    output_file.parent.mkdir(parents=True, exist_ok=True)
+    with output_file.open("w", encoding="utf-8", newline="") as out:
+        for path in files:
+            rel = path.relative_to(root).as_posix()
+            encoding, content = _read_payload(path)
+            out.write(f"{BEGIN}\t{rel}\t{len(content)}\t{encoding}\n")
+            out.write(content)
+            out.write("\n")
+            out.write(f"{END}\n")
+    print(f"Packed {len(files)} files into {output_file}")
+
+
+def _chunk_pattern(prefix: str) -> re.Pattern[str]:
+    return re.compile(rf"^{re.escape(prefix)}([1-9][0-9]*)$")
+
+
+def split_archive(input_file: Path, *, chunk_dir: Path | None = None,
+                   chunk_prefix: str | None = None,
+                   chunk_size: int = DEFAULT_CHUNK_SIZE) -> list[Path]:
+    if not input_file.exists():
+        raise FileNotFoundError(f"Archive file not found: {input_file}")
+    if chunk_size <= 0:
+        raise ValueError("Chunk size must be positive")
+    target = chunk_dir or input_file.parent
+    target.mkdir(parents=True, exist_ok=True)
+    prefix = chunk_prefix or input_file.stem
+    pattern = _chunk_pattern(prefix)
+    for path in target.iterdir():
+        if path.is_file() and pattern.fullmatch(path.name):
+            path.unlink()
+    chunks: list[Path] = []
+    current = None
+    current_size = 0
+    with input_file.open("r", encoding="utf-8", newline="") as source:
+        for line in source:
+            size = len(line.encode("utf-8"))
+            if current is None or current_size and current_size + size > chunk_size:
+                if current is not None:
+                    current.close()
+                chunk_path = target / f"{prefix}{len(chunks) + 1}"
+                current = chunk_path.open("w", encoding="utf-8", newline="")
+                chunks.append(chunk_path)
+                current_size = 0
+            current.write(line)
+            current_size += size
+    if current is None:
+        path = target / f"{prefix}1"
+        path.write_text("", encoding="utf-8")
+        chunks.append(path)
+    else:
+        current.close()
+    return chunks
+
+
+def _collect_chunks(directory: Path, prefix: str) -> list[Path]:
+    matches = []
+    pattern = _chunk_pattern(prefix)
+    for path in directory.iterdir():
+        match = pattern.fullmatch(path.name)
+        if path.is_file() and match:
+            matches.append((int(match.group(1)), path))
+    matches.sort()
+    if not matches:
+        raise FileNotFoundError(f"Archive chunks not found in {directory} with prefix {prefix!r}")
+    if [n for n, _ in matches] != list(range(1, len(matches) + 1)):
+        raise ValueError("Archive chunks are incomplete or out of order")
+    return [path for _, path in matches]
+
+
+def join_archive(output_file: Path, *, chunk_dir: Path | None = None,
+                 chunk_prefix: str | None = None) -> list[Path]:
+    directory = chunk_dir or output_file.parent
+    chunks = _collect_chunks(directory, chunk_prefix or output_file.stem)
+    output_file.write_bytes(b"".join(path.read_bytes() for path in chunks))
+    return chunks
+
+
+def unpack(root: Path, input_file: Path) -> None:
+    restored = 0
+    root_resolved = root.resolve()
+    with input_file.open("r", encoding="utf-8") as source:
+        while True:
+            header = source.readline()
+            if not header:
+                break
+            if not header.startswith(BEGIN + "\t"):
+                raise ValueError("Invalid archive format: malformed BEGIN header")
+            fields = header.rstrip("\n").split("\t")
+            if len(fields) == 3:
+                _, rel_path, raw_len = fields
+                encoding = "utf8"
+            elif len(fields) == 4:
+                _, rel_path, raw_len, encoding = fields
+            else:
+                raise ValueError("Invalid archive format: malformed BEGIN payload")
+            content = source.read(int(raw_len))
+            if len(content) != int(raw_len) or source.read(1) != "\n" or source.readline().rstrip("\n") != END:
+                raise ValueError("Invalid archive format: truncated file or missing END marker")
+            target = (root / rel_path).resolve()
+            if root_resolved != target and root_resolved not in target.parents:
+                raise ValueError(f"Refusing to unpack outside root: {rel_path}")
+            _write_payload(target, encoding, content)
+            restored += 1
+    print(f"Restored {restored} files from {input_file}")
+
+
+def main() -> None:
+    parser = argparse.ArgumentParser()
+    parser.add_argument("mode", choices=("pack", "unpack", "split", "join"))
+    parser.add_argument("--root", default=".")
+    parser.add_argument("--archive", default=None)
+    parser.add_argument("--chunk-dir", default=None)
+    parser.add_argument("--chunk-prefix", default=None)
+    parser.add_argument("--chunk-size", type=int, default=DEFAULT_CHUNK_SIZE)
+    args = parser.parse_args()
+    root = Path(args.root).resolve()
+    archive = Path(args.archive).resolve() if args.archive else root / ARCHIVE_FILE
+    chunk_dir = Path(args.chunk_dir).resolve() if args.chunk_dir else archive.parent
+    if args.mode == "pack":
+        pack(root, archive)
+    elif args.mode == "unpack":
+        unpack(root, archive)
+    elif args.mode == "split":
+        split_archive(archive, chunk_dir=chunk_dir, chunk_prefix=args.chunk_prefix, chunk_size=args.chunk_size)
+    else:
+        join_archive(archive, chunk_dir=chunk_dir, chunk_prefix=args.chunk_prefix)
+
+
+if __name__ == "__main__":
+    main()
+
+===END_FILE===
+===BEGIN_FILE===	scripts/test_check_schedule_includes.py	2727	utf8
+#!/usr/bin/env python3
+"""Self-tests for check_schedule_includes.py (no third-party dependencies)."""
+
+from __future__ import annotations
+
+import tempfile
+from pathlib import Path
+
+import check_schedule_includes as checker
+
+
+def test_valid_virtual_package() -> None:
+    with tempfile.TemporaryDirectory() as tmp:
+        package = Path(tmp)
+        root = package / "SCHEDULE" / "FORECAST" / "MVP1_schedule_IN.INC"
+        include = package / "INCLUDE" / "MODEL.INC"
+        root.parent.mkdir(parents=True)
+        include.parent.mkdir(parents=True)
+        root.write_text("INCLUDE\n'../../INCLUDE/MODEL.INC' /\n", encoding="utf-8")
+        include.write_text("DATES\n  1 JAN 2025 /\n", encoding="utf-8")
+        code, result = checker.run(
+            checker.build_parser().parse_args(
+                [str(root), "--package-dir", str(package)]
+            )
+        )
+        assert code == 0, result
+        assert result["ok"] is True
+        assert result["files_checked"] == 2
+        assert result["includes_checked"] == 1
+
+
+def test_invalid_include_and_encoding() -> None:
+    with tempfile.TemporaryDirectory() as tmp:
+        source = Path(tmp) / "MVP1_schedule_IN.INC"
+        source.write_text("INCLUDE\n'' /\nINCLUDE\n'broken\n", encoding="utf-8")
+        code, result = checker.run(
+            checker.build_parser().parse_args([str(source)])
+        )
+        assert code == 1, result
+        codes = {finding["code"] for finding in result["findings"]}
+        assert "INCLUDE_PATH_INVALID" in codes
+        assert "INCLUDE_QUOTE_UNTERMINATED" in codes
+
+        utf16 = Path(tmp) / "utf16.INC"
+        utf16.write_bytes("DATES\n/\n".encode("utf-16"))
+        code, result = checker.run(
+            checker.build_parser().parse_args([str(utf16)])
+        )
+        assert code == 1, result
+        codes = {finding["code"] for finding in result["findings"]}
+        assert "NUL_BYTE" in codes
+        assert "ENCODING_NOT_UTF8" in codes
+
+
+def test_missing_include_body() -> None:
+    with tempfile.TemporaryDirectory() as tmp:
+        package = Path(tmp)
+        root = package / "SCHEDULE" / "FORECAST" / "root.INC"
+        root.parent.mkdir(parents=True)
+        root.write_text("INCLUDE\n'../../INCLUDE/missing.INC' /\n", encoding="utf-8")
+        code, result = checker.run(
+            checker.build_parser().parse_args(
+                [str(root), "--package-dir", str(package)]
+            )
+        )
+        assert code == 1, result
+        assert any(f["code"] == "INCLUDE_NOT_FOUND" for f in result["findings"])
+
+
+if __name__ == "__main__":
+    test_valid_virtual_package()
+    test_invalid_include_and_encoding()
+    test_missing_include_body()
+    print("check_schedule_includes self-tests OK")
+
+===END_FILE===
+===BEGIN_FILE===	scripts/test_project_pack.py	4052	utf8
+#!/usr/bin/env python3
+"""Smoke tests for scripts/project_pack.py (no pytest required)."""
+from __future__ import annotations
+
+import importlib.util
+import sys
+import tempfile
+from pathlib import Path
+
+ROOT = Path(__file__).resolve().parents[1]
+
+
+def _load():
+    spec = importlib.util.spec_from_file_location(
+        "project_pack",
+        ROOT / "scripts" / "project_pack.py",
+    )
+    assert spec and spec.loader
+    mod = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(mod)
+    return mod
+
+
+def test_pack_unpack_roundtrip() -> None:
+    mod = _load()
+    with tempfile.TemporaryDirectory() as tmp:
+        src = Path(tmp) / "src"
+        out = Path(tmp) / "out"
+        archive = Path(tmp) / "all.txt"
+        (src / "n8n" / "workflows").mkdir(parents=True)
+        (src / "excel-agent-tools").mkdir(parents=True)
+        (src / "schedule-builder-service" / "app").mkdir(parents=True)
+        (src / "scripts").mkdir(parents=True)
+        (src / ".venv" / "lib").mkdir(parents=True)
+        (src / "excel-agent-tools" / "tests").mkdir(parents=True)
+
+        (src / "docs.md").write_text("# runbook\n", encoding="utf-8")
+        (src / ".env.example").write_text("KEY=value\n", encoding="utf-8")
+        (src / "n8n" / "workflows" / "a.workflow.json").write_text('{"ok":1}\n', encoding="utf-8")
+        (src / "excel-agent-tools" / "app.py").write_text("print(1)\n", encoding="utf-8")
+        (src / "schedule-builder-service" / "app" / "main.py").write_text("print('schedule')\n", encoding="utf-8")
+        (src / "excel-agent-tools" / "secret.env").write_text("SECRET=1\n", encoding="utf-8")
+        (src / "excel-agent-tools" / "tests" / "test_x.py").write_text("assert True\n", encoding="utf-8")
+        (src / ".venv" / "lib" / "skip.py").write_text("nope\n", encoding="utf-8")
+        (src / "scripts" / "project_pack.py").write_text("# pack\n", encoding="utf-8")
+        # binary sample
+        (src / "n8n" / "blob.bin").write_bytes(b"\x00\xff")
+        # .bin not in include list — skip; use .inc with binary via forced name
+        (src / "n8n" / "sample.inc").write_bytes(b"DATES\n/\n\x00")
+
+        # No .git → walk fallback
+        files = mod.collect_files(src)
+        rels = [p.relative_to(src).as_posix() for p in files]
+        assert "docs.md" in rels
+        assert ".env.example" in rels
+        assert "n8n/workflows/a.workflow.json" in rels
+        assert "excel-agent-tools/app.py" in rels
+        assert "schedule-builder-service/app/main.py" in rels
+        assert "scripts/project_pack.py" in rels
+        assert "excel-agent-tools/secret.env" not in rels
+        assert "excel-agent-tools/tests/test_x.py" not in rels
+        assert ".venv/lib/skip.py" not in rels
+        assert "n8n/sample.inc" in rels
+
+        mod.pack(src, archive)
+        mod.unpack(out, archive)
+        assert (out / "docs.md").read_text(encoding="utf-8") == "# runbook\n"
+        assert (out / "n8n" / "workflows" / "a.workflow.json").read_text(encoding="utf-8") == '{"ok":1}\n'
+        assert (out / "n8n" / "sample.inc").read_bytes() == b"DATES\n/\n\x00"
+        assert (out / "schedule-builder-service" / "app" / "main.py").read_text(encoding="utf-8") == "print('schedule')\n"
+
+
+def test_split_join() -> None:
+    mod = _load()
+    with tempfile.TemporaryDirectory() as tmp:
+        src = Path(tmp) / "src"
+        archive = Path(tmp) / "all.txt"
+        joined = Path(tmp) / "joined.txt"
+        (src / "scripts").mkdir(parents=True)
+        (src / "docs.md").write_text("x" * 5000, encoding="utf-8")
+        (src / "scripts" / "a.py").write_text("print(1)\n", encoding="utf-8")
+        mod.pack(src, archive)
+        chunks = mod.split_archive(archive, chunk_size=800)
+        assert len(chunks) >= 2
+        mod.join_archive(joined, chunk_dir=archive.parent, chunk_prefix="all")
+        assert joined.read_bytes() == archive.read_bytes()
+
+
+def main() -> int:
+    test_pack_unpack_roundtrip()
+    test_split_join()
+    print("project_pack self-tests OK")
+    return 0
+
+
+if __name__ == "__main__":
+    sys.exit(main())
+
+===END_FILE===

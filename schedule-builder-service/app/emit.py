@@ -9,10 +9,14 @@ from .parse import Block, Record, ScheduleDoc, timeline_segments
 def _record_line(record: Record) -> str:
     raw = record.raw.strip()
     if raw.endswith("/"):
-        return raw
-    if record.tokens:
-        return "  " + " ".join(record.tokens) + " /"
-    return "  /"
+        line = raw
+    elif record.tokens:
+        line = "  " + " ".join(record.tokens) + " /"
+    else:
+        line = "  /"
+    if record.comment and "--" not in line:
+        line += f" -- {record.comment}"
+    return line
 
 
 def emit_block(block: Block) -> str:

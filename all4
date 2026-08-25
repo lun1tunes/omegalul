@@ -1,3 +1,292 @@
+              "responseFormat": "json"
+            }
+          }
+        }
+      },
+      "id": "cf896b5f-c322-54db-8650-f141428dbb6e",
+      "name": "Fetch excel result",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.4,
+      "position": [
+        1960,
+        0
+      ],
+      "onError": "continueRegularOutput",
+      "alwaysOutputData": true
+    },
+    {
+      "parameters": {
+        "jsCode": "\nconst fetched=$json||{};\nconst opened=$('Open excel session').first().json||{};\nif(fetched.status){\n  return [{json:{\n    task_id:fetched.task_id||opened.task_id||'',\n    agent_id:'excel_extractor',\n    status:fetched.status,\n    message:fetched.message||'',\n    data:fetched.data||{},\n    artifacts:fetched.artifacts||{},\n    issues:fetched.issues||[],\n    assumptions:fetched.assumptions||[],\n    requests:fetched.requests||[]\n  }}];\n}\nreturn [{json:{\n  task_id:opened.task_id||'',\n  agent_id:'excel_extractor',\n  status:'failed',\n  message:String(fetched.message||fetched.error||'Excel Extractor не вернул факты'),\n  data:{},\n  artifacts:{},\n  issues:[{type:'excel_agent_no_result'}],\n  assumptions:[],\n  requests:[]\n}}];\n"
+      },
+      "id": "76537492-0ad0-514e-9053-8685f3bf04b1",
+      "name": "Format excel result",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        2200,
+        0
+      ]
+    },
+    {
+      "parameters": {
+        "toolDescription": "Компактные листы и размеры workbook. Без файла.",
+        "method": "POST",
+        "url": "={{ $('Runtime configuration').first().json.excel_tools_url + '/agent-tools/' + \"workbook_introspect\" }}",
+        "authentication": "none",
+        "sendQuery": false,
+        "sendHeaders": true,
+        "specifyHeaders": "keypair",
+        "sendBody": true,
+        "specifyBody": "keypair",
+        "placeholderDefinitions": {
+          "values": []
+        },
+        "optimizeResponse": false,
+        "parametersHeaders": {
+          "values": [
+            {
+              "name": "Content-Type",
+              "valueProvider": "fieldValue",
+              "value": "application/json"
+            },
+            {
+              "name": "X-API-Key",
+              "valueProvider": "fieldValue",
+              "value": "={{ $('Runtime configuration').first().json.excel_tools_api_key || '' }}"
+            }
+          ]
+        },
+        "parametersBody": {
+          "values": [
+            {
+              "name": "session_id",
+              "valueProvider": "fieldValue",
+              "value": "={{ $('Open excel session').first().json.session_id }}"
+            }
+          ]
+        }
+      },
+      "id": "71b0ad7a-728c-509e-b23d-b9cdc615e2ae",
+      "name": "workbook_introspect",
+      "type": "@n8n/n8n-nodes-langchain.toolHttpRequest",
+      "typeVersion": 1.1,
+      "position": [
+        760,
+        -420
+      ]
+    },
+    {
+      "parameters": {
+        "toolDescription": "Небольшой preview одного листа. sheet только из introspect.",
+        "method": "POST",
+        "url": "={{ $('Runtime configuration').first().json.excel_tools_url + '/agent-tools/' + \"sheet_preview\" }}",
+        "authentication": "none",
+        "sendQuery": false,
+        "sendHeaders": true,
+        "specifyHeaders": "keypair",
+        "sendBody": true,
+        "specifyBody": "keypair",
+        "placeholderDefinitions": {
+          "values": [
+            {
+              "name": "sheet",
+              "description": "Точное имя листа из introspect",
+              "type": "string"
+            }
+          ]
+        },
+        "optimizeResponse": false,
+        "parametersHeaders": {
+          "values": [
+            {
+              "name": "Content-Type",
+              "valueProvider": "fieldValue",
+              "value": "application/json"
+            },
+            {
+              "name": "X-API-Key",
+              "valueProvider": "fieldValue",
+              "value": "={{ $('Runtime configuration').first().json.excel_tools_api_key || '' }}"
+            }
+          ]
+        },
+        "parametersBody": {
+          "values": [
+            {
+              "name": "session_id",
+              "valueProvider": "fieldValue",
+              "value": "={{ $('Open excel session').first().json.session_id }}"
+            },
+            {
+              "name": "sheet",
+              "valueProvider": "modelRequired",
+              "value": ""
+            }
+          ]
+        }
+      },
+      "id": "669a4f3a-4afd-5a8e-999e-35cfadceb7eb",
+      "name": "sheet_preview",
+      "type": "@n8n/n8n-nodes-langchain.toolHttpRequest",
+      "typeVersion": 1.1,
+      "position": [
+        980,
+        -420
+      ]
+    },
+    {
+      "parameters": {
+        "toolDescription": "Найти таблицы. sheet опционален. Возвращает table_id, range, columns — не workbook.",
+        "method": "POST",
+        "url": "={{ $('Runtime configuration').first().json.excel_tools_url + '/agent-tools/' + \"detect_tables\" }}",
+        "authentication": "none",
+        "sendQuery": false,
+        "sendHeaders": true,
+        "specifyHeaders": "keypair",
+        "sendBody": true,
+        "specifyBody": "keypair",
+        "placeholderDefinitions": {
+          "values": [
+            {
+              "name": "sheet",
+              "description": "Ограничить поиск одним листом",
+              "type": "string"
+            }
+          ]
+        },
+        "optimizeResponse": false,
+        "parametersHeaders": {
+          "values": [
+            {
+              "name": "Content-Type",
+              "valueProvider": "fieldValue",
+              "value": "application/json"
+            },
+            {
+              "name": "X-API-Key",
+              "valueProvider": "fieldValue",
+              "value": "={{ $('Runtime configuration').first().json.excel_tools_api_key || '' }}"
+            }
+          ]
+        },
+        "parametersBody": {
+          "values": [
+            {
+              "name": "session_id",
+              "valueProvider": "fieldValue",
+              "value": "={{ $('Open excel session').first().json.session_id }}"
+            },
+            {
+              "name": "sheet",
+              "valueProvider": "modelOptional",
+              "value": ""
+            }
+          ]
+        }
+      },
+      "id": "3a321bbf-c410-53e2-b000-a99958d37337",
+      "name": "detect_tables",
+      "type": "@n8n/n8n-nodes-langchain.toolHttpRequest",
+      "typeVersion": 1.1,
+      "position": [
+        1200,
+        -420
+      ]
+    },
+    {
+      "parameters": {
+        "toolDescription": "Ранжировать уже найденные или подходящие таблицы по фразе запроса.",
+        "method": "POST",
+        "url": "={{ $('Runtime configuration').first().json.excel_tools_url + '/agent-tools/' + \"match_tables\" }}",
+        "authentication": "none",
+        "sendQuery": false,
+        "sendHeaders": true,
+        "specifyHeaders": "keypair",
+        "sendBody": true,
+        "specifyBody": "keypair",
+        "placeholderDefinitions": {
+          "values": [
+            {
+              "name": "query",
+              "description": "Что искать: даты ввода, дебиты, ...",
+              "type": "string"
+            }
+          ]
+        },
+        "optimizeResponse": false,
+        "parametersHeaders": {
+          "values": [
+            {
+              "name": "Content-Type",
+              "valueProvider": "fieldValue",
+              "value": "application/json"
+            },
+            {
+              "name": "X-API-Key",
+              "valueProvider": "fieldValue",
+              "value": "={{ $('Runtime configuration').first().json.excel_tools_api_key || '' }}"
+            }
+          ]
+        },
+        "parametersBody": {
+          "values": [
+            {
+              "name": "session_id",
+              "valueProvider": "fieldValue",
+              "value": "={{ $('Open excel session').first().json.session_id }}"
+            },
+            {
+              "name": "query",
+              "valueProvider": "modelRequired",
+              "value": ""
+            }
+          ]
+        }
+      },
+      "id": "fd8414df-6c58-5e8d-9f9e-d49bcfa063c1",
+      "name": "match_tables",
+      "type": "@n8n/n8n-nodes-langchain.toolHttpRequest",
+      "typeVersion": 1.1,
+      "position": [
+        1420,
+        -420
+      ]
+    },
+    {
+      "parameters": {
+        "toolDescription": "Колонки, число строк и sample. table_id только из detect/match.",
+        "method": "POST",
+        "url": "={{ $('Runtime configuration').first().json.excel_tools_url + '/agent-tools/' + \"describe_table\" }}",
+        "authentication": "none",
+        "sendQuery": false,
+        "sendHeaders": true,
+        "specifyHeaders": "keypair",
+        "sendBody": true,
+        "specifyBody": "keypair",
+        "placeholderDefinitions": {
+          "values": [
+            {
+              "name": "table_id",
+              "description": "table_id из detect_tables",
+              "type": "string"
+            }
+          ]
+        },
+        "optimizeResponse": false,
+        "parametersHeaders": {
+          "values": [
+            {
+              "name": "Content-Type",
+              "valueProvider": "fieldValue",
+              "value": "application/json"
+            },
+            {
+              "name": "X-API-Key",
+              "valueProvider": "fieldValue",
+              "value": "={{ $('Runtime configuration').first().json.excel_tools_api_key || '' }}"
+            }
+          ]
+        },
         "parametersBody": {
           "values": [
             {
@@ -470,19 +759,22 @@
 }
 
 ===END_FILE===
-===BEGIN_FILE===	n8n/workflows/core/mas-control-plane-proxy.workflow.json	13380	utf8
+===BEGIN_FILE===	n8n/workflows/core/mas-control-plane-proxy.workflow.json	14469	utf8
 {
   "id": "mas-control-plane-proxy-v1",
   "name": "MAS — Control Plane Proxy",
   "active": false,
   "isArchived": false,
   "settings": {
-    "executionOrder": "v1"
+    "executionOrder": "v1",
+    "saveDataSuccessExecution": "none",
+    "saveDataErrorExecution": "all",
+    "saveManualExecutions": true
   },
   "nodes": [
     {
       "parameters": {
-        "content": "## edit after import\n\nThis is the only database boundary for MAS Activity.\n\n1. Bind the same Postgres credential used by the existing MAS workflows.\n2. Bind Header Auth on the webhook.\n3. Activate this workflow.\n4. Set `CONTROL_PLANE_PROXY_URL=http://n8n:5678/webhook/mas-control-plane` in Activity.\n\nOperations: schema, create_case, get_case, list_cases, update_case, append_event, list_events, append_error, list_errors, record_execution, case_id_for_execution, list_agents, upsert_agent, artifact_put, artifact_get.\n\nActivity contains no database driver and no Postgres connection. HITL state, events and error traces use the same proxy.",
+        "content": "## edit after import\n\nThis is the only database boundary for MAS Activity.\n\n1. Bind the same Postgres credential used by the existing MAS workflows.\n2. Bind Header Auth on the webhook.\n3. Activate this workflow.\n4. Set `CONTROL_PLANE_PROXY_URL=http://n8n:5678/webhook/mas-control-plane` in Activity.\n\nOperations: schema, create_case, get_case, list_cases, update_case, append_event, list_events, snapshot, append_error, list_errors, record_execution, case_id_for_execution, list_agents, upsert_agent, artifact_put, artifact_get.\n\n`snapshot` returns case + events in one SQL / one n8n execution (Activity live feed).\nSuccessful production executions are not saved; errors still are.\n\nActivity contains no database driver and no Postgres connection. HITL state, events and error traces use the same proxy.",
         "height": 430,
         "width": 560,
         "color": 1
@@ -522,7 +814,7 @@
     },
     {
       "parameters": {
-        "jsCode": "const raw=$json.body&&typeof $json.body==='object'?$json.body:$json;\nconst op=String(raw.operation||'').trim();\nconst allowed=new Set(['schema','create_case','get_case','list_cases','update_case','append_event','list_events','append_error','list_errors','record_execution','case_id_for_execution','list_agents','upsert_agent','artifact_put','artifact_get']);\nif(!allowed.has(op)) throw new Error('unsupported operation');\nconst s=v=>String(v??'');\nconst j=v=>JSON.stringify(v??{});\nconst caseId=s(raw.case_id).trim();\nconst artifactId=s(raw.artifact_id).trim();\nif(['create_case','get_case','update_case','append_event','list_events','list_errors','artifact_put','artifact_get'].includes(op)&&!caseId) throw new Error('case_id is required');\nif(['artifact_put','artifact_get'].includes(op)&&!artifactId) throw new Error('artifact_id is required');\nconst common={operation:op,case_id:caseId,artifact_id:artifactId};\nlet query='',params=[];\nif(op==='schema') query=`CREATE TABLE IF NOT EXISTS cases (case_id TEXT PRIMARY KEY,state JSONB NOT NULL DEFAULT '{}'::jsonb,status TEXT NOT NULL,updated_at TIMESTAMPTZ NOT NULL DEFAULT now(),CONSTRAINT cases_status_check CHECK (status IN ('new','running','waiting_user','done','failed')));CREATE TABLE IF NOT EXISTS events (event_id BIGSERIAL PRIMARY KEY,case_id TEXT NOT NULL REFERENCES cases(case_id) ON DELETE CASCADE,task_id TEXT,kind TEXT NOT NULL,actor TEXT NOT NULL,agent_id TEXT,status TEXT,status_message TEXT,handoff_message TEXT,payload JSONB NOT NULL DEFAULT '{}'::jsonb,created_at TIMESTAMPTZ NOT NULL DEFAULT now());CREATE INDEX IF NOT EXISTS events_case_id_event_id_idx ON events(case_id);CREATE TABLE IF NOT EXISTS error_traces (error_id BIGSERIAL PRIMARY KEY,case_id TEXT,execution_id TEXT,workflow_name TEXT,node_name TEXT,error_message TEXT,error_type TEXT,stack TEXT,input_snapshot JSONB,created_at TIMESTAMPTZ NOT NULL DEFAULT now());CREATE INDEX IF NOT EXISTS error_traces_case_id_idx ON error_traces(case_id);CREATE TABLE IF NOT EXISTS executions (execution_id TEXT PRIMARY KEY,case_id TEXT,workflow_name TEXT,started_at TIMESTAMPTZ NOT NULL DEFAULT now());CREATE INDEX IF NOT EXISTS executions_case_id_idx ON executions(case_id);CREATE TABLE IF NOT EXISTS agent_registry (agent_id TEXT PRIMARY KEY,title TEXT,when_to_use TEXT,input_required JSONB NOT NULL DEFAULT '[]'::jsonb,output_provides JSONB NOT NULL DEFAULT '[]'::jsonb);CREATE TABLE IF NOT EXISTS mas_artifacts (case_id TEXT NOT NULL,artifact_id TEXT NOT NULL,filename TEXT NOT NULL,mime_type TEXT NOT NULL DEFAULT 'application/octet-stream',content BYTEA NOT NULL,created_at TIMESTAMPTZ NOT NULL DEFAULT now(),updated_at TIMESTAMPTZ NOT NULL DEFAULT now(),PRIMARY KEY(case_id,artifact_id));CREATE INDEX IF NOT EXISTS mas_artifacts_case_id_idx ON mas_artifacts(case_id);INSERT INTO agent_registry(agent_id,title,when_to_use,input_required,output_provides) VALUES ('excel_extractor','Excel Extractor','Если есть Excel-файл и нужно извлечь данные','[\"excel\"]'::jsonb,'[\"excel_table\",\"normalized_rows\"]'::jsonb),('calculation_agent','Calculation Agent','Если нужна геометрическая калька','[\"surface\",\"trajectory\"]'::jsonb,'[\"top_perforation_md\"]'::jsonb),('schedule_builder','Schedule Builder','Построение SCHEDULE','[\"schedule_source\"]'::jsonb,'[\"schedule_out\",\"diff\"]'::jsonb) ON CONFLICT(agent_id) DO NOTHING;SELECT true AS schema_ok;`;\nelse if(op==='create_case'){query='INSERT INTO cases(case_id,state,status,updated_at) VALUES($1,$2::jsonb,$3,now()) ON CONFLICT(case_id) DO NOTHING RETURNING case_id,state,status,updated_at';params=[caseId,j(raw.state),s(raw.status||'new')];}\nelse if(op==='get_case'){query='SELECT case_id,state,status,updated_at FROM cases WHERE case_id=$1';params=[caseId];}\nelse if(op==='list_cases'){query='SELECT c.case_id,c.status,c.updated_at,c.state,(SELECT COUNT(*) FROM events e WHERE e.case_id=c.case_id) AS event_count FROM cases c ORDER BY c.updated_at DESC LIMIT $1';params=[Number(raw.limit||80)];}\nelse if(op==='update_case'){query='UPDATE cases SET state=$1::jsonb,status=$2,updated_at=now() WHERE case_id=$3 RETURNING case_id,state,status,updated_at';params=[j(raw.state),s(raw.status),caseId];}\nelse if(op==='append_event'){query=\"WITH locked AS (SELECT case_id FROM cases WHERE case_id=$1 FOR UPDATE), last_event AS (SELECT e.* FROM events e JOIN locked l ON l.case_id=e.case_id WHERE e.case_id=$1 ORDER BY e.event_id DESC LIMIT 1), inserted AS (INSERT INTO events(case_id,task_id,kind,actor,agent_id,status,status_message,handoff_message,payload) SELECT $1,$2,$3,$4,$5,$6,$7,$8,$9::jsonb WHERE NOT EXISTS (SELECT 1 FROM last_event WHERE kind=$3 AND actor=$4 AND COALESCE(agent_id,'')=COALESCE($5,'') AND COALESCE(status,'')=COALESCE($6,'') AND regexp_replace(COALESCE(status_message,''),'\\\\s+',' ','g')=regexp_replace(COALESCE($7,''),'\\\\s+',' ','g') AND regexp_replace(COALESCE(handoff_message,''),'\\\\s+',' ','g')=regexp_replace(COALESCE($8,''),'\\\\s+',' ','g') AND COALESCE(task_id,'')=COALESCE($2,'')) RETURNING event_id,case_id,task_id,kind,actor,agent_id,status,status_message,handoff_message,payload,created_at) SELECT *,false AS idempotent FROM inserted UNION ALL SELECT event_id,case_id,task_id,kind,actor,agent_id,status,status_message,handoff_message,payload,created_at,true AS idempotent FROM last_event WHERE NOT EXISTS (SELECT 1 FROM inserted)\";params=[caseId,s(raw.task_id),s(raw.kind),s(raw.actor),raw.agent_id||null,raw.status||null,raw.status_message||null,raw.handoff_message||null,j(raw.payload)];}\nelse if(op==='list_events'){query='SELECT event_id,case_id,task_id,kind,actor,agent_id,status,status_message,handoff_message,payload,created_at FROM events WHERE case_id=$1 AND event_id>$2 ORDER BY event_id ASC';params=[caseId,Number(raw.after_seq||0)];}\nelse if(op==='append_error'){query='INSERT INTO error_traces(case_id,execution_id,workflow_name,node_name,error_message,error_type,stack,input_snapshot) VALUES($1,$2,$3,$4,$5,$6,$7,$8::jsonb) RETURNING error_id,case_id,execution_id,workflow_name,node_name,error_message,error_type,stack,input_snapshot,created_at';params=[raw.case_id||null,raw.execution_id||null,raw.workflow_name||null,raw.node_name||null,raw.error_message||null,raw.error_type||null,raw.stack||null,j(raw.input_snapshot)];}\nelse if(op==='list_errors'){query='SELECT error_id,case_id,execution_id,workflow_name,node_name,error_message,error_type,stack,input_snapshot,created_at FROM error_traces WHERE case_id=$1 ORDER BY error_id ASC';params=[caseId];}\nelse if(op==='record_execution'){query='INSERT INTO executions(execution_id,case_id,workflow_name) VALUES($1,$2,$3) ON CONFLICT(execution_id) DO UPDATE SET case_id=EXCLUDED.case_id,workflow_name=EXCLUDED.workflow_name RETURNING execution_id,case_id,workflow_name';params=[s(raw.execution_id),caseId,s(raw.workflow_name||'orchestrator')];}\nelse if(op==='case_id_for_execution'){query='SELECT case_id FROM executions WHERE execution_id=$1';params=[s(raw.execution_id)];}\nelse if(op==='list_agents'){query='SELECT agent_id,title,when_to_use,input_required,output_provides FROM agent_registry ORDER BY agent_id';}\nelse if(op==='upsert_agent'){const r=raw.row||{};query='INSERT INTO agent_registry(agent_id,title,when_to_use,input_required,output_provides) VALUES($1,$2,$3,$4::jsonb,$5::jsonb) ON CONFLICT(agent_id) DO UPDATE SET title=EXCLUDED.title,when_to_use=EXCLUDED.when_to_use,input_required=EXCLUDED.input_required,output_provides=EXCLUDED.output_provides RETURNING agent_id,title,when_to_use,input_required,output_provides';params=[s(r.agent_id),r.title||null,r.when_to_use||null,j(r.input_required||[]),j(r.output_provides||[])];}\nelse if(op==='artifact_put'){query=\"INSERT INTO mas_artifacts(case_id,artifact_id,filename,mime_type,content,updated_at) VALUES($1,$2,$3,$4,decode($5,'base64'),now()) ON CONFLICT(case_id,artifact_id) DO UPDATE SET filename=EXCLUDED.filename,mime_type=EXCLUDED.mime_type,content=EXCLUDED.content,updated_at=now() RETURNING case_id,artifact_id,filename,mime_type,octet_length(content)::bigint AS bytes\";params=[caseId,artifactId,s(raw.filename||artifactId).slice(0,512),s(raw.mime_type||'application/octet-stream').slice(0,255),s(raw.content_base64)];}\nelse if(op==='artifact_get'){query=\"SELECT case_id,artifact_id,filename,mime_type,encode(content,'base64') AS content_base64,octet_length(content)::bigint AS bytes FROM mas_artifacts WHERE case_id=$1 AND artifact_id=$2\";params=[caseId,artifactId];}\nreturn [{json:{...common,query,params}}];"
+        "jsCode": "const raw=$json.body&&typeof $json.body==='object'?$json.body:$json;\nconst op=String(raw.operation||'').trim();\nconst allowed=new Set(['schema','create_case','get_case','list_cases','update_case','append_event','list_events','snapshot','append_error','list_errors','record_execution','case_id_for_execution','list_agents','upsert_agent','artifact_put','artifact_get']);\nif(!allowed.has(op)) throw new Error('unsupported operation');\nconst s=v=>String(v??'');\nconst j=v=>JSON.stringify(v??{});\nconst caseId=s(raw.case_id).trim();\nconst artifactId=s(raw.artifact_id).trim();\nif(['create_case','get_case','update_case','append_event','list_events','snapshot','list_errors','artifact_put','artifact_get'].includes(op)&&!caseId) throw new Error('case_id is required');\nif(['artifact_put','artifact_get'].includes(op)&&!artifactId) throw new Error('artifact_id is required');\nconst common={operation:op,case_id:caseId,artifact_id:artifactId};\nlet query='',params=[];\nif(op==='schema') query=`CREATE TABLE IF NOT EXISTS cases (case_id TEXT PRIMARY KEY,state JSONB NOT NULL DEFAULT '{}'::jsonb,status TEXT NOT NULL,updated_at TIMESTAMPTZ NOT NULL DEFAULT now(),CONSTRAINT cases_status_check CHECK (status IN ('new','running','waiting_user','done','failed')));CREATE TABLE IF NOT EXISTS events (event_id BIGSERIAL PRIMARY KEY,case_id TEXT NOT NULL REFERENCES cases(case_id) ON DELETE CASCADE,task_id TEXT,kind TEXT NOT NULL,actor TEXT NOT NULL,agent_id TEXT,status TEXT,status_message TEXT,handoff_message TEXT,payload JSONB NOT NULL DEFAULT '{}'::jsonb,created_at TIMESTAMPTZ NOT NULL DEFAULT now());CREATE INDEX IF NOT EXISTS events_case_id_event_id_idx ON events(case_id);CREATE TABLE IF NOT EXISTS error_traces (error_id BIGSERIAL PRIMARY KEY,case_id TEXT,execution_id TEXT,workflow_name TEXT,node_name TEXT,error_message TEXT,error_type TEXT,stack TEXT,input_snapshot JSONB,created_at TIMESTAMPTZ NOT NULL DEFAULT now());CREATE INDEX IF NOT EXISTS error_traces_case_id_idx ON error_traces(case_id);CREATE TABLE IF NOT EXISTS executions (execution_id TEXT PRIMARY KEY,case_id TEXT,workflow_name TEXT,started_at TIMESTAMPTZ NOT NULL DEFAULT now());CREATE INDEX IF NOT EXISTS executions_case_id_idx ON executions(case_id);CREATE TABLE IF NOT EXISTS agent_registry (agent_id TEXT PRIMARY KEY,title TEXT,when_to_use TEXT,input_required JSONB NOT NULL DEFAULT '[]'::jsonb,output_provides JSONB NOT NULL DEFAULT '[]'::jsonb);CREATE TABLE IF NOT EXISTS mas_artifacts (case_id TEXT NOT NULL,artifact_id TEXT NOT NULL,filename TEXT NOT NULL,mime_type TEXT NOT NULL DEFAULT 'application/octet-stream',content BYTEA NOT NULL,created_at TIMESTAMPTZ NOT NULL DEFAULT now(),updated_at TIMESTAMPTZ NOT NULL DEFAULT now(),PRIMARY KEY(case_id,artifact_id));CREATE INDEX IF NOT EXISTS mas_artifacts_case_id_idx ON mas_artifacts(case_id);INSERT INTO agent_registry(agent_id,title,when_to_use,input_required,output_provides) VALUES ('excel_extractor','Excel Extractor','Если есть Excel-файл и нужно извлечь данные','[\"excel\"]'::jsonb,'[\"excel_table\",\"normalized_rows\"]'::jsonb),('calculation_agent','Calculation Agent','Если нужна геометрическая калька','[\"surface\",\"trajectory\"]'::jsonb,'[\"top_perforation_md\"]'::jsonb),('schedule_builder','Schedule Builder','Построение SCHEDULE','[\"schedule_source\"]'::jsonb,'[\"schedule_out\",\"diff\"]'::jsonb) ON CONFLICT(agent_id) DO NOTHING;SELECT true AS schema_ok;`;\nelse if(op==='create_case'){query='INSERT INTO cases(case_id,state,status,updated_at) VALUES($1,$2::jsonb,$3,now()) ON CONFLICT(case_id) DO NOTHING RETURNING case_id,state,status,updated_at';params=[caseId,j(raw.state),s(raw.status||'new')];}\nelse if(op==='get_case'){query='SELECT case_id,state,status,updated_at FROM cases WHERE case_id=$1';params=[caseId];}\nelse if(op==='list_cases'){query='SELECT c.case_id,c.status,c.updated_at,c.state,(SELECT COUNT(*) FROM events e WHERE e.case_id=c.case_id) AS event_count FROM cases c ORDER BY c.updated_at DESC LIMIT $1';params=[Number(raw.limit||80)];}\nelse if(op==='update_case'){query='UPDATE cases SET state=$1::jsonb,status=$2,updated_at=now() WHERE case_id=$3 RETURNING case_id,state,status,updated_at';params=[j(raw.state),s(raw.status),caseId];}\nelse if(op==='append_event'){query=\"WITH locked AS (SELECT case_id FROM cases WHERE case_id=$1 FOR UPDATE), last_event AS (SELECT e.* FROM events e JOIN locked l ON l.case_id=e.case_id WHERE e.case_id=$1 ORDER BY e.event_id DESC LIMIT 1), inserted AS (INSERT INTO events(case_id,task_id,kind,actor,agent_id,status,status_message,handoff_message,payload) SELECT $1,$2,$3,$4,$5,$6,$7,$8,$9::jsonb WHERE NOT EXISTS (SELECT 1 FROM last_event WHERE kind=$3 AND actor=$4 AND COALESCE(agent_id,'')=COALESCE($5,'') AND COALESCE(status,'')=COALESCE($6,'') AND regexp_replace(COALESCE(status_message,''),'\\\\s+',' ','g')=regexp_replace(COALESCE($7,''),'\\\\s+',' ','g') AND regexp_replace(COALESCE(handoff_message,''),'\\\\s+',' ','g')=regexp_replace(COALESCE($8,''),'\\\\s+',' ','g') AND COALESCE(task_id,'')=COALESCE($2,'')) RETURNING event_id,case_id,task_id,kind,actor,agent_id,status,status_message,handoff_message,payload,created_at) SELECT *,false AS idempotent FROM inserted UNION ALL SELECT event_id,case_id,task_id,kind,actor,agent_id,status,status_message,handoff_message,payload,created_at,true AS idempotent FROM last_event WHERE NOT EXISTS (SELECT 1 FROM inserted)\";params=[caseId,s(raw.task_id),s(raw.kind),s(raw.actor),raw.agent_id||null,raw.status||null,raw.status_message||null,raw.handoff_message||null,j(raw.payload)];}\nelse if(op==='list_events'){query='SELECT event_id,case_id,task_id,kind,actor,agent_id,status,status_message,handoff_message,payload,created_at FROM events WHERE case_id=$1 AND event_id>$2 ORDER BY event_id ASC';params=[caseId,Number(raw.after_seq||0)];}\nelse if(op==='snapshot'){query=`SELECT (SELECT jsonb_build_object('case_id',case_id,'state',state,'status',status,'updated_at',updated_at) FROM cases WHERE case_id=$1) AS case_row, COALESCE((SELECT jsonb_agg(to_jsonb(e) ORDER BY e.event_id) FROM (SELECT event_id,case_id,task_id,kind,actor,agent_id,status,status_message,handoff_message,payload,created_at FROM events WHERE case_id=$1 AND event_id>$2 ORDER BY event_id ASC) e),'[]'::jsonb) AS events`;params=[caseId,Number(raw.after_seq||0)];}\nelse if(op==='append_error'){query='INSERT INTO error_traces(case_id,execution_id,workflow_name,node_name,error_message,error_type,stack,input_snapshot) VALUES($1,$2,$3,$4,$5,$6,$7,$8::jsonb) RETURNING error_id,case_id,execution_id,workflow_name,node_name,error_message,error_type,stack,input_snapshot,created_at';params=[raw.case_id||null,raw.execution_id||null,raw.workflow_name||null,raw.node_name||null,raw.error_message||null,raw.error_type||null,raw.stack||null,j(raw.input_snapshot)];}\nelse if(op==='list_errors'){query='SELECT error_id,case_id,execution_id,workflow_name,node_name,error_message,error_type,stack,input_snapshot,created_at FROM error_traces WHERE case_id=$1 ORDER BY error_id ASC';params=[caseId];}\nelse if(op==='record_execution'){query='INSERT INTO executions(execution_id,case_id,workflow_name) VALUES($1,$2,$3) ON CONFLICT(execution_id) DO UPDATE SET case_id=EXCLUDED.case_id,workflow_name=EXCLUDED.workflow_name RETURNING execution_id,case_id,workflow_name';params=[s(raw.execution_id),caseId,s(raw.workflow_name||'orchestrator')];}\nelse if(op==='case_id_for_execution'){query='SELECT case_id FROM executions WHERE execution_id=$1';params=[s(raw.execution_id)];}\nelse if(op==='list_agents'){query='SELECT agent_id,title,when_to_use,input_required,output_provides FROM agent_registry ORDER BY agent_id';}\nelse if(op==='upsert_agent'){const r=raw.row||{};query='INSERT INTO agent_registry(agent_id,title,when_to_use,input_required,output_provides) VALUES($1,$2,$3,$4::jsonb,$5::jsonb) ON CONFLICT(agent_id) DO UPDATE SET title=EXCLUDED.title,when_to_use=EXCLUDED.when_to_use,input_required=EXCLUDED.input_required,output_provides=EXCLUDED.output_provides RETURNING agent_id,title,when_to_use,input_required,output_provides';params=[s(r.agent_id),r.title||null,r.when_to_use||null,j(r.input_required||[]),j(r.output_provides||[])];}\nelse if(op==='artifact_put'){query=\"INSERT INTO mas_artifacts(case_id,artifact_id,filename,mime_type,content,updated_at) VALUES($1,$2,$3,$4,decode($5,'base64'),now()) ON CONFLICT(case_id,artifact_id) DO UPDATE SET filename=EXCLUDED.filename,mime_type=EXCLUDED.mime_type,content=EXCLUDED.content,updated_at=now() RETURNING case_id,artifact_id,filename,mime_type,octet_length(content)::bigint AS bytes\";params=[caseId,artifactId,s(raw.filename||artifactId).slice(0,512),s(raw.mime_type||'application/octet-stream').slice(0,255),s(raw.content_base64)];}\nelse if(op==='artifact_get'){query=\"SELECT case_id,artifact_id,filename,mime_type,encode(content,'base64') AS content_base64,octet_length(content)::bigint AS bytes FROM mas_artifacts WHERE case_id=$1 AND artifact_id=$2\";params=[caseId,artifactId];}\nreturn [{json:{...common,query,params}}];"
       },
       "id": "mas-control-plane-normalize-v1",
       "name": "Normalize control-plane request",
@@ -562,7 +854,7 @@
     },
     {
       "parameters": {
-        "jsCode": "const req=$('Normalize control-plane request').first().json||{};\nconst rows=$input.all().map(x=>x.json||{});\nconst op=req.operation;\nlet result;\nif(op==='list_cases') result=rows;\nelse if(op==='list_events') result=rows;\nelse if(op==='list_errors') result=rows;\nelse if(op==='list_agents') result=rows;\nelse if(op==='case_id_for_execution') result=rows[0]?.case_id||null;\nelse if(op==='artifact_get') result=rows[0]?{found:true,...rows[0]}:{found:false,case_id:req.case_id,artifact_id:req.artifact_id};\nelse result=rows[0]||{};\nreturn [{json:{ok:true,operation:op,result}}];"
+        "jsCode": "const req=$('Normalize control-plane request').first().json||{};\nconst rows=$input.all().map(x=>x.json||{});\nconst op=req.operation;\nlet result;\nif(op==='list_cases') result=rows;\nelse if(op==='list_events') result=rows;\nelse if(op==='list_errors') result=rows;\nelse if(op==='list_agents') result=rows;\nelse if(op==='case_id_for_execution') result=rows[0]?.case_id||null;\nelse if(op==='artifact_get') result=rows[0]?{found:true,...rows[0]}:{found:false,case_id:req.case_id,artifact_id:req.artifact_id};\nelse if(op==='snapshot'){const row=rows[0]||{};const parse=v=>{if(v==null||v==='')return v;if(typeof v==='string'){try{return JSON.parse(v);}catch(_){return v;}}return v;};result={case:parse(row.case_row)||null,events:parse(row.events)||[]};if(!Array.isArray(result.events)) result.events=[];}\nelse result=rows[0]||{};\nreturn [{json:{ok:true,operation:op,result}}];"
       },
       "id": "mas-control-plane-format-v1",
       "name": "Format control-plane response",
@@ -1387,7 +1679,7 @@
 }
 
 ===END_FILE===
-===BEGIN_FILE===	n8n/workflows/core/mas-orchestrator.workflow.json	66650	utf8
+===BEGIN_FILE===	n8n/workflows/core/mas-orchestrator.workflow.json	66749	utf8
 {
   "id": "e9bbdb6e-3b7c-5dc0-851a-30bd9f2eb0d6",
   "name": "Orchestrator — MAS",
@@ -1478,7 +1770,7 @@
     },
     {
       "parameters": {
-        "jsCode": "\nconst raw=$input.first().json||{};\nconst body=raw.body&&typeof raw.body==='object'?raw.body:raw;\nconst action=String(body.action||raw.action||'step').trim().toLowerCase();\nlet caseId=String(body.case_id||raw.case_id||'').trim();\nconst goal=String(body.task_description||body.goal||raw.task_description||raw.goal||'').trim();\nconst taskName=String(body.task_name||raw.task_name||'').trim();\nconst humanResponse=String(body.human_response||raw.human_response||'');\nconst gateId=String(body.gate_id||raw.gate_id||'');\nconst requestedBy=String(body.requested_by||raw.requested_by||'');\nconst artifacts=body.artifacts&&typeof body.artifacts==='object'?body.artifacts:{};\nconst activityBaseUrl=String(raw.activity_base_url||'').trim();\nconst orchestratorStepUrl=String(raw.orchestrator_step_url||'').trim();\nconst executionId=String($execution.id||'');\nconst readinessId=!caseId||caseId==='CASE-readiness-probe';\nif(action==='probe'||(action==='status'&&readinessId)){\n  return [{json:{\n    case_id:caseId||'CASE-readiness-probe',\n    action:'probe',\n    is_probe:true,\n    is_status:false,\n    is_resume:false,\n    needs_create:false,\n    next_status:'probe',\n    status:'probe',\n    action_type:'probe',\n    should_continue:false\n  }}];\n}\nlet needsCreate=false;\nif(action==='create'){\n  if(!caseId) caseId='CASE-'+Date.now().toString(16)+'-'+Math.random().toString(16).slice(2,8);\n  if(!goal) throw new Error('task_description is required for action=create');\n  needsCreate=true;\n} else if(!caseId){\n  if(action!=='start') throw new Error('case_id is required');\n  if(!goal) throw new Error('task_description is required for action=start');\n  caseId='CASE-'+Date.now().toString(16)+'-'+Math.random().toString(16).slice(2,8);\n  needsCreate=true;\n}\nreturn [{json:{\n  case_id:caseId,\n  action,\n  goal,\n  task_name:taskName,\n  human_response:humanResponse,\n  gate_id:gateId,\n  requested_by:requestedBy,\n  artifacts,\n  activity_base_url:activityBaseUrl,\n  orchestrator_step_url:orchestratorStepUrl,\n  is_probe:false,\n  is_status:action==='status',\n  is_resume:action==='resume',\n  needs_create:needsCreate,\n  execution_id:executionId,\n  workflow_name:'orchestrator',\n  sql_parameters:[caseId],\n  exec_sql_parameters:[executionId, caseId, 'orchestrator'],\n}}];\n"
+        "jsCode": "\nconst raw=$input.first().json||{};\nconst body=raw.body&&typeof raw.body==='object'?raw.body:raw;\nconst action=String(body.action||raw.action||'step').trim().toLowerCase();\nlet caseId=String(body.case_id||raw.case_id||'').trim();\nconst goal=String(body.task_description||body.goal||raw.task_description||raw.goal||'').trim();\nconst taskName=String(body.task_name||raw.task_name||'').trim();\nconst humanResponse=String(body.human_response||raw.human_response||'');\nconst gateId=String(body.gate_id||raw.gate_id||'');\nconst requestedBy=String(body.requested_by||raw.requested_by||'');\nconst activityBaseUrl=String(raw.activity_base_url||'').trim();\nconst orchestratorStepUrl=String(raw.orchestrator_step_url||'').trim();\nconst executionId=String($execution.id||'');\nconst readinessId=!caseId||caseId==='CASE-readiness-probe';\nif(action==='probe'||(action==='status'&&readinessId)){\n  return [{json:{\n    case_id:caseId||'CASE-readiness-probe',\n    action:'probe',\n    is_probe:true,\n    is_status:false,\n    is_resume:false,\n    needs_create:false,\n    next_status:'probe',\n    status:'probe',\n    action_type:'probe',\n    should_continue:false\n  }}];\n}\nlet needsCreate=false;\nif(action==='create'){\n  if(!caseId) caseId='CASE-'+Date.now().toString(16)+'-'+Math.random().toString(16).slice(2,8);\n  if(!goal) throw new Error('task_description is required for action=create');\n  needsCreate=true;\n} else if(!caseId){\n  if(action!=='start') throw new Error('case_id is required');\n  if(!goal) throw new Error('task_description is required for action=start');\n  caseId='CASE-'+Date.now().toString(16)+'-'+Math.random().toString(16).slice(2,8);\n  needsCreate=true;\n}\nreturn [{json:{\n  case_id:caseId,\n  action,\n  goal,\n  task_name:taskName,\n  human_response:humanResponse,\n  gate_id:gateId,\n  requested_by:requestedBy,\n  activity_base_url:activityBaseUrl,\n  orchestrator_step_url:orchestratorStepUrl,\n  is_probe:false,\n  is_status:action==='status',\n  is_resume:action==='resume',\n  needs_create:needsCreate,\n  execution_id:executionId,\n  workflow_name:'orchestrator',\n  sql_parameters:[caseId],\n  exec_sql_parameters:[executionId, caseId, 'orchestrator'],\n}}];\n"
       },
       "id": "07d3d3cc-a9e7-508a-97d4-17391b86e1e1",
       "name": "Normalize step request",
@@ -1557,7 +1849,7 @@
     },
     {
       "parameters": {
-        "jsCode": "\nconst req=$json||{};\nconst goal=String(req.goal||'').trim();\nconst source= req.artifacts&&typeof req.artifacts==='object' ? {...req.artifacts} : {};\nif(source.file&&!source.excel) source.excel=source.file;\nif(source.schedule_files&&!source.schedule_source) source.schedule_source=source.schedule_files;\nconst state={\n  case_id:req.case_id,\n  goal,\n  task_name:req.task_name||'',\n  status:'running',\n  plan:[],\n  artifacts:source,\n  data:{},\n  current_task:null,\n  hitl:{pending:false,questions:[],answers:{}},\n  last_error:null,\n  step_count:0\n};\nconst persistEvents=[[req.case_id,'','case.created','user','','new',('Принял задачу: '+goal).slice(0,200),'',JSON.stringify({requested_by:req.requested_by||'',task_name:req.task_name||'',artifacts:Object.keys(source),note:'orchestrator start; files stay in Activity /cases/{id}/artifacts'})]];\nreturn [{json:{\n  ...req,\n  state,\n  create_sql_parameters:[req.case_id, JSON.stringify(state), 'running'],\n  persist_events:persistEvents,\n  event_sql_parameters:persistEvents[0]\n}}];\n"
+        "jsCode": "\nconst req=$json||{};\nconst goal=String(req.goal||'').trim();\nconst state={\n  case_id:req.case_id,\n  goal,\n  task_name:req.task_name||'',\n  status:'running',\n  plan:[],\n  artifacts:{},\n  data:{},\n  current_task:null,\n  hitl:{pending:false,questions:[],answers:{}},\n  last_error:null,\n  step_count:0\n};\nconst persistEvents=[[req.case_id,'','case.created','user','','new',('Принял задачу: '+goal).slice(0,200),'',JSON.stringify({requested_by:req.requested_by||'',task_name:req.task_name||'',note:'orchestrator start; files stay in Activity /cases/{id}/artifacts'})]];\nreturn [{json:{\n  ...req,\n  state,\n  create_sql_parameters:[req.case_id, JSON.stringify(state), 'running'],\n  persist_events:persistEvents,\n  event_sql_parameters:persistEvents[0]\n}}];\n"
       },
       "id": "27ddbd46-3d3a-5c9a-b8ed-7e83bd872f58",
       "name": "Prepare start case",
@@ -2263,7 +2555,7 @@
     },
     {
       "parameters": {
-        "jsCode": "\nconst prev=$('Prepare agent call').first().json||$('Parse decision').first().json||{};\nconst http=$json||{};\nconst obj=v=>v&&typeof v==='object'&&!Array.isArray(v);\nconst result=obj(http.body)?http.body:(obj(http)?http:{});\nconst status=String(result.status||(http.error?'failed':'completed'));\nconst state=obj(prev.state)?{...prev.state}:{};\nconst data=obj(state.data)?{...state.data}:{};\nconst artifacts=obj(state.artifacts)?{...state.artifacts}:{};\nconst agentId=String(prev.agent_id||result.agent_id||'');\nconst bucket=agentId==='excel_extractor'?'excel':(agentId==='calculation_agent'?'calc':(agentId==='schedule_builder'?'schedule':'agent'));\nif(status==='completed'){\n  data[bucket]=result.data||result;\n  if(agentId==='excel_extractor'&&result.data&&Array.isArray(result.data.facts)) data.facts=result.data.facts;\n  Object.assign(artifacts, result.artifacts||{});\n  state.current_task=null;\n  state.last_error=null;\n}\nif(Array.isArray(state.plan)){\n  state.plan=state.plan.map(p=>{\n    if(!p||typeof p!=='object') return p;\n    if(status==='completed'&&String(p.status)==='running') return {...p,status:'done'};\n    return p;\n  });\n}\nlet nextStatus='running';\nlet shouldContinue=true;\nconst events=[];\nif(status==='needs_input'){\n  nextStatus='waiting_user';\n  shouldContinue=false;\n  const reqs=Array.isArray(result.requests)?result.requests:[];\n  const q=reqs[0]||{question_id:'Q-agent',question:String(result.message||'Агенту нужны данные'),options:[]};\n  state.hitl={pending:true,questions:reqs.length?reqs:[q],answers:(state.hitl&&state.hitl.answers)||{}};\n  events.push({kind:'hitl.request',actor:'orchestrator',agent_id:agentId,status:'waiting_user',status_message:q.question,payload:q});\n} else if(status==='completed'){\n  events.push({\n    kind:'agent.result',\n    actor:agentId||'agent',\n    agent_id:agentId,\n    task_id:(prev.agent_task&&prev.agent_task.task_id)||'',\n    status:'completed',\n    status_message:String(result.message||'Агент завершил работу'),\n    payload:{data_keys:Object.keys((result.data&&typeof result.data==='object')?result.data:{}),artifacts:Object.keys((result.artifacts&&typeof result.artifacts==='object')?result.artifacts:{})}\n  });\n} else if(status==='failed'||http.error){\n  nextStatus='running';\n  shouldContinue=true;\n  state.last_error={message:String(result.message||http.message||'agent failed'),agent_id:agentId};\n  data[bucket]=result.data||result;\n  events.push({kind:'agent.failed',actor:agentId||'agent',agent_id:agentId,status:'failed',status_message:String(result.message||http.message||'Агент вернул ошибку'),payload:{message:state.last_error.message,issues:result.issues||[]}});\n}\nif(Number(state.step_count||0)>=24){\n  nextStatus='failed';\n  shouldContinue=false;\n  events.push({kind:'case.failed',actor:'orchestrator',status:'failed',status_message:'Превышен лимит шагов оркестратора'});\n}\nstate.data=data;\nstate.artifacts=artifacts;\nstate.status=nextStatus;\nconst persistEvents=events.map(e=>[\n  prev.case_id, e.task_id||'', e.kind, e.actor, e.agent_id||'', e.status||'', e.status_message||'', e.handoff_message||'', JSON.stringify(e.payload||{})\n]);\nreturn [{json:{\n  ...prev,\n  agent_result:result,\n  state,\n  next_status:nextStatus,\n  should_continue:shouldContinue&&nextStatus==='running',\n  update_sql_parameters:[JSON.stringify(state), nextStatus, prev.case_id],\n  persist_events:persistEvents,\n  events,\n  event_sql_parameters:persistEvents[0],\n  continue_url:`${String(prev.activity_base_url||'http://mas-activity:8200').replace(/\\/$/,'')}/cases/${encodeURIComponent(String(prev.case_id||''))}/run`\n}}];\n"
+        "jsCode": "\nconst prev=$('Prepare agent call').first().json||$('Parse decision').first().json||{};\nconst http=$json||{};\nconst obj=v=>v&&typeof v==='object'&&!Array.isArray(v);\nconst clean=v=>{\n  const s=String(v??'').trim();\n  return /^(none|null|undefined)$/i.test(s)?'':s;\n};\nconst unwrap=v=>{\n  if(obj(v)) return v;\n  if(Array.isArray(v)&&v.length&&obj(v[0])) return v[0];\n  return {};\n};\nconst result=unwrap(http.body&&typeof http.body==='object'?http.body:http);\nconst rawStatus=clean(result.status);\nconst status=rawStatus|| (http.error?'failed':'completed');\nconst resultMessage=clean(result.message);\nconst fallbackMessage=status==='completed'\n  ? 'Schedule Builder завершил обработку schedule.'\n  : status==='needs_input'\n    ? 'Schedule Builder запросил дополнительные данные.'\n    : 'Schedule Builder вернул ошибку.';\nconst state=obj(prev.state)?{...prev.state}:{};\nconst data=obj(state.data)?{...state.data}:{};\nconst artifacts=obj(state.artifacts)?{...state.artifacts}:{};\nconst agentId=String(prev.agent_id||result.agent_id||'');\nconst bucket=agentId==='excel_extractor'?'excel':(agentId==='calculation_agent'?'calc':(agentId==='schedule_builder'?'schedule':'agent'));\nif(status==='completed'){\n  data[bucket]=result.data||result;\n  if(agentId==='excel_extractor'&&result.data&&Array.isArray(result.data.facts)) data.facts=result.data.facts;\n  Object.assign(artifacts, result.artifacts||{});\n  state.current_task=null;\n  state.last_error=null;\n}\nif(Array.isArray(state.plan)){\n  state.plan=state.plan.map(p=>{\n    if(!p||typeof p!=='object') return p;\n    if(status==='completed'&&String(p.status)==='running') return {...p,status:'done'};\n    return p;\n  });\n}\nlet nextStatus='running';\nlet shouldContinue=true;\nconst events=[];\nif(status==='needs_input'){\n  nextStatus='waiting_user';\n  shouldContinue=false;\n  const reqs=Array.isArray(result.requests)?result.requests:[];\n  const q=reqs[0]||{question_id:'Q-agent',question:resultMessage||'Агенту нужны данные',options:[]};\n  state.hitl={pending:true,questions:reqs.length?reqs:[q],answers:(state.hitl&&state.hitl.answers)||{}};\n  events.push({kind:'hitl.request',actor:'orchestrator',agent_id:agentId,status:'waiting_user',status_message:q.question,payload:q});\n} else if(status==='completed'){\n  events.push({\n    kind:'agent.result',\n    actor:agentId||'agent',\n    agent_id:agentId,\n    task_id:(prev.agent_task&&prev.agent_task.task_id)||'',\n    status:'completed',\n    status_message:resultMessage||fallbackMessage,\n    payload:{data_keys:Object.keys((result.data&&typeof result.data==='object')?result.data:{}),artifacts:Object.keys((result.artifacts&&typeof result.artifacts==='object')?result.artifacts:{})}\n  });\n} else if(status==='failed'||http.error){\n  nextStatus='running';\n  shouldContinue=true;\n  state.last_error={message:resultMessage||clean(http.message)||fallbackMessage,agent_id:agentId};\n  data[bucket]=result.data||result;\n  events.push({kind:'agent.failed',actor:agentId||'agent',agent_id:agentId,status:'failed',status_message:state.last_error.message,payload:{message:state.last_error.message,issues:result.issues||[]}});\n}\nif(Number(state.step_count||0)>=24){\n  nextStatus='failed';\n  shouldContinue=false;\n  events.push({kind:'case.failed',actor:'orchestrator',status:'failed',status_message:'Превышен лимит шагов оркестратора'});\n}\nstate.data=data;\nstate.artifacts=artifacts;\nstate.status=nextStatus;\nconst persistEvents=events.map(e=>[\n  prev.case_id, e.task_id||'', e.kind, e.actor, e.agent_id||'', e.status||'', e.status_message||'', e.handoff_message||'', JSON.stringify(e.payload||{})\n]);\nreturn [{json:{\n  ...prev,\n  agent_result:result,\n  state,\n  next_status:nextStatus,\n  should_continue:shouldContinue&&nextStatus==='running',\n  update_sql_parameters:[JSON.stringify(state), nextStatus, prev.case_id],\n  persist_events:persistEvents,\n  events,\n  event_sql_parameters:persistEvents[0],\n  continue_url:`${String(prev.activity_base_url||'http://mas-activity:8200').replace(/\\/$/,'')}/cases/${encodeURIComponent(String(prev.case_id||''))}/run`\n}}];\n"
       },
       "id": "991e54b5-5f3a-5f9b-9ef1-0165be4207d4",
       "name": "Merge agent result",
@@ -3113,11 +3405,11 @@
   },
   "tags": [],
   "pinData": {},
-  "versionId": "97ec5d3f-7fae-4b2e-9887-20c89093f549"
+  "versionId": "a904a34a-e42f-4a7f-9046-4397eb84224e"
 }
 
 ===END_FILE===
-===BEGIN_FILE===	n8n/workflows/core/schedule-builder-agent.workflow.json	34319	utf8
+===BEGIN_FILE===	n8n/workflows/core/schedule-builder-agent.workflow.json	46466	utf8
 {
   "id": "c8d5f3b2-6e91-5d22-8a7b-1f0c4e9a2d55",
   "name": "Agent — Schedule Builder",
@@ -3282,6 +3574,106 @@
     },
     {
       "parameters": {
+        "method": "POST",
+        "url": "={{ $('Runtime configuration').first().json.activity_base_url + '/cases/' + $('Normalize schedule task').first().json.agent_task.case_id + '/events' }}",
+        "sendHeaders": true,
+        "headerParameters": {
+          "parameters": [
+            {
+              "name": "Content-Type",
+              "value": "application/json"
+            }
+          ]
+        },
+        "options": {
+          "timeout": 30000,
+          "response": {
+            "response": {
+              "fullResponse": false,
+              "responseFormat": "json"
+            }
+          }
+        },
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "={{ ({kind: \"agent.accepted\", actor: 'schedule_builder', agent_id: 'schedule_builder', task_id: $('Normalize schedule task').first().json.agent_task.task_id, status: \"running\", status_message: \"Schedule Builder \\u043f\\u0440\\u0438\\u043d\\u044f\\u043b \\u0437\\u0430\\u0434\\u0430\\u0447\\u0443 \\u0438 \\u0430\\u043d\\u0430\\u043b\\u0438\\u0437\\u0438\\u0440\\u0443\\u0435\\u0442 \\u0438\\u0441\\u0445\\u043e\\u0434\\u043d\\u044b\\u0439 schedule.\", payload: {source: 'schedule-builder-agent-workflow'}}) }}"
+      },
+      "id": "86a96e9e-e91b-547c-9c5e-347ca0339933",
+      "name": "Activity — Schedule Builder accepted",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.4,
+      "position": [
+        1220,
+        -220
+      ],
+      "onError": "continueRegularOutput",
+      "alwaysOutputData": true
+    },
+    {
+      "parameters": {
+        "jsCode": "const x=$('Session ready?').first().json||{}; return [{json:x}];"
+      },
+      "id": "416a2622-2b17-5230-99b1-e4ac32c062ff",
+      "name": "Restore after Schedule Builder accepted",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        1440,
+        -220
+      ]
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "={{ $('Runtime configuration').first().json.activity_base_url + '/cases/' + $('Normalize schedule task').first().json.agent_task.case_id + '/events' }}",
+        "sendHeaders": true,
+        "headerParameters": {
+          "parameters": [
+            {
+              "name": "Content-Type",
+              "value": "application/json"
+            }
+          ]
+        },
+        "options": {
+          "timeout": 30000,
+          "response": {
+            "response": {
+              "fullResponse": false,
+              "responseFormat": "json"
+            }
+          }
+        },
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "={{ ({kind: \"agent.progress\", actor: 'schedule_builder', agent_id: 'schedule_builder', task_id: $('Normalize schedule task').first().json.agent_task.task_id, status: \"running\", status_message: \"Schedule Builder \\u043f\\u0440\\u043e\\u0432\\u0435\\u0440\\u044f\\u0435\\u0442 \\u0441\\u0442\\u0440\\u0443\\u043a\\u0442\\u0443\\u0440\\u0443 \\u0441\\u043a\\u0432\\u0430\\u0436\\u0438\\u043d, \\u0434\\u0430\\u0442\\u044b \\u0438 \\u043f\\u0440\\u043e\\u0433\\u043d\\u043e\\u0437\\u043d\\u044b\\u0435 controls.\", payload: {source: 'schedule-builder-agent-workflow'}}) }}"
+      },
+      "id": "5dc68398-8825-52fd-964b-065a00102a56",
+      "name": "Activity — Schedule Builder progress",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.4,
+      "position": [
+        1660,
+        -220
+      ],
+      "onError": "continueRegularOutput",
+      "alwaysOutputData": true
+    },
+    {
+      "parameters": {
+        "jsCode": "const x=$('Restore after Schedule Builder accepted').first().json||{}; return [{json:x}];"
+      },
+      "id": "2cf633bd-4a88-500f-90ab-d095e718a904",
+      "name": "Restore after Schedule Builder progress",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        1880,
+        -220
+      ]
+    },
+    {
+      "parameters": {
         "mode": "expression",
         "numberOutputs": 3,
         "output": "={{ ({commissioning:0, group_rebind:1, operations:2})[$json.suggested_capability] ?? 2 }}"
@@ -3371,6 +3763,56 @@
     },
     {
       "parameters": {
+        "method": "POST",
+        "url": "={{ $('Runtime configuration').first().json.activity_base_url + '/cases/' + $('Normalize schedule task').first().json.agent_task.case_id + '/events' }}",
+        "sendHeaders": true,
+        "headerParameters": {
+          "parameters": [
+            {
+              "name": "Content-Type",
+              "value": "application/json"
+            }
+          ]
+        },
+        "options": {
+          "timeout": 30000,
+          "response": {
+            "response": {
+              "fullResponse": false,
+              "responseFormat": "json"
+            }
+          }
+        },
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "={{ ({kind: 'agent.result', actor: 'schedule_builder', agent_id: 'schedule_builder', task_id: $('Normalize schedule task').first().json.agent_task.task_id, status: String($('Format schedule result').first().json.status || 'failed'), status_message: String($('Format schedule result').first().json.message || 'Schedule Builder завершил обработку schedule.'), payload: {source: 'schedule-builder-agent-workflow'}}) }}"
+      },
+      "id": "0cbd0f7e-14f7-5ab9-bad8-662743b03009",
+      "name": "Activity — Schedule Builder completed",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.4,
+      "position": [
+        2200,
+        -180
+      ],
+      "onError": "continueRegularOutput",
+      "alwaysOutputData": true
+    },
+    {
+      "parameters": {
+        "jsCode": "const x=$('Format schedule result').first().json||{}; return [{json:x}];"
+      },
+      "id": "8a239e73-9c07-5b0a-b114-f6883a7d9629",
+      "name": "Restore after Schedule Builder activity",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        2440,
+        -180
+      ]
+    },
+    {
+      "parameters": {
         "jsCode": "\nconst opened=$json||{};\nconst task=$('Normalize schedule task').first().json.agent_task||{};\nconst agent_input=JSON.stringify({\n  objective:opened.objective||task.objective||'',\n  handoff_message:opened.handoff_message||task.handoff_message||'',\n  inspect:opened.inspect||{},\n  fact_count:opened.fact_count||0,\n  facts_preview:opened.facts_preview||[],\n  suggested_capability:opened.suggested_capability||''\n});\nreturn [{json:{...opened, session_id:opened.session_id, agent_input}}];\n"
       },
       "id": "0efd1b65-b426-5dd1-9cdd-2a66eb50c4e3",
@@ -3388,7 +3830,7 @@
         "text": "={{ $json.agent_input }}",
         "hasOutputParser": false,
         "options": {
-          "systemMessage": "Ты — единственный LLM-решатель агента Schedule Builder.\n\nИсходный .INC тебе не показывают. Он лежит в сессии FastAPI. session_id привязан workflow: никогда не передавай session_id и обёртку args/input.\n\nИнструменты:\n- inspect_schedule — скважины, keywords, даты, GRUPTREE (компактно)\n- search_keywords — по intent сервиса вернёт keywords + methods\n- get_keyword — объектная модель полей и методов\n- list_records — компактные записи keyword/well\n- apply_commissioning — сдвиг дат ввода по фактам Excel из сессии. Даты сам не выдумывай.\n- apply_group_rebind — перепривязка групп по тексту задачи и baseline. Скважины только из inspect.\n- apply_operations — точечные MODIFY/ADD по схеме keyword. wells только из inspect.\n- build_schedule — собрать текущий working text, если apply уже менял сессию\n- validate_result — проверки emit\n\nПравила:\n- Не пиши текст SCHEDULE сам. Только инструменты.\n- Не придумывай скважины, даты, группы, дебиты.\n- suggested_capability=commissioning → сразу apply_commissioning, затем STOP.\n- suggested_capability=group_rebind → inspect при необходимости, затем apply_group_rebind, затем STOP.\n- Иначе search_keywords → get_keyword → apply_operations / needs_input.\n- После apply_* со status completed или needs_input — STOP. Не вызывай build, если apply уже вернул результат.\n- Если данных нет — не вызывай apply с пустыми выдуманными полями.\n\nЗаверши одним коротким фактическим предложением по-русски.\n",
+          "systemMessage": "Ты — единственный LLM-решатель агента Schedule Builder.\n\nИсходный .INC тебе не показывают. Он лежит в сессии FastAPI. session_id привязан workflow: никогда не передавай session_id и обёртку args/input.\n\nИнструменты:\n- inspect_schedule — объектная инвентаризация скважин, keywords, даты, GRUPTREE (компактно)\n- inspect_well — подробный объект одной скважины: identity, factual WCONPROD, commissioning anchor и история режимов\n- analyze_forecast_controls — детерминированный разбор control timeline: history, forecast, overrides, economics, reopen/status/efficiency events\n- search_keywords — по intent сервиса вернёт keywords + methods\n- get_keyword — объектная модель полей и методов\n- list_records — компактные записи keyword/well\n- apply_commissioning — сдвиг дат ввода по фактам Excel из сессии. Якорь commissioning — первый нефактический WCONPROD; последующие WCONPROD являются прогнозными режимами и сохраняются.\n- apply_group_rebind — перепривязка групп по тексту задачи и baseline. Скважины только из inspect.\n- apply_operations — точечные MODIFY/ADD по схеме keyword. wells только из inspect.\n- build_schedule — собрать текущий working text, если apply уже менял сессию\n- validate_result — проверки emit\n\nПравила:\n- Не пиши текст SCHEDULE сам. Только инструменты.\n- Не придумывай скважины, даты, группы, дебиты.\n- Для commissioning сначала проверь объект скважины через inspect_schedule/inspect_well и отличай first_wconprod от forecast control events.\n- Для изменения одного параметра после существующего контроля используй WELTARG, а не переписывай весь WCONPROD.\n- Не путай WECON (экономические пределы), WTEST (переоткрытие), WELOPEN (статус), WEFAC (uptime), WPIMULT (CF) и GCONPROD (группа).\n- Если analyze_forecast_controls вернул needs_input по границе history/forecast — не применяй операцию до уточнения.\n- Жёсткое правило: если комментарий WCONPROD содержит «факт» или «fact», запись фактическая. Её нельзя удалять, переносить или использовать как прогнозный commissioning anchor.\n- suggested_capability=commissioning → сразу apply_commissioning, затем STOP.\n- suggested_capability=group_rebind → inspect при необходимости, затем apply_group_rebind, затем STOP.\n- Иначе search_keywords → get_keyword → apply_operations / needs_input.\n- После apply_* со status completed или needs_input — STOP. Не вызывай build, если apply уже вернул результат.\n- Если данных нет — не вызывай apply с пустыми выдуманными полями.\n\nЗаверши одним коротким фактическим предложением по-русски.\n",
           "maxIterations": 12,
           "returnIntermediateSteps": true,
           "passthroughBinaryImages": false,
@@ -3484,7 +3926,7 @@
     },
     {
       "parameters": {
-        "toolDescription": "Компактный осмотр baseline: wells, keywords, даты, GRUPTREE. Без полного .INC.",
+        "toolDescription": "Объектная инвентаризация baseline: wells, factual/forecast WCONPROD, commissioning anchors, история режимов, keywords, даты и GRUPTREE. Без полного .INC.",
         "method": "POST",
         "url": "={{ $('Runtime configuration').first().json.schedule_service_url + '/agent-tools/' + \"inspect_schedule\" }}",
         "authentication": "none",
@@ -3522,6 +3964,114 @@
       "typeVersion": 1.1,
       "position": [
         760,
+        -420
+      ]
+    },
+    {
+      "parameters": {
+        "toolDescription": "Подробно осмотреть одну скважину: identity, factual WCONPROD, commissioning anchor (первый нефактический WCONPROD), последующие forecast control events и связанные records.",
+        "method": "POST",
+        "url": "={{ $('Runtime configuration').first().json.schedule_service_url + '/agent-tools/' + \"inspect_well\" }}",
+        "authentication": "none",
+        "sendQuery": false,
+        "sendHeaders": true,
+        "specifyHeaders": "keypair",
+        "sendBody": true,
+        "specifyBody": "keypair",
+        "placeholderDefinitions": {
+          "values": [
+            {
+              "name": "well",
+              "description": "Точное имя скважины из inspect_schedule",
+              "type": "string"
+            }
+          ]
+        },
+        "optimizeResponse": false,
+        "parametersHeaders": {
+          "values": [
+            {
+              "name": "Content-Type",
+              "valueProvider": "fieldValue",
+              "value": "application/json"
+            }
+          ]
+        },
+        "parametersBody": {
+          "values": [
+            {
+              "name": "session_id",
+              "valueProvider": "fieldValue",
+              "value": "={{ $('Open schedule session').first().json.session_id }}"
+            },
+            {
+              "name": "well",
+              "valueProvider": "modelRequired",
+              "value": ""
+            }
+          ]
+        }
+      },
+      "id": "49ab200f-c1b7-51c5-b779-072adab2478a",
+      "name": "inspect_well",
+      "type": "@n8n/n8n-nodes-langchain.toolHttpRequest",
+      "typeVersion": 1.1,
+      "position": [
+        980,
+        -420
+      ]
+    },
+    {
+      "parameters": {
+        "toolDescription": "Детерминированно разобрать timeline одной скважины: history/forecast controls, commissioning, WELTARG, WECON, WTEST, WELOPEN, WEFAC, WPIMULT и правила выбора keyword.",
+        "method": "POST",
+        "url": "={{ $('Runtime configuration').first().json.schedule_service_url + '/agent-tools/' + \"analyze_forecast_controls\" }}",
+        "authentication": "none",
+        "sendQuery": false,
+        "sendHeaders": true,
+        "specifyHeaders": "keypair",
+        "sendBody": true,
+        "specifyBody": "keypair",
+        "placeholderDefinitions": {
+          "values": [
+            {
+              "name": "well",
+              "description": "Точное имя скважины из inspect_schedule",
+              "type": "string"
+            }
+          ]
+        },
+        "optimizeResponse": false,
+        "parametersHeaders": {
+          "values": [
+            {
+              "name": "Content-Type",
+              "valueProvider": "fieldValue",
+              "value": "application/json"
+            }
+          ]
+        },
+        "parametersBody": {
+          "values": [
+            {
+              "name": "session_id",
+              "valueProvider": "fieldValue",
+              "value": "={{ $('Open schedule session').first().json.session_id }}"
+            },
+            {
+              "name": "well",
+              "valueProvider": "modelRequired",
+              "value": ""
+            }
+          ]
+        }
+      },
+      "id": "29254bd0-9438-5967-b0d7-3fe53f600120",
+      "name": "analyze_forecast_controls",
+      "type": "@n8n/n8n-nodes-langchain.toolHttpRequest",
+      "typeVersion": 1.1,
+      "position": [
+        1200,
         -420
       ]
     },
@@ -3575,8 +4125,8 @@
       "type": "@n8n/n8n-nodes-langchain.toolHttpRequest",
       "typeVersion": 1.1,
       "position": [
-        980,
-        -420
+        760,
+        -260
       ]
     },
     {
@@ -3629,8 +4179,8 @@
       "type": "@n8n/n8n-nodes-langchain.toolHttpRequest",
       "typeVersion": 1.1,
       "position": [
-        1200,
-        -420
+        980,
+        -260
       ]
     },
     {
@@ -3693,7 +4243,7 @@
       "type": "@n8n/n8n-nodes-langchain.toolHttpRequest",
       "typeVersion": 1.1,
       "position": [
-        760,
+        1200,
         -260
       ]
     },
@@ -3736,8 +4286,8 @@
       "type": "@n8n/n8n-nodes-langchain.toolHttpRequest",
       "typeVersion": 1.1,
       "position": [
-        980,
-        -260
+        760,
+        -100
       ]
     },
     {
@@ -3800,8 +4350,8 @@
       "type": "@n8n/n8n-nodes-langchain.toolHttpRequest",
       "typeVersion": 1.1,
       "position": [
-        1200,
-        -260
+        980,
+        -100
       ]
     },
     {
@@ -3854,7 +4404,7 @@
       "type": "@n8n/n8n-nodes-langchain.toolHttpRequest",
       "typeVersion": 1.1,
       "position": [
-        760,
+        1200,
         -100
       ]
     },
@@ -3897,8 +4447,8 @@
       "type": "@n8n/n8n-nodes-langchain.toolHttpRequest",
       "typeVersion": 1.1,
       "position": [
-        980,
-        -100
+        760,
+        60
       ]
     },
     {
@@ -3940,8 +4490,8 @@
       "type": "@n8n/n8n-nodes-langchain.toolHttpRequest",
       "typeVersion": 1.1,
       "position": [
-        1200,
-        -100
+        980,
+        60
       ]
     }
   ],
@@ -3994,7 +4544,7 @@
       "main": [
         [
           {
-            "node": "Capability router",
+            "node": "Activity — Schedule Builder accepted",
             "type": "main",
             "index": 0
           }
@@ -4002,6 +4552,50 @@
         [
           {
             "node": "Format missing schedule",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Activity — Schedule Builder accepted": {
+      "main": [
+        [
+          {
+            "node": "Restore after Schedule Builder accepted",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Restore after Schedule Builder accepted": {
+      "main": [
+        [
+          {
+            "node": "Activity — Schedule Builder progress",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Activity — Schedule Builder progress": {
+      "main": [
+        [
+          {
+            "node": "Restore after Schedule Builder progress",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Restore after Schedule Builder progress": {
+      "main": [
+        [
+          {
+            "node": "Capability router",
             "type": "main",
             "index": 0
           }
@@ -4078,6 +4672,28 @@
       ]
     },
     "inspect_schedule": {
+      "ai_tool": [
+        [
+          {
+            "node": "Schedule Builder AI Agent",
+            "type": "ai_tool",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "inspect_well": {
+      "ai_tool": [
+        [
+          {
+            "node": "Schedule Builder AI Agent",
+            "type": "ai_tool",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "analyze_forecast_controls": {
       "ai_tool": [
         [
           {
@@ -4197,6 +4813,28 @@
           }
         ]
       ]
+    },
+    "Format schedule result": {
+      "main": [
+        [
+          {
+            "node": "Activity — Schedule Builder completed",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Activity — Schedule Builder completed": {
+      "main": [
+        [
+          {
+            "node": "Restore after Schedule Builder activity",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
     }
   },
   "settings": {
@@ -4211,7 +4849,7 @@
   },
   "tags": [],
   "pinData": {},
-  "versionId": "3570c18a-5529-4cec-a307-d1432eb9dba5"
+  "versionId": "e284e757-a5d7-42d1-8ef6-d24dc29214c4"
 }
 
 ===END_FILE===
@@ -18500,596 +19138,3 @@
                           },
                           {
                             "name": "A",
-                            "position": 3,
-                            "type": "number",
-                            "required": true
-                          },
-                          {
-                            "name": "B",
-                            "position": 4,
-                            "type": "number",
-                            "required": true
-                          },
-                          {
-                            "name": "C",
-                            "position": 5,
-                            "type": "number",
-                            "required": false
-                          },
-                          {
-                            "name": "D",
-                            "position": 6,
-                            "type": "number",
-                            "required": false
-                          },
-                          {
-                            "name": "E",
-                            "position": 7,
-                            "type": "number",
-                            "required": true
-                          },
-                          {
-                            "name": "F",
-                            "position": 8,
-                            "type": "number",
-                            "required": true
-                          }
-                        ],
-                        "layout": {
-                          "newline": "LF",
-                          "indent": "  ",
-                          "delimiter": "SPACE",
-                          "record_terminator": "SLASH",
-                          "block_terminator": "SLASH_LINE"
-                        },
-                        "semantics": {
-                          "period": "FORECAST",
-                          "clock": {
-                            "uses_current": true
-                          },
-                          "definitions": [],
-                          "references": [],
-                          "prerequisites": [],
-                          "state_assignments": [
-                            {
-                              "namespace": "guiderat-formula",
-                              "entity_type": "guiderat_formula",
-                              "entity_field": "PHASE",
-                              "key_fields": [
-                                "PHASE"
-                              ],
-                              "value_fields": [
-                                "INTERVAL",
-                                "PHASE",
-                                "A",
-                                "B",
-                                "C",
-                                "D",
-                                "E",
-                                "F"
-                              ]
-                            }
-                          ],
-                          "numeric_constraints": [
-                            {
-                              "field": "INTERVAL",
-                              "min": 0
-                            },
-                            {
-                              "field": "A"
-                            },
-                            {
-                              "field": "B",
-                              "min": 0
-                            },
-                            {
-                              "field": "C"
-                            },
-                            {
-                              "field": "D"
-                            },
-                            {
-                              "field": "E"
-                            },
-                            {
-                              "field": "F"
-                            },
-                            {
-                              "field": "GRDAMP",
-                              "min_exclusive": 0,
-                              "max": 1
-                            },
-                            {
-                              "field": "GRMIN",
-                              "min_exclusive": 0
-                            }
-                          ]
-                        }
-                      },
-                      {
-                        "schema_id": "expert:GUIDERAT:oil",
-                        "schema_revision": "1",
-                        "keyword": "GUIDERAT",
-                        "variant": "oil",
-                        "citation": {
-                          "document_id": "tnav-user-manual-russian",
-                          "document_revision": "19.4",
-                          "page": "12.20.90 / 1933-1936",
-                          "heading": "GUIDERAT",
-                          "source_hash": "sha256:7d1624e1ea0196383c86dbd2558826c53a5a86eb992c48141eb4e3b66f0353d5"
-                        },
-                        "parser": {
-                          "token_width": 12,
-                          "allow_trailing_omission": true,
-                          "allow_unquoted_strings": true
-                        },
-                        "fields": [
-                          {
-                            "name": "INTERVAL",
-                            "position": 1,
-                            "type": "number",
-                            "required": false
-                          },
-                          {
-                            "name": "PHASE",
-                            "position": 2,
-                            "type": "string",
-                            "required": true,
-                            "enum": [
-                              "OIL"
-                            ]
-                          },
-                          {
-                            "name": "A",
-                            "position": 3,
-                            "type": "number",
-                            "required": true
-                          },
-                          {
-                            "name": "B",
-                            "position": 4,
-                            "type": "number",
-                            "required": true
-                          },
-                          {
-                            "name": "C",
-                            "position": 5,
-                            "type": "number",
-                            "required": false
-                          },
-                          {
-                            "name": "D",
-                            "position": 6,
-                            "type": "number",
-                            "required": false
-                          },
-                          {
-                            "name": "E",
-                            "position": 7,
-                            "type": "number",
-                            "required": false
-                          },
-                          {
-                            "name": "F",
-                            "position": 8,
-                            "type": "number",
-                            "required": false
-                          },
-                          {
-                            "name": "INCREASE",
-                            "position": 9,
-                            "type": "string",
-                            "required": false,
-                            "enum": [
-                              "YES",
-                              "NO"
-                            ]
-                          },
-                          {
-                            "name": "GRDAMP",
-                            "position": 10,
-                            "type": "number",
-                            "required": false
-                          },
-                          {
-                            "name": "FREE_GAS",
-                            "position": 11,
-                            "type": "string",
-                            "required": false,
-                            "enum": [
-                              "YES",
-                              "NO"
-                            ]
-                          },
-                          {
-                            "name": "GRMIN",
-                            "position": 12,
-                            "type": "number",
-                            "required": false
-                          }
-                        ],
-                        "layout": {
-                          "newline": "LF",
-                          "indent": "  ",
-                          "delimiter": "SPACE",
-                          "record_terminator": "SLASH",
-                          "block_terminator": "SLASH_LINE"
-                        },
-                        "semantics": {
-                          "period": "FORECAST",
-                          "clock": {
-                            "uses_current": true
-                          },
-                          "definitions": [],
-                          "references": [],
-                          "prerequisites": [],
-                          "state_assignments": [
-                            {
-                              "namespace": "guiderat-formula",
-                              "entity_type": "guiderat_formula",
-                              "entity_field": "PHASE",
-                              "key_fields": [
-                                "PHASE"
-                              ],
-                              "value_fields": [
-                                "INTERVAL",
-                                "PHASE",
-                                "A",
-                                "B",
-                                "C",
-                                "D",
-                                "E",
-                                "F",
-                                "INCREASE",
-                                "GRDAMP",
-                                "FREE_GAS",
-                                "GRMIN"
-                              ]
-                            }
-                          ],
-                          "numeric_constraints": [
-                            {
-                              "field": "INTERVAL",
-                              "min": 0
-                            },
-                            {
-                              "field": "A"
-                            },
-                            {
-                              "field": "B",
-                              "min": 0
-                            },
-                            {
-                              "field": "C"
-                            },
-                            {
-                              "field": "D"
-                            },
-                            {
-                              "field": "E"
-                            },
-                            {
-                              "field": "F"
-                            },
-                            {
-                              "field": "GRDAMP",
-                              "min_exclusive": 0,
-                              "max": 1
-                            },
-                            {
-                              "field": "GRMIN",
-                              "min_exclusive": 0
-                            }
-                          ]
-                        }
-                      },
-                      {
-                        "schema_id": "expert:GUIDERAT:liq",
-                        "schema_revision": "1",
-                        "keyword": "GUIDERAT",
-                        "variant": "liq",
-                        "citation": {
-                          "document_id": "tnav-user-manual-russian",
-                          "document_revision": "19.4",
-                          "page": "12.20.90 / 1933-1936",
-                          "heading": "GUIDERAT",
-                          "source_hash": "sha256:7d1624e1ea0196383c86dbd2558826c53a5a86eb992c48141eb4e3b66f0353d5"
-                        },
-                        "parser": {
-                          "token_width": 12,
-                          "allow_trailing_omission": true,
-                          "allow_unquoted_strings": true
-                        },
-                        "fields": [
-                          {
-                            "name": "INTERVAL",
-                            "position": 1,
-                            "type": "number",
-                            "required": false
-                          },
-                          {
-                            "name": "PHASE",
-                            "position": 2,
-                            "type": "string",
-                            "required": true,
-                            "enum": [
-                              "LIQ"
-                            ]
-                          },
-                          {
-                            "name": "A",
-                            "position": 3,
-                            "type": "number",
-                            "required": true
-                          },
-                          {
-                            "name": "B",
-                            "position": 4,
-                            "type": "number",
-                            "required": true
-                          },
-                          {
-                            "name": "C",
-                            "position": 5,
-                            "type": "number",
-                            "required": false
-                          },
-                          {
-                            "name": "D",
-                            "position": 6,
-                            "type": "number",
-                            "required": false
-                          },
-                          {
-                            "name": "E",
-                            "position": 7,
-                            "type": "number",
-                            "required": false
-                          },
-                          {
-                            "name": "F",
-                            "position": 8,
-                            "type": "number",
-                            "required": false
-                          },
-                          {
-                            "name": "INCREASE",
-                            "position": 9,
-                            "type": "string",
-                            "required": false,
-                            "enum": [
-                              "YES",
-                              "NO"
-                            ]
-                          },
-                          {
-                            "name": "GRDAMP",
-                            "position": 10,
-                            "type": "number",
-                            "required": false
-                          },
-                          {
-                            "name": "FREE_GAS",
-                            "position": 11,
-                            "type": "string",
-                            "required": false,
-                            "enum": [
-                              "YES",
-                              "NO"
-                            ]
-                          },
-                          {
-                            "name": "GRMIN",
-                            "position": 12,
-                            "type": "number",
-                            "required": false
-                          }
-                        ],
-                        "layout": {
-                          "newline": "LF",
-                          "indent": "  ",
-                          "delimiter": "SPACE",
-                          "record_terminator": "SLASH",
-                          "block_terminator": "SLASH_LINE"
-                        },
-                        "semantics": {
-                          "period": "FORECAST",
-                          "clock": {
-                            "uses_current": true
-                          },
-                          "definitions": [],
-                          "references": [],
-                          "prerequisites": [],
-                          "state_assignments": [
-                            {
-                              "namespace": "guiderat-formula",
-                              "entity_type": "guiderat_formula",
-                              "entity_field": "PHASE",
-                              "key_fields": [
-                                "PHASE"
-                              ],
-                              "value_fields": [
-                                "INTERVAL",
-                                "PHASE",
-                                "A",
-                                "B",
-                                "C",
-                                "D",
-                                "E",
-                                "F",
-                                "INCREASE",
-                                "GRDAMP",
-                                "FREE_GAS",
-                                "GRMIN"
-                              ]
-                            }
-                          ],
-                          "numeric_constraints": [
-                            {
-                              "field": "INTERVAL",
-                              "min": 0
-                            },
-                            {
-                              "field": "A"
-                            },
-                            {
-                              "field": "B",
-                              "min": 0
-                            },
-                            {
-                              "field": "C"
-                            },
-                            {
-                              "field": "D"
-                            },
-                            {
-                              "field": "E"
-                            },
-                            {
-                              "field": "F"
-                            },
-                            {
-                              "field": "GRDAMP",
-                              "min_exclusive": 0,
-                              "max": 1
-                            },
-                            {
-                              "field": "GRMIN",
-                              "min_exclusive": 0
-                            }
-                          ]
-                        }
-                      },
-                      {
-                        "schema_id": "expert:GUIDERAT:gas",
-                        "schema_revision": "1",
-                        "keyword": "GUIDERAT",
-                        "variant": "gas",
-                        "citation": {
-                          "document_id": "tnav-user-manual-russian",
-                          "document_revision": "19.4",
-                          "page": "12.20.90 / 1933-1936",
-                          "heading": "GUIDERAT",
-                          "source_hash": "sha256:7d1624e1ea0196383c86dbd2558826c53a5a86eb992c48141eb4e3b66f0353d5"
-                        },
-                        "parser": {
-                          "token_width": 12,
-                          "allow_trailing_omission": true,
-                          "allow_unquoted_strings": true
-                        },
-                        "fields": [
-                          {
-                            "name": "INTERVAL",
-                            "position": 1,
-                            "type": "number",
-                            "required": false
-                          },
-                          {
-                            "name": "PHASE",
-                            "position": 2,
-                            "type": "string",
-                            "required": true,
-                            "enum": [
-                              "GAS"
-                            ]
-                          },
-                          {
-                            "name": "A",
-                            "position": 3,
-                            "type": "number",
-                            "required": true
-                          },
-                          {
-                            "name": "B",
-                            "position": 4,
-                            "type": "number",
-                            "required": true
-                          },
-                          {
-                            "name": "C",
-                            "position": 5,
-                            "type": "number",
-                            "required": false
-                          },
-                          {
-                            "name": "D",
-                            "position": 6,
-                            "type": "number",
-                            "required": false
-                          },
-                          {
-                            "name": "E",
-                            "position": 7,
-                            "type": "number",
-                            "required": false
-                          },
-                          {
-                            "name": "F",
-                            "position": 8,
-                            "type": "number",
-                            "required": false
-                          },
-                          {
-                            "name": "INCREASE",
-                            "position": 9,
-                            "type": "string",
-                            "required": false,
-                            "enum": [
-                              "YES",
-                              "NO"
-                            ]
-                          },
-                          {
-                            "name": "GRDAMP",
-                            "position": 10,
-                            "type": "number",
-                            "required": false
-                          },
-                          {
-                            "name": "FREE_GAS",
-                            "position": 11,
-                            "type": "string",
-                            "required": false,
-                            "enum": [
-                              "YES",
-                              "NO"
-                            ]
-                          },
-                          {
-                            "name": "GRMIN",
-                            "position": 12,
-                            "type": "number",
-                            "required": false
-                          }
-                        ],
-                        "layout": {
-                          "newline": "LF",
-                          "indent": "  ",
-                          "delimiter": "SPACE",
-                          "record_terminator": "SLASH",
-                          "block_terminator": "SLASH_LINE"
-                        },
-                        "semantics": {
-                          "period": "FORECAST",
-                          "clock": {
-                            "uses_current": true
-                          },
-                          "definitions": [],
-                          "references": [],
-                          "prerequisites": [],
-                          "state_assignments": [
-                            {
-                              "namespace": "guiderat-formula",
-                              "entity_type": "guiderat_formula",
-                              "entity_field": "PHASE",
-                              "key_fields": [
-                                "PHASE"
-                              ],
-                              "value_fields": [
-                                "INTERVAL",
-                                "PHASE",
-                                "A",
-                                "B",
-                                "C",
-                                "D",
-                                "E",

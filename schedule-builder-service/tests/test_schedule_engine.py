@@ -122,6 +122,241 @@ WCONPROD
     assert "1601 OPEN GRAT" not in jan
 
 
+def test_commissioning_preserves_later_wconprod_forecast_controls() -> None:
+    from app.commissioning import run_commissioning_revise
+
+    source = """DATES
+  1 JAN 2020 /
+/
+
+WCONPROD
+  1601 OPEN GRAT 1* 1* 200000 1* 1* 90 /
+/
+
+DATES
+  1 FEB 2020 /
+/
+
+WCONPROD
+  1601 OPEN GRAT 1* 1* 250000 1* 1* 90 /
+/
+"""
+    revised = run_commissioning_revise(source, [{"well": "1601", "date": "23 FEB 2020"}])
+    assert revised["status"] == "applied"
+    text = revised["generated_schedule"]
+    feb = text.split("23 FEB 2020")[1]
+    assert "1601 OPEN GRAT 1* 1* 200000" in feb
+    assert "1601 OPEN GRAT 1* 1* 250000" in text
+    assert text.index("250000") < text.index("200000")
+    assert revised["control_semantics"]["commissioning_anchor"] == "first WCONPROD per well"
+
+
+def test_inspect_schedule_exposes_well_object_and_control_history() -> None:
+    from app.agent_tools import _compact_inspect
+
+    source = """DATES
+  1 JAN 2020 /
+/
+
+WELSPECS
+  1601 G1 10 20 1000 OIL /
+/
+
+WCONPROD
+  1601 OPEN GRAT 1* 1* 200000 /
+/
+
+DATES
+  1 FEB 2020 /
+/
+
+WCONPROD
+  1601 OPEN GRAT 1* 1* 250000 /
+/
+"""
+    item = _compact_inspect(source)["well_objects"][0]
+    assert item["well"] == "1601"
+    assert item["identity"]["group"] == "G1"
+    assert item["first_wconprod"]["date"] == "1 JAN 2020"
+    assert item["forecast_control_count"] == 1
+
+
+def test_analyze_forecast_controls_distinguishes_overrides_economics_and_policies() -> None:
+    from app.agent_tools import _compact_inspect, execute_tool
+    from app import sessions
+
+    source = """DATES
+  1 JAN 2020 /
+/
+
+WELSPECS
+  P1 G1 10 20 1000 OIL /
+/
+
+WCONHIST
+  P1 OPEN 10 /
+/
+
+DATES
+  1 JAN 2021 /
+/
+
+WCONPROD
+  P1 OPEN GRAT 1* 1* 200000 /
+/
+
+WELTARG
+  P1 GRAT 150000 /
+/
+
+WECON
+  P1 1* 1* 0.95 2* WELL /
+/
+
+WTEST
+  P1 30 E /
+/
+
+WELOPEN
+  P1 OPEN /
+/
+
+WEFAC
+  P1 0.9 /
+/
+
+WPIMULT
+  P1 1.2 /
+/
+"""
+    state = sessions.put({
+        "session_id": sessions.new_session_id(),
+        "task_id": "analysis",
+        "source_text": source,
+        "working_text": source,
+        "objective": "",
+        "handoff_message": "",
+        "inputs": {},
+        "context": {},
+        "facts": [],
+    })
+    result = execute_tool(state["session_id"], "analyze_forecast_controls", {"well": "P1"})
+    assert result["ok"] is True
+    assert result["commissioning_anchor"]["keyword"] == "WCONPROD"
+    assert result["control_overrides"][0]["keyword"] == "WELTARG"
+    assert result["economic_limits"][0]["keyword"] == "WECON"
+    assert result["reopen_policies"][0]["keyword"] == "WTEST"
+    assert result["efficiency_events"][0]["keyword"] == "WEFAC"
+    assert result["connection_multipliers"][0]["keyword"] == "WPIMULT"
+    assert result["needs_input"] == []
+
+
+def test_generic_operations_protect_factual_control_and_require_weltarg_base() -> None:
+    from app.agent_tools import execute_tool
+    from app import sessions
+
+    source = """DATES
+  1 JAN 2020 /
+/
+
+WCONPROD
+  P1 OPEN GRAT 1* 1* 120000 / -- ФАКТ
+/
+"""
+    state = sessions.put({
+        "session_id": sessions.new_session_id(),
+        "task_id": "semantic",
+        "source_text": source,
+        "working_text": source,
+        "objective": "",
+        "handoff_message": "",
+        "inputs": {},
+        "context": {},
+        "facts": [],
+    })
+    factual = execute_tool(state["session_id"], "apply_operations", {
+        "operations": [{"keyword": "WCONPROD", "operation": "MODIFY", "fields": {"well": "P1", "ORAT": 1}}],
+    })
+    assert factual["status"] == "failed"
+    assert factual["issues"][0]["code"] == "FACTUAL_WCONPROD_PROTECTED"
+
+    no_base_source = "DATES\n  1 JAN 2020 /\n/\n\nWELSPECS\n  P1 G1 1 1 1000 OIL /\n/\n"
+    no_base_state = sessions.put({
+        **state,
+        "session_id": sessions.new_session_id(),
+        "source_text": no_base_source,
+        "working_text": no_base_source,
+    })
+    missing = execute_tool(no_base_state["session_id"], "apply_operations", {
+        "operations": [{"keyword": "WELTARG", "operation": "ADD", "fields": {"well": "P1", "quantity": "BHP", "value": 100}}],
+    })
+    assert missing["status"] == "failed"
+    assert missing["issues"][0]["code"] == "WELTARG_BASE_CONTROL_MISSING"
+
+
+def test_fact_comment_is_preserved_and_factual_wconprod_is_not_retargeted() -> None:
+    from app.commissioning import run_commissioning_revise
+    from app.parse import parse_schedule
+    from app.well_model import build_well_objects
+
+    source = """DATES
+  1 JAN 2019 /
+/
+
+WCONPROD
+  1601 OPEN GRAT 1* 1* 120000 / -- ФАКТ: история
+/
+
+DATES
+  1 JAN 2020 /
+/
+
+WCONPROD
+  1601 OPEN GRAT 1* 1* 200000 / -- forecast start
+/
+
+DATES
+  1 FEB 2020 /
+/
+
+WCONPROD
+  1601 OPEN GRAT 1* 1* 250000 / -- forecast mode
+/
+"""
+    objects = build_well_objects(parse_schedule(source))
+    item = objects[0]
+    assert item["factual_control_events"][0]["factual"] is True
+    assert item["commissioning_wconprod"]["tokens"][-1] == "200000"
+
+    revised = run_commissioning_revise(source, [{"well": "1601", "date": "23 FEB 2020"}])
+    assert revised["status"] == "applied"
+    text = revised["generated_schedule"]
+    assert "120000 / -- ФАКТ: история" in text
+    assert "200000 / -- forecast start" in text
+    assert "250000 / -- forecast mode" in text
+    assert "23 FEB 2020" in text
+    assert text.index("120000") < text.index("200000")
+
+
+def test_remove_cannot_delete_factual_wconprod() -> None:
+    from app.apply import apply_operations
+    from app.parse import parse_schedule
+
+    source = """DATES
+  1 JAN 2019 /
+/
+
+WCONPROD
+  1601 OPEN GRAT 120000 / -- факт
+/
+"""
+    _, findings = apply_operations(
+        parse_schedule(source),
+        [{"keyword": "WCONPROD", "operation": "REMOVE", "fields": {"well": "1601"}}],
+    )
+    assert any(item["code"] == "FACTUAL_WCONPROD_PROTECTED" for item in findings)
+
+
 def test_group_rebind_spec_from_task_prose() -> None:
     from app.group_rebind import extract_group_rebind_spec, run_group_rebind_revise
 
@@ -290,6 +525,3 @@ def test_hitl_json_answers_yield_policy_and_new_well_defs() -> None:
     }
     assert _unlisted_policy(state) == "remove"
     assert _new_well_defs(state)[0]["well"] == "N001"
-
-
-

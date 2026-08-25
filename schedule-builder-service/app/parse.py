@@ -16,6 +16,7 @@ HEADER = re.compile(r"^\s*([A-Za-z][A-Za-z0-9_]*)\s*(?:--.*)?$")
 class Record:
     tokens: list[str]
     raw: str
+    comment: str = ""
 
 
 @dataclass
@@ -54,14 +55,43 @@ def parse_schedule(text: str) -> ScheduleDoc:
         end = headers[idx + 1][0] if idx + 1 < len(headers) else len(lines)
         body_lines = lines[start + 1 : end]
         records: list[Record] = []
+        pending_comment = ""
         for raw in body_lines:
             stripped = raw.strip()
-            if not stripped or stripped.startswith("--") or stripped == "/":
+            if not stripped or stripped == "/":
                 continue
+            if stripped.startswith("--"):
+                if records:
+                    comment = stripped[2:].strip()
+                    records[-1].comment = " ".join(
+                        part for part in (records[-1].comment, comment) if part
+                    )
+                else:
+                    pending_comment = " ".join(
+                        part for part in (pending_comment, stripped[2:].strip()) if part
+                    )
+                continue
+            inline_comment = ""
+            comment_pos = raw.find("--")
+            if comment_pos >= 0:
+                inline_comment = raw[comment_pos + 2 :].strip()
+                raw = raw[:comment_pos].rstrip()
+                stripped = raw.strip()
             cleaned = stripped[:-1].rstrip() if stripped.endswith("/") else stripped
             tokens = [tok for tok in re.split(r"[,\s]+", cleaned) if tok and tok != "/"]
             if tokens:
-                records.append(Record(tokens=tokens, raw=raw.rstrip("\n")))
+                records.append(
+                    Record(
+                        tokens=tokens,
+                        raw=raw.rstrip("\n"),
+                        comment=" ".join(
+                            part
+                            for part in (pending_comment, inline_comment)
+                            if part
+                        ),
+                    )
+                )
+                pending_comment = ""
         blocks.append(
             Block(
                 keyword=kw,
@@ -80,7 +110,7 @@ def timeline_segments(doc: ScheduleDoc) -> list[dict[str, Any]]:
         if block.keyword == "DATES":
             if current:
                 segments.append(current)
-            date = block.records[0].tokens[0] if block.records else None
+            date = " ".join(block.records[0].tokens) if block.records else None
             current = {"date": date, "dates_block": block, "blocks": []}
             continue
         if current is None:

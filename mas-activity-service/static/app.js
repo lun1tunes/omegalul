@@ -992,8 +992,19 @@
       feedPollTimer = null;
     }
     source = new EventSource(`/cases/${encodeURIComponent(taskId)}/stream`);
-    source.onopen = () => setLive("live");
-    source.onerror = () => setLive("reconnecting");
+    source.onopen = () => {
+      setLive("live");
+      if (feedPollTimer) {
+        clearInterval(feedPollTimer);
+        feedPollTimer = null;
+      }
+    };
+    source.onerror = () => {
+      setLive("reconnecting");
+      if (!feedPollTimer) {
+        feedPollTimer = setInterval(() => pollFeed({ durable: false }), 5000);
+      }
+    };
     source.onmessage = (ev) => {
       if (startOpen || currentTask !== taskId) return;
       try {
@@ -1009,6 +1020,10 @@
             empty.hidden = false;
             empty.textContent = emptyFeedMessage(msg);
           }
+          syncSchema(lastCaseFeed);
+        } else if (msg.type === "meta") {
+          lastCaseFeed = { ...lastCaseFeed, ...msg };
+          applyFeedMeta(msg);
           syncSchema(lastCaseFeed);
         } else if (msg.type === "turn") {
           renderTurn(msg.turn, { animate: true });
@@ -1029,7 +1044,6 @@
         }
       } catch (_) { /* ignore malformed SSE */ }
     };
-    feedPollTimer = setInterval(() => pollFeed({ durable: false }), 2500);
   }
 
   function attachedFilesFromFeed(data) {

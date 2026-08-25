@@ -1,3 +1,103 @@
+                    "EXCEED_ACTION",
+                    "EXCEED_PARENT"
+                  ]
+                }
+              ],
+              "numeric_constraints": [
+                {
+                  "field": "ORAT",
+                  "min": 0
+                },
+                {
+                  "field": "WRAT",
+                  "min": 0
+                },
+                {
+                  "field": "GRAT",
+                  "min": 0
+                },
+                {
+                  "field": "LRAT",
+                  "min": 0
+                }
+              ]
+            }
+          },
+          {
+            "schema_id": "expert:GCONPROD:grat",
+            "schema_revision": "1",
+            "keyword": "GCONPROD",
+            "variant": "grat",
+            "citation": {
+              "document_id": "tnav-user-manual-russian",
+              "document_revision": "19.4",
+              "page": "12.20.89 / 1928-1932",
+              "heading": "GCONPROD",
+              "source_hash": "sha256:858bbd62b39f9f8ae74ec09a9fbbd5b4580fd41977f2677aa3bbb1ab2531bf50"
+            },
+            "parser": {
+              "token_width": 19,
+              "allow_trailing_omission": true,
+              "allow_unquoted_strings": true
+            },
+            "fields": [
+              {
+                "name": "GROUP",
+                "position": 1,
+                "type": "string",
+                "required": true,
+                "quote": "single"
+              },
+              {
+                "name": "CONTROL",
+                "position": 2,
+                "type": "string",
+                "required": true,
+                "enum": [
+                  "GRAT"
+                ]
+              },
+              {
+                "name": "ORAT",
+                "position": 3,
+                "type": "number",
+                "required": false,
+                "default_allowed": true
+              },
+              {
+                "name": "WRAT",
+                "position": 4,
+                "type": "number",
+                "required": false,
+                "default_allowed": true
+              },
+              {
+                "name": "GRAT",
+                "position": 5,
+                "type": "number",
+                "required": true
+              },
+              {
+                "name": "LRAT",
+                "position": 6,
+                "type": "number",
+                "required": false,
+                "default_allowed": true
+              },
+              {
+                "name": "EXCEED_ACTION",
+                "position": 7,
+                "type": "string",
+                "required": true,
+                "enum": [
+                  "NONE",
+                  "CON",
+                  "CON+",
+                  "+CON",
+                  "WELL",
+                  "RATE",
+                  "TARG"
+                ]
               },
               {
                 "name": "EXCEED_PARENT",
@@ -19633,7 +19733,7 @@ if __name__ == "__main__":
     main()
 
 ===END_FILE===
-===BEGIN_FILE===	n8n/templates/generate_mas_orchestrator.py	43000	utf8
+===BEGIN_FILE===	n8n/templates/generate_mas_orchestrator.py	43461	utf8
 #!/usr/bin/env python3
 """Generate the thin MAS orchestrator (one n8n execution = one step)."""
 
@@ -20213,8 +20313,24 @@ MERGE = r"""
 const prev=$('Prepare agent call').first().json||$('Parse decision').first().json||{};
 const http=$json||{};
 const obj=v=>v&&typeof v==='object'&&!Array.isArray(v);
-const result=obj(http.body)?http.body:(obj(http)?http:{});
-const status=String(result.status||(http.error?'failed':'completed'));
+const clean=v=>{
+  const s=String(v??'').trim();
+  return /^(none|null|undefined)$/i.test(s)?'':s;
+};
+const unwrap=v=>{
+  if(obj(v)) return v;
+  if(Array.isArray(v)&&v.length&&obj(v[0])) return v[0];
+  return {};
+};
+const result=unwrap(http.body&&typeof http.body==='object'?http.body:http);
+const rawStatus=clean(result.status);
+const status=rawStatus|| (http.error?'failed':'completed');
+const resultMessage=clean(result.message);
+const fallbackMessage=status==='completed'
+  ? 'Schedule Builder завершил обработку schedule.'
+  : status==='needs_input'
+    ? 'Schedule Builder запросил дополнительные данные.'
+    : 'Schedule Builder вернул ошибку.';
 const state=obj(prev.state)?{...prev.state}:{};
 const data=obj(state.data)?{...state.data}:{};
 const artifacts=obj(state.artifacts)?{...state.artifacts}:{};
@@ -20241,7 +20357,7 @@ if(status==='needs_input'){
   nextStatus='waiting_user';
   shouldContinue=false;
   const reqs=Array.isArray(result.requests)?result.requests:[];
-  const q=reqs[0]||{question_id:'Q-agent',question:String(result.message||'Агенту нужны данные'),options:[]};
+  const q=reqs[0]||{question_id:'Q-agent',question:resultMessage||'Агенту нужны данные',options:[]};
   state.hitl={pending:true,questions:reqs.length?reqs:[q],answers:(state.hitl&&state.hitl.answers)||{}};
   events.push({kind:'hitl.request',actor:'orchestrator',agent_id:agentId,status:'waiting_user',status_message:q.question,payload:q});
 } else if(status==='completed'){
@@ -20251,15 +20367,15 @@ if(status==='needs_input'){
     agent_id:agentId,
     task_id:(prev.agent_task&&prev.agent_task.task_id)||'',
     status:'completed',
-    status_message:String(result.message||'Агент завершил работу'),
+    status_message:resultMessage||fallbackMessage,
     payload:{data_keys:Object.keys((result.data&&typeof result.data==='object')?result.data:{}),artifacts:Object.keys((result.artifacts&&typeof result.artifacts==='object')?result.artifacts:{})}
   });
 } else if(status==='failed'||http.error){
   nextStatus='running';
   shouldContinue=true;
-  state.last_error={message:String(result.message||http.message||'agent failed'),agent_id:agentId};
+  state.last_error={message:resultMessage||clean(http.message)||fallbackMessage,agent_id:agentId};
   data[bucket]=result.data||result;
-  events.push({kind:'agent.failed',actor:agentId||'agent',agent_id:agentId,status:'failed',status_message:String(result.message||http.message||'Агент вернул ошибку'),payload:{message:state.last_error.message,issues:result.issues||[]}});
+  events.push({kind:'agent.failed',actor:agentId||'agent',agent_id:agentId,status:'failed',status_message:state.last_error.message,payload:{message:state.last_error.message,issues:result.issues||[]}});
 }
 if(Number(state.step_count||0)>=24){
   nextStatus='failed';
@@ -20638,7 +20754,7 @@ if __name__ == "__main__":
     main()
 
 ===END_FILE===
-===BEGIN_FILE===	n8n/templates/generate_schedule_builder_agent.py	19363	utf8
+===BEGIN_FILE===	n8n/templates/generate_schedule_builder_agent.py	24651	utf8
 #!/usr/bin/env python3
 """Generate Agent — Schedule Builder: one LLM + FastAPI keyword tools."""
 
@@ -20666,11 +20782,13 @@ SYSTEM = """Ты — единственный LLM-решатель агента 
 Исходный .INC тебе не показывают. Он лежит в сессии FastAPI. session_id привязан workflow: никогда не передавай session_id и обёртку args/input.
 
 Инструменты:
-- inspect_schedule — скважины, keywords, даты, GRUPTREE (компактно)
+- inspect_schedule — объектная инвентаризация скважин, keywords, даты, GRUPTREE (компактно)
+- inspect_well — подробный объект одной скважины: identity, factual WCONPROD, commissioning anchor и история режимов
+- analyze_forecast_controls — детерминированный разбор control timeline: history, forecast, overrides, economics, reopen/status/efficiency events
 - search_keywords — по intent сервиса вернёт keywords + methods
 - get_keyword — объектная модель полей и методов
 - list_records — компактные записи keyword/well
-- apply_commissioning — сдвиг дат ввода по фактам Excel из сессии. Даты сам не выдумывай.
+- apply_commissioning — сдвиг дат ввода по фактам Excel из сессии. Якорь commissioning — первый нефактический WCONPROD; последующие WCONPROD являются прогнозными режимами и сохраняются.
 - apply_group_rebind — перепривязка групп по тексту задачи и baseline. Скважины только из inspect.
 - apply_operations — точечные MODIFY/ADD по схеме keyword. wells только из inspect.
 - build_schedule — собрать текущий working text, если apply уже менял сессию
@@ -20679,6 +20797,11 @@ SYSTEM = """Ты — единственный LLM-решатель агента 
 Правила:
 - Не пиши текст SCHEDULE сам. Только инструменты.
 - Не придумывай скважины, даты, группы, дебиты.
+- Для commissioning сначала проверь объект скважины через inspect_schedule/inspect_well и отличай first_wconprod от forecast control events.
+- Для изменения одного параметра после существующего контроля используй WELTARG, а не переписывай весь WCONPROD.
+- Не путай WECON (экономические пределы), WTEST (переоткрытие), WELOPEN (статус), WEFAC (uptime), WPIMULT (CF) и GCONPROD (группа).
+- Если analyze_forecast_controls вернул needs_input по границе history/forecast — не применяй операцию до уточнения.
+- Жёсткое правило: если комментарий WCONPROD содержит «факт» или «fact», запись фактическая. Её нельзя удалять, переносить или использовать как прогнозный commissioning anchor.
 - suggested_capability=commissioning → сразу apply_commissioning, затем STOP.
 - suggested_capability=group_rebind → inspect при необходимости, затем apply_group_rebind, затем STOP.
 - Иначе search_keywords → get_keyword → apply_operations / needs_input.
@@ -20689,7 +20812,17 @@ SYSTEM = """Ты — единственный LLM-решатель агента 
 """
 
 TOOLS = [
-    ("inspect_schedule", "Компактный осмотр baseline: wells, keywords, даты, GRUPTREE. Без полного .INC.", []),
+    ("inspect_schedule", "Объектная инвентаризация baseline: wells, factual/forecast WCONPROD, commissioning anchors, история режимов, keywords, даты и GRUPTREE. Без полного .INC.", []),
+    (
+        "inspect_well",
+        "Подробно осмотреть одну скважину: identity, factual WCONPROD, commissioning anchor (первый нефактический WCONPROD), последующие forecast control events и связанные records.",
+        [("well", "string", True, "Точное имя скважины из inspect_schedule")],
+    ),
+    (
+        "analyze_forecast_controls",
+        "Детерминированно разобрать timeline одной скважины: history/forecast controls, commissioning, WELTARG, WECON, WTEST, WELOPEN, WEFAC, WPIMULT и правила выбора keyword.",
+        [("well", "string", True, "Точное имя скважины из inspect_schedule")],
+    ),
     (
         "search_keywords",
         "Найти keywords и methods по intent (даты ввода, группы, дебиты, перфорация, ГРП).",
@@ -20777,6 +20910,47 @@ def http_json(name, pos, method, url, body=None, timeout=180000):
         params["specifyBody"] = "json"
         params["jsonBody"] = body
     return node(name, "n8n-nodes-base.httpRequest", 4.4, pos, params, onError="continueRegularOutput", alwaysOutputData=True)
+
+
+def activity_event(name, pos, kind, message, *, status="running"):
+    body = (
+        "={{ ({"
+        f"kind: {json.dumps(kind)}, "
+        "actor: 'schedule_builder', agent_id: 'schedule_builder', "
+        "task_id: $('Normalize schedule task').first().json.agent_task.task_id, "
+        f"status: {json.dumps(status)}, "
+        f"status_message: {json.dumps(message)}, "
+        "payload: {source: 'schedule-builder-agent-workflow'}"
+        "}) }}"
+    )
+    return http_json(
+        name,
+        pos,
+        "POST",
+        "={{ $('Runtime configuration').first().json.activity_base_url + '/cases/' + $('Normalize schedule task').first().json.agent_task.case_id + '/events' }}",
+        body,
+        timeout=30000,
+    )
+
+
+def activity_result_event(name, pos):
+    body = (
+        "={{ ({"
+        "kind: 'agent.result', actor: 'schedule_builder', agent_id: 'schedule_builder', "
+        "task_id: $('Normalize schedule task').first().json.agent_task.task_id, "
+        "status: String($('Format schedule result').first().json.status || 'failed'), "
+        "status_message: String($('Format schedule result').first().json.message || 'Schedule Builder завершил обработку schedule.'), "
+        "payload: {source: 'schedule-builder-agent-workflow'}"
+        "}) }}"
+    )
+    return http_json(
+        name,
+        pos,
+        "POST",
+        "={{ $('Runtime configuration').first().json.activity_base_url + '/cases/' + $('Normalize schedule task').first().json.agent_task.case_id + '/events' }}",
+        body,
+        timeout=30000,
+    )
 
 
 def tool_http(name, pos, description, fields):
@@ -21029,6 +21203,32 @@ def main() -> None:
             },
         ),
         node("Format missing schedule", "n8n-nodes-base.code", 2, (1220, 240), {"jsCode": FORMAT_OPEN}),
+        activity_event(
+            "Activity — Schedule Builder accepted",
+            (1220, -220),
+            "agent.accepted",
+            "Schedule Builder принял задачу и анализирует исходный schedule.",
+        ),
+        node(
+            "Restore after Schedule Builder accepted",
+            "n8n-nodes-base.code",
+            2,
+            (1440, -220),
+            {"jsCode": "const x=$('Session ready?').first().json||{}; return [{json:x}];"},
+        ),
+        activity_event(
+            "Activity — Schedule Builder progress",
+            (1660, -220),
+            "agent.progress",
+            "Schedule Builder проверяет структуру скважин, даты и прогнозные controls.",
+        ),
+        node(
+            "Restore after Schedule Builder progress",
+            "n8n-nodes-base.code",
+            2,
+            (1880, -220),
+            {"jsCode": "const x=$('Restore after Schedule Builder accepted').first().json||{}; return [{json:x}];"},
+        ),
         node(
             "Capability router",
             "n8n-nodes-base.switch",
@@ -21055,6 +21255,17 @@ def main() -> None:
             "={{ $('Runtime configuration').first().json.schedule_service_url + '/agent-tools/apply_group_rebind' }}",
             "={{ ({session_id: $('Open schedule session').first().json.session_id}) }}",
             timeout=180000,
+        ),
+        activity_result_event(
+            "Activity — Schedule Builder completed",
+            (2200, -180),
+        ),
+        node(
+            "Restore after Schedule Builder activity",
+            "n8n-nodes-base.code",
+            2,
+            (2440, -180),
+            {"jsCode": "const x=$('Format schedule result').first().json||{}; return [{json:x}];"},
         ),
         node("Prepare AI Agent input", "n8n-nodes-base.code", 2, (1480, 160), {"jsCode": PREPARE}),
         node(
@@ -21106,7 +21317,11 @@ def main() -> None:
     connect(connections, "Runtime configuration", "Normalize schedule task")
     connect(connections, "Normalize schedule task", "Open schedule session")
     connect(connections, "Open schedule session", "Session ready?")
-    connect(connections, "Session ready?", "Capability router", si=0)
+    connect(connections, "Session ready?", "Activity — Schedule Builder accepted", si=0)
+    connect(connections, "Activity — Schedule Builder accepted", "Restore after Schedule Builder accepted")
+    connect(connections, "Restore after Schedule Builder accepted", "Activity — Schedule Builder progress")
+    connect(connections, "Activity — Schedule Builder progress", "Restore after Schedule Builder progress")
+    connect(connections, "Restore after Schedule Builder progress", "Capability router")
     connect(connections, "Session ready?", "Format missing schedule", si=1)
     connect(connections, "Capability router", "Apply commissioning", si=0)
     connect(connections, "Capability router", "Apply group rebind", si=1)
@@ -21119,6 +21334,8 @@ def main() -> None:
         connect(connections, name, "Schedule Builder AI Agent", out="ai_tool", tin="ai_tool")
     connect(connections, "Schedule Builder AI Agent", "Fetch schedule result")
     connect(connections, "Fetch schedule result", "Format schedule result")
+    connect(connections, "Format schedule result", "Activity — Schedule Builder completed")
+    connect(connections, "Activity — Schedule Builder completed", "Restore after Schedule Builder activity")
 
     wf = {
         "id": WF_ID,
@@ -22518,127 +22735,3 @@ const excelAnsweredQuestion=q=>/скважин|дат[аыеу]\s*ввод|commi
 let blockingQuestions=questions.filter(q=>{if(profileQuestion(q))return false;if(excelDelegation&&excelOwnedQuestion(q))return false;if((excelEvidenceReady||builderIntakeRetry)&&excelAnsweredQuestion(q))return false;return true;});
 if(decision==='needs_input'&&excelDelegation&&packetComplete&&allowed.has(intendedSpecialist)&&blockingQuestions.length===0){
   decision='delegate';
-  packetCandidate=withPacketControls({...plan.specialist_packet,contract:'specialist_packet',contract_version:'1.0',task_id:base.task_id,attempt:Number(base.retry_count)+1},{expected_version:Number(base.version)+1,idempotency_key:`${base.task_id}:specialist:${plan.specialist_packet.specialist_id}:${Number(base.retry_count)+1}:${Number(base.version)+1}`});
-}
-// Force Excel only when a workbook binary / input_files entry is actually present.
-// Do NOT scan full requestBlob — HITL replies may mention «Excel» and falsely re-trigger the hop.
-const objectiveBlob=clean(request.objective||request.problem_statement||request.task_description||request.request_text);
-const objectiveMentionsExcel=/(xlsx|\.xls\b|\bexcel\b|workbook)/i.test(objectiveBlob);
-const wantsExcel=hasExcelBinary;
-const hasScheduleBaseline=(typeof request.baseline_schedule_text==='string'&&request.baseline_schedule_text.length>0)||(typeof persistedSchedule.baseline_schedule_text==='string'&&persistedSchedule.baseline_schedule_text.length>0);
-if(!packetComplete&&!excelEvidenceReady&&!builderIntakeRetry&&wantsExcel&&hasScheduleBaseline&&allowed.has('excel_extraction_specialist')&&decision!=='delegate'){
-  decision='delegate';
-  packetCandidate={
-    contract:'specialist_packet',contract_version:'1.0',task_id:base.task_id,specialist_id:'excel_extraction_specialist',
-    attempt:Number(base.retry_count)+1,
-    objective:objectiveBlob||'Extract the table described in the task from the attached workbook.',
-    inputs:{prompt:objectiveBlob||'Extract bounded rows with entity identity from the attached workbook. Export every column of the matched table. Do not drop date or numeric columns.',consumer:'schedule_builder',workflow_kind:'schedule'},
-    controls:{bounded_request:true,max_rows:10000,max_cells:200000},
-    acceptance_criteria:[{id:'rows_extracted',criterion:'Return bounded rows with entity identity from the workbook',required:true,expected:'finite rows'}],
-    artifact_refs:arr(request.artifact_refs)?request.artifact_refs:[],
-  };
-  blockingQuestions=[];
-}
-// Attached schedule package, no workbook: open Builder. Domain grammar (DATES/INCLUDE) is Builder's job.
-if(!packetComplete&&!excelEvidenceReady&&!builderIntakeRetry&&!hasExcelBinary&&hasScheduleBaseline&&allowed.has('schedule_builder_specialist')&&decision!=='delegate'){
-  const baseSchedule=resolveRequestSchedule(request);
-  decision='delegate';
-  packetCandidate={
-    contract:'specialist_packet',contract_version:'1.0',task_id:base.task_id,specialist_id:'schedule_builder_specialist',
-    attempt:Number(base.retry_count)+1,
-    objective:objectiveBlob||'Revise the attached SCHEDULE package.',
-    inputs:{schedule_request:attachSchedulePackage(baseSchedule)},
-    controls:{},
-    acceptance_criteria:[
-      {id:'task_applied',criterion:'Apply the requested schedule change',required:true,expected:'matches objective'},
-      {id:'preserve_unmentioned',criterion:'Unrelated baseline constructs preserved',required:true,expected:'preserve_unmentioned'},
-    ],
-    artifact_refs:arr(request.artifact_refs)?request.artifact_refs:[],
-  };
-  blockingQuestions=[];
-}
-// CREATE from scratch: no baseline file, no workbook — still Builder, not orch grammar.
-const scheduleIntended=intendedSpecialist==='schedule_builder_specialist'||/schedule/.test(clean(plan.task_type))||(intendedSpecialist===''&&/(schedule|\.inc\b|wconprod|tnavigator)/i.test(objectiveBlob+' '+clean(plan.task_type)));
-if(!packetComplete&&!excelEvidenceReady&&!builderIntakeRetry&&!hasExcelBinary&&!hasScheduleBaseline&&allowed.has('schedule_builder_specialist')&&scheduleIntended){
-  const baseSchedule=resolveRequestSchedule(request);
-  const prior=obj(plan.specialist_packet)&&obj(plan.specialist_packet.inputs)&&obj(plan.specialist_packet.inputs.schedule_request)?plan.specialist_packet.inputs.schedule_request:{};
-  decision='delegate';
-  packetCandidate={
-    contract:'specialist_packet',contract_version:'1.0',task_id:base.task_id,specialist_id:'schedule_builder_specialist',
-    attempt:Number(base.retry_count)+1,
-    objective:objectiveBlob||clean(plan.specialist_packet&&plan.specialist_packet.objective)||'Create a forecast SCHEDULE from the task.',
-    inputs:{schedule_request:attachSchedulePackage({...baseSchedule,...prior,build_mode:clean(prior.build_mode||baseSchedule.build_mode)||'CREATE'})},
-    controls:{},
-    acceptance_criteria:[{id:'task_applied',criterion:'Emit the requested CREATE schedule',required:true,expected:'matches objective'}],
-    artifact_refs:arr(request.artifact_refs)?request.artifact_refs:[],
-  };
-  blockingQuestions=[];
-}
-// Planner chose Excel without a workbook: require upload only if objective named Excel; else redirect to Builder.
-if(decision==='delegate'&&clean(packetCandidate.specialist_id)==='excel_extraction_specialist'&&!hasExcelBinary){
-  if(objectiveMentionsExcel){
-    decision='needs_input';
-    blockingQuestions=[{id:'excel_file',question:'Прикрепите workbook (.xlsx/.xls) в поле file — в задаче указан Excel, но файл не приложен.',text:'Прикрепите workbook (.xlsx/.xls) в поле file — в задаче указан Excel, но файл не приложен.',type:'file',required:true}];
-    packetCandidate={};
-  } else if(hasScheduleBaseline&&allowed.has('schedule_builder_specialist')){
-    const baseSchedule=resolveRequestSchedule(request);
-    packetCandidate={
-      contract:'specialist_packet',contract_version:'1.0',task_id:base.task_id,specialist_id:'schedule_builder_specialist',
-      attempt:Number(base.retry_count)+1,
-      objective:objectiveBlob||'Revise the attached SCHEDULE package.',
-      inputs:{schedule_request:attachSchedulePackage(baseSchedule)},
-      controls:{},
-      acceptance_criteria:[
-        {id:'task_applied',criterion:'Apply the requested schedule change',required:true,expected:'matches objective'},
-        {id:'preserve_unmentioned',criterion:'Unrelated baseline constructs preserved',required:true,expected:'preserve_unmentioned'},
-      ],
-      artifact_refs:arr(request.artifact_refs)?request.artifact_refs:[],
-    };
-    blockingQuestions=[];
-  }
-}
-// After Excel facts (or Builder intake retry), hand the package + facts to Builder
-// only when the task explicitly consumes Schedule — not because Excel succeeded.
-// Domain DATES/INCLUDE/keyword grammar stays in Builder intake/validation.
-const scheduleConsumer=explicitScheduleConsumer(request,obj(packetCandidate.inputs)?packetCandidate.inputs:{})||explicitScheduleConsumer(request,obj(persistedPacket.inputs)?persistedPacket.inputs:{})||hasScheduleBaseline;
-if((builderIntakeRetry||(excelEvidenceReady&&scheduleConsumer))&&allowed.has('schedule_builder_specialist')){
-  const compact=obj(previousSpecialistResult.compact_data)?previousSpecialistResult.compact_data:{};
-  const factsPacket=excelEvidenceReady&&obj(compact)?{
-    contract:'source_facts_packet',
-    contract_version:'1.0',
-    source_snapshot_hash:clean(compact.source_snapshot_hash),
-    correlation_id:clean(compact.correlation_id),
-    facts:arr(compact.facts)?compact.facts:[],
-    conflicts:arr(compact.conflicts)?compact.conflicts:[],
-  }:(factsFromPersisted||null);
-  const factWells=(arr(factsPacket?.facts)?factsPacket.facts:[]).filter(f=>{
-    const values=obj(f?.values)?f.values:{};
-    return Boolean(clean(f?.well||f?.entity||f?.entity_id||values['Скважина']||values.скважина||values.WELL||values.well||values['Группа']||values.GROUP||values.group));
-  });
-  if(excelEvidenceReady&&factsPacket&&!factWells.length&&allowed.has('excel_extraction_specialist')){
-    decision='delegate';
-    packetCandidate={
-      contract:'specialist_packet',contract_version:'1.0',task_id:base.task_id,specialist_id:'excel_extraction_specialist',
-      attempt:Number(base.retry_count)+1,
-      objective:objectiveBlob||'Повторный extract: у каждой строки должно быть имя объекта (скважина или группа).',
-      inputs:{prompt:objectiveBlob||'Export rows with entity identity. Do not invent well or group names.'},
-      controls:{bounded_request:true,max_rows:10000,max_cells:200000},
-      acceptance_criteria:[{id:'entity_identity',criterion:'Every fact row includes an entity name',required:true,expected:'non-empty names'}],
-      artifact_refs:arr(request.artifact_refs)?request.artifact_refs:[],
-    };
-    blockingQuestions=[];
-  } else if(factWells.length||(!excelEvidenceReady&&builderIntakeRetry&&(factsPacket||!hasExcelBinary))){
-  const effectiveFactsPacket=factsPacket;
-  const baseSchedule=resolveRequestSchedule(request);
-  let builderPacket=(packetObject&&plan.specialist_packet.specialist_id==='schedule_builder_specialist'&&packetComplete)?plan.specialist_packet:(obj(persistedPacket)&&persistedPacket.specialist_id==='schedule_builder_specialist'?persistedPacket:null);
-  if(!builderPacket){
-    builderPacket={
-      contract:'specialist_packet',contract_version:'1.0',task_id:base.task_id,specialist_id:'schedule_builder_specialist',
-      attempt:Number(base.retry_count)+1,
-      objective:clean(request.objective||request.problem_statement||request.request_text)||'Revise the attached SCHEDULE using extracted facts.',
-      inputs:{schedule_request:attachSchedulePackage({...baseSchedule,source_facts_packet:effectiveFactsPacket})},
-      controls:{},
-      acceptance_criteria:[
-        {id:'task_applied',criterion:'Apply extracted facts to the schedule package',required:true,expected:'matches objective'},
-        {id:'preserve_unmentioned',criterion:'Unrelated baseline constructs preserved',required:true,expected:'preserve_unmentioned'},
-      ],

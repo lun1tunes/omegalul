@@ -25,11 +25,13 @@ SYSTEM = """Ты — единственный LLM-решатель агента 
 Исходный .INC тебе не показывают. Он лежит в сессии FastAPI. session_id привязан workflow: никогда не передавай session_id и обёртку args/input.
 
 Инструменты:
-- inspect_schedule — скважины, keywords, даты, GRUPTREE (компактно)
+- inspect_schedule — объектная инвентаризация скважин, keywords, даты, GRUPTREE (компактно)
+- inspect_well — подробный объект одной скважины: identity, factual WCONPROD, commissioning anchor и история режимов
+- analyze_forecast_controls — детерминированный разбор control timeline: history, forecast, overrides, economics, reopen/status/efficiency events
 - search_keywords — по intent сервиса вернёт keywords + methods
 - get_keyword — объектная модель полей и методов
 - list_records — компактные записи keyword/well
-- apply_commissioning — сдвиг дат ввода по фактам Excel из сессии. Даты сам не выдумывай.
+- apply_commissioning — сдвиг дат ввода по фактам Excel из сессии. Якорь commissioning — первый нефактический WCONPROD; последующие WCONPROD являются прогнозными режимами и сохраняются.
 - apply_group_rebind — перепривязка групп по тексту задачи и baseline. Скважины только из inspect.
 - apply_operations — точечные MODIFY/ADD по схеме keyword. wells только из inspect.
 - build_schedule — собрать текущий working text, если apply уже менял сессию
@@ -38,6 +40,11 @@ SYSTEM = """Ты — единственный LLM-решатель агента 
 Правила:
 - Не пиши текст SCHEDULE сам. Только инструменты.
 - Не придумывай скважины, даты, группы, дебиты.
+- Для commissioning сначала проверь объект скважины через inspect_schedule/inspect_well и отличай first_wconprod от forecast control events.
+- Для изменения одного параметра после существующего контроля используй WELTARG, а не переписывай весь WCONPROD.
+- Не путай WECON (экономические пределы), WTEST (переоткрытие), WELOPEN (статус), WEFAC (uptime), WPIMULT (CF) и GCONPROD (группа).
+- Если analyze_forecast_controls вернул needs_input по границе history/forecast — не применяй операцию до уточнения.
+- Жёсткое правило: если комментарий WCONPROD содержит «факт» или «fact», запись фактическая. Её нельзя удалять, переносить или использовать как прогнозный commissioning anchor.
 - suggested_capability=commissioning → сразу apply_commissioning, затем STOP.
 - suggested_capability=group_rebind → inspect при необходимости, затем apply_group_rebind, затем STOP.
 - Иначе search_keywords → get_keyword → apply_operations / needs_input.
@@ -48,7 +55,17 @@ SYSTEM = """Ты — единственный LLM-решатель агента 
 """
 
 TOOLS = [
-    ("inspect_schedule", "Компактный осмотр baseline: wells, keywords, даты, GRUPTREE. Без полного .INC.", []),
+    ("inspect_schedule", "Объектная инвентаризация baseline: wells, factual/forecast WCONPROD, commissioning anchors, история режимов, keywords, даты и GRUPTREE. Без полного .INC.", []),
+    (
+        "inspect_well",
+        "Подробно осмотреть одну скважину: identity, factual WCONPROD, commissioning anchor (первый нефактический WCONPROD), последующие forecast control events и связанные records.",
+        [("well", "string", True, "Точное имя скважины из inspect_schedule")],
+    ),
+    (
+        "analyze_forecast_controls",
+        "Детерминированно разобрать timeline одной скважины: history/forecast controls, commissioning, WELTARG, WECON, WTEST, WELOPEN, WEFAC, WPIMULT и правила выбора keyword.",
+        [("well", "string", True, "Точное имя скважины из inspect_schedule")],
+    ),
     (
         "search_keywords",
         "Найти keywords и methods по intent (даты ввода, группы, дебиты, перфорация, ГРП).",
@@ -136,6 +153,47 @@ def http_json(name, pos, method, url, body=None, timeout=180000):
         params["specifyBody"] = "json"
         params["jsonBody"] = body
     return node(name, "n8n-nodes-base.httpRequest", 4.4, pos, params, onError="continueRegularOutput", alwaysOutputData=True)
+
+
+def activity_event(name, pos, kind, message, *, status="running"):
+    body = (
+        "={{ ({"
+        f"kind: {json.dumps(kind)}, "
+        "actor: 'schedule_builder', agent_id: 'schedule_builder', "
+        "task_id: $('Normalize schedule task').first().json.agent_task.task_id, "
+        f"status: {json.dumps(status)}, "
+        f"status_message: {json.dumps(message)}, "
+        "payload: {source: 'schedule-builder-agent-workflow'}"
+        "}) }}"
+    )
+    return http_json(
+        name,
+        pos,
+        "POST",
+        "={{ $('Runtime configuration').first().json.activity_base_url + '/cases/' + $('Normalize schedule task').first().json.agent_task.case_id + '/events' }}",
+        body,
+        timeout=30000,
+    )
+
+
+def activity_result_event(name, pos):
+    body = (
+        "={{ ({"
+        "kind: 'agent.result', actor: 'schedule_builder', agent_id: 'schedule_builder', "
+        "task_id: $('Normalize schedule task').first().json.agent_task.task_id, "
+        "status: String($('Format schedule result').first().json.status || 'failed'), "
+        "status_message: String($('Format schedule result').first().json.message || 'Schedule Builder завершил обработку schedule.'), "
+        "payload: {source: 'schedule-builder-agent-workflow'}"
+        "}) }}"
+    )
+    return http_json(
+        name,
+        pos,
+        "POST",
+        "={{ $('Runtime configuration').first().json.activity_base_url + '/cases/' + $('Normalize schedule task').first().json.agent_task.case_id + '/events' }}",
+        body,
+        timeout=30000,
+    )
 
 
 def tool_http(name, pos, description, fields):
@@ -388,6 +446,32 @@ def main() -> None:
             },
         ),
         node("Format missing schedule", "n8n-nodes-base.code", 2, (1220, 240), {"jsCode": FORMAT_OPEN}),
+        activity_event(
+            "Activity — Schedule Builder accepted",
+            (1220, -220),
+            "agent.accepted",
+            "Schedule Builder принял задачу и анализирует исходный schedule.",
+        ),
+        node(
+            "Restore after Schedule Builder accepted",
+            "n8n-nodes-base.code",
+            2,
+            (1440, -220),
+            {"jsCode": "const x=$('Session ready?').first().json||{}; return [{json:x}];"},
+        ),
+        activity_event(
+            "Activity — Schedule Builder progress",
+            (1660, -220),
+            "agent.progress",
+            "Schedule Builder проверяет структуру скважин, даты и прогнозные controls.",
+        ),
+        node(
+            "Restore after Schedule Builder progress",
+            "n8n-nodes-base.code",
+            2,
+            (1880, -220),
+            {"jsCode": "const x=$('Restore after Schedule Builder accepted').first().json||{}; return [{json:x}];"},
+        ),
         node(
             "Capability router",
             "n8n-nodes-base.switch",
@@ -414,6 +498,17 @@ def main() -> None:
             "={{ $('Runtime configuration').first().json.schedule_service_url + '/agent-tools/apply_group_rebind' }}",
             "={{ ({session_id: $('Open schedule session').first().json.session_id}) }}",
             timeout=180000,
+        ),
+        activity_result_event(
+            "Activity — Schedule Builder completed",
+            (2200, -180),
+        ),
+        node(
+            "Restore after Schedule Builder activity",
+            "n8n-nodes-base.code",
+            2,
+            (2440, -180),
+            {"jsCode": "const x=$('Format schedule result').first().json||{}; return [{json:x}];"},
         ),
         node("Prepare AI Agent input", "n8n-nodes-base.code", 2, (1480, 160), {"jsCode": PREPARE}),
         node(
@@ -465,7 +560,11 @@ def main() -> None:
     connect(connections, "Runtime configuration", "Normalize schedule task")
     connect(connections, "Normalize schedule task", "Open schedule session")
     connect(connections, "Open schedule session", "Session ready?")
-    connect(connections, "Session ready?", "Capability router", si=0)
+    connect(connections, "Session ready?", "Activity — Schedule Builder accepted", si=0)
+    connect(connections, "Activity — Schedule Builder accepted", "Restore after Schedule Builder accepted")
+    connect(connections, "Restore after Schedule Builder accepted", "Activity — Schedule Builder progress")
+    connect(connections, "Activity — Schedule Builder progress", "Restore after Schedule Builder progress")
+    connect(connections, "Restore after Schedule Builder progress", "Capability router")
     connect(connections, "Session ready?", "Format missing schedule", si=1)
     connect(connections, "Capability router", "Apply commissioning", si=0)
     connect(connections, "Capability router", "Apply group rebind", si=1)
@@ -478,6 +577,8 @@ def main() -> None:
         connect(connections, name, "Schedule Builder AI Agent", out="ai_tool", tin="ai_tool")
     connect(connections, "Schedule Builder AI Agent", "Fetch schedule result")
     connect(connections, "Fetch schedule result", "Format schedule result")
+    connect(connections, "Format schedule result", "Activity — Schedule Builder completed")
+    connect(connections, "Activity — Schedule Builder completed", "Restore after Schedule Builder activity")
 
     wf = {
         "id": WF_ID,

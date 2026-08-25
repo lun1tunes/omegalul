@@ -130,7 +130,7 @@ python3 scripts/test_project_pack.py
 ```
 
 ===END_FILE===
-===BEGIN_FILE===	docker-compose.yml	8252	utf8
+===BEGIN_FILE===	docker-compose.yml	8225	utf8
 services:
   excel-tools:
     image: python:3.11-slim
@@ -205,7 +205,6 @@ services:
       - N8N_BASE_URL=http://n8n:5678
       - KNOWLEDGE_INGEST_URL=http://n8n:5678/webhook/mas-knowledge-ingest
       - ORCHESTRATOR_WORKFLOW_ID=e9bbdb6e-3b7c-5dc0-851a-30bd9f2eb0d6
-      - HITL_MODE=n8n_rest
       - ACTIVITY_TLS_VERIFY=${ACTIVITY_TLS_VERIFY:-true}
       - ACTIVITY_CA_BUNDLE=${ACTIVITY_CA_BUNDLE:-}
       - ACTIVITY_STATE_PATH=/app/data/activity_state.json
@@ -5259,7 +5258,7 @@ async def get(case_id: str, artifact_id: str) -> tuple[str, bytes, str]:
     )
 
 ===END_FILE===
-===BEGIN_FILE===	mas-activity-service/app/cases_api.py	31169	utf8
+===BEGIN_FILE===	mas-activity-service/app/cases_api.py	33241	utf8
 """Case control-plane HTTP API (state, events, SSE, HITL, run)."""
 
 from __future__ import annotations
@@ -5342,7 +5341,22 @@ TERMINAL_KINDS = {"case.finished", "case.failed"}
 
 
 def _event_message(event: dict[str, Any]) -> str:
-    return " ".join(str(event.get("status_message") or "").split())
+    value = " ".join(str(event.get("status_message") or "").split())
+    return "" if value.casefold() in {"none", "null", "undefined"} else value
+
+
+def _event_display_message(kind: str, event: dict[str, Any]) -> str:
+    message = _event_message(event)
+    if message:
+        return message
+    return {
+        "agent.accepted": "Агент принял задачу и начал работу.",
+        "agent.progress": "Агент продолжает обработку.",
+        "agent.result": "Агент завершил работу.",
+        "agent.failed": "Агент завершил работу с ошибкой.",
+        "hitl.request": "Нужно уточнение от пользователя.",
+        "case.failed": "Задача завершилась с ошибкой.",
+    }.get(kind, kind or "Событие зафиксировано.")
 
 
 def _same_agent_line(left: dict[str, Any], right: dict[str, Any]) -> bool:
@@ -5405,9 +5419,10 @@ def event_to_turn(event: dict[str, Any]) -> dict[str, Any]:
         text = FINISHED_RESULT_TEXT
         brief = FINISHED_RESULT_TEXT
     else:
-        summary = event.get("status_message") or kind
-        text = event.get("status_message") or ""
-        brief = event.get("status_message") or ""
+        display_message = _event_display_message(kind, event)
+        summary = display_message
+        text = display_message
+        brief = display_message
     return {
         "at": _iso(event.get("created_at")),
         "stage": kind,
@@ -5523,17 +5538,18 @@ def _schedule_artifact(case_id: str, artifacts: dict[str, Any]) -> dict[str, Any
     }
 
 
-def case_feed(case_id: str, after_seq: int = 0) -> dict[str, Any]:
-    row = control_plane.get_case(case_id)
-    if row is None:
-        raise HTTPException(status_code=404, detail="case not found")
-    state = row["state"] if isinstance(row["state"], dict) else {}
-    events = collapse_duplicate_events(control_plane.list_events(case_id, after_seq=after_seq))
+def _feed_from_row(
+    case_id: str,
+    row: dict[str, Any],
+    events: list[dict[str, Any]],
+    after_seq: int = 0,
+) -> dict[str, Any]:
+    state = row["state"] if isinstance(row.get("state"), dict) else {}
     turns = [event_to_turn(event) for event in events]
     pending = state.get("hitl") if isinstance(state.get("hitl"), dict) else {}
     questions = pending.get("questions") if isinstance(pending.get("questions"), list) else []
     gate = None
-    if row["status"] == "waiting_user" and questions:
+    if row.get("status") == "waiting_user" and questions:
         q0 = questions[0] if isinstance(questions[0], dict) else {}
         gate = {
             "gate_id": q0.get("question_id") or "hitl",
@@ -5555,18 +5571,27 @@ def case_feed(case_id: str, after_seq: int = 0) -> dict[str, Any]:
         "task_name": name,
         "title": (name or state.get("goal") or case_id)[:120],
         "objective": state.get("goal") or "",
-        "status": row["status"],
+        "status": row.get("status"),
         "state": state,
         "attached_files": attached,
-        "awaiting_human": row["status"] == "waiting_user",
+        "awaiting_human": row.get("status") == "waiting_user",
         "human_gate": gate,
         "activity": turns,
         "events": events,
-        "schema": build_schema_model(events, state=state, status=row["status"]),
+        "schema": build_schema_model(events, state=state, status=row.get("status")),
         "after_seq": after_seq,
         "schedule_artifact": _schedule_artifact(case_id, artifacts),
         "restartable": case_is_restartable(row),
     }
+
+
+def case_feed(case_id: str, after_seq: int = 0) -> dict[str, Any]:
+    snap = control_plane.snapshot(case_id, after_seq=after_seq)
+    row = snap["case"]
+    if row is None:
+        raise HTTPException(status_code=404, detail="case not found")
+    events = collapse_duplicate_events(snap["events"])
+    return _feed_from_row(case_id, row, events, after_seq)
 
 
 async def _read_upload(upload: UploadFile, *, field: str) -> tuple[str, bytes, str]:
@@ -5715,13 +5740,17 @@ async def create_case(
                 raise HTTPException(status_code=502, detail=f"artifact proxy upload failed: {exc}") from exc
     else:
         save_task_binaries(case_id, binary or None)
-    control_plane.create_case(case_id, goal, artifacts, task_name=name)
+    extra = {}
     if (schedule_root or "").strip():
-        row = control_plane.get_case(case_id)
-        if row:
-            state = dict(row["state"] or {})
-            state["schedule_root"] = schedule_root.strip()
-            control_plane.update_case(case_id, state=state, status="new")
+        extra["schedule_root"] = schedule_root.strip()
+    control_plane.create_case(
+        case_id,
+        goal,
+        artifacts,
+        task_name=name,
+        extra_state=extra or None,
+        status="running",
+    )
     control_plane.append_event(
         case_id,
         kind="case.created",
@@ -5730,7 +5759,6 @@ async def create_case(
         status_message=f"Принял задачу: {goal[:180]}",
         payload={"requested_by": requested_by, "files": [fname for _s, fname, _c, _m in uploads], "task_name": name},
     )
-    control_plane.update_case(case_id, status="running")
     background_tasks.add_task(_invoke_create, case_id)
     return {"ok": True, "case_id": case_id, "task_id": case_id, "status": "running", "task_name": name}
 
@@ -5743,7 +5771,7 @@ def patch_case_name(case_id: str, body: CaseNameIn) -> dict[str, Any]:
     name = _normalize_task_name(body.task_name)
     state = dict(row["state"] or {})
     state["task_name"] = name
-    control_plane.update_case(case_id, state=state)
+    control_plane.update_case(case_id, state=state, status=row["status"])
     feed = case_feed(case_id)
     return {
         "ok": True,
@@ -5770,9 +5798,10 @@ def get_state(case_id: str) -> dict[str, Any]:
 
 @router.get("/cases/{case_id}/events")
 def get_events(case_id: str, after_seq: int = Query(default=0, ge=0)) -> dict[str, Any]:
-    if control_plane.get_case(case_id) is None:
+    snap = control_plane.snapshot(case_id, after_seq=after_seq)
+    if snap["case"] is None:
         raise HTTPException(status_code=404, detail="case not found")
-    events = collapse_duplicate_events(control_plane.list_events(case_id, after_seq=after_seq))
+    events = collapse_duplicate_events(snap["events"])
     return {"case_id": case_id, "events": events, "activity": [event_to_turn(event) for event in events]}
 
 
@@ -5865,7 +5894,7 @@ async def _merge_case_uploads(case_id: str, uploads: list[tuple[str, str, bytes,
         save_task_binaries(case_id, binary)
     if row:
         state["artifacts"] = artifacts
-        control_plane.update_case(case_id, state=state)
+        control_plane.update_case(case_id, state=state, status=row.get("status") or "running")
     return names
 
 
@@ -5963,8 +5992,8 @@ async def post_run(case_id: str, request: Request, background_tasks: BackgroundT
         raise HTTPException(status_code=503, detail=UNCONFIGURED_N8N)
     explicit_restart = action in RESTART_ACTIONS and case_is_restartable(row)
     if explicit_restart:
-        _prepare_case_restart(case_id, row)
-        row = control_plane.get_case(case_id) or row
+        state = _prepare_case_restart(case_id, row)
+        row = {**row, "state": state, "status": "running"}
     elif case_is_restartable(row):
         return {
             "ok": True,
@@ -5977,7 +6006,7 @@ async def post_run(case_id: str, request: Request, background_tasks: BackgroundT
         }
     state = row["state"] if isinstance(row["state"], dict) else {}
     if int(state.get("step_count") or 0) >= MAX_STEPS:
-        control_plane.update_case(case_id, status="failed")
+        control_plane.update_case(case_id, state=state, status="failed")
         control_plane.append_event(
             case_id,
             kind="case.failed",
@@ -5995,7 +6024,7 @@ async def post_run(case_id: str, request: Request, background_tasks: BackgroundT
             "restartable": True,
         }
     if row["status"] != "waiting_user":
-        control_plane.update_case(case_id, status="running")
+        control_plane.update_case(case_id, state=state, status="running")
     background_tasks.add_task(_invoke_step, case_id)
     return {
         "ok": True,
@@ -6008,33 +6037,62 @@ async def post_run(case_id: str, request: Request, background_tasks: BackgroundT
     }
 
 
+def _stream_meta(feed: dict[str, Any]) -> dict[str, Any]:
+    return {
+        "status": feed.get("status"),
+        "awaiting_human": feed.get("awaiting_human"),
+        "human_gate": feed.get("human_gate"),
+        "restartable": feed.get("restartable"),
+        "schedule_artifact": feed.get("schedule_artifact"),
+        "state": feed.get("state"),
+        "task_name": feed.get("task_name"),
+        "title": feed.get("title"),
+        "objective": feed.get("objective"),
+        "attached_files": feed.get("attached_files"),
+    }
+
+
 @router.get("/cases/{case_id}/stream")
 async def stream_case(case_id: str, request: Request) -> StreamingResponse:
-    if control_plane.get_case(case_id) is None:
+    snap = control_plane.snapshot(case_id)
+    if snap["case"] is None:
         raise HTTPException(status_code=404, detail="case not found")
 
     async def gen():
         last = 0
-        snapshot = case_feed(case_id)
+        tail: list[dict[str, Any]] = list(snap["events"] or [])
+        snapshot = _feed_from_row(case_id, snap["case"], collapse_duplicate_events(tail), 0)
         yield f"data: {json.dumps({'type': 'snapshot', **snapshot}, default=str)}\n\n"
         events = snapshot.get("events") or []
         if events:
             last = int(events[-1]["event_id"])
+        last_updated = str((snap["case"] or {}).get("updated_at") or "")
         while True:
             if await request.is_disconnected():
                 break
-            await asyncio.sleep(1.0)
-            fresh = control_plane.list_events(case_id, after_seq=last)
-            visible_ids = {
-                int(event["event_id"])
-                for event in collapse_duplicate_events(control_plane.list_events(case_id))
-                if event.get("event_id") is not None
-            }
-            for event in fresh:
+            await asyncio.sleep(2.0)
+            fresh = control_plane.snapshot(case_id, after_seq=last)
+            row = fresh["case"]
+            if row is None:
+                break
+            raw_new = list(fresh["events"] or [])
+            collapsed = collapse_duplicate_events(tail[-8:] + raw_new)
+            emit = [
+                event
+                for event in collapsed
+                if event.get("event_id") is not None and int(event["event_id"]) > last
+            ]
+            if raw_new:
+                tail = (tail + raw_new)[-16:]
+            feed = _feed_from_row(case_id, row, [], last)
+            meta = _stream_meta(feed)
+            updated = str(row.get("updated_at") or "")
+            for event in emit:
                 last = int(event["event_id"])
-                if int(event["event_id"]) not in visible_ids:
-                    continue
-                yield f"data: {json.dumps({'type': 'turn', 'turn': event_to_turn(event), 'event': event}, default=str)}\n\n"
+                yield f"data: {json.dumps({'type': 'turn', 'turn': event_to_turn(event), 'event': event, **meta}, default=str)}\n\n"
+            if not emit and updated != last_updated:
+                yield f"data: {json.dumps({'type': 'meta', **meta}, default=str)}\n\n"
+            last_updated = updated
             yield f"data: {json.dumps({'type': 'ping'})}\n\n"
 
     return StreamingResponse(gen(), media_type="text/event-stream")
@@ -6468,7 +6526,7 @@ def load_json_schema(name: str) -> dict[str, Any]:
     return json.loads(path.read_text(encoding="utf-8"))
 
 ===END_FILE===
-===BEGIN_FILE===	mas-activity-service/app/control_plane.py	12089	utf8
+===BEGIN_FILE===	mas-activity-service/app/control_plane.py	14164	utf8
 """Control-plane facade.
 
 Production storage is reached only through the n8n control-plane webhook.
@@ -6490,6 +6548,9 @@ from app.contracts import empty_state
 from app.settings import get_settings
 
 _LOCK = threading.Lock()
+_CLIENT_LOCK = threading.Lock()
+_HTTP: httpx.Client | None = None
+_HTTP_KEY: tuple[Any, ...] | None = None
 _CASES: dict[str, dict[str, Any]] = {}
 _EVENTS: dict[str, list[dict[str, Any]]] = {}
 _ERRORS: dict[str, list[dict[str, Any]]] = {}
@@ -6547,6 +6608,20 @@ def _headers() -> dict[str, str]:
     return headers
 
 
+def _http_client() -> httpx.Client:
+    """Reuse one client: each proxy call used to open a fresh TCP session to n8n."""
+    global _HTTP, _HTTP_KEY
+    cfg = get_settings()
+    key = (_proxy_url(), cfg.control_plane_proxy_timeout_s, cfg.httpx_verify)
+    with _CLIENT_LOCK:
+        if _HTTP is None or _HTTP_KEY != key:
+            if _HTTP is not None:
+                _HTTP.close()
+            _HTTP = httpx.Client(timeout=key[1], verify=key[2])
+            _HTTP_KEY = key
+        return _HTTP
+
+
 def proxy_call(operation: str, **payload: Any) -> Any:
     """Call the single n8n control-plane webhook and unwrap its result."""
     url = _proxy_url()
@@ -6554,11 +6629,7 @@ def proxy_call(operation: str, **payload: Any) -> Any:
         raise RuntimeError("CONTROL_PLANE_PROXY_URL is not configured")
     body = {"operation": operation, **payload}
     try:
-        with httpx.Client(
-            timeout=get_settings().control_plane_proxy_timeout_s,
-            verify=get_settings().httpx_verify,
-        ) as client:
-            response = client.post(url, json=body, headers=_headers())
+        response = _http_client().post(url, json=body, headers=_headers())
     except httpx.HTTPError as exc:
         raise RuntimeError(f"control-plane proxy request failed: {exc}") from exc
     if response.status_code >= 400:
@@ -6640,16 +6711,26 @@ def _local_case(case_id: str) -> dict[str, Any] | None:
         return dict(row) if row else None
 
 
-def create_case(case_id: str, goal: str, artifacts: dict[str, Any] | None = None, task_name: str = "") -> dict[str, Any]:
+def create_case(
+    case_id: str,
+    goal: str,
+    artifacts: dict[str, Any] | None = None,
+    task_name: str = "",
+    extra_state: dict[str, Any] | None = None,
+    status: str = "new",
+) -> dict[str, Any]:
     state = empty_state(case_id, goal)
     if task_name:
         state["task_name"] = str(task_name).strip()
     if artifacts:
         state["artifacts"] = artifacts
+    if extra_state:
+        state.update(extra_state)
+    status = str(status or "new").strip() or "new"
     if _configured():
-        return dict(proxy_call("create_case", case_id=case_id, state=state, status="new") or {})
+        return dict(proxy_call("create_case", case_id=case_id, state=state, status=status) or {})
     with _LOCK:
-        row = {"case_id": case_id, "state": state, "status": "new", "updated_at": _now()}
+        row = {"case_id": case_id, "state": state, "status": status, "updated_at": _now()}
         _CASES[case_id] = row
         _EVENTS.setdefault(case_id, [])
         _ERRORS.setdefault(case_id, [])
@@ -6659,8 +6740,39 @@ def create_case(case_id: str, goal: str, artifacts: dict[str, Any] | None = None
 def get_case(case_id: str) -> dict[str, Any] | None:
     if _configured():
         result = proxy_call("get_case", case_id=case_id)
-        return dict(result) if isinstance(result, dict) else None
+        return dict(result) if isinstance(result, dict) and result.get("case_id") else None
     return _local_case(case_id)
+
+
+def snapshot(case_id: str, after_seq: int = 0) -> dict[str, Any]:
+    """One webhook: case row + events after ``after_seq``.
+
+    Falls back to get_case + list_events if the imported proxy is older
+    and does not yet know ``snapshot``.
+    """
+    after_seq = int(after_seq or 0)
+    if _configured():
+        try:
+            result = proxy_call("snapshot", case_id=case_id, after_seq=after_seq) or {}
+        except RuntimeError as exc:
+            if "unsupported operation" not in str(exc).lower():
+                raise
+            row = get_case(case_id)
+            events = list_events(case_id, after_seq=after_seq) if row else []
+            return {"case": row, "events": events}
+        case = result.get("case") if isinstance(result, dict) else None
+        events = result.get("events") if isinstance(result, dict) else None
+        row = dict(case) if isinstance(case, dict) and case.get("case_id") else None
+        rows = list(events) if isinstance(events, list) else []
+        return {"case": row, "events": rows}
+    row = _local_case(case_id)
+    with _LOCK:
+        events = [
+            dict(item)
+            for item in _EVENTS.get(case_id, [])
+            if int(item["event_id"]) > after_seq
+        ]
+    return {"case": row, "events": events}
 
 
 def list_cases(limit: int = 80) -> list[dict[str, Any]]:
@@ -6673,11 +6785,15 @@ def list_cases(limit: int = 80) -> list[dict[str, Any]]:
 
 
 def update_case(case_id: str, *, state: dict[str, Any] | None = None, status: str | None = None) -> dict[str, Any]:
-    current = get_case(case_id)
-    if current is None:
-        raise KeyError(case_id)
-    next_state = state if state is not None else current["state"]
-    next_status = status if status is not None else current["status"]
+    if state is None or status is None:
+        current = get_case(case_id)
+        if current is None:
+            raise KeyError(case_id)
+        next_state = state if state is not None else current["state"]
+        next_status = status if status is not None else current["status"]
+    else:
+        next_state = state
+        next_status = status
     if isinstance(next_state, dict):
         next_state = {**next_state, "status": next_status, "case_id": case_id}
     if _configured():
@@ -10539,7 +10655,7 @@ class TaskMeta(BaseModel):
     awaiting_human: bool = False
 
 ===END_FILE===
-===BEGIN_FILE===	mas-activity-service/app/orchestrator.py	18441	utf8
+===BEGIN_FILE===	mas-activity-service/app/orchestrator.py	16673	utf8
 """Orchestrator invocation for HITL and task start (webhook or n8n REST)."""
 
 from __future__ import annotations
@@ -10833,46 +10949,6 @@ async def _login(client: httpx.AsyncClient, cfg: Settings) -> str:
         return _cookie
 
 
-def _load_execution_data_via_postgres(execution_id: str) -> str | None:
-    """Read flatted n8n execution_data from the compose Postgres (avoids n8n includeData OOM)."""
-    import re
-    import subprocess
-    from pathlib import Path
-
-    if not re.fullmatch(r"\d{1,18}", str(execution_id)):
-        return None
-    root = Path(__file__).resolve().parents[2]
-    try:
-        cp = subprocess.run(
-            [
-                "docker",
-                "compose",
-                "exec",
-                "-T",
-                "postgres",
-                "psql",
-                "-U",
-                "n8n",
-                "-d",
-                "n8n",
-                "-At",
-                "-c",
-                f'SELECT data FROM execution_data WHERE "executionId"={execution_id};',
-            ],
-            cwd=str(root),
-            capture_output=True,
-            text=True,
-            timeout=180,
-            check=False,
-        )
-    except (OSError, subprocess.SubprocessError):
-        return None
-    raw = (cp.stdout or "").strip()
-    if cp.returncode != 0 or not raw.startswith("["):
-        return None
-    return raw
-
-
 async def _invoke_n8n_rest(
     payload: dict[str, Any],
     *,
@@ -10948,40 +11024,32 @@ async def _invoke_n8n_rest(
             status = (last.get("data") or last).get("status")
             if status in {"success", "error", "crashed", "canceled"}:
                 # Failed runs do not need their potentially huge execution blob.
-                # More importantly, do not invoke the optional local Docker/Postgres
-                # fallback for an already-failed run: in a corporate/Windows
-                # deployment Docker may not exist and the fallback can block for its
-                # full subprocess timeout while we only need to fail closed.
                 if status != "success":
                     raise OrchestratorError(
                         _execution_error_message(last, status=status),
                         status_code=502,
                         detail={"execution_id": execution_id, "status": status},
                     )
-                # Prefer Postgres for the payload: includeData of golden SCHEDULE runs
-                # has repeatedly heap-OOM'd n8n (~512MiB) while serializing the response.
-                pg = await asyncio.to_thread(_load_execution_data_via_postgres, str(execution_id))
-                if pg is not None:
-                    last = {"data": {"data": pg, "status": status}}
-                else:
-                    try:
-                        full = await client.get(
-                            f"{cfg.n8n_base}/rest/executions/{execution_id}",
-                            params={"includeData": "true"},
-                        )
-                    except httpx.HTTPError as exc:
-                        raise OrchestratorError(
-                            f"n8n execution fetch failed: {exc}",
-                            status_code=502,
-                            detail={"execution_id": execution_id},
-                        ) from exc
-                    if full.status_code >= 400:
-                        raise OrchestratorError(
-                            f"n8n execution fetch HTTP {full.status_code}",
-                            status_code=502,
-                            detail=full.text[:400],
-                        )
-                    last = full.json()
+                # REST is a lab fallback. Field Windows processes never see Postgres:
+                # they call n8n webhooks only. Do not query the database from here.
+                try:
+                    full = await client.get(
+                        f"{cfg.n8n_base}/rest/executions/{execution_id}",
+                        params={"includeData": "true"},
+                    )
+                except httpx.HTTPError as exc:
+                    raise OrchestratorError(
+                        f"n8n execution fetch failed: {exc}",
+                        status_code=502,
+                        detail={"execution_id": execution_id},
+                    ) from exc
+                if full.status_code >= 400:
+                    raise OrchestratorError(
+                        f"n8n execution fetch HTTP {full.status_code}",
+                        status_code=502,
+                        detail=full.text[:400],
+                    )
+                last = full.json()
                 parsed = extract_orchestrator_response(last)
                 if parsed:
                     return parsed
@@ -14242,7 +14310,7 @@ a.btn.schedule-download:hover:not(:disabled),
 }
 
 ===END_FILE===
-===BEGIN_FILE===	mas-activity-service/static/app.js	69309	utf8
+===BEGIN_FILE===	mas-activity-service/static/app.js	69644	utf8
 (() => {
   const thread = document.getElementById("thread");
   const empty = document.getElementById("empty");
@@ -15237,8 +15305,19 @@ a.btn.schedule-download:hover:not(:disabled),
       feedPollTimer = null;
     }
     source = new EventSource(`/cases/${encodeURIComponent(taskId)}/stream`);
-    source.onopen = () => setLive("live");
-    source.onerror = () => setLive("reconnecting");
+    source.onopen = () => {
+      setLive("live");
+      if (feedPollTimer) {
+        clearInterval(feedPollTimer);
+        feedPollTimer = null;
+      }
+    };
+    source.onerror = () => {
+      setLive("reconnecting");
+      if (!feedPollTimer) {
+        feedPollTimer = setInterval(() => pollFeed({ durable: false }), 5000);
+      }
+    };
     source.onmessage = (ev) => {
       if (startOpen || currentTask !== taskId) return;
       try {
@@ -15254,6 +15333,10 @@ a.btn.schedule-download:hover:not(:disabled),
             empty.hidden = false;
             empty.textContent = emptyFeedMessage(msg);
           }
+          syncSchema(lastCaseFeed);
+        } else if (msg.type === "meta") {
+          lastCaseFeed = { ...lastCaseFeed, ...msg };
+          applyFeedMeta(msg);
           syncSchema(lastCaseFeed);
         } else if (msg.type === "turn") {
           renderTurn(msg.turn, { animate: true });
@@ -15274,7 +15357,6 @@ a.btn.schedule-download:hover:not(:disabled),
         }
       } catch (_) { /* ignore malformed SSE */ }
     };
-    feedPollTimer = setInterval(() => pollFeed({ durable: false }), 2500);
   }
 
   function attachedFilesFromFeed(data) {
@@ -16329,7 +16411,7 @@ a.btn.schedule-download:hover:not(:disabled),
   </main>
 
   <script src="/static/schema.js?v=11"></script>
-  <script src="/static/app.js?v=84"></script>
+  <script src="/static/app.js?v=85"></script>
 </body>
 </html>
 
@@ -43478,7 +43560,7 @@ if __name__ == "__main__":
     main()
 
 ===END_FILE===
-===BEGIN_FILE===	n8n/templates/generate_mas_orchestrator.py	43000	utf8
+===BEGIN_FILE===	n8n/templates/generate_mas_orchestrator.py	43461	utf8
 #!/usr/bin/env python3
 """Generate the thin MAS orchestrator (one n8n execution = one step)."""
 
@@ -44058,8 +44140,24 @@ MERGE = r"""
 const prev=$('Prepare agent call').first().json||$('Parse decision').first().json||{};
 const http=$json||{};
 const obj=v=>v&&typeof v==='object'&&!Array.isArray(v);
-const result=obj(http.body)?http.body:(obj(http)?http:{});
-const status=String(result.status||(http.error?'failed':'completed'));
+const clean=v=>{
+  const s=String(v??'').trim();
+  return /^(none|null|undefined)$/i.test(s)?'':s;
+};
+const unwrap=v=>{
+  if(obj(v)) return v;
+  if(Array.isArray(v)&&v.length&&obj(v[0])) return v[0];
+  return {};
+};
+const result=unwrap(http.body&&typeof http.body==='object'?http.body:http);
+const rawStatus=clean(result.status);
+const status=rawStatus|| (http.error?'failed':'completed');
+const resultMessage=clean(result.message);
+const fallbackMessage=status==='completed'
+  ? 'Schedule Builder завершил обработку schedule.'
+  : status==='needs_input'
+    ? 'Schedule Builder запросил дополнительные данные.'
+    : 'Schedule Builder вернул ошибку.';
 const state=obj(prev.state)?{...prev.state}:{};
 const data=obj(state.data)?{...state.data}:{};
 const artifacts=obj(state.artifacts)?{...state.artifacts}:{};
@@ -44086,7 +44184,7 @@ if(status==='needs_input'){
   nextStatus='waiting_user';
   shouldContinue=false;
   const reqs=Array.isArray(result.requests)?result.requests:[];
-  const q=reqs[0]||{question_id:'Q-agent',question:String(result.message||'Агенту нужны данные'),options:[]};
+  const q=reqs[0]||{question_id:'Q-agent',question:resultMessage||'Агенту нужны данные',options:[]};
   state.hitl={pending:true,questions:reqs.length?reqs:[q],answers:(state.hitl&&state.hitl.answers)||{}};
   events.push({kind:'hitl.request',actor:'orchestrator',agent_id:agentId,status:'waiting_user',status_message:q.question,payload:q});
 } else if(status==='completed'){
@@ -44096,15 +44194,15 @@ if(status==='needs_input'){
     agent_id:agentId,
     task_id:(prev.agent_task&&prev.agent_task.task_id)||'',
     status:'completed',
-    status_message:String(result.message||'Агент завершил работу'),
+    status_message:resultMessage||fallbackMessage,
     payload:{data_keys:Object.keys((result.data&&typeof result.data==='object')?result.data:{}),artifacts:Object.keys((result.artifacts&&typeof result.artifacts==='object')?result.artifacts:{})}
   });
 } else if(status==='failed'||http.error){
   nextStatus='running';
   shouldContinue=true;
-  state.last_error={message:String(result.message||http.message||'agent failed'),agent_id:agentId};
+  state.last_error={message:resultMessage||clean(http.message)||fallbackMessage,agent_id:agentId};
   data[bucket]=result.data||result;
-  events.push({kind:'agent.failed',actor:agentId||'agent',agent_id:agentId,status:'failed',status_message:String(result.message||http.message||'Агент вернул ошибку'),payload:{message:state.last_error.message,issues:result.issues||[]}});
+  events.push({kind:'agent.failed',actor:agentId||'agent',agent_id:agentId,status:'failed',status_message:state.last_error.message,payload:{message:state.last_error.message,issues:result.issues||[]}});
 }
 if(Number(state.step_count||0)>=24){
   nextStatus='failed';
@@ -44483,7 +44581,7 @@ if __name__ == "__main__":
     main()
 
 ===END_FILE===
-===BEGIN_FILE===	n8n/templates/generate_schedule_builder_agent.py	19363	utf8
+===BEGIN_FILE===	n8n/templates/generate_schedule_builder_agent.py	24651	utf8
 #!/usr/bin/env python3
 """Generate Agent — Schedule Builder: one LLM + FastAPI keyword tools."""
 
@@ -44511,11 +44609,13 @@ SYSTEM = """Ты — единственный LLM-решатель агента 
 Исходный .INC тебе не показывают. Он лежит в сессии FastAPI. session_id привязан workflow: никогда не передавай session_id и обёртку args/input.
 
 Инструменты:
-- inspect_schedule — скважины, keywords, даты, GRUPTREE (компактно)
+- inspect_schedule — объектная инвентаризация скважин, keywords, даты, GRUPTREE (компактно)
+- inspect_well — подробный объект одной скважины: identity, factual WCONPROD, commissioning anchor и история режимов
+- analyze_forecast_controls — детерминированный разбор control timeline: history, forecast, overrides, economics, reopen/status/efficiency events
 - search_keywords — по intent сервиса вернёт keywords + methods
 - get_keyword — объектная модель полей и методов
 - list_records — компактные записи keyword/well
-- apply_commissioning — сдвиг дат ввода по фактам Excel из сессии. Даты сам не выдумывай.
+- apply_commissioning — сдвиг дат ввода по фактам Excel из сессии. Якорь commissioning — первый нефактический WCONPROD; последующие WCONPROD являются прогнозными режимами и сохраняются.
 - apply_group_rebind — перепривязка групп по тексту задачи и baseline. Скважины только из inspect.
 - apply_operations — точечные MODIFY/ADD по схеме keyword. wells только из inspect.
 - build_schedule — собрать текущий working text, если apply уже менял сессию
@@ -44524,6 +44624,11 @@ SYSTEM = """Ты — единственный LLM-решатель агента 
 Правила:
 - Не пиши текст SCHEDULE сам. Только инструменты.
 - Не придумывай скважины, даты, группы, дебиты.
+- Для commissioning сначала проверь объект скважины через inspect_schedule/inspect_well и отличай first_wconprod от forecast control events.
+- Для изменения одного параметра после существующего контроля используй WELTARG, а не переписывай весь WCONPROD.
+- Не путай WECON (экономические пределы), WTEST (переоткрытие), WELOPEN (статус), WEFAC (uptime), WPIMULT (CF) и GCONPROD (группа).
+- Если analyze_forecast_controls вернул needs_input по границе history/forecast — не применяй операцию до уточнения.
+- Жёсткое правило: если комментарий WCONPROD содержит «факт» или «fact», запись фактическая. Её нельзя удалять, переносить или использовать как прогнозный commissioning anchor.
 - suggested_capability=commissioning → сразу apply_commissioning, затем STOP.
 - suggested_capability=group_rebind → inspect при необходимости, затем apply_group_rebind, затем STOP.
 - Иначе search_keywords → get_keyword → apply_operations / needs_input.
@@ -44534,7 +44639,17 @@ SYSTEM = """Ты — единственный LLM-решатель агента 
 """
 
 TOOLS = [
-    ("inspect_schedule", "Компактный осмотр baseline: wells, keywords, даты, GRUPTREE. Без полного .INC.", []),
+    ("inspect_schedule", "Объектная инвентаризация baseline: wells, factual/forecast WCONPROD, commissioning anchors, история режимов, keywords, даты и GRUPTREE. Без полного .INC.", []),
+    (
+        "inspect_well",
+        "Подробно осмотреть одну скважину: identity, factual WCONPROD, commissioning anchor (первый нефактический WCONPROD), последующие forecast control events и связанные records.",
+        [("well", "string", True, "Точное имя скважины из inspect_schedule")],
+    ),
+    (
+        "analyze_forecast_controls",
+        "Детерминированно разобрать timeline одной скважины: history/forecast controls, commissioning, WELTARG, WECON, WTEST, WELOPEN, WEFAC, WPIMULT и правила выбора keyword.",
+        [("well", "string", True, "Точное имя скважины из inspect_schedule")],
+    ),
     (
         "search_keywords",
         "Найти keywords и methods по intent (даты ввода, группы, дебиты, перфорация, ГРП).",
@@ -44622,6 +44737,47 @@ def http_json(name, pos, method, url, body=None, timeout=180000):
         params["specifyBody"] = "json"
         params["jsonBody"] = body
     return node(name, "n8n-nodes-base.httpRequest", 4.4, pos, params, onError="continueRegularOutput", alwaysOutputData=True)
+
+
+def activity_event(name, pos, kind, message, *, status="running"):
+    body = (
+        "={{ ({"
+        f"kind: {json.dumps(kind)}, "
+        "actor: 'schedule_builder', agent_id: 'schedule_builder', "
+        "task_id: $('Normalize schedule task').first().json.agent_task.task_id, "
+        f"status: {json.dumps(status)}, "
+        f"status_message: {json.dumps(message)}, "
+        "payload: {source: 'schedule-builder-agent-workflow'}"
+        "}) }}"
+    )
+    return http_json(
+        name,
+        pos,
+        "POST",
+        "={{ $('Runtime configuration').first().json.activity_base_url + '/cases/' + $('Normalize schedule task').first().json.agent_task.case_id + '/events' }}",
+        body,
+        timeout=30000,
+    )
+
+
+def activity_result_event(name, pos):
+    body = (
+        "={{ ({"
+        "kind: 'agent.result', actor: 'schedule_builder', agent_id: 'schedule_builder', "
+        "task_id: $('Normalize schedule task').first().json.agent_task.task_id, "
+        "status: String($('Format schedule result').first().json.status || 'failed'), "
+        "status_message: String($('Format schedule result').first().json.message || 'Schedule Builder завершил обработку schedule.'), "
+        "payload: {source: 'schedule-builder-agent-workflow'}"
+        "}) }}"
+    )
+    return http_json(
+        name,
+        pos,
+        "POST",
+        "={{ $('Runtime configuration').first().json.activity_base_url + '/cases/' + $('Normalize schedule task').first().json.agent_task.case_id + '/events' }}",
+        body,
+        timeout=30000,
+    )
 
 
 def tool_http(name, pos, description, fields):
@@ -44874,6 +45030,32 @@ def main() -> None:
             },
         ),
         node("Format missing schedule", "n8n-nodes-base.code", 2, (1220, 240), {"jsCode": FORMAT_OPEN}),
+        activity_event(
+            "Activity — Schedule Builder accepted",
+            (1220, -220),
+            "agent.accepted",
+            "Schedule Builder принял задачу и анализирует исходный schedule.",
+        ),
+        node(
+            "Restore after Schedule Builder accepted",
+            "n8n-nodes-base.code",
+            2,
+            (1440, -220),
+            {"jsCode": "const x=$('Session ready?').first().json||{}; return [{json:x}];"},
+        ),
+        activity_event(
+            "Activity — Schedule Builder progress",
+            (1660, -220),
+            "agent.progress",
+            "Schedule Builder проверяет структуру скважин, даты и прогнозные controls.",
+        ),
+        node(
+            "Restore after Schedule Builder progress",
+            "n8n-nodes-base.code",
+            2,
+            (1880, -220),
+            {"jsCode": "const x=$('Restore after Schedule Builder accepted').first().json||{}; return [{json:x}];"},
+        ),
         node(
             "Capability router",
             "n8n-nodes-base.switch",
@@ -44900,6 +45082,17 @@ def main() -> None:
             "={{ $('Runtime configuration').first().json.schedule_service_url + '/agent-tools/apply_group_rebind' }}",
             "={{ ({session_id: $('Open schedule session').first().json.session_id}) }}",
             timeout=180000,
+        ),
+        activity_result_event(
+            "Activity — Schedule Builder completed",
+            (2200, -180),
+        ),
+        node(
+            "Restore after Schedule Builder activity",
+            "n8n-nodes-base.code",
+            2,
+            (2440, -180),
+            {"jsCode": "const x=$('Format schedule result').first().json||{}; return [{json:x}];"},
         ),
         node("Prepare AI Agent input", "n8n-nodes-base.code", 2, (1480, 160), {"jsCode": PREPARE}),
         node(
@@ -44951,7 +45144,11 @@ def main() -> None:
     connect(connections, "Runtime configuration", "Normalize schedule task")
     connect(connections, "Normalize schedule task", "Open schedule session")
     connect(connections, "Open schedule session", "Session ready?")
-    connect(connections, "Session ready?", "Capability router", si=0)
+    connect(connections, "Session ready?", "Activity — Schedule Builder accepted", si=0)
+    connect(connections, "Activity — Schedule Builder accepted", "Restore after Schedule Builder accepted")
+    connect(connections, "Restore after Schedule Builder accepted", "Activity — Schedule Builder progress")
+    connect(connections, "Activity — Schedule Builder progress", "Restore after Schedule Builder progress")
+    connect(connections, "Restore after Schedule Builder progress", "Capability router")
     connect(connections, "Session ready?", "Format missing schedule", si=1)
     connect(connections, "Capability router", "Apply commissioning", si=0)
     connect(connections, "Capability router", "Apply group rebind", si=1)
@@ -44964,6 +45161,8 @@ def main() -> None:
         connect(connections, name, "Schedule Builder AI Agent", out="ai_tool", tin="ai_tool")
     connect(connections, "Schedule Builder AI Agent", "Fetch schedule result")
     connect(connections, "Fetch schedule result", "Format schedule result")
+    connect(connections, "Format schedule result", "Activity — Schedule Builder completed")
+    connect(connections, "Activity — Schedule Builder completed", "Restore after Schedule Builder activity")
 
     wf = {
         "id": WF_ID,
@@ -61104,19 +61303,22 @@ main().catch((error) => {
 }
 
 ===END_FILE===
-===BEGIN_FILE===	n8n/workflows/core/mas-control-plane-proxy.workflow.json	13380	utf8
+===BEGIN_FILE===	n8n/workflows/core/mas-control-plane-proxy.workflow.json	14469	utf8
 {
   "id": "mas-control-plane-proxy-v1",
   "name": "MAS — Control Plane Proxy",
   "active": false,
   "isArchived": false,
   "settings": {
-    "executionOrder": "v1"
+    "executionOrder": "v1",
+    "saveDataSuccessExecution": "none",
+    "saveDataErrorExecution": "all",
+    "saveManualExecutions": true
   },
   "nodes": [
     {
       "parameters": {
-        "content": "## edit after import\n\nThis is the only database boundary for MAS Activity.\n\n1. Bind the same Postgres credential used by the existing MAS workflows.\n2. Bind Header Auth on the webhook.\n3. Activate this workflow.\n4. Set `CONTROL_PLANE_PROXY_URL=http://n8n:5678/webhook/mas-control-plane` in Activity.\n\nOperations: schema, create_case, get_case, list_cases, update_case, append_event, list_events, append_error, list_errors, record_execution, case_id_for_execution, list_agents, upsert_agent, artifact_put, artifact_get.\n\nActivity contains no database driver and no Postgres connection. HITL state, events and error traces use the same proxy.",
+        "content": "## edit after import\n\nThis is the only database boundary for MAS Activity.\n\n1. Bind the same Postgres credential used by the existing MAS workflows.\n2. Bind Header Auth on the webhook.\n3. Activate this workflow.\n4. Set `CONTROL_PLANE_PROXY_URL=http://n8n:5678/webhook/mas-control-plane` in Activity.\n\nOperations: schema, create_case, get_case, list_cases, update_case, append_event, list_events, snapshot, append_error, list_errors, record_execution, case_id_for_execution, list_agents, upsert_agent, artifact_put, artifact_get.\n\n`snapshot` returns case + events in one SQL / one n8n execution (Activity live feed).\nSuccessful production executions are not saved; errors still are.\n\nActivity contains no database driver and no Postgres connection. HITL state, events and error traces use the same proxy.",
         "height": 430,
         "width": 560,
         "color": 1
@@ -61156,7 +61358,7 @@ main().catch((error) => {
     },
     {
       "parameters": {
-        "jsCode": "const raw=$json.body&&typeof $json.body==='object'?$json.body:$json;\nconst op=String(raw.operation||'').trim();\nconst allowed=new Set(['schema','create_case','get_case','list_cases','update_case','append_event','list_events','append_error','list_errors','record_execution','case_id_for_execution','list_agents','upsert_agent','artifact_put','artifact_get']);\nif(!allowed.has(op)) throw new Error('unsupported operation');\nconst s=v=>String(v??'');\nconst j=v=>JSON.stringify(v??{});\nconst caseId=s(raw.case_id).trim();\nconst artifactId=s(raw.artifact_id).trim();\nif(['create_case','get_case','update_case','append_event','list_events','list_errors','artifact_put','artifact_get'].includes(op)&&!caseId) throw new Error('case_id is required');\nif(['artifact_put','artifact_get'].includes(op)&&!artifactId) throw new Error('artifact_id is required');\nconst common={operation:op,case_id:caseId,artifact_id:artifactId};\nlet query='',params=[];\nif(op==='schema') query=`CREATE TABLE IF NOT EXISTS cases (case_id TEXT PRIMARY KEY,state JSONB NOT NULL DEFAULT '{}'::jsonb,status TEXT NOT NULL,updated_at TIMESTAMPTZ NOT NULL DEFAULT now(),CONSTRAINT cases_status_check CHECK (status IN ('new','running','waiting_user','done','failed')));CREATE TABLE IF NOT EXISTS events (event_id BIGSERIAL PRIMARY KEY,case_id TEXT NOT NULL REFERENCES cases(case_id) ON DELETE CASCADE,task_id TEXT,kind TEXT NOT NULL,actor TEXT NOT NULL,agent_id TEXT,status TEXT,status_message TEXT,handoff_message TEXT,payload JSONB NOT NULL DEFAULT '{}'::jsonb,created_at TIMESTAMPTZ NOT NULL DEFAULT now());CREATE INDEX IF NOT EXISTS events_case_id_event_id_idx ON events(case_id);CREATE TABLE IF NOT EXISTS error_traces (error_id BIGSERIAL PRIMARY KEY,case_id TEXT,execution_id TEXT,workflow_name TEXT,node_name TEXT,error_message TEXT,error_type TEXT,stack TEXT,input_snapshot JSONB,created_at TIMESTAMPTZ NOT NULL DEFAULT now());CREATE INDEX IF NOT EXISTS error_traces_case_id_idx ON error_traces(case_id);CREATE TABLE IF NOT EXISTS executions (execution_id TEXT PRIMARY KEY,case_id TEXT,workflow_name TEXT,started_at TIMESTAMPTZ NOT NULL DEFAULT now());CREATE INDEX IF NOT EXISTS executions_case_id_idx ON executions(case_id);CREATE TABLE IF NOT EXISTS agent_registry (agent_id TEXT PRIMARY KEY,title TEXT,when_to_use TEXT,input_required JSONB NOT NULL DEFAULT '[]'::jsonb,output_provides JSONB NOT NULL DEFAULT '[]'::jsonb);CREATE TABLE IF NOT EXISTS mas_artifacts (case_id TEXT NOT NULL,artifact_id TEXT NOT NULL,filename TEXT NOT NULL,mime_type TEXT NOT NULL DEFAULT 'application/octet-stream',content BYTEA NOT NULL,created_at TIMESTAMPTZ NOT NULL DEFAULT now(),updated_at TIMESTAMPTZ NOT NULL DEFAULT now(),PRIMARY KEY(case_id,artifact_id));CREATE INDEX IF NOT EXISTS mas_artifacts_case_id_idx ON mas_artifacts(case_id);INSERT INTO agent_registry(agent_id,title,when_to_use,input_required,output_provides) VALUES ('excel_extractor','Excel Extractor','Если есть Excel-файл и нужно извлечь данные','[\"excel\"]'::jsonb,'[\"excel_table\",\"normalized_rows\"]'::jsonb),('calculation_agent','Calculation Agent','Если нужна геометрическая калька','[\"surface\",\"trajectory\"]'::jsonb,'[\"top_perforation_md\"]'::jsonb),('schedule_builder','Schedule Builder','Построение SCHEDULE','[\"schedule_source\"]'::jsonb,'[\"schedule_out\",\"diff\"]'::jsonb) ON CONFLICT(agent_id) DO NOTHING;SELECT true AS schema_ok;`;\nelse if(op==='create_case'){query='INSERT INTO cases(case_id,state,status,updated_at) VALUES($1,$2::jsonb,$3,now()) ON CONFLICT(case_id) DO NOTHING RETURNING case_id,state,status,updated_at';params=[caseId,j(raw.state),s(raw.status||'new')];}\nelse if(op==='get_case'){query='SELECT case_id,state,status,updated_at FROM cases WHERE case_id=$1';params=[caseId];}\nelse if(op==='list_cases'){query='SELECT c.case_id,c.status,c.updated_at,c.state,(SELECT COUNT(*) FROM events e WHERE e.case_id=c.case_id) AS event_count FROM cases c ORDER BY c.updated_at DESC LIMIT $1';params=[Number(raw.limit||80)];}\nelse if(op==='update_case'){query='UPDATE cases SET state=$1::jsonb,status=$2,updated_at=now() WHERE case_id=$3 RETURNING case_id,state,status,updated_at';params=[j(raw.state),s(raw.status),caseId];}\nelse if(op==='append_event'){query=\"WITH locked AS (SELECT case_id FROM cases WHERE case_id=$1 FOR UPDATE), last_event AS (SELECT e.* FROM events e JOIN locked l ON l.case_id=e.case_id WHERE e.case_id=$1 ORDER BY e.event_id DESC LIMIT 1), inserted AS (INSERT INTO events(case_id,task_id,kind,actor,agent_id,status,status_message,handoff_message,payload) SELECT $1,$2,$3,$4,$5,$6,$7,$8,$9::jsonb WHERE NOT EXISTS (SELECT 1 FROM last_event WHERE kind=$3 AND actor=$4 AND COALESCE(agent_id,'')=COALESCE($5,'') AND COALESCE(status,'')=COALESCE($6,'') AND regexp_replace(COALESCE(status_message,''),'\\\\s+',' ','g')=regexp_replace(COALESCE($7,''),'\\\\s+',' ','g') AND regexp_replace(COALESCE(handoff_message,''),'\\\\s+',' ','g')=regexp_replace(COALESCE($8,''),'\\\\s+',' ','g') AND COALESCE(task_id,'')=COALESCE($2,'')) RETURNING event_id,case_id,task_id,kind,actor,agent_id,status,status_message,handoff_message,payload,created_at) SELECT *,false AS idempotent FROM inserted UNION ALL SELECT event_id,case_id,task_id,kind,actor,agent_id,status,status_message,handoff_message,payload,created_at,true AS idempotent FROM last_event WHERE NOT EXISTS (SELECT 1 FROM inserted)\";params=[caseId,s(raw.task_id),s(raw.kind),s(raw.actor),raw.agent_id||null,raw.status||null,raw.status_message||null,raw.handoff_message||null,j(raw.payload)];}\nelse if(op==='list_events'){query='SELECT event_id,case_id,task_id,kind,actor,agent_id,status,status_message,handoff_message,payload,created_at FROM events WHERE case_id=$1 AND event_id>$2 ORDER BY event_id ASC';params=[caseId,Number(raw.after_seq||0)];}\nelse if(op==='append_error'){query='INSERT INTO error_traces(case_id,execution_id,workflow_name,node_name,error_message,error_type,stack,input_snapshot) VALUES($1,$2,$3,$4,$5,$6,$7,$8::jsonb) RETURNING error_id,case_id,execution_id,workflow_name,node_name,error_message,error_type,stack,input_snapshot,created_at';params=[raw.case_id||null,raw.execution_id||null,raw.workflow_name||null,raw.node_name||null,raw.error_message||null,raw.error_type||null,raw.stack||null,j(raw.input_snapshot)];}\nelse if(op==='list_errors'){query='SELECT error_id,case_id,execution_id,workflow_name,node_name,error_message,error_type,stack,input_snapshot,created_at FROM error_traces WHERE case_id=$1 ORDER BY error_id ASC';params=[caseId];}\nelse if(op==='record_execution'){query='INSERT INTO executions(execution_id,case_id,workflow_name) VALUES($1,$2,$3) ON CONFLICT(execution_id) DO UPDATE SET case_id=EXCLUDED.case_id,workflow_name=EXCLUDED.workflow_name RETURNING execution_id,case_id,workflow_name';params=[s(raw.execution_id),caseId,s(raw.workflow_name||'orchestrator')];}\nelse if(op==='case_id_for_execution'){query='SELECT case_id FROM executions WHERE execution_id=$1';params=[s(raw.execution_id)];}\nelse if(op==='list_agents'){query='SELECT agent_id,title,when_to_use,input_required,output_provides FROM agent_registry ORDER BY agent_id';}\nelse if(op==='upsert_agent'){const r=raw.row||{};query='INSERT INTO agent_registry(agent_id,title,when_to_use,input_required,output_provides) VALUES($1,$2,$3,$4::jsonb,$5::jsonb) ON CONFLICT(agent_id) DO UPDATE SET title=EXCLUDED.title,when_to_use=EXCLUDED.when_to_use,input_required=EXCLUDED.input_required,output_provides=EXCLUDED.output_provides RETURNING agent_id,title,when_to_use,input_required,output_provides';params=[s(r.agent_id),r.title||null,r.when_to_use||null,j(r.input_required||[]),j(r.output_provides||[])];}\nelse if(op==='artifact_put'){query=\"INSERT INTO mas_artifacts(case_id,artifact_id,filename,mime_type,content,updated_at) VALUES($1,$2,$3,$4,decode($5,'base64'),now()) ON CONFLICT(case_id,artifact_id) DO UPDATE SET filename=EXCLUDED.filename,mime_type=EXCLUDED.mime_type,content=EXCLUDED.content,updated_at=now() RETURNING case_id,artifact_id,filename,mime_type,octet_length(content)::bigint AS bytes\";params=[caseId,artifactId,s(raw.filename||artifactId).slice(0,512),s(raw.mime_type||'application/octet-stream').slice(0,255),s(raw.content_base64)];}\nelse if(op==='artifact_get'){query=\"SELECT case_id,artifact_id,filename,mime_type,encode(content,'base64') AS content_base64,octet_length(content)::bigint AS bytes FROM mas_artifacts WHERE case_id=$1 AND artifact_id=$2\";params=[caseId,artifactId];}\nreturn [{json:{...common,query,params}}];"
+        "jsCode": "const raw=$json.body&&typeof $json.body==='object'?$json.body:$json;\nconst op=String(raw.operation||'').trim();\nconst allowed=new Set(['schema','create_case','get_case','list_cases','update_case','append_event','list_events','snapshot','append_error','list_errors','record_execution','case_id_for_execution','list_agents','upsert_agent','artifact_put','artifact_get']);\nif(!allowed.has(op)) throw new Error('unsupported operation');\nconst s=v=>String(v??'');\nconst j=v=>JSON.stringify(v??{});\nconst caseId=s(raw.case_id).trim();\nconst artifactId=s(raw.artifact_id).trim();\nif(['create_case','get_case','update_case','append_event','list_events','snapshot','list_errors','artifact_put','artifact_get'].includes(op)&&!caseId) throw new Error('case_id is required');\nif(['artifact_put','artifact_get'].includes(op)&&!artifactId) throw new Error('artifact_id is required');\nconst common={operation:op,case_id:caseId,artifact_id:artifactId};\nlet query='',params=[];\nif(op==='schema') query=`CREATE TABLE IF NOT EXISTS cases (case_id TEXT PRIMARY KEY,state JSONB NOT NULL DEFAULT '{}'::jsonb,status TEXT NOT NULL,updated_at TIMESTAMPTZ NOT NULL DEFAULT now(),CONSTRAINT cases_status_check CHECK (status IN ('new','running','waiting_user','done','failed')));CREATE TABLE IF NOT EXISTS events (event_id BIGSERIAL PRIMARY KEY,case_id TEXT NOT NULL REFERENCES cases(case_id) ON DELETE CASCADE,task_id TEXT,kind TEXT NOT NULL,actor TEXT NOT NULL,agent_id TEXT,status TEXT,status_message TEXT,handoff_message TEXT,payload JSONB NOT NULL DEFAULT '{}'::jsonb,created_at TIMESTAMPTZ NOT NULL DEFAULT now());CREATE INDEX IF NOT EXISTS events_case_id_event_id_idx ON events(case_id);CREATE TABLE IF NOT EXISTS error_traces (error_id BIGSERIAL PRIMARY KEY,case_id TEXT,execution_id TEXT,workflow_name TEXT,node_name TEXT,error_message TEXT,error_type TEXT,stack TEXT,input_snapshot JSONB,created_at TIMESTAMPTZ NOT NULL DEFAULT now());CREATE INDEX IF NOT EXISTS error_traces_case_id_idx ON error_traces(case_id);CREATE TABLE IF NOT EXISTS executions (execution_id TEXT PRIMARY KEY,case_id TEXT,workflow_name TEXT,started_at TIMESTAMPTZ NOT NULL DEFAULT now());CREATE INDEX IF NOT EXISTS executions_case_id_idx ON executions(case_id);CREATE TABLE IF NOT EXISTS agent_registry (agent_id TEXT PRIMARY KEY,title TEXT,when_to_use TEXT,input_required JSONB NOT NULL DEFAULT '[]'::jsonb,output_provides JSONB NOT NULL DEFAULT '[]'::jsonb);CREATE TABLE IF NOT EXISTS mas_artifacts (case_id TEXT NOT NULL,artifact_id TEXT NOT NULL,filename TEXT NOT NULL,mime_type TEXT NOT NULL DEFAULT 'application/octet-stream',content BYTEA NOT NULL,created_at TIMESTAMPTZ NOT NULL DEFAULT now(),updated_at TIMESTAMPTZ NOT NULL DEFAULT now(),PRIMARY KEY(case_id,artifact_id));CREATE INDEX IF NOT EXISTS mas_artifacts_case_id_idx ON mas_artifacts(case_id);INSERT INTO agent_registry(agent_id,title,when_to_use,input_required,output_provides) VALUES ('excel_extractor','Excel Extractor','Если есть Excel-файл и нужно извлечь данные','[\"excel\"]'::jsonb,'[\"excel_table\",\"normalized_rows\"]'::jsonb),('calculation_agent','Calculation Agent','Если нужна геометрическая калька','[\"surface\",\"trajectory\"]'::jsonb,'[\"top_perforation_md\"]'::jsonb),('schedule_builder','Schedule Builder','Построение SCHEDULE','[\"schedule_source\"]'::jsonb,'[\"schedule_out\",\"diff\"]'::jsonb) ON CONFLICT(agent_id) DO NOTHING;SELECT true AS schema_ok;`;\nelse if(op==='create_case'){query='INSERT INTO cases(case_id,state,status,updated_at) VALUES($1,$2::jsonb,$3,now()) ON CONFLICT(case_id) DO NOTHING RETURNING case_id,state,status,updated_at';params=[caseId,j(raw.state),s(raw.status||'new')];}\nelse if(op==='get_case'){query='SELECT case_id,state,status,updated_at FROM cases WHERE case_id=$1';params=[caseId];}\nelse if(op==='list_cases'){query='SELECT c.case_id,c.status,c.updated_at,c.state,(SELECT COUNT(*) FROM events e WHERE e.case_id=c.case_id) AS event_count FROM cases c ORDER BY c.updated_at DESC LIMIT $1';params=[Number(raw.limit||80)];}\nelse if(op==='update_case'){query='UPDATE cases SET state=$1::jsonb,status=$2,updated_at=now() WHERE case_id=$3 RETURNING case_id,state,status,updated_at';params=[j(raw.state),s(raw.status),caseId];}\nelse if(op==='append_event'){query=\"WITH locked AS (SELECT case_id FROM cases WHERE case_id=$1 FOR UPDATE), last_event AS (SELECT e.* FROM events e JOIN locked l ON l.case_id=e.case_id WHERE e.case_id=$1 ORDER BY e.event_id DESC LIMIT 1), inserted AS (INSERT INTO events(case_id,task_id,kind,actor,agent_id,status,status_message,handoff_message,payload) SELECT $1,$2,$3,$4,$5,$6,$7,$8,$9::jsonb WHERE NOT EXISTS (SELECT 1 FROM last_event WHERE kind=$3 AND actor=$4 AND COALESCE(agent_id,'')=COALESCE($5,'') AND COALESCE(status,'')=COALESCE($6,'') AND regexp_replace(COALESCE(status_message,''),'\\\\s+',' ','g')=regexp_replace(COALESCE($7,''),'\\\\s+',' ','g') AND regexp_replace(COALESCE(handoff_message,''),'\\\\s+',' ','g')=regexp_replace(COALESCE($8,''),'\\\\s+',' ','g') AND COALESCE(task_id,'')=COALESCE($2,'')) RETURNING event_id,case_id,task_id,kind,actor,agent_id,status,status_message,handoff_message,payload,created_at) SELECT *,false AS idempotent FROM inserted UNION ALL SELECT event_id,case_id,task_id,kind,actor,agent_id,status,status_message,handoff_message,payload,created_at,true AS idempotent FROM last_event WHERE NOT EXISTS (SELECT 1 FROM inserted)\";params=[caseId,s(raw.task_id),s(raw.kind),s(raw.actor),raw.agent_id||null,raw.status||null,raw.status_message||null,raw.handoff_message||null,j(raw.payload)];}\nelse if(op==='list_events'){query='SELECT event_id,case_id,task_id,kind,actor,agent_id,status,status_message,handoff_message,payload,created_at FROM events WHERE case_id=$1 AND event_id>$2 ORDER BY event_id ASC';params=[caseId,Number(raw.after_seq||0)];}\nelse if(op==='snapshot'){query=`SELECT (SELECT jsonb_build_object('case_id',case_id,'state',state,'status',status,'updated_at',updated_at) FROM cases WHERE case_id=$1) AS case_row, COALESCE((SELECT jsonb_agg(to_jsonb(e) ORDER BY e.event_id) FROM (SELECT event_id,case_id,task_id,kind,actor,agent_id,status,status_message,handoff_message,payload,created_at FROM events WHERE case_id=$1 AND event_id>$2 ORDER BY event_id ASC) e),'[]'::jsonb) AS events`;params=[caseId,Number(raw.after_seq||0)];}\nelse if(op==='append_error'){query='INSERT INTO error_traces(case_id,execution_id,workflow_name,node_name,error_message,error_type,stack,input_snapshot) VALUES($1,$2,$3,$4,$5,$6,$7,$8::jsonb) RETURNING error_id,case_id,execution_id,workflow_name,node_name,error_message,error_type,stack,input_snapshot,created_at';params=[raw.case_id||null,raw.execution_id||null,raw.workflow_name||null,raw.node_name||null,raw.error_message||null,raw.error_type||null,raw.stack||null,j(raw.input_snapshot)];}\nelse if(op==='list_errors'){query='SELECT error_id,case_id,execution_id,workflow_name,node_name,error_message,error_type,stack,input_snapshot,created_at FROM error_traces WHERE case_id=$1 ORDER BY error_id ASC';params=[caseId];}\nelse if(op==='record_execution'){query='INSERT INTO executions(execution_id,case_id,workflow_name) VALUES($1,$2,$3) ON CONFLICT(execution_id) DO UPDATE SET case_id=EXCLUDED.case_id,workflow_name=EXCLUDED.workflow_name RETURNING execution_id,case_id,workflow_name';params=[s(raw.execution_id),caseId,s(raw.workflow_name||'orchestrator')];}\nelse if(op==='case_id_for_execution'){query='SELECT case_id FROM executions WHERE execution_id=$1';params=[s(raw.execution_id)];}\nelse if(op==='list_agents'){query='SELECT agent_id,title,when_to_use,input_required,output_provides FROM agent_registry ORDER BY agent_id';}\nelse if(op==='upsert_agent'){const r=raw.row||{};query='INSERT INTO agent_registry(agent_id,title,when_to_use,input_required,output_provides) VALUES($1,$2,$3,$4::jsonb,$5::jsonb) ON CONFLICT(agent_id) DO UPDATE SET title=EXCLUDED.title,when_to_use=EXCLUDED.when_to_use,input_required=EXCLUDED.input_required,output_provides=EXCLUDED.output_provides RETURNING agent_id,title,when_to_use,input_required,output_provides';params=[s(r.agent_id),r.title||null,r.when_to_use||null,j(r.input_required||[]),j(r.output_provides||[])];}\nelse if(op==='artifact_put'){query=\"INSERT INTO mas_artifacts(case_id,artifact_id,filename,mime_type,content,updated_at) VALUES($1,$2,$3,$4,decode($5,'base64'),now()) ON CONFLICT(case_id,artifact_id) DO UPDATE SET filename=EXCLUDED.filename,mime_type=EXCLUDED.mime_type,content=EXCLUDED.content,updated_at=now() RETURNING case_id,artifact_id,filename,mime_type,octet_length(content)::bigint AS bytes\";params=[caseId,artifactId,s(raw.filename||artifactId).slice(0,512),s(raw.mime_type||'application/octet-stream').slice(0,255),s(raw.content_base64)];}\nelse if(op==='artifact_get'){query=\"SELECT case_id,artifact_id,filename,mime_type,encode(content,'base64') AS content_base64,octet_length(content)::bigint AS bytes FROM mas_artifacts WHERE case_id=$1 AND artifact_id=$2\";params=[caseId,artifactId];}\nreturn [{json:{...common,query,params}}];"
       },
       "id": "mas-control-plane-normalize-v1",
       "name": "Normalize control-plane request",
@@ -61196,7 +61398,7 @@ main().catch((error) => {
     },
     {
       "parameters": {
-        "jsCode": "const req=$('Normalize control-plane request').first().json||{};\nconst rows=$input.all().map(x=>x.json||{});\nconst op=req.operation;\nlet result;\nif(op==='list_cases') result=rows;\nelse if(op==='list_events') result=rows;\nelse if(op==='list_errors') result=rows;\nelse if(op==='list_agents') result=rows;\nelse if(op==='case_id_for_execution') result=rows[0]?.case_id||null;\nelse if(op==='artifact_get') result=rows[0]?{found:true,...rows[0]}:{found:false,case_id:req.case_id,artifact_id:req.artifact_id};\nelse result=rows[0]||{};\nreturn [{json:{ok:true,operation:op,result}}];"
+        "jsCode": "const req=$('Normalize control-plane request').first().json||{};\nconst rows=$input.all().map(x=>x.json||{});\nconst op=req.operation;\nlet result;\nif(op==='list_cases') result=rows;\nelse if(op==='list_events') result=rows;\nelse if(op==='list_errors') result=rows;\nelse if(op==='list_agents') result=rows;\nelse if(op==='case_id_for_execution') result=rows[0]?.case_id||null;\nelse if(op==='artifact_get') result=rows[0]?{found:true,...rows[0]}:{found:false,case_id:req.case_id,artifact_id:req.artifact_id};\nelse if(op==='snapshot'){const row=rows[0]||{};const parse=v=>{if(v==null||v==='')return v;if(typeof v==='string'){try{return JSON.parse(v);}catch(_){return v;}}return v;};result={case:parse(row.case_row)||null,events:parse(row.events)||[]};if(!Array.isArray(result.events)) result.events=[];}\nelse result=rows[0]||{};\nreturn [{json:{ok:true,operation:op,result}}];"
       },
       "id": "mas-control-plane-format-v1",
       "name": "Format control-plane response",
@@ -62021,7 +62223,7 @@ main().catch((error) => {
 }
 
 ===END_FILE===
-===BEGIN_FILE===	n8n/workflows/core/mas-orchestrator.workflow.json	66650	utf8
+===BEGIN_FILE===	n8n/workflows/core/mas-orchestrator.workflow.json	66749	utf8
 {
   "id": "e9bbdb6e-3b7c-5dc0-851a-30bd9f2eb0d6",
   "name": "Orchestrator — MAS",
@@ -62112,7 +62314,7 @@ main().catch((error) => {
     },
     {
       "parameters": {
-        "jsCode": "\nconst raw=$input.first().json||{};\nconst body=raw.body&&typeof raw.body==='object'?raw.body:raw;\nconst action=String(body.action||raw.action||'step').trim().toLowerCase();\nlet caseId=String(body.case_id||raw.case_id||'').trim();\nconst goal=String(body.task_description||body.goal||raw.task_description||raw.goal||'').trim();\nconst taskName=String(body.task_name||raw.task_name||'').trim();\nconst humanResponse=String(body.human_response||raw.human_response||'');\nconst gateId=String(body.gate_id||raw.gate_id||'');\nconst requestedBy=String(body.requested_by||raw.requested_by||'');\nconst artifacts=body.artifacts&&typeof body.artifacts==='object'?body.artifacts:{};\nconst activityBaseUrl=String(raw.activity_base_url||'').trim();\nconst orchestratorStepUrl=String(raw.orchestrator_step_url||'').trim();\nconst executionId=String($execution.id||'');\nconst readinessId=!caseId||caseId==='CASE-readiness-probe';\nif(action==='probe'||(action==='status'&&readinessId)){\n  return [{json:{\n    case_id:caseId||'CASE-readiness-probe',\n    action:'probe',\n    is_probe:true,\n    is_status:false,\n    is_resume:false,\n    needs_create:false,\n    next_status:'probe',\n    status:'probe',\n    action_type:'probe',\n    should_continue:false\n  }}];\n}\nlet needsCreate=false;\nif(action==='create'){\n  if(!caseId) caseId='CASE-'+Date.now().toString(16)+'-'+Math.random().toString(16).slice(2,8);\n  if(!goal) throw new Error('task_description is required for action=create');\n  needsCreate=true;\n} else if(!caseId){\n  if(action!=='start') throw new Error('case_id is required');\n  if(!goal) throw new Error('task_description is required for action=start');\n  caseId='CASE-'+Date.now().toString(16)+'-'+Math.random().toString(16).slice(2,8);\n  needsCreate=true;\n}\nreturn [{json:{\n  case_id:caseId,\n  action,\n  goal,\n  task_name:taskName,\n  human_response:humanResponse,\n  gate_id:gateId,\n  requested_by:requestedBy,\n  artifacts,\n  activity_base_url:activityBaseUrl,\n  orchestrator_step_url:orchestratorStepUrl,\n  is_probe:false,\n  is_status:action==='status',\n  is_resume:action==='resume',\n  needs_create:needsCreate,\n  execution_id:executionId,\n  workflow_name:'orchestrator',\n  sql_parameters:[caseId],\n  exec_sql_parameters:[executionId, caseId, 'orchestrator'],\n}}];\n"
+        "jsCode": "\nconst raw=$input.first().json||{};\nconst body=raw.body&&typeof raw.body==='object'?raw.body:raw;\nconst action=String(body.action||raw.action||'step').trim().toLowerCase();\nlet caseId=String(body.case_id||raw.case_id||'').trim();\nconst goal=String(body.task_description||body.goal||raw.task_description||raw.goal||'').trim();\nconst taskName=String(body.task_name||raw.task_name||'').trim();\nconst humanResponse=String(body.human_response||raw.human_response||'');\nconst gateId=String(body.gate_id||raw.gate_id||'');\nconst requestedBy=String(body.requested_by||raw.requested_by||'');\nconst activityBaseUrl=String(raw.activity_base_url||'').trim();\nconst orchestratorStepUrl=String(raw.orchestrator_step_url||'').trim();\nconst executionId=String($execution.id||'');\nconst readinessId=!caseId||caseId==='CASE-readiness-probe';\nif(action==='probe'||(action==='status'&&readinessId)){\n  return [{json:{\n    case_id:caseId||'CASE-readiness-probe',\n    action:'probe',\n    is_probe:true,\n    is_status:false,\n    is_resume:false,\n    needs_create:false,\n    next_status:'probe',\n    status:'probe',\n    action_type:'probe',\n    should_continue:false\n  }}];\n}\nlet needsCreate=false;\nif(action==='create'){\n  if(!caseId) caseId='CASE-'+Date.now().toString(16)+'-'+Math.random().toString(16).slice(2,8);\n  if(!goal) throw new Error('task_description is required for action=create');\n  needsCreate=true;\n} else if(!caseId){\n  if(action!=='start') throw new Error('case_id is required');\n  if(!goal) throw new Error('task_description is required for action=start');\n  caseId='CASE-'+Date.now().toString(16)+'-'+Math.random().toString(16).slice(2,8);\n  needsCreate=true;\n}\nreturn [{json:{\n  case_id:caseId,\n  action,\n  goal,\n  task_name:taskName,\n  human_response:humanResponse,\n  gate_id:gateId,\n  requested_by:requestedBy,\n  activity_base_url:activityBaseUrl,\n  orchestrator_step_url:orchestratorStepUrl,\n  is_probe:false,\n  is_status:action==='status',\n  is_resume:action==='resume',\n  needs_create:needsCreate,\n  execution_id:executionId,\n  workflow_name:'orchestrator',\n  sql_parameters:[caseId],\n  exec_sql_parameters:[executionId, caseId, 'orchestrator'],\n}}];\n"
       },
       "id": "07d3d3cc-a9e7-508a-97d4-17391b86e1e1",
       "name": "Normalize step request",
@@ -62191,7 +62393,7 @@ main().catch((error) => {
     },
     {
       "parameters": {
-        "jsCode": "\nconst req=$json||{};\nconst goal=String(req.goal||'').trim();\nconst source= req.artifacts&&typeof req.artifacts==='object' ? {...req.artifacts} : {};\nif(source.file&&!source.excel) source.excel=source.file;\nif(source.schedule_files&&!source.schedule_source) source.schedule_source=source.schedule_files;\nconst state={\n  case_id:req.case_id,\n  goal,\n  task_name:req.task_name||'',\n  status:'running',\n  plan:[],\n  artifacts:source,\n  data:{},\n  current_task:null,\n  hitl:{pending:false,questions:[],answers:{}},\n  last_error:null,\n  step_count:0\n};\nconst persistEvents=[[req.case_id,'','case.created','user','','new',('Принял задачу: '+goal).slice(0,200),'',JSON.stringify({requested_by:req.requested_by||'',task_name:req.task_name||'',artifacts:Object.keys(source),note:'orchestrator start; files stay in Activity /cases/{id}/artifacts'})]];\nreturn [{json:{\n  ...req,\n  state,\n  create_sql_parameters:[req.case_id, JSON.stringify(state), 'running'],\n  persist_events:persistEvents,\n  event_sql_parameters:persistEvents[0]\n}}];\n"
+        "jsCode": "\nconst req=$json||{};\nconst goal=String(req.goal||'').trim();\nconst state={\n  case_id:req.case_id,\n  goal,\n  task_name:req.task_name||'',\n  status:'running',\n  plan:[],\n  artifacts:{},\n  data:{},\n  current_task:null,\n  hitl:{pending:false,questions:[],answers:{}},\n  last_error:null,\n  step_count:0\n};\nconst persistEvents=[[req.case_id,'','case.created','user','','new',('Принял задачу: '+goal).slice(0,200),'',JSON.stringify({requested_by:req.requested_by||'',task_name:req.task_name||'',note:'orchestrator start; files stay in Activity /cases/{id}/artifacts'})]];\nreturn [{json:{\n  ...req,\n  state,\n  create_sql_parameters:[req.case_id, JSON.stringify(state), 'running'],\n  persist_events:persistEvents,\n  event_sql_parameters:persistEvents[0]\n}}];\n"
       },
       "id": "27ddbd46-3d3a-5c9a-b8ed-7e83bd872f58",
       "name": "Prepare start case",
@@ -62897,7 +63099,7 @@ main().catch((error) => {
     },
     {
       "parameters": {
-        "jsCode": "\nconst prev=$('Prepare agent call').first().json||$('Parse decision').first().json||{};\nconst http=$json||{};\nconst obj=v=>v&&typeof v==='object'&&!Array.isArray(v);\nconst result=obj(http.body)?http.body:(obj(http)?http:{});\nconst status=String(result.status||(http.error?'failed':'completed'));\nconst state=obj(prev.state)?{...prev.state}:{};\nconst data=obj(state.data)?{...state.data}:{};\nconst artifacts=obj(state.artifacts)?{...state.artifacts}:{};\nconst agentId=String(prev.agent_id||result.agent_id||'');\nconst bucket=agentId==='excel_extractor'?'excel':(agentId==='calculation_agent'?'calc':(agentId==='schedule_builder'?'schedule':'agent'));\nif(status==='completed'){\n  data[bucket]=result.data||result;\n  if(agentId==='excel_extractor'&&result.data&&Array.isArray(result.data.facts)) data.facts=result.data.facts;\n  Object.assign(artifacts, result.artifacts||{});\n  state.current_task=null;\n  state.last_error=null;\n}\nif(Array.isArray(state.plan)){\n  state.plan=state.plan.map(p=>{\n    if(!p||typeof p!=='object') return p;\n    if(status==='completed'&&String(p.status)==='running') return {...p,status:'done'};\n    return p;\n  });\n}\nlet nextStatus='running';\nlet shouldContinue=true;\nconst events=[];\nif(status==='needs_input'){\n  nextStatus='waiting_user';\n  shouldContinue=false;\n  const reqs=Array.isArray(result.requests)?result.requests:[];\n  const q=reqs[0]||{question_id:'Q-agent',question:String(result.message||'Агенту нужны данные'),options:[]};\n  state.hitl={pending:true,questions:reqs.length?reqs:[q],answers:(state.hitl&&state.hitl.answers)||{}};\n  events.push({kind:'hitl.request',actor:'orchestrator',agent_id:agentId,status:'waiting_user',status_message:q.question,payload:q});\n} else if(status==='completed'){\n  events.push({\n    kind:'agent.result',\n    actor:agentId||'agent',\n    agent_id:agentId,\n    task_id:(prev.agent_task&&prev.agent_task.task_id)||'',\n    status:'completed',\n    status_message:String(result.message||'Агент завершил работу'),\n    payload:{data_keys:Object.keys((result.data&&typeof result.data==='object')?result.data:{}),artifacts:Object.keys((result.artifacts&&typeof result.artifacts==='object')?result.artifacts:{})}\n  });\n} else if(status==='failed'||http.error){\n  nextStatus='running';\n  shouldContinue=true;\n  state.last_error={message:String(result.message||http.message||'agent failed'),agent_id:agentId};\n  data[bucket]=result.data||result;\n  events.push({kind:'agent.failed',actor:agentId||'agent',agent_id:agentId,status:'failed',status_message:String(result.message||http.message||'Агент вернул ошибку'),payload:{message:state.last_error.message,issues:result.issues||[]}});\n}\nif(Number(state.step_count||0)>=24){\n  nextStatus='failed';\n  shouldContinue=false;\n  events.push({kind:'case.failed',actor:'orchestrator',status:'failed',status_message:'Превышен лимит шагов оркестратора'});\n}\nstate.data=data;\nstate.artifacts=artifacts;\nstate.status=nextStatus;\nconst persistEvents=events.map(e=>[\n  prev.case_id, e.task_id||'', e.kind, e.actor, e.agent_id||'', e.status||'', e.status_message||'', e.handoff_message||'', JSON.stringify(e.payload||{})\n]);\nreturn [{json:{\n  ...prev,\n  agent_result:result,\n  state,\n  next_status:nextStatus,\n  should_continue:shouldContinue&&nextStatus==='running',\n  update_sql_parameters:[JSON.stringify(state), nextStatus, prev.case_id],\n  persist_events:persistEvents,\n  events,\n  event_sql_parameters:persistEvents[0],\n  continue_url:`${String(prev.activity_base_url||'http://mas-activity:8200').replace(/\\/$/,'')}/cases/${encodeURIComponent(String(prev.case_id||''))}/run`\n}}];\n"
+        "jsCode": "\nconst prev=$('Prepare agent call').first().json||$('Parse decision').first().json||{};\nconst http=$json||{};\nconst obj=v=>v&&typeof v==='object'&&!Array.isArray(v);\nconst clean=v=>{\n  const s=String(v??'').trim();\n  return /^(none|null|undefined)$/i.test(s)?'':s;\n};\nconst unwrap=v=>{\n  if(obj(v)) return v;\n  if(Array.isArray(v)&&v.length&&obj(v[0])) return v[0];\n  return {};\n};\nconst result=unwrap(http.body&&typeof http.body==='object'?http.body:http);\nconst rawStatus=clean(result.status);\nconst status=rawStatus|| (http.error?'failed':'completed');\nconst resultMessage=clean(result.message);\nconst fallbackMessage=status==='completed'\n  ? 'Schedule Builder завершил обработку schedule.'\n  : status==='needs_input'\n    ? 'Schedule Builder запросил дополнительные данные.'\n    : 'Schedule Builder вернул ошибку.';\nconst state=obj(prev.state)?{...prev.state}:{};\nconst data=obj(state.data)?{...state.data}:{};\nconst artifacts=obj(state.artifacts)?{...state.artifacts}:{};\nconst agentId=String(prev.agent_id||result.agent_id||'');\nconst bucket=agentId==='excel_extractor'?'excel':(agentId==='calculation_agent'?'calc':(agentId==='schedule_builder'?'schedule':'agent'));\nif(status==='completed'){\n  data[bucket]=result.data||result;\n  if(agentId==='excel_extractor'&&result.data&&Array.isArray(result.data.facts)) data.facts=result.data.facts;\n  Object.assign(artifacts, result.artifacts||{});\n  state.current_task=null;\n  state.last_error=null;\n}\nif(Array.isArray(state.plan)){\n  state.plan=state.plan.map(p=>{\n    if(!p||typeof p!=='object') return p;\n    if(status==='completed'&&String(p.status)==='running') return {...p,status:'done'};\n    return p;\n  });\n}\nlet nextStatus='running';\nlet shouldContinue=true;\nconst events=[];\nif(status==='needs_input'){\n  nextStatus='waiting_user';\n  shouldContinue=false;\n  const reqs=Array.isArray(result.requests)?result.requests:[];\n  const q=reqs[0]||{question_id:'Q-agent',question:resultMessage||'Агенту нужны данные',options:[]};\n  state.hitl={pending:true,questions:reqs.length?reqs:[q],answers:(state.hitl&&state.hitl.answers)||{}};\n  events.push({kind:'hitl.request',actor:'orchestrator',agent_id:agentId,status:'waiting_user',status_message:q.question,payload:q});\n} else if(status==='completed'){\n  events.push({\n    kind:'agent.result',\n    actor:agentId||'agent',\n    agent_id:agentId,\n    task_id:(prev.agent_task&&prev.agent_task.task_id)||'',\n    status:'completed',\n    status_message:resultMessage||fallbackMessage,\n    payload:{data_keys:Object.keys((result.data&&typeof result.data==='object')?result.data:{}),artifacts:Object.keys((result.artifacts&&typeof result.artifacts==='object')?result.artifacts:{})}\n  });\n} else if(status==='failed'||http.error){\n  nextStatus='running';\n  shouldContinue=true;\n  state.last_error={message:resultMessage||clean(http.message)||fallbackMessage,agent_id:agentId};\n  data[bucket]=result.data||result;\n  events.push({kind:'agent.failed',actor:agentId||'agent',agent_id:agentId,status:'failed',status_message:state.last_error.message,payload:{message:state.last_error.message,issues:result.issues||[]}});\n}\nif(Number(state.step_count||0)>=24){\n  nextStatus='failed';\n  shouldContinue=false;\n  events.push({kind:'case.failed',actor:'orchestrator',status:'failed',status_message:'Превышен лимит шагов оркестратора'});\n}\nstate.data=data;\nstate.artifacts=artifacts;\nstate.status=nextStatus;\nconst persistEvents=events.map(e=>[\n  prev.case_id, e.task_id||'', e.kind, e.actor, e.agent_id||'', e.status||'', e.status_message||'', e.handoff_message||'', JSON.stringify(e.payload||{})\n]);\nreturn [{json:{\n  ...prev,\n  agent_result:result,\n  state,\n  next_status:nextStatus,\n  should_continue:shouldContinue&&nextStatus==='running',\n  update_sql_parameters:[JSON.stringify(state), nextStatus, prev.case_id],\n  persist_events:persistEvents,\n  events,\n  event_sql_parameters:persistEvents[0],\n  continue_url:`${String(prev.activity_base_url||'http://mas-activity:8200').replace(/\\/$/,'')}/cases/${encodeURIComponent(String(prev.case_id||''))}/run`\n}}];\n"
       },
       "id": "991e54b5-5f3a-5f9b-9ef1-0165be4207d4",
       "name": "Merge agent result",
@@ -63747,11 +63949,11 @@ main().catch((error) => {
   },
   "tags": [],
   "pinData": {},
-  "versionId": "97ec5d3f-7fae-4b2e-9887-20c89093f549"
+  "versionId": "a904a34a-e42f-4a7f-9046-4397eb84224e"
 }
 
 ===END_FILE===
-===BEGIN_FILE===	n8n/workflows/core/schedule-builder-agent.workflow.json	34319	utf8
+===BEGIN_FILE===	n8n/workflows/core/schedule-builder-agent.workflow.json	46466	utf8
 {
   "id": "c8d5f3b2-6e91-5d22-8a7b-1f0c4e9a2d55",
   "name": "Agent — Schedule Builder",
@@ -63916,6 +64118,106 @@ main().catch((error) => {
     },
     {
       "parameters": {
+        "method": "POST",
+        "url": "={{ $('Runtime configuration').first().json.activity_base_url + '/cases/' + $('Normalize schedule task').first().json.agent_task.case_id + '/events' }}",
+        "sendHeaders": true,
+        "headerParameters": {
+          "parameters": [
+            {
+              "name": "Content-Type",
+              "value": "application/json"
+            }
+          ]
+        },
+        "options": {
+          "timeout": 30000,
+          "response": {
+            "response": {
+              "fullResponse": false,
+              "responseFormat": "json"
+            }
+          }
+        },
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "={{ ({kind: \"agent.accepted\", actor: 'schedule_builder', agent_id: 'schedule_builder', task_id: $('Normalize schedule task').first().json.agent_task.task_id, status: \"running\", status_message: \"Schedule Builder \\u043f\\u0440\\u0438\\u043d\\u044f\\u043b \\u0437\\u0430\\u0434\\u0430\\u0447\\u0443 \\u0438 \\u0430\\u043d\\u0430\\u043b\\u0438\\u0437\\u0438\\u0440\\u0443\\u0435\\u0442 \\u0438\\u0441\\u0445\\u043e\\u0434\\u043d\\u044b\\u0439 schedule.\", payload: {source: 'schedule-builder-agent-workflow'}}) }}"
+      },
+      "id": "86a96e9e-e91b-547c-9c5e-347ca0339933",
+      "name": "Activity — Schedule Builder accepted",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.4,
+      "position": [
+        1220,
+        -220
+      ],
+      "onError": "continueRegularOutput",
+      "alwaysOutputData": true
+    },
+    {
+      "parameters": {
+        "jsCode": "const x=$('Session ready?').first().json||{}; return [{json:x}];"
+      },
+      "id": "416a2622-2b17-5230-99b1-e4ac32c062ff",
+      "name": "Restore after Schedule Builder accepted",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        1440,
+        -220
+      ]
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "={{ $('Runtime configuration').first().json.activity_base_url + '/cases/' + $('Normalize schedule task').first().json.agent_task.case_id + '/events' }}",
+        "sendHeaders": true,
+        "headerParameters": {
+          "parameters": [
+            {
+              "name": "Content-Type",
+              "value": "application/json"
+            }
+          ]
+        },
+        "options": {
+          "timeout": 30000,
+          "response": {
+            "response": {
+              "fullResponse": false,
+              "responseFormat": "json"
+            }
+          }
+        },
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "={{ ({kind: \"agent.progress\", actor: 'schedule_builder', agent_id: 'schedule_builder', task_id: $('Normalize schedule task').first().json.agent_task.task_id, status: \"running\", status_message: \"Schedule Builder \\u043f\\u0440\\u043e\\u0432\\u0435\\u0440\\u044f\\u0435\\u0442 \\u0441\\u0442\\u0440\\u0443\\u043a\\u0442\\u0443\\u0440\\u0443 \\u0441\\u043a\\u0432\\u0430\\u0436\\u0438\\u043d, \\u0434\\u0430\\u0442\\u044b \\u0438 \\u043f\\u0440\\u043e\\u0433\\u043d\\u043e\\u0437\\u043d\\u044b\\u0435 controls.\", payload: {source: 'schedule-builder-agent-workflow'}}) }}"
+      },
+      "id": "5dc68398-8825-52fd-964b-065a00102a56",
+      "name": "Activity — Schedule Builder progress",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.4,
+      "position": [
+        1660,
+        -220
+      ],
+      "onError": "continueRegularOutput",
+      "alwaysOutputData": true
+    },
+    {
+      "parameters": {
+        "jsCode": "const x=$('Restore after Schedule Builder accepted').first().json||{}; return [{json:x}];"
+      },
+      "id": "2cf633bd-4a88-500f-90ab-d095e718a904",
+      "name": "Restore after Schedule Builder progress",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        1880,
+        -220
+      ]
+    },
+    {
+      "parameters": {
         "mode": "expression",
         "numberOutputs": 3,
         "output": "={{ ({commissioning:0, group_rebind:1, operations:2})[$json.suggested_capability] ?? 2 }}"
@@ -64005,6 +64307,56 @@ main().catch((error) => {
     },
     {
       "parameters": {
+        "method": "POST",
+        "url": "={{ $('Runtime configuration').first().json.activity_base_url + '/cases/' + $('Normalize schedule task').first().json.agent_task.case_id + '/events' }}",
+        "sendHeaders": true,
+        "headerParameters": {
+          "parameters": [
+            {
+              "name": "Content-Type",
+              "value": "application/json"
+            }
+          ]
+        },
+        "options": {
+          "timeout": 30000,
+          "response": {
+            "response": {
+              "fullResponse": false,
+              "responseFormat": "json"
+            }
+          }
+        },
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "={{ ({kind: 'agent.result', actor: 'schedule_builder', agent_id: 'schedule_builder', task_id: $('Normalize schedule task').first().json.agent_task.task_id, status: String($('Format schedule result').first().json.status || 'failed'), status_message: String($('Format schedule result').first().json.message || 'Schedule Builder завершил обработку schedule.'), payload: {source: 'schedule-builder-agent-workflow'}}) }}"
+      },
+      "id": "0cbd0f7e-14f7-5ab9-bad8-662743b03009",
+      "name": "Activity — Schedule Builder completed",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.4,
+      "position": [
+        2200,
+        -180
+      ],
+      "onError": "continueRegularOutput",
+      "alwaysOutputData": true
+    },
+    {
+      "parameters": {
+        "jsCode": "const x=$('Format schedule result').first().json||{}; return [{json:x}];"
+      },
+      "id": "8a239e73-9c07-5b0a-b114-f6883a7d9629",
+      "name": "Restore after Schedule Builder activity",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        2440,
+        -180
+      ]
+    },
+    {
+      "parameters": {
         "jsCode": "\nconst opened=$json||{};\nconst task=$('Normalize schedule task').first().json.agent_task||{};\nconst agent_input=JSON.stringify({\n  objective:opened.objective||task.objective||'',\n  handoff_message:opened.handoff_message||task.handoff_message||'',\n  inspect:opened.inspect||{},\n  fact_count:opened.fact_count||0,\n  facts_preview:opened.facts_preview||[],\n  suggested_capability:opened.suggested_capability||''\n});\nreturn [{json:{...opened, session_id:opened.session_id, agent_input}}];\n"
       },
       "id": "0efd1b65-b426-5dd1-9cdd-2a66eb50c4e3",
@@ -64022,7 +64374,7 @@ main().catch((error) => {
         "text": "={{ $json.agent_input }}",
         "hasOutputParser": false,
         "options": {
-          "systemMessage": "Ты — единственный LLM-решатель агента Schedule Builder.\n\nИсходный .INC тебе не показывают. Он лежит в сессии FastAPI. session_id привязан workflow: никогда не передавай session_id и обёртку args/input.\n\nИнструменты:\n- inspect_schedule — скважины, keywords, даты, GRUPTREE (компактно)\n- search_keywords — по intent сервиса вернёт keywords + methods\n- get_keyword — объектная модель полей и методов\n- list_records — компактные записи keyword/well\n- apply_commissioning — сдвиг дат ввода по фактам Excel из сессии. Даты сам не выдумывай.\n- apply_group_rebind — перепривязка групп по тексту задачи и baseline. Скважины только из inspect.\n- apply_operations — точечные MODIFY/ADD по схеме keyword. wells только из inspect.\n- build_schedule — собрать текущий working text, если apply уже менял сессию\n- validate_result — проверки emit\n\nПравила:\n- Не пиши текст SCHEDULE сам. Только инструменты.\n- Не придумывай скважины, даты, группы, дебиты.\n- suggested_capability=commissioning → сразу apply_commissioning, затем STOP.\n- suggested_capability=group_rebind → inspect при необходимости, затем apply_group_rebind, затем STOP.\n- Иначе search_keywords → get_keyword → apply_operations / needs_input.\n- После apply_* со status completed или needs_input — STOP. Не вызывай build, если apply уже вернул результат.\n- Если данных нет — не вызывай apply с пустыми выдуманными полями.\n\nЗаверши одним коротким фактическим предложением по-русски.\n",
+          "systemMessage": "Ты — единственный LLM-решатель агента Schedule Builder.\n\nИсходный .INC тебе не показывают. Он лежит в сессии FastAPI. session_id привязан workflow: никогда не передавай session_id и обёртку args/input.\n\nИнструменты:\n- inspect_schedule — объектная инвентаризация скважин, keywords, даты, GRUPTREE (компактно)\n- inspect_well — подробный объект одной скважины: identity, factual WCONPROD, commissioning anchor и история режимов\n- analyze_forecast_controls — детерминированный разбор control timeline: history, forecast, overrides, economics, reopen/status/efficiency events\n- search_keywords — по intent сервиса вернёт keywords + methods\n- get_keyword — объектная модель полей и методов\n- list_records — компактные записи keyword/well\n- apply_commissioning — сдвиг дат ввода по фактам Excel из сессии. Якорь commissioning — первый нефактический WCONPROD; последующие WCONPROD являются прогнозными режимами и сохраняются.\n- apply_group_rebind — перепривязка групп по тексту задачи и baseline. Скважины только из inspect.\n- apply_operations — точечные MODIFY/ADD по схеме keyword. wells только из inspect.\n- build_schedule — собрать текущий working text, если apply уже менял сессию\n- validate_result — проверки emit\n\nПравила:\n- Не пиши текст SCHEDULE сам. Только инструменты.\n- Не придумывай скважины, даты, группы, дебиты.\n- Для commissioning сначала проверь объект скважины через inspect_schedule/inspect_well и отличай first_wconprod от forecast control events.\n- Для изменения одного параметра после существующего контроля используй WELTARG, а не переписывай весь WCONPROD.\n- Не путай WECON (экономические пределы), WTEST (переоткрытие), WELOPEN (статус), WEFAC (uptime), WPIMULT (CF) и GCONPROD (группа).\n- Если analyze_forecast_controls вернул needs_input по границе history/forecast — не применяй операцию до уточнения.\n- Жёсткое правило: если комментарий WCONPROD содержит «факт» или «fact», запись фактическая. Её нельзя удалять, переносить или использовать как прогнозный commissioning anchor.\n- suggested_capability=commissioning → сразу apply_commissioning, затем STOP.\n- suggested_capability=group_rebind → inspect при необходимости, затем apply_group_rebind, затем STOP.\n- Иначе search_keywords → get_keyword → apply_operations / needs_input.\n- После apply_* со status completed или needs_input — STOP. Не вызывай build, если apply уже вернул результат.\n- Если данных нет — не вызывай apply с пустыми выдуманными полями.\n\nЗаверши одним коротким фактическим предложением по-русски.\n",
           "maxIterations": 12,
           "returnIntermediateSteps": true,
           "passthroughBinaryImages": false,
@@ -64118,7 +64470,7 @@ main().catch((error) => {
     },
     {
       "parameters": {
-        "toolDescription": "Компактный осмотр baseline: wells, keywords, даты, GRUPTREE. Без полного .INC.",
+        "toolDescription": "Объектная инвентаризация baseline: wells, factual/forecast WCONPROD, commissioning anchors, история режимов, keywords, даты и GRUPTREE. Без полного .INC.",
         "method": "POST",
         "url": "={{ $('Runtime configuration').first().json.schedule_service_url + '/agent-tools/' + \"inspect_schedule\" }}",
         "authentication": "none",
@@ -64156,6 +64508,114 @@ main().catch((error) => {
       "typeVersion": 1.1,
       "position": [
         760,
+        -420
+      ]
+    },
+    {
+      "parameters": {
+        "toolDescription": "Подробно осмотреть одну скважину: identity, factual WCONPROD, commissioning anchor (первый нефактический WCONPROD), последующие forecast control events и связанные records.",
+        "method": "POST",
+        "url": "={{ $('Runtime configuration').first().json.schedule_service_url + '/agent-tools/' + \"inspect_well\" }}",
+        "authentication": "none",
+        "sendQuery": false,
+        "sendHeaders": true,
+        "specifyHeaders": "keypair",
+        "sendBody": true,
+        "specifyBody": "keypair",
+        "placeholderDefinitions": {
+          "values": [
+            {
+              "name": "well",
+              "description": "Точное имя скважины из inspect_schedule",
+              "type": "string"
+            }
+          ]
+        },
+        "optimizeResponse": false,
+        "parametersHeaders": {
+          "values": [
+            {
+              "name": "Content-Type",
+              "valueProvider": "fieldValue",
+              "value": "application/json"
+            }
+          ]
+        },
+        "parametersBody": {
+          "values": [
+            {
+              "name": "session_id",
+              "valueProvider": "fieldValue",
+              "value": "={{ $('Open schedule session').first().json.session_id }}"
+            },
+            {
+              "name": "well",
+              "valueProvider": "modelRequired",
+              "value": ""
+            }
+          ]
+        }
+      },
+      "id": "49ab200f-c1b7-51c5-b779-072adab2478a",
+      "name": "inspect_well",
+      "type": "@n8n/n8n-nodes-langchain.toolHttpRequest",
+      "typeVersion": 1.1,
+      "position": [
+        980,
+        -420
+      ]
+    },
+    {
+      "parameters": {
+        "toolDescription": "Детерминированно разобрать timeline одной скважины: history/forecast controls, commissioning, WELTARG, WECON, WTEST, WELOPEN, WEFAC, WPIMULT и правила выбора keyword.",
+        "method": "POST",
+        "url": "={{ $('Runtime configuration').first().json.schedule_service_url + '/agent-tools/' + \"analyze_forecast_controls\" }}",
+        "authentication": "none",
+        "sendQuery": false,
+        "sendHeaders": true,
+        "specifyHeaders": "keypair",
+        "sendBody": true,
+        "specifyBody": "keypair",
+        "placeholderDefinitions": {
+          "values": [
+            {
+              "name": "well",
+              "description": "Точное имя скважины из inspect_schedule",
+              "type": "string"
+            }
+          ]
+        },
+        "optimizeResponse": false,
+        "parametersHeaders": {
+          "values": [
+            {
+              "name": "Content-Type",
+              "valueProvider": "fieldValue",
+              "value": "application/json"
+            }
+          ]
+        },
+        "parametersBody": {
+          "values": [
+            {
+              "name": "session_id",
+              "valueProvider": "fieldValue",
+              "value": "={{ $('Open schedule session').first().json.session_id }}"
+            },
+            {
+              "name": "well",
+              "valueProvider": "modelRequired",
+              "value": ""
+            }
+          ]
+        }
+      },
+      "id": "29254bd0-9438-5967-b0d7-3fe53f600120",
+      "name": "analyze_forecast_controls",
+      "type": "@n8n/n8n-nodes-langchain.toolHttpRequest",
+      "typeVersion": 1.1,
+      "position": [
+        1200,
         -420
       ]
     },
@@ -64209,8 +64669,8 @@ main().catch((error) => {
       "type": "@n8n/n8n-nodes-langchain.toolHttpRequest",
       "typeVersion": 1.1,
       "position": [
-        980,
-        -420
+        760,
+        -260
       ]
     },
     {
@@ -64263,8 +64723,8 @@ main().catch((error) => {
       "type": "@n8n/n8n-nodes-langchain.toolHttpRequest",
       "typeVersion": 1.1,
       "position": [
-        1200,
-        -420
+        980,
+        -260
       ]
     },
     {
@@ -64327,7 +64787,7 @@ main().catch((error) => {
       "type": "@n8n/n8n-nodes-langchain.toolHttpRequest",
       "typeVersion": 1.1,
       "position": [
-        760,
+        1200,
         -260
       ]
     },
@@ -64370,8 +64830,8 @@ main().catch((error) => {
       "type": "@n8n/n8n-nodes-langchain.toolHttpRequest",
       "typeVersion": 1.1,
       "position": [
-        980,
-        -260
+        760,
+        -100
       ]
     },
     {
@@ -64434,8 +64894,8 @@ main().catch((error) => {
       "type": "@n8n/n8n-nodes-langchain.toolHttpRequest",
       "typeVersion": 1.1,
       "position": [
-        1200,
-        -260
+        980,
+        -100
       ]
     },
     {
@@ -64488,7 +64948,7 @@ main().catch((error) => {
       "type": "@n8n/n8n-nodes-langchain.toolHttpRequest",
       "typeVersion": 1.1,
       "position": [
-        760,
+        1200,
         -100
       ]
     },
@@ -64531,8 +64991,8 @@ main().catch((error) => {
       "type": "@n8n/n8n-nodes-langchain.toolHttpRequest",
       "typeVersion": 1.1,
       "position": [
-        980,
-        -100
+        760,
+        60
       ]
     },
     {
@@ -64574,8 +65034,8 @@ main().catch((error) => {
       "type": "@n8n/n8n-nodes-langchain.toolHttpRequest",
       "typeVersion": 1.1,
       "position": [
-        1200,
-        -100
+        980,
+        60
       ]
     }
   ],
@@ -64628,7 +65088,7 @@ main().catch((error) => {
       "main": [
         [
           {
-            "node": "Capability router",
+            "node": "Activity — Schedule Builder accepted",
             "type": "main",
             "index": 0
           }
@@ -64636,6 +65096,50 @@ main().catch((error) => {
         [
           {
             "node": "Format missing schedule",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Activity — Schedule Builder accepted": {
+      "main": [
+        [
+          {
+            "node": "Restore after Schedule Builder accepted",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Restore after Schedule Builder accepted": {
+      "main": [
+        [
+          {
+            "node": "Activity — Schedule Builder progress",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Activity — Schedule Builder progress": {
+      "main": [
+        [
+          {
+            "node": "Restore after Schedule Builder progress",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Restore after Schedule Builder progress": {
+      "main": [
+        [
+          {
+            "node": "Capability router",
             "type": "main",
             "index": 0
           }
@@ -64712,6 +65216,28 @@ main().catch((error) => {
       ]
     },
     "inspect_schedule": {
+      "ai_tool": [
+        [
+          {
+            "node": "Schedule Builder AI Agent",
+            "type": "ai_tool",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "inspect_well": {
+      "ai_tool": [
+        [
+          {
+            "node": "Schedule Builder AI Agent",
+            "type": "ai_tool",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "analyze_forecast_controls": {
       "ai_tool": [
         [
           {
@@ -64831,6 +65357,28 @@ main().catch((error) => {
           }
         ]
       ]
+    },
+    "Format schedule result": {
+      "main": [
+        [
+          {
+            "node": "Activity — Schedule Builder completed",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Activity — Schedule Builder completed": {
+      "main": [
+        [
+          {
+            "node": "Restore after Schedule Builder activity",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
     }
   },
   "settings": {
@@ -64845,7 +65393,7 @@ main().catch((error) => {
   },
   "tags": [],
   "pinData": {},
-  "versionId": "3570c18a-5529-4cec-a307-d1432eb9dba5"
+  "versionId": "e284e757-a5d7-42d1-8ef6-d24dc29214c4"
 }
 
 ===END_FILE===
@@ -99409,7 +99957,7 @@ from __future__ import annotations
 
 
 ===END_FILE===
-===BEGIN_FILE===	schedule-builder-service/app/agent_tools.py	21074	utf8
+===BEGIN_FILE===	schedule-builder-service/app/agent_tools.py	26516	utf8
 """Deterministic tools for the n8n Schedule Builder LLM. Never invent wells or dates."""
 
 from __future__ import annotations
@@ -99426,6 +99974,7 @@ from .group_rebind import extract_group_rebind_spec, run_group_rebind_revise, wa
 from .io import commissioning_facts, file_ref, load_source
 from .keywords import keyword_object, search_keywords
 from .parse import parse_schedule, well_names
+from .well_model import build_well_objects, find_well
 from . import sessions
 from .validate import validate_emitted
 
@@ -99437,6 +99986,7 @@ MAX_WELLS = 200
 def _compact_inspect(source: str) -> dict[str, Any]:
     doc = parse_schedule(source)
     wells = sorted(well_names(doc))
+    well_objects = build_well_objects(doc)
     dates: list[str] = []
     keywords: list[str] = []
     groups: list[dict[str, str]] = []
@@ -99460,6 +100010,8 @@ def _compact_inspect(source: str) -> dict[str, Any]:
         "well_count": len(wells),
         "wells": wells[:MAX_WELLS],
         "wells_truncated": len(wells) > MAX_WELLS,
+        "well_objects": well_objects[:MAX_WELLS],
+        "well_objects_truncated": len(well_objects) > MAX_WELLS,
         "keywords_present": seen,
         "date_count": len(dates),
         "dates_preview": dates[:12],
@@ -99682,6 +100234,75 @@ def execute_tool(session_id: str, name: str, args: dict[str, Any] | None = None)
     if name == "inspect_schedule":
         return {"ok": True, "inspect": _compact_inspect(source), "fact_count": len(state.get("facts") or [])}
 
+    if name == "inspect_well":
+        objects = build_well_objects(parse_schedule(source))
+        well = find_well(objects, args.get("well"))
+        if well is None:
+            return {
+                "ok": False,
+                "error": "well_not_found",
+                "well": str(args.get("well") or ""),
+                "message": "Скважина не найдена в baseline SCHEDULE.",
+            }
+        return {"ok": True, "well": well}
+
+    if name == "analyze_forecast_controls":
+        objects = build_well_objects(parse_schedule(source))
+        well = find_well(objects, args.get("well"))
+        if well is None:
+            return {
+                "ok": False,
+                "error": "well_not_found",
+                "well": str(args.get("well") or ""),
+                "message": "Скважина не найдена в baseline SCHEDULE.",
+            }
+        controls = well.get("control_events") or []
+        factual = [event for event in controls if event.get("factual")]
+        forecast = [
+            event for event in controls
+            if event.get("keyword") == "WCONPROD" and not event.get("factual")
+        ]
+        boundary_candidates = sorted({
+            event.get("date")
+            for event in controls
+            if event.get("date") and event.get("keyword") in {"WCONHIST", "WCONPROD"}
+        })
+        explicit_forecast_comment = any(
+            any(word in str(event.get("comment") or "").casefold() for word in ("forecast", "прогноз"))
+            for event in forecast
+        )
+        return {
+            "ok": True,
+            "well": well.get("well"),
+            "identity": well.get("identity"),
+            "commissioning_anchor": well.get("commissioning_wconprod"),
+            "latest_control": well.get("latest_control"),
+            "factual_history": factual,
+            "forecast_controls": forecast,
+            "control_overrides": well.get("override_events") or [],
+            "economic_limits": well.get("economic_events") or [],
+            "reopen_policies": well.get("test_events") or [],
+            "status_events": well.get("status_events") or [],
+            "efficiency_events": well.get("efficiency_events") or [],
+            "connection_multipliers": well.get("connection_events") or [],
+            "forecast_boundary_candidates": boundary_candidates,
+            "decision_rules": {
+                "full_control_change": "WCONPROD",
+                "single_value_change": "WELTARG",
+                "economic_limit": "WECON",
+                "reopen_policy": "WTEST",
+                "well_status": "WELOPEN",
+                "uptime_factor": "WEFAC",
+                "connection_factor": "WPIMULT",
+                "group_control": "GCONPROD",
+            },
+            "needs_input": (
+                ["forecast/history boundary"]
+                if factual and forecast and not explicit_forecast_comment
+                else []
+            ),
+        }
+
     if name == "search_keywords":
         intent = str(args.get("intent") or blob)
         hits = search_keywords(intent)
@@ -99880,6 +100501,54 @@ def execute_tool(session_id: str, name: str, args: dict[str, Any] | None = None)
         if bad:
             return {"ok": False, "error": "well_not_in_schedule", "wells": bad}
         built_doc = parse_schedule(source)
+        semantic_findings: list[dict[str, Any]] = []
+        for op in operations:
+            keyword = str(op.get("keyword") or "").upper()
+            fields = op.get("fields") if isinstance(op.get("fields"), dict) else {}
+            well_name = str(fields.get("well") or op.get("well") or "").strip().strip("'\"")
+            if keyword == "WCONPROD":
+                factual = any(
+                    block.keyword == "WCONPROD"
+                    and any(
+                        rec.tokens
+                        and rec.tokens[0].strip("'\"") == well_name
+                        and ("факт" in str(rec.comment).casefold() or "fact" in str(rec.comment).casefold())
+                        for rec in block.records
+                    )
+                    for block in built_doc.blocks
+                )
+                if factual:
+                    semantic_findings.append({
+                        "code": "FACTUAL_WCONPROD_PROTECTED",
+                        "keyword": keyword,
+                        "well": well_name,
+                        "severity": "error",
+                        "message": "Фактический WCONPROD нельзя изменять generic operation.",
+                    })
+            if keyword == "WELTARG":
+                has_base = any(
+                    block.keyword in {"WCONPROD", "WCONHIST"}
+                    and any(rec.tokens and rec.tokens[0].strip("'\"") == well_name for rec in block.records)
+                    for block in built_doc.blocks
+                )
+                if not has_base:
+                    semantic_findings.append({
+                        "code": "WELTARG_BASE_CONTROL_MISSING",
+                        "keyword": keyword,
+                        "well": well_name,
+                        "severity": "error",
+                        "message": "WELTARG требует предшествующий WCONPROD или WCONHIST.",
+                    })
+        if semantic_findings:
+            result = _agent_result(
+                task_id,
+                "failed",
+                "Операция нарушает семантику SCHEDULE",
+                data={"findings": semantic_findings},
+                issues=semantic_findings,
+                artifacts={"schedule_out": source, "diff": ""},
+            )
+            return _store_result(state, result)
         applied, findings = apply_operations(built_doc, operations)
         text = emit_schedule(applied)
         findings.extend(validate_emitted(text, applied))
@@ -99933,7 +100602,7 @@ def suggested_capability(state: dict[str, Any]) -> str:
     return "operations"
 
 ===END_FILE===
-===BEGIN_FILE===	schedule-builder-service/app/apply.py	3405	utf8
+===BEGIN_FILE===	schedule-builder-service/app/apply.py	4187	utf8
 """Apply keyword operations onto a parsed SCHEDULE document."""
 
 from __future__ import annotations
@@ -99942,6 +100611,7 @@ from typing import Any
 
 from .keywords import KEYWORDS, normalize_keyword
 from .parse import Block, Record, ScheduleDoc
+from .well_model import is_factual_record
 
 
 def _tokens_from_fields(fields: dict[str, Any]) -> list[str]:
@@ -100001,7 +100671,23 @@ def apply_operations(doc: ScheduleDoc, operations: list[dict[str, Any]]) -> tupl
             for block in blocks:
                 if block.keyword != keyword:
                     continue
-                block.records = [r for r in block.records if not (r.tokens and r.tokens[0].strip("'") == well)]
+                kept: list[Record] = []
+                for record in block.records:
+                    matches = record.tokens and record.tokens[0].strip("'\"") == well
+                    if matches and keyword == "WCONPROD" and is_factual_record(record):
+                        findings.append(
+                            {
+                                "code": "FACTUAL_WCONPROD_PROTECTED",
+                                "keyword": keyword,
+                                "well": well,
+                                "severity": "error",
+                                "message": "Factual WCONPROD cannot be deleted.",
+                            }
+                        )
+                        kept.append(record)
+                    elif not matches:
+                        kept.append(record)
+                block.records = kept
         else:
             findings.append({"code": "OPERATION_UNKNOWN", "operation": action, "severity": "error"})
     return ScheduleDoc(blocks=blocks, text=doc.text, sha256=doc.sha256), findings
@@ -100060,7 +100746,7 @@ def unified_diff(before: str, after: str, from_file: str = "schedule.inc", to_fi
     )
 
 ===END_FILE===
-===BEGIN_FILE===	schedule-builder-service/app/emit.py	2027	utf8
+===BEGIN_FILE===	schedule-builder-service/app/emit.py	2143	utf8
 """Emit SCHEDULE text: within-DATES order, record `/`, bare block `/`, then blank line."""
 
 from __future__ import annotations
@@ -100072,10 +100758,14 @@ from .parse import Block, Record, ScheduleDoc, timeline_segments
 def _record_line(record: Record) -> str:
     raw = record.raw.strip()
     if raw.endswith("/"):
-        return raw
-    if record.tokens:
-        return "  " + " ".join(record.tokens) + " /"
-    return "  /"
+        line = raw
+    elif record.tokens:
+        line = "  " + " ".join(record.tokens) + " /"
+    else:
+        line = "  /"
+    if record.comment and "--" not in line:
+        line += f" -- {record.comment}"
+    return line
 
 
 def emit_block(block: Block) -> str:
@@ -100375,7 +101065,7 @@ def file_ref(inputs: dict[str, Any]) -> str:
     )
 
 ===END_FILE===
-===BEGIN_FILE===	schedule-builder-service/app/keywords.py	9128	utf8
+===BEGIN_FILE===	schedule-builder-service/app/keywords.py	11112	utf8
 """tNavigator 22.2 SCHEDULE keyword catalogue (METRIC). Emit FRACTURE_SPECS, not FRACTURE_WELL."""
 
 from __future__ import annotations
@@ -100542,8 +101232,31 @@ FIELDS: dict[str, list[dict[str, Any]]] = {
     ],
     "WELTARG": [
         {"name": "well", "type": "string", "required": True, "unit": None, "description": "Имя скважины"},
-        {"name": "item", "type": "string", "required": False, "unit": None, "description": "ORAT/BHP/..."},
-        {"name": "value", "type": "number", "required": False, "unit": None, "description": "Target value"},
+        {"name": "quantity", "type": "string", "required": True, "unit": None, "description": "ORAT/WRAT/GRAT/LRAT/RESV/BHP/THP/TARGTHP/VFP/LIFT/GUID/DEPTH"},
+        {"name": "value", "type": "number", "required": True, "unit": None, "description": "Новое значение"},
+    ],
+    "WCONHIST": [
+        {"name": "well", "type": "string", "required": True, "unit": None, "description": "Имя исторической скважины"},
+        {"name": "status", "type": "string", "required": False, "unit": None, "description": "OPEN/SHUT"},
+    ],
+    "WECON": [
+        {"name": "well", "type": "string", "required": True, "unit": None, "description": "Имя скважины"},
+        {"name": "min_orat", "type": "number", "required": False, "unit": "m3/d", "description": "Минимальный экономический ORAT"},
+        {"name": "max_wct", "type": "number", "required": False, "unit": None, "description": "Максимальная обводнённость"},
+        {"name": "action", "type": "string", "required": False, "unit": None, "description": "NONE/CON/WELL"},
+    ],
+    "WTEST": [
+        {"name": "well", "type": "string", "required": True, "unit": None, "description": "Имя скважины"},
+        {"name": "interval", "type": "number", "required": True, "unit": "day", "description": "Интервал проверки"},
+        {"name": "reason", "type": "string", "required": True, "unit": None, "description": "P/E/G"},
+    ],
+    "WPIMULT": [
+        {"name": "well", "type": "string", "required": True, "unit": None, "description": "Имя скважины"},
+        {"name": "mult", "type": "number", "required": True, "unit": None, "description": "Множитель CF"},
+    ],
+    "GCONPROD": [
+        {"name": "group", "type": "string", "required": True, "unit": None, "description": "Имя группы или FIELD"},
+        {"name": "control", "type": "string", "required": True, "unit": None, "description": "ORAT/WRAT/GRAT/LRAT/RESV/FLD"},
     ],
 }
 
@@ -100559,6 +101272,11 @@ DESCRIPTIONS = {
     "COMPDATMD": "Перфорация по MD",
     "GRUPTREE": "Иерархия групп",
     "WELTARG": "Целевое управление скважиной",
+    "WCONHIST": "Исторический контроль добывающей скважины; не прогноз",
+    "WECON": "Экономические пределы скважины; не целевой дебит",
+    "WTEST": "Политика проверки и переоткрытия закрытой скважины",
+    "WPIMULT": "Множитель проводимости перфорации",
+    "GCONPROD": "Прогнозный контроль группы или FIELD; не well control",
     "FRACTURE_SPECS": "Параметры ГРП скважины (legacy name; layout FRACTURE_WELL §12.2.131)",
 }
 
@@ -101144,7 +101862,7 @@ def get_session_result(session_id: str) -> dict[str, Any]:
         raise HTTPException(status_code=404, detail="session_not_found") from exc
 
 ===END_FILE===
-===BEGIN_FILE===	schedule-builder-service/app/parse.py	3170	utf8
+===BEGIN_FILE===	schedule-builder-service/app/parse.py	4296	utf8
 """Lexical SCHEDULE parser: keyword blocks + record lines. Does not invent field layouts."""
 
 from __future__ import annotations
@@ -101163,6 +101881,7 @@ HEADER = re.compile(r"^\s*([A-Za-z][A-Za-z0-9_]*)\s*(?:--.*)?$")
 class Record:
     tokens: list[str]
     raw: str
+    comment: str = ""
 
 
 @dataclass
@@ -101201,14 +101920,43 @@ def parse_schedule(text: str) -> ScheduleDoc:
         end = headers[idx + 1][0] if idx + 1 < len(headers) else len(lines)
         body_lines = lines[start + 1 : end]
         records: list[Record] = []
+        pending_comment = ""
         for raw in body_lines:
             stripped = raw.strip()
-            if not stripped or stripped.startswith("--") or stripped == "/":
+            if not stripped or stripped == "/":
                 continue
+            if stripped.startswith("--"):
+                if records:
+                    comment = stripped[2:].strip()
+                    records[-1].comment = " ".join(
+                        part for part in (records[-1].comment, comment) if part
+                    )
+                else:
+                    pending_comment = " ".join(
+                        part for part in (pending_comment, stripped[2:].strip()) if part
+                    )
+                continue
+            inline_comment = ""
+            comment_pos = raw.find("--")
+            if comment_pos >= 0:
+                inline_comment = raw[comment_pos + 2 :].strip()
+                raw = raw[:comment_pos].rstrip()
+                stripped = raw.strip()
             cleaned = stripped[:-1].rstrip() if stripped.endswith("/") else stripped
             tokens = [tok for tok in re.split(r"[,\s]+", cleaned) if tok and tok != "/"]
             if tokens:
-                records.append(Record(tokens=tokens, raw=raw.rstrip("\n")))
+                records.append(
+                    Record(
+                        tokens=tokens,
+                        raw=raw.rstrip("\n"),
+                        comment=" ".join(
+                            part
+                            for part in (pending_comment, inline_comment)
+                            if part
+                        ),
+                    )
+                )
+                pending_comment = ""
         blocks.append(
             Block(
                 keyword=kw,
@@ -101227,7 +101975,7 @@ def timeline_segments(doc: ScheduleDoc) -> list[dict[str, Any]]:
         if block.keyword == "DATES":
             if current:
                 segments.append(current)
-            date = block.records[0].tokens[0] if block.records else None
+            date = " ".join(block.records[0].tokens) if block.records else None
             current = {"date": date, "dates_block": block, "blocks": []}
             continue
         if current is None:
@@ -101303,7 +102051,7 @@ def _expire_unlocked() -> None:
         _SESSIONS.pop(sid, None)
 
 ===END_FILE===
-===BEGIN_FILE===	schedule-builder-service/app/timeline_ops.py	8975	utf8
+===BEGIN_FILE===	schedule-builder-service/app/timeline_ops.py	11197	utf8
 """Python-native timeline edits used by Schedule Builder."""
 
 from __future__ import annotations
@@ -101316,6 +102064,7 @@ from typing import Any
 from .diff import unified_diff
 from .emit import emit_schedule
 from .parse import Block, Record, ScheduleDoc, parse_schedule, timeline_segments
+from .well_model import is_factual_record
 
 MONTHS = {
     "JAN": 1, "FEB": 2, "MAR": 3, "APR": 4, "MAY": 5, "JUN": 6,
@@ -101404,7 +102153,31 @@ def commissioning_revise(
     segments = deepcopy(timeline_segments(parse_schedule(source_text)))
     by_date = {parse_date(s.get("date")): s for s in segments if parse_date(s.get("date"))}
     moved: list[tuple[str, Record, str, date]] = []
-    seen: set[tuple[str, str]] = set()
+    first_wconprod_date: dict[str, date | None] = {}
+    for segment in segments:
+        source_date = parse_date(segment.get("date"))
+        for block in segment.get("blocks") or []:
+            if block.keyword != "WCONPROD":
+                continue
+            for record in block.records:
+                well = _well(record)
+                if (
+                    well in targets
+                    and well not in first_wconprod_date
+                    and not is_factual_record(record)
+                ):
+                    first_wconprod_date[well] = source_date
+    missing_primary = sorted(set(targets) - set(first_wconprod_date))
+    for well in missing_primary:
+        findings.append({
+            "code": "COMMISSIONING_PRIMARY_WCONPROD_MISSING",
+            "severity": "error",
+            "well": well,
+            "keyword": "WCONPROD",
+        })
+
+    seen_primary: set[str] = set()
+    seen_companions: set[tuple[str, str]] = set()
     for segment in segments:
         source_date = parse_date(segment.get("date"))
         for block in list(segment.get("blocks") or []):
@@ -101413,11 +102186,27 @@ def commissioning_revise(
             keep: list[Record] = []
             for record in block.records:
                 well = _well(record)
-                key = (well, block.keyword)
-                if well not in targets or key in seen:
+                if well not in targets:
                     keep.append(record)
                     continue
-                seen.add(key)
+                is_primary = block.keyword == "WCONPROD"
+                if is_primary and is_factual_record(record):
+                    keep.append(record)
+                    continue
+                is_companion = (
+                    block.keyword in {"WELOPEN", "WEFAC"}
+                    and well in first_wconprod_date
+                    and first_wconprod_date.get(well) == source_date
+                )
+                if (is_primary and well in seen_primary) or (
+                    is_companion and (well, block.keyword) in seen_companions
+                ) or (not is_primary and not is_companion):
+                    keep.append(record)
+                    continue
+                if is_primary:
+                    seen_primary.add(well)
+                else:
+                    seen_companions.add((well, block.keyword))
                 moved.append((block.keyword, record, well, targets[well]))
             block.records = keep
             if not block.records:
@@ -101464,6 +102253,18 @@ def commissioning_revise(
         "shifts": [{"well": w, "date": tnav_date(t)} for w, t in targets.items()],
         "findings": findings,
         "file_ref": file_ref,
+        "control_semantics": {
+            "commissioning_anchor": "first WCONPROD per well",
+            "forecast_controls_preserved": True,
+            "factual_wconprod_preserved": True,
+            "forecast_control_count": max(0, sum(
+                1 for segment in segments
+                for block in segment.get("blocks") or []
+                if block.keyword == "WCONPROD"
+                for record in block.records
+                if _well(record) in targets
+            )),
+        },
     }
 
 
@@ -101618,6 +102419,148 @@ def validate_emitted(text: str, doc: ScheduleDoc | None = None) -> list[dict[str
     return findings
 
 ===END_FILE===
+===BEGIN_FILE===	schedule-builder-service/app/well_model.py	5112	utf8
+"""Object-level view of wells in a parsed SCHEDULE timeline."""
+
+from __future__ import annotations
+
+from typing import Any
+
+from .parse import ScheduleDoc, timeline_segments
+
+WELL_KEYWORDS = {
+    "WELSPECS",
+    "WELLTRACK",
+    "COMPDATMD",
+    "WCONPROD",
+    "WCONINJE",
+    "WCONHIST",
+    "WELOPEN",
+    "WEFAC",
+    "WECON",
+    "WTEST",
+    "WELTARG",
+    "WPIMULT",
+}
+
+
+def is_factual_record(record: Any) -> bool:
+    comment = str(getattr(record, "comment", "") or "")
+    return "факт" in comment.casefold() or "fact" in comment.casefold()
+
+
+def _well_name(record: Any) -> str:
+    tokens = getattr(record, "tokens", None) or []
+    return str(tokens[0]).strip("'\"") if tokens else ""
+
+
+def _date_text(segment: dict[str, Any]) -> str | None:
+    value = segment.get("date")
+    return str(value) if value else None
+
+
+def build_well_objects(doc: ScheduleDoc) -> list[dict[str, Any]]:
+    """Build a compact, deterministic well object inventory.
+
+    ``first_wconprod`` is the commissioning anchor. Every later WCONPROD is
+    retained as a separate forecast control event and is never confused with
+    commissioning.
+    """
+    objects: dict[str, dict[str, Any]] = {}
+    for segment in timeline_segments(doc):
+        date = _date_text(segment)
+        for block in segment.get("blocks") or []:
+            if block.keyword not in WELL_KEYWORDS:
+                continue
+            for record in block.records:
+                well = _well_name(record)
+                if not well:
+                    continue
+                item = objects.setdefault(
+                    well,
+                    {
+                        "well": well,
+                        "identity": {},
+                        "first_wconprod": None,
+                        "control_events": [],
+                        "override_events": [],
+                        "economic_events": [],
+                        "test_events": [],
+                        "status_events": [],
+                        "efficiency_events": [],
+                        "connection_events": [],
+                        "events": [],
+                    },
+                )
+                event = {
+                    "keyword": block.keyword,
+                    "date": date,
+                    "tokens": list(record.tokens),
+                    "comment": record.comment,
+                    "factual": is_factual_record(record),
+                }
+                item["events"].append(event)
+                if block.keyword == "WELSPECS" and not item["identity"]:
+                    tokens = record.tokens
+                    item["identity"] = {
+                        "group": tokens[1].strip("'\"") if len(tokens) > 1 else "",
+                        "tokens": list(tokens),
+                    }
+                if block.keyword in {"WCONPROD", "WCONINJE", "WCONHIST"}:
+                    item["control_events"].append(event)
+                if block.keyword == "WELTARG":
+                    item["override_events"].append(event)
+                elif block.keyword == "WECON":
+                    item["economic_events"].append(event)
+                elif block.keyword == "WTEST":
+                    item["test_events"].append(event)
+                elif block.keyword == "WELOPEN":
+                    item["status_events"].append(event)
+                elif block.keyword == "WEFAC":
+                    item["efficiency_events"].append(event)
+                elif block.keyword == "WPIMULT":
+                    item["connection_events"].append(event)
+                if block.keyword == "WCONPROD" and item["first_wconprod"] is None:
+                    item["first_wconprod"] = event
+
+    result = []
+    for item in objects.values():
+        controls = item["control_events"]
+        item["forecast_control_count"] = max(
+            0,
+            sum(1 for event in controls if event["keyword"] == "WCONPROD") - 1,
+        )
+        item["status"] = (
+            item["first_wconprod"]["tokens"][1]
+            if item["first_wconprod"] and len(item["first_wconprod"]["tokens"]) > 1
+            else None
+        )
+        item["factual_control_events"] = [
+            event for event in controls if event["factual"]
+        ]
+        item["forecast_control_events"] = [
+            event
+            for event in controls
+            if event["keyword"] == "WCONPROD" and not event["factual"]
+        ]
+        item["commissioning_wconprod"] = next(
+            (event for event in item["forecast_control_events"] if event["keyword"] == "WCONPROD"),
+            None,
+        )
+        item["latest_control"] = controls[-1] if controls else None
+        item["forecast_events"] = [
+            event for event in item["events"]
+            if not event["factual"] and event["keyword"] != "WCONHIST"
+        ]
+        result.append(item)
+    return sorted(result, key=lambda item: item["well"])
+
+
+def find_well(objects: list[dict[str, Any]], well: str) -> dict[str, Any] | None:
+    wanted = str(well or "").strip().strip("'\"")
+    return next((item for item in objects if item.get("well") == wanted), None)
+
+===END_FILE===
 ===BEGIN_FILE===	schedule-builder-service/requirements.txt	120	utf8
 fastapi>=0.115.14,<0.116
 uvicorn[standard]>=0.30,<1.0
@@ -101627,7 +102570,7 @@ httpx>=0.27,<1.0
 
 
 ===END_FILE===
-===BEGIN_FILE===	schedule-builder-service/tests/test_schedule_engine.py	9115	utf8
+===BEGIN_FILE===	schedule-builder-service/tests/test_schedule_engine.py	14873	utf8
 from __future__ import annotations
 
 from app.emit import emit_schedule
@@ -101750,6 +102693,241 @@ WCONPROD
     assert "1601 OPEN GRAT" in feb
     jan = text.split("1 JAN 2020")[1].split("DATES")[0]
     assert "1601 OPEN GRAT" not in jan
+
+
+def test_commissioning_preserves_later_wconprod_forecast_controls() -> None:
+    from app.commissioning import run_commissioning_revise
+
+    source = """DATES
+  1 JAN 2020 /
+/
+
+WCONPROD
+  1601 OPEN GRAT 1* 1* 200000 1* 1* 90 /
+/
+
+DATES
+  1 FEB 2020 /
+/
+
+WCONPROD
+  1601 OPEN GRAT 1* 1* 250000 1* 1* 90 /
+/
+"""
+    revised = run_commissioning_revise(source, [{"well": "1601", "date": "23 FEB 2020"}])
+    assert revised["status"] == "applied"
+    text = revised["generated_schedule"]
+    feb = text.split("23 FEB 2020")[1]
+    assert "1601 OPEN GRAT 1* 1* 200000" in feb
+    assert "1601 OPEN GRAT 1* 1* 250000" in text
+    assert text.index("250000") < text.index("200000")
+    assert revised["control_semantics"]["commissioning_anchor"] == "first WCONPROD per well"
+
+
+def test_inspect_schedule_exposes_well_object_and_control_history() -> None:
+    from app.agent_tools import _compact_inspect
+
+    source = """DATES
+  1 JAN 2020 /
+/
+
+WELSPECS
+  1601 G1 10 20 1000 OIL /
+/
+
+WCONPROD
+  1601 OPEN GRAT 1* 1* 200000 /
+/
+
+DATES
+  1 FEB 2020 /
+/
+
+WCONPROD
+  1601 OPEN GRAT 1* 1* 250000 /
+/
+"""
+    item = _compact_inspect(source)["well_objects"][0]
+    assert item["well"] == "1601"
+    assert item["identity"]["group"] == "G1"
+    assert item["first_wconprod"]["date"] == "1 JAN 2020"
+    assert item["forecast_control_count"] == 1
+
+
+def test_analyze_forecast_controls_distinguishes_overrides_economics_and_policies() -> None:
+    from app.agent_tools import _compact_inspect, execute_tool
+    from app import sessions
+
+    source = """DATES
+  1 JAN 2020 /
+/
+
+WELSPECS
+  P1 G1 10 20 1000 OIL /
+/
+
+WCONHIST
+  P1 OPEN 10 /
+/
+
+DATES
+  1 JAN 2021 /
+/
+
+WCONPROD
+  P1 OPEN GRAT 1* 1* 200000 /
+/
+
+WELTARG
+  P1 GRAT 150000 /
+/
+
+WECON
+  P1 1* 1* 0.95 2* WELL /
+/
+
+WTEST
+  P1 30 E /
+/
+
+WELOPEN
+  P1 OPEN /
+/
+
+WEFAC
+  P1 0.9 /
+/
+
+WPIMULT
+  P1 1.2 /
+/
+"""
+    state = sessions.put({
+        "session_id": sessions.new_session_id(),
+        "task_id": "analysis",
+        "source_text": source,
+        "working_text": source,
+        "objective": "",
+        "handoff_message": "",
+        "inputs": {},
+        "context": {},
+        "facts": [],
+    })
+    result = execute_tool(state["session_id"], "analyze_forecast_controls", {"well": "P1"})
+    assert result["ok"] is True
+    assert result["commissioning_anchor"]["keyword"] == "WCONPROD"
+    assert result["control_overrides"][0]["keyword"] == "WELTARG"
+    assert result["economic_limits"][0]["keyword"] == "WECON"
+    assert result["reopen_policies"][0]["keyword"] == "WTEST"
+    assert result["efficiency_events"][0]["keyword"] == "WEFAC"
+    assert result["connection_multipliers"][0]["keyword"] == "WPIMULT"
+    assert result["needs_input"] == []
+
+
+def test_generic_operations_protect_factual_control_and_require_weltarg_base() -> None:
+    from app.agent_tools import execute_tool
+    from app import sessions
+
+    source = """DATES
+  1 JAN 2020 /
+/
+
+WCONPROD
+  P1 OPEN GRAT 1* 1* 120000 / -- ФАКТ
+/
+"""
+    state = sessions.put({
+        "session_id": sessions.new_session_id(),
+        "task_id": "semantic",
+        "source_text": source,
+        "working_text": source,
+        "objective": "",
+        "handoff_message": "",
+        "inputs": {},
+        "context": {},
+        "facts": [],
+    })
+    factual = execute_tool(state["session_id"], "apply_operations", {
+        "operations": [{"keyword": "WCONPROD", "operation": "MODIFY", "fields": {"well": "P1", "ORAT": 1}}],
+    })
+    assert factual["status"] == "failed"
+    assert factual["issues"][0]["code"] == "FACTUAL_WCONPROD_PROTECTED"
+
+    no_base_source = "DATES\n  1 JAN 2020 /\n/\n\nWELSPECS\n  P1 G1 1 1 1000 OIL /\n/\n"
+    no_base_state = sessions.put({
+        **state,
+        "session_id": sessions.new_session_id(),
+        "source_text": no_base_source,
+        "working_text": no_base_source,
+    })
+    missing = execute_tool(no_base_state["session_id"], "apply_operations", {
+        "operations": [{"keyword": "WELTARG", "operation": "ADD", "fields": {"well": "P1", "quantity": "BHP", "value": 100}}],
+    })
+    assert missing["status"] == "failed"
+    assert missing["issues"][0]["code"] == "WELTARG_BASE_CONTROL_MISSING"
+
+
+def test_fact_comment_is_preserved_and_factual_wconprod_is_not_retargeted() -> None:
+    from app.commissioning import run_commissioning_revise
+    from app.parse import parse_schedule
+    from app.well_model import build_well_objects
+
+    source = """DATES
+  1 JAN 2019 /
+/
+
+WCONPROD
+  1601 OPEN GRAT 1* 1* 120000 / -- ФАКТ: история
+/
+
+DATES
+  1 JAN 2020 /
+/
+
+WCONPROD
+  1601 OPEN GRAT 1* 1* 200000 / -- forecast start
+/
+
+DATES
+  1 FEB 2020 /
+/
+
+WCONPROD
+  1601 OPEN GRAT 1* 1* 250000 / -- forecast mode
+/
+"""
+    objects = build_well_objects(parse_schedule(source))
+    item = objects[0]
+    assert item["factual_control_events"][0]["factual"] is True
+    assert item["commissioning_wconprod"]["tokens"][-1] == "200000"
+
+    revised = run_commissioning_revise(source, [{"well": "1601", "date": "23 FEB 2020"}])
+    assert revised["status"] == "applied"
+    text = revised["generated_schedule"]
+    assert "120000 / -- ФАКТ: история" in text
+    assert "200000 / -- forecast start" in text
+    assert "250000 / -- forecast mode" in text
+    assert "23 FEB 2020" in text
+    assert text.index("120000") < text.index("200000")
+
+
+def test_remove_cannot_delete_factual_wconprod() -> None:
+    from app.apply import apply_operations
+    from app.parse import parse_schedule
+
+    source = """DATES
+  1 JAN 2019 /
+/
+
+WCONPROD
+  1601 OPEN GRAT 120000 / -- факт
+/
+"""
+    _, findings = apply_operations(
+        parse_schedule(source),
+        [{"keyword": "WCONPROD", "operation": "REMOVE", "fields": {"well": "1601"}}],
+    )
+    assert any(item["code"] == "FACTUAL_WCONPROD_PROTECTED" for item in findings)
 
 
 def test_group_rebind_spec_from_task_prose() -> None:
@@ -101920,9 +103098,6 @@ def test_hitl_json_answers_yield_policy_and_new_well_defs() -> None:
     }
     assert _unlisted_policy(state) == "remove"
     assert _new_well_defs(state)[0]["well"] == "N001"
-
-
-
 
 ===END_FILE===
 ===BEGIN_FILE===	scripts/_bootstrap_n8n_field.py	9101	utf8

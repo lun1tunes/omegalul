@@ -1,3 +1,596 @@
+                            "position": 3,
+                            "type": "number",
+                            "required": true
+                          },
+                          {
+                            "name": "B",
+                            "position": 4,
+                            "type": "number",
+                            "required": true
+                          },
+                          {
+                            "name": "C",
+                            "position": 5,
+                            "type": "number",
+                            "required": false
+                          },
+                          {
+                            "name": "D",
+                            "position": 6,
+                            "type": "number",
+                            "required": false
+                          },
+                          {
+                            "name": "E",
+                            "position": 7,
+                            "type": "number",
+                            "required": true
+                          },
+                          {
+                            "name": "F",
+                            "position": 8,
+                            "type": "number",
+                            "required": true
+                          }
+                        ],
+                        "layout": {
+                          "newline": "LF",
+                          "indent": "  ",
+                          "delimiter": "SPACE",
+                          "record_terminator": "SLASH",
+                          "block_terminator": "SLASH_LINE"
+                        },
+                        "semantics": {
+                          "period": "FORECAST",
+                          "clock": {
+                            "uses_current": true
+                          },
+                          "definitions": [],
+                          "references": [],
+                          "prerequisites": [],
+                          "state_assignments": [
+                            {
+                              "namespace": "guiderat-formula",
+                              "entity_type": "guiderat_formula",
+                              "entity_field": "PHASE",
+                              "key_fields": [
+                                "PHASE"
+                              ],
+                              "value_fields": [
+                                "INTERVAL",
+                                "PHASE",
+                                "A",
+                                "B",
+                                "C",
+                                "D",
+                                "E",
+                                "F"
+                              ]
+                            }
+                          ],
+                          "numeric_constraints": [
+                            {
+                              "field": "INTERVAL",
+                              "min": 0
+                            },
+                            {
+                              "field": "A"
+                            },
+                            {
+                              "field": "B",
+                              "min": 0
+                            },
+                            {
+                              "field": "C"
+                            },
+                            {
+                              "field": "D"
+                            },
+                            {
+                              "field": "E"
+                            },
+                            {
+                              "field": "F"
+                            },
+                            {
+                              "field": "GRDAMP",
+                              "min_exclusive": 0,
+                              "max": 1
+                            },
+                            {
+                              "field": "GRMIN",
+                              "min_exclusive": 0
+                            }
+                          ]
+                        }
+                      },
+                      {
+                        "schema_id": "expert:GUIDERAT:oil",
+                        "schema_revision": "1",
+                        "keyword": "GUIDERAT",
+                        "variant": "oil",
+                        "citation": {
+                          "document_id": "tnav-user-manual-russian",
+                          "document_revision": "19.4",
+                          "page": "12.20.90 / 1933-1936",
+                          "heading": "GUIDERAT",
+                          "source_hash": "sha256:7d1624e1ea0196383c86dbd2558826c53a5a86eb992c48141eb4e3b66f0353d5"
+                        },
+                        "parser": {
+                          "token_width": 12,
+                          "allow_trailing_omission": true,
+                          "allow_unquoted_strings": true
+                        },
+                        "fields": [
+                          {
+                            "name": "INTERVAL",
+                            "position": 1,
+                            "type": "number",
+                            "required": false
+                          },
+                          {
+                            "name": "PHASE",
+                            "position": 2,
+                            "type": "string",
+                            "required": true,
+                            "enum": [
+                              "OIL"
+                            ]
+                          },
+                          {
+                            "name": "A",
+                            "position": 3,
+                            "type": "number",
+                            "required": true
+                          },
+                          {
+                            "name": "B",
+                            "position": 4,
+                            "type": "number",
+                            "required": true
+                          },
+                          {
+                            "name": "C",
+                            "position": 5,
+                            "type": "number",
+                            "required": false
+                          },
+                          {
+                            "name": "D",
+                            "position": 6,
+                            "type": "number",
+                            "required": false
+                          },
+                          {
+                            "name": "E",
+                            "position": 7,
+                            "type": "number",
+                            "required": false
+                          },
+                          {
+                            "name": "F",
+                            "position": 8,
+                            "type": "number",
+                            "required": false
+                          },
+                          {
+                            "name": "INCREASE",
+                            "position": 9,
+                            "type": "string",
+                            "required": false,
+                            "enum": [
+                              "YES",
+                              "NO"
+                            ]
+                          },
+                          {
+                            "name": "GRDAMP",
+                            "position": 10,
+                            "type": "number",
+                            "required": false
+                          },
+                          {
+                            "name": "FREE_GAS",
+                            "position": 11,
+                            "type": "string",
+                            "required": false,
+                            "enum": [
+                              "YES",
+                              "NO"
+                            ]
+                          },
+                          {
+                            "name": "GRMIN",
+                            "position": 12,
+                            "type": "number",
+                            "required": false
+                          }
+                        ],
+                        "layout": {
+                          "newline": "LF",
+                          "indent": "  ",
+                          "delimiter": "SPACE",
+                          "record_terminator": "SLASH",
+                          "block_terminator": "SLASH_LINE"
+                        },
+                        "semantics": {
+                          "period": "FORECAST",
+                          "clock": {
+                            "uses_current": true
+                          },
+                          "definitions": [],
+                          "references": [],
+                          "prerequisites": [],
+                          "state_assignments": [
+                            {
+                              "namespace": "guiderat-formula",
+                              "entity_type": "guiderat_formula",
+                              "entity_field": "PHASE",
+                              "key_fields": [
+                                "PHASE"
+                              ],
+                              "value_fields": [
+                                "INTERVAL",
+                                "PHASE",
+                                "A",
+                                "B",
+                                "C",
+                                "D",
+                                "E",
+                                "F",
+                                "INCREASE",
+                                "GRDAMP",
+                                "FREE_GAS",
+                                "GRMIN"
+                              ]
+                            }
+                          ],
+                          "numeric_constraints": [
+                            {
+                              "field": "INTERVAL",
+                              "min": 0
+                            },
+                            {
+                              "field": "A"
+                            },
+                            {
+                              "field": "B",
+                              "min": 0
+                            },
+                            {
+                              "field": "C"
+                            },
+                            {
+                              "field": "D"
+                            },
+                            {
+                              "field": "E"
+                            },
+                            {
+                              "field": "F"
+                            },
+                            {
+                              "field": "GRDAMP",
+                              "min_exclusive": 0,
+                              "max": 1
+                            },
+                            {
+                              "field": "GRMIN",
+                              "min_exclusive": 0
+                            }
+                          ]
+                        }
+                      },
+                      {
+                        "schema_id": "expert:GUIDERAT:liq",
+                        "schema_revision": "1",
+                        "keyword": "GUIDERAT",
+                        "variant": "liq",
+                        "citation": {
+                          "document_id": "tnav-user-manual-russian",
+                          "document_revision": "19.4",
+                          "page": "12.20.90 / 1933-1936",
+                          "heading": "GUIDERAT",
+                          "source_hash": "sha256:7d1624e1ea0196383c86dbd2558826c53a5a86eb992c48141eb4e3b66f0353d5"
+                        },
+                        "parser": {
+                          "token_width": 12,
+                          "allow_trailing_omission": true,
+                          "allow_unquoted_strings": true
+                        },
+                        "fields": [
+                          {
+                            "name": "INTERVAL",
+                            "position": 1,
+                            "type": "number",
+                            "required": false
+                          },
+                          {
+                            "name": "PHASE",
+                            "position": 2,
+                            "type": "string",
+                            "required": true,
+                            "enum": [
+                              "LIQ"
+                            ]
+                          },
+                          {
+                            "name": "A",
+                            "position": 3,
+                            "type": "number",
+                            "required": true
+                          },
+                          {
+                            "name": "B",
+                            "position": 4,
+                            "type": "number",
+                            "required": true
+                          },
+                          {
+                            "name": "C",
+                            "position": 5,
+                            "type": "number",
+                            "required": false
+                          },
+                          {
+                            "name": "D",
+                            "position": 6,
+                            "type": "number",
+                            "required": false
+                          },
+                          {
+                            "name": "E",
+                            "position": 7,
+                            "type": "number",
+                            "required": false
+                          },
+                          {
+                            "name": "F",
+                            "position": 8,
+                            "type": "number",
+                            "required": false
+                          },
+                          {
+                            "name": "INCREASE",
+                            "position": 9,
+                            "type": "string",
+                            "required": false,
+                            "enum": [
+                              "YES",
+                              "NO"
+                            ]
+                          },
+                          {
+                            "name": "GRDAMP",
+                            "position": 10,
+                            "type": "number",
+                            "required": false
+                          },
+                          {
+                            "name": "FREE_GAS",
+                            "position": 11,
+                            "type": "string",
+                            "required": false,
+                            "enum": [
+                              "YES",
+                              "NO"
+                            ]
+                          },
+                          {
+                            "name": "GRMIN",
+                            "position": 12,
+                            "type": "number",
+                            "required": false
+                          }
+                        ],
+                        "layout": {
+                          "newline": "LF",
+                          "indent": "  ",
+                          "delimiter": "SPACE",
+                          "record_terminator": "SLASH",
+                          "block_terminator": "SLASH_LINE"
+                        },
+                        "semantics": {
+                          "period": "FORECAST",
+                          "clock": {
+                            "uses_current": true
+                          },
+                          "definitions": [],
+                          "references": [],
+                          "prerequisites": [],
+                          "state_assignments": [
+                            {
+                              "namespace": "guiderat-formula",
+                              "entity_type": "guiderat_formula",
+                              "entity_field": "PHASE",
+                              "key_fields": [
+                                "PHASE"
+                              ],
+                              "value_fields": [
+                                "INTERVAL",
+                                "PHASE",
+                                "A",
+                                "B",
+                                "C",
+                                "D",
+                                "E",
+                                "F",
+                                "INCREASE",
+                                "GRDAMP",
+                                "FREE_GAS",
+                                "GRMIN"
+                              ]
+                            }
+                          ],
+                          "numeric_constraints": [
+                            {
+                              "field": "INTERVAL",
+                              "min": 0
+                            },
+                            {
+                              "field": "A"
+                            },
+                            {
+                              "field": "B",
+                              "min": 0
+                            },
+                            {
+                              "field": "C"
+                            },
+                            {
+                              "field": "D"
+                            },
+                            {
+                              "field": "E"
+                            },
+                            {
+                              "field": "F"
+                            },
+                            {
+                              "field": "GRDAMP",
+                              "min_exclusive": 0,
+                              "max": 1
+                            },
+                            {
+                              "field": "GRMIN",
+                              "min_exclusive": 0
+                            }
+                          ]
+                        }
+                      },
+                      {
+                        "schema_id": "expert:GUIDERAT:gas",
+                        "schema_revision": "1",
+                        "keyword": "GUIDERAT",
+                        "variant": "gas",
+                        "citation": {
+                          "document_id": "tnav-user-manual-russian",
+                          "document_revision": "19.4",
+                          "page": "12.20.90 / 1933-1936",
+                          "heading": "GUIDERAT",
+                          "source_hash": "sha256:7d1624e1ea0196383c86dbd2558826c53a5a86eb992c48141eb4e3b66f0353d5"
+                        },
+                        "parser": {
+                          "token_width": 12,
+                          "allow_trailing_omission": true,
+                          "allow_unquoted_strings": true
+                        },
+                        "fields": [
+                          {
+                            "name": "INTERVAL",
+                            "position": 1,
+                            "type": "number",
+                            "required": false
+                          },
+                          {
+                            "name": "PHASE",
+                            "position": 2,
+                            "type": "string",
+                            "required": true,
+                            "enum": [
+                              "GAS"
+                            ]
+                          },
+                          {
+                            "name": "A",
+                            "position": 3,
+                            "type": "number",
+                            "required": true
+                          },
+                          {
+                            "name": "B",
+                            "position": 4,
+                            "type": "number",
+                            "required": true
+                          },
+                          {
+                            "name": "C",
+                            "position": 5,
+                            "type": "number",
+                            "required": false
+                          },
+                          {
+                            "name": "D",
+                            "position": 6,
+                            "type": "number",
+                            "required": false
+                          },
+                          {
+                            "name": "E",
+                            "position": 7,
+                            "type": "number",
+                            "required": false
+                          },
+                          {
+                            "name": "F",
+                            "position": 8,
+                            "type": "number",
+                            "required": false
+                          },
+                          {
+                            "name": "INCREASE",
+                            "position": 9,
+                            "type": "string",
+                            "required": false,
+                            "enum": [
+                              "YES",
+                              "NO"
+                            ]
+                          },
+                          {
+                            "name": "GRDAMP",
+                            "position": 10,
+                            "type": "number",
+                            "required": false
+                          },
+                          {
+                            "name": "FREE_GAS",
+                            "position": 11,
+                            "type": "string",
+                            "required": false,
+                            "enum": [
+                              "YES",
+                              "NO"
+                            ]
+                          },
+                          {
+                            "name": "GRMIN",
+                            "position": 12,
+                            "type": "number",
+                            "required": false
+                          }
+                        ],
+                        "layout": {
+                          "newline": "LF",
+                          "indent": "  ",
+                          "delimiter": "SPACE",
+                          "record_terminator": "SLASH",
+                          "block_terminator": "SLASH_LINE"
+                        },
+                        "semantics": {
+                          "period": "FORECAST",
+                          "clock": {
+                            "uses_current": true
+                          },
+                          "definitions": [],
+                          "references": [],
+                          "prerequisites": [],
+                          "state_assignments": [
+                            {
+                              "namespace": "guiderat-formula",
+                              "entity_type": "guiderat_formula",
+                              "entity_field": "PHASE",
+                              "key_fields": [
+                                "PHASE"
+                              ],
+                              "value_fields": [
+                                "INTERVAL",
+                                "PHASE",
+                                "A",
+                                "B",
+                                "C",
+                                "D",
+                                "E",
                                 "F",
                                 "INCREASE",
                                 "GRDAMP",
@@ -13877,66 +14470,3 @@
         "hasOutputParser": true,
         "needsFallback": false,
         "options": {
-          "systemMessage": "# tNavigator SCHEDULE Builder\n\n## Role\nBounded SCHEDULE draft builder inside a deterministic pipeline (tNavigator 22.2, METRIC).\nOrchestrator owns durable state, tabular extraction, HITL, release.\nYou never call Excel/APIs/other workflows, never approve, never claim release.\n\n## Authority\nUse only: approved plan, source facts, baseline inventory/query, RAG keyword_instruction + worked examples, approved schema_catalogue.\nNever invent field order, defaults, units, dates, well/group/LGR/template identities, or vendor grammar.\nGrammar and field layouts come from schema_catalogue + expert cards — not from memory.\n\n## Domain — SCHEDULE (§12.20)\nSCHEDULE = well/group operating data over simulation time (+ limited in-section edits the full simulator allows).\nKeywords are applied in **file order**. Canonical declare order: well → completions → operating mode.\n\n### Comments in `.data` / `.inc` / model keyword files (`--`)\nIn ECLIPSE / tNavigator text, `--` starts a comment through end-of-line (full-line or trailing after a keyword/record).\n- **Skip structurally:** never parse `--…` as a keyword header, record line, or field token. Deterministic analyzer/validator already ignores comment-only lines and trailing `--` tails when counting records.\n- **Still read the text:** comments frequently carry useful clarifications (cutover notes, well/group aliases, units, why a control was chosen, “keep as-is”, Excel/sheet refs). Use that text as context for IR intent, warnings, and gap questions.\n- **Not inventable authority:** do not turn comment prose into WCONPROD/DATES/… values. Facts + schema_catalogue + baseline records win. Comment vs fact conflict → `needs_input` (or explicit warning), never silent override.\n- **CREATE:** optional `--` annotations are fine next to emitted blocks; keep them as comments only.\n- **REVISE:** preserve existing comment bytes/placement under `preserve_unmentioned`; do not drop comments when MODIFY/KEEP nearby keywords.\n\n### INCLUDE call sites and included files\n- **Same date by default:** each INCLUDE stays on the same DATES position as in the baseline/source schedule. INCLUDE inherits the current clock (`uses_current`); do not shift includes to cutover, first-well date, or file top without authority.\n- **Explicit exception only:** move/rebind an INCLUDE when the task or source_facts give clear instructions for that specific include (example: “INCLUDE GRUPTREE_BASE sync with the date the first well is introduced”). Unmentioned includes → KEEP path, order, and date slot.\n- **Read when present:** if the PATH resolves to a file in package/`include_files`, open and decode that body too (allowlisted keywords, nested INCLUDE, `--` comments) before planning/emitting changes that touch its scope. Attaching INCLUDE bodies is optional. If the file is absent, KEEP the INCLUDE call on the same DATES and do not invent contents — do not HITL for the missing body. Ask (`needs_input`) only when the task explicitly requires editing that included file's contents and the body is still missing. Date moves apply to the INCLUDE call-site in the attached root, not to an unattached child.\n- **REVISE:** preserve include layout + call-site dates under `preserve_unmentioned`; do not inline included files into the root unless an approved package refactor says so.\n\n### Keywords before the first DATES\nHeader records before the first DATES stay in place. Do not invent `model_start_date`. Do not HITL for missing model start or `change_effective_from` when the task did not give them.\nKeyword-wide REMOVE applies to every matching block, including pre-DATES. MOVE a pre-DATES keyword only when the task explicitly says to move that keyword.\n\n### Preferred well path (tN §11.2)\n1. `WELSPECS` — well + group (group default FIELD).\n2. `WELLTRACK` — trajectory (order vs WELSPECS free).\n3. `COMPDATMD` — MD/TVD perfs (only after WELSPECS and WELLTRACK exist).\n4. Control on current `DATES`: `WCONHIST` in history, `WCONPROD` / `WCONINJE` in forecast (cutover from temporal_policy/facts).\n5. Optional drawdown cap: `WELDRAW` (affects potential §5.6.7 and may tighten phase rate vs WCONPROD/WELTARG).\n\nE1/E3 IJK perfs use `COMPDAT` — **not** in MVP allowlist. Do not emit `COMPDAT`. If the task requires IJK-only COMPDAT without MD facts → `needs_input`.\n\n### Groups / guide rates (§2.14.2)\n`GRUPTREE` = hierarchy (FIELD root; node-group XOR leaf-group with wells via WELSPECS).\n`GCONPROD` = group production targets; rates split by guide rates (default = well potential §5.6.7), not equally.\n`GCONINJE` = group injection targets (WATER/GAS/OIL; RATE/RESV/REIN/VREP); injector rates split by potentials / guide rates.\n`GUIDERAT` = formula for guide rates used with GCONPROD (especially GUIDE=FORM) and wells without fixed `WGRUPCON` guides.\n`GSATPROD` = fixed production rates for **satellite** (auxiliary) groups — no wells/children; external/other-region offtake sources.\n`GSATINJE` = fixed injection rates for satellite groups (OIL/WAT/GAS; one phase per record).\nDo not emit `WGRUPCON` (outside allowlist) — if fixed per-well guides required → `needs_input`.\n\n### Compositional streams (E3 / tN)\n`WELLSTRE` = named inject stream mole fractions (oil/gas); Σxi = 1; Nc matches model component count. Not for E1. Do not confuse with `WELLSTRW` (multicomponent water; outside allowlist).\n`WINJGAS` = well inject-gas composition for compositional models with `WCONINJE` GAS (SOURCE = GAS|STREAM|MIX|GV|WV|GRUP). STREAM needs prior `WELLSTRE`; MIX needs `WINJMIX` (outside allowlist → `needs_input`). Well or `*LIST` after WLIST.\n`GINJGAS` = group inject-gas composition with `GCONINJE` GAS (same SOURCE enum). Still outside: `GSATCOMP`, `WINJMIX`, `WELLSTRW`.\nNever invent component counts, mole fractions, stream/mix names, or GV/WV sources without facts.\n\n### Network (§2.14.11)\n`BRANPROP` + `NODEPROP` (+ `WNETDP`) only if `NETWORK` already enabled in baseline/profile.\n`GNETDP` = dynamic adjustment of fixed group/node pressure to keep rate in [RATE_MIN, RATE_MAX] (also usable with fixed-pressure groups without inventing NETWORK). `GNETINJE` remains outside allowlist.\n`NETBALAN` = NETWORK balance solver tolerances (node pressure tol, max iterations, auto-choke rate tol). Field 1 ignored (E1/E3 compat). Requires NETWORK in baseline — do not invent NETWORK.\nLeaf groups with wells must still align with `GRUPTREE`. Without NETWORK when topology/solver params are required → `needs_input`, do not invent NETWORK.\n\n### VFP tables (producers)\n`VFPPROD` bodies are large empirical BHP tables (Prosper / well-performance software / baseline `.inc`), not invented in Builder.\nMVP job: know **table number** `N` and wire it into `WCONPROD` / `WCONHIST` field VFP_TABLE (and ALQ units per that table). KEEP existing `VFPPROD` in REVISE. Never fabricate FLO/THP/WFR/GFR/ALQ axes or table body → `needs_input` for missing table artifact.\n`WVFPDP` = per-well BHP add-on (METRIC: bars) and optional tubing ΔP scale `fp` applied to interpolated VFP BHP (`BHP1 = THP + fp*(BHPtab−THP)`). Emit `WVFPDP` only (not inventing `VFPDP`). Values from facts; do not invent calibrations.\n\n### Conditional actions (§12.20.161+)\n`ACTIONX` + `ENDACTIO` = conditional SCHEDULE block (AND/OR conditions on wells/groups/regions/time/FIELD/completions). Emit `ENDACTIO` only (not synonym `ENDACTION`).\n`DELAYACT` + `ENDACTIO` = delayed body after a named trigger action fires (delay days, max activations, delay increment). Trigger is usually an `ACTIONX` name already declared.\nNested keywords between opener and ENDACTIO must themselves be allowlisted. No `DATES`/`TSTEP` inside the block.\nStill outside allowlist: `ACTION`, `ACTIONG`, `ACTIONR`, `ACTIONW`, `ACTIONC` → `needs_input` if those forms are required.\nUnsupported ACTIONX features in tNavigator (ALWAYS, LGR perfs, aquifer, block) → `needs_input`.\n\n### User-defined quantities\n`UDQ` = DEFINE/ASSIGN/UPDATE named expressions (WU/GU/FU/RU/CU…; ≤8 chars, RU ≤5). Used in ACTIONX conditions and as UDA in many well/group keywords. Expression text must come from facts — never invent SUMMARY mnemonics or formulas.\n`UDT` = lookup tables named `TU*` (axes NV/LC/LL + value grid) consumed by UDQ via `TU*[…]`. Table body only from facts; `UDTDIMS` (RUNSPEC) must already match — outside allowlist → `needs_input` if dims missing. `UDQPARAM` remains outside allowlist.\n\n### Per-timestep Python hook\n`APPLYSCRIPT` = wire a Python library file + entry function that the simulator calls each timestep (`SCRIPT_FILE` + `FUNCTION_NAME`). Emit only the SCHEDULE record from facts — never invent/write the `.py` body, API helpers, or `__init_script__`. Script file must exist as a package artifact. Not the GUI/graph calculator Python path.\n\n### Fractures — two disjoint paths\n- Plane/virtual perfs: `WFRACP` (global); `WFRACPL` (LGR well; needs LGR name + WELSPECL/COMPDATL in baseline).\n- LGR template package (§5.8): `FRACTURE_TEMPLATE` (GRID) → `FRACTURE_SPECS` (emit name; manual § may say FRACTURE_WELL) → `FRACTURE_STAGE` (SCHEDULE ON/OFF).\nNever mix paths or emit both for the same event without facts.\n\n### Names, masks, defaults (§12.20 intro)\n- New wells: exact names only.\n- Named well sets: emit `WLIST` (`*NAME` + NEW/ADD/MOVE/DEL), then reference `*NAME` in consumer keywords. Wells in the list must already exist via WELSPECS.\n- Raw masks `*` `?` `[n-m]` without WLIST alter **existing** wells only and cannot introduce wells. Prefer exact names or WLIST; bare masks → `needs_input` unless REVISE baseline already defines the set.\n- Schema-allowed omission: `*` / `N*` — only when catalogue/facts permit.\n\n## Allowlist (emit only these)\nDATES, INCLUDE, GRUPTREE, WELSPECS, WELLTRACK, COMPDATMD, WCONHIST, WCONPROD, WCONINJE, GCONPROD, GCONINJE, GUIDERAT, GSATPROD, GSATINJE, WELLSTRE, WINJGAS, GINJGAS, BRANPROP, NODEPROP, GNETDP, NETBALAN, FRACTURE_TEMPLATE, FRACTURE_SPECS, FRACTURE_STAGE, WECON, WTEST, WELTARG, WNETDP, WPIMULT, WDFAC, WEFAC, WELOPEN, WELDRAW, WLIST, WFRACP, WFRACPL, VFPPROD, WVFPDP, ACTIONX, DELAYACT, ENDACTIO, UDQ, UDT, APPLYSCRIPT.\n\n## Explicitly out of scope (never invent)\n- SCHEDULE property/region edits listed in §12.20 but not allowlisted: SATNUM, PVTNUM, ROCKNUM, MULTX/Y/Z±, PORO, NTG, PERMX/Y/Z, LX/LY/LZ, SOIL/SWAT/SGAS, …\n- Other ACTION* forms (`ACTION`, `ACTIONG`, `ACTIONR`, `ACTIONW`, `ACTIONC`) and synonym `ENDACTION` (emit `ENDACTIO`); `UDQPARAM` / `UDTDIMS` (RUNSPEC dims); inventing `APPLYSCRIPT` Python **bodies**/helpers; hist injectors (`WCONINJH`); short synonym `WCONINJ` (emit `WCONINJE`); LGR declare (`WELSPECL`/`COMPDATL`) as CREATE emit; `COMPDAT`/`COMPDATL`; `FRACTURE_WELL` synonym (emit `FRACTURE_SPECS`); inventing `VFPPROD`/`VFPINJ` table **bodies** (Prosper/external); fixed per-well guides `WGRUPCON`; satellite/mix/water composition still outside (`GSATCOMP`, `WINJMIX`, `WELLSTRW`); network inject tree `GNETINJE`; econ/group variants outside allowlist (`WECONX`, `GECON*`, `GCONSUMP`, …).\nIf the task needs any of the above → `needs_input` (do not approximate with a nearby allowlisted keyword).\n\n## Modes\nCREATE: supported records only; return requirements_matrix, source_map, completeness_report, typed ir_events, ADD ops. Do **not** render keyword text yourself when an approved schema_catalogue is supplied — emit typed IR for the deterministic renderer.\nREVISE: preserve every unmentioned baseline construct (`preserve_unmentioned`). Explicit KEEP/MODIFY/ADD/REMOVE. MODIFY/REMOVE only via target_node_id + expected_raw_hash from decoded_baseline_inventory.records (planning samples are not mutation authority). Missing from new Excel evidence ⇒ KEEP, never REMOVE. REMOVE requires explicit approval.\n\n## Gaps\nMissing/conflicting mandatory fact or citation → `needs_input` with evidence_gap objects (entity, effective_at, keyword, field, reason, expected_format, question).\nDo **not** empty `ir_events` to force a special path. Deterministic commissioning timeline runs only when the packet has an explicit capability (`commissioning_date_retarget` / `shift_commissioning_dates` / `commissioning_revise` / `timeline_revise`) **and** well/date facts. Deterministic group rebind runs only when capability is `group_membership_rebind` / `group_rebind` **and** a complete structured spec is present (`wells`, `parent_group`, `parent_of_parent`, `well_groups`, `rate`/`gas_rate`, `control`). Never infer DKS, FIELD, `G{well}`, or GRAT from prose. Otherwise emit typed IR for the renderer.\n\n## Output\nRequired top-level fields: status, summary, build_mode, ir_events.\nOmit empty arrays if unused (`changes`/`evidence_gap` default to [] in Code). Omit decision_record — Code synthesizes it.\nDo not invent full schedule text when schema_catalogue is present — prefer typed IR events for the renderer.\nHuman-facing: optional `user_message` — 1–3 short Russian sentences for Activity/HITL; keep keyword/field names in Latin (`WCONPROD`, `ORAT`); no English filler in Russian prose.\nNo hidden chain-of-thought. Return exactly the connected schema.\n",
-          "maxIterations": 8,
-          "returnIntermediateSteps": true,
-          "enableStreaming": false
-        }
-      },
-      "id": "9764ca1f-3aae-51c4-9bd5-3135954fc034",
-      "name": "SCHEDULE Builder Agent",
-      "type": "@n8n/n8n-nodes-langchain.agent",
-      "typeVersion": 3.1,
-      "position": [
-        7840,
-        170
-      ]
-    },
-    {
-      "parameters": {
-        "model": {
-          "mode": "id",
-          "value": "gpt-5.4-nano"
-        },
-        "options": {
-          "maxTokens": 6000,
-          "temperature": 0,
-          "timeout": 300000,
-          "maxRetries": 5
-        },
-        "responsesApiEnabled": false
-      },
-      "id": "3c87caf0-a3dd-576a-bf60-58828ebcafa0",
-      "name": "SCHEDULE Builder Chat Model — configure in UI",
-      "type": "@n8n/n8n-nodes-langchain.lmChatOpenAi",
-      "typeVersion": 1.3,
-      "position": [
-        7840,
-        0
-      ],
-      "credentials": {
-        "openAiApi": {
-          "id": "REPLACE_IN_UI",
-          "name": "REPLACE: schedule builder chat credential"
-        }
-      }
-    },
-    {
-      "parameters": {
-        "schemaType": "manual",
-        "inputSchema": "{\"type\": \"object\", \"additionalProperties\": true, \"required\": [\"status\", \"summary\", \"build_mode\", \"ir_events\"], \"properties\": {\"status\": {\"enum\": [\"succeeded\", \"partial\", \"needs_input\", \"needs_decision\", \"needs_approval\", \"retryable_error\", \"fatal_error\"]}, \"summary\": {\"type\": \"string\"}, \"build_mode\": {\"enum\": [\"CREATE\", \"REVISE\"]}, \"generated_schedule\": {\"type\": \"string\"}, \"ir_events\": {\"type\": \"array\", \"items\": {\"type\": \"object\"}}, \"changes\": {\"type\": \"array\", \"items\": {\"type\": \"object\"}}, \"evidence_gap\": {\"type\": \"array\", \"items\": {\"type\": \"object\"}}, \"assumptions\": {\"type\": \"array\", \"items\": {\"type\": \"string\"}}, \"warnings\": {\"type\": \"array\", \"items\": {\"type\": \"string\"}}, \"decision_record\": {\"type\": \"object\"}, \"preservation_report\": {\"type\": \"object\"}, \"requirements_matrix\": {\"type\": \"array\", \"items\": {\"type\": \"object\"}}, \"source_map\": {\"type\": \"array\", \"items\": {\"type\": \"object\"}}}}",
-        "autoFix": true,
-        "customizeRetryPrompt": true,
-        "prompt": "You are repairing structured JSON for an n8n output parser.\n\nInstructions:\n{instructions}\n\nPrevious completion (may contain markdown, <think> tags, or extra prose):\n{completion}\n\nParser error:\n{error}\n\nReply with ONLY one JSON object that matches the schema. No markdown fences, no <think> tags, no commentary."
-      },
-      "id": "15faba66-3e44-57f0-b0ea-b46d6484fd5f",
-      "name": "SCHEDULE Builder Structured Output",
-      "type": "@n8n/n8n-nodes-langchain.outputParserStructured",
-      "typeVersion": 1.3,
-      "position": [
-        7840,
-        -170
-      ]
-    },
-    {
-      "parameters": {

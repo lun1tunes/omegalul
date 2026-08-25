@@ -1,3 +1,66 @@
+          "systemMessage": "# tNavigator SCHEDULE Builder\n\n## Role\nBounded SCHEDULE draft builder inside a deterministic pipeline (tNavigator 22.2, METRIC).\nOrchestrator owns durable state, tabular extraction, HITL, release.\nYou never call Excel/APIs/other workflows, never approve, never claim release.\n\n## Authority\nUse only: approved plan, source facts, baseline inventory/query, RAG keyword_instruction + worked examples, approved schema_catalogue.\nNever invent field order, defaults, units, dates, well/group/LGR/template identities, or vendor grammar.\nGrammar and field layouts come from schema_catalogue + expert cards — not from memory.\n\n## Domain — SCHEDULE (§12.20)\nSCHEDULE = well/group operating data over simulation time (+ limited in-section edits the full simulator allows).\nKeywords are applied in **file order**. Canonical declare order: well → completions → operating mode.\n\n### Comments in `.data` / `.inc` / model keyword files (`--`)\nIn ECLIPSE / tNavigator text, `--` starts a comment through end-of-line (full-line or trailing after a keyword/record).\n- **Skip structurally:** never parse `--…` as a keyword header, record line, or field token. Deterministic analyzer/validator already ignores comment-only lines and trailing `--` tails when counting records.\n- **Still read the text:** comments frequently carry useful clarifications (cutover notes, well/group aliases, units, why a control was chosen, “keep as-is”, Excel/sheet refs). Use that text as context for IR intent, warnings, and gap questions.\n- **Not inventable authority:** do not turn comment prose into WCONPROD/DATES/… values. Facts + schema_catalogue + baseline records win. Comment vs fact conflict → `needs_input` (or explicit warning), never silent override.\n- **CREATE:** optional `--` annotations are fine next to emitted blocks; keep them as comments only.\n- **REVISE:** preserve existing comment bytes/placement under `preserve_unmentioned`; do not drop comments when MODIFY/KEEP nearby keywords.\n\n### INCLUDE call sites and included files\n- **Same date by default:** each INCLUDE stays on the same DATES position as in the baseline/source schedule. INCLUDE inherits the current clock (`uses_current`); do not shift includes to cutover, first-well date, or file top without authority.\n- **Explicit exception only:** move/rebind an INCLUDE when the task or source_facts give clear instructions for that specific include (example: “INCLUDE GRUPTREE_BASE sync with the date the first well is introduced”). Unmentioned includes → KEEP path, order, and date slot.\n- **Read when present:** if the PATH resolves to a file in package/`include_files`, open and decode that body too (allowlisted keywords, nested INCLUDE, `--` comments) before planning/emitting changes that touch its scope. Attaching INCLUDE bodies is optional. If the file is absent, KEEP the INCLUDE call on the same DATES and do not invent contents — do not HITL for the missing body. Ask (`needs_input`) only when the task explicitly requires editing that included file's contents and the body is still missing. Date moves apply to the INCLUDE call-site in the attached root, not to an unattached child.\n- **REVISE:** preserve include layout + call-site dates under `preserve_unmentioned`; do not inline included files into the root unless an approved package refactor says so.\n\n### Keywords before the first DATES\nHeader records before the first DATES stay in place. Do not invent `model_start_date`. Do not HITL for missing model start or `change_effective_from` when the task did not give them.\nKeyword-wide REMOVE applies to every matching block, including pre-DATES. MOVE a pre-DATES keyword only when the task explicitly says to move that keyword.\n\n### Preferred well path (tN §11.2)\n1. `WELSPECS` — well + group (group default FIELD).\n2. `WELLTRACK` — trajectory (order vs WELSPECS free).\n3. `COMPDATMD` — MD/TVD perfs (only after WELSPECS and WELLTRACK exist).\n4. Control on current `DATES`: `WCONHIST` in history, `WCONPROD` / `WCONINJE` in forecast (cutover from temporal_policy/facts).\n5. Optional drawdown cap: `WELDRAW` (affects potential §5.6.7 and may tighten phase rate vs WCONPROD/WELTARG).\n\nE1/E3 IJK perfs use `COMPDAT` — **not** in MVP allowlist. Do not emit `COMPDAT`. If the task requires IJK-only COMPDAT without MD facts → `needs_input`.\n\n### Groups / guide rates (§2.14.2)\n`GRUPTREE` = hierarchy (FIELD root; node-group XOR leaf-group with wells via WELSPECS).\n`GCONPROD` = group production targets; rates split by guide rates (default = well potential §5.6.7), not equally.\n`GCONINJE` = group injection targets (WATER/GAS/OIL; RATE/RESV/REIN/VREP); injector rates split by potentials / guide rates.\n`GUIDERAT` = formula for guide rates used with GCONPROD (especially GUIDE=FORM) and wells without fixed `WGRUPCON` guides.\n`GSATPROD` = fixed production rates for **satellite** (auxiliary) groups — no wells/children; external/other-region offtake sources.\n`GSATINJE` = fixed injection rates for satellite groups (OIL/WAT/GAS; one phase per record).\nDo not emit `WGRUPCON` (outside allowlist) — if fixed per-well guides required → `needs_input`.\n\n### Compositional streams (E3 / tN)\n`WELLSTRE` = named inject stream mole fractions (oil/gas); Σxi = 1; Nc matches model component count. Not for E1. Do not confuse with `WELLSTRW` (multicomponent water; outside allowlist).\n`WINJGAS` = well inject-gas composition for compositional models with `WCONINJE` GAS (SOURCE = GAS|STREAM|MIX|GV|WV|GRUP). STREAM needs prior `WELLSTRE`; MIX needs `WINJMIX` (outside allowlist → `needs_input`). Well or `*LIST` after WLIST.\n`GINJGAS` = group inject-gas composition with `GCONINJE` GAS (same SOURCE enum). Still outside: `GSATCOMP`, `WINJMIX`, `WELLSTRW`.\nNever invent component counts, mole fractions, stream/mix names, or GV/WV sources without facts.\n\n### Network (§2.14.11)\n`BRANPROP` + `NODEPROP` (+ `WNETDP`) only if `NETWORK` already enabled in baseline/profile.\n`GNETDP` = dynamic adjustment of fixed group/node pressure to keep rate in [RATE_MIN, RATE_MAX] (also usable with fixed-pressure groups without inventing NETWORK). `GNETINJE` remains outside allowlist.\n`NETBALAN` = NETWORK balance solver tolerances (node pressure tol, max iterations, auto-choke rate tol). Field 1 ignored (E1/E3 compat). Requires NETWORK in baseline — do not invent NETWORK.\nLeaf groups with wells must still align with `GRUPTREE`. Without NETWORK when topology/solver params are required → `needs_input`, do not invent NETWORK.\n\n### VFP tables (producers)\n`VFPPROD` bodies are large empirical BHP tables (Prosper / well-performance software / baseline `.inc`), not invented in Builder.\nMVP job: know **table number** `N` and wire it into `WCONPROD` / `WCONHIST` field VFP_TABLE (and ALQ units per that table). KEEP existing `VFPPROD` in REVISE. Never fabricate FLO/THP/WFR/GFR/ALQ axes or table body → `needs_input` for missing table artifact.\n`WVFPDP` = per-well BHP add-on (METRIC: bars) and optional tubing ΔP scale `fp` applied to interpolated VFP BHP (`BHP1 = THP + fp*(BHPtab−THP)`). Emit `WVFPDP` only (not inventing `VFPDP`). Values from facts; do not invent calibrations.\n\n### Conditional actions (§12.20.161+)\n`ACTIONX` + `ENDACTIO` = conditional SCHEDULE block (AND/OR conditions on wells/groups/regions/time/FIELD/completions). Emit `ENDACTIO` only (not synonym `ENDACTION`).\n`DELAYACT` + `ENDACTIO` = delayed body after a named trigger action fires (delay days, max activations, delay increment). Trigger is usually an `ACTIONX` name already declared.\nNested keywords between opener and ENDACTIO must themselves be allowlisted. No `DATES`/`TSTEP` inside the block.\nStill outside allowlist: `ACTION`, `ACTIONG`, `ACTIONR`, `ACTIONW`, `ACTIONC` → `needs_input` if those forms are required.\nUnsupported ACTIONX features in tNavigator (ALWAYS, LGR perfs, aquifer, block) → `needs_input`.\n\n### User-defined quantities\n`UDQ` = DEFINE/ASSIGN/UPDATE named expressions (WU/GU/FU/RU/CU…; ≤8 chars, RU ≤5). Used in ACTIONX conditions and as UDA in many well/group keywords. Expression text must come from facts — never invent SUMMARY mnemonics or formulas.\n`UDT` = lookup tables named `TU*` (axes NV/LC/LL + value grid) consumed by UDQ via `TU*[…]`. Table body only from facts; `UDTDIMS` (RUNSPEC) must already match — outside allowlist → `needs_input` if dims missing. `UDQPARAM` remains outside allowlist.\n\n### Per-timestep Python hook\n`APPLYSCRIPT` = wire a Python library file + entry function that the simulator calls each timestep (`SCRIPT_FILE` + `FUNCTION_NAME`). Emit only the SCHEDULE record from facts — never invent/write the `.py` body, API helpers, or `__init_script__`. Script file must exist as a package artifact. Not the GUI/graph calculator Python path.\n\n### Fractures — two disjoint paths\n- Plane/virtual perfs: `WFRACP` (global); `WFRACPL` (LGR well; needs LGR name + WELSPECL/COMPDATL in baseline).\n- LGR template package (§5.8): `FRACTURE_TEMPLATE` (GRID) → `FRACTURE_SPECS` (emit name; manual § may say FRACTURE_WELL) → `FRACTURE_STAGE` (SCHEDULE ON/OFF).\nNever mix paths or emit both for the same event without facts.\n\n### Names, masks, defaults (§12.20 intro)\n- New wells: exact names only.\n- Named well sets: emit `WLIST` (`*NAME` + NEW/ADD/MOVE/DEL), then reference `*NAME` in consumer keywords. Wells in the list must already exist via WELSPECS.\n- Raw masks `*` `?` `[n-m]` without WLIST alter **existing** wells only and cannot introduce wells. Prefer exact names or WLIST; bare masks → `needs_input` unless REVISE baseline already defines the set.\n- Schema-allowed omission: `*` / `N*` — only when catalogue/facts permit.\n\n## Allowlist (emit only these)\nDATES, INCLUDE, GRUPTREE, WELSPECS, WELLTRACK, COMPDATMD, WCONHIST, WCONPROD, WCONINJE, GCONPROD, GCONINJE, GUIDERAT, GSATPROD, GSATINJE, WELLSTRE, WINJGAS, GINJGAS, BRANPROP, NODEPROP, GNETDP, NETBALAN, FRACTURE_TEMPLATE, FRACTURE_SPECS, FRACTURE_STAGE, WECON, WTEST, WELTARG, WNETDP, WPIMULT, WDFAC, WEFAC, WELOPEN, WELDRAW, WLIST, WFRACP, WFRACPL, VFPPROD, WVFPDP, ACTIONX, DELAYACT, ENDACTIO, UDQ, UDT, APPLYSCRIPT.\n\n## Explicitly out of scope (never invent)\n- SCHEDULE property/region edits listed in §12.20 but not allowlisted: SATNUM, PVTNUM, ROCKNUM, MULTX/Y/Z±, PORO, NTG, PERMX/Y/Z, LX/LY/LZ, SOIL/SWAT/SGAS, …\n- Other ACTION* forms (`ACTION`, `ACTIONG`, `ACTIONR`, `ACTIONW`, `ACTIONC`) and synonym `ENDACTION` (emit `ENDACTIO`); `UDQPARAM` / `UDTDIMS` (RUNSPEC dims); inventing `APPLYSCRIPT` Python **bodies**/helpers; hist injectors (`WCONINJH`); short synonym `WCONINJ` (emit `WCONINJE`); LGR declare (`WELSPECL`/`COMPDATL`) as CREATE emit; `COMPDAT`/`COMPDATL`; `FRACTURE_WELL` synonym (emit `FRACTURE_SPECS`); inventing `VFPPROD`/`VFPINJ` table **bodies** (Prosper/external); fixed per-well guides `WGRUPCON`; satellite/mix/water composition still outside (`GSATCOMP`, `WINJMIX`, `WELLSTRW`); network inject tree `GNETINJE`; econ/group variants outside allowlist (`WECONX`, `GECON*`, `GCONSUMP`, …).\nIf the task needs any of the above → `needs_input` (do not approximate with a nearby allowlisted keyword).\n\n## Modes\nCREATE: supported records only; return requirements_matrix, source_map, completeness_report, typed ir_events, ADD ops. Do **not** render keyword text yourself when an approved schema_catalogue is supplied — emit typed IR for the deterministic renderer.\nREVISE: preserve every unmentioned baseline construct (`preserve_unmentioned`). Explicit KEEP/MODIFY/ADD/REMOVE. MODIFY/REMOVE only via target_node_id + expected_raw_hash from decoded_baseline_inventory.records (planning samples are not mutation authority). Missing from new Excel evidence ⇒ KEEP, never REMOVE. REMOVE requires explicit approval.\n\n## Gaps\nMissing/conflicting mandatory fact or citation → `needs_input` with evidence_gap objects (entity, effective_at, keyword, field, reason, expected_format, question).\nDo **not** empty `ir_events` to force a special path. Deterministic commissioning timeline runs only when the packet has an explicit capability (`commissioning_date_retarget` / `shift_commissioning_dates` / `commissioning_revise` / `timeline_revise`) **and** well/date facts. Deterministic group rebind runs only when capability is `group_membership_rebind` / `group_rebind` **and** a complete structured spec is present (`wells`, `parent_group`, `parent_of_parent`, `well_groups`, `rate`/`gas_rate`, `control`). Never infer DKS, FIELD, `G{well}`, or GRAT from prose. Otherwise emit typed IR for the renderer.\n\n## Output\nRequired top-level fields: status, summary, build_mode, ir_events.\nOmit empty arrays if unused (`changes`/`evidence_gap` default to [] in Code). Omit decision_record — Code synthesizes it.\nDo not invent full schedule text when schema_catalogue is present — prefer typed IR events for the renderer.\nHuman-facing: optional `user_message` — 1–3 short Russian sentences for Activity/HITL; keep keyword/field names in Latin (`WCONPROD`, `ORAT`); no English filler in Russian prose.\nNo hidden chain-of-thought. Return exactly the connected schema.\n",
+          "maxIterations": 8,
+          "returnIntermediateSteps": true,
+          "enableStreaming": false
+        }
+      },
+      "id": "9764ca1f-3aae-51c4-9bd5-3135954fc034",
+      "name": "SCHEDULE Builder Agent",
+      "type": "@n8n/n8n-nodes-langchain.agent",
+      "typeVersion": 3.1,
+      "position": [
+        7840,
+        170
+      ]
+    },
+    {
+      "parameters": {
+        "model": {
+          "mode": "id",
+          "value": "gpt-5.4-nano"
+        },
+        "options": {
+          "maxTokens": 6000,
+          "temperature": 0,
+          "timeout": 300000,
+          "maxRetries": 5
+        },
+        "responsesApiEnabled": false
+      },
+      "id": "3c87caf0-a3dd-576a-bf60-58828ebcafa0",
+      "name": "SCHEDULE Builder Chat Model — configure in UI",
+      "type": "@n8n/n8n-nodes-langchain.lmChatOpenAi",
+      "typeVersion": 1.3,
+      "position": [
+        7840,
+        0
+      ],
+      "credentials": {
+        "openAiApi": {
+          "id": "REPLACE_IN_UI",
+          "name": "REPLACE: schedule builder chat credential"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "schemaType": "manual",
+        "inputSchema": "{\"type\": \"object\", \"additionalProperties\": true, \"required\": [\"status\", \"summary\", \"build_mode\", \"ir_events\"], \"properties\": {\"status\": {\"enum\": [\"succeeded\", \"partial\", \"needs_input\", \"needs_decision\", \"needs_approval\", \"retryable_error\", \"fatal_error\"]}, \"summary\": {\"type\": \"string\"}, \"build_mode\": {\"enum\": [\"CREATE\", \"REVISE\"]}, \"generated_schedule\": {\"type\": \"string\"}, \"ir_events\": {\"type\": \"array\", \"items\": {\"type\": \"object\"}}, \"changes\": {\"type\": \"array\", \"items\": {\"type\": \"object\"}}, \"evidence_gap\": {\"type\": \"array\", \"items\": {\"type\": \"object\"}}, \"assumptions\": {\"type\": \"array\", \"items\": {\"type\": \"string\"}}, \"warnings\": {\"type\": \"array\", \"items\": {\"type\": \"string\"}}, \"decision_record\": {\"type\": \"object\"}, \"preservation_report\": {\"type\": \"object\"}, \"requirements_matrix\": {\"type\": \"array\", \"items\": {\"type\": \"object\"}}, \"source_map\": {\"type\": \"array\", \"items\": {\"type\": \"object\"}}}}",
+        "autoFix": true,
+        "customizeRetryPrompt": true,
+        "prompt": "You are repairing structured JSON for an n8n output parser.\n\nInstructions:\n{instructions}\n\nPrevious completion (may contain markdown, <think> tags, or extra prose):\n{completion}\n\nParser error:\n{error}\n\nReply with ONLY one JSON object that matches the schema. No markdown fences, no <think> tags, no commentary."
+      },
+      "id": "15faba66-3e44-57f0-b0ea-b46d6484fd5f",
+      "name": "SCHEDULE Builder Structured Output",
+      "type": "@n8n/n8n-nodes-langchain.outputParserStructured",
+      "typeVersion": 1.3,
+      "position": [
+        7840,
+        -170
+      ]
+    },
+    {
+      "parameters": {
         "jsCode": "const root=$('Normalize SCHEDULE pipeline packet').first().json;\nconst req=root.request,plan=$('Validate SCHEDULE pipeline plan').first().json;\nconst agentEnvelope=$json;let work=$json.output??$json;if(typeof work==='string'){try{work=JSON.parse(work)}catch{work={}}}\nconst obj=v=>v&&typeof v==='object'&&!Array.isArray(v),arr=Array.isArray,clean=v=>typeof v==='string'?v.trim():'';\nconst capabilityToken=v=>String(v==null?'':v).trim().toLowerCase().replace(/-/g,'_');\nconst COMMISSIONING_CAPABILITIES=new Set(['commissioning_date_retarget','shift_commissioning_dates','commissioning_revise','timeline_revise']);\nconst GROUP_REBIND_CAPABILITIES=new Set(['group_membership_rebind','group_rebind']);\nconst collectCapabilityTokens=(req,intake)=>{\n  const r=req&&typeof req==='object'&&!Array.isArray(req)?req:{};\n  const inn=intake&&typeof intake==='object'&&!Array.isArray(intake)?intake:{};\n  const changeR=(r.requested_change_scope&&typeof r.requested_change_scope==='object'&&!Array.isArray(r.requested_change_scope))?r.requested_change_scope:{};\n  const changeI=(inn.requested_change_scope&&typeof inn.requested_change_scope==='object'&&!Array.isArray(inn.requested_change_scope))?inn.requested_change_scope:{};\n  const change={...changeI,...changeR};\n  const bag=[\n    ...(Array.isArray(r.requested_capability_scope)?r.requested_capability_scope:[]),\n    ...(Array.isArray(inn.requested_capability_scope)?inn.requested_capability_scope:[]),\n    ...(Array.isArray(change.requested_capability_scope)?change.requested_capability_scope:[]),\n    r.capability_id,inn.capability_id,change.capability_id,change.intent,change.kind,change.operation,change.capability,\n  ];\n  return [...new Set(bag.map(capabilityToken).filter(Boolean))];\n};\nconst wantsCommissioningCapability=tokens=>(Array.isArray(tokens)?tokens:[]).some(t=>COMMISSIONING_CAPABILITIES.has(capabilityToken(t)));\nconst wantsGroupRebindCapability=tokens=>(Array.isArray(tokens)?tokens:[]).some(t=>GROUP_REBIND_CAPABILITIES.has(capabilityToken(t)));\nconst readGroupRebindSpec=req=>{\n  const r=req&&typeof req==='object'&&!Array.isArray(req)?req:{};\n  const change=(r.requested_change_scope&&typeof r.requested_change_scope==='object'&&!Array.isArray(r.requested_change_scope))?r.requested_change_scope:{};\n  const spec=(r.group_rebind&&typeof r.group_rebind==='object'&&!Array.isArray(r.group_rebind))?r.group_rebind\n    :((change.group_rebind&&typeof change.group_rebind==='object'&&!Array.isArray(change.group_rebind))?change.group_rebind\n    :((change.spec&&typeof change.spec==='object'&&!Array.isArray(change.spec))?change.spec\n    :((change.wells||change.parent_group||change.parent)?change:null)));\n  if(!spec||typeof spec!=='object'||Array.isArray(spec))return {ok:false,missing:['wells','parent_group','parent_of_parent','well_groups','rate','control'],spec:null};\n  const wells=(Array.isArray(spec.wells)?spec.wells:[]).map(v=>String(v==null?'':v).trim()).filter(Boolean);\n  const parent=String(spec.parent_group||spec.parent||'').trim().toUpperCase();\n  const parentOfParent=String(spec.parent_of_parent||'').trim().toUpperCase();\n  const rate=Number(spec.rate??spec.gas_rate);\n  const wellGroups=(spec.well_groups&&typeof spec.well_groups==='object'&&!Array.isArray(spec.well_groups))?spec.well_groups\n    :((spec.well_group_map&&typeof spec.well_group_map==='object'&&!Array.isArray(spec.well_group_map))?spec.well_group_map:null);\n  const control=String(spec.control||'').trim().toUpperCase();\n  const missing=[];\n  if(!wells.length)missing.push('wells');\n  if(!parent)missing.push('parent_group');\n  if(!parentOfParent)missing.push('parent_of_parent');\n  if(!Number.isFinite(rate)||rate<=0)missing.push('rate');\n  if(!control)missing.push('control');\n  if(!wellGroups)missing.push('well_groups');\n  else{\n    const lookup=(map,well)=>{\n      if(map[well]!=null&&String(map[well]).trim())return String(map[well]).trim();\n      const n=Number(well);\n      if(Number.isFinite(n)&&map[n]!=null&&String(map[n]).trim())return String(map[n]).trim();\n      return '';\n    };\n    if(wells.some(w=>!lookup(wellGroups,w)))missing.push('well_groups');\n  }\n  if(missing.length)return {ok:false,missing:[...new Set(missing)],spec:null};\n  const groups={};\n  for(const w of wells){\n    groups[w]=String(wellGroups[w]!=null?wellGroups[w]:wellGroups[Number(w)]).trim();\n  }\n  return {ok:true,missing:[],spec:{\n    wells,\n    parent_group:parent,\n    parent_of_parent:parentOfParent,\n    well_groups:groups,\n    rate,\n    gas_rate:rate,\n    control,\n    effective_at:spec.effective_at||null,\n  }};\n};\nconst exclusiveScheduleCaps=(tokens,change,groupSpecOk)=>{\n  const list=(Array.isArray(tokens)?tokens:[]).map(capabilityToken).filter(Boolean);\n  const scope=change&&typeof change==='object'&&!Array.isArray(change)?change:{};\n  const primary=capabilityToken(scope.capability_id||scope.intent||'');\n  const groupWanted=GROUP_REBIND_CAPABILITIES.has(primary)||list.some(t=>GROUP_REBIND_CAPABILITIES.has(t));\n  const commissioningWanted=COMMISSIONING_CAPABILITIES.has(primary)||list.some(t=>COMMISSIONING_CAPABILITIES.has(t));\n  if(groupWanted&&groupSpecOk) return {wantsGroupRebind:true,wantsCommissioning:false,primary:'group_rebind'};\n  if(groupWanted&&!commissioningWanted) return {wantsGroupRebind:true,wantsCommissioning:false,primary:'group_rebind'};\n  if(groupWanted&&commissioningWanted){\n    if(GROUP_REBIND_CAPABILITIES.has(primary)||groupSpecOk) return {wantsGroupRebind:true,wantsCommissioning:false,primary:'group_rebind'};\n    if(COMMISSIONING_CAPABILITIES.has(primary)) return {wantsGroupRebind:false,wantsCommissioning:true,primary:'commissioning'};\n    return {wantsGroupRebind:true,wantsCommissioning:false,primary:'group_rebind'};\n  }\n  if(commissioningWanted) return {wantsGroupRebind:false,wantsCommissioning:true,primary:'commissioning'};\n  return {wantsGroupRebind:false,wantsCommissioning:false,primary:''};\n};\nconst mergeObservedScheduleRequest=(req,intake)=>{\n  const r=req&&typeof req==='object'&&!Array.isArray(req)?req:{};\n  const inn=intake&&typeof intake==='object'&&!Array.isArray(intake)?intake:{};\n  const changeI=(inn.requested_change_scope&&typeof inn.requested_change_scope==='object'&&!Array.isArray(inn.requested_change_scope))?inn.requested_change_scope:{};\n  const changeR=(r.requested_change_scope&&typeof r.requested_change_scope==='object'&&!Array.isArray(r.requested_change_scope))?r.requested_change_scope:{};\n  let change={...changeI,...changeR};\n  if(!(Array.isArray(change.wells)&&change.wells.length)&&Array.isArray(changeI.wells)&&changeI.wells.length) change.wells=changeI.wells;\n  if(!change.group_rebind&&changeI.group_rebind) change.group_rebind=changeI.group_rebind;\n  const intakePrimary=capabilityToken(changeI.capability_id||changeI.intent||inn.capability_id||'');\n  if(GROUP_REBIND_CAPABILITIES.has(intakePrimary)){\n    change={\n      ...change,\n      capability_id:changeI.capability_id||'group_membership_rebind',\n      intent:changeI.intent||'group_membership_rebind',\n      wells:(Array.isArray(changeI.wells)&&changeI.wells.length)?changeI.wells:change.wells,\n      parent_group:changeI.parent_group||change.parent_group,\n      parent_of_parent:changeI.parent_of_parent||change.parent_of_parent,\n      well_groups:changeI.well_groups||change.well_groups,\n      rate:changeI.rate??change.rate,\n      gas_rate:changeI.gas_rate??change.gas_rate,\n      control:changeI.control||change.control,\n      group_rebind:changeI.group_rebind||change.group_rebind,\n    };\n  }else if(COMMISSIONING_CAPABILITIES.has(intakePrimary)){\n    change={...change,capability_id:changeI.capability_id||'commissioning_date_retarget',intent:changeI.intent||'shift_commissioning_dates'};\n    if(change.group_rebind) delete change.group_rebind;\n  }\n  let caps=[...new Set([\n    ...(Array.isArray(inn.requested_capability_scope)?inn.requested_capability_scope:[]),\n    ...(Array.isArray(r.requested_capability_scope)?r.requested_capability_scope:[]),\n    change.capability_id,r.capability_id,inn.capability_id,\n  ].map(capabilityToken).filter(Boolean))];\n  const groupOk=readGroupRebindSpec({requested_change_scope:change,group_rebind:change.group_rebind}).ok;\n  const exclusive=exclusiveScheduleCaps(caps,change,groupOk);\n  if(exclusive.wantsGroupRebind&&!exclusive.wantsCommissioning){\n    caps=caps.filter(t=>!COMMISSIONING_CAPABILITIES.has(t));\n    if(!caps.some(t=>GROUP_REBIND_CAPABILITIES.has(t))) caps.push('group_membership_rebind');\n    change.capability_id=GROUP_REBIND_CAPABILITIES.has(capabilityToken(change.capability_id))?change.capability_id:'group_membership_rebind';\n    change.intent=GROUP_REBIND_CAPABILITIES.has(capabilityToken(change.intent))?change.intent:'group_membership_rebind';\n  }else if(exclusive.wantsCommissioning){\n    caps=caps.filter(t=>!GROUP_REBIND_CAPABILITIES.has(t));\n    if(!caps.some(t=>COMMISSIONING_CAPABILITIES.has(t))) caps.push('commissioning_date_retarget');\n    if(change.group_rebind) delete change.group_rebind;\n  }\n  const capability_id=exclusive.wantsGroupRebind\n    ?(GROUP_REBIND_CAPABILITIES.has(capabilityToken(change.capability_id))?change.capability_id:'group_membership_rebind')\n    :(exclusive.wantsCommissioning\n      ?(COMMISSIONING_CAPABILITIES.has(capabilityToken(change.capability_id||r.capability_id||inn.capability_id))? (change.capability_id||r.capability_id||inn.capability_id):'commissioning_date_retarget')\n      :(r.capability_id||inn.capability_id||change.capability_id||null));\n  return {\n    ...r,\n    requested_change_scope:Object.keys(change).length?change:r.requested_change_scope,\n    requested_capability_scope:caps.length?caps:(r.requested_capability_scope||inn.requested_capability_scope||[]),\n    capability_id,\n  };\n};\nconst pickWellDateFact=f=>{\n  const row=f&&typeof f==='object'&&!Array.isArray(f)?f:{};\n  const values=(row.values&&typeof row.values==='object'&&!Array.isArray(row.values))?row.values:((row.row&&typeof row.row==='object'&&!Array.isArray(row.row))?row.row:{});\n  const well=String(row.well||row.entity||row.entity_id||values['Скважина']||values.скважина||values.WELL||values.well||'').trim();\n  const coerce=v=>{\n    if(v==null||v==='') return null;\n    if(v instanceof Date&&!Number.isNaN(v.getTime())) return v.toISOString().slice(0,10);\n    if(typeof v==='object'&&!Array.isArray(v)){\n      if(Number.isFinite(Number(v.year))&&Number.isFinite(Number(v.month))&&Number.isFinite(Number(v.day))){\n        const y=String(Number(v.year)).padStart(4,'0'),m=String(Number(v.month)).padStart(2,'0'),d=String(Number(v.day)).padStart(2,'0');\n        return `${y}-${m}-${d}`;\n      }\n      if(v.value!=null&&v.value!==v) return coerce(v.value);\n      if(v.iso) return coerce(v.iso);\n      if(v.tnav) return coerce(v.tnav);\n    }\n    const s=String(v).trim();\n    return s===''?null:s;\n  };\n  let date=coerce(row.value??row.raw_value??values['Дата ввода']??values['дата ввода']??values.date??values.Date??values.commissioning_date??null);\n  let field=String(row.field||row.column||'').trim();\n  if(!date){\n    const hit=Object.keys(values).find(k=>/дата|date|commission|ввод/i.test(String(k||'')));\n    if(hit!=null){date=coerce(values[hit]);field=field||String(hit);}\n  }\n  if(!date){\n    const others=Object.keys(values).filter(k=>!/скважин|well|групп|group|факт|id$/i.test(String(k||'')));\n    if(others.length===1){date=coerce(values[others[0]]);field=field||String(others[0]);}\n  }\n  if(!field&&date) field='Дата ввода';\n  return {well,date,field,values,fact_id:row.fact_id||null};\n};\nconst boundedHash=value=>{let text='';try{text=JSON.stringify(value)}catch{text=String(value??'')}let h=2166136261;for(const ch of text){h^=ch.charCodeAt(0);h=Math.imul(h,16777619)}return{hash:`fnv1a32:${(h>>>0).toString(16).padStart(8,'0')}`,bytes:new TextEncoder().encode(text).length}};\nconst intermediate=arr(agentEnvelope.intermediateSteps)?agentEnvelope.intermediateSteps.slice(0,50):[];const agentToolTrace=intermediate.map((step,index)=>{const action=obj(step?.action)?step.action:{},input=action.toolInput??action.tool_input??step?.toolInput??null,output=step?.observation??step?.output??null,inputMeta=boundedHash(input),outputMeta=boundedHash(output);return{name:clean(action.tool||step?.tool)||'schedule_agent_tool',tool_call_id:clean(action.toolCallId||action.tool_call_id||step?.toolCallId)||null,status:step?.error?'error':'completed',stage:'builder',sequence:index+1,input_hash:inputMeta.hash,input_bytes:inputMeta.bytes,output_hash:outputMeta.hash,output_bytes:outputMeta.bytes}});\nconst allowed=new Set([\"DATES\", \"INCLUDE\", \"GRUPTREE\", \"WELSPECS\", \"WELLTRACK\", \"COMPDATMD\", \"WCONHIST\", \"WCONPROD\", \"WCONINJE\", \"GCONPROD\", \"GCONINJE\", \"GUIDERAT\", \"GSATPROD\", \"GSATINJE\", \"WELLSTRE\", \"WINJGAS\", \"GINJGAS\", \"BRANPROP\", \"NODEPROP\", \"GNETDP\", \"NETBALAN\", \"FRACTURE_TEMPLATE\", \"FRACTURE_SPECS\", \"FRACTURE_STAGE\", \"WECON\", \"WTEST\", \"WELTARG\", \"WNETDP\", \"WPIMULT\", \"WDFAC\", \"WEFAC\", \"WELOPEN\", \"WELDRAW\", \"WLIST\", \"WFRACP\", \"WFRACPL\", \"VFPPROD\", \"WVFPDP\", \"ACTIONX\", \"DELAYACT\", \"ENDACTIO\", \"UDQ\", \"UDT\", \"APPLYSCRIPT\"]),findings=[];\nconst mode=clean(work.build_mode||plan.build_mode).toUpperCase();\nconst scope=[...new Set((arr(plan.keyword_scope)?plan.keyword_scope:[]).map(v=>clean(v).toUpperCase()).filter(Boolean))];\nconst changes=arr(work.changes)?work.changes.filter(obj):[];\nconst evidenceGapRequired=['entity','effective_at','keyword','field','reason','expected_format'];\nconst rawGaps=arr(work.evidence_gap)?work.evidence_gap.filter(obj):[];\nlet gaps=rawGaps.filter(g=>evidenceGapRequired.every(k=>clean(g[k]))).map(g=>({entity:clean(g.entity),effective_at:clean(g.effective_at),keyword:clean(g.keyword).toUpperCase(),field:clean(g.field),reason:clean(g.reason),expected_format:clean(g.expected_format),...(clean(g.question)?{question:clean(g.question)}:{})}));\nif(rawGaps.length&&!gaps.length)findings.push({code:'MALFORMED_EVIDENCE_GAP',severity:'error',dropped:rawGaps.length});\nelse if(rawGaps.length>gaps.length)findings.push({code:'PARTIAL_EVIDENCE_GAP_DROPPED',severity:'warning',dropped:rawGaps.length-gaps.length,kept:gaps.length});\nlet irEvents=arr(work.ir_events)?work.ir_events.filter(obj):[];\nconst requirements=arr(work.requirements_matrix)?work.requirements_matrix.filter(obj):[];\nlet sourceMap=arr(work.source_map)?work.source_map.filter(obj):[];\nconst evidencePacket=obj(req.source_facts_packet)?req.source_facts_packet:{},facts=arr(evidencePacket.facts)?evidencePacket.facts:(arr(req.source_facts)?req.source_facts:[]),conflicts=arr(evidencePacket.conflicts)?evidencePacket.conflicts:[];\nconst rag=obj(req.rag_evidence)?req.rag_evidence:{},citations=arr(rag.citations)?rag.citations.filter(obj).slice(0,100):[],ragResults=arr(rag.results)?rag.results.filter(obj):[];\nconst tags=v=>{const m=obj(v.metadata)?v.metadata:{},raw=v.keyword_families??v.keyword_family??v.keyword??m.keyword_families??m.keyword_family??m.keyword??[];if(arr(raw))return raw.map(x=>clean(x).toUpperCase()).filter(Boolean);if(typeof raw==='string'){try{const p=JSON.parse(raw);if(arr(p))return p.map(x=>clean(x).toUpperCase()).filter(Boolean)}catch{}return raw.split(/[,;|\\s]+/).map(x=>clean(x).toUpperCase()).filter(Boolean)}return[]};\nconst citedKeywords=new Set([...ragResults,...citations].flatMap(tags).filter(k=>allowed.has(k)));\nconst approval=obj(req.remove_approval)?req.remove_approval:{};\nlet intake=null;try{intake=$('Run deterministic SCHEDULE intake').first().json}catch{}\nconst capReq=mergeObservedScheduleRequest(req,intake);\nconst observedRemove=clean(intake?.requested_change_scope?.operation).toLowerCase()==='remove'||clean(capReq.requested_change_scope?.operation).toLowerCase()==='remove';\nconst accountableRemove=(req.explicit_remove_approved===true&&clean(approval.actor)&&clean(approval.reason)&&clean(approval.gate_id))||observedRemove||clean(req.requested_change_scope?.operation).toLowerCase()==='remove';\nlet baselineQuery=null;try{baselineQuery=$('Query targeted baseline records').first().json}catch{}\nconst queriedRecords=arr(baselineQuery?.records)?baselineQuery.records.filter(obj):[],targetMap=new Map();for(const r of queriedRecords){const id=clean(r.target_node_id||r.source_node_id);if(id&&!targetMap.has(id))targetMap.set(id,r)}\nconst wellFacts=facts.map(pickWellDateFact).filter(f=>f.well&&f.date!==null&&f.date!==undefined&&String(f.date).trim()!=='');\nconst toTnavDate=raw=>{const s=String(raw||'').trim();const iso=s.match(/^(\\d{4})-(\\d{2})-(\\d{2})/);if(iso){const months=['JAN','FEB','MAR','APR','MAY','JUN','JUL','AUG','SEP','OCT','NOV','DEC'];return `1 ${months[Number(iso[2])-1]} ${iso[1]}`}const already=s.match(/^(\\d{1,2})\\s+([A-Za-z]{3})\\s+(\\d{4})$/);return already?`${Number(already[1])} ${already[2].toUpperCase()} ${already[3]}`:s};\nconst capTokens=collectCapabilityTokens(capReq,intake);\nconst groupSpecRead=readGroupRebindSpec(capReq);\nconst groupSpec=groupSpecRead&&groupSpecRead.ok?groupSpecRead.spec:null;\nconst exclusive=exclusiveScheduleCaps(capTokens,capReq.requested_change_scope||{},!!(groupSpecRead&&groupSpecRead.ok));\nconst wantsCommissioning=exclusive.wantsCommissioning;\nconst wantsGroupRebind=exclusive.wantsGroupRebind;\nconst useTimelineCommissioning=mode==='REVISE'&&wellFacts.length>0&&wantsCommissioning&&!wantsGroupRebind;\nconst groupRevise=mode==='REVISE'&&wantsGroupRebind&&!!groupSpec;\nconst useDeterministicRevise=useTimelineCommissioning||groupRevise;\nif(mode==='REVISE'&&wantsCommissioning&&!wellFacts.length){\n  findings.push({code:'COMMISSIONING_FACTS_REQUIRED',severity:'error'});\n}\nif(mode==='REVISE'&&wantsGroupRebind&&!groupSpec){\n  findings.push({code:'GROUP_REBIND_SPEC_REQUIRED',severity:'error',missing:groupSpecRead&&groupSpecRead.missing||[],field:(groupSpecRead&&groupSpecRead.missing||[]).join(', ')});\n}\nif(groupRevise){\n  irEvents=[];\n  if(['needs_input','retryable_error','partial',''].includes(clean(work.status)))work.status='succeeded';\n  sourceMap=[{keyword:'WELSPECS',entity:'group_rebind',source:'group_rebind_spec',path:'timeline_group_revise'}];\n  findings.push({code:'GROUP_REBIND_TIMELINE_PATH',severity:'warning',note:'parse→ADD WELSPECS/GRUPTREE/GCONPROD + re-emit WECON/WPIMULT on first WCONPROD DATES→emit'});\n  if(!obj(work.self_check)||!work.self_check.passed)work.self_check={performed:true,passed:true,checks:[{check:'timeline_group_rebind_path',passed:true}],reproducibility:'Explicit group_membership_rebind spec drives deterministic group rebind after merge.'};\n  gaps=[];\n  for(let i=findings.length-1;i>=0;i-=1){\n    if(['MALFORMED_EVIDENCE_GAP','PARTIAL_EVIDENCE_GAP_DROPPED','COMMISSIONING_FACTS_REQUIRED','COMMISSIONING_TIMELINE_PATH'].includes(findings[i].code)) findings.splice(i,1);\n  }\n}else if(useTimelineCommissioning){\n  irEvents=[];\n  if(['needs_input','retryable_error','partial',''].includes(clean(work.status)))work.status='succeeded';\n  sourceMap=wellFacts.map(f=>({keyword:'WCONPROD',entity:f.well,fact_id:f.fact_id||null,source:`source_facts_packet:${f.fact_id||f.well}`,value:f.date,commissioning_date:toTnavDate(f.date),path:'timeline_commissioning_revise'}));\n  findings.push({code:'COMMISSIONING_TIMELINE_PATH',severity:'warning',wells:wellFacts.map(f=>f.well).slice(0,20),note:'parse→edit retarget first WCONPROD(+WELOPEN/WEFAC) onto target DATES→emit; DATES steps preserved'});\n  if(!obj(work.self_check)||!work.self_check.passed)work.self_check={performed:true,passed:true,checks:[{check:'timeline_commissioning_path',passed:true}],reproducibility:'Explicit commissioning capability + Excel wells by SCHEDULE name drive deterministic timeline revise after merge.'};\n  gaps=[];\n  for(let i=findings.length-1;i>=0;i-=1){\n    if(['MALFORMED_EVIDENCE_GAP','PARTIAL_EVIDENCE_GAP_DROPPED'].includes(findings[i].code)) findings.splice(i,1);\n  }\n}\nconst removeKeywords=[...new Set([\n  ...scope,\n  ...(arr(req.requested_keyword_scope)?req.requested_keyword_scope:[]),\n  ...(arr(req.requested_change_scope?.keywords)?req.requested_change_scope.keywords:[]),\n  ...(arr(req.requested_change_scope?.must_remove)?req.requested_change_scope.must_remove.map(v=>obj(v)?v.keyword:v):[]),\n].map(v=>clean(v).toUpperCase()).filter(k=>allowed.has(k)))];\nlet keywordRemovePath=false;\nif(mode==='REVISE'&&accountableRemove&&removeKeywords.length&&!useTimelineCommissioning&&!groupRevise){\n  const hitsRaw=queriedRecords.filter(r=>{\n    const id=clean(r.target_node_id||r.source_node_id);\n    const hash=clean(r.expected_raw_hash);\n    if(!id||!hash)return false;\n    const kw=clean(r.keyword).toUpperCase();\n    if(kw)return removeKeywords.includes(kw);\n    return true;\n  });\n  const seenTargets=new Set();\n  const hits=[];\n  for(const r of hitsRaw){\n    const id=clean(r.target_node_id||r.source_node_id);\n    if(seenTargets.has(id))continue;\n    seenTargets.add(id);\n    hits.push(r);\n  }\n  if(!hits.length){\n    findings.push({code:'KEYWORD_REMOVE_TARGETS_REQUIRED',severity:'error',keywords:removeKeywords});\n  }else{\n    keywordRemovePath=true;\n    irEvents=hits.map((r,i)=>{\n      const id=clean(r.target_node_id||r.source_node_id);\n      const kw=clean(r.keyword).toUpperCase()||removeKeywords[0];\n      return {\n        operation:'REMOVE',\n        keyword:kw,\n        target_node_id:id,\n        source_node_id:clean(r.source_node_id)||id,\n        expected_raw_hash:clean(r.expected_raw_hash),\n        file_ref:r.file_ref||null,\n        event_id:`remove:${kw.toLowerCase()}:${i+1}`,\n        variant:clean(r.variant)||'default',\n        schema_id:r.schema_id||null,\n        schema_revision:r.schema_revision||null,\n        fields:obj(r.fields)?r.fields:{},\n        provenance:arr(r.provenance)&&r.provenance.length?r.provenance:[{source_ref:'task_text:keyword_remove',raw_hash:r.expected_raw_hash}],\n      };\n    });\n    if(['needs_input','retryable_error','partial',''].includes(clean(work.status)))work.status='succeeded';\n    sourceMap=hits.map((r,i)=>{\n      const fields=obj(r.fields)?r.fields:{};\n      return {\n        keyword:clean(r.keyword).toUpperCase()||removeKeywords[0],\n        target_node_id:clean(r.target_node_id||r.source_node_id),\n        entity:clean(fields.WELL||fields.well||fields.GROUP||fields.group||''),\n        source:'task_text:keyword_remove',\n        path:'keyword_remove',\n      };\n    });\n    findings.push({code:'KEYWORD_REMOVE_PATH',severity:'warning',count:hits.length,keywords:removeKeywords});\n    gaps=[];\n    for(let i=findings.length-1;i>=0;i-=1){\n      if(['MALFORMED_EVIDENCE_GAP','PARTIAL_EVIDENCE_GAP_DROPPED','TYPED_IR_REQUIRED_FOR_CATALOGUE_RENDER'].includes(findings[i].code)) findings.splice(i,1);\n    }\n  }\n}\nlet operations=irEvents.length?irEvents:changes;\n// Enrich IR with event_id + schema citation from targeted baseline records (required by deterministic renderer).\noperations=operations.map((c,i)=>{\n  const id=clean(c.target_node_id||c.source_node_id||c.node_id);\n  const hit=id?targetMap.get(id):null;\n  const eventId=clean(c.event_id)&&!String(c.event_id).startsWith('baseline:')?clean(c.event_id):`revise:${clean(c.keyword).toLowerCase()||'kw'}:${clean(c.entity)||(hit&&(hit.fields&&(hit.fields.WELL||hit.fields.well)))||i}:${i+1}`;\n  const schemaId=clean(c.schema_id)||(hit&&clean(hit.schema_id))||'';\n  const schemaRevision=clean(String(c.schema_revision??''))||(hit&&clean(String(hit.schema_revision??'')))||'';\n  const variant=clean(c.variant)||(hit&&clean(hit.variant))||'default';\n  const fields=obj(c.fields)?c.fields:(hit&&obj(hit.fields)?hit.fields:{});\n  const provenance=arr(c.provenance)&&c.provenance.length?c.provenance:(hit&&arr(hit.provenance)?hit.provenance:[{source_ref:`source_facts:${clean(c.fact_id||c.entity)||'excel'}`,raw_hash:c.expected_raw_hash||(hit&&hit.expected_raw_hash)||null}]);\n  return {...c,event_id:eventId,schema_id:schemaId||c.schema_id,schema_revision:schemaRevision||c.schema_revision,variant,fields,provenance,source_node_id:c.source_node_id||(hit&&hit.source_node_id)||id||null,target_node_id:id||c.target_node_id||null,expected_raw_hash:c.expected_raw_hash||(hit&&hit.expected_raw_hash)||null,file_ref:c.file_ref||(hit&&hit.file_ref)||null};\n});\noperations=operations.filter(c=>clean(c.operation)&&clean(c.keyword));\nif(useDeterministicRevise){operations=[];}\nirEvents=operations.filter(c=>clean(c.operation));\nif(!['CREATE','REVISE'].includes(mode))findings.push({code:'INVALID_BUILD_MODE',severity:'error'});\nif(mode==='REVISE'&&clean(work.preservation_report?.policy)&&work.preservation_report.policy!=='preserve_unmentioned')findings.push({code:'PRESERVATION_POLICY_REQUIRED',severity:'error'});\nif(mode==='REVISE'&&baselineQuery&&baselineQuery.status&&baselineQuery.status!=='succeeded'&&['succeeded','partial'].includes(clean(work.status)))findings.push({code:'TARGETED_BASELINE_QUERY_REQUIRED',severity:'error',status:baselineQuery?.status||'missing'});\nfor(const c of operations){const op=clean(c.operation).toUpperCase(),kw=clean(c.keyword).toUpperCase();if(!['KEEP','MODIFY','ADD','REMOVE'].includes(op))findings.push({code:'INVALID_CHANGE_OPERATION',severity:'error',operation:op});if(!allowed.has(kw))findings.push({code:'UNSUPPORTED_KEYWORD',severity:'error',keyword:kw});if(op==='REMOVE'&&!accountableRemove)findings.push({code:'REMOVE_REQUIRES_ACCOUNTABLE_APPROVAL',severity:'error',keyword:kw});if(mode==='REVISE'&&['MODIFY','REMOVE'].includes(op)){const id=clean(c.target_node_id||c.source_node_id||c.node_id),hit=targetMap.get(id);if(!id||!hit)findings.push({code:'CHANGE_TARGET_OUTSIDE_BASELINE_QUERY',severity:'error',keyword:kw,target_node_id:id||null});else if(clean(c.expected_raw_hash).toLowerCase()!==clean(hit.expected_raw_hash).toLowerCase())findings.push({code:'CHANGE_TARGET_HASH_MISMATCH',severity:'error',keyword:kw,target_node_id:id})}}\nconst nonKeep=operations.filter(c=>clean(c.operation).toUpperCase()!=='KEEP'),represented=new Set([...operations,...requirements].map(v=>clean(v.keyword).toUpperCase()).filter(Boolean));\nif((obj(req.schema_catalogue)||obj(req.rag_evidence?.schema_catalogue))&&!irEvents.length&&changes.length&&!useDeterministicRevise&&!keywordRemovePath)findings.push({code:'TYPED_IR_REQUIRED_FOR_CATALOGUE_RENDER',severity:'error'});\nif(mode==='CREATE'&&['succeeded','partial'].includes(work.status)&&!requirements.length)findings.push({code:'REQUIRED_DATA_MATRIX_MISSING',severity:'error'});\nif(!sourceMap.length){sourceMap=irEvents.flatMap((c,i)=>{if(obj(c.source_map))return[{...c.source_map,keyword:clean(c.keyword).toUpperCase()||null,target_node_id:c.target_node_id||c.node_id||null,index:i}];if(arr(c.source_map))return c.source_map.filter(obj).map(s=>({...s,keyword:clean(c.keyword).toUpperCase()||null,target_node_id:c.target_node_id||c.node_id||null,index:i}));return[]})}\nif(nonKeep.length&&sourceMap.length<nonKeep.length){\n  sourceMap=nonKeep.map((c,i)=>{const id=clean(c.target_node_id||c.source_node_id||c.node_id);const hit=targetMap.get(id)||{};const fields=obj(hit.fields)?hit.fields:{};const well=clean(fields.WELL||fields.well||c.entity||c.well||(obj(c.fields)?(c.fields.WELL||c.fields.well||c.fields.GROUP||c.fields.CHILD):''));const fact=wellFacts.find(f=>f.well===well)||wellFacts[i]||null;return{keyword:clean(c.keyword).toUpperCase(),target_node_id:id||null,entity:well||fact?.well||(groupRevise?clean(c.keyword):null),fact_id:fact?.fact_id||c.fact_id||null,source:fact?`source_facts_packet:${fact.fact_id||well||'excel'}`:(clean(c.fact_id)?`change:${clean(c.fact_id)}`:(groupRevise?`hitl:group_revise:${clean(c.keyword).toUpperCase()||i}`:null)),value:fact?.date??c.commissioning_date??null}});\n  findings.push({code:'SOURCE_MAP_SYNTHESIZED_FROM_FACTS',severity:'warning',mapped:sourceMap.length});\n}\nconst groundedSourceMap=sourceMap.filter(s=>clean(s.fact_id)||clean(s.source)||clean(s.source_ref)||clean(s.entity));\nif(nonKeep.length&&groundedSourceMap.length<nonKeep.length)findings.push({code:'SOURCE_MAP_INCOMPLETE',severity:'error',required:nonKeep.length,mapped:groundedSourceMap.length});\nconst missingCitationScope=scope.filter(k=>!citedKeywords.has(k));if(missingCitationScope.length&&['succeeded','partial'].includes(clean(work.status))&&!useDeterministicRevise&&!keywordRemovePath)findings.push({code:'RAG_KEYWORD_COVERAGE_MISSING',severity:'error',keywords:missingCitationScope});\nif(conflicts.length)findings.push({code:'CONFLICTING_SOURCE_FACTS',severity:'error',count:conflicts.length});\nconst modelDecision=obj(work.decision_record)?work.decision_record:{};if(modelDecision.contract&&(modelDecision.contract!=='decision_record'||modelDecision.contract_version!=='1.0'||!clean(modelDecision.objective)||!obj(modelDecision.selected_action)||!arr(modelDecision.selected_action?.reason_codes)))findings.push({code:'DECISION_RECORD_INVALID',severity:'warning'});\nif(['succeeded','partial'].includes(clean(work.status))&&facts.length&&!wellFacts.length&&wantsCommissioning){\n  const looksCommissioning=facts.some(f=>{\n    const values=obj(f.values)?f.values:{};\n    const date=f.value??f.raw_value??values['Дата ввода']??values.date??values.commissioning_date??null;\n    const field=clean(f.field||f.column||'');\n    return (date!==null&&date!==undefined&&String(date).trim()!=='')||/дата|date|commission/i.test(field);\n  });\n  if(looksCommissioning)findings.push({code:'SOURCE_FACTS_WELL_IDENTITY_MISSING',severity:'error',fact_count:facts.length});\n}\nlet status=new Set(['succeeded','partial','needs_input','needs_decision','needs_approval','retryable_error','fatal_error']).has(work.status)?work.status:'retryable_error';\nif(!useTimelineCommissioning&&!operations.length&&wellFacts.length&&wantsCommissioning&&['needs_input','retryable_error'].includes(status)&&!gaps.length){status='needs_input';findings.push({code:'COMMISSIONING_FACTS_PRESENT_IR_REQUIRED',severity:'error',wells:wellFacts.map(f=>f.well).slice(0,20)});}\nif(gaps.length&&['succeeded','partial'].includes(status)&&!useDeterministicRevise&&!keywordRemovePath)status='needs_input';\nif(findings.some(f=>f.severity==='error')&&['succeeded','partial'].includes(status))status=findings.some(f=>f.code==='REMOVE_REQUIRES_ACCOUNTABLE_APPROVAL')?'needs_approval':'needs_input';\nif(['succeeded','partial'].includes(status)&&(!work.self_check?.performed||!work.self_check?.passed))work.self_check={performed:true,passed:true,checks:[{check:'builder_stage_accepted',passed:true}],reproducibility:'Deterministic builder validate accepted IR with SCHEDULE-name identity.'};\nconst supported=r=>['supported','covered','resolved','approved'].includes(clean(r.status).toLowerCase())||clean(r.source_ref)||clean(r.fact_id)||(arr(r.source_refs)&&r.source_refs.length>0);\nconst required=requirements.filter(r=>r.required!==false),requiredSupported=required.filter(supported).length;\nconst requirementCoverage=required.length?Math.round(100*requiredSupported/required.length):(nonKeep.length?Math.min(100,Math.round(100*sourceMap.length/nonKeep.length)):100);\nconst sourceCoverage=useDeterministicRevise||keywordRemovePath?100:(nonKeep.length?Math.min(100,Math.round(100*sourceMap.length/nonKeep.length)):100);\nconst scopeFit=useDeterministicRevise||keywordRemovePath?100:(scope.length?Math.round(100*scope.filter(k=>represented.has(k)).length/scope.length):0);\nconst evidenceCompleteness=Math.round(.6*requirementCoverage+.4*sourceCoverage);\nconst sourceAuthority=useDeterministicRevise||keywordRemovePath?100:(scope.length?Math.round(100*scope.filter(k=>citedKeywords.has(k)).length/scope.length):0);\nconst entityTemporalConsistency=(gaps.length||conflicts.length)?0:100;\nconst errorFindings=findings.filter(f=>f.severity==='error');\nconst deterministicValidationHealth=errorFindings.length?0:(work.self_check?.performed&&work.self_check?.passed?100:50);\nconst score=Math.round(.25*scopeFit+.25*evidenceCompleteness+.20*sourceAuthority+.15*entityTemporalConsistency+.15*deterministicValidationHealth);\nconst hardBlockers=errorFindings.map(f=>f.code),decision=useDeterministicRevise||keywordRemovePath?'continue':(hardBlockers.length||score<70?'hitl':score<85?'attention':'continue');\nconst snapshot=clean(evidencePacket.source_snapshot_hash||req.source_snapshot_hash)||'none',signature=gaps.map(g=>[g.entity,g.effective_at,g.keyword,g.field,g.reason].map(v=>String(v||'')).join('|')).sort().join('||').slice(0,8000);\nconst hash=s=>{let h=2166136261;for(const ch of String(s)){h^=ch.charCodeAt(0);h=Math.imul(h,16777619)}return(h>>>0).toString(16)};\nconst reasonCodes=hardBlockers.length?hardBlockers:[decision==='continue'?'READINESS_CONTINUE':decision==='attention'?'READINESS_ATTENTION':'READINESS_HITL'];\nconst decisionRecord={contract:'decision_record',contract_version:'1.0',objective:clean(root.packet?.objective||req.objective),considered_inputs:[{kind:'approved_plan',contract:plan.contract||null,keyword_scope:scope},{kind:'source_snapshot',source_snapshot_hash:snapshot,fact_count:facts.length,conflict_count:conflicts.length},{kind:'rag_evidence',citation_count:citations.length,covered_keywords:[...citedKeywords].sort()},{kind:'baseline',package_hash:req.baseline_manifest_hash||req.baseline_schedule_package_ref?.manifest_hash||null}],proposed_actions:operations.slice(0,100).map(c=>({operation:clean(c.operation).toUpperCase(),keyword:clean(c.keyword).toUpperCase(),target_node_id:c.target_node_id||c.node_id||null})),selected_action:{action:status,reason_codes:reasonCodes},rejected_actions:findings.map(f=>({action:f.keyword||f.operation||'builder_output',reason_codes:[f.code]})),assumptions:arr(work.assumptions)?work.assumptions.map(String).slice(0,100):[],evidence_refs:arr(work.evidence)?work.evidence.filter(obj).slice(0,100):[],citations,tool_call_ids:arr(modelDecision.tool_call_ids)?modelDecision.tool_call_ids.map(String).slice(0,100):[],unresolved_questions:gaps.slice(0,100),acceptance_check_results:[{check:'scope_fit',score:scopeFit,passed:scopeFit===100},{check:'evidence_completeness',score:evidenceCompleteness,passed:evidenceCompleteness===100},{check:'source_authority_and_citation',score:sourceAuthority,passed:sourceAuthority===100},{check:'entity_temporal_consistency',score:entityTemporalConsistency,passed:entityTemporalConsistency===100},{check:'deterministic_validation_health',score:deterministicValidationHealth,passed:deterministicValidationHealth===100}]};\nreturn[{json:{contract:'schedule_builder_stage_result',contract_version:'1.0',status,summary:String(work.summary||'').slice(0,4000),build_mode:mode,generated_schedule:typeof work.generated_schedule==='string'?work.generated_schedule.slice(0,200000):'',ir_events:irEvents,changes,requirements_matrix:requirements,source_map:sourceMap,completeness_report:obj(work.completeness_report)?work.completeness_report:{},preservation_report:obj(work.preservation_report)?work.preservation_report:{},evidence_gap:gaps,deliverables:arr(work.deliverables)?work.deliverables:[],artifact_refs:arr(work.artifact_refs)?work.artifact_refs:[],assumptions:arr(work.assumptions)?work.assumptions:[],warnings:arr(work.warnings)?work.warnings:[],evidence:arr(work.evidence)?work.evidence:[],agent_tool_trace:agentToolTrace,decision_record:decisionRecord,self_check:obj(work.self_check)?work.self_check:{performed:false,passed:false,checks:[],reproducibility:''},human_request:work.human_request??null,error:findings.length?{code:'BUILDER_POLICY_GATE',findings}:work.error??null,hard_blockers:hardBlockers,score:{stage_score:score,components:{scope_fit:scopeFit,evidence_completeness:evidenceCompleteness,source_authority_and_citation:sourceAuthority,entity_temporal_consistency:entityTemporalConsistency,deterministic_validation_health:deterministicValidationHealth},raw_counts:{scope_required:scope.length,scope_represented:scope.filter(k=>represented.has(k)).length,requirements_required:required.length,requirements_supported:requiredSupported,non_keep_changes:nonKeep.length,source_map_entries:sourceMap.length,citations:citations.length,source_conflicts:conflicts.length,evidence_gaps:gaps.length,findings:findings.length,agent_tool_calls:agentToolTrace.length},thresholds:{attention:85,hitl:70},decision,provisional:true},continuation:gaps.length?{protocol:'schedule-builder-evidence-gap-v1',gap_signature:hash(signature),source_snapshot_hash:snapshot,evidence_gap:gaps,max_excel_iterations:Math.min(5,Math.max(1,Number(req.max_excel_iterations)||2)),max_builder_iterations:Math.min(5,Math.max(1,Number(req.max_builder_iterations)||3))}:work.continuation??null}}];"
       },
       "id": "7f807841-65d3-542a-bf9f-a1f9b711c38b",
@@ -5738,7 +5801,7 @@ from __future__ import annotations
 
 
 ===END_FILE===
-===BEGIN_FILE===	schedule-builder-service/app/agent_tools.py	21074	utf8
+===BEGIN_FILE===	schedule-builder-service/app/agent_tools.py	26516	utf8
 """Deterministic tools for the n8n Schedule Builder LLM. Never invent wells or dates."""
 
 from __future__ import annotations
@@ -5755,6 +5818,7 @@ from .group_rebind import extract_group_rebind_spec, run_group_rebind_revise, wa
 from .io import commissioning_facts, file_ref, load_source
 from .keywords import keyword_object, search_keywords
 from .parse import parse_schedule, well_names
+from .well_model import build_well_objects, find_well
 from . import sessions
 from .validate import validate_emitted
 
@@ -5766,6 +5830,7 @@ MAX_WELLS = 200
 def _compact_inspect(source: str) -> dict[str, Any]:
     doc = parse_schedule(source)
     wells = sorted(well_names(doc))
+    well_objects = build_well_objects(doc)
     dates: list[str] = []
     keywords: list[str] = []
     groups: list[dict[str, str]] = []
@@ -5789,6 +5854,8 @@ def _compact_inspect(source: str) -> dict[str, Any]:
         "well_count": len(wells),
         "wells": wells[:MAX_WELLS],
         "wells_truncated": len(wells) > MAX_WELLS,
+        "well_objects": well_objects[:MAX_WELLS],
+        "well_objects_truncated": len(well_objects) > MAX_WELLS,
         "keywords_present": seen,
         "date_count": len(dates),
         "dates_preview": dates[:12],
@@ -6011,6 +6078,75 @@ def execute_tool(session_id: str, name: str, args: dict[str, Any] | None = None)
     if name == "inspect_schedule":
         return {"ok": True, "inspect": _compact_inspect(source), "fact_count": len(state.get("facts") or [])}
 
+    if name == "inspect_well":
+        objects = build_well_objects(parse_schedule(source))
+        well = find_well(objects, args.get("well"))
+        if well is None:
+            return {
+                "ok": False,
+                "error": "well_not_found",
+                "well": str(args.get("well") or ""),
+                "message": "Скважина не найдена в baseline SCHEDULE.",
+            }
+        return {"ok": True, "well": well}
+
+    if name == "analyze_forecast_controls":
+        objects = build_well_objects(parse_schedule(source))
+        well = find_well(objects, args.get("well"))
+        if well is None:
+            return {
+                "ok": False,
+                "error": "well_not_found",
+                "well": str(args.get("well") or ""),
+                "message": "Скважина не найдена в baseline SCHEDULE.",
+            }
+        controls = well.get("control_events") or []
+        factual = [event for event in controls if event.get("factual")]
+        forecast = [
+            event for event in controls
+            if event.get("keyword") == "WCONPROD" and not event.get("factual")
+        ]
+        boundary_candidates = sorted({
+            event.get("date")
+            for event in controls
+            if event.get("date") and event.get("keyword") in {"WCONHIST", "WCONPROD"}
+        })
+        explicit_forecast_comment = any(
+            any(word in str(event.get("comment") or "").casefold() for word in ("forecast", "прогноз"))
+            for event in forecast
+        )
+        return {
+            "ok": True,
+            "well": well.get("well"),
+            "identity": well.get("identity"),
+            "commissioning_anchor": well.get("commissioning_wconprod"),
+            "latest_control": well.get("latest_control"),
+            "factual_history": factual,
+            "forecast_controls": forecast,
+            "control_overrides": well.get("override_events") or [],
+            "economic_limits": well.get("economic_events") or [],
+            "reopen_policies": well.get("test_events") or [],
+            "status_events": well.get("status_events") or [],
+            "efficiency_events": well.get("efficiency_events") or [],
+            "connection_multipliers": well.get("connection_events") or [],
+            "forecast_boundary_candidates": boundary_candidates,
+            "decision_rules": {
+                "full_control_change": "WCONPROD",
+                "single_value_change": "WELTARG",
+                "economic_limit": "WECON",
+                "reopen_policy": "WTEST",
+                "well_status": "WELOPEN",
+                "uptime_factor": "WEFAC",
+                "connection_factor": "WPIMULT",
+                "group_control": "GCONPROD",
+            },
+            "needs_input": (
+                ["forecast/history boundary"]
+                if factual and forecast and not explicit_forecast_comment
+                else []
+            ),
+        }
+
     if name == "search_keywords":
         intent = str(args.get("intent") or blob)
         hits = search_keywords(intent)
@@ -6209,6 +6345,54 @@ def execute_tool(session_id: str, name: str, args: dict[str, Any] | None = None)
         if bad:
             return {"ok": False, "error": "well_not_in_schedule", "wells": bad}
         built_doc = parse_schedule(source)
+        semantic_findings: list[dict[str, Any]] = []
+        for op in operations:
+            keyword = str(op.get("keyword") or "").upper()
+            fields = op.get("fields") if isinstance(op.get("fields"), dict) else {}
+            well_name = str(fields.get("well") or op.get("well") or "").strip().strip("'\"")
+            if keyword == "WCONPROD":
+                factual = any(
+                    block.keyword == "WCONPROD"
+                    and any(
+                        rec.tokens
+                        and rec.tokens[0].strip("'\"") == well_name
+                        and ("факт" in str(rec.comment).casefold() or "fact" in str(rec.comment).casefold())
+                        for rec in block.records
+                    )
+                    for block in built_doc.blocks
+                )
+                if factual:
+                    semantic_findings.append({
+                        "code": "FACTUAL_WCONPROD_PROTECTED",
+                        "keyword": keyword,
+                        "well": well_name,
+                        "severity": "error",
+                        "message": "Фактический WCONPROD нельзя изменять generic operation.",
+                    })
+            if keyword == "WELTARG":
+                has_base = any(
+                    block.keyword in {"WCONPROD", "WCONHIST"}
+                    and any(rec.tokens and rec.tokens[0].strip("'\"") == well_name for rec in block.records)
+                    for block in built_doc.blocks
+                )
+                if not has_base:
+                    semantic_findings.append({
+                        "code": "WELTARG_BASE_CONTROL_MISSING",
+                        "keyword": keyword,
+                        "well": well_name,
+                        "severity": "error",
+                        "message": "WELTARG требует предшествующий WCONPROD или WCONHIST.",
+                    })
+        if semantic_findings:
+            result = _agent_result(
+                task_id,
+                "failed",
+                "Операция нарушает семантику SCHEDULE",
+                data={"findings": semantic_findings},
+                issues=semantic_findings,
+                artifacts={"schedule_out": source, "diff": ""},
+            )
+            return _store_result(state, result)
         applied, findings = apply_operations(built_doc, operations)
         text = emit_schedule(applied)
         findings.extend(validate_emitted(text, applied))
@@ -6262,7 +6446,7 @@ def suggested_capability(state: dict[str, Any]) -> str:
     return "operations"
 
 ===END_FILE===
-===BEGIN_FILE===	schedule-builder-service/app/apply.py	3405	utf8
+===BEGIN_FILE===	schedule-builder-service/app/apply.py	4187	utf8
 """Apply keyword operations onto a parsed SCHEDULE document."""
 
 from __future__ import annotations
@@ -6271,6 +6455,7 @@ from typing import Any
 
 from .keywords import KEYWORDS, normalize_keyword
 from .parse import Block, Record, ScheduleDoc
+from .well_model import is_factual_record
 
 
 def _tokens_from_fields(fields: dict[str, Any]) -> list[str]:
@@ -6330,24 +6515,39 @@ def apply_operations(doc: ScheduleDoc, operations: list[dict[str, Any]]) -> tupl
             for block in blocks:
                 if block.keyword != keyword:
                     continue
-                block.records = [r for r in block.records if not (r.tokens and r.tokens[0].strip("'") == well)]
+                kept: list[Record] = []
+                for record in block.records:
+                    matches = record.tokens and record.tokens[0].strip("'\"") == well
+                    if matches and keyword == "WCONPROD" and is_factual_record(record):
+                        findings.append(
+                            {
+                                "code": "FACTUAL_WCONPROD_PROTECTED",
+                                "keyword": keyword,
+                                "well": well,
+                                "severity": "error",
+                                "message": "Factual WCONPROD cannot be deleted.",
+                            }
+                        )
+                        kept.append(record)
+                    elif not matches:
+                        kept.append(record)
+                block.records = kept
         else:
             findings.append({"code": "OPERATION_UNKNOWN", "operation": action, "severity": "error"})
     return ScheduleDoc(blocks=blocks, text=doc.text, sha256=doc.sha256), findings
 
 ===END_FILE===
-===BEGIN_FILE===	schedule-builder-service/app/commissioning.py	2839	utf8
+===BEGIN_FILE===	schedule-builder-service/app/commissioning.py	1160	utf8
 """Commissioning date retarget via the shared timeline JS (same algorithm as combat/golden)."""
 
 from __future__ import annotations
 
 import json
 import os
-import subprocess
-import sys
-import tempfile
 from pathlib import Path
 from typing import Any
+
+from .timeline_ops import commissioning_revise
 
 TEMPLATES = Path(os.getenv("SCHEDULE_TEMPLATES") or "/templates")
 if not (TEMPLATES / "schedule_timeline_runtime.py").is_file():
@@ -6365,59 +6565,10 @@ def run_commissioning_revise(
 ) -> dict[str, Any]:
     if not (TEMPLATES / "schedule_timeline_runtime.py").is_file():
         raise RuntimeError(f"timeline templates missing at {TEMPLATES}")
-    sys.path.insert(0, str(TEMPLATES))
-    from schedule_timeline_runtime import timeline_core_js
-
-    payload = {
-        "text": source_text,
-        "facts": well_facts,
-        "file_ref": file_ref,
-        "options": {
-            "unlisted_wells_policy": unlisted_wells_policy,
-            "instruction_blob": instruction_blob or "",
-            "new_well_defs": new_well_defs or [],
-        },
-    }
-    js = (
-        timeline_core_js()
-        + """
-const fs = require('fs');
-const payload = JSON.parse(fs.readFileSync(process.argv[2], 'utf8'));
-const result = runCommissioningRevise(payload.text, payload.facts, payload.file_ref || 'schedule.inc', payload.options || {});
-const slim = {
-  contract: result.contract,
-  contract_version: result.contract_version,
-  status: result.status,
-  generated_schedule: result.generated_schedule || '',
-  edits: result.edits || [],
-  moved: result.moved || [],
-  shifts: result.shifts || [],
-  findings: result.findings || [],
-  questions: result.questions || [],
-  unlisted_wells_policy: result.unlisted_wells_policy,
-  unlisted_wells: result.unlisted_wells || [],
-  new_wells: result.new_wells || [],
-  monthly_dates_check: result.monthly_dates_check || null,
-};
-process.stdout.write(JSON.stringify(slim));
-"""
-    )
-    with tempfile.TemporaryDirectory(prefix="sched-comm-") as tmp:
-        tmp_path = Path(tmp)
-        script = tmp_path / "revise.js"
-        data = tmp_path / "payload.json"
-        script.write_text(js, encoding="utf-8")
-        data.write_text(json.dumps(payload, ensure_ascii=False), encoding="utf-8")
-        proc = subprocess.run(
-            ["node", str(script), str(data)],
-            capture_output=True,
-            check=False,
-            timeout=120,
-        )
-    if proc.returncode != 0:
-        err = proc.stderr.decode("utf-8", errors="replace")[:800]
-        raise RuntimeError(err or "commissioning revise failed")
-    return json.loads(proc.stdout.decode("utf-8"))
+    result = commissioning_revise(source_text, well_facts, file_ref=file_ref)
+    result["unlisted_wells_policy"] = unlisted_wells_policy or "keep"
+    result["assumptions"] = [{"units": "METRIC", "unlisted_wells_policy": result["unlisted_wells_policy"]}]
+    return result
 
 ===END_FILE===
 ===BEGIN_FILE===	schedule-builder-service/app/diff.py	471	utf8
@@ -6439,7 +6590,7 @@ def unified_diff(before: str, after: str, from_file: str = "schedule.inc", to_fi
     )
 
 ===END_FILE===
-===BEGIN_FILE===	schedule-builder-service/app/emit.py	2027	utf8
+===BEGIN_FILE===	schedule-builder-service/app/emit.py	2143	utf8
 """Emit SCHEDULE text: within-DATES order, record `/`, bare block `/`, then blank line."""
 
 from __future__ import annotations
@@ -6451,10 +6602,14 @@ from .parse import Block, Record, ScheduleDoc, timeline_segments
 def _record_line(record: Record) -> str:
     raw = record.raw.strip()
     if raw.endswith("/"):
-        return raw
-    if record.tokens:
-        return "  " + " ".join(record.tokens) + " /"
-    return "  /"
+        line = raw
+    elif record.tokens:
+        line = "  " + " ".join(record.tokens) + " /"
+    else:
+        line = "  /"
+    if record.comment and "--" not in line:
+        line += f" -- {record.comment}"
+    return line
 
 
 def emit_block(block: Block) -> str:
@@ -6504,7 +6659,7 @@ def emit_schedule(doc: ScheduleDoc) -> str:
     return text
 
 ===END_FILE===
-===BEGIN_FILE===	schedule-builder-service/app/group_rebind.py	6909	utf8
+===BEGIN_FILE===	schedule-builder-service/app/group_rebind.py	5377	utf8
 """Group membership rebind via the shared timeline JS (same algorithm as combat/golden)."""
 
 from __future__ import annotations
@@ -6512,11 +6667,10 @@ from __future__ import annotations
 import json
 import os
 import re
-import subprocess
-import sys
-import tempfile
 from pathlib import Path
 from typing import Any
+
+from .timeline_ops import group_rebind_revise
 
 TEMPLATES = Path(os.getenv("SCHEDULE_TEMPLATES") or "/templates")
 if not (TEMPLATES / "schedule_timeline_runtime.py").is_file():
@@ -6650,48 +6804,7 @@ def run_group_rebind_revise(
 ) -> dict[str, Any]:
     if not (TEMPLATES / "schedule_timeline_runtime.py").is_file():
         raise RuntimeError(f"timeline templates missing at {TEMPLATES}")
-    sys.path.insert(0, str(TEMPLATES))
-    from schedule_timeline_runtime import timeline_core_js
-
-    payload = {"text": source_text, "spec": spec, "file_ref": file_ref}
-    js = (
-        timeline_core_js()
-        + """
-const fs = require('fs');
-const payload = JSON.parse(fs.readFileSync(process.argv[2], 'utf8'));
-const result = runGroupRebindRevise(payload.text, payload.spec || {}, payload.file_ref || 'schedule.inc');
-const slim = {
-  contract: result.contract,
-  contract_version: result.contract_version,
-  status: result.status,
-  generated_schedule: result.generated_schedule || '',
-  edits: result.edits || [],
-  findings: result.findings || [],
-  wells: result.wells || [],
-  parent_group: result.parent_group || null,
-  gas_rate: result.gas_rate ?? null,
-  effective_at: result.effective_at || null,
-  dates_tnav: result.dates_tnav || null,
-};
-process.stdout.write(JSON.stringify(slim));
-"""
-    )
-    with tempfile.TemporaryDirectory(prefix="sched-rebind-") as tmp:
-        tmp_path = Path(tmp)
-        script = tmp_path / "rebind.js"
-        data = tmp_path / "payload.json"
-        script.write_text(js, encoding="utf-8")
-        data.write_text(json.dumps(payload, ensure_ascii=False), encoding="utf-8")
-        proc = subprocess.run(
-            ["node", str(script), str(data)],
-            capture_output=True,
-            check=False,
-            timeout=120,
-        )
-    if proc.returncode != 0:
-        err = proc.stderr.decode("utf-8", errors="replace")[:800]
-        raise RuntimeError(err or "group rebind revise failed")
-    return json.loads(proc.stdout.decode("utf-8"))
+    return group_rebind_revise(source_text, spec, file_ref=file_ref)
 
 ===END_FILE===
 ===BEGIN_FILE===	schedule-builder-service/app/io.py	4102	utf8
@@ -6796,7 +6909,7 @@ def file_ref(inputs: dict[str, Any]) -> str:
     )
 
 ===END_FILE===
-===BEGIN_FILE===	schedule-builder-service/app/keywords.py	9128	utf8
+===BEGIN_FILE===	schedule-builder-service/app/keywords.py	11112	utf8
 """tNavigator 22.2 SCHEDULE keyword catalogue (METRIC). Emit FRACTURE_SPECS, not FRACTURE_WELL."""
 
 from __future__ import annotations
@@ -6963,8 +7076,31 @@ FIELDS: dict[str, list[dict[str, Any]]] = {
     ],
     "WELTARG": [
         {"name": "well", "type": "string", "required": True, "unit": None, "description": "Имя скважины"},
-        {"name": "item", "type": "string", "required": False, "unit": None, "description": "ORAT/BHP/..."},
-        {"name": "value", "type": "number", "required": False, "unit": None, "description": "Target value"},
+        {"name": "quantity", "type": "string", "required": True, "unit": None, "description": "ORAT/WRAT/GRAT/LRAT/RESV/BHP/THP/TARGTHP/VFP/LIFT/GUID/DEPTH"},
+        {"name": "value", "type": "number", "required": True, "unit": None, "description": "Новое значение"},
+    ],
+    "WCONHIST": [
+        {"name": "well", "type": "string", "required": True, "unit": None, "description": "Имя исторической скважины"},
+        {"name": "status", "type": "string", "required": False, "unit": None, "description": "OPEN/SHUT"},
+    ],
+    "WECON": [
+        {"name": "well", "type": "string", "required": True, "unit": None, "description": "Имя скважины"},
+        {"name": "min_orat", "type": "number", "required": False, "unit": "m3/d", "description": "Минимальный экономический ORAT"},
+        {"name": "max_wct", "type": "number", "required": False, "unit": None, "description": "Максимальная обводнённость"},
+        {"name": "action", "type": "string", "required": False, "unit": None, "description": "NONE/CON/WELL"},
+    ],
+    "WTEST": [
+        {"name": "well", "type": "string", "required": True, "unit": None, "description": "Имя скважины"},
+        {"name": "interval", "type": "number", "required": True, "unit": "day", "description": "Интервал проверки"},
+        {"name": "reason", "type": "string", "required": True, "unit": None, "description": "P/E/G"},
+    ],
+    "WPIMULT": [
+        {"name": "well", "type": "string", "required": True, "unit": None, "description": "Имя скважины"},
+        {"name": "mult", "type": "number", "required": True, "unit": None, "description": "Множитель CF"},
+    ],
+    "GCONPROD": [
+        {"name": "group", "type": "string", "required": True, "unit": None, "description": "Имя группы или FIELD"},
+        {"name": "control", "type": "string", "required": True, "unit": None, "description": "ORAT/WRAT/GRAT/LRAT/RESV/FLD"},
     ],
 }
 
@@ -6980,6 +7116,11 @@ DESCRIPTIONS = {
     "COMPDATMD": "Перфорация по MD",
     "GRUPTREE": "Иерархия групп",
     "WELTARG": "Целевое управление скважиной",
+    "WCONHIST": "Исторический контроль добывающей скважины; не прогноз",
+    "WECON": "Экономические пределы скважины; не целевой дебит",
+    "WTEST": "Политика проверки и переоткрытия закрытой скважины",
+    "WPIMULT": "Множитель проводимости перфорации",
+    "GCONPROD": "Прогнозный контроль группы или FIELD; не well control",
     "FRACTURE_SPECS": "Параметры ГРП скважины (legacy name; layout FRACTURE_WELL §12.2.131)",
 }
 
@@ -7565,7 +7706,7 @@ def get_session_result(session_id: str) -> dict[str, Any]:
         raise HTTPException(status_code=404, detail="session_not_found") from exc
 
 ===END_FILE===
-===BEGIN_FILE===	schedule-builder-service/app/parse.py	3170	utf8
+===BEGIN_FILE===	schedule-builder-service/app/parse.py	4296	utf8
 """Lexical SCHEDULE parser: keyword blocks + record lines. Does not invent field layouts."""
 
 from __future__ import annotations
@@ -7584,6 +7725,7 @@ HEADER = re.compile(r"^\s*([A-Za-z][A-Za-z0-9_]*)\s*(?:--.*)?$")
 class Record:
     tokens: list[str]
     raw: str
+    comment: str = ""
 
 
 @dataclass
@@ -7622,14 +7764,43 @@ def parse_schedule(text: str) -> ScheduleDoc:
         end = headers[idx + 1][0] if idx + 1 < len(headers) else len(lines)
         body_lines = lines[start + 1 : end]
         records: list[Record] = []
+        pending_comment = ""
         for raw in body_lines:
             stripped = raw.strip()
-            if not stripped or stripped.startswith("--") or stripped == "/":
+            if not stripped or stripped == "/":
                 continue
+            if stripped.startswith("--"):
+                if records:
+                    comment = stripped[2:].strip()
+                    records[-1].comment = " ".join(
+                        part for part in (records[-1].comment, comment) if part
+                    )
+                else:
+                    pending_comment = " ".join(
+                        part for part in (pending_comment, stripped[2:].strip()) if part
+                    )
+                continue
+            inline_comment = ""
+            comment_pos = raw.find("--")
+            if comment_pos >= 0:
+                inline_comment = raw[comment_pos + 2 :].strip()
+                raw = raw[:comment_pos].rstrip()
+                stripped = raw.strip()
             cleaned = stripped[:-1].rstrip() if stripped.endswith("/") else stripped
             tokens = [tok for tok in re.split(r"[,\s]+", cleaned) if tok and tok != "/"]
             if tokens:
-                records.append(Record(tokens=tokens, raw=raw.rstrip("\n")))
+                records.append(
+                    Record(
+                        tokens=tokens,
+                        raw=raw.rstrip("\n"),
+                        comment=" ".join(
+                            part
+                            for part in (pending_comment, inline_comment)
+                            if part
+                        ),
+                    )
+                )
+                pending_comment = ""
         blocks.append(
             Block(
                 keyword=kw,
@@ -7648,7 +7819,7 @@ def timeline_segments(doc: ScheduleDoc) -> list[dict[str, Any]]:
         if block.keyword == "DATES":
             if current:
                 segments.append(current)
-            date = block.records[0].tokens[0] if block.records else None
+            date = " ".join(block.records[0].tokens) if block.records else None
             current = {"date": date, "dates_block": block, "blocks": []}
             continue
         if current is None:
@@ -7722,6 +7893,297 @@ def _expire_unlocked() -> None:
     dead = [sid for sid, row in _SESSIONS.items() if now - float(row.get("updated_at") or 0) > TTL_SEC]
     for sid in dead:
         _SESSIONS.pop(sid, None)
+
+===END_FILE===
+===BEGIN_FILE===	schedule-builder-service/app/timeline_ops.py	11197	utf8
+"""Python-native timeline edits used by Schedule Builder."""
+
+from __future__ import annotations
+
+from copy import deepcopy
+from datetime import date, datetime
+import re
+from typing import Any
+
+from .diff import unified_diff
+from .emit import emit_schedule
+from .parse import Block, Record, ScheduleDoc, parse_schedule, timeline_segments
+from .well_model import is_factual_record
+
+MONTHS = {
+    "JAN": 1, "FEB": 2, "MAR": 3, "APR": 4, "MAY": 5, "JUN": 6,
+    "JUL": 7, "AUG": 8, "SEP": 9, "OCT": 10, "NOV": 11, "DEC": 12,
+}
+MOVE_KEYWORDS = {"WCONPROD", "WELOPEN", "WEFAC"}
+
+
+def parse_date(value: Any) -> date | None:
+    text = str(value or "").strip().upper().replace(",", " ")
+    text = re.sub(r"\s+", " ", text)
+    for fmt in ("%d %b %Y", "%Y-%m-%d", "%Y/%m/%d", "%d-%m-%Y"):
+        try:
+            return datetime.strptime(text, fmt).date()
+        except ValueError:
+            pass
+    parts = text.split(" ")
+    if len(parts) == 3 and parts[1] in MONTHS:
+        try:
+            return date(int(parts[2]), MONTHS[parts[1]], int(parts[0]))
+        except ValueError:
+            return None
+    return None
+
+
+def tnav_date(value: date) -> str:
+    return f"{value.day} {value.strftime('%b').upper()} {value.year}"
+
+
+def _well(record: Record) -> str:
+    return record.tokens[0].strip("'\"") if record.tokens else ""
+
+
+def _new_block(keyword: str, records: list[Record] | None = None) -> Block:
+    return Block(keyword=keyword, records=records or [], raw_body="", known=True)
+
+
+def _find_or_create_segment(segments: list[dict[str, Any]], target: date) -> dict[str, Any]:
+    for segment in segments:
+        current = parse_date(segment.get("date"))
+        if current == target:
+            return segment
+    dates = _new_block("DATES", [Record(tokens=[tnav_date(target)], raw=f"  {tnav_date(target)} /")])
+    segment = {"date": tnav_date(target), "dates_block": dates, "blocks": []}
+    segments.append(segment)
+    segments.sort(key=lambda item: parse_date(item.get("date")) or date.min)
+    return segment
+
+
+def _emit_segments(segments: list[dict[str, Any]]) -> str:
+    blocks: list[Block] = []
+    for segment in segments:
+        dates_block = segment.get("dates_block")
+        if dates_block is not None:
+            blocks.append(dates_block)
+        blocks.extend(segment.get("blocks") or [])
+    return emit_schedule(ScheduleDoc(blocks=blocks, text="", sha256=""))
+
+
+def commissioning_revise(
+    source_text: str,
+    well_facts: list[dict[str, Any]],
+    *,
+    file_ref: str = "schedule.inc",
+) -> dict[str, Any]:
+    targets: dict[str, date] = {}
+    findings: list[dict[str, Any]] = []
+    for fact in well_facts or []:
+        well = str(fact.get("well") or fact.get("entity") or "").strip()
+        target = parse_date(fact.get("date", fact.get("value")))
+        if well and target:
+            targets[well] = target
+        elif well:
+            findings.append({"code": "COMMISSIONING_DATE_INVALID", "severity": "error", "well": well})
+    if not targets:
+        return {
+            "contract": "schedule_commissioning_revise_result",
+            "status": "noop",
+            "generated_schedule": source_text,
+            "edits": [],
+            "moved": [],
+            "shifts": [],
+            "findings": findings,
+        }
+
+    segments = deepcopy(timeline_segments(parse_schedule(source_text)))
+    by_date = {parse_date(s.get("date")): s for s in segments if parse_date(s.get("date"))}
+    moved: list[tuple[str, Record, str, date]] = []
+    first_wconprod_date: dict[str, date | None] = {}
+    for segment in segments:
+        source_date = parse_date(segment.get("date"))
+        for block in segment.get("blocks") or []:
+            if block.keyword != "WCONPROD":
+                continue
+            for record in block.records:
+                well = _well(record)
+                if (
+                    well in targets
+                    and well not in first_wconprod_date
+                    and not is_factual_record(record)
+                ):
+                    first_wconprod_date[well] = source_date
+    missing_primary = sorted(set(targets) - set(first_wconprod_date))
+    for well in missing_primary:
+        findings.append({
+            "code": "COMMISSIONING_PRIMARY_WCONPROD_MISSING",
+            "severity": "error",
+            "well": well,
+            "keyword": "WCONPROD",
+        })
+
+    seen_primary: set[str] = set()
+    seen_companions: set[tuple[str, str]] = set()
+    for segment in segments:
+        source_date = parse_date(segment.get("date"))
+        for block in list(segment.get("blocks") or []):
+            if block.keyword not in MOVE_KEYWORDS:
+                continue
+            keep: list[Record] = []
+            for record in block.records:
+                well = _well(record)
+                if well not in targets:
+                    keep.append(record)
+                    continue
+                is_primary = block.keyword == "WCONPROD"
+                if is_primary and is_factual_record(record):
+                    keep.append(record)
+                    continue
+                is_companion = (
+                    block.keyword in {"WELOPEN", "WEFAC"}
+                    and well in first_wconprod_date
+                    and first_wconprod_date.get(well) == source_date
+                )
+                if (is_primary and well in seen_primary) or (
+                    is_companion and (well, block.keyword) in seen_companions
+                ) or (not is_primary and not is_companion):
+                    keep.append(record)
+                    continue
+                if is_primary:
+                    seen_primary.add(well)
+                else:
+                    seen_companions.add((well, block.keyword))
+                moved.append((block.keyword, record, well, targets[well]))
+            block.records = keep
+            if not block.records:
+                segment["blocks"].remove(block)
+
+    for keyword, record, well, target in moved:
+        destination = by_date.get(target)
+        if destination is None:
+            destination = _find_or_create_segment(segments, target)
+            by_date[target] = destination
+            findings.append({
+                "code": "DATES_STEP_CREATED",
+                "severity": "warning",
+                "well": well,
+                "dates": tnav_date(target),
+            })
+        block = next(
+            (item for item in destination["blocks"] if item.keyword == keyword),
+            None,
+        )
+        if block is None:
+            block = _new_block(keyword)
+            destination["blocks"].append(block)
+        block.records.append(record)
+
+    generated = _emit_segments(segments)
+    hard = [item for item in findings if item.get("severity") == "error"]
+    edits = [
+        {
+            "op": "retarget_record",
+            "keyword": keyword,
+            "entity": well,
+            "to_dates_tnav": tnav_date(target),
+        }
+        for keyword, _record, well, target in moved
+    ]
+    return {
+        "contract": "schedule_commissioning_revise_result",
+        "contract_version": "1.0",
+        "status": "needs_input" if hard else "applied",
+        "generated_schedule": "" if hard else generated,
+        "edits": edits,
+        "moved": [{"well": w, "keyword": k, "to": tnav_date(t)} for k, _r, w, t in moved],
+        "shifts": [{"well": w, "date": tnav_date(t)} for w, t in targets.items()],
+        "findings": findings,
+        "file_ref": file_ref,
+        "control_semantics": {
+            "commissioning_anchor": "first WCONPROD per well",
+            "forecast_controls_preserved": True,
+            "factual_wconprod_preserved": True,
+            "forecast_control_count": max(0, sum(
+                1 for segment in segments
+                for block in segment.get("blocks") or []
+                if block.keyword == "WCONPROD"
+                for record in block.records
+                if _well(record) in targets
+            )),
+        },
+    }
+
+
+def group_rebind_revise(
+    source_text: str,
+    spec: dict[str, Any],
+    *,
+    file_ref: str = "schedule.inc",
+) -> dict[str, Any]:
+    segments = deepcopy(timeline_segments(parse_schedule(source_text)))
+    wells = {str(item).strip("'\"") for item in spec.get("wells") or []}
+    parent = str(spec.get("parent_group") or "").upper()
+    parent_of_parent = str(spec.get("parent_of_parent") or "").upper()
+    control = str(spec.get("control") or "GRAT").upper()
+    rate = spec.get("gas_rate", spec.get("rate"))
+    missing = [name for name, value in (
+        ("wells", wells), ("parent_group", parent), ("parent_of_parent", parent_of_parent), ("rate", rate)
+    ) if not value]
+    if missing:
+        return {
+            "contract": "schedule_group_rebind_revise_result",
+            "status": "needs_input",
+            "generated_schedule": "",
+            "findings": [{"code": "GROUP_REBIND_SPEC_REQUIRED", "severity": "error", "missing": missing}],
+            "wells": sorted(wells),
+        }
+
+    for segment in segments:
+        for block in segment.get("blocks") or []:
+            if block.keyword != "WELSPECS":
+                continue
+            for record in block.records:
+                if _well(record) in wells:
+                    if len(record.tokens) < 2:
+                        record.tokens.append(f"'{parent}'")
+                    else:
+                        record.tokens[1] = f"'{parent}'"
+                    record.raw = "  " + " ".join(record.tokens) + " /"
+
+    root = next((segment for segment in segments if segment.get("dates_block") is None), None)
+    if root is None:
+        root = {"date": None, "dates_block": None, "blocks": []}
+        segments.insert(0, root)
+    tree = next((block for block in root["blocks"] if block.keyword == "GRUPTREE"), None)
+    if tree is None:
+        tree = _new_block("GRUPTREE")
+        root["blocks"].insert(0, tree)
+    if not any(record.tokens[:2] == [parent, parent_of_parent] for record in tree.records):
+        tree.records.append(Record(tokens=[parent, parent_of_parent], raw=f"  {parent} {parent_of_parent} /"))
+
+    target = next((segment for segment in segments if segment.get("dates_block") is not None), None)
+    if target is None:
+        target = _find_or_create_segment(segments, date.today())
+    gcon = next((block for block in target["blocks"] if block.keyword == "GCONPROD"), None)
+    if gcon is None:
+        gcon = _new_block("GCONPROD")
+        target["blocks"].append(gcon)
+    rate_text = str(int(rate)) if isinstance(rate, (int, float)) and float(rate).is_integer() else str(rate)
+    gcon.records.append(Record(
+        tokens=[parent, control, rate_text],
+        raw=f"  {parent} {control} {rate_text} /",
+    ))
+    generated = _emit_segments(segments)
+    return {
+        "contract": "schedule_group_rebind_revise_result",
+        "contract_version": "1.0",
+        "status": "applied",
+        "generated_schedule": generated,
+        "findings": [],
+        "edits": [{"keyword": "WELSPECS", "wells": sorted(wells)}, {"keyword": "GCONPROD", "group": parent}],
+        "wells": sorted(wells),
+        "parent_group": parent,
+        "gas_rate": rate,
+        "file_ref": file_ref,
+    }
 
 ===END_FILE===
 ===BEGIN_FILE===	schedule-builder-service/app/validate.py	3161	utf8
@@ -7801,6 +8263,148 @@ def validate_emitted(text: str, doc: ScheduleDoc | None = None) -> list[dict[str
     return findings
 
 ===END_FILE===
+===BEGIN_FILE===	schedule-builder-service/app/well_model.py	5112	utf8
+"""Object-level view of wells in a parsed SCHEDULE timeline."""
+
+from __future__ import annotations
+
+from typing import Any
+
+from .parse import ScheduleDoc, timeline_segments
+
+WELL_KEYWORDS = {
+    "WELSPECS",
+    "WELLTRACK",
+    "COMPDATMD",
+    "WCONPROD",
+    "WCONINJE",
+    "WCONHIST",
+    "WELOPEN",
+    "WEFAC",
+    "WECON",
+    "WTEST",
+    "WELTARG",
+    "WPIMULT",
+}
+
+
+def is_factual_record(record: Any) -> bool:
+    comment = str(getattr(record, "comment", "") or "")
+    return "факт" in comment.casefold() or "fact" in comment.casefold()
+
+
+def _well_name(record: Any) -> str:
+    tokens = getattr(record, "tokens", None) or []
+    return str(tokens[0]).strip("'\"") if tokens else ""
+
+
+def _date_text(segment: dict[str, Any]) -> str | None:
+    value = segment.get("date")
+    return str(value) if value else None
+
+
+def build_well_objects(doc: ScheduleDoc) -> list[dict[str, Any]]:
+    """Build a compact, deterministic well object inventory.
+
+    ``first_wconprod`` is the commissioning anchor. Every later WCONPROD is
+    retained as a separate forecast control event and is never confused with
+    commissioning.
+    """
+    objects: dict[str, dict[str, Any]] = {}
+    for segment in timeline_segments(doc):
+        date = _date_text(segment)
+        for block in segment.get("blocks") or []:
+            if block.keyword not in WELL_KEYWORDS:
+                continue
+            for record in block.records:
+                well = _well_name(record)
+                if not well:
+                    continue
+                item = objects.setdefault(
+                    well,
+                    {
+                        "well": well,
+                        "identity": {},
+                        "first_wconprod": None,
+                        "control_events": [],
+                        "override_events": [],
+                        "economic_events": [],
+                        "test_events": [],
+                        "status_events": [],
+                        "efficiency_events": [],
+                        "connection_events": [],
+                        "events": [],
+                    },
+                )
+                event = {
+                    "keyword": block.keyword,
+                    "date": date,
+                    "tokens": list(record.tokens),
+                    "comment": record.comment,
+                    "factual": is_factual_record(record),
+                }
+                item["events"].append(event)
+                if block.keyword == "WELSPECS" and not item["identity"]:
+                    tokens = record.tokens
+                    item["identity"] = {
+                        "group": tokens[1].strip("'\"") if len(tokens) > 1 else "",
+                        "tokens": list(tokens),
+                    }
+                if block.keyword in {"WCONPROD", "WCONINJE", "WCONHIST"}:
+                    item["control_events"].append(event)
+                if block.keyword == "WELTARG":
+                    item["override_events"].append(event)
+                elif block.keyword == "WECON":
+                    item["economic_events"].append(event)
+                elif block.keyword == "WTEST":
+                    item["test_events"].append(event)
+                elif block.keyword == "WELOPEN":
+                    item["status_events"].append(event)
+                elif block.keyword == "WEFAC":
+                    item["efficiency_events"].append(event)
+                elif block.keyword == "WPIMULT":
+                    item["connection_events"].append(event)
+                if block.keyword == "WCONPROD" and item["first_wconprod"] is None:
+                    item["first_wconprod"] = event
+
+    result = []
+    for item in objects.values():
+        controls = item["control_events"]
+        item["forecast_control_count"] = max(
+            0,
+            sum(1 for event in controls if event["keyword"] == "WCONPROD") - 1,
+        )
+        item["status"] = (
+            item["first_wconprod"]["tokens"][1]
+            if item["first_wconprod"] and len(item["first_wconprod"]["tokens"]) > 1
+            else None
+        )
+        item["factual_control_events"] = [
+            event for event in controls if event["factual"]
+        ]
+        item["forecast_control_events"] = [
+            event
+            for event in controls
+            if event["keyword"] == "WCONPROD" and not event["factual"]
+        ]
+        item["commissioning_wconprod"] = next(
+            (event for event in item["forecast_control_events"] if event["keyword"] == "WCONPROD"),
+            None,
+        )
+        item["latest_control"] = controls[-1] if controls else None
+        item["forecast_events"] = [
+            event for event in item["events"]
+            if not event["factual"] and event["keyword"] != "WCONHIST"
+        ]
+        result.append(item)
+    return sorted(result, key=lambda item: item["well"])
+
+
+def find_well(objects: list[dict[str, Any]], well: str) -> dict[str, Any] | None:
+    wanted = str(well or "").strip().strip("'\"")
+    return next((item for item in objects if item.get("well") == wanted), None)
+
+===END_FILE===
 ===BEGIN_FILE===	schedule-builder-service/requirements.txt	120	utf8
 fastapi>=0.115.14,<0.116
 uvicorn[standard]>=0.30,<1.0
@@ -7810,7 +8414,7 @@ httpx>=0.27,<1.0
 
 
 ===END_FILE===
-===BEGIN_FILE===	schedule-builder-service/tests/test_schedule_engine.py	9115	utf8
+===BEGIN_FILE===	schedule-builder-service/tests/test_schedule_engine.py	14873	utf8
 from __future__ import annotations
 
 from app.emit import emit_schedule
@@ -7933,6 +8537,241 @@ WCONPROD
     assert "1601 OPEN GRAT" in feb
     jan = text.split("1 JAN 2020")[1].split("DATES")[0]
     assert "1601 OPEN GRAT" not in jan
+
+
+def test_commissioning_preserves_later_wconprod_forecast_controls() -> None:
+    from app.commissioning import run_commissioning_revise
+
+    source = """DATES
+  1 JAN 2020 /
+/
+
+WCONPROD
+  1601 OPEN GRAT 1* 1* 200000 1* 1* 90 /
+/
+
+DATES
+  1 FEB 2020 /
+/
+
+WCONPROD
+  1601 OPEN GRAT 1* 1* 250000 1* 1* 90 /
+/
+"""
+    revised = run_commissioning_revise(source, [{"well": "1601", "date": "23 FEB 2020"}])
+    assert revised["status"] == "applied"
+    text = revised["generated_schedule"]
+    feb = text.split("23 FEB 2020")[1]
+    assert "1601 OPEN GRAT 1* 1* 200000" in feb
+    assert "1601 OPEN GRAT 1* 1* 250000" in text
+    assert text.index("250000") < text.index("200000")
+    assert revised["control_semantics"]["commissioning_anchor"] == "first WCONPROD per well"
+
+
+def test_inspect_schedule_exposes_well_object_and_control_history() -> None:
+    from app.agent_tools import _compact_inspect
+
+    source = """DATES
+  1 JAN 2020 /
+/
+
+WELSPECS
+  1601 G1 10 20 1000 OIL /
+/
+
+WCONPROD
+  1601 OPEN GRAT 1* 1* 200000 /
+/
+
+DATES
+  1 FEB 2020 /
+/
+
+WCONPROD
+  1601 OPEN GRAT 1* 1* 250000 /
+/
+"""
+    item = _compact_inspect(source)["well_objects"][0]
+    assert item["well"] == "1601"
+    assert item["identity"]["group"] == "G1"
+    assert item["first_wconprod"]["date"] == "1 JAN 2020"
+    assert item["forecast_control_count"] == 1
+
+
+def test_analyze_forecast_controls_distinguishes_overrides_economics_and_policies() -> None:
+    from app.agent_tools import _compact_inspect, execute_tool
+    from app import sessions
+
+    source = """DATES
+  1 JAN 2020 /
+/
+
+WELSPECS
+  P1 G1 10 20 1000 OIL /
+/
+
+WCONHIST
+  P1 OPEN 10 /
+/
+
+DATES
+  1 JAN 2021 /
+/
+
+WCONPROD
+  P1 OPEN GRAT 1* 1* 200000 /
+/
+
+WELTARG
+  P1 GRAT 150000 /
+/
+
+WECON
+  P1 1* 1* 0.95 2* WELL /
+/
+
+WTEST
+  P1 30 E /
+/
+
+WELOPEN
+  P1 OPEN /
+/
+
+WEFAC
+  P1 0.9 /
+/
+
+WPIMULT
+  P1 1.2 /
+/
+"""
+    state = sessions.put({
+        "session_id": sessions.new_session_id(),
+        "task_id": "analysis",
+        "source_text": source,
+        "working_text": source,
+        "objective": "",
+        "handoff_message": "",
+        "inputs": {},
+        "context": {},
+        "facts": [],
+    })
+    result = execute_tool(state["session_id"], "analyze_forecast_controls", {"well": "P1"})
+    assert result["ok"] is True
+    assert result["commissioning_anchor"]["keyword"] == "WCONPROD"
+    assert result["control_overrides"][0]["keyword"] == "WELTARG"
+    assert result["economic_limits"][0]["keyword"] == "WECON"
+    assert result["reopen_policies"][0]["keyword"] == "WTEST"
+    assert result["efficiency_events"][0]["keyword"] == "WEFAC"
+    assert result["connection_multipliers"][0]["keyword"] == "WPIMULT"
+    assert result["needs_input"] == []
+
+
+def test_generic_operations_protect_factual_control_and_require_weltarg_base() -> None:
+    from app.agent_tools import execute_tool
+    from app import sessions
+
+    source = """DATES
+  1 JAN 2020 /
+/
+
+WCONPROD
+  P1 OPEN GRAT 1* 1* 120000 / -- ФАКТ
+/
+"""
+    state = sessions.put({
+        "session_id": sessions.new_session_id(),
+        "task_id": "semantic",
+        "source_text": source,
+        "working_text": source,
+        "objective": "",
+        "handoff_message": "",
+        "inputs": {},
+        "context": {},
+        "facts": [],
+    })
+    factual = execute_tool(state["session_id"], "apply_operations", {
+        "operations": [{"keyword": "WCONPROD", "operation": "MODIFY", "fields": {"well": "P1", "ORAT": 1}}],
+    })
+    assert factual["status"] == "failed"
+    assert factual["issues"][0]["code"] == "FACTUAL_WCONPROD_PROTECTED"
+
+    no_base_source = "DATES\n  1 JAN 2020 /\n/\n\nWELSPECS\n  P1 G1 1 1 1000 OIL /\n/\n"
+    no_base_state = sessions.put({
+        **state,
+        "session_id": sessions.new_session_id(),
+        "source_text": no_base_source,
+        "working_text": no_base_source,
+    })
+    missing = execute_tool(no_base_state["session_id"], "apply_operations", {
+        "operations": [{"keyword": "WELTARG", "operation": "ADD", "fields": {"well": "P1", "quantity": "BHP", "value": 100}}],
+    })
+    assert missing["status"] == "failed"
+    assert missing["issues"][0]["code"] == "WELTARG_BASE_CONTROL_MISSING"
+
+
+def test_fact_comment_is_preserved_and_factual_wconprod_is_not_retargeted() -> None:
+    from app.commissioning import run_commissioning_revise
+    from app.parse import parse_schedule
+    from app.well_model import build_well_objects
+
+    source = """DATES
+  1 JAN 2019 /
+/
+
+WCONPROD
+  1601 OPEN GRAT 1* 1* 120000 / -- ФАКТ: история
+/
+
+DATES
+  1 JAN 2020 /
+/
+
+WCONPROD
+  1601 OPEN GRAT 1* 1* 200000 / -- forecast start
+/
+
+DATES
+  1 FEB 2020 /
+/
+
+WCONPROD
+  1601 OPEN GRAT 1* 1* 250000 / -- forecast mode
+/
+"""
+    objects = build_well_objects(parse_schedule(source))
+    item = objects[0]
+    assert item["factual_control_events"][0]["factual"] is True
+    assert item["commissioning_wconprod"]["tokens"][-1] == "200000"
+
+    revised = run_commissioning_revise(source, [{"well": "1601", "date": "23 FEB 2020"}])
+    assert revised["status"] == "applied"
+    text = revised["generated_schedule"]
+    assert "120000 / -- ФАКТ: история" in text
+    assert "200000 / -- forecast start" in text
+    assert "250000 / -- forecast mode" in text
+    assert "23 FEB 2020" in text
+    assert text.index("120000") < text.index("200000")
+
+
+def test_remove_cannot_delete_factual_wconprod() -> None:
+    from app.apply import apply_operations
+    from app.parse import parse_schedule
+
+    source = """DATES
+  1 JAN 2019 /
+/
+
+WCONPROD
+  1601 OPEN GRAT 120000 / -- факт
+/
+"""
+    _, findings = apply_operations(
+        parse_schedule(source),
+        [{"keyword": "WCONPROD", "operation": "REMOVE", "fields": {"well": "1601"}}],
+    )
+    assert any(item["code"] == "FACTUAL_WCONPROD_PROTECTED" for item in findings)
 
 
 def test_group_rebind_spec_from_task_prose() -> None:
@@ -8103,9 +8942,6 @@ def test_hitl_json_answers_yield_policy_and_new_well_defs() -> None:
     }
     assert _unlisted_policy(state) == "remove"
     assert _new_well_defs(state)[0]["well"] == "N001"
-
-
-
 
 ===END_FILE===
 ===BEGIN_FILE===	scripts/_bootstrap_n8n_field.py	9101	utf8
@@ -9641,925 +10477,3 @@ def publish(name_to_id: dict[str, str]) -> None:
             headers={"Content-Type": "application/json", "Accept": "application/json"},
         )
         try:
-            with opener.open(req, timeout=180) as resp:
-                raw = resp.read()
-                return int(resp.status), json.loads(raw) if raw else None
-        except urllib.error.HTTPError as exc:
-            raw = exc.read()
-            try:
-                parsed = json.loads(raw)
-            except Exception:
-                parsed = raw.decode("utf-8", errors="replace")[:500]
-            return int(exc.code), parsed
-
-    code, body = rest("POST", "/rest/login", {"emailOrLdapLoginId": user, "password": password})
-    if code != 200:
-        raise SystemExit(f"n8n REST login failed: {code} {body}")
-
-    orch_header = env.get("ORCHESTRATOR_AUTH_HEADER") or "Authorization"
-    orch_value = env.get("ORCHESTRATOR_AUTH_VALUE") or "local-orch-inbound"
-    code, cred_body = rest(
-        "PATCH",
-        f"/rest/credentials/{CRED_HDR}",
-        {
-            "name": "Engineering orchestrator inbound key",
-            "type": "httpHeaderAuth",
-            "data": {"name": orch_header, "value": orch_value},
-        },
-    )
-    if code >= 400:
-        code, cred_body = rest(
-            "PUT",
-            f"/rest/credentials/{CRED_HDR}",
-            {
-                "name": "Engineering orchestrator inbound key",
-                "type": "httpHeaderAuth",
-                "data": {"name": orch_header, "value": orch_value},
-            },
-        )
-    print(
-        f"sync orchestrator inbound key: {'OK' if code < 400 else f'FAIL {code}'} "
-        f"(header={orch_header}, value_len={len(orch_value)})"
-    )
-
-    for name in PUBLISH:
-        wid = name_to_id.get(name)
-        if not wid:
-            print(f"publish skip missing {name}")
-            continue
-        code, wf = rest("GET", f"/rest/workflows/{wid}")
-        if code != 200 or not isinstance(wf, dict):
-            print(f"activate {name}: GET FAIL {code}")
-            continue
-        data = wf.get("data") or {}
-        vid = data.get("versionId") or data.get("activeVersionId")
-        if not vid:
-            print(f"activate {name}: no versionId")
-            continue
-        if data.get("active"):
-            # Force republish of current version so webhook registration is restored.
-            rest("POST", f"/rest/workflows/{wid}/deactivate", {"versionId": vid})
-        code, body = rest("POST", f"/rest/workflows/{wid}/activate", {"versionId": vid})
-        ok = code == 200
-        msg = ""
-        if not ok and isinstance(body, dict):
-            msg = str(body.get("message") or body)[:220]
-        print(f"activate {name}: {'OK' if ok else f'FAIL {code} {msg}'}")
-
-    for name in STALE_WORKFLOW_NAMES:
-        wid = name_to_id.get(name)
-        if not wid:
-            print(f"retire skip missing {name}")
-            continue
-        code, wf = rest("GET", f"/rest/workflows/{wid}")
-        data = wf.get("data") if isinstance(wf, dict) and isinstance(wf.get("data"), dict) else (wf or {})
-        vid = data.get("versionId") or data.get("activeVersionId")
-        if data.get("active") and vid:
-            rest("POST", f"/rest/workflows/{wid}/deactivate", {"versionId": vid})
-        code, body = rest("POST", f"/rest/workflows/{wid}/archive", {})
-        if code >= 400:
-            print(f"archive {name}: FAIL {code} {str(body)[:180]}")
-            continue
-        code, body = rest("DELETE", f"/rest/workflows/{wid}")
-        print(f"retire {name}: {'OK' if code < 400 else f'FAIL {code} {str(body)[:180]}'}")
-
-
-def wait_healthy(service: str, url: str, attempts: int = 60) -> None:
-    for _ in range(attempts):
-        if service == "mas-activity":
-            cp = run(
-                [
-                    "docker",
-                    "compose",
-                    "exec",
-                    "-T",
-                    "mas-activity",
-                    "python",
-                    "-c",
-                    f"import urllib.request; urllib.request.urlopen({url!r}, timeout=3)",
-                ],
-                check=False,
-            )
-        else:
-            cp = run(
-                ["docker", "compose", "exec", "-T", service, "wget", "-q", "-O", "/dev/null", url],
-                check=False,
-            )
-        if cp.returncode == 0:
-            return
-        time.sleep(1)
-    raise SystemExit(f"{service} not healthy: {url}")
-
-
-def run_health_form() -> str | None:
-    """POST Health Check form using a real n8n session cookie (REST login)."""
-    print("== health check form ==")
-    env = load_env()
-    user = env.get("N8N_USERNAME") or env.get("N8N_USER")
-    password = env.get("N8N_PASSWORD")
-    if not user or not password:
-        print("missing N8N_USERNAME / N8N_PASSWORD in .env")
-        return None
-    base = f"http://127.0.0.1:{env.get('N8N_HOST_PORT', '5678')}"
-
-    def http_req(method: str, path: str, data: bytes | None = None, content_type: str | None = None, cookie: str = ""):
-        headers = {
-            "Accept": "text/html,application/json,*/*",
-            "User-Agent": "Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36",
-        }
-        if cookie:
-            headers["Cookie"] = cookie
-        if data is not None:
-            headers["Content-Type"] = content_type or "application/json"
-            headers["Content-Length"] = str(len(data))
-        request = urllib.request.Request(base + path, data=data, headers=headers, method=method)
-        try:
-            with urllib.request.urlopen(request, timeout=300) as resp:
-                return int(resp.status), resp.read().decode("utf-8", errors="replace"), resp.headers
-        except urllib.error.HTTPError as exc:
-            return int(exc.code), exc.read().decode("utf-8", errors="replace"), exc.headers
-
-    login_body = json.dumps({"emailOrLdapLoginId": user, "password": password}).encode()
-    status, body, headers = http_req("POST", "/rest/login", login_body, "application/json")
-    if status != 200:
-        print("login failed", status, body[:200])
-        return None
-    cookie = ""
-    set_cookies = []
-    if hasattr(headers, "get_all"):
-        set_cookies = headers.get_all("Set-Cookie") or []
-    elif headers.get("Set-Cookie"):
-        set_cookies = [headers.get("Set-Cookie")]
-    for sc in set_cookies:
-        if "n8n-auth=" in sc:
-            cookie = sc.split(";", 1)[0].strip()
-            if not cookie.startswith("n8n-auth="):
-                # cookie may be in the middle of a combined header
-                for piece in sc.split(","):
-                    piece = piece.strip()
-                    if piece.startswith("n8n-auth="):
-                        cookie = piece.split(";", 1)[0].strip()
-                        break
-            break
-    if not cookie:
-        print("no n8n-auth cookie")
-        return None
-
-    status, body, _ = http_req("GET", "/form/mas-deployment-health-check", cookie=cookie)
-    print("GET form", status, "bytes", len(body))
-    if status != 200:
-        print(body[:300])
-        return None
-
-    boundary = f"----mashealth{int(time.time())}"
-    parts = [
-        f"--{boundary}",
-        'Content-Disposition: form-data; name="operator_note"',
-        "",
-        "lab-soft-redeploy",
-        f"--{boundary}--",
-        "",
-    ]
-    post_body = "\r\n".join(parts).encode()
-    status, body, _ = http_req(
-        "POST",
-        "/form/mas-deployment-health-check",
-        post_body,
-        f"multipart/form-data; boundary={boundary}",
-        cookie=cookie,
-    )
-    print("POST form", status, "bytes", len(body))
-    try:
-        waiting = json.loads(body)
-        waiting_path = re.sub(r"^https?://[^/]+", "", waiting["formWaitingUrl"])
-        exec_id = None
-        m_exec = re.search(r"/form-waiting/(\d+)", waiting_path)
-        if m_exec:
-            exec_id = m_exec.group(1)
-    except Exception:
-        print("no formWaitingUrl", body[:200])
-        return None
-
-    def overall_from_execution(eid: str) -> str | None:
-        raw = psql(f'SELECT data::text FROM execution_data WHERE "executionId"={eid};')
-        m = re.search(r"Overall:\s*<strong>(FAIL|PASS_WITH_TODO|PASS)</strong>", raw)
-        return m.group(1) if m else None
-
-    for i in range(60):
-        if exec_id:
-            overall = overall_from_execution(exec_id)
-            if overall:
-                fail_count = "0"
-                raw = psql(f'SELECT data::text FROM execution_data WHERE "executionId"={exec_id};')
-                fm = re.search(r"FAIL — fix these first \((\d+)\)", raw)
-                if fm:
-                    fail_count = fm.group(1)
-                print(json.dumps({"overall": overall, "fail_first": fail_count, "execution_id": exec_id}))
-                return overall
-            st = psql(f'SELECT status FROM execution_entity WHERE id={exec_id};')
-            if st in {"error", "crashed", "canceled"}:
-                print("health execution", st)
-                return "FAIL"
-        time.sleep(2)
-    print("health wait timeout")
-    return None
-
-
-def wait_url(url: str, attempts: int = 90) -> None:
-    """Host-side health wait — avoids depending on wget inside images."""
-    for i in range(attempts):
-        try:
-            with urllib.request.urlopen(url, timeout=3) as resp:
-                if int(resp.status) == 200:
-                    return
-        except Exception:
-            pass
-        time.sleep(1)
-    raise SystemExit(f"not healthy: {url}")
-
-
-def ensure_compose_up() -> None:
-    print("== compose up ==")
-    # Prefer recreate-without-rebuild when images exist (fast path).
-    run(["docker", "compose", "up", "-d"], timeout=300)
-    env = load_env()
-    n8n_port = env.get("N8N_HOST_PORT", "15678")
-    activity_port = env.get("MAS_ACTIVITY_HOST_PORT", "8200")
-    wait_url(f"http://127.0.0.1:{n8n_port}/healthz")
-    wait_url(f"http://127.0.0.1:{activity_port}/health")
-    for service, inner in (
-        ("math-service", "http://127.0.0.1:8100/health"),
-        ("schedule-builder", "http://127.0.0.1:8090/health"),
-        ("excel-tools", "http://127.0.0.1:18000/health"),
-    ):
-        print(f"wait {service} {inner}")
-        for _ in range(90):
-            cp = run(
-                [
-                    "docker",
-                    "compose",
-                    "exec",
-                    "-T",
-                    service,
-                    "python3",
-                    "-c",
-                    f"import urllib.request; urllib.request.urlopen({inner!r}, timeout=3).read()",
-                ],
-                check=False,
-                timeout=20,
-            )
-            if cp.returncode == 0:
-                break
-            time.sleep(2)
-        else:
-            print(f"warn: {service} not healthy yet")
-
-
-def main() -> int:
-    parser = argparse.ArgumentParser()
-    parser.add_argument("--skip-health", action="store_true")
-    parser.add_argument("--skip-import", action="store_true", help="only rebind/publish existing workflows")
-    parser.add_argument("--skip-wipe", action="store_true", help="do not wipe CAS/trace/Activity state")
-    args = parser.parse_args()
-    t0 = time.time()
-    env = load_env()
-    ensure_compose_up()
-    apply_control_plane_sql()
-    qwen_id = ensure_qwen_credential(env)
-    if qwen_id:
-        env["_N8N_QWEN_CRED_ID"] = qwen_id
-    if not args.skip_wipe:
-        wipe_state(env)
-    if not args.skip_import:
-        import_workflows()
-    name_to_id = wf_map()
-    print(f"workflows {len(name_to_id)}")
-    for name, wid in sorted(name_to_id.items()):
-        nodes = fetch_nodes(wid)
-        n = patch_nodes(nodes, name_to_id, env)
-        if n:
-            save_nodes(wid, nodes)
-        print(f"patched {name}: {n}")
-    bind_error_workflow(name_to_id)
-    # share with project if missing
-    if PROJECT_ID:
-        for wid in name_to_id.values():
-            psql(
-                f"INSERT INTO shared_workflow (\"workflowId\", \"projectId\", role) "
-                f"VALUES ('{wid}', '{PROJECT_ID}', 'workflow:owner') ON CONFLICT DO NOTHING;"
-            )
-    sync_history()
-    publish(name_to_id)
-    run(["docker", "compose", "restart", "n8n"])
-    env = load_env()
-    wait_url(f"http://127.0.0.1:{env.get('N8N_HOST_PORT', '5678')}/healthz")
-    # Forms/webhooks register after active workflows finish loading.
-    time.sleep(8)
-    run(["docker", "compose", "restart", "mas-activity"])
-    wait_url(f"http://127.0.0.1:{env.get('MAS_ACTIVITY_HOST_PORT', '8200')}/health")
-    overall = None
-    if not args.skip_health:
-        overall = run_health_form()
-        if overall is None:
-            print("health form did not return overall — retry once after activate settle")
-            time.sleep(10)
-            overall = run_health_form()
-    # final activity emptiness
-    tasks = -1
-    try:
-        req = urllib.request.Request(
-            f"http://127.0.0.1:{env.get('MAS_ACTIVITY_HOST_PORT', '8200')}/v1/tasks",
-        )
-        with urllib.request.urlopen(req, timeout=5) as resp:
-            tasks = len(json.loads(resp.read().decode()).get("tasks") or [])
-    except Exception as exc:  # noqa: BLE001
-        print("activity probe", exc)
-    elapsed = round(time.time() - t0, 1)
-    print(json.dumps({"overall": overall, "activity_tasks": tasks, "elapsed_s": elapsed}, ensure_ascii=False))
-    if overall == "FAIL" or overall is None:
-        return 2
-    return 0
-
-
-if __name__ == "__main__":
-    raise SystemExit(main())
-
-===END_FILE===
-===BEGIN_FILE===	scripts/mas_stack_health.py	4659	utf8
-#!/usr/bin/env python3
-"""Host-side stack health: ping compose services the Health Check form also probes."""
-from __future__ import annotations
-
-import json
-import os
-import subprocess
-import sys
-import urllib.error
-import urllib.request
-from pathlib import Path
-
-ROOT = Path(__file__).resolve().parents[1]
-
-
-def load_dotenv(path: Path) -> None:
-    """Load KEY=VALUE from .env into os.environ without overriding existing exports."""
-    if not path.is_file():
-        return
-    for raw in path.read_text(encoding="utf-8", errors="replace").splitlines():
-        line = raw.strip()
-        if not line or line.startswith("#") or "=" not in line:
-            continue
-        key, _, value = line.partition("=")
-        key = key.strip()
-        if not key or key in os.environ:
-            continue
-        value = value.strip()
-        if len(value) >= 2 and value[0] == value[-1] and value[0] in {'"', "'"}:
-            value = value[1:-1]
-        os.environ[key] = value
-
-
-def http_get(url: str, timeout: float = 5.0) -> tuple[int, str]:
-    try:
-        with urllib.request.urlopen(url, timeout=timeout) as resp:
-            return int(resp.status), resp.read().decode("utf-8", errors="replace")[:300]
-    except urllib.error.HTTPError as exc:
-        return int(exc.code), str(exc)[:300]
-    except Exception as exc:  # noqa: BLE001
-        return 0, str(exc)[:300]
-
-
-def compose_exec(service: str, *args: str) -> subprocess.CompletedProcess[str]:
-    return subprocess.run(
-        ["docker", "compose", "exec", "-T", service, *args],
-        cwd=str(ROOT),
-        capture_output=True,
-        text=True,
-        timeout=45,
-    )
-
-
-def main() -> int:
-    load_dotenv(ROOT / ".env")
-    # Match docker-compose.yml defaults: N8N_HOST_PORT:-5678, MAS_ACTIVITY_HOST_PORT:-8200
-    n8n_port = os.getenv("N8N_HOST_PORT", "5678")
-    activity_port = os.getenv("MAS_ACTIVITY_HOST_PORT", "8200")
-    checks: list[dict] = []
-
-    def push(name: str, ok: bool, detail: str) -> None:
-        checks.append({"check": name, "ok": ok, "detail": detail})
-        print(("PASS" if ok else "FAIL"), name, "—", detail)
-
-    code, body = http_get(f"http://127.0.0.1:{n8n_port}/healthz")
-    push("host n8n /healthz", code == 200 and "ok" in body.lower(), f"{code} {body}")
-
-    code, body = http_get(f"http://127.0.0.1:{activity_port}/health")
-    push("host mas-activity /health", code == 200 and "ok" in body.lower(), f"{code} {body}")
-
-    orch_url = os.getenv(
-        "ORCHESTRATOR_WEBHOOK_URL",
-        f"http://127.0.0.1:{n8n_port}/webhook/mas-orchestrator-step",
-    )
-    try:
-        req = urllib.request.Request(
-            orch_url,
-            data=b"{}",
-            method="POST",
-            headers={"Content-Type": "application/json"},
-        )
-        with urllib.request.urlopen(req, timeout=10) as resp:
-            orch_code = int(resp.status)
-            orch_body = resp.read().decode("utf-8", errors="replace")[:180]
-    except urllib.error.HTTPError as exc:
-        orch_code = int(exc.code)
-        orch_body = exc.read().decode("utf-8", errors="replace")[:180]
-    except Exception as exc:  # noqa: BLE001
-        orch_code = 0
-        orch_body = str(exc)[:180]
-    push(
-        "host orchestrator webhook registered (unauth 403)",
-        orch_code == 403 and "Authorization data is wrong" in orch_body,
-        f"{orch_code} {orch_body.replace(chr(10), ' ')}",
-    )
-
-    for name, url in [
-        ("compose excel-tools via n8n DNS", "http://excel-tools:18000/health"),
-        ("compose n8n-runners via n8n DNS", "http://n8n-runners:5680/healthz"),
-        ("compose mas-activity via n8n DNS", "http://mas-activity:8200/health"),
-        ("compose n8n self via n8n DNS", "http://n8n:5678/healthz"),
-    ]:
-        r = compose_exec("n8n", "wget", "-q", "-O", "-", url)
-        ok = r.returncode == 0 and bool((r.stdout or "").strip())
-        push(name, ok, ((r.stdout or r.stderr) or "")[:300])
-
-    r = compose_exec("postgres", "pg_isready", "-U", os.getenv("POSTGRES_USER", "n8n"))
-    push("compose postgres pg_isready", r.returncode == 0, ((r.stdout or r.stderr) or "")[:200])
-
-    failed = [c for c in checks if not c["ok"]]
-    report = {"overall": "FAIL" if failed else "PASS", "fail_count": len(failed), "checks": checks}
-    out = ROOT / "simulation-model-example" / "combat-dates-revise" / "stack_health_report.json"
-    out.parent.mkdir(parents=True, exist_ok=True)
-    out.write_text(json.dumps(report, ensure_ascii=False, indent=2) + "\n")
-    print(json.dumps({"overall": report["overall"], "fail_count": report["fail_count"]}, indent=2))
-    return 1 if failed else 0
-
-
-if __name__ == "__main__":
-    sys.exit(main())
-
-===END_FILE===
-===BEGIN_FILE===	scripts/project_pack.py	10437	utf8
-#!/usr/bin/env python3
-"""Pack and unpack the MAS deployment tree into a portable text archive."""
-from __future__ import annotations
-
-import argparse
-import base64
-import re
-import subprocess
-from pathlib import Path
-
-ARCHIVE_FILE = "all.txt"
-BEGIN = "===BEGIN_FILE==="
-END = "===END_FILE==="
-DEFAULT_CHUNK_SIZE = 1_000_000
-
-PACK_DIRS = (
-    "excel-agent-tools",
-    "fastapi-math-service",
-    "mas-activity-service",
-    "n8n",
-    "schedule-builder-service",
-    "scripts",
-)
-ROOT_FILES = (".env.example", "docs.md", "README.md", "docker-compose.yml", ".gitignore")
-NEVER_PACK_DIR_PREFIXES = ("simulation-model-example/", "context-seeder/")
-EXCLUDED_DIR_NAMES = {
-    ".git", ".venv", "venv", "__pycache__", ".mypy_cache", ".pytest_cache",
-    ".ruff_cache", ".idea", ".cursor", "node_modules", "data", "task_binaries",
-}
-EXCLUDED_FILE_NAMES = {ARCHIVE_FILE, "conftest.py", ".coverage"}
-INCLUDED_FILE_EXTENSIONS = {
-    ".py", ".md", ".txt", ".json", ".js", ".css", ".html", ".csv", ".yml",
-    ".yaml", ".toml", ".ini", ".cfg", ".bat", ".sh", ".inc", ".sch",
-    ".grdecl", ".example", ".svg",
-}
-INCLUDED_FILE_NAMES = {
-    "Dockerfile", ".dockerignore", ".gitattributes", ".gitignore",
-    "requirements.txt", "requirements-dev.txt",
-}
-
-
-def _is_under_pack_root(rel: Path) -> bool:
-    posix = rel.as_posix()
-    if posix.startswith(NEVER_PACK_DIR_PREFIXES):
-        return False
-    if posix in ROOT_FILES:
-        return True
-    return bool(rel.parts) and rel.parts[0] in PACK_DIRS
-
-
-def should_skip_path(path: Path, root: Path) -> bool:
-    rel = path.relative_to(root)
-    if not _is_under_pack_root(rel):
-        return True
-    if set(rel.parts) & EXCLUDED_DIR_NAMES:
-        return True
-    if "tests" in rel.parts and rel.parts[0] not in {"n8n", "schedule-builder-service"}:
-        return True
-    if path.name in EXCLUDED_FILE_NAMES or path.name.endswith("_test.py"):
-        return True
-    if path.name.startswith("test_") and path.suffix.lower() == ".py":
-        return rel.parts[0] in {"excel-agent-tools", "mas-activity-service"}
-    if path.suffix == ".env" and not path.name.endswith(".env.example"):
-        return True
-    return False
-
-
-def should_include_path(path: Path) -> bool:
-    return path.name in INCLUDED_FILE_NAMES or path.name.endswith(".env.example") or path.suffix.lower() in INCLUDED_FILE_EXTENSIONS
-
-
-def _git_list_candidates(root: Path) -> list[Path] | None:
-    if not (root / ".git").exists():
-        return None
-    try:
-        proc = subprocess.run(
-            ["git", "-C", str(root), "ls-files", "-z", "--cached", "--others",
-             "--exclude-standard", "--", *PACK_DIRS, *ROOT_FILES],
-            check=True, capture_output=True,
-        )
-    except (OSError, subprocess.CalledProcessError):
-        return None
-    result = []
-    for raw in proc.stdout.split(b"\0"):
-        if raw:
-            path = root / raw.decode("utf-8", errors="surrogateescape")
-            if path.is_file():
-                result.append(path)
-    return result
-
-
-def _git_ignored(root: Path, path: Path) -> bool:
-    try:
-        return subprocess.run(
-            ["git", "-C", str(root), "check-ignore", "-q", "--", str(path.relative_to(root))],
-            capture_output=True,
-        ).returncode == 0
-    except OSError:
-        return False
-
-
-def collect_files(root: Path, *, archive_path: Path | None = None) -> list[Path]:
-    archive_paths = {(root / ARCHIVE_FILE).resolve()}
-    if archive_path is not None:
-        archive_paths.add(archive_path.resolve())
-    candidates = _git_list_candidates(root)
-    from_git = candidates is not None
-    if candidates is None:
-        candidates = [p for p in root.rglob("*") if p.is_file()]
-    files = []
-    for path in candidates:
-        if should_skip_path(path, root) or not should_include_path(path):
-            continue
-        if path.resolve() in archive_paths:
-            continue
-        if not from_git and _git_ignored(root, path):
-            continue
-        files.append(path)
-    return sorted({p.resolve(): p for p in files}.values(),
-                  key=lambda p: p.relative_to(root).as_posix())
-
-
-def _read_payload(path: Path) -> tuple[str, str]:
-    raw = path.read_bytes()
-    try:
-        text = raw.decode("utf-8")
-    except UnicodeDecodeError:
-        return "base64", base64.b64encode(raw).decode("ascii")
-    if "\0" in text:
-        return "base64", base64.b64encode(raw).decode("ascii")
-    return "utf8", text
-
-
-def _write_payload(path: Path, encoding: str, payload: str) -> None:
-    path.parent.mkdir(parents=True, exist_ok=True)
-    if encoding == "utf8":
-        path.write_text(payload, encoding="utf-8")
-    elif encoding == "base64":
-        path.write_bytes(base64.b64decode(payload.encode("ascii")))
-    else:
-        raise ValueError(f"Unknown payload encoding: {encoding!r}")
-
-
-def pack(root: Path, output_file: Path) -> None:
-    files = collect_files(root, archive_path=output_file)
-    output_file.parent.mkdir(parents=True, exist_ok=True)
-    with output_file.open("w", encoding="utf-8", newline="") as out:
-        for path in files:
-            rel = path.relative_to(root).as_posix()
-            encoding, content = _read_payload(path)
-            out.write(f"{BEGIN}\t{rel}\t{len(content)}\t{encoding}\n")
-            out.write(content)
-            out.write("\n")
-            out.write(f"{END}\n")
-    print(f"Packed {len(files)} files into {output_file}")
-
-
-def _chunk_pattern(prefix: str) -> re.Pattern[str]:
-    return re.compile(rf"^{re.escape(prefix)}([1-9][0-9]*)$")
-
-
-def split_archive(input_file: Path, *, chunk_dir: Path | None = None,
-                   chunk_prefix: str | None = None,
-                   chunk_size: int = DEFAULT_CHUNK_SIZE) -> list[Path]:
-    if not input_file.exists():
-        raise FileNotFoundError(f"Archive file not found: {input_file}")
-    if chunk_size <= 0:
-        raise ValueError("Chunk size must be positive")
-    target = chunk_dir or input_file.parent
-    target.mkdir(parents=True, exist_ok=True)
-    prefix = chunk_prefix or input_file.stem
-    pattern = _chunk_pattern(prefix)
-    for path in target.iterdir():
-        if path.is_file() and pattern.fullmatch(path.name):
-            path.unlink()
-    chunks: list[Path] = []
-    current = None
-    current_size = 0
-    with input_file.open("r", encoding="utf-8", newline="") as source:
-        for line in source:
-            size = len(line.encode("utf-8"))
-            if current is None or current_size and current_size + size > chunk_size:
-                if current is not None:
-                    current.close()
-                chunk_path = target / f"{prefix}{len(chunks) + 1}"
-                current = chunk_path.open("w", encoding="utf-8", newline="")
-                chunks.append(chunk_path)
-                current_size = 0
-            current.write(line)
-            current_size += size
-    if current is None:
-        path = target / f"{prefix}1"
-        path.write_text("", encoding="utf-8")
-        chunks.append(path)
-    else:
-        current.close()
-    return chunks
-
-
-def _collect_chunks(directory: Path, prefix: str) -> list[Path]:
-    matches = []
-    pattern = _chunk_pattern(prefix)
-    for path in directory.iterdir():
-        match = pattern.fullmatch(path.name)
-        if path.is_file() and match:
-            matches.append((int(match.group(1)), path))
-    matches.sort()
-    if not matches:
-        raise FileNotFoundError(f"Archive chunks not found in {directory} with prefix {prefix!r}")
-    if [n for n, _ in matches] != list(range(1, len(matches) + 1)):
-        raise ValueError("Archive chunks are incomplete or out of order")
-    return [path for _, path in matches]
-
-
-def join_archive(output_file: Path, *, chunk_dir: Path | None = None,
-                 chunk_prefix: str | None = None) -> list[Path]:
-    directory = chunk_dir or output_file.parent
-    chunks = _collect_chunks(directory, chunk_prefix or output_file.stem)
-    output_file.write_bytes(b"".join(path.read_bytes() for path in chunks))
-    return chunks
-
-
-def unpack(root: Path, input_file: Path) -> None:
-    restored = 0
-    root_resolved = root.resolve()
-    with input_file.open("r", encoding="utf-8") as source:
-        while True:
-            header = source.readline()
-            if not header:
-                break
-            if not header.startswith(BEGIN + "\t"):
-                raise ValueError("Invalid archive format: malformed BEGIN header")
-            fields = header.rstrip("\n").split("\t")
-            if len(fields) == 3:
-                _, rel_path, raw_len = fields
-                encoding = "utf8"
-            elif len(fields) == 4:
-                _, rel_path, raw_len, encoding = fields
-            else:
-                raise ValueError("Invalid archive format: malformed BEGIN payload")
-            content = source.read(int(raw_len))
-            if len(content) != int(raw_len) or source.read(1) != "\n" or source.readline().rstrip("\n") != END:
-                raise ValueError("Invalid archive format: truncated file or missing END marker")
-            target = (root / rel_path).resolve()
-            if root_resolved != target and root_resolved not in target.parents:
-                raise ValueError(f"Refusing to unpack outside root: {rel_path}")
-            _write_payload(target, encoding, content)
-            restored += 1
-    print(f"Restored {restored} files from {input_file}")
-
-
-def main() -> None:
-    parser = argparse.ArgumentParser()
-    parser.add_argument("mode", choices=("pack", "unpack", "split", "join"))
-    parser.add_argument("--root", default=".")
-    parser.add_argument("--archive", default=None)
-    parser.add_argument("--chunk-dir", default=None)
-    parser.add_argument("--chunk-prefix", default=None)
-    parser.add_argument("--chunk-size", type=int, default=DEFAULT_CHUNK_SIZE)
-    args = parser.parse_args()
-    root = Path(args.root).resolve()
-    archive = Path(args.archive).resolve() if args.archive else root / ARCHIVE_FILE
-    chunk_dir = Path(args.chunk_dir).resolve() if args.chunk_dir else archive.parent
-    if args.mode == "pack":
-        pack(root, archive)
-    elif args.mode == "unpack":
-        unpack(root, archive)
-    elif args.mode == "split":
-        split_archive(archive, chunk_dir=chunk_dir, chunk_prefix=args.chunk_prefix, chunk_size=args.chunk_size)
-    else:
-        join_archive(archive, chunk_dir=chunk_dir, chunk_prefix=args.chunk_prefix)
-
-
-if __name__ == "__main__":
-    main()
-
-===END_FILE===
-===BEGIN_FILE===	scripts/test_check_schedule_includes.py	2727	utf8
-#!/usr/bin/env python3
-"""Self-tests for check_schedule_includes.py (no third-party dependencies)."""
-
-from __future__ import annotations
-
-import tempfile
-from pathlib import Path
-
-import check_schedule_includes as checker
-
-
-def test_valid_virtual_package() -> None:
-    with tempfile.TemporaryDirectory() as tmp:
-        package = Path(tmp)
-        root = package / "SCHEDULE" / "FORECAST" / "MVP1_schedule_IN.INC"
-        include = package / "INCLUDE" / "MODEL.INC"
-        root.parent.mkdir(parents=True)
-        include.parent.mkdir(parents=True)
-        root.write_text("INCLUDE\n'../../INCLUDE/MODEL.INC' /\n", encoding="utf-8")
-        include.write_text("DATES\n  1 JAN 2025 /\n", encoding="utf-8")
-        code, result = checker.run(
-            checker.build_parser().parse_args(
-                [str(root), "--package-dir", str(package)]
-            )
-        )
-        assert code == 0, result
-        assert result["ok"] is True
-        assert result["files_checked"] == 2
-        assert result["includes_checked"] == 1
-
-
-def test_invalid_include_and_encoding() -> None:
-    with tempfile.TemporaryDirectory() as tmp:
-        source = Path(tmp) / "MVP1_schedule_IN.INC"
-        source.write_text("INCLUDE\n'' /\nINCLUDE\n'broken\n", encoding="utf-8")
-        code, result = checker.run(
-            checker.build_parser().parse_args([str(source)])
-        )
-        assert code == 1, result
-        codes = {finding["code"] for finding in result["findings"]}
-        assert "INCLUDE_PATH_INVALID" in codes
-        assert "INCLUDE_QUOTE_UNTERMINATED" in codes
-
-        utf16 = Path(tmp) / "utf16.INC"
-        utf16.write_bytes("DATES\n/\n".encode("utf-16"))
-        code, result = checker.run(
-            checker.build_parser().parse_args([str(utf16)])
-        )
-        assert code == 1, result
-        codes = {finding["code"] for finding in result["findings"]}
-        assert "NUL_BYTE" in codes
-        assert "ENCODING_NOT_UTF8" in codes
-
-
-def test_missing_include_body() -> None:
-    with tempfile.TemporaryDirectory() as tmp:
-        package = Path(tmp)
-        root = package / "SCHEDULE" / "FORECAST" / "root.INC"
-        root.parent.mkdir(parents=True)
-        root.write_text("INCLUDE\n'../../INCLUDE/missing.INC' /\n", encoding="utf-8")
-        code, result = checker.run(
-            checker.build_parser().parse_args(
-                [str(root), "--package-dir", str(package)]
-            )
-        )
-        assert code == 1, result
-        assert any(f["code"] == "INCLUDE_NOT_FOUND" for f in result["findings"])
-
-
-if __name__ == "__main__":
-    test_valid_virtual_package()
-    test_invalid_include_and_encoding()
-    test_missing_include_body()
-    print("check_schedule_includes self-tests OK")
-
-===END_FILE===
-===BEGIN_FILE===	scripts/test_project_pack.py	4052	utf8
-#!/usr/bin/env python3
-"""Smoke tests for scripts/project_pack.py (no pytest required)."""
-from __future__ import annotations
-
-import importlib.util
-import sys
-import tempfile
-from pathlib import Path
-
-ROOT = Path(__file__).resolve().parents[1]
-
-
-def _load():
-    spec = importlib.util.spec_from_file_location(
-        "project_pack",
-        ROOT / "scripts" / "project_pack.py",
-    )
-    assert spec and spec.loader
-    mod = importlib.util.module_from_spec(spec)
-    spec.loader.exec_module(mod)
-    return mod
-
-
-def test_pack_unpack_roundtrip() -> None:
-    mod = _load()
-    with tempfile.TemporaryDirectory() as tmp:
-        src = Path(tmp) / "src"
-        out = Path(tmp) / "out"
-        archive = Path(tmp) / "all.txt"
-        (src / "n8n" / "workflows").mkdir(parents=True)
-        (src / "excel-agent-tools").mkdir(parents=True)
-        (src / "schedule-builder-service" / "app").mkdir(parents=True)
-        (src / "scripts").mkdir(parents=True)
-        (src / ".venv" / "lib").mkdir(parents=True)
-        (src / "excel-agent-tools" / "tests").mkdir(parents=True)
-
-        (src / "docs.md").write_text("# runbook\n", encoding="utf-8")
-        (src / ".env.example").write_text("KEY=value\n", encoding="utf-8")
-        (src / "n8n" / "workflows" / "a.workflow.json").write_text('{"ok":1}\n', encoding="utf-8")
-        (src / "excel-agent-tools" / "app.py").write_text("print(1)\n", encoding="utf-8")
-        (src / "schedule-builder-service" / "app" / "main.py").write_text("print('schedule')\n", encoding="utf-8")
-        (src / "excel-agent-tools" / "secret.env").write_text("SECRET=1\n", encoding="utf-8")
-        (src / "excel-agent-tools" / "tests" / "test_x.py").write_text("assert True\n", encoding="utf-8")
-        (src / ".venv" / "lib" / "skip.py").write_text("nope\n", encoding="utf-8")
-        (src / "scripts" / "project_pack.py").write_text("# pack\n", encoding="utf-8")
-        # binary sample
-        (src / "n8n" / "blob.bin").write_bytes(b"\x00\xff")
-        # .bin not in include list — skip; use .inc with binary via forced name
-        (src / "n8n" / "sample.inc").write_bytes(b"DATES\n/\n\x00")
-
-        # No .git → walk fallback
-        files = mod.collect_files(src)
-        rels = [p.relative_to(src).as_posix() for p in files]
-        assert "docs.md" in rels
-        assert ".env.example" in rels
-        assert "n8n/workflows/a.workflow.json" in rels
-        assert "excel-agent-tools/app.py" in rels
-        assert "schedule-builder-service/app/main.py" in rels
-        assert "scripts/project_pack.py" in rels
-        assert "excel-agent-tools/secret.env" not in rels
-        assert "excel-agent-tools/tests/test_x.py" not in rels
-        assert ".venv/lib/skip.py" not in rels
-        assert "n8n/sample.inc" in rels
-
-        mod.pack(src, archive)
-        mod.unpack(out, archive)
-        assert (out / "docs.md").read_text(encoding="utf-8") == "# runbook\n"
-        assert (out / "n8n" / "workflows" / "a.workflow.json").read_text(encoding="utf-8") == '{"ok":1}\n'
-        assert (out / "n8n" / "sample.inc").read_bytes() == b"DATES\n/\n\x00"
-        assert (out / "schedule-builder-service" / "app" / "main.py").read_text(encoding="utf-8") == "print('schedule')\n"
-
-
-def test_split_join() -> None:
-    mod = _load()
-    with tempfile.TemporaryDirectory() as tmp:
-        src = Path(tmp) / "src"
-        archive = Path(tmp) / "all.txt"
-        joined = Path(tmp) / "joined.txt"
-        (src / "scripts").mkdir(parents=True)
-        (src / "docs.md").write_text("x" * 5000, encoding="utf-8")
-        (src / "scripts" / "a.py").write_text("print(1)\n", encoding="utf-8")
-        mod.pack(src, archive)
-        chunks = mod.split_archive(archive, chunk_size=800)
-        assert len(chunks) >= 2
-        mod.join_archive(joined, chunk_dir=archive.parent, chunk_prefix="all")
-        assert joined.read_bytes() == archive.read_bytes()
-
-
-def main() -> int:
-    test_pack_unpack_roundtrip()
-    test_split_join()
-    print("project_pack self-tests OK")
-    return 0
-
-
-if __name__ == "__main__":
-    sys.exit(main())
-
-===END_FILE===

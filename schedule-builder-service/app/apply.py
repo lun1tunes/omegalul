@@ -6,6 +6,7 @@ from typing import Any
 
 from .keywords import KEYWORDS, normalize_keyword
 from .parse import Block, Record, ScheduleDoc
+from .well_model import is_factual_record
 
 
 def _tokens_from_fields(fields: dict[str, Any]) -> list[str]:
@@ -65,7 +66,23 @@ def apply_operations(doc: ScheduleDoc, operations: list[dict[str, Any]]) -> tupl
             for block in blocks:
                 if block.keyword != keyword:
                     continue
-                block.records = [r for r in block.records if not (r.tokens and r.tokens[0].strip("'") == well)]
+                kept: list[Record] = []
+                for record in block.records:
+                    matches = record.tokens and record.tokens[0].strip("'\"") == well
+                    if matches and keyword == "WCONPROD" and is_factual_record(record):
+                        findings.append(
+                            {
+                                "code": "FACTUAL_WCONPROD_PROTECTED",
+                                "keyword": keyword,
+                                "well": well,
+                                "severity": "error",
+                                "message": "Factual WCONPROD cannot be deleted.",
+                            }
+                        )
+                        kept.append(record)
+                    elif not matches:
+                        kept.append(record)
+                block.records = kept
         else:
             findings.append({"code": "OPERATION_UNKNOWN", "operation": action, "severity": "error"})
     return ScheduleDoc(blocks=blocks, text=doc.text, sha256=doc.sha256), findings

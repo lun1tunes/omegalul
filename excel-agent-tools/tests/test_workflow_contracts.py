@@ -585,9 +585,10 @@ def test_mas_control_plane_proxy_contains_all_activity_operations() -> None:
         "schema", "create_case", "get_case", "list_cases", "update_case",
         "append_event", "list_events", "append_error", "list_errors",
         "record_execution", "case_id_for_execution", "list_agents",
-        "upsert_agent", "artifact_put", "artifact_get",
+        "upsert_agent", "artifact_put", "artifact_get", "snapshot",
     ):
         assert f"'{operation}'" in code
+    assert workflow["settings"].get("saveDataSuccessExecution") == "none"
 
 
 def test_universal_engineering_orchestrator_has_no_service_or_excel_contract() -> None:

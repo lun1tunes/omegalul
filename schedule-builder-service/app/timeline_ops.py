@@ -10,6 +10,7 @@ from typing import Any
 from .diff import unified_diff
 from .emit import emit_schedule
 from .parse import Block, Record, ScheduleDoc, parse_schedule, timeline_segments
+from .well_model import is_factual_record
 
 MONTHS = {
     "JAN": 1, "FEB": 2, "MAR": 3, "APR": 4, "MAY": 5, "JUN": 6,
@@ -98,7 +99,31 @@ def commissioning_revise(
     segments = deepcopy(timeline_segments(parse_schedule(source_text)))
     by_date = {parse_date(s.get("date")): s for s in segments if parse_date(s.get("date"))}
     moved: list[tuple[str, Record, str, date]] = []
-    seen: set[tuple[str, str]] = set()
+    first_wconprod_date: dict[str, date | None] = {}
+    for segment in segments:
+        source_date = parse_date(segment.get("date"))
+        for block in segment.get("blocks") or []:
+            if block.keyword != "WCONPROD":
+                continue
+            for record in block.records:
+                well = _well(record)
+                if (
+                    well in targets
+                    and well not in first_wconprod_date
+                    and not is_factual_record(record)
+                ):
+                    first_wconprod_date[well] = source_date
+    missing_primary = sorted(set(targets) - set(first_wconprod_date))
+    for well in missing_primary:
+        findings.append({
+            "code": "COMMISSIONING_PRIMARY_WCONPROD_MISSING",
+            "severity": "error",
+            "well": well,
+            "keyword": "WCONPROD",
+        })
+
+    seen_primary: set[str] = set()
+    seen_companions: set[tuple[str, str]] = set()
     for segment in segments:
         source_date = parse_date(segment.get("date"))
         for block in list(segment.get("blocks") or []):
@@ -107,11 +132,27 @@ def commissioning_revise(
             keep: list[Record] = []
             for record in block.records:
                 well = _well(record)
-                key = (well, block.keyword)
-                if well not in targets or key in seen:
+                if well not in targets:
                     keep.append(record)
                     continue
-                seen.add(key)
+                is_primary = block.keyword == "WCONPROD"
+                if is_primary and is_factual_record(record):
+                    keep.append(record)
+                    continue
+                is_companion = (
+                    block.keyword in {"WELOPEN", "WEFAC"}
+                    and well in first_wconprod_date
+                    and first_wconprod_date.get(well) == source_date
+                )
+                if (is_primary and well in seen_primary) or (
+                    is_companion and (well, block.keyword) in seen_companions
+                ) or (not is_primary and not is_companion):
+                    keep.append(record)
+                    continue
+                if is_primary:
+                    seen_primary.add(well)
+                else:
+                    seen_companions.add((well, block.keyword))
                 moved.append((block.keyword, record, well, targets[well]))
             block.records = keep
             if not block.records:
@@ -158,6 +199,18 @@ def commissioning_revise(
         "shifts": [{"well": w, "date": tnav_date(t)} for w, t in targets.items()],
         "findings": findings,
         "file_ref": file_ref,
+        "control_semantics": {
+            "commissioning_anchor": "first WCONPROD per well",
+            "forecast_controls_preserved": True,
+            "factual_wconprod_preserved": True,
+            "forecast_control_count": max(0, sum(
+                1 for segment in segments
+                for block in segment.get("blocks") or []
+                if block.keyword == "WCONPROD"
+                for record in block.records
+                if _well(record) in targets
+            )),
+        },
     }
 
 

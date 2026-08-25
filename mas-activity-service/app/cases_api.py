@@ -80,7 +80,22 @@ TERMINAL_KINDS = {"case.finished", "case.failed"}
 
 
 def _event_message(event: dict[str, Any]) -> str:
-    return " ".join(str(event.get("status_message") or "").split())
+    value = " ".join(str(event.get("status_message") or "").split())
+    return "" if value.casefold() in {"none", "null", "undefined"} else value
+
+
+def _event_display_message(kind: str, event: dict[str, Any]) -> str:
+    message = _event_message(event)
+    if message:
+        return message
+    return {
+        "agent.accepted": "Агент принял задачу и начал работу.",
+        "agent.progress": "Агент продолжает обработку.",
+        "agent.result": "Агент завершил работу.",
+        "agent.failed": "Агент завершил работу с ошибкой.",
+        "hitl.request": "Нужно уточнение от пользователя.",
+        "case.failed": "Задача завершилась с ошибкой.",
+    }.get(kind, kind or "Событие зафиксировано.")
 
 
 def _same_agent_line(left: dict[str, Any], right: dict[str, Any]) -> bool:
@@ -143,9 +158,10 @@ def event_to_turn(event: dict[str, Any]) -> dict[str, Any]:
         text = FINISHED_RESULT_TEXT
         brief = FINISHED_RESULT_TEXT
     else:
-        summary = event.get("status_message") or kind
-        text = event.get("status_message") or ""
-        brief = event.get("status_message") or ""
+        display_message = _event_display_message(kind, event)
+        summary = display_message
+        text = display_message
+        brief = display_message
     return {
         "at": _iso(event.get("created_at")),
         "stage": kind,
@@ -261,17 +277,18 @@ def _schedule_artifact(case_id: str, artifacts: dict[str, Any]) -> dict[str, Any
     }
 
 
-def case_feed(case_id: str, after_seq: int = 0) -> dict[str, Any]:
-    row = control_plane.get_case(case_id)
-    if row is None:
-        raise HTTPException(status_code=404, detail="case not found")
-    state = row["state"] if isinstance(row["state"], dict) else {}
-    events = collapse_duplicate_events(control_plane.list_events(case_id, after_seq=after_seq))
+def _feed_from_row(
+    case_id: str,
+    row: dict[str, Any],
+    events: list[dict[str, Any]],
+    after_seq: int = 0,
+) -> dict[str, Any]:
+    state = row["state"] if isinstance(row.get("state"), dict) else {}
     turns = [event_to_turn(event) for event in events]
     pending = state.get("hitl") if isinstance(state.get("hitl"), dict) else {}
     questions = pending.get("questions") if isinstance(pending.get("questions"), list) else []
     gate = None
-    if row["status"] == "waiting_user" and questions:
+    if row.get("status") == "waiting_user" and questions:
         q0 = questions[0] if isinstance(questions[0], dict) else {}
         gate = {
             "gate_id": q0.get("question_id") or "hitl",
@@ -293,18 +310,27 @@ def case_feed(case_id: str, after_seq: int = 0) -> dict[str, Any]:
         "task_name": name,
         "title": (name or state.get("goal") or case_id)[:120],
         "objective": state.get("goal") or "",
-        "status": row["status"],
+        "status": row.get("status"),
         "state": state,
         "attached_files": attached,
-        "awaiting_human": row["status"] == "waiting_user",
+        "awaiting_human": row.get("status") == "waiting_user",
         "human_gate": gate,
         "activity": turns,
         "events": events,
-        "schema": build_schema_model(events, state=state, status=row["status"]),
+        "schema": build_schema_model(events, state=state, status=row.get("status")),
         "after_seq": after_seq,
         "schedule_artifact": _schedule_artifact(case_id, artifacts),
         "restartable": case_is_restartable(row),
     }
+
+
+def case_feed(case_id: str, after_seq: int = 0) -> dict[str, Any]:
+    snap = control_plane.snapshot(case_id, after_seq=after_seq)
+    row = snap["case"]
+    if row is None:
+        raise HTTPException(status_code=404, detail="case not found")
+    events = collapse_duplicate_events(snap["events"])
+    return _feed_from_row(case_id, row, events, after_seq)
 
 
 async def _read_upload(upload: UploadFile, *, field: str) -> tuple[str, bytes, str]:
@@ -453,13 +479,17 @@ async def create_case(
                 raise HTTPException(status_code=502, detail=f"artifact proxy upload failed: {exc}") from exc
     else:
         save_task_binaries(case_id, binary or None)
-    control_plane.create_case(case_id, goal, artifacts, task_name=name)
+    extra = {}
     if (schedule_root or "").strip():
-        row = control_plane.get_case(case_id)
-        if row:
-            state = dict(row["state"] or {})
-            state["schedule_root"] = schedule_root.strip()
-            control_plane.update_case(case_id, state=state, status="new")
+        extra["schedule_root"] = schedule_root.strip()
+    control_plane.create_case(
+        case_id,
+        goal,
+        artifacts,
+        task_name=name,
+        extra_state=extra or None,
+        status="running",
+    )
     control_plane.append_event(
         case_id,
         kind="case.created",
@@ -468,7 +498,6 @@ async def create_case(
         status_message=f"Принял задачу: {goal[:180]}",
         payload={"requested_by": requested_by, "files": [fname for _s, fname, _c, _m in uploads], "task_name": name},
     )
-    control_plane.update_case(case_id, status="running")
     background_tasks.add_task(_invoke_create, case_id)
     return {"ok": True, "case_id": case_id, "task_id": case_id, "status": "running", "task_name": name}
 
@@ -481,7 +510,7 @@ def patch_case_name(case_id: str, body: CaseNameIn) -> dict[str, Any]:
     name = _normalize_task_name(body.task_name)
     state = dict(row["state"] or {})
     state["task_name"] = name
-    control_plane.update_case(case_id, state=state)
+    control_plane.update_case(case_id, state=state, status=row["status"])
     feed = case_feed(case_id)
     return {
         "ok": True,
@@ -508,9 +537,10 @@ def get_state(case_id: str) -> dict[str, Any]:
 
 @router.get("/cases/{case_id}/events")
 def get_events(case_id: str, after_seq: int = Query(default=0, ge=0)) -> dict[str, Any]:
-    if control_plane.get_case(case_id) is None:
+    snap = control_plane.snapshot(case_id, after_seq=after_seq)
+    if snap["case"] is None:
         raise HTTPException(status_code=404, detail="case not found")
-    events = collapse_duplicate_events(control_plane.list_events(case_id, after_seq=after_seq))
+    events = collapse_duplicate_events(snap["events"])
     return {"case_id": case_id, "events": events, "activity": [event_to_turn(event) for event in events]}
 
 
@@ -603,7 +633,7 @@ async def _merge_case_uploads(case_id: str, uploads: list[tuple[str, str, bytes,
         save_task_binaries(case_id, binary)
     if row:
         state["artifacts"] = artifacts
-        control_plane.update_case(case_id, state=state)
+        control_plane.update_case(case_id, state=state, status=row.get("status") or "running")
     return names
 
 
@@ -701,8 +731,8 @@ async def post_run(case_id: str, request: Request, background_tasks: BackgroundT
         raise HTTPException(status_code=503, detail=UNCONFIGURED_N8N)
     explicit_restart = action in RESTART_ACTIONS and case_is_restartable(row)
     if explicit_restart:
-        _prepare_case_restart(case_id, row)
-        row = control_plane.get_case(case_id) or row
+        state = _prepare_case_restart(case_id, row)
+        row = {**row, "state": state, "status": "running"}
     elif case_is_restartable(row):
         return {
             "ok": True,
@@ -715,7 +745,7 @@ async def post_run(case_id: str, request: Request, background_tasks: BackgroundT
         }
     state = row["state"] if isinstance(row["state"], dict) else {}
     if int(state.get("step_count") or 0) >= MAX_STEPS:
-        control_plane.update_case(case_id, status="failed")
+        control_plane.update_case(case_id, state=state, status="failed")
         control_plane.append_event(
             case_id,
             kind="case.failed",
@@ -733,7 +763,7 @@ async def post_run(case_id: str, request: Request, background_tasks: BackgroundT
             "restartable": True,
         }
     if row["status"] != "waiting_user":
-        control_plane.update_case(case_id, status="running")
+        control_plane.update_case(case_id, state=state, status="running")
     background_tasks.add_task(_invoke_step, case_id)
     return {
         "ok": True,
@@ -746,33 +776,62 @@ async def post_run(case_id: str, request: Request, background_tasks: BackgroundT
     }
 
 
+def _stream_meta(feed: dict[str, Any]) -> dict[str, Any]:
+    return {
+        "status": feed.get("status"),
+        "awaiting_human": feed.get("awaiting_human"),
+        "human_gate": feed.get("human_gate"),
+        "restartable": feed.get("restartable"),
+        "schedule_artifact": feed.get("schedule_artifact"),
+        "state": feed.get("state"),
+        "task_name": feed.get("task_name"),
+        "title": feed.get("title"),
+        "objective": feed.get("objective"),
+        "attached_files": feed.get("attached_files"),
+    }
+
+
 @router.get("/cases/{case_id}/stream")
 async def stream_case(case_id: str, request: Request) -> StreamingResponse:
-    if control_plane.get_case(case_id) is None:
+    snap = control_plane.snapshot(case_id)
+    if snap["case"] is None:
         raise HTTPException(status_code=404, detail="case not found")
 
     async def gen():
         last = 0
-        snapshot = case_feed(case_id)
+        tail: list[dict[str, Any]] = list(snap["events"] or [])
+        snapshot = _feed_from_row(case_id, snap["case"], collapse_duplicate_events(tail), 0)
         yield f"data: {json.dumps({'type': 'snapshot', **snapshot}, default=str)}\n\n"
         events = snapshot.get("events") or []
         if events:
             last = int(events[-1]["event_id"])
+        last_updated = str((snap["case"] or {}).get("updated_at") or "")
         while True:
             if await request.is_disconnected():
                 break
-            await asyncio.sleep(1.0)
-            fresh = control_plane.list_events(case_id, after_seq=last)
-            visible_ids = {
-                int(event["event_id"])
-                for event in collapse_duplicate_events(control_plane.list_events(case_id))
-                if event.get("event_id") is not None
-            }
-            for event in fresh:
+            await asyncio.sleep(2.0)
+            fresh = control_plane.snapshot(case_id, after_seq=last)
+            row = fresh["case"]
+            if row is None:
+                break
+            raw_new = list(fresh["events"] or [])
+            collapsed = collapse_duplicate_events(tail[-8:] + raw_new)
+            emit = [
+                event
+                for event in collapsed
+                if event.get("event_id") is not None and int(event["event_id"]) > last
+            ]
+            if raw_new:
+                tail = (tail + raw_new)[-16:]
+            feed = _feed_from_row(case_id, row, [], last)
+            meta = _stream_meta(feed)
+            updated = str(row.get("updated_at") or "")
+            for event in emit:
                 last = int(event["event_id"])
-                if int(event["event_id"]) not in visible_ids:
-                    continue
-                yield f"data: {json.dumps({'type': 'turn', 'turn': event_to_turn(event), 'event': event}, default=str)}\n\n"
+                yield f"data: {json.dumps({'type': 'turn', 'turn': event_to_turn(event), 'event': event, **meta}, default=str)}\n\n"
+            if not emit and updated != last_updated:
+                yield f"data: {json.dumps({'type': 'meta', **meta}, default=str)}\n\n"
+            last_updated = updated
             yield f"data: {json.dumps({'type': 'ping'})}\n\n"
 
     return StreamingResponse(gen(), media_type="text/event-stream")

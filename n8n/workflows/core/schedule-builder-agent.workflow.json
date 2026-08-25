@@ -162,6 +162,106 @@
     },
     {
       "parameters": {
+        "method": "POST",
+        "url": "={{ $('Runtime configuration').first().json.activity_base_url + '/cases/' + $('Normalize schedule task').first().json.agent_task.case_id + '/events' }}",
+        "sendHeaders": true,
+        "headerParameters": {
+          "parameters": [
+            {
+              "name": "Content-Type",
+              "value": "application/json"
+            }
+          ]
+        },
+        "options": {
+          "timeout": 30000,
+          "response": {
+            "response": {
+              "fullResponse": false,
+              "responseFormat": "json"
+            }
+          }
+        },
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "={{ ({kind: \"agent.accepted\", actor: 'schedule_builder', agent_id: 'schedule_builder', task_id: $('Normalize schedule task').first().json.agent_task.task_id, status: \"running\", status_message: \"Schedule Builder \\u043f\\u0440\\u0438\\u043d\\u044f\\u043b \\u0437\\u0430\\u0434\\u0430\\u0447\\u0443 \\u0438 \\u0430\\u043d\\u0430\\u043b\\u0438\\u0437\\u0438\\u0440\\u0443\\u0435\\u0442 \\u0438\\u0441\\u0445\\u043e\\u0434\\u043d\\u044b\\u0439 schedule.\", payload: {source: 'schedule-builder-agent-workflow'}}) }}"
+      },
+      "id": "86a96e9e-e91b-547c-9c5e-347ca0339933",
+      "name": "Activity — Schedule Builder accepted",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.4,
+      "position": [
+        1220,
+        -220
+      ],
+      "onError": "continueRegularOutput",
+      "alwaysOutputData": true
+    },
+    {
+      "parameters": {
+        "jsCode": "const x=$('Session ready?').first().json||{}; return [{json:x}];"
+      },
+      "id": "416a2622-2b17-5230-99b1-e4ac32c062ff",
+      "name": "Restore after Schedule Builder accepted",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        1440,
+        -220
+      ]
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "={{ $('Runtime configuration').first().json.activity_base_url + '/cases/' + $('Normalize schedule task').first().json.agent_task.case_id + '/events' }}",
+        "sendHeaders": true,
+        "headerParameters": {
+          "parameters": [
+            {
+              "name": "Content-Type",
+              "value": "application/json"
+            }
+          ]
+        },
+        "options": {
+          "timeout": 30000,
+          "response": {
+            "response": {
+              "fullResponse": false,
+              "responseFormat": "json"
+            }
+          }
+        },
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "={{ ({kind: \"agent.progress\", actor: 'schedule_builder', agent_id: 'schedule_builder', task_id: $('Normalize schedule task').first().json.agent_task.task_id, status: \"running\", status_message: \"Schedule Builder \\u043f\\u0440\\u043e\\u0432\\u0435\\u0440\\u044f\\u0435\\u0442 \\u0441\\u0442\\u0440\\u0443\\u043a\\u0442\\u0443\\u0440\\u0443 \\u0441\\u043a\\u0432\\u0430\\u0436\\u0438\\u043d, \\u0434\\u0430\\u0442\\u044b \\u0438 \\u043f\\u0440\\u043e\\u0433\\u043d\\u043e\\u0437\\u043d\\u044b\\u0435 controls.\", payload: {source: 'schedule-builder-agent-workflow'}}) }}"
+      },
+      "id": "5dc68398-8825-52fd-964b-065a00102a56",
+      "name": "Activity — Schedule Builder progress",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.4,
+      "position": [
+        1660,
+        -220
+      ],
+      "onError": "continueRegularOutput",
+      "alwaysOutputData": true
+    },
+    {
+      "parameters": {
+        "jsCode": "const x=$('Restore after Schedule Builder accepted').first().json||{}; return [{json:x}];"
+      },
+      "id": "2cf633bd-4a88-500f-90ab-d095e718a904",
+      "name": "Restore after Schedule Builder progress",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        1880,
+        -220
+      ]
+    },
+    {
+      "parameters": {
         "mode": "expression",
         "numberOutputs": 3,
         "output": "={{ ({commissioning:0, group_rebind:1, operations:2})[$json.suggested_capability] ?? 2 }}"
@@ -251,6 +351,56 @@
     },
     {
       "parameters": {
+        "method": "POST",
+        "url": "={{ $('Runtime configuration').first().json.activity_base_url + '/cases/' + $('Normalize schedule task').first().json.agent_task.case_id + '/events' }}",
+        "sendHeaders": true,
+        "headerParameters": {
+          "parameters": [
+            {
+              "name": "Content-Type",
+              "value": "application/json"
+            }
+          ]
+        },
+        "options": {
+          "timeout": 30000,
+          "response": {
+            "response": {
+              "fullResponse": false,
+              "responseFormat": "json"
+            }
+          }
+        },
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "={{ ({kind: 'agent.result', actor: 'schedule_builder', agent_id: 'schedule_builder', task_id: $('Normalize schedule task').first().json.agent_task.task_id, status: String($('Format schedule result').first().json.status || 'failed'), status_message: String($('Format schedule result').first().json.message || 'Schedule Builder завершил обработку schedule.'), payload: {source: 'schedule-builder-agent-workflow'}}) }}"
+      },
+      "id": "0cbd0f7e-14f7-5ab9-bad8-662743b03009",
+      "name": "Activity — Schedule Builder completed",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.4,
+      "position": [
+        2200,
+        -180
+      ],
+      "onError": "continueRegularOutput",
+      "alwaysOutputData": true
+    },
+    {
+      "parameters": {
+        "jsCode": "const x=$('Format schedule result').first().json||{}; return [{json:x}];"
+      },
+      "id": "8a239e73-9c07-5b0a-b114-f6883a7d9629",
+      "name": "Restore after Schedule Builder activity",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        2440,
+        -180
+      ]
+    },
+    {
+      "parameters": {
         "jsCode": "\nconst opened=$json||{};\nconst task=$('Normalize schedule task').first().json.agent_task||{};\nconst agent_input=JSON.stringify({\n  objective:opened.objective||task.objective||'',\n  handoff_message:opened.handoff_message||task.handoff_message||'',\n  inspect:opened.inspect||{},\n  fact_count:opened.fact_count||0,\n  facts_preview:opened.facts_preview||[],\n  suggested_capability:opened.suggested_capability||''\n});\nreturn [{json:{...opened, session_id:opened.session_id, agent_input}}];\n"
       },
       "id": "0efd1b65-b426-5dd1-9cdd-2a66eb50c4e3",
@@ -268,7 +418,7 @@
         "text": "={{ $json.agent_input }}",
         "hasOutputParser": false,
         "options": {
-          "systemMessage": "Ты — единственный LLM-решатель агента Schedule Builder.\n\nИсходный .INC тебе не показывают. Он лежит в сессии FastAPI. session_id привязан workflow: никогда не передавай session_id и обёртку args/input.\n\nИнструменты:\n- inspect_schedule — скважины, keywords, даты, GRUPTREE (компактно)\n- search_keywords — по intent сервиса вернёт keywords + methods\n- get_keyword — объектная модель полей и методов\n- list_records — компактные записи keyword/well\n- apply_commissioning — сдвиг дат ввода по фактам Excel из сессии. Даты сам не выдумывай.\n- apply_group_rebind — перепривязка групп по тексту задачи и baseline. Скважины только из inspect.\n- apply_operations — точечные MODIFY/ADD по схеме keyword. wells только из inspect.\n- build_schedule — собрать текущий working text, если apply уже менял сессию\n- validate_result — проверки emit\n\nПравила:\n- Не пиши текст SCHEDULE сам. Только инструменты.\n- Не придумывай скважины, даты, группы, дебиты.\n- suggested_capability=commissioning → сразу apply_commissioning, затем STOP.\n- suggested_capability=group_rebind → inspect при необходимости, затем apply_group_rebind, затем STOP.\n- Иначе search_keywords → get_keyword → apply_operations / needs_input.\n- После apply_* со status completed или needs_input — STOP. Не вызывай build, если apply уже вернул результат.\n- Если данных нет — не вызывай apply с пустыми выдуманными полями.\n\nЗаверши одним коротким фактическим предложением по-русски.\n",
+          "systemMessage": "Ты — единственный LLM-решатель агента Schedule Builder.\n\nИсходный .INC тебе не показывают. Он лежит в сессии FastAPI. session_id привязан workflow: никогда не передавай session_id и обёртку args/input.\n\nИнструменты:\n- inspect_schedule — объектная инвентаризация скважин, keywords, даты, GRUPTREE (компактно)\n- inspect_well — подробный объект одной скважины: identity, factual WCONPROD, commissioning anchor и история режимов\n- analyze_forecast_controls — детерминированный разбор control timeline: history, forecast, overrides, economics, reopen/status/efficiency events\n- search_keywords — по intent сервиса вернёт keywords + methods\n- get_keyword — объектная модель полей и методов\n- list_records — компактные записи keyword/well\n- apply_commissioning — сдвиг дат ввода по фактам Excel из сессии. Якорь commissioning — первый нефактический WCONPROD; последующие WCONPROD являются прогнозными режимами и сохраняются.\n- apply_group_rebind — перепривязка групп по тексту задачи и baseline. Скважины только из inspect.\n- apply_operations — точечные MODIFY/ADD по схеме keyword. wells только из inspect.\n- build_schedule — собрать текущий working text, если apply уже менял сессию\n- validate_result — проверки emit\n\nПравила:\n- Не пиши текст SCHEDULE сам. Только инструменты.\n- Не придумывай скважины, даты, группы, дебиты.\n- Для commissioning сначала проверь объект скважины через inspect_schedule/inspect_well и отличай first_wconprod от forecast control events.\n- Для изменения одного параметра после существующего контроля используй WELTARG, а не переписывай весь WCONPROD.\n- Не путай WECON (экономические пределы), WTEST (переоткрытие), WELOPEN (статус), WEFAC (uptime), WPIMULT (CF) и GCONPROD (группа).\n- Если analyze_forecast_controls вернул needs_input по границе history/forecast — не применяй операцию до уточнения.\n- Жёсткое правило: если комментарий WCONPROD содержит «факт» или «fact», запись фактическая. Её нельзя удалять, переносить или использовать как прогнозный commissioning anchor.\n- suggested_capability=commissioning → сразу apply_commissioning, затем STOP.\n- suggested_capability=group_rebind → inspect при необходимости, затем apply_group_rebind, затем STOP.\n- Иначе search_keywords → get_keyword → apply_operations / needs_input.\n- После apply_* со status completed или needs_input — STOP. Не вызывай build, если apply уже вернул результат.\n- Если данных нет — не вызывай apply с пустыми выдуманными полями.\n\nЗаверши одним коротким фактическим предложением по-русски.\n",
           "maxIterations": 12,
           "returnIntermediateSteps": true,
           "passthroughBinaryImages": false,
@@ -364,7 +514,7 @@
     },
     {
       "parameters": {
-        "toolDescription": "Компактный осмотр baseline: wells, keywords, даты, GRUPTREE. Без полного .INC.",
+        "toolDescription": "Объектная инвентаризация baseline: wells, factual/forecast WCONPROD, commissioning anchors, история режимов, keywords, даты и GRUPTREE. Без полного .INC.",
         "method": "POST",
         "url": "={{ $('Runtime configuration').first().json.schedule_service_url + '/agent-tools/' + \"inspect_schedule\" }}",
         "authentication": "none",
@@ -402,6 +552,114 @@
       "typeVersion": 1.1,
       "position": [
         760,
+        -420
+      ]
+    },
+    {
+      "parameters": {
+        "toolDescription": "Подробно осмотреть одну скважину: identity, factual WCONPROD, commissioning anchor (первый нефактический WCONPROD), последующие forecast control events и связанные records.",
+        "method": "POST",
+        "url": "={{ $('Runtime configuration').first().json.schedule_service_url + '/agent-tools/' + \"inspect_well\" }}",
+        "authentication": "none",
+        "sendQuery": false,
+        "sendHeaders": true,
+        "specifyHeaders": "keypair",
+        "sendBody": true,
+        "specifyBody": "keypair",
+        "placeholderDefinitions": {
+          "values": [
+            {
+              "name": "well",
+              "description": "Точное имя скважины из inspect_schedule",
+              "type": "string"
+            }
+          ]
+        },
+        "optimizeResponse": false,
+        "parametersHeaders": {
+          "values": [
+            {
+              "name": "Content-Type",
+              "valueProvider": "fieldValue",
+              "value": "application/json"
+            }
+          ]
+        },
+        "parametersBody": {
+          "values": [
+            {
+              "name": "session_id",
+              "valueProvider": "fieldValue",
+              "value": "={{ $('Open schedule session').first().json.session_id }}"
+            },
+            {
+              "name": "well",
+              "valueProvider": "modelRequired",
+              "value": ""
+            }
+          ]
+        }
+      },
+      "id": "49ab200f-c1b7-51c5-b779-072adab2478a",
+      "name": "inspect_well",
+      "type": "@n8n/n8n-nodes-langchain.toolHttpRequest",
+      "typeVersion": 1.1,
+      "position": [
+        980,
+        -420
+      ]
+    },
+    {
+      "parameters": {
+        "toolDescription": "Детерминированно разобрать timeline одной скважины: history/forecast controls, commissioning, WELTARG, WECON, WTEST, WELOPEN, WEFAC, WPIMULT и правила выбора keyword.",
+        "method": "POST",
+        "url": "={{ $('Runtime configuration').first().json.schedule_service_url + '/agent-tools/' + \"analyze_forecast_controls\" }}",
+        "authentication": "none",
+        "sendQuery": false,
+        "sendHeaders": true,
+        "specifyHeaders": "keypair",
+        "sendBody": true,
+        "specifyBody": "keypair",
+        "placeholderDefinitions": {
+          "values": [
+            {
+              "name": "well",
+              "description": "Точное имя скважины из inspect_schedule",
+              "type": "string"
+            }
+          ]
+        },
+        "optimizeResponse": false,
+        "parametersHeaders": {
+          "values": [
+            {
+              "name": "Content-Type",
+              "valueProvider": "fieldValue",
+              "value": "application/json"
+            }
+          ]
+        },
+        "parametersBody": {
+          "values": [
+            {
+              "name": "session_id",
+              "valueProvider": "fieldValue",
+              "value": "={{ $('Open schedule session').first().json.session_id }}"
+            },
+            {
+              "name": "well",
+              "valueProvider": "modelRequired",
+              "value": ""
+            }
+          ]
+        }
+      },
+      "id": "29254bd0-9438-5967-b0d7-3fe53f600120",
+      "name": "analyze_forecast_controls",
+      "type": "@n8n/n8n-nodes-langchain.toolHttpRequest",
+      "typeVersion": 1.1,
+      "position": [
+        1200,
         -420
       ]
     },
@@ -455,8 +713,8 @@
       "type": "@n8n/n8n-nodes-langchain.toolHttpRequest",
       "typeVersion": 1.1,
       "position": [
-        980,
-        -420
+        760,
+        -260
       ]
     },
     {
@@ -509,8 +767,8 @@
       "type": "@n8n/n8n-nodes-langchain.toolHttpRequest",
       "typeVersion": 1.1,
       "position": [
-        1200,
-        -420
+        980,
+        -260
       ]
     },
     {
@@ -573,7 +831,7 @@
       "type": "@n8n/n8n-nodes-langchain.toolHttpRequest",
       "typeVersion": 1.1,
       "position": [
-        760,
+        1200,
         -260
       ]
     },
@@ -616,8 +874,8 @@
       "type": "@n8n/n8n-nodes-langchain.toolHttpRequest",
       "typeVersion": 1.1,
       "position": [
-        980,
-        -260
+        760,
+        -100
       ]
     },
     {
@@ -680,8 +938,8 @@
       "type": "@n8n/n8n-nodes-langchain.toolHttpRequest",
       "typeVersion": 1.1,
       "position": [
-        1200,
-        -260
+        980,
+        -100
       ]
     },
     {
@@ -734,7 +992,7 @@
       "type": "@n8n/n8n-nodes-langchain.toolHttpRequest",
       "typeVersion": 1.1,
       "position": [
-        760,
+        1200,
         -100
       ]
     },
@@ -777,8 +1035,8 @@
       "type": "@n8n/n8n-nodes-langchain.toolHttpRequest",
       "typeVersion": 1.1,
       "position": [
-        980,
-        -100
+        760,
+        60
       ]
     },
     {
@@ -820,8 +1078,8 @@
       "type": "@n8n/n8n-nodes-langchain.toolHttpRequest",
       "typeVersion": 1.1,
       "position": [
-        1200,
-        -100
+        980,
+        60
       ]
     }
   ],
@@ -874,7 +1132,7 @@
       "main": [
         [
           {
-            "node": "Capability router",
+            "node": "Activity — Schedule Builder accepted",
             "type": "main",
             "index": 0
           }
@@ -882,6 +1140,50 @@
         [
           {
             "node": "Format missing schedule",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Activity — Schedule Builder accepted": {
+      "main": [
+        [
+          {
+            "node": "Restore after Schedule Builder accepted",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Restore after Schedule Builder accepted": {
+      "main": [
+        [
+          {
+            "node": "Activity — Schedule Builder progress",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Activity — Schedule Builder progress": {
+      "main": [
+        [
+          {
+            "node": "Restore after Schedule Builder progress",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Restore after Schedule Builder progress": {
+      "main": [
+        [
+          {
+            "node": "Capability router",
             "type": "main",
             "index": 0
           }
@@ -958,6 +1260,28 @@
       ]
     },
     "inspect_schedule": {
+      "ai_tool": [
+        [
+          {
+            "node": "Schedule Builder AI Agent",
+            "type": "ai_tool",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "inspect_well": {
+      "ai_tool": [
+        [
+          {
+            "node": "Schedule Builder AI Agent",
+            "type": "ai_tool",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "analyze_forecast_controls": {
       "ai_tool": [
         [
           {
@@ -1077,6 +1401,28 @@
           }
         ]
       ]
+    },
+    "Format schedule result": {
+      "main": [
+        [
+          {
+            "node": "Activity — Schedule Builder completed",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Activity — Schedule Builder completed": {
+      "main": [
+        [
+          {
+            "node": "Restore after Schedule Builder activity",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
     }
   },
   "settings": {
@@ -1091,5 +1437,5 @@
   },
   "tags": [],
   "pinData": {},
-  "versionId": "3570c18a-5529-4cec-a307-d1432eb9dba5"
+  "versionId": "e284e757-a5d7-42d1-8ef6-d24dc29214c4"
 }

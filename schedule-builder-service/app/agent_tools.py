@@ -14,6 +14,7 @@ from .group_rebind import extract_group_rebind_spec, run_group_rebind_revise, wa
 from .io import commissioning_facts, file_ref, load_source
 from .keywords import keyword_object, search_keywords
 from .parse import parse_schedule, well_names
+from .well_model import build_well_objects, find_well
 from . import sessions
 from .validate import validate_emitted
 
@@ -25,6 +26,7 @@ MAX_WELLS = 200
 def _compact_inspect(source: str) -> dict[str, Any]:
     doc = parse_schedule(source)
     wells = sorted(well_names(doc))
+    well_objects = build_well_objects(doc)
     dates: list[str] = []
     keywords: list[str] = []
     groups: list[dict[str, str]] = []
@@ -48,6 +50,8 @@ def _compact_inspect(source: str) -> dict[str, Any]:
         "well_count": len(wells),
         "wells": wells[:MAX_WELLS],
         "wells_truncated": len(wells) > MAX_WELLS,
+        "well_objects": well_objects[:MAX_WELLS],
+        "well_objects_truncated": len(well_objects) > MAX_WELLS,
         "keywords_present": seen,
         "date_count": len(dates),
         "dates_preview": dates[:12],
@@ -270,6 +274,75 @@ def execute_tool(session_id: str, name: str, args: dict[str, Any] | None = None)
     if name == "inspect_schedule":
         return {"ok": True, "inspect": _compact_inspect(source), "fact_count": len(state.get("facts") or [])}
 
+    if name == "inspect_well":
+        objects = build_well_objects(parse_schedule(source))
+        well = find_well(objects, args.get("well"))
+        if well is None:
+            return {
+                "ok": False,
+                "error": "well_not_found",
+                "well": str(args.get("well") or ""),
+                "message": "Скважина не найдена в baseline SCHEDULE.",
+            }
+        return {"ok": True, "well": well}
+
+    if name == "analyze_forecast_controls":
+        objects = build_well_objects(parse_schedule(source))
+        well = find_well(objects, args.get("well"))
+        if well is None:
+            return {
+                "ok": False,
+                "error": "well_not_found",
+                "well": str(args.get("well") or ""),
+                "message": "Скважина не найдена в baseline SCHEDULE.",
+            }
+        controls = well.get("control_events") or []
+        factual = [event for event in controls if event.get("factual")]
+        forecast = [
+            event for event in controls
+            if event.get("keyword") == "WCONPROD" and not event.get("factual")
+        ]
+        boundary_candidates = sorted({
+            event.get("date")
+            for event in controls
+            if event.get("date") and event.get("keyword") in {"WCONHIST", "WCONPROD"}
+        })
+        explicit_forecast_comment = any(
+            any(word in str(event.get("comment") or "").casefold() for word in ("forecast", "прогноз"))
+            for event in forecast
+        )
+        return {
+            "ok": True,
+            "well": well.get("well"),
+            "identity": well.get("identity"),
+            "commissioning_anchor": well.get("commissioning_wconprod"),
+            "latest_control": well.get("latest_control"),
+            "factual_history": factual,
+            "forecast_controls": forecast,
+            "control_overrides": well.get("override_events") or [],
+            "economic_limits": well.get("economic_events") or [],
+            "reopen_policies": well.get("test_events") or [],
+            "status_events": well.get("status_events") or [],
+            "efficiency_events": well.get("efficiency_events") or [],
+            "connection_multipliers": well.get("connection_events") or [],
+            "forecast_boundary_candidates": boundary_candidates,
+            "decision_rules": {
+                "full_control_change": "WCONPROD",
+                "single_value_change": "WELTARG",
+                "economic_limit": "WECON",
+                "reopen_policy": "WTEST",
+                "well_status": "WELOPEN",
+                "uptime_factor": "WEFAC",
+                "connection_factor": "WPIMULT",
+                "group_control": "GCONPROD",
+            },
+            "needs_input": (
+                ["forecast/history boundary"]
+                if factual and forecast and not explicit_forecast_comment
+                else []
+            ),
+        }
+
     if name == "search_keywords":
         intent = str(args.get("intent") or blob)
         hits = search_keywords(intent)
@@ -468,6 +541,54 @@ def execute_tool(session_id: str, name: str, args: dict[str, Any] | None = None)
         if bad:
             return {"ok": False, "error": "well_not_in_schedule", "wells": bad}
         built_doc = parse_schedule(source)
+        semantic_findings: list[dict[str, Any]] = []
+        for op in operations:
+            keyword = str(op.get("keyword") or "").upper()
+            fields = op.get("fields") if isinstance(op.get("fields"), dict) else {}
+            well_name = str(fields.get("well") or op.get("well") or "").strip().strip("'\"")
+            if keyword == "WCONPROD":
+                factual = any(
+                    block.keyword == "WCONPROD"
+                    and any(
+                        rec.tokens
+                        and rec.tokens[0].strip("'\"") == well_name
+                        and ("факт" in str(rec.comment).casefold() or "fact" in str(rec.comment).casefold())
+                        for rec in block.records
+                    )
+                    for block in built_doc.blocks
+                )
+                if factual:
+                    semantic_findings.append({
+                        "code": "FACTUAL_WCONPROD_PROTECTED",
+                        "keyword": keyword,
+                        "well": well_name,
+                        "severity": "error",
+                        "message": "Фактический WCONPROD нельзя изменять generic operation.",
+                    })
+            if keyword == "WELTARG":
+                has_base = any(
+                    block.keyword in {"WCONPROD", "WCONHIST"}
+                    and any(rec.tokens and rec.tokens[0].strip("'\"") == well_name for rec in block.records)
+                    for block in built_doc.blocks
+                )
+                if not has_base:
+                    semantic_findings.append({
+                        "code": "WELTARG_BASE_CONTROL_MISSING",
+                        "keyword": keyword,
+                        "well": well_name,
+                        "severity": "error",
+                        "message": "WELTARG требует предшествующий WCONPROD или WCONHIST.",
+                    })
+        if semantic_findings:
+            result = _agent_result(
+                task_id,
+                "failed",
+                "Операция нарушает семантику SCHEDULE",
+                data={"findings": semantic_findings},
+                issues=semantic_findings,
+                artifacts={"schedule_out": source, "diff": ""},
+            )
+            return _store_result(state, result)
         applied, findings = apply_operations(built_doc, operations)
         text = emit_schedule(applied)
         findings.extend(validate_emitted(text, applied))

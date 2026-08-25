@@ -72,7 +72,6 @@ services:
       - N8N_BASE_URL=http://n8n:5678
       - KNOWLEDGE_INGEST_URL=http://n8n:5678/webhook/mas-knowledge-ingest
       - ORCHESTRATOR_WORKFLOW_ID=e9bbdb6e-3b7c-5dc0-851a-30bd9f2eb0d6
-      - HITL_MODE=n8n_rest
       - ACTIVITY_TLS_VERIFY=${ACTIVITY_TLS_VERIFY:-true}
       - ACTIVITY_CA_BUNDLE=${ACTIVITY_CA_BUNDLE:-}
       - ACTIVITY_STATE_PATH=/app/data/activity_state.json

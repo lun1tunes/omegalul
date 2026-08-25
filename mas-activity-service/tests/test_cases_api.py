@@ -22,13 +22,13 @@ ROOT = Path(__file__).resolve().parents[1]
 def _isolate(monkeypatch) -> None:
     for key in (
         "CONTROL_PLANE_PROXY_URL",
-        "CONTROL_PLANE_REQUIRED",
         "ORCHESTRATOR_WEBHOOK_URL",
         "N8N_BASE_URL",
         "ACTIVITY_STATE_PATH",
         "ACTIVITY_BINARIES_PATH",
     ):
         monkeypatch.delenv(key, raising=False)
+    monkeypatch.setenv("CONTROL_PLANE_REQUIRED", "false")
     reset_store()
 
 
@@ -330,6 +330,92 @@ def test_control_plane_proxy_carries_hitl_and_errors(monkeypatch) -> None:
     assert calls[2][1]["error_message"] == "boom"
 
 
+def test_snapshot_is_one_proxy_call(monkeypatch) -> None:
+    from app import control_plane
+
+    calls: list[str] = []
+
+    def fake_proxy(operation, **payload):
+        calls.append(operation)
+        assert payload["case_id"] == "CASE-1"
+        assert payload["after_seq"] == 4
+        return {
+            "case": {"case_id": "CASE-1", "state": {"goal": "g"}, "status": "running"},
+            "events": [{"event_id": 5, "kind": "agent.progress"}],
+        }
+
+    monkeypatch.setattr(control_plane, "_configured", lambda: True)
+    monkeypatch.setattr(control_plane, "proxy_call", fake_proxy)
+    snap = control_plane.snapshot("CASE-1", after_seq=4)
+    assert calls == ["snapshot"]
+    assert snap["case"]["case_id"] == "CASE-1"
+    assert snap["events"][0]["event_id"] == 5
+
+
+def test_snapshot_falls_back_when_proxy_is_old(monkeypatch) -> None:
+    from app import control_plane
+
+    calls: list[str] = []
+
+    def fake_proxy(operation, **payload):
+        calls.append(operation)
+        if operation == "snapshot":
+            raise RuntimeError("unsupported operation")
+        if operation == "get_case":
+            return {"case_id": "CASE-1", "state": {}, "status": "running"}
+        if operation == "list_events":
+            return [{"event_id": 2}]
+        raise AssertionError(operation)
+
+    monkeypatch.setattr(control_plane, "_configured", lambda: True)
+    monkeypatch.setattr(control_plane, "proxy_call", fake_proxy)
+    snap = control_plane.snapshot("CASE-1", after_seq=1)
+    assert calls == ["snapshot", "get_case", "list_events"]
+    assert snap["case"]["case_id"] == "CASE-1"
+    assert snap["events"] == [{"event_id": 2}]
+
+
+def test_update_case_skips_read_when_state_and_status_given(monkeypatch) -> None:
+    from app import control_plane
+
+    calls: list[str] = []
+
+    def fake_proxy(operation, **payload):
+        calls.append(operation)
+        return {"case_id": payload["case_id"], "state": payload["state"], "status": payload["status"]}
+
+    monkeypatch.setattr(control_plane, "_configured", lambda: True)
+    monkeypatch.setattr(control_plane, "proxy_call", fake_proxy)
+    control_plane.update_case("CASE-1", state={"goal": "x"}, status="running")
+    assert calls == ["update_case"]
+
+
+def test_case_feed_uses_snapshot_not_two_reads(monkeypatch) -> None:
+    from app import cases_api, control_plane
+
+    calls: list[str] = []
+
+    def fake_proxy(operation, **payload):
+        calls.append(operation)
+        if operation != "snapshot":
+            raise AssertionError(operation)
+        return {
+            "case": {
+                "case_id": "CASE-1",
+                "state": {"goal": "даты", "artifacts": {}},
+                "status": "running",
+            },
+            "events": [],
+        }
+
+    monkeypatch.setattr(control_plane, "_configured", lambda: True)
+    monkeypatch.setattr(control_plane, "proxy_call", fake_proxy)
+    feed = cases_api.case_feed("CASE-1")
+    assert calls == ["snapshot"]
+    assert feed["case_id"] == "CASE-1"
+    assert feed["status"] == "running"
+
+
 def test_create_case_optional_task_name(monkeypatch) -> None:
     monkeypatch.setenv("ORCHESTRATOR_WEBHOOK_URL", "http://127.0.0.1:9/webhook/mas-orchestrator-step")
     from app.settings import Settings
@@ -536,6 +622,17 @@ def test_event_lane_handoff_directions() -> None:
     assert turn["from_role"] == "orchestrator"
     assert turn["to_role"] == "schedule_builder"
     assert turn["kind"] == "handoff"
+
+    none_result = event_to_turn(
+        {
+            "kind": "agent.result",
+            "actor": "schedule_builder",
+            "agent_id": "schedule_builder",
+            "status_message": "None",
+        }
+    )
+    assert none_result["summary"] == "Агент завершил работу."
+    assert none_result["brief"] != "None"
 
 
 def test_schedule_artifact_download_from_state(monkeypatch) -> None:

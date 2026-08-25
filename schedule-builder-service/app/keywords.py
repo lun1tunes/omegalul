@@ -164,8 +164,31 @@ FIELDS: dict[str, list[dict[str, Any]]] = {
     ],
     "WELTARG": [
         {"name": "well", "type": "string", "required": True, "unit": None, "description": "Имя скважины"},
-        {"name": "item", "type": "string", "required": False, "unit": None, "description": "ORAT/BHP/..."},
-        {"name": "value", "type": "number", "required": False, "unit": None, "description": "Target value"},
+        {"name": "quantity", "type": "string", "required": True, "unit": None, "description": "ORAT/WRAT/GRAT/LRAT/RESV/BHP/THP/TARGTHP/VFP/LIFT/GUID/DEPTH"},
+        {"name": "value", "type": "number", "required": True, "unit": None, "description": "Новое значение"},
+    ],
+    "WCONHIST": [
+        {"name": "well", "type": "string", "required": True, "unit": None, "description": "Имя исторической скважины"},
+        {"name": "status", "type": "string", "required": False, "unit": None, "description": "OPEN/SHUT"},
+    ],
+    "WECON": [
+        {"name": "well", "type": "string", "required": True, "unit": None, "description": "Имя скважины"},
+        {"name": "min_orat", "type": "number", "required": False, "unit": "m3/d", "description": "Минимальный экономический ORAT"},
+        {"name": "max_wct", "type": "number", "required": False, "unit": None, "description": "Максимальная обводнённость"},
+        {"name": "action", "type": "string", "required": False, "unit": None, "description": "NONE/CON/WELL"},
+    ],
+    "WTEST": [
+        {"name": "well", "type": "string", "required": True, "unit": None, "description": "Имя скважины"},
+        {"name": "interval", "type": "number", "required": True, "unit": "day", "description": "Интервал проверки"},
+        {"name": "reason", "type": "string", "required": True, "unit": None, "description": "P/E/G"},
+    ],
+    "WPIMULT": [
+        {"name": "well", "type": "string", "required": True, "unit": None, "description": "Имя скважины"},
+        {"name": "mult", "type": "number", "required": True, "unit": None, "description": "Множитель CF"},
+    ],
+    "GCONPROD": [
+        {"name": "group", "type": "string", "required": True, "unit": None, "description": "Имя группы или FIELD"},
+        {"name": "control", "type": "string", "required": True, "unit": None, "description": "ORAT/WRAT/GRAT/LRAT/RESV/FLD"},
     ],
 }
 
@@ -181,6 +204,11 @@ DESCRIPTIONS = {
     "COMPDATMD": "Перфорация по MD",
     "GRUPTREE": "Иерархия групп",
     "WELTARG": "Целевое управление скважиной",
+    "WCONHIST": "Исторический контроль добывающей скважины; не прогноз",
+    "WECON": "Экономические пределы скважины; не целевой дебит",
+    "WTEST": "Политика проверки и переоткрытия закрытой скважины",
+    "WPIMULT": "Множитель проводимости перфорации",
+    "GCONPROD": "Прогнозный контроль группы или FIELD; не well control",
     "FRACTURE_SPECS": "Параметры ГРП скважины (legacy name; layout FRACTURE_WELL §12.2.131)",
 }
 

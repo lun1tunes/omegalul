@@ -291,46 +291,6 @@ async def _login(client: httpx.AsyncClient, cfg: Settings) -> str:
         return _cookie
 
 
-def _load_execution_data_via_postgres(execution_id: str) -> str | None:
-    """Read flatted n8n execution_data from the compose Postgres (avoids n8n includeData OOM)."""
-    import re
-    import subprocess
-    from pathlib import Path
-
-    if not re.fullmatch(r"\d{1,18}", str(execution_id)):
-        return None
-    root = Path(__file__).resolve().parents[2]
-    try:
-        cp = subprocess.run(
-            [
-                "docker",
-                "compose",
-                "exec",
-                "-T",
-                "postgres",
-                "psql",
-                "-U",
-                "n8n",
-                "-d",
-                "n8n",
-                "-At",
-                "-c",
-                f'SELECT data FROM execution_data WHERE "executionId"={execution_id};',
-            ],
-            cwd=str(root),
-            capture_output=True,
-            text=True,
-            timeout=180,
-            check=False,
-        )
-    except (OSError, subprocess.SubprocessError):
-        return None
-    raw = (cp.stdout or "").strip()
-    if cp.returncode != 0 or not raw.startswith("["):
-        return None
-    return raw
-
-
 async def _invoke_n8n_rest(
     payload: dict[str, Any],
     *,
@@ -406,40 +366,32 @@ async def _invoke_n8n_rest(
             status = (last.get("data") or last).get("status")
             if status in {"success", "error", "crashed", "canceled"}:
                 # Failed runs do not need their potentially huge execution blob.
-                # More importantly, do not invoke the optional local Docker/Postgres
-                # fallback for an already-failed run: in a corporate/Windows
-                # deployment Docker may not exist and the fallback can block for its
-                # full subprocess timeout while we only need to fail closed.
                 if status != "success":
                     raise OrchestratorError(
                         _execution_error_message(last, status=status),
                         status_code=502,
                         detail={"execution_id": execution_id, "status": status},
                     )
-                # Prefer Postgres for the payload: includeData of golden SCHEDULE runs
-                # has repeatedly heap-OOM'd n8n (~512MiB) while serializing the response.
-                pg = await asyncio.to_thread(_load_execution_data_via_postgres, str(execution_id))
-                if pg is not None:
-                    last = {"data": {"data": pg, "status": status}}
-                else:
-                    try:
-                        full = await client.get(
-                            f"{cfg.n8n_base}/rest/executions/{execution_id}",
-                            params={"includeData": "true"},
-                        )
-                    except httpx.HTTPError as exc:
-                        raise OrchestratorError(
-                            f"n8n execution fetch failed: {exc}",
-                            status_code=502,
-                            detail={"execution_id": execution_id},
-                        ) from exc
-                    if full.status_code >= 400:
-                        raise OrchestratorError(
-                            f"n8n execution fetch HTTP {full.status_code}",
-                            status_code=502,
-                            detail=full.text[:400],
-                        )
-                    last = full.json()
+                # REST is a lab fallback. Field Windows processes never see Postgres:
+                # they call n8n webhooks only. Do not query the database from here.
+                try:
+                    full = await client.get(
+                        f"{cfg.n8n_base}/rest/executions/{execution_id}",
+                        params={"includeData": "true"},
+                    )
+                except httpx.HTTPError as exc:
+                    raise OrchestratorError(
+                        f"n8n execution fetch failed: {exc}",
+                        status_code=502,
+                        detail={"execution_id": execution_id},
+                    ) from exc
+                if full.status_code >= 400:
+                    raise OrchestratorError(
+                        f"n8n execution fetch HTTP {full.status_code}",
+                        status_code=502,
+                        detail=full.text[:400],
+                    )
+                last = full.json()
                 parsed = extract_orchestrator_response(last)
                 if parsed:
                     return parsed
