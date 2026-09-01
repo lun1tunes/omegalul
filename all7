@@ -1,3 +1,305 @@
+        run(["docker", "compose", "cp", str(path), f"postgres:{remote}"])
+        run(
+            [
+                "docker",
+                "compose",
+                "exec",
+                "-T",
+                "postgres",
+                "psql",
+                "-U",
+                "n8n",
+                "-d",
+                "n8n",
+                "-v",
+                "ON_ERROR_STOP=1",
+                "-f",
+                remote,
+            ]
+        )
+        print(f"applied {name}")
+
+
+def ensure_qwen_credential(env: dict[str, str]) -> str:
+    """Create or reuse OpenAI-compatible Qwen credential. Returns live n8n id."""
+    existing = psql("SELECT name || E'\\t' || id FROM credentials_entity;")
+    for line in existing.splitlines():
+        if "\t" not in line:
+            continue
+        name, cid = line.split("\t", 1)
+        if name.strip() == "Qwen OpenAI-compatible":
+            print(f"qwen credential exists id={cid.strip()}")
+            return cid.strip()
+    key = (env.get("QWEN_API_KEY") or "").strip()
+    url = (env.get("QWEN_BASE_URL") or "https://api.openai.com/v1").rstrip("/")
+    if not key:
+        print("qwen credential skip: QWEN_API_KEY missing")
+        return ""
+    import http.cookiejar
+
+    user = env.get("N8N_USERNAME") or env.get("N8N_USER")
+    password = env.get("N8N_PASSWORD")
+    if not user or not password:
+        print("qwen credential skip: no n8n login")
+        return ""
+    base = f"http://127.0.0.1:{env.get('N8N_HOST_PORT', '15678')}"
+    cj = http.cookiejar.CookieJar()
+    opener = urllib.request.build_opener(urllib.request.HTTPCookieProcessor(cj))
+    login = urllib.request.Request(
+        base + "/rest/login",
+        data=json.dumps({"emailOrLdapLoginId": user, "password": password}).encode(),
+        headers={"Content-Type": "application/json"},
+        method="POST",
+    )
+    opener.open(login, timeout=30)
+    payload = {
+        "name": "Qwen OpenAI-compatible",
+        "type": "openAiApi",
+        "data": {"apiKey": key, "url": url},
+    }
+    req = urllib.request.Request(
+        base + "/rest/credentials",
+        data=json.dumps(payload).encode(),
+        headers={"Content-Type": "application/json", "Accept": "application/json"},
+        method="POST",
+    )
+    with opener.open(req, timeout=60) as resp:
+        body = json.loads(resp.read().decode() if resp.length != 0 else b"{}")
+    cred = body.get("data") or body
+    cid = str(cred.get("id") or "").strip()
+    if not cid:
+        raise SystemExit(f"qwen credential create missing id: {list(body)[:8]}")
+    if PROJECT_ID:
+        psql(
+            "INSERT INTO shared_credentials (\"credentialsId\", \"projectId\", role) "
+            f"VALUES ('{cid}', '{PROJECT_ID}', 'credential:owner') ON CONFLICT DO NOTHING;"
+        )
+    print(f"qwen credential created id={cid}")
+    return cid
+
+
+def bind_error_workflow(name_to_id: dict[str, str]) -> None:
+    """Point Settings → Error workflow at Error — MAS Node Traces (live n8n IDs)."""
+    hid = name_to_id.get("Error — MAS Node Traces") or name_to_id.get("Error — MAS Case Handler")
+    if not hid:
+        print("bind errorWorkflow skip: handler missing")
+        return
+    print("== bind n8n Error workflow ==")
+    for name, wid in sorted(name_to_id.items()):
+        target = "" if name in ERROR_WORKFLOW_SKIP else hid
+        escaped = target.replace("'", "''")
+        psql(
+            "UPDATE workflow_entity "
+            "SET settings = jsonb_set(COALESCE(settings::jsonb, '{}'::jsonb), "
+            f"'{{errorWorkflow}}', to_jsonb('{escaped}'::text)) "
+            f"WHERE id = '{wid}';"
+        )
+        print(f"errorWorkflow {name}: {target or '(empty)'}")
+
+
+def patch_nodes(nodes, name_to_id: dict[str, str], env: dict[str, str]) -> int:
+    changed = 0
+    # Compose DNS: n8n + agent containers reach Activity on the backend network.
+    # Field Windows: set MAS_ACTIVITY_URL=http://<PC-IP>:8200 (corporate n8n is not in compose).
+    activity_url = env.get("MAS_ACTIVITY_URL", "http://mas-activity:8200")
+    # Same port as field Windows (8000). Compose excel-tools listens on 8000 too.
+    excel_url = env.get("EXCEL_TOOLS_URL", "http://excel-tools:8000")
+    math_url = env.get("MATH_SERVICE_URL", "http://math-service:8100")
+    schedule_url = env.get("SCHEDULE_BUILDER_URL", "http://schedule-builder:8090")
+    excel_key = env.get("EXCEL_TOOLS_API_KEY") or env.get("excel_tools_api_key") or ""
+    webhook_key = env.get("EXCEL_WEBHOOK_API_KEY") or env.get("excel_webhook_api_key") or excel_key
+    placeholders = dict(PLACEHOLDERS)
+    for ph, target in OPTIONAL_PLACEHOLDERS.items():
+        if target in name_to_id:
+            placeholders[ph] = target
+
+    for node in nodes:
+        creds = node.get("credentials")
+        if isinstance(creds, dict):
+            for ctype, meta in creds.items():
+                if not isinstance(meta, dict):
+                    continue
+                cname = str(meta.get("name") or "")
+                if ctype == "postgres":
+                    meta["id"] = CRED_PG
+                    meta["name"] = "Postgres pgvector"
+                    changed += 1
+                elif ctype == "openAiApi":
+                    qwen_id = str(env.get("_N8N_QWEN_CRED_ID") or "").strip()
+                    if "qwen" in cname.lower() and qwen_id:
+                        meta["id"] = qwen_id
+                        meta["name"] = "Qwen OpenAI-compatible"
+                    else:
+                        meta["id"] = CRED_OA
+                        meta["name"] = "OpenAI production"
+                    changed += 1
+                elif ctype == "httpHeaderAuth":
+                    meta["id"] = CRED_HDR
+                    meta["name"] = "Engineering orchestrator inbound key"
+                    changed += 1
+        params = node.get("parameters")
+        if not isinstance(params, dict):
+            continue
+        chat_model = str(env.get("N8N_CHAT_MODEL") or "").strip()
+        if chat_model and node.get("type") == "@n8n/n8n-nodes-langchain.lmChatOpenAi":
+            model = params.get("model")
+            if isinstance(model, dict):
+                model["value"] = chat_model
+                model["mode"] = "id"
+                changed += 1
+            elif model is None or isinstance(model, str):
+                params["model"] = {"mode": "id", "value": chat_model}
+                changed += 1
+        dt = params.get("dataTableId")
+        if isinstance(dt, dict) and dt.get("__rl"):
+            cached = str(dt.get("cachedResultName") or "").lower()
+            name = str(node.get("name") or "").lower()
+            if "trace" in cached or "trace" in name:
+                dt.update({"value": DT_TRACE, "mode": "list", "cachedResultName": "mas_trace_events_v1"})
+            else:
+                dt.update({"value": DT_TASK, "mode": "list", "cachedResultName": "engineering_orchestrator_tasks_v1"})
+            changed += 1
+        wid = params.get("workflowId")
+        if isinstance(wid, dict) and wid.get("__rl"):
+            val = str(wid.get("value") or "")
+            cached = str(wid.get("cachedResultName") or "")
+            if "Data Specialist" in cached or "Document Specialist" in cached:
+                target = placeholders.get(val) or "Template — Engineering Specialist"
+            else:
+                target = placeholders.get(val) or (cached if cached in name_to_id else None)
+                if cached == "SCHEDULE — Knowledge Retrieval":
+                    target = "MAS — Knowledge Retrieval"
+            if target and target in name_to_id:
+                wid["value"] = name_to_id[target]
+                wid["mode"] = "list"
+                wid["cachedResultName"] = target
+                changed += 1
+        # n8n 2.30 production webhooks require a stable webhookId; missing id → 404 "not registered".
+        if node.get("type") == "n8n-nodes-base.webhook" and not node.get("webhookId"):
+            path = str((params.get("path") or "")).strip()
+            stable = {
+                "engineering-orchestrator": "a1000003-orch-wh-0001-8000-000000000002",
+                "engineering-orchestrator-form": "a1000003-orch-form-0001-8000-000000000002",
+                "mas-activity-hydrate": "a1000003-hyd-wh-0001-8000-000000000002",
+                "mas-orchestrator-step": "a1000003-mas-orch-wh-0001-800000000001",
+                "schedule-builder-agent": "a1000003-sched-agent-wh-0001-8000000001",
+            }.get(path)
+            if stable:
+                node["webhookId"] = stable
+                changed += 1
+        if node.get("name") in {"Runtime configuration", "Runtime endpoints"}:
+            for assignment in (((params.get("assignments") or {}).get("assignments")) or []):
+                key = assignment.get("name")
+                if key == "excel_extractor_url":
+                    assignment["value"] = excel_url.rstrip("/") + "/agent/run"
+                    changed += 1
+                elif key == "excel_tools_url":
+                    assignment["value"] = "={{ " + json.dumps(excel_url) + " }}"
+                    changed += 1
+                elif key == "excel_tools_api_key":
+                    assignment["value"] = excel_key
+                    changed += 1
+                elif key == "excel_webhook_api_key":
+                    assignment["value"] = "={{ " + json.dumps(webhook_key) + " }}"
+                    changed += 1
+                elif key == "calculation_agent_url":
+                    assignment["value"] = math_url.rstrip("/") + "/agent/run"
+                    changed += 1
+                elif key == "schedule_builder_url":
+                    assignment["value"] = env.get(
+                        "SCHEDULE_BUILDER_AGENT_URL",
+                        "http://n8n:5678/webhook/schedule-builder-agent",
+                    )
+                    changed += 1
+                elif key == "schedule_service_url":
+                    assignment["value"] = schedule_url.rstrip("/")
+                    changed += 1
+                elif key == "orchestrator_step_url":
+                    assignment["value"] = env.get(
+                        "ORCHESTRATOR_INTERNAL_WEBHOOK_URL",
+                        "http://n8n:5678/webhook/mas-orchestrator-step",
+                    )
+                    changed += 1
+                elif key == "activity_base_url":
+                    assignment["value"] = activity_url
+                    changed += 1
+        if node.get("name") == "Math Service Configuration":
+            for assignment in (((params.get("assignments") or {}).get("assignments")) or []):
+                key = assignment.get("name")
+                if key == "math_service_url":
+                    assignment["value"] = math_url
+                    changed += 1
+        if node.get("name") == "Activity connection":
+            for assignment in (((params.get("assignments") or {}).get("assignments")) or []):
+                key = assignment.get("name")
+                if key == "activity_base_url":
+                    assignment["value"] = activity_url
+                    changed += 1
+        js = params.get("jsCode")
+        if isinstance(js, str) and "ACTIVITY_BASE_URL" in js and "Activity connection" not in js:
+            js2 = re.sub(
+                r"const ACTIVITY_BASE_URL=['\"][^'\"]*['\"]",
+                f"const ACTIVITY_BASE_URL={json.dumps(activity_url)}",
+                js,
+            )
+            if js2 != js:
+                params["jsCode"] = js2
+                changed += 1
+    return changed
+
+
+def sync_history() -> None:
+    print("== sync workflow_history ==")
+    psql(
+        """
+UPDATE workflow_history h
+SET nodes = w.nodes,
+    connections = w.connections,
+    name = w.name,
+    "updatedAt" = NOW()
+FROM workflow_entity w
+WHERE h."versionId" = w."versionId"
+  AND h."workflowId" = w.id
+  AND (
+    h.nodes::text IS DISTINCT FROM w.nodes::text
+    OR h.connections::text IS DISTINCT FROM w.connections::text
+  );
+"""
+    )
+
+
+def publish(name_to_id: dict[str, str]) -> None:
+    """Publish+activate via REST. CLI `n8n publish:workflow` is a no-op for workflow_published_version in 2.30."""
+    print("== publish/activate (REST) ==")
+    env = load_env()
+    user = env.get("N8N_USERNAME") or env.get("N8N_USER")
+    password = env.get("N8N_PASSWORD")
+    if not user or not password:
+        print("missing N8N_USERNAME / N8N_PASSWORD — falling back to CLI publish")
+        for name in PUBLISH:
+            wid = name_to_id.get(name)
+            if not wid:
+                print(f"publish skip missing {name}")
+                continue
+            cp = run(["docker", "compose", "exec", "-T", "n8n", "n8n", "publish:workflow", f"--id={wid}"], check=False)
+            print(f"publish {name}: {'OK' if cp.returncode == 0 else 'FAIL'}")
+        return
+
+    import http.cookiejar
+
+    base = f"http://127.0.0.1:{env.get('N8N_HOST_PORT', '15678')}"
+    cj = http.cookiejar.CookieJar()
+    opener = urllib.request.build_opener(urllib.request.HTTPCookieProcessor(cj))
+
+    def rest(method: str, path: str, payload: dict | None = None):
+        body = None if payload is None else json.dumps(payload).encode()
+        req = urllib.request.Request(
+            base + path,
+            data=body,
+            method=method,
+            headers={"Content-Type": "application/json", "Accept": "application/json"},
+        )
+        try:
             with opener.open(req, timeout=180) as resp:
                 raw = resp.read()
                 return int(resp.status), json.loads(raw) if raw else None
@@ -235,19 +537,99 @@ def wait_url(url: str, attempts: int = 90) -> None:
     raise SystemExit(f"not healthy: {url}")
 
 
+def wait_control_plane_webhook(env: dict[str, str], attempts: int = 60) -> None:
+    """Activity cannot boot until production /webhook/mas-control-plane is registered."""
+    port = env.get("N8N_HOST_PORT", "15678")
+    url = f"http://127.0.0.1:{port}/webhook/mas-control-plane"
+    body = json.dumps({"operation": "schema"}).encode()
+    header = env.get("CONTROL_PLANE_PROXY_AUTH_HEADER") or "Authorization"
+    value = env.get("CONTROL_PLANE_PROXY_AUTH_VALUE") or "local-orch-inbound"
+    print("== wait control-plane webhook ==")
+    for _ in range(attempts):
+        req = urllib.request.Request(
+            url,
+            data=body,
+            method="POST",
+            headers={"Content-Type": "application/json", header: value},
+        )
+        try:
+            with urllib.request.urlopen(req, timeout=30) as resp:
+                raw = resp.read()
+                data = json.loads(raw) if raw else {}
+                if data.get("ok") is True:
+                    print("control-plane webhook ok")
+                    return
+                print(f"control-plane unexpected body {str(data)[:180]}")
+        except urllib.error.HTTPError as exc:
+            code = int(exc.code)
+            text = exc.read().decode("utf-8", errors="replace")[:180]
+            print(f"control-plane HTTP {code} {text.replace(chr(10), ' ')}")
+            if code != 404:
+                print("control-plane webhook registered")
+                return
+        except Exception as exc:  # noqa: BLE001
+            print(f"control-plane wait {exc}")
+        time.sleep(2)
+    raise SystemExit("control-plane webhook not registered")
+
+
+def wait_activity_health(env: dict[str, str]) -> None:
+    port = env.get("MAS_ACTIVITY_HOST_PORT", "8200")
+    host = f"http://127.0.0.1:{port}/health"
+    print(f"== wait mas-activity {host} ==")
+    try:
+        wait_url(host, attempts=180)
+        return
+    except SystemExit:
+        pass
+    for _ in range(90):
+        cp = run(
+            [
+                "docker",
+                "compose",
+                "exec",
+                "-T",
+                "mas-activity",
+                "python3",
+                "-c",
+                "import urllib.request; urllib.request.urlopen('http://127.0.0.1:8200/health', timeout=3).read()",
+            ],
+            check=False,
+            timeout=20,
+        )
+        if cp.returncode == 0:
+            print("mas-activity healthy via docker exec")
+            return
+        time.sleep(2)
+    raise SystemExit(f"not healthy: {host}")
+
+
 def ensure_compose_up() -> None:
     print("== compose up ==")
-    # Prefer recreate-without-rebuild when images exist (fast path).
-    run(["docker", "compose", "up", "-d"], timeout=300)
+    # Do not start mas-activity yet: it requires an active Control Plane Proxy webhook.
+    run(["docker", "compose", "stop", "mas-activity"], check=False, timeout=60)
+    run(
+        [
+            "docker",
+            "compose",
+            "up",
+            "-d",
+            "postgres",
+            "n8n",
+            "n8n-runners",
+            "excel-tools",
+            "math-service",
+            "schedule-builder",
+        ],
+        timeout=300,
+    )
     env = load_env()
     n8n_port = env.get("N8N_HOST_PORT", "15678")
-    activity_port = env.get("MAS_ACTIVITY_HOST_PORT", "8200")
     wait_url(f"http://127.0.0.1:{n8n_port}/healthz")
-    wait_url(f"http://127.0.0.1:{activity_port}/health")
     for service, inner in (
         ("math-service", "http://127.0.0.1:8100/health"),
         ("schedule-builder", "http://127.0.0.1:8090/health"),
-        ("excel-tools", "http://127.0.0.1:18000/health"),
+        ("excel-tools", "http://127.0.0.1:8000/health"),
     ):
         print(f"wait {service} {inner}")
         for _ in range(90):
@@ -276,7 +658,7 @@ def main() -> int:
     parser = argparse.ArgumentParser()
     parser.add_argument("--skip-health", action="store_true")
     parser.add_argument("--skip-import", action="store_true", help="only rebind/publish existing workflows")
-    parser.add_argument("--skip-wipe", action="store_true", help="do not wipe CAS/trace/Activity state")
+    parser.add_argument("--skip-wipe", action="store_true", help="do not wipe cases/events/Activity state")
     args = parser.parse_args()
     t0 = time.time()
     env = load_env()
@@ -309,11 +691,12 @@ def main() -> int:
     publish(name_to_id)
     run(["docker", "compose", "restart", "n8n"])
     env = load_env()
-    wait_url(f"http://127.0.0.1:{env.get('N8N_HOST_PORT', '5678')}/healthz")
+    wait_url(f"http://127.0.0.1:{env.get('N8N_HOST_PORT', '15678')}/healthz")
     # Forms/webhooks register after active workflows finish loading.
     time.sleep(8)
-    run(["docker", "compose", "restart", "mas-activity"])
-    wait_url(f"http://127.0.0.1:{env.get('MAS_ACTIVITY_HOST_PORT', '8200')}/health")
+    wait_control_plane_webhook(env)
+    run(["docker", "compose", "up", "-d", "--no-deps", "mas-activity"], timeout=180)
+    wait_activity_health(env)
     overall = None
     if not args.skip_health:
         overall = run_health_form()
@@ -342,7 +725,7 @@ if __name__ == "__main__":
     raise SystemExit(main())
 
 ===END_FILE===
-===BEGIN_FILE===	scripts/mas_stack_health.py	4659	utf8
+===BEGIN_FILE===	scripts/mas_stack_health.py	4658	utf8
 #!/usr/bin/env python3
 """Host-side stack health: ping compose services the Health Check form also probes."""
 from __future__ import annotations
@@ -440,7 +823,7 @@ def main() -> int:
     )
 
     for name, url in [
-        ("compose excel-tools via n8n DNS", "http://excel-tools:18000/health"),
+        ("compose excel-tools via n8n DNS", "http://excel-tools:8000/health"),
         ("compose n8n-runners via n8n DNS", "http://n8n-runners:5680/healthz"),
         ("compose mas-activity via n8n DNS", "http://mas-activity:8200/health"),
         ("compose n8n self via n8n DNS", "http://n8n:5678/healthz"),

@@ -1,3 +1,155 @@
+                  "schema_catalogue": {
+                    "contract": "schedule_schema_catalogue",
+                    "contract_version": "1.0",
+                    "catalogue_ref": "catalogue://tnavigator/22.2/guiderat-guide-rate-formula-v1",
+                    "catalogue_hash": "sha256:410c9c3ce02874a3933b4382d735cd457c1a9992119753fc3cc3fc2c02f55a85",
+                    "source_hash": "sha256:7d1624e1ea0196383c86dbd2558826c53a5a86eb992c48141eb4e3b66f0353d5",
+                    "access_scope": "petroleum-engineering",
+                    "simulator_profile": {
+                      "vendor": "Rock Flow Dynamics",
+                      "simulator": "tNavigator",
+                      "version": "22.2",
+                      "unit_system": "METRIC"
+                    },
+                    "approved": true,
+                    "approved_by": "department-hydrodynamic-expert",
+                    "author": "department-hydrodynamic-expert",
+                    "approval_gate_id": "expert:guiderat-guide-rate-formula-v1:1",
+                    "schemas": [
+                      {
+                        "schema_id": "expert:GUIDERAT:none",
+                        "schema_revision": "1",
+                        "keyword": "GUIDERAT",
+                        "variant": "none",
+                        "citation": {
+                          "document_id": "tnav-user-manual-russian",
+                          "document_revision": "19.4",
+                          "page": "12.20.90 / 1933-1936",
+                          "heading": "GUIDERAT",
+                          "source_hash": "sha256:7d1624e1ea0196383c86dbd2558826c53a5a86eb992c48141eb4e3b66f0353d5"
+                        },
+                        "parser": {
+                          "token_width": 12,
+                          "allow_trailing_omission": true,
+                          "allow_unquoted_strings": true
+                        },
+                        "fields": [
+                          {
+                            "name": "INTERVAL",
+                            "position": 1,
+                            "type": "number",
+                            "required": false
+                          },
+                          {
+                            "name": "PHASE",
+                            "position": 2,
+                            "type": "string",
+                            "required": true,
+                            "enum": [
+                              "NONE"
+                            ]
+                          }
+                        ],
+                        "layout": {
+                          "newline": "LF",
+                          "indent": "  ",
+                          "delimiter": "SPACE",
+                          "record_terminator": "SLASH",
+                          "block_terminator": "SLASH_LINE"
+                        },
+                        "semantics": {
+                          "period": "FORECAST",
+                          "clock": {
+                            "uses_current": true
+                          },
+                          "definitions": [],
+                          "references": [],
+                          "prerequisites": [],
+                          "state_assignments": [
+                            {
+                              "namespace": "guiderat-formula",
+                              "entity_type": "guiderat_formula",
+                              "entity_field": "PHASE",
+                              "key_fields": [
+                                "PHASE"
+                              ],
+                              "value_fields": [
+                                "INTERVAL",
+                                "PHASE"
+                              ]
+                            }
+                          ],
+                          "numeric_constraints": [
+                            {
+                              "field": "INTERVAL",
+                              "min": 0
+                            },
+                            {
+                              "field": "A"
+                            },
+                            {
+                              "field": "B",
+                              "min": 0
+                            },
+                            {
+                              "field": "C"
+                            },
+                            {
+                              "field": "D"
+                            },
+                            {
+                              "field": "E"
+                            },
+                            {
+                              "field": "F"
+                            },
+                            {
+                              "field": "GRDAMP",
+                              "min_exclusive": 0,
+                              "max": 1
+                            },
+                            {
+                              "field": "GRMIN",
+                              "min_exclusive": 0
+                            }
+                          ]
+                        }
+                      },
+                      {
+                        "schema_id": "expert:GUIDERAT:res",
+                        "schema_revision": "1",
+                        "keyword": "GUIDERAT",
+                        "variant": "res",
+                        "citation": {
+                          "document_id": "tnav-user-manual-russian",
+                          "document_revision": "19.4",
+                          "page": "12.20.90 / 1933-1936",
+                          "heading": "GUIDERAT",
+                          "source_hash": "sha256:7d1624e1ea0196383c86dbd2558826c53a5a86eb992c48141eb4e3b66f0353d5"
+                        },
+                        "parser": {
+                          "token_width": 12,
+                          "allow_trailing_omission": true,
+                          "allow_unquoted_strings": true
+                        },
+                        "fields": [
+                          {
+                            "name": "INTERVAL",
+                            "position": 1,
+                            "type": "number",
+                            "required": false
+                          },
+                          {
+                            "name": "PHASE",
+                            "position": 2,
+                            "type": "string",
+                            "required": true,
+                            "enum": [
+                              "RES"
+                            ]
+                          },
+                          {
+                            "name": "A",
                             "position": 3,
                             "type": "number",
                             "required": true

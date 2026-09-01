@@ -1,3 +1,72 @@
+          "systemMessage": "Ты — единственный LLM-решатель агента Excel Extractor.\n\nWorkbook тебе не показывают. Он лежит в сессии FastAPI. session_id привязан workflow: никогда не передавай session_id и обёртку args/input.\n\nИнструменты:\n- workbook_introspect — листы и размеры (компактно)\n- sheet_preview — небольшой прямоугольник одного листа, не весь лист\n- detect_tables — найти таблицы, вернуть table_id / range / columns\n- match_tables — ранжировать таблицы по запросу\n- describe_table — колонки и sample по table_id\n- list_column_values — ограниченные distinct-значения колонки\n- query_table — строки по table_id (limit, фильтры). Не выгружай всю книгу\n- extract_commissioning — скважина+дата ввода из уже открытой сессии. Даты и скважины сам не выдумывай\n\nПравила:\n- Не пиши SCHEDULE / .INC. Только факты из Excel.\n- Не придумывай скважины, даты, дебиты, имена листов и table_id.\n- suggested_capability=commissioning → сразу extract_commissioning, затем STOP.\n- Иначе introspect/detect → query нужных таблиц. Если нужны даты ввода — extract_commissioning.\n- После extract_commissioning со status completed или needs_input — STOP.\n- Если файла/таблиц нет — не выдумывай строки.\n\nЗаверши одним коротким фактическим предложением по-русски.\n",
+          "maxIterations": 12,
+          "returnIntermediateSteps": true,
+          "passthroughBinaryImages": false,
+          "passthroughBinaryPdfs": false,
+          "enableStreaming": false
+        },
+        "needsFallback": false
+      },
+      "id": "2f03ceca-e58c-53ff-8b58-4586a68f08ea",
+      "name": "Excel Extractor AI Agent",
+      "type": "@n8n/n8n-nodes-langchain.agent",
+      "typeVersion": 3.1,
+      "position": [
+        1720,
+        160
+      ]
+    },
+    {
+      "parameters": {
+        "model": {
+          "mode": "id",
+          "value": "qwen3.6-plus"
+        },
+        "options": {
+          "maxTokens": 2048,
+          "temperature": 0,
+          "timeout": 300000,
+          "maxRetries": 5
+        },
+        "responsesApiEnabled": false
+      },
+      "id": "e81706e1-430e-5640-a5c8-2500fb80aa1b",
+      "name": "Excel Extractor Chat Model — Qwen",
+      "type": "@n8n/n8n-nodes-langchain.lmChatOpenAi",
+      "typeVersion": 1.3,
+      "position": [
+        1720,
+        40
+      ],
+      "credentials": {
+        "openAiApi": {
+          "id": "REPLACE_IN_UI",
+          "name": "REPLACE: Qwen OpenAI-compatible excel extractor credential"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "method": "GET",
+        "url": "={{ $('Runtime configuration').first().json.excel_tools_url + '/sessions/' + $('Open excel session').first().json.session_id + '/result' }}",
+        "sendHeaders": true,
+        "headerParameters": {
+          "parameters": [
+            {
+              "name": "Content-Type",
+              "value": "application/json"
+            },
+            {
+              "name": "X-API-Key",
+              "value": "={{ $('Runtime configuration').first().json.excel_tools_api_key || '' }}"
+            }
+          ]
+        },
+        "options": {
+          "timeout": 120000,
+          "response": {
+            "response": {
+              "fullResponse": false,
               "responseFormat": "json"
             }
           }
@@ -759,7 +828,7 @@
 }
 
 ===END_FILE===
-===BEGIN_FILE===	n8n/workflows/core/mas-control-plane-proxy.workflow.json	14469	utf8
+===BEGIN_FILE===	n8n/workflows/core/mas-control-plane-proxy.workflow.json	17188	utf8
 {
   "id": "mas-control-plane-proxy-v1",
   "name": "MAS — Control Plane Proxy",
@@ -774,9 +843,9 @@
   "nodes": [
     {
       "parameters": {
-        "content": "## edit after import\n\nThis is the only database boundary for MAS Activity.\n\n1. Bind the same Postgres credential used by the existing MAS workflows.\n2. Bind Header Auth on the webhook.\n3. Activate this workflow.\n4. Set `CONTROL_PLANE_PROXY_URL=http://n8n:5678/webhook/mas-control-plane` in Activity.\n\nOperations: schema, create_case, get_case, list_cases, update_case, append_event, list_events, snapshot, append_error, list_errors, record_execution, case_id_for_execution, list_agents, upsert_agent, artifact_put, artifact_get.\n\n`snapshot` returns case + events in one SQL / one n8n execution (Activity live feed).\nSuccessful production executions are not saved; errors still are.\n\nActivity contains no database driver and no Postgres connection. HITL state, events and error traces use the same proxy.",
-        "height": 430,
-        "width": 560,
+        "content": "## edit after import\n\nThis is the only database boundary for MAS Activity.\n\n1. Bind the same Postgres credential used by the existing MAS workflows.\n2. Bind Header Auth on the webhook.\n3. Activate this workflow.\n4. Set `CONTROL_PLANE_PROXY_URL=http://n8n:5678/webhook/mas-control-plane` in Activity.\n\nOperations: schema, wipe, create_case, get_case, list_cases, update_case, append_event, list_events, snapshot, append_error, list_errors, record_execution, case_id_for_execution, list_agents, upsert_agent, artifact_put, artifact_get.\n\n`schema` is additive (CREATE IF NOT EXISTS). Activity boot calls schema and never truncates.\n\nTo **clear MAS case data** (cases, events, error_traces, executions, mas_artifacts; not agent_registry, not n8n tables):\n- Set `wipe_data` to **true** on **Operator flags**, save, then **Execute workflow** from the canvas (manual mode), **or**\n- POST `{\"operation\":\"wipe\"}` / `{\"operation\":\"schema\",\"wipe\":true}` with Header Auth.\nLeave `wipe_data` **false** in production so a saved workflow cannot wipe on Activity restart.\n\n`snapshot` returns case + events in one SQL / one n8n execution (Activity live feed).\nSuccessful production executions are not saved; errors still are.\n\nActivity contains no database driver and no Postgres connection. HITL state, events and error traces use the same proxy.",
+        "height": 620,
+        "width": 620,
         "color": 1
       },
       "id": "mas-control-plane-note-v1",
@@ -814,14 +883,38 @@
     },
     {
       "parameters": {
-        "jsCode": "const raw=$json.body&&typeof $json.body==='object'?$json.body:$json;\nconst op=String(raw.operation||'').trim();\nconst allowed=new Set(['schema','create_case','get_case','list_cases','update_case','append_event','list_events','snapshot','append_error','list_errors','record_execution','case_id_for_execution','list_agents','upsert_agent','artifact_put','artifact_get']);\nif(!allowed.has(op)) throw new Error('unsupported operation');\nconst s=v=>String(v??'');\nconst j=v=>JSON.stringify(v??{});\nconst caseId=s(raw.case_id).trim();\nconst artifactId=s(raw.artifact_id).trim();\nif(['create_case','get_case','update_case','append_event','list_events','snapshot','list_errors','artifact_put','artifact_get'].includes(op)&&!caseId) throw new Error('case_id is required');\nif(['artifact_put','artifact_get'].includes(op)&&!artifactId) throw new Error('artifact_id is required');\nconst common={operation:op,case_id:caseId,artifact_id:artifactId};\nlet query='',params=[];\nif(op==='schema') query=`CREATE TABLE IF NOT EXISTS cases (case_id TEXT PRIMARY KEY,state JSONB NOT NULL DEFAULT '{}'::jsonb,status TEXT NOT NULL,updated_at TIMESTAMPTZ NOT NULL DEFAULT now(),CONSTRAINT cases_status_check CHECK (status IN ('new','running','waiting_user','done','failed')));CREATE TABLE IF NOT EXISTS events (event_id BIGSERIAL PRIMARY KEY,case_id TEXT NOT NULL REFERENCES cases(case_id) ON DELETE CASCADE,task_id TEXT,kind TEXT NOT NULL,actor TEXT NOT NULL,agent_id TEXT,status TEXT,status_message TEXT,handoff_message TEXT,payload JSONB NOT NULL DEFAULT '{}'::jsonb,created_at TIMESTAMPTZ NOT NULL DEFAULT now());CREATE INDEX IF NOT EXISTS events_case_id_event_id_idx ON events(case_id);CREATE TABLE IF NOT EXISTS error_traces (error_id BIGSERIAL PRIMARY KEY,case_id TEXT,execution_id TEXT,workflow_name TEXT,node_name TEXT,error_message TEXT,error_type TEXT,stack TEXT,input_snapshot JSONB,created_at TIMESTAMPTZ NOT NULL DEFAULT now());CREATE INDEX IF NOT EXISTS error_traces_case_id_idx ON error_traces(case_id);CREATE TABLE IF NOT EXISTS executions (execution_id TEXT PRIMARY KEY,case_id TEXT,workflow_name TEXT,started_at TIMESTAMPTZ NOT NULL DEFAULT now());CREATE INDEX IF NOT EXISTS executions_case_id_idx ON executions(case_id);CREATE TABLE IF NOT EXISTS agent_registry (agent_id TEXT PRIMARY KEY,title TEXT,when_to_use TEXT,input_required JSONB NOT NULL DEFAULT '[]'::jsonb,output_provides JSONB NOT NULL DEFAULT '[]'::jsonb);CREATE TABLE IF NOT EXISTS mas_artifacts (case_id TEXT NOT NULL,artifact_id TEXT NOT NULL,filename TEXT NOT NULL,mime_type TEXT NOT NULL DEFAULT 'application/octet-stream',content BYTEA NOT NULL,created_at TIMESTAMPTZ NOT NULL DEFAULT now(),updated_at TIMESTAMPTZ NOT NULL DEFAULT now(),PRIMARY KEY(case_id,artifact_id));CREATE INDEX IF NOT EXISTS mas_artifacts_case_id_idx ON mas_artifacts(case_id);INSERT INTO agent_registry(agent_id,title,when_to_use,input_required,output_provides) VALUES ('excel_extractor','Excel Extractor','Если есть Excel-файл и нужно извлечь данные','[\"excel\"]'::jsonb,'[\"excel_table\",\"normalized_rows\"]'::jsonb),('calculation_agent','Calculation Agent','Если нужна геометрическая калька','[\"surface\",\"trajectory\"]'::jsonb,'[\"top_perforation_md\"]'::jsonb),('schedule_builder','Schedule Builder','Построение SCHEDULE','[\"schedule_source\"]'::jsonb,'[\"schedule_out\",\"diff\"]'::jsonb) ON CONFLICT(agent_id) DO NOTHING;SELECT true AS schema_ok;`;\nelse if(op==='create_case'){query='INSERT INTO cases(case_id,state,status,updated_at) VALUES($1,$2::jsonb,$3,now()) ON CONFLICT(case_id) DO NOTHING RETURNING case_id,state,status,updated_at';params=[caseId,j(raw.state),s(raw.status||'new')];}\nelse if(op==='get_case'){query='SELECT case_id,state,status,updated_at FROM cases WHERE case_id=$1';params=[caseId];}\nelse if(op==='list_cases'){query='SELECT c.case_id,c.status,c.updated_at,c.state,(SELECT COUNT(*) FROM events e WHERE e.case_id=c.case_id) AS event_count FROM cases c ORDER BY c.updated_at DESC LIMIT $1';params=[Number(raw.limit||80)];}\nelse if(op==='update_case'){query='UPDATE cases SET state=$1::jsonb,status=$2,updated_at=now() WHERE case_id=$3 RETURNING case_id,state,status,updated_at';params=[j(raw.state),s(raw.status),caseId];}\nelse if(op==='append_event'){query=\"WITH locked AS (SELECT case_id FROM cases WHERE case_id=$1 FOR UPDATE), last_event AS (SELECT e.* FROM events e JOIN locked l ON l.case_id=e.case_id WHERE e.case_id=$1 ORDER BY e.event_id DESC LIMIT 1), inserted AS (INSERT INTO events(case_id,task_id,kind,actor,agent_id,status,status_message,handoff_message,payload) SELECT $1,$2,$3,$4,$5,$6,$7,$8,$9::jsonb WHERE NOT EXISTS (SELECT 1 FROM last_event WHERE kind=$3 AND actor=$4 AND COALESCE(agent_id,'')=COALESCE($5,'') AND COALESCE(status,'')=COALESCE($6,'') AND regexp_replace(COALESCE(status_message,''),'\\\\s+',' ','g')=regexp_replace(COALESCE($7,''),'\\\\s+',' ','g') AND regexp_replace(COALESCE(handoff_message,''),'\\\\s+',' ','g')=regexp_replace(COALESCE($8,''),'\\\\s+',' ','g') AND COALESCE(task_id,'')=COALESCE($2,'')) RETURNING event_id,case_id,task_id,kind,actor,agent_id,status,status_message,handoff_message,payload,created_at) SELECT *,false AS idempotent FROM inserted UNION ALL SELECT event_id,case_id,task_id,kind,actor,agent_id,status,status_message,handoff_message,payload,created_at,true AS idempotent FROM last_event WHERE NOT EXISTS (SELECT 1 FROM inserted)\";params=[caseId,s(raw.task_id),s(raw.kind),s(raw.actor),raw.agent_id||null,raw.status||null,raw.status_message||null,raw.handoff_message||null,j(raw.payload)];}\nelse if(op==='list_events'){query='SELECT event_id,case_id,task_id,kind,actor,agent_id,status,status_message,handoff_message,payload,created_at FROM events WHERE case_id=$1 AND event_id>$2 ORDER BY event_id ASC';params=[caseId,Number(raw.after_seq||0)];}\nelse if(op==='snapshot'){query=`SELECT (SELECT jsonb_build_object('case_id',case_id,'state',state,'status',status,'updated_at',updated_at) FROM cases WHERE case_id=$1) AS case_row, COALESCE((SELECT jsonb_agg(to_jsonb(e) ORDER BY e.event_id) FROM (SELECT event_id,case_id,task_id,kind,actor,agent_id,status,status_message,handoff_message,payload,created_at FROM events WHERE case_id=$1 AND event_id>$2 ORDER BY event_id ASC) e),'[]'::jsonb) AS events`;params=[caseId,Number(raw.after_seq||0)];}\nelse if(op==='append_error'){query='INSERT INTO error_traces(case_id,execution_id,workflow_name,node_name,error_message,error_type,stack,input_snapshot) VALUES($1,$2,$3,$4,$5,$6,$7,$8::jsonb) RETURNING error_id,case_id,execution_id,workflow_name,node_name,error_message,error_type,stack,input_snapshot,created_at';params=[raw.case_id||null,raw.execution_id||null,raw.workflow_name||null,raw.node_name||null,raw.error_message||null,raw.error_type||null,raw.stack||null,j(raw.input_snapshot)];}\nelse if(op==='list_errors'){query='SELECT error_id,case_id,execution_id,workflow_name,node_name,error_message,error_type,stack,input_snapshot,created_at FROM error_traces WHERE case_id=$1 ORDER BY error_id ASC';params=[caseId];}\nelse if(op==='record_execution'){query='INSERT INTO executions(execution_id,case_id,workflow_name) VALUES($1,$2,$3) ON CONFLICT(execution_id) DO UPDATE SET case_id=EXCLUDED.case_id,workflow_name=EXCLUDED.workflow_name RETURNING execution_id,case_id,workflow_name';params=[s(raw.execution_id),caseId,s(raw.workflow_name||'orchestrator')];}\nelse if(op==='case_id_for_execution'){query='SELECT case_id FROM executions WHERE execution_id=$1';params=[s(raw.execution_id)];}\nelse if(op==='list_agents'){query='SELECT agent_id,title,when_to_use,input_required,output_provides FROM agent_registry ORDER BY agent_id';}\nelse if(op==='upsert_agent'){const r=raw.row||{};query='INSERT INTO agent_registry(agent_id,title,when_to_use,input_required,output_provides) VALUES($1,$2,$3,$4::jsonb,$5::jsonb) ON CONFLICT(agent_id) DO UPDATE SET title=EXCLUDED.title,when_to_use=EXCLUDED.when_to_use,input_required=EXCLUDED.input_required,output_provides=EXCLUDED.output_provides RETURNING agent_id,title,when_to_use,input_required,output_provides';params=[s(r.agent_id),r.title||null,r.when_to_use||null,j(r.input_required||[]),j(r.output_provides||[])];}\nelse if(op==='artifact_put'){query=\"INSERT INTO mas_artifacts(case_id,artifact_id,filename,mime_type,content,updated_at) VALUES($1,$2,$3,$4,decode($5,'base64'),now()) ON CONFLICT(case_id,artifact_id) DO UPDATE SET filename=EXCLUDED.filename,mime_type=EXCLUDED.mime_type,content=EXCLUDED.content,updated_at=now() RETURNING case_id,artifact_id,filename,mime_type,octet_length(content)::bigint AS bytes\";params=[caseId,artifactId,s(raw.filename||artifactId).slice(0,512),s(raw.mime_type||'application/octet-stream').slice(0,255),s(raw.content_base64)];}\nelse if(op==='artifact_get'){query=\"SELECT case_id,artifact_id,filename,mime_type,encode(content,'base64') AS content_base64,octet_length(content)::bigint AS bytes FROM mas_artifacts WHERE case_id=$1 AND artifact_id=$2\";params=[caseId,artifactId];}\nreturn [{json:{...common,query,params}}];"
+        "assignments": {
+          "assignments": [
+            {
+              "id": "mas-control-plane-wipe-flag",
+              "name": "wipe_data",
+              "value": false,
+              "type": "boolean"
+            }
+          ]
+        },
+        "options": {},
+        "includeOtherFields": true
+      },
+      "id": "mas-control-plane-flags-v1",
+      "name": "Operator flags",
+      "type": "n8n-nodes-base.set",
+      "typeVersion": 3.4,
+      "position": [
+        240,
+        0
+      ]
+    },
+    {
+      "parameters": {
+        "jsCode": "const raw=$json.body&&typeof $json.body==='object'?$json.body:$json;\nconst op=String(raw.operation||'').trim();\nconst allowed=new Set(['schema','wipe','create_case','get_case','list_cases','update_case','append_event','list_events','snapshot','append_error','list_errors','record_execution','case_id_for_execution','list_agents','upsert_agent','artifact_put','artifact_get']);\nif(!allowed.has(op)) throw new Error('unsupported operation');\nconst s=v=>String(v??'');\nconst j=v=>JSON.stringify(v??{});\nconst caseId=s(raw.case_id).trim();\nconst artifactId=s(raw.artifact_id).trim();\nif(['create_case','get_case','update_case','append_event','list_events','snapshot','list_errors','artifact_put','artifact_get'].includes(op)&&!caseId) throw new Error('case_id is required');\nif(['artifact_put','artifact_get'].includes(op)&&!artifactId) throw new Error('artifact_id is required');\nconst flagWipe=$json.wipe_data===true||$json.wipe_data==='true'||$json.wipe_data===1||$json.wipe_data==='1';\nconst bodyWipe=raw.wipe===true||raw.clear_data===true||raw.wipe===1||raw.wipe==='true'||String(raw.wipe||'').toLowerCase()==='true';\nconst execMode=String((typeof $execution!=='undefined'&&$execution.mode)||'');\nconst wipe=op==='wipe'||bodyWipe||(execMode==='manual'&&flagWipe);\nconst wipeSql=`DO $$ BEGIN IF to_regclass('public.events') IS NOT NULL THEN EXECUTE 'TRUNCATE TABLE events RESTART IDENTITY CASCADE'; END IF; IF to_regclass('public.error_traces') IS NOT NULL THEN EXECUTE 'TRUNCATE TABLE error_traces RESTART IDENTITY CASCADE'; END IF; IF to_regclass('public.executions') IS NOT NULL THEN EXECUTE 'TRUNCATE TABLE executions RESTART IDENTITY CASCADE'; END IF; IF to_regclass('public.mas_artifacts') IS NOT NULL THEN EXECUTE 'TRUNCATE TABLE mas_artifacts RESTART IDENTITY CASCADE'; END IF; IF to_regclass('public.cases') IS NOT NULL THEN EXECUTE 'TRUNCATE TABLE cases RESTART IDENTITY CASCADE'; END IF; END$$;`;\nconst common={operation:op,case_id:caseId,artifact_id:artifactId,wiped:wipe};\nlet query='',params=[];\nif(op==='schema'||op==='wipe') query=(wipe?wipeSql:'')+`CREATE TABLE IF NOT EXISTS cases (case_id TEXT PRIMARY KEY,state JSONB NOT NULL DEFAULT '{}'::jsonb,status TEXT NOT NULL,updated_at TIMESTAMPTZ NOT NULL DEFAULT now(),CONSTRAINT cases_status_check CHECK (status IN ('new','running','waiting_user','done','failed')));CREATE TABLE IF NOT EXISTS events (event_id BIGSERIAL PRIMARY KEY,case_id TEXT NOT NULL REFERENCES cases(case_id) ON DELETE CASCADE,task_id TEXT,kind TEXT NOT NULL,actor TEXT NOT NULL,agent_id TEXT,status TEXT,status_message TEXT,handoff_message TEXT,payload JSONB NOT NULL DEFAULT '{}'::jsonb,created_at TIMESTAMPTZ NOT NULL DEFAULT now());CREATE INDEX IF NOT EXISTS events_case_id_event_id_idx ON events(case_id);CREATE TABLE IF NOT EXISTS error_traces (error_id BIGSERIAL PRIMARY KEY,case_id TEXT,execution_id TEXT,workflow_name TEXT,node_name TEXT,error_message TEXT,error_type TEXT,stack TEXT,input_snapshot JSONB,created_at TIMESTAMPTZ NOT NULL DEFAULT now());CREATE INDEX IF NOT EXISTS error_traces_case_id_idx ON error_traces(case_id);CREATE TABLE IF NOT EXISTS executions (execution_id TEXT PRIMARY KEY,case_id TEXT,workflow_name TEXT,started_at TIMESTAMPTZ NOT NULL DEFAULT now());CREATE INDEX IF NOT EXISTS executions_case_id_idx ON executions(case_id);CREATE TABLE IF NOT EXISTS agent_registry (agent_id TEXT PRIMARY KEY,title TEXT,when_to_use TEXT,input_required JSONB NOT NULL DEFAULT '[]'::jsonb,output_provides JSONB NOT NULL DEFAULT '[]'::jsonb);CREATE TABLE IF NOT EXISTS mas_artifacts (case_id TEXT NOT NULL,artifact_id TEXT NOT NULL,filename TEXT NOT NULL,mime_type TEXT NOT NULL DEFAULT 'application/octet-stream',content BYTEA NOT NULL,created_at TIMESTAMPTZ NOT NULL DEFAULT now(),updated_at TIMESTAMPTZ NOT NULL DEFAULT now(),PRIMARY KEY(case_id,artifact_id));CREATE INDEX IF NOT EXISTS mas_artifacts_case_id_idx ON mas_artifacts(case_id);INSERT INTO agent_registry(agent_id,title,when_to_use,input_required,output_provides) VALUES ('excel_extractor','Excel Extractor','Если есть Excel-файл и нужно извлечь данные','[\"excel\"]'::jsonb,'[\"excel_table\",\"normalized_rows\"]'::jsonb),('calculation_agent','Calculation Agent','Если нужна геометрическая калька','[\"surface\",\"trajectory\"]'::jsonb,'[\"top_perforation_md\"]'::jsonb),('schedule_builder','Schedule Builder','Построение SCHEDULE','[\"schedule_source\"]'::jsonb,'[\"schedule_out\",\"diff\"]'::jsonb) ON CONFLICT(agent_id) DO NOTHING;SELECT true AS schema_ok;`;\nelse if(op==='create_case'){query='INSERT INTO cases(case_id,state,status,updated_at) VALUES($1,$2::jsonb,$3,now()) ON CONFLICT(case_id) DO NOTHING RETURNING case_id,state,status,updated_at';params=[caseId,j(raw.state),s(raw.status||'new')];}\nelse if(op==='get_case'){query='SELECT case_id,state,status,updated_at FROM cases WHERE case_id=$1';params=[caseId];}\nelse if(op==='list_cases'){query=\"SELECT c.case_id,c.status,c.updated_at,c.state,(SELECT COUNT(*) FROM events e WHERE e.case_id=c.case_id) AS event_count,COALESCE((SELECT jsonb_agg(jsonb_build_object('kind',e.kind,'actor',e.actor,'agent_id',e.agent_id,'task_id',e.task_id,'status_message',e.status_message,'handoff_message',e.handoff_message) ORDER BY e.event_id) FROM events e WHERE e.case_id=c.case_id),'[]'::jsonb) AS events FROM cases c ORDER BY c.updated_at DESC LIMIT $1\";params=[Number(raw.limit||80)];}\nelse if(op==='update_case'){query='UPDATE cases SET state=$1::jsonb,status=$2,updated_at=now() WHERE case_id=$3 RETURNING case_id,state,status,updated_at';params=[j(raw.state),s(raw.status),caseId];}\nelse if(op==='append_event'){query=\"WITH locked AS (SELECT case_id FROM cases WHERE case_id=$1 FOR UPDATE), last_event AS (SELECT e.* FROM events e JOIN locked l ON l.case_id=e.case_id WHERE e.case_id=$1 ORDER BY e.event_id DESC LIMIT 1), inserted AS (INSERT INTO events(case_id,task_id,kind,actor,agent_id,status,status_message,handoff_message,payload) SELECT $1,$2,$3,$4,$5,$6,$7,$8,$9::jsonb WHERE NOT EXISTS (SELECT 1 FROM last_event WHERE kind=$3 AND actor=$4 AND COALESCE(agent_id,'')=COALESCE($5,'') AND COALESCE(status,'')=COALESCE($6,'') AND regexp_replace(COALESCE(status_message,''),'\\\\s+',' ','g')=regexp_replace(COALESCE($7,''),'\\\\s+',' ','g') AND regexp_replace(COALESCE(handoff_message,''),'\\\\s+',' ','g')=regexp_replace(COALESCE($8,''),'\\\\s+',' ','g') AND COALESCE(task_id,'')=COALESCE($2,'')) RETURNING event_id,case_id,task_id,kind,actor,agent_id,status,status_message,handoff_message,payload,created_at) SELECT *,false AS idempotent FROM inserted UNION ALL SELECT event_id,case_id,task_id,kind,actor,agent_id,status,status_message,handoff_message,payload,created_at,true AS idempotent FROM last_event WHERE NOT EXISTS (SELECT 1 FROM inserted)\";params=[caseId,s(raw.task_id),s(raw.kind),s(raw.actor),raw.agent_id||null,raw.status||null,raw.status_message||null,raw.handoff_message||null,j(raw.payload)];}\nelse if(op==='list_events'){query='SELECT event_id,case_id,task_id,kind,actor,agent_id,status,status_message,handoff_message,payload,created_at FROM events WHERE case_id=$1 AND event_id>$2 ORDER BY event_id ASC';params=[caseId,Number(raw.after_seq||0)];}\nelse if(op==='snapshot'){query=`SELECT (SELECT jsonb_build_object('case_id',case_id,'state',state,'status',status,'updated_at',updated_at) FROM cases WHERE case_id=$1) AS case_row, COALESCE((SELECT jsonb_agg(to_jsonb(e) ORDER BY e.event_id) FROM (SELECT event_id,case_id,task_id,kind,actor,agent_id,status,status_message,handoff_message,payload,created_at FROM events WHERE case_id=$1 AND event_id>$2 ORDER BY event_id ASC) e),'[]'::jsonb) AS events`;params=[caseId,Number(raw.after_seq||0)];}\nelse if(op==='append_error'){query='INSERT INTO error_traces(case_id,execution_id,workflow_name,node_name,error_message,error_type,stack,input_snapshot) VALUES($1,$2,$3,$4,$5,$6,$7,$8::jsonb) RETURNING error_id,case_id,execution_id,workflow_name,node_name,error_message,error_type,stack,input_snapshot,created_at';params=[raw.case_id||null,raw.execution_id||null,raw.workflow_name||null,raw.node_name||null,raw.error_message||null,raw.error_type||null,raw.stack||null,j(raw.input_snapshot)];}\nelse if(op==='list_errors'){query='SELECT error_id,case_id,execution_id,workflow_name,node_name,error_message,error_type,stack,input_snapshot,created_at FROM error_traces WHERE case_id=$1 ORDER BY error_id ASC';params=[caseId];}\nelse if(op==='record_execution'){query='INSERT INTO executions(execution_id,case_id,workflow_name) VALUES($1,$2,$3) ON CONFLICT(execution_id) DO UPDATE SET case_id=EXCLUDED.case_id,workflow_name=EXCLUDED.workflow_name RETURNING execution_id,case_id,workflow_name';params=[s(raw.execution_id),caseId,s(raw.workflow_name||'orchestrator')];}\nelse if(op==='case_id_for_execution'){query='SELECT case_id FROM executions WHERE execution_id=$1';params=[s(raw.execution_id)];}\nelse if(op==='list_agents'){query='SELECT agent_id,title,when_to_use,input_required,output_provides FROM agent_registry ORDER BY agent_id';}\nelse if(op==='upsert_agent'){const r=raw.row||{};query='INSERT INTO agent_registry(agent_id,title,when_to_use,input_required,output_provides) VALUES($1,$2,$3,$4::jsonb,$5::jsonb) ON CONFLICT(agent_id) DO UPDATE SET title=EXCLUDED.title,when_to_use=EXCLUDED.when_to_use,input_required=EXCLUDED.input_required,output_provides=EXCLUDED.output_provides RETURNING agent_id,title,when_to_use,input_required,output_provides';params=[s(r.agent_id),r.title||null,r.when_to_use||null,j(r.input_required||[]),j(r.output_provides||[])];}\nelse if(op==='artifact_put'){query=\"INSERT INTO mas_artifacts(case_id,artifact_id,filename,mime_type,content,updated_at) VALUES($1,$2,$3,$4,decode($5,'base64'),now()) ON CONFLICT(case_id,artifact_id) DO UPDATE SET filename=EXCLUDED.filename,mime_type=EXCLUDED.mime_type,content=EXCLUDED.content,updated_at=now() RETURNING case_id,artifact_id,filename,mime_type,octet_length(content)::bigint AS bytes\";params=[caseId,artifactId,s(raw.filename||artifactId).slice(0,512),s(raw.mime_type||'application/octet-stream').slice(0,255),s(raw.content_base64)];}\nelse if(op==='artifact_get'){query=\"SELECT case_id,artifact_id,filename,mime_type,encode(content,'base64') AS content_base64,octet_length(content)::bigint AS bytes FROM mas_artifacts WHERE case_id=$1 AND artifact_id=$2\";params=[caseId,artifactId];}\nreturn [{json:{...common,query,params}}];"
       },
       "id": "mas-control-plane-normalize-v1",
       "name": "Normalize control-plane request",
       "type": "n8n-nodes-base.code",
       "typeVersion": 2,
       "position": [
-        240,
+        500,
         0
       ]
     },
@@ -841,7 +934,7 @@
       "type": "n8n-nodes-base.postgres",
       "typeVersion": 2.6,
       "position": [
-        540,
+        800,
         0
       ],
       "alwaysOutputData": true,
@@ -854,14 +947,14 @@
     },
     {
       "parameters": {
-        "jsCode": "const req=$('Normalize control-plane request').first().json||{};\nconst rows=$input.all().map(x=>x.json||{});\nconst op=req.operation;\nlet result;\nif(op==='list_cases') result=rows;\nelse if(op==='list_events') result=rows;\nelse if(op==='list_errors') result=rows;\nelse if(op==='list_agents') result=rows;\nelse if(op==='case_id_for_execution') result=rows[0]?.case_id||null;\nelse if(op==='artifact_get') result=rows[0]?{found:true,...rows[0]}:{found:false,case_id:req.case_id,artifact_id:req.artifact_id};\nelse if(op==='snapshot'){const row=rows[0]||{};const parse=v=>{if(v==null||v==='')return v;if(typeof v==='string'){try{return JSON.parse(v);}catch(_){return v;}}return v;};result={case:parse(row.case_row)||null,events:parse(row.events)||[]};if(!Array.isArray(result.events)) result.events=[];}\nelse result=rows[0]||{};\nreturn [{json:{ok:true,operation:op,result}}];"
+        "jsCode": "const req=$('Normalize control-plane request').first().json||{};\nconst rows=$input.all().map(x=>x.json||{});\nconst op=req.operation;\nlet result;\nif(op==='list_cases') result=rows;\nelse if(op==='list_events') result=rows;\nelse if(op==='list_errors') result=rows;\nelse if(op==='list_agents') result=rows;\nelse if(op==='case_id_for_execution') result=rows[0]?.case_id||null;\nelse if(op==='artifact_get') result=rows[0]?{found:true,...rows[0]}:{found:false,case_id:req.case_id,artifact_id:req.artifact_id};\nelse if(op==='schema'||op==='wipe') result={schema_ok:true,wiped:req.wiped===true};\nelse if(op==='snapshot'){const row=rows[0]||{};const parse=v=>{if(v==null||v==='')return v;if(typeof v==='string'){try{return JSON.parse(v);}catch(_){return v;}}return v;};result={case:parse(row.case_row)||null,events:parse(row.events)||[]};if(!Array.isArray(result.events)) result.events=[];}\nelse result=rows[0]||{};\nreturn [{json:{ok:true,operation:op,result}}];"
       },
       "id": "mas-control-plane-format-v1",
       "name": "Format control-plane response",
       "type": "n8n-nodes-base.code",
       "typeVersion": 2,
       "position": [
-        820,
+        1080,
         0
       ]
     },
@@ -876,7 +969,7 @@
       "type": "n8n-nodes-base.respondToWebhook",
       "typeVersion": 1.4,
       "position": [
-        1080,
+        1360,
         0
       ]
     }
@@ -886,7 +979,7 @@
       "main": [
         [
           {
-            "node": "Normalize control-plane request",
+            "node": "Operator flags",
             "type": "main",
             "index": 0
           }
@@ -925,13 +1018,24 @@
           }
         ]
       ]
+    },
+    "Operator flags": {
+      "main": [
+        [
+          {
+            "node": "Normalize control-plane request",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
     }
   },
   "pinData": {}
 }
 
 ===END_FILE===
-===BEGIN_FILE===	n8n/workflows/core/mas-deployment-health-check.workflow.json	25632	utf8
+===BEGIN_FILE===	n8n/workflows/core/mas-deployment-health-check.workflow.json	25629	utf8
 {
   "id": "mas-deployment-health-check-v1",
   "name": "Form — MAS Deployment Health Check",
@@ -962,7 +1066,7 @@
     },
     {
       "parameters": {
-        "content": "## MAS Deployment Health Check (n8n 2.30.8)\n1. Production path: Orchestrator — MAS webhook `mas-orchestrator-step`.\n2. Live HTTP: excel-tools:18000, math-service:8100, schedule-builder:8090, n8n-runners, mas-activity, n8n.\n3. CAS / Trace / Data Tables / old Engineering MAS are retired — report them as TODO.\n4. `fail_first: 0` with PASS_WITH_TODO is the expected lab result.\n\nFull runbook: docs.md",
+        "content": "## MAS Deployment Health Check (n8n 2.30.8)\n1. Production path: Orchestrator — MAS webhook `mas-orchestrator-step`.\n2. Live HTTP: excel-tools:8000, math-service:8100, schedule-builder:8090, n8n-runners, mas-activity, n8n.\n3. CAS / Trace / Data Tables / old Engineering MAS are retired — report them as TODO.\n4. `fail_first: 0` with PASS_WITH_TODO is the expected lab result.\n\nFull runbook: docs.md",
         "width": 520,
         "height": 320,
         "color": 5
@@ -1105,7 +1209,7 @@
     },
     {
       "parameters": {
-        "jsCode": "const escapeHtml = (value) => String(value ?? '')\n  .replace(/&/g, '&amp;')\n  .replace(/</g, '&lt;')\n  .replace(/>/g, '&gt;')\n  .replace(/\\\"/g, '&quot;')\n  .replace(/'/g, '&#39;');\n\nconst prepared = $('Prepare health probes').first().json || {};\n\nconst readProbe = (nodeName) => {\n  try {\n    const items = $(nodeName).all();\n    if (!items.length) {\n      return { ran: false, items: [], errors: [`Node \"${nodeName}\" produced no items (binding/table likely unresolved).`] };\n    }\n    const errors = [];\n    for (const item of items) {\n      if (item.error) errors.push(String(item.error.message || item.error.description || item.error));\n      const j = item.json || {};\n      if (j.error) errors.push(typeof j.error === 'string' ? j.error : JSON.stringify(j.error));\n      if (typeof j.message === 'string' && /REPLACE_|could not find|doesn't exist|does not exist|not configured|invalid credential|denied|ECONNREFUSED|ENOTFOUND/i.test(j.message)) {\n        errors.push(j.message);\n      }\n      // continueOnFail sometimes surfaces only a string/code on the item root\n      if (typeof item.message === 'string' && /REPLACE_|error|fail/i.test(item.message)) errors.push(item.message);\n    }\n    return { ran: true, items: items.map((i) => i.json || {}), errors };\n  } catch (e) {\n    return { ran: false, items: [], errors: [String(e.message || e)] };\n  }\n};\n\nconst checks = [];\nconst push = (check, status, where_to_fix, detail) => {\n  checks.push({ check, status, where_to_fix, detail });\n};\n\nconst BINDINGS = [\n  { owner: 'Orchestrator — Engineering MAS', node: 'Call Excel Extraction Specialist Adapter', target: 'Adapter — Excel Extraction' },\n  { owner: 'Orchestrator — Engineering MAS', node: 'Call SCHEDULE Hybrid Retrieval', target: 'MAS — Knowledge Retrieval' },\n  { owner: 'Orchestrator — Engineering MAS', node: 'Call SCHEDULE Builder Specialist', target: 'SCHEDULE — Builder' },\n  { owner: 'Orchestrator — Engineering MAS', node: 'Call Calculation Specialist', target: 'Adapter — Calculation (Math Service)' },\n  { owner: 'Orchestrator — Engineering MAS', node: 'Call MAS Trace Event Writer', target: 'Writer — MAS Trace' },\n  { owner: 'Adapter — Excel Extraction', node: 'Call native Excel Extraction Agent', target: 'Agent — Excel Extractor' },\n  { owner: 'Form — MAS Entry', node: 'Call Universal Engineering Orchestrator', target: 'Orchestrator — Engineering MAS' },\n  { owner: 'Form — MAS Human Gate', node: 'Call Orchestrator status', target: 'Orchestrator — Engineering MAS' },\n  { owner: 'Form — MAS Human Gate', node: 'Call Orchestrator resume', target: 'Orchestrator — Engineering MAS' },\n  { owner: 'Form — MAS Deployment Health Check', node: 'Call Orchestrator probe', target: 'Orchestrator — Engineering MAS' },\n  { owner: 'Form — MAS Deployment Health Check', node: 'Call Trace Writer probe', target: 'Writer — MAS Trace' },\n  { owner: 'Orchestrator — Engineering MAS', node: 'Call CAS persist — insert new task', target: 'CAS — Persist Task State' },\n  { owner: 'Orchestrator — Engineering MAS', node: 'Call CAS persist — human action then plan', target: 'CAS — Persist Task State' },\n  { owner: 'Orchestrator — Engineering MAS', node: 'Call CAS persist — terminal human action', target: 'CAS — Persist Task State' },\n  { owner: 'Orchestrator — Engineering MAS', node: 'Call CAS persist — plan or human gate', target: 'CAS — Persist Task State' },\n  { owner: 'Orchestrator — Engineering MAS', node: 'Call CAS persist — SCHEDULE evidence retry', target: 'CAS — Persist Task State' },\n  { owner: 'Orchestrator — Engineering MAS', node: 'Call CAS persist — SCHEDULE resume', target: 'CAS — Persist Task State' },\n  { owner: 'Orchestrator — Engineering MAS', node: 'Call CAS persist — verification', target: 'CAS — Persist Task State' },\n  { owner: 'Orchestrator — Engineering MAS', node: 'Call CAS persist — specialist gate or error', target: 'CAS — Persist Task State' },\n  { owner: 'Orchestrator — Engineering MAS', node: 'Call CAS persist — routing gate', target: 'CAS — Persist Task State' },\n];\n\nconst DT_NODES = [\n  { owner: 'Writer — MAS Trace', node: 'Insert MAS trace event', table: 'mas_trace_events_v1' },\n  { owner: 'CAS — Persist Task State', node: 'Insert durable task row', table: 'engineering_orchestrator_tasks_v1' },\n  { owner: 'CAS — Persist Task State', node: 'Update durable task row', table: 'engineering_orchestrator_tasks_v1' },\n  { owner: 'Orchestrator — Engineering MAS', node: 'Load task by ID', table: 'engineering_orchestrator_tasks_v1' },\n  { owner: 'Form — MAS Deployment Health Check', node: 'Probe task Data Table', table: 'engineering_orchestrator_tasks_v1' },\n  { owner: 'Form — MAS Deployment Health Check', node: 'Probe trace Data Table', table: 'mas_trace_events_v1' },\n];\n\nfor (const b of BINDINGS) {\n  push(\n    `Binding checklist: ${b.owner} → ${b.node}`,\n    'TODO',\n    `${b.owner} → node \"${b.node}\" → select \"${b.target}\"`,\n    'Manual UI binding. Live probes below only cover Health Check → Orchestrator/Trace and Data Tables.',\n  );\n}\nfor (const d of DT_NODES) {\n  push(\n    `Data Table checklist: ${d.owner} → ${d.node}`,\n    'TODO',\n    `${d.owner} → node \"${d.node}\" → select table \"${d.table}\"`,\n    'Select the Data Table in the node resource locator (must not remain REPLACE_IN_UI).',\n  );\n}\n\nconst taskProbe = readProbe('Probe task Data Table');\npush(\n  'Live: task Data Table readable',\n  'TODO',\n  'Postgres control plane: cases/events (postgres-init/02-mas-control-plane.sql). Data Table engineering_orchestrator_tasks_v1 is retired from production.',\n  taskProbe.errors.join(' | ') || 'Not a production gate after MAS cutover.',\n);\n\nconst traceProbe = readProbe('Probe trace Data Table');\npush(\n  'Live: trace Data Table readable',\n  'TODO',\n  'Postgres control plane: events + error_traces. Data Table mas_trace_events_v1 is retired from production.',\n  traceProbe.errors.join(' | ') || 'Not a production gate after MAS cutover.',\n);\n\nconst orchProbe = readProbe('Call Orchestrator probe');\nconst orchJson = orchProbe.items[0] || {};\nconst orchStatus = String(orchJson.status || '');\nconst orchLooksBound = orchProbe.ran && !orchProbe.errors.length && orchJson.input_valid !== false && ['not_found', 'awaiting_human', 'completed', 'failed', 'conflict', 'cancelled', 'rejected'].includes(orchStatus);\npush(\n  'Live: Orchestrator reachable via Execute Workflow',\n  'TODO',\n  'Form — MAS Deployment Health Check: production path is webhook /webhook/mas-orchestrator-step (Orchestrator — MAS). Execute Workflow action=status against Orchestrator — Engineering MAS is retired.',\n  orchLooksBound\n    ? `legacy status=${orchStatus} (informational)`\n    : (orchProbe.errors.join(' | ') || `legacy Execute Workflow not used after cutover; status=${orchStatus || 'n/a'}`),\n);\n\nconst writerProbe = readProbe('Call Trace Writer probe');\nconst writerJson = writerProbe.items[0] || {};\nconst writerOk = writerProbe.ran && !writerProbe.errors.length && (writerJson.contract === 'mas_trace_ack' || writerJson.stored === true);\npush(\n  'Live: Trace Writer reachable + insert path',\n  'TODO',\n  'Writer — MAS Trace is STALE. Agents write Activity POST /cases/{id}/events; n8n crashes go to error_traces.',\n  writerOk ? `legacy mas_trace_ack event_id=${writerJson.event_id || 'n/a'}` : (writerProbe.errors.join(' | ') || 'Not a production gate after MAS cutover.'),\n);\n\nconst readHttp = (nodeName, expectOk = (j, statusCode) => statusCode >= 200 && statusCode < 300) => {\n  try {\n    const items = $(nodeName).all();\n    if (!items.length) return { ok: false, detail: `Node \"${nodeName}\" produced no items.` };\n    const item = items[0];\n    if (item.error) return { ok: false, detail: String(item.error.message || item.error) };\n    const j = item.json || {};\n    const statusCode = Number(j.statusCode ?? j.status ?? (j.data && j.data.statusCode) ?? 0);\n    // n8n httpRequest fullResponse puts body under j.body or j.data\n    const body = j.body ?? j.data ?? j;\n    const ok = expectOk(body, statusCode) && !(typeof j.message === 'string' && /ECONNREFUSED|ENOTFOUND|timeout|REPLACE_/i.test(j.message));\n    return { ok, detail: `statusCode=${statusCode || 'n/a'} body=${JSON.stringify(body).slice(0, 180)}`, statusCode, body };\n  } catch (e) {\n    return { ok: false, detail: String(e.message || e) };\n  }\n};\n\nconst excelHealth = readHttp('Probe excel-tools /health', (body, code) => code === 200 || (body && (body.status === 'ok' || body.ok === true)));\npush('Live: excel-tools /health', excelHealth.ok ? 'PASS' : 'FAIL',\n  'docker compose → excel-tools; from n8n: GET http://excel-tools:18000/health',\n  excelHealth.detail);\n\nconst runnersHealth = readHttp('Probe n8n-runners /healthz', (body, code) => code === 200);\npush('Live: n8n-runners /healthz', runnersHealth.ok ? 'PASS' : 'FAIL',\n  'docker compose → n8n-runners healthcheck; from n8n: GET http://n8n-runners:5680/healthz',\n  runnersHealth.detail);\n\nconst activityHealth = readHttp('Probe mas-activity /health', (body, code) => code === 200 || (body && body.status === 'ok'));\npush('Live: mas-activity /health', activityHealth.ok ? 'PASS' : 'FAIL',\n  'docker compose → mas-activity (optional UI); from n8n: GET http://mas-activity:8200/health',\n  activityHealth.detail);\n\nconst n8nHealth = readHttp('Probe n8n /healthz', (body, code) => code === 200 || (body && body.status === 'ok'));\npush('Live: n8n /healthz', n8nHealth.ok ? 'PASS' : 'FAIL',\n  'docker compose → n8n; GET http://n8n:5678/healthz',\n  n8nHealth.detail);\n\nconst mathHealth = readHttp('Probe math-service /health', (body, code) => code === 200 || (body && body.status === 'ok'));\npush('Live: math-service /health', mathHealth.ok ? 'PASS' : 'FAIL',\n  'docker compose → math-service; from n8n: GET http://math-service:8100/health',\n  mathHealth.detail);\n\nconst scheduleHealth = readHttp('Probe schedule-builder /health', (body, code) => code === 200 || (body && body.status === 'ok'));\npush('Live: schedule-builder /health', scheduleHealth.ok ? 'PASS' : 'FAIL',\n  'docker compose → schedule-builder; from n8n: GET http://schedule-builder:8090/health',\n  scheduleHealth.detail);\n\npush(\n  'Manual: specialist routes (Excel / SCHEDULE / Calculation)',\n  'TODO',\n  'docs.md → Manual smoke; Orchestrator Call Excel / Retrieval / Builder / Calculation nodes',\n  'Health Check intentionally does not call LLM or Excel/SCHEDULE Builder.',\n);\npush(\n  'Manual: export Orchestrator JSON and search REPLACE_',\n  'TODO',\n  'Orchestrator — Engineering MAS → export → search REPLACE_EXCEL_ADAPTER_IN_UI, REPLACE_SCHEDULE_*, REPLACE_CALCULATION_*, REPLACE_MAS_TRACE_*',\n  'Any REPLACE_ left means an Execute Workflow binding is unfinished.',\n);\n\nconst fail = checks.filter((c) => c.status === 'FAIL');\nconst pass = checks.filter((c) => c.status === 'PASS');\nconst todo = checks.filter((c) => c.status === 'TODO');\nconst overall = fail.length ? 'FAIL' : 'PASS_WITH_TODO';\n\nconst rowHtml = (c) => `<tr><td><strong>${escapeHtml(c.status)}</strong></td><td>${escapeHtml(c.check)}</td><td><code>${escapeHtml(c.where_to_fix)}</code></td><td>${escapeHtml(c.detail)}</td></tr>`;\nconst section = (title, rows) => rows.length\n  ? `<h2>${escapeHtml(title)} (${rows.length})</h2><table border=\"1\" cellpadding=\"6\" cellspacing=\"0\"><thead><tr><th>status</th><th>check</th><th>where_to_fix</th><th>detail</th></tr></thead><tbody>${rows.map(rowHtml).join('')}</tbody></table>`\n  : '';\n\nconst html = `<main>\n<h1>MAS deployment health check</h1>\n<p>Overall: <strong>${escapeHtml(overall)}</strong></p>\n<p>Started: <code>${escapeHtml(prepared.started_at || '')}</code></p>\n<p>Probe task_id: <code>${escapeHtml(prepared.probe_task_id || '')}</code></p>\n<p>Operator: <code>${escapeHtml(prepared.operator_note || prepared.requested_by || '')}</code></p>\n<p>Live probes cover Docker HTTP health (excel-tools, math-service, schedule-builder, runners, activity, n8n). CAS/Trace/old orchestrator are TODO after control-plane cutover.</p>\n${section('FAIL — fix these first', fail)}\n${section('PASS — live probes', pass)}\n${section('TODO — checklist / manual', todo)}\n<p>Full runbook: <code>docs.md</code></p>\n</main>`;\n\nreturn [{ json: {\n  overall,\n  fail_count: fail.length,\n  pass_count: pass.length,\n  todo_count: todo.length,\n  checks,\n  form_response_html: html,\n  where_to_fix: fail.map((c) => c.where_to_fix),\n}}];"
+        "jsCode": "const escapeHtml = (value) => String(value ?? '')\n  .replace(/&/g, '&amp;')\n  .replace(/</g, '&lt;')\n  .replace(/>/g, '&gt;')\n  .replace(/\\\"/g, '&quot;')\n  .replace(/'/g, '&#39;');\n\nconst prepared = $('Prepare health probes').first().json || {};\n\nconst readProbe = (nodeName) => {\n  try {\n    const items = $(nodeName).all();\n    if (!items.length) {\n      return { ran: false, items: [], errors: [`Node \"${nodeName}\" produced no items (binding/table likely unresolved).`] };\n    }\n    const errors = [];\n    for (const item of items) {\n      if (item.error) errors.push(String(item.error.message || item.error.description || item.error));\n      const j = item.json || {};\n      if (j.error) errors.push(typeof j.error === 'string' ? j.error : JSON.stringify(j.error));\n      if (typeof j.message === 'string' && /REPLACE_|could not find|doesn't exist|does not exist|not configured|invalid credential|denied|ECONNREFUSED|ENOTFOUND/i.test(j.message)) {\n        errors.push(j.message);\n      }\n      // continueOnFail sometimes surfaces only a string/code on the item root\n      if (typeof item.message === 'string' && /REPLACE_|error|fail/i.test(item.message)) errors.push(item.message);\n    }\n    return { ran: true, items: items.map((i) => i.json || {}), errors };\n  } catch (e) {\n    return { ran: false, items: [], errors: [String(e.message || e)] };\n  }\n};\n\nconst checks = [];\nconst push = (check, status, where_to_fix, detail) => {\n  checks.push({ check, status, where_to_fix, detail });\n};\n\nconst BINDINGS = [\n  { owner: 'Orchestrator — Engineering MAS', node: 'Call Excel Extraction Specialist Adapter', target: 'Adapter — Excel Extraction' },\n  { owner: 'Orchestrator — Engineering MAS', node: 'Call SCHEDULE Hybrid Retrieval', target: 'MAS — Knowledge Retrieval' },\n  { owner: 'Orchestrator — Engineering MAS', node: 'Call SCHEDULE Builder Specialist', target: 'SCHEDULE — Builder' },\n  { owner: 'Orchestrator — Engineering MAS', node: 'Call Calculation Specialist', target: 'Adapter — Calculation (Math Service)' },\n  { owner: 'Orchestrator — Engineering MAS', node: 'Call MAS Trace Event Writer', target: 'Writer — MAS Trace' },\n  { owner: 'Adapter — Excel Extraction', node: 'Call native Excel Extraction Agent', target: 'Agent — Excel Extractor' },\n  { owner: 'Form — MAS Entry', node: 'Call Universal Engineering Orchestrator', target: 'Orchestrator — Engineering MAS' },\n  { owner: 'Form — MAS Human Gate', node: 'Call Orchestrator status', target: 'Orchestrator — Engineering MAS' },\n  { owner: 'Form — MAS Human Gate', node: 'Call Orchestrator resume', target: 'Orchestrator — Engineering MAS' },\n  { owner: 'Form — MAS Deployment Health Check', node: 'Call Orchestrator probe', target: 'Orchestrator — Engineering MAS' },\n  { owner: 'Form — MAS Deployment Health Check', node: 'Call Trace Writer probe', target: 'Writer — MAS Trace' },\n  { owner: 'Orchestrator — Engineering MAS', node: 'Call CAS persist — insert new task', target: 'CAS — Persist Task State' },\n  { owner: 'Orchestrator — Engineering MAS', node: 'Call CAS persist — human action then plan', target: 'CAS — Persist Task State' },\n  { owner: 'Orchestrator — Engineering MAS', node: 'Call CAS persist — terminal human action', target: 'CAS — Persist Task State' },\n  { owner: 'Orchestrator — Engineering MAS', node: 'Call CAS persist — plan or human gate', target: 'CAS — Persist Task State' },\n  { owner: 'Orchestrator — Engineering MAS', node: 'Call CAS persist — SCHEDULE evidence retry', target: 'CAS — Persist Task State' },\n  { owner: 'Orchestrator — Engineering MAS', node: 'Call CAS persist — SCHEDULE resume', target: 'CAS — Persist Task State' },\n  { owner: 'Orchestrator — Engineering MAS', node: 'Call CAS persist — verification', target: 'CAS — Persist Task State' },\n  { owner: 'Orchestrator — Engineering MAS', node: 'Call CAS persist — specialist gate or error', target: 'CAS — Persist Task State' },\n  { owner: 'Orchestrator — Engineering MAS', node: 'Call CAS persist — routing gate', target: 'CAS — Persist Task State' },\n];\n\nconst DT_NODES = [\n  { owner: 'Writer — MAS Trace', node: 'Insert MAS trace event', table: 'mas_trace_events_v1' },\n  { owner: 'CAS — Persist Task State', node: 'Insert durable task row', table: 'engineering_orchestrator_tasks_v1' },\n  { owner: 'CAS — Persist Task State', node: 'Update durable task row', table: 'engineering_orchestrator_tasks_v1' },\n  { owner: 'Orchestrator — Engineering MAS', node: 'Load task by ID', table: 'engineering_orchestrator_tasks_v1' },\n  { owner: 'Form — MAS Deployment Health Check', node: 'Probe task Data Table', table: 'engineering_orchestrator_tasks_v1' },\n  { owner: 'Form — MAS Deployment Health Check', node: 'Probe trace Data Table', table: 'mas_trace_events_v1' },\n];\n\nfor (const b of BINDINGS) {\n  push(\n    `Binding checklist: ${b.owner} → ${b.node}`,\n    'TODO',\n    `${b.owner} → node \"${b.node}\" → select \"${b.target}\"`,\n    'Manual UI binding. Live probes below only cover Health Check → Orchestrator/Trace and Data Tables.',\n  );\n}\nfor (const d of DT_NODES) {\n  push(\n    `Data Table checklist: ${d.owner} → ${d.node}`,\n    'TODO',\n    `${d.owner} → node \"${d.node}\" → select table \"${d.table}\"`,\n    'Select the Data Table in the node resource locator (must not remain REPLACE_IN_UI).',\n  );\n}\n\nconst taskProbe = readProbe('Probe task Data Table');\npush(\n  'Live: task Data Table readable',\n  'TODO',\n  'Postgres control plane: cases/events (postgres-init/02-mas-control-plane.sql). Data Table engineering_orchestrator_tasks_v1 is retired from production.',\n  taskProbe.errors.join(' | ') || 'Not a production gate after MAS cutover.',\n);\n\nconst traceProbe = readProbe('Probe trace Data Table');\npush(\n  'Live: trace Data Table readable',\n  'TODO',\n  'Postgres control plane: events + error_traces. Data Table mas_trace_events_v1 is retired from production.',\n  traceProbe.errors.join(' | ') || 'Not a production gate after MAS cutover.',\n);\n\nconst orchProbe = readProbe('Call Orchestrator probe');\nconst orchJson = orchProbe.items[0] || {};\nconst orchStatus = String(orchJson.status || '');\nconst orchLooksBound = orchProbe.ran && !orchProbe.errors.length && orchJson.input_valid !== false && ['not_found', 'awaiting_human', 'completed', 'failed', 'conflict', 'cancelled', 'rejected'].includes(orchStatus);\npush(\n  'Live: Orchestrator reachable via Execute Workflow',\n  'TODO',\n  'Form — MAS Deployment Health Check: production path is webhook /webhook/mas-orchestrator-step (Orchestrator — MAS). Execute Workflow action=status against Orchestrator — Engineering MAS is retired.',\n  orchLooksBound\n    ? `legacy status=${orchStatus} (informational)`\n    : (orchProbe.errors.join(' | ') || `legacy Execute Workflow not used after cutover; status=${orchStatus || 'n/a'}`),\n);\n\nconst writerProbe = readProbe('Call Trace Writer probe');\nconst writerJson = writerProbe.items[0] || {};\nconst writerOk = writerProbe.ran && !writerProbe.errors.length && (writerJson.contract === 'mas_trace_ack' || writerJson.stored === true);\npush(\n  'Live: Trace Writer reachable + insert path',\n  'TODO',\n  'Writer — MAS Trace is STALE. Agents write Activity POST /cases/{id}/events; n8n crashes go to error_traces.',\n  writerOk ? `legacy mas_trace_ack event_id=${writerJson.event_id || 'n/a'}` : (writerProbe.errors.join(' | ') || 'Not a production gate after MAS cutover.'),\n);\n\nconst readHttp = (nodeName, expectOk = (j, statusCode) => statusCode >= 200 && statusCode < 300) => {\n  try {\n    const items = $(nodeName).all();\n    if (!items.length) return { ok: false, detail: `Node \"${nodeName}\" produced no items.` };\n    const item = items[0];\n    if (item.error) return { ok: false, detail: String(item.error.message || item.error) };\n    const j = item.json || {};\n    const statusCode = Number(j.statusCode ?? j.status ?? (j.data && j.data.statusCode) ?? 0);\n    // n8n httpRequest fullResponse puts body under j.body or j.data\n    const body = j.body ?? j.data ?? j;\n    const ok = expectOk(body, statusCode) && !(typeof j.message === 'string' && /ECONNREFUSED|ENOTFOUND|timeout|REPLACE_/i.test(j.message));\n    return { ok, detail: `statusCode=${statusCode || 'n/a'} body=${JSON.stringify(body).slice(0, 180)}`, statusCode, body };\n  } catch (e) {\n    return { ok: false, detail: String(e.message || e) };\n  }\n};\n\nconst excelHealth = readHttp('Probe excel-tools /health', (body, code) => code === 200 || (body && (body.status === 'ok' || body.ok === true)));\npush('Live: excel-tools /health', excelHealth.ok ? 'PASS' : 'FAIL',\n  'docker compose → excel-tools; from n8n: GET http://excel-tools:8000/health',\n  excelHealth.detail);\n\nconst runnersHealth = readHttp('Probe n8n-runners /healthz', (body, code) => code === 200);\npush('Live: n8n-runners /healthz', runnersHealth.ok ? 'PASS' : 'FAIL',\n  'docker compose → n8n-runners healthcheck; from n8n: GET http://n8n-runners:5680/healthz',\n  runnersHealth.detail);\n\nconst activityHealth = readHttp('Probe mas-activity /health', (body, code) => code === 200 || (body && body.status === 'ok'));\npush('Live: mas-activity /health', activityHealth.ok ? 'PASS' : 'FAIL',\n  'docker compose → mas-activity (optional UI); from n8n: GET http://mas-activity:8200/health',\n  activityHealth.detail);\n\nconst n8nHealth = readHttp('Probe n8n /healthz', (body, code) => code === 200 || (body && body.status === 'ok'));\npush('Live: n8n /healthz', n8nHealth.ok ? 'PASS' : 'FAIL',\n  'docker compose → n8n; GET http://n8n:5678/healthz',\n  n8nHealth.detail);\n\nconst mathHealth = readHttp('Probe math-service /health', (body, code) => code === 200 || (body && body.status === 'ok'));\npush('Live: math-service /health', mathHealth.ok ? 'PASS' : 'FAIL',\n  'docker compose → math-service; from n8n: GET http://math-service:8100/health',\n  mathHealth.detail);\n\nconst scheduleHealth = readHttp('Probe schedule-builder /health', (body, code) => code === 200 || (body && body.status === 'ok'));\npush('Live: schedule-builder /health', scheduleHealth.ok ? 'PASS' : 'FAIL',\n  'docker compose → schedule-builder; from n8n: GET http://schedule-builder:8090/health',\n  scheduleHealth.detail);\n\npush(\n  'Manual: specialist routes (Excel / SCHEDULE / Calculation)',\n  'TODO',\n  'docs.md → Manual smoke; Orchestrator Call Excel / Retrieval / Builder / Calculation nodes',\n  'Health Check intentionally does not call LLM or Excel/SCHEDULE Builder.',\n);\npush(\n  'Manual: export Orchestrator JSON and search REPLACE_',\n  'TODO',\n  'Orchestrator — Engineering MAS → export → search REPLACE_EXCEL_ADAPTER_IN_UI, REPLACE_SCHEDULE_*, REPLACE_CALCULATION_*, REPLACE_MAS_TRACE_*',\n  'Any REPLACE_ left means an Execute Workflow binding is unfinished.',\n);\n\nconst fail = checks.filter((c) => c.status === 'FAIL');\nconst pass = checks.filter((c) => c.status === 'PASS');\nconst todo = checks.filter((c) => c.status === 'TODO');\nconst overall = fail.length ? 'FAIL' : 'PASS_WITH_TODO';\n\nconst rowHtml = (c) => `<tr><td><strong>${escapeHtml(c.status)}</strong></td><td>${escapeHtml(c.check)}</td><td><code>${escapeHtml(c.where_to_fix)}</code></td><td>${escapeHtml(c.detail)}</td></tr>`;\nconst section = (title, rows) => rows.length\n  ? `<h2>${escapeHtml(title)} (${rows.length})</h2><table border=\"1\" cellpadding=\"6\" cellspacing=\"0\"><thead><tr><th>status</th><th>check</th><th>where_to_fix</th><th>detail</th></tr></thead><tbody>${rows.map(rowHtml).join('')}</tbody></table>`\n  : '';\n\nconst html = `<main>\n<h1>MAS deployment health check</h1>\n<p>Overall: <strong>${escapeHtml(overall)}</strong></p>\n<p>Started: <code>${escapeHtml(prepared.started_at || '')}</code></p>\n<p>Probe task_id: <code>${escapeHtml(prepared.probe_task_id || '')}</code></p>\n<p>Operator: <code>${escapeHtml(prepared.operator_note || prepared.requested_by || '')}</code></p>\n<p>Live probes cover Docker HTTP health (excel-tools, math-service, schedule-builder, runners, activity, n8n). CAS/Trace/old orchestrator are TODO after control-plane cutover.</p>\n${section('FAIL — fix these first', fail)}\n${section('PASS — live probes', pass)}\n${section('TODO — checklist / manual', todo)}\n<p>Full runbook: <code>docs.md</code></p>\n</main>`;\n\nreturn [{ json: {\n  overall,\n  fail_count: fail.length,\n  pass_count: pass.length,\n  todo_count: todo.length,\n  checks,\n  form_response_html: html,\n  where_to_fix: fail.map((c) => c.where_to_fix),\n}}];"
       },
       "id": "c1000001-0001-4000-8000-00000000000b",
       "name": "Build health report",
@@ -1134,7 +1238,7 @@
     {
       "parameters": {
         "method": "GET",
-        "url": "http://excel-tools:18000/health",
+        "url": "http://excel-tools:8000/health",
         "options": {
           "timeout": 5000,
           "response": {
@@ -1679,7 +1783,7 @@
 }
 
 ===END_FILE===
-===BEGIN_FILE===	n8n/workflows/core/mas-orchestrator.workflow.json	66749	utf8
+===BEGIN_FILE===	n8n/workflows/core/mas-orchestrator.workflow.json	66924	utf8
 {
   "id": "e9bbdb6e-3b7c-5dc0-851a-30bd9f2eb0d6",
   "name": "Orchestrator — MAS",
@@ -2712,7 +2816,7 @@
     },
     {
       "parameters": {
-        "jsCode": "const x=$json||{};\nconst kind=x.action_type==='finish'?'case.finished':(x.action_type==='ask_user'||x.next_status==='waiting_user'?'hitl.request':'orchestrator.status');\nconst payload={contract:'mas_orchestrator_ack',case_id:x.case_id,status:x.next_status||x.status,action_type:x.action_type||null,message:x.message||null,should_continue:x.should_continue===true,human_gate:x.human_gate||null,version:x.version??null,restartable:x.restartable===true};\nreturn [{json:{...x,activity_sync:Boolean(x.case_id&&!x.is_probe&&x.activity_base_url),activity_url:`${String(x.activity_base_url||'').replace(/\\/$/,'')}/cases/${encodeURIComponent(String(x.case_id||''))}/events`,activity_event:{kind,actor:'orchestrator',status:payload.status,status_message:payload.message||kind,payload}}}];"
+        "jsCode": "const x=$json||{};\nconst persisted=Array.isArray(x.persist_events)&&x.persist_events.length>0;\nconst kind=x.action_type==='finish'?'case.finished':(x.action_type==='ask_user'||x.next_status==='waiting_user'?'hitl.request':'orchestrator.status');\nconst payload={contract:'mas_orchestrator_ack',case_id:x.case_id,status:x.next_status||x.status,action_type:x.action_type||null,message:x.message||null,should_continue:x.should_continue===true,human_gate:x.human_gate||null,version:x.version??null,restartable:x.restartable===true};\nconst statusMessage=String(payload.message||'').trim()||String(x.status_message||'').trim();\nreturn [{json:{...x,activity_sync:Boolean(x.case_id&&!x.is_probe&&x.activity_base_url&&!persisted),activity_url:`${String(x.activity_base_url||'').replace(/\\/$/,'')}/cases/${encodeURIComponent(String(x.case_id||''))}/events`,activity_event:{kind,actor:'orchestrator',status:payload.status,status_message:statusMessage,payload}}}];"
       },
       "id": "c0b3d0ee-55cf-5db7-b41a-59fb6a219290",
       "name": "Prepare Activity ack",
@@ -3405,7 +3509,7 @@
   },
   "tags": [],
   "pinData": {},
-  "versionId": "a904a34a-e42f-4a7f-9046-4397eb84224e"
+  "versionId": "eab1707f-9e60-43cd-a6bc-de81e30f56eb"
 }
 
 ===END_FILE===
@@ -18986,155 +19090,3 @@
                       "explanation": "Variant oil / near-full. Числа только из фактов."
                     }
                   ],
-                  "schema_catalogue": {
-                    "contract": "schedule_schema_catalogue",
-                    "contract_version": "1.0",
-                    "catalogue_ref": "catalogue://tnavigator/22.2/guiderat-guide-rate-formula-v1",
-                    "catalogue_hash": "sha256:410c9c3ce02874a3933b4382d735cd457c1a9992119753fc3cc3fc2c02f55a85",
-                    "source_hash": "sha256:7d1624e1ea0196383c86dbd2558826c53a5a86eb992c48141eb4e3b66f0353d5",
-                    "access_scope": "petroleum-engineering",
-                    "simulator_profile": {
-                      "vendor": "Rock Flow Dynamics",
-                      "simulator": "tNavigator",
-                      "version": "22.2",
-                      "unit_system": "METRIC"
-                    },
-                    "approved": true,
-                    "approved_by": "department-hydrodynamic-expert",
-                    "author": "department-hydrodynamic-expert",
-                    "approval_gate_id": "expert:guiderat-guide-rate-formula-v1:1",
-                    "schemas": [
-                      {
-                        "schema_id": "expert:GUIDERAT:none",
-                        "schema_revision": "1",
-                        "keyword": "GUIDERAT",
-                        "variant": "none",
-                        "citation": {
-                          "document_id": "tnav-user-manual-russian",
-                          "document_revision": "19.4",
-                          "page": "12.20.90 / 1933-1936",
-                          "heading": "GUIDERAT",
-                          "source_hash": "sha256:7d1624e1ea0196383c86dbd2558826c53a5a86eb992c48141eb4e3b66f0353d5"
-                        },
-                        "parser": {
-                          "token_width": 12,
-                          "allow_trailing_omission": true,
-                          "allow_unquoted_strings": true
-                        },
-                        "fields": [
-                          {
-                            "name": "INTERVAL",
-                            "position": 1,
-                            "type": "number",
-                            "required": false
-                          },
-                          {
-                            "name": "PHASE",
-                            "position": 2,
-                            "type": "string",
-                            "required": true,
-                            "enum": [
-                              "NONE"
-                            ]
-                          }
-                        ],
-                        "layout": {
-                          "newline": "LF",
-                          "indent": "  ",
-                          "delimiter": "SPACE",
-                          "record_terminator": "SLASH",
-                          "block_terminator": "SLASH_LINE"
-                        },
-                        "semantics": {
-                          "period": "FORECAST",
-                          "clock": {
-                            "uses_current": true
-                          },
-                          "definitions": [],
-                          "references": [],
-                          "prerequisites": [],
-                          "state_assignments": [
-                            {
-                              "namespace": "guiderat-formula",
-                              "entity_type": "guiderat_formula",
-                              "entity_field": "PHASE",
-                              "key_fields": [
-                                "PHASE"
-                              ],
-                              "value_fields": [
-                                "INTERVAL",
-                                "PHASE"
-                              ]
-                            }
-                          ],
-                          "numeric_constraints": [
-                            {
-                              "field": "INTERVAL",
-                              "min": 0
-                            },
-                            {
-                              "field": "A"
-                            },
-                            {
-                              "field": "B",
-                              "min": 0
-                            },
-                            {
-                              "field": "C"
-                            },
-                            {
-                              "field": "D"
-                            },
-                            {
-                              "field": "E"
-                            },
-                            {
-                              "field": "F"
-                            },
-                            {
-                              "field": "GRDAMP",
-                              "min_exclusive": 0,
-                              "max": 1
-                            },
-                            {
-                              "field": "GRMIN",
-                              "min_exclusive": 0
-                            }
-                          ]
-                        }
-                      },
-                      {
-                        "schema_id": "expert:GUIDERAT:res",
-                        "schema_revision": "1",
-                        "keyword": "GUIDERAT",
-                        "variant": "res",
-                        "citation": {
-                          "document_id": "tnav-user-manual-russian",
-                          "document_revision": "19.4",
-                          "page": "12.20.90 / 1933-1936",
-                          "heading": "GUIDERAT",
-                          "source_hash": "sha256:7d1624e1ea0196383c86dbd2558826c53a5a86eb992c48141eb4e3b66f0353d5"
-                        },
-                        "parser": {
-                          "token_width": 12,
-                          "allow_trailing_omission": true,
-                          "allow_unquoted_strings": true
-                        },
-                        "fields": [
-                          {
-                            "name": "INTERVAL",
-                            "position": 1,
-                            "type": "number",
-                            "required": false
-                          },
-                          {
-                            "name": "PHASE",
-                            "position": 2,
-                            "type": "string",
-                            "required": true,
-                            "enum": [
-                              "RES"
-                            ]
-                          },
-                          {
-                            "name": "A",

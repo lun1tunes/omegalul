@@ -1,3 +1,25 @@
+    requested_capability_scope:arr(observed.requested_capability_scope)?observed.requested_capability_scope:(arr(cur.requested_capability_scope)?cur.requested_capability_scope:[]),
+    ...(clean(observed.requested_change_scope?.capability_id)?{capability_id:observed.requested_change_scope.capability_id}:{}),
+    ...(obj(observed.requested_change_scope)?{requested_change_scope:observed.requested_change_scope}:{}),
+  };
+};
+const excelEvidenceReady=previousSpecialistResult&&previousSpecialistResult.specialist_id==='excel_extraction_specialist'&&['succeeded','partial'].includes(String(previousSpecialistResult.status||''));
+const factsFromPersisted=obj(persistedSchedule.source_facts_packet)?persistedSchedule.source_facts_packet:null;
+// Detect workbook early — builderIntakeRetry must not reference hasExcelBinary before init (TDZ).
+const inputFiles=arr(request.input_files)?request.input_files:[];
+const excelName=v=>/\.xlsx?$/i.test(String(v||''));
+const hasExcelBinary=Boolean(
+  (base.binary&&(base.binary.file||base.binary.workbook))
+  || Object.values(base.binary||{}).some(b=>b&&excelName(b.fileName||b.filename))
+  || inputFiles.some(f=>excelName(f?.filename||f?.name)||/^(file|workbook)$/i.test(String(f?.field||'')))
+);
+// Text-only REVISE (no Excel facts) must also retry Builder intake with defaults after HITL.
+const hasBaselineForRetry=(typeof request.baseline_schedule_text==='string'&&request.baseline_schedule_text.length>0)||(typeof persistedSchedule.baseline_schedule_text==='string'&&persistedSchedule.baseline_schedule_text.length>0);
+const builderIntakeRetry=previousSpecialistResult&&previousSpecialistResult.specialist_id==='schedule_builder_specialist'&&String(previousSpecialistResult.status||'')==='needs_input'&&hasBaselineForRetry&&(Boolean(factsFromPersisted)||!hasExcelBinary);
+const excelAnsweredQuestion=q=>/скважин|дат[аыеу]\s*ввод|commission|well\b|дата ввода|исходн|baseline|schedule|\.inc\b/.test(questionBlob(q));
+let blockingQuestions=questions.filter(q=>{if(profileQuestion(q))return false;if(excelDelegation&&excelOwnedQuestion(q))return false;if((excelEvidenceReady||builderIntakeRetry)&&excelAnsweredQuestion(q))return false;return true;});
+if(decision==='needs_input'&&excelDelegation&&packetComplete&&allowed.has(intendedSpecialist)&&blockingQuestions.length===0){
+  decision='delegate';
   packetCandidate=withPacketControls({...plan.specialist_packet,contract:'specialist_packet',contract_version:'1.0',task_id:base.task_id,attempt:Number(base.retry_count)+1},{expected_version:Number(base.version)+1,idempotency_key:`${base.task_id}:specialist:${plan.specialist_packet.specialist_id}:${Number(base.retry_count)+1}:${Number(base.version)+1}`});
 }
 // Force Excel only when a workbook binary / input_files entry is actually present.
@@ -8973,7 +8995,7 @@ async function run(name, json, nodes) {
 });
 
 ===END_FILE===
-===BEGIN_FILE===	n8n/tests/mas-orchestrator-smoke.js	15092	utf8
+===BEGIN_FILE===	n8n/tests/mas-orchestrator-smoke.js	15352	utf8
 'use strict';
 /**
  * Thin Orchestrator — MAS: one step, no RAG/SCHEDULE, errorWorkflow bound.
@@ -9115,6 +9137,10 @@ async function run(name, json, nodes = {}, binary = {}) {
   assert.equal(wf.connections['Normalize step request'].main[0][0].node, 'Probe ping?');
   assert.equal(wf.connections['Status only?'].main[0][0].node, 'Prepare Activity ack');
   assert.equal(wf.connections['Prepare Activity ack'].main[0][0].node, 'Activity sync?');
+  const ack = wf.nodes.find((n) => n.name === 'Prepare Activity ack');
+  assert.match(ack.parameters.jsCode, /persist_events/);
+  assert.match(ack.parameters.jsCode, /!persisted/);
+  assert.equal(ack.parameters.jsCode.includes("payload.message||kind"), false);
 
   const probed = await run('Normalize step request', {
     action: 'probe',
@@ -9190,7 +9216,7 @@ async function run(name, json, nodes = {}, binary = {}) {
       'Load agent registry': { agent_id: 'excel_extractor', title: 'Excel' },
       'Runtime endpoints': {
         activity_base_url: 'http://mas-activity:8200',
-        excel_extractor_url: 'http://excel-tools:18000/agent/run',
+        excel_extractor_url: 'http://excel-tools:8000/agent/run',
       },
     },
   );
@@ -13653,15 +13679,15 @@ main().catch((error) => {
 });
 
 ===END_FILE===
-===BEGIN_FILE===	n8n/workflows/README.md	425	utf8
+===BEGIN_FILE===	n8n/workflows/README.md	574	utf8
 # n8n workflows
 
-- `core/` — production MAS runtime. **Import only via n8n UI** (Import from File), порядок — `runtime_import_order` в [`../import-manifest.json`](../import-manifest.json). Канон: [`../../docs.md`](../../docs.md) §3.
+- `core/` — production MAS runtime. **Import only via n8n UI** (Import from File), порядок — `runtime_import_order` в [`../import-manifest.json`](../import-manifest.json). Канон: [`../../docs.md`](../../docs.md) §2.
 - `support/` — не на live user path: specialist template, Cluster/Binary/Presentation stubs, AI-components reference, standalone Excel form. Field guide: [`../../docs.md`](../../docs.md) §6.
-
+- `retired/` — Engineering MAS (CAS, Data Tables, Entry Form, Human Gate, Trace Writer, Activity Hydrate, старый SCHEDULE Builder). Не импортировать.
 
 ===END_FILE===
-===BEGIN_FILE===	n8n/workflows/core/excel-extractor-agent.workflow.json	33915	utf8
+===BEGIN_FILE===	n8n/workflows/core/excel-extractor-agent.workflow.json	33913	utf8
 {
   "id": "3774c645-a20d-53df-9288-130173c400c2",
   "name": "Agent — Excel Extractor",
@@ -13670,7 +13696,7 @@ main().catch((error) => {
   "nodes": [
     {
       "parameters": {
-        "content": "## edit after import\n\n**Agent — Excel Extractor** — один LLM + excel-tools FastAPI.\n\n1. Bind **Qwen** credential on Excel Extractor Chat Model\n2. Runtime configuration: `excel_tools_url` = `http://excel-tools:18000`, API key, `activity_base_url`\n3. Orchestrator — MAS вызывает этот workflow через `executeWorkflow` (`Call Excel Extractor`). Webhook не нужен.\n\nФайлы не грузятся в n8n. Сервис сам GET `/cases/{id}/artifacts/excel`.\n`suggested_capability=commissioning` идёт обычным HTTP `extract_commissioning` (external n8n runners не execute'ят toolHttpRequest). Скважины/даты не хардкодятся.",
+        "content": "## edit after import\n\n**Agent — Excel Extractor** — один LLM + excel-tools FastAPI.\n\n1. Bind **Qwen** credential on Excel Extractor Chat Model\n2. Runtime configuration: `excel_tools_url` = `http://excel-tools:8000`, API key, `activity_base_url`\n3. Orchestrator — MAS вызывает этот workflow через `executeWorkflow` (`Call Excel Extractor`). Webhook не нужен.\n\nФайлы не грузятся в n8n. Сервис сам GET `/cases/{id}/artifacts/excel`.\n`suggested_capability=commissioning` идёт обычным HTTP `extract_commissioning` (external n8n runners не execute'ят toolHttpRequest). Скважины/даты не хардкодятся.",
         "height": 340,
         "width": 480,
         "color": 1
@@ -13705,7 +13731,7 @@ main().catch((error) => {
             {
               "id": "5d79d338-8464-510f-9563-d5a6fdd1c391",
               "name": "excel_tools_url",
-              "value": "http://excel-tools:18000",
+              "value": "http://excel-tools:8000",
               "type": "string"
             },
             {
@@ -13909,72 +13935,3 @@ main().catch((error) => {
         "text": "={{ $json.agent_input }}",
         "hasOutputParser": false,
         "options": {
-          "systemMessage": "Ты — единственный LLM-решатель агента Excel Extractor.\n\nWorkbook тебе не показывают. Он лежит в сессии FastAPI. session_id привязан workflow: никогда не передавай session_id и обёртку args/input.\n\nИнструменты:\n- workbook_introspect — листы и размеры (компактно)\n- sheet_preview — небольшой прямоугольник одного листа, не весь лист\n- detect_tables — найти таблицы, вернуть table_id / range / columns\n- match_tables — ранжировать таблицы по запросу\n- describe_table — колонки и sample по table_id\n- list_column_values — ограниченные distinct-значения колонки\n- query_table — строки по table_id (limit, фильтры). Не выгружай всю книгу\n- extract_commissioning — скважина+дата ввода из уже открытой сессии. Даты и скважины сам не выдумывай\n\nПравила:\n- Не пиши SCHEDULE / .INC. Только факты из Excel.\n- Не придумывай скважины, даты, дебиты, имена листов и table_id.\n- suggested_capability=commissioning → сразу extract_commissioning, затем STOP.\n- Иначе introspect/detect → query нужных таблиц. Если нужны даты ввода — extract_commissioning.\n- После extract_commissioning со status completed или needs_input — STOP.\n- Если файла/таблиц нет — не выдумывай строки.\n\nЗаверши одним коротким фактическим предложением по-русски.\n",
-          "maxIterations": 12,
-          "returnIntermediateSteps": true,
-          "passthroughBinaryImages": false,
-          "passthroughBinaryPdfs": false,
-          "enableStreaming": false
-        },
-        "needsFallback": false
-      },
-      "id": "2f03ceca-e58c-53ff-8b58-4586a68f08ea",
-      "name": "Excel Extractor AI Agent",
-      "type": "@n8n/n8n-nodes-langchain.agent",
-      "typeVersion": 3.1,
-      "position": [
-        1720,
-        160
-      ]
-    },
-    {
-      "parameters": {
-        "model": {
-          "mode": "id",
-          "value": "qwen3.6-plus"
-        },
-        "options": {
-          "maxTokens": 2048,
-          "temperature": 0,
-          "timeout": 300000,
-          "maxRetries": 5
-        },
-        "responsesApiEnabled": false
-      },
-      "id": "e81706e1-430e-5640-a5c8-2500fb80aa1b",
-      "name": "Excel Extractor Chat Model — Qwen",
-      "type": "@n8n/n8n-nodes-langchain.lmChatOpenAi",
-      "typeVersion": 1.3,
-      "position": [
-        1720,
-        40
-      ],
-      "credentials": {
-        "openAiApi": {
-          "id": "REPLACE_IN_UI",
-          "name": "REPLACE: Qwen OpenAI-compatible excel extractor credential"
-        }
-      }
-    },
-    {
-      "parameters": {
-        "method": "GET",
-        "url": "={{ $('Runtime configuration').first().json.excel_tools_url + '/sessions/' + $('Open excel session').first().json.session_id + '/result' }}",
-        "sendHeaders": true,
-        "headerParameters": {
-          "parameters": [
-            {
-              "name": "Content-Type",
-              "value": "application/json"
-            },
-            {
-              "name": "X-API-Key",
-              "value": "={{ $('Runtime configuration').first().json.excel_tools_api_key || '' }}"
-            }
-          ]
-        },
-        "options": {
-          "timeout": 120000,
-          "response": {
-            "response": {
-              "fullResponse": false,

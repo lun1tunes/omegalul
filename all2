@@ -1,3 +1,85 @@
+                "type": "number",
+                "required": false,
+                "default_allowed": true
+              },
+              {
+                "name": "WRAT",
+                "position": 4,
+                "type": "number",
+                "required": true
+              },
+              {
+                "name": "GRAT",
+                "position": 5,
+                "type": "number",
+                "required": false,
+                "default_allowed": true
+              },
+              {
+                "name": "LRAT",
+                "position": 6,
+                "type": "number",
+                "required": false,
+                "default_allowed": true
+              },
+              {
+                "name": "EXCEED_ACTION",
+                "position": 7,
+                "type": "string",
+                "required": true,
+                "enum": [
+                  "NONE",
+                  "CON",
+                  "CON+",
+                  "+CON",
+                  "WELL",
+                  "RATE",
+                  "TARG"
+                ]
+              },
+              {
+                "name": "EXCEED_PARENT",
+                "position": 8,
+                "type": "string",
+                "required": true,
+                "enum": [
+                  "YES",
+                  "NO"
+                ]
+              }
+            ],
+            "layout": {
+              "newline": "LF",
+              "indent": "  ",
+              "delimiter": "SPACE",
+              "record_terminator": "SLASH",
+              "block_terminator": "SLASH_LINE"
+            },
+            "semantics": {
+              "period": "FORECAST",
+              "clock": {
+                "uses_current": true
+              },
+              "references": [
+                {
+                  "entity_type": "group",
+                  "id_field": "GROUP",
+                  "required": true
+                }
+              ],
+              "state_assignments": [
+                {
+                  "namespace": "group-control",
+                  "entity_type": "group",
+                  "entity_field": "GROUP",
+                  "key_fields": [
+                    "CONTROL"
+                  ],
+                  "value_fields": [
+                    "ORAT",
+                    "WRAT",
+                    "GRAT",
+                    "LRAT",
                     "EXCEED_ACTION",
                     "EXCEED_PARENT"
                   ]
@@ -18290,7 +18372,7 @@ if __name__ == "__main__":
     _relayout_written()
 
 ===END_FILE===
-===BEGIN_FILE===	n8n/templates/generate_excel_extractor_agent.py	19088	utf8
+===BEGIN_FILE===	n8n/templates/generate_excel_extractor_agent.py	19086	utf8
 #!/usr/bin/env python3
 """Generate Agent — Excel Extractor: one LLM + excel-tools FastAPI tools."""
 
@@ -18596,7 +18678,7 @@ def main() -> None:
                     "**Agent — Excel Extractor** — один LLM + excel-tools FastAPI.\n\n"
                     "1. Bind **Qwen** credential on Excel Extractor Chat Model\n"
                     "2. Runtime configuration: `excel_tools_url` = "
-                    "`http://excel-tools:18000`, API key, `activity_base_url`\n"
+                    "`http://excel-tools:8000`, API key, `activity_base_url`\n"
                     "3. Orchestrator — MAS вызывает этот workflow через "
                     "`executeWorkflow` (`Call Excel Extractor`). Webhook не нужен.\n\n"
                     "Файлы не грузятся в n8n. Сервис сам GET "
@@ -18643,7 +18725,7 @@ def main() -> None:
                         {
                             "id": nid("cfg-svc"),
                             "name": "excel_tools_url",
-                            "value": "http://excel-tools:18000",
+                            "value": "http://excel-tools:8000",
                             "type": "string",
                         },
                         {
@@ -19733,7 +19815,7 @@ if __name__ == "__main__":
     main()
 
 ===END_FILE===
-===BEGIN_FILE===	n8n/templates/generate_mas_orchestrator.py	43461	utf8
+===BEGIN_FILE===	n8n/templates/generate_mas_orchestrator.py	43634	utf8
 #!/usr/bin/env python3
 """Generate the thin MAS orchestrator (one n8n execution = one step)."""
 
@@ -20639,9 +20721,11 @@ def main() -> None:
             "Prepare Activity ack",
             (4320, 120),
             r"""const x=$json||{};
+const persisted=Array.isArray(x.persist_events)&&x.persist_events.length>0;
 const kind=x.action_type==='finish'?'case.finished':(x.action_type==='ask_user'||x.next_status==='waiting_user'?'hitl.request':'orchestrator.status');
 const payload={contract:'mas_orchestrator_ack',case_id:x.case_id,status:x.next_status||x.status,action_type:x.action_type||null,message:x.message||null,should_continue:x.should_continue===true,human_gate:x.human_gate||null,version:x.version??null,restartable:x.restartable===true};
-return [{json:{...x,activity_sync:Boolean(x.case_id&&!x.is_probe&&x.activity_base_url),activity_url:`${String(x.activity_base_url||'').replace(/\/$/,'')}/cases/${encodeURIComponent(String(x.case_id||''))}/events`,activity_event:{kind,actor:'orchestrator',status:payload.status,status_message:payload.message||kind,payload}}}];""",
+const statusMessage=String(payload.message||'').trim()||String(x.status_message||'').trim();
+return [{json:{...x,activity_sync:Boolean(x.case_id&&!x.is_probe&&x.activity_base_url&&!persisted),activity_url:`${String(x.activity_base_url||'').replace(/\/$/,'')}/cases/${encodeURIComponent(String(x.case_id||''))}/events`,activity_event:{kind,actor:'orchestrator',status:payload.status,status_message:statusMessage,payload}}}];""",
         ),
         if_true("Activity sync?", (4480, 220), "={{ Boolean($json.activity_sync) }}"),
         node(
@@ -22713,25 +22797,3 @@ const attachSchedulePackage=sr=>{
     baseline_package:original.baseline_package||persistedSchedule.baseline_package||cur.baseline_package||null,
     simulator_profile:observed.simulator_profile,
     requested_keyword_scope:observed.requested_keyword_scope,
-    requested_capability_scope:arr(observed.requested_capability_scope)?observed.requested_capability_scope:(arr(cur.requested_capability_scope)?cur.requested_capability_scope:[]),
-    ...(clean(observed.requested_change_scope?.capability_id)?{capability_id:observed.requested_change_scope.capability_id}:{}),
-    ...(obj(observed.requested_change_scope)?{requested_change_scope:observed.requested_change_scope}:{}),
-  };
-};
-const excelEvidenceReady=previousSpecialistResult&&previousSpecialistResult.specialist_id==='excel_extraction_specialist'&&['succeeded','partial'].includes(String(previousSpecialistResult.status||''));
-const factsFromPersisted=obj(persistedSchedule.source_facts_packet)?persistedSchedule.source_facts_packet:null;
-// Detect workbook early — builderIntakeRetry must not reference hasExcelBinary before init (TDZ).
-const inputFiles=arr(request.input_files)?request.input_files:[];
-const excelName=v=>/\.xlsx?$/i.test(String(v||''));
-const hasExcelBinary=Boolean(
-  (base.binary&&(base.binary.file||base.binary.workbook))
-  || Object.values(base.binary||{}).some(b=>b&&excelName(b.fileName||b.filename))
-  || inputFiles.some(f=>excelName(f?.filename||f?.name)||/^(file|workbook)$/i.test(String(f?.field||'')))
-);
-// Text-only REVISE (no Excel facts) must also retry Builder intake with defaults after HITL.
-const hasBaselineForRetry=(typeof request.baseline_schedule_text==='string'&&request.baseline_schedule_text.length>0)||(typeof persistedSchedule.baseline_schedule_text==='string'&&persistedSchedule.baseline_schedule_text.length>0);
-const builderIntakeRetry=previousSpecialistResult&&previousSpecialistResult.specialist_id==='schedule_builder_specialist'&&String(previousSpecialistResult.status||'')==='needs_input'&&hasBaselineForRetry&&(Boolean(factsFromPersisted)||!hasExcelBinary);
-const excelAnsweredQuestion=q=>/скважин|дат[аыеу]\s*ввод|commission|well\b|дата ввода|исходн|baseline|schedule|\.inc\b/.test(questionBlob(q));
-let blockingQuestions=questions.filter(q=>{if(profileQuestion(q))return false;if(excelDelegation&&excelOwnedQuestion(q))return false;if((excelEvidenceReady||builderIntakeRetry)&&excelAnsweredQuestion(q))return false;return true;});
-if(decision==='needs_input'&&excelDelegation&&packetComplete&&allowed.has(intendedSpecialist)&&blockingQuestions.length===0){
-  decision='delegate';

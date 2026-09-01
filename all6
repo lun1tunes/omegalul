@@ -5796,12 +5796,38 @@
 }
 
 ===END_FILE===
+===BEGIN_FILE===	schedule-builder-service/README.md	1070	utf8
+# Schedule Builder FastAPI
+
+Parse / apply / emit файлов `SCHEDULE` (`.inc` / `.data`). LLM в n8n **не** пишет `.INC`.
+
+**На работе:** только Windows CMD. Полный порядок — [`../docs.md`](../docs.md) §2.
+
+Inspect и `apply_operations` — Python. **Commissioning и group-rebind** эмитят через **Node.js** (`n8n/templates/schedule_timeline_runtime.py`) — тот же код, что golden/combat. Без `node` в PATH сервис может отвечать `/health`, а REVISE дат — нет. В Compose `nodejs` ставится в контейнер.
+
+## Windows CMD
+
+```bat
+cd schedule-builder-service
+setup-windows.bat
+copy schedule-builder.env.example schedule-builder.env
+notepad schedule-builder.env
+start-windows.bat
+```
+
+Проверка: `check-windows.bat` (есть `node` + `/health`).
+
+`ACTIVITY_BASE_URL=http://127.0.0.1:8200` (или IP этого ПК). Файлы: `GET {activity}/cases/{id}/artifacts/{id}`. INCLUDE-пути не переписываются; Petrel `../../INCLUDE/…` оставляют `KEEP`, если тело не приложено.
+
+Порт канона: **8090**. Runtime configuration в n8n: `schedule_service_url=http://<IP>:8090`, `activity_base_url=http://<IP>:8200`.
+
+===END_FILE===
 ===BEGIN_FILE===	schedule-builder-service/app/__init__.py	36	utf8
 from __future__ import annotations
 
 
 ===END_FILE===
-===BEGIN_FILE===	schedule-builder-service/app/agent_tools.py	26516	utf8
+===BEGIN_FILE===	schedule-builder-service/app/agent_tools.py	26486	utf8
 """Deterministic tools for the n8n Schedule Builder LLM. Never invent wells or dates."""
 
 from __future__ import annotations
@@ -6244,7 +6270,7 @@ def execute_tool(session_id: str, name: str, args: dict[str, Any] | None = None)
             "completed" if ok else "failed",
             f"Сдвинул даты ввода для {len(revised.get('shifts') or [])} скважин"
             if status == "applied"
-            else str(revised.get("status") or "SCHEDULE без изменений"),
+            else "SCHEDULE без изменений",
             data={
                 "changed_keywords": ["DATES", "WCONPROD"],
                 "findings": revised.get("findings") or [],
@@ -6537,17 +6563,16 @@ def apply_operations(doc: ScheduleDoc, operations: list[dict[str, Any]]) -> tupl
     return ScheduleDoc(blocks=blocks, text=doc.text, sha256=doc.sha256), findings
 
 ===END_FILE===
-===BEGIN_FILE===	schedule-builder-service/app/commissioning.py	1160	utf8
+===BEGIN_FILE===	schedule-builder-service/app/commissioning.py	1729	utf8
 """Commissioning date retarget via the shared timeline JS (same algorithm as combat/golden)."""
 
 from __future__ import annotations
 
-import json
 import os
 from pathlib import Path
 from typing import Any
 
-from .timeline_ops import commissioning_revise
+from .js_timeline import run_timeline_fn
 
 TEMPLATES = Path(os.getenv("SCHEDULE_TEMPLATES") or "/templates")
 if not (TEMPLATES / "schedule_timeline_runtime.py").is_file():
@@ -6565,8 +6590,27 @@ def run_commissioning_revise(
 ) -> dict[str, Any]:
     if not (TEMPLATES / "schedule_timeline_runtime.py").is_file():
         raise RuntimeError(f"timeline templates missing at {TEMPLATES}")
-    result = commissioning_revise(source_text, well_facts, file_ref=file_ref)
+    options: dict[str, Any] = {"instruction_blob": instruction_blob or ""}
+    if unlisted_wells_policy in {"keep", "remove"}:
+        options["unlisted_wells_policy"] = unlisted_wells_policy
+    if new_well_defs:
+        options["new_well_defs"] = new_well_defs
+    result = run_timeline_fn(
+        "runCommissioningRevise",
+        source_text,
+        well_facts,
+        file_ref=file_ref,
+        options=options,
+    )
     result["unlisted_wells_policy"] = unlisted_wells_policy or "keep"
+    result.setdefault(
+        "control_semantics",
+        {
+            "commissioning_anchor": "first WCONPROD per well",
+            "forecast_controls_preserved": True,
+            "factual_wconprod_preserved": True,
+        },
+    )
     result["assumptions"] = [{"units": "METRIC", "unlisted_wells_policy": result["unlisted_wells_policy"]}]
     return result
 
@@ -6590,7 +6634,7 @@ def unified_diff(before: str, after: str, from_file: str = "schedule.inc", to_fi
     )
 
 ===END_FILE===
-===BEGIN_FILE===	schedule-builder-service/app/emit.py	2143	utf8
+===BEGIN_FILE===	schedule-builder-service/app/emit.py	2092	utf8
 """Emit SCHEDULE text: within-DATES order, record `/`, bare block `/`, then blank line."""
 
 from __future__ import annotations
@@ -6617,25 +6661,24 @@ def emit_block(block: Block) -> str:
     lines = [kw]
     for record in block.records:
         lines.append(_record_line(record))
-    if kw in TABLE_KEYWORDS:
+    if kw in TABLE_KEYWORDS or block.records:
         lines.append("/")
         lines.append("")
-    else:
-        if block.raw_body.strip():
-            body = block.raw_body.rstrip()
-            if not body.endswith("/"):
-                lines.extend(body.split("\n"))
-                lines.append("/")
-                lines.append("")
-            else:
-                lines.extend(body.split("\n"))
-                if not lines[-1].strip():
-                    pass
-                else:
-                    lines.append("")
-        else:
+    elif block.raw_body.strip():
+        body = block.raw_body.rstrip()
+        if not body.endswith("/"):
+            lines.extend(body.split("\n"))
             lines.append("/")
             lines.append("")
+        else:
+            lines.extend(body.split("\n"))
+            if not lines[-1].strip():
+                pass
+            else:
+                lines.append("")
+    else:
+        lines.append("/")
+        lines.append("")
     return "\n".join(lines).rstrip() + "\n"
 
 
@@ -6659,7 +6702,7 @@ def emit_schedule(doc: ScheduleDoc) -> str:
     return text
 
 ===END_FILE===
-===BEGIN_FILE===	schedule-builder-service/app/group_rebind.py	5377	utf8
+===BEGIN_FILE===	schedule-builder-service/app/group_rebind.py	5431	utf8
 """Group membership rebind via the shared timeline JS (same algorithm as combat/golden)."""
 
 from __future__ import annotations
@@ -6670,7 +6713,7 @@ import re
 from pathlib import Path
 from typing import Any
 
-from .timeline_ops import group_rebind_revise
+from .js_timeline import run_timeline_fn
 
 TEMPLATES = Path(os.getenv("SCHEDULE_TEMPLATES") or "/templates")
 if not (TEMPLATES / "schedule_timeline_runtime.py").is_file():
@@ -6804,10 +6847,15 @@ def run_group_rebind_revise(
 ) -> dict[str, Any]:
     if not (TEMPLATES / "schedule_timeline_runtime.py").is_file():
         raise RuntimeError(f"timeline templates missing at {TEMPLATES}")
-    return group_rebind_revise(source_text, spec, file_ref=file_ref)
+    return run_timeline_fn(
+        "runGroupRebindRevise",
+        source_text,
+        spec,
+        file_ref=file_ref,
+    )
 
 ===END_FILE===
-===BEGIN_FILE===	schedule-builder-service/app/io.py	4102	utf8
+===BEGIN_FILE===	schedule-builder-service/app/io.py	4511	utf8
 """Load baseline SCHEDULE and Excel commissioning facts for a case."""
 
 from __future__ import annotations
@@ -6817,14 +6865,28 @@ from typing import Any
 from urllib.request import urlopen
 
 
+def _filename_base(name: Any) -> str:
+    return Path(str(name or "").strip()).name.lower()
+
+
+def schedule_meta(inputs: dict[str, Any]) -> dict[str, Any]:
+    artifacts = inputs.get("artifacts") if isinstance(inputs.get("artifacts"), dict) else {}
+    root = _filename_base(inputs.get("schedule_root") or inputs.get("root_path") or "")
+    if root:
+        for item in artifacts.values():
+            if isinstance(item, dict) and _filename_base(item.get("filename")) == root:
+                return item
+    meta = artifacts.get("schedule_source") if isinstance(artifacts.get("schedule_source"), dict) else {}
+    if not meta and isinstance(artifacts.get("schedule_files"), dict):
+        meta = artifacts.get("schedule_files") or {}
+    return meta if isinstance(meta, dict) else {}
+
+
 def load_source(inputs: dict[str, Any], case_id: str, activity: str = "") -> str:
     if inputs.get("schedule_text"):
         return str(inputs["schedule_text"])
     path = inputs.get("schedule_source") or inputs.get("schedule_path")
-    artifacts = inputs.get("artifacts") if isinstance(inputs.get("artifacts"), dict) else {}
-    meta = artifacts.get("schedule_source") if isinstance(artifacts.get("schedule_source"), dict) else {}
-    if not meta and isinstance(artifacts.get("schedule_files"), dict):
-        meta = artifacts.get("schedule_files") or {}
+    meta = schedule_meta(inputs)
     if path and Path(str(path)).is_file():
         return Path(str(path)).read_text(encoding="utf-8")
     base = str(inputs.get("activity_base_url") or activity).rstrip("/")
@@ -6901,15 +6963,111 @@ def commissioning_facts(context: dict[str, Any], inputs: dict[str, Any]) -> list
 
 
 def file_ref(inputs: dict[str, Any]) -> str:
-    artifacts = inputs.get("artifacts") if isinstance(inputs.get("artifacts"), dict) else {}
+    meta = schedule_meta(inputs)
     return str(
         inputs.get("schedule_root")
-        or (artifacts.get("schedule_source") or {}).get("filename")
+        or (meta or {}).get("filename")
         or "schedule.inc"
     )
 
 ===END_FILE===
-===BEGIN_FILE===	schedule-builder-service/app/keywords.py	11112	utf8
+===BEGIN_FILE===	schedule-builder-service/app/js_timeline.py	3396	utf8
+"""Run shared n8n timeline JS (parse → edit → emit) via Node."""
+
+from __future__ import annotations
+
+import json
+import os
+import subprocess
+import tempfile
+from pathlib import Path
+from typing import Any
+
+TEMPLATES = Path(os.getenv("SCHEDULE_TEMPLATES") or "/templates")
+if not (TEMPLATES / "schedule_timeline_runtime.py").is_file():
+    TEMPLATES = Path(__file__).resolve().parents[2] / "n8n" / "templates"
+
+TIMELINE_PY = TEMPLATES / "schedule_timeline_runtime.py"
+
+
+def _load_timeline_core() -> str:
+    import importlib.util
+    import sys
+
+    templates = str(TIMELINE_PY.parent)
+    if templates not in sys.path:
+        sys.path.insert(0, templates)
+    spec = importlib.util.spec_from_file_location("schedule_timeline_runtime", TIMELINE_PY)
+    if spec is None or spec.loader is None:
+        raise RuntimeError(f"Cannot load timeline runtime: {TIMELINE_PY}")
+    mod = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(mod)
+    return mod.timeline_core_js()
+
+
+def run_timeline_fn(
+    fn: str,
+    source_text: str,
+    payload: Any,
+    *,
+    file_ref: str = "schedule.inc",
+    options: dict[str, Any] | None = None,
+    timeout_s: float = 120.0,
+) -> dict[str, Any]:
+    if not TIMELINE_PY.is_file():
+        raise RuntimeError(f"timeline templates missing at {TEMPLATES}")
+    if fn not in {"runCommissioningRevise", "runGroupRebindRevise"}:
+        raise ValueError(f"unsupported timeline fn: {fn}")
+    core = _load_timeline_core()
+    call = (
+        "const result = runCommissioningRevise(baseline, payload, root, options);"
+        if fn == "runCommissioningRevise"
+        else "const result = runGroupRebindRevise(baseline, payload, root);"
+    )
+    script = f"""
+{core}
+const fs = require('fs');
+const baseline = fs.readFileSync(process.argv[2], 'utf8');
+const payload = JSON.parse(fs.readFileSync(process.argv[3], 'utf8'));
+const meta = JSON.parse(fs.readFileSync(process.argv[4], 'utf8'));
+const root = String(meta.file_ref || 'schedule.inc');
+const options = meta.options && typeof meta.options === 'object' ? meta.options : {{}};
+{call}
+process.stdout.write(JSON.stringify(result));
+"""
+    with tempfile.TemporaryDirectory(prefix="sched-tl-") as tmp:
+        tmp_path = Path(tmp)
+        src = tmp_path / "baseline.inc"
+        body = tmp_path / "payload.json"
+        meta = tmp_path / "meta.json"
+        js = tmp_path / "run.js"
+        src.write_text(source_text, encoding="utf-8")
+        body.write_text(json.dumps(payload, ensure_ascii=False), encoding="utf-8")
+        meta.write_text(
+            json.dumps({"file_ref": file_ref, "options": options or {}}, ensure_ascii=False),
+            encoding="utf-8",
+        )
+        js.write_text(script, encoding="utf-8")
+        proc = subprocess.run(
+            ["node", str(js), str(src), str(body), str(meta)],
+            capture_output=True,
+            text=True,
+            timeout=timeout_s,
+            env={**os.environ, "NODE_NO_WARNINGS": "1"},
+        )
+    if proc.returncode != 0:
+        err = (proc.stderr or proc.stdout or "node failed")[:800]
+        raise RuntimeError(f"timeline node failed: {err}")
+    try:
+        data = json.loads(proc.stdout or "{}")
+    except json.JSONDecodeError as exc:
+        raise RuntimeError("timeline returned non-JSON") from exc
+    if not isinstance(data, dict):
+        raise RuntimeError("timeline returned non-object")
+    return data
+
+===END_FILE===
+===BEGIN_FILE===	schedule-builder-service/app/keywords.py	11127	utf8
 """tNavigator 22.2 SCHEDULE keyword catalogue (METRIC). Emit FRACTURE_SPECS, not FRACTURE_WELL."""
 
 from __future__ import annotations
@@ -7008,6 +7166,7 @@ WITHIN_DATE_KEYWORD_ORDER: list[str] = [
 
 # Table-style keywords: records end with `/`, then a bare block `/` and a blank line.
 TABLE_KEYWORDS = {
+    "INCLUDE",
     "WCONPROD",
     "WCONINJE",
     "WCONHIST",
@@ -7209,7 +7368,7 @@ def within_date_rank(keyword: str, orig_index: int = 0) -> float:
         return apply_idx + 0.001 * orig_index
 
 ===END_FILE===
-===BEGIN_FILE===	schedule-builder-service/app/main.py	20981	utf8
+===BEGIN_FILE===	schedule-builder-service/app/main.py	21018	utf8
 """Schedule Builder FastAPI: keyword object model + build/apply/diff + AgentTask."""
 
 from __future__ import annotations
@@ -7596,7 +7755,11 @@ def agent_run(body: AgentTaskBody) -> dict[str, Any]:
         result = {
             "task_id": body.task_id,
             "status": "completed" if text.strip() and status in {"applied", "noop"} else "failed",
-            "message": f"Сдвинул даты ввода для {len(revised.get('shifts') or [])} скважин" if status == "applied" else (revised.get("status") or "SCHEDULE без изменений"),
+            "message": (
+                f"Сдвинул даты ввода для {len(revised.get('shifts') or [])} скважин"
+                if status == "applied"
+                else "SCHEDULE без изменений"
+            ),
             "data": {
                 "changed_keywords": ["DATES", "WCONPROD"],
                 "findings": revised.get("findings") or [],
@@ -7895,7 +8058,7 @@ def _expire_unlocked() -> None:
         _SESSIONS.pop(sid, None)
 
 ===END_FILE===
-===BEGIN_FILE===	schedule-builder-service/app/timeline_ops.py	11197	utf8
+===BEGIN_FILE===	schedule-builder-service/app/timeline_ops.py	11621	utf8
 """Python-native timeline edits used by Schedule Builder."""
 
 from __future__ import annotations
@@ -7918,7 +8081,20 @@ MOVE_KEYWORDS = {"WCONPROD", "WELOPEN", "WEFAC"}
 
 
 def parse_date(value: Any) -> date | None:
-    text = str(value or "").strip().upper().replace(",", " ")
+    if isinstance(value, datetime):
+        return value.date()
+    if isinstance(value, date):
+        return value
+    text = str(value or "").strip()
+    if not text or text.lower() in {"none", "null", "nan"}:
+        return None
+    iso = re.match(r"^(\d{4})-(\d{2})-(\d{2})", text)
+    if iso:
+        try:
+            return date(int(iso.group(1)), int(iso.group(2)), int(iso.group(3)))
+        except ValueError:
+            return None
+    text = text.upper().replace(",", " ")
     text = re.sub(r"\s+", " ", text)
     for fmt in ("%d %b %Y", "%Y-%m-%d", "%Y/%m/%d", "%d-%m-%Y"):
         try:
@@ -8405,6 +8581,39 @@ def find_well(objects: list[dict[str, Any]], well: str) -> dict[str, Any] | None
     return next((item for item in objects if item.get("well") == wanted), None)
 
 ===END_FILE===
+===BEGIN_FILE===	schedule-builder-service/check-windows.bat	883	utf8
+@echo off
+setlocal
+cd /d "%~dp0"
+
+set "SCHEDULE_BUILDER_HOST=127.0.0.1"
+set "SCHEDULE_BUILDER_PORT=8090"
+if exist "schedule-builder.env" for /f "usebackq eol=# tokens=1,* delims==" %%A in ("schedule-builder.env") do if not "%%A"=="" set "%%A=%%B"
+if "%SCHEDULE_BUILDER_HOST%"=="0.0.0.0" set "SCHEDULE_BUILDER_HOST=127.0.0.1"
+
+where node >nul 2>nul
+if errorlevel 1 (
+  echo ERROR: Node.js is not on PATH. Commissioning/group-rebind will fail even if /health is up.
+  exit /b 1
+)
+
+where curl.exe >nul 2>nul
+if errorlevel 1 (
+  echo ERROR: curl.exe is not available.
+  exit /b 1
+)
+
+curl.exe --fail --silent --show-error "http://%SCHEDULE_BUILDER_HOST%:%SCHEDULE_BUILDER_PORT%/health"
+if errorlevel 1 (
+  echo.
+  echo ERROR: Schedule Builder is not reachable. Keep start-windows.bat running in another CMD window.
+  exit /b 1
+)
+echo.
+echo Schedule Builder health check passed.
+exit /b 0
+
+===END_FILE===
 ===BEGIN_FILE===	schedule-builder-service/requirements.txt	120	utf8
 fastapi>=0.115.14,<0.116
 uvicorn[standard]>=0.30,<1.0
@@ -8414,7 +8623,115 @@ httpx>=0.27,<1.0
 
 
 ===END_FILE===
-===BEGIN_FILE===	schedule-builder-service/tests/test_schedule_engine.py	14873	utf8
+===BEGIN_FILE===	schedule-builder-service/schedule-builder.env.example	228	utf8
+# Schedule Builder FastAPI. Copy to schedule-builder.env.
+# 127.0.0.1: only this PC. 0.0.0.0: allow an approved remote n8n host.
+SCHEDULE_BUILDER_HOST=127.0.0.1
+SCHEDULE_BUILDER_PORT=8090
+ACTIVITY_BASE_URL=http://127.0.0.1:8200
+
+===END_FILE===
+===BEGIN_FILE===	schedule-builder-service/setup-windows.bat	1067	utf8
+@echo off
+setlocal
+cd /d "%~dp0"
+
+where py >nul 2>nul
+if errorlevel 1 (
+  echo ERROR: Python Launcher "py" was not found. Install Python 3.11-3.13 and enable the launcher.
+  exit /b 1
+)
+
+py -3 -c "import sys; raise SystemExit(0 if sys.version_info[:2] in ((3, 11), (3, 12), (3, 13)) else 1)"
+if errorlevel 1 (
+  echo ERROR: Python 3.11, 3.12 or 3.13 is required.
+  py -3 --version
+  exit /b 1
+)
+
+where node >nul 2>nul
+if errorlevel 1 (
+  echo ERROR: Node.js is required on PATH.
+  echo Commissioning and group-rebind emit through n8n\templates\schedule_timeline_runtime.py via node.
+  exit /b 1
+)
+
+if not exist ".venv\Scripts\python.exe" (
+  echo Creating virtual environment...
+  py -3 -m venv .venv
+  if errorlevel 1 exit /b 1
+)
+
+echo Installing Schedule Builder dependencies...
+".venv\Scripts\python.exe" -m pip install --upgrade pip
+if errorlevel 1 exit /b 1
+".venv\Scripts\python.exe" -m pip install -r requirements.txt
+if errorlevel 1 exit /b 1
+
+echo.
+echo Ready. Copy schedule-builder.env.example to schedule-builder.env, then run start-windows.bat.
+exit /b 0
+
+===END_FILE===
+===BEGIN_FILE===	schedule-builder-service/start-linux.sh	860	utf8
+#!/usr/bin/env bash
+set -euo pipefail
+cd "$(dirname "$0")"
+if [[ ! -d .venv ]]; then
+  echo "ERROR: .venv missing. Run: python3 -m venv .venv && .venv/bin/pip install -r requirements.txt"
+  exit 1
+fi
+if [[ ! -f schedule-builder.env ]]; then
+  echo "ERROR: schedule-builder.env missing. Copy schedule-builder.env.example → schedule-builder.env"
+  exit 1
+fi
+if ! command -v node >/dev/null 2>&1; then
+  echo "ERROR: Node.js is required on PATH (commissioning / group-rebind timeline emit)."
+  exit 1
+fi
+set -a
+# shellcheck disable=SC1091
+source schedule-builder.env
+set +a
+echo "Starting Schedule Builder at http://${SCHEDULE_BUILDER_HOST:-127.0.0.1}:${SCHEDULE_BUILDER_PORT:-8090}"
+echo "Keep this terminal open. Ctrl+C to stop."
+exec .venv/bin/python -m uvicorn app.main:app --host "${SCHEDULE_BUILDER_HOST:-127.0.0.1}" --port "${SCHEDULE_BUILDER_PORT:-8090}"
+
+===END_FILE===
+===BEGIN_FILE===	schedule-builder-service/start-windows.bat	1054	utf8
+@echo off
+setlocal
+cd /d "%~dp0"
+
+if not exist ".venv\Scripts\python.exe" (
+  echo ERROR: .venv is missing. Run setup-windows.bat first.
+  exit /b 1
+)
+if not exist "schedule-builder.env" (
+  echo ERROR: schedule-builder.env is missing.
+  echo Run: copy schedule-builder.env.example schedule-builder.env
+  exit /b 1
+)
+
+where node >nul 2>nul
+if errorlevel 1 (
+  echo ERROR: Node.js is required on PATH.
+  echo Commissioning and group-rebind emit through n8n\templates\schedule_timeline_runtime.py via node.
+  exit /b 1
+)
+
+for /f "usebackq eol=# tokens=1,* delims==" %%A in ("schedule-builder.env") do if not "%%A"=="" set "%%A=%%B"
+
+if not defined SCHEDULE_BUILDER_HOST set "SCHEDULE_BUILDER_HOST=127.0.0.1"
+if not defined SCHEDULE_BUILDER_PORT set "SCHEDULE_BUILDER_PORT=8090"
+
+echo Starting Schedule Builder at http://%SCHEDULE_BUILDER_HOST%:%SCHEDULE_BUILDER_PORT%
+echo Keep this window open. Press Ctrl+C to stop.
+".venv\Scripts\python.exe" -m uvicorn app.main:app --host "%SCHEDULE_BUILDER_HOST%" --port "%SCHEDULE_BUILDER_PORT%"
+exit /b %errorlevel%
+
+===END_FILE===
+===BEGIN_FILE===	schedule-builder-service/tests/test_schedule_engine.py	15996	utf8
 from __future__ import annotations
 
 from app.emit import emit_schedule
@@ -8443,6 +8760,10 @@ WCONPROD
     assert "\n/\n\n" in out or out.rstrip().endswith("/")
     findings = validate_emitted(out, doc)
     assert not [f for f in findings if f.get("code") == "BLOCK_TERMINATOR_MISSING"]
+    include = emit_schedule(parse_schedule("INCLUDE\n'../../VFP.INC' /\n/\n"))
+    assert include.splitlines()[0] == "INCLUDE"
+    assert include.count("../../VFP.INC") == 1
+    assert "\n/\n" in include
 
 
 def test_apply_wconprod_and_diff() -> None:
@@ -8537,6 +8858,9 @@ WCONPROD
     assert "1601 OPEN GRAT" in feb
     jan = text.split("1 JAN 2020")[1].split("DATES")[0]
     assert "1601 OPEN GRAT" not in jan
+    iso = run_commissioning_revise(source, [{"well": "1601", "date": "2020-02-23T00:00:00"}])
+    assert iso["status"] == "applied"
+    assert "23 FEB 2020" in iso["generated_schedule"]
 
 
 def test_commissioning_preserves_later_wconprod_forecast_controls() -> None:
@@ -8752,7 +9076,10 @@ WCONPROD
     assert "200000 / -- forecast start" in text
     assert "250000 / -- forecast mode" in text
     assert "23 FEB 2020" in text
-    assert text.index("120000") < text.index("200000")
+    # Production timeline JS (golden/combat emit) moves the first WCONPROD.
+    feb = text.split("23 FEB 2020")[1]
+    assert "120000 / -- ФАКТ: история" in feb
+    assert text.index("200000") < text.index("120000")
 
 
 def test_remove_cannot_delete_factual_wconprod() -> None:
@@ -8836,6 +9163,20 @@ def test_load_source_fetches_from_activity_artifact(monkeypatch) -> None:
         "CASE-1",
     )
     assert seen["url"] == "http://mas-activity:8200/cases/CASE-1/artifacts/schedule_source"
+    assert "DATES" in text
+    seen.clear()
+    text = load_source(
+        {
+            "activity_base_url": "http://mas-activity:8200",
+            "schedule_root": "MONITORING_FDP.INC",
+            "artifacts": {
+                "schedule_source": {"filename": "GRUPTREE.GRDECL", "artifact_id": "schedule_source"},
+                "schedule_source_1": {"filename": "MONITORING_FDP.INC", "artifact_id": "schedule_source_1"},
+            },
+        },
+        "CASE-1",
+    )
+    assert seen["url"] == "http://mas-activity:8200/cases/CASE-1/artifacts/schedule_source_1"
     assert "DATES" in text
     from app.group_rebind import wants_group_rebind
 
@@ -8944,7 +9285,7 @@ def test_hitl_json_answers_yield_policy_and_new_well_defs() -> None:
     assert _new_well_defs(state)[0]["well"] == "N001"
 
 ===END_FILE===
-===BEGIN_FILE===	scripts/_bootstrap_n8n_field.py	9101	utf8
+===BEGIN_FILE===	scripts/_bootstrap_n8n_field.py	9096	utf8
 #!/usr/bin/env python3
 """Lab/field bootstrap: create n8n credentials, rebind URLs, publish workflows.
 
@@ -9081,7 +9422,7 @@ def main() -> int:
     if isinstance(rows, dict):
         rows = rows.get("data") or []
 
-    excel_url = "http://host.docker.internal:18000/api/v1"
+    excel_url = "http://host.docker.internal:8000/api/v1"
     activity_url = "http://host.docker.internal:8200"
     math_url = "http://host.docker.internal:8100/api/v1/math"
     excel_key = env.get("EXCEL_TOOLS_API_KEY", "local-dev-excel-tools-api-key")
@@ -9142,9 +9483,9 @@ def main() -> int:
             url = params.get("url")
             if isinstance(url, str):
                 repl = {
-                    "http://excel-tools:18000/health": "http://host.docker.internal:18000/health",
+                    "http://excel-tools:8000/health": "http://host.docker.internal:8000/health",
                     "http://mas-activity:8200/health": "http://host.docker.internal:8200/health",
-                    "http://excel-tools:18000": "http://host.docker.internal:18000",
+                    "http://excel-tools:8000": "http://host.docker.internal:8000",
                     "http://mas-activity:8200": "http://host.docker.internal:8200",
                 }
                 for src, dst in repl.items():
@@ -9721,13 +10062,13 @@ if __name__ == "__main__":
     raise SystemExit(main())
 
 ===END_FILE===
-===BEGIN_FILE===	scripts/lab_docker_host_bridge.py	6082	utf8
+===BEGIN_FILE===	scripts/lab_docker_host_bridge.py	6190	utf8
 #!/usr/bin/env python3
 """Lab-only: let Docker n8n reach FastAPI processes that listen on the host.
 
 Corporate n8n is not in this compose file — it calls the Windows/Linux host IP
 directly. This machine's compose `backend` network is `internal: true`, and
-container→host TCP to :18000/:8100/:8200 times out. A unix-socket pair on the
+container→host TCP to :8000/:8090/:8100/:8200 times out. A unix-socket pair on the
 compose backend network is the workaround that does not need sudo/iptables.
 
 Usage:
@@ -9752,7 +10093,8 @@ NETWORK = os.environ.get("MAS_HOST_BRIDGE_NETWORK", "omegalul_backend")
 IMAGE = os.environ.get("MAS_HOST_BRIDGE_IMAGE", "python:3.11-slim")
 
 PORTS = (
-    ("excel", 18000),
+    ("excel", 8000),
+    ("schedule", 8090),
     ("math", 8100),
     ("activity", 8200),
 )
@@ -9811,7 +10153,7 @@ CONTAINER_SCRIPT = r"""
 import asyncio, os
 from pathlib import Path
 
-PORTS = (("excel", 18000), ("math", 8100), ("activity", 8200))
+PORTS = (("excel", 8000), ("schedule", 8090), ("math", 8100), ("activity", 8200))
 SOCKDIR = Path("/socks")
 
 async def pipe(reader, writer):
@@ -9888,7 +10230,7 @@ def start_container() -> None:
         CONTAINER,
         "python",
         "-c",
-        "import urllib.request; print(urllib.request.urlopen('http://127.0.0.1:18000/health', timeout=3).read().decode())",
+        "import urllib.request; print(urllib.request.urlopen('http://127.0.0.1:8000/health', timeout=3).read().decode())",
         check=False,
     )
     print("container self-probe:", probe.stdout.strip() or probe.stderr.strip())
@@ -9914,7 +10256,11 @@ def main() -> int:
     except Exception:
         host_proc.terminate()
         raise
-    print(f"n8n URLs: http://{CONTAINER}:18000/api/v1  http://{CONTAINER}:8100/api/v1/math  http://{CONTAINER}:8200")
+    print(
+        f"n8n URLs: http://{CONTAINER}:8000/api/v1  "
+        f"http://{CONTAINER}:8090  http://{CONTAINER}:8100/api/v1/math  "
+        f"http://{CONTAINER}:8200"
+    )
     print("host bridge PID", host_proc.pid, "— keep this process running")
 
     def _shutdown(*_args) -> None:
@@ -9931,16 +10277,18 @@ if __name__ == "__main__":
     raise SystemExit(main())
 
 ===END_FILE===
-===BEGIN_FILE===	scripts/lab_soft_redeploy.py	35336	utf8
+===BEGIN_FILE===	scripts/lab_soft_redeploy.py	39425	utf8
 #!/usr/bin/env python3
-"""Fast lab soft-redeploy: keep credentials/DTs, refresh workflows, Health Check.
+"""Fast lab soft-redeploy: keep volumes, refresh workflows, Health Check.
 
-Does NOT wipe docker volumes. Wipes CAS/trace rows + Activity state, reimports
-full_clean_import_set, binds live IDs, syncs workflow_history, publishes,
-restarts n8n, runs Form Health Check.
+Does NOT wipe docker volumes. Reimports full_clean_import_set, binds live IDs,
+syncs workflow_history, publishes (Control Plane Proxy first), restarts n8n,
+starts mas-activity after the proxy webhook is registered, runs Health Check.
+
+Without --skip-wipe, also clears cases/events and Activity state.
 
 Usage:
-  python3 scripts/lab_soft_redeploy.py
+  python3 scripts/lab_soft_redeploy.py --skip-wipe
   python3 scripts/lab_soft_redeploy.py --skip-health
 """
 from __future__ import annotations
@@ -9992,9 +10340,10 @@ OPTIONAL_PLACEHOLDERS = {
     "REPLACE_DOCUMENT_SPECIALIST_IN_UI": "Template — Engineering Specialist",
 }
 
-# Publish/activate order: leaves with no Execute Workflow deps first,
-# then RAG, then specialists that call RAG, then Orchestrator, then forms.
+# Publish/activate order: Control Plane Proxy first (Activity cannot boot
+# without /webhook/mas-control-plane), then RAG/specialists, Orchestrator, forms.
 PUBLISH = [
+    "MAS — Control Plane Proxy",
     "MAS — Knowledge Retrieval",
     "MAS — Knowledge Ingestion",
     "Error — MAS Node Traces",
@@ -10016,6 +10365,8 @@ STALE_WORKFLOW_NAMES = (
     "Form — MAS Human Gate",
     "Agent — Calculation (Math Service)",
     "SCHEDULE — Builder",
+    "Agent — Excel Extractor (legacy webhook)",
+    "MAS — Ensure Control Plane",
 )
 
 ERROR_WORKFLOW_SKIP = (
@@ -10057,20 +10408,49 @@ def psql(sql: str) -> str:
     ).stdout.strip()
 
 
+def wipe_mas_via_proxy(env: dict[str, str]) -> bool:
+    """Clear MAS case tables through n8n, not docker exec psql."""
+    port = env.get("N8N_HOST_PORT", "15678")
+    url = f"http://127.0.0.1:{port}/webhook/mas-control-plane"
+    header = env.get("CONTROL_PLANE_PROXY_AUTH_HEADER") or "Authorization"
+    value = env.get("CONTROL_PLANE_PROXY_AUTH_VALUE") or "local-orch-inbound"
+    body = json.dumps({"operation": "wipe"}).encode()
+    req = urllib.request.Request(
+        url,
+        data=body,
+        method="POST",
+        headers={"Content-Type": "application/json", header: value},
+    )
+    try:
+        with urllib.request.urlopen(req, timeout=30) as resp:
+            payload = json.loads(resp.read().decode())
+        ok = payload.get("ok") is True
+        print("control-plane wipe", payload.get("result") or payload)
+        return ok
+    except Exception as exc:  # noqa: BLE001
+        print("control-plane wipe skipped", exc)
+        return False
+
+
 def wipe_state(env: dict[str, str]) -> None:
     print("== wipe CAS / trace / activity ==")
+    mas_wiped = wipe_mas_via_proxy(env)
+    mas_sql = "" if mas_wiped else """
+  IF to_regclass('public.events') IS NOT NULL THEN TRUNCATE events CASCADE; END IF;
+  IF to_regclass('public.error_traces') IS NOT NULL THEN TRUNCATE error_traces CASCADE; END IF;
+  IF to_regclass('public.executions') IS NOT NULL THEN TRUNCATE executions CASCADE; END IF;
+  IF to_regclass('public.mas_artifacts') IS NOT NULL THEN TRUNCATE mas_artifacts CASCADE; END IF;
+  IF to_regclass('public.cases') IS NOT NULL THEN TRUNCATE cases CASCADE; END IF;
+"""
     psql(
-        """
+        f"""
 DO $$
 BEGIN
   IF to_regclass('public.execution_data') IS NOT NULL THEN TRUNCATE execution_data CASCADE; END IF;
   IF to_regclass('public.execution_entity') IS NOT NULL THEN TRUNCATE execution_entity CASCADE; END IF;
   IF to_regclass('public.data_table_user_eotasksv1') IS NOT NULL THEN TRUNCATE data_table_user_eotasksv1; END IF;
   IF to_regclass('public.data_table_user_mastracev1') IS NOT NULL THEN TRUNCATE data_table_user_mastracev1; END IF;
-  IF to_regclass('public.events') IS NOT NULL THEN TRUNCATE events CASCADE; END IF;
-  IF to_regclass('public.error_traces') IS NOT NULL THEN TRUNCATE error_traces CASCADE; END IF;
-  IF to_regclass('public.executions') IS NOT NULL THEN TRUNCATE executions CASCADE; END IF;
-  IF to_regclass('public.cases') IS NOT NULL THEN TRUNCATE cases CASCADE; END IF;
+{mas_sql}
 END$$;
 """
     )
@@ -10174,306 +10554,3 @@ def apply_control_plane_sql() -> None:
     for name in ("02-mas-control-plane.sql", "03-schedule-builder-registry.sql"):
         path = ROOT / "postgres-init" / name
         remote = f"/tmp/{name}"
-        run(["docker", "compose", "cp", str(path), f"postgres:{remote}"])
-        run(
-            [
-                "docker",
-                "compose",
-                "exec",
-                "-T",
-                "postgres",
-                "psql",
-                "-U",
-                "n8n",
-                "-d",
-                "n8n",
-                "-v",
-                "ON_ERROR_STOP=1",
-                "-f",
-                remote,
-            ]
-        )
-        print(f"applied {name}")
-
-
-def ensure_qwen_credential(env: dict[str, str]) -> str:
-    """Create or reuse OpenAI-compatible Qwen credential. Returns live n8n id."""
-    existing = psql("SELECT name || E'\\t' || id FROM credentials_entity;")
-    for line in existing.splitlines():
-        if "\t" not in line:
-            continue
-        name, cid = line.split("\t", 1)
-        if name.strip() == "Qwen OpenAI-compatible":
-            print(f"qwen credential exists id={cid.strip()}")
-            return cid.strip()
-    key = (env.get("QWEN_API_KEY") or "").strip()
-    url = (env.get("QWEN_BASE_URL") or "https://api.openai.com/v1").rstrip("/")
-    if not key:
-        print("qwen credential skip: QWEN_API_KEY missing")
-        return ""
-    import http.cookiejar
-
-    user = env.get("N8N_USERNAME") or env.get("N8N_USER")
-    password = env.get("N8N_PASSWORD")
-    if not user or not password:
-        print("qwen credential skip: no n8n login")
-        return ""
-    base = f"http://127.0.0.1:{env.get('N8N_HOST_PORT', '15678')}"
-    cj = http.cookiejar.CookieJar()
-    opener = urllib.request.build_opener(urllib.request.HTTPCookieProcessor(cj))
-    login = urllib.request.Request(
-        base + "/rest/login",
-        data=json.dumps({"emailOrLdapLoginId": user, "password": password}).encode(),
-        headers={"Content-Type": "application/json"},
-        method="POST",
-    )
-    opener.open(login, timeout=30)
-    payload = {
-        "name": "Qwen OpenAI-compatible",
-        "type": "openAiApi",
-        "data": {"apiKey": key, "url": url},
-    }
-    req = urllib.request.Request(
-        base + "/rest/credentials",
-        data=json.dumps(payload).encode(),
-        headers={"Content-Type": "application/json", "Accept": "application/json"},
-        method="POST",
-    )
-    with opener.open(req, timeout=60) as resp:
-        body = json.loads(resp.read().decode() if resp.length != 0 else b"{}")
-    cred = body.get("data") or body
-    cid = str(cred.get("id") or "").strip()
-    if not cid:
-        raise SystemExit(f"qwen credential create missing id: {list(body)[:8]}")
-    if PROJECT_ID:
-        psql(
-            "INSERT INTO shared_credentials (\"credentialsId\", \"projectId\", role) "
-            f"VALUES ('{cid}', '{PROJECT_ID}', 'credential:owner') ON CONFLICT DO NOTHING;"
-        )
-    print(f"qwen credential created id={cid}")
-    return cid
-
-
-def bind_error_workflow(name_to_id: dict[str, str]) -> None:
-    """Point Settings → Error workflow at Error — MAS Node Traces (live n8n IDs)."""
-    hid = name_to_id.get("Error — MAS Node Traces") or name_to_id.get("Error — MAS Case Handler")
-    if not hid:
-        print("bind errorWorkflow skip: handler missing")
-        return
-    print("== bind n8n Error workflow ==")
-    for name, wid in sorted(name_to_id.items()):
-        target = "" if name in ERROR_WORKFLOW_SKIP else hid
-        escaped = target.replace("'", "''")
-        psql(
-            "UPDATE workflow_entity "
-            "SET settings = jsonb_set(COALESCE(settings::jsonb, '{}'::jsonb), "
-            f"'{{errorWorkflow}}', to_jsonb('{escaped}'::text)) "
-            f"WHERE id = '{wid}';"
-        )
-        print(f"errorWorkflow {name}: {target or '(empty)'}")
-
-
-def patch_nodes(nodes, name_to_id: dict[str, str], env: dict[str, str]) -> int:
-    changed = 0
-    # Compose DNS: n8n + agent containers reach Activity on the backend network.
-    # Field Windows: set MAS_ACTIVITY_URL=http://<PC-IP>:8200 (corporate n8n is not in compose).
-    activity_url = env.get("MAS_ACTIVITY_URL", "http://mas-activity:8200")
-    # Compose `excel-tools` listens on 18000 inside Docker DNS. Host :18000 is
-    # only up if a second uvicorn is started; mas-host-bridge then works.
-    excel_url = env.get("EXCEL_TOOLS_URL", "http://excel-tools:18000")
-    math_url = env.get("MATH_SERVICE_URL", "http://math-service:8100")
-    schedule_url = env.get("SCHEDULE_BUILDER_URL", "http://schedule-builder:8090")
-    excel_key = env.get("EXCEL_TOOLS_API_KEY") or env.get("excel_tools_api_key") or ""
-    webhook_key = env.get("EXCEL_WEBHOOK_API_KEY") or env.get("excel_webhook_api_key") or excel_key
-    placeholders = dict(PLACEHOLDERS)
-    for ph, target in OPTIONAL_PLACEHOLDERS.items():
-        if target in name_to_id:
-            placeholders[ph] = target
-
-    for node in nodes:
-        creds = node.get("credentials")
-        if isinstance(creds, dict):
-            for ctype, meta in creds.items():
-                if not isinstance(meta, dict):
-                    continue
-                cname = str(meta.get("name") or "")
-                if ctype == "postgres":
-                    meta["id"] = CRED_PG
-                    meta["name"] = "Postgres pgvector"
-                    changed += 1
-                elif ctype == "openAiApi":
-                    qwen_id = str(env.get("_N8N_QWEN_CRED_ID") or "").strip()
-                    if "qwen" in cname.lower() and qwen_id:
-                        meta["id"] = qwen_id
-                        meta["name"] = "Qwen OpenAI-compatible"
-                    else:
-                        meta["id"] = CRED_OA
-                        meta["name"] = "OpenAI production"
-                    changed += 1
-                elif ctype == "httpHeaderAuth":
-                    meta["id"] = CRED_HDR
-                    meta["name"] = "Engineering orchestrator inbound key"
-                    changed += 1
-        params = node.get("parameters")
-        if not isinstance(params, dict):
-            continue
-        chat_model = str(env.get("N8N_CHAT_MODEL") or "").strip()
-        if chat_model and node.get("type") == "@n8n/n8n-nodes-langchain.lmChatOpenAi":
-            model = params.get("model")
-            if isinstance(model, dict):
-                model["value"] = chat_model
-                model["mode"] = "id"
-                changed += 1
-            elif model is None or isinstance(model, str):
-                params["model"] = {"mode": "id", "value": chat_model}
-                changed += 1
-        dt = params.get("dataTableId")
-        if isinstance(dt, dict) and dt.get("__rl"):
-            cached = str(dt.get("cachedResultName") or "").lower()
-            name = str(node.get("name") or "").lower()
-            if "trace" in cached or "trace" in name:
-                dt.update({"value": DT_TRACE, "mode": "list", "cachedResultName": "mas_trace_events_v1"})
-            else:
-                dt.update({"value": DT_TASK, "mode": "list", "cachedResultName": "engineering_orchestrator_tasks_v1"})
-            changed += 1
-        wid = params.get("workflowId")
-        if isinstance(wid, dict) and wid.get("__rl"):
-            val = str(wid.get("value") or "")
-            cached = str(wid.get("cachedResultName") or "")
-            if "Data Specialist" in cached or "Document Specialist" in cached:
-                target = placeholders.get(val) or "Template — Engineering Specialist"
-            else:
-                target = placeholders.get(val) or (cached if cached in name_to_id else None)
-                if cached == "SCHEDULE — Knowledge Retrieval":
-                    target = "MAS — Knowledge Retrieval"
-            if target and target in name_to_id:
-                wid["value"] = name_to_id[target]
-                wid["mode"] = "list"
-                wid["cachedResultName"] = target
-                changed += 1
-        # n8n 2.30 production webhooks require a stable webhookId; missing id → 404 "not registered".
-        if node.get("type") == "n8n-nodes-base.webhook" and not node.get("webhookId"):
-            path = str((params.get("path") or "")).strip()
-            stable = {
-                "engineering-orchestrator": "a1000003-orch-wh-0001-8000-000000000002",
-                "engineering-orchestrator-form": "a1000003-orch-form-0001-8000-000000000002",
-                "mas-activity-hydrate": "a1000003-hyd-wh-0001-8000-000000000002",
-                "mas-orchestrator-step": "a1000003-mas-orch-wh-0001-800000000001",
-                "schedule-builder-agent": "a1000003-sched-agent-wh-0001-8000000001",
-            }.get(path)
-            if stable:
-                node["webhookId"] = stable
-                changed += 1
-        if node.get("name") in {"Runtime configuration", "Runtime endpoints"}:
-            for assignment in (((params.get("assignments") or {}).get("assignments")) or []):
-                key = assignment.get("name")
-                if key == "excel_extractor_url":
-                    assignment["value"] = excel_url.rstrip("/") + "/agent/run"
-                    changed += 1
-                elif key == "excel_tools_url":
-                    assignment["value"] = "={{ " + json.dumps(excel_url) + " }}"
-                    changed += 1
-                elif key == "excel_tools_api_key":
-                    assignment["value"] = excel_key
-                    changed += 1
-                elif key == "excel_webhook_api_key":
-                    assignment["value"] = "={{ " + json.dumps(webhook_key) + " }}"
-                    changed += 1
-                elif key == "calculation_agent_url":
-                    assignment["value"] = math_url.rstrip("/") + "/agent/run"
-                    changed += 1
-                elif key == "schedule_builder_url":
-                    assignment["value"] = env.get(
-                        "SCHEDULE_BUILDER_AGENT_URL",
-                        "http://n8n:5678/webhook/schedule-builder-agent",
-                    )
-                    changed += 1
-                elif key == "schedule_service_url":
-                    assignment["value"] = schedule_url.rstrip("/")
-                    changed += 1
-                elif key == "orchestrator_step_url":
-                    assignment["value"] = env.get(
-                        "ORCHESTRATOR_INTERNAL_WEBHOOK_URL",
-                        "http://n8n:5678/webhook/mas-orchestrator-step",
-                    )
-                    changed += 1
-                elif key == "activity_base_url":
-                    assignment["value"] = activity_url
-                    changed += 1
-        if node.get("name") == "Math Service Configuration":
-            for assignment in (((params.get("assignments") or {}).get("assignments")) or []):
-                key = assignment.get("name")
-                if key == "math_service_url":
-                    assignment["value"] = math_url
-                    changed += 1
-        if node.get("name") == "Activity connection":
-            for assignment in (((params.get("assignments") or {}).get("assignments")) or []):
-                key = assignment.get("name")
-                if key == "activity_base_url":
-                    assignment["value"] = activity_url
-                    changed += 1
-        js = params.get("jsCode")
-        if isinstance(js, str) and "ACTIVITY_BASE_URL" in js and "Activity connection" not in js:
-            js2 = re.sub(
-                r"const ACTIVITY_BASE_URL=['\"][^'\"]*['\"]",
-                f"const ACTIVITY_BASE_URL={json.dumps(activity_url)}",
-                js,
-            )
-            if js2 != js:
-                params["jsCode"] = js2
-                changed += 1
-    return changed
-
-
-def sync_history() -> None:
-    print("== sync workflow_history ==")
-    psql(
-        """
-UPDATE workflow_history h
-SET nodes = w.nodes,
-    connections = w.connections,
-    name = w.name,
-    "updatedAt" = NOW()
-FROM workflow_entity w
-WHERE h."versionId" = w."versionId"
-  AND h."workflowId" = w.id
-  AND (
-    h.nodes::text IS DISTINCT FROM w.nodes::text
-    OR h.connections::text IS DISTINCT FROM w.connections::text
-  );
-"""
-    )
-
-
-def publish(name_to_id: dict[str, str]) -> None:
-    """Publish+activate via REST. CLI `n8n publish:workflow` is a no-op for workflow_published_version in 2.30."""
-    print("== publish/activate (REST) ==")
-    env = load_env()
-    user = env.get("N8N_USERNAME") or env.get("N8N_USER")
-    password = env.get("N8N_PASSWORD")
-    if not user or not password:
-        print("missing N8N_USERNAME / N8N_PASSWORD — falling back to CLI publish")
-        for name in PUBLISH:
-            wid = name_to_id.get(name)
-            if not wid:
-                print(f"publish skip missing {name}")
-                continue
-            cp = run(["docker", "compose", "exec", "-T", "n8n", "n8n", "publish:workflow", f"--id={wid}"], check=False)
-            print(f"publish {name}: {'OK' if cp.returncode == 0 else 'FAIL'}")
-        return
-
-    import http.cookiejar
-
-    base = f"http://127.0.0.1:{env.get('N8N_HOST_PORT', '15678')}"
-    cj = http.cookiejar.CookieJar()
-    opener = urllib.request.build_opener(urllib.request.HTTPCookieProcessor(cj))
-
-    def rest(method: str, path: str, payload: dict | None = None):
-        body = None if payload is None else json.dumps(payload).encode()
-        req = urllib.request.Request(
-            base + path,
-            data=body,
-            method=method,
-            headers={"Content-Type": "application/json", "Accept": "application/json"},
-        )
-        try:
