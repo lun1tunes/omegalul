@@ -5,10 +5,12 @@ from __future__ import annotations
 import json
 import os
 import re
+import shutil
 from pathlib import Path
 from typing import Any
 
 from .js_timeline import run_timeline_fn
+from .timeline_ops import group_rebind_revise as python_group_rebind_revise
 
 TEMPLATES = Path(os.getenv("SCHEDULE_TEMPLATES") or "/templates")
 if not (TEMPLATES / "schedule_timeline_runtime.py").is_file():
@@ -142,9 +144,17 @@ def run_group_rebind_revise(
 ) -> dict[str, Any]:
     if not (TEMPLATES / "schedule_timeline_runtime.py").is_file():
         raise RuntimeError(f"timeline templates missing at {TEMPLATES}")
-    return run_timeline_fn(
-        "runGroupRebindRevise",
-        source_text,
-        spec,
-        file_ref=file_ref,
-    )
+    if shutil.which("node") is None:
+        return python_group_rebind_revise(source_text, spec, file_ref=file_ref)
+    try:
+        return run_timeline_fn(
+            "runGroupRebindRevise",
+            source_text,
+            spec,
+            file_ref=file_ref,
+        )
+    except RuntimeError as exc:
+        message = str(exc).lower()
+        if "node failed" not in message and "winerror 2" not in message and "no such file" not in message:
+            raise
+        return python_group_rebind_revise(source_text, spec, file_ref=file_ref)

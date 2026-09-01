@@ -3,10 +3,12 @@
 from __future__ import annotations
 
 import os
+import shutil
 from pathlib import Path
 from typing import Any
 
 from .js_timeline import run_timeline_fn
+from .timeline_ops import commissioning_revise as python_commissioning_revise
 
 TEMPLATES = Path(os.getenv("SCHEDULE_TEMPLATES") or "/templates")
 if not (TEMPLATES / "schedule_timeline_runtime.py").is_file():
@@ -29,13 +31,30 @@ def run_commissioning_revise(
         options["unlisted_wells_policy"] = unlisted_wells_policy
     if new_well_defs:
         options["new_well_defs"] = new_well_defs
-    result = run_timeline_fn(
-        "runCommissioningRevise",
-        source_text,
-        well_facts,
-        file_ref=file_ref,
-        options=options,
-    )
+    if shutil.which("node") is None:
+        result = python_commissioning_revise(
+            source_text,
+            well_facts,
+            file_ref=file_ref,
+        )
+    else:
+        try:
+            result = run_timeline_fn(
+                "runCommissioningRevise",
+                source_text,
+                well_facts,
+                file_ref=file_ref,
+                options=options,
+            )
+        except RuntimeError as exc:
+            message = str(exc).lower()
+            if "node failed" not in message and "winerror 2" not in message and "no such file" not in message:
+                raise
+            result = python_commissioning_revise(
+                source_text,
+                well_facts,
+                file_ref=file_ref,
+            )
     result["unlisted_wells_policy"] = unlisted_wells_policy or "keep"
     result.setdefault(
         "control_semantics",

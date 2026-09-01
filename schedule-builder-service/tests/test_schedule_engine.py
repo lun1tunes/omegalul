@@ -342,10 +342,8 @@ WCONPROD
     assert "200000 / -- forecast start" in text
     assert "250000 / -- forecast mode" in text
     assert "23 FEB 2020" in text
-    # Production timeline JS (golden/combat emit) moves the first WCONPROD.
-    feb = text.split("23 FEB 2020")[1]
-    assert "120000 / -- ФАКТ: история" in feb
-    assert text.index("200000") < text.index("120000")
+    assert text.index("120000 / -- ФАКТ: история") < text.index("23 FEB 2020")
+    assert text.index("120000") < text.index("200000")
 
 
 def test_remove_cannot_delete_factual_wconprod() -> None:
@@ -526,6 +524,54 @@ def test_commissioning_facts_prefer_specialist_over_baseline_column() -> None:
     assert len(rows) == 1
     assert rows[0]["well"] == "304R"
     assert str(rows[0]["date"]).startswith("2019-08-01")
+
+
+def test_commissioning_fallback_without_node(monkeypatch) -> None:
+    from app.commissioning import run_commissioning_revise
+
+    monkeypatch.setattr("app.commissioning.shutil.which", lambda _name: None)
+    source = """DATES
+  1 JAN 2020 /
+/
+
+WCONPROD
+  1601 OPEN GRAT 1* 1* 200000 /
+/
+"""
+    revised = run_commissioning_revise(source, [{"well": "1601", "date": "23 FEB 2020"}])
+    assert revised["status"] == "applied"
+    assert "23 FEB 2020" in revised["generated_schedule"]
+
+
+def test_group_rebind_fallback_without_node(monkeypatch) -> None:
+    from app.group_rebind import run_group_rebind_revise
+
+    monkeypatch.setattr("app.group_rebind.shutil.which", lambda _name: None)
+    source = """GRUPTREE
+NORTH FIELD /
+/
+
+DATES
+  1 JAN 2020 /
+/
+
+WCONPROD
+  1601 OPEN GRAT 1* 1* 200000 /
+/
+"""
+    revised = run_group_rebind_revise(
+        source,
+        {
+            "wells": ["1601"],
+            "parent_group": "DKS",
+            "parent_of_parent": "FIELD",
+            "well_groups": {"1601": "G1601"},
+            "control": "GRAT",
+            "gas_rate": 200000,
+        },
+    )
+    assert revised["status"] == "applied"
+    assert "DKS FIELD /" in revised["generated_schedule"]
 
 
 def test_hitl_json_answers_yield_policy_and_new_well_defs() -> None:
