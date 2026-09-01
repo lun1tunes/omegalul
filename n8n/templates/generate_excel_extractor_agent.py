@@ -303,7 +303,7 @@ def main() -> None:
                     "**Agent — Excel Extractor** — один LLM + excel-tools FastAPI.\n\n"
                     "1. Bind **Qwen** credential on Excel Extractor Chat Model\n"
                     "2. Runtime configuration: `excel_tools_url` = "
-                    "`http://excel-tools:18000`, API key, `activity_base_url`\n"
+                    "`http://excel-tools:8000`, API key, `activity_base_url`\n"
                     "3. Orchestrator — MAS вызывает этот workflow через "
                     "`executeWorkflow` (`Call Excel Extractor`). Webhook не нужен.\n\n"
                     "Файлы не грузятся в n8n. Сервис сам GET "
@@ -350,7 +350,7 @@ def main() -> None:
                         {
                             "id": nid("cfg-svc"),
                             "name": "excel_tools_url",
-                            "value": "http://excel-tools:18000",
+                            "value": "http://excel-tools:8000",
                             "type": "string",
                         },
                         {

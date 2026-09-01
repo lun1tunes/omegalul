@@ -81,7 +81,10 @@ TERMINAL_KINDS = {"case.finished", "case.failed"}
 
 def _event_message(event: dict[str, Any]) -> str:
     value = " ".join(str(event.get("status_message") or "").split())
-    return "" if value.casefold() in {"none", "null", "undefined"} else value
+    kind = str(event.get("kind") or "").strip()
+    if value.casefold() in {"none", "null", "undefined", kind.casefold()}:
+        return ""
+    return value
 
 
 def _event_display_message(kind: str, event: dict[str, Any]) -> str:
@@ -132,9 +135,21 @@ def collapse_duplicate_events(events: list[dict[str, Any]] | None) -> list[dict[
                 if kind == "orchestrator.decision":
                     out[-1] = event
                 continue
-        if kind in TERMINAL_KINDS:
-            while out and str(out[-1].get("kind") or "") in ORCH_ECHO_KINDS and _event_message(out[-1]) == msg:
+        if kind == "agent.handoff" and out:
+            prev = out[-1]
+            if str(prev.get("kind") or "") in ORCH_ECHO_KINDS and (
+                not _event_message(prev) or _event_message(prev) == msg
+            ):
                 out.pop()
+        if kind in TERMINAL_KINDS:
+            while out and str(out[-1].get("kind") or "") in ORCH_ECHO_KINDS and (
+                not msg or _event_message(out[-1]) == msg
+            ):
+                out.pop()
+            if out and str(out[-1].get("kind") or "") in TERMINAL_KINDS:
+                if msg and not _event_message(out[-1]):
+                    out[-1] = event
+                continue
         out.append(event)
     return out
 
@@ -162,6 +177,7 @@ def event_to_turn(event: dict[str, Any]) -> dict[str, Any]:
         summary = display_message
         text = display_message
         brief = display_message
+    event_id = event.get("event_id")
     return {
         "at": _iso(event.get("created_at")),
         "stage": kind,
@@ -175,6 +191,8 @@ def event_to_turn(event: dict[str, Any]) -> dict[str, Any]:
         "to_role": right or left,
         "lane_dir": lane_dir,
         "event_type": kind,
+        "event_id": event_id,
+        "turn_id": event_id,
         "handoff_message": handoff,
         "kind": turn_kind,
         "details": {
@@ -182,7 +200,7 @@ def event_to_turn(event: dict[str, Any]) -> dict[str, Any]:
             "agent_id": event.get("agent_id"),
             "handoff_message": handoff,
             "payload": payload,
-            "event_id": event.get("event_id"),
+            "event_id": event_id,
             "lane_dir": lane_dir,
         },
         "chips": _chips(event),
@@ -207,6 +225,32 @@ def _chips(event: dict[str, Any]) -> list[dict[str, Any]]:
     return chips
 
 
+def _events_for_rail(row: dict[str, Any]) -> list[dict[str, Any]] | None:
+    raw = row.get("events")
+    if isinstance(raw, str):
+        text = raw.strip()
+        if not text:
+            return []
+        try:
+            raw = json.loads(text)
+        except json.JSONDecodeError:
+            return None
+    if isinstance(raw, list):
+        return [item for item in raw if isinstance(item, dict)]
+    return None
+
+
+def _rail_turn_count(row: dict[str, Any]) -> int | None:
+    """Collapsed chat length. Omit the rail number when events were not loaded.
+
+    Raw ``event_count`` includes orchestrator echoes; do not show it as turns.
+    """
+    events = _events_for_rail(row)
+    if events is None:
+        return None
+    return len(collapse_duplicate_events(events))
+
+
 def case_rail_item(row: dict[str, Any]) -> dict[str, Any]:
     state = row.get("state") if isinstance(row.get("state"), dict) else {}
     status = str(row.get("status") or state.get("status") or "")
@@ -219,7 +263,7 @@ def case_rail_item(row: dict[str, Any]) -> dict[str, Any]:
         "updated_at": _iso(row.get("updated_at")),
         "status": status,
         "last_status": status,
-        "turn_count": int(row.get("event_count") or 0),
+        "turn_count": _rail_turn_count(row),
         "awaiting_human": status == "waiting_user",
         "restartable": case_is_restartable({"status": status}),
     }
@@ -353,6 +397,46 @@ def _artifact_slot(filename: str) -> str:
     return "attachment"
 
 
+def _filename_base(name: str) -> str:
+    return Path(str(name or "").strip()).name.lower()
+
+
+def _promote_schedule_root(
+    uploads: list[tuple[str, str, bytes, str]],
+    schedule_root: str = "",
+) -> list[tuple[str, str, bytes, str]]:
+    """Ensure the named root .INC is the `schedule_source` slot, not whichever file arrived first."""
+    root = _filename_base(schedule_root)
+    if not root:
+        return list(uploads)
+    match_i = next(
+        (
+            i
+            for i, (slot, filename, _content, _mime) in enumerate(uploads)
+            if slot == "schedule_source" and _filename_base(filename) == root
+        ),
+        None,
+    )
+    if match_i is None:
+        return list(uploads)
+    ordered = list(uploads)
+    item = ordered.pop(match_i)
+    insert_at = next((i for i, (slot, *_rest) in enumerate(ordered) if slot == "schedule_source"), len(ordered))
+    ordered.insert(insert_at, item)
+    return ordered
+
+
+def _index_uploads(uploads: list[tuple[str, str, bytes, str]]) -> dict[str, tuple[str, bytes, str]]:
+    binary: dict[str, tuple[str, bytes, str]] = {}
+    used: dict[str, int] = {}
+    for slot, filename, content, mime in uploads:
+        n = used.get(slot, 0)
+        used[slot] = n + 1
+        key = slot if n == 0 else f"{slot}_{n}"
+        binary[key] = (filename, content, mime)
+    return binary
+
+
 def _new_case_id() -> str:
     return f"CASE-{int(time.time()):x}-{secrets.token_hex(3)}"
 
@@ -457,20 +541,16 @@ async def create_case(
     for item in files or []:
         await take(item, None)
 
-    binary = {}
-    artifacts: dict[str, Any] = {}
-    used: dict[str, int] = {}
-    for slot, filename, content, mime in uploads:
-        n = used.get(slot, 0)
-        used[slot] = n + 1
-        key = slot if n == 0 else f"{slot}_{n}"
-        binary[key] = (filename, content, mime)
-        artifacts[key] = {
+    binary = _index_uploads(_promote_schedule_root(uploads, schedule_root))
+    artifacts: dict[str, Any] = {
+        key: {
             "filename": filename,
             "mime_type": mime,
             "bytes": len(content),
             "artifact_id": key,
         }
+        for key, (filename, content, mime) in binary.items()
+    }
     if artifact_store.configured():
         for key, (filename, content, mime) in binary.items():
             try:
@@ -798,13 +878,23 @@ async def stream_case(case_id: str, request: Request) -> StreamingResponse:
         raise HTTPException(status_code=404, detail="case not found")
 
     async def gen():
-        last = 0
-        tail: list[dict[str, Any]] = list(snap["events"] or [])
-        snapshot = _feed_from_row(case_id, snap["case"], collapse_duplicate_events(tail), 0)
+        all_raw: list[dict[str, Any]] = list(snap["events"] or [])
+        snapshot = _feed_from_row(case_id, snap["case"], collapse_duplicate_events(all_raw), 0)
         yield f"data: {json.dumps({'type': 'snapshot', **snapshot}, default=str)}\n\n"
         events = snapshot.get("events") or []
-        if events:
-            last = int(events[-1]["event_id"])
+        seen_ids = {
+            int(event["event_id"])
+            for event in events
+            if event.get("event_id") is not None
+        }
+        last = max(
+            (
+                int(event["event_id"])
+                for event in all_raw
+                if event.get("event_id") is not None
+            ),
+            default=0,
+        )
         last_updated = str((snap["case"] or {}).get("updated_at") or "")
         while True:
             if await request.is_disconnected():
@@ -815,19 +905,27 @@ async def stream_case(case_id: str, request: Request) -> StreamingResponse:
             if row is None:
                 break
             raw_new = list(fresh["events"] or [])
-            collapsed = collapse_duplicate_events(tail[-8:] + raw_new)
+            if raw_new:
+                all_raw.extend(raw_new)
+                last = max(
+                    last,
+                    max(
+                        int(event["event_id"])
+                        for event in raw_new
+                        if event.get("event_id") is not None
+                    ),
+                )
+            collapsed = collapse_duplicate_events(all_raw)
             emit = [
                 event
                 for event in collapsed
-                if event.get("event_id") is not None and int(event["event_id"]) > last
+                if event.get("event_id") is not None and int(event["event_id"]) not in seen_ids
             ]
-            if raw_new:
-                tail = (tail + raw_new)[-16:]
             feed = _feed_from_row(case_id, row, [], last)
             meta = _stream_meta(feed)
             updated = str(row.get("updated_at") or "")
             for event in emit:
-                last = int(event["event_id"])
+                seen_ids.add(int(event["event_id"]))
                 yield f"data: {json.dumps({'type': 'turn', 'turn': event_to_turn(event), 'event': event, **meta}, default=str)}\n\n"
             if not emit and updated != last_updated:
                 yield f"data: {json.dumps({'type': 'meta', **meta}, default=str)}\n\n"

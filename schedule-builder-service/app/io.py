@@ -7,14 +7,28 @@ from typing import Any
 from urllib.request import urlopen
 
 
+def _filename_base(name: Any) -> str:
+    return Path(str(name or "").strip()).name.lower()
+
+
+def schedule_meta(inputs: dict[str, Any]) -> dict[str, Any]:
+    artifacts = inputs.get("artifacts") if isinstance(inputs.get("artifacts"), dict) else {}
+    root = _filename_base(inputs.get("schedule_root") or inputs.get("root_path") or "")
+    if root:
+        for item in artifacts.values():
+            if isinstance(item, dict) and _filename_base(item.get("filename")) == root:
+                return item
+    meta = artifacts.get("schedule_source") if isinstance(artifacts.get("schedule_source"), dict) else {}
+    if not meta and isinstance(artifacts.get("schedule_files"), dict):
+        meta = artifacts.get("schedule_files") or {}
+    return meta if isinstance(meta, dict) else {}
+
+
 def load_source(inputs: dict[str, Any], case_id: str, activity: str = "") -> str:
     if inputs.get("schedule_text"):
         return str(inputs["schedule_text"])
     path = inputs.get("schedule_source") or inputs.get("schedule_path")
-    artifacts = inputs.get("artifacts") if isinstance(inputs.get("artifacts"), dict) else {}
-    meta = artifacts.get("schedule_source") if isinstance(artifacts.get("schedule_source"), dict) else {}
-    if not meta and isinstance(artifacts.get("schedule_files"), dict):
-        meta = artifacts.get("schedule_files") or {}
+    meta = schedule_meta(inputs)
     if path and Path(str(path)).is_file():
         return Path(str(path)).read_text(encoding="utf-8")
     base = str(inputs.get("activity_base_url") or activity).rstrip("/")
@@ -91,9 +105,9 @@ def commissioning_facts(context: dict[str, Any], inputs: dict[str, Any]) -> list
 
 
 def file_ref(inputs: dict[str, Any]) -> str:
-    artifacts = inputs.get("artifacts") if isinstance(inputs.get("artifacts"), dict) else {}
+    meta = schedule_meta(inputs)
     return str(
         inputs.get("schedule_root")
-        or (artifacts.get("schedule_source") or {}).get("filename")
+        or (meta or {}).get("filename")
         or "schedule.inc"
     )

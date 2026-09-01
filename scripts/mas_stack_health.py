@@ -95,7 +95,7 @@ def main() -> int:
     )
 
     for name, url in [
-        ("compose excel-tools via n8n DNS", "http://excel-tools:18000/health"),
+        ("compose excel-tools via n8n DNS", "http://excel-tools:8000/health"),
         ("compose n8n-runners via n8n DNS", "http://n8n-runners:5680/healthz"),
         ("compose mas-activity via n8n DNS", "http://mas-activity:8200/health"),
         ("compose n8n self via n8n DNS", "http://n8n:5678/healthz"),

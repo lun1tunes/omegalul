@@ -1,12 +1,14 @@
 #!/usr/bin/env python3
-"""Fast lab soft-redeploy: keep credentials/DTs, refresh workflows, Health Check.
+"""Fast lab soft-redeploy: keep volumes, refresh workflows, Health Check.
 
-Does NOT wipe docker volumes. Wipes CAS/trace rows + Activity state, reimports
-full_clean_import_set, binds live IDs, syncs workflow_history, publishes,
-restarts n8n, runs Form Health Check.
+Does NOT wipe docker volumes. Reimports full_clean_import_set, binds live IDs,
+syncs workflow_history, publishes (Control Plane Proxy first), restarts n8n,
+starts mas-activity after the proxy webhook is registered, runs Health Check.
+
+Without --skip-wipe, also clears cases/events and Activity state.
 
 Usage:
-  python3 scripts/lab_soft_redeploy.py
+  python3 scripts/lab_soft_redeploy.py --skip-wipe
   python3 scripts/lab_soft_redeploy.py --skip-health
 """
 from __future__ import annotations
@@ -58,9 +60,10 @@ OPTIONAL_PLACEHOLDERS = {
     "REPLACE_DOCUMENT_SPECIALIST_IN_UI": "Template — Engineering Specialist",
 }
 
-# Publish/activate order: leaves with no Execute Workflow deps first,
-# then RAG, then specialists that call RAG, then Orchestrator, then forms.
+# Publish/activate order: Control Plane Proxy first (Activity cannot boot
+# without /webhook/mas-control-plane), then RAG/specialists, Orchestrator, forms.
 PUBLISH = [
+    "MAS — Control Plane Proxy",
     "MAS — Knowledge Retrieval",
     "MAS — Knowledge Ingestion",
     "Error — MAS Node Traces",
@@ -82,6 +85,8 @@ STALE_WORKFLOW_NAMES = (
     "Form — MAS Human Gate",
     "Agent — Calculation (Math Service)",
     "SCHEDULE — Builder",
+    "Agent — Excel Extractor (legacy webhook)",
+    "MAS — Ensure Control Plane",
 )
 
 ERROR_WORKFLOW_SKIP = (
@@ -123,20 +128,49 @@ def psql(sql: str) -> str:
     ).stdout.strip()
 
 
+def wipe_mas_via_proxy(env: dict[str, str]) -> bool:
+    """Clear MAS case tables through n8n, not docker exec psql."""
+    port = env.get("N8N_HOST_PORT", "15678")
+    url = f"http://127.0.0.1:{port}/webhook/mas-control-plane"
+    header = env.get("CONTROL_PLANE_PROXY_AUTH_HEADER") or "Authorization"
+    value = env.get("CONTROL_PLANE_PROXY_AUTH_VALUE") or "local-orch-inbound"
+    body = json.dumps({"operation": "wipe"}).encode()
+    req = urllib.request.Request(
+        url,
+        data=body,
+        method="POST",
+        headers={"Content-Type": "application/json", header: value},
+    )
+    try:
+        with urllib.request.urlopen(req, timeout=30) as resp:
+            payload = json.loads(resp.read().decode())
+        ok = payload.get("ok") is True
+        print("control-plane wipe", payload.get("result") or payload)
+        return ok
+    except Exception as exc:  # noqa: BLE001
+        print("control-plane wipe skipped", exc)
+        return False
+
+
 def wipe_state(env: dict[str, str]) -> None:
     print("== wipe CAS / trace / activity ==")
+    mas_wiped = wipe_mas_via_proxy(env)
+    mas_sql = "" if mas_wiped else """
+  IF to_regclass('public.events') IS NOT NULL THEN TRUNCATE events CASCADE; END IF;
+  IF to_regclass('public.error_traces') IS NOT NULL THEN TRUNCATE error_traces CASCADE; END IF;
+  IF to_regclass('public.executions') IS NOT NULL THEN TRUNCATE executions CASCADE; END IF;
+  IF to_regclass('public.mas_artifacts') IS NOT NULL THEN TRUNCATE mas_artifacts CASCADE; END IF;
+  IF to_regclass('public.cases') IS NOT NULL THEN TRUNCATE cases CASCADE; END IF;
+"""
     psql(
-        """
+        f"""
 DO $$
 BEGIN
   IF to_regclass('public.execution_data') IS NOT NULL THEN TRUNCATE execution_data CASCADE; END IF;
   IF to_regclass('public.execution_entity') IS NOT NULL THEN TRUNCATE execution_entity CASCADE; END IF;
   IF to_regclass('public.data_table_user_eotasksv1') IS NOT NULL THEN TRUNCATE data_table_user_eotasksv1; END IF;
   IF to_regclass('public.data_table_user_mastracev1') IS NOT NULL THEN TRUNCATE data_table_user_mastracev1; END IF;
-  IF to_regclass('public.events') IS NOT NULL THEN TRUNCATE events CASCADE; END IF;
-  IF to_regclass('public.error_traces') IS NOT NULL THEN TRUNCATE error_traces CASCADE; END IF;
-  IF to_regclass('public.executions') IS NOT NULL THEN TRUNCATE executions CASCADE; END IF;
-  IF to_regclass('public.cases') IS NOT NULL THEN TRUNCATE cases CASCADE; END IF;
+{mas_sql}
 END$$;
 """
     )
@@ -344,9 +378,8 @@ def patch_nodes(nodes, name_to_id: dict[str, str], env: dict[str, str]) -> int:
     # Compose DNS: n8n + agent containers reach Activity on the backend network.
     # Field Windows: set MAS_ACTIVITY_URL=http://<PC-IP>:8200 (corporate n8n is not in compose).
     activity_url = env.get("MAS_ACTIVITY_URL", "http://mas-activity:8200")
-    # Compose `excel-tools` listens on 18000 inside Docker DNS. Host :18000 is
-    # only up if a second uvicorn is started; mas-host-bridge then works.
-    excel_url = env.get("EXCEL_TOOLS_URL", "http://excel-tools:18000")
+    # Same port as field Windows (8000). Compose excel-tools listens on 8000 too.
+    excel_url = env.get("EXCEL_TOOLS_URL", "http://excel-tools:8000")
     math_url = env.get("MATH_SERVICE_URL", "http://math-service:8100")
     schedule_url = env.get("SCHEDULE_BUILDER_URL", "http://schedule-builder:8090")
     excel_key = env.get("EXCEL_TOOLS_API_KEY") or env.get("excel_tools_api_key") or ""
@@ -780,19 +813,99 @@ def wait_url(url: str, attempts: int = 90) -> None:
     raise SystemExit(f"not healthy: {url}")
 
 
+def wait_control_plane_webhook(env: dict[str, str], attempts: int = 60) -> None:
+    """Activity cannot boot until production /webhook/mas-control-plane is registered."""
+    port = env.get("N8N_HOST_PORT", "15678")
+    url = f"http://127.0.0.1:{port}/webhook/mas-control-plane"
+    body = json.dumps({"operation": "schema"}).encode()
+    header = env.get("CONTROL_PLANE_PROXY_AUTH_HEADER") or "Authorization"
+    value = env.get("CONTROL_PLANE_PROXY_AUTH_VALUE") or "local-orch-inbound"
+    print("== wait control-plane webhook ==")
+    for _ in range(attempts):
+        req = urllib.request.Request(
+            url,
+            data=body,
+            method="POST",
+            headers={"Content-Type": "application/json", header: value},
+        )
+        try:
+            with urllib.request.urlopen(req, timeout=30) as resp:
+                raw = resp.read()
+                data = json.loads(raw) if raw else {}
+                if data.get("ok") is True:
+                    print("control-plane webhook ok")
+                    return
+                print(f"control-plane unexpected body {str(data)[:180]}")
+        except urllib.error.HTTPError as exc:
+            code = int(exc.code)
+            text = exc.read().decode("utf-8", errors="replace")[:180]
+            print(f"control-plane HTTP {code} {text.replace(chr(10), ' ')}")
+            if code != 404:
+                print("control-plane webhook registered")
+                return
+        except Exception as exc:  # noqa: BLE001
+            print(f"control-plane wait {exc}")
+        time.sleep(2)
+    raise SystemExit("control-plane webhook not registered")
+
+
+def wait_activity_health(env: dict[str, str]) -> None:
+    port = env.get("MAS_ACTIVITY_HOST_PORT", "8200")
+    host = f"http://127.0.0.1:{port}/health"
+    print(f"== wait mas-activity {host} ==")
+    try:
+        wait_url(host, attempts=180)
+        return
+    except SystemExit:
+        pass
+    for _ in range(90):
+        cp = run(
+            [
+                "docker",
+                "compose",
+                "exec",
+                "-T",
+                "mas-activity",
+                "python3",
+                "-c",
+                "import urllib.request; urllib.request.urlopen('http://127.0.0.1:8200/health', timeout=3).read()",
+            ],
+            check=False,
+            timeout=20,
+        )
+        if cp.returncode == 0:
+            print("mas-activity healthy via docker exec")
+            return
+        time.sleep(2)
+    raise SystemExit(f"not healthy: {host}")
+
+
 def ensure_compose_up() -> None:
     print("== compose up ==")
-    # Prefer recreate-without-rebuild when images exist (fast path).
-    run(["docker", "compose", "up", "-d"], timeout=300)
+    # Do not start mas-activity yet: it requires an active Control Plane Proxy webhook.
+    run(["docker", "compose", "stop", "mas-activity"], check=False, timeout=60)
+    run(
+        [
+            "docker",
+            "compose",
+            "up",
+            "-d",
+            "postgres",
+            "n8n",
+            "n8n-runners",
+            "excel-tools",
+            "math-service",
+            "schedule-builder",
+        ],
+        timeout=300,
+    )
     env = load_env()
     n8n_port = env.get("N8N_HOST_PORT", "15678")
-    activity_port = env.get("MAS_ACTIVITY_HOST_PORT", "8200")
     wait_url(f"http://127.0.0.1:{n8n_port}/healthz")
-    wait_url(f"http://127.0.0.1:{activity_port}/health")
     for service, inner in (
         ("math-service", "http://127.0.0.1:8100/health"),
         ("schedule-builder", "http://127.0.0.1:8090/health"),
-        ("excel-tools", "http://127.0.0.1:18000/health"),
+        ("excel-tools", "http://127.0.0.1:8000/health"),
     ):
         print(f"wait {service} {inner}")
         for _ in range(90):
@@ -821,7 +934,7 @@ def main() -> int:
     parser = argparse.ArgumentParser()
     parser.add_argument("--skip-health", action="store_true")
     parser.add_argument("--skip-import", action="store_true", help="only rebind/publish existing workflows")
-    parser.add_argument("--skip-wipe", action="store_true", help="do not wipe CAS/trace/Activity state")
+    parser.add_argument("--skip-wipe", action="store_true", help="do not wipe cases/events/Activity state")
     args = parser.parse_args()
     t0 = time.time()
     env = load_env()
@@ -854,11 +967,12 @@ def main() -> int:
     publish(name_to_id)
     run(["docker", "compose", "restart", "n8n"])
     env = load_env()
-    wait_url(f"http://127.0.0.1:{env.get('N8N_HOST_PORT', '5678')}/healthz")
+    wait_url(f"http://127.0.0.1:{env.get('N8N_HOST_PORT', '15678')}/healthz")
     # Forms/webhooks register after active workflows finish loading.
     time.sleep(8)
-    run(["docker", "compose", "restart", "mas-activity"])
-    wait_url(f"http://127.0.0.1:{env.get('MAS_ACTIVITY_HOST_PORT', '8200')}/health")
+    wait_control_plane_webhook(env)
+    run(["docker", "compose", "up", "-d", "--no-deps", "mas-activity"], timeout=180)
+    wait_activity_health(env)
     overall = None
     if not args.skip_health:
         overall = run_health_form()

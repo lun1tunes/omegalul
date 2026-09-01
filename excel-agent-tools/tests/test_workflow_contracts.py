@@ -132,11 +132,16 @@ def test_ui_import_manifest_is_complete_and_matches_static_bindings() -> None:
     }
     workflow_names = set(workflows_by_name)
     bindings = manifest["mandatory_execute_workflow_bindings"]
+    retired_bindings = manifest["retired_execute_workflow_bindings"]
     future_bindings = manifest["future_enterprise_or_optional_bindings"]
-    assert len(bindings) == 27
+    assert [binding["node"] for binding in bindings] == ["Call Excel Extractor", "Call Schedule Builder"]
+    assert all(binding["owner"] == "Orchestrator — MAS" for binding in bindings)
     assert future_bindings == []
+    assert len(retired_bindings) == 24
     assert manifest["health_check"]["ui_name"] == "Form — MAS Deployment Health Check"
     assert (ROOT / "docs.md").is_file()
+    header_auth = next(item for item in manifest["required_credentials"] if item["type"] == "httpHeaderAuth")
+    assert "X-API-Key" in header_auth["use"]
     runtime_order = [Path(value).name for value in manifest["runtime_import_order"]]
     assert runtime_order.index("schedule-builder-agent.workflow.json") < runtime_order.index(
         "mas-orchestrator.workflow.json"
@@ -144,9 +149,11 @@ def test_ui_import_manifest_is_complete_and_matches_static_bindings() -> None:
     assert runtime_order.index("excel-extractor-agent.workflow.json") < runtime_order.index(
         "mas-orchestrator.workflow.json"
     )
-    all_static_bindings = bindings + future_bindings
+    core_by_name = {load_json(path)["name"]: load_json(path) for path in CORE.glob("*.workflow.json")}
+    support_by_name = {load_json(path)["name"]: load_json(path) for path in SUPPORT.glob("*.workflow.json")}
+    live_by_name = {**support_by_name, **core_by_name}
     placeholder_targets: dict[str, tuple[str, str]] = {}
-    for binding in all_static_bindings:
+    for binding in bindings + future_bindings:
         identity = binding["target"]
         key = binding["placeholder"]
         if key in placeholder_targets:
@@ -157,15 +164,15 @@ def test_ui_import_manifest_is_complete_and_matches_static_bindings() -> None:
             placeholder_targets[key] = identity
     cas_nodes = [
         binding["node"]
-        for binding in bindings
+        for binding in retired_bindings
         if binding["placeholder"] == "REPLACE_CAS_PERSIST_IN_UI"
     ]
     assert len(cas_nodes) == 10
     assert len(set(cas_nodes)) == 10
-    for binding in all_static_bindings:
-        assert binding["owner"] in workflow_names
-        assert binding["target"] in workflow_names
-        owner = workflows_by_name[binding["owner"]]
+    for binding in bindings + future_bindings:
+        assert binding["owner"] in live_by_name
+        assert binding["target"] in live_by_name or binding["target"] in workflow_names
+        owner = live_by_name[binding["owner"]]
         owner_nodes = {node["name"]: node for node in owner["nodes"]}
         assert binding["node"] in owner_nodes, (
             f"Mandatory binding node {binding['node']!r} is missing from workflow "
@@ -174,6 +181,17 @@ def test_ui_import_manifest_is_complete_and_matches_static_bindings() -> None:
         call = owner_nodes[binding["node"]]
         assert call["type"] == "n8n-nodes-base.executeWorkflow"
         assert call["parameters"]["workflowId"]["value"] == binding["placeholder"]
+    retired_by_name = {
+        load_json(path)["name"]: load_json(path) for path in RETIRED.glob("*.workflow.json")
+    }
+    for binding in retired_bindings:
+        owner = retired_by_name.get(binding["owner"]) or workflows_by_name.get(binding["owner"])
+        assert owner is not None, binding["owner"]
+        owner_nodes = {node["name"]: node for node in owner["nodes"]}
+        assert binding["node"] in owner_nodes, (
+            f"Retired binding node {binding['node']!r} is missing from workflow "
+            f"{binding['owner']!r}"
+        )
     assert any("expert-authored" in blocker for blocker in manifest["mvp_external_blockers"])
 
 
@@ -520,6 +538,7 @@ def test_mas_deployment_health_check_is_native_and_reports_where_to_fix() -> Non
     assert "Call Trace Writer probe" not in by_name
     assert by_name["Probe math-service /health"]["parameters"]["url"] == "http://math-service:8100/health"
     assert by_name["Probe schedule-builder /health"]["parameters"]["url"] == "http://schedule-builder:8090/health"
+    assert by_name["Probe excel-tools /health"]["parameters"]["url"] == "http://excel-tools:8000/health"
     report = by_name["Build health report"]["parameters"]["jsCode"]
     assert "where_to_fix" in report
     assert "Form — MAS Entry" in report
@@ -582,12 +601,31 @@ def test_mas_control_plane_proxy_contains_all_activity_operations() -> None:
         if node["name"] == "Normalize control-plane request"
     )
     for operation in (
-        "schema", "create_case", "get_case", "list_cases", "update_case",
+        "schema", "wipe", "create_case", "get_case", "list_cases", "update_case",
         "append_event", "list_events", "append_error", "list_errors",
         "record_execution", "case_id_for_execution", "list_agents",
         "upsert_agent", "artifact_put", "artifact_get", "snapshot",
     ):
         assert f"'{operation}'" in code
+    assert "execMode==='manual'&&flagWipe" in code
+    assert "TRUNCATE TABLE cases" in code
+    assert "jsonb_agg" in code and "AS events FROM cases c" in code
+    assert "agent_registry" in code and "TRUNCATE TABLE agent_registry" not in code
+    flags = next(node for node in workflow["nodes"] if node["name"] == "Operator flags")
+    assert flags["type"] == "n8n-nodes-base.set"
+    assignments = flags["parameters"]["assignments"]["assignments"]
+    wipe_flag = next(item for item in assignments if item["name"] == "wipe_data")
+    assert wipe_flag["value"] is False
+    assert workflow["connections"]["MAS control-plane webhook"]["main"][0][0]["node"] == "Operator flags"
+    assert workflow["connections"]["Operator flags"]["main"][0][0]["node"] == "Normalize control-plane request"
+    fmt = next(
+        node["parameters"]["jsCode"]
+        for node in workflow["nodes"]
+        if node["name"] == "Format control-plane response"
+    )
+    assert "op==='schema'||op==='wipe'" in fmt
+    note = next(node for node in workflow["nodes"] if node["name"] == "edit after import")
+    assert "wipe_data" in note["parameters"]["content"]
     assert workflow["settings"].get("saveDataSuccessExecution") == "none"
 
 

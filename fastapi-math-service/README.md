@@ -1,7 +1,7 @@
 # FastAPI Math Service (MVP)
 
 Геометрический сервис MAS: batch intersection `.dev` × ASCII CPS3/ZMAP.  
-**На работе:** только Windows CMD. Полная установка — [`docs.md`](../docs.md) §3; n8n Agent — UI-импорт `calculation-specialist-agent.workflow.json`.
+**На работе:** только Windows CMD. Полная установка — [`docs.md`](../docs.md) §2. Оркестратор зовёт HTTP `POST http://<IP>:8100/agent/run`. Старый `Agent — Calculation (Math Service)` лежит в `n8n/workflows/retired/` и **не импортируется**.
 
 ## Windows CMD (канон)
 
@@ -14,7 +14,7 @@ start-windows.bat
 
 Проверка во втором CMD: `check-windows.bat`.
 
-Локально: `http://127.0.0.1:8100/health`. Для корпоративного n8n: `MATH_SERVICE_HOST=0.0.0.0` и в Adapter — `http://<IP-Windows>:8100/api/v1/math`.
+Локально: `http://127.0.0.1:8100/health`. Для корпоративного n8n: `MATH_SERVICE_HOST=0.0.0.0` и в Orchestrator Runtime — `http://<IP-Windows>:8100/agent/run`.
 
 ## Endpoint
 

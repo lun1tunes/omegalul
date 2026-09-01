@@ -176,6 +176,14 @@ def ensure_schema() -> dict[str, Any]:
     return {"ok": True, "backend": "memory"}
 
 
+def wipe_data() -> dict[str, Any]:
+    """Truncate MAS case tables via the n8n proxy. Never called on Activity boot."""
+    if _configured():
+        return dict(proxy_call("wipe") or {})
+    reset_memory()
+    return {"ok": True, "backend": "memory", "wiped": True}
+
+
 def _local_case(case_id: str) -> dict[str, Any] | None:
     with _LOCK:
         row = _CASES.get(case_id)
@@ -252,7 +260,11 @@ def list_cases(limit: int = 80) -> list[dict[str, Any]]:
         return list(result or [])
     with _LOCK:
         rows = sorted(_CASES.values(), key=lambda row: str(row.get("updated_at") or ""), reverse=True)
-        return [{**row, "event_count": len(_EVENTS.get(row["case_id"], []))} for row in rows[:limit]]
+        out: list[dict[str, Any]] = []
+        for row in rows[:limit]:
+            events = [dict(item) for item in _EVENTS.get(row["case_id"], [])]
+            out.append({**row, "event_count": len(events), "events": events})
+        return out
 
 
 def update_case(case_id: str, *, state: dict[str, Any] | None = None, status: str | None = None) -> dict[str, Any]:

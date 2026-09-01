@@ -384,7 +384,11 @@ def agent_run(body: AgentTaskBody) -> dict[str, Any]:
         result = {
             "task_id": body.task_id,
             "status": "completed" if text.strip() and status in {"applied", "noop"} else "failed",
-            "message": f"Сдвинул даты ввода для {len(revised.get('shifts') or [])} скважин" if status == "applied" else (revised.get("status") or "SCHEDULE без изменений"),
+            "message": (
+                f"Сдвинул даты ввода для {len(revised.get('shifts') or [])} скважин"
+                if status == "applied"
+                else "SCHEDULE без изменений"
+            ),
             "data": {
                 "changed_keywords": ["DATES", "WCONPROD"],
                 "findings": revised.get("findings") or [],

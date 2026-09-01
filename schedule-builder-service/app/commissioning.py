@@ -2,12 +2,11 @@
 
 from __future__ import annotations
 
-import json
 import os
 from pathlib import Path
 from typing import Any
 
-from .timeline_ops import commissioning_revise
+from .js_timeline import run_timeline_fn
 
 TEMPLATES = Path(os.getenv("SCHEDULE_TEMPLATES") or "/templates")
 if not (TEMPLATES / "schedule_timeline_runtime.py").is_file():
@@ -25,7 +24,26 @@ def run_commissioning_revise(
 ) -> dict[str, Any]:
     if not (TEMPLATES / "schedule_timeline_runtime.py").is_file():
         raise RuntimeError(f"timeline templates missing at {TEMPLATES}")
-    result = commissioning_revise(source_text, well_facts, file_ref=file_ref)
+    options: dict[str, Any] = {"instruction_blob": instruction_blob or ""}
+    if unlisted_wells_policy in {"keep", "remove"}:
+        options["unlisted_wells_policy"] = unlisted_wells_policy
+    if new_well_defs:
+        options["new_well_defs"] = new_well_defs
+    result = run_timeline_fn(
+        "runCommissioningRevise",
+        source_text,
+        well_facts,
+        file_ref=file_ref,
+        options=options,
+    )
     result["unlisted_wells_policy"] = unlisted_wells_policy or "keep"
+    result.setdefault(
+        "control_semantics",
+        {
+            "commissioning_anchor": "first WCONPROD per well",
+            "forecast_controls_preserved": True,
+            "factual_wconprod_preserved": True,
+        },
+    )
     result["assumptions"] = [{"units": "METRIC", "unlisted_wells_policy": result["unlisted_wells_policy"]}]
     return result

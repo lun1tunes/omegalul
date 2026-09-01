@@ -134,7 +134,7 @@ def main() -> int:
     if isinstance(rows, dict):
         rows = rows.get("data") or []
 
-    excel_url = "http://host.docker.internal:18000/api/v1"
+    excel_url = "http://host.docker.internal:8000/api/v1"
     activity_url = "http://host.docker.internal:8200"
     math_url = "http://host.docker.internal:8100/api/v1/math"
     excel_key = env.get("EXCEL_TOOLS_API_KEY", "local-dev-excel-tools-api-key")
@@ -195,9 +195,9 @@ def main() -> int:
             url = params.get("url")
             if isinstance(url, str):
                 repl = {
-                    "http://excel-tools:18000/health": "http://host.docker.internal:18000/health",
+                    "http://excel-tools:8000/health": "http://host.docker.internal:8000/health",
                     "http://mas-activity:8200/health": "http://host.docker.internal:8200/health",
-                    "http://excel-tools:18000": "http://host.docker.internal:18000",
+                    "http://excel-tools:8000": "http://host.docker.internal:8000",
                     "http://mas-activity:8200": "http://host.docker.internal:8200",
                 }
                 for src, dst in repl.items():

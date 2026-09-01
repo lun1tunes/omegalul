@@ -213,6 +213,9 @@ def _as_date(value: Any) -> Any:
             return value.strftime("%Y-%m-%d")
         except Exception:
             return str(value)
+    text = str(value).strip()
+    if len(text) >= 10 and text[4] == "-" and text[7] == "-":
+        return text[:10]
     return value
 
 

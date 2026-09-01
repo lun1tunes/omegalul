@@ -1,0 +1,32 @@
+{
+  "remote.autoForwardPorts": true,
+  "remote.portsAttributes": {
+    "8000": {
+      "label": "Excel Tools",
+      "onAutoForward": "notify"
+    },
+    "8090": {
+      "label": "Schedule Builder",
+      "onAutoForward": "notify"
+    },
+    "8100": {
+      "label": "Math Service",
+      "onAutoForward": "notify"
+    },
+    "8200": {
+      "label": "MAS Activity",
+      "onAutoForward": "notify"
+    },
+    "15678": {
+      "label": "n8n",
+      "onAutoForward": "silent"
+    },
+    "15432": {
+      "label": "Postgres",
+      "onAutoForward": "silent"
+    },
+    "18000": {
+      "onAutoForward": "ignore"
+    }
+  }
+}

@@ -8,7 +8,7 @@ import re
 from pathlib import Path
 from typing import Any
 
-from .timeline_ops import group_rebind_revise
+from .js_timeline import run_timeline_fn
 
 TEMPLATES = Path(os.getenv("SCHEDULE_TEMPLATES") or "/templates")
 if not (TEMPLATES / "schedule_timeline_runtime.py").is_file():
@@ -142,4 +142,9 @@ def run_group_rebind_revise(
 ) -> dict[str, Any]:
     if not (TEMPLATES / "schedule_timeline_runtime.py").is_file():
         raise RuntimeError(f"timeline templates missing at {TEMPLATES}")
-    return group_rebind_revise(source_text, spec, file_ref=file_ref)
+    return run_timeline_fn(
+        "runGroupRebindRevise",
+        source_text,
+        spec,
+        file_ref=file_ref,
+    )

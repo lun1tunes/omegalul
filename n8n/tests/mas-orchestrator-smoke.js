@@ -139,6 +139,10 @@ async function run(name, json, nodes = {}, binary = {}) {
   assert.equal(wf.connections['Normalize step request'].main[0][0].node, 'Probe ping?');
   assert.equal(wf.connections['Status only?'].main[0][0].node, 'Prepare Activity ack');
   assert.equal(wf.connections['Prepare Activity ack'].main[0][0].node, 'Activity sync?');
+  const ack = wf.nodes.find((n) => n.name === 'Prepare Activity ack');
+  assert.match(ack.parameters.jsCode, /persist_events/);
+  assert.match(ack.parameters.jsCode, /!persisted/);
+  assert.equal(ack.parameters.jsCode.includes("payload.message||kind"), false);
 
   const probed = await run('Normalize step request', {
     action: 'probe',
@@ -214,7 +218,7 @@ async function run(name, json, nodes = {}, binary = {}) {
       'Load agent registry': { agent_id: 'excel_extractor', title: 'Excel' },
       'Runtime endpoints': {
         activity_base_url: 'http://mas-activity:8200',
-        excel_extractor_url: 'http://excel-tools:18000/agent/run',
+        excel_extractor_url: 'http://excel-tools:8000/agent/run',
       },
     },
   );

@@ -96,6 +96,7 @@ WITHIN_DATE_KEYWORD_ORDER: list[str] = [
 
 # Table-style keywords: records end with `/`, then a bare block `/` and a blank line.
 TABLE_KEYWORDS = {
+    "INCLUDE",
     "WCONPROD",
     "WCONINJE",
     "WCONHIST",

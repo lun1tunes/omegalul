@@ -109,6 +109,7 @@
   let peekEl = null;
   let peekTimer = 0;
   let peekSource = null;
+  let currentFrame = null;
 
   function text(value) {
     return String(value || "").trim();
@@ -430,6 +431,13 @@
     });
   }
 
+  function shorten(value, max) {
+    const raw = text(value);
+    if (!raw) return "";
+    if (raw.length <= max) return raw;
+    return `${raw.slice(0, Math.max(0, max - 1)).trimEnd()}…`;
+  }
+
   function point(box, side) {
     if (side === "left") return { x: box.x, y: box.y + box.h * 0.5 };
     if (side === "right") return { x: box.x + box.w, y: box.y + box.h * 0.5 };
@@ -513,10 +521,33 @@
     return cubicPoint(p0, c1, c2, p1, 0.5);
   }
 
-  function edgePath(id) {
+  function measuredLayout() {
+    if (!stage || !nodesEl) return LAYOUT;
+    const sr = stage.getBoundingClientRect();
+    if (!sr.width || !sr.height) return LAYOUT;
+    const map = {};
+    for (const id of NODE_KEYS) {
+      const el = nodesEl.querySelector(`[data-node="${id}"]`);
+      if (!el) {
+        map[id] = LAYOUT[id];
+        continue;
+      }
+      const br = el.getBoundingClientRect();
+      map[id] = {
+        x: ((br.left - sr.left) / sr.width) * 100,
+        y: ((br.top - sr.top) / sr.height) * 100,
+        w: (br.width / sr.width) * 100,
+        h: (br.height / sr.height) * 100,
+      };
+    }
+    return map;
+  }
+
+  function edgePath(id, layout) {
     const spec = EDGE_ENDS[id];
-    const a = LAYOUT[spec[0]];
-    const b = LAYOUT[spec[2]];
+    const boxes = layout || LAYOUT;
+    const a = boxes[spec[0]] || LAYOUT[spec[0]];
+    const b = boxes[spec[2]] || LAYOUT[spec[2]];
     const p1 = point(a, spec[1]);
     const p2 = point(b, spec[3]);
     const dx = p2.x - p1.x;
@@ -524,9 +555,9 @@
     const c1 = { x: p1.x + dx * 0.38, y: p1.y + dy * 0.12 };
     const c2 = { x: p1.x + dx * 0.62, y: p1.y + dy * 0.88 };
     if (spec[1] === "right" || spec[1] === "left") {
-      c1.x = p1.x + (spec[1] === "right" ? 10 : -10);
+      c1.x = p1.x + (spec[1] === "right" ? 8 : -8);
       c1.y = p1.y;
-      c2.x = p2.x + (spec[3] === "left" ? -10 : 10);
+      c2.x = p2.x + (spec[3] === "left" ? -8 : 8);
       c2.y = p2.y;
     }
     return {
@@ -591,6 +622,9 @@
         <marker id="schemaArrowActive" viewBox="0 0 10 10" refX="8.4" refY="5" markerWidth="2.3" markerHeight="2.3" markerUnits="userSpaceOnUse" orient="auto" overflow="visible">
           <path d="M 0 0.8 L 10 5 L 0 9.2 Z" fill="#00B8F0"></path>
         </marker>
+        <marker id="schemaArrowDone" viewBox="0 0 10 10" refX="8.4" refY="5" markerWidth="2.3" markerHeight="2.3" markerUnits="userSpaceOnUse" orient="auto" overflow="visible">
+          <path d="M 0 0.8 L 10 5 L 0 9.2 Z" fill="#0033A0"></path>
+        </marker>
         <marker id="schemaArrowError" viewBox="0 0 10 10" refX="8.4" refY="5" markerWidth="2.3" markerHeight="2.3" markerUnits="userSpaceOnUse" orient="auto" overflow="visible">
           <path d="M 0 0.8 L 10 5 L 0 9.2 Z" fill="#F90D4B"></path>
         </marker>
@@ -607,30 +641,46 @@
     }
     nodesEl.innerHTML = "";
     for (const id of NODE_KEYS) {
-      const box = LAYOUT[id];
       const meta = NODE_META[id];
       const node = document.createElement("article");
       node.className = "schema-node";
       node.dataset.node = id;
-      node.style.left = `${box.x}%`;
-      node.style.top = `${box.y}%`;
-      node.style.width = `${box.w}%`;
-      node.style.height = `${box.h}%`;
+      const head = document.createElement("div");
+      head.className = "schema-node-head";
       const kicker = document.createElement("span");
       kicker.className = "schema-kicker";
       kicker.textContent = meta.kicker;
       const title = document.createElement("h2");
       title.textContent = meta.title;
+      title.title = meta.title;
+      head.append(kicker, title);
       const body = document.createElement("div");
       body.className = "schema-node-body";
-      node.append(kicker, title, body);
-      node.addEventListener("pointerenter", () => {
+      node.append(head, body);
+      node.addEventListener("pointerenter", (ev) => {
+        if (ev.pointerType === "touch") return;
         clearTimeout(peekTimer);
         showPeek(node);
       });
       node.addEventListener("pointerleave", hidePeekSoon);
       nodesEl.appendChild(node);
     }
+    nodesEl.addEventListener("click", (ev) => {
+      const node = ev.target.closest(".schema-node");
+      if (!node || ev.target.closest("a")) return;
+      if (!node.classList.contains("is-clipped")) return;
+      if (peekSource === node && peekEl && !peekEl.hidden) hidePeek();
+      else showPeek(node);
+    });
+    nodesEl.addEventListener("keydown", (ev) => {
+      if (ev.key !== "Enter" && ev.key !== " ") return;
+      const node = ev.target.closest(".schema-node");
+      if (!node || ev.target !== node) return;
+      if (!node.classList.contains("is-clipped")) return;
+      ev.preventDefault();
+      if (peekSource === node && peekEl && !peekEl.hidden) hidePeek();
+      else showPeek(node);
+    });
     built = true;
     bindPeekChrome();
   }
@@ -646,7 +696,7 @@
       const body = node.querySelector(".schema-node-body");
       let clipped = overflowing(body);
       if (!clipped && body) {
-        for (const el of body.querySelectorAll(".schema-goal, .schema-prompt, .schema-caption, .schema-files li")) {
+        for (const el of body.querySelectorAll(".schema-goal, .schema-prompt, .schema-caption")) {
           if (overflowing(el)) {
             clipped = true;
             break;
@@ -654,8 +704,15 @@
         }
       }
       node.classList.toggle("is-clipped", clipped);
-      if (clipped) node.setAttribute("aria-haspopup", "true");
-      else node.removeAttribute("aria-haspopup");
+      if (clipped) {
+        node.setAttribute("aria-haspopup", "true");
+        node.tabIndex = 0;
+        node.title = "Нажмите, чтобы показать полный текст";
+      } else {
+        node.removeAttribute("aria-haspopup");
+        node.removeAttribute("tabindex");
+        node.removeAttribute("title");
+      }
     }
   }
 
@@ -753,7 +810,9 @@
     if (root) {
       new MutationObserver(() => {
         if (root.hidden) hidePeek();
-        else requestAnimationFrame(markClippedNodes);
+        else if (currentFrame) {
+          requestAnimationFrame(() => layoutDiagram(currentFrame, { replaceSlips: true }));
+        }
       }).observe(root, { attributes: true, attributeFilter: ["hidden"] });
     }
   }
@@ -764,7 +823,8 @@
     if (animate) el.classList.add("is-live-in");
     el.style.left = `${x}%`;
     el.style.top = `${y}%`;
-    el.textContent = textValue;
+    el.title = textValue;
+    el.textContent = shorten(textValue, 72);
     return el;
   }
 
@@ -793,7 +853,11 @@
   }
 
   function paintChrome(frame) {
-    if (stepEl) stepEl.textContent = frame?.label || "";
+    if (stepEl) {
+      const label = frame?.label || "";
+      stepEl.textContent = label;
+      stepEl.title = label;
+    }
     if (countEl) {
       countEl.textContent = frames.length ? `шаг ${index + 1} / ${frames.length}` : "шаг 0 / 0";
     }
@@ -811,12 +875,60 @@
     if (endLabelEl) endLabelEl.classList.toggle("is-muted", !complete);
   }
 
+  function syncEdgeGeometry(frame, layout) {
+    if (!frame || !edgesEl) return;
+    const boxes = layout || measuredLayout();
+    const marker = {
+      active: "url(#schemaArrowActive)",
+      error: "url(#schemaArrowError)",
+      done: "url(#schemaArrowDone)",
+      pending: "url(#schemaArrowDone)",
+    };
+    for (const id of DRAW_EDGE_KEYS) {
+      const path = edgesEl.querySelector(`[data-edge="${id}"]`);
+      if (!path) continue;
+      const visual = pairVisual(id, frame.edges, frame.active_edge);
+      const tone = visual.tone || "idle";
+      const geo = edgePath(id, boxes);
+      path.setAttribute("d", visual.dir === "back" ? geo.dRev : geo.d);
+      path.setAttribute("data-dir", visual.dir);
+      path.setAttribute("class", `schema-edge-path is-${tone}${visual.dir === "back" ? " is-back" : ""}`);
+      if (marker[tone]) path.setAttribute("marker-end", marker[tone]);
+      else path.removeAttribute("marker-end");
+    }
+  }
+
+  function placeEdgeSlips(frame, layout, animateSlips) {
+    if (!stage || !frame) return;
+    stage.querySelectorAll(".schema-slip").forEach((el) => el.remove());
+    const boxes = layout || measuredLayout();
+    for (const id of DRAW_EDGE_KEYS) {
+      const visual = pairVisual(id, frame.edges, frame.active_edge);
+      if (!visual.bubble) continue;
+      const path = edgesEl.querySelector(`[data-edge="${id}"]`);
+      const geo = edgePath(id, boxes);
+      const mid = pathMidpoint(path, geo.mid);
+      stage.append(bubbleEl("edge", visual.bubble, mid.x, mid.y, "edge", animateSlips));
+    }
+  }
+
+  function layoutDiagram(frame, { animateSlips = false, replaceSlips = true } = {}) {
+    if (!frame || !stage || (root && root.hidden)) return;
+    const layout = measuredLayout();
+    syncEdgeGeometry(frame, layout);
+    if (replaceSlips) placeEdgeSlips(frame, layout, animateSlips);
+    markClippedNodes();
+  }
+
   function renderFrame(frame, { animateSlips = false } = {}) {
     if (!root || !frame) return;
     ensureDom();
+    currentFrame = frame;
     const key = slipsKey(frame);
-    if (!animateSlips && key === lastSlipsKey && index === lastPaintIndex) {
+    const contentChanged = key !== lastSlipsKey || index !== lastPaintIndex;
+    if (!contentChanged) {
       paintChrome(frame);
+      requestAnimationFrame(() => layoutDiagram(frame, { replaceSlips: true }));
       return;
     }
     lastSlipsKey = key;
@@ -832,7 +944,9 @@
       if (id === "input") {
         const goal = document.createElement("p");
         goal.className = "schema-goal";
-        goal.textContent = frame.input?.goal || "Нет описания задачи";
+        const goalText = frame.input?.goal || "Нет описания задачи";
+        goal.textContent = goalText;
+        goal.title = goalText;
         body.append(goal);
         const files = Array.isArray(frame.input?.files) ? frame.input.files : [];
         if (files.length) {
@@ -849,12 +963,15 @@
       } else if (id === "output") {
         const result = document.createElement("p");
         result.className = "schema-goal";
-        result.textContent = frame.output?.result || (complete ? "Нет текста результата" : "Результат появится после завершения");
+        const resultCopy = frame.output?.result || (complete ? "Нет текста результата" : "Результат появится после завершения");
+        result.textContent = resultCopy;
+        result.title = resultCopy;
         body.append(result);
         if (frame.output?.prompt) {
           const prompt = document.createElement("p");
           prompt.className = "schema-prompt";
           prompt.textContent = frame.output.prompt;
+          prompt.title = frame.output.prompt;
           body.append(prompt);
         }
         const showDl = scheduleDownload && ["active", "done", "error"].includes(spec.tone);
@@ -877,38 +994,16 @@
           const line = document.createElement("p");
           line.className = "schema-caption";
           line.textContent = caption;
+          line.title = caption;
           body.append(line);
         }
       }
     }
-    const marker = {
-      active: "url(#schemaArrowActive)",
-      error: "url(#schemaArrowError)",
-    };
-    for (const id of DRAW_EDGE_KEYS) {
-      const path = edgesEl.querySelector(`[data-edge="${id}"]`);
-      if (!path) continue;
-      const visual = pairVisual(id, frame.edges, frame.active_edge);
-      const tone = visual.tone || "idle";
-      const geo = edgePath(id);
-      path.setAttribute("d", visual.dir === "back" ? geo.dRev : geo.d);
-      path.setAttribute("data-dir", visual.dir);
-      path.setAttribute("class", `schema-edge-path is-${tone}${visual.dir === "back" ? " is-back" : ""}`);
-      if (marker[tone]) path.setAttribute("marker-end", marker[tone]);
-      else path.removeAttribute("marker-end");
-    }
-    stage.querySelectorAll(".schema-slip").forEach((el) => el.remove());
-    for (const id of DRAW_EDGE_KEYS) {
-      const visual = pairVisual(id, frame.edges, frame.active_edge);
-      if (!visual.bubble) continue;
-      const path = edgesEl.querySelector(`[data-edge="${id}"]`);
-      const geo = edgePath(id);
-      const mid = pathMidpoint(path, geo.mid);
-      stage.append(bubbleEl("edge", visual.bubble, mid.x, mid.y, "edge", animateSlips));
-    }
     paintChrome(frame);
-    hidePeek();
-    requestAnimationFrame(markClippedNodes);
+    if (contentChanged) hidePeek();
+    requestAnimationFrame(() => {
+      layoutDiagram(frame, { animateSlips: animateSlips && contentChanged, replaceSlips: true });
+    });
   }
 
   function showIndex(next, { user = false } = {}) {
@@ -973,15 +1068,31 @@
   window.addEventListener("resize", () => {
     clearTimeout(resizeTimer);
     resizeTimer = setTimeout(() => {
-      if (frames[index]) renderFrame(frames[index]);
+      if (currentFrame) layoutDiagram(currentFrame, { replaceSlips: true });
     }, 80);
   });
+  if (typeof ResizeObserver !== "undefined" && stage) {
+    const stageWatch = new ResizeObserver(() => {
+      clearTimeout(resizeTimer);
+      resizeTimer = setTimeout(() => {
+        if (root && !root.hidden && currentFrame) {
+          layoutDiagram(currentFrame, { replaceSlips: true });
+        }
+      }, 40);
+    });
+    stageWatch.observe(stage);
+  }
 
   window.MasSchema = {
     setFeed,
     reset,
     buildFrames: buildSchemaFrames,
     showIndex,
+    relayout() {
+      if (currentFrame) {
+        requestAnimationFrame(() => layoutDiagram(currentFrame, { replaceSlips: true }));
+      }
+    },
     START_LABEL,
     END_LABEL,
   };

@@ -556,11 +556,14 @@ def test_ready_health_and_static_assets() -> None:
     assert "humanizeGateReason" in js_text
     assert "humanizeQuestion" in js_text
     assert "looksMachineAsk" in js_text
+    assert "function turnRenderKey" in js_text
+    assert "eid:${eid}" in js_text
+    assert "schedules.unshift(chosen)" in js_text
     assert 'q.required ? "обязательно"' not in js_text
     assert "формат: ${q.expected_format}" not in js_text
-    assert "app.js?v=85" in index.text
-    assert "schema.js?v=11" in index.text
-    assert "app.css?v=79" in index.text
+    assert "app.js?v=87" in index.text
+    assert "schema.js?v=14" in index.text
+    assert "app.css?v=84" in index.text
     assert "viewChatBtn" in index.text
     assert "viewSchemaBtn" in index.text
     assert ">Чат<" in index.text
@@ -606,6 +609,7 @@ def test_ready_health_and_static_assets() -> None:
     assert "data.skipped" in js_text
     assert "Перезапуск не выполнен" in js_text
     assert "setWorkspaceView" in js_text
+    assert "MasSchema.relayout" in js_text
     assert "syncSchema" in js_text
     assert "MasSchema" in js_text
     schema_js = (STATIC / "schema.js").read_text(encoding="utf-8")
@@ -618,9 +622,15 @@ def test_ready_health_and_static_assets() -> None:
     assert "schema-slip" in (STATIC / "app.css").read_text(encoding="utf-8")
     assert "schema-download" in (STATIC / "app.css").read_text(encoding="utf-8")
     assert "schema-caption" in (STATIC / "app.css").read_text(encoding="utf-8")
+    assert "schema-canvas" in (STATIC / "app.css").read_text(encoding="utf-8")
+    assert "schema-inspector" in (STATIC / "app.css").read_text(encoding="utf-8")
+    assert "mode-schema .composer" in (STATIC / "app.css").read_text(encoding="utf-8")
+    assert "measuredLayout" in schema_js
+    assert "schema-node-head" in schema_js
+    assert "relayout" in schema_js
     assert "markerUnits=\"userSpaceOnUse\"" in schema_js
     assert "schemaArrowIdle" not in schema_js
-    assert "schemaArrowDone" not in schema_js
+    assert "schemaArrowDone" in schema_js
     assert 'markerWidth="2.3"' in schema_js
     assert "schemaArrowActive" in schema_js
     assert "removeAttribute(\"marker-end\")" in schema_js
@@ -1261,6 +1271,34 @@ def test_activity_never_shells_out_to_postgres() -> None:
     plane = (ROOT / "app" / "control_plane.py").read_text(encoding="utf-8")
     assert "psycopg" not in plane
     assert "subprocess" not in plane
+    forbidden = ("psycopg", "asyncpg", "sqlalchemy", "psql ", "postgres://", "postgresql://")
+    app_root = ROOT / "app"
+    for path in app_root.rglob("*.py"):
+        body = path.read_text(encoding="utf-8")
+        for token in forbidden:
+            assert token not in body, (path.name, token)
+    for sibling in (
+        ROOT.parent / "excel-agent-tools" / "app",
+        ROOT.parent / "schedule-builder-service" / "app",
+        ROOT.parent / "fastapi-math-service" / "app",
+    ):
+        if not sibling.is_dir():
+            continue
+        for path in sibling.rglob("*.py"):
+            body = path.read_text(encoding="utf-8")
+            for token in forbidden:
+                assert token not in body, (str(path), token)
+    for req in (
+        ROOT / "requirements.txt",
+        ROOT.parent / "excel-agent-tools" / "requirements.txt",
+        ROOT.parent / "schedule-builder-service" / "requirements.txt",
+        ROOT.parent / "fastapi-math-service" / "requirements.txt",
+    ):
+        if not req.is_file():
+            continue
+        req_text = req.read_text(encoding="utf-8").lower()
+        assert "psycopg" not in req_text
+        assert "asyncpg" not in req_text
 
 
 def test_n8n_rest_failed_execution_never_returns_parsed_response(monkeypatch) -> None:

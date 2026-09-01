@@ -440,7 +440,7 @@ def execute_tool(session_id: str, name: str, args: dict[str, Any] | None = None)
             "completed" if ok else "failed",
             f"Сдвинул даты ввода для {len(revised.get('shifts') or [])} скважин"
             if status == "applied"
-            else str(revised.get("status") or "SCHEDULE без изменений"),
+            else "SCHEDULE без изменений",
             data={
                 "changed_keywords": ["DATES", "WCONPROD"],
                 "findings": revised.get("findings") or [],

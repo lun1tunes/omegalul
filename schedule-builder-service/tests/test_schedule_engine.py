@@ -26,6 +26,10 @@ WCONPROD
     assert "\n/\n\n" in out or out.rstrip().endswith("/")
     findings = validate_emitted(out, doc)
     assert not [f for f in findings if f.get("code") == "BLOCK_TERMINATOR_MISSING"]
+    include = emit_schedule(parse_schedule("INCLUDE\n'../../VFP.INC' /\n/\n"))
+    assert include.splitlines()[0] == "INCLUDE"
+    assert include.count("../../VFP.INC") == 1
+    assert "\n/\n" in include
 
 
 def test_apply_wconprod_and_diff() -> None:
@@ -120,6 +124,9 @@ WCONPROD
     assert "1601 OPEN GRAT" in feb
     jan = text.split("1 JAN 2020")[1].split("DATES")[0]
     assert "1601 OPEN GRAT" not in jan
+    iso = run_commissioning_revise(source, [{"well": "1601", "date": "2020-02-23T00:00:00"}])
+    assert iso["status"] == "applied"
+    assert "23 FEB 2020" in iso["generated_schedule"]
 
 
 def test_commissioning_preserves_later_wconprod_forecast_controls() -> None:
@@ -335,7 +342,10 @@ WCONPROD
     assert "200000 / -- forecast start" in text
     assert "250000 / -- forecast mode" in text
     assert "23 FEB 2020" in text
-    assert text.index("120000") < text.index("200000")
+    # Production timeline JS (golden/combat emit) moves the first WCONPROD.
+    feb = text.split("23 FEB 2020")[1]
+    assert "120000 / -- ФАКТ: история" in feb
+    assert text.index("200000") < text.index("120000")
 
 
 def test_remove_cannot_delete_factual_wconprod() -> None:
@@ -419,6 +429,20 @@ def test_load_source_fetches_from_activity_artifact(monkeypatch) -> None:
         "CASE-1",
     )
     assert seen["url"] == "http://mas-activity:8200/cases/CASE-1/artifacts/schedule_source"
+    assert "DATES" in text
+    seen.clear()
+    text = load_source(
+        {
+            "activity_base_url": "http://mas-activity:8200",
+            "schedule_root": "MONITORING_FDP.INC",
+            "artifacts": {
+                "schedule_source": {"filename": "GRUPTREE.GRDECL", "artifact_id": "schedule_source"},
+                "schedule_source_1": {"filename": "MONITORING_FDP.INC", "artifact_id": "schedule_source_1"},
+            },
+        },
+        "CASE-1",
+    )
+    assert seen["url"] == "http://mas-activity:8200/cases/CASE-1/artifacts/schedule_source_1"
     assert "DATES" in text
     from app.group_rebind import wants_group_rebind
 

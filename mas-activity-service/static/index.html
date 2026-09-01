@@ -8,7 +8,7 @@
   <link rel="preconnect" href="https://fonts.googleapis.com" />
   <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
   <link href="https://fonts.googleapis.com/css2?family=IBM+Plex+Sans:wght@400;500;600;700&family=IBM+Plex+Mono:wght@400;500&display=swap" rel="stylesheet" />
-  <link rel="stylesheet" href="/static/app.css?v=79" />
+  <link rel="stylesheet" href="/static/app.css?v=84" />
 </head>
 <body>
   <div class="atmosphere" aria-hidden="true"></div>
@@ -87,9 +87,15 @@
           </div>
         </div>
         <section class="schema-view" id="schemaView" hidden tabindex="0" aria-label="Схема агентов">
-          <div class="schema-stage" id="schemaStage">
-            <svg class="schema-edges" id="schemaEdges" aria-hidden="true"></svg>
-            <div class="schema-nodes" id="schemaNodes"></div>
+          <div class="schema-canvas">
+            <div class="schema-stage" id="schemaStage">
+              <svg class="schema-edges" id="schemaEdges" aria-hidden="true"></svg>
+              <div class="schema-nodes" id="schemaNodes"></div>
+            </div>
+          </div>
+          <div class="schema-inspector">
+            <p class="schema-step-label" id="schemaStepLabel"></p>
+            <span class="schema-step-count" id="schemaStepCount">шаг 0 / 0</span>
           </div>
           <div class="schema-timeline" id="schemaTimeline">
             <div class="schema-track">
@@ -101,8 +107,6 @@
               <button type="button" class="schema-step-btn" id="schemaPrev" aria-label="Предыдущий шаг">‹</button>
               <button type="button" class="schema-step-btn" id="schemaNext" aria-label="Следующий шаг">›</button>
             </div>
-            <p class="schema-step-label" id="schemaStepLabel"></p>
-            <span class="schema-step-count" id="schemaStepCount">шаг 0 / 0</span>
           </div>
         </section>
       </div>
@@ -200,7 +204,7 @@
     </section>
   </main>
 
-  <script src="/static/schema.js?v=11"></script>
-  <script src="/static/app.js?v=85"></script>
+  <script src="/static/schema.js?v=14"></script>
+  <script src="/static/app.js?v=87"></script>
 </body>
 </html>

@@ -2,7 +2,7 @@ services:
   excel-tools:
     image: python:3.11-slim
     command: >
-      sh -c "pip install -r requirements.txt && python3 -m uvicorn app.main:app --host 0.0.0.0 --port 18000"
+      sh -c "pip install -r requirements.txt && python3 -m uvicorn app.main:app --host 0.0.0.0 --port 8000"
     working_dir: /app
     volumes:
       - ./excel-agent-tools:/app
@@ -14,8 +14,8 @@ services:
       - MAX_QUERY_PREVIEW_ROWS=10000
     extra_hosts:
       - host.docker.internal:host-gateway
-    depends_on:
-      - mas-activity
+    ports:
+      - 127.0.0.1:${EXCEL_TOOLS_HOST_PORT:-8000}:8000
     networks:
       - backend
       - egress
@@ -30,8 +30,8 @@ services:
       - ACTIVITY_BASE_URL=${ACTIVITY_BASE_URL:-http://mas-activity:8200}
     extra_hosts:
       - host.docker.internal:host-gateway
-    depends_on:
-      - mas-activity
+    ports:
+      - 127.0.0.1:${MATH_SERVICE_HOST_PORT:-8100}:8100
     networks:
       - backend
       - egress
@@ -48,13 +48,14 @@ services:
       - SCHEDULE_TEMPLATES=/templates
     extra_hosts:
       - host.docker.internal:host-gateway
-    depends_on:
-      - mas-activity
+    ports:
+      - 127.0.0.1:${SCHEDULE_BUILDER_HOST_PORT:-8090}:8090
     networks:
       - backend
       - egress
   mas-activity:
     image: python:3.11-slim
+    restart: unless-stopped
     command: >
       sh -c "pip install -r requirements.txt && python3 -m uvicorn app.main:app --host 0.0.0.0 --port 8200"
     working_dir: /app
@@ -79,6 +80,8 @@ services:
     depends_on:
       n8n:
         condition: service_healthy
+    ports:
+      - 127.0.0.1:${MAS_ACTIVITY_HOST_PORT:-8200}:8200
     networks:
       - backend
       - egress

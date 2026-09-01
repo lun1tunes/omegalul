@@ -3,7 +3,7 @@
 
 Corporate n8n is not in this compose file — it calls the Windows/Linux host IP
 directly. This machine's compose `backend` network is `internal: true`, and
-container→host TCP to :18000/:8100/:8200 times out. A unix-socket pair on the
+container→host TCP to :8000/:8090/:8100/:8200 times out. A unix-socket pair on the
 compose backend network is the workaround that does not need sudo/iptables.
 
 Usage:
@@ -28,7 +28,8 @@ NETWORK = os.environ.get("MAS_HOST_BRIDGE_NETWORK", "omegalul_backend")
 IMAGE = os.environ.get("MAS_HOST_BRIDGE_IMAGE", "python:3.11-slim")
 
 PORTS = (
-    ("excel", 18000),
+    ("excel", 8000),
+    ("schedule", 8090),
     ("math", 8100),
     ("activity", 8200),
 )
@@ -87,7 +88,7 @@ CONTAINER_SCRIPT = r"""
 import asyncio, os
 from pathlib import Path
 
-PORTS = (("excel", 18000), ("math", 8100), ("activity", 8200))
+PORTS = (("excel", 8000), ("schedule", 8090), ("math", 8100), ("activity", 8200))
 SOCKDIR = Path("/socks")
 
 async def pipe(reader, writer):
@@ -164,7 +165,7 @@ def start_container() -> None:
         CONTAINER,
         "python",
         "-c",
-        "import urllib.request; print(urllib.request.urlopen('http://127.0.0.1:18000/health', timeout=3).read().decode())",
+        "import urllib.request; print(urllib.request.urlopen('http://127.0.0.1:8000/health', timeout=3).read().decode())",
         check=False,
     )
     print("container self-probe:", probe.stdout.strip() or probe.stderr.strip())
@@ -190,7 +191,11 @@ def main() -> int:
     except Exception:
         host_proc.terminate()
         raise
-    print(f"n8n URLs: http://{CONTAINER}:18000/api/v1  http://{CONTAINER}:8100/api/v1/math  http://{CONTAINER}:8200")
+    print(
+        f"n8n URLs: http://{CONTAINER}:8000/api/v1  "
+        f"http://{CONTAINER}:8090  http://{CONTAINER}:8100/api/v1/math  "
+        f"http://{CONTAINER}:8200"
+    )
     print("host bridge PID", host_proc.pid, "— keep this process running")
 
     def _shutdown(*_args) -> None:

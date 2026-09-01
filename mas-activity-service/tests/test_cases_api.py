@@ -65,6 +65,22 @@ def test_ensure_schema_is_noop_without_database() -> None:
     assert control_plane.sql_statements(sql) == control_plane.sql_statements(init)
 
 
+def test_wipe_data_clears_memory_backend_only() -> None:
+    from app import control_plane
+
+    control_plane.create_case("CASE-wipe-1", "goal")
+    control_plane.append_event("CASE-wipe-1", kind="case.created", actor="system")
+    assert control_plane.get_case("CASE-wipe-1") is not None
+    report = control_plane.wipe_data()
+    assert report["wiped"] is True
+    assert report["backend"] == "memory"
+    assert control_plane.get_case("CASE-wipe-1") is None
+    src = (ROOT / "app" / "control_plane.py").read_text(encoding="utf-8")
+    ensure = src.split("def ensure_schema()", 1)[1].split("def wipe_data()", 1)[0]
+    assert 'proxy_call("schema")' in ensure
+    assert 'proxy_call("wipe")' not in ensure
+
+
 def test_empty_state_is_compact() -> None:
     state = empty_state("CASE-1", "goal")
     assert state["case_id"] == "CASE-1"
@@ -254,6 +270,42 @@ def test_create_keeps_files_in_activity_not_n8n(monkeypatch) -> None:
     xlsx = client.get(f"/cases/{case_id}/artifacts/excel")
     assert xlsx.status_code == 200
     assert xlsx.content == b"xlsx-bytes"
+
+
+def test_create_promotes_schedule_root_to_schedule_source(monkeypatch) -> None:
+    monkeypatch.setenv("ORCHESTRATOR_WEBHOOK_URL", "http://n8n.test/webhook/mas-orchestrator-step")
+    from app.settings import Settings
+
+    monkeypatch.setattr("app.cases_api.get_settings", lambda: Settings())
+    monkeypatch.setattr("app.cases_api._invoke_create", lambda case_id: None)
+    res = client.post(
+        "/cases",
+        data={
+            "task_description": "Корень среди stub INCLUDE",
+            "requested_by": "tester",
+            "schedule_root": "MONITORING_FDP.INC",
+        },
+        files=[
+            ("schedule_files", ("GRUPTREE.GRDECL", b"GRUPTREE\n/", "text/plain")),
+            ("schedule_files", ("MONITORING_FDP.INC", b"INCLUDE\n 'GRUPTREE.GRDECL' /\n/", "text/plain")),
+            ("schedule_files", ("VFP.INC", b"-- vfp\n", "text/plain")),
+        ],
+    )
+    assert res.status_code == 200, res.text
+    case_id = res.json()["case_id"]
+    from app import control_plane
+
+    artifacts = control_plane.get_case(case_id)["state"]["artifacts"]
+    assert artifacts["schedule_source"]["filename"] == "MONITORING_FDP.INC"
+    assert artifacts["schedule_source"]["artifact_id"] == "schedule_source"
+    assert artifacts["schedule_source_1"]["filename"] == "GRUPTREE.GRDECL"
+    assert artifacts["schedule_source_2"]["filename"] == "VFP.INC"
+    root = client.get(f"/cases/{case_id}/artifacts/schedule_source")
+    assert root.status_code == 200
+    assert b"INCLUDE" in root.content
+    stub = client.get(f"/cases/{case_id}/artifacts/schedule_source_1")
+    assert stub.status_code == 200
+    assert stub.content == b"GRUPTREE\n/"
 
 
 def test_create_uses_artifact_proxy_when_configured(monkeypatch) -> None:
@@ -693,12 +745,54 @@ def test_collapse_duplicate_status_and_agent_result() -> None:
             {"kind": "orchestrator.status", "actor": "orchestrator", "status_message": msg, "event_id": 3},
             {"kind": "orchestrator.decision", "actor": "orchestrator", "status_message": msg, "event_id": 4},
             {"kind": "case.finished", "actor": "orchestrator", "status_message": msg, "event_id": 5},
+            {"kind": "case.finished", "actor": "orchestrator", "status_message": "case.finished", "event_id": 6},
         ]
     )
     kinds = [row["kind"] for row in rows]
     assert kinds == ["agent.result", "case.finished"]
     assert rows[0]["event_id"] == 1
     assert rows[1]["event_id"] == 5
+    assert rows[-1]["status_message"] == msg
+
+
+def test_collapse_decision_echo_into_handoff() -> None:
+    from app.cases_api import collapse_duplicate_events
+
+    msg = "Нужно извлечь данные из Excel."
+    rows = collapse_duplicate_events(
+        [
+            {"kind": "orchestrator.decision", "actor": "orchestrator", "status_message": msg, "event_id": 1},
+            {
+                "kind": "agent.handoff",
+                "actor": "orchestrator",
+                "agent_id": "excel_extractor",
+                "status_message": msg,
+                "handoff_message": "Агент Excel, достань даты.",
+                "event_id": 2,
+            },
+        ]
+    )
+    assert [row["kind"] for row in rows] == ["agent.handoff"]
+    assert rows[0]["handoff_message"].startswith("Агент Excel")
+    assert rows[0]["event_id"] == 2
+
+
+def test_event_to_turn_carries_event_id() -> None:
+    from app.cases_api import event_to_turn
+
+    turn = event_to_turn(
+        {
+            "kind": "agent.result",
+            "actor": "excel_extractor",
+            "agent_id": "excel_extractor",
+            "status_message": "Таблица готова",
+            "event_id": 42,
+        }
+    )
+    assert turn["event_id"] == 42
+    assert turn["turn_id"] == 42
+    assert turn["details"]["event_id"] == 42
+    assert turn["brief"] == "Таблица готова"
 
 
 def test_agent_result_post_is_idempotent(monkeypatch) -> None:
@@ -747,10 +841,16 @@ def test_agent_result_post_is_idempotent(monkeypatch) -> None:
         status="done",
         status_message="schedule_out уже есть — завершаю.",
     )
-    feed_kinds = [row["kind"] for row in client.get(f"/cases/{case_id}").json()["events"]]
+    feed = client.get(f"/cases/{case_id}").json()
+    feed_kinds = [row["kind"] for row in feed["events"]]
     assert feed_kinds[-2:] == ["agent.result", "case.finished"]
     assert feed_kinds.count("orchestrator.status") == 0
     assert feed_kinds.count("orchestrator.decision") == 0
+    listed = client.get("/cases").json()["cases"]
+    rail = next(item for item in listed if item["case_id"] == case_id)
+    assert rail["turn_count"] == len(feed["events"])
+    raw_count = len(control_plane.list_events(case_id))
+    assert raw_count > rail["turn_count"]
 
 
 def test_post_run_restarts_failed_and_done_cases(monkeypatch) -> None:

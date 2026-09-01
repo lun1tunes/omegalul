@@ -1,9 +1,11 @@
 # FastAPI Excel tools
 
 Детерминированный сервис без LLM: принимает Excel, держит дисковую сессию и отдаёт tools для schema/query/extract/validate/export.  
-**На работе:** только Windows CMD ниже. Полный MAS — [`docs.md`](../docs.md) §3 (n8n — только UI-импорт).
+**На работе:** только Windows CMD ниже. Полный MAS — [`docs.md`](../docs.md) §2 (n8n — только UI-импорт).
 
-Каждый запрос к `/api/v1/*` требует `X-API-Key`; исключение — `/health`.
+Каждый запрос к `/api/v1/*` и `/agent-tools/*` требует `X-API-Key`; исключение — `/health`.
+
+Живой Agent — Excel Extractor в n8n бьёт в **`excel_tools_url` без `/api/v1`**: `http://<IP>:8000` + пути `/agent-tools/…`. Header Auth n8n сюда **не** ставится (`excel_tools_api_key` в Runtime configuration). Файлы сервис забирает сам: `GET {activity_base_url}/cases/{id}/artifacts/…`.
 
 ## Windows CMD (канон)
 
@@ -19,13 +21,14 @@ start-windows.bat
 
 Проверка во втором CMD: `check-windows.bat`.
 
-Локальный URL для n8n на том же ПК: `http://127.0.0.1:8000/api/v1`. Для корпоративного n8n на другом хосте: `EXCEL_TOOLS_HOST=0.0.0.0` и в Agent Runtime — `http://<IP-Windows>:8000/api/v1` (тот же `API_KEY`).
+Локальный URL для n8n на том же ПК: `excel_tools_url=http://127.0.0.1:8000` (не `/api/v1`). Для корпоративного n8n на другом хосте: `EXCEL_TOOLS_HOST=0.0.0.0` и в Agent Runtime — `http://<IP-Windows>:8000` (тот же `API_KEY` → `excel_tools_api_key`). Запасной `ACTIVITY_BASE_URL=http://127.0.0.1:8200` в `excel-tools.env`, если задача не передала `activity_base_url`.
 
 ## Переменные (`excel-tools.env`)
 
 | Переменная | Назначение |
 |---|---|
-| `API_KEY` | общий секрет FastAPI и Runtime configuration в n8n |
+| `API_KEY` | общий секрет FastAPI и `excel_tools_api_key` в n8n Runtime configuration |
+| `ACTIVITY_BASE_URL` | запасной URL Activity, если n8n не передал `activity_base_url` |
 | `EXCEL_TOOLS_HOST`, `EXCEL_TOOLS_PORT` | адрес прослушивания (.bat) |
 | `SESSION_DIR`, `SESSION_TTL_HOURS` | каталог и TTL сессий |
 | `MAX_FILE_SIZE_MB` | лимит upload |

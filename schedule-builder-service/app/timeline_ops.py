@@ -20,7 +20,20 @@ MOVE_KEYWORDS = {"WCONPROD", "WELOPEN", "WEFAC"}
 
 
 def parse_date(value: Any) -> date | None:
-    text = str(value or "").strip().upper().replace(",", " ")
+    if isinstance(value, datetime):
+        return value.date()
+    if isinstance(value, date):
+        return value
+    text = str(value or "").strip()
+    if not text or text.lower() in {"none", "null", "nan"}:
+        return None
+    iso = re.match(r"^(\d{4})-(\d{2})-(\d{2})", text)
+    if iso:
+        try:
+            return date(int(iso.group(1)), int(iso.group(2)), int(iso.group(3)))
+        except ValueError:
+            return None
+    text = text.upper().replace(",", " ")
     text = re.sub(r"\s+", " ", text)
     for fmt in ("%d %b %Y", "%Y-%m-%d", "%Y/%m/%d", "%d-%m-%Y"):
         try:

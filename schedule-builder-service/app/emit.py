@@ -24,25 +24,24 @@ def emit_block(block: Block) -> str:
     lines = [kw]
     for record in block.records:
         lines.append(_record_line(record))
-    if kw in TABLE_KEYWORDS:
+    if kw in TABLE_KEYWORDS or block.records:
         lines.append("/")
         lines.append("")
-    else:
-        if block.raw_body.strip():
-            body = block.raw_body.rstrip()
-            if not body.endswith("/"):
-                lines.extend(body.split("\n"))
-                lines.append("/")
-                lines.append("")
-            else:
-                lines.extend(body.split("\n"))
-                if not lines[-1].strip():
-                    pass
-                else:
-                    lines.append("")
-        else:
+    elif block.raw_body.strip():
+        body = block.raw_body.rstrip()
+        if not body.endswith("/"):
+            lines.extend(body.split("\n"))
             lines.append("/")
             lines.append("")
+        else:
+            lines.extend(body.split("\n"))
+            if not lines[-1].strip():
+                pass
+            else:
+                lines.append("")
+    else:
+        lines.append("/")
+        lines.append("")
     return "\n".join(lines).rstrip() + "\n"
 
 

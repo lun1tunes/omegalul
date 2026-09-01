@@ -395,6 +395,9 @@
     }
     if (workspaceView === "schema" && schemaView) {
       schemaView.focus({ preventScroll: true });
+      if (window.MasSchema && typeof window.MasSchema.relayout === "function") {
+        requestAnimationFrame(() => window.MasSchema.relayout());
+      }
     }
   }
 
@@ -772,8 +775,14 @@
     return "Статус";
   }
 
+  function turnRenderKey(turn) {
+    const eid = turn?.event_id ?? turn?.details?.event_id ?? turn?.turn_id;
+    if (eid != null && String(eid).trim() !== "") return `eid:${eid}`;
+    return `${turn.turn_id}:${turn.at}:${turn.status}:${turn.duration_ms || ""}:${turn.kind || ""}`;
+  }
+
   function renderTurn(turn, { animate = true } = {}) {
-    const id = `${turn.turn_id}:${turn.at}:${turn.status}:${turn.duration_ms || ""}:${turn.kind || ""}`;
+    const id = turnRenderKey(turn);
     if (rendered.has(id)) return;
     rendered.add(id);
     empty.hidden = true;
@@ -1588,7 +1597,14 @@
       if (scheduleRoot) scheduleRoot.focus();
       return;
     }
-    if (root) form.append("schedule_root", root);
+    if (root) {
+      form.append("schedule_root", root);
+      const idx = schedules.findIndex((f) => f && f.name === root);
+      if (idx > 0) {
+        const [chosen] = schedules.splice(idx, 1);
+        schedules.unshift(chosen);
+      }
+    }
     if (excel) form.append("file", excel, excel.name);
     if (surface) form.append("surface_file", surface, surface.name);
     for (const f of schedules) form.append("schedule_files", f, f.name);

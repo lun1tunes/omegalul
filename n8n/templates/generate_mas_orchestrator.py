@@ -903,9 +903,11 @@ def main() -> None:
             "Prepare Activity ack",
             (4320, 120),
             r"""const x=$json||{};
+const persisted=Array.isArray(x.persist_events)&&x.persist_events.length>0;
 const kind=x.action_type==='finish'?'case.finished':(x.action_type==='ask_user'||x.next_status==='waiting_user'?'hitl.request':'orchestrator.status');
 const payload={contract:'mas_orchestrator_ack',case_id:x.case_id,status:x.next_status||x.status,action_type:x.action_type||null,message:x.message||null,should_continue:x.should_continue===true,human_gate:x.human_gate||null,version:x.version??null,restartable:x.restartable===true};
-return [{json:{...x,activity_sync:Boolean(x.case_id&&!x.is_probe&&x.activity_base_url),activity_url:`${String(x.activity_base_url||'').replace(/\/$/,'')}/cases/${encodeURIComponent(String(x.case_id||''))}/events`,activity_event:{kind,actor:'orchestrator',status:payload.status,status_message:payload.message||kind,payload}}}];""",
+const statusMessage=String(payload.message||'').trim()||String(x.status_message||'').trim();
+return [{json:{...x,activity_sync:Boolean(x.case_id&&!x.is_probe&&x.activity_base_url&&!persisted),activity_url:`${String(x.activity_base_url||'').replace(/\/$/,'')}/cases/${encodeURIComponent(String(x.case_id||''))}/events`,activity_event:{kind,actor:'orchestrator',status:payload.status,status_message:statusMessage,payload}}}];""",
         ),
         if_true("Activity sync?", (4480, 220), "={{ Boolean($json.activity_sync) }}"),
         node(

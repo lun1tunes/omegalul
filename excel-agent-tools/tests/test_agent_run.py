@@ -46,6 +46,18 @@ def test_commissioning_facts_normalizes_numeric_well_and_iso_date() -> None:
     assert facts[0]["date"] == "2020-02-23"
 
 
+def test_commissioning_facts_strips_iso_datetime() -> None:
+    facts = commissioning_facts(
+        [
+            {
+                "columns": ["Скважина", "Дата ввода"],
+                "preview": [{"Скважина": "1601", "Дата ввода": "2020-02-23T00:00:00"}],
+            }
+        ]
+    )
+    assert facts[0]["date"] == "2020-02-23"
+
+
 def test_golden_case_1_excel_extracts_well_date_facts(tmp_path, monkeypatch) -> None:
     from pathlib import Path
 
@@ -69,6 +81,12 @@ def test_golden_case_1_excel_extracts_well_date_facts(tmp_path, monkeypatch) -> 
     wells = {item["well"] for item in facts}
     assert {"1601", "1602"} <= wells
     assert all(item.get("date") for item in facts)
+    from datetime import date as date_cls
+
+    for item in facts:
+        raw = str(item["date"])
+        assert "T" not in raw
+        date_cls.fromisoformat(raw)
 
 
 def test_excel_agent_fetches_workbook_from_activity_artifact_url(tmp_path, monkeypatch) -> None:
