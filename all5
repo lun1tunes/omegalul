@@ -1,3 +1,662 @@
+                      "title": "Один интервал в LGR",
+                      "task": "W1 в LGR_A на [10,5,3], az=90, L=50/50, H=5/5, width=0.01, PROPANT0.",
+                      "schedule_text": "WFRACPL\n'W1' 'LGR_A' 10 5 3 10 5 3 90 0 50 50 5 5 0.01 'PROPANT0' /\n/\n",
+                      "explanation": "Variant point. IJK span вырожден в точку. Имена учебные."
+                    }
+                  ],
+                  "schema_catalogue": {
+                    "contract": "schedule_schema_catalogue",
+                    "contract_version": "1.0",
+                    "catalogue_ref": "catalogue://tnavigator/22.2/wfracpl-lgr-plane-fracture-v1",
+                    "catalogue_hash": "sha256:4a622527873986c9b721771efdd5cb12186690d8011517d6fa7eed84002796e6",
+                    "source_hash": "sha256:85b5c99afd3834176d68e44becc24e8da9af6e4ae88449fc27a63483a37c1849",
+                    "access_scope": "petroleum-engineering",
+                    "simulator_profile": {
+                      "vendor": "Rock Flow Dynamics",
+                      "simulator": "tNavigator",
+                      "version": "22.2",
+                      "unit_system": "METRIC"
+                    },
+                    "approved": true,
+                    "approved_by": "department-hydrodynamic-expert",
+                    "author": "department-hydrodynamic-expert",
+                    "approval_gate_id": "expert:wfracpl-lgr-plane-fracture-v1:1",
+                    "schemas": [
+                      {
+                        "schema_id": "expert:WFRACPL:span",
+                        "schema_revision": "1",
+                        "keyword": "WFRACPL",
+                        "variant": "span",
+                        "citation": {
+                          "document_id": "tnav-user-manual-russian",
+                          "document_revision": "19.4",
+                          "page": "12.20.149 / 2062-2066",
+                          "heading": "WFRACPL",
+                          "source_hash": "sha256:85b5c99afd3834176d68e44becc24e8da9af6e4ae88449fc27a63483a37c1849"
+                        },
+                        "parser": {
+                          "token_width": 26,
+                          "allow_trailing_omission": true,
+                          "allow_unquoted_strings": true
+                        },
+                        "fields": [
+                          {
+                            "name": "WELL",
+                            "position": 1,
+                            "type": "string",
+                            "required": true,
+                            "quote": "single"
+                          },
+                          {
+                            "name": "LGR",
+                            "position": 2,
+                            "type": "string",
+                            "required": true,
+                            "quote": "single"
+                          },
+                          {
+                            "name": "I1",
+                            "position": 3,
+                            "type": "integer",
+                            "required": true
+                          },
+                          {
+                            "name": "J1",
+                            "position": 4,
+                            "type": "integer",
+                            "required": true
+                          },
+                          {
+                            "name": "K1",
+                            "position": 5,
+                            "type": "integer",
+                            "required": true
+                          },
+                          {
+                            "name": "I2",
+                            "position": 6,
+                            "type": "integer",
+                            "required": true
+                          },
+                          {
+                            "name": "J2",
+                            "position": 7,
+                            "type": "integer",
+                            "required": true
+                          },
+                          {
+                            "name": "K2",
+                            "position": 8,
+                            "type": "integer",
+                            "required": true
+                          },
+                          {
+                            "name": "AZIMUTH",
+                            "position": 9,
+                            "type": "number",
+                            "required": true
+                          },
+                          {
+                            "name": "ZENITH",
+                            "position": 10,
+                            "type": "number",
+                            "required": false,
+                            "default_allowed": true
+                          },
+                          {
+                            "name": "L1",
+                            "position": 11,
+                            "type": "number",
+                            "required": true
+                          },
+                          {
+                            "name": "L2",
+                            "position": 12,
+                            "type": "number",
+                            "required": true
+                          },
+                          {
+                            "name": "H1",
+                            "position": 13,
+                            "type": "number",
+                            "required": false,
+                            "default_allowed": true
+                          },
+                          {
+                            "name": "H2",
+                            "position": 14,
+                            "type": "number",
+                            "required": false,
+                            "default_allowed": true
+                          },
+                          {
+                            "name": "WIDTH",
+                            "position": 15,
+                            "type": "number",
+                            "required": false,
+                            "default_allowed": true
+                          },
+                          {
+                            "name": "PROPANT",
+                            "position": 16,
+                            "type": "string",
+                            "required": false,
+                            "default_allowed": true,
+                            "quote": "single"
+                          },
+                          {
+                            "name": "FLOW_OR_DAYS",
+                            "position": 17,
+                            "type": "string",
+                            "required": false,
+                            "default_allowed": true,
+                            "quote": "single"
+                          },
+                          {
+                            "name": "FLOW_PHASE",
+                            "position": 18,
+                            "type": "string",
+                            "required": false,
+                            "default_allowed": true,
+                            "enum": [
+                              "OIL",
+                              "WAT",
+                              "GAS",
+                              "LIQ",
+                              "TIME"
+                            ]
+                          },
+                          {
+                            "name": "PI_MULT",
+                            "position": 19,
+                            "type": "number",
+                            "required": false,
+                            "default_allowed": true
+                          },
+                          {
+                            "name": "PROPPANT_VOL",
+                            "position": 26,
+                            "type": "number",
+                            "required": false,
+                            "default_allowed": true
+                          }
+                        ],
+                        "layout": {
+                          "newline": "LF",
+                          "indent": "  ",
+                          "delimiter": "SPACE",
+                          "record_terminator": "SLASH",
+                          "block_terminator": "SLASH_LINE"
+                        },
+                        "semantics": {
+                          "period": "ANY",
+                          "clock": {
+                            "uses_current": true
+                          },
+                          "definitions": [
+                            {
+                              "entity_type": "fracture_plane_lgr",
+                              "id_field": "WELL",
+                              "action": "UPSERT"
+                            }
+                          ],
+                          "references": [
+                            {
+                              "entity_type": "well",
+                              "id_field": "WELL",
+                              "required": true
+                            }
+                          ],
+                          "prerequisites": [
+                            {
+                              "keyword": "WELSPECL",
+                              "scope": "ENTITY",
+                              "entity_field": "WELL",
+                              "prerequisite_entity_field": "WELL"
+                            }
+                          ],
+                          "state_assignments": [
+                            {
+                              "namespace": "well-fracture-plane-lgr",
+                              "entity_type": "well",
+                              "entity_field": "WELL",
+                              "key_fields": [
+                                "WELL",
+                                "LGR"
+                              ],
+                              "value_fields": [
+                                "LGR",
+                                "I1",
+                                "J1",
+                                "K1",
+                                "I2",
+                                "J2",
+                                "K2",
+                                "AZIMUTH",
+                                "ZENITH",
+                                "L1",
+                                "L2",
+                                "H1",
+                                "H2",
+                                "WIDTH",
+                                "PROPANT",
+                                "PI_MULT",
+                                "PROPPANT_VOL"
+                              ]
+                            }
+                          ],
+                          "numeric_constraints": [
+                            {
+                              "field": "AZIMUTH",
+                              "min": 0,
+                              "max": 360
+                            },
+                            {
+                              "field": "ZENITH",
+                              "min": 0,
+                              "max": 90
+                            },
+                            {
+                              "field": "L1",
+                              "min": 0
+                            },
+                            {
+                              "field": "L2",
+                              "min": 0
+                            },
+                            {
+                              "field": "H1",
+                              "min": 0
+                            },
+                            {
+                              "field": "H2",
+                              "min": 0
+                            },
+                            {
+                              "field": "WIDTH",
+                              "min": 0
+                            },
+                            {
+                              "field": "PI_MULT",
+                              "min_exclusive": 0
+                            },
+                            {
+                              "field": "PROPPANT_VOL",
+                              "min": 0
+                            },
+                            {
+                              "field": "I1",
+                              "min": 1
+                            },
+                            {
+                              "field": "J1",
+                              "min": 1
+                            },
+                            {
+                              "field": "K1",
+                              "min": 1
+                            },
+                            {
+                              "field": "I2",
+                              "min": 1
+                            },
+                            {
+                              "field": "J2",
+                              "min": 1
+                            },
+                            {
+                              "field": "K2",
+                              "min": 1
+                            }
+                          ]
+                        }
+                      },
+                      {
+                        "schema_id": "expert:WFRACPL:point",
+                        "schema_revision": "1",
+                        "keyword": "WFRACPL",
+                        "variant": "point",
+                        "citation": {
+                          "document_id": "tnav-user-manual-russian",
+                          "document_revision": "19.4",
+                          "page": "12.20.149 / 2062-2066",
+                          "heading": "WFRACPL",
+                          "source_hash": "sha256:85b5c99afd3834176d68e44becc24e8da9af6e4ae88449fc27a63483a37c1849"
+                        },
+                        "parser": {
+                          "token_width": 26,
+                          "allow_trailing_omission": true,
+                          "allow_unquoted_strings": true
+                        },
+                        "fields": [
+                          {
+                            "name": "WELL",
+                            "position": 1,
+                            "type": "string",
+                            "required": true,
+                            "quote": "single"
+                          },
+                          {
+                            "name": "LGR",
+                            "position": 2,
+                            "type": "string",
+                            "required": true,
+                            "quote": "single"
+                          },
+                          {
+                            "name": "I1",
+                            "position": 3,
+                            "type": "integer",
+                            "required": true
+                          },
+                          {
+                            "name": "J1",
+                            "position": 4,
+                            "type": "integer",
+                            "required": true
+                          },
+                          {
+                            "name": "K1",
+                            "position": 5,
+                            "type": "integer",
+                            "required": true
+                          },
+                          {
+                            "name": "I2",
+                            "position": 6,
+                            "type": "integer",
+                            "required": true
+                          },
+                          {
+                            "name": "J2",
+                            "position": 7,
+                            "type": "integer",
+                            "required": true
+                          },
+                          {
+                            "name": "K2",
+                            "position": 8,
+                            "type": "integer",
+                            "required": true
+                          },
+                          {
+                            "name": "AZIMUTH",
+                            "position": 9,
+                            "type": "number",
+                            "required": true
+                          },
+                          {
+                            "name": "ZENITH",
+                            "position": 10,
+                            "type": "number",
+                            "required": false,
+                            "default_allowed": true
+                          },
+                          {
+                            "name": "L1",
+                            "position": 11,
+                            "type": "number",
+                            "required": true
+                          },
+                          {
+                            "name": "L2",
+                            "position": 12,
+                            "type": "number",
+                            "required": true
+                          },
+                          {
+                            "name": "H1",
+                            "position": 13,
+                            "type": "number",
+                            "required": false,
+                            "default_allowed": true
+                          },
+                          {
+                            "name": "H2",
+                            "position": 14,
+                            "type": "number",
+                            "required": false,
+                            "default_allowed": true
+                          },
+                          {
+                            "name": "WIDTH",
+                            "position": 15,
+                            "type": "number",
+                            "required": false,
+                            "default_allowed": true
+                          },
+                          {
+                            "name": "PROPANT",
+                            "position": 16,
+                            "type": "string",
+                            "required": false,
+                            "default_allowed": true,
+                            "quote": "single"
+                          },
+                          {
+                            "name": "FLOW_OR_DAYS",
+                            "position": 17,
+                            "type": "string",
+                            "required": false,
+                            "default_allowed": true,
+                            "quote": "single"
+                          },
+                          {
+                            "name": "FLOW_PHASE",
+                            "position": 18,
+                            "type": "string",
+                            "required": false,
+                            "default_allowed": true,
+                            "enum": [
+                              "OIL",
+                              "WAT",
+                              "GAS",
+                              "LIQ",
+                              "TIME"
+                            ]
+                          },
+                          {
+                            "name": "PI_MULT",
+                            "position": 19,
+                            "type": "number",
+                            "required": false,
+                            "default_allowed": true
+                          },
+                          {
+                            "name": "PROPPANT_VOL",
+                            "position": 26,
+                            "type": "number",
+                            "required": false,
+                            "default_allowed": true
+                          }
+                        ],
+                        "layout": {
+                          "newline": "LF",
+                          "indent": "  ",
+                          "delimiter": "SPACE",
+                          "record_terminator": "SLASH",
+                          "block_terminator": "SLASH_LINE"
+                        },
+                        "semantics": {
+                          "period": "ANY",
+                          "clock": {
+                            "uses_current": true
+                          },
+                          "definitions": [
+                            {
+                              "entity_type": "fracture_plane_lgr",
+                              "id_field": "WELL",
+                              "action": "UPSERT"
+                            }
+                          ],
+                          "references": [
+                            {
+                              "entity_type": "well",
+                              "id_field": "WELL",
+                              "required": true
+                            }
+                          ],
+                          "prerequisites": [
+                            {
+                              "keyword": "WELSPECL",
+                              "scope": "ENTITY",
+                              "entity_field": "WELL",
+                              "prerequisite_entity_field": "WELL"
+                            }
+                          ],
+                          "state_assignments": [
+                            {
+                              "namespace": "well-fracture-plane-lgr",
+                              "entity_type": "well",
+                              "entity_field": "WELL",
+                              "key_fields": [
+                                "WELL",
+                                "LGR"
+                              ],
+                              "value_fields": [
+                                "LGR",
+                                "I1",
+                                "J1",
+                                "K1",
+                                "I2",
+                                "J2",
+                                "K2",
+                                "AZIMUTH",
+                                "ZENITH",
+                                "L1",
+                                "L2",
+                                "H1",
+                                "H2",
+                                "WIDTH",
+                                "PROPANT",
+                                "PI_MULT",
+                                "PROPPANT_VOL"
+                              ]
+                            }
+                          ],
+                          "numeric_constraints": [
+                            {
+                              "field": "AZIMUTH",
+                              "min": 0,
+                              "max": 360
+                            },
+                            {
+                              "field": "ZENITH",
+                              "min": 0,
+                              "max": 90
+                            },
+                            {
+                              "field": "L1",
+                              "min": 0
+                            },
+                            {
+                              "field": "L2",
+                              "min": 0
+                            },
+                            {
+                              "field": "H1",
+                              "min": 0
+                            },
+                            {
+                              "field": "H2",
+                              "min": 0
+                            },
+                            {
+                              "field": "WIDTH",
+                              "min": 0
+                            },
+                            {
+                              "field": "PI_MULT",
+                              "min_exclusive": 0
+                            },
+                            {
+                              "field": "PROPPANT_VOL",
+                              "min": 0
+                            },
+                            {
+                              "field": "I1",
+                              "min": 1
+                            },
+                            {
+                              "field": "J1",
+                              "min": 1
+                            },
+                            {
+                              "field": "K1",
+                              "min": 1
+                            },
+                            {
+                              "field": "I2",
+                              "min": 1
+                            },
+                            {
+                              "field": "J2",
+                              "min": 1
+                            },
+                            {
+                              "field": "K2",
+                              "min": 1
+                            }
+                          ]
+                        }
+                      }
+                    ]
+                  }
+                },
+                {
+                  "contract": "schedule_knowledge_block",
+                  "contract_version": "1.0",
+                  "target_base": "schedule_mvp",
+                  "knowledge_type": "keyword_instruction",
+                  "knowledge_id": "guiderat-guide-rate-formula-v1",
+                  "revision": "1",
+                  "title": "GUIDERAT — формула направляющих дебитов",
+                  "keywords": [
+                    "GUIDERAT"
+                  ],
+                  "topics": [
+                    "направляющие дебиты",
+                    "GUIDERAT",
+                    "guide rate formula",
+                    "GCONPROD FORM",
+                    "не WGRUPCON"
+                  ],
+                  "task_patterns": [
+                    "задать GUIDERAT",
+                    "формула guide rates",
+                    "GUIDERAT RES GOR",
+                    "FORM в GCONPROD",
+                    "снизить долю высокообводнённых"
+                  ],
+                  "simulator_family": [
+                    "E100",
+                    "E300",
+                    "tNavigator"
+                  ],
+                  "status": "active",
+                  "author": "department-hydrodynamic-expert",
+                  "access_scope": "petroleum-engineering",
+                  "text": "GUIDERAT — формула направляющих дебитов скважин для группового контроля.\n\nНазначение. Задаёт формулу guide rates, которыми GCONPROD делит групповой целевой дебит между скважинами. Форматы: tN, E1, E3. Секция: только SCHEDULE. Это не GCONPROD (групповой лимит), не WGRUPCON (постоянный guide на скважину; вне allowlist → needs_input), не WCONPROD.\n\nКогда применяется формула (§12.20.90 / §2.14.2):\n1) все добывающие скважины без постоянных guide rates через WGRUPCON;\n2) любая группа, у которой в GCONPROD параметр 10 (GUIDE_PHASE) = FORM.\nПо умолчанию guide = потенциал скважины (§5.6.7) в начале каждого шага. GUIDERAT нужен, чтобы автоматически ухудшать долю скважин с высокой обводненностью / ГНФ.\n\nФормула (начало шага после INTERVAL):\nGUIDERATEp = (POTGUIDERATEp)^A / [ B + C·(R1)^D + E·(R2)^F ]\nгде POTGUIDERATEp — потенциал фазы p; R1/R2 — отношения потенциалов фаз, зависящие от PHASE.\n\nRecord layout. Keyword GUIDERAT, одна запись `/`, блок — отдельный `/` (обычно одна глобальная формула на текущих DATES).\n\nПоля (§12.20.90; METRIC: days / sm3/sm3 как в таблице фаз):\n\n1. INTERVAL — мин. интервал между пересчётами guide (days). Расчёт — в начале шага после INTERVAL с прошлого пересчёта. Default: 0.\n2. PHASE — OIL | LIQ | GAS | RES | NONE. Default: NONE.\n   - OIL: R1=WOR, R2=GOR.\n   - LIQ: R1=water cut, R2=GLR.\n   - GAS: R1=WGR, R2=OGR.\n   - RES: пластовый флюид; R1=WOR, R2=GOR.\n   - NONE: формула выключена; guide = потенциал каждый шаг.\n   Если PHASE ≠ фаза группового CONTROL, guide пересчитывается в управляемую фазу с учётом WOR/GOR на шаге.\n3. A — степень потенциала. Default: 0.\n4. B — неотрицательный. Default: 0.\n5. C. Default: 0.\n6. D. Default: 0.\n7. E. Default: 0.\n8. F. Default: 0.\n9. INCREASE — YES | NO: может ли guide расти относительно предыдущего. Default: YES. NO → только убывать/держать.\n10. GRDAMP — коэффициент затухания ∈ (0;1]: GRused = GRDAMP·GRcalc + (1−GRDAMP)·GRprev. Default: 1.\n11. FREE_GAS — YES | NO: в R2 только свободный газ блока (YES) или полный газ (NO). Default: NO.\n12. GRMIN — нижняя отсечка guide; если GRp < GRMIN → GRMIN. Условие GRMIN > 1e-19 × flow. Default: 1e-6.\n\nКанон render этого корпуса.\n- `none` — PHASE=NONE (сброс формулы к потенциалам).\n- `res` — PHASE=RES + A B E F как в примере мануала (C D default): `1* RES 1.0 1.0 2* 10 2`.\n- `oil` / `liq` / `gas` — PHASE соответствующей фазы + коэффициенты из фактов.\n- `full` — все 12 полей явно.\nНе копируйте учебные 1.0/10/2 без фактов. Не эмитьте WGRUPCON.\n\nIR / semantics.\n- period=FORECAST; clock.uses_current=true.\n- definitions/state: UPSERT global guiderat-formula (не per-well entity).\n- references: нет WELL/GROUP id в записи.\n- prerequisites: мягкая связь с GCONPROD — для GUIDE_PHASE=FORM формула обязательна (эмитьте GUIDERAT или берите из baseline); без FORM всё равно действует на скважины без WGRUPCON.\n- numeric_constraints: INTERVAL≥0; B≥0; GRDAMP ∈ (0,1]; GRMIN>0; A–F finite.\n\nСвязанные keywords.\n- GCONPROD — групповой контроль; GUIDE_PHASE=FORM.\n- WGRUPCON — фиксированные guide rates (вне allowlist).\n- GRUPTREE / WELSPECS — иерархия и leaf-скважины.\n- WCONPROD CONTROL=GRUP — скважина берёт долю от group control.\n\nТеория (§2.14.2; §5.6.7).\n- Групповой дебит делится пропорционально guide rates, не поровну.\n- Потенциал — дебит без rate-лимита при текущих условиях блока.\n- Цель формулы — снизить долю высокообводнённых / высоко-GOR скважин относительно потенциала.\n\nАнтипаттерны.\n- FORM в GCONPROD без GUIDERAT (и без baseline формулы).\n- Подмена GUIDERAT постоянными WGRUPCON без фактов / вне allowlist.\n- PHASE=NONE при явной формуле в фактах (и наоборот).\n- GRDAMP∉(0;1]; отрицательный B.\n- Выдумать A–F «для красоты» без фактов/инженерного задания.\n\nНехватка факта → needs_input: нужны коэффициенты/фаза без значений; только WGRUPCON без GUIDERAT path; конфликт с baseline guiderat без REVISE target.\n\nКарточка самодостаточна: renderer использует только schema_catalogue этой записи и выбранный variant.",
+                  "examples": [
+                    {
+                      "title": "RES — канон мануала",
+                      "task": "Фаза RES, A=1, B=1, E=10, F=2 (C D default).",
+                      "schedule_text": "GUIDERAT\n1* RES 1.0 1.0 2* 10 2 /\n/\n",
+                      "explanation": "§12.20.90 с. 1935–1936. Variant res. GUIDERATE_RES = POT / (1 + 10·R2²). Учебные коэффициенты."
+                    },
+                    {
+                      "title": "Выключить формулу",
+                      "task": "Guide rates = потенциалы (PHASE=NONE).",
+                      "schedule_text": "GUIDERAT\n  1* NONE /\n/\n",
+                      "explanation": "Variant none."
+                    },
+                    {
+                      "title": "OIL с затуханием",
+                      "task": "OIL, A=1 B=1 C=0 D=0 E=5 F=1, INCREASE=YES, GRDAMP=0.5.",
+                      "schedule_text": "GUIDERAT\n  0 OIL 1 1 0 0 5 1 YES 0.5 /\n/\n",
+                      "explanation": "Variant oil / near-full. Числа только из фактов."
+                    }
+                  ],
                   "schema_catalogue": {
                     "contract": "schedule_schema_catalogue",
                     "contract_version": "1.0",
@@ -6941,7 +7600,7 @@
     },
     {
       "parameters": {
-        "jsCode": "const expected = [\n  \"excel-agent-trust-boundary\",\n  \"excel-agent-discovery-and-tables\",\n  \"excel-agent-query-and-result-protocol\",\n  \"excel-agent-clarification-and-continuation\",\n  \"excel-agent-rag-and-operations\",\n  \"route-excel-extractor\",\n  \"route-schedule-builder\",\n  \"route-calculation\",\n  \"route-cluster-calculation\",\n  \"route-binary-results\",\n  \"route-presentation\",\n  \"route-hitl-required-evidence\",\n  \"specialist-template-bounded-work\",\n  \"dates-schedule-clock-v1\",\n  \"include-schedule-package-v1\",\n  \"gruptree-group-hierarchy-v1\",\n  \"welspecs-well-declaration-v1\",\n  \"welltrack-trajectory-v1\",\n  \"compdatmd-perforation-md-v1\",\n  \"wconprod-forecast-control-v1\",\n  \"wconinje-forecast-inject-v1\",\n  \"gconprod-group-forecast-v1\",\n  \"branprop-network-branch-v1\",\n  \"nodeprop-network-node-v1\",\n  \"wecon-economic-limits-v1\",\n  \"wtest-reopen-policy-v1\",\n  \"weltarg-target-override-v1\",\n  \"wnetdp-network-delta-p-v1\",\n  \"wconhist-history-control-v1\",\n  \"vfpprod-table-ref-v1\",\n  \"fracture-template-v1\",\n  \"fracture-specs-v1\",\n  \"fracture-stage-v1\",\n  \"wpimult-connection-factor-v1\",\n  \"wdfac-well-dfactor-v1\",\n  \"wlist-well-list-v1\",\n  \"wfracp-plane-fracture-v1\",\n  \"wfracpl-lgr-plane-fracture-v1\",\n  \"guiderat-guide-rate-formula-v1\",\n  \"gconinje-group-inject-v1\",\n  \"gsatprod-satellite-prod-v1\",\n  \"gsatinje-satellite-inject-v1\",\n  \"wellstre-inject-stream-v1\",\n  \"gnetdp-pressure-band-v1\",\n  \"weldraw-max-drawdown-v1\",\n  \"netbalan-network-balance-v1\",\n  \"actionx-conditional-block-v1\",\n  \"endactio-action-close-v1\",\n  \"delayact-delayed-action-v1\",\n  \"udq-user-defined-quantity-v1\",\n  \"udt-lookup-table-v1\",\n  \"applyscript-python-hook-v1\",\n  \"ginjgas-group-inject-gas-v1\",\n  \"winjgas-well-inject-gas-v1\",\n  \"wvfpdp-vfp-pressure-correction-v1\",\n  \"schedule-model-file-comments-v1\",\n  \"wefac-well-efficiency-v1\",\n  \"welopen-well-status-v1\",\n];\nconst table = 'tnavigator_schedule_knowledge_v1';\nconst query = [\n  'WITH inv AS (',\n  '  SELECT',\n  \"    coalesce(metadata->>'document_id', metadata->>'knowledge_id', '(missing document_id)') AS document_id\",\n  \"    , coalesce(metadata->>'target_base', '') AS target_base\",\n  '    , count(*)::int AS chunk_count',\n  '    , min(left(text, 120)) AS text_preview',\n  '  FROM ' + table,\n  '  GROUP BY 1, 2',\n  '), meta AS (',\n  '  SELECT (SELECT count(*)::int FROM ' + table + ') AS total_rows',\n  \"       , (SELECT count(DISTINCT nullif(coalesce(metadata->>'document_id', metadata->>'knowledge_id', ''), ''))::int FROM \" + table + ') AS distinct_documents',\n  '       , (',\n  '            SELECT pg_catalog.format_type(a.atttypid, a.atttypmod)',\n  '            FROM pg_catalog.pg_attribute AS a',\n  \"            WHERE a.attrelid = to_regclass('\" + table + \"')\",\n  \"              AND a.attname = 'embedding'\",\n  '              AND NOT a.attisdropped',\n  '            LIMIT 1',\n  '          ) AS embedding_type',\n  ')',\n  \"SELECT coalesce(inv.document_id, '(none)') AS document_id,\",\n  \"       coalesce(inv.target_base, '') AS target_base,\",\n  '       coalesce(inv.chunk_count, 0)::int AS chunk_count,',\n  '       inv.text_preview,',\n  '       meta.total_rows, meta.distinct_documents, meta.embedding_type',\n  'FROM meta',\n  'LEFT JOIN inv ON TRUE',\n  'ORDER BY 1;',\n].join('\\n');\nreturn [{ json: {\n  rag_table_name: table,\n  expected_document_ids: expected,\n  expected_document_count: expected.length,\n  query,\n} }];"
+        "jsCode": "const expected = [\n  \"excel-agent-trust-boundary\",\n  \"excel-agent-discovery-and-tables\",\n  \"excel-agent-query-and-result-protocol\",\n  \"excel-agent-clarification-and-continuation\",\n  \"excel-agent-rag-and-operations\",\n  \"route-excel-extractor\",\n  \"route-schedule-builder\",\n  \"route-mas-thin-orchestrator\",\n  \"route-calculation\",\n  \"route-cluster-calculation\",\n  \"route-binary-results\",\n  \"route-presentation\",\n  \"route-hitl-required-evidence\",\n  \"specialist-template-bounded-work\",\n  \"dates-schedule-clock-v1\",\n  \"include-schedule-package-v1\",\n  \"gruptree-group-hierarchy-v1\",\n  \"welspecs-well-declaration-v1\",\n  \"welltrack-trajectory-v1\",\n  \"compdatmd-perforation-md-v1\",\n  \"wconprod-forecast-control-v1\",\n  \"wconinje-forecast-inject-v1\",\n  \"gconprod-group-forecast-v1\",\n  \"branprop-network-branch-v1\",\n  \"nodeprop-network-node-v1\",\n  \"wecon-economic-limits-v1\",\n  \"wtest-reopen-policy-v1\",\n  \"weltarg-target-override-v1\",\n  \"wnetdp-network-delta-p-v1\",\n  \"wconhist-history-control-v1\",\n  \"vfpprod-table-ref-v1\",\n  \"fracture-template-v1\",\n  \"fracture-specs-v1\",\n  \"fracture-stage-v1\",\n  \"wpimult-connection-factor-v1\",\n  \"wdfac-well-dfactor-v1\",\n  \"wlist-well-list-v1\",\n  \"wfracp-plane-fracture-v1\",\n  \"wfracpl-lgr-plane-fracture-v1\",\n  \"guiderat-guide-rate-formula-v1\",\n  \"gconinje-group-inject-v1\",\n  \"gsatprod-satellite-prod-v1\",\n  \"gsatinje-satellite-inject-v1\",\n  \"wellstre-inject-stream-v1\",\n  \"gnetdp-pressure-band-v1\",\n  \"weldraw-max-drawdown-v1\",\n  \"netbalan-network-balance-v1\",\n  \"actionx-conditional-block-v1\",\n  \"endactio-action-close-v1\",\n  \"delayact-delayed-action-v1\",\n  \"udq-user-defined-quantity-v1\",\n  \"udt-lookup-table-v1\",\n  \"applyscript-python-hook-v1\",\n  \"ginjgas-group-inject-gas-v1\",\n  \"winjgas-well-inject-gas-v1\",\n  \"wvfpdp-vfp-pressure-correction-v1\",\n  \"schedule-model-file-comments-v1\",\n  \"wefac-well-efficiency-v1\",\n  \"welopen-well-status-v1\",\n];\nconst table = 'tnavigator_schedule_knowledge_v1';\nconst query = [\n  'WITH inv AS (',\n  '  SELECT',\n  \"    coalesce(metadata->>'document_id', metadata->>'knowledge_id', '(missing document_id)') AS document_id\",\n  \"    , coalesce(metadata->>'target_base', '') AS target_base\",\n  '    , count(*)::int AS chunk_count',\n  '    , min(left(text, 120)) AS text_preview',\n  '  FROM ' + table,\n  '  GROUP BY 1, 2',\n  '), meta AS (',\n  '  SELECT (SELECT count(*)::int FROM ' + table + ') AS total_rows',\n  \"       , (SELECT count(DISTINCT nullif(coalesce(metadata->>'document_id', metadata->>'knowledge_id', ''), ''))::int FROM \" + table + ') AS distinct_documents',\n  '       , (',\n  '            SELECT pg_catalog.format_type(a.atttypid, a.atttypmod)',\n  '            FROM pg_catalog.pg_attribute AS a',\n  \"            WHERE a.attrelid = to_regclass('\" + table + \"')\",\n  \"              AND a.attname = 'embedding'\",\n  '              AND NOT a.attisdropped',\n  '            LIMIT 1',\n  '          ) AS embedding_type',\n  ')',\n  \"SELECT coalesce(inv.document_id, '(none)') AS document_id,\",\n  \"       coalesce(inv.target_base, '') AS target_base,\",\n  '       coalesce(inv.chunk_count, 0)::int AS chunk_count,',\n  '       inv.text_preview,',\n  '       meta.total_rows, meta.distinct_documents, meta.embedding_type',\n  'FROM meta',\n  'LEFT JOIN inv ON TRUE',\n  'ORDER BY 1;',\n].join('\\n');\nreturn [{ json: {\n  rag_table_name: table,\n  expected_document_ids: expected,\n  expected_document_count: expected.length,\n  query,\n} }];"
       },
       "id": "5b899b69-0bd0-5ca1-b592-9b67e5d8e2c4",
       "name": "Prepare RAG inventory query",
@@ -13410,7 +14069,7 @@
 }
 
 ===END_FILE===
-===BEGIN_FILE===	n8n/workflows/retired/mas-trace-event-writer.workflow.json	15346	utf8
+===BEGIN_FILE===	n8n/workflows/retired/mas-trace-event-writer.workflow.json	15371	utf8
 {
   "id": "3c93b407-5b49-5c3b-b503-2ace753c5582",
   "name": "Writer — MAS Trace",
@@ -13723,7 +14382,8 @@
   "settings": {
     "executionOrder": "v1",
     "saveManualExecutions": true,
-    "callerPolicy": "workflowsFromSameOwner"
+    "callerPolicy": "workflowsFromSameOwner",
+    "errorWorkflow": ""
   },
   "versionId": "75256204-bf72-57b8-b309-6f9cdb5c3575",
   "meta": {
@@ -14558,67 +15218,3 @@
     },
     {
       "parameters": {
-        "jsCode": "const x=$json.baseline_query_request??$json;\nconst obj=v=>v&&typeof v==='object'&&!Array.isArray(v),arr=Array.isArray,clean=v=>typeof v==='string'?v.trim():'';\nconst allowed=new Set([\"DATES\", \"INCLUDE\", \"GRUPTREE\", \"WELSPECS\", \"WELLTRACK\", \"COMPDATMD\", \"WCONHIST\", \"WCONPROD\", \"WCONINJE\", \"GCONPROD\", \"GCONINJE\", \"GUIDERAT\", \"GSATPROD\", \"GSATINJE\", \"WELLSTRE\", \"WINJGAS\", \"GINJGAS\", \"BRANPROP\", \"NODEPROP\", \"GNETDP\", \"NETBALAN\", \"FRACTURE_TEMPLATE\", \"FRACTURE_SPECS\", \"FRACTURE_STAGE\", \"WECON\", \"WTEST\", \"WELTARG\", \"WNETDP\", \"WPIMULT\", \"WDFAC\", \"WEFAC\", \"WELOPEN\", \"WELDRAW\", \"WLIST\", \"WFRACP\", \"WFRACPL\", \"VFPPROD\", \"WVFPDP\", \"ACTIONX\", \"DELAYACT\", \"ENDACTIO\", \"UDQ\", \"UDT\", \"APPLYSCRIPT\"]),findings=[];\n\nconst SHA_K=[\n  0x428a2f98,0x71374491,0xb5c0fbcf,0xe9b5dba5,0x3956c25b,0x59f111f1,0x923f82a4,0xab1c5ed5,\n  0xd807aa98,0x12835b01,0x243185be,0x550c7dc3,0x72be5d74,0x80deb1fe,0x9bdc06a7,0xc19bf174,\n  0xe49b69c1,0xefbe4786,0x0fc19dc6,0x240ca1cc,0x2de92c6f,0x4a7484aa,0x5cb0a9dc,0x76f988da,\n  0x983e5152,0xa831c66d,0xb00327c8,0xbf597fc7,0xc6e00bf3,0xd5a79147,0x06ca6351,0x14292967,\n  0x27b70a85,0x2e1b2138,0x4d2c6dfc,0x53380d13,0x650a7354,0x766a0abb,0x81c2c92e,0x92722c85,\n  0xa2bfe8a1,0xa81a664b,0xc24b8b70,0xc76c51a3,0xd192e819,0xd6990624,0xf40e3585,0x106aa070,\n  0x19a4c116,0x1e376c08,0x2748774c,0x34b0bcb5,0x391c0cb3,0x4ed8aa4a,0x5b9cca4f,0x682e6ff3,\n  0x748f82ee,0x78a5636f,0x84c87814,0x8cc70208,0x90befffa,0xa4506ceb,0xbef9a3f7,0xc67178f2\n];\nconst shaUtf8=s=>{const out=[],t=String(s);for(let i=0;i<t.length;i++){let cp=t.codePointAt(i);if(cp>0xffff)i++;if(cp>=0xd800&&cp<=0xdfff)cp=0xfffd;if(cp<=0x7f)out.push(cp);else if(cp<=0x7ff)out.push(0xc0|(cp>>6),0x80|(cp&63));else if(cp<=0xffff)out.push(0xe0|(cp>>12),0x80|((cp>>6)&63),0x80|(cp&63));else out.push(0xf0|(cp>>18),0x80|((cp>>12)&63),0x80|((cp>>6)&63),0x80|(cp&63))}return out};\nconst shaRotr=(v,n)=>(v>>>n)|(v<<(32-n));\nconst sha256=s=>{const b=shaUtf8(s),bit=b.length*8,b2=b.slice();b2.push(0x80);while((b2.length%64)!==56)b2.push(0);for(let i=7;i>=0;i--)b2.push((bit/Math.pow(2,i*8))&255);let h0=0x6a09e667,h1=0xbb67ae85,h2=0x3c6ef372,h3=0xa54ff53a,h4=0x510e527f,h5=0x9b05688c,h6=0x1f83d9ab,h7=0x5be0cd19;for(let off=0;off<b2.length;off+=64){const w=new Array(64);for(let i=0;i<16;i++){const p=off+i*4;w[i]=((b2[p]<<24)|(b2[p+1]<<16)|(b2[p+2]<<8)|b2[p+3])>>>0}for(let i=16;i<64;i++){const a=w[i-15],c=w[i-2],s0=(shaRotr(a,7)^shaRotr(a,18)^(a>>>3))>>>0,s1=(shaRotr(c,17)^shaRotr(c,19)^(c>>>10))>>>0;w[i]=(w[i-16]+s0+w[i-7]+s1)>>>0}let a=h0,bv=h1,c=h2,d=h3,e=h4,f=h5,g=h6,hh=h7;for(let i=0;i<64;i++){const S1=(shaRotr(e,6)^shaRotr(e,11)^shaRotr(e,25))>>>0,ch=((e&f)^((~e)&g))>>>0,t1=(hh+S1+ch+SHA_K[i]+w[i])>>>0,S0=(shaRotr(a,2)^shaRotr(a,13)^shaRotr(a,22))>>>0,maj=((a&bv)^(a&c)^(bv&c))>>>0,t2=(S0+maj)>>>0;hh=g;g=f;f=e;e=(d+t1)>>>0;d=c;c=bv;bv=a;a=(t1+t2)>>>0}h0=(h0+a)>>>0;h1=(h1+bv)>>>0;h2=(h2+c)>>>0;h3=(h3+d)>>>0;h4=(h4+e)>>>0;h5=(h5+f)>>>0;h6=(h6+g)>>>0;h7=(h7+hh)>>>0}return [h0,h1,h2,h3,h4,h5,h6,h7].map(v=>v.toString(16).padStart(8,'0')).join('')};\nconst contentHash=s=>`sha256:${sha256(String(s??''))}`;\n\nconst hash=contentHash,shaPattern=/^sha256:[a-f0-9]{64}$/i,decoded=obj(x.baseline_decode_result)?x.baseline_decode_result:{},query=obj(x.query)?x.query:{};\nconst purpose=clean(query.purpose||'BUILD').toUpperCase(),phase=clean(query.phase||'ALL').toUpperCase(),summaryOnly=query.summary_only===true,requireComplete=query.require_complete!==false;\nconst all=arr(decoded.decoded_records)?decoded.decoded_records.filter(obj):[],prefix=arr(decoded.prefix_records)?decoded.prefix_records.filter(obj):[],suffix=arr(decoded.suffix_records)?decoded.suffix_records.filter(obj):[];\nconst source=phase==='PREFIX'?prefix:phase==='SUFFIX'?suffix:all,MAX_RECORDS=50000,MAX_LIMIT=2000,DEFAULT_LIMIT=purpose==='PLANNING'?250:1000;\nif(decoded.contract!=='baseline_decode_result'||decoded.contract_version!=='1.0'||decoded.status!=='decoded')findings.push({code:'BASELINE_DECODE_RESULT_REQUIRED',severity:'error'});\nif(!shaPattern.test(clean(decoded.decoded_hash))||!shaPattern.test(clean(decoded.baseline_package_hash))||!shaPattern.test(clean(decoded.catalogue_hash)))findings.push({code:'BASELINE_QUERY_SOURCE_HASH_INVALID',severity:'error'});\nif(clean(x.expected_decoded_hash)&&clean(x.expected_decoded_hash)!==clean(decoded.decoded_hash))findings.push({code:'BASELINE_QUERY_STALE_DECODED_HASH',severity:'error'});\nif(!['PLANNING','BUILD','DIAGNOSTIC'].includes(purpose))findings.push({code:'BASELINE_QUERY_PURPOSE_INVALID',severity:'error'});\nif(!['ALL','PREFIX','SUFFIX'].includes(phase))findings.push({code:'BASELINE_QUERY_PHASE_INVALID',severity:'error'});\nif(source.length>MAX_RECORDS)findings.push({code:'BASELINE_QUERY_SOURCE_LIMIT',severity:'error',count:source.length,limit:MAX_RECORDS});\nfor(const r of source){if(!clean(r.event_id)||!clean(r.target_node_id||r.source_node_id)||!shaPattern.test(clean(r.expected_raw_hash))||!shaPattern.test(clean(r.record_hash))||!Number.isInteger(Number(r.execution_sequence))||!arr(r.provenance)||!r.provenance.length){findings.push({code:'BASELINE_QUERY_RECORD_IDENTITY_INVALID',severity:'error',event_id:r.event_id||null});break}}\nconst keywords=[...new Set((arr(query.keywords)?query.keywords:[]).map(v=>clean(v).toUpperCase()).filter(Boolean))],unsupported=keywords.filter(k=>!allowed.has(k));\nif(unsupported.length)findings.push({code:'BASELINE_QUERY_KEYWORD_UNSUPPORTED',severity:'error',keywords:unsupported});\nconst nodeIds=new Set((arr(query.source_node_ids)?query.source_node_ids:[]).map(clean).filter(Boolean)),files=new Set((arr(query.file_refs)?query.file_refs:[]).map(clean).filter(Boolean));\nconst entityValues=new Set((arr(query.entity_values)?query.entity_values:[]).map(v=>clean(String(v)).toUpperCase()).filter(Boolean));\nconst fieldFilters=arr(query.field_filters)?query.field_filters.filter(obj):[];\nfor(const f of fieldFilters){const field=clean(f.field),op=clean(f.operator||'EQ').toUpperCase(),values=arr(f.values)?f.values:[f.value];if(!/^[A-Za-z][A-Za-z0-9_]*$/.test(field)||!['EQ','IN','CONTAINS','EXISTS'].includes(op)||(!values.length&&op!=='EXISTS'))findings.push({code:'BASELINE_QUERY_FIELD_FILTER_INVALID',severity:'error',field,operator:op})}\nconst month={JAN:0,FEB:1,MAR:2,APR:3,MAY:4,JUN:5,JUL:6,AUG:7,SEP:8,OCT:9,NOV:10,DEC:11};\nconst parseDate=raw=>{const t=clean(raw).toUpperCase();let m=t.match(/^(\\d{4})-(\\d{2})-(\\d{2})$/),y,mo,d;if(m){y=Number(m[1]);mo=Number(m[2])-1;d=Number(m[3])}else{m=t.match(/^(\\d{1,2})\\s+([A-Z]{3})\\s+(\\d{4})$/);if(!m||month[m[2]]===undefined)return null;d=Number(m[1]);mo=month[m[2]];y=Number(m[3])}const epoch=Date.UTC(y,mo,d),v=new Date(epoch);return v.getUTCFullYear()===y&&v.getUTCMonth()===mo&&v.getUTCDate()===d?{iso:`${String(y).padStart(4,'0')}-${String(mo+1).padStart(2,'0')}-${String(d).padStart(2,'0')}`,epoch}:null};\nconst from=clean(query.effective_from)?parseDate(query.effective_from):null,to=clean(query.effective_to)?parseDate(query.effective_to):null;\nif(clean(query.effective_from)&&!from)findings.push({code:'BASELINE_QUERY_DATE_INVALID',severity:'error',field:'effective_from'});if(clean(query.effective_to)&&!to)findings.push({code:'BASELINE_QUERY_DATE_INVALID',severity:'error',field:'effective_to'});if(from&&to&&from.epoch>to.epoch)findings.push({code:'BASELINE_QUERY_DATE_RANGE_INVALID',severity:'error'});\nconst canonical=v=>obj(v)?JSON.stringify(v):String(v??''),scalarValues=fields=>Object.values(obj(fields)?fields:{}).filter(v=>!obj(v)&&!arr(v)).map(v=>clean(String(v)).toUpperCase()).filter(Boolean);\nconst matchesField=(r,f)=>{const fields=obj(r.fields)?r.fields:{},name=clean(f.field),op=clean(f.operator||'EQ').toUpperCase();if(op==='EXISTS')return Object.prototype.hasOwnProperty.call(fields,name);if(!Object.prototype.hasOwnProperty.call(fields,name))return false;const actual=canonical(fields[name]),values=(arr(f.values)?f.values:[f.value]).map(canonical);if(op==='CONTAINS')return values.some(v=>actual.toUpperCase().includes(v.toUpperCase()));return values.some(v=>actual.toUpperCase()===v.toUpperCase())};\nconst matched=source.filter(r=>{const kw=clean(r.keyword).toUpperCase(),d=parseDate(r.effective_at);if(keywords.length&&!keywords.includes(kw))return false;if(nodeIds.size&&!nodeIds.has(clean(r.source_node_id)))return false;if(files.size&&!files.has(clean(r.file_ref)))return false;if(entityValues.size&&![...entityValues].some(v=>scalarValues(r.fields).includes(v)))return false;if(fieldFilters.length&&!fieldFilters.every(f=>matchesField(r,f)))return false;if(from&&(!d||d.epoch<from.epoch))return false;if(to&&(!d||d.epoch>to.epoch))return false;return true}).sort((a,b)=>Number(a.execution_sequence??0)-Number(b.execution_sequence??0)||Number(a.record_index??0)-Number(b.record_index??0));\nconst rawCursor=Number(query.cursor??0),cursor=Number.isInteger(rawCursor)&&rawCursor>=0?rawCursor:0,rawLimit=Number(query.limit??DEFAULT_LIMIT),limit=Number.isInteger(rawLimit)&&rawLimit>=1&&rawLimit<=MAX_LIMIT?rawLimit:DEFAULT_LIMIT;\nif(rawCursor!==cursor)findings.push({code:'BASELINE_QUERY_CURSOR_INVALID',severity:'error'});if(rawLimit!==limit&&query.limit!==undefined)findings.push({code:'BASELINE_QUERY_LIMIT_INVALID',severity:'error',max:MAX_LIMIT});\nconst page=summaryOnly?[]:matched.slice(cursor,cursor+limit),next=summaryOnly||cursor+limit>=matched.length?null:cursor+limit,truncated=summaryOnly?false:next!==null;\nconst counts=matched.reduce((a,r)=>(a[clean(r.keyword).toUpperCase()]=(a[clean(r.keyword).toUpperCase()]||0)+1,a),{}),variants=matched.reduce((a,r)=>{const key=`${clean(r.keyword).toUpperCase()}::${clean(r.variant)||'default'}`;a[key]=(a[key]||0)+1;return a},{});\nconst fieldNames={};for(const r of matched){const kw=clean(r.keyword).toUpperCase();fieldNames[kw]=[...new Set([...(fieldNames[kw]||[]),...Object.keys(obj(r.fields)?r.fields:{})])].sort()}\nconst dated=matched.map(r=>parseDate(r.effective_at)).filter(Boolean),dateRange=dated.length?{from:new Date(Math.min(...dated.map(d=>d.epoch))).toISOString().slice(0,10),to:new Date(Math.max(...dated.map(d=>d.epoch))).toISOString().slice(0,10)}:null;\nconst sampleLimit=Math.min(100,Math.max(0,Number(query.sample_limit??25)||0)),samples=[];if(summaryOnly&&sampleLimit){const perKeyword=new Map();for(const r of matched){const kw=clean(r.keyword).toUpperCase(),n=perKeyword.get(kw)||0;if(n>=5)continue;samples.push(r);perKeyword.set(kw,n+1);if(samples.length>=sampleLimit)break}}\nconst queryBody={purpose,phase,keywords:[...keywords].sort(),source_node_ids:[...nodeIds].sort(),file_refs:[...files].sort(),entity_values:[...entityValues].sort(),field_filters:fieldFilters,effective_from:from?.iso||null,effective_to:to?.iso||null,cursor,limit,summary_only:summaryOnly,require_complete:requireComplete,decoded_hash:decoded.decoded_hash},queryHash=hash(JSON.stringify(queryBody));\nconst hard=findings.filter(f=>f.severity==='error');if(!hard.length&&requireComplete&&!summaryOnly&&truncated)findings.push({code:'BASELINE_QUERY_REFINEMENT_REQUIRED',severity:'error',matches:matched.length,returned:page.length,limit,next_cursor:next});\nconst errors=findings.filter(f=>f.severity==='error'),status=errors.length?'needs_input':truncated?'partial':'succeeded';\nreturn[{json:{contract:'baseline_inventory_query_result',contract_version:'1.0',status,purpose,phase,query_hash:queryHash,decoded_hash:decoded.decoded_hash||null,baseline_package_hash:decoded.baseline_package_hash||null,catalogue_hash:decoded.catalogue_hash||null,total_source_records:source.length,total_matches:matched.length,cursor,limit,next_cursor:next,truncated,records:errors.length?[]:page,samples:errors.length?[]:samples,summary:{keyword_counts:counts,variant_counts:variants,field_names:fieldNames,effective_range:dateRange},findings,hard_blockers:[...new Set(errors.map(f=>f.code))]}}];"
-      },
-      "id": "309dd61a-fef1-5c8d-9e40-697d1dccfddd",
-      "name": "Query targeted baseline records",
-      "type": "n8n-nodes-base.code",
-      "typeVersion": 2,
-      "position": [
-        7000,
-        0
-      ]
-    },
-    {
-      "parameters": {
-        "conditions": {
-          "options": {
-            "caseSensitive": true,
-            "leftValue": "",
-            "typeValidation": "strict",
-            "version": 2
-          },
-          "conditions": [
-            {
-              "id": "e8712e5f-2b4c-5125-9712-da2b0e8825f3",
-              "leftValue": "={{ $json.status }}",
-              "rightValue": "succeeded",
-              "operator": {
-                "type": "string",
-                "operation": "equals"
-              }
-            }
-          ],
-          "combinator": "and"
-        },
-        "options": {}
-      },
-      "id": "2d64110b-63fd-5d76-9d70-68c039976966",
-      "name": "Targeted baseline context complete?",
-      "type": "n8n-nodes-base.if",
-      "typeVersion": 2.2,
-      "position": [
-        7280,
-        0
-      ]
-    },
-    {
-      "parameters": {
-        "jsCode": "const capabilityToken=v=>String(v==null?'':v).trim().toLowerCase().replace(/-/g,'_');\nconst COMMISSIONING_CAPABILITIES=new Set(['commissioning_date_retarget','shift_commissioning_dates','commissioning_revise','timeline_revise']);\nconst GROUP_REBIND_CAPABILITIES=new Set(['group_membership_rebind','group_rebind']);\nconst collectCapabilityTokens=(req,intake)=>{\n  const r=req&&typeof req==='object'&&!Array.isArray(req)?req:{};\n  const inn=intake&&typeof intake==='object'&&!Array.isArray(intake)?intake:{};\n  const changeR=(r.requested_change_scope&&typeof r.requested_change_scope==='object'&&!Array.isArray(r.requested_change_scope))?r.requested_change_scope:{};\n  const changeI=(inn.requested_change_scope&&typeof inn.requested_change_scope==='object'&&!Array.isArray(inn.requested_change_scope))?inn.requested_change_scope:{};\n  const change={...changeI,...changeR};\n  const bag=[\n    ...(Array.isArray(r.requested_capability_scope)?r.requested_capability_scope:[]),\n    ...(Array.isArray(inn.requested_capability_scope)?inn.requested_capability_scope:[]),\n    ...(Array.isArray(change.requested_capability_scope)?change.requested_capability_scope:[]),\n    r.capability_id,inn.capability_id,change.capability_id,change.intent,change.kind,change.operation,change.capability,\n  ];\n  return [...new Set(bag.map(capabilityToken).filter(Boolean))];\n};\nconst wantsCommissioningCapability=tokens=>(Array.isArray(tokens)?tokens:[]).some(t=>COMMISSIONING_CAPABILITIES.has(capabilityToken(t)));\nconst wantsGroupRebindCapability=tokens=>(Array.isArray(tokens)?tokens:[]).some(t=>GROUP_REBIND_CAPABILITIES.has(capabilityToken(t)));\nconst readGroupRebindSpec=req=>{\n  const r=req&&typeof req==='object'&&!Array.isArray(req)?req:{};\n  const change=(r.requested_change_scope&&typeof r.requested_change_scope==='object'&&!Array.isArray(r.requested_change_scope))?r.requested_change_scope:{};\n  const spec=(r.group_rebind&&typeof r.group_rebind==='object'&&!Array.isArray(r.group_rebind))?r.group_rebind\n    :((change.group_rebind&&typeof change.group_rebind==='object'&&!Array.isArray(change.group_rebind))?change.group_rebind\n    :((change.spec&&typeof change.spec==='object'&&!Array.isArray(change.spec))?change.spec\n    :((change.wells||change.parent_group||change.parent)?change:null)));\n  if(!spec||typeof spec!=='object'||Array.isArray(spec))return {ok:false,missing:['wells','parent_group','parent_of_parent','well_groups','rate','control'],spec:null};\n  const wells=(Array.isArray(spec.wells)?spec.wells:[]).map(v=>String(v==null?'':v).trim()).filter(Boolean);\n  const parent=String(spec.parent_group||spec.parent||'').trim().toUpperCase();\n  const parentOfParent=String(spec.parent_of_parent||'').trim().toUpperCase();\n  const rate=Number(spec.rate??spec.gas_rate);\n  const wellGroups=(spec.well_groups&&typeof spec.well_groups==='object'&&!Array.isArray(spec.well_groups))?spec.well_groups\n    :((spec.well_group_map&&typeof spec.well_group_map==='object'&&!Array.isArray(spec.well_group_map))?spec.well_group_map:null);\n  const control=String(spec.control||'').trim().toUpperCase();\n  const missing=[];\n  if(!wells.length)missing.push('wells');\n  if(!parent)missing.push('parent_group');\n  if(!parentOfParent)missing.push('parent_of_parent');\n  if(!Number.isFinite(rate)||rate<=0)missing.push('rate');\n  if(!control)missing.push('control');\n  if(!wellGroups)missing.push('well_groups');\n  else{\n    const lookup=(map,well)=>{\n      if(map[well]!=null&&String(map[well]).trim())return String(map[well]).trim();\n      const n=Number(well);\n      if(Number.isFinite(n)&&map[n]!=null&&String(map[n]).trim())return String(map[n]).trim();\n      return '';\n    };\n    if(wells.some(w=>!lookup(wellGroups,w)))missing.push('well_groups');\n  }\n  if(missing.length)return {ok:false,missing:[...new Set(missing)],spec:null};\n  const groups={};\n  for(const w of wells){\n    groups[w]=String(wellGroups[w]!=null?wellGroups[w]:wellGroups[Number(w)]).trim();\n  }\n  return {ok:true,missing:[],spec:{\n    wells,\n    parent_group:parent,\n    parent_of_parent:parentOfParent,\n    well_groups:groups,\n    rate,\n    gas_rate:rate,\n    control,\n    effective_at:spec.effective_at||null,\n  }};\n};\nconst exclusiveScheduleCaps=(tokens,change,groupSpecOk)=>{\n  const list=(Array.isArray(tokens)?tokens:[]).map(capabilityToken).filter(Boolean);\n  const scope=change&&typeof change==='object'&&!Array.isArray(change)?change:{};\n  const primary=capabilityToken(scope.capability_id||scope.intent||'');\n  const groupWanted=GROUP_REBIND_CAPABILITIES.has(primary)||list.some(t=>GROUP_REBIND_CAPABILITIES.has(t));\n  const commissioningWanted=COMMISSIONING_CAPABILITIES.has(primary)||list.some(t=>COMMISSIONING_CAPABILITIES.has(t));\n  if(groupWanted&&groupSpecOk) return {wantsGroupRebind:true,wantsCommissioning:false,primary:'group_rebind'};\n  if(groupWanted&&!commissioningWanted) return {wantsGroupRebind:true,wantsCommissioning:false,primary:'group_rebind'};\n  if(groupWanted&&commissioningWanted){\n    if(GROUP_REBIND_CAPABILITIES.has(primary)||groupSpecOk) return {wantsGroupRebind:true,wantsCommissioning:false,primary:'group_rebind'};\n    if(COMMISSIONING_CAPABILITIES.has(primary)) return {wantsGroupRebind:false,wantsCommissioning:true,primary:'commissioning'};\n    return {wantsGroupRebind:true,wantsCommissioning:false,primary:'group_rebind'};\n  }\n  if(commissioningWanted) return {wantsGroupRebind:false,wantsCommissioning:true,primary:'commissioning'};\n  return {wantsGroupRebind:false,wantsCommissioning:false,primary:''};\n};\nconst mergeObservedScheduleRequest=(req,intake)=>{\n  const r=req&&typeof req==='object'&&!Array.isArray(req)?req:{};\n  const inn=intake&&typeof intake==='object'&&!Array.isArray(intake)?intake:{};\n  const changeI=(inn.requested_change_scope&&typeof inn.requested_change_scope==='object'&&!Array.isArray(inn.requested_change_scope))?inn.requested_change_scope:{};\n  const changeR=(r.requested_change_scope&&typeof r.requested_change_scope==='object'&&!Array.isArray(r.requested_change_scope))?r.requested_change_scope:{};\n  let change={...changeI,...changeR};\n  if(!(Array.isArray(change.wells)&&change.wells.length)&&Array.isArray(changeI.wells)&&changeI.wells.length) change.wells=changeI.wells;\n  if(!change.group_rebind&&changeI.group_rebind) change.group_rebind=changeI.group_rebind;\n  const intakePrimary=capabilityToken(changeI.capability_id||changeI.intent||inn.capability_id||'');\n  if(GROUP_REBIND_CAPABILITIES.has(intakePrimary)){\n    change={\n      ...change,\n      capability_id:changeI.capability_id||'group_membership_rebind',\n      intent:changeI.intent||'group_membership_rebind',\n      wells:(Array.isArray(changeI.wells)&&changeI.wells.length)?changeI.wells:change.wells,\n      parent_group:changeI.parent_group||change.parent_group,\n      parent_of_parent:changeI.parent_of_parent||change.parent_of_parent,\n      well_groups:changeI.well_groups||change.well_groups,\n      rate:changeI.rate??change.rate,\n      gas_rate:changeI.gas_rate??change.gas_rate,\n      control:changeI.control||change.control,\n      group_rebind:changeI.group_rebind||change.group_rebind,\n    };\n  }else if(COMMISSIONING_CAPABILITIES.has(intakePrimary)){\n    change={...change,capability_id:changeI.capability_id||'commissioning_date_retarget',intent:changeI.intent||'shift_commissioning_dates'};\n    if(change.group_rebind) delete change.group_rebind;\n  }\n  let caps=[...new Set([\n    ...(Array.isArray(inn.requested_capability_scope)?inn.requested_capability_scope:[]),\n    ...(Array.isArray(r.requested_capability_scope)?r.requested_capability_scope:[]),\n    change.capability_id,r.capability_id,inn.capability_id,\n  ].map(capabilityToken).filter(Boolean))];\n  const groupOk=readGroupRebindSpec({requested_change_scope:change,group_rebind:change.group_rebind}).ok;\n  const exclusive=exclusiveScheduleCaps(caps,change,groupOk);\n  if(exclusive.wantsGroupRebind&&!exclusive.wantsCommissioning){\n    caps=caps.filter(t=>!COMMISSIONING_CAPABILITIES.has(t));\n    if(!caps.some(t=>GROUP_REBIND_CAPABILITIES.has(t))) caps.push('group_membership_rebind');\n    change.capability_id=GROUP_REBIND_CAPABILITIES.has(capabilityToken(change.capability_id))?change.capability_id:'group_membership_rebind';\n    change.intent=GROUP_REBIND_CAPABILITIES.has(capabilityToken(change.intent))?change.intent:'group_membership_rebind';\n  }else if(exclusive.wantsCommissioning){\n    caps=caps.filter(t=>!GROUP_REBIND_CAPABILITIES.has(t));\n    if(!caps.some(t=>COMMISSIONING_CAPABILITIES.has(t))) caps.push('commissioning_date_retarget');\n    if(change.group_rebind) delete change.group_rebind;\n  }\n  const capability_id=exclusive.wantsGroupRebind\n    ?(GROUP_REBIND_CAPABILITIES.has(capabilityToken(change.capability_id))?change.capability_id:'group_membership_rebind')\n    :(exclusive.wantsCommissioning\n      ?(COMMISSIONING_CAPABILITIES.has(capabilityToken(change.capability_id||r.capability_id||inn.capability_id))? (change.capability_id||r.capability_id||inn.capability_id):'commissioning_date_retarget')\n      :(r.capability_id||inn.capability_id||change.capability_id||null));\n  return {\n    ...r,\n    requested_change_scope:Object.keys(change).length?change:r.requested_change_scope,\n    requested_capability_scope:caps.length?caps:(r.requested_capability_scope||inn.requested_capability_scope||[]),\n    capability_id,\n  };\n};\nconst pickWellDateFact=f=>{\n  const row=f&&typeof f==='object'&&!Array.isArray(f)?f:{};\n  const values=(row.values&&typeof row.values==='object'&&!Array.isArray(row.values))?row.values:((row.row&&typeof row.row==='object'&&!Array.isArray(row.row))?row.row:{});\n  const well=String(row.well||row.entity||row.entity_id||values['Скважина']||values.скважина||values.WELL||values.well||'').trim();\n  const coerce=v=>{\n    if(v==null||v==='') return null;\n    if(v instanceof Date&&!Number.isNaN(v.getTime())) return v.toISOString().slice(0,10);\n    if(typeof v==='object'&&!Array.isArray(v)){\n      if(Number.isFinite(Number(v.year))&&Number.isFinite(Number(v.month))&&Number.isFinite(Number(v.day))){\n        const y=String(Number(v.year)).padStart(4,'0'),m=String(Number(v.month)).padStart(2,'0'),d=String(Number(v.day)).padStart(2,'0');\n        return `${y}-${m}-${d}`;\n      }\n      if(v.value!=null&&v.value!==v) return coerce(v.value);\n      if(v.iso) return coerce(v.iso);\n      if(v.tnav) return coerce(v.tnav);\n    }\n    const s=String(v).trim();\n    return s===''?null:s;\n  };\n  let date=coerce(row.value??row.raw_value??values['Дата ввода']??values['дата ввода']??values.date??values.Date??values.commissioning_date??null);\n  let field=String(row.field||row.column||'').trim();\n  if(!date){\n    const hit=Object.keys(values).find(k=>/дата|date|commission|ввод/i.test(String(k||'')));\n    if(hit!=null){date=coerce(values[hit]);field=field||String(hit);}\n  }\n  if(!date){\n    const others=Object.keys(values).filter(k=>!/скважин|well|групп|group|факт|id$/i.test(String(k||'')));\n    if(others.length===1){date=coerce(values[others[0]]);field=field||String(others[0]);}\n  }\n  if(!field&&date) field='Дата ввода';\n  return {well,date,field,values,fact_id:row.fact_id||null};\n};\nconst root=$('Normalize SCHEDULE pipeline packet').first().json;\nconst intake=$('Run deterministic SCHEDULE intake').first().json;\nconst plan=$('Validate SCHEDULE pipeline plan').first().json;\nlet baseline=null;try{baseline=$('Analyze lossless baseline inventory').first().json}catch{}\nlet decoded=null;try{decoded=$('Decode typed baseline records').first().json}catch{}\nlet replay=null;try{replay=$('Replay baseline prefix into semantic boundary').first().json}catch{}\nlet baselineQuery=null;try{baselineQuery=$('Query targeted baseline records').first().json}catch{}\nconst req=root.request;const obj=v=>v&&typeof v==='object'&&!Array.isArray(v),arr=Array.isArray,clean=v=>typeof v==='string'?v.trim():'';\nconst slimFacts=packet=>{if(!obj(packet))return packet;const pick=(row,keys)=>{if(!obj(row))return null;for(const k of keys){if(row[k]!==undefined&&row[k]!==null&&String(row[k]).trim()!=='')return row[k]}return null};const facts=arr(packet.facts)?packet.facts.slice(0,200).map(f=>{const values=obj(f.values)?f.values:(obj(f.row)?f.row:null);const well=f.well||f.entity_id||f.object_id||pick(values,['Скважина','скважина','WELL','Well','well','WellName'])||null;const value=f.value??f.raw_value??pick(values,['Дата ввода','дата ввода','Date','date','commissioning_date','value'])??null;const field=f.field||f.column||(value!==null?'Дата ввода':null);return {fact_id:f.fact_id||f.id||null,well,field,value,unit:f.unit||null,sheet:f.sheet||null,values:values||undefined}}):[];return {contract:packet.contract||null,contract_version:packet.contract_version||null,source_snapshot_hash:packet.source_snapshot_hash||null,correlation_id:packet.correlation_id||null,fact_count:facts.length||Number(packet.fact_count)||0,facts,conflicts:arr(packet.conflicts)?packet.conflicts.slice(0,20):[],columns:arr(packet.columns)?packet.columns.slice(0,50):undefined}};\nconst slimRag=rag=>{if(!obj(rag))return rag;const catalogue=obj(rag.schema_catalogue)?{contract:rag.schema_catalogue.contract||'schedule_schema_catalogue',contract_version:rag.schema_catalogue.contract_version||'1.0',catalogue_ref:rag.schema_catalogue.catalogue_ref||null,catalogue_hash:rag.schema_catalogue.catalogue_hash||null,source_hash:rag.schema_catalogue.source_hash||null,approved:rag.schema_catalogue.approved===true,approved_by:rag.schema_catalogue.approved_by||rag.schema_catalogue.author||null,author:rag.schema_catalogue.author||null,simulator_profile:obj(rag.schema_catalogue.simulator_profile)?rag.schema_catalogue.simulator_profile:{vendor:'Rock Flow Dynamics',simulator:'tNavigator',version:'22.2'},schemas:(arr(rag.schema_catalogue.schemas)?rag.schema_catalogue.schemas:[]).slice(0,40).map(s=>({keyword:s.keyword,variant:s.variant||'default',schema_id:s.schema_id||null,schema_revision:s.schema_revision||null,citation:obj(s.citation)?s.citation:null,semantics:obj(s.semantics)?s.semantics:null,layout:obj(s.layout)?s.layout:null,fields:(arr(s.fields)?s.fields:[]).slice(0,40)}))}:null;const results=(arr(rag.results)?rag.results:[]).slice(0,12).map(r=>{const meta=obj(r.metadata)?r.metadata:{};return {knowledge_id:r.knowledge_id||meta.knowledge_id||null,knowledge_type:r.knowledge_type||meta.knowledge_type||null,title:r.title||meta.title||null,keywords:r.keywords||meta.keyword_families||meta.keywords||[],score:r.score??r.rrf_score??null,snippet:clean(r.page_content||r.text||r.content||'').slice(0,600)}});return {contract:rag.contract,citations:(arr(rag.citations)?rag.citations:[]).slice(0,30),results,schema_catalogue:catalogue,findings:(arr(rag.findings)?rag.findings:[]).slice(0,20)}};\nconst slimInventory=inv=>{if(!obj(inv))return null;const files=(arr(inv.files)?inv.files:[]).slice(0,50).map(f=>{const nodes=arr(f.nodes)?f.nodes:[];const keyword_counts={};for(const n of nodes){const kw=clean(n.keyword).toUpperCase();if(kw)keyword_counts[kw]=(keyword_counts[kw]||0)+1}return {file_ref:f.file_ref||f.path||null,byte_length:f.manifest?.byte_length||f.byte_length||null,node_count:nodes.length,keyword_counts}});return {root_path:inv.root_path||null,package_hash:inv.package_hash||null,keyword_inventory:inv.keyword_inventory||null,files}};\nconst compactBaseline=baseline&&typeof baseline==='object'?{contract:baseline.contract,status:baseline.status,package_hash:baseline.package?.package_hash||null,compact_inventory:slimInventory(baseline.compact_inventory),keyword_inventory:baseline.keyword_inventory||{},findings:(arr(baseline.findings)?baseline.findings:[]).slice(0,20),preservation_token:baseline.preservation_token||null}:null;\nconst decodedInventory=baselineQuery&&typeof baselineQuery==='object'?{contract:baselineQuery.contract,status:baselineQuery.status,summary:baselineQuery.summary||{},records:(arr(baselineQuery.records)?baselineQuery.records:[]).slice(0,200),total_matches:baselineQuery.total_matches||0,findings:(arr(baselineQuery.findings)?baselineQuery.findings:[]).slice(0,20)}:null;\nconst semanticBoundary=replay&&replay.semantic_state_snapshot?{snapshot_kind:replay.semantic_state_snapshot.snapshot_kind,replay_through:replay.semantic_state_snapshot.replay_through,change_effective_from:replay.semantic_state_snapshot.change_effective_from,boundary_hash:replay.semantic_state_snapshot.boundary_hash,entity_count:Array.isArray(replay.semantic_state_snapshot.entities)?replay.semantic_state_snapshot.entities.length:(replay.semantic_replay?.entities||0)}:null;\nconst humanInstruction=clean(req.human_instruction)||clean(root.packet?.inputs?.human_instruction)||clean(req.hitl_reply_text)||(obj(root.latest_human_response)?clean(root.latest_human_response.text||root.latest_human_response.human_response||''):'');\nconst intakeChange=obj(intake.requested_change_scope)?intake.requested_change_scope:{};\nconst reqChange=obj(req.requested_change_scope)?req.requested_change_scope:{};\nconst merged=mergeObservedScheduleRequest(req,intake);\nconst mergedChange=obj(merged.requested_change_scope)?merged.requested_change_scope:{...intakeChange,...reqChange};\nif(!(arr(mergedChange.wells)&&mergedChange.wells.length)&&arr(intakeChange.wells)&&intakeChange.wells.length) mergedChange.wells=intakeChange.wells;\nif(!mergedChange.group_rebind&&intakeChange.group_rebind) mergedChange.group_rebind=intakeChange.group_rebind;\nconst mergedCaps=arr(merged.requested_capability_scope)?merged.requested_capability_scope:[...new Set([...(arr(intake.requested_capability_scope)?intake.requested_capability_scope:[]),...(arr(req.requested_capability_scope)?req.requested_capability_scope:[])].map(clean).filter(Boolean))];\nconst scheduleMeta={build_mode:req.build_mode||intake.build_mode,root_path:req.root_path||null,requested_keyword_scope:(arr(intake.requested_keyword_scope)&&intake.requested_keyword_scope.length)?intake.requested_keyword_scope:(req.requested_keyword_scope||[]),requested_capability_scope:mergedCaps.length?mergedCaps:(req.requested_capability_scope||intake.requested_capability_scope||[]),capability_id:merged.capability_id||req.capability_id||intake.capability_id||mergedChange.capability_id||null,requested_change_scope:Object.keys(mergedChange).length?mergedChange:{},change_effective_from:req.change_effective_from||null,preservation_policy:req.preservation_policy||'preserve_unmentioned',simulator_profile:req.simulator_profile||intake.simulator_profile||{},human_instruction:humanInstruction||null};\nconst payload={schedule_request:scheduleMeta,intake_result:{objective:intake.objective,build_mode:intake.build_mode,requested_keyword_scope:intake.requested_keyword_scope,requested_capability_scope:intake.requested_capability_scope,simulator_profile:intake.simulator_profile},approved_plan:{status:plan.status,build_mode:plan.build_mode,keyword_scope:plan.keyword_scope,stages:plan.stages,preservation_policy:plan.preservation_policy,rationale:plan.rationale},baseline_analysis:compactBaseline,decoded_baseline_inventory:decodedInventory,semantic_boundary:semanticBoundary,source_facts_packet:slimFacts(req.source_facts_packet),rag_evidence:slimRag(req.rag_evidence),human_instruction:humanInstruction||null,latest_human_response:obj(root.latest_human_response)?root.latest_human_response:null,instruction:'Match wells ONLY by SCHEDULE name (source_facts_packet.facts[].well / values.Скважина). Do not empty ir_events to force a special path. Deterministic commissioning timeline runs only when capability is commissioning_date_retarget|shift_commissioning_dates|commissioning_revise|timeline_revise AND well/date facts exist. Deterministic group rebind runs only when capability is group_membership_rebind|group_rebind AND a complete structured spec is present (wells, parent_group, parent_of_parent, well_groups, gas_rate/rate, control). Never infer DKS, FIELD, G{well}, or GRAT from prose. Otherwise emit typed IR. Human HITL answers are authoritative.'+(humanInstruction?` Human correction (authoritative): ${humanInstruction}`:'')};\nreturn[{json:{builder_context:payload,builder_input:JSON.stringify(payload)}}];"
-      },
-      "id": "03b1576b-67bf-54f0-9ce4-297ef35b3343",
-      "name": "Prepare SCHEDULE builder stage",
-      "type": "n8n-nodes-base.code",
-      "typeVersion": 2,
-      "position": [
-        7560,
-        0
-      ]
-    },
-    {
-      "parameters": {
-        "promptType": "define",
-        "text": "={{ $json.builder_input }}",
-        "hasOutputParser": true,
-        "needsFallback": false,
-        "options": {

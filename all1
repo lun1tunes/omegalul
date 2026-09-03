@@ -107,7 +107,7 @@ mas-activity-service/activity.log
 simulation-model-example/
 
 ===END_FILE===
-===BEGIN_FILE===	README.md	1516	utf8
+===BEGIN_FILE===	README.md	1526	utf8
 # Petroleum Engineering MAS
 
 **Единственный полевой runbook:** [`docs.md`](docs.md) — пошаговое развёртывание (Windows-сервисы → UI n8n → bindings → Health → activate).
@@ -116,8 +116,8 @@ simulation-model-example/
 
 | Слой (работа) | Как |
 |---|---|
-| **n8n 2.30.8** | Только UI: Import from File по `runtime_import_order` (8 core JSON). Data Tables для стейта кейсов **не** создаём. |
-| **Excel `:8000` / Schedule `:8090` / Math `:8100` / Activity `:8200`** | Windows CMD: `setup-windows.bat` → `start-windows.bat`. Schedule Builder нужен **Node.js**. |
+| **n8n 2.30.8** | Только UI: Import from File по `runtime_import_order` (9 core JSON). Data Tables для стейта кейсов **не** создаём. |
+| **Excel `:8000` / Schedule `:8090` / Math `:8100` / Activity `:8200`** | Windows CMD: `setup-windows.bat` → `start-windows.bat`. Только Python `.venv`, без Docker и без Node. |
 | **Lab soft-redeploy** | `python3 scripts/lab_soft_redeploy.py` (см. `docs.md` §5–§6) |
 
 Машинный контракт имён: [`n8n/import-manifest.json`](n8n/import-manifest.json) (`runtime_import_order` = поле; `full_clean_import_set` = lab + support). Compose / REST-импорт — только лаборатория (§5 в `docs.md`).
@@ -134,7 +134,7 @@ python3 scripts/test_project_pack.py
 ```
 
 ===END_FILE===
-===BEGIN_FILE===	docker-compose.yml	8408	utf8
+===BEGIN_FILE===	docker-compose.yml	8242	utf8
 services:
   excel-tools:
     image: python:3.11-slim
@@ -175,14 +175,12 @@ services:
   schedule-builder:
     image: python:3.11-slim
     command: >
-      sh -c "apt-get update -qq && apt-get install -y -qq --no-install-recommends nodejs >/dev/null && pip install -r requirements.txt && python3 -m uvicorn app.main:app --host 0.0.0.0 --port 8090"
+      sh -c "pip install -r requirements.txt && python3 -m uvicorn app.main:app --host 0.0.0.0 --port 8090"
     working_dir: /app
     volumes:
       - ./schedule-builder-service:/app
-      - ./n8n/templates:/templates:ro
     environment:
       - ACTIVITY_BASE_URL=${ACTIVITY_BASE_URL:-http://mas-activity:8200}
-      - SCHEDULE_TEMPLATES=/templates
     extra_hosts:
       - host.docker.internal:host-gateway
     ports:
@@ -366,7 +364,7 @@ networks:
   ingress: null
 
 ===END_FILE===
-===BEGIN_FILE===	docs.md	24667	utf8
+===BEGIN_FILE===	docs.md	25927	utf8
 # Руководство по развёртыванию NOVATEK RE MASter (n8n 2.30.8)
 
 Единственный полевой runbook: что запустить на Windows, что импортировать в корпоративный n8n, в каком порядке настраивать и как проверить.
@@ -471,6 +469,7 @@ Calculation — **не** отдельный n8n-агент: оркестрато
 | `Form — MAS Deployment Health Check` | `/form/mas-deployment-health-check` | **форма**, нужна сессия n8n |
 | `Agent — Excel Extractor` | нет | только `executeWorkflow` |
 | `Agent — Schedule Builder` | нет | только `executeWorkflow` |
+| `MAS — Runtime Config` | нет | только `executeWorkflow` (URL loader) |
 | `MAS — Knowledge Retrieval` | нет | только `executeWorkflow` |
 | `Error — MAS Node Traces` | Error Trigger | Settings → Error workflow |
 
@@ -485,7 +484,7 @@ Calculation — **не** отдельный n8n-агент: оркестрато
 | Браузер инженера | Activity `http://127.0.0.1:8200` (или IP ПК) | `http://127.0.0.1:8200` |
 | Postgres | только n8n credential (DBA) | `127.0.0.1:15432` с lab-хоста; Windows-сервисы **не** ходят в БД |
 
-В Runtime configuration полевого n8n **не** оставляйте `http://excel-tools:8000` — это имя видно только внутри Compose.
+В Runtime URLs полевого n8n **не** оставляйте `http://excel-tools:8000` — это имя видно только внутри Compose. Правьте один workflow `MAS — Runtime Config`.
 
 ---
 
@@ -528,9 +527,7 @@ notepad schedule-builder.env
 start-windows.bat
 ```
 
-Нужен **Node.js в PATH**: commissioning и group-rebind эмитят тем же timeline JS (`n8n/templates/schedule_timeline_runtime.py`), что и golden/combat. Без `node` `/health` может быть зелёным, а REVISE дат — нет.
-
-`ACTIVITY_BASE_URL=http://127.0.0.1:8200` (или `http://<IP-этого-ПК>:8200`, если Activity слушает `0.0.0.0`). Проверка: `check-windows.bat`.
+`ACTIVITY_BASE_URL=http://127.0.0.1:8200` (или `http://<IP-этого-ПК>:8200`, если Activity слушает `0.0.0.0`). Только Python `.venv` — Node.js на Windows не нужен. Проверка: `check-windows.bat`.
 
 **3. Math Service (`:8100`)**
 
@@ -569,7 +566,7 @@ start-windows.bat
 
 Проверка: `check-windows.bat` → `/health` и `/ready`. Если `/ready` = 503, в JSON видно, какой webhook не отвечает. `/health` должен содержать `"control_plane_backend": "n8n_proxy"`.
 
-В нодах n8n **Activity connection** / `activity_base_url` поставьте `http://<IP-Windows>:8200`.
+В нодах n8n URL Activity / Excel / Schedule / Math задаются **один раз** в `MAS — Runtime Config` (`http://<IP-Windows>:8200` и соседние порты).
 
 ### Шаг 1. Импорт workflows
 
@@ -577,12 +574,13 @@ n8n → Import from File. Порядок — `n8n/import-manifest.json` → `run
 
 1. `n8n/workflows/core/tnavigator-schedule-knowledge-ingestion.workflow.json` — `MAS — Knowledge Ingestion`
 2. `n8n/workflows/core/tnavigator-schedule-hybrid-retrieval.workflow.json` — `MAS — Knowledge Retrieval`
-3. `n8n/workflows/core/schedule-builder-agent.workflow.json` — `Agent — Schedule Builder`
-4. `n8n/workflows/core/excel-extractor-agent.workflow.json` — `Agent — Excel Extractor`
-5. `n8n/workflows/core/mas-error-traces.workflow.json` — `Error — MAS Node Traces`
-6. `n8n/workflows/core/mas-control-plane-proxy.workflow.json` — `MAS — Control Plane Proxy`
-7. `n8n/workflows/core/mas-orchestrator.workflow.json` — `Orchestrator — MAS`
-8. `n8n/workflows/core/mas-deployment-health-check.workflow.json` — `Form — MAS Deployment Health Check`
+3. `n8n/workflows/core/mas-runtime-config.workflow.json` — `MAS — Runtime Config` (один Set URL)
+4. `n8n/workflows/core/schedule-builder-agent.workflow.json` — `Agent — Schedule Builder`
+5. `n8n/workflows/core/excel-extractor-agent.workflow.json` — `Agent — Excel Extractor`
+6. `n8n/workflows/core/mas-error-traces.workflow.json` — `Error — MAS Node Traces`
+7. `n8n/workflows/core/mas-control-plane-proxy.workflow.json` — `MAS — Control Plane Proxy`
+8. `n8n/workflows/core/mas-orchestrator.workflow.json` — `Orchestrator — MAS`
+9. `n8n/workflows/core/mas-deployment-health-check.workflow.json` — `Form — MAS Deployment Health Check`
 
 Не импортировать `n8n/workflows/retired/` и не настраивать CAS / Trace Writer / Entry / Human Gate / Activity Hydrate / Orchestrator — Engineering MAS.
 
@@ -602,18 +600,22 @@ n8n → Import from File. Порядок — `n8n/import-manifest.json` → `run
 | Knowledge Ingestion / Retrieval → embeddings | тот же embedding credential, модель `text-embedding-3-small`, поле **Dimensions пустое** |
 | Knowledge Ingestion / Retrieval / Orchestrator / Control Plane Proxy | Postgres credential |
 | Orchestrator webhook и Control Plane Proxy webhook | Header Auth (одно и то же имя/значение, что в `mas-activity.env`) |
-| Excel Extractor → Runtime configuration | `excel_tools_url=http://<IP-Windows>:8000` (**без** `/api/v1`; ноды бьют в `/agent-tools/…`), `excel_tools_api_key` = `API_KEY` из `excel-tools.env`, `activity_base_url=http://<IP-Windows>:8200` |
-| Schedule Builder → Runtime configuration | `schedule_service_url=http://<IP-Windows>:8090`, `activity_base_url=http://<IP-Windows>:8200` |
-| Orchestrator → Calculation | `http://<IP-Windows>:8100/agent/run` |
+| Agent — Excel Extractor → HTTP / toolHttpRequest | **отдельный** Header Auth: header name `X-API-Key`, value = `API_KEY` из `excel-tools.env`. Имя credential в UI: `Excel Tools X-API-Key`. |
+| `MAS — Runtime Config` → Runtime URLs | `activity_base_url=http://<IP-Windows>:8200`, `excel_tools_url=http://<IP-Windows>:8000` (**без** `/api/v1`), `schedule_service_url=http://<IP-Windows>:8090`, `math_url=http://<IP-Windows>:8100` (без `/agent/run`) |
+| Orchestrator / Excel / Schedule → Execute Workflow | `Runtime endpoints` / `Runtime configuration` → `MAS — Runtime Config` |
+| Orchestrator → Calculation | берёт `math_url` + `/agent/run` |
 
 В JSON не должно остаться `REPLACE_IN_UI` (кроме support-заглушек, которые не импортируете в runtime).
 
-Header Auth — это **не** ключ Excel. Excel идёт заголовком `X-API-Key` из Runtime configuration.
+Header Auth webhook (Authorization) — это **не** ключ Excel. Ключ Excel — отдельный Header Auth credential `X-API-Key` на нодах Agent — Excel Extractor, не поле Set.
 
 ### Шаг 3. Execute Workflow bindings (живые)
 
 | Workflow | Нода | Цель |
 |---|---|---|
+| `Orchestrator — MAS` | `Runtime endpoints` | `MAS — Runtime Config` |
+| `Agent — Excel Extractor` | `Runtime configuration` | `MAS — Runtime Config` |
+| `Agent — Schedule Builder` | `Runtime configuration` | `MAS — Runtime Config` |
 | `Orchestrator — MAS` | `Call Excel Extractor` | `Agent — Excel Extractor` |
 | `Orchestrator — MAS` | `Call Schedule Builder` | `Agent — Schedule Builder` |
 
@@ -639,9 +641,9 @@ Activity на старте вызывает только `schema` и **нико�
 
 Таблицы прокси: `cases`, `events`, `error_traces`, `executions`, `agent_registry`, `mas_artifacts`.
 
-Операции: `schema`, `wipe`, `create_case`, `get_case`, `list_cases`, `update_case`, `append_event`, `list_events`, `snapshot`, `append_error`, `list_errors`, `record_execution`, `case_id_for_execution`, `list_agents`, `upsert_agent`, `artifact_put`, `artifact_get`.
+Операции: `schema`, `wipe`, `create_case`, `get_case`, `list_cases`, `update_case`, `append_event`, `list_events`, `snapshot`, `append_error`, `list_errors`, `record_execution`, `case_id_for_execution`, `list_agents`, `upsert_agent`, `artifact_put`, `artifact_get`, `batch`.
 
-`snapshot` возвращает case + events одним SQL — так Activity читает ленту, чтобы не плодить n8n executions. Успешные production executions прокси **не сохраняются**; ошибки сохраняются. После смены прокси переимпортируйте workflow и перезапустите Activity.
+`snapshot` возвращает case + events одним SQL. Activity не дергает прокси каждые 2 с на каждую вкладку: один poller на открытый кейс, 2 с пока `running`, 6 с на HITL/done/failed, сразу просыпается на запись. Несколько single-row операций (`create_case`+`append_event`, `update_case`+`append_event`) идут как `batch` — Postgres в одном n8n execution последовательно. Успешные production executions прокси **не сохраняются** (`saveDataSuccessExecution=none`, `saveExecutionProgress=false`); ошибки сохраняются. После смены прокси переимпортируйте workflow и перезапустите Activity.
 
 ### Шаг 5. RAG (База знаний, не маршрутизация оркестратора)
 
@@ -673,7 +675,7 @@ RAG нужен для Activity → **База знаний** и для буду�
 ### Шаг 7. Работа инженера (HITL)
 
 1. Activity → новая задача, цель текстом, файлы (Excel / `.inc` / `.dev` / поверхность).
-2. Лента событий обновляется с прокси (`snapshot`). Пока открыт EventSource, отдельный частый poll не нужен.
+2. Лента событий обновляется с прокси (`snapshot`). Пока открыт EventSource, отдельный частый poll не нужен: один poller на кейс, 2 с в работе / сразу на запись.
 3. Статус `waiting_user` — ответить в панели HITL (вариант / текст). Не копировать `expected_version` / `gate_id` вручную.
 4. Результат — скачать `.INC` из карточки задачи.
 5. После правок UI Activity: hard-refresh. В query static есть `app.js?v=…`.
@@ -686,10 +688,11 @@ RAG нужен для Activity → **База знаний** и для буду�
 
 ### Режимы
 
-- **`CREATE`** — новый SCHEDULE с нуля.
+- **`CREATE`:** Создание нового файла SCHEDULE.
 - **`REVISE`** — менять только то, что сказано в задаче, остальное не трогать.
-- Excel читает только Excel Extractor. Schedule Builder получает уже извлечённые факты.
-- LLM не пишет `.INC` руками. Inspect / `apply_operations` — Python FastAPI. **Commissioning и group-rebind** эмитят через Node (`schedule_timeline_runtime.py`) — тот же алгоритм, что golden/combat. Остальной parse/apply/emit остаётся в сервисе.
+- Excel Extractor / n8n никогда не читает Excel-файлы напрямую: только HTTP к Excel Tools (`:8000`). Schedule Builder получает уже извлечённые факты (Handoff фактов), не xlsx.
+- Excel/Schedule агенты: `returnIntermediateSteps=true`.
+- LLM не пишет `.INC` руками. Parse / apply / emit, commissioning и group-rebind — Python FastAPI (`timeline_ops.py`). На Windows достаточно `.venv`. JS timeline в `n8n/templates/schedule_timeline_runtime.py` — только n8n smokes, не процесс сервиса.
 
 ### INCLUDE
 
@@ -734,13 +737,13 @@ RAG нужен для Activity → **База знаний** и для буду�
 | Knowledge Ingestion timeout | embeddings `batchSize=16`, `timeout=600` |
 | Activity «Загрузить в RAG» → 404 | Ingestion не Active, path `/webhook/mas-knowledge-ingest` |
 | `/webhook/mas-deployment-health-check` → 404 | это форма `/form/mas-deployment-health-check` |
-| Excel 401 | `excel_tools_api_key` ≠ `API_KEY` в `excel-tools.env`; сервис на **:8000** |
-| n8n не видит Excel/Schedule/Activity | firewall; сервисы слушают `0.0.0.0`; URL в Runtime configuration — IP Windows, не `excel-tools` |
+| Excel 401 | credential `Excel Tools X-API-Key` ≠ `API_KEY` в `excel-tools.env`; сервис на **:8000**; не путать с Header Auth webhook |
+| n8n не видит Excel/Schedule/Activity | firewall; сервисы слушают `0.0.0.0`; URL в **MAS — Runtime Config** — IP Windows, не `excel-tools` |
 | Пустая лента при живом n8n | прокси, операция `snapshot` после переимпорта Control Plane Proxy, Activity перезапущен |
 | Рейл «N turn» ≠ число пузырей в чате | переимпортировать Control Plane Proxy (`list_cases` отдаёт `events`); Activity считает свёрнутую ленту |
 | CORS в браузере | Activity CORSMiddleware; не сочетать `allow_credentials=True` с `"*"` |
 | `REPLACE_...` в экспорте JSON | не привязан credential или executeWorkflow |
-| n8n Executions забит прокси | переимпортируйте Control Plane Proxy: успешные прогоны не сохраняются |
+| n8n Executions забит прокси | переимпортируйте Control Plane Proxy (`saveDataSuccessExecution=none`); Activity 2.x не поллит snapshot с каждой вкладки — один poller / `batch` |
 | Qwen 503 | другой OpenAI-compatible credential на Chat Model |
 
 ---
@@ -758,7 +761,7 @@ Activity в Compose **не** стартует, пока не зарегистр�
 for f in n8n/tests/*-smoke.js; do node "$f" || exit 1; done
 
 cd mas-activity-service && PYTHONPATH=. .venv/bin/python -m pytest -q
-cd ../schedule-builder-service && PYTHONPATH=. python3 -m pytest -q   # нужен node
+cd ../schedule-builder-service && PYTHONPATH=. python3 -m pytest -q
 # pytest excel-tools: из venv Activity, не системный python без pytest
 PYTHONPATH=excel-agent-tools mas-activity-service/.venv/bin/python -m pytest excel-agent-tools/tests/test_agent_run.py excel-agent-tools/tests/test_workflow_contracts.py -q
 ```
@@ -782,7 +785,7 @@ python3 scripts/lab_soft_redeploy.py --skip-wipe
 
 Без `--skip-wipe` скрипт чистит `cases`/`events` и Activity state. Volumes не трогает.
 
-После UI-правок Activity: hard-refresh (`app.js?v=87` на момент этой редакции). Контейнеры FastAPI без `--reload`.
+После UI-правок Activity: hard-refresh (`app.css?v=85`, `app.js?v=87` на момент этой редакции). Контейнеры FastAPI без `--reload`.
 
 Боевой сценарий дат/REVISE: `simulation-model-example/combat-dates-revise/` (`PUBLISH_ACTIVITY=0 python3 run_integration_cases.py` если трогали commissioning/emit).
 
@@ -839,7 +842,7 @@ USER app
 CMD ["python", "-m", "pytest", "-q", "tests"]
 
 ===END_FILE===
-===BEGIN_FILE===	excel-agent-tools/README.md	2307	utf8
+===BEGIN_FILE===	excel-agent-tools/README.md	2395	utf8
 # FastAPI Excel tools
 
 Детерминированный сервис без LLM: принимает Excel, держит дисковую сессию и отдаёт tools для schema/query/extract/validate/export.  
@@ -847,7 +850,7 @@ CMD ["python", "-m", "pytest", "-q", "tests"]
 
 Каждый запрос к `/api/v1/*` и `/agent-tools/*` требует `X-API-Key`; исключение — `/health`.
 
-Живой Agent — Excel Extractor в n8n бьёт в **`excel_tools_url` без `/api/v1`**: `http://<IP>:8000` + пути `/agent-tools/…`. Header Auth n8n сюда **не** ставится (`excel_tools_api_key` в Runtime configuration). Файлы сервис забирает сам: `GET {activity_base_url}/cases/{id}/artifacts/…`.
+Живой Agent — Excel Extractor в n8n бьёт в **`excel_tools_url` без `/api/v1`**: `http://<IP>:8000` + пути `/agent-tools/…`. URL задаётся в `MAS — Runtime Config`. Ключ — n8n Header Auth credential **Excel Tools X-API-Key** (header `X-API-Key`), не поле Set. Файлы сервис забирает сам: `GET {activity_base_url}/cases/{id}/artifacts/…`.
 
 ## Windows CMD (канон)
 
@@ -863,13 +866,13 @@ start-windows.bat
 
 Проверка во втором CMD: `check-windows.bat`.
 
-Локальный URL для n8n на том же ПК: `excel_tools_url=http://127.0.0.1:8000` (не `/api/v1`). Для корпоративного n8n на другом хосте: `EXCEL_TOOLS_HOST=0.0.0.0` и в Agent Runtime — `http://<IP-Windows>:8000` (тот же `API_KEY` → `excel_tools_api_key`). Запасной `ACTIVITY_BASE_URL=http://127.0.0.1:8200` в `excel-tools.env`, если задача не передала `activity_base_url`.
+Локальный URL для n8n на том же ПК: `excel_tools_url=http://127.0.0.1:8000` (не `/api/v1`) в **MAS — Runtime Config**. Для корпоративного n8n на другом хосте: `EXCEL_TOOLS_HOST=0.0.0.0` и в Runtime URLs — `http://<IP-Windows>:8000` (тот же `API_KEY` → credential Header Auth `X-API-Key`). Запасной `ACTIVITY_BASE_URL=http://127.0.0.1:8200` в `excel-tools.env`, если задача не передала `activity_base_url`.
 
 ## Переменные (`excel-tools.env`)
 
 | Переменная | Назначение |
 |---|---|
-| `API_KEY` | общий секрет FastAPI и `excel_tools_api_key` в n8n Runtime configuration |
+| `API_KEY` | общий секрет FastAPI и n8n credential Header Auth `Excel Tools X-API-Key` |
 | `ACTIVITY_BASE_URL` | запасной URL Activity, если n8n не передал `activity_base_url` |
 | `EXCEL_TOOLS_HOST`, `EXCEL_TOOLS_PORT` | адрес прослушивания (.bat) |
 | `SESSION_DIR`, `SESSION_TTL_HOURS` | каталог и TTL сессий |
@@ -4428,7 +4431,7 @@ echo Keep this window open. Press Ctrl+C to stop.
 exit /b %errorlevel%
 
 ===END_FILE===
-===BEGIN_FILE===	fastapi-math-service/README.md	1293	utf8
+===BEGIN_FILE===	fastapi-math-service/README.md	1331	utf8
 # FastAPI Math Service (MVP)
 
 Геометрический сервис MAS: batch intersection `.dev` × ASCII CPS3/ZMAP.  
@@ -4445,7 +4448,7 @@ start-windows.bat
 
 Проверка во втором CMD: `check-windows.bat`.
 
-Локально: `http://127.0.0.1:8100/health`. Для корпоративного n8n: `MATH_SERVICE_HOST=0.0.0.0` и в Orchestrator Runtime — `http://<IP-Windows>:8100/agent/run`.
+Локально: `http://127.0.0.1:8100/health`. Для корпоративного n8n: `MATH_SERVICE_HOST=0.0.0.0` и в `MAS — Runtime Config` — `math_url=http://<IP-Windows>:8100` (оркестратор добавляет `/agent/run`).
 
 ## Endpoint
 
@@ -5041,7 +5044,7 @@ EXPOSE 8200
 CMD ["python", "-m", "uvicorn", "app.main:app", "--host", "0.0.0.0", "--port", "8200"]
 
 ===END_FILE===
-===BEGIN_FILE===	mas-activity-service/README.md	5923	utf8
+===BEGIN_FILE===	mas-activity-service/README.md	5963	utf8
 # MAS Activity Service
 
 Чат-лента Orchestrator ↔ specialists, HITL в том же UI, старт задачи drag-and-drop.
@@ -5150,7 +5153,7 @@ Tests: `.venv\Scripts\python.exe -m pytest -q`.
 
 ## n8n wiring
 
-`activity_base_url` в Runtime configuration Excel Extractor и Schedule Builder:
+`activity_base_url` в **MAS — Runtime Config** (ноды Runtime configuration / Runtime endpoints вызывают этот workflow):
 
 - Полевой Windows: `http://<IP-Windows>:8200`
 - Compose DNS: `http://mas-activity:8200`
@@ -5265,7 +5268,196 @@ async def get(case_id: str, artifact_id: str) -> tuple[str, bytes, str]:
     )
 
 ===END_FILE===
-===BEGIN_FILE===	mas-activity-service/app/cases_api.py	36432	utf8
+===BEGIN_FILE===	mas-activity-service/app/case_watch.py	5869	utf8
+"""One control-plane poller per open case SSE stream.
+
+n8n records an execution per webhook. The Activity UI used to call
+``snapshot`` every 2s per browser tab. This hub:
+
+- shares one poller across tabs for the same case
+- keeps 2s while the case is ``running`` / has new events
+- backs off to 6s when idle (HITL / done / failed)
+- wakes immediately on writes (create / update / append) so HITL answers
+  and agent events still land without waiting for the idle interval
+"""
+
+from __future__ import annotations
+
+import asyncio
+from typing import Any
+
+from app import control_plane
+
+RUNNING_INTERVAL_S = 2.0
+IDLE_INTERVAL_S = 6.0
+IDLE_STATUSES = frozenset({"waiting_user", "done", "failed"})
+# One coalesced slot per subscriber: overflow merges events instead of dropping them.
+QUEUE_MAX = 1
+
+_subs: dict[str, list[asyncio.Queue]] = {}
+_tasks: dict[str, asyncio.Task] = {}
+_wakes: dict[str, asyncio.Event] = {}
+_lock = asyncio.Lock()
+_loop: asyncio.AbstractEventLoop | None = None
+
+
+def poll_interval(status: str | None, had_events: bool) -> float:
+    if had_events:
+        return RUNNING_INTERVAL_S
+    if str(status or "") in IDLE_STATUSES:
+        return IDLE_INTERVAL_S
+    return RUNNING_INTERVAL_S
+
+
+def notify_case(case_id: str) -> None:
+    """Wake the SSE poller from a sync write path (thread-safe)."""
+    cid = str(case_id or "").strip()
+    loop = _loop
+    if not cid or loop is None:
+        return
+
+    def _set() -> None:
+        ev = _wakes.get(cid)
+        if ev is not None:
+            ev.set()
+
+    try:
+        loop.call_soon_threadsafe(_set)
+    except RuntimeError:
+        return
+
+
+async def subscribe(case_id: str) -> asyncio.Queue:
+    global _loop
+    cid = str(case_id or "").strip()
+    if not cid:
+        raise ValueError("case_id is required")
+    _loop = asyncio.get_running_loop()
+    queue: asyncio.Queue = asyncio.Queue(maxsize=QUEUE_MAX)
+    async with _lock:
+        _subs.setdefault(cid, []).append(queue)
+        _wakes.setdefault(cid, asyncio.Event())
+        if cid not in _tasks or _tasks[cid].done():
+            _tasks[cid] = asyncio.create_task(_run(cid), name=f"case-watch:{cid}")
+    return queue
+
+
+async def unsubscribe(case_id: str, queue: asyncio.Queue) -> None:
+    cid = str(case_id or "").strip()
+    async with _lock:
+        holders = _subs.get(cid) or []
+        if queue in holders:
+            holders.remove(queue)
+        if holders:
+            return
+        _subs.pop(cid, None)
+        wake = _wakes.pop(cid, None)
+        if wake is not None:
+            wake.set()
+        task = _tasks.pop(cid, None)
+        if task is not None and not task.done():
+            task.cancel()
+
+
+def merge_watch_payload(old: dict[str, Any] | None, new: dict[str, Any]) -> dict[str, Any]:
+    """Keep the latest case row and every event id from both payloads."""
+    incoming = new if isinstance(new, dict) else {}
+    if not isinstance(old, dict):
+        return {
+            "case": incoming.get("case"),
+            "events": list(incoming.get("events") or []),
+        }
+    events: list[Any] = []
+    seen: set[int] = set()
+    for item in list(old.get("events") or []) + list(incoming.get("events") or []):
+        if not isinstance(item, dict):
+            events.append(item)
+            continue
+        eid = item.get("event_id")
+        if eid is None:
+            events.append(item)
+            continue
+        try:
+            key = int(eid)
+        except (TypeError, ValueError):
+            events.append(item)
+            continue
+        if key in seen:
+            continue
+        seen.add(key)
+        events.append(item)
+    case = incoming.get("case")
+    if case is None:
+        case = old.get("case")
+    return {"case": case, "events": events}
+
+
+async def _publish(case_id: str, payload: dict[str, Any]) -> None:
+    async with _lock:
+        holders = list(_subs.get(case_id) or [])
+    for queue in holders:
+        pending = None
+        if queue.full():
+            try:
+                pending = queue.get_nowait()
+            except asyncio.QueueEmpty:
+                pending = None
+        item = merge_watch_payload(pending, payload)
+        try:
+            queue.put_nowait(item)
+        except asyncio.QueueFull:
+            try:
+                extra = queue.get_nowait()
+            except asyncio.QueueEmpty:
+                extra = None
+            merged = merge_watch_payload(extra, item)
+            try:
+                queue.put_nowait(merged)
+            except asyncio.QueueFull:
+                continue
+
+
+async def _run(case_id: str) -> None:
+    last = 0
+    interval = RUNNING_INTERVAL_S
+    try:
+        while True:
+            async with _lock:
+                if not _subs.get(case_id):
+                    return
+                wake = _wakes.setdefault(case_id, asyncio.Event())
+            try:
+                await asyncio.wait_for(wake.wait(), timeout=interval)
+            except asyncio.TimeoutError:
+                pass
+            wake.clear()
+            fresh = await asyncio.to_thread(control_plane.snapshot, case_id, last)
+            row = fresh.get("case") if isinstance(fresh, dict) else None
+            events = list((fresh or {}).get("events") or [])
+            if events:
+                last = max(
+                    last,
+                    max(int(event["event_id"]) for event in events if event.get("event_id") is not None),
+                )
+            status = str((row or {}).get("status") or "")
+            interval = poll_interval(status, bool(events))
+            await _publish(case_id, {"case": row, "events": events})
+    except asyncio.CancelledError:
+        return
+
+
+def reset() -> None:
+    """Tests: drop pollers. Best-effort; running tasks are cancelled."""
+    global _loop
+    _loop = None
+    for task in list(_tasks.values()):
+        task.cancel()
+    _tasks.clear()
+    _subs.clear()
+    _wakes.clear()
+
+===END_FILE===
+===BEGIN_FILE===	mas-activity-service/app/cases_api.py	37408	utf8
 """Case control-plane HTTP API (state, events, SSE, HITL, run)."""
 
 from __future__ import annotations
@@ -5281,8 +5473,9 @@ from typing import Any
 from fastapi import APIRouter, BackgroundTasks, File, Form, HTTPException, Query, Request, UploadFile
 from fastapi.responses import StreamingResponse
 
-from app import control_plane
 from app import artifact_store
+from app import case_watch
+from app import control_plane
 from app.contracts import AGENT_EVENT_KINDS, CaseAnswerIn, CaseEventIn, CaseNameIn, MAX_STEPS
 from app.orchestrator import OrchestratorError, invoke_orchestrator
 from app.schema_view import FINISHED_RESULT_TEXT, build_schema_model
@@ -5734,22 +5927,29 @@ async def _invoke_action(case_id: str, *, action: str) -> None:
         )
     except OrchestratorError as exc:
         logger.error("orchestrator %s failed case_id=%s: %s", action, case_id, exc)
-        control_plane.append_event(
-            case_id,
-            kind="case.failed",
-            actor="orchestrator",
-            status="failed",
-            status_message=str(exc)[:500],
-            payload={"status_code": exc.status_code},
-        )
         try:
             row = control_plane.get_case(case_id)
-            if row:
-                state = dict(row["state"] or {})
-                state["last_error"] = {"message": str(exc)[:500]}
-                control_plane.update_case(case_id, state=state, status="failed")
+            state = dict(row["state"] or {}) if row else {}
+            state["last_error"] = {"message": str(exc)[:500]}
+            control_plane.update_case_and_append(
+                case_id,
+                state=state,
+                status="failed",
+                kind="case.failed",
+                actor="orchestrator",
+                event_status="failed",
+                status_message=str(exc)[:500],
+                payload={"status_code": exc.status_code},
+            )
         except KeyError:
-            pass
+            control_plane.append_event(
+                case_id,
+                kind="case.failed",
+                actor="orchestrator",
+                status="failed",
+                status_message=str(exc)[:500],
+                payload={"status_code": exc.status_code},
+            )
 
 
 @router.get("/cases")
@@ -5837,14 +6037,17 @@ async def create_case(
         task_name=name,
         extra_state=extra or None,
         status="running",
-    )
-    control_plane.append_event(
-        case_id,
-        kind="case.created",
-        actor="user",
-        status="new",
-        status_message=f"Принял задачу: {goal[:180]}",
-        payload={"requested_by": requested_by, "files": [fname for _s, fname, _c, _m in uploads], "task_name": name},
+        initial_event={
+            "kind": "case.created",
+            "actor": "user",
+            "status": "new",
+            "status_message": f"Принял задачу: {goal[:180]}",
+            "payload": {
+                "requested_by": requested_by,
+                "files": [fname for _s, fname, _c, _m in uploads],
+                "task_name": name,
+            },
+        },
     )
     background_tasks.add_task(_invoke_create, case_id)
     return {"ok": True, "case_id": case_id, "task_id": case_id, "status": "running", "task_name": name}
@@ -6018,12 +6221,13 @@ async def post_answer(case_id: str, request: Request, background_tasks: Backgrou
     hitl["answers"] = answers
     hitl["pending"] = False
     state["hitl"] = hitl
-    control_plane.update_case(case_id, state=state, status="running")
-    control_plane.append_event(
+    control_plane.update_case_and_append(
         case_id,
+        state=state,
+        status="running",
         kind="hitl.answered",
         actor="user",
-        status="answered",
+        event_status="answered",
         status_message=f"Пользователь ответил: {answer}",
         payload={
             "question_id": question_id,
@@ -6058,12 +6262,13 @@ def _prepare_case_restart(case_id: str, row: dict[str, Any]) -> dict[str, Any]:
     hitl = dict(state.get("hitl") or {})
     hitl["pending"] = False
     state["hitl"] = hitl
-    control_plane.update_case(case_id, state=state, status="running")
-    control_plane.append_event(
+    control_plane.update_case_and_append(
         case_id,
+        state=state,
+        status="running",
         kind="orchestrator.status",
         actor="orchestrator",
-        status="running",
+        event_status="running",
         status_message="Перезапуск задачи",
     )
     return state
@@ -6093,12 +6298,13 @@ async def post_run(case_id: str, request: Request, background_tasks: BackgroundT
         }
     state = row["state"] if isinstance(row["state"], dict) else {}
     if int(state.get("step_count") or 0) >= MAX_STEPS:
-        control_plane.update_case(case_id, state=state, status="failed")
-        control_plane.append_event(
+        control_plane.update_case_and_append(
             case_id,
+            state=state,
+            status="failed",
             kind="case.failed",
             actor="orchestrator",
-            status="failed",
+            event_status="failed",
             status_message=f"Превышен лимит шагов оркестратора ({MAX_STEPS})",
         )
         return {
@@ -6164,41 +6370,52 @@ async def stream_case(case_id: str, request: Request) -> StreamingResponse:
             default=0,
         )
         last_updated = str((snap["case"] or {}).get("updated_at") or "")
-        while True:
-            if await request.is_disconnected():
-                break
-            await asyncio.sleep(2.0)
-            fresh = control_plane.snapshot(case_id, after_seq=last)
-            row = fresh["case"]
-            if row is None:
-                break
-            raw_new = list(fresh["events"] or [])
-            if raw_new:
-                all_raw.extend(raw_new)
-                last = max(
-                    last,
-                    max(
-                        int(event["event_id"])
-                        for event in raw_new
-                        if event.get("event_id") is not None
-                    ),
-                )
-            collapsed = collapse_duplicate_events(all_raw)
-            emit = [
-                event
-                for event in collapsed
-                if event.get("event_id") is not None and int(event["event_id"]) not in seen_ids
-            ]
-            feed = _feed_from_row(case_id, row, [], last)
-            meta = _stream_meta(feed)
-            updated = str(row.get("updated_at") or "")
-            for event in emit:
-                seen_ids.add(int(event["event_id"]))
-                yield f"data: {json.dumps({'type': 'turn', 'turn': event_to_turn(event), 'event': event, **meta}, default=str)}\n\n"
-            if not emit and updated != last_updated:
-                yield f"data: {json.dumps({'type': 'meta', **meta}, default=str)}\n\n"
-            last_updated = updated
-            yield f"data: {json.dumps({'type': 'ping'})}\n\n"
+        queue = await case_watch.subscribe(case_id)
+        try:
+            while True:
+                if await request.is_disconnected():
+                    break
+                try:
+                    fresh = await asyncio.wait_for(queue.get(), timeout=15.0)
+                except asyncio.TimeoutError:
+                    yield f"data: {json.dumps({'type': 'ping'})}\n\n"
+                    continue
+                row = (fresh or {}).get("case")
+                if row is None:
+                    break
+                raw_new = [
+                    event
+                    for event in list((fresh or {}).get("events") or [])
+                    if event.get("event_id") is None or int(event["event_id"]) > last
+                ]
+                if raw_new:
+                    all_raw.extend(raw_new)
+                    last = max(
+                        last,
+                        max(
+                            int(event["event_id"])
+                            for event in raw_new
+                            if event.get("event_id") is not None
+                        ),
+                    )
+                collapsed = collapse_duplicate_events(all_raw)
+                emit = [
+                    event
+                    for event in collapsed
+                    if event.get("event_id") is not None and int(event["event_id"]) not in seen_ids
+                ]
+                feed = _feed_from_row(case_id, row, [], last)
+                meta = _stream_meta(feed)
+                updated = str(row.get("updated_at") or "")
+                for event in emit:
+                    seen_ids.add(int(event["event_id"]))
+                    yield f"data: {json.dumps({'type': 'turn', 'turn': event_to_turn(event), 'event': event, **meta}, default=str)}\n\n"
+                if not emit and updated != last_updated:
+                    yield f"data: {json.dumps({'type': 'meta', **meta}, default=str)}\n\n"
+                last_updated = updated
+                yield f"data: {json.dumps({'type': 'ping'})}\n\n"
+        finally:
+            await case_watch.unsubscribe(case_id, queue)
 
     return StreamingResponse(gen(), media_type="text/event-stream")
 
@@ -6248,101 +6465,12 @@ async def get_artifact(case_id: str, artifact_id: str):
     )
 
 ===END_FILE===
-===BEGIN_FILE===	mas-activity-service/app/commissioning.py	7414	utf8
-"""Local commissioning REVISE via schedule_timeline_runtime (Node)."""
+===BEGIN_FILE===	mas-activity-service/app/commissioning.py	4169	utf8
+"""Pull SCHEDULE text out of Orchestrator/Builder payloads. Pure Python."""
 
 from __future__ import annotations
 
-import json
-import os
-import subprocess
-import tempfile
-from pathlib import Path
 from typing import Any
-
-ROOT = Path(__file__).resolve().parents[2]
-TIMELINE_PY = ROOT / "n8n" / "templates" / "schedule_timeline_runtime.py"
-
-
-def _load_timeline_core() -> str:
-    # Import without requiring n8n package layout on PYTHONPATH.
-    import importlib.util
-
-    spec = importlib.util.spec_from_file_location("schedule_timeline_runtime", TIMELINE_PY)
-    if spec is None or spec.loader is None:
-        raise RuntimeError(f"Cannot load timeline runtime: {TIMELINE_PY}")
-    mod = importlib.util.module_from_spec(spec)
-    spec.loader.exec_module(mod)
-    return mod.timeline_core_js()
-
-
-def normalize_well_facts(raw: Any) -> list[dict[str, str]]:
-    if isinstance(raw, dict) and isinstance(raw.get("wells"), list):
-        raw = raw["wells"]
-    if not isinstance(raw, list):
-        return []
-    out: list[dict[str, str]] = []
-    for item in raw:
-        if not isinstance(item, dict):
-            continue
-        well = str(item.get("well") or item.get("name") or "").strip()
-        date = str(item.get("date") or item.get("new_date") or item.get("Дата ввода") or "").strip()
-        if well and date:
-            out.append({"well": well, "date": date})
-    return out
-
-
-def run_commissioning_revise(
-    *,
-    baseline_text: str,
-    well_facts: list[dict[str, str]],
-    instruction_blob: str = "",
-    unlisted_wells_policy: str | None = None,
-    new_well_defs: list[dict[str, Any]] | None = None,
-    root_filename: str = "schedule.inc",
-    timeout_s: float = 60.0,
-) -> dict[str, Any]:
-    if not baseline_text.strip():
-        raise ValueError("baseline schedule text is empty")
-    if not well_facts:
-        raise ValueError("well facts are required for local commissioning")
-    core = _load_timeline_core()
-    options: dict[str, Any] = {"instruction_blob": instruction_blob or ""}
-    if unlisted_wells_policy in {"keep", "remove"}:
-        options["unlisted_wells_policy"] = unlisted_wells_policy
-    if new_well_defs:
-        options["new_well_defs"] = new_well_defs
-
-    script = f"""
-{core}
-const baseline = {json.dumps(baseline_text)};
-const facts = {json.dumps(well_facts, ensure_ascii=False)};
-const options = {json.dumps(options, ensure_ascii=False)};
-const root = {json.dumps(root_filename)};
-const result = runCommissioningRevise(baseline, facts, root, options);
-process.stdout.write(JSON.stringify(result));
-"""
-    with tempfile.TemporaryDirectory(prefix="mas-comm-") as tmp:
-        path = Path(tmp) / "run.js"
-        path.write_text(script, encoding="utf-8")
-        proc = subprocess.run(
-            ["node", str(path)],
-            capture_output=True,
-            text=True,
-            timeout=timeout_s,
-            cwd=str(ROOT),
-            env={**os.environ, "NODE_NO_WARNINGS": "1"},
-        )
-    if proc.returncode != 0:
-        err = (proc.stderr or proc.stdout or "node failed")[:800]
-        raise RuntimeError(f"commissioning node failed: {err}")
-    try:
-        data = json.loads(proc.stdout or "{}")
-    except json.JSONDecodeError as exc:
-        raise RuntimeError("commissioning returned non-JSON") from exc
-    if not isinstance(data, dict):
-        raise RuntimeError("commissioning returned non-object")
-    return data
 
 
 def extract_schedule_from_orchestrator(orch: dict[str, Any]) -> tuple[str, str] | None:
@@ -6631,7 +6759,7 @@ def load_json_schema(name: str) -> dict[str, Any]:
     return json.loads(path.read_text(encoding="utf-8"))
 
 ===END_FILE===
-===BEGIN_FILE===	mas-activity-service/app/control_plane.py	14578	utf8
+===BEGIN_FILE===	mas-activity-service/app/control_plane.py	20429	utf8
 """Control-plane facade.
 
 Production storage is reached only through the n8n control-plane webhook.
@@ -6654,8 +6782,24 @@ from app.settings import get_settings
 
 _LOCK = threading.Lock()
 _CLIENT_LOCK = threading.Lock()
+_CACHE_LOCK = threading.Lock()
 _HTTP: httpx.Client | None = None
 _HTTP_KEY: tuple[Any, ...] | None = None
+_SNAP_TTL_S = 0.4
+_LIST_TTL_S = 1.0
+_read_gen = 0
+_snap_cache: dict[tuple[str, int], tuple[float, dict[str, Any]]] = {}
+_list_cache: tuple[float, int, list[dict[str, Any]]] | None = None
+_WRITE_OPS = frozenset({
+    "wipe",
+    "create_case",
+    "update_case",
+    "append_event",
+    "append_error",
+    "record_execution",
+    "upsert_agent",
+    "artifact_put",
+})
 _CASES: dict[str, dict[str, Any]] = {}
 _EVENTS: dict[str, list[dict[str, Any]]] = {}
 _ERRORS: dict[str, list[dict[str, Any]]] = {}
@@ -6727,6 +6871,41 @@ def _http_client() -> httpx.Client:
         return _HTTP
 
 
+def invalidate_read_cache() -> None:
+    global _list_cache, _read_gen
+    with _CACHE_LOCK:
+        _snap_cache.clear()
+        _list_cache = None
+        _read_gen += 1
+
+
+def _notify_case(case_id: str | None) -> None:
+    cid = str(case_id or "").strip()
+    if not cid:
+        return
+    try:
+        from app import case_watch
+    except Exception:
+        return
+    case_watch.notify_case(cid)
+
+
+def _after_write(operation: str, payload: dict[str, Any]) -> None:
+    if operation not in _WRITE_OPS and operation != "batch":
+        return
+    invalidate_read_cache()
+    if operation == "batch":
+        seen: set[str] = set()
+        for item in payload.get("calls") or []:
+            if isinstance(item, dict):
+                cid = str(item.get("case_id") or "").strip()
+                if cid and cid not in seen:
+                    seen.add(cid)
+                    _notify_case(cid)
+        return
+    _notify_case(payload.get("case_id"))
+
+
 def proxy_call(operation: str, **payload: Any) -> Any:
     """Call the single n8n control-plane webhook and unwrap its result."""
     url = _proxy_url()
@@ -6747,7 +6926,34 @@ def proxy_call(operation: str, **payload: Any) -> Any:
         raise RuntimeError("control-plane proxy returned invalid JSON") from exc
     if not isinstance(data, dict) or data.get("ok") is not True:
         raise RuntimeError(str((data or {}).get("error") if isinstance(data, dict) else data))
-    return data.get("result")
+    result = data.get("result")
+    _after_write(operation, payload)
+    return result
+
+
+def proxy_call_many(calls: list[dict[str, Any]]) -> list[Any]:
+    """One n8n execution for several single-row ops; falls back to sequential calls."""
+    cleaned = [dict(item) for item in calls if isinstance(item, dict) and item.get("operation")]
+    if not cleaned:
+        return []
+    if len(cleaned) == 1:
+        body = dict(cleaned[0])
+        operation = str(body.pop("operation"))
+        return [proxy_call(operation, **body)]
+    try:
+        result = proxy_call("batch", calls=cleaned)
+    except RuntimeError as exc:
+        if "unsupported operation" not in str(exc).lower():
+            raise
+        out: list[Any] = []
+        for item in cleaned:
+            body = dict(item)
+            operation = str(body.pop("operation"))
+            out.append(proxy_call(operation, **body))
+        return out
+    if isinstance(result, list):
+        return result
+    return [result]
 
 
 def reset_memory() -> None:
@@ -6759,6 +6965,7 @@ def reset_memory() -> None:
         _EXECUTIONS.clear()
         _EVENT_SEQ = 0
         _ERROR_SEQ = 0
+    invalidate_read_cache()
 
 
 def control_plane_sql() -> str:
@@ -6831,6 +7038,7 @@ def create_case(
     task_name: str = "",
     extra_state: dict[str, Any] | None = None,
     status: str = "new",
+    initial_event: dict[str, Any] | None = None,
 ) -> dict[str, Any]:
     state = empty_state(case_id, goal)
     if task_name:
@@ -6841,13 +7049,23 @@ def create_case(
         state.update(extra_state)
     status = str(status or "new").strip() or "new"
     if _configured():
-        return dict(proxy_call("create_case", case_id=case_id, state=state, status=status) or {})
+        calls: list[dict[str, Any]] = [
+            {"operation": "create_case", "case_id": case_id, "state": state, "status": status}
+        ]
+        if initial_event:
+            calls.append({"operation": "append_event", "case_id": case_id, **initial_event})
+        results = proxy_call_many(calls)
+        row = results[0] if results else {}
+        return dict(row) if isinstance(row, dict) else {"case_id": case_id, "state": state, "status": status}
     with _LOCK:
         row = {"case_id": case_id, "state": state, "status": status, "updated_at": _now()}
         _CASES[case_id] = row
         _EVENTS.setdefault(case_id, [])
         _ERRORS.setdefault(case_id, [])
-        return dict(row)
+    if initial_event:
+        append_event(case_id, **initial_event)
+        return get_case(case_id) or dict(row)
+    return dict(row)
 
 
 def get_case(case_id: str) -> dict[str, Any] | None:
@@ -6857,13 +7075,37 @@ def get_case(case_id: str) -> dict[str, Any] | None:
     return _local_case(case_id)
 
 
+def _copy_snapshot(value: dict[str, Any]) -> dict[str, Any]:
+    case = value.get("case")
+    events = value.get("events")
+    return {
+        "case": dict(case) if isinstance(case, dict) else case,
+        "events": [dict(item) if isinstance(item, dict) else item for item in (events or [])],
+    }
+
+
+def _store_snapshot(cache_key: tuple[str, int], packed: dict[str, Any], gen: int) -> None:
+    with _CACHE_LOCK:
+        if gen == _read_gen:
+            _snap_cache[cache_key] = (time.monotonic(), packed)
+
+
 def snapshot(case_id: str, after_seq: int = 0) -> dict[str, Any]:
     """One webhook: case row + events after ``after_seq``.
 
     Falls back to get_case + list_events if the imported proxy is older
-    and does not yet know ``snapshot``.
+    and does not yet know ``snapshot``. Short TTL coalesces overlapping
+    SSE / GET /cases/{id} reads without delaying writes (cache drops on write).
+    An in-flight fetch started before a write is not stored after invalidate.
     """
     after_seq = int(after_seq or 0)
+    cache_key = (str(case_id), after_seq)
+    now = time.monotonic()
+    with _CACHE_LOCK:
+        hit = _snap_cache.get(cache_key)
+        if hit and now - hit[0] < _SNAP_TTL_S:
+            return _copy_snapshot(hit[1])
+        gen = _read_gen
     if _configured():
         try:
             result = proxy_call("snapshot", case_id=case_id, after_seq=after_seq) or {}
@@ -6872,12 +7114,16 @@ def snapshot(case_id: str, after_seq: int = 0) -> dict[str, Any]:
                 raise
             row = get_case(case_id)
             events = list_events(case_id, after_seq=after_seq) if row else []
-            return {"case": row, "events": events}
+            packed = {"case": row, "events": events}
+            _store_snapshot(cache_key, packed, gen)
+            return _copy_snapshot(packed)
         case = result.get("case") if isinstance(result, dict) else None
         events = result.get("events") if isinstance(result, dict) else None
         row = dict(case) if isinstance(case, dict) and case.get("case_id") else None
         rows = list(events) if isinstance(events, list) else []
-        return {"case": row, "events": rows}
+        packed = {"case": row, "events": rows}
+        _store_snapshot(cache_key, packed, gen)
+        return _copy_snapshot(packed)
     row = _local_case(case_id)
     with _LOCK:
         events = [
@@ -6889,9 +7135,25 @@ def snapshot(case_id: str, after_seq: int = 0) -> dict[str, Any]:
 
 
 def list_cases(limit: int = 80) -> list[dict[str, Any]]:
+    global _list_cache
+    limit = int(limit or 80)
+    now = time.monotonic()
+    with _CACHE_LOCK:
+        hit = _list_cache
+        if hit and hit[1] == limit and now - hit[0] < _LIST_TTL_S:
+            return [dict(row) for row in hit[2]]
+        gen = _read_gen
     if _configured():
-        result = proxy_call("list_cases", limit=limit)
-        return list(result or [])
+        result = list(proxy_call("list_cases", limit=limit) or [])
+        rows = [
+            dict(row)
+            for row in result
+            if isinstance(row, dict) and str(row.get("case_id") or "").strip()
+        ]
+        with _CACHE_LOCK:
+            if gen == _read_gen:
+                _list_cache = (time.monotonic(), limit, rows)
+        return [dict(row) for row in rows]
     with _LOCK:
         rows = sorted(_CASES.values(), key=lambda row: str(row.get("updated_at") or ""), reverse=True)
         out: list[dict[str, Any]] = []
@@ -6919,6 +7181,44 @@ def update_case(case_id: str, *, state: dict[str, Any] | None = None, status: st
         row = {"case_id": case_id, "state": next_state, "status": next_status, "updated_at": _now()}
         _CASES[case_id] = row
         return dict(row)
+
+
+def update_case_and_append(
+    case_id: str,
+    *,
+    state: dict[str, Any],
+    status: str,
+    kind: str,
+    actor: str,
+    agent_id: str | None = None,
+    event_status: str | None = None,
+    status_message: str | None = None,
+    handoff_message: str | None = None,
+    task_id: str | None = None,
+    payload: dict[str, Any] | None = None,
+) -> dict[str, Any]:
+    """One proxy batch: persist case row then append an event."""
+    next_state = {**state, "status": status, "case_id": case_id} if isinstance(state, dict) else state
+    event = {
+        "kind": kind,
+        "actor": actor,
+        "agent_id": agent_id,
+        "status": event_status,
+        "status_message": status_message,
+        "handoff_message": handoff_message,
+        "task_id": task_id,
+        "payload": payload or {},
+    }
+    if _configured():
+        results = proxy_call_many(
+            [
+                {"operation": "update_case", "case_id": case_id, "state": next_state, "status": status},
+                {"operation": "append_event", "case_id": case_id, **event},
+            ]
+        )
+        return dict(results[1] or {}) if len(results) > 1 and isinstance(results[1], dict) else {}
+    update_case(case_id, state=next_state, status=status)
+    return append_event(case_id, **event)
 
 
 def _norm_text(value: Any) -> str:
@@ -8021,7 +8321,7 @@ async def push_corpus_to_n8n() -> dict[str, Any]:
     return normalize_ingest_response(raw, sent_count=len(documents))
 
 ===END_FILE===
-===BEGIN_FILE===	mas-activity-service/app/main.py	101825	utf8
+===BEGIN_FILE===	mas-activity-service/app/main.py	101879	utf8
 """In-memory MAS activity feed for chat-style handoff presentation + HITL."""
 
 from __future__ import annotations
@@ -8216,6 +8516,8 @@ def reset_store() -> None:
     _task_binaries.clear()
     _empty_rail_list_attempted = False
     control_plane.reset_memory()
+    from app import case_watch
+    case_watch.reset()
     _persist()
 
 
@@ -12596,7 +12898,7 @@ echo Keep this window open. Press Ctrl+C to stop.
 exit /b %errorlevel%
 
 ===END_FILE===
-===BEGIN_FILE===	mas-activity-service/static/app.css	43423	utf8
+===BEGIN_FILE===	mas-activity-service/static/app.css	43493	utf8
 :root {
   --ink: #0f172a;
   --muted: #64748b;
@@ -13116,30 +13418,28 @@ body:has(.flash:not([hidden])) .stage {
 .workspace.mode-schema .composer {
   display: none !important;
 }
-.workspace.mode-schema .transcript-head {
-  flex-direction: row;
+.transcript-head {
+  --head-pad-y: 1.15rem;
+  --head-pad-x: clamp(1.5rem, 4vw, 4rem);
+  --view-toggle-slot: 10rem;
+  position: relative;
+  display: flex;
+  justify-content: space-between;
+  align-items: flex-start;
+  gap: 1rem;
+  margin: 0;
+  padding: var(--head-pad-y) var(--head-pad-x) 0.85rem;
+  padding-right: calc(var(--head-pad-x) + var(--view-toggle-slot));
+  flex: 0 0 auto;
   flex-wrap: nowrap;
-  align-items: center;
-  gap: 0.75rem;
-  padding-top: 0.7rem;
-  padding-bottom: 0.5rem;
 }
-.workspace.mode-schema .transcript-head .head-copy {
+.transcript-head .head-copy {
   min-width: 0;
   flex: 1 1 auto;
 }
-.transcript-head {
-  display: flex;
-  justify-content: space-between;
-  gap: 1rem;
-  align-items: center;
-  margin: 0;
-  padding: 1.15rem clamp(1.5rem, 4vw, 4rem) 0.85rem;
-  flex: 0 0 auto;
-  flex-wrap: wrap;
-}
 .transcript-head .schedule-download {
   flex: 0 0 auto;
+  align-self: center;
 }
 .transcript-head .schedule-download[hidden] {
   display: none !important;
@@ -13836,6 +14136,10 @@ a.btn.schedule-download:hover:not(:disabled),
 .file-chips li button:hover { color: var(--block); }
 
 .view-toggle {
+  position: absolute;
+  top: var(--head-pad-y);
+  right: var(--head-pad-x);
+  z-index: 4;
   display: inline-flex;
   flex: 0 0 auto;
   padding: 0.15rem;
@@ -14513,7 +14817,6 @@ a.btn.schedule-download:hover:not(:disabled),
     transform: translateY(50%) rotate(45deg);
   }
   .transcript-head { flex-direction: column; align-items: stretch; }
-  .view-toggle { align-self: start; }
   .schema-track-label { font-size: 0.6rem; }
   .schema-slip { max-width: min(11rem, 42%); }
   .schema-canvas { padding: 0.4rem 0.55rem 0.15rem; }
@@ -16471,7 +16774,7 @@ a.btn.schedule-download:hover:not(:disabled),
   <link rel="preconnect" href="https://fonts.googleapis.com" />
   <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
   <link href="https://fonts.googleapis.com/css2?family=IBM+Plex+Sans:wght@400;500;600;700&family=IBM+Plex+Mono:wght@400;500&display=swap" rel="stylesheet" />
-  <link rel="stylesheet" href="/static/app.css?v=84" />
+  <link rel="stylesheet" href="/static/app.css?v=85" />
 </head>
 <body>
   <div class="atmosphere" aria-hidden="true"></div>
@@ -18972,13 +19275,13 @@ body.knowledge-page:has(.flash:not([hidden])) .kb-stage {
 })();
 
 ===END_FILE===
-===BEGIN_FILE===	n8n/README.md	1184	utf8
+===BEGIN_FILE===	n8n/README.md	1222	utf8
 # n8n package
 
 - Workflows: [`workflows/`](workflows/) — `core/` live MAS (8 JSON) + `support/` templates + `retired/` archive (**не импортировать**).
-- Import contract: [`import-manifest.json`](import-manifest.json). Поле — `runtime_import_order` (8 файлов). Lab `lab_soft_redeploy.py` ещё тянет `full_clean_import_set` (core + support, 14 JSON). Target **2.30.8**.
+- Import contract: [`import-manifest.json`](import-manifest.json). Поле — `runtime_import_order` (9 файлов). Lab `lab_soft_redeploy.py` ещё тянет `full_clean_import_set` (core + support, 15 JSON). Target **2.30.8**.
 - Data Tables CSV: [`data-tables/`](data-tables/) — **retired**. Живой стейт кейсов — Postgres за `MAS — Control Plane Proxy`, не n8n Data Tables.
-- Generators: [`templates/`](templates/). Commissioning/group-rebind emit: `schedule_timeline_runtime.py` (Node).
+- Generators: [`templates/`](templates/). JS timeline (`schedule_timeline_runtime.py`) — n8n smokes only; live Schedule Builder emit is Python FastAPI.
 - Code smokes: [`tests/`](tests/).
 - SCHEDULE multi-file: form `schedule_files` + optional `schedule_root`; INCLUDE-пути не переписываем (`templates/schedule_package_materialize.py`).
 - Presentation UI: [`../mas-activity-service/`](../mas-activity-service/) — вход `POST /cases`, лента `GET /cases/{id}/stream`.
@@ -19251,7 +19554,7 @@ task_id,version,status,risk_class,request_json,runtime_json,plan_json,packet_jso
 event_id,trace_id,task_id,at,stage,event_type,actor,status,summary,details_json
 
 ===END_FILE===
-===BEGIN_FILE===	n8n/import-manifest.json	17595	utf8
+===BEGIN_FILE===	n8n/import-manifest.json	18778	utf8
 {
   "contract": "n8n_ui_import_manifest",
   "contract_version": "1.0",
@@ -19260,6 +19563,7 @@ event_id,trace_id,task_id,at,stage,event_type,actor,status,summary,details_json
   "full_clean_import_set": [
     "workflows/core/tnavigator-schedule-knowledge-ingestion.workflow.json",
     "workflows/core/tnavigator-schedule-hybrid-retrieval.workflow.json",
+    "workflows/core/mas-runtime-config.workflow.json",
     "workflows/core/schedule-builder-agent.workflow.json",
     "workflows/core/excel-extractor-agent.workflow.json",
     "workflows/core/mas-error-traces.workflow.json",
@@ -19276,6 +19580,7 @@ event_id,trace_id,task_id,at,stage,event_type,actor,status,summary,details_json
   "runtime_import_order": [
     "workflows/core/tnavigator-schedule-knowledge-ingestion.workflow.json",
     "workflows/core/tnavigator-schedule-hybrid-retrieval.workflow.json",
+    "workflows/core/mas-runtime-config.workflow.json",
     "workflows/core/schedule-builder-agent.workflow.json",
     "workflows/core/excel-extractor-agent.workflow.json",
     "workflows/core/mas-error-traces.workflow.json",
@@ -19363,6 +19668,24 @@ event_id,trace_id,task_id,at,stage,event_type,actor,status,summary,details_json
     }
   ],
   "mandatory_execute_workflow_bindings": [
+    {
+      "owner": "Orchestrator — MAS",
+      "node": "Runtime endpoints",
+      "target": "MAS — Runtime Config",
+      "placeholder": "REPLACE_MAS_RUNTIME_CONFIG_IN_UI"
+    },
+    {
+      "owner": "Agent — Excel Extractor",
+      "node": "Runtime configuration",
+      "target": "MAS — Runtime Config",
+      "placeholder": "REPLACE_MAS_RUNTIME_CONFIG_IN_UI"
+    },
+    {
+      "owner": "Agent — Schedule Builder",
+      "node": "Runtime configuration",
+      "target": "MAS — Runtime Config",
+      "placeholder": "REPLACE_MAS_RUNTIME_CONFIG_IN_UI"
+    },
     {
       "owner": "Orchestrator — MAS",
       "node": "Call Excel Extractor",
@@ -19457,17 +19780,17 @@ event_id,trace_id,task_id,at,stage,event_type,actor,status,summary,details_json
     },
     {
       "type": "httpHeaderAuth",
-      "use": "Orchestrator inbound webhook and Control Plane Proxy webhook. Excel FastAPI uses X-API-Key from Runtime configuration, not Header Auth."
+      "use": "Two Header Auth credentials: (1) Orchestrator inbound webhook and Control Plane Proxy webhook (Authorization). (2) Excel Tools X-API-Key — header name X-API-Key, value = API_KEY from excel-tools.env — on Agent — Excel Extractor HTTP nodes. Do not put the Excel key in a Set or item JSON."
     }
   ],
   "ui_configuration": [
-    "Field import is runtime_import_order (8 core JSON). Do not import n8n/workflows/retired/. support/ only when adding a specialist.",
+    "Field import is runtime_import_order (9 core JSON). Do not import n8n/workflows/retired/. support/ only when adding a specialist.",
     "Do not create n8n Data Tables for live case state. Health Check probes to engineering_orchestrator_tasks_v1 / mas_trace_events_v1 may PASS_WITH_TODO.",
     "Do not set ACTIVITY_HYDRATE_URL. Do not import Activity — Hydrate, Entry Form, Human Gate, CAS Persist, Trace Writer, or Orchestrator — Engineering MAS.",
     "Bind Orchestrator — MAS: Call Excel Extractor → Agent — Excel Extractor; Call Schedule Builder → Agent — Schedule Builder.",
-    "Excel Extractor Runtime configuration: excel_tools_url = http://<IP-Windows>:8000 (no /api/v1), excel_tools_api_key = API_KEY, activity_base_url = http://<IP-Windows>:8200. Auth is X-API-Key, not Header Auth.",
-    "Schedule Builder Runtime configuration: schedule_service_url = http://<IP-Windows>:8090, activity_base_url = http://<IP-Windows>:8200. Windows Schedule Builder needs Node.js on PATH.",
-    "Orchestrator Calculation HTTP: http://<IP-Windows>:8100/agent/run. Do not import Agent — Calculation (Math Service).",
+    "Bind Runtime endpoints / Runtime configuration → MAS — Runtime Config on Orchestrator, Excel Extractor, and Schedule Builder. Edit the four URLs once in MAS — Runtime Config (lab Docker DNS in git; field = http://<IP-Windows>:8200/:8000/:8090/:8100). math_url has no /agent/run suffix.",
+    "Excel Tools X-API-Key: Header Auth credential (header name X-API-Key) on Agent — Excel Extractor HTTP / toolHttpRequest nodes. Do not store the key in MAS — Runtime Config.",
+    "Windows host needs Python 3.11-3.13 venv only (no Node, no Docker). Orchestrator Calculation HTTP uses math_url + /agent/run. Do not import Agent — Calculation (Math Service).",
     "Bind Header Auth on Orchestrator webhook and Control Plane Proxy webhook. Activate Control Plane Proxy first, POST {\"operation\":\"schema\"}, then start Activity.",
     "Settings → Error workflow = Error — MAS Node Traces on Orchestrator, Excel Extractor, Schedule Builder, Retrieval, Ingestion. Not on the error workflow itself or Control Plane Proxy.",
     "Seed agent_registry via Control Plane Proxy schema (excel_extractor, calculation_agent, schedule_builder). Orchestrator does not call Knowledge Retrieval.",
@@ -19477,6 +19800,8 @@ event_id,trace_id,task_id,at,stage,event_type,actor,status,summary,details_json
     "Engineers start tasks in Activity UI POST /cases (http://<IP>:8200), not Entry Form."
   ],
   "activation_order": [
+    "Import MAS — Runtime Config, fill Runtime URLs (field: Windows IP), bind Execute Workflow on Orchestrator/Excel/Schedule.",
+    "Create Header Auth credential Excel Tools X-API-Key and bind it on Agent — Excel Extractor HTTP nodes.",
     "Activate MAS — Control Plane Proxy and POST {\"operation\":\"schema\"}.",
     "Start Activity with CONTROL_PLANE_PROXY_URL; /health control_plane_backend = n8n_proxy.",
     "Optional: MAS — Knowledge Ingestion (Activity → Загрузить в RAG) and MAS — Knowledge Retrieval.",
@@ -19487,15 +19812,14 @@ event_id,trace_id,task_id,at,stage,event_type,actor,status,summary,details_json
     "Activity POST /cases with Excel + schedule_files + schedule_root stores artifacts on the control plane; specialists GET /cases/{id}/artifacts/{id}.",
     "start without a usable objective asks the user via HITL (waiting_user), not a fabricated .INC.",
     "Excel Extractor uses X-API-Key tools at /agent-tools/*; dates with an ISO time suffix become YYYY-MM-DD.",
-    "Schedule Builder commissioning and group-rebind emit through Node timeline JS (same as goldens). Python parse/apply/emit remains for inspect/apply_operations.",
+    "Schedule Builder commissioning and group-rebind emit in Python FastAPI (timeline_ops). JS timeline stays in n8n templates/smokes only.",
     "INCLUDE text is not rewritten. Petrel ../../INCLUDE/... stays KEEP when bodies are not attached; URL/absolute paths are unsafe.",
     "validated REVISE returns .INC plus completeness/preservation evidence; golden_case_1/2 match *_MAS_result.INC (WEFAC ignored).",
     "Activity chat collapses duplicate agent.result / orchestrator.status+decision / double case.finished; rail turn_count matches that feed.",
-    "Control Plane Proxy snapshot is one SQL for case+events. Successful proxy executions are not saved."
+    "Control Plane Proxy snapshot is one SQL for case+events. Activity uses one SSE poller per case (2s running / 6s idle, wake on write) and batch for create/update+event. Successful proxy executions are not saved."
   ],
   "mvp_external_blockers": [
     "corporate n8n 2.30.8 UI round-trip with Postgres+vector, Header Auth, and network access to Windows Excel :8000 / Schedule :8090 / Math :8100 / Activity :8200",
-    "Node.js on the Windows host that runs Schedule Builder (commissioning / group-rebind)",
     "expert-authored active keyword_instruction cards if you use Knowledge Retrieval / specialist template RAG"
   ],
   "deferred_enterprise_gates": [
@@ -23889,229 +24213,3 @@ event_id,trace_id,task_id,at,stage,event_type,actor,status,summary,details_json
       "status": "active",
       "author": "department-hydrodynamic-expert",
       "access_scope": "petroleum-engineering",
-      "text": "GCONPROD — прогнозные цели и ограничения дебита группы / месторождения.\n\nНазначение. GCONPROD задаёт тип группового контроля и лимиты дебита для группы скважин или FIELD. Симулятор перераспределяет дебиты скважин (пропорционально потенциалам / guide rates), чтобы удержать групповой контроль. Форматы: tN, E1, E3. Секция: только SCHEDULE. Это не скважинный прогноз (WCONPROD), не история (отдельные hist-слова), не дерево групп (GRUPTREE) и не GUIDERAT (формула направляющих).\n\nКогда применять. FORECAST / после cutover: групповые ORAT/WRAT/GRAT/LRAT/… лимиты. Не раньше утверждённого cutover. Обычно после DATES и после того, как группа существует: FIELD всегда; иначе группа из GRUPTREE и/или leaf-группа со скважинами WELSPECS. Скважины с CONTROL=GRUP в WCONPROD опираются на GCONPROD своей группы.\n\nRecord layout. Keyword GCONPROD, затем одна или несколько записей, каждая `/`. Блок — отдельный `/`.\n\nПоля по порядку (§12.20.89; METRIC):\n\n1. GROUP — имя группы, префикс с `*` (все группы с таким началом), или FIELD. Default симулятора: default-группа WELSPECS. В корпусе пишите GROUP явно. CREATE MVP: не эмитьте префикс-wildcard (`GROUP2*`) без детерминированного раскрытия в факты — иначе needs_input / перечислите точные имена. REVISE: KEEP raw wildcard baseline допустим.\n2. CONTROL — тип контроля (какое значение лимита ведёт расчёт дебита группы). Default: NONE.\n   MVP: NONE | ORAT | WRAT | GRAT | LRAT | RESV | FLD.\n   - ORAT/WRAT/GRAT/LRAT — лимит фазы (поля 3–6); при превышении операция фазы считается RATE независимо от параметров 7/11/12/13.\n   - RESV — пластовый флюид (поле 14; учитывает WELSPECS param 13).\n   - PRBL — уравновешивающая доля отбора (поле 15).\n   - FLD — группа под вышестоящей / FIELD по guide rate (поля 9–10).\n   - WGRA / PBGS / PBWS — E3-only → needs_input без E3 scope.\n3. ORAT — нефть sm3/day (или верхний лимит). Default: нет ограничения.\n4. WRAT — вода sm3/day.\n5. GRAT — газ sm3/day (FIELD: Mscf/day).\n6. LRAT — жидкость на поверхности sm3/day.\n7. EXCEED_ACTION — при превышении ORAT/WRAT/GRAT/LRAT (общее): NONE | CON | CON+ | +CON | WELL | RATE | TARG.\n   - RATE — приравнять дебит группы к нарушенному лимиту (пересчёт скважин по потенциалам).\n   - TARG — tNavigator-only: как RATE, но лимит снимается, когда перестаёт выполняться.\n   - WELL / CON / CON+ / +CON — закрытие скважины или интервала-нарушителя.\n8. EXCEED_PARENT — YES | NO: может ли вышестоящая группа перехватить контроль. Default: YES.\n9. GUIDE_RATE — безразмерный коэффициент доли группы в фазе (для FLD / распределения). Default: нет.\n10. GUIDE_PHASE — OIL | WAT | GAS | LIQ | WGA | CVAL | POTN | FORM.\n    - POTN/FORM: поле 9 игнорируется; FORM требует GUIDERAT (эмитьте GUIDERAT из allowlist или KEEP baseline; без формулы → needs_input).\n11–13. EXCEED_WRAT / EXCEED_GRAT / EXCEED_LRAT — операции на отдельные фазовые лимиты; default = поле 7.\n14. RESV — rm3/day.\n15. PRBL — уравновешивающая доля отбора (операция RATE).\n16. WGRA — жирный газ (E3).\n17. HEAT — игнорируется (совместимость).\n18–19. PBGS / PBWS — доли газа/воды surface (E3; операция RATE).\n\nПоведение. Если CONTROL ≠ NONE, симулятор меняет дебиты скважин/подгрупп, чтобы выполнить контроль. В текущей версии при расчёте учитывается только лимит активного CONTROL; прочие лимиты игнорируются (§12.20.89). Потенциал скважины = добыча без ограничений по дебиту.\n\nКанон render этого корпуса.\n- `orat` — GROUP CONTROL=ORAT ORAT EXCEED_ACTION EXCEED_PARENT.\n- `wrat` / `grat` / `lrat` — аналогично с целевым лимитом в своей позиции (для lrat: 3* defaults + LRAT, как пример GROUP11).\n- `none` — GROUP CONTROL=NONE.\n- `fld` — GROUP CONTROL=FLD … GUIDE_RATE GUIDE_PHASE (если даны).\n- `resv` — GROUP CONTROL=RESV … RESV.\nНе эмитьте поля вне variant. GROUP quoted (кроме политики unquoted). Дебиты ≥0 finite. Не копируйте учебные GROUP11/GROUP2*/500/1000 без фактов.\n\nIR / semantics.\n- period=FORECAST; clock.uses_current=true.\n- references: group GROUP required.\n- definitions: UPSERT group-control state на GROUP (не создаёт группу как hierarchy edge — это GRUPTREE).\n- prerequisites: для GROUP≠FIELD группа должна уже существовать как entity (GRUPTREE и/или WELSPECS leaf). Схема MVP: reference group; FIELD всегда валиден. Явный GRUPTREE prerequisite не ставим на FIELD.\n- state_assignments: namespace group-control; key CONTROL; value_fields = целевые лимиты/действия variant.\n- numeric_constraints: ORAT/WRAT/GRAT/LRAT/RESV/GUIDE_RATE min 0.\n\nСвязанные keywords (не эмитьте без scope).\n- GRUPTREE — иерархия; FLD/EXCEED_PARENT опираются на parent.\n- WELSPECS — скважины в leaf-группах; RESV связан с param 13.\n- WCONPROD CONTROL=GRUP — скважина берёт долю от GCONPROD.\n- GUIDERAT — GUIDE_PHASE=FORM.\n- WGRUPCON — постоянные guide rates скважин.\n\nВалидация.\n- CONTROL согласован с заполненным целевым полем (ORAT→ORAT, LRAT→LRAT, …).\n- EXCEED_ACTION ∈ enum; EXCEED_PARENT ∈ {YES,NO}.\n- Не GCONPROD в HISTORY interval.\n- Не wildcard GROUP в CREATE без resolved list.\n- Node-группа с children vs leaf: групповой контроль допустим на иерархии; не вешайте скважины на node-группу (правило GRUPTREE).\n\nТеория (§2.14.2 — Групповой контроль; §5.6.7 — потенциал).\n- Возможности групповой добычи в tNavigator описаны в §2.14.2: GRUPTREE задаёт дерево; GCONPROD — контроль добывающих групп; GUIDERAT — формула guide rates для GCONPROD.\n- Групповой целевой дебит делится между скважинами пропорционально их направляющим дебитам (не «поровну»).\n- Потенциал (§5.6.7) — дебит/приемистость без лимита на rate при текущих условиях блока, с учётом BHP/THP (и VFP) и опционально депрессии (WELDRAW). Потенциал группы = сумма потенциалов скважин.\n- Guide по умолчанию = потенциал; иначе GUIDERAT / WGRUPCON.\n\nАнтипаттерны.\n- WCONPROD вместо GCONPROD для группового лимита.\n- CONTROL=ORAT без ORAT / LRAT без LRAT.\n- GUIDE_PHASE=FORM без коэффициентов GUIDERAT / без baseline формулы.\n- Считать GCONPROD объявлением группы в дереве.\n- Префикс `*` «на всякий случай».\n\nНехватка факта → needs_input: нет GROUP; нет CONTROL/лимита; cutover неясен; wildcard без списка; FLD без guide/parent; E3 CONTROL без профиля; конфликт с baseline group-control без REVISE target.\n\nКарточка самодостаточна: renderer использует только schema_catalogue этой записи и выбранный variant.",
-      "examples": [
-        {
-          "title": "LRAT группы — канон мануала",
-          "task": "GROUP11 на контроле жидкости 1000 sm3/day, RATE, вышестоящие YES.",
-          "schedule_text": "GCONPROD\nGROUP11 LRAT 3* 1000 RATE YES /\n/\n",
-          "explanation": "§12.20.89 с. 1932. Variant lrat: ORAT/WRAT/GRAT default (3*), LRAT=1000, EXCEED_ACTION=RATE, EXCEED_PARENT=YES. Учебные имена/числа."
-        },
-        {
-          "title": "ORAT точной группы",
-          "task": "Группа G1, контроль нефти 500 sm3/day, RATE, YES.",
-          "schedule_text": "GCONPROD\n  'G1' ORAT 500 3* RATE YES /\n/\n",
-          "explanation": "Variant orat. В мануале был префикс GROUP2*; в CREATE пишите точное имя из фактов."
-        },
-        {
-          "title": "FIELD без ограничения",
-          "task": "Месторождение FIELD, CONTROL=NONE.",
-          "schedule_text": "GCONPROD\n  'FIELD' NONE /\n/\n",
-          "explanation": "Variant none. Явный FIELD; не оставляйте GROUP пустым/default."
-        },
-        {
-          "title": "WRAT группы",
-          "task": "Группа WATER1, лимит воды 200 sm3/day, RATE, YES.",
-          "schedule_text": "GCONPROD\n  'WATER1' WRAT 1* 200 2* RATE YES /\n/\n",
-          "explanation": "Variant wrat. ORAT default, WRAT=200, GRAT/LRAT default."
-        }
-      ],
-      "schema_catalogue": {
-        "contract": "schedule_schema_catalogue",
-        "contract_version": "1.0",
-        "catalogue_ref": "catalogue://tnavigator/22.2/gconprod-group-forecast-v1",
-        "catalogue_hash": "sha256:13c7d826c995f500f7a6612b322e8d1a8de3bff5a7ad0574810dc124668b23df",
-        "source_hash": "sha256:858bbd62b39f9f8ae74ec09a9fbbd5b4580fd41977f2677aa3bbb1ab2531bf50",
-        "access_scope": "petroleum-engineering",
-        "simulator_profile": {
-          "vendor": "Rock Flow Dynamics",
-          "simulator": "tNavigator",
-          "version": "22.2",
-          "unit_system": "METRIC"
-        },
-        "approved": true,
-        "approved_by": "department-hydrodynamic-expert",
-        "author": "department-hydrodynamic-expert",
-        "approval_gate_id": "expert:gconprod-group-forecast-v1:2",
-        "schemas": [
-          {
-            "schema_id": "expert:GCONPROD:orat",
-            "schema_revision": "1",
-            "keyword": "GCONPROD",
-            "variant": "orat",
-            "citation": {
-              "document_id": "tnav-user-manual-russian",
-              "document_revision": "19.4",
-              "page": "12.20.89 / 1928-1932",
-              "heading": "GCONPROD",
-              "source_hash": "sha256:858bbd62b39f9f8ae74ec09a9fbbd5b4580fd41977f2677aa3bbb1ab2531bf50"
-            },
-            "parser": {
-              "token_width": 19,
-              "allow_trailing_omission": true,
-              "allow_unquoted_strings": true
-            },
-            "fields": [
-              {
-                "name": "GROUP",
-                "position": 1,
-                "type": "string",
-                "required": true,
-                "quote": "single"
-              },
-              {
-                "name": "CONTROL",
-                "position": 2,
-                "type": "string",
-                "required": true,
-                "enum": [
-                  "ORAT"
-                ]
-              },
-              {
-                "name": "ORAT",
-                "position": 3,
-                "type": "number",
-                "required": true
-              },
-              {
-                "name": "WRAT",
-                "position": 4,
-                "type": "number",
-                "required": false,
-                "default_allowed": true
-              },
-              {
-                "name": "GRAT",
-                "position": 5,
-                "type": "number",
-                "required": false,
-                "default_allowed": true
-              },
-              {
-                "name": "LRAT",
-                "position": 6,
-                "type": "number",
-                "required": false,
-                "default_allowed": true
-              },
-              {
-                "name": "EXCEED_ACTION",
-                "position": 7,
-                "type": "string",
-                "required": true,
-                "enum": [
-                  "NONE",
-                  "CON",
-                  "CON+",
-                  "+CON",
-                  "WELL",
-                  "RATE",
-                  "TARG"
-                ]
-              },
-              {
-                "name": "EXCEED_PARENT",
-                "position": 8,
-                "type": "string",
-                "required": true,
-                "enum": [
-                  "YES",
-                  "NO"
-                ]
-              }
-            ],
-            "layout": {
-              "newline": "LF",
-              "indent": "  ",
-              "delimiter": "SPACE",
-              "record_terminator": "SLASH",
-              "block_terminator": "SLASH_LINE"
-            },
-            "semantics": {
-              "period": "FORECAST",
-              "clock": {
-                "uses_current": true
-              },
-              "references": [
-                {
-                  "entity_type": "group",
-                  "id_field": "GROUP",
-                  "required": true
-                }
-              ],
-              "state_assignments": [
-                {
-                  "namespace": "group-control",
-                  "entity_type": "group",
-                  "entity_field": "GROUP",
-                  "key_fields": [
-                    "CONTROL"
-                  ],
-                  "value_fields": [
-                    "ORAT",
-                    "WRAT",
-                    "GRAT",
-                    "LRAT",
-                    "EXCEED_ACTION",
-                    "EXCEED_PARENT"
-                  ]
-                }
-              ],
-              "numeric_constraints": [
-                {
-                  "field": "ORAT",
-                  "min": 0
-                },
-                {
-                  "field": "WRAT",
-                  "min": 0
-                },
-                {
-                  "field": "GRAT",
-                  "min": 0
-                },
-                {
-                  "field": "LRAT",
-                  "min": 0
-                }
-              ]
-            }
-          },
-          {
-            "schema_id": "expert:GCONPROD:wrat",
-            "schema_revision": "1",
-            "keyword": "GCONPROD",
-            "variant": "wrat",
-            "citation": {
-              "document_id": "tnav-user-manual-russian",
-              "document_revision": "19.4",
-              "page": "12.20.89 / 1928-1932",
-              "heading": "GCONPROD",
-              "source_hash": "sha256:858bbd62b39f9f8ae74ec09a9fbbd5b4580fd41977f2677aa3bbb1ab2531bf50"
-            },
-            "parser": {
-              "token_width": 19,
-              "allow_trailing_omission": true,
-              "allow_unquoted_strings": true
-            },
-            "fields": [
-              {
-                "name": "GROUP",
-                "position": 1,
-                "type": "string",
-                "required": true,
-                "quote": "single"
-              },
-              {
-                "name": "CONTROL",
-                "position": 2,
-                "type": "string",
-                "required": true,
-                "enum": [
-                  "WRAT"
-                ]
-              },
-              {
-                "name": "ORAT",
-                "position": 3,

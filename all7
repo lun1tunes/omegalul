@@ -1,3 +1,1607 @@
+    text = load_source(
+        {
+            "activity_base_url": "http://mas-activity:8200",
+            "artifacts": {"schedule_source": {"filename": "base.inc", "artifact_id": "schedule_source"}},
+        },
+        "CASE-1",
+    )
+    assert seen["url"] == "http://mas-activity:8200/cases/CASE-1/artifacts/schedule_source"
+    assert "DATES" in text
+    seen.clear()
+    text = load_source(
+        {
+            "activity_base_url": "http://mas-activity:8200",
+            "schedule_root": "MONITORING_FDP.INC",
+            "artifacts": {
+                "schedule_source": {"filename": "GRUPTREE.GRDECL", "artifact_id": "schedule_source"},
+                "schedule_source_1": {"filename": "MONITORING_FDP.INC", "artifact_id": "schedule_source_1"},
+            },
+        },
+        "CASE-1",
+    )
+    assert seen["url"] == "http://mas-activity:8200/cases/CASE-1/artifacts/schedule_source_1"
+    assert "DATES" in text
+    from app.group_rebind import wants_group_rebind
+
+    objective = "На основе старого прогнозного schedule и Excel с новыми датами ввода собрать новый schedule.inc"
+    assert wants_group_rebind(objective, {"artifacts": {"schedule_source_5": {"filename": "GRUPTREE.GRDECL"}}}) is False
+    group_task = 'скважины 1601 и 1602 помести в отдельную группу - "DKS"'
+    assert wants_group_rebind(group_task, {}) is True
+    polluted_handoff = "перепривязав скважины в нужные группы согласно baseline"
+    assert wants_group_rebind(objective, {"handoff": polluted_handoff}) is False
+
+
+def test_agent_tools_open_inspect_search_and_operations() -> None:
+    from fastapi.testclient import TestClient
+
+    from app.main import app
+
+    client = TestClient(app)
+    opened = client.post(
+        "/agent-tools/open_session",
+        json={
+            "task_id": "t1",
+            "objective": "Поставь ORAT 15 на P1",
+            "inputs": {"schedule_text": "DATES\n  1 JAN 2026 /\n/\n\nWCONPROD\n  'P1' OPEN 10 /\n/\n"},
+        },
+    )
+    assert opened.status_code == 200
+    body = opened.json()
+    assert body["ok"] is True
+    sid = body["session_id"]
+    assert "P1" in body["inspect"]["wells"]
+    search = client.post("/agent-tools/search_keywords", json={"session_id": sid, "intent": "даты ввода"})
+    names = [item["keyword"] for item in search.json()["keywords"]]
+    assert "DATES" in names
+    applied = client.post(
+        "/agent-tools/apply_operations",
+        json={
+            "session_id": sid,
+            "operations": {
+                "0": {"keyword": "WCONPROD", "operation": "MODIFY", "fields": {"well": "P1", "status": "OPEN", "ORAT": 15}}
+            },
+        },
+    )
+    assert applied.status_code == 200
+    assert applied.json()["status"] == "completed"
+    result = client.get(f"/sessions/{sid}/result")
+    assert result.status_code == 200
+    assert "15" in result.json()["artifacts"]["schedule_out"]
+    invented = client.post(
+        "/agent-tools/apply_operations",
+        json={
+            "session_id": sid,
+            "operations": [{"keyword": "WCONPROD", "operation": "MODIFY", "fields": {"well": "NOPE", "ORAT": 1}}],
+        },
+    )
+    assert invented.json()["ok"] is False
+    assert invented.json()["error"] == "well_not_in_schedule"
+
+
+def test_commissioning_facts_prefer_specialist_over_baseline_column() -> None:
+    from app.io import commissioning_facts
+
+    context = {
+        "data": {
+            "excel": {
+                "facts": [{"well": "304R", "date": "2019-08-01T00:00:00"}],
+                "normalized_rows": [
+                    {
+                        "preview": [
+                            {
+                                "Скважина": "304R",
+                                "Дата ввода": "2019-08-01T00:00:00",
+                                "Дата ввода (baseline в .INC)": "2019-07-01T00:00:00",
+                            }
+                        ]
+                    }
+                ],
+            }
+        }
+    }
+    rows = commissioning_facts(context, {})
+    assert len(rows) == 1
+    assert rows[0]["well"] == "304R"
+    assert str(rows[0]["date"]).startswith("2019-08-01")
+
+
+def test_commissioning_runs_without_node() -> None:
+    from app.commissioning import run_commissioning_revise
+    source = """DATES
+  1 JAN 2020 /
+/
+
+WCONPROD
+  1601 OPEN GRAT 1* 1* 200000 /
+/
+"""
+    revised = run_commissioning_revise(source, [{"well": "1601", "date": "23 FEB 2020"}])
+    assert revised["status"] == "applied"
+    assert "23 FEB 2020" in revised["generated_schedule"]
+
+
+def test_group_rebind_runs_without_node() -> None:
+    from app.group_rebind import run_group_rebind_revise
+    source = """GRUPTREE
+NORTH FIELD /
+/
+
+DATES
+  1 JAN 2020 /
+/
+
+WCONPROD
+  1601 OPEN GRAT 1* 1* 200000 /
+/
+"""
+    revised = run_group_rebind_revise(
+        source,
+        {
+            "wells": ["1601"],
+            "parent_group": "DKS",
+            "parent_of_parent": "FIELD",
+            "well_groups": {"1601": "G1601"},
+            "control": "GRAT",
+            "gas_rate": 200000,
+        },
+    )
+    assert revised["status"] == "applied"
+    assert "DKS FIELD /" in revised["generated_schedule"]
+
+
+def test_hitl_json_answers_yield_policy_and_new_well_defs() -> None:
+    import json
+
+    from app.agent_tools import _new_well_defs, _unlisted_policy
+
+    defs = [{"well": "N001", "welspecs_line": " N001 GNEW 1 1 1* OIL /"}]
+    state = {
+        "inputs": {},
+        "context": {
+            "hitl": {
+                "answers": {
+                    "new_wells_policy": json.dumps(
+                        {"unlisted_wells_policy": "remove", "new_well_defs": defs},
+                        ensure_ascii=False,
+                    )
+                }
+            }
+        },
+    }
+    assert _unlisted_policy(state) == "remove"
+    assert _new_well_defs(state)[0]["well"] == "N001"
+
+
+_PROSE_REMOVE = (
+    "REVISE прогнозный SCHEDULE по Excel с датами ввода. В Excel не все скважины: "
+    "тех скважин, которые есть в примере schedule но нет в файле с запусками — убрать."
+)
+_PROSE_KEEP = (
+    "REVISE прогнозный SCHEDULE: сдвинуть даты ввода по Excel. "
+    "Инструкция молчит про скважины, которых нет в Excel — по умолчанию сохранить их запуски."
+)
+_TWO_WELL_SOURCE = """DATES
+  1 JAN 2020 /
+/
+
+WCONPROD
+  1601 OPEN GRAT 1* 1* 200000 /
+  201 OPEN GRAT 1* 1* 100000 /
+/
+
+WELOPEN
+  1601 OPEN /
+  201 OPEN /
+/
+"""
+
+
+def test_detect_unlisted_policy_from_prose() -> None:
+    from app.timeline_ops import detect_unlisted_wells_policy
+
+    assert detect_unlisted_wells_policy(_PROSE_REMOVE) == "remove"
+    assert detect_unlisted_wells_policy(_PROSE_KEEP) == "keep"
+    assert detect_unlisted_wells_policy(
+        "Во вложении excel файл с новыми датами ввода скважин."
+    ) == "keep"
+
+
+def test_commissioning_prose_remove_without_enum_needs_unlisted_policy() -> None:
+    from app.commissioning import run_commissioning_revise
+
+    revised = run_commissioning_revise(
+        _TWO_WELL_SOURCE,
+        [{"well": "1601", "date": "23 FEB 2020"}],
+        instruction_blob=_PROSE_REMOVE,
+    )
+    assert revised["status"] == "needs_input"
+    assert revised["generated_schedule"] == ""
+    assert revised["unlisted_wells_policy"] is None
+    assert "201" in revised["unlisted_wells"]
+    assert any(item["code"] == "UNLISTED_WELLS_POLICY_REQUIRED" for item in revised["findings"])
+    assert any(item.get("id") == "unlisted_wells_policy" for item in revised["questions"])
+
+
+def test_commissioning_explicit_remove_drops_unlisted() -> None:
+    from app.commissioning import run_commissioning_revise
+
+    revised = run_commissioning_revise(
+        _TWO_WELL_SOURCE,
+        [{"well": "1601", "date": "23 FEB 2020"}],
+        instruction_blob=_PROSE_REMOVE,
+        unlisted_wells_policy="remove",
+    )
+    assert revised["status"] == "applied"
+    assert revised["unlisted_wells_policy"] == "remove"
+    text = revised["generated_schedule"]
+    assert "23 FEB 2020" in text
+    assert "1601 OPEN GRAT" in text
+    assert not re.search(r"\b201\b", text)
+    assert any(item["code"] == "UNLISTED_WELLS_REMOVED" for item in revised["findings"])
+
+
+def test_commissioning_keep_preserves_unlisted() -> None:
+    from app.commissioning import run_commissioning_revise
+
+    revised = run_commissioning_revise(
+        _TWO_WELL_SOURCE,
+        [{"well": "1601", "date": "23 FEB 2020"}],
+        instruction_blob=_PROSE_KEEP,
+    )
+    assert revised["status"] == "applied"
+    assert revised["unlisted_wells_policy"] == "keep"
+    text = revised["generated_schedule"]
+    assert re.search(r"\b201\b", text)
+    assert "201 OPEN GRAT" in text
+    assert any(item["code"] == "UNLISTED_WELLS_KEPT" for item in revised["findings"])
+
+
+def test_commissioning_new_well_without_defs_needs_hitl() -> None:
+    from app.commissioning import run_commissioning_revise
+
+    revised = run_commissioning_revise(
+        _TWO_WELL_SOURCE,
+        [
+            {"well": "1601", "date": "23 FEB 2020"},
+            {"well": "N001", "date": "1 MAR 2020"},
+        ],
+        unlisted_wells_policy="keep",
+    )
+    assert revised["status"] == "needs_input"
+    assert revised["generated_schedule"] == ""
+    assert "N001" in revised["new_wells"]
+    assert any(item["code"] == "NEW_WELLS_REQUIRE_HITL" for item in revised["findings"])
+    assert any(item.get("id") == "new_wells_policy" for item in revised["questions"])
+
+
+def test_commissioning_new_well_defs_are_applied() -> None:
+    from app.commissioning import run_commissioning_revise
+
+    revised = run_commissioning_revise(
+        _TWO_WELL_SOURCE,
+        [
+            {"well": "1601", "date": "23 FEB 2020"},
+            {"well": "N001", "date": "1 MAR 2020"},
+        ],
+        unlisted_wells_policy="keep",
+        new_well_defs=[{
+            "well": "N001",
+            "date": "1 MAR 2020",
+            "welltrack_include": "welltracks/N001.dev",
+            "welspecs_line": "N001 GNEW 1 1 1* GAS /",
+            "compdatmd_lines": ["N001 1 1 1 1 OPEN 1* 1* 1* 1* 1* 1* 1000 1100 /"],
+            "wconprod_line": "N001 OPEN GRAT 1* 1* 50000 /",
+        }],
+    )
+    assert revised["status"] == "applied"
+    text = revised["generated_schedule"]
+    assert "INCLUDE" in text
+    assert "welltracks/N001.dev" in text
+    assert "N001 GNEW" in text
+    assert "1 MAR 2020" in text
+    assert "N001 OPEN GRAT 1* 1* 50000" in text
+    assert any(item["code"] == "NEW_WELLS_APPLIED" for item in revised["findings"])
+    assert "N001" in revised["new_wells"]
+    assert "N001" in (revised.get("new_wells_applied") or [{}])[0].get("well", "")
+
+===END_FILE===
+===BEGIN_FILE===	scripts/_bootstrap_n8n_field.py	10330	utf8
+#!/usr/bin/env python3
+"""Lab/field bootstrap: create n8n credentials, rebind URLs, publish workflows.
+
+Does not import workflows (UI import is the field canon). Safe to re-run.
+"""
+from __future__ import annotations
+
+import json
+import time
+import urllib.error
+import urllib.request
+from pathlib import Path
+
+ROOT = Path(__file__).resolve().parents[1]
+
+
+def load_env() -> dict[str, str]:
+    out: dict[str, str] = {}
+    for path in (ROOT / ".env",):
+        if not path.is_file():
+            continue
+        for line in path.read_text(encoding="utf-8").splitlines():
+            if not line.strip() or line.startswith("#") or "=" not in line:
+                continue
+            k, _, v = line.partition("=")
+            out[k.strip()] = v.strip().strip('"').strip("'")
+    return out
+
+
+def n8n_session(env: dict[str, str]) -> tuple[str, str]:
+    base = f"http://127.0.0.1:{env.get('N8N_HOST_PORT', '15678')}"
+    body = json.dumps(
+        {"emailOrLdapLoginId": env["N8N_USERNAME"], "password": env["N8N_PASSWORD"]}
+    ).encode()
+    req = urllib.request.Request(
+        base + "/rest/login", data=body, headers={"Content-Type": "application/json"}
+    )
+    with urllib.request.urlopen(req, timeout=30) as resp:
+        cookie = ""
+        raw = resp.headers.get("Set-Cookie") or ""
+        for part in raw.split(","):
+            part = part.strip()
+            if part.startswith("n8n-auth="):
+                cookie = part.split(";", 1)[0]
+                break
+        if not cookie:
+            raise SystemExit("no n8n-auth cookie")
+        return base, cookie
+
+
+def api(base: str, cookie: str, method: str, path: str, payload: dict | None = None):
+    data = None if payload is None else json.dumps(payload).encode()
+    headers = {"Cookie": cookie, "Accept": "application/json"}
+    if data is not None:
+        headers["Content-Type"] = "application/json"
+    req = urllib.request.Request(base + path, data=data, headers=headers, method=method)
+    try:
+        with urllib.request.urlopen(req, timeout=60) as resp:
+            raw = resp.read()
+            return resp.status, json.loads(raw) if raw else {}
+    except urllib.error.HTTPError as exc:
+        body = exc.read().decode("utf-8", errors="replace")
+        try:
+            parsed = json.loads(body)
+        except json.JSONDecodeError:
+            parsed = {"raw": body[:800]}
+        return exc.code, parsed
+
+
+def create_credential(base: str, cookie: str, name: str, ctype: str, data: dict) -> str:
+    status, body = api(
+        base,
+        cookie,
+        "POST",
+        "/rest/credentials",
+        {"name": name, "type": ctype, "data": data},
+    )
+    if status >= 400:
+        raise SystemExit(f"create credential {name} failed {status} {body}")
+    cred = body.get("data") or body
+    cid = cred.get("id")
+    if not cid:
+        raise SystemExit(f"credential {name} missing id: {body}")
+    print(f"credential {name} id={cid} type={ctype}")
+    return str(cid)
+
+
+def main() -> int:
+    env = load_env()
+    base, cookie = n8n_session(env)
+
+    status, existing = api(base, cookie, "GET", "/rest/credentials")
+    items = (existing.get("data") if isinstance(existing, dict) else existing) or []
+    by_name = {c.get("name"): c for c in items if isinstance(c, dict)}
+
+    def ensure(name: str, ctype: str, data: dict) -> str:
+        if name in by_name and by_name[name].get("id"):
+            print(f"credential exists {name} id={by_name[name]['id']}")
+            return str(by_name[name]["id"])
+        return create_credential(base, cookie, name, ctype, data)
+
+    pg_id = ensure(
+        "Postgres pgvector",
+        "postgres",
+        {
+            "host": "postgres",
+            "database": env.get("POSTGRES_DB", "n8n"),
+            "user": env.get("POSTGRES_USER", "n8n"),
+            "password": env["POSTGRES_PASSWORD"],
+            "port": 5432,
+            "ssl": "disable",
+        },
+    )
+    oa_id = ensure(
+        "OpenAI production",
+        "openAiApi",
+        {"apiKey": env["OPENAI_API_KEY"]},
+    )
+    hdr_id = ensure(
+        "Engineering orchestrator inbound key",
+        "httpHeaderAuth",
+        {"name": "Authorization", "value": "local-orch-inbound"},
+    )
+    excel_hdr_id = ensure(
+        "Excel Tools X-API-Key",
+        "httpHeaderAuth",
+        {"name": "X-API-Key", "value": env.get("EXCEL_TOOLS_API_KEY", "local-dev-excel-tools-api-key")},
+    )
+
+    ids = {
+        "cred-postgres-pgvector-01": pg_id,
+        "cred-openai-production-01": oa_id,
+        "cred-orch-header-auth-01": hdr_id,
+        "cred-qwen-compatible-01": oa_id,
+    }
+
+    status, wfs = api(base, cookie, "GET", "/rest/workflows?limit=250")
+    rows = (wfs.get("data") if isinstance(wfs, dict) else wfs) or []
+    if isinstance(rows, dict):
+        rows = rows.get("data") or []
+
+    excel_url = "http://host.docker.internal:8000/api/v1"
+    activity_url = "http://host.docker.internal:8200"
+    math_url = "http://host.docker.internal:8100/api/v1/math"
+    excel_key = env.get("EXCEL_TOOLS_API_KEY", "local-dev-excel-tools-api-key")
+
+    for row in rows:
+        wid = row.get("id")
+        name = row.get("name")
+        if not wid:
+            continue
+        status, wf = api(base, cookie, "GET", f"/rest/workflows/{wid}")
+        data = wf.get("data") or wf
+        nodes = data.get("nodes") or []
+        changed = 0
+        blob = json.dumps(nodes)
+        for old, new in ids.items():
+            if old in blob and old != new:
+                blob = blob.replace(old, new)
+                changed += 1
+        nodes = json.loads(blob)
+        for node in nodes:
+            nname = node.get("name")
+            params = node.get("parameters") if isinstance(node.get("parameters"), dict) else {}
+            creds = node.get("credentials") if isinstance(node.get("credentials"), dict) else {}
+            for ctype, meta in creds.items():
+                if not isinstance(meta, dict):
+                    continue
+                if ctype == "postgres":
+                    meta["id"] = pg_id
+                    meta["name"] = "Postgres pgvector"
+                    changed += 1
+                elif ctype == "openAiApi":
+                    meta["id"] = oa_id
+                    meta["name"] = "OpenAI production"
+                    changed += 1
+                elif ctype == "httpHeaderAuth":
+                    cname = str(meta.get("name") or "")
+                    if "excel" in cname.lower() or "x-api-key" in cname.lower():
+                        meta["id"] = excel_hdr_id
+                        meta["name"] = "Excel Tools X-API-Key"
+                    else:
+                        meta["id"] = hdr_id
+                        meta["name"] = "Engineering orchestrator inbound key"
+                    changed += 1
+            if nname == "Runtime URLs":
+                for assignment in (((params.get("assignments") or {}).get("assignments")) or []):
+                    key = assignment.get("name")
+                    if key == "excel_tools_url":
+                        assignment["value"] = "http://host.docker.internal:8000"
+                        changed += 1
+                    elif key == "activity_base_url":
+                        assignment["value"] = activity_url
+                        changed += 1
+                    elif key == "schedule_service_url":
+                        assignment["value"] = "http://host.docker.internal:8090"
+                        changed += 1
+                    elif key == "math_url":
+                        assignment["value"] = "http://host.docker.internal:8100"
+                        changed += 1
+            if nname == "Runtime configuration":
+                for assignment in (((params.get("assignments") or {}).get("assignments")) or []):
+                    key = assignment.get("name")
+                    if key == "excel_tools_url":
+                        assignment["value"] = "http://host.docker.internal:8000"
+                        changed += 1
+            if nname == "Math Service Configuration":
+                for assignment in (((params.get("assignments") or {}).get("assignments")) or []):
+                    if assignment.get("name") == "math_service_url":
+                        assignment["value"] = math_url
+                        changed += 1
+            if nname == "Activity connection":
+                for assignment in (((params.get("assignments") or {}).get("assignments")) or []):
+                    if assignment.get("name") == "activity_base_url":
+                        assignment["value"] = activity_url
+                        changed += 1
+            url = params.get("url")
+            if isinstance(url, str):
+                repl = {
+                    "http://excel-tools:8000/health": "http://host.docker.internal:8000/health",
+                    "http://mas-activity:8200/health": "http://host.docker.internal:8200/health",
+                    "http://excel-tools:8000": "http://host.docker.internal:8000",
+                    "http://mas-activity:8200": "http://host.docker.internal:8200",
+                }
+                for src, dst in repl.items():
+                    if src in url:
+                        params["url"] = url.replace(src, dst)
+                        changed += 1
+                        break
+        if not changed:
+            print(f"unchanged {name}")
+            continue
+        data["nodes"] = nodes
+        # n8n 2.30 PUT wants the workflow settings payload.
+        put_body = {
+            "name": data.get("name"),
+            "nodes": nodes,
+            "connections": data.get("connections"),
+            "settings": data.get("settings") or {},
+            "staticData": data.get("staticData"),
+        }
+        st, body = api(base, cookie, "PUT", f"/rest/workflows/{wid}", put_body)
+        print(f"patched {name} changed={changed} put={st}")
+        if st >= 400:
+            print(body)
+
+    print("bootstrap credentials done", {"postgres": pg_id, "openai": oa_id, "header": hdr_id, "excel_header": excel_hdr_id})
+    Path("/tmp/mas-n8n-bootstrap-ids.json").write_text(
+        json.dumps(
+            {"postgres": pg_id, "openai": oa_id, "header": hdr_id, "excel_header": excel_hdr_id, "ts": time.time()},
+            indent=2,
+        ),
+        encoding="utf-8",
+    )
+    return 0
+
+
+if __name__ == "__main__":
+    raise SystemExit(main())
+
+===END_FILE===
+===BEGIN_FILE===	scripts/check_schedule_includes.py	18205	utf8
+#!/usr/bin/env python3
+"""Validate tNavigator/ECL-style INCLUDE directives in SCHEDULE files.
+
+The checker is deliberately read-only.  It does not rewrite INCLUDE paths or
+the source files.  It checks the things that can produce the n8n materializer
+error ``INCLUDE path invalid``:
+
+* UTF-8/text encoding and embedded NUL bytes;
+* an INCLUDE without a quoted, non-empty path;
+* an unterminated quote or missing ``/`` terminator;
+* absolute/URL paths and paths that escape the virtual package root; and
+* missing include bodies when a package directory is supplied.
+
+Examples:
+
+    # Check one uploaded/flat root file.  No files are modified.
+    python3 scripts/check_schedule_includes.py MVP1_schedule_IN.INC
+
+    # Check the complete virtual package and resolve INCLUDE bodies.
+    python3 scripts/check_schedule_includes.py \
+        simulation-model-example/package \
+        --root-path SCHEDULE/FORECAST/MONITORING_1_2_2_1_4q25_3_NORTH1_6_FDP.INC
+
+    # Machine-readable output for CI/support bundles.
+    python3 scripts/check_schedule_includes.py file.INC --json
+"""
+
+from __future__ import annotations
+
+import argparse
+import bisect
+import codecs
+import json
+import posixpath
+import re
+import sys
+from dataclasses import asdict, dataclass
+from pathlib import Path
+from typing import Iterable
+
+
+SUPPORTED_SUFFIXES = {".inc", ".data", ".sch", ".txt", ".grdecl"}
+WORD_RE = re.compile(r"[A-Za-z_][A-Za-z0-9_]*")
+URL_RE = re.compile(r"^[A-Za-z][A-Za-z0-9+.-]*://")
+WINDOWS_ABS_RE = re.compile(r"^[A-Za-z]:/")
+
+
+@dataclass(frozen=True)
+class Finding:
+    severity: str
+    code: str
+    file: str
+    line: int
+    column: int
+    message: str
+    path: str | None = None
+
+
+@dataclass(frozen=True)
+class IncludeRef:
+    line: int
+    column: int
+    path: str | None
+    path_start: int
+    path_end: int
+    terminated: bool
+    quote_closed: bool
+
+
+@dataclass(frozen=True)
+class Token:
+    kind: str
+    value: str
+    start: int
+    end: int
+    quote_closed: bool = True
+
+
+def line_starts(text: str) -> list[int]:
+    starts = [0]
+    starts.extend(index + 1 for index, char in enumerate(text) if char == "\n")
+    return starts
+
+
+def location(starts: list[int], offset: int, text_length: int) -> tuple[int, int]:
+    # Do not clamp to the start of the last line: a one-line file (or a final
+    # line without EOL) can legitimately report a column past that offset.
+    offset = max(0, min(offset, text_length))
+    row = bisect.bisect_right(starts, offset)
+    return row, offset - starts[row - 1] + 1
+
+
+def tokenize(text: str) -> list[Token]:
+    """Tokenize enough of the deck grammar to inspect INCLUDE safely.
+
+    ``--`` starts a comment outside a quoted string.  Newlines are retained so
+    a normal multiline form (INCLUDE on one line, path on the next) works.
+    """
+
+    tokens: list[Token] = []
+    index = 0
+    length = len(text)
+    while index < length:
+        char = text[index]
+        if char in " \t\r":
+            index += 1
+            continue
+        if char == "\n":
+            tokens.append(Token("newline", char, index, index + 1))
+            index += 1
+            continue
+        if char == "-" and index + 1 < length and text[index + 1] == "-":
+            newline = text.find("\n", index)
+            index = length if newline < 0 else newline
+            continue
+        if char in "'\"":
+            quote = char
+            start = index
+            index += 1
+            value_start = index
+            escaped = False
+            while index < length:
+                current = text[index]
+                if escaped:
+                    escaped = False
+                    index += 1
+                    continue
+                if current == "\\":
+                    escaped = True
+                    index += 1
+                    continue
+                if current == quote:
+                    value = text[value_start:index]
+                    index += 1
+                    tokens.append(Token("string", value, start, index, True))
+                    break
+                if current == "\n":
+                    # A quoted filename cannot contain a physical newline.
+                    value = text[value_start:index]
+                    tokens.append(Token("string", value, start, index, False))
+                    break
+                index += 1
+            else:
+                tokens.append(Token("string", text[value_start:], start, length, False))
+                index = length
+            continue
+        word = WORD_RE.match(text, index)
+        if word:
+            tokens.append(Token("word", word.group(0), word.start(), word.end()))
+            index = word.end()
+            continue
+        if char == "/":
+            tokens.append(Token("slash", char, index, index + 1))
+        else:
+            tokens.append(Token("other", char, index, index + 1))
+        index += 1
+    return tokens
+
+
+def parse_includes(text: str) -> list[IncludeRef]:
+    refs: list[IncludeRef] = []
+    tokens = tokenize(text)
+    for index, token in enumerate(tokens):
+        if token.kind != "word" or token.value.upper() != "INCLUDE":
+            continue
+
+        cursor = index + 1
+        while cursor < len(tokens) and tokens[cursor].kind == "newline":
+            cursor += 1
+        if cursor >= len(tokens):
+            refs.append(IncludeRef(0, 0, None, token.end, token.end, False, False))
+            continue
+
+        candidate = tokens[cursor]
+        if candidate.kind != "string":
+            refs.append(IncludeRef(0, 0, None, candidate.start, candidate.end, False, False))
+            continue
+
+        cursor += 1
+        while cursor < len(tokens) and tokens[cursor].kind == "newline":
+            cursor += 1
+        terminated = cursor < len(tokens) and tokens[cursor].kind == "slash"
+        refs.append(
+            IncludeRef(
+                0,
+                0,
+                candidate.value,
+                candidate.start + 1,
+                max(candidate.start + 1, candidate.end - (1 if candidate.quote_closed else 0)),
+                terminated,
+                candidate.quote_closed,
+            )
+        )
+    return refs
+
+
+def clean_virtual_path(value: str) -> str:
+    return value.strip().replace("\\", "/")
+
+
+def is_absolute_or_url(value: str) -> bool:
+    return value.startswith("/") or bool(URL_RE.match(value)) or bool(WINDOWS_ABS_RE.match(value))
+
+
+def resolve_virtual_path(base: str, relative: str) -> tuple[str | None, str | None]:
+    """Resolve a relative INCLUDE against a virtual package path."""
+
+    value = clean_virtual_path(relative)
+    if not value or "\x00" in value:
+        return None, "invalid"
+    if is_absolute_or_url(value):
+        return None, "unsafe"
+    base = clean_virtual_path(base)
+    if not base or is_absolute_or_url(base):
+        return None, "unsafe"
+    joined = posixpath.normpath(posixpath.join(posixpath.dirname(base), value))
+    if joined in {"", ".", ".."} or joined.startswith("../") or joined.startswith("/"):
+        return None, "unsafe"
+    return joined, None
+
+
+def default_root_path(source: Path, text: str, package_dir: Path | None) -> str:
+    if package_dir is not None:
+        try:
+            return source.resolve().relative_to(package_dir.resolve()).as_posix()
+        except ValueError:
+            pass
+    # This mirrors the n8n materializer for a flat upload whose INCLUDE paths
+    # contain Petrel's ../../... prefix.
+    has_parent_include = any(
+        ref.path and ".." in clean_virtual_path(ref.path).split("/")
+        for ref in parse_includes(text)
+    )
+    name = source.name
+    return f"SCHEDULE/FORECAST/{name}" if has_parent_include else name
+
+
+class ScheduleIncludeChecker:
+    def __init__(self, package_dir: Path | None = None) -> None:
+        self.package_dir = package_dir.resolve() if package_dir else None
+        self.findings: list[Finding] = []
+        self.includes_checked = 0
+        self.files_checked = 0
+        self._visited: set[str] = set()
+
+    def add(
+        self,
+        severity: str,
+        code: str,
+        source: Path,
+        text: str,
+        offset: int,
+        message: str,
+        path: str | None = None,
+    ) -> None:
+        starts = line_starts(text)
+        line, column = location(starts, offset, len(text))
+        self.findings.append(
+            Finding(severity, code, str(source), line, column, message, path)
+        )
+
+    def read_text(self, source: Path) -> str:
+        try:
+            data = source.read_bytes()
+        except OSError as exc:
+            self.findings.append(
+                Finding("error", "FILE_READ_ERROR", str(source), 1, 1, str(exc))
+            )
+            return ""
+
+        if b"\x00" in data:
+            self.findings.append(
+                Finding(
+                    "error",
+                    "NUL_BYTE",
+                    str(source),
+                    1,
+                    1,
+                    "file contains a NUL byte; it is not a clean text deck",
+                )
+            )
+        if data.startswith((codecs.BOM_UTF16_LE, codecs.BOM_UTF16_BE, codecs.BOM_UTF32_LE, codecs.BOM_UTF32_BE)):
+            self.findings.append(
+                Finding(
+                    "error",
+                    "ENCODING_NOT_UTF8",
+                    str(source),
+                    1,
+                    1,
+                    "file has a UTF-16/UTF-32 BOM; save the deck as UTF-8 text",
+                )
+            )
+        try:
+            text = data.decode("utf-8-sig")
+        except UnicodeDecodeError as exc:
+            self.findings.append(
+                Finding(
+                    "error",
+                    "INVALID_UTF8",
+                    str(source),
+                    1,
+                    1,
+                    f"file is not valid UTF-8 ({exc})",
+                )
+            )
+            text = data.decode("utf-8", errors="replace")
+        return text
+
+    def check_file(self, source: Path, virtual_path: str, recurse: bool = True) -> None:
+        virtual_path = clean_virtual_path(virtual_path)
+        visit_key = virtual_path.lower()
+        if visit_key in self._visited:
+            return
+        self._visited.add(visit_key)
+        self.files_checked += 1
+        text = self.read_text(source)
+        refs = parse_includes(text)
+        for ref in refs:
+            self.includes_checked += 1
+            offset = ref.path_start if ref.path is not None else ref.path_start
+            if ref.path is None:
+                self.add(
+                    "error",
+                    "INCLUDE_PATH_MISSING",
+                    source,
+                    text,
+                    offset,
+                    "INCLUDE must be followed by a quoted path",
+                )
+                continue
+            path = ref.path.strip()
+            if not path:
+                self.add(
+                    "error",
+                    "INCLUDE_PATH_INVALID",
+                    source,
+                    text,
+                    ref.path_start,
+                    "INCLUDE path is empty",
+                    path,
+                )
+                continue
+            if "\x00" in path:
+                self.add(
+                    "error",
+                    "INCLUDE_PATH_INVALID",
+                    source,
+                    text,
+                    ref.path_start,
+                    "INCLUDE path contains a NUL byte",
+                    path,
+                )
+                continue
+            if not ref.quote_closed:
+                self.add(
+                    "error",
+                    "INCLUDE_QUOTE_UNTERMINATED",
+                    source,
+                    text,
+                    ref.path_start,
+                    "INCLUDE path quote is not terminated",
+                    path,
+                )
+                continue
+            if not ref.terminated:
+                self.add(
+                    "error",
+                    "INCLUDE_TERMINATOR_MISSING",
+                    source,
+                    text,
+                    ref.path_end,
+                    "INCLUDE must end with '/' after the quoted path",
+                    path,
+                )
+            target, error = resolve_virtual_path(virtual_path, path)
+            if error == "invalid":
+                self.add(
+                    "error",
+                    "INCLUDE_PATH_INVALID",
+                    source,
+                    text,
+                    ref.path_start,
+                    "INCLUDE path is empty or malformed",
+                    path,
+                )
+                continue
+            if error == "unsafe" or target is None:
+                self.add(
+                    "error",
+                    "INCLUDE_PATH_UNSAFE",
+                    source,
+                    text,
+                    ref.path_start,
+                    "INCLUDE path is absolute, a URL, or escapes the virtual package root",
+                    path,
+                )
+                continue
+            if self.package_dir is None or not recurse:
+                continue
+            target_file = self.package_dir.joinpath(*target.split("/"))
+            try:
+                target_file.resolve().relative_to(self.package_dir)
+            except ValueError:
+                self.add(
+                    "error",
+                    "INCLUDE_PATH_UNSAFE",
+                    source,
+                    text,
+                    ref.path_start,
+                    "resolved INCLUDE target escapes the package directory",
+                    path,
+                )
+                continue
+            if not target_file.is_file():
+                self.add(
+                    "error",
+                    "INCLUDE_NOT_FOUND",
+                    source,
+                    text,
+                    ref.path_start,
+                    f"INCLUDE target does not exist: {target}",
+                    path,
+                )
+                continue
+            self.check_file(target_file, target)
+
+
+def find_root_in_directory(directory: Path) -> tuple[Path, str] | None:
+    candidates: list[tuple[Path, str]] = []
+    for source in sorted(directory.rglob("*")):
+        if not source.is_file() or source.suffix.lower() not in SUPPORTED_SUFFIXES:
+            continue
+        try:
+            text = source.read_text(encoding="utf-8-sig")
+        except (OSError, UnicodeError):
+            continue
+        if any(ref.path is not None for ref in parse_includes(text)):
+            candidates.append((source, source.relative_to(directory).as_posix()))
+    if len(candidates) == 1:
+        return candidates[0]
+    return None
+
+
+def build_parser() -> argparse.ArgumentParser:
+    parser = argparse.ArgumentParser(description=__doc__)
+    parser.add_argument("target", type=Path, help="root file or virtual package directory")
+    parser.add_argument(
+        "--root-path",
+        help="virtual path of the root file, e.g. SCHEDULE/FORECAST/MVP1_schedule_IN.INC",
+    )
+    parser.add_argument(
+        "--package-dir",
+        type=Path,
+        help="directory containing virtual package paths; enables INCLUDE_NOT_FOUND checks",
+    )
+    parser.add_argument("--json", action="store_true", help="emit machine-readable JSON")
+    return parser
+
+
+def run(args: argparse.Namespace) -> tuple[int, dict]:
+    target = args.target.resolve()
+    package_dir = args.package_dir.resolve() if args.package_dir else None
+    if target.is_dir():
+        if package_dir is None:
+            package_dir = target
+        if args.root_path:
+            root_path = clean_virtual_path(args.root_path)
+            source = package_dir.joinpath(*root_path.split("/"))
+        else:
+            detected = find_root_in_directory(package_dir)
+            if detected is None:
+                result = {
+                    "ok": False,
+                    "error": "could not identify a unique root file; pass --root-path",
+                }
+                return 2, result
+            source, root_path = detected
+    else:
+        source = target
+        root_path = clean_virtual_path(args.root_path or "")
+        if not root_path:
+            # Read once only for root-path inference; check_file performs the
+            # authoritative read and reports encoding/NUL problems.
+            try:
+                preview = source.read_bytes().decode("utf-8-sig", errors="replace")
+            except OSError:
+                preview = ""
+            root_path = default_root_path(source, preview, package_dir)
+
+    if not source.is_file():
+        result = {"ok": False, "error": f"root file not found: {source}"}
+        return 2, result
+
+    checker = ScheduleIncludeChecker(package_dir)
+    checker.check_file(source, root_path)
+    errors = [finding for finding in checker.findings if finding.severity == "error"]
+    result = {
+        "ok": not errors,
+        "root_file": str(source),
+        "root_path": root_path,
+        "package_dir": str(package_dir) if package_dir else None,
+        "files_checked": checker.files_checked,
+        "includes_checked": checker.includes_checked,
+        "findings": [asdict(finding) for finding in checker.findings],
+    }
+    return (0 if not errors else 1), result
+
+
+def print_human(result: dict) -> None:
+    print("PASS" if result.get("ok") else "FAIL")
+    if result.get("error"):
+        print(f"ERROR: {result['error']}")
+        return
+    for finding in result.get("findings", []):
+        location_text = f"{finding['file']}:{finding['line']}:{finding['column']}"
+        path_text = f" [{finding['path']}]" if finding.get("path") else ""
+        print(f"{finding['severity'].upper()} {finding['code']} {location_text}{path_text}: {finding['message']}")
+    print(
+        f"Checked files={result['files_checked']}, "
+        f"INCLUDEs={result['includes_checked']}, "
+        f"findings={len(result.get('findings', []))}"
+    )
+
+
+def main(argv: Iterable[str] | None = None) -> int:
+    parser = build_parser()
+    args = parser.parse_args(argv)
+    code, result = run(args)
+    if args.json:
+        print(json.dumps(result, ensure_ascii=False, indent=2))
+    else:
+        print_human(result)
+    return code
+
+
+if __name__ == "__main__":
+    raise SystemExit(main())
+
+===END_FILE===
+===BEGIN_FILE===	scripts/lab_docker_host_bridge.py	6190	utf8
+#!/usr/bin/env python3
+"""Lab-only: let Docker n8n reach FastAPI processes that listen on the host.
+
+Corporate n8n is not in this compose file — it calls the Windows/Linux host IP
+directly. This machine's compose `backend` network is `internal: true`, and
+container→host TCP to :8000/:8090/:8100/:8200 times out. A unix-socket pair on the
+compose backend network is the workaround that does not need sudo/iptables.
+
+Usage:
+  python3 scripts/lab_docker_host_bridge.py
+  python3 scripts/lab_docker_host_bridge.py --stop
+"""
+from __future__ import annotations
+
+import argparse
+import asyncio
+import os
+import signal
+import subprocess
+import sys
+import time
+from pathlib import Path
+
+ROOT = Path(__file__).resolve().parents[1]
+SOCKDIR = Path(os.environ.get("MAS_HOST_BRIDGE_SOCKDIR", "/tmp/mas-host-socks"))
+CONTAINER = os.environ.get("MAS_HOST_BRIDGE_NAME", "mas-host-bridge")
+NETWORK = os.environ.get("MAS_HOST_BRIDGE_NETWORK", "omegalul_backend")
+IMAGE = os.environ.get("MAS_HOST_BRIDGE_IMAGE", "python:3.11-slim")
+
+PORTS = (
+    ("excel", 8000),
+    ("schedule", 8090),
+    ("math", 8100),
+    ("activity", 8200),
+)
+
+
+async def _pipe(reader: asyncio.StreamReader, writer: asyncio.StreamWriter) -> None:
+    try:
+        while True:
+            chunk = await reader.read(65536)
+            if not chunk:
+                break
+            writer.write(chunk)
+            await writer.drain()
+    except (ConnectionResetError, BrokenPipeError, asyncio.CancelledError):
+        pass
+    finally:
+        try:
+            writer.close()
+            await writer.wait_closed()
+        except Exception:
+            pass
+
+
+async def _unix_to_tcp(unix_path: Path, tcp_port: int) -> None:
+    if unix_path.exists():
+        unix_path.unlink()
+
+    async def on_client(
+        reader: asyncio.StreamReader, writer: asyncio.StreamWriter
+    ) -> None:
+        try:
+            remote_r, remote_w = await asyncio.open_connection("127.0.0.1", tcp_port)
+        except OSError as exc:
+            writer.close()
+            await writer.wait_closed()
+            print(f"host bridge {unix_path.name} -> 127.0.0.1:{tcp_port} failed: {exc}", flush=True)
+            return
+        await asyncio.gather(_pipe(reader, remote_w), _pipe(remote_r, writer))
+
+    server = await asyncio.start_unix_server(on_client, path=str(unix_path))
+    os.chmod(unix_path, 0o666)
+    print(f"host {unix_path} -> 127.0.0.1:{tcp_port}", flush=True)
+    async with server:
+        await server.serve_forever()
+
+
+def run_host_side() -> None:
+    SOCKDIR.mkdir(parents=True, exist_ok=True)
+    async def main() -> None:
+        await asyncio.gather(*[_unix_to_tcp(SOCKDIR / f"{name}.sock", port) for name, port in PORTS])
+
+    asyncio.run(main())
+
+
+CONTAINER_SCRIPT = r"""
+import asyncio, os
+from pathlib import Path
+
+PORTS = (("excel", 8000), ("schedule", 8090), ("math", 8100), ("activity", 8200))
+SOCKDIR = Path("/socks")
+
+async def pipe(reader, writer):
+    try:
+        while True:
+            chunk = await reader.read(65536)
+            if not chunk:
+                break
+            writer.write(chunk)
+            await writer.drain()
+    except Exception:
+        pass
+    finally:
+        try:
+            writer.close()
+            await writer.wait_closed()
+        except Exception:
+            pass
+
+async def listen(name, port):
+    sock = SOCKDIR / f"{name}.sock"
+    async def on_client(reader, writer):
+        try:
+            remote_r, remote_w = await asyncio.open_unix_connection(str(sock))
+        except OSError as exc:
+            print(f"container {name}:{port} -> {sock} failed: {exc}", flush=True)
+            writer.close()
+            await writer.wait_closed()
+            return
+        await asyncio.gather(pipe(reader, remote_w), pipe(remote_r, writer))
+    server = await asyncio.start_server(on_client, "0.0.0.0", port)
+    print(f"container 0.0.0.0:{port} -> {sock}", flush=True)
+    async with server:
+        await server.serve_forever()
+
+async def main():
+    await asyncio.gather(*[listen(name, port) for name, port in PORTS])
+
+asyncio.run(main())
+"""
+
+
+def docker(*args: str, check: bool = True) -> subprocess.CompletedProcess:
+    return subprocess.run(["docker", *args], check=check, text=True, capture_output=True)
+
+
+def stop() -> None:
+    docker("rm", "-f", CONTAINER, check=False)
+    print(f"removed {CONTAINER}")
+
+
+def start_container() -> None:
+    docker("rm", "-f", CONTAINER, check=False)
+    cp = docker(
+        "run",
+        "-d",
+        "--name",
+        CONTAINER,
+        "--network",
+        NETWORK,
+        "--restart",
+        "unless-stopped",
+        "-v",
+        f"{SOCKDIR}:/socks",
+        IMAGE,
+        "python",
+        "-c",
+        CONTAINER_SCRIPT,
+    )
+    print(cp.stdout.strip() or cp.stderr)
+    time.sleep(1)
+    probe = docker(
+        "exec",
+        CONTAINER,
+        "python",
+        "-c",
+        "import urllib.request; print(urllib.request.urlopen('http://127.0.0.1:8000/health', timeout=3).read().decode())",
+        check=False,
+    )
+    print("container self-probe:", probe.stdout.strip() or probe.stderr.strip())
+
+
+def main() -> int:
+    parser = argparse.ArgumentParser()
+    parser.add_argument("--stop", action="store_true")
+    parser.add_argument("--host-only", action="store_true")
+    args = parser.parse_args()
+    if args.stop:
+        stop()
+        return 0
+    if args.host_only:
+        run_host_side()
+        return 0
+
+    SOCKDIR.mkdir(parents=True, exist_ok=True)
+    host_proc = subprocess.Popen([sys.executable, str(Path(__file__)), "--host-only"])
+    time.sleep(0.4)
+    try:
+        start_container()
+    except Exception:
+        host_proc.terminate()
+        raise
+    print(
+        f"n8n URLs: http://{CONTAINER}:8000/api/v1  "
+        f"http://{CONTAINER}:8090  http://{CONTAINER}:8100/api/v1/math  "
+        f"http://{CONTAINER}:8200"
+    )
+    print("host bridge PID", host_proc.pid, "— keep this process running")
+
+    def _shutdown(*_args) -> None:
+        stop()
+        host_proc.terminate()
+        raise SystemExit(0)
+
+    signal.signal(signal.SIGTERM, _shutdown)
+    signal.signal(signal.SIGINT, _shutdown)
+    return host_proc.wait()
+
+
+if __name__ == "__main__":
+    raise SystemExit(main())
+
+===END_FILE===
+===BEGIN_FILE===	scripts/lab_soft_redeploy.py	43466	utf8
+#!/usr/bin/env python3
+"""Fast lab soft-redeploy: keep volumes, refresh workflows, Health Check.
+
+Does NOT wipe docker volumes. Reimports full_clean_import_set, binds live IDs,
+syncs workflow_history, publishes (Control Plane Proxy first), restarts n8n,
+starts mas-activity after the proxy webhook is registered, runs Health Check.
+
+Without --skip-wipe, also clears cases/events and Activity state.
+
+Usage:
+  python3 scripts/lab_soft_redeploy.py --skip-wipe
+  python3 scripts/lab_soft_redeploy.py --skip-health
+"""
+from __future__ import annotations
+
+import argparse
+import json
+import os
+import re
+import subprocess
+import sys
+import tempfile
+import time
+import urllib.error
+import urllib.request
+from pathlib import Path
+
+ROOT = Path(__file__).resolve().parents[1]
+MANIFEST = json.loads((ROOT / "n8n/import-manifest.json").read_text(encoding="utf-8"))
+USER_ID = "8974d698-6d13-4fc8-9693-a39e363197a2"
+PROJECT_ID = "iaz2Dk8BIQ5ZolyY"
+DT_TASK = "eotasksv1"
+DT_TRACE = "mastracev1"
+CRED_PG = "TXTEmuvI2W5Q4ckW"
+CRED_OA = "hmOqhmlEN8Kxampr"
+CRED_HDR = "TZWvrKzFO7hsdoZY"
+
+PLACEHOLDERS = {
+    "REPLACE_CAS_PERSIST_IN_UI": "CAS — Persist Task State",
+    "REPLACE_SCHEDULE_RAG_RETRIEVAL_IN_UI": "MAS — Knowledge Retrieval",
+    "REPLACE_SCHEDULE_BUILDER_IN_UI": "SCHEDULE — Builder",
+    "REPLACE_SCHEDULE_BUILDER_AGENT_IN_UI": "Agent — Schedule Builder",
+    "REPLACE_MAS_RUNTIME_CONFIG_IN_UI": "MAS — Runtime Config",
+    "REPLACE_CALCULATION_AGENT_IN_UI": "Agent — Calculation (Math Service)",
+    "REPLACE_MAS_TRACE_WRITER_IN_UI": "Writer — MAS Trace",
+    "REPLACE_EXCEL_EXTRACTION_AGENT_IN_UI": "Agent — Excel Extractor",
+    "REPLACE_HEALTH_ORCHESTRATOR_IN_UI": "Orchestrator — MAS",
+    "REPLACE_HEALTH_TRACE_IN_UI": "Writer — MAS Trace",
+    "REPLACE_ORCHESTRATOR_ID_IN_UI": "Orchestrator — MAS",
+    "REPLACE_ORCHESTRATOR_ID_IN_UI_HUMAN_GATE_STATUS": "Orchestrator — MAS",
+    "REPLACE_ORCHESTRATOR_ID_IN_UI_HUMAN_GATE_RESUME": "Orchestrator — MAS",
+    "REPLACE_ERROR_HANDLER_IN_UI": "Error — MAS Node Traces",
+}
+
+# Optional stubs — bind when imported so Orchestrator activate/publish can succeed.
+OPTIONAL_PLACEHOLDERS = {
+    "REPLACE_CLUSTER_CALC_ADAPTER_IN_UI": "Template — Cluster Calculation Adapter",
+    "REPLACE_BINARY_RESULTS_ADAPTER_IN_UI": "Template — Binary Results Adapter",
+    "REPLACE_PRESENTATION_ADAPTER_IN_UI": "Template — Presentation Assembler",
+    "REPLACE_DATA_SPECIALIST_IN_UI": "Template — Engineering Specialist",
+    "REPLACE_DOCUMENT_SPECIALIST_IN_UI": "Template — Engineering Specialist",
+}
+
+# Publish/activate order: Control Plane Proxy first (Activity cannot boot
+# without /webhook/mas-control-plane), then RAG/specialists, Orchestrator, forms.
+PUBLISH = [
+    "MAS — Control Plane Proxy",
+    "MAS — Runtime Config",
+    "MAS — Knowledge Retrieval",
+    "MAS — Knowledge Ingestion",
+    "Error — MAS Node Traces",
+    "Agent — Schedule Builder",
+    "Agent — Excel Extractor",
+    "Orchestrator — MAS",
+    "Form — MAS Deployment Health Check",
+]
+
+STALE_WORKFLOW_NAMES = (
+    "Activity — List Tasks (Data Table)",
+    "Activity — Load Feed (Data Tables)",
+    "Activity — Hydrate (Data Tables)",
+    "Orchestrator — Engineering MAS",
+    "CAS — Persist Task State",
+    "Writer — MAS Trace",
+    "Error — MAS Case Handler",
+    "Form — MAS Entry",
+    "Form — MAS Human Gate",
+    "Agent — Calculation (Math Service)",
+    "SCHEDULE — Builder",
+    "Agent — Excel Extractor (legacy webhook)",
+    "MAS — Ensure Control Plane",
+)
+
+ERROR_WORKFLOW_SKIP = (
+    "Error — MAS Node Traces",
+    "Error — MAS Case Handler",
+    "Writer — MAS Trace",
+    "CAS — Persist Task State",
+    "MAS — Control Plane Proxy",
+    "MAS — Runtime Config",
+)
+
+
+def run(cmd: list[str], check: bool = True, timeout: int | None = 120) -> subprocess.CompletedProcess:
+    cp = subprocess.run(cmd, cwd=str(ROOT), text=True, capture_output=True, timeout=timeout)
+    if check and cp.returncode != 0:
+        print(cp.stdout[-2000:], file=sys.stderr)
+        print(cp.stderr[-2000:], file=sys.stderr)
+        raise SystemExit(cp.returncode)
+    return cp
+
+
+def load_env() -> dict[str, str]:
+    out: dict[str, str] = {}
+    path = ROOT / ".env"
+    if path.is_file():
+        for line in path.read_text(encoding="utf-8").splitlines():
+            if not line.strip() or line.startswith("#") or "=" not in line:
+                continue
+            k, _, v = line.partition("=")
+            out[k.strip()] = v.strip().strip('"').strip("'")
+    chat_model = str(os.environ.get("N8N_CHAT_MODEL") or "").strip()
+    if chat_model:
+        out["N8N_CHAT_MODEL"] = chat_model
+    return out
+
+
+def psql(sql: str) -> str:
+    return run(
+        ["docker", "compose", "exec", "-T", "postgres", "psql", "-U", "n8n", "-d", "n8n", "-t", "-A", "-c", sql]
+    ).stdout.strip()
+
+
+def wipe_mas_via_proxy(env: dict[str, str]) -> bool:
+    """Clear MAS case tables through n8n, not docker exec psql."""
+    port = env.get("N8N_HOST_PORT", "15678")
+    url = f"http://127.0.0.1:{port}/webhook/mas-control-plane"
+    header = env.get("CONTROL_PLANE_PROXY_AUTH_HEADER") or "Authorization"
+    value = env.get("CONTROL_PLANE_PROXY_AUTH_VALUE") or "local-orch-inbound"
+    body = json.dumps({"operation": "wipe"}).encode()
+    req = urllib.request.Request(
+        url,
+        data=body,
+        method="POST",
+        headers={"Content-Type": "application/json", header: value},
+    )
+    try:
+        with urllib.request.urlopen(req, timeout=30) as resp:
+            payload = json.loads(resp.read().decode())
+        ok = payload.get("ok") is True
+        print("control-plane wipe", payload.get("result") or payload)
+        return ok
+    except Exception as exc:  # noqa: BLE001
+        print("control-plane wipe skipped", exc)
+        return False
+
+
+def wipe_state(env: dict[str, str]) -> None:
+    print("== wipe CAS / trace / activity ==")
+    mas_wiped = wipe_mas_via_proxy(env)
+    mas_sql = "" if mas_wiped else """
+  IF to_regclass('public.events') IS NOT NULL THEN TRUNCATE events CASCADE; END IF;
+  IF to_regclass('public.error_traces') IS NOT NULL THEN TRUNCATE error_traces CASCADE; END IF;
+  IF to_regclass('public.executions') IS NOT NULL THEN TRUNCATE executions CASCADE; END IF;
+  IF to_regclass('public.mas_artifacts') IS NOT NULL THEN TRUNCATE mas_artifacts CASCADE; END IF;
+  IF to_regclass('public.cases') IS NOT NULL THEN TRUNCATE cases CASCADE; END IF;
+"""
+    psql(
+        f"""
+DO $$
+BEGIN
+  IF to_regclass('public.execution_data') IS NOT NULL THEN TRUNCATE execution_data CASCADE; END IF;
+  IF to_regclass('public.execution_entity') IS NOT NULL THEN TRUNCATE execution_entity CASCADE; END IF;
+  IF to_regclass('public.data_table_user_eotasksv1') IS NOT NULL THEN TRUNCATE data_table_user_eotasksv1; END IF;
+  IF to_regclass('public.data_table_user_mastracev1') IS NOT NULL THEN TRUNCATE data_table_user_mastracev1; END IF;
+{mas_sql}
+END$$;
+"""
+    )
+    run(
+        [
+            "docker",
+            "compose",
+            "exec",
+            "-T",
+            "mas-activity",
+            "python",
+            "-c",
+            "from pathlib import Path; p=Path('/app/data/activity_state.json'); p.parent.mkdir(parents=True, exist_ok=True); p.write_text('{\"tasks\":{}}')",
+        ],
+        check=False,
+    )
+    req = urllib.request.Request(
+        f"http://127.0.0.1:{env.get('MAS_ACTIVITY_HOST_PORT', '8200')}/v1/tasks",
+    )
+    try:
+        with urllib.request.urlopen(req, timeout=5) as resp:
+            body = json.loads(resp.read().decode())
+        print("activity tasks", len(body.get("tasks") or []))
+    except Exception as exc:  # noqa: BLE001
+        print("activity probe", exc)
+
+
+def import_workflows() -> None:
+    print("== import workflows ==")
+    files = [ROOT / "n8n" / rel for rel in MANIFEST["full_clean_import_set"]]
+    missing = [str(p) for p in files if not p.is_file()]
+    if missing:
+        raise SystemExit(f"missing workflows: {missing}")
+    for path in files:
+        remote = f"/tmp/import-{path.name}"
+        run(["docker", "compose", "cp", str(path), f"n8n:{remote}"])
+        cp = run(
+            ["docker", "compose", "exec", "-T", "n8n", "n8n", "import:workflow", f"--input={remote}"],
+            check=False,
+            timeout=180,
+        )
+        status = "OK" if cp.returncode == 0 else "FAIL"
+        print(f"import {path.name}: {status}")
+        if cp.returncode != 0:
+            print((cp.stderr or cp.stdout)[-500:])
+
+
+def wf_map() -> dict[str, str]:
+    raw = psql("SELECT name || E'\\t' || id FROM workflow_entity ORDER BY name;")
+    out: dict[str, str] = {}
+    for line in raw.splitlines():
+        if "\t" not in line:
+            continue
+        name, wid = line.split("\t", 1)
+        out[name] = wid
+    return out
+
+
+def fetch_nodes(wid: str):
+    raw = psql(f"SELECT nodes::text FROM workflow_entity WHERE id = '{wid}';")
+    return json.loads(raw)
+
+
+def save_nodes(wid: str, nodes) -> None:
+    payload = json.dumps(nodes, ensure_ascii=False)
+    tag = "masnodes"
+    while f"${tag}$" in payload:
+        tag += "x"
+    sql_path = Path(tempfile.mkstemp(prefix="wf-nodes-", suffix=".sql")[1])
+    remote = f"/tmp/wf-nodes-{wid}.sql"
+    try:
+        sql_path.write_text(
+            f"UPDATE workflow_entity SET nodes = ${tag}${payload}${tag}$::json WHERE id = '{wid}';\n",
+            encoding="utf-8",
+        )
+        run(["docker", "compose", "cp", str(sql_path), f"postgres:{remote}"])
+        run(
+            [
+                "docker",
+                "compose",
+                "exec",
+                "-T",
+                "postgres",
+                "psql",
+                "-U",
+                "n8n",
+                "-d",
+                "n8n",
+                "-v",
+                "ON_ERROR_STOP=1",
+                "-f",
+                remote,
+            ]
+        )
+    finally:
+        sql_path.unlink(missing_ok=True)
+
+
+def apply_control_plane_sql() -> None:
+    print("== apply MAS control-plane SQL ==")
+    for name in ("02-mas-control-plane.sql", "03-schedule-builder-registry.sql"):
+        path = ROOT / "postgres-init" / name
+        remote = f"/tmp/{name}"
         run(["docker", "compose", "cp", str(path), f"postgres:{remote}"])
         run(
             [
@@ -78,6 +1682,85 @@ def ensure_qwen_credential(env: dict[str, str]) -> str:
     return cid
 
 
+def ensure_excel_tools_header_auth(env: dict[str, str]) -> str:
+    """Header Auth credential for Excel FastAPI (X-API-Key). Not the inbound webhook key."""
+    wanted = "Excel Tools X-API-Key"
+    existing = psql("SELECT name || E'\\t' || id FROM credentials_entity;")
+    found = ""
+    for line in existing.splitlines():
+        if "\t" not in line:
+            continue
+        name, cid = line.split("\t", 1)
+        if name.strip() == wanted:
+            found = cid.strip()
+            print(f"excel header auth exists id={found}")
+            break
+    key = (env.get("EXCEL_TOOLS_API_KEY") or env.get("excel_tools_api_key") or "").strip()
+    user = env.get("N8N_USERNAME") or env.get("N8N_USER")
+    password = env.get("N8N_PASSWORD")
+    if not user or not password:
+        print("excel header auth skip: no n8n login")
+        return found
+    import http.cookiejar
+
+    base = f"http://127.0.0.1:{env.get('N8N_HOST_PORT', '15678')}"
+    cj = http.cookiejar.CookieJar()
+    opener = urllib.request.build_opener(urllib.request.HTTPCookieProcessor(cj))
+    login = urllib.request.Request(
+        base + "/rest/login",
+        data=json.dumps({"emailOrLdapLoginId": user, "password": password}).encode(),
+        headers={"Content-Type": "application/json"},
+        method="POST",
+    )
+    try:
+        opener.open(login, timeout=30)
+    except Exception as exc:  # noqa: BLE001
+        print("excel header auth login failed", exc)
+        return found
+    payload = {
+        "name": wanted,
+        "type": "httpHeaderAuth",
+        "data": {"name": "X-API-Key", "value": key or "local-dev-excel-tools-api-key"},
+    }
+    if found:
+        for method, path in (
+            ("PATCH", f"/rest/credentials/{found}"),
+            ("PUT", f"/rest/credentials/{found}"),
+        ):
+            req = urllib.request.Request(
+                base + path,
+                data=json.dumps(payload).encode(),
+                headers={"Content-Type": "application/json", "Accept": "application/json"},
+                method=method,
+            )
+            try:
+                opener.open(req, timeout=60)
+                print(f"excel header auth synced id={found}")
+                return found
+            except urllib.error.HTTPError:
+                continue
+        return found
+    req = urllib.request.Request(
+        base + "/rest/credentials",
+        data=json.dumps(payload).encode(),
+        headers={"Content-Type": "application/json", "Accept": "application/json"},
+        method="POST",
+    )
+    with opener.open(req, timeout=60) as resp:
+        body = json.loads(resp.read().decode() if resp.length != 0 else b"{}")
+    cred = body.get("data") or body
+    cid = str(cred.get("id") or "").strip()
+    if not cid:
+        raise SystemExit(f"excel header auth create missing id: {list(body)[:8]}")
+    if PROJECT_ID:
+        psql(
+            "INSERT INTO shared_credentials (\"credentialsId\", \"projectId\", role) "
+            f"VALUES ('{cid}', '{PROJECT_ID}', 'credential:owner') ON CONFLICT DO NOTHING;"
+        )
+    print(f"excel header auth created id={cid}")
+    return cid
+
+
 def bind_error_workflow(name_to_id: dict[str, str]) -> None:
     """Point Settings → Error workflow at Error — MAS Node Traces (live n8n IDs)."""
     hid = name_to_id.get("Error — MAS Node Traces") or name_to_id.get("Error — MAS Case Handler")
@@ -106,8 +1789,6 @@ def patch_nodes(nodes, name_to_id: dict[str, str], env: dict[str, str]) -> int:
     excel_url = env.get("EXCEL_TOOLS_URL", "http://excel-tools:8000")
     math_url = env.get("MATH_SERVICE_URL", "http://math-service:8100")
     schedule_url = env.get("SCHEDULE_BUILDER_URL", "http://schedule-builder:8090")
-    excel_key = env.get("EXCEL_TOOLS_API_KEY") or env.get("excel_tools_api_key") or ""
-    webhook_key = env.get("EXCEL_WEBHOOK_API_KEY") or env.get("excel_webhook_api_key") or excel_key
     placeholders = dict(PLACEHOLDERS)
     for ph, target in OPTIONAL_PLACEHOLDERS.items():
         if target in name_to_id:
@@ -134,9 +1815,16 @@ def patch_nodes(nodes, name_to_id: dict[str, str], env: dict[str, str]) -> int:
                         meta["name"] = "OpenAI production"
                     changed += 1
                 elif ctype == "httpHeaderAuth":
-                    meta["id"] = CRED_HDR
-                    meta["name"] = "Engineering orchestrator inbound key"
-                    changed += 1
+                    if "excel" in cname.lower() or "x-api-key" in cname.lower():
+                        excel_hdr = str(env.get("_N8N_EXCEL_HDR_CRED_ID") or "").strip()
+                        if excel_hdr:
+                            meta["id"] = excel_hdr
+                            meta["name"] = "Excel Tools X-API-Key"
+                            changed += 1
+                    else:
+                        meta["id"] = CRED_HDR
+                        meta["name"] = "Engineering orchestrator inbound key"
+                        changed += 1
         params = node.get("parameters")
         if not isinstance(params, dict):
             continue
@@ -187,6 +1875,21 @@ def patch_nodes(nodes, name_to_id: dict[str, str], env: dict[str, str]) -> int:
             if stable:
                 node["webhookId"] = stable
                 changed += 1
+        if node.get("name") == "Runtime URLs":
+            for assignment in (((params.get("assignments") or {}).get("assignments")) or []):
+                key = assignment.get("name")
+                if key == "excel_tools_url":
+                    assignment["value"] = excel_url.rstrip("/")
+                    changed += 1
+                elif key == "schedule_service_url":
+                    assignment["value"] = schedule_url.rstrip("/")
+                    changed += 1
+                elif key == "math_url":
+                    assignment["value"] = math_url.rstrip("/").removesuffix("/agent/run")
+                    changed += 1
+                elif key == "activity_base_url":
+                    assignment["value"] = activity_url.rstrip("/")
+                    changed += 1
         if node.get("name") in {"Runtime configuration", "Runtime endpoints"}:
             for assignment in (((params.get("assignments") or {}).get("assignments")) or []):
                 key = assignment.get("name")
@@ -194,13 +1897,7 @@ def patch_nodes(nodes, name_to_id: dict[str, str], env: dict[str, str]) -> int:
                     assignment["value"] = excel_url.rstrip("/") + "/agent/run"
                     changed += 1
                 elif key == "excel_tools_url":
-                    assignment["value"] = "={{ " + json.dumps(excel_url) + " }}"
-                    changed += 1
-                elif key == "excel_tools_api_key":
-                    assignment["value"] = excel_key
-                    changed += 1
-                elif key == "excel_webhook_api_key":
-                    assignment["value"] = "={{ " + json.dumps(webhook_key) + " }}"
+                    assignment["value"] = excel_url.rstrip("/")
                     changed += 1
                 elif key == "calculation_agent_url":
                     assignment["value"] = math_url.rstrip("/") + "/agent/run"
@@ -667,6 +2364,9 @@ def main() -> int:
     qwen_id = ensure_qwen_credential(env)
     if qwen_id:
         env["_N8N_QWEN_CRED_ID"] = qwen_id
+    excel_hdr = ensure_excel_tools_header_auth(env)
+    if excel_hdr:
+        env["_N8N_EXCEL_HDR_CRED_ID"] = excel_hdr
     if not args.skip_wipe:
         wipe_state(env)
     if not args.skip_import:
