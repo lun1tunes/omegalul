@@ -38,14 +38,12 @@ services:
   schedule-builder:
     image: python:3.11-slim
     command: >
-      sh -c "apt-get update -qq && apt-get install -y -qq --no-install-recommends nodejs >/dev/null && pip install -r requirements.txt && python3 -m uvicorn app.main:app --host 0.0.0.0 --port 8090"
+      sh -c "pip install -r requirements.txt && python3 -m uvicorn app.main:app --host 0.0.0.0 --port 8090"
     working_dir: /app
     volumes:
       - ./schedule-builder-service:/app
-      - ./n8n/templates:/templates:ro
     environment:
       - ACTIVITY_BASE_URL=${ACTIVITY_BASE_URL:-http://mas-activity:8200}
-      - SCHEDULE_TEMPLATES=/templates
     extra_hosts:
       - host.docker.internal:host-gateway
     ports:

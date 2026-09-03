@@ -50,10 +50,15 @@ for (const name of [
 assert.ok(wf.connections['search_keywords'].ai_tool);
 assert.ok(wf.connections['Schedule Builder Chat Model — Qwen'].ai_languageModel);
 assert.equal(wf.connections['When executed by another workflow'].main[0][0].node, 'Runtime configuration');
+const runtimeCfg = wf.nodes.find((n) => n.name === 'Runtime configuration');
+assert.equal(runtimeCfg.type, 'n8n-nodes-base.executeWorkflow');
+assert.equal(runtimeCfg.parameters.workflowId.value, 'REPLACE_MAS_RUNTIME_CONFIG_IN_UI');
+assert.equal(runtimeCfg.parameters.workflowId.cachedResultName, 'MAS — Runtime Config');
 const cap = wf.nodes.find((n) => n.name === 'Capability router');
 assert.ok(cap);
 assert.equal(cap.type, 'n8n-nodes-base.switch');
-assert.equal(wf.connections['Session ready?'].main[0][0].node, 'Capability router');
+assert.equal(wf.connections['Session ready?'].main[0][0].node, 'Activity — Schedule Builder accepted');
+assert.equal(wf.connections['Restore after Schedule Builder progress'].main[0][0].node, 'Capability router');
 assert.equal(wf.connections['Capability router'].main[0][0].node, 'Apply commissioning');
 assert.equal(wf.connections['Capability router'].main[1][0].node, 'Apply group rebind');
 assert.equal(wf.connections['Capability router'].main[2][0].node, 'Prepare AI Agent input');
@@ -64,8 +69,8 @@ assert.equal(wf.connections['Apply commissioning'].main[0][0].node, 'Fetch sched
 assert.equal(wf.connections['Apply group rebind'].main[0][0].node, 'Fetch schedule result');
 
 const cfg = orch.nodes.find((n) => n.name === 'Runtime endpoints');
-const url = (cfg.parameters.assignments.assignments || []).find((a) => a.name === 'schedule_builder_url');
-assert.equal(url, undefined, 'no HTTP webhook URL — specialist is executeWorkflow');
+assert.equal(cfg.type, 'n8n-nodes-base.executeWorkflow');
+assert.equal(cfg.parameters.workflowId.value, 'REPLACE_MAS_RUNTIME_CONFIG_IN_UI');
 const call = orch.nodes.find((n) => n.name === 'Call Schedule Builder');
 assert.equal(call.type, 'n8n-nodes-base.executeWorkflow');
 assert.equal(call.typeVersion, 1.3);

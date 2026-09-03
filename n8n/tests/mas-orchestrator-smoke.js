@@ -26,7 +26,12 @@ function toItem(payload) {
 }
 
 async function run(name, json, nodes = {}, binary = {}) {
-  const resolved = { 'Normalize step request': { json, binary }, ...nodes };
+  const resolved = {
+    'Authenticated MAS webhook': { json, binary },
+    'Normalize step request': { json, binary },
+    'Runtime endpoints': { json: {} },
+    ...nodes,
+  };
   const lookup = (nodeName) => {
     if (!Object.prototype.hasOwnProperty.call(resolved, nodeName)) {
       throw new Error(`node not executed: ${nodeName}`);
@@ -95,16 +100,13 @@ async function run(name, json, nodes = {}, binary = {}) {
 
   const runtime = wf.nodes.find((n) => n.name === 'Runtime endpoints');
   assert.ok(runtime);
-  const activityUrl = (runtime.parameters.assignments.assignments || []).find(
-    (a) => a.name === 'activity_base_url',
-  );
-  assert.equal(activityUrl.value, 'http://mas-activity:8200');
+  assert.equal(runtime.type, 'n8n-nodes-base.executeWorkflow');
+  assert.equal(runtime.typeVersion, 1.3);
+  assert.equal(runtime.parameters.workflowId.value, 'REPLACE_MAS_RUNTIME_CONFIG_IN_UI');
+  assert.equal(runtime.parameters.workflowId.cachedResultName, 'MAS — Runtime Config');
+  assert.equal(runtime.parameters.options.waitForSubWorkflow, true);
+  assert.equal(text.includes('excel_tools_api_key'), false);
   assert.equal(text.includes('mas-host-bridge'), false);
-
-  const stepUrl = (runtime.parameters.assignments.assignments || []).find(
-    (a) => a.name === 'orchestrator_step_url',
-  );
-  assert.equal(stepUrl.value, 'http://n8n:5678/webhook/mas-orchestrator-step');
   const callSchedule = wf.nodes.find((n) => n.name === 'Call Schedule Builder');
   assert.equal(callSchedule.type, 'n8n-nodes-base.executeWorkflow');
   assert.equal(callSchedule.typeVersion, 1.3);
@@ -126,8 +128,7 @@ async function run(name, json, nodes = {}, binary = {}) {
   assert.equal(callExcel.onError, 'continueRegularOutput');
   assert.deepEqual(Object.keys(callExcel.parameters.workflowInputs.value), ['agent_task']);
   assert.equal(callExcel.parameters.workflowInputs.value.agent_task, '={{ $json.agent_task }}');
-  const excelUrl = (runtime.parameters.assignments.assignments || []).find((a) => a.name === 'excel_extractor_url');
-  assert.equal(excelUrl, undefined, 'no HTTP /agent/run URL — specialist is executeWorkflow');
+  assert.equal(text.includes('excel_extractor_url'), false, 'no HTTP /agent/run URL — specialist is executeWorkflow');
   assert.equal(callSchedule.parameters.workflowInputs.value.agent_task, '={{ $json.agent_task }}');
   assert.equal(text.includes('formBinaryData'), false);
   assert.equal(text.includes('.first().binary'), false);

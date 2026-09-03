@@ -8,6 +8,7 @@ import uuid
 from pathlib import Path
 
 from llm_runtime_options import chat_model_options
+from generate_mas_runtime_config import EXCEL_KEY_CRED, runtime_config_execute_params
 
 ROOT = Path(__file__).resolve().parents[1]
 OUT = ROOT / "workflows/core/excel-extractor-agent.workflow.json"
@@ -122,15 +123,11 @@ def http_json(name, pos, method, url, body=None, timeout=180000):
     params = {
         "method": method,
         "url": url,
+        "authentication": "genericCredentialType",
+        "genericAuthType": "httpHeaderAuth",
         "sendHeaders": True,
         "headerParameters": {
-            "parameters": [
-                {"name": "Content-Type", "value": "application/json"},
-                {
-                    "name": "X-API-Key",
-                    "value": "={{ $('Runtime configuration').first().json.excel_tools_api_key || '' }}",
-                },
-            ]
+            "parameters": [{"name": "Content-Type", "value": "application/json"}]
         },
         "options": {"timeout": timeout, "response": {"response": {"fullResponse": False, "responseFormat": "json"}}},
     }
@@ -138,7 +135,16 @@ def http_json(name, pos, method, url, body=None, timeout=180000):
         params["sendBody"] = True
         params["specifyBody"] = "json"
         params["jsonBody"] = body
-    return node(name, "n8n-nodes-base.httpRequest", 4.4, pos, params, onError="continueRegularOutput", alwaysOutputData=True)
+    return node(
+        name,
+        "n8n-nodes-base.httpRequest",
+        4.4,
+        pos,
+        params,
+        credentials=EXCEL_KEY_CRED,
+        onError="continueRegularOutput",
+        alwaysOutputData=True,
+    )
 
 
 def tool_http(name, pos, description, fields):
@@ -171,7 +177,8 @@ def tool_http(name, pos, description, fields):
             "url": "={{ $('Runtime configuration').first().json.excel_tools_url + '/agent-tools/' + "
             + json.dumps(name)
             + " }}",
-            "authentication": "none",
+            "authentication": "genericCredentialType",
+            "genericAuthType": "httpHeaderAuth",
             "sendQuery": False,
             "sendHeaders": True,
             "specifyHeaders": "keypair",
@@ -182,20 +189,17 @@ def tool_http(name, pos, description, fields):
             "parametersHeaders": {
                 "values": [
                     {"name": "Content-Type", "valueProvider": "fieldValue", "value": "application/json"},
-                    {
-                        "name": "X-API-Key",
-                        "valueProvider": "fieldValue",
-                        "value": "={{ $('Runtime configuration').first().json.excel_tools_api_key || '' }}",
-                    },
                 ]
             },
             "parametersBody": {"values": body_values},
         },
+        credentials=EXCEL_KEY_CRED,
     )
 
 
 NORMALIZE = r"""
-const root=$json||{};
+const incoming=(()=>{try{return $('When executed by another workflow').first().json||{}}catch{return $json||{}}})();
+const root=incoming&&typeof incoming==='object'?incoming:{};
 const body=root.body&&typeof root.body==='object'?root.body:root;
 const packet=body.specialist_packet&&typeof body.specialist_packet==='object'?body.specialist_packet:null;
 let task=body.agent_task&&typeof body.agent_task==='object'?body.agent_task:(body.case_id||body.task_id||body.objective?body:null);
@@ -302,8 +306,9 @@ def main() -> None:
                     "## edit after import\n\n"
                     "**Agent — Excel Extractor** — один LLM + excel-tools FastAPI.\n\n"
                     "1. Bind **Qwen** credential on Excel Extractor Chat Model\n"
-                    "2. Runtime configuration: `excel_tools_url` = "
-                    "`http://excel-tools:8000`, API key, `activity_base_url`\n"
+                    "2. Bind **Runtime configuration** → `MAS — Runtime Config` "
+                    "(URL сервисов). Ключ Excel: credential Header Auth "
+                    "**Excel Tools X-API-Key** (`X-API-Key`), не Set.\n"
                     "3. Orchestrator — MAS вызывает этот workflow через "
                     "`executeWorkflow` (`Call Excel Extractor`). Webhook не нужен.\n\n"
                     "Файлы не грузятся в n8n. Сервис сам GET "
@@ -341,35 +346,10 @@ def main() -> None:
         ),
         node(
             "Runtime configuration",
-            "n8n-nodes-base.set",
-            3.4,
+            "n8n-nodes-base.executeWorkflow",
+            1.3,
             (260, 0),
-            {
-                "assignments": {
-                    "assignments": [
-                        {
-                            "id": nid("cfg-svc"),
-                            "name": "excel_tools_url",
-                            "value": "http://excel-tools:8000",
-                            "type": "string",
-                        },
-                        {
-                            "id": nid("cfg-key"),
-                            "name": "excel_tools_api_key",
-                            "value": "",
-                            "type": "string",
-                        },
-                        {
-                            "id": nid("cfg-act"),
-                            "name": "activity_base_url",
-                            "value": "http://mas-activity:8200",
-                            "type": "string",
-                        },
-                    ]
-                },
-                "options": {},
-                "includeOtherFields": True,
-            },
+            runtime_config_execute_params(),
         ),
         node("Normalize excel task", "n8n-nodes-base.code", 2, (500, 0), {"jsCode": NORMALIZE}),
         http_json(

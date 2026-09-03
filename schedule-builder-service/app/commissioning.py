@@ -1,18 +1,10 @@
-"""Commissioning date retarget via the shared timeline JS (same algorithm as combat/golden)."""
+"""Commissioning date retarget — Python timeline only (no Node)."""
 
 from __future__ import annotations
 
-import os
-import shutil
-from pathlib import Path
 from typing import Any
 
-from .js_timeline import run_timeline_fn
 from .timeline_ops import commissioning_revise as python_commissioning_revise
-
-TEMPLATES = Path(os.getenv("SCHEDULE_TEMPLATES") or "/templates")
-if not (TEMPLATES / "schedule_timeline_runtime.py").is_file():
-    TEMPLATES = Path(__file__).resolve().parents[2] / "n8n" / "templates"
 
 
 def run_commissioning_revise(
@@ -20,42 +12,18 @@ def run_commissioning_revise(
     well_facts: list[dict[str, Any]],
     *,
     file_ref: str = "schedule.inc",
-    unlisted_wells_policy: str | None = "keep",
+    unlisted_wells_policy: str | None = None,
     instruction_blob: str = "",
     new_well_defs: list[dict[str, Any]] | None = None,
 ) -> dict[str, Any]:
-    if not (TEMPLATES / "schedule_timeline_runtime.py").is_file():
-        raise RuntimeError(f"timeline templates missing at {TEMPLATES}")
-    options: dict[str, Any] = {"instruction_blob": instruction_blob or ""}
-    if unlisted_wells_policy in {"keep", "remove"}:
-        options["unlisted_wells_policy"] = unlisted_wells_policy
-    if new_well_defs:
-        options["new_well_defs"] = new_well_defs
-    if shutil.which("node") is None:
-        result = python_commissioning_revise(
-            source_text,
-            well_facts,
-            file_ref=file_ref,
-        )
-    else:
-        try:
-            result = run_timeline_fn(
-                "runCommissioningRevise",
-                source_text,
-                well_facts,
-                file_ref=file_ref,
-                options=options,
-            )
-        except RuntimeError as exc:
-            message = str(exc).lower()
-            if "node failed" not in message and "winerror 2" not in message and "no such file" not in message:
-                raise
-            result = python_commissioning_revise(
-                source_text,
-                well_facts,
-                file_ref=file_ref,
-            )
-    result["unlisted_wells_policy"] = unlisted_wells_policy or "keep"
+    result = python_commissioning_revise(
+        source_text,
+        well_facts,
+        file_ref=file_ref,
+        unlisted_wells_policy=unlisted_wells_policy,
+        instruction_blob=instruction_blob,
+        new_well_defs=new_well_defs or [],
+    )
     result.setdefault(
         "control_semantics",
         {
@@ -64,5 +32,6 @@ def run_commissioning_revise(
             "factual_wconprod_preserved": True,
         },
     )
-    result["assumptions"] = [{"units": "METRIC", "unlisted_wells_policy": result["unlisted_wells_policy"]}]
+    policy = result.get("unlisted_wells_policy")
+    result["assumptions"] = [{"units": "METRIC", "unlisted_wells_policy": policy or "keep"}]
     return result

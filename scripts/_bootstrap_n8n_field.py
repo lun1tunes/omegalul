@@ -121,6 +121,11 @@ def main() -> int:
         "httpHeaderAuth",
         {"name": "Authorization", "value": "local-orch-inbound"},
     )
+    excel_hdr_id = ensure(
+        "Excel Tools X-API-Key",
+        "httpHeaderAuth",
+        {"name": "X-API-Key", "value": env.get("EXCEL_TOOLS_API_KEY", "local-dev-excel-tools-api-key")},
+    )
 
     ids = {
         "cred-postgres-pgvector-01": pg_id,
@@ -170,17 +175,34 @@ def main() -> int:
                     meta["name"] = "OpenAI production"
                     changed += 1
                 elif ctype == "httpHeaderAuth":
-                    meta["id"] = hdr_id
-                    meta["name"] = "Engineering orchestrator inbound key"
+                    cname = str(meta.get("name") or "")
+                    if "excel" in cname.lower() or "x-api-key" in cname.lower():
+                        meta["id"] = excel_hdr_id
+                        meta["name"] = "Excel Tools X-API-Key"
+                    else:
+                        meta["id"] = hdr_id
+                        meta["name"] = "Engineering orchestrator inbound key"
                     changed += 1
+            if nname == "Runtime URLs":
+                for assignment in (((params.get("assignments") or {}).get("assignments")) or []):
+                    key = assignment.get("name")
+                    if key == "excel_tools_url":
+                        assignment["value"] = "http://host.docker.internal:8000"
+                        changed += 1
+                    elif key == "activity_base_url":
+                        assignment["value"] = activity_url
+                        changed += 1
+                    elif key == "schedule_service_url":
+                        assignment["value"] = "http://host.docker.internal:8090"
+                        changed += 1
+                    elif key == "math_url":
+                        assignment["value"] = "http://host.docker.internal:8100"
+                        changed += 1
             if nname == "Runtime configuration":
                 for assignment in (((params.get("assignments") or {}).get("assignments")) or []):
                     key = assignment.get("name")
                     if key == "excel_tools_url":
-                        assignment["value"] = "={{ " + json.dumps(excel_url) + " }}"
-                        changed += 1
-                    elif key == "excel_tools_api_key":
-                        assignment["value"] = "={{ " + json.dumps(excel_key) + " }}"
+                        assignment["value"] = "http://host.docker.internal:8000"
                         changed += 1
             if nname == "Math Service Configuration":
                 for assignment in (((params.get("assignments") or {}).get("assignments")) or []):
@@ -222,9 +244,12 @@ def main() -> int:
         if st >= 400:
             print(body)
 
-    print("bootstrap credentials done", {"postgres": pg_id, "openai": oa_id, "header": hdr_id})
+    print("bootstrap credentials done", {"postgres": pg_id, "openai": oa_id, "header": hdr_id, "excel_header": excel_hdr_id})
     Path("/tmp/mas-n8n-bootstrap-ids.json").write_text(
-        json.dumps({"postgres": pg_id, "openai": oa_id, "header": hdr_id, "ts": time.time()}, indent=2),
+        json.dumps(
+            {"postgres": pg_id, "openai": oa_id, "header": hdr_id, "excel_header": excel_hdr_id, "ts": time.time()},
+            indent=2,
+        ),
         encoding="utf-8",
     )
     return 0

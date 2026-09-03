@@ -40,6 +40,7 @@ PLACEHOLDERS = {
     "REPLACE_SCHEDULE_RAG_RETRIEVAL_IN_UI": "MAS — Knowledge Retrieval",
     "REPLACE_SCHEDULE_BUILDER_IN_UI": "SCHEDULE — Builder",
     "REPLACE_SCHEDULE_BUILDER_AGENT_IN_UI": "Agent — Schedule Builder",
+    "REPLACE_MAS_RUNTIME_CONFIG_IN_UI": "MAS — Runtime Config",
     "REPLACE_CALCULATION_AGENT_IN_UI": "Agent — Calculation (Math Service)",
     "REPLACE_MAS_TRACE_WRITER_IN_UI": "Writer — MAS Trace",
     "REPLACE_EXCEL_EXTRACTION_AGENT_IN_UI": "Agent — Excel Extractor",
@@ -64,6 +65,7 @@ OPTIONAL_PLACEHOLDERS = {
 # without /webhook/mas-control-plane), then RAG/specialists, Orchestrator, forms.
 PUBLISH = [
     "MAS — Control Plane Proxy",
+    "MAS — Runtime Config",
     "MAS — Knowledge Retrieval",
     "MAS — Knowledge Ingestion",
     "Error — MAS Node Traces",
@@ -95,6 +97,7 @@ ERROR_WORKFLOW_SKIP = (
     "Writer — MAS Trace",
     "CAS — Persist Task State",
     "MAS — Control Plane Proxy",
+    "MAS — Runtime Config",
 )
 
 
@@ -354,6 +357,85 @@ def ensure_qwen_credential(env: dict[str, str]) -> str:
     return cid
 
 
+def ensure_excel_tools_header_auth(env: dict[str, str]) -> str:
+    """Header Auth credential for Excel FastAPI (X-API-Key). Not the inbound webhook key."""
+    wanted = "Excel Tools X-API-Key"
+    existing = psql("SELECT name || E'\\t' || id FROM credentials_entity;")
+    found = ""
+    for line in existing.splitlines():
+        if "\t" not in line:
+            continue
+        name, cid = line.split("\t", 1)
+        if name.strip() == wanted:
+            found = cid.strip()
+            print(f"excel header auth exists id={found}")
+            break
+    key = (env.get("EXCEL_TOOLS_API_KEY") or env.get("excel_tools_api_key") or "").strip()
+    user = env.get("N8N_USERNAME") or env.get("N8N_USER")
+    password = env.get("N8N_PASSWORD")
+    if not user or not password:
+        print("excel header auth skip: no n8n login")
+        return found
+    import http.cookiejar
+
+    base = f"http://127.0.0.1:{env.get('N8N_HOST_PORT', '15678')}"
+    cj = http.cookiejar.CookieJar()
+    opener = urllib.request.build_opener(urllib.request.HTTPCookieProcessor(cj))
+    login = urllib.request.Request(
+        base + "/rest/login",
+        data=json.dumps({"emailOrLdapLoginId": user, "password": password}).encode(),
+        headers={"Content-Type": "application/json"},
+        method="POST",
+    )
+    try:
+        opener.open(login, timeout=30)
+    except Exception as exc:  # noqa: BLE001
+        print("excel header auth login failed", exc)
+        return found
+    payload = {
+        "name": wanted,
+        "type": "httpHeaderAuth",
+        "data": {"name": "X-API-Key", "value": key or "local-dev-excel-tools-api-key"},
+    }
+    if found:
+        for method, path in (
+            ("PATCH", f"/rest/credentials/{found}"),
+            ("PUT", f"/rest/credentials/{found}"),
+        ):
+            req = urllib.request.Request(
+                base + path,
+                data=json.dumps(payload).encode(),
+                headers={"Content-Type": "application/json", "Accept": "application/json"},
+                method=method,
+            )
+            try:
+                opener.open(req, timeout=60)
+                print(f"excel header auth synced id={found}")
+                return found
+            except urllib.error.HTTPError:
+                continue
+        return found
+    req = urllib.request.Request(
+        base + "/rest/credentials",
+        data=json.dumps(payload).encode(),
+        headers={"Content-Type": "application/json", "Accept": "application/json"},
+        method="POST",
+    )
+    with opener.open(req, timeout=60) as resp:
+        body = json.loads(resp.read().decode() if resp.length != 0 else b"{}")
+    cred = body.get("data") or body
+    cid = str(cred.get("id") or "").strip()
+    if not cid:
+        raise SystemExit(f"excel header auth create missing id: {list(body)[:8]}")
+    if PROJECT_ID:
+        psql(
+            "INSERT INTO shared_credentials (\"credentialsId\", \"projectId\", role) "
+            f"VALUES ('{cid}', '{PROJECT_ID}', 'credential:owner') ON CONFLICT DO NOTHING;"
+        )
+    print(f"excel header auth created id={cid}")
+    return cid
+
+
 def bind_error_workflow(name_to_id: dict[str, str]) -> None:
     """Point Settings → Error workflow at Error — MAS Node Traces (live n8n IDs)."""
     hid = name_to_id.get("Error — MAS Node Traces") or name_to_id.get("Error — MAS Case Handler")
@@ -382,8 +464,6 @@ def patch_nodes(nodes, name_to_id: dict[str, str], env: dict[str, str]) -> int:
     excel_url = env.get("EXCEL_TOOLS_URL", "http://excel-tools:8000")
     math_url = env.get("MATH_SERVICE_URL", "http://math-service:8100")
     schedule_url = env.get("SCHEDULE_BUILDER_URL", "http://schedule-builder:8090")
-    excel_key = env.get("EXCEL_TOOLS_API_KEY") or env.get("excel_tools_api_key") or ""
-    webhook_key = env.get("EXCEL_WEBHOOK_API_KEY") or env.get("excel_webhook_api_key") or excel_key
     placeholders = dict(PLACEHOLDERS)
     for ph, target in OPTIONAL_PLACEHOLDERS.items():
         if target in name_to_id:
@@ -410,9 +490,16 @@ def patch_nodes(nodes, name_to_id: dict[str, str], env: dict[str, str]) -> int:
                         meta["name"] = "OpenAI production"
                     changed += 1
                 elif ctype == "httpHeaderAuth":
-                    meta["id"] = CRED_HDR
-                    meta["name"] = "Engineering orchestrator inbound key"
-                    changed += 1
+                    if "excel" in cname.lower() or "x-api-key" in cname.lower():
+                        excel_hdr = str(env.get("_N8N_EXCEL_HDR_CRED_ID") or "").strip()
+                        if excel_hdr:
+                            meta["id"] = excel_hdr
+                            meta["name"] = "Excel Tools X-API-Key"
+                            changed += 1
+                    else:
+                        meta["id"] = CRED_HDR
+                        meta["name"] = "Engineering orchestrator inbound key"
+                        changed += 1
         params = node.get("parameters")
         if not isinstance(params, dict):
             continue
@@ -463,6 +550,21 @@ def patch_nodes(nodes, name_to_id: dict[str, str], env: dict[str, str]) -> int:
             if stable:
                 node["webhookId"] = stable
                 changed += 1
+        if node.get("name") == "Runtime URLs":
+            for assignment in (((params.get("assignments") or {}).get("assignments")) or []):
+                key = assignment.get("name")
+                if key == "excel_tools_url":
+                    assignment["value"] = excel_url.rstrip("/")
+                    changed += 1
+                elif key == "schedule_service_url":
+                    assignment["value"] = schedule_url.rstrip("/")
+                    changed += 1
+                elif key == "math_url":
+                    assignment["value"] = math_url.rstrip("/").removesuffix("/agent/run")
+                    changed += 1
+                elif key == "activity_base_url":
+                    assignment["value"] = activity_url.rstrip("/")
+                    changed += 1
         if node.get("name") in {"Runtime configuration", "Runtime endpoints"}:
             for assignment in (((params.get("assignments") or {}).get("assignments")) or []):
                 key = assignment.get("name")
@@ -470,13 +572,7 @@ def patch_nodes(nodes, name_to_id: dict[str, str], env: dict[str, str]) -> int:
                     assignment["value"] = excel_url.rstrip("/") + "/agent/run"
                     changed += 1
                 elif key == "excel_tools_url":
-                    assignment["value"] = "={{ " + json.dumps(excel_url) + " }}"
-                    changed += 1
-                elif key == "excel_tools_api_key":
-                    assignment["value"] = excel_key
-                    changed += 1
-                elif key == "excel_webhook_api_key":
-                    assignment["value"] = "={{ " + json.dumps(webhook_key) + " }}"
+                    assignment["value"] = excel_url.rstrip("/")
                     changed += 1
                 elif key == "calculation_agent_url":
                     assignment["value"] = math_url.rstrip("/") + "/agent/run"
@@ -943,6 +1039,9 @@ def main() -> int:
     qwen_id = ensure_qwen_credential(env)
     if qwen_id:
         env["_N8N_QWEN_CRED_ID"] = qwen_id
+    excel_hdr = ensure_excel_tools_header_auth(env)
+    if excel_hdr:
+        env["_N8N_EXCEL_HDR_CRED_ID"] = excel_hdr
     if not args.skip_wipe:
         wipe_state(env)
     if not args.skip_import:

@@ -102,6 +102,7 @@ Calculation — **не** отдельный n8n-агент: оркестрато
 | `Form — MAS Deployment Health Check` | `/form/mas-deployment-health-check` | **форма**, нужна сессия n8n |
 | `Agent — Excel Extractor` | нет | только `executeWorkflow` |
 | `Agent — Schedule Builder` | нет | только `executeWorkflow` |
+| `MAS — Runtime Config` | нет | только `executeWorkflow` (URL loader) |
 | `MAS — Knowledge Retrieval` | нет | только `executeWorkflow` |
 | `Error — MAS Node Traces` | Error Trigger | Settings → Error workflow |
 
@@ -116,7 +117,7 @@ Calculation — **не** отдельный n8n-агент: оркестрато
 | Браузер инженера | Activity `http://127.0.0.1:8200` (или IP ПК) | `http://127.0.0.1:8200` |
 | Postgres | только n8n credential (DBA) | `127.0.0.1:15432` с lab-хоста; Windows-сервисы **не** ходят в БД |
 
-В Runtime configuration полевого n8n **не** оставляйте `http://excel-tools:8000` — это имя видно только внутри Compose.
+В Runtime URLs полевого n8n **не** оставляйте `http://excel-tools:8000` — это имя видно только внутри Compose. Правьте один workflow `MAS — Runtime Config`.
 
 ---
 
@@ -159,9 +160,7 @@ notepad schedule-builder.env
 start-windows.bat
 ```
 
-Нужен **Node.js в PATH**: commissioning и group-rebind эмитят тем же timeline JS (`n8n/templates/schedule_timeline_runtime.py`), что и golden/combat. Без `node` `/health` может быть зелёным, а REVISE дат — нет.
-
-`ACTIVITY_BASE_URL=http://127.0.0.1:8200` (или `http://<IP-этого-ПК>:8200`, если Activity слушает `0.0.0.0`). Проверка: `check-windows.bat`.
+`ACTIVITY_BASE_URL=http://127.0.0.1:8200` (или `http://<IP-этого-ПК>:8200`, если Activity слушает `0.0.0.0`). Только Python `.venv` — Node.js на Windows не нужен. Проверка: `check-windows.bat`.
 
 **3. Math Service (`:8100`)**
 
@@ -200,7 +199,7 @@ start-windows.bat
 
 Проверка: `check-windows.bat` → `/health` и `/ready`. Если `/ready` = 503, в JSON видно, какой webhook не отвечает. `/health` должен содержать `"control_plane_backend": "n8n_proxy"`.
 
-В нодах n8n **Activity connection** / `activity_base_url` поставьте `http://<IP-Windows>:8200`.
+В нодах n8n URL Activity / Excel / Schedule / Math задаются **один раз** в `MAS — Runtime Config` (`http://<IP-Windows>:8200` и соседние порты).
 
 ### Шаг 1. Импорт workflows
 
@@ -208,12 +207,13 @@ n8n → Import from File. Порядок — `n8n/import-manifest.json` → `run
 
 1. `n8n/workflows/core/tnavigator-schedule-knowledge-ingestion.workflow.json` — `MAS — Knowledge Ingestion`
 2. `n8n/workflows/core/tnavigator-schedule-hybrid-retrieval.workflow.json` — `MAS — Knowledge Retrieval`
-3. `n8n/workflows/core/schedule-builder-agent.workflow.json` — `Agent — Schedule Builder`
-4. `n8n/workflows/core/excel-extractor-agent.workflow.json` — `Agent — Excel Extractor`
-5. `n8n/workflows/core/mas-error-traces.workflow.json` — `Error — MAS Node Traces`
-6. `n8n/workflows/core/mas-control-plane-proxy.workflow.json` — `MAS — Control Plane Proxy`
-7. `n8n/workflows/core/mas-orchestrator.workflow.json` — `Orchestrator — MAS`
-8. `n8n/workflows/core/mas-deployment-health-check.workflow.json` — `Form — MAS Deployment Health Check`
+3. `n8n/workflows/core/mas-runtime-config.workflow.json` — `MAS — Runtime Config` (один Set URL)
+4. `n8n/workflows/core/schedule-builder-agent.workflow.json` — `Agent — Schedule Builder`
+5. `n8n/workflows/core/excel-extractor-agent.workflow.json` — `Agent — Excel Extractor`
+6. `n8n/workflows/core/mas-error-traces.workflow.json` — `Error — MAS Node Traces`
+7. `n8n/workflows/core/mas-control-plane-proxy.workflow.json` — `MAS — Control Plane Proxy`
+8. `n8n/workflows/core/mas-orchestrator.workflow.json` — `Orchestrator — MAS`
+9. `n8n/workflows/core/mas-deployment-health-check.workflow.json` — `Form — MAS Deployment Health Check`
 
 Не импортировать `n8n/workflows/retired/` и не настраивать CAS / Trace Writer / Entry / Human Gate / Activity Hydrate / Orchestrator — Engineering MAS.
 
@@ -233,18 +233,22 @@ n8n → Import from File. Порядок — `n8n/import-manifest.json` → `run
 | Knowledge Ingestion / Retrieval → embeddings | тот же embedding credential, модель `text-embedding-3-small`, поле **Dimensions пустое** |
 | Knowledge Ingestion / Retrieval / Orchestrator / Control Plane Proxy | Postgres credential |
 | Orchestrator webhook и Control Plane Proxy webhook | Header Auth (одно и то же имя/значение, что в `mas-activity.env`) |
-| Excel Extractor → Runtime configuration | `excel_tools_url=http://<IP-Windows>:8000` (**без** `/api/v1`; ноды бьют в `/agent-tools/…`), `excel_tools_api_key` = `API_KEY` из `excel-tools.env`, `activity_base_url=http://<IP-Windows>:8200` |
-| Schedule Builder → Runtime configuration | `schedule_service_url=http://<IP-Windows>:8090`, `activity_base_url=http://<IP-Windows>:8200` |
-| Orchestrator → Calculation | `http://<IP-Windows>:8100/agent/run` |
+| Agent — Excel Extractor → HTTP / toolHttpRequest | **отдельный** Header Auth: header name `X-API-Key`, value = `API_KEY` из `excel-tools.env`. Имя credential в UI: `Excel Tools X-API-Key`. |
+| `MAS — Runtime Config` → Runtime URLs | `activity_base_url=http://<IP-Windows>:8200`, `excel_tools_url=http://<IP-Windows>:8000` (**без** `/api/v1`), `schedule_service_url=http://<IP-Windows>:8090`, `math_url=http://<IP-Windows>:8100` (без `/agent/run`) |
+| Orchestrator / Excel / Schedule → Execute Workflow | `Runtime endpoints` / `Runtime configuration` → `MAS — Runtime Config` |
+| Orchestrator → Calculation | берёт `math_url` + `/agent/run` |
 
 В JSON не должно остаться `REPLACE_IN_UI` (кроме support-заглушек, которые не импортируете в runtime).
 
-Header Auth — это **не** ключ Excel. Excel идёт заголовком `X-API-Key` из Runtime configuration.
+Header Auth webhook (Authorization) — это **не** ключ Excel. Ключ Excel — отдельный Header Auth credential `X-API-Key` на нодах Agent — Excel Extractor, не поле Set.
 
 ### Шаг 3. Execute Workflow bindings (живые)
 
 | Workflow | Нода | Цель |
 |---|---|---|
+| `Orchestrator — MAS` | `Runtime endpoints` | `MAS — Runtime Config` |
+| `Agent — Excel Extractor` | `Runtime configuration` | `MAS — Runtime Config` |
+| `Agent — Schedule Builder` | `Runtime configuration` | `MAS — Runtime Config` |
 | `Orchestrator — MAS` | `Call Excel Extractor` | `Agent — Excel Extractor` |
 | `Orchestrator — MAS` | `Call Schedule Builder` | `Agent — Schedule Builder` |
 
@@ -270,9 +274,9 @@ Activity на старте вызывает только `schema` и **нико�
 
 Таблицы прокси: `cases`, `events`, `error_traces`, `executions`, `agent_registry`, `mas_artifacts`.
 
-Операции: `schema`, `wipe`, `create_case`, `get_case`, `list_cases`, `update_case`, `append_event`, `list_events`, `snapshot`, `append_error`, `list_errors`, `record_execution`, `case_id_for_execution`, `list_agents`, `upsert_agent`, `artifact_put`, `artifact_get`.
+Операции: `schema`, `wipe`, `create_case`, `get_case`, `list_cases`, `update_case`, `append_event`, `list_events`, `snapshot`, `append_error`, `list_errors`, `record_execution`, `case_id_for_execution`, `list_agents`, `upsert_agent`, `artifact_put`, `artifact_get`, `batch`.
 
-`snapshot` возвращает case + events одним SQL — так Activity читает ленту, чтобы не плодить n8n executions. Успешные production executions прокси **не сохраняются**; ошибки сохраняются. После смены прокси переимпортируйте workflow и перезапустите Activity.
+`snapshot` возвращает case + events одним SQL. Activity не дергает прокси каждые 2 с на каждую вкладку: один poller на открытый кейс, 2 с пока `running`, 6 с на HITL/done/failed, сразу просыпается на запись. Несколько single-row операций (`create_case`+`append_event`, `update_case`+`append_event`) идут как `batch` — Postgres в одном n8n execution последовательно. Успешные production executions прокси **не сохраняются** (`saveDataSuccessExecution=none`, `saveExecutionProgress=false`); ошибки сохраняются. После смены прокси переимпортируйте workflow и перезапустите Activity.
 
 ### Шаг 5. RAG (База знаний, не маршрутизация оркестратора)
 
@@ -304,7 +308,7 @@ RAG нужен для Activity → **База знаний** и для буду�
 ### Шаг 7. Работа инженера (HITL)
 
 1. Activity → новая задача, цель текстом, файлы (Excel / `.inc` / `.dev` / поверхность).
-2. Лента событий обновляется с прокси (`snapshot`). Пока открыт EventSource, отдельный частый poll не нужен.
+2. Лента событий обновляется с прокси (`snapshot`). Пока открыт EventSource, отдельный частый poll не нужен: один poller на кейс, 2 с в работе / сразу на запись.
 3. Статус `waiting_user` — ответить в панели HITL (вариант / текст). Не копировать `expected_version` / `gate_id` вручную.
 4. Результат — скачать `.INC` из карточки задачи.
 5. После правок UI Activity: hard-refresh. В query static есть `app.js?v=…`.
@@ -317,10 +321,11 @@ RAG нужен для Activity → **База знаний** и для буду�
 
 ### Режимы
 
-- **`CREATE`** — новый SCHEDULE с нуля.
+- **`CREATE`:** Создание нового файла SCHEDULE.
 - **`REVISE`** — менять только то, что сказано в задаче, остальное не трогать.
-- Excel читает только Excel Extractor. Schedule Builder получает уже извлечённые факты.
-- LLM не пишет `.INC` руками. Inspect / `apply_operations` — Python FastAPI. **Commissioning и group-rebind** эмитят через Node (`schedule_timeline_runtime.py`) — тот же алгоритм, что golden/combat. Остальной parse/apply/emit остаётся в сервисе.
+- Excel Extractor / n8n никогда не читает Excel-файлы напрямую: только HTTP к Excel Tools (`:8000`). Schedule Builder получает уже извлечённые факты (Handoff фактов), не xlsx.
+- Excel/Schedule агенты: `returnIntermediateSteps=true`.
+- LLM не пишет `.INC` руками. Parse / apply / emit, commissioning и group-rebind — Python FastAPI (`timeline_ops.py`). На Windows достаточно `.venv`. JS timeline в `n8n/templates/schedule_timeline_runtime.py` — только n8n smokes, не процесс сервиса.
 
 ### INCLUDE
 
@@ -365,13 +370,13 @@ RAG нужен для Activity → **База знаний** и для буду�
 | Knowledge Ingestion timeout | embeddings `batchSize=16`, `timeout=600` |
 | Activity «Загрузить в RAG» → 404 | Ingestion не Active, path `/webhook/mas-knowledge-ingest` |
 | `/webhook/mas-deployment-health-check` → 404 | это форма `/form/mas-deployment-health-check` |
-| Excel 401 | `excel_tools_api_key` ≠ `API_KEY` в `excel-tools.env`; сервис на **:8000** |
-| n8n не видит Excel/Schedule/Activity | firewall; сервисы слушают `0.0.0.0`; URL в Runtime configuration — IP Windows, не `excel-tools` |
+| Excel 401 | credential `Excel Tools X-API-Key` ≠ `API_KEY` в `excel-tools.env`; сервис на **:8000**; не путать с Header Auth webhook |
+| n8n не видит Excel/Schedule/Activity | firewall; сервисы слушают `0.0.0.0`; URL в **MAS — Runtime Config** — IP Windows, не `excel-tools` |
 | Пустая лента при живом n8n | прокси, операция `snapshot` после переимпорта Control Plane Proxy, Activity перезапущен |
 | Рейл «N turn» ≠ число пузырей в чате | переимпортировать Control Plane Proxy (`list_cases` отдаёт `events`); Activity считает свёрнутую ленту |
 | CORS в браузере | Activity CORSMiddleware; не сочетать `allow_credentials=True` с `"*"` |
 | `REPLACE_...` в экспорте JSON | не привязан credential или executeWorkflow |
-| n8n Executions забит прокси | переимпортируйте Control Plane Proxy: успешные прогоны не сохраняются |
+| n8n Executions забит прокси | переимпортируйте Control Plane Proxy (`saveDataSuccessExecution=none`); Activity 2.x не поллит snapshot с каждой вкладки — один poller / `batch` |
 | Qwen 503 | другой OpenAI-compatible credential на Chat Model |
 
 ---
@@ -389,7 +394,7 @@ Activity в Compose **не** стартует, пока не зарегистр�
 for f in n8n/tests/*-smoke.js; do node "$f" || exit 1; done
 
 cd mas-activity-service && PYTHONPATH=. .venv/bin/python -m pytest -q
-cd ../schedule-builder-service && PYTHONPATH=. python3 -m pytest -q   # нужен node
+cd ../schedule-builder-service && PYTHONPATH=. python3 -m pytest -q
 # pytest excel-tools: из venv Activity, не системный python без pytest
 PYTHONPATH=excel-agent-tools mas-activity-service/.venv/bin/python -m pytest excel-agent-tools/tests/test_agent_run.py excel-agent-tools/tests/test_workflow_contracts.py -q
 ```
@@ -413,7 +418,7 @@ python3 scripts/lab_soft_redeploy.py --skip-wipe
 
 Без `--skip-wipe` скрипт чистит `cases`/`events` и Activity state. Volumes не трогает.
 
-После UI-правок Activity: hard-refresh (`app.js?v=87` на момент этой редакции). Контейнеры FastAPI без `--reload`.
+После UI-правок Activity: hard-refresh (`app.css?v=85`, `app.js?v=87` на момент этой редакции). Контейнеры FastAPI без `--reload`.
 
 Боевой сценарий дат/REVISE: `simulation-model-example/combat-dates-revise/` (`PUBLISH_ACTIVITY=0 python3 run_integration_cases.py` если трогали commissioning/emit).
 

@@ -9,10 +9,6 @@ if [[ ! -f schedule-builder.env ]]; then
   echo "ERROR: schedule-builder.env missing. Copy schedule-builder.env.example → schedule-builder.env"
   exit 1
 fi
-if ! command -v node >/dev/null 2>&1; then
-  echo "ERROR: Node.js is required on PATH (commissioning / group-rebind timeline emit)."
-  exit 1
-fi
 set -a
 # shellcheck disable=SC1091
 source schedule-builder.env

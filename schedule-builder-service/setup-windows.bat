@@ -15,13 +15,6 @@ if errorlevel 1 (
   exit /b 1
 )
 
-where node >nul 2>nul
-if errorlevel 1 (
-  echo ERROR: Node.js is required on PATH.
-  echo Commissioning and group-rebind emit through n8n\templates\schedule_timeline_runtime.py via node.
-  exit /b 1
-)
-
 if not exist ".venv\Scripts\python.exe" (
   echo Creating virtual environment...
   py -3 -m venv .venv

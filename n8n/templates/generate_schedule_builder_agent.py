@@ -8,6 +8,7 @@ import uuid
 from pathlib import Path
 
 from llm_runtime_options import chat_model_options
+from generate_mas_runtime_config import runtime_config_execute_params
 
 ROOT = Path(__file__).resolve().parents[1]
 OUT = ROOT / "workflows/core/schedule-builder-agent.workflow.json"
@@ -244,7 +245,8 @@ def tool_http(name, pos, description, fields):
 
 
 NORMALIZE = r"""
-const root=$json||{};
+const incoming=(()=>{try{return $('When executed by another workflow').first().json||{}}catch{return $json||{}}})();
+const root=incoming&&typeof incoming==='object'?incoming:{};
 const body=root.body&&typeof root.body==='object'?root.body:root;
 const packet=body.specialist_packet&&typeof body.specialist_packet==='object'?body.specialist_packet:null;
 let task=body.agent_task&&typeof body.agent_task==='object'?body.agent_task:(body.case_id||body.task_id||body.objective?body:null);
@@ -352,8 +354,8 @@ def main() -> None:
                     "## edit after import\n\n"
                     "**Agent — Schedule Builder** — один LLM + FastAPI tools.\n\n"
                     "1. Bind **Qwen** credential on Schedule Builder Chat Model\n"
-                    "2. Runtime configuration: `schedule_service_url` = FastAPI "
-                    "`http://schedule-builder:8090` (field: Windows/host URL)\n"
+                    "2. Bind **Runtime configuration** → `MAS — Runtime Config` "
+                    "(URL FastAPI). Field: Windows/host URL.\n"
                     "3. Orchestrator — MAS вызывает этот workflow через "
                     "`executeWorkflow` (`Call Schedule Builder`), как Excel Extractor. "
                     "Webhook не нужен.\n\n"
@@ -392,29 +394,10 @@ def main() -> None:
         ),
         node(
             "Runtime configuration",
-            "n8n-nodes-base.set",
-            3.4,
+            "n8n-nodes-base.executeWorkflow",
+            1.3,
             (260, 0),
-            {
-                "assignments": {
-                    "assignments": [
-                        {
-                            "id": nid("cfg-svc"),
-                            "name": "schedule_service_url",
-                            "value": "http://schedule-builder:8090",
-                            "type": "string",
-                        },
-                        {
-                            "id": nid("cfg-act"),
-                            "name": "activity_base_url",
-                            "value": "http://mas-activity:8200",
-                            "type": "string",
-                        },
-                    ]
-                },
-                "options": {},
-                "includeOtherFields": True,
-            },
+            runtime_config_execute_params(),
         ),
         node("Normalize schedule task", "n8n-nodes-base.code", 2, (500, 0), {"jsCode": NORMALIZE}),
         http_json(

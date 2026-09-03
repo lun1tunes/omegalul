@@ -12,8 +12,8 @@
   "nodes": [
     {
       "parameters": {
-        "content": "## edit after import\n\n**Form — MAS Deployment Health Check** after MAS cutover:\n\n- Live FAIL gates are Docker HTTP: excel-tools, math-service, schedule-builder, n8n-runners, mas-activity, n8n.\n- Data Tables / Trace Writer / old Orchestrator Execute Workflow are TODO (Postgres cases + FastAPI agents).\n- Production orchestrator webhook: `mas-orchestrator-step`.\n",
-        "height": 272,
+        "content": "## edit after import\n\n**Form — MAS Deployment Health Check** — after UI import, complete bindings before activate:\n\n- Bind Data Table on **Probe task Data Table**\n- Bind Data Table on **Probe trace Data Table**\n\nDo not rely on env()/Globals for corporate UI import.",
+        "height": 216,
         "width": 440,
         "color": 1
       },
@@ -23,7 +23,7 @@
       "typeVersion": 1,
       "position": [
         -40,
-        -332
+        -276
       ]
     },
     {
@@ -178,7 +178,7 @@
       "type": "n8n-nodes-base.code",
       "typeVersion": 2,
       "position": [
-        3920,
+        3080,
         0
       ]
     },
@@ -193,7 +193,7 @@
       "type": "n8n-nodes-base.form",
       "typeVersion": 2.5,
       "position": [
-        4200,
+        3360,
         0
       ]
     },
@@ -217,7 +217,7 @@
       "type": "n8n-nodes-base.httpRequest",
       "typeVersion": 4.2,
       "position": [
-        2520,
+        1400,
         0
       ],
       "continueOnFail": true,
@@ -243,7 +243,7 @@
       "type": "n8n-nodes-base.httpRequest",
       "typeVersion": 4.2,
       "position": [
-        2800,
+        1680,
         0
       ],
       "continueOnFail": true,
@@ -269,7 +269,7 @@
       "type": "n8n-nodes-base.httpRequest",
       "typeVersion": 4.2,
       "position": [
-        3080,
+        1960,
         0
       ],
       "continueOnFail": true,
@@ -295,7 +295,7 @@
       "type": "n8n-nodes-base.httpRequest",
       "typeVersion": 4.2,
       "position": [
-        3360,
+        2240,
         0
       ],
       "continueOnFail": true,
@@ -321,7 +321,7 @@
       "type": "n8n-nodes-base.httpRequest",
       "typeVersion": 4.2,
       "position": [
-        3500,
+        2520,
         0
       ],
       "continueOnFail": true,
@@ -347,7 +347,7 @@
       "type": "n8n-nodes-base.httpRequest",
       "typeVersion": 4.2,
       "position": [
-        3640,
+        2800,
         0
       ],
       "continueOnFail": true,

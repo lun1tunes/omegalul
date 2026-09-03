@@ -106,7 +106,7 @@ Tests: `.venv\Scripts\python.exe -m pytest -q`.
 
 ## n8n wiring
 
-`activity_base_url` в Runtime configuration Excel Extractor и Schedule Builder:
+`activity_base_url` в **MAS — Runtime Config** (ноды Runtime configuration / Runtime endpoints вызывают этот workflow):
 
 - Полевой Windows: `http://<IP-Windows>:8200`
 - Compose DNS: `http://mas-activity:8200`

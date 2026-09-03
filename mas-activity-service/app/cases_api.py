@@ -13,8 +13,9 @@ from typing import Any
 from fastapi import APIRouter, BackgroundTasks, File, Form, HTTPException, Query, Request, UploadFile
 from fastapi.responses import StreamingResponse
 
-from app import control_plane
 from app import artifact_store
+from app import case_watch
+from app import control_plane
 from app.contracts import AGENT_EVENT_KINDS, CaseAnswerIn, CaseEventIn, CaseNameIn, MAX_STEPS
 from app.orchestrator import OrchestratorError, invoke_orchestrator
 from app.schema_view import FINISHED_RESULT_TEXT, build_schema_model
@@ -466,22 +467,29 @@ async def _invoke_action(case_id: str, *, action: str) -> None:
         )
     except OrchestratorError as exc:
         logger.error("orchestrator %s failed case_id=%s: %s", action, case_id, exc)
-        control_plane.append_event(
-            case_id,
-            kind="case.failed",
-            actor="orchestrator",
-            status="failed",
-            status_message=str(exc)[:500],
-            payload={"status_code": exc.status_code},
-        )
         try:
             row = control_plane.get_case(case_id)
-            if row:
-                state = dict(row["state"] or {})
-                state["last_error"] = {"message": str(exc)[:500]}
-                control_plane.update_case(case_id, state=state, status="failed")
+            state = dict(row["state"] or {}) if row else {}
+            state["last_error"] = {"message": str(exc)[:500]}
+            control_plane.update_case_and_append(
+                case_id,
+                state=state,
+                status="failed",
+                kind="case.failed",
+                actor="orchestrator",
+                event_status="failed",
+                status_message=str(exc)[:500],
+                payload={"status_code": exc.status_code},
+            )
         except KeyError:
-            pass
+            control_plane.append_event(
+                case_id,
+                kind="case.failed",
+                actor="orchestrator",
+                status="failed",
+                status_message=str(exc)[:500],
+                payload={"status_code": exc.status_code},
+            )
 
 
 @router.get("/cases")
@@ -569,14 +577,17 @@ async def create_case(
         task_name=name,
         extra_state=extra or None,
         status="running",
-    )
-    control_plane.append_event(
-        case_id,
-        kind="case.created",
-        actor="user",
-        status="new",
-        status_message=f"Принял задачу: {goal[:180]}",
-        payload={"requested_by": requested_by, "files": [fname for _s, fname, _c, _m in uploads], "task_name": name},
+        initial_event={
+            "kind": "case.created",
+            "actor": "user",
+            "status": "new",
+            "status_message": f"Принял задачу: {goal[:180]}",
+            "payload": {
+                "requested_by": requested_by,
+                "files": [fname for _s, fname, _c, _m in uploads],
+                "task_name": name,
+            },
+        },
     )
     background_tasks.add_task(_invoke_create, case_id)
     return {"ok": True, "case_id": case_id, "task_id": case_id, "status": "running", "task_name": name}
@@ -750,12 +761,13 @@ async def post_answer(case_id: str, request: Request, background_tasks: Backgrou
     hitl["answers"] = answers
     hitl["pending"] = False
     state["hitl"] = hitl
-    control_plane.update_case(case_id, state=state, status="running")
-    control_plane.append_event(
+    control_plane.update_case_and_append(
         case_id,
+        state=state,
+        status="running",
         kind="hitl.answered",
         actor="user",
-        status="answered",
+        event_status="answered",
         status_message=f"Пользователь ответил: {answer}",
         payload={
             "question_id": question_id,
@@ -790,12 +802,13 @@ def _prepare_case_restart(case_id: str, row: dict[str, Any]) -> dict[str, Any]:
     hitl = dict(state.get("hitl") or {})
     hitl["pending"] = False
     state["hitl"] = hitl
-    control_plane.update_case(case_id, state=state, status="running")
-    control_plane.append_event(
+    control_plane.update_case_and_append(
         case_id,
+        state=state,
+        status="running",
         kind="orchestrator.status",
         actor="orchestrator",
-        status="running",
+        event_status="running",
         status_message="Перезапуск задачи",
     )
     return state
@@ -825,12 +838,13 @@ async def post_run(case_id: str, request: Request, background_tasks: BackgroundT
         }
     state = row["state"] if isinstance(row["state"], dict) else {}
     if int(state.get("step_count") or 0) >= MAX_STEPS:
-        control_plane.update_case(case_id, state=state, status="failed")
-        control_plane.append_event(
+        control_plane.update_case_and_append(
             case_id,
+            state=state,
+            status="failed",
             kind="case.failed",
             actor="orchestrator",
-            status="failed",
+            event_status="failed",
             status_message=f"Превышен лимит шагов оркестратора ({MAX_STEPS})",
         )
         return {
@@ -896,41 +910,52 @@ async def stream_case(case_id: str, request: Request) -> StreamingResponse:
             default=0,
         )
         last_updated = str((snap["case"] or {}).get("updated_at") or "")
-        while True:
-            if await request.is_disconnected():
-                break
-            await asyncio.sleep(2.0)
-            fresh = control_plane.snapshot(case_id, after_seq=last)
-            row = fresh["case"]
-            if row is None:
-                break
-            raw_new = list(fresh["events"] or [])
-            if raw_new:
-                all_raw.extend(raw_new)
-                last = max(
-                    last,
-                    max(
-                        int(event["event_id"])
-                        for event in raw_new
-                        if event.get("event_id") is not None
-                    ),
-                )
-            collapsed = collapse_duplicate_events(all_raw)
-            emit = [
-                event
-                for event in collapsed
-                if event.get("event_id") is not None and int(event["event_id"]) not in seen_ids
-            ]
-            feed = _feed_from_row(case_id, row, [], last)
-            meta = _stream_meta(feed)
-            updated = str(row.get("updated_at") or "")
-            for event in emit:
-                seen_ids.add(int(event["event_id"]))
-                yield f"data: {json.dumps({'type': 'turn', 'turn': event_to_turn(event), 'event': event, **meta}, default=str)}\n\n"
-            if not emit and updated != last_updated:
-                yield f"data: {json.dumps({'type': 'meta', **meta}, default=str)}\n\n"
-            last_updated = updated
-            yield f"data: {json.dumps({'type': 'ping'})}\n\n"
+        queue = await case_watch.subscribe(case_id)
+        try:
+            while True:
+                if await request.is_disconnected():
+                    break
+                try:
+                    fresh = await asyncio.wait_for(queue.get(), timeout=15.0)
+                except asyncio.TimeoutError:
+                    yield f"data: {json.dumps({'type': 'ping'})}\n\n"
+                    continue
+                row = (fresh or {}).get("case")
+                if row is None:
+                    break
+                raw_new = [
+                    event
+                    for event in list((fresh or {}).get("events") or [])
+                    if event.get("event_id") is None or int(event["event_id"]) > last
+                ]
+                if raw_new:
+                    all_raw.extend(raw_new)
+                    last = max(
+                        last,
+                        max(
+                            int(event["event_id"])
+                            for event in raw_new
+                            if event.get("event_id") is not None
+                        ),
+                    )
+                collapsed = collapse_duplicate_events(all_raw)
+                emit = [
+                    event
+                    for event in collapsed
+                    if event.get("event_id") is not None and int(event["event_id"]) not in seen_ids
+                ]
+                feed = _feed_from_row(case_id, row, [], last)
+                meta = _stream_meta(feed)
+                updated = str(row.get("updated_at") or "")
+                for event in emit:
+                    seen_ids.add(int(event["event_id"]))
+                    yield f"data: {json.dumps({'type': 'turn', 'turn': event_to_turn(event), 'event': event, **meta}, default=str)}\n\n"
+                if not emit and updated != last_updated:
+                    yield f"data: {json.dumps({'type': 'meta', **meta}, default=str)}\n\n"
+                last_updated = updated
+                yield f"data: {json.dumps({'type': 'ping'})}\n\n"
+        finally:
+            await case_watch.unsubscribe(case_id, queue)
 
     return StreamingResponse(gen(), media_type="text/event-stream")
 

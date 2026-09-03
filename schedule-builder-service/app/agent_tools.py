@@ -204,7 +204,7 @@ def _hitl_payloads(state: dict[str, Any]) -> list[Any]:
 def _unlisted_policy(state: dict[str, Any]) -> str | None:
     """HITL / inputs enum is authority. Prose in the objective is not.
 
-    Empty means the timeline JS decides: silent keep, or HITL when prose
+    Empty means commissioning_revise decides: silent keep, or HITL when prose
     suggests remove. Do not default to keep here — that skips the HITL gate.
     """
     inputs = state.get("inputs") if isinstance(state.get("inputs"), dict) else {}

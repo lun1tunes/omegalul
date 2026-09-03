@@ -5,6 +5,22 @@
   "isArchived": false,
   "nodes": [
     {
+      "parameters": {
+        "content": "## edit after import\n\n**Error — MAS Node Traces** — after UI import, complete bindings before activate:\n\n- Set Postgres credentials on **Lookup case by execution**\n- Set Postgres credentials on **Insert error_traces**\n- Set Postgres credentials on **Insert system.node_error event**\n\nDo not rely on env()/Globals for corporate UI import.",
+        "height": 244,
+        "width": 440,
+        "color": 1
+      },
+      "id": "e6e4cd05-70ad-53ea-bc65-ce30b46abb3c",
+      "name": "edit after import",
+      "type": "n8n-nodes-base.stickyNote",
+      "typeVersion": 1,
+      "position": [
+        -40,
+        -304
+      ]
+    },
+    {
       "parameters": {},
       "id": "7a04025f-3654-5c44-a91a-e58c37dd57c7",
       "name": "Error Trigger",
@@ -24,7 +40,7 @@
       "type": "n8n-nodes-base.code",
       "typeVersion": 2,
       "position": [
-        240,
+        280,
         0
       ]
     },
@@ -44,7 +60,7 @@
       "type": "n8n-nodes-base.postgres",
       "typeVersion": 2.6,
       "position": [
-        480,
+        560,
         0
       ],
       "credentials": {
@@ -64,7 +80,7 @@
       "type": "n8n-nodes-base.code",
       "typeVersion": 2,
       "position": [
-        720,
+        840,
         0
       ]
     },
@@ -84,7 +100,7 @@
       "type": "n8n-nodes-base.postgres",
       "typeVersion": 2.6,
       "position": [
-        960,
+        1120,
         0
       ],
       "credentials": {
@@ -104,7 +120,7 @@
       "type": "n8n-nodes-base.code",
       "typeVersion": 2,
       "position": [
-        1200,
+        1400,
         0
       ]
     },
@@ -124,7 +140,7 @@
       "type": "n8n-nodes-base.postgres",
       "typeVersion": 2.6,
       "position": [
-        1440,
+        1680,
         0
       ],
       "credentials": {
@@ -144,7 +160,7 @@
       "type": "n8n-nodes-base.code",
       "typeVersion": 2,
       "position": [
-        1680,
+        1960,
         0
       ]
     }
@@ -239,5 +255,5 @@
   },
   "tags": [],
   "pinData": {},
-  "versionId": "b6e4200f-c34a-4ba1-b905-4f7dbe48e99d"
+  "versionId": "5fe9dbed-f967-4b01-8c19-ab3949b83c51"
 }

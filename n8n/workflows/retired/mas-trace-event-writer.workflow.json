@@ -310,7 +310,8 @@
   "settings": {
     "executionOrder": "v1",
     "saveManualExecutions": true,
-    "callerPolicy": "workflowsFromSameOwner"
+    "callerPolicy": "workflowsFromSameOwner",
+    "errorWorkflow": ""
   },
   "versionId": "75256204-bf72-57b8-b309-6f9cdb5c3575",
   "meta": {

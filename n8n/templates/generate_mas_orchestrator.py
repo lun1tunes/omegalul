@@ -8,6 +8,7 @@ import uuid
 from pathlib import Path
 
 from llm_runtime_options import chat_model_options, structured_parser_params
+from generate_mas_runtime_config import runtime_config_execute_params
 
 ROOT = Path(__file__).resolve().parents[1]
 OUT = ROOT / "workflows/core/mas-orchestrator.workflow.json"
@@ -154,7 +155,6 @@ def http_json(name, pos, url, body, timeout=180000):
             "headerParameters": {
                 "parameters": [
                     {"name": "Content-Type", "value": "application/json"},
-                    {"name": "X-API-Key", "value": "={{ $json.excel_tools_api_key || '' }}"},
                 ]
             },
             "sendBody": True,
@@ -228,7 +228,8 @@ def connect(c, src, dst, out="main", si=0, tin="main", ti=0):
 
 
 NORMALIZE = r"""
-const raw=$input.first().json||{};
+const cfg=(()=>{try{return $('Runtime endpoints').first().json||{}}catch{return {}}})();
+const raw=(()=>{try{return $('Authenticated MAS webhook').first().json||{}}catch{return $input.first().json||{}}})();
 const body=raw.body&&typeof raw.body==='object'?raw.body:raw;
 const action=String(body.action||raw.action||'step').trim().toLowerCase();
 let caseId=String(body.case_id||raw.case_id||'').trim();
@@ -237,8 +238,7 @@ const taskName=String(body.task_name||raw.task_name||'').trim();
 const humanResponse=String(body.human_response||raw.human_response||'');
 const gateId=String(body.gate_id||raw.gate_id||'');
 const requestedBy=String(body.requested_by||raw.requested_by||'');
-const activityBaseUrl=String(raw.activity_base_url||'').trim();
-const orchestratorStepUrl=String(raw.orchestrator_step_url||'').trim();
+const activityBaseUrl=String(cfg.activity_base_url||raw.activity_base_url||'').trim();
 const executionId=String($execution.id||'');
 const readinessId=!caseId||caseId==='CASE-readiness-probe';
 if(action==='probe'||(action==='status'&&readinessId)){
@@ -275,7 +275,6 @@ return [{json:{
   gate_id:gateId,
   requested_by:requestedBy,
   activity_base_url:activityBaseUrl,
-  orchestrator_step_url:orchestratorStepUrl,
   is_probe:false,
   is_status:action==='status',
   is_resume:action==='resume',
@@ -431,9 +430,13 @@ else if(!compact.has_excel&&compact.has_schedule_source&&!compact.has_schedule_o
 else if(compact.has_schedule_out) hint.push('schedule_out уже есть — finish.');
 const prompt=`Цель:\n${compact.goal}\n\nТекущее состояние:\n${JSON.stringify(compact,null,2)}\n\nПодсказка следующего шага:\n${hint.join(' ')||'выбери по реестру агентов'}\n\nДоступные агенты:\n${JSON.stringify(registry,null,2)}\n`;
 const endpoints=$('Runtime endpoints').first().json||{};
+const math=String(endpoints.math_url||endpoints.calculation_agent_url||'').replace(/\/$/,'');
+const calculationAgentUrl=math?(math.endsWith('/agent/run')?math:`${math}/agent/run`):'';
 return [{json:{
   ...req,
   ...endpoints,
+  calculation_agent_url:calculationAgentUrl,
+  activity_base_url:String(endpoints.activity_base_url||req.activity_base_url||'http://mas-activity:8200').replace(/\/$/,''),
   case_id:req.case_id,
   state,
   status,
@@ -678,7 +681,7 @@ def main() -> None:
         note(
             "edit after import",
             (-200, -420),
-            "## edit after import\n\n**Orchestrator — MAS** — thin loop:\n- Bind Postgres on load/insert/update\n- Bind **Qwen** OpenAI-compatible credential on Decision Chat Model\n- Bind inbound header auth on webhook\n- Bind **Call Excel Extractor** → `Agent — Excel Extractor` (executeWorkflow)\n- Bind **Call Schedule Builder** → `Agent — Schedule Builder` (executeWorkflow)\n- Runtime endpoints patched by lab_soft_redeploy\n\n`action`: probe | status | start | create | step | resume\n- Activity `/cases` stores files; specialists fetch `/cases/{id}/artifacts/{id}` from their FastAPI tools. n8n never carries binaries.\n- **status** loads case and returns `human_gate` without LLM\n- Decision is Basic LLM Chain + Structured Output (no Agent tools)\n\nOne execution = one step.",
+            "## edit after import\n\n**Orchestrator — MAS** — thin loop:\n- Bind Postgres on load/insert/update\n- Bind **Qwen** OpenAI-compatible credential on Decision Chat Model\n- Bind inbound header auth on webhook\n- Bind **Runtime endpoints** → `MAS — Runtime Config` (один Set URL на весь контур)\n- Bind **Call Excel Extractor** → `Agent — Excel Extractor` (executeWorkflow)\n- Bind **Call Schedule Builder** → `Agent — Schedule Builder` (executeWorkflow)\n- Excel `X-API-Key` — credential на Agent — Excel Extractor, не этот workflow\n\n`action`: probe | status | start | create | step | resume\n- Activity `/cases` stores files; specialists fetch `/cases/{id}/artifacts/{id}` from their FastAPI tools. n8n never carries binaries.\n- **status** loads case and returns `human_gate` without LLM\n- Decision is Basic LLM Chain + Structured Output (no Agent tools)\n\nOne execution = one step.",
             480,
             420,
             1,
@@ -698,15 +701,12 @@ def main() -> None:
             credentials=HDR,
             webhookId="a1000003-mas-orch-wh-0001-800000000001",
         ),
-        set_fields(
+        node(
             "Runtime endpoints",
+            "n8n-nodes-base.executeWorkflow",
+            1.3,
             (240, 0),
-            [
-                ("calculation_agent_url", "http://math-service:8100/agent/run", "string"),
-                ("orchestrator_step_url", "http://n8n:5678/webhook/mas-orchestrator-step", "string"),
-                ("activity_base_url", "http://mas-activity:8200", "string"),
-                ("excel_tools_api_key", "", "string"),
-            ],
+            runtime_config_execute_params(),
         ),
         code("Normalize step request", (480, 0), NORMALIZE),
         if_true("Probe ping?", (640, 0), "={{ Boolean($json.is_probe) }}"),

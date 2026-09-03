@@ -6,7 +6,7 @@
   "nodes": [
     {
       "parameters": {
-        "content": "## edit after import\n\n**Agent — Excel Extractor** — один LLM + excel-tools FastAPI.\n\n1. Bind **Qwen** credential on Excel Extractor Chat Model\n2. Runtime configuration: `excel_tools_url` = `http://excel-tools:8000`, API key, `activity_base_url`\n3. Orchestrator — MAS вызывает этот workflow через `executeWorkflow` (`Call Excel Extractor`). Webhook не нужен.\n\nФайлы не грузятся в n8n. Сервис сам GET `/cases/{id}/artifacts/excel`.\n`suggested_capability=commissioning` идёт обычным HTTP `extract_commissioning` (external n8n runners не execute'ят toolHttpRequest). Скважины/даты не хардкодятся.",
+        "content": "## edit after import\n\n**Agent — Excel Extractor** — один LLM + excel-tools FastAPI.\n\n1. Bind **Qwen** credential on Excel Extractor Chat Model\n2. Bind **Runtime configuration** → `MAS — Runtime Config` (URL сервисов). Ключ Excel: credential Header Auth **Excel Tools X-API-Key** (`X-API-Key`), не Set.\n3. Orchestrator — MAS вызывает этот workflow через `executeWorkflow` (`Call Excel Extractor`). Webhook не нужен.\n\nФайлы не грузятся в n8n. Сервис сам GET `/cases/{id}/artifacts/excel`.\n`suggested_capability=commissioning` идёт обычным HTTP `extract_commissioning` (external n8n runners не execute'ят toolHttpRequest). Скважины/даты не хардкодятся.",
         "height": 340,
         "width": 480,
         "color": 1
@@ -16,8 +16,8 @@
       "type": "n8n-nodes-base.stickyNote",
       "typeVersion": 1,
       "position": [
-        -220,
-        -360
+        -40,
+        -825
       ]
     },
     {
@@ -36,50 +36,45 @@
     },
     {
       "parameters": {
-        "assignments": {
-          "assignments": [
-            {
-              "id": "5d79d338-8464-510f-9563-d5a6fdd1c391",
-              "name": "excel_tools_url",
-              "value": "http://excel-tools:8000",
-              "type": "string"
-            },
-            {
-              "id": "5d222650-435a-598b-888c-3867100e3c3b",
-              "name": "excel_tools_api_key",
-              "value": "",
-              "type": "string"
-            },
-            {
-              "id": "dfff2401-bdc7-5d5d-9363-300e4b785c1c",
-              "name": "activity_base_url",
-              "value": "http://mas-activity:8200",
-              "type": "string"
-            }
-          ]
+        "source": "database",
+        "workflowId": {
+          "__rl": true,
+          "value": "REPLACE_MAS_RUNTIME_CONFIG_IN_UI",
+          "mode": "list",
+          "cachedResultName": "MAS — Runtime Config"
         },
-        "options": {},
-        "includeOtherFields": true
+        "workflowInputs": {
+          "mappingMode": "defineBelow",
+          "value": {},
+          "matchingColumns": [],
+          "schema": [],
+          "attemptToConvertTypes": false,
+          "convertFieldsToString": false
+        },
+        "mode": "once",
+        "options": {
+          "waitForSubWorkflow": true
+        }
       },
       "id": "4765d023-1b68-5337-b4a8-2e68c5940499",
       "name": "Runtime configuration",
-      "type": "n8n-nodes-base.set",
-      "typeVersion": 3.4,
+      "type": "n8n-nodes-base.executeWorkflow",
+      "typeVersion": 1.3,
       "position": [
-        260,
+        280,
         0
       ]
     },
     {
       "parameters": {
-        "jsCode": "\nconst root=$json||{};\nconst body=root.body&&typeof root.body==='object'?root.body:root;\nconst packet=body.specialist_packet&&typeof body.specialist_packet==='object'?body.specialist_packet:null;\nlet task=body.agent_task&&typeof body.agent_task==='object'?body.agent_task:(body.case_id||body.task_id||body.objective?body:null);\nif(!task||typeof task!=='object') task={};\nif(packet){\n  const inputs=packet.inputs&&typeof packet.inputs==='object'?packet.inputs:{};\n  task={\n    case_id:String(packet.case_id||body.case_id||task.case_id||''),\n    task_id:String(packet.task_id||task.task_id||''),\n    agent_id:'excel_extractor',\n    objective:String(packet.objective||task.objective||''),\n    handoff_message:String(packet.handoff_message||task.handoff_message||packet.objective||''),\n    inputs,\n    context:packet.context&&typeof packet.context==='object'?packet.context:(task.context||{}),\n    constraints:packet.controls&&typeof packet.controls==='object'?packet.controls:(task.constraints||{})\n  };\n}\ntask.agent_id='excel_extractor';\ntask.case_id=String(task.case_id||'');\ntask.task_id=String(task.task_id||'');\ntask.objective=String(task.objective||'');\ntask.handoff_message=String(task.handoff_message||'');\ntask.inputs=task.inputs&&typeof task.inputs==='object'?task.inputs:{};\ntask.context=task.context&&typeof task.context==='object'?task.context:{};\nconst cfg=$('Runtime configuration').first().json||{};\nif(!task.inputs.activity_base_url&&cfg.activity_base_url) task.inputs={...task.inputs, activity_base_url:cfg.activity_base_url};\nreturn [{json:{...cfg, agent_task:task, case_id:task.case_id, task_id:task.task_id}}];\n"
+        "jsCode": "\nconst incoming=(()=>{try{return $('When executed by another workflow').first().json||{}}catch{return $json||{}}})();\nconst root=incoming&&typeof incoming==='object'?incoming:{};\nconst body=root.body&&typeof root.body==='object'?root.body:root;\nconst packet=body.specialist_packet&&typeof body.specialist_packet==='object'?body.specialist_packet:null;\nlet task=body.agent_task&&typeof body.agent_task==='object'?body.agent_task:(body.case_id||body.task_id||body.objective?body:null);\nif(!task||typeof task!=='object') task={};\nif(packet){\n  const inputs=packet.inputs&&typeof packet.inputs==='object'?packet.inputs:{};\n  task={\n    case_id:String(packet.case_id||body.case_id||task.case_id||''),\n    task_id:String(packet.task_id||task.task_id||''),\n    agent_id:'excel_extractor',\n    objective:String(packet.objective||task.objective||''),\n    handoff_message:String(packet.handoff_message||task.handoff_message||packet.objective||''),\n    inputs,\n    context:packet.context&&typeof packet.context==='object'?packet.context:(task.context||{}),\n    constraints:packet.controls&&typeof packet.controls==='object'?packet.controls:(task.constraints||{})\n  };\n}\ntask.agent_id='excel_extractor';\ntask.case_id=String(task.case_id||'');\ntask.task_id=String(task.task_id||'');\ntask.objective=String(task.objective||'');\ntask.handoff_message=String(task.handoff_message||'');\ntask.inputs=task.inputs&&typeof task.inputs==='object'?task.inputs:{};\ntask.context=task.context&&typeof task.context==='object'?task.context:{};\nconst cfg=$('Runtime configuration').first().json||{};\nif(!task.inputs.activity_base_url&&cfg.activity_base_url) task.inputs={...task.inputs, activity_base_url:cfg.activity_base_url};\nreturn [{json:{...cfg, agent_task:task, case_id:task.case_id, task_id:task.task_id}}];\n"
       },
       "id": "0bee4cdf-a5e6-5a00-be1c-f713ccef0baa",
       "name": "Normalize excel task",
       "type": "n8n-nodes-base.code",
       "typeVersion": 2,
       "position": [
-        500,
+        560,
         0
       ]
     },
@@ -87,16 +82,14 @@
       "parameters": {
         "method": "POST",
         "url": "={{ $json.excel_tools_url }}/agent-tools/open_session",
+        "authentication": "genericCredentialType",
+        "genericAuthType": "httpHeaderAuth",
         "sendHeaders": true,
         "headerParameters": {
           "parameters": [
             {
               "name": "Content-Type",
               "value": "application/json"
-            },
-            {
-              "name": "X-API-Key",
-              "value": "={{ $('Runtime configuration').first().json.excel_tools_api_key || '' }}"
             }
           ]
         },
@@ -118,9 +111,15 @@
       "type": "n8n-nodes-base.httpRequest",
       "typeVersion": 4.4,
       "position": [
-        740,
+        840,
         0
       ],
+      "credentials": {
+        "httpHeaderAuth": {
+          "id": "REPLACE_IN_UI",
+          "name": "REPLACE: Excel Tools X-API-Key"
+        }
+      },
       "onError": "continueRegularOutput",
       "alwaysOutputData": true
     },
@@ -153,7 +152,7 @@
       "type": "n8n-nodes-base.if",
       "typeVersion": 2.3,
       "position": [
-        980,
+        1120,
         0
       ]
     },
@@ -166,8 +165,8 @@
       "type": "n8n-nodes-base.code",
       "typeVersion": 2,
       "position": [
-        1220,
-        240
+        1400,
+        85
       ]
     },
     {
@@ -181,24 +180,22 @@
       "type": "n8n-nodes-base.switch",
       "typeVersion": 3.4,
       "position": [
-        1220,
-        0
+        1400,
+        -85
       ]
     },
     {
       "parameters": {
         "method": "POST",
         "url": "={{ $('Runtime configuration').first().json.excel_tools_url + '/agent-tools/extract_commissioning' }}",
+        "authentication": "genericCredentialType",
+        "genericAuthType": "httpHeaderAuth",
         "sendHeaders": true,
         "headerParameters": {
           "parameters": [
             {
               "name": "Content-Type",
               "value": "application/json"
-            },
-            {
-              "name": "X-API-Key",
-              "value": "={{ $('Runtime configuration').first().json.excel_tools_api_key || '' }}"
             }
           ]
         },
@@ -220,9 +217,15 @@
       "type": "n8n-nodes-base.httpRequest",
       "typeVersion": 4.4,
       "position": [
-        1480,
-        -160
+        1680,
+        255
       ],
+      "credentials": {
+        "httpHeaderAuth": {
+          "id": "REPLACE_IN_UI",
+          "name": "REPLACE: Excel Tools X-API-Key"
+        }
+      },
       "onError": "continueRegularOutput",
       "alwaysOutputData": true
     },
@@ -235,8 +238,8 @@
       "type": "n8n-nodes-base.code",
       "typeVersion": 2,
       "position": [
-        1480,
-        160
+        1680,
+        425
       ]
     },
     {
@@ -259,8 +262,8 @@
       "type": "@n8n/n8n-nodes-langchain.agent",
       "typeVersion": 3.1,
       "position": [
-        1720,
-        160
+        1960,
+        425
       ]
     },
     {
@@ -282,8 +285,8 @@
       "type": "@n8n/n8n-nodes-langchain.lmChatOpenAi",
       "typeVersion": 1.3,
       "position": [
-        1720,
-        40
+        1960,
+        255
       ],
       "credentials": {
         "openAiApi": {
@@ -296,16 +299,14 @@
       "parameters": {
         "method": "GET",
         "url": "={{ $('Runtime configuration').first().json.excel_tools_url + '/sessions/' + $('Open excel session').first().json.session_id + '/result' }}",
+        "authentication": "genericCredentialType",
+        "genericAuthType": "httpHeaderAuth",
         "sendHeaders": true,
         "headerParameters": {
           "parameters": [
             {
               "name": "Content-Type",
               "value": "application/json"
-            },
-            {
-              "name": "X-API-Key",
-              "value": "={{ $('Runtime configuration').first().json.excel_tools_api_key || '' }}"
             }
           ]
         },
@@ -324,9 +325,15 @@
       "type": "n8n-nodes-base.httpRequest",
       "typeVersion": 4.4,
       "position": [
-        1960,
+        2240,
         0
       ],
+      "credentials": {
+        "httpHeaderAuth": {
+          "id": "REPLACE_IN_UI",
+          "name": "REPLACE: Excel Tools X-API-Key"
+        }
+      },
       "onError": "continueRegularOutput",
       "alwaysOutputData": true
     },
@@ -339,7 +346,7 @@
       "type": "n8n-nodes-base.code",
       "typeVersion": 2,
       "position": [
-        2200,
+        2520,
         0
       ]
     },
@@ -348,7 +355,8 @@
         "toolDescription": "Компактные листы и размеры workbook. Без файла.",
         "method": "POST",
         "url": "={{ $('Runtime configuration').first().json.excel_tools_url + '/agent-tools/' + \"workbook_introspect\" }}",
-        "authentication": "none",
+        "authentication": "genericCredentialType",
+        "genericAuthType": "httpHeaderAuth",
         "sendQuery": false,
         "sendHeaders": true,
         "specifyHeaders": "keypair",
@@ -364,11 +372,6 @@
               "name": "Content-Type",
               "valueProvider": "fieldValue",
               "value": "application/json"
-            },
-            {
-              "name": "X-API-Key",
-              "valueProvider": "fieldValue",
-              "value": "={{ $('Runtime configuration').first().json.excel_tools_api_key || '' }}"
             }
           ]
         },
@@ -387,16 +390,23 @@
       "type": "@n8n/n8n-nodes-langchain.toolHttpRequest",
       "typeVersion": 1.1,
       "position": [
-        760,
-        -420
-      ]
+        1680,
+        85
+      ],
+      "credentials": {
+        "httpHeaderAuth": {
+          "id": "REPLACE_IN_UI",
+          "name": "REPLACE: Excel Tools X-API-Key"
+        }
+      }
     },
     {
       "parameters": {
         "toolDescription": "Небольшой preview одного листа. sheet только из introspect.",
         "method": "POST",
         "url": "={{ $('Runtime configuration').first().json.excel_tools_url + '/agent-tools/' + \"sheet_preview\" }}",
-        "authentication": "none",
+        "authentication": "genericCredentialType",
+        "genericAuthType": "httpHeaderAuth",
         "sendQuery": false,
         "sendHeaders": true,
         "specifyHeaders": "keypair",
@@ -418,11 +428,6 @@
               "name": "Content-Type",
               "valueProvider": "fieldValue",
               "value": "application/json"
-            },
-            {
-              "name": "X-API-Key",
-              "valueProvider": "fieldValue",
-              "value": "={{ $('Runtime configuration').first().json.excel_tools_api_key || '' }}"
             }
           ]
         },
@@ -446,16 +451,23 @@
       "type": "@n8n/n8n-nodes-langchain.toolHttpRequest",
       "typeVersion": 1.1,
       "position": [
-        980,
-        -420
-      ]
+        1960,
+        85
+      ],
+      "credentials": {
+        "httpHeaderAuth": {
+          "id": "REPLACE_IN_UI",
+          "name": "REPLACE: Excel Tools X-API-Key"
+        }
+      }
     },
     {
       "parameters": {
         "toolDescription": "Найти таблицы. sheet опционален. Возвращает table_id, range, columns — не workbook.",
         "method": "POST",
         "url": "={{ $('Runtime configuration').first().json.excel_tools_url + '/agent-tools/' + \"detect_tables\" }}",
-        "authentication": "none",
+        "authentication": "genericCredentialType",
+        "genericAuthType": "httpHeaderAuth",
         "sendQuery": false,
         "sendHeaders": true,
         "specifyHeaders": "keypair",
@@ -477,11 +489,6 @@
               "name": "Content-Type",
               "valueProvider": "fieldValue",
               "value": "application/json"
-            },
-            {
-              "name": "X-API-Key",
-              "valueProvider": "fieldValue",
-              "value": "={{ $('Runtime configuration').first().json.excel_tools_api_key || '' }}"
             }
           ]
         },
@@ -505,16 +512,23 @@
       "type": "@n8n/n8n-nodes-langchain.toolHttpRequest",
       "typeVersion": 1.1,
       "position": [
-        1200,
-        -420
-      ]
+        1680,
+        -85
+      ],
+      "credentials": {
+        "httpHeaderAuth": {
+          "id": "REPLACE_IN_UI",
+          "name": "REPLACE: Excel Tools X-API-Key"
+        }
+      }
     },
     {
       "parameters": {
         "toolDescription": "Ранжировать уже найденные или подходящие таблицы по фразе запроса.",
         "method": "POST",
         "url": "={{ $('Runtime configuration').first().json.excel_tools_url + '/agent-tools/' + \"match_tables\" }}",
-        "authentication": "none",
+        "authentication": "genericCredentialType",
+        "genericAuthType": "httpHeaderAuth",
         "sendQuery": false,
         "sendHeaders": true,
         "specifyHeaders": "keypair",
@@ -536,11 +550,6 @@
               "name": "Content-Type",
               "valueProvider": "fieldValue",
               "value": "application/json"
-            },
-            {
-              "name": "X-API-Key",
-              "valueProvider": "fieldValue",
-              "value": "={{ $('Runtime configuration').first().json.excel_tools_api_key || '' }}"
             }
           ]
         },
@@ -564,16 +573,23 @@
       "type": "@n8n/n8n-nodes-langchain.toolHttpRequest",
       "typeVersion": 1.1,
       "position": [
-        1420,
-        -420
-      ]
+        1960,
+        -85
+      ],
+      "credentials": {
+        "httpHeaderAuth": {
+          "id": "REPLACE_IN_UI",
+          "name": "REPLACE: Excel Tools X-API-Key"
+        }
+      }
     },
     {
       "parameters": {
         "toolDescription": "Колонки, число строк и sample. table_id только из detect/match.",
         "method": "POST",
         "url": "={{ $('Runtime configuration').first().json.excel_tools_url + '/agent-tools/' + \"describe_table\" }}",
-        "authentication": "none",
+        "authentication": "genericCredentialType",
+        "genericAuthType": "httpHeaderAuth",
         "sendQuery": false,
         "sendHeaders": true,
         "specifyHeaders": "keypair",
@@ -595,11 +611,6 @@
               "name": "Content-Type",
               "valueProvider": "fieldValue",
               "value": "application/json"
-            },
-            {
-              "name": "X-API-Key",
-              "valueProvider": "fieldValue",
-              "value": "={{ $('Runtime configuration').first().json.excel_tools_api_key || '' }}"
             }
           ]
         },
@@ -623,16 +634,23 @@
       "type": "@n8n/n8n-nodes-langchain.toolHttpRequest",
       "typeVersion": 1.1,
       "position": [
-        760,
-        -260
-      ]
+        1680,
+        -255
+      ],
+      "credentials": {
+        "httpHeaderAuth": {
+          "id": "REPLACE_IN_UI",
+          "name": "REPLACE: Excel Tools X-API-Key"
+        }
+      }
     },
     {
       "parameters": {
         "toolDescription": "Ограниченные distinct-значения одной колонки для точных фильтров.",
         "method": "POST",
         "url": "={{ $('Runtime configuration').first().json.excel_tools_url + '/agent-tools/' + \"list_column_values\" }}",
-        "authentication": "none",
+        "authentication": "genericCredentialType",
+        "genericAuthType": "httpHeaderAuth",
         "sendQuery": false,
         "sendHeaders": true,
         "specifyHeaders": "keypair",
@@ -659,11 +677,6 @@
               "name": "Content-Type",
               "valueProvider": "fieldValue",
               "value": "application/json"
-            },
-            {
-              "name": "X-API-Key",
-              "valueProvider": "fieldValue",
-              "value": "={{ $('Runtime configuration').first().json.excel_tools_api_key || '' }}"
             }
           ]
         },
@@ -692,16 +705,23 @@
       "type": "@n8n/n8n-nodes-langchain.toolHttpRequest",
       "typeVersion": 1.1,
       "position": [
-        980,
-        -260
-      ]
+        1960,
+        -255
+      ],
+      "credentials": {
+        "httpHeaderAuth": {
+          "id": "REPLACE_IN_UI",
+          "name": "REPLACE: Excel Tools X-API-Key"
+        }
+      }
     },
     {
       "parameters": {
         "toolDescription": "Строки таблицы. select/filters — JSON с числовыми ключами 0,1,2,...",
         "method": "POST",
         "url": "={{ $('Runtime configuration').first().json.excel_tools_url + '/agent-tools/' + \"query_table\" }}",
-        "authentication": "none",
+        "authentication": "genericCredentialType",
+        "genericAuthType": "httpHeaderAuth",
         "sendQuery": false,
         "sendHeaders": true,
         "specifyHeaders": "keypair",
@@ -738,11 +758,6 @@
               "name": "Content-Type",
               "valueProvider": "fieldValue",
               "value": "application/json"
-            },
-            {
-              "name": "X-API-Key",
-              "valueProvider": "fieldValue",
-              "value": "={{ $('Runtime configuration').first().json.excel_tools_api_key || '' }}"
             }
           ]
         },
@@ -781,16 +796,23 @@
       "type": "@n8n/n8n-nodes-langchain.toolHttpRequest",
       "typeVersion": 1.1,
       "position": [
-        1200,
-        -260
-      ]
+        1680,
+        -425
+      ],
+      "credentials": {
+        "httpHeaderAuth": {
+          "id": "REPLACE_IN_UI",
+          "name": "REPLACE: Excel Tools X-API-Key"
+        }
+      }
     },
     {
       "parameters": {
         "toolDescription": "Извлечь факты скважина+дата ввода из сессии. Аргументы не передавай.",
         "method": "POST",
         "url": "={{ $('Runtime configuration').first().json.excel_tools_url + '/agent-tools/' + \"extract_commissioning\" }}",
-        "authentication": "none",
+        "authentication": "genericCredentialType",
+        "genericAuthType": "httpHeaderAuth",
         "sendQuery": false,
         "sendHeaders": true,
         "specifyHeaders": "keypair",
@@ -806,11 +828,6 @@
               "name": "Content-Type",
               "valueProvider": "fieldValue",
               "value": "application/json"
-            },
-            {
-              "name": "X-API-Key",
-              "valueProvider": "fieldValue",
-              "value": "={{ $('Runtime configuration').first().json.excel_tools_api_key || '' }}"
             }
           ]
         },
@@ -829,9 +846,15 @@
       "type": "@n8n/n8n-nodes-langchain.toolHttpRequest",
       "typeVersion": 1.1,
       "position": [
-        1420,
-        -260
-      ]
+        1960,
+        -425
+      ],
+      "credentials": {
+        "httpHeaderAuth": {
+          "id": "REPLACE_IN_UI",
+          "name": "REPLACE: Excel Tools X-API-Key"
+        }
+      }
     }
   ],
   "connections": {
@@ -1071,5 +1094,5 @@
   },
   "tags": [],
   "pinData": {},
-  "versionId": "c5ddaf5c-330e-4c53-baa9-42abc31b99ea"
+  "versionId": "311832bb-3515-4b1b-9163-f13919d1f524"
 }

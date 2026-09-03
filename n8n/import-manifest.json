@@ -6,6 +6,7 @@
   "full_clean_import_set": [
     "workflows/core/tnavigator-schedule-knowledge-ingestion.workflow.json",
     "workflows/core/tnavigator-schedule-hybrid-retrieval.workflow.json",
+    "workflows/core/mas-runtime-config.workflow.json",
     "workflows/core/schedule-builder-agent.workflow.json",
     "workflows/core/excel-extractor-agent.workflow.json",
     "workflows/core/mas-error-traces.workflow.json",
@@ -22,6 +23,7 @@
   "runtime_import_order": [
     "workflows/core/tnavigator-schedule-knowledge-ingestion.workflow.json",
     "workflows/core/tnavigator-schedule-hybrid-retrieval.workflow.json",
+    "workflows/core/mas-runtime-config.workflow.json",
     "workflows/core/schedule-builder-agent.workflow.json",
     "workflows/core/excel-extractor-agent.workflow.json",
     "workflows/core/mas-error-traces.workflow.json",
@@ -109,6 +111,24 @@
     }
   ],
   "mandatory_execute_workflow_bindings": [
+    {
+      "owner": "Orchestrator — MAS",
+      "node": "Runtime endpoints",
+      "target": "MAS — Runtime Config",
+      "placeholder": "REPLACE_MAS_RUNTIME_CONFIG_IN_UI"
+    },
+    {
+      "owner": "Agent — Excel Extractor",
+      "node": "Runtime configuration",
+      "target": "MAS — Runtime Config",
+      "placeholder": "REPLACE_MAS_RUNTIME_CONFIG_IN_UI"
+    },
+    {
+      "owner": "Agent — Schedule Builder",
+      "node": "Runtime configuration",
+      "target": "MAS — Runtime Config",
+      "placeholder": "REPLACE_MAS_RUNTIME_CONFIG_IN_UI"
+    },
     {
       "owner": "Orchestrator — MAS",
       "node": "Call Excel Extractor",
@@ -203,17 +223,17 @@
     },
     {
       "type": "httpHeaderAuth",
-      "use": "Orchestrator inbound webhook and Control Plane Proxy webhook. Excel FastAPI uses X-API-Key from Runtime configuration, not Header Auth."
+      "use": "Two Header Auth credentials: (1) Orchestrator inbound webhook and Control Plane Proxy webhook (Authorization). (2) Excel Tools X-API-Key — header name X-API-Key, value = API_KEY from excel-tools.env — on Agent — Excel Extractor HTTP nodes. Do not put the Excel key in a Set or item JSON."
     }
   ],
   "ui_configuration": [
-    "Field import is runtime_import_order (8 core JSON). Do not import n8n/workflows/retired/. support/ only when adding a specialist.",
+    "Field import is runtime_import_order (9 core JSON). Do not import n8n/workflows/retired/. support/ only when adding a specialist.",
     "Do not create n8n Data Tables for live case state. Health Check probes to engineering_orchestrator_tasks_v1 / mas_trace_events_v1 may PASS_WITH_TODO.",
     "Do not set ACTIVITY_HYDRATE_URL. Do not import Activity — Hydrate, Entry Form, Human Gate, CAS Persist, Trace Writer, or Orchestrator — Engineering MAS.",
     "Bind Orchestrator — MAS: Call Excel Extractor → Agent — Excel Extractor; Call Schedule Builder → Agent — Schedule Builder.",
-    "Excel Extractor Runtime configuration: excel_tools_url = http://<IP-Windows>:8000 (no /api/v1), excel_tools_api_key = API_KEY, activity_base_url = http://<IP-Windows>:8200. Auth is X-API-Key, not Header Auth.",
-    "Schedule Builder Runtime configuration: schedule_service_url = http://<IP-Windows>:8090, activity_base_url = http://<IP-Windows>:8200. Windows Schedule Builder needs Node.js on PATH.",
-    "Orchestrator Calculation HTTP: http://<IP-Windows>:8100/agent/run. Do not import Agent — Calculation (Math Service).",
+    "Bind Runtime endpoints / Runtime configuration → MAS — Runtime Config on Orchestrator, Excel Extractor, and Schedule Builder. Edit the four URLs once in MAS — Runtime Config (lab Docker DNS in git; field = http://<IP-Windows>:8200/:8000/:8090/:8100). math_url has no /agent/run suffix.",
+    "Excel Tools X-API-Key: Header Auth credential (header name X-API-Key) on Agent — Excel Extractor HTTP / toolHttpRequest nodes. Do not store the key in MAS — Runtime Config.",
+    "Windows host needs Python 3.11-3.13 venv only (no Node, no Docker). Orchestrator Calculation HTTP uses math_url + /agent/run. Do not import Agent — Calculation (Math Service).",
     "Bind Header Auth on Orchestrator webhook and Control Plane Proxy webhook. Activate Control Plane Proxy first, POST {\"operation\":\"schema\"}, then start Activity.",
     "Settings → Error workflow = Error — MAS Node Traces on Orchestrator, Excel Extractor, Schedule Builder, Retrieval, Ingestion. Not on the error workflow itself or Control Plane Proxy.",
     "Seed agent_registry via Control Plane Proxy schema (excel_extractor, calculation_agent, schedule_builder). Orchestrator does not call Knowledge Retrieval.",
@@ -223,6 +243,8 @@
     "Engineers start tasks in Activity UI POST /cases (http://<IP>:8200), not Entry Form."
   ],
   "activation_order": [
+    "Import MAS — Runtime Config, fill Runtime URLs (field: Windows IP), bind Execute Workflow on Orchestrator/Excel/Schedule.",
+    "Create Header Auth credential Excel Tools X-API-Key and bind it on Agent — Excel Extractor HTTP nodes.",
     "Activate MAS — Control Plane Proxy and POST {\"operation\":\"schema\"}.",
     "Start Activity with CONTROL_PLANE_PROXY_URL; /health control_plane_backend = n8n_proxy.",
     "Optional: MAS — Knowledge Ingestion (Activity → Загрузить в RAG) and MAS — Knowledge Retrieval.",
@@ -233,15 +255,14 @@
     "Activity POST /cases with Excel + schedule_files + schedule_root stores artifacts on the control plane; specialists GET /cases/{id}/artifacts/{id}.",
     "start without a usable objective asks the user via HITL (waiting_user), not a fabricated .INC.",
     "Excel Extractor uses X-API-Key tools at /agent-tools/*; dates with an ISO time suffix become YYYY-MM-DD.",
-    "Schedule Builder commissioning and group-rebind emit through Node timeline JS (same as goldens). Python parse/apply/emit remains for inspect/apply_operations.",
+    "Schedule Builder commissioning and group-rebind emit in Python FastAPI (timeline_ops). JS timeline stays in n8n templates/smokes only.",
     "INCLUDE text is not rewritten. Petrel ../../INCLUDE/... stays KEEP when bodies are not attached; URL/absolute paths are unsafe.",
     "validated REVISE returns .INC plus completeness/preservation evidence; golden_case_1/2 match *_MAS_result.INC (WEFAC ignored).",
     "Activity chat collapses duplicate agent.result / orchestrator.status+decision / double case.finished; rail turn_count matches that feed.",
-    "Control Plane Proxy snapshot is one SQL for case+events. Successful proxy executions are not saved."
+    "Control Plane Proxy snapshot is one SQL for case+events. Activity uses one SSE poller per case (2s running / 6s idle, wake on write) and batch for create/update+event. Successful proxy executions are not saved."
   ],
   "mvp_external_blockers": [
     "corporate n8n 2.30.8 UI round-trip with Postgres+vector, Header Auth, and network access to Windows Excel :8000 / Schedule :8090 / Math :8100 / Activity :8200",
-    "Node.js on the Windows host that runs Schedule Builder (commissioning / group-rebind)",
     "expert-authored active keyword_instruction cards if you use Knowledge Retrieval / specialist template RAG"
   ],
   "deferred_enterprise_gates": [

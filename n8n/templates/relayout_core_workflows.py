@@ -325,6 +325,12 @@ def manual_edit_reasons(data: dict) -> list[str]:
             reasons.append(f"Confirm model wiring for agent **{name}**")
         if t == "n8n-nodes-base.webhook" and n.get("credentials"):
             reasons.append(f"Set webhook auth credentials on **{name}**")
+        if t == "n8n-nodes-base.set":
+            assigns = (((p.get("assignments") or {}).get("assignments")) or [])
+            if any(isinstance(a, dict) and a.get("name") == "wipe_data" for a in assigns):
+                reasons.append(
+                    "Keep **Operator flags** `wipe_data` = false except a manual wipe"
+                )
         if short == "toolHttpRequest":
             # tools often inherit; skip noise unless many
             pass
@@ -355,25 +361,7 @@ def build_edit_note_content(wf_name: str, reasons: list[str]) -> str:
     return "\n".join(lines)
 
 
-def upsert_edit_note(data: dict, reasons: list[str]) -> None:
-    nodes = data.setdefault("nodes", [])
-    # Remove prior edit-after-import notes (by name or title)
-    keep = []
-    for n in nodes:
-        if not _is_sticky(n):
-            keep.append(n)
-            continue
-        content = ((n.get("parameters") or {}).get("content") or "").lower()
-        name = (n.get("name") or "").lower()
-        if name == EDIT_NOTE_NAME or EDIT_TITLE.lower() in content:
-            continue
-        keep.append(n)
-    nodes[:] = keep
-
-    if not reasons:
-        return
-
-    # Place sticky above/left of content bbox after layout
+def _place_edit_note(nodes: list[dict], width: int, height: int) -> list[int]:
     non_sticky = [n for n in nodes if not _is_sticky(n)]
     if non_sticky:
         xs = [n["position"][0] for n in non_sticky]
@@ -381,11 +369,7 @@ def upsert_edit_note(data: dict, reasons: list[str]) -> None:
         min_x, min_y = min(xs), min(ys)
     else:
         min_x, min_y = 0, 0
-
-    width, height = 440, min(520, 160 + 28 * min(len(reasons), 14))
     pos = [min_x - 40, min_y - height - 60]
-
-    # Avoid overlapping other stickies: push up if needed
     for _ in range(8):
         trial = (pos[0], pos[1], width, height)
         hit = False
@@ -396,7 +380,50 @@ def upsert_edit_note(data: dict, reasons: list[str]) -> None:
                 break
         if not hit:
             break
+    return pos
 
+
+def _merge_wipe_hint(content: str, reasons: list[str]) -> str:
+    if "wipe_data" in content:
+        return content
+    hint = next((r for r in reasons if "wipe_data" in r), None)
+    if not hint:
+        return content
+    return content.rstrip() + f"\n- {hint}\n"
+
+
+def upsert_edit_note(data: dict, reasons: list[str]) -> None:
+    nodes = data.setdefault("nodes", [])
+    existing = None
+    keep = []
+    for n in nodes:
+        if not _is_sticky(n):
+            keep.append(n)
+            continue
+        content = ((n.get("parameters") or {}).get("content") or "").lower()
+        name = (n.get("name") or "").lower()
+        if name == EDIT_NOTE_NAME or EDIT_TITLE.lower() in content:
+            if existing is None:
+                existing = n
+            continue
+        keep.append(n)
+    nodes[:] = keep
+
+    if existing is None and not reasons:
+        return
+
+    if existing is not None:
+        params = existing.setdefault("parameters", {})
+        content = _merge_wipe_hint(str(params.get("content") or ""), reasons)
+        params["content"] = content
+        width = int(params.get("width") or 440)
+        height = int(params.get("height") or min(520, 160 + 28 * min(max(len(reasons), 1), 14)))
+        existing["position"] = _place_edit_note(nodes, width, height)
+        nodes.insert(0, existing)
+        return
+
+    width, height = 440, min(520, 160 + 28 * min(len(reasons), 14))
+    pos = _place_edit_note(nodes, width, height)
     wf_name = data.get("name") or "workflow"
     note = {
         "parameters": {

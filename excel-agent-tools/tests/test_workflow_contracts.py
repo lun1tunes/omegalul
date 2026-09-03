@@ -45,6 +45,7 @@ ERROR_AND_STUB_WORKFLOWS = {
     "mas-orchestrator.workflow.json",
     "schedule-builder-agent.workflow.json",
     "excel-extractor-agent.workflow.json",
+    "mas-runtime-config.workflow.json",
     "cluster-calc-specialist-adapter.workflow.json",
     "binary-results-specialist-adapter.workflow.json",
     "presentation-specialist-adapter.workflow.json",
@@ -113,7 +114,7 @@ def test_ui_import_manifest_is_complete_and_matches_static_bindings() -> None:
     assert manifest["target_n8n_version"] == "2.30.8"
     imported = {Path(value).name for value in manifest["full_clean_import_set"]}
     assert imported == {path.name for path in importable_workflow_files()}
-    assert len(imported) == 14
+    assert len(imported) == 15
     assert {path.name for path in CORE.glob("*.workflow.json")} == {
         Path(value).name for value in manifest["runtime_import_order"]
     }
@@ -134,8 +135,20 @@ def test_ui_import_manifest_is_complete_and_matches_static_bindings() -> None:
     bindings = manifest["mandatory_execute_workflow_bindings"]
     retired_bindings = manifest["retired_execute_workflow_bindings"]
     future_bindings = manifest["future_enterprise_or_optional_bindings"]
-    assert [binding["node"] for binding in bindings] == ["Call Excel Extractor", "Call Schedule Builder"]
-    assert all(binding["owner"] == "Orchestrator — MAS" for binding in bindings)
+    assert [binding["node"] for binding in bindings] == [
+        "Runtime endpoints",
+        "Runtime configuration",
+        "Runtime configuration",
+        "Call Excel Extractor",
+        "Call Schedule Builder",
+    ]
+    assert [binding["owner"] for binding in bindings] == [
+        "Orchestrator — MAS",
+        "Agent — Excel Extractor",
+        "Agent — Schedule Builder",
+        "Orchestrator — MAS",
+        "Orchestrator — MAS",
+    ]
     assert future_bindings == []
     assert len(retired_bindings) == 24
     assert manifest["health_check"]["ui_name"] == "Form — MAS Deployment Health Check"
@@ -143,6 +156,9 @@ def test_ui_import_manifest_is_complete_and_matches_static_bindings() -> None:
     header_auth = next(item for item in manifest["required_credentials"] if item["type"] == "httpHeaderAuth")
     assert "X-API-Key" in header_auth["use"]
     runtime_order = [Path(value).name for value in manifest["runtime_import_order"]]
+    assert runtime_order.index("mas-runtime-config.workflow.json") < runtime_order.index(
+        "excel-extractor-agent.workflow.json"
+    )
     assert runtime_order.index("schedule-builder-agent.workflow.json") < runtime_order.index(
         "mas-orchestrator.workflow.json"
     )
@@ -604,9 +620,10 @@ def test_mas_control_plane_proxy_contains_all_activity_operations() -> None:
         "schema", "wipe", "create_case", "get_case", "list_cases", "update_case",
         "append_event", "list_events", "append_error", "list_errors",
         "record_execution", "case_id_for_execution", "list_agents",
-        "upsert_agent", "artifact_put", "artifact_get", "snapshot",
+        "upsert_agent", "artifact_put", "artifact_get", "snapshot", "batch",
     ):
         assert f"'{operation}'" in code
+    assert "batch only supports single-row operations" in code
     assert "execMode==='manual'&&flagWipe" in code
     assert "TRUNCATE TABLE cases" in code
     assert "jsonb_agg" in code and "AS events FROM cases c" in code
@@ -624,9 +641,60 @@ def test_mas_control_plane_proxy_contains_all_activity_operations() -> None:
         if node["name"] == "Format control-plane response"
     )
     assert "op==='schema'||op==='wipe'" in fmt
+    assert "operation:'batch'" in fmt.replace(" ", "")
     note = next(node for node in workflow["nodes"] if node["name"] == "edit after import")
     assert "wipe_data" in note["parameters"]["content"]
     assert workflow["settings"].get("saveDataSuccessExecution") == "none"
+    assert workflow["settings"].get("saveExecutionProgress") is False
+    pg = next(node for node in workflow["nodes"] if node["name"] == "Execute control-plane SQL")
+    assert pg["parameters"]["options"]["queryBatching"] == "independently"
+
+
+def test_mas_runtime_config_is_the_only_url_set() -> None:
+    workflow = load_json(workflow_path("mas-runtime-config.workflow.json"))
+    assert workflow["name"] == "MAS — Runtime Config"
+    assert workflow.get("active") is False
+    assert workflow["settings"].get("saveDataSuccessExecution") == "none"
+    urls = next(node for node in workflow["nodes"] if node["name"] == "Runtime URLs")
+    names = [item["name"] for item in urls["parameters"]["assignments"]["assignments"]]
+    assert names == [
+        "activity_base_url",
+        "excel_tools_url",
+        "schedule_service_url",
+        "math_url",
+    ]
+    assert urls["parameters"]["includeOtherFields"] is False
+    blob = json.dumps(workflow)
+    assert "excel_tools_api_key" not in blob
+    assert "$env" not in blob and "$vars" not in blob
+    for filename in (
+        "excel-extractor-agent.workflow.json",
+        "schedule-builder-agent.workflow.json",
+        "mas-orchestrator.workflow.json",
+    ):
+        other = load_json(workflow_path(filename))
+        text = json.dumps(other)
+        assert "excel_tools_api_key" not in text
+        loaders = [
+            node
+            for node in other["nodes"]
+            if node["name"] in {"Runtime configuration", "Runtime endpoints"}
+        ]
+        assert loaders
+        for node in loaders:
+            assert node["type"] == "n8n-nodes-base.executeWorkflow"
+            assert node["parameters"]["workflowId"]["value"] == "REPLACE_MAS_RUNTIME_CONFIG_IN_UI"
+    excel = load_json(workflow_path("excel-extractor-agent.workflow.json"))
+    http_nodes = [
+        node
+        for node in excel["nodes"]
+        if node["type"] in {"n8n-nodes-base.httpRequest", "@n8n/n8n-nodes-langchain.toolHttpRequest"}
+    ]
+    assert http_nodes
+    for node in http_nodes:
+        assert node["parameters"].get("authentication") == "genericCredentialType"
+        assert node["parameters"].get("genericAuthType") == "httpHeaderAuth"
+        assert node["credentials"]["httpHeaderAuth"]["name"] == "REPLACE: Excel Tools X-API-Key"
 
 
 def test_universal_engineering_orchestrator_has_no_service_or_excel_contract() -> None:
@@ -1418,7 +1486,7 @@ def test_universal_engineering_instruction_templates_are_portable() -> None:
         "generate_mas_error_handler.py",
         "generate_mas_error_traces.py",
         "generate_mas_orchestrator.py",
-        "generate_mas_ensure_control_plane.py",
+        "generate_mas_runtime_config.py",
         "generate_schedule_builder_agent.py",
         "generate_excel_extractor_agent.py",
         "relayout_core_workflows.py",

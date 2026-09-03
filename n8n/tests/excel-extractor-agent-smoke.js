@@ -54,6 +54,18 @@ for (const name of [
 assert.ok(wf.connections['detect_tables'].ai_tool);
 assert.ok(wf.connections['Excel Extractor Chat Model — Qwen'].ai_languageModel);
 assert.equal(wf.connections['When executed by another workflow'].main[0][0].node, 'Runtime configuration');
+const runtimeCfg = wf.nodes.find((n) => n.name === 'Runtime configuration');
+assert.equal(runtimeCfg.type, 'n8n-nodes-base.executeWorkflow');
+assert.equal(runtimeCfg.parameters.workflowId.value, 'REPLACE_MAS_RUNTIME_CONFIG_IN_UI');
+assert.equal(runtimeCfg.parameters.workflowId.cachedResultName, 'MAS — Runtime Config');
+assert.equal(JSON.stringify(wf).includes('excel_tools_api_key'), false);
+const openSession = wf.nodes.find((n) => n.name === 'Open excel session');
+assert.equal(openSession.parameters.authentication, 'genericCredentialType');
+assert.equal(openSession.parameters.genericAuthType, 'httpHeaderAuth');
+assert.equal(openSession.credentials.httpHeaderAuth.name, 'REPLACE: Excel Tools X-API-Key');
+const introspect = wf.nodes.find((n) => n.name === 'workbook_introspect');
+assert.equal(introspect.parameters.authentication, 'genericCredentialType');
+assert.equal(introspect.credentials.httpHeaderAuth.name, 'REPLACE: Excel Tools X-API-Key');
 const cap = wf.nodes.find((n) => n.name === 'Capability router');
 assert.ok(cap);
 assert.equal(cap.type, 'n8n-nodes-base.switch');
@@ -76,8 +88,8 @@ for (const field of sessionFields) {
 }
 
 const cfg = orch.nodes.find((n) => n.name === 'Runtime endpoints');
-const url = (cfg.parameters.assignments.assignments || []).find((a) => a.name === 'excel_extractor_url');
-assert.equal(url, undefined, 'no HTTP /agent/run URL — specialist is executeWorkflow');
+assert.equal(cfg.type, 'n8n-nodes-base.executeWorkflow');
+assert.equal(cfg.parameters.workflowId.value, 'REPLACE_MAS_RUNTIME_CONFIG_IN_UI');
 const call = orch.nodes.find((n) => n.name === 'Call Excel Extractor');
 assert.equal(call.type, 'n8n-nodes-base.executeWorkflow');
 assert.equal(call.typeVersion, 1.3);

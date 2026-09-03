@@ -6,7 +6,7 @@
   "nodes": [
     {
       "parameters": {
-        "content": "## edit after import\n\n**Orchestrator — MAS** — thin loop:\n- Bind Postgres on load/insert/update\n- Bind **Qwen** OpenAI-compatible credential on Decision Chat Model\n- Bind inbound header auth on webhook\n- Bind **Call Excel Extractor** → `Agent — Excel Extractor` (executeWorkflow)\n- Bind **Call Schedule Builder** → `Agent — Schedule Builder` (executeWorkflow)\n- Runtime endpoints patched by lab_soft_redeploy\n\n`action`: probe | status | start | create | step | resume\n- Activity `/cases` stores files; specialists fetch `/cases/{id}/artifacts/{id}` from their FastAPI tools. n8n never carries binaries.\n- **status** loads case and returns `human_gate` without LLM\n- Decision is Basic LLM Chain + Structured Output (no Agent tools)\n\nOne execution = one step.",
+        "content": "## edit after import\n\n**Orchestrator — MAS** — thin loop:\n- Bind Postgres on load/insert/update\n- Bind **Qwen** OpenAI-compatible credential on Decision Chat Model\n- Bind inbound header auth on webhook\n- Bind **Runtime endpoints** → `MAS — Runtime Config` (один Set URL на весь контур)\n- Bind **Call Excel Extractor** → `Agent — Excel Extractor` (executeWorkflow)\n- Bind **Call Schedule Builder** → `Agent — Schedule Builder` (executeWorkflow)\n- Excel `X-API-Key` — credential на Agent — Excel Extractor, не этот workflow\n\n`action`: probe | status | start | create | step | resume\n- Activity `/cases` stores files; specialists fetch `/cases/{id}/artifacts/{id}` from their FastAPI tools. n8n never carries binaries.\n- **status** loads case and returns `human_gate` without LLM\n- Decision is Basic LLM Chain + Structured Output (no Agent tools)\n\nOne execution = one step.",
         "width": 480,
         "height": 420,
         "color": 1
@@ -16,8 +16,8 @@
       "type": "n8n-nodes-base.stickyNote",
       "typeVersion": 1,
       "position": [
-        -200,
-        -420
+        -40,
+        -735
       ]
     },
     {
@@ -46,56 +46,45 @@
     },
     {
       "parameters": {
-        "assignments": {
-          "assignments": [
-            {
-              "id": "3c90130b-ac50-548d-932a-664f9e666737",
-              "name": "calculation_agent_url",
-              "value": "http://math-service:8100/agent/run",
-              "type": "string"
-            },
-            {
-              "id": "75aea0af-7af2-55a6-acca-850fc42cccc1",
-              "name": "orchestrator_step_url",
-              "value": "http://n8n:5678/webhook/mas-orchestrator-step",
-              "type": "string"
-            },
-            {
-              "id": "818ebb7e-2212-55be-b9a4-b75a67cca546",
-              "name": "activity_base_url",
-              "value": "http://mas-activity:8200",
-              "type": "string"
-            },
-            {
-              "id": "cc285755-9359-507f-aa51-e9ac4dbe4e7f",
-              "name": "excel_tools_api_key",
-              "value": "",
-              "type": "string"
-            }
-          ]
+        "source": "database",
+        "workflowId": {
+          "__rl": true,
+          "value": "REPLACE_MAS_RUNTIME_CONFIG_IN_UI",
+          "mode": "list",
+          "cachedResultName": "MAS — Runtime Config"
         },
-        "options": {},
-        "includeOtherFields": true
+        "workflowInputs": {
+          "mappingMode": "defineBelow",
+          "value": {},
+          "matchingColumns": [],
+          "schema": [],
+          "attemptToConvertTypes": false,
+          "convertFieldsToString": false
+        },
+        "mode": "once",
+        "options": {
+          "waitForSubWorkflow": true
+        }
       },
       "id": "0255a7a5-fc9a-5d2f-84d3-8634ba4a3de6",
       "name": "Runtime endpoints",
-      "type": "n8n-nodes-base.set",
-      "typeVersion": 3.4,
+      "type": "n8n-nodes-base.executeWorkflow",
+      "typeVersion": 1.3,
       "position": [
-        240,
+        280,
         0
       ]
     },
     {
       "parameters": {
-        "jsCode": "\nconst raw=$input.first().json||{};\nconst body=raw.body&&typeof raw.body==='object'?raw.body:raw;\nconst action=String(body.action||raw.action||'step').trim().toLowerCase();\nlet caseId=String(body.case_id||raw.case_id||'').trim();\nconst goal=String(body.task_description||body.goal||raw.task_description||raw.goal||'').trim();\nconst taskName=String(body.task_name||raw.task_name||'').trim();\nconst humanResponse=String(body.human_response||raw.human_response||'');\nconst gateId=String(body.gate_id||raw.gate_id||'');\nconst requestedBy=String(body.requested_by||raw.requested_by||'');\nconst activityBaseUrl=String(raw.activity_base_url||'').trim();\nconst orchestratorStepUrl=String(raw.orchestrator_step_url||'').trim();\nconst executionId=String($execution.id||'');\nconst readinessId=!caseId||caseId==='CASE-readiness-probe';\nif(action==='probe'||(action==='status'&&readinessId)){\n  return [{json:{\n    case_id:caseId||'CASE-readiness-probe',\n    action:'probe',\n    is_probe:true,\n    is_status:false,\n    is_resume:false,\n    needs_create:false,\n    next_status:'probe',\n    status:'probe',\n    action_type:'probe',\n    should_continue:false\n  }}];\n}\nlet needsCreate=false;\nif(action==='create'){\n  if(!caseId) caseId='CASE-'+Date.now().toString(16)+'-'+Math.random().toString(16).slice(2,8);\n  if(!goal) throw new Error('task_description is required for action=create');\n  needsCreate=true;\n} else if(!caseId){\n  if(action!=='start') throw new Error('case_id is required');\n  if(!goal) throw new Error('task_description is required for action=start');\n  caseId='CASE-'+Date.now().toString(16)+'-'+Math.random().toString(16).slice(2,8);\n  needsCreate=true;\n}\nreturn [{json:{\n  case_id:caseId,\n  action,\n  goal,\n  task_name:taskName,\n  human_response:humanResponse,\n  gate_id:gateId,\n  requested_by:requestedBy,\n  activity_base_url:activityBaseUrl,\n  orchestrator_step_url:orchestratorStepUrl,\n  is_probe:false,\n  is_status:action==='status',\n  is_resume:action==='resume',\n  needs_create:needsCreate,\n  execution_id:executionId,\n  workflow_name:'orchestrator',\n  sql_parameters:[caseId],\n  exec_sql_parameters:[executionId, caseId, 'orchestrator'],\n}}];\n"
+        "jsCode": "\nconst cfg=(()=>{try{return $('Runtime endpoints').first().json||{}}catch{return {}}})();\nconst raw=(()=>{try{return $('Authenticated MAS webhook').first().json||{}}catch{return $input.first().json||{}}})();\nconst body=raw.body&&typeof raw.body==='object'?raw.body:raw;\nconst action=String(body.action||raw.action||'step').trim().toLowerCase();\nlet caseId=String(body.case_id||raw.case_id||'').trim();\nconst goal=String(body.task_description||body.goal||raw.task_description||raw.goal||'').trim();\nconst taskName=String(body.task_name||raw.task_name||'').trim();\nconst humanResponse=String(body.human_response||raw.human_response||'');\nconst gateId=String(body.gate_id||raw.gate_id||'');\nconst requestedBy=String(body.requested_by||raw.requested_by||'');\nconst activityBaseUrl=String(cfg.activity_base_url||raw.activity_base_url||'').trim();\nconst executionId=String($execution.id||'');\nconst readinessId=!caseId||caseId==='CASE-readiness-probe';\nif(action==='probe'||(action==='status'&&readinessId)){\n  return [{json:{\n    case_id:caseId||'CASE-readiness-probe',\n    action:'probe',\n    is_probe:true,\n    is_status:false,\n    is_resume:false,\n    needs_create:false,\n    next_status:'probe',\n    status:'probe',\n    action_type:'probe',\n    should_continue:false\n  }}];\n}\nlet needsCreate=false;\nif(action==='create'){\n  if(!caseId) caseId='CASE-'+Date.now().toString(16)+'-'+Math.random().toString(16).slice(2,8);\n  if(!goal) throw new Error('task_description is required for action=create');\n  needsCreate=true;\n} else if(!caseId){\n  if(action!=='start') throw new Error('case_id is required');\n  if(!goal) throw new Error('task_description is required for action=start');\n  caseId='CASE-'+Date.now().toString(16)+'-'+Math.random().toString(16).slice(2,8);\n  needsCreate=true;\n}\nreturn [{json:{\n  case_id:caseId,\n  action,\n  goal,\n  task_name:taskName,\n  human_response:humanResponse,\n  gate_id:gateId,\n  requested_by:requestedBy,\n  activity_base_url:activityBaseUrl,\n  is_probe:false,\n  is_status:action==='status',\n  is_resume:action==='resume',\n  needs_create:needsCreate,\n  execution_id:executionId,\n  workflow_name:'orchestrator',\n  sql_parameters:[caseId],\n  exec_sql_parameters:[executionId, caseId, 'orchestrator'],\n}}];\n"
       },
       "id": "07d3d3cc-a9e7-508a-97d4-17391b86e1e1",
       "name": "Normalize step request",
       "type": "n8n-nodes-base.code",
       "typeVersion": 2,
       "position": [
-        480,
+        560,
         0
       ]
     },
@@ -128,7 +117,7 @@
       "type": "n8n-nodes-base.if",
       "typeVersion": 2.3,
       "position": [
-        640,
+        840,
         0
       ]
     },
@@ -161,8 +150,8 @@
       "type": "n8n-nodes-base.if",
       "typeVersion": 2.3,
       "position": [
-        640,
-        160
+        1120,
+        0
       ]
     },
     {
@@ -174,8 +163,8 @@
       "type": "n8n-nodes-base.code",
       "typeVersion": 2,
       "position": [
-        800,
-        280
+        1400,
+        0
       ]
     },
     {
@@ -194,8 +183,8 @@
       "type": "n8n-nodes-base.postgres",
       "typeVersion": 2.6,
       "position": [
-        1000,
-        280
+        1680,
+        0
       ],
       "credentials": {
         "postgres": {
@@ -214,8 +203,8 @@
       "type": "n8n-nodes-base.code",
       "typeVersion": 2,
       "position": [
-        1180,
-        280
+        1960,
+        0
       ]
     },
     {
@@ -234,8 +223,8 @@
       "type": "n8n-nodes-base.postgres",
       "typeVersion": 2.6,
       "position": [
-        1360,
-        280
+        2240,
+        0
       ],
       "credentials": {
         "postgres": {
@@ -254,8 +243,8 @@
       "type": "n8n-nodes-base.code",
       "typeVersion": 2,
       "position": [
-        1540,
-        280
+        2520,
+        0
       ],
       "executeOnce": true
     },
@@ -275,8 +264,8 @@
       "type": "n8n-nodes-base.postgres",
       "typeVersion": 2.6,
       "position": [
-        720,
-        -120
+        2800,
+        0
       ],
       "credentials": {
         "postgres": {
@@ -302,8 +291,8 @@
       "type": "n8n-nodes-base.postgres",
       "typeVersion": 2.6,
       "position": [
-        960,
-        -120
+        3080,
+        0
       ],
       "credentials": {
         "postgres": {
@@ -322,8 +311,8 @@
       "type": "n8n-nodes-base.code",
       "typeVersion": 2,
       "position": [
-        1120,
-        -240
+        3360,
+        0
       ]
     },
     {
@@ -355,8 +344,8 @@
       "type": "n8n-nodes-base.if",
       "typeVersion": 2.3,
       "position": [
-        1280,
-        -240
+        3640,
+        0
       ]
     },
     {
@@ -368,8 +357,8 @@
       "type": "n8n-nodes-base.code",
       "typeVersion": 2,
       "position": [
-        1120,
-        -120
+        3920,
+        0
       ]
     },
     {
@@ -401,8 +390,8 @@
       "type": "n8n-nodes-base.if",
       "typeVersion": 2.3,
       "position": [
-        1280,
-        -120
+        4200,
+        0
       ]
     },
     {
@@ -434,8 +423,8 @@
       "type": "n8n-nodes-base.if",
       "typeVersion": 2.3,
       "position": [
-        1280,
-        40
+        4480,
+        0
       ]
     },
     {
@@ -454,8 +443,8 @@
       "type": "n8n-nodes-base.postgres",
       "typeVersion": 2.6,
       "position": [
-        1480,
-        40
+        4760,
+        0
       ],
       "credentials": {
         "postgres": {
@@ -474,8 +463,8 @@
       "type": "n8n-nodes-base.code",
       "typeVersion": 2,
       "position": [
-        1660,
-        40
+        5040,
+        0
       ]
     },
     {
@@ -494,8 +483,8 @@
       "type": "n8n-nodes-base.postgres",
       "typeVersion": 2.6,
       "position": [
-        1840,
-        40
+        5320,
+        0
       ],
       "credentials": {
         "postgres": {
@@ -514,8 +503,8 @@
       "type": "n8n-nodes-base.code",
       "typeVersion": 2,
       "position": [
-        2020,
-        40
+        5600,
+        0
       ],
       "executeOnce": true
     },
@@ -535,8 +524,8 @@
       "type": "n8n-nodes-base.postgres",
       "typeVersion": 2.6,
       "position": [
-        960,
-        80
+        5880,
+        0
       ],
       "credentials": {
         "postgres": {
@@ -548,14 +537,14 @@
     },
     {
       "parameters": {
-        "jsCode": "\nconst req=$('Normalize step request').first().json||{};\nconst extras=(()=>{try{return $('Apply request extras').first().json}catch{return null}})();\nconst load=$('Load case').first().json||{};\nconst parse=v=>{if(v&&typeof v==='object')return v;try{return JSON.parse(String(v||'{}'))}catch{return {}}};\nconst state=(extras&&extras.state&&typeof extras.state==='object')?extras.state:parse(load.state||load.State||{});\nif(!state.artifacts||typeof state.artifacts!=='object') state.artifacts={};\nif(state.artifacts.file&&!state.artifacts.excel) state.artifacts.excel=state.artifacts.file;\nif(state.artifacts.schedule_files&&!state.artifacts.schedule_source) state.artifacts.schedule_source=state.artifacts.schedule_files;\nconst status=String((extras&&extras.next_status)||load.status||state.status||'running');\nconst registry=$('Load agent registry').all().map(i=>i.json||{}).filter(r=>r&&r.agent_id);\nconst artifacts=state.artifacts&&typeof state.artifacts==='object'?state.artifacts:{};\nconst data=state.data&&typeof state.data==='object'?state.data:{};\nconst plan=Array.isArray(state.plan)?state.plan:[];\nconst hitl=state.hitl&&typeof state.hitl==='object'?state.hitl:{};\nconst compact={\n  goal:state.goal||'',\n  artifacts_present:Object.keys(artifacts).filter(k=>artifacts[k]!=null&&artifacts[k]!==''),\n  artifact_files:Object.fromEntries(Object.entries(artifacts).map(([k,v])=>[k,(v&&typeof v==='object'&&v.filename)?v.filename:k])),\n  has_excel:Boolean(artifacts.excel),\n  has_schedule_source:Boolean(artifacts.schedule_source),\n    has_schedule_out:Boolean(artifacts.schedule_out&&String(artifacts.schedule_out).trim()),\n  excel_facts:(data.excel&&Array.isArray(data.excel.facts))?data.excel.facts.length:(Array.isArray(data.facts)?data.facts.length:0),\n  schedule_root:state.schedule_root||'',\n  data_present:Object.fromEntries(Object.keys(data).map(k=>[k,!(data[k]==null||data[k]==={}||data[k]===[])]) ),\n  plan:plan.map(p=>({id:p.id,status:p.status})),\n  current_task:state.current_task||null,\n  hitl_pending:hitl.pending===true,\n  hitl_answers:hitl.answers||{},\n  step_count:Number(state.step_count||0),\n  last_error:state.last_error||null\n};\nconst hint=[];\nif(compact.has_excel&&!data.excel) hint.push('Сначала excel_extractor — в artifacts есть Excel, фактов ещё нет.');\nelse if((compact.excel_facts>0||(data.excel&&data.excel.facts))&&compact.has_schedule_source&&!compact.has_schedule_out) hint.push('Дальше schedule_builder — факты Excel и исходный .inc уже есть.');\nelse if(!compact.has_excel&&compact.has_schedule_source&&!compact.has_schedule_out) hint.push('Excel нет: сразу schedule_builder по тексту задачи и baseline .inc.');\nelse if(compact.has_schedule_out) hint.push('schedule_out уже есть — finish.');\nconst prompt=`Цель:\\n${compact.goal}\\n\\nТекущее состояние:\\n${JSON.stringify(compact,null,2)}\\n\\nПодсказка следующего шага:\\n${hint.join(' ')||'выбери по реестру агентов'}\\n\\nДоступные агенты:\\n${JSON.stringify(registry,null,2)}\\n`;\nconst endpoints=$('Runtime endpoints').first().json||{};\nreturn [{json:{\n  ...req,\n  ...endpoints,\n  case_id:req.case_id,\n  state,\n  status,\n  registry,\n  compact,\n  planner_input:prompt,\n  step_count:compact.step_count\n}}];\n"
+        "jsCode": "\nconst req=$('Normalize step request').first().json||{};\nconst extras=(()=>{try{return $('Apply request extras').first().json}catch{return null}})();\nconst load=$('Load case').first().json||{};\nconst parse=v=>{if(v&&typeof v==='object')return v;try{return JSON.parse(String(v||'{}'))}catch{return {}}};\nconst state=(extras&&extras.state&&typeof extras.state==='object')?extras.state:parse(load.state||load.State||{});\nif(!state.artifacts||typeof state.artifacts!=='object') state.artifacts={};\nif(state.artifacts.file&&!state.artifacts.excel) state.artifacts.excel=state.artifacts.file;\nif(state.artifacts.schedule_files&&!state.artifacts.schedule_source) state.artifacts.schedule_source=state.artifacts.schedule_files;\nconst status=String((extras&&extras.next_status)||load.status||state.status||'running');\nconst registry=$('Load agent registry').all().map(i=>i.json||{}).filter(r=>r&&r.agent_id);\nconst artifacts=state.artifacts&&typeof state.artifacts==='object'?state.artifacts:{};\nconst data=state.data&&typeof state.data==='object'?state.data:{};\nconst plan=Array.isArray(state.plan)?state.plan:[];\nconst hitl=state.hitl&&typeof state.hitl==='object'?state.hitl:{};\nconst compact={\n  goal:state.goal||'',\n  artifacts_present:Object.keys(artifacts).filter(k=>artifacts[k]!=null&&artifacts[k]!==''),\n  artifact_files:Object.fromEntries(Object.entries(artifacts).map(([k,v])=>[k,(v&&typeof v==='object'&&v.filename)?v.filename:k])),\n  has_excel:Boolean(artifacts.excel),\n  has_schedule_source:Boolean(artifacts.schedule_source),\n    has_schedule_out:Boolean(artifacts.schedule_out&&String(artifacts.schedule_out).trim()),\n  excel_facts:(data.excel&&Array.isArray(data.excel.facts))?data.excel.facts.length:(Array.isArray(data.facts)?data.facts.length:0),\n  schedule_root:state.schedule_root||'',\n  data_present:Object.fromEntries(Object.keys(data).map(k=>[k,!(data[k]==null||data[k]==={}||data[k]===[])]) ),\n  plan:plan.map(p=>({id:p.id,status:p.status})),\n  current_task:state.current_task||null,\n  hitl_pending:hitl.pending===true,\n  hitl_answers:hitl.answers||{},\n  step_count:Number(state.step_count||0),\n  last_error:state.last_error||null\n};\nconst hint=[];\nif(compact.has_excel&&!data.excel) hint.push('Сначала excel_extractor — в artifacts есть Excel, фактов ещё нет.');\nelse if((compact.excel_facts>0||(data.excel&&data.excel.facts))&&compact.has_schedule_source&&!compact.has_schedule_out) hint.push('Дальше schedule_builder — факты Excel и исходный .inc уже есть.');\nelse if(!compact.has_excel&&compact.has_schedule_source&&!compact.has_schedule_out) hint.push('Excel нет: сразу schedule_builder по тексту задачи и baseline .inc.');\nelse if(compact.has_schedule_out) hint.push('schedule_out уже есть — finish.');\nconst prompt=`Цель:\\n${compact.goal}\\n\\nТекущее состояние:\\n${JSON.stringify(compact,null,2)}\\n\\nПодсказка следующего шага:\\n${hint.join(' ')||'выбери по реестру агентов'}\\n\\nДоступные агенты:\\n${JSON.stringify(registry,null,2)}\\n`;\nconst endpoints=$('Runtime endpoints').first().json||{};\nconst math=String(endpoints.math_url||endpoints.calculation_agent_url||'').replace(/\\/$/,'');\nconst calculationAgentUrl=math?(math.endsWith('/agent/run')?math:`${math}/agent/run`):'';\nreturn [{json:{\n  ...req,\n  ...endpoints,\n  calculation_agent_url:calculationAgentUrl,\n  activity_base_url:String(endpoints.activity_base_url||req.activity_base_url||'http://mas-activity:8200').replace(/\\/$/,''),\n  case_id:req.case_id,\n  state,\n  status,\n  registry,\n  compact,\n  planner_input:prompt,\n  step_count:compact.step_count\n}}];\n"
       },
       "id": "6a3a64b1-8396-5ce1-a233-8bcf6983ec96",
       "name": "Prepare decision context",
       "type": "n8n-nodes-base.code",
       "typeVersion": 2,
       "position": [
-        1200,
+        6160,
         0
       ]
     },
@@ -579,8 +568,8 @@
       "type": "@n8n/n8n-nodes-langchain.chainLlm",
       "typeVersion": 1.9,
       "position": [
-        1440,
-        0
+        6440,
+        170
       ]
     },
     {
@@ -602,8 +591,8 @@
       "type": "@n8n/n8n-nodes-langchain.lmChatOpenAi",
       "typeVersion": 1.3,
       "position": [
-        1440,
-        -180
+        6440,
+        0
       ],
       "credentials": {
         "openAiApi": {
@@ -625,8 +614,8 @@
       "type": "@n8n/n8n-nodes-langchain.outputParserStructured",
       "typeVersion": 1.3,
       "position": [
-        1680,
-        -180
+        6440,
+        -170
       ]
     },
     {
@@ -638,7 +627,7 @@
       "type": "n8n-nodes-base.code",
       "typeVersion": 2,
       "position": [
-        1920,
+        6720,
         0
       ]
     },
@@ -658,8 +647,8 @@
       "type": "n8n-nodes-base.postgres",
       "typeVersion": 2.6,
       "position": [
-        2160,
-        -120
+        7000,
+        0
       ],
       "credentials": {
         "postgres": {
@@ -678,8 +667,8 @@
       "type": "n8n-nodes-base.code",
       "typeVersion": 2,
       "position": [
-        2160,
-        80
+        7280,
+        0
       ]
     },
     {
@@ -698,8 +687,8 @@
       "type": "n8n-nodes-base.postgres",
       "typeVersion": 2.6,
       "position": [
-        2400,
-        80
+        7560,
+        0
       ],
       "credentials": {
         "postgres": {
@@ -718,7 +707,7 @@
       "type": "n8n-nodes-base.code",
       "typeVersion": 2,
       "position": [
-        2640,
+        7840,
         0
       ],
       "executeOnce": true
@@ -732,7 +721,7 @@
       "type": "n8n-nodes-base.code",
       "typeVersion": 2,
       "position": [
-        2760,
+        8120,
         0
       ]
     },
@@ -747,7 +736,7 @@
       "type": "n8n-nodes-base.switch",
       "typeVersion": 3.4,
       "position": [
-        2880,
+        8400,
         0
       ]
     },
@@ -780,8 +769,8 @@
       "type": "n8n-nodes-base.executeWorkflow",
       "typeVersion": 1.3,
       "position": [
-        3120,
-        -240
+        8680,
+        -255
       ],
       "onError": "continueRegularOutput"
     },
@@ -795,10 +784,6 @@
             {
               "name": "Content-Type",
               "value": "application/json"
-            },
-            {
-              "name": "X-API-Key",
-              "value": "={{ $json.excel_tools_api_key || '' }}"
             }
           ]
         },
@@ -819,8 +804,8 @@
       "type": "n8n-nodes-base.httpRequest",
       "typeVersion": 4.4,
       "position": [
-        3120,
-        -40
+        8680,
+        -85
       ],
       "onError": "continueRegularOutput"
     },
@@ -853,8 +838,8 @@
       "type": "n8n-nodes-base.executeWorkflow",
       "typeVersion": 1.3,
       "position": [
-        3120,
-        160
+        8680,
+        85
       ],
       "onError": "continueRegularOutput"
     },
@@ -867,8 +852,8 @@
       "type": "n8n-nodes-base.code",
       "typeVersion": 2,
       "position": [
-        3120,
-        360
+        8680,
+        255
       ]
     },
     {
@@ -880,8 +865,8 @@
       "type": "n8n-nodes-base.code",
       "typeVersion": 2,
       "position": [
-        3360,
-        -40
+        8960,
+        0
       ]
     },
     {
@@ -900,8 +885,8 @@
       "type": "n8n-nodes-base.postgres",
       "typeVersion": 2.6,
       "position": [
-        3600,
-        -160
+        9240,
+        0
       ],
       "credentials": {
         "postgres": {
@@ -920,8 +905,8 @@
       "type": "n8n-nodes-base.code",
       "typeVersion": 2,
       "position": [
-        3600,
-        40
+        9520,
+        0
       ]
     },
     {
@@ -940,8 +925,8 @@
       "type": "n8n-nodes-base.postgres",
       "typeVersion": 2.6,
       "position": [
-        3840,
-        40
+        9800,
+        0
       ],
       "credentials": {
         "postgres": {
@@ -960,7 +945,7 @@
       "type": "n8n-nodes-base.code",
       "typeVersion": 2,
       "position": [
-        3960,
+        10080,
         0
       ],
       "executeOnce": true
@@ -994,7 +979,7 @@
       "type": "n8n-nodes-base.if",
       "typeVersion": 2.3,
       "position": [
-        4080,
+        10360,
         0
       ]
     },
@@ -1023,8 +1008,8 @@
       "type": "n8n-nodes-base.httpRequest",
       "typeVersion": 4.4,
       "position": [
-        4320,
-        -80
+        10640,
+        0
       ],
       "onError": "continueRegularOutput"
     },
@@ -1037,8 +1022,8 @@
       "type": "n8n-nodes-base.code",
       "typeVersion": 2,
       "position": [
-        4320,
-        120
+        10920,
+        0
       ]
     },
     {
@@ -1070,8 +1055,8 @@
       "type": "n8n-nodes-base.if",
       "typeVersion": 2.3,
       "position": [
-        4480,
-        220
+        11200,
+        0
       ]
     },
     {
@@ -1099,8 +1084,8 @@
       "type": "n8n-nodes-base.httpRequest",
       "typeVersion": 4.4,
       "position": [
-        4640,
-        120
+        11480,
+        0
       ],
       "onError": "continueRegularOutput"
     },
@@ -1113,8 +1098,8 @@
       "type": "n8n-nodes-base.code",
       "typeVersion": 2,
       "position": [
-        4800,
-        220
+        11760,
+        0
       ]
     }
   ],
@@ -1723,5 +1708,5 @@
   },
   "tags": [],
   "pinData": {},
-  "versionId": "eab1707f-9e60-43cd-a6bc-de81e30f56eb"
+  "versionId": "42ff2f26-d4cb-4ff1-9e3b-6cb10d384957"
 }

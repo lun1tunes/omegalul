@@ -1,0 +1,108 @@
+{
+  "id": "863f299a-eb01-5a3b-92c8-b70cfe88c98e",
+  "name": "MAS — Runtime Config",
+  "active": false,
+  "isArchived": false,
+  "nodes": [
+    {
+      "parameters": {
+        "content": "## Runtime URLs (edit in UI)\n\n**MAS — Runtime Config** — единственный Set с URL сервисов (n8n free: без Variables / Environment в JSON).\n\n1. Пропишите URL в **Runtime URLs**. Lab Compose DNS уже стоит. Поле: `http://<IP-Windows>:8200` / `:8000` / `:8090` / `:8100`.\n2. На Orchestrator / Excel / Schedule привяжите Execute Workflow → этот workflow (ноды **Runtime endpoints** / **Runtime configuration**).\n3. Ключ Excel **не** сюда. Credential Header Auth **Excel Tools X-API-Key**: header name `X-API-Key`, value = `API_KEY` из `excel-tools.env`. Привяжите его на HTTP-нодах Agent — Excel Extractor.\n\nВозвращает только `activity_base_url`, `excel_tools_url`, `schedule_service_url`, `math_url`. Ничего не оркестрирует.",
+        "height": 400,
+        "width": 520,
+        "color": 1
+      },
+      "id": "2cb541ce-2dd5-503e-9616-9c0b6c52b3be",
+      "name": "Runtime Config README",
+      "type": "n8n-nodes-base.stickyNote",
+      "typeVersion": 1,
+      "position": [
+        -600,
+        -440
+      ]
+    },
+    {
+      "parameters": {
+        "inputSource": "jsonExample",
+        "jsonExample": "{\"environment\": \"lab\"}"
+      },
+      "id": "8adef90c-2e9d-5599-a9e9-8eb6fadc8ba3",
+      "name": "When executed by another workflow",
+      "type": "n8n-nodes-base.executeWorkflowTrigger",
+      "typeVersion": 1.2,
+      "position": [
+        0,
+        0
+      ]
+    },
+    {
+      "parameters": {
+        "assignments": {
+          "assignments": [
+            {
+              "id": "d337ae6d-83b8-5592-996f-4abb5d6bdbe6",
+              "name": "activity_base_url",
+              "value": "http://mas-activity:8200",
+              "type": "string"
+            },
+            {
+              "id": "d9d14e84-4021-5ae8-8173-767c84dc69a7",
+              "name": "excel_tools_url",
+              "value": "http://excel-tools:8000",
+              "type": "string"
+            },
+            {
+              "id": "9224e60f-c64b-530f-ae37-f1cd71749611",
+              "name": "schedule_service_url",
+              "value": "http://schedule-builder:8090",
+              "type": "string"
+            },
+            {
+              "id": "bf8b2b5f-cd9f-504e-bb2f-c1cb6c7981d2",
+              "name": "math_url",
+              "value": "http://math-service:8100",
+              "type": "string"
+            }
+          ]
+        },
+        "options": {},
+        "includeOtherFields": false
+      },
+      "id": "ed25ce06-908d-5cea-be05-cd7c4690b682",
+      "name": "Runtime URLs",
+      "type": "n8n-nodes-base.set",
+      "typeVersion": 3.4,
+      "position": [
+        280,
+        0
+      ]
+    }
+  ],
+  "connections": {
+    "When executed by another workflow": {
+      "main": [
+        [
+          {
+            "node": "Runtime URLs",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    }
+  },
+  "settings": {
+    "executionOrder": "v1",
+    "saveManualExecutions": true,
+    "saveDataSuccessExecution": "none",
+    "saveDataErrorExecution": "all",
+    "callerPolicy": "workflowsFromSameOwner",
+    "errorWorkflow": ""
+  },
+  "meta": {
+    "templateCredsSetupCompleted": true,
+    "targetN8nVersion": "2.30.8"
+  },
+  "tags": [],
+  "pinData": {},
+  "versionId": "d025fe91-cb81-4fbc-a2f9-5ed0cc83de99"
+}

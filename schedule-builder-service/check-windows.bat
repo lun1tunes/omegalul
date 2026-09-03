@@ -7,12 +7,6 @@ set "SCHEDULE_BUILDER_PORT=8090"
 if exist "schedule-builder.env" for /f "usebackq eol=# tokens=1,* delims==" %%A in ("schedule-builder.env") do if not "%%A"=="" set "%%A=%%B"
 if "%SCHEDULE_BUILDER_HOST%"=="0.0.0.0" set "SCHEDULE_BUILDER_HOST=127.0.0.1"
 
-where node >nul 2>nul
-if errorlevel 1 (
-  echo ERROR: Node.js is not on PATH. Commissioning/group-rebind will fail even if /health is up.
-  exit /b 1
-)
-
 where curl.exe >nul 2>nul
 if errorlevel 1 (
   echo ERROR: curl.exe is not available.

@@ -563,7 +563,7 @@ def test_ready_health_and_static_assets() -> None:
     assert "формат: ${q.expected_format}" not in js_text
     assert "app.js?v=87" in index.text
     assert "schema.js?v=14" in index.text
-    assert "app.css?v=84" in index.text
+    assert "app.css?v=85" in index.text
     assert "viewChatBtn" in index.text
     assert "viewSchemaBtn" in index.text
     assert ">Чат<" in index.text
@@ -1277,6 +1277,7 @@ def test_activity_never_shells_out_to_postgres() -> None:
         body = path.read_text(encoding="utf-8")
         for token in forbidden:
             assert token not in body, (path.name, token)
+        assert '["node"' not in body and "['node'" not in body, path.name
     for sibling in (
         ROOT.parent / "excel-agent-tools" / "app",
         ROOT.parent / "schedule-builder-service" / "app",
@@ -1288,6 +1289,8 @@ def test_activity_never_shells_out_to_postgres() -> None:
             body = path.read_text(encoding="utf-8")
             for token in forbidden:
                 assert token not in body, (str(path), token)
+            assert '["node"' not in body and "['node'" not in body, path
+            assert "js_timeline" not in body, path
     for req in (
         ROOT / "requirements.txt",
         ROOT.parent / "excel-agent-tools" / "requirements.txt",

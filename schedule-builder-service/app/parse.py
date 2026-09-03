@@ -55,21 +55,21 @@ def parse_schedule(text: str) -> ScheduleDoc:
         end = headers[idx + 1][0] if idx + 1 < len(headers) else len(lines)
         body_lines = lines[start + 1 : end]
         records: list[Record] = []
-        pending_comment = ""
         for raw in body_lines:
             stripped = raw.strip()
             if not stripped or stripped == "/":
                 continue
             if stripped.startswith("--"):
-                if records:
+                # Commented-out table row (`--NORTH GRAT … /`) is its own line.
+                # Short notes (`-- факт`) after a live record stay on that record.
+                commented_row = "/" in stripped
+                if records and records[-1].tokens and not commented_row:
                     comment = stripped[2:].strip()
                     records[-1].comment = " ".join(
                         part for part in (records[-1].comment, comment) if part
                     )
                 else:
-                    pending_comment = " ".join(
-                        part for part in (pending_comment, stripped[2:].strip()) if part
-                    )
+                    records.append(Record(tokens=[], raw=raw.rstrip("\n")))
                 continue
             inline_comment = ""
             comment_pos = raw.find("--")
@@ -84,14 +84,9 @@ def parse_schedule(text: str) -> ScheduleDoc:
                     Record(
                         tokens=tokens,
                         raw=raw.rstrip("\n"),
-                        comment=" ".join(
-                            part
-                            for part in (pending_comment, inline_comment)
-                            if part
-                        ),
+                        comment=inline_comment,
                     )
                 )
-                pending_comment = ""
         blocks.append(
             Block(
                 keyword=kw,

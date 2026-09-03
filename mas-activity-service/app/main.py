@@ -192,6 +192,8 @@ def reset_store() -> None:
     _task_binaries.clear()
     _empty_rail_list_attempted = False
     control_plane.reset_memory()
+    from app import case_watch
+    case_watch.reset()
     _persist()
 
 

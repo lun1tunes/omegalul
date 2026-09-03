@@ -12,13 +12,6 @@ if not exist "schedule-builder.env" (
   exit /b 1
 )
 
-where node >nul 2>nul
-if errorlevel 1 (
-  echo ERROR: Node.js is required on PATH.
-  echo Commissioning and group-rebind emit through n8n\templates\schedule_timeline_runtime.py via node.
-  exit /b 1
-)
-
 for /f "usebackq eol=# tokens=1,* delims==" %%A in ("schedule-builder.env") do if not "%%A"=="" set "%%A=%%B"
 
 if not defined SCHEDULE_BUILDER_HOST set "SCHEDULE_BUILDER_HOST=127.0.0.1"

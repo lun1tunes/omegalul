@@ -6,8 +6,8 @@
 
 | Слой (работа) | Как |
 |---|---|
-| **n8n 2.30.8** | Только UI: Import from File по `runtime_import_order` (8 core JSON). Data Tables для стейта кейсов **не** создаём. |
-| **Excel `:8000` / Schedule `:8090` / Math `:8100` / Activity `:8200`** | Windows CMD: `setup-windows.bat` → `start-windows.bat`. Schedule Builder нужен **Node.js**. |
+| **n8n 2.30.8** | Только UI: Import from File по `runtime_import_order` (9 core JSON). Data Tables для стейта кейсов **не** создаём. |
+| **Excel `:8000` / Schedule `:8090` / Math `:8100` / Activity `:8200`** | Windows CMD: `setup-windows.bat` → `start-windows.bat`. Только Python `.venv`, без Docker и без Node. |
 | **Lab soft-redeploy** | `python3 scripts/lab_soft_redeploy.py` (см. `docs.md` §5–§6) |
 
 Машинный контракт имён: [`n8n/import-manifest.json`](n8n/import-manifest.json) (`runtime_import_order` = поле; `full_clean_import_set` = lab + support). Compose / REST-импорт — только лаборатория (§5 в `docs.md`).

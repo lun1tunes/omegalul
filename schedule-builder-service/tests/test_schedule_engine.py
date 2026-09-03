@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+import re
+
 from app.emit import emit_schedule
 from app.keywords import keyword_object, normalize_keyword
 from app.parse import parse_schedule
@@ -30,6 +32,74 @@ WCONPROD
     assert include.splitlines()[0] == "INCLUDE"
     assert include.count("../../VFP.INC") == 1
     assert "\n/\n" in include
+
+
+def test_leading_commented_out_record_stays_off_next_live_line() -> None:
+    from app.commissioning import run_commissioning_revise
+
+    source = """DATES
+  1 AUG 2025 /
+/
+
+GCONPROD
+--FIELD GRAT 1* 1* 79018000 6* RATE /
+NORTH GRAT 1* 1* 11358904.1 6* RATE /
+/
+
+DATES
+  1 JAN 2020 /
+/
+
+WCONPROD
+  1601 OPEN GRAT 1* 1* 200000 /
+/
+"""
+    revised = run_commissioning_revise(source, [{"well": "1601", "date": "23 FEB 2020"}])
+    assert revised["status"] == "applied"
+    text = revised["generated_schedule"]
+    assert "--FIELD GRAT 1* 1* 79018000 6* RATE /" in text
+    assert "NORTH GRAT 1* 1* 11358904.1 6* RATE / -- FIELD" not in text
+    north = [line for line in text.splitlines() if line.strip().startswith("NORTH GRAT")]
+    assert north
+    assert "--" not in north[0]
+
+
+def test_commented_out_row_between_live_records_is_not_glued() -> None:
+    from app.emit import emit_schedule
+    from app.parse import parse_schedule
+
+    source = """DATES
+  1 NOV 2026 /
+/
+
+GCONPROD
+FIELD GRAT 1* 1* 94821000 6* RATE /
+--NORTH GRAT 1* 1* 11400000 6* RATE /
+NORTH GRAT 1* 1* 2000000 6* RATE /
+/
+"""
+    text = emit_schedule(parse_schedule(source))
+    assert "--NORTH GRAT 1* 1* 11400000 6* RATE /" in text
+    field = [line for line in text.splitlines() if line.strip().startswith("FIELD GRAT")]
+    assert field
+    assert "--" not in field[0]
+    live_north = [line for line in text.splitlines() if line.strip().startswith("NORTH GRAT")]
+    assert live_north
+    assert "--" not in live_north[0]
+
+
+def test_emit_preserves_slash_before_trailing_token() -> None:
+    from app.emit import emit_schedule
+    from app.parse import parse_schedule
+
+    source = """BRANPROP
+J2C DOUPPG_C 1146 / J11c
+/
+"""
+    text = emit_schedule(parse_schedule(source))
+    assert "J2C DOUPPG_C 1146 / J11c" in text
+    assert "J2C DOUPPG_C 1146 J11c /" not in text
+
 
 
 def test_apply_wconprod_and_diff() -> None:
@@ -395,8 +465,12 @@ WCONPROD
     assert spec["well_groups"]["1601"] == "G1601"
     revised = run_group_rebind_revise(source, spec)
     assert revised["status"] == "applied"
-    assert "DKS FIELD /" in revised["generated_schedule"]
-    assert "GCONPROD" in revised["generated_schedule"]
+    text = revised["generated_schedule"]
+    jan = text.split("1 JAN 2020")[1].split("DATES")[0]
+    assert "1601 G1601 /" in jan
+    assert "DKS FIELD /" in jan
+    assert "G1601 DKS /" in jan
+    assert "DKS GRAT 2* 200000 /" in jan
 
 
 def test_load_source_fetches_from_activity_artifact(monkeypatch) -> None:
@@ -526,10 +600,8 @@ def test_commissioning_facts_prefer_specialist_over_baseline_column() -> None:
     assert str(rows[0]["date"]).startswith("2019-08-01")
 
 
-def test_commissioning_fallback_without_node(monkeypatch) -> None:
+def test_commissioning_runs_without_node() -> None:
     from app.commissioning import run_commissioning_revise
-
-    monkeypatch.setattr("app.commissioning.shutil.which", lambda _name: None)
     source = """DATES
   1 JAN 2020 /
 /
@@ -543,10 +615,8 @@ WCONPROD
     assert "23 FEB 2020" in revised["generated_schedule"]
 
 
-def test_group_rebind_fallback_without_node(monkeypatch) -> None:
+def test_group_rebind_runs_without_node() -> None:
     from app.group_rebind import run_group_rebind_revise
-
-    monkeypatch.setattr("app.group_rebind.shutil.which", lambda _name: None)
     source = """GRUPTREE
 NORTH FIELD /
 /
@@ -595,3 +665,136 @@ def test_hitl_json_answers_yield_policy_and_new_well_defs() -> None:
     }
     assert _unlisted_policy(state) == "remove"
     assert _new_well_defs(state)[0]["well"] == "N001"
+
+
+_PROSE_REMOVE = (
+    "REVISE прогнозный SCHEDULE по Excel с датами ввода. В Excel не все скважины: "
+    "тех скважин, которые есть в примере schedule но нет в файле с запусками — убрать."
+)
+_PROSE_KEEP = (
+    "REVISE прогнозный SCHEDULE: сдвинуть даты ввода по Excel. "
+    "Инструкция молчит про скважины, которых нет в Excel — по умолчанию сохранить их запуски."
+)
+_TWO_WELL_SOURCE = """DATES
+  1 JAN 2020 /
+/
+
+WCONPROD
+  1601 OPEN GRAT 1* 1* 200000 /
+  201 OPEN GRAT 1* 1* 100000 /
+/
+
+WELOPEN
+  1601 OPEN /
+  201 OPEN /
+/
+"""
+
+
+def test_detect_unlisted_policy_from_prose() -> None:
+    from app.timeline_ops import detect_unlisted_wells_policy
+
+    assert detect_unlisted_wells_policy(_PROSE_REMOVE) == "remove"
+    assert detect_unlisted_wells_policy(_PROSE_KEEP) == "keep"
+    assert detect_unlisted_wells_policy(
+        "Во вложении excel файл с новыми датами ввода скважин."
+    ) == "keep"
+
+
+def test_commissioning_prose_remove_without_enum_needs_unlisted_policy() -> None:
+    from app.commissioning import run_commissioning_revise
+
+    revised = run_commissioning_revise(
+        _TWO_WELL_SOURCE,
+        [{"well": "1601", "date": "23 FEB 2020"}],
+        instruction_blob=_PROSE_REMOVE,
+    )
+    assert revised["status"] == "needs_input"
+    assert revised["generated_schedule"] == ""
+    assert revised["unlisted_wells_policy"] is None
+    assert "201" in revised["unlisted_wells"]
+    assert any(item["code"] == "UNLISTED_WELLS_POLICY_REQUIRED" for item in revised["findings"])
+    assert any(item.get("id") == "unlisted_wells_policy" for item in revised["questions"])
+
+
+def test_commissioning_explicit_remove_drops_unlisted() -> None:
+    from app.commissioning import run_commissioning_revise
+
+    revised = run_commissioning_revise(
+        _TWO_WELL_SOURCE,
+        [{"well": "1601", "date": "23 FEB 2020"}],
+        instruction_blob=_PROSE_REMOVE,
+        unlisted_wells_policy="remove",
+    )
+    assert revised["status"] == "applied"
+    assert revised["unlisted_wells_policy"] == "remove"
+    text = revised["generated_schedule"]
+    assert "23 FEB 2020" in text
+    assert "1601 OPEN GRAT" in text
+    assert not re.search(r"\b201\b", text)
+    assert any(item["code"] == "UNLISTED_WELLS_REMOVED" for item in revised["findings"])
+
+
+def test_commissioning_keep_preserves_unlisted() -> None:
+    from app.commissioning import run_commissioning_revise
+
+    revised = run_commissioning_revise(
+        _TWO_WELL_SOURCE,
+        [{"well": "1601", "date": "23 FEB 2020"}],
+        instruction_blob=_PROSE_KEEP,
+    )
+    assert revised["status"] == "applied"
+    assert revised["unlisted_wells_policy"] == "keep"
+    text = revised["generated_schedule"]
+    assert re.search(r"\b201\b", text)
+    assert "201 OPEN GRAT" in text
+    assert any(item["code"] == "UNLISTED_WELLS_KEPT" for item in revised["findings"])
+
+
+def test_commissioning_new_well_without_defs_needs_hitl() -> None:
+    from app.commissioning import run_commissioning_revise
+
+    revised = run_commissioning_revise(
+        _TWO_WELL_SOURCE,
+        [
+            {"well": "1601", "date": "23 FEB 2020"},
+            {"well": "N001", "date": "1 MAR 2020"},
+        ],
+        unlisted_wells_policy="keep",
+    )
+    assert revised["status"] == "needs_input"
+    assert revised["generated_schedule"] == ""
+    assert "N001" in revised["new_wells"]
+    assert any(item["code"] == "NEW_WELLS_REQUIRE_HITL" for item in revised["findings"])
+    assert any(item.get("id") == "new_wells_policy" for item in revised["questions"])
+
+
+def test_commissioning_new_well_defs_are_applied() -> None:
+    from app.commissioning import run_commissioning_revise
+
+    revised = run_commissioning_revise(
+        _TWO_WELL_SOURCE,
+        [
+            {"well": "1601", "date": "23 FEB 2020"},
+            {"well": "N001", "date": "1 MAR 2020"},
+        ],
+        unlisted_wells_policy="keep",
+        new_well_defs=[{
+            "well": "N001",
+            "date": "1 MAR 2020",
+            "welltrack_include": "welltracks/N001.dev",
+            "welspecs_line": "N001 GNEW 1 1 1* GAS /",
+            "compdatmd_lines": ["N001 1 1 1 1 OPEN 1* 1* 1* 1* 1* 1* 1000 1100 /"],
+            "wconprod_line": "N001 OPEN GRAT 1* 1* 50000 /",
+        }],
+    )
+    assert revised["status"] == "applied"
+    text = revised["generated_schedule"]
+    assert "INCLUDE" in text
+    assert "welltracks/N001.dev" in text
+    assert "N001 GNEW" in text
+    assert "1 MAR 2020" in text
+    assert "N001 OPEN GRAT 1* 1* 50000" in text
+    assert any(item["code"] == "NEW_WELLS_APPLIED" for item in revised["findings"])
+    assert "N001" in revised["new_wells"]
+    assert "N001" in (revised.get("new_wells_applied") or [{}])[0].get("well", "")

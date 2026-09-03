@@ -7,9 +7,13 @@ from .parse import Block, Record, ScheduleDoc, timeline_segments
 
 
 def _record_line(record: Record) -> str:
-    raw = record.raw.strip()
-    if raw.endswith("/"):
-        line = raw
+    raw = record.raw.rstrip("\n")
+    stripped = raw.strip()
+    if not record.tokens and stripped.startswith("--"):
+        return raw if raw.strip() else stripped
+    if "/" in stripped:
+        # Keep original slash placement (`1146 / J11c`, not `1146 J11c /`).
+        line = raw.rstrip()
     elif record.tokens:
         line = "  " + " ".join(record.tokens) + " /"
     else:

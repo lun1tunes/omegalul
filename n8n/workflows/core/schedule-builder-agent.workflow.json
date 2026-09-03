@@ -6,7 +6,7 @@
   "nodes": [
     {
       "parameters": {
-        "content": "## edit after import\n\n**Agent — Schedule Builder** — один LLM + FastAPI tools.\n\n1. Bind **Qwen** credential on Schedule Builder Chat Model\n2. Runtime configuration: `schedule_service_url` = FastAPI `http://schedule-builder:8090` (field: Windows/host URL)\n3. Orchestrator — MAS вызывает этот workflow через `executeWorkflow` (`Call Schedule Builder`), как Excel Extractor. Webhook не нужен.\n\nLLM не пишет .INC. parse/apply/emit остаются в сервисе.\n`suggested_capability` commissioning/group_rebind идут обычным HTTP `apply_*` (external n8n runners не execute'ят toolHttpRequest). Скважины/даты не хардкодятся — только факты сессии и текст задачи.",
+        "content": "## edit after import\n\n**Agent — Schedule Builder** — один LLM + FastAPI tools.\n\n1. Bind **Qwen** credential on Schedule Builder Chat Model\n2. Bind **Runtime configuration** → `MAS — Runtime Config` (URL FastAPI). Field: Windows/host URL.\n3. Orchestrator — MAS вызывает этот workflow через `executeWorkflow` (`Call Schedule Builder`), как Excel Extractor. Webhook не нужен.\n\nLLM не пишет .INC. parse/apply/emit остаются в сервисе.\n`suggested_capability` commissioning/group_rebind идут обычным HTTP `apply_*` (external n8n runners не execute'ят toolHttpRequest). Скважины/даты не хардкодятся — только факты сессии и текст задачи.",
         "height": 320,
         "width": 480,
         "color": 1
@@ -16,8 +16,8 @@
       "type": "n8n-nodes-base.stickyNote",
       "typeVersion": 1,
       "position": [
-        -220,
-        -360
+        -40,
+        -1060
       ]
     },
     {
@@ -36,44 +36,45 @@
     },
     {
       "parameters": {
-        "assignments": {
-          "assignments": [
-            {
-              "id": "1b4109c5-aae5-5a33-ba7d-b9ad3290f18c",
-              "name": "schedule_service_url",
-              "value": "http://schedule-builder:8090",
-              "type": "string"
-            },
-            {
-              "id": "c9b6d3c3-31da-511e-a018-453a627fd809",
-              "name": "activity_base_url",
-              "value": "http://mas-activity:8200",
-              "type": "string"
-            }
-          ]
+        "source": "database",
+        "workflowId": {
+          "__rl": true,
+          "value": "REPLACE_MAS_RUNTIME_CONFIG_IN_UI",
+          "mode": "list",
+          "cachedResultName": "MAS — Runtime Config"
         },
-        "options": {},
-        "includeOtherFields": true
+        "workflowInputs": {
+          "mappingMode": "defineBelow",
+          "value": {},
+          "matchingColumns": [],
+          "schema": [],
+          "attemptToConvertTypes": false,
+          "convertFieldsToString": false
+        },
+        "mode": "once",
+        "options": {
+          "waitForSubWorkflow": true
+        }
       },
       "id": "34ccd1d6-0800-5349-88bf-01da2527973f",
       "name": "Runtime configuration",
-      "type": "n8n-nodes-base.set",
-      "typeVersion": 3.4,
+      "type": "n8n-nodes-base.executeWorkflow",
+      "typeVersion": 1.3,
       "position": [
-        260,
+        280,
         0
       ]
     },
     {
       "parameters": {
-        "jsCode": "\nconst root=$json||{};\nconst body=root.body&&typeof root.body==='object'?root.body:root;\nconst packet=body.specialist_packet&&typeof body.specialist_packet==='object'?body.specialist_packet:null;\nlet task=body.agent_task&&typeof body.agent_task==='object'?body.agent_task:(body.case_id||body.task_id||body.objective?body:null);\nif(!task||typeof task!=='object') task={};\nif(packet){\n  const inputs=packet.inputs&&typeof packet.inputs==='object'?packet.inputs:{};\n  task={\n    case_id:String(packet.case_id||body.case_id||task.case_id||''),\n    task_id:String(packet.task_id||task.task_id||''),\n    agent_id:'schedule_builder',\n    objective:String(packet.objective||task.objective||''),\n    handoff_message:String(packet.handoff_message||task.handoff_message||packet.objective||''),\n    inputs,\n    context:packet.context&&typeof packet.context==='object'?packet.context:(task.context||{}),\n    constraints:packet.controls&&typeof packet.controls==='object'?packet.controls:(task.constraints||{})\n  };\n}\ntask.agent_id='schedule_builder';\ntask.case_id=String(task.case_id||'');\ntask.task_id=String(task.task_id||'');\ntask.objective=String(task.objective||'');\ntask.handoff_message=String(task.handoff_message||'');\ntask.inputs=task.inputs&&typeof task.inputs==='object'?task.inputs:{};\ntask.context=task.context&&typeof task.context==='object'?task.context:{};\nconst cfg=$('Runtime configuration').first().json||{};\nif(!task.inputs.activity_base_url&&cfg.activity_base_url) task.inputs={...task.inputs, activity_base_url:cfg.activity_base_url};\nreturn [{json:{...cfg, agent_task:task, case_id:task.case_id, task_id:task.task_id}}];\n"
+        "jsCode": "\nconst incoming=(()=>{try{return $('When executed by another workflow').first().json||{}}catch{return $json||{}}})();\nconst root=incoming&&typeof incoming==='object'?incoming:{};\nconst body=root.body&&typeof root.body==='object'?root.body:root;\nconst packet=body.specialist_packet&&typeof body.specialist_packet==='object'?body.specialist_packet:null;\nlet task=body.agent_task&&typeof body.agent_task==='object'?body.agent_task:(body.case_id||body.task_id||body.objective?body:null);\nif(!task||typeof task!=='object') task={};\nif(packet){\n  const inputs=packet.inputs&&typeof packet.inputs==='object'?packet.inputs:{};\n  task={\n    case_id:String(packet.case_id||body.case_id||task.case_id||''),\n    task_id:String(packet.task_id||task.task_id||''),\n    agent_id:'schedule_builder',\n    objective:String(packet.objective||task.objective||''),\n    handoff_message:String(packet.handoff_message||task.handoff_message||packet.objective||''),\n    inputs,\n    context:packet.context&&typeof packet.context==='object'?packet.context:(task.context||{}),\n    constraints:packet.controls&&typeof packet.controls==='object'?packet.controls:(task.constraints||{})\n  };\n}\ntask.agent_id='schedule_builder';\ntask.case_id=String(task.case_id||'');\ntask.task_id=String(task.task_id||'');\ntask.objective=String(task.objective||'');\ntask.handoff_message=String(task.handoff_message||'');\ntask.inputs=task.inputs&&typeof task.inputs==='object'?task.inputs:{};\ntask.context=task.context&&typeof task.context==='object'?task.context:{};\nconst cfg=$('Runtime configuration').first().json||{};\nif(!task.inputs.activity_base_url&&cfg.activity_base_url) task.inputs={...task.inputs, activity_base_url:cfg.activity_base_url};\nreturn [{json:{...cfg, agent_task:task, case_id:task.case_id, task_id:task.task_id}}];\n"
       },
       "id": "107fff28-ec6f-5420-a95e-bbf2be2f0f3b",
       "name": "Normalize schedule task",
       "type": "n8n-nodes-base.code",
       "typeVersion": 2,
       "position": [
-        500,
+        560,
         0
       ]
     },
@@ -108,7 +109,7 @@
       "type": "n8n-nodes-base.httpRequest",
       "typeVersion": 4.4,
       "position": [
-        740,
+        840,
         0
       ],
       "onError": "continueRegularOutput",
@@ -143,7 +144,7 @@
       "type": "n8n-nodes-base.if",
       "typeVersion": 2.3,
       "position": [
-        980,
+        1120,
         0
       ]
     },
@@ -156,8 +157,8 @@
       "type": "n8n-nodes-base.code",
       "typeVersion": 2,
       "position": [
-        1220,
-        240
+        1400,
+        85
       ]
     },
     {
@@ -191,8 +192,8 @@
       "type": "n8n-nodes-base.httpRequest",
       "typeVersion": 4.4,
       "position": [
-        1220,
-        -220
+        1400,
+        -85
       ],
       "onError": "continueRegularOutput",
       "alwaysOutputData": true
@@ -206,8 +207,8 @@
       "type": "n8n-nodes-base.code",
       "typeVersion": 2,
       "position": [
-        1440,
-        -220
+        1680,
+        0
       ]
     },
     {
@@ -241,8 +242,8 @@
       "type": "n8n-nodes-base.httpRequest",
       "typeVersion": 4.4,
       "position": [
-        1660,
-        -220
+        1960,
+        0
       ],
       "onError": "continueRegularOutput",
       "alwaysOutputData": true
@@ -256,8 +257,8 @@
       "type": "n8n-nodes-base.code",
       "typeVersion": 2,
       "position": [
-        1880,
-        -220
+        2240,
+        0
       ]
     },
     {
@@ -271,7 +272,7 @@
       "type": "n8n-nodes-base.switch",
       "typeVersion": 3.4,
       "position": [
-        1220,
+        2520,
         0
       ]
     },
@@ -306,8 +307,8 @@
       "type": "n8n-nodes-base.httpRequest",
       "typeVersion": 4.4,
       "position": [
-        1480,
-        -160
+        2800,
+        170
       ],
       "onError": "continueRegularOutput",
       "alwaysOutputData": true
@@ -343,8 +344,8 @@
       "type": "n8n-nodes-base.httpRequest",
       "typeVersion": 4.4,
       "position": [
-        1480,
-        0
+        2800,
+        510
       ],
       "onError": "continueRegularOutput",
       "alwaysOutputData": true
@@ -380,8 +381,8 @@
       "type": "n8n-nodes-base.httpRequest",
       "typeVersion": 4.4,
       "position": [
-        2200,
-        -180
+        3920,
+        0
       ],
       "onError": "continueRegularOutput",
       "alwaysOutputData": true
@@ -395,8 +396,8 @@
       "type": "n8n-nodes-base.code",
       "typeVersion": 2,
       "position": [
-        2440,
-        -180
+        4200,
+        0
       ]
     },
     {
@@ -408,8 +409,8 @@
       "type": "n8n-nodes-base.code",
       "typeVersion": 2,
       "position": [
-        1480,
-        160
+        2800,
+        680
       ]
     },
     {
@@ -432,8 +433,8 @@
       "type": "@n8n/n8n-nodes-langchain.agent",
       "typeVersion": 3.1,
       "position": [
-        1720,
-        160
+        3080,
+        510
       ]
     },
     {
@@ -455,8 +456,8 @@
       "type": "@n8n/n8n-nodes-langchain.lmChatOpenAi",
       "typeVersion": 1.3,
       "position": [
-        1720,
-        40
+        3080,
+        340
       ],
       "credentials": {
         "openAiApi": {
@@ -493,7 +494,7 @@
       "type": "n8n-nodes-base.httpRequest",
       "typeVersion": 4.4,
       "position": [
-        1960,
+        3360,
         0
       ],
       "onError": "continueRegularOutput",
@@ -508,7 +509,7 @@
       "type": "n8n-nodes-base.code",
       "typeVersion": 2,
       "position": [
-        2200,
+        3640,
         0
       ]
     },
@@ -551,8 +552,8 @@
       "type": "@n8n/n8n-nodes-langchain.toolHttpRequest",
       "typeVersion": 1.1,
       "position": [
-        760,
-        -420
+        2800,
+        340
       ]
     },
     {
@@ -605,8 +606,8 @@
       "type": "@n8n/n8n-nodes-langchain.toolHttpRequest",
       "typeVersion": 1.1,
       "position": [
-        980,
-        -420
+        3080,
+        170
       ]
     },
     {
@@ -659,8 +660,8 @@
       "type": "@n8n/n8n-nodes-langchain.toolHttpRequest",
       "typeVersion": 1.1,
       "position": [
-        1200,
-        -420
+        2800,
+        0
       ]
     },
     {
@@ -713,8 +714,8 @@
       "type": "@n8n/n8n-nodes-langchain.toolHttpRequest",
       "typeVersion": 1.1,
       "position": [
-        760,
-        -260
+        3080,
+        0
       ]
     },
     {
@@ -767,8 +768,8 @@
       "type": "@n8n/n8n-nodes-langchain.toolHttpRequest",
       "typeVersion": 1.1,
       "position": [
-        980,
-        -260
+        2800,
+        -170
       ]
     },
     {
@@ -831,8 +832,8 @@
       "type": "@n8n/n8n-nodes-langchain.toolHttpRequest",
       "typeVersion": 1.1,
       "position": [
-        1200,
-        -260
+        3080,
+        -170
       ]
     },
     {
@@ -874,8 +875,8 @@
       "type": "@n8n/n8n-nodes-langchain.toolHttpRequest",
       "typeVersion": 1.1,
       "position": [
-        760,
-        -100
+        2800,
+        -340
       ]
     },
     {
@@ -938,8 +939,8 @@
       "type": "@n8n/n8n-nodes-langchain.toolHttpRequest",
       "typeVersion": 1.1,
       "position": [
-        980,
-        -100
+        3080,
+        -340
       ]
     },
     {
@@ -992,8 +993,8 @@
       "type": "@n8n/n8n-nodes-langchain.toolHttpRequest",
       "typeVersion": 1.1,
       "position": [
-        1200,
-        -100
+        2800,
+        -510
       ]
     },
     {
@@ -1035,8 +1036,8 @@
       "type": "@n8n/n8n-nodes-langchain.toolHttpRequest",
       "typeVersion": 1.1,
       "position": [
-        760,
-        60
+        3080,
+        -510
       ]
     },
     {
@@ -1078,8 +1079,8 @@
       "type": "@n8n/n8n-nodes-langchain.toolHttpRequest",
       "typeVersion": 1.1,
       "position": [
-        980,
-        60
+        2800,
+        -680
       ]
     }
   ],
@@ -1437,5 +1438,5 @@
   },
   "tags": [],
   "pinData": {},
-  "versionId": "e284e757-a5d7-42d1-8ef6-d24dc29214c4"
+  "versionId": "64b5c564-3cfd-431f-8010-c930d049fc19"
 }

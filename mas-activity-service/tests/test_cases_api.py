@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import asyncio
 import os
 from pathlib import Path
 
@@ -380,6 +381,193 @@ def test_control_plane_proxy_carries_hitl_and_errors(monkeypatch) -> None:
     ]
     assert calls[0][1]["kind"] == "hitl.answered"
     assert calls[2][1]["error_message"] == "boom"
+
+
+def test_snapshot_ttl_coalesces_overlapping_reads(monkeypatch) -> None:
+    from app import control_plane
+
+    calls: list[str] = []
+
+    def fake_proxy(operation, **payload):
+        calls.append(operation)
+        return {
+            "case": {"case_id": "CASE-1", "state": {}, "status": "running"},
+            "events": [],
+        }
+
+    monkeypatch.setattr(control_plane, "_configured", lambda: True)
+    monkeypatch.setattr(control_plane, "proxy_call", fake_proxy)
+    control_plane.invalidate_read_cache()
+    first = control_plane.snapshot("CASE-1", after_seq=0)
+    second = control_plane.snapshot("CASE-1", after_seq=0)
+    assert calls == ["snapshot"]
+    assert first["case"]["case_id"] == second["case"]["case_id"]
+    control_plane.invalidate_read_cache()
+    control_plane.snapshot("CASE-1", after_seq=0)
+    assert calls == ["snapshot", "snapshot"]
+
+
+def test_snapshot_does_not_cache_after_invalidate_during_fetch(monkeypatch) -> None:
+    from app import control_plane
+
+    calls: list[str] = []
+
+    def fake_proxy(operation, **payload):
+        calls.append(operation)
+        if operation != "snapshot":
+            raise AssertionError(operation)
+        if len(calls) == 1:
+            control_plane.invalidate_read_cache()
+            return {
+                "case": {"case_id": "CASE-1", "status": "running", "state": {"v": "stale"}},
+                "events": [],
+            }
+        return {
+            "case": {"case_id": "CASE-1", "status": "running", "state": {"v": "fresh"}},
+            "events": [],
+        }
+
+    monkeypatch.setattr(control_plane, "_configured", lambda: True)
+    monkeypatch.setattr(control_plane, "proxy_call", fake_proxy)
+    control_plane.invalidate_read_cache()
+    first = control_plane.snapshot("CASE-1", after_seq=0)
+    assert first["case"]["state"]["v"] == "stale"
+    second = control_plane.snapshot("CASE-1", after_seq=0)
+    assert second["case"]["state"]["v"] == "fresh"
+    assert calls == ["snapshot", "snapshot"]
+
+
+def test_list_cases_does_not_cache_after_invalidate_during_fetch(monkeypatch) -> None:
+    from app import control_plane
+
+    calls: list[str] = []
+
+    def fake_proxy(operation, **payload):
+        calls.append(operation)
+        if operation != "list_cases":
+            raise AssertionError(operation)
+        if len(calls) == 1:
+            control_plane.invalidate_read_cache()
+            return [{"case_id": "CASE-1", "status": "running", "state": {"v": "stale"}}]
+        return [{"case_id": "CASE-1", "status": "running", "state": {"v": "fresh"}}]
+
+    monkeypatch.setattr(control_plane, "_configured", lambda: True)
+    monkeypatch.setattr(control_plane, "proxy_call", fake_proxy)
+    control_plane.invalidate_read_cache()
+    first = control_plane.list_cases()
+    assert first[0]["state"]["v"] == "stale"
+    second = control_plane.list_cases()
+    assert second[0]["state"]["v"] == "fresh"
+    assert calls == ["list_cases", "list_cases"]
+
+
+def test_list_cases_skips_empty_proxy_rows(monkeypatch) -> None:
+    from app import control_plane
+
+    def fake_proxy(operation, **payload):
+        if operation != "list_cases":
+            raise AssertionError(operation)
+        return [{}, {"case_id": "CASE-1", "status": "running", "state": {}}]
+
+    monkeypatch.setattr(control_plane, "_configured", lambda: True)
+    monkeypatch.setattr(control_plane, "proxy_call", fake_proxy)
+    control_plane.invalidate_read_cache()
+    rows = control_plane.list_cases()
+    assert [row["case_id"] for row in rows] == ["CASE-1"]
+
+
+def test_create_case_with_event_uses_one_batch(monkeypatch) -> None:
+    from app import control_plane
+
+    calls: list[tuple[str, dict]] = []
+
+    def fake_proxy(operation, **payload):
+        calls.append((operation, payload))
+        if operation == "batch":
+            return [
+                {"case_id": "CASE-1", "status": "running"},
+                {"event_id": 1, "kind": "case.created"},
+            ]
+        raise AssertionError(operation)
+
+    monkeypatch.setattr(control_plane, "_configured", lambda: True)
+    monkeypatch.setattr(control_plane, "proxy_call", fake_proxy)
+    control_plane.create_case(
+        "CASE-1",
+        "goal",
+        status="running",
+        initial_event={"kind": "case.created", "actor": "user", "status": "new"},
+    )
+    assert [item[0] for item in calls] == ["batch"]
+    ops = [item["operation"] for item in calls[0][1]["calls"]]
+    assert ops == ["create_case", "append_event"]
+
+
+def test_batch_falls_back_when_proxy_is_old(monkeypatch) -> None:
+    from app import control_plane
+
+    calls: list[str] = []
+
+    def fake_proxy(operation, **payload):
+        calls.append(operation)
+        if operation == "batch":
+            raise RuntimeError("unsupported operation")
+        return {"case_id": payload.get("case_id"), "operation": operation}
+
+    monkeypatch.setattr(control_plane, "_configured", lambda: True)
+    monkeypatch.setattr(control_plane, "proxy_call", fake_proxy)
+    results = control_plane.proxy_call_many(
+        [
+            {"operation": "update_case", "case_id": "CASE-1", "state": {}, "status": "running"},
+            {"operation": "append_event", "case_id": "CASE-1", "kind": "hitl.answered", "actor": "user"},
+        ]
+    )
+    assert calls == ["batch", "update_case", "append_event"]
+    assert len(results) == 2
+
+
+def test_watch_interval_is_fast_while_running() -> None:
+    from app.case_watch import IDLE_INTERVAL_S, RUNNING_INTERVAL_S, poll_interval
+
+    assert poll_interval("running", False) == RUNNING_INTERVAL_S
+    assert poll_interval("waiting_user", False) == IDLE_INTERVAL_S
+    assert poll_interval("waiting_user", True) == RUNNING_INTERVAL_S
+    assert poll_interval("done", False) == IDLE_INTERVAL_S
+
+
+def test_merge_watch_payload_keeps_all_event_ids() -> None:
+    from app.case_watch import merge_watch_payload
+
+    merged = merge_watch_payload(
+        {"case": {"status": "running"}, "events": [{"event_id": 1, "kind": "a"}]},
+        {"case": {"status": "waiting_user"}, "events": [{"event_id": 1, "kind": "a"}, {"event_id": 2, "kind": "b"}]},
+    )
+    assert merged["case"]["status"] == "waiting_user"
+    assert [item["event_id"] for item in merged["events"]] == [1, 2]
+
+
+def test_watch_publish_coalesces_when_queue_is_full() -> None:
+    from app import case_watch
+
+    async def run() -> None:
+        case_watch.reset()
+        queue: asyncio.Queue = asyncio.Queue(maxsize=1)
+        case_watch._subs["CASE-1"] = [queue]
+        await case_watch._publish(
+            "CASE-1",
+            {"case": {"status": "running"}, "events": [{"event_id": 1, "kind": "a"}]},
+        )
+        await case_watch._publish(
+            "CASE-1",
+            {"case": {"status": "waiting_user"}, "events": [{"event_id": 2, "kind": "b"}]},
+        )
+        assert queue.qsize() == 1
+        payload = queue.get_nowait()
+        assert payload["case"]["status"] == "waiting_user"
+        assert [item["event_id"] for item in payload["events"]] == [1, 2]
+
+    asyncio.run(run())
+    case_watch.reset()
 
 
 def test_snapshot_is_one_proxy_call(monkeypatch) -> None:

@@ -20,8 +20,24 @@ from app.settings import get_settings
 
 _LOCK = threading.Lock()
 _CLIENT_LOCK = threading.Lock()
+_CACHE_LOCK = threading.Lock()
 _HTTP: httpx.Client | None = None
 _HTTP_KEY: tuple[Any, ...] | None = None
+_SNAP_TTL_S = 0.4
+_LIST_TTL_S = 1.0
+_read_gen = 0
+_snap_cache: dict[tuple[str, int], tuple[float, dict[str, Any]]] = {}
+_list_cache: tuple[float, int, list[dict[str, Any]]] | None = None
+_WRITE_OPS = frozenset({
+    "wipe",
+    "create_case",
+    "update_case",
+    "append_event",
+    "append_error",
+    "record_execution",
+    "upsert_agent",
+    "artifact_put",
+})
 _CASES: dict[str, dict[str, Any]] = {}
 _EVENTS: dict[str, list[dict[str, Any]]] = {}
 _ERRORS: dict[str, list[dict[str, Any]]] = {}
@@ -93,6 +109,41 @@ def _http_client() -> httpx.Client:
         return _HTTP
 
 
+def invalidate_read_cache() -> None:
+    global _list_cache, _read_gen
+    with _CACHE_LOCK:
+        _snap_cache.clear()
+        _list_cache = None
+        _read_gen += 1
+
+
+def _notify_case(case_id: str | None) -> None:
+    cid = str(case_id or "").strip()
+    if not cid:
+        return
+    try:
+        from app import case_watch
+    except Exception:
+        return
+    case_watch.notify_case(cid)
+
+
+def _after_write(operation: str, payload: dict[str, Any]) -> None:
+    if operation not in _WRITE_OPS and operation != "batch":
+        return
+    invalidate_read_cache()
+    if operation == "batch":
+        seen: set[str] = set()
+        for item in payload.get("calls") or []:
+            if isinstance(item, dict):
+                cid = str(item.get("case_id") or "").strip()
+                if cid and cid not in seen:
+                    seen.add(cid)
+                    _notify_case(cid)
+        return
+    _notify_case(payload.get("case_id"))
+
+
 def proxy_call(operation: str, **payload: Any) -> Any:
     """Call the single n8n control-plane webhook and unwrap its result."""
     url = _proxy_url()
@@ -113,7 +164,34 @@ def proxy_call(operation: str, **payload: Any) -> Any:
         raise RuntimeError("control-plane proxy returned invalid JSON") from exc
     if not isinstance(data, dict) or data.get("ok") is not True:
         raise RuntimeError(str((data or {}).get("error") if isinstance(data, dict) else data))
-    return data.get("result")
+    result = data.get("result")
+    _after_write(operation, payload)
+    return result
+
+
+def proxy_call_many(calls: list[dict[str, Any]]) -> list[Any]:
+    """One n8n execution for several single-row ops; falls back to sequential calls."""
+    cleaned = [dict(item) for item in calls if isinstance(item, dict) and item.get("operation")]
+    if not cleaned:
+        return []
+    if len(cleaned) == 1:
+        body = dict(cleaned[0])
+        operation = str(body.pop("operation"))
+        return [proxy_call(operation, **body)]
+    try:
+        result = proxy_call("batch", calls=cleaned)
+    except RuntimeError as exc:
+        if "unsupported operation" not in str(exc).lower():
+            raise
+        out: list[Any] = []
+        for item in cleaned:
+            body = dict(item)
+            operation = str(body.pop("operation"))
+            out.append(proxy_call(operation, **body))
+        return out
+    if isinstance(result, list):
+        return result
+    return [result]
 
 
 def reset_memory() -> None:
@@ -125,6 +203,7 @@ def reset_memory() -> None:
         _EXECUTIONS.clear()
         _EVENT_SEQ = 0
         _ERROR_SEQ = 0
+    invalidate_read_cache()
 
 
 def control_plane_sql() -> str:
@@ -197,6 +276,7 @@ def create_case(
     task_name: str = "",
     extra_state: dict[str, Any] | None = None,
     status: str = "new",
+    initial_event: dict[str, Any] | None = None,
 ) -> dict[str, Any]:
     state = empty_state(case_id, goal)
     if task_name:
@@ -207,13 +287,23 @@ def create_case(
         state.update(extra_state)
     status = str(status or "new").strip() or "new"
     if _configured():
-        return dict(proxy_call("create_case", case_id=case_id, state=state, status=status) or {})
+        calls: list[dict[str, Any]] = [
+            {"operation": "create_case", "case_id": case_id, "state": state, "status": status}
+        ]
+        if initial_event:
+            calls.append({"operation": "append_event", "case_id": case_id, **initial_event})
+        results = proxy_call_many(calls)
+        row = results[0] if results else {}
+        return dict(row) if isinstance(row, dict) else {"case_id": case_id, "state": state, "status": status}
     with _LOCK:
         row = {"case_id": case_id, "state": state, "status": status, "updated_at": _now()}
         _CASES[case_id] = row
         _EVENTS.setdefault(case_id, [])
         _ERRORS.setdefault(case_id, [])
-        return dict(row)
+    if initial_event:
+        append_event(case_id, **initial_event)
+        return get_case(case_id) or dict(row)
+    return dict(row)
 
 
 def get_case(case_id: str) -> dict[str, Any] | None:
@@ -223,13 +313,37 @@ def get_case(case_id: str) -> dict[str, Any] | None:
     return _local_case(case_id)
 
 
+def _copy_snapshot(value: dict[str, Any]) -> dict[str, Any]:
+    case = value.get("case")
+    events = value.get("events")
+    return {
+        "case": dict(case) if isinstance(case, dict) else case,
+        "events": [dict(item) if isinstance(item, dict) else item for item in (events or [])],
+    }
+
+
+def _store_snapshot(cache_key: tuple[str, int], packed: dict[str, Any], gen: int) -> None:
+    with _CACHE_LOCK:
+        if gen == _read_gen:
+            _snap_cache[cache_key] = (time.monotonic(), packed)
+
+
 def snapshot(case_id: str, after_seq: int = 0) -> dict[str, Any]:
     """One webhook: case row + events after ``after_seq``.
 
     Falls back to get_case + list_events if the imported proxy is older
-    and does not yet know ``snapshot``.
+    and does not yet know ``snapshot``. Short TTL coalesces overlapping
+    SSE / GET /cases/{id} reads without delaying writes (cache drops on write).
+    An in-flight fetch started before a write is not stored after invalidate.
     """
     after_seq = int(after_seq or 0)
+    cache_key = (str(case_id), after_seq)
+    now = time.monotonic()
+    with _CACHE_LOCK:
+        hit = _snap_cache.get(cache_key)
+        if hit and now - hit[0] < _SNAP_TTL_S:
+            return _copy_snapshot(hit[1])
+        gen = _read_gen
     if _configured():
         try:
             result = proxy_call("snapshot", case_id=case_id, after_seq=after_seq) or {}
@@ -238,12 +352,16 @@ def snapshot(case_id: str, after_seq: int = 0) -> dict[str, Any]:
                 raise
             row = get_case(case_id)
             events = list_events(case_id, after_seq=after_seq) if row else []
-            return {"case": row, "events": events}
+            packed = {"case": row, "events": events}
+            _store_snapshot(cache_key, packed, gen)
+            return _copy_snapshot(packed)
         case = result.get("case") if isinstance(result, dict) else None
         events = result.get("events") if isinstance(result, dict) else None
         row = dict(case) if isinstance(case, dict) and case.get("case_id") else None
         rows = list(events) if isinstance(events, list) else []
-        return {"case": row, "events": rows}
+        packed = {"case": row, "events": rows}
+        _store_snapshot(cache_key, packed, gen)
+        return _copy_snapshot(packed)
     row = _local_case(case_id)
     with _LOCK:
         events = [
@@ -255,9 +373,25 @@ def snapshot(case_id: str, after_seq: int = 0) -> dict[str, Any]:
 
 
 def list_cases(limit: int = 80) -> list[dict[str, Any]]:
+    global _list_cache
+    limit = int(limit or 80)
+    now = time.monotonic()
+    with _CACHE_LOCK:
+        hit = _list_cache
+        if hit and hit[1] == limit and now - hit[0] < _LIST_TTL_S:
+            return [dict(row) for row in hit[2]]
+        gen = _read_gen
     if _configured():
-        result = proxy_call("list_cases", limit=limit)
-        return list(result or [])
+        result = list(proxy_call("list_cases", limit=limit) or [])
+        rows = [
+            dict(row)
+            for row in result
+            if isinstance(row, dict) and str(row.get("case_id") or "").strip()
+        ]
+        with _CACHE_LOCK:
+            if gen == _read_gen:
+                _list_cache = (time.monotonic(), limit, rows)
+        return [dict(row) for row in rows]
     with _LOCK:
         rows = sorted(_CASES.values(), key=lambda row: str(row.get("updated_at") or ""), reverse=True)
         out: list[dict[str, Any]] = []
@@ -285,6 +419,44 @@ def update_case(case_id: str, *, state: dict[str, Any] | None = None, status: st
         row = {"case_id": case_id, "state": next_state, "status": next_status, "updated_at": _now()}
         _CASES[case_id] = row
         return dict(row)
+
+
+def update_case_and_append(
+    case_id: str,
+    *,
+    state: dict[str, Any],
+    status: str,
+    kind: str,
+    actor: str,
+    agent_id: str | None = None,
+    event_status: str | None = None,
+    status_message: str | None = None,
+    handoff_message: str | None = None,
+    task_id: str | None = None,
+    payload: dict[str, Any] | None = None,
+) -> dict[str, Any]:
+    """One proxy batch: persist case row then append an event."""
+    next_state = {**state, "status": status, "case_id": case_id} if isinstance(state, dict) else state
+    event = {
+        "kind": kind,
+        "actor": actor,
+        "agent_id": agent_id,
+        "status": event_status,
+        "status_message": status_message,
+        "handoff_message": handoff_message,
+        "task_id": task_id,
+        "payload": payload or {},
+    }
+    if _configured():
+        results = proxy_call_many(
+            [
+                {"operation": "update_case", "case_id": case_id, "state": next_state, "status": status},
+                {"operation": "append_event", "case_id": case_id, **event},
+            ]
+        )
+        return dict(results[1] or {}) if len(results) > 1 and isinstance(results[1], dict) else {}
+    update_case(case_id, state=next_state, status=status)
+    return append_event(case_id, **event)
 
 
 def _norm_text(value: Any) -> str:

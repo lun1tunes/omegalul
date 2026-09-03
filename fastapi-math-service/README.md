@@ -14,7 +14,7 @@ start-windows.bat
 
 Проверка во втором CMD: `check-windows.bat`.
 
-Локально: `http://127.0.0.1:8100/health`. Для корпоративного n8n: `MATH_SERVICE_HOST=0.0.0.0` и в Orchestrator Runtime — `http://<IP-Windows>:8100/agent/run`.
+Локально: `http://127.0.0.1:8100/health`. Для корпоративного n8n: `MATH_SERVICE_HOST=0.0.0.0` и в `MAS — Runtime Config` — `math_url=http://<IP-Windows>:8100` (оркестратор добавляет `/agent/run`).
 
 ## Endpoint
 
