@@ -6,7 +6,7 @@
   "nodes": [
     {
       "parameters": {
-        "content": "## Runtime URLs (edit in UI)\n\n**MAS — Runtime Config** — единственный Set с URL сервисов (n8n free: без Variables / Environment в JSON).\n\n1. Пропишите URL в **Runtime URLs**. Lab Compose DNS уже стоит. Поле: `http://<IP-Windows>:8200` / `:8000` / `:8090` / `:8100`.\n2. На Orchestrator / Excel / Schedule привяжите Execute Workflow → этот workflow (ноды **Runtime endpoints** / **Runtime configuration**).\n3. Ключ Excel **не** сюда. Credential Header Auth **Excel Tools X-API-Key**: header name `X-API-Key`, value = `API_KEY` из `excel-tools.env`. Привяжите его на HTTP-нодах Agent — Excel Extractor.\n\nВозвращает только `activity_base_url`, `excel_tools_url`, `schedule_service_url`, `math_url`. Ничего не оркестрирует.",
+        "content": "## Runtime URLs (edit in UI)\n\n**MAS — Runtime Config** — единственный Set с URL сервисов (n8n free: без Variables / Environment в JSON).\n\n1. Пропишите URL в **Runtime URLs**. Lab Compose DNS уже стоит. Поле: `http://<IP-Windows>:8200` / `:8000` / `:8090` / `:8100`.\n2. На Orchestrator / Excel / Schedule привяжите Execute Workflow → этот workflow (ноды **Runtime endpoints** / **Runtime configuration**).\n3. Ключ Excel **не** сюда. Credential Header Auth **Excel Tools X-API-Key**: header name `X-API-Key`, value = `API_KEY` из `excel-tools.env`. Привяжите его на HTTP-нодах Agent — Excel Extractor.\n\nВозвращает `activity_base_url`, `excel_tools_url`, `schedule_service_url`, `math_url`, `orchestrator_step_url`. Ничего не оркестрирует.\n\n`orchestrator_step_url` — внутренний webhook оркестратора (loop сам себя, не через Activity `/run`). Lab: `http://127.0.0.1:5678/webhook/mas-orchestrator-step`.",
         "height": 400,
         "width": 520,
         "color": 1
@@ -16,8 +16,8 @@
       "type": "n8n-nodes-base.stickyNote",
       "typeVersion": 1,
       "position": [
-        -600,
-        -440
+        -220,
+        -360
       ]
     },
     {
@@ -61,6 +61,12 @@
               "name": "math_url",
               "value": "http://math-service:8100",
               "type": "string"
+            },
+            {
+              "id": "5fc128f2-914c-5616-acea-fbc081784744",
+              "name": "orchestrator_step_url",
+              "value": "http://127.0.0.1:5678/webhook/mas-orchestrator-step",
+              "type": "string"
             }
           ]
         },
@@ -72,7 +78,7 @@
       "type": "n8n-nodes-base.set",
       "typeVersion": 3.4,
       "position": [
-        280,
+        260,
         0
       ]
     }
@@ -104,5 +110,5 @@
   },
   "tags": [],
   "pinData": {},
-  "versionId": "d025fe91-cb81-4fbc-a2f9-5ed0cc83de99"
+  "versionId": "97c273c0-34a9-49ea-a78c-43ef19ec1bec"
 }

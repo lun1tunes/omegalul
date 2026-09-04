@@ -9,6 +9,8 @@ from __future__ import annotations
 import json
 from typing import Any
 
+from app.state_shape import artifact_filenames
+
 NODE_KEYS = ("input", "orchestrator", "excel", "calc", "schedule", "user", "output")
 EDGE_KEYS = (
     "in_orch",
@@ -67,21 +69,7 @@ def _text(value: Any) -> str:
 
 def _files_from_state(state: dict[str, Any]) -> list[str]:
     artifacts = state.get("artifacts") if isinstance(state.get("artifacts"), dict) else {}
-    names: list[str] = []
-    seen: set[str] = set()
-    skip = {"schedule_out", "diff"}
-    for key, item in artifacts.items():
-        if key in skip:
-            continue
-        name = ""
-        if isinstance(item, dict):
-            name = _text(item.get("filename") or item.get("artifact_id") or key)
-        elif item not in (None, "", {}, []):
-            name = _text(key)
-        if name and name not in seen:
-            seen.add(name)
-            names.append(name)
-    return names
+    return artifact_filenames(artifacts)
 
 
 def _human_status(message: Any) -> str:

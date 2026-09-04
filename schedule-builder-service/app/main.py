@@ -15,11 +15,12 @@ from .commissioning import run_commissioning_revise
 from .diff import unified_diff
 from .emit import emit_schedule
 from .group_rebind import extract_group_rebind_spec, run_group_rebind_revise, wants_group_rebind
-from .io import commissioning_facts, file_ref, load_source
+from .io import bind_case_packet, commissioning_facts, file_ref, load_source
 from .keywords import KEYWORDS, all_keywords, keyword_object, search_keywords
 from .parse import parse_schedule, well_names
 from .validate import validate_emitted
 from . import agent_tools
+from . import sessions
 
 app = FastAPI(title="schedule-builder-service", version="0.1.0")
 ACTIVITY = os.getenv("ACTIVITY_BASE_URL", "").rstrip("/")
@@ -184,6 +185,8 @@ def diff(req: DiffRequest) -> dict[str, Any]:
 def agent_run(body: AgentTaskBody) -> dict[str, Any]:
     inputs = body.inputs if isinstance(body.inputs, dict) else {}
     activity = str(inputs.get("activity_base_url") or ACTIVITY)
+    context = body.context if isinstance(body.context, dict) else {}
+    inputs, context = bind_case_packet(inputs, context, body.case_id, activity)
     _emit(
         body.case_id,
         activity,
@@ -221,7 +224,6 @@ def agent_run(body: AgentTaskBody) -> dict[str, Any]:
         }
         _emit(body.case_id, activity, {"kind": "agent.result", "actor": "schedule_builder", "agent_id": "schedule_builder", "task_id": body.task_id, "status": "needs_input", "status_message": result["message"]})
         return result
-    context = body.context if isinstance(body.context, dict) else {}
     source_name = file_ref(inputs)
     blob = body.objective or ""
     if wants_group_rebind(blob, inputs):
@@ -496,3 +498,8 @@ def get_session_result(session_id: str) -> dict[str, Any]:
         return agent_tools.session_result(session_id)
     except KeyError as exc:
         raise HTTPException(status_code=404, detail="session_not_found") from exc
+
+
+@app.post("/sessions/{session_id}/close")
+def close_session(session_id: str) -> dict[str, Any]:
+    return sessions.close(session_id)

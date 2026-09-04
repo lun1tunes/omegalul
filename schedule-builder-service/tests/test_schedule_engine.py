@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import json
 import re
 
 from app.emit import emit_schedule
@@ -197,6 +198,43 @@ WCONPROD
     iso = run_commissioning_revise(source, [{"well": "1601", "date": "2020-02-23T00:00:00"}])
     assert iso["status"] == "applied"
     assert "23 FEB 2020" in iso["generated_schedule"]
+
+
+def test_commissioning_moves_preamble_welopen_with_first_wconprod() -> None:
+    from app.commissioning import run_commissioning_revise
+
+    source = """WELOPEN
+304R OPEN /
+/
+
+DATES
+  1 JAN 2020 /
+/
+
+WCONPROD
+  304R OPEN GRAT 1* 1* 265900 1* 1* 90 1* 34 /
+/
+
+DATES
+  1 MAR 2020 /
+/
+
+WELOPEN
+304R SHUT /
+/
+"""
+    revised = run_commissioning_revise(source, [{"well": "304R", "date": "1 AUG 2019"}])
+    assert revised["status"] == "applied"
+    text = revised["generated_schedule"]
+    header = text.split("DATES", 1)[0]
+    assert "WELOPEN" not in header
+    assert "304R OPEN" not in header
+    aug = text.split("1 AUG 2019", 1)[1].split("DATES", 1)[0]
+    assert "WELOPEN" in aug
+    assert "304R OPEN" in aug
+    assert "304R OPEN GRAT" in aug
+    mar = text.split("1 MAR 2020", 1)[1]
+    assert "304R SHUT" in mar
 
 
 def test_commissioning_preserves_later_wconprod_forecast_controls() -> None:
@@ -526,6 +564,56 @@ def test_load_source_fetches_from_activity_artifact(monkeypatch) -> None:
     assert wants_group_rebind(objective, {"handoff": polluted_handoff}) is False
 
 
+def test_bind_case_packet_hydrates_nested_artifacts_and_facts(monkeypatch) -> None:
+    from app.io import bind_case_packet, commissioning_facts, load_source
+
+    packet = {
+        "state": {
+            "schedule_root": "base.inc",
+            "artifacts": {
+                "excel": {"filename": "a.xlsx", "artifact_id": "excel"},
+                "schedule": {
+                    "source": {"filename": "base.inc", "artifact_id": "schedule_source"},
+                    "grdecl": [{"filename": "G.GRDECL", "artifact_id": "schedule_source_1"}],
+                    "includes": [{"filename": "VFP.INC", "artifact_id": "schedule_source_2"}],
+                },
+            },
+            "data": {"excel": {"facts": [{"well": "P1", "date": "1 JAN 2020"}]}},
+        }
+    }
+
+    class _Resp:
+        def __init__(self, body: bytes):
+            self._body = body
+
+        def read(self):
+            return self._body
+
+        def __enter__(self):
+            return self
+
+        def __exit__(self, *args):
+            return False
+
+    def fake_urlopen(url, timeout=15):
+        if "/state" in str(url):
+            return _Resp(json.dumps(packet).encode())
+        return _Resp(b"DATES\n/")
+
+    monkeypatch.setattr("app.io.urlopen", fake_urlopen)
+    inputs, context = bind_case_packet(
+        {"activity_base_url": "http://mas-activity:8200", "artifact_ids": ["excel", "schedule_source"]},
+        {"hitl": {"pending": False}},
+        "CASE-1",
+    )
+    assert inputs["artifacts"]["schedule_source"]["filename"] == "base.inc"
+    assert inputs["artifacts"]["schedule_source_1"]["filename"] == "G.GRDECL"
+    assert inputs["schedule_root"] == "base.inc"
+    assert context["excel"]["facts"][0]["well"] == "P1"
+    assert commissioning_facts(context, inputs)[0]["well"] == "P1"
+    assert "DATES" in load_source(inputs, "CASE-1", "http://mas-activity:8200")
+
+
 def test_agent_tools_open_inspect_search_and_operations() -> None:
     from fastapi.testclient import TestClient
 
@@ -571,6 +659,106 @@ def test_agent_tools_open_inspect_search_and_operations() -> None:
     )
     assert invented.json()["ok"] is False
     assert invented.json()["error"] == "well_not_in_schedule"
+
+
+def test_apply_operations_accepts_array_and_rejects_empty() -> None:
+    from fastapi.testclient import TestClient
+
+    from app.main import app
+
+    client = TestClient(app)
+    opened = client.post(
+        "/agent-tools/open_session",
+        json={
+            "task_id": "t-ops",
+            "objective": "Поставь ORAT 20 на P1",
+            "inputs": {"schedule_text": "DATES\n  1 JAN 2026 /\n/\n\nWCONPROD\n  'P1' OPEN 10 /\n/\n"},
+        },
+    )
+    sid = opened.json()["session_id"]
+    empty = client.post("/agent-tools/apply_operations", json={"session_id": sid, "operations": {}})
+    assert empty.json()["status"] == "needs_input"
+    applied = client.post(
+        "/agent-tools/apply_operations",
+        json={
+            "session_id": sid,
+            "operations": [
+                {"keyword": "WCONPROD", "operation": "MODIFY", "fields": {"well": "P1", "status": "OPEN", "ORAT": 20}}
+            ],
+        },
+    )
+    assert applied.json()["status"] == "completed"
+    result = client.get(f"/sessions/{sid}/result")
+    assert "20" in result.json()["artifacts"]["schedule_out"]
+
+
+def test_group_rebind_asks_parent_group_when_no_gruptree() -> None:
+    from fastapi.testclient import TestClient
+
+    from app.main import app
+
+    client = TestClient(app)
+    opened = client.post(
+        "/agent-tools/open_session",
+        json={
+            "task_id": "t-grp",
+            "objective": "скважину P1 помести в отдельную группу",
+            "inputs": {"schedule_text": "DATES\n  1 JAN 2026 /\n/\n\nWCONPROD\n  'P1' OPEN 10 /\n/\n"},
+        },
+    )
+    body = opened.json()
+    assert body["suggested_capability"] == "group_rebind"
+    sid = body["session_id"]
+    applied = client.post("/agent-tools/apply_group_rebind", json={"session_id": sid})
+    payload = applied.json()
+    assert payload["status"] == "needs_input"
+    assert payload["requests"][0]["question_id"] == "Q-parent-group"
+    assert "GRUPTREE" in payload["requests"][0]["question"]
+    assert "GNEW" in payload["requests"][0]["options"]
+
+
+def test_session_result_needs_input_without_apply_then_close() -> None:
+    from fastapi.testclient import TestClient
+
+    from app.main import app
+
+    client = TestClient(app)
+    opened = client.post(
+        "/agent-tools/open_session",
+        json={
+            "task_id": "t-idle",
+            "objective": "посмотри schedule",
+            "inputs": {"schedule_text": "DATES\n  1 JAN 2026 /\n/\n"},
+        },
+    )
+    sid = opened.json()["session_id"]
+    assert opened.json()["suggested_capability"] == "operations"
+    result = client.get(f"/sessions/{sid}/result")
+    assert result.json()["status"] == "needs_input"
+    assert result.json()["issues"][0]["type"] == "no_apply"
+    closed = client.post(f"/sessions/{sid}/close")
+    assert closed.json()["ok"] is True
+    assert client.get(f"/sessions/{sid}/result").status_code == 404
+
+
+def test_session_result_autobuilds_dirty_working_text() -> None:
+    from app import sessions
+    from app.agent_tools import open_session, session_result
+
+    opened = open_session(
+        {
+            "task_id": "t-build",
+            "objective": "сборка",
+            "inputs": {"schedule_text": "DATES\n  1 JAN 2026 /\n/\n"},
+        }
+    )
+    sid = opened["session_id"]
+    state = sessions.get(sid)
+    state["working_text"] = "DATES\n  2 JAN 2026 /\n/\n"
+    sessions.save(state)
+    result = session_result(sid)
+    assert result["status"] in {"completed", "failed"}
+    assert "2 JAN 2026" in result["artifacts"]["schedule_out"]
 
 
 def test_commissioning_facts_prefer_specialist_over_baseline_column() -> None:
@@ -665,6 +853,41 @@ def test_hitl_json_answers_yield_policy_and_new_well_defs() -> None:
     }
     assert _unlisted_policy(state) == "remove"
     assert _new_well_defs(state)[0]["well"] == "N001"
+
+
+def test_unlisted_policy_from_plain_hitl_string() -> None:
+    from app.agent_tools import _unlisted_policy
+
+    state = {
+        "inputs": {},
+        "context": {"hitl": {"answers": {"unlisted_wells_policy": "unlisted_wells_policy=remove"}}},
+    }
+    assert _unlisted_policy(state) == "remove"
+
+
+def test_wefac_wildcard_is_not_an_unlisted_well() -> None:
+    from app.commissioning import run_commissioning_revise
+
+    source = """WEFAC
+'*' 0.9500 /
+/
+
+DATES
+  1 JAN 2020 /
+/
+
+WCONPROD
+  1601 OPEN GRAT 1* 1* 200000 /
+  201 OPEN GRAT 1* 1* 100000 /
+/
+"""
+    revised = run_commissioning_revise(
+        source,
+        [{"well": "1601", "date": "23 FEB 2020"}],
+        instruction_blob=_PROSE_REMOVE,
+    )
+    assert "*" not in (revised.get("unlisted_wells") or [])
+    assert "201" in revised["unlisted_wells"]
 
 
 _PROSE_REMOVE = (

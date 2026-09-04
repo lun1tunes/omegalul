@@ -6,8 +6,8 @@
   "nodes": [
     {
       "parameters": {
-        "content": "## edit after import\n\n**Agent — Excel Extractor** — один LLM + excel-tools FastAPI.\n\n1. Bind **Qwen** credential on Excel Extractor Chat Model\n2. Bind **Runtime configuration** → `MAS — Runtime Config` (URL сервисов). Ключ Excel: credential Header Auth **Excel Tools X-API-Key** (`X-API-Key`), не Set.\n3. Orchestrator — MAS вызывает этот workflow через `executeWorkflow` (`Call Excel Extractor`). Webhook не нужен.\n\nФайлы не грузятся в n8n. Сервис сам GET `/cases/{id}/artifacts/excel`.\n`suggested_capability=commissioning` идёт обычным HTTP `extract_commissioning` (external n8n runners не execute'ят toolHttpRequest). Скважины/даты не хардкодятся.",
-        "height": 340,
+        "content": "## edit after import\n\n**Agent — Excel Extractor** — один LLM + excel-tools FastAPI.\n\n1. Bind **Qwen** credential on Excel Extractor Chat Model\n2. Bind **Runtime configuration** → `MAS — Runtime Config` (URL сервисов). Ключ Excel: credential Header Auth **Excel Tools X-API-Key** (`X-API-Key`), не Set. Activity events ключ Excel не используют.\n3. Orchestrator — MAS вызывает этот workflow через `executeWorkflow` (`Call Excel Extractor`). Webhook не нужен.\n\nФайлы не грузятся в n8n. Сервис сам GET `/cases/{id}/artifacts/excel`.\n`suggested_capability=commissioning` идёт обычным HTTP `extract_commissioning` (external n8n runners не execute'ят toolHttpRequest). Остальное — LLM + query_table. После extract проверяется status; needs_input не идёт в Fetch result. Сессия закрывается POST /sessions/{id}/close. Скважины/даты не хардкодятся.",
+        "height": 380,
         "width": 480,
         "color": 1
       },
@@ -16,8 +16,8 @@
       "type": "n8n-nodes-base.stickyNote",
       "typeVersion": 1,
       "position": [
-        -40,
-        -825
+        -220,
+        -360
       ]
     },
     {
@@ -61,7 +61,7 @@
       "type": "n8n-nodes-base.executeWorkflow",
       "typeVersion": 1.3,
       "position": [
-        280,
+        260,
         0
       ]
     },
@@ -74,7 +74,7 @@
       "type": "n8n-nodes-base.code",
       "typeVersion": 2,
       "position": [
-        560,
+        500,
         0
       ]
     },
@@ -82,8 +82,6 @@
       "parameters": {
         "method": "POST",
         "url": "={{ $json.excel_tools_url }}/agent-tools/open_session",
-        "authentication": "genericCredentialType",
-        "genericAuthType": "httpHeaderAuth",
         "sendHeaders": true,
         "headerParameters": {
           "parameters": [
@@ -102,6 +100,8 @@
             }
           }
         },
+        "authentication": "genericCredentialType",
+        "genericAuthType": "httpHeaderAuth",
         "sendBody": true,
         "specifyBody": "json",
         "jsonBody": "={{ $json.agent_task }}"
@@ -111,17 +111,20 @@
       "type": "n8n-nodes-base.httpRequest",
       "typeVersion": 4.4,
       "position": [
-        840,
+        740,
         0
       ],
+      "onError": "continueRegularOutput",
+      "alwaysOutputData": true,
+      "retryOnFail": true,
+      "maxTries": 3,
+      "waitBetweenTries": 2000,
       "credentials": {
         "httpHeaderAuth": {
           "id": "REPLACE_IN_UI",
           "name": "REPLACE: Excel Tools X-API-Key"
         }
-      },
-      "onError": "continueRegularOutput",
-      "alwaysOutputData": true
+      }
     },
     {
       "parameters": {
@@ -152,7 +155,7 @@
       "type": "n8n-nodes-base.if",
       "typeVersion": 2.3,
       "position": [
-        1120,
+        980,
         0
       ]
     },
@@ -165,31 +168,131 @@
       "type": "n8n-nodes-base.code",
       "typeVersion": 2,
       "position": [
-        1400,
-        85
+        1220,
+        240
+      ]
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "={{ $('Runtime configuration').first().json.activity_base_url + '/cases/' + $('Normalize excel task').first().json.agent_task.case_id + '/events' }}",
+        "sendHeaders": true,
+        "headerParameters": {
+          "parameters": [
+            {
+              "name": "Content-Type",
+              "value": "application/json"
+            }
+          ]
+        },
+        "options": {
+          "timeout": 2000,
+          "response": {
+            "response": {
+              "fullResponse": false,
+              "responseFormat": "json",
+              "neverError": true
+            }
+          }
+        },
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "={{ ({kind: \"agent.accepted\", actor: 'excel_extractor', agent_id: 'excel_extractor', task_id: $('Normalize excel task').first().json.agent_task.task_id, status: \"running\", status_message: \"Excel Extractor \\u043f\\u0440\\u0438\\u043d\\u044f\\u043b \\u0437\\u0430\\u0434\\u0430\\u0447\\u0443 \\u0438 \\u0430\\u043d\\u0430\\u043b\\u0438\\u0437\\u0438\\u0440\\u0443\\u0435\\u0442 workbook\", payload: {source: 'excel-extractor-agent-workflow'}}) }}"
+      },
+      "id": "2ba996b4-4630-51b0-b2eb-775f8a69bfe5",
+      "name": "Activity — Excel Extractor accepted",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.4,
+      "position": [
+        1220,
+        -220
+      ],
+      "onError": "continueRegularOutput",
+      "alwaysOutputData": true
+    },
+    {
+      "parameters": {
+        "jsCode": "const x=$('Session ready?').first().json||{}; return [{json:x}];"
+      },
+      "id": "8921db49-3958-54b5-8afd-879004744e14",
+      "name": "Restore after Excel Extractor accepted",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        1440,
+        -220
+      ]
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "={{ $('Runtime configuration').first().json.activity_base_url + '/cases/' + $('Normalize excel task').first().json.agent_task.case_id + '/events' }}",
+        "sendHeaders": true,
+        "headerParameters": {
+          "parameters": [
+            {
+              "name": "Content-Type",
+              "value": "application/json"
+            }
+          ]
+        },
+        "options": {
+          "timeout": 2000,
+          "response": {
+            "response": {
+              "fullResponse": false,
+              "responseFormat": "json",
+              "neverError": true
+            }
+          }
+        },
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "={{ ({kind: \"agent.progress\", actor: 'excel_extractor', agent_id: 'excel_extractor', task_id: $('Normalize excel task').first().json.agent_task.task_id, status: \"running\", status_message: \"Excel Extractor \\u043f\\u0440\\u043e\\u0432\\u0435\\u0440\\u044f\\u0435\\u0442 \\u043b\\u0438\\u0441\\u0442\\u044b \\u0438 \\u0442\\u0430\\u0431\\u043b\\u0438\\u0446\\u044b workbook.\", payload: {source: 'excel-extractor-agent-workflow'}}) }}"
+      },
+      "id": "235a036f-7fa6-5d14-bab4-dd96bbbc2669",
+      "name": "Activity — Excel Extractor progress",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.4,
+      "position": [
+        1660,
+        -220
+      ],
+      "onError": "continueRegularOutput",
+      "alwaysOutputData": true
+    },
+    {
+      "parameters": {
+        "jsCode": "\nconst x=$('Restore after Excel Extractor accepted').first().json||{};\nconst cap=String(x.suggested_capability||'').trim();\nconst known=cap==='commissioning'?cap:'operations';\nreturn [{json:{...x, suggested_capability:known}}];\n"
+      },
+      "id": "38201a10-732a-545e-9f47-93db858316ab",
+      "name": "Restore after Excel Extractor progress",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        1880,
+        -220
       ]
     },
     {
       "parameters": {
         "mode": "expression",
         "numberOutputs": 2,
-        "output": "={{ ({commissioning:0, operations:1})[$json.suggested_capability] ?? 1 }}"
+        "output": "={{ ({commissioning:0, operations:1})[String($json.suggested_capability||'operations')] ?? 1 }}"
       },
       "id": "9c4011ef-18c6-5476-a9f5-7d1c8003b0d8",
       "name": "Capability router",
       "type": "n8n-nodes-base.switch",
       "typeVersion": 3.4,
       "position": [
-        1400,
-        -85
+        1220,
+        0
       ]
     },
     {
       "parameters": {
         "method": "POST",
         "url": "={{ $('Runtime configuration').first().json.excel_tools_url + '/agent-tools/extract_commissioning' }}",
-        "authentication": "genericCredentialType",
-        "genericAuthType": "httpHeaderAuth",
         "sendHeaders": true,
         "headerParameters": {
           "parameters": [
@@ -208,6 +311,8 @@
             }
           }
         },
+        "authentication": "genericCredentialType",
+        "genericAuthType": "httpHeaderAuth",
         "sendBody": true,
         "specifyBody": "json",
         "jsonBody": "={{ ({session_id: $('Open excel session').first().json.session_id}) }}"
@@ -217,17 +322,168 @@
       "type": "n8n-nodes-base.httpRequest",
       "typeVersion": 4.4,
       "position": [
-        1680,
-        255
+        1480,
+        -160
       ],
+      "onError": "continueRegularOutput",
+      "alwaysOutputData": true,
+      "retryOnFail": true,
+      "maxTries": 3,
+      "waitBetweenTries": 2000,
       "credentials": {
         "httpHeaderAuth": {
           "id": "REPLACE_IN_UI",
           "name": "REPLACE: Excel Tools X-API-Key"
         }
+      }
+    },
+    {
+      "parameters": {
+        "jsCode": "\nconst raw=$json||{};\nconst data=raw.data&&typeof raw.data==='object'?raw.data:{};\nconst facts=Array.isArray(data.facts)?data.facts:[];\nconst n=Number(data.total_count!=null?data.total_count:facts.length);\nconst httpError=raw.error&&typeof raw.error==='object'?raw.error:null;\nconst status=String(raw.status||(httpError?'failed':'')).trim();\nconst skipFetch=status!=='completed';\nconst fallback=status==='completed'\n  ? ('Commissioning: извлечено '+n+' скважин с датами ввода')\n  : (status==='needs_input'?'Commissioning требует уточнения':'Извлечение commissioning не удалось');\nconst message=String(raw.message||(httpError&&(httpError.message||httpError.description))||fallback);\nreturn [{json:{\n  ...raw,\n  status:status||'failed',\n  message,\n  skip_fetch:skipFetch,\n  activity_kind:status==='completed'?'agent.progress':(status==='needs_input'?'agent.progress':'agent.failed'),\n  status_message:message,\n  activity_payload:{\n    source:'excel-extractor-agent-workflow',\n    operation:'extract_commissioning',\n    wells_extracted:n,\n    status:status||'failed'\n  }\n}}];\n"
       },
+      "id": "1c30137c-709c-5f7e-8f7c-e7ba5987e1f0",
+      "name": "Describe extract result",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        1680,
+        -80
+      ]
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "={{ $('Runtime configuration').first().json.activity_base_url + '/cases/' + $('Normalize excel task').first().json.agent_task.case_id + '/events' }}",
+        "sendHeaders": true,
+        "headerParameters": {
+          "parameters": [
+            {
+              "name": "Content-Type",
+              "value": "application/json"
+            }
+          ]
+        },
+        "options": {
+          "timeout": 2000,
+          "response": {
+            "response": {
+              "fullResponse": false,
+              "responseFormat": "json",
+              "neverError": true
+            }
+          }
+        },
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "={{ ({kind: $json.activity_kind || 'agent.progress', actor: 'excel_extractor', agent_id: 'excel_extractor', task_id: $('Normalize excel task').first().json.agent_task.task_id, status: $json.status || 'running', status_message: $json.status_message || '', payload: $json.activity_payload || {source: 'excel-extractor-agent-workflow'}}) }}"
+      },
+      "id": "2510017c-0d8e-5330-b93c-c207c3a53b6a",
+      "name": "Activity — Excel Extractor extract",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.4,
+      "position": [
+        1680,
+        -260
+      ],
       "onError": "continueRegularOutput",
       "alwaysOutputData": true
+    },
+    {
+      "parameters": {
+        "jsCode": "const x=$('Describe extract result').first().json||{}; return [{json:x}];"
+      },
+      "id": "d0d8e581-014c-5152-b254-e82545521361",
+      "name": "Restore after extract event",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        1880,
+        -260
+      ]
+    },
+    {
+      "parameters": {
+        "conditions": {
+          "options": {
+            "caseSensitive": true,
+            "leftValue": "",
+            "typeValidation": "strict",
+            "version": 2
+          },
+          "conditions": [
+            {
+              "id": "232ffa77-6d3c-5d10-b5f7-41d7cd2b19e2",
+              "leftValue": "={{ Boolean($json.skip_fetch) }}",
+              "rightValue": true,
+              "operator": {
+                "type": "boolean",
+                "operation": "true"
+              }
+            }
+          ],
+          "combinator": "and"
+        },
+        "options": {}
+      },
+      "id": "61de8b55-7517-5252-8bab-8e15cbcd92e7",
+      "name": "Extract finished?",
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2.3,
+      "position": [
+        1880,
+        -80
+      ]
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "={{ $('Runtime configuration').first().json.activity_base_url + '/cases/' + $('Normalize excel task').first().json.agent_task.case_id + '/events' }}",
+        "sendHeaders": true,
+        "headerParameters": {
+          "parameters": [
+            {
+              "name": "Content-Type",
+              "value": "application/json"
+            }
+          ]
+        },
+        "options": {
+          "timeout": 2000,
+          "response": {
+            "response": {
+              "fullResponse": false,
+              "responseFormat": "json",
+              "neverError": true
+            }
+          }
+        },
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "={{ ({kind: 'agent.result', actor: 'excel_extractor', agent_id: 'excel_extractor', task_id: $('Normalize excel task').first().json.agent_task.task_id, status: String($('Format excel result').first().json.status || 'failed'), status_message: String($('Format excel result').first().json.message || 'Excel Extractor завершил обработку workbook.'), payload: {source: 'excel-extractor-agent-workflow'}}) }}"
+      },
+      "id": "3fb91d21-d736-5aa8-a698-687040600dad",
+      "name": "Activity — Excel Extractor completed",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.4,
+      "position": [
+        2560,
+        -180
+      ],
+      "onError": "continueRegularOutput",
+      "alwaysOutputData": true
+    },
+    {
+      "parameters": {
+        "jsCode": "const x=$('Format excel result').first().json||{}; return [{json:x}];"
+      },
+      "id": "e1e7e71e-fbd9-586a-b6de-531218fe7bf7",
+      "name": "Restore after Excel Extractor activity",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        2760,
+        -180
+      ]
     },
     {
       "parameters": {
@@ -238,8 +494,8 @@
       "type": "n8n-nodes-base.code",
       "typeVersion": 2,
       "position": [
-        1680,
-        425
+        1480,
+        160
       ]
     },
     {
@@ -248,8 +504,8 @@
         "text": "={{ $json.agent_input }}",
         "hasOutputParser": false,
         "options": {
-          "systemMessage": "Ты — единственный LLM-решатель агента Excel Extractor.\n\nWorkbook тебе не показывают. Он лежит в сессии FastAPI. session_id привязан workflow: никогда не передавай session_id и обёртку args/input.\n\nИнструменты:\n- workbook_introspect — листы и размеры (компактно)\n- sheet_preview — небольшой прямоугольник одного листа, не весь лист\n- detect_tables — найти таблицы, вернуть table_id / range / columns\n- match_tables — ранжировать таблицы по запросу\n- describe_table — колонки и sample по table_id\n- list_column_values — ограниченные distinct-значения колонки\n- query_table — строки по table_id (limit, фильтры). Не выгружай всю книгу\n- extract_commissioning — скважина+дата ввода из уже открытой сессии. Даты и скважины сам не выдумывай\n\nПравила:\n- Не пиши SCHEDULE / .INC. Только факты из Excel.\n- Не придумывай скважины, даты, дебиты, имена листов и table_id.\n- suggested_capability=commissioning → сразу extract_commissioning, затем STOP.\n- Иначе introspect/detect → query нужных таблиц. Если нужны даты ввода — extract_commissioning.\n- После extract_commissioning со status completed или needs_input — STOP.\n- Если файла/таблиц нет — не выдумывай строки.\n\nЗаверши одним коротким фактическим предложением по-русски.\n",
-          "maxIterations": 12,
+          "systemMessage": "Ты — единственный LLM-решатель агента Excel Extractor.\n\nWorkbook тебе не показывают. Он лежит в сессии FastAPI. session_id привязан workflow: никогда не передавай session_id и обёртку args/input.\n\nИнструменты:\n- workbook_introspect — листы и размеры (компактно)\n- sheet_preview — небольшой прямоугольник одного листа, не весь лист\n- detect_tables — найти таблицы, вернуть table_id / range / columns\n- match_tables — ранжировать таблицы по запросу\n- describe_table — колонки и sample по table_id\n- list_column_values — ограниченные distinct-значения колонки\n- query_table — строки по table_id (limit, фильтры). select и filters — JSON-массивы, не объект с ключами \"0\",\"1\". Не выгружай всю книгу\n- extract_commissioning — скважина+дата ввода из уже открытой сессии. Даты и скважины сам не выдумывай\n\nПравила:\n- Не пиши SCHEDULE / .INC. Только факты из Excel.\n- Не придумывай скважины, даты, дебиты, имена листов и table_id.\n- Проанализируй objective и handoff_message.\n- Если задача про даты ввода скважин → extract_commissioning один раз, затем STOP.\n- Если задача про дебиты, управления, историю, PVT, SCAL → introspect/detect/query. Не вызывай extract_commissioning, если даты ввода не нужны.\n- После извлечения данных (extract_commissioning или query_table) — STOP.\n- Если за 3 шага нет прогресса — STOP и верни вопрос. Не вызывай один tool больше трёх раз подряд.\n- Если файла/таблиц нет — не выдумывай строки.\n\nЗаверши одним коротким фактическим предложением по-русски.\n",
+          "maxIterations": 6,
           "returnIntermediateSteps": true,
           "passthroughBinaryImages": false,
           "passthroughBinaryPdfs": false,
@@ -262,8 +518,8 @@
       "type": "@n8n/n8n-nodes-langchain.agent",
       "typeVersion": 3.1,
       "position": [
-        1960,
-        425
+        1720,
+        160
       ]
     },
     {
@@ -285,8 +541,8 @@
       "type": "@n8n/n8n-nodes-langchain.lmChatOpenAi",
       "typeVersion": 1.3,
       "position": [
-        1960,
-        255
+        1720,
+        40
       ],
       "credentials": {
         "openAiApi": {
@@ -297,10 +553,105 @@
     },
     {
       "parameters": {
+        "jsCode": "\nconst agent=$json||{};\nconst opened=$('Open excel session').first().json||{};\nconst steps=Array.isArray(agent.intermediateSteps)?agent.intermediateSteps:(Array.isArray(agent.intermediate_steps)?agent.intermediate_steps:[]);\nconst toolName=step=>{\n  if(!step||typeof step!=='object') return '';\n  const a=step.action&&typeof step.action==='object'?step.action:step;\n  return String(a.tool||a.toolName||a.name||step.tool||'');\n};\nconst tools=steps.map(toolName).filter(Boolean);\nconst unique=[...new Set(tools)];\nconst counts={};\nfor(const name of tools) counts[name]=(counts[name]||0)+1;\nconst repeated=Object.keys(counts).some(name=>counts[name]>3);\nconst hasExtraction=tools.some(n=>n==='extract_commissioning'||n==='query_table');\nconst skipFetch=!hasExtraction||repeated;\nconst message=hasExtraction&&!repeated\n  ? ('Excel Extractor вызвал '+String(tools.length)+' tools: '+unique.join(', '))\n  : (repeated\n    ? 'Агент повторял один и тот же tool без прогресса. Нужно уточнение.'\n    : 'Агент не извлёк данных. Уточните, какие данные нужны.');\nreturn [{json:{\n  ...(skipFetch?{\n    task_id:opened.task_id||'',\n    agent_id:'excel_extractor',\n    status:'needs_input',\n    message,\n    data:{tools_used:unique,total_calls:steps.length},\n    artifacts:{},\n    issues:[{type:repeated?'repeated_tools':'no_extract'}],\n    assumptions:[],\n    requests:[{question_id:'Q-clarify',question:message,options:['Даты ввода','Дебиты','Управления','Другое']}]\n  }:agent),\n  skip_fetch:skipFetch,\n  has_extraction:hasExtraction,\n  activity_kind:'agent.progress',\n  status_message:message,\n  activity_payload:{source:'excel-extractor-agent-workflow',total_calls:steps.length,tools_used:unique,iterations:steps.length}\n}}];\n"
+      },
+      "id": "8e5963b8-e599-57ec-905d-0d75952ce797",
+      "name": "Summarize AI steps",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        1960,
+        160
+      ]
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "={{ $('Runtime configuration').first().json.activity_base_url + '/cases/' + $('Normalize excel task').first().json.agent_task.case_id + '/events' }}",
+        "sendHeaders": true,
+        "headerParameters": {
+          "parameters": [
+            {
+              "name": "Content-Type",
+              "value": "application/json"
+            }
+          ]
+        },
+        "options": {
+          "timeout": 2000,
+          "response": {
+            "response": {
+              "fullResponse": false,
+              "responseFormat": "json",
+              "neverError": true
+            }
+          }
+        },
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "={{ ({kind: $json.activity_kind || 'agent.progress', actor: 'excel_extractor', agent_id: 'excel_extractor', task_id: $('Normalize excel task').first().json.agent_task.task_id, status: $json.status || 'running', status_message: $json.status_message || '', payload: $json.activity_payload || {source: 'excel-extractor-agent-workflow'}}) }}"
+      },
+      "id": "b69862bc-7271-5f43-9eeb-badc4d50fe1e",
+      "name": "Activity — Excel Extractor tools",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.4,
+      "position": [
+        1960,
+        300
+      ],
+      "onError": "continueRegularOutput",
+      "alwaysOutputData": true
+    },
+    {
+      "parameters": {
+        "jsCode": "const x=$('Summarize AI steps').first().json||{}; return [{json:x}];"
+      },
+      "id": "bfff55ca-b120-5b27-b003-90d0be6e781f",
+      "name": "Restore after AI tools",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        2160,
+        300
+      ]
+    },
+    {
+      "parameters": {
+        "conditions": {
+          "options": {
+            "caseSensitive": true,
+            "leftValue": "",
+            "typeValidation": "strict",
+            "version": 2
+          },
+          "conditions": [
+            {
+              "id": "668386bc-3a45-5fbd-9ce3-fd61c18ef6a5",
+              "leftValue": "={{ Boolean($json.skip_fetch) }}",
+              "rightValue": true,
+              "operator": {
+                "type": "boolean",
+                "operation": "true"
+              }
+            }
+          ],
+          "combinator": "and"
+        },
+        "options": {}
+      },
+      "id": "3a56e325-e614-52a0-ae57-9f87c50c2f93",
+      "name": "AI extracted?",
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2.3,
+      "position": [
+        2160,
+        160
+      ]
+    },
+    {
+      "parameters": {
         "method": "GET",
         "url": "={{ $('Runtime configuration').first().json.excel_tools_url + '/sessions/' + $('Open excel session').first().json.session_id + '/result' }}",
-        "authentication": "genericCredentialType",
-        "genericAuthType": "httpHeaderAuth",
         "sendHeaders": true,
         "headerParameters": {
           "parameters": [
@@ -318,24 +669,29 @@
               "responseFormat": "json"
             }
           }
-        }
+        },
+        "authentication": "genericCredentialType",
+        "genericAuthType": "httpHeaderAuth"
       },
       "id": "cf896b5f-c322-54db-8650-f141428dbb6e",
       "name": "Fetch excel result",
       "type": "n8n-nodes-base.httpRequest",
       "typeVersion": 4.4,
       "position": [
-        2240,
+        2100,
         0
       ],
+      "onError": "continueRegularOutput",
+      "alwaysOutputData": true,
+      "retryOnFail": true,
+      "maxTries": 3,
+      "waitBetweenTries": 2000,
       "credentials": {
         "httpHeaderAuth": {
           "id": "REPLACE_IN_UI",
           "name": "REPLACE: Excel Tools X-API-Key"
         }
-      },
-      "onError": "continueRegularOutput",
-      "alwaysOutputData": true
+      }
     },
     {
       "parameters": {
@@ -346,9 +702,54 @@
       "type": "n8n-nodes-base.code",
       "typeVersion": 2,
       "position": [
-        2520,
+        2320,
         0
       ]
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "={{ $('Runtime configuration').first().json.excel_tools_url + '/sessions/' + $('Open excel session').first().json.session_id + '/close' }}",
+        "sendHeaders": true,
+        "headerParameters": {
+          "parameters": [
+            {
+              "name": "Content-Type",
+              "value": "application/json"
+            }
+          ]
+        },
+        "options": {
+          "timeout": 5000,
+          "response": {
+            "response": {
+              "fullResponse": false,
+              "responseFormat": "json"
+            }
+          }
+        },
+        "authentication": "genericCredentialType",
+        "genericAuthType": "httpHeaderAuth",
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "={{ ({}) }}"
+      },
+      "id": "d4756be7-445d-5085-b4c9-0eae2faefb74",
+      "name": "Close excel session",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.4,
+      "position": [
+        2480,
+        0
+      ],
+      "onError": "continueRegularOutput",
+      "alwaysOutputData": true,
+      "credentials": {
+        "httpHeaderAuth": {
+          "id": "REPLACE_IN_UI",
+          "name": "REPLACE: Excel Tools X-API-Key"
+        }
+      }
     },
     {
       "parameters": {
@@ -390,15 +791,18 @@
       "type": "@n8n/n8n-nodes-langchain.toolHttpRequest",
       "typeVersion": 1.1,
       "position": [
-        1680,
-        85
+        760,
+        -420
       ],
       "credentials": {
         "httpHeaderAuth": {
           "id": "REPLACE_IN_UI",
           "name": "REPLACE: Excel Tools X-API-Key"
         }
-      }
+      },
+      "retryOnFail": true,
+      "maxTries": 3,
+      "waitBetweenTries": 2000
     },
     {
       "parameters": {
@@ -451,15 +855,18 @@
       "type": "@n8n/n8n-nodes-langchain.toolHttpRequest",
       "typeVersion": 1.1,
       "position": [
-        1960,
-        85
+        980,
+        -420
       ],
       "credentials": {
         "httpHeaderAuth": {
           "id": "REPLACE_IN_UI",
           "name": "REPLACE: Excel Tools X-API-Key"
         }
-      }
+      },
+      "retryOnFail": true,
+      "maxTries": 3,
+      "waitBetweenTries": 2000
     },
     {
       "parameters": {
@@ -512,15 +919,18 @@
       "type": "@n8n/n8n-nodes-langchain.toolHttpRequest",
       "typeVersion": 1.1,
       "position": [
-        1680,
-        -85
+        1200,
+        -420
       ],
       "credentials": {
         "httpHeaderAuth": {
           "id": "REPLACE_IN_UI",
           "name": "REPLACE: Excel Tools X-API-Key"
         }
-      }
+      },
+      "retryOnFail": true,
+      "maxTries": 3,
+      "waitBetweenTries": 2000
     },
     {
       "parameters": {
@@ -573,15 +983,18 @@
       "type": "@n8n/n8n-nodes-langchain.toolHttpRequest",
       "typeVersion": 1.1,
       "position": [
-        1960,
-        -85
+        1420,
+        -420
       ],
       "credentials": {
         "httpHeaderAuth": {
           "id": "REPLACE_IN_UI",
           "name": "REPLACE: Excel Tools X-API-Key"
         }
-      }
+      },
+      "retryOnFail": true,
+      "maxTries": 3,
+      "waitBetweenTries": 2000
     },
     {
       "parameters": {
@@ -634,15 +1047,18 @@
       "type": "@n8n/n8n-nodes-langchain.toolHttpRequest",
       "typeVersion": 1.1,
       "position": [
-        1680,
-        -255
+        760,
+        -260
       ],
       "credentials": {
         "httpHeaderAuth": {
           "id": "REPLACE_IN_UI",
           "name": "REPLACE: Excel Tools X-API-Key"
         }
-      }
+      },
+      "retryOnFail": true,
+      "maxTries": 3,
+      "waitBetweenTries": 2000
     },
     {
       "parameters": {
@@ -705,19 +1121,22 @@
       "type": "@n8n/n8n-nodes-langchain.toolHttpRequest",
       "typeVersion": 1.1,
       "position": [
-        1960,
-        -255
+        980,
+        -260
       ],
       "credentials": {
         "httpHeaderAuth": {
           "id": "REPLACE_IN_UI",
           "name": "REPLACE: Excel Tools X-API-Key"
         }
-      }
+      },
+      "retryOnFail": true,
+      "maxTries": 3,
+      "waitBetweenTries": 2000
     },
     {
       "parameters": {
-        "toolDescription": "Строки таблицы. select/filters — JSON с числовыми ключами 0,1,2,...",
+        "toolDescription": "Строки таблицы. select и filters — JSON-массивы: [\"well\",\"date\"] и [{\"field\":\"well\",\"operator\":\"eq\",\"value\":\"101\"}].",
         "method": "POST",
         "url": "={{ $('Runtime configuration').first().json.excel_tools_url + '/agent-tools/' + \"query_table\" }}",
         "authentication": "genericCredentialType",
@@ -736,12 +1155,12 @@
             },
             {
               "name": "select",
-              "description": "Числовые ключи → имена колонок",
+              "description": "Массив имён колонок, например [\"well\",\"date\"]",
               "type": "json"
             },
             {
               "name": "filters",
-              "description": "Числовые ключи → {field, operator, value}",
+              "description": "Массив {field, operator, value}",
               "type": "json"
             },
             {
@@ -796,15 +1215,18 @@
       "type": "@n8n/n8n-nodes-langchain.toolHttpRequest",
       "typeVersion": 1.1,
       "position": [
-        1680,
-        -425
+        1200,
+        -260
       ],
       "credentials": {
         "httpHeaderAuth": {
           "id": "REPLACE_IN_UI",
           "name": "REPLACE: Excel Tools X-API-Key"
         }
-      }
+      },
+      "retryOnFail": true,
+      "maxTries": 3,
+      "waitBetweenTries": 2000
     },
     {
       "parameters": {
@@ -846,15 +1268,18 @@
       "type": "@n8n/n8n-nodes-langchain.toolHttpRequest",
       "typeVersion": 1.1,
       "position": [
-        1960,
-        -425
+        1420,
+        -260
       ],
       "credentials": {
         "httpHeaderAuth": {
           "id": "REPLACE_IN_UI",
           "name": "REPLACE: Excel Tools X-API-Key"
         }
-      }
+      },
+      "retryOnFail": true,
+      "maxTries": 3,
+      "waitBetweenTries": 2000
     }
   ],
   "connections": {
@@ -906,7 +1331,7 @@
       "main": [
         [
           {
-            "node": "Capability router",
+            "node": "Activity — Excel Extractor accepted",
             "type": "main",
             "index": 0
           }
@@ -914,6 +1339,50 @@
         [
           {
             "node": "Format missing excel",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Activity — Excel Extractor accepted": {
+      "main": [
+        [
+          {
+            "node": "Restore after Excel Extractor accepted",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Restore after Excel Extractor accepted": {
+      "main": [
+        [
+          {
+            "node": "Activity — Excel Extractor progress",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Activity — Excel Extractor progress": {
+      "main": [
+        [
+          {
+            "node": "Restore after Excel Extractor progress",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Restore after Excel Extractor progress": {
+      "main": [
+        [
+          {
+            "node": "Capability router",
             "type": "main",
             "index": 0
           }
@@ -940,6 +1409,57 @@
     },
     "Extract commissioning": {
       "main": [
+        [
+          {
+            "node": "Describe extract result",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Describe extract result": {
+      "main": [
+        [
+          {
+            "node": "Activity — Excel Extractor extract",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Activity — Excel Extractor extract": {
+      "main": [
+        [
+          {
+            "node": "Restore after extract event",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Restore after extract event": {
+      "main": [
+        [
+          {
+            "node": "Extract finished?",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Extract finished?": {
+      "main": [
+        [
+          {
+            "node": "Format excel result",
+            "type": "main",
+            "index": 0
+          }
+        ],
         [
           {
             "node": "Fetch excel result",
@@ -1063,6 +1583,57 @@
       "main": [
         [
           {
+            "node": "Summarize AI steps",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Summarize AI steps": {
+      "main": [
+        [
+          {
+            "node": "Activity — Excel Extractor tools",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Activity — Excel Extractor tools": {
+      "main": [
+        [
+          {
+            "node": "Restore after AI tools",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Restore after AI tools": {
+      "main": [
+        [
+          {
+            "node": "AI extracted?",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "AI extracted?": {
+      "main": [
+        [
+          {
+            "node": "Format excel result",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
             "node": "Fetch excel result",
             "type": "main",
             "index": 0
@@ -1080,13 +1651,47 @@
           }
         ]
       ]
+    },
+    "Format excel result": {
+      "main": [
+        [
+          {
+            "node": "Close excel session",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Close excel session": {
+      "main": [
+        [
+          {
+            "node": "Activity — Excel Extractor completed",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Activity — Excel Extractor completed": {
+      "main": [
+        [
+          {
+            "node": "Restore after Excel Extractor activity",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
     }
   },
   "settings": {
     "executionOrder": "v1",
     "saveManualExecutions": true,
     "callerPolicy": "workflowsFromSameOwner",
-    "errorWorkflow": ""
+    "errorWorkflow": "",
+    "executionTimeout": 900
   },
   "meta": {
     "templateCredsSetupCompleted": true,
@@ -1094,5 +1699,5 @@
   },
   "tags": [],
   "pinData": {},
-  "versionId": "311832bb-3515-4b1b-9163-f13919d1f524"
+  "versionId": "ef1fee7f-bafd-4044-90b9-9be58319a1ae"
 }

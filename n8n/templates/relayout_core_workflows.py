@@ -327,9 +327,13 @@ def manual_edit_reasons(data: dict) -> list[str]:
             reasons.append(f"Set webhook auth credentials on **{name}**")
         if t == "n8n-nodes-base.set":
             assigns = (((p.get("assignments") or {}).get("assignments")) or [])
-            if any(isinstance(a, dict) and a.get("name") == "wipe_data" for a in assigns):
+            if any(
+                isinstance(a, dict) and a.get("name") in {"clear", "wipe_data"}
+                for a in assigns
+            ):
                 reasons.append(
-                    "Keep **Operator flags** `wipe_data` = false except a manual wipe"
+                    "Keep **Operator flags** `clear` = false except a manual wipe "
+                    "(schema + TRUNCATE cases; never agent_registry)"
                 )
         if short == "toolHttpRequest":
             # tools often inherit; skip noise unless many
@@ -384,9 +388,9 @@ def _place_edit_note(nodes: list[dict], width: int, height: int) -> list[int]:
 
 
 def _merge_wipe_hint(content: str, reasons: list[str]) -> str:
-    if "wipe_data" in content:
+    if "`clear`" in content and "Operator flags" in content:
         return content
-    hint = next((r for r in reasons if "wipe_data" in r), None)
+    hint = next((r for r in reasons if "`clear`" in r or "wipe_data" in r), None)
     if not hint:
         return content
     return content.rstrip() + f"\n- {hint}\n"
@@ -470,6 +474,15 @@ def separate_other_stickies(data: dict) -> None:
 
 
 def relayout_workflow(data: dict) -> dict:
+    if data.get("name") == "Orchestrator — MAS":
+        from generate_mas_orchestrator import apply_orchestrator_layout
+
+        apply_orchestrator_layout(data)
+        reasons = manual_edit_reasons(data)
+        upsert_edit_note(data, reasons)
+        apply_orchestrator_layout(data)
+        return data
+
     nodes = data.get("nodes") or []
     connections = data.get("connections") or {}
     positions = layered_positions(nodes, connections)

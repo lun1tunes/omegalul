@@ -49,8 +49,11 @@ SYSTEM = """Ты — единственный LLM-решатель агента 
 - suggested_capability=commissioning → сразу apply_commissioning, затем STOP.
 - suggested_capability=group_rebind → inspect при необходимости, затем apply_group_rebind, затем STOP.
 - Иначе search_keywords → get_keyword → apply_operations / needs_input.
+- apply_operations принимает JSON-массив [{keyword, operation, fields}], не объект с ключами "0","1".
 - После apply_* со status completed или needs_input — STOP. Не вызывай build, если apply уже вернул результат.
 - Если данных нет — не вызывай apply с пустыми выдуманными полями.
+- Не вызывай один и тот же inspect_* больше трёх раз подряд. Если за 3 шага нет apply_* — STOP и верни вопрос (needs_input).
+- Не зацикливайся: max несколько tool-вызовов, затем короткий итог.
 
 Заверши одним коротким фактическим предложением по-русски.
 """
@@ -100,8 +103,8 @@ TOOLS = [
     ),
     (
         "apply_operations",
-        "Применить operations. JSON-объект с числовыми ключами: {\"0\":{keyword,operation,fields}}.",
-        [("operations", "json", True, "Числовые ключи → {keyword, operation, fields}")],
+        "Применить operations. JSON-массив: [{\"keyword\":\"WCONPROD\",\"operation\":\"MODIFY\",\"fields\":{...}}].",
+        [("operations", "json", True, "Массив {keyword, operation, fields}. Не объект с ключами 0,1,2.")],
     ),
     (
         "build_schedule",
@@ -141,19 +144,50 @@ def connect(c, src, dst, out="main", si=0, tin="main", ti=0):
     outputs[si].append({"node": dst, "type": tin, "index": ti})
 
 
-def http_json(name, pos, method, url, body=None, timeout=180000):
+def if_true(name, pos, left):
+    return node(
+        name,
+        "n8n-nodes-base.if",
+        2.3,
+        pos,
+        {
+            "conditions": {
+                "options": {"caseSensitive": True, "leftValue": "", "typeValidation": "strict", "version": 2},
+                "conditions": [
+                    {
+                        "id": nid(f"{name}-cond"),
+                        "leftValue": left,
+                        "rightValue": True,
+                        "operator": {"type": "boolean", "operation": "true"},
+                    }
+                ],
+                "combinator": "and",
+            },
+            "options": {},
+        },
+    )
+
+
+def http_json(name, pos, method, url, body=None, timeout=180000, *, activity=False, retry=False):
+    response = {"fullResponse": False, "responseFormat": "json"}
+    if activity:
+        response["neverError"] = True
+        timeout = min(timeout, 2000)
     params = {
         "method": method,
         "url": url,
         "sendHeaders": True,
         "headerParameters": {"parameters": [{"name": "Content-Type", "value": "application/json"}]},
-        "options": {"timeout": timeout, "response": {"response": {"fullResponse": False, "responseFormat": "json"}}},
+        "options": {"timeout": timeout, "response": {"response": response}},
     }
     if body is not None:
         params["sendBody"] = True
         params["specifyBody"] = "json"
         params["jsonBody"] = body
-    return node(name, "n8n-nodes-base.httpRequest", 4.4, pos, params, onError="continueRegularOutput", alwaysOutputData=True)
+    extra = {"onError": "continueRegularOutput", "alwaysOutputData": True}
+    if retry:
+        extra.update({"retryOnFail": True, "maxTries": 3, "waitBetweenTries": 2000})
+    return node(name, "n8n-nodes-base.httpRequest", 4.4, pos, params, **extra)
 
 
 def activity_event(name, pos, kind, message, *, status="running"):
@@ -173,7 +207,8 @@ def activity_event(name, pos, kind, message, *, status="running"):
         "POST",
         "={{ $('Runtime configuration').first().json.activity_base_url + '/cases/' + $('Normalize schedule task').first().json.agent_task.case_id + '/events' }}",
         body,
-        timeout=30000,
+        timeout=2000,
+        activity=True,
     )
 
 
@@ -193,7 +228,30 @@ def activity_result_event(name, pos):
         "POST",
         "={{ $('Runtime configuration').first().json.activity_base_url + '/cases/' + $('Normalize schedule task').first().json.agent_task.case_id + '/events' }}",
         body,
-        timeout=30000,
+        timeout=2000,
+        activity=True,
+    )
+
+
+def activity_event_dynamic(name, pos):
+    body = (
+        "={{ ({"
+        "kind: $json.activity_kind || 'agent.progress', "
+        "actor: 'schedule_builder', agent_id: 'schedule_builder', "
+        "task_id: $('Normalize schedule task').first().json.agent_task.task_id, "
+        "status: $json.status || 'running', "
+        "status_message: $json.status_message || '', "
+        "payload: $json.activity_payload || {source: 'schedule-builder-agent-workflow'}"
+        "}) }}"
+    )
+    return http_json(
+        name,
+        pos,
+        "POST",
+        "={{ $('Runtime configuration').first().json.activity_base_url + '/cases/' + $('Normalize schedule task').first().json.agent_task.case_id + '/events' }}",
+        body,
+        timeout=2000,
+        activity=True,
     )
 
 
@@ -241,6 +299,9 @@ def tool_http(name, pos, description, fields):
             "parametersHeaders": {"values": [{"name": "Content-Type", "valueProvider": "fieldValue", "value": "application/json"}]},
             "parametersBody": {"values": body_values},
         },
+        retryOnFail=True,
+        maxTries=3,
+        waitBetweenTries=2000,
     )
 
 
@@ -276,6 +337,93 @@ if(!task.inputs.activity_base_url&&cfg.activity_base_url) task.inputs={...task.i
 return [{json:{...cfg, agent_task:task, case_id:task.case_id, task_id:task.task_id}}];
 """
 
+RESTORE_AFTER_PROGRESS = r"""
+const x=$('Restore after Schedule Builder accepted').first().json||{};
+const cap=String(x.suggested_capability||'').trim();
+const known=cap==='commissioning'||cap==='group_rebind'?cap:'operations';
+return [{json:{...x, suggested_capability:known}}];
+"""
+
+DESCRIBE_APPLY = r"""
+const raw=$json||{};
+const data=raw.data&&typeof raw.data==='object'?raw.data:{};
+const shifts=Array.isArray(data.shifts)?data.shifts:[];
+const rebind=data.group_rebind&&typeof data.group_rebind==='object'?data.group_rebind:{};
+const httpError=raw.error&&typeof raw.error==='object'?raw.error:null;
+const status=String(raw.status||(httpError?'failed':'')).trim();
+const operation=rebind.parent_group||Array.isArray(rebind.wells)?'group_rebind':(shifts.length||(Array.isArray(data.changed_keywords)&&data.changed_keywords.indexOf('DATES')>=0)?'commissioning':'apply');
+const dates=shifts.slice(0,12).map(s=>{
+  if(!s||typeof s!=='object') return '';
+  const well=String(s.well||s.name||'').trim();
+  const date=String(s.date||s.new_date||s.to||'').trim();
+  return well?(date?well+': '+date:well):'';
+}).filter(Boolean);
+const wellsAffected=operation==='group_rebind'
+  ? (Array.isArray(rebind.wells)?rebind.wells.length:Number(data.records_applied||0))
+  : Number(shifts.length||data.records_applied||0);
+const skipFetch=status!=='completed';
+const fallback=operation==='group_rebind'
+  ? (status==='completed'?'Перепривязка групп завершена':'Перепривязка групп требует уточнения')
+  : (status==='completed'?('Commissioning: сдвинуты даты ввода для '+wellsAffected+' скважин'):'Commissioning требует уточнения');
+const message=String(raw.message||(httpError&&(httpError.message||httpError.description))||fallback);
+return [{json:{
+  ...raw,
+  status:status||'failed',
+  message,
+  skip_fetch:skipFetch,
+  activity_kind:status==='completed'?'agent.progress':(status==='needs_input'?'agent.progress':'agent.failed'),
+  status_message:message,
+  activity_payload:{
+    source:'schedule-builder-agent-workflow',
+    operation,
+    wells_affected:wellsAffected,
+    dates_changed:dates,
+    status:status||'failed'
+  }
+}}];
+"""
+
+SUMMARIZE_AI = r"""
+const agent=$json||{};
+const opened=$('Open schedule session').first().json||{};
+const steps=Array.isArray(agent.intermediateSteps)?agent.intermediateSteps:(Array.isArray(agent.intermediate_steps)?agent.intermediate_steps:[]);
+const toolName=step=>{
+  if(!step||typeof step!=='object') return '';
+  const a=step.action&&typeof step.action==='object'?step.action:step;
+  return String(a.tool||a.toolName||a.name||step.tool||'');
+};
+const tools=steps.map(toolName).filter(Boolean);
+const unique=[...new Set(tools)];
+const counts={};
+for(const name of tools) counts[name]=(counts[name]||0)+1;
+const repeated=Object.keys(counts).some(name=>counts[name]>3);
+const hasApply=tools.some(n=>n.indexOf('apply_')===0||n.indexOf('build_')===0);
+const skipFetch=!hasApply||repeated;
+const message=hasApply&&!repeated
+  ? ('Schedule Builder вызвал '+String(tools.length)+' tools: '+unique.join(', '))
+  : (repeated
+    ? 'Агент повторял один и тот же tool без прогресса. Нужно уточнение.'
+    : 'Агент не применил изменений. Уточните задачу.');
+return [{json:{
+  ...(skipFetch?{
+    task_id:opened.task_id||'',
+    agent_id:'schedule_builder',
+    status:'needs_input',
+    message,
+    data:{tools_used:unique,total_calls:steps.length},
+    artifacts:{},
+    issues:[{type:repeated?'repeated_tools':'no_apply'}],
+    assumptions:[],
+    requests:[{question_id:'Q-apply',question:message,options:[]}]
+  }:agent),
+  skip_fetch:skipFetch,
+  has_apply:hasApply,
+  activity_kind:'agent.progress',
+  status_message:message,
+  activity_payload:{source:'schedule-builder-agent-workflow',total_calls:steps.length,tools_used:unique,iterations:steps.length}
+}}];
+"""
+
 PREPARE = r"""
 const opened=$json||{};
 const task=$('Normalize schedule task').first().json.agent_task||{};
@@ -309,6 +457,8 @@ return [{json:{
 FORMAT_RESULT = r"""
 const fetched=$json||{};
 const opened=$('Open schedule session').first().json||{};
+const arts=fetched.artifacts&&typeof fetched.artifacts==='object'?fetched.artifacts:{};
+const artifacts=(typeof arts.schedule_out==='boolean')?{}:arts;
 if(fetched.status){
   return [{json:{
     task_id:fetched.task_id||opened.task_id||'',
@@ -316,7 +466,7 @@ if(fetched.status){
     status:fetched.status,
     message:fetched.message||'',
     data:fetched.data||{},
-    artifacts:fetched.artifacts||{},
+    artifacts,
     issues:fetched.issues||[],
     assumptions:fetched.assumptions||[],
     requests:fetched.requests||[]
@@ -362,8 +512,9 @@ def main() -> None:
                     "LLM не пишет .INC. parse/apply/emit остаются в сервисе.\n"
                     "`suggested_capability` commissioning/group_rebind идут "
                     "обычным HTTP `apply_*` (external n8n runners не execute'ят "
-                    "toolHttpRequest). Скважины/даты не хардкодятся — только "
-                    "факты сессии и текст задачи."
+                    "toolHttpRequest). После apply проверяется status; "
+                    "needs_input не идёт в Fetch result. Сессия закрывается "
+                    "POST /sessions/{id}/close. Скважины/даты не хардкодятся."
                 ),
                 "height": 320,
                 "width": 480,
@@ -406,6 +557,7 @@ def main() -> None:
             "POST",
             "={{ $json.schedule_service_url }}/agent-tools/open_session",
             "={{ $json.agent_task }}",
+            retry=True,
         ),
         node(
             "Session ready?",
@@ -453,7 +605,7 @@ def main() -> None:
             "n8n-nodes-base.code",
             2,
             (1880, -220),
-            {"jsCode": "const x=$('Restore after Schedule Builder accepted').first().json||{}; return [{json:x}];"},
+            {"jsCode": RESTORE_AFTER_PROGRESS},
         ),
         node(
             "Capability router",
@@ -463,7 +615,7 @@ def main() -> None:
             {
                 "mode": "expression",
                 "numberOutputs": 3,
-                "output": "={{ ({commissioning:0, group_rebind:1, operations:2})[$json.suggested_capability] ?? 2 }}",
+                "output": "={{ ({commissioning:0, group_rebind:1, operations:2})[String($json.suggested_capability||'operations')] ?? 2 }}",
             },
         ),
         http_json(
@@ -473,6 +625,7 @@ def main() -> None:
             "={{ $('Runtime configuration').first().json.schedule_service_url + '/agent-tools/apply_commissioning' }}",
             "={{ ({session_id: $('Open schedule session').first().json.session_id}) }}",
             timeout=180000,
+            retry=True,
         ),
         http_json(
             "Apply group rebind",
@@ -481,16 +634,27 @@ def main() -> None:
             "={{ $('Runtime configuration').first().json.schedule_service_url + '/agent-tools/apply_group_rebind' }}",
             "={{ ({session_id: $('Open schedule session').first().json.session_id}) }}",
             timeout=180000,
+            retry=True,
         ),
+        node("Describe apply result", "n8n-nodes-base.code", 2, (1680, -80), {"jsCode": DESCRIBE_APPLY}),
+        activity_event_dynamic("Activity — Schedule Builder apply", (1680, -260)),
+        node(
+            "Restore after apply event",
+            "n8n-nodes-base.code",
+            2,
+            (1880, -260),
+            {"jsCode": "const x=$('Describe apply result').first().json||{}; return [{json:x}];"},
+        ),
+        if_true("Apply finished?", (1880, -80), "={{ Boolean($json.skip_fetch) }}"),
         activity_result_event(
             "Activity — Schedule Builder completed",
-            (2200, -180),
+            (2560, -180),
         ),
         node(
             "Restore after Schedule Builder activity",
             "n8n-nodes-base.code",
             2,
-            (2440, -180),
+            (2760, -180),
             {"jsCode": "const x=$('Format schedule result').first().json||{}; return [{json:x}];"},
         ),
         node("Prepare AI Agent input", "n8n-nodes-base.code", 2, (1480, 160), {"jsCode": PREPARE}),
@@ -505,7 +669,7 @@ def main() -> None:
                 "hasOutputParser": False,
                 "options": {
                     "systemMessage": SYSTEM,
-                    "maxIterations": 12,
+                    "maxIterations": 6,
                     "returnIntermediateSteps": True,
                     "passthroughBinaryImages": False,
                     "passthroughBinaryPdfs": False,
@@ -526,15 +690,35 @@ def main() -> None:
             },
             credentials=OA,
         ),
+        node("Summarize AI steps", "n8n-nodes-base.code", 2, (1960, 160), {"jsCode": SUMMARIZE_AI}),
+        activity_event_dynamic("Activity — Schedule Builder tools", (1960, 300)),
+        node(
+            "Restore after AI tools",
+            "n8n-nodes-base.code",
+            2,
+            (2160, 300),
+            {"jsCode": "const x=$('Summarize AI steps').first().json||{}; return [{json:x}];"},
+        ),
+        if_true("AI applied?", (2160, 160), "={{ Boolean($json.skip_fetch) }}"),
         http_json(
             "Fetch schedule result",
-            (1960, 0),
+            (2100, 0),
             "GET",
             "={{ $('Runtime configuration').first().json.schedule_service_url + '/sessions/' + $('Open schedule session').first().json.session_id + '/result' }}",
             None,
             timeout=120000,
+            retry=True,
         ),
-        node("Format schedule result", "n8n-nodes-base.code", 2, (2200, 0), {"jsCode": FORMAT_RESULT}),
+        node("Format schedule result", "n8n-nodes-base.code", 2, (2320, 0), {"jsCode": FORMAT_RESULT}),
+        http_json(
+            "Close schedule session",
+            (2480, 0),
+            "POST",
+            "={{ $('Runtime configuration').first().json.schedule_service_url + '/sessions/' + $('Open schedule session').first().json.session_id + '/close' }}",
+            "={{ ({}) }}",
+            timeout=2000,
+            activity=True,
+        ),
         *tools,
     ]
 
@@ -552,15 +736,26 @@ def main() -> None:
     connect(connections, "Capability router", "Apply commissioning", si=0)
     connect(connections, "Capability router", "Apply group rebind", si=1)
     connect(connections, "Capability router", "Prepare AI Agent input", si=2)
-    connect(connections, "Apply commissioning", "Fetch schedule result")
-    connect(connections, "Apply group rebind", "Fetch schedule result")
+    connect(connections, "Apply commissioning", "Describe apply result")
+    connect(connections, "Apply group rebind", "Describe apply result")
+    connect(connections, "Describe apply result", "Activity — Schedule Builder apply")
+    connect(connections, "Activity — Schedule Builder apply", "Restore after apply event")
+    connect(connections, "Restore after apply event", "Apply finished?")
+    connect(connections, "Apply finished?", "Format schedule result", si=0)
+    connect(connections, "Apply finished?", "Fetch schedule result", si=1)
     connect(connections, "Prepare AI Agent input", "Schedule Builder AI Agent")
     connect(connections, "Schedule Builder Chat Model — Qwen", "Schedule Builder AI Agent", out="ai_languageModel", tin="ai_languageModel")
     for name, _desc, _fields in TOOLS:
         connect(connections, name, "Schedule Builder AI Agent", out="ai_tool", tin="ai_tool")
-    connect(connections, "Schedule Builder AI Agent", "Fetch schedule result")
+    connect(connections, "Schedule Builder AI Agent", "Summarize AI steps")
+    connect(connections, "Summarize AI steps", "Activity — Schedule Builder tools")
+    connect(connections, "Activity — Schedule Builder tools", "Restore after AI tools")
+    connect(connections, "Restore after AI tools", "AI applied?")
+    connect(connections, "AI applied?", "Format schedule result", si=0)
+    connect(connections, "AI applied?", "Fetch schedule result", si=1)
     connect(connections, "Fetch schedule result", "Format schedule result")
-    connect(connections, "Format schedule result", "Activity — Schedule Builder completed")
+    connect(connections, "Format schedule result", "Close schedule session")
+    connect(connections, "Close schedule session", "Activity — Schedule Builder completed")
     connect(connections, "Activity — Schedule Builder completed", "Restore after Schedule Builder activity")
 
     wf = {
@@ -575,6 +770,7 @@ def main() -> None:
             "saveManualExecutions": True,
             "callerPolicy": "workflowsFromSameOwner",
             "errorWorkflow": "",
+            "executionTimeout": 900,
         },
         "meta": {"templateCredsSetupCompleted": True, "targetN8nVersion": "2.30.8"},
         "tags": [],

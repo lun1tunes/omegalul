@@ -595,4 +595,28 @@ def test_n8n_session_endpoints_open_extract_and_tool_alias(client: TestClient) -
     fetched = client.get(f"/sessions/{session_id}/result", headers={"X-API-Key": "test-key"})
     assert fetched.status_code == 200
     assert fetched.json()["status"] == "completed"
+    assert result["data"]["total_count"] == len(result["data"]["facts"])
+    assert result["data"]["preview"] == result["data"]["facts"][:10]
+    assert client.post(f"/sessions/{session_id}/close").status_code == 401
+    closed = client.post(f"/sessions/{session_id}/close", headers={"X-API-Key": "test-key"})
+    assert closed.status_code == 200
+    assert closed.json()["closed"] is True
+    assert client.get(f"/sessions/{session_id}/result", headers={"X-API-Key": "test-key"}).status_code == 404
     assert client.post("/agent-tools/open_session", json={"objective": "даты"}).status_code == 401
+
+
+def test_n8n_json_sequence_accepts_arrays_and_gapped_numeric_keys() -> None:
+    from app.main import _n8n_json_sequence, normalize_agent_tool_args
+
+    assert _n8n_json_sequence(["well", "date"]) == ["well", "date"]
+    assert _n8n_json_sequence({"0": "well", "2": "rate"}) == ["well", "rate"]
+    args = normalize_agent_tool_args(
+        "query_table",
+        {
+            "table_id": "t1",
+            "select": {"0": "well", "2": "rate"},
+            "filters": {"0": {"field": "well", "operator": "eq", "value": "101"}},
+        },
+    )
+    assert args["select"] == ["well", "rate"]
+    assert args["filters"] == [{"field": "well", "operator": "eq", "value": "101"}]

@@ -8,6 +8,8 @@ from typing import Any, Literal
 
 from pydantic import BaseModel, Field, field_validator, model_validator
 
+from app.state_shape import compact_decision_context as compact_decision_context
+
 SCHEMAS = Path(__file__).resolve().parents[1] / "schemas"
 
 CASE_STATUSES = ("new", "running", "waiting_user", "done", "failed")
@@ -56,6 +58,7 @@ class CaseState(BaseModel):
     hitl: HitlState = Field(default_factory=HitlState)
     last_error: dict[str, Any] | None = None
     step_count: int = 0
+    version: int = 1
 
 
 class CallAgentAction(BaseModel):
@@ -157,8 +160,9 @@ class CaseEventIn(BaseModel):
 
 class CaseAnswerIn(BaseModel):
     question_id: str
-    answer: str
+    answer: Any
     requested_by: str = "mas activity user"
+    expected_version: int | None = None
 
 
 class CaseNameIn(BaseModel):
@@ -166,33 +170,7 @@ class CaseNameIn(BaseModel):
 
 
 def empty_state(case_id: str, goal: str = "") -> dict[str, Any]:
-    return CaseState(case_id=case_id, goal=goal, status="new").model_dump()
-
-
-def compact_decision_context(state: dict[str, Any]) -> dict[str, Any]:
-    artifacts = state.get("artifacts") if isinstance(state.get("artifacts"), dict) else {}
-    data = state.get("data") if isinstance(state.get("data"), dict) else {}
-    plan = state.get("plan") if isinstance(state.get("plan"), list) else []
-    hitl = state.get("hitl") if isinstance(state.get("hitl"), dict) else {}
-    present_data = {}
-    for key, value in data.items():
-        present_data[key] = value not in (None, {}, [], "")
-    name = str(state.get("task_name") or "").strip()
-    return {
-        "goal": state.get("goal") or "",
-        "task_name": name,
-        "artifacts_present": [key for key, value in artifacts.items() if value not in (None, "", {}, [])],
-        "data_present": present_data,
-        "plan": [
-            {"id": item.get("id"), "status": item.get("status")}
-            for item in plan
-            if isinstance(item, dict)
-        ],
-        "current_task": state.get("current_task"),
-        "hitl_pending": bool(hitl.get("pending")),
-        "step_count": int(state.get("step_count") or 0),
-        "last_error": state.get("last_error"),
-    }
+    return CaseState(case_id=case_id, goal=goal, status="new", version=1).model_dump()
 
 
 def load_json_schema(name: str) -> dict[str, Any]:

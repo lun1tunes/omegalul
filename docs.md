@@ -7,7 +7,7 @@ MVP собирает и правит файлы `SCHEDULE` (создание с 
 ### Жёсткие правила
 
 - **n8n** на работе — только UI. Workflows импортируются вручную («Import from File»). Никакого REST-импорта и никакого Docker Compose на полевом ПК.
-- **Локальные сервисы на Windows** (Activity, Excel Tools, Math, Schedule Builder) видят **только n8n workflow webhooks**. Прямого доступа к Postgres нет и не должно быть. Стейт кейсов, события, HITL и артефакты идут через webhook `MAS — Control Plane Proxy`.
+- **Локальные сервисы на Windows** (Activity, Excel Tools, Math, Schedule Builder) **не** ходят в Postgres. Стейт кейсов, HITL и артефакты — webhook `MAS — Control Plane Proxy`. Excel / Schedule / Math к Activity — только `GET /cases/{id}/artifacts/…` и `POST /cases/{id}/events`. n8n они видят как HTTP tools / Runtime URLs, не как БД.
 - **Секреты** не кладут в JSON workflows, `$env` и `$vars`. Ключи — n8n Credentials либо `.env` на Windows.
 - **Не импортировать** `n8n/workflows/retired/`. Это старый контур Engineering MAS (CAS, Data Tables, Entry Form, Human Gate, Trace Writer, Activity Hydrate).
 - **Не задавать** `ACTIVITY_HYDRATE_URL` и не искать workflow `Activity — Hydrate`. Кейсы живут в Postgres за прокси.
@@ -38,59 +38,78 @@ python3 project_pack.py unpack
 
 ## 1. Архитектура
 
+**Сервисы:** Activity `:8200`, Excel Tools `:8000`, Schedule Builder `:8090`, Math `:8100`, Postgres+PGVector, n8n **2.30.8**, n8n-runners (Code/JS).  
+**9 core workflow** (`runtime_import_order`): Ingestion, Retrieval, Runtime Config, Schedule Builder, Excel Extractor, Error traces, Control Plane Proxy, Orchestrator, Health Check.  
+`n8n/workflows/support/` (6 JSON) в полевой runtime **не** входят; lab может импортировать их как `full_clean_import_set`. `retired/` не импортировать.
+
 ```mermaid
 flowchart TB
   classDef entry fill:#eef2ff,stroke:#6366f1,color:#1e1b4b
-  classDef box fill:#f8fafc,stroke:#64748b,color:#0f172a
-  classDef llm fill:#fff7ed,stroke:#f97316,color:#7c2d12
-  classDef rag fill:#ecfdf5,stroke:#10b981,color:#064e3b
+  classDef wf fill:#f8fafc,stroke:#64748b,color:#0f172a
   classDef svc fill:#dbeafe,stroke:#2563eb,color:#1e3a8a
   classDef data fill:#f9fafb,stroke:#9ca3af,color:#374151
 
   User[Инженер]:::entry
-  Activity[Activity UI :8200]:::svc
-  Orch[Orchestrator — MAS]:::box
-  OrchLLM[Decision LLM]:::llm
-  Proxy[MAS — Control Plane Proxy]:::box
-  ExcelAgent[Agent — Excel Extractor]:::box
-  ExcelTools[Excel Tools :8000]:::svc
-  SchedAgent[Agent — Schedule Builder]:::box
-  SchedSvc[Schedule Builder :8090]:::svc
-  MathSvc[Math Service :8100]:::svc
-  Retr[MAS — Knowledge Retrieval]:::rag
-  Ingest[MAS — Knowledge Ingestion]:::rag
-  Err[Error — MAS Node Traces]:::box
+  subgraph win [FastAPI]
+    Activity[Activity :8200]:::svc
+    ExcelTools[Excel Tools :8000]:::svc
+    SchedSvc[Schedule Builder :8090]:::svc
+    MathSvc[Math :8100]:::svc
+  end
+  subgraph plat [n8n 2.30.8 + runners]
+    Orch[Orchestrator — MAS]:::wf
+    ExcelAgent[Agent — Excel Extractor]:::wf
+    SchedAgent[Agent — Schedule Builder]:::wf
+    Proxy[MAS — Control Plane Proxy]:::wf
+    Runtime[MAS — Runtime Config]:::wf
+    Ingest[MAS — Knowledge Ingestion]:::wf
+    Retr[MAS — Knowledge Retrieval]:::wf
+    Err[Error — MAS Node Traces]:::wf
+    Health[Form — MAS Deployment Health Check]:::wf
+    Runners[n8n-runners :5680]:::svc
+  end
   Pg[(Postgres + PGVector)]:::data
 
   User --> Activity
-  Activity -->|"webhooks only"| Orch
-  Activity -->|"webhooks only"| Proxy
-  Activity -->|"webhooks only"| Ingest
-  Orch --> OrchLLM
+  Activity --> Orch
+  Activity --> Proxy
+  Activity --> Ingest
+  Orch --> Runtime
+  ExcelAgent --> Runtime
+  SchedAgent --> Runtime
   Orch --> ExcelAgent --> ExcelTools
   Orch --> SchedAgent --> SchedSvc
   Orch -->|"HTTP /agent/run"| MathSvc
-  Orch --> Err
+  Orch --> Pg
+  Proxy --> Pg
+  Err --> Pg
+  Ingest --> Pg
+  Retr --> Pg
   ExcelTools --> Activity
   SchedSvc --> Activity
-  Proxy --> Pg
-  Orch --> Pg
-  Retr --> Pg
-  Ingest --> Pg
+  MathSvc --> Activity
+  Health -.-> Activity
+  Health -.-> ExcelTools
+  Health -.-> SchedSvc
+  Health -.-> MathSvc
+  Health -.-> Runners
 ```
 
 Как это работает:
 
-1. Инженер создаёт задачу в Activity (`POST /cases`, multipart: `file`, `schedule_files`, `schedule_root`, при необходимости `.dev` / поверхность). Файлы кладутся в control-plane (`mas_artifacts`) через тот же n8n webhook.
-2. Activity вызывает оркестратор webhook `mas-orchestrator-step`.
-3. Оркестратор один шаг = одно n8n execution: читает кейс из Postgres (credential n8n), берёт агентов из `agent_registry` (его заполняет `schema` прокси), решает `call_agent` / `ask_user` / `finish`. Excel и Schedule — `executeWorkflow`; Math — HTTP `…:8100/agent/run`. **Knowledge Retrieval на канвасе оркестратора нет.**
-4. Excel Extractor и Schedule Builder — LLM в n8n + FastAPI tools на Windows. Файлы специалисты забирают сами: `GET http://<IP-Windows>:8200/cases/{id}/artifacts/{id}` (в Compose `http://mas-activity:8200`).
-5. HITL (`waiting_user`) и лента событий живут в таблицах `cases` / `events` за прокси. Activity **не** подключается к БД. Ответ инженера уходит обратно на `mas-orchestrator-step`.
-6. Готовый `.INC` скачивается из Activity (карточка задачи / артефакт), не из Entry Form.
+1. Инженер создаёт задачу в Activity (`POST /cases`, multipart: `file`, `schedule_files`, `schedule_root`, при необходимости `.dev` / поверхность). Файлы кладутся в control-plane (`mas_artifacts`) через webhook прокси.
+2. Activity вызывает оркестратор `mas-orchestrator-step` на **create / resume / restart**. Дальше оркестратор сам POST-ит `action:step` на свой webhook (`orchestrator_step_url` в Runtime Config). Activity читает `cases`/`events`, не крутит шаг за шагом.
+3. Один шаг оркестратора = одно n8n execution: кейс из Postgres (credential n8n), агенты из `agent_registry` (`schema` прокси), решение `call_agent` / `ask_user` / `finish`. Excel и Schedule — `executeWorkflow`; Math — HTTP `…:8100/agent/run`. **Knowledge Retrieval на канвасе оркестратора нет** (нужен только при клоне `Template — Engineering Specialist`).
+4. Excel Extractor и Schedule Builder — LLM в n8n + FastAPI tools. Файлы забирают сами: `GET …:8200/cases/{id}/artifacts/{id}`. Math — тот же GET. Прогресс в ленту — `POST …/cases/{id}/events` **без** Excel `X-API-Key` (это не Header Auth webhook).
+5. HITL (`waiting_user`) и лента — таблицы `cases` / `events`. Activity **не** ходит в БД. Ответ инженера — снова `mas-orchestrator-step` (оркестратор передаёт HITL-ответы в следующий `call_agent`, в т.ч. `unlisted_wells_policy`).
+6. Готовый `.INC` скачивается из Activity, не из Entry Form. Ошибки нод n8n пишет `Error — MAS Node Traces` **напрямую в Postgres** (`error_traces` + `events`), не через прокси.
+7. Health Check — **форма n8n** (сессия UI), не webhook. Пробы HTTP сервисов и устаревших Data Tables (`PASS_WITH_TODO`).
 
-После импорта все workflows `active: false`. Сначала credentials и bindings, затем **Control Plane Proxy** (`schema` → `agent_registry`), Health Check, и только при 0 FAIL — активация оркестратора. RAG (Ingestion) — для Базы знаний Activity, не для маршрутизации.
+После импорта все workflows `active: false`. Сначала credentials и bindings, затем **Control Plane Proxy** (`schema` → `agent_registry`), Health Check, и только при 0 FAIL — активация оркестратора. RAG (Ingestion) — База знаний Activity, не маршрутизация.
 
-Calculation — **не** отдельный n8n-агент: оркестратор бьёт в Math Service HTTP `…:8100/agent/run`. Старый `Agent — Calculation (Math Service)` лежит в `retired/` и не импортируется.
+Calculation — **не** отдельный n8n-агент: оркестратор бьёт в Math Service HTTP. Старый `Agent — Calculation (Math Service)` лежит в `retired/` и не импортируется. Code/JS ноды исполняет **n8n-runners**, не процесс n8n.
+
+`MAS — Runtime Config` — единственный Set URL (`activity_base_url`, `excel_tools_url`, `schedule_service_url`, `math_url` без `/agent/run`, `orchestrator_step_url`). Ключ Excel туда **не** кладут.
 
 ### 1.1. Живые HTTP-точки n8n
 
@@ -112,10 +131,11 @@ Calculation — **не** отдельный n8n-агент: оркестрато
 
 | Кто вызывает | Поле (Windows + корпоративный n8n) | Lab (Docker Compose) |
 |---|---|---|
-| Activity → n8n | `http://<URL-n8n>/webhook/…` | контейнер: `http://n8n:5678/webhook/…`; браузер: `http://127.0.0.1:15678` |
+| Activity → n8n | `http://<URL-n8n>/webhook/…` | контейнер: `http://n8n:5678/webhook/…`; браузер: `http://127.0.0.1:${N8N_HOST_PORT}` (lab-скрипты и `mas-activity.env.example` ждут **15678**; `.env.example` ставит **5678**) |
 | n8n → Excel / Schedule / Math / Activity | `http://<IP-Windows>:8000` / `:8090` / `:8100` / `:8200` | Docker DNS: `excel-tools:8000`, `schedule-builder:8090`, `math-service:8100`, `mas-activity:8200` |
 | Браузер инженера | Activity `http://127.0.0.1:8200` (или IP ПК) | `http://127.0.0.1:8200` |
-| Postgres | только n8n credential (DBA) | `127.0.0.1:15432` с lab-хоста; Windows-сервисы **не** ходят в БД |
+| Postgres | только n8n credential (DBA) | с хоста `127.0.0.1:${POSTGRES_HOST_PORT}` (часто **15432**; compose default **5432**). Windows-сервисы **не** ходят в БД |
+| Code/JS ноды | корпоративный task runner | контейнер `n8n-runners`, health `n8n-runners:5680/healthz` |
 
 В Runtime URLs полевого n8n **не** оставляйте `http://excel-tools:8000` — это имя видно только внутри Compose. Правьте один workflow `MAS — Runtime Config`.
 
@@ -134,7 +154,7 @@ Calculation — **не** отдельный n8n-агент: оркестрато
 | Сервис | Каталог | Порт | Зачем |
 |---|---|---|---|
 | Excel Tools | `excel-agent-tools` | **8000** | разбор Excel |
-| Schedule Builder | `schedule-builder-service` | **8090** | parse / apply / emit `.INC` (commissioning и group-rebind — через Node) |
+| Schedule Builder | `schedule-builder-service` | **8090** | parse / apply / emit `.INC` (commissioning и group-rebind — Python `timeline_ops.py`, без Node) |
 | Math Service | `fastapi-math-service` | **8100** | пересечение траектории |
 | Activity UI | `mas-activity-service` | **8200** | задачи, HITL, RAG upload, скачивание `.INC` |
 
@@ -232,9 +252,9 @@ n8n → Import from File. Порядок — `n8n/import-manifest.json` → `run
 | `Agent — Schedule Builder` → Schedule Builder Chat Model | тот же тип LLM |
 | Knowledge Ingestion / Retrieval → embeddings | тот же embedding credential, модель `text-embedding-3-small`, поле **Dimensions пустое** |
 | Knowledge Ingestion / Retrieval / Orchestrator / Control Plane Proxy | Postgres credential |
-| Orchestrator webhook и Control Plane Proxy webhook | Header Auth (одно и то же имя/значение, что в `mas-activity.env`) |
+| Orchestrator webhook, **POST continue run** и Control Plane Proxy webhook | Header Auth (одно и то же имя/значение, что в `mas-activity.env`) |
 | Agent — Excel Extractor → HTTP / toolHttpRequest | **отдельный** Header Auth: header name `X-API-Key`, value = `API_KEY` из `excel-tools.env`. Имя credential в UI: `Excel Tools X-API-Key`. |
-| `MAS — Runtime Config` → Runtime URLs | `activity_base_url=http://<IP-Windows>:8200`, `excel_tools_url=http://<IP-Windows>:8000` (**без** `/api/v1`), `schedule_service_url=http://<IP-Windows>:8090`, `math_url=http://<IP-Windows>:8100` (без `/agent/run`) |
+| `MAS — Runtime Config` → Runtime URLs | `activity_base_url=http://<IP-Windows>:8200`, `excel_tools_url=http://<IP-Windows>:8000` (**без** `/api/v1`), `schedule_service_url=http://<IP-Windows>:8090`, `math_url=http://<IP-Windows>:8100` (без `/agent/run`), `orchestrator_step_url=http://127.0.0.1:5678/webhook/mas-orchestrator-step` (n8n бьёт **сам в себя**; не Activity `/cases/{id}/run`) |
 | Orchestrator / Excel / Schedule → Execute Workflow | `Runtime endpoints` / `Runtime configuration` → `MAS — Runtime Config` |
 | Orchestrator → Calculation | берёт `math_url` + `/agent/run` |
 
@@ -265,12 +285,14 @@ Settings → **Error workflow** у оркестратора, Excel Extractor, Sc
 
 Создаются `CREATE TABLE/INDEX IF NOT EXISTS` и upsert в `agent_registry`. **DROP нет.** Нужны права `CREATE TABLE` у роли n8n. Расширение `vector` этот workflow **не** ставит.
 
-Очистка MAS-данных (кейсы, events, error_traces, executions, mas_artifacts; **не** `agent_registry` и **не** таблицы n8n) — только через тот же прокси:
+Отдельный workflow только для init/wipe **не** заводим: второй webhook + вторая Postgres-привязка разъедутся с DDL. Init и контролируемая очистка живут в том же `MAS — Control Plane Proxy`.
 
-- в n8n откройте `MAS — Control Plane Proxy` → нода **Operator flags** → `wipe_data = true` → Save → **Execute workflow** с канваса (manual). После очистки верните флаг в `false`;
-- или `POST /webhook/mas-control-plane` с `{"operation":"wipe"}` / `{"operation":"schema","wipe":true}`.
+Очистка MAS-данных (кейсы, events, error_traces, executions, mas_artifacts; **не** `agent_registry` и **не** таблицы n8n) — только явный `clear` на `schema` (один прогон: создать таблицы, если нет, и TRUNCATE содержимого):
 
-Activity на старте вызывает только `schema` и **никогда** не шлёт `wipe`. Полевой FastAPI (Activity / Excel / Math / Schedule) **не** содержит драйвера Postgres.
+- в n8n откройте `MAS — Control Plane Proxy` → **Operator flags** → `clear = true` → Save → Test webhook с телом `{"operation":"schema"}`. После очистки верните `clear` в `false`;
+- или `POST /webhook/mas-control-plane` с `{"operation":"schema","clear":true}` (алиас: `{"operation":"wipe"}`).
+
+`schema` без `clear` таблицы создаёт и **не** чистит. Activity на старте вызывает только `schema` и **никогда** не шлёт `clear`/`wipe`. Полевой FastAPI (Activity / Excel / Math / Schedule) **не** содержит драйвера Postgres. Lab-redeploy кейсы сам не трёт: `python3 scripts/lab_soft_redeploy.py --wipe`.
 
 Таблицы прокси: `cases`, `events`, `error_traces`, `executions`, `agent_registry`, `mas_artifacts`.
 
@@ -383,14 +405,14 @@ RAG нужен для Activity → **База знаний** и для буду�
 
 ## 5. Лаборатория (разработчики)
 
-Compose на Linux-lab: n8n `127.0.0.1:15678`, Postgres `127.0.0.1:15432`. С хоста также публикуются Excel `:8000`, Schedule `:8090`, Math `:8100`, Activity `:8200`. Docker DNS для нод n8n: `excel-tools:8000`, `schedule-builder:8090`, `math-service:8100`, `mas-activity:8200`. **Не** `docker compose down -v` — это снесёт Postgres и RAG.
+Compose на Linux-lab: n8n с хоста `http://127.0.0.1:${N8N_HOST_PORT}` (скрипты по умолчанию **15678**, `.env.example` — **5678**), Postgres `127.0.0.1:${POSTGRES_HOST_PORT}` (часто **15432**, compose default **5432**). С хоста также Excel `:8000`, Schedule `:8090`, Math `:8100`, Activity `:8200`. Docker DNS для нод n8n: `excel-tools:8000`, `schedule-builder:8090`, `math-service:8100`, `mas-activity:8200`. Code-ноды: `n8n-runners:5680`. **Не** `docker compose down -v` — это снесёт Postgres и RAG.
 
 Не поднимайте одновременно Docker `mas-activity` и `mas-activity-service/start-linux.sh` на одном `:8200`.
 
 Activity в Compose **не** стартует, пока не зарегистрирован production webhook прокси (иначе lifespan падает с HTTP 404). `scripts/lab_soft_redeploy.py` импортирует workflows, активирует прокси, затем поднимает Activity.
 
 ```bash
-# дымовые тесты SCHEDULE emit / terminators
+# дымовые тесты SCHEDULE emit / terminators — нужен Node.js (lab). На полевой Windows Node не ставится.
 for f in n8n/tests/*-smoke.js; do node "$f" || exit 1; done
 
 cd mas-activity-service && PYTHONPATH=. .venv/bin/python -m pytest -q
@@ -408,19 +430,26 @@ PYTHONPATH=mas-activity-service mas-activity-service/.venv/bin/python \
   simulation-model-example/golden-cases/run_ui_smoke.py golden_case_2
 ```
 
-Не переписывать `*_MAS_result.INC` без явной просьбы. После правок Python у FastAPI в Compose: `docker compose up -d --force-recreate excel-tools schedule-builder mas-activity`. После правки Control Plane Proxy — переимпорт workflow (иначе `list_cases` без колонки `events`).
+Не переписывать `*_MAS_result.INC` без явной просьбы. После правок Python у FastAPI в Compose: `docker compose restart excel-tools schedule-builder math-service mas-activity` (uvicorn **без** `--reload`). После правки Control Plane Proxy — переимпорт workflow (иначе `list_cases` без колонки `events`).
 
-Поднять стенд и **переимпортировать** workflows, **не** затирая кейсы:
+Поднять стенд и **переимпортировать** workflows (кейсы по умолчанию **не** трогает):
 
 ```bash
-python3 scripts/lab_soft_redeploy.py --skip-wipe
+python3 scripts/lab_soft_redeploy.py
 ```
 
-Без `--skip-wipe` скрипт чистит `cases`/`events` и Activity state. Volumes не трогает.
+`--skip-wipe` оставлен как no-op (wipe и так выключен). Явная очистка кейсов/events/Activity state: `python3 scripts/lab_soft_redeploy.py --wipe`. Volumes не трогает.
 
-После UI-правок Activity: hard-refresh (`app.css?v=85`, `app.js?v=87` на момент этой редакции). Контейнеры FastAPI без `--reload`.
+После UI-правок Activity: hard-refresh. Версии cache-bust в `mas-activity-service/static/index.html` (`app.css?v=…`, `app.js?v=…`, `schema.js?v=…`) — цифры из этого файла не копировать сюда.
 
-Боевой сценарий дат/REVISE: `simulation-model-example/combat-dates-revise/` (`PUBLISH_ACTIVITY=0 python3 run_integration_cases.py` если трогали commissioning/emit).
+Боевой сценарий дат/REVISE: `simulation-model-example/combat-dates-revise/` (`PUBLISH_ACTIVITY=0 python3 run_integration_cases.py` если трогали commissioning/emit). Живые 6 задач через Activity UI (перед первым кейсом — чистая база, `--wipe`):
+
+```bash
+PYTHONPATH=mas-activity-service mas-activity-service/.venv/bin/python \
+  simulation-model-example/run_live_five.py
+```
+
+golden_case_1 / golden_case_2 + combat 0–3 (keep / keep-half / remove-half / new wells). HITL отвечает скрипт (`unlisted_wells_policy`).
 
 Проверка стека с хоста: `python3 scripts/mas_stack_health.py`.
 

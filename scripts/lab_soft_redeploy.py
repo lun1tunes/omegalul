@@ -5,10 +5,11 @@ Does NOT wipe docker volumes. Reimports full_clean_import_set, binds live IDs,
 syncs workflow_history, publishes (Control Plane Proxy first), restarts n8n,
 starts mas-activity after the proxy webhook is registered, runs Health Check.
 
-Without --skip-wipe, also clears cases/events and Activity state.
+Does not wipe MAS cases unless --wipe is passed.
 
 Usage:
-  python3 scripts/lab_soft_redeploy.py --skip-wipe
+  python3 scripts/lab_soft_redeploy.py
+  python3 scripts/lab_soft_redeploy.py --wipe
   python3 scripts/lab_soft_redeploy.py --skip-health
 """
 from __future__ import annotations
@@ -137,7 +138,7 @@ def wipe_mas_via_proxy(env: dict[str, str]) -> bool:
     url = f"http://127.0.0.1:{port}/webhook/mas-control-plane"
     header = env.get("CONTROL_PLANE_PROXY_AUTH_HEADER") or "Authorization"
     value = env.get("CONTROL_PLANE_PROXY_AUTH_VALUE") or "local-orch-inbound"
-    body = json.dumps({"operation": "wipe"}).encode()
+    body = json.dumps({"operation": "schema", "clear": True}).encode()
     req = urllib.request.Request(
         url,
         data=body,
@@ -565,6 +566,12 @@ def patch_nodes(nodes, name_to_id: dict[str, str], env: dict[str, str]) -> int:
                 elif key == "activity_base_url":
                     assignment["value"] = activity_url.rstrip("/")
                     changed += 1
+                elif key == "orchestrator_step_url":
+                    assignment["value"] = env.get(
+                        "ORCHESTRATOR_INTERNAL_WEBHOOK_URL",
+                        "http://127.0.0.1:5678/webhook/mas-orchestrator-step",
+                    )
+                    changed += 1
         if node.get("name") in {"Runtime configuration", "Runtime endpoints"}:
             for assignment in (((params.get("assignments") or {}).get("assignments")) or []):
                 key = assignment.get("name")
@@ -589,7 +596,7 @@ def patch_nodes(nodes, name_to_id: dict[str, str], env: dict[str, str]) -> int:
                 elif key == "orchestrator_step_url":
                     assignment["value"] = env.get(
                         "ORCHESTRATOR_INTERNAL_WEBHOOK_URL",
-                        "http://n8n:5678/webhook/mas-orchestrator-step",
+                        "http://127.0.0.1:5678/webhook/mas-orchestrator-step",
                     )
                     changed += 1
                 elif key == "activity_base_url":
@@ -1030,7 +1037,16 @@ def main() -> int:
     parser = argparse.ArgumentParser()
     parser.add_argument("--skip-health", action="store_true")
     parser.add_argument("--skip-import", action="store_true", help="only rebind/publish existing workflows")
-    parser.add_argument("--skip-wipe", action="store_true", help="do not wipe cases/events/Activity state")
+    parser.add_argument(
+        "--wipe",
+        action="store_true",
+        help="truncate MAS cases/events/artifacts and Activity state (keeps agent_registry)",
+    )
+    parser.add_argument(
+        "--skip-wipe",
+        action="store_true",
+        help="deprecated: wipe is off unless --wipe (kept so old runbooks still work)",
+    )
     args = parser.parse_args()
     t0 = time.time()
     env = load_env()
@@ -1042,7 +1058,7 @@ def main() -> int:
     excel_hdr = ensure_excel_tools_header_auth(env)
     if excel_hdr:
         env["_N8N_EXCEL_HDR_CRED_ID"] = excel_hdr
-    if not args.skip_wipe:
+    if args.wipe:
         wipe_state(env)
     if not args.skip_import:
         import_workflows()
@@ -1071,6 +1087,8 @@ def main() -> int:
     time.sleep(8)
     wait_control_plane_webhook(env)
     run(["docker", "compose", "up", "-d", "--no-deps", "mas-activity"], timeout=180)
+    # Volume-mounted Activity keeps running across up -d; restart loads new Python.
+    run(["docker", "compose", "restart", "mas-activity"], timeout=120)
     wait_activity_health(env)
     overall = None
     if not args.skip_health:
@@ -1091,6 +1109,8 @@ def main() -> int:
         print("activity probe", exc)
     elapsed = round(time.time() - t0, 1)
     print(json.dumps({"overall": overall, "activity_tasks": tasks, "elapsed_s": elapsed}, ensure_ascii=False))
+    if args.skip_health:
+        return 0
     if overall == "FAIL" or overall is None:
         return 2
     return 0

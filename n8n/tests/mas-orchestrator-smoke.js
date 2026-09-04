@@ -80,6 +80,14 @@ async function run(name, json, nodes = {}, binary = {}) {
   ]) {
     assert.ok(wf.nodes.some((n) => n.name === need), `missing ${need}`);
   }
+  const exec = wf.nodes.filter((n) => n.type !== 'n8n-nodes-base.stickyNote');
+  const xs = exec.map((n) => n.position[0]);
+  const ys = exec.map((n) => n.position[1]);
+  const width = Math.max(...xs) - Math.min(...xs);
+  const uniqueY = new Set(ys).size;
+  assert.ok(width < 2200, `orchestrator too wide: ${width}`);
+  assert.ok(uniqueY >= 8, `orchestrator still a line: uniqueY=${uniqueY}`);
+  assert.ok(wf.nodes.some((n) => n.name === 'lane intake'));
   const decision = wf.nodes.find((n) => n.name === 'Decision LLM');
   assert.equal(decision.type, '@n8n/n8n-nodes-langchain.chainLlm');
   assert.equal(decision.typeVersion, 1.9);
@@ -116,9 +124,16 @@ async function run(name, json, nodes = {}, binary = {}) {
   assert.equal(callSchedule.onError, 'continueRegularOutput');
   const continueNode = wf.nodes.find((n) => n.name === 'POST continue run');
   assert.ok(String(continueNode.parameters.jsonBody).includes("action: 'step'"));
+  assert.ok(String(continueNode.parameters.jsonBody).includes('orchestrator-self'));
   assert.equal(continueNode.parameters.url, "={{ $json.continue_url }}");
-  assert.equal(continueNode.parameters.authentication, undefined);
-  assert.equal(source('Merge agent result').includes('/cases/'), true);
+  assert.equal(continueNode.parameters.authentication, 'genericCredentialType');
+  assert.equal(continueNode.parameters.genericAuthType, 'httpHeaderAuth');
+  assert.ok(continueNode.credentials && continueNode.credentials.httpHeaderAuth);
+  assert.equal(continueNode.parameters.options.timeout, 3000);
+  assert.equal(source('Merge agent result').includes('/cases/'), false);
+  assert.ok(source('Merge agent result').includes('mas-orchestrator-step'));
+  const ackHttp = wf.nodes.find((n) => n.name === 'POST step ack to MAS Activity');
+  assert.equal(ackHttp.parameters.options.timeout, 2000);
   const callExcel = wf.nodes.find((n) => n.name === 'Call Excel Extractor');
   assert.equal(callExcel.type, 'n8n-nodes-base.executeWorkflow');
   assert.equal(callExcel.typeVersion, 1.3);
@@ -199,8 +214,14 @@ async function run(name, json, nodes = {}, binary = {}) {
     },
   );
   assert.deepEqual(createdCase.state.artifacts, {});
+  assert.equal(createdCase.state.version, 1);
   assert.match(JSON.stringify(createdCase.persist_events[0]), /Activity/);
 
+  const fatFacts = Array.from({ length: 40 }, (_, i) => ({
+    well: `W${i}`,
+    date: '2020-01-01',
+    values: { pad: 'x'.repeat(80) },
+  }));
   const prepared = await run(
     'Prepare decision context',
     { case_id: 'CASE-1' },
@@ -211,8 +232,18 @@ async function run(name, json, nodes = {}, binary = {}) {
           artifacts: {
             excel: { filename: 'dates.xlsx', artifact_id: 'excel' },
             schedule_source: { filename: 'base.inc', artifact_id: 'schedule_source' },
+            schedule_source_1: { filename: 'GRUPTREE.GRDECL', artifact_id: 'schedule_source_1' },
           },
-          data: {},
+          data: {
+            facts: fatFacts,
+            excel: { facts: fatFacts, normalized_rows: [{ preview: fatFacts, row_count: 40 }] },
+          },
+          current_task: {
+            task_id: 'TASK-OLD',
+            agent_id: 'excel_extractor',
+            context: { data: { facts: fatFacts } },
+          },
+          hitl: { pending: false, answers: { 'Q-1': JSON.stringify({ text: 'ok' }) } },
         },
         status: 'running',
       },
@@ -225,6 +256,16 @@ async function run(name, json, nodes = {}, binary = {}) {
   );
   assert.equal(prepared.compact.has_excel, true);
   assert.equal(prepared.compact.has_schedule_source, true);
+  assert.equal(prepared.compact.files.grdecl, 1);
+  assert.equal(prepared.compact.files.includes, 0);
+  assert.equal(prepared.compact.excel_filename, 'dates.xlsx');
+  assert.equal(prepared.compact.excel_facts, 40);
+  assert.equal(prepared.compact.wells_in_excel.length, 20);
+  assert.equal(prepared.compact.current_task.agent_id, 'excel_extractor');
+  assert.equal(prepared.compact.current_task.context, undefined);
+  assert.ok(!prepared.planner_input.includes('pad'));
+  assert.ok(!('facts' in (prepared.state.data || {})));
+  assert.deepEqual(prepared.state.hitl.answers['Q-1'], { text: 'ok' });
   assert.equal(prepared.activity_base_url, 'http://mas-activity:8200');
   assert.match(prepared.planner_input, /excel_extractor/);
 
@@ -276,6 +317,54 @@ async function run(name, json, nodes = {}, binary = {}) {
   assert.equal(hitlApplied.did_resume, true);
   assert.equal(hitlApplied.state.hitl.pending, false);
   assert.equal(hitlApplied.state.hitl.answers['Q-1'], 'январь');
+  assert.equal(hitlApplied.state.version, 1);
+
+  const hitlJson = await run(
+    'Apply request extras',
+    {
+      status: 'waiting_user',
+      state: {
+        goal: 'g',
+        hitl: { pending: true, questions: [{ question_id: 'Q-1', question: '?' }], answers: {} },
+      },
+    },
+    {
+      'Normalize step request': {
+        case_id: 'CASE-1',
+        is_resume: true,
+        action: 'resume',
+        human_response: JSON.stringify({ text: 'январь' }),
+        gate_id: 'Q-1',
+      },
+    },
+  );
+  assert.equal(hitlJson.state.hitl.answers['Q-1'].text, 'январь');
+
+  const mismatch = await run(
+    'Apply request extras',
+    {
+      status: 'waiting_user',
+      state: {
+        goal: 'g',
+        version: 4,
+        hitl: { pending: true, questions: [{ question_id: 'Q-1', question: '?' }], answers: {} },
+      },
+    },
+    {
+      'Normalize step request': {
+        case_id: 'CASE-1',
+        is_resume: true,
+        action: 'resume',
+        human_response: 'x',
+        gate_id: 'Q-1',
+        expected_version: 2,
+      },
+    },
+  );
+  assert.equal(mismatch.action_type, 'version_mismatch');
+  assert.equal(mismatch.did_resume, false);
+  assert.equal(mismatch.should_continue, false);
+  assert.match(String(mismatch.message), /expected 2/);
 
   const parsed = await run(
     'Parse decision',
@@ -303,10 +392,51 @@ async function run(name, json, nodes = {}, binary = {}) {
   assert.equal(parsed.should_call_agent, true);
   assert.equal(parsed.agent_task.agent_id, 'excel_extractor');
   assert.equal(parsed.agent_task.inputs.activity_base_url, 'http://activity:8200');
-  assert.deepEqual(parsed.agent_task.inputs.artifacts, { excel: 'a.xlsx' });
+  assert.equal(parsed.agent_task.inputs.artifacts, undefined);
+  assert.deepEqual(parsed.agent_task.inputs.artifact_ids, ['excel']);
+  assert.equal(parsed.agent_task.inputs.context, undefined);
+  assert.equal(parsed.state.current_task.task_id, 'TASK-1');
+  assert.equal(parsed.state.current_task.context, undefined);
+  assert.equal(parsed.state.version, 1);
   assert.equal(parsed.next_status, 'running');
   assert.deepEqual(parsed.events.map((e) => e.kind), ['orchestrator.decision', 'agent.handoff']);
   assert.equal(parsed.events.some((e) => e.kind === 'orchestrator.status'), false);
+
+  const afterHitl = await run(
+    'Parse decision',
+    {
+      output: {
+        status_message: 'Передаю schedule_builder.',
+        action: {
+          type: 'call_agent',
+          agent_id: 'schedule_builder',
+          task_id: 'TASK-2',
+          handoff_message: 'Примени даты и политику unlisted.',
+        },
+      },
+    },
+    {
+      'Prepare decision context': {
+        case_id: 'CASE-1',
+        state: {
+          goal: 'сдвинь даты',
+          artifacts: { excel: 'a.xlsx', schedule_source: 'b.inc' },
+          data: { excel: { facts: [{ well: '1601', date: '2020-01-01' }] } },
+          plan: [],
+          step_count: 1,
+          hitl: {
+            pending: false,
+            questions: [{ question_id: 'unlisted_wells_policy', question: '?' }],
+            answers: { unlisted_wells_policy: 'unlisted_wells_policy=remove' },
+          },
+        },
+        activity_base_url: 'http://activity:8200',
+      },
+    },
+  );
+  assert.equal(afterHitl.agent_task.inputs.unlisted_wells_policy, 'remove');
+  assert.equal(afterHitl.agent_task.context.hitl.answers.unlisted_wells_policy, 'unlisted_wells_policy=remove');
+  assert.deepEqual(afterHitl.agent_task.context.hitl.answer_ids, ['unlisted_wells_policy']);
 
   const finished = await run(
     'Parse decision',
@@ -329,7 +459,12 @@ async function run(name, json, nodes = {}, binary = {}) {
 
   const merged = await run(
     'Merge agent result',
-    { status: 'completed', message: 'ok', data: { rows: 3 }, artifacts: {} },
+    {
+      status: 'completed',
+      message: 'ok',
+      data: { facts: [{ well: 'A', date: '2020-01-01', values: { pad: 'secret' } }] },
+      artifacts: {},
+    },
     {
       'Parse decision': parsed,
       'Prepare agent call': { ...parsed, agent_id: 'excel_extractor', activity_base_url: 'http://activity:8200' },
@@ -337,8 +472,11 @@ async function run(name, json, nodes = {}, binary = {}) {
   );
   assert.equal(merged.next_status, 'running');
   assert.equal(merged.should_continue, true);
-  assert.ok(merged.state.data.excel);
-  assert.equal(merged.continue_url, 'http://activity:8200/cases/CASE-1/run');
+  assert.deepEqual(merged.state.data.excel.facts, [{ well: 'A', date: '2020-01-01' }]);
+  assert.ok(!JSON.stringify(merged.state.data).includes('secret'));
+  assert.ok(!('facts' in (merged.state.data || {})));
+  assert.equal(merged.state.version, 2);
+  assert.equal(merged.continue_url, 'http://127.0.0.1:5678/webhook/mas-orchestrator-step');
   assert.deepEqual(merged.events.map((e) => e.kind), ['agent.result']);
   assert.equal(merged.persist_events[0][2], 'agent.result');
 
@@ -354,6 +492,20 @@ async function run(name, json, nodes = {}, binary = {}) {
   assert.equal(failedMerge.should_continue, true);
   assert.deepEqual(failedMerge.events.map((e) => e.kind), ['agent.failed']);
   assert.equal(failedMerge.state.last_error.agent_id, 'schedule_builder');
+  assert.equal(failedMerge.state.data.schedule.summary.includes('SCHEDULE не собран'), true);
+  assert.ok(!('facts' in (failedMerge.state.data || {})));
+
+  const execFail = await run(
+    'Merge agent result',
+    { error: { message: 'Subworkflow failed' } },
+    {
+      'Parse decision': parsed,
+      'Prepare agent call': { ...parsed, agent_id: 'excel_extractor', activity_base_url: 'http://activity:8200' },
+    },
+  );
+  assert.equal(execFail.events[0].kind, 'agent.failed');
+  assert.equal(execFail.state.last_error.message, 'Subworkflow failed');
+  assert.equal(execFail.should_continue, true);
 
   const expanded = await run(
     'Expand agent events',

@@ -6,7 +6,7 @@
   "nodes": [
     {
       "parameters": {
-        "content": "## edit after import\n\n**Agent — Schedule Builder** — один LLM + FastAPI tools.\n\n1. Bind **Qwen** credential on Schedule Builder Chat Model\n2. Bind **Runtime configuration** → `MAS — Runtime Config` (URL FastAPI). Field: Windows/host URL.\n3. Orchestrator — MAS вызывает этот workflow через `executeWorkflow` (`Call Schedule Builder`), как Excel Extractor. Webhook не нужен.\n\nLLM не пишет .INC. parse/apply/emit остаются в сервисе.\n`suggested_capability` commissioning/group_rebind идут обычным HTTP `apply_*` (external n8n runners не execute'ят toolHttpRequest). Скважины/даты не хардкодятся — только факты сессии и текст задачи.",
+        "content": "## edit after import\n\n**Agent — Schedule Builder** — один LLM + FastAPI tools.\n\n1. Bind **Qwen** credential on Schedule Builder Chat Model\n2. Bind **Runtime configuration** → `MAS — Runtime Config` (URL FastAPI). Field: Windows/host URL.\n3. Orchestrator — MAS вызывает этот workflow через `executeWorkflow` (`Call Schedule Builder`), как Excel Extractor. Webhook не нужен.\n\nLLM не пишет .INC. parse/apply/emit остаются в сервисе.\n`suggested_capability` commissioning/group_rebind идут обычным HTTP `apply_*` (external n8n runners не execute'ят toolHttpRequest). После apply проверяется status; needs_input не идёт в Fetch result. Сессия закрывается POST /sessions/{id}/close. Скважины/даты не хардкодятся.",
         "height": 320,
         "width": 480,
         "color": 1
@@ -16,8 +16,8 @@
       "type": "n8n-nodes-base.stickyNote",
       "typeVersion": 1,
       "position": [
-        -40,
-        -1060
+        -220,
+        -360
       ]
     },
     {
@@ -61,7 +61,7 @@
       "type": "n8n-nodes-base.executeWorkflow",
       "typeVersion": 1.3,
       "position": [
-        280,
+        260,
         0
       ]
     },
@@ -74,7 +74,7 @@
       "type": "n8n-nodes-base.code",
       "typeVersion": 2,
       "position": [
-        560,
+        500,
         0
       ]
     },
@@ -109,11 +109,14 @@
       "type": "n8n-nodes-base.httpRequest",
       "typeVersion": 4.4,
       "position": [
-        840,
+        740,
         0
       ],
       "onError": "continueRegularOutput",
-      "alwaysOutputData": true
+      "alwaysOutputData": true,
+      "retryOnFail": true,
+      "maxTries": 3,
+      "waitBetweenTries": 2000
     },
     {
       "parameters": {
@@ -144,7 +147,7 @@
       "type": "n8n-nodes-base.if",
       "typeVersion": 2.3,
       "position": [
-        1120,
+        980,
         0
       ]
     },
@@ -157,8 +160,8 @@
       "type": "n8n-nodes-base.code",
       "typeVersion": 2,
       "position": [
-        1400,
-        85
+        1220,
+        240
       ]
     },
     {
@@ -175,11 +178,12 @@
           ]
         },
         "options": {
-          "timeout": 30000,
+          "timeout": 2000,
           "response": {
             "response": {
               "fullResponse": false,
-              "responseFormat": "json"
+              "responseFormat": "json",
+              "neverError": true
             }
           }
         },
@@ -192,8 +196,8 @@
       "type": "n8n-nodes-base.httpRequest",
       "typeVersion": 4.4,
       "position": [
-        1400,
-        -85
+        1220,
+        -220
       ],
       "onError": "continueRegularOutput",
       "alwaysOutputData": true
@@ -207,8 +211,8 @@
       "type": "n8n-nodes-base.code",
       "typeVersion": 2,
       "position": [
-        1680,
-        0
+        1440,
+        -220
       ]
     },
     {
@@ -225,11 +229,12 @@
           ]
         },
         "options": {
-          "timeout": 30000,
+          "timeout": 2000,
           "response": {
             "response": {
               "fullResponse": false,
-              "responseFormat": "json"
+              "responseFormat": "json",
+              "neverError": true
             }
           }
         },
@@ -242,37 +247,37 @@
       "type": "n8n-nodes-base.httpRequest",
       "typeVersion": 4.4,
       "position": [
-        1960,
-        0
+        1660,
+        -220
       ],
       "onError": "continueRegularOutput",
       "alwaysOutputData": true
     },
     {
       "parameters": {
-        "jsCode": "const x=$('Restore after Schedule Builder accepted').first().json||{}; return [{json:x}];"
+        "jsCode": "\nconst x=$('Restore after Schedule Builder accepted').first().json||{};\nconst cap=String(x.suggested_capability||'').trim();\nconst known=cap==='commissioning'||cap==='group_rebind'?cap:'operations';\nreturn [{json:{...x, suggested_capability:known}}];\n"
       },
       "id": "2cf633bd-4a88-500f-90ab-d095e718a904",
       "name": "Restore after Schedule Builder progress",
       "type": "n8n-nodes-base.code",
       "typeVersion": 2,
       "position": [
-        2240,
-        0
+        1880,
+        -220
       ]
     },
     {
       "parameters": {
         "mode": "expression",
         "numberOutputs": 3,
-        "output": "={{ ({commissioning:0, group_rebind:1, operations:2})[$json.suggested_capability] ?? 2 }}"
+        "output": "={{ ({commissioning:0, group_rebind:1, operations:2})[String($json.suggested_capability||'operations')] ?? 2 }}"
       },
       "id": "d925f291-4356-5f16-b0be-96db210a4207",
       "name": "Capability router",
       "type": "n8n-nodes-base.switch",
       "typeVersion": 3.4,
       "position": [
-        2520,
+        1220,
         0
       ]
     },
@@ -307,11 +312,14 @@
       "type": "n8n-nodes-base.httpRequest",
       "typeVersion": 4.4,
       "position": [
-        2800,
-        170
+        1480,
+        -160
       ],
       "onError": "continueRegularOutput",
-      "alwaysOutputData": true
+      "alwaysOutputData": true,
+      "retryOnFail": true,
+      "maxTries": 3,
+      "waitBetweenTries": 2000
     },
     {
       "parameters": {
@@ -344,11 +352,27 @@
       "type": "n8n-nodes-base.httpRequest",
       "typeVersion": 4.4,
       "position": [
-        2800,
-        510
+        1480,
+        0
       ],
       "onError": "continueRegularOutput",
-      "alwaysOutputData": true
+      "alwaysOutputData": true,
+      "retryOnFail": true,
+      "maxTries": 3,
+      "waitBetweenTries": 2000
+    },
+    {
+      "parameters": {
+        "jsCode": "\nconst raw=$json||{};\nconst data=raw.data&&typeof raw.data==='object'?raw.data:{};\nconst shifts=Array.isArray(data.shifts)?data.shifts:[];\nconst rebind=data.group_rebind&&typeof data.group_rebind==='object'?data.group_rebind:{};\nconst httpError=raw.error&&typeof raw.error==='object'?raw.error:null;\nconst status=String(raw.status||(httpError?'failed':'')).trim();\nconst operation=rebind.parent_group||Array.isArray(rebind.wells)?'group_rebind':(shifts.length||(Array.isArray(data.changed_keywords)&&data.changed_keywords.indexOf('DATES')>=0)?'commissioning':'apply');\nconst dates=shifts.slice(0,12).map(s=>{\n  if(!s||typeof s!=='object') return '';\n  const well=String(s.well||s.name||'').trim();\n  const date=String(s.date||s.new_date||s.to||'').trim();\n  return well?(date?well+': '+date:well):'';\n}).filter(Boolean);\nconst wellsAffected=operation==='group_rebind'\n  ? (Array.isArray(rebind.wells)?rebind.wells.length:Number(data.records_applied||0))\n  : Number(shifts.length||data.records_applied||0);\nconst skipFetch=status!=='completed';\nconst fallback=operation==='group_rebind'\n  ? (status==='completed'?'Перепривязка групп завершена':'Перепривязка групп требует уточнения')\n  : (status==='completed'?('Commissioning: сдвинуты даты ввода для '+wellsAffected+' скважин'):'Commissioning требует уточнения');\nconst message=String(raw.message||(httpError&&(httpError.message||httpError.description))||fallback);\nreturn [{json:{\n  ...raw,\n  status:status||'failed',\n  message,\n  skip_fetch:skipFetch,\n  activity_kind:status==='completed'?'agent.progress':(status==='needs_input'?'agent.progress':'agent.failed'),\n  status_message:message,\n  activity_payload:{\n    source:'schedule-builder-agent-workflow',\n    operation,\n    wells_affected:wellsAffected,\n    dates_changed:dates,\n    status:status||'failed'\n  }\n}}];\n"
+      },
+      "id": "72e69be9-d613-5793-8a28-7ed686282a08",
+      "name": "Describe apply result",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        1680,
+        -80
+      ]
     },
     {
       "parameters": {
@@ -364,11 +388,96 @@
           ]
         },
         "options": {
-          "timeout": 30000,
+          "timeout": 2000,
           "response": {
             "response": {
               "fullResponse": false,
-              "responseFormat": "json"
+              "responseFormat": "json",
+              "neverError": true
+            }
+          }
+        },
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "={{ ({kind: $json.activity_kind || 'agent.progress', actor: 'schedule_builder', agent_id: 'schedule_builder', task_id: $('Normalize schedule task').first().json.agent_task.task_id, status: $json.status || 'running', status_message: $json.status_message || '', payload: $json.activity_payload || {source: 'schedule-builder-agent-workflow'}}) }}"
+      },
+      "id": "0aedda63-011a-559a-b492-ec964af9b7bc",
+      "name": "Activity — Schedule Builder apply",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.4,
+      "position": [
+        1680,
+        -260
+      ],
+      "onError": "continueRegularOutput",
+      "alwaysOutputData": true
+    },
+    {
+      "parameters": {
+        "jsCode": "const x=$('Describe apply result').first().json||{}; return [{json:x}];"
+      },
+      "id": "461cb954-bf18-5b99-a1bf-c971f59c3354",
+      "name": "Restore after apply event",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        1880,
+        -260
+      ]
+    },
+    {
+      "parameters": {
+        "conditions": {
+          "options": {
+            "caseSensitive": true,
+            "leftValue": "",
+            "typeValidation": "strict",
+            "version": 2
+          },
+          "conditions": [
+            {
+              "id": "396c7270-c52a-5140-85dc-eb9acd9b5feb",
+              "leftValue": "={{ Boolean($json.skip_fetch) }}",
+              "rightValue": true,
+              "operator": {
+                "type": "boolean",
+                "operation": "true"
+              }
+            }
+          ],
+          "combinator": "and"
+        },
+        "options": {}
+      },
+      "id": "97d6ecd1-19a2-5feb-96df-9aadfff6f9bc",
+      "name": "Apply finished?",
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2.3,
+      "position": [
+        1880,
+        -80
+      ]
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "={{ $('Runtime configuration').first().json.activity_base_url + '/cases/' + $('Normalize schedule task').first().json.agent_task.case_id + '/events' }}",
+        "sendHeaders": true,
+        "headerParameters": {
+          "parameters": [
+            {
+              "name": "Content-Type",
+              "value": "application/json"
+            }
+          ]
+        },
+        "options": {
+          "timeout": 2000,
+          "response": {
+            "response": {
+              "fullResponse": false,
+              "responseFormat": "json",
+              "neverError": true
             }
           }
         },
@@ -381,8 +490,8 @@
       "type": "n8n-nodes-base.httpRequest",
       "typeVersion": 4.4,
       "position": [
-        3920,
-        0
+        2560,
+        -180
       ],
       "onError": "continueRegularOutput",
       "alwaysOutputData": true
@@ -396,8 +505,8 @@
       "type": "n8n-nodes-base.code",
       "typeVersion": 2,
       "position": [
-        4200,
-        0
+        2760,
+        -180
       ]
     },
     {
@@ -409,8 +518,8 @@
       "type": "n8n-nodes-base.code",
       "typeVersion": 2,
       "position": [
-        2800,
-        680
+        1480,
+        160
       ]
     },
     {
@@ -419,8 +528,8 @@
         "text": "={{ $json.agent_input }}",
         "hasOutputParser": false,
         "options": {
-          "systemMessage": "Ты — единственный LLM-решатель агента Schedule Builder.\n\nИсходный .INC тебе не показывают. Он лежит в сессии FastAPI. session_id привязан workflow: никогда не передавай session_id и обёртку args/input.\n\nИнструменты:\n- inspect_schedule — объектная инвентаризация скважин, keywords, даты, GRUPTREE (компактно)\n- inspect_well — подробный объект одной скважины: identity, factual WCONPROD, commissioning anchor и история режимов\n- analyze_forecast_controls — детерминированный разбор control timeline: history, forecast, overrides, economics, reopen/status/efficiency events\n- search_keywords — по intent сервиса вернёт keywords + methods\n- get_keyword — объектная модель полей и методов\n- list_records — компактные записи keyword/well\n- apply_commissioning — сдвиг дат ввода по фактам Excel из сессии. Якорь commissioning — первый нефактический WCONPROD; последующие WCONPROD являются прогнозными режимами и сохраняются.\n- apply_group_rebind — перепривязка групп по тексту задачи и baseline. Скважины только из inspect.\n- apply_operations — точечные MODIFY/ADD по схеме keyword. wells только из inspect.\n- build_schedule — собрать текущий working text, если apply уже менял сессию\n- validate_result — проверки emit\n\nПравила:\n- Не пиши текст SCHEDULE сам. Только инструменты.\n- Не придумывай скважины, даты, группы, дебиты.\n- Для commissioning сначала проверь объект скважины через inspect_schedule/inspect_well и отличай first_wconprod от forecast control events.\n- Для изменения одного параметра после существующего контроля используй WELTARG, а не переписывай весь WCONPROD.\n- Не путай WECON (экономические пределы), WTEST (переоткрытие), WELOPEN (статус), WEFAC (uptime), WPIMULT (CF) и GCONPROD (группа).\n- Если analyze_forecast_controls вернул needs_input по границе history/forecast — не применяй операцию до уточнения.\n- Жёсткое правило: если комментарий WCONPROD содержит «факт» или «fact», запись фактическая. Её нельзя удалять, переносить или использовать как прогнозный commissioning anchor.\n- suggested_capability=commissioning → сразу apply_commissioning, затем STOP.\n- suggested_capability=group_rebind → inspect при необходимости, затем apply_group_rebind, затем STOP.\n- Иначе search_keywords → get_keyword → apply_operations / needs_input.\n- После apply_* со status completed или needs_input — STOP. Не вызывай build, если apply уже вернул результат.\n- Если данных нет — не вызывай apply с пустыми выдуманными полями.\n\nЗаверши одним коротким фактическим предложением по-русски.\n",
-          "maxIterations": 12,
+          "systemMessage": "Ты — единственный LLM-решатель агента Schedule Builder.\n\nИсходный .INC тебе не показывают. Он лежит в сессии FastAPI. session_id привязан workflow: никогда не передавай session_id и обёртку args/input.\n\nИнструменты:\n- inspect_schedule — объектная инвентаризация скважин, keywords, даты, GRUPTREE (компактно)\n- inspect_well — подробный объект одной скважины: identity, factual WCONPROD, commissioning anchor и история режимов\n- analyze_forecast_controls — детерминированный разбор control timeline: history, forecast, overrides, economics, reopen/status/efficiency events\n- search_keywords — по intent сервиса вернёт keywords + methods\n- get_keyword — объектная модель полей и методов\n- list_records — компактные записи keyword/well\n- apply_commissioning — сдвиг дат ввода по фактам Excel из сессии. Якорь commissioning — первый нефактический WCONPROD; последующие WCONPROD являются прогнозными режимами и сохраняются.\n- apply_group_rebind — перепривязка групп по тексту задачи и baseline. Скважины только из inspect.\n- apply_operations — точечные MODIFY/ADD по схеме keyword. wells только из inspect.\n- build_schedule — собрать текущий working text, если apply уже менял сессию\n- validate_result — проверки emit\n\nПравила:\n- Не пиши текст SCHEDULE сам. Только инструменты.\n- Не придумывай скважины, даты, группы, дебиты.\n- Для commissioning сначала проверь объект скважины через inspect_schedule/inspect_well и отличай first_wconprod от forecast control events.\n- Для изменения одного параметра после существующего контроля используй WELTARG, а не переписывай весь WCONPROD.\n- Не путай WECON (экономические пределы), WTEST (переоткрытие), WELOPEN (статус), WEFAC (uptime), WPIMULT (CF) и GCONPROD (группа).\n- Если analyze_forecast_controls вернул needs_input по границе history/forecast — не применяй операцию до уточнения.\n- Жёсткое правило: если комментарий WCONPROD содержит «факт» или «fact», запись фактическая. Её нельзя удалять, переносить или использовать как прогнозный commissioning anchor.\n- suggested_capability=commissioning → сразу apply_commissioning, затем STOP.\n- suggested_capability=group_rebind → inspect при необходимости, затем apply_group_rebind, затем STOP.\n- Иначе search_keywords → get_keyword → apply_operations / needs_input.\n- apply_operations принимает JSON-массив [{keyword, operation, fields}], не объект с ключами \"0\",\"1\".\n- После apply_* со status completed или needs_input — STOP. Не вызывай build, если apply уже вернул результат.\n- Если данных нет — не вызывай apply с пустыми выдуманными полями.\n- Не вызывай один и тот же inspect_* больше трёх раз подряд. Если за 3 шага нет apply_* — STOP и верни вопрос (needs_input).\n- Не зацикливайся: max несколько tool-вызовов, затем короткий итог.\n\nЗаверши одним коротким фактическим предложением по-русски.\n",
+          "maxIterations": 6,
           "returnIntermediateSteps": true,
           "passthroughBinaryImages": false,
           "passthroughBinaryPdfs": false,
@@ -433,8 +542,8 @@
       "type": "@n8n/n8n-nodes-langchain.agent",
       "typeVersion": 3.1,
       "position": [
-        3080,
-        510
+        1720,
+        160
       ]
     },
     {
@@ -456,8 +565,8 @@
       "type": "@n8n/n8n-nodes-langchain.lmChatOpenAi",
       "typeVersion": 1.3,
       "position": [
-        3080,
-        340
+        1720,
+        40
       ],
       "credentials": {
         "openAiApi": {
@@ -465,6 +574,103 @@
           "name": "REPLACE: Qwen OpenAI-compatible schedule builder credential"
         }
       }
+    },
+    {
+      "parameters": {
+        "jsCode": "\nconst agent=$json||{};\nconst opened=$('Open schedule session').first().json||{};\nconst steps=Array.isArray(agent.intermediateSteps)?agent.intermediateSteps:(Array.isArray(agent.intermediate_steps)?agent.intermediate_steps:[]);\nconst toolName=step=>{\n  if(!step||typeof step!=='object') return '';\n  const a=step.action&&typeof step.action==='object'?step.action:step;\n  return String(a.tool||a.toolName||a.name||step.tool||'');\n};\nconst tools=steps.map(toolName).filter(Boolean);\nconst unique=[...new Set(tools)];\nconst counts={};\nfor(const name of tools) counts[name]=(counts[name]||0)+1;\nconst repeated=Object.keys(counts).some(name=>counts[name]>3);\nconst hasApply=tools.some(n=>n.indexOf('apply_')===0||n.indexOf('build_')===0);\nconst skipFetch=!hasApply||repeated;\nconst message=hasApply&&!repeated\n  ? ('Schedule Builder вызвал '+String(tools.length)+' tools: '+unique.join(', '))\n  : (repeated\n    ? 'Агент повторял один и тот же tool без прогресса. Нужно уточнение.'\n    : 'Агент не применил изменений. Уточните задачу.');\nreturn [{json:{\n  ...(skipFetch?{\n    task_id:opened.task_id||'',\n    agent_id:'schedule_builder',\n    status:'needs_input',\n    message,\n    data:{tools_used:unique,total_calls:steps.length},\n    artifacts:{},\n    issues:[{type:repeated?'repeated_tools':'no_apply'}],\n    assumptions:[],\n    requests:[{question_id:'Q-apply',question:message,options:[]}]\n  }:agent),\n  skip_fetch:skipFetch,\n  has_apply:hasApply,\n  activity_kind:'agent.progress',\n  status_message:message,\n  activity_payload:{source:'schedule-builder-agent-workflow',total_calls:steps.length,tools_used:unique,iterations:steps.length}\n}}];\n"
+      },
+      "id": "a068d7f6-510e-5983-ba46-3ef5c8735285",
+      "name": "Summarize AI steps",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        1960,
+        160
+      ]
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "={{ $('Runtime configuration').first().json.activity_base_url + '/cases/' + $('Normalize schedule task').first().json.agent_task.case_id + '/events' }}",
+        "sendHeaders": true,
+        "headerParameters": {
+          "parameters": [
+            {
+              "name": "Content-Type",
+              "value": "application/json"
+            }
+          ]
+        },
+        "options": {
+          "timeout": 2000,
+          "response": {
+            "response": {
+              "fullResponse": false,
+              "responseFormat": "json",
+              "neverError": true
+            }
+          }
+        },
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "={{ ({kind: $json.activity_kind || 'agent.progress', actor: 'schedule_builder', agent_id: 'schedule_builder', task_id: $('Normalize schedule task').first().json.agent_task.task_id, status: $json.status || 'running', status_message: $json.status_message || '', payload: $json.activity_payload || {source: 'schedule-builder-agent-workflow'}}) }}"
+      },
+      "id": "25bb1f57-6ac5-5783-b3e1-5b54071ce9e3",
+      "name": "Activity — Schedule Builder tools",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.4,
+      "position": [
+        1960,
+        300
+      ],
+      "onError": "continueRegularOutput",
+      "alwaysOutputData": true
+    },
+    {
+      "parameters": {
+        "jsCode": "const x=$('Summarize AI steps').first().json||{}; return [{json:x}];"
+      },
+      "id": "b48a748e-bca1-5770-b371-1fb6b29ff537",
+      "name": "Restore after AI tools",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        2160,
+        300
+      ]
+    },
+    {
+      "parameters": {
+        "conditions": {
+          "options": {
+            "caseSensitive": true,
+            "leftValue": "",
+            "typeValidation": "strict",
+            "version": 2
+          },
+          "conditions": [
+            {
+              "id": "10027cba-9f59-5d4f-b7ad-af2bdbaec770",
+              "leftValue": "={{ Boolean($json.skip_fetch) }}",
+              "rightValue": true,
+              "operator": {
+                "type": "boolean",
+                "operation": "true"
+              }
+            }
+          ],
+          "combinator": "and"
+        },
+        "options": {}
+      },
+      "id": "e44a2f01-41d6-5204-bcf7-cdb01d734246",
+      "name": "AI applied?",
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2.3,
+      "position": [
+        2160,
+        160
+      ]
     },
     {
       "parameters": {
@@ -494,24 +700,65 @@
       "type": "n8n-nodes-base.httpRequest",
       "typeVersion": 4.4,
       "position": [
-        3360,
+        2100,
         0
       ],
       "onError": "continueRegularOutput",
-      "alwaysOutputData": true
+      "alwaysOutputData": true,
+      "retryOnFail": true,
+      "maxTries": 3,
+      "waitBetweenTries": 2000
     },
     {
       "parameters": {
-        "jsCode": "\nconst fetched=$json||{};\nconst opened=$('Open schedule session').first().json||{};\nif(fetched.status){\n  return [{json:{\n    task_id:fetched.task_id||opened.task_id||'',\n    agent_id:'schedule_builder',\n    status:fetched.status,\n    message:fetched.message||'',\n    data:fetched.data||{},\n    artifacts:fetched.artifacts||{},\n    issues:fetched.issues||[],\n    assumptions:fetched.assumptions||[],\n    requests:fetched.requests||[]\n  }}];\n}\nreturn [{json:{\n  task_id:opened.task_id||'',\n  agent_id:'schedule_builder',\n  status:'failed',\n  message:String(fetched.message||fetched.error||'Schedule Builder не вернул SCHEDULE'),\n  data:{},\n  artifacts:{},\n  issues:[{type:'schedule_agent_no_result'}],\n  assumptions:[],\n  requests:[]\n}}];\n"
+        "jsCode": "\nconst fetched=$json||{};\nconst opened=$('Open schedule session').first().json||{};\nconst arts=fetched.artifacts&&typeof fetched.artifacts==='object'?fetched.artifacts:{};\nconst artifacts=(typeof arts.schedule_out==='boolean')?{}:arts;\nif(fetched.status){\n  return [{json:{\n    task_id:fetched.task_id||opened.task_id||'',\n    agent_id:'schedule_builder',\n    status:fetched.status,\n    message:fetched.message||'',\n    data:fetched.data||{},\n    artifacts,\n    issues:fetched.issues||[],\n    assumptions:fetched.assumptions||[],\n    requests:fetched.requests||[]\n  }}];\n}\nreturn [{json:{\n  task_id:opened.task_id||'',\n  agent_id:'schedule_builder',\n  status:'failed',\n  message:String(fetched.message||fetched.error||'Schedule Builder не вернул SCHEDULE'),\n  data:{},\n  artifacts:{},\n  issues:[{type:'schedule_agent_no_result'}],\n  assumptions:[],\n  requests:[]\n}}];\n"
       },
       "id": "0f545993-1de6-527f-9df0-cf396719357c",
       "name": "Format schedule result",
       "type": "n8n-nodes-base.code",
       "typeVersion": 2,
       "position": [
-        3640,
+        2320,
         0
       ]
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "={{ $('Runtime configuration').first().json.schedule_service_url + '/sessions/' + $('Open schedule session').first().json.session_id + '/close' }}",
+        "sendHeaders": true,
+        "headerParameters": {
+          "parameters": [
+            {
+              "name": "Content-Type",
+              "value": "application/json"
+            }
+          ]
+        },
+        "options": {
+          "timeout": 2000,
+          "response": {
+            "response": {
+              "fullResponse": false,
+              "responseFormat": "json",
+              "neverError": true
+            }
+          }
+        },
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "={{ ({}) }}"
+      },
+      "id": "9fc94bed-75bb-50c9-a537-464497a2b82f",
+      "name": "Close schedule session",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.4,
+      "position": [
+        2480,
+        0
+      ],
+      "onError": "continueRegularOutput",
+      "alwaysOutputData": true
     },
     {
       "parameters": {
@@ -552,9 +799,12 @@
       "type": "@n8n/n8n-nodes-langchain.toolHttpRequest",
       "typeVersion": 1.1,
       "position": [
-        2800,
-        340
-      ]
+        760,
+        -420
+      ],
+      "retryOnFail": true,
+      "maxTries": 3,
+      "waitBetweenTries": 2000
     },
     {
       "parameters": {
@@ -606,9 +856,12 @@
       "type": "@n8n/n8n-nodes-langchain.toolHttpRequest",
       "typeVersion": 1.1,
       "position": [
-        3080,
-        170
-      ]
+        980,
+        -420
+      ],
+      "retryOnFail": true,
+      "maxTries": 3,
+      "waitBetweenTries": 2000
     },
     {
       "parameters": {
@@ -660,9 +913,12 @@
       "type": "@n8n/n8n-nodes-langchain.toolHttpRequest",
       "typeVersion": 1.1,
       "position": [
-        2800,
-        0
-      ]
+        1200,
+        -420
+      ],
+      "retryOnFail": true,
+      "maxTries": 3,
+      "waitBetweenTries": 2000
     },
     {
       "parameters": {
@@ -714,9 +970,12 @@
       "type": "@n8n/n8n-nodes-langchain.toolHttpRequest",
       "typeVersion": 1.1,
       "position": [
-        3080,
-        0
-      ]
+        760,
+        -260
+      ],
+      "retryOnFail": true,
+      "maxTries": 3,
+      "waitBetweenTries": 2000
     },
     {
       "parameters": {
@@ -768,9 +1027,12 @@
       "type": "@n8n/n8n-nodes-langchain.toolHttpRequest",
       "typeVersion": 1.1,
       "position": [
-        2800,
-        -170
-      ]
+        980,
+        -260
+      ],
+      "retryOnFail": true,
+      "maxTries": 3,
+      "waitBetweenTries": 2000
     },
     {
       "parameters": {
@@ -832,9 +1094,12 @@
       "type": "@n8n/n8n-nodes-langchain.toolHttpRequest",
       "typeVersion": 1.1,
       "position": [
-        3080,
-        -170
-      ]
+        1200,
+        -260
+      ],
+      "retryOnFail": true,
+      "maxTries": 3,
+      "waitBetweenTries": 2000
     },
     {
       "parameters": {
@@ -875,9 +1140,12 @@
       "type": "@n8n/n8n-nodes-langchain.toolHttpRequest",
       "typeVersion": 1.1,
       "position": [
-        2800,
-        -340
-      ]
+        760,
+        -100
+      ],
+      "retryOnFail": true,
+      "maxTries": 3,
+      "waitBetweenTries": 2000
     },
     {
       "parameters": {
@@ -939,13 +1207,16 @@
       "type": "@n8n/n8n-nodes-langchain.toolHttpRequest",
       "typeVersion": 1.1,
       "position": [
-        3080,
-        -340
-      ]
+        980,
+        -100
+      ],
+      "retryOnFail": true,
+      "maxTries": 3,
+      "waitBetweenTries": 2000
     },
     {
       "parameters": {
-        "toolDescription": "Применить operations. JSON-объект с числовыми ключами: {\"0\":{keyword,operation,fields}}.",
+        "toolDescription": "Применить operations. JSON-массив: [{\"keyword\":\"WCONPROD\",\"operation\":\"MODIFY\",\"fields\":{...}}].",
         "method": "POST",
         "url": "={{ $('Runtime configuration').first().json.schedule_service_url + '/agent-tools/' + \"apply_operations\" }}",
         "authentication": "none",
@@ -958,7 +1229,7 @@
           "values": [
             {
               "name": "operations",
-              "description": "Числовые ключи → {keyword, operation, fields}",
+              "description": "Массив {keyword, operation, fields}. Не объект с ключами 0,1,2.",
               "type": "json"
             }
           ]
@@ -993,9 +1264,12 @@
       "type": "@n8n/n8n-nodes-langchain.toolHttpRequest",
       "typeVersion": 1.1,
       "position": [
-        2800,
-        -510
-      ]
+        1200,
+        -100
+      ],
+      "retryOnFail": true,
+      "maxTries": 3,
+      "waitBetweenTries": 2000
     },
     {
       "parameters": {
@@ -1036,9 +1310,12 @@
       "type": "@n8n/n8n-nodes-langchain.toolHttpRequest",
       "typeVersion": 1.1,
       "position": [
-        3080,
-        -510
-      ]
+        760,
+        60
+      ],
+      "retryOnFail": true,
+      "maxTries": 3,
+      "waitBetweenTries": 2000
     },
     {
       "parameters": {
@@ -1079,9 +1356,12 @@
       "type": "@n8n/n8n-nodes-langchain.toolHttpRequest",
       "typeVersion": 1.1,
       "position": [
-        2800,
-        -680
-      ]
+        980,
+        60
+      ],
+      "retryOnFail": true,
+      "maxTries": 3,
+      "waitBetweenTries": 2000
     }
   ],
   "connections": {
@@ -1220,7 +1500,7 @@
       "main": [
         [
           {
-            "node": "Fetch schedule result",
+            "node": "Describe apply result",
             "type": "main",
             "index": 0
           }
@@ -1229,6 +1509,57 @@
     },
     "Apply group rebind": {
       "main": [
+        [
+          {
+            "node": "Describe apply result",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Describe apply result": {
+      "main": [
+        [
+          {
+            "node": "Activity — Schedule Builder apply",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Activity — Schedule Builder apply": {
+      "main": [
+        [
+          {
+            "node": "Restore after apply event",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Restore after apply event": {
+      "main": [
+        [
+          {
+            "node": "Apply finished?",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Apply finished?": {
+      "main": [
+        [
+          {
+            "node": "Format schedule result",
+            "type": "main",
+            "index": 0
+          }
+        ],
         [
           {
             "node": "Fetch schedule result",
@@ -1385,6 +1716,57 @@
       "main": [
         [
           {
+            "node": "Summarize AI steps",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Summarize AI steps": {
+      "main": [
+        [
+          {
+            "node": "Activity — Schedule Builder tools",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Activity — Schedule Builder tools": {
+      "main": [
+        [
+          {
+            "node": "Restore after AI tools",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Restore after AI tools": {
+      "main": [
+        [
+          {
+            "node": "AI applied?",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "AI applied?": {
+      "main": [
+        [
+          {
+            "node": "Format schedule result",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
             "node": "Fetch schedule result",
             "type": "main",
             "index": 0
@@ -1404,6 +1786,17 @@
       ]
     },
     "Format schedule result": {
+      "main": [
+        [
+          {
+            "node": "Close schedule session",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Close schedule session": {
       "main": [
         [
           {
@@ -1430,7 +1823,8 @@
     "executionOrder": "v1",
     "saveManualExecutions": true,
     "callerPolicy": "workflowsFromSameOwner",
-    "errorWorkflow": ""
+    "errorWorkflow": "",
+    "executionTimeout": 900
   },
   "meta": {
     "templateCredsSetupCompleted": true,
@@ -1438,5 +1832,5 @@
   },
   "tags": [],
   "pinData": {},
-  "versionId": "64b5c564-3cfd-431f-8010-c930d049fc19"
+  "versionId": "2f07cc90-33e0-47b7-af4f-0c3c8a752ece"
 }

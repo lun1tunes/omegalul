@@ -32,15 +32,17 @@ Workbook тебе не показывают. Он лежит в сессии Fas
 - match_tables — ранжировать таблицы по запросу
 - describe_table — колонки и sample по table_id
 - list_column_values — ограниченные distinct-значения колонки
-- query_table — строки по table_id (limit, фильтры). Не выгружай всю книгу
+- query_table — строки по table_id (limit, фильтры). select и filters — JSON-массивы, не объект с ключами "0","1". Не выгружай всю книгу
 - extract_commissioning — скважина+дата ввода из уже открытой сессии. Даты и скважины сам не выдумывай
 
 Правила:
 - Не пиши SCHEDULE / .INC. Только факты из Excel.
 - Не придумывай скважины, даты, дебиты, имена листов и table_id.
-- suggested_capability=commissioning → сразу extract_commissioning, затем STOP.
-- Иначе introspect/detect → query нужных таблиц. Если нужны даты ввода — extract_commissioning.
-- После extract_commissioning со status completed или needs_input — STOP.
+- Проанализируй objective и handoff_message.
+- Если задача про даты ввода скважин → extract_commissioning один раз, затем STOP.
+- Если задача про дебиты, управления, историю, PVT, SCAL → introspect/detect/query. Не вызывай extract_commissioning, если даты ввода не нужны.
+- После извлечения данных (extract_commissioning или query_table) — STOP.
+- Если за 3 шага нет прогресса — STOP и верни вопрос. Не вызывай один tool больше трёх раз подряд.
 - Если файла/таблиц нет — не выдумывай строки.
 
 Заверши одним коротким фактическим предложением по-русски.
@@ -78,11 +80,11 @@ TOOLS = [
     ),
     (
         "query_table",
-        "Строки таблицы. select/filters — JSON с числовыми ключами 0,1,2,...",
+        "Строки таблицы. select и filters — JSON-массивы: [\"well\",\"date\"] и [{\"field\":\"well\",\"operator\":\"eq\",\"value\":\"101\"}].",
         [
             ("table_id", "string", True, "table_id из detect_tables"),
-            ("select", "json", False, "Числовые ключи → имена колонок"),
-            ("filters", "json", False, "Числовые ключи → {field, operator, value}"),
+            ("select", "json", False, "Массив имён колонок, например [\"well\",\"date\"]"),
+            ("filters", "json", False, "Массив {field, operator, value}"),
             ("limit", "string", False, "Лимит строк, по умолчанию 200"),
         ],
     ),
@@ -119,31 +121,119 @@ def connect(c, src, dst, out="main", si=0, tin="main", ti=0):
     outputs[si].append({"node": dst, "type": tin, "index": ti})
 
 
-def http_json(name, pos, method, url, body=None, timeout=180000):
+def if_true(name, pos, left):
+    return node(
+        name,
+        "n8n-nodes-base.if",
+        2.3,
+        pos,
+        {
+            "conditions": {
+                "options": {"caseSensitive": True, "leftValue": "", "typeValidation": "strict", "version": 2},
+                "conditions": [
+                    {
+                        "id": nid(f"{name}-cond"),
+                        "leftValue": left,
+                        "rightValue": True,
+                        "operator": {"type": "boolean", "operation": "true"},
+                    }
+                ],
+                "combinator": "and",
+            },
+            "options": {},
+        },
+    )
+
+
+def http_json(name, pos, method, url, body=None, timeout=180000, *, activity=False, retry=False):
+    response = {"fullResponse": False, "responseFormat": "json"}
+    if activity:
+        response["neverError"] = True
+        timeout = min(timeout, 2000)
     params = {
         "method": method,
         "url": url,
-        "authentication": "genericCredentialType",
-        "genericAuthType": "httpHeaderAuth",
         "sendHeaders": True,
-        "headerParameters": {
-            "parameters": [{"name": "Content-Type", "value": "application/json"}]
-        },
-        "options": {"timeout": timeout, "response": {"response": {"fullResponse": False, "responseFormat": "json"}}},
+        "headerParameters": {"parameters": [{"name": "Content-Type", "value": "application/json"}]},
+        "options": {"timeout": timeout, "response": {"response": response}},
     }
+    if not activity:
+        params["authentication"] = "genericCredentialType"
+        params["genericAuthType"] = "httpHeaderAuth"
     if body is not None:
         params["sendBody"] = True
         params["specifyBody"] = "json"
         params["jsonBody"] = body
-    return node(
+    extra = {"onError": "continueRegularOutput", "alwaysOutputData": True}
+    if retry:
+        extra.update({"retryOnFail": True, "maxTries": 3, "waitBetweenTries": 2000})
+    if not activity:
+        extra["credentials"] = EXCEL_KEY_CRED
+    return node(name, "n8n-nodes-base.httpRequest", 4.4, pos, params, **extra)
+
+
+def activity_event(name, pos, kind, message, *, status="running"):
+    body = (
+        "={{ ({"
+        f"kind: {json.dumps(kind)}, "
+        "actor: 'excel_extractor', agent_id: 'excel_extractor', "
+        "task_id: $('Normalize excel task').first().json.agent_task.task_id, "
+        f"status: {json.dumps(status)}, "
+        f"status_message: {json.dumps(message)}, "
+        "payload: {source: 'excel-extractor-agent-workflow'}"
+        "}) }}"
+    )
+    return http_json(
         name,
-        "n8n-nodes-base.httpRequest",
-        4.4,
         pos,
-        params,
-        credentials=EXCEL_KEY_CRED,
-        onError="continueRegularOutput",
-        alwaysOutputData=True,
+        "POST",
+        "={{ $('Runtime configuration').first().json.activity_base_url + '/cases/' + $('Normalize excel task').first().json.agent_task.case_id + '/events' }}",
+        body,
+        timeout=2000,
+        activity=True,
+    )
+
+
+def activity_result_event(name, pos):
+    body = (
+        "={{ ({"
+        "kind: 'agent.result', actor: 'excel_extractor', agent_id: 'excel_extractor', "
+        "task_id: $('Normalize excel task').first().json.agent_task.task_id, "
+        "status: String($('Format excel result').first().json.status || 'failed'), "
+        "status_message: String($('Format excel result').first().json.message || 'Excel Extractor завершил обработку workbook.'), "
+        "payload: {source: 'excel-extractor-agent-workflow'}"
+        "}) }}"
+    )
+    return http_json(
+        name,
+        pos,
+        "POST",
+        "={{ $('Runtime configuration').first().json.activity_base_url + '/cases/' + $('Normalize excel task').first().json.agent_task.case_id + '/events' }}",
+        body,
+        timeout=2000,
+        activity=True,
+    )
+
+
+def activity_event_dynamic(name, pos):
+    body = (
+        "={{ ({"
+        "kind: $json.activity_kind || 'agent.progress', "
+        "actor: 'excel_extractor', agent_id: 'excel_extractor', "
+        "task_id: $('Normalize excel task').first().json.agent_task.task_id, "
+        "status: $json.status || 'running', "
+        "status_message: $json.status_message || '', "
+        "payload: $json.activity_payload || {source: 'excel-extractor-agent-workflow'}"
+        "}) }}"
+    )
+    return http_json(
+        name,
+        pos,
+        "POST",
+        "={{ $('Runtime configuration').first().json.activity_base_url + '/cases/' + $('Normalize excel task').first().json.agent_task.case_id + '/events' }}",
+        body,
+        timeout=2000,
+        activity=True,
     )
 
 
@@ -194,6 +284,9 @@ def tool_http(name, pos, description, fields):
             "parametersBody": {"values": body_values},
         },
         credentials=EXCEL_KEY_CRED,
+        retryOnFail=True,
+        maxTries=3,
+        waitBetweenTries=2000,
     )
 
 
@@ -227,6 +320,82 @@ task.context=task.context&&typeof task.context==='object'?task.context:{};
 const cfg=$('Runtime configuration').first().json||{};
 if(!task.inputs.activity_base_url&&cfg.activity_base_url) task.inputs={...task.inputs, activity_base_url:cfg.activity_base_url};
 return [{json:{...cfg, agent_task:task, case_id:task.case_id, task_id:task.task_id}}];
+"""
+
+RESTORE_AFTER_PROGRESS = r"""
+const x=$('Restore after Excel Extractor accepted').first().json||{};
+const cap=String(x.suggested_capability||'').trim();
+const known=cap==='commissioning'?cap:'operations';
+return [{json:{...x, suggested_capability:known}}];
+"""
+
+DESCRIBE_EXTRACT = r"""
+const raw=$json||{};
+const data=raw.data&&typeof raw.data==='object'?raw.data:{};
+const facts=Array.isArray(data.facts)?data.facts:[];
+const n=Number(data.total_count!=null?data.total_count:facts.length);
+const httpError=raw.error&&typeof raw.error==='object'?raw.error:null;
+const status=String(raw.status||(httpError?'failed':'')).trim();
+const skipFetch=status!=='completed';
+const fallback=status==='completed'
+  ? ('Commissioning: извлечено '+n+' скважин с датами ввода')
+  : (status==='needs_input'?'Commissioning требует уточнения':'Извлечение commissioning не удалось');
+const message=String(raw.message||(httpError&&(httpError.message||httpError.description))||fallback);
+return [{json:{
+  ...raw,
+  status:status||'failed',
+  message,
+  skip_fetch:skipFetch,
+  activity_kind:status==='completed'?'agent.progress':(status==='needs_input'?'agent.progress':'agent.failed'),
+  status_message:message,
+  activity_payload:{
+    source:'excel-extractor-agent-workflow',
+    operation:'extract_commissioning',
+    wells_extracted:n,
+    status:status||'failed'
+  }
+}}];
+"""
+
+SUMMARIZE_AI = r"""
+const agent=$json||{};
+const opened=$('Open excel session').first().json||{};
+const steps=Array.isArray(agent.intermediateSteps)?agent.intermediateSteps:(Array.isArray(agent.intermediate_steps)?agent.intermediate_steps:[]);
+const toolName=step=>{
+  if(!step||typeof step!=='object') return '';
+  const a=step.action&&typeof step.action==='object'?step.action:step;
+  return String(a.tool||a.toolName||a.name||step.tool||'');
+};
+const tools=steps.map(toolName).filter(Boolean);
+const unique=[...new Set(tools)];
+const counts={};
+for(const name of tools) counts[name]=(counts[name]||0)+1;
+const repeated=Object.keys(counts).some(name=>counts[name]>3);
+const hasExtraction=tools.some(n=>n==='extract_commissioning'||n==='query_table');
+const skipFetch=!hasExtraction||repeated;
+const message=hasExtraction&&!repeated
+  ? ('Excel Extractor вызвал '+String(tools.length)+' tools: '+unique.join(', '))
+  : (repeated
+    ? 'Агент повторял один и тот же tool без прогресса. Нужно уточнение.'
+    : 'Агент не извлёк данных. Уточните, какие данные нужны.');
+return [{json:{
+  ...(skipFetch?{
+    task_id:opened.task_id||'',
+    agent_id:'excel_extractor',
+    status:'needs_input',
+    message,
+    data:{tools_used:unique,total_calls:steps.length},
+    artifacts:{},
+    issues:[{type:repeated?'repeated_tools':'no_extract'}],
+    assumptions:[],
+    requests:[{question_id:'Q-clarify',question:message,options:['Даты ввода','Дебиты','Управления','Другое']}]
+  }:agent),
+  skip_fetch:skipFetch,
+  has_extraction:hasExtraction,
+  activity_kind:'agent.progress',
+  status_message:message,
+  activity_payload:{source:'excel-extractor-agent-workflow',total_calls:steps.length,tools_used:unique,iterations:steps.length}
+}}];
 """
 
 PREPARE = r"""
@@ -308,16 +477,20 @@ def main() -> None:
                     "1. Bind **Qwen** credential on Excel Extractor Chat Model\n"
                     "2. Bind **Runtime configuration** → `MAS — Runtime Config` "
                     "(URL сервисов). Ключ Excel: credential Header Auth "
-                    "**Excel Tools X-API-Key** (`X-API-Key`), не Set.\n"
+                    "**Excel Tools X-API-Key** (`X-API-Key`), не Set. "
+                    "Activity events ключ Excel не используют.\n"
                     "3. Orchestrator — MAS вызывает этот workflow через "
                     "`executeWorkflow` (`Call Excel Extractor`). Webhook не нужен.\n\n"
                     "Файлы не грузятся в n8n. Сервис сам GET "
                     "`/cases/{id}/artifacts/excel`.\n"
                     "`suggested_capability=commissioning` идёт обычным HTTP "
                     "`extract_commissioning` (external n8n runners не execute'ят "
-                    "toolHttpRequest). Скважины/даты не хардкодятся."
+                    "toolHttpRequest). Остальное — LLM + query_table. "
+                    "После extract проверяется status; needs_input не идёт в "
+                    "Fetch result. Сессия закрывается POST /sessions/{id}/close. "
+                    "Скважины/даты не хардкодятся."
                 ),
-                "height": 340,
+                "height": 380,
                 "width": 480,
                 "color": 1,
             },
@@ -358,6 +531,7 @@ def main() -> None:
             "POST",
             "={{ $json.excel_tools_url }}/agent-tools/open_session",
             "={{ $json.agent_task }}",
+            retry=True,
         ),
         node(
             "Session ready?",
@@ -381,6 +555,32 @@ def main() -> None:
             },
         ),
         node("Format missing excel", "n8n-nodes-base.code", 2, (1220, 240), {"jsCode": FORMAT_OPEN}),
+        activity_event(
+            "Activity — Excel Extractor accepted",
+            (1220, -220),
+            "agent.accepted",
+            "Excel Extractor принял задачу и анализирует workbook",
+        ),
+        node(
+            "Restore after Excel Extractor accepted",
+            "n8n-nodes-base.code",
+            2,
+            (1440, -220),
+            {"jsCode": "const x=$('Session ready?').first().json||{}; return [{json:x}];"},
+        ),
+        activity_event(
+            "Activity — Excel Extractor progress",
+            (1660, -220),
+            "agent.progress",
+            "Excel Extractor проверяет листы и таблицы workbook.",
+        ),
+        node(
+            "Restore after Excel Extractor progress",
+            "n8n-nodes-base.code",
+            2,
+            (1880, -220),
+            {"jsCode": RESTORE_AFTER_PROGRESS},
+        ),
         node(
             "Capability router",
             "n8n-nodes-base.switch",
@@ -389,7 +589,7 @@ def main() -> None:
             {
                 "mode": "expression",
                 "numberOutputs": 2,
-                "output": "={{ ({commissioning:0, operations:1})[$json.suggested_capability] ?? 1 }}",
+                "output": "={{ ({commissioning:0, operations:1})[String($json.suggested_capability||'operations')] ?? 1 }}",
             },
         ),
         http_json(
@@ -399,6 +599,28 @@ def main() -> None:
             "={{ $('Runtime configuration').first().json.excel_tools_url + '/agent-tools/extract_commissioning' }}",
             "={{ ({session_id: $('Open excel session').first().json.session_id}) }}",
             timeout=180000,
+            retry=True,
+        ),
+        node("Describe extract result", "n8n-nodes-base.code", 2, (1680, -80), {"jsCode": DESCRIBE_EXTRACT}),
+        activity_event_dynamic("Activity — Excel Extractor extract", (1680, -260)),
+        node(
+            "Restore after extract event",
+            "n8n-nodes-base.code",
+            2,
+            (1880, -260),
+            {"jsCode": "const x=$('Describe extract result').first().json||{}; return [{json:x}];"},
+        ),
+        if_true("Extract finished?", (1880, -80), "={{ Boolean($json.skip_fetch) }}"),
+        activity_result_event(
+            "Activity — Excel Extractor completed",
+            (2560, -180),
+        ),
+        node(
+            "Restore after Excel Extractor activity",
+            "n8n-nodes-base.code",
+            2,
+            (2760, -180),
+            {"jsCode": "const x=$('Format excel result').first().json||{}; return [{json:x}];"},
         ),
         node("Prepare AI Agent input", "n8n-nodes-base.code", 2, (1480, 160), {"jsCode": PREPARE}),
         node(
@@ -412,7 +634,7 @@ def main() -> None:
                 "hasOutputParser": False,
                 "options": {
                     "systemMessage": SYSTEM,
-                    "maxIterations": 12,
+                    "maxIterations": 6,
                     "returnIntermediateSteps": True,
                     "passthroughBinaryImages": False,
                     "passthroughBinaryPdfs": False,
@@ -433,15 +655,34 @@ def main() -> None:
             },
             credentials=OA,
         ),
+        node("Summarize AI steps", "n8n-nodes-base.code", 2, (1960, 160), {"jsCode": SUMMARIZE_AI}),
+        activity_event_dynamic("Activity — Excel Extractor tools", (1960, 300)),
+        node(
+            "Restore after AI tools",
+            "n8n-nodes-base.code",
+            2,
+            (2160, 300),
+            {"jsCode": "const x=$('Summarize AI steps').first().json||{}; return [{json:x}];"},
+        ),
+        if_true("AI extracted?", (2160, 160), "={{ Boolean($json.skip_fetch) }}"),
         http_json(
             "Fetch excel result",
-            (1960, 0),
+            (2100, 0),
             "GET",
             "={{ $('Runtime configuration').first().json.excel_tools_url + '/sessions/' + $('Open excel session').first().json.session_id + '/result' }}",
             None,
             timeout=120000,
+            retry=True,
         ),
-        node("Format excel result", "n8n-nodes-base.code", 2, (2200, 0), {"jsCode": FORMAT_RESULT}),
+        node("Format excel result", "n8n-nodes-base.code", 2, (2320, 0), {"jsCode": FORMAT_RESULT}),
+        http_json(
+            "Close excel session",
+            (2480, 0),
+            "POST",
+            "={{ $('Runtime configuration').first().json.excel_tools_url + '/sessions/' + $('Open excel session').first().json.session_id + '/close' }}",
+            "={{ ({}) }}",
+            timeout=5000,
+        ),
         *tools,
     ]
 
@@ -450,17 +691,34 @@ def main() -> None:
     connect(connections, "Runtime configuration", "Normalize excel task")
     connect(connections, "Normalize excel task", "Open excel session")
     connect(connections, "Open excel session", "Session ready?")
-    connect(connections, "Session ready?", "Capability router", si=0)
+    connect(connections, "Session ready?", "Activity — Excel Extractor accepted", si=0)
+    connect(connections, "Activity — Excel Extractor accepted", "Restore after Excel Extractor accepted")
+    connect(connections, "Restore after Excel Extractor accepted", "Activity — Excel Extractor progress")
+    connect(connections, "Activity — Excel Extractor progress", "Restore after Excel Extractor progress")
+    connect(connections, "Restore after Excel Extractor progress", "Capability router")
     connect(connections, "Session ready?", "Format missing excel", si=1)
     connect(connections, "Capability router", "Extract commissioning", si=0)
     connect(connections, "Capability router", "Prepare AI Agent input", si=1)
-    connect(connections, "Extract commissioning", "Fetch excel result")
+    connect(connections, "Extract commissioning", "Describe extract result")
+    connect(connections, "Describe extract result", "Activity — Excel Extractor extract")
+    connect(connections, "Activity — Excel Extractor extract", "Restore after extract event")
+    connect(connections, "Restore after extract event", "Extract finished?")
+    connect(connections, "Extract finished?", "Format excel result", si=0)
+    connect(connections, "Extract finished?", "Fetch excel result", si=1)
     connect(connections, "Prepare AI Agent input", "Excel Extractor AI Agent")
     connect(connections, "Excel Extractor Chat Model — Qwen", "Excel Extractor AI Agent", out="ai_languageModel", tin="ai_languageModel")
     for name, _desc, _fields in TOOLS:
         connect(connections, name, "Excel Extractor AI Agent", out="ai_tool", tin="ai_tool")
-    connect(connections, "Excel Extractor AI Agent", "Fetch excel result")
+    connect(connections, "Excel Extractor AI Agent", "Summarize AI steps")
+    connect(connections, "Summarize AI steps", "Activity — Excel Extractor tools")
+    connect(connections, "Activity — Excel Extractor tools", "Restore after AI tools")
+    connect(connections, "Restore after AI tools", "AI extracted?")
+    connect(connections, "AI extracted?", "Format excel result", si=0)
+    connect(connections, "AI extracted?", "Fetch excel result", si=1)
     connect(connections, "Fetch excel result", "Format excel result")
+    connect(connections, "Format excel result", "Close excel session")
+    connect(connections, "Close excel session", "Activity — Excel Extractor completed")
+    connect(connections, "Activity — Excel Extractor completed", "Restore after Excel Extractor activity")
 
     wf = {
         "id": WF_ID,
@@ -474,6 +732,7 @@ def main() -> None:
             "saveManualExecutions": True,
             "callerPolicy": "workflowsFromSameOwner",
             "errorWorkflow": "",
+            "executionTimeout": 900,
         },
         "meta": {"templateCredsSetupCompleted": True, "targetN8nVersion": "2.30.8"},
         "tags": [],

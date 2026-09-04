@@ -78,8 +78,12 @@ def test_wipe_data_clears_memory_backend_only() -> None:
     assert control_plane.get_case("CASE-wipe-1") is None
     src = (ROOT / "app" / "control_plane.py").read_text(encoding="utf-8")
     ensure = src.split("def ensure_schema()", 1)[1].split("def wipe_data()", 1)[0]
+    wipe_src = src.split("def wipe_data()", 1)[1].split("def _local_case", 1)[0]
     assert 'proxy_call("schema")' in ensure
+    assert "clear=True" not in ensure
     assert 'proxy_call("wipe")' not in ensure
+    assert 'proxy_call("schema", clear=True)' in wipe_src
+    assert 'proxy_call("wipe")' not in wipe_src
 
 
 def test_empty_state_is_compact() -> None:
@@ -90,8 +94,18 @@ def test_empty_state_is_compact() -> None:
     ctx = compact_decision_context(state)
     assert ctx["goal"] == "goal"
     assert ctx["task_name"] == ""
-    assert ctx["artifacts_present"] == []
+    assert ctx["files"] == {
+        "excel": 0,
+        "schedule_source": 0,
+        "includes": 0,
+        "grdecl": 0,
+        "trajectories": 0,
+        "surface": 0,
+        "schedule_out": 0,
+    }
     assert ctx["hitl_pending"] is False
+    assert ctx["version"] == 1
+    assert ctx["current_task"] is None
 
 
 def test_decision_call_agent_roundtrip() -> None:
@@ -228,6 +242,7 @@ def test_create_action_passes_uploaded_artifacts_to_n8n(monkeypatch) -> None:
         "mime_type": "application/octet-stream",
         "bytes": 10,
         "artifact_id": "excel",
+        "role": "excel",
     }
     assert control_plane.get_case(case_id)["state"]["artifacts"]["excel"]["artifact_id"] == "excel"
 
@@ -264,7 +279,7 @@ def test_create_keeps_files_in_activity_not_n8n(monkeypatch) -> None:
     artifacts = (row or {}).get("state", {}).get("artifacts") or {}
     assert artifacts["excel"]["artifact_id"] == "excel"
     assert artifacts["excel"]["filename"] == "dates.xlsx"
-    assert artifacts["schedule_source"]["artifact_id"] == "schedule_source"
+    assert artifacts["schedule"]["source"]["artifact_id"] == "schedule_source"
     inc = client.get(f"/cases/{case_id}/artifacts/schedule_source")
     assert inc.status_code == 200
     assert inc.content == b"DATES\n/"
@@ -297,10 +312,13 @@ def test_create_promotes_schedule_root_to_schedule_source(monkeypatch) -> None:
     from app import control_plane
 
     artifacts = control_plane.get_case(case_id)["state"]["artifacts"]
-    assert artifacts["schedule_source"]["filename"] == "MONITORING_FDP.INC"
-    assert artifacts["schedule_source"]["artifact_id"] == "schedule_source"
-    assert artifacts["schedule_source_1"]["filename"] == "GRUPTREE.GRDECL"
-    assert artifacts["schedule_source_2"]["filename"] == "VFP.INC"
+    assert artifacts["schedule"]["source"]["filename"] == "MONITORING_FDP.INC"
+    assert artifacts["schedule"]["source"]["artifact_id"] == "schedule_source"
+    includes = {item["filename"]: item["artifact_id"] for item in artifacts["schedule"].get("includes") or []}
+    grdecl = {item["filename"]: item["artifact_id"] for item in artifacts["schedule"].get("grdecl") or []}
+    assert grdecl["GRUPTREE.GRDECL"] == "schedule_source_1"
+    assert "GRUPTREE.GRDECL" not in includes
+    assert includes["VFP.INC"] == "schedule_source_2"
     root = client.get(f"/cases/{case_id}/artifacts/schedule_source")
     assert root.status_code == 200
     assert b"INCLUDE" in root.content
@@ -474,6 +492,52 @@ def test_list_cases_skips_empty_proxy_rows(monkeypatch) -> None:
     control_plane.invalidate_read_cache()
     rows = control_plane.list_cases()
     assert [row["case_id"] for row in rows] == ["CASE-1"]
+
+
+def test_list_cases_unwraps_single_dict_row(monkeypatch) -> None:
+    from app import control_plane
+
+    def fake_proxy(operation, **payload):
+        if operation != "list_cases":
+            raise AssertionError(operation)
+        return {"case_id": "CASE-only", "status": "done", "state": {}}
+
+    monkeypatch.setattr(control_plane, "_configured", lambda: True)
+    monkeypatch.setattr(control_plane, "proxy_call", fake_proxy)
+    control_plane.invalidate_read_cache()
+    rows = control_plane.list_cases()
+    assert [row["case_id"] for row in rows] == ["CASE-only"]
+
+
+def test_wipe_data_proxy_sends_schema_clear(monkeypatch) -> None:
+    from app import control_plane
+
+    calls: list[tuple[str, dict]] = []
+
+    def fake_proxy(operation, **payload):
+        calls.append((operation, payload))
+        return {"schema_ok": True, "wiped": True}
+
+    monkeypatch.setattr(control_plane, "_configured", lambda: True)
+    monkeypatch.setattr(control_plane, "proxy_call", fake_proxy)
+    report = control_plane.wipe_data()
+    assert calls == [("schema", {"clear": True})]
+    assert report["wiped"] is True
+
+
+def test_ensure_schema_proxy_does_not_clear(monkeypatch) -> None:
+    from app import control_plane
+
+    calls: list[tuple[str, dict]] = []
+
+    def fake_proxy(operation, **payload):
+        calls.append((operation, payload))
+        return {"schema_ok": True, "wiped": False}
+
+    monkeypatch.setattr(control_plane, "_configured", lambda: True)
+    monkeypatch.setattr(control_plane, "proxy_call", fake_proxy)
+    control_plane.ensure_schema()
+    assert calls == [("schema", {})]
 
 
 def test_create_case_with_event_uses_one_batch(monkeypatch) -> None:
@@ -787,6 +851,40 @@ def test_hitl_answer_and_agent_event(monkeypatch) -> None:
     assert errors.json()["errors"] == []
 
 
+def test_answer_rejects_stale_expected_version(monkeypatch) -> None:
+    monkeypatch.setenv("ORCHESTRATOR_WEBHOOK_URL", "http://127.0.0.1:9/webhook/mas-orchestrator-step")
+    from app.settings import Settings
+    from app import control_plane
+
+    monkeypatch.setattr("app.cases_api.get_settings", lambda: Settings())
+    monkeypatch.setattr("app.cases_api._invoke_create", lambda case_id: None)
+    res = client.post("/cases", data={"task_description": "HITL version", "requested_by": "tester"})
+    case_id = res.json()["case_id"]
+    state = control_plane.get_case(case_id)["state"]
+    control_plane.update_case(
+        case_id,
+        state={
+            **state,
+            "version": 5,
+            "hitl": {"pending": True, "questions": [{"question_id": "Q-1", "question": "?"}], "answers": {}},
+        },
+        status="waiting_user",
+    )
+    stale = client.post(
+        f"/cases/{case_id}/answer",
+        json={"question_id": "Q-1", "answer": "нет", "expected_version": 2},
+    )
+    assert stale.status_code == 409, stale.text
+    assert "expected 2" in stale.json()["detail"]
+    assert "got 5" in stale.json()["detail"]
+    ok = client.post(
+        f"/cases/{case_id}/answer",
+        json={"question_id": "Q-1", "answer": "да", "expected_version": 5},
+    )
+    assert ok.status_code == 200, ok.text
+    assert control_plane.get_case(case_id)["state"]["version"] == 6
+
+
 def test_hitl_multipart_attaches_schedule(tmp_path, monkeypatch) -> None:
     monkeypatch.setenv("ORCHESTRATOR_WEBHOOK_URL", "http://127.0.0.1:9/webhook/mas-orchestrator-step")
     monkeypatch.setenv("ACTIVITY_BINARIES_PATH", str(tmp_path / "bins"))
@@ -912,6 +1010,7 @@ def test_result_filename_does_not_reuse_baseline_name() -> None:
     assert _result_filename({"schedule_source": {"filename": "baseline.inc"}}) == "baseline_result.inc"
     assert _result_filename({"schedule_source": {"filename": "FORECAST.INC"}}) == "FORECAST_result.INC"
     assert _result_filename({"schedule_out": {"filename": "custom_out.inc"}}) == "custom_out.inc"
+    assert _result_filename({"schedule": {"source": {"filename": "nested.inc", "artifact_id": "schedule_source"}}}) == "nested_result.inc"
 
 
 def test_collapse_duplicate_status_and_agent_result() -> None:

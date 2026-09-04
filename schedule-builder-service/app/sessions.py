@@ -45,6 +45,15 @@ def save(state: dict[str, Any]) -> dict[str, Any]:
     return state
 
 
+def close(session_id: str) -> dict[str, Any]:
+    sid = str(session_id or "")
+    with _LOCK:
+        existed = sid in _SESSIONS
+        _SESSIONS.pop(sid, None)
+        _expire_unlocked()
+    return {"ok": True, "closed": existed, "session_id": sid}
+
+
 def _expire_unlocked() -> None:
     now = time.time()
     dead = [sid for sid, row in _SESSIONS.items() if now - float(row.get("updated_at") or 0) > TTL_SEC]

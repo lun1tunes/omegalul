@@ -635,7 +635,8 @@ h1.is-renaming #titleText {
   font-size: 0.75rem;
   line-height: 1.4;
   color: var(--muted);
-  word-break: break-all;
+  overflow-wrap: anywhere;
+  word-break: normal;
 }
 .request-files[hidden] { display: none !important; }
 .not-found {
@@ -1280,16 +1281,16 @@ a.btn.schedule-download:hover:not(:disabled),
   flex: 1 1 auto;
   min-height: 0;
   display: grid;
-  place-items: center;
+  place-items: stretch;
   container-type: size;
   container-name: schema-canvas;
-  padding: 0.65rem 1rem 0.35rem;
+  padding: 0.75rem 1.15rem 0.45rem;
   overflow: hidden;
 }
 .schema-stage {
   position: relative;
-  width: min(100%, 56rem);
-  height: min(100%, 34rem);
+  width: 100%;
+  height: 100%;
   min-width: 0;
   min-height: 0;
   overflow: visible;
@@ -1334,25 +1335,25 @@ a.btn.schedule-download:hover:not(:disabled),
   inset: 0;
   z-index: 2;
   display: grid;
-  grid-template-columns: minmax(0, 1fr) minmax(0, 1.08fr) minmax(0, 1fr);
-  grid-template-rows: auto auto auto;
+  grid-template-columns: minmax(0, 1fr) minmax(0, 1.12fr) minmax(0, 1fr);
+  grid-template-rows: minmax(5rem, 0.82fr) minmax(8.5rem, 1.38fr) minmax(7rem, 1.18fr);
   grid-template-areas:
     ". hitl ."
     "input orch output"
     "excel calc schedule";
-  gap: clamp(1.35rem, 5.5cqh, 2.35rem) clamp(1.6rem, 4.2cqw, 2.6rem);
-  padding: clamp(0.7rem, 2.8cqh, 1.35rem) clamp(0.8rem, 2.4cqw, 1.5rem);
-  align-content: center;
-  justify-content: center;
+  gap: clamp(1.55rem, 7.2cqh, 3.6rem) clamp(1.7rem, 5.4cqw, 4.1rem);
+  padding: clamp(0.85rem, 3.4cqh, 1.9rem) clamp(1rem, 3.6cqw, 2.3rem);
+  align-content: stretch;
+  justify-content: stretch;
   min-height: 0;
   pointer-events: none;
 }
 .schema-node[data-node="user"] {
   grid-area: hitl;
-  width: min(100%, 13.5rem);
+  width: 100%;
 }
 .schema-node[data-node="input"] { grid-area: input; }
-.schema-node[data-node="orchestrator"] { grid-area: orch; width: min(100%, 17.5rem); }
+.schema-node[data-node="orchestrator"] { grid-area: orch; width: 100%; }
 .schema-node[data-node="output"] { grid-area: output; }
 .schema-node[data-node="excel"] { grid-area: excel; }
 .schema-node[data-node="calc"] { grid-area: calc; }
@@ -1363,12 +1364,12 @@ a.btn.schedule-download:hover:not(:disabled),
   flex-direction: column;
   justify-content: flex-start;
   gap: 0.2rem;
-  width: min(100%, 16.5rem);
-  height: auto;
+  width: 100%;
+  height: 100%;
   min-width: 0;
   min-height: 0;
-  justify-self: center;
-  align-self: center;
+  justify-self: stretch;
+  align-self: stretch;
   padding: 0.55rem 0.7rem 0.6rem;
   background: #fff;
   border: 1px solid var(--line);
@@ -1447,7 +1448,7 @@ a.btn.schedule-download:hover:not(:disabled),
 }
 .schema-node-body {
   min-height: 0;
-  flex: 0 1 auto;
+  flex: 1 1 auto;
   overflow: hidden;
   display: flex;
   flex-direction: column;
@@ -1467,8 +1468,8 @@ a.btn.schedule-download:hover:not(:disabled),
 .schema-peek {
   position: fixed;
   z-index: 40;
-  width: min(22rem, calc(100vw - 1.5rem));
-  max-height: min(22rem, calc(100vh - 1.5rem));
+  width: min(38rem, calc(100vw - 1.75rem));
+  max-height: min(70vh, 36rem);
   overflow: auto;
   padding: 0.65rem 0.75rem 0.8rem;
   background: #fff;
@@ -1495,13 +1496,20 @@ a.btn.schedule-download:hover:not(:disabled),
   word-break: break-word;
 }
 .schema-peek .schema-files {
-  margin-top: 0.25rem;
-}
-.schema-peek .schema-files li {
-  white-space: normal;
+  display: block;
+  -webkit-line-clamp: unset;
+  line-clamp: unset;
   overflow: visible;
-  text-overflow: unset;
-  word-break: break-all;
+  overflow-wrap: anywhere;
+  word-break: normal;
+}
+.schema-peek-text {
+  margin: 0.35rem 0 0;
+  font-size: 0.86rem;
+  line-height: 1.45;
+  color: var(--ink);
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
 }
 .schema-download {
   margin-top: 0.2rem;
@@ -1542,18 +1550,22 @@ a.btn.schedule-download:hover:not(:disabled),
   line-height: 1.35;
   color: var(--ink);
   display: -webkit-box;
-  -webkit-line-clamp: 2;
+  -webkit-line-clamp: 4;
   -webkit-box-orient: vertical;
-  line-clamp: 2;
+  line-clamp: 4;
   overflow: hidden;
   overflow-wrap: anywhere;
+}
+.schema-node[data-node="orchestrator"] .schema-caption {
+  -webkit-line-clamp: 6;
+  line-clamp: 6;
 }
 .schema-node[data-node="excel"] .schema-caption,
 .schema-node[data-node="calc"] .schema-caption,
 .schema-node[data-node="schedule"] .schema-caption,
 .schema-node[data-node="user"] .schema-caption {
-  -webkit-line-clamp: 2;
-  line-clamp: 2;
+  -webkit-line-clamp: 4;
+  line-clamp: 4;
 }
 .schema-goal,
 .schema-prompt {
@@ -1562,44 +1574,36 @@ a.btn.schedule-download:hover:not(:disabled),
   line-height: 1.35;
   color: var(--ink);
   display: -webkit-box;
-  -webkit-line-clamp: 2;
+  -webkit-line-clamp: 5;
   -webkit-box-orient: vertical;
-  line-clamp: 2;
+  line-clamp: 5;
   overflow: hidden;
   overflow-wrap: anywhere;
 }
 .schema-prompt {
   color: var(--blue-700);
-  -webkit-line-clamp: 2;
-  line-clamp: 2;
+  -webkit-line-clamp: 5;
+  line-clamp: 5;
 }
 .schema-files {
-  list-style: none;
   margin: 0.2rem 0 0;
   padding: 0;
-  display: flex;
-  flex-wrap: nowrap;
-  gap: 0.25rem;
-  min-width: 0;
-  overflow: hidden;
-}
-.schema-files li {
-  max-width: 100%;
-  overflow: hidden;
-  text-overflow: ellipsis;
-  white-space: nowrap;
   font-family: var(--mono);
   font-size: 0.62rem;
+  line-height: 1.4;
   color: var(--blue-700);
-  background: var(--blue-100);
-  padding: 0.12rem 0.35rem;
-  border-radius: 4px;
-  flex: 0 1 auto;
+  display: -webkit-box;
+  -webkit-line-clamp: 4;
+  -webkit-box-orient: vertical;
+  line-clamp: 4;
+  overflow: hidden;
+  overflow-wrap: anywhere;
+  word-break: normal;
 }
 .schema-slip {
   position: absolute;
-  z-index: 4;
-  max-width: min(12.5rem, 28%);
+  z-index: 5;
+  max-width: min(22rem, 42%);
   padding: 0.28rem 0.45rem;
   background: #fff;
   border: 1px solid var(--line);
@@ -1609,14 +1613,19 @@ a.btn.schedule-download:hover:not(:disabled),
   line-height: 1.3;
   color: var(--ink);
   display: -webkit-box;
-  -webkit-line-clamp: 2;
+  -webkit-line-clamp: 3;
   -webkit-box-orient: vertical;
-  line-clamp: 2;
+  line-clamp: 3;
   overflow: hidden;
   overflow-wrap: anywhere;
   transform: translate(-10%, -100%);
   animation: none;
-  pointer-events: none;
+  pointer-events: auto;
+  cursor: zoom-in;
+}
+.schema-slip.is-peeking {
+  z-index: 7;
+  box-shadow: 0 0 0 3px rgba(0, 184, 240, 0.2);
 }
 .schema-slip.is-live-in {
   animation: schema-slip-in 180ms ease;
@@ -1818,9 +1827,9 @@ a.btn.schedule-download:hover:not(:disabled),
   border-radius: 6px;
   min-height: 1.2em;
   display: -webkit-box;
-  -webkit-line-clamp: 2;
+  -webkit-line-clamp: 4;
   -webkit-box-orient: vertical;
-  line-clamp: 2;
+  line-clamp: 4;
   overflow: hidden;
   overflow-wrap: anywhere;
 }

@@ -17,6 +17,16 @@ from app import artifact_store
 from app import case_watch
 from app import control_plane
 from app.contracts import AGENT_EVENT_KINDS, CaseAnswerIn, CaseEventIn, CaseNameIn, MAX_STEPS
+from app.state_shape import (
+    artifact_filenames,
+    artifacts_from_indexed,
+    bump_version,
+    decode_hitl_answer,
+    flatten_artifacts,
+    hitl_answer_text,
+    nest_artifacts,
+    role_for_artifact_id,
+)
 from app.orchestrator import OrchestratorError, invoke_orchestrator
 from app.schema_view import FINISHED_RESULT_TEXT, build_schema_model
 from app.settings import UNCONFIGURED_N8N, get_settings
@@ -36,6 +46,26 @@ USER = "user"
 TASK_NAME_MAX = 120
 RESTARTABLE_STATUSES = frozenset({"done", "failed", "retryable_error"})
 RESTART_ACTIONS = frozenset({"retry", "restart"})
+
+
+def _parse_expected_version(raw: Any) -> int | None:
+    if raw is None or raw == "":
+        return None
+    try:
+        return int(raw)
+    except (TypeError, ValueError) as exc:
+        raise HTTPException(status_code=400, detail="expected_version must be an integer") from exc
+
+
+def _assert_state_version(state: dict[str, Any], expected: int | None) -> None:
+    if expected is None:
+        return
+    current = int(state.get("version") or 0)
+    if current != expected:
+        raise HTTPException(
+            status_code=409,
+            detail=f"Version mismatch: expected {expected}, got {current}. Reload status.",
+        )
 
 
 def _normalize_task_name(value: Any) -> str:
@@ -271,7 +301,7 @@ def case_rail_item(row: dict[str, Any]) -> dict[str, Any]:
 
 
 def _schedule_filename(artifacts: dict[str, Any]) -> str:
-    src = artifacts.get("schedule_source")
+    src = flatten_artifacts(artifacts).get("schedule_source")
     if isinstance(src, dict):
         name = str(src.get("filename") or "").strip()
         if name:
@@ -283,7 +313,7 @@ def _schedule_filename(artifacts: dict[str, Any]) -> str:
 
 def _result_filename(artifacts: dict[str, Any]) -> str:
     """Never advertise the baseline upload as the generated result."""
-    out = artifacts.get("schedule_out")
+    out = flatten_artifacts(artifacts).get("schedule_out")
     if isinstance(out, dict):
         name = str(out.get("filename") or "").strip()
         if name:
@@ -297,7 +327,7 @@ def _result_filename(artifacts: dict[str, Any]) -> str:
 
 
 def _schedule_out_text(artifacts: dict[str, Any]) -> str | None:
-    text = artifacts.get("schedule_out")
+    text = flatten_artifacts(artifacts).get("schedule_out")
     if isinstance(text, str) and len(text.strip()) > 20:
         return text
     if isinstance(text, dict):
@@ -342,11 +372,7 @@ def _feed_from_row(
             "questions": questions,
         }
     artifacts = state.get("artifacts") if isinstance(state.get("artifacts"), dict) else {}
-    attached = [
-        str(item.get("filename") or key)
-        for key, item in artifacts.items()
-        if isinstance(item, dict)
-    ]
+    attached = artifact_filenames(artifacts)
     name = _normalize_task_name(state.get("task_name"))
     return {
         "ok": True,
@@ -550,15 +576,7 @@ async def create_case(
         await take(item, None)
 
     binary = _index_uploads(_promote_schedule_root(uploads, schedule_root))
-    artifacts: dict[str, Any] = {
-        key: {
-            "filename": filename,
-            "mime_type": mime,
-            "bytes": len(content),
-            "artifact_id": key,
-        }
-        for key, (filename, content, mime) in binary.items()
-    }
+    artifacts: dict[str, Any] = artifacts_from_indexed(binary)
     if artifact_store.configured():
         for key, (filename, content, mime) in binary.items():
             try:
@@ -695,7 +713,9 @@ async def _merge_case_uploads(case_id: str, uploads: list[tuple[str, str, bytes,
     binary = load_task_binaries(case_id) if not artifact_store.configured() else {}
     row = control_plane.get_case(case_id)
     state = dict((row or {}).get("state") or {})
-    artifacts = dict(state.get("artifacts") or {})
+    artifacts = nest_artifacts(state.get("artifacts") or {})
+    used = {key for key in flatten_artifacts(artifacts).keys() if key != "diff"} | set(binary.keys())
+    used.discard("diff")
     names: list[str] = []
     for slot, filename, content, mime in uploads:
         if slot in {"excel", "surface"}:
@@ -703,16 +723,20 @@ async def _merge_case_uploads(case_id: str, uploads: list[tuple[str, str, bytes,
         else:
             key = slot
             n = 0
-            while key in binary or key in artifacts:
+            while key in used:
                 n += 1
                 key = f"{slot}_{n}"
+        used.add(key)
         binary[key] = (filename, content, mime)
-        artifacts[key] = {
+        flat = flatten_artifacts(artifacts)
+        flat[key] = {
             "filename": filename,
             "mime_type": mime,
             "bytes": len(content),
             "artifact_id": key,
+            "role": role_for_artifact_id(key),
         }
+        artifacts = nest_artifacts(flat)
         names.append(filename)
     if artifact_store.configured():
         for key, (filename, content, mime) in binary.items():
@@ -735,11 +759,13 @@ async def post_answer(case_id: str, request: Request, background_tasks: Backgrou
         raise HTTPException(status_code=404, detail="case not found")
     ctype = (request.headers.get("content-type") or "").lower()
     file_names: list[str] = []
+    expected_version: int | None = None
     if "multipart/form-data" in ctype:
         form = await request.form()
         question_id = str(form.get("question_id") or form.get("gate_id") or "Q-1").strip() or "Q-1"
         answer = str(form.get("answer") or form.get("human_response") or "").strip()
         requested_by = str(form.get("requested_by") or "mas activity user")
+        expected_version = _parse_expected_version(form.get("expected_version"))
         file_names = await _merge_case_uploads(case_id, await _collect_form_uploads(form))
         if not answer and file_names:
             answer = "(файл)"
@@ -753,14 +779,19 @@ async def post_answer(case_id: str, request: Request, background_tasks: Backgrou
         question_id = body.question_id
         answer = body.answer
         requested_by = body.requested_by
+        expected_version = body.expected_version
     row = control_plane.get_case(case_id) or row
     state = dict(row["state"] or {})
+    _assert_state_version(state, expected_version)
     hitl = dict(state.get("hitl") or {})
     answers = dict(hitl.get("answers") or {})
-    answers[question_id] = answer
+    parsed_answer = decode_hitl_answer(answer)
+    answers[question_id] = parsed_answer
     hitl["answers"] = answers
     hitl["pending"] = False
     state["hitl"] = hitl
+    bump_version(state)
+    answer_text = hitl_answer_text(parsed_answer)
     control_plane.update_case_and_append(
         case_id,
         state=state,
@@ -768,10 +799,10 @@ async def post_answer(case_id: str, request: Request, background_tasks: Backgrou
         kind="hitl.answered",
         actor="user",
         event_status="answered",
-        status_message=f"Пользователь ответил: {answer}",
+        status_message=f"Пользователь ответил: {answer_text}",
         payload={
             "question_id": question_id,
-            "answer": answer,
+            "answer": parsed_answer,
             "requested_by": requested_by,
             "files": file_names,
         },
@@ -802,6 +833,7 @@ def _prepare_case_restart(case_id: str, row: dict[str, Any]) -> dict[str, Any]:
     hitl = dict(state.get("hitl") or {})
     hitl["pending"] = False
     state["hitl"] = hitl
+    bump_version(state)
     control_plane.update_case_and_append(
         case_id,
         state=state,

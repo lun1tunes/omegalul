@@ -131,17 +131,28 @@
     const artifacts = state && typeof state.artifacts === "object" ? state.artifacts : {};
     const names = [];
     const seen = new Set();
-    const skip = new Set(["schedule_out", "diff"]);
-    for (const [key, item] of Object.entries(artifacts)) {
-      if (skip.has(key)) continue;
-      let name = "";
-      if (item && typeof item === "object") name = text(item.filename || item.artifact_id || key);
-      else if (item) name = text(key);
-      if (name && !seen.has(name)) {
-        seen.add(name);
-        names.push(name);
+    const skip = new Set(["schedule_out", "diff", "out"]);
+    function walk(value, key) {
+      if (skip.has(key)) return;
+      if (Array.isArray(value)) {
+        value.forEach((item) => walk(item, key));
+        return;
+      }
+      if (value && typeof value === "object") {
+        if (value.role === "schedule_out") return;
+        if (value.filename || value.artifact_id) {
+          const name = text(value.filename);
+          if (name && !seen.has(name)) {
+            seen.add(name);
+            names.push(name);
+          }
+          return;
+        }
+        Object.entries(value).forEach(([childKey, child]) => walk(child, childKey));
+        return;
       }
     }
+    walk(artifacts, "");
     return names;
   }
 
@@ -690,14 +701,21 @@
     return el.scrollHeight > el.clientHeight + 1 || el.scrollWidth > el.clientWidth + 1;
   }
 
+  function looksClamped(el) {
+    if (!el) return false;
+    if (overflowing(el)) return true;
+    const raw = text(el.textContent);
+    return raw.length > 96;
+  }
+
   function markClippedNodes() {
     if (!nodesEl || !root || root.hidden) return;
     for (const node of nodesEl.querySelectorAll(".schema-node")) {
       const body = node.querySelector(".schema-node-body");
       let clipped = overflowing(body);
       if (!clipped && body) {
-        for (const el of body.querySelectorAll(".schema-goal, .schema-prompt, .schema-caption")) {
-          if (overflowing(el)) {
+        for (const el of body.querySelectorAll(".schema-goal, .schema-prompt, .schema-caption, .schema-files")) {
+          if (looksClamped(el) || overflowing(el)) {
             clipped = true;
             break;
           }
@@ -769,32 +787,55 @@
     peek.style.top = `${Math.round(top)}px`;
   }
 
-  function showPeek(node) {
-    if (!node || !node.classList.contains("is-clipped")) return;
-    const body = node.querySelector(".schema-node-body");
-    if (!body) return;
-    if (peekSource === node && peekEl && !peekEl.hidden) {
-      placePeek(node);
+  function openPeek(anchor, fill) {
+    if (!anchor) return;
+    const peek = ensurePeek();
+    if (peekSource === anchor && peekEl && !peekEl.hidden) {
+      placePeek(anchor);
       return;
     }
-    const peek = ensurePeek();
     peek.innerHTML = "";
-    const kicker = node.querySelector(".schema-kicker");
-    const title = node.querySelector("h2");
-    if (kicker) peek.append(kicker.cloneNode(true));
-    if (title) peek.append(title.cloneNode(true));
-    const clone = body.cloneNode(true);
-    clone.className = "schema-peek-body";
-    peek.append(clone);
-    if (peekSource && peekSource !== node) {
+    fill(peek);
+    if (peekSource && peekSource !== anchor) {
       peekSource.classList.remove("is-peeking");
       peekSource.removeAttribute("aria-expanded");
     }
     peek.hidden = false;
-    peekSource = node;
-    node.classList.add("is-peeking");
-    node.setAttribute("aria-expanded", "true");
-    placePeek(node);
+    peekSource = anchor;
+    anchor.classList.add("is-peeking");
+    anchor.setAttribute("aria-expanded", "true");
+    placePeek(anchor);
+  }
+
+  function showPeek(node) {
+    if (!node || !node.classList.contains("is-clipped")) return;
+    const body = node.querySelector(".schema-node-body");
+    if (!body) return;
+    openPeek(node, (peek) => {
+      const kicker = node.querySelector(".schema-kicker");
+      const title = node.querySelector("h2");
+      if (kicker) peek.append(kicker.cloneNode(true));
+      if (title) peek.append(title.cloneNode(true));
+      const clone = body.cloneNode(true);
+      clone.className = "schema-peek-body";
+      peek.append(clone);
+    });
+  }
+
+  function showSlipPeek(slip) {
+    const full = text(slip?.dataset?.full);
+    if (!full) return;
+    openPeek(slip, (peek) => {
+      const kicker = document.createElement("span");
+      kicker.className = "schema-kicker";
+      kicker.textContent = "сообщение";
+      const title = document.createElement("h2");
+      title.textContent = "Полный текст";
+      const copy = document.createElement("p");
+      copy.className = "schema-peek-text";
+      copy.textContent = full;
+      peek.append(kicker, title, copy);
+    });
   }
 
   function bindPeekChrome() {
@@ -805,6 +846,7 @@
       if (!peekEl || peekEl.hidden) return;
       const target = ev.target;
       if (peekEl.contains(target) || (peekSource && peekSource.contains(target))) return;
+      if (target && target.closest && target.closest(".schema-slip")) return;
       hidePeek();
     });
     if (root) {
@@ -823,8 +865,30 @@
     if (animate) el.classList.add("is-live-in");
     el.style.left = `${x}%`;
     el.style.top = `${y}%`;
-    el.title = textValue;
-    el.textContent = shorten(textValue, 72);
+    const full = text(textValue);
+    el.dataset.full = full;
+    el.textContent = shorten(full, 110);
+    el.title = "Нажмите, чтобы показать полный текст";
+    el.tabIndex = 0;
+    el.setAttribute("role", "button");
+    el.setAttribute("aria-haspopup", "true");
+    el.addEventListener("pointerenter", (ev) => {
+      if (ev.pointerType === "touch") return;
+      clearTimeout(peekTimer);
+      showSlipPeek(el);
+    });
+    el.addEventListener("pointerleave", hidePeekSoon);
+    el.addEventListener("click", (ev) => {
+      ev.stopPropagation();
+      if (peekSource === el && peekEl && !peekEl.hidden) hidePeek();
+      else showSlipPeek(el);
+    });
+    el.addEventListener("keydown", (ev) => {
+      if (ev.key !== "Enter" && ev.key !== " ") return;
+      ev.preventDefault();
+      if (peekSource === el && peekEl && !peekEl.hidden) hidePeek();
+      else showSlipPeek(el);
+    });
     return el;
   }
 
@@ -900,6 +964,7 @@
 
   function placeEdgeSlips(frame, layout, animateSlips) {
     if (!stage || !frame) return;
+    if (peekSource && peekSource.classList.contains("schema-slip")) hidePeek();
     stage.querySelectorAll(".schema-slip").forEach((el) => el.remove());
     const boxes = layout || measuredLayout();
     for (const id of DRAW_EDGE_KEYS) {
@@ -950,15 +1015,11 @@
         body.append(goal);
         const files = Array.isArray(frame.input?.files) ? frame.input.files : [];
         if (files.length) {
-          const list = document.createElement("ul");
-          list.className = "schema-files";
-          for (const name of files) {
-            const li = document.createElement("li");
-            li.textContent = name;
-            li.title = name;
-            list.append(li);
-          }
-          body.append(list);
+          const line = document.createElement("p");
+          line.className = "schema-files";
+          line.textContent = files.join(" · ");
+          line.title = files.join("\n");
+          body.append(line);
         }
       } else if (id === "output") {
         const result = document.createElement("p");

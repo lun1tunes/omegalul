@@ -31,6 +31,11 @@ assert.ok(agent);
 assert.equal(agent.type, '@n8n/n8n-nodes-langchain.agent');
 assert.equal(agent.typeVersion, 3.1);
 assert.equal(agent.parameters.hasOutputParser, false);
+function sourceCode(name) {
+  const node = wf.nodes.find((n) => n.name === name);
+  assert.ok(node && node.parameters && node.parameters.jsCode, name);
+  return node.parameters.jsCode;
+}
 const model = wf.nodes.find((n) => n.name === 'Schedule Builder Chat Model — Qwen');
 assert.ok(model);
 assert.equal(model.typeVersion, 1.3);
@@ -65,8 +70,26 @@ assert.equal(wf.connections['Capability router'].main[2][0].node, 'Prepare AI Ag
 const applyComm = wf.nodes.find((n) => n.name === 'Apply commissioning');
 assert.equal(applyComm.type, 'n8n-nodes-base.httpRequest');
 assert.ok(String(applyComm.parameters.url).includes('apply_commissioning'));
-assert.equal(wf.connections['Apply commissioning'].main[0][0].node, 'Fetch schedule result');
-assert.equal(wf.connections['Apply group rebind'].main[0][0].node, 'Fetch schedule result');
+assert.equal(applyComm.retryOnFail, true);
+assert.equal(wf.connections['Apply commissioning'].main[0][0].node, 'Describe apply result');
+assert.equal(wf.connections['Apply group rebind'].main[0][0].node, 'Describe apply result');
+assert.equal(wf.connections['Describe apply result'].main[0][0].node, 'Activity — Schedule Builder apply');
+assert.equal(wf.connections['Restore after apply event'].main[0][0].node, 'Apply finished?');
+assert.equal(wf.connections['Apply finished?'].main[0][0].node, 'Format schedule result');
+assert.equal(wf.connections['Apply finished?'].main[1][0].node, 'Fetch schedule result');
+assert.equal(wf.connections['Schedule Builder AI Agent'].main[0][0].node, 'Summarize AI steps');
+assert.equal(wf.connections['AI applied?'].main[0][0].node, 'Format schedule result');
+assert.equal(wf.connections['AI applied?'].main[1][0].node, 'Fetch schedule result');
+assert.equal(wf.connections['Format schedule result'].main[0][0].node, 'Close schedule session');
+assert.equal(agent.parameters.options.maxIterations, 6);
+assert.equal(wf.settings.executionTimeout, 900);
+assert.ok(sourceCode('Describe apply result').includes('skip_fetch'));
+assert.ok(sourceCode('Restore after Schedule Builder progress').includes('operations'));
+const applyOps = wf.nodes.find((n) => n.name === 'apply_operations');
+assert.ok(String(applyOps.parameters.toolDescription).includes('массив') || String(applyOps.parameters.toolDescription).includes('Массив'));
+const activityProgress = wf.nodes.find((n) => n.name === 'Activity — Schedule Builder progress');
+assert.equal(activityProgress.parameters.options.timeout, 2000);
+assert.equal(activityProgress.parameters.options.response.response.neverError, true);
 
 const cfg = orch.nodes.find((n) => n.name === 'Runtime endpoints');
 assert.equal(cfg.type, 'n8n-nodes-base.executeWorkflow');

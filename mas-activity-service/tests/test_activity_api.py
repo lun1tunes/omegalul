@@ -562,8 +562,8 @@ def test_ready_health_and_static_assets() -> None:
     assert 'q.required ? "обязательно"' not in js_text
     assert "формат: ${q.expected_format}" not in js_text
     assert "app.js?v=87" in index.text
-    assert "schema.js?v=14" in index.text
-    assert "app.css?v=85" in index.text
+    assert "schema.js?v=18" in index.text
+    assert "app.css?v=88" in index.text
     assert "viewChatBtn" in index.text
     assert "viewSchemaBtn" in index.text
     assert ">Чат<" in index.text
@@ -574,6 +574,13 @@ def test_ready_health_and_static_assets() -> None:
     assert "<details class=\"gate-panel\"" in index.text
     assert "Развернуть" in (STATIC / "app.css").read_text(encoding="utf-8")
     assert "mode-schema .gate-panel[open]" in (STATIC / "app.css").read_text(encoding="utf-8")
+    css_text = (STATIC / "app.css").read_text(encoding="utf-8")
+    files_css = css_text.split("\n.schema-files {", 1)[1].split("}", 1)[0]
+    assert "flex-wrap: nowrap" not in files_css
+    assert "word-break: break-all" not in files_css
+    assert "overflow-wrap: anywhere" in files_css
+    schema_js = (STATIC / "schema.js").read_text(encoding="utf-8")
+    assert 'files.join(" · ")' in schema_js
     assert "Постановка задачи" in index.text
     assert "Результат" in index.text
     assert "Нет такой задачи в Workspace." in index.text
@@ -635,11 +642,17 @@ def test_ready_health_and_static_assets() -> None:
     assert "schemaArrowActive" in schema_js
     assert "removeAttribute(\"marker-end\")" in schema_js
     assert "schema-download" in schema_js
-    assert "schema-peek" in schema_js
+    assert "showSlipPeek" in schema_js
+    assert "dataset.full" in schema_js
+    assert "looksClamped" in schema_js
     assert "markClippedNodes" in schema_js
     assert "is-clipped" in schema_js
-    assert "schema-peek" in (STATIC / "app.css").read_text(encoding="utf-8")
-    assert "schema-node.is-clipped" in (STATIC / "app.css").read_text(encoding="utf-8")
+    assert "schema-peek" in schema_js
+    assert "schema-peek-text" in schema_js
+    assert "schema-peek-text" in (STATIC / "app.css").read_text(encoding="utf-8")
+    assert "place-items: stretch" in (STATIC / "app.css").read_text(encoding="utf-8")
+    assert "width: min(100%, 56rem)" not in (STATIC / "app.css").read_text(encoding="utf-8")
+    assert "pointer-events: auto" in (STATIC / "app.css").read_text(encoding="utf-8")
     assert "Скачать результат" in schema_js
     assert "Задача завершена. Загрузите результаты работы." in schema_js
     assert "Скачать результат" in js_text

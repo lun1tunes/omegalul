@@ -25,7 +25,7 @@ SERVICE_ROOT = Path(__file__).resolve().parents[1]
 load_dotenv(SERVICE_ROOT / "excel-tools.env", override=False)
 load_dotenv(SERVICE_ROOT / ".env", override=False)
 
-from .sessions import cleanup_expired_sessions, init_state, load_state, locked_session, new_session_id, session_dir, session_file
+from .sessions import cleanup_expired_sessions, close_session, init_state, load_state, locked_session, new_session_id, session_dir, session_file
 from .tools import TOOL_SCHEMAS, execute_tool
 
 # Import modules for registration. These modules never invoke an LLM.
@@ -250,8 +250,6 @@ def _n8n_json_sequence(value: Any) -> Any:
     if not all(isinstance(key, str) and key.isdigit() for key in keys):
         return value
     indexes = sorted(int(key) for key in keys)
-    if indexes != list(range(len(keys))):
-        return value
     return [value[str(index)] for index in indexes]
 
 
@@ -443,6 +441,11 @@ def get_session_result(session_id: str) -> dict[str, Any]:
         return agent_run.session_result(session_id)
     except ValueError as error:
         raise _session_http_error(error) from error
+
+
+@app.post("/sessions/{session_id}/close", dependencies=[Depends(require_api_key)])
+def close_excel_session(session_id: str) -> dict[str, Any]:
+    return close_session(session_id)
 
 
 @app.post("/agent-tools/{tool_name}", dependencies=[Depends(require_api_key)])

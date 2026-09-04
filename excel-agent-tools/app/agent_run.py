@@ -6,6 +6,7 @@ import hashlib
 import json
 import logging
 import os
+import re
 from pathlib import Path
 from typing import Any
 from urllib.request import Request, urlopen
@@ -271,11 +272,15 @@ def _store_result(state: dict[str, Any], result: dict[str, Any]) -> dict[str, An
     return result
 
 
+_COMMISSIONING_RE = re.compile(
+    r"commission|(?:^|[^а-яёa-z])дат[аыуе](?:[^а-яёa-z]|$)|(?:^|[^а-яёa-z])ввод",
+    re.IGNORECASE,
+)
+
+
 def suggested_capability(objective: str, handoff: str = "") -> str:
     text = f"{objective} {handoff}".casefold()
-    if any(token in text for token in ("дат", "ввод", "commission", "скважин", "well", "дебит")):
-        return "commissioning"
-    if not text.strip():
+    if _COMMISSIONING_RE.search(text):
         return "commissioning"
     return "operations"
 
@@ -426,7 +431,8 @@ def extract_commissioning(session_id: str) -> dict[str, Any]:
                 {
                     "table_id": table_id,
                     "columns": columns,
-                    "preview": preview[:200],
+                    "preview": preview[:3],
+                    "preview_count": len(preview),
                     "row_count": len(preview),
                     "records": preview,
                 }
@@ -458,6 +464,8 @@ def extract_commissioning(session_id: str) -> dict[str, Any]:
             "table_ids": table_ids,
             "normalized_rows": rows_out,
             "facts": facts,
+            "preview": facts[:10],
+            "total_count": len(facts),
             "session_id": session_id,
             "file_name": filename,
         },
@@ -484,11 +492,54 @@ def session_result(session_id: str) -> dict[str, Any]:
     if isinstance(result, dict) and result.get("status"):
         return result
     payload = state.get("payload") if isinstance(state.get("payload"), dict) else {}
+    task_id = str(payload.get("task_id") or "")
+    result_sets = state.get("result_sets") if isinstance(state.get("result_sets"), dict) else {}
+    rows_out: list[dict[str, Any]] = []
+    for item in result_sets.values():
+        if not isinstance(item, dict):
+            continue
+        preview = item.get("preview_records") or item.get("preview_rows") or []
+        if not isinstance(preview, list):
+            preview = []
+        rows_out.append(
+            {
+                "table_id": item.get("table_id"),
+                "columns": item.get("columns") or [],
+                "preview": preview[:10],
+                "preview_count": int(item.get("row_count") or len(preview)),
+                "row_count": int(item.get("stored_rows") or len(preview)),
+            }
+        )
+    if rows_out:
+        facts = commissioning_facts(
+            [{"columns": item.get("columns") or [], "preview": item.get("preview") or []} for item in rows_out]
+        )
+        return _agent_result(
+            task_id,
+            "completed",
+            f"Извлечено запросов: {len(rows_out)}" + (f", фактов скважина+дата: {len(facts)}" if facts else ""),
+            data={
+                "normalized_rows": rows_out,
+                "facts": facts,
+                "preview": facts[:10],
+                "total_count": len(facts),
+                "session_id": session_id,
+                "file_name": str(state.get("file_name") or ""),
+            },
+            artifacts={"excel_session": session_id},
+        )
     return _agent_result(
-        str(payload.get("task_id") or ""),
-        "failed",
-        "Агент не вызвал extract_commissioning — факты Excel не собраны",
+        task_id,
+        "needs_input",
+        "Агент не извлёк данных. Уточните, какие данные нужны.",
         issues=[{"type": "no_extract"}],
+        requests=[
+            {
+                "question_id": "Q-clarify",
+                "question": "Какие именно данные нужно извлечь из Excel?",
+                "options": ["Даты ввода", "Дебиты", "Управления", "Другое"],
+            }
+        ],
     )
 
 
@@ -515,7 +566,7 @@ def commissioning_facts(tables: list[dict[str, Any]]) -> list[dict[str, Any]]:
             if token in seen:
                 continue
             seen.add(token)
-            facts.append({"well": well, "date": date, "values": row})
+            facts.append({"well": well, "date": date})
     return facts
 
 

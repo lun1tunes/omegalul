@@ -24,12 +24,13 @@ EXCEL_KEY_CRED = {
     }
 }
 
-# Lab Compose DNS. Field: overwrite these four values in the Set after UI import.
+# Lab Compose DNS. Field: overwrite these values in the Set after UI import.
 LAB_URLS = (
     ("activity_base_url", "http://mas-activity:8200"),
     ("excel_tools_url", "http://excel-tools:8000"),
     ("schedule_service_url", "http://schedule-builder:8090"),
     ("math_url", "http://math-service:8100"),
+    ("orchestrator_step_url", "http://127.0.0.1:5678/webhook/mas-orchestrator-step"),
 )
 
 
@@ -102,9 +103,12 @@ def main() -> None:
                     "**Excel Tools X-API-Key**: header name `X-API-Key`, value = "
                     "`API_KEY` из `excel-tools.env`. Привяжите его на HTTP-нодах "
                     "Agent — Excel Extractor.\n\n"
-                    "Возвращает только "
+                    "Возвращает "
                     "`activity_base_url`, `excel_tools_url`, `schedule_service_url`, "
-                    "`math_url`. Ничего не оркестрирует."
+                    "`math_url`, `orchestrator_step_url`. Ничего не оркестрирует.\n\n"
+                    "`orchestrator_step_url` — внутренний webhook оркестратора "
+                    "(loop сам себя, не через Activity `/run`). Lab: "
+                    "`http://127.0.0.1:5678/webhook/mas-orchestrator-step`."
                 ),
                 "height": 400,
                 "width": 520,

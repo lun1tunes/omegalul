@@ -11,7 +11,7 @@ from .commissioning import run_commissioning_revise
 from .diff import unified_diff
 from .emit import emit_schedule
 from .group_rebind import extract_group_rebind_spec, run_group_rebind_revise, wants_group_rebind
-from .io import commissioning_facts, file_ref, load_source
+from .io import bind_case_packet, commissioning_facts, file_ref, load_source
 from .keywords import keyword_object, search_keywords
 from .parse import parse_schedule, well_names
 from .well_model import build_well_objects, find_well
@@ -102,6 +102,7 @@ def open_session(task: dict[str, Any], *, activity: str = "") -> dict[str, Any]:
     context = task.get("context") if isinstance(task.get("context"), dict) else {}
     case_id = str(task.get("case_id") or "")
     task_id = str(task.get("task_id") or "")
+    inputs, context = bind_case_packet(inputs, context, case_id, activity)
     try:
         source = load_source(inputs, case_id, activity)
     except Exception as exc:
@@ -166,13 +167,27 @@ def open_session(task: dict[str, Any], *, activity: str = "") -> dict[str, Any]:
 def session_result(session_id: str) -> dict[str, Any]:
     state = sessions.get(session_id)
     result = state.get("result")
+    if not (isinstance(result, dict) and result.get("status")):
+        working = str(state.get("working_text") or "")
+        source = str(state.get("source_text") or "")
+        if working.strip() and working != source:
+            execute_tool(session_id, "build_schedule", {})
+            state = sessions.get(session_id)
+            result = state.get("result")
     if isinstance(result, dict) and result.get("status"):
         return result
     return _agent_result(
         str(state.get("task_id") or ""),
-        "failed",
-        "Агент не вызвал apply/build — SCHEDULE не собран",
-        issues=[{"type": "no_build"}],
+        "needs_input",
+        "Агент не применил изменений. Уточните задачу.",
+        issues=[{"type": "no_apply"}],
+        requests=[
+            {
+                "question_id": "Q-apply",
+                "question": "Агент не применил изменений к SCHEDULE. Уточните, что сделать со скважинами и keywords.",
+                "options": [],
+            }
+        ],
     )
 
 
@@ -244,7 +259,7 @@ def _new_well_defs(state: dict[str, Any]) -> list[dict[str, Any]]:
 
 def _ops_from_model(raw: Any) -> list[dict[str, Any]]:
     if isinstance(raw, list):
-        return [row for row in raw if isinstance(row, dict)]
+        return [row for row in raw if isinstance(row, dict) and (row.get("keyword") or row.get("operation"))]
     if isinstance(raw, str) and raw.strip():
         try:
             parsed = json.loads(raw)
@@ -258,10 +273,27 @@ def _ops_from_model(raw: Any) -> list[dict[str, Any]]:
         out: list[dict[str, Any]] = []
         for key in keys:
             item = raw[key]
-            if isinstance(item, dict):
+            if isinstance(item, dict) and (item.get("keyword") or item.get("operation")):
                 out.append(item)
         return out
     return []
+
+
+def _has_gruptree(source: str) -> bool:
+    present = _compact_inspect(source).get("keywords_present") or []
+    return "GRUPTREE" in present
+
+
+def _gruptree_parent_options(source: str) -> list[str]:
+    options: list[str] = []
+    for row in _compact_inspect(source).get("gruptree_preview") or []:
+        if not isinstance(row, dict):
+            continue
+        for key in ("parent", "child"):
+            name = str(row.get(key) or "").strip()
+            if name and name not in options:
+                options.append(name)
+    return options[:12]
 
 
 def execute_tool(session_id: str, name: str, args: dict[str, Any] | None = None) -> dict[str, Any]:
@@ -483,7 +515,33 @@ def execute_tool(session_id: str, name: str, args: dict[str, Any] | None = None)
                 "wells": invented,
                 "message": "Нельзя придумывать скважины. Берите имена из inspect_schedule.",
             }
-        if missing and not spec.get("parent_group"):
+        if not spec.get("parent_group"):
+            has_tree = _has_gruptree(source)
+            options = _gruptree_parent_options(source) or ["GNEW", "GINJ", "GPROD"]
+            result = _agent_result(
+                task_id,
+                "needs_input",
+                (
+                    "Baseline не содержит GRUPTREE. Укажите родительскую группу для перепривязки."
+                    if not has_tree
+                    else "Укажите родительскую группу для перепривязки."
+                ),
+                data={"group_rebind": spec, "missing": missing or ["parent_group"]},
+                issues=[{"type": "GROUP_REBIND_SPEC_REQUIRED", "missing": missing or ["parent_group"]}],
+                requests=[
+                    {
+                        "question_id": "Q-parent-group",
+                        "question": (
+                            "Baseline не содержит GRUPTREE. Укажите родительскую группу для перепривязки."
+                            if not has_tree
+                            else "Укажите родительскую группу для перепривязки."
+                        ),
+                        "options": options,
+                    }
+                ],
+            )
+            return _store_result(state, result)
+        if missing:
             result = _agent_result(
                 task_id,
                 "needs_input",
@@ -531,6 +589,21 @@ def execute_tool(session_id: str, name: str, args: dict[str, Any] | None = None)
 
     if name == "apply_operations":
         operations = _ops_from_model(args.get("operations"))
+        if not operations:
+            result = _agent_result(
+                task_id,
+                "needs_input",
+                "Нужен список operations: массив {keyword, operation, fields}.",
+                issues=[{"type": "operations_required"}],
+                requests=[
+                    {
+                        "question_id": "Q-operations",
+                        "question": "Передайте operations массивом, например [{\"keyword\":\"WCONPROD\",\"operation\":\"MODIFY\",\"fields\":{...}}].",
+                        "options": [],
+                    }
+                ],
+            )
+            return _store_result(state, result)
         wells = well_names(parse_schedule(source))
         bad = []
         for op in operations:

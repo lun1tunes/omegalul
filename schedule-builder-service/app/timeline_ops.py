@@ -73,6 +73,13 @@ def _well(record: Record) -> str:
     return record.tokens[0].strip("'\"") if record.tokens else ""
 
 
+def _is_named_well(well: str) -> bool:
+    name = str(well or "").strip().strip("'\"")
+    if not name or name in {"*", "1*"}:
+        return False
+    return not name.startswith("*")
+
+
 def _well_name(value: Any) -> str:
     return str(value or "").strip().strip("'\"")
 
@@ -94,7 +101,7 @@ def _excel_wells(well_facts: list[dict[str, Any]]) -> list[str]:
     seen: list[str] = []
     for fact in well_facts or []:
         well = _well_name(fact.get("well") or fact.get("entity"))
-        if well and well not in seen:
+        if well and _is_named_well(well) and well not in seen:
             seen.append(well)
     return seen
 
@@ -107,8 +114,8 @@ def _list_baseline_commissioning_wells(segments: list[dict[str, Any]]) -> list[s
                 continue
             for record in block.records:
                 well = _well(record)
-                if well:
-                    wells.add(well)
+                if _is_named_well(well):
+                    wells.add(_well_name(well))
     return sorted(wells)
 
 
@@ -391,7 +398,6 @@ def _retarget_commissioning_dates(
     seen_primary: set[str] = set()
     seen_companions: set[tuple[str, str]] = set()
     for segment in segments:
-        source_date = parse_date(segment.get("date"))
         for block in list(segment.get("blocks") or []):
             if block.keyword not in MOVE_KEYWORDS:
                 continue
@@ -405,10 +411,14 @@ def _retarget_commissioning_dates(
                 if is_primary and is_factual_record(record):
                     keep.append(record)
                     continue
+                # First WELOPEN/WEFAC for the well travel with first WCONPROD,
+                # including undated preamble (304R OPEN before any DATES).
+                # Later occurrences (SHUT, later WEFAC) stay. Same as JS
+                # editCommissioningDatesOnTimeline takeFirst.
                 is_companion = (
                     block.keyword in {"WELOPEN", "WEFAC"}
                     and well in first_wconprod_date
-                    and first_wconprod_date.get(well) == source_date
+                    and _is_named_well(well)
                 )
                 if (is_primary and well in seen_primary) or (
                     is_companion and (well, block.keyword) in seen_companions

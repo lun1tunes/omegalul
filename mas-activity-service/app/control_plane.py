@@ -16,6 +16,7 @@ from typing import Any
 import httpx
 
 from app.contracts import empty_state
+from app.state_shape import nest_artifacts
 from app.settings import get_settings
 
 _LOCK = threading.Lock()
@@ -128,8 +129,21 @@ def _notify_case(case_id: str | None) -> None:
     case_watch.notify_case(cid)
 
 
+def _is_clearing(operation: str, payload: dict[str, Any]) -> bool:
+    if operation == "wipe":
+        return True
+    if operation != "schema":
+        return False
+    clear = payload.get("clear", payload.get("wipe"))
+    return clear is True or clear in (1, "1", "true", "True")
+
+
 def _after_write(operation: str, payload: dict[str, Any]) -> None:
-    if operation not in _WRITE_OPS and operation != "batch":
+    if (
+        operation not in _WRITE_OPS
+        and operation != "batch"
+        and not _is_clearing(operation, payload)
+    ):
         return
     invalidate_read_cache()
     if operation == "batch":
@@ -256,9 +270,14 @@ def ensure_schema() -> dict[str, Any]:
 
 
 def wipe_data() -> dict[str, Any]:
-    """Truncate MAS case tables via the n8n proxy. Never called on Activity boot."""
+    """Truncate MAS case tables via the n8n proxy. Never called on Activity boot.
+
+    Proxy path is ``schema`` + ``clear=true``: create tables if needed, then
+    TRUNCATE cases/events/error_traces/executions/mas_artifacts. Never
+    ``agent_registry``.
+    """
     if _configured():
-        return dict(proxy_call("wipe") or {})
+        return dict(proxy_call("schema", clear=True) or {})
     reset_memory()
     return {"ok": True, "backend": "memory", "wiped": True}
 
@@ -282,7 +301,7 @@ def create_case(
     if task_name:
         state["task_name"] = str(task_name).strip()
     if artifacts:
-        state["artifacts"] = artifacts
+        state["artifacts"] = nest_artifacts(artifacts)
     if extra_state:
         state.update(extra_state)
     status = str(status or "new").strip() or "new"
@@ -372,9 +391,9 @@ def snapshot(case_id: str, after_seq: int = 0) -> dict[str, Any]:
     return {"case": row, "events": events}
 
 
-def list_cases(limit: int = 80) -> list[dict[str, Any]]:
+def list_cases(limit: int = 200) -> list[dict[str, Any]]:
     global _list_cache
-    limit = int(limit or 80)
+    limit = int(limit or 200)
     now = time.monotonic()
     with _CACHE_LOCK:
         hit = _list_cache
@@ -382,7 +401,10 @@ def list_cases(limit: int = 80) -> list[dict[str, Any]]:
             return [dict(row) for row in hit[2]]
         gen = _read_gen
     if _configured():
-        result = list(proxy_call("list_cases", limit=limit) or [])
+        raw = proxy_call("list_cases", limit=limit)
+        if isinstance(raw, dict) and str(raw.get("case_id") or "").strip():
+            raw = [raw]
+        result = list(raw or [])
         rows = [
             dict(row)
             for row in result

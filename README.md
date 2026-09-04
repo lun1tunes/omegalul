@@ -12,6 +12,8 @@
 
 Машинный контракт имён: [`n8n/import-manifest.json`](n8n/import-manifest.json) (`runtime_import_order` = поле; `full_clean_import_set` = lab + support). Compose / REST-импорт — только лаборатория (§5 в `docs.md`).
 
+Проверки **лаборатории** (не полевые сервисы). Цикл `node n8n/tests/*-smoke.js` требует Node.js; FastAPI на Windows по-прежнему только `.venv` — см. `docs.md` §5 и §3 (JS timeline не входит в процесс Schedule Builder).
+
 ```bash
 export WORKSPACE_ROOT="$PWD"
 for f in n8n/tests/*-smoke.js; do node "$f" || exit 1; done

@@ -198,6 +198,9 @@ def main() -> int:
                     elif key == "math_url":
                         assignment["value"] = "http://host.docker.internal:8100"
                         changed += 1
+                    elif key == "orchestrator_step_url":
+                        assignment["value"] = "http://127.0.0.1:5678/webhook/mas-orchestrator-step"
+                        changed += 1
             if nname == "Runtime configuration":
                 for assignment in (((params.get("assignments") or {}).get("assignments")) or []):
                     key = assignment.get("name")

@@ -217,3 +217,26 @@ def _cleanup_expired_sessions() -> int:
             # Corrupt/incomplete sessions must not make new uploads fail. Leave them for an operator.
             continue
     return deleted
+
+
+def close_session(session_id: str) -> dict[str, Any]:
+    """Drop a session directory after the n8n agent has fetched the result."""
+    try:
+        validate_session_id(session_id)
+    except ValueError:
+        return {"ok": True, "closed": False, "session_id": session_id}
+    directory = session_root() / session_id
+    if not directory.is_dir():
+        return {"ok": True, "closed": False, "session_id": session_id}
+    try:
+        with FileLock(str(session_lock_path(session_id)), timeout=5):
+            if directory.is_dir():
+                shutil.rmtree(directory)
+        lock_path = session_lock_path(session_id)
+        try:
+            lock_path.unlink(missing_ok=True)
+        except OSError:
+            pass
+        return {"ok": True, "closed": True, "session_id": session_id}
+    except Timeout:
+        return {"ok": False, "closed": False, "session_id": session_id, "busy": True}

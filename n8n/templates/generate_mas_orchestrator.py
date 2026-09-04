@@ -237,6 +237,7 @@ const goal=String(body.task_description||body.goal||raw.task_description||raw.go
 const taskName=String(body.task_name||raw.task_name||'').trim();
 const humanResponse=String(body.human_response||raw.human_response||'');
 const gateId=String(body.gate_id||raw.gate_id||'');
+const expectedVersion=body.expected_version!=null?Number(body.expected_version):(raw.expected_version!=null?Number(raw.expected_version):null);
 const requestedBy=String(body.requested_by||raw.requested_by||'');
 const activityBaseUrl=String(cfg.activity_base_url||raw.activity_base_url||'').trim();
 const executionId=String($execution.id||'');
@@ -273,6 +274,7 @@ return [{json:{
   task_name:taskName,
   human_response:humanResponse,
   gate_id:gateId,
+  expected_version:Number.isFinite(expectedVersion)?expectedVersion:null,
   requested_by:requestedBy,
   activity_base_url:activityBaseUrl,
   is_probe:false,
@@ -284,6 +286,288 @@ return [{json:{
   sql_parameters:[caseId],
   exec_sql_parameters:[executionId, caseId, 'orchestrator'],
 }}];
+"""
+
+STATE_SHAPE_JS = r"""
+function roleForArtifactId(id){
+  const k=String(id||'');
+  if(k==='excel'||k.indexOf('excel_')===0) return 'excel';
+  if(k==='surface') return 'surface';
+  if(k==='schedule_source') return 'schedule_source';
+  if(k.indexOf('schedule_source_')===0) return 'schedule_include';
+  if(k==='schedule_out') return 'schedule_out';
+  if(k==='trajectory'||k.indexOf('trajectory_')===0) return 'trajectory';
+  if(k==='diff') return 'diff';
+  return 'attachment';
+}
+function isNestedArtifacts(arts){
+  if(!arts||typeof arts!=='object'||Array.isArray(arts)) return false;
+  const sch=arts.schedule;
+  if(sch&&typeof sch==='object'&&!Array.isArray(sch)&&(sch.source||Array.isArray(sch.includes)||Array.isArray(sch.grdecl)||sch.out||sch.diff!=null)) return true;
+  if(Array.isArray(arts.trajectories)||Array.isArray(arts.attachments)) return true;
+  return false;
+}
+function fileItem(id,value,role){
+  if(value==null||value===''||(typeof value==='object'&&!Array.isArray(value)&&!Object.keys(value).length)) return null;
+  const resolved=role||roleForArtifactId(id);
+  if(resolved==='diff') return null;
+  if(typeof value==='string'){
+    if(resolved==='schedule_out') return {artifact_id:id||'schedule_out',role:'schedule_out',bytes:value.length,text:value};
+    return {artifact_id:id,filename:value,role:resolved};
+  }
+  if(typeof value!=='object'||Array.isArray(value)) return null;
+  const item={...value};
+  item.artifact_id=item.artifact_id||id;
+  if(!item.artifact_id) return null;
+  item.role=item.role||resolved||roleForArtifactId(item.artifact_id);
+  return item;
+}
+function flattenArtifacts(arts){
+  const src=arts&&typeof arts==='object'&&!Array.isArray(arts)?arts:{};
+  const out={};
+  const put=(value,fallbackId)=>{
+    if(fallbackId==='diff'){ if(value!=null) out.diff=value; return; }
+    const row=fileItem(fallbackId,value);
+    if(!row) return;
+    out[row.artifact_id]=row;
+  };
+  if(isNestedArtifacts(src)){
+    put(src.excel,'excel');
+    put(src.surface,'surface');
+    const sch=src.schedule&&typeof src.schedule==='object'?src.schedule:{};
+    put(sch.source,'schedule_source');
+    const incs=Array.isArray(sch.includes)?sch.includes:[];
+    for(const inc of incs) put(inc,inc&&inc.artifact_id);
+    const grdecl=Array.isArray(sch.grdecl)?sch.grdecl:[];
+    for(const g of grdecl) put(g,g&&g.artifact_id);
+    put(sch.out,'schedule_out');
+    if(sch.diff!=null) out.diff=sch.diff;
+    const trajs=Array.isArray(src.trajectories)?src.trajectories:[];
+    for(const t of trajs) put(t,t&&t.artifact_id||'trajectory');
+    const atts=Array.isArray(src.attachments)?src.attachments:[];
+    for(const a of atts) put(a,a&&a.artifact_id);
+    for(const [k,v] of Object.entries(src)){
+      if(k==='excel'||k==='surface'||k==='schedule'||k==='trajectories'||k==='attachments') continue;
+      if(!(k in out)) put(v,k);
+    }
+    return out;
+  }
+  for(const [k,v] of Object.entries(src)){
+    if(k==='schedule'||k==='trajectories'||k==='attachments') continue;
+    put(v,k);
+  }
+  return out;
+}
+function nestArtifacts(arts){
+  const nested={};
+  const includes=[];
+  const grdecl=[];
+  const trajectories=[];
+  const attachments=[];
+  for(const [id,item] of Object.entries(flattenArtifacts(arts))){
+    if(id==='diff'){ nested.schedule=nested.schedule||{}; nested.schedule.diff=item; continue; }
+    if(!item||typeof item!=='object') continue;
+    const role=item.role||roleForArtifactId(id);
+    if(role==='excel') nested.excel=item;
+    else if(role==='surface') nested.surface=item;
+    else if(role==='schedule_source'){ nested.schedule=nested.schedule||{}; nested.schedule.source=item; }
+    else if(role==='schedule_include'){
+      const name=String(item.filename||'').toLowerCase();
+      if(name.endsWith('.grdecl')) grdecl.push(item);
+      else includes.push(item);
+    }
+    else if(role==='schedule_out'){ nested.schedule=nested.schedule||{}; nested.schedule.out=item; }
+    else if(role==='trajectory') trajectories.push(item);
+    else attachments.push(item);
+  }
+  if(includes.length){ nested.schedule=nested.schedule||{}; nested.schedule.includes=includes; }
+  if(grdecl.length){ nested.schedule=nested.schedule||{}; nested.schedule.grdecl=grdecl; }
+  if(trajectories.length) nested.trajectories=trajectories;
+  if(attachments.length) nested.attachments=attachments;
+  return nested;
+}
+function fileCounts(arts){
+  const counts={excel:0,schedule_source:0,includes:0,grdecl:0,trajectories:0,surface:0,schedule_out:0};
+  for(const [id,item] of Object.entries(flattenArtifacts(arts))){
+    if(id==='diff') continue;
+    const role=(item&&item.role)||roleForArtifactId(id);
+    if(role==='schedule_include'){
+      const name=String((item&&item.filename)||'').toLowerCase();
+      if(name.endsWith('.grdecl')) counts.grdecl+=1;
+      else counts.includes+=1;
+    }
+    else if(role in counts) counts[role]+=1;
+  }
+  return counts;
+}
+function hasScheduleOut(arts){
+  const item=flattenArtifacts(arts).schedule_out;
+  if(!item) return false;
+  if(typeof item==='string') return Boolean(String(item).trim());
+  if(typeof item==='object') return Boolean(item.text||item.content||item.filename||item.artifact_id);
+  return true;
+}
+function slimExcel(d){
+  if(!d||typeof d!=='object'||Array.isArray(d)) return d;
+  const out={...d};
+  if(Array.isArray(d.facts)){
+    out.facts=d.facts.filter(x=>x&&typeof x==='object').map(f=>({well:f.well,date:f.date}));
+  }
+  if(Array.isArray(d.normalized_rows)){
+    out.normalized_rows=d.normalized_rows.filter(t=>t&&typeof t==='object').map(t=>{
+      const prev=Array.isArray(t.preview)?t.preview:[];
+      const count=t.preview_count!=null?Number(t.preview_count):(t.row_count!=null?Number(t.row_count):prev.length);
+      return {table_id:t.table_id,columns:t.columns||[],row_count:t.row_count!=null?t.row_count:count,preview_count:count,preview:prev.slice(0,3)};
+    });
+  }
+  return out;
+}
+function decodeHitlAnswer(v){
+  if(v==null||typeof v!=='string') return v;
+  const s=v.trim();
+  if(!s) return v;
+  if(!((s[0]==='{'&&s[s.length-1]==='}')||(s[0]==='['&&s[s.length-1]===']')||(s[0]==='"'&&s[s.length-1]==='"'))) return v;
+  try{
+    const p=JSON.parse(s);
+    if(typeof p==='string'){
+      const t=p.trim();
+      if((t[0]==='{'&&t[t.length-1]==='}')||(t[0]==='['&&t[t.length-1]===']')){
+        try{return JSON.parse(t);}catch{return p;}
+      }
+      return p;
+    }
+    return p;
+  }catch{return v;}
+}
+function decodeHitlAnswers(answers){
+  const src=answers&&typeof answers==='object'&&!Array.isArray(answers)?answers:{};
+  const out={};
+  for(const [k,v] of Object.entries(src)) out[k]=decodeHitlAnswer(v);
+  return out;
+}
+function slimCurrentTask(task,arts,data){
+  if(!task||typeof task!=='object') return null;
+  if(!task.task_id&&!task.agent_id) return null;
+  const ids=Array.isArray(task.artifact_ids)?task.artifact_ids:Object.keys(flattenArtifacts(arts||{})).filter(k=>k!=='diff');
+  const keys=Array.isArray(task.data_keys)?task.data_keys:Object.keys(data&&typeof data==='object'?data:{});
+  return {task_id:task.task_id||null,agent_id:task.agent_id||null,artifact_ids:ids,data_keys:keys};
+}
+function slimError(err){
+  if(!err||typeof err!=='object') return err||null;
+  return {message:err.message||'',agent_id:err.agent_id||null};
+}
+function mergeIncomingArtifacts(artifacts,incoming){
+  const nested=nestArtifacts(artifacts);
+  const src=incoming&&typeof incoming==='object'&&!Array.isArray(incoming)?incoming:{};
+  for(const [k,v] of Object.entries(src)){
+    if(k==='diff'){ nested.schedule=nested.schedule||{}; nested.schedule.diff=v; continue; }
+    if(k==='excel_session'){
+      nested.excel=(nested.excel&&typeof nested.excel==='object')?{...nested.excel}:{artifact_id:'excel',role:'excel'};
+      nested.excel.session_id=v;
+      continue;
+    }
+    if(Array.isArray(v)&&(k==='includes'||k==='grdecl')){
+      nested.schedule=nested.schedule||{};
+      nested.schedule[k]=Array.isArray(nested.schedule[k])?nested.schedule[k]:[];
+      for(const row of v){
+        const item=fileItem(row&&row.artifact_id,row);
+        if(item) nested.schedule[k].push(item);
+      }
+      continue;
+    }
+    if(k==='schedule_out'){
+      nested.schedule=nested.schedule||{};
+      nested.schedule.out=typeof v==='string'?{artifact_id:'schedule_out',role:'schedule_out',bytes:String(v).length,text:v}:(fileItem('schedule_out',v,'schedule_out')||v);
+      continue;
+    }
+    const item=fileItem(k,v);
+    if(!item) continue;
+    const role=item.role||roleForArtifactId(k);
+    if(role==='excel') nested.excel=item;
+    else if(role==='surface') nested.surface=item;
+    else if(role==='schedule_source'){ nested.schedule=nested.schedule||{}; nested.schedule.source=item; }
+    else if(role==='schedule_include'){
+      nested.schedule=nested.schedule||{};
+      const name=String(item.filename||'').toLowerCase();
+      if(name.endsWith('.grdecl')){
+        nested.schedule.grdecl=Array.isArray(nested.schedule.grdecl)?nested.schedule.grdecl:[];
+        nested.schedule.grdecl.push(item);
+      } else {
+        nested.schedule.includes=Array.isArray(nested.schedule.includes)?nested.schedule.includes:[];
+        nested.schedule.includes.push(item);
+      }
+    }
+    else if(role==='trajectory'){ nested.trajectories=Array.isArray(nested.trajectories)?nested.trajectories:[]; nested.trajectories.push(item); }
+    else { nested.attachments=Array.isArray(nested.attachments)?nested.attachments:[]; nested.attachments.push(item); }
+  }
+  return nested;
+}
+function sanitizeState(state){
+  const s=state&&typeof state==='object'?{...state}:{};
+  const arts=s.artifacts&&typeof s.artifacts==='object'?{...s.artifacts}:{};
+  if(arts.file&&!arts.excel) arts.excel=arts.file;
+  if(arts.schedule_files&&!arts.schedule_source) arts.schedule_source=arts.schedule_files;
+  s.artifacts=nestArtifacts(arts);
+  const data=s.data&&typeof s.data==='object'&&!Array.isArray(s.data)?{...s.data}:{};
+  delete data.facts;
+  if(data.excel) data.excel=slimExcel(data.excel);
+  s.data=data;
+  const hitl=s.hitl&&typeof s.hitl==='object'?{...s.hitl}:{pending:false,questions:[],answers:{}};
+  hitl.answers=decodeHitlAnswers(hitl.answers||{});
+  s.hitl=hitl;
+  s.current_task=slimCurrentTask(s.current_task,s.artifacts,s.data);
+  if(s.last_error&&typeof s.last_error==='object') s.last_error=slimError(s.last_error);
+  return s;
+}
+function buildCompact(state){
+  const artifacts=state.artifacts||{};
+  const data=state.data||{};
+  const plan=Array.isArray(state.plan)?state.plan:[];
+  const hitl=state.hitl||{};
+  const counts=fileCounts(artifacts);
+  const excel=data.excel&&typeof data.excel==='object'?data.excel:{};
+  const facts=Array.isArray(excel.facts)?excel.facts:[];
+  const questions=Array.isArray(hitl.questions)?hitl.questions:[];
+  const q0=questions[0]&&typeof questions[0]==='object'?questions[0]:{};
+  const pending=hitl.pending===true;
+  const flat=flattenArtifacts(artifacts);
+  const excelMeta=flat.excel&&typeof flat.excel==='object'?flat.excel:{};
+  const sourceMeta=flat.schedule_source&&typeof flat.schedule_source==='object'?flat.schedule_source:{};
+  const err=state.last_error;
+  const cur=state.current_task;
+  return {
+    goal:String(state.goal||'').slice(0,500),
+    task_name:state.task_name||'',
+    status:state.status||'',
+    files:counts,
+    has_excel:counts.excel>0,
+    has_schedule_source:counts.schedule_source>0,
+    has_schedule_out:counts.schedule_out>0,
+    excel_filename:excelMeta.filename||null,
+    schedule_source_filename:sourceMeta.filename||null,
+    excel_facts:facts.length,
+    wells_in_excel:facts.map(f=>f&&f.well).filter(Boolean).slice(0,20),
+    schedule_root:state.schedule_root||'',
+    plan:plan.map(p=>({id:p.id,status:p.status})),
+    current_task:cur&&typeof cur==='object'?{task_id:cur.task_id||null,agent_id:cur.agent_id||null}:null,
+    hitl_pending:pending,
+    hitl_question:pending?(String(q0.question||'').slice(0,200)||null):null,
+    hitl_answer_ids:Object.keys(hitl.answers||{}),
+    unlisted_wells_policy:(()=>{
+      const answers=hitl.answers&&typeof hitl.answers==='object'?hitl.answers:{};
+      for(const [key,val] of Object.entries(answers)){
+        const blob=String(typeof val==='string'?val:JSON.stringify(val||'')).toLowerCase();
+        const id=String(key||'').toLowerCase();
+        const m=blob.match(/unlisted_wells_policy\s*[:=]\s*(keep|remove)/)||((id.includes('unlisted')||blob.includes('unlisted'))?blob.match(/\b(keep|remove)\b/):null);
+        if(m) return m[1].toLowerCase();
+      }
+      return null;
+    })(),
+    step_count:Number(state.step_count||0),
+    version:Number(state.version||0),
+    last_error:(err&&typeof err==='object'?err.message:null)||null
+  };
+}
 """
 
 CREATE_CASE = r"""
@@ -300,7 +584,8 @@ const state={
   current_task:null,
   hitl:{pending:false,questions:[],answers:{}},
   last_error:null,
-  step_count:0
+  step_count:0,
+  version:1
 };
 const persistEvents=[[req.case_id,'','case.created','user','','new',('Принял задачу: '+goal).slice(0,200),'',JSON.stringify({requested_by:req.requested_by||'',task_name:req.task_name||'',note:'orchestrator start; files stay in Activity /cases/{id}/artifacts'})]];
 return [{json:{
@@ -312,11 +597,11 @@ return [{json:{
 }}];
 """
 
-APPLY_EXTRAS = r"""
+APPLY_EXTRAS = STATE_SHAPE_JS + r"""
 const req=$('Normalize step request').first().json||{};
 const load=$json||{};
 const parse=v=>{if(v&&typeof v==='object'&&!Array.isArray(v))return v;try{const p=JSON.parse(String(v||'{}'));return p&&typeof p==='object'&&!Array.isArray(p)?p:{}}catch{return {}}};
-const state=parse(load.state||load.State||{});
+let state=parse(load.state||load.State||{});
 if(req.is_status===true){
   const hitl=parse(state.hitl);
   const questions=Array.isArray(hitl.questions)?hitl.questions:[];
@@ -345,19 +630,46 @@ if(req.is_status===true){
     human_gate,
     version,
     restartable:status==='done'||status==='failed',
-    has_schedule_out:Boolean(state.artifacts&&state.artifacts.schedule_out)
+    has_schedule_out:hasScheduleOut(state.artifacts)
   }}];
 }
 if(req.is_resume===true){
-  const answer=String(req.human_response||'').trim();
-  const hitl=parse(state.hitl);
+  state=sanitizeState(state);
+  const expected=Number(req.expected_version);
+  const current=Number(state.version||0);
+  if(Number.isFinite(expected)&&expected>0&&current>0&&expected!==current){
+    const hitl=state.hitl&&typeof state.hitl==='object'?state.hitl:{};
+    const questions=Array.isArray(hitl.questions)?hitl.questions:[];
+    return [{json:{
+      ...req,
+      state,
+      did_resume:false,
+      is_status:false,
+      next_status:String(state.status||'waiting_user'),
+      status:String(state.status||'waiting_user'),
+      action_type:'version_mismatch',
+      should_continue:false,
+      message:`Version mismatch: expected ${expected}, got ${current}. Reload status.`,
+      version:current,
+      human_gate:questions.length?{
+        gate_id:(questions[0]&&questions[0].question_id)||'hitl',
+        kind:'needs_input',
+        reason:questions[0]&&questions[0].question||state.goal||'Нужен ответ',
+        expected_version:current,
+        questions
+      }:null
+    }}];
+  }
+  const answer=decodeHitlAnswer(String(req.human_response||'').trim());
+  const hitl=state.hitl&&typeof state.hitl==='object'?state.hitl:{pending:false,questions:[],answers:{}};
   const questions=Array.isArray(hitl.questions)?hitl.questions:[];
   const qid=String(req.gate_id||(questions[0]&&questions[0].question_id)||'Q-1');
   const answers={...(hitl.answers&&typeof hitl.answers==='object'?hitl.answers:{})};
   answers[qid]=answer;
   state.hitl={pending:false,questions,answers};
   state.status='running';
-  const persistEvents=[[req.case_id,'','hitl.answered','user','','answered',answer?('Пользователь ответил: '+answer):'Пользователь ответил','',JSON.stringify({question_id:qid,answer})]];
+  state.version=Number(state.version||0)+1;
+  const persistEvents=[[req.case_id,'','hitl.answered','user','','answered',answer?('Пользователь ответил: '+(typeof answer==='string'?answer:JSON.stringify(answer))):'Пользователь ответил','',JSON.stringify({question_id:qid,answer})]];
   return [{json:{
     ...req,
     state,
@@ -391,43 +703,23 @@ if(!requested||loaded!==requested){
 return [{json:{...req,...row,case_loaded:true}}];
 """
 
-PREPARE_DECISION = r"""
+PREPARE_DECISION = STATE_SHAPE_JS + r"""
 const req=$('Normalize step request').first().json||{};
 const extras=(()=>{try{return $('Apply request extras').first().json}catch{return null}})();
 const load=$('Load case').first().json||{};
 const parse=v=>{if(v&&typeof v==='object')return v;try{return JSON.parse(String(v||'{}'))}catch{return {}}};
-const state=(extras&&extras.state&&typeof extras.state==='object')?extras.state:parse(load.state||load.State||{});
-if(!state.artifacts||typeof state.artifacts!=='object') state.artifacts={};
-if(state.artifacts.file&&!state.artifacts.excel) state.artifacts.excel=state.artifacts.file;
-if(state.artifacts.schedule_files&&!state.artifacts.schedule_source) state.artifacts.schedule_source=state.artifacts.schedule_files;
+const rawState=(extras&&extras.state&&typeof extras.state==='object')?extras.state:parse(load.state||load.State||{});
+const state=sanitizeState(rawState);
 const status=String((extras&&extras.next_status)||load.status||state.status||'running');
 const registry=$('Load agent registry').all().map(i=>i.json||{}).filter(r=>r&&r.agent_id);
-const artifacts=state.artifacts&&typeof state.artifacts==='object'?state.artifacts:{};
+const compact=buildCompact(state);
 const data=state.data&&typeof state.data==='object'?state.data:{};
-const plan=Array.isArray(state.plan)?state.plan:[];
-const hitl=state.hitl&&typeof state.hitl==='object'?state.hitl:{};
-const compact={
-  goal:state.goal||'',
-  artifacts_present:Object.keys(artifacts).filter(k=>artifacts[k]!=null&&artifacts[k]!==''),
-  artifact_files:Object.fromEntries(Object.entries(artifacts).map(([k,v])=>[k,(v&&typeof v==='object'&&v.filename)?v.filename:k])),
-  has_excel:Boolean(artifacts.excel),
-  has_schedule_source:Boolean(artifacts.schedule_source),
-    has_schedule_out:Boolean(artifacts.schedule_out&&String(artifacts.schedule_out).trim()),
-  excel_facts:(data.excel&&Array.isArray(data.excel.facts))?data.excel.facts.length:(Array.isArray(data.facts)?data.facts.length:0),
-  schedule_root:state.schedule_root||'',
-  data_present:Object.fromEntries(Object.keys(data).map(k=>[k,!(data[k]==null||data[k]==={}||data[k]===[])]) ),
-  plan:plan.map(p=>({id:p.id,status:p.status})),
-  current_task:state.current_task||null,
-  hitl_pending:hitl.pending===true,
-  hitl_answers:hitl.answers||{},
-  step_count:Number(state.step_count||0),
-  last_error:state.last_error||null
-};
 const hint=[];
 if(compact.has_excel&&!data.excel) hint.push('Сначала excel_extractor — в artifacts есть Excel, фактов ещё нет.');
-else if((compact.excel_facts>0||(data.excel&&data.excel.facts))&&compact.has_schedule_source&&!compact.has_schedule_out) hint.push('Дальше schedule_builder — факты Excel и исходный .inc уже есть.');
+else if(compact.excel_facts>0&&compact.has_schedule_source&&!compact.has_schedule_out) hint.push('Дальше schedule_builder — факты Excel и исходный .inc уже есть.');
 else if(!compact.has_excel&&compact.has_schedule_source&&!compact.has_schedule_out) hint.push('Excel нет: сразу schedule_builder по тексту задачи и baseline .inc.');
 else if(compact.has_schedule_out) hint.push('schedule_out уже есть — finish.');
+if(compact.unlisted_wells_policy==='keep'||compact.unlisted_wells_policy==='remove') hint.push('HITL unlisted_wells_policy уже выбран: '+compact.unlisted_wells_policy+'.');
 const prompt=`Цель:\n${compact.goal}\n\nТекущее состояние:\n${JSON.stringify(compact,null,2)}\n\nПодсказка следующего шага:\n${hint.join(' ')||'выбери по реестру агентов'}\n\nДоступные агенты:\n${JSON.stringify(registry,null,2)}\n`;
 const endpoints=$('Runtime endpoints').first().json||{};
 const math=String(endpoints.math_url||endpoints.calculation_agent_url||'').replace(/\/$/,'');
@@ -437,6 +729,7 @@ return [{json:{
   ...endpoints,
   calculation_agent_url:calculationAgentUrl,
   activity_base_url:String(endpoints.activity_base_url||req.activity_base_url||'http://mas-activity:8200').replace(/\/$/,''),
+  orchestrator_step_url:String(endpoints.orchestrator_step_url||req.orchestrator_step_url||'http://127.0.0.1:5678/webhook/mas-orchestrator-step').replace(/\/$/,''),
   case_id:req.case_id,
   state,
   status,
@@ -447,7 +740,7 @@ return [{json:{
 }}];
 """
 
-PARSE_DECISION = r"""
+PARSE_DECISION = STATE_SHAPE_JS + r"""
 const prev=$('Prepare decision context').first().json||{};
 const raw=$json;
 const obj=v=>v&&typeof v==='object'&&!Array.isArray(v);
@@ -456,8 +749,9 @@ const out=parse(raw.output||raw.text||raw);
 const decision=obj(out.action)?out:(obj(raw)?raw:{});
 const action=obj(decision.action)?decision.action:{type:'ask_user',question_id:'Q-parse',question:'Не удалось разобрать решение оркестратора',options:[]};
 const type=String(action.type||'').trim();
-const state=obj(prev.state)?{...prev.state}:{};
+const state=sanitizeState(obj(prev.state)?{...prev.state}:{});
 state.step_count=Number(state.step_count||0)+1;
+state.version=Number(state.version||0)+1;
 if(Array.isArray(decision.plan_update)){
   const by=new Map((Array.isArray(state.plan)?state.plan:[]).map(p=>[p.id,p]));
   for(const item of decision.plan_update){if(item&&item.id) by.set(item.id,{...(by.get(item.id)||{}),...item});}
@@ -468,24 +762,45 @@ const decisionEvent={
   kind:'orchestrator.decision',
   actor:'orchestrator',
   status_message:statusMessage,
-  payload:{action_type:type,agent_id:action.agent_id||null,step_count:state.step_count}
+  payload:{action_type:type,agent_id:action.agent_id||null,step_count:state.step_count,version:state.version}
 };
 const events=[];
 let nextStatus='running';
 let agentTask=null;
 if(type==='call_agent'){
   const taskId=String(action.task_id||`TASK-${state.step_count}`).trim();
+  const flatArts=flattenArtifacts(state.artifacts||{});
+  const artifactIds=Object.keys(flatArts).filter(k=>k!=='diff');
+  const hitlState=state.hitl&&typeof state.hitl==='object'?state.hitl:{};
+  const hitlAnswers=hitlState.answers&&typeof hitlState.answers==='object'?hitlState.answers:{};
+  let unlistedPolicy='';
+  for(const [key,val] of Object.entries(hitlAnswers)){
+    const blob=String(typeof val==='string'?val:JSON.stringify(val||'')).toLowerCase();
+    const id=String(key||'').toLowerCase();
+    const m=blob.match(/unlisted_wells_policy\s*[:=]\s*(keep|remove)/)||((id.includes('unlisted')||blob.includes('unlisted'))?blob.match(/\b(keep|remove)\b/):null);
+    if(m){ unlistedPolicy=m[1].toLowerCase(); break; }
+  }
   agentTask={
     case_id:prev.case_id,
     task_id:taskId,
     agent_id:String(action.agent_id||'').trim(),
     objective:String(action.task&&action.task.objective||state.goal||''),
     handoff_message:String(action.handoff_message||''),
-    inputs:{...(obj(action.task)?action.task:{}),artifacts:state.artifacts||{},activity_base_url:String(prev.activity_base_url||'http://mas-activity:8200').replace(/\/$/,''),schedule_root:state.schedule_root||(obj(action.task)?action.task.schedule_root:'')},
-    context:{data:state.data||{},hitl:state.hitl||{}},
+    inputs:{
+      ...(obj(action.task)?action.task:{}),
+      activity_base_url:String(prev.activity_base_url||'http://mas-activity:8200').replace(/\/$/,''),
+      schedule_root:state.schedule_root||(obj(action.task)?action.task.schedule_root:''),
+      artifact_ids:artifactIds,
+      data_refs:Object.keys(state.data||{}),
+      ...(unlistedPolicy?{unlisted_wells_policy:unlistedPolicy}:{})
+    },
+    context:{hitl:{pending:Boolean(hitlState.pending),answer_ids:Object.keys(hitlAnswers),answers:hitlAnswers}},
     constraints:{units:'METRIC'}
   };
-  state.current_task=agentTask;
+  delete agentTask.inputs.artifacts;
+  delete agentTask.inputs.context;
+  delete agentTask.inputs.data;
+  state.current_task=slimCurrentTask({task_id:taskId,agent_id:agentTask.agent_id},state.artifacts,state.data);
   events.push(decisionEvent, {
     kind:'agent.handoff',
     actor:'orchestrator',
@@ -576,7 +891,7 @@ else route='unknown';
 return [{json:{...x,route}}];
 """
 
-MERGE = r"""
+MERGE = STATE_SHAPE_JS + r"""
 const prev=$('Prepare agent call').first().json||$('Parse decision').first().json||{};
 const http=$json||{};
 const obj=v=>v&&typeof v==='object'&&!Array.isArray(v);
@@ -589,24 +904,36 @@ const unwrap=v=>{
   if(Array.isArray(v)&&v.length&&obj(v[0])) return v[0];
   return {};
 };
-const result=unwrap(http.body&&typeof http.body==='object'?http.body:http);
+const execError=http.error||http.executionError||null;
+const result=unwrap(
+  (http.body&&typeof http.body==='object')?http.body
+  :(http.result&&typeof http.result==='object')?http.result
+  :(http.output&&typeof http.output==='object')?http.output
+  :http
+);
 const rawStatus=clean(result.status);
-const status=rawStatus|| (http.error?'failed':'completed');
-const resultMessage=clean(result.message);
+const errorMessage=clean((execError&&(execError.message||execError.description))||(result.error&&(result.error.message||result.error.description))||http.message);
+const failed=!rawStatus&&Boolean(execError||result.error||errorMessage&&!result.task_id);
+const status=rawStatus|| (failed?'failed':'completed');
+const resultMessage=clean(result.message)||errorMessage;
 const fallbackMessage=status==='completed'
   ? 'Schedule Builder завершил обработку schedule.'
   : status==='needs_input'
     ? 'Schedule Builder запросил дополнительные данные.'
     : 'Schedule Builder вернул ошибку.';
-const state=obj(prev.state)?{...prev.state}:{};
+const state=sanitizeState(obj(prev.state)?{...prev.state}:{});
 const data=obj(state.data)?{...state.data}:{};
-const artifacts=obj(state.artifacts)?{...state.artifacts}:{};
+delete data.facts;
 const agentId=String(prev.agent_id||result.agent_id||'');
 const bucket=agentId==='excel_extractor'?'excel':(agentId==='calculation_agent'?'calc':(agentId==='schedule_builder'?'schedule':'agent'));
 if(status==='completed'){
-  data[bucket]=result.data||result;
-  if(agentId==='excel_extractor'&&result.data&&Array.isArray(result.data.facts)) data.facts=result.data.facts;
-  Object.assign(artifacts, result.artifacts||{});
+  const raw=obj(result.data)?result.data:{};
+  if(bucket==='excel') data.excel=slimExcel(raw);
+  else {
+    data[bucket]={summary:result.message||'',keys:Object.keys(raw)};
+    if(bucket==='calc'&&raw.top_perforation_md!=null) data.calc.top_perforation_md=raw.top_perforation_md;
+  }
+  state.artifacts=mergeIncomingArtifacts(state.artifacts, result.artifacts||{});
   state.current_task=null;
   state.last_error=null;
 }
@@ -637,11 +964,11 @@ if(status==='needs_input'){
     status_message:resultMessage||fallbackMessage,
     payload:{data_keys:Object.keys((result.data&&typeof result.data==='object')?result.data:{}),artifacts:Object.keys((result.artifacts&&typeof result.artifacts==='object')?result.artifacts:{})}
   });
-} else if(status==='failed'||http.error){
+} else if(status==='failed'||execError){
   nextStatus='running';
   shouldContinue=true;
-  state.last_error={message:resultMessage||clean(http.message)||fallbackMessage,agent_id:agentId};
-  data[bucket]=result.data||result;
+  state.last_error={message:resultMessage||fallbackMessage,agent_id:agentId};
+  data[bucket]={summary:state.last_error.message,keys:Object.keys((result.data&&typeof result.data==='object')?result.data:{})};
   events.push({kind:'agent.failed',actor:agentId||'agent',agent_id:agentId,status:'failed',status_message:state.last_error.message,payload:{message:state.last_error.message,issues:result.issues||[]}});
 }
 if(Number(state.step_count||0)>=24){
@@ -650,8 +977,8 @@ if(Number(state.step_count||0)>=24){
   events.push({kind:'case.failed',actor:'orchestrator',status:'failed',status_message:'Превышен лимит шагов оркестратора'});
 }
 state.data=data;
-state.artifacts=artifacts;
 state.status=nextStatus;
+state.version=Number(state.version||0)+1;
 const persistEvents=events.map(e=>[
   prev.case_id, e.task_id||'', e.kind, e.actor, e.agent_id||'', e.status||'', e.status_message||'', e.handoff_message||'', JSON.stringify(e.payload||{})
 ]);
@@ -665,15 +992,81 @@ return [{json:{
   persist_events:persistEvents,
   events,
   event_sql_parameters:persistEvents[0],
-  continue_url:`${String(prev.activity_base_url||'http://mas-activity:8200').replace(/\/$/,'')}/cases/${encodeURIComponent(String(prev.case_id||''))}/run`
+  continue_url:String(prev.orchestrator_step_url||'http://127.0.0.1:5678/webhook/mas-orchestrator-step').replace(/\/$/,'')
 }}];
 """
 
 FINISH_NONE = r"""
 const x=$json;
-const cont=x.action_type==='finish'?false:false;
-return [{json:{...x, should_continue:false, continue_url:`${String(x.activity_base_url||'http://mas-activity:8200').replace(/\/$/,'')}/cases/${encodeURIComponent(String(x.case_id||''))}/run`}}];
+return [{json:{...x, should_continue:false, continue_url:String(x.orchestrator_step_url||'http://127.0.0.1:5678/webhook/mas-orchestrator-step').replace(/\/$/,'')}}];
 """
+
+# Compact board (not a 12k-wide Kahn line). Grid 250×180; node ~200×88.
+CX, CY = 250, 180
+ORCH_LAYOUT: dict[str, tuple[int, int]] = {
+    "edit after import": (-520, -380),
+    "lane intake": (0, -110),
+    "lane start": (1750, 180),
+    "lane decide": (0, 790),
+    "lane agents": (0, 1150),
+    "Authenticated MAS webhook": (0, 0),
+    "Runtime endpoints": (CX, 0),
+    "Normalize step request": (2 * CX, 0),
+    "Probe ping?": (3 * CX, 0),
+    "Needs create?": (4 * CX, 0),
+    "Insert execution map": (5 * CX, 0),
+    "Load case": (6 * CX, 0),
+    "Prepare start case": (4 * CX, CY),
+    "Insert new case": (5 * CX, CY),
+    "Expand start events": (6 * CX, CY),
+    "Insert start events": (4 * CX, 2 * CY),
+    "Restore after start": (5 * CX, 2 * CY),
+    "Validate loaded case": (0, 3 * CY),
+    "Case found?": (CX, 3 * CY),
+    "Apply request extras": (2 * CX, 3 * CY),
+    "Status only?": (3 * CX, 3 * CY),
+    "Resume persist?": (4 * CX, 3 * CY),
+    "Update case after resume": (5 * CX, 3 * CY),
+    "Expand resume events": (6 * CX, 3 * CY),
+    "Insert resume events": (5 * CX, 4 * CY),
+    "Restore after resume": (6 * CX, 4 * CY),
+    "Decision Chat Model — configure in UI": (2 * CX, 4 * CY),
+    "Decision Structured Output": (3 * CX, 4 * CY),
+    "Load agent registry": (0, 5 * CY),
+    "Prepare decision context": (CX, 5 * CY),
+    "Decision LLM": (2 * CX, 5 * CY),
+    "Parse decision": (3 * CX, 5 * CY),
+    "Update case after decision": (4 * CX, 5 * CY),
+    "Expand decision events": (5 * CX, 5 * CY),
+    "Insert decision events": (4 * CX, 6 * CY),
+    "Restore parsed decision": (5 * CX, 6 * CY),
+    "Prepare agent call": (6 * CX, 5 * CY),
+    "Action router": (6 * CX, 6 * CY),
+    "Call Excel Extractor": (0, 7 * CY),
+    "Call Calculation Agent": (0, 8 * CY),
+    "Call Schedule Builder": (0, 9 * CY),
+    "No agent this step": (0, 10 * CY),
+    "Merge agent result": (CX, 8 * CY),
+    "Update case after agent": (2 * CX, 8 * CY),
+    "Expand agent events": (3 * CX, 8 * CY),
+    "Insert agent events": (2 * CX, 9 * CY),
+    "Restore after agent events": (3 * CX, 9 * CY),
+    "Continue loop?": (4 * CX, 8 * CY),
+    "POST continue run": (5 * CX, 8 * CY),
+    "Prepare Activity ack": (4 * CX, 10 * CY),
+    "Activity sync?": (5 * CX, 10 * CY),
+    "POST step ack to MAS Activity": (6 * CX, 9 * CY),
+    "Format step ack": (6 * CX, 10 * CY),
+}
+
+
+def apply_orchestrator_layout(wf: dict) -> None:
+    """Keep the board layout; generic layered relayout must not flatten this graph."""
+    for node in wf.get("nodes") or []:
+        name = node.get("name")
+        if name in ORCH_LAYOUT:
+            x, y = ORCH_LAYOUT[name]
+            node["position"] = [int(x), int(y)]
 
 
 def main() -> None:
@@ -681,11 +1074,15 @@ def main() -> None:
         note(
             "edit after import",
             (-200, -420),
-            "## edit after import\n\n**Orchestrator — MAS** — thin loop:\n- Bind Postgres on load/insert/update\n- Bind **Qwen** OpenAI-compatible credential on Decision Chat Model\n- Bind inbound header auth on webhook\n- Bind **Runtime endpoints** → `MAS — Runtime Config` (один Set URL на весь контур)\n- Bind **Call Excel Extractor** → `Agent — Excel Extractor` (executeWorkflow)\n- Bind **Call Schedule Builder** → `Agent — Schedule Builder` (executeWorkflow)\n- Excel `X-API-Key` — credential на Agent — Excel Extractor, не этот workflow\n\n`action`: probe | status | start | create | step | resume\n- Activity `/cases` stores files; specialists fetch `/cases/{id}/artifacts/{id}` from their FastAPI tools. n8n never carries binaries.\n- **status** loads case and returns `human_gate` without LLM\n- Decision is Basic LLM Chain + Structured Output (no Agent tools)\n\nOne execution = one step.",
+            "## edit after import\n\n**Orchestrator — MAS** — thin loop:\n- Bind Postgres on load/insert/update\n- Bind **Qwen** OpenAI-compatible credential on Decision Chat Model\n- Bind inbound header auth on webhook **and** POST continue run\n- Bind **Runtime endpoints** → `MAS — Runtime Config` (один Set URL на весь контур)\n- Bind **Call Excel Extractor** → `Agent — Excel Extractor` (executeWorkflow)\n- Bind **Call Schedule Builder** → `Agent — Schedule Builder` (executeWorkflow)\n- Excel `X-API-Key` — credential на Agent — Excel Extractor, не этот workflow\n\n`action`: probe | status | start | create | step | resume\n- Activity `/cases` stores files; specialists fetch `/cases/{id}/artifacts/{id}` from their FastAPI tools. n8n never carries binaries.\n- **status** loads case and returns `human_gate` without LLM\n- Decision is Basic LLM Chain + Structured Output (no Agent tools)\n- Loop: **POST continue run** → own webhook (`orchestrator_step_url` in Runtime Config). Activity starts/resumes cases; it does not drive the step loop.\n\nOne execution = one step.",
             480,
             420,
             1,
         ),
+        note("lane intake", (0, -110), "### 1. Вход и загрузка кейса", 280, 72, 6),
+        note("lane start", (1750, 180), "### 2. Новый кейс", 220, 72, 4),
+        note("lane decide", (0, 790), "### 3. Решение LLM", 240, 72, 5),
+        note("lane agents", (0, 1150), "### 4. Агенты и цикл", 260, 72, 7),
         node(
             "Authenticated MAS webhook",
             "n8n-nodes-base.webhook",
@@ -890,19 +1287,30 @@ def main() -> None:
             {
                 "method": "POST",
                 "url": "={{ $json.continue_url }}",
+                "authentication": "genericCredentialType",
+                "genericAuthType": "httpHeaderAuth",
                 "sendHeaders": True,
                 "headerParameters": {"parameters": [{"name": "Content-Type", "value": "application/json"}]},
                 "sendBody": True,
                 "specifyBody": "json",
-                "jsonBody": "={{ ({action: 'step', case_id: $json.case_id, source: 'orchestrator'}) }}",
-                "options": {"timeout": 5000},
+                "jsonBody": "={{ ({action: 'step', case_id: $json.case_id, source: 'orchestrator-self'}) }}",
+                "options": {"timeout": 3000, "response": {"response": {"fullResponse": False, "neverError": True}}},
             },
+            credentials=HDR,
             onError="continueRegularOutput",
+            alwaysOutputData=True,
         ),
         code(
             "Prepare Activity ack",
             (4320, 120),
-            r"""const x=$json||{};
+            r"""const pick=()=>{
+  try{const m=$('Merge agent result').first().json; if(m&&m.case_id) return m;}catch{}
+  try{const n=$('No agent this step').first().json; if(n&&n.case_id) return n;}catch{}
+  try{const a=$('Apply request extras').first().json; if(a&&a.case_id) return a;}catch{}
+  try{const r=$('Normalize step request').first().json; if(r&&r.case_id) return r;}catch{}
+  return $json||{};
+};
+const x=pick();
 const persisted=Array.isArray(x.persist_events)&&x.persist_events.length>0;
 const kind=x.action_type==='finish'?'case.finished':(x.action_type==='ask_user'||x.next_status==='waiting_user'?'hitl.request':'orchestrator.status');
 const payload={contract:'mas_orchestrator_ack',case_id:x.case_id,status:x.next_status||x.status,action_type:x.action_type||null,message:x.message||null,should_continue:x.should_continue===true,human_gate:x.human_gate||null,version:x.version??null,restartable:x.restartable===true};
@@ -923,7 +1331,7 @@ return [{json:{...x,activity_sync:Boolean(x.case_id&&!x.is_probe&&x.activity_bas
                 "sendBody": True,
                 "specifyBody": "json",
                 "jsonBody": "={{ $json.activity_event }}",
-                "options": {"timeout": 10000},
+                "options": {"timeout": 2000, "response": {"response": {"fullResponse": False, "neverError": True}}},
             },
             onError="continueRegularOutput",
         ),
@@ -1011,6 +1419,10 @@ return [{json:{...x,activity_sync:Boolean(x.case_id&&!x.is_probe&&x.activity_bas
         "pinData": {},
         "versionId": str(uuid.uuid4()),
     }
+    apply_orchestrator_layout(wf)
+    missing = [n["name"] for n in wf["nodes"] if n.get("name") not in ORCH_LAYOUT]
+    if missing:
+        raise SystemExit(f"orchestrator layout missing nodes: {missing}")
     OUT.parent.mkdir(parents=True, exist_ok=True)
     OUT.write_text(json.dumps(wf, ensure_ascii=False, indent=2) + "\n", encoding="utf-8")
     print(f"wrote {OUT} ({len(nodes)} nodes)")

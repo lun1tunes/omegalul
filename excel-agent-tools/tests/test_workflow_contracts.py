@@ -624,15 +624,17 @@ def test_mas_control_plane_proxy_contains_all_activity_operations() -> None:
     ):
         assert f"'{operation}'" in code
     assert "batch only supports single-row operations" in code
-    assert "execMode==='manual'&&flagWipe" in code
+    assert "execMode==='manual'&&flagClear" in code
+    assert "op==='wipe'||(op==='schema'&&" in code
     assert "TRUNCATE TABLE cases" in code
     assert "jsonb_agg" in code and "AS events FROM cases c" in code
     assert "agent_registry" in code and "TRUNCATE TABLE agent_registry" not in code
     flags = next(node for node in workflow["nodes"] if node["name"] == "Operator flags")
     assert flags["type"] == "n8n-nodes-base.set"
     assignments = flags["parameters"]["assignments"]["assignments"]
-    wipe_flag = next(item for item in assignments if item["name"] == "wipe_data")
-    assert wipe_flag["value"] is False
+    clear_flag = next(item for item in assignments if item["name"] == "clear")
+    assert clear_flag["value"] is False
+    assert all(item.get("name") != "wipe_data" for item in assignments)
     assert workflow["connections"]["MAS control-plane webhook"]["main"][0][0]["node"] == "Operator flags"
     assert workflow["connections"]["Operator flags"]["main"][0][0]["node"] == "Normalize control-plane request"
     fmt = next(
@@ -641,9 +643,12 @@ def test_mas_control_plane_proxy_contains_all_activity_operations() -> None:
         if node["name"] == "Format control-plane response"
     )
     assert "op==='schema'||op==='wipe'" in fmt
+    assert "dataRows(incoming)" in fmt
+    assert "grouped.get(0)||incoming" not in fmt
     assert "operation:'batch'" in fmt.replace(" ", "")
     note = next(node for node in workflow["nodes"] if node["name"] == "edit after import")
-    assert "wipe_data" in note["parameters"]["content"]
+    assert "`clear`" in note["parameters"]["content"]
+    assert "wipe_data" not in note["parameters"]["content"]
     assert workflow["settings"].get("saveDataSuccessExecution") == "none"
     assert workflow["settings"].get("saveExecutionProgress") is False
     pg = next(node for node in workflow["nodes"] if node["name"] == "Execute control-plane SQL")
@@ -662,6 +667,7 @@ def test_mas_runtime_config_is_the_only_url_set() -> None:
         "excel_tools_url",
         "schedule_service_url",
         "math_url",
+        "orchestrator_step_url",
     ]
     assert urls["parameters"]["includeOtherFields"] is False
     blob = json.dumps(workflow)
@@ -692,6 +698,10 @@ def test_mas_runtime_config_is_the_only_url_set() -> None:
     ]
     assert http_nodes
     for node in http_nodes:
+        url = str(node.get("parameters", {}).get("url") or "")
+        if node["name"].startswith("Activity —") or "/events" in url:
+            assert node["parameters"].get("authentication") != "genericCredentialType"
+            continue
         assert node["parameters"].get("authentication") == "genericCredentialType"
         assert node["parameters"].get("genericAuthType") == "httpHeaderAuth"
         assert node["credentials"]["httpHeaderAuth"]["name"] == "REPLACE: Excel Tools X-API-Key"

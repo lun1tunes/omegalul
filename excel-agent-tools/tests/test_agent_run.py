@@ -30,7 +30,7 @@ def test_commissioning_facts_from_russian_columns() -> None:
             }
         ]
     )
-    assert facts == [{"well": "1601", "date": "23 FEB 2020", "values": {"Скважина": "1601", "Дата ввода": "23 FEB 2020"}}]
+    assert facts == [{"well": "1601", "date": "23 FEB 2020"}]
 
 
 def test_commissioning_facts_normalizes_numeric_well_and_iso_date() -> None:
@@ -149,6 +149,8 @@ def test_open_session_then_extract_commissioning_matches_agent_run(tmp_path, mon
     assert {"1601", "1602"} <= wells
     fetched = session_result(opened["session_id"])
     assert fetched["data"]["facts"] == extracted["data"]["facts"]
+    assert extracted["data"]["total_count"] == len(extracted["data"]["facts"])
+    assert extracted["data"]["preview"] == extracted["data"]["facts"][:10]
 
 
 def test_open_and_extract_emit_live_activity_status_lines(tmp_path, monkeypatch) -> None:
@@ -206,3 +208,47 @@ def test_emit_tool_progress_for_detect_tables() -> None:
         {"ok": True, "result": {"tables": [{}, {}]}},
     )
     assert seen == ["Нашёл таблиц: 2"]
+
+
+def test_suggested_capability_dates_vs_rates() -> None:
+    from app.agent_run import suggested_capability
+
+    assert suggested_capability("даты ввода скважин") == "commissioning"
+    assert suggested_capability("сдвинуть даты ввода") == "commissioning"
+    assert suggested_capability("commissioning dates") == "commissioning"
+    assert suggested_capability("достань дебиты") == "operations"
+    assert suggested_capability("PVT и SCAL") == "operations"
+    assert suggested_capability("Extract wells") == "operations"
+    assert suggested_capability("") == "operations"
+
+
+def test_session_result_needs_input_without_extract_then_close(tmp_path, monkeypatch) -> None:
+    from pathlib import Path
+
+    from app.agent_run import open_session, session_result
+    from app.sessions import close_session
+
+    xlsx = Path("/home/lun1z/omegalul/simulation-model-example/golden-cases/golden_case_1/MONITORING_well_commissioning_dates.xlsx")
+    if not xlsx.is_file():
+        return
+    monkeypatch.setenv("SESSION_DIR", str(tmp_path))
+    opened = open_session(
+        {
+            "case_id": "CASE-IDLE",
+            "task_id": "TASK-IDLE",
+            "agent_id": "excel_extractor",
+            "objective": "достань дебиты",
+            "inputs": {"excel_path": str(xlsx)},
+            "context": {},
+        }
+    )
+    assert opened["ok"] is True
+    assert opened["suggested_capability"] == "operations"
+    result = session_result(opened["session_id"])
+    assert result["status"] == "needs_input"
+    assert result["issues"][0]["type"] == "no_extract"
+    closed = close_session(opened["session_id"])
+    assert closed["ok"] is True
+    assert closed["closed"] is True
+    again = close_session(opened["session_id"])
+    assert again["closed"] is False
