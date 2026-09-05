@@ -9,6 +9,12 @@ from pathlib import Path
 
 from llm_runtime_options import chat_model_options, structured_parser_params
 from generate_mas_runtime_config import runtime_config_execute_params
+from mas_retrieval_client import (
+    SELECTORS,
+    attach_orchestrator_rag_js,
+    knowledge_retrieval_execute_params,
+)
+from mas_state_utils import STATE_SHAPE_JS
 
 ROOT = Path(__file__).resolve().parents[1]
 OUT = ROOT / "workflows/core/mas-orchestrator.workflow.json"
@@ -51,6 +57,12 @@ DECISION_SCHEMA = {
 
 SYSTEM = """Ты оркестратор инженерной задачи.
 
+Перед решением в planner_input приходит срез RAG: target_base=orchestrator_routing, knowledge_type=routing_card. Это карточки маршрутизации из общей базы знаний. Не протокол Excel (excel_protocol) и не keyword_instruction SCHEDULE (schedule_mvp) — другие срезы той же базы сюда не подмешивают.
+
+Используй карточки для декомпозиции, plan_update и handoff_message. agent_id бери только из реестра ниже. Если в карточке старое имя — маппинг: excel_extraction_specialist→excel_extractor, schedule_builder_specialist→schedule_builder, engineering_calculation_specialist→calculation_agent. cluster_calculation_specialist / binary_results_specialist / presentation_specialist в live registry нет — не вызывай.
+
+Если RAG status=empty или unavailable — решай по реестру и compact. Не спрашивай HITL про базу знаний.
+
 Ты должен выбрать одно действие:
 1. call_agent
 2. ask_user
@@ -70,7 +82,7 @@ SYSTEM = """Ты оркестратор инженерной задачи.
 - Имена INCLUDE-файлов (GRUPTREE.GRDECL и т.п.) — это состав пакета, не просьба менять группы. Не пиши в handoff про перепривязку групп, если пользователь об этом не просил.
 - Если следующий шаг очевиден, выбери call_agent.
 - Не вызывай агента, которого нет в реестре.
-- Не разбирай SCHEDULE/.INC сам и не ходи в RAG.
+- Не разбирай SCHEDULE/.INC сам. Retrieval уже выполнен до тебя (только срез orchestrator_routing).
 - Возвращай только JSON.
 - status_message пиши по-русски, коротко, в стиле текущего шага.
 - handoff_message — человекопонятное обращение к агенту, например: «Агент Excel, достань из файла данные по датам ввода скважин.»
@@ -288,288 +300,6 @@ return [{json:{
 }}];
 """
 
-STATE_SHAPE_JS = r"""
-function roleForArtifactId(id){
-  const k=String(id||'');
-  if(k==='excel'||k.indexOf('excel_')===0) return 'excel';
-  if(k==='surface') return 'surface';
-  if(k==='schedule_source') return 'schedule_source';
-  if(k.indexOf('schedule_source_')===0) return 'schedule_include';
-  if(k==='schedule_out') return 'schedule_out';
-  if(k==='trajectory'||k.indexOf('trajectory_')===0) return 'trajectory';
-  if(k==='diff') return 'diff';
-  return 'attachment';
-}
-function isNestedArtifacts(arts){
-  if(!arts||typeof arts!=='object'||Array.isArray(arts)) return false;
-  const sch=arts.schedule;
-  if(sch&&typeof sch==='object'&&!Array.isArray(sch)&&(sch.source||Array.isArray(sch.includes)||Array.isArray(sch.grdecl)||sch.out||sch.diff!=null)) return true;
-  if(Array.isArray(arts.trajectories)||Array.isArray(arts.attachments)) return true;
-  return false;
-}
-function fileItem(id,value,role){
-  if(value==null||value===''||(typeof value==='object'&&!Array.isArray(value)&&!Object.keys(value).length)) return null;
-  const resolved=role||roleForArtifactId(id);
-  if(resolved==='diff') return null;
-  if(typeof value==='string'){
-    if(resolved==='schedule_out') return {artifact_id:id||'schedule_out',role:'schedule_out',bytes:value.length,text:value};
-    return {artifact_id:id,filename:value,role:resolved};
-  }
-  if(typeof value!=='object'||Array.isArray(value)) return null;
-  const item={...value};
-  item.artifact_id=item.artifact_id||id;
-  if(!item.artifact_id) return null;
-  item.role=item.role||resolved||roleForArtifactId(item.artifact_id);
-  return item;
-}
-function flattenArtifacts(arts){
-  const src=arts&&typeof arts==='object'&&!Array.isArray(arts)?arts:{};
-  const out={};
-  const put=(value,fallbackId)=>{
-    if(fallbackId==='diff'){ if(value!=null) out.diff=value; return; }
-    const row=fileItem(fallbackId,value);
-    if(!row) return;
-    out[row.artifact_id]=row;
-  };
-  if(isNestedArtifacts(src)){
-    put(src.excel,'excel');
-    put(src.surface,'surface');
-    const sch=src.schedule&&typeof src.schedule==='object'?src.schedule:{};
-    put(sch.source,'schedule_source');
-    const incs=Array.isArray(sch.includes)?sch.includes:[];
-    for(const inc of incs) put(inc,inc&&inc.artifact_id);
-    const grdecl=Array.isArray(sch.grdecl)?sch.grdecl:[];
-    for(const g of grdecl) put(g,g&&g.artifact_id);
-    put(sch.out,'schedule_out');
-    if(sch.diff!=null) out.diff=sch.diff;
-    const trajs=Array.isArray(src.trajectories)?src.trajectories:[];
-    for(const t of trajs) put(t,t&&t.artifact_id||'trajectory');
-    const atts=Array.isArray(src.attachments)?src.attachments:[];
-    for(const a of atts) put(a,a&&a.artifact_id);
-    for(const [k,v] of Object.entries(src)){
-      if(k==='excel'||k==='surface'||k==='schedule'||k==='trajectories'||k==='attachments') continue;
-      if(!(k in out)) put(v,k);
-    }
-    return out;
-  }
-  for(const [k,v] of Object.entries(src)){
-    if(k==='schedule'||k==='trajectories'||k==='attachments') continue;
-    put(v,k);
-  }
-  return out;
-}
-function nestArtifacts(arts){
-  const nested={};
-  const includes=[];
-  const grdecl=[];
-  const trajectories=[];
-  const attachments=[];
-  for(const [id,item] of Object.entries(flattenArtifacts(arts))){
-    if(id==='diff'){ nested.schedule=nested.schedule||{}; nested.schedule.diff=item; continue; }
-    if(!item||typeof item!=='object') continue;
-    const role=item.role||roleForArtifactId(id);
-    if(role==='excel') nested.excel=item;
-    else if(role==='surface') nested.surface=item;
-    else if(role==='schedule_source'){ nested.schedule=nested.schedule||{}; nested.schedule.source=item; }
-    else if(role==='schedule_include'){
-      const name=String(item.filename||'').toLowerCase();
-      if(name.endsWith('.grdecl')) grdecl.push(item);
-      else includes.push(item);
-    }
-    else if(role==='schedule_out'){ nested.schedule=nested.schedule||{}; nested.schedule.out=item; }
-    else if(role==='trajectory') trajectories.push(item);
-    else attachments.push(item);
-  }
-  if(includes.length){ nested.schedule=nested.schedule||{}; nested.schedule.includes=includes; }
-  if(grdecl.length){ nested.schedule=nested.schedule||{}; nested.schedule.grdecl=grdecl; }
-  if(trajectories.length) nested.trajectories=trajectories;
-  if(attachments.length) nested.attachments=attachments;
-  return nested;
-}
-function fileCounts(arts){
-  const counts={excel:0,schedule_source:0,includes:0,grdecl:0,trajectories:0,surface:0,schedule_out:0};
-  for(const [id,item] of Object.entries(flattenArtifacts(arts))){
-    if(id==='diff') continue;
-    const role=(item&&item.role)||roleForArtifactId(id);
-    if(role==='schedule_include'){
-      const name=String((item&&item.filename)||'').toLowerCase();
-      if(name.endsWith('.grdecl')) counts.grdecl+=1;
-      else counts.includes+=1;
-    }
-    else if(role in counts) counts[role]+=1;
-  }
-  return counts;
-}
-function hasScheduleOut(arts){
-  const item=flattenArtifacts(arts).schedule_out;
-  if(!item) return false;
-  if(typeof item==='string') return Boolean(String(item).trim());
-  if(typeof item==='object') return Boolean(item.text||item.content||item.filename||item.artifact_id);
-  return true;
-}
-function slimExcel(d){
-  if(!d||typeof d!=='object'||Array.isArray(d)) return d;
-  const out={...d};
-  if(Array.isArray(d.facts)){
-    out.facts=d.facts.filter(x=>x&&typeof x==='object').map(f=>({well:f.well,date:f.date}));
-  }
-  if(Array.isArray(d.normalized_rows)){
-    out.normalized_rows=d.normalized_rows.filter(t=>t&&typeof t==='object').map(t=>{
-      const prev=Array.isArray(t.preview)?t.preview:[];
-      const count=t.preview_count!=null?Number(t.preview_count):(t.row_count!=null?Number(t.row_count):prev.length);
-      return {table_id:t.table_id,columns:t.columns||[],row_count:t.row_count!=null?t.row_count:count,preview_count:count,preview:prev.slice(0,3)};
-    });
-  }
-  return out;
-}
-function decodeHitlAnswer(v){
-  if(v==null||typeof v!=='string') return v;
-  const s=v.trim();
-  if(!s) return v;
-  if(!((s[0]==='{'&&s[s.length-1]==='}')||(s[0]==='['&&s[s.length-1]===']')||(s[0]==='"'&&s[s.length-1]==='"'))) return v;
-  try{
-    const p=JSON.parse(s);
-    if(typeof p==='string'){
-      const t=p.trim();
-      if((t[0]==='{'&&t[t.length-1]==='}')||(t[0]==='['&&t[t.length-1]===']')){
-        try{return JSON.parse(t);}catch{return p;}
-      }
-      return p;
-    }
-    return p;
-  }catch{return v;}
-}
-function decodeHitlAnswers(answers){
-  const src=answers&&typeof answers==='object'&&!Array.isArray(answers)?answers:{};
-  const out={};
-  for(const [k,v] of Object.entries(src)) out[k]=decodeHitlAnswer(v);
-  return out;
-}
-function slimCurrentTask(task,arts,data){
-  if(!task||typeof task!=='object') return null;
-  if(!task.task_id&&!task.agent_id) return null;
-  const ids=Array.isArray(task.artifact_ids)?task.artifact_ids:Object.keys(flattenArtifacts(arts||{})).filter(k=>k!=='diff');
-  const keys=Array.isArray(task.data_keys)?task.data_keys:Object.keys(data&&typeof data==='object'?data:{});
-  return {task_id:task.task_id||null,agent_id:task.agent_id||null,artifact_ids:ids,data_keys:keys};
-}
-function slimError(err){
-  if(!err||typeof err!=='object') return err||null;
-  return {message:err.message||'',agent_id:err.agent_id||null};
-}
-function mergeIncomingArtifacts(artifacts,incoming){
-  const nested=nestArtifacts(artifacts);
-  const src=incoming&&typeof incoming==='object'&&!Array.isArray(incoming)?incoming:{};
-  for(const [k,v] of Object.entries(src)){
-    if(k==='diff'){ nested.schedule=nested.schedule||{}; nested.schedule.diff=v; continue; }
-    if(k==='excel_session'){
-      nested.excel=(nested.excel&&typeof nested.excel==='object')?{...nested.excel}:{artifact_id:'excel',role:'excel'};
-      nested.excel.session_id=v;
-      continue;
-    }
-    if(Array.isArray(v)&&(k==='includes'||k==='grdecl')){
-      nested.schedule=nested.schedule||{};
-      nested.schedule[k]=Array.isArray(nested.schedule[k])?nested.schedule[k]:[];
-      for(const row of v){
-        const item=fileItem(row&&row.artifact_id,row);
-        if(item) nested.schedule[k].push(item);
-      }
-      continue;
-    }
-    if(k==='schedule_out'){
-      nested.schedule=nested.schedule||{};
-      nested.schedule.out=typeof v==='string'?{artifact_id:'schedule_out',role:'schedule_out',bytes:String(v).length,text:v}:(fileItem('schedule_out',v,'schedule_out')||v);
-      continue;
-    }
-    const item=fileItem(k,v);
-    if(!item) continue;
-    const role=item.role||roleForArtifactId(k);
-    if(role==='excel') nested.excel=item;
-    else if(role==='surface') nested.surface=item;
-    else if(role==='schedule_source'){ nested.schedule=nested.schedule||{}; nested.schedule.source=item; }
-    else if(role==='schedule_include'){
-      nested.schedule=nested.schedule||{};
-      const name=String(item.filename||'').toLowerCase();
-      if(name.endsWith('.grdecl')){
-        nested.schedule.grdecl=Array.isArray(nested.schedule.grdecl)?nested.schedule.grdecl:[];
-        nested.schedule.grdecl.push(item);
-      } else {
-        nested.schedule.includes=Array.isArray(nested.schedule.includes)?nested.schedule.includes:[];
-        nested.schedule.includes.push(item);
-      }
-    }
-    else if(role==='trajectory'){ nested.trajectories=Array.isArray(nested.trajectories)?nested.trajectories:[]; nested.trajectories.push(item); }
-    else { nested.attachments=Array.isArray(nested.attachments)?nested.attachments:[]; nested.attachments.push(item); }
-  }
-  return nested;
-}
-function sanitizeState(state){
-  const s=state&&typeof state==='object'?{...state}:{};
-  const arts=s.artifacts&&typeof s.artifacts==='object'?{...s.artifacts}:{};
-  if(arts.file&&!arts.excel) arts.excel=arts.file;
-  if(arts.schedule_files&&!arts.schedule_source) arts.schedule_source=arts.schedule_files;
-  s.artifacts=nestArtifacts(arts);
-  const data=s.data&&typeof s.data==='object'&&!Array.isArray(s.data)?{...s.data}:{};
-  delete data.facts;
-  if(data.excel) data.excel=slimExcel(data.excel);
-  s.data=data;
-  const hitl=s.hitl&&typeof s.hitl==='object'?{...s.hitl}:{pending:false,questions:[],answers:{}};
-  hitl.answers=decodeHitlAnswers(hitl.answers||{});
-  s.hitl=hitl;
-  s.current_task=slimCurrentTask(s.current_task,s.artifacts,s.data);
-  if(s.last_error&&typeof s.last_error==='object') s.last_error=slimError(s.last_error);
-  return s;
-}
-function buildCompact(state){
-  const artifacts=state.artifacts||{};
-  const data=state.data||{};
-  const plan=Array.isArray(state.plan)?state.plan:[];
-  const hitl=state.hitl||{};
-  const counts=fileCounts(artifacts);
-  const excel=data.excel&&typeof data.excel==='object'?data.excel:{};
-  const facts=Array.isArray(excel.facts)?excel.facts:[];
-  const questions=Array.isArray(hitl.questions)?hitl.questions:[];
-  const q0=questions[0]&&typeof questions[0]==='object'?questions[0]:{};
-  const pending=hitl.pending===true;
-  const flat=flattenArtifacts(artifacts);
-  const excelMeta=flat.excel&&typeof flat.excel==='object'?flat.excel:{};
-  const sourceMeta=flat.schedule_source&&typeof flat.schedule_source==='object'?flat.schedule_source:{};
-  const err=state.last_error;
-  const cur=state.current_task;
-  return {
-    goal:String(state.goal||'').slice(0,500),
-    task_name:state.task_name||'',
-    status:state.status||'',
-    files:counts,
-    has_excel:counts.excel>0,
-    has_schedule_source:counts.schedule_source>0,
-    has_schedule_out:counts.schedule_out>0,
-    excel_filename:excelMeta.filename||null,
-    schedule_source_filename:sourceMeta.filename||null,
-    excel_facts:facts.length,
-    wells_in_excel:facts.map(f=>f&&f.well).filter(Boolean).slice(0,20),
-    schedule_root:state.schedule_root||'',
-    plan:plan.map(p=>({id:p.id,status:p.status})),
-    current_task:cur&&typeof cur==='object'?{task_id:cur.task_id||null,agent_id:cur.agent_id||null}:null,
-    hitl_pending:pending,
-    hitl_question:pending?(String(q0.question||'').slice(0,200)||null):null,
-    hitl_answer_ids:Object.keys(hitl.answers||{}),
-    unlisted_wells_policy:(()=>{
-      const answers=hitl.answers&&typeof hitl.answers==='object'?hitl.answers:{};
-      for(const [key,val] of Object.entries(answers)){
-        const blob=String(typeof val==='string'?val:JSON.stringify(val||'')).toLowerCase();
-        const id=String(key||'').toLowerCase();
-        const m=blob.match(/unlisted_wells_policy\s*[:=]\s*(keep|remove)/)||((id.includes('unlisted')||blob.includes('unlisted'))?blob.match(/\b(keep|remove)\b/):null);
-        if(m) return m[1].toLowerCase();
-      }
-      return null;
-    })(),
-    step_count:Number(state.step_count||0),
-    version:Number(state.version||0),
-    last_error:(err&&typeof err==='object'?err.message:null)||null
-  };
-}
-"""
-
 CREATE_CASE = r"""
 const req=$json||{};
 const goal=String(req.goal||'').trim();
@@ -584,6 +314,7 @@ const state={
   current_task:null,
   hitl:{pending:false,questions:[],answers:{}},
   last_error:null,
+  error_count:0,
   step_count:0,
   version:1
 };
@@ -664,12 +395,13 @@ if(req.is_resume===true){
   const hitl=state.hitl&&typeof state.hitl==='object'?state.hitl:{pending:false,questions:[],answers:{}};
   const questions=Array.isArray(hitl.questions)?hitl.questions:[];
   const qid=String(req.gate_id||(questions[0]&&questions[0].question_id)||'Q-1');
+  const q0=questions.find(q=>q&&String(q.question_id||'')===qid)||questions[0]||{};
   const answers={...(hitl.answers&&typeof hitl.answers==='object'?hitl.answers:{})};
-  answers[qid]=answer;
+  answers[qid]=normalizeHitlAnswer(qid, answer, q0.question);
   state.hitl={pending:false,questions,answers};
   state.status='running';
   state.version=Number(state.version||0)+1;
-  const persistEvents=[[req.case_id,'','hitl.answered','user','','answered',answer?('Пользователь ответил: '+(typeof answer==='string'?answer:JSON.stringify(answer))):'Пользователь ответил','',JSON.stringify({question_id:qid,answer})]];
+  const persistEvents=[[req.case_id,'','hitl.answered','user','','answered',answer?('Пользователь ответил: '+(typeof answer==='string'?answer:JSON.stringify(answer))):'Пользователь ответил','',JSON.stringify({question_id:qid,answer:answers[qid]})]];
   return [{json:{
     ...req,
     state,
@@ -703,7 +435,13 @@ if(!requested||loaded!==requested){
 return [{json:{...req,...row,case_loaded:true}}];
 """
 
-PREPARE_DECISION = STATE_SHAPE_JS + r"""
+_ORCH_SEL = SELECTORS["orchestrator"]
+PREPARE_DECISION = STATE_SHAPE_JS + (
+    "const ORCH_RAG_TARGET_BASE=" + json.dumps(_ORCH_SEL["target_base"]) + ";\n"
+    "const ORCH_RAG_ACCESS_SCOPE=" + json.dumps(_ORCH_SEL["access_scope"]) + ";\n"
+    "const ORCH_RAG_KNOWLEDGE_TYPES=" + json.dumps(_ORCH_SEL["knowledge_types"]) + ";\n"
+    "const ORCH_RAG_TOP_K=" + str(int(_ORCH_SEL["top_k"])) + ";\n"
+    + r"""
 const req=$('Normalize step request').first().json||{};
 const extras=(()=>{try{return $('Apply request extras').first().json}catch{return null}})();
 const load=$('Load case').first().json||{};
@@ -721,6 +459,20 @@ else if(!compact.has_excel&&compact.has_schedule_source&&!compact.has_schedule_o
 else if(compact.has_schedule_out) hint.push('schedule_out уже есть — finish.');
 if(compact.unlisted_wells_policy==='keep'||compact.unlisted_wells_policy==='remove') hint.push('HITL unlisted_wells_policy уже выбран: '+compact.unlisted_wells_policy+'.');
 const prompt=`Цель:\n${compact.goal}\n\nТекущее состояние:\n${JSON.stringify(compact,null,2)}\n\nПодсказка следующего шага:\n${hint.join(' ')||'выбери по реестру агентов'}\n\nДоступные агенты:\n${JSON.stringify(registry,null,2)}\n`;
+const retrieval_selector={target_base:ORCH_RAG_TARGET_BASE,knowledge_types:ORCH_RAG_KNOWLEDGE_TYPES};
+const query=inferRetrievalQuery(compact);
+const schedule_retrieval_request={
+  query,
+  filters:{
+    target_base:ORCH_RAG_TARGET_BASE,
+    access_scope:ORCH_RAG_ACCESS_SCOPE,
+    knowledge_types:ORCH_RAG_KNOWLEDGE_TYPES,
+    keyword_families:inferRoutingKeywordFamilies(compact),
+    topics:inferRoutingTopics(compact),
+    task_patterns:inferTaskPatterns(compact)
+  },
+  top_k:ORCH_RAG_TOP_K
+};
 const endpoints=$('Runtime endpoints').first().json||{};
 const math=String(endpoints.math_url||endpoints.calculation_agent_url||'').replace(/\/$/,'');
 const calculationAgentUrl=math?(math.endsWith('/agent/run')?math:`${math}/agent/run`):'';
@@ -736,9 +488,12 @@ return [{json:{
   registry,
   compact,
   planner_input:prompt,
+  schedule_retrieval_request,
+  retrieval_selector,
   step_count:compact.step_count
 }}];
 """
+)
 
 PARSE_DECISION = STATE_SHAPE_JS + r"""
 const prev=$('Prepare decision context').first().json||{};
@@ -773,13 +528,7 @@ if(type==='call_agent'){
   const artifactIds=Object.keys(flatArts).filter(k=>k!=='diff');
   const hitlState=state.hitl&&typeof state.hitl==='object'?state.hitl:{};
   const hitlAnswers=hitlState.answers&&typeof hitlState.answers==='object'?hitlState.answers:{};
-  let unlistedPolicy='';
-  for(const [key,val] of Object.entries(hitlAnswers)){
-    const blob=String(typeof val==='string'?val:JSON.stringify(val||'')).toLowerCase();
-    const id=String(key||'').toLowerCase();
-    const m=blob.match(/unlisted_wells_policy\s*[:=]\s*(keep|remove)/)||((id.includes('unlisted')||blob.includes('unlisted'))?blob.match(/\b(keep|remove)\b/):null);
-    if(m){ unlistedPolicy=m[1].toLowerCase(); break; }
-  }
+  const unlistedPolicy=readUnlistedWellsPolicy(hitlAnswers)||'';
   agentTask={
     case_id:prev.case_id,
     task_id:taskId,
@@ -936,6 +685,7 @@ if(status==='completed'){
   state.artifacts=mergeIncomingArtifacts(state.artifacts, result.artifacts||{});
   state.current_task=null;
   state.last_error=null;
+  state.error_count=0;
 }
 if(Array.isArray(state.plan)){
   state.plan=state.plan.map(p=>{
@@ -965,11 +715,21 @@ if(status==='needs_input'){
     payload:{data_keys:Object.keys((result.data&&typeof result.data==='object')?result.data:{}),artifacts:Object.keys((result.artifacts&&typeof result.artifacts==='object')?result.artifacts:{})}
   });
 } else if(status==='failed'||execError){
-  nextStatus='running';
-  shouldContinue=true;
-  state.last_error={message:resultMessage||fallbackMessage,agent_id:agentId};
+  const prevErr=state.last_error&&typeof state.last_error==='object'?state.last_error:{};
+  const sameAgent=Boolean(agentId)&&String(prevErr.agent_id||'')===agentId;
+  const errorCount=(sameAgent?Number(prevErr.count||state.error_count||0):0)+1;
+  state.error_count=errorCount;
+  state.last_error={message:resultMessage||fallbackMessage,agent_id:agentId,count:errorCount};
   data[bucket]={summary:state.last_error.message,keys:Object.keys((result.data&&typeof result.data==='object')?result.data:{})};
-  events.push({kind:'agent.failed',actor:agentId||'agent',agent_id:agentId,status:'failed',status_message:state.last_error.message,payload:{message:state.last_error.message,issues:result.issues||[]}});
+  events.push({kind:'agent.failed',actor:agentId||'agent',agent_id:agentId,status:'failed',status_message:state.last_error.message,payload:{message:state.last_error.message,issues:result.issues||[],error_count:errorCount}});
+  if(errorCount>=3){
+    nextStatus='failed';
+    shouldContinue=false;
+    events.push({kind:'case.failed',actor:'orchestrator',status:'failed',status_message:'Агент '+agentId+' упал '+errorCount+' раза подряд',payload:{agent_id:agentId,error_count:errorCount}});
+  } else {
+    nextStatus='running';
+    shouldContinue=true;
+  }
 }
 if(Number(state.step_count||0)>=24){
   nextStatus='failed';
@@ -1034,6 +794,8 @@ ORCH_LAYOUT: dict[str, tuple[int, int]] = {
     "Decision Structured Output": (3 * CX, 4 * CY),
     "Load agent registry": (0, 5 * CY),
     "Prepare decision context": (CX, 5 * CY),
+    "Call Knowledge Retrieval": (CX, 6 * CY),
+    "Attach orchestrator RAG evidence": (2 * CX, 6 * CY),
     "Decision LLM": (2 * CX, 5 * CY),
     "Parse decision": (3 * CX, 5 * CY),
     "Update case after decision": (4 * CX, 5 * CY),
@@ -1074,7 +836,7 @@ def main() -> None:
         note(
             "edit after import",
             (-200, -420),
-            "## edit after import\n\n**Orchestrator — MAS** — thin loop:\n- Bind Postgres on load/insert/update\n- Bind **Qwen** OpenAI-compatible credential on Decision Chat Model\n- Bind inbound header auth on webhook **and** POST continue run\n- Bind **Runtime endpoints** → `MAS — Runtime Config` (один Set URL на весь контур)\n- Bind **Call Excel Extractor** → `Agent — Excel Extractor` (executeWorkflow)\n- Bind **Call Schedule Builder** → `Agent — Schedule Builder` (executeWorkflow)\n- Excel `X-API-Key` — credential на Agent — Excel Extractor, не этот workflow\n\n`action`: probe | status | start | create | step | resume\n- Activity `/cases` stores files; specialists fetch `/cases/{id}/artifacts/{id}` from their FastAPI tools. n8n never carries binaries.\n- **status** loads case and returns `human_gate` without LLM\n- Decision is Basic LLM Chain + Structured Output (no Agent tools)\n- Loop: **POST continue run** → own webhook (`orchestrator_step_url` in Runtime Config). Activity starts/resumes cases; it does not drive the step loop.\n\nOne execution = one step.",
+            "## edit after import\n\n**Orchestrator — MAS** — thin loop:\n- Bind Postgres on load/insert/update\n- Bind **Qwen** OpenAI-compatible credential on Decision Chat Model\n- Bind inbound header auth on webhook **and** POST continue run\n- Bind **Runtime endpoints** → `MAS — Runtime Config` (один Set URL на весь контур)\n- Bind **Call Excel Extractor** → `Agent — Excel Extractor` (executeWorkflow)\n- Bind **Call Schedule Builder** → `Agent — Schedule Builder` (executeWorkflow)\n- Bind **Call Knowledge Retrieval** → `MAS — Knowledge Retrieval` (срез `orchestrator_routing` / `routing_card`; не excel_protocol и не schedule_mvp)\n- Excel `X-API-Key` — credential на Agent — Excel Extractor, не этот workflow\n\n`action`: probe | status | start | create | step | resume\n- Activity `/cases` stores files; specialists fetch `/cases/{id}/artifacts/{id}` from their FastAPI tools. n8n never carries binaries.\n- **status** loads case and returns `human_gate` without LLM\n- Decision is Basic LLM Chain + Structured Output (no Agent tools)\n- Loop: **POST continue run** → own webhook (`orchestrator_step_url` in Runtime Config). Activity starts/resumes cases; it does not drive the step loop.\n\nOne execution = one step.",
             480,
             420,
             1,
@@ -1173,6 +935,15 @@ def main() -> None:
             "={{ [] }}",
         ),
         code("Prepare decision context", (1200, 0), PREPARE_DECISION),
+        node(
+            "Call Knowledge Retrieval",
+            "n8n-nodes-base.executeWorkflow",
+            1.3,
+            (1200, 180),
+            knowledge_retrieval_execute_params(),
+            onError="continueRegularOutput",
+        ),
+        code("Attach orchestrator RAG evidence", (1440, 180), attach_orchestrator_rag_js()),
         node(
             "Decision LLM",
             "@n8n/n8n-nodes-langchain.chainLlm",
@@ -1294,7 +1065,7 @@ def main() -> None:
                 "sendBody": True,
                 "specifyBody": "json",
                 "jsonBody": "={{ ({action: 'step', case_id: $json.case_id, source: 'orchestrator-self'}) }}",
-                "options": {"timeout": 3000, "response": {"response": {"fullResponse": False, "neverError": True}}},
+                "options": {"timeout": 8000, "response": {"response": {"fullResponse": False, "neverError": True}}},
             },
             credentials=HDR,
             onError="continueRegularOutput",
@@ -1370,7 +1141,9 @@ return [{json:{...x,activity_sync:Boolean(x.case_id&&!x.is_probe&&x.activity_bas
     connect(connections, "Insert resume events", "Restore after resume")
     connect(connections, "Restore after resume", "Load agent registry")
     connect(connections, "Load agent registry", "Prepare decision context")
-    connect(connections, "Prepare decision context", "Decision LLM")
+    connect(connections, "Prepare decision context", "Call Knowledge Retrieval")
+    connect(connections, "Call Knowledge Retrieval", "Attach orchestrator RAG evidence")
+    connect(connections, "Attach orchestrator RAG evidence", "Decision LLM")
     connect(connections, "Decision Chat Model — configure in UI", "Decision LLM", out="ai_languageModel", tin="ai_languageModel")
     connect(connections, "Decision Chat Model — configure in UI", "Decision Structured Output", out="ai_languageModel", si=0, tin="ai_languageModel")
     connect(connections, "Decision Structured Output", "Decision LLM", out="ai_outputParser", tin="ai_outputParser")

@@ -316,10 +316,13 @@ def compact_unlisted_policy(answers: Any) -> str | None:
         match = re.search(r"unlisted_wells_policy\s*[:=]\s*(keep|remove)", text)
         if match:
             return match.group(1)
-        if "unlisted" in text:
-            word = re.search(r"\b(keep|remove)\b", text)
-            if word:
-                return word.group(1)
+        keyed = "unlisted" in text or "лишн" in text or "не из excel" in text
+        if not keyed:
+            continue
+        if re.search(r"остав|сохран", text) or re.search(r"\bkeep\b", text):
+            return "keep"
+        if re.search(r"убер|удал|выкин|выкинь", text) or re.search(r"\bremove\b", text):
+            return "remove"
     return None
 
 

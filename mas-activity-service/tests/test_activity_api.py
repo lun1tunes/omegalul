@@ -562,8 +562,8 @@ def test_ready_health_and_static_assets() -> None:
     assert 'q.required ? "обязательно"' not in js_text
     assert "формат: ${q.expected_format}" not in js_text
     assert "app.js?v=87" in index.text
-    assert "schema.js?v=18" in index.text
-    assert "app.css?v=88" in index.text
+    assert "schema.js?v=23" in index.text
+    assert "app.css?v=92" in index.text
     assert "viewChatBtn" in index.text
     assert "viewSchemaBtn" in index.text
     assert ">Чат<" in index.text
@@ -649,7 +649,24 @@ def test_ready_health_and_static_assets() -> None:
     assert "is-clipped" in schema_js
     assert "schema-peek" in schema_js
     assert "schema-peek-text" in schema_js
+    assert "schema-peek-message" in schema_js
+    assert "Полный текст" not in schema_js
+    assert "shorten(full, 280)" in schema_js
+    assert "hoverOpenPeek" in schema_js
+    assert "peekPinned && peekSource === source" in schema_js
+    assert "dismissHoverPeek" in schema_js
+    assert "togglePinnedPeek" in schema_js
+    assert "schema-slip-text" in schema_js
+    assert ".schema-slip-text" in (STATIC / "app.css").read_text(encoding="utf-8")
+    assert "markClippedSlip" in schema_js
+    assert "peekEl.matches(\":hover\")" not in schema_js
+    assert "peekEl.addEventListener(\"pointerleave\"" not in schema_js
+    assert "peekEl.addEventListener(\"pointerenter\"" not in schema_js
+    assert ".schema-slip.is-clipped" in (STATIC / "app.css").read_text(encoding="utf-8")
     assert "schema-peek-text" in (STATIC / "app.css").read_text(encoding="utf-8")
+    assert ".schema-peek-message" in (STATIC / "app.css").read_text(encoding="utf-8")
+    assert "max-width: min(32rem, 58%)" in (STATIC / "app.css").read_text(encoding="utf-8")
+    assert ".schema-peek.is-pinned" in (STATIC / "app.css").read_text(encoding="utf-8")
     assert "place-items: stretch" in (STATIC / "app.css").read_text(encoding="utf-8")
     assert "width: min(100%, 56rem)" not in (STATIC / "app.css").read_text(encoding="utf-8")
     assert "pointer-events: auto" in (STATIC / "app.css").read_text(encoding="utf-8")

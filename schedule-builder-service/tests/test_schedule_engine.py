@@ -12,7 +12,9 @@ from app.apply import apply_operations
 
 def test_fracture_specs_alias() -> None:
     assert normalize_keyword("FRACTURE_WELL") == "FRACTURE_SPECS"
-    assert keyword_object("WCONPROD")["fields"][0]["name"] == "well"
+    names = [str(row.get("name") or "") for row in keyword_object("WCONPROD")["fields"]]
+    assert names[0] in {"well", "WELL"}
+    assert keyword_object("WCONPROD")["details"]["kind"] == "schedule_keyword"
 
 
 def test_emit_block_terminator_and_blank_line() -> None:
@@ -863,6 +865,11 @@ def test_unlisted_policy_from_plain_hitl_string() -> None:
         "context": {"hitl": {"answers": {"unlisted_wells_policy": "unlisted_wells_policy=remove"}}},
     }
     assert _unlisted_policy(state) == "remove"
+    keep_state = {
+        "inputs": {},
+        "context": {"hitl": {"answers": {"unlisted_wells_policy": "оставь лишние скважины"}}},
+    }
+    assert _unlisted_policy(keep_state) == "keep"
 
 
 def test_wefac_wildcard_is_not_an_unlisted_well() -> None:

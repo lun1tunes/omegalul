@@ -9,6 +9,12 @@ from pathlib import Path
 
 from llm_runtime_options import chat_model_options
 from generate_mas_runtime_config import runtime_config_execute_params
+from mas_retrieval_client import (
+    SELECTORS,
+    attach_schedule_rag_js,
+    knowledge_retrieval_execute_params,
+)
+from schedule_rag_workflows import KEYWORDS as SCHEDULE_KEYWORDS
 
 ROOT = Path(__file__).resolve().parents[1]
 OUT = ROOT / "workflows/core/schedule-builder-agent.workflow.json"
@@ -30,11 +36,12 @@ SYSTEM = """Ты — единственный LLM-решатель агента 
 - inspect_well — подробный объект одной скважины: identity, factual WCONPROD, commissioning anchor и история режимов
 - analyze_forecast_controls — детерминированный разбор control timeline: history, forecast, overrides, economics, reopen/status/efficiency events
 - search_keywords — по intent сервиса вернёт keywords + methods
-- get_keyword — объектная модель полей и методов
+- get_keyword — объект keyword: details.parameters (позиция, тип, unit, описание) из schema_catalogue
 - list_records — компактные записи keyword/well
 - apply_commissioning — сдвиг дат ввода по фактам Excel из сессии. Якорь commissioning — первый нефактический WCONPROD; последующие WCONPROD являются прогнозными режимами и сохраняются.
 - apply_group_rebind — перепривязка групп по тексту задачи и baseline. Скважины только из inspect.
 - apply_operations — точечные MODIFY/ADD по схеме keyword. wells только из inspect.
+- render_ir — fields по каталогу → текст записи .inc (слэши, layout). Не пиши .INC сам.
 - build_schedule — собрать текущий working text, если apply уже менял сессию
 - validate_result — проверки emit
 
@@ -48,12 +55,15 @@ SYSTEM = """Ты — единственный LLM-решатель агента 
 - Жёсткое правило: если комментарий WCONPROD содержит «факт» или «fact», запись фактическая. Её нельзя удалять, переносить или использовать как прогнозный commissioning anchor.
 - suggested_capability=commissioning → сразу apply_commissioning, затем STOP.
 - suggested_capability=group_rebind → inspect при необходимости, затем apply_group_rebind, затем STOP.
-- Иначе search_keywords → get_keyword → apply_operations / needs_input.
+- Иначе search_keywords → get_keyword (смотри details.parameters) → apply_operations / render_ir / needs_input.
+- Имена полей бери из get_keyword.details (WELL, DATE, CHILD), не выдумывай расклад.
+- WCONPROD variant = CONTROL в нижнем регистре (orat, wrat, grat, lrat, bhp, thp, resv, grup). Если variant не указан — положи CONTROL в fields.
 - apply_operations принимает JSON-массив [{keyword, operation, fields}], не объект с ключами "0","1".
 - После apply_* со status completed или needs_input — STOP. Не вызывай build, если apply уже вернул результат.
 - Если данных нет — не вызывай apply с пустыми выдуманными полями.
 - Не вызывай один и тот же inspect_* больше трёх раз подряд. Если за 3 шага нет apply_* — STOP и верни вопрос (needs_input).
 - Не зацикливайся: max несколько tool-вызовов, затем короткий итог.
+- Retrieved knowledge — только срез schedule_mvp (keyword_instruction / worked_example): when-to-use и pitfalls. Расклад полей по-прежнему из get_keyword.details / render_ir, не из schema_catalogue RAG. Пустой или unavailable срез — работай инструментами, не спрашивай HITL про базу знаний и не ходи в excel_protocol / orchestrator_routing.
 
 Заверши одним коротким фактическим предложением по-русски.
 """
@@ -77,7 +87,7 @@ TOOLS = [
     ),
     (
         "get_keyword",
-        "Объектная модель keyword: fields + methods. Бери имена полей отсюда, не выдумывай.",
+        "Объект keyword: details.kind=schedule_keyword, parameters[{name,position,type,required,unit,description,enum}]. Имена полей только отсюда.",
         [("keyword", "string", True, "DATES / WCONPROD / GRUPTREE / ...")],
     ),
     (
@@ -105,6 +115,14 @@ TOOLS = [
         "apply_operations",
         "Применить operations. JSON-массив: [{\"keyword\":\"WCONPROD\",\"operation\":\"MODIFY\",\"fields\":{...}}].",
         [("operations", "json", True, "Массив {keyword, operation, fields}. Не объект с ключами 0,1,2.")],
+    ),
+    (
+        "render_ir",
+        "Собрать текст keyword по schema_catalogue: ir_events[{event_id,operation,keyword,variant,fields,provenance}]. Не пиши .INC руками.",
+        [
+            ("mode", "string", False, "CREATE или REVISE"),
+            ("ir_events", "json", True, "Массив IR-событий с fields по get_keyword.details.parameters"),
+        ],
     ),
     (
         "build_schedule",
@@ -424,19 +442,62 @@ return [{json:{
 }}];
 """
 
-PREPARE = r"""
+_SCHED_SEL = SELECTORS["schedule"]
+PREPARE = (
+    "const RAG_TARGET_BASE=" + json.dumps(_SCHED_SEL["target_base"]) + ";\n"
+    "const RAG_ACCESS_SCOPE=" + json.dumps(_SCHED_SEL["access_scope"]) + ";\n"
+    "const RAG_KNOWLEDGE_TYPES=" + json.dumps(_SCHED_SEL["knowledge_types"]) + ";\n"
+    "const RAG_TOP_K=" + str(int(_SCHED_SEL["top_k"])) + ";\n"
+    "const ALLOWED_KEYWORDS=" + json.dumps(SCHEDULE_KEYWORDS) + ";\n"
+    + r"""
 const opened=$json||{};
 const task=$('Normalize schedule task').first().json.agent_task||{};
-const agent_input=JSON.stringify({
-  objective:opened.objective||task.objective||'',
-  handoff_message:opened.handoff_message||task.handoff_message||'',
+const objective=String(opened.objective||task.objective||'');
+const handoff=String(opened.handoff_message||task.handoff_message||'');
+const blob=[objective,handoff].join('\n');
+const allowed=new Set(ALLOWED_KEYWORDS);
+const fromText=[...new Set((blob.match(/\b[A-Z][A-Z0-9_]{2,}\b/g)||[]).filter(k=>allowed.has(k)))];
+const low=blob.toLowerCase();
+const mapped=[];
+if(/дат[аые].{0,24}ввод|ввод.{0,16}скважин|commission/.test(low)) mapped.push('DATES','WCONPROD');
+if(/групп|перепривяз|gruptree/.test(low)) mapped.push('GRUPTREE','GCONPROD','WELSPECS');
+if(/\borat\b|\bwrat\b|\bgrat\b|дебит|лимит.{0,24}нефт|wconprod|weltarg/.test(low)) mapped.push('WCONPROD','WELTARG');
+if(/грп|гидроразрыв|fracture/.test(low)) mapped.push('FRACTURE_SPECS','FRACTURE_STAGE');
+if(/vfp/.test(low)) mapped.push('VFPPROD','WVFPDP');
+if(/перфорац|compdat/.test(low)) mapped.push('COMPDATMD');
+if(/закачк|инъект|wconinje/.test(low)) mapped.push('WCONINJE');
+const keyword_families=[...new Set([...fromText,...mapped])].filter(k=>allowed.has(k)).slice(0,6);
+const topics=[];
+const task_patterns=[];
+if(/дат|ввод/.test(low)){topics.push('календарь');task_patterns.push('даты ввода');}
+if(/групп|перепривяз/.test(low)){topics.push('группы');task_patterns.push('перепривязка групп');}
+if(/дебит|orat|лимит/.test(low)){topics.push('контроль');task_patterns.push('прогнозный режим');}
+if(/грп|fracture/.test(low)){topics.push('ГРП');task_patterns.push('гидроразрыв');}
+const query=blob.trim().replace(/\b[\w.-]+\.(xlsx|xls|xlsm|inc|dev|txt|csv)\b/gi,' ').replace(/\s+/g,' ').trim().slice(0,800)||'schedule keyword instruction';
+const retrieval_selector={target_base:RAG_TARGET_BASE,knowledge_types:RAG_KNOWLEDGE_TYPES};
+const schedule_retrieval_request={
+  query,
+  filters:{
+    target_base:RAG_TARGET_BASE,
+    access_scope:RAG_ACCESS_SCOPE,
+    knowledge_types:RAG_KNOWLEDGE_TYPES,
+    keyword_families,
+    topics:[...new Set(topics)],
+    task_patterns:[...new Set(task_patterns)]
+  },
+  top_k:RAG_TOP_K
+};
+const planner_input=JSON.stringify({
+  objective,
+  handoff_message:handoff,
   inspect:opened.inspect||{},
   fact_count:opened.fact_count||0,
   facts_preview:opened.facts_preview||[],
   suggested_capability:opened.suggested_capability||''
 });
-return [{json:{...opened, session_id:opened.session_id, agent_input}}];
+return [{json:{...opened,session_id:opened.session_id,agent_input:planner_input,planner_input,schedule_retrieval_request,retrieval_selector}}];
 """
+)
 
 FORMAT_OPEN = r"""
 const opened=$json||{};
@@ -506,7 +567,10 @@ def main() -> None:
                     "1. Bind **Qwen** credential on Schedule Builder Chat Model\n"
                     "2. Bind **Runtime configuration** → `MAS — Runtime Config` "
                     "(URL FastAPI). Field: Windows/host URL.\n"
-                    "3. Orchestrator — MAS вызывает этот workflow через "
+                    "3. Bind **Call Knowledge Retrieval** → `MAS — Knowledge Retrieval` "
+                    "(срез `schedule_mvp` / `keyword_instruction`; LLM-ветка operations). "
+                    "Commissioning / group_rebind RAG не вызывают.\n"
+                    "4. Orchestrator — MAS вызывает этот workflow через "
                     "`executeWorkflow` (`Call Schedule Builder`), как Excel Extractor. "
                     "Webhook не нужен.\n\n"
                     "LLM не пишет .INC. parse/apply/emit остаются в сервисе.\n"
@@ -516,7 +580,7 @@ def main() -> None:
                     "needs_input не идёт в Fetch result. Сессия закрывается "
                     "POST /sessions/{id}/close. Скважины/даты не хардкодятся."
                 ),
-                "height": 320,
+                "height": 360,
                 "width": 480,
                 "color": 1,
             },
@@ -659,13 +723,28 @@ def main() -> None:
         ),
         node("Prepare AI Agent input", "n8n-nodes-base.code", 2, (1480, 160), {"jsCode": PREPARE}),
         node(
+            "Call Knowledge Retrieval",
+            "n8n-nodes-base.executeWorkflow",
+            1.3,
+            (1480, 300),
+            knowledge_retrieval_execute_params(),
+            onError="continueRegularOutput",
+        ),
+        node(
+            "Attach schedule RAG evidence",
+            "n8n-nodes-base.code",
+            2,
+            (1680, 300),
+            {"jsCode": attach_schedule_rag_js()},
+        ),
+        node(
             "Schedule Builder AI Agent",
             "@n8n/n8n-nodes-langchain.agent",
             3.1,
             (1720, 160),
             {
                 "promptType": "define",
-                "text": "={{ $json.agent_input }}",
+                "text": "={{ $json.planner_input }}",
                 "hasOutputParser": False,
                 "options": {
                     "systemMessage": SYSTEM,
@@ -743,7 +822,9 @@ def main() -> None:
     connect(connections, "Restore after apply event", "Apply finished?")
     connect(connections, "Apply finished?", "Format schedule result", si=0)
     connect(connections, "Apply finished?", "Fetch schedule result", si=1)
-    connect(connections, "Prepare AI Agent input", "Schedule Builder AI Agent")
+    connect(connections, "Prepare AI Agent input", "Call Knowledge Retrieval")
+    connect(connections, "Call Knowledge Retrieval", "Attach schedule RAG evidence")
+    connect(connections, "Attach schedule RAG evidence", "Schedule Builder AI Agent")
     connect(connections, "Schedule Builder Chat Model — Qwen", "Schedule Builder AI Agent", out="ai_languageModel", tin="ai_languageModel")
     for name, _desc, _fields in TOOLS:
         connect(connections, name, "Schedule Builder AI Agent", out="ai_tool", tin="ai_tool")

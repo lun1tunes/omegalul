@@ -223,18 +223,25 @@ def keyword_object(name: str) -> dict[str, Any] | None:
     code = normalize_keyword(name)
     if code not in KEYWORDS:
         return None
-    fields = FIELDS.get(code, [{"name": "tokens", "type": "string", "required": False, "unit": None, "description": "Raw record tokens"}])
+    from .schema_keyword import details_for
+
+    details = details_for(code)
+    variants = list((details.variants if details else []) or [])
+    primary = variants[0] if variants else {}
+    fields = list(primary.get("parameters") or FIELDS.get(code) or [{"name": "tokens", "type": "string", "required": False, "unit": None, "description": "Raw record tokens"}])
     return {
         "keyword": code,
         "section": "SCHEDULE",
         "description": DESCRIPTIONS.get(code, f"SCHEDULE keyword {code}"),
         "fields": fields,
+        "details": details.model_dump() if details else {"kind": "schedule_keyword", "keyword": code, "variants": []},
         "methods": [
             {"name": method, "description": method, "input_schema": {"type": "object"}}
             for method in METHODS
         ],
         "examples": [],
         "constraints": {"units": "METRIC", "simulator": "tNavigator 22.2"},
+        "source": details.source if details else "builtin",
     }
 
 

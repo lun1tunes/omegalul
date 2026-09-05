@@ -74,6 +74,7 @@ flowchart TB
   Activity --> Orch
   Activity --> Proxy
   Activity --> Ingest
+  Orch --> Retr
   Orch --> Runtime
   ExcelAgent --> Runtime
   SchedAgent --> Runtime
@@ -99,13 +100,13 @@ flowchart TB
 
 1. Инженер создаёт задачу в Activity (`POST /cases`, multipart: `file`, `schedule_files`, `schedule_root`, при необходимости `.dev` / поверхность). Файлы кладутся в control-plane (`mas_artifacts`) через webhook прокси.
 2. Activity вызывает оркестратор `mas-orchestrator-step` на **create / resume / restart**. Дальше оркестратор сам POST-ит `action:step` на свой webhook (`orchestrator_step_url` в Runtime Config). Activity читает `cases`/`events`, не крутит шаг за шагом.
-3. Один шаг оркестратора = одно n8n execution: кейс из Postgres (credential n8n), агенты из `agent_registry` (`schema` прокси), решение `call_agent` / `ask_user` / `finish`. Excel и Schedule — `executeWorkflow`; Math — HTTP `…:8100/agent/run`. **Knowledge Retrieval на канвасе оркестратора нет** (нужен только при клоне `Template — Engineering Specialist`).
+3. Один шаг оркестратора = одно n8n execution: кейс из Postgres (credential n8n), агенты из `agent_registry` (`schema` прокси), решение `call_agent` / `ask_user` / `finish`. Перед LLM оркестратор вызывает `MAS — Knowledge Retrieval` со срезом `target_base=orchestrator_routing` (`routing_card`). Excel и Schedule — `executeWorkflow`; Math — HTTP `…:8100/agent/run`. На LLM-ветке Excel/Schedule сами вызывают тот же Retrieval со срезами `excel_protocol` / `schedule_mvp` (HTTP commissioning / group_rebind RAG не трогают).
 4. Excel Extractor и Schedule Builder — LLM в n8n + FastAPI tools. Файлы забирают сами: `GET …:8200/cases/{id}/artifacts/{id}`. Math — тот же GET. Прогресс в ленту — `POST …/cases/{id}/events` **без** Excel `X-API-Key` (это не Header Auth webhook).
 5. HITL (`waiting_user`) и лента — таблицы `cases` / `events`. Activity **не** ходит в БД. Ответ инженера — снова `mas-orchestrator-step` (оркестратор передаёт HITL-ответы в следующий `call_agent`, в т.ч. `unlisted_wells_policy`).
 6. Готовый `.INC` скачивается из Activity, не из Entry Form. Ошибки нод n8n пишет `Error — MAS Node Traces` **напрямую в Postgres** (`error_traces` + `events`), не через прокси.
 7. Health Check — **форма n8n** (сессия UI), не webhook. Пробы HTTP сервисов и устаревших Data Tables (`PASS_WITH_TODO`).
 
-После импорта все workflows `active: false`. Сначала credentials и bindings, затем **Control Plane Proxy** (`schema` → `agent_registry`), Health Check, и только при 0 FAIL — активация оркестратора. RAG (Ingestion) — База знаний Activity, не маршрутизация.
+После импорта все workflows `active: false`. Сначала credentials и bindings, затем **Control Plane Proxy** (`schema` → `agent_registry`), Health Check, и только при 0 FAIL — активация оркестратора. RAG: одна таблица, изоляция `target_base`. Оркестратор читает `orchestrator_routing`; Excel LLM — `excel_protocol`; Schedule LLM — `schedule_mvp`. Наполнение — Activity → База знаний.
 
 Calculation — **не** отдельный n8n-агент: оркестратор бьёт в Math Service HTTP. Старый `Agent — Calculation (Math Service)` лежит в `retired/` и не импортируется. Code/JS ноды исполняет **n8n-runners**, не процесс n8n.
 
@@ -255,7 +256,7 @@ n8n → Import from File. Порядок — `n8n/import-manifest.json` → `run
 | Orchestrator webhook, **POST continue run** и Control Plane Proxy webhook | Header Auth (одно и то же имя/значение, что в `mas-activity.env`) |
 | Agent — Excel Extractor → HTTP / toolHttpRequest | **отдельный** Header Auth: header name `X-API-Key`, value = `API_KEY` из `excel-tools.env`. Имя credential в UI: `Excel Tools X-API-Key`. |
 | `MAS — Runtime Config` → Runtime URLs | `activity_base_url=http://<IP-Windows>:8200`, `excel_tools_url=http://<IP-Windows>:8000` (**без** `/api/v1`), `schedule_service_url=http://<IP-Windows>:8090`, `math_url=http://<IP-Windows>:8100` (без `/agent/run`), `orchestrator_step_url=http://127.0.0.1:5678/webhook/mas-orchestrator-step` (n8n бьёт **сам в себя**; не Activity `/cases/{id}/run`) |
-| Orchestrator / Excel / Schedule → Execute Workflow | `Runtime endpoints` / `Runtime configuration` → `MAS — Runtime Config` |
+| Orchestrator / Excel / Schedule → Execute Workflow | `Runtime endpoints` / `Runtime configuration` → `MAS — Runtime Config`; `Call Knowledge Retrieval` (Orchestrator + Excel LLM + Schedule LLM) → `MAS — Knowledge Retrieval` |
 | Orchestrator → Calculation | берёт `math_url` + `/agent/run` |
 
 В JSON не должно остаться `REPLACE_IN_UI` (кроме support-заглушек, которые не импортируете в runtime).
@@ -271,8 +272,11 @@ Header Auth webhook (Authorization) — это **не** ключ Excel. Ключ
 | `Agent — Schedule Builder` | `Runtime configuration` | `MAS — Runtime Config` |
 | `Orchestrator — MAS` | `Call Excel Extractor` | `Agent — Excel Extractor` |
 | `Orchestrator — MAS` | `Call Schedule Builder` | `Agent — Schedule Builder` |
+| `Orchestrator — MAS` | `Call Knowledge Retrieval` | `MAS — Knowledge Retrieval` (`filters.target_base=orchestrator_routing`) |
+| `Agent — Excel Extractor` | `Call Knowledge Retrieval` | `MAS — Knowledge Retrieval` (`filters.target_base=excel_protocol`; только LLM-ветка operations) |
+| `Agent — Schedule Builder` | `Call Knowledge Retrieval` | `MAS — Knowledge Retrieval` (`filters.target_base=schedule_mvp`; только LLM-ветка operations) |
 
-`Call Calculation Agent` — HTTP на Math Service, не executeWorkflow. Live Excel Extractor и Schedule Builder **не** вызывают Hybrid Retrieval. `MAS — Knowledge Retrieval` привязывают только при клоне `Template — Engineering Specialist` (`support/`).
+`Call Calculation Agent` — HTTP на Math Service, не executeWorkflow. Live Excel Extractor и Schedule Builder вызывают тот же Retrieval на LLM-пути (селекторы `excel_protocol` / `schedule_mvp`). HTTP `extract_commissioning` / `apply_commissioning` / `apply_group_rebind` RAG не вызывают. `Template — Engineering Specialist` (`support/`) тоже биндит Retrieval своим `target_base`.
 
 Settings → **Error workflow** у оркестратора, Excel Extractor, Schedule Builder, Retrieval, Ingestion: `Error — MAS Node Traces`. Не ставить error workflow на сам `Error — MAS Node Traces` и на `MAS — Control Plane Proxy`.
 
@@ -300,11 +304,15 @@ Settings → **Error workflow** у оркестратора, Excel Extractor, Sc
 
 `snapshot` возвращает case + events одним SQL. Activity не дергает прокси каждые 2 с на каждую вкладку: один poller на открытый кейс, 2 с пока `running`, 6 с на HITL/done/failed, сразу просыпается на запись. Несколько single-row операций (`create_case`+`append_event`, `update_case`+`append_event`) идут как `batch` — Postgres в одном n8n execution последовательно. Успешные production executions прокси **не сохраняются** (`saveDataSuccessExecution=none`, `saveExecutionProgress=false`); ошибки сохраняются. После смены прокси переимпортируйте workflow и перезапустите Activity.
 
-### Шаг 5. RAG (База знаний, не маршрутизация оркестратора)
+### Шаг 5. RAG (одна база, селектор `target_base`)
 
-Первый Excel/Schedule прогон **не** ждёт RAG: список агентов — таблица `agent_registry` после `schema` прокси (`excel_extractor`, `calculation_agent`, `schedule_builder`). Оркестратор Retrieval не вызывает.
+Список агентов по-прежнему в `agent_registry` после `schema` прокси (`excel_extractor`, `calculation_agent`, `schedule_builder`). Если срез RAG пуст, оркестратор решает по реестру и compact — **не** HITL про базу.
 
-RAG нужен для Activity → **База знаний** и для будущих специалистов по шаблону. Таблицы: `tnavigator_schedule_knowledge_v1` (векторы) и `tnavigator_schedule_knowledge_documents_v1`. Изоляция `target_base`: `schedule_mvp`, `excel_protocol`, `orchestrator_routing`, `specialist_template`.
+Гибкость системы — пополнение этой базы. Оркестратор на каждом шаге решения вызывает `MAS — Knowledge Retrieval` **только** со срезом `orchestrator_routing` / `routing_card` (декомпозиция, план, handoff). Live Excel Extractor на LLM-ветке берёт `excel_protocol` / `protocol_instruction`; Schedule Builder — `schedule_mvp` / `keyword_instruction` (when-to-use; расклад полей по-прежнему `get_keyword` / FastAPI catalogue). Те же таблицы и тот же sub-workflow; клоны — `specialist_template`. Нельзя ходить «во всю базу» без `target_base`. Пустой срез у специалиста — инструменты без HITL про RAG.
+
+Query оркестратора — цель + факты состояния (сколько скважин из Excel, нужно ли обновить baseline), без имён файлов и без rule-based hint (hint остаётся в LLM-промпте). `topics` и `task_patterns` считаются из цели и артефактов. `keyword_families` здесь — routing-теги (`XLSX`, `INC`, `COMMISSIONING`, `GROUP_CONTROL`), не keywords SCHEDULE. Теговая ветка Retrieval — **ИЛИ** по `keyword_families` / `topics` / `task_patterns`; жёсткий срез только `target_base` + `knowledge_types`. Карточки короче 50 символов и с `rrf_score<=0` отбрасываются; из оставшихся в prompt попадают лучшие по RRF (не ниже 45% от лучшего hit).
+
+Таблицы: `tnavigator_schedule_knowledge_v1` (векторы) и `tnavigator_schedule_knowledge_documents_v1`.
 
 Источник карточек: `n8n/rag/excel-agent-operating-guide.documents.json` (блок `injection_template` ingest игнорирует).
 
@@ -348,6 +356,7 @@ RAG нужен для Activity → **База знаний** и для буду�
 - Excel Extractor / n8n никогда не читает Excel-файлы напрямую: только HTTP к Excel Tools (`:8000`). Schedule Builder получает уже извлечённые факты (Handoff фактов), не xlsx.
 - Excel/Schedule агенты: `returnIntermediateSteps=true`.
 - LLM не пишет `.INC` руками. Parse / apply / emit, commissioning и group-rebind — Python FastAPI (`timeline_ops.py`). На Windows достаточно `.venv`. JS timeline в `n8n/templates/schedule_timeline_runtime.py` — только n8n smokes, не процесс сервиса.
+- Расклад keyword не хардкодится классом на слово: RAG `schema_catalogue` → Pydantic `KeywordSchema` → `POST /render` / tool `render_ir`. `get_keyword` отдаёт `details.parameters`. Снимок каталога: `schedule-builder-service/app/data/schema_catalogues.json`.
 
 ### INCLUDE
 

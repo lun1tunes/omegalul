@@ -1,6 +1,6 @@
 'use strict';
 /**
- * Thin Orchestrator — MAS: one step, no RAG/SCHEDULE, errorWorkflow bound.
+ * Thin Orchestrator — MAS: one step, retrieval selector orchestrator_routing, errorWorkflow bound.
  */
 const assert = require('node:assert/strict');
 const fs = require('node:fs');
@@ -53,13 +53,16 @@ async function run(name, json, nodes = {}, binary = {}) {
   const webhook = wf.nodes.find((n) => n.type === 'n8n-nodes-base.webhook');
   assert.equal(webhook.parameters.path, 'mas-orchestrator-step');
   const text = JSON.stringify(wf);
-  assert.equal(text.includes('Hybrid Retrieval'), false);
+  assert.equal(text.includes('Call routing Hybrid Retrieval'), false);
   assert.equal(text.includes('Call SCHEDULE Builder'), false);
   assert.equal(text.includes('engineering-orchestrator'), false);
   for (const need of [
     'Normalize step request',
     'Load case',
     'Load agent registry',
+    'Prepare decision context',
+    'Call Knowledge Retrieval',
+    'Attach orchestrator RAG evidence',
     'Decision LLM',
     'Parse decision',
     'Action router',
@@ -122,6 +125,24 @@ async function run(name, json, nodes = {}, binary = {}) {
   assert.equal(callSchedule.parameters.workflowId.cachedResultName, 'Agent — Schedule Builder');
   assert.equal(callSchedule.parameters.options.waitForSubWorkflow, true);
   assert.equal(callSchedule.onError, 'continueRegularOutput');
+  const helperNames = [
+    'Apply request extras',
+    'Prepare decision context',
+    'Parse decision',
+    'Merge agent result',
+  ];
+  const helperChunks = helperNames.map((name) => {
+    const js = source(name);
+    const begin = js.indexOf('/* mas_state_utils begin */');
+    const end = js.indexOf('/* mas_state_utils end */');
+    assert.ok(begin >= 0 && end > begin, `state utils markers missing in ${name}`);
+    assert.ok(js.includes('function readUnlistedWellsPolicy'), name);
+    assert.ok(js.includes('function normalizeHitlAnswer'), name);
+    assert.ok(js.includes('function inferTaskPatterns'), name);
+    assert.ok(js.includes('function inferRetrievalQuery'), name);
+    return js.slice(begin, end);
+  });
+  assert.equal(new Set(helperChunks).size, 1, 'state helpers must be identical across Code nodes');
   const continueNode = wf.nodes.find((n) => n.name === 'POST continue run');
   assert.ok(String(continueNode.parameters.jsonBody).includes("action: 'step'"));
   assert.ok(String(continueNode.parameters.jsonBody).includes('orchestrator-self'));
@@ -129,7 +150,7 @@ async function run(name, json, nodes = {}, binary = {}) {
   assert.equal(continueNode.parameters.authentication, 'genericCredentialType');
   assert.equal(continueNode.parameters.genericAuthType, 'httpHeaderAuth');
   assert.ok(continueNode.credentials && continueNode.credentials.httpHeaderAuth);
-  assert.equal(continueNode.parameters.options.timeout, 3000);
+  assert.equal(continueNode.parameters.options.timeout, 8000);
   assert.equal(source('Merge agent result').includes('/cases/'), false);
   assert.ok(source('Merge agent result').includes('mas-orchestrator-step'));
   const ackHttp = wf.nodes.find((n) => n.name === 'POST step ack to MAS Activity');
@@ -145,6 +166,27 @@ async function run(name, json, nodes = {}, binary = {}) {
   assert.equal(callExcel.parameters.workflowInputs.value.agent_task, '={{ $json.agent_task }}');
   assert.equal(text.includes('excel_extractor_url'), false, 'no HTTP /agent/run URL — specialist is executeWorkflow');
   assert.equal(callSchedule.parameters.workflowInputs.value.agent_task, '={{ $json.agent_task }}');
+  const callRag = wf.nodes.find((n) => n.name === 'Call Knowledge Retrieval');
+  assert.equal(callRag.type, 'n8n-nodes-base.executeWorkflow');
+  assert.equal(callRag.typeVersion, 1.3);
+  assert.equal(callRag.parameters.workflowId.value, 'REPLACE_SCHEDULE_RAG_RETRIEVAL_IN_UI');
+  assert.equal(callRag.parameters.workflowId.cachedResultName, 'MAS — Knowledge Retrieval');
+  assert.equal(callRag.parameters.options.waitForSubWorkflow, true);
+  assert.equal(callRag.onError, 'continueRegularOutput');
+  assert.equal(
+    callRag.parameters.workflowInputs.value.schedule_retrieval_request,
+    '={{ $json.schedule_retrieval_request }}',
+  );
+  assert.equal(wf.connections['Prepare decision context'].main[0][0].node, 'Call Knowledge Retrieval');
+  assert.equal(wf.connections['Call Knowledge Retrieval'].main[0][0].node, 'Attach orchestrator RAG evidence');
+  assert.equal(wf.connections['Attach orchestrator RAG evidence'].main[0][0].node, 'Decision LLM');
+  const system = decision.parameters.messages.messageValues[0].message;
+  assert.match(system, /orchestrator_routing/);
+  assert.equal(system.includes('не ходи в RAG'), false);
+  assert.match(source('Prepare decision context'), /orchestrator_routing/);
+  assert.equal(source('Prepare decision context').includes('schedule_mvp'), false);
+  assert.match(source('Attach orchestrator RAG evidence'), /Prepare decision context/);
+  assert.match(source('Attach orchestrator RAG evidence'), /orchestrator_routing/);
   assert.equal(text.includes('formBinaryData'), false);
   assert.equal(text.includes('.first().binary'), false);
   assert.equal(text.includes('multipart-form-data'), false);
@@ -268,6 +310,209 @@ async function run(name, json, nodes = {}, binary = {}) {
   assert.deepEqual(prepared.state.hitl.answers['Q-1'], { text: 'ok' });
   assert.equal(prepared.activity_base_url, 'http://mas-activity:8200');
   assert.match(prepared.planner_input, /excel_extractor/);
+  assert.equal(prepared.schedule_retrieval_request.filters.target_base, 'orchestrator_routing');
+  assert.deepEqual(prepared.schedule_retrieval_request.filters.knowledge_types, ['routing_card']);
+  assert.equal(prepared.schedule_retrieval_request.filters.access_scope, 'petroleum-engineering');
+  const families = prepared.schedule_retrieval_request.filters.keyword_families;
+  assert.ok(families.includes('XLSX'));
+  assert.ok(families.includes('EXCEL_EXTRACTOR'));
+  assert.ok(families.includes('INC'));
+  assert.ok(families.includes('SCHEDULE_BUILDER'));
+  assert.ok(families.includes('COMMISSIONING'));
+  assert.equal(families.includes('GROUP_CONTROL'), false);
+  assert.equal(families.includes('WCONPROD'), false);
+  assert.equal(families.includes('DATES'), false);
+  assert.ok(!prepared.schedule_retrieval_request.query.includes('WCONPROD'));
+  assert.ok(!prepared.schedule_retrieval_request.query.includes('dates.xlsx'));
+  assert.ok(!prepared.schedule_retrieval_request.query.includes('base.inc'));
+  assert.ok(!prepared.schedule_retrieval_request.query.includes('excel workbook'));
+  assert.ok(!prepared.schedule_retrieval_request.query.includes('schedule_builder —'));
+  assert.match(prepared.schedule_retrieval_request.query, /даты ввода/);
+  assert.match(prepared.schedule_retrieval_request.query, /Извлечено 40 скважин из Excel/);
+  assert.match(prepared.schedule_retrieval_request.query, /Нужно обновить baseline SCHEDULE/);
+  assert.match(prepared.planner_input, /Дальше schedule_builder/);
+  assert.equal(prepared.schedule_retrieval_request.top_k, 12);
+  const topics = prepared.schedule_retrieval_request.filters.topics;
+  assert.ok(topics.includes('Excel'));
+  assert.ok(topics.includes('SCHEDULE'));
+  assert.ok(topics.includes('handoff'));
+  assert.equal(topics.includes('маршрутизация'), false);
+  assert.deepEqual(prepared.retrieval_selector, {
+    target_base: 'orchestrator_routing',
+    knowledge_types: ['routing_card'],
+  });
+  const patterns = prepared.schedule_retrieval_request.filters.task_patterns;
+  assert.ok(patterns.includes('даты ввода'));
+  assert.ok(patterns.includes('новые даты ввода скважин'));
+  assert.ok(patterns.includes('сдвиг дат'));
+  assert.equal(patterns.includes('перепривязка групп'), false);
+
+  const groupPrepared = await run(
+    'Prepare decision context',
+    { case_id: 'CASE-1' },
+    {
+      'Load case': {
+        state: {
+          goal: 'перепривяжи скважины в группу G1',
+          artifacts: { schedule_source: { filename: 'base.inc', artifact_id: 'schedule_source' } },
+          data: {},
+        },
+        status: 'running',
+      },
+      'Load agent registry': { agent_id: 'schedule_builder', title: 'Schedule' },
+      'Runtime endpoints': { activity_base_url: 'http://mas-activity:8200' },
+    },
+  );
+  const groupFam = groupPrepared.schedule_retrieval_request.filters.keyword_families;
+  assert.ok(groupFam.includes('GROUP_CONTROL'));
+  assert.ok(groupFam.includes('INC'));
+  assert.equal(groupFam.includes('COMMISSIONING'), false);
+  assert.equal(groupFam.includes('XLSX'), false);
+  assert.ok(groupPrepared.schedule_retrieval_request.filters.task_patterns.includes('перепривязка групп'));
+  assert.ok(!groupPrepared.schedule_retrieval_request.query.includes('base.inc'));
+  assert.ok(groupPrepared.schedule_retrieval_request.filters.topics.includes('SCHEDULE'));
+
+  const attached = await run(
+    'Attach orchestrator RAG evidence',
+    {
+      contract: 'schedule_retrieval_result',
+      status: 'succeeded',
+      evidence_ready: true,
+      results: [
+        {
+          knowledge_id: 'route-excel-extractor',
+          knowledge_type: 'routing_card',
+          target_base: 'orchestrator_routing',
+          title: 'Excel',
+          body: { text: 'Делегируйте excel_extractor когда есть xlsx и в artifacts есть Excel файл.' },
+        },
+        {
+          knowledge_id: 'wconprod-v1',
+          knowledge_type: 'keyword_instruction',
+          target_base: 'schedule_mvp',
+          title: 'WCONPROD',
+          body: { text: 'WCONPROD full manual '.repeat(40) },
+        },
+      ],
+      findings: [],
+    },
+    { 'Prepare decision context': prepared },
+  );
+  assert.equal(attached.rag.target_base, 'orchestrator_routing');
+  assert.equal(attached.rag.status, 'ready');
+  assert.equal(attached.rag.cards.length, 1);
+  assert.equal(attached.rag.cards[0].knowledge_id, 'route-excel-extractor');
+  assert.ok(!attached.planner_input.includes('WCONPROD full manual'));
+  assert.match(attached.planner_input, /excel_extractor/);
+  assert.equal(attached.case_id, 'CASE-1');
+  assert.ok(attached.state);
+
+  const attachedFail = await run(
+    'Attach orchestrator RAG evidence',
+    { error: { message: 'subworkflow missing' } },
+    { 'Prepare decision context': prepared },
+  );
+  assert.equal(attachedFail.rag.status, 'unavailable');
+  assert.equal(attachedFail.rag.cards.length, 0);
+  assert.match(attachedFail.planner_input, /Не спрашивай HITL про RAG/);
+  assert.ok(attachedFail.planner_input.includes(prepared.planner_input.slice(0, 40)));
+
+  const attachedEmpty = await run(
+    'Attach orchestrator RAG evidence',
+    {
+      contract: 'schedule_retrieval_result',
+      status: 'succeeded',
+      results: [],
+      findings: [{ code: 'NO_AUTHORIZED_EVIDENCE' }],
+    },
+    { 'Prepare decision context': prepared },
+  );
+  assert.equal(attachedEmpty.rag.status, 'empty');
+  assert.deepEqual(attachedEmpty.rag.findings, ['NO_AUTHORIZED_EVIDENCE']);
+
+  const longCard = 'R'.repeat(900);
+  const attachedTrim = await run(
+    'Attach orchestrator RAG evidence',
+    {
+      contract: 'schedule_retrieval_result',
+      status: 'succeeded',
+      results: Array.from({ length: 8 }, (_, i) => ({
+        knowledge_id: `route-card-${i}`,
+        knowledge_type: 'routing_card',
+        target_base: 'orchestrator_routing',
+        title: `Card ${i}`,
+        body: { text: longCard },
+      })),
+    },
+    { 'Prepare decision context': prepared },
+  );
+  assert.equal(attachedTrim.rag.cards.length, 6);
+  assert.equal(attachedTrim.rag.cards[0].text.length, 700);
+
+  const attachedShort = await run(
+    'Attach orchestrator RAG evidence',
+    {
+      contract: 'schedule_retrieval_result',
+      status: 'succeeded',
+      results: [
+        {
+          knowledge_id: 'tiny',
+          knowledge_type: 'routing_card',
+          target_base: 'orchestrator_routing',
+          title: 'Tiny',
+          body: { text: 'коротко' },
+        },
+        {
+          knowledge_id: 'zero-score',
+          knowledge_type: 'routing_card',
+          target_base: 'orchestrator_routing',
+          title: 'Zero',
+          rrf_score: 0,
+          body: { text: 'Достаточно длинный текст карточки маршрутизации чтобы пройти порог длины.' },
+        },
+        {
+          knowledge_id: 'route-excel-extractor',
+          knowledge_type: 'routing_card',
+          target_base: 'orchestrator_routing',
+          title: 'Excel',
+          body: { text: 'Делегируйте excel_extractor когда есть xlsx и в artifacts есть Excel файл.' },
+        },
+      ],
+    },
+    { 'Prepare decision context': prepared },
+  );
+  assert.equal(attachedShort.rag.status, 'ready');
+  assert.equal(attachedShort.rag.cards.length, 1);
+  assert.equal(attachedShort.rag.cards[0].knowledge_id, 'route-excel-extractor');
+
+  const attachedFloor = await run(
+    'Attach orchestrator RAG evidence',
+    {
+      contract: 'schedule_retrieval_result',
+      status: 'succeeded',
+      results: [
+        {
+          knowledge_id: 'weak',
+          knowledge_type: 'routing_card',
+          target_base: 'orchestrator_routing',
+          title: 'Weak',
+          rrf_score: 0.01,
+          body: { text: 'Достаточно длинный текст карточки маршрутизации чтобы пройти порог длины.' },
+        },
+        {
+          knowledge_id: 'strong',
+          knowledge_type: 'routing_card',
+          target_base: 'orchestrator_routing',
+          title: 'Strong',
+          rrf_score: 0.09,
+          body: { text: 'Делегируйте excel_extractor когда есть xlsx и в artifacts есть Excel файл.' },
+        },
+      ],
+    },
+    { 'Prepare decision context': prepared },
+  );
+  assert.equal(attachedFloor.rag.cards.length, 1);
+  assert.equal(attachedFloor.rag.cards[0].knowledge_id, 'strong');
 
   const resumed = await run('Normalize step request', {
     action: 'resume',
@@ -339,6 +584,59 @@ async function run(name, json, nodes = {}, binary = {}) {
     },
   );
   assert.equal(hitlJson.state.hitl.answers['Q-1'].text, 'январь');
+
+  const unlistedHitl = await run(
+    'Apply request extras',
+    {
+      status: 'waiting_user',
+      state: {
+        goal: 'g',
+        hitl: {
+          pending: true,
+          questions: [{ question_id: 'unlisted_wells_policy', question: 'Скважины не из Excel?' }],
+          answers: {},
+        },
+      },
+    },
+    {
+      'Normalize step request': {
+        case_id: 'CASE-1',
+        is_resume: true,
+        action: 'resume',
+        human_response: 'убери лишние скважины',
+        gate_id: 'unlisted_wells_policy',
+      },
+    },
+  );
+  assert.equal(unlistedHitl.did_resume, true);
+  assert.equal(unlistedHitl.state.hitl.answers.unlisted_wells_policy.unlisted_wells_policy, 'remove');
+  assert.equal(unlistedHitl.state.hitl.answers.unlisted_wells_policy.raw, 'убери лишние скважины');
+
+  const unlistedKeep = await run(
+    'Apply request extras',
+    {
+      status: 'waiting_user',
+      state: {
+        goal: 'g',
+        hitl: {
+          pending: true,
+          questions: [{ question_id: 'unlisted_wells_policy', question: 'Скважины не из Excel?' }],
+          answers: {},
+        },
+      },
+    },
+    {
+      'Normalize step request': {
+        case_id: 'CASE-1',
+        is_resume: true,
+        action: 'resume',
+        human_response: 'оставь лишние скважины',
+        gate_id: 'unlisted_wells_policy',
+      },
+    },
+  );
+  assert.equal(unlistedKeep.state.hitl.answers.unlisted_wells_policy.unlisted_wells_policy, 'keep');
+  assert.equal(unlistedKeep.state.hitl.answers.unlisted_wells_policy.raw, 'оставь лишние скважины');
 
   const mismatch = await run(
     'Apply request extras',
@@ -492,8 +790,32 @@ async function run(name, json, nodes = {}, binary = {}) {
   assert.equal(failedMerge.should_continue, true);
   assert.deepEqual(failedMerge.events.map((e) => e.kind), ['agent.failed']);
   assert.equal(failedMerge.state.last_error.agent_id, 'schedule_builder');
+  assert.equal(failedMerge.state.last_error.count, 1);
+  assert.equal(failedMerge.state.error_count, 1);
   assert.equal(failedMerge.state.data.schedule.summary.includes('SCHEDULE не собран'), true);
   assert.ok(!('facts' in (failedMerge.state.data || {})));
+
+  const thirdFail = await run(
+    'Merge agent result',
+    { status: 'failed', message: 'сервис недоступен', data: {}, artifacts: {} },
+    {
+      'Parse decision': parsed,
+      'Prepare agent call': {
+        ...parsed,
+        agent_id: 'schedule_builder',
+        activity_base_url: 'http://activity:8200',
+        state: {
+          ...(parsed.state || {}),
+          last_error: { message: 'down', agent_id: 'schedule_builder', count: 2 },
+          error_count: 2,
+        },
+      },
+    },
+  );
+  assert.equal(thirdFail.next_status, 'failed');
+  assert.equal(thirdFail.should_continue, false);
+  assert.equal(thirdFail.state.error_count, 3);
+  assert.deepEqual(thirdFail.events.map((e) => e.kind), ['agent.failed', 'case.failed']);
 
   const execFail = await run(
     'Merge agent result',

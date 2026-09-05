@@ -98,3 +98,12 @@ def test_compact_reads_unlisted_policy_from_hitl_answer() -> None:
     )
     assert ctx["unlisted_wells_policy"] == "remove"
     assert ctx["hitl_answer_ids"] == ["unlisted_wells_policy"]
+    keep = compact_decision_context(
+        {
+            "hitl": {
+                "pending": False,
+                "answers": {"unlisted_wells_policy": "оставь лишние скважины"},
+            }
+        }
+    )
+    assert keep["unlisted_wells_policy"] == "keep"

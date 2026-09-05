@@ -9,6 +9,11 @@ from pathlib import Path
 
 from llm_runtime_options import chat_model_options
 from generate_mas_runtime_config import EXCEL_KEY_CRED, runtime_config_execute_params
+from mas_retrieval_client import (
+    SELECTORS,
+    attach_excel_rag_js,
+    knowledge_retrieval_execute_params,
+)
 
 ROOT = Path(__file__).resolve().parents[1]
 OUT = ROOT / "workflows/core/excel-extractor-agent.workflow.json"
@@ -44,6 +49,7 @@ Workbook тебе не показывают. Он лежит в сессии Fas
 - После извлечения данных (extract_commissioning или query_table) — STOP.
 - Если за 3 шага нет прогресса — STOP и верни вопрос. Не вызывай один tool больше трёх раз подряд.
 - Если файла/таблиц нет — не выдумывай строки.
+- Retrieved knowledge — только срез excel_protocol / protocol_instruction (протокол инструментов). Не schedule_mvp и не строки workbook. Пустой или unavailable срез — обычные правила инструментов, не спрашивай HITL про базу знаний.
 
 Заверши одним коротким фактическим предложением по-русски.
 """
@@ -398,18 +404,49 @@ return [{json:{
 }}];
 """
 
-PREPARE = r"""
+_EXCEL_SEL = SELECTORS["excel"]
+PREPARE = (
+    "const RAG_TARGET_BASE=" + json.dumps(_EXCEL_SEL["target_base"]) + ";\n"
+    "const RAG_ACCESS_SCOPE=" + json.dumps(_EXCEL_SEL["access_scope"]) + ";\n"
+    "const RAG_KNOWLEDGE_TYPES=" + json.dumps(_EXCEL_SEL["knowledge_types"]) + ";\n"
+    "const RAG_TOP_K=" + str(int(_EXCEL_SEL["top_k"])) + ";\n"
+    "const RAG_TOPICS=" + json.dumps(_EXCEL_SEL.get("topics") or [], ensure_ascii=False) + ";\n"
+    + r"""
 const opened=$json||{};
 const task=$('Normalize excel task').first().json.agent_task||{};
-const agent_input=JSON.stringify({
-  objective:opened.objective||task.objective||'',
-  handoff_message:opened.handoff_message||task.handoff_message||'',
+const objective=String(opened.objective||task.objective||'');
+const handoff=String(opened.handoff_message||task.handoff_message||'');
+const blob=[objective,handoff].join('\n');
+const low=blob.toLowerCase();
+const topics=RAG_TOPICS.slice();
+const task_patterns=[];
+if(/дат|ввод|commission/.test(low)) task_patterns.push('даты ввода');
+if(/таблиц|query|дебит|истори|управлен/.test(low)) task_patterns.push('извлечь таблицу');
+if(/уточн|ambigu|clarif/.test(low)) task_patterns.push('clarification_needed');
+const query=blob.trim().replace(/\b[\w.-]+\.(xlsx|xls|xlsm|inc|dev|txt|csv)\b/gi,' ').replace(/\s+/g,' ').trim().slice(0,800)||'excel protocol instruction';
+const retrieval_selector={target_base:RAG_TARGET_BASE,knowledge_types:RAG_KNOWLEDGE_TYPES};
+const schedule_retrieval_request={
+  query,
+  filters:{
+    target_base:RAG_TARGET_BASE,
+    access_scope:RAG_ACCESS_SCOPE,
+    knowledge_types:RAG_KNOWLEDGE_TYPES,
+    keyword_families:[],
+    topics:[...new Set(topics)],
+    task_patterns:[...new Set(task_patterns)]
+  },
+  top_k:RAG_TOP_K
+};
+const planner_input=JSON.stringify({
+  objective,
+  handoff_message:handoff,
   inspect:opened.inspect||{},
   file_name:opened.file_name||'',
   suggested_capability:opened.suggested_capability||''
 });
-return [{json:{...opened, session_id:opened.session_id, agent_input}}];
+return [{json:{...opened,session_id:opened.session_id,agent_input:planner_input,planner_input,schedule_retrieval_request,retrieval_selector}}];
 """
+)
 
 FORMAT_OPEN = r"""
 const opened=$json||{};
@@ -479,7 +516,10 @@ def main() -> None:
                     "(URL сервисов). Ключ Excel: credential Header Auth "
                     "**Excel Tools X-API-Key** (`X-API-Key`), не Set. "
                     "Activity events ключ Excel не используют.\n"
-                    "3. Orchestrator — MAS вызывает этот workflow через "
+                    "3. Bind **Call Knowledge Retrieval** → `MAS — Knowledge Retrieval` "
+                    "(срез `excel_protocol` / `protocol_instruction`; LLM-ветка operations). "
+                    "`extract_commissioning` HTTP RAG не вызывает.\n"
+                    "4. Orchestrator — MAS вызывает этот workflow через "
                     "`executeWorkflow` (`Call Excel Extractor`). Webhook не нужен.\n\n"
                     "Файлы не грузятся в n8n. Сервис сам GET "
                     "`/cases/{id}/artifacts/excel`.\n"
@@ -624,13 +664,28 @@ def main() -> None:
         ),
         node("Prepare AI Agent input", "n8n-nodes-base.code", 2, (1480, 160), {"jsCode": PREPARE}),
         node(
+            "Call Knowledge Retrieval",
+            "n8n-nodes-base.executeWorkflow",
+            1.3,
+            (1480, 300),
+            knowledge_retrieval_execute_params(),
+            onError="continueRegularOutput",
+        ),
+        node(
+            "Attach excel RAG evidence",
+            "n8n-nodes-base.code",
+            2,
+            (1680, 300),
+            {"jsCode": attach_excel_rag_js()},
+        ),
+        node(
             "Excel Extractor AI Agent",
             "@n8n/n8n-nodes-langchain.agent",
             3.1,
             (1720, 160),
             {
                 "promptType": "define",
-                "text": "={{ $json.agent_input }}",
+                "text": "={{ $json.planner_input }}",
                 "hasOutputParser": False,
                 "options": {
                     "systemMessage": SYSTEM,
@@ -705,7 +760,9 @@ def main() -> None:
     connect(connections, "Restore after extract event", "Extract finished?")
     connect(connections, "Extract finished?", "Format excel result", si=0)
     connect(connections, "Extract finished?", "Fetch excel result", si=1)
-    connect(connections, "Prepare AI Agent input", "Excel Extractor AI Agent")
+    connect(connections, "Prepare AI Agent input", "Call Knowledge Retrieval")
+    connect(connections, "Call Knowledge Retrieval", "Attach excel RAG evidence")
+    connect(connections, "Attach excel RAG evidence", "Excel Extractor AI Agent")
     connect(connections, "Excel Extractor Chat Model — Qwen", "Excel Extractor AI Agent", out="ai_languageModel", tin="ai_languageModel")
     for name, _desc, _fields in TOOLS:
         connect(connections, name, "Excel Extractor AI Agent", out="ai_tool", tin="ai_tool")

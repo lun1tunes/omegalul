@@ -232,11 +232,14 @@ def _unlisted_policy(state: dict[str, Any]) -> str | None:
             if pol in {"keep", "remove"}:
                 return pol
         blob = str(payload).lower()
-        if "unlisted_wells_policy=remove" in blob or re.search(r"(^|\s)remove(\s|$)", blob):
-            if "unlisted_wells_policy=keep" not in blob:
-                return "remove"
-        if "unlisted_wells_policy=keep" in blob:
+        if (
+            "unlisted_wells_policy=keep" in blob
+            or re.search(r"остав|сохран", blob)
+            or re.search(r"(^|\s)keep(\s|$)", blob)
+        ) and "unlisted_wells_policy=remove" not in blob:
             return "keep"
+        if "unlisted_wells_policy=remove" in blob or re.search(r"(^|\s)remove(\s|$)", blob):
+            return "remove"
     return None
 
 
@@ -397,6 +400,21 @@ def execute_tool(session_id: str, name: str, args: dict[str, Any] | None = None)
         if item is None:
             return {"ok": False, "error": "unknown_keyword", "keyword": args.get("keyword")}
         return {"ok": True, "keyword": item}
+
+    if name == "render_ir":
+        from .schema_models import coerce_ir_events
+        from .schema_renderer import validate_and_render
+        from .schema_store import load_catalogue
+
+        catalogue = args.get("schema_catalogue") if isinstance(args.get("schema_catalogue"), dict) else None
+        raw_events = args.get("ir_events")
+        events = raw_events if isinstance(raw_events, list) else coerce_ir_events(raw_events)
+        result = validate_and_render(
+            mode=str(args.get("mode") or "CREATE"),
+            schema_catalogue=catalogue or load_catalogue(),
+            ir_events=events,
+        )
+        return {"ok": result.get("status") == "rendered", **result}
 
     if name == "list_records":
         keyword = str(args.get("keyword") or "").strip().upper()

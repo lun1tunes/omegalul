@@ -21,3 +21,10 @@ start-windows.bat
 `ACTIVITY_BASE_URL=http://127.0.0.1:8200` (или IP этого ПК). Файлы: `GET {activity}/cases/{id}/artifacts/{id}`. INCLUDE-пути не переписываются; Petrel `../../INCLUDE/…` оставляют `KEEP`, если тело не приложено.
 
 Порт канона: **8090**. URL в n8n задаётся один раз в `MAS — Runtime Config` (`schedule_service_url`, `activity_base_url`).
+
+## Каталог keyword (без класса на DATES/WCONPROD)
+
+Расклад полей живёт в RAG `schema_catalogue` (`schedule_mvp`). FastAPI на старте читает тот же JSON (или `app/data/schema_catalogues.json` на поле без n8n/rag). Агент вызывает `get_keyword` и получает `details.parameters` (позиция, тип, unit, описание). Рендер — `POST /render` / tool `render_ir`: IR `fields` → строка `.inc` по `layout` (record `/`, затем голый `/` блока и пустая строка).
+
+Новый keyword = карточка в корпусе + allowlist. Python-класс на каждое слово не добавляем. Обновить снимок: `python3 -m app.schema_store` из каталога сервиса.
+

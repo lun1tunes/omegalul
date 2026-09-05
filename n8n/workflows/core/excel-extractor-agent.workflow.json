@@ -6,7 +6,7 @@
   "nodes": [
     {
       "parameters": {
-        "content": "## edit after import\n\n**Agent — Excel Extractor** — один LLM + excel-tools FastAPI.\n\n1. Bind **Qwen** credential on Excel Extractor Chat Model\n2. Bind **Runtime configuration** → `MAS — Runtime Config` (URL сервисов). Ключ Excel: credential Header Auth **Excel Tools X-API-Key** (`X-API-Key`), не Set. Activity events ключ Excel не используют.\n3. Orchestrator — MAS вызывает этот workflow через `executeWorkflow` (`Call Excel Extractor`). Webhook не нужен.\n\nФайлы не грузятся в n8n. Сервис сам GET `/cases/{id}/artifacts/excel`.\n`suggested_capability=commissioning` идёт обычным HTTP `extract_commissioning` (external n8n runners не execute'ят toolHttpRequest). Остальное — LLM + query_table. После extract проверяется status; needs_input не идёт в Fetch result. Сессия закрывается POST /sessions/{id}/close. Скважины/даты не хардкодятся.",
+        "content": "## edit after import\n\n**Agent — Excel Extractor** — один LLM + excel-tools FastAPI.\n\n1. Bind **Qwen** credential on Excel Extractor Chat Model\n2. Bind **Runtime configuration** → `MAS — Runtime Config` (URL сервисов). Ключ Excel: credential Header Auth **Excel Tools X-API-Key** (`X-API-Key`), не Set. Activity events ключ Excel не используют.\n3. Bind **Call Knowledge Retrieval** → `MAS — Knowledge Retrieval` (срез `excel_protocol` / `protocol_instruction`; LLM-ветка operations). `extract_commissioning` HTTP RAG не вызывает.\n4. Orchestrator — MAS вызывает этот workflow через `executeWorkflow` (`Call Excel Extractor`). Webhook не нужен.\n\nФайлы не грузятся в n8n. Сервис сам GET `/cases/{id}/artifacts/excel`.\n`suggested_capability=commissioning` идёт обычным HTTP `extract_commissioning` (external n8n runners не execute'ят toolHttpRequest). Остальное — LLM + query_table. После extract проверяется status; needs_input не идёт в Fetch result. Сессия закрывается POST /sessions/{id}/close. Скважины/даты не хардкодятся.",
         "height": 380,
         "width": 480,
         "color": 1
@@ -487,7 +487,7 @@
     },
     {
       "parameters": {
-        "jsCode": "\nconst opened=$json||{};\nconst task=$('Normalize excel task').first().json.agent_task||{};\nconst agent_input=JSON.stringify({\n  objective:opened.objective||task.objective||'',\n  handoff_message:opened.handoff_message||task.handoff_message||'',\n  inspect:opened.inspect||{},\n  file_name:opened.file_name||'',\n  suggested_capability:opened.suggested_capability||''\n});\nreturn [{json:{...opened, session_id:opened.session_id, agent_input}}];\n"
+        "jsCode": "const RAG_TARGET_BASE=\"excel_protocol\";\nconst RAG_ACCESS_SCOPE=\"petroleum-engineering\";\nconst RAG_KNOWLEDGE_TYPES=[\"protocol_instruction\"];\nconst RAG_TOP_K=8;\nconst RAG_TOPICS=[\"протокол\", \"clarification\"];\n\nconst opened=$json||{};\nconst task=$('Normalize excel task').first().json.agent_task||{};\nconst objective=String(opened.objective||task.objective||'');\nconst handoff=String(opened.handoff_message||task.handoff_message||'');\nconst blob=[objective,handoff].join('\\n');\nconst low=blob.toLowerCase();\nconst topics=RAG_TOPICS.slice();\nconst task_patterns=[];\nif(/дат|ввод|commission/.test(low)) task_patterns.push('даты ввода');\nif(/таблиц|query|дебит|истори|управлен/.test(low)) task_patterns.push('извлечь таблицу');\nif(/уточн|ambigu|clarif/.test(low)) task_patterns.push('clarification_needed');\nconst query=blob.trim().replace(/\\b[\\w.-]+\\.(xlsx|xls|xlsm|inc|dev|txt|csv)\\b/gi,' ').replace(/\\s+/g,' ').trim().slice(0,800)||'excel protocol instruction';\nconst retrieval_selector={target_base:RAG_TARGET_BASE,knowledge_types:RAG_KNOWLEDGE_TYPES};\nconst schedule_retrieval_request={\n  query,\n  filters:{\n    target_base:RAG_TARGET_BASE,\n    access_scope:RAG_ACCESS_SCOPE,\n    knowledge_types:RAG_KNOWLEDGE_TYPES,\n    keyword_families:[],\n    topics:[...new Set(topics)],\n    task_patterns:[...new Set(task_patterns)]\n  },\n  top_k:RAG_TOP_K\n};\nconst planner_input=JSON.stringify({\n  objective,\n  handoff_message:handoff,\n  inspect:opened.inspect||{},\n  file_name:opened.file_name||'',\n  suggested_capability:opened.suggested_capability||''\n});\nreturn [{json:{...opened,session_id:opened.session_id,agent_input:planner_input,planner_input,schedule_retrieval_request,retrieval_selector}}];\n"
       },
       "id": "2d5a7eba-bd5e-5ccb-895a-b7ca5109b7cc",
       "name": "Prepare AI Agent input",
@@ -500,11 +500,58 @@
     },
     {
       "parameters": {
+        "source": "database",
+        "workflowId": {
+          "__rl": true,
+          "value": "REPLACE_SCHEDULE_RAG_RETRIEVAL_IN_UI",
+          "mode": "list",
+          "cachedResultName": "MAS — Knowledge Retrieval"
+        },
+        "workflowInputs": {
+          "mappingMode": "defineBelow",
+          "value": {
+            "schedule_retrieval_request": "={{ $json.schedule_retrieval_request }}"
+          },
+          "matchingColumns": [],
+          "schema": [],
+          "attemptToConvertTypes": false,
+          "convertFieldsToString": false
+        },
+        "mode": "once",
+        "options": {
+          "waitForSubWorkflow": true
+        }
+      },
+      "id": "288cc2a9-5655-515a-bbb8-6e2ad26276ea",
+      "name": "Call Knowledge Retrieval",
+      "type": "n8n-nodes-base.executeWorkflow",
+      "typeVersion": 1.3,
+      "position": [
+        1480,
+        300
+      ],
+      "onError": "continueRegularOutput"
+    },
+    {
+      "parameters": {
+        "jsCode": "function unwrapRetrieval(raw){\n  const obj=v=>v&&typeof v==='object'&&!Array.isArray(v);\n  const src=obj(raw)?raw:{};\n  if(obj(src.schedule_retrieval_result)) return src.schedule_retrieval_result;\n  if(obj(src.body)&&obj(src.body.schedule_retrieval_result)) return src.body.schedule_retrieval_result;\n  if(String(src.contract||'')==='schedule_retrieval_result') return src;\n  if(src.error||Number(src.statusCode)>=400) return {status:'failed',findings:[{code:'RETRIEVAL_CALL_FAILED'}],results:[]};\n  return src;\n}\nfunction compactRetrievalCards(result, selector, limit, textLimit){\n  const rows=Array.isArray(result.results)?result.results:[];\n  const wantedBase=String(selector.target_base||'');\n  const wantedTypes=new Set((selector.knowledge_types||[]).map(v=>String(v).toLowerCase()));\n  const cap=Number(limit)||6;\n  const cut=Number(textLimit)||700;\n  const minText=50;\n  const relKeep=0.45;\n  const scored=[];\n  for(const r of rows){\n    if(!r||typeof r!=='object') continue;\n    const body=r.body&&typeof r.body==='object'?r.body:{};\n    const base=String(r.target_base||body.target_base||(result.filters&&result.filters.target_base)||'');\n    const kt=String(r.knowledge_type||body.knowledge_type||'').toLowerCase();\n    if(wantedBase&&base&&base!==wantedBase) continue;\n    if(wantedTypes.size&&kt&&!wantedTypes.has(kt)) continue;\n    const text=String(body.text||body.instruction||r.text||'').trim();\n    if(text.length<minText) continue;\n    const score=r.rrf_score!=null?Number(r.rrf_score):(body.rrf_score!=null?Number(body.rrf_score):null);\n    if(Number.isFinite(score)&&score<=0) continue;\n    scored.push({\n      knowledge_id:String(r.knowledge_id||body.knowledge_id||''),\n      title:String(r.title||body.title||'').slice(0,160),\n      knowledge_type:kt||null,\n      text:text.slice(0,cut),\n      _score:Number.isFinite(score)?score:null\n    });\n  }\n  const finite=scored.map(c=>c._score).filter(s=>s!=null);\n  const best=finite.length?Math.max.apply(null,finite):0;\n  const floor=best>0?best*relKeep:0;\n  const kept=scored.filter(c=>c._score==null||floor<=0||c._score>=floor);\n  kept.sort((a,b)=>{\n    if(a._score==null&&b._score==null) return 0;\n    if(a._score==null) return 1;\n    if(b._score==null) return -1;\n    return b._score-a._score;\n  });\n  return kept.slice(0,cap).map(c=>({knowledge_id:c.knowledge_id,title:c.title,knowledge_type:c.knowledge_type,text:c.text}));\n}\nconst prev=$(\"Prepare AI Agent input\").first().json||{};\nconst raw=$json||{};\nconst result=unwrapRetrieval(raw);\nconst fallbackSelector={\"target_base\": \"excel_protocol\", \"knowledge_types\": [\"protocol_instruction\"]};\nconst fromPrev=prev.retrieval_selector;\nconst selector=(fromPrev&&fromPrev.target_base)?{target_base:String(fromPrev.target_base),knowledge_types:Array.isArray(fromPrev.knowledge_types)&&fromPrev.knowledge_types.length?fromPrev.knowledge_types:fallbackSelector.knowledge_types}:fallbackSelector;\nconst failed=result.status==='abstain'||result.status==='failed'||result.status==='needs_input'||Boolean(raw.error);\nconst cards=failed?[]:compactRetrievalCards(result,selector,8,1200);\nconst rag={contract:'mas_rag_evidence',contract_version:'1.0',target_base:selector.target_base,knowledge_types:selector.knowledge_types,status:failed?'unavailable':(cards.length?'ready':'empty'),cards,findings:(Array.isArray(result.findings)?result.findings:[]).slice(0,6).map(f=>f&&f.code).filter(Boolean)};\nconst note=rag.status==='ready'?\"Карточки — срез excel_protocol (protocol_instruction), не schedule_mvp и не orchestrator_routing. Это протокол инструментов (opaque id, query_table, clarification). Строки workbook только из Excel-tools. Не спрашивай HITL про базу знаний.\":\"Срез excel_protocol пуст или недоступен — работай правилами инструментов. Не спрашивай HITL про RAG и не ходи в другие target_base.\";\nconst planner=`${prev.planner_input||prev.agent_input||''}\\n\\nRetrieved knowledge (target_base=${selector.target_base}):\\n${JSON.stringify(rag,null,2)}\\n\\n${note}\\n`;\nreturn [{json:{...prev,rag,planner_input:planner,agent_input:planner}}];\n"
+      },
+      "id": "10aa56ce-c69e-532e-a7c2-0efd4561415d",
+      "name": "Attach excel RAG evidence",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        1680,
+        300
+      ]
+    },
+    {
+      "parameters": {
         "promptType": "define",
-        "text": "={{ $json.agent_input }}",
+        "text": "={{ $json.planner_input }}",
         "hasOutputParser": false,
         "options": {
-          "systemMessage": "Ты — единственный LLM-решатель агента Excel Extractor.\n\nWorkbook тебе не показывают. Он лежит в сессии FastAPI. session_id привязан workflow: никогда не передавай session_id и обёртку args/input.\n\nИнструменты:\n- workbook_introspect — листы и размеры (компактно)\n- sheet_preview — небольшой прямоугольник одного листа, не весь лист\n- detect_tables — найти таблицы, вернуть table_id / range / columns\n- match_tables — ранжировать таблицы по запросу\n- describe_table — колонки и sample по table_id\n- list_column_values — ограниченные distinct-значения колонки\n- query_table — строки по table_id (limit, фильтры). select и filters — JSON-массивы, не объект с ключами \"0\",\"1\". Не выгружай всю книгу\n- extract_commissioning — скважина+дата ввода из уже открытой сессии. Даты и скважины сам не выдумывай\n\nПравила:\n- Не пиши SCHEDULE / .INC. Только факты из Excel.\n- Не придумывай скважины, даты, дебиты, имена листов и table_id.\n- Проанализируй objective и handoff_message.\n- Если задача про даты ввода скважин → extract_commissioning один раз, затем STOP.\n- Если задача про дебиты, управления, историю, PVT, SCAL → introspect/detect/query. Не вызывай extract_commissioning, если даты ввода не нужны.\n- После извлечения данных (extract_commissioning или query_table) — STOP.\n- Если за 3 шага нет прогресса — STOP и верни вопрос. Не вызывай один tool больше трёх раз подряд.\n- Если файла/таблиц нет — не выдумывай строки.\n\nЗаверши одним коротким фактическим предложением по-русски.\n",
+          "systemMessage": "Ты — единственный LLM-решатель агента Excel Extractor.\n\nWorkbook тебе не показывают. Он лежит в сессии FastAPI. session_id привязан workflow: никогда не передавай session_id и обёртку args/input.\n\nИнструменты:\n- workbook_introspect — листы и размеры (компактно)\n- sheet_preview — небольшой прямоугольник одного листа, не весь лист\n- detect_tables — найти таблицы, вернуть table_id / range / columns\n- match_tables — ранжировать таблицы по запросу\n- describe_table — колонки и sample по table_id\n- list_column_values — ограниченные distinct-значения колонки\n- query_table — строки по table_id (limit, фильтры). select и filters — JSON-массивы, не объект с ключами \"0\",\"1\". Не выгружай всю книгу\n- extract_commissioning — скважина+дата ввода из уже открытой сессии. Даты и скважины сам не выдумывай\n\nПравила:\n- Не пиши SCHEDULE / .INC. Только факты из Excel.\n- Не придумывай скважины, даты, дебиты, имена листов и table_id.\n- Проанализируй objective и handoff_message.\n- Если задача про даты ввода скважин → extract_commissioning один раз, затем STOP.\n- Если задача про дебиты, управления, историю, PVT, SCAL → introspect/detect/query. Не вызывай extract_commissioning, если даты ввода не нужны.\n- После извлечения данных (extract_commissioning или query_table) — STOP.\n- Если за 3 шага нет прогресса — STOP и верни вопрос. Не вызывай один tool больше трёх раз подряд.\n- Если файла/таблиц нет — не выдумывай строки.\n- Retrieved knowledge — только срез excel_protocol / protocol_instruction (протокол инструментов). Не schedule_mvp и не строки workbook. Пустой или unavailable срез — обычные правила инструментов, не спрашивай HITL про базу знаний.\n\nЗаверши одним коротким фактическим предложением по-русски.\n",
           "maxIterations": 6,
           "returnIntermediateSteps": true,
           "passthroughBinaryImages": false,
@@ -1473,6 +1520,28 @@
       "main": [
         [
           {
+            "node": "Call Knowledge Retrieval",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Call Knowledge Retrieval": {
+      "main": [
+        [
+          {
+            "node": "Attach excel RAG evidence",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Attach excel RAG evidence": {
+      "main": [
+        [
+          {
             "node": "Excel Extractor AI Agent",
             "type": "main",
             "index": 0
@@ -1699,5 +1768,5 @@
   },
   "tags": [],
   "pinData": {},
-  "versionId": "ef1fee7f-bafd-4044-90b9-9be58319a1ae"
+  "versionId": "81a01dde-aee1-4341-bc6d-a2d4de41e8de"
 }

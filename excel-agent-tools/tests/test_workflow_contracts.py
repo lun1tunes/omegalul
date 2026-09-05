@@ -141,6 +141,9 @@ def test_ui_import_manifest_is_complete_and_matches_static_bindings() -> None:
         "Runtime configuration",
         "Call Excel Extractor",
         "Call Schedule Builder",
+        "Call Knowledge Retrieval",
+        "Call Knowledge Retrieval",
+        "Call Knowledge Retrieval",
     ]
     assert [binding["owner"] for binding in bindings] == [
         "Orchestrator — MAS",
@@ -148,6 +151,9 @@ def test_ui_import_manifest_is_complete_and_matches_static_bindings() -> None:
         "Agent — Schedule Builder",
         "Orchestrator — MAS",
         "Orchestrator — MAS",
+        "Orchestrator — MAS",
+        "Agent — Excel Extractor",
+        "Agent — Schedule Builder",
     ]
     assert future_bindings == []
     assert len(retired_bindings) == 24
@@ -1282,8 +1288,8 @@ def test_schedule_flow_is_orchestrator_mediated_and_multi_stage() -> None:
         for document in ingestible_operating_guide_documents()
         if document.get("knowledge_id") == "route-hitl-required-evidence"
     )
-    assert hitl_card["revision"] == "4"
-    assert "delegate excel_extraction_specialist, не HITL" in hitl_card["text"]
+    assert hitl_card["revision"] == "5"
+    assert "delegate excel_extractor, не HITL" in hitl_card["text"]
     assert "Builder RAG evidence gate" in hitl_card["text"]
 
 
@@ -1499,6 +1505,8 @@ def test_universal_engineering_instruction_templates_are_portable() -> None:
         "generate_mas_runtime_config.py",
         "generate_schedule_builder_agent.py",
         "generate_excel_extractor_agent.py",
+        "mas_state_utils.py",
+        "mas_retrieval_client.py",
         "relayout_core_workflows.py",
     }
     assert {path.name for path in TEMPLATES.iterdir() if path.is_file()} == expected

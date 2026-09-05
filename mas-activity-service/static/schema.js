@@ -109,6 +109,7 @@
   let peekEl = null;
   let peekTimer = 0;
   let peekSource = null;
+  let peekPinned = false;
   let currentFrame = null;
 
   function text(value) {
@@ -670,18 +671,17 @@
       node.append(head, body);
       node.addEventListener("pointerenter", (ev) => {
         if (ev.pointerType === "touch") return;
-        clearTimeout(peekTimer);
-        showPeek(node);
+        if (!node.classList.contains("is-clipped")) return;
+        hoverOpenPeek(node, showPeek);
       });
-      node.addEventListener("pointerleave", hidePeekSoon);
+      node.addEventListener("pointerleave", dismissHoverPeek);
       nodesEl.appendChild(node);
     }
     nodesEl.addEventListener("click", (ev) => {
       const node = ev.target.closest(".schema-node");
       if (!node || ev.target.closest("a")) return;
       if (!node.classList.contains("is-clipped")) return;
-      if (peekSource === node && peekEl && !peekEl.hidden) hidePeek();
-      else showPeek(node);
+      togglePinnedPeek(node, showPeek);
     });
     nodesEl.addEventListener("keydown", (ev) => {
       if (ev.key !== "Enter" && ev.key !== " ") return;
@@ -689,8 +689,7 @@
       if (!node || ev.target !== node) return;
       if (!node.classList.contains("is-clipped")) return;
       ev.preventDefault();
-      if (peekSource === node && peekEl && !peekEl.hidden) hidePeek();
-      else showPeek(node);
+      togglePinnedPeek(node, showPeek);
     });
     built = true;
     bindPeekChrome();
@@ -702,10 +701,7 @@
   }
 
   function looksClamped(el) {
-    if (!el) return false;
-    if (overflowing(el)) return true;
-    const raw = text(el.textContent);
-    return raw.length > 96;
+    return overflowing(el);
   }
 
   function markClippedNodes() {
@@ -741,32 +737,51 @@
     peekEl.className = "schema-peek";
     peekEl.hidden = true;
     peekEl.setAttribute("role", "tooltip");
-    peekEl.addEventListener("pointerenter", () => clearTimeout(peekTimer));
-    peekEl.addEventListener("pointerleave", hidePeekSoon);
     document.body.appendChild(peekEl);
     return peekEl;
   }
 
   function hidePeek() {
     clearTimeout(peekTimer);
+    peekPinned = false;
     if (peekSource) {
       peekSource.classList.remove("is-peeking");
       peekSource.removeAttribute("aria-expanded");
     }
     peekSource = null;
     if (peekEl) {
+      peekEl.classList.remove("is-pinned", "schema-peek-message");
       peekEl.hidden = true;
       peekEl.innerHTML = "";
     }
   }
 
-  function hidePeekSoon() {
-    clearTimeout(peekTimer);
-    peekTimer = setTimeout(() => {
-      if (peekEl && !peekEl.hidden && peekEl.matches(":hover")) return;
-      if (peekSource && peekSource.matches(":hover")) return;
-      hidePeek();
-    }, 140);
+  function dismissHoverPeek() {
+    if (peekPinned) return;
+    hidePeek();
+  }
+
+  function hoverOpenPeek(source, show) {
+    if (!source || typeof show !== "function") return;
+    if (peekPinned && peekSource === source) return;
+    peekPinned = false;
+    if (peekEl) peekEl.classList.remove("is-pinned");
+    show(source);
+  }
+
+  function togglePinnedPeek(source, show) {
+    if (!source || typeof show !== "function") return;
+    if (peekSource === source && peekEl && !peekEl.hidden) {
+      if (peekPinned) hidePeek();
+      else {
+        peekPinned = true;
+        peekEl.classList.add("is-pinned");
+      }
+      return;
+    }
+    show(source);
+    peekPinned = true;
+    if (peekEl) peekEl.classList.add("is-pinned");
   }
 
   function placePeek(node) {
@@ -795,6 +810,7 @@
       return;
     }
     peek.innerHTML = "";
+    peek.classList.remove("schema-peek-message");
     fill(peek);
     if (peekSource && peekSource !== anchor) {
       peekSource.classList.remove("is-peeking");
@@ -822,19 +838,43 @@
     });
   }
 
+  function slipNeedsPeek(el) {
+    if (!el) return false;
+    const full = text(el.dataset && el.dataset.full);
+    if (!full) return false;
+    const copy = el.querySelector(".schema-slip-text") || el;
+    if (full !== text(copy.textContent)) return true;
+    return overflowing(copy);
+  }
+
+  function markClippedSlip(el) {
+    if (!el) return;
+    const clipped = slipNeedsPeek(el);
+    el.classList.toggle("is-clipped", clipped);
+    if (clipped) {
+      el.title = "Нажмите, чтобы показать полный текст";
+      el.tabIndex = 0;
+      el.setAttribute("role", "button");
+      el.setAttribute("aria-haspopup", "true");
+    } else {
+      el.removeAttribute("title");
+      el.removeAttribute("tabindex");
+      el.removeAttribute("role");
+      el.removeAttribute("aria-haspopup");
+      el.removeAttribute("aria-expanded");
+    }
+  }
+
   function showSlipPeek(slip) {
+    if (!slipNeedsPeek(slip)) return;
     const full = text(slip?.dataset?.full);
     if (!full) return;
     openPeek(slip, (peek) => {
-      const kicker = document.createElement("span");
-      kicker.className = "schema-kicker";
-      kicker.textContent = "сообщение";
-      const title = document.createElement("h2");
-      title.textContent = "Полный текст";
+      peek.classList.add("schema-peek-message");
       const copy = document.createElement("p");
       copy.className = "schema-peek-text";
       copy.textContent = full;
-      peek.append(kicker, title, copy);
+      peek.append(copy);
     });
   }
 
@@ -867,27 +907,26 @@
     el.style.top = `${y}%`;
     const full = text(textValue);
     el.dataset.full = full;
-    el.textContent = shorten(full, 110);
-    el.title = "Нажмите, чтобы показать полный текст";
-    el.tabIndex = 0;
-    el.setAttribute("role", "button");
-    el.setAttribute("aria-haspopup", "true");
+    const copy = document.createElement("span");
+    copy.className = "schema-slip-text";
+    copy.textContent = shorten(full, 280);
+    el.append(copy);
     el.addEventListener("pointerenter", (ev) => {
       if (ev.pointerType === "touch") return;
-      clearTimeout(peekTimer);
-      showSlipPeek(el);
+      if (!slipNeedsPeek(el)) return;
+      hoverOpenPeek(el, showSlipPeek);
     });
-    el.addEventListener("pointerleave", hidePeekSoon);
+    el.addEventListener("pointerleave", dismissHoverPeek);
     el.addEventListener("click", (ev) => {
       ev.stopPropagation();
-      if (peekSource === el && peekEl && !peekEl.hidden) hidePeek();
-      else showSlipPeek(el);
+      if (!slipNeedsPeek(el)) return;
+      togglePinnedPeek(el, showSlipPeek);
     });
     el.addEventListener("keydown", (ev) => {
       if (ev.key !== "Enter" && ev.key !== " ") return;
+      if (!slipNeedsPeek(el)) return;
       ev.preventDefault();
-      if (peekSource === el && peekEl && !peekEl.hidden) hidePeek();
-      else showSlipPeek(el);
+      togglePinnedPeek(el, showSlipPeek);
     });
     return el;
   }
@@ -973,7 +1012,9 @@
       const path = edgesEl.querySelector(`[data-edge="${id}"]`);
       const geo = edgePath(id, boxes);
       const mid = pathMidpoint(path, geo.mid);
-      stage.append(bubbleEl("edge", visual.bubble, mid.x, mid.y, "edge", animateSlips));
+      const slip = bubbleEl("edge", visual.bubble, mid.x, mid.y, "edge", animateSlips);
+      stage.append(slip);
+      markClippedSlip(slip);
     }
   }
 

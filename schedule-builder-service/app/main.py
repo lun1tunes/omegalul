@@ -17,6 +17,9 @@ from .emit import emit_schedule
 from .group_rebind import extract_group_rebind_spec, run_group_rebind_revise, wants_group_rebind
 from .io import bind_case_packet, commissioning_facts, file_ref, load_source
 from .keywords import KEYWORDS, all_keywords, keyword_object, search_keywords
+from .schema_models import IREvent
+from .schema_renderer import validate_and_render
+from .schema_store import load_catalogue
 from .parse import parse_schedule, well_names
 from .validate import validate_emitted
 from . import agent_tools
@@ -41,6 +44,12 @@ class ApplyRequest(BaseModel):
 class DiffRequest(BaseModel):
     before: str
     after: str
+
+
+class RenderIRRequest(BaseModel):
+    mode: str = "CREATE"
+    schema_catalogue: dict[str, Any] | None = None
+    ir_events: list[dict[str, Any]] = Field(default_factory=list)
 
 
 class AgentTaskBody(BaseModel):
@@ -139,6 +148,16 @@ def get_keyword(keyword: str) -> dict[str, Any]:
     if item is None:
         raise HTTPException(status_code=404, detail="unknown keyword")
     return item
+
+
+@app.post("/render")
+def render_ir(req: RenderIRRequest) -> dict[str, Any]:
+    catalogue = req.schema_catalogue if isinstance(req.schema_catalogue, dict) else None
+    return validate_and_render(
+        mode=req.mode,
+        schema_catalogue=catalogue or load_catalogue(),
+        ir_events=[IREvent.model_validate(item) for item in req.ir_events],
+    )
 
 
 @app.post("/keywords/{keyword}/prepare")

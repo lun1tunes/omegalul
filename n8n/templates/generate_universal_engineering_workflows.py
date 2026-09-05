@@ -5,6 +5,7 @@ import uuid
 from pathlib import Path
 
 from schedule_package_materialize import build_materialize_uploads_node_js
+from mas_retrieval_client import knowledge_retrieval_execute_params
 from mas_handoff_contracts import (
     APPEND_HANDOFF_JS,
     EXPLICIT_SCHEDULE_CONSUMER_JS,
@@ -168,25 +169,7 @@ def call_hybrid_retrieval(name: str, position: tuple[int, int]) -> dict:
         "n8n-nodes-base.executeWorkflow",
         1.3,
         position,
-        {
-            "source": "database",
-            "workflowId": {
-                "__rl": True,
-                "value": "REPLACE_SCHEDULE_RAG_RETRIEVAL_IN_UI",
-                "mode": "list",
-                "cachedResultName": "MAS — Knowledge Retrieval",
-            },
-            "workflowInputs": {
-                "mappingMode": "defineBelow",
-                "value": {"schedule_retrieval_request": "={{ $json.schedule_retrieval_request }}"},
-                "matchingColumns": [],
-                "schema": [],
-                "attemptToConvertTypes": False,
-                "convertFieldsToString": False,
-            },
-            "mode": "once",
-            "options": {"waitForSubWorkflow": True},
-        },
+        knowledge_retrieval_execute_params(),
         onError="continueRegularOutput",
     )
 

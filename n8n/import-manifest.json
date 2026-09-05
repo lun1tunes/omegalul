@@ -140,6 +140,24 @@
       "node": "Call Schedule Builder",
       "target": "Agent — Schedule Builder",
       "placeholder": "REPLACE_SCHEDULE_BUILDER_AGENT_IN_UI"
+    },
+    {
+      "owner": "Orchestrator — MAS",
+      "node": "Call Knowledge Retrieval",
+      "target": "MAS — Knowledge Retrieval",
+      "placeholder": "REPLACE_SCHEDULE_RAG_RETRIEVAL_IN_UI"
+    },
+    {
+      "owner": "Agent — Excel Extractor",
+      "node": "Call Knowledge Retrieval",
+      "target": "MAS — Knowledge Retrieval",
+      "placeholder": "REPLACE_SCHEDULE_RAG_RETRIEVAL_IN_UI"
+    },
+    {
+      "owner": "Agent — Schedule Builder",
+      "node": "Call Knowledge Retrieval",
+      "target": "MAS — Knowledge Retrieval",
+      "placeholder": "REPLACE_SCHEDULE_RAG_RETRIEVAL_IN_UI"
     }
   ],
   "health_check": {
@@ -230,24 +248,24 @@
     "Field import is runtime_import_order (9 core JSON). Do not import n8n/workflows/retired/. support/ only when adding a specialist.",
     "Do not create n8n Data Tables for live case state. Health Check probes to engineering_orchestrator_tasks_v1 / mas_trace_events_v1 may PASS_WITH_TODO.",
     "Do not set ACTIVITY_HYDRATE_URL. Do not import Activity — Hydrate, Entry Form, Human Gate, CAS Persist, Trace Writer, or Orchestrator — Engineering MAS.",
-    "Bind Orchestrator — MAS: Call Excel Extractor → Agent — Excel Extractor; Call Schedule Builder → Agent — Schedule Builder.",
+    "Bind Orchestrator — MAS: Call Excel Extractor → Agent — Excel Extractor; Call Schedule Builder → Agent — Schedule Builder; Call Knowledge Retrieval → MAS — Knowledge Retrieval (selector target_base=orchestrator_routing). Bind Call Knowledge Retrieval on Excel Extractor (excel_protocol) and Schedule Builder (schedule_mvp).",
     "Bind Runtime endpoints / Runtime configuration → MAS — Runtime Config on Orchestrator, Excel Extractor, and Schedule Builder. Edit the four URLs once in MAS — Runtime Config (lab Docker DNS in git; field = http://<IP-Windows>:8200/:8000/:8090/:8100). math_url has no /agent/run suffix.",
     "Excel Tools X-API-Key: Header Auth credential (header name X-API-Key) on Agent — Excel Extractor HTTP / toolHttpRequest nodes. Do not store the key in MAS — Runtime Config.",
     "Windows host needs Python 3.11-3.13 venv only (no Node, no Docker). Orchestrator Calculation HTTP uses math_url + /agent/run. Do not import Agent — Calculation (Math Service).",
     "Bind Header Auth on Orchestrator webhook and Control Plane Proxy webhook. Activate Control Plane Proxy first, POST {\"operation\":\"schema\"}, then start Activity.",
     "Settings → Error workflow = Error — MAS Node Traces on Orchestrator, Excel Extractor, Schedule Builder, Retrieval, Ingestion. Not on the error workflow itself or Control Plane Proxy.",
-    "Seed agent_registry via Control Plane Proxy schema (excel_extractor, calculation_agent, schedule_builder). Orchestrator does not call Knowledge Retrieval.",
-    "Optional: Activity Knowledge → Загрузить в RAG (MAS — Knowledge Ingestion). Retrieval is executeWorkflow only; bind it when cloning Template — Engineering Specialist.",
+    "Seed agent_registry via Control Plane Proxy schema (excel_extractor, calculation_agent, schedule_builder). Orchestrator calls Knowledge Retrieval with target_base=orchestrator_routing (routing_card only). Excel LLM path uses excel_protocol; Schedule LLM path uses schedule_mvp.",
+    "Optional: Activity Knowledge → Загрузить в RAG (MAS — Knowledge Ingestion). Live Excel/Schedule LLM paths call the same Retrieval with excel_protocol / schedule_mvp. Bind Call Knowledge Retrieval on Orchestrator, Excel Extractor, and Schedule Builder.",
     "Run Form — MAS Deployment Health Check before activating the Orchestrator. 0 FAIL; PASS_WITH_TODO on retired Data Tables / CAS / Entry Form is expected.",
     "Keep every workflow inactive until placeholders and credentials are resolved. Activate Proxy, then Ingestion/Retrieval/Excel/Schedule/Error, then Orchestrator.",
     "Engineers start tasks in Activity UI POST /cases (http://<IP>:8200), not Entry Form."
   ],
   "activation_order": [
-    "Import MAS — Runtime Config, fill Runtime URLs (field: Windows IP), bind Execute Workflow on Orchestrator/Excel/Schedule.",
+    "Import MAS — Runtime Config, fill Runtime URLs (field: Windows IP), bind Execute Workflow on Orchestrator/Excel/Schedule (Runtime Config) and Call Knowledge Retrieval → MAS — Knowledge Retrieval on Orchestrator, Excel Extractor, and Schedule Builder.",
     "Create Header Auth credential Excel Tools X-API-Key and bind it on Agent — Excel Extractor HTTP nodes.",
     "Activate MAS — Control Plane Proxy and POST {\"operation\":\"schema\"}.",
     "Start Activity with CONTROL_PLANE_PROXY_URL; /health control_plane_backend = n8n_proxy.",
-    "Optional: MAS — Knowledge Ingestion (Activity → Загрузить в RAG) and MAS — Knowledge Retrieval.",
+    "Activate MAS — Knowledge Retrieval before Orchestrator and before Excel/Schedule LLM smokes (Call Knowledge Retrieval: orchestrator_routing / excel_protocol / schedule_mvp). Ingest cards via Activity.",
     "Smoke Excel Extractor and Schedule Builder while Orchestrator is still inactive.",
     "Activate Orchestrator — MAS last. Entry point is Activity UI, not a form."
   ],
@@ -263,7 +281,7 @@
   ],
   "mvp_external_blockers": [
     "corporate n8n 2.30.8 UI round-trip with Postgres+vector, Header Auth, and network access to Windows Excel :8000 / Schedule :8090 / Math :8100 / Activity :8200",
-    "expert-authored active keyword_instruction cards if you use Knowledge Retrieval / specialist template RAG"
+    "expert-authored active keyword_instruction cards if Schedule Builder later calls Knowledge Retrieval; routing_card ingest for Orchestrator (orchestrator_routing)"
   ],
   "deferred_enterprise_gates": [
     "optional real tNavigator integration may be designed later as a separate approved project",

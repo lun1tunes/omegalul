@@ -418,10 +418,10 @@
                   "target_base": "orchestrator_routing",
                   "knowledge_type": "routing_card",
                   "knowledge_id": "route-excel-extractor",
-                  "revision": "3",
+                  "revision": "4",
                   "title": "Excel Extractor routing card",
                   "keywords": [
-                    "EXCEL_EXTRACTION_SPECIALIST",
+                    "EXCEL_EXTRACTOR",
                     "XLSX"
                   ],
                   "topics": [
@@ -435,7 +435,7 @@
                   "status": "active",
                   "author": "orchestrator-routing-maintainer",
                   "access_scope": "petroleum-engineering",
-                  "text": "Делегируйте excel_extraction_specialist, когда нужен табличный факт из .xlsx/.xls. Required evidence: workbook binary в поле file, не в CAS state. Если файла нет — delegate Excel, не HITL. Не спрашивайте человека про содержимое таблиц, имена листов, ORAT/дебиты, единицы или CRS: их читает агент Excel. Для SCHEDULE handoff каждая строка facts ОБЯЗАНА нести имя объекта как в .INC (колонка Скважина/WELL или Группа/GROUP) плюс измеряемые поля — идентификация между агентами только по schedule-имени, не по индексу строки. Если имена отсутствуют — повторно delegate Excel с required_columns, не seed facts и не зовите Builder. После успеха передайте compact_data как source_facts в schedule_builder_specialist. Не вызывайте Builder из Excel."
+                  "text": "Live agent_id: excel_extractor (не excel_extraction_specialist). Делегируйте excel_extractor, когда нужен табличный факт из .xlsx/.xls и в artifacts есть Excel. Required evidence: workbook в artifacts.excel. Если файла нет — не HITL за содержимое таблиц и не вызывайте Excel. Не спрашивайте человека про листы, ORAT/дебиты, единицы или CRS: их читает excel_extractor. Для SCHEDULE handoff каждая строка facts несёт имя объекта как в .INC (Скважина/WELL или Группа/GROUP). Если имён нет — снова excel_extractor, не seed facts и не зовите schedule_builder. После успеха передайте факты в schedule_builder. Не вызывайте Builder из Excel. Это карточка среза orchestrator_routing; протокол Excel живёт в excel_protocol."
                 },
                 {
                   "contract": "schedule_knowledge_block",
@@ -443,11 +443,13 @@
                   "target_base": "orchestrator_routing",
                   "knowledge_type": "routing_card",
                   "knowledge_id": "route-schedule-builder",
-                  "revision": "4",
+                  "revision": "6",
                   "title": "SCHEDULE Builder routing card",
                   "keywords": [
-                    "SCHEDULE_BUILDER_SPECIALIST",
-                    "INC"
+                    "SCHEDULE_BUILDER",
+                    "INC",
+                    "COMMISSIONING",
+                    "GROUP_CONTROL"
                   ],
                   "topics": [
                     "маршрутизация",
@@ -455,12 +457,17 @@
                   ],
                   "task_patterns": [
                     "построить прогнозный SCHEDULE",
-                    "revise schedule"
+                    "revise schedule",
+                    "новые даты ввода скважин",
+                    "даты ввода",
+                    "сдвиг дат",
+                    "перепривязка групп",
+                    "групповой контроль"
                   ],
                   "status": "active",
                   "author": "orchestrator-routing-maintainer",
                   "access_scope": "petroleum-engineering",
-                  "text": "Делегируйте schedule_builder_specialist для CREATE/REVISE tNavigator 22.2 SCHEDULE. Controls уже заданы: METRIC, tNavigator 22.2, access_scope=petroleum-engineering — не подтверждайте их HITL. Keyword scope и requested_change_scope берите из текста задачи (названные allowlist keyword и глагол: убери/добавь/измени), не выдумывайте WCONPROD/DATES/commissioning. Facts/source_facts с именами скважин/групп как в baseline .INC нужны только если задача меняет конкретные скважины и имён нет в тексте. Для REVISE нужен baseline .inc. Сопоставляйте WELOPEN/WCONPROD/WELSPECS только по имени объекта SCHEDULE из facts.well / values.Скважина (или Группа). Пробел keyword_instruction/schema_catalogue в schedule_mvp закрывает Builder RAG gate после routing, не вопрос планировщика. Orchestrator вызывает Hybrid Retrieval с target_base=schedule_mvp до Builder. Builder никогда не вызывает Excel."
+                  "text": "Live agent_id: schedule_builder (не schedule_builder_specialist). Делегируйте schedule_builder для CREATE/REVISE tNavigator 22.2 SCHEDULE. Controls уже заданы: METRIC, tNavigator 22.2, access_scope=petroleum-engineering — не подтверждайте их HITL. Keyword scope и requested_change_scope берите из текста задачи (названные allowlist keyword и глагол: убери/добавь/измени), не выдумывайте WCONPROD/DATES/commissioning. Facts с именами скважин/групп как в baseline .INC нужны только если задача меняет конкретные скважины и имён нет в тексте. Для REVISE нужен baseline .inc. Сопоставляйте WELOPEN/WCONPROD/WELSPECS по имени объекта SCHEDULE из facts.well. Thin Orchestrator читает только срез orchestrator_routing; keyword_instruction schedule_mvp — срез Builder, не оркестратора, и не HITL планировщика. Builder никогда не вызывает Excel."
                 },
                 {
                   "contract": "schedule_knowledge_block",
@@ -468,13 +475,15 @@
                   "target_base": "orchestrator_routing",
                   "knowledge_type": "routing_card",
                   "knowledge_id": "route-mas-thin-orchestrator",
-                  "revision": "1",
+                  "revision": "3",
                   "title": "Thin Orchestrator — MAS routing",
                   "keywords": [
                     "EXCEL_EXTRACTOR",
                     "SCHEDULE_BUILDER",
                     "INC",
-                    "XLSX"
+                    "XLSX",
+                    "COMMISSIONING",
+                    "GROUP_CONTROL"
                   ],
                   "topics": [
                     "маршрутизация",
@@ -483,13 +492,17 @@
                   ],
                   "task_patterns": [
                     "новые даты ввода скважин",
+                    "даты ввода",
+                    "сдвиг дат",
+                    "собрать новый schedule.inc",
                     "перепривязка скважин в группу",
-                    "собрать новый schedule.inc"
+                    "перепривязка групп",
+                    "групповой контроль"
                   ],
                   "status": "active",
                   "author": "orchestrator-routing-maintainer",
                   "access_scope": "petroleum-engineering",
-                  "text": "Thin Orchestrator — MAS (Postgres cases/events, FastAPI-агенты). excel_extractor вызывай только если в artifacts есть Excel; он возвращает facts[] {well, date} как в baseline .INC, не пишет SCHEDULE. Путь «даты ввода»: excel_extractor → schedule_builder → finish. Путь «группа / GCONPROD / GRUPTREE / помести в группу»: сразу schedule_builder без Excel; даты ввода скважин брать из baseline DATES/WCONPROD, не спрашивать у человека. schedule_builder пишет artifacts.schedule_out. После schedule_out — finish. Не выдумывай даты и имена скважин. Handoff_message — человекопонятое обращение к агенту."
+                  "text": "Thin Orchestrator — MAS. Retrieval только с target_base=orchestrator_routing / routing_card (общая база, селектор среза). Не читай excel_protocol и schedule_mvp на шаге решения. excel_extractor только если в artifacts есть Excel; facts[] {well, date} как в baseline .INC, не пишет SCHEDULE. Путь «даты ввода»: excel_extractor → schedule_builder → finish. Путь «группа / GCONPROD / GRUPTREE»: сразу schedule_builder без Excel; даты из baseline, не HITL. После schedule_out — finish. agent_id только из agent_registry. Пустой RAG — решай по реестру и compact, не HITL про базу. Handoff_message — человекопонятное обращение к агенту."
                 },
                 {
                   "contract": "schedule_knowledge_block",
@@ -497,10 +510,10 @@
                   "target_base": "orchestrator_routing",
                   "knowledge_type": "routing_card",
                   "knowledge_id": "route-calculation",
-                  "revision": "2",
+                  "revision": "4",
                   "title": "Calculation specialist routing card",
                   "keywords": [
-                    "ENGINEERING_CALCULATION_SPECIALIST",
+                    "CALCULATION_AGENT",
                     "DEV",
                     "CPS3"
                   ],
@@ -510,12 +523,14 @@
                   ],
                   "task_patterns": [
                     "пересечение траектории",
-                    "well trajectory intersection"
+                    "well trajectory intersection",
+                    "перфорация",
+                    "траектория"
                   ],
                   "status": "active",
                   "author": "orchestrator-routing-maintainer",
                   "access_scope": "petroleum-engineering",
-                  "text": "Делегируйте engineering_calculation_specialist при .dev траекториях и одном ASCII CPS3. Не генерирует SCHEDULE text. После успеха несите compact_data.calculation в Builder. HITL оправдан только если нет одного или более .dev и ровно одной ASCII CPS3 поверхности в той же CRS/units/datum. Не спрашивайте units/CRS/access_scope, если petroleum defaults уже заданы."
+                  "text": "Live agent_id: calculation_agent (не engineering_calculation_specialist). Делегируйте calculation_agent при .dev траекториях и одном ASCII CPS3. Не генерирует SCHEDULE text. После успеха факты расчёта можно отдать schedule_builder. HITL оправдан только если нет .dev и ровно одной ASCII CPS3 в той же CRS/units/datum. Не спрашивайте units/CRS/access_scope, если petroleum defaults уже заданы."
                 },
                 {
                   "contract": "schedule_knowledge_block",
@@ -523,7 +538,7 @@
                   "target_base": "orchestrator_routing",
                   "knowledge_type": "routing_card",
                   "knowledge_id": "route-cluster-calculation",
-                  "revision": "1",
+                  "revision": "2",
                   "title": "Cluster calculation specialist routing card",
                   "keywords": [
                     "CLUSTER_CALCULATION_SPECIALIST",
@@ -542,7 +557,7 @@
                   "status": "active",
                   "author": "orchestrator-routing-maintainer",
                   "access_scope": "petroleum-engineering",
-                  "text": "Делегируйте cluster_calculation_specialist только когда allowlist configured:true и нужен submit/poll удалённой расчётной задачи (SSH/job API). Возвращает job_id/status/log refs — не сырой SSH transcript и не SCHEDULE. После успеха обычно следует binary_results_specialist (через Orchestrator), не прямой Call. Пока configured:false — needs_decision владельцу n8n, не HITL инженеру за credentials."
+                  "text": "Live Orchestrator — MAS: cluster_calculation_specialist нет в agent_registry — не вызывай. Карточка для будущего специалиста. Пока configured:false — не HITL инженеру за credentials."
                 },
                 {
                   "contract": "schedule_knowledge_block",
@@ -550,7 +565,7 @@
                   "target_base": "orchestrator_routing",
                   "knowledge_type": "routing_card",
                   "knowledge_id": "route-binary-results",
-                  "revision": "1",
+                  "revision": "2",
                   "title": "Binary results specialist routing card",
                   "keywords": [
                     "BINARY_RESULTS_SPECIALIST",
@@ -568,7 +583,7 @@
                   "status": "active",
                   "author": "orchestrator-routing-maintainer",
                   "access_scope": "petroleum-engineering",
-                  "text": "Делегируйте binary_results_specialist когда нужны typed report facts из бинарных результатов кластерного расчёта. Вход: binaries + previous_specialist_result с job refs. Выход: report_facts_packet (snapshot+correlation). Не перезапускает job и не собирает презентацию. Пока configured:false — routing gate владельцу."
+                  "text": "Live Orchestrator — MAS: binary_results_specialist нет в agent_registry — не вызывай. Карточка для будущего специалиста. Пока configured:false — не HITL инженеру."
                 },
                 {
                   "contract": "schedule_knowledge_block",
@@ -576,7 +591,7 @@
                   "target_base": "orchestrator_routing",
                   "knowledge_type": "routing_card",
                   "knowledge_id": "route-presentation",
-                  "revision": "1",
+                  "revision": "2",
                   "title": "Presentation specialist routing card",
                   "keywords": [
                     "PRESENTATION_SPECIALIST",
@@ -594,7 +609,7 @@
                   "status": "active",
                   "author": "orchestrator-routing-maintainer",
                   "access_scope": "petroleum-engineering",
-                  "text": "Делегируйте presentation_specialist после готовых report facts / artifact_refs. Собирает deck/charts; не парсит binaries и не ходит на кластер. Release/approve остаётся у Orchestrator/Human Gate. Пока configured:false — routing gate владельцу."
+                  "text": "Live Orchestrator — MAS: presentation_specialist нет в agent_registry — не вызывай. Карточка для будущего специалиста. Пока configured:false — не HITL инженеру."
                 },
                 {
                   "contract": "schedule_knowledge_block",
@@ -602,7 +617,7 @@
                   "target_base": "orchestrator_routing",
                   "knowledge_type": "routing_card",
                   "knowledge_id": "route-hitl-required-evidence",
-                  "revision": "4",
+                  "revision": "5",
                   "title": "HITL and required-evidence matrix",
                   "keywords": [
                     "HITL",
@@ -618,7 +633,7 @@
                   "status": "active",
                   "author": "orchestrator-routing-maintainer",
                   "access_scope": "petroleum-engineering",
-                  "text": "Petroleum defaults уже заданы: access_scope=petroleum-engineering, unit_system=METRIC, simulator=tNavigator 22.2. HITL только для фактов, без которых нельзя выбрать специалиста или отдать пакет в Builder: нет objective/deliverable; REVISE без baseline .inc/.data; в тексте нет allowlist keyword и не сказано, что менять; идём в Calculation без .dev и ровно одной ASCII CPS3; critical risk (needs_approval до delegation). Data/Document и Cluster/Binary/Presentation при configured:false → needs_decision владельцу (binding), не инженеру. Отсутствующий workbook → delegate excel_extraction_specialist, не HITL. Не спрашивайте units, CRS, access_scope, simulator и не просите подтвердить METRIC. Keyword/change_scope, уже названные в запросе, не переспрашивайте. Пробел schedule_mvp keyword_instruction/schema_catalogue — Builder RAG evidence gate после routing, не вопрос планировщика. Verifier не получает domain RAG."
+                  "text": "Petroleum defaults уже заданы: access_scope=petroleum-engineering, unit_system=METRIC, simulator=tNavigator 22.2. HITL только для фактов, без которых нельзя выбрать агента: нет objective; REVISE без baseline .inc/.data; идём в calculation_agent без .dev и ровно одной ASCII CPS3. Cluster/Binary/Presentation нет в live registry — не вызывай и не спрашивай HITL. Отсутствующий workbook → не HITL за содержимое таблиц; delegate excel_extractor, не HITL, только если Excel есть в artifacts. Не спрашивайте units, CRS, access_scope, simulator. Пустой срез orchestrator_routing — не HITL про RAG, решай по реестру. Пробел schedule_mvp keyword_instruction/schema_catalogue — Builder RAG evidence gate (срез Builder), не вопрос оркестратора."
                 },
                 {
                   "contract": "schedule_knowledge_block",
