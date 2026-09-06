@@ -37,6 +37,10 @@ function format({ prepared, incoming }) {
 const flags = workflow.nodes.find((n) => n.name === 'Operator flags');
 const clearFlag = flags.parameters.assignments.assignments.find((a) => a.name === 'clear');
 assert.equal(clearFlag.value, false);
+const pin = (workflow.pinData || {})['MAS control-plane webhook'];
+assert.ok(Array.isArray(pin) && pin[0] && pin[0].json && pin[0].json.body);
+assert.equal(pin[0].json.body.operation, 'schema');
+assert.equal(String(pin[0].json.webhookUrl || '').includes('webhook-test'), true);
 
 const schemaOnly = normalize({ body: { operation: 'schema' }, clear: true }, 'webhook');
 assert.equal(schemaOnly.length, 1);
@@ -49,9 +53,25 @@ assert.equal(schemaClear[0].json.wiped, true);
 assert.equal(schemaClear[0].json.query.includes('TRUNCATE TABLE cases'), true);
 assert.equal(schemaClear[0].json.query.includes('TRUNCATE TABLE agent_registry'), false);
 assert.equal(schemaClear[0].json.query.includes('CREATE TABLE IF NOT EXISTS agent_registry'), true);
+assert.equal(schemaClear[0].json.query.includes('$$'), false);
+assert.equal(schemaClear[0].json.query.indexOf('CREATE TABLE IF NOT EXISTS cases') < schemaClear[0].json.query.indexOf('TRUNCATE TABLE cases'), true);
 
 const manualFlag = normalize({ body: { operation: 'schema' }, clear: true }, 'manual');
 assert.equal(manualFlag[0].json.wiped, true);
+
+const webhookTestFlag = normalize(
+  {
+    body: { operation: 'schema' },
+    clear: true,
+    webhookUrl: 'http://localhost:5678/webhook-test/mas-control-plane',
+  },
+  'webhook',
+);
+assert.equal(webhookTestFlag[0].json.wiped, true);
+
+const checkboxOnly = normalize({ clear: true }, 'manual');
+assert.equal(checkboxOnly[0].json.operation, 'schema');
+assert.equal(checkboxOnly[0].json.wiped, true);
 
 const listWithClear = normalize(
   { body: { operation: 'list_cases', clear: true, limit: 10 }, clear: true },

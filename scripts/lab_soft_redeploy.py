@@ -132,13 +132,29 @@ def psql(sql: str) -> str:
     ).stdout.strip()
 
 
+def _merge_activity_env(env: dict[str, str]) -> dict[str, str]:
+    """Auth for the control-plane webhook lives in mas-activity.env on the lab."""
+    merged = dict(env)
+    extra = ROOT / "mas-activity-service" / "mas-activity.env"
+    if extra.is_file():
+        for line in extra.read_text(encoding="utf-8").splitlines():
+            if not line.strip() or line.startswith("#") or "=" not in line:
+                continue
+            key, _, val = line.partition("=")
+            key = key.strip()
+            if key and key not in merged:
+                merged[key] = val.strip().strip('"').strip("'")
+    return merged
+
+
 def wipe_mas_via_proxy(env: dict[str, str]) -> bool:
     """Clear MAS case tables through n8n, not docker exec psql."""
-    port = env.get("N8N_HOST_PORT", "15678")
+    cfg = _merge_activity_env(env)
+    port = cfg.get("N8N_HOST_PORT", "15678")
     url = f"http://127.0.0.1:{port}/webhook/mas-control-plane"
-    header = env.get("CONTROL_PLANE_PROXY_AUTH_HEADER") or "Authorization"
-    value = env.get("CONTROL_PLANE_PROXY_AUTH_VALUE") or "local-orch-inbound"
-    body = json.dumps({"operation": "schema", "clear": True}).encode()
+    header = cfg.get("CONTROL_PLANE_PROXY_AUTH_HEADER") or "Authorization"
+    value = cfg.get("CONTROL_PLANE_PROXY_AUTH_VALUE") or "local-orch-inbound"
+    body = json.dumps({"operation": "wipe"}).encode()
     req = urllib.request.Request(
         url,
         data=body,
@@ -147,13 +163,28 @@ def wipe_mas_via_proxy(env: dict[str, str]) -> bool:
     )
     try:
         with urllib.request.urlopen(req, timeout=30) as resp:
-            payload = json.loads(resp.read().decode())
-        ok = payload.get("ok") is True
-        print("control-plane wipe", payload.get("result") or payload)
-        return ok
+            raw = resp.read().decode("utf-8", errors="replace")
+            status = int(resp.status)
+    except urllib.error.HTTPError as exc:
+        raw = exc.read().decode("utf-8", errors="replace")
+        print("control-plane wipe skipped HTTP", exc.code, raw[:240])
+        return False
     except Exception as exc:  # noqa: BLE001
         print("control-plane wipe skipped", exc)
         return False
+    if not raw.strip():
+        print("control-plane wipe skipped empty response")
+        return False
+    try:
+        payload = json.loads(raw)
+    except json.JSONDecodeError:
+        print("control-plane wipe skipped non-JSON", status, raw[:240])
+        return False
+    result = payload.get("result") if isinstance(payload, dict) else None
+    wiped = isinstance(result, dict) and result.get("wiped") is True
+    ok = isinstance(payload, dict) and payload.get("ok") is True and wiped
+    print("control-plane wipe", result or payload)
+    return ok
 
 
 def wipe_state(env: dict[str, str]) -> None:

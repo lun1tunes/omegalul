@@ -104,7 +104,7 @@ flowchart TB
 4. Excel Extractor и Schedule Builder — LLM в n8n + FastAPI tools. Файлы забирают сами: `GET …:8200/cases/{id}/artifacts/{id}`. Math — тот же GET. Прогресс в ленту — `POST …/cases/{id}/events` **без** Excel `X-API-Key` (это не Header Auth webhook).
 5. HITL (`waiting_user`) и лента — таблицы `cases` / `events`. Activity **не** ходит в БД. Ответ инженера — снова `mas-orchestrator-step` (оркестратор передаёт HITL-ответы в следующий `call_agent`, в т.ч. `unlisted_wells_policy`).
 6. Готовый `.INC` скачивается из Activity, не из Entry Form. Ошибки нод n8n пишет `Error — MAS Node Traces` **напрямую в Postgres** (`error_traces` + `events`), не через прокси.
-7. Health Check — **форма n8n** (сессия UI), не webhook. Пробы HTTP сервисов и устаревших Data Tables (`PASS_WITH_TODO`).
+7. Health Check — **форма n8n** (сессия UI), не webhook. Берёт URL из `MAS — Runtime Config` и пробует четыре Windows-сервиса, Activity `/ready` и собственные webhooks n8n (оркестратор, прокси). Своих адресов не хранит.
 
 После импорта все workflows `active: false`. Сначала credentials и bindings, затем **Control Plane Proxy** (`schema` → `agent_registry`), Health Check, и только при 0 FAIL — активация оркестратора. RAG: одна таблица, изоляция `target_base`. Оркестратор читает `orchestrator_routing`; Excel LLM — `excel_protocol`; Schedule LLM — `schedule_mvp`. Наполнение — Activity → База знаний.
 
@@ -240,7 +240,7 @@ n8n → Import from File. Порядок — `n8n/import-manifest.json` → `run
 
 `n8n/workflows/support/` — только если сознательно добавляете нового специалиста. В runtime-контур поля они не входят.
 
-На корпоративном n8n должен быть включён **task runner** (как `n8n-runners` в lab): Code/JS ноды исполняются внешним runner, не «внутри» контейнера n8n.
+Code/JS ноды в n8n 2.30.8 исполняет **task runner** (в lab — контейнер `n8n-runners`). На корпоративном n8n это забота его администраторов, из UI ничего настраивать не нужно; наш JS не использует `require`, `$env`, `$vars`.
 
 ### Шаг 2. Credentials
 
@@ -275,6 +275,7 @@ Header Auth webhook (Authorization) — это **не** ключ Excel. Ключ
 | `Orchestrator — MAS` | `Call Knowledge Retrieval` | `MAS — Knowledge Retrieval` (`filters.target_base=orchestrator_routing`) |
 | `Agent — Excel Extractor` | `Call Knowledge Retrieval` | `MAS — Knowledge Retrieval` (`filters.target_base=excel_protocol`; только LLM-ветка operations) |
 | `Agent — Schedule Builder` | `Call Knowledge Retrieval` | `MAS — Knowledge Retrieval` (`filters.target_base=schedule_mvp`; только LLM-ветка operations) |
+| `Form — MAS Deployment Health Check` | `Runtime endpoints` | `MAS — Runtime Config` (плюс Header Auth webhook-credential на `Probe Orchestrator webhook` и `Probe Control Plane Proxy webhook`) |
 
 `Call Calculation Agent` — HTTP на Math Service, не executeWorkflow. Live Excel Extractor и Schedule Builder вызывают тот же Retrieval на LLM-пути (селекторы `excel_protocol` / `schedule_mvp`). HTTP `extract_commissioning` / `apply_commissioning` / `apply_group_rebind` RAG не вызывают. `Template — Engineering Specialist` (`support/`) тоже биндит Retrieval своим `target_base`.
 
@@ -293,7 +294,7 @@ Settings → **Error workflow** у оркестратора, Excel Extractor, Sc
 
 Очистка MAS-данных (кейсы, events, error_traces, executions, mas_artifacts; **не** `agent_registry` и **не** таблицы n8n) — только явный `clear` на `schema` (один прогон: создать таблицы, если нет, и TRUNCATE содержимого):
 
-- в n8n откройте `MAS — Control Plane Proxy` → **Operator flags** → `clear = true` → Save → Test webhook с телом `{"operation":"schema"}`. После очистки верните `clear` в `false`;
+- в n8n откройте `MAS — Control Plane Proxy` → нода **Operator flags** → галочка / boolean `clear = true` → Save → **Test workflow** (не Listen / не production webhook). В workflow уже закреплён pin `{operation:schema}`. После очистки верните `clear` в `false` и снова Save. Production `/webhook/` галочку **игнорирует**, чтобы Activity на старте не стёрла кейсы;
 - или `POST /webhook/mas-control-plane` с `{"operation":"schema","clear":true}` (алиас: `{"operation":"wipe"}`).
 
 `schema` без `clear` таблицы создаёт и **не** чистит. Activity на старте вызывает только `schema` и **никогда** не шлёт `clear`/`wipe`. Полевой FastAPI (Activity / Excel / Math / Schedule) **не** содержит драйвера Postgres. Lab-redeploy кейсы сам не трёт: `python3 scripts/lab_soft_redeploy.py --wipe`.
@@ -328,12 +329,23 @@ Query оркестратора — цель + факты состояния (с�
 
 ### Шаг 6. Health Check и активация
 
-1. Откройте форму `Form — MAS Deployment Health Check` (`/form/mas-deployment-health-check`, нужна сессия n8n). Это **форма**, не webhook.
-2. Цель — **0 FAIL**. `PASS_WITH_TODO` по старым Data Tables / CAS / Entry Form — ожидаемо, это не блокер живого контура.
-3. Активируйте: Control Plane Proxy (уже), Ingestion, Retrieval, Excel Extractor, Schedule Builder, Error traces, **затем** Orchestrator.
-4. Вход в систему — Activity UI `http://<IP>:8200`, не Entry Form.
+1. В `Form — MAS Deployment Health Check` привяжите `Runtime endpoints` → `MAS — Runtime Config` и Header Auth credential (тот же, что на webhook оркестратора и прокси) на `Probe Orchestrator webhook` / `Probe Control Plane Proxy webhook`. Больше в форме ничего не правят — все адреса она берёт из Runtime Config.
+2. Откройте форму (`/form/mas-deployment-health-check`, нужна сессия n8n). Это **форма**, не webhook. Гонять её можно до активации оркестратора: проба оркестратора тогда честно покажет `FAIL … not Active`.
+3. Цель на поле — **`PASS`** (0 FAIL, 0 TODO). `PASS_WITH_TODO` означает, что в Runtime Config остались lab-имена `mas-activity` / `excel-tools` / … — на поле это ошибка конфигурации, в lab норма. У каждого FAIL есть колонка `where_to_fix`.
+4. Активируйте: Control Plane Proxy (уже), Ingestion, Retrieval, Excel Extractor, Schedule Builder, Error traces, **затем** Orchestrator. Прогоните форму ещё раз — все пробы `PASS`.
+5. Вход в систему — Activity UI `http://<IP>:8200`, не Entry Form.
 
-Пробы Health Check (lab DNS): `excel-tools:8000/health`, `math-service:8100/health`, `schedule-builder:8090/health`, `n8n-runners:5680/healthz`, `mas-activity:8200/health`, `n8n:5678/healthz`. На поле те же порты, но хост = IP Windows / URL n8n — форму всё равно гоняют из корпоративного n8n, поэтому HTTP-ноды формы нужно поправить на полевые URL, иначе lab-имена не резолвятся.
+Что пробует форма (все URL — из `MAS — Runtime Config`):
+
+| Проба | Что подтверждает |
+|---|---|
+| `GET {activity_base_url}/health` | Activity жив, `control_plane_backend = n8n_proxy` (не memory) |
+| `GET {activity_base_url}/ready` | **обратное направление**: Windows-ПК достаёт до webhooks n8n (`ORCHESTRATOR_WEBHOOK_URL`, `CONTROL_PLANE_PROXY_URL`, `KNOWLEDGE_INGEST_URL`, корпоративный TLS) |
+| `GET {excel_tools_url}/health`, `{schedule_service_url}/health`, `{math_url}/health` | n8n → Windows: сервис запущен, слушает `0.0.0.0`, firewall открыт |
+| `POST {orchestrator_step_url}` `{"action":"probe"}` | оркестратор Active, Header Auth совпадает, `orchestrator_step_url` — адрес, по которому n8n достаёт сам себя (тот же путь, что self-POST `action:step`) |
+| `POST …/webhook/mas-control-plane` `{"operation":"list_agents"}` | прокси Active, Postgres credential, `schema` отработал: в `agent_registry` есть `excel_extractor`, `schedule_builder`, `calculation_agent` |
+
+Форма не зовёт LLM, Excel и Schedule Builder и не трогает Data Tables / `n8n-runners`.
 
 ### Шаг 7. Работа инженера (HITL)
 
@@ -401,6 +413,9 @@ Query оркестратора — цель + факты состояния (с�
 | Knowledge Ingestion timeout | embeddings `batchSize=16`, `timeout=600` |
 | Activity «Загрузить в RAG» → 404 | Ingestion не Active, path `/webhook/mas-knowledge-ingest` |
 | `/webhook/mas-deployment-health-check` → 404 | это форма `/form/mas-deployment-health-check` |
+| Health Check: `Runtime Config: bound and readable` FAIL | в форме не привязан `Runtime endpoints` → `MAS — Runtime Config` |
+| Health Check: `Orchestrator webhook` / `Control Plane Proxy` 403 | Header Auth credential на пробе ≠ credential на webhook |
+| Health Check: `Orchestrator webhook` 404 | оркестратор не Active или `orchestrator_step_url` в Runtime Config не тот URL, по которому n8n видит сам себя |
 | Excel 401 | credential `Excel Tools X-API-Key` ≠ `API_KEY` в `excel-tools.env`; сервис на **:8000**; не путать с Header Auth webhook |
 | n8n не видит Excel/Schedule/Activity | firewall; сервисы слушают `0.0.0.0`; URL в **MAS — Runtime Config** — IP Windows, не `excel-tools` |
 | Пустая лента при живом n8n | прокси, операция `snapshot` после переимпорта Control Plane Proxy, Activity перезапущен |

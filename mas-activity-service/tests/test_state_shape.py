@@ -2,9 +2,12 @@ from __future__ import annotations
 
 from app.state_shape import (
     compact_decision_context,
+    compact_unlisted_policy,
     decode_hitl_answer,
     flatten_artifacts,
+    is_unlisted_wells_gate,
     nest_artifacts,
+    parse_keep_remove,
     slim_excel_data,
 )
 
@@ -107,3 +110,24 @@ def test_compact_reads_unlisted_policy_from_hitl_answer() -> None:
         }
     )
     assert keep["unlisted_wells_policy"] == "keep"
+
+
+def test_unlisted_policy_uses_word_boundaries_like_n8n() -> None:
+    assert parse_keep_remove("upkeep of extra wells", keyed=True) == ""
+    assert parse_keep_remove("housekeeper removed extras", keyed=True) == ""
+    assert parse_keep_remove("keep extra wells", keyed=True) == "keep"
+    assert parse_keep_remove("remove extras", keyed=True) == "remove"
+    assert parse_keep_remove("keep extra wells", keyed=False) == ""
+    assert parse_keep_remove("оставь лишние скважины") == "keep"
+    assert compact_unlisted_policy({"unlisted_wells_policy": "upkeep of extra wells"}) is None
+    assert compact_unlisted_policy({"unlisted_wells_policy": "keep extra wells"}) == "keep"
+    assert compact_unlisted_policy({"unlisted_wells_policy": "оставь"}) == "keep"
+    assert compact_unlisted_policy({"unlisted_wells_policy": "убери"}) == "remove"
+    assert compact_unlisted_policy({"Q-1": "please keep going"}) is None
+    assert compact_unlisted_policy({"keep_unlisted": "ok"}) is None
+    assert compact_unlisted_policy({"Q-1": {"unlisted_wells_policy": "keep"}}) == "keep"
+    assert compact_unlisted_policy({"unlisted_wells_policy": {"raw": "remove extras"}}) == "remove"
+    assert compact_unlisted_policy({"Q-1": {"raw": "keep extra wells"}}) is None
+    assert is_unlisted_wells_gate("unlisted_wells_policy", "") is True
+    assert is_unlisted_wells_gate("Q-1", "скважины не из excel") is True
+    assert is_unlisted_wells_gate("Q-1", "") is False

@@ -72,7 +72,7 @@
   "data_tables": [
     {
       "name": "engineering_orchestrator_tasks_v1",
-      "purpose": "retired CAS task table; Health Check still probes it (PASS_WITH_TODO). Live case state is Postgres cases via Control Plane Proxy.",
+      "purpose": "retired CAS task table; not probed by Health Check. Live case state is Postgres cases via Control Plane Proxy.",
       "columns": {
         "task_id": "String",
         "version": "Number",
@@ -94,7 +94,7 @@
     },
     {
       "name": "mas_trace_events_v1",
-      "purpose": "retired Data Table ledger; Health Check still probes it (PASS_WITH_TODO). Live events are Postgres events via Control Plane Proxy.",
+      "purpose": "retired Data Table ledger; not probed by Health Check. Live events are Postgres events via Control Plane Proxy.",
       "columns": {
         "event_id": "String",
         "trace_id": "String",
@@ -164,24 +164,33 @@
     "workflow": "workflows/core/mas-deployment-health-check.workflow.json",
     "ui_name": "Form — MAS Deployment Health Check",
     "runbook": "docs.md",
-    "data_table_probes": [
+    "generator": "templates/generate_mas_health_check.py",
+    "url_source": "MAS — Runtime Config via executeWorkflow node Runtime endpoints (REPLACE_MAS_RUNTIME_CONFIG_IN_UI). The form stores no URLs of its own.",
+    "bindings": [
       {
-        "node": "Probe task Data Table",
-        "table": "engineering_orchestrator_tasks_v1"
+        "node": "Runtime endpoints",
+        "target": "MAS — Runtime Config",
+        "placeholder": "REPLACE_MAS_RUNTIME_CONFIG_IN_UI"
       },
       {
-        "node": "Probe trace Data Table",
-        "table": "mas_trace_events_v1"
+        "node": "Probe Orchestrator webhook",
+        "credential": "httpHeaderAuth — same credential as Orchestrator webhook / Control Plane Proxy webhook"
+      },
+      {
+        "node": "Probe Control Plane Proxy webhook",
+        "credential": "httpHeaderAuth — same credential as Orchestrator webhook / Control Plane Proxy webhook"
       }
     ],
     "live_probes": [
-      "HTTP excel-tools:8000/health",
-      "HTTP math-service:8100/health",
-      "HTTP schedule-builder:8090/health",
-      "HTTP n8n-runners:5680/healthz",
-      "HTTP mas-activity:8200/health",
-      "HTTP n8n:5678/healthz"
+      "GET {activity_base_url}/health (control_plane_backend must be n8n_proxy)",
+      "GET {activity_base_url}/ready (Activity → n8n webhooks from the Windows PC)",
+      "GET {excel_tools_url}/health",
+      "GET {schedule_service_url}/health",
+      "GET {math_url}/health",
+      "POST {orchestrator_step_url} {\"action\":\"probe\"} (Header Auth)",
+      "POST {orchestrator_step_url minus /mas-orchestrator-step}/mas-control-plane {\"operation\":\"list_agents\"} (Header Auth; expects excel_extractor, schedule_builder, calculation_agent)"
     ],
+    "result": "PASS = 0 FAIL, 0 TODO (field). PASS_WITH_TODO = lab Docker DNS names still in Runtime Config. FAIL lists where_to_fix per check.",
     "host_health_script": "scripts/mas_stack_health.py",
     "does_not_call": [
       "LLM Planner/Verifier",
@@ -246,7 +255,7 @@
   ],
   "ui_configuration": [
     "Field import is runtime_import_order (9 core JSON). Do not import n8n/workflows/retired/. support/ only when adding a specialist.",
-    "Do not create n8n Data Tables for live case state. Health Check probes to engineering_orchestrator_tasks_v1 / mas_trace_events_v1 may PASS_WITH_TODO.",
+    "Do not create n8n Data Tables for live case state. Health Check no longer probes engineering_orchestrator_tasks_v1 / mas_trace_events_v1.",
     "Do not set ACTIVITY_HYDRATE_URL. Do not import Activity — Hydrate, Entry Form, Human Gate, CAS Persist, Trace Writer, or Orchestrator — Engineering MAS.",
     "Bind Orchestrator — MAS: Call Excel Extractor → Agent — Excel Extractor; Call Schedule Builder → Agent — Schedule Builder; Call Knowledge Retrieval → MAS — Knowledge Retrieval (selector target_base=orchestrator_routing). Bind Call Knowledge Retrieval on Excel Extractor (excel_protocol) and Schedule Builder (schedule_mvp).",
     "Bind Runtime endpoints / Runtime configuration → MAS — Runtime Config on Orchestrator, Excel Extractor, and Schedule Builder. Edit the four URLs once in MAS — Runtime Config (lab Docker DNS in git; field = http://<IP-Windows>:8200/:8000/:8090/:8100). math_url has no /agent/run suffix.",
@@ -256,7 +265,7 @@
     "Settings → Error workflow = Error — MAS Node Traces on Orchestrator, Excel Extractor, Schedule Builder, Retrieval, Ingestion. Not on the error workflow itself or Control Plane Proxy.",
     "Seed agent_registry via Control Plane Proxy schema (excel_extractor, calculation_agent, schedule_builder). Orchestrator calls Knowledge Retrieval with target_base=orchestrator_routing (routing_card only). Excel LLM path uses excel_protocol; Schedule LLM path uses schedule_mvp.",
     "Optional: Activity Knowledge → Загрузить в RAG (MAS — Knowledge Ingestion). Live Excel/Schedule LLM paths call the same Retrieval with excel_protocol / schedule_mvp. Bind Call Knowledge Retrieval on Orchestrator, Excel Extractor, and Schedule Builder.",
-    "Run Form — MAS Deployment Health Check before activating the Orchestrator. 0 FAIL; PASS_WITH_TODO on retired Data Tables / CAS / Entry Form is expected.",
+    "Run Form — MAS Deployment Health Check before activating the Orchestrator. Bind its Runtime endpoints → MAS — Runtime Config and the Header Auth credential on both webhook probes. Field target: PASS (0 FAIL, 0 TODO); PASS_WITH_TODO only means lab Docker DNS names are still in Runtime Config.",
     "Keep every workflow inactive until placeholders and credentials are resolved. Activate Proxy, then Ingestion/Retrieval/Excel/Schedule/Error, then Orchestrator.",
     "Engineers start tasks in Activity UI POST /cases (http://<IP>:8200), not Entry Form."
   ],

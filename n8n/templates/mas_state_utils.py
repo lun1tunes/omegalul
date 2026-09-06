@@ -179,16 +179,14 @@ function isUnlistedWellsGate(qid, question){
   return id.includes('unlisted')||q.includes('unlisted')||q.includes('не из excel')||q.includes('лишн');
 }
 function parseKeepRemove(blob, keyed){
+  /* Same rules as Python parse_keep_remove: labeled enum, then gated keep/remove. */
   const s=String(blob||'').toLowerCase();
-  const keyedOk=keyed===true;
   const labeled=s.match(/unlisted_wells_policy\s*[:=]\s*(keep|remove)/);
   if(labeled) return labeled[1];
-  if(s.includes('keep')||/остав|сохран/.test(s)) return 'keep';
-  if(s.includes('remove')||/убер|удал|выкин|выкинь/.test(s)||(keyedOk&&s.includes('лишн'))) return 'remove';
-  if(keyedOk){
-    const m=s.match(/\b(keep|remove)\b/);
-    if(m) return m[1];
-  }
+  const keyedOk=keyed===true||s.includes('unlisted')||s.includes('лишн')||s.includes('не из excel');
+  if(!keyedOk) return '';
+  if(/остав|сохран/.test(s)||/\bkeep\b/.test(s)) return 'keep';
+  if(/убер|удал|выкин|выкинь/.test(s)||/\bremove\b/.test(s)) return 'remove';
   return '';
 }
 function normalizeHitlAnswer(qid, answer, question){

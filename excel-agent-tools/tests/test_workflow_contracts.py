@@ -554,24 +554,48 @@ def test_mas_deployment_health_check_is_native_and_reports_where_to_fix() -> Non
     assert by_name["Health check form"]["typeVersion"] == 2.6
     assert by_name["Show health report"]["typeVersion"] == 2.5
     assert by_name["Show health report"]["parameters"]["operation"] == "completion"
-    assert by_name["Probe task Data Table"]["type"] == "n8n-nodes-base.dataTable"
-    assert by_name["Probe trace Data Table"]["typeVersion"] == 1.1
+    # Field rule: URLs live only in MAS — Runtime Config; Health Check reads them, never stores its own.
+    runtime = by_name["Runtime endpoints"]
+    assert runtime["type"] == "n8n-nodes-base.executeWorkflow"
+    assert runtime["typeVersion"] == 1.3
+    assert runtime["parameters"]["workflowId"]["value"] == "REPLACE_MAS_RUNTIME_CONFIG_IN_UI"
+    assert runtime.get("onError") == "continueRegularOutput"
+    assert not any(node["type"] == "n8n-nodes-base.dataTable" for node in health["nodes"])
     assert "Call Orchestrator probe" not in by_name
     assert "Call Trace Writer probe" not in by_name
-    assert by_name["Probe math-service /health"]["parameters"]["url"] == "http://math-service:8100/health"
-    assert by_name["Probe schedule-builder /health"]["parameters"]["url"] == "http://schedule-builder:8090/health"
-    assert by_name["Probe excel-tools /health"]["parameters"]["url"] == "http://excel-tools:8000/health"
+    http_nodes = [node for node in health["nodes"] if node["type"] == "n8n-nodes-base.httpRequest"]
+    assert {node["name"] for node in http_nodes} == {
+        "Probe Activity /health",
+        "Probe Activity /ready",
+        "Probe Excel Tools /health",
+        "Probe Schedule Builder /health",
+        "Probe Math /health",
+        "Probe Orchestrator webhook",
+        "Probe Control Plane Proxy webhook",
+    }
+    for node in http_nodes:
+        assert node["parameters"]["url"].startswith("={{ $('Prepare health probes').first().json.urls."), node["name"]
+        assert node.get("continueOnFail") is True, node["name"]
+    executable = json.dumps([n for n in health["nodes"] if n["type"] != "n8n-nodes-base.stickyNote"], ensure_ascii=False)
+    for lab_dns in ("excel-tools:8000", "schedule-builder:8090", "math-service:8100", "mas-activity:8200", "n8n-runners", "n8n:5678"):
+        assert lab_dns not in executable, lab_dns
+    for name in ("Probe Orchestrator webhook", "Probe Control Plane Proxy webhook"):
+        assert by_name[name]["parameters"]["genericAuthType"] == "httpHeaderAuth"
+        assert by_name[name]["credentials"]["httpHeaderAuth"]["id"] == "REPLACE_IN_UI"
+    prepare = by_name["Prepare health probes"]["parameters"]["jsCode"]
+    assert "$('Runtime endpoints')" in prepare
+    assert "/mas-control-plane" in prepare
+    assert "action: 'probe'" in prepare
+    assert "operation: 'list_agents'" in prepare
     report = by_name["Build health report"]["parameters"]["jsCode"]
     assert "where_to_fix" in report
-    assert "Form — MAS Entry" in report
-    assert "engineering_orchestrator_tasks_v1" in report
-    assert "mas_trace_events_v1" in report
-    assert "REPLACE_" in report
+    assert "MAS — Runtime Config" in report
+    assert "control_plane_backend" in report
+    assert "Header Auth mismatch" in report
     assert "produced no items" in report
-    assert "Probe excel-tools /health" in by_name
-    assert "Live: excel-tools /health" in report
-    assert "Live: mas-activity /health" in report
-    assert "input_valid !== false" in report
+    assert "Overall: <strong>" in report and "FAIL — fix these first" in report  # lab_soft_redeploy parses these
+    for retired in ("Form — MAS Entry", "engineering_orchestrator_tasks_v1", "mas_trace_events_v1", "CAS — Persist Task State"):
+        assert retired not in report, retired
     gate = load_json(workflow_path("mas-human-gate-form.workflow.json"))
     decide = next(n["parameters"]["jsCode"] for n in gate["nodes"] if n["name"] == "Decide resume from status")
     assert "Number.isInteger(expectedVersion)" in decide
@@ -630,9 +654,11 @@ def test_mas_control_plane_proxy_contains_all_activity_operations() -> None:
     ):
         assert f"'{operation}'" in code
     assert "batch only supports single-row operations" in code
-    assert "execMode==='manual'&&flagClear" in code
+    assert "editorTest&&flagClear" in code
+    assert "webhook-test" in code
     assert "op==='wipe'||(op==='schema'&&" in code
     assert "TRUNCATE TABLE cases" in code
+    assert "DO $$" not in code
     assert "jsonb_agg" in code and "AS events FROM cases c" in code
     assert "agent_registry" in code and "TRUNCATE TABLE agent_registry" not in code
     flags = next(node for node in workflow["nodes"] if node["name"] == "Operator flags")
@@ -654,7 +680,10 @@ def test_mas_control_plane_proxy_contains_all_activity_operations() -> None:
     assert "operation:'batch'" in fmt.replace(" ", "")
     note = next(node for node in workflow["nodes"] if node["name"] == "edit after import")
     assert "`clear`" in note["parameters"]["content"]
+    assert "Test workflow" in note["parameters"]["content"]
     assert "wipe_data" not in note["parameters"]["content"]
+    pin = (workflow.get("pinData") or {}).get("MAS control-plane webhook") or []
+    assert pin and pin[0]["json"]["body"]["operation"] == "schema"
     assert workflow["settings"].get("saveDataSuccessExecution") == "none"
     assert workflow["settings"].get("saveExecutionProgress") is False
     pg = next(node for node in workflow["nodes"] if node["name"] == "Execute control-plane SQL")
@@ -1501,6 +1530,7 @@ def test_universal_engineering_instruction_templates_are_portable() -> None:
         "mas_handoff_contracts.py",
         "generate_mas_error_handler.py",
         "generate_mas_error_traces.py",
+        "generate_mas_health_check.py",
         "generate_mas_orchestrator.py",
         "generate_mas_runtime_config.py",
         "generate_schedule_builder_agent.py",
@@ -1954,8 +1984,13 @@ def test_schedule_rag_and_trace_foundations_enforce_governance() -> None:
     health_names = {node["name"] for node in health["nodes"]}
     assert "Prepare Trace Writer probe" not in health_names
     assert "Call Trace Writer probe" not in health_names
-    assert "Probe math-service /health" in health_names
-    assert not any(node["type"] == "n8n-nodes-base.executeWorkflow" for node in health["nodes"])
+    assert "Probe Math /health" in health_names
+    execute_targets = {
+        node["parameters"]["workflowId"]["value"]
+        for node in health["nodes"]
+        if node["type"] == "n8n-nodes-base.executeWorkflow"
+    }
+    assert execute_targets == {"REPLACE_MAS_RUNTIME_CONFIG_IN_UI"}
 
 
 def test_hybrid_rag_is_the_only_agent_knowledge_path() -> None:

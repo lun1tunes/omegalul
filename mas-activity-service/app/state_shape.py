@@ -308,21 +308,52 @@ def decode_hitl_answers(answers: Any) -> dict[str, Any]:
     return {str(key): decode_hitl_answer(val) for key, val in src.items()}
 
 
+def is_unlisted_wells_gate(qid: Any, question: Any = "") -> bool:
+    """Same rules as n8n ``isUnlistedWellsGate``."""
+    ident = str(qid or "").lower()
+    q = str(question or "").lower()
+    return "unlisted" in ident or "unlisted" in q or "не из excel" in q or "лишн" in q
+
+
+def parse_keep_remove(blob: Any, keyed: bool = False) -> str:
+    """Same rules as n8n ``parseKeepRemove``: labeled enum, then gated keep/remove.
+
+    English tokens use word boundaries so ``upkeep`` / ``removed`` do not match.
+    """
+    text = str(blob or "").lower()
+    match = re.search(r"unlisted_wells_policy\s*[:=]\s*(keep|remove)", text)
+    if match:
+        return match.group(1)
+    keyed_ok = keyed or "unlisted" in text or "лишн" in text or "не из excel" in text
+    if not keyed_ok:
+        return ""
+    if re.search(r"остав|сохран", text) or re.search(r"\bkeep\b", text):
+        return "keep"
+    if re.search(r"убер|удал|выкин|выкинь", text) or re.search(r"\bremove\b", text):
+        return "remove"
+    return ""
+
+
 def compact_unlisted_policy(answers: Any) -> str | None:
+    """Same rules as n8n ``readUnlistedWellsPolicy``: gate on the answer key, not a concat."""
     src = answers if isinstance(answers, dict) else {}
     for key, val in src.items():
-        blob = val if isinstance(val, str) else json.dumps(val, ensure_ascii=False)
-        text = f"{key} {blob}".lower()
-        match = re.search(r"unlisted_wells_policy\s*[:=]\s*(keep|remove)", text)
-        if match:
-            return match.group(1)
-        keyed = "unlisted" in text or "лишн" in text or "не из excel" in text
-        if not keyed:
+        keyed = is_unlisted_wells_gate(key, "")
+        if isinstance(val, dict):
+            direct = str(val.get("unlisted_wells_policy") or "").lower()
+            if direct in {"keep", "remove"}:
+                return direct
+            nested_src = val["raw"] if val.get("raw") is not None else val
+            nested_blob = (
+                nested_src if isinstance(nested_src, str) else json.dumps(nested_src, ensure_ascii=False)
+            )
+            nested = parse_keep_remove(nested_blob, keyed)
+            if nested:
+                return nested
             continue
-        if re.search(r"остав|сохран", text) or re.search(r"\bkeep\b", text):
-            return "keep"
-        if re.search(r"убер|удал|выкин|выкинь", text) or re.search(r"\bremove\b", text):
-            return "remove"
+        found = parse_keep_remove(val, keyed)
+        if found:
+            return found
     return None
 
 

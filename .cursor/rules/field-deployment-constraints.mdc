@@ -1,0 +1,23 @@
+---
+description: Field deployment constraints — corporate n8n 2.30.8 UI-only, FastAPI on Windows with Python only; lab mirrors it 1:1
+alwaysApply: true
+---
+
+# Field deployment constraints (always honour)
+
+This repo is a lab that reproduces the real workplace setup 1:1. Every change must work under the **field** constraints, not just in Docker Compose.
+
+## Field reality
+
+- **n8n = corporate instance, version `2.30.8` exactly.** The engineer has **UI access only**: no server shell, no env vars, no `$env`/`$vars`, no config files, no REST/CLI import, no control over task runners, Postgres, or reverse proxy. Everything must be achievable via **Import from File**, Credentials, Settings and Set-node edits in the UI.
+- **All FastAPI services (Activity `:8200`, Excel Tools `:8000`, Schedule Builder `:8090`, Math `:8100`) run on the engineer's Windows workstation** with plain **Python + pip libraries only** (`.venv`, `setup-windows.bat` / `start-windows.bat`). **No Node.js, no Docker, no compilers, no Postgres driver** on Windows.
+- Network: corporate n8n ↔ Windows workstation over the corporate LAN (services must be able to listen on `0.0.0.0`; Activity calls n8n webhooks by corporate URL, possibly behind TLS with a corporate CA).
+
+## Consequences for changes
+
+1. Anything that must run at runtime lives either in **n8n workflow JSON** (Code/JS nodes executed by n8n's runner) or in **Python FastAPI**. Never make a runtime feature depend on Node.js, Docker DNS names (`excel-tools`, `mas-activity`, `n8n:5678`, `n8n-runners`), `docker compose`, `psql`, or lab scripts (`scripts/lab_soft_redeploy.py`, `_bootstrap_n8n_field.py`).
+2. Do not use n8n features outside 2.30.8; do not rely on community nodes, `require()` in Code nodes, `$env`, Globals/Variables, or the public REST API.
+3. Field-editable values (service URLs, `orchestrator_step_url`, auth headers) must stay in **`MAS — Runtime Config`** and **Credentials**, so they can be changed from the UI without regenerating JSON.
+4. New Python dependencies must have **Windows wheels** for Python 3.11–3.13 (no build-from-source).
+5. Lab-only conveniences (Docker, REST import, host bridge, Node smokes) are fine as dev tooling but must be clearly labelled lab-only and never become the only path to a feature.
+6. When docs describe a step, describe the **field** path (UI / Windows CMD) first; lab path second.

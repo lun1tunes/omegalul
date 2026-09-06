@@ -325,6 +325,8 @@ def manual_edit_reasons(data: dict) -> list[str]:
             reasons.append(f"Confirm model wiring for agent **{name}**")
         if t == "n8n-nodes-base.webhook" and n.get("credentials"):
             reasons.append(f"Set webhook auth credentials on **{name}**")
+        if t == "n8n-nodes-base.httpRequest" and "httpHeaderAuth" in (n.get("credentials") or {}):
+            reasons.append(f"Set Header Auth credential on **{name}**")
         if t == "n8n-nodes-base.set":
             assigns = (((p.get("assignments") or {}).get("assignments")) or [])
             if any(
@@ -332,8 +334,9 @@ def manual_edit_reasons(data: dict) -> list[str]:
                 for a in assigns
             ):
                 reasons.append(
-                    "Keep **Operator flags** `clear` = false except a manual wipe "
-                    "(schema + TRUNCATE cases; never agent_registry)"
+                    "Keep **Operator flags** `clear` = false except a manual wipe: "
+                    "set true → Save → Test workflow; then set false. "
+                    "Production webhook ignores the checkbox"
                 )
         if short == "toolHttpRequest":
             # tools often inherit; skip noise unless many

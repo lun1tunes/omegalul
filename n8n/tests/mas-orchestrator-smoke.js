@@ -143,6 +143,10 @@ async function run(name, json, nodes = {}, binary = {}) {
     return js.slice(begin, end);
   });
   assert.equal(new Set(helperChunks).size, 1, 'state helpers must be identical across Code nodes');
+  assert.equal(helperChunks[0].includes("s.includes('keep')"), false);
+  assert.equal(helperChunks[0].includes("s.includes('remove')"), false);
+  assert.match(helperChunks[0], /\\bkeep\\b/);
+  assert.match(helperChunks[0], /\\bremove\\b/);
   const continueNode = wf.nodes.find((n) => n.name === 'POST continue run');
   assert.ok(String(continueNode.parameters.jsonBody).includes("action: 'step'"));
   assert.ok(String(continueNode.parameters.jsonBody).includes('orchestrator-self'));
@@ -638,6 +642,57 @@ async function run(name, json, nodes = {}, binary = {}) {
   assert.equal(unlistedKeep.state.hitl.answers.unlisted_wells_policy.unlisted_wells_policy, 'keep');
   assert.equal(unlistedKeep.state.hitl.answers.unlisted_wells_policy.raw, 'оставь лишние скважины');
 
+  const unlistedKeepWord = await run(
+    'Apply request extras',
+    {
+      status: 'waiting_user',
+      state: {
+        goal: 'g',
+        hitl: {
+          pending: true,
+          questions: [{ question_id: 'unlisted_wells_policy', question: 'Скважины не из Excel?' }],
+          answers: {},
+        },
+      },
+    },
+    {
+      'Normalize step request': {
+        case_id: 'CASE-1',
+        is_resume: true,
+        action: 'resume',
+        human_response: 'keep extra wells',
+        gate_id: 'unlisted_wells_policy',
+      },
+    },
+  );
+  assert.equal(unlistedKeepWord.state.hitl.answers.unlisted_wells_policy.unlisted_wells_policy, 'keep');
+
+  const unlistedUpkeep = await run(
+    'Apply request extras',
+    {
+      status: 'waiting_user',
+      state: {
+        goal: 'g',
+        hitl: {
+          pending: true,
+          questions: [{ question_id: 'unlisted_wells_policy', question: 'Скважины не из Excel?' }],
+          answers: {},
+        },
+      },
+    },
+    {
+      'Normalize step request': {
+        case_id: 'CASE-1',
+        is_resume: true,
+        action: 'resume',
+        human_response: 'upkeep of extra wells',
+        gate_id: 'unlisted_wells_policy',
+      },
+    },
+  );
+  assert.equal(unlistedUpkeep.state.hitl.answers.unlisted_wells_policy.unlisted_wells_policy, undefined);
+  assert.equal(unlistedUpkeep.state.hitl.answers.unlisted_wells_policy, 'upkeep of extra wells');
+
   const mismatch = await run(
     'Apply request extras',
     {
@@ -735,6 +790,44 @@ async function run(name, json, nodes = {}, binary = {}) {
   assert.equal(afterHitl.agent_task.inputs.unlisted_wells_policy, 'remove');
   assert.equal(afterHitl.agent_task.context.hitl.answers.unlisted_wells_policy, 'unlisted_wells_policy=remove');
   assert.deepEqual(afterHitl.agent_task.context.hitl.answer_ids, ['unlisted_wells_policy']);
+
+  const upkeepCompact = await run(
+    'Prepare decision context',
+    { case_id: 'CASE-1' },
+    {
+      'Load case': {
+        state: {
+          goal: 'сдвинь даты',
+          artifacts: { excel: 'a.xlsx', schedule_source: 'b.inc' },
+          data: {},
+          hitl: { pending: false, answers: { unlisted_wells_policy: 'upkeep of extra wells' } },
+        },
+        status: 'running',
+      },
+      'Load agent registry': { agent_id: 'schedule_builder', title: 'Schedule' },
+      'Runtime endpoints': { activity_base_url: 'http://mas-activity:8200' },
+    },
+  );
+  assert.equal(upkeepCompact.compact.unlisted_wells_policy, null);
+
+  const keepWordCompact = await run(
+    'Prepare decision context',
+    { case_id: 'CASE-1' },
+    {
+      'Load case': {
+        state: {
+          goal: 'сдвинь даты',
+          artifacts: { excel: 'a.xlsx', schedule_source: 'b.inc' },
+          data: {},
+          hitl: { pending: false, answers: { unlisted_wells_policy: 'keep extra wells' } },
+        },
+        status: 'running',
+      },
+      'Load agent registry': { agent_id: 'schedule_builder', title: 'Schedule' },
+      'Runtime endpoints': { activity_base_url: 'http://mas-activity:8200' },
+    },
+  );
+  assert.equal(keepWordCompact.compact.unlisted_wells_policy, 'keep');
 
   const finished = await run(
     'Parse decision',

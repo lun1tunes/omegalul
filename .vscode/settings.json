@@ -1,4 +1,7 @@
 {
+  "remote.extensionKind": {
+    "anysphere.cursor-browser-automation": ["ui"]
+  },
   "remote.autoForwardPorts": true,
   "remote.portsAttributes": {
     "8000": {

@@ -1,7 +1,7 @@
 {
   "id": "mas-deployment-health-check-v1",
   "name": "Form — MAS Deployment Health Check",
-  "description": "Native n8n 2.30.8 deployment readiness form after MAS cutover. Live FAIL gates: excel-tools, math-service, schedule-builder, n8n-runners, mas-activity, n8n. CAS/Trace/old orchestrator are TODO.",
+  "description": "Native n8n 2.30.8 deployment readiness form. All probe URLs come from MAS — Runtime Config: Activity /health + /ready, Excel Tools, Schedule Builder, Math /health, Orchestrator webhook (action=probe), Control Plane Proxy webhook (list_agents). No Docker DNS, no Data Tables.",
   "active": false,
   "settings": {
     "executionOrder": "v1",
@@ -12,8 +12,8 @@
   "nodes": [
     {
       "parameters": {
-        "content": "## edit after import\n\n**Form — MAS Deployment Health Check** — after UI import, complete bindings before activate:\n\n- Bind Data Table on **Probe task Data Table**\n- Bind Data Table on **Probe trace Data Table**\n\nDo not rely on env()/Globals for corporate UI import.",
-        "height": 216,
+        "content": "## edit after import\n\n**Form — MAS Deployment Health Check** — after UI import, complete bindings before activate:\n\n- Bind sub-workflow on **Runtime endpoints**\n- Set Header Auth credential on **Probe Orchestrator webhook**\n- Set Header Auth credential on **Probe Control Plane Proxy webhook**\n\nDo not rely on env()/Globals for corporate UI import.",
+        "height": 244,
         "width": 440,
         "color": 1
       },
@@ -23,30 +23,30 @@
       "typeVersion": 1,
       "position": [
         -40,
-        -276
+        -304
       ]
     },
     {
       "parameters": {
-        "content": "## MAS Deployment Health Check (n8n 2.30.8)\n1. Production path: Orchestrator — MAS webhook `mas-orchestrator-step`.\n2. Live HTTP: excel-tools:8000, math-service:8100, schedule-builder:8090, n8n-runners, mas-activity, n8n.\n3. CAS / Trace / Data Tables / old Engineering MAS are retired — report them as TODO.\n4. `fail_first: 0` with PASS_WITH_TODO is the expected lab result.\n\nFull runbook: docs.md",
+        "content": "## MAS Deployment Health Check (n8n 2.30.8)\n1. URLs come from **MAS — Runtime Config** (bind **Runtime endpoints**). No second copy of addresses lives here.\n2. Probes: Activity `/health` + `/ready`, Excel Tools / Schedule Builder / Math `/health`, Orchestrator webhook (`action=probe`), Control Plane Proxy webhook (`list_agents`).\n3. Webhook probes use the same Header Auth credential as the Orchestrator / Control Plane Proxy webhooks.\n4. Goal on the field: **PASS** with 0 FAIL. Lab Compose DNS names in Runtime Config show as TODO (`PASS_WITH_TODO`).\n5. Does not call LLM, Excel, or SCHEDULE Builder.\n\nFull runbook: docs.md",
         "width": 520,
-        "height": 320,
+        "height": 340,
         "color": 5
       },
-      "id": "c1000001-0001-4000-8000-000000000001",
+      "id": "5bc9b388-4f9f-594d-bfa9-6c141f49686a",
       "name": "Health Check README",
       "type": "n8n-nodes-base.stickyNote",
       "typeVersion": 1,
       "position": [
         -600,
-        -360
+        -380
       ]
     },
     {
       "parameters": {
         "authentication": "n8nUserAuth",
         "formTitle": "MAS — Deployment Health Check",
-        "formDescription": "Run control-plane readiness probes. Bind this form's Data Table probes and Execute Workflow probes first (see sticky note / docs.md). Does not call LLM, Excel, or SCHEDULE Builder.",
+        "formDescription": "Probes the four Windows FastAPI services and this n8n's Orchestrator / Control Plane Proxy webhooks using the URLs from MAS — Runtime Config. Bind Runtime endpoints and the Header Auth credential first (see sticky note / docs.md). Does not call LLM, Excel, or SCHEDULE Builder.",
         "formFields": {
           "values": [
             {
@@ -67,7 +67,7 @@
           "includeUserInOutput": true
         }
       },
-      "id": "c1000001-0001-4000-8000-000000000002",
+      "id": "d5e613bc-799c-50cf-93d9-7b65c4bedd34",
       "name": "Health check form",
       "type": "n8n-nodes-base.formTrigger",
       "typeVersion": 2.6,
@@ -79,130 +79,56 @@
     },
     {
       "parameters": {
-        "jsCode": "const note = String($json.operator_note || '').trim();\nconst probeTaskId = '__mas_health_probe__';\nreturn [{ json: {\n  probe_task_id: probeTaskId,\n  operator_note: note || null,\n  started_at: new Date().toISOString(),\n  action: 'status',\n  task_id: probeTaskId,\n  entrypoint: 'health_check',\n  requested_by: note || 'mas-health-check',\n}}];"
+        "source": "database",
+        "workflowId": {
+          "__rl": true,
+          "value": "REPLACE_MAS_RUNTIME_CONFIG_IN_UI",
+          "mode": "list",
+          "cachedResultName": "MAS — Runtime Config"
+        },
+        "workflowInputs": {
+          "mappingMode": "defineBelow",
+          "value": {},
+          "matchingColumns": [],
+          "schema": [],
+          "attemptToConvertTypes": false,
+          "convertFieldsToString": false
+        },
+        "mode": "once",
+        "options": {
+          "waitForSubWorkflow": true
+        }
       },
-      "id": "c1000001-0001-4000-8000-000000000003",
+      "id": "89229b2f-f9f9-553b-9c60-289472c22a22",
+      "name": "Runtime endpoints",
+      "type": "n8n-nodes-base.executeWorkflow",
+      "typeVersion": 1.3,
+      "position": [
+        280,
+        0
+      ],
+      "onError": "continueRegularOutput",
+      "alwaysOutputData": true
+    },
+    {
+      "parameters": {
+        "jsCode": "\n/* All probe URLs come from MAS — Runtime Config (node \"Runtime endpoints\"). */\nconst note = String($json.operator_note || '').trim();\nlet cfg = {};\nlet cfgError = '';\ntry {\n  const item = $('Runtime endpoints').first() || {};\n  cfg = item.json && typeof item.json === 'object' ? item.json : {};\n  if (item.error) cfgError = String(item.error.message || item.error);\n  if (typeof cfg.error === 'string') cfgError = cfg.error;\n  else if (cfg.error && typeof cfg.error === 'object') cfgError = String(cfg.error.message || JSON.stringify(cfg.error));\n} catch (e) {\n  cfgError = String(e.message || e);\n}\nconst KEYS = ['activity_base_url', 'excel_tools_url', 'schedule_service_url', 'math_url', 'orchestrator_step_url'];\nconst trim = (v) => String(v || '').trim().replace(/\\/+$/, '');\nconst runtime = {};\nfor (const k of KEYS) runtime[k] = trim(cfg[k]);\nconst LAB_DNS = /^https?:\\/\\/(mas-activity|excel-tools|schedule-builder|math-service)(:\\d+)?$/i;\nconst runtime_issues = [];\nif (cfgError) runtime_issues.push({ key: '*', kind: 'unbound', detail: cfgError });\nfor (const k of KEYS) {\n  const v = runtime[k];\n  if (!v) runtime_issues.push({ key: k, kind: 'empty', detail: 'empty value' });\n  else if (/REPLACE_/i.test(v)) runtime_issues.push({ key: k, kind: 'placeholder', detail: v });\n  else if (!/^https?:\\/\\//i.test(v)) runtime_issues.push({ key: k, kind: 'not_url', detail: v });\n  else if (LAB_DNS.test(v)) runtime_issues.push({ key: k, kind: 'lab_dns', detail: v });\n}\nif (runtime.orchestrator_step_url && !/\\/webhook\\/mas-orchestrator-step$/.test(runtime.orchestrator_step_url)) {\n  runtime_issues.push({ key: 'orchestrator_step_url', kind: 'wrong_path', detail: runtime.orchestrator_step_url });\n}\nconst webhookBase = runtime.orchestrator_step_url.replace(/\\/mas-orchestrator-step$/, '');\nconst join = (base, path) => (base ? `${base}${path}` : '');\nconst urls = {\n  activity_health: join(runtime.activity_base_url, '/health'),\n  activity_ready: join(runtime.activity_base_url, '/ready'),\n  excel_health: join(runtime.excel_tools_url, '/health'),\n  schedule_health: join(runtime.schedule_service_url, '/health'),\n  math_health: join(runtime.math_url, '/health'),\n  orchestrator_webhook: runtime.orchestrator_step_url,\n  control_plane_webhook: webhookBase && webhookBase !== runtime.orchestrator_step_url ? `${webhookBase}/mas-control-plane` : '',\n};\nconst bodies = {\n  orchestrator_probe: { action: 'probe', case_id: 'CASE-readiness-probe', requested_by: note || 'mas-health-check' },\n  control_plane_list_agents: { operation: 'list_agents' },\n};\nreturn [{ json: {\n  operator_note: note || null,\n  started_at: new Date().toISOString(),\n  entrypoint: 'health_check',\n  requested_by: note || 'mas-health-check',\n  runtime,\n  runtime_issues,\n  urls,\n  bodies,\n} }];\n"
+      },
+      "id": "62a9e609-5f04-54aa-8269-7edb5ce0d11b",
       "name": "Prepare health probes",
       "type": "n8n-nodes-base.code",
       "typeVersion": 2,
       "position": [
-        280,
-        0
-      ]
-    },
-    {
-      "parameters": {
-        "operation": "get",
-        "dataTableId": {
-          "__rl": true,
-          "mode": "list",
-          "value": "REPLACE_IN_UI",
-          "cachedResultName": "Engineering orchestrator task state"
-        },
-        "matchType": "allConditions",
-        "filters": {
-          "conditions": [
-            {
-              "keyName": "task_id",
-              "condition": "eq",
-              "keyValue": "={{ $json.probe_task_id }}"
-            }
-          ]
-        },
-        "returnAll": false,
-        "limit": 1
-      },
-      "id": "c1000001-0001-4000-8000-000000000004",
-      "name": "Probe task Data Table",
-      "type": "n8n-nodes-base.dataTable",
-      "typeVersion": 1.1,
-      "position": [
         560,
-        0
-      ],
-      "continueOnFail": true,
-      "alwaysOutputData": true
-    },
-    {
-      "parameters": {
-        "jsCode": "const prepared = $('Prepare health probes').first().json || {};\nreturn [{ json: { ...prepared, _after: 'task_dt' } }];"
-      },
-      "id": "c1000001-0001-4000-8000-000000000005",
-      "name": "Continue after task probe",
-      "type": "n8n-nodes-base.code",
-      "typeVersion": 2,
-      "position": [
-        840,
-        0
-      ]
-    },
-    {
-      "parameters": {
-        "operation": "get",
-        "dataTableId": {
-          "__rl": true,
-          "mode": "list",
-          "value": "REPLACE_IN_UI",
-          "cachedResultName": "MAS trace events v1"
-        },
-        "matchType": "allConditions",
-        "filters": {
-          "conditions": [
-            {
-              "keyName": "task_id",
-              "condition": "eq",
-              "keyValue": "={{ $json.probe_task_id }}"
-            }
-          ]
-        },
-        "returnAll": false,
-        "limit": 1
-      },
-      "id": "c1000001-0001-4000-8000-000000000006",
-      "name": "Probe trace Data Table",
-      "type": "n8n-nodes-base.dataTable",
-      "typeVersion": 1.1,
-      "position": [
-        1120,
-        0
-      ],
-      "continueOnFail": true,
-      "alwaysOutputData": true
-    },
-    {
-      "parameters": {
-        "jsCode": "const escapeHtml = (value) => String(value ?? '')\n  .replace(/&/g, '&amp;')\n  .replace(/</g, '&lt;')\n  .replace(/>/g, '&gt;')\n  .replace(/\\\"/g, '&quot;')\n  .replace(/'/g, '&#39;');\n\nconst prepared = $('Prepare health probes').first().json || {};\n\nconst readProbe = (nodeName) => {\n  try {\n    const items = $(nodeName).all();\n    if (!items.length) {\n      return { ran: false, items: [], errors: [`Node \"${nodeName}\" produced no items (binding/table likely unresolved).`] };\n    }\n    const errors = [];\n    for (const item of items) {\n      if (item.error) errors.push(String(item.error.message || item.error.description || item.error));\n      const j = item.json || {};\n      if (j.error) errors.push(typeof j.error === 'string' ? j.error : JSON.stringify(j.error));\n      if (typeof j.message === 'string' && /REPLACE_|could not find|doesn't exist|does not exist|not configured|invalid credential|denied|ECONNREFUSED|ENOTFOUND/i.test(j.message)) {\n        errors.push(j.message);\n      }\n      // continueOnFail sometimes surfaces only a string/code on the item root\n      if (typeof item.message === 'string' && /REPLACE_|error|fail/i.test(item.message)) errors.push(item.message);\n    }\n    return { ran: true, items: items.map((i) => i.json || {}), errors };\n  } catch (e) {\n    return { ran: false, items: [], errors: [String(e.message || e)] };\n  }\n};\n\nconst checks = [];\nconst push = (check, status, where_to_fix, detail) => {\n  checks.push({ check, status, where_to_fix, detail });\n};\n\nconst BINDINGS = [\n  { owner: 'Orchestrator — Engineering MAS', node: 'Call Excel Extraction Specialist Adapter', target: 'Adapter — Excel Extraction' },\n  { owner: 'Orchestrator — Engineering MAS', node: 'Call SCHEDULE Hybrid Retrieval', target: 'MAS — Knowledge Retrieval' },\n  { owner: 'Orchestrator — Engineering MAS', node: 'Call SCHEDULE Builder Specialist', target: 'SCHEDULE — Builder' },\n  { owner: 'Orchestrator — Engineering MAS', node: 'Call Calculation Specialist', target: 'Adapter — Calculation (Math Service)' },\n  { owner: 'Orchestrator — Engineering MAS', node: 'Call MAS Trace Event Writer', target: 'Writer — MAS Trace' },\n  { owner: 'Adapter — Excel Extraction', node: 'Call native Excel Extraction Agent', target: 'Agent — Excel Extractor' },\n  { owner: 'Form — MAS Entry', node: 'Call Universal Engineering Orchestrator', target: 'Orchestrator — Engineering MAS' },\n  { owner: 'Form — MAS Human Gate', node: 'Call Orchestrator status', target: 'Orchestrator — Engineering MAS' },\n  { owner: 'Form — MAS Human Gate', node: 'Call Orchestrator resume', target: 'Orchestrator — Engineering MAS' },\n  { owner: 'Form — MAS Deployment Health Check', node: 'Call Orchestrator probe', target: 'Orchestrator — Engineering MAS' },\n  { owner: 'Form — MAS Deployment Health Check', node: 'Call Trace Writer probe', target: 'Writer — MAS Trace' },\n  { owner: 'Orchestrator — Engineering MAS', node: 'Call CAS persist — insert new task', target: 'CAS — Persist Task State' },\n  { owner: 'Orchestrator — Engineering MAS', node: 'Call CAS persist — human action then plan', target: 'CAS — Persist Task State' },\n  { owner: 'Orchestrator — Engineering MAS', node: 'Call CAS persist — terminal human action', target: 'CAS — Persist Task State' },\n  { owner: 'Orchestrator — Engineering MAS', node: 'Call CAS persist — plan or human gate', target: 'CAS — Persist Task State' },\n  { owner: 'Orchestrator — Engineering MAS', node: 'Call CAS persist — SCHEDULE evidence retry', target: 'CAS — Persist Task State' },\n  { owner: 'Orchestrator — Engineering MAS', node: 'Call CAS persist — SCHEDULE resume', target: 'CAS — Persist Task State' },\n  { owner: 'Orchestrator — Engineering MAS', node: 'Call CAS persist — verification', target: 'CAS — Persist Task State' },\n  { owner: 'Orchestrator — Engineering MAS', node: 'Call CAS persist — specialist gate or error', target: 'CAS — Persist Task State' },\n  { owner: 'Orchestrator — Engineering MAS', node: 'Call CAS persist — routing gate', target: 'CAS — Persist Task State' },\n];\n\nconst DT_NODES = [\n  { owner: 'Writer — MAS Trace', node: 'Insert MAS trace event', table: 'mas_trace_events_v1' },\n  { owner: 'CAS — Persist Task State', node: 'Insert durable task row', table: 'engineering_orchestrator_tasks_v1' },\n  { owner: 'CAS — Persist Task State', node: 'Update durable task row', table: 'engineering_orchestrator_tasks_v1' },\n  { owner: 'Orchestrator — Engineering MAS', node: 'Load task by ID', table: 'engineering_orchestrator_tasks_v1' },\n  { owner: 'Form — MAS Deployment Health Check', node: 'Probe task Data Table', table: 'engineering_orchestrator_tasks_v1' },\n  { owner: 'Form — MAS Deployment Health Check', node: 'Probe trace Data Table', table: 'mas_trace_events_v1' },\n];\n\nfor (const b of BINDINGS) {\n  push(\n    `Binding checklist: ${b.owner} → ${b.node}`,\n    'TODO',\n    `${b.owner} → node \"${b.node}\" → select \"${b.target}\"`,\n    'Manual UI binding. Live probes below only cover Health Check → Orchestrator/Trace and Data Tables.',\n  );\n}\nfor (const d of DT_NODES) {\n  push(\n    `Data Table checklist: ${d.owner} → ${d.node}`,\n    'TODO',\n    `${d.owner} → node \"${d.node}\" → select table \"${d.table}\"`,\n    'Select the Data Table in the node resource locator (must not remain REPLACE_IN_UI).',\n  );\n}\n\nconst taskProbe = readProbe('Probe task Data Table');\npush(\n  'Live: task Data Table readable',\n  'TODO',\n  'Postgres control plane: cases/events (postgres-init/02-mas-control-plane.sql). Data Table engineering_orchestrator_tasks_v1 is retired from production.',\n  taskProbe.errors.join(' | ') || 'Not a production gate after MAS cutover.',\n);\n\nconst traceProbe = readProbe('Probe trace Data Table');\npush(\n  'Live: trace Data Table readable',\n  'TODO',\n  'Postgres control plane: events + error_traces. Data Table mas_trace_events_v1 is retired from production.',\n  traceProbe.errors.join(' | ') || 'Not a production gate after MAS cutover.',\n);\n\nconst orchProbe = readProbe('Call Orchestrator probe');\nconst orchJson = orchProbe.items[0] || {};\nconst orchStatus = String(orchJson.status || '');\nconst orchLooksBound = orchProbe.ran && !orchProbe.errors.length && orchJson.input_valid !== false && ['not_found', 'awaiting_human', 'completed', 'failed', 'conflict', 'cancelled', 'rejected'].includes(orchStatus);\npush(\n  'Live: Orchestrator reachable via Execute Workflow',\n  'TODO',\n  'Form — MAS Deployment Health Check: production path is webhook /webhook/mas-orchestrator-step (Orchestrator — MAS). Execute Workflow action=status against Orchestrator — Engineering MAS is retired.',\n  orchLooksBound\n    ? `legacy status=${orchStatus} (informational)`\n    : (orchProbe.errors.join(' | ') || `legacy Execute Workflow not used after cutover; status=${orchStatus || 'n/a'}`),\n);\n\nconst writerProbe = readProbe('Call Trace Writer probe');\nconst writerJson = writerProbe.items[0] || {};\nconst writerOk = writerProbe.ran && !writerProbe.errors.length && (writerJson.contract === 'mas_trace_ack' || writerJson.stored === true);\npush(\n  'Live: Trace Writer reachable + insert path',\n  'TODO',\n  'Writer — MAS Trace is STALE. Agents write Activity POST /cases/{id}/events; n8n crashes go to error_traces.',\n  writerOk ? `legacy mas_trace_ack event_id=${writerJson.event_id || 'n/a'}` : (writerProbe.errors.join(' | ') || 'Not a production gate after MAS cutover.'),\n);\n\nconst readHttp = (nodeName, expectOk = (j, statusCode) => statusCode >= 200 && statusCode < 300) => {\n  try {\n    const items = $(nodeName).all();\n    if (!items.length) return { ok: false, detail: `Node \"${nodeName}\" produced no items.` };\n    const item = items[0];\n    if (item.error) return { ok: false, detail: String(item.error.message || item.error) };\n    const j = item.json || {};\n    const statusCode = Number(j.statusCode ?? j.status ?? (j.data && j.data.statusCode) ?? 0);\n    // n8n httpRequest fullResponse puts body under j.body or j.data\n    const body = j.body ?? j.data ?? j;\n    const ok = expectOk(body, statusCode) && !(typeof j.message === 'string' && /ECONNREFUSED|ENOTFOUND|timeout|REPLACE_/i.test(j.message));\n    return { ok, detail: `statusCode=${statusCode || 'n/a'} body=${JSON.stringify(body).slice(0, 180)}`, statusCode, body };\n  } catch (e) {\n    return { ok: false, detail: String(e.message || e) };\n  }\n};\n\nconst excelHealth = readHttp('Probe excel-tools /health', (body, code) => code === 200 || (body && (body.status === 'ok' || body.ok === true)));\npush('Live: excel-tools /health', excelHealth.ok ? 'PASS' : 'FAIL',\n  'docker compose → excel-tools; from n8n: GET http://excel-tools:8000/health',\n  excelHealth.detail);\n\nconst runnersHealth = readHttp('Probe n8n-runners /healthz', (body, code) => code === 200);\npush('Live: n8n-runners /healthz', runnersHealth.ok ? 'PASS' : 'FAIL',\n  'docker compose → n8n-runners healthcheck; from n8n: GET http://n8n-runners:5680/healthz',\n  runnersHealth.detail);\n\nconst activityHealth = readHttp('Probe mas-activity /health', (body, code) => code === 200 || (body && body.status === 'ok'));\npush('Live: mas-activity /health', activityHealth.ok ? 'PASS' : 'FAIL',\n  'docker compose → mas-activity (optional UI); from n8n: GET http://mas-activity:8200/health',\n  activityHealth.detail);\n\nconst n8nHealth = readHttp('Probe n8n /healthz', (body, code) => code === 200 || (body && body.status === 'ok'));\npush('Live: n8n /healthz', n8nHealth.ok ? 'PASS' : 'FAIL',\n  'docker compose → n8n; GET http://n8n:5678/healthz',\n  n8nHealth.detail);\n\nconst mathHealth = readHttp('Probe math-service /health', (body, code) => code === 200 || (body && body.status === 'ok'));\npush('Live: math-service /health', mathHealth.ok ? 'PASS' : 'FAIL',\n  'docker compose → math-service; from n8n: GET http://math-service:8100/health',\n  mathHealth.detail);\n\nconst scheduleHealth = readHttp('Probe schedule-builder /health', (body, code) => code === 200 || (body && body.status === 'ok'));\npush('Live: schedule-builder /health', scheduleHealth.ok ? 'PASS' : 'FAIL',\n  'docker compose → schedule-builder; from n8n: GET http://schedule-builder:8090/health',\n  scheduleHealth.detail);\n\npush(\n  'Manual: specialist routes (Excel / SCHEDULE / Calculation)',\n  'TODO',\n  'docs.md → Manual smoke; Orchestrator Call Excel / Retrieval / Builder / Calculation nodes',\n  'Health Check intentionally does not call LLM or Excel/SCHEDULE Builder.',\n);\npush(\n  'Manual: export Orchestrator JSON and search REPLACE_',\n  'TODO',\n  'Orchestrator — Engineering MAS → export → search REPLACE_EXCEL_ADAPTER_IN_UI, REPLACE_SCHEDULE_*, REPLACE_CALCULATION_*, REPLACE_MAS_TRACE_*',\n  'Any REPLACE_ left means an Execute Workflow binding is unfinished.',\n);\n\nconst fail = checks.filter((c) => c.status === 'FAIL');\nconst pass = checks.filter((c) => c.status === 'PASS');\nconst todo = checks.filter((c) => c.status === 'TODO');\nconst overall = fail.length ? 'FAIL' : 'PASS_WITH_TODO';\n\nconst rowHtml = (c) => `<tr><td><strong>${escapeHtml(c.status)}</strong></td><td>${escapeHtml(c.check)}</td><td><code>${escapeHtml(c.where_to_fix)}</code></td><td>${escapeHtml(c.detail)}</td></tr>`;\nconst section = (title, rows) => rows.length\n  ? `<h2>${escapeHtml(title)} (${rows.length})</h2><table border=\"1\" cellpadding=\"6\" cellspacing=\"0\"><thead><tr><th>status</th><th>check</th><th>where_to_fix</th><th>detail</th></tr></thead><tbody>${rows.map(rowHtml).join('')}</tbody></table>`\n  : '';\n\nconst html = `<main>\n<h1>MAS deployment health check</h1>\n<p>Overall: <strong>${escapeHtml(overall)}</strong></p>\n<p>Started: <code>${escapeHtml(prepared.started_at || '')}</code></p>\n<p>Probe task_id: <code>${escapeHtml(prepared.probe_task_id || '')}</code></p>\n<p>Operator: <code>${escapeHtml(prepared.operator_note || prepared.requested_by || '')}</code></p>\n<p>Live probes cover Docker HTTP health (excel-tools, math-service, schedule-builder, runners, activity, n8n). CAS/Trace/old orchestrator are TODO after control-plane cutover.</p>\n${section('FAIL — fix these first', fail)}\n${section('PASS — live probes', pass)}\n${section('TODO — checklist / manual', todo)}\n<p>Full runbook: <code>docs.md</code></p>\n</main>`;\n\nreturn [{ json: {\n  overall,\n  fail_count: fail.length,\n  pass_count: pass.length,\n  todo_count: todo.length,\n  checks,\n  form_response_html: html,\n  where_to_fix: fail.map((c) => c.where_to_fix),\n}}];"
-      },
-      "id": "c1000001-0001-4000-8000-00000000000b",
-      "name": "Build health report",
-      "type": "n8n-nodes-base.code",
-      "typeVersion": 2,
-      "position": [
-        3080,
-        0
-      ]
-    },
-    {
-      "parameters": {
-        "operation": "completion",
-        "respondWith": "showText",
-        "responseText": "={{ $json.form_response_html }}"
-      },
-      "id": "c1000001-0001-4000-8000-00000000000c",
-      "name": "Show health report",
-      "type": "n8n-nodes-base.form",
-      "typeVersion": 2.5,
-      "position": [
-        3360,
         0
       ]
     },
     {
       "parameters": {
         "method": "GET",
-        "url": "http://excel-tools:8000/health",
+        "url": "={{ $('Prepare health probes').first().json.urls.activity_health }}",
         "options": {
-          "timeout": 5000,
+          "timeout": 8000,
           "response": {
             "response": {
               "neverError": true,
@@ -212,8 +138,60 @@
           }
         }
       },
-      "id": "c1000001-0001-4000-8000-000000000010",
-      "name": "Probe excel-tools /health",
+      "id": "4a79641f-2bfd-5f1c-96cb-82f1485c8a9e",
+      "name": "Probe Activity /health",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [
+        840,
+        0
+      ],
+      "continueOnFail": true,
+      "alwaysOutputData": true
+    },
+    {
+      "parameters": {
+        "method": "GET",
+        "url": "={{ $('Prepare health probes').first().json.urls.activity_ready }}",
+        "options": {
+          "timeout": 8000,
+          "response": {
+            "response": {
+              "neverError": true,
+              "responseFormat": "autodetect",
+              "fullResponse": true
+            }
+          }
+        }
+      },
+      "id": "37a8896f-fa0d-5e3c-9727-b258b34614f7",
+      "name": "Probe Activity /ready",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [
+        1120,
+        0
+      ],
+      "continueOnFail": true,
+      "alwaysOutputData": true
+    },
+    {
+      "parameters": {
+        "method": "GET",
+        "url": "={{ $('Prepare health probes').first().json.urls.excel_health }}",
+        "options": {
+          "timeout": 8000,
+          "response": {
+            "response": {
+              "neverError": true,
+              "responseFormat": "autodetect",
+              "fullResponse": true
+            }
+          }
+        }
+      },
+      "id": "369f06d9-6ad9-57ce-a04d-b47985df7ae2",
+      "name": "Probe Excel Tools /health",
       "type": "n8n-nodes-base.httpRequest",
       "typeVersion": 4.2,
       "position": [
@@ -226,9 +204,9 @@
     {
       "parameters": {
         "method": "GET",
-        "url": "http://n8n-runners:5680/healthz",
+        "url": "={{ $('Prepare health probes').first().json.urls.schedule_health }}",
         "options": {
-          "timeout": 5000,
+          "timeout": 8000,
           "response": {
             "response": {
               "neverError": true,
@@ -238,8 +216,8 @@
           }
         }
       },
-      "id": "c1000001-0001-4000-8000-000000000011",
-      "name": "Probe n8n-runners /healthz",
+      "id": "de2ff1a0-ccd7-5471-8e61-d9798edf54b8",
+      "name": "Probe Schedule Builder /health",
       "type": "n8n-nodes-base.httpRequest",
       "typeVersion": 4.2,
       "position": [
@@ -252,9 +230,9 @@
     {
       "parameters": {
         "method": "GET",
-        "url": "http://mas-activity:8200/health",
+        "url": "={{ $('Prepare health probes').first().json.urls.math_health }}",
         "options": {
-          "timeout": 5000,
+          "timeout": 8000,
           "response": {
             "response": {
               "neverError": true,
@@ -264,8 +242,8 @@
           }
         }
       },
-      "id": "c1000001-0001-4000-8000-000000000012",
-      "name": "Probe mas-activity /health",
+      "id": "9e8fabc0-a2ce-5ad5-ae62-c878e7e2368a",
+      "name": "Probe Math /health",
       "type": "n8n-nodes-base.httpRequest",
       "typeVersion": 4.2,
       "position": [
@@ -277,10 +255,24 @@
     },
     {
       "parameters": {
-        "method": "GET",
-        "url": "http://n8n:5678/healthz",
+        "method": "POST",
+        "url": "={{ $('Prepare health probes').first().json.urls.orchestrator_webhook }}",
+        "authentication": "genericCredentialType",
+        "genericAuthType": "httpHeaderAuth",
+        "sendHeaders": true,
+        "headerParameters": {
+          "parameters": [
+            {
+              "name": "Content-Type",
+              "value": "application/json"
+            }
+          ]
+        },
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "={{ JSON.stringify($('Prepare health probes').first().json.bodies.orchestrator_probe) }}",
         "options": {
-          "timeout": 5000,
+          "timeout": 20000,
           "response": {
             "response": {
               "neverError": true,
@@ -290,23 +282,43 @@
           }
         }
       },
-      "id": "c1000001-0001-4000-8000-000000000013",
-      "name": "Probe n8n /healthz",
+      "id": "4e43d497-f609-582f-a439-7abba7915ff3",
+      "name": "Probe Orchestrator webhook",
       "type": "n8n-nodes-base.httpRequest",
       "typeVersion": 4.2,
       "position": [
         2240,
         0
       ],
+      "credentials": {
+        "httpHeaderAuth": {
+          "id": "REPLACE_IN_UI",
+          "name": "REPLACE: MAS webhook Header Auth (same as Orchestrator / Control Plane Proxy)"
+        }
+      },
       "continueOnFail": true,
       "alwaysOutputData": true
     },
     {
       "parameters": {
-        "method": "GET",
-        "url": "http://math-service:8100/health",
+        "method": "POST",
+        "url": "={{ $('Prepare health probes').first().json.urls.control_plane_webhook }}",
+        "authentication": "genericCredentialType",
+        "genericAuthType": "httpHeaderAuth",
+        "sendHeaders": true,
+        "headerParameters": {
+          "parameters": [
+            {
+              "name": "Content-Type",
+              "value": "application/json"
+            }
+          ]
+        },
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "={{ JSON.stringify($('Prepare health probes').first().json.bodies.control_plane_list_agents) }}",
         "options": {
-          "timeout": 5000,
+          "timeout": 20000,
           "response": {
             "response": {
               "neverError": true,
@@ -316,47 +328,66 @@
           }
         }
       },
-      "id": "c1000001-0001-4000-8000-000000000014",
-      "name": "Probe math-service /health",
+      "id": "87f61fab-2adc-59ee-a3b1-3661822a5d57",
+      "name": "Probe Control Plane Proxy webhook",
       "type": "n8n-nodes-base.httpRequest",
       "typeVersion": 4.2,
       "position": [
         2520,
         0
       ],
+      "credentials": {
+        "httpHeaderAuth": {
+          "id": "REPLACE_IN_UI",
+          "name": "REPLACE: MAS webhook Header Auth (same as Orchestrator / Control Plane Proxy)"
+        }
+      },
       "continueOnFail": true,
       "alwaysOutputData": true
     },
     {
       "parameters": {
-        "method": "GET",
-        "url": "http://schedule-builder:8090/health",
-        "options": {
-          "timeout": 5000,
-          "response": {
-            "response": {
-              "neverError": true,
-              "responseFormat": "autodetect",
-              "fullResponse": true
-            }
-          }
-        }
+        "jsCode": "\nconst escapeHtml = (value) => String(value ?? '')\n  .replace(/&/g, '&amp;')\n  .replace(/</g, '&lt;')\n  .replace(/>/g, '&gt;')\n  .replace(/\\\"/g, '&quot;')\n  .replace(/'/g, '&#39;');\n\nconst prepared = $('Prepare health probes').first().json || {};\nconst runtime = prepared.runtime || {};\nconst urls = prepared.urls || {};\nconst issues = Array.isArray(prepared.runtime_issues) ? prepared.runtime_issues : [];\n\nconst checks = [];\nconst push = (check, status, where_to_fix, detail) => { checks.push({ check, status, where_to_fix, detail }); };\n\nconst RUNTIME_FIX = 'MAS — Runtime Config → node \"Runtime URLs\" (field: http://<IP-Windows>:8200 / :8000 / :8090 / :8100; orchestrator_step_url = URL of this n8n + /webhook/mas-orchestrator-step)';\nconst BIND_FIX = 'Form — MAS Deployment Health Check → node \"Runtime endpoints\" → select \"MAS — Runtime Config\"';\n\n/* 1. Runtime Config */\nconst unbound = issues.find((i) => i.kind === 'unbound');\nif (unbound) {\n  push('Runtime Config: bound and readable', 'FAIL', BIND_FIX, unbound.detail);\n} else {\n  push('Runtime Config: bound and readable', 'PASS', BIND_FIX, `${Object.keys(runtime).filter((k) => runtime[k]).length}/5 URLs set`);\n}\nfor (const i of issues) {\n  if (i.kind === 'unbound') continue;\n  if (i.kind === 'lab_dns') {\n    push(`Runtime Config: ${i.key} is a lab Docker DNS name`, 'TODO', RUNTIME_FIX, `${i.detail} — correct on the Compose lab; on the field it must be the Windows IP`);\n  } else if (i.kind === 'wrong_path') {\n    push(`Runtime Config: ${i.key} path`, 'FAIL', RUNTIME_FIX, `${i.detail} — must end with /webhook/mas-orchestrator-step`);\n  } else {\n    push(`Runtime Config: ${i.key} is ${i.kind}`, 'FAIL', RUNTIME_FIX, i.detail);\n  }\n}\n\n/* 2. HTTP probes */\nconst readHttp = (nodeName) => {\n  try {\n    const items = $(nodeName).all();\n    if (!items.length) return { ok: false, statusCode: 0, body: null, detail: `Node \"${nodeName}\" produced no items.` };\n    const item = items[0];\n    const j = item.json || {};\n    const errMsg = item.error ? String(item.error.message || item.error) : (typeof j.message === 'string' && !j.statusCode ? j.message : '');\n    if (errMsg && !j.statusCode) return { ok: false, statusCode: 0, body: null, detail: errMsg };\n    const statusCode = Number(j.statusCode ?? j.status ?? 0);\n    let body = j.body ?? j.data ?? null;\n    if (typeof body === 'string') { try { body = JSON.parse(body); } catch (e) { /* keep text */ } }\n    const short = body == null ? '' : (typeof body === 'string' ? body : JSON.stringify(body));\n    return { ok: statusCode >= 200 && statusCode < 300, statusCode, body, detail: `statusCode=${statusCode || 'n/a'} body=${short.slice(0, 200)}` };\n  } catch (e) {\n    return { ok: false, statusCode: 0, body: null, detail: String(e.message || e) };\n  }\n};\nconst netHint = (label, url, dir) => `${label} — ${url || 'URL empty'}. ${dir}`;\nconst WIN = 'Windows: start-windows.bat running; service listens on 0.0.0.0; Windows Firewall allows the port from the n8n host; URL in MAS — Runtime Config.';\n\nconst svc = (nodeName, label, url, bodyOk) => {\n  const r = readHttp(nodeName);\n  const okBody = r.ok && (bodyOk ? bodyOk(r.body) : true);\n  push(`Live: ${label}`, okBody ? 'PASS' : 'FAIL', netHint(label, url, WIN), r.detail);\n  return r;\n};\n\nconst activity = svc('Probe Activity /health', 'Activity /health', urls.activity_health, (b) => b && b.status === 'ok');\nif (activity.ok && activity.body && typeof activity.body === 'object') {\n  const backend = String(activity.body.control_plane_backend || '');\n  push('Live: Activity control plane = n8n_proxy', backend === 'n8n_proxy' ? 'PASS' : 'FAIL',\n    'mas-activity.env: CONTROL_PLANE_REQUIRED=true, CONTROL_PLANE_PROXY_URL=<n8n>/webhook/mas-control-plane, CONTROL_PLANE_PROXY_AUTH_* — restart Activity',\n    `control_plane_backend=${backend || 'n/a'}`);\n}\nconst ready = readHttp('Probe Activity /ready');\n{\n  const b = ready.body && typeof ready.body === 'object' ? (ready.body.detail && typeof ready.body.detail === 'object' ? ready.body.detail : ready.body) : {};\n  const failing = [];\n  const wh = b.webhooks || b.checks || {};\n  const scan = (obj) => {\n    if (Array.isArray(obj)) { for (const it of obj) if (it && it.ok === false) failing.push(it.name || it.url || it.path || 'webhook'); return; }\n    if (obj && typeof obj === 'object') for (const [k, v] of Object.entries(obj)) { if (v && typeof v === 'object' && v.ok === false) failing.push(k); else if (Array.isArray(v)) scan(v); }\n  };\n  scan(wh);\n  const missing = Array.isArray(b.missing_config) ? b.missing_config : [];\n  push('Live: Activity /ready (Windows → n8n webhooks)', ready.ok ? 'PASS' : 'FAIL',\n    'From the Windows PC Activity must reach this n8n: ORCHESTRATOR_WEBHOOK_URL / CONTROL_PLANE_PROXY_URL / KNOWLEDGE_INGEST_URL in mas-activity.env; corporate TLS → ACTIVITY_CA_BUNDLE; webhooks Active',\n    ready.ok ? ready.detail : `${ready.detail}${failing.length ? ` failing=${failing.join(',')}` : ''}${missing.length ? ` missing_config=${missing.join(',')}` : ''}`);\n}\nsvc('Probe Excel Tools /health', 'Excel Tools /health', urls.excel_health, (b) => b && (b.status === 'ok' || b.ok === true));\nsvc('Probe Schedule Builder /health', 'Schedule Builder /health', urls.schedule_health, (b) => b && (b.status === 'ok' || b.ok === true));\nsvc('Probe Math /health', 'Math /health', urls.math_health, (b) => b && (b.status === 'ok' || b.ok === true));\n\n/* 3. n8n webhooks (this n8n calling itself — same path the Orchestrator self-POST uses) */\nconst webhookFix = (wf) => `n8n: ${wf} Active; Header Auth credential on this form's probe = the one on the ${wf} webhook; orchestrator_step_url in MAS — Runtime Config = URL this n8n can reach itself on`;\nconst orch = readHttp('Probe Orchestrator webhook');\n{\n  const b = orch.body && typeof orch.body === 'object' ? orch.body : {};\n  let status = 'FAIL';\n  let detail = orch.detail;\n  if (orch.ok && (b.contract === 'mas_orchestrator_ack' || b.status === 'probe' || b.action === 'probe')) status = 'PASS';\n  else if (orch.ok) { status = 'PASS'; detail = `HTTP ${orch.statusCode} but no mas_orchestrator_ack — re-import Orchestrator — MAS? ${orch.detail}`; }\n  else if (orch.statusCode === 401 || orch.statusCode === 403) detail = `HTTP ${orch.statusCode}: Header Auth mismatch (probe credential vs Orchestrator webhook). ${orch.detail}`;\n  else if (orch.statusCode === 404) detail = `HTTP 404: Orchestrator — MAS is not Active or orchestrator_step_url is wrong. ${orch.detail}`;\n  push('Live: Orchestrator webhook /webhook/mas-orchestrator-step (action=probe)', status, webhookFix('Orchestrator — MAS'), detail);\n}\nconst proxy = readHttp('Probe Control Plane Proxy webhook');\n{\n  const b = proxy.body && typeof proxy.body === 'object' ? proxy.body : {};\n  const agents = Array.isArray(b.result) ? b.result.map((a) => String((a && a.agent_id) || '')).filter(Boolean) : [];\n  const REQUIRED = ['excel_extractor', 'schedule_builder', 'calculation_agent'];\n  const missing = REQUIRED.filter((id) => !agents.includes(id));\n  let status = 'FAIL';\n  let detail = proxy.detail;\n  if (proxy.ok && b.ok === true && Array.isArray(b.result)) {\n    status = missing.length ? 'FAIL' : 'PASS';\n    detail = missing.length\n      ? `agent_registry missing ${missing.join(',')} — POST {\"operation\":\"schema\"} to /webhook/mas-control-plane (seeds registry)`\n      : `agents=${agents.join(',')}`;\n  } else if (proxy.statusCode === 401 || proxy.statusCode === 403) detail = `HTTP ${proxy.statusCode}: Header Auth mismatch (probe credential vs Control Plane Proxy webhook). ${proxy.detail}`;\n  else if (proxy.statusCode === 404) detail = `HTTP 404: MAS — Control Plane Proxy is not Active or webhook base differs from orchestrator_step_url. ${proxy.detail}`;\n  else if (/relation .* does not exist/i.test(proxy.detail)) detail = `Postgres tables missing — POST {\"operation\":\"schema\"} first. ${proxy.detail}`;\n  push('Live: Control Plane Proxy webhook + Postgres agent_registry (list_agents)', status,\n    `${webhookFix('MAS — Control Plane Proxy')}; Postgres credential on \"Execute control-plane SQL\"; then POST {\"operation\":\"schema\"}`, detail);\n}\n\n/* 4. Roll-up */\nconst fail = checks.filter((c) => c.status === 'FAIL');\nconst pass = checks.filter((c) => c.status === 'PASS');\nconst todo = checks.filter((c) => c.status === 'TODO');\nconst overall = fail.length ? 'FAIL' : (todo.length ? 'PASS_WITH_TODO' : 'PASS');\n\nconst MANUAL = [\n  'Execute Workflow bindings: Orchestrator — MAS → Runtime endpoints / Call Excel Extractor / Call Schedule Builder / Call Knowledge Retrieval; Agent — Excel Extractor and Agent — Schedule Builder → Runtime configuration / Call Knowledge Retrieval.',\n  'Credentials: LLM on the three Chat Models; embeddings on Ingestion / Retrieval; Postgres on Ingestion / Retrieval / Orchestrator / Control Plane Proxy; Header Auth on Orchestrator webhook + POST continue run + Control Plane Proxy webhook; Excel Tools X-API-Key on Agent — Excel Extractor HTTP nodes.',\n  'Settings → Error workflow = Error — MAS Node Traces on Orchestrator, Excel Extractor, Schedule Builder, Retrieval, Ingestion.',\n  'Export each workflow JSON and search REPLACE_ — none may remain.',\n  'Activation order: Control Plane Proxy → Ingestion / Retrieval / Excel / Schedule / Error traces → Orchestrator.',\n];\n\nconst rowHtml = (c) => `<tr><td><strong>${escapeHtml(c.status)}</strong></td><td>${escapeHtml(c.check)}</td><td><code>${escapeHtml(c.where_to_fix)}</code></td><td>${escapeHtml(c.detail)}</td></tr>`;\nconst section = (title, rows) => rows.length\n  ? `<h2>${escapeHtml(title)} (${rows.length})</h2><table border=\\\"1\\\" cellpadding=\\\"6\\\" cellspacing=\\\"0\\\"><thead><tr><th>status</th><th>check</th><th>where_to_fix</th><th>detail</th></tr></thead><tbody>${rows.map(rowHtml).join('')}</tbody></table>`\n  : '';\nconst runtimeHtml = `<table border=\\\"1\\\" cellpadding=\\\"6\\\" cellspacing=\\\"0\\\"><thead><tr><th>Runtime Config key</th><th>value</th></tr></thead><tbody>${Object.keys(runtime).map((k) => `<tr><td><code>${escapeHtml(k)}</code></td><td><code>${escapeHtml(runtime[k] || '(empty)')}</code></td></tr>`).join('')}</tbody></table>`;\n\nconst html = `<main>\n<h1>MAS deployment health check</h1>\n<p>Overall: <strong>${escapeHtml(overall)}</strong></p>\n<p>Started: <code>${escapeHtml(prepared.started_at || '')}</code> · Operator: <code>${escapeHtml(prepared.operator_note || prepared.requested_by || '')}</code></p>\n<p>All URLs below come from <strong>MAS — Runtime Config</strong>. Probes: the four Windows FastAPI services, Activity → n8n readiness, and this n8n's own Orchestrator / Control Plane Proxy webhooks (Header Auth).</p>\n${runtimeHtml}\n${section('FAIL — fix these first', fail)}\n${section('PASS — live probes', pass)}\n${section('TODO — lab values / follow-up', todo)}\n<h2>Manual checklist (not probed)</h2><ul>${MANUAL.map((m) => `<li>${escapeHtml(m)}</li>`).join('')}</ul>\n<p>Full runbook: <code>docs.md</code></p>\n</main>`;\n\nreturn [{ json: {\n  overall,\n  fail_count: fail.length,\n  pass_count: pass.length,\n  todo_count: todo.length,\n  checks,\n  runtime,\n  form_response_html: html,\n  where_to_fix: fail.map((c) => c.where_to_fix),\n} }];\n"
       },
-      "id": "c1000001-0001-4000-8000-000000000015",
-      "name": "Probe schedule-builder /health",
-      "type": "n8n-nodes-base.httpRequest",
-      "typeVersion": 4.2,
+      "id": "cd63af1c-8eb1-58a7-a8db-53cbec25d630",
+      "name": "Build health report",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
       "position": [
         2800,
         0
-      ],
-      "continueOnFail": true,
-      "alwaysOutputData": true
+      ]
+    },
+    {
+      "parameters": {
+        "operation": "completion",
+        "respondWith": "showText",
+        "responseText": "={{ $json.form_response_html }}"
+      },
+      "id": "d57604e3-bc50-5633-b6f1-e3db68260759",
+      "name": "Show health report",
+      "type": "n8n-nodes-base.form",
+      "typeVersion": 2.5,
+      "position": [
+        3080,
+        0
+      ]
     }
   ],
   "pinData": {},
   "connections": {
     "Health check form": {
+      "main": [
+        [
+          {
+            "node": "Runtime endpoints",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Runtime endpoints": {
       "main": [
         [
           {
@@ -371,40 +402,84 @@
       "main": [
         [
           {
-            "node": "Probe task Data Table",
+            "node": "Probe Activity /health",
             "type": "main",
             "index": 0
           }
         ]
       ]
     },
-    "Probe task Data Table": {
+    "Probe Activity /health": {
       "main": [
         [
           {
-            "node": "Continue after task probe",
+            "node": "Probe Activity /ready",
             "type": "main",
             "index": 0
           }
         ]
       ]
     },
-    "Continue after task probe": {
+    "Probe Activity /ready": {
       "main": [
         [
           {
-            "node": "Probe trace Data Table",
+            "node": "Probe Excel Tools /health",
             "type": "main",
             "index": 0
           }
         ]
       ]
     },
-    "Probe trace Data Table": {
+    "Probe Excel Tools /health": {
       "main": [
         [
           {
-            "node": "Probe excel-tools /health",
+            "node": "Probe Schedule Builder /health",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Probe Schedule Builder /health": {
+      "main": [
+        [
+          {
+            "node": "Probe Math /health",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Probe Math /health": {
+      "main": [
+        [
+          {
+            "node": "Probe Orchestrator webhook",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Probe Orchestrator webhook": {
+      "main": [
+        [
+          {
+            "node": "Probe Control Plane Proxy webhook",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Probe Control Plane Proxy webhook": {
+      "main": [
+        [
+          {
+            "node": "Build health report",
             "type": "main",
             "index": 0
           }
@@ -421,79 +496,13 @@
           }
         ]
       ]
-    },
-    "Probe excel-tools /health": {
-      "main": [
-        [
-          {
-            "node": "Probe n8n-runners /healthz",
-            "type": "main",
-            "index": 0
-          }
-        ]
-      ]
-    },
-    "Probe n8n-runners /healthz": {
-      "main": [
-        [
-          {
-            "node": "Probe mas-activity /health",
-            "type": "main",
-            "index": 0
-          }
-        ]
-      ]
-    },
-    "Probe mas-activity /health": {
-      "main": [
-        [
-          {
-            "node": "Probe n8n /healthz",
-            "type": "main",
-            "index": 0
-          }
-        ]
-      ]
-    },
-    "Probe n8n /healthz": {
-      "main": [
-        [
-          {
-            "node": "Probe math-service /health",
-            "type": "main",
-            "index": 0
-          }
-        ]
-      ]
-    },
-    "Probe math-service /health": {
-      "main": [
-        [
-          {
-            "node": "Probe schedule-builder /health",
-            "type": "main",
-            "index": 0
-          }
-        ]
-      ]
-    },
-    "Probe schedule-builder /health": {
-      "main": [
-        [
-          {
-            "node": "Build health report",
-            "type": "main",
-            "index": 0
-          }
-        ]
-      ]
     }
   },
-  "versionId": "mas-deployment-health-check-v1.2",
+  "versionId": "mas-deployment-health-check-v2.0",
   "meta": {
     "templateCredsSetupCompleted": false,
     "targetN8nVersion": "2.30.8",
-    "contractVersion": "mas_deployment_health_check/v1.2"
+    "contractVersion": "mas_deployment_health_check/v2.0"
   },
   "tags": []
 }
