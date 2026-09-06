@@ -5,7 +5,7 @@ from __future__ import annotations
 from copy import deepcopy
 from datetime import date, datetime
 import re
-from typing import Any
+from typing import Any, Mapping
 
 from .emit import emit_schedule
 from .parse import Block, Record, ScheduleDoc, parse_schedule, timeline_segments
@@ -119,6 +119,20 @@ def _list_baseline_commissioning_wells(segments: list[dict[str, Any]]) -> list[s
     return sorted(wells)
 
 
+def _baseline_appearance_order(segments: list[dict[str, Any]]) -> dict[str, int]:
+    """Well → index of first appearance in the source timeline (WELSPECS/COMPDATMD/WCON… records)."""
+    order: dict[str, int] = {}
+    for segment in segments:
+        for block in segment.get("blocks") or []:
+            if block.keyword not in MOVE_KEYWORDS:
+                continue
+            for record in block.records:
+                well = _well(record)
+                if _is_named_well(well):
+                    order.setdefault(_well_name(well), len(order))
+    return order
+
+
 def _preamble(segments: list[dict[str, Any]]) -> dict[str, Any]:
     for segment in segments:
         if segment.get("dates_block") is None:
@@ -228,6 +242,177 @@ def _build_new_well_evidence_gaps(
     return gaps
 
 
+NEW_WELL_FACT_COLUMNS: list[dict[str, str]] = [
+    {"key": "well", "label": "Скважина", "required": "yes"},
+    {"key": "date", "label": "Дата ввода", "required": "yes (обычно уже есть в Excel с датами)"},
+    {"key": "group", "label": "Группа (как в GRUPTREE)", "required": "yes"},
+    {"key": "phase", "label": "Основная фаза (OIL/GAS/WATER/LIQ)", "required": "no"},
+    {"key": "md_top", "label": "MD верх перфорации, м", "required": "yes"},
+    {"key": "md_bot", "label": "MD низ перфорации, м", "required": "yes"},
+    {"key": "diameter", "label": "Диаметр ствола, м", "required": "no"},
+    {"key": "control", "label": "Режим контроля (ORAT/GRAT/LRAT/WRAT/RESV/BHP/THP)", "required": "yes"},
+    {"key": "rate", "label": "Целевой дебит для режима, sm3/сут", "required": "yes (для дебитных режимов)"},
+    {"key": "bhp", "label": "Лимит BHP, bar", "required": "no"},
+    {"key": "thp", "label": "Лимит THP, bar", "required": "no"},
+    {"key": "vfp_table", "label": "Номер VFPPROD-таблицы", "required": "no"},
+    {"key": "welltrack_include", "label": "Файл траектории WELLTRACK (.inc)", "required": "yes (вложение)"},
+]
+
+_NEW_WELL_FACT_ALIASES: dict[str, tuple[str, ...]] = {
+    "well": ("well", "скважина", "entity", "name"),
+    "date": ("date", "commissioning_date", "дата ввода", "дата"),
+    "group": ("group", "группа"),
+    "phase": ("phase", "фаза"),
+    "i": ("i", "iw"),
+    "j": ("j", "jw"),
+    "ref_depth": ("ref_depth", "опорная глубина"),
+    "branch": ("branch", "ствол"),
+    "md_top": ("md_top", "mdl", "md верх", "верх", "top_md"),
+    "md_bot": ("md_bot", "mdu", "md низ", "низ", "bottom_md", "bot_md"),
+    "diameter": ("diameter", "диаметр"),
+    "status": ("status", "статус"),
+    "control": ("control", "режим", "режим контроля"),
+    "rate": ("rate", "дебит"),
+    "orat": ("orat",),
+    "wrat": ("wrat",),
+    "grat": ("grat",),
+    "lrat": ("lrat",),
+    "resv": ("resv",),
+    "bhp": ("bhp", "забойное", "лимит bhp"),
+    "thp": ("thp", "устьевое", "лимит thp"),
+    "vfp_table": ("vfp_table", "vfp", "vfpprod"),
+    "welltrack_include": ("welltrack_include", "welltrack_path", "include_path", "welltrack", "траектория"),
+}
+
+_RATE_CONTROLS = ("ORAT", "WRAT", "GRAT", "LRAT", "RESV")
+_WCONPROD_ORDER = ("ORAT", "WRAT", "GRAT", "LRAT", "RESV", "BHP", "THP", "VFP_TABLE")
+
+
+def _fact(spec: Mapping[str, Any], key: str) -> Any:
+    lowered = {str(k).strip().lower(): v for k, v in spec.items()}
+    for alias in _NEW_WELL_FACT_ALIASES.get(key, (key,)):
+        if alias in lowered and lowered[alias] not in (None, ""):
+            return lowered[alias]
+    return None
+
+
+def _num_token(value: Any) -> str | None:
+    if value is None or value == "":
+        return None
+    if isinstance(value, bool):
+        return None
+    if isinstance(value, (int, float)):
+        return str(int(value)) if float(value).is_integer() else repr(float(value))
+    text = str(value).strip().replace(",", ".")
+    try:
+        number = float(text)
+    except ValueError:
+        return None
+    return str(int(number)) if number.is_integer() else text
+
+
+def _trim_defaults(tokens: list[str]) -> list[str]:
+    while tokens and tokens[-1] == "1*":
+        tokens.pop()
+    return tokens
+
+
+def compose_new_well_lines(spec: Mapping[str, Any]) -> tuple[dict[str, Any], list[dict[str, Any]]]:
+    """Render WELSPECS / COMPDATMD / WCONPROD records for a new well from engineering facts.
+
+    Engineers provide facts (group, MD interval, control + rate, limits, trajectory file);
+    the record layout follows the tNavigator manual (§12.20.3 WELSPECS, §12.20.10 COMPDATMD,
+    §12.20.42 WCONPROD).  Nothing is invented: a missing required fact is a finding, never a
+    default rate/group.
+    """
+    findings: list[dict[str, Any]] = []
+    well = _well_name(_fact(spec, "well"))
+    out: dict[str, Any] = {"well": well}
+    if not well:
+        findings.append({"code": "NEW_WELL_NAME_REQUIRED", "severity": "error"})
+        return out, findings
+    date = _fact(spec, "date")
+    if date is not None:
+        out["date"] = date.isoformat() if hasattr(date, "isoformat") else str(date)
+
+    include = _well_name(_fact(spec, "welltrack_include"))
+    if include:
+        out["welltrack_include"] = include
+
+    group = str(_fact(spec, "group") or "").strip()
+    if not group:
+        findings.append({"code": "NEW_WELL_GROUP_REQUIRED", "severity": "error", "well": well})
+    else:
+        i_tok = _num_token(_fact(spec, "i")) or "1*"
+        j_tok = _num_token(_fact(spec, "j")) or "1*"
+        ref_tok = _num_token(_fact(spec, "ref_depth")) or "1*"
+        phase = str(_fact(spec, "phase") or "").strip().upper()
+        tokens = [well, group, i_tok, j_tok, ref_tok]
+        if phase:
+            if phase not in {"OIL", "WATER", "GAS", "LIQ"}:
+                findings.append({"code": "NEW_WELL_PHASE_INVALID", "severity": "error", "well": well, "phase": phase})
+            tokens.append(phase)
+        out["welspecs_line"] = " " + " ".join(_trim_defaults(tokens)) + " /"
+
+    md_top = _num_token(_fact(spec, "md_top"))
+    md_bot = _num_token(_fact(spec, "md_bot"))
+    if not md_top or not md_bot:
+        findings.append({"code": "NEW_WELL_PERFORATION_MD_REQUIRED", "severity": "error", "well": well})
+    else:
+        branch = _num_token(_fact(spec, "branch")) or "1*"
+        status = str(_fact(spec, "status") or "OPEN").strip().upper()
+        if status not in {"OPEN", "SHUT"}:
+            findings.append({"code": "NEW_WELL_STATUS_INVALID", "severity": "error", "well": well, "status": status})
+            status = "OPEN"
+        tokens = [well, branch, md_top, md_bot, "MD", status]
+        diameter = _num_token(_fact(spec, "diameter"))
+        if diameter:
+            tokens += ["2*", diameter]
+        out["compdatmd_line"] = " " + " ".join(tokens) + " /"
+
+    control = str(_fact(spec, "control") or "").strip().upper()
+    if not control:
+        findings.append({"code": "NEW_WELL_CONTROL_REQUIRED", "severity": "error", "well": well})
+    elif control not in _RATE_CONTROLS + ("BHP", "THP"):
+        findings.append({"code": "NEW_WELL_CONTROL_INVALID", "severity": "error", "well": well, "control": control})
+    else:
+        values: dict[str, str | None] = {name: _num_token(_fact(spec, name.lower())) for name in _WCONPROD_ORDER}
+        rate = _num_token(_fact(spec, "rate"))
+        if control in _RATE_CONTROLS and rate and not values.get(control):
+            values[control] = rate
+        if control in _RATE_CONTROLS and not values.get(control):
+            findings.append({"code": "NEW_WELL_RATE_REQUIRED", "severity": "error", "well": well, "control": control})
+        elif control in {"BHP", "THP"} and not values.get(control):
+            findings.append({"code": "NEW_WELL_PRESSURE_REQUIRED", "severity": "error", "well": well, "control": control})
+        else:
+            status = str(_fact(spec, "status") or "OPEN").strip().upper()
+            if status not in {"OPEN", "STOP", "SHUT", "AUTO"}:
+                status = "OPEN"
+            tokens = [well, status, control] + [values.get(name) or "1*" for name in _WCONPROD_ORDER]
+            out["wconprod_line"] = " " + " ".join(_trim_defaults(tokens)) + " /"
+    return out, findings
+
+
+def new_well_definitions_from_facts(
+    rows: list[Mapping[str, Any]],
+) -> tuple[list[dict[str, Any]], list[dict[str, Any]]]:
+    """Accept either legacy typed-line definitions or engineering fact rows; return typed defs."""
+    defs: list[dict[str, Any]] = []
+    findings: list[dict[str, Any]] = []
+    for row in rows or []:
+        if not isinstance(row, Mapping):
+            continue
+        typed = any(row.get(k) for k in ("welspecs_line", "compdatmd_line", "compdatmd_lines", "wconprod_line", "wconinje_line"))
+        if typed:
+            defs.append(dict(row))
+            continue
+        composed, row_findings = compose_new_well_lines(row)
+        findings.extend(row_findings)
+        if not any(code.get("severity") == "error" for code in row_findings):
+            defs.append(composed)
+    return defs, findings
+
+
 def _apply_new_well_definitions(
     segments: list[dict[str, Any]],
     defs: list[dict[str, Any]],
@@ -235,6 +420,8 @@ def _apply_new_well_definitions(
     applied: list[dict[str, Any]] = []
     findings: list[dict[str, Any]] = []
     preamble = _preamble(segments)
+    defs, fact_findings = new_well_definitions_from_facts(list(defs or []))
+    findings.extend(fact_findings)
     for defn in defs or []:
         well = _well_name(defn.get("well") or defn.get("entity"))
         if not well:
@@ -490,12 +677,24 @@ def commissioning_revise(
             "id": "unlisted_wells_policy",
             "question": (
                 f"В Excel нет скважин: {', '.join(unlisted[:20])}"
-                f"{'…' if len(unlisted) > 20 else ''}. Сохранить их запуски или убрать?"
+                f"{'…' if len(unlisted) > 20 else ''}. В baseline у них есть даты ввода. "
+                "Оставить эти запуски как есть или убрать их из прогноза?"
             ),
-            "expected_format": "keep|remove",
             "required": True,
-            "type": "enum",
-            "enum": ["keep", "remove"],
+            "type": "choice",
+            "options": [
+                {
+                    "value": "keep",
+                    "label": "Оставить как в baseline",
+                    "hint": "Даты ввода этих скважин не меняются",
+                },
+                {
+                    "value": "remove",
+                    "label": "Убрать из прогноза",
+                    "hint": "Их WELSPECS / COMPDATMD / WCONPROD на датах ввода удаляются",
+                },
+            ],
+            "accepts": {"free_text": True},
         }]
         return _hitl_result(
             file_ref=file_ref,
@@ -522,27 +721,28 @@ def commissioning_revise(
     unresolved_new = [well for well in new_wells if well not in def_wells]
     if unresolved_new:
         gaps = _build_new_well_evidence_gaps(unresolved_new, shifts_preview)
+        shown = ", ".join(unresolved_new[:10]) + (f" и ещё {len(unresolved_new) - 10}" if len(unresolved_new) > 10 else "")
+        # One human question. Engineers give facts (table / text / files); Schedule Builder
+        # renders WELSPECS / COMPDATMD / WCONPROD itself — nobody types .INC lines.
         questions = [
             {
                 "id": "new_wells_policy",
                 "question": (
-                    f"В Excel есть новые скважины ({', '.join(unresolved_new)}), которых нет в schedule. "
-                    "Прикрепите траектории (WELLTRACK) и таблицу с перфорациями и стартовыми дебитами."
+                    f"В Excel есть новые скважины ({shown}), которых нет в schedule. "
+                    "Чтобы добавить их в прогноз, приложите траектории WELLTRACK (.inc) и по каждой скважине укажите: "
+                    "группу (как в GRUPTREE), интервал перфорации по MD (верх/низ, м), диаметр ствола, "
+                    "режим контроля и целевой дебит (например GRAT 80000), при необходимости лимит BHP и номер VFP-таблицы. "
+                    "Удобнее таблицей (xlsx), можно и текстом. Значений по умолчанию не подставляю."
                 ),
-                "expected_format": "text + file attachments (WELLTRACK + xlsx)",
                 "required": True,
-                "type": "file",
+                "type": "facts",
+                "wells": unresolved_new,
+                "accepts": {
+                    "free_text": True,
+                    "files": ["WELLTRACK .inc", "xlsx"],
+                    "table": {"columns": NEW_WELL_FACT_COLUMNS},
+                },
             },
-            *[
-                {
-                    "id": f"new_well_gap_{index + 1}",
-                    "question": gap["question"],
-                    "expected_format": gap["expected_format"],
-                    "required": True,
-                    "type": "file",
-                }
-                for index, gap in enumerate(gaps[:20])
-            ],
         ]
         return _hitl_result(
             file_ref=file_ref,
@@ -693,6 +893,11 @@ def group_rebind_revise(
 ) -> dict[str, Any]:
     segments = deepcopy(timeline_segments(parse_schedule(source_text)))
     wells = [str(item).strip("'\"") for item in spec.get("wells") or [] if str(item).strip()]
+    # Deterministic emit: the LLM may list wells in any order; records follow the baseline order
+    # (first appearance in the source), unknown names keep their given order at the end.
+    baseline_order = _baseline_appearance_order(segments)
+    given_order = {w: i for i, w in enumerate(wells)}
+    wells = sorted(dict.fromkeys(wells), key=lambda w: (baseline_order.get(w, len(baseline_order)), given_order[w]))
     well_set = set(wells)
     parent = str(spec.get("parent_group") or "").upper()
     parent_of_parent = str(spec.get("parent_of_parent") or "").upper()

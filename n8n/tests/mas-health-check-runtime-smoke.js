@@ -4,7 +4,7 @@ const assert = require('node:assert/strict');
 const fs = require('node:fs');
 const path = require('node:path');
 
-const workspace = process.env.WORKSPACE_ROOT || '/workspace';
+const workspace = process.env.WORKSPACE_ROOT || path.resolve(__dirname, '..', '..');
 const workflow = JSON.parse(fs.readFileSync(
   path.join(workspace, 'n8n', 'workflows', 'core', 'mas-deployment-health-check.workflow.json'),
   'utf8',

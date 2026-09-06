@@ -16,8 +16,8 @@
       "type": "n8n-nodes-base.stickyNote",
       "typeVersion": 1,
       "position": [
-        -220,
-        -360
+        -40,
+        -950
       ]
     },
     {
@@ -61,20 +61,20 @@
       "type": "n8n-nodes-base.executeWorkflow",
       "typeVersion": 1.3,
       "position": [
-        260,
+        280,
         0
       ]
     },
     {
       "parameters": {
-        "jsCode": "\nconst incoming=(()=>{try{return $('When executed by another workflow').first().json||{}}catch{return $json||{}}})();\nconst root=incoming&&typeof incoming==='object'?incoming:{};\nconst body=root.body&&typeof root.body==='object'?root.body:root;\nconst packet=body.specialist_packet&&typeof body.specialist_packet==='object'?body.specialist_packet:null;\nlet task=body.agent_task&&typeof body.agent_task==='object'?body.agent_task:(body.case_id||body.task_id||body.objective?body:null);\nif(!task||typeof task!=='object') task={};\nif(packet){\n  const inputs=packet.inputs&&typeof packet.inputs==='object'?packet.inputs:{};\n  task={\n    case_id:String(packet.case_id||body.case_id||task.case_id||''),\n    task_id:String(packet.task_id||task.task_id||''),\n    agent_id:'excel_extractor',\n    objective:String(packet.objective||task.objective||''),\n    handoff_message:String(packet.handoff_message||task.handoff_message||packet.objective||''),\n    inputs,\n    context:packet.context&&typeof packet.context==='object'?packet.context:(task.context||{}),\n    constraints:packet.controls&&typeof packet.controls==='object'?packet.controls:(task.constraints||{})\n  };\n}\ntask.agent_id='excel_extractor';\ntask.case_id=String(task.case_id||'');\ntask.task_id=String(task.task_id||'');\ntask.objective=String(task.objective||'');\ntask.handoff_message=String(task.handoff_message||'');\ntask.inputs=task.inputs&&typeof task.inputs==='object'?task.inputs:{};\ntask.context=task.context&&typeof task.context==='object'?task.context:{};\nconst cfg=$('Runtime configuration').first().json||{};\nif(!task.inputs.activity_base_url&&cfg.activity_base_url) task.inputs={...task.inputs, activity_base_url:cfg.activity_base_url};\nreturn [{json:{...cfg, agent_task:task, case_id:task.case_id, task_id:task.task_id}}];\n"
+        "jsCode": "\nconst incoming=(()=>{try{return $('When executed by another workflow').first().json||{}}catch{return $json||{}}})();\nconst root=incoming&&typeof incoming==='object'?incoming:{};\nconst body=root.body&&typeof root.body==='object'?root.body:root;\nlet task=body.agent_task&&typeof body.agent_task==='object'?body.agent_task:(body.case_id||body.task_id||body.objective?body:null);\nif(!task||typeof task!=='object') task={};\n// Contract: agent_task only (retired specialist_packet is not accepted).\ntask.agent_id='excel_extractor';\ntask.case_id=String(task.case_id||'');\ntask.task_id=String(task.task_id||'');\ntask.objective=String(task.objective||'');\ntask.handoff_message=String(task.handoff_message||'');\ntask.inputs=task.inputs&&typeof task.inputs==='object'?task.inputs:{};\ntask.context=task.context&&typeof task.context==='object'?task.context:{};\nconst cfg=$('Runtime configuration').first().json||{};\nif(!task.inputs.activity_base_url&&cfg.activity_base_url) task.inputs={...task.inputs, activity_base_url:cfg.activity_base_url};\nreturn [{json:{...cfg, agent_task:task, case_id:task.case_id, task_id:task.task_id}}];\n"
       },
       "id": "0bee4cdf-a5e6-5a00-be1c-f713ccef0baa",
       "name": "Normalize excel task",
       "type": "n8n-nodes-base.code",
       "typeVersion": 2,
       "position": [
-        500,
+        560,
         0
       ]
     },
@@ -111,7 +111,7 @@
       "type": "n8n-nodes-base.httpRequest",
       "typeVersion": 4.4,
       "position": [
-        740,
+        840,
         0
       ],
       "onError": "continueRegularOutput",
@@ -155,7 +155,7 @@
       "type": "n8n-nodes-base.if",
       "typeVersion": 2.3,
       "position": [
-        980,
+        1120,
         0
       ]
     },
@@ -168,8 +168,8 @@
       "type": "n8n-nodes-base.code",
       "typeVersion": 2,
       "position": [
-        1220,
-        240
+        1400,
+        85
       ]
     },
     {
@@ -204,8 +204,8 @@
       "type": "n8n-nodes-base.httpRequest",
       "typeVersion": 4.4,
       "position": [
-        1220,
-        -220
+        1400,
+        -85
       ],
       "onError": "continueRegularOutput",
       "alwaysOutputData": true
@@ -219,8 +219,8 @@
       "type": "n8n-nodes-base.code",
       "typeVersion": 2,
       "position": [
-        1440,
-        -220
+        1680,
+        0
       ]
     },
     {
@@ -255,8 +255,8 @@
       "type": "n8n-nodes-base.httpRequest",
       "typeVersion": 4.4,
       "position": [
-        1660,
-        -220
+        1960,
+        0
       ],
       "onError": "continueRegularOutput",
       "alwaysOutputData": true
@@ -270,8 +270,8 @@
       "type": "n8n-nodes-base.code",
       "typeVersion": 2,
       "position": [
-        1880,
-        -220
+        2240,
+        0
       ]
     },
     {
@@ -285,7 +285,7 @@
       "type": "n8n-nodes-base.switch",
       "typeVersion": 3.4,
       "position": [
-        1220,
+        2520,
         0
       ]
     },
@@ -322,8 +322,8 @@
       "type": "n8n-nodes-base.httpRequest",
       "typeVersion": 4.4,
       "position": [
-        1480,
-        -160
+        2800,
+        -85
       ],
       "onError": "continueRegularOutput",
       "alwaysOutputData": true,
@@ -346,8 +346,8 @@
       "type": "n8n-nodes-base.code",
       "typeVersion": 2,
       "position": [
-        1680,
-        -80
+        3080,
+        -85
       ]
     },
     {
@@ -382,8 +382,8 @@
       "type": "n8n-nodes-base.httpRequest",
       "typeVersion": 4.4,
       "position": [
-        1680,
-        -260
+        3360,
+        85
       ],
       "onError": "continueRegularOutput",
       "alwaysOutputData": true
@@ -397,8 +397,8 @@
       "type": "n8n-nodes-base.code",
       "typeVersion": 2,
       "position": [
-        1880,
-        -260
+        3640,
+        170
       ]
     },
     {
@@ -430,47 +430,9 @@
       "type": "n8n-nodes-base.if",
       "typeVersion": 2.3,
       "position": [
-        1880,
-        -80
+        3920,
+        -85
       ]
-    },
-    {
-      "parameters": {
-        "method": "POST",
-        "url": "={{ $('Runtime configuration').first().json.activity_base_url + '/cases/' + $('Normalize excel task').first().json.agent_task.case_id + '/events' }}",
-        "sendHeaders": true,
-        "headerParameters": {
-          "parameters": [
-            {
-              "name": "Content-Type",
-              "value": "application/json"
-            }
-          ]
-        },
-        "options": {
-          "timeout": 2000,
-          "response": {
-            "response": {
-              "fullResponse": false,
-              "responseFormat": "json",
-              "neverError": true
-            }
-          }
-        },
-        "sendBody": true,
-        "specifyBody": "json",
-        "jsonBody": "={{ ({kind: 'agent.result', actor: 'excel_extractor', agent_id: 'excel_extractor', task_id: $('Normalize excel task').first().json.agent_task.task_id, status: String($('Format excel result').first().json.status || 'failed'), status_message: String($('Format excel result').first().json.message || 'Excel Extractor завершил обработку workbook.'), payload: {source: 'excel-extractor-agent-workflow'}}) }}"
-      },
-      "id": "3fb91d21-d736-5aa8-a698-687040600dad",
-      "name": "Activity — Excel Extractor completed",
-      "type": "n8n-nodes-base.httpRequest",
-      "typeVersion": 4.4,
-      "position": [
-        2560,
-        -180
-      ],
-      "onError": "continueRegularOutput",
-      "alwaysOutputData": true
     },
     {
       "parameters": {
@@ -481,8 +443,8 @@
       "type": "n8n-nodes-base.code",
       "typeVersion": 2,
       "position": [
-        2760,
-        -180
+        5880,
+        0
       ]
     },
     {
@@ -494,8 +456,8 @@
       "type": "n8n-nodes-base.code",
       "typeVersion": 2,
       "position": [
-        1480,
-        160
+        2800,
+        85
       ]
     },
     {
@@ -527,8 +489,8 @@
       "type": "n8n-nodes-base.executeWorkflow",
       "typeVersion": 1.3,
       "position": [
-        1480,
-        300
+        3080,
+        85
       ],
       "onError": "continueRegularOutput"
     },
@@ -541,8 +503,8 @@
       "type": "n8n-nodes-base.code",
       "typeVersion": 2,
       "position": [
-        1680,
-        300
+        3360,
+        425
       ]
     },
     {
@@ -565,8 +527,8 @@
       "type": "@n8n/n8n-nodes-langchain.agent",
       "typeVersion": 3.1,
       "position": [
-        1720,
-        160
+        3640,
+        510
       ]
     },
     {
@@ -588,8 +550,8 @@
       "type": "@n8n/n8n-nodes-langchain.lmChatOpenAi",
       "typeVersion": 1.3,
       "position": [
-        1720,
-        40
+        3640,
+        340
       ],
       "credentials": {
         "openAiApi": {
@@ -607,8 +569,8 @@
       "type": "n8n-nodes-base.code",
       "typeVersion": 2,
       "position": [
-        1960,
-        160
+        3920,
+        85
       ]
     },
     {
@@ -643,8 +605,8 @@
       "type": "n8n-nodes-base.httpRequest",
       "typeVersion": 4.4,
       "position": [
-        1960,
-        300
+        4200,
+        0
       ],
       "onError": "continueRegularOutput",
       "alwaysOutputData": true
@@ -658,8 +620,8 @@
       "type": "n8n-nodes-base.code",
       "typeVersion": 2,
       "position": [
-        2160,
-        300
+        4480,
+        0
       ]
     },
     {
@@ -691,8 +653,8 @@
       "type": "n8n-nodes-base.if",
       "typeVersion": 2.3,
       "position": [
-        2160,
-        160
+        4760,
+        0
       ]
     },
     {
@@ -725,7 +687,7 @@
       "type": "n8n-nodes-base.httpRequest",
       "typeVersion": 4.4,
       "position": [
-        2100,
+        5040,
         0
       ],
       "onError": "continueRegularOutput",
@@ -749,7 +711,7 @@
       "type": "n8n-nodes-base.code",
       "typeVersion": 2,
       "position": [
-        2320,
+        5320,
         0
       ]
     },
@@ -786,7 +748,7 @@
       "type": "n8n-nodes-base.httpRequest",
       "typeVersion": 4.4,
       "position": [
-        2480,
+        5600,
         0
       ],
       "onError": "continueRegularOutput",
@@ -838,8 +800,8 @@
       "type": "@n8n/n8n-nodes-langchain.toolHttpRequest",
       "typeVersion": 1.1,
       "position": [
-        760,
-        -420
+        3360,
+        255
       ],
       "credentials": {
         "httpHeaderAuth": {
@@ -902,8 +864,8 @@
       "type": "@n8n/n8n-nodes-langchain.toolHttpRequest",
       "typeVersion": 1.1,
       "position": [
-        980,
-        -420
+        3640,
+        0
       ],
       "credentials": {
         "httpHeaderAuth": {
@@ -966,8 +928,8 @@
       "type": "@n8n/n8n-nodes-langchain.toolHttpRequest",
       "typeVersion": 1.1,
       "position": [
-        1200,
-        -420
+        3360,
+        -85
       ],
       "credentials": {
         "httpHeaderAuth": {
@@ -1030,8 +992,8 @@
       "type": "@n8n/n8n-nodes-langchain.toolHttpRequest",
       "typeVersion": 1.1,
       "position": [
-        1420,
-        -420
+        3640,
+        -170
       ],
       "credentials": {
         "httpHeaderAuth": {
@@ -1094,8 +1056,8 @@
       "type": "@n8n/n8n-nodes-langchain.toolHttpRequest",
       "typeVersion": 1.1,
       "position": [
-        760,
-        -260
+        3360,
+        -255
       ],
       "credentials": {
         "httpHeaderAuth": {
@@ -1168,8 +1130,8 @@
       "type": "@n8n/n8n-nodes-langchain.toolHttpRequest",
       "typeVersion": 1.1,
       "position": [
-        980,
-        -260
+        3640,
+        -340
       ],
       "credentials": {
         "httpHeaderAuth": {
@@ -1262,8 +1224,8 @@
       "type": "@n8n/n8n-nodes-langchain.toolHttpRequest",
       "typeVersion": 1.1,
       "position": [
-        1200,
-        -260
+        3360,
+        -425
       ],
       "credentials": {
         "httpHeaderAuth": {
@@ -1315,8 +1277,8 @@
       "type": "@n8n/n8n-nodes-langchain.toolHttpRequest",
       "typeVersion": 1.1,
       "position": [
-        1420,
-        -260
+        3640,
+        -510
       ],
       "credentials": {
         "httpHeaderAuth": {
@@ -1736,17 +1698,6 @@
       "main": [
         [
           {
-            "node": "Activity — Excel Extractor completed",
-            "type": "main",
-            "index": 0
-          }
-        ]
-      ]
-    },
-    "Activity — Excel Extractor completed": {
-      "main": [
-        [
-          {
             "node": "Restore after Excel Extractor activity",
             "type": "main",
             "index": 0
@@ -1768,5 +1719,5 @@
   },
   "tags": [],
   "pinData": {},
-  "versionId": "81a01dde-aee1-4341-bc6d-a2d4de41e8de"
+  "versionId": "384dac0f-8d40-4d65-9a97-4aefd9572a04"
 }

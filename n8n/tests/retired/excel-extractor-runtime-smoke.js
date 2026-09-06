@@ -1,6 +1,6 @@
 'use strict';
 const assert = require('node:assert/strict');
-const { readWorkflow } = require('./_workflow');
+const { readWorkflow } = require('../_workflow');
 const workflow = readWorkflow('excel-extraction-agent.workflow.json');
 const AsyncFunction = Object.getPrototypeOf(async function () {}).constructor;
 const src = (name) => {

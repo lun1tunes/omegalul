@@ -36,3 +36,5 @@ mas-activity-service/activity.log
 
 # Local combat / golden fixtures only — never pack or commit
 simulation-model-example/
+.cursor/
+.codex/

@@ -143,6 +143,7 @@
   let feedPollTimer = null;
   let rendered = new Set();
   let gateState = null;
+  let selectedChoice = null;
   let taskVersion = null;
   let awaitingHuman = false;
   let taskCatalog = [];
@@ -437,6 +438,21 @@
     return parts[parts.length - 1] || s;
   }
 
+  function questionOptions(q) {
+    const raw = q && Array.isArray(q.options) ? q.options : [];
+    const out = [];
+    for (const opt of raw) {
+      if (opt && typeof opt === "object") {
+        const value = String(opt.value ?? opt.id ?? opt.label ?? "").trim();
+        const label = String(opt.label ?? opt.value ?? "").trim();
+        if (value && label) out.push({ value, label, hint: String(opt.hint || opt.consequence || "").trim() });
+      } else if (typeof opt === "string" && opt.trim()) {
+        out.push({ value: opt.trim(), label: opt.trim(), hint: "" });
+      }
+    }
+    return out.slice(0, 8);
+  }
+
   function humanizeGateReason(reason, questions) {
     if (!looksMachineAsk(reason)) return String(reason || "").trim() || GATE_GENERIC_REASON;
     const blob = [reason, ...(Array.isArray(questions) ? questions.map((q) => q && (q.code || q.id)) : [])].join(" ");
@@ -723,22 +739,67 @@
     const rawKind = String(gateState.kind || "human_gate");
     gateKind.textContent = GATE_KIND_LABELS[rawKind] || GATE_KIND_LABELS[rawKind.toLowerCase()] || "Запрос";
     gateKind.title = rawKind;
-    gateMeta.textContent = [
-      version != null ? `v${version}` : gateState.expected_version != null ? `v${gateState.expected_version}` : null,
-    ].filter(Boolean).join(" · ");
+    // No machine metadata (version / gate_id) in the human-facing panel.
+    gateMeta.textContent = "";
     const questions = Array.isArray(gateState.questions) ? gateState.questions : [];
     const reason = humanizeGateReason(gateState.reason, questions) || "Ожидается ваше решение.";
     gateReason.textContent = reason;
     gateQuestions.innerHTML = "";
+    const prevChoice = selectedChoice && selectedChoice.gate_id === gateState.gate_id ? selectedChoice : null;
+    selectedChoice = null;
     const seenAsk = new Set();
     for (const q of questions) {
       const text = humanizeQuestion(q);
       if (!text || seenAsk.has(text)) continue;
       seenAsk.add(text);
       const li = document.createElement("li");
-      li.append(document.createTextNode(text));
+      // Same sentence as the reason line — show only the options, not the text twice.
+      if (text !== reason) li.append(document.createTextNode(text));
+      const options = questionOptions(q);
+      if (options.length) {
+        const row = document.createElement("div");
+        row.className = "gate-options";
+        row.setAttribute("role", "group");
+        const qid = String(q.question_id || q.id || gateState.gate_id || "");
+        for (const opt of options) {
+          const btn = document.createElement("button");
+          btn.type = "button";
+          btn.className = "btn gate-option";
+          btn.textContent = opt.label;
+          if (opt.hint) btn.title = opt.hint;
+          const isSelected = prevChoice && prevChoice.question_id === qid && prevChoice.value === opt.value;
+          if (isSelected) {
+            btn.classList.add("selected");
+            selectedChoice = { gate_id: gateState.gate_id, question_id: qid, value: opt.value, label: opt.label };
+          }
+          btn.addEventListener("click", () => {
+            const already = btn.classList.contains("selected");
+            row.querySelectorAll(".gate-option").forEach((b) => b.classList.remove("selected"));
+            if (already) {
+              selectedChoice = null;
+              return;
+            }
+            btn.classList.add("selected");
+            selectedChoice = { gate_id: gateState.gate_id, question_id: qid, value: opt.value, label: opt.label };
+            if (!humanResponse.value.trim()) humanResponse.focus();
+          });
+          row.append(btn);
+        }
+        li.append(row);
+      }
+      // Fact-table request (e.g. new wells): show the expected columns as a plain hint, not a schema.
+      const columns = Array.isArray(q?.accepts?.table?.columns) ? q.accepts.table.columns : [];
+      if (columns.length) {
+        const hint = document.createElement("div");
+        hint.className = "gate-table-hint";
+        const labels = columns.map((c) => (c && (c.label || c.key)) || "").filter(Boolean);
+        hint.textContent = `Колонки таблицы: ${labels.join(" · ")}`;
+        li.append(hint);
+      }
       gateQuestions.append(li);
     }
+    if (questions.length && !gateQuestions.childElementCount) gateQuestions.hidden = true;
+    else gateQuestions.hidden = false;
     if (gatePreview) {
       const extra = seenAsk.size > 1 ? ` · ${seenAsk.size} пунктов` : "";
       const line = String(reason).replace(/\s+/g, " ").trim();
@@ -749,9 +810,12 @@
       composerHint.hidden = true;
       composerHint.textContent = "";
       const kind = String(gateState.kind || "").toLowerCase();
+      const hasOptions = questions.some((q) => questionOptions(q).length);
       humanResponse.placeholder = (kind === "result_approval" || kind === "needs_approval")
         ? "Своими словами: выпуск принять — или что проверить / доработать"
-        : "Уточнения, недостающие данные, что ещё поправить…";
+        : hasOptions
+          ? "Выберите вариант выше и/или напишите своими словами…"
+          : "Уточнения, недостающие данные, что ещё поправить…";
     } else {
       composerHint.hidden = false;
       composerHint.textContent = "Ответ пока не требуется. Можно подождать или открыть другую задачу.";
@@ -1491,9 +1555,10 @@
     }
     const by = REQUESTED_BY;
     const responseText = humanResponse.value.trim();
-    if (!responseText && !hitlFiles.length) {
+    const choice = selectedChoice && selectedChoice.gate_id === gateState?.gate_id ? selectedChoice : null;
+    if (!responseText && !hitlFiles.length && !choice) {
       humanResponse.focus();
-      showFlash("Нужен текст ответа или вложение.");
+      showFlash("Выберите вариант, напишите ответ или приложите файл.");
       return;
     }
 
@@ -1509,9 +1574,10 @@
       if (gateState?.gate_id) form.append("gate_id", gateState.gate_id);
       form.append(
         "question_id",
-        gateState?.gate_id || gateState?.questions?.[0]?.question_id || "Q-1",
+        choice?.question_id || gateState?.gate_id || gateState?.questions?.[0]?.question_id || "Q-1",
       );
-      form.append("answer", responseText || "(файл)");
+      if (choice) form.append("choice", choice.value);
+      form.append("answer", responseText || (choice ? choice.label : "(файл)"));
       const ver = gateState?.expected_version ?? taskVersion;
       if (ver != null && ver !== "") form.append("expected_version", String(ver));
       for (const entry of hitlFiles) {
@@ -1547,8 +1613,9 @@
       });
       humanResponse.value = "";
       hitlFiles = [];
+      selectedChoice = null;
       renderHitlFiles();
-      showFlash("Ответ отправлен.", { ok: true });
+      showFlash(choice ? `Вы решили: ${choice.label}` : "Ответ отправлен.", { ok: true });
       const snap = await fetch(`/cases/${encodeURIComponent(currentTask)}`);
       if (snap.ok) {
         mergeFeed(await snap.json(), { animateTurns: true });

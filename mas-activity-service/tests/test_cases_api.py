@@ -851,6 +851,82 @@ def test_hitl_answer_and_agent_event(monkeypatch) -> None:
     assert errors.json()["errors"] == []
 
 
+def test_hitl_answer_option_button_stores_choice_and_label(monkeypatch) -> None:
+    monkeypatch.setenv("ORCHESTRATOR_WEBHOOK_URL", "http://127.0.0.1:9/webhook/mas-orchestrator-step")
+    from app.settings import Settings
+    from app import control_plane
+
+    monkeypatch.setattr("app.cases_api.get_settings", lambda: Settings())
+    monkeypatch.setattr("app.cases_api._invoke_create", lambda case_id: None)
+    monkeypatch.setattr("app.cases_api._invoke_step", lambda case_id: None)
+    res = client.post("/cases", data={"task_description": "HITL options", "requested_by": "tester"})
+    case_id = res.json()["case_id"]
+    question = {
+        "question_id": "unlisted_wells_policy",
+        "question": "В Excel нет скважин: 201. Оставить или убрать?",
+        "options": [
+            {"value": "keep", "label": "Оставить как в baseline"},
+            {"value": "remove", "label": "Убрать из прогноза"},
+        ],
+    }
+    control_plane.update_case(
+        case_id,
+        state={**control_plane.get_case(case_id)["state"], "hitl": {"pending": True, "questions": [question], "answers": {}}},
+        status="waiting_user",
+    )
+    gate = client.get(f"/cases/{case_id}").json()["human_gate"]
+    assert gate["questions"][0]["options"][1]["label"] == "Убрать из прогноза"
+
+    # Multipart, like the browser: button click with empty free text.
+    ans = client.post(
+        f"/cases/{case_id}/answer",
+        data={"question_id": "unlisted_wells_policy", "choice": "remove", "answer": "", "requested_by": "tester"},
+    )
+    assert ans.status_code == 200
+    state = control_plane.get_case(case_id)["state"]
+    stored = state["hitl"]["answers"]["unlisted_wells_policy"]
+    assert stored == {"choice": "remove", "text": "Убрать из прогноза", "label": "Убрать из прогноза"}
+    events = client.get(f"/cases/{case_id}/events").json()["events"]
+    answered = next(e for e in events if e["kind"] == "hitl.answered")
+    assert answered["status_message"] == "Пользователь ответил: Убрать из прогноза"
+    assert "remove" not in answered["status_message"]
+
+    # JSON path keeps the engineer's own words alongside the choice.
+    control_plane.update_case(
+        case_id,
+        state={**control_plane.get_case(case_id)["state"], "hitl": {"pending": True, "questions": [question], "answers": {}}},
+        status="waiting_user",
+    )
+    ans = client.post(
+        f"/cases/{case_id}/answer",
+        json={"question_id": "unlisted_wells_policy", "answer": "убери, их закрыли", "choice": "remove"},
+    )
+    assert ans.status_code == 200
+    stored = control_plane.get_case(case_id)["state"]["hitl"]["answers"]["unlisted_wells_policy"]
+    assert stored["choice"] == "remove" and stored["text"] == "убери, их закрыли"
+
+
+def test_option_label_matches_question_by_id_and_ignores_idless_shadow() -> None:
+    from app.cases_api import _option_label
+
+    idless = {"question": "Старый вопрос без id", "options": [{"value": "accept", "label": "НЕПРАВИЛЬНАЯ метка"}]}
+    review = {
+        "question_id": "result_review_7",
+        "question": "Принять результат?",
+        "options": [{"value": "accept", "label": "Принять результат"}, {"value": "rework", "label": "Нужна доработка"}],
+    }
+    # An id-less question listed first must not answer for a lookup that names another question.
+    assert _option_label({"questions": [idless, review]}, "result_review_7", "accept") == "Принять результат"
+    assert _option_label({"questions": [idless, review]}, "result_review_7", "rework") == "Нужна доработка"
+    # Unknown id: no exact question → legacy id-less fallback is allowed.
+    assert _option_label({"questions": [idless, review]}, "Q-legacy", "accept") == "НЕПРАВИЛЬНАЯ метка"
+    # Exact question exists but lacks the value → do not borrow from other questions.
+    assert _option_label({"questions": [idless, review]}, "result_review_7", "maybe") == "maybe"
+    # String options and agent-style `id` keys still work.
+    assert _option_label({"questions": [{"id": "q1", "options": ["да", "нет"]}]}, "q1", "нет") == "нет"
+    assert _option_label({"questions": []}, "q1", "x") == "x"
+
+
 def test_answer_rejects_stale_expected_version(monkeypatch) -> None:
     monkeypatch.setenv("ORCHESTRATOR_WEBHOOK_URL", "http://127.0.0.1:9/webhook/mas-orchestrator-step")
     from app.settings import Settings

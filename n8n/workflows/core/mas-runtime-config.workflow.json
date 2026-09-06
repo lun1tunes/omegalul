@@ -6,7 +6,7 @@
   "nodes": [
     {
       "parameters": {
-        "content": "## Runtime URLs (edit in UI)\n\n**MAS — Runtime Config** — единственный Set с URL сервисов (n8n free: без Variables / Environment в JSON).\n\n1. Пропишите URL в **Runtime URLs**. Lab Compose DNS уже стоит. Поле: `http://<IP-Windows>:8200` / `:8000` / `:8090` / `:8100`.\n2. На Orchestrator / Excel / Schedule привяжите Execute Workflow → этот workflow (ноды **Runtime endpoints** / **Runtime configuration**).\n3. Ключ Excel **не** сюда. Credential Header Auth **Excel Tools X-API-Key**: header name `X-API-Key`, value = `API_KEY` из `excel-tools.env`. Привяжите его на HTTP-нодах Agent — Excel Extractor.\n\nВозвращает `activity_base_url`, `excel_tools_url`, `schedule_service_url`, `math_url`, `orchestrator_step_url`. Ничего не оркестрирует.\n\n`orchestrator_step_url` — внутренний webhook оркестратора (loop сам себя, не через Activity `/run`). Lab: `http://127.0.0.1:5678/webhook/mas-orchestrator-step`.",
+        "content": "## Runtime URLs (edit in UI)\n\n**MAS — Runtime Config** — единственный Set с URL сервисов (n8n free: без Variables / Environment в JSON).\n\n1. Пропишите URL в **Runtime URLs**. Lab Compose DNS уже стоит. Поле: `http://<IP-Windows>:8200` / `:8000` / `:8090` / `:8100`.\n2. На Orchestrator / Excel / Schedule привяжите Execute Workflow → этот workflow (ноды **Runtime endpoints** / **Runtime configuration**).\n3. Ключ Excel **не** сюда. Credential Header Auth **Excel Tools X-API-Key**: header name `X-API-Key`, value = `API_KEY` из `excel-tools.env`. Привяжите его на HTTP-нодах Agent — Excel Extractor.\n\nВозвращает `activity_base_url`, `excel_tools_url`, `schedule_service_url`, `math_url`, `orchestrator_step_url`, `max_steps`. Ничего не оркестрирует.\n\n`max_steps` — бюджет шагов оркестратора на кейс (по умолчанию 12): при достижении с готовым результатом инженеру предлагается принять/доработать, без результата — кейс failed.\n\n`orchestrator_step_url` — внутренний webhook оркестратора (loop сам себя, не через Activity `/run`). Lab: `http://127.0.0.1:5678/webhook/mas-orchestrator-step`.",
         "height": 400,
         "width": 520,
         "color": 1
@@ -16,8 +16,8 @@
       "type": "n8n-nodes-base.stickyNote",
       "typeVersion": 1,
       "position": [
-        -220,
-        -360
+        -600,
+        -440
       ]
     },
     {
@@ -67,6 +67,12 @@
               "name": "orchestrator_step_url",
               "value": "http://127.0.0.1:5678/webhook/mas-orchestrator-step",
               "type": "string"
+            },
+            {
+              "id": "d7b33404-17f8-5446-941e-cf9f783f68bf",
+              "name": "max_steps",
+              "value": "12",
+              "type": "string"
             }
           ]
         },
@@ -78,7 +84,7 @@
       "type": "n8n-nodes-base.set",
       "typeVersion": 3.4,
       "position": [
-        260,
+        280,
         0
       ]
     }
@@ -110,5 +116,5 @@
   },
   "tags": [],
   "pinData": {},
-  "versionId": "97c273c0-34a9-49ea-a78c-43ef19ec1bec"
+  "versionId": "7f652c47-c8e9-4bf1-ae7f-1e23945e514f"
 }

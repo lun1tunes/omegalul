@@ -8,7 +8,7 @@ const path = require('node:path');
 const { spawn } = require('node:child_process');
 const http = require('node:http');
 
-const { workspace, readWorkflow } = require('./_workflow');
+const { workspace, readWorkflow } = require('../_workflow');
 const orchestrator = readWorkflow('universal-engineering-orchestrator.workflow.json');
 const traceWf = readWorkflow('mas-trace-event-writer.workflow.json');
 const AsyncFunction = Object.getPrototypeOf(async function () {}).constructor;

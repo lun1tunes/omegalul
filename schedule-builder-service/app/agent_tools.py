@@ -216,6 +216,101 @@ def _hitl_payloads(state: dict[str, Any]) -> list[Any]:
     return out
 
 
+def _wells_phrase(wells: list[str], limit: int = 6) -> str:
+    shown = ", ".join(wells[:limit])
+    if len(wells) > limit:
+        shown += f" и ещё {len(wells) - limit}"
+    return shown
+
+
+def _plural_wells(count: int, case: str = "gen") -> str:
+    """Russian agreement for 'скважина': gen — '(даты) 1 скважины / 3 скважин', acc — 'добавил 1 скважину / 3 скважины / 5 скважин'."""
+    rem10, rem100 = count % 10, count % 100
+    one = rem10 == 1 and rem100 != 11
+    few = 2 <= rem10 <= 4 and not 12 <= rem100 <= 14
+    if case == "acc":
+        word = "скважину" if one else ("скважины" if few else "скважин")
+    elif case == "nom":
+        word = "скважина" if one else ("скважины" if few else "скважин")
+    else:
+        word = "скважины" if one else "скважин"
+    return f"{count} {word}"
+
+
+def summarize_commissioning_result(revised: dict[str, Any]) -> dict[str, Any]:
+    """Engineer-facing summary built from what was actually changed (not a template count).
+
+    Uses the revise result: records really retargeted (``moved``), wells added from
+    definitions, wells removed as unlisted, wells kept as in baseline.
+    """
+    moved = [row for row in (revised.get("moved") or []) if isinstance(row, dict)]
+    shifted_wells = sorted({str(row.get("well") or "") for row in moved} - {""})
+    shift_dates = {str(row.get("well") or ""): str(row.get("to") or "") for row in moved}
+    added = sorted({
+        str(row.get("well") or "")
+        for row in (revised.get("new_wells_applied") or [])
+        if isinstance(row, dict)
+    } - {""})
+    removed = sorted({
+        str(row.get("well") or "")
+        for row in (revised.get("removed") or [])
+        if isinstance(row, dict)
+    } - {""})
+    unlisted = [str(w) for w in (revised.get("unlisted_wells") or [])]
+    policy = str(revised.get("unlisted_wells_policy") or "keep")
+    kept = unlisted if policy == "keep" else []
+    unchanged = sorted(
+        {str(row.get("well") or "") for row in (revised.get("shifts") or []) if isinstance(row, dict)}
+        - set(shifted_wells) - set(added) - {""}
+    )
+
+    keywords: list[str] = []
+    for row in moved:
+        kw = str(row.get("keyword") or "").upper()
+        if kw and kw not in keywords:
+            keywords.append(kw)
+    if added:
+        for kw in ("WELSPECS", "COMPDATMD", "WCONPROD"):
+            if kw not in keywords:
+                keywords.append(kw)
+    if removed:
+        for row in revised.get("removed") or []:
+            kw = str(row.get("keyword") or "").upper() if isinstance(row, dict) else ""
+            if kw and kw not in keywords:
+                keywords.append(kw)
+    if moved or added or removed:
+        keywords.insert(0, "DATES")
+
+    parts: list[str] = []
+    if shifted_wells:
+        sample = ", ".join(
+            f"{w} → {shift_dates[w]}" if shift_dates.get(w) else w for w in shifted_wells[:4]
+        )
+        tail = f" и ещё {len(shifted_wells) - 4}" if len(shifted_wells) > 4 else ""
+        parts.append(f"Сдвинул даты ввода {_plural_wells(len(shifted_wells))}: {sample}{tail}.")
+    if unchanged:
+        parts.append(f"Даты {_plural_wells(len(unchanged))} из Excel уже совпадали с baseline ({_wells_phrase(unchanged)}).")
+    if added:
+        parts.append(
+            f"Добавил {_plural_wells(len(added), 'acc')} ({_wells_phrase(added)}) — WELSPECS, COMPDATMD и WCONPROD на датах ввода."
+        )
+    if removed:
+        parts.append(f"Убрал из прогноза {_plural_wells(len(removed), 'acc')} вне Excel: {_wells_phrase(removed)}.")
+    if kept:
+        parts.append(f"{_plural_wells(len(kept), 'acc').capitalize()} вне Excel оставил как в baseline: {_wells_phrase(kept)}.")
+    status = str(revised.get("status") or "")
+    if not parts:
+        parts.append("SCHEDULE без изменений: даты из Excel совпадают с baseline." if status == "noop" else "SCHEDULE без изменений.")
+    return {
+        "message": " ".join(parts),
+        "changed_keywords": keywords,
+        "wells_shifted": shifted_wells,
+        "wells_added": added,
+        "wells_removed": removed,
+        "wells_kept_unlisted": kept,
+    }
+
+
 def _unlisted_policy(state: dict[str, Any]) -> str | None:
     """HITL / inputs enum is authority. Prose in the objective is not.
 
@@ -226,6 +321,16 @@ def _unlisted_policy(state: dict[str, Any]) -> str | None:
     raw = str(inputs.get("unlisted_wells_policy") or "").strip().lower()
     if raw in {"keep", "remove"}:
         return raw
+    # Activity option button: answers[<unlisted question id>] = {"choice": "keep"|"remove", "text": label}
+    context = state.get("context") if isinstance(state.get("context"), dict) else {}
+    hitl = context.get("hitl") if isinstance(context.get("hitl"), dict) else {}
+    answers = hitl.get("answers") if isinstance(hitl.get("answers"), dict) else {}
+    for key, value in answers.items():
+        parsed = _parse_jsonish(value) if not isinstance(value, dict) else value
+        if "unlisted" in str(key).lower() and isinstance(parsed, dict):
+            choice = str(parsed.get("choice") or "").strip().lower()
+            if choice in {"keep", "remove"}:
+                return choice
     for payload in _hitl_payloads(state):
         if isinstance(payload, dict):
             pol = str(payload.get("unlisted_wells_policy") or "").strip().lower()
@@ -244,15 +349,24 @@ def _unlisted_policy(state: dict[str, Any]) -> str | None:
 
 
 def _new_well_defs(state: dict[str, Any]) -> list[dict[str, Any]]:
+    """New wells as engineering facts (``new_wells``: group, MD interval, control, rate, …).
+
+    Schedule Builder renders WELSPECS / COMPDATMD / WCONPROD from these facts
+    (``timeline_ops.compose_new_well_lines``).  Legacy ``new_well_defs`` with typed lines
+    is still accepted for compatibility.
+    """
     inputs = state.get("inputs") if isinstance(state.get("inputs"), dict) else {}
-    raw = inputs.get("new_well_defs")
-    if isinstance(raw, list) and raw:
-        return [row for row in raw if isinstance(row, dict)]
+    for key in ("new_wells", "new_well_defs"):
+        raw = inputs.get(key)
+        if isinstance(raw, list) and raw:
+            return [row for row in raw if isinstance(row, dict)]
     for payload in _hitl_payloads(state):
-        if isinstance(payload, dict) and isinstance(payload.get("new_well_defs"), list):
-            rows = [row for row in payload["new_well_defs"] if isinstance(row, dict)]
-            if rows:
-                return rows
+        if isinstance(payload, dict):
+            for key in ("new_wells", "new_well_defs"):
+                if isinstance(payload.get(key), list):
+                    rows = [row for row in payload[key] if isinstance(row, dict)]
+                    if rows:
+                        return rows
         if isinstance(payload, list):
             rows = [row for row in payload if isinstance(row, dict) and row.get("well")]
             if rows:
@@ -485,14 +599,18 @@ def execute_tool(session_id: str, name: str, args: dict[str, Any] | None = None)
         text = str(revised.get("generated_schedule") or "")
         state["working_text"] = text or source
         ok = bool(text.strip()) and status in {"applied", "noop"}
+        summary = summarize_commissioning_result(revised)
         result = _agent_result(
             task_id,
             "completed" if ok else "failed",
-            f"Сдвинул даты ввода для {len(revised.get('shifts') or [])} скважин"
-            if status == "applied"
-            else "SCHEDULE без изменений",
+            summary["message"],
             data={
-                "changed_keywords": ["DATES", "WCONPROD"],
+                "changed_keywords": summary["changed_keywords"],
+                "summary_for_human": summary["message"],
+                "wells_shifted": summary["wells_shifted"],
+                "wells_added": summary["wells_added"],
+                "wells_removed": summary["wells_removed"],
+                "wells_kept_unlisted": summary["wells_kept_unlisted"],
                 "findings": revised.get("findings") or [],
                 "edits": revised.get("edits") or [],
                 "shifts": revised.get("shifts") or [],

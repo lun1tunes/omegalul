@@ -7,7 +7,7 @@ import json
 import uuid
 from pathlib import Path
 
-ROOT = Path(__file__).resolve().parents[1]
+ROOT = Path(__file__).resolve().parents[2]
 OUT = ROOT / "workflows/retired/mas-error-handler.workflow.json"
 
 WF_ID = "e1f0a7c2-9b4d-5e8f-a123-4567890abcde"
@@ -502,8 +502,10 @@ return[{json:{
 
 def bind_error_workflow_settings() -> None:
     """Stamp Settings.errorWorkflow on portable JSON (skip handler + its callees)."""
+    # Retired contour: never touch live core/ workflows (they use Error — MAS Traces).
     root = ROOT / "workflows"
-    for path in sorted(root.glob("**/*.workflow.json")):
+    paths = sorted((root / "retired").glob("*.workflow.json")) + sorted((root / "support").glob("*.workflow.json"))
+    for path in paths:
         data = json.loads(path.read_text(encoding="utf-8"))
         name = str(data.get("name") or "")
         settings = data.get("settings")
@@ -522,7 +524,7 @@ def _relayout_core() -> None:
     import subprocess
     import sys
 
-    script = Path(__file__).resolve().parent / "relayout_core_workflows.py"
+    script = Path(__file__).resolve().parents[1] / "relayout_core_workflows.py"
     subprocess.check_call([sys.executable, str(script)], cwd=str(ROOT.parent))
 
 

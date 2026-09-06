@@ -472,7 +472,7 @@ def test_hitl_and_health_forms_are_hand_authored_not_generator_emitted() -> None
     schedule_emitted |= set(re.findall(r'd\["([^"]+\.workflow\.json)"\]', schedule_source))
     assert hand_authored.isdisjoint(schedule_emitted)
 
-    universal_source = (TEMPLATES / "generate_universal_engineering_workflows.py").read_text(encoding="utf-8")
+    universal_source = (TEMPLATES / "retired" / "generate_universal_engineering_workflows.py").read_text(encoding="utf-8")
     universal_emitted = set(re.findall(r'(?:WORKFLOWS|CORE|SUPPORT|RETIRED) / "([^"]+\.workflow\.json)"', universal_source))
     universal_emitted |= set(re.findall(r"(?:WORKFLOWS|CORE|SUPPORT|RETIRED) / '([^']+\.workflow\.json)'", universal_source))
     assert hand_authored.isdisjoint(universal_emitted)
@@ -703,6 +703,7 @@ def test_mas_runtime_config_is_the_only_url_set() -> None:
         "schedule_service_url",
         "math_url",
         "orchestrator_step_url",
+        "max_steps",
     ]
     assert urls["parameters"]["includeOtherFields"] is False
     blob = json.dumps(workflow)
@@ -1059,7 +1060,7 @@ def test_cas_persist_task_is_the_single_fail_closed_write_path() -> None:
     assert connections["Insert durable task row"]["main"][0][0]["node"] == "Confirm CAS persist"
     assert connections["Update durable task row"]["main"][0][0]["node"] == "Confirm CAS persist"
 
-    generator = (TEMPLATES / "generate_universal_engineering_workflows.py").read_text(encoding="utf-8")
+    generator = (TEMPLATES / "retired" / "generate_universal_engineering_workflows.py").read_text(encoding="utf-8")
     assert "def call_cas_persist(" in generator
     assert "def build_cas_persist(" in generator
     assert 'RETIRED / "cas-persist-task.workflow.json"' in generator
@@ -1187,7 +1188,7 @@ def test_schedule_flow_is_orchestrator_mediated_and_multi_stage() -> None:
     assert "handoff_events" in format_code
     trace_code = by_name["Prepare final MAS trace event"]["parameters"]["jsCode"]
     assert "event_type:'handoff'" in trace_code
-    registry = load_json(ROOT / "n8n" / "contracts" / "specialist_registry.v1.json")
+    registry = load_json(ROOT / "n8n" / "contracts" / "retired" / "specialist_registry.v1.json")
     assert registry["contract"] == "specialist_registry"
     assert {s["specialist_id"] for s in registry["specialists"]} <= {
         "excel_extraction_specialist",
@@ -1504,17 +1505,11 @@ def test_specialist_template_uses_only_universal_boundary() -> None:
 
 
 def test_universal_engineering_instruction_templates_are_portable() -> None:
+    # Live generators / helper modules (n8n/templates). Retired contour lives in n8n/templates/retired/.
     expected = {
-        "engineering-task-instruction.template.json",
-        "specialist-result-contract.schema.json",
-        "orchestrator-instruction.template.md",
-        "specialist-workflow-instruction.template.md",
-        "generate_universal_engineering_workflows.py",
         "generate_schedule_workflows.py",
-        "generate_activity_hydrate_workflows.py",
-        "apply_mas_hybrid_rag.py",
-            "hitl_user_copy.py",
-            "llm_runtime_options.py",
+        "hitl_user_copy.py",
+        "llm_runtime_options.py",
         "schedule_lossless_runtime.py",
         "schedule_baseline_decoder.py",
         "schedule_baseline_query.py",
@@ -1527,8 +1522,6 @@ def test_universal_engineering_instruction_templates_are_portable() -> None:
         "schedule_schema_runtime.py",
         "schedule_semantic_runtime.py",
         "schedule_emit_order.py",
-        "mas_handoff_contracts.py",
-        "generate_mas_error_handler.py",
         "generate_mas_error_traces.py",
         "generate_mas_health_check.py",
         "generate_mas_orchestrator.py",
@@ -1540,7 +1533,20 @@ def test_universal_engineering_instruction_templates_are_portable() -> None:
         "relayout_core_workflows.py",
     }
     assert {path.name for path in TEMPLATES.iterdir() if path.is_file()} == expected
-    contract = load_json(TEMPLATES / "specialist-result-contract.schema.json")
+    retired_expected = {
+        "README.md",
+        "engineering-task-instruction.template.json",
+        "specialist-result-contract.schema.json",
+        "orchestrator-instruction.template.md",
+        "specialist-workflow-instruction.template.md",
+        "generate_universal_engineering_workflows.py",
+        "generate_activity_hydrate_workflows.py",
+        "apply_mas_hybrid_rag.py",
+        "mas_handoff_contracts.py",
+        "generate_mas_error_handler.py",
+    }
+    assert {path.name for path in (TEMPLATES / "retired").iterdir() if path.is_file()} == retired_expected
+    contract = load_json(TEMPLATES / "retired" / "specialist-result-contract.schema.json")
     statuses = set(contract["properties"]["status"]["enum"])
     assert statuses == {
         "succeeded",
@@ -1663,7 +1669,7 @@ def test_ingestible_sheet_skips_template_and_dedupes_keys() -> None:
 def test_portable_knowledge_block_reads_wrapper_text_like_seeder() -> None:
     import sys
 
-    sys.path.insert(0, str(TEMPLATES))
+    sys.path.insert(0, str(TEMPLATES / "retired"))
     from apply_mas_hybrid_rag import _portable_knowledge_block
 
     wrapped = {

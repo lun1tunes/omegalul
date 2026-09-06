@@ -2,7 +2,7 @@
 
 // Human-facing HITL copy: findings stay machine codes; Activity/gate text is Russian.
 const assert = require('node:assert/strict');
-const { readWorkflow } = require('./_workflow');
+const { readWorkflow } = require('../_workflow');
 const builder = readWorkflow('tnavigator-schedule-builder.workflow.json');
 const orch = readWorkflow('universal-engineering-orchestrator.workflow.json');
 const excel = readWorkflow('excel-extraction-agent.workflow.json');

@@ -7,7 +7,7 @@ const path = require('node:path');
 const { spawnSync } = require('node:child_process');
 const vm = require('node:vm');
 
-const { workspace, workflowFile } = require('./_workflow');
+const { workspace, workflowFile } = require('../_workflow');
 const AsyncFunction = Object.getPrototypeOf(async function () {}).constructor;
 
 function loadMaterializeFn() {

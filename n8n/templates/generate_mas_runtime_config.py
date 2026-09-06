@@ -31,6 +31,9 @@ LAB_URLS = (
     ("schedule_service_url", "http://schedule-builder:8090"),
     ("math_url", "http://math-service:8100"),
     ("orchestrator_step_url", "http://127.0.0.1:5678/webhook/mas-orchestrator-step"),
+    # Orchestrator step budget per case (not a URL). When reached with a completed result the
+    # engineer is asked to accept / rework; without any result the case fails. UI-editable.
+    ("max_steps", "12"),
 )
 
 
@@ -105,7 +108,9 @@ def main() -> None:
                     "Agent — Excel Extractor.\n\n"
                     "Возвращает "
                     "`activity_base_url`, `excel_tools_url`, `schedule_service_url`, "
-                    "`math_url`, `orchestrator_step_url`. Ничего не оркестрирует.\n\n"
+                    "`math_url`, `orchestrator_step_url`, `max_steps`. Ничего не оркестрирует.\n\n"
+                    "`max_steps` — бюджет шагов оркестратора на кейс (по умолчанию 12): при достижении "
+                    "с готовым результатом инженеру предлагается принять/доработать, без результата — кейс failed.\n\n"
                     "`orchestrator_step_url` — внутренний webhook оркестратора "
                     "(loop сам себя, не через Activity `/run`). Lab: "
                     "`http://127.0.0.1:5678/webhook/mas-orchestrator-step`."

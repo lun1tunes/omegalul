@@ -8,7 +8,7 @@ const assert = require('node:assert/strict');
 const fs = require('node:fs');
 const path = require('node:path');
 
-const { workspace, workflowFile } = require('./_workflow');
+const { workspace, workflowFile } = require('../_workflow');
 const packageRoot = path.join(workspace, 'simulation-model-example', 'package');
 const rootRel = 'SCHEDULE/FORECAST/MONITORING_1_2_2_1_4q25_3_NORTH1_6_FDP.INC';
 const fixture = path.join(packageRoot, rootRel);

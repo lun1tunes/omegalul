@@ -343,6 +343,10 @@ def compact_unlisted_policy(answers: Any) -> str | None:
             direct = str(val.get("unlisted_wells_policy") or "").lower()
             if direct in {"keep", "remove"}:
                 return direct
+            # Option button in Activity: {"choice": "keep"|"remove", "text": "<label>"}
+            choice = str(val.get("choice") or "").lower()
+            if keyed and choice in {"keep", "remove"}:
+                return choice
             nested_src = val["raw"] if val.get("raw") is not None else val
             nested_blob = (
                 nested_src if isinstance(nested_src, str) else json.dumps(nested_src, ensure_ascii=False)
@@ -361,7 +365,7 @@ def hitl_answer_text(answer: Any) -> str:
     if isinstance(answer, str):
         return answer
     if isinstance(answer, dict):
-        for key in ("text", "answer", "value"):
+        for key in ("text", "label", "answer", "value", "choice"):
             if answer.get(key) not in (None, ""):
                 return str(answer[key])
         return json.dumps(answer, ensure_ascii=False)[:200]

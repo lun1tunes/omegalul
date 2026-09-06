@@ -1,4 +1,16 @@
-"""In-memory MAS activity feed for chat-style handoff presentation + HITL."""
+"""MAS Activity service entrypoint.
+
+Live API (used by the Activity UI and by n8n Orchestrator — MAS):
+  * ``app.cases_api`` router — ``/cases*`` (Postgres-backed via Control Plane Proxy)
+  * ``/health``, ``/ready``, ``/v1/diagnostics/connectivity``
+  * ``/v1/knowledge/*`` (RAG cards editor), static pages ``/``, ``/knowledge``, ``/t/{task_id}``
+
+LEGACY (retired contour, kept for the frozen Universal Engineering Orchestrator in
+``n8n/workflows/retired`` and its tests): the in-memory ``/v1/tasks*``, ``/v1/turns``,
+``/v1/sync``, ``/v1/hydrate``, ``/v1/demo/seed`` API and its helpers below.  The UI does
+not call these endpoints.  Do not extend them; new behaviour goes to ``app.cases_api``.
+Extraction into a separate module is tracked in ``MAS_REFACTORING_PLAN.md`` (Phase 0).
+"""
 
 from __future__ import annotations
 

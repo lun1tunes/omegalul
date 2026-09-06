@@ -200,9 +200,12 @@ def event_to_turn(event: dict[str, Any]) -> dict[str, Any]:
     else:
         turn_kind = "status"
     if kind == "case.finished":
-        summary = FINISHED_RESULT_TEXT
-        text = FINISHED_RESULT_TEXT
-        brief = FINISHED_RESULT_TEXT
+        # Orchestrator's finish carries an honest summary (what agents actually did); the template
+        # is only a fallback for legacy events without one.
+        said = str(event.get("status_message") or "").strip()
+        summary = said or FINISHED_RESULT_TEXT
+        text = f"{said} Результат можно скачать." if said else FINISHED_RESULT_TEXT
+        brief = summary
     else:
         display_message = _event_display_message(kind, event)
         summary = display_message
@@ -367,7 +370,8 @@ def _feed_from_row(
         q0 = questions[0] if isinstance(questions[0], dict) else {}
         gate = {
             "gate_id": q0.get("question_id") or "hitl",
-            "kind": "needs_input",
+            # Orchestrator marks result reviews (kind=result_approval); everything else is a data/decision request.
+            "kind": str(q0.get("kind") or "needs_input"),
             "reason": q0.get("question") or state.get("goal") or "Нужен ответ",
             "questions": questions,
         }
@@ -752,6 +756,39 @@ async def _merge_case_uploads(case_id: str, uploads: list[tuple[str, str, bytes,
     return names
 
 
+def _option_label(hitl: dict[str, Any], question_id: str, choice: str) -> str:
+    """Human label for a clicked option.
+
+    Match the question by id first; questions without an id are only considered when no
+    question carries the requested id (legacy single-question gates), so an id-less question
+    can never shadow the one the engineer actually answered.
+    """
+    questions = [q for q in (hitl.get("questions") if isinstance(hitl.get("questions"), list) else []) if isinstance(q, dict)]
+    wanted = str(question_id or "")
+
+    def label_in(question: dict[str, Any]) -> str | None:
+        for option in question.get("options") or []:
+            if isinstance(option, dict) and str(option.get("value") or "") == choice:
+                return str(option.get("label") or choice)
+            if isinstance(option, str) and option == choice:
+                return option
+        return None
+
+    exact = [q for q in questions if str(q.get("question_id") or q.get("id") or "") == wanted and wanted]
+    for question in exact:
+        found = label_in(question)
+        if found is not None:
+            return found
+    if not exact:
+        for question in questions:
+            if str(question.get("question_id") or question.get("id") or ""):
+                continue
+            found = label_in(question)
+            if found is not None:
+                return found
+    return choice
+
+
 @router.post("/cases/{case_id}/answer")
 async def post_answer(case_id: str, request: Request, background_tasks: BackgroundTasks) -> dict[str, Any]:
     row = control_plane.get_case(case_id)
@@ -760,16 +797,17 @@ async def post_answer(case_id: str, request: Request, background_tasks: Backgrou
     ctype = (request.headers.get("content-type") or "").lower()
     file_names: list[str] = []
     expected_version: int | None = None
-    if "multipart/form-data" in ctype:
+    if "multipart/form-data" in ctype or "application/x-www-form-urlencoded" in ctype:
         form = await request.form()
         question_id = str(form.get("question_id") or form.get("gate_id") or "Q-1").strip() or "Q-1"
         answer = str(form.get("answer") or form.get("human_response") or "").strip()
         requested_by = str(form.get("requested_by") or "mas activity user")
         expected_version = _parse_expected_version(form.get("expected_version"))
+        choice = str(form.get("choice") or "").strip() or None
         file_names = await _merge_case_uploads(case_id, await _collect_form_uploads(form))
         if not answer and file_names:
             answer = "(файл)"
-        if not answer:
+        if not answer and not choice:
             raise HTTPException(status_code=400, detail="answer or file is required")
     else:
         raw = await request.json()
@@ -780,12 +818,21 @@ async def post_answer(case_id: str, request: Request, background_tasks: Backgrou
         answer = body.answer
         requested_by = body.requested_by
         expected_version = body.expected_version
+        choice = (body.choice or "").strip() or None
     row = control_plane.get_case(case_id) or row
     state = dict(row["state"] or {})
     _assert_state_version(state, expected_version)
     hitl = dict(state.get("hitl") or {})
     answers = dict(hitl.get("answers") or {})
     parsed_answer = decode_hitl_answer(answer)
+    if choice:
+        # Option button: keep the machine value and the human label/free text side by side.
+        label = _option_label(hitl, question_id, choice)
+        parsed_answer = {
+            "choice": choice,
+            "text": parsed_answer if isinstance(parsed_answer, str) and parsed_answer else label,
+            "label": label,
+        }
     answers[question_id] = parsed_answer
     hitl["answers"] = answers
     hitl["pending"] = False

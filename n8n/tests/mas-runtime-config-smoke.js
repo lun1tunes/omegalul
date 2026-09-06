@@ -36,6 +36,7 @@ assert.deepEqual(fields, {
   schedule_service_url: 'http://schedule-builder:8090',
   math_url: 'http://math-service:8100',
   orchestrator_step_url: 'http://127.0.0.1:5678/webhook/mas-orchestrator-step',
+  max_steps: '12',
 });
 const blob = JSON.stringify(wf);
 assert.equal(blob.includes('excel_tools_api_key'), false);

@@ -193,6 +193,9 @@ function normalizeHitlAnswer(qid, answer, question){
   const decoded=decodeHitlAnswer(answer);
   if(!isUnlistedWellsGate(qid, question)) return decoded;
   if(decoded&&typeof decoded==='object'&&!Array.isArray(decoded)){
+    /* Activity option button: {choice:'keep'|'remove', text:'<label>'} */
+    const choice=String(decoded.choice||'').toLowerCase();
+    if(choice==='keep'||choice==='remove') return {...decoded, unlisted_wells_policy:choice};
     const p=parseKeepRemove(decoded.unlisted_wells_policy||'', true)||parseKeepRemove(decoded.raw!=null?decoded.raw:JSON.stringify(decoded), true);
     if(p) return {unlisted_wells_policy:p, raw:decoded.raw!=null?decoded.raw:decoded};
   }
@@ -206,8 +209,11 @@ function readUnlistedWellsPolicy(answers){
     if(val&&typeof val==='object'&&!Array.isArray(val)){
       const direct=String(val.unlisted_wells_policy||'').toLowerCase();
       if(direct==='keep'||direct==='remove') return direct;
+      const choice=String(val.choice||'').toLowerCase();
+      if(isUnlistedWellsGate(key,'')&&(choice==='keep'||choice==='remove')) return choice;
       const nested=parseKeepRemove(val.raw!=null?val.raw:JSON.stringify(val), isUnlistedWellsGate(key,''));
       if(nested) return nested;
+      continue;
     }
     const keyed=isUnlistedWellsGate(key,'');
     const found=parseKeepRemove(val, keyed);
@@ -346,7 +352,159 @@ function sanitizeState(state){
   s.current_task=slimCurrentTask(s.current_task,s.artifacts,s.data);
   if(s.last_error&&typeof s.last_error==='object') s.last_error=slimError(s.last_error);
   s.error_count=Number(s.error_count||(s.last_error&&s.last_error.count)||0)||0;
+  s.ledger=sanitizeLedger(s.ledger);
+  reconcileLedgerAnswers(s);
   return s;
+}
+function reconcileLedgerAnswers(state){
+  /* Activity writes HITL answers straight into state.hitl.answers and then calls action=step
+     (the orchestrator's own resume path is only one of two write paths). Any answer that is not
+     yet in the journal is appended here, so guards and the LLM see it regardless of the path. */
+  const hitl=state.hitl&&typeof state.hitl==='object'?state.hitl:{};
+  const answers=hitl.answers&&typeof hitl.answers==='object'&&!Array.isArray(hitl.answers)?hitl.answers:{};
+  const questions=Array.isArray(hitl.questions)?hitl.questions:[];
+  const l=sanitizeLedger(state.ledger);
+  const seen=new Set(l.history.filter(e=>e.kind==='human').map(e=>String(e.question_id||'')));
+  let changed=false;
+  for(const [qid,ans] of Object.entries(answers)){
+    if(seen.has(String(qid))) continue;
+    const q=questions.find(x=>x&&String(x.question_id||x.id||'')===String(qid))||{};
+    const reviewAccept=isResultReviewGate(qid)&&humanAnswerChoice(ans)==='accept';
+    ledgerPush(state,{kind:'human',step:Number(state.step_count||0),question_id:String(qid),question:String(q.question||'').slice(0,200),answer:humanAnswerText(ans).slice(0,300),...(reviewAccept?{review_accept:true}:{})});
+    state.ledger.last_human_step=Number(state.step_count||0);
+    state.ledger.stall_count=0;
+    changed=true;
+  }
+  return changed;
+}
+function ledgerAnsweredAgentQuestion(state){
+  /* An agent asked (needs_input), the human answered, and that agent has not run since:
+     the answer has not been applied yet. Finishing now would drop the human's decision. */
+  const h=sanitizeLedger(state.ledger).history;
+  let pending=null;
+  for(const e of h){
+    if(e.kind==='agent'){
+      if(e.status==='needs_input') pending={agent_id:e.agent_id,task_id:e.task_id||'',question:String(e.summary||''),answered:false,answer:''};
+      else if(pending&&String(e.agent_id||'')===String(pending.agent_id)) pending=null;
+    } else if(e.kind==='human'&&pending&&!isResultReviewGate(e.question_id)){
+      pending.answered=true;
+      pending.answer=String(e.answer||'');
+    }
+  }
+  return pending&&pending.answered?pending:null;
+}
+/* --- Progress ledger (task journal) ---
+   Domain-free record of what happened in the case: every agent result and every human answer.
+   The Decision LLM reasons about completion from this journal (not from boolean flags), and
+   Parse decision uses it for deterministic loop protection (same agent re-delegated after a
+   completed result without new inputs → result review with the human, never a silent retry). */
+const LEDGER_HISTORY_MAX=30;
+function sanitizeLedger(raw){
+  const l=raw&&typeof raw==='object'&&!Array.isArray(raw)?{...raw}:{};
+  const history=Array.isArray(l.history)?l.history.filter(e=>e&&typeof e==='object'):[];
+  return {
+    history:history.slice(-LEDGER_HISTORY_MAX),
+    stall_count:Number(l.stall_count||0)||0,
+    last_human_step:Number(l.last_human_step||0)||0,
+    reviews:Number(l.reviews||0)||0
+  };
+}
+function ledgerPush(state, entry){
+  const l=sanitizeLedger(state.ledger);
+  l.history=[...l.history,{...entry,step:Number(entry.step||state.step_count||0)}].slice(-LEDGER_HISTORY_MAX);
+  state.ledger=l;
+  return l;
+}
+function ledgerAgentEntries(state, agentId){
+  const l=sanitizeLedger(state.ledger);
+  return l.history.filter(e=>e.kind==='agent'&&(!agentId||String(e.agent_id||'')===String(agentId)));
+}
+function ledgerLastAgentEntry(state, agentId){
+  const rows=ledgerAgentEntries(state, agentId);
+  return rows.length?rows[rows.length-1]:null;
+}
+function ledgerHasNewInputsSince(state, entry){
+  /* True when a human answered (text / choice / files) after the given journal entry. */
+  const l=sanitizeLedger(state.ledger);
+  const idx=l.history.indexOf(entry);
+  const tail=idx>=0?l.history.slice(idx+1):l.history;
+  return tail.some(e=>e.kind==='human');
+}
+function ledgerHumanAccepted(state){
+  const l=sanitizeLedger(state.ledger);
+  for(let i=l.history.length-1;i>=0;i--){
+    const e=l.history[i];
+    if(e.kind==='agent') return false;
+    if(e.kind==='human'&&e.review_accept===true) return true;
+  }
+  return false;
+}
+function humanAnswerText(answer){
+  if(answer==null) return '';
+  if(typeof answer==='string') return answer;
+  if(typeof answer!=='object'||Array.isArray(answer)) return String(answer);
+  for(const key of ['text','label','answer','value','choice']){
+    if(answer[key]!=null&&answer[key]!=='') return String(answer[key]);
+  }
+  try{return JSON.stringify(answer).slice(0,200)}catch{return ''}
+}
+function humanAnswerChoice(answer){
+  if(!answer||typeof answer!=='object'||Array.isArray(answer)) return '';
+  return String(answer.choice||'').trim().toLowerCase();
+}
+function isResultReviewGate(qid){
+  return String(qid||'').indexOf('result_review')===0;
+}
+function agentTitle(agentId, registry){
+  const rows=Array.isArray(registry)?registry:[];
+  const hit=rows.find(r=>r&&String(r.agent_id||'')===String(agentId||''));
+  return (hit&&hit.title)||String(agentId||'агент');
+}
+function composeDoneSummary(state, registry){
+  const done=ledgerAgentEntries(state).filter(e=>e.status==='completed'&&String(e.summary||'').trim());
+  if(!done.length) return '';
+  const seen=new Set();
+  const parts=[];
+  for(const e of done){
+    const s=String(e.summary||'').trim().replace(/\s+/g,' ');
+    if(seen.has(s)) continue;
+    seen.add(s);
+    parts.push(`${agentTitle(e.agent_id, registry)}: ${s}`);
+  }
+  return parts.join(' ');
+}
+function buildResultReviewQuestion(state, agentId, registry, reason){
+  const last=ledgerLastAgentEntry(state, agentId);
+  const summary=String((last&&last.summary)||'').trim();
+  const title=agentTitle(agentId, registry);
+  const lead=reason==='step_limit'
+    ?'Оркестратор исчерпал лимит шагов. '
+    :`${title} уже выполнил эту задачу, новых данных с тех пор не появилось. `;
+  const body=summary?`Результат: ${summary}. `:'';
+  return {
+    question_id:`result_review_${Number(state.step_count||0)}`,
+    kind:'result_approval',
+    question:`${lead}${body}Принять результат как итог задачи или нужна доработка? Если доработка — напишите, что именно не так.`,
+    options:[
+      {value:'accept',label:'Принять результат'},
+      {value:'rework',label:'Нужна доработка — опишу ниже'}
+    ]
+  };
+}
+function compactLedger(state){
+  const l=sanitizeLedger(state.ledger);
+  const rows=l.history.slice(-8).map(e=>{
+    if(e.kind==='human'){
+      return {step:e.step,kind:'human',question:String(e.question||'').slice(0,120),answer:String(e.answer||'').slice(0,160),...(e.review_accept?{review_accept:true}:{})};
+    }
+    return {
+      step:e.step,kind:'agent',agent_id:e.agent_id||null,task_id:e.task_id||null,status:e.status||null,
+      summary:String(e.summary||'').slice(0,240),
+      artifacts_added:Array.isArray(e.artifacts_added)?e.artifacts_added.slice(0,8):[],
+      ...(e.rework_reason?{rework_reason:String(e.rework_reason).slice(0,160)}:{})
+    };
+  });
+  return {history:rows,stall_count:l.stall_count,completed_agents:[...new Set(l.history.filter(e=>e.kind==='agent'&&e.status==='completed').map(e=>e.agent_id).filter(Boolean))]};
 }
 function buildCompact(state){
   const artifacts=state.artifacts||{};
@@ -385,7 +543,8 @@ function buildCompact(state){
     unlisted_wells_policy:readUnlistedWellsPolicy(hitl.answers),
     step_count:Number(state.step_count||0),
     version:Number(state.version||0),
-    last_error:(err&&typeof err==='object'?err.message:null)||null
+    last_error:(err&&typeof err==='object'?err.message:null)||null,
+    journal:compactLedger(state)
   };
 }
 /* mas_state_utils end */

@@ -4,7 +4,7 @@
  * Each scenario fails closed if the corresponding value factor is missing.
  */
 const assert = require('node:assert/strict');
-const { readWorkflow } = require('./_workflow');
+const { readWorkflow } = require('../_workflow');
 const fs = require('node:fs');
 const path = require('node:path');
 

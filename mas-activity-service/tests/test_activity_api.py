@@ -561,9 +561,9 @@ def test_ready_health_and_static_assets() -> None:
     assert "schedules.unshift(chosen)" in js_text
     assert 'q.required ? "обязательно"' not in js_text
     assert "формат: ${q.expected_format}" not in js_text
-    assert "app.js?v=87" in index.text
+    assert "app.js?v=89" in index.text
     assert "schema.js?v=23" in index.text
-    assert "app.css?v=92" in index.text
+    assert "app.css?v=94" in index.text
     assert "viewChatBtn" in index.text
     assert "viewSchemaBtn" in index.text
     assert ">Чат<" in index.text
@@ -1427,7 +1427,9 @@ def test_static_ui_requires_schedule_root_and_generic_conflict_banner() -> None:
     assert "formatStartError" in js
     assert "emptyFeedMessage" in js
     assert "hitlDropzone" in js
-    assert "Нужен текст ответа или вложение." in js
+    assert "Выберите вариант, напишите ответ или приложите файл." in js
+    assert "gate-option" in js  # HITL options rendered as buttons
+    assert 'form.append("choice", choice.value)' in js
 
 
 def test_live_hitl_status_failure_does_not_local_apply(monkeypatch) -> None:
@@ -2777,7 +2779,7 @@ def test_durable_feed_surfaces_webhook_error(monkeypatch) -> None:
 
 
 def test_feed_hydrate_workflow_limit_matches_max_turns() -> None:
-    gen = Path(__file__).resolve().parents[2] / "n8n" / "templates" / "generate_activity_hydrate_workflows.py"
+    gen = Path(__file__).resolve().parents[2] / "n8n" / "templates" / "retired" / "generate_activity_hydrate_workflows.py"
     text = gen.read_text(encoding="utf-8")
     assert '"limit": 500' in text or '"limit":500' in text
     assert "truncated" in text

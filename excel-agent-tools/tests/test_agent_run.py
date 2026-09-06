@@ -187,7 +187,8 @@ def test_open_and_extract_emit_live_activity_status_lines(tmp_path, monkeypatch)
     assert any(msg.startswith("Файл ") and "таблиц" in msg for msg in messages)
     assert any(msg.startswith("Нашёл таблиц:") for msg in messages)
     assert any(msg.startswith("Фактов скважина+дата:") for msg in messages)
-    assert "agent.result" in kinds
+    # Tools report progress only; the single agent.result is emitted by the orchestrator on merge.
+    assert "agent.result" not in kinds
     assert any("Извлечено таблиц" in msg for msg in messages)
 
 

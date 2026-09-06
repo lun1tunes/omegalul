@@ -200,26 +200,6 @@ def activity_event(name, pos, kind, message, *, status="running"):
     )
 
 
-def activity_result_event(name, pos):
-    body = (
-        "={{ ({"
-        "kind: 'agent.result', actor: 'excel_extractor', agent_id: 'excel_extractor', "
-        "task_id: $('Normalize excel task').first().json.agent_task.task_id, "
-        "status: String($('Format excel result').first().json.status || 'failed'), "
-        "status_message: String($('Format excel result').first().json.message || 'Excel Extractor завершил обработку workbook.'), "
-        "payload: {source: 'excel-extractor-agent-workflow'}"
-        "}) }}"
-    )
-    return http_json(
-        name,
-        pos,
-        "POST",
-        "={{ $('Runtime configuration').first().json.activity_base_url + '/cases/' + $('Normalize excel task').first().json.agent_task.case_id + '/events' }}",
-        body,
-        timeout=2000,
-        activity=True,
-    )
-
 
 def activity_event_dynamic(name, pos):
     body = (
@@ -300,22 +280,9 @@ NORMALIZE = r"""
 const incoming=(()=>{try{return $('When executed by another workflow').first().json||{}}catch{return $json||{}}})();
 const root=incoming&&typeof incoming==='object'?incoming:{};
 const body=root.body&&typeof root.body==='object'?root.body:root;
-const packet=body.specialist_packet&&typeof body.specialist_packet==='object'?body.specialist_packet:null;
 let task=body.agent_task&&typeof body.agent_task==='object'?body.agent_task:(body.case_id||body.task_id||body.objective?body:null);
 if(!task||typeof task!=='object') task={};
-if(packet){
-  const inputs=packet.inputs&&typeof packet.inputs==='object'?packet.inputs:{};
-  task={
-    case_id:String(packet.case_id||body.case_id||task.case_id||''),
-    task_id:String(packet.task_id||task.task_id||''),
-    agent_id:'excel_extractor',
-    objective:String(packet.objective||task.objective||''),
-    handoff_message:String(packet.handoff_message||task.handoff_message||packet.objective||''),
-    inputs,
-    context:packet.context&&typeof packet.context==='object'?packet.context:(task.context||{}),
-    constraints:packet.controls&&typeof packet.controls==='object'?packet.controls:(task.constraints||{})
-  };
-}
+// Contract: agent_task only (retired specialist_packet is not accepted).
 task.agent_id='excel_extractor';
 task.case_id=String(task.case_id||'');
 task.task_id=String(task.task_id||'');
@@ -651,10 +618,6 @@ def main() -> None:
             {"jsCode": "const x=$('Describe extract result').first().json||{}; return [{json:x}];"},
         ),
         if_true("Extract finished?", (1880, -80), "={{ Boolean($json.skip_fetch) }}"),
-        activity_result_event(
-            "Activity — Excel Extractor completed",
-            (2560, -180),
-        ),
         node(
             "Restore after Excel Extractor activity",
             "n8n-nodes-base.code",
@@ -774,8 +737,8 @@ def main() -> None:
     connect(connections, "AI extracted?", "Fetch excel result", si=1)
     connect(connections, "Fetch excel result", "Format excel result")
     connect(connections, "Format excel result", "Close excel session")
-    connect(connections, "Close excel session", "Activity — Excel Extractor completed")
-    connect(connections, "Activity — Excel Extractor completed", "Restore after Excel Extractor activity")
+    # agent.result is emitted once, by the orchestrator when it merges this result into case state.
+    connect(connections, "Close excel session", "Restore after Excel Extractor activity")
 
     wf = {
         "id": WF_ID,

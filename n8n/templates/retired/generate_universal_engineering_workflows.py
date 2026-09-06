@@ -1,8 +1,12 @@
 from __future__ import annotations
 
 import json
+import sys
 import uuid
 from pathlib import Path
+
+# Retired generator: lives in n8n/templates/retired/, shares helper modules with live templates.
+sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 
 from schedule_package_materialize import build_materialize_uploads_node_js
 from mas_retrieval_client import knowledge_retrieval_execute_params
@@ -21,12 +25,12 @@ from generate_schedule_workflows import KEYWORDS
 from schedule_task_facts import build_schedule_task_facts_js
 
 
-ROOT = Path(__file__).resolve().parents[2]
+ROOT = Path(__file__).resolve().parents[3]
 WORKFLOWS = ROOT / "n8n" / "workflows"
 CORE = WORKFLOWS / "core"
 RETIRED = WORKFLOWS / "retired"
 SUPPORT = WORKFLOWS / "support"
-TEMPLATES = ROOT / "n8n" / "templates"
+TEMPLATES = ROOT / "n8n" / "templates" / "retired"
 ERROR_HANDLER_WF_ID = "e1f0a7c2-9b4d-5e8f-a123-4567890abcde"
 _SPECIALIST_CATALOG_JSON = specialist_catalog_js()
 _SPECIALIST_ALLOWLIST_JS = allowlist_js()
@@ -2632,7 +2636,7 @@ def main() -> None:
     import sys
 
     subprocess.check_call(
-        [sys.executable, str(Path(__file__).resolve().parent / "relayout_core_workflows.py")],
+        [sys.executable, str(Path(__file__).resolve().parents[1] / "relayout_core_workflows.py")],
         cwd=str(ROOT),
     )
 

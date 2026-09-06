@@ -33,8 +33,19 @@ HDR = {"httpHeaderAuth": {"id": "REPLACE_IN_UI", "name": "REPLACE: engineering o
 DECISION_SCHEMA = {
     "type": "object",
     "additionalProperties": True,
-    "required": ["status_message", "action"],
+    "required": ["progress", "status_message", "action"],
     "properties": {
+        # Progress ledger (Magentic-One style): the LLM must first judge completion from the journal.
+        "progress": {
+            "type": "object",
+            "required": ["goal_satisfied", "evidence"],
+            "properties": {
+                "goal_satisfied": {"type": "boolean"},
+                "evidence": {"type": "string"},
+                "missing": {"type": "string"},
+                "is_repeating": {"type": "boolean"},
+            },
+        },
         "status_message": {"type": "string"},
         "plan_update": {"type": "array", "items": {"type": "object"}},
         "action": {
@@ -45,11 +56,15 @@ DECISION_SCHEMA = {
                 "agent_id": {"type": "string"},
                 "task_id": {"type": "string"},
                 "handoff_message": {"type": "string"},
+                "rework_reason": {"type": "string"},
                 "task": {"type": "object"},
                 "question_id": {"type": "string"},
                 "question": {"type": "string"},
                 "options": {"type": "array", "items": {"type": "string"}},
-                "result": {"type": "object"},
+                "result": {
+                    "type": "object",
+                    "properties": {"summary_for_human": {"type": "string"}},
+                },
             },
         },
     },
@@ -63,10 +78,23 @@ SYSTEM = """Ты оркестратор инженерной задачи.
 
 Если RAG status=empty или unavailable — решай по реестру и compact. Не спрашивай HITL про базу знаний.
 
-Ты должен выбрать одно действие:
+Сначала заполни progress — оценку хода задачи по журналу (compact.journal.history: результаты агентов с summary и добавленными артефактами, ответы человека):
+- goal_satisfied: true, только если результаты в журнале покрывают цель целиком.
+- evidence: что именно в журнале это подтверждает (или чего не хватает).
+- missing: что ещё нужно сделать (пусто, если цель достигнута).
+- is_repeating: true, если ты собираешься повторить агенту задание, которое он уже выполнил (status completed) без новых данных.
+
+Затем выбери одно действие:
 1. call_agent
 2. ask_user
 3. finish
+
+Завершение:
+- Если goal_satisfied — только finish. В action.result.summary_for_human напиши по-русски, что фактически сделано, опираясь на summary агентов из журнала (не на шаблон «вызвал агента»).
+- Агент, который вернул completed, свою часть сделал: его результат уже в артефактах. Не вызывай его снова «для проверки» или «чтобы применить ещё раз».
+- Повторный call_agent того же агента допустим только если появились новые данные (ответ человека, новые файлы) или ты нашёл конкретный недостаток в его результате — тогда обязательно заполни action.rework_reason и опиши недостаток в handoff_message.
+- Если человек в журнале принял результат (review_accept) — finish.
+- Если агент вернул needs_input (задал вопрос) и человек ответил — верни задачу этому же агенту (call_agent) и передай ответ в handoff_message. Пока этот агент не вернул completed, цель не достигнута и finish невозможен.
 
 Агенты в реестре:
 - excel_extractor — Excel: скважины, даты ввода, дебиты. Не пишет SCHEDULE. Вызывай только если в artifacts есть excel.
@@ -78,7 +106,6 @@ SYSTEM = """Ты оркестратор инженерной задачи.
 - Типичный путь «новые даты ввода»: excel_extractor, затем schedule_builder, затем finish.
 - Типичный путь «перепривязка в группу / групповой контроль»: сразу schedule_builder (Excel не нужен), затем finish. Даты ввода этих скважин брать из baseline SCHEDULE.
 - Не вызывай excel_extractor, если Excel нет в artifacts.
-- Если в data/artifacts уже есть schedule_out — finish.
 - Имена INCLUDE-файлов (GRUPTREE.GRDECL и т.п.) — это состав пакета, не просьба менять группы. Не пиши в handoff про перепривязку групп, если пользователь об этом не просил.
 - Если следующий шаг очевиден, выбери call_agent.
 - Не вызывай агента, которого нет в реестре.
@@ -343,7 +370,7 @@ if(req.is_status===true){
     const q0=questions[0]&&typeof questions[0]==='object'?questions[0]:{};
     human_gate={
       gate_id:q0.question_id||'hitl',
-      kind:'needs_input',
+      kind:String(q0.kind||'needs_input'),
       reason:q0.question||state.goal||'Нужен ответ',
       expected_version:version,
       questions
@@ -384,7 +411,7 @@ if(req.is_resume===true){
       version:current,
       human_gate:questions.length?{
         gate_id:(questions[0]&&questions[0].question_id)||'hitl',
-        kind:'needs_input',
+        kind:String((questions[0]&&questions[0].kind)||'needs_input'),
         reason:questions[0]&&questions[0].question||state.goal||'Нужен ответ',
         expected_version:current,
         questions
@@ -401,6 +428,11 @@ if(req.is_resume===true){
   state.hitl={pending:false,questions,answers};
   state.status='running';
   state.version=Number(state.version||0)+1;
+  /* Journal: a human answer is new input — it unlocks re-delegation and resets stall protection. */
+  const reviewAccept=isResultReviewGate(qid)&&humanAnswerChoice(answers[qid])==='accept';
+  ledgerPush(state,{kind:'human',step:Number(state.step_count||0),question_id:qid,question:String(q0.question||'').slice(0,200),answer:humanAnswerText(answers[qid]).slice(0,300),...(reviewAccept?{review_accept:true}:{})});
+  state.ledger.last_human_step=Number(state.step_count||0);
+  state.ledger.stall_count=0;
   const persistEvents=[[req.case_id,'','hitl.answered','user','','answered',answer?('Пользователь ответил: '+(typeof answer==='string'?answer:JSON.stringify(answer))):'Пользователь ответил','',JSON.stringify({question_id:qid,answer:answers[qid]})]];
   return [{json:{
     ...req,
@@ -451,14 +483,14 @@ const state=sanitizeState(rawState);
 const status=String((extras&&extras.next_status)||load.status||state.status||'running');
 const registry=$('Load agent registry').all().map(i=>i.json||{}).filter(r=>r&&r.agent_id);
 const compact=buildCompact(state);
-const data=state.data&&typeof state.data==='object'?state.data:{};
-const hint=[];
-if(compact.has_excel&&!data.excel) hint.push('Сначала excel_extractor — в artifacts есть Excel, фактов ещё нет.');
-else if(compact.excel_facts>0&&compact.has_schedule_source&&!compact.has_schedule_out) hint.push('Дальше schedule_builder — факты Excel и исходный .inc уже есть.');
-else if(!compact.has_excel&&compact.has_schedule_source&&!compact.has_schedule_out) hint.push('Excel нет: сразу schedule_builder по тексту задачи и baseline .inc.');
-else if(compact.has_schedule_out) hint.push('schedule_out уже есть — finish.');
-if(compact.unlisted_wells_policy==='keep'||compact.unlisted_wells_policy==='remove') hint.push('HITL unlisted_wells_policy уже выбран: '+compact.unlisted_wells_policy+'.');
-const prompt=`Цель:\n${compact.goal}\n\nТекущее состояние:\n${JSON.stringify(compact,null,2)}\n\nПодсказка следующего шага:\n${hint.join(' ')||'выбери по реестру агентов'}\n\nДоступные агенты:\n${JSON.stringify(registry,null,2)}\n`;
+/* No rule-based routing hint here: the Decision LLM reasons from goal + journal + state + registry + RAG policy cards. */
+const journalLines=(compact.journal&&Array.isArray(compact.journal.history)?compact.journal.history:[]).map(e=>{
+  if(e.kind==='human') return `- шаг ${e.step}: человек ответил${e.review_accept?' (принял результат)':''}: «${e.answer}»${e.question?` — на вопрос «${e.question}»`:''}`;
+  const arts=(e.artifacts_added||[]).length?`; артефакты: ${e.artifacts_added.join(', ')}`:'';
+  return `- шаг ${e.step}: ${e.agent_id} → ${e.status}: ${e.summary||'(без описания)'}${arts}${e.rework_reason?` (доработка: ${e.rework_reason})`:''}`;
+});
+const journalText=journalLines.length?journalLines.join('\n'):'- пока ничего не сделано';
+const prompt=`Цель:\n${compact.goal}\n\nЖурнал задачи (что уже сделано, по шагам):\n${journalText}\n\nТекущее состояние:\n${JSON.stringify(compact,null,2)}\n\nДоступные агенты (реестр):\n${JSON.stringify(registry,null,2)}\n`;
 const retrieval_selector={target_base:ORCH_RAG_TARGET_BASE,knowledge_types:ORCH_RAG_KNOWLEDGE_TYPES};
 const query=inferRetrievalQuery(compact);
 const schedule_retrieval_request={
@@ -502,22 +534,74 @@ const obj=v=>v&&typeof v==='object'&&!Array.isArray(v);
 const parse=v=>{if(obj(v))return v;try{const p=JSON.parse(String(v||''));return obj(p)?p:{}}catch{return {}}};
 const out=parse(raw.output||raw.text||raw);
 const decision=obj(out.action)?out:(obj(raw)?raw:{});
-const action=obj(decision.action)?decision.action:{type:'ask_user',question_id:'Q-parse',question:'Не удалось разобрать решение оркестратора',options:[]};
-const type=String(action.type||'').trim();
+let action=obj(decision.action)?{...decision.action}:{type:'ask_user',question_id:'Q-parse',question:'Не удалось разобрать решение оркестратора',options:[]};
+let type=String(action.type||'').trim();
+const progress=obj(decision.progress)?decision.progress:{};
+const registry=Array.isArray(prev.registry)?prev.registry:[];
 const state=sanitizeState(obj(prev.state)?{...prev.state}:{});
 state.step_count=Number(state.step_count||0)+1;
 state.version=Number(state.version||0)+1;
+/* --- Completion guards (deterministic safety around the LLM decision; no domain knowledge) ---
+   1. The human accepted the result in a review gate → the case is finished, whatever the LLM picked.
+   2. The LLM itself says goal_satisfied but still delegates → finish (its own judgement wins over habit).
+   3. Re-delegating to an agent that already returned completed, with no new human input since:
+      allowed once with an explicit rework_reason; otherwise → result review with the human. */
+let guard=null;
+let reworkReason='';
+const answered=ledgerAnsweredAgentQuestion(state);
+if(type==='finish'&&answered){
+  /* 0. An agent asked, the human answered, the agent has not run since → the answer must reach the
+        agent that asked. Finishing here would silently drop the engineer's decision. */
+  guard='answer_not_applied';
+  type='call_agent';
+  action={
+    type:'call_agent',
+    agent_id:answered.agent_id,
+    handoff_message:`Инженер ответил на ваш вопрос («${answered.question.slice(0,160)}»): «${answered.answer.slice(0,200)}». Продолжите задачу с учётом этого ответа.`,
+    task:{objective:String(state.goal||'')}
+  };
+} else if(type!=='finish'&&ledgerHumanAccepted(state)){
+  guard='human_accepted';
+  type='finish';
+  action={type:'finish',result:{summary_for_human:String((obj(action.result)&&action.result.summary_for_human)||'')}};
+} else if(type==='call_agent'&&progress.goal_satisfied===true&&!answered){
+  guard='goal_satisfied';
+  type='finish';
+  action={type:'finish',result:{summary_for_human:String(progress.evidence||'')}};
+} else if(type==='call_agent'){
+  const agentId=String(action.agent_id||'').trim();
+  const last=ledgerLastAgentEntry(state, agentId);
+  const repeat=Boolean(last)&&String(last.status||'')==='completed'&&!ledgerHasNewInputsSince(state, last);
+  if(repeat){
+    reworkReason=String(action.rework_reason||'').trim();
+    const stall=Number(state.ledger.stall_count||0);
+    if(reworkReason&&stall<1){
+      guard='rework_allowed';
+      state.ledger.stall_count=stall+1;
+    } else {
+      guard=reworkReason?'stall_review':'repeat_review';
+      state.ledger.stall_count=stall+1;
+      state.ledger.reviews=Number(state.ledger.reviews||0)+1;
+      const review=buildResultReviewQuestion(state, agentId, registry, 'repeat');
+      type='ask_user';
+      action={type:'ask_user',...review};
+    }
+  }
+}
 if(Array.isArray(decision.plan_update)){
   const by=new Map((Array.isArray(state.plan)?state.plan:[]).map(p=>[p.id,p]));
   for(const item of decision.plan_update){if(item&&item.id) by.set(item.id,{...(by.get(item.id)||{}),...item});}
   state.plan=[...by.values()];
 }
-const statusMessage=String(decision.status_message||'').trim()||'Шаг оркестратора';
+let statusMessage=String(decision.status_message||'').trim()||'Шаг оркестратора';
+if(guard==='repeat_review'||guard==='stall_review') statusMessage='Результат уже получен — прошу инженера принять его или описать доработку.';
+else if(guard==='answer_not_applied') statusMessage=`Передаю ответ инженера агенту ${agentTitle(action.agent_id, registry)}.`;
+else if(guard==='human_accepted') statusMessage='Инженер принял результат — завершаю задачу.';
 const decisionEvent={
   kind:'orchestrator.decision',
   actor:'orchestrator',
   status_message:statusMessage,
-  payload:{action_type:type,agent_id:action.agent_id||null,step_count:state.step_count,version:state.version}
+  payload:{action_type:type,agent_id:action.agent_id||null,step_count:state.step_count,version:state.version,progress:{goal_satisfied:progress.goal_satisfied===true,evidence:String(progress.evidence||'').slice(0,300),missing:String(progress.missing||'').slice(0,300)},...(guard?{guard}:{})}
 };
 const events=[];
 let nextStatus='running';
@@ -541,7 +625,8 @@ if(type==='call_agent'){
       schedule_root:state.schedule_root||(obj(action.task)?action.task.schedule_root:''),
       artifact_ids:artifactIds,
       data_refs:Object.keys(state.data||{}),
-      ...(unlistedPolicy?{unlisted_wells_policy:unlistedPolicy}:{})
+      ...(unlistedPolicy?{unlisted_wells_policy:unlistedPolicy}:{}),
+      ...(reworkReason?{rework_reason:reworkReason}:{})
     },
     context:{hitl:{pending:Boolean(hitlState.pending),answer_ids:Object.keys(hitlAnswers),answers:hitlAnswers}},
     constraints:{units:'METRIC'}
@@ -561,14 +646,21 @@ if(type==='call_agent'){
   });
 } else if(type==='ask_user'){
   nextStatus='waiting_user';
-  const q={question_id:String(action.question_id||`Q-${state.step_count}`),question:String(action.question||'Нужно уточнение'),options:Array.isArray(action.options)?action.options:[]};
+  const q={question_id:String(action.question_id||`Q-${state.step_count}`),question:String(action.question||'Нужно уточнение'),options:Array.isArray(action.options)?action.options:[],...(action.kind?{kind:action.kind}:{})};
   state.hitl={pending:true,questions:[q],answers:(state.hitl&&state.hitl.answers)||{}};
+  state.current_task=null;
   events.push(decisionEvent, {kind:'hitl.request',actor:'orchestrator',status:'waiting_user',status_message:statusMessage,payload:q});
 } else if(type==='finish'){
   nextStatus='done';
   state.current_task=null;
-  state.data={...(state.data||{}),result:action.result||{}};
-  events.push({kind:'case.finished',actor:'orchestrator',status:'done',status_message:statusMessage,payload:{...(obj(action.result)?action.result:{}),action_type:'finish'}});
+  /* Honest completion: what agents actually did (their summaries), not "called N agents". */
+  const llmSummary=String((obj(action.result)&&action.result.summary_for_human)||'').trim();
+  const journalSummary=composeDoneSummary(state, registry);
+  const summary=llmSummary||journalSummary||statusMessage;
+  const result={...(obj(action.result)?action.result:{}),summary_for_human:summary,done_by_agents:journalSummary,...(guard?{guard}:{})};
+  state.data={...(state.data||{}),result};
+  statusMessage=summary;
+  events.push({kind:'case.finished',actor:'orchestrator',status:'done',status_message:summary,payload:{...result,action_type:'finish'}});
 } else {
   nextStatus='waiting_user';
   const q={question_id:'Q-unknown',question:'Оркестратор вернул неизвестное действие',options:[]};
@@ -675,6 +767,7 @@ const data=obj(state.data)?{...state.data}:{};
 delete data.facts;
 const agentId=String(prev.agent_id||result.agent_id||'');
 const bucket=agentId==='excel_extractor'?'excel':(agentId==='calculation_agent'?'calc':(agentId==='schedule_builder'?'schedule':'agent'));
+const artifactsBefore=new Set(Object.keys(flattenArtifacts(state.artifacts||{})));
 if(status==='completed'){
   const raw=obj(result.data)?result.data:{};
   if(bucket==='excel') data.excel=slimExcel(raw);
@@ -687,6 +780,20 @@ if(status==='completed'){
   state.last_error=null;
   state.error_count=0;
 }
+/* Journal entry: what this agent actually did on this task (drives completion reasoning + loop guard). */
+const artifactsAdded=Object.keys(flattenArtifacts(state.artifacts||{})).filter(k=>!artifactsBefore.has(k));
+const agentTaskIn=obj(prev.agent_task)?prev.agent_task:{};
+ledgerPush(state,{
+  kind:'agent',
+  step:Number(state.step_count||0),
+  agent_id:agentId,
+  task_id:String(agentTaskIn.task_id||''),
+  status,
+  summary:String(resultMessage||fallbackMessage).slice(0,400),
+  artifacts_added:artifactsAdded,
+  data_keys:Object.keys(obj(result.data)?result.data:{}).slice(0,12),
+  ...(agentTaskIn.inputs&&agentTaskIn.inputs.rework_reason?{rework_reason:String(agentTaskIn.inputs.rework_reason)}:{})
+});
 if(Array.isArray(state.plan)){
   state.plan=state.plan.map(p=>{
     if(!p||typeof p!=='object') return p;
@@ -731,10 +838,22 @@ if(status==='needs_input'){
     shouldContinue=true;
   }
 }
-if(Number(state.step_count||0)>=24){
-  nextStatus='failed';
+/* Step budget comes from MAS — Runtime Config (max_steps, UI-editable). Hitting it is not a silent
+   failure: if there is a completed result, the engineer reviews it; only with nothing to show we fail. */
+const maxSteps=Math.max(3,Number(prev.max_steps)||12);
+if(Number(state.step_count||0)>=maxSteps&&nextStatus==='running'){
   shouldContinue=false;
-  events.push({kind:'case.failed',actor:'orchestrator',status:'failed',status_message:'Превышен лимит шагов оркестратора'});
+  const done=composeDoneSummary(state, Array.isArray(prev.registry)?prev.registry:[]);
+  if(done){
+    nextStatus='waiting_user';
+    const review=buildResultReviewQuestion(state, agentId, Array.isArray(prev.registry)?prev.registry:[], 'step_limit');
+    state.hitl={pending:true,questions:[review],answers:(state.hitl&&state.hitl.answers)||{}};
+    state.ledger.reviews=Number(state.ledger.reviews||0)+1;
+    events.push({kind:'hitl.request',actor:'orchestrator',status:'waiting_user',status_message:`Лимит шагов (${maxSteps}) исчерпан — прошу инженера принять результат или описать доработку.`,payload:review});
+  } else {
+    nextStatus='failed';
+    events.push({kind:'case.failed',actor:'orchestrator',status:'failed',status_message:`Превышен лимит шагов оркестратора (${maxSteps}), результата нет.`});
+  }
 }
 state.data=data;
 state.status=nextStatus;

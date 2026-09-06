@@ -128,6 +128,9 @@ def test_unlisted_policy_uses_word_boundaries_like_n8n() -> None:
     assert compact_unlisted_policy({"Q-1": {"unlisted_wells_policy": "keep"}}) == "keep"
     assert compact_unlisted_policy({"unlisted_wells_policy": {"raw": "remove extras"}}) == "remove"
     assert compact_unlisted_policy({"Q-1": {"raw": "keep extra wells"}}) is None
+    # Option button from the Activity HITL panel
+    assert compact_unlisted_policy({"unlisted_wells_policy": {"choice": "remove", "text": "Убрать из прогноза"}}) == "remove"
+    assert compact_unlisted_policy({"Q-parent-group": {"choice": "remove", "text": "x"}}) is None
     assert is_unlisted_wells_gate("unlisted_wells_policy", "") is True
     assert is_unlisted_wells_gate("Q-1", "скважины не из excel") is True
     assert is_unlisted_wells_gate("Q-1", "") is False

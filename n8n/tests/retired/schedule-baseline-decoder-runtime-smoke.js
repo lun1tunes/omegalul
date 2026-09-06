@@ -6,7 +6,7 @@ const assert = require('node:assert/strict');
 const fs = require('node:fs');
 const path = require('node:path');
 
-const { workflowFile } = require('./_workflow');
+const { workflowFile } = require('../_workflow');
 const AsyncFunction = Object.getPrototypeOf(async function () {}).constructor;
 
 function source(file, name) {

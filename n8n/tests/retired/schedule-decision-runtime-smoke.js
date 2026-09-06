@@ -3,7 +3,7 @@
 // Executes the exact exported n8n Code-node JavaScript for the observable
 // decision/readiness contracts. No model-authored percentage is trusted here.
 const assert = require('node:assert/strict');
-const { readWorkflow } = require('./_workflow');
+const { readWorkflow } = require('../_workflow');
 const plannerWorkflow = readWorkflow('tnavigator-schedule-builder.workflow.json');
 const builderWorkflow = readWorkflow('tnavigator-schedule-builder.workflow.json');
 const traceWorkflow = readWorkflow('mas-trace-event-writer.workflow.json');

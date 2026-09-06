@@ -137,6 +137,7 @@ async function run(name, json, nodes = {}, binary = {}) {
     const end = js.indexOf('/* mas_state_utils end */');
     assert.ok(begin >= 0 && end > begin, `state utils markers missing in ${name}`);
     assert.ok(js.includes('function readUnlistedWellsPolicy'), name);
+    assert.match(js, /if\(nested\) return nested;\s*continue;/, name);
     assert.ok(js.includes('function normalizeHitlAnswer'), name);
     assert.ok(js.includes('function inferTaskPatterns'), name);
     assert.ok(js.includes('function inferRetrievalQuery'), name);
@@ -147,6 +148,15 @@ async function run(name, json, nodes = {}, binary = {}) {
   assert.equal(helperChunks[0].includes("s.includes('remove')"), false);
   assert.match(helperChunks[0], /\\bkeep\\b/);
   assert.match(helperChunks[0], /\\bremove\\b/);
+  {
+    // Activity option button answer: {choice, text, label} — no regex on the human label.
+    const helpers = new Function(`${helperChunks[0]}; return { normalizeHitlAnswer, readUnlistedWellsPolicy };`)();
+    const clicked = { choice: 'remove', text: 'Убрать из прогноза', label: 'Убрать из прогноза' };
+    assert.equal(helpers.normalizeHitlAnswer('unlisted_wells_policy', clicked, '').unlisted_wells_policy, 'remove');
+    assert.equal(helpers.readUnlistedWellsPolicy({ unlisted_wells_policy: clicked }), 'remove');
+    assert.equal(helpers.readUnlistedWellsPolicy({ 'Q-parent-group': clicked }), null, 'choice is gated by the question id');
+    assert.equal(helpers.readUnlistedWellsPolicy({ unlisted_wells_policy: { choice: 'keep', text: 'Оставить как в baseline' } }), 'keep');
+  }
   const continueNode = wf.nodes.find((n) => n.name === 'POST continue run');
   assert.ok(String(continueNode.parameters.jsonBody).includes("action: 'step'"));
   assert.ok(String(continueNode.parameters.jsonBody).includes('orchestrator-self'));
@@ -334,7 +344,9 @@ async function run(name, json, nodes = {}, binary = {}) {
   assert.match(prepared.schedule_retrieval_request.query, /даты ввода/);
   assert.match(prepared.schedule_retrieval_request.query, /Извлечено 40 скважин из Excel/);
   assert.match(prepared.schedule_retrieval_request.query, /Нужно обновить baseline SCHEDULE/);
-  assert.match(prepared.planner_input, /Дальше schedule_builder/);
+  // No rule-based "next step" hint: the Decision LLM must reason from state + registry + RAG.
+  assert.ok(!prepared.planner_input.includes('Подсказка следующего шага'));
+  assert.ok(!/Дальше schedule_builder|Сначала excel_extractor|сразу schedule_builder|уже есть — finish/.test(prepared.planner_input));
   assert.equal(prepared.schedule_retrieval_request.top_k, 12);
   const topics = prepared.schedule_retrieval_request.filters.topics;
   assert.ok(topics.includes('Excel'));
@@ -931,6 +943,211 @@ async function run(name, json, nodes = {}, binary = {}) {
     },
   );
   assert.equal(expanded.p3, 'agent.result');
+
+  // ---------------------------------------------------------------------------------------------
+  // Completion contract (regression for CASE-6a9da4e2: schedule_builder completed 23× in a loop).
+  // Journal (progress ledger) → LLM sees what was done; deterministic guards stop silent repeats.
+  // ---------------------------------------------------------------------------------------------
+  {
+    const registry = [
+      { agent_id: 'schedule_builder', title: 'Schedule Builder' },
+      { agent_id: 'excel_extractor', title: 'Excel Extractor' },
+    ];
+    const req = { case_id: 'CASE-LOOP', action: 'step', is_status: false, is_resume: false };
+    const baseState = {
+      case_id: 'CASE-LOOP',
+      goal: 'Скважины 1601 и 1602 в группу DKS, GRAT 200 тыс.',
+      status: 'running',
+      step_count: 1,
+      version: 2,
+      artifacts: { schedule: { source: { artifact_id: 'schedule_source', filename: 'baseline.inc' } } },
+      data: {},
+      hitl: { pending: false, questions: [], answers: {} },
+      plan: [],
+    };
+    const prepare = (state, extra = {}) => run('Prepare decision context', {}, {
+      'Apply request extras': { ...req, state, next_status: 'running' },
+      'Load case': { case_id: 'CASE-LOOP', state: JSON.stringify(state), status: 'running' },
+      'Load agent registry': registry,
+      'Runtime endpoints': { activity_base_url: 'http://mas-activity:8200', max_steps: '12', ...extra },
+    });
+    const decide = (prepared, output) => run('Parse decision', { output }, { 'Prepare decision context': prepared });
+    const merge = (parsed, body) => run('Merge agent result', { body }, { 'Prepare agent call': parsed, 'Parse decision': parsed });
+    const delegate = {
+      progress: { goal_satisfied: false, evidence: 'ничего не сделано', missing: 'перепривязка' },
+      status_message: 'Передаю задачу билдеру SCHEDULE.',
+      action: { type: 'call_agent', agent_id: 'schedule_builder', handoff_message: 'Перепривяжи 1601 и 1602 в DKS.' },
+    };
+
+    // Step 1: fresh case → delegation is legitimate.
+    let prepared = await prepare(baseState);
+    assert.match(prepared.planner_input, /Журнал задачи/);
+    assert.match(prepared.planner_input, /пока ничего не сделано/);
+    assert.deepEqual(prepared.compact.journal, { history: [], stall_count: 0, completed_agents: [] });
+    let parsed = await decide(prepared, delegate);
+    assert.equal(parsed.action_type, 'call_agent');
+    assert.equal(parsed.should_call_agent, true);
+    assert.equal(parsed.decision.progress.goal_satisfied, false);
+
+    // Agent completes: the journal records what it did and which artifacts appeared.
+    let merged = await merge(parsed, {
+      status: 'completed',
+      agent_id: 'schedule_builder',
+      message: 'Перепривязал 2 скважины в DKS (GCONPROD GRAT 200000)',
+      data: { group_rebind: {}, edits: [] },
+      artifacts: { schedule_out: 'DATES\n 1 JAN 2026 /\n/\n' + 'x'.repeat(300), diff: 'd' },
+    });
+    assert.equal(merged.next_status, 'running');
+    assert.equal(merged.should_continue, true);
+    const journal = merged.state.ledger.history;
+    assert.equal(journal.length, 1);
+    assert.equal(journal[0].kind, 'agent');
+    assert.equal(journal[0].agent_id, 'schedule_builder');
+    assert.equal(journal[0].status, 'completed');
+    assert.match(journal[0].summary, /Перепривязал 2 скважины/);
+    assert.ok(journal[0].artifacts_added.includes('schedule_out'));
+
+    // Step 2: the LLM now sees the journal in planner_input …
+    prepared = await prepare(merged.state);
+    assert.match(prepared.planner_input, /шаг 2: schedule_builder → completed: Перепривязал 2 скважины/);
+    assert.deepEqual(prepared.compact.journal.completed_agents, ['schedule_builder']);
+
+    // … (a) if it still re-delegates the same task with no new inputs → result review with the human, not a silent rerun.
+    let repeat = await decide(prepared, delegate);
+    assert.equal(repeat.action_type, 'ask_user');
+    assert.equal(repeat.should_call_agent, false);
+    assert.equal(repeat.next_status, 'waiting_user');
+    assert.equal(repeat.decision.action.type, 'call_agent', 'raw LLM decision is kept for audit');
+    const gate = repeat.state.hitl.questions[0];
+    assert.match(gate.question_id, /^result_review_/);
+    assert.equal(gate.kind, 'result_approval');
+    assert.match(gate.question, /Schedule Builder уже выполнил эту задачу/);
+    assert.match(gate.question, /Перепривязал 2 скважины/);
+    assert.deepEqual(gate.options.map((o) => o.value), ['accept', 'rework']);
+    assert.ok(!/[a-z_]+=[a-z]+|expected_format/.test(gate.question), 'human prose, no machine syntax');
+    assert.equal(repeat.events.find((e) => e.kind === 'orchestrator.decision').payload.guard, 'repeat_review');
+
+    // … (b) if it re-delegates with an explicit rework_reason → allowed once, reason travels to the agent.
+    let rework = await decide(prepared, {
+      ...delegate,
+      action: { ...delegate.action, rework_reason: 'GCONPROD стоит до даты ввода 1602' },
+    });
+    assert.equal(rework.action_type, 'call_agent');
+    assert.equal(rework.agent_task.inputs.rework_reason, 'GCONPROD стоит до даты ввода 1602');
+    assert.equal(rework.state.ledger.stall_count, 1);
+    const reworked = await merge(rework, { status: 'completed', agent_id: 'schedule_builder', message: 'Сдвинул GCONPROD на дату ввода', data: {}, artifacts: {} });
+    assert.equal(reworked.state.ledger.history.at(-1).rework_reason, 'GCONPROD стоит до даты ввода 1602');
+    // Second rework without new human input is not allowed → review.
+    const prepared3 = await prepare(reworked.state);
+    const second = await decide(prepared3, { ...delegate, action: { ...delegate.action, rework_reason: 'ещё раз' } });
+    assert.equal(second.action_type, 'ask_user');
+    assert.equal(second.events.find((e) => e.kind === 'orchestrator.decision').payload.guard, 'stall_review');
+
+    // … (c) if the LLM says goal_satisfied but habitually delegates → finish with an honest summary.
+    const contradiction = await decide(prepared, {
+      ...delegate,
+      progress: { goal_satisfied: true, evidence: 'Schedule Builder перепривязал скважины, schedule_out получен' },
+    });
+    assert.equal(contradiction.action_type, 'finish');
+    assert.equal(contradiction.next_status, 'done');
+    assert.match(contradiction.state.data.result.summary_for_human, /перепривязал скважины/);
+
+    // … (d) the proper path: finish with summary_for_human; journal summary is attached for the feed.
+    const finish = await decide(prepared, {
+      progress: { goal_satisfied: true, evidence: 'schedule_out получен' },
+      status_message: 'Готово.',
+      action: { type: 'finish', result: { summary_for_human: 'Скважины 1601 и 1602 переведены в группу DKS с GRAT 200000; новый SCHEDULE готов.' } },
+    });
+    assert.equal(finish.next_status, 'done');
+    const finished = finish.events.find((e) => e.kind === 'case.finished');
+    assert.equal(finished.status_message, 'Скважины 1601 и 1602 переведены в группу DKS с GRAT 200000; новый SCHEDULE готов.');
+    assert.match(finished.payload.done_by_agents, /Schedule Builder: Перепривязал 2 скважины/);
+    // finish without summary_for_human → summary composed from the journal, never "вызвал агента".
+    const finishBare = await decide(prepared, { progress: { goal_satisfied: true, evidence: 'ok' }, status_message: 'Готово', action: { type: 'finish' } });
+    assert.match(finishBare.events.find((e) => e.kind === 'case.finished').status_message, /Schedule Builder: Перепривязал 2 скважины/);
+
+    // Human accepts the review → next step finishes regardless of the LLM's habit.
+    const resumeReq = { ...req, is_resume: true, gate_id: gate.question_id, human_response: JSON.stringify({ choice: 'accept', text: 'Принять результат', label: 'Принять результат' }) };
+    const resumed = await run('Apply request extras', { state: JSON.stringify(repeat.state), status: 'waiting_user' }, { 'Normalize step request': resumeReq });
+    assert.equal(resumed.did_resume, true);
+    const human = resumed.state.ledger.history.at(-1);
+    assert.equal(human.kind, 'human');
+    assert.equal(human.review_accept, true);
+    assert.equal(human.answer, 'Принять результат');
+    assert.equal(resumed.state.ledger.stall_count, 0);
+    const preparedAccepted = await prepare(resumed.state);
+    assert.match(preparedAccepted.planner_input, /человек ответил \(принял результат\)/);
+    const afterAccept = await decide(preparedAccepted, delegate);
+    assert.equal(afterAccept.action_type, 'finish');
+    assert.equal(afterAccept.events.find((e) => e.kind === 'case.finished').payload.guard, 'human_accepted');
+
+    // Human asks for rework → new input: delegation is allowed again (stall reset).
+    const reworkReq = { ...req, is_resume: true, gate_id: gate.question_id, human_response: JSON.stringify({ choice: 'rework', text: 'Групповой контроль должен начинаться с даты ввода 1602, а не 1601' }) };
+    const resumedRework = await run('Apply request extras', { state: JSON.stringify(repeat.state), status: 'waiting_user' }, { 'Normalize step request': reworkReq });
+    assert.equal(resumedRework.state.ledger.history.at(-1).review_accept, undefined);
+    const afterRework = await decide(await prepare(resumedRework.state), delegate);
+    assert.equal(afterRework.action_type, 'call_agent');
+
+    // Agent asked (needs_input) → Activity wrote the answer into state.hitl.answers and called action=step
+    // (no orchestrator resume). The journal must still pick the answer up, and finishing is not allowed
+    // until the asking agent has run with it (regression for combat_case3: LLM "finished" after the
+    // unlisted-wells answer and hallucinated that schedule_builder had produced the schedule).
+    const asked = await merge(parsed, {
+      status: 'needs_input',
+      agent_id: 'schedule_builder',
+      message: 'В Excel нет скважин: 201, 208. Оставить или убрать?',
+      requests: [{ question_id: 'unlisted_wells_policy', question: 'В Excel нет скважин: 201, 208. Оставить или убрать?', options: [{ value: 'keep', label: 'Оставить' }, { value: 'remove', label: 'Убрать' }] }],
+      data: { unlisted_wells: ['201', '208'] },
+      artifacts: {},
+    });
+    assert.equal(asked.next_status, 'waiting_user');
+    assert.equal(asked.state.ledger.history.at(-1).status, 'needs_input');
+    const activityWritten = {
+      ...asked.state,
+      hitl: { ...asked.state.hitl, pending: false, answers: { unlisted_wells_policy: { choice: 'remove', text: 'Убрать из прогноза', label: 'Убрать из прогноза' } } },
+    };
+    const preparedAnswered = await prepare(activityWritten);
+    const humanEntry = preparedAnswered.compact.journal.history.at(-1);
+    assert.equal(humanEntry.kind, 'human');
+    assert.equal(humanEntry.answer, 'Убрать из прогноза');
+    assert.match(preparedAnswered.planner_input, /человек ответил: «Убрать из прогноза»/);
+    const prematureFinish = await decide(preparedAnswered, {
+      progress: { goal_satisfied: true, evidence: 'schedule_builder отработал' },
+      status_message: 'Готово',
+      action: { type: 'finish', result: { summary_for_human: 'Всё сделано' } },
+    });
+    assert.equal(prematureFinish.action_type, 'call_agent', 'the answer must reach the agent that asked');
+    assert.equal(prematureFinish.agent_task.agent_id, 'schedule_builder');
+    assert.match(prematureFinish.agent_task.handoff_message, /Инженер ответил на ваш вопрос/);
+    assert.match(prematureFinish.agent_task.handoff_message, /Убрать из прогноза/);
+    assert.equal(prematureFinish.agent_task.inputs.unlisted_wells_policy, 'remove');
+    assert.equal(prematureFinish.events.find((e) => e.kind === 'orchestrator.decision').payload.guard, 'answer_not_applied');
+    // The same answer is not journaled twice on later steps.
+    const preparedTwice = await prepare(prematureFinish.state);
+    assert.equal(preparedTwice.compact.journal.history.filter((e) => e.kind === 'human').length, 1);
+    // Once the asking agent completes, finish is allowed.
+    const afterAnswer = await merge(prematureFinish, { status: 'completed', agent_id: 'schedule_builder', message: 'Сдвинул 4 скважины, убрал 2', data: {}, artifacts: { schedule_out: 'x'.repeat(400) } });
+    const finalFinish = await decide(await prepare(afterAnswer.state), { progress: { goal_satisfied: true, evidence: 'ok' }, status_message: 'Готово', action: { type: 'finish' } });
+    assert.equal(finalFinish.action_type, 'finish');
+    assert.match(finalFinish.events.find((e) => e.kind === 'case.finished').status_message, /Сдвинул 4 скважины, убрал 2/);
+
+    // Step budget from Runtime Config: at the limit with a result → review, without result → failed.
+    const nearLimit = { ...merged.state, step_count: 12 };
+    const atLimitParsed = await decide(await prepare(nearLimit), { ...delegate, action: { ...delegate.action, agent_id: 'excel_extractor' } });
+    const atLimit = await merge(atLimitParsed, { status: 'completed', agent_id: 'excel_extractor', message: 'Извлёк 0 строк', data: {}, artifacts: {} });
+    assert.equal(atLimit.next_status, 'waiting_user');
+    assert.equal(atLimit.should_continue, false);
+    assert.match(atLimit.state.hitl.questions[0].question, /исчерпал лимит шагов/);
+    const noResultState = { ...baseState, step_count: 12 };
+    const noResultParsed = await decide(await prepare(noResultState), delegate);
+    const noResult = await merge(noResultParsed, { status: 'failed', agent_id: 'schedule_builder', message: 'boom', data: {}, artifacts: {} });
+    assert.equal(noResult.next_status, 'failed', 'budget exhausted and nothing completed → honest failure');
+    assert.match(noResult.events.find((e) => e.kind === 'case.failed').status_message, /результата нет/);
+    const belowLimit = await merge({ ...noResultParsed, state: { ...noResultParsed.state, step_count: 5 } }, { status: 'failed', agent_id: 'schedule_builder', message: 'boom', data: {}, artifacts: {} });
+    assert.equal(belowLimit.next_status, 'running', 'below the budget a first failure is retried by the error budget');
+    const noResultDone = await merge(noResultParsed, { status: 'completed', agent_id: 'schedule_builder', message: '', data: {}, artifacts: {} });
+    assert.equal(noResultDone.next_status, 'waiting_user', 'a completed result (even terse) is reviewed, not thrown away');
+  }
 
   assert.equal(err.name, 'Error — MAS Node Traces');
   assert.equal(err.settings.errorWorkflow || '', '');

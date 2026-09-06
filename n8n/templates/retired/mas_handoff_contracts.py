@@ -9,8 +9,8 @@ from __future__ import annotations
 import json
 from pathlib import Path
 
-ROOT = Path(__file__).resolve().parents[1]
-REGISTRY_PATH = ROOT / "contracts" / "specialist_registry.v1.json"
+ROOT = Path(__file__).resolve().parents[2]
+REGISTRY_PATH = ROOT / "contracts" / "retired" / "specialist_registry.v1.json"
 EVIDENCE_GAP_REQUIRED = (
     "entity",
     "effective_at",

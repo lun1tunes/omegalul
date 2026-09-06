@@ -9,7 +9,7 @@ from __future__ import annotations
 import json, uuid
 from pathlib import Path
 from schedule_pipeline import DECISION_RECORD_SCHEMA, build_schedule_pipeline
-from schedule_rag_workflows import build_ingestion, build_retrieval
+from schedule_rag_workflows import KEYWORDS, build_ingestion, build_retrieval
 from schedule_lossless_runtime import build_baseline_js, build_merge_js
 from schedule_baseline_decoder import build_baseline_decoder_js
 from schedule_baseline_query import build_baseline_query_js
@@ -24,7 +24,7 @@ LIVE_CORE=frozenset({
  'tnavigator-schedule-knowledge-ingestion.workflow.json',
  'tnavigator-schedule-hybrid-retrieval.workflow.json',
 })
-KEYWORDS=['DATES','INCLUDE','GRUPTREE','WELSPECS','WELLTRACK','COMPDATMD','WCONHIST','WCONPROD','WCONINJE','GCONPROD','GCONINJE','GUIDERAT','GSATPROD','GSATINJE','WELLSTRE','WINJGAS','GINJGAS','BRANPROP','NODEPROP','GNETDP','NETBALAN','FRACTURE_TEMPLATE','FRACTURE_SPECS','FRACTURE_STAGE','WECON','WTEST','WELTARG','WNETDP','WPIMULT','WDFAC','WEFAC','WELOPEN','WELDRAW','WLIST','WFRACP','WFRACPL','VFPPROD','WVFPDP','ACTIONX','DELAYACT','ENDACTIO','UDQ','UDT','APPLYSCRIPT']
+# KEYWORDS (SCHEDULE allowlist) has a single source: schedule_rag_workflows.KEYWORDS.
 def uid(name): return str(uuid.uuid5(uuid.NAMESPACE_URL,'omegalul/schedule-foundation/'+name))
 def node(name,type_,version,pos,parameters,**extra):
  v={'parameters':parameters,'id':uid(name),'name':name,'type':type_,'typeVersion':version,'position':list(pos)};v.update(extra);return v

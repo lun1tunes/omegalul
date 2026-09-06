@@ -163,6 +163,8 @@ class CaseAnswerIn(BaseModel):
     answer: Any
     requested_by: str = "mas activity user"
     expected_version: int | None = None
+    # Value of a selected question option (Activity renders `options[]` as buttons).
+    choice: str | None = None
 
 
 class CaseNameIn(BaseModel):

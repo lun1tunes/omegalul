@@ -834,6 +834,41 @@ WCONPROD
     assert "DKS FIELD /" in revised["generated_schedule"]
 
 
+def test_group_rebind_emits_wells_in_baseline_order_regardless_of_llm_order() -> None:
+    """Deterministic emit: the LLM listed 1602 before 1601 — records still follow the baseline."""
+    from app.group_rebind import run_group_rebind_revise
+    source = """GRUPTREE
+NORTH FIELD /
+/
+
+DATES
+  1 JAN 2020 /
+/
+
+WELSPECS
+  1601 NORTH 1 1 1* GAS /
+  1602 NORTH 1 1 1* GAS /
+/
+
+WCONPROD
+  1601 OPEN GRAT 1* 1* 200000 /
+  1602 OPEN GRAT 1* 1* 200000 /
+/
+"""
+    spec = {
+        "wells": ["1602", "1601", "1602"],
+        "parent_group": "DKS",
+        "parent_of_parent": "FIELD",
+        "well_groups": {"1601": "G1601", "1602": "G1602"},
+        "control": "GRAT",
+        "gas_rate": 200000,
+    }
+    text = run_group_rebind_revise(source, spec)["generated_schedule"]
+    assert text.index("G1601 DKS /") < text.index("G1602 DKS /")
+    assert text.index("1601 G1601 /") < text.index("1602 G1602 /")
+    assert text.count("G1602 DKS /") == 1
+
+
 def test_hitl_json_answers_yield_policy_and_new_well_defs() -> None:
     import json
 
@@ -870,6 +905,24 @@ def test_unlisted_policy_from_plain_hitl_string() -> None:
         "context": {"hitl": {"answers": {"unlisted_wells_policy": "оставь лишние скважины"}}},
     }
     assert _unlisted_policy(keep_state) == "keep"
+
+
+def test_unlisted_policy_from_activity_option_button() -> None:
+    """Activity stores a clicked option as {choice, text, label}; no regex on the label."""
+    from app.agent_tools import _unlisted_policy
+
+    state = {
+        "inputs": {},
+        "context": {"hitl": {"answers": {
+            "unlisted_wells_policy": {"choice": "remove", "text": "Убрать из прогноза", "label": "Убрать из прогноза"},
+        }}},
+    }
+    assert _unlisted_policy(state) == "remove"
+    other_gate = {
+        "inputs": {},
+        "context": {"hitl": {"answers": {"Q-parent-group": {"choice": "remove", "text": "x"}}}},
+    }
+    assert _unlisted_policy(other_gate) is None
 
 
 def test_wefac_wildcard_is_not_an_unlisted_well() -> None:
@@ -944,7 +997,12 @@ def test_commissioning_prose_remove_without_enum_needs_unlisted_policy() -> None
     assert revised["unlisted_wells_policy"] is None
     assert "201" in revised["unlisted_wells"]
     assert any(item["code"] == "UNLISTED_WELLS_POLICY_REQUIRED" for item in revised["findings"])
-    assert any(item.get("id") == "unlisted_wells_policy" for item in revised["questions"])
+    question = next(item for item in revised["questions"] if item.get("id") == "unlisted_wells_policy")
+    # Human-facing question: Russian prose + labelled options, no machine enum text.
+    assert "expected_format" not in question
+    assert [opt["value"] for opt in question["options"]] == ["keep", "remove"]
+    assert all(opt["label"] and not opt["label"].isascii() for opt in question["options"])
+    assert "keep|remove" not in question["question"]
 
 
 def test_commissioning_explicit_remove_drops_unlisted() -> None:
@@ -1028,3 +1086,122 @@ def test_commissioning_new_well_defs_are_applied() -> None:
     assert any(item["code"] == "NEW_WELLS_APPLIED" for item in revised["findings"])
     assert "N001" in revised["new_wells"]
     assert "N001" in (revised.get("new_wells_applied") or [{}])[0].get("well", "")
+
+
+def test_new_well_question_is_human_and_asks_for_facts_not_inc_lines() -> None:
+    from app.commissioning import run_commissioning_revise
+
+    revised = run_commissioning_revise(
+        _TWO_WELL_SOURCE,
+        [{"well": "1601", "date": "23 FEB 2020"}, {"well": "N001", "date": "1 MAR 2020"}],
+        unlisted_wells_policy="keep",
+    )
+    assert revised["status"] == "needs_input"
+    questions = revised["questions"]
+    assert len(questions) == 1
+    q = questions[0]
+    assert q["id"] == "new_wells_policy"
+    assert "expected_format" not in q
+    assert "N001" in q["question"]
+    assert "WELLTRACK" in q["question"] and "GRAT" in q["question"]
+    assert "record line" not in q["question"] and "typed" not in q["question"]
+    assert q["accepts"]["files"] == ["WELLTRACK .inc", "xlsx"]
+    columns = {c["key"] for c in q["accepts"]["table"]["columns"]}
+    assert {"well", "group", "md_top", "md_bot", "control", "rate", "welltrack_include"} <= columns
+    assert q["wells"] == ["N001"]
+
+
+def test_compose_new_well_lines_follows_manual_layout() -> None:
+    from app.timeline_ops import compose_new_well_lines
+
+    spec = {
+        "well": "N001", "date": "2023-01-01", "group": "GNEW", "phase": "OIL", "i": 1, "j": 1,
+        "md_top": 3200, "md_bot": 3240, "diameter": 0.15,
+        "control": "GRAT", "rate": 80000, "bhp": 90, "vfp_table": 30,
+        "welltrack_include": "INCLUDE/WELLTRACK/N001_WELLTRACK.INC",
+    }
+    out, findings = compose_new_well_lines(spec)
+    assert findings == []
+    # WELSPECS: WELL GROUP I J REF_DEPTH PHASE
+    assert out["welspecs_line"] == " N001 GNEW 1 1 1* OIL /"
+    # COMPDATMD: WELL BRANCH MDL MDU DEPTH_TYPE STATUS SAT_TABLE CF DIAMETER
+    assert out["compdatmd_line"] == " N001 1* 3200 3240 MD OPEN 2* 0.15 /"
+    # WCONPROD: WELL STATUS CONTROL ORAT WRAT GRAT LRAT RESV BHP THP VFP_TABLE
+    assert out["wconprod_line"] == " N001 OPEN GRAT 1* 1* 80000 1* 1* 90 1* 30 /"
+    assert out["welltrack_include"] == "INCLUDE/WELLTRACK/N001_WELLTRACK.INC"
+
+    # Russian table headers from an xlsx are accepted; trailing defaults are trimmed.
+    out_ru, findings_ru = compose_new_well_lines(
+        {"Скважина": "N002", "Дата ввода": "2023-02-01", "Группа": "GNEW", "MD_TOP": 3210, "MD_BOT": 3250, "Режим": "GRAT", "Дебит": 85000}
+    )
+    assert findings_ru == []
+    assert out_ru["welspecs_line"] == " N002 GNEW /"
+    assert out_ru["wconprod_line"] == " N002 OPEN GRAT 1* 1* 85000 /"
+
+    # Nothing is invented: missing group / control / rate are findings, not defaults.
+    _, missing = compose_new_well_lines({"well": "N003", "md_top": 1, "md_bot": 2, "control": "ORAT"})
+    codes = {f["code"] for f in missing}
+    assert {"NEW_WELL_GROUP_REQUIRED", "NEW_WELL_RATE_REQUIRED"} <= codes
+
+
+def test_commissioning_new_wells_from_engineering_facts_are_applied() -> None:
+    from app.commissioning import run_commissioning_revise
+
+    revised = run_commissioning_revise(
+        _TWO_WELL_SOURCE,
+        [{"well": "1601", "date": "23 FEB 2020"}, {"well": "N001", "date": "1 MAR 2020"}],
+        unlisted_wells_policy="keep",
+        new_well_defs=[{
+            "well": "N001", "date": "1 MAR 2020", "group": "GNEW", "phase": "GAS",
+            "md_top": 1000, "md_bot": 1100, "control": "GRAT", "rate": 50000,
+            "welltrack_include": "welltracks/N001.dev",
+        }],
+    )
+    assert revised["status"] == "applied"
+    text = revised["generated_schedule"]
+    assert "N001 GNEW 1* 1* 1* GAS /" in text
+    assert "N001 1* 1000 1100 MD OPEN /" in text
+    assert "N001 OPEN GRAT 1* 1* 50000 /" in text
+    assert "welltracks/N001.dev" in text
+
+
+def test_commissioning_summary_describes_actual_changes() -> None:
+    """Engineer-facing summary comes from the real diff, not a template count of Excel rows."""
+    from app.agent_tools import summarize_commissioning_result
+
+    revised = {
+        "status": "applied",
+        "moved": [
+            {"well": "201", "keyword": "WCONPROD", "to": "01 FEB 2026"},
+            {"well": "201", "keyword": "WELSPECS", "to": "01 FEB 2026"},
+            {"well": "208", "keyword": "WCONPROD", "to": "01 MAR 2026"},
+        ],
+        "shifts": [{"well": "201"}, {"well": "208"}, {"well": "212"}],
+        "new_wells_applied": [{"well": "N001"}, {"well": "N002"}],
+        "removed": [{"well": "301", "keyword": "WCONPROD"}, {"well": "301", "keyword": "WELSPECS"}],
+        "unlisted_wells": ["301"],
+        "unlisted_wells_policy": "remove",
+    }
+    summary = summarize_commissioning_result(revised)
+    msg = summary["message"]
+    assert msg.startswith("Сдвинул даты ввода 2 скважин: 201 → 01 FEB 2026, 208 → 01 MAR 2026.")
+    assert "212" in msg and "уже совпадали" in msg
+    assert "Добавил 2 скважины (N001, N002)" in msg
+    assert "Убрал из прогноза 1 скважину вне Excel: 301." in msg
+    assert summary["changed_keywords"] == ["DATES", "WCONPROD", "WELSPECS", "COMPDATMD"]
+    assert summary["wells_shifted"] == ["201", "208"]
+    assert summary["wells_removed"] == ["301"]
+    # no snake_case / machine tokens in the human sentence
+    assert "unlisted" not in msg and "=" not in msg and "{" not in msg
+
+    kept = summarize_commissioning_result({
+        "status": "applied",
+        "moved": [{"well": "201", "keyword": "WCONPROD", "to": "01 FEB 2026"}],
+        "shifts": [{"well": "201"}],
+        "unlisted_wells": ["301", "302"],
+        "unlisted_wells_policy": "keep",
+    })
+    assert kept["message"] == (
+        "Сдвинул даты ввода 1 скважины: 201 → 01 FEB 2026. 2 скважины вне Excel оставил как в baseline: 301, 302."
+    )
+    assert summarize_commissioning_result({"status": "noop"})["message"].startswith("SCHEDULE без изменений")

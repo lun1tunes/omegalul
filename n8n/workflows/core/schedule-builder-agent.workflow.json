@@ -16,8 +16,8 @@
       "type": "n8n-nodes-base.stickyNote",
       "typeVersion": 1,
       "position": [
-        -220,
-        -360
+        -40,
+        -1100
       ]
     },
     {
@@ -61,20 +61,20 @@
       "type": "n8n-nodes-base.executeWorkflow",
       "typeVersion": 1.3,
       "position": [
-        260,
+        280,
         0
       ]
     },
     {
       "parameters": {
-        "jsCode": "\nconst incoming=(()=>{try{return $('When executed by another workflow').first().json||{}}catch{return $json||{}}})();\nconst root=incoming&&typeof incoming==='object'?incoming:{};\nconst body=root.body&&typeof root.body==='object'?root.body:root;\nconst packet=body.specialist_packet&&typeof body.specialist_packet==='object'?body.specialist_packet:null;\nlet task=body.agent_task&&typeof body.agent_task==='object'?body.agent_task:(body.case_id||body.task_id||body.objective?body:null);\nif(!task||typeof task!=='object') task={};\nif(packet){\n  const inputs=packet.inputs&&typeof packet.inputs==='object'?packet.inputs:{};\n  task={\n    case_id:String(packet.case_id||body.case_id||task.case_id||''),\n    task_id:String(packet.task_id||task.task_id||''),\n    agent_id:'schedule_builder',\n    objective:String(packet.objective||task.objective||''),\n    handoff_message:String(packet.handoff_message||task.handoff_message||packet.objective||''),\n    inputs,\n    context:packet.context&&typeof packet.context==='object'?packet.context:(task.context||{}),\n    constraints:packet.controls&&typeof packet.controls==='object'?packet.controls:(task.constraints||{})\n  };\n}\ntask.agent_id='schedule_builder';\ntask.case_id=String(task.case_id||'');\ntask.task_id=String(task.task_id||'');\ntask.objective=String(task.objective||'');\ntask.handoff_message=String(task.handoff_message||'');\ntask.inputs=task.inputs&&typeof task.inputs==='object'?task.inputs:{};\ntask.context=task.context&&typeof task.context==='object'?task.context:{};\nconst cfg=$('Runtime configuration').first().json||{};\nif(!task.inputs.activity_base_url&&cfg.activity_base_url) task.inputs={...task.inputs, activity_base_url:cfg.activity_base_url};\nreturn [{json:{...cfg, agent_task:task, case_id:task.case_id, task_id:task.task_id}}];\n"
+        "jsCode": "\nconst incoming=(()=>{try{return $('When executed by another workflow').first().json||{}}catch{return $json||{}}})();\nconst root=incoming&&typeof incoming==='object'?incoming:{};\nconst body=root.body&&typeof root.body==='object'?root.body:root;\nlet task=body.agent_task&&typeof body.agent_task==='object'?body.agent_task:(body.case_id||body.task_id||body.objective?body:null);\nif(!task||typeof task!=='object') task={};\n// Contract: agent_task only (retired specialist_packet is not accepted).\ntask.agent_id='schedule_builder';\ntask.case_id=String(task.case_id||'');\ntask.task_id=String(task.task_id||'');\ntask.objective=String(task.objective||'');\ntask.handoff_message=String(task.handoff_message||'');\ntask.inputs=task.inputs&&typeof task.inputs==='object'?task.inputs:{};\ntask.context=task.context&&typeof task.context==='object'?task.context:{};\nconst cfg=$('Runtime configuration').first().json||{};\nif(!task.inputs.activity_base_url&&cfg.activity_base_url) task.inputs={...task.inputs, activity_base_url:cfg.activity_base_url};\nreturn [{json:{...cfg, agent_task:task, case_id:task.case_id, task_id:task.task_id}}];\n"
       },
       "id": "107fff28-ec6f-5420-a95e-bbf2be2f0f3b",
       "name": "Normalize schedule task",
       "type": "n8n-nodes-base.code",
       "typeVersion": 2,
       "position": [
-        500,
+        560,
         0
       ]
     },
@@ -109,7 +109,7 @@
       "type": "n8n-nodes-base.httpRequest",
       "typeVersion": 4.4,
       "position": [
-        740,
+        840,
         0
       ],
       "onError": "continueRegularOutput",
@@ -147,7 +147,7 @@
       "type": "n8n-nodes-base.if",
       "typeVersion": 2.3,
       "position": [
-        980,
+        1120,
         0
       ]
     },
@@ -160,8 +160,8 @@
       "type": "n8n-nodes-base.code",
       "typeVersion": 2,
       "position": [
-        1220,
-        240
+        1400,
+        85
       ]
     },
     {
@@ -196,8 +196,8 @@
       "type": "n8n-nodes-base.httpRequest",
       "typeVersion": 4.4,
       "position": [
-        1220,
-        -220
+        1400,
+        -85
       ],
       "onError": "continueRegularOutput",
       "alwaysOutputData": true
@@ -211,8 +211,8 @@
       "type": "n8n-nodes-base.code",
       "typeVersion": 2,
       "position": [
-        1440,
-        -220
+        1680,
+        0
       ]
     },
     {
@@ -247,8 +247,8 @@
       "type": "n8n-nodes-base.httpRequest",
       "typeVersion": 4.4,
       "position": [
-        1660,
-        -220
+        1960,
+        0
       ],
       "onError": "continueRegularOutput",
       "alwaysOutputData": true
@@ -262,8 +262,8 @@
       "type": "n8n-nodes-base.code",
       "typeVersion": 2,
       "position": [
-        1880,
-        -220
+        2240,
+        0
       ]
     },
     {
@@ -277,7 +277,7 @@
       "type": "n8n-nodes-base.switch",
       "typeVersion": 3.4,
       "position": [
-        1220,
+        2520,
         0
       ]
     },
@@ -312,8 +312,8 @@
       "type": "n8n-nodes-base.httpRequest",
       "typeVersion": 4.4,
       "position": [
-        1480,
-        -160
+        2800,
+        -170
       ],
       "onError": "continueRegularOutput",
       "alwaysOutputData": true,
@@ -352,7 +352,7 @@
       "type": "n8n-nodes-base.httpRequest",
       "typeVersion": 4.4,
       "position": [
-        1480,
+        2800,
         0
       ],
       "onError": "continueRegularOutput",
@@ -370,8 +370,8 @@
       "type": "n8n-nodes-base.code",
       "typeVersion": 2,
       "position": [
-        1680,
-        -80
+        3080,
+        -85
       ]
     },
     {
@@ -406,8 +406,8 @@
       "type": "n8n-nodes-base.httpRequest",
       "typeVersion": 4.4,
       "position": [
-        1680,
-        -260
+        3360,
+        255
       ],
       "onError": "continueRegularOutput",
       "alwaysOutputData": true
@@ -421,8 +421,8 @@
       "type": "n8n-nodes-base.code",
       "typeVersion": 2,
       "position": [
-        1880,
-        -260
+        3640,
+        340
       ]
     },
     {
@@ -454,47 +454,9 @@
       "type": "n8n-nodes-base.if",
       "typeVersion": 2.3,
       "position": [
-        1880,
-        -80
+        3920,
+        -85
       ]
-    },
-    {
-      "parameters": {
-        "method": "POST",
-        "url": "={{ $('Runtime configuration').first().json.activity_base_url + '/cases/' + $('Normalize schedule task').first().json.agent_task.case_id + '/events' }}",
-        "sendHeaders": true,
-        "headerParameters": {
-          "parameters": [
-            {
-              "name": "Content-Type",
-              "value": "application/json"
-            }
-          ]
-        },
-        "options": {
-          "timeout": 2000,
-          "response": {
-            "response": {
-              "fullResponse": false,
-              "responseFormat": "json",
-              "neverError": true
-            }
-          }
-        },
-        "sendBody": true,
-        "specifyBody": "json",
-        "jsonBody": "={{ ({kind: 'agent.result', actor: 'schedule_builder', agent_id: 'schedule_builder', task_id: $('Normalize schedule task').first().json.agent_task.task_id, status: String($('Format schedule result').first().json.status || 'failed'), status_message: String($('Format schedule result').first().json.message || 'Schedule Builder завершил обработку schedule.'), payload: {source: 'schedule-builder-agent-workflow'}}) }}"
-      },
-      "id": "0cbd0f7e-14f7-5ab9-bad8-662743b03009",
-      "name": "Activity — Schedule Builder completed",
-      "type": "n8n-nodes-base.httpRequest",
-      "typeVersion": 4.4,
-      "position": [
-        2560,
-        -180
-      ],
-      "onError": "continueRegularOutput",
-      "alwaysOutputData": true
     },
     {
       "parameters": {
@@ -505,8 +467,8 @@
       "type": "n8n-nodes-base.code",
       "typeVersion": 2,
       "position": [
-        2760,
-        -180
+        5880,
+        0
       ]
     },
     {
@@ -518,8 +480,8 @@
       "type": "n8n-nodes-base.code",
       "typeVersion": 2,
       "position": [
-        1480,
-        160
+        2800,
+        170
       ]
     },
     {
@@ -551,8 +513,8 @@
       "type": "n8n-nodes-base.executeWorkflow",
       "typeVersion": 1.3,
       "position": [
-        1480,
-        300
+        3080,
+        85
       ],
       "onError": "continueRegularOutput"
     },
@@ -565,8 +527,8 @@
       "type": "n8n-nodes-base.code",
       "typeVersion": 2,
       "position": [
-        1680,
-        300
+        3360,
+        595
       ]
     },
     {
@@ -589,8 +551,8 @@
       "type": "@n8n/n8n-nodes-langchain.agent",
       "typeVersion": 3.1,
       "position": [
-        1720,
-        160
+        3640,
+        680
       ]
     },
     {
@@ -612,8 +574,8 @@
       "type": "@n8n/n8n-nodes-langchain.lmChatOpenAi",
       "typeVersion": 1.3,
       "position": [
-        1720,
-        40
+        3640,
+        510
       ],
       "credentials": {
         "openAiApi": {
@@ -631,8 +593,8 @@
       "type": "n8n-nodes-base.code",
       "typeVersion": 2,
       "position": [
-        1960,
-        160
+        3920,
+        85
       ]
     },
     {
@@ -667,8 +629,8 @@
       "type": "n8n-nodes-base.httpRequest",
       "typeVersion": 4.4,
       "position": [
-        1960,
-        300
+        4200,
+        0
       ],
       "onError": "continueRegularOutput",
       "alwaysOutputData": true
@@ -682,8 +644,8 @@
       "type": "n8n-nodes-base.code",
       "typeVersion": 2,
       "position": [
-        2160,
-        300
+        4480,
+        0
       ]
     },
     {
@@ -715,8 +677,8 @@
       "type": "n8n-nodes-base.if",
       "typeVersion": 2.3,
       "position": [
-        2160,
-        160
+        4760,
+        0
       ]
     },
     {
@@ -747,7 +709,7 @@
       "type": "n8n-nodes-base.httpRequest",
       "typeVersion": 4.4,
       "position": [
-        2100,
+        5040,
         0
       ],
       "onError": "continueRegularOutput",
@@ -765,7 +727,7 @@
       "type": "n8n-nodes-base.code",
       "typeVersion": 2,
       "position": [
-        2320,
+        5320,
         0
       ]
     },
@@ -801,7 +763,7 @@
       "type": "n8n-nodes-base.httpRequest",
       "typeVersion": 4.4,
       "position": [
-        2480,
+        5600,
         0
       ],
       "onError": "continueRegularOutput",
@@ -846,8 +808,8 @@
       "type": "@n8n/n8n-nodes-langchain.toolHttpRequest",
       "typeVersion": 1.1,
       "position": [
-        760,
-        -420
+        3360,
+        425
       ],
       "retryOnFail": true,
       "maxTries": 3,
@@ -903,8 +865,8 @@
       "type": "@n8n/n8n-nodes-langchain.toolHttpRequest",
       "typeVersion": 1.1,
       "position": [
-        980,
-        -420
+        3640,
+        170
       ],
       "retryOnFail": true,
       "maxTries": 3,
@@ -960,8 +922,8 @@
       "type": "@n8n/n8n-nodes-langchain.toolHttpRequest",
       "typeVersion": 1.1,
       "position": [
-        1200,
-        -420
+        3360,
+        85
       ],
       "retryOnFail": true,
       "maxTries": 3,
@@ -1017,8 +979,8 @@
       "type": "@n8n/n8n-nodes-langchain.toolHttpRequest",
       "typeVersion": 1.1,
       "position": [
-        760,
-        -260
+        3640,
+        0
       ],
       "retryOnFail": true,
       "maxTries": 3,
@@ -1074,8 +1036,8 @@
       "type": "@n8n/n8n-nodes-langchain.toolHttpRequest",
       "typeVersion": 1.1,
       "position": [
-        980,
-        -260
+        3360,
+        -85
       ],
       "retryOnFail": true,
       "maxTries": 3,
@@ -1141,8 +1103,8 @@
       "type": "@n8n/n8n-nodes-langchain.toolHttpRequest",
       "typeVersion": 1.1,
       "position": [
-        1200,
-        -260
+        3640,
+        -170
       ],
       "retryOnFail": true,
       "maxTries": 3,
@@ -1187,8 +1149,8 @@
       "type": "@n8n/n8n-nodes-langchain.toolHttpRequest",
       "typeVersion": 1.1,
       "position": [
-        760,
-        -100
+        3360,
+        -255
       ],
       "retryOnFail": true,
       "maxTries": 3,
@@ -1254,8 +1216,8 @@
       "type": "@n8n/n8n-nodes-langchain.toolHttpRequest",
       "typeVersion": 1.1,
       "position": [
-        980,
-        -100
+        3640,
+        -340
       ],
       "retryOnFail": true,
       "maxTries": 3,
@@ -1311,8 +1273,8 @@
       "type": "@n8n/n8n-nodes-langchain.toolHttpRequest",
       "typeVersion": 1.1,
       "position": [
-        1200,
-        -100
+        3360,
+        -425
       ],
       "retryOnFail": true,
       "maxTries": 3,
@@ -1378,8 +1340,8 @@
       "type": "@n8n/n8n-nodes-langchain.toolHttpRequest",
       "typeVersion": 1.1,
       "position": [
-        760,
-        60
+        3640,
+        -510
       ],
       "retryOnFail": true,
       "maxTries": 3,
@@ -1424,8 +1386,8 @@
       "type": "@n8n/n8n-nodes-langchain.toolHttpRequest",
       "typeVersion": 1.1,
       "position": [
-        980,
-        60
+        3360,
+        -595
       ],
       "retryOnFail": true,
       "maxTries": 3,
@@ -1470,8 +1432,8 @@
       "type": "@n8n/n8n-nodes-langchain.toolHttpRequest",
       "typeVersion": 1.1,
       "position": [
-        1200,
-        60
+        3640,
+        -680
       ],
       "retryOnFail": true,
       "maxTries": 3,
@@ -1947,17 +1909,6 @@
       "main": [
         [
           {
-            "node": "Activity — Schedule Builder completed",
-            "type": "main",
-            "index": 0
-          }
-        ]
-      ]
-    },
-    "Activity — Schedule Builder completed": {
-      "main": [
-        [
-          {
             "node": "Restore after Schedule Builder activity",
             "type": "main",
             "index": 0
@@ -1979,5 +1930,5 @@
   },
   "tags": [],
   "pinData": {},
-  "versionId": "89f2bf93-3df5-430b-abef-41d08b0debc6"
+  "versionId": "2cdbf170-cbc3-4a19-9d39-942928c14c38"
 }

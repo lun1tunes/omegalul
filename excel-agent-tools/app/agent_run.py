@@ -339,9 +339,10 @@ def open_session(task: dict[str, Any]) -> dict[str, Any]:
             issues=[{"type": "missing_excel", "detail": str(exc)}],
             requests=[{"question_id": "Q-excel", "question": "Приложите workbook .xlsx", "options": []}],
         )
+        # Tool-level event; the orchestrator emits the single agent.result / hitl.request.
         _emit(
             case_id,
-            kind="agent.result",
+            kind="agent.progress",
             task_id=task_id,
             activity=activity,
             status="needs_input",
@@ -474,9 +475,10 @@ def extract_commissioning(session_id: str) -> dict[str, Any]:
     with locked_session(session_id):
         state = load_state(session_id)
         _store_result(state, result)
+    # Tool-level progress; agent.result is emitted once by the orchestrator on merge.
     _emit(
         case_id,
-        kind="agent.result",
+        kind="agent.progress",
         task_id=task_id,
         activity=activity,
         status="completed",

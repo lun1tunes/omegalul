@@ -6,7 +6,7 @@ const assert = require('node:assert/strict');
 const fs = require('node:fs');
 const path = require('node:path');
 
-const { readWorkflow } = require('./_workflow');
+const { readWorkflow } = require('../_workflow');
 const workflow = readWorkflow('tnavigator-schedule-builder.workflow.json');
 const node = workflow.nodes.find((candidate) => candidate.name === 'Query baseline planning context');
 assert(node && node.type === 'n8n-nodes-base.code');

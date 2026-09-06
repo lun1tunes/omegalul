@@ -6,7 +6,7 @@ const assert = require('node:assert/strict');
 const fs = require('node:fs');
 const path = require('node:path');
 
-const { readWorkflow } = require('./_workflow');
+const { readWorkflow } = require('../_workflow');
 const wf = readWorkflow('mas-error-handler.workflow.json');
 const orch = readWorkflow('universal-engineering-orchestrator.workflow.json');
 const AsyncFunction = Object.getPrototypeOf(async function () {}).constructor;

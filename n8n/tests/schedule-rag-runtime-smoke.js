@@ -2,7 +2,7 @@
 const assert = require('node:assert/strict');
 const fs = require('node:fs');
 const path = require('node:path');
-const workspace = process.env.WORKSPACE_ROOT || '/workspace';
+const workspace = process.env.WORKSPACE_ROOT || path.resolve(__dirname, '..', '..');
 const workflow = JSON.parse(fs.readFileSync(path.join(workspace,'n8n/workflows/core/tnavigator-schedule-hybrid-retrieval.workflow.json'),'utf8'));
 const ingestion = JSON.parse(fs.readFileSync(path.join(workspace,'n8n/workflows/core/tnavigator-schedule-knowledge-ingestion.workflow.json'),'utf8'));
 const AsyncFunction = Object.getPrototypeOf(async function(){}).constructor;

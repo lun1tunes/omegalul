@@ -8,7 +8,7 @@ from __future__ import annotations
 import json
 from pathlib import Path
 
-ROOT = Path(__file__).resolve().parents[1]
+ROOT = Path(__file__).resolve().parents[2]
 CORE = ROOT / "workflows" / "core"
 OUT = ROOT / "workflows" / "retired"
 STALE = (
@@ -33,7 +33,7 @@ def _relayout_written() -> None:
     import subprocess
     import sys
 
-    script = Path(__file__).resolve().parent / "relayout_core_workflows.py"
+    script = Path(__file__).resolve().parents[1] / "relayout_core_workflows.py"
     subprocess.check_call([sys.executable, str(script)], cwd=str(ROOT.parent))
 
 

@@ -110,7 +110,17 @@ flowchart TB
 
 Calculation — **не** отдельный n8n-агент: оркестратор бьёт в Math Service HTTP. Старый `Agent — Calculation (Math Service)` лежит в `retired/` и не импортируется. Code/JS ноды исполняет **n8n-runners**, не процесс n8n.
 
-`MAS — Runtime Config` — единственный Set URL (`activity_base_url`, `excel_tools_url`, `schedule_service_url`, `math_url` без `/agent/run`, `orchestrator_step_url`). Ключ Excel туда **не** кладут.
+`MAS — Runtime Config` — единственный Set URL (`activity_base_url`, `excel_tools_url`, `schedule_service_url`, `math_url` без `/agent/run`, `orchestrator_step_url`) плюс `max_steps` — бюджет шагов оркестратора на кейс (по умолчанию 12). Ключ Excel туда **не** кладут.
+
+### 1.3. Как оркестратор завершает задачу
+
+Паттерн — progress ledger (Magentic-One): решение о завершении принимает LLM по **журналу задачи**, а детерминированные предохранители не дают циклу пройти молча.
+
+- **Журнал** (`state.ledger.history`) — каждый результат агента (`agent_id`, `task_id`, `status`, `summary`, добавленные артефакты, `rework_reason`) и каждый ответ человека (вопрос, текст, `review_accept`). В `planner_input` он идёт отдельным блоком «Журнал задачи (что уже сделано, по шагам)» и в `compact.journal` — LLM видит, что сделано, а не булевые флаги.
+- **`progress`** — обязательный блок решения LLM: `goal_satisfied`, `evidence`, `missing`, `is_repeating`. Только при `goal_satisfied` — `finish`; `action.result.summary_for_human` описывает фактически сделанное по summary агентов. Если LLM его не написала, итог собирается из журнала («Schedule Builder: Перепривязал 2 скважины в DKS …») — никаких «вызвал N агентов».
+- **Предохранители в `Parse decision`** (без домена): (1) человек принял результат в review — `finish`; (2) LLM написала `goal_satisfied`, но делегирует — `finish`; (3) повторное делегирование агенту, который уже вернул `completed`, без нового ввода человека — допускается **один раз** и только с заполненным `rework_reason` (уходит агенту в `inputs.rework_reason`); иначе — **review-гейт** `result_review_*` (`kind=result_approval`, кнопки «Принять результат» / «Нужна доработка — опишу ниже»). Ответ человека — новый ввод: сбрасывает stall и снова разрешает делегирование.
+- **Бюджет шагов** `max_steps` (Runtime Config, UI): по достижении с готовым результатом — тот же review-гейт («исчерпал лимит шагов…»), без единого результата — `failed` с честным сообщением.
+- **Activity** показывает `case.finished` со `status_message` оркестратора (итог по журналу), review-гейт — как `result_approval` с кнопками. `run_live_five.py` считает такой кейс **проваленным**, если были повторные handoff без нового ввода, review-эскалации или `step_count > LIVE_STEP_BUDGET` (8): завершение должно быть осознанным, а не пережитым по лимиту.
 
 ### 1.1. Живые HTTP-точки n8n
 
@@ -393,7 +403,7 @@ Query оркестратора — цель + факты состояния (с�
 Новый keyword:
 
 1. Проверить, что имя есть в `n8n/rag/tNavUserManualRussian.pdf` как заголовок `12.x.y. KEYWORD`. Если нет — не выдумывать, предложить ближайшее реальное.
-2. Добавить в `KEYWORDS` в `n8n/templates/generate_schedule_workflows.py` **и** в `n8n/templates/schedule_rag_workflows.py`.
+2. Добавить в `KEYWORDS` в `n8n/templates/schedule_rag_workflows.py` (единственный источник; `generate_schedule_workflows.py` импортирует его).
 3. `python3 generate_schedule_workflows.py` из `n8n/templates`.
 4. Карточка `schedule_mvp` / `keyword_instruction` в `excel-agent-operating-guide.documents.json` (до `injection_template`), bump `revision`, снова RAG.
 5. Обновить этот список в `docs.md`.
@@ -436,8 +446,10 @@ Compose на Linux-lab: n8n с хоста `http://127.0.0.1:${N8N_HOST_PORT}` (�
 Activity в Compose **не** стартует, пока не зарегистрирован production webhook прокси (иначе lifespan падает с HTTP 404). `scripts/lab_soft_redeploy.py` импортирует workflows, активирует прокси, затем поднимает Activity.
 
 ```bash
-# дымовые тесты SCHEDULE emit / terminators — нужен Node.js (lab). На полевой Windows Node не ставится.
+# дымовые тесты живого контура (orchestrator, agents, proxy, RAG, health check, SCHEDULE emit / terminators) — нужен Node.js (lab). На полевой Windows Node не ставится.
 for f in n8n/tests/*-smoke.js; do node "$f" || exit 1; done
+# retired-контур (замороженные JSON) — отдельно, только если трогали n8n/templates/retired или workflows/retired:
+# for f in n8n/tests/retired/*.js; do node "$f" || exit 1; done
 
 cd mas-activity-service && PYTHONPATH=. .venv/bin/python -m pytest -q
 cd ../schedule-builder-service && PYTHONPATH=. python3 -m pytest -q
@@ -479,11 +491,14 @@ golden_case_1 / golden_case_2 + combat 0–3 (keep / keep-half / remove-half / n
 
 ---
 
-## 6. Новый агент-специалист
+## 6. Новый агент
 
-LLM не выбирает `workflow_id`. Агенты не вызывают друг друга: только оркестратор и пакеты `specialist_packet` / `specialist_result`.
+LLM не выбирает `workflow_id`. Агенты не вызывают друг друга: только оркестратор, контракт `agent_task` → `agent_result`.
 
-1. Шаблон из `n8n/workflows/support/`.
-2. Реестр `n8n/contracts/specialist_registry.v1.json`, пока `configured: false`.
-3. Карточка в RAG (`routing_card`), bump `revision`, **Загрузить в RAG**.
-4. Binding `Call …` на оркестраторе, затем `configured: true`.
+Сегодня (до Фазы 2 `MAS_REFACTORING_PLAN.md`) добавление агента требует правки шаблона оркестратора (`generate_mas_orchestrator.py`: SYSTEM, ROUTE, узел вызова, MERGE) и регенерации JSON, плюс:
+
+1. Workflow агента (образец — `Agent — Excel Extractor` / `Agent — Schedule Builder`: Normalize → AI Agent + tools → Finalize `agent_result`).
+2. Строка в `agent_registry` (Activity → «Агенты» → `upsert_agent`, либо SQL-seed `postgres-init/02…`).
+3. Карточка в RAG (`orchestrator_routing`), bump `revision`, **Загрузить в RAG**.
+
+Retired-контур `specialist_packet` / `specialist_result` / `specialist_registry.v1.json` заморожен в `n8n/templates/retired/`, `n8n/contracts/retired/`, `n8n/workflows/retired|support/` — не расширять.

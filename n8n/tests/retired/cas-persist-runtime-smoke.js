@@ -2,7 +2,7 @@
 
 // Executes the exact exported Code-node JavaScript for CAS — Persist Task State.
 const assert = require('node:assert/strict');
-const { readWorkflow } = require('./_workflow');
+const { readWorkflow } = require('../_workflow');
 const workflow = readWorkflow('cas-persist-task.workflow.json');
 const AsyncFunction = Object.getPrototypeOf(async function () {}).constructor;
 

@@ -6,7 +6,7 @@
 const assert = require('node:assert/strict');
 const fs = require('node:fs');
 const path = require('node:path');
-const workspace = process.env.WORKSPACE_ROOT || '/workspace';
+const workspace = process.env.WORKSPACE_ROOT || path.resolve(__dirname, '..', '..');
 const guidePath = path.join(workspace, 'n8n/rag/excel-agent-operating-guide.documents.json');
 const baselinePath = path.join(workspace, 'n8n/tests/fixtures/excel-protocol-searchable-baseline.json');
 const ingestion = JSON.parse(fs.readFileSync(path.join(workspace, 'n8n/workflows/core/tnavigator-schedule-knowledge-ingestion.workflow.json'), 'utf8'));
