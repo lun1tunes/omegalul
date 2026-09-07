@@ -475,14 +475,43 @@ WCONPROD
     assert any(item["code"] == "FACTUAL_WCONPROD_PROTECTED" for item in findings)
 
 
-def test_group_rebind_spec_from_task_prose() -> None:
-    from app.group_rebind import extract_group_rebind_spec, run_group_rebind_revise
+def test_remove_unlisted_keeps_wildcard_records() -> None:
+    """combat_case2 regression: ``WEFAC '*'`` / ``WTEST *`` address all wells — they are not
+    «wells outside Excel» and must survive the remove policy untouched."""
+    from app.commissioning import run_commissioning_revise
 
-    task = (
-        'На основе старого прогнозного schedule - скважины 1601 и 1602 помести в отдельную группу - "DKS", '
-        "и задай этим скважинам групповой контроль 200 тыс. м3 газа в сут. (с момента даты ввода этих скважин)."
+    source = """WEFAC
+'*' 0.9500 /
+/
+WTEST
+* 30 P 0 /
+/
+DATES
+  1 JAN 2020 /
+/
+
+WCONPROD
+  1601 OPEN GRAT 1* 1* 200000 1* 1* 90 /
+  201 OPEN GRAT 1* 1* 100000 1* 1* 90 /
+/
+WEFAC
+'P*' 0.9000 /
+/
+"""
+    revised = run_commissioning_revise(
+        source,
+        [{"well": "1601", "date": "2020-02-01"}],
+        unlisted_wells_policy="remove",
     )
-    source = """GRUPTREE
+    removed = sorted(str(row["well"]) for row in revised["removed"])
+    assert removed == ["201"], revised["removed"]
+    assert revised["unlisted_wells"] == ["201"]
+    text = revised["generated_schedule"]
+    assert "'*' 0.9500 /" in text and "* 30 P 0 /" in text and "'P*' 0.9000 /" in text
+    assert "201 OPEN" not in text and "1601 OPEN" in text
+
+
+GROUP_REBIND_SOURCE = """GRUPTREE
 NORTH FIELD /
 /
 
@@ -495,22 +524,42 @@ WCONPROD
   1602 OPEN GRAT 1* 1* 257000 1* 1* 90 /
 /
 """
-    spec, missing = extract_group_rebind_spec(task, {"1601", "1602", "9999"}, source_text=source)
+
+
+def test_group_rebind_spec_is_llm_structure_with_explicit_conventions() -> None:
+    """The LLM reads «1601 и 1602 → группа "DKS", 200 тыс. м3 газа» and passes a structure.
+    No prose regex here; the two rendering conventions are reported as assumptions."""
+    from app.group_rebind import gruptree_summary, normalize_group_rebind_spec, run_group_rebind_revise
+
+    baseline = gruptree_summary(GROUP_REBIND_SOURCE)
+    assert baseline == {"has_gruptree": True, "groups": ["FIELD", "NORTH"], "roots": ["FIELD"]}
+    spec, missing, assumptions = normalize_group_rebind_spec(
+        {"wells": "1602, 1601", "parent_group": "dks", "control": "GRAT", "gas_rate": "200 000"},
+        baseline=baseline,
+    )
     assert missing == []
-    assert spec["wells"] == ["1601", "1602"] or set(spec["wells"]) == {"1601", "1602"}
+    assert spec["wells"] == ["1602", "1601"]
     assert spec["parent_group"] == "DKS"
     assert spec["parent_of_parent"] == "FIELD"
-    assert spec["control"] == "GRAT"
     assert spec["gas_rate"] == 200000
-    assert spec["well_groups"]["1601"] == "G1601"
-    revised = run_group_rebind_revise(source, spec)
+    assert spec["well_groups"] == {"1601": "G1601", "1602": "G1602"}
+    assert [next(iter(a)) for a in assumptions] == ["well_groups", "parent_of_parent"]
+    revised = run_group_rebind_revise(GROUP_REBIND_SOURCE, spec)
     assert revised["status"] == "applied"
-    text = revised["generated_schedule"]
-    jan = text.split("1 JAN 2020")[1].split("DATES")[0]
+    jan = revised["generated_schedule"].split("1 JAN 2020")[1].split("DATES")[0]
     assert "1601 G1601 /" in jan
     assert "DKS FIELD /" in jan
     assert "G1601 DKS /" in jan
     assert "DKS GRAT 2* 200000 /" in jan
+
+    # Nothing is guessed from prose: an empty structure is simply "missing", with no defaults.
+    spec, missing, assumptions = normalize_group_rebind_spec({}, baseline={"roots": ["FIELD", "OTHER"]})
+    assert missing == ["wells", "parent_group", "parent_of_parent", "control", "gas_rate"]
+    assert spec["parent_of_parent"] == "" and assumptions == []
+    _, missing, _ = normalize_group_rebind_spec(
+        {"wells": ["1601"], "parent_group": "DKS", "parent_of_parent": "FIELD", "control": "GAS", "gas_rate": 0},
+    )
+    assert missing == ["control", "gas_rate"]
 
 
 def test_load_source_fetches_from_activity_artifact(monkeypatch) -> None:
@@ -556,14 +605,6 @@ def test_load_source_fetches_from_activity_artifact(monkeypatch) -> None:
     )
     assert seen["url"] == "http://mas-activity:8200/cases/CASE-1/artifacts/schedule_source_1"
     assert "DATES" in text
-    from app.group_rebind import wants_group_rebind
-
-    objective = "На основе старого прогнозного schedule и Excel с новыми датами ввода собрать новый schedule.inc"
-    assert wants_group_rebind(objective, {"artifacts": {"schedule_source_5": {"filename": "GRUPTREE.GRDECL"}}}) is False
-    group_task = 'скважины 1601 и 1602 помести в отдельную группу - "DKS"'
-    assert wants_group_rebind(group_task, {}) is True
-    polluted_handoff = "перепривязав скважины в нужные группы согласно baseline"
-    assert wants_group_rebind(objective, {"handoff": polluted_handoff}) is False
 
 
 def test_bind_case_packet_hydrates_nested_artifacts_and_facts(monkeypatch) -> None:
@@ -679,7 +720,10 @@ def test_apply_operations_accepts_array_and_rejects_empty() -> None:
     )
     sid = opened.json()["session_id"]
     empty = client.post("/agent-tools/apply_operations", json={"session_id": sid, "operations": {}})
-    assert empty.json()["status"] == "needs_input"
+    # A malformed tool call is the LLM's problem, not a question for the engineer.
+    assert empty.json()["ok"] is False
+    assert empty.json()["error"] == "operations_required"
+    assert client.get(f"/sessions/{sid}/result").json()["issues"][0]["type"] == "no_apply"
     applied = client.post(
         "/agent-tools/apply_operations",
         json={
@@ -694,29 +738,182 @@ def test_apply_operations_accepts_array_and_rejects_empty() -> None:
     assert "20" in result.json()["artifacts"]["schedule_out"]
 
 
-def test_group_rebind_asks_parent_group_when_no_gruptree() -> None:
+def _open(client, objective: str, source: str, **extra):
+    opened = client.post(
+        "/agent-tools/open_session",
+        json={"task_id": "t-grp", "objective": objective, "inputs": {"schedule_text": source}, **extra},
+    )
+    body = opened.json()
+    assert body["ok"] is True
+    assert "suggested_capability" not in body, "no regex capability router: the LLM picks the tool"
+    return body
+
+
+def test_group_rebind_incomplete_spec_goes_back_to_llm_not_to_engineer() -> None:
     from fastapi.testclient import TestClient
 
     from app.main import app
 
     client = TestClient(app)
-    opened = client.post(
+    body = _open(client, "скважину P1 помести в отдельную группу", "DATES\n  1 JAN 2026 /\n/\n\nWCONPROD\n  'P1' OPEN 10 /\n/\n")
+    sid = body["session_id"]
+    incomplete = client.post("/agent-tools/apply_group_rebind", json={"session_id": sid, "wells": "P1"}).json()
+    assert incomplete["ok"] is False
+    assert incomplete["error"] == "spec_incomplete"
+    assert incomplete["missing"] == ["parent_group", "parent_of_parent", "control", "gas_rate"]
+    assert incomplete["baseline"]["has_gruptree"] is False
+    assert "GNEW" not in json.dumps(incomplete), "no invented placeholder groups"
+    assert set(incomplete["where_to_find"]) == set(incomplete["missing"])
+    assert "ask_engineer" in incomplete["message"]
+    # Nothing was stored as the agent's answer: the session still has no result for the orchestrator.
+    assert client.get(f"/sessions/{sid}/result").json()["issues"][0]["type"] == "no_apply"
+    invented = client.post("/agent-tools/apply_group_rebind", json={"session_id": sid, "wells": "P1 P2"}).json()
+    assert invented["error"] == "well_not_in_schedule" and invented["wells"] == ["P2"]
+
+
+def test_group_rebind_full_spec_from_llm_applies_and_summarizes_for_human() -> None:
+    from fastapi.testclient import TestClient
+
+    from app.main import app
+
+    client = TestClient(app)
+    sid = _open(client, 'скважины 1601 и 1602 → группа "DKS", 200 тыс. м3 газа', GROUP_REBIND_SOURCE)["session_id"]
+    applied = client.post(
+        "/agent-tools/apply_group_rebind",
+        json={"session_id": sid, "spec": {"wells": ["1602", "1601"], "parent_group": "DKS", "control": "GRAT", "gas_rate": 200000}},
+    ).json()
+    assert applied["status"] == "completed"
+    assert applied["message"] == applied["data"]["summary_for_human"]
+    assert "Перепривязал 2 скважины (1602, 1601) в группу DKS под FIELD" in applied["message"]
+    assert "GRAT 200000 м3/сут" in applied["message"]
+    assert {"units": "METRIC"} in applied["assumptions"]
+    assert any("parent_of_parent" in a for a in applied["assumptions"])
+    text = client.get(f"/sessions/{sid}/result").json()["artifacts"]["schedule_out"]
+    jan = text.split("1 JAN 2020")[1].split("DATES")[0]
+    assert jan.index("1601 G1601 /") < jan.index("1602 G1602 /"), "baseline order, not LLM order"
+    assert "DKS GRAT 2* 200000 /" in jan
+
+
+def test_ask_engineer_is_the_only_human_question_path_and_must_be_prose() -> None:
+    from fastapi.testclient import TestClient
+
+    from app.agent_tools import human_text_problems
+    from app.main import app
+
+    client = TestClient(app)
+    sid = _open(client, "скважину P1 помести в отдельную группу", "DATES\n  1 JAN 2026 /\n/\n\nWCONPROD\n  'P1' OPEN 10 /\n/\n")["session_id"]
+    machine = client.post(
+        "/agent-tools/ask_engineer",
+        json={"session_id": sid, "question": "Уточните parent_group для перепривязки групп", "options": ["keep|remove"]},
+    ).json()
+    assert machine["ok"] is False and machine["error"] == "question_not_human"
+    assert any("parent_group" in p for p in machine["problems"])
+    assert client.get(f"/sessions/{sid}/result").json()["issues"][0]["type"] == "no_apply"
+
+    asked = client.post(
+        "/agent-tools/ask_engineer",
+        json={
+            "session_id": sid,
+            "topic": "target_group",
+            "question": "В какую группу поместить скважину P1? В baseline пока нет дерева групп, поэтому нужно её имя и родитель.",
+            "options": [{"value": "NEW", "label": "Новая группа — назову ниже"}, "Оставить без группового контроля"],
+            "accepts_files": "xlsx",
+        },
+    ).json()
+    assert asked["status"] == "needs_input"
+    req = asked["requests"][0]
+    assert req["question_id"] == "Q-target_group" and req["type"] == "choice"
+    assert req["options"][1] == {"value": "Оставить без группового контроля", "label": "Оставить без группового контроля"}
+    assert req["accepts"] == {"free_text": True, "files": ["xlsx"]}
+    assert client.get(f"/sessions/{sid}/result").json()["requests"][0]["question"] == req["question"]
+
+    # One result per run: after the question is fixed, the LLM cannot overwrite it with a re-worded
+    # ask_engineer or another whole-task apply (live trace 63860: apply → apply → ask → apply → ask).
+    again = client.post(
+        "/agent-tools/ask_engineer",
+        json={"session_id": sid, "question": "А в какую всё-таки группу поместить скважину P1?"},
+    ).json()
+    assert again["ok"] is False and again["error"] == "result_already_stored"
+    assert again["status"] == "needs_input"
+    assert "Больше инструменты не вызывай" in again["message"]
+    blocked_apply = client.post("/agent-tools/apply_commissioning", json={"session_id": sid}).json()
+    assert blocked_apply["error"] == "result_already_stored"
+    assert client.get(f"/sessions/{sid}/result").json()["requests"][0]["question"] == req["question"]
+    # Read-only tools keep working.
+    assert client.post("/agent-tools/inspect_schedule", json={"session_id": sid}).json()["ok"] is True
+
+    assert human_text_problems("В Excel нет скважин: H_304R, 1601. Оставить их запуски как в baseline?") == []
+    assert human_text_problems("Уточните rate для перепривязки групп.") == []  # plain words pass; ids don't
+    assert human_text_problems("unlisted_wells_policy=keep") != []
+    assert human_text_problems('{"decision": "keep"}') != []
+
+
+def test_engineer_new_well_facts_win_over_orchestrator_echo_of_well_names() -> None:
+    """combat_case3 regression (CASE-6a9e4c07): the Decision LLM echoed ``task.new_wells`` as a bare
+    list of names; the old lookup took that non-empty list, filtered it to nothing and never looked
+    at the engineer's HITL table → the same question was asked again."""
+    from app.agent_tools import _new_well_defs
+
+    facts = [{"well": "N001", "date": "2023-01-01", "group": "GNEW", "md_top": 3200, "md_bot": 3240, "control": "GRAT", "rate": 80000}]
+    state = {
+        "inputs": {"new_wells": ["N001", "N002"]},
+        "context": {"hitl": {"answers": {"new_wells_policy": json.dumps({"text": "Параметры в таблице", "new_wells": facts})}}},
+    }
+    assert _new_well_defs(state) == facts
+    # Without an engineer answer, dict rows from inputs are still accepted; bare names are not.
+    assert _new_well_defs({"inputs": {"new_wells": ["N001"]}}) == []
+    assert _new_well_defs({"inputs": {"new_wells": facts}}) == facts
+
+
+def test_open_session_shows_engineer_answers_and_rework_to_llm() -> None:
+    from fastapi.testclient import TestClient
+
+    from app.main import app
+
+    client = TestClient(app)
+    body = client.post(
         "/agent-tools/open_session",
         json={
-            "task_id": "t-grp",
-            "objective": "скважину P1 помести в отдельную группу",
-            "inputs": {"schedule_text": "DATES\n  1 JAN 2026 /\n/\n\nWCONPROD\n  'P1' OPEN 10 /\n/\n"},
+            "task_id": "t-ans",
+            "objective": "сдвинь даты ввода",
+            "inputs": {"schedule_text": "DATES\n  1 JAN 2026 /\n/\n", "rework_reason": "Скважина 1602 не сдвинута"},
+            "context": {
+                "hitl": {
+                    "answers": {
+                        "unlisted_wells_policy": {"choice": "remove", "label": "Убрать из прогноза", "text": "Убрать из прогноза"},
+                        "new_wells_policy": json.dumps({"text": "Траектории приложены", "new_wells": [{"well": "N1"}, {"well": "N2"}]}),
+                        "Q-free": "Оставь как есть",
+                    }
+                }
+            },
         },
-    )
-    body = opened.json()
-    assert body["suggested_capability"] == "group_rebind"
-    sid = body["session_id"]
-    applied = client.post("/agent-tools/apply_group_rebind", json={"session_id": sid})
-    payload = applied.json()
-    assert payload["status"] == "needs_input"
-    assert payload["requests"][0]["question_id"] == "Q-parent-group"
-    assert "GRUPTREE" in payload["requests"][0]["question"]
-    assert "GNEW" in payload["requests"][0]["options"]
+    ).json()
+    assert body["rework_reason"] == "Скважина 1602 не сдвинута"
+    answers = {row["question_id"]: row for row in body["engineer_answers"]}
+    assert answers["unlisted_wells_policy"]["choice"] == "remove"
+    assert answers["unlisted_wells_policy"]["label"] == "Убрать из прогноза"
+    assert answers["new_wells_policy"]["attached_facts"] == "new_wells: 2 записей"
+    assert "new_wells" not in json.dumps(answers["new_wells_policy"].get("text", "")), "no raw JSON blobs for the LLM"
+    assert answers["Q-free"] == {"question_id": "Q-free", "text": "Оставь как есть"}
+
+
+def test_every_engineer_facing_text_from_tools_is_human() -> None:
+    """Every needs_input a Schedule Builder tool can emit: Russian prose, no ids/enums/JSON."""
+    from fastapi.testclient import TestClient
+
+    from app.agent_tools import NO_APPLY_QUESTION, human_text_problems
+    from app.main import app
+
+    client = TestClient(app)
+    texts: list[str] = [NO_APPLY_QUESTION]
+    no_source = client.post("/agent-tools/open_session", json={"task_id": "t", "objective": "x", "inputs": {}}).json()
+    texts += [no_source["result"]["message"], *(q["question"] for q in no_source["result"]["requests"])]
+    sid = _open(client, "сдвинь даты ввода", "DATES\n  1 JAN 2026 /\n/\n\nWCONPROD\n  'P1' OPEN 10 /\n/\n")["session_id"]
+    no_facts = client.post("/agent-tools/apply_commissioning", json={"session_id": sid}).json()
+    assert no_facts["status"] == "needs_input"
+    texts += [no_facts["message"], *(q["question"] for q in no_facts["requests"])]
+    for text in texts:
+        assert human_text_problems(text) == [], (text, human_text_problems(text))
 
 
 def test_session_result_needs_input_without_apply_then_close() -> None:
@@ -734,10 +931,12 @@ def test_session_result_needs_input_without_apply_then_close() -> None:
         },
     )
     sid = opened.json()["session_id"]
-    assert opened.json()["suggested_capability"] == "operations"
+    assert "suggested_capability" not in opened.json()
+    assert opened.json()["engineer_answers"] == []
     result = client.get(f"/sessions/{sid}/result")
     assert result.json()["status"] == "needs_input"
     assert result.json()["issues"][0]["type"] == "no_apply"
+    assert result.json()["requests"][0]["accepts"]["free_text"] is True
     closed = client.post(f"/sessions/{sid}/close")
     assert closed.json()["ok"] is True
     assert client.get(f"/sessions/{sid}/result").status_code == 404

@@ -988,6 +988,13 @@ async function run(name, json, nodes = {}, binary = {}) {
     assert.equal(parsed.action_type, 'call_agent');
     assert.equal(parsed.should_call_agent, true);
     assert.equal(parsed.decision.progress.goal_satisfied, false);
+    // First delegation with a wrong goal_satisfied flag (combat_case2 regression): the agent has never
+    // run, so the action is the intent — call it, do not finish on the flag.
+    const slip = await decide(prepared, { ...delegate, progress: { ...delegate.progress, goal_satisfied: true } });
+    assert.equal(slip.action_type, 'call_agent');
+    assert.equal(slip.should_call_agent, true);
+    assert.equal(slip.next_status, 'running');
+    assert.equal(slip.events.find((e) => e.kind === 'orchestrator.decision').payload.guard, 'goal_flag_ignored');
 
     // Agent completes: the journal records what it did and which artifacts appeared.
     let merged = await merge(parsed, {
@@ -1050,7 +1057,9 @@ async function run(name, json, nodes = {}, binary = {}) {
     });
     assert.equal(contradiction.action_type, 'finish');
     assert.equal(contradiction.next_status, 'done');
-    assert.match(contradiction.state.data.result.summary_for_human, /перепривязал скважины/);
+    // evidence mentions `schedule_out` (an id) → the engineer sees the journal summary instead.
+    assert.match(contradiction.state.data.result.summary_for_human, /Schedule Builder: Перепривязал 2 скважины/);
+    assert.equal(/schedule_out/.test(contradiction.state.data.result.summary_for_human), false);
 
     // … (d) the proper path: finish with summary_for_human; journal summary is attached for the feed.
     const finish = await decide(prepared, {
@@ -1065,6 +1074,15 @@ async function run(name, json, nodes = {}, binary = {}) {
     // finish without summary_for_human → summary composed from the journal, never "вызвал агента".
     const finishBare = await decide(prepared, { progress: { goal_satisfied: true, evidence: 'ok' }, status_message: 'Готово', action: { type: 'finish' } });
     assert.match(finishBare.events.find((e) => e.kind === 'case.finished').status_message, /Schedule Builder: Перепривязал 2 скважины/);
+    // The LLM leaked ids into the engineer-facing summary → the journal summary is shown instead.
+    const finishLeaky = await decide(prepared, {
+      progress: { goal_satisfied: true, evidence: 'ok' },
+      status_message: 'Готово',
+      action: { type: 'finish', result: { summary_for_human: 'schedule_builder перепривязал скважины, подготовлены schedule_out и diff.' } },
+    });
+    const leakyMsg = finishLeaky.events.find((e) => e.kind === 'case.finished').status_message;
+    assert.match(leakyMsg, /Schedule Builder: Перепривязал 2 скважины/);
+    assert.equal(/schedule_out|schedule_builder/.test(leakyMsg), false, leakyMsg);
 
     // Human accepts the review → next step finishes regardless of the LLM's habit.
     const resumeReq = { ...req, is_resume: true, gate_id: gate.question_id, human_response: JSON.stringify({ choice: 'accept', text: 'Принять результат', label: 'Принять результат' }) };
@@ -1147,6 +1165,123 @@ async function run(name, json, nodes = {}, binary = {}) {
     assert.equal(belowLimit.next_status, 'running', 'below the budget a first failure is retried by the error budget');
     const noResultDone = await merge(noResultParsed, { status: 'completed', agent_id: 'schedule_builder', message: '', data: {}, artifacts: {} });
     assert.equal(noResultDone.next_status, 'waiting_user', 'a completed result (even terse) is reviewed, not thrown away');
+
+    // ---- Verified completion (combat_case0/1 regression: LLM finished after Excel only) ----
+    // Structure: finish takes the detour Decision LLM → Finish proposed? → completion check → Parse decision.
+    assert.equal(wf.connections['Decision LLM'].main[0][0].node, 'Finish proposed?');
+    assert.equal(wf.connections['Finish proposed?'].main[0][0].node, 'Prepare completion check');
+    assert.equal(wf.connections['Finish proposed?'].main[1][0].node, 'Parse decision');
+    assert.equal(wf.connections['Prepare completion check'].main[0][0].node, 'Verify completion');
+    assert.equal(wf.connections['Verify completion'].main[0][0].node, 'Parse decision');
+    assert.equal(wf.connections['Verification Structured Output'].ai_outputParser[0][0].node, 'Verify completion');
+    assert.ok(wf.connections['Decision Chat Model — configure in UI'].ai_languageModel[0].some((c) => c.node === 'Verify completion'));
+    const verify = wf.nodes.find((n) => n.name === 'Verify completion');
+    assert.equal(verify.type, '@n8n/n8n-nodes-langchain.chainLlm');
+    const verifySystem = verify.parameters.messages.messageValues[0].message;
+    assert.match(verifySystem, /извлечь данные ≠ построить/);
+    assert.equal(/excel_extractor|schedule_builder|WCONPROD|Excel/.test(verifySystem), false, 'completion check knows no domain');
+    assert.equal(wf.connections['No agent this step'].main[0][0].node, 'Continue loop?', 'a continue step re-enters the loop');
+    // Runtime: Excel done, LLM proposes finish, the check says the deliverable is not covered.
+    const excelOnly = {
+      ...baseState,
+      step_count: 2,
+      artifacts: { ...baseState.artifacts, excel: { artifact_id: 'excel', filename: 'dates.xlsx' } },
+      ledger: { history: [{ kind: 'agent', step: 1, status: 'completed', agent_id: 'excel_extractor', task_id: 'TASK-1', summary: 'Извлечено фактов: 8', artifacts_added: [] }], stall_count: 0, reviews: 0, last_human_step: 0 },
+    };
+    const preparedExcel = await prepare(excelOnly);
+    const falseFinish = {
+      progress: { goal_satisfied: true, evidence: 'даты извлечены' },
+      status_message: 'Готово',
+      action: { type: 'finish', result: { summary_for_human: 'Даты извлечены, прогнозный schedule обновлён.' } },
+    };
+    const checkInput = await run('Prepare completion check', { output: falseFinish }, { 'Prepare decision context': preparedExcel, 'Decision LLM': { output: falseFinish } });
+    assert.match(checkInput.verify_input, /^Цель:/);
+    assert.match(checkInput.verify_input, /excel_extractor → completed: Извлечено фактов: 8/);
+    assert.match(checkInput.verify_input, /Предложенный итог оркестратора:\nДаты извлечены, прогнозный schedule обновлён\./);
+    assert.equal(checkInput.verify_input.includes('Текущее состояние:'), false, 'the check sees goal + journal + proposal, not the raw state dump');
+    const rejected = {
+      goal_parts: [
+        { part: 'новые даты ввода извлечены из Excel', covered: true, evidence: 'шаг 1' },
+        { part: 'обновлённый прогнозный schedule-файл', covered: false, evidence: 'в журнале нет' },
+      ],
+      unsupported_claims: ['прогнозный schedule обновлён'],
+      all_covered: false,
+      verdict_for_human: 'Даты из Excel извлечены, но обновлённый schedule ещё не собран',
+    };
+    const decideVerified = (prepared, output, verification) =>
+      run('Parse decision', { output: verification }, { 'Prepare decision context': prepared, 'Decision LLM': { output }, 'Verify completion': { output: verification } });
+    const firstReject = await decideVerified(preparedExcel, falseFinish, rejected);
+    assert.equal(firstReject.action_type, 'continue', 'first rejection → one more orchestrator step, no HITL');
+    assert.equal(firstReject.next_status, 'running');
+    assert.equal(firstReject.should_call_agent, false);
+    assert.equal(firstReject.events.find((e) => e.kind === 'orchestrator.decision').payload.guard, 'completion_unverified');
+    assert.equal(firstReject.events.some((e) => e.kind === 'case.finished'), false);
+    const contMsg = firstReject.events.find((e) => e.kind === 'orchestrator.status').status_message;
+    assert.match(contMsg, /обновлённый schedule ещё не собран/);
+    assert.match(contMsg, /Продолжаю работу/);
+    assert.equal(/[a-z]+_[a-z_]+|[{}[\]]/.test(contMsg), false, contMsg);
+    assert.equal(firstReject.state.ledger.verify_rejections, 1);
+    const vEntry = firstReject.state.ledger.history.at(-1);
+    assert.equal(vEntry.kind, 'verification');
+    assert.deepEqual(vEntry.uncovered, ['обновлённый прогнозный schedule-файл']);
+    // "No agent this step" turns the continue decision into a loop trigger.
+    const noAgent = await run('No agent this step', { ...firstReject, orchestrator_step_url: 'http://n8n/webhook/mas-orchestrator-step' });
+    assert.equal(noAgent.should_continue, true);
+    assert.equal(noAgent.continue_url, 'http://n8n/webhook/mas-orchestrator-step');
+    const noAgentFinish = await run('No agent this step', { action_type: 'finish', next_status: 'done' });
+    assert.equal(noAgentFinish.should_continue, false);
+    // Next step: the Decision LLM sees the gap in the journal and must close it.
+    const preparedAfterReject = await prepare(firstReject.state);
+    assert.match(preparedAfterReject.planner_input, /проверка завершения отклонила finish — не покрыто: обновлённый прогнозный schedule-файл/);
+    assert.equal(preparedAfterReject.compact.journal.history.at(-1).kind, 'verification');
+    const closesGap = await decideVerified(preparedAfterReject, { ...delegate, progress: { goal_satisfied: false, evidence: 'schedule не собран' } }, null);
+    assert.equal(closesGap.action_type, 'call_agent');
+    assert.equal(closesGap.agent_task.agent_id, 'schedule_builder');
+    // Stubborn finish rejected a second time → the engineer decides (prose, accept / continue).
+    const secondReject = await decideVerified(preparedAfterReject, falseFinish, rejected);
+    assert.equal(secondReject.action_type, 'ask_user');
+    assert.equal(secondReject.next_status, 'waiting_user');
+    assert.equal(secondReject.events.find((e) => e.kind === 'orchestrator.decision').payload.guard, 'completion_review');
+    const reviewQ = secondReject.state.hitl.questions[0];
+    assert.match(reviewQ.question_id, /^result_review_/);
+    assert.match(reviewQ.question, /проверка нашла пробел/);
+    assert.match(reviewQ.question, /Не хватает: обновлённый прогнозный schedule-файл/);
+    assert.match(reviewQ.question, /Сделано: Excel Extractor: Извлечено фактов: 8/);
+    assert.deepEqual(reviewQ.options.map((o) => o.value), ['accept', 'rework']);
+    assert.equal(/[a-z]+_[a-z_]+|[{}[\]]/.test(reviewQ.question), false, reviewQ.question);
+    // A verified finish passes through and is marked as such.
+    const okFinish = await decideVerified(preparedExcel, falseFinish, { ...rejected, goal_parts: rejected.goal_parts.map((p) => ({ ...p, covered: true })), all_covered: true, unsupported_claims: [] });
+    assert.equal(okFinish.action_type, 'finish');
+    assert.equal(okFinish.events.find((e) => e.kind === 'case.finished').payload.completion_verified, true);
+    assert.equal(okFinish.events.find((e) => e.kind === 'case.finished').status_message, 'Даты извлечены, прогнозный schedule обновлён.');
+    // golden_case_1 regression: the model contradicted itself (every part covered, all_covered:false).
+    // Per-part judgements win → verified finish, no continue step, no review.
+    const selfContradicting = await decideVerified(preparedExcel, falseFinish, { ...rejected, goal_parts: rejected.goal_parts.map((p) => ({ ...p, covered: true })), all_covered: false, unsupported_claims: [] });
+    assert.equal(selfContradicting.action_type, 'finish');
+    assert.equal(selfContradicting.events.find((e) => e.kind === 'case.finished').payload.completion_verified, true);
+    assert.equal(selfContradicting.state.ledger.verify_rejections || 0, 0);
+    // Partial replies: either field alone is usable; an uncovered part must reject even without the flag
+    // (discarding the reply would let the finish through unchecked).
+    const partsOnly = await decideVerified(preparedExcel, falseFinish, { goal_parts: rejected.goal_parts });
+    assert.equal(partsOnly.action_type, 'continue', 'goal_parts without all_covered still rejects');
+    const flagOnly = await decideVerified(preparedExcel, falseFinish, { all_covered: true });
+    assert.equal(flagOnly.action_type, 'finish');
+    assert.equal(flagOnly.events.find((e) => e.kind === 'case.finished').payload.completion_verified, true);
+    // Nothing usable (empty parts, no boolean flag) → no verification, never a rejection with no gaps.
+    for (const empty of [{ goal_parts: [] }, { goal_parts: [{ part: '', covered: false }] }, { all_covered: 'yes' }, {}]) {
+      const noVerdict = await decideVerified(preparedExcel, falseFinish, empty);
+      assert.equal(noVerdict.action_type, 'finish', JSON.stringify(empty));
+      assert.equal('completion_verified' in noVerdict.events.find((e) => e.kind === 'case.finished').payload, false, JSON.stringify(empty));
+      assert.equal(noVerdict.state.ledger.verify_rejections || 0, 0);
+    }
+    // All parts covered but the proposed summary claims more than the journal → the journal summary is shown.
+    const overclaim = await decideVerified(preparedExcel, falseFinish, { ...rejected, goal_parts: rejected.goal_parts.map((p) => ({ ...p, covered: true })), all_covered: true, unsupported_claims: ['прогнозный schedule обновлён'] });
+    assert.equal(overclaim.action_type, 'finish');
+    assert.equal(overclaim.events.find((e) => e.kind === 'case.finished').status_message, 'Excel Extractor: Извлечено фактов: 8');
+    // The human accepted in a review → finish even if the check would object.
+    const acceptedState = { ...excelOnly, ledger: { ...excelOnly.ledger, history: [...excelOnly.ledger.history, { kind: 'human', step: 3, question_id: 'result_review_3', question: 'Принять?', answer: 'Принять результат как есть', review_accept: true }] } };
+    const acceptedFinish = await decideVerified(await prepare(acceptedState), falseFinish, rejected);
+    assert.equal(acceptedFinish.action_type, 'finish');
   }
 
   assert.equal(err.name, 'Error — MAS Node Traces');

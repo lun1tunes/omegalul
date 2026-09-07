@@ -46,7 +46,11 @@ const model = wf.nodes.find((n) => n.name === 'Excel Extractor Chat Model — Qw
 assert.ok(model);
 assert.equal(model.typeVersion, 1.3);
 assert.equal(model.parameters.options.timeout, 300000);
-const tools = wf.nodes.filter((n) => n.type === '@n8n/n8n-nodes-langchain.toolHttpRequest').map((n) => n.name);
+// n8n 2.30.8 + AI Agent v3 executes tools through the engine: the legacy langchain
+// toolHttpRequest (hidden, supplyData-only) fails at runtime; tools must be HTTP Request "as tool".
+assert.equal(wf.nodes.some((n) => n.type === '@n8n/n8n-nodes-langchain.toolHttpRequest'), false);
+const toolNodes = wf.nodes.filter((n) => n.type === 'n8n-nodes-base.httpRequestTool');
+const tools = toolNodes.map((n) => n.name);
 for (const name of [
   'workbook_introspect',
   'sheet_preview',
@@ -112,14 +116,16 @@ assert.equal(activityProgress.parameters.authentication, undefined);
 const close = wf.nodes.find((n) => n.name === 'Close excel session');
 assert.ok(String(close.parameters.url).includes('/close'));
 assert.equal(close.parameters.authentication, 'genericCredentialType');
-const sessionFields = wf.nodes
-  .filter((n) => n.type === '@n8n/n8n-nodes-langchain.toolHttpRequest')
-  .flatMap((n) => (n.parameters.parametersBody?.values || []).filter((f) => f.name === 'session_id'));
-assert.ok(sessionFields.length >= 8);
-for (const field of sessionFields) {
-  assert.equal(field.valueProvider, 'fieldValue');
-  assert.match(String(field.value), /Open excel session/);
-  assert.equal(String(field.value).includes('$json.session_id'), false);
+assert.ok(toolNodes.length >= 8);
+for (const t of toolNodes) {
+  assert.equal(t.typeVersion, 4.4, t.name);
+  assert.equal(t.parameters.descriptionType, 'manual', t.name);
+  assert.equal(t.parameters.authentication, 'genericCredentialType', t.name);
+  assert.equal(t.parameters.genericAuthType, 'httpHeaderAuth', t.name);
+  const body = String(t.parameters.jsonBody);
+  assert.ok(body.includes("session_id: $('Open excel session').first().json.session_id"), t.name);
+  assert.equal(body.includes('$json.session_id'), false, t.name);
+  assert.deepEqual(wf.connections[t.name], { ai_tool: [[{ node: 'Excel Extractor AI Agent', type: 'ai_tool', index: 0 }]] }, t.name);
 }
 
 const callRag = wf.nodes.find((n) => n.name === 'Call Knowledge Retrieval');

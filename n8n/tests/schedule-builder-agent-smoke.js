@@ -44,13 +44,34 @@ const model = wf.nodes.find((n) => n.name === 'Schedule Builder Chat Model — Q
 assert.ok(model);
 assert.equal(model.typeVersion, 1.3);
 assert.equal(model.parameters.options.timeout, 300000);
-const tools = wf.nodes.filter((n) => n.type === '@n8n/n8n-nodes-langchain.toolHttpRequest').map((n) => n.name);
+// n8n 2.30.8 + AI Agent v3 executes tools through the engine: the legacy langchain
+// toolHttpRequest (hidden, supplyData-only) fails at runtime; tools must be HTTP Request "as tool".
+assert.equal(wf.nodes.some((n) => n.type === '@n8n/n8n-nodes-langchain.toolHttpRequest'), false);
+const toolNodes = wf.nodes.filter((n) => n.type === 'n8n-nodes-base.httpRequestTool');
+const tools = toolNodes.map((n) => n.name);
+for (const t of toolNodes) {
+  assert.equal(t.typeVersion, 4.4, t.name);
+  assert.equal(t.parameters.descriptionType, 'manual', t.name);
+  assert.ok(String(t.parameters.toolDescription).trim(), t.name);
+  assert.ok(String(t.parameters.jsonBody).includes("session_id: $('Open schedule session').first().json.session_id"), t.name);
+  assert.ok(String(t.parameters.url).includes(`'/agent-tools/' + ${JSON.stringify(t.name)}`), t.name);
+  assert.deepEqual(wf.connections[t.name], { ai_tool: [[{ node: 'Schedule Builder AI Agent', type: 'ai_tool', index: 0 }]] }, t.name);
+}
+// $fromAI(key, description, type[, default]): declared args per tool, required = no default.
+const fromAI = (node) =>
+  [...String(node.parameters.jsonBody).matchAll(/\$fromAI\("([^"]+)", "([^"]*)", "([^"]+)"(?:, "([^"]*)")?\)/g)].map((m) => ({
+    key: m[1],
+    description: m[2],
+    type: m[3],
+    required: m[4] === undefined,
+  }));
 for (const name of [
   'inspect_schedule',
   'search_keywords',
   'get_keyword',
   'apply_commissioning',
   'apply_group_rebind',
+  'ask_engineer',
   'apply_operations',
   'render_ir',
   'build_schedule',
@@ -61,6 +82,24 @@ const system = String(agent.parameters.options.systemMessage || '');
 assert.ok(system.includes('render_ir'));
 assert.ok(system.includes('details.parameters'));
 assert.match(system, /schedule_mvp/);
+// LLM-first: the LLM picks the tool from the task; no regex capability hint drives it.
+assert.equal(system.includes('suggested_capability'), false);
+assert.match(system, /ask_engineer — единственный способ спросить инженера/);
+assert.match(system, /spec_incomplete — это тебе, не инженеру/);
+assert.match(system, /не строками \.INC/);
+const rebindTool = wf.nodes.find((n) => n.name === 'apply_group_rebind');
+const rebindArgs = fromAI(rebindTool);
+assert.deepEqual(rebindArgs.map((a) => a.key), ['wells', 'parent_group', 'parent_of_parent', 'control', 'gas_rate', 'effective_at']);
+assert.deepEqual(rebindArgs.filter((a) => a.required).map((a) => a.key), ['wells', 'parent_group', 'control', 'gas_rate']);
+assert.equal(rebindArgs.find((a) => a.key === 'gas_rate').type, 'number');
+// Zero-arg tools still bind the session; optional JSON args travel as text (n8n rejects empty json).
+assert.deepEqual(fromAI(wf.nodes.find((n) => n.name === 'apply_commissioning')), []);
+assert.equal(fromAI(wf.nodes.find((n) => n.name === 'apply_operations'))[0].type, 'json');
+const askTool = wf.nodes.find((n) => n.name === 'ask_engineer');
+assert.match(String(askTool.parameters.toolDescription), /русской фразой/);
+const askArgs = fromAI(askTool);
+assert.deepEqual(askArgs.filter((a) => a.required).map((a) => a.key), ['question']);
+assert.ok(askArgs.some((a) => a.key === 'options' && a.type === 'string' && !a.required));
 assert.ok(wf.connections['search_keywords'].ai_tool);
 assert.ok(wf.connections['Schedule Builder Chat Model — Qwen'].ai_languageModel);
 assert.equal(wf.connections['When executed by another workflow'].main[0][0].node, 'Runtime configuration');
@@ -68,24 +107,13 @@ const runtimeCfg = wf.nodes.find((n) => n.name === 'Runtime configuration');
 assert.equal(runtimeCfg.type, 'n8n-nodes-base.executeWorkflow');
 assert.equal(runtimeCfg.parameters.workflowId.value, 'REPLACE_MAS_RUNTIME_CONFIG_IN_UI');
 assert.equal(runtimeCfg.parameters.workflowId.cachedResultName, 'MAS — Runtime Config');
-const cap = wf.nodes.find((n) => n.name === 'Capability router');
-assert.ok(cap);
-assert.equal(cap.type, 'n8n-nodes-base.switch');
+// No regex "Capability router" and no HTTP apply_* bypass: every task reaches the LLM agent.
+for (const gone of ['Capability router', 'Apply commissioning', 'Apply group rebind', 'Describe apply result', 'Apply finished?']) {
+  assert.equal(wf.nodes.some((n) => n.name === gone), false, `${gone} must be gone`);
+}
 assert.equal(wf.connections['Session ready?'].main[0][0].node, 'Activity — Schedule Builder accepted');
-assert.equal(wf.connections['Restore after Schedule Builder progress'].main[0][0].node, 'Capability router');
-assert.equal(wf.connections['Capability router'].main[0][0].node, 'Apply commissioning');
-assert.equal(wf.connections['Capability router'].main[1][0].node, 'Apply group rebind');
-assert.equal(wf.connections['Capability router'].main[2][0].node, 'Prepare AI Agent input');
-const applyComm = wf.nodes.find((n) => n.name === 'Apply commissioning');
-assert.equal(applyComm.type, 'n8n-nodes-base.httpRequest');
-assert.ok(String(applyComm.parameters.url).includes('apply_commissioning'));
-assert.equal(applyComm.retryOnFail, true);
-assert.equal(wf.connections['Apply commissioning'].main[0][0].node, 'Describe apply result');
-assert.equal(wf.connections['Apply group rebind'].main[0][0].node, 'Describe apply result');
-assert.equal(wf.connections['Describe apply result'].main[0][0].node, 'Activity — Schedule Builder apply');
-assert.equal(wf.connections['Restore after apply event'].main[0][0].node, 'Apply finished?');
-assert.equal(wf.connections['Apply finished?'].main[0][0].node, 'Format schedule result');
-assert.equal(wf.connections['Apply finished?'].main[1][0].node, 'Fetch schedule result');
+assert.equal(wf.connections['Restore after Schedule Builder progress'].main[0][0].node, 'Prepare AI Agent input');
+assert.equal(JSON.stringify(wf).includes('suggested_capability'), false);
 assert.equal(wf.connections['Prepare AI Agent input'].main[0][0].node, 'Call Knowledge Retrieval');
 assert.equal(wf.connections['Call Knowledge Retrieval'].main[0][0].node, 'Attach schedule RAG evidence');
 assert.equal(wf.connections['Attach schedule RAG evidence'].main[0][0].node, 'Schedule Builder AI Agent');
@@ -93,10 +121,10 @@ assert.equal(wf.connections['Schedule Builder AI Agent'].main[0][0].node, 'Summa
 assert.equal(wf.connections['AI applied?'].main[0][0].node, 'Format schedule result');
 assert.equal(wf.connections['AI applied?'].main[1][0].node, 'Fetch schedule result');
 assert.equal(wf.connections['Format schedule result'].main[0][0].node, 'Close schedule session');
-assert.equal(agent.parameters.options.maxIterations, 6);
+assert.equal(agent.parameters.options.maxIterations, 8);
 assert.equal(wf.settings.executionTimeout, 900);
-assert.ok(sourceCode('Describe apply result').includes('skip_fetch'));
-assert.ok(sourceCode('Restore after Schedule Builder progress').includes('operations'));
+assert.ok(sourceCode('Summarize AI steps').includes('skip_fetch'));
+assert.ok(sourceCode('Summarize AI steps').includes("n==='ask_engineer'"), 'ask_engineer stores a result → fetch it');
 const applyOps = wf.nodes.find((n) => n.name === 'apply_operations');
 assert.ok(String(applyOps.parameters.toolDescription).includes('массив') || String(applyOps.parameters.toolDescription).includes('Массив'));
 const activityProgress = wf.nodes.find((n) => n.name === 'Activity — Schedule Builder progress');
@@ -164,12 +192,18 @@ async function run(name, json, nodes = {}) {
       fact_count: 2,
       facts_preview: [],
       session_id: 'sess-s',
-      suggested_capability: 'operations',
+      engineer_answers: [{ question_id: 'unlisted_wells_policy', choice: 'keep', label: 'Оставить как в baseline' }],
     },
     {
-      'Normalize schedule task': { agent_task: { objective: 'Поставь ORAT 80 на скважины, не трогай факт' } },
+      'Normalize schedule task': {
+        agent_task: { objective: 'Поставь ORAT 80 на скважины, не трогай факт', inputs: { rework_reason: 'Скважина 1602 не сдвинута' } },
+      },
     },
   );
+  const plannerInput = JSON.parse(prepared.planner_input);
+  assert.equal('suggested_capability' in plannerInput, false, 'the LLM picks the tool, no regex hint');
+  assert.equal(plannerInput.engineer_answers[0].label, 'Оставить как в baseline');
+  assert.equal(plannerInput.rework_reason, 'Скважина 1602 не сдвинута');
   assert.equal(prepared.schedule_retrieval_request.filters.target_base, 'schedule_mvp');
   assert.deepEqual(prepared.schedule_retrieval_request.filters.knowledge_types, [
     'keyword_instruction',
@@ -226,6 +260,47 @@ async function run(name, json, nodes = {}) {
   assert.equal(attachedFail.rag.status, 'unavailable');
   assert.equal(attachedFail.rag.cards.length, 0);
   assert.match(attachedFail.planner_input, /Не спрашивай HITL про RAG/);
+
+  // Summarize AI steps: a result exists after apply_* or ask_engineer → fetch it; otherwise the
+  // fallback question to the engineer is plain Russian (no tool names, ids or enums).
+  const MACHINE = /[a-z]+_[a-z_]+|[a-z_]+=[a-z0-9]+|[{}[\]]/;
+  const opened = { 'Open schedule session': { task_id: 'T-1', session_id: 'sess-s' } };
+  const asked = await run(
+    'Summarize AI steps',
+    {
+      output: 'Спросил инженера, в какую группу поместить скважину.',
+      intermediateSteps: [{ action: { tool: 'inspect_schedule' } }, { action: { tool: 'ask_engineer' } }],
+    },
+    opened,
+  );
+  assert.equal(asked.skip_fetch, false);
+  assert.equal(asked.has_apply, true);
+  assert.equal(asked.status_message, 'Спросил инженера, в какую группу поместить скважину.');
+  const applied = await run(
+    'Summarize AI steps',
+    { output: 'Сдвинул даты ввода.', intermediateSteps: [{ action: { tool: 'apply_commissioning' } }] },
+    opened,
+  );
+  assert.equal(applied.skip_fetch, false);
+  const idle = await run(
+    'Summarize AI steps',
+    { output: '', intermediateSteps: [{ action: { tool: 'inspect_schedule' } }] },
+    opened,
+  );
+  assert.equal(idle.skip_fetch, true);
+  assert.equal(idle.status, 'needs_input');
+  assert.equal(idle.requests[0].accepts.free_text, true);
+  for (const text of [idle.message, idle.requests[0].question, idle.status_message]) {
+    assert.equal(MACHINE.test(text), false, text);
+    assert.equal(/tools?\b/i.test(text), false, text);
+  }
+  const looped = await run(
+    'Summarize AI steps',
+    { output: '', intermediateSteps: Array.from({ length: 5 }, () => ({ action: { tool: 'inspect_well' } })) },
+    opened,
+  );
+  assert.equal(looped.issues[0].type, 'repeated_tools');
+  assert.match(looped.requests[0].question, /не смог продвинуться/);
 
   console.log('schedule-builder-agent-smoke: ok');
 })().catch((err) => {

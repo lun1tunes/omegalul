@@ -1,116 +1,119 @@
-"""Group membership rebind — Python timeline only (no Node)."""
+"""Group membership rebind — the spec is a structure the agent LLM fills from the task.
+
+No prose parsing lives here any more (no intent keywords, no rate regex): the LLM reads the
+engineer's task and ``inspect_schedule`` and passes ``wells / parent_group / parent_of_parent /
+control / gas_rate`` explicitly.  This module only coerces that structure, applies two explicit
+rendering conventions (reported back as assumptions) and lists what is still missing.
+"""
 
 from __future__ import annotations
 
-import re
 from typing import Any
 
+from .parse import parse_schedule
 from .timeline_ops import group_rebind_revise as python_group_rebind_revise
 
-GROUP_INTENT = (
-    "групп",
-    "gruptree",
-    "gconprod",
-    "перепривяз",
-    "group_rebind",
-    "group_membership",
-    "отдельн",
-)
+CONTROLS = ("ORAT", "WRAT", "GRAT", "LRAT", "RESV")
+SPEC_FIELDS = ("wells", "parent_group", "parent_of_parent", "well_groups", "control", "gas_rate", "effective_at")
 
 
-def wants_group_rebind(blob: str, inputs: dict[str, Any] | None = None) -> bool:
-    text = (blob or "").lower()
-    if any(token in text for token in GROUP_INTENT):
-        return True
-    caps = (inputs or {}).get("requested_capability_scope") if isinstance(inputs, dict) else None
-    if isinstance(caps, list) and any(
-        "group" in str(item).lower() or "rebind" in str(item).lower() for item in caps
-    ):
-        return True
-    spec = (inputs or {}).get("group_rebind") if isinstance(inputs, dict) else None
-    return isinstance(spec, dict) and bool(spec)
-
-
-def _hitl_blob(hitl: dict[str, Any] | None) -> str:
-    if not isinstance(hitl, dict):
-        return ""
-    parts: list[str] = []
-    answers = hitl.get("answers") or {}
-    if isinstance(answers, dict):
-        parts.extend(str(v) for v in answers.values())
-    elif isinstance(answers, list):
-        parts.extend(str(item) for item in answers)
-    return "\n".join(parts)
-
-
-def _parse_rate(blob: str) -> float | None:
-    text = blob.replace("\u00a0", " ")
-    match = re.search(r"(\d+(?:[.,]\d+)?)\s*тыс", text, re.I)
-    if match:
-        return float(match.group(1).replace(",", ".")) * 1000.0
-    match = re.search(r"(\d{1,3}(?:[ \u00a0]\d{3})+)\s*(?:м3|m3|газ)", text, re.I)
-    if match:
-        return float(match.group(1).replace(" ", "").replace("\u00a0", ""))
-    match = re.search(r"(\d{4,7})\s*(?:м3|m3|газ|сут|grat)", text, re.I)
-    if match:
-        return float(match.group(1))
-    match = re.search(r"(?:grat|gconprod|дебит|контроль)\D{0,12}(\d{4,7})", text, re.I)
-    if match:
-        return float(match.group(1))
-    return None
-
-
-def extract_group_rebind_spec(
-    blob: str,
-    source_wells: set[str],
-    source_text: str = "",
-    hitl: dict[str, Any] | None = None,
-    inputs: dict[str, Any] | None = None,
-) -> tuple[dict[str, Any], list[str]]:
-    """Build a timeline spec from task text + baseline names. Missing fields are listed, not invented from golden fixtures."""
-    merged = "\n".join([blob or "", _hitl_blob(hitl)])
-    incoming = {}
-    if isinstance(inputs, dict) and isinstance(inputs.get("group_rebind"), dict):
-        incoming = dict(inputs["group_rebind"])
-    wells: list[str] = list(incoming.get("wells") or [])
-    if not wells:
-        ordered = sorted((str(w) for w in source_wells), key=len, reverse=True)
-        found: list[str] = []
-        for well in ordered:
-            if not well or well in found:
+def gruptree_summary(source_text: str) -> dict[str, Any]:
+    """Groups already present in baseline GRUPTREE: all names, and roots (parents that are nobody's child)."""
+    children: list[str] = []
+    parents: list[str] = []
+    for block in parse_schedule(source_text or "").blocks:
+        if block.keyword != "GRUPTREE":
+            continue
+        for rec in block.records:
+            if len(rec.tokens) < 2:
                 continue
-            if re.search(rf"(?<![\w.]){re.escape(well)}(?![\w.])", merged):
-                found.append(well)
-        wells = found
-    quoted = re.findall(r"[«\"']([A-Za-z][A-Za-z0-9_]{1,16})[»\"']", merged)
-    parent = str(incoming.get("parent_group") or (quoted[0] if quoted else "")).strip().upper()
-    parent_of_parent = str(incoming.get("parent_of_parent") or "").strip().upper()
-    if not parent_of_parent and re.search(r"\bFIELD\b", source_text or ""):
-        parent_of_parent = "FIELD"
-    control = str(incoming.get("control") or "").strip().upper()
-    if not control and re.search(r"газ|grat|м3|m3", merged, re.I):
-        control = "GRAT"
-    elif not control and re.search(r"\borat\b|нефть", merged, re.I):
-        control = "ORAT"
-    rate = incoming.get("rate", incoming.get("gas_rate"))
-    if rate in (None, ""):
-        rate = _parse_rate(merged)
+            child = rec.tokens[0].strip("'\"")
+            parent = rec.tokens[1].strip("'\"")
+            if child:
+                children.append(child)
+            if parent:
+                parents.append(parent)
+    ordered = list(dict.fromkeys([*parents, *children]))
+    child_set = set(children)
+    roots = [name for name in dict.fromkeys(parents) if name not in child_set]
+    return {"has_gruptree": bool(ordered), "groups": ordered[:60], "roots": roots[:12]}
+
+
+def _wells_list(raw: Any) -> list[str]:
+    if isinstance(raw, str):
+        items = raw.replace(",", " ").split()
+    elif isinstance(raw, list):
+        items = [str(item) for item in raw]
+    else:
+        items = []
+    out: list[str] = []
+    for item in items:
+        name = item.strip().strip("'\"")
+        if name and name not in out:
+            out.append(name)
+    return out
+
+
+def _number(raw: Any) -> float | None:
+    if raw in (None, "", False):
+        return None
+    if isinstance(raw, (int, float)):
+        return float(raw)
+    text = str(raw).replace("\u00a0", "").replace(" ", "").replace(",", ".")
     try:
-        rate_n = float(rate) if rate not in (None, "") else None
-    except (TypeError, ValueError):
-        rate_n = None
-    groups_in = incoming.get("well_groups") if isinstance(incoming.get("well_groups"), dict) else {}
-    well_groups = {str(k): str(v) for k, v in groups_in.items() if str(v).strip()}
-    if not well_groups and wells and parent:
-        well_groups = {well: f"G{well}" for well in wells}
-    spec = {
+        return float(text)
+    except ValueError:
+        return None
+
+
+def normalize_group_rebind_spec(
+    raw: dict[str, Any] | None,
+    *,
+    baseline: dict[str, Any] | None = None,
+) -> tuple[dict[str, Any], list[str], list[dict[str, Any]]]:
+    """Coerce the LLM's structured spec. Returns (spec, missing_fields, assumptions).
+
+    Conventions applied when the LLM leaves them out (both reported as assumptions):
+    * ``well_groups`` — one sub-group per well named ``G<well>`` under ``parent_group``;
+    * ``parent_of_parent`` — the single root of baseline GRUPTREE, if the tree has exactly one.
+    Anything else that is missing goes back to the LLM, never guessed from prose.
+    """
+    raw = raw if isinstance(raw, dict) else {}
+    nested = raw.get("spec") if isinstance(raw.get("spec"), dict) else {}
+    merged = {**nested, **{k: v for k, v in raw.items() if k != "spec"}}
+    baseline = baseline if isinstance(baseline, dict) else {}
+    assumptions: list[dict[str, Any]] = []
+
+    wells = _wells_list(merged.get("wells"))
+    parent = str(merged.get("parent_group") or "").strip().strip("'\"").upper()
+    parent_of_parent = str(merged.get("parent_of_parent") or "").strip().strip("'\"").upper()
+    control = str(merged.get("control") or "").strip().upper()
+    rate = _number(merged.get("gas_rate", merged.get("rate", merged.get("oil_rate"))))
+    effective_at = str(merged.get("effective_at") or "").strip()
+
+    groups_in = merged.get("well_groups") if isinstance(merged.get("well_groups"), dict) else {}
+    well_groups = {str(k).strip().strip("'\""): str(v).strip().strip("'\"") for k, v in groups_in.items() if str(v).strip()}
+    if wells and any(not well_groups.get(well) for well in wells):
+        for well in wells:
+            well_groups.setdefault(well, f"G{well}")
+        assumptions.append({"well_groups": "по одной подгруппе на скважину: G<скважина> под parent_group"})
+
+    roots = [str(r) for r in (baseline.get("roots") or []) if str(r).strip()]
+    if not parent_of_parent and len(roots) == 1:
+        parent_of_parent = roots[0].upper()
+        assumptions.append({"parent_of_parent": f"корень baseline GRUPTREE: {parent_of_parent}"})
+
+    spec: dict[str, Any] = {
         "wells": wells,
         "parent_group": parent,
         "parent_of_parent": parent_of_parent,
-        "well_groups": well_groups,
-        "gas_rate": rate_n,
+        "well_groups": {well: well_groups[well] for well in wells} if wells else {},
         "control": control,
+        "gas_rate": rate,
     }
+    if effective_at:
+        spec["effective_at"] = effective_at
+
     missing: list[str] = []
     if not wells:
         missing.append("wells")
@@ -120,11 +123,11 @@ def extract_group_rebind_spec(
         missing.append("parent_of_parent")
     if not control:
         missing.append("control")
-    if not rate_n or rate_n <= 0:
-        missing.append("rate")
-    if wells and any(not well_groups.get(well) for well in wells):
-        missing.append("well_groups")
-    return spec, missing
+    elif control not in CONTROLS:
+        missing.append("control")
+    if rate is None or rate <= 0:
+        missing.append("gas_rate")
+    return spec, missing, assumptions
 
 
 def run_group_rebind_revise(

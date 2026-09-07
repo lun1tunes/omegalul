@@ -14,6 +14,7 @@ from mas_retrieval_client import (
     attach_schedule_rag_js,
     knowledge_retrieval_execute_params,
 )
+from mas_tool_nodes import HTTP_REQUEST_TOOL_TYPE, HTTP_REQUEST_TOOL_VERSION, http_request_tool_params
 from schedule_rag_workflows import KEYWORDS as SCHEDULE_KEYWORDS
 
 ROOT = Path(__file__).resolve().parents[1]
@@ -27,45 +28,36 @@ OA = {
     }
 }
 
-SYSTEM = """Ты — единственный LLM-решатель агента Schedule Builder.
+SYSTEM = """Ты — инженер-решатель агента Schedule Builder: читаешь задачу инженера, выбираешь инструмент и вызываешь его со структурированными аргументами. Текст SCHEDULE (.INC) пишут инструменты, не ты.
 
-Исходный .INC тебе не показывают. Он лежит в сессии FastAPI. session_id привязан workflow: никогда не передавай session_id и обёртку args/input.
+Исходный .INC тебе не показывают — он лежит в сессии FastAPI. session_id привязан workflow: никогда не передавай session_id и обёртку args/input.
 
-Инструменты:
-- inspect_schedule — объектная инвентаризация скважин, keywords, даты, GRUPTREE (компактно)
-- inspect_well — подробный объект одной скважины: identity, factual WCONPROD, commissioning anchor и история режимов
-- analyze_forecast_controls — детерминированный разбор control timeline: history, forecast, overrides, economics, reopen/status/efficiency events
-- search_keywords — по intent сервиса вернёт keywords + methods
-- get_keyword — объект keyword: details.parameters (позиция, тип, unit, описание) из schema_catalogue
-- list_records — компактные записи keyword/well
-- apply_commissioning — сдвиг дат ввода по фактам Excel из сессии. Якорь commissioning — первый нефактический WCONPROD; последующие WCONPROD являются прогнозными режимами и сохраняются.
-- apply_group_rebind — перепривязка групп по тексту задачи и baseline. Скважины только из inspect.
-- apply_operations — точечные MODIFY/ADD по схеме keyword. wells только из inspect.
-- render_ir — fields по каталогу → текст записи .inc (слэши, layout). Не пиши .INC сам.
-- build_schedule — собрать текущий working text, если apply уже менял сессию
-- validate_result — проверки emit
+Какой инструмент когда:
+- Задача про НОВЫЕ ДАТЫ ВВОДА скважин (Excel «скважина — дата», fact_count > 0) → apply_commissioning. Факты, решение по скважинам вне Excel и параметры новых скважин уже в сессии — аргументов не нужно. Другие apply_* для такой задачи не вызывай.
+- Задача про ГРУППЫ (поместить скважины в группу, групповой контроль GCONPROD) → inspect_schedule (имена скважин, дерево GRUPTREE), затем apply_group_rebind с полным spec: wells, parent_group, parent_of_parent, control (ORAT/WRAT/GRAT/LRAT/RESV), gas_rate числом в м3/сут («200 тыс. м3 газа в сут.» → 200000). Родителя новой группы бери из дерева baseline (корень — FIELD или как в inspect), если инженер не сказал иначе.
+- Точечные правки режимов/keywords → search_keywords → get_keyword (details.parameters) → apply_operations или render_ir.
+- inspect_well / analyze_forecast_controls / list_records — чтобы посмотреть скважину перед правкой. Не вызывай их «на всякий случай» и не больше трёх раз подряд.
+- build_schedule — только если apply уже менял сессию; validate_result — проверки emit.
+- ask_engineer — единственный способ спросить инженера. Только когда данных нет ни в задаче, ни в baseline, ни в ответах инженера (engineer_answers). Один вопрос обычной русской фразой: что нужно и зачем; варианты (options) — как их называет инженер: имена групп из baseline, «оставить»/«убрать». Никаких имён полей, JSON, enum, кодов. Инженер отвечает фактами, таблицами и файлами — не строками .INC.
 
-Правила:
-- Не пиши текст SCHEDULE сам. Только инструменты.
-- Не придумывай скважины, даты, группы, дебиты.
-- Для commissioning сначала проверь объект скважины через inspect_schedule/inspect_well и отличай first_wconprod от forecast control events.
-- Для изменения одного параметра после существующего контроля используй WELTARG, а не переписывай весь WCONPROD.
-- Не путай WECON (экономические пределы), WTEST (переоткрытие), WELOPEN (статус), WEFAC (uptime), WPIMULT (CF) и GCONPROD (группа).
-- Если analyze_forecast_controls вернул needs_input по границе history/forecast — не применяй операцию до уточнения.
-- Жёсткое правило: если комментарий WCONPROD содержит «факт» или «fact», запись фактическая. Её нельзя удалять, переносить или использовать как прогнозный commissioning anchor.
-- suggested_capability=commissioning → сразу apply_commissioning, затем STOP.
-- suggested_capability=group_rebind → inspect при необходимости, затем apply_group_rebind, затем STOP.
-- Иначе search_keywords → get_keyword (смотри details.parameters) → apply_operations / render_ir / needs_input.
-- Имена полей бери из get_keyword.details (WELL, DATE, CHILD), не выдумывай расклад.
-- WCONPROD variant = CONTROL в нижнем регистре (orat, wrat, grat, lrat, bhp, thp, resv, grup). Если variant не указан — положи CONTROL в fields.
+Ответы инструментов:
+- ok:false, error:spec_incomplete — это тебе, не инженеру: заполни missing из текста задачи и inspect_schedule (where_to_find подсказывает откуда) и вызови инструмент снова. Спрашивай инженера, только если данных действительно нет.
+- ok:false, error:question_not_human — переформулируй вопрос прозой и вызови ask_engineer снова.
+- ok:false, error:well_not_in_schedule / operations_required — ошибка твоего вызова; исправь аргументы.
+- ok:false, error:result_already_stored — результат этого запуска уже зафиксирован (apply или вопрос инженеру). Больше инструменты не вызывай, заверши ответ.
+- status completed или needs_input от apply_* / ask_engineer — результат зафиксирован. STOP: не вызывай build и другие apply.
+
+Инварианты:
+- Не придумывай скважины, даты, группы, дебиты. Имена скважин — только из inspect_schedule.
+- Если комментарий WCONPROD содержит «факт»/«fact», запись фактическая: её нельзя удалять, переносить или считать прогнозным якорем ввода. Якорь commissioning — первый нефактический WCONPROD; следующие WCONPROD — прогнозные режимы, они сохраняются.
+- Один параметр после существующего контроля — WELTARG, не переписывание WCONPROD. Не путай WECON (экономика), WTEST (переоткрытие), WELOPEN (статус), WEFAC (uptime), WPIMULT (CF), GCONPROD (группа).
+- Имена полей — из get_keyword.details (WELL, DATE, CHILD). WCONPROD variant = CONTROL в нижнем регистре (orat, wrat, grat, lrat, bhp, thp, resv, grup); если variant не указан — положи CONTROL в fields.
 - apply_operations принимает JSON-массив [{keyword, operation, fields}], не объект с ключами "0","1".
-- После apply_* со status completed или needs_input — STOP. Не вызывай build, если apply уже вернул результат.
-- Если данных нет — не вызывай apply с пустыми выдуманными полями.
-- Не вызывай один и тот же inspect_* больше трёх раз подряд. Если за 3 шага нет apply_* — STOP и верни вопрос (needs_input).
-- Не зацикливайся: max несколько tool-вызовов, затем короткий итог.
-- Retrieved knowledge — только срез schedule_mvp (keyword_instruction / worked_example): when-to-use и pitfalls. Расклад полей по-прежнему из get_keyword.details / render_ir, не из schema_catalogue RAG. Пустой или unavailable срез — работай инструментами, не спрашивай HITL про базу знаний и не ходи в excel_protocol / orchestrator_routing.
+- Если analyze_forecast_controls вернул needs_input по границе history/forecast — не применяй операцию, спроси инженера.
+- rework_reason в задаче — замечание оркестратора к прошлому результату: устрани именно его.
+- Retrieved knowledge — только срез schedule_mvp (keyword_instruction / worked_example): when-to-use и pitfalls. Расклад полей — из get_keyword.details / render_ir. Пустой или unavailable срез — работай инструментами, не спрашивай про базу знаний.
 
-Заверши одним коротким фактическим предложением по-русски.
+Заверши одним коротким фактическим предложением по-русски о том, что сделано или чего не хватило.
 """
 
 TOOLS = [
@@ -100,15 +92,29 @@ TOOLS = [
     ),
     (
         "apply_commissioning",
-        "Сдвинуть даты ввода по фактам Excel, уже лежащим в сессии. Даты в аргументах не передавай.",
+        "Сдвинуть даты ввода скважин по фактам «скважина — дата» из Excel, уже лежащим в сессии (fact_count). Решение по скважинам вне Excel и параметры новых скважин тоже берутся из сессии. Аргументов нет. Для задач про даты ввода — это единственный нужный apply.",
         [],
     ),
     (
         "apply_group_rebind",
-        "Перепривязать скважины в группу. Пустые поля сервис возьмёт из objective/baseline. wells только из inspect.",
+        "Поместить скважины в группу с групповым контролем (WELSPECS + GRUPTREE + GCONPROD). Spec заполняешь ты из задачи и inspect_schedule; ничего не выводится из текста автоматически. Неполный spec вернётся как ok:false spec_incomplete с missing и where_to_find — дополни и вызови снова.",
         [
-            ("parent_group", "string", False, "Родительская группа, если уже известна"),
-            ("wells", "string", False, "Имена скважин через пробел, только из inspect"),
+            ("wells", "string", True, "Имена скважин через пробел или запятую, только из inspect_schedule.wells"),
+            ("parent_group", "string", True, "Имя целевой группы из задачи (например DKS)"),
+            ("parent_of_parent", "string", False, "Родитель целевой группы в GRUPTREE: корень baseline (FIELD) или группа из задачи. Пусто — возьмётся единственный корень baseline"),
+            ("control", "string", True, "Тип группового контроля: GRAT (газ), ORAT (нефть), WRAT (вода), LRAT (жидкость), RESV"),
+            ("gas_rate", "number", True, "Целевой дебит числом в м3/сут: «200 тыс. м3 в сут.» → 200000"),
+            ("effective_at", "string", False, "Дата начала контроля вида 1 JAN 2026; пусто — с даты ввода этих скважин"),
+        ],
+    ),
+    (
+        "ask_engineer",
+        "Задать инженеру ОДИН вопрос обычной русской фразой, когда данных нет ни в задаче, ни в baseline, ни в engineer_answers. options — варианты словами инженера (имена групп из baseline, «оставить»/«убрать»). Без имён полей, JSON, enum. После вызова — STOP.",
+        [
+            ("question", "string", True, "Вопрос по-русски: что нужно и зачем, с именами скважин/групп"),
+            ("options", "string", False, "Варианты ответа через точку с запятой, например «Оставить как в baseline; Убрать из прогноза». Пусто — свободный ответ"),
+            ("topic", "string", False, "Короткий латинский идентификатор темы вопроса, например target_group"),
+            ("accepts_files", "string", False, "Какие файлы принимаются, через запятую: xlsx, .inc"),
         ],
     ),
     (
@@ -254,49 +260,21 @@ def activity_event_dynamic(name, pos):
 
 
 def tool_http(name, pos, description, fields):
-    placeholders = {
-        "values": [
-            {"name": key, "description": desc, "type": typ}
-            for key, typ, _req, desc in fields
-        ]
-    }
-    body_values = [
-        {
-            "name": "session_id",
-            "valueProvider": "fieldValue",
-            "value": "={{ $('Open schedule session').first().json.session_id }}",
-        }
-    ]
-    for key, _typ, required, _desc in fields:
-        body_values.append(
-            {
-                "name": key,
-                "valueProvider": "modelRequired" if required else "modelOptional",
-                "value": "",
-            }
-        )
+    # n8n 2.30.8 + AI Agent v3: tools must be executable nodes → HTTP Request (as tool) with $fromAI.
     return node(
         name,
-        "@n8n/n8n-nodes-langchain.toolHttpRequest",
-        1.1,
+        HTTP_REQUEST_TOOL_TYPE,
+        HTTP_REQUEST_TOOL_VERSION,
         pos,
-        {
-            "toolDescription": description,
-            "method": "POST",
-            "url": "={{ $('Runtime configuration').first().json.schedule_service_url + '/agent-tools/' + "
+        http_request_tool_params(
+            name,
+            description,
+            fields,
+            url_expr="={{ $('Runtime configuration').first().json.schedule_service_url + '/agent-tools/' + "
             + json.dumps(name)
             + " }}",
-            "authentication": "none",
-            "sendQuery": False,
-            "sendHeaders": True,
-            "specifyHeaders": "keypair",
-            "sendBody": True,
-            "specifyBody": "keypair",
-            "placeholderDefinitions": placeholders,
-            "optimizeResponse": False,
-            "parametersHeaders": {"values": [{"name": "Content-Type", "valueProvider": "fieldValue", "value": "application/json"}]},
-            "parametersBody": {"values": body_values},
-        },
+            session_expr="$('Open schedule session').first().json.session_id",
+        ),
         retryOnFail=True,
         maxTries=3,
         waitBetweenTries=2000,
@@ -322,52 +300,6 @@ if(!task.inputs.activity_base_url&&cfg.activity_base_url) task.inputs={...task.i
 return [{json:{...cfg, agent_task:task, case_id:task.case_id, task_id:task.task_id}}];
 """
 
-RESTORE_AFTER_PROGRESS = r"""
-const x=$('Restore after Schedule Builder accepted').first().json||{};
-const cap=String(x.suggested_capability||'').trim();
-const known=cap==='commissioning'||cap==='group_rebind'?cap:'operations';
-return [{json:{...x, suggested_capability:known}}];
-"""
-
-DESCRIBE_APPLY = r"""
-const raw=$json||{};
-const data=raw.data&&typeof raw.data==='object'?raw.data:{};
-const shifts=Array.isArray(data.shifts)?data.shifts:[];
-const rebind=data.group_rebind&&typeof data.group_rebind==='object'?data.group_rebind:{};
-const httpError=raw.error&&typeof raw.error==='object'?raw.error:null;
-const status=String(raw.status||(httpError?'failed':'')).trim();
-const operation=rebind.parent_group||Array.isArray(rebind.wells)?'group_rebind':(shifts.length||(Array.isArray(data.changed_keywords)&&data.changed_keywords.indexOf('DATES')>=0)?'commissioning':'apply');
-const dates=shifts.slice(0,12).map(s=>{
-  if(!s||typeof s!=='object') return '';
-  const well=String(s.well||s.name||'').trim();
-  const date=String(s.date||s.new_date||s.to||'').trim();
-  return well?(date?well+': '+date:well):'';
-}).filter(Boolean);
-const wellsAffected=operation==='group_rebind'
-  ? (Array.isArray(rebind.wells)?rebind.wells.length:Number(data.records_applied||0))
-  : Number(shifts.length||data.records_applied||0);
-const skipFetch=status!=='completed';
-const fallback=operation==='group_rebind'
-  ? (status==='completed'?'Перепривязка групп завершена':'Перепривязка групп требует уточнения')
-  : (status==='completed'?('Commissioning: сдвинуты даты ввода для '+wellsAffected+' скважин'):'Commissioning требует уточнения');
-const message=String(raw.message||(httpError&&(httpError.message||httpError.description))||fallback);
-return [{json:{
-  ...raw,
-  status:status||'failed',
-  message,
-  skip_fetch:skipFetch,
-  activity_kind:status==='completed'?'agent.progress':(status==='needs_input'?'agent.progress':'agent.failed'),
-  status_message:message,
-  activity_payload:{
-    source:'schedule-builder-agent-workflow',
-    operation,
-    wells_affected:wellsAffected,
-    dates_changed:dates,
-    status:status||'failed'
-  }
-}}];
-"""
-
 SUMMARIZE_AI = r"""
 const agent=$json||{};
 const opened=$('Open schedule session').first().json||{};
@@ -382,29 +314,33 @@ const unique=[...new Set(tools)];
 const counts={};
 for(const name of tools) counts[name]=(counts[name]||0)+1;
 const repeated=Object.keys(counts).some(name=>counts[name]>3);
-const hasApply=tools.some(n=>n.indexOf('apply_')===0||n.indexOf('build_')===0);
-const skipFetch=!hasApply||repeated;
-const message=hasApply&&!repeated
-  ? ('Schedule Builder вызвал '+String(tools.length)+' tools: '+unique.join(', '))
-  : (repeated
-    ? 'Агент повторял один и тот же tool без прогресса. Нужно уточнение.'
-    : 'Агент не применил изменений. Уточните задачу.');
+// A stored result exists after apply_* / build_schedule (completed) or ask_engineer (needs_input).
+const hasResult=tools.some(n=>n.indexOf('apply_')===0||n.indexOf('build_')===0||n==='ask_engineer');
+const skipFetch=!hasResult;
+const finalText=String(agent.output||agent.text||'').trim();
+// Engineer-facing fallback when the LLM ended without fixing a result: plain Russian, no tool names.
+const question=repeated
+  ? 'Schedule Builder не смог продвинуться по задаче: несколько раз проверял SCHEDULE, но не понял, что именно изменить. Опишите задачу подробнее: какие скважины, какие даты или режимы работы и откуда взять значения.'
+  : 'Schedule Builder не внёс изменений в SCHEDULE: не хватило данных, чтобы понять задачу. Опишите, что именно нужно изменить (скважины, даты, режимы) и откуда взять значения (Excel, текст, baseline).';
+const message=hasResult
+  ? (finalText||'Schedule Builder завершил работу с инструментами.')
+  : (finalText?finalText+' ':'')+question;
 return [{json:{
   ...(skipFetch?{
     task_id:opened.task_id||'',
     agent_id:'schedule_builder',
     status:'needs_input',
-    message,
-    data:{tools_used:unique,total_calls:steps.length},
+    message:question,
+    data:{tools_used:unique,total_calls:steps.length,llm_final_text:finalText.slice(0,600)},
     artifacts:{},
     issues:[{type:repeated?'repeated_tools':'no_apply'}],
     assumptions:[],
-    requests:[{question_id:'Q-apply',question:message,options:[]}]
+    requests:[{question_id:'Q-apply',question,options:[],accepts:{free_text:true,files:['xlsx','.inc']}}]
   }:agent),
   skip_fetch:skipFetch,
-  has_apply:hasApply,
+  has_apply:hasResult,
   activity_kind:'agent.progress',
-  status_message:message,
+  status_message:message.slice(0,400),
   activity_payload:{source:'schedule-builder-agent-workflow',total_calls:steps.length,tools_used:unique,iterations:steps.length}
 }}];
 """
@@ -454,13 +390,17 @@ const schedule_retrieval_request={
   },
   top_k:RAG_TOP_K
 };
+// The LLM decides which tool fits: task text + baseline inventory + what the engineer already answered.
+const engineerAnswers=Array.isArray(opened.engineer_answers)?opened.engineer_answers:[];
+const reworkReason=String(opened.rework_reason||(task.inputs&&task.inputs.rework_reason)||'').trim();
 const planner_input=JSON.stringify({
   objective,
   handoff_message:handoff,
   inspect:opened.inspect||{},
   fact_count:opened.fact_count||0,
   facts_preview:opened.facts_preview||[],
-  suggested_capability:opened.suggested_capability||''
+  engineer_answers:engineerAnswers,
+  ...(reworkReason?{rework_reason:reworkReason}:{})
 });
 return [{json:{...opened,session_id:opened.session_id,agent_input:planner_input,planner_input,schedule_retrieval_request,retrieval_selector}}];
 """
@@ -541,10 +481,12 @@ def main() -> None:
                     "`executeWorkflow` (`Call Schedule Builder`), как Excel Extractor. "
                     "Webhook не нужен.\n\n"
                     "LLM не пишет .INC. parse/apply/emit остаются в сервисе.\n"
-                    "`suggested_capability` commissioning/group_rebind идут "
-                    "обычным HTTP `apply_*` (external n8n runners не execute'ят "
-                    "toolHttpRequest). После apply проверяется status; "
-                    "needs_input не идёт в Fetch result. Сессия закрывается "
+                    "Инструмент выбирает LLM по задаче (нет regex-роутера): "
+                    "`apply_commissioning` для дат ввода, `apply_group_rebind` "
+                    "со spec от LLM, `apply_operations`/`render_ir` для точечных правок. "
+                    "Вопрос инженеру — только `ask_engineer` прозой с вариантами; "
+                    "неполный spec возвращается LLM, не человеку. Результат читается "
+                    "из GET /sessions/{id}/result, сессия закрывается "
                     "POST /sessions/{id}/close. Скважины/даты не хардкодятся."
                 ),
                 "height": 360,
@@ -636,47 +578,8 @@ def main() -> None:
             "n8n-nodes-base.code",
             2,
             (1880, -220),
-            {"jsCode": RESTORE_AFTER_PROGRESS},
+            {"jsCode": "const x=$('Restore after Schedule Builder accepted').first().json||{}; return [{json:x}];"},
         ),
-        node(
-            "Capability router",
-            "n8n-nodes-base.switch",
-            3.4,
-            (1220, 0),
-            {
-                "mode": "expression",
-                "numberOutputs": 3,
-                "output": "={{ ({commissioning:0, group_rebind:1, operations:2})[String($json.suggested_capability||'operations')] ?? 2 }}",
-            },
-        ),
-        http_json(
-            "Apply commissioning",
-            (1480, -160),
-            "POST",
-            "={{ $('Runtime configuration').first().json.schedule_service_url + '/agent-tools/apply_commissioning' }}",
-            "={{ ({session_id: $('Open schedule session').first().json.session_id}) }}",
-            timeout=180000,
-            retry=True,
-        ),
-        http_json(
-            "Apply group rebind",
-            (1480, 0),
-            "POST",
-            "={{ $('Runtime configuration').first().json.schedule_service_url + '/agent-tools/apply_group_rebind' }}",
-            "={{ ({session_id: $('Open schedule session').first().json.session_id}) }}",
-            timeout=180000,
-            retry=True,
-        ),
-        node("Describe apply result", "n8n-nodes-base.code", 2, (1680, -80), {"jsCode": DESCRIBE_APPLY}),
-        activity_event_dynamic("Activity — Schedule Builder apply", (1680, -260)),
-        node(
-            "Restore after apply event",
-            "n8n-nodes-base.code",
-            2,
-            (1880, -260),
-            {"jsCode": "const x=$('Describe apply result').first().json||{}; return [{json:x}];"},
-        ),
-        if_true("Apply finished?", (1880, -80), "={{ Boolean($json.skip_fetch) }}"),
         node(
             "Restore after Schedule Builder activity",
             "n8n-nodes-base.code",
@@ -711,7 +614,7 @@ def main() -> None:
                 "hasOutputParser": False,
                 "options": {
                     "systemMessage": SYSTEM,
-                    "maxIterations": 6,
+                    "maxIterations": 8,
                     "returnIntermediateSteps": True,
                     "passthroughBinaryImages": False,
                     "passthroughBinaryPdfs": False,
@@ -773,18 +676,9 @@ def main() -> None:
     connect(connections, "Activity — Schedule Builder accepted", "Restore after Schedule Builder accepted")
     connect(connections, "Restore after Schedule Builder accepted", "Activity — Schedule Builder progress")
     connect(connections, "Activity — Schedule Builder progress", "Restore after Schedule Builder progress")
-    connect(connections, "Restore after Schedule Builder progress", "Capability router")
+    # No capability router: every task goes through the LLM, which picks the tool.
+    connect(connections, "Restore after Schedule Builder progress", "Prepare AI Agent input")
     connect(connections, "Session ready?", "Format missing schedule", si=1)
-    connect(connections, "Capability router", "Apply commissioning", si=0)
-    connect(connections, "Capability router", "Apply group rebind", si=1)
-    connect(connections, "Capability router", "Prepare AI Agent input", si=2)
-    connect(connections, "Apply commissioning", "Describe apply result")
-    connect(connections, "Apply group rebind", "Describe apply result")
-    connect(connections, "Describe apply result", "Activity — Schedule Builder apply")
-    connect(connections, "Activity — Schedule Builder apply", "Restore after apply event")
-    connect(connections, "Restore after apply event", "Apply finished?")
-    connect(connections, "Apply finished?", "Format schedule result", si=0)
-    connect(connections, "Apply finished?", "Fetch schedule result", si=1)
     connect(connections, "Prepare AI Agent input", "Call Knowledge Retrieval")
     connect(connections, "Call Knowledge Retrieval", "Attach schedule RAG evidence")
     connect(connections, "Attach schedule RAG evidence", "Schedule Builder AI Agent")

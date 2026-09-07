@@ -79,7 +79,7 @@ SYSTEM = """Ты оркестратор инженерной задачи.
 Если RAG status=empty или unavailable — решай по реестру и compact. Не спрашивай HITL про базу знаний.
 
 Сначала заполни progress — оценку хода задачи по журналу (compact.journal.history: результаты агентов с summary и добавленными артефактами, ответы человека):
-- goal_satisfied: true, только если результаты в журнале покрывают цель целиком.
+- goal_satisfied: true, только если результаты в журнале покрывают цель целиком. Если ты выбираешь call_agent — цель ещё не достигнута: goal_satisfied=false, в missing напиши, чего не хватает.
 - evidence: что именно в журнале это подтверждает (или чего не хватает).
 - missing: что ещё нужно сделать (пусто, если цель достигнута).
 - is_repeating: true, если ты собираешься повторить агенту задание, которое он уже выполнил (status completed) без новых данных.
@@ -91,10 +91,12 @@ SYSTEM = """Ты оркестратор инженерной задачи.
 
 Завершение:
 - Если goal_satisfied — только finish. В action.result.summary_for_human напиши по-русски, что фактически сделано, опираясь на summary агентов из журнала (не на шаблон «вызвал агента»).
+- summary_for_human и question читает инженер, не программа: обычные русские фразы без технических идентификаторов — ни agent_id (schedule_builder), ни имён артефактов (schedule_out, diff), ни ключей JSON. Агентов называй по title из реестра, результат — файлом («новый schedule.inc»), скважины и даты — как в summary агентов.
 - Агент, который вернул completed, свою часть сделал: его результат уже в артефактах. Не вызывай его снова «для проверки» или «чтобы применить ещё раз».
 - Повторный call_agent того же агента допустим только если появились новые данные (ответ человека, новые файлы) или ты нашёл конкретный недостаток в его результате — тогда обязательно заполни action.rework_reason и опиши недостаток в handoff_message.
 - Если человек в журнале принял результат (review_accept) — finish.
 - Если агент вернул needs_input (задал вопрос) и человек ответил — верни задачу этому же агенту (call_agent) и передай ответ в handoff_message. Пока этот агент не вернул completed, цель не достигнута и finish невозможен.
+- finish проверяется отдельно: каждая часть цели должна быть покрыта записью журнала со статусом completed. Если в журнале есть «проверка завершения отклонила finish — не покрыто: …», цель не достигнута: закрой именно эти части через call_agent. Не повторяй finish без новых результатов агентов.
 
 Агенты в реестре:
 - excel_extractor — Excel: скважины, даты ввода, дебиты. Не пишет SCHEDULE. Вызывай только если в artifacts есть excel.
@@ -113,6 +115,62 @@ SYSTEM = """Ты оркестратор инженерной задачи.
 - Возвращай только JSON.
 - status_message пиши по-русски, коротко, в стиле текущего шага.
 - handoff_message — человекопонятное обращение к агенту, например: «Агент Excel, достань из файла данные по датам ввода скважин.»
+"""
+
+# Completion check: a second, sceptical LLM pass that runs only when the Decision LLM proposes
+# `finish`. It decomposes the goal into deliverables and demands a completed journal entry for
+# each one. Domain-free: it knows nothing about Excel or SCHEDULE, only goal vs. journal.
+VERIFY_SCHEMA = {
+    "type": "object",
+    "additionalProperties": True,
+    "required": ["goal_parts", "all_covered", "verdict_for_human"],
+    "properties": {
+        "goal_parts": {
+            "type": "array",
+            "items": {
+                "type": "object",
+                "required": ["part", "covered", "evidence"],
+                "properties": {
+                    "part": {"type": "string"},
+                    "covered": {"type": "boolean"},
+                    "evidence": {"type": "string"},
+                },
+            },
+        },
+        "unsupported_claims": {"type": "array", "items": {"type": "string"}},
+        "all_covered": {"type": "boolean"},
+        "verdict_for_human": {"type": "string"},
+    },
+}
+
+VERIFY_SYSTEM = """Ты проверяющий завершения инженерной задачи. Оркестратор предлагает завершить задачу; твоя работа — проверить это по журналу, а не поверить на слово.
+
+Тебе даны: цель (текст инженера), журнал (что агенты фактически сделали — их итоги со статусом и добавленные артефакты, ответы инженера) и предложенный итог.
+
+1. Разбей цель на части — результаты, которые инженер должен получить на выходе (обычно 1–3). Часть — это результат («получен обновлённый файл X»), не действие («вызвать агента»).
+2. Для каждой части решай, покрыта ли она записью журнала со статусом completed, чей итог по смыслу говорит, что это сделано. Промежуточный шаг не покрывает конечный результат: извлечь данные ≠ построить на их основе итог; «исходный файл есть во вложении» ≠ «получен новый файл». Но не придирайся к формулировкам: если агент отчитался о сделанных изменениях (сдвинул даты, добавил/убрал скважины, перепривязал группы) и/или в записи есть добавленные артефакты (новый файл, diff), результат получен. evidence — пересказ записи журнала (шаг N) либо «в журнале нет».
+3. unsupported_claims — утверждения предложенного итога, которых нет в журнале (например «файл собран», когда ни один агент об этом не отчитался).
+4. all_covered = true только если покрыты все части — и обязательно true, если все части covered=true. Не выдумывай записей журнала и не додумывай, что «наверняка сделано».
+5. verdict_for_human — одна русская фраза для инженера без идентификаторов и имён полей: что сделано и чего не хватает.
+
+Возвращай только JSON.
+"""
+
+PREPARE_VERIFY = r"""
+const ctx=$('Prepare decision context').first().json||{};
+const llm=$('Decision LLM').first().json||{};
+const obj=v=>v&&typeof v==='object'&&!Array.isArray(v);
+const parse=v=>{if(obj(v))return v;try{const p=JSON.parse(String(v||''));return obj(p)?p:{}}catch{return {}}};
+const decision=parse(llm.output||llm.text||llm);
+const action=obj(decision.action)?decision.action:{};
+const proposed=String((obj(action.result)&&action.result.summary_for_human)||'').trim();
+const progress=obj(decision.progress)?decision.progress:{};
+/* Same goal + journal the Decision LLM saw (planner_input starts with them), plus its proposal. */
+const planner=String(ctx.planner_input||'');
+const cut=planner.indexOf('\nТекущее состояние:');
+const goalAndJournal=cut>0?planner.slice(0,cut):planner;
+const verify_input=`${goalAndJournal}\n\nПредложенный итог оркестратора:\n${proposed||'(итог не написан)'}\n\nОбоснование оркестратора:\n${String(progress.evidence||'').slice(0,600)||'(нет)'}\n`;
+return [{json:{...ctx, verify_input, proposed_summary:proposed}}];
 """
 
 
@@ -486,6 +544,7 @@ const compact=buildCompact(state);
 /* No rule-based routing hint here: the Decision LLM reasons from goal + journal + state + registry + RAG policy cards. */
 const journalLines=(compact.journal&&Array.isArray(compact.journal.history)?compact.journal.history:[]).map(e=>{
   if(e.kind==='human') return `- шаг ${e.step}: человек ответил${e.review_accept?' (принял результат)':''}: «${e.answer}»${e.question?` — на вопрос «${e.question}»`:''}`;
+  if(e.kind==='verification') return `- шаг ${e.step}: проверка завершения отклонила finish — не покрыто: ${(e.uncovered||[]).join('; ')||'(не указано)'}`;
   const arts=(e.artifacts_added||[]).length?`; артефакты: ${e.artifacts_added.join(', ')}`:'';
   return `- шаг ${e.step}: ${e.agent_id} → ${e.status}: ${e.summary||'(без описания)'}${arts}${e.rework_reason?` (доработка: ${e.rework_reason})`:''}`;
 });
@@ -529,11 +588,30 @@ return [{json:{
 
 PARSE_DECISION = STATE_SHAPE_JS + r"""
 const prev=$('Prepare decision context').first().json||{};
-const raw=$json;
+/* Input arrives either straight from Decision LLM or via the completion check (Verify completion). */
+const raw=(()=>{try{return $('Decision LLM').first().json||$json}catch{return $json}})();
 const obj=v=>v&&typeof v==='object'&&!Array.isArray(v);
 const parse=v=>{if(obj(v))return v;try{const p=JSON.parse(String(v||''));return obj(p)?p:{}}catch{return {}}};
 const out=parse(raw.output||raw.text||raw);
 const decision=obj(out.action)?out:(obj(raw)?raw:{});
+const verification=(()=>{
+  try{
+    const v=$('Verify completion').first().json||{};
+    const p=parse(v.output||v.text||v);
+    /* The per-part judgements are the reasoning; the summary flag is derived from them (the model
+       can contradict itself: every part covered:true yet all_covered:false). No parts listed → flag.
+       Neither a usable part nor a boolean flag → no verification (null), never a verdict from nothing.
+       Deliberately lenient (either field suffices): a partial reply with an uncovered part must still
+       reject — discarding it would let the finish through unchecked. */
+    const parts=(Array.isArray(p.goal_parts)?p.goal_parts:[]).filter(x=>obj(x)&&String(x.part||'').trim());
+    const hasFlag=typeof p.all_covered==='boolean';
+    if(!hasFlag&&!parts.length) return null;
+    const uncovered=parts.filter(x=>x.covered!==true).map(x=>String(x.part||'').trim()).slice(0,6);
+    const allCovered=parts.length?uncovered.length===0:p.all_covered===true;
+    return {...p,goal_parts:parts,uncovered,all_covered:allCovered,
+      unsupported_claims:(Array.isArray(p.unsupported_claims)?p.unsupported_claims:[]).map(s=>String(s||'').trim()).filter(Boolean).slice(0,6)};
+  }catch{return null}
+})();
 let action=obj(decision.action)?{...decision.action}:{type:'ask_user',question_id:'Q-parse',question:'Не удалось разобрать решение оркестратора',options:[]};
 let type=String(action.type||'').trim();
 const progress=obj(decision.progress)?decision.progress:{};
@@ -543,12 +621,18 @@ state.step_count=Number(state.step_count||0)+1;
 state.version=Number(state.version||0)+1;
 /* --- Completion guards (deterministic safety around the LLM decision; no domain knowledge) ---
    1. The human accepted the result in a review gate → the case is finished, whatever the LLM picked.
-   2. The LLM itself says goal_satisfied but still delegates → finish (its own judgement wins over habit).
+   2. The LLM says goal_satisfied yet re-delegates to an agent that already completed (habit) → finish.
+      A first delegation with a wrong goal_satisfied flag is the opposite case: the action is the
+      intent, the flag is the slip — the flag is ignored and the agent is called.
    3. Re-delegating to an agent that already returned completed, with no new human input since:
       allowed once with an explicit rework_reason; otherwise → result review with the human. */
 let guard=null;
 let reworkReason='';
 const answered=ledgerAnsweredAgentQuestion(state);
+const repeatDelegation=(agentId)=>{
+  const last=ledgerLastAgentEntry(state, String(agentId||'').trim());
+  return Boolean(last)&&String(last.status||'')==='completed'&&!ledgerHasNewInputsSince(state, last);
+};
 if(type==='finish'&&answered){
   /* 0. An agent asked, the human answered, the agent has not run since → the answer must reach the
         agent that asked. Finishing here would silently drop the engineer's decision. */
@@ -564,14 +648,35 @@ if(type==='finish'&&answered){
   guard='human_accepted';
   type='finish';
   action={type:'finish',result:{summary_for_human:String((obj(action.result)&&action.result.summary_for_human)||'')}};
-} else if(type==='call_agent'&&progress.goal_satisfied===true&&!answered){
+} else if(type==='finish'&&verification&&verification.all_covered===false&&!ledgerHumanAccepted(state)){
+  /* 4. Verified completion: the LLM proposed finish, the completion check found parts of the goal
+        without a completed journal entry. First time — one more step with the gaps in the journal
+        (the Decision LLM must close them); second time — the engineer decides. */
+  const uncovered=verification.uncovered||[];
+  const unsupported=verification.unsupported_claims||[];
+  const verdict=String(verification.verdict_for_human||'').trim();
+  const rejections=Number(state.ledger.verify_rejections||0);
+  ledgerPush(state,{kind:'verification',verdict:'rejected',uncovered,unsupported,proposed:String((obj(action.result)&&action.result.summary_for_human)||'').slice(0,300)});
+  state.ledger.verify_rejections=rejections+1;
+  if(rejections<1){
+    guard='completion_unverified';
+    type='continue';
+    action={type:'continue',uncovered,verdict};
+  } else {
+    guard='completion_review';
+    state.ledger.reviews=Number(state.ledger.reviews||0)+1;
+    const review=buildCompletionReviewQuestion(state, registry, uncovered, verdict);
+    type='ask_user';
+    action={type:'ask_user',...review};
+  }
+} else if(type==='call_agent'&&progress.goal_satisfied===true&&!answered&&repeatDelegation(action.agent_id)){
   guard='goal_satisfied';
   type='finish';
   action={type:'finish',result:{summary_for_human:String(progress.evidence||'')}};
 } else if(type==='call_agent'){
   const agentId=String(action.agent_id||'').trim();
-  const last=ledgerLastAgentEntry(state, agentId);
-  const repeat=Boolean(last)&&String(last.status||'')==='completed'&&!ledgerHasNewInputsSince(state, last);
+  const repeat=repeatDelegation(agentId);
+  if(progress.goal_satisfied===true&&!repeat) guard='goal_flag_ignored';
   if(repeat){
     reworkReason=String(action.rework_reason||'').trim();
     const stall=Number(state.ledger.stall_count||0);
@@ -597,11 +702,17 @@ let statusMessage=String(decision.status_message||'').trim()||'Шаг оркес
 if(guard==='repeat_review'||guard==='stall_review') statusMessage='Результат уже получен — прошу инженера принять его или описать доработку.';
 else if(guard==='answer_not_applied') statusMessage=`Передаю ответ инженера агенту ${agentTitle(action.agent_id, registry)}.`;
 else if(guard==='human_accepted') statusMessage='Инженер принял результат — завершаю задачу.';
+else if(guard==='completion_unverified'){
+  const gaps=(action.uncovered||[]).join('; ');
+  const verdict=String(action.verdict||'').trim();
+  statusMessage=(verdict&&!looksMachineText(verdict)?verdict.replace(/\.?$/,'. '):'Проверка завершения: задача ещё не выполнена целиком. ')+(gaps?`Не хватает: ${gaps}. `:'')+'Продолжаю работу.';
+}
+else if(guard==='completion_review') statusMessage='Проверка завершения снова нашла пробел — прошу инженера принять результат или уточнить, что нужно получить.';
 const decisionEvent={
   kind:'orchestrator.decision',
   actor:'orchestrator',
   status_message:statusMessage,
-  payload:{action_type:type,agent_id:action.agent_id||null,step_count:state.step_count,version:state.version,progress:{goal_satisfied:progress.goal_satisfied===true,evidence:String(progress.evidence||'').slice(0,300),missing:String(progress.missing||'').slice(0,300)},...(guard?{guard}:{})}
+  payload:{action_type:type,agent_id:action.agent_id||null,step_count:state.step_count,version:state.version,progress:{goal_satisfied:progress.goal_satisfied===true,evidence:String(progress.evidence||'').slice(0,300),missing:String(progress.missing||'').slice(0,300)},...(guard?{guard}:{}),...(verification?{verification:{all_covered:verification.all_covered===true,goal_parts:(Array.isArray(verification.goal_parts)?verification.goal_parts:[]).slice(0,6).map(p=>({part:String((p&&p.part)||'').slice(0,160),covered:Boolean(p&&p.covered)}))}}:{})}
 };
 const events=[];
 let nextStatus='running';
@@ -650,14 +761,23 @@ if(type==='call_agent'){
   state.hitl={pending:true,questions:[q],answers:(state.hitl&&state.hitl.answers)||{}};
   state.current_task=null;
   events.push(decisionEvent, {kind:'hitl.request',actor:'orchestrator',status:'waiting_user',status_message:statusMessage,payload:q});
+} else if(type==='continue'){
+  /* Completion check rejected the finish: no agent, no question — the next step re-decides with the
+     gaps written into the journal. The loop is continued by "No agent this step" → "Continue loop?". */
+  nextStatus='running';
+  state.current_task=null;
+  events.push(decisionEvent, {kind:'orchestrator.status',actor:'orchestrator',status:'running',status_message:statusMessage,payload:{action_type:'continue',uncovered:action.uncovered||[]}});
 } else if(type==='finish'){
   nextStatus='done';
   state.current_task=null;
   /* Honest completion: what agents actually did (their summaries), not "called N agents". */
   const llmSummary=String((obj(action.result)&&action.result.summary_for_human)||'').trim();
   const journalSummary=composeDoneSummary(state, registry);
-  const summary=llmSummary||journalSummary||statusMessage;
-  const result={...(obj(action.result)?action.result:{}),summary_for_human:summary,done_by_agents:journalSummary,...(guard?{guard}:{})};
+  /* The engineer reads this line: if the LLM leaked ids (schedule_builder, schedule_out, JSON) or the
+     completion check found claims the journal does not support, prefer the journal. */
+  const unsupported=verification&&Array.isArray(verification.unsupported_claims)&&verification.unsupported_claims.length>0;
+  const summary=(llmSummary&&!looksMachineText(llmSummary)&&!(unsupported&&journalSummary))?llmSummary:(journalSummary||llmSummary||statusMessage);
+  const result={...(obj(action.result)?action.result:{}),summary_for_human:summary,done_by_agents:journalSummary,...(guard?{guard}:{}),...(verification?{completion_verified:verification.all_covered===true}:{})};
   state.data={...(state.data||{}),result};
   statusMessage=summary;
   events.push({kind:'case.finished',actor:'orchestrator',status:'done',status_message:summary,payload:{...result,action_type:'finish'}});
@@ -877,7 +997,10 @@ return [{json:{
 
 FINISH_NONE = r"""
 const x=$json;
-return [{json:{...x, should_continue:false, continue_url:String(x.orchestrator_step_url||'http://127.0.0.1:5678/webhook/mas-orchestrator-step').replace(/\/$/,'')}}];
+/* Only a `continue` decision (completion check rejected a finish) triggers the next step here;
+   ask_user / finish end the run. */
+const shouldContinue=String(x.action_type||'')==='continue'&&String(x.next_status||'')==='running';
+return [{json:{...x, should_continue:shouldContinue, continue_url:String(x.orchestrator_step_url||'http://127.0.0.1:5678/webhook/mas-orchestrator-step').replace(/\/$/,'')}}];
 """
 
 # Compact board (not a 12k-wide Kahn line). Grid 250×180; node ~200×88.
@@ -916,13 +1039,17 @@ ORCH_LAYOUT: dict[str, tuple[int, int]] = {
     "Call Knowledge Retrieval": (CX, 6 * CY),
     "Attach orchestrator RAG evidence": (2 * CX, 6 * CY),
     "Decision LLM": (2 * CX, 5 * CY),
-    "Parse decision": (3 * CX, 5 * CY),
-    "Update case after decision": (4 * CX, 5 * CY),
-    "Expand decision events": (5 * CX, 5 * CY),
-    "Insert decision events": (4 * CX, 6 * CY),
-    "Restore parsed decision": (5 * CX, 6 * CY),
-    "Prepare agent call": (6 * CX, 5 * CY),
-    "Action router": (6 * CX, 6 * CY),
+    "Finish proposed?": (3 * CX, 5 * CY),
+    "Prepare completion check": (3 * CX, 6 * CY),
+    "Verify completion": (4 * CX, 6 * CY),
+    "Verification Structured Output": (4 * CX, 4 * CY),
+    "Parse decision": (4 * CX, 5 * CY),
+    "Update case after decision": (5 * CX, 5 * CY),
+    "Expand decision events": (6 * CX, 5 * CY),
+    "Insert decision events": (5 * CX, 6 * CY),
+    "Restore parsed decision": (6 * CX, 6 * CY),
+    "Prepare agent call": (7 * CX, 5 * CY),
+    "Action router": (7 * CX, 6 * CY),
     "Call Excel Extractor": (0, 7 * CY),
     "Call Calculation Agent": (0, 8 * CY),
     "Call Schedule Builder": (0, 9 * CY),
@@ -1102,7 +1229,41 @@ def main() -> None:
             (1680, -180),
             structured_parser_params(json.dumps(DECISION_SCHEMA, ensure_ascii=False)),
         ),
-        code("Parse decision", (1920, 0), PARSE_DECISION),
+        # Verified completion: only a proposed `finish` takes the detour through the completion check.
+        if_true(
+            "Finish proposed?",
+            (1680, 0),
+            "={{ String(((($json.output || {}).action) || {}).type || '') === 'finish' }}",
+        ),
+        code("Prepare completion check", (1800, 120), PREPARE_VERIFY),
+        node(
+            "Verify completion",
+            "@n8n/n8n-nodes-langchain.chainLlm",
+            1.9,
+            (1920, 120),
+            {
+                "promptType": "define",
+                "text": "={{ $json.verify_input }}",
+                "hasOutputParser": True,
+                "needsFallback": False,
+                "messages": {
+                    "messageValues": [
+                        {
+                            "type": "SystemMessagePromptTemplate",
+                            "message": VERIFY_SYSTEM,
+                        }
+                    ]
+                },
+            },
+        ),
+        node(
+            "Verification Structured Output",
+            "@n8n/n8n-nodes-langchain.outputParserStructured",
+            1.3,
+            (1920, 300),
+            structured_parser_params(json.dumps(VERIFY_SCHEMA, ensure_ascii=False)),
+        ),
+        code("Parse decision", (2040, 0), PARSE_DECISION),
         postgres(
             "Update case after decision",
             (2160, -120),
@@ -1266,7 +1427,15 @@ return [{json:{...x,activity_sync:Boolean(x.case_id&&!x.is_probe&&x.activity_bas
     connect(connections, "Decision Chat Model — configure in UI", "Decision LLM", out="ai_languageModel", tin="ai_languageModel")
     connect(connections, "Decision Chat Model — configure in UI", "Decision Structured Output", out="ai_languageModel", si=0, tin="ai_languageModel")
     connect(connections, "Decision Structured Output", "Decision LLM", out="ai_outputParser", tin="ai_outputParser")
-    connect(connections, "Decision LLM", "Parse decision")
+    # Verified completion: finish → completion check (second LLM pass) → Parse decision; anything else → Parse decision.
+    connect(connections, "Decision LLM", "Finish proposed?")
+    connect(connections, "Finish proposed?", "Prepare completion check", si=0)
+    connect(connections, "Finish proposed?", "Parse decision", si=1)
+    connect(connections, "Prepare completion check", "Verify completion")
+    connect(connections, "Verify completion", "Parse decision")
+    connect(connections, "Decision Chat Model — configure in UI", "Verify completion", out="ai_languageModel", si=0, tin="ai_languageModel")
+    connect(connections, "Decision Chat Model — configure in UI", "Verification Structured Output", out="ai_languageModel", si=0, tin="ai_languageModel")
+    connect(connections, "Verification Structured Output", "Verify completion", out="ai_outputParser", tin="ai_outputParser")
     connect(connections, "Parse decision", "Update case after decision")
     connect(connections, "Update case after decision", "Expand decision events")
     connect(connections, "Expand decision events", "Insert decision events")
@@ -1280,7 +1449,8 @@ return [{json:{...x,activity_sync:Boolean(x.case_id&&!x.is_probe&&x.activity_bas
     connect(connections, "Call Excel Extractor", "Merge agent result")
     connect(connections, "Call Calculation Agent", "Merge agent result")
     connect(connections, "Call Schedule Builder", "Merge agent result")
-    connect(connections, "No agent this step", "Prepare Activity ack")
+    # A `continue` step (completion check rejected a finish) re-enters the loop like an agent step would.
+    connect(connections, "No agent this step", "Continue loop?")
     connect(connections, "Merge agent result", "Update case after agent")
     connect(connections, "Update case after agent", "Expand agent events")
     connect(connections, "Expand agent events", "Insert agent events")

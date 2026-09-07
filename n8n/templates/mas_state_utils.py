@@ -406,7 +406,8 @@ function sanitizeLedger(raw){
     history:history.slice(-LEDGER_HISTORY_MAX),
     stall_count:Number(l.stall_count||0)||0,
     last_human_step:Number(l.last_human_step||0)||0,
-    reviews:Number(l.reviews||0)||0
+    reviews:Number(l.reviews||0)||0,
+    verify_rejections:Number(l.verify_rejections||0)||0
   };
 }
 function ledgerPush(state, entry){
@@ -460,6 +461,12 @@ function agentTitle(agentId, registry){
   const hit=rows.find(r=>r&&String(r.agent_id||'')===String(agentId||''));
   return (hit&&hit.title)||String(agentId||'агент');
 }
+/* Engineer-facing text must be prose: no snake_case ids, key=value pairs, JSON braces or pipes. */
+function looksMachineText(text){
+  const s=String(text||'');
+  if(!s.trim()) return false;
+  return /[a-z]+_[a-z_]+|[a-z_]+=[a-z0-9]+|[{}\[\]]|\w\|\w/.test(s)||!/[А-Яа-яЁё]{3,}/.test(s);
+}
 function composeDoneSummary(state, registry){
   const done=ledgerAgentEntries(state).filter(e=>e.status==='completed'&&String(e.summary||'').trim());
   if(!done.length) return '';
@@ -491,11 +498,32 @@ function buildResultReviewQuestion(state, agentId, registry, reason){
     ]
   };
 }
+/* Completion check (a second LLM pass) said the proposed finish leaves parts of the goal uncovered,
+   and the orchestrator already had one more step to close them: let the engineer decide. */
+function buildCompletionReviewQuestion(state, registry, uncovered, verdict){
+  const done=composeDoneSummary(state, registry);
+  const gaps=(Array.isArray(uncovered)?uncovered:[]).map(s=>String(s||'').trim()).filter(Boolean);
+  const gapText=gaps.length?`Не хватает: ${gaps.join('; ')}. `:'';
+  const doneText=done?`Сделано: ${done}. `:'';
+  const lead=String(verdict||'').trim()&&!looksMachineText(verdict)?`${String(verdict).trim().replace(/\.?$/,'.')} `:'';
+  return {
+    question_id:`result_review_${Number(state.step_count||0)}`,
+    kind:'result_approval',
+    question:`Оркестратор считает задачу выполненной, но проверка нашла пробел. ${lead}${doneText}${gapText}Принять результат как есть или продолжить работу? Если продолжить — напишите, что именно нужно получить.`,
+    options:[
+      {value:'accept',label:'Принять результат как есть'},
+      {value:'rework',label:'Продолжить — опишу ниже'}
+    ]
+  };
+}
 function compactLedger(state){
   const l=sanitizeLedger(state.ledger);
   const rows=l.history.slice(-8).map(e=>{
     if(e.kind==='human'){
       return {step:e.step,kind:'human',question:String(e.question||'').slice(0,120),answer:String(e.answer||'').slice(0,160),...(e.review_accept?{review_accept:true}:{})};
+    }
+    if(e.kind==='verification'){
+      return {step:e.step,kind:'verification',verdict:'rejected',uncovered:(Array.isArray(e.uncovered)?e.uncovered:[]).slice(0,6).map(s=>String(s).slice(0,160))};
     }
     return {
       step:e.step,kind:'agent',agent_id:e.agent_id||null,task_id:e.task_id||null,status:e.status||null,

@@ -10,7 +10,7 @@ from .apply import apply_operations
 from .commissioning import run_commissioning_revise
 from .diff import unified_diff
 from .emit import emit_schedule
-from .group_rebind import extract_group_rebind_spec, run_group_rebind_revise, wants_group_rebind
+from .group_rebind import CONTROLS, gruptree_summary, normalize_group_rebind_spec, run_group_rebind_revise
 from .io import bind_case_packet, commissioning_facts, file_ref, load_source
 from .keywords import keyword_object, search_keywords
 from .parse import parse_schedule, well_names
@@ -83,6 +83,12 @@ def _agent_result(
         "assumptions": assumptions or [{"units": UNITS}],
         "requests": requests or [],
     }
+
+
+# Tools that fix a result in the session. Whole-task tools produce the final answer for the run;
+# apply_operations / build_schedule may legitimately chain after a completed point edit.
+RESULT_TOOLS = {"apply_commissioning", "apply_group_rebind", "ask_engineer", "apply_operations", "build_schedule"}
+WHOLE_TASK_TOOLS = {"apply_commissioning", "apply_group_rebind", "ask_engineer"}
 
 
 def _store_result(state: dict[str, Any], result: dict[str, Any]) -> dict[str, Any]:
@@ -160,8 +166,17 @@ def open_session(task: dict[str, Any], *, activity: str = "") -> dict[str, Any]:
         ],
         "objective": state["objective"],
         "handoff_message": state["handoff_message"],
-        "suggested_capability": suggested_capability(state),
+        # What the engineer already answered / asked to rework — the LLM must see it, not re-ask.
+        "engineer_answers": _engineer_answers(state),
+        "rework_reason": str(inputs.get("rework_reason") or ""),
     }
+
+
+NO_APPLY_QUESTION = (
+    "Schedule Builder не смог определить, что именно изменить в SCHEDULE. "
+    "Опишите задачу подробнее: какие скважины, какие даты или режимы работы и откуда взять значения "
+    "(Excel, текст, baseline)."
+)
 
 
 def session_result(session_id: str) -> dict[str, Any]:
@@ -179,16 +194,50 @@ def session_result(session_id: str) -> dict[str, Any]:
     return _agent_result(
         str(state.get("task_id") or ""),
         "needs_input",
-        "Агент не применил изменений. Уточните задачу.",
+        "Schedule Builder не внёс изменений: не хватает данных, чтобы понять задачу.",
         issues=[{"type": "no_apply"}],
         requests=[
             {
                 "question_id": "Q-apply",
-                "question": "Агент не применил изменений к SCHEDULE. Уточните, что сделать со скважинами и keywords.",
+                "question": NO_APPLY_QUESTION,
                 "options": [],
+                "accepts": {"free_text": True, "files": ["xlsx", ".inc"]},
             }
         ],
     )
+
+
+def _engineer_answers(state: dict[str, Any]) -> list[dict[str, Any]]:
+    """Compact view of HITL answers for the LLM: question id, chosen option, text (no raw JSON blobs)."""
+    context = state.get("context") if isinstance(state.get("context"), dict) else {}
+    hitl = context.get("hitl") if isinstance(context.get("hitl"), dict) else {}
+    answers = hitl.get("answers") if isinstance(hitl.get("answers"), dict) else {}
+    out: list[dict[str, Any]] = []
+    for key, value in answers.items():
+        parsed = _parse_jsonish(value) if not isinstance(value, dict) else value
+        row: dict[str, Any] = {"question_id": str(key)}
+        if isinstance(parsed, dict):
+            choice = str(parsed.get("choice") or "").strip()
+            label = str(parsed.get("label") or "").strip()
+            text = str(parsed.get("text") or parsed.get("answer") or "").strip()
+            if choice:
+                row["choice"] = choice
+            if label:
+                row["label"] = label
+            if text:
+                row["text"] = text[:400]
+            for facts_key in ("new_wells", "new_well_defs"):
+                if isinstance(parsed.get(facts_key), list):
+                    row["attached_facts"] = f"{facts_key}: {len(parsed[facts_key])} записей"
+            for policy_key in ("unlisted_wells_policy",):
+                if parsed.get(policy_key):
+                    row[policy_key] = str(parsed[policy_key])
+        elif isinstance(value, str) and value.strip():
+            row["text"] = value.strip()[:400]
+        else:
+            continue
+        out.append(row)
+    return out[:12]
 
 
 def _parse_jsonish(value: Any) -> Any:
@@ -355,22 +404,29 @@ def _new_well_defs(state: dict[str, Any]) -> list[dict[str, Any]]:
     (``timeline_ops.compose_new_well_lines``).  Legacy ``new_well_defs`` with typed lines
     is still accepted for compatibility.
     """
-    inputs = state.get("inputs") if isinstance(state.get("inputs"), dict) else {}
-    for key in ("new_wells", "new_well_defs"):
-        raw = inputs.get(key)
-        if isinstance(raw, list) and raw:
-            return [row for row in raw if isinstance(row, dict)]
+    def rows_of(raw: Any) -> list[dict[str, Any]]:
+        if not isinstance(raw, list):
+            return []
+        return [row for row in raw if isinstance(row, dict) and str(row.get("well") or row.get("entity") or "").strip()]
+
+    # 1. The engineer's answer wins: these facts were given in reply to the agent's own question.
     for payload in _hitl_payloads(state):
         if isinstance(payload, dict):
             for key in ("new_wells", "new_well_defs"):
-                if isinstance(payload.get(key), list):
-                    rows = [row for row in payload[key] if isinstance(row, dict)]
-                    if rows:
-                        return rows
-        if isinstance(payload, list):
-            rows = [row for row in payload if isinstance(row, dict) and row.get("well")]
+                rows = rows_of(payload.get(key))
+                if rows:
+                    return rows
+        elif isinstance(payload, list):
+            rows = rows_of(payload)
             if rows:
                 return rows
+    # 2. Orchestrator inputs. The Decision LLM may echo a bare list of well names here
+    #    (["N001", "N002"]) — that is not a definition and must not hide the engineer's facts.
+    inputs = state.get("inputs") if isinstance(state.get("inputs"), dict) else {}
+    for key in ("new_wells", "new_well_defs"):
+        rows = rows_of(inputs.get(key))
+        if rows:
+            return rows
     return []
 
 
@@ -396,21 +452,81 @@ def _ops_from_model(raw: Any) -> list[dict[str, Any]]:
     return []
 
 
-def _has_gruptree(source: str) -> bool:
-    present = _compact_inspect(source).get("keywords_present") or []
-    return "GRUPTREE" in present
+_MACHINE_TOKEN_RE = re.compile(r"[a-z]+_[a-z_]+|[a-z_]+=[a-z0-9]+|[{}\[\]<>]|\w\|\w")
 
 
-def _gruptree_parent_options(source: str) -> list[str]:
-    options: list[str] = []
-    for row in _compact_inspect(source).get("gruptree_preview") or []:
-        if not isinstance(row, dict):
+def human_text_problems(text: str) -> list[str]:
+    """Why a string is not fit for an engineer: snake_case ids, key=value, JSON braces, a|b enums.
+
+    Cyrillic prose with well names (1601, H_304R — uppercase) and keywords (WCONPROD) passes.
+    """
+    problems: list[str] = []
+    stripped = str(text or "").strip()
+    if len(stripped) < 12:
+        problems.append("слишком коротко для вопроса инженеру")
+    if not re.search(r"[А-Яа-яЁё]{3,}", stripped):
+        problems.append("вопрос должен быть по-русски")
+    tokens = sorted({m.group(0) for m in _MACHINE_TOKEN_RE.finditer(stripped)})
+    if tokens:
+        problems.append("машинные токены: " + ", ".join(tokens[:6]))
+    return problems
+
+
+def _options_for_human(raw: Any) -> list[dict[str, str]]:
+    items = raw
+    if isinstance(raw, str):
+        parsed = _parse_jsonish(raw)
+        items = parsed if isinstance(parsed, list) else [part.strip() for part in raw.split(";") if part.strip()]
+    if not isinstance(items, list):
+        return []
+    out: list[dict[str, str]] = []
+    for item in items:
+        if isinstance(item, dict):
+            label = str(item.get("label") or item.get("text") or item.get("value") or "").strip()
+            value = str(item.get("value") or label).strip()
+            hint = str(item.get("hint") or "").strip()
+        else:
+            label = str(item).strip()
+            value = label
+            hint = ""
+        if not label:
             continue
-        for key in ("parent", "child"):
-            name = str(row.get(key) or "").strip()
-            if name and name not in options:
-                options.append(name)
-    return options[:12]
+        row = {"value": value, "label": label}
+        if hint:
+            row["hint"] = hint
+        out.append(row)
+    return out[:8]
+
+
+def _spec_incomplete(
+    spec: dict[str, Any],
+    missing: list[str],
+    baseline: dict[str, Any],
+    assumptions: list[dict[str, Any]],
+) -> dict[str, Any]:
+    """Tool-level answer for the LLM (not a human question): what is missing and where to take it from."""
+    where = {
+        "wells": "имена скважин из текста задачи; проверь по inspect_schedule.wells",
+        "parent_group": "имя новой/целевой группы из текста задачи (в кавычках у инженера)",
+        "parent_of_parent": "родитель группы: корень baseline GRUPTREE (см. baseline.roots) или группа из задачи",
+        "control": "тип группового контроля из задачи: газ → GRAT, нефть → ORAT, вода → WRAT, жидкость → LRAT",
+        "gas_rate": "целевой дебит числом в м3/сут (например «200 тыс. м3 газа в сут.» → 200000)",
+    }
+    return {
+        "ok": False,
+        "error": "spec_incomplete",
+        "missing": missing,
+        "spec": spec,
+        "assumptions": assumptions,
+        "baseline": baseline,
+        "controls": list(CONTROLS),
+        "where_to_find": {key: where[key] for key in missing if key in where},
+        "message": (
+            "Спецификация перепривязки не полная. Заполни недостающие поля из текста задачи и inspect_schedule "
+            "и вызови apply_group_rebind ещё раз. Если в задаче этих данных действительно нет — спроси инженера "
+            "через ask_engineer одним вопросом по-русски (варианты групп — из baseline.groups)."
+        ),
+    }
 
 
 def execute_tool(session_id: str, name: str, args: dict[str, Any] | None = None) -> dict[str, Any]:
@@ -419,6 +535,26 @@ def execute_tool(session_id: str, name: str, args: dict[str, Any] | None = None)
     source = str(state.get("working_text") or state.get("source_text") or "")
     task_id = str(state.get("task_id") or "")
     blob = " ".join([str(state.get("objective") or ""), str(state.get("handoff_message") or "")])
+
+    # Protocol guard: one stored result per session. Once apply_* / ask_engineer fixed a result
+    # (completed or a question to the engineer), further result-producing calls would overwrite it
+    # — e.g. the LLM re-wording a deterministic question. Tell the LLM to stop instead.
+    stored = state.get("result") if isinstance(state.get("result"), dict) else None
+    stored_status = str(stored.get("status") or "") if stored else ""
+    blocked = bool(stored) and name in RESULT_TOOLS and (
+        stored_status == "needs_input" or name in WHOLE_TASK_TOOLS
+    )
+    if blocked:
+        return {
+            "ok": False,
+            "error": "result_already_stored",
+            "status": str(stored.get("status") or ""),
+            "message": (
+                "Результат уже зафиксирован в сессии (" + str(stored.get("status") or "") + "): "
+                + str(stored.get("message") or "")[:300]
+                + " Больше инструменты не вызывай — заверши ответ одним предложением."
+            ),
+        }
 
     if name == "inspect_schedule":
         return {"ok": True, "inspect": _compact_inspect(source), "fact_count": len(state.get("facts") or [])}
@@ -555,13 +691,17 @@ def execute_tool(session_id: str, name: str, args: dict[str, Any] | None = None)
             result = _agent_result(
                 task_id,
                 "needs_input",
-                "Для сдвига дат ввода нужны факты скважина + дата из Excel",
+                "Чтобы сдвинуть даты ввода, нужна таблица «скважина — дата ввода», а в задаче её нет.",
                 issues=[{"type": "commissioning_facts_required"}],
                 requests=[
                     {
                         "question_id": "Q-facts",
-                        "question": "Приложите Excel со скважинами и датами ввода",
+                        "question": (
+                            "Чтобы сдвинуть даты ввода, нужна таблица «скважина — новая дата ввода». "
+                            "Приложите Excel с этими колонками или перечислите пары «скважина — дата» текстом."
+                        ),
                         "options": [],
+                        "accepts": {"free_text": True, "files": ["xlsx"]},
                     }
                 ],
                 assumptions=[],
@@ -623,26 +763,16 @@ def execute_tool(session_id: str, name: str, args: dict[str, Any] | None = None)
         return _store_result(state, result)
 
     if name == "apply_group_rebind":
+        # LLM-first: the spec is what the LLM passed (plus a structured inputs.group_rebind from the
+        # task, if the orchestrator forwarded one). Nothing is read from prose here; an incomplete
+        # spec goes back to the LLM as a tool error, never to the engineer as "Уточните <поле>".
         wells = well_names(parse_schedule(source))
-        spec, missing = extract_group_rebind_spec(
-            blob,
-            wells,
-            source_text=source,
-            hitl=(state.get("context") or {}).get("hitl")
-            if isinstance((state.get("context") or {}).get("hitl"), dict)
-            else {},
-            inputs=state.get("inputs") or {},
-        )
-        override = args.get("spec") if isinstance(args.get("spec"), dict) else args
-        for key in ("parent_group", "parent_of_parent", "control", "gas_rate", "oil_rate"):
-            if override.get(key) not in (None, ""):
-                spec[key] = override[key]
-        if override.get("wells"):
-            raw_wells = override.get("wells")
-            if isinstance(raw_wells, str):
-                spec["wells"] = [item.strip() for item in raw_wells.replace(",", " ").split() if item.strip()]
-            elif isinstance(raw_wells, list):
-                spec["wells"] = [str(item).strip() for item in raw_wells if str(item).strip()]
+        baseline = gruptree_summary(source)
+        inputs = state.get("inputs") if isinstance(state.get("inputs"), dict) else {}
+        seed = inputs.get("group_rebind") if isinstance(inputs.get("group_rebind"), dict) else {}
+        llm_spec = args.get("spec") if isinstance(args.get("spec"), dict) else args
+        merged = {**seed, **{k: v for k, v in llm_spec.items() if v not in (None, "", [], {})}}
+        spec, missing, assumptions = normalize_group_rebind_spec(merged, baseline=baseline)
         invented = [name for name in spec.get("wells") or [] if name not in wells]
         if invented:
             return {
@@ -651,95 +781,114 @@ def execute_tool(session_id: str, name: str, args: dict[str, Any] | None = None)
                 "wells": invented,
                 "message": "Нельзя придумывать скважины. Берите имена из inspect_schedule.",
             }
-        if not spec.get("parent_group"):
-            has_tree = _has_gruptree(source)
-            options = _gruptree_parent_options(source) or ["GNEW", "GINJ", "GPROD"]
-            result = _agent_result(
-                task_id,
-                "needs_input",
-                (
-                    "Baseline не содержит GRUPTREE. Укажите родительскую группу для перепривязки."
-                    if not has_tree
-                    else "Укажите родительскую группу для перепривязки."
-                ),
-                data={"group_rebind": spec, "missing": missing or ["parent_group"]},
-                issues=[{"type": "GROUP_REBIND_SPEC_REQUIRED", "missing": missing or ["parent_group"]}],
-                requests=[
-                    {
-                        "question_id": "Q-parent-group",
-                        "question": (
-                            "Baseline не содержит GRUPTREE. Укажите родительскую группу для перепривязки."
-                            if not has_tree
-                            else "Укажите родительскую группу для перепривязки."
-                        ),
-                        "options": options,
-                    }
-                ],
-            )
-            return _store_result(state, result)
         if missing:
-            result = _agent_result(
-                task_id,
-                "needs_input",
-                "Для перепривязки групп нужны: " + ", ".join(missing),
-                data={"group_rebind": spec, "missing": missing},
-                issues=[{"type": "GROUP_REBIND_SPEC_REQUIRED", "missing": missing}],
-                requests=[
-                    {
-                        "question_id": item,
-                        "question": f"Уточните {item} для перепривязки групп.",
-                        "options": [],
-                    }
-                    for item in missing
-                ],
-            )
-            return _store_result(state, result)
+            return _spec_incomplete(spec, missing, baseline, assumptions)
         revised = run_group_rebind_revise(source, spec, file_ref=str(state.get("file_ref") or "schedule.inc"))
         status = str(revised.get("status") or "")
         text = str(revised.get("generated_schedule") or "")
         if status == "needs_input" or not text.strip():
-            result = _agent_result(
-                task_id,
-                "needs_input",
-                "Перепривязка групп требует уточнения по baseline",
-                data={"findings": revised.get("findings") or [], "group_rebind": spec},
-                issues=revised.get("findings") or [],
-                requests=[{"question_id": "group_rebind", "question": "Уточните spec перепривязки групп", "options": []}],
-            )
-            return _store_result(state, result)
+            findings = revised.get("findings") or []
+            codes = [str(f.get("code") or "") for f in findings if isinstance(f, dict)]
+            if "GROUP_REBIND_COMMISSIONING_DATE_MISSING" in codes:
+                return {
+                    "ok": False,
+                    "error": "effective_date_unknown",
+                    "spec": spec,
+                    "findings": findings,
+                    "message": (
+                        "У этих скважин в baseline нет даты ввода, с которой начать групповой контроль. "
+                        "Передай effective_at (дата в формате 1 JAN 2026) из задачи или спроси инженера через ask_engineer."
+                    ),
+                }
+            return {
+                "ok": False,
+                "error": "group_rebind_not_applied",
+                "spec": spec,
+                "findings": findings,
+                "message": "Перепривязка не применена к baseline; см. findings и исправь спецификацию.",
+            }
         state["working_text"] = text
+        count = len(spec["wells"])
+        rate = spec["gas_rate"]
+        rate_text = f"{int(rate)}" if float(rate).is_integer() else f"{rate}"
+        summary = (
+            f"Перепривязал {_plural_wells(count, 'acc')} ({_wells_phrase(spec['wells'])}) "
+            f"в группу {spec['parent_group']} под {spec['parent_of_parent']}; "
+            f"групповой контроль {spec['control']} {rate_text} м3/сут с даты ввода этих скважин."
+        )
         result = _agent_result(
             task_id,
             "completed",
-            f"Перепривязал {len(spec['wells'])} скважин в {spec['parent_group']} (GCONPROD {spec['control']} {spec['gas_rate']})",
+            summary,
             data={
                 "changed_keywords": ["WELSPECS", "GRUPTREE", "GCONPROD"],
+                "summary_for_human": summary,
                 "findings": revised.get("findings") or [],
                 "edits": revised.get("edits") or [],
                 "group_rebind": spec,
             },
             artifacts={"schedule_out": text, "diff": unified_diff(str(state.get("source_text") or ""), text)},
             issues=revised.get("findings") or [],
+            assumptions=[{"units": UNITS}, *assumptions],
+        )
+        return _store_result(state, result)
+
+    if name == "ask_engineer":
+        # The only way the LLM asks a human. Prose in Russian, optional option buttons — never
+        # field names, enums or JSON. Machine-looking text is bounced back to the LLM to rephrase.
+        question = str(args.get("question") or "").strip()
+        problems = human_text_problems(question)
+        options = _options_for_human(args.get("options"))
+        for opt in options:
+            problems.extend(f"вариант «{opt['label']}»: {p}" for p in human_text_problems(opt["label"]) if "коротко" not in p)
+        if problems:
+            return {
+                "ok": False,
+                "error": "question_not_human",
+                "problems": problems,
+                "message": (
+                    "Переформулируй вопрос для инженера: обычная русская фраза, что именно нужно и зачем, "
+                    "варианты — как их называет инженер (имена групп, «оставить»/«убрать»), без имён полей и JSON."
+                ),
+            }
+        question_id = re.sub(r"[^a-z0-9_]+", "_", str(args.get("topic") or "engineer").strip().lower()).strip("_") or "engineer"
+        accepts: dict[str, Any] = {"free_text": True}
+        files = args.get("accepts_files")
+        if isinstance(files, str) and files.strip():
+            accepts["files"] = [part.strip() for part in files.split(",") if part.strip()]
+        elif isinstance(files, list) and files:
+            accepts["files"] = [str(part).strip() for part in files if str(part).strip()]
+        result = _agent_result(
+            task_id,
+            "needs_input",
+            question,
+            data={"asked_by": "schedule_builder_llm"},
+            issues=[{"type": "engineer_input_required", "topic": question_id}],
+            requests=[
+                {
+                    "question_id": f"Q-{question_id}",
+                    "question": question,
+                    "required": True,
+                    "type": "choice" if options else "text",
+                    "options": options,
+                    "accepts": accepts,
+                }
+            ],
+            assumptions=[],
         )
         return _store_result(state, result)
 
     if name == "apply_operations":
         operations = _ops_from_model(args.get("operations"))
         if not operations:
-            result = _agent_result(
-                task_id,
-                "needs_input",
-                "Нужен список operations: массив {keyword, operation, fields}.",
-                issues=[{"type": "operations_required"}],
-                requests=[
-                    {
-                        "question_id": "Q-operations",
-                        "question": "Передайте operations массивом, например [{\"keyword\":\"WCONPROD\",\"operation\":\"MODIFY\",\"fields\":{...}}].",
-                        "options": [],
-                    }
-                ],
-            )
-            return _store_result(state, result)
+            return {
+                "ok": False,
+                "error": "operations_required",
+                "message": (
+                    "Передай operations JSON-массивом [{\"keyword\":\"WCONPROD\",\"operation\":\"MODIFY\",\"fields\":{...}}]. "
+                    "Это ошибка вызова инструмента, инженера спрашивать не нужно."
+                ),
+            }
         wells = well_names(parse_schedule(source))
         bad = []
         for op in operations:
@@ -839,13 +988,3 @@ def execute_tool(session_id: str, name: str, args: dict[str, Any] | None = None)
         return {"ok": True, "findings": findings, "error_count": len([f for f in findings if f.get("severity") == "error"])}
 
     raise KeyError(name)
-
-
-def suggested_capability(state: dict[str, Any]) -> str:
-    blob = " ".join([str(state.get("objective") or ""), str(state.get("handoff_message") or "")])
-    inputs = state.get("inputs") if isinstance(state.get("inputs"), dict) else {}
-    if wants_group_rebind(blob, inputs):
-        return "group_rebind"
-    if state.get("facts"):
-        return "commissioning"
-    return "operations"

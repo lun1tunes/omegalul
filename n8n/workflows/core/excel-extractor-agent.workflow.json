@@ -6,7 +6,7 @@
   "nodes": [
     {
       "parameters": {
-        "content": "## edit after import\n\n**Agent — Excel Extractor** — один LLM + excel-tools FastAPI.\n\n1. Bind **Qwen** credential on Excel Extractor Chat Model\n2. Bind **Runtime configuration** → `MAS — Runtime Config` (URL сервисов). Ключ Excel: credential Header Auth **Excel Tools X-API-Key** (`X-API-Key`), не Set. Activity events ключ Excel не используют.\n3. Bind **Call Knowledge Retrieval** → `MAS — Knowledge Retrieval` (срез `excel_protocol` / `protocol_instruction`; LLM-ветка operations). `extract_commissioning` HTTP RAG не вызывает.\n4. Orchestrator — MAS вызывает этот workflow через `executeWorkflow` (`Call Excel Extractor`). Webhook не нужен.\n\nФайлы не грузятся в n8n. Сервис сам GET `/cases/{id}/artifacts/excel`.\n`suggested_capability=commissioning` идёт обычным HTTP `extract_commissioning` (external n8n runners не execute'ят toolHttpRequest). Остальное — LLM + query_table. После extract проверяется status; needs_input не идёт в Fetch result. Сессия закрывается POST /sessions/{id}/close. Скважины/даты не хардкодятся.",
+        "content": "## edit after import\n\n**Agent — Excel Extractor** — один LLM + excel-tools FastAPI.\n\n1. Bind **Qwen** credential on Excel Extractor Chat Model\n2. Bind **Runtime configuration** → `MAS — Runtime Config` (URL сервисов). Ключ Excel: credential Header Auth **Excel Tools X-API-Key** (`X-API-Key`), не Set. Activity events ключ Excel не используют.\n3. Bind **Call Knowledge Retrieval** → `MAS — Knowledge Retrieval` (срез `excel_protocol` / `protocol_instruction`; LLM-ветка operations). `extract_commissioning` HTTP RAG не вызывает.\n4. Orchestrator — MAS вызывает этот workflow через `executeWorkflow` (`Call Excel Extractor`). Webhook не нужен.\n\nФайлы не грузятся в n8n. Сервис сам GET `/cases/{id}/artifacts/excel`.\n`suggested_capability=commissioning` пока идёт обычным HTTP `extract_commissioning` (regex-роутер, Фаза 3.3 плана). Остальное — LLM + инструменты HTTP Request (as tool) с `$fromAI`. После extract проверяется status; needs_input не идёт в Fetch result. Сессия закрывается POST /sessions/{id}/close. Скважины/даты не хардкодятся.",
         "height": 380,
         "width": 480,
         "color": 1
@@ -763,42 +763,37 @@
     {
       "parameters": {
         "toolDescription": "Компактные листы и размеры workbook. Без файла.",
+        "descriptionType": "manual",
         "method": "POST",
         "url": "={{ $('Runtime configuration').first().json.excel_tools_url + '/agent-tools/' + \"workbook_introspect\" }}",
-        "authentication": "genericCredentialType",
-        "genericAuthType": "httpHeaderAuth",
-        "sendQuery": false,
         "sendHeaders": true,
-        "specifyHeaders": "keypair",
-        "sendBody": true,
-        "specifyBody": "keypair",
-        "placeholderDefinitions": {
-          "values": []
-        },
-        "optimizeResponse": false,
-        "parametersHeaders": {
-          "values": [
+        "headerParameters": {
+          "parameters": [
             {
               "name": "Content-Type",
-              "valueProvider": "fieldValue",
               "value": "application/json"
             }
           ]
         },
-        "parametersBody": {
-          "values": [
-            {
-              "name": "session_id",
-              "valueProvider": "fieldValue",
-              "value": "={{ $('Open excel session').first().json.session_id }}"
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "={{ ({session_id: $('Open excel session').first().json.session_id}) }}",
+        "options": {
+          "timeout": 180000,
+          "response": {
+            "response": {
+              "fullResponse": false,
+              "responseFormat": "json"
             }
-          ]
-        }
+          }
+        },
+        "authentication": "genericCredentialType",
+        "genericAuthType": "httpHeaderAuth"
       },
       "id": "71b0ad7a-728c-509e-b23d-b9cdc615e2ae",
       "name": "workbook_introspect",
-      "type": "@n8n/n8n-nodes-langchain.toolHttpRequest",
-      "typeVersion": 1.1,
+      "type": "n8n-nodes-base.httpRequestTool",
+      "typeVersion": 4.4,
       "position": [
         3360,
         255
@@ -816,53 +811,37 @@
     {
       "parameters": {
         "toolDescription": "Небольшой preview одного листа. sheet только из introspect.",
+        "descriptionType": "manual",
         "method": "POST",
         "url": "={{ $('Runtime configuration').first().json.excel_tools_url + '/agent-tools/' + \"sheet_preview\" }}",
-        "authentication": "genericCredentialType",
-        "genericAuthType": "httpHeaderAuth",
-        "sendQuery": false,
         "sendHeaders": true,
-        "specifyHeaders": "keypair",
-        "sendBody": true,
-        "specifyBody": "keypair",
-        "placeholderDefinitions": {
-          "values": [
-            {
-              "name": "sheet",
-              "description": "Точное имя листа из introspect",
-              "type": "string"
-            }
-          ]
-        },
-        "optimizeResponse": false,
-        "parametersHeaders": {
-          "values": [
+        "headerParameters": {
+          "parameters": [
             {
               "name": "Content-Type",
-              "valueProvider": "fieldValue",
               "value": "application/json"
             }
           ]
         },
-        "parametersBody": {
-          "values": [
-            {
-              "name": "session_id",
-              "valueProvider": "fieldValue",
-              "value": "={{ $('Open excel session').first().json.session_id }}"
-            },
-            {
-              "name": "sheet",
-              "valueProvider": "modelRequired",
-              "value": ""
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "={{ ({session_id: $('Open excel session').first().json.session_id, sheet: $fromAI(\"sheet\", \"Точное имя листа из introspect\", \"string\")}) }}",
+        "options": {
+          "timeout": 180000,
+          "response": {
+            "response": {
+              "fullResponse": false,
+              "responseFormat": "json"
             }
-          ]
-        }
+          }
+        },
+        "authentication": "genericCredentialType",
+        "genericAuthType": "httpHeaderAuth"
       },
       "id": "669a4f3a-4afd-5a8e-999e-35cfadceb7eb",
       "name": "sheet_preview",
-      "type": "@n8n/n8n-nodes-langchain.toolHttpRequest",
-      "typeVersion": 1.1,
+      "type": "n8n-nodes-base.httpRequestTool",
+      "typeVersion": 4.4,
       "position": [
         3640,
         0
@@ -880,53 +859,37 @@
     {
       "parameters": {
         "toolDescription": "Найти таблицы. sheet опционален. Возвращает table_id, range, columns — не workbook.",
+        "descriptionType": "manual",
         "method": "POST",
         "url": "={{ $('Runtime configuration').first().json.excel_tools_url + '/agent-tools/' + \"detect_tables\" }}",
-        "authentication": "genericCredentialType",
-        "genericAuthType": "httpHeaderAuth",
-        "sendQuery": false,
         "sendHeaders": true,
-        "specifyHeaders": "keypair",
-        "sendBody": true,
-        "specifyBody": "keypair",
-        "placeholderDefinitions": {
-          "values": [
-            {
-              "name": "sheet",
-              "description": "Ограничить поиск одним листом",
-              "type": "string"
-            }
-          ]
-        },
-        "optimizeResponse": false,
-        "parametersHeaders": {
-          "values": [
+        "headerParameters": {
+          "parameters": [
             {
               "name": "Content-Type",
-              "valueProvider": "fieldValue",
               "value": "application/json"
             }
           ]
         },
-        "parametersBody": {
-          "values": [
-            {
-              "name": "session_id",
-              "valueProvider": "fieldValue",
-              "value": "={{ $('Open excel session').first().json.session_id }}"
-            },
-            {
-              "name": "sheet",
-              "valueProvider": "modelOptional",
-              "value": ""
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "={{ ({session_id: $('Open excel session').first().json.session_id, sheet: $fromAI(\"sheet\", \"Ограничить поиск одним листом\", \"string\", \"\")}) }}",
+        "options": {
+          "timeout": 180000,
+          "response": {
+            "response": {
+              "fullResponse": false,
+              "responseFormat": "json"
             }
-          ]
-        }
+          }
+        },
+        "authentication": "genericCredentialType",
+        "genericAuthType": "httpHeaderAuth"
       },
       "id": "3a321bbf-c410-53e2-b000-a99958d37337",
       "name": "detect_tables",
-      "type": "@n8n/n8n-nodes-langchain.toolHttpRequest",
-      "typeVersion": 1.1,
+      "type": "n8n-nodes-base.httpRequestTool",
+      "typeVersion": 4.4,
       "position": [
         3360,
         -85
@@ -944,53 +907,37 @@
     {
       "parameters": {
         "toolDescription": "Ранжировать уже найденные или подходящие таблицы по фразе запроса.",
+        "descriptionType": "manual",
         "method": "POST",
         "url": "={{ $('Runtime configuration').first().json.excel_tools_url + '/agent-tools/' + \"match_tables\" }}",
-        "authentication": "genericCredentialType",
-        "genericAuthType": "httpHeaderAuth",
-        "sendQuery": false,
         "sendHeaders": true,
-        "specifyHeaders": "keypair",
-        "sendBody": true,
-        "specifyBody": "keypair",
-        "placeholderDefinitions": {
-          "values": [
-            {
-              "name": "query",
-              "description": "Что искать: даты ввода, дебиты, ...",
-              "type": "string"
-            }
-          ]
-        },
-        "optimizeResponse": false,
-        "parametersHeaders": {
-          "values": [
+        "headerParameters": {
+          "parameters": [
             {
               "name": "Content-Type",
-              "valueProvider": "fieldValue",
               "value": "application/json"
             }
           ]
         },
-        "parametersBody": {
-          "values": [
-            {
-              "name": "session_id",
-              "valueProvider": "fieldValue",
-              "value": "={{ $('Open excel session').first().json.session_id }}"
-            },
-            {
-              "name": "query",
-              "valueProvider": "modelRequired",
-              "value": ""
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "={{ ({session_id: $('Open excel session').first().json.session_id, query: $fromAI(\"query\", \"Что искать: даты ввода, дебиты, ...\", \"string\")}) }}",
+        "options": {
+          "timeout": 180000,
+          "response": {
+            "response": {
+              "fullResponse": false,
+              "responseFormat": "json"
             }
-          ]
-        }
+          }
+        },
+        "authentication": "genericCredentialType",
+        "genericAuthType": "httpHeaderAuth"
       },
       "id": "fd8414df-6c58-5e8d-9f9e-d49bcfa063c1",
       "name": "match_tables",
-      "type": "@n8n/n8n-nodes-langchain.toolHttpRequest",
-      "typeVersion": 1.1,
+      "type": "n8n-nodes-base.httpRequestTool",
+      "typeVersion": 4.4,
       "position": [
         3640,
         -170
@@ -1008,53 +955,37 @@
     {
       "parameters": {
         "toolDescription": "Колонки, число строк и sample. table_id только из detect/match.",
+        "descriptionType": "manual",
         "method": "POST",
         "url": "={{ $('Runtime configuration').first().json.excel_tools_url + '/agent-tools/' + \"describe_table\" }}",
-        "authentication": "genericCredentialType",
-        "genericAuthType": "httpHeaderAuth",
-        "sendQuery": false,
         "sendHeaders": true,
-        "specifyHeaders": "keypair",
-        "sendBody": true,
-        "specifyBody": "keypair",
-        "placeholderDefinitions": {
-          "values": [
-            {
-              "name": "table_id",
-              "description": "table_id из detect_tables",
-              "type": "string"
-            }
-          ]
-        },
-        "optimizeResponse": false,
-        "parametersHeaders": {
-          "values": [
+        "headerParameters": {
+          "parameters": [
             {
               "name": "Content-Type",
-              "valueProvider": "fieldValue",
               "value": "application/json"
             }
           ]
         },
-        "parametersBody": {
-          "values": [
-            {
-              "name": "session_id",
-              "valueProvider": "fieldValue",
-              "value": "={{ $('Open excel session').first().json.session_id }}"
-            },
-            {
-              "name": "table_id",
-              "valueProvider": "modelRequired",
-              "value": ""
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "={{ ({session_id: $('Open excel session').first().json.session_id, table_id: $fromAI(\"table_id\", \"table_id из detect_tables\", \"string\")}) }}",
+        "options": {
+          "timeout": 180000,
+          "response": {
+            "response": {
+              "fullResponse": false,
+              "responseFormat": "json"
             }
-          ]
-        }
+          }
+        },
+        "authentication": "genericCredentialType",
+        "genericAuthType": "httpHeaderAuth"
       },
       "id": "96de5f67-f2d4-5264-a64d-a957f04be6d2",
       "name": "describe_table",
-      "type": "@n8n/n8n-nodes-langchain.toolHttpRequest",
-      "typeVersion": 1.1,
+      "type": "n8n-nodes-base.httpRequestTool",
+      "typeVersion": 4.4,
       "position": [
         3360,
         -255
@@ -1072,63 +1003,37 @@
     {
       "parameters": {
         "toolDescription": "Ограниченные distinct-значения одной колонки для точных фильтров.",
+        "descriptionType": "manual",
         "method": "POST",
         "url": "={{ $('Runtime configuration').first().json.excel_tools_url + '/agent-tools/' + \"list_column_values\" }}",
-        "authentication": "genericCredentialType",
-        "genericAuthType": "httpHeaderAuth",
-        "sendQuery": false,
         "sendHeaders": true,
-        "specifyHeaders": "keypair",
-        "sendBody": true,
-        "specifyBody": "keypair",
-        "placeholderDefinitions": {
-          "values": [
-            {
-              "name": "table_id",
-              "description": "table_id из detect_tables",
-              "type": "string"
-            },
-            {
-              "name": "column",
-              "description": "Точное имя колонки из describe/detect",
-              "type": "string"
-            }
-          ]
-        },
-        "optimizeResponse": false,
-        "parametersHeaders": {
-          "values": [
+        "headerParameters": {
+          "parameters": [
             {
               "name": "Content-Type",
-              "valueProvider": "fieldValue",
               "value": "application/json"
             }
           ]
         },
-        "parametersBody": {
-          "values": [
-            {
-              "name": "session_id",
-              "valueProvider": "fieldValue",
-              "value": "={{ $('Open excel session').first().json.session_id }}"
-            },
-            {
-              "name": "table_id",
-              "valueProvider": "modelRequired",
-              "value": ""
-            },
-            {
-              "name": "column",
-              "valueProvider": "modelRequired",
-              "value": ""
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "={{ ({session_id: $('Open excel session').first().json.session_id, table_id: $fromAI(\"table_id\", \"table_id из detect_tables\", \"string\"), column: $fromAI(\"column\", \"Точное имя колонки из describe/detect\", \"string\")}) }}",
+        "options": {
+          "timeout": 180000,
+          "response": {
+            "response": {
+              "fullResponse": false,
+              "responseFormat": "json"
             }
-          ]
-        }
+          }
+        },
+        "authentication": "genericCredentialType",
+        "genericAuthType": "httpHeaderAuth"
       },
       "id": "217189e1-947c-5e4f-b109-ff47a44e265f",
       "name": "list_column_values",
-      "type": "@n8n/n8n-nodes-langchain.toolHttpRequest",
-      "typeVersion": 1.1,
+      "type": "n8n-nodes-base.httpRequestTool",
+      "typeVersion": 4.4,
       "position": [
         3640,
         -340
@@ -1146,83 +1051,37 @@
     {
       "parameters": {
         "toolDescription": "Строки таблицы. select и filters — JSON-массивы: [\"well\",\"date\"] и [{\"field\":\"well\",\"operator\":\"eq\",\"value\":\"101\"}].",
+        "descriptionType": "manual",
         "method": "POST",
         "url": "={{ $('Runtime configuration').first().json.excel_tools_url + '/agent-tools/' + \"query_table\" }}",
-        "authentication": "genericCredentialType",
-        "genericAuthType": "httpHeaderAuth",
-        "sendQuery": false,
         "sendHeaders": true,
-        "specifyHeaders": "keypair",
-        "sendBody": true,
-        "specifyBody": "keypair",
-        "placeholderDefinitions": {
-          "values": [
-            {
-              "name": "table_id",
-              "description": "table_id из detect_tables",
-              "type": "string"
-            },
-            {
-              "name": "select",
-              "description": "Массив имён колонок, например [\"well\",\"date\"]",
-              "type": "json"
-            },
-            {
-              "name": "filters",
-              "description": "Массив {field, operator, value}",
-              "type": "json"
-            },
-            {
-              "name": "limit",
-              "description": "Лимит строк, по умолчанию 200",
-              "type": "string"
-            }
-          ]
-        },
-        "optimizeResponse": false,
-        "parametersHeaders": {
-          "values": [
+        "headerParameters": {
+          "parameters": [
             {
               "name": "Content-Type",
-              "valueProvider": "fieldValue",
               "value": "application/json"
             }
           ]
         },
-        "parametersBody": {
-          "values": [
-            {
-              "name": "session_id",
-              "valueProvider": "fieldValue",
-              "value": "={{ $('Open excel session').first().json.session_id }}"
-            },
-            {
-              "name": "table_id",
-              "valueProvider": "modelRequired",
-              "value": ""
-            },
-            {
-              "name": "select",
-              "valueProvider": "modelOptional",
-              "value": ""
-            },
-            {
-              "name": "filters",
-              "valueProvider": "modelOptional",
-              "value": ""
-            },
-            {
-              "name": "limit",
-              "valueProvider": "modelOptional",
-              "value": ""
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "={{ ({session_id: $('Open excel session').first().json.session_id, table_id: $fromAI(\"table_id\", \"table_id из detect_tables\", \"string\"), select: $fromAI(\"select\", \"JSON-текст. Массив имён колонок, например ['well','date']\", \"string\", \"\"), filters: $fromAI(\"filters\", \"JSON-текст. Массив {field, operator, value}\", \"string\", \"\"), limit: $fromAI(\"limit\", \"Лимит строк, по умолчанию 200\", \"string\", \"\")}) }}",
+        "options": {
+          "timeout": 180000,
+          "response": {
+            "response": {
+              "fullResponse": false,
+              "responseFormat": "json"
             }
-          ]
-        }
+          }
+        },
+        "authentication": "genericCredentialType",
+        "genericAuthType": "httpHeaderAuth"
       },
       "id": "11d8897f-cc55-5326-b643-3bd461d3602b",
       "name": "query_table",
-      "type": "@n8n/n8n-nodes-langchain.toolHttpRequest",
-      "typeVersion": 1.1,
+      "type": "n8n-nodes-base.httpRequestTool",
+      "typeVersion": 4.4,
       "position": [
         3360,
         -425
@@ -1240,42 +1099,37 @@
     {
       "parameters": {
         "toolDescription": "Извлечь факты скважина+дата ввода из сессии. Аргументы не передавай.",
+        "descriptionType": "manual",
         "method": "POST",
         "url": "={{ $('Runtime configuration').first().json.excel_tools_url + '/agent-tools/' + \"extract_commissioning\" }}",
-        "authentication": "genericCredentialType",
-        "genericAuthType": "httpHeaderAuth",
-        "sendQuery": false,
         "sendHeaders": true,
-        "specifyHeaders": "keypair",
-        "sendBody": true,
-        "specifyBody": "keypair",
-        "placeholderDefinitions": {
-          "values": []
-        },
-        "optimizeResponse": false,
-        "parametersHeaders": {
-          "values": [
+        "headerParameters": {
+          "parameters": [
             {
               "name": "Content-Type",
-              "valueProvider": "fieldValue",
               "value": "application/json"
             }
           ]
         },
-        "parametersBody": {
-          "values": [
-            {
-              "name": "session_id",
-              "valueProvider": "fieldValue",
-              "value": "={{ $('Open excel session').first().json.session_id }}"
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "={{ ({session_id: $('Open excel session').first().json.session_id}) }}",
+        "options": {
+          "timeout": 180000,
+          "response": {
+            "response": {
+              "fullResponse": false,
+              "responseFormat": "json"
             }
-          ]
-        }
+          }
+        },
+        "authentication": "genericCredentialType",
+        "genericAuthType": "httpHeaderAuth"
       },
       "id": "fa55ccb0-944f-55c5-971b-8e216a89245c",
       "name": "extract_commissioning",
-      "type": "@n8n/n8n-nodes-langchain.toolHttpRequest",
-      "typeVersion": 1.1,
+      "type": "n8n-nodes-base.httpRequestTool",
+      "typeVersion": 4.4,
       "position": [
         3640,
         -510
@@ -1719,5 +1573,5 @@
   },
   "tags": [],
   "pinData": {},
-  "versionId": "384dac0f-8d40-4d65-9a97-4aefd9572a04"
+  "versionId": "0dfd5e4d-8016-431a-b300-81abe91e2daa"
 }

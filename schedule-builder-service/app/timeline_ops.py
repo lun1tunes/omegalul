@@ -74,10 +74,15 @@ def _well(record: Record) -> str:
 
 
 def _is_named_well(well: str) -> bool:
+    """True for a concrete well name; False for wildcards/patterns (``*``, ``1*``, ``'P*'``, ``W?``).
+
+    Pattern records (``WEFAC '*' 0.95``, ``WTEST * 30 P``) address all matching wells and are
+    never a "well outside Excel" — they must survive commissioning revise untouched.
+    """
     name = str(well or "").strip().strip("'\"")
     if not name or name in {"*", "1*"}:
         return False
-    return not name.startswith("*")
+    return "*" not in name and "?" not in name
 
 
 def _well_name(value: Any) -> str:
@@ -179,7 +184,8 @@ def _remove_unlisted_commissioning(
             kept: list[Record] = []
             for record in block.records:
                 well = _well(record)
-                if well and well not in keep:
+                # Only concrete wells absent from Excel are removed; wildcard records stay.
+                if well and _is_named_well(well) and well not in keep:
                     removed.append({
                         "well": well,
                         "keyword": block.keyword,

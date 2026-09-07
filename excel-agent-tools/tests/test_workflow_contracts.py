@@ -90,6 +90,9 @@ N8N_2_30_8_PORTABLE_NODE_VERSIONS = {
     "n8n-nodes-base.form": {2.5},
     "n8n-nodes-base.formTrigger": {2.6},
     "n8n-nodes-base.httpRequest": {4.4},
+    # HTTP Request "as tool": the only HTTP tool AI Agent v3 can execute in 2.30.8
+    # (toolHttpRequest is hidden there and has no `execute` method).
+    "n8n-nodes-base.httpRequestTool": {4.4},
     "n8n-nodes-base.if": {2.2, 2.3},
     "n8n-nodes-base.manualTrigger": {1},
     "n8n-nodes-base.merge": {3.2},
@@ -1530,6 +1533,7 @@ def test_universal_engineering_instruction_templates_are_portable() -> None:
         "generate_excel_extractor_agent.py",
         "mas_state_utils.py",
         "mas_retrieval_client.py",
+        "mas_tool_nodes.py",
         "relayout_core_workflows.py",
     }
     assert {path.name for path in TEMPLATES.iterdir() if path.is_file()} == expected

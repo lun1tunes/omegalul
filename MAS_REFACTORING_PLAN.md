@@ -54,6 +54,10 @@
 | 🆕 O11 | `Parse decision` | Ложный `finish` после ответа человека (`CASE-6a9dac9d`): агент спросил → человек ответил → LLM «завершила», не вернув ответ агенту | ✅ Инвариант `answer_not_applied`: ответ уходит агенту, который спросил; `finish` невозможен, пока он не вернул `completed` |
 | 🆕 O12 | `Parse decision` | Повторное делегирование после `completed` исполнялось молча | ✅ Один повтор только с `rework_reason` (уходит агенту), дальше — review-гейт `result_approval`; ответ человека сбрасывает stall |
 | 🆕 O13 | `Parse decision` `plan_update` | Мержится по `item.id`, а LLM пишет `{step, action, agent_id, reason}` → `plan` всегда `[]`, декомпозиция не сохраняется | ⬜ Фаза 2.5: схема `plan_update` с обязательным `id`, показ в Activity |
+| 🆕 O14 | `Parse decision` guard `goal_satisfied` | Ложный `finish` без Schedule Builder (`CASE-6a9dc4b3`): LLM выбрала верное `call_agent`, но ошибочно поставила `goal_satisfied:true`; guard доверил флагу, а не действию | ✅ Guard срабатывает только при **повторном** делегировании агенту с `completed` (привычка); первое делегирование — действие побеждает, флаг игнорируется (`guard: goal_flag_ignored` в журнале). Harness падает сразу на `done` без `.INC` |
+| 🆕 O16 | Decision LLM `finish` без проверки | Ложный `finish` после одного Excel (`CASE-6a9e46ea`, `CASE-6a9e46fc`): LLM сама выбрала `finish` и написала «schedule обновлён», хотя Schedule Builder не вызывался; ни один детерминированный guard это не ловит (и не должен — это семантика) | ✅ **Проверенное завершение**: второй LLM-проход `Verify completion` (цель → части-результаты → покрытие записями журнала `completed`, `unsupported_claims`); отказ → `continue`-шаг с пробелом в журнале, повторный отказ → review-гейт прозой; `completion_verified` в `case.finished` |
+| 🆕 A13 | `agent_tools._new_well_defs` | Decision LLM эхом положила в `task.new_wells` голый список имён (`["N001",…]`); lookup брал непустой `inputs.new_wells`, фильтровал до пустоты и **не смотрел** ответ инженера → тот же вопрос про новые скважины дважды (`CASE-6a9e4c07`) | ✅ Факты инженера из HITL — первыми; из `inputs` принимаются только строки-определения (dict с `well`); pytest-регресс |
+| 🆕 O15 | `Parse decision` `finish` | `summary_for_human` от LLM с `schedule_builder`/`schedule_out` — инженер читал идентификаторы | ✅ Правило в промпте (title из реестра, «новый schedule.inc») + детерминированный fallback на итог по журналу, если текст «машинный» (`looksMachineText`) |
 
 ### 2.2 HITL
 
@@ -67,7 +71,7 @@
 | H6 | Activity `/answer` пишет в state напрямую, оркестратор — через `resume` | Два write-path | 🟡 Журнал подхватывает ответы из `hitl.answers` независимо от пути (`reconcileLedgerAnswers`); сами два пути остались (Фаза 1.3) |
 | H7 | `app.js renderGate` | Без кнопок, `kind` всегда `needs_input` | ✅ Кнопки, `choice`+`label`, эхо «Вы решили: …», `kind` из вопроса (`result_approval` для review), без `expected_version`/`gate_id` в DOM; подсказка колонок таблицы для `accepts.table` |
 | H8 | `agent.result` шаблон `DESCRIBE_APPLY` | Лента врала про сделанное | ✅ `summarize_commissioning_result` по фактическому diff (сдвинуто/добавлено/убрано/оставлено); `agent.result` эмитит только оркестратор |
-| 🆕 H9 | `agent_tools.py` `apply_group_rebind` (и `main.py`) | `needs_input` с `requests=[{question:"Уточните {item} для перепривязки групп"}]` по `missing` → человек читает «Уточните rate» (`CASE-6a9dafa5`, два раунда) | ⬜ **Приоритет.** Контракт: инструмент с неполным spec возвращает finding **для LLM агента** (что не хватает, откуда взять — GRUPTREE, задача), а не вопрос человеку; вопрос человеку — только когда данных нет ни в задаче, ни в baseline, и тогда прозой с `options`/`accepts` |
+| 🆕 H9 | `agent_tools.py` `apply_group_rebind` (и `main.py`) | `needs_input` с `requests=[{question:"Уточните {item} для перепривязки групп"}]` по `missing` → человек читает «Уточните rate» (`CASE-6a9dafa5`, два раунда) | ✅ Неполный spec → `ok:false, error:spec_incomplete {missing, where_to_find}` **для LLM**; вопрос человеку — только `ask_engineer` (проза, `options`, `accepts_files`), машинный текст отклоняется `question_not_human`. `human_text_problems` — общий фильтр; `run_live_five` проверяет каждый HITL/итог на «машинность» |
 | 🆕 H10 | Activity `case.finished` | Текст «Задача завершена. Загрузите результаты работы.» затирал итог оркестратора | ✅ Показывается `status_message` оркестратора (итог по журналу), шаблон — fallback |
 
 ### 2.3 Агенты и FastAPI
@@ -76,14 +80,16 @@
 |---|---|---|---|
 | A1 | Excel `_COMMISSIONING_RE` → HTTP без LLM | LLM-substitute | ⬜ Фаза 3 |
 | A2 | `WELL_COL`/`DATE_COL` substring | Выбор колонок без подтверждения LLM | ⬜ Фаза 3 (как `suggested_mapping`) |
-| A3 | Schedule `suggested_capability` | Regex `GROUP_INTENT`, «есть facts → commissioning» | ⬜ Фаза 3 |
-| A4 | `group_rebind.py` `extract_group_rebind_spec`, `_parse_rate`, `G{well}` | Регулярки вместо структурированного вывода | ⬜ Фаза 3 |
-| A5 | Fallback `["GNEW","GINJ","GPROD"]`, «Уточните {item}» | Заглушки вместо GRUPTREE | ⬜ Сливается с H9 |
+| A3 | Schedule `suggested_capability` | Regex `GROUP_INTENT`, «есть facts → commissioning» | ✅ Capability router и HTTP-обход `apply_*` удалены; инструмент выбирает LLM |
+| A4 | `group_rebind.py` `extract_group_rebind_spec`, `_parse_rate`, `G{well}` | Регулярки вместо структурированного вывода | ✅ `normalize_group_rebind_spec` от структуры LLM; неполный spec → `spec_incomplete` LLM, не человеку |
+| A5 | Fallback `["GNEW","GINJ","GPROD"]`, «Уточните {item}» | Заглушки вместо GRUPTREE | ✅ `gruptree_summary` + `ask_engineer` прозой с вариантами из baseline |
 | A6 | `INTENT_ALIASES` | Словарь keyword | ⬜ Фаза 3 |
-| A7 | `SUMMARIZE_AI`/`DESCRIBE_*` | Машинные итоги | 🟡 Commissioning — честный diff; group_rebind и Excel — ещё шаблоны |
-| A8 | Python `/agent/run` дубли | Второй источник поведения | ⬜ Фаза 3 |
-| 🆕 A9 | Schedule Builder LLM на commissioning-задаче вызвала `apply_group_rebind` (`CASE-6a9dafa5`) | Промпт агента/описания инструментов не удерживают LLM от «попробовать всё»; результат вышел верным только благодаря повторным HITL | ⬜ Фаза 3.3/3.4 — начать с этого |
-| 🆕 A10 | `group_rebind_revise` | Порядок скважин в записях зависел от порядка в spec от LLM (golden 2 мигал: 1602 перед 1601) | ✅ Детерминированный порядок по первому появлению в baseline |
+| A7 | `SUMMARIZE_AI`/`DESCRIBE_*` | Машинные итоги | 🟡 Schedule Builder — честные итоги (сдвиги/добавления/удаления по скважинам); Excel — ещё шаблоны |
+| A8 | Python `/agent/run` дубли | Второй источник поведения | ✅ Schedule `/agent/run` удалён (Excel — Фаза 3.3) |
+| A9 | Schedule Builder LLM на commissioning-задаче вызвала `apply_group_rebind` (`CASE-6a9dafa5`) | Промпт агента/описания инструментов не удерживают LLM от «попробовать всё» | ✅ Новый `SYSTEM` «какой инструмент когда», `apply_group_rebind` требует полный spec; live 6/6 без лишних apply |
+| A10 | `group_rebind_revise` | Порядок скважин в записях зависел от порядка в spec от LLM (golden 2 мигал: 1602 перед 1601) | ✅ Детерминированный порядок по первому появлению в baseline |
+| 🆕 A11 | **`@n8n/n8n-nodes-langchain.toolHttpRequest` в n8n 2.30.8** | Узел скрыт (`hidden: true`) и имеет только `supplyData`; AI Agent v3 исполняет инструменты через движок → каждый вызов падал «has a supplyData method but no execute method». LLM-путь обоих агентов **никогда не работал** в 2.30.8 — это маскировал regex-роутер с прямыми HTTP | ✅ Оба агента на `n8n-nodes-base.httpRequestTool` 4.4 + `$fromAI(...)` (`mas_tool_nodes.py`); реестр версий в `test_workflow_contracts.py` |
+| 🆕 A12 | `_remove_unlisted_commissioning` | Политика «убрать скважины вне Excel» удаляла и wildcard-записи (`WEFAC '*' 0.95`, `WTEST * 30 P`) — молча меняла uptime всей модели (`CASE-6a9dc8b7`) | ✅ `_is_named_well` исключает `*`/`?`-паттерны; remove трогает только именованные скважины; pytest-регресс |
 
 ### 2.4 Расширяемость и гигиена
 
@@ -144,14 +150,14 @@
 
 Оценка выросла: инварианты и их smokes — отдельная работа; Qwen требует проверки каждого изменения промпта live-прогоном.
 
-### Фаза 3 — Агенты LLM-first ⬜ (5–7 дней) — начать со Schedule Builder
+### Фаза 3 — Агенты LLM-first 🟡 (Schedule Builder ✅, Excel ⬜ 3–4 дня)
 
-1. **A9/A3/A4 Schedule Builder первым**: убрать `suggested_capability`; `apply_group_rebind(spec)` принимает структурированный spec от LLM (Structured Output из задачи + `inspect_schedule`: реальные группы GRUPTREE как варианты); удалить `GROUP_INTENT`, `_parse_rate`, quoted-parent regex, авто-`G{well}`. Описания инструментов в промпте агента: когда какой уместен, «не пробовать инструмент ради проверки».
-2. Промпты агентов: без «при suggested_capability=… вызови X и STOP»; роль, инварианты (не писать `.INC` руками, факт ≠ приказ, METRIC из baseline), `summary_for_human` по diff — для group_rebind и Excel тоже (A7).
-3. Excel Extractor: LLM выбирает таблицу/колонки через `detect_tables`/`describe_table` (`WELL_COL`/`DATE_COL` → `suggested_mapping`), затем детерминированный `extract_facts`; извлечение `new_wells` из таблицы параметров.
-4. Убрать Python `/agent/run` дубли (A8) у Excel/Schedule; оставить у Math.
-5. Надёжность tool-calls Qwen: лимит итераций, `autoFix`, smoke «агент вызвал инструмент, а не ответил текстом».
-6. Критерий: golden 2 без `GROUP_INTENT`; combat 0–3 без `_COMMISSIONING_RE`; `.INC` побайтно тот же; ни одного лишнего HITL в combat 3.
+1. ✅ **A9/A3/A4 Schedule Builder**: `suggested_capability`, Capability router и HTTP-обход удалены; `apply_group_rebind(spec)` от LLM (`wells, parent_group, parent_of_parent, control, gas_rate, effective_at`), неполный spec → `spec_incomplete` LLM; `GROUP_INTENT`, `_parse_rate`, авто-`G{well}` из regex удалены (конвенции — явные `assumptions`). `SYSTEM` — «какой инструмент когда», `ask_engineer` — единственный путь к человеку.
+2. ✅ **A11 платформа**: инструменты агентов — `n8n-nodes-base.httpRequestTool` + `$fromAI` (`mas_tool_nodes.py`); старый `toolHttpRequest` в 2.30.8 не исполняется. Любой новый инструмент — только через `tool_http(...)` генератора.
+3. ⬜ Excel Extractor: убрать regex-роутер `_COMMISSIONING_RE`/`suggested_capability` (A1) тем же приёмом; LLM выбирает таблицу/колонки через `detect_tables`/`describe_table` (`WELL_COL`/`DATE_COL` → `suggested_mapping`, A2), затем детерминированный `extract_facts`; извлечение `new_wells` из таблицы параметров; `summary_for_human` по факту (A7). **Проверить live LLM-путь Excel** — он ещё ни разу не исполнялся (см. A11); опциональные JSON-аргументы инструментов идут текстом (`$fromAI` не принимает пустой json) — Python-сторона должна парсить строку.
+4. ⬜ Убрать Python `/agent/run` дубль у Excel (A8); оставить у Math.
+5. 🟡 Надёжность tool-calls Qwen: `maxIterations` 8; `SUMMARIZE_AI` даёт прозу при «агент крутил inspect без apply»; ⬜ smoke «агент вызвал инструмент, а не ответил текстом».
+6. Критерий: ✅ golden 2 без `GROUP_INTENT`; ✅ combat 0–3 через LLM-выбор инструмента, `.INC` побайтно тот же; ⬜ combat 0–3 без `_COMMISSIONING_RE` (Excel); лишних HITL в combat 3 нет — вопрос про скважины вне Excel задаёт LLM прозой, harness отвечает кнопкой.
 
 ### Фаза 4 — Расширяемость как продукт ⬜ (3–4 дня)
 
@@ -199,9 +205,17 @@
 5. Детерминированный порядок скважин в group_rebind.
 6. Live: 6/6 `ok`, `mismatch_count: 0`, без циклов. Наблюдение для Фазы 1/3: combat 3 — два лишних HITL «Уточните rate/wells» от `apply_group_rebind` (H9/A9).
 
+### Ревизия 3 (2026-09-07, ночь) — сделано
+
+1. H9 + A3/A4/A5/A8/A9: Schedule Builder LLM-first (см. §2.3), `ask_engineer`, `spec_incomplete`, `human_text_problems`; Python `/agent/run` Schedule удалён.
+2. **A11 — платформенная находка**: первый же live-прогон LLM-пути упал на `toolHttpRequest` («has a supplyData method but no execute method»). В 2.30.8 узел скрыт и не исполняется AI Agent v3; regex-роутер маскировал это с самого начала. Оба агента переведены на `httpRequestTool` + `$fromAI`.
+3. O14 — ложный `finish` `CASE-6a9dc4b3`: guard `goal_satisfied` доверял флагу, а не действию → теперь только при повторном делегировании. O15 — итог для инженера без идентификаторов (промпт + fallback на журнал).
+4. A12 — remove-политика удаляла wildcard-записи (`WEFAC '*'`); исправлено, pytest-регресс.
+5. `run_live_five`: проверка «машинности» каждого HITL/итога; падение сразу при повторе того же вопроса после ответа и при `done` без `.INC`; ответ на вопрос агента распознаётся по вариантам «оставить/убрать», как это сделал бы инженер.
+6. O16 — проверенное завершение (`Verify completion`): live-гейт после O14 показал, что LLM сама выбирает `finish` после Excel (2 из 6 кейсов) — флаговые guard'ы тут бессильны. Завершение теперь подтверждает отдельный скептический LLM-проход по журналу; отказ даёт оркестратору ещё шаг, второй отказ — инженеру. Детерминированная часть: вердикт выводится из `goal_parts` (модель противоречила себе: все части covered, `all_covered:false` — golden 1 ушёл в review); `unsupported_claims` → инженеру показывается итог по журналу, не текст LLM. A13 — попутно найденный дубль вопроса про новые скважины. Итог гейта: 6/6 `done`, `completion_verified:true`, `.INC` побайтно.
+
 ### Ближайшие шаги (в этом порядке)
 
-1. H9 — контракт `needs_input` инструментов Schedule Builder (без «Уточните <поле>»), smoke машинности.
-2. A9/A3 — Schedule Builder LLM-first: `suggested_capability` убрать, spec group_rebind от LLM структурой, описания инструментов.
-3. Фаза 1.3 — единый write-path ответа.
-4. Фаза 2 — реестр исполняемый, промпт без маршрутов, `plan_update` с `id`.
+1. Фаза 3.3/3.4 — Excel Extractor LLM-first (A1/A2/A7/A8) и live-проверка его LLM-пути.
+2. Фаза 1.3 — единый write-path ответа.
+3. Фаза 2 — реестр исполняемый, промпт без маршрутов (O1/O3/O5), `plan_update` с `id` (O13).

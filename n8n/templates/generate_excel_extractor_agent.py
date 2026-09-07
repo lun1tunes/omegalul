@@ -9,6 +9,7 @@ from pathlib import Path
 
 from llm_runtime_options import chat_model_options
 from generate_mas_runtime_config import EXCEL_KEY_CRED, runtime_config_execute_params
+from mas_tool_nodes import HTTP_REQUEST_TOOL_TYPE, HTTP_REQUEST_TOOL_VERSION, http_request_tool_params
 from mas_retrieval_client import (
     SELECTORS,
     attach_excel_rag_js,
@@ -224,51 +225,23 @@ def activity_event_dynamic(name, pos):
 
 
 def tool_http(name, pos, description, fields):
-    placeholders = {
-        "values": [{"name": key, "description": desc, "type": typ} for key, typ, _req, desc in fields]
-    }
-    body_values = [
-        {
-            "name": "session_id",
-            "valueProvider": "fieldValue",
-            "value": "={{ $('Open excel session').first().json.session_id }}",
-        }
-    ]
-    for key, _typ, required, _desc in fields:
-        body_values.append(
-            {
-                "name": key,
-                "valueProvider": "modelRequired" if required else "modelOptional",
-                "value": "",
-            }
-        )
+    # n8n 2.30.8 + AI Agent v3: tools must be executable nodes → HTTP Request (as tool) with $fromAI.
+    params = http_request_tool_params(
+        name,
+        description,
+        fields,
+        url_expr="={{ $('Runtime configuration').first().json.excel_tools_url + '/agent-tools/' + "
+        + json.dumps(name)
+        + " }}",
+        session_expr="$('Open excel session').first().json.session_id",
+    )
+    params.update({"authentication": "genericCredentialType", "genericAuthType": "httpHeaderAuth"})
     return node(
         name,
-        "@n8n/n8n-nodes-langchain.toolHttpRequest",
-        1.1,
+        HTTP_REQUEST_TOOL_TYPE,
+        HTTP_REQUEST_TOOL_VERSION,
         pos,
-        {
-            "toolDescription": description,
-            "method": "POST",
-            "url": "={{ $('Runtime configuration').first().json.excel_tools_url + '/agent-tools/' + "
-            + json.dumps(name)
-            + " }}",
-            "authentication": "genericCredentialType",
-            "genericAuthType": "httpHeaderAuth",
-            "sendQuery": False,
-            "sendHeaders": True,
-            "specifyHeaders": "keypair",
-            "sendBody": True,
-            "specifyBody": "keypair",
-            "placeholderDefinitions": placeholders,
-            "optimizeResponse": False,
-            "parametersHeaders": {
-                "values": [
-                    {"name": "Content-Type", "valueProvider": "fieldValue", "value": "application/json"},
-                ]
-            },
-            "parametersBody": {"values": body_values},
-        },
+        params,
         credentials=EXCEL_KEY_CRED,
         retryOnFail=True,
         maxTries=3,
@@ -490,9 +463,9 @@ def main() -> None:
                     "`executeWorkflow` (`Call Excel Extractor`). Webhook не нужен.\n\n"
                     "Файлы не грузятся в n8n. Сервис сам GET "
                     "`/cases/{id}/artifacts/excel`.\n"
-                    "`suggested_capability=commissioning` идёт обычным HTTP "
-                    "`extract_commissioning` (external n8n runners не execute'ят "
-                    "toolHttpRequest). Остальное — LLM + query_table. "
+                    "`suggested_capability=commissioning` пока идёт обычным HTTP "
+                    "`extract_commissioning` (regex-роутер, Фаза 3.3 плана). "
+                    "Остальное — LLM + инструменты HTTP Request (as tool) с `$fromAI`. "
                     "После extract проверяется status; needs_input не идёт в "
                     "Fetch result. Сессия закрывается POST /sessions/{id}/close. "
                     "Скважины/даты не хардкодятся."
