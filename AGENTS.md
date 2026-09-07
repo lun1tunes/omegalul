@@ -46,7 +46,7 @@
 - `agent_result` → сливается в `state.data.<agent>` (`Merge agent result`), `requests[]` → HITL, `message` → лента.
 - Excel Tools: `POST /agent-tools/open_session` → `{session_id, inspect{files,sheets,tables[{table_id,file,sheet,columns,sample}]}, engineer_answers, rework_reason}`; инструменты — `POST /agent-tools/{name}` `{session_id, …args}`; результат — `GET /sessions/{id}/result`.
 - Schedule Builder: `open_session` → `apply_commissioning` / `apply_group_rebind(spec)` / `apply_operations` / `render_ir` / `build_schedule` / `ask_engineer`; факты новых скважин — `_new_well_defs` (ответ инженера > `data.excel.new_wells` > `inputs`).
-- Activity: `POST /cases` (multipart `file`, `schedule_files`, `attachments`), `GET /cases/{id}/events|state`, `POST /cases/{id}/answer`, `GET /cases/{id}/artifacts/{artifact_id}`; артефакты `excel`, `excel_1…`, `schedule_source[_N]`, `schedule_out`, `diff`.
+- Activity: `POST /cases` (multipart `file`, `schedule_files`, `attachments`), `GET /cases/{id}/events|state`, `POST /cases/{id}/answer` (файлы + сырой `{choice,text,label}` → оркестратор `resume` `source=human`, state HITL не пишет), `POST /cases/{id}/run` `action=resume` `source=agent|system`, `GET /cases/{id}/artifacts/{artifact_id}`; артефакты `excel`, `excel_1…`, `schedule_source[_N]`, `schedule_out`, `diff`.
 - События: `case.created, agent.handoff, agent.accepted, agent.progress, agent.result, hitl.request, hitl.answered, orchestrator.decision, case.finished`; ошибки нод n8n — `Error — MAS Node Traces`.
 
 ## 5. Как здесь работают (цикл одной задачи)

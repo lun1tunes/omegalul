@@ -24,9 +24,7 @@ from app.state_shape import (
     artifact_text,
     artifacts_from_indexed,
     bump_version,
-    decode_hitl_answer,
     flatten_artifacts,
-    hitl_answer_text,
     nest_artifacts,
     role_for_artifact_id,
 )
@@ -495,19 +493,26 @@ async def _invoke_create(case_id: str) -> None:
     await _invoke_action(case_id, action="create")
 
 
-async def _invoke_action(case_id: str, *, action: str) -> None:
+async def _invoke_resume(case_id: str, extra: dict[str, Any] | None = None) -> None:
+    await _invoke_action(case_id, action="resume", extra=extra or {})
+
+
+async def _invoke_action(case_id: str, *, action: str, extra: dict[str, Any] | None = None) -> None:
     try:
         row = control_plane.get_case(case_id)
         state = dict(row["state"] or {}) if row else {}
+        payload: dict[str, Any] = {
+            "case_id": case_id,
+            "action": action,
+            "task_description": str(state.get("goal") or ""),
+            "task_name": str(state.get("task_name") or ""),
+            "requested_by": "mas activity user",
+            "artifacts": state.get("artifacts") if isinstance(state.get("artifacts"), dict) else {},
+        }
+        if extra:
+            payload.update({key: value for key, value in extra.items() if value is not None})
         await invoke_orchestrator(
-            {
-                "case_id": case_id,
-                "action": action,
-                "task_description": str(state.get("goal") or ""),
-                "task_name": str(state.get("task_name") or ""),
-                "requested_by": "mas activity user",
-                "artifacts": state.get("artifacts") if isinstance(state.get("artifacts"), dict) else {},
-            },
+            payload,
             timeout_s=180.0,
         )
     except OrchestratorError as exc:
@@ -840,52 +845,32 @@ async def post_answer(case_id: str, request: Request, background_tasks: Backgrou
     row = control_plane.get_case(case_id) or row
     state = dict(row["state"] or {})
     _assert_state_version(state, expected_version)
-    hitl = dict(state.get("hitl") or {})
-    answers = dict(hitl.get("answers") or {})
-    parsed_answer = decode_hitl_answer(answer)
-    if choice:
-        # Option button: keep the machine value and the human label/free text side by side.
-        label = _option_label(hitl, question_id, choice)
-        parsed_answer = {
-            "choice": choice,
-            "text": parsed_answer if isinstance(parsed_answer, str) and parsed_answer else label,
-            "label": label,
-        }
-    answers[question_id] = parsed_answer
-    hitl["answers"] = answers
-    hitl["pending"] = False
-    state["hitl"] = hitl
-    bump_version(state)
-    answer_text = hitl_answer_text(parsed_answer)
-    control_plane.update_case_and_append(
-        case_id,
-        state=state,
-        status="running",
-        kind="hitl.answered",
-        actor="user",
-        event_status="answered",
-        status_message=f"Пользователь ответил: {answer_text}",
-        payload={
-            "question_id": question_id,
-            "answer": parsed_answer,
-            "requested_by": requested_by,
-            "files": file_names,
-        },
-    )
     if get_settings().n8n_transport == "unconfigured":
         raise HTTPException(status_code=503, detail=UNCONFIGURED_N8N)
-    background_tasks.add_task(_invoke_step, case_id)
-    return {"ok": True, "case_id": case_id, "status": "running", "files": file_names}
+    raw_answer: dict[str, Any] = {"text": answer, "files": file_names}
+    if choice:
+        label = _option_label(dict(state.get("hitl") or {}), question_id, choice)
+        raw_answer["choice"] = choice
+        raw_answer["label"] = label
+        if not raw_answer.get("text"):
+            raw_answer["text"] = label
+    extra = {
+        "source": "human",
+        "gate_id": question_id,
+        "expected_version": expected_version,
+        "human_response": json.dumps(raw_answer, ensure_ascii=False),
+        "requested_by": requested_by,
+    }
+    background_tasks.add_task(_invoke_resume, case_id, extra)
+    return {"ok": True, "case_id": case_id, "status": str(row.get("status") or "waiting_user"), "files": file_names}
 
 
-async def _run_action(request: Request) -> str:
+async def _run_body(request: Request) -> dict[str, Any]:
     try:
         raw = await request.json()
     except Exception:
-        return "step"
-    if not isinstance(raw, dict):
-        return "step"
-    return str(raw.get("action") or "step").strip().lower() or "step"
+        return {}
+    return raw if isinstance(raw, dict) else {}
 
 
 def _prepare_case_restart(case_id: str, row: dict[str, Any]) -> dict[str, Any]:
@@ -916,9 +901,33 @@ async def post_run(case_id: str, request: Request, background_tasks: BackgroundT
     row = control_plane.get_case(case_id)
     if row is None:
         raise HTTPException(status_code=404, detail="case not found")
-    action = await _run_action(request)
+    body = await _run_body(request)
+    action = str(body.get("action") or "step").strip().lower() or "step"
     if get_settings().n8n_transport == "unconfigured":
         raise HTTPException(status_code=503, detail=UNCONFIGURED_N8N)
+    if action == "resume":
+        source = str(body.get("source") or "agent").strip().lower()
+        if source == "human":
+            raise HTTPException(status_code=400, detail="Ответ инженера отправляйте через поле ответа в задаче.")
+        if source not in {"agent", "system"}:
+            raise HTTPException(status_code=400, detail="Будить задачу может агент или система.")
+        extra = {
+            "source": source,
+            "task_id": str(body.get("task_id") or ""),
+            "agent_id": str(body.get("agent_id") or ""),
+            "human_response": json.dumps(body.get("payload") if body.get("payload") is not None else body.get("result") or {}, ensure_ascii=False),
+            "requested_by": str(body.get("requested_by") or "mas activity user"),
+        }
+        background_tasks.add_task(_invoke_resume, case_id, extra)
+        return {
+            "ok": True,
+            "accepted": True,
+            "skipped": False,
+            "status": "running",
+            "restartable": False,
+            "case_id": case_id,
+            "task_id": case_id,
+        }
     explicit_restart = action in RESTART_ACTIONS and case_is_restartable(row)
     if explicit_restart:
         state = _prepare_case_restart(case_id, row)
@@ -1128,13 +1137,16 @@ def get_schedule(case_id: str):
 
 def _inline_artifact(case_id: str, artifact_id: str) -> tuple[str, bytes, str] | None:
     """Text deliverables (schedule_out / diff) live inline in state, not in the blob store."""
-    row = control_plane.get_case(case_id)
+    # One webhook (case + events), same as the feed: cards are built the same way everywhere,
+    # including producers of legacy artifacts inferred from agent.result events.
+    snap = control_plane.snapshot(case_id)
+    row = snap["case"]
     state = row["state"] if row and isinstance(row.get("state"), dict) else {}
     artifacts = state.get("artifacts") if isinstance(state.get("artifacts"), dict) else {}
     text = artifact_text(artifacts, artifact_id)
     if text is None:
         return None
-    card = next((c for c in _artifact_cards(case_id, state) if c["artifact_id"] == artifact_id), None)
+    card = next((c for c in _artifact_cards(case_id, state, snap.get("events") or []) if c["artifact_id"] == artifact_id), None)
     filename = (card or {}).get("filename") or artifact_id
     mime = (card or {}).get("mime_type") or "text/plain; charset=utf-8"
     return filename, text.encode("utf-8"), mime

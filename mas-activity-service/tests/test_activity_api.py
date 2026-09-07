@@ -542,8 +542,8 @@ def test_ready_health_and_static_assets() -> None:
     ):
         assert gone not in html, gone
     # Cache busting: the HTML must reference the current asset versions.
-    assert "app.js?v=101" in html
-    assert "schema.js?v=30" in html
+    assert "app.js?v=102" in html
+    assert "schema.js?v=31" in html
     assert "app.css?v=100" in html
 
     js_text = (STATIC / "app.js").read_text(encoding="utf-8")
@@ -566,6 +566,7 @@ def test_ready_health_and_static_assets() -> None:
         "MasSchema.setAgents", "MasSchema.relayout", "showLoadError(taskId, `Не удалось загрузить задачу (${snap.status}).`)",
         'showLoadError(taskId, "Сеть недоступна при загрузке задачи.")', "li._masTurn = turn", "at_abs", "lane_dir",
         "human_gate ?? data.gate", "duration_label",
+        "Ответ принят, ждём оркестратор", "xlsm", "applyResumeWaitHint",
     ):
         assert needle in js_text, needle
     # The header shows a human title + status pill, never `task_id: … · Готово (done)`.
@@ -582,7 +583,7 @@ def test_ready_health_and_static_assets() -> None:
         "function buildSchemaFrames", "function applyEvent", "handoff_message", "setAgents", "agentKey",
         "pairVisual", "schema-slip", "schema-peek", "schemaArrowActive", "schemaArrowDone", "schemaArrowError",
         "auto-start-reverse", "deliverableCards", "download_path", "startPlay", "Постановка задачи",
-        "Задача завершена. Загрузите результаты работы.", "Ожидает задачу",
+        "Задача завершена. Загрузите результаты работы.", "Ожидает задачу", "prioritizeInputCards",
     ):
         assert needle in schema_js, needle
     for agent in ("excel_extractor", "schedule_builder", "calculation_agent"):

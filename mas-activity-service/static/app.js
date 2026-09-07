@@ -79,6 +79,21 @@
   const inputsList = $("inputsList");
 
   const REQUESTED_BY = "mas activity user";
+  let resumeWaitHint = false;
+  let resumeWaitAnsweredAt = 0;
+
+  function hitlAnsweredCount(feed) {
+    return (feed && Array.isArray(feed.events) ? feed.events : []).filter((e) => String(e.kind || "") === "hitl.answered").length;
+  }
+  function applyResumeWaitHint() {
+    if (!resumeWaitHint) return;
+    if (!awaitingHuman || hitlAnsweredCount(lastCaseFeed) > resumeWaitAnsweredAt) {
+      resumeWaitHint = false;
+      return;
+    }
+    composerHint.hidden = false;
+    composerHint.textContent = "Ответ принят, ждём оркестратор…";
+  }
 
   // ------------------------------------------------------------------ labels
   const LIVE_LABELS = { idle: "ожидание", connecting: "подключение", live: "онлайн", reconnecting: "переподключение" };
@@ -591,7 +606,7 @@
   // ------------------------------------------------------------------ files (compose / reply)
   function classifyFile(file) {
     const name = (file.name || "").toLowerCase();
-    if (/\.(xlsx|xls)$/.test(name)) return "excel";
+    if (/\.(xlsx|xls|xlsm|xltx|xltm)$/.test(name)) return "excel";
     if (/\.dev$/.test(name)) return "trajectory";
     if (/\.(cps3|grd|grid)$/.test(name)) return "surface";
     if (/\.(data|inc|sch|txt|grdecl)$/.test(name)) return "schedule";
@@ -617,6 +632,7 @@
         ? "Задача остановилась с ошибкой. Можно перезапустить её с теми же исходными файлами."
         : "Задача завершена. Если нужно пересчитать — перезапустите её с теми же файлами.";
     }
+    applyResumeWaitHint();
   }
 
   function setRestartable(flag) {
@@ -810,11 +826,21 @@
       composerHint.hidden = true;
       composerHint.textContent = "";
     }
+    applyResumeWaitHint();
   }
 
   // ------------------------------------------------------------------ deliverable / artifact cards
   function cardsByKind(kind) {
-    return (artifactCards || []).filter((c) => c && String(c.kind || "") === kind);
+    const rows = (artifactCards || []).filter((c) => c && String(c.kind || "") === kind);
+    if (kind !== "input") return rows;
+    const rank = (card) => {
+      const role = String(card.role || "");
+      const name = String(card.filename || "").toLowerCase();
+      if (role === "excel" || /\.(xlsx|xls|xlsm|xltx|xltm)$/i.test(name)) return 0;
+      if (role === "schedule_source") return 1;
+      return 2;
+    };
+    return rows.slice().sort((a, b) => rank(a) - rank(b));
   }
   function cardById(id) {
     return (artifactCards || []).find((c) => c && c.artifact_id === id) || null;
@@ -1598,6 +1624,7 @@
     replyBtn.disabled = true;
     composerHint.hidden = false;
     composerHint.textContent = "Отправляем ответ…";
+    let resumePending = false;
     try {
       const form = new FormData();
       form.append("action", "reply");
@@ -1623,24 +1650,18 @@
         composerHint.textContent = "Не удалось отправить. Проверьте статус задачи и соединение.";
         return;
       }
-      if (data.turn) renderTurn(data.turn, { animate: true });
-      applyFeedMeta({
-        human_gate: data.human_gate,
-        status: data.orchestrator?.status,
-        version: data.orchestrator?.version,
-        awaiting_human: data.awaiting_human,
-        semantic_diff: data.semantic_diff,
-        status_message: data.orchestrator?.message || data.status_message,
-      });
       humanResponse.value = "";
       autosize(humanResponse);
       hitlFiles = [];
       selectedChoice = null;
       renderHitlFiles();
       showFlash(choice ? `Вы решили: ${choice.label}` : "Ответ отправлен.", { ok: true });
+      resumeWaitHint = true;
+      resumeWaitAnsweredAt = hitlAnsweredCount(lastCaseFeed);
       const snap = await fetch(`/cases/${encodeURIComponent(currentTask)}`);
       if (snap.ok) mergeFeed(await snap.json(), { animateTurns: true });
       await refreshRail();
+      if (awaitingHuman) resumePending = true;
     } catch (_) {
       showFlash("Сеть недоступна при отправке ответа.");
       composerHint.hidden = false;
@@ -1648,6 +1669,10 @@
     } finally {
       composer.classList.remove("busy");
       setComposerArmed(awaitingHuman);
+      if (resumePending) {
+        composerHint.hidden = false;
+        composerHint.textContent = "Ответ принят, ждём оркестратор…";
+      }
     }
   }
 

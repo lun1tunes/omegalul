@@ -1,6 +1,6 @@
 # NOVATEK RE MASter — анализ и план рефакторинга «от хардкода к инженерной MAS»
 
-Ревизия 5 — 2026-09-07 (день). Статусы ниже сверены с кодом на эту дату; история ревизий — §7. Как работать по плану — `AGENTS.md` (карта, инварианты, цикл задачи), гейт — `python3 scripts/mas_gate.py [--live]`.
+Ревизия 7 — 2026-09-07 (вечер). Статусы ниже сверены с кодом на эту дату; история ревизий — §7. Как работать по плану — `AGENTS.md` (карта, инварианты, цикл задачи), гейт — `python3 scripts/mas_gate.py [--live]`.
 
 Ограничения, которые план не нарушает: n8n **2.30.8**, только UI (Import from File, Credentials, Set-ноды); FastAPI на Windows — только Python; вся правка адресов и лимитов — в `MAS — Runtime Config`; секретов в JSON нет.
 
@@ -66,11 +66,11 @@
 | # | Где | Что | Статус |
 |---|---|---|---|
 | H1 | `timeline_ops.py` unlisted | `expected_format: "keep\|remove"`, `enum` | ✅ Проза + `options[{value,label,hint}]`, `accepts.free_text` |
-| H2 | `parseKeepRemove` и зеркало в Activity | Regex по ответу человека | 🟡 Кнопка даёт `choice` — regex не нужен; `parseKeepRemove` (`mas_state_utils.py`) и `parse_keep_remove` (`state_shape.py`) остались как fallback для свободного текста до 1.3 |
+| H2 | `parseKeepRemove` и зеркало в Activity | Regex по ответу человека | ✅ Удалены (`mas_state_utils.py`, `state_shape.py`). Кнопка = `choice`; свободный текст при вариантах — Interpret free-text answer (Qwen + Structured Output), `confidence < 0.8` → переспрос |
 | H3 | `new_well_defs` со строками `.inc` | Человек пишет SCHEDULE руками | ✅ Инженерные факты `new_wells` (группа, MD верх/низ, диаметр, режим+дебит, BHP, VFP, файл WELLTRACK); `compose_new_well_lines` собирает `WELSPECS/COMPDATMD/WCONPROD` по мануалу; недостающий факт = finding. Legacy typed-lines принимается для совместимости |
 | H4 | combat-3: вопрос про новые скважины не задавался | Диалог не соответствовал уточнениям | ✅ Два последовательных вопроса (unlisted → new_wells), harness отвечает на каждый отдельно |
 | H5 | `hitl_user_copy.py` + `humanizeQuestion` | Два слоя «компиляции» кодов в русский | ✅ Закрыт решением: в MAS-контуре композитора нет — инструменты отдают прозу (H9), `ask_user` оркестратора ограничен схемой. `hitl_user_copy.py` используется только schedule-intake контуром (`schedule_pipeline.py`, `schedule_intake_runtime.py`) как словарь кодов |
-| H6 | Activity `/answer` пишет в state напрямую, оркестратор — через `resume` | Два write-path | 🟡 Журнал подхватывает ответы из `hitl.answers` независимо от пути (`reconcileLedgerAnswers`); сами два пути остались (Фаза 1.3) |
+| H6 | Activity `/answer` пишет в state напрямую, оркестратор — через `resume` | Два write-path | ✅ Один путь: `/answer` хранит файлы и зовёт `resume` `source=human`; журнал и `hitl.answered` — только оркестратор. `POST /run` `action=resume` `source=agent|system` — внешнее событие (§3 п.10). `reconcileLedgerAnswers` оставлен как safety net для старых кейсов |
 | H7 | `app.js renderGate` | Без кнопок, `kind` всегда `needs_input` | ✅ Кнопки, `choice`+`label`, эхо «Вы решили: …», `kind` из вопроса (`result_approval` для review), без `expected_version`/`gate_id` в DOM; подсказка колонок таблицы для `accepts.table` |
 | H8 | `agent.result` шаблон `DESCRIBE_APPLY` | Лента врала про сделанное | ✅ `summarize_commissioning_result` по фактическому diff (сдвинуто/добавлено/убрано/оставлено); `agent.result` эмитит только оркестратор |
 | 🆕 H9 | `agent_tools.py` `apply_group_rebind` (и `main.py`) | `needs_input` с `requests=[{question:"Уточните {item} для перепривязки групп"}]` по `missing` → человек читает «Уточните rate» (`CASE-6a9dafa5`, два раунда) | ✅ Неполный spec → `ok:false, error:spec_incomplete {missing, where_to_find}` **для LLM**; вопрос человеку — только `ask_engineer` (проза, `options`, `accepts_files`), машинный текст отклоняется `question_not_human`. `human_text_problems` — общий фильтр; `run_live_five` проверяет каждый HITL/итог на «машинность» |
@@ -110,6 +110,15 @@
 | 🆕 O17 | `Prepare decision context` `has_schedule_out` (`hasScheduleOut`) | Доменный флаг в `planner_input` — та же утечка, что O1 | ✅ `planner_input.deliverables` + `case.finished.payload.deliverables`; `grep has_schedule_out` по коду пуст |
 | 🆕 R4 | `run_live_five.py`: «`done` без `schedule_out` = провал», скачивание через `/schedule` | Ожидание `.INC` зашито в харнесс | ✅ `expects` в `specs()`; «`done` без ожидаемых deliverables = провал», у каждого deliverable есть `producer`; скачивание через `GET /cases/{id}/artifacts` → `download_path` |
 
+### 2.6 Единый write-path ответа (найдено в ревизии 7)
+
+| # | Где | Что | Статус |
+|---|---|---|---|
+| 🆕 H11 | `run_live_five.poll` и UI после `/answer` | После 1.3 `/answer` отвечает сразу (`waiting_user`), resume — фоновый вызов оркестратора; харнесс ждал «тот же гейт» до `LIVE_TIMEOUT` (25 мин) — выглядело как зависание на HITL; UI молчал | ✅ Харнесс: `LIVE_HITL_RESUME_S` (180 с) — если оркестратор не подхватил ответ, кейс падает с гейтом, вложениями и последними событиями; вопрос «прикрепите Excel» при уже приложенной книге — провал сразу. UI: подсказка «Ответ принят, ждём оркестратор…» до `hitl.answered` |
+| 🆕 R5 | `artifact_cards` / `artifact_filenames` (Python) и `artifactCards` (JS), чипы «Исходные данные» и узел схемы (лимит 4) | Вторая книга Excel (`excel_1` → `attachments`) шла после ~20 INCLUDE-заглушек и не попадала в первые 4 чипа — «Excel не видим в MAS» | ✅ Входы сортируются: Excel → корень schedule → остальное (оба двойника + pytest/smoke на 20 заглушек); `.xlsm/.xltx/.xltm` принимаются композитором и `accept=` обеих форм |
+| 🆕 O18 | `WRITE_EVENTS` (`Expand start events`) + `Prepare start case` | Оркестратор формировал свой `case.created`, который до 1.3 молча терялся (в `$json` после Postgres нет `persist_events`); когда `Expand events` научился читать Code-ноды для resume — в ленте стало два «Принял задачу» (`CASE-6a9ee318`) | ✅ Автор `case.created` — Activity (`initial_event`); `Prepare start case` событий не пишет, `Expand events` не читает его; smoke |
+| 🆕 O19 | `Prepare Activity ack` `pick()` | На ветке интерпретации читал `Apply request extras` (`needs_interpret`, событий нет) → постил в Activity пустой `hitl.request` поверх настоящего переспроса (`CASE-6a9ee76b`) | ✅ `pick()` сначала берёт `Apply interpreted answer` (он владеет `persist_events`); smoke на `activity_sync === false` |
+
 ---
 
 ## 3. Целевая архитектура (принципы, дополнены)
@@ -129,22 +138,19 @@
 
 ## 4. План по фазам (ревизия 5)
 
-Гейт каждой фазы — `python3 scripts/mas_gate.py`: регенерация без дрейфа, 13 smokes, pytest (Activity 150, Schedule 57, Excel 87), offline combat; `--live` — `run_live_five.py` 6/6 `done`, `mismatch_count: 0`, без циклов/повторных HITL/review. Порядок фаз: сначала то, что инженер видит в ленте, затем оркестратор без домена, затем расширяемость как продукт.
+Гейт каждой фазы — `python3 scripts/mas_gate.py`: регенерация без дрейфа, `n8n/tests/*-smoke.js`, pytest (Activity / Schedule / Excel), offline combat; `--live` — `run_live_five.py` 6/6 `done`, `mismatch_count: 0`, без циклов/повторных HITL/review. Порядок фаз: сначала то, что инженер видит в ленте, затем оркестратор без домена, затем расширяемость как продукт.
 
 ### Фаза 0 — Гигиена ✅
 
 Сделано: retired-контур вынесен (`n8n/templates/retired`, `n8n/tests/retired`, `n8n/contracts/retired`), один `KEYWORDS`, `specialist_packet` не принимается, правило `mas-llm-first-no-domain-hardcode.mdc`, Health Check берёт URL из Runtime Config. Хвост: legacy Activity API `/v1/tasks*` — вынос при удобном случае.
 
-### Фаза 1 — Человеческий HITL 🟡 (осталось: 1.3 и структурный smoke, 1–2 дня)
+### Фаза 1 — Человеческий HITL ✅
 
-Сделано: 1.1 контракт уточнения на unlisted/new_wells (проза + options + accepts) · 1.4 UI кнопки/эхо/без машинных полей · 1.5 новые скважины фактами · 1.6 честные итоги commissioning и `case.finished` · **H9** контракт `needs_input` для всех инструментов (`spec_incomplete` → LLM, `ask_engineer` → человек, `human_text_problems` в обоих сервисах; `Уточните {item}` и `GNEW/GINJ/GPROD` удалены) · **1.2** композитор HITL не нужен (закрыт решением, H5) · **1.5b** Excel Extractor извлекает `new_wells` из таблицы параметров (`extract_well_parameters` → `data.excel.new_wells`), Activity и оркестратор хранят все книги кейса · машинность текста проверяется live: `run_live_five` валит кейс за snake_case/`key=value`/JSON в любом HITL и итоге.
+Сделано: 1.1 контракт уточнения на unlisted/new_wells (проза + options + accepts) · 1.4 UI кнопки/эхо/без машинных полей · 1.5 новые скважины фактами · 1.6 честные итоги commissioning и `case.finished` · **H9** контракт `needs_input` для всех инструментов (`spec_incomplete` → LLM, `ask_engineer` → человек, `human_text_problems` в обоих сервисах; `Уточните {item}` и `GNEW/GINJ/GPROD` удалены) · **1.2** композитор HITL не нужен (закрыт решением, H5) · **1.5b** Excel Extractor извлекает `new_wells` из таблицы параметров (`extract_well_parameters` → `data.excel.new_wells`), Activity и оркестратор хранят все книги кейса · машинность текста проверяется live: `run_live_five` валит кейс за snake_case/`key=value`/JSON в любом HITL и итоге · **1.3** единый write-path ответа (H2/H6) + структурный smoke `human-text-structure-smoke.js`.
 
-Осталось:
+**1.3 Единый write-path ответа** (ревизия 7). Activity `/answer` сохраняет файлы и зовёт оркестратор `action=resume` `source=human` с сырым `{choice,text,label,files}`; нормализация, журнал и `hitl.answered` — только в оркестраторе. `choice` с кнопки принимается как есть; свободный текст при вопросе с вариантами — `Interpret free-text answer` (`chainLlm` 1.9 + Structured Output, тот же Qwen, что Verify completion) → `{decision, confidence, paraphrase}`; `confidence < 0.8` — переспрос прозой. `parseKeepRemove` / `parse_keep_remove` удалены. `POST /cases/{id}/run` `action=resume` принимает `source: agent|system` и `task_id` (§3 п.10).
 
-1. **1.3 Единый write-path ответа.** Activity `/answer` сохраняет сырой ответ и файлы и зовёт оркестратор `resume`; нормализация и запись в журнал — только в оркестраторе. После этого `parseKeepRemove`/`parse_keep_remove` удаляются (H2, H6); в оркестраторе остаётся `choice`, а свободный текст без `choice` интерпретирует LLM (Information Extractor) в `{decision, confidence}`; деструктив при низкой уверенности — переспрос. **Проектное требование (§3 п.10):** `resume` принимает не только ответ человека, но и внешнее событие (`source: human|agent|system`, `task_id`) — путь, по которому долгий агент (расчёт на кластере) вернёт результат.
-2. 🟡 **Smoke машинности на структуре** (Node smoke по сгенерированному JSON: тексты fallback-вопросов и `status_message` в Code-нодах без машинных токенов). Live-часть уже есть в `run_live_five`; структурная — вместе с 1.3.
-
-Критерий: ✅ `run_live_five` без единого `Уточните <поле>`; ✅ combat 3 — один HITL (скважины вне Excel), параметры новых скважин из второй книги без вопросов; ⬜ один write-path, `parseKeepRemove` отсутствует в репозитории.
+Критерий: ✅ `run_live_five` без единого `Уточните <поле>`; ✅ combat 3 — один HITL (скважины вне Excel), параметры новых скважин из второй книги без вопросов; ✅ один write-path, `parseKeepRemove` отсутствует в `n8n/templates` и `mas-activity-service`.
 
 ### Фаза 1.5 — Результаты как артефакты агентов ✅ (ревизия 6)
 
@@ -161,7 +167,7 @@
 
 Критерий: ✅ `mas_gate.py --live` 6/6 (ревизия 6, `CASE-6a9ed4c4`…`CASE-6a9ed655`); ✅ `grep has_schedule_out` пуст; ✅ round-trip трёх видов артефактов.
 
-### Фаза 2 — Оркестратор без домена 🟡 (осталось 4–6 дней; следующая после 1.3)
+### Фаза 2 — Оркестратор без домена 🟡 (осталось 4–6 дней)
 
 Сделано (2.0): журнал `state.ledger` (O9), `progress` в решении (O10), инварианты `answer_not_applied` (O11) / `repeat_review` + `rework_reason` (O12) / `goal_flag_ignored` (O14) / `stall_review`, `max_steps` в Runtime Config (O8), проверенное завершение `Verify completion` с детерминированным вердиктом из `goal_parts` (O16), итог инженеру без идентификаторов с fallback на журнал (O15), `nestArtifacts` без потери книг.
 
@@ -269,12 +275,19 @@ Activity «Агенты» (список, карточка, health, `workflow_id`
 4. Правки: журнал шаг 0 = вложения инженера (имена файлов); `VERIFY_SYSTEM` не выделяет исходные файлы в часть цели; `agent_task.inputs` — только ссылки оркестратора (`handoff_message` — единственный канал к агенту). Smoke: `CASE-6a9ec6b3` (выдуманные `facts` не доходят) и `CASE-6a9ec5ef` (шаг 0 в `planner_input`).
 5. Повторный `--live` GREEN 6/6, `mismatch_count: 0`, без `completion_review`: `CASE-6a9ed4c4-26f1a4` (golden 1, finish без review), `CASE-6a9ed4fc-2bf47a`, `CASE-6a9ed54e-594585`, `CASE-6a9ed57d-e860b7` (combat 1: `1601`/`295R` → `1 FEB 2020` из Excel, не OCT/DEC), `CASE-6a9ed5be-7c5ab2`, `CASE-6a9ed655-43325b`.
 
+### Ревизия 7 (2026-09-07, вечер) — Фаза 1.3: единый write-path ответа
+
+1. **H2/H6 закрыты.** Activity `/answer` хранит только файлы и зовёт оркестратор `action=resume` `source=human` с сырым `{choice,text,label,files}`; `hitl.answers`, журнал и `hitl.answered` пишет только оркестратор (`Apply request extras` / `Apply interpreted answer`). `parseKeepRemove` / `parse_keep_remove` удалены; `normalizeHitlAnswer` / `compact_unlisted_policy` понимают только `choice` и `unlisted_wells_policy`. `POST /cases/{id}/run` `action=resume` принимает `source=agent|system` + `task_id` (журнал `kind:external`, событие `orchestrator.resume`); `source=human` там — 400 прозой.
+2. **Интерпретация свободного текста.** При вопросе с вариантами и ответе без `choice` — `Interpret free-text answer` (`chainLlm` 1.9 + Structured Output `{decision, confidence, paraphrase}`, тот же Qwen, что Verify completion); `confidence ≥ 0.8` и `decision` из списка вариантов → ответ принят с парафразом; иначе — переспрос прозой («Не удалось однозначно понять ответ…») с теми же вариантами, state не мутируется. Смок `human-text-structure-smoke.js` проверяет кириллические литералы Code-нод на машинные токены.
+3. **Live-находки после первого прогона 1.3:** харнесс «висел» на HITL до `LIVE_TIMEOUT`, потому что resume стал асинхронным (H11 → `LIVE_HITL_RESUME_S`); вторая книга Excel уходила за 20 INCLUDE-заглушек и не попадала в 4 чипа (R5 → Excel первым в обоих двойниках); двойной `case.created` (O18, `CASE-6a9ee318`) и пустой `hitl.request` поверх переспроса (O19, `CASE-6a9ee76b`) — оба от того, что `Expand events`/`Prepare Activity ack` научились читать Code-ноды; исправлено в генераторе, smoke на оба.
+4. **Гейт.** Offline GREEN (regen без дрейфа, 14 smokes, pytest Activity 157 / Schedule 57 / Excel 87, combat). Live GREEN 6/6, `mismatch_count: 0`, без повторных HITL и review: `CASE-6a9ee8f4-08a7e0` (golden 1), `CASE-6a9ee942-e8bf26` (golden 2), `CASE-6a9ee99b-e17659`, `CASE-6a9ee9cf-0788e8`, `CASE-6a9eea31-dae207`, `CASE-6a9eea8f-5b638c` (combat 0–3; combat 3 — один HITL, ответ кнопкой через `resume`). Interpret-ветка доказана отдельно (шесть кейсов жмут кнопку): `CASE-6a9ee706-8fe25c` — свободный текст «Убери их из прогноза, пожалуйста…» → `choice=remove`, парафраз в ленте, `.INC` = golden; `CASE-6a9eeaed-1e839f` — «Хм, даже не знаю…» → переспрос → кнопка → `done`, `.INC` = golden, в ленте ровно два `hitl.request` и один `hitl.answered`.
+5. Не сделано (осознанно): Фаза 2 не начата — отдельная сессия; `reconcileLedgerAnswers` оставлен как safety net для кейсов до 1.3.
+
 ### Ближайшие шаги (в этом порядке)
 
 Каждый пункт — отдельный бриф по `/mas-brief` (файл в `briefs/`); перед стартом и в конце — `python3 scripts/mas_gate.py [--live]`.
 
-1. Фаза 1.3 — единый write-path ответа с внешним `resume` (Activity хранит сырой ответ → оркестратор интерпретирует; `parseKeepRemove`/`parse_keep_remove` удалить) + структурный smoke машинности (Фаза 1 п.2).
-2. Фаза 2 — реестр исполняемый, промпт без маршрутов (O1/O3/O5), `plan_update` с `id` (O13), RAG без regex-тегов (O4); `MERGE` универсальный поверх общей модели артефактов (Фаза 1.5 сделана).
-3. Фаза 3.5 — smoke «агент вызвал инструмент, а не ответил текстом»; 3.6 — `INTENT_ALIASES` → RAG (A6).
-4. Фаза 4 — Activity «Агенты» и шаблон агента (после Фазы 2).
-5. Фаза 5 — метрики `guard`-срабатываний в Activity; LLM-судья читаемости ленты.
+1. Фаза 2 — реестр исполняемый, промпт без маршрутов (O1/O3/O5), `plan_update` с `id` (O13), RAG без regex-тегов (O4); `MERGE` универсальный поверх общей модели артефактов (Фаза 1.5 сделана).
+2. Фаза 3.5 — smoke «агент вызвал инструмент, а не ответил текстом»; 3.6 — `INTENT_ALIASES` → RAG (A6).
+3. Фаза 4 — Activity «Агенты» и шаблон агента (после Фазы 2).
+4. Фаза 5 — метрики `guard`-срабатываний в Activity; LLM-судья читаемости ленты.

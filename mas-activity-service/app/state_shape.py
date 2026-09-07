@@ -35,6 +35,17 @@ FILE_COUNT_KEYS = (
     "surface",
     "schedule_out",
 )
+_EXCEL_NAME_SUFFIXES = (".xlsx", ".xls", ".xlsm", ".xltx", ".xltm")
+
+
+def input_rank(role: str = "", filename: str = "") -> int:
+    """Excel workbooks before schedule includes so the first chips are the files that matter."""
+    name = str(filename or "").lower()
+    if str(role or "") == "excel" or name.endswith(_EXCEL_NAME_SUFFIXES):
+        return 0
+    if str(role or "") == "schedule_source":
+        return 1
+    return 2
 
 
 def role_for_artifact_id(artifact_id: str) -> str:
@@ -308,6 +319,7 @@ def artifact_cards(arts: Any, *, producers: dict[str, str] | None = None) -> lis
             "created_at": item.get("created_at"),
         }
         (inputs if kind == "input" else produced).append(card)
+    inputs.sort(key=lambda c: (input_rank(c["role"], c["filename"]), c["artifact_id"]))
     return inputs + produced
 
 
@@ -328,17 +340,20 @@ def artifact_text(arts: Any, artifact_id: str) -> str | None:
 
 
 def artifact_filenames(arts: Any) -> list[str]:
-    """Names of the engineer's inputs (what the case started from)."""
-    names: list[str] = []
+    """Names of the engineer's inputs (what the case started from). Excel first."""
+    rows: list[tuple[int, int, str]] = []
     seen: set[str] = set()
-    for item in flatten_artifacts(arts).values():
+    for i, item in enumerate(flatten_artifacts(arts).values()):
         if not isinstance(item, dict) or artifact_kind(item) != "input":
             continue
         name = str(item.get("filename") or "").strip()
-        if name and name not in seen:
-            seen.add(name)
-            names.append(name)
-    return names
+        if not name or name in seen:
+            continue
+        seen.add(name)
+        role = str(item.get("role") or role_for_artifact_id(str(item.get("artifact_id") or "")))
+        rows.append((input_rank(role, name), i, name))
+    rows.sort()
+    return [name for _rank, _i, name in rows]
 
 
 def slim_excel_data(data: Any) -> Any:
@@ -416,49 +431,22 @@ def is_unlisted_wells_gate(qid: Any, question: Any = "") -> bool:
     return "unlisted" in ident or "unlisted" in q or "не из excel" in q or "лишн" in q
 
 
-def parse_keep_remove(blob: Any, keyed: bool = False) -> str:
-    """Same rules as n8n ``parseKeepRemove``: labeled enum, then gated keep/remove.
-
-    English tokens use word boundaries so ``upkeep`` / ``removed`` do not match.
-    """
-    text = str(blob or "").lower()
-    match = re.search(r"unlisted_wells_policy\s*[:=]\s*(keep|remove)", text)
-    if match:
-        return match.group(1)
-    keyed_ok = keyed or "unlisted" in text or "лишн" in text or "не из excel" in text
-    if not keyed_ok:
-        return ""
-    if re.search(r"остав|сохран", text) or re.search(r"\bkeep\b", text):
-        return "keep"
-    if re.search(r"убер|удал|выкин|выкинь", text) or re.search(r"\bremove\b", text):
-        return "remove"
-    return ""
-
-
 def compact_unlisted_policy(answers: Any) -> str | None:
-    """Same rules as n8n ``readUnlistedWellsPolicy``: gate on the answer key, not a concat."""
+    """Same rules as n8n ``readUnlistedWellsPolicy``: only explicit choice / policy fields.
+
+    Free-text interpretation is the orchestrator's LLM pass (Phase 1.3) — this helper
+    never regex-parses the engineer's words.
+    """
     src = answers if isinstance(answers, dict) else {}
     for key, val in src.items():
-        keyed = is_unlisted_wells_gate(key, "")
-        if isinstance(val, dict):
-            direct = str(val.get("unlisted_wells_policy") or "").lower()
-            if direct in {"keep", "remove"}:
-                return direct
-            # Option button in Activity: {"choice": "keep"|"remove", "text": "<label>"}
-            choice = str(val.get("choice") or "").lower()
-            if keyed and choice in {"keep", "remove"}:
-                return choice
-            nested_src = val["raw"] if val.get("raw") is not None else val
-            nested_blob = (
-                nested_src if isinstance(nested_src, str) else json.dumps(nested_src, ensure_ascii=False)
-            )
-            nested = parse_keep_remove(nested_blob, keyed)
-            if nested:
-                return nested
+        if not isinstance(val, dict):
             continue
-        found = parse_keep_remove(val, keyed)
-        if found:
-            return found
+        direct = str(val.get("unlisted_wells_policy") or "").lower()
+        if direct in {"keep", "remove"}:
+            return direct
+        choice = str(val.get("choice") or "").lower()
+        if is_unlisted_wells_gate(key, "") and choice in {"keep", "remove"}:
+            return choice
     return None
 
 

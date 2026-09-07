@@ -8,7 +8,7 @@ description: Runs the NOVATEK RE MASter verification gate (workflow regeneration
 ## Run
 
 ```bash
-python3 scripts/mas_gate.py                 # offline: regen drift, 13 smokes, 3 pytest suites, combat engine (~1–2 min)
+python3 scripts/mas_gate.py                 # offline: regen drift, n8n/tests/*-smoke.js, 3 pytest suites, combat engine (~1–2 min)
 python3 scripts/mas_gate.py --live          # + lab redeploy + run_live_five (6 cases, ~10 min)
 python3 scripts/mas_gate.py --live --cases combat_case3
 python3 scripts/mas_gate.py --only smokes,pytest --keep-going

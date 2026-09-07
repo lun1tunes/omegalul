@@ -173,6 +173,84 @@ const verify_input=`${goalAndJournal}\n\nПредложенный итог ор�
 return [{json:{...ctx, verify_input, proposed_summary:proposed}}];
 """
 
+INTERPRET_SCHEMA = {
+    "type": "object",
+    "additionalProperties": True,
+    "required": ["decision", "confidence", "paraphrase"],
+    "properties": {
+        "decision": {"type": "string"},
+        "confidence": {"type": "number"},
+        "paraphrase": {"type": "string"},
+    },
+}
+
+INTERPRET_SYSTEM = """Ты понимаешь свободный ответ инженера на вопрос, у которого уже есть варианты.
+
+Тебе даны: текст вопроса, варианты (как их видит инженер) и его слова.
+
+Верни JSON:
+- decision — значение выбранного варианта (то, что стоит за кнопкой: keep, remove, accept, rework или иное value из списка). Не придумывай вариант, которого нет.
+- confidence — число от 0 до 1. Если ответ двусмысленный, двусмысленно-вежливый или не про этот вопрос — ниже 0.8.
+- paraphrase — одна русская фраза, что инженер имел в виду, без идентификаторов и без JSON.
+
+Если не уверен — decision оставь пустым или unclear, confidence ниже 0.8. Не угадывай деструктив (убрать, удалить), если инженер этого явно не сказал.
+"""
+
+APPLY_INTERPRETED = STATE_SHAPE_JS + r"""
+const prev=$('Apply request extras').first().json||{};
+const llm=$('Interpret free-text answer').first().json||{};
+const obj=v=>v&&typeof v==='object'&&!Array.isArray(v);
+const parse=v=>{if(obj(v))return v;try{const p=JSON.parse(String(v||''));return obj(p)?p:{}}catch{return {}}};
+const decision=parse(llm.output||llm.text||llm);
+let state=sanitizeState(prev.state);
+const qid=String(prev.interpret_qid||'Q-1');
+const q0=obj(prev.interpret_question)?prev.interpret_question:{};
+const raw=prev.interpret_raw;
+const applied=applyInterpretedDecision(qid,q0,raw,decision);
+const hitl=state.hitl&&typeof state.hitl==='object'?{...state.hitl}:{pending:false,questions:[],answers:{}};
+const questions=Array.isArray(hitl.questions)?hitl.questions:[];
+const answers={...(hitl.answers&&typeof hitl.answers==='object'?hitl.answers:{})};
+if(!applied.accepted){
+  const q=buildClarifyQuestion(q0);
+  state.hitl={pending:true,questions:[q],answers};
+  state.status='waiting_user';
+  state.version=Number(state.version||0)+1;
+  const persistEvents=[[prev.case_id,'','hitl.request','orchestrator','','waiting_user',q.question,'',JSON.stringify(q)]];
+  return [{json:{
+    ...prev,
+    state,
+    did_resume:true,
+    needs_interpret:false,
+    next_status:'waiting_user',
+    should_continue:false,
+    update_sql_parameters:[JSON.stringify(state),'waiting_user',prev.case_id],
+    persist_events:persistEvents,
+    event_sql_parameters:persistEvents[0],
+    human_gate:{gate_id:q.question_id,kind:q.kind,reason:q.question,expected_version:state.version,questions:[q]}
+  }}];
+}
+answers[qid]=applied.answer;
+state.hitl={pending:false,questions,answers};
+state.status='running';
+state.version=Number(state.version||0)+1;
+const reviewAccept=isResultReviewGate(qid)&&humanAnswerChoice(applied.answer)==='accept';
+ledgerPush(state,{kind:'human',step:Number(state.step_count||0),question_id:qid,question:String(q0.question||'').slice(0,200),answer:humanAnswerText(applied.answer).slice(0,300),...(reviewAccept?{review_accept:true}:{})});
+state.ledger.last_human_step=Number(state.step_count||0);
+state.ledger.stall_count=0;
+const said=humanAnswerText(applied.answer);
+const persistEvents=[[prev.case_id,'','hitl.answered','user','','answered',said?('Пользователь ответил: '+said):'Пользователь ответил','',JSON.stringify({question_id:qid,answer:applied.answer})]];
+return [{json:{
+  ...prev,
+  state,
+  did_resume:true,
+  needs_interpret:false,
+  next_status:'running',
+  update_sql_parameters:[JSON.stringify(state),'running',prev.case_id],
+  persist_events:persistEvents,
+  event_sql_parameters:persistEvents[0]
+}}];
+"""
+
 
 def nid(name: str) -> str:
     return str(uuid.uuid5(uuid.NAMESPACE_URL, f"mas-orch:{name}"))
@@ -332,10 +410,14 @@ const action=String(body.action||raw.action||'step').trim().toLowerCase();
 let caseId=String(body.case_id||raw.case_id||'').trim();
 const goal=String(body.task_description||body.goal||raw.task_description||raw.goal||'').trim();
 const taskName=String(body.task_name||raw.task_name||'').trim();
-const humanResponse=String(body.human_response||raw.human_response||'');
+const hrRaw=body.human_response!=null?body.human_response:(raw.human_response!=null?raw.human_response:'');
+const humanResponse=typeof hrRaw==='string'?hrRaw:(hrRaw==null?'':JSON.stringify(hrRaw));
 const gateId=String(body.gate_id||raw.gate_id||'');
 const expectedVersion=body.expected_version!=null?Number(body.expected_version):(raw.expected_version!=null?Number(raw.expected_version):null);
 const requestedBy=String(body.requested_by||raw.requested_by||'');
+const resumeSource=String(body.source||raw.source||(action==='resume'?'human':'')).trim().toLowerCase();
+const resumeTaskId=String(body.task_id||raw.task_id||'');
+const resumeAgentId=String(body.agent_id||raw.agent_id||'');
 const activityBaseUrl=String(cfg.activity_base_url||raw.activity_base_url||'').trim();
 const executionId=String($execution.id||'');
 const readinessId=!caseId||caseId==='CASE-readiness-probe';
@@ -373,6 +455,9 @@ return [{json:{
   gate_id:gateId,
   expected_version:Number.isFinite(expectedVersion)?expectedVersion:null,
   requested_by:requestedBy,
+  source:resumeSource,
+  task_id:resumeTaskId,
+  agent_id:resumeAgentId,
   activity_base_url:activityBaseUrl,
   is_probe:false,
   is_status:action==='status',
@@ -403,13 +488,14 @@ const state={
   step_count:0,
   version:1
 };
-const persistEvents=[[req.case_id,'','case.created','user','','new',('Принял задачу: '+goal).slice(0,200),'',JSON.stringify({requested_by:req.requested_by||'',task_name:req.task_name||'',note:'orchestrator start; files stay in Activity /cases/{id}/artifacts'})]];
+/* `case.created` is written by Activity (`POST /cases` initial_event) before it calls action=create;
+   the orchestrator must not add a second one (CASE-6a9ee318: two «Принял задачу» rows). */
 return [{json:{
   ...req,
   state,
   create_sql_parameters:[req.case_id, JSON.stringify(state), 'running'],
-  persist_events:persistEvents,
-  event_sql_parameters:persistEvents[0]
+  persist_events:[],
+  event_sql_parameters:[]
 }}];
 """
 
@@ -476,26 +562,74 @@ if(req.is_resume===true){
       }:null
     }}];
   }
+  const source=String(req.source||'human').toLowerCase();
+  if(source==='agent'||source==='system'){
+    const taskId=String(req.task_id||'');
+    const agentId=String(req.agent_id||'');
+    const summary=humanAnswerText(decodeHitlAnswer(String(req.human_response||'').trim()))||'событие';
+    ledgerPush(state,{kind:'external',source,task_id:taskId,agent_id:agentId,step:Number(state.step_count||0),summary:String(summary).slice(0,300)});
+    state.status='running';
+    state.version=Number(state.version||0)+1;
+    state.ledger.last_human_step=Number(state.step_count||0);
+    state.ledger.stall_count=0;
+    const persistEvents=[[req.case_id,taskId,'orchestrator.resume',source,agentId,'running','Продолжение по событию агента или системы','',JSON.stringify({source,task_id:taskId})]];
+    return [{json:{
+      ...req,
+      state,
+      did_resume:true,
+      needs_interpret:false,
+      is_status:false,
+      next_status:'running',
+      update_sql_parameters:[JSON.stringify(state),'running',req.case_id],
+      persist_events:persistEvents,
+      event_sql_parameters:persistEvents[0]
+    }}];
+  }
   const answer=decodeHitlAnswer(String(req.human_response||'').trim());
   const hitl=state.hitl&&typeof state.hitl==='object'?state.hitl:{pending:false,questions:[],answers:{}};
   const questions=Array.isArray(hitl.questions)?hitl.questions:[];
   const qid=String(req.gate_id||(questions[0]&&questions[0].question_id)||'Q-1');
   const q0=questions.find(q=>q&&String(q.question_id||'')===qid)||questions[0]||{};
+  const stored=normalizeHitlAnswer(qid, answer, q0.question);
+  const choice=humanAnswerChoice(stored);
+  const opts=optionValues(q0);
+  const needsInterpret=!choice&&opts.length>0&&Boolean(humanAnswerText(stored).trim());
+  if(needsInterpret){
+    const optionLines=(Array.isArray(q0.options)?q0.options:[]).map(o=>{
+      if(o&&typeof o==='object'&&!Array.isArray(o)) return `- ${o.label||o.value||''}`;
+      return `- ${o}`;
+    }).join('\n');
+    const interpret_input=`Вопрос инженеру:\n${String(q0.question||'')}\n\nВарианты:\n${optionLines}\n\nОтвет инженера:\n${humanAnswerText(stored)}\n`;
+    return [{json:{
+      ...req,
+      state,
+      did_resume:true,
+      needs_interpret:true,
+      is_status:false,
+      next_status:String(state.status||'waiting_user'),
+      interpret_qid:qid,
+      interpret_raw:stored,
+      interpret_question:q0,
+      interpret_input,
+      should_continue:false
+    }}];
+  }
   const answers={...(hitl.answers&&typeof hitl.answers==='object'?hitl.answers:{})};
-  answers[qid]=normalizeHitlAnswer(qid, answer, q0.question);
+  answers[qid]=stored;
   state.hitl={pending:false,questions,answers};
   state.status='running';
   state.version=Number(state.version||0)+1;
-  /* Journal: a human answer is new input — it unlocks re-delegation and resets stall protection. */
-  const reviewAccept=isResultReviewGate(qid)&&humanAnswerChoice(answers[qid])==='accept';
-  ledgerPush(state,{kind:'human',step:Number(state.step_count||0),question_id:qid,question:String(q0.question||'').slice(0,200),answer:humanAnswerText(answers[qid]).slice(0,300),...(reviewAccept?{review_accept:true}:{})});
+  const reviewAccept=isResultReviewGate(qid)&&humanAnswerChoice(stored)==='accept';
+  ledgerPush(state,{kind:'human',step:Number(state.step_count||0),question_id:qid,question:String(q0.question||'').slice(0,200),answer:humanAnswerText(stored).slice(0,300),...(reviewAccept?{review_accept:true}:{})});
   state.ledger.last_human_step=Number(state.step_count||0);
   state.ledger.stall_count=0;
-  const persistEvents=[[req.case_id,'','hitl.answered','user','','answered',answer?('Пользователь ответил: '+(typeof answer==='string'?answer:JSON.stringify(answer))):'Пользователь ответил','',JSON.stringify({question_id:qid,answer:answers[qid]})]];
+  const said=humanAnswerText(stored);
+  const persistEvents=[[req.case_id,'','hitl.answered','user','','answered',said?('Пользователь ответил: '+said):'Пользователь ответил','',JSON.stringify({question_id:qid,answer:stored})]];
   return [{json:{
     ...req,
     state,
     did_resume:true,
+    needs_interpret:false,
     is_status:false,
     next_status:'running',
     update_sql_parameters:[JSON.stringify(state),'running',req.case_id],
@@ -533,12 +667,14 @@ PREPARE_DECISION = STATE_SHAPE_JS + (
     "const ORCH_RAG_TOP_K=" + str(int(_ORCH_SEL["top_k"])) + ";\n"
     + r"""
 const req=$('Normalize step request').first().json||{};
+const interpreted=(()=>{try{return $('Apply interpreted answer').first().json}catch{return null}})();
 const extras=(()=>{try{return $('Apply request extras').first().json}catch{return null}})();
 const load=$('Load case').first().json||{};
 const parse=v=>{if(v&&typeof v==='object')return v;try{return JSON.parse(String(v||'{}'))}catch{return {}}};
-const rawState=(extras&&extras.state&&typeof extras.state==='object')?extras.state:parse(load.state||load.State||{});
+const fromResume=(interpreted&&interpreted.state)?interpreted:extras;
+const rawState=(fromResume&&fromResume.state&&typeof fromResume.state==='object')?fromResume.state:parse(load.state||load.State||{});
 const state=sanitizeState(rawState);
-const status=String((extras&&extras.next_status)||load.status||state.status||'running');
+const status=String((fromResume&&fromResume.next_status)||load.status||state.status||'running');
 const registry=$('Load agent registry').all().map(i=>i.json||{}).filter(r=>r&&r.agent_id);
 const compact=buildCompact(state);
 /* No rule-based routing hint here: the Decision LLM reasons from goal + journal + state + registry + RAG policy cards. */
@@ -826,7 +962,12 @@ return [{json:{
 WRITE_EVENTS = r"""
 const fromParse=(()=>{try{return $('Parse decision').first().json}catch{return null}})();
 const fromMerge=(()=>{try{return $('Merge agent result').first().json}catch{return null}})();
-const prev=fromMerge||fromParse||$json||{};
+const fromInterp=(()=>{try{return $('Apply interpreted answer').first().json}catch{return null}})();
+const fromExtras=(()=>{try{return $('Apply request extras').first().json}catch{return null}})();
+const withEvents=v=>v&&Array.isArray(v.persist_events)&&v.persist_events.length?v:null;
+/* Resume events (hitl.answered / hitl.request re-ask / orchestrator.resume) come from Apply interpreted answer or
+   Apply request extras. `case.created` is Activity's — Prepare start case is deliberately not a source here. */
+const prev=fromMerge||fromParse||withEvents(fromInterp)||withEvents(fromExtras)||$json||{};
 const rows=Array.isArray(prev.persist_events)?prev.persist_events:[];
 if(!rows.length) return [{json:{...prev,p1:'',p2:'',p3:'',p4:'',p5:'',p6:'',p7:'',p8:'',p9:'{}'}}];
 return rows.map(params=>{
@@ -1035,10 +1176,16 @@ ORCH_LAYOUT: dict[str, tuple[int, int]] = {
     "Apply request extras": (2 * CX, 3 * CY),
     "Status only?": (3 * CX, 3 * CY),
     "Resume persist?": (4 * CX, 3 * CY),
+    "Needs interpret?": (7 * CX, 3 * CY),
+    "Interpret free-text answer": (8 * CX, 3 * CY),
+    "Answer interpretation Structured Output": (8 * CX, 2 * CY),
+    "Apply interpreted answer": (7 * CX, 2 * CY),
     "Update case after resume": (5 * CX, 3 * CY),
     "Expand resume events": (6 * CX, 3 * CY),
     "Insert resume events": (5 * CX, 4 * CY),
     "Restore after resume": (6 * CX, 4 * CY),
+    "Resume to decision?": (6 * CX, 2 * CY),
+    "Not a resume?": (3 * CX, 4 * CY),
     "Decision Chat Model — configure in UI": (2 * CX, 4 * CY),
     "Decision Structured Output": (3 * CX, 4 * CY),
     "Load agent registry": (0, 5 * CY),
@@ -1089,7 +1236,7 @@ def main() -> None:
         note(
             "edit after import",
             (-200, -420),
-            "## edit after import\n\n**Orchestrator — MAS** — thin loop:\n- Bind Postgres on load/insert/update\n- Bind **Qwen** OpenAI-compatible credential on Decision Chat Model\n- Bind inbound header auth on webhook **and** POST continue run\n- Bind **Runtime endpoints** → `MAS — Runtime Config` (один Set URL на весь контур)\n- Bind **Call Excel Extractor** → `Agent — Excel Extractor` (executeWorkflow)\n- Bind **Call Schedule Builder** → `Agent — Schedule Builder` (executeWorkflow)\n- Bind **Call Knowledge Retrieval** → `MAS — Knowledge Retrieval` (срез `orchestrator_routing` / `routing_card`; не excel_protocol и не schedule_mvp)\n- Excel `X-API-Key` — credential на Agent — Excel Extractor, не этот workflow\n\n`action`: probe | status | start | create | step | resume\n- Activity `/cases` stores files; specialists fetch `/cases/{id}/artifacts/{id}` from their FastAPI tools. n8n never carries binaries.\n- **status** loads case and returns `human_gate` without LLM\n- Decision is Basic LLM Chain + Structured Output (no Agent tools)\n- Loop: **POST continue run** → own webhook (`orchestrator_step_url` in Runtime Config). Activity starts/resumes cases; it does not drive the step loop.\n\nOne execution = one step.",
+            "## edit after import\n\n**Orchestrator — MAS** — thin loop:\n- Bind Postgres on load/insert/update\n- Bind **Qwen** OpenAI-compatible credential on Decision Chat Model (also Interpret free-text answer + Verify completion)\n- Bind inbound header auth on webhook **and** POST continue run\n- Bind **Runtime endpoints** → `MAS — Runtime Config` (один Set URL на весь контур)\n- Bind **Call Excel Extractor** → `Agent — Excel Extractor` (executeWorkflow)\n- Bind **Call Schedule Builder** → `Agent — Schedule Builder` (executeWorkflow)\n- Bind **Call Knowledge Retrieval** → `MAS — Knowledge Retrieval` (срез `orchestrator_routing` / `routing_card`; не excel_protocol и не schedule_mvp)\n- Excel `X-API-Key` — credential на Agent — Excel Extractor, не этот workflow\n\n`action`: probe | status | start | create | step | resume\n- **resume** `source`: human (Activity `/answer`) | agent | system (`POST /cases/{id}/run`). Кнопка HITL = `choice`; свободный текст при вариантах — Interpret free-text answer (тот же Qwen).\n- Activity `/cases` stores files; specialists fetch `/cases/{id}/artifacts/{id}` from their FastAPI tools. n8n never carries binaries.\n- **status** loads case and returns `human_gate` without LLM\n- Decision is Basic LLM Chain + Structured Output (no Agent tools)\n- Loop: **POST continue run** → own webhook (`orchestrator_step_url` in Runtime Config). Activity starts/resumes cases; it does not drive the step loop.\n\nOne execution = one step.",
             480,
             420,
             1,
@@ -1161,6 +1308,35 @@ def main() -> None:
         code("Apply request extras", (1120, -120), APPLY_EXTRAS),
         if_true("Status only?", (1280, -120), "={{ Boolean($json.is_status) }}"),
         if_true("Resume persist?", (1280, 40), "={{ Boolean($json.did_resume) }}"),
+        if_true("Needs interpret?", (1480, -80), "={{ Boolean($json.needs_interpret) }}"),
+        node(
+            "Interpret free-text answer",
+            "@n8n/n8n-nodes-langchain.chainLlm",
+            1.9,
+            (1680, -80),
+            {
+                "promptType": "define",
+                "text": "={{ $json.interpret_input }}",
+                "hasOutputParser": True,
+                "needsFallback": False,
+                "messages": {
+                    "messageValues": [
+                        {
+                            "type": "SystemMessagePromptTemplate",
+                            "message": INTERPRET_SYSTEM,
+                        }
+                    ]
+                },
+            },
+        ),
+        node(
+            "Answer interpretation Structured Output",
+            "@n8n/n8n-nodes-langchain.outputParserStructured",
+            1.3,
+            (1680, -240),
+            structured_parser_params(json.dumps(INTERPRET_SCHEMA, ensure_ascii=False)),
+        ),
+        code("Apply interpreted answer", (1880, -80), APPLY_INTERPRETED),
         postgres(
             "Update case after resume",
             (1480, 40),
@@ -1178,9 +1354,11 @@ def main() -> None:
         code(
             "Restore after resume",
             (2020, 40),
-            "const prev=$('Apply request extras').first().json||{};\nreturn [{json:prev}];",
+            "let prev=null;\ntry{const item=$('Apply interpreted answer').first(); if(item&&item.json&&item.json.did_resume) prev=item.json;}catch(e){}\nif(!prev){try{prev=$('Apply request extras').first().json||{}}catch(e){prev={}}}\nreturn [{json:prev}];",
             executeOnce=True,
         ),
+        if_true("Resume to decision?", (1840, 200), "={{ String($json.next_status || '') === 'running' }}"),
+        if_true("Not a resume?", (1120, 200), "={{ Boolean($json.is_resume) !== true }}"),
         postgres(
             "Load agent registry",
             (960, 80),
@@ -1364,6 +1542,9 @@ def main() -> None:
             r"""const pick=()=>{
   try{const m=$('Merge agent result').first().json; if(m&&m.case_id) return m;}catch{}
   try{const n=$('No agent this step').first().json; if(n&&n.case_id) return n;}catch{}
+  /* Interpret path: Apply interpreted answer owns the persisted events (hitl.answered / re-ask). Reading
+     Apply request extras here (needs_interpret, no events) posted an empty hitl.request ack (CASE-6a9ee76b). */
+  try{const i=$('Apply interpreted answer').first().json; if(i&&i.case_id&&i.did_resume) return i;}catch{}
   try{const a=$('Apply request extras').first().json; if(a&&a.case_id) return a;}catch{}
   try{const r=$('Normalize step request').first().json; if(r&&r.case_id) return r;}catch{}
   return $json||{};
@@ -1421,12 +1602,23 @@ return [{json:{...x,activity_sync:Boolean(x.case_id&&!x.is_probe&&x.activity_bas
     connect(connections, "Apply request extras", "Status only?")
     connect(connections, "Status only?", "Prepare Activity ack", si=0)
     connect(connections, "Status only?", "Resume persist?", si=1)
-    connect(connections, "Resume persist?", "Update case after resume", si=0)
-    connect(connections, "Resume persist?", "Load agent registry", si=1)
+    connect(connections, "Resume persist?", "Needs interpret?", si=0)
+    connect(connections, "Resume persist?", "Not a resume?", si=1)
+    connect(connections, "Not a resume?", "Load agent registry", si=0)
+    connect(connections, "Not a resume?", "Prepare Activity ack", si=1)
+    connect(connections, "Needs interpret?", "Interpret free-text answer", si=0)
+    connect(connections, "Needs interpret?", "Update case after resume", si=1)
+    connect(connections, "Interpret free-text answer", "Apply interpreted answer")
+    connect(connections, "Apply interpreted answer", "Update case after resume")
+    connect(connections, "Decision Chat Model — configure in UI", "Interpret free-text answer", out="ai_languageModel", si=0, tin="ai_languageModel")
+    connect(connections, "Decision Chat Model — configure in UI", "Answer interpretation Structured Output", out="ai_languageModel", si=0, tin="ai_languageModel")
+    connect(connections, "Answer interpretation Structured Output", "Interpret free-text answer", out="ai_outputParser", tin="ai_outputParser")
     connect(connections, "Update case after resume", "Expand resume events")
     connect(connections, "Expand resume events", "Insert resume events")
     connect(connections, "Insert resume events", "Restore after resume")
-    connect(connections, "Restore after resume", "Load agent registry")
+    connect(connections, "Restore after resume", "Resume to decision?")
+    connect(connections, "Resume to decision?", "Load agent registry", si=0)
+    connect(connections, "Resume to decision?", "Prepare Activity ack", si=1)
     connect(connections, "Load agent registry", "Prepare decision context")
     connect(connections, "Prepare decision context", "Call Knowledge Retrieval")
     connect(connections, "Call Knowledge Retrieval", "Attach orchestrator RAG evidence")

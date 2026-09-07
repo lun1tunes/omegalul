@@ -121,6 +121,11 @@
         Object.entries(value).forEach(([k, v]) => walk(v, k));
       }
     })(arts, "");
+    names.sort((a, b) => {
+      const ra = /\.(xlsx|xls|xlsm|xltx|xltm)$/i.test(a) ? 0 : 1;
+      const rb = /\.(xlsx|xls|xlsm|xltx|xltm)$/i.test(b) ? 0 : 1;
+      return ra - rb;
+    });
     return names;
   }
 
@@ -541,6 +546,17 @@
   }
   function cssEscape(s) { return typeof CSS !== "undefined" && CSS.escape ? CSS.escape(s) : s.replace(/([:>])/g, "\\$1"); }
 
+  function prioritizeInputCards(cards) {
+    const rank = (card) => {
+      const role = String(card.role || "");
+      const name = String(card.filename || "").toLowerCase();
+      if (role === "excel" || /\.(xlsx|xls|xlsm|xltx|xltm)$/i.test(name)) return 0;
+      if (role === "schedule_source") return 1;
+      return 2;
+    };
+    return (cards || []).slice().sort((a, b) => rank(a) - rank(b));
+  }
+
   function fileChip(card) {
     const name = text(card.filename || card.artifact_id);
     const el = document.createElement(card.download_path ? "a" : "span");
@@ -577,7 +593,7 @@
       files.hidden = true;
       if (key === "input") {
         caption.textContent = frame.input?.goal || "Нет описания задачи";
-        const cards = inputCards.length ? inputCards : (frame.input?.files || []).map((f) => ({ filename: f }));
+        const cards = prioritizeInputCards(inputCards.length ? inputCards : (frame.input?.files || []).map((f) => ({ filename: f })));
         if (cards.length) { files.hidden = false; for (const c of cards.slice(0, 4)) files.append(fileChip(c)); }
       } else if (key === "output") {
         caption.textContent = frame.output?.result || (complete ? "Нет текста итога" : "Итог появится, когда оркестратор завершит задачу");

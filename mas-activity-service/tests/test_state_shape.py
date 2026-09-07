@@ -12,7 +12,6 @@ from app.state_shape import (
     flatten_artifacts,
     is_unlisted_wells_gate,
     nest_artifacts,
-    parse_keep_remove,
     slim_excel_data,
 )
 
@@ -54,7 +53,35 @@ def test_artifact_cards_roundtrip_three_kinds_two_producers() -> None:
     assert artifact_text(nested, "diff") == "--- a\n+++ b\n"
     assert artifact_text(nested, "excel") is None
     # Inputs are what the case started from; agent outputs are not "attached files".
-    assert sorted(artifact_filenames(nested)) == ["base.inc", "dates.xlsx", "params.xlsx"]
+    # Excel (including the second workbook) ranks above INCLUDE stubs — combat 3 has ~20 of those.
+    assert artifact_filenames(nested) == ["dates.xlsx", "params.xlsx", "base.inc"]
+    assert [c["filename"] for c in cards if c["kind"] == "input"] == ["dates.xlsx", "params.xlsx", "base.inc"]
+
+
+def test_excel_inputs_rank_above_include_stubs() -> None:
+    """Combat 3: second workbook is attachments[role=excel]; chips show 4 files — Excel must lead."""
+    nested = nest_artifacts(
+        {
+            "excel": {"artifact_id": "excel", "filename": "case3_half_plus_new.xlsx", "role": "excel", "kind": "input", "producer": "user"},
+            "schedule_source": {"artifact_id": "schedule_source", "filename": "MONITORING_FDP.INC", "role": "schedule_source", "kind": "input", "producer": "user"},
+            **{
+                f"schedule_source_{i}": {
+                    "artifact_id": f"schedule_source_{i}",
+                    "filename": f"STUB{i}.INC",
+                    "role": "schedule_include",
+                    "kind": "input",
+                    "producer": "user",
+                }
+                for i in range(1, 21)
+            },
+            "excel_1": {"artifact_id": "excel_1", "filename": "case3_new_wells_params.xlsx", "role": "excel", "kind": "input", "producer": "user"},
+        }
+    )
+    names = artifact_filenames(nested)
+    assert names[:3] == ["case3_half_plus_new.xlsx", "case3_new_wells_params.xlsx", "MONITORING_FDP.INC"]
+    inputs = [c["filename"] for c in artifact_cards(nested) if c["kind"] == "input"]
+    assert inputs[:3] == names[:3]
+    assert "case3_new_wells_params.xlsx" in inputs[:4]
 
 
 def test_legacy_state_defaults_kind_and_producer() -> None:
@@ -162,12 +189,13 @@ def test_compact_reads_unlisted_policy_from_hitl_answer() -> None:
         {
             "hitl": {
                 "pending": False,
-                "answers": {"unlisted_wells_policy": "unlisted_wells_policy=remove"},
+                "answers": {"unlisted_wells_policy": {"choice": "remove", "text": "Убрать из прогноза"}},
             }
         }
     )
     assert ctx["unlisted_wells_policy"] == "remove"
     assert ctx["hitl_answer_ids"] == ["unlisted_wells_policy"]
+    # Free text is not a policy until the orchestrator interpret pass writes choice.
     keep = compact_decision_context(
         {
             "hitl": {
@@ -176,26 +204,19 @@ def test_compact_reads_unlisted_policy_from_hitl_answer() -> None:
             }
         }
     )
-    assert keep["unlisted_wells_policy"] == "keep"
+    assert keep["unlisted_wells_policy"] is None
 
 
-def test_unlisted_policy_uses_word_boundaries_like_n8n() -> None:
-    assert parse_keep_remove("upkeep of extra wells", keyed=True) == ""
-    assert parse_keep_remove("housekeeper removed extras", keyed=True) == ""
-    assert parse_keep_remove("keep extra wells", keyed=True) == "keep"
-    assert parse_keep_remove("remove extras", keyed=True) == "remove"
-    assert parse_keep_remove("keep extra wells", keyed=False) == ""
-    assert parse_keep_remove("оставь лишние скважины") == "keep"
+def test_unlisted_policy_is_choice_only_not_regex() -> None:
     assert compact_unlisted_policy({"unlisted_wells_policy": "upkeep of extra wells"}) is None
-    assert compact_unlisted_policy({"unlisted_wells_policy": "keep extra wells"}) == "keep"
-    assert compact_unlisted_policy({"unlisted_wells_policy": "оставь"}) == "keep"
-    assert compact_unlisted_policy({"unlisted_wells_policy": "убери"}) == "remove"
+    assert compact_unlisted_policy({"unlisted_wells_policy": "keep extra wells"}) is None
+    assert compact_unlisted_policy({"unlisted_wells_policy": "оставь"}) is None
+    assert compact_unlisted_policy({"unlisted_wells_policy": "убери"}) is None
+    assert compact_unlisted_policy({"unlisted_wells_policy": "unlisted_wells_policy=remove"}) is None
     assert compact_unlisted_policy({"Q-1": "please keep going"}) is None
     assert compact_unlisted_policy({"keep_unlisted": "ok"}) is None
     assert compact_unlisted_policy({"Q-1": {"unlisted_wells_policy": "keep"}}) == "keep"
-    assert compact_unlisted_policy({"unlisted_wells_policy": {"raw": "remove extras"}}) == "remove"
-    assert compact_unlisted_policy({"Q-1": {"raw": "keep extra wells"}}) is None
-    # Option button from the Activity HITL panel
+    assert compact_unlisted_policy({"unlisted_wells_policy": {"raw": "remove extras"}}) is None
     assert compact_unlisted_policy({"unlisted_wells_policy": {"choice": "remove", "text": "Убрать из прогноза"}}) == "remove"
     assert compact_unlisted_policy({"Q-parent-group": {"choice": "remove", "text": "x"}}) is None
     assert is_unlisted_wells_gate("unlisted_wells_policy", "") is True

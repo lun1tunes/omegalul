@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import asyncio
+import json
 import os
 from pathlib import Path
 
@@ -819,8 +820,14 @@ def test_hitl_answer_and_agent_event(monkeypatch) -> None:
     from app.settings import Settings
     from app import control_plane
 
+    captured: list[dict] = []
+
+    async def fake_resume(case_id, extra=None):
+        captured.append({"case_id": case_id, **(extra or {})})
+
     monkeypatch.setattr("app.cases_api.get_settings", lambda: Settings())
     monkeypatch.setattr("app.cases_api._invoke_create", lambda case_id: None)
+    monkeypatch.setattr("app.cases_api._invoke_resume", fake_resume)
     res = client.post("/cases", data={"task_description": "HITL", "requested_by": "tester"})
     case_id = res.json()["case_id"]
     control_plane.update_case(
@@ -841,24 +848,38 @@ def test_hitl_answer_and_agent_event(monkeypatch) -> None:
         },
     )
     assert posted.status_code == 200
+    before = control_plane.get_case(case_id)
     ans = client.post(f"/cases/{case_id}/answer", json={"question_id": "Q-1", "answer": "DD.MM.YYYY"})
     assert ans.status_code == 200
+    assert ans.json()["status"] == "waiting_user"
+    after = control_plane.get_case(case_id)
+    assert after["state"]["hitl"]["answers"] == {}
+    assert after["state"].get("version") == before["state"].get("version")
     kinds = [e["kind"] for e in client.get(f"/cases/{case_id}/events").json()["events"]]
-    assert "hitl.answered" in kinds
+    assert "hitl.answered" not in kinds
     assert "agent.accepted" in kinds
+    assert captured and captured[0]["source"] == "human"
+    payload = json.loads(captured[0]["human_response"])
+    assert payload["text"] == "DD.MM.YYYY"
+    assert captured[0]["gate_id"] == "Q-1"
     errors = client.get(f"/cases/{case_id}/errors")
     assert errors.status_code == 200
     assert errors.json()["errors"] == []
 
 
-def test_hitl_answer_option_button_stores_choice_and_label(monkeypatch) -> None:
+def test_hitl_answer_option_button_forwards_choice_without_writing_state(monkeypatch) -> None:
     monkeypatch.setenv("ORCHESTRATOR_WEBHOOK_URL", "http://127.0.0.1:9/webhook/mas-orchestrator-step")
     from app.settings import Settings
     from app import control_plane
 
+    captured: list[dict] = []
+
+    async def fake_resume(case_id, extra=None):
+        captured.append({"case_id": case_id, **(extra or {})})
+
     monkeypatch.setattr("app.cases_api.get_settings", lambda: Settings())
     monkeypatch.setattr("app.cases_api._invoke_create", lambda case_id: None)
-    monkeypatch.setattr("app.cases_api._invoke_step", lambda case_id: None)
+    monkeypatch.setattr("app.cases_api._invoke_resume", fake_resume)
     res = client.post("/cases", data={"task_description": "HITL options", "requested_by": "tester"})
     case_id = res.json()["case_id"]
     question = {
@@ -884,26 +905,24 @@ def test_hitl_answer_option_button_stores_choice_and_label(monkeypatch) -> None:
     )
     assert ans.status_code == 200
     state = control_plane.get_case(case_id)["state"]
-    stored = state["hitl"]["answers"]["unlisted_wells_policy"]
-    assert stored == {"choice": "remove", "text": "Убрать из прогноза", "label": "Убрать из прогноза"}
-    events = client.get(f"/cases/{case_id}/events").json()["events"]
-    answered = next(e for e in events if e["kind"] == "hitl.answered")
-    assert answered["status_message"] == "Пользователь ответил: Убрать из прогноза"
-    assert "remove" not in answered["status_message"]
+    assert state["hitl"]["answers"] == {}
+    kinds = [e["kind"] for e in client.get(f"/cases/{case_id}/events").json()["events"]]
+    assert "hitl.answered" not in kinds
+    payload = json.loads(captured[0]["human_response"])
+    assert payload == {"text": "Убрать из прогноза", "files": [], "choice": "remove", "label": "Убрать из прогноза"}
+    assert captured[0]["source"] == "human"
+    assert captured[0]["gate_id"] == "unlisted_wells_policy"
 
     # JSON path keeps the engineer's own words alongside the choice.
-    control_plane.update_case(
-        case_id,
-        state={**control_plane.get_case(case_id)["state"], "hitl": {"pending": True, "questions": [question], "answers": {}}},
-        status="waiting_user",
-    )
+    captured.clear()
     ans = client.post(
         f"/cases/{case_id}/answer",
         json={"question_id": "unlisted_wells_policy", "answer": "убери, их закрыли", "choice": "remove"},
     )
     assert ans.status_code == 200
-    stored = control_plane.get_case(case_id)["state"]["hitl"]["answers"]["unlisted_wells_policy"]
-    assert stored["choice"] == "remove" and stored["text"] == "убери, их закрыли"
+    assert control_plane.get_case(case_id)["state"]["hitl"]["answers"] == {}
+    payload = json.loads(captured[0]["human_response"])
+    assert payload["choice"] == "remove" and payload["text"] == "убери, их закрыли"
 
 
 def test_option_label_matches_question_by_id_and_ignores_idless_shadow() -> None:
@@ -946,6 +965,12 @@ def test_answer_rejects_stale_expected_version(monkeypatch) -> None:
         },
         status="waiting_user",
     )
+    captured: list[dict] = []
+
+    async def fake_resume(case_id, extra=None):
+        captured.append({"case_id": case_id, **(extra or {})})
+
+    monkeypatch.setattr("app.cases_api._invoke_resume", fake_resume)
     stale = client.post(
         f"/cases/{case_id}/answer",
         json={"question_id": "Q-1", "answer": "нет", "expected_version": 2},
@@ -953,12 +978,47 @@ def test_answer_rejects_stale_expected_version(monkeypatch) -> None:
     assert stale.status_code == 409, stale.text
     assert "expected 2" in stale.json()["detail"]
     assert "got 5" in stale.json()["detail"]
+    assert captured == []
     ok = client.post(
         f"/cases/{case_id}/answer",
         json={"question_id": "Q-1", "answer": "да", "expected_version": 5},
     )
     assert ok.status_code == 200, ok.text
-    assert control_plane.get_case(case_id)["state"]["version"] == 6
+    assert control_plane.get_case(case_id)["state"]["version"] == 5
+    assert captured and captured[0]["expected_version"] == 5
+
+
+def test_run_resume_agent_source_wakes_orchestrator(monkeypatch) -> None:
+    monkeypatch.setenv("ORCHESTRATOR_WEBHOOK_URL", "http://127.0.0.1:9/webhook/mas-orchestrator-step")
+    from app.settings import Settings
+    from app import control_plane
+
+    captured: list[dict] = []
+
+    async def fake_resume(case_id, extra=None):
+        captured.append({"case_id": case_id, **(extra or {})})
+
+    monkeypatch.setattr("app.cases_api.get_settings", lambda: Settings())
+    monkeypatch.setattr("app.cases_api._invoke_create", lambda case_id: None)
+    monkeypatch.setattr("app.cases_api._invoke_resume", fake_resume)
+    res = client.post("/cases", data={"task_description": "long agent", "requested_by": "tester"})
+    case_id = res.json()["case_id"]
+    control_plane.update_case(case_id, state=control_plane.get_case(case_id)["state"], status="running")
+    ok = client.post(
+        f"/cases/{case_id}/run",
+        json={"action": "resume", "source": "agent", "task_id": "TASK-long", "agent_id": "calculation_agent", "payload": {"status": "completed"}},
+    )
+    assert ok.status_code == 200, ok.text
+    assert ok.json()["accepted"] is True
+    assert captured[0]["source"] == "agent"
+    assert captured[0]["task_id"] == "TASK-long"
+    assert json.loads(captured[0]["human_response"])["status"] == "completed"
+    kinds = [e["kind"] for e in client.get(f"/cases/{case_id}/events").json()["events"]]
+    assert "hitl.answered" not in kinds
+
+    human = client.post(f"/cases/{case_id}/run", json={"action": "resume", "source": "human", "human_response": "да"})
+    assert human.status_code == 400
+    assert "поле ответа" in human.json()["detail"]
 
 
 def test_hitl_multipart_attaches_schedule(tmp_path, monkeypatch) -> None:
@@ -969,6 +1029,7 @@ def test_hitl_multipart_attaches_schedule(tmp_path, monkeypatch) -> None:
 
     monkeypatch.setattr("app.cases_api.get_settings", lambda: Settings())
     monkeypatch.setattr("app.cases_api._invoke_create", lambda case_id: None)
+    monkeypatch.setattr("app.cases_api._invoke_resume", lambda case_id, extra=None: None)
     res = client.post(
         "/cases",
         data={"task_description": "HITL files", "requested_by": "tester"},
@@ -1004,7 +1065,8 @@ def test_hitl_multipart_attaches_schedule(tmp_path, monkeypatch) -> None:
     feed = client.get(f"/cases/{case_id}")
     assert "WELLS.INC" in feed.json()["attached_files"]
     kinds = [e["kind"] for e in client.get(f"/cases/{case_id}/events").json()["events"]]
-    assert "hitl.answered" in kinds
+    assert "hitl.answered" not in kinds
+    assert control_plane.get_case(case_id)["state"]["hitl"]["answers"] == {}
 
 
 def test_event_lane_handoff_directions() -> None:
@@ -1161,6 +1223,22 @@ def test_legacy_deliverable_producer_comes_from_agent_result_event(monkeypatch) 
     cards = client.get(f"/cases/{case_id}/artifacts", params={"kind": "deliverable"}).json()["artifacts"]
     assert {c["artifact_id"]: c["producer"] for c in cards} == {"schedule_out": "schedule_builder", "diff": "schedule_builder"}
     assert cards[0]["filename"] == "schedule_result.inc"
+    # The inline download builds its card the same way (case + events in one snapshot), so a legacy
+    # deliverable resolves to the same filename/producer as in the list — not to a card without events.
+    import app.cases_api as cases_api
+
+    seen: list[list] = []
+    real_cards = cases_api._artifact_cards
+
+    def spy(cid, state, events=None):
+        seen.append(list(events or []))
+        return real_cards(cid, state, events)
+
+    monkeypatch.setattr(cases_api, "_artifact_cards", spy)
+    dl = client.get(f"/cases/{case_id}/artifacts/schedule_out")
+    assert dl.status_code == 200 and dl.content == b"x" * 40
+    assert "schedule_result.inc" in dl.headers.get("content-disposition", "")
+    assert seen and any(e.get("kind") == "agent.result" for e in seen[-1]), "inline download must pass the case events"
 
 
 def test_agents_registry_for_ui() -> None:

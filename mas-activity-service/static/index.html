@@ -168,7 +168,7 @@
             <textarea id="taskDescription" rows="4" required placeholder="Например: во вложении Excel с новыми датами ввода — обновите прогнозный schedule"></textarea>
           </label>
           <div class="dropzone" id="startDropzone" tabindex="0" role="button" aria-label="Прикрепить файлы">
-            <input id="startFileInput" type="file" multiple hidden accept=".xlsx,.xls,.data,.inc,.sch,.txt,.grdecl,.dev,.cps3,.grd,.grid" />
+            <input id="startFileInput" type="file" multiple hidden accept=".xlsx,.xls,.xlsm,.xltx,.xltm,.data,.inc,.sch,.txt,.grdecl,.dev,.cps3,.grd,.grid" />
             <svg class="icon dropzone-icon" aria-hidden="true"><use href="#i-attach"/></svg>
             <p class="dropzone-title">Перетащите файлы сюда или нажмите, чтобы выбрать</p>
             <p class="dropzone-hint">Excel, schedule (.data / .inc), траектории (.dev), поверхности CPS3</p>
@@ -206,7 +206,7 @@
       <form class="composer" id="composer" autocomplete="off" hidden>
         <ul class="file-chips composer-files" id="hitlFileList" hidden></ul>
         <div class="composer-box" id="hitlDropzone" role="group" aria-label="Ваш ответ">
-          <input id="hitlFileInput" type="file" multiple hidden accept=".xlsx,.xls,.data,.inc,.sch,.txt,.grdecl,.dev,.cps3,.grd,.grid" />
+          <input id="hitlFileInput" type="file" multiple hidden accept=".xlsx,.xls,.xlsm,.xltx,.xltm,.data,.inc,.sch,.txt,.grdecl,.dev,.cps3,.grd,.grid" />
           <button type="button" class="icon-btn composer-attach" id="hitlAttachBtn" title="Прикрепить файлы" aria-label="Прикрепить файлы">
             <svg class="icon" aria-hidden="true"><use href="#i-attach"/></svg>
           </button>
@@ -247,7 +247,7 @@
     </aside>
   </main>
 
-  <script src="/static/schema.js?v=30"></script>
-  <script src="/static/app.js?v=101"></script>
+  <script src="/static/schema.js?v=31"></script>
+  <script src="/static/app.js?v=102"></script>
 </body>
 </html>

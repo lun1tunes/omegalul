@@ -165,8 +165,16 @@ function cardFilename(item){
   if(role==='diff') return 'schedule_changes.diff';
   return String(item.artifact_id||role||'artifact');
 }
+function isExcelName(name){
+  return /\.(xlsx|xls|xlsm|xltx|xltm)$/i.test(String(name||''));
+}
+function inputRank(role, filename){
+  if(String(role||'')==='excel'||isExcelName(filename)) return 0;
+  if(String(role||'')==='schedule_source') return 1;
+  return 2;
+}
 function artifactCards(arts){
-  /* Inputs first, then what agents produced. No inline text — cards are safe to log and to send to the LLM. */
+  /* Inputs first (Excel before INCLUDE stubs), then what agents produced. No inline text. */
   const inputs=[];
   const produced=[];
   for(const [id,item] of Object.entries(flattenArtifacts(arts))){
@@ -176,6 +184,7 @@ function artifactCards(arts){
     const card={artifact_id:id,role:String(item.role||roleForArtifactId(id)),kind,producer:artifactProducer(item),filename:cardFilename(item),bytes:Number.isFinite(size)?size:null,summary:String(item.summary||'').trim()};
     (kind==='input'?inputs:produced).push(card);
   }
+  inputs.sort((a,b)=>inputRank(a.role,a.filename)-inputRank(b.role,b.filename)||String(a.artifact_id).localeCompare(String(b.artifact_id)));
   return inputs.concat(produced);
 }
 function deliverables(arts){
@@ -224,46 +233,53 @@ function isUnlistedWellsGate(qid, question){
   const q=String(question||'').toLowerCase();
   return id.includes('unlisted')||q.includes('unlisted')||q.includes('не из excel')||q.includes('лишн');
 }
-function parseKeepRemove(blob, keyed){
-  /* Same rules as Python parse_keep_remove: labeled enum, then gated keep/remove. */
-  const s=String(blob||'').toLowerCase();
-  const labeled=s.match(/unlisted_wells_policy\s*[:=]\s*(keep|remove)/);
-  if(labeled) return labeled[1];
-  const keyedOk=keyed===true||s.includes('unlisted')||s.includes('лишн')||s.includes('не из excel');
-  if(!keyedOk) return '';
-  if(/остав|сохран/.test(s)||/\bkeep\b/.test(s)) return 'keep';
-  if(/убер|удал|выкин|выкинь/.test(s)||/\bremove\b/.test(s)) return 'remove';
-  return '';
+function optionValues(question){
+  const opts=question&&Array.isArray(question.options)?question.options:[];
+  return opts.map(o=>{
+    if(o&&typeof o==='object'&&!Array.isArray(o)) return String(o.value||'').trim()||String(o.label||'').trim();
+    return String(o||'').trim();
+  }).filter(Boolean);
+}
+const INTERPRET_CONFIDENCE_FLOOR=0.8;
+function applyInterpretedDecision(qid, question, rawAnswer, parsed){
+  const conf=Number(parsed&&parsed.confidence);
+  const decision=String((parsed&&parsed.decision)||'').trim().toLowerCase();
+  const values=optionValues(question).map(v=>String(v||'').toLowerCase());
+  const ok=decision&&values.indexOf(decision)>=0&&Number.isFinite(conf)&&conf>=INTERPRET_CONFIDENCE_FLOOR;
+  if(!ok) return {accepted:false};
+  const text=String((parsed&&parsed.paraphrase)||humanAnswerText(rawAnswer)||'').trim()||decision;
+  const stored={choice:decision, text, label:text};
+  if(isUnlistedWellsGate(qid, (question&&question.question)||'')&&(decision==='keep'||decision==='remove')) stored.unlisted_wells_policy=decision;
+  return {accepted:true, answer:stored, confidence:conf};
+}
+function buildClarifyQuestion(question){
+  const q=question&&typeof question==='object'?question:{};
+  return {
+    question_id:String(q.question_id||q.id||'Q-1'),
+    kind:String(q.kind||'needs_input'),
+    question:'Не удалось однозначно понять ответ. Выберите один из вариантов — или напишите короче, что сделать.',
+    options:Array.isArray(q.options)?q.options:[]
+  };
 }
 function normalizeHitlAnswer(qid, answer, question){
+  /* Phase 1.3: no regex on free text. A button sets choice; anything else stays as the engineer wrote it
+     until the Interpret free-text answer pass (or is stored as prose when the question has no options). */
   const decoded=decodeHitlAnswer(answer);
-  if(!isUnlistedWellsGate(qid, question)) return decoded;
   if(decoded&&typeof decoded==='object'&&!Array.isArray(decoded)){
-    /* Activity option button: {choice:'keep'|'remove', text:'<label>'} */
     const choice=String(decoded.choice||'').toLowerCase();
-    if(choice==='keep'||choice==='remove') return {...decoded, unlisted_wells_policy:choice};
-    const p=parseKeepRemove(decoded.unlisted_wells_policy||'', true)||parseKeepRemove(decoded.raw!=null?decoded.raw:JSON.stringify(decoded), true);
-    if(p) return {unlisted_wells_policy:p, raw:decoded.raw!=null?decoded.raw:decoded};
+    if(isUnlistedWellsGate(qid, question)&&(choice==='keep'||choice==='remove')) return {...decoded, unlisted_wells_policy:choice};
+    return decoded;
   }
-  const p=parseKeepRemove(decoded, true);
-  if(p) return {unlisted_wells_policy:p, raw:decoded};
   return decoded;
 }
 function readUnlistedWellsPolicy(answers){
   const src=answers&&typeof answers==='object'&&!Array.isArray(answers)?answers:{};
   for(const [key,val] of Object.entries(src)){
-    if(val&&typeof val==='object'&&!Array.isArray(val)){
-      const direct=String(val.unlisted_wells_policy||'').toLowerCase();
-      if(direct==='keep'||direct==='remove') return direct;
-      const choice=String(val.choice||'').toLowerCase();
-      if(isUnlistedWellsGate(key,'')&&(choice==='keep'||choice==='remove')) return choice;
-      const nested=parseKeepRemove(val.raw!=null?val.raw:JSON.stringify(val), isUnlistedWellsGate(key,''));
-      if(nested) return nested;
-      continue;
-    }
-    const keyed=isUnlistedWellsGate(key,'');
-    const found=parseKeepRemove(val, keyed);
-    if(found) return found;
+    if(!(val&&typeof val==='object'&&!Array.isArray(val))) continue;
+    const direct=String(val.unlisted_wells_policy||'').toLowerCase();
+    if(direct==='keep'||direct==='remove') return direct;
+    const choice=String(val.choice||'').toLowerCase();
+    if(isUnlistedWellsGate(key,'')&&(choice==='keep'||choice==='remove')) return choice;
   }
   return null;
 }
@@ -413,9 +429,8 @@ function sanitizeState(state){
   return s;
 }
 function reconcileLedgerAnswers(state){
-  /* Activity writes HITL answers straight into state.hitl.answers and then calls action=step
-     (the orchestrator's own resume path is only one of two write paths). Any answer that is not
-     yet in the journal is appended here, so guards and the LLM see it regardless of the path. */
+  /* Safety net for leftover cases from before Phase 1.3: if answers landed in state without a
+     journal row (old Activity write-path), copy them in. The live path is orchestrator resume. */
   const hitl=state.hitl&&typeof state.hitl==='object'?state.hitl:{};
   const answers=hitl.answers&&typeof hitl.answers==='object'&&!Array.isArray(hitl.answers)?hitl.answers:{};
   const questions=Array.isArray(hitl.questions)?hitl.questions:[];

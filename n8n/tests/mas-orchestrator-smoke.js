@@ -76,6 +76,12 @@ async function run(name, json, nodes = {}, binary = {}) {
     'Apply request extras',
     'Status only?',
     'Resume persist?',
+    'Needs interpret?',
+    'Interpret free-text answer',
+    'Answer interpretation Structured Output',
+    'Apply interpreted answer',
+    'Resume to decision?',
+    'Not a resume?',
     'POST continue run',
     'Prepare Activity ack',
     'Activity sync?',
@@ -106,8 +112,17 @@ async function run(name, json, nodes = {}, binary = {}) {
   assert.equal(modelEdges[0].type, 'ai_languageModel');
   assert.ok(modelEdges.some((e) => e.node === 'Decision LLM' && e.type === 'ai_languageModel'));
   assert.ok(modelEdges.some((e) => e.node === 'Decision Structured Output' && e.type === 'ai_languageModel'));
+  assert.ok(modelEdges.some((e) => e.node === 'Verify completion' && e.type === 'ai_languageModel'));
+  assert.ok(modelEdges.some((e) => e.node === 'Interpret free-text answer' && e.type === 'ai_languageModel'));
+  assert.ok(modelEdges.some((e) => e.node === 'Answer interpretation Structured Output' && e.type === 'ai_languageModel'));
   const parserEdges = wf.connections['Decision Structured Output'].ai_outputParser[0];
   assert.equal(parserEdges[0].node, 'Decision LLM');
+  const interpretParser = wf.connections['Answer interpretation Structured Output'].ai_outputParser[0];
+  assert.equal(interpretParser[0].node, 'Interpret free-text answer');
+  const interpretLlm = wf.nodes.find((n) => n.name === 'Interpret free-text answer');
+  assert.equal(interpretLlm.type, '@n8n/n8n-nodes-langchain.chainLlm');
+  assert.equal(interpretLlm.typeVersion, 1.9);
+  assert.equal(interpretLlm.parameters.hasOutputParser, true);
 
   const runtime = wf.nodes.find((n) => n.name === 'Runtime endpoints');
   assert.ok(runtime);
@@ -130,6 +145,7 @@ async function run(name, json, nodes = {}, binary = {}) {
     'Prepare decision context',
     'Parse decision',
     'Merge agent result',
+    'Apply interpreted answer',
   ];
   const helperChunks = helperNames.map((name) => {
     const js = source(name);
@@ -137,25 +153,39 @@ async function run(name, json, nodes = {}, binary = {}) {
     const end = js.indexOf('/* mas_state_utils end */');
     assert.ok(begin >= 0 && end > begin, `state utils markers missing in ${name}`);
     assert.ok(js.includes('function readUnlistedWellsPolicy'), name);
-    assert.match(js, /if\(nested\) return nested;\s*continue;/, name);
     assert.ok(js.includes('function normalizeHitlAnswer'), name);
+    assert.ok(js.includes('function applyInterpretedDecision'), name);
     assert.ok(js.includes('function inferTaskPatterns'), name);
     assert.ok(js.includes('function inferRetrievalQuery'), name);
+    assert.equal(js.includes('parseKeepRemove'), false, name);
     return js.slice(begin, end);
   });
   assert.equal(new Set(helperChunks).size, 1, 'state helpers must be identical across Code nodes');
   assert.equal(helperChunks[0].includes("s.includes('keep')"), false);
   assert.equal(helperChunks[0].includes("s.includes('remove')"), false);
-  assert.match(helperChunks[0], /\\bkeep\\b/);
-  assert.match(helperChunks[0], /\\bremove\\b/);
+  assert.equal(helperChunks[0].includes('parseKeepRemove'), false);
   {
     // Activity option button answer: {choice, text, label} — no regex on the human label.
-    const helpers = new Function(`${helperChunks[0]}; return { normalizeHitlAnswer, readUnlistedWellsPolicy };`)();
+    const helpers = new Function(`${helperChunks[0]}; return { normalizeHitlAnswer, readUnlistedWellsPolicy, applyInterpretedDecision, buildClarifyQuestion, looksMachineText };`)();
     const clicked = { choice: 'remove', text: 'Убрать из прогноза', label: 'Убрать из прогноза' };
     assert.equal(helpers.normalizeHitlAnswer('unlisted_wells_policy', clicked, '').unlisted_wells_policy, 'remove');
     assert.equal(helpers.readUnlistedWellsPolicy({ unlisted_wells_policy: clicked }), 'remove');
     assert.equal(helpers.readUnlistedWellsPolicy({ 'Q-parent-group': clicked }), null, 'choice is gated by the question id');
     assert.equal(helpers.readUnlistedWellsPolicy({ unlisted_wells_policy: { choice: 'keep', text: 'Оставить как в baseline' } }), 'keep');
+    const q = {
+      question_id: 'unlisted_wells_policy',
+      question: 'В Excel нет скважин. Оставить или убрать?',
+      options: [{ value: 'keep', label: 'Оставить' }, { value: 'remove', label: 'Убрать' }],
+    };
+    const accepted = helpers.applyInterpretedDecision('unlisted_wells_policy', q, { text: 'убери лишние' }, { decision: 'remove', confidence: 0.9, paraphrase: 'Убрать лишние скважины' });
+    assert.equal(accepted.accepted, true);
+    assert.equal(accepted.answer.choice, 'remove');
+    assert.equal(accepted.answer.unlisted_wells_policy, 'remove');
+    const rejected = helpers.applyInterpretedDecision('unlisted_wells_policy', q, { text: 'наверное' }, { decision: 'remove', confidence: 0.4, paraphrase: 'неясно' });
+    assert.equal(rejected.accepted, false);
+    const clarify = helpers.buildClarifyQuestion(q);
+    assert.match(clarify.question, /Не удалось однозначно понять ответ/);
+    assert.equal(helpers.looksMachineText(clarify.question), false);
   }
   {
     // Two workbooks in one case: the first keeps the `excel` slot, the second survives as an attachment
@@ -196,6 +226,16 @@ async function run(name, json, nodes = {}, binary = {}) {
       ['schedule_source', 'input', 'user'],
       ['schedule_out', 'deliverable', 'schedule_builder'],
       ['diff', 'deliverable', 'schedule_builder'],
+    ]);
+    // Second workbook must rank above INCLUDE stubs (combat 3 buries excel_1 after ~20 includes).
+    const crowded = helpers.artifactCards({
+      excel: { artifact_id: 'excel', filename: 'dates.xlsx', role: 'excel', kind: 'input', producer: 'user' },
+      schedule_source: { artifact_id: 'schedule_source', filename: 'MONITORING_FDP.INC', role: 'schedule_source', kind: 'input', producer: 'user' },
+      schedule_source_1: { artifact_id: 'schedule_source_1', filename: 'GRUPTREE.GRDECL', role: 'schedule_include', kind: 'input', producer: 'user' },
+      excel_1: { artifact_id: 'excel_1', filename: 'params.xlsx', role: 'excel', kind: 'input', producer: 'user' },
+    });
+    assert.deepEqual(crowded.filter((c) => c.kind === 'input').map((c) => c.filename), [
+      'dates.xlsx', 'params.xlsx', 'MONITORING_FDP.INC', 'GRUPTREE.GRDECL',
     ]);
     assert.ok(cards.every((c) => !('text' in c)), 'cards carry no inline text');
     assert.deepEqual(helpers.deliverables(merged).map((d) => d.filename), ['schedule_result.inc', 'schedule_changes.diff']);
@@ -263,6 +303,22 @@ async function run(name, json, nodes = {}, binary = {}) {
   assert.match(ack.parameters.jsCode, /persist_events/);
   assert.match(ack.parameters.jsCode, /!persisted/);
   assert.equal(ack.parameters.jsCode.includes("payload.message||kind"), false);
+  {
+    // CASE-6a9ee76b: ambiguous free text → Apply interpreted answer persisted the re-ask itself; the ack must
+    // not read Apply request extras (needs_interpret, no events) and POST a second, empty hitl.request.
+    const reask = {
+      case_id: 'CASE-reask', did_resume: true, next_status: 'waiting_user', activity_base_url: 'http://mas-activity:8200',
+      persist_events: [['CASE-reask', '', 'hitl.request', 'orchestrator', '', 'waiting_user', 'Не удалось однозначно понять ответ.', '', '{}']],
+    };
+    const extras = { case_id: 'CASE-reask', did_resume: true, needs_interpret: true, next_status: 'waiting_user', activity_base_url: 'http://mas-activity:8200' };
+    const acked = await run('Prepare Activity ack', extras, {
+      'Apply request extras': extras,
+      'Apply interpreted answer': reask,
+    });
+    assert.equal(acked.activity_sync, false, 'interpret re-ask is already persisted — no ack event');
+    const onlyExtras = await run('Prepare Activity ack', extras, { 'Apply request extras': extras });
+    assert.equal(onlyExtras.activity_sync, true, 'without persisted events the ack still syncs (status path)');
+  }
 
   const probed = await run('Normalize step request', {
     action: 'probe',
@@ -319,7 +375,13 @@ async function run(name, json, nodes = {}, binary = {}) {
   );
   assert.deepEqual(createdCase.state.artifacts, {});
   assert.equal(createdCase.state.version, 1);
-  assert.match(JSON.stringify(createdCase.persist_events[0]), /Activity/);
+  // CASE-6a9ee318: Activity already wrote `case.created` (initial_event); the orchestrator's own copy
+  // was silently dropped before 1.3 and duplicated the row once Expand events learned to read Code-node
+  // outputs. `Prepare start case` emits no events; `Expand start events` never reads it.
+  assert.deepEqual(createdCase.persist_events, []);
+  assert.equal(source('Expand start events').includes("$('Prepare start case')"), false);
+  assert.ok(source('Expand resume events').includes("$('Apply interpreted answer')"));
+  assert.ok(source('Expand resume events').includes("$('Apply request extras')"));
 
   const fatFacts = Array.from({ length: 40 }, (_, i) => ({
     well: `W${i}`,
@@ -604,6 +666,22 @@ async function run(name, json, nodes = {}, binary = {}) {
   assert.equal(statusSnap.human_gate.expected_version, 3);
   assert.equal(statusSnap.should_continue, false);
 
+  const unlistedQuestion = {
+    question_id: 'unlisted_wells_policy',
+    question: 'В Excel нет скважин: 201. Оставить или убрать?',
+    options: [
+      { value: 'keep', label: 'Оставить как в baseline' },
+      { value: 'remove', label: 'Убрать из прогноза' },
+    ],
+  };
+  const unlistedState = {
+    status: 'waiting_user',
+    state: {
+      goal: 'g',
+      hitl: { pending: true, questions: [unlistedQuestion], answers: {} },
+    },
+  };
+
   const hitlApplied = await run(
     'Apply request extras',
     {
@@ -618,12 +696,14 @@ async function run(name, json, nodes = {}, binary = {}) {
         case_id: 'CASE-1',
         is_resume: true,
         action: 'resume',
+        source: 'human',
         human_response: 'январь',
         gate_id: 'Q-1',
       },
     },
   );
   assert.equal(hitlApplied.did_resume, true);
+  assert.equal(hitlApplied.needs_interpret, false);
   assert.equal(hitlApplied.state.hitl.pending, false);
   assert.equal(hitlApplied.state.hitl.answers['Q-1'], 'январь');
   assert.equal(hitlApplied.state.version, 1);
@@ -642,6 +722,7 @@ async function run(name, json, nodes = {}, binary = {}) {
         case_id: 'CASE-1',
         is_resume: true,
         action: 'resume',
+        source: 'human',
         human_response: JSON.stringify({ text: 'январь' }),
         gate_id: 'Q-1',
       },
@@ -649,109 +730,191 @@ async function run(name, json, nodes = {}, binary = {}) {
   );
   assert.equal(hitlJson.state.hitl.answers['Q-1'].text, 'январь');
 
-  const unlistedHitl = await run(
-    'Apply request extras',
+  const normalizedObject = await run(
+    'Normalize step request',
     {
-      status: 'waiting_user',
-      state: {
-        goal: 'g',
-        hitl: {
-          pending: true,
-          questions: [{ question_id: 'unlisted_wells_policy', question: 'Скважины не из Excel?' }],
-          answers: {},
-        },
-      },
+      action: 'resume',
+      case_id: 'CASE-1',
+      source: 'human',
+      gate_id: 'unlisted_wells_policy',
+      human_response: { text: 'убери', choice: 'remove' },
     },
+  );
+  assert.equal(typeof normalizedObject.human_response, 'string');
+  assert.equal(JSON.parse(normalizedObject.human_response).choice, 'remove');
+  assert.equal(normalizedObject.source, 'human');
+  assert.equal(normalizedObject.is_resume, true);
+
+  const unlistedButton = await run(
+    'Apply request extras',
+    unlistedState,
     {
       'Normalize step request': {
         case_id: 'CASE-1',
         is_resume: true,
         action: 'resume',
+        source: 'human',
+        human_response: JSON.stringify({ choice: 'remove', text: 'Убрать из прогноза', label: 'Убрать из прогноза' }),
+        gate_id: 'unlisted_wells_policy',
+      },
+    },
+  );
+  assert.equal(unlistedButton.did_resume, true);
+  assert.equal(unlistedButton.needs_interpret, false);
+  assert.equal(unlistedButton.state.hitl.answers.unlisted_wells_policy.unlisted_wells_policy, 'remove');
+  assert.equal(unlistedButton.next_status, 'running');
+  assert.equal(unlistedButton.persist_events[0][2], 'hitl.answered');
+
+  const unlistedHitl = await run(
+    'Apply request extras',
+    unlistedState,
+    {
+      'Normalize step request': {
+        case_id: 'CASE-1',
+        is_resume: true,
+        action: 'resume',
+        source: 'human',
         human_response: 'убери лишние скважины',
         gate_id: 'unlisted_wells_policy',
       },
     },
   );
   assert.equal(unlistedHitl.did_resume, true);
-  assert.equal(unlistedHitl.state.hitl.answers.unlisted_wells_policy.unlisted_wells_policy, 'remove');
-  assert.equal(unlistedHitl.state.hitl.answers.unlisted_wells_policy.raw, 'убери лишние скважины');
+  assert.equal(unlistedHitl.needs_interpret, true);
+  assert.equal(unlistedHitl.state.hitl.pending, true);
+  assert.equal(unlistedHitl.state.hitl.answers.unlisted_wells_policy, undefined);
+  assert.ok(String(unlistedHitl.interpret_input).includes('убери лишние скважины'));
 
   const unlistedKeep = await run(
     'Apply request extras',
-    {
-      status: 'waiting_user',
-      state: {
-        goal: 'g',
-        hitl: {
-          pending: true,
-          questions: [{ question_id: 'unlisted_wells_policy', question: 'Скважины не из Excel?' }],
-          answers: {},
-        },
-      },
-    },
+    unlistedState,
     {
       'Normalize step request': {
         case_id: 'CASE-1',
         is_resume: true,
         action: 'resume',
+        source: 'human',
         human_response: 'оставь лишние скважины',
         gate_id: 'unlisted_wells_policy',
       },
     },
   );
-  assert.equal(unlistedKeep.state.hitl.answers.unlisted_wells_policy.unlisted_wells_policy, 'keep');
-  assert.equal(unlistedKeep.state.hitl.answers.unlisted_wells_policy.raw, 'оставь лишние скважины');
+  assert.equal(unlistedKeep.needs_interpret, true);
+  assert.equal(unlistedKeep.state.hitl.answers.unlisted_wells_policy, undefined);
 
   const unlistedKeepWord = await run(
     'Apply request extras',
-    {
-      status: 'waiting_user',
-      state: {
-        goal: 'g',
-        hitl: {
-          pending: true,
-          questions: [{ question_id: 'unlisted_wells_policy', question: 'Скважины не из Excel?' }],
-          answers: {},
-        },
-      },
-    },
+    unlistedState,
     {
       'Normalize step request': {
         case_id: 'CASE-1',
         is_resume: true,
         action: 'resume',
+        source: 'human',
         human_response: 'keep extra wells',
         gate_id: 'unlisted_wells_policy',
       },
     },
   );
-  assert.equal(unlistedKeepWord.state.hitl.answers.unlisted_wells_policy.unlisted_wells_policy, 'keep');
+  assert.equal(unlistedKeepWord.needs_interpret, true);
+  assert.equal(unlistedKeepWord.state.hitl.pending, true);
 
   const unlistedUpkeep = await run(
     'Apply request extras',
-    {
-      status: 'waiting_user',
-      state: {
-        goal: 'g',
-        hitl: {
-          pending: true,
-          questions: [{ question_id: 'unlisted_wells_policy', question: 'Скважины не из Excel?' }],
-          answers: {},
-        },
-      },
-    },
+    unlistedState,
     {
       'Normalize step request': {
         case_id: 'CASE-1',
         is_resume: true,
         action: 'resume',
+        source: 'human',
         human_response: 'upkeep of extra wells',
         gate_id: 'unlisted_wells_policy',
       },
     },
   );
-  assert.equal(unlistedUpkeep.state.hitl.answers.unlisted_wells_policy.unlisted_wells_policy, undefined);
-  assert.equal(unlistedUpkeep.state.hitl.answers.unlisted_wells_policy, 'upkeep of extra wells');
+  assert.equal(unlistedUpkeep.needs_interpret, true, 'substring keep in upkeep must not skip interpret');
+  assert.equal(unlistedUpkeep.state.hitl.answers.unlisted_wells_policy, undefined);
+
+  const interpretedRemove = await run(
+    'Apply interpreted answer',
+    {},
+    {
+      'Apply request extras': {
+        case_id: 'CASE-1',
+        did_resume: true,
+        needs_interpret: true,
+        interpret_qid: 'unlisted_wells_policy',
+        interpret_raw: { text: 'убери лишние скважины' },
+        interpret_question: unlistedQuestion,
+        state: unlistedState.state,
+      },
+      'Interpret free-text answer': {
+        output: { decision: 'remove', confidence: 0.9, paraphrase: 'Убрать скважины, которых нет в Excel' },
+      },
+    },
+  );
+  assert.equal(interpretedRemove.next_status, 'running');
+  assert.equal(interpretedRemove.state.hitl.pending, false);
+  assert.equal(interpretedRemove.state.hitl.answers.unlisted_wells_policy.choice, 'remove');
+  assert.equal(interpretedRemove.state.hitl.answers.unlisted_wells_policy.unlisted_wells_policy, 'remove');
+  assert.equal(interpretedRemove.persist_events[0][2], 'hitl.answered');
+
+  const interpretedUnsure = await run(
+    'Apply interpreted answer',
+    {},
+    {
+      'Apply request extras': {
+        case_id: 'CASE-1',
+        did_resume: true,
+        needs_interpret: true,
+        interpret_qid: 'unlisted_wells_policy',
+        interpret_raw: { text: 'наверное так' },
+        interpret_question: unlistedQuestion,
+        state: unlistedState.state,
+      },
+      'Interpret free-text answer': {
+        output: { decision: 'remove', confidence: 0.4, paraphrase: 'неясно' },
+      },
+    },
+  );
+  assert.equal(interpretedUnsure.next_status, 'waiting_user');
+  assert.equal(interpretedUnsure.state.hitl.pending, true);
+  assert.match(String(interpretedUnsure.state.hitl.questions[0].question), /Не удалось однозначно понять ответ/);
+  assert.equal(interpretedUnsure.persist_events[0][2], 'hitl.request');
+
+  const agentResume = await run(
+    'Apply request extras',
+    { status: 'running', state: { goal: 'g', step_count: 2 } },
+    {
+      'Normalize step request': {
+        case_id: 'CASE-1',
+        is_resume: true,
+        action: 'resume',
+        source: 'agent',
+        task_id: 'TASK-long',
+        agent_id: 'calculation_agent',
+        human_response: JSON.stringify({ status: 'completed' }),
+      },
+    },
+  );
+  assert.equal(agentResume.did_resume, true);
+  assert.equal(agentResume.needs_interpret, false);
+  assert.equal(agentResume.next_status, 'running');
+  assert.equal(agentResume.persist_events[0][2], 'orchestrator.resume');
+  assert.equal(agentResume.persist_events[0][3], 'agent');
+  assert.equal(agentResume.state.ledger.history.some((e) => e.kind === 'external' && e.source === 'agent'), true);
+
+  const restoredAfterInterpret = await run(
+    'Restore after resume',
+    { next_status: 'waiting_user' },
+    {
+      'Apply request extras': { did_resume: true, next_status: 'running', state: { hitl: { pending: true } } },
+      'Apply interpreted answer': interpretedUnsure,
+    },
+  );
+  assert.equal(restoredAfterInterpret.next_status, 'waiting_user');
+  assert.match(String(restoredAfterInterpret.state.hitl.questions[0].question), /Не удалось однозначно понять ответ/);
 
   const mismatch = await run(
     'Apply request extras',
@@ -847,7 +1010,7 @@ async function run(name, json, nodes = {}, binary = {}) {
           hitl: {
             pending: false,
             questions: [{ question_id: 'unlisted_wells_policy', question: '?' }],
-            answers: { unlisted_wells_policy: 'unlisted_wells_policy=remove' },
+            answers: { unlisted_wells_policy: { choice: 'remove', text: 'Убрать из прогноза', label: 'Убрать из прогноза' } },
           },
         },
         activity_base_url: 'http://activity:8200',
@@ -855,7 +1018,7 @@ async function run(name, json, nodes = {}, binary = {}) {
     },
   );
   assert.equal(afterHitl.agent_task.inputs.unlisted_wells_policy, 'remove');
-  assert.equal(afterHitl.agent_task.context.hitl.answers.unlisted_wells_policy, 'unlisted_wells_policy=remove');
+  assert.equal(afterHitl.agent_task.context.hitl.answers.unlisted_wells_policy.choice, 'remove');
   assert.deepEqual(afterHitl.agent_task.context.hitl.answer_ids, ['unlisted_wells_policy']);
 
   const upkeepCompact = await run(
@@ -894,7 +1057,7 @@ async function run(name, json, nodes = {}, binary = {}) {
       'Runtime endpoints': { activity_base_url: 'http://mas-activity:8200' },
     },
   );
-  assert.equal(keepWordCompact.compact.unlisted_wells_policy, 'keep');
+  assert.equal(keepWordCompact.compact.unlisted_wells_policy, null);
 
   const finished = await run(
     'Parse decision',
