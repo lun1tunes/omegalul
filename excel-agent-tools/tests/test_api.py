@@ -574,7 +574,10 @@ def test_n8n_session_endpoints_open_extract_and_tool_alias(client: TestClient) -
     assert opened.status_code == 200, opened.text
     body = opened.json()
     assert body["ok"] is True
+    assert "suggested_capability" not in body, "no regex router: the LLM picks table and columns from the inventory"
     session_id = body["session_id"]
+    table = body["inspect"]["tables"][0]
+    assert {"table_id", "sheet", "columns", "sample", "file"} <= set(table)
     alias = client.post(
         "/agent-tools/detect_tables",
         headers={"X-API-Key": "test-key"},
@@ -582,21 +585,33 @@ def test_n8n_session_endpoints_open_extract_and_tool_alias(client: TestClient) -
     )
     assert alias.status_code == 200, alias.text
     assert alias.json()["ok"] is True
+    # The LLM must name the columns; a missing spec is an error for the model, not a question for the engineer.
+    incomplete = client.post(
+        "/agent-tools/extract_commissioning",
+        headers={"X-API-Key": "test-key"},
+        json={"session_id": session_id, "table_id": table["table_id"]},
+    )
+    assert incomplete.status_code == 200, incomplete.text
+    assert incomplete.json()["ok"] is False
+    assert incomplete.json()["error"]["code"] == "spec_incomplete"
     extracted = client.post(
         "/agent-tools/extract_commissioning",
         headers={"X-API-Key": "test-key"},
-        json={"session_id": session_id},
+        json={"session_id": session_id, "table_id": table["table_id"], "well_column": "Скважина", "date_column": "Дата ввода"},
     )
     assert extracted.status_code == 200, extracted.text
-    result = extracted.json()
+    assert extracted.json()["ok"] is True
+    assert extracted.json()["result"]["status"] == "completed"
+    fetched = client.get(f"/sessions/{session_id}/result", headers={"X-API-Key": "test-key"})
+    assert fetched.status_code == 200
+    result = fetched.json()
     assert result["status"] == "completed"
     wells = {item["well"] for item in result["data"]["facts"]}
     assert {"1601", "1602"} <= wells
-    fetched = client.get(f"/sessions/{session_id}/result", headers={"X-API-Key": "test-key"})
-    assert fetched.status_code == 200
-    assert fetched.json()["status"] == "completed"
     assert result["data"]["total_count"] == len(result["data"]["facts"])
     assert result["data"]["preview"] == result["data"]["facts"][:10]
+    assert result["data"]["commissioning_source"]["date_column"] == "Дата ввода"
+    assert "1601" in result["message"] and "скважин" in result["message"]
     assert client.post(f"/sessions/{session_id}/close").status_code == 401
     closed = client.post(f"/sessions/{session_id}/close", headers={"X-API-Key": "test-key"})
     assert closed.status_code == 200

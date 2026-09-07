@@ -1,255 +1,283 @@
 from __future__ import annotations
 
-from app.agent_run import commissioning_facts, run_excel_agent
+import json
+from pathlib import Path
+
+import pytest
+
+from app import agent_run
+from app.sessions import load_state
+from app.tools import execute_tool
+
+GOLDEN_XLSX = Path("/home/lun1z/omegalul/simulation-model-example/golden-cases/golden_case_1/MONITORING_well_commissioning_dates.xlsx")
+COMBAT = Path("/home/lun1z/omegalul/simulation-model-example/combat-dates-revise/cases")
+DATES_XLSX = COMBAT / "case3_half_plus_new.xlsx"
+PARAMS_XLSX = COMBAT / "case3_new_wells_params.xlsx"
 
 
-def test_excel_agent_asks_for_workbook_without_writing_schedule() -> None:
-    result = run_excel_agent(
-        {
-            "case_id": "CASE-1",
-            "task_id": "TASK-1",
-            "agent_id": "excel_extractor",
-            "objective": "Extract wells",
-            "inputs": {},
-            "context": {},
-        }
-    )
-    assert result["status"] == "needs_input"
-    assert result["issues"][0]["type"] == "missing_excel"
-    blob = str(result).upper()
-    assert "WCONPROD" not in blob
-    assert "SCHEDULE" not in blob or "Нет Excel" in result["message"]
-
-
-def test_commissioning_facts_from_russian_columns() -> None:
-    facts = commissioning_facts(
-        [
-            {
-                "columns": ["Скважина", "Дата ввода"],
-                "preview": [{"Скважина": "1601", "Дата ввода": "23 FEB 2020"}],
-            }
-        ]
-    )
-    assert facts == [{"well": "1601", "date": "23 FEB 2020"}]
-
-
-def test_commissioning_facts_normalizes_numeric_well_and_iso_date() -> None:
-    facts = commissioning_facts(
-        [
-            {
-                "columns": ["Well", "Дата ввода"],
-                "preview": [{"Well": 1601.0, "Дата ввода": "2020-02-23"}],
-            }
-        ]
-    )
-    assert facts[0]["well"] == "1601"
-    assert facts[0]["date"] == "2020-02-23"
-
-
-def test_commissioning_facts_strips_iso_datetime() -> None:
-    facts = commissioning_facts(
-        [
-            {
-                "columns": ["Скважина", "Дата ввода"],
-                "preview": [{"Скважина": "1601", "Дата ввода": "2020-02-23T00:00:00"}],
-            }
-        ]
-    )
-    assert facts[0]["date"] == "2020-02-23"
-
-
-def test_golden_case_1_excel_extracts_well_date_facts(tmp_path, monkeypatch) -> None:
-    from pathlib import Path
-
-    xlsx = Path("/home/lun1z/omegalul/simulation-model-example/golden-cases/golden_case_1/MONITORING_well_commissioning_dates.xlsx")
-    if not xlsx.is_file():
-        return
-    monkeypatch.setenv("SESSION_DIR", str(tmp_path))
-    result = run_excel_agent(
-        {
-            "case_id": "CASE-G1",
-            "task_id": "TASK-G1",
-            "agent_id": "excel_extractor",
-            "objective": "даты ввода",
-            "inputs": {"excel_path": str(xlsx)},
-            "context": {},
-        }
-    )
-    assert result["status"] == "completed"
-    facts = result["data"]["facts"]
-    assert len(facts) >= 2
-    wells = {item["well"] for item in facts}
-    assert {"1601", "1602"} <= wells
-    assert all(item.get("date") for item in facts)
-    from datetime import date as date_cls
-
-    for item in facts:
-        raw = str(item["date"])
-        assert "T" not in raw
-        date_cls.fromisoformat(raw)
-
-
-def test_excel_agent_fetches_workbook_from_activity_artifact_url(tmp_path, monkeypatch) -> None:
-    from pathlib import Path
-
-    xlsx = Path("/home/lun1z/omegalul/simulation-model-example/golden-cases/golden_case_1/MONITORING_well_commissioning_dates.xlsx")
-    if not xlsx.is_file():
-        return
-    seen: dict[str, str] = {}
-
-    def fake_fetch(url: str) -> bytes:
-        seen["url"] = url
-        return xlsx.read_bytes()
-
-    monkeypatch.setattr("app.agent_run._fetch_bytes", fake_fetch)
-    monkeypatch.setenv("SESSION_DIR", str(tmp_path))
-    result = run_excel_agent(
-        {
-            "case_id": "CASE-1",
-            "task_id": "TASK-1",
-            "agent_id": "excel_extractor",
-            "objective": "даты ввода",
-            "inputs": {
-                "activity_base_url": "http://mas-activity:8200",
-                "artifacts": {"excel": {"filename": "dates.xlsx", "artifact_id": "excel"}},
-            },
-            "context": {},
-        }
-    )
-    assert seen["url"] == "http://mas-activity:8200/cases/CASE-1/artifacts/excel"
-    assert result["status"] == "completed"
-    wells = {item["well"] for item in result["data"]["facts"]}
-    assert {"1601", "1602"} <= wells
-
-
-def test_open_session_then_extract_commissioning_matches_agent_run(tmp_path, monkeypatch) -> None:
-    from pathlib import Path
-
-    from app.agent_run import extract_commissioning, open_session, session_result
-
-    xlsx = Path("/home/lun1z/omegalul/simulation-model-example/golden-cases/golden_case_1/MONITORING_well_commissioning_dates.xlsx")
-    if not xlsx.is_file():
-        return
-    monkeypatch.setenv("SESSION_DIR", str(tmp_path))
-    task = {
-        "case_id": "CASE-G1",
-        "task_id": "TASK-G1",
+def _task(objective: str = "даты ввода", **inputs) -> dict:
+    return {
+        "case_id": "CASE-T",
+        "task_id": "TASK-T",
         "agent_id": "excel_extractor",
-        "objective": "даты ввода",
-        "inputs": {"excel_path": str(xlsx)},
+        "objective": objective,
+        "inputs": inputs,
         "context": {},
     }
-    opened = open_session(task)
-    assert opened["ok"] is True
-    assert opened["suggested_capability"] == "commissioning"
-    assert opened["inspect"]["table_count"] >= 1
-    extracted = extract_commissioning(opened["session_id"])
-    assert extracted["status"] == "completed"
-    wells = {item["well"] for item in extracted["data"]["facts"]}
-    assert {"1601", "1602"} <= wells
-    fetched = session_result(opened["session_id"])
-    assert fetched["data"]["facts"] == extracted["data"]["facts"]
-    assert extracted["data"]["total_count"] == len(extracted["data"]["facts"])
-    assert extracted["data"]["preview"] == extracted["data"]["facts"][:10]
 
 
-def test_open_and_extract_emit_live_activity_status_lines(tmp_path, monkeypatch) -> None:
-    from pathlib import Path
-
-    from app import agent_run
-
-    xlsx = Path("/home/lun1z/omegalul/simulation-model-example/golden-cases/golden_case_1/MONITORING_well_commissioning_dates.xlsx")
-    if not xlsx.is_file():
-        return
+@pytest.fixture(autouse=True)
+def _quiet_activity(monkeypatch, tmp_path):
     monkeypatch.setenv("SESSION_DIR", str(tmp_path))
     seen: list[tuple[str, str]] = []
+    monkeypatch.setattr(agent_run, "_post_event", lambda _cid, p: seen.append((str(p.get("kind")), str(p.get("status_message") or ""))))
+    agent_run._SEEN_EVENTS = seen  # type: ignore[attr-defined]
+    yield seen
 
-    def capture(case_id, payload):
-        seen.append((str(payload.get("kind")), str(payload.get("status_message") or "")))
 
-    monkeypatch.setattr(agent_run, "_post_event", capture)
-    task = {
-        "case_id": "CASE-LIVE",
-        "task_id": "TASK-LIVE",
-        "agent_id": "excel_extractor",
-        "objective": "даты ввода",
-        "inputs": {"excel_path": str(xlsx)},
-        "context": {},
-    }
-    opened = agent_run.open_session(task)
+def test_open_session_without_workbook_asks_in_prose_and_writes_no_schedule() -> None:
+    opened = agent_run.open_session(_task("Extract wells"))
+    assert opened["ok"] is False
+    result = opened["result"]
+    assert result["status"] == "needs_input"
+    assert result["issues"][0]["type"] == "missing_excel"
+    question = result["requests"][0]["question"]
+    assert "Приложите" in question and "{" not in question
+    assert "WCONPROD" not in str(result).upper()
+
+
+def test_open_session_returns_inventory_not_a_capability_decision() -> None:
+    if not GOLDEN_XLSX.is_file():
+        pytest.skip("golden xlsx missing")
+    opened = agent_run.open_session(_task(excel_path=str(GOLDEN_XLSX)))
     assert opened["ok"] is True
-    extracted = agent_run.extract_commissioning(opened["session_id"])
-    assert extracted["status"] == "completed"
-    kinds = [kind for kind, _ in seen]
-    messages = [msg for _, msg in seen]
+    assert "suggested_capability" not in opened
+    inspect = opened["inspect"]
+    assert inspect["table_count"] >= 1
+    table = inspect["tables"][0]
+    assert table["columns"] == ["Скважина", "Дата ввода"]
+    assert table["sample"] and table["sample"][0]["Скважина"] == "1601"
+    assert table["file"] == GOLDEN_XLSX.name
+    assert opened["files"] == [GOLDEN_XLSX.name]
+    assert agent_run.session_result(opened["session_id"])["status"] == "needs_input"
+
+
+def test_extract_commissioning_needs_explicit_columns_and_validates_them() -> None:
+    if not GOLDEN_XLSX.is_file():
+        pytest.skip("golden xlsx missing")
+    opened = agent_run.open_session(_task(excel_path=str(GOLDEN_XLSX)))
+    state = load_state(opened["session_id"])
+    table_id = opened["inspect"]["tables"][0]["table_id"]
+
+    incomplete = execute_tool(state, "extract_commissioning", {"table_id": table_id})
+    assert incomplete["ok"] is False
+    assert incomplete["error"]["code"] == "spec_incomplete"
+    assert incomplete["error"]["details"]["missing"] == ["well_column", "date_column"]
+    assert incomplete["error"]["details"]["available_tables"][0]["table_id"] == table_id
+
+    wrong = execute_tool(state, "extract_commissioning", {"table_id": table_id, "well_column": "Скважина", "date_column": "Нет такой"})
+    assert wrong["ok"] is False
+    assert wrong["error"]["code"] == "column_not_found"
+    assert wrong["error"]["details"]["available_columns"] == ["Скважина", "Дата ввода"]
+
+    not_dates = execute_tool(state, "extract_commissioning", {"table_id": table_id, "well_column": "Дата ввода", "date_column": "Скважина"})
+    assert not_dates["ok"] is False
+    assert not_dates["error"]["code"] == "column_not_dates"
+
+    # The result is not stored until a valid extraction happened.
+    assert agent_run.session_result(opened["session_id"])["status"] == "needs_input"
+
+
+def test_extract_commissioning_is_deterministic_and_summary_is_prose() -> None:
+    if not GOLDEN_XLSX.is_file():
+        pytest.skip("golden xlsx missing")
+    opened = agent_run.open_session(_task(excel_path=str(GOLDEN_XLSX)))
+    state = load_state(opened["session_id"])
+    table_id = opened["inspect"]["tables"][0]["table_id"]
+    done = execute_tool(state, "extract_commissioning", {"table_id": table_id, "well_column": "скважина", "date_column": "Дата ввода"})
+    assert done["ok"] is True, done
+    assert done["result"]["status"] == "completed"
+    result = agent_run.session_result(opened["session_id"])
+    assert result["status"] == "completed"
+    facts = result["data"]["facts"]
+    assert {item["well"] for item in facts} >= {"1601", "1602"}
+    for item in facts:
+        assert "T" not in str(item["date"])
+        assert len(str(item["date"])) == 10
+    assert result["data"]["total_count"] == len(facts)
+    assert result["data"]["preview"] == facts[:10]
+    assert result["data"]["commissioning_source"]["well_column"] == "Скважина"
+    assert result["data"]["file_name"] == GOLDEN_XLSX.name
+    assert result["message"].startswith("Даты ввода: 2 скважины (1601, 1602)")
+    kinds = [kind for kind, _ in agent_run._SEEN_EVENTS]  # type: ignore[attr-defined]
     assert "agent.accepted" in kinds
-    assert "Разбираю Excel" in messages
-    assert any(msg.startswith("Файл ") and "таблиц" in msg for msg in messages)
-    assert any(msg.startswith("Нашёл таблиц:") for msg in messages)
-    assert any(msg.startswith("Фактов скважина+дата:") for msg in messages)
-    # Tools report progress only; the single agent.result is emitted by the orchestrator on merge.
-    assert "agent.result" not in kinds
-    assert any("Извлечено таблиц" in msg for msg in messages)
+    assert "agent.result" not in kinds, "the orchestrator emits the single agent.result"
+    assert any(msg.startswith("Даты ввода:") for _, msg in agent_run._SEEN_EVENTS)  # type: ignore[attr-defined]
 
 
-def test_emit_tool_progress_for_detect_tables() -> None:
-    from app.agent_run import emit_tool_progress
-
-    seen: list[str] = []
-
-    def capture(_case_id, payload):
-        seen.append(str(payload.get("status_message") or ""))
-
-    import app.agent_run as agent_run
-
-    agent_run._post_event = capture  # type: ignore[method-assign]
-    emit_tool_progress(
-        {"payload": {"case_id": "CASE-T", "task_id": "T1", "activity_base": "http://x"}},
-        "detect_tables",
-        {"ok": True, "result": {"tables": [{}, {}]}},
+def test_two_workbooks_become_one_session_with_per_file_inventory(monkeypatch) -> None:
+    if not (DATES_XLSX.is_file() and PARAMS_XLSX.is_file()):
+        pytest.skip("combat fixtures missing")
+    monkeypatch.setattr(
+        agent_run,
+        "_excel_cards",
+        lambda _task: [
+            {"artifact_id": "excel", "filename": DATES_XLSX.name, "path": str(DATES_XLSX)},
+            {"artifact_id": "excel_1", "filename": PARAMS_XLSX.name, "path": str(PARAMS_XLSX)},
+        ],
     )
-    assert seen == ["Нашёл таблиц: 2"]
+    opened = agent_run.open_session(_task("даты ввода и новые скважины"))
+    assert opened["ok"] is True
+    assert opened["files"] == [DATES_XLSX.name, PARAMS_XLSX.name]
+    by_file = {t["file"]: t for t in opened["inspect"]["tables"]}
+    assert set(by_file) == {DATES_XLSX.name, PARAMS_XLSX.name}
+    dates, params = by_file[DATES_XLSX.name], by_file[PARAMS_XLSX.name]
+    assert dates["columns"] == ["Скважина", "Дата ввода"]
+    assert "MD_TOP" in params["columns"] and "WELLTRACK" in params["columns"]
+
+    state = load_state(opened["session_id"])
+    first = execute_tool(state, "extract_commissioning", {"table_id": dates["table_id"], "well_column": "Скважина", "date_column": "Дата ввода"})
+    assert first["ok"] is True
+    mapping = {
+        "date": "Дата ввода",
+        "group": "Группа",
+        "phase": "Фаза",
+        "i": "I",
+        "j": "J",
+        "md_top": "MD_TOP",
+        "md_bot": "MD_BOT",
+        "diameter": "Диаметр",
+        "control": "Режим",
+        "rate": "Дебит",
+        "bhp": "BHP",
+        "vfp_table": "VFP",
+        "welltrack_include": "WELLTRACK",
+    }
+    # n8n passes optional JSON tool arguments as strings.
+    second = execute_tool(state, "extract_well_parameters", {"table_id": params["table_id"], "well_column": "Скважина", "mapping": json.dumps(mapping)})
+    assert second["ok"] is True, second
+    result = agent_run.session_result(opened["session_id"])
+    assert result["status"] == "completed"
+    assert len(result["data"]["facts"]) == 14
+    new_wells = result["data"]["new_wells"]
+    assert [row["well"] for row in new_wells][:3] == ["N001", "N002", "N003"]
+    assert new_wells[0] == {
+        "well": "N001",
+        "date": "2023-01-01",
+        "group": "GNEW",
+        "phase": "OIL",
+        "i": 1,
+        "j": 1,
+        "md_top": 3200,
+        "md_bot": 3240,
+        "diameter": 0.15,
+        "control": "GRAT",
+        "rate": 80000,
+        "bhp": 90,
+        "vfp_table": 30,
+        "welltrack_include": "INCLUDE/WELLTRACK/N001_WELLTRACK.INC",
+    }
+    assert result["message"].startswith("Даты ввода: 14 скважин")
+    assert "Параметры новых скважин: 10 скважин" in result["message"]
+    assert result["data"]["files"] == [DATES_XLSX.name, PARAMS_XLSX.name]
 
 
-def test_suggested_capability_dates_vs_rates() -> None:
-    from app.agent_run import suggested_capability
+def test_extract_well_parameters_passes_unmapped_columns_under_their_headers() -> None:
+    if not PARAMS_XLSX.is_file():
+        pytest.skip("combat fixtures missing")
+    opened = agent_run.open_session(_task("новые скважины", excel_path=str(PARAMS_XLSX)))
+    state = load_state(opened["session_id"])
+    table_id = opened["inspect"]["tables"][0]["table_id"]
+    bad = execute_tool(state, "extract_well_parameters", {"table_id": table_id, "well_column": "Скважина", "mapping": {"group": "Нет колонки"}})
+    assert bad["ok"] is False and bad["error"]["code"] == "column_not_found"
+    done = execute_tool(state, "extract_well_parameters", {"table_id": table_id, "well_column": "Скважина"})
+    assert done["ok"] is True
+    row = agent_run.session_result(opened["session_id"])["data"]["new_wells"][0]
+    assert row["well"] == "N001"
+    assert row["Группа"] == "GNEW" and row["MD_TOP"] == 3200  # Schedule Builder resolves these via its aliases
 
-    assert suggested_capability("даты ввода скважин") == "commissioning"
-    assert suggested_capability("сдвинуть даты ввода") == "commissioning"
-    assert suggested_capability("commissioning dates") == "commissioning"
-    assert suggested_capability("достань дебиты") == "operations"
-    assert suggested_capability("PVT и SCAL") == "operations"
-    assert suggested_capability("Extract wells") == "operations"
-    assert suggested_capability("") == "operations"
+
+def test_repeated_extraction_attempts_are_bounded() -> None:
+    if not GOLDEN_XLSX.is_file():
+        pytest.skip("golden xlsx missing")
+    opened = agent_run.open_session(_task(excel_path=str(GOLDEN_XLSX)))
+    state = load_state(opened["session_id"])
+    table_id = opened["inspect"]["tables"][0]["table_id"]
+    for _ in range(agent_run.MAX_TOOL_REPEATS):
+        execute_tool(state, "extract_commissioning", {"table_id": table_id, "well_column": "Скважина", "date_column": "нет"})
+    blocked = execute_tool(state, "extract_commissioning", {"table_id": table_id, "well_column": "Скважина", "date_column": "Дата ввода"})
+    assert blocked["ok"] is False
+    assert blocked["error"]["code"] == "too_many_attempts"
 
 
-def test_session_result_needs_input_without_extract_then_close(tmp_path, monkeypatch) -> None:
-    from pathlib import Path
-
-    from app.agent_run import open_session, session_result
-    from app.sessions import close_session
-
-    xlsx = Path("/home/lun1z/omegalul/simulation-model-example/golden-cases/golden_case_1/MONITORING_well_commissioning_dates.xlsx")
-    if not xlsx.is_file():
-        return
-    monkeypatch.setenv("SESSION_DIR", str(tmp_path))
-    opened = open_session(
+def test_ask_engineer_requires_prose_and_stores_needs_input() -> None:
+    if not GOLDEN_XLSX.is_file():
+        pytest.skip("golden xlsx missing")
+    opened = agent_run.open_session(_task(excel_path=str(GOLDEN_XLSX)))
+    state = load_state(opened["session_id"])
+    machine = execute_tool(state, "ask_engineer", {"question": "date_column=? {choose}"})
+    assert machine["ok"] is False
+    assert machine["error"]["code"] == "question_not_human"
+    asked = execute_tool(
+        state,
+        "ask_engineer",
         {
-            "case_id": "CASE-IDLE",
-            "task_id": "TASK-IDLE",
-            "agent_id": "excel_extractor",
-            "objective": "достань дебиты",
-            "inputs": {"excel_path": str(xlsx)},
-            "context": {},
+            "question": "В таблице две колонки с датами — «Дата ввода» и «Дата ввода (baseline в .INC)». Какую из них считать новой датой ввода?",
+            "options": "Дата ввода; Дата ввода (baseline в .INC)",
+            "topic": "date_column",
+        },
+    )
+    assert asked["ok"] is True
+    result = agent_run.session_result(opened["session_id"])
+    assert result["status"] == "needs_input"
+    request = result["requests"][0]
+    assert request["question_id"] == "Q-date_column"
+    assert [opt["label"] for opt in request["options"]] == ["Дата ввода", "Дата ввода (baseline в .INC)"]
+    assert request["accepts"]["free_text"] is True
+
+
+def test_excel_cards_collect_every_workbook_of_the_case(monkeypatch) -> None:
+    monkeypatch.setattr(
+        agent_run,
+        "_fetch_case_state",
+        lambda _activity, _case: {
+            "artifacts": {
+                "excel": {"artifact_id": "excel", "filename": "dates.xlsx", "role": "excel"},
+                "schedule": {"source": {"artifact_id": "schedule_source", "filename": "baseline.inc", "role": "schedule_source"}},
+                "attachments": [{"artifact_id": "excel_1", "filename": "params.xlsx", "role": "excel"}],
+            }
+        },
+    )
+    cards = agent_run._excel_cards(
+        {
+            "case_id": "CASE-9",
+            "inputs": {"activity_base_url": "http://mas-activity:8200", "artifact_ids": ["excel", "excel_1", "schedule_source"]},
         }
     )
-    assert opened["ok"] is True
-    assert opened["suggested_capability"] == "operations"
-    result = session_result(opened["session_id"])
-    assert result["status"] == "needs_input"
-    assert result["issues"][0]["type"] == "no_extract"
-    closed = close_session(opened["session_id"])
-    assert closed["ok"] is True
-    assert closed["closed"] is True
-    again = close_session(opened["session_id"])
-    assert again["closed"] is False
+    assert [(c["artifact_id"], c["filename"]) for c in cards] == [("excel", "dates.xlsx"), ("excel_1", "params.xlsx")]
+    assert cards[1]["url"] == "http://mas-activity:8200/cases/CASE-9/artifacts/excel_1"
+
+    # Older orchestrator states kept only the last workbook in the `excel` slot (CASE-6a9e67ef): the fixed
+    # id `excel` is probed anyway so the first workbook is never lost.
+    monkeypatch.setattr(agent_run, "_fetch_case_state", lambda _a, _c: {"artifacts": {"excel": {"artifact_id": "excel_1", "filename": "params.xlsx", "role": "excel"}}})
+    cards = agent_run._excel_cards({"case_id": "CASE-9", "inputs": {"activity_base_url": "http://mas-activity:8200", "artifact_ids": ["excel_1"]}})
+    assert [c["artifact_id"] for c in cards] == ["excel", "excel_1"]
+
+
+def test_emit_tool_progress_for_detect_tables_and_tool_errors() -> None:
+    seen: list[str] = []
+    state = {"payload": {"case_id": "CASE-T", "task_id": "T1", "activity_base": "http://x"}}
+    agent_run._post_event = lambda _case_id, payload: seen.append(str(payload.get("status_message") or ""))  # type: ignore[method-assign]
+    agent_run.emit_tool_progress(state, "detect_tables", {"ok": True, "result": {"tables": [{}, {}]}})
+    agent_run.emit_tool_progress(state, "extract_commissioning", {"ok": False, "error": {"code": "column_not_dates"}})
+    agent_run.emit_tool_progress(state, "extract_commissioning", {"ok": True, "result": {"status": "completed"}})
+    assert seen == ["Нашёл таблиц: 2", "Выбранная колонка не похожа на даты — подбираю другую"]
+
+
+def test_date_normalisation_accepts_engineering_formats() -> None:
+    assert agent_run._as_date("2020-02-23T00:00:00") == ("2020-02-23", True)
+    assert agent_run._as_date("23.02.2020") == ("2020-02-23", True)
+    assert agent_run._as_date("23 FEB 2020") == ("23 FEB 2020", True)
+    assert agent_run._as_date("Примечание") == ("Примечание", False)
+    assert agent_run._as_well(1601.0) == "1601"
+    assert agent_run._as_well("1601.0") == "1601"

@@ -27,69 +27,67 @@ OA = {
     }
 }
 
-SYSTEM = """Ты — единственный LLM-решатель агента Excel Extractor.
+SYSTEM = """Ты — решатель агента Excel Extractor: читаешь задачу инженера и инвентарь приложенных Excel-книг (файлы, листы, таблицы с колонками и первыми строками), сам выбираешь таблицу и колонки и вызываешь инструмент извлечения. Данные извлекают инструменты — ты их не переписываешь и SCHEDULE / .INC не пишешь.
 
-Workbook тебе не показывают. Он лежит в сессии FastAPI. session_id привязан workflow: никогда не передавай session_id и обёртку args/input.
+Книгу целиком тебе не показывают — она лежит в сессии FastAPI. session_id привязан workflow: никогда не передавай session_id и обёртку args/input.
 
-Инструменты:
-- workbook_introspect — листы и размеры (компактно)
-- sheet_preview — небольшой прямоугольник одного листа, не весь лист
-- detect_tables — найти таблицы, вернуть table_id / range / columns
-- match_tables — ранжировать таблицы по запросу
-- describe_table — колонки и sample по table_id
-- list_column_values — ограниченные distinct-значения колонки
-- query_table — строки по table_id (limit, фильтры). select и filters — JSON-массивы, не объект с ключами "0","1". Не выгружай всю книгу
-- extract_commissioning — скважина+дата ввода из уже открытой сессии. Даты и скважины сам не выдумывай
+Какой инструмент когда:
+- Задача про даты ввода / запуска скважин (таблица «скважина — дата») → extract_commissioning с table_id, well_column и date_column из инвентаря (inspect.tables: columns и sample). Если в таблице несколько колонок с датами — бери новую (плановую) дату ввода, а не baseline / старую / дату из .INC. Один вызов на таблицу.
+- В инвентаре есть таблица параметров скважин (группа, интервал MD, диаметр, режим, дебит, BHP, VFP, файл траектории) и задача упоминает новые скважины или их добавление → extract_well_parameters с table_id, well_column и mapping колонок на поля: date, group, phase, i, j, md_top, md_bot, diameter, control, rate, bhp, thp, vfp_table, welltrack_include. Немаппированные колонки сохраняются под своими заголовками.
+- Обе таблицы есть → оба инструмента, по одному вызову каждый.
+- Инвентаря не хватает (заголовки непонятны, таблица не найдена) → describe_table / sheet_preview / list_column_values / detect_tables / match_tables — не больше трёх вызовов подряд.
+- Другие данные (дебиты, история, режимы, PVT) → detect_tables / describe_table / query_table. select и filters в query_table — JSON-массивы, не объект с ключами "0","1". Не выгружай всю книгу.
+- ask_engineer — единственный способ спросить инженера: только когда по инвентарю и ответам инженера (engineer_answers) нельзя выбрать таблицу или колонку (например две колонки дат без пояснений). Один вопрос обычной русской фразой; варианты — как их видит инженер (названия листов и колонок). Никаких имён полей, JSON, enum.
 
-Правила:
-- Не пиши SCHEDULE / .INC. Только факты из Excel.
-- Не придумывай скважины, даты, дебиты, имена листов и table_id.
-- Проанализируй objective и handoff_message.
-- Если задача про даты ввода скважин → extract_commissioning один раз, затем STOP.
-- Если задача про дебиты, управления, историю, PVT, SCAL → introspect/detect/query. Не вызывай extract_commissioning, если даты ввода не нужны.
-- После извлечения данных (extract_commissioning или query_table) — STOP.
-- Если за 3 шага нет прогресса — STOP и верни вопрос. Не вызывай один tool больше трёх раз подряд.
-- Если файла/таблиц нет — не выдумывай строки.
-- Retrieved knowledge — только срез excel_protocol / protocol_instruction (протокол инструментов). Не schedule_mvp и не строки workbook. Пустой или unavailable срез — обычные правила инструментов, не спрашивай HITL про базу знаний.
+Ответы инструментов:
+- ok:false с error.code spec_incomplete / table_not_found / column_not_found / column_not_dates / no_rows — это тебе, не инженеру: исправь аргументы по инвентарю (details.available_tables / available_columns подсказывают) и вызови инструмент снова.
+- ok:false с error.code question_not_human — переформулируй вопрос прозой и вызови ask_engineer снова.
+- ok:false с error.code too_many_attempts — больше этот инструмент не вызывай: спроси инженера или заверши ответ.
+- status completed от extract_* — результат зафиксирован. Если извлекать больше нечего — STOP. status needs_input от ask_engineer — STOP.
 
-Заверши одним коротким фактическим предложением по-русски.
+Инварианты:
+- Не придумывай скважины, даты, дебиты, имена листов, table_id и колонок — только из инвентаря и ответов инструментов.
+- rework_reason в задаче — замечание оркестратора к прошлому результату: устрани именно его.
+- Retrieved knowledge — только срез excel_protocol / protocol_instruction (протокол инструментов). Пустой или unavailable срез — работай по инвентарю, инженера про базу знаний не спрашивай.
+
+Заверши одним коротким фактическим предложением по-русски: что извлечено или чего не хватило.
 """
 
 TOOLS = [
-    ("workbook_introspect", "Компактные листы и размеры workbook. Без файла.", []),
+    ("workbook_introspect", "Компактные листы и размеры книги. Без файла.", []),
     (
         "sheet_preview",
-        "Небольшой preview одного листа. sheet только из introspect.",
-        [("sheet", "string", True, "Точное имя листа из introspect")],
+        "Небольшой preview одного листа. sheet только из инвентаря / introspect.",
+        [("sheet", "string", True, "Точное имя листа из инвентаря")],
     ),
     (
         "detect_tables",
-        "Найти таблицы. sheet опционален. Возвращает table_id, range, columns — не workbook.",
+        "Найти таблицы (если инвентарь пуст или неполный). sheet опционален. Возвращает table_id, range, columns — не книгу.",
         [("sheet", "string", False, "Ограничить поиск одним листом")],
     ),
     (
         "match_tables",
-        "Ранжировать уже найденные или подходящие таблицы по фразе запроса.",
-        [("query", "string", True, "Что искать: даты ввода, дебиты, ...")],
+        "Ранжировать найденные таблицы по фразе запроса.",
+        [("query", "string", True, "Что искать: даты ввода, параметры скважин, дебиты, ...")],
     ),
     (
         "describe_table",
-        "Колонки, число строк и sample. table_id только из detect/match.",
-        [("table_id", "string", True, "table_id из detect_tables")],
+        "Колонки, число строк и sample одной таблицы. table_id только из инвентаря / detect.",
+        [("table_id", "string", True, "table_id из инвентаря")],
     ),
     (
         "list_column_values",
-        "Ограниченные distinct-значения одной колонки для точных фильтров.",
+        "Ограниченные distinct-значения одной колонки — чтобы понять, что в ней лежит.",
         [
-            ("table_id", "string", True, "table_id из detect_tables"),
-            ("column", "string", True, "Точное имя колонки из describe/detect"),
+            ("table_id", "string", True, "table_id из инвентаря"),
+            ("column", "string", True, "Точное имя колонки из инвентаря"),
         ],
     ),
     (
         "query_table",
-        "Строки таблицы. select и filters — JSON-массивы: [\"well\",\"date\"] и [{\"field\":\"well\",\"operator\":\"eq\",\"value\":\"101\"}].",
+        "Строки таблицы для прочих данных (дебиты, история). select и filters — JSON-массивы: [\"well\",\"date\"] и [{\"field\":\"well\",\"operator\":\"eq\",\"value\":\"101\"}].",
         [
-            ("table_id", "string", True, "table_id из detect_tables"),
+            ("table_id", "string", True, "table_id из инвентаря"),
             ("select", "json", False, "Массив имён колонок, например [\"well\",\"date\"]"),
             ("filters", "json", False, "Массив {field, operator, value}"),
             ("limit", "string", False, "Лимит строк, по умолчанию 200"),
@@ -97,8 +95,35 @@ TOOLS = [
     ),
     (
         "extract_commissioning",
-        "Извлечь факты скважина+дата ввода из сессии. Аргументы не передавай.",
-        [],
+        "Извлечь факты «скважина — дата ввода» из выбранной тобой таблицы. Ты указываешь table_id и точные имена колонок из инвентаря; извлечение детерминированное, колонки проверяются (column_not_found / column_not_dates вернутся тебе).",
+        [
+            ("table_id", "string", True, "table_id таблицы со скважинами и датами из инвентаря"),
+            ("well_column", "string", True, "Точное имя колонки со скважинами"),
+            ("date_column", "string", True, "Точное имя колонки с новой датой ввода (не baseline)"),
+        ],
+    ),
+    (
+        "extract_well_parameters",
+        "Извлечь таблицу параметров новых скважин (группа, интервал MD, диаметр, режим, дебит, BHP, VFP, файл траектории). Ты указываешь table_id, колонку скважин и mapping колонок на поля; извлечение детерминированное.",
+        [
+            ("table_id", "string", True, "table_id таблицы параметров из инвентаря"),
+            ("well_column", "string", True, "Точное имя колонки со скважинами"),
+            (
+                "mapping",
+                "json",
+                False,
+                "JSON-объект {поле: колонка}: date, group, phase, i, j, md_top, md_bot, diameter, control, rate, bhp, thp, vfp_table, welltrack_include → точные имена колонок",
+            ),
+        ],
+    ),
+    (
+        "ask_engineer",
+        "Спросить инженера одним вопросом по-русски, когда по инвентарю нельзя выбрать таблицу или колонку. Варианты показываются кнопками. Не для ошибок вызова инструментов.",
+        [
+            ("question", "string", True, "Обычная русская фраза: что нужно уточнить и зачем, без имён полей и JSON"),
+            ("options", "string", False, "Варианты через точку с запятой, как их видит инженер (названия листов/колонок); пусто — свободный ответ"),
+            ("topic", "string", False, "Короткая латинская тема вопроса, например date_column"),
+        ],
     ),
 ]
 
@@ -268,41 +293,6 @@ if(!task.inputs.activity_base_url&&cfg.activity_base_url) task.inputs={...task.i
 return [{json:{...cfg, agent_task:task, case_id:task.case_id, task_id:task.task_id}}];
 """
 
-RESTORE_AFTER_PROGRESS = r"""
-const x=$('Restore after Excel Extractor accepted').first().json||{};
-const cap=String(x.suggested_capability||'').trim();
-const known=cap==='commissioning'?cap:'operations';
-return [{json:{...x, suggested_capability:known}}];
-"""
-
-DESCRIBE_EXTRACT = r"""
-const raw=$json||{};
-const data=raw.data&&typeof raw.data==='object'?raw.data:{};
-const facts=Array.isArray(data.facts)?data.facts:[];
-const n=Number(data.total_count!=null?data.total_count:facts.length);
-const httpError=raw.error&&typeof raw.error==='object'?raw.error:null;
-const status=String(raw.status||(httpError?'failed':'')).trim();
-const skipFetch=status!=='completed';
-const fallback=status==='completed'
-  ? ('Commissioning: извлечено '+n+' скважин с датами ввода')
-  : (status==='needs_input'?'Commissioning требует уточнения':'Извлечение commissioning не удалось');
-const message=String(raw.message||(httpError&&(httpError.message||httpError.description))||fallback);
-return [{json:{
-  ...raw,
-  status:status||'failed',
-  message,
-  skip_fetch:skipFetch,
-  activity_kind:status==='completed'?'agent.progress':(status==='needs_input'?'agent.progress':'agent.failed'),
-  status_message:message,
-  activity_payload:{
-    source:'excel-extractor-agent-workflow',
-    operation:'extract_commissioning',
-    wells_extracted:n,
-    status:status||'failed'
-  }
-}}];
-"""
-
 SUMMARIZE_AI = r"""
 const agent=$json||{};
 const opened=$('Open excel session').first().json||{};
@@ -317,29 +307,33 @@ const unique=[...new Set(tools)];
 const counts={};
 for(const name of tools) counts[name]=(counts[name]||0)+1;
 const repeated=Object.keys(counts).some(name=>counts[name]>3);
-const hasExtraction=tools.some(n=>n==='extract_commissioning'||n==='query_table');
-const skipFetch=!hasExtraction||repeated;
-const message=hasExtraction&&!repeated
-  ? ('Excel Extractor вызвал '+String(tools.length)+' tools: '+unique.join(', '))
-  : (repeated
-    ? 'Агент повторял один и тот же tool без прогресса. Нужно уточнение.'
-    : 'Агент не извлёк данных. Уточните, какие данные нужны.');
+// A stored result exists after extract_* (completed) or ask_engineer (needs_input); the session is authoritative.
+const hasResult=tools.some(n=>n.indexOf('extract_')===0||n==='ask_engineer');
+const skipFetch=!hasResult;
+const finalText=String(agent.output||agent.text||'').trim();
+// Engineer-facing fallback when the LLM ended without fixing a result: plain Russian, no tool names.
+const question=repeated
+  ? 'Excel Extractor несколько раз просматривал книгу, но не смог выбрать таблицу и колонки. Уточните, на каком листе и в каких колонках находятся скважины и нужные значения (даты ввода, режимы, дебиты).'
+  : 'Excel Extractor не смог понять, какие данные взять из приложенной книги. Уточните, на каком листе и в каких колонках находятся скважины и нужные значения (даты ввода, режимы, дебиты).';
+const message=hasResult
+  ? (finalText||'Excel Extractor извлёк данные из книги.')
+  : (finalText?finalText+' ':'')+question;
 return [{json:{
   ...(skipFetch?{
     task_id:opened.task_id||'',
     agent_id:'excel_extractor',
     status:'needs_input',
-    message,
-    data:{tools_used:unique,total_calls:steps.length},
+    message:question,
+    data:{tools_used:unique,total_calls:steps.length,llm_final_text:finalText.slice(0,600)},
     artifacts:{},
     issues:[{type:repeated?'repeated_tools':'no_extract'}],
     assumptions:[],
-    requests:[{question_id:'Q-clarify',question:message,options:['Даты ввода','Дебиты','Управления','Другое']}]
+    requests:[{question_id:'Q-clarify',question,options:[],accepts:{free_text:true,files:['xlsx']}}]
   }:agent),
   skip_fetch:skipFetch,
-  has_extraction:hasExtraction,
+  has_extraction:hasResult,
   activity_kind:'agent.progress',
-  status_message:message,
+  status_message:message.slice(0,400),
   activity_payload:{source:'excel-extractor-agent-workflow',total_calls:steps.length,tools_used:unique,iterations:steps.length}
 }}];
 """
@@ -377,12 +371,16 @@ const schedule_retrieval_request={
   },
   top_k:RAG_TOP_K
 };
+// The LLM decides which table/columns fit: task text + workbook inventory + what the engineer already answered.
+const engineerAnswers=Array.isArray(opened.engineer_answers)?opened.engineer_answers:[];
+const reworkReason=String(opened.rework_reason||(task.inputs&&task.inputs.rework_reason)||'').trim();
 const planner_input=JSON.stringify({
   objective,
   handoff_message:handoff,
+  files:Array.isArray(opened.files)?opened.files:[],
   inspect:opened.inspect||{},
-  file_name:opened.file_name||'',
-  suggested_capability:opened.suggested_capability||''
+  engineer_answers:engineerAnswers,
+  ...(reworkReason?{rework_reason:reworkReason}:{})
 });
 return [{json:{...opened,session_id:opened.session_id,agent_input:planner_input,planner_input,schedule_retrieval_request,retrieval_selector}}];
 """
@@ -400,7 +398,7 @@ return [{json:{
   artifacts:result.artifacts||{},
   issues:result.issues||[{type:'missing_excel'}],
   assumptions:result.assumptions||[],
-  requests:result.requests||[{question_id:'Q-excel',question:'Приложите workbook .xlsx',options:[]}]
+  requests:result.requests||[{question_id:'Q-excel',question:'К задаче не приложен Excel-файл с данными. Приложите книгу .xlsx, из которой нужно взять скважины и даты.',options:[],accepts:{free_text:true,files:['xlsx']}}]
 }}];
 """
 
@@ -457,17 +455,17 @@ def main() -> None:
                     "**Excel Tools X-API-Key** (`X-API-Key`), не Set. "
                     "Activity events ключ Excel не используют.\n"
                     "3. Bind **Call Knowledge Retrieval** → `MAS — Knowledge Retrieval` "
-                    "(срез `excel_protocol` / `protocol_instruction`; LLM-ветка operations). "
-                    "`extract_commissioning` HTTP RAG не вызывает.\n"
+                    "(срез `excel_protocol` / `protocol_instruction`).\n"
                     "4. Orchestrator — MAS вызывает этот workflow через "
                     "`executeWorkflow` (`Call Excel Extractor`). Webhook не нужен.\n\n"
-                    "Файлы не грузятся в n8n. Сервис сам GET "
-                    "`/cases/{id}/artifacts/excel`.\n"
-                    "`suggested_capability=commissioning` пока идёт обычным HTTP "
-                    "`extract_commissioning` (regex-роутер, Фаза 3.3 плана). "
-                    "Остальное — LLM + инструменты HTTP Request (as tool) с `$fromAI`. "
-                    "После extract проверяется status; needs_input не идёт в "
-                    "Fetch result. Сессия закрывается POST /sessions/{id}/close. "
+                    "Файлы не грузятся в n8n. `open_session` сам забирает все Excel-вложения "
+                    "кейса (`/cases/{id}/artifacts/excel`, `excel_1`, …) в одну сессию и "
+                    "возвращает инвентарь (листы, таблицы, колонки, первые строки). "
+                    "Никакого regex-роутера: LLM сам выбирает таблицу и колонки и вызывает "
+                    "`extract_commissioning` / `extract_well_parameters` (детерминированное "
+                    "извлечение, проверка колонок) или `ask_engineer` (вопрос прозой). "
+                    "Инструменты — HTTP Request (as tool) с `$fromAI`. Результат читается "
+                    "GET /sessions/{id}/result, сессия закрывается POST /sessions/{id}/close. "
                     "Скважины/даты не хардкодятся."
                 ),
                 "height": 380,
@@ -552,45 +550,15 @@ def main() -> None:
             "Activity — Excel Extractor progress",
             (1660, -220),
             "agent.progress",
-            "Excel Extractor проверяет листы и таблицы workbook.",
+            "Excel Extractor читает листы и таблицы приложенных книг.",
         ),
         node(
             "Restore after Excel Extractor progress",
             "n8n-nodes-base.code",
             2,
             (1880, -220),
-            {"jsCode": RESTORE_AFTER_PROGRESS},
+            {"jsCode": "const x=$('Restore after Excel Extractor accepted').first().json||{}; return [{json:x}];"},
         ),
-        node(
-            "Capability router",
-            "n8n-nodes-base.switch",
-            3.4,
-            (1220, 0),
-            {
-                "mode": "expression",
-                "numberOutputs": 2,
-                "output": "={{ ({commissioning:0, operations:1})[String($json.suggested_capability||'operations')] ?? 1 }}",
-            },
-        ),
-        http_json(
-            "Extract commissioning",
-            (1480, -160),
-            "POST",
-            "={{ $('Runtime configuration').first().json.excel_tools_url + '/agent-tools/extract_commissioning' }}",
-            "={{ ({session_id: $('Open excel session').first().json.session_id}) }}",
-            timeout=180000,
-            retry=True,
-        ),
-        node("Describe extract result", "n8n-nodes-base.code", 2, (1680, -80), {"jsCode": DESCRIBE_EXTRACT}),
-        activity_event_dynamic("Activity — Excel Extractor extract", (1680, -260)),
-        node(
-            "Restore after extract event",
-            "n8n-nodes-base.code",
-            2,
-            (1880, -260),
-            {"jsCode": "const x=$('Describe extract result').first().json||{}; return [{json:x}];"},
-        ),
-        if_true("Extract finished?", (1880, -80), "={{ Boolean($json.skip_fetch) }}"),
         node(
             "Restore after Excel Extractor activity",
             "n8n-nodes-base.code",
@@ -625,7 +593,7 @@ def main() -> None:
                 "hasOutputParser": False,
                 "options": {
                     "systemMessage": SYSTEM,
-                    "maxIterations": 6,
+                    "maxIterations": 8,
                     "returnIntermediateSteps": True,
                     "passthroughBinaryImages": False,
                     "passthroughBinaryPdfs": False,
@@ -686,16 +654,8 @@ def main() -> None:
     connect(connections, "Activity — Excel Extractor accepted", "Restore after Excel Extractor accepted")
     connect(connections, "Restore after Excel Extractor accepted", "Activity — Excel Extractor progress")
     connect(connections, "Activity — Excel Extractor progress", "Restore after Excel Extractor progress")
-    connect(connections, "Restore after Excel Extractor progress", "Capability router")
+    connect(connections, "Restore after Excel Extractor progress", "Prepare AI Agent input")
     connect(connections, "Session ready?", "Format missing excel", si=1)
-    connect(connections, "Capability router", "Extract commissioning", si=0)
-    connect(connections, "Capability router", "Prepare AI Agent input", si=1)
-    connect(connections, "Extract commissioning", "Describe extract result")
-    connect(connections, "Describe extract result", "Activity — Excel Extractor extract")
-    connect(connections, "Activity — Excel Extractor extract", "Restore after extract event")
-    connect(connections, "Restore after extract event", "Extract finished?")
-    connect(connections, "Extract finished?", "Format excel result", si=0)
-    connect(connections, "Extract finished?", "Fetch excel result", si=1)
     connect(connections, "Prepare AI Agent input", "Call Knowledge Retrieval")
     connect(connections, "Call Knowledge Retrieval", "Attach excel RAG evidence")
     connect(connections, "Attach excel RAG evidence", "Excel Extractor AI Agent")

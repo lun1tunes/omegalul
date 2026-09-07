@@ -411,11 +411,6 @@ class AgentTaskBody(BaseModel):
     constraints: dict[str, Any] = Field(default_factory=dict)
 
 
-class SessionOnlyBody(BaseModel):
-    model_config = ConfigDict(extra="ignore")
-    session_id: str = Field(min_length=1, max_length=128)
-
-
 def _session_http_error(error: Exception) -> HTTPException:
     detail = str(error)
     code = status.HTTP_404_NOT_FOUND if detail == "Session not found" else status.HTTP_422_UNPROCESSABLE_ENTITY
@@ -424,15 +419,13 @@ def _session_http_error(error: Exception) -> HTTPException:
 
 @app.post("/agent-tools/open_session", dependencies=[Depends(require_api_key)])
 def open_excel_session(body: AgentTaskBody) -> dict[str, Any]:
+    """Load every Excel attachment of the case into one session and return the inventory for the LLM.
+
+    Extraction itself (``extract_commissioning``, ``extract_well_parameters``, ``ask_engineer``) goes
+    through the generic ``/agent-tools/{tool_name}`` route like every other registry tool: the LLM
+    picks the table and columns, the tool validates and extracts deterministically.
+    """
     return agent_run.open_session(body.model_dump())
-
-
-@app.post("/agent-tools/extract_commissioning", dependencies=[Depends(require_api_key)])
-def extract_commissioning(body: SessionOnlyBody) -> dict[str, Any]:
-    try:
-        return agent_run.extract_commissioning(body.session_id)
-    except ValueError as error:
-        raise _session_http_error(error) from error
 
 
 @app.get("/sessions/{session_id}/result", dependencies=[Depends(require_api_key)])
@@ -451,8 +444,3 @@ def close_excel_session(session_id: str) -> dict[str, Any]:
 @app.post("/agent-tools/{tool_name}", dependencies=[Depends(require_api_key)])
 def call_agent_tool_alias(tool_name: str, body: AgentToolRequest) -> dict[str, Any]:
     return call_agent_tool(tool_name, body)
-
-
-@app.post("/agent/run", dependencies=[Depends(require_api_key)])
-def agent_run_endpoint(body: AgentTaskBody) -> dict[str, Any]:
-    return agent_run.run_excel_agent(body.model_dump())

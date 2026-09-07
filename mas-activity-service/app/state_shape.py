@@ -153,7 +153,14 @@ def nest_artifacts(arts: Any) -> dict[str, Any]:
             continue
         role = str(item.get("role") or role_for_artifact_id(aid))
         if role == "excel":
-            nested["excel"] = item
+            # The first workbook (id ``excel``) owns the slot; further workbooks (``excel_1``…) stay
+            # visible as attachments with role ``excel`` instead of silently overwriting the slot.
+            if "excel" not in nested or (aid == "excel" and str(nested["excel"].get("artifact_id")) != "excel"):
+                if "excel" in nested:
+                    attachments.append(nested["excel"])
+                nested["excel"] = item
+            else:
+                attachments.append(item)
         elif role == "surface":
             nested["surface"] = item
         elif role == "schedule_source":

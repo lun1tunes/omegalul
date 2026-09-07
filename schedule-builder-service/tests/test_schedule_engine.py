@@ -865,6 +865,26 @@ def test_engineer_new_well_facts_win_over_orchestrator_echo_of_well_names() -> N
     assert _new_well_defs({"inputs": {"new_wells": facts}}) == facts
 
 
+def test_new_well_facts_come_from_excel_extractor_before_orchestrator_inputs() -> None:
+    """Excel Extractor ``extract_well_parameters`` stores the parameters table under
+    ``state.data.excel.new_wells``; the engineer attaches a workbook, nobody types JSON."""
+    from app.agent_tools import _new_well_defs
+
+    from_excel = [
+        {"well": "N001", "date": "2023-01-01", "group": "GNEW", "phase": "OIL", "i": 1, "j": 1, "md_top": 3200, "md_bot": 3240, "control": "GRAT", "rate": 80000},
+        {"well": "N002", "Дата ввода": "2023-02-01", "Группа": "GNEW", "MD_TOP": 3210, "MD_BOT": 3250, "Режим": "GRAT", "Дебит": 85000},
+    ]
+    state = {
+        "inputs": {"new_wells": ["N001", "N002"]},
+        "context": {"data": {"excel": {"facts": [{"well": "N001", "date": "2023-01-01"}], "new_wells": from_excel}}},
+    }
+    assert _new_well_defs(state) == from_excel
+    # An explicit engineer answer still wins over the extracted table.
+    engineer = [{"well": "N001", "group": "GOLD", "md_top": 1, "md_bot": 2, "control": "ORAT", "rate": 1}]
+    state["context"]["hitl"] = {"answers": {"new_wells_policy": json.dumps({"text": "Вот таблица", "new_wells": engineer})}}
+    assert _new_well_defs(state) == engineer
+
+
 def test_open_session_shows_engineer_answers_and_rework_to_llm() -> None:
     from fastapi.testclient import TestClient
 

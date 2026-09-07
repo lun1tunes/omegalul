@@ -377,6 +377,8 @@ Query оркестратора — цель + факты состояния (с�
 - **`CREATE`:** Создание нового файла SCHEDULE.
 - **`REVISE`** — менять только то, что сказано в задаче, остальное не трогать.
 - Excel Extractor / n8n никогда не читает Excel-файлы напрямую: только HTTP к Excel Tools (`:8000`). Schedule Builder получает уже извлечённые факты (Handoff фактов), не xlsx.
+- Excel Extractor — LLM-first, без regex-роутера. `POST /agent-tools/open_session` сам забирает **все** Excel-вложения кейса (`artifacts/excel`, `excel_1`, …; несколько `.xlsx` склеиваются в одну книгу, лист = `<лист> (<файл>)`) и возвращает инвентарь: файлы, листы, таблицы с `table_id`, колонками и двумя строками-образцами. LLM по задаче, инвентарю и `engineer_answers` выбирает таблицу и колонки и вызывает `extract_commissioning(table_id, well_column, date_column)` → `data.excel.facts` или `extract_well_parameters(table_id, well_column, mapping)` → `data.excel.new_wells` (параметры новых скважин; Schedule Builder берёт их раньше `inputs.new_wells`, но после ответа инженера). Ошибки выбора (`spec_incomplete`, `table_not_found`, `column_not_found`, `column_not_dates`, `no_rows`, `too_many_attempts`) возвращаются LLM с `available_tables` / `available_columns`, не инженеру. Вопрос инженеру — только `ask_engineer` (проверка прозы `question_not_human`). Итог агента — факт («Даты ввода: 14 скважин (…), с … по …»), не «вызвал N tools».
+- Несколько Excel в кейсе: Activity `nest_artifacts` держит первый в слоте `excel`, остальные — в `attachments` с `role=excel`; `flatten_artifacts` возвращает `excel`, `excel_1`, … без потерь.
 - Excel/Schedule агенты: `returnIntermediateSteps=true`.
 - LLM не пишет `.INC` руками. Parse / apply / emit, commissioning и group-rebind — Python FastAPI (`timeline_ops.py`). На Windows достаточно `.venv`. JS timeline в `n8n/templates/schedule_timeline_runtime.py` — только n8n smokes, не процесс сервиса.
 - Расклад keyword не хардкодится классом на слово: RAG `schema_catalogue` → Pydantic `KeywordSchema` → `POST /render` / tool `render_ir`. `get_keyword` отдаёт `details.parameters`. Снимок каталога: `schedule-builder-service/app/data/schema_catalogues.json`.
@@ -446,6 +448,8 @@ Compose на Linux-lab: n8n с хоста `http://127.0.0.1:${N8N_HOST_PORT}` (�
 
 Activity в Compose **не** стартует, пока не зарегистрирован production webhook прокси (иначе lifespan падает с HTTP 404). `scripts/lab_soft_redeploy.py` импортирует workflows, активирует прокси, затем поднимает Activity.
 
+Один вердикт вместо набора команд ниже (lab): `python3 scripts/mas_gate.py` — регенерация всех workflow с проверкой дрейфа, все smokes, три pytest-набора, offline combat; `--live` добавляет `lab_soft_redeploy` и шесть живых кейсов. Разбор одного кейса: `python3 scripts/mas_trace_case.py CASE-… [--n8n --node "Parse decision"]` (лента, state, аудит текста для инженера, n8n executions). Правила работы для агентов и людей — `AGENTS.md`, `.cursor/rules/`, `.cursor/skills/`.
+
 ```bash
 # дымовые тесты живого контура (orchestrator, agents, proxy, RAG, health check, SCHEDULE emit / terminators) — нужен Node.js (lab). На полевой Windows Node не ставится.
 for f in n8n/tests/*-smoke.js; do node "$f" || exit 1; done
@@ -486,7 +490,9 @@ PYTHONPATH=mas-activity-service mas-activity-service/.venv/bin/python \
   simulation-model-example/run_live_five.py
 ```
 
-golden_case_1 / golden_case_2 + combat 0–3 (keep / keep-half / remove-half / new wells). HITL отвечает скрипт (`unlisted_wells_policy`).
+golden_case_1 / golden_case_2 + combat 0–3 (keep / keep-half / remove-half / new wells). HITL отвечает скрипт (`unlisted_wells_policy`). combat 3 прикладывает вторую книгу `case3_new_wells_params.xlsx` — параметры новых скважин читает Excel Extractor, JSON-ответ в HITL остаётся запасным путём.
+
+Сравнение `.INC` (`compare_schedules` в `golden-cases/run_ui_smoke.py`, тот же код в `run_live_five.py`) — **семантическое**, не побайтное: по каждому шагу DATES сравниваются набор ключевых слов и мультимножество записей с канонизированными токенами (кавычки, регистр ключевых слов, числа `0.150` = `0.15`, хвостовые `1*`, порядок записей внутри keyword не важен). Пробелы, пустые строки, комментарии и формат чисел различием не считаются; различие — только отсутствие/лишнее keyword на дате или другие значения параметров.
 
 Проверка стека с хоста: `python3 scripts/mas_stack_health.py`.
 

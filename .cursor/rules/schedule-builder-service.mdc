@@ -1,0 +1,28 @@
+---
+description: Schedule Builder service + agent contract (deterministic SCHEDULE engine, LLM-chosen tools, spec_incomplete, new-well facts priority)
+globs: schedule-builder-service/**,n8n/templates/generate_schedule_builder_agent.py,n8n/tests/schedule-builder-agent-smoke.js
+alwaysApply: false
+---
+
+# Schedule Builder — LLM picks the tool, Python writes the SCHEDULE
+
+Flow: `open_session(agent_task)` binds the case packet (baseline `.INC`, includes, `data.excel` facts, HITL answers, `rework_reason`) → LLM chooses a tool → `execute_tool(session_id, name, args)` in `app/agent_tools.py` → one stored `result` per session → `GET /sessions/{id}/result`.
+
+## Rules
+- **The LLM never writes `.INC` text.** Parse/apply/emit live in `parse.py`, `timeline_ops.py`, `commissioning.py`, `group_rebind.py`, `emit.py`; keyword layout comes from `schema_catalogues.json` via `schema_renderer.py` (`render_ir`). No keyword layout hardcoded as a class per keyword.
+- Tools (`execute_tool` branches): `inspect_schedule`, `inspect_well`, `analyze_forecast_controls`, `search_keywords`, `get_keyword`, `render_ir`, `list_records`, `apply_commissioning`, `apply_group_rebind(spec)`, `apply_operations`, `build_schedule`, `validate_result`, `ask_engineer`. Adding one = a branch here + `TOOLS` row in the generator (`tool_http`) + `SYSTEM` «когда вызывать» + smoke + pytest.
+- Incomplete spec → `_spec_incomplete(...)` for the LLM (where to find the data: task, GRUPTREE, baseline, `engineer_answers`). A human is asked only via `ask_engineer` (prose, `human_text_problems`, options from baseline/GRUPTREE — never `GNEW/GINJ/GPROD` placeholders).
+- One result per session: after `apply_*`/`ask_engineer` stored a result, further result-producing calls return `result_already_stored` — the LLM must stop, not re-word.
+- New-well facts priority in `_new_well_defs`: engineer HITL answer (`new_wells_policy` table) → `data.excel.new_wells` (Excel Extractor `extract_well_parameters`) → `inputs.new_wells` **only if dict rows** (bare well names from the Decision LLM are not definitions).
+- Unlisted-wells policy (`keep|remove`) comes from the HITL `choice`, never regex on the label; `remove` touches only named wells (`_is_named_well`), never `*`/`?` wildcards (`WEFAC '*'`).
+- Summaries are counts and well lists: «Сдвинул даты ввода 4 скважин: 1601 → 1 FEB 2020 …», «Добавил 10 скважин — WELSPECS, COMPDATMD и WCONPROD», «Убрал из прогноза …».
+- Emit invariants (also `.cursor/rules/schedule-syntax-self-apply-smoke.mdc`): every table keyword ends with a bare `/` plus a blank line; keyword order per `schedule_emit_order.py`; INCLUDE safety untouched.
+
+## Verify
+```bash
+cd schedule-builder-service && PYTHONPATH=. ../mas-activity-service/.venv/bin/python -m pytest -q tests
+cd n8n/templates && python3 generate_schedule_builder_agent.py && node ../tests/schedule-builder-agent-smoke.js
+PUBLISH_ACTIVITY=0 python3 simulation-model-example/combat-dates-revise/run_integration_cases.py
+docker compose restart schedule-builder   # lab
+```
+Live: `python3 scripts/mas_gate.py --live` (golden 1–2 commissioning/group-rebind, combat 0–3 keep/remove/new wells). `.INC` comparison is semantic (`compare_schedules`), not byte-wise.

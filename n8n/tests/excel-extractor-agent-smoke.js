@@ -60,9 +60,41 @@ for (const name of [
   'list_column_values',
   'query_table',
   'extract_commissioning',
+  'extract_well_parameters',
+  'ask_engineer',
 ]) {
   assert.ok(tools.includes(name), name);
 }
+// $fromAI(key, description, type[, default]): the LLM names the table and the columns; nothing is
+// inferred from the task text by regex. required = no default.
+function fromAI(node, key) {
+  const args = [...String(node.parameters.jsonBody).matchAll(/\$fromAI\("([^"]+)", "([^"]*)", "([^"]+)"(?:, "([^"]*)")?\)/g)].map((m) => ({
+    key: m[1],
+    description: m[2],
+    type: m[3],
+    required: m[4] === undefined,
+  }));
+  const arg = args.find((a) => a.key === key);
+  assert.ok(arg, `${node.name}: $fromAI("${key}") missing`);
+  return arg;
+}
+const extractTool = wf.nodes.find((n) => n.name === 'extract_commissioning');
+assert.ok(String(extractTool.parameters.url).includes("'/agent-tools/' + \"extract_commissioning\""));
+for (const key of ['table_id', 'well_column', 'date_column']) {
+  const arg = fromAI(extractTool, key);
+  assert.equal(arg.type, 'string', key);
+  assert.equal(arg.required, true, key);
+}
+assert.match(fromAI(extractTool, 'date_column').description, /не baseline/);
+const paramsTool = wf.nodes.find((n) => n.name === 'extract_well_parameters');
+assert.equal(fromAI(paramsTool, 'table_id').required, true);
+assert.equal(fromAI(paramsTool, 'well_column').required, true);
+assert.equal(fromAI(paramsTool, 'mapping').required, false, 'mapping is optional');
+assert.match(fromAI(paramsTool, 'mapping').description, /md_top/);
+const askTool = wf.nodes.find((n) => n.name === 'ask_engineer');
+assert.equal(fromAI(askTool, 'question').required, true);
+assert.equal(fromAI(askTool, 'options').required, false);
+assert.match(String(askTool.parameters.toolDescription), /инженер/i);
 assert.ok(wf.connections['detect_tables'].ai_tool);
 assert.ok(wf.connections['Excel Extractor Chat Model — Qwen'].ai_languageModel);
 assert.equal(wf.connections['When executed by another workflow'].main[0][0].node, 'Runtime configuration');
@@ -79,34 +111,32 @@ assert.equal(openSession.retryOnFail, true);
 const introspect = wf.nodes.find((n) => n.name === 'workbook_introspect');
 assert.equal(introspect.parameters.authentication, 'genericCredentialType');
 assert.equal(introspect.credentials.httpHeaderAuth.name, 'REPLACE: Excel Tools X-API-Key');
-const cap = wf.nodes.find((n) => n.name === 'Capability router');
-assert.ok(cap);
-assert.equal(cap.type, 'n8n-nodes-base.switch');
+// No regex "Capability router" and no HTTP extract_commissioning bypass: every task reaches the LLM
+// agent, which picks table and columns from the inventory returned by open_session.
+for (const gone of ['Capability router', 'Extract commissioning', 'Describe extract result', 'Extract finished?', 'Restore after extract event']) {
+  assert.equal(wf.nodes.some((n) => n.name === gone), false, `${gone} must be gone`);
+}
+assert.equal(wf.nodes.some((n) => n.type === 'n8n-nodes-base.switch'), false);
+assert.equal(JSON.stringify(wf).includes('suggested_capability'), false);
 assert.equal(wf.connections['Session ready?'].main[0][0].node, 'Activity — Excel Extractor accepted');
-assert.equal(wf.connections['Restore after Excel Extractor progress'].main[0][0].node, 'Capability router');
-assert.equal(wf.connections['Capability router'].main[0][0].node, 'Extract commissioning');
-assert.equal(wf.connections['Capability router'].main[1][0].node, 'Prepare AI Agent input');
-const extract = wf.nodes.find((n) => n.name === 'Extract commissioning');
-assert.equal(extract.type, 'n8n-nodes-base.httpRequest');
-assert.ok(String(extract.parameters.url).includes('extract_commissioning'));
-assert.equal(extract.retryOnFail, true);
-assert.equal(wf.connections['Extract commissioning'].main[0][0].node, 'Describe extract result');
-assert.equal(wf.connections['Describe extract result'].main[0][0].node, 'Activity — Excel Extractor extract');
-assert.equal(wf.connections['Restore after extract event'].main[0][0].node, 'Extract finished?');
-assert.equal(wf.connections['Extract finished?'].main[0][0].node, 'Format excel result');
-assert.equal(wf.connections['Extract finished?'].main[1][0].node, 'Fetch excel result');
+assert.equal(wf.connections['Session ready?'].main[1][0].node, 'Format missing excel');
+assert.equal(wf.connections['Restore after Excel Extractor progress'].main[0][0].node, 'Prepare AI Agent input');
 assert.equal(wf.connections['Prepare AI Agent input'].main[0][0].node, 'Call Knowledge Retrieval');
+const system = String(agent.parameters.options.systemMessage || '');
+for (const must of ['extract_commissioning', 'extract_well_parameters', 'ask_engineer', 'spec_incomplete', 'column_not_found', 'question_not_human', 'engineer_answers']) {
+  assert.ok(system.includes(must), `system prompt mentions ${must}`);
+}
+assert.equal(system.includes('suggested_capability'), false);
 assert.equal(wf.connections['Call Knowledge Retrieval'].main[0][0].node, 'Attach excel RAG evidence');
 assert.equal(wf.connections['Attach excel RAG evidence'].main[0][0].node, 'Excel Extractor AI Agent');
 assert.equal(wf.connections['Excel Extractor AI Agent'].main[0][0].node, 'Summarize AI steps');
 assert.equal(wf.connections['AI extracted?'].main[0][0].node, 'Format excel result');
 assert.equal(wf.connections['AI extracted?'].main[1][0].node, 'Fetch excel result');
 assert.equal(wf.connections['Format excel result'].main[0][0].node, 'Close excel session');
-assert.equal(agent.parameters.options.maxIterations, 6);
+assert.equal(agent.parameters.options.maxIterations, 8);
 assert.equal(wf.settings.executionTimeout, 900);
-assert.ok(sourceCode('Describe extract result').includes('skip_fetch'));
-assert.ok(sourceCode('Restore after Excel Extractor progress').includes('operations'));
-assert.ok(sourceCode('Summarize AI steps').includes('query_table'));
+assert.ok(sourceCode('Summarize AI steps').includes('ask_engineer'));
+assert.equal(sourceCode('Summarize AI steps').includes('вызвал'), false, 'no "called N tools" template shown to engineers');
 const queryTable = wf.nodes.find((n) => n.name === 'query_table');
 assert.ok(String(queryTable.parameters.toolDescription).includes('массив') || String(queryTable.parameters.toolDescription).includes('Массив'));
 const activityProgress = wf.nodes.find((n) => n.name === 'Activity — Excel Extractor progress');
@@ -181,15 +211,23 @@ async function run(name, json, nodes = {}) {
 }
 
 (async () => {
+  const inventory = {
+    files: ['rates.xlsx'],
+    sheets: [{ name: 'Wells', rows: 3, columns: 2, file: 'rates.xlsx' }],
+    table_count: 1,
+    tables: [{ table_id: 'tbl_1', file: 'rates.xlsx', sheet: 'Wells', range: 'A1:B3', columns: ['Скважина', 'Дебит'], sample: [{ Скважина: '1601', Дебит: 120 }] }],
+  };
   const prepared = await run(
     'Prepare AI Agent input',
     {
       objective: 'Достань дебиты из таблицы',
       handoff_message: 'query_table по нефти',
-      inspect: {},
+      inspect: inventory,
+      files: ['rates.xlsx'],
       file_name: 'rates.xlsx',
       session_id: 'sess-1',
-      suggested_capability: 'operations',
+      engineer_answers: [{ question_id: 'Q-date_column', label: 'Дата ввода' }],
+      rework_reason: 'взята колонка baseline',
     },
     {
       'Normalize excel task': { agent_task: { objective: 'Достань дебиты из таблицы' } },
@@ -202,7 +240,48 @@ async function run(name, json, nodes = {}) {
   assert.ok(prepared.schedule_retrieval_request.query.includes('дебит'));
   assert.equal(prepared.schedule_retrieval_request.query.includes('rates.xlsx'), false);
   assert.equal(prepared.retrieval_selector.target_base, 'excel_protocol');
-  assert.ok(prepared.planner_input.includes('Достань дебиты'));
+  const plannerInput = JSON.parse(prepared.planner_input);
+  assert.equal(plannerInput.objective, 'Достань дебиты из таблицы');
+  assert.deepEqual(plannerInput.files, ['rates.xlsx']);
+  assert.equal(plannerInput.inspect.tables[0].columns[1], 'Дебит', 'inventory (tables, columns, sample) reaches the LLM');
+  assert.equal(plannerInput.engineer_answers[0].label, 'Дата ввода', 'HITL answers reach the LLM');
+  assert.equal(plannerInput.rework_reason, 'взята колонка baseline');
+  assert.equal('suggested_capability' in plannerInput, false, 'the LLM picks the tool, no regex hint');
+
+  // Summarize AI steps: a stored result (extract_* / ask_engineer) → fetch it; otherwise a prose question.
+  const opened = { task_id: 'TASK-1', session_id: 'sess-1' };
+  const summarized = await run(
+    'Summarize AI steps',
+    {
+      output: 'Извлёк даты ввода для 14 скважин.',
+      intermediateSteps: [
+        { action: { tool: 'describe_table' } },
+        { action: { tool: 'extract_commissioning' } },
+      ],
+    },
+    { 'Open excel session': opened },
+  );
+  assert.equal(summarized.skip_fetch, false);
+  assert.equal(summarized.has_extraction, true);
+  assert.equal(summarized.status_message, 'Извлёк даты ввода для 14 скважин.');
+  const noResult = await run(
+    'Summarize AI steps',
+    { output: 'Не нашёл таблицу с датами.', intermediateSteps: [{ action: { tool: 'detect_tables' } }, { action: { tool: 'describe_table' } }] },
+    { 'Open excel session': opened },
+  );
+  assert.equal(noResult.skip_fetch, true);
+  assert.equal(noResult.status, 'needs_input');
+  assert.equal(noResult.task_id, 'TASK-1');
+  assert.match(noResult.requests[0].question, /Уточните, на каком листе/);
+  assert.equal(noResult.requests[0].accepts.free_text, true);
+  assert.equal(/[a-z]+_[a-z_]+/.test(noResult.requests[0].question), false, 'engineer question has no snake_case tokens');
+  assert.equal(noResult.issues[0].type, 'no_extract');
+  const askedHuman = await run(
+    'Summarize AI steps',
+    { output: 'Нужно уточнение инженера.', intermediateSteps: [{ action: { tool: 'ask_engineer' } }] },
+    { 'Open excel session': opened },
+  );
+  assert.equal(askedHuman.skip_fetch, false, 'ask_engineer stored needs_input in the session — fetch it');
 
   const attached = await run(
     'Attach excel RAG evidence',

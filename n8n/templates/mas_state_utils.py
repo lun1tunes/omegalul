@@ -96,7 +96,15 @@ function nestArtifacts(arts){
     if(id==='diff'){ nested.schedule=nested.schedule||{}; nested.schedule.diff=item; continue; }
     if(!item||typeof item!=='object') continue;
     const role=item.role||roleForArtifactId(id);
-    if(role==='excel') nested.excel=item;
+    if(role==='excel'){
+      // First workbook (id `excel`) owns the slot; further workbooks (`excel_1`…) stay as attachments
+      // with role excel so flatten/nest is lossless and every Excel of the case stays reachable.
+      const aid=String(item.artifact_id||id);
+      if(!nested.excel||(aid==='excel'&&String(nested.excel.artifact_id||'')!=='excel')){
+        if(nested.excel) attachments.push(nested.excel);
+        nested.excel=item;
+      } else attachments.push(item);
+    }
     else if(role==='surface') nested.surface=item;
     else if(role==='schedule_source'){ nested.schedule=nested.schedule||{}; nested.schedule.source=item; }
     else if(role==='schedule_include'){

@@ -11,7 +11,7 @@ from .commissioning import run_commissioning_revise
 from .diff import unified_diff
 from .emit import emit_schedule
 from .group_rebind import CONTROLS, gruptree_summary, normalize_group_rebind_spec, run_group_rebind_revise
-from .io import bind_case_packet, commissioning_facts, file_ref, load_source
+from .io import bind_case_packet, commissioning_facts, excel_bucket, file_ref, load_source
 from .keywords import keyword_object, search_keywords
 from .parse import parse_schedule, well_names
 from .well_model import build_well_objects, find_well
@@ -420,7 +420,13 @@ def _new_well_defs(state: dict[str, Any]) -> list[dict[str, Any]]:
             rows = rows_of(payload)
             if rows:
                 return rows
-    # 2. Orchestrator inputs. The Decision LLM may echo a bare list of well names here
+    # 2. Excel Extractor already read a parameters table from the attached workbook
+    #    (``extract_well_parameters`` → state.data.excel.new_wells). Engineers attach tables, not JSON.
+    context = state.get("context") if isinstance(state.get("context"), dict) else {}
+    rows = rows_of(excel_bucket(context).get("new_wells"))
+    if rows:
+        return rows
+    # 3. Orchestrator inputs. The Decision LLM may echo a bare list of well names here
     #    (["N001", "N002"]) — that is not a definition and must not hide the engineer's facts.
     inputs = state.get("inputs") if isinstance(state.get("inputs"), dict) else {}
     for key in ("new_wells", "new_well_defs"):

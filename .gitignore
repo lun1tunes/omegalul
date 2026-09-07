@@ -36,5 +36,9 @@ mas-activity-service/activity.log
 
 # Local combat / golden fixtures only — never pack or commit
 simulation-model-example/
-.cursor/
+# Cursor: keep local state (mcp.json etc.) out of git, but version the rules and skills —
+# they are the working contract for every agent working on this repo (see AGENTS.md).
+.cursor/*
+!.cursor/rules/
+!.cursor/skills/
 .codex/

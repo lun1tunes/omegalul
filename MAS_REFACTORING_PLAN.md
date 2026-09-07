@@ -78,14 +78,14 @@
 
 | # | Где | Что | Статус |
 |---|---|---|---|
-| A1 | Excel `_COMMISSIONING_RE` → HTTP без LLM | LLM-substitute | ⬜ Фаза 3 |
-| A2 | `WELL_COL`/`DATE_COL` substring | Выбор колонок без подтверждения LLM | ⬜ Фаза 3 (как `suggested_mapping`) |
+| A1 | Excel `_COMMISSIONING_RE` → HTTP без LLM | LLM-substitute | ✅ Регекс, `suggested_capability`, Capability router и HTTP-обход `extract_commissioning` удалены; LLM выбирает таблицу/колонки по инвентарю `open_session` |
+| A2 | `WELL_COL`/`DATE_COL` substring | Выбор колонок без подтверждения LLM | ✅ `extract_commissioning(table_id, well_column, date_column)`, `extract_well_parameters(table_id, well_column, mapping)`; несуществующая/не-датовая колонка → `column_not_found`/`column_not_dates` LLM с `available_columns` |
 | A3 | Schedule `suggested_capability` | Regex `GROUP_INTENT`, «есть facts → commissioning» | ✅ Capability router и HTTP-обход `apply_*` удалены; инструмент выбирает LLM |
 | A4 | `group_rebind.py` `extract_group_rebind_spec`, `_parse_rate`, `G{well}` | Регулярки вместо структурированного вывода | ✅ `normalize_group_rebind_spec` от структуры LLM; неполный spec → `spec_incomplete` LLM, не человеку |
 | A5 | Fallback `["GNEW","GINJ","GPROD"]`, «Уточните {item}» | Заглушки вместо GRUPTREE | ✅ `gruptree_summary` + `ask_engineer` прозой с вариантами из baseline |
 | A6 | `INTENT_ALIASES` | Словарь keyword | ⬜ Фаза 3 |
-| A7 | `SUMMARIZE_AI`/`DESCRIBE_*` | Машинные итоги | 🟡 Schedule Builder — честные итоги (сдвиги/добавления/удаления по скважинам); Excel — ещё шаблоны |
-| A8 | Python `/agent/run` дубли | Второй источник поведения | ✅ Schedule `/agent/run` удалён (Excel — Фаза 3.3) |
+| A7 | `SUMMARIZE_AI`/`DESCRIBE_*` | Машинные итоги | ✅ Schedule Builder — сдвиги/добавления/удаления по скважинам; Excel — «Даты ввода: N скважин (…), с … по …» / «Параметры новых скважин: N (…) — группа, интервал MD, …»; `DESCRIBE_EXTRACT` удалён |
+| A8 | Python `/agent/run` дубли | Второй источник поведения | ✅ Schedule и Excel `/agent/run` удалены; остался только Math (HTTP-агент без n8n-workflow) |
 | A9 | Schedule Builder LLM на commissioning-задаче вызвала `apply_group_rebind` (`CASE-6a9dafa5`) | Промпт агента/описания инструментов не удерживают LLM от «попробовать всё» | ✅ Новый `SYSTEM` «какой инструмент когда», `apply_group_rebind` требует полный spec; live 6/6 без лишних apply |
 | A10 | `group_rebind_revise` | Порядок скважин в записях зависел от порядка в spec от LLM (golden 2 мигал: 1602 перед 1601) | ✅ Детерминированный порядок по первому появлению в baseline |
 | 🆕 A11 | **`@n8n/n8n-nodes-langchain.toolHttpRequest` в n8n 2.30.8** | Узел скрыт (`hidden: true`) и имеет только `supplyData`; AI Agent v3 исполняет инструменты через движок → каждый вызов падал «has a supplyData method but no execute method». LLM-путь обоих агентов **никогда не работал** в 2.30.8 — это маскировал regex-роутер с прямыми HTTP | ✅ Оба агента на `n8n-nodes-base.httpRequestTool` 4.4 + `$fromAI(...)` (`mas_tool_nodes.py`); реестр версий в `test_workflow_contracts.py` |
@@ -129,7 +129,7 @@
 2. **Smoke «нет машинных токенов в тексте для человека»**: `hitl.request.question`, `options[].label`, `status_message`, `summary_for_human`, `case.finished` — без `[a-z_]+=[a-z]+`, snake_case-идентификаторов, JSON. Гейт и на структуру (Node smoke по JSON агентов/оркестратора), и на live-трассу (проверка в `run_live_five`).
 3. **1.3 Единый write-path ответа.** Activity `/answer` сохраняет сырой ответ и файлы и зовёт оркестратор `resume`; нормализация и запись в журнал — только в оркестраторе. После этого `parseKeepRemove` в Activity удаляется; в оркестраторе остаётся `choice`, а свободный текст без `choice` интерпретирует LLM (Information Extractor) в `{decision, confidence}`; деструктив при низкой уверенности — переспрос.
 4. **1.2 HITL-composer — понижен.** Отдельный LLM-шаг для переписывания вопросов не нужен, если инструменты (п.1) отдают прозу. Композитор нужен только для вопросов самого оркестратора (`ask_user` LLM) — там достаточно требования схемы: `question` прозой, `options[{value,label}]`.
-5. Excel Extractor извлекает `new_wells` из приложенной таблицы параметров (сейчас факты приходят JSON из харнесса) — вместе с Фазой 3.2.
+5. ✅ Excel Extractor извлекает `new_wells` из приложенной таблицы параметров (`extract_well_parameters` → `data.excel.new_wells`; Schedule Builder читает их раньше `inputs.new_wells`). Попутно: Activity `nest_artifacts` терял второй `.xlsx` (`excel_1` перезаписывал слот `excel`) — теперь лишние книги в `attachments` с `role=excel`.
 
 Критерий: `run_live_five` без единого `Уточните <поле>`; combat 3 — ровно два HITL (unlisted, new_wells); smoke машинности зелёный.
 
@@ -150,14 +150,14 @@
 
 Оценка выросла: инварианты и их smokes — отдельная работа; Qwen требует проверки каждого изменения промпта live-прогоном.
 
-### Фаза 3 — Агенты LLM-first 🟡 (Schedule Builder ✅, Excel ⬜ 3–4 дня)
+### Фаза 3 — Агенты LLM-first ✅ (Schedule Builder ✅, Excel ✅)
 
 1. ✅ **A9/A3/A4 Schedule Builder**: `suggested_capability`, Capability router и HTTP-обход удалены; `apply_group_rebind(spec)` от LLM (`wells, parent_group, parent_of_parent, control, gas_rate, effective_at`), неполный spec → `spec_incomplete` LLM; `GROUP_INTENT`, `_parse_rate`, авто-`G{well}` из regex удалены (конвенции — явные `assumptions`). `SYSTEM` — «какой инструмент когда», `ask_engineer` — единственный путь к человеку.
 2. ✅ **A11 платформа**: инструменты агентов — `n8n-nodes-base.httpRequestTool` + `$fromAI` (`mas_tool_nodes.py`); старый `toolHttpRequest` в 2.30.8 не исполняется. Любой новый инструмент — только через `tool_http(...)` генератора.
-3. ⬜ Excel Extractor: убрать regex-роутер `_COMMISSIONING_RE`/`suggested_capability` (A1) тем же приёмом; LLM выбирает таблицу/колонки через `detect_tables`/`describe_table` (`WELL_COL`/`DATE_COL` → `suggested_mapping`, A2), затем детерминированный `extract_facts`; извлечение `new_wells` из таблицы параметров; `summary_for_human` по факту (A7). **Проверить live LLM-путь Excel** — он ещё ни разу не исполнялся (см. A11); опциональные JSON-аргументы инструментов идут текстом (`$fromAI` не принимает пустой json) — Python-сторона должна парсить строку.
-4. ⬜ Убрать Python `/agent/run` дубль у Excel (A8); оставить у Math.
+3. ✅ Excel Extractor LLM-first: `open_session` забирает все Excel-вложения кейса в одну сессию (несколько `.xlsx` склеиваются, лист = `<лист> (<файл>)`) и отдаёт **инвентарь** (файлы, листы, таблицы, колонки, 2 строки-образца) + `engineer_answers` + `rework_reason`; LLM выбирает таблицу/колонки и вызывает `extract_commissioning(table_id, well_column, date_column)` / `extract_well_parameters(table_id, well_column, mapping)` (детерминированное извлечение, валидация колонок, `too_many_attempts` после 3 попыток) или `ask_engineer` (проза, `question_not_human`). Регекс `_COMMISSIONING_RE`, `suggested_capability`, Capability router, `Extract commissioning`/`Describe extract result` из workflow удалены. Опциональный `mapping` идёт JSON-текстом (`$fromAI` не принимает пустой json) — Python парсит строку.
+4. ✅ Python `/agent/run` и `/agent-tools/extract_commissioning`(без аргументов) у Excel удалены; extract-инструменты — обычные registry-tools через `/agent-tools/{name}`.
 5. 🟡 Надёжность tool-calls Qwen: `maxIterations` 8; `SUMMARIZE_AI` даёт прозу при «агент крутил inspect без apply»; ⬜ smoke «агент вызвал инструмент, а не ответил текстом».
-6. Критерий: ✅ golden 2 без `GROUP_INTENT`; ✅ combat 0–3 через LLM-выбор инструмента, `.INC` побайтно тот же; ⬜ combat 0–3 без `_COMMISSIONING_RE` (Excel); лишних HITL в combat 3 нет — вопрос про скважины вне Excel задаёт LLM прозой, harness отвечает кнопкой.
+6. Критерий: ✅ golden 2 без `GROUP_INTENT`; ✅ combat 0–3 через LLM-выбор инструмента; ✅ combat 0–3 без `_COMMISSIONING_RE` (Excel); `.INC` сравнивается **семантически** (по решению заказчика: keyword на нужной дате с теми же параметрами; пробелы/пустые строки/формат чисел не важны — `compare_schedules` канонизирует токены записей по шагу DATES); лишних HITL в combat 3 нет — вопрос про скважины вне Excel задаёт LLM прозой, harness отвечает кнопкой.
 
 ### Фаза 4 — Расширяемость как продукт ⬜ (3–4 дня)
 
@@ -214,8 +214,25 @@
 5. `run_live_five`: проверка «машинности» каждого HITL/итога; падение сразу при повторе того же вопроса после ответа и при `done` без `.INC`; ответ на вопрос агента распознаётся по вариантам «оставить/убрать», как это сделал бы инженер.
 6. O16 — проверенное завершение (`Verify completion`): live-гейт после O14 показал, что LLM сама выбирает `finish` после Excel (2 из 6 кейсов) — флаговые guard'ы тут бессильны. Завершение теперь подтверждает отдельный скептический LLM-проход по журналу; отказ даёт оркестратору ещё шаг, второй отказ — инженеру. Детерминированная часть: вердикт выводится из `goal_parts` (модель противоречила себе: все части covered, `all_covered:false` — golden 1 ушёл в review); `unsupported_claims` → инженеру показывается итог по журналу, не текст LLM. A13 — попутно найденный дубль вопроса про новые скважины. Итог гейта: 6/6 `done`, `completion_verified:true`, `.INC` побайтно.
 
+### Ревизия 4 (2026-09-07, день) — сделано
+
+1. **Excel Extractor LLM-first (A1/A2/A7/A8, Фаза 3.3/3.4).** Live-проба показала: `handoff_message` оркестратора всегда содержал «даты ввода», поэтому `_COMMISSIONING_RE` уводил каждую задачу в HTTP-обход, LLM-путь Excel в проде не исполнялся ни разу; имя файла терялось (`inputs.artifacts` удаляется оркестратором); второй `.xlsx` кейса пропадал в `nest_artifacts`. Сделано: инвентарь из `open_session` (все книги кейса), инструменты `extract_commissioning(table_id, well_column, date_column)`, `extract_well_parameters(table_id, well_column, mapping)`, `ask_engineer`; ошибки выбора — LLM с `available_*`; итоги — факты, не «вызвал N tools». Activity и оркестратор (`nestArtifacts` в `mas_state_utils.py`) хранят все Excel-вложения (`excel`, `excel_1` → `attachments[role=excel]`); первый live-прогон case 3 поймал именно JS-вариант потери (`CASE-6a9e67ef`). Live-гейт после правки: 6/6 `done`, `mismatch_count: 0`, combat 3 — один HITL (скважины вне Excel), параметры новых скважин прочитаны из второй книги. Schedule Builder читает `new_wells` из `data.excel` (после ответа инженера, до `inputs`). Фикстура `case3_new_wells_params.xlsx` получила колонки I/J.
+2. **Семантическое сравнение `.INC`** (решение заказчика): `compare_schedules` сравнивает по шагам DATES набор keyword и мультимножество канонизированных записей (кавычки, регистр, `0.150`=`0.15`, хвостовые `1*`, порядок записей внутри keyword). Пробелы/пустые строки/формат чисел — не различие.
+
+### Ревизия 5 (2026-09-07, день) — слой знаний для делегирования
+
+Цель: чтобы следующий пункт плана мог выполнить другой (более дешёвый) агент без повторного исследования репозитория. Сделано:
+
+1. `AGENTS.md` — точка входа: карта репозитория, 11 инвариантов, контракты, цикл одной задачи, рецепты расширения, ловушки (A11 `toolHttpRequest`, regex-маскировка, флаги Qwen, двойники `nest_artifacts`, `_MACHINE_TOKEN_RE`, venv для pytest, семантическое сравнение `.INC`), правила делегирования.
+2. `.cursor/rules/`: всегда — `mas-working-contract` (доказательство → правка источника → гейт → фиксация в плане), плюс существующие 4; по файлам — `excel-agent-tools`, `schedule-builder-service`, `n8n-templates`, `mas-activity-service`, `live-harness`. `.gitignore` теперь версионирует `.cursor/rules` и `.cursor/skills` (локальный `mcp.json` — нет).
+3. `.cursor/skills/`: `/mas-gate` (как гонять и читать гейт), `/mas-trace` (как читать трассу кейса, таблица «симптом → узел»), `/mas-brief` (шаблон брифа для делегирования одного пункта плана).
+4. `scripts/mas_gate.py` — один вердикт: регенерация всех workflow с проверкой дрейфа (порядок: генераторы → `generate_schedule_workflows.py` с relayout последним; `versionId` игнорируется), 14 smokes, 3 pytest-набора, offline combat; `--live` — redeploy + `run_live_five`. `scripts/mas_trace_case.py` — лента, state/ledger, HITL, аудит машинного текста, подсказки (цикл, повтор вопроса, review, бюджет шагов, `done` без `.INC`), n8n executions и вывод узла.
+
 ### Ближайшие шаги (в этом порядке)
 
-1. Фаза 3.3/3.4 — Excel Extractor LLM-first (A1/A2/A7/A8) и live-проверка его LLM-пути.
-2. Фаза 1.3 — единый write-path ответа.
-3. Фаза 2 — реестр исполняемый, промпт без маршрутов (O1/O3/O5), `plan_update` с `id` (O13).
+Каждый пункт — отдельный бриф по `/mas-brief`; перед стартом и в конце — `python3 scripts/mas_gate.py [--live]`.
+
+1. Фаза 1.3 — единый write-path ответа (Activity хранит сырой ответ → оркестратор интерпретирует; `parseKeepRemove` удалить).
+2. Фаза 2 — реестр исполняемый, промпт без маршрутов (O1/O3/O5), `plan_update` с `id` (O13).
+3. Фаза 3.5 — smoke «агент вызвал инструмент, а не ответил текстом».
+4. Фаза 5 — метрики `guard`-срабатываний в Activity; LLM-судья читаемости ленты.

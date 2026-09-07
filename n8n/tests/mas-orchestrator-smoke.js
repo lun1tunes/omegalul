@@ -157,6 +157,23 @@ async function run(name, json, nodes = {}, binary = {}) {
     assert.equal(helpers.readUnlistedWellsPolicy({ 'Q-parent-group': clicked }), null, 'choice is gated by the question id');
     assert.equal(helpers.readUnlistedWellsPolicy({ unlisted_wells_policy: { choice: 'keep', text: 'Оставить как в baseline' } }), 'keep');
   }
+  {
+    // Two workbooks in one case: the first keeps the `excel` slot, the second survives as an attachment
+    // (role excel) — the Excel Extractor reads both; nest(flatten(x)) is lossless.
+    const helpers = new Function(`${helperChunks[0]}; return { flattenArtifacts, nestArtifacts };`)();
+    const flat = {
+      excel: { artifact_id: 'excel', filename: 'dates.xlsx', role: 'excel', bytes: 1 },
+      excel_1: { artifact_id: 'excel_1', filename: 'params.xlsx', role: 'excel', bytes: 2 },
+      schedule_source: { artifact_id: 'schedule_source', filename: 'baseline.inc', role: 'schedule_source', bytes: 3 },
+    };
+    const nested = helpers.nestArtifacts(flat);
+    assert.equal(nested.excel.artifact_id, 'excel');
+    assert.deepEqual(nested.attachments.map((a) => a.artifact_id), ['excel_1']);
+    assert.deepEqual(Object.keys(helpers.flattenArtifacts(nested)).sort(), ['excel', 'excel_1', 'schedule_source']);
+    const reversed = helpers.nestArtifacts({ excel_1: flat.excel_1, excel: flat.excel });
+    assert.equal(reversed.excel.artifact_id, 'excel', 'order of arrival does not decide who owns the slot');
+    assert.deepEqual(reversed.attachments.map((a) => a.artifact_id), ['excel_1']);
+  }
   const continueNode = wf.nodes.find((n) => n.name === 'POST continue run');
   assert.ok(String(continueNode.parameters.jsonBody).includes("action: 'step'"));
   assert.ok(String(continueNode.parameters.jsonBody).includes('orchestrator-self'));

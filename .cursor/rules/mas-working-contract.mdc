@@ -1,0 +1,30 @@
+---
+description: How work is done in this repo — entry point, evidence, gate, reporting. Applies to every session.
+alwaysApply: true
+---
+
+# MAS working contract
+
+Read `AGENTS.md` first (map, invariants, recipes, traps). The queue of work is `MAS_REFACTORING_PLAN.md` → «Ближайшие шаги».
+
+## Scope
+- One plan item (or one user request) per session. Do the whole item; do not widen or quietly narrow it. Extra findings → a line in the plan's debt table, not a change.
+- Never touch `n8n/templates/retired/`, `n8n/workflows/retired/`, golden `*_MAS_result.INC`, or wipe cases unless the user asked.
+
+## Evidence before fixes
+- A live defect is reproduced with `python3 scripts/mas_trace_case.py CASE-… --n8n` (timeline, state, human-text audit, n8n executions) before any edit. Quote the event/node that proves the cause.
+- Do not "fix" Qwen behaviour by adding regex or hardcoded routes — change the prompt/tool contract or add a deterministic *guard*, and prove it on a live case.
+
+## Change discipline
+- Source of truth is `n8n/templates/*.py` and the FastAPI code. After editing a template: `cd n8n/templates && python3 generate_<x>.py` (`generate_schedule_workflows.py` for RAG/schedule). Never edit workflow JSON by hand.
+- Every fixed defect gets a regression test (pytest or `n8n/tests/*-smoke.js`) with the case id in its docstring.
+- Human-facing text (HITL questions, options, `status_message`, summaries) is Russian prose without snake_case / `key=value` / JSON / `a|b` — both services validate this via `human_text_problems`; keep file and sheet names out of `message`, put them in `data`.
+
+## Gate = definition of done
+- `python3 scripts/mas_gate.py` (regen drift, 13 smokes, 3 pytest suites, offline combat) must be GREEN before reporting.
+- If orchestrator, an agent, prompts, emit or Activity artifacts were touched: `python3 scripts/mas_gate.py --live` → 6/6 `done`, `mismatch_count: 0`, no repeated HITL, no review escalation. Lab only: needs Docker Compose + `.env`.
+- Report facts: files, counts, case ids, what is not done and why. No "should work".
+
+## Close the loop
+- Update `MAS_REFACTORING_PLAN.md` (debt row status + «Ревизия N» entry with live findings) and `docs.md` when a contract, command or field step changed.
+- Temporary scripts live in `/tmp`, not in the repo.

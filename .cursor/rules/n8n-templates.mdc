@@ -1,0 +1,18 @@
+---
+description: n8n workflow generators (templates → JSON), node version registry for 2.30.8, Code-node helpers, smokes
+globs: n8n/templates/**,n8n/workflows/**,n8n/tests/**
+alwaysApply: false
+---
+
+# n8n generators — templates are the source, JSON is output
+
+- Edit `n8n/templates/generate_*.py`, then regenerate from `n8n/templates/`: `python3 generate_<x>.py`, and **last** `python3 generate_schedule_workflows.py` (it ends with `relayout_core_workflows.py`, which normalises positions of every core workflow — running it last makes regeneration a fixed point). Simplest: `python3 scripts/mas_gate.py --only regen` regenerates everything in the right order and flags drift (`versionId` is minted per run and ignored). Never hand-edit `n8n/workflows/**/*.json`.
+- Allowed node types/versions are the registry `N8N_2_30_8_PORTABLE_NODE_VERSIONS` in `excel-agent-tools/tests/test_workflow_contracts.py`. A new node type = verify it exists in 2.30.8, add to the registry with a comment, then use. AI Agent `3.1`, `chainLlm 1.9`, `lmChatOpenAi 1.3`, `outputParserStructured 1.3`, `httpRequest(Tool) 4.4`, `code 2`, `executeWorkflow 1.3`, `if 2.2/2.3`, `switch 3.4`.
+- **LLM tools = `tool_http(name, pos, description, fields)`** (wraps `mas_tool_nodes.http_request_tool_params`): `n8n-nodes-base.httpRequestTool` 4.4, JSON body with `session_id: $('Open … session').first().json.session_id` and `$fromAI("key", "description", "string|number|json"[, "default"])` per field. Required = no default. Optional `json` becomes `string` with `""` (n8n rejects empty json) — the service parses the string. Never `@n8n/n8n-nodes-langchain.toolHttpRequest` (no `execute` in 2.30.8).
+- Code nodes: plain JS, no `require`, no `$env`/`$vars`. Node references only via `$('Node name').first().json`; when a node may not have run, wrap in `try{}catch{}`. Orchestrator helpers come from `mas_state_utils.py` and are inlined between `/* mas_state_utils begin */ … end */` — the smoke asserts every Code node carries an identical copy. Python twins exist in `mas-activity-service/app/state_shape.py` (artifacts flatten/nest) — change both, test round-trip in both.
+- Structured decisions (`Parse decision`, `Verify completion`, HITL answer interpretation) go through `outputParserStructured` / chains, then deterministic validation in JS (derive verdicts from parts, never trust a lone boolean flag from Qwen).
+- Field-editable values (URLs, `orchestrator_step_url`, keys) come from `MAS — Runtime Config` (`Runtime configuration` executeWorkflow node) and Credentials (`REPLACE: …` placeholders bound in UI). No literal hosts, no Docker DNS names.
+- Human-facing strings emitted by Code nodes (`status_message`, HITL `question`, `options[].label`, `summary_for_human`) are Russian prose; `looksMachineText` guards fall back to journal-composed text.
+- Every workflow has a smoke in `n8n/tests/<name>-smoke.js` that (a) asserts structure (nodes, versions, connections, credentials placeholders) and (b) executes Code-node `jsCode` with stubbed `$()` for the key scenarios. Extend the smoke with every behaviour change; run all: `for f in n8n/tests/*-smoke.js; do node "$f" || exit 1; done`.
+- Prompts (`SYSTEM`, `VERIFY_SYSTEM`) in agents may be domain-specific; the orchestrator prompt may not (see `mas-llm-first-no-domain-hardcode.mdc`). Prompt edits are verified live (`scripts/mas_gate.py --live`) — Qwen behaviour changes with wording.
+- Lab import: `python3 scripts/lab_soft_redeploy.py [--skip-health]` (reimport + rebind + Health Check). Field import: docs.md §2 (UI «Import from File», bindings, credentials).
