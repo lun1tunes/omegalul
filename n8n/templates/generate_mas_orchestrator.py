@@ -147,7 +147,7 @@ VERIFY_SYSTEM = """Ты проверяющий завершения инжене
 
 Тебе даны: цель (текст инженера), журнал (что агенты фактически сделали — их итоги со статусом и добавленные артефакты, ответы инженера) и предложенный итог.
 
-1. Разбей цель на части — результаты, которые инженер должен получить на выходе (обычно 1–3). Часть — это результат («получен обновлённый файл X»), не действие («вызвать агента»).
+1. Разбей цель на части — результаты, которые инженер должен получить на выходе (обычно 1–3). Часть — это результат («получен обновлённый файл X»), не действие («вызвать агента»). Файлы, которые инженер приложил сам (шаг 0 журнала), — исходные данные, а не результат: «получить/использовать исходный файл» не выделяй в отдельную часть.
 2. Для каждой части решай, покрыта ли она записью журнала со статусом completed, чей итог по смыслу говорит, что это сделано. Промежуточный шаг не покрывает конечный результат: извлечь данные ≠ построить на их основе итог; «исходный файл есть во вложении» ≠ «получен новый файл». Но не придирайся к формулировкам: если агент отчитался о сделанных изменениях (сдвинул даты, добавил/убрал скважины, перепривязал группы) и/или в записи есть добавленные артефакты (новый файл, diff), результат получен. evidence — пересказ записи журнала (шаг N) либо «в журнале нет».
 3. unsupported_claims — утверждения предложенного итога, которых нет в журнале (например «файл собран», когда ни один агент об этом не отчитался).
 4. all_covered = true только если покрыты все части — и обязательно true, если все части covered=true. Не выдумывай записей журнала и не додумывай, что «наверняка сделано».
@@ -446,7 +446,7 @@ if(req.is_status===true){
     human_gate,
     version,
     restartable:status==='done'||status==='failed',
-    has_schedule_out:hasScheduleOut(state.artifacts)
+    deliverables:deliverables(state.artifacts)
   }}];
 }
 if(req.is_resume===true){
@@ -548,7 +548,13 @@ const journalLines=(compact.journal&&Array.isArray(compact.journal.history)?comp
   const arts=(e.artifacts_added||[]).length?`; артефакты: ${e.artifacts_added.join(', ')}`:'';
   return `- шаг ${e.step}: ${e.agent_id} → ${e.status}: ${e.summary||'(без описания)'}${arts}${e.rework_reason?` (доработка: ${e.rework_reason})`:''}`;
 });
-const journalText=journalLines.length?journalLines.join('\n'):'- пока ничего не сделано';
+/* Step 0 of the journal is what the engineer handed in (artifact cards with kind=input). Without it the completion
+   check has no evidence that the source files exist and may invent an uncoverable "get the source file" part
+   (CASE-6a9ec5ef-905bb0). Filenames only — no roles, no domain words. */
+const inputCards=artifactCards(state.artifacts||{}).filter(c=>c.kind==='input');
+const inputNames=inputCards.map(c=>String(c.filename||c.artifact_id||'').trim()).filter(Boolean);
+const inputsLine=inputNames.length?`- шаг 0: инженер приложил ${inputNames.length} файл(ов): ${inputNames.slice(0,6).join(', ')}${inputNames.length>6?` и ещё ${inputNames.length-6}`:''}`:'';
+const journalText=[inputsLine,...journalLines].filter(Boolean).join('\n')||'- пока ничего не сделано';
 const prompt=`Цель:\n${compact.goal}\n\nЖурнал задачи (что уже сделано, по шагам):\n${journalText}\n\nТекущее состояние:\n${JSON.stringify(compact,null,2)}\n\nДоступные агенты (реестр):\n${JSON.stringify(registry,null,2)}\n`;
 const retrieval_selector={target_base:ORCH_RAG_TARGET_BASE,knowledge_types:ORCH_RAG_KNOWLEDGE_TYPES};
 const query=inferRetrievalQuery(compact);
@@ -724,6 +730,10 @@ if(type==='call_agent'){
   const hitlState=state.hitl&&typeof state.hitl==='object'?state.hitl:{};
   const hitlAnswers=hitlState.answers&&typeof hitlState.answers==='object'?hitlState.answers:{};
   const unlistedPolicy=readUnlistedWellsPolicy(hitlAnswers)||'';
+  /* inputs are references owned by the orchestrator (artifact ids, data buckets, HITL policy). The LLM talks to
+     the agent through handoff_message only: anything it puts into action.task (e.g. its own `facts` with dates)
+     is a paraphrase, and an agent that trusted it would override the deterministic result of a previous agent
+     (CASE-6a9ec6b3-74e34e: invented per-well dates replaced data.excel.facts). */
   agentTask={
     case_id:prev.case_id,
     task_id:taskId,
@@ -731,9 +741,8 @@ if(type==='call_agent'){
     objective:String(action.task&&action.task.objective||state.goal||''),
     handoff_message:String(action.handoff_message||''),
     inputs:{
-      ...(obj(action.task)?action.task:{}),
       activity_base_url:String(prev.activity_base_url||'http://mas-activity:8200').replace(/\/$/,''),
-      schedule_root:state.schedule_root||(obj(action.task)?action.task.schedule_root:''),
+      schedule_root:state.schedule_root||'',
       artifact_ids:artifactIds,
       data_refs:Object.keys(state.data||{}),
       ...(unlistedPolicy?{unlisted_wells_policy:unlistedPolicy}:{}),
@@ -742,9 +751,6 @@ if(type==='call_agent'){
     context:{hitl:{pending:Boolean(hitlState.pending),answer_ids:Object.keys(hitlAnswers),answers:hitlAnswers}},
     constraints:{units:'METRIC'}
   };
-  delete agentTask.inputs.artifacts;
-  delete agentTask.inputs.context;
-  delete agentTask.inputs.data;
   state.current_task=slimCurrentTask({task_id:taskId,agent_id:agentTask.agent_id},state.artifacts,state.data);
   events.push(decisionEvent, {
     kind:'agent.handoff',
@@ -777,7 +783,8 @@ if(type==='call_agent'){
      completion check found claims the journal does not support, prefer the journal. */
   const unsupported=verification&&Array.isArray(verification.unsupported_claims)&&verification.unsupported_claims.length>0;
   const summary=(llmSummary&&!looksMachineText(llmSummary)&&!(unsupported&&journalSummary))?llmSummary:(journalSummary||llmSummary||statusMessage);
-  const result={...(obj(action.result)?action.result:{}),summary_for_human:summary,done_by_agents:journalSummary,...(guard?{guard}:{}),...(verification?{completion_verified:verification.all_covered===true}:{})};
+  /* The case result is the set of deliverables agents produced (cards with producer), not one file. */
+  const result={...(obj(action.result)?action.result:{}),summary_for_human:summary,done_by_agents:journalSummary,deliverables:deliverables(state.artifacts),...(guard?{guard}:{}),...(verification?{completion_verified:verification.all_covered===true}:{})};
   state.data={...(state.data||{}),result};
   statusMessage=summary;
   events.push({kind:'case.finished',actor:'orchestrator',status:'done',status_message:summary,payload:{...result,action_type:'finish'}});
@@ -895,7 +902,7 @@ if(status==='completed'){
     data[bucket]={summary:result.message||'',keys:Object.keys(raw)};
     if(bucket==='calc'&&raw.top_perforation_md!=null) data.calc.top_perforation_md=raw.top_perforation_md;
   }
-  state.artifacts=mergeIncomingArtifacts(state.artifacts, result.artifacts||{});
+  state.artifacts=mergeIncomingArtifacts(state.artifacts, result.artifacts||{}, agentId);
   state.current_task=null;
   state.last_error=null;
   state.error_count=0;
@@ -939,7 +946,7 @@ if(status==='needs_input'){
     task_id:(prev.agent_task&&prev.agent_task.task_id)||'',
     status:'completed',
     status_message:resultMessage||fallbackMessage,
-    payload:{data_keys:Object.keys((result.data&&typeof result.data==='object')?result.data:{}),artifacts:Object.keys((result.artifacts&&typeof result.artifacts==='object')?result.artifacts:{})}
+    payload:{data_keys:Object.keys((result.data&&typeof result.data==='object')?result.data:{}),artifacts:Object.keys((result.artifacts&&typeof result.artifacts==='object')?result.artifacts:{}),deliverables:deliverables(state.artifacts).filter(d=>d.producer===agentId)}
   });
 } else if(status==='failed'||execError){
   const prevErr=state.last_error&&typeof state.last_error==='object'?state.last_error:{};

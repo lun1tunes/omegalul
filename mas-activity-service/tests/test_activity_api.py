@@ -520,227 +520,92 @@ def test_ready_health_and_static_assets() -> None:
     assert "ORCHESTRATOR_WEBHOOK_URL" in " ".join(detail.get("missing_config") or [])
     index = client.get("/")
     assert index.status_code == 200
-    assert "composer" in index.text
-    assert "startComposer" in index.text
-    assert "taskName" in index.text
-    assert "Название задачи" in index.text
-    assert "newTaskBtn" in index.text
-    assert "rail-new-task" in index.text
-    assert "railList" in index.text
-    assert "brandHome" in index.text
-    assert "NOVATEK RE MASter" in index.text
-    assert "Workspace" in index.text
-    assert "Novatek STC reservoir engineering multi-agent system" in index.text
-    assert "reloadDurableBtn" not in index.text
-    assert "Из Data Tables" not in index.text
-    assert "requestPanel" in index.text
-    assert "notFound" in index.text
-    assert "Задача не найдена" in index.text
-    assert "Вернуться на главную" in index.text
-    assert "taskRail" in index.text
-    assert "id=\"cancelBtn\"" not in index.text
-    assert "id=\"approveBtn\"" not in index.text
-    assert "id=\"rejectBtn\"" not in index.text
-    assert "id=\"replyBtn\"" in index.text
-    assert "hitlDropzone" in index.text
-    assert "Утвердить" not in index.text
-    assert "Отклонить" not in index.text
-    assert "taskSelect" not in index.text
-    assert "openBtn" not in index.text
+    html = index.text
+    # Workspace shell: task rail · chat/schema · results inspector (Phase 1.5: results are agent deliverables).
+    for anchor in (
+        "taskRail", "railList", "railSearch", "newTaskBtn", "brandHome",
+        "composer", "startComposer", "taskName", "taskDescription", "startDropzone", "scheduleRoot",
+        "requestPanel", "statusBanner", "thread", "notFound", "Задача не найдена", "Вернуться на главную",
+        'id="replyBtn"', "hitlDropzone", "hitlAttachBtn", "restartBtn",
+        "viewChatBtn", "viewSchemaBtn", ">Чат<", ">Схема<", "schemaView", "schemaTimeline", "schemaPlay",
+        'class="gate-panel"', "gatePreview", "gateQuestions",
+        "inspector", "resultsPanel", "resultsGroups", "inputsPanel", "diffExpander", "Изменения между версиями",
+        "renameTaskBtn", "statusDot", "statusPill", "titleText",
+        "NOVATEK RE MASter", "Workspace", "Novatek STC reservoir engineering multi-agent system",
+        'href="/knowledge"',
+    ):
+        assert anchor in html, anchor
+    # Retired controls and the single-file framing must not come back.
+    for gone in (
+        'id="cancelBtn"', 'id="approveBtn"', 'id="rejectBtn"', "taskSelect", "openBtn", "reloadDurableBtn",
+        "scheduleDownloadHead", "Data Tables", "Утвердить", "Отклонить", "backendLabel", "liveLabel",
+    ):
+        assert gone not in html, gone
+    # Cache busting: the HTML must reference the current asset versions.
+    assert "app.js?v=101" in html
+    assert "schema.js?v=30" in html
+    assert "app.css?v=100" in html
+
     js_text = (STATIC / "app.js").read_text(encoding="utf-8")
     assert "X-Activity-Key" not in js_text
     assert "mas_activity_key" not in js_text
-    assert "brief" in js_text
-    assert "duration_label" in js_text
-    assert "submitHitl" in js_text
-    assert "humanizeGateReason" in js_text
-    assert "humanizeQuestion" in js_text
-    assert "looksMachineAsk" in js_text
-    assert "function turnRenderKey" in js_text
-    assert "eid:${eid}" in js_text
-    assert "schedules.unshift(chosen)" in js_text
+    assert "alert(" not in js_text
+    # API contract the UI relies on.
+    for needle in (
+        'fetch("/cases")', "/cases/${encodeURIComponent(taskId)}/stream", "/answer", "/run", 'method: "PATCH"',
+        'fetch("/agents")', "/artifacts/", 'cardsByKind("deliverable")', 'cardsByKind("input")',
+        "download_path", "producer",
+    ):
+        assert needle in js_text, needle
+    # Rendering contract: grouped turns, deliverable chips, humanised HITL, no machine text in the header.
+    for needle in (
+        "function renderTurn", "function turnRenderKey", "eid:${eid}", "day-sep", "is-cont",
+        "deliverableChips", "renderInspector", "result-group", "humanizeGateReason", "humanizeQuestion",
+        "looksMachineAsk", "submitHitl", "submitStart", "schedules.unshift(chosen)", "beginRenameTask",
+        "feedMatchesOpenTask", "bumpFeedGeneration", 'msg.type === "meta"', "setInterval(() => pollFeed(), 5000)",
+        "MasSchema.setAgents", "MasSchema.relayout", "showLoadError(taskId, `Не удалось загрузить задачу (${snap.status}).`)",
+        'showLoadError(taskId, "Сеть недоступна при загрузке задачи.")', "li._masTurn = turn", "at_abs", "lane_dir",
+        "human_gate ?? data.gate", "duration_label",
+    ):
+        assert needle in js_text, needle
+    # The header shows a human title + status pill, never `task_id: … · Готово (done)`.
+    assert '"task_id" : "task_name"' not in js_text and "`${prefix}: ${ident}" not in js_text
+    assert "schedule_artifact" not in js_text  # deliverables replaced the single-file slot
     assert 'q.required ? "обязательно"' not in js_text
     assert "формат: ${q.expected_format}" not in js_text
-    assert "app.js?v=89" in index.text
-    assert "schema.js?v=23" in index.text
-    assert "app.css?v=94" in index.text
-    assert "viewChatBtn" in index.text
-    assert "viewSchemaBtn" in index.text
-    assert ">Чат<" in index.text
-    assert ">Схема<" in index.text
-    assert "schemaView" in index.text
-    assert "schemaTimeline" in index.text
-    assert "gatePreview" in index.text
-    assert "<details class=\"gate-panel\"" in index.text
-    assert "Развернуть" in (STATIC / "app.css").read_text(encoding="utf-8")
-    assert "mode-schema .gate-panel[open]" in (STATIC / "app.css").read_text(encoding="utf-8")
-    css_text = (STATIC / "app.css").read_text(encoding="utf-8")
-    files_css = css_text.split("\n.schema-files {", 1)[1].split("}", 1)[0]
-    assert "flex-wrap: nowrap" not in files_css
-    assert "word-break: break-all" not in files_css
-    assert "overflow-wrap: anywhere" in files_css
+    # The UI hardcodes no agent: names come from /agents, only the orchestrator/user roles are known.
+    for agent in ("excel_extractor", "schedule_builder", "calculation_agent"):
+        assert agent not in js_text, agent
+
     schema_js = (STATIC / "schema.js").read_text(encoding="utf-8")
-    assert 'files.join(" · ")' in schema_js
-    assert "Постановка задачи" in index.text
-    assert "Результат" in index.text
-    assert "Нет такой задачи в Workspace." in index.text
-    assert "Data Tables" not in index.text
-    assert "submitStart" in js_text
-    assert "form.append(\"task_name\"" in js_text
-    assert "catalogTaskName" in js_text
-    assert "beginRenameTask" in js_text
-    assert 'method: "PATCH"' in js_text
-    assert "renameTaskBtn" in index.text
-    assert "clearWorkspaceView" in js_text
-    assert "startResumeTask" in js_text
-    assert "turnKicker" in js_text
-    assert '"Сообщение"' in js_text
-    assert "displayRole" in js_text
-    assert 'User: "Вы"' in js_text
-    assert "syncScheduleRootField" in js_text
-    assert "hydrateFromDataTables" in js_text
-    assert "let currentTask = null" in js_text
-    assert "reloadFeed && currentTask" in js_text
-    assert "JSON.stringify({\n          question_id:" not in js_text
-    assert "refreshRail({ durable: !snap.ok })" in js_text
-    assert "setTaskHeader" in js_text
-    assert "attachLive" in js_text
-    assert "pollFeed" in js_text
-    assert "setInterval(() => pollFeed({ durable: false }), 2500)" not in js_text
-    assert "setInterval(() => pollFeed({ durable: false }), 5000)" in js_text
-    assert 'msg.type === "meta"' in js_text
-    assert "feedMatchesOpenTask" in js_text
-    assert "bumpFeedGeneration" in js_text
-    assert "composing: true" in js_text
-    assert "applyFeedMeta(msg)" in js_text
-    assert "data.skipped" in js_text
-    assert "Перезапуск не выполнен" in js_text
-    assert "setWorkspaceView" in js_text
-    assert "MasSchema.relayout" in js_text
-    assert "syncSchema" in js_text
-    assert "MasSchema" in js_text
-    schema_js = (STATIC / "schema.js").read_text(encoding="utf-8")
-    assert "function buildSchemaFrames" in schema_js
-    assert "handoff_message" in schema_js
-    assert "DRAW_EDGE_KEYS" in schema_js
-    assert "pairVisual" in schema_js
-    assert "dRev" in schema_js
-    assert "excel_orch" in schema_js
-    assert "schema-slip" in (STATIC / "app.css").read_text(encoding="utf-8")
-    assert "schema-download" in (STATIC / "app.css").read_text(encoding="utf-8")
-    assert "schema-caption" in (STATIC / "app.css").read_text(encoding="utf-8")
-    assert "schema-canvas" in (STATIC / "app.css").read_text(encoding="utf-8")
-    assert "schema-inspector" in (STATIC / "app.css").read_text(encoding="utf-8")
-    assert "mode-schema .composer" in (STATIC / "app.css").read_text(encoding="utf-8")
-    assert "measuredLayout" in schema_js
-    assert "schema-node-head" in schema_js
-    assert "relayout" in schema_js
-    assert "markerUnits=\"userSpaceOnUse\"" in schema_js
-    assert "schemaArrowIdle" not in schema_js
-    assert "schemaArrowDone" in schema_js
-    assert 'markerWidth="2.3"' in schema_js
-    assert "schemaArrowActive" in schema_js
-    assert "removeAttribute(\"marker-end\")" in schema_js
-    assert "schema-download" in schema_js
-    assert "showSlipPeek" in schema_js
-    assert "dataset.full" in schema_js
-    assert "looksClamped" in schema_js
-    assert "markClippedNodes" in schema_js
-    assert "is-clipped" in schema_js
-    assert "schema-peek" in schema_js
-    assert "schema-peek-text" in schema_js
-    assert "schema-peek-message" in schema_js
-    assert "Полный текст" not in schema_js
-    assert "shorten(full, 280)" in schema_js
-    assert "hoverOpenPeek" in schema_js
-    assert "peekPinned && peekSource === source" in schema_js
-    assert "dismissHoverPeek" in schema_js
-    assert "togglePinnedPeek" in schema_js
-    assert "schema-slip-text" in schema_js
-    assert ".schema-slip-text" in (STATIC / "app.css").read_text(encoding="utf-8")
-    assert "markClippedSlip" in schema_js
-    assert "peekEl.matches(\":hover\")" not in schema_js
-    assert "peekEl.addEventListener(\"pointerleave\"" not in schema_js
-    assert "peekEl.addEventListener(\"pointerenter\"" not in schema_js
-    assert ".schema-slip.is-clipped" in (STATIC / "app.css").read_text(encoding="utf-8")
-    assert "schema-peek-text" in (STATIC / "app.css").read_text(encoding="utf-8")
-    assert ".schema-peek-message" in (STATIC / "app.css").read_text(encoding="utf-8")
-    assert "max-width: min(32rem, 58%)" in (STATIC / "app.css").read_text(encoding="utf-8")
-    assert ".schema-peek.is-pinned" in (STATIC / "app.css").read_text(encoding="utf-8")
-    assert "place-items: stretch" in (STATIC / "app.css").read_text(encoding="utf-8")
-    assert "width: min(100%, 56rem)" not in (STATIC / "app.css").read_text(encoding="utf-8")
-    assert "pointer-events: auto" in (STATIC / "app.css").read_text(encoding="utf-8")
-    assert "Скачать результат" in schema_js
-    assert "Задача завершена. Загрузите результаты работы." in schema_js
-    assert "Скачать результат" in js_text
-    assert "pathMidpoint" in schema_js
-    assert "getTotalLength" in schema_js
-    assert "getPointAtLength" in schema_js
-    assert "getScreenCTM" in schema_js
-    assert "cubicArcMid" in schema_js
-    assert "translate(-50%, calc(-100% - 8px))" in (STATIC / "app.css").read_text(encoding="utf-8")
-    assert "statusLabel" in schema_js
-    assert "setCaption" in schema_js
-    assert "Ожидает задачу" in schema_js
-    assert "is-live-in" in (STATIC / "app.css").read_text(encoding="utf-8")
-    assert "animateSlips" in schema_js
-    assert "liveNewStep" in schema_js
-    assert "showLoadError" in js_text
-    assert "showNotFound(taskId)" in js_text
-    # Non-404 / network failures must not claim the task is missing from Activity+DT.
-    assert "showNotFound(taskId);\n        showFlash" not in js_text
-    assert "showLoadError(taskId, `Не удалось загрузить задачу (${snap.status}).`)" in js_text
-    assert "showLoadError(taskId, \"Сеть недоступна при загрузке задачи.\")" in js_text
-    assert "/cases" in js_text
-    assert "submitStart" in js_text
-    assert 'id="scheduleDownload"' not in index.text
-    assert 'id="scheduleDownloadHead"' in index.text
-    assert 'user: "Вы"' in js_text
-    assert "who-track" not in js_text
-    assert "who-line" not in js_text
-    assert 'arrow.className = "arrow"' in js_text
-    assert "lane_dir" in js_text
-    assert "paintScheduleDownloadHead" in js_text
-    assert "appendScheduleDownload" not in js_text
-    assert "Скачать" in js_text
-    assert "schedule_artifact: data.schedule_artifact" in js_text
-    assert "semantic_diff: data.semantic_diff" in js_text
-    assert "renderSemanticDiff" in js_text
-    assert "diffExpander" in index.text
-    assert "Изменения между версиями" in index.text
-    assert "li._masTurn = turn" in js_text
-    assert "statusDot" in index.text
-    assert "titleText" in index.text
-    assert "backendLabel" not in index.text
-    assert "liveLabel" not in index.text
-    assert "statusTone" in js_text
-    css_text = (STATIC / "app.css").read_text(encoding="utf-8")
-    assert "task-line" in css_text
-    assert "tone-hitl" in css_text
-    assert ".transcript[hidden]" in css_text
-    assert ".workspace.mode-schema .chat-pane" in css_text
-    assert "tone-error" in css_text
-    assert "who-track" not in css_text
-    assert "who-line" not in css_text
-    assert ".who .arrow::after" in css_text
-    assert "schedule-download-row" not in css_text
-    assert ".transcript-head .schedule-download" in css_text
-    assert "diff-expander" in css_text
-    assert "grid-template-columns: 280px 1fr" in css_text
-    assert "showFlash" in js_text
-    assert "alert(" not in js_text
-    assert "human_gate ?? data.gate" in js_text
-    assert "at_abs" in js_text
+    for needle in (
+        "function buildSchemaFrames", "function applyEvent", "handoff_message", "setAgents", "agentKey",
+        "pairVisual", "schema-slip", "schema-peek", "schemaArrowActive", "schemaArrowDone", "schemaArrowError",
+        "auto-start-reverse", "deliverableCards", "download_path", "startPlay", "Постановка задачи",
+        "Задача завершена. Загрузите результаты работы.", "Ожидает задачу",
+    ):
+        assert needle in schema_js, needle
+    for agent in ("excel_extractor", "schedule_builder", "calculation_agent"):
+        assert agent not in schema_js, agent
+
     css = (STATIC / "app.css").read_text(encoding="utf-8")
-    assert ".brief" in css
-    assert ".dropzone" in css
-    assert "outcome-ok" in css
-    assert "--blue-900" in css
-    assert ".flash" in css
-    assert ".rail { display: none; }" not in css
+    for needle in (
+        "--brand-blue: #0033A0", "--brand-cyan: #00B8F0", "--brand-ink: #001A57", "--brand-red: #F90D4B",
+        ".flash", ".dropzone", ".rail-item", ".turn", ".day-sep", ".file-chip", ".gate-panel", ".composer-box",
+        ".inspector", ".result-group", ".result-file", ".schema-node", ".schema-edge", ".schema-slip", ".schema-peek",
+        "@media (max-width: 1180px)", "@media (max-width: 860px)", "prefers-reduced-motion",
+    ):
+        assert needle in css, needle
     js = client.get("/static/app.js")
     assert js.status_code == 200
     assert "duration_label" in js.text
+
+    knowledge = client.get("/knowledge")
+    assert knowledge.status_code == 200
+    for anchor in ("agentTabs", "agentSelect", "kbSearch", "addBtn", "ingestBtn", "cardList", "createPanel", 'href="/"'):
+        assert anchor in knowledge.text, anchor
+    assert "knowledge.css?v=100" in knowledge.text
+    assert "knowledge.js?v=100" in knowledge.text
 
 
 def test_cors_preflight_and_get_allow_any_origin() -> None:
@@ -1418,10 +1283,10 @@ def test_n8n_rest_failed_execution_never_returns_parsed_response(monkeypatch) ->
 
 def test_static_ui_requires_schedule_root_and_generic_conflict_banner() -> None:
     js = (STATIC / "app.js").read_text(encoding="utf-8")
-    assert "Выберите корневой schedule" in js
+    assert "Укажите, какой из приложенных schedule-файлов главный." in js
     assert "schedules.length >= 2 && !root" in js
     assert "полным пакетом schedule или без лишних INCLUDE" not in js
-    assert "в ленте выше обычно есть причина" in js
+    assert "причина обычно есть в ленте" in js
     assert "startSubmitBtn.disabled = true" in js
     assert 'startSubmitBtn.setAttribute("aria-busy", "true")' in js
     assert "formatStartError" in js

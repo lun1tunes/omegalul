@@ -1049,35 +1049,125 @@ def test_event_lane_handoff_directions() -> None:
     assert none_result["brief"] != "None"
 
 
-def test_schedule_artifact_download_from_state(monkeypatch) -> None:
+def test_deliverables_are_agent_artifact_cards(monkeypatch) -> None:
+    """Phase 1.5: the case result is the set of deliverables by producer, downloadable by artifact id.
+
+    Uploads are ``kind=input, producer=user``; what the Schedule Builder returned is
+    ``kind=deliverable, producer=schedule_builder``; ``/schedule`` stays as a compatibility alias.
+    """
     monkeypatch.setenv("ORCHESTRATOR_WEBHOOK_URL", "http://127.0.0.1:9/webhook/mas-orchestrator-step")
     from app.settings import Settings
     from app import control_plane
 
     monkeypatch.setattr("app.cases_api.get_settings", lambda: Settings())
     monkeypatch.setattr("app.cases_api._invoke_create", lambda case_id: None)
-    res = client.post("/cases", data={"task_description": "INC out", "requested_by": "tester"})
+    res = client.post(
+        "/cases",
+        data={"task_description": "INC out", "requested_by": "tester"},
+        files=[
+            ("file", ("dates.xlsx", b"x" * 12, "application/vnd.ms-excel")),
+            ("schedule_files", ("FORECAST.INC", b"DATES\n/\n", "text/plain")),
+        ],
+    )
     assert res.status_code == 200, res.text
     case_id = res.json()["case_id"]
     row = control_plane.get_case(case_id)
     state = dict(row["state"])
-    state["artifacts"] = {
-        **(state.get("artifacts") or {}),
-        "schedule_source": {"filename": "FORECAST.INC", "artifact_id": "schedule_source"},
-        "schedule_out": "DATES\n  1 JAN 2020 /\n/\nWELSPECS\n/",
+    inputs = client.get(f"/cases/{case_id}/artifacts").json()["artifacts"]
+    assert [(c["artifact_id"], c["kind"], c["producer"]) for c in inputs] == [
+        ("excel", "input", "user"),
+        ("schedule_source", "input", "user"),
+    ]
+    assert all(c["created_at"] for c in inputs)
+    # The orchestrator merged the Schedule Builder result (JS twin stamps kind/producer).
+    flat = {
+        **{c["artifact_id"]: c for c in inputs},
+        "schedule_out": {
+            "artifact_id": "schedule_out",
+            "role": "schedule_out",
+            "kind": "deliverable",
+            "producer": "schedule_builder",
+            "text": "DATES\n  1 JAN 2020 /\n/\nWELSPECS\n/",
+        },
+        "diff": {"artifact_id": "diff", "role": "diff", "kind": "deliverable", "producer": "schedule_builder", "text": "--- a\n+++ b\n"},
     }
+    from app.state_shape import nest_artifacts
+
+    state["artifacts"] = nest_artifacts(flat)
     control_plane.update_case(case_id, state=state, status="done")
-    feed = client.get(f"/cases/{case_id}")
-    assert feed.status_code == 200
-    art = feed.json()["schedule_artifact"]
-    assert art["available"] is True
-    assert art["filename"] == "FORECAST_result.INC"
-    assert art["download_path"] == f"/cases/{case_id}/schedule"
-    assert art["label"] == "Скачать результат"
-    dl = client.get(f"/cases/{case_id}/schedule")
+
+    feed = client.get(f"/cases/{case_id}").json()
+    assert "schedule_artifact" not in feed
+    cards = feed["artifacts"]
+    assert [(c["artifact_id"], c["kind"], c["producer"]) for c in cards] == [
+        ("excel", "input", "user"),
+        ("schedule_source", "input", "user"),
+        ("schedule_out", "deliverable", "schedule_builder"),
+        ("diff", "deliverable", "schedule_builder"),
+    ]
+    assert all("text" not in c for c in cards)
+    deliverables = feed["deliverables"]
+    assert [d["filename"] for d in deliverables] == ["FORECAST_result.INC", "FORECAST_result.diff"]
+    assert deliverables[0]["download_path"] == f"/cases/{case_id}/artifacts/schedule_out"
+    assert deliverables[0]["bytes"] == len("DATES\n  1 JAN 2020 /\n/\nWELSPECS\n/".encode("utf-8"))
+
+    listed = client.get(f"/cases/{case_id}/artifacts", params={"kind": "deliverable"}).json()["artifacts"]
+    assert [c["artifact_id"] for c in listed] == ["schedule_out", "diff"]
+    by_agent = client.get(f"/cases/{case_id}/artifacts", params={"producer": "schedule_builder"}).json()["artifacts"]
+    assert [c["artifact_id"] for c in by_agent] == ["schedule_out", "diff"]
+    by_user = client.get(f"/cases/{case_id}/artifacts", params={"producer": "user"}).json()["artifacts"]
+    assert [c["artifact_id"] for c in by_user] == ["excel", "schedule_source"]
+
+    # Text deliverables download by artifact id (inline in state, not in the blob store) …
+    dl = client.get(f"/cases/{case_id}/artifacts/schedule_out")
     assert dl.status_code == 200
     assert b"DATES" in dl.content
     assert "FORECAST_result.INC" in dl.headers.get("content-disposition", "")
+    diff_dl = client.get(f"/cases/{case_id}/artifacts/diff")
+    assert diff_dl.status_code == 200
+    assert diff_dl.content.startswith(b"--- a")
+    # … binaries still come from the store …
+    xlsx = client.get(f"/cases/{case_id}/artifacts/excel")
+    assert xlsx.status_code == 200 and xlsx.content == b"x" * 12
+    # … and the old alias keeps working for older scripts.
+    alias = client.get(f"/cases/{case_id}/schedule")
+    assert alias.status_code == 200 and b"DATES" in alias.content
+    assert client.get(f"/cases/{case_id}/artifacts/nope").status_code == 404
+
+
+def test_legacy_deliverable_producer_comes_from_agent_result_event(monkeypatch) -> None:
+    """States merged before ``producer`` existed: the producer is read from the agent.result event."""
+    monkeypatch.setenv("ORCHESTRATOR_WEBHOOK_URL", "http://127.0.0.1:9/webhook/mas-orchestrator-step")
+    from app.settings import Settings
+    from app import control_plane
+
+    monkeypatch.setattr("app.cases_api.get_settings", lambda: Settings())
+    monkeypatch.setattr("app.cases_api._invoke_create", lambda case_id: None)
+    res = client.post("/cases", data={"task_description": "legacy", "requested_by": "tester"})
+    case_id = res.json()["case_id"]
+    row = control_plane.get_case(case_id)
+    state = dict(row["state"])
+    state["artifacts"] = {"schedule": {"out": {"artifact_id": "schedule_out", "role": "schedule_out", "text": "x" * 40}, "diff": "d" * 5}}
+    control_plane.update_case(case_id, state=state, status="done")
+    control_plane.append_event(
+        case_id,
+        kind="agent.result",
+        actor="schedule_builder",
+        agent_id="schedule_builder",
+        status="completed",
+        status_message="Собрал новый schedule",
+        payload={"artifacts": ["schedule_out", "diff"]},
+    )
+    cards = client.get(f"/cases/{case_id}/artifacts", params={"kind": "deliverable"}).json()["artifacts"]
+    assert {c["artifact_id"]: c["producer"] for c in cards} == {"schedule_out": "schedule_builder", "diff": "schedule_builder"}
+    assert cards[0]["filename"] == "schedule_result.inc"
+
+
+def test_agents_registry_for_ui() -> None:
+    body = client.get("/agents").json()
+    ids = {a["agent_id"]: a for a in body["agents"]}
+    assert "schedule_builder" in ids and ids["schedule_builder"]["title"] == "Schedule Builder"
+    assert "output_provides" in ids["schedule_builder"]
 
 
 def test_result_filename_does_not_reuse_baseline_name() -> None:

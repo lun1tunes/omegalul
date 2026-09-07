@@ -206,7 +206,7 @@ def test_knowledge_namespaces_list_get_patch(tmp_path: Path) -> None:
         assert page.status_code == 200
         assert "База знаний" in page.text
         assert "knowledge.js" in page.text
-        assert "Создать новое знание" in page.text
+        assert "Новая карточка" in page.text
         assert "Загрузить в RAG" in page.text
     finally:
         knowledge_store.set_corpus_path(None)

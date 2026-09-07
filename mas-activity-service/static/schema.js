@@ -1,86 +1,35 @@
 (() => {
+  "use strict";
+
   const START_LABEL = "Постановка задачи";
-  const END_LABEL = "Результат";
+  const END_LABEL = "Итог";
   const FINISHED_RESULT_TEXT = "Задача завершена. Загрузите результаты работы.";
-  const NODE_KEYS = ["input", "orchestrator", "excel", "calc", "schedule", "user", "output"];
-  const EDGE_KEYS = [
-    "in_orch", "orch_out",
-    "orch_excel", "orch_calc", "orch_schedule",
-    "excel_orch", "calc_orch", "schedule_orch",
-    "orch_user", "user_orch",
-  ];
-  /** Physical SVG paths: one line per orch↔agent / orch↔HITL pair; logical return edges stay in EDGE_KEYS. */
-  const DRAW_EDGE_KEYS = [
-    "in_orch", "orch_out",
-    "orch_excel", "orch_calc", "orch_schedule",
-    "orch_user",
-  ];
-  const PAIR_BACK = {
-    orch_excel: "excel_orch",
-    orch_calc: "calc_orch",
-    orch_schedule: "schedule_orch",
-    orch_user: "user_orch",
-  };
-  const AGENT_NODES = {
-    excel_extractor: "excel",
-    calculation_agent: "calc",
-    schedule_builder: "schedule",
-  };
-  const OUTBOUND = { excel: "orch_excel", calc: "orch_calc", schedule: "orch_schedule" };
-  const RETURN_EDGE = { excel: "excel_orch", calc: "calc_orch", schedule: "schedule_orch" };
-  const NODE_META = {
-    input: { kicker: "вход", title: START_LABEL },
-    orchestrator: { kicker: "оркестратор", title: "Оркестратор" },
-    excel: { kicker: "агент", title: "Excel" },
-    calc: { kicker: "агент", title: "Расчёт" },
-    schedule: { kicker: "агент", title: "Schedule" },
-    user: { kicker: "HITL", title: "Вы" },
-    output: { kicker: "выход", title: END_LABEL },
-  };
-  const LAYOUT = {
-    input: { x: 3.2, y: 28, w: 21, h: 28 },
-    orchestrator: { x: 38, y: 24, w: 24, h: 36 },
-    output: { x: 75.8, y: 28, w: 21, h: 28 },
-    excel: { x: 15, y: 68, w: 19, h: 24 },
-    calc: { x: 40.5, y: 68, w: 19, h: 24 },
-    schedule: { x: 66, y: 68, w: 19, h: 24 },
-    user: { x: 38, y: 3.5, w: 24, h: 18 },
-  };
-  const EDGE_ENDS = {
-    in_orch: ["input", "right", "orchestrator", "left"],
-    orch_out: ["orchestrator", "right", "output", "left"],
-    orch_excel: ["orchestrator", "bottom", "excel", "top"],
-    orch_calc: ["orchestrator", "bottom", "calc", "top"],
-    orch_schedule: ["orchestrator", "bottom", "schedule", "top"],
-    excel_orch: ["excel", "top", "orchestrator", "bottom"],
-    calc_orch: ["calc", "top", "orchestrator", "bottom"],
-    schedule_orch: ["schedule", "top", "orchestrator", "bottom"],
-    orch_user: ["orchestrator", "top", "user", "bottom"],
-    user_orch: ["user", "bottom", "orchestrator", "top"],
-  };
+  const FIXED_NODES = ["input", "orchestrator", "user", "output"];
   const KIND_LABELS = {
     "case.created": START_LABEL,
     "case.finished": END_LABEL,
-    "case.failed": END_LABEL,
-    "orchestrator.status": "Оркестратор",
-    "orchestrator.decision": "Оркестратор",
-    "agent.handoff": "Передача",
+    "case.failed": "Задача завершилась с ошибкой",
+    "orchestrator.status": "Оркестратор думает",
+    "orchestrator.decision": "Решение оркестратора",
+    "agent.handoff": "Поручение агенту",
     "agent.accepted": "Агент принял задачу",
     "agent.progress": "Агент работает",
     "agent.result": "Агент вернул результат",
     "agent.failed": "Сбой агента",
-    "hitl.request": "Запрос к вам",
+    "hitl.request": "Вопрос вам",
     "hitl.answered": "Ваш ответ",
     "system.node_error": "Сбой узла",
   };
   const TONE_STATUS = {
     idle: "Ожидает",
-    pending: "Передан",
+    pending: "Получил задачу",
     active: "В работе",
     waiting: "Ждёт вас",
     done: "Готово",
     error: "Ошибка",
   };
+  const ORCH_RE = /orchestrator/i;
+  const USER_ROLES = new Set(["", "user", "engineer", "human_operator", "specialist", "mas activity user"]);
 
   const root = document.getElementById("schemaView");
   const stage = document.getElementById("schemaStage");
@@ -92,183 +41,161 @@
   const endLabelEl = document.getElementById("schemaEndLabel");
   const prevBtn = document.getElementById("schemaPrev");
   const nextBtn = document.getElementById("schemaNext");
+  const playBtn = document.getElementById("schemaPlay");
   const countEl = document.getElementById("schemaStepCount");
 
   if (startLabelEl) startLabelEl.textContent = START_LABEL;
   if (endLabelEl) endLabelEl.textContent = END_LABEL;
 
+  /** @type {Map<string, {title: string, when_to_use: string}>} */
+  const registry = new Map();
   let frames = [];
   let index = 0;
   let followLive = true;
   let complete = false;
-  let built = false;
-  let resizeTimer = 0;
-  let lastSlipsKey = "";
-  let lastPaintIndex = -1;
-  let scheduleDownload = null;
-  let peekEl = null;
-  let peekTimer = 0;
-  let peekSource = null;
-  let peekPinned = false;
   let currentFrame = null;
+  let agentIds = [];
+  let deliverableCards = [];
+  let inputCards = [];
+  let resizeTimer = 0;
+  let playTimer = 0;
+  let lastKey = "";
+  let peekEl = null;
+  let peekFor = null;
+  let lastFeed = null;
 
-  function text(value) {
-    return String(value || "").trim();
+  const text = (v) => String(v || "").trim();
+  const copy = (v) => JSON.parse(JSON.stringify(v));
+
+  function isUser(role) { return USER_ROLES.has(text(role).toLowerCase()); }
+  function isOrch(role) { return ORCH_RE.test(text(role)); }
+  function agentKey(id) { return `agent:${text(id)}`; }
+  function agentIdOf(key) { return String(key || "").startsWith("agent:") ? key.slice(6) : ""; }
+
+  function humanTitle(id) {
+    const reg = registry.get(id);
+    if (reg && reg.title) return reg.title;
+    return text(id).replace(/[_-]+/g, " ").replace(/\b\w/g, (c) => c.toUpperCase()) || "Агент";
   }
-
-  function statusLabel(id, spec) {
-    const tone = spec?.tone || "idle";
-    if (tone === "idle" && id === "user") return "Не запрашивали";
-    if (tone === "idle" && (id === "excel" || id === "calc" || id === "schedule")) return "Не вызывался";
-    if (tone === "idle" && id === "orchestrator") return "Ожидает задачу";
+  function initials(label) {
+    const words = text(label).split(/\s+/).filter(Boolean);
+    if (!words.length) return "·";
+    if (words.length === 1) return words[0].slice(0, 2);
+    return (words[0][0] + words[1][0]).toUpperCase();
+  }
+  function nodeMeta(key) {
+    if (key === "input") return { kicker: "вход", title: START_LABEL, icon: "i-file" };
+    if (key === "orchestrator") return { kicker: "оркестратор", title: "Оркестратор", icon: "i-orch" };
+    if (key === "user") return { kicker: "инженер", title: "Вы", icon: "i-user" };
+    if (key === "output") return { kicker: "выход", title: END_LABEL, icon: "i-download" };
+    const id = agentIdOf(key);
+    return { kicker: "агент", title: humanTitle(id), initials: initials(humanTitle(id)), hint: registry.get(id)?.when_to_use || "" };
+  }
+  function statusLabel(key, tone) {
+    if (tone === "idle") {
+      if (key === "user") return "Вопросов не было";
+      if (key === "orchestrator") return "Ожидает задачу";
+      if (key.startsWith("agent:")) return "Не вызывался";
+      return "";
+    }
+    if (key === "output" && tone === "active") return complete ? "Готово" : "Формируется";
+    if (key === "input" && tone === "active") return "Принята";
     return TONE_STATUS[tone] || tone;
   }
 
-  function copy(value) {
-    return JSON.parse(JSON.stringify(value));
-  }
-
+  // ------------------------------------------------------------------ frames
   function filesFromState(state) {
-    const artifacts = state && typeof state.artifacts === "object" ? state.artifacts : {};
+    const arts = state && typeof state.artifacts === "object" ? state.artifacts : {};
     const names = [];
     const seen = new Set();
-    const skip = new Set(["schedule_out", "diff", "out"]);
-    function walk(value, key) {
-      if (skip.has(key)) return;
-      if (Array.isArray(value)) {
-        value.forEach((item) => walk(item, key));
-        return;
-      }
+    (function walk(value, key) {
+      if (key === "schedule_out" || key === "diff" || key === "out") return;
+      if (Array.isArray(value)) { value.forEach((v) => walk(v, key)); return; }
       if (value && typeof value === "object") {
-        if (value.role === "schedule_out") return;
+        if (value.kind === "deliverable" || value.role === "schedule_out" || value.role === "diff") return;
         if (value.filename || value.artifact_id) {
           const name = text(value.filename);
-          if (name && !seen.has(name)) {
-            seen.add(name);
-            names.push(name);
-          }
+          if (name && !seen.has(name)) { seen.add(name); names.push(name); }
           return;
         }
-        Object.entries(value).forEach(([childKey, child]) => walk(child, childKey));
-        return;
+        Object.entries(value).forEach(([k, v]) => walk(v, k));
       }
-    }
-    walk(artifacts, "");
+    })(arts, "");
     return names;
   }
 
-  function humanStatus(message) {
-    const msg = text(message);
-    if (!msg || /^(case\.finished|case\.failed)$/i.test(msg)) return "";
-    return msg;
-  }
-
-  function resultText(payload, statusMessage) {
-    const data = payload && typeof payload === "object" ? payload : {};
-    const result = data.result;
-    if (typeof result === "string" && result.trim()) return result.trim();
-    if (result && typeof result === "object") {
-      for (const key of ["summary", "message", "text", "status_message"]) {
-        if (text(result[key])) return text(result[key]);
-      }
-      try {
-        return JSON.stringify(result).slice(0, 400);
-      } catch (_) {
-        return statusMessage;
-      }
-    }
-    for (const key of ["message", "summary", "text"]) {
-      if (text(data[key])) return text(data[key]);
-    }
-    return statusMessage;
-  }
-
-  function blankGraph(state) {
+  function blankGraph(state, agents) {
     const nodes = {};
     const edges = {};
-    for (const key of NODE_KEYS) nodes[key] = { tone: "idle", bubble: null, caption: "" };
-    for (const key of EDGE_KEYS) edges[key] = { tone: "idle", bubble: null };
+    for (const key of FIXED_NODES) nodes[key] = { tone: "idle", bubble: null, caption: "" };
+    for (const id of agents) nodes[agentKey(id)] = { tone: "idle", bubble: null, caption: "" };
+    edges["input>orchestrator"] = { tone: "idle", bubble: null };
+    edges["orchestrator>output"] = { tone: "idle", bubble: null };
+    edges["orchestrator>user"] = { tone: "idle", bubble: null };
+    edges["user>orchestrator"] = { tone: "idle", bubble: null };
+    for (const id of agents) {
+      edges[`orchestrator>${agentKey(id)}`] = { tone: "idle", bubble: null };
+      edges[`${agentKey(id)}>orchestrator`] = { tone: "idle", bubble: null };
+    }
     return {
-      nodes,
-      edges,
+      nodes, edges,
       input: { goal: text(state && state.goal), files: filesFromState(state || {}) },
       output: { result: "", prompt: "" },
-      active_node: null,
-      active_edge: null,
-      in_flight: null,
-      last_handoff: {},
-      last_orch_prompt: "",
+      active_node: null, active_edge: null, in_flight: null, last_handoff: {}, last_orch_prompt: "",
     };
   }
 
-  function setCaption(graph, nodeId, value) {
-    const caption = text(value);
-    if (caption) graph.nodes[nodeId].caption = caption;
-  }
-
-  function clearNodeBubbles(graph, keep) {
-    for (const [nodeId, node] of Object.entries(graph.nodes)) {
-      if (nodeId !== keep) node.bubble = null;
+  function setCaption(graph, key, value) { const c = text(value); if (c && graph.nodes[key]) graph.nodes[key].caption = c; }
+  function clearBubbles(graph, keep) { for (const [k, n] of Object.entries(graph.nodes)) if (k !== keep) n.bubble = null; }
+  function activateNode(graph, key, bubble) {
+    if (!graph.nodes[key]) return;
+    for (const [k, n] of Object.entries(graph.nodes)) {
+      if (k === key) continue;
+      if (n.tone === "active") n.tone = "done";
+      n.bubble = null;
     }
+    graph.nodes[key].tone = "active";
+    graph.nodes[key].bubble = bubble || null;
+    setCaption(graph, key, bubble);
+    graph.active_node = key;
   }
-
-  function activateNode(graph, nodeId, bubble) {
-    for (const [nid, node] of Object.entries(graph.nodes)) {
-      if (nid === nodeId) continue;
-      if (node.tone === "active") node.tone = "done";
-      node.bubble = null;
+  function markDone(graph, key) {
+    const n = graph.nodes[key];
+    if (!n) return;
+    if (n.tone !== "error") n.tone = "done";
+    n.bubble = null;
+    if (graph.active_node === key) graph.active_node = null;
+  }
+  function setEdge(graph, id, tone, bubble) {
+    if (!graph.edges[id]) return;
+    for (const [eid, e] of Object.entries(graph.edges)) {
+      if (eid !== id && e.tone === "active" && tone === "active") { e.tone = "done"; e.bubble = null; }
     }
-    graph.nodes[nodeId].tone = "active";
-    graph.nodes[nodeId].bubble = bubble || null;
-    setCaption(graph, nodeId, bubble);
-    graph.active_node = nodeId;
+    graph.edges[id].tone = tone;
+    graph.edges[id].bubble = tone === "active" ? (bubble || null) : null;
+    graph.active_edge = tone === "active" ? id : (graph.active_edge === id ? null : graph.active_edge);
   }
-
-  function markDone(graph, nodeId) {
-    const node = graph.nodes[nodeId];
-    if (node.tone !== "error") node.tone = "done";
-    node.bubble = null;
-    if (graph.active_node === nodeId) graph.active_node = null;
+  function eventAgent(event) {
+    const a = text(event.agent_id);
+    if (a && !isOrch(a) && !isUser(a)) return a;
+    const actor = text(event.actor);
+    if (actor && !isOrch(actor) && !isUser(actor)) return actor;
+    return "";
   }
-
-  function setEdge(graph, edgeId, tone, bubble) {
-    for (const [eid, edge] of Object.entries(graph.edges)) {
-      if (eid === edgeId) continue;
-      if (edge.tone === "active" && tone === "active") {
-        edge.tone = "done";
-        edge.bubble = null;
-      }
-    }
-    graph.edges[edgeId].tone = tone;
-    graph.edges[edgeId].bubble = tone === "active" ? (bubble || null) : null;
-    graph.active_edge = tone === "active" ? edgeId : (graph.active_edge === edgeId ? null : graph.active_edge);
-  }
-
-  function agentNode(event) {
-    return AGENT_NODES[text(event.agent_id)] || AGENT_NODES[text(event.actor)] || null;
-  }
-
   function frameLabel(event) {
     const kind = text(event.kind);
     if (kind === "case.created") return START_LABEL;
-    if (kind === "case.finished" || kind === "case.failed") return END_LABEL;
+    if (kind === "case.finished") return END_LABEL;
     if (kind === "agent.handoff" && text(event.handoff_message)) return text(event.handoff_message);
     if (text(event.status_message)) return text(event.status_message);
     return KIND_LABELS[kind] || kind || "Шаг";
   }
-
   function snapshot(graph, event, idx) {
     return {
-      index: idx,
-      label: frameLabel(event),
-      kind: text(event.kind),
-      event_id: event.event_id,
-      nodes: copy(graph.nodes),
-      edges: copy(graph.edges),
-      input: copy(graph.input),
-      output: copy(graph.output),
-      active_node: graph.active_node,
-      active_edge: graph.active_edge,
+      index: idx, label: frameLabel(event), kind: text(event.kind), event_id: event.event_id,
+      agent_id: eventAgent(event),
+      nodes: copy(graph.nodes), edges: copy(graph.edges), input: copy(graph.input), output: copy(graph.output),
+      active_node: graph.active_node, active_edge: graph.active_edge,
     };
   }
 
@@ -277,24 +204,23 @@
     const statusMessage = text(event.status_message);
     const handoff = text(event.handoff_message);
     const payload = event.payload && typeof event.payload === "object" ? event.payload : {};
-    const node = agentNode(event);
+    const agent = eventAgent(event);
+    const node = agent ? agentKey(agent) : null;
+    const out = node ? `orchestrator>${node}` : null;
+    const back = node ? `${node}>orchestrator` : null;
 
     if (kind === "case.created") {
-      if (Array.isArray(payload.files) && payload.files.length) {
-        graph.input.files = payload.files.map((name) => String(name)).filter(Boolean);
-      }
+      if (Array.isArray(payload.files) && payload.files.length) graph.input.files = payload.files.map(String).filter(Boolean);
       if (!graph.input.goal && statusMessage) graph.input.goal = statusMessage;
       activateNode(graph, "input", null);
-      setEdge(graph, "in_orch", "active");
+      setEdge(graph, "input>orchestrator", "active");
       return;
     }
     if (kind === "orchestrator.status" || kind === "orchestrator.decision") {
       if (graph.nodes.input.tone === "active") markDone(graph, "input");
-      if (graph.edges.in_orch.tone === "active") setEdge(graph, "in_orch", "done");
+      if (graph.edges["input>orchestrator"].tone === "active") setEdge(graph, "input>orchestrator", "done");
       const flying = graph.in_flight;
-      if (flying && graph.edges[RETURN_EDGE[flying]]?.tone === "active") {
-        setEdge(graph, RETURN_EDGE[flying], "done");
-      }
+      if (flying && graph.edges[`${flying}>orchestrator`]?.tone === "active") setEdge(graph, `${flying}>orchestrator`, "done");
       graph.last_orch_prompt = statusMessage || graph.last_orch_prompt || "";
       activateNode(graph, "orchestrator", statusMessage || null);
       return;
@@ -303,31 +229,30 @@
       graph.in_flight = node;
       graph.last_handoff[node] = handoff;
       graph.nodes[node].tone = "pending";
-      setEdge(graph, OUTBOUND[node], "active", handoff || null);
+      setEdge(graph, out, "active", handoff || null);
       if (graph.nodes.orchestrator.tone !== "error") {
         graph.nodes.orchestrator.tone = "active";
         if (statusMessage) {
           graph.nodes.orchestrator.bubble = statusMessage;
           setCaption(graph, "orchestrator", statusMessage);
           graph.active_node = "orchestrator";
-          clearNodeBubbles(graph, "orchestrator");
+          clearBubbles(graph, "orchestrator");
         }
       }
       return;
     }
     if ((kind === "agent.accepted" || kind === "agent.progress") && node) {
       graph.in_flight = node;
-      const outbound = OUTBOUND[node];
-      const kept = handoff || graph.last_handoff[node] || graph.edges[outbound].bubble;
+      const kept = handoff || graph.last_handoff[node] || graph.edges[out].bubble;
       activateNode(graph, node, statusMessage || null);
-      setEdge(graph, outbound, "active", kept);
+      setEdge(graph, out, "active", kept);
       return;
     }
     if (kind === "agent.result" && node) {
       setCaption(graph, node, statusMessage);
       markDone(graph, node);
-      setEdge(graph, OUTBOUND[node], "done");
-      setEdge(graph, RETURN_EDGE[node], "active");
+      setEdge(graph, out, "done");
+      setEdge(graph, back, "active", statusMessage || null);
       graph.in_flight = null;
       graph.nodes.orchestrator.tone = "pending";
       graph.nodes.orchestrator.bubble = null;
@@ -339,9 +264,9 @@
       graph.nodes[node].bubble = statusMessage || null;
       setCaption(graph, node, statusMessage);
       graph.active_node = node;
-      clearNodeBubbles(graph, node);
-      setEdge(graph, OUTBOUND[node], "done");
-      setEdge(graph, RETURN_EDGE[node], "error");
+      clearBubbles(graph, node);
+      setEdge(graph, out, "done");
+      setEdge(graph, back, "error");
       graph.in_flight = null;
       return;
     }
@@ -350,31 +275,28 @@
       activateNode(graph, "user", question || null);
       graph.nodes.orchestrator.tone = "waiting";
       graph.nodes.orchestrator.bubble = null;
-      setEdge(graph, "orch_user", "active", question || null);
+      setEdge(graph, "orchestrator>user", "active", question || null);
       return;
     }
     if (kind === "hitl.answered") {
       markDone(graph, "user");
-      setEdge(graph, "orch_user", "done");
-      setEdge(graph, "user_orch", "active");
+      setEdge(graph, "orchestrator>user", "done");
+      setEdge(graph, "user>orchestrator", "active", statusMessage || null);
       activateNode(graph, "orchestrator", statusMessage || null);
       return;
     }
     if (kind === "case.finished") {
-      for (const [nodeId, item] of Object.entries(graph.nodes)) {
-        if (nodeId === "output") continue;
-        if (item.tone === "active" || item.tone === "pending" || item.tone === "waiting") item.tone = "done";
-        item.bubble = null;
+      for (const [k, n] of Object.entries(graph.nodes)) {
+        if (k === "output") continue;
+        if (["active", "pending", "waiting"].includes(n.tone)) n.tone = "done";
+        n.bubble = null;
       }
-      setCaption(graph, "orchestrator", humanStatus(statusMessage) || graph.last_orch_prompt);
-      for (const edge of Object.values(graph.edges)) {
-        if (edge.tone === "active") edge.tone = "done";
-        edge.bubble = null;
-      }
+      setCaption(graph, "orchestrator", (statusMessage && !/^case\./.test(statusMessage) ? statusMessage : "") || graph.last_orch_prompt);
+      for (const e of Object.values(graph.edges)) { if (e.tone === "active") e.tone = "done"; e.bubble = null; }
       graph.output.prompt = "";
-      graph.output.result = FINISHED_RESULT_TEXT;
+      graph.output.result = statusMessage && !/^case\./.test(statusMessage) ? statusMessage : FINISHED_RESULT_TEXT;
       activateNode(graph, "output", null);
-      setEdge(graph, "orch_out", "active");
+      setEdge(graph, "orchestrator>output", "active");
       graph.in_flight = null;
       graph.active_node = "output";
       return;
@@ -386,9 +308,8 @@
       graph.nodes.orchestrator.bubble = statusMessage || null;
       setCaption(graph, "orchestrator", statusMessage);
       graph.nodes.output.tone = "error";
-      graph.nodes.output.bubble = null;
-      clearNodeBubbles(graph, "orchestrator");
-      setEdge(graph, "orch_out", "error");
+      clearBubbles(graph, "orchestrator");
+      setEdge(graph, "orchestrator>output", "error");
       graph.active_node = "orchestrator";
       graph.in_flight = null;
       return;
@@ -398,38 +319,35 @@
       graph.nodes.orchestrator.bubble = statusMessage || null;
       setCaption(graph, "orchestrator", statusMessage);
       graph.active_node = "orchestrator";
-      clearNodeBubbles(graph, "orchestrator");
+      clearBubbles(graph, "orchestrator");
     }
   }
 
+  function collectAgents(events) {
+    const ids = [];
+    const seen = new Set();
+    for (const id of registry.keys()) { if (!seen.has(id)) { seen.add(id); ids.push(id); } }
+    for (const e of events) {
+      const id = eventAgent(e);
+      if (id && !seen.has(id)) { seen.add(id); ids.push(id); }
+    }
+    return ids;
+  }
+
   function buildSchemaFrames(events, state) {
-    const graph = blankGraph(state || {});
-    const rows = Array.isArray(events) ? events.filter((row) => row && typeof row === "object") : [];
+    const rows = Array.isArray(events) ? events.filter((r) => r && typeof r === "object") : [];
+    agentIds = collectAgents(rows);
+    const graph = blankGraph(state || {}, agentIds);
     if (!rows.length) {
       activateNode(graph, "input", null);
-      return [{
-        index: 0,
-        label: START_LABEL,
-        kind: "case.created",
-        event_id: null,
-        nodes: copy(graph.nodes),
-        edges: copy(graph.edges),
-        input: copy(graph.input),
-        output: copy(graph.output),
-        active_node: "input",
-        active_edge: null,
-      }];
+      return [{ ...snapshot(graph, { kind: "case.created" }, 0), label: START_LABEL, active_node: "input", active_edge: null }];
     }
-    return rows.map((event, idx) => {
-      applyEvent(graph, event);
-      return snapshot(graph, event, idx);
-    });
+    return rows.map((event, idx) => { applyEvent(graph, event); return snapshot(graph, event, idx); });
   }
 
   function eventsFromFeed(data) {
     if (Array.isArray(data?.events) && data.events.length) return data.events;
-    const turns = Array.isArray(data?.activity) ? data.activity : [];
-    return turns.map((turn) => {
+    return (Array.isArray(data?.activity) ? data.activity : []).map((turn) => {
       const details = turn?.details && typeof turn.details === "object" ? turn.details : {};
       return {
         kind: turn.event_type || turn.stage || turn.status,
@@ -443,761 +361,473 @@
     });
   }
 
-  function shorten(value, max) {
-    const raw = text(value);
-    if (!raw) return "";
-    if (raw.length <= max) return raw;
-    return `${raw.slice(0, Math.max(0, max - 1)).trimEnd()}…`;
+  // ------------------------------------------------------------------ layout
+  const NODE_W = 196;
+  function layoutCenters() {
+    const centers = { user: { x: 50, y: 13 }, input: { x: 13, y: 50 }, orchestrator: { x: 50, y: 50 }, output: { x: 87, y: 50 } };
+    const n = agentIds.length;
+    const stageW = stage.clientWidth || 900;
+    // Agents sit on the bottom row; shrink the cards when the stage cannot fit them side by side.
+    let nodeW = NODE_W;
+    if (n > 1) nodeW = Math.max(132, Math.min(NODE_W, (0.94 * stageW) / n - 12));
+    nodesEl.style.setProperty("--node-w", `${Math.round(nodeW)}px`);
+    const minGap = ((nodeW + 12) / stageW) * 100;
+    const spacing = n <= 1 ? 0 : Math.max(minGap, Math.min(26, 76 / (n - 1)));
+    const edge = (nodeW / 2 / stageW) * 100 + 1;
+    agentIds.forEach((id, i) => {
+      const x = 50 + (i - (n - 1) / 2) * spacing;
+      centers[agentKey(id)] = { x: Math.max(edge, Math.min(100 - edge, x)), y: 87 };
+    });
+    // Side nodes keep clear of the stage border as well.
+    centers.input.x = Math.max(edge, 13);
+    centers.output.x = Math.min(100 - edge, 87);
+    return centers;
   }
 
-  function point(box, side) {
-    if (side === "left") return { x: box.x, y: box.y + box.h * 0.5 };
-    if (side === "right") return { x: box.x + box.w, y: box.y + box.h * 0.5 };
-    if (side === "top") return { x: box.x + box.w * 0.5, y: box.y };
-    return { x: box.x + box.w * 0.5, y: box.y + box.h };
-  }
-
-  function isLiveTone(tone) {
-    return tone === "active" || tone === "error";
-  }
-
-  function toneRank(tone) {
-    if (isLiveTone(tone)) return 2;
-    if (tone === "done" || tone === "pending" || tone === "waiting") return 1;
-    return 0;
-  }
-
-  function pairVisual(outId, edges, activeEdge) {
-    const out = (edges && edges[outId]) || { tone: "idle", bubble: null };
-    const backId = PAIR_BACK[outId];
-    if (!backId) {
-      return {
-        tone: out.tone || "idle",
-        dir: isLiveTone(out.tone) ? "out" : "none",
-        bubble: out.bubble || null,
-      };
-    }
-    const back = (edges && edges[backId]) || { tone: "idle", bubble: null };
-    const outLive = isLiveTone(out.tone);
-    const backLive = isLiveTone(back.tone);
-    if (outLive && backLive) {
-      if (activeEdge === backId) {
-        return { tone: back.tone, dir: "back", bubble: back.bubble || out.bubble || null };
-      }
-      return { tone: out.tone, dir: "out", bubble: out.bubble || back.bubble || null };
-    }
-    if (backLive) {
-      return { tone: back.tone, dir: "back", bubble: back.bubble || out.bubble || null };
-    }
-    if (outLive) {
-      return { tone: out.tone, dir: "out", bubble: out.bubble || back.bubble || null };
-    }
-    if (toneRank(back.tone) > toneRank(out.tone)) {
-      return { tone: back.tone || "idle", dir: "none", bubble: back.bubble || out.bubble || null };
-    }
-    return { tone: out.tone || "idle", dir: "none", bubble: out.bubble || back.bubble || null };
-  }
-
-  function cubicPoint(p0, c1, c2, p1, t) {
-    const u = 1 - t;
-    const uu = u * u;
-    const tt = t * t;
-    return {
-      x: uu * u * p0.x + 3 * uu * t * c1.x + 3 * u * tt * c2.x + tt * t * p1.x,
-      y: uu * u * p0.y + 3 * uu * t * c1.y + 3 * u * tt * c2.y + tt * t * p1.y,
-    };
-  }
-
-  function cubicArcMid(p0, c1, c2, p1) {
-    const steps = 32;
-    const pts = [{ p: p0, len: 0 }];
-    let length = 0;
-    let prev = p0;
-    for (let i = 1; i <= steps; i++) {
-      const p = cubicPoint(p0, c1, c2, p1, i / steps);
-      length += Math.hypot(p.x - prev.x, p.y - prev.y);
-      pts.push({ p, len: length });
-      prev = p;
-    }
-    const half = length / 2;
-    for (let i = 1; i < pts.length; i++) {
-      if (pts[i].len >= half) {
-        const span = pts[i].len - pts[i - 1].len || 1;
-        const k = (half - pts[i - 1].len) / span;
-        return {
-          x: pts[i - 1].p.x + (pts[i].p.x - pts[i - 1].p.x) * k,
-          y: pts[i - 1].p.y + (pts[i].p.y - pts[i - 1].p.y) * k,
-        };
-      }
-    }
-    return cubicPoint(p0, c1, c2, p1, 0.5);
-  }
-
-  function measuredLayout() {
-    if (!stage || !nodesEl) return LAYOUT;
+  function measuredBoxes() {
     const sr = stage.getBoundingClientRect();
-    if (!sr.width || !sr.height) return LAYOUT;
     const map = {};
-    for (const id of NODE_KEYS) {
-      const el = nodesEl.querySelector(`[data-node="${id}"]`);
-      if (!el) {
-        map[id] = LAYOUT[id];
-        continue;
-      }
+    for (const el of nodesEl.querySelectorAll(".schema-node")) {
       const br = el.getBoundingClientRect();
-      map[id] = {
-        x: ((br.left - sr.left) / sr.width) * 100,
-        y: ((br.top - sr.top) / sr.height) * 100,
-        w: (br.width / sr.width) * 100,
-        h: (br.height / sr.height) * 100,
-      };
+      map[el.dataset.node] = { x: br.left - sr.left, y: br.top - sr.top, w: br.width, h: br.height };
     }
-    return map;
+    return { boxes: map, w: sr.width, h: sr.height };
   }
 
-  function edgePath(id, layout) {
-    const spec = EDGE_ENDS[id];
-    const boxes = layout || LAYOUT;
-    const a = boxes[spec[0]] || LAYOUT[spec[0]];
-    const b = boxes[spec[2]] || LAYOUT[spec[2]];
-    const p1 = point(a, spec[1]);
-    const p2 = point(b, spec[3]);
-    const dx = p2.x - p1.x;
-    const dy = p2.y - p1.y;
-    const c1 = { x: p1.x + dx * 0.38, y: p1.y + dy * 0.12 };
-    const c2 = { x: p1.x + dx * 0.62, y: p1.y + dy * 0.88 };
-    if (spec[1] === "right" || spec[1] === "left") {
-      c1.x = p1.x + (spec[1] === "right" ? 8 : -8);
-      c1.y = p1.y;
-      c2.x = p2.x + (spec[3] === "left" ? -8 : 8);
-      c2.y = p2.y;
+  function anchor(box, side) {
+    if (side === "left") return { x: box.x, y: box.y + box.h / 2 };
+    if (side === "right") return { x: box.x + box.w, y: box.y + box.h / 2 };
+    if (side === "top") return { x: box.x + box.w / 2, y: box.y };
+    return { x: box.x + box.w / 2, y: box.y + box.h };
+  }
+
+  function edgeEnds(id) {
+    const [a, b] = id.split(">");
+    if (a === "input") return [a, "right", b, "left"];
+    if (b === "output") return [a, "right", b, "left"];
+    if (b === "user") return [a, "top", b, "bottom"];
+    if (a === "user") return [a, "bottom", b, "top"];
+    if (a === "orchestrator") return [a, "bottom", b, "top"];
+    return [a, "top", b, "bottom"];
+  }
+
+  function geometry(id, boxes) {
+    const [na, sa, nb, sb] = edgeEnds(id);
+    const A = boxes[na]; const B = boxes[nb];
+    if (!A || !B) return null;
+    const p1 = anchor(A, sa); const p2 = anchor(B, sb);
+    const dx = p2.x - p1.x; const dy = p2.y - p1.y;
+    let c1; let c2;
+    if (sa === "left" || sa === "right") {
+      const k = Math.max(24, Math.abs(dx) * 0.42);
+      c1 = { x: p1.x + (sa === "right" ? k : -k), y: p1.y };
+      c2 = { x: p2.x + (sb === "left" ? -k : k), y: p2.y };
+    } else {
+      const k = Math.max(20, Math.abs(dy) * 0.45);
+      c1 = { x: p1.x, y: p1.y + (sa === "bottom" ? k : -k) };
+      c2 = { x: p2.x, y: p2.y + (sb === "top" ? -k : k) };
     }
+    const mid = cubic(p1, c1, c2, p2, 0.5);
+    return { d: `M ${p1.x} ${p1.y} C ${c1.x} ${c1.y}, ${c2.x} ${c2.y}, ${p2.x} ${p2.y}`, mid };
+  }
+  function cubic(p0, c1, c2, p1, t) {
+    const u = 1 - t;
     return {
-      d: `M ${p1.x} ${p1.y} C ${c1.x} ${c1.y}, ${c2.x} ${c2.y}, ${p2.x} ${p2.y}`,
-      dRev: `M ${p2.x} ${p2.y} C ${c2.x} ${c2.y}, ${c1.x} ${c1.y}, ${p1.x} ${p1.y}`,
-      mid: cubicArcMid(p1, c1, c2, p2),
+      x: u * u * u * p0.x + 3 * u * u * t * c1.x + 3 * u * t * t * c2.x + t * t * t * p1.x,
+      y: u * u * u * p0.y + 3 * u * u * t * c1.y + 3 * u * t * t * c2.y + t * t * t * p1.y,
     };
   }
 
-  function pathMidpoint(path, fallback) {
-    try {
-      if (!path || typeof path.getTotalLength !== "function") return fallback;
-      const len = path.getTotalLength();
-      if (!Number.isFinite(len) || len <= 0) return fallback;
-      const stageRect = stage && stage.getBoundingClientRect();
-      const ctm = typeof path.getScreenCTM === "function" ? path.getScreenCTM() : null;
-      if (!stageRect || !stageRect.width || !stageRect.height || !ctm) {
-        const p = path.getPointAtLength(len / 2);
-        if (p && Number.isFinite(p.x) && Number.isFinite(p.y)) return { x: p.x, y: p.y };
-        return fallback;
-      }
-      const steps = 64;
-      const samples = [];
-      let acc = 0;
-      let prevX = 0;
-      let prevY = 0;
-      for (let i = 0; i <= steps; i++) {
-        const p = path.getPointAtLength((len * i) / steps);
-        const sx = ctm.a * p.x + ctm.c * p.y + ctm.e;
-        const sy = ctm.b * p.x + ctm.d * p.y + ctm.f;
-        if (i) acc += Math.hypot(sx - prevX, sy - prevY);
-        samples.push({ sx, sy, acc });
-        prevX = sx;
-        prevY = sy;
-      }
-      const half = acc / 2;
-      let sx = samples[samples.length - 1].sx;
-      let sy = samples[samples.length - 1].sy;
-      for (let i = 1; i < samples.length; i++) {
-        if (samples[i].acc >= half) {
-          const span = samples[i].acc - samples[i - 1].acc || 1;
-          const k = (half - samples[i - 1].acc) / span;
-          sx = samples[i - 1].sx + (samples[i].sx - samples[i - 1].sx) * k;
-          sy = samples[i - 1].sy + (samples[i].sy - samples[i - 1].sy) * k;
-          break;
-        }
-      }
-      return {
-        x: ((sx - stageRect.left) / stageRect.width) * 100,
-        y: ((sy - stageRect.top) / stageRect.height) * 100,
-      };
-    } catch (_) { /* keep fallback */ }
-    return fallback;
+  /** Physical wires: one per pair; the logical return edge decides direction/tone when it is live. */
+  function drawnEdges() {
+    const ids = ["input>orchestrator", "orchestrator>output", "orchestrator>user"];
+    for (const id of agentIds) ids.push(`orchestrator>${agentKey(id)}`);
+    return ids;
+  }
+  function backOf(id) {
+    const [a, b] = id.split(">");
+    return b === "output" || a === "input" ? null : `${b}>${a}`;
+  }
+  const live = (t) => t === "active" || t === "error";
+  function pairVisual(id, edges, activeEdge) {
+    const out = edges[id] || { tone: "idle" };
+    const backId = backOf(id);
+    const back = backId ? edges[backId] || { tone: "idle" } : null;
+    if (back && live(back.tone) && (!live(out.tone) || activeEdge === backId)) return { tone: back.tone, dir: "back", bubble: back.bubble || null };
+    if (live(out.tone)) return { tone: out.tone, dir: "out", bubble: out.bubble || null };
+    const rank = (t) => (live(t) ? 2 : ["done", "pending", "waiting"].includes(t) ? 1 : 0);
+    if (back && rank(back.tone) > rank(out.tone)) return { tone: back.tone, dir: "none", bubble: null };
+    return { tone: out.tone || "idle", dir: "none", bubble: null };
   }
 
-  function ensureDom() {
-    if (!stage || !nodesEl || !edgesEl || built) return;
-    edgesEl.setAttribute("viewBox", "0 0 100 100");
-    edgesEl.setAttribute("preserveAspectRatio", "none");
-    edgesEl.innerHTML = `
-      <defs>
-        <marker id="schemaArrowActive" viewBox="0 0 10 10" refX="8.4" refY="5" markerWidth="2.3" markerHeight="2.3" markerUnits="userSpaceOnUse" orient="auto" overflow="visible">
-          <path d="M 0 0.8 L 10 5 L 0 9.2 Z" fill="#00B8F0"></path>
-        </marker>
-        <marker id="schemaArrowDone" viewBox="0 0 10 10" refX="8.4" refY="5" markerWidth="2.3" markerHeight="2.3" markerUnits="userSpaceOnUse" orient="auto" overflow="visible">
-          <path d="M 0 0.8 L 10 5 L 0 9.2 Z" fill="#0033A0"></path>
-        </marker>
-        <marker id="schemaArrowError" viewBox="0 0 10 10" refX="8.4" refY="5" markerWidth="2.3" markerHeight="2.3" markerUnits="userSpaceOnUse" orient="auto" overflow="visible">
-          <path d="M 0 0.8 L 10 5 L 0 9.2 Z" fill="#F90D4B"></path>
-        </marker>
-      </defs>
-    `;
-    for (const id of DRAW_EDGE_KEYS) {
-      const geo = edgePath(id);
-      const path = document.createElementNS("http://www.w3.org/2000/svg", "path");
-      path.setAttribute("d", geo.d);
-      path.setAttribute("data-edge", id);
-      path.setAttribute("fill", "none");
-      path.setAttribute("class", "schema-edge-path");
-      edgesEl.appendChild(path);
-    }
-    nodesEl.innerHTML = "";
-    for (const id of NODE_KEYS) {
-      const meta = NODE_META[id];
+  // ------------------------------------------------------------------ DOM
+  function svgEl(name, attrs) {
+    const el = document.createElementNS("http://www.w3.org/2000/svg", name);
+    for (const [k, v] of Object.entries(attrs || {})) el.setAttribute(k, v);
+    return el;
+  }
+  function iconUse(id) {
+    const svg = svgEl("svg", { class: "icon", "aria-hidden": "true" });
+    svg.append(svgEl("use", { href: `#${id}` }));
+    return svg;
+  }
+
+  function ensureNodes() {
+    const wanted = [...FIXED_NODES, ...agentIds.map(agentKey)];
+    const existing = new Set(Array.from(nodesEl.querySelectorAll(".schema-node"), (el) => el.dataset.node));
+    for (const el of nodesEl.querySelectorAll(".schema-node")) if (!wanted.includes(el.dataset.node)) el.remove();
+    for (const key of wanted) {
+      if (existing.has(key)) continue;
+      const meta = nodeMeta(key);
       const node = document.createElement("article");
-      node.className = "schema-node";
-      node.dataset.node = id;
+      node.className = "schema-node is-idle";
+      node.dataset.node = key;
+      node.tabIndex = 0;
       const head = document.createElement("div");
       head.className = "schema-node-head";
-      const kicker = document.createElement("span");
-      kicker.className = "schema-kicker";
+      const av = document.createElement("span");
+      av.className = "avatar";
+      if (meta.icon) av.append(iconUse(meta.icon)); else av.textContent = meta.initials || "·";
+      const copyEl = document.createElement("div");
+      const kicker = document.createElement("div");
+      kicker.className = "schema-node-kicker";
       kicker.textContent = meta.kicker;
-      const title = document.createElement("h2");
+      const title = document.createElement("div");
+      title.className = "schema-node-title";
       title.textContent = meta.title;
-      title.title = meta.title;
-      head.append(kicker, title);
-      const body = document.createElement("div");
-      body.className = "schema-node-body";
-      node.append(head, body);
-      node.addEventListener("pointerenter", (ev) => {
-        if (ev.pointerType === "touch") return;
-        if (!node.classList.contains("is-clipped")) return;
-        hoverOpenPeek(node, showPeek);
-      });
-      node.addEventListener("pointerleave", dismissHoverPeek);
-      nodesEl.appendChild(node);
+      if (meta.hint) title.title = meta.hint;
+      copyEl.append(kicker, title);
+      const status = document.createElement("span");
+      status.className = "status-pill schema-node-status";
+      head.append(av, copyEl, status);
+      const caption = document.createElement("p");
+      caption.className = "schema-node-caption";
+      const files = document.createElement("div");
+      files.className = "schema-node-files";
+      files.hidden = true;
+      node.append(head, caption, files);
+      node.addEventListener("click", (ev) => { if (!ev.target.closest("a")) togglePeek(node); });
+      node.addEventListener("keydown", (ev) => { if (ev.key === "Enter" || ev.key === " ") { ev.preventDefault(); togglePeek(node); } });
+      nodesEl.append(node);
     }
-    nodesEl.addEventListener("click", (ev) => {
-      const node = ev.target.closest(".schema-node");
-      if (!node || ev.target.closest("a")) return;
-      if (!node.classList.contains("is-clipped")) return;
-      togglePinnedPeek(node, showPeek);
-    });
-    nodesEl.addEventListener("keydown", (ev) => {
-      if (ev.key !== "Enter" && ev.key !== " ") return;
-      const node = ev.target.closest(".schema-node");
-      if (!node || ev.target !== node) return;
-      if (!node.classList.contains("is-clipped")) return;
-      ev.preventDefault();
-      togglePinnedPeek(node, showPeek);
-    });
-    built = true;
-    bindPeekChrome();
-  }
-
-  function overflowing(el) {
-    if (!el) return false;
-    return el.scrollHeight > el.clientHeight + 1 || el.scrollWidth > el.clientWidth + 1;
-  }
-
-  function looksClamped(el) {
-    return overflowing(el);
-  }
-
-  function markClippedNodes() {
-    if (!nodesEl || !root || root.hidden) return;
-    for (const node of nodesEl.querySelectorAll(".schema-node")) {
-      const body = node.querySelector(".schema-node-body");
-      let clipped = overflowing(body);
-      if (!clipped && body) {
-        for (const el of body.querySelectorAll(".schema-goal, .schema-prompt, .schema-caption, .schema-files")) {
-          if (looksClamped(el) || overflowing(el)) {
-            clipped = true;
-            break;
-          }
-        }
+    // markers once
+    if (!edgesEl.querySelector("defs")) {
+      const defs = svgEl("defs");
+      for (const [id, color] of [["schemaArrowActive", "#00B8F0"], ["schemaArrowDone", "#0033A0"], ["schemaArrowError", "#F90D4B"]]) {
+        const m = svgEl("marker", { id, viewBox: "0 0 10 10", refX: "8", refY: "5", markerWidth: "7", markerHeight: "7", markerUnits: "userSpaceOnUse", orient: "auto" });
+        m.append(svgEl("path", { d: "M 0 1 L 10 5 L 0 9 Z", fill: color }));
+        defs.append(m);
       }
-      node.classList.toggle("is-clipped", clipped);
-      if (clipped) {
-        node.setAttribute("aria-haspopup", "true");
-        node.tabIndex = 0;
-        node.title = "Нажмите, чтобы показать полный текст";
-      } else {
-        node.removeAttribute("aria-haspopup");
-        node.removeAttribute("tabindex");
-        node.removeAttribute("title");
-      }
+      edgesEl.append(defs);
+    }
+    const wantedEdges = drawnEdges();
+    for (const p of edgesEl.querySelectorAll("path[data-edge]")) if (!wantedEdges.includes(p.dataset.edge)) p.remove();
+    for (const id of wantedEdges) {
+      if (edgesEl.querySelector(`[data-edge="${cssEscape(id)}"]`)) continue;
+      edgesEl.append(svgEl("path", { class: "schema-edge-glow", "data-glow": id }));
+      edgesEl.append(svgEl("path", { class: "schema-edge", "data-edge": id }));
+    }
+    applyCenters();
+  }
+
+  function applyCenters() {
+    const centers = layoutCenters();
+    for (const el of nodesEl.querySelectorAll(".schema-node")) {
+      const c = centers[el.dataset.node];
+      if (!c) continue;
+      el.style.left = `${c.x}%`;
+      el.style.top = `${c.y}%`;
     }
   }
+  function cssEscape(s) { return typeof CSS !== "undefined" && CSS.escape ? CSS.escape(s) : s.replace(/([:>])/g, "\\$1"); }
 
-  function ensurePeek() {
-    if (peekEl) return peekEl;
-    peekEl = document.createElement("div");
-    peekEl.id = "schemaPeek";
-    peekEl.className = "schema-peek";
-    peekEl.hidden = true;
-    peekEl.setAttribute("role", "tooltip");
-    document.body.appendChild(peekEl);
-    return peekEl;
-  }
-
-  function hidePeek() {
-    clearTimeout(peekTimer);
-    peekPinned = false;
-    if (peekSource) {
-      peekSource.classList.remove("is-peeking");
-      peekSource.removeAttribute("aria-expanded");
-    }
-    peekSource = null;
-    if (peekEl) {
-      peekEl.classList.remove("is-pinned", "schema-peek-message");
-      peekEl.hidden = true;
-      peekEl.innerHTML = "";
-    }
-  }
-
-  function dismissHoverPeek() {
-    if (peekPinned) return;
-    hidePeek();
-  }
-
-  function hoverOpenPeek(source, show) {
-    if (!source || typeof show !== "function") return;
-    if (peekPinned && peekSource === source) return;
-    peekPinned = false;
-    if (peekEl) peekEl.classList.remove("is-pinned");
-    show(source);
-  }
-
-  function togglePinnedPeek(source, show) {
-    if (!source || typeof show !== "function") return;
-    if (peekSource === source && peekEl && !peekEl.hidden) {
-      if (peekPinned) hidePeek();
-      else {
-        peekPinned = true;
-        peekEl.classList.add("is-pinned");
-      }
-      return;
-    }
-    show(source);
-    peekPinned = true;
-    if (peekEl) peekEl.classList.add("is-pinned");
-  }
-
-  function placePeek(node) {
-    const peek = ensurePeek();
-    const gap = 10;
-    const box = node.getBoundingClientRect();
-    peek.style.left = "0px";
-    peek.style.top = "0px";
-    const width = peek.offsetWidth;
-    const height = peek.offsetHeight;
-    let left = box.right + gap;
-    let top = box.top;
-    if (left + width > window.innerWidth - gap) left = box.left - width - gap;
-    if (left < gap) left = Math.max(gap, (window.innerWidth - width) / 2);
-    if (top + height > window.innerHeight - gap) top = window.innerHeight - height - gap;
-    if (top < gap) top = gap;
-    peek.style.left = `${Math.round(left)}px`;
-    peek.style.top = `${Math.round(top)}px`;
-  }
-
-  function openPeek(anchor, fill) {
-    if (!anchor) return;
-    const peek = ensurePeek();
-    if (peekSource === anchor && peekEl && !peekEl.hidden) {
-      placePeek(anchor);
-      return;
-    }
-    peek.innerHTML = "";
-    peek.classList.remove("schema-peek-message");
-    fill(peek);
-    if (peekSource && peekSource !== anchor) {
-      peekSource.classList.remove("is-peeking");
-      peekSource.removeAttribute("aria-expanded");
-    }
-    peek.hidden = false;
-    peekSource = anchor;
-    anchor.classList.add("is-peeking");
-    anchor.setAttribute("aria-expanded", "true");
-    placePeek(anchor);
-  }
-
-  function showPeek(node) {
-    if (!node || !node.classList.contains("is-clipped")) return;
-    const body = node.querySelector(".schema-node-body");
-    if (!body) return;
-    openPeek(node, (peek) => {
-      const kicker = node.querySelector(".schema-kicker");
-      const title = node.querySelector("h2");
-      if (kicker) peek.append(kicker.cloneNode(true));
-      if (title) peek.append(title.cloneNode(true));
-      const clone = body.cloneNode(true);
-      clone.className = "schema-peek-body";
-      peek.append(clone);
-    });
-  }
-
-  function slipNeedsPeek(el) {
-    if (!el) return false;
-    const full = text(el.dataset && el.dataset.full);
-    if (!full) return false;
-    const copy = el.querySelector(".schema-slip-text") || el;
-    if (full !== text(copy.textContent)) return true;
-    return overflowing(copy);
-  }
-
-  function markClippedSlip(el) {
-    if (!el) return;
-    const clipped = slipNeedsPeek(el);
-    el.classList.toggle("is-clipped", clipped);
-    if (clipped) {
-      el.title = "Нажмите, чтобы показать полный текст";
-      el.tabIndex = 0;
-      el.setAttribute("role", "button");
-      el.setAttribute("aria-haspopup", "true");
-    } else {
-      el.removeAttribute("title");
-      el.removeAttribute("tabindex");
-      el.removeAttribute("role");
-      el.removeAttribute("aria-haspopup");
-      el.removeAttribute("aria-expanded");
-    }
-  }
-
-  function showSlipPeek(slip) {
-    if (!slipNeedsPeek(slip)) return;
-    const full = text(slip?.dataset?.full);
-    if (!full) return;
-    openPeek(slip, (peek) => {
-      peek.classList.add("schema-peek-message");
-      const copy = document.createElement("p");
-      copy.className = "schema-peek-text";
-      copy.textContent = full;
-      peek.append(copy);
-    });
-  }
-
-  function bindPeekChrome() {
-    document.addEventListener("keydown", (ev) => {
-      if (ev.key === "Escape") hidePeek();
-    });
-    document.addEventListener("pointerdown", (ev) => {
-      if (!peekEl || peekEl.hidden) return;
-      const target = ev.target;
-      if (peekEl.contains(target) || (peekSource && peekSource.contains(target))) return;
-      if (target && target.closest && target.closest(".schema-slip")) return;
-      hidePeek();
-    });
-    if (root) {
-      new MutationObserver(() => {
-        if (root.hidden) hidePeek();
-        else if (currentFrame) {
-          requestAnimationFrame(() => layoutDiagram(currentFrame, { replaceSlips: true }));
-        }
-      }).observe(root, { attributes: true, attributeFilter: ["hidden"] });
-    }
-  }
-
-  function bubbleEl(kind, textValue, x, y, from, animate) {
-    const el = document.createElement("div");
-    el.className = `schema-slip schema-slip-${kind} schema-slip-from-${from || "south"}`;
-    if (animate) el.classList.add("is-live-in");
-    el.style.left = `${x}%`;
-    el.style.top = `${y}%`;
-    const full = text(textValue);
-    el.dataset.full = full;
-    const copy = document.createElement("span");
-    copy.className = "schema-slip-text";
-    copy.textContent = shorten(full, 280);
-    el.append(copy);
-    el.addEventListener("pointerenter", (ev) => {
-      if (ev.pointerType === "touch") return;
-      if (!slipNeedsPeek(el)) return;
-      hoverOpenPeek(el, showSlipPeek);
-    });
-    el.addEventListener("pointerleave", dismissHoverPeek);
-    el.addEventListener("click", (ev) => {
-      ev.stopPropagation();
-      if (!slipNeedsPeek(el)) return;
-      togglePinnedPeek(el, showSlipPeek);
-    });
-    el.addEventListener("keydown", (ev) => {
-      if (ev.key !== "Enter" && ev.key !== " ") return;
-      if (!slipNeedsPeek(el)) return;
-      ev.preventDefault();
-      togglePinnedPeek(el, showSlipPeek);
-    });
+  function fileChip(card) {
+    const name = text(card.filename || card.artifact_id);
+    const el = document.createElement(card.download_path ? "a" : "span");
+    el.className = "file-chip";
+    if (card.download_path) { el.href = card.download_path; el.setAttribute("download", name); }
+    const ext = document.createElement("span");
+    ext.className = "ext";
+    const e = (name.match(/\.([a-z0-9]{1,6})$/i) || [, "file"])[1].toLowerCase();
+    ext.dataset.ext = e;
+    ext.textContent = e.slice(0, 4);
+    const n = document.createElement("span");
+    n.className = "name";
+    n.textContent = name;
+    el.title = card.summary || name;
+    el.append(ext, n);
+    if (card.download_path) el.append(iconUse("i-download"));
     return el;
   }
 
-  function slipsKey(frame) {
-    if (!frame) return "";
-    const nodes = NODE_KEYS.map((id) => {
-      const spec = frame.nodes?.[id] || {};
-      return `${id}:${spec.tone || ""}:${spec.bubble || ""}:${spec.caption || ""}`;
-    });
-    const edges = EDGE_KEYS.map((id) => {
-      const spec = frame.edges?.[id] || {};
-      return `${id}:${spec.tone || ""}:${spec.bubble || ""}`;
-    });
-    const files = Array.isArray(frame.input?.files) ? frame.input.files.join(",") : "";
-    return [
-      frame.label || "",
-      frame.input?.goal || "",
-      files,
-      frame.output?.result || "",
-      frame.output?.prompt || "",
-      scheduleDownload?.download_path || "",
-      complete ? "1" : "0",
-      ...nodes,
-      ...edges,
-    ].join("\n");
+  function paintNodes(frame) {
+    for (const el of nodesEl.querySelectorAll(".schema-node")) {
+      const key = el.dataset.node;
+      const spec = frame.nodes[key] || { tone: "idle" };
+      const tone = spec.tone || "idle";
+      el.className = `schema-node is-${tone === "error" ? "failed" : tone}`;
+      const status = el.querySelector(".schema-node-status");
+      const label = statusLabel(key, tone);
+      status.textContent = label;
+      status.hidden = !label;
+      status.dataset.tone = tone === "error" ? "failed" : tone === "active" || tone === "pending" ? "running" : tone === "waiting" ? "waiting" : tone === "done" ? "done" : "";
+      const caption = el.querySelector(".schema-node-caption");
+      const files = el.querySelector(".schema-node-files");
+      files.innerHTML = "";
+      files.hidden = true;
+      if (key === "input") {
+        caption.textContent = frame.input?.goal || "Нет описания задачи";
+        const cards = inputCards.length ? inputCards : (frame.input?.files || []).map((f) => ({ filename: f }));
+        if (cards.length) { files.hidden = false; for (const c of cards.slice(0, 4)) files.append(fileChip(c)); }
+      } else if (key === "output") {
+        caption.textContent = frame.output?.result || (complete ? "Нет текста итога" : "Итог появится, когда оркестратор завершит задачу");
+        if (complete && deliverableCards.length && ["active", "done", "error"].includes(tone)) {
+          files.hidden = false;
+          for (const c of deliverableCards.slice(0, 6)) files.append(fileChip(c));
+        }
+      } else {
+        const c = text(spec.caption || spec.bubble);
+        caption.textContent = c;
+        caption.hidden = !c;
+      }
+      caption.hidden = !text(caption.textContent);
+      el.classList.toggle("is-peekable", Boolean(text(caption.textContent)) || !files.hidden);
+      el.dataset.full = text(caption.textContent);
+    }
+  }
+
+  function paintEdges(frame) {
+    applyCenters();
+    const { boxes, w, h } = measuredBoxes();
+    if (!w || !h) return;
+    edgesEl.setAttribute("viewBox", `0 0 ${w} ${h}`);
+    stage.querySelectorAll(".schema-slip").forEach((el) => el.remove());
+    for (const id of drawnEdges()) {
+      const path = edgesEl.querySelector(`[data-edge="${cssEscape(id)}"]`);
+      const glow = edgesEl.querySelector(`[data-glow="${cssEscape(id)}"]`);
+      if (!path) continue;
+      const geo = geometry(id, boxes);
+      if (!geo) continue;
+      const vis = pairVisual(id, frame.edges, frame.active_edge);
+      const tone = vis.tone || "idle";
+      path.setAttribute("d", geo.d);
+      if (glow) { glow.setAttribute("d", geo.d); glow.setAttribute("class", `schema-edge-glow${tone === "active" ? " is-active" : ""}`); }
+      path.setAttribute("class", `schema-edge is-${tone === "error" ? "failed" : tone}`);
+      const marker = tone === "active" ? "schemaArrowActive" : tone === "error" ? "schemaArrowError" : tone === "done" || tone === "pending" ? "schemaArrowDone" : "";
+      if (marker && vis.dir !== "none") {
+        // arrow at the receiving end; for "back" the receiver is the start of the drawn path
+        path.setAttribute(vis.dir === "back" ? "marker-start" : "marker-end", `url(#${marker})`);
+        path.removeAttribute(vis.dir === "back" ? "marker-end" : "marker-start");
+      } else {
+        path.removeAttribute("marker-end");
+        path.removeAttribute("marker-start");
+      }
+      if (vis.bubble && tone === "active") {
+        const slip = document.createElement("button");
+        slip.type = "button";
+        slip.className = "schema-slip";
+        slip.style.left = `${(geo.mid.x / w) * 100}%`;
+        slip.style.top = `${(geo.mid.y / h) * 100}%`;
+        const full = text(vis.bubble);
+        slip.dataset.full = full;
+        slip.textContent = full.length > 64 ? `${full.slice(0, 63).trimEnd()}…` : full;
+        slip.title = full;
+        slip.addEventListener("click", (ev) => { ev.stopPropagation(); togglePeek(slip); });
+        stage.append(slip);
+      }
+    }
+  }
+  /** Back edges put the arrow on `marker-start`; auto-start-reverse flips it to point at the receiver. */
+  function fixMarkerOrientation() {
+    for (const m of edgesEl.querySelectorAll("marker")) m.setAttribute("orient", "auto-start-reverse");
   }
 
   function paintChrome(frame) {
-    if (stepEl) {
-      const label = frame?.label || "";
-      stepEl.textContent = label;
-      stepEl.title = label;
-    }
-    if (countEl) {
-      countEl.textContent = frames.length ? `шаг ${index + 1} / ${frames.length}` : "шаг 0 / 0";
-    }
-    if (rangeEl) {
-      rangeEl.max = String(Math.max(frames.length - 1, 0));
-      rangeEl.value = String(index);
-      rangeEl.disabled = frames.length < 2;
-      const max = Math.max(frames.length - 1, 1);
-      const pct = frames.length < 2 ? 0 : (index / max) * 100;
-      rangeEl.style.setProperty("--schema-progress", `${pct}%`);
-    }
-    if (prevBtn) prevBtn.disabled = index <= 0;
-    if (nextBtn) nextBtn.disabled = index >= frames.length - 1;
-    if (root) root.dataset.complete = complete ? "true" : "false";
-    if (endLabelEl) endLabelEl.classList.toggle("is-muted", !complete);
-  }
-
-  function syncEdgeGeometry(frame, layout) {
-    if (!frame || !edgesEl) return;
-    const boxes = layout || measuredLayout();
-    const marker = {
-      active: "url(#schemaArrowActive)",
-      error: "url(#schemaArrowError)",
-      done: "url(#schemaArrowDone)",
-      pending: "url(#schemaArrowDone)",
-    };
-    for (const id of DRAW_EDGE_KEYS) {
-      const path = edgesEl.querySelector(`[data-edge="${id}"]`);
-      if (!path) continue;
-      const visual = pairVisual(id, frame.edges, frame.active_edge);
-      const tone = visual.tone || "idle";
-      const geo = edgePath(id, boxes);
-      path.setAttribute("d", visual.dir === "back" ? geo.dRev : geo.d);
-      path.setAttribute("data-dir", visual.dir);
-      path.setAttribute("class", `schema-edge-path is-${tone}${visual.dir === "back" ? " is-back" : ""}`);
-      if (marker[tone]) path.setAttribute("marker-end", marker[tone]);
-      else path.removeAttribute("marker-end");
+    stepEl.textContent = frame?.label || "";
+    stepEl.title = frame?.label || "";
+    countEl.textContent = frames.length ? `шаг ${index + 1} / ${frames.length}` : "шаг 0 / 0";
+    rangeEl.max = String(Math.max(frames.length - 1, 0));
+    rangeEl.value = String(index);
+    rangeEl.disabled = frames.length < 2;
+    rangeEl.style.setProperty("--progress", `${frames.length < 2 ? 0 : (index / Math.max(frames.length - 1, 1)) * 100}%`);
+    prevBtn.disabled = index <= 0;
+    nextBtn.disabled = index >= frames.length - 1;
+    playBtn.disabled = frames.length < 2;
+    root.dataset.complete = complete ? "true" : "false";
+    if (frame?.agent_id || frame?.active_node) {
+      const key = frame.active_node || agentKey(frame.agent_id);
+      const el = nodesEl.querySelector(`[data-node="${cssEscape(key)}"]`);
+      nodesEl.querySelectorAll(".schema-node.is-current").forEach((n) => n.classList.remove("is-current"));
+      if (el) el.classList.add("is-current");
     }
   }
 
-  function placeEdgeSlips(frame, layout, animateSlips) {
-    if (!stage || !frame) return;
-    if (peekSource && peekSource.classList.contains("schema-slip")) hidePeek();
-    stage.querySelectorAll(".schema-slip").forEach((el) => el.remove());
-    const boxes = layout || measuredLayout();
-    for (const id of DRAW_EDGE_KEYS) {
-      const visual = pairVisual(id, frame.edges, frame.active_edge);
-      if (!visual.bubble) continue;
-      const path = edgesEl.querySelector(`[data-edge="${id}"]`);
-      const geo = edgePath(id, boxes);
-      const mid = pathMidpoint(path, geo.mid);
-      const slip = bubbleEl("edge", visual.bubble, mid.x, mid.y, "edge", animateSlips);
-      stage.append(slip);
-      markClippedSlip(slip);
-    }
-  }
-
-  function layoutDiagram(frame, { animateSlips = false, replaceSlips = true } = {}) {
-    if (!frame || !stage || (root && root.hidden)) return;
-    const layout = measuredLayout();
-    syncEdgeGeometry(frame, layout);
-    if (replaceSlips) placeEdgeSlips(frame, layout, animateSlips);
-    markClippedNodes();
-  }
-
-  function renderFrame(frame, { animateSlips = false } = {}) {
+  function renderFrame(frame) {
     if (!root || !frame) return;
-    ensureDom();
     currentFrame = frame;
-    const key = slipsKey(frame);
-    const contentChanged = key !== lastSlipsKey || index !== lastPaintIndex;
-    if (!contentChanged) {
-      paintChrome(frame);
-      requestAnimationFrame(() => layoutDiagram(frame, { replaceSlips: true }));
-      return;
-    }
-    lastSlipsKey = key;
-    lastPaintIndex = index;
-    for (const id of NODE_KEYS) {
-      const node = nodesEl.querySelector(`[data-node="${id}"]`);
-      if (!node) continue;
-      const spec = frame.nodes[id] || { tone: "idle" };
-      node.dataset.tone = spec.tone || "idle";
-      const body = node.querySelector(".schema-node-body");
-      if (!body) continue;
-      body.innerHTML = "";
-      if (id === "input") {
-        const goal = document.createElement("p");
-        goal.className = "schema-goal";
-        const goalText = frame.input?.goal || "Нет описания задачи";
-        goal.textContent = goalText;
-        goal.title = goalText;
-        body.append(goal);
-        const files = Array.isArray(frame.input?.files) ? frame.input.files : [];
-        if (files.length) {
-          const line = document.createElement("p");
-          line.className = "schema-files";
-          line.textContent = files.join(" · ");
-          line.title = files.join("\n");
-          body.append(line);
-        }
-      } else if (id === "output") {
-        const result = document.createElement("p");
-        result.className = "schema-goal";
-        const resultCopy = frame.output?.result || (complete ? "Нет текста результата" : "Результат появится после завершения");
-        result.textContent = resultCopy;
-        result.title = resultCopy;
-        body.append(result);
-        if (frame.output?.prompt) {
-          const prompt = document.createElement("p");
-          prompt.className = "schema-prompt";
-          prompt.textContent = frame.output.prompt;
-          prompt.title = frame.output.prompt;
-          body.append(prompt);
-        }
-        const showDl = scheduleDownload && ["active", "done", "error"].includes(spec.tone);
-        if (showDl) {
-          const link = document.createElement("a");
-          link.className = "schema-download schedule-download";
-          link.href = scheduleDownload.download_path;
-          link.setAttribute("download", scheduleDownload.filename || "schedule_result.inc");
-          link.textContent = "Скачать результат";
-          link.title = `Скачать результат SCHEDULE (${scheduleDownload.filename || "schedule_result.inc"})`;
-          body.append(link);
-        }
-      } else {
-        const status = document.createElement("span");
-        status.className = "schema-status";
-        status.textContent = statusLabel(id, spec);
-        body.append(status);
-        const caption = text(spec.caption || spec.bubble);
-        if (caption) {
-          const line = document.createElement("p");
-          line.className = "schema-caption";
-          line.textContent = caption;
-          line.title = caption;
-          body.append(line);
-        }
-      }
+    ensureNodes();
+    fixMarkerOrientation();
+    const key = `${index}|${JSON.stringify(frame.nodes)}|${JSON.stringify(frame.edges)}|${deliverableCards.length}|${inputCards.length}|${complete}`;
+    if (key !== lastKey) {
+      lastKey = key;
+      hidePeek();
+      paintNodes(frame);
     }
     paintChrome(frame);
-    if (contentChanged) hidePeek();
-    requestAnimationFrame(() => {
-      layoutDiagram(frame, { animateSlips: animateSlips && contentChanged, replaceSlips: true });
-    });
+    if (!root.hidden) requestAnimationFrame(() => paintEdges(frame));
   }
 
+  // ------------------------------------------------------------------ peek
+  function ensurePeek() {
+    if (peekEl) return peekEl;
+    peekEl = document.createElement("div");
+    peekEl.className = "schema-peek";
+    peekEl.hidden = true;
+    peekEl.setAttribute("role", "tooltip");
+    stage.append(peekEl);
+    return peekEl;
+  }
+  function hidePeek() {
+    if (peekEl) { peekEl.hidden = true; peekEl.innerHTML = ""; }
+    peekFor = null;
+  }
+  function togglePeek(anchorEl) {
+    if (peekFor === anchorEl) { hidePeek(); return; }
+    const full = text(anchorEl.dataset.full);
+    const node = anchorEl.classList.contains("schema-node") ? anchorEl : null;
+    const files = node ? node.querySelector(".schema-node-files") : null;
+    if (!full && (!files || files.hidden)) { hidePeek(); return; }
+    const peek = ensurePeek();
+    peek.innerHTML = "";
+    peek.classList.add("is-pinned");
+    const title = document.createElement("div");
+    title.className = "schema-peek-title";
+    if (node) {
+      const meta = nodeMeta(node.dataset.node);
+      title.textContent = meta.title;
+      const small = document.createElement("small");
+      small.textContent = node.querySelector(".schema-node-status")?.textContent || "";
+      title.append(small);
+    } else {
+      title.textContent = "Сообщение";
+    }
+    const body = document.createElement("div");
+    body.className = "schema-peek-body";
+    body.textContent = full;
+    peek.append(title, body);
+    if (files && !files.hidden) {
+      const list = document.createElement("div");
+      list.className = "schema-peek-files";
+      for (const chip of files.querySelectorAll(".file-chip .name")) {
+        const s = document.createElement("span");
+        s.textContent = chip.textContent;
+        list.append(s);
+      }
+      peek.append(list);
+    }
+    peek.hidden = false;
+    const sr = stage.getBoundingClientRect();
+    const ar = anchorEl.getBoundingClientRect();
+    const cx = ar.left - sr.left + ar.width / 2;
+    const above = ar.top - sr.top > peek.offsetHeight + 20;
+    peek.classList.toggle("is-below", !above);
+    peek.style.left = `${Math.max(160, Math.min(sr.width - 160, cx))}px`;
+    peek.style.top = `${above ? ar.top - sr.top : ar.bottom - sr.top}px`;
+    peekFor = anchorEl;
+  }
+  document.addEventListener("pointerdown", (ev) => {
+    if (!peekEl || peekEl.hidden) return;
+    if (peekEl.contains(ev.target) || (peekFor && peekFor.contains(ev.target))) return;
+    hidePeek();
+  });
+  document.addEventListener("keydown", (ev) => { if (ev.key === "Escape") { hidePeek(); stopPlay(); } });
+
+  // ------------------------------------------------------------------ navigation / playback
   function showIndex(next, { user = false } = {}) {
     if (!frames.length) return;
     index = Math.max(0, Math.min(frames.length - 1, next));
     if (user) followLive = index === frames.length - 1;
     renderFrame(frames[index]);
   }
+  function stopPlay() {
+    if (playTimer) { clearInterval(playTimer); playTimer = 0; }
+    playBtn.setAttribute("aria-pressed", "false");
+    playBtn.innerHTML = "";
+    playBtn.append(iconUse("i-play"));
+    playBtn.setAttribute("aria-label", "Проиграть шаги");
+  }
+  function startPlay() {
+    if (frames.length < 2) return;
+    if (index >= frames.length - 1) showIndex(0, { user: true });
+    playBtn.setAttribute("aria-pressed", "true");
+    playBtn.innerHTML = "";
+    playBtn.append(iconUse("i-pause"));
+    playBtn.setAttribute("aria-label", "Остановить");
+    playTimer = setInterval(() => {
+      if (index >= frames.length - 1) { stopPlay(); followLive = true; return; }
+      showIndex(index + 1, { user: true });
+    }, 1100);
+  }
 
   function setFeed(data) {
     const feed = data && typeof data === "object" ? data : {};
-    const state = {
-      ...(feed.state && typeof feed.state === "object" ? feed.state : {}),
-    };
+    lastFeed = feed;
+    const state = { ...(feed.state && typeof feed.state === "object" ? feed.state : {}) };
     if (feed.objective && !state.goal) state.goal = feed.objective;
     const attached = Array.isArray(feed.attached_files) ? feed.attached_files : [];
     if (attached.length && (!state.artifacts || !Object.keys(state.artifacts).length)) {
       state.artifacts = Object.fromEntries(attached.map((name, i) => [`file_${i}`, { filename: name }]));
     }
+    const cards = Array.isArray(feed.artifacts) ? feed.artifacts.filter((c) => c && typeof c === "object") : [];
+    deliverableCards = Array.isArray(feed.deliverables) && feed.deliverables.length ? feed.deliverables : cards.filter((c) => c.kind === "deliverable");
+    inputCards = cards.filter((c) => c.kind === "input");
     const events = eventsFromFeed(feed);
-    const art = feed.schedule_artifact;
-    scheduleDownload = art && typeof art === "object" && art.available && art.download_path ? art : null;
-    const prevIndex = index;
     const prevLen = frames.length;
     frames = buildSchemaFrames(events, state);
-    complete = Boolean(feed.schema?.complete) || ["done", "failed"].includes(String(feed.status || "")) ||
-      ["case.finished", "case.failed"].includes(frames[frames.length - 1]?.kind);
+    complete = Boolean(feed.schema?.complete) || ["done", "failed"].includes(String(feed.status || "")) || ["case.finished", "case.failed"].includes(frames[frames.length - 1]?.kind);
     if (followLive || index >= frames.length) index = Math.max(frames.length - 1, 0);
     index = Math.max(0, Math.min(frames.length - 1, index));
-    const liveNewStep = followLive && (index > prevIndex || frames.length > prevLen);
-    renderFrame(frames[index] || frames[0], { animateSlips: liveNewStep });
+    if (frames.length !== prevLen) stopPlay();
+    renderFrame(frames[index] || frames[0]);
   }
 
   function reset() {
+    stopPlay();
+    lastFeed = null;
+    deliverableCards = [];
+    inputCards = [];
     frames = buildSchemaFrames([], {});
     index = 0;
     followLive = true;
     complete = false;
-    scheduleDownload = null;
-    lastSlipsKey = "";
-    lastPaintIndex = -1;
+    lastKey = "";
     hidePeek();
     renderFrame(frames[0]);
   }
 
-  if (rangeEl) {
-    rangeEl.addEventListener("input", () => showIndex(Number(rangeEl.value), { user: true }));
+  function setAgents(list) {
+    for (const row of Array.isArray(list) ? list : []) {
+      if (row && row.agent_id) registry.set(String(row.agent_id), { title: String(row.title || row.agent_id), when_to_use: String(row.when_to_use || "") });
+    }
+    lastKey = "";
+    // Rebuild so registry agents appear on the canvas (idle) even before they are called.
+    if (lastFeed) setFeed(lastFeed); else reset();
   }
-  if (prevBtn) prevBtn.addEventListener("click", () => showIndex(index - 1, { user: true }));
-  if (nextBtn) nextBtn.addEventListener("click", () => showIndex(index + 1, { user: true }));
-  if (root) {
-    root.addEventListener("keydown", (ev) => {
-      if (ev.key === "ArrowLeft") {
-        ev.preventDefault();
-        showIndex(index - 1, { user: true });
-      } else if (ev.key === "ArrowRight") {
-        ev.preventDefault();
-        showIndex(index + 1, { user: true });
-      }
-    });
-  }
-  window.addEventListener("resize", () => {
-    clearTimeout(resizeTimer);
-    resizeTimer = setTimeout(() => {
-      if (currentFrame) layoutDiagram(currentFrame, { replaceSlips: true });
-    }, 80);
+
+  rangeEl.addEventListener("input", () => { stopPlay(); showIndex(Number(rangeEl.value), { user: true }); });
+  prevBtn.addEventListener("click", () => { stopPlay(); showIndex(index - 1, { user: true }); });
+  nextBtn.addEventListener("click", () => { stopPlay(); showIndex(index + 1, { user: true }); });
+  playBtn.addEventListener("click", () => (playTimer ? stopPlay() : startPlay()));
+  root.addEventListener("keydown", (ev) => {
+    if (ev.key === "ArrowLeft") { ev.preventDefault(); stopPlay(); showIndex(index - 1, { user: true }); }
+    else if (ev.key === "ArrowRight") { ev.preventDefault(); stopPlay(); showIndex(index + 1, { user: true }); }
   });
-  if (typeof ResizeObserver !== "undefined" && stage) {
-    const stageWatch = new ResizeObserver(() => {
-      clearTimeout(resizeTimer);
-      resizeTimer = setTimeout(() => {
-        if (root && !root.hidden && currentFrame) {
-          layoutDiagram(currentFrame, { replaceSlips: true });
-        }
-      }, 40);
-    });
-    stageWatch.observe(stage);
-  }
+  const relayout = () => { if (currentFrame && !root.hidden) requestAnimationFrame(() => paintEdges(currentFrame)); };
+  window.addEventListener("resize", () => { clearTimeout(resizeTimer); resizeTimer = setTimeout(relayout, 60); });
+  if (typeof ResizeObserver !== "undefined") new ResizeObserver(() => { clearTimeout(resizeTimer); resizeTimer = setTimeout(relayout, 40); }).observe(stage);
+  new MutationObserver(() => { if (root.hidden) { hidePeek(); stopPlay(); } else relayout(); }).observe(root, { attributes: true, attributeFilter: ["hidden"] });
 
-  window.MasSchema = {
-    setFeed,
-    reset,
-    buildFrames: buildSchemaFrames,
-    showIndex,
-    relayout() {
-      if (currentFrame) {
-        requestAnimationFrame(() => layoutDiagram(currentFrame, { replaceSlips: true }));
-      }
-    },
-    START_LABEL,
-    END_LABEL,
-  };
+  window.MasSchema = { setFeed, reset, setAgents, buildFrames: buildSchemaFrames, showIndex, relayout, START_LABEL, END_LABEL };
 
-  if (root) reset();
+  reset();
 })();

@@ -4,83 +4,115 @@
   <meta charset="utf-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1" />
   <title>NOVATEK RE MASter — База знаний</title>
+  <meta name="color-scheme" content="light" />
   <link rel="icon" href="data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 100 100'><rect x='14' y='40' width='8' height='20' rx='4' fill='%23001A57'/><rect x='78' y='40' width='8' height='20' rx='4' fill='%23001A57'/><line x1='50' y1='20' x2='50' y2='10' stroke='%230033A0' stroke-width='6' stroke-linecap='round'/><circle cx='50' cy='10' r='6' fill='%2300B8F0'/><rect x='22' y='20' width='56' height='60' rx='12' fill='%230033A0'/><circle cx='36' cy='45' r='7' fill='%2300B8F0'/><circle cx='64' cy='45' r='7' fill='%2300B8F0'/><rect x='36' y='64' width='28' height='6' rx='3' fill='%2300B8F0'/></svg>" />
   <link rel="preconnect" href="https://fonts.googleapis.com" />
   <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
   <link href="https://fonts.googleapis.com/css2?family=IBM+Plex+Sans:wght@400;500;600;700&family=IBM+Plex+Mono:wght@400;500&display=swap" rel="stylesheet" />
-  <link rel="stylesheet" href="/static/app.css?v=57" />
-  <link rel="stylesheet" href="/static/knowledge.css?v=12" />
+  <link rel="stylesheet" href="/static/app.css?v=100" />
+  <link rel="stylesheet" href="/static/knowledge.css?v=100" />
   <script src="https://cdn.jsdelivr.net/npm/marked@15.0.7/marked.min.js" defer></script>
 </head>
 <body class="knowledge-page">
-  <div class="atmosphere" aria-hidden="true"></div>
+  <svg width="0" height="0" style="position:absolute" aria-hidden="true">
+    <defs>
+      <symbol id="i-plus" viewBox="0 0 16 16"><path d="M8 3v10M3 8h10" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" fill="none"/></symbol>
+      <symbol id="i-search" viewBox="0 0 16 16"><circle cx="7" cy="7" r="4.5" stroke="currentColor" stroke-width="1.6" fill="none"/><path d="M10.5 10.5 14 14" stroke="currentColor" stroke-width="1.6" stroke-linecap="round"/></symbol>
+      <symbol id="i-upload" viewBox="0 0 16 16"><path d="M8 13.5v-8m0 0 3 3m-3-3-3 3M3 2.5h10" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round" fill="none"/></symbol>
+    </defs>
+  </svg>
+
   <header class="top">
     <a class="brand" href="/" aria-label="NOVATEK RE MASter — главная">
+      <span class="brand-mark" aria-hidden="true">
+        <svg viewBox="0 0 100 100" width="26" height="26"><rect x="14" y="40" width="8" height="20" rx="4" fill="#001A57"/><rect x="78" y="40" width="8" height="20" rx="4" fill="#001A57"/><line x1="50" y1="20" x2="50" y2="10" stroke="#0033A0" stroke-width="6" stroke-linecap="round"/><circle cx="50" cy="10" r="6" fill="#00B8F0"/><rect x="22" y="20" width="56" height="60" rx="12" fill="#0033A0"/><circle cx="36" cy="45" r="7" fill="#00B8F0"/><circle cx="64" cy="45" r="7" fill="#00B8F0"/><rect x="36" y="64" width="28" height="6" rx="3" fill="#00B8F0"/></svg>
+      </span>
       <span class="brand-lockup">
         <span class="brand-row">
           <span class="mark">NOVATEK RE MASter</span>
-          <span class="product">Knowledge</span>
+          <span class="product">База знаний</span>
         </span>
-        <span class="brand-sub">Novatek STC reservoir engineering multi-agent system</span>
+        <span class="brand-sub">Что агенты знают о SCHEDULE, Excel и правилах работы</span>
       </span>
     </a>
-    <div class="top-actions">
-      <a class="btn btn-quiet" href="/">Workspace</a>
-    </div>
+    <nav class="top-actions" aria-label="Разделы">
+      <a class="nav-link" href="/">Задачи</a>
+      <a class="nav-link is-current" href="/knowledge">База знаний</a>
+    </nav>
   </header>
 
   <div id="flash" class="flash" hidden role="alert"></div>
 
   <main class="kb-stage">
-    <section class="kb-toolbar">
-      <label class="who-field kb-agent">
-        <span>Агент / target_base</span>
+    <aside class="kb-side" aria-label="Базы знаний агентов">
+      <div class="kb-side-title">Агенты</div>
+      <div class="kb-tabs" id="agentTabs" role="tablist" aria-label="Агент"></div>
+      <label class="kb-select-fallback">
+        <span>Агент</span>
         <select id="agentSelect" aria-label="Выбор агента">
           <option value="">Загрузка…</option>
         </select>
       </label>
-      <p class="kb-hint" id="agentHint">Загрузка агентов…</p>
-      <div class="kb-toolbar-actions">
-        <button type="button" class="btn btn-quiet" id="ingestBtn">Загрузить в RAG</button>
-        <button type="button" class="btn" id="addBtn" disabled>+ Создать новое знание</button>
-      </div>
-    </section>
+      <p class="kb-side-note">Карточки читает RAG соответствующего агента. После правок нажмите «Загрузить в RAG», чтобы изменения попали в поиск.</p>
+      <button type="button" class="btn btn-quiet kb-ingest-btn" id="ingestBtn">
+        <svg class="icon" aria-hidden="true"><use href="#i-upload"/></svg>
+        <span>Загрузить в RAG</span>
+      </button>
+    </aside>
 
-    <section class="kb-create" id="createPanel" hidden>
-      <h2 class="kb-create-title">Новая карточка</h2>
-      <p class="kb-create-note">
-        Пишется в <code>excel-agent-operating-guide.documents.json</code>.
-        Keywords / topics / task_patterns используются в tag-ветке RAG.
-      </p>
-      <div class="kb-create-grid">
-        <label class="who-field">
-          <span>knowledge_id</span>
-          <input id="createId" type="text" maxlength="119" placeholder="dates-schedule-clock-v1" />
-        </label>
-        <label class="who-field">
-          <span>knowledge_type</span>
-          <select id="createType"></select>
-        </label>
-        <label class="who-field kb-create-wide">
-          <span>title</span>
-          <input id="createTitle" type="text" maxlength="300" placeholder="Человекочитаемый заголовок" />
-        </label>
-      </div>
-      <div id="createTagFields" class="kb-tag-fields"></div>
-      <label class="who-field kb-create-text">
-        <span>text (markdown)</span>
-        <textarea id="createText" class="kb-editor" rows="10" placeholder="Полная самодостаточная инструкция…"></textarea>
-      </label>
-      <div class="kb-actions">
-        <button type="button" class="btn btn-approve" id="createSave">Создать</button>
-        <button type="button" class="btn btn-cancel" id="createCancel">Отмена</button>
-      </div>
-    </section>
+    <section class="kb-main">
+      <header class="kb-head">
+        <div class="kb-head-copy">
+          <p class="kb-hint" id="agentHint">Загрузка агентов…</p>
+        </div>
+        <div class="kb-head-tools">
+          <label class="rail-search kb-search">
+            <svg class="icon" aria-hidden="true"><use href="#i-search"/></svg>
+            <input id="kbSearch" type="search" placeholder="Найти карточку" autocomplete="off" aria-label="Найти карточку" />
+            <span class="kb-count" id="kbCount"></span>
+          </label>
+          <button type="button" class="btn btn-primary" id="addBtn" disabled>
+            <svg class="icon" aria-hidden="true"><use href="#i-plus"/></svg>
+            <span>Новая карточка</span>
+          </button>
+        </div>
+      </header>
 
-    <section class="kb-list" id="cardList" aria-live="polite"></section>
-    <p class="empty" id="listEmpty" hidden>Нет карточек для этого агента.</p>
+      <section class="kb-create" id="createPanel" hidden>
+        <div class="kb-create-head">
+          <h2 class="kb-create-title">Новая карточка</h2>
+          <p class="kb-create-note">Карточка сохраняется в корпус агента и попадёт в RAG после загрузки. Теги, темы и формулировки задач помогают поиску найти карточку по запросу инженера.</p>
+        </div>
+        <div class="kb-create-grid">
+          <label class="field">
+            <span>Идентификатор</span>
+            <input id="createId" type="text" maxlength="119" placeholder="dates-schedule-clock-v1" />
+          </label>
+          <label class="field">
+            <span>Тип карточки</span>
+            <select id="createType"></select>
+          </label>
+          <label class="field kb-create-wide">
+            <span>Заголовок</span>
+            <input id="createTitle" type="text" maxlength="300" placeholder="Человекочитаемый заголовок" />
+          </label>
+        </div>
+        <div id="createTagFields" class="kb-tag-fields"></div>
+        <label class="field kb-create-text">
+          <span>Текст карточки <em class="optional">markdown</em></span>
+          <textarea id="createText" class="kb-editor" rows="10" placeholder="Полная самодостаточная инструкция…"></textarea>
+        </label>
+        <div class="kb-actions">
+          <button type="button" class="btn btn-quiet btn-cancel" id="createCancel">Отмена</button>
+          <button type="button" class="btn btn-primary btn-approve" id="createSave">Создать</button>
+        </div>
+      </section>
+
+      <section class="kb-list" id="cardList" aria-live="polite"></section>
+      <p class="empty" id="listEmpty" hidden>У этого агента пока нет карточек.</p>
+    </section>
   </main>
 
-  <script src="/static/knowledge.js?v=8"></script>
+  <script src="/static/knowledge.js?v=100"></script>
 </body>
 </html>

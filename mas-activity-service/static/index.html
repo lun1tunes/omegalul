@@ -4,16 +4,43 @@
   <meta charset="utf-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1" />
   <title>NOVATEK RE MASter Workspace</title>
+  <meta name="color-scheme" content="light" />
   <link rel="icon" href="data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 100 100'><rect x='14' y='40' width='8' height='20' rx='4' fill='%23001A57'/><rect x='78' y='40' width='8' height='20' rx='4' fill='%23001A57'/><line x1='50' y1='20' x2='50' y2='10' stroke='%230033A0' stroke-width='6' stroke-linecap='round'/><circle cx='50' cy='10' r='6' fill='%2300B8F0'/><rect x='22' y='20' width='56' height='60' rx='12' fill='%230033A0'/><circle cx='36' cy='45' r='7' fill='%2300B8F0'/><circle cx='64' cy='45' r='7' fill='%2300B8F0'/><rect x='36' y='64' width='28' height='6' rx='3' fill='%2300B8F0'/></svg>" />
   <link rel="preconnect" href="https://fonts.googleapis.com" />
   <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
   <link href="https://fonts.googleapis.com/css2?family=IBM+Plex+Sans:wght@400;500;600;700&family=IBM+Plex+Mono:wght@400;500&display=swap" rel="stylesheet" />
-  <link rel="stylesheet" href="/static/app.css?v=94" />
+  <link rel="stylesheet" href="/static/app.css?v=100" />
 </head>
 <body>
-  <div class="atmosphere" aria-hidden="true"></div>
+  <svg width="0" height="0" style="position:absolute" aria-hidden="true">
+    <defs>
+      <symbol id="i-plus" viewBox="0 0 16 16"><path d="M8 3v10M3 8h10" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" fill="none"/></symbol>
+      <symbol id="i-search" viewBox="0 0 16 16"><circle cx="7" cy="7" r="4.5" stroke="currentColor" stroke-width="1.6" fill="none"/><path d="M10.5 10.5 14 14" stroke="currentColor" stroke-width="1.6" stroke-linecap="round"/></symbol>
+      <symbol id="i-attach" viewBox="0 0 16 16"><path d="M10.5 4.5 5.8 9.2a1.9 1.9 0 0 0 2.7 2.7l5-5a3.3 3.3 0 0 0-4.7-4.7L3.6 7.4a4.6 4.6 0 0 0 6.5 6.5l3.2-3.2" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round" fill="none"/></symbol>
+      <symbol id="i-send" viewBox="0 0 16 16"><path d="M2.5 8 13.5 2.8 10.9 13.4 8.2 9.1 2.5 8Z" stroke="currentColor" stroke-width="1.5" stroke-linejoin="round" fill="none"/><path d="m8.2 9.1 5.3-6.3" stroke="currentColor" stroke-width="1.5" stroke-linecap="round"/></symbol>
+      <symbol id="i-download" viewBox="0 0 16 16"><path d="M8 2.5v8m0 0 3-3m-3 3-3-3M3 12.5h10" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round" fill="none"/></symbol>
+      <symbol id="i-file" viewBox="0 0 16 16"><path d="M4 1.5h5l3.5 3.5v9.5H4z" stroke="currentColor" stroke-width="1.4" stroke-linejoin="round" fill="none"/><path d="M9 1.5V5h3.5" stroke="currentColor" stroke-width="1.4" stroke-linejoin="round" fill="none"/></symbol>
+      <symbol id="i-pencil" viewBox="0 0 16 16"><path d="M11.2 1.6 14.4 4.8 5.6 13.6H2.4v-3.2L11.2 1.6Z" stroke="currentColor" stroke-width="1.4" stroke-linejoin="round" fill="none"/></symbol>
+      <symbol id="i-check" viewBox="0 0 16 16"><path d="m3 8.5 3.2 3L13 4.5" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" fill="none"/></symbol>
+      <symbol id="i-close" viewBox="0 0 16 16"><path d="m4 4 8 8M12 4l-8 8" stroke="currentColor" stroke-width="1.6" stroke-linecap="round"/></symbol>
+      <symbol id="i-chevron" viewBox="0 0 16 16"><path d="m6 3.5 4.5 4.5L6 12.5" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round" fill="none"/></symbol>
+      <symbol id="i-play" viewBox="0 0 16 16"><path d="M5 3.5v9l7.5-4.5z" fill="currentColor"/></symbol>
+      <symbol id="i-pause" viewBox="0 0 16 16"><path d="M5 3.5h2.2v9H5zm3.8 0H11v9H8.8z" fill="currentColor"/></symbol>
+      <symbol id="i-panel" viewBox="0 0 16 16"><rect x="2" y="3" width="12" height="10" rx="2" stroke="currentColor" stroke-width="1.5" fill="none"/><path d="M10 3v10" stroke="currentColor" stroke-width="1.5"/></symbol>
+      <symbol id="i-user" viewBox="0 0 16 16"><circle cx="8" cy="5.5" r="2.8" stroke="currentColor" stroke-width="1.5" fill="none"/><path d="M2.8 14a5.2 5.2 0 0 1 10.4 0" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" fill="none"/></symbol>
+      <symbol id="i-orch" viewBox="0 0 16 16"><path d="M8 1.8 13.4 5v6L8 14.2 2.6 11V5z" stroke="currentColor" stroke-width="1.5" stroke-linejoin="round" fill="none"/><circle cx="8" cy="8" r="1.9" fill="currentColor"/></symbol>
+      <symbol id="i-agent" viewBox="0 0 16 16"><rect x="2.5" y="4" width="11" height="9" rx="2.5" stroke="currentColor" stroke-width="1.5" fill="none"/><path d="M8 1.5V4" stroke="currentColor" stroke-width="1.5" stroke-linecap="round"/><circle cx="5.8" cy="8.5" r="1" fill="currentColor"/><circle cx="10.2" cy="8.5" r="1" fill="currentColor"/></symbol>
+    </defs>
+  </svg>
+
   <header class="top">
+    <button type="button" class="icon-btn rail-toggle" id="railToggle" aria-label="Список задач" aria-controls="taskRail" aria-expanded="false">
+      <svg class="icon" aria-hidden="true"><use href="#i-panel"/></svg>
+    </button>
     <a class="brand" href="/" id="brandHome" title="На главную" aria-label="NOVATEK RE MASter Workspace — на главную">
+      <span class="brand-mark" aria-hidden="true">
+        <svg viewBox="0 0 100 100" width="26" height="26"><rect x="14" y="40" width="8" height="20" rx="4" fill="#001A57"/><rect x="78" y="40" width="8" height="20" rx="4" fill="#001A57"/><line x1="50" y1="20" x2="50" y2="10" stroke="#0033A0" stroke-width="6" stroke-linecap="round"/><circle cx="50" cy="10" r="6" fill="#00B8F0"/><rect x="22" y="20" width="56" height="60" rx="12" fill="#0033A0"/><circle cx="36" cy="45" r="7" fill="#00B8F0"/><circle cx="64" cy="45" r="7" fill="#00B8F0"/><rect x="36" y="64" width="28" height="6" rx="3" fill="#00B8F0"/></svg>
+      </span>
       <span class="brand-lockup">
         <span class="brand-row">
           <span class="mark">NOVATEK RE MASter</span>
@@ -22,9 +49,10 @@
         <span class="brand-sub">Novatek STC reservoir engineering multi-agent system</span>
       </span>
     </a>
-    <div class="top-actions">
-      <a class="btn btn-quiet" href="/knowledge">База знаний</a>
-    </div>
+    <nav class="top-actions" aria-label="Разделы">
+      <a class="nav-link is-current" href="/">Задачи</a>
+      <a class="nav-link" href="/knowledge">База знаний</a>
+    </nav>
   </header>
 
   <div id="flash" class="flash" hidden role="alert"></div>
@@ -36,43 +64,57 @@
     </span>
   </div>
 
-  <main class="stage">
-    <aside class="rail" id="taskRail" aria-label="Недавние задачи">
-      <button type="button" class="rail-new-task" id="newTaskBtn" title="Создать задачу">
-        <span class="rail-new-icon" aria-hidden="true">+</span>
-        <span class="rail-new-copy">
+  <main class="stage" id="stage">
+    <aside class="rail" id="taskRail" aria-label="Задачи">
+      <div class="rail-head">
+        <button type="button" class="btn btn-primary rail-new-task" id="newTaskBtn" title="Создать задачу">
+          <svg class="icon" aria-hidden="true"><use href="#i-plus"/></svg>
           <span class="id">Новая задача</span>
-        </span>
-      </button>
-        <div class="rail-list" id="railList"></div>
+        </button>
+        <label class="rail-search">
+          <svg class="icon" aria-hidden="true"><use href="#i-search"/></svg>
+          <input id="railSearch" type="search" placeholder="Найти задачу" autocomplete="off" aria-label="Найти задачу" />
+        </label>
+      </div>
+      <div class="rail-list" id="railList" role="list"></div>
+      <p class="rail-empty" id="railEmpty" hidden>Задач пока нет — создайте первую.</p>
     </aside>
+
     <section class="workspace mode-chat" id="workspace">
-      <div class="transcript-head">
+      <header class="work-head">
         <div class="head-copy">
           <h1 id="title">
             <span class="status-dot" id="statusDot" hidden aria-hidden="true"></span>
             <span id="titleText">Выберите задачу</span>
             <input id="renameTaskInput" class="rename-task-input" type="text" maxlength="120" hidden autocomplete="off" aria-label="Название задачи" />
-            <button type="button" id="renameTaskBtn" class="rename-task-btn" hidden title="Переименовать задачу" aria-label="Переименовать задачу">
-              <svg width="14" height="14" viewBox="0 0 16 16" aria-hidden="true">
-                <path fill="currentColor" d="M11.2 1.6 14.4 4.8 5.6 13.6H2.4v-3.2L11.2 1.6Zm1.1-1.1 1.2 1.2c.5.5.5 1.3 0 1.8l-.5.5-3-3 .5-.5c.5-.5 1.3-.5 1.8 0ZM1.6 12.4V14.4h2l.4-.1 8.2-8.2-2.3-2.3L1.7 12c0 .1-.1.3-.1.4Z"/>
-              </svg>
+            <button type="button" id="renameTaskBtn" class="icon-btn rename-task-btn" hidden title="Переименовать задачу" aria-label="Переименовать задачу">
+              <svg class="icon" aria-hidden="true"><use href="#i-pencil"/></svg>
             </button>
           </h1>
+          <p class="head-meta" id="headMeta" hidden>
+            <span class="status-pill" id="statusPill" hidden></span>
+            <span class="head-id" id="headId"></span>
+          </p>
         </div>
-        <div class="view-toggle" role="tablist" aria-label="Представление задачи">
-          <button type="button" id="viewChatBtn" class="view-toggle-btn" role="tab" aria-selected="true" aria-controls="chatView">Чат</button>
-          <button type="button" id="viewSchemaBtn" class="view-toggle-btn" role="tab" aria-selected="false" aria-controls="schemaView">Схема</button>
+        <div class="head-tools">
+          <div class="view-toggle" role="tablist" aria-label="Представление задачи">
+            <button type="button" id="viewChatBtn" class="view-toggle-btn" role="tab" aria-selected="true" aria-controls="chatView">Чат</button>
+            <button type="button" id="viewSchemaBtn" class="view-toggle-btn" role="tab" aria-selected="false" aria-controls="schemaView">Схема</button>
+          </div>
+          <button type="button" class="btn btn-quiet inspector-toggle" id="inspectorToggle" aria-controls="inspector" aria-expanded="false">
+            <svg class="icon" aria-hidden="true"><use href="#i-panel"/></svg>
+            <span id="inspectorToggleLabel">Результаты</span>
+          </button>
         </div>
-        <a id="scheduleDownloadHead" class="btn btn-quiet schedule-download" hidden download>Скачать schedule.inc</a>
-      </div>
-      <div class="workspace-main">
+      </header>
+
+      <div class="work-body">
         <div class="transcript chat-pane" id="chatView" aria-live="polite">
-          <aside class="request-panel" id="requestPanel" hidden>
-            <div class="request-label">Исходный запрос</div>
+          <section class="request-panel" id="requestPanel" hidden>
+            <div class="request-label">Постановка задачи</div>
             <p class="request-text" id="requestText"></p>
-            <p class="request-files" id="requestFiles" hidden></p>
-          </aside>
+            <ul class="request-files file-chips" id="requestFiles" hidden></ul>
+          </section>
           <aside class="status-banner" id="statusBanner" hidden>
             <div class="status-banner-label" id="statusBannerLabel">Статус</div>
             <p class="status-banner-text" id="statusBannerText"></p>
@@ -86,6 +128,7 @@
             <a class="btn btn-quiet" href="/" id="notFoundHome">Вернуться на главную</a>
           </div>
         </div>
+
         <section class="schema-view" id="schemaView" hidden tabindex="0" aria-label="Схема агентов">
           <div class="schema-canvas">
             <div class="schema-stage" id="schemaStage">
@@ -93,35 +136,66 @@
               <div class="schema-nodes" id="schemaNodes"></div>
             </div>
           </div>
-          <div class="schema-inspector">
-            <p class="schema-step-label" id="schemaStepLabel"></p>
-            <span class="schema-step-count" id="schemaStepCount">шаг 0 / 0</span>
-          </div>
-          <div class="schema-timeline" id="schemaTimeline">
+          <footer class="schema-timeline" id="schemaTimeline">
+            <div class="schema-step">
+              <span class="schema-step-count" id="schemaStepCount">шаг 0 / 0</span>
+              <p class="schema-step-label" id="schemaStepLabel"></p>
+            </div>
             <div class="schema-track">
               <span class="schema-track-label" id="schemaStartLabel">Постановка задачи</span>
               <input id="schemaRange" type="range" min="0" max="0" value="0" aria-label="Шаг схемы" />
-              <span class="schema-track-label" id="schemaEndLabel">Результат</span>
+              <span class="schema-track-label" id="schemaEndLabel">Итог</span>
             </div>
             <div class="schema-nav" role="group" aria-label="Шаги схемы">
-              <button type="button" class="schema-step-btn" id="schemaPrev" aria-label="Предыдущий шаг">‹</button>
-              <button type="button" class="schema-step-btn" id="schemaNext" aria-label="Следующий шаг">›</button>
+              <button type="button" class="icon-btn schema-step-btn" id="schemaPrev" aria-label="Предыдущий шаг"><svg class="icon flip" aria-hidden="true"><use href="#i-chevron"/></svg></button>
+              <button type="button" class="icon-btn schema-step-btn" id="schemaPlay" aria-label="Проиграть шаги" aria-pressed="false"><svg class="icon" aria-hidden="true"><use href="#i-play"/></svg></button>
+              <button type="button" class="icon-btn schema-step-btn" id="schemaNext" aria-label="Следующий шаг"><svg class="icon" aria-hidden="true"><use href="#i-chevron"/></svg></button>
+            </div>
+          </footer>
+        </section>
+
+        <form class="composer start-composer" id="startComposer" autocomplete="off" hidden>
+          <div class="start-head">
+            <h2>Новая задача</h2>
+            <p>Опишите, что нужно сделать, и приложите исходные файлы — система сама решит, какие агенты понадобятся.</p>
+          </div>
+          <label class="field">
+            <span>Название <em class="optional">необязательно</em></span>
+            <input id="taskName" type="text" maxlength="120" placeholder="Например: Даты ввода 4кв 2025" />
+          </label>
+          <label class="field">
+            <span>Описание задачи</span>
+            <textarea id="taskDescription" rows="4" required placeholder="Например: во вложении Excel с новыми датами ввода — обновите прогнозный schedule"></textarea>
+          </label>
+          <div class="dropzone" id="startDropzone" tabindex="0" role="button" aria-label="Прикрепить файлы">
+            <input id="startFileInput" type="file" multiple hidden accept=".xlsx,.xls,.data,.inc,.sch,.txt,.grdecl,.dev,.cps3,.grd,.grid" />
+            <svg class="icon dropzone-icon" aria-hidden="true"><use href="#i-attach"/></svg>
+            <p class="dropzone-title">Перетащите файлы сюда или нажмите, чтобы выбрать</p>
+            <p class="dropzone-hint">Excel, schedule (.data / .inc), траектории (.dev), поверхности CPS3</p>
+            <ul class="file-chips" id="startFileList" hidden></ul>
+          </div>
+          <label class="field schedule-root-field" id="scheduleRootField" hidden>
+            <span>Главный schedule среди вложений</span>
+            <select id="scheduleRoot" aria-label="Главный schedule файл среди вложений">
+              <option value="">Какой .data / .INC главный?</option>
+            </select>
+          </label>
+          <div class="start-actions">
+            <p class="composer-hint" id="startHint" hidden></p>
+            <div class="composer-actions" role="group" aria-label="Действия новой задачи">
+              <button type="button" class="btn btn-quiet" id="startCancelBtn">Отмена</button>
+              <button type="submit" class="btn btn-primary" id="startSubmitBtn">Создать задачу</button>
             </div>
           </div>
-        </section>
+        </form>
       </div>
-
-      <details class="diff-expander" id="diffExpander" hidden>
-        <summary>Изменения между версиями</summary>
-        <div class="diff-body" id="diffBody"></div>
-      </details>
 
       <details class="gate-panel" id="gatePanel" hidden>
         <summary class="gate-head">
-          <span class="gate-badge" id="gateKind">needs_approval</span>
+          <span class="gate-badge" id="gateKind">Запрос</span>
           <span class="gate-preview" id="gatePreview"></span>
-          <span class="gate-toggle" aria-hidden="true"></span>
           <span class="gate-meta" id="gateMeta"></span>
+          <svg class="icon gate-toggle" aria-hidden="true"><use href="#i-chevron"/></svg>
         </summary>
         <div class="gate-body">
           <p class="gate-reason" id="gateReason"></p>
@@ -129,82 +203,51 @@
         </div>
       </details>
 
-      <form class="composer start-composer" id="startComposer" autocomplete="off" hidden>
-        <div class="composer-top">
-          <div class="composer-actions" role="group" aria-label="Действия новой задачи">
-            <button type="button" class="btn btn-cancel" id="startCancelBtn">Закрыть</button>
-            <button type="submit" class="btn btn-approve" id="startSubmitBtn">Создать задачу</button>
-          </div>
-        </div>
-        <label class="reply-field">
-          <span>Название задачи <em class="optional">(необязательно)</em></span>
-          <input id="taskName" type="text" maxlength="120" placeholder="Например: Даты ввода 4кв 2025" />
-        </label>
-        <label class="reply-field">
-          <span>Описание задачи</span>
-          <textarea id="taskDescription" rows="3" required placeholder="Например: во вложении Excel с новыми датами ввода — обновите прогнозный schedule"></textarea>
-        </label>
-        <div
-          class="dropzone"
-          id="startDropzone"
-          tabindex="0"
-          role="button"
-          aria-label="Прикрепить файлы"
-        >
-          <input
-            id="startFileInput"
-            type="file"
-            multiple
-            hidden
-            accept=".xlsx,.xls,.data,.inc,.sch,.txt,.grdecl,.dev,.cps3,.grd,.grid"
-          />
-          <p class="dropzone-title">Перетащите файлы сюда или нажмите, чтобы выбрать</p>
-          <p class="dropzone-hint">Excel, schedule (.data / .inc), траектории (.dev), поверхности CPS3</p>
-          <ul class="file-chips" id="startFileList" hidden></ul>
-        </div>
-        <label class="who-field schedule-root-field" id="scheduleRootField" hidden>
-          <select id="scheduleRoot" aria-label="Главный schedule файл среди вложений">
-            <option value="">Какой .data / .INC главный?</option>
-          </select>
-        </label>
-        <p class="composer-hint" id="startHint" hidden></p>
-      </form>
-
       <form class="composer" id="composer" autocomplete="off" hidden>
-        <label class="reply-field">
-          <span>Ваш ответ</span>
-          <textarea id="humanResponse" rows="2" placeholder="Уточнения, недостающие данные, что ещё поправить…"></textarea>
-        </label>
-        <div class="composer-attach-row">
-          <div
-            class="dropzone dropzone-compact"
-            id="hitlDropzone"
-            tabindex="0"
-            role="button"
-            aria-label="Прикрепить файлы к ответу"
-          >
-            <input
-              id="hitlFileInput"
-              type="file"
-              multiple
-              hidden
-              accept=".xlsx,.xls,.data,.inc,.sch,.txt,.grdecl,.dev,.cps3,.grd,.grid"
-            />
-            <p class="dropzone-title">Перетащите файлы сюда или нажмите, чтобы выбрать</p>
-            <p class="dropzone-hint">Недостающий INCLUDE, Excel, schedule, траектории</p>
-            <ul class="file-chips" id="hitlFileList" hidden></ul>
-          </div>
-          <div class="composer-actions" role="group" aria-label="Ответ системе">
-            <button type="submit" class="btn" id="replyBtn">Ответить</button>
-            <button type="button" class="btn" id="restartBtn" hidden>Перезапустить</button>
-          </div>
+        <ul class="file-chips composer-files" id="hitlFileList" hidden></ul>
+        <div class="composer-box" id="hitlDropzone" role="group" aria-label="Ваш ответ">
+          <input id="hitlFileInput" type="file" multiple hidden accept=".xlsx,.xls,.data,.inc,.sch,.txt,.grdecl,.dev,.cps3,.grd,.grid" />
+          <button type="button" class="icon-btn composer-attach" id="hitlAttachBtn" title="Прикрепить файлы" aria-label="Прикрепить файлы">
+            <svg class="icon" aria-hidden="true"><use href="#i-attach"/></svg>
+          </button>
+        <textarea id="humanResponse" rows="1" placeholder="Уточнения, недостающие данные, что ещё поправить…" aria-label="Ваш ответ"></textarea>
+        <div class="composer-actions" role="group" aria-label="Ответ системе">
+          <button type="submit" class="btn btn-primary composer-send" id="replyBtn">
+            <span>Ответить</span>
+            <svg class="icon" aria-hidden="true"><use href="#i-send"/></svg>
+          </button>
         </div>
-        <p class="composer-hint" id="composerHint" hidden></p>
-      </form>
+      </div>
+      <div class="composer-idle" id="composerIdle" hidden>
+        <span class="composer-idle-text" id="composerIdleText">Задача завершена.</span>
+        <button type="button" class="btn btn-quiet" id="restartBtn">Перезапустить с теми же файлами</button>
+      </div>
+      <p class="composer-hint" id="composerHint" hidden></p>
+      <p class="composer-drop-hint" id="composerDropHint">Файлы можно перетащить прямо в поле ответа — Excel, schedule, недостающий INCLUDE, траектории.</p>
+    </form>
     </section>
+
+    <aside class="inspector" id="inspector" aria-label="Результаты и материалы задачи">
+      <div class="inspector-head">
+        <h2>Результаты</h2>
+        <button type="button" class="icon-btn inspector-close" id="inspectorClose" aria-label="Скрыть панель"><svg class="icon" aria-hidden="true"><use href="#i-close"/></svg></button>
+      </div>
+      <section class="results-panel" id="resultsPanel">
+        <p class="panel-empty" id="resultsEmpty">Результаты появятся здесь, когда агенты закончат работу. У каждого — свои файлы.</p>
+        <div class="results-groups" id="resultsGroups"></div>
+      </section>
+      <details class="diff-expander" id="diffExpander" hidden>
+        <summary>Изменения между версиями</summary>
+        <div class="diff-body" id="diffBody"></div>
+      </details>
+      <section class="inputs-panel" id="inputsPanel" hidden>
+        <h3>Исходные данные</h3>
+        <ul class="file-chips inputs-list" id="inputsList"></ul>
+      </section>
+    </aside>
   </main>
 
-  <script src="/static/schema.js?v=23"></script>
-  <script src="/static/app.js?v=89"></script>
+  <script src="/static/schema.js?v=30"></script>
+  <script src="/static/app.js?v=101"></script>
 </body>
 </html>

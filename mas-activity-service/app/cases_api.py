@@ -7,6 +7,7 @@ import json
 import logging
 import secrets
 import time
+from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any
 
@@ -18,7 +19,9 @@ from app import case_watch
 from app import control_plane
 from app.contracts import AGENT_EVENT_KINDS, CaseAnswerIn, CaseEventIn, CaseNameIn, MAX_STEPS
 from app.state_shape import (
+    artifact_cards,
     artifact_filenames,
+    artifact_text,
     artifacts_from_indexed,
     bump_version,
     decode_hitl_answer,
@@ -204,7 +207,7 @@ def event_to_turn(event: dict[str, Any]) -> dict[str, Any]:
         # is only a fallback for legacy events without one.
         said = str(event.get("status_message") or "").strip()
         summary = said or FINISHED_RESULT_TEXT
-        text = f"{said} Результат можно скачать." if said else FINISHED_RESULT_TEXT
+        text = summary
         brief = summary
     else:
         display_message = _event_display_message(kind, event)
@@ -330,29 +333,38 @@ def _result_filename(artifacts: dict[str, Any]) -> str:
 
 
 def _schedule_out_text(artifacts: dict[str, Any]) -> str | None:
-    text = flatten_artifacts(artifacts).get("schedule_out")
+    text = artifact_text(artifacts, "schedule_out")
     if isinstance(text, str) and len(text.strip()) > 20:
         return text
-    if isinstance(text, dict):
-        inner = text.get("text") or text.get("content")
-        if isinstance(inner, str) and len(inner.strip()) > 20:
-            return inner
     return None
 
 
-def _schedule_artifact(case_id: str, artifacts: dict[str, Any]) -> dict[str, Any] | None:
-    text = _schedule_out_text(artifacts)
-    if not text:
-        return None
-    return {
-        "available": True,
-        "filename": _result_filename(artifacts),
-        "byte_length": len(text.encode("utf-8")),
-        "inline": True,
-        "download_path": f"/cases/{case_id}/schedule",
-        "kind": "result",
-        "label": "Скачать результат",
-    }
+def _producers_from_events(events: list[dict[str, Any]] | None) -> dict[str, str]:
+    """artifact_id → agent_id for states merged before ``producer`` existed (from agent.result events)."""
+    out: dict[str, str] = {}
+    for event in events or []:
+        if not isinstance(event, dict) or str(event.get("kind") or "") != "agent.result":
+            continue
+        agent = str(event.get("agent_id") or event.get("actor") or "").strip()
+        payload = event.get("payload") if isinstance(event.get("payload"), dict) else {}
+        ids = payload.get("artifacts") if isinstance(payload.get("artifacts"), list) else []
+        for aid in ids:
+            if agent and isinstance(aid, str) and aid:
+                out[aid] = agent
+    return out
+
+
+def _artifact_cards(case_id: str, state: dict[str, Any], events: list[dict[str, Any]] | None = None) -> list[dict[str, Any]]:
+    """Artifact cards of a case with download paths; the engineer's inputs first, then agent results."""
+    artifacts = state.get("artifacts") if isinstance(state.get("artifacts"), dict) else {}
+    cards = artifact_cards(artifacts, producers=_producers_from_events(events))
+    for card in cards:
+        if card["role"] == "schedule_out" and not (flatten_artifacts(artifacts).get("schedule_out") or {}).get("filename"):
+            card["filename"] = _result_filename(artifacts)
+        elif card["role"] == "diff" and not (flatten_artifacts(artifacts).get("diff") or {}).get("filename"):
+            card["filename"] = f"{Path(_result_filename(artifacts)).stem}.diff"
+        card["download_path"] = f"/cases/{case_id}/artifacts/{card['artifact_id']}"
+    return cards
 
 
 def _feed_from_row(
@@ -378,6 +390,7 @@ def _feed_from_row(
     artifacts = state.get("artifacts") if isinstance(state.get("artifacts"), dict) else {}
     attached = artifact_filenames(artifacts)
     name = _normalize_task_name(state.get("task_name"))
+    cards = _artifact_cards(case_id, state, events)
     return {
         "ok": True,
         "task_id": case_id,
@@ -394,7 +407,9 @@ def _feed_from_row(
         "events": events,
         "schema": build_schema_model(events, state=state, status=row.get("status")),
         "after_seq": after_seq,
-        "schedule_artifact": _schedule_artifact(case_id, artifacts),
+        # Phase 1.5: the case result is the set of agent deliverables (cards by producer), not one file.
+        "artifacts": cards,
+        "deliverables": [card for card in cards if card["kind"] == "deliverable"],
         "restartable": case_is_restartable(row),
     }
 
@@ -580,7 +595,7 @@ async def create_case(
         await take(item, None)
 
     binary = _index_uploads(_promote_schedule_root(uploads, schedule_root))
-    artifacts: dict[str, Any] = artifacts_from_indexed(binary)
+    artifacts: dict[str, Any] = artifacts_from_indexed(binary, created_at=datetime.now(timezone.utc).isoformat())
     if artifact_store.configured():
         for key, (filename, content, mime) in binary.items():
             try:
@@ -739,6 +754,9 @@ async def _merge_case_uploads(case_id: str, uploads: list[tuple[str, str, bytes,
             "bytes": len(content),
             "artifact_id": key,
             "role": role_for_artifact_id(key),
+            "kind": "input",
+            "producer": "user",
+            "created_at": datetime.now(timezone.utc).isoformat(),
         }
         artifacts = nest_artifacts(flat)
         names.append(filename)
@@ -955,7 +973,8 @@ def _stream_meta(feed: dict[str, Any]) -> dict[str, Any]:
         "awaiting_human": feed.get("awaiting_human"),
         "human_gate": feed.get("human_gate"),
         "restartable": feed.get("restartable"),
-        "schedule_artifact": feed.get("schedule_artifact"),
+        "artifacts": feed.get("artifacts"),
+        "deliverables": feed.get("deliverables"),
         "state": feed.get("state"),
         "task_name": feed.get("task_name"),
         "title": feed.get("title"),
@@ -1039,8 +1058,56 @@ async def stream_case(case_id: str, request: Request) -> StreamingResponse:
     return StreamingResponse(gen(), media_type="text/event-stream")
 
 
+@router.get("/agents")
+def list_agents() -> dict[str, Any]:
+    """Agent registry for the UI (titles for feed / schema / results) — the UI hardcodes no agent."""
+    rows = []
+    for row in control_plane.list_agents():
+        if not isinstance(row, dict) or not row.get("agent_id"):
+            continue
+        rows.append(
+            {
+                "agent_id": str(row.get("agent_id")),
+                "title": str(row.get("title") or row.get("agent_id")),
+                "when_to_use": str(row.get("when_to_use") or ""),
+                "output_provides": list(row.get("output_provides") or []),
+            }
+        )
+    return {"agents": rows}
+
+
+@router.get("/cases/{case_id}/artifacts")
+def list_artifacts(
+    case_id: str,
+    kind: str = Query(default=""),
+    producer: str = Query(default=""),
+) -> dict[str, Any]:
+    """Artifact cards of the case: ``{artifact_id, role, kind, producer, filename, bytes, download_path}``.
+
+    ``kind`` = input | intermediate | deliverable; ``producer`` = user | <agent_id>.
+    """
+    snap = control_plane.snapshot(case_id)
+    row = snap["case"]
+    if row is None:
+        raise HTTPException(status_code=404, detail="case not found")
+    state = row["state"] if isinstance(row.get("state"), dict) else {}
+    cards = _artifact_cards(case_id, state, snap.get("events") or [])
+    want_kind = (kind or "").strip().lower()
+    want_producer = (producer or "").strip()
+    if want_kind:
+        cards = [card for card in cards if card["kind"] == want_kind]
+    if want_producer:
+        cards = [card for card in cards if card["producer"] == want_producer]
+    return {"ok": True, "case_id": case_id, "artifacts": cards}
+
+
 @router.get("/cases/{case_id}/schedule")
 def get_schedule(case_id: str):
+    """Compatibility alias for the Schedule Builder deliverable (``role == schedule_out``).
+
+    Kept for older harness scripts; new clients read ``GET /cases/{id}/artifacts`` and download by
+    ``download_path`` (``/cases/{id}/artifacts/{artifact_id}``).
+    """
     row = control_plane.get_case(case_id)
     if row is None:
         raise HTTPException(status_code=404, detail="case not found")
@@ -1059,11 +1126,28 @@ def get_schedule(case_id: str):
     )
 
 
+def _inline_artifact(case_id: str, artifact_id: str) -> tuple[str, bytes, str] | None:
+    """Text deliverables (schedule_out / diff) live inline in state, not in the blob store."""
+    row = control_plane.get_case(case_id)
+    state = row["state"] if row and isinstance(row.get("state"), dict) else {}
+    artifacts = state.get("artifacts") if isinstance(state.get("artifacts"), dict) else {}
+    text = artifact_text(artifacts, artifact_id)
+    if text is None:
+        return None
+    card = next((c for c in _artifact_cards(case_id, state) if c["artifact_id"] == artifact_id), None)
+    filename = (card or {}).get("filename") or artifact_id
+    mime = (card or {}).get("mime_type") or "text/plain; charset=utf-8"
+    return filename, text.encode("utf-8"), mime
+
+
 @router.get("/cases/{case_id}/artifacts/{artifact_id}")
 async def get_artifact(case_id: str, artifact_id: str):
     if control_plane.get_case(case_id) is None:
         raise HTTPException(status_code=404, detail="case not found")
-    if artifact_store.configured():
+    inline = _inline_artifact(case_id, artifact_id)
+    if inline is not None:
+        filename, content, mime = inline
+    elif artifact_store.configured():
         try:
             filename, content, mime = await artifact_store.get(case_id, artifact_id)
         except FileNotFoundError as exc:

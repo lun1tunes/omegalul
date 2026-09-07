@@ -35,12 +35,22 @@ function isNestedArtifacts(arts){
   if(Array.isArray(arts.trajectories)||Array.isArray(arts.attachments)) return true;
   return false;
 }
+/* Artifact card: {artifact_id, role, kind: input|intermediate|deliverable, producer: user|<agent_id>,
+   filename, bytes, text?}. Text artifacts (schedule_out, diff) live inline in state. Python twin:
+   mas-activity-service/app/state_shape.py. */
+const INLINE_TEXT_ROLES=['schedule_out','diff'];
+const AGENT_ONLY_ROLES=['schedule_out','diff'];
+function utf8Length(s){
+  try{return unescape(encodeURIComponent(String(s))).length}catch(_){return String(s).length}
+}
 function fileItem(id,value,role){
   if(value==null||value===''||(typeof value==='object'&&!Array.isArray(value)&&!Object.keys(value).length)) return null;
   const resolved=role||roleForArtifactId(id);
-  if(resolved==='diff') return null;
   if(typeof value==='string'){
-    if(resolved==='schedule_out') return {artifact_id:id||'schedule_out',role:'schedule_out',bytes:value.length,text:value};
+    if(INLINE_TEXT_ROLES.indexOf(resolved)>=0){
+      if(!value.trim()) return null;
+      return {artifact_id:id||resolved,role:resolved,bytes:utf8Length(value),text:value};
+    }
     return {artifact_id:id,filename:value,role:resolved};
   }
   if(typeof value!=='object'||Array.isArray(value)) return null;
@@ -54,7 +64,6 @@ function flattenArtifacts(arts){
   const src=arts&&typeof arts==='object'&&!Array.isArray(arts)?arts:{};
   const out={};
   const put=(value,fallbackId)=>{
-    if(fallbackId==='diff'){ if(value!=null) out.diff=value; return; }
     const row=fileItem(fallbackId,value);
     if(!row) return;
     out[row.artifact_id]=row;
@@ -69,7 +78,7 @@ function flattenArtifacts(arts){
     const grdecl=Array.isArray(sch.grdecl)?sch.grdecl:[];
     for(const g of grdecl) put(g,g&&g.artifact_id);
     put(sch.out,'schedule_out');
-    if(sch.diff!=null) out.diff=sch.diff;
+    put(sch.diff,'diff');
     const trajs=Array.isArray(src.trajectories)?src.trajectories:[];
     for(const t of trajs) put(t,t&&t.artifact_id||'trajectory');
     const atts=Array.isArray(src.attachments)?src.attachments:[];
@@ -93,10 +102,10 @@ function nestArtifacts(arts){
   const trajectories=[];
   const attachments=[];
   for(const [id,item] of Object.entries(flattenArtifacts(arts))){
-    if(id==='diff'){ nested.schedule=nested.schedule||{}; nested.schedule.diff=item; continue; }
     if(!item||typeof item!=='object') continue;
     const role=item.role||roleForArtifactId(id);
-    if(role==='excel'){
+    if(role==='diff'){ nested.schedule=nested.schedule||{}; nested.schedule.diff=item; }
+    else if(role==='excel'){
       // First workbook (id `excel`) owns the slot; further workbooks (`excel_1`…) stay as attachments
       // with role excel so flatten/nest is lossless and every Excel of the case stays reachable.
       const aid=String(item.artifact_id||id);
@@ -125,7 +134,6 @@ function nestArtifacts(arts){
 function fileCounts(arts){
   const counts={excel:0,schedule_source:0,includes:0,grdecl:0,trajectories:0,surface:0,schedule_out:0};
   for(const [id,item] of Object.entries(flattenArtifacts(arts))){
-    if(id==='diff') continue;
     const role=(item&&item.role)||roleForArtifactId(id);
     if(role==='schedule_include'){
       const name=String((item&&item.filename)||'').toLowerCase();
@@ -136,12 +144,42 @@ function fileCounts(arts){
   }
   return counts;
 }
-function hasScheduleOut(arts){
-  const item=flattenArtifacts(arts).schedule_out;
-  if(!item) return false;
-  if(typeof item==='string') return Boolean(String(item).trim());
-  if(typeof item==='object') return Boolean(item.text||item.content||item.filename||item.artifact_id);
-  return true;
+function artifactKind(item){
+  if(!item||typeof item!=='object') return 'input';
+  const k=String(item.kind||'').trim().toLowerCase();
+  if(k==='input'||k==='intermediate'||k==='deliverable') return k;
+  const role=String(item.role||roleForArtifactId(item.artifact_id||''));
+  return AGENT_ONLY_ROLES.indexOf(role)>=0?'deliverable':'input';
+}
+function artifactProducer(item){
+  if(!item||typeof item!=='object') return 'user';
+  const p=String(item.producer||'').trim();
+  if(p) return p;
+  return artifactKind(item)==='input'?'user':'';
+}
+function cardFilename(item){
+  const name=String(item.filename||'').trim();
+  if(name) return name;
+  const role=String(item.role||'');
+  if(role==='schedule_out') return 'schedule_result.inc';
+  if(role==='diff') return 'schedule_changes.diff';
+  return String(item.artifact_id||role||'artifact');
+}
+function artifactCards(arts){
+  /* Inputs first, then what agents produced. No inline text — cards are safe to log and to send to the LLM. */
+  const inputs=[];
+  const produced=[];
+  for(const [id,item] of Object.entries(flattenArtifacts(arts))){
+    if(!item||typeof item!=='object') continue;
+    const kind=artifactKind(item);
+    const size=item.bytes!=null?Number(item.bytes):(typeof item.text==='string'?utf8Length(item.text):null);
+    const card={artifact_id:id,role:String(item.role||roleForArtifactId(id)),kind,producer:artifactProducer(item),filename:cardFilename(item),bytes:Number.isFinite(size)?size:null,summary:String(item.summary||'').trim()};
+    (kind==='input'?inputs:produced).push(card);
+  }
+  return inputs.concat(produced);
+}
+function deliverables(arts){
+  return artifactCards(arts).filter(c=>c.kind==='deliverable');
 }
 function slimExcel(d){
   if(!d||typeof d!=='object'||Array.isArray(d)) return d;
@@ -235,8 +273,9 @@ function inferRetrievalQuery(compact){
   const parts=[String(c.goal||'').trim()];
   if(facts>0) parts.push('Извлечено '+facts+' скважин из Excel');
   else if(c.has_excel) parts.push('В artifacts есть Excel, фактов ещё нет');
-  if(c.has_schedule_source&&!c.has_schedule_out) parts.push('Нужно обновить baseline SCHEDULE');
-  if(c.has_schedule_out) parts.push('SCHEDULE уже собран');
+  const dels=Array.isArray(c.deliverables)?c.deliverables:[];
+  if(c.has_schedule_source&&!dels.length) parts.push('Нужно обновить baseline SCHEDULE');
+  if(dels.length) parts.push('Агенты уже вернули результаты: '+dels.map(d=>d.filename||d.artifact_id).filter(Boolean).join(', '));
   return parts.filter(Boolean).join('\n').slice(0,800)||'маршрутизация инженерной задачи petroleum-engineering';
 }
 function inferRoutingTopics(compact){
@@ -298,11 +337,18 @@ function slimError(err){
   const count=Number(err.count||0);
   return {message:err.message||'',agent_id:err.agent_id||null,count:Number.isFinite(count)?count:0};
 }
-function mergeIncomingArtifacts(artifacts,incoming){
+function mergeIncomingArtifacts(artifacts,incoming,producer){
+  /* Everything an agent returns under `artifacts` is a deliverable of that agent (kind/producer are
+     stamped here, agents do not know these fields). `excel_session` is a service handle, not an artifact. */
   const nested=nestArtifacts(artifacts);
   const src=incoming&&typeof incoming==='object'&&!Array.isArray(incoming)?incoming:{};
+  const by=String(producer||'').trim();
+  const stamp=(item)=>{
+    if(!item||typeof item!=='object') return item;
+    if(by){ item.producer=item.producer||by; item.kind=item.kind||'deliverable'; }
+    return item;
+  };
   for(const [k,v] of Object.entries(src)){
-    if(k==='diff'){ nested.schedule=nested.schedule||{}; nested.schedule.diff=v; continue; }
     if(k==='excel_session'){
       nested.excel=(nested.excel&&typeof nested.excel==='object')?{...nested.excel}:{artifact_id:'excel',role:'excel'};
       nested.excel.session_id=v;
@@ -312,17 +358,19 @@ function mergeIncomingArtifacts(artifacts,incoming){
       nested.schedule=nested.schedule||{};
       nested.schedule[k]=Array.isArray(nested.schedule[k])?nested.schedule[k]:[];
       for(const row of v){
-        const item=fileItem(row&&row.artifact_id,row);
+        const item=stamp(fileItem(row&&row.artifact_id,row));
         if(item) nested.schedule[k].push(item);
       }
       continue;
     }
-    if(k==='schedule_out'){
+    if(k==='schedule_out'||k==='diff'){
+      const item=stamp(fileItem(k,v,k));
+      if(!item) continue;
       nested.schedule=nested.schedule||{};
-      nested.schedule.out=typeof v==='string'?{artifact_id:'schedule_out',role:'schedule_out',bytes:String(v).length,text:v}:(fileItem('schedule_out',v,'schedule_out')||v);
+      if(k==='schedule_out') nested.schedule.out=item; else nested.schedule.diff=item;
       continue;
     }
-    const item=fileItem(k,v);
+    const item=stamp(fileItem(k,v));
     if(!item) continue;
     const role=item.role||roleForArtifactId(k);
     if(role==='excel') nested.excel=item;
@@ -565,7 +613,7 @@ function buildCompact(state){
     files:counts,
     has_excel:counts.excel>0,
     has_schedule_source:counts.schedule_source>0,
-    has_schedule_out:counts.schedule_out>0,
+    deliverables:deliverables(artifacts).map(d=>({producer:d.producer,artifact_id:d.artifact_id,filename:d.filename})),
     excel_filename:excelMeta.filename||null,
     schedule_source_filename:sourceMeta.filename||null,
     excel_facts:facts.length,

@@ -3,6 +3,12 @@
 Blob store ids stay stable (`excel`, `schedule_source`, `schedule_source_1`, …).
 Persisted `state.artifacts` groups those ids by role so planners do not see
 24 numbered keys. Flat and nested shapes both round-trip through flatten/nest.
+
+Every artifact is a card ``{artifact_id, role, kind, producer, filename, bytes, …}``:
+``kind`` is ``input`` (uploaded by the engineer), ``intermediate`` or ``deliverable``
+(returned by an agent); ``producer`` is ``user`` or the ``agent_id``. The case result
+is the set of deliverables — no single artifact id is "the result".
+JS twin: ``n8n/templates/mas_state_utils.py`` (change both, test both).
 """
 
 from __future__ import annotations
@@ -12,6 +18,13 @@ import re
 from typing import Any
 
 PREVIEW_CAP = 3
+
+ARTIFACT_KINDS = ("input", "intermediate", "deliverable")
+USER_PRODUCER = "user"
+# Roles that only agents produce: without an explicit ``kind`` they are deliverables.
+AGENT_ONLY_ROLES = frozenset({"schedule_out", "diff"})
+# Text artifacts live inline in state (``text``), not in the blob store.
+INLINE_TEXT_ROLES = frozenset({"schedule_out", "diff"})
 
 FILE_COUNT_KEYS = (
     "excel",
@@ -65,14 +78,14 @@ def _as_item(artifact_id: str, value: Any, role: str | None = None) -> dict[str,
     if value is None or value in ("", [], {}):
         return None
     resolved_role = role or role_for_artifact_id(artifact_id)
-    if resolved_role == "diff":
-        return None
     if isinstance(value, str):
-        if resolved_role == "schedule_out":
+        if resolved_role in INLINE_TEXT_ROLES:
+            if not value.strip():
+                return None
             return {
-                "artifact_id": artifact_id or "schedule_out",
-                "role": "schedule_out",
-                "bytes": len(value),
+                "artifact_id": artifact_id or resolved_role,
+                "role": resolved_role,
+                "bytes": len(value.encode("utf-8")),
                 "text": value,
             }
         return {
@@ -96,10 +109,6 @@ def flatten_artifacts(arts: Any) -> dict[str, Any]:
     out: dict[str, Any] = {}
 
     def put(value: Any, fallback_id: str = "") -> None:
-        if fallback_id == "diff":
-            if value is not None:
-                out["diff"] = value
-            return
         item = _as_item(fallback_id, value)
         if not item:
             return
@@ -117,8 +126,7 @@ def flatten_artifacts(arts: Any) -> dict[str, Any]:
             if isinstance(item, dict):
                 put(item, str(item.get("artifact_id") or ""))
         put(sch.get("out"), "schedule_out")
-        if sch.get("diff") is not None:
-            out["diff"] = sch["diff"]
+        put(sch.get("diff"), "diff")
         for traj in src.get("trajectories") or []:
             if isinstance(traj, dict):
                 put(traj, str(traj.get("artifact_id") or "trajectory"))
@@ -146,13 +154,12 @@ def nest_artifacts(arts: Any) -> dict[str, Any]:
     trajectories: list[dict[str, Any]] = []
     attachments: list[dict[str, Any]] = []
     for aid, item in flatten_artifacts(arts).items():
-        if aid == "diff":
-            nested.setdefault("schedule", {})["diff"] = item
-            continue
         if not isinstance(item, dict):
             continue
         role = str(item.get("role") or role_for_artifact_id(aid))
-        if role == "excel":
+        if role == "diff":
+            nested.setdefault("schedule", {})["diff"] = item
+        elif role == "excel":
             # The first workbook (id ``excel``) owns the slot; further workbooks (``excel_1``…) stay
             # visible as attachments with role ``excel`` instead of silently overwriting the slot.
             if "excel" not in nested or (aid == "excel" and str(nested["excel"].get("artifact_id")) != "excel"):
@@ -187,26 +194,33 @@ def nest_artifacts(arts: Any) -> dict[str, Any]:
     return nested
 
 
-def artifacts_from_indexed(binary: dict[str, tuple[str, bytes, str]]) -> dict[str, Any]:
+def artifacts_from_indexed(
+    binary: dict[str, tuple[str, bytes, str]],
+    *,
+    producer: str = USER_PRODUCER,
+    created_at: str | None = None,
+) -> dict[str, Any]:
+    """Cards for engineer uploads: ``kind=input``, ``producer=user``."""
     items = []
     for key, (filename, content, mime) in binary.items():
-        items.append(
-            {
-                "filename": filename,
-                "mime_type": mime,
-                "bytes": len(content),
-                "artifact_id": key,
-                "role": role_for_artifact_id(key),
-            }
-        )
+        item: dict[str, Any] = {
+            "filename": filename,
+            "mime_type": mime,
+            "bytes": len(content),
+            "artifact_id": key,
+            "role": role_for_artifact_id(key),
+            "kind": "input",
+            "producer": producer,
+        }
+        if created_at:
+            item["created_at"] = created_at
+        items.append(item)
     return nest_artifacts({item["artifact_id"]: item for item in items})
 
 
 def artifact_file_counts(arts: Any) -> dict[str, int]:
     counts = {key: 0 for key in FILE_COUNT_KEYS}
     for aid, item in flatten_artifacts(arts).items():
-        if aid == "diff":
-            continue
         role = item.get("role") if isinstance(item, dict) else role_for_artifact_id(aid)
         if role == "schedule_include":
             if _is_grdecl(item):
@@ -218,27 +232,107 @@ def artifact_file_counts(arts: Any) -> dict[str, int]:
     return counts
 
 
-def has_schedule_out(arts: Any) -> bool:
-    item = flatten_artifacts(arts).get("schedule_out")
-    if not item:
-        return False
+def artifact_kind(item: Any) -> str:
+    """``kind`` with a deterministic default: agent-only roles are deliverables, the rest inputs."""
+    if not isinstance(item, dict):
+        return "input"
+    kind = str(item.get("kind") or "").strip().lower()
+    if kind in ARTIFACT_KINDS:
+        return kind
+    role = str(item.get("role") or role_for_artifact_id(str(item.get("artifact_id") or "")))
+    return "deliverable" if role in AGENT_ONLY_ROLES else "input"
+
+
+def artifact_producer(item: Any) -> str:
+    """``producer`` with a default: inputs come from the engineer; agent cards keep their agent_id."""
+    if not isinstance(item, dict):
+        return USER_PRODUCER
+    producer = str(item.get("producer") or "").strip()
+    if producer:
+        return producer
+    return USER_PRODUCER if artifact_kind(item) == "input" else ""
+
+
+def _card_filename(item: dict[str, Any]) -> str:
+    name = str(item.get("filename") or "").strip()
+    if name:
+        return name
+    role = str(item.get("role") or "")
+    aid = str(item.get("artifact_id") or role or "artifact")
+    if role == "schedule_out":
+        return "schedule_result.inc"
+    if role == "diff":
+        return "schedule_changes.diff"
+    return aid
+
+
+def _card_mime(item: dict[str, Any]) -> str:
+    mime = str(item.get("mime_type") or item.get("mime") or "").strip()
+    if mime:
+        return mime
+    role = str(item.get("role") or "")
+    if role == "diff":
+        return "text/x-diff; charset=utf-8"
+    if role in INLINE_TEXT_ROLES:
+        return "text/plain; charset=utf-8"
+    return "application/octet-stream"
+
+
+def artifact_cards(arts: Any, *, producers: dict[str, str] | None = None) -> list[dict[str, Any]]:
+    """Flat list of artifact cards (no inline ``text``), inputs first, then agent results.
+
+    ``producers`` maps artifact_id → agent_id for legacy states whose agent artifacts were
+    merged before ``producer`` existed (Activity derives it from ``agent.result`` events).
+    """
+    inputs: list[dict[str, Any]] = []
+    produced: list[dict[str, Any]] = []
+    fallback = producers or {}
+    for aid, item in flatten_artifacts(arts).items():
+        if not isinstance(item, dict):
+            continue
+        kind = artifact_kind(item)
+        producer = artifact_producer(item) or fallback.get(aid, "")
+        text = item.get("text") if isinstance(item.get("text"), str) else None
+        size = item.get("bytes")
+        if size is None and text is not None:
+            size = len(text.encode("utf-8"))
+        card = {
+            "artifact_id": aid,
+            "role": str(item.get("role") or role_for_artifact_id(aid)),
+            "kind": kind,
+            "producer": producer,
+            "filename": _card_filename(item),
+            "mime_type": _card_mime(item),
+            "bytes": int(size) if isinstance(size, (int, float)) else None,
+            "summary": str(item.get("summary") or "").strip(),
+            "created_at": item.get("created_at"),
+        }
+        (inputs if kind == "input" else produced).append(card)
+    return inputs + produced
+
+
+def deliverables(arts: Any, *, producers: dict[str, str] | None = None) -> list[dict[str, Any]]:
+    return [card for card in artifact_cards(arts, producers=producers) if card["kind"] == "deliverable"]
+
+
+def artifact_text(arts: Any, artifact_id: str) -> str | None:
+    """Inline text of a text artifact (``schedule_out`` / ``diff``) or ``None``."""
+    item = flatten_artifacts(arts).get(str(artifact_id or ""))
     if isinstance(item, str):
-        return bool(item.strip())
+        return item if item.strip() else None
     if isinstance(item, dict):
-        text = item.get("text") or item.get("content") or ""
-        return bool(str(text).strip() or item.get("filename") or item.get("artifact_id"))
-    return True
+        inner = item.get("text") or item.get("content")
+        if isinstance(inner, str) and inner.strip():
+            return inner
+    return None
 
 
 def artifact_filenames(arts: Any) -> list[str]:
+    """Names of the engineer's inputs (what the case started from)."""
     names: list[str] = []
     seen: set[str] = set()
-    for aid, item in flatten_artifacts(arts).items():
-        if aid in {"diff", "schedule_out"}:
-            continue
-        if not isinstance(item, dict):
-            continue
-        if str(item.get("role") or role_for_artifact_id(aid)) == "schedule_out":
+    for item in flatten_artifacts(arts).values():
+        if not isinstance(item, dict) or artifact_kind(item) != "input":
             continue
         name = str(item.get("filename") or "").strip()
         if name and name not in seen:
@@ -467,7 +561,10 @@ def compact_decision_context(state: dict[str, Any]) -> dict[str, Any]:
         "files": counts,
         "has_excel": counts["excel"] > 0,
         "has_schedule_source": counts["schedule_source"] > 0,
-        "has_schedule_out": counts["schedule_out"] > 0,
+        "deliverables": [
+            {"producer": card["producer"], "artifact_id": card["artifact_id"], "filename": card["filename"]}
+            for card in deliverables(artifacts)
+        ],
         "excel_filename": excel_meta.get("filename") or None,
         "schedule_source_filename": source_meta.get("filename") or None,
         "excel_facts": len(facts),

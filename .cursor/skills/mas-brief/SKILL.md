@@ -8,6 +8,8 @@ disable-model-invocation: true
 
 A brief is what lets a cheaper model do one plan item well: it removes discovery cost and pins the done criteria. One item per brief. Fill every section; delete nothing.
 
+Save it as `briefs/<YYYY-MM-DD>-<item>.md` and link it from the plan item. The first message of the new chat is then just: «Выполни бриф `briefs/<file>.md`». Example: `briefs/2026-09-07-phase-1.5-deliverables.md`.
+
 ## Template
 
 ```markdown

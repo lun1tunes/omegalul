@@ -174,6 +174,37 @@ async function run(name, json, nodes = {}, binary = {}) {
     assert.equal(reversed.excel.artifact_id, 'excel', 'order of arrival does not decide who owns the slot');
     assert.deepEqual(reversed.attachments.map((a) => a.artifact_id), ['excel_1']);
   }
+  {
+    // Phase 1.5 — artifacts are cards {kind, producer}: engineer uploads are inputs, whatever an agent
+    // returns under `artifacts` is that agent's deliverable. Cards round-trip through nest/flatten, the
+    // `diff` text is a card too (not a loose string), and `deliverables()` never names a slot.
+    const helpers = new Function(`${helperChunks[0]}; return { flattenArtifacts, nestArtifacts, mergeIncomingArtifacts, artifactCards, deliverables };`)();
+    const uploads = {
+      excel: { artifact_id: 'excel', filename: 'dates.xlsx', role: 'excel', bytes: 1, kind: 'input', producer: 'user' },
+      schedule_source: { artifact_id: 'schedule_source', filename: 'baseline.inc', role: 'schedule_source', bytes: 3, kind: 'input', producer: 'user' },
+    };
+    const merged = helpers.mergeIncomingArtifacts(uploads, { schedule_out: 'DATES\n 1 JAN 2026 /\n/\n', diff: '--- a\n+++ b\n' }, 'schedule_builder');
+    assert.equal(merged.schedule.out.producer, 'schedule_builder');
+    assert.equal(merged.schedule.out.kind, 'deliverable');
+    assert.equal(merged.schedule.diff.producer, 'schedule_builder');
+    assert.equal(merged.schedule.diff.role, 'diff');
+    const roundTrip = helpers.nestArtifacts(helpers.flattenArtifacts(merged));
+    assert.deepEqual(roundTrip, merged, 'cards survive nest(flatten(x))');
+    const cards = helpers.artifactCards(merged);
+    assert.deepEqual(cards.map((c) => [c.artifact_id, c.kind, c.producer]), [
+      ['excel', 'input', 'user'],
+      ['schedule_source', 'input', 'user'],
+      ['schedule_out', 'deliverable', 'schedule_builder'],
+      ['diff', 'deliverable', 'schedule_builder'],
+    ]);
+    assert.ok(cards.every((c) => !('text' in c)), 'cards carry no inline text');
+    assert.deepEqual(helpers.deliverables(merged).map((d) => d.filename), ['schedule_result.inc', 'schedule_changes.diff']);
+    // Legacy state (agent artifacts merged before producer existed): still deliverables, producer unknown.
+    const legacy = helpers.deliverables({ schedule_out: 'x'.repeat(30), schedule: { diff: 'd' } });
+    assert.deepEqual(legacy.map((d) => [d.artifact_id, d.kind, d.producer]).sort(), [['diff', 'deliverable', ''], ['schedule_out', 'deliverable', '']]);
+    // An empty diff (nothing changed) is not an artifact.
+    assert.deepEqual(helpers.deliverables(helpers.mergeIncomingArtifacts({}, { schedule_out: 'x'.repeat(30), diff: '' }, 'schedule_builder')).map((d) => d.artifact_id), ['schedule_out']);
+  }
   const continueNode = wf.nodes.find((n) => n.name === 'POST continue run');
   assert.ok(String(continueNode.parameters.jsonBody).includes("action: 'step'"));
   assert.ok(String(continueNode.parameters.jsonBody).includes('orchestrator-self'));
@@ -758,7 +789,9 @@ async function run(name, json, nodes = {}, binary = {}) {
           agent_id: 'excel_extractor',
           task_id: 'TASK-1',
           handoff_message: 'Достань даты',
-          task: { excel_artifact: 'a.xlsx' },
+          // The LLM likes to "help" with its own data. CASE-6a9ec6b3-74e34e: it put per-well `facts` with
+          // invented dates into action.task, and Schedule Builder preferred them to data.excel.facts.
+          task: { objective: 'Извлечь даты', excel_artifact: 'a.xlsx', facts: [{ well: '295R', date: '2019-10-01' }] },
         },
       },
     },
@@ -773,10 +806,15 @@ async function run(name, json, nodes = {}, binary = {}) {
   assert.equal(parsed.action_type, 'call_agent');
   assert.equal(parsed.should_call_agent, true);
   assert.equal(parsed.agent_task.agent_id, 'excel_extractor');
+  assert.equal(parsed.agent_task.objective, 'Извлечь даты');
   assert.equal(parsed.agent_task.inputs.activity_base_url, 'http://activity:8200');
   assert.equal(parsed.agent_task.inputs.artifacts, undefined);
   assert.deepEqual(parsed.agent_task.inputs.artifact_ids, ['excel']);
   assert.equal(parsed.agent_task.inputs.context, undefined);
+  // inputs are orchestrator-owned references only; LLM-authored payload never reaches the agent as data.
+  assert.equal(parsed.agent_task.inputs.facts, undefined);
+  assert.equal(parsed.agent_task.inputs.excel_artifact, undefined);
+  assert.deepEqual(Object.keys(parsed.agent_task.inputs).sort(), ['activity_base_url', 'artifact_ids', 'data_refs', 'schedule_root']);
   assert.equal(parsed.state.current_task.task_id, 'TASK-1');
   assert.equal(parsed.state.current_task.context, undefined);
   assert.equal(parsed.state.version, 1);
@@ -999,8 +1037,16 @@ async function run(name, json, nodes = {}, binary = {}) {
     // Step 1: fresh case → delegation is legitimate.
     let prepared = await prepare(baseState);
     assert.match(prepared.planner_input, /Журнал задачи/);
-    assert.match(prepared.planner_input, /пока ничего не сделано/);
+    // Step 0 of the journal = the engineer's inputs, by filename (CASE-6a9ec5ef-905bb0: without it the completion
+    // check invented an uncoverable part «получить старый прогнозный schedule» and escalated to review).
+    assert.match(prepared.planner_input, /- шаг 0: инженер приложил 1 файл\(ов\): baseline\.inc/);
+    assert.ok(!prepared.planner_input.includes('пока ничего не сделано'));
+    const journalSection = prepared.planner_input.slice(0, prepared.planner_input.indexOf('\nТекущее состояние:'));
+    assert.ok(!journalSection.includes('schedule_source'), 'journal names files, not artifact roles');
     assert.deepEqual(prepared.compact.journal, { history: [], stall_count: 0, completed_agents: [] });
+    // No inputs at all → the journal says so explicitly.
+    const bare = await prepare({ ...baseState, artifacts: {} });
+    assert.match(bare.planner_input, /пока ничего не сделано/);
     let parsed = await decide(prepared, delegate);
     assert.equal(parsed.action_type, 'call_agent');
     assert.equal(parsed.should_call_agent, true);
@@ -1030,11 +1076,22 @@ async function run(name, json, nodes = {}, binary = {}) {
     assert.equal(journal[0].status, 'completed');
     assert.match(journal[0].summary, /Перепривязал 2 скважины/);
     assert.ok(journal[0].artifacts_added.includes('schedule_out'));
+    // Phase 1.5: merged artifacts are that agent's deliverables; the agent.result event lists them.
+    const resultEvent = merged.events.find((e) => e.kind === 'agent.result');
+    assert.deepEqual(resultEvent.payload.deliverables.map((d) => [d.artifact_id, d.producer, d.kind]), [
+      ['schedule_out', 'schedule_builder', 'deliverable'],
+      ['diff', 'schedule_builder', 'deliverable'],
+    ]);
+    assert.equal(merged.state.artifacts.schedule.out.producer, 'schedule_builder');
 
     // Step 2: the LLM now sees the journal in planner_input …
     prepared = await prepare(merged.state);
     assert.match(prepared.planner_input, /шаг 2: schedule_builder → completed: Перепривязал 2 скважины/);
     assert.deepEqual(prepared.compact.journal.completed_agents, ['schedule_builder']);
+    // … and the deliverables as cards (no `has_schedule_out` slot flag anywhere in the context).
+    assert.deepEqual(prepared.compact.deliverables.map((d) => d.producer), ['schedule_builder', 'schedule_builder']);
+    assert.equal('has_schedule_out' in prepared.compact, false);
+    assert.ok(!prepared.planner_input.includes('has_schedule_out'));
 
     // … (a) if it still re-delegates the same task with no new inputs → result review with the human, not a silent rerun.
     let repeat = await decide(prepared, delegate);
@@ -1088,6 +1145,11 @@ async function run(name, json, nodes = {}, binary = {}) {
     const finished = finish.events.find((e) => e.kind === 'case.finished');
     assert.equal(finished.status_message, 'Скважины 1601 и 1602 переведены в группу DKS с GRAT 200000; новый SCHEDULE готов.');
     assert.match(finished.payload.done_by_agents, /Schedule Builder: Перепривязал 2 скважины/);
+    // Phase 1.5: the finish carries the case result as deliverable cards by producer, not "the schedule".
+    assert.deepEqual(finished.payload.deliverables.map((d) => [d.producer, d.artifact_id, d.filename]), [
+      ['schedule_builder', 'schedule_out', 'schedule_result.inc'],
+      ['schedule_builder', 'diff', 'schedule_changes.diff'],
+    ]);
     // finish without summary_for_human → summary composed from the journal, never "вызвал агента".
     const finishBare = await decide(prepared, { progress: { goal_satisfied: true, evidence: 'ok' }, status_message: 'Готово', action: { type: 'finish' } });
     assert.match(finishBare.events.find((e) => e.kind === 'case.finished').status_message, /Schedule Builder: Перепривязал 2 скважины/);

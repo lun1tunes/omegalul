@@ -14,6 +14,9 @@
   const createTagFields = document.getElementById("createTagFields");
   const createSave = document.getElementById("createSave");
   const createCancel = document.getElementById("createCancel");
+  const agentTabs = document.getElementById("agentTabs");
+  const kbSearch = document.getElementById("kbSearch");
+  const kbCount = document.getElementById("kbCount");
 
   const TAG_GROUPS = [
     {
@@ -117,6 +120,53 @@
 
   function currentNamespace() {
     return namespaces.find((item) => item.id === currentBase) || null;
+  }
+
+  /** Agent tabs mirror the (accessible) select: one click = one knowledge base. */
+  function renderAgentTabs() {
+    if (!agentTabs) return;
+    agentTabs.innerHTML = "";
+    for (const ns of namespaces) {
+      const btn = document.createElement("button");
+      btn.type = "button";
+      btn.className = "kb-tab" + (ns.id === currentBase ? " is-active" : "");
+      btn.setAttribute("role", "tab");
+      btn.setAttribute("aria-selected", String(ns.id === currentBase));
+      const label = document.createElement("span");
+      label.className = "kb-tab-label";
+      label.textContent = ns.label || ns.id;
+      const count = document.createElement("span");
+      count.className = "kb-tab-count";
+      count.textContent = ns.document_count != null ? String(ns.document_count) : "";
+      btn.append(label, count);
+      btn.title = ns.id;
+      btn.addEventListener("click", () => {
+        if (agentSelect) agentSelect.value = ns.id;
+        loadDocuments(ns.id);
+      });
+      agentTabs.append(btn);
+    }
+  }
+
+  function syncAgentTabs() {
+    if (!agentTabs) return;
+    for (const btn of agentTabs.querySelectorAll(".kb-tab")) {
+      const active = btn.title === currentBase;
+      btn.classList.toggle("is-active", active);
+      btn.setAttribute("aria-selected", String(active));
+    }
+  }
+
+  function applySearch() {
+    if (!kbSearch) return;
+    const q = kbSearch.value.trim().toLowerCase();
+    let shown = 0;
+    for (const card of cardList.querySelectorAll(".kb-card")) {
+      const hit = !q || String(card.dataset.search || "").includes(q);
+      card.hidden = !hit;
+      if (hit) shown += 1;
+    }
+    if (kbCount) kbCount.textContent = q ? `${shown} из ${cardList.querySelectorAll(".kb-card").length}` : "";
   }
 
   function syncAddButton() {
@@ -329,6 +379,8 @@
     }
     const first = namespaces[0].id;
     agentSelect.value = first;
+    currentBase = first;
+    renderAgentTabs();
     await loadDocuments(first);
   }
 
@@ -614,15 +666,18 @@
       draft = null;
       const body = cardEl.querySelector(".kb-body");
       if (body) body.remove();
+      cardEl.classList.remove("is-open");
       return;
     }
     for (const other of cardList.querySelectorAll(".kb-card")) {
       if (other !== cardEl) {
         const body = other.querySelector(".kb-body");
         if (body) body.remove();
+        other.classList.remove("is-open");
       }
     }
     openId = id;
+    cardEl.classList.add("is-open");
     try {
       const detail = await fetchDetail(summary.target_base, id);
       renderBody(cardEl, detail, { editing: editingId === id });
@@ -635,6 +690,10 @@
     const card = document.createElement("article");
     card.className = "kb-card";
     card.dataset.id = summary.knowledge_id;
+    card.dataset.search = [
+      summary.title, summary.knowledge_id, summary.knowledge_type, summary.text_preview,
+      ...(summary.keywords || []), ...(summary.topics || []), ...(summary.task_patterns || []),
+    ].filter(Boolean).join(" ").toLowerCase();
 
     const head = document.createElement("button");
     head.type = "button";
@@ -692,9 +751,12 @@
     }
     const docs = Array.isArray(data.documents) ? data.documents : [];
     const ns = namespaces.find((item) => item.id === base);
+    syncAgentTabs();
     agentHint.textContent = ns
-      ? `${ns.label}: ${docs.length} карточек · типы: ${(ns.knowledge_types || []).join(", ") || "—"}`
-      : `${docs.length} карточек`;
+      ? `${ns.label} · ${pluralCards(docs.length)} · типы: ${(ns.knowledge_types || []).join(", ") || "—"}`
+      : pluralCards(docs.length);
+    if (kbSearch) kbSearch.value = "";
+    if (kbCount) kbCount.textContent = "";
 
     if (!docs.length) {
       listEmpty.hidden = false;
@@ -715,10 +777,18 @@
     }
   }
 
+  function pluralCards(n) {
+    const m10 = n % 10; const m100 = n % 100;
+    if (m10 === 1 && m100 !== 11) return `${n} карточка`;
+    if (m10 >= 2 && m10 <= 4 && (m100 < 12 || m100 > 14)) return `${n} карточки`;
+    return `${n} карточек`;
+  }
+
   agentSelect.addEventListener("change", () => {
     const base = agentSelect.value.trim();
     loadDocuments(base);
   });
+  if (kbSearch) kbSearch.addEventListener("input", applySearch);
 
   addBtn.addEventListener("click", () => openCreatePanel());
 

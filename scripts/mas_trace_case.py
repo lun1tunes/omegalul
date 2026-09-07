@@ -102,7 +102,8 @@ def print_timeline(evs: list[dict[str, Any]]) -> None:
             extra = f"  → {e.get('agent_id')}: {short(e.get('handoff_message'), 160)}"
         if kind == "hitl.request":
             payload = e.get("payload") if isinstance(e.get("payload"), dict) else {}
-            opts = payload.get("options") or (payload.get("question") or {}).get("options") if isinstance(payload, dict) else []
+            q = payload.get("question")
+            opts = payload.get("options") or (q.get("options") if isinstance(q, dict) else None) or []
             if isinstance(opts, list) and opts:
                 labels = [o.get("label") if isinstance(o, dict) else o for o in opts]
                 extra = f"  options: {labels}"
@@ -132,6 +133,9 @@ def print_state(st: dict[str, Any]) -> None:
                 print(f"  question {q.get('question_id')}: {short(q.get('question'), 200)}")
     flat = flatten_artifacts(st.get("artifacts"))
     print("artifacts: " + ", ".join(f"{aid}={short(card.get('filename'), 40)}" for aid, card in flat.items()))
+    dels = [(aid, card) for aid, card in flat.items() if str(card.get("kind") or "") == "deliverable" or aid in {"schedule_out", "diff"}]
+    if dels:
+        print("deliverables: " + ", ".join(f"{aid}←{card.get('producer') or '?'}" for aid, card in dels))
     data = st.get("data") if isinstance(st.get("data"), dict) else {}
     for bucket, value in data.items():
         if isinstance(value, dict):
@@ -195,8 +199,9 @@ def verdict_hints(evs: list[dict[str, Any]], st: dict[str, Any]) -> list[str]:
     if steps > 8:
         hints.append(f"step_count={steps} > 8 budget")
     flat = flatten_artifacts(st.get("artifacts"))
-    if st.get("status") == "done" and "schedule_out" not in flat:
-        hints.append("status done but no schedule_out artifact")
+    dels = [aid for aid, card in flat.items() if str(card.get("kind") or "") == "deliverable" or aid in {"schedule_out", "diff"}]
+    if st.get("status") == "done" and not dels:
+        hints.append("status done but no agent deliverables in artifacts")
     return hints
 
 
