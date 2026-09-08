@@ -44,7 +44,7 @@ POST /sessions/{id}/close
 Файлы-результаты (xlsx, отчёты) кладите через `activity.upload(...)` — карточка вернётся в `agent_result.artifacts`.
 
 **Ошибки аргументов — для LLM, не для инженера.** `raise ToolError("no_wells_found", "…подсказка модели…", …)`
-превращается в `{"ok": false, "error": "no_wells_found", "message": "…"}`; модель исправит вызов.
+превращается в `{"ok": false, "code": "no_wells_found", "message": "…"}`; модель исправит вызов. Ключ — `code`, не `error`: item с `json.error` n8n считает упавшим и при `retryOnFail` повторяет HTTP-вызов.
 Инженера спрашивает только `ask_engineer`, и только прозой: `human_text_problems` отклонит `well_column`, `key=value`, JSON.
 
 ## Сделать свой агент за 6 шагов

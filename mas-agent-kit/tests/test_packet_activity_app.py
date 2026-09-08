@@ -220,7 +220,7 @@ def test_agent_app_routes(tmp_path: Path) -> None:
     sid = opened["session_id"]
     assert client.get(f"/sessions/{sid}/result").json()["status"] == "needs_input"
     bad = client.post("/agent-tools/echo", json={"session_id": sid}).json()
-    assert bad["ok"] is False and bad["error"] == "spec_incomplete"
+    assert bad["ok"] is False and bad["code"] == "spec_incomplete"
     ok = client.post("/agent-tools/echo", json={"session_id": sid, "message": "тест", "items": '["a"]'}).json()
     assert ok == {"ok": True, "status": "completed"}
     result = client.get(f"/sessions/{sid}/result").json()
@@ -231,3 +231,18 @@ def test_agent_app_routes(tmp_path: Path) -> None:
     assert client.get(f"/sessions/{sid}/result").status_code == 404
     refused = client.post("/agent-tools/open_session", json={"case_id": "C", "task_id": "T-2", "objective": ""}).json()
     assert refused["ok"] is False and refused["status"] == "needs_input" and refused["result"]["requests"][0]["question"].startswith("Опишите")
+
+
+def test_store_result_tells_the_model_who_acts_next(tmp_path: Path) -> None:
+    """A14 (CASE-6aa008a4-5e33bd, CASE-6aa008f6-67123d): shown the raw needs_input result with its
+    ``requests[]``, Qwen re-asked the engineer through ask_engineer → result_already_stored. The model
+    view of a fixed result carries a ``next_step`` line; the stored result (orchestrator contract) does not."""
+    agent = _DemoAgent(tmp_path)
+    state = agent.store.create({"task_id": "T-9"})
+    asked = agent.store_result(state, agent.needs_input(state, "Какие скважины оставить?"))
+    assert asked["status"] == "needs_input" and asked["requests"][0]["question"] == "Какие скважины оставить?"
+    assert "ask_engineer не нужен" in asked["next_step"] and "заверши ответ" in asked["next_step"]
+    assert "next_step" not in agent.store.load(state["session_id"])["result"]
+    done = agent.store_result(state, agent.new_result(state, "completed", "Готово."))
+    assert done["next_step"].startswith("Результат зафиксирован")
+    assert "next_step" not in agent.model_view({"status": "weird"})

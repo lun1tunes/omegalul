@@ -76,18 +76,18 @@ def test_extract_commissioning_needs_explicit_columns_and_validates_them() -> No
 
     incomplete = execute_tool(state, "extract_commissioning", {"table_id": table_id})
     assert incomplete["ok"] is False
-    assert incomplete["error"] == "spec_incomplete"
+    assert incomplete["code"] == "spec_incomplete"
     assert incomplete["missing"] == ["well_column", "date_column"]
     assert incomplete["available_tables"][0]["table_id"] == table_id
 
     wrong = execute_tool(state, "extract_commissioning", {"table_id": table_id, "well_column": "Скважина", "date_column": "Нет такой"})
     assert wrong["ok"] is False
-    assert wrong["error"] == "column_not_found"
+    assert wrong["code"] == "column_not_found"
     assert wrong["available_columns"] == ["Скважина", "Дата ввода"]
 
     not_dates = execute_tool(state, "extract_commissioning", {"table_id": table_id, "well_column": "Дата ввода", "date_column": "Скважина"})
     assert not_dates["ok"] is False
-    assert not_dates["error"] == "column_not_dates"
+    assert not_dates["code"] == "column_not_dates"
 
     # The result is not stored until a valid extraction happened.
     assert agent.result(load_state(opened["session_id"]))["status"] == "needs_input"
@@ -194,7 +194,7 @@ def test_extract_well_parameters_passes_unmapped_columns_under_their_headers() -
     state = load_state(opened["session_id"])
     table_id = opened["inspect"]["tables"][0]["table_id"]
     bad = execute_tool(state, "extract_well_parameters", {"table_id": table_id, "well_column": "Скважина", "mapping": {"group": "Нет колонки"}})
-    assert bad["ok"] is False and bad["error"] == "column_not_found"
+    assert bad["ok"] is False and bad["code"] == "column_not_found"
     done = execute_tool(state, "extract_well_parameters", {"table_id": table_id, "well_column": "Скважина"})
     assert done["ok"] is True
     row = agent.result(load_state(opened["session_id"]))["data"]["new_wells"][0]
@@ -212,7 +212,7 @@ def test_repeated_extraction_attempts_are_bounded() -> None:
         execute_tool(state, "extract_commissioning", {"table_id": table_id, "well_column": "Скважина", "date_column": "нет"})
     blocked = execute_tool(state, "extract_commissioning", {"table_id": table_id, "well_column": "Скважина", "date_column": "Дата ввода"})
     assert blocked["ok"] is False
-    assert blocked["error"] == "too_many_attempts"
+    assert blocked["code"] == "too_many_attempts"
 
 
 def test_ask_engineer_requires_prose_and_stores_needs_input() -> None:
@@ -222,7 +222,7 @@ def test_ask_engineer_requires_prose_and_stores_needs_input() -> None:
     state = load_state(opened["session_id"])
     machine = execute_tool(state, "ask_engineer", {"question": "date_column=? {choose}"})
     assert machine["ok"] is False
-    assert machine["error"] == "question_not_human"
+    assert machine["code"] == "question_not_human"
     asked = execute_tool(
         state,
         "ask_engineer",
@@ -272,7 +272,7 @@ def test_excel_cards_collect_every_workbook_of_the_case(monkeypatch) -> None:
 def test_after_tool_posts_progress_for_detect_tables_and_tool_errors(_quiet_activity) -> None:
     state = {"case_id": "CASE-T", "task_id": "T1", "activity_base_url": "http://x"}
     agent.after_tool(state, "detect_tables", {"ok": True, "tables": [{}, {}]})
-    agent.after_tool(state, "extract_commissioning", {"ok": False, "error": "column_not_dates"})
+    agent.after_tool(state, "extract_commissioning", {"ok": False, "code": "column_not_dates"})
     agent.after_tool(state, "extract_commissioning", {"ok": True, "status": "completed"})
     assert [msg for _, msg in _quiet_activity] == ["Нашёл таблиц: 2", "Выбранная колонка не похожа на даты — подбираю другую"]
 

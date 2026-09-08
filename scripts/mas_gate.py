@@ -8,14 +8,15 @@ Runs, in order, and prints a summary table (stops at the first failing stage unl
   pytest     Agent Kit, Activity, Schedule Builder, Excel Tools, Demo Agent (template) test suites
   combat     PUBLISH_ACTIVITY=0 combat-dates-revise/run_integration_cases.py (offline engine check)
   live       (only with --live) scripts/lab_soft_redeploy.py --skip-health + run_live_five.py [6 cases]
-             + run_live_demo_agent.py [template agent: in_progress → resume source=agent]  (~12 min)
+             + run_live_demo_agent.py [template agent: in_progress → resume source=agent;
+               three_agent_chain: excel → builder → demo with state.plan]  (~15 min)
 
 Usage:
   python3 scripts/mas_gate.py                 # offline gate (≈1 min)
-  python3 scripts/mas_gate.py --live          # offline gate + lab redeploy + 6 live cases + demo agent case
+  python3 scripts/mas_gate.py --live          # offline gate + lab redeploy + 6 live cases + 2 demo agent cases
   python3 scripts/mas_gate.py --only smokes,pytest
   python3 scripts/mas_gate.py --live --cases combat_case3
-  python3 scripts/mas_gate.py --live --cases demo_agent   # only the template agent case
+  python3 scripts/mas_gate.py --live --cases demo_agent   # only the template agent cases (long job + three-agent chain)
 
 Field note: this script needs Node.js, Docker Compose and the lab .venv — it is developer tooling.
 The field path is docs.md §5 (commands) and the n8n Health Check form.
@@ -164,8 +165,9 @@ def stage_live(cases: list[str]) -> tuple[bool, str]:
         ok = ok and code == 0
         lines += [ln for ln in out.splitlines() if ln.startswith('{"id"') or ln.startswith("FAIL ")] or [tail(out, 20)]
     if not cases or DEMO_CASE in cases:
-        # Template agent (agents-template/demo_agent): enables its registry row, runs one text-only case through
-        # in_progress → waiting_agent → resume source=agent, disables the row again.
+        # Template agent (agents-template/demo_agent): enables its registry row, runs the text-only long-job case
+        # (in_progress → waiting_agent → resume source=agent) and the three-agent chain (plan on excel → builder →
+        # demo), disables the row again.
         code, out = run(
             [py(), "simulation-model-example/run_live_demo_agent.py"],
             env={"PYTHONPATH": "mas-activity-service"},

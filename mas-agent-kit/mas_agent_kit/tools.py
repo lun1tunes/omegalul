@@ -11,7 +11,7 @@
 
     tools.run(state, "inspect_well", {"well": "P1"})   # → {"ok": true, "well": {...}}
 
-``run`` returns the flat envelope (``{"ok": true, ...result}`` or ``{"ok": false, "error", "message", ...}``),
+``run`` returns the flat envelope (``{"ok": true, ...result}`` or ``{"ok": false, "code", "message", ...}``),
 coerces JSON-typed arguments the LLM sent as strings, keeps a bounded ``tool_history`` in the state
 and saves the state through the store. Guards: ``repeat_guard`` (``too_many_attempts``) and
 ``result_guard`` (``result_already_stored``) are explicit calls, so every agent decides its own protocol.

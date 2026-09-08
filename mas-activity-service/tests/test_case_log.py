@@ -81,6 +81,25 @@ def test_records_levels_sources_steps_and_links() -> None:
     assert steps[2]["action_type"] == "finish" and steps[2]["duration_ms"] is not None
 
 
+def test_finish_decision_is_one_chat_line_but_its_own_log_step() -> None:
+    """Parse decision now writes orchestrator.decision (action_type finish, plan counters) right before
+    case.finished with the same status_message: the chat shows one final line, the developer log shows
+    the last step with «Решение: finish» and the plan counters (O13 tail)."""
+    summary = "Сдвинул даты 4 скважин; новый schedule приложен."
+    decision = {"kind": "orchestrator.decision", "actor": "orchestrator", "status_message": summary, "event_id": 7,
+                "payload": {"action_type": "finish", "agent_id": None, "step_count": 3, "plan": {"total": 2, "open": 0, "accepted": 0, "rejected": 0},
+                            "verification": {"all_covered": True, "goal_parts": []}, **EXEC}}
+    finished = {"kind": "case.finished", "actor": "orchestrator", "status": "done", "status_message": summary, "event_id": 8,
+                "payload": {"action_type": "finish", "summary_for_human": summary, "plan": [{"id": "p1", "status": "done"}, {"id": "p2", "status": "done"}], **EXEC}}
+    chat = collapse_duplicate_events([decision, finished])
+    assert [e["kind"] for e in chat] == ["case.finished"]
+    records = case_log.records_from_events([decision, finished], n8n_base="https://n8n.corp")
+    assert [r["kind"] for r in records] == ["orchestrator.decision", "case.finished"] and {r["step"] for r in records} == {3}
+    assert records[0]["title"] == "Решение: finish" and records[0]["level"] == "info" and records[0]["detail"]["plan"] == {"total": 2, "open": 0, "accepted": 0, "rejected": 0}
+    (step,) = case_log.step_groups(records)
+    assert step["step"] == 3 and step["action_type"] == "finish" and step["decision"] == "Решение: finish"
+
+
 def test_error_traces_merge_into_node_error_records() -> None:
     case_id = _seed("CASE-log-err")
     trace = control_plane.append_error_trace(case_id=case_id, execution_id="4712", workflow_name="Agent — Excel Extractor", node_name="Excel Extractor AI Agent",

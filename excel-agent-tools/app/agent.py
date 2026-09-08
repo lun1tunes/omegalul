@@ -175,7 +175,7 @@ class ExcelExtractorAgent(AgentService):
             n = result.get("row_count") if isinstance(result.get("row_count"), int) else (len(rows) if isinstance(rows, list) else 0)
             message = f"Читаю таблицу: {n} строк"
         elif tool_name in {"extract_commissioning", "extract_well_parameters", "ask_engineer"} and not result.get("ok", True):
-            message = TOOL_ERROR_PROGRESS.get(str(result.get("error") or ""), "")
+            message = TOOL_ERROR_PROGRESS.get(str(result.get("code") or ""), "")
         if message:
             self.activity_for_state(state).progress(message)
 

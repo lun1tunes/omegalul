@@ -742,14 +742,16 @@ const journalText=[inputsLine,...journalLines].filter(Boolean).join('\n')||'- п
 const planText=planLines(state.plan).join('\n')||'- план ещё не составлен: составь его в plan_update';
 const prompt=`Цель:\n${compact.goal}\n\nЖурнал задачи (что уже сделано, по шагам):\n${journalText}\n\nПлан задачи (твоя декомпозиция; статусы pending, active, done, blocked, dropped):\n${planText}\n\nТекущее состояние:\n${JSON.stringify(compact,null,2)}\n\nДоступные агенты (реестр):\n${JSON.stringify(plannerRegistry,null,2)}\n`;
 const retrieval_selector={target_base:ORCH_RAG_TARGET_BASE,knowledge_types:ORCH_RAG_KNOWLEDGE_TYPES};
-/* Plain-text query: goal + inputs + agent summaries. Selectors (target_base / knowledge_types) do the filtering;
-   no regex-derived topics or keyword families (Phase 2). */
+/* Plain-text query: goal + plan titles + agent summaries. Selectors (target_base / knowledge_types) do the
+   filtering; the tag branch gets the registry roles of the agents named in open plan items
+   (planRetrievalTopics) — no regex-derived topics or keyword families (Phase 2 / O4). */
 const schedule_retrieval_request={
   query:buildRetrievalQuery(compact),
   filters:{
     target_base:ORCH_RAG_TARGET_BASE,
     access_scope:ORCH_RAG_ACCESS_SCOPE,
-    knowledge_types:ORCH_RAG_KNOWLEDGE_TYPES
+    knowledge_types:ORCH_RAG_KNOWLEDGE_TYPES,
+    topics:planRetrievalTopics(state.plan, registry)
   },
   top_k:ORCH_RAG_TOP_K
 };
@@ -976,7 +978,10 @@ if(type==='call_agent'){
   const result={...(obj(action.result)?action.result:{}),summary_for_human:summary,done_by_agents:journalSummary,deliverables:deliverables(state.artifacts),...(guard?{guard}:{}),...(verification?{completion_verified:verification.all_covered===true}:{})};
   state.data={...(state.data||{}),result};
   statusMessage=summary;
-  events.push({kind:'case.finished',actor:'orchestrator',status:'done',status_message:summary,payload:{...result,action_type:'finish',plan:state.plan,...execRef()}});
+  /* The finish is a decision too: the developer log gets the LLM's raw finish (plan counters, verification,
+     guard) as the last step's decision; the chat collapses it into case.finished (same status_message). */
+  decisionEvent.status_message=summary;
+  events.push(decisionEvent, {kind:'case.finished',actor:'orchestrator',status:'done',status_message:summary,payload:{...result,action_type:'finish',plan:state.plan,...execRef()}});
 } else {
   nextStatus='waiting_user';
   const q={question_id:'Q-unknown',question:'Оркестратор вернул неизвестное действие',options:[]};

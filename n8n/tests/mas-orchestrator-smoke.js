@@ -508,10 +508,12 @@ async function run(name, json, nodes = {}, binary = {}) {
   assert.equal(prepared.schedule_retrieval_request.filters.target_base, 'orchestrator_routing');
   assert.deepEqual(prepared.schedule_retrieval_request.filters.knowledge_types, ['routing_card']);
   assert.equal(prepared.schedule_retrieval_request.filters.access_scope, 'petroleum-engineering');
-  // Phase 2: no regex-derived tags in the retrieval request — selectors + plain-text query only.
-  for (const gone of ['keyword_families', 'topics', 'task_patterns']) {
+  // Phase 2: no regex-derived tags in the retrieval request — selectors + plain-text query; the only tags
+  // are `topics` from the plan (registry roles of agents in open plan items — empty without a plan).
+  for (const gone of ['keyword_families', 'task_patterns']) {
     assert.equal(gone in prepared.schedule_retrieval_request.filters, false, gone);
   }
+  assert.deepEqual(prepared.schedule_retrieval_request.filters.topics, []);
   assert.match(prepared.schedule_retrieval_request.query, /даты ввода/);
   assert.match(prepared.schedule_retrieval_request.query, /Извлечено 40 скважин из Excel/);
   assert.ok(prepared.schedule_retrieval_request.query.length <= 800);
@@ -1185,7 +1187,17 @@ async function run(name, json, nodes = {}, binary = {}) {
     },
   );
   assert.equal(finished.action_type, 'finish');
-  assert.deepEqual(finished.events.map((e) => e.kind), ['case.finished']);
+  // A finish is a decision too: the developer log gets the raw LLM decision as the last step's decision
+  // (plan counters, guard, verification); it carries the same status_message as case.finished so the
+  // Activity chat collapses the pair into one line.
+  assert.deepEqual(finished.events.map((e) => e.kind), ['orchestrator.decision', 'case.finished']);
+  {
+    const [finishDecision, finishedEvent] = finished.events;
+    assert.equal(finishDecision.payload.action_type, 'finish');
+    assert.equal(finishDecision.status_message, finishedEvent.status_message);
+    assert.deepEqual(finishDecision.payload.plan, { total: 0, open: 0, accepted: 0, rejected: 0 });
+    assert.equal(finishDecision.payload.decision.action.type, 'finish');
+  }
 
   const merged = await run(
     'Merge agent result',
@@ -1683,8 +1695,9 @@ async function run(name, json, nodes = {}, binary = {}) {
   // ---------------------------------------------------------------------------------------------
   {
     const registry = [
-      { agent_id: 'excel_extractor', title: 'Excel Extractor' },
-      { agent_id: 'schedule_builder', title: 'Schedule Builder' },
+      // Postgres jsonb columns arrive parsed; a string is how a hand-edited Runtime Config / UI row may look.
+      { agent_id: 'excel_extractor', title: 'Excel Extractor', input_required: ['excel'], output_provides: '["facts","new_wells"]' },
+      { agent_id: 'schedule_builder', title: 'Schedule Builder', input_required: ['schedule_source'], output_provides: ['schedule_out', 'diff'] },
     ];
     const req = { case_id: 'CASE-PLAN', action: 'step', is_status: false, is_resume: false };
     const baseState = {
@@ -1715,9 +1728,10 @@ async function run(name, json, nodes = {}, binary = {}) {
       action: { type: 'call_agent', agent_id: 'excel_extractor', handoff_message: 'Извлеки даты ввода из книги.' },
     };
 
-    // A fresh case: the prompt asks for a plan and explains the vocabulary.
+    // A fresh case: the prompt asks for a plan and explains the vocabulary; no plan → no RAG tags.
     let prepared = await prepare(baseState);
     assert.match(prepared.planner_input, /План задачи \(твоя декомпозиция; статусы pending, active, done, blocked, dropped\):\n- план ещё не составлен: составь его в plan_update/);
+    assert.deepEqual(prepared.schedule_retrieval_request.filters.topics, []);
     const system = wf.nodes.find((n) => n.name === 'Decision LLM').parameters.messages.messageValues[0].message;
     assert.match(system, /plan_update/);
     assert.match(system, /Пункт без id отбрасывается/);
@@ -1760,6 +1774,13 @@ async function run(name, json, nodes = {}, binary = {}) {
     assert.ok(prepared.planner_input.indexOf('План задачи') < prepared.planner_input.indexOf('\nТекущее состояние:'), 'plan is inside the slice Prepare verify forwards');
     assert.deepEqual(prepared.compact.plan[1], { id: 'p2', title: 'Новый schedule на основе baseline', status: 'pending', agent_id: 'schedule_builder' });
     assert.match(prepared.schedule_retrieval_request.query, /План: Даты ввода скважин из Excel; Новый schedule на основе baseline; Согласование с инженером/);
+    // Tag branch (O4 tail): registry roles of the agents named in *open* plan items — p1 is done (excel roles
+    // gone), p2 names the builder, p3 names nobody. Routing cards carry the same words in `topics`.
+    assert.deepEqual(prepared.schedule_retrieval_request.filters.topics, ['schedule_source', 'schedule_out', 'diff']);
+    {
+      const bothOpen = await prepare({ ...merged.state, plan: merged.state.plan.map((p) => (p.id === 'p1' ? { ...p, status: 'blocked' } : p)) });
+      assert.deepEqual(bothOpen.schedule_retrieval_request.filters.topics, ['excel', 'facts', 'new_wells', 'schedule_source', 'schedule_out', 'diff']);
+    }
 
     // An update touches only the fields it names: status without title keeps the title; a title without status keeps the status.
     const touched = await decide(prepared, {
@@ -1807,6 +1828,12 @@ async function run(name, json, nodes = {}, binary = {}) {
     assert.equal(done.action_type, 'finish');
     assert.equal(done.events.find((e) => e.kind === 'case.finished').payload.completion_verified, true);
     assert.deepEqual(done.events.find((e) => e.kind === 'case.finished').payload.plan.map((p) => p.status), ['done', 'done', 'dropped']);
+    // The finish decision is logged like every other decision (last step of the developer log shows
+    // «Решение: finish» with the plan counters and the verifier's parts), same message as case.finished.
+    assert.deepEqual(done.events.map((e) => e.kind), ['orchestrator.decision', 'case.finished']);
+    assert.deepEqual(decisionPayload(done).plan, { total: 3, open: 0, accepted: 0, rejected: 0 });
+    assert.equal(decisionPayload(done).verification.all_covered, true);
+    assert.equal(done.events[0].status_message, done.events[1].status_message);
 
     // A plan item the model closes in the same reply as finish does not block it.
     const stale = { ...merged.state, plan: merged.state.plan.map((p) => (p.id === 'p2' ? { ...p, status: 'active' } : p)) };

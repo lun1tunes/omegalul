@@ -42,18 +42,35 @@ def _registry(store: SessionStore) -> ToolRegistry:
     return tools
 
 
+def test_error_envelope_never_carries_the_n8n_failure_key(store: SessionStore) -> None:
+    """CASE-6a9ffb35-bebdb8: n8n 2.30.8 re-runs a retryOnFail node whose first item has a truthy
+    ``json.error`` — one LLM ``ask_engineer`` reached the service three times, 2 s apart, and the
+    developer log counted three ``result_already_stored`` warnings. Envelopes use ``code``."""
+    tools = _registry(store)
+    state = store.create({"file_hash": "h1"})
+    for envelope in (
+        tools.run(state, "pick", {}),
+        tools.run(state, "nope", {}),
+        tools.run(state, "boom", {}),
+        tools.run(state, "pick", "not-a-dict"),  # type: ignore[arg-type]
+        ToolError("x", "y", error="smuggled").envelope(),
+    ):
+        assert envelope["ok"] is False and envelope["code"]
+        assert "error" not in envelope, envelope
+
+
 def test_registry_envelopes_are_flat_and_history_is_saved(store: SessionStore) -> None:
     tools = _registry(store)
     state = store.create({"file_hash": "h1"})
     ok = tools.run(state, "pick", {"table_id": "t1", "columns": '["a","b"]', "mapping": {"0": "x"}})
     assert ok == {"ok": True, "picked": "t1", "columns": ["a", "b"], "mapping": {"0": "x"}}
     bad = tools.run(state, "pick", {})
-    assert bad["ok"] is False and bad["error"] == "spec_incomplete" and bad["missing"] == ["table_id"] and bad["available_tables"] == ["t1"]
+    assert bad["ok"] is False and bad["code"] == "spec_incomplete" and bad["missing"] == ["table_id"] and bad["available_tables"] == ["t1"]
     unknown = tools.run(state, "nope", {})
-    assert unknown["error"] == "unknown_tool" and "pick" in unknown["available_tools"]
+    assert unknown["code"] == "unknown_tool" and "pick" in unknown["available_tools"]
     crashed = tools.run(state, "boom", {})
-    assert crashed["error"] == "tool_failed" and "/srv" not in json.dumps(crashed)
-    assert tools.run(state, "pick", "not-a-dict")["error"] == "invalid_arguments"  # type: ignore[arg-type]
+    assert crashed["code"] == "tool_failed" and "/srv" not in json.dumps(crashed)
+    assert tools.run(state, "pick", "not-a-dict")["code"] == "invalid_arguments"  # type: ignore[arg-type]
     reloaded = store.load(state["session_id"])
     assert [h["tool"] for h in reloaded["tool_history"]] == ["pick", "pick", "boom"]
     assert reloaded["tool_history"][1]["error_code"] == "spec_incomplete"
@@ -77,7 +94,7 @@ def test_cache_repeat_and_result_guards(store: SessionStore) -> None:
     assert exc.value.code == "too_many_attempts"
     assert tools.run(state, "fix", {})["ok"] is True
     blocked = tools.run(state, "fix", {})
-    assert blocked["error"] == "result_already_stored" and blocked["status"] == "completed"
+    assert blocked["code"] == "result_already_stored" and blocked["status"] == "completed"
 
 
 def test_session_store_lifecycle_and_path_safety(store: SessionStore) -> None:

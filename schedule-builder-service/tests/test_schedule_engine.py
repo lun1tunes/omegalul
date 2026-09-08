@@ -736,7 +736,7 @@ def test_agent_tools_open_inspect_search_and_operations() -> None:
         },
     )
     assert invented.json()["ok"] is False
-    assert invented.json()["error"] == "well_not_in_schedule"
+    assert invented.json()["code"] == "well_not_in_schedule"
 
 
 def test_apply_operations_accepts_array_and_rejects_empty() -> None:
@@ -757,7 +757,7 @@ def test_apply_operations_accepts_array_and_rejects_empty() -> None:
     empty = client.post("/agent-tools/apply_operations", json={"session_id": sid, "operations": {}})
     # A malformed tool call is the LLM's problem, not a question for the engineer.
     assert empty.json()["ok"] is False
-    assert empty.json()["error"] == "operations_required"
+    assert empty.json()["code"] == "operations_required"
     assert client.get(f"/sessions/{sid}/result").json()["issues"][0]["type"] == "no_apply"
     applied = client.post(
         "/agent-tools/apply_operations",
@@ -794,7 +794,7 @@ def test_group_rebind_incomplete_spec_goes_back_to_llm_not_to_engineer() -> None
     sid = body["session_id"]
     incomplete = client.post("/agent-tools/apply_group_rebind", json={"session_id": sid, "wells": "P1"}).json()
     assert incomplete["ok"] is False
-    assert incomplete["error"] == "spec_incomplete"
+    assert incomplete["code"] == "spec_incomplete"
     assert incomplete["missing"] == ["parent_group", "parent_of_parent", "control", "gas_rate"]
     assert incomplete["baseline"]["has_gruptree"] is False
     assert "GNEW" not in json.dumps(incomplete), "no invented placeholder groups"
@@ -803,7 +803,7 @@ def test_group_rebind_incomplete_spec_goes_back_to_llm_not_to_engineer() -> None
     # Nothing was stored as the agent's answer: the session still has no result for the orchestrator.
     assert client.get(f"/sessions/{sid}/result").json()["issues"][0]["type"] == "no_apply"
     invented = client.post("/agent-tools/apply_group_rebind", json={"session_id": sid, "wells": "P1 P2"}).json()
-    assert invented["error"] == "well_not_in_schedule" and invented["wells"] == ["P2"]
+    assert invented["code"] == "well_not_in_schedule" and invented["wells"] == ["P2"]
 
 
 def test_group_rebind_full_spec_from_llm_applies_and_summarizes_for_human() -> None:
@@ -841,7 +841,7 @@ def test_ask_engineer_is_the_only_human_question_path_and_must_be_prose() -> Non
         "/agent-tools/ask_engineer",
         json={"session_id": sid, "question": "Уточните parent_group для перепривязки групп", "options": ["keep|remove"]},
     ).json()
-    assert machine["ok"] is False and machine["error"] == "question_not_human"
+    assert machine["ok"] is False and machine["code"] == "question_not_human"
     assert any("parent_group" in p for p in machine["problems"])
     assert client.get(f"/sessions/{sid}/result").json()["issues"][0]["type"] == "no_apply"
 
@@ -868,11 +868,11 @@ def test_ask_engineer_is_the_only_human_question_path_and_must_be_prose() -> Non
         "/agent-tools/ask_engineer",
         json={"session_id": sid, "question": "А в какую всё-таки группу поместить скважину P1?"},
     ).json()
-    assert again["ok"] is False and again["error"] == "result_already_stored"
+    assert again["ok"] is False and again["code"] == "result_already_stored"
     assert again["status"] == "needs_input"
     assert "Больше инструменты не вызывай" in again["message"]
     blocked_apply = client.post("/agent-tools/apply_commissioning", json={"session_id": sid}).json()
-    assert blocked_apply["error"] == "result_already_stored"
+    assert blocked_apply["code"] == "result_already_stored"
     assert client.get(f"/sessions/{sid}/result").json()["requests"][0]["question"] == req["question"]
     # Read-only tools keep working.
     assert client.post("/agent-tools/inspect_schedule", json={"session_id": sid}).json()["ok"] is True

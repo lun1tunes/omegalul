@@ -99,7 +99,7 @@ def test_count_wells_completes_with_upstream_facts(client: TestClient, activity_
 def test_no_wells_is_an_llm_error_not_an_engineer_question(client: TestClient, activity_url: str) -> None:
     opened = client.post("/agent-tools/open_session", json=task(activity_url, "Посчитай что-нибудь", case_id="CASE-empty")).json()
     out = client.post("/agent-tools/count_wells", json={"session_id": opened["session_id"]}).json()
-    assert out["ok"] is False and out["error"] == "no_wells_found"
+    assert out["ok"] is False and out["code"] == "no_wells_found"
     assert "ask_engineer" in out["message"], "the message tells the LLM what to do next"
     # Nothing was stored: GET result falls back to the agent's own needs_input question.
     assert client.get(f"/sessions/{opened['session_id']}/result").json()["status"] == "needs_input"
@@ -109,7 +109,7 @@ def test_ask_engineer_stores_needs_input_in_russian(client: TestClient, activity
     opened = client.post("/agent-tools/open_session", json=task(activity_url, "Сделай демонстрацию")).json()
     sid = opened["session_id"]
     bad = client.post("/agent-tools/ask_engineer", json={"session_id": sid, "question": "Укажите well_column для table_id"}).json()
-    assert bad["ok"] is False and bad["error"] == "question_not_human"
+    assert bad["ok"] is False and bad["code"] == "question_not_human"
     ok = client.post("/agent-tools/ask_engineer", json={"session_id": sid, "question": "Какие скважины посчитать?", "options": "Все из задачи; Только новые"}).json()
     assert ok["status"] == "needs_input"
     result = client.get(f"/sessions/{sid}/result").json()

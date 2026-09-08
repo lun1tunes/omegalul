@@ -166,7 +166,7 @@ def test_successful_finalization_requires_successful_result_validation(client: T
         json={"name": "finalize_extraction", "args": {"status": "success", "data": {}}},
     ).json()
     assert missing_result["ok"] is False
-    assert missing_result["error"] == "INVALID_FINAL_OUTPUT"
+    assert missing_result["code"] == "INVALID_FINAL_OUTPUT"
 
     table_id = tool(client, session_id, "detect_tables", {"sheet": "Заказы"})["tables"][0]["table_id"]
     queried = tool(client, session_id, "query_table", {"table_id": table_id, "select": ["Заказ №"]})
@@ -177,7 +177,7 @@ def test_successful_finalization_requires_successful_result_validation(client: T
         json={"name": "finalize_extraction", "args": {"status": "success", "data": {"result_id": queried["result_id"]}}},
     ).json()
     assert unvalidated["ok"] is False
-    assert unvalidated["error"] == "RESULT_NOT_VALIDATED"
+    assert unvalidated["code"] == "RESULT_NOT_VALIDATED"
 
     rejected_validation = tool(
         client,
@@ -192,7 +192,7 @@ def test_successful_finalization_requires_successful_result_validation(client: T
         json={"name": "finalize_extraction", "args": {"status": "success", "data": {"result_id": queried["result_id"]}}},
     ).json()
     assert failed_finalization["ok"] is False
-    assert failed_finalization["error"] == "RESULT_NOT_VALIDATED"
+    assert failed_finalization["code"] == "RESULT_NOT_VALIDATED"
 
     accepted_validation = tool(client, session_id, "validate_result", {"result_id": queried["result_id"], "required_columns": ["Заказ №"]})
     assert accepted_validation["valid"] is True
@@ -209,7 +209,7 @@ def test_structured_errors_batch_and_clarification(client: TestClient) -> None:
     )
     assert batch.status_code == 200
     results = batch.json()["results"]
-    assert results[0]["ok"] is False and results[0]["error"] == "unknown_tool"
+    assert results[0]["ok"] is False and results[0]["code"] == "unknown_tool"
     assert results[1]["ok"] is True
     clarification = tool(client, session_id, "submit_clarification", {"questions": [{"id": "amount", "question": "Какую сумму использовать?", "type": "choice", "options": ["Сумма", "Сумма итого"]}]})
     answer = {"token": clarification["token"], "answers": [{"question_id": "amount", "answer": "Сумма итого"}]}
@@ -223,7 +223,7 @@ def test_structured_errors_batch_and_clarification(client: TestClient) -> None:
         headers={"X-API-Key": "test-key"},
         json={"name": "resolve_clarification", "args": {"token": clarification["token"], "answers": [{"question_id": "amount", "answer": "Сумма"}]}},
     ).json()
-    assert conflict["ok"] is False and conflict["error"] == "CLARIFICATION_ALREADY_RESOLVED"
+    assert conflict["ok"] is False and conflict["code"] == "CLARIFICATION_ALREADY_RESOLVED"
 
 
 def test_agent_tool_transport_accepts_n8n_envelopes_and_top_level_arguments(client: TestClient) -> None:
@@ -600,7 +600,7 @@ def test_n8n_session_endpoints_open_extract_and_tool_alias(client: TestClient) -
     )
     assert incomplete.status_code == 200, incomplete.text
     assert incomplete.json()["ok"] is False
-    assert incomplete.json()["error"] == "spec_incomplete"
+    assert incomplete.json()["code"] == "spec_incomplete"
     extracted = client.post(
         "/agent-tools/extract_commissioning",
         headers={"X-API-Key": "test-key"},

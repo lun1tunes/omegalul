@@ -133,9 +133,9 @@ class ScheduleBuilderAgent(AgentService):
 
     def store_result(self, state: dict[str, Any], result: dict[str, Any]) -> dict[str, Any]:
         """Save the full result; echo to the LLM only sizes of the artifacts — the ``.INC`` never goes to the model."""
-        super().store_result(state, result)
+        view = super().store_result(state, result)  # result + next_step hint for the model
         arts = result.get("artifacts") if isinstance(result.get("artifacts"), dict) else {}
-        compact = {k: v for k, v in result.items() if k != "artifacts"}
+        compact = {k: v for k, v in view.items() if k != "artifacts"}
         compact["artifacts"] = {
             "schedule_out": bool(str(arts.get("schedule_out") or "").strip()),
             "diff_bytes": len(str(arts.get("diff") or "").encode("utf-8")),

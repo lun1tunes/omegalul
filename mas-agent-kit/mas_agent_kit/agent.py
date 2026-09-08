@@ -40,6 +40,15 @@ from .result import agent_result, needs_input
 from .session import SessionStore
 from .tools import ToolRegistry
 
+#: ``next_step`` the model reads after a tool fixed the session result — who acts next, so it stops.
+RESULT_NEXT_STEP: dict[str, str] = {
+    "needs_input": "Вопрос инженеру уже поставлен этим результатом — оркестратор передаст его инженеру и вернётся с ответом. "
+    "ask_engineer не нужен; больше инструменты не вызывай, заверши ответ одним предложением.",
+    "completed": "Результат зафиксирован. Больше инструменты не вызывай, заверши ответ одним предложением о том, что сделано.",
+    "in_progress": "Работа запущена, результат придёт позже через Activity. Больше инструменты не вызывай, заверши ответ одним предложением.",
+    "failed": "Результат зафиксирован как неудача. Больше инструменты не вызывай, одним предложением опиши, чего не хватило.",
+}
+
 
 class AgentService:
     agent_id: str = ""
@@ -93,7 +102,7 @@ class AgentService:
             call=int(state.get("llm_calls") or 0) or 1,
             args=args,
             result={k: v for k, v in result.items() if k != "ok"},
-            error="" if ok else str(result.get("error") or "error"),
+            error="" if ok else str(result.get("code") or "error"),
             session_id=str(state.get("session_id") or ""),
         )
 
@@ -139,9 +148,24 @@ class AgentService:
         return needs_input(self.agent_id, str(state.get("task_id") or ""), question, **kw)
 
     def store_result(self, state: dict[str, Any], result: dict[str, Any]) -> dict[str, Any]:
+        """Fix the session result and return what the LLM should see (``model_view``)."""
         state["result"] = result
         self.store.save(state)
-        return result
+        return self.model_view(result)
+
+    def model_view(self, result: dict[str, Any]) -> dict[str, Any]:
+        """The stored result plus a ``next_step`` line for the model.
+
+        The result itself is the orchestrator's contract (``requests[]`` becomes the HITL question). Shown
+        raw to the model, a ``needs_input`` result read as «now ask the engineer»: Qwen re-asked the same
+        question through ``ask_engineer`` and got ``result_already_stored`` (CASE-6aa008a4-5e33bd,
+        CASE-6aa008f6-67123d). The hint says who acts next, so the model can stop.
+        """
+        view = dict(result)
+        hint = RESULT_NEXT_STEP.get(str(result.get("status") or ""))
+        if hint:
+            view["next_step"] = hint
+        return view
 
 
 def agent_router(agent: AgentService, *, dependencies: list[Any] | None = None) -> APIRouter:

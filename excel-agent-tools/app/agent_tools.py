@@ -459,6 +459,6 @@ def ask_engineer_tool(ctx: dict[str, Any], args: dict[str, Any]) -> dict[str, An
         issues=[{"type": "engineer_input_required", "topic": request["question_id"][2:]}],
         requests=[request],
     )
-    agent.store_result(state, result)
+    view = agent.store_result(state, result)
     agent.activity_for_state(state).progress("Нужно уточнение инженера: " + request["question"][:200], status="needs_input")
-    return {"status": "needs_input", "message": request["question"]}
+    return {"status": "needs_input", "message": request["question"], "next_step": view.get("next_step", "")}

@@ -418,7 +418,7 @@
                   "target_base": "orchestrator_routing",
                   "knowledge_type": "routing_card",
                   "knowledge_id": "route-excel-extractor",
-                  "revision": "5",
+                  "revision": "6",
                   "title": "Политика: табличные факты из Excel",
                   "keywords": [
                     "XLSX",
@@ -426,7 +426,9 @@
                   ],
                   "topics": [
                     "маршрутизация",
-                    "Excel"
+                    "Excel",
+                    "facts",
+                    "new_wells"
                   ],
                   "task_patterns": [
                     "извлечь таблицу",
@@ -445,7 +447,7 @@
                   "target_base": "orchestrator_routing",
                   "knowledge_type": "routing_card",
                   "knowledge_id": "route-schedule-builder",
-                  "revision": "7",
+                  "revision": "8",
                   "title": "Политика: правка SCHEDULE",
                   "keywords": [
                     "INC",
@@ -454,7 +456,12 @@
                   ],
                   "topics": [
                     "маршрутизация",
-                    "SCHEDULE"
+                    "SCHEDULE",
+                    "schedule_source",
+                    "schedule_out",
+                    "diff",
+                    "facts",
+                    "new_wells"
                   ],
                   "task_patterns": [
                     "построить прогнозный SCHEDULE",
@@ -477,7 +484,7 @@
                   "target_base": "orchestrator_routing",
                   "knowledge_type": "routing_card",
                   "knowledge_id": "route-mas-thin-orchestrator",
-                  "revision": "4",
+                  "revision": "5",
                   "title": "Политика декомпозиции задач MAS",
                   "keywords": [
                     "INC",
@@ -488,7 +495,12 @@
                   "topics": [
                     "маршрутизация",
                     "декомпозиция",
-                    "handoff"
+                    "handoff",
+                    "excel",
+                    "schedule_source",
+                    "facts",
+                    "new_wells",
+                    "schedule_out"
                   ],
                   "task_patterns": [
                     "новые даты ввода скважин",
@@ -511,7 +523,7 @@
                   "target_base": "orchestrator_routing",
                   "knowledge_type": "routing_card",
                   "knowledge_id": "route-calculation",
-                  "revision": "5",
+                  "revision": "6",
                   "title": "Политика: геометрия скважины",
                   "keywords": [
                     "DEV",
@@ -519,7 +531,10 @@
                   ],
                   "topics": [
                     "маршрутизация",
-                    "geometry"
+                    "geometry",
+                    "surface",
+                    "trajectory",
+                    "top_perforation_md"
                   ],
                   "task_patterns": [
                     "пересечение траектории",

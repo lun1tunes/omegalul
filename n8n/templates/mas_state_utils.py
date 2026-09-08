@@ -768,6 +768,27 @@ function planLines(plan){
     return `- ${p.id} [${p.status}] ${p.title}${agent}${deps}${note}`;
   });
 }
+/* RAG tag branch from the plan (no regex over the goal): the open plan items name agents, the registry
+   names what those agents consume/produce (input_required / output_provides — artifact roles and data
+   keys). Routing cards carry the same role words in `topics`, so the cards for the agents the model
+   intends to use are boosted. Empty plan → empty tags → lexical/semantic branches only. */
+function planRetrievalTopics(plan, registry){
+  const rows=Array.isArray(registry)?registry:[];
+  const out=[];
+  for(const p of planOpenItems(plan)){
+    const row=p.agent_id?rows.find(r=>r&&String(r.agent_id||'')===p.agent_id):null;
+    if(!row) continue;
+    for(const key of ['input_required','output_provides']){
+      let vals=row[key];
+      if(typeof vals==='string'){ try{vals=JSON.parse(vals);}catch{vals=[];} }
+      for(const v of (Array.isArray(vals)?vals:[])){
+        const tag=String(v||'').trim().toLowerCase();
+        if(tag&&!out.includes(tag)) out.push(tag);
+      }
+    }
+  }
+  return out.slice(0,12);
+}
 /* One agent_result → case state. Used by `Merge agent result` (synchronous agents) and by the
    `resume source=agent` path (long agents that returned `in_progress` and finish later through the
    Activity run endpoint). Domain-free: it knows statuses and slots, not agents.
