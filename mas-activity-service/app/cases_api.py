@@ -28,6 +28,7 @@ from app.state_shape import (
     flatten_artifacts,
     nest_artifacts,
     role_for_artifact_id,
+    sanitize_plan,
 )
 from app.orchestrator import OrchestratorError, invoke_orchestrator
 from app.schema_view import FINISHED_RESULT_TEXT, build_schema_model
@@ -412,6 +413,8 @@ def _feed_from_row(
         # Phase 1.5: the case result is the set of agent deliverables (cards by producer), not one file.
         "artifacts": cards,
         "deliverables": [card for card in cards if card["kind"] == "deliverable"],
+        # O13: the orchestrator's decomposition (state.plan) — the UI shows it under the task statement.
+        "plan": sanitize_plan(state.get("plan")),
         "restartable": case_is_restartable(row),
     }
 
@@ -1034,6 +1037,7 @@ def _stream_meta(feed: dict[str, Any]) -> dict[str, Any]:
         "restartable": feed.get("restartable"),
         "artifacts": feed.get("artifacts"),
         "deliverables": feed.get("deliverables"),
+        "plan": feed.get("plan"),
         "state": feed.get("state"),
         "task_name": feed.get("task_name"),
         "title": feed.get("title"),

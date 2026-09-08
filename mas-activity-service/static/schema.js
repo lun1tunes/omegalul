@@ -129,11 +129,24 @@
     return names;
   }
 
+  // Plan (O13): state.plan rows with an agent → the node's caption is the planned result; idle nodes with a
+  // plan row read «В плане» instead of «Не вызывался».
+  function planByAgent(state) {
+    const out = new Map();
+    for (const item of Array.isArray(state?.plan) ? state.plan : []) {
+      const id = text(item?.agent_id);
+      if (!id || !item?.id || item.status === "dropped" || out.has(id)) continue;
+      out.set(id, { title: text(item.title || item.id), status: text(item.status || "pending") });
+    }
+    return out;
+  }
+
   function blankGraph(state, agents) {
     const nodes = {};
     const edges = {};
+    const planned = planByAgent(state);
     for (const key of FIXED_NODES) nodes[key] = { tone: "idle", bubble: null, caption: "" };
-    for (const id of agents) nodes[agentKey(id)] = { tone: "idle", bubble: null, caption: "" };
+    for (const id of agents) nodes[agentKey(id)] = { tone: "idle", bubble: null, caption: planned.get(id)?.title || "", planned: planned.has(id) };
     edges["input>orchestrator"] = { tone: "idle", bubble: null };
     edges["orchestrator>output"] = { tone: "idle", bubble: null };
     edges["orchestrator>user"] = { tone: "idle", bubble: null };
@@ -583,7 +596,7 @@
       const tone = spec.tone || "idle";
       el.className = `schema-node is-${tone === "error" ? "failed" : tone}`;
       const status = el.querySelector(".schema-node-status");
-      const label = statusLabel(key, tone);
+      const label = tone === "idle" && spec.planned ? "В плане" : statusLabel(key, tone);
       status.textContent = label;
       status.hidden = !label;
       status.dataset.tone = tone === "error" ? "failed" : tone === "active" || tone === "pending" ? "running" : tone === "waiting" ? "waiting" : tone === "done" ? "done" : "";

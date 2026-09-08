@@ -9,7 +9,7 @@
   <link rel="preconnect" href="https://fonts.googleapis.com" />
   <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
   <link href="https://fonts.googleapis.com/css2?family=IBM+Plex+Sans:wght@400;500;600;700&family=IBM+Plex+Mono:wght@400;500&display=swap" rel="stylesheet" />
-  <link rel="stylesheet" href="/static/app.css?v=101" />
+  <link rel="stylesheet" href="/static/app.css?v=102" />
 </head>
 <body>
   <svg width="0" height="0" style="position:absolute" aria-hidden="true">
@@ -121,6 +121,10 @@
             <div class="request-label">Постановка задачи</div>
             <p class="request-text" id="requestText"></p>
             <ul class="request-files file-chips" id="requestFiles" hidden></ul>
+            <section class="request-plan" id="requestPlan" hidden aria-label="План оркестратора">
+              <div class="request-label request-plan-label">План <span class="request-plan-count" id="requestPlanCount"></span></div>
+              <ol class="plan-steps" id="requestPlanSteps"></ol>
+            </section>
           </section>
           <aside class="status-banner" id="statusBanner" hidden>
             <div class="status-banner-label" id="statusBannerLabel">Статус</div>
@@ -274,8 +278,8 @@
     </aside>
   </main>
 
-  <script src="/static/schema.js?v=31"></script>
+  <script src="/static/schema.js?v=32"></script>
   <script src="/static/log.js?v=1"></script>
-  <script src="/static/app.js?v=104"></script>
+  <script src="/static/app.js?v=105"></script>
 </body>
 </html>

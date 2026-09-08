@@ -1678,6 +1678,149 @@ async function run(name, json, nodes = {}, binary = {}) {
   }
 
   // ---------------------------------------------------------------------------------------------
+  // O13 — the plan is an object the orchestrator keeps (regression for CASE-6a9fa129-5ae077: the model wrote
+  // `plan_update: [{step:1, agent:"…", action:"call_agent", reason:"…"}]` — no id — and the plan was lost).
+  // ---------------------------------------------------------------------------------------------
+  {
+    const registry = [
+      { agent_id: 'excel_extractor', title: 'Excel Extractor' },
+      { agent_id: 'schedule_builder', title: 'Schedule Builder' },
+    ];
+    const req = { case_id: 'CASE-PLAN', action: 'step', is_status: false, is_resume: false };
+    const baseState = {
+      case_id: 'CASE-PLAN',
+      goal: 'Сдвинуть даты ввода по Excel и собрать новый schedule',
+      status: 'running',
+      step_count: 0,
+      version: 1,
+      artifacts: { excel: { artifact_id: 'excel', filename: 'dates.xlsx' }, schedule: { source: { artifact_id: 'schedule_source', filename: 'baseline.inc' } } },
+      data: {},
+      hitl: { pending: false, questions: [], answers: {} },
+      plan: [],
+    };
+    const prepare = (state) => run('Prepare decision context', {}, {
+      'Apply request extras': { ...req, state, next_status: 'running' },
+      'Load case': { case_id: 'CASE-PLAN', state: JSON.stringify(state), status: 'running' },
+      'Load agent registry': registry,
+      'Runtime endpoints': { activity_base_url: 'http://mas-activity:8200', max_steps: '12' },
+    });
+    const decide = (prepared, output, verification) => (verification === undefined
+      ? run('Parse decision', { output }, { 'Prepare decision context': prepared })
+      : run('Parse decision', { output: verification }, { 'Prepare decision context': prepared, 'Decision LLM': { output }, 'Verify completion': { output: verification } }));
+    const merge = (parsed, body) => run('Merge agent result', { body }, { 'Prepare agent call': parsed, 'Parse decision': parsed });
+    const decisionPayload = (parsed) => parsed.events.find((e) => e.kind === 'orchestrator.decision').payload;
+    const callExcel = {
+      progress: { goal_satisfied: false, evidence: 'ничего не сделано', missing: 'даты и schedule' },
+      status_message: 'Сначала извлеку даты из Excel.',
+      action: { type: 'call_agent', agent_id: 'excel_extractor', handoff_message: 'Извлеки даты ввода из книги.' },
+    };
+
+    // A fresh case: the prompt asks for a plan and explains the vocabulary.
+    let prepared = await prepare(baseState);
+    assert.match(prepared.planner_input, /План задачи \(твоя декомпозиция; статусы pending, active, done, blocked, dropped\):\n- план ещё не составлен: составь его в plan_update/);
+    const system = wf.nodes.find((n) => n.name === 'Decision LLM').parameters.messages.messageValues[0].message;
+    assert.match(system, /plan_update/);
+    assert.match(system, /Пункт без id отбрасывается/);
+    assert.match(system, /finish возможен, только когда в плане нет пунктов pending, active или blocked/);
+    const schema = JSON.parse(wf.nodes.find((n) => n.name === 'Decision Structured Output').parameters.inputSchema);
+    assert.deepEqual(schema.properties.plan_update.items.required, ['id']);
+    assert.deepEqual(schema.properties.plan_update.items.properties.status.enum, ['pending', 'active', 'done', 'blocked', 'dropped']);
+
+    // The live shape from CASE-6a9fa129-5ae077 (no id) → rejected and counted, state.plan stays empty.
+    const prose = await decide(prepared, { ...callExcel, plan_update: [
+      { step: 1, agent: 'Excel Extractor', action: 'call_agent', reason: 'Нужны даты' },
+      { step: 2, agent: 'Schedule Builder', action: 'call_agent', reason: 'Собрать schedule' },
+    ] });
+    assert.equal(prose.action_type, 'call_agent');
+    assert.deepEqual(prose.state.plan, []);
+    assert.deepEqual(decisionPayload(prose).plan, { total: 0, open: 0, accepted: 0, rejected: 2 });
+
+    // A proper plan: ids, titles, agent by title or by id, dependencies; call_agent marks the item active.
+    let parsed = await decide(prepared, { ...callExcel, plan_update: [
+      { id: 'p1', title: 'Даты ввода скважин из Excel', agent_id: 'Excel Extractor' },
+      { id: 'p2', title: 'Новый schedule на основе baseline', agent_id: 'schedule_builder', depends_on: ['p1'] },
+      { id: 'p3', title: 'Согласование с инженером', agent_id: 'ghost_agent', status: 'nonsense' },
+    ] });
+    assert.equal(parsed.action_type, 'call_agent');
+    assert.deepEqual(parsed.state.plan, [
+      { id: 'p1', title: 'Даты ввода скважин из Excel', status: 'active', agent_id: 'excel_extractor' },
+      { id: 'p2', title: 'Новый schedule на основе baseline', status: 'pending', agent_id: 'schedule_builder', depends_on: ['p1'] },
+      { id: 'p3', title: 'Согласование с инженером', status: 'pending' },
+    ]);
+    assert.deepEqual(decisionPayload(parsed).plan, { total: 3, open: 3, accepted: 3, rejected: 0 });
+    assert.deepEqual(parsed.agent_task.inputs.artifact_ids.includes('excel'), true);
+
+    // The agent completes → its active item is done, nothing else moves.
+    let merged = await merge(parsed, { status: 'completed', agent_id: 'excel_extractor', message: 'Извлечено дат: 4', data: { facts: [1, 2, 3, 4] } });
+    assert.deepEqual(merged.state.plan.map((p) => [p.id, p.status]), [['p1', 'done'], ['p2', 'pending'], ['p3', 'pending']]);
+
+    // The plan is what the Decision LLM and the completion check read next to the journal; titles feed retrieval.
+    prepared = await prepare(merged.state);
+    assert.match(prepared.planner_input, /План задачи[^\n]*\n- p1 \[done\] Даты ввода скважин из Excel — agent_id: excel_extractor\n- p2 \[pending\] Новый schedule на основе baseline — agent_id: schedule_builder \(после: p1\)\n- p3 \[pending\] Согласование с инженером\n/);
+    assert.ok(prepared.planner_input.indexOf('План задачи') < prepared.planner_input.indexOf('\nТекущее состояние:'), 'plan is inside the slice Prepare verify forwards');
+    assert.deepEqual(prepared.compact.plan[1], { id: 'p2', title: 'Новый schedule на основе baseline', status: 'pending', agent_id: 'schedule_builder' });
+    assert.match(prepared.schedule_retrieval_request.query, /План: Даты ввода скважин из Excel; Новый schedule на основе baseline; Согласование с инженером/);
+
+    // An update touches only the fields it names: status without title keeps the title; a title without status keeps the status.
+    const touched = await decide(prepared, {
+      ...callExcel,
+      action: { type: 'call_agent', agent_id: 'schedule_builder', handoff_message: 'Собери schedule по датам.' },
+      plan_update: [{ id: 'p3', status: 'dropped', note: 'инженер не просил' }, { id: 'p2', title: 'Новый schedule по датам из Excel' }],
+    });
+    assert.deepEqual(touched.state.plan.map((p) => [p.id, p.status, p.title]), [
+      ['p1', 'done', 'Даты ввода скважин из Excel'],
+      ['p2', 'active', 'Новый schedule по датам из Excel'],
+      ['p3', 'dropped', 'Согласование с инженером'],
+    ]);
+    assert.equal(touched.state.plan[2].note, 'инженер не просил');
+
+    // The plan survives a resume (state round-trips through Apply request extras / sanitizeState).
+    const resumed = await run('Apply request extras', { status: 'waiting_user', state: { ...merged.state, hitl: { pending: true, questions: [{ question_id: 'Q-1', question: '?' }], answers: {} } } }, {
+      'Normalize step request': { case_id: 'CASE-PLAN', is_resume: true, action: 'resume', source: 'human', human_response: 'да', gate_id: 'Q-1' },
+    });
+    assert.deepEqual(resumed.state.plan, merged.state.plan);
+
+    // finish while p2 is still pending → treated like a rejected completion check (one continue step), even
+    // when the verifier itself says all covered; the open item is named in the journal and in the status.
+    const finish = { progress: { goal_satisfied: true, evidence: 'даты извлечены' }, status_message: 'Готово.', action: { type: 'finish', result: { summary_for_human: 'Даты извлечены, schedule обновлён.' } } };
+    const allCovered = { goal_parts: [{ part: 'даты извлечены', covered: true, evidence: 'шаг 1' }], all_covered: true, verdict_for_human: 'Всё сделано' };
+    const early = await decide(prepared, { ...finish, plan_update: [{ id: 'p3', status: 'dropped' }] }, allCovered);
+    assert.equal(early.action_type, 'continue');
+    assert.equal(decisionPayload(early).guard, 'completion_unverified');
+    assert.deepEqual(early.state.ledger.history.at(-1).uncovered, ['Новый schedule на основе baseline']);
+    const earlyMsg = early.events.find((e) => e.kind === 'orchestrator.status').status_message;
+    assert.match(earlyMsg, /Не хватает: Новый schedule на основе baseline/);
+    assert.equal(earlyMsg.includes('Всё сделано'), false, 'a positive verdict is not quoted when the plan is what blocks');
+    assert.equal(/[a-z]+_[a-z_]+|[{}[\]]/.test(earlyMsg), false, earlyMsg);
+    assert.deepEqual(decisionPayload(early).plan, { total: 3, open: 1, accepted: 1, rejected: 0 });
+    // Next step the model sees the gap twice: in the journal and in the plan block.
+    const afterEarly = await prepare(early.state);
+    assert.match(afterEarly.planner_input, /отклонила finish — не покрыто: Новый schedule на основе baseline/);
+    assert.match(afterEarly.planner_input, /- p2 \[pending\] Новый schedule на основе baseline/);
+
+    // The builder runs and completes → p2 done → a verified finish passes, the plan rides on case.finished.
+    const callBuilder = await decide(afterEarly, { ...callExcel, action: { type: 'call_agent', agent_id: 'schedule_builder', handoff_message: 'Собери schedule.' } });
+    assert.equal(callBuilder.state.plan.find((p) => p.id === 'p2').status, 'active');
+    merged = await merge(callBuilder, { status: 'completed', agent_id: 'schedule_builder', message: 'Сдвинул даты 4 скважин', artifacts: { schedule_out: 'DATES\n/\n', diff: 'd' } });
+    assert.deepEqual(merged.state.plan.map((p) => [p.id, p.status]), [['p1', 'done'], ['p2', 'done'], ['p3', 'dropped']]);
+    const done = await decide(await prepare(merged.state), finish, allCovered);
+    assert.equal(done.action_type, 'finish');
+    assert.equal(done.events.find((e) => e.kind === 'case.finished').payload.completion_verified, true);
+    assert.deepEqual(done.events.find((e) => e.kind === 'case.finished').payload.plan.map((p) => p.status), ['done', 'done', 'dropped']);
+
+    // A plan item the model closes in the same reply as finish does not block it.
+    const stale = { ...merged.state, plan: merged.state.plan.map((p) => (p.id === 'p2' ? { ...p, status: 'active' } : p)) };
+    const closedInline = await decide(await prepare(stale), { ...finish, plan_update: [{ id: 'p2', status: 'done' }] }, allCovered);
+    assert.equal(closedInline.action_type, 'finish');
+    // … while a second finish over the same open item (verify_rejections is already 1) goes to the engineer.
+    const stillOpen = await decide(await prepare(stale), finish, allCovered);
+    assert.equal(stillOpen.action_type, 'ask_user');
+    assert.equal(decisionPayload(stillOpen).guard, 'completion_review');
+    assert.match(stillOpen.state.hitl.questions[0].question, /Не хватает: Новый schedule на основе baseline/);
+    assert.equal(/[a-z]+_[a-z_]+|[{}[\]]/.test(stillOpen.state.hitl.questions[0].question), false, stillOpen.state.hitl.questions[0].question);
+  }
+
+  // ---------------------------------------------------------------------------------------------
   // Phase 2 — an agent added with `upsert_agent` is callable without regenerating the orchestrator:
   // "Prepare agent call" resolves the route from the registry row (+ Runtime Config overrides) only.
   // ---------------------------------------------------------------------------------------------

@@ -1,6 +1,12 @@
 from __future__ import annotations
 
+import re
+import sys
+from pathlib import Path
+
 from app.state_shape import (
+    PLAN_OPEN_STATUSES,
+    PLAN_STATUSES,
     artifact_cards,
     artifact_filenames,
     artifact_text,
@@ -12,10 +18,14 @@ from app.state_shape import (
     flatten_artifacts,
     is_unlisted_wells_gate,
     nest_artifacts,
+    plan_open_items,
     sanitize_agents,
     sanitize_case_state,
+    sanitize_plan,
     slim_agent_data,
 )
+
+REPO = Path(__file__).resolve().parents[2]
 
 
 def test_artifact_cards_roundtrip_three_kinds_two_producers() -> None:
@@ -257,3 +267,53 @@ def test_unlisted_policy_is_choice_only_not_regex() -> None:
     assert is_unlisted_wells_gate("unlisted_wells_policy", "") is True
     assert is_unlisted_wells_gate("Q-1", "скважины не из excel") is True
     assert is_unlisted_wells_gate("Q-1", "") is False
+
+
+def test_plan_twins_share_statuses_and_shape() -> None:
+    """O13: plan vocabulary and sanitising are the same in Python and in the JS helpers the orchestrator inlines."""
+    sys.path.insert(0, str(REPO / "n8n" / "templates"))
+    try:
+        import mas_state_utils  # noqa: PLC0415
+    finally:
+        sys.path.pop(0)
+    assert tuple(mas_state_utils.PLAN_STATUSES) == PLAN_STATUSES
+    assert tuple(mas_state_utils.PLAN_OPEN_STATUSES) == PLAN_OPEN_STATUSES
+    js = mas_state_utils.STATE_SHAPE_JS
+    assert "const PLAN_STATUSES=" + '["pending", "active", "done", "blocked", "dropped"]' in js
+    assert re.search(r"const PLAN_MAX_ITEMS=12;", js)
+    assert "function sanitizePlan(" in js and "function planOpenItems(" in js
+
+
+def test_sanitize_plan_requires_id_and_normalises_fields() -> None:
+    """CASE-6a9fa129-5ae077: the model wrote plan rows without id → they are dropped, the rest normalised."""
+    raw = [
+        {"step": 1, "agent": "Excel Extractor", "action": "call_agent"},
+        {"id": " p1 ", "title": "  Даты ввода из Excel ", "agent_id": "excel_extractor", "status": "active", "depends_on": [None, "", "p0"]},
+        {"id": "p2", "title": "Новый schedule", "status": "nonsense", "note": "x" * 400, "depends_on": "p1"},
+        {"id": "p1", "title": "дубликат"},
+        "p3",
+        {"id": "p4"},
+    ]
+    plan = sanitize_plan(raw)
+    assert plan == [
+        {"id": "p1", "title": "Даты ввода из Excel", "status": "active", "agent_id": "excel_extractor", "depends_on": ["p0"]},
+        {"id": "p2", "title": "Новый schedule", "status": "pending", "note": "x" * 300},
+        {"id": "p4", "title": "", "status": "pending"},
+    ]
+    assert [p["id"] for p in plan_open_items(raw)] == ["p1", "p2", "p4"]
+    assert plan_open_items([{"id": "a", "status": "done"}, {"id": "b", "status": "dropped"}, {"id": "c", "status": "blocked"}]) == [
+        {"id": "c", "title": "", "status": "blocked"}
+    ]
+    assert len(sanitize_plan([{"id": f"p{i}"} for i in range(30)])) == 12
+    assert sanitize_plan(None) == [] and sanitize_plan({"id": "x"}) == []
+
+
+def test_state_and_compact_carry_the_sanitised_plan() -> None:
+    state = sanitize_case_state({"goal": "g", "plan": [{"id": "p1", "title": "Даты", "agent_id": "excel_extractor", "status": "done"}, {"nope": 1}]})
+    assert state["plan"] == [{"id": "p1", "title": "Даты", "status": "done", "agent_id": "excel_extractor"}]
+    ctx = compact_decision_context({"goal": "g", "plan": [{"id": "p1", "title": "Даты", "status": "done"}, {"id": "p2", "title": "Schedule", "agent_id": "schedule_builder", "note": "n"}]})
+    assert ctx["plan"] == [
+        {"id": "p1", "title": "Даты", "status": "done"},
+        {"id": "p2", "title": "Schedule", "status": "pending", "agent_id": "schedule_builder"},
+    ]
+    assert compact_decision_context({"goal": "g"})["plan"] == []

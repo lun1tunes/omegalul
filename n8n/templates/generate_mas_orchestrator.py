@@ -15,7 +15,7 @@ from mas_retrieval_client import (
     attach_orchestrator_rag_js,
     knowledge_retrieval_execute_params,
 )
-from mas_state_utils import STATE_SHAPE_JS
+from mas_state_utils import PLAN_STATUSES, STATE_SHAPE_JS
 
 ROOT = Path(__file__).resolve().parents[1]
 OUT = ROOT / "workflows/core/mas-orchestrator.workflow.json"
@@ -48,7 +48,23 @@ DECISION_SCHEMA = {
             },
         },
         "status_message": {"type": "string"},
-        "plan_update": {"type": "array", "items": {"type": "object"}},
+        # Plan (O13): the LLM's decomposition of the goal, merged by `id` in Parse decision. Only `id` is
+        # required by the parser (a missing title falls back to the id); an item without id is rejected there.
+        "plan_update": {
+            "type": "array",
+            "items": {
+                "type": "object",
+                "required": ["id"],
+                "properties": {
+                    "id": {"type": "string"},
+                    "title": {"type": "string"},
+                    "agent_id": {"type": "string"},
+                    "status": {"enum": PLAN_STATUSES},
+                    "depends_on": {"type": "array", "items": {"type": "string"}},
+                    "note": {"type": "string"},
+                },
+            },
+        },
         "action": {
             "type": "object",
             "required": ["type"],
@@ -91,6 +107,13 @@ SYSTEM = """Ты оркестратор инженерной задачи. Пр�
 - evidence: что именно в журнале это подтверждает (или чего не хватает).
 - missing: что ещё нужно сделать (пусто, если цель достигнута).
 - is_repeating: true, если ты собираешься повторить агенту задание, которое он уже выполнил (status completed) без новых данных.
+
+Затем веди план (plan_update) — свою декомпозицию цели на результаты, которые инженер должен получить (1–5 пунктов), а не список вызовов:
+- На первом шаге составь план целиком; дальше присылай в plan_update только изменившиеся пункты. Текущий план показан в блоке «План задачи» planner_input.
+- Пункт: id (короткий стабильный идентификатор латиницей: p1, p2, …), title (по-русски: какой результат будет получен), agent_id (агент из реестра, который даёт этот результат — обязателен, если результат даёт агент), status (pending — не начат, active — в работе, done — результат есть в журнале, blocked — нельзя получить без инженера, dropped — оказался не нужен), depends_on (id пунктов, без которых этот не начать), note (коротко, почему blocked или dropped).
+- Пункт без id отбрасывается. Не добавляй пункты «проверить результат», «завершить задачу» и работу, о которой инженер не просил.
+- Статусы pending → active → done по вызовам агентов оркестратор проставляет сам. Меняй статус вручную только для blocked, dropped и для пунктов без агента.
+- finish возможен, только когда в плане нет пунктов pending, active или blocked. Если пункт по журналу выполнен, но остался открытым — закрой его в plan_update в том же ответе, что и finish.
 
 Затем выбери одно действие:
 1. call_agent
@@ -144,9 +167,9 @@ VERIFY_SCHEMA = {
 
 VERIFY_SYSTEM = """Ты проверяющий завершения инженерной задачи. Оркестратор предлагает завершить задачу; твоя работа — проверить это по журналу, а не поверить на слово.
 
-Тебе даны: цель (текст инженера), журнал (что агенты фактически сделали — их итоги со статусом и добавленные артефакты, ответы инженера) и предложенный итог.
+Тебе даны: цель (текст инженера), журнал (что агенты фактически сделали — их итоги со статусом и добавленные артефакты, ответы инженера), план оркестратора (его собственная разбивка цели на результаты со статусами) и предложенный итог.
 
-1. Разбей цель на части — результаты, которые инженер должен получить на выходе (обычно 1–3). Часть — это результат («получен обновлённый файл X»), не действие («вызвать агента»). Файлы, которые инженер приложил сам (шаг 0 журнала), — исходные данные, а не результат: «получить/использовать исходный файл» не выделяй в отдельную часть.
+1. Разбей цель на части — результаты, которые инженер должен получить на выходе (обычно 1–3). Часть — это результат («получен обновлённый файл X»), не действие («вызвать агента»). Если план оркестратора есть, начни с его пунктов (кроме dropped) и добавь то, что в плане упущено, но требуется целью. Файлы, которые инженер приложил сам (шаг 0 журнала), — исходные данные, а не результат: «получить/использовать исходный файл» не выделяй в отдельную часть.
 2. Для каждой части решай, покрыта ли она записью журнала со статусом completed, чей итог по смыслу говорит, что это сделано. Промежуточный шаг не покрывает конечный результат: извлечь данные ≠ построить на их основе итог; «исходный файл есть во вложении» ≠ «получен новый файл». Но не придирайся к формулировкам: если агент отчитался о сделанных изменениях (сдвинул даты, добавил/убрал скважины, перепривязал группы) и/или в записи есть добавленные артефакты (новый файл, diff), результат получен. evidence — пересказ записи журнала (шаг N) либо «в журнале нет».
 3. unsupported_claims — утверждения предложенного итога, которых нет в журнале (например «файл собран», когда ни один агент об этом не отчитался).
 4. all_covered = true только если покрыты все части — и обязательно true, если все части covered=true. Не выдумывай записей журнала и не додумывай, что «наверняка сделано».
@@ -714,7 +737,10 @@ const inputCards=artifactCards(state.artifacts||{}).filter(c=>c.kind==='input');
 const inputNames=inputCards.map(c=>String(c.filename||c.artifact_id||'').trim()).filter(Boolean);
 const inputsLine=inputNames.length?`- шаг 0: инженер приложил ${inputNames.length} файл(ов): ${inputNames.slice(0,6).join(', ')}${inputNames.length>6?` и ещё ${inputNames.length-6}`:''}`:'';
 const journalText=[inputsLine,...journalLines].filter(Boolean).join('\n')||'- пока ничего не сделано';
-const prompt=`Цель:\n${compact.goal}\n\nЖурнал задачи (что уже сделано, по шагам):\n${journalText}\n\nТекущее состояние:\n${JSON.stringify(compact,null,2)}\n\nДоступные агенты (реестр):\n${JSON.stringify(plannerRegistry,null,2)}\n`;
+/* O13: the plan sits next to the journal — the Decision LLM updates it, Verify completion reads both
+   (Prepare verify cuts planner_input before «Текущее состояние»). */
+const planText=planLines(state.plan).join('\n')||'- план ещё не составлен: составь его в plan_update';
+const prompt=`Цель:\n${compact.goal}\n\nЖурнал задачи (что уже сделано, по шагам):\n${journalText}\n\nПлан задачи (твоя декомпозиция; статусы pending, active, done, blocked, dropped):\n${planText}\n\nТекущее состояние:\n${JSON.stringify(compact,null,2)}\n\nДоступные агенты (реестр):\n${JSON.stringify(plannerRegistry,null,2)}\n`;
 const retrieval_selector={target_base:ORCH_RAG_TARGET_BASE,knowledge_types:ORCH_RAG_KNOWLEDGE_TYPES};
 /* Plain-text query: goal + inputs + agent summaries. Selectors (target_base / knowledge_types) do the filtering;
    no regex-derived topics or keyword families (Phase 2). */
@@ -779,6 +805,9 @@ const registry=Array.isArray(prev.registry)?prev.registry:[];
 const state=sanitizeState(obj(prev.state)?{...prev.state}:{});
 state.step_count=Number(state.step_count||0)+1;
 state.version=Number(state.version||0)+1;
+/* O13: merge the plan before the guards — the model may close items in the same reply as finish.
+   Items without id are rejected and counted (developer log), never silently dropped. */
+const planMerge=applyPlanUpdate(state, decision.plan_update, registry);
 /* --- Completion guards (deterministic safety around the LLM decision; no domain knowledge) ---
    1. The human accepted the result in a review gate → the case is finished, whatever the LLM picked.
    2. The LLM says goal_satisfied yet re-delegates to an agent that already completed (habit) → finish.
@@ -789,6 +818,9 @@ state.version=Number(state.version||0)+1;
 let guard=null;
 let reworkReason='';
 const answered=ledgerAnsweredAgentQuestion(state);
+/* Open plan items (pending / active / blocked) are uncovered parts of the goal by definition: a finish
+   with them behaves like a rejected completion check (one continue step, then the engineer). */
+const planOpen=type==='finish'?planOpenItems(state.plan):[];
 const repeatDelegation=(agentId)=>{
   const last=ledgerLastAgentEntry(state, String(agentId||'').trim());
   return Boolean(last)&&String(last.status||'')==='completed'&&!ledgerHasNewInputsSince(state, last);
@@ -808,13 +840,14 @@ if(type==='finish'&&answered){
   guard='human_accepted';
   type='finish';
   action={type:'finish',result:{summary_for_human:String((obj(action.result)&&action.result.summary_for_human)||'')}};
-} else if(type==='finish'&&verification&&verification.all_covered===false&&!ledgerHumanAccepted(state)){
-  /* 4. Verified completion: the LLM proposed finish, the completion check found parts of the goal
-        without a completed journal entry. First time — one more step with the gaps in the journal
-        (the Decision LLM must close them); second time — the engineer decides. */
-  const uncovered=verification.uncovered||[];
-  const unsupported=verification.unsupported_claims||[];
-  const verdict=String(verification.verdict_for_human||'').trim();
+} else if(type==='finish'&&!ledgerHumanAccepted(state)&&((verification&&verification.all_covered===false)||planOpen.length)){
+  /* 4. Verified completion: the LLM proposed finish, but the completion check found parts of the goal
+        without a completed journal entry and/or its own plan still has open items. First time — one
+        more step with the gaps in the journal (the Decision LLM must close them); second time — the
+        engineer decides. */
+  const uncovered=[...new Set([...(verification?verification.uncovered||[]:[]), ...planOpen.map(p=>p.title||p.id)])].slice(0,8);
+  const unsupported=verification?verification.unsupported_claims||[]:[];
+  const verdict=(verification&&verification.all_covered===false)?String(verification.verdict_for_human||'').trim():'';
   const rejections=Number(state.ledger.verify_rejections||0);
   ledgerPush(state,{kind:'verification',verdict:'rejected',uncovered,unsupported,proposed:String((obj(action.result)&&action.result.summary_for_human)||'').slice(0,300)});
   state.ledger.verify_rejections=rejections+1;
@@ -853,11 +886,6 @@ if(type==='finish'&&answered){
     }
   }
 }
-if(Array.isArray(decision.plan_update)){
-  const by=new Map((Array.isArray(state.plan)?state.plan:[]).map(p=>[p.id,p]));
-  for(const item of decision.plan_update){if(item&&item.id) by.set(item.id,{...(by.get(item.id)||{}),...item});}
-  state.plan=[...by.values()];
-}
 let statusMessage=String(decision.status_message||'').trim()||'Шаг оркестратора';
 if(guard==='repeat_review'||guard==='stall_review') statusMessage='Результат уже получен — прошу инженера принять его или описать доработку.';
 else if(guard==='answer_not_applied') statusMessage=`Передаю ответ инженера агенту ${agentTitle(action.agent_id, registry)}.`;
@@ -875,7 +903,7 @@ const decisionEvent={
   kind:'orchestrator.decision',
   actor:'orchestrator',
   status_message:statusMessage,
-  payload:{action_type:type,agent_id:action.agent_id||null,step_count:state.step_count,version:state.version,progress:{goal_satisfied:progress.goal_satisfied===true,evidence:String(progress.evidence||'').slice(0,300),missing:String(progress.missing||'').slice(0,300)},...(guard?{guard}:{}),...(verification?{verification:{all_covered:verification.all_covered===true,goal_parts:(Array.isArray(verification.goal_parts)?verification.goal_parts:[]).slice(0,6).map(p=>({part:String((p&&p.part)||'').slice(0,160),covered:Boolean(p&&p.covered)}))}}:{}),decision:decisionRaw,...execRef()}
+  payload:{action_type:type,agent_id:action.agent_id||null,step_count:state.step_count,version:state.version,progress:{goal_satisfied:progress.goal_satisfied===true,evidence:String(progress.evidence||'').slice(0,300),missing:String(progress.missing||'').slice(0,300)},...(guard?{guard}:{}),plan:{total:state.plan.length,open:planOpenItems(state.plan).length,accepted:planMerge.accepted,rejected:planMerge.rejected},...(verification?{verification:{all_covered:verification.all_covered===true,goal_parts:(Array.isArray(verification.goal_parts)?verification.goal_parts:[]).slice(0,6).map(p=>({part:String((p&&p.part)||'').slice(0,160),covered:Boolean(p&&p.covered)}))}}:{}),decision:decisionRaw,...execRef()}
 };
 const events=[];
 let nextStatus='running';
@@ -911,6 +939,7 @@ if(type==='call_agent'){
     constraints:{units:'METRIC'}
   };
   state.current_task=slimCurrentTask({task_id:taskId,agent_id:agentTask.agent_id},state.artifacts,state.agents);
+  planMarkAgentActive(state, agentTask.agent_id);
   events.push(decisionEvent, {
     kind:'agent.handoff',
     actor:'orchestrator',
@@ -947,7 +976,7 @@ if(type==='call_agent'){
   const result={...(obj(action.result)?action.result:{}),summary_for_human:summary,done_by_agents:journalSummary,deliverables:deliverables(state.artifacts),...(guard?{guard}:{}),...(verification?{completion_verified:verification.all_covered===true}:{})};
   state.data={...(state.data||{}),result};
   statusMessage=summary;
-  events.push({kind:'case.finished',actor:'orchestrator',status:'done',status_message:summary,payload:{...result,action_type:'finish',...execRef()}});
+  events.push({kind:'case.finished',actor:'orchestrator',status:'done',status_message:summary,payload:{...result,action_type:'finish',plan:state.plan,...execRef()}});
 } else {
   nextStatus='waiting_user';
   const q={question_id:'Q-unknown',question:'Оркестратор вернул неизвестное действие',options:[]};

@@ -578,6 +578,52 @@ a:hover { text-decoration: underline; text-decoration-thickness: 1px; text-under
 }
 .request-files { margin-top: 12px; }
 
+/* Plan (O13): the orchestrator's decomposition of the goal, under the task statement. */
+.request-plan { margin-top: 16px; }
+.request-plan-label { display: flex; align-items: baseline; gap: 8px; }
+.request-plan-count { font-weight: 500; letter-spacing: 0; text-transform: none; color: var(--muted); }
+.plan-steps {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  display: grid;
+  gap: 6px;
+}
+.plan-step {
+  display: grid;
+  grid-template-columns: 18px 1fr;
+  gap: 10px;
+  align-items: start;
+  font-size: 14px;
+  line-height: 1.45;
+  color: var(--ink);
+}
+.plan-step-mark {
+  width: 18px;
+  height: 18px;
+  margin-top: 2px;
+  border-radius: 50%;
+  border: 1.5px solid var(--line);
+  display: grid;
+  place-items: center;
+  font-size: 11px;
+  color: #fff;
+  box-sizing: border-box;
+}
+.plan-step[data-status="active"] .plan-step-mark { border-color: var(--brand-blue); box-shadow: 0 0 0 3px var(--blue-200); }
+.plan-step[data-status="active"] .plan-step-mark::after { content: ""; width: 8px; height: 8px; border-radius: 50%; background: var(--brand-blue); animation: plan-pulse 1.4s ease-in-out infinite; }
+.plan-step[data-status="done"] .plan-step-mark { background: var(--ok); border-color: var(--ok); }
+.plan-step[data-status="done"] .plan-step-mark::after { content: "✓"; }
+.plan-step[data-status="blocked"] .plan-step-mark { background: var(--brand-red); border-color: var(--brand-red); }
+.plan-step[data-status="blocked"] .plan-step-mark::after { content: "!"; font-weight: 700; }
+.plan-step[data-status="dropped"] { color: var(--muted); }
+.plan-step[data-status="dropped"] .plan-step-title { text-decoration: line-through; }
+.plan-step[data-status="dropped"] .plan-step-mark { border-style: dashed; }
+.plan-step-title { font-weight: 500; }
+.plan-step-meta { display: block; font-size: 12px; color: var(--muted); margin-top: 1px; }
+.plan-step[data-status="active"] .plan-step-meta { color: var(--brand-blue); }
+@keyframes plan-pulse { 0%, 100% { opacity: 1; transform: scale(1); } 50% { opacity: 0.45; transform: scale(0.8); } }
+
 .status-banner {
   display: grid;
   grid-template-columns: auto 1fr;

@@ -27,6 +27,9 @@
   const requestPanel = $("requestPanel");
   const requestText = $("requestText");
   const requestFiles = $("requestFiles");
+  const requestPlan = $("requestPlan");
+  const requestPlanSteps = $("requestPlanSteps");
+  const requestPlanCount = $("requestPlanCount");
   const taskRail = $("taskRail");
   const railList = $("railList");
   const railEmpty = $("railEmpty");
@@ -1065,11 +1068,50 @@
     return [];
   }
 
+  // ------------------------------------------------------------------ plan (O13)
+  const PLAN_STATUS_LABEL = { pending: "не начат", active: "в работе", done: "готово", blocked: "нужен инженер", dropped: "не понадобилось" };
+  let currentPlan = [];
+
+  function renderPlan(plan) {
+    currentPlan = Array.isArray(plan) ? plan.filter((p) => p && typeof p === "object" && p.id) : [];
+    requestPlanSteps.innerHTML = "";
+    if (!currentPlan.length) { requestPlan.hidden = true; requestPlanCount.textContent = ""; return; }
+    const done = currentPlan.filter((p) => p.status === "done").length;
+    const counted = currentPlan.filter((p) => p.status !== "dropped").length;
+    requestPlanCount.textContent = counted ? `${done} из ${counted}` : "";
+    for (const step of currentPlan) {
+      const li = document.createElement("li");
+      li.className = "plan-step";
+      li.dataset.status = String(step.status || "pending");
+      li.dataset.planId = String(step.id);
+      const mark = document.createElement("span");
+      mark.className = "plan-step-mark";
+      mark.setAttribute("aria-hidden", "true");
+      const body = document.createElement("div");
+      const title = document.createElement("span");
+      title.className = "plan-step-title";
+      title.textContent = String(step.title || step.id);
+      body.append(title);
+      const meta = [];
+      if (step.agent_id) meta.push(displayRole(step.agent_id));
+      meta.push(PLAN_STATUS_LABEL[step.status] || String(step.status || ""));
+      if (step.note && (step.status === "blocked" || step.status === "dropped")) meta.push(String(step.note));
+      const metaEl = document.createElement("span");
+      metaEl.className = "plan-step-meta";
+      metaEl.textContent = meta.filter(Boolean).join(" · ");
+      body.append(metaEl);
+      li.append(mark, body);
+      requestPlanSteps.append(li);
+    }
+    requestPlan.hidden = false;
+    requestPanel.hidden = false;
+  }
+
   function renderRequest(objective, attached) {
     const text = String(objective || "").trim();
     const names = Array.isArray(attached) ? attached.map((f) => String(f || "").trim()).filter(Boolean) : [];
     const inputs = cardsByKind("input");
-    if (!text && !names.length && !inputs.length) {
+    if (!text && !names.length && !inputs.length && !currentPlan.length) {
       requestText.textContent = "";
       requestFiles.innerHTML = "";
       requestFiles.hidden = true;
@@ -1380,6 +1422,8 @@
       renderInspector();
     }
     if (currentTask) setTaskHeader(currentTask, data.status, { awaiting: data.awaiting_human, task_name: currentTaskName });
+    if (Array.isArray(data.plan)) renderPlan(data.plan);
+    else if (data.state && typeof data.state === "object" && Array.isArray(data.state.plan)) renderPlan(data.state.plan);
     if (Object.prototype.hasOwnProperty.call(data, "objective") || Object.prototype.hasOwnProperty.call(data, "attached_files") || Array.isArray(data.activity) || Array.isArray(data.artifacts)) {
       const objective = Object.prototype.hasOwnProperty.call(data, "objective") ? data.objective : (requestText.textContent || lastCaseFeed.objective || null);
       renderRequest(objective, attachedFilesFromFeed(data.attached_files ? data : lastCaseFeed));
@@ -1492,6 +1536,7 @@
     artifactCards = [];
     lastCaseFeed = emptyFeed();
     if (window.MasLog) window.MasLog.clear();
+    renderPlan([]);
     renderRequest(null);
     renderGate(null, { awaiting: false });
     setRestartable(false);

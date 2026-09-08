@@ -1576,3 +1576,34 @@ def test_agent_uploads_binary_deliverable_and_gets_card(tmp_path, monkeypatch) -
     assert steal.json()["artifact"]["role"] == "attachment"
     bad = client.post(f"/cases/{case_id}/artifacts", data={"artifact_id": "x", "producer": "user"}, files=[("file", ("e.bin", b"x", "application/octet-stream"))])
     assert bad.status_code == 400
+
+
+def test_feed_and_stream_meta_carry_the_orchestrator_plan(monkeypatch) -> None:
+    """O13: ``state.plan`` (the orchestrator's decomposition) reaches the UI sanitised, in the snapshot and in
+    the stream meta, so the chat can draw it under the task statement."""
+    monkeypatch.setenv("ORCHESTRATOR_WEBHOOK_URL", "http://127.0.0.1:9/webhook/mas-orchestrator-step")
+    from app.settings import Settings
+    from app import control_plane
+    from app.cases_api import _feed_from_row, _stream_meta
+
+    monkeypatch.setattr("app.cases_api.get_settings", lambda: Settings())
+    monkeypatch.setattr("app.cases_api._invoke_create", lambda case_id: None)
+    res = client.post("/cases", data={"task_description": "план", "requested_by": "tester"})
+    assert res.status_code == 200, res.text
+    case_id = res.json()["case_id"]
+    row = control_plane.get_case(case_id)
+    state = dict(row["state"])
+    assert client.get(f"/cases/{case_id}").json()["plan"] == []
+    state["plan"] = [
+        {"id": "p1", "title": "Даты ввода из Excel", "agent_id": "excel_extractor", "status": "done"},
+        {"id": "p2", "title": "Новый schedule", "agent_id": "schedule_builder", "status": "active", "depends_on": ["p1"]},
+        {"step": 3, "agent": "prose row without id"},
+    ]
+    control_plane.update_case(case_id, state=state, status="running")
+    feed = client.get(f"/cases/{case_id}").json()
+    assert feed["plan"] == [
+        {"id": "p1", "title": "Даты ввода из Excel", "status": "done", "agent_id": "excel_extractor"},
+        {"id": "p2", "title": "Новый schedule", "status": "active", "agent_id": "schedule_builder", "depends_on": ["p1"]},
+    ]
+    meta = _stream_meta(_feed_from_row(case_id, control_plane.get_case(case_id), [], 0))
+    assert meta["plan"] == feed["plan"]

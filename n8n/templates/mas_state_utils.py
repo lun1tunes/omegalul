@@ -12,10 +12,17 @@ helpers inside Parse/Merge (they call flatten/merge mid-node).
 
 from __future__ import annotations
 
+import json
+
 STATE_SHAPE_MARKER_BEGIN = "/* mas_state_utils begin */"
 STATE_SHAPE_MARKER_END = "/* mas_state_utils end */"
 
-STATE_SHAPE_JS = r"""
+# Plan item statuses (O13). Single source for the Decision schema enum, the JS helpers below and the
+# Python twin (state_shape.PLAN_STATUSES is asserted equal in tests).
+PLAN_STATUSES = ("pending", "active", "done", "blocked", "dropped")
+PLAN_OPEN_STATUSES = ("pending", "active", "blocked")
+
+_STATE_SHAPE_JS_TEMPLATE = r"""
 /* mas_state_utils begin */
 function roleForArtifactId(id){
   const k=String(id||'');
@@ -363,13 +370,16 @@ function readUnlistedWellsPolicy(answers){
   }
   return null;
 }
-/* Retrieval query for the routing slice: the task as the engineer and the journal describe it — plain
-   text for the lexical + semantic branches. No regex-derived tags (O4): the tag branch gets nothing. */
+/* Retrieval query for the routing slice: the task as the engineer, the orchestrator's plan and the journal
+   describe it — plain text for the lexical + semantic branches. No regex-derived tags (O4): the tag branch
+   gets nothing; the plan titles (LLM-written) are the topical hint. */
 function buildRetrievalQuery(compact){
   const c=compact&&typeof compact==='object'?compact:{};
   const parts=[String(c.goal||'').trim()];
   const inputs=Array.isArray(c.inputs)?c.inputs:[];
   if(inputs.length) parts.push('Приложены файлы: '+inputs.map(i=>i&&(i.filename||i.artifact_id)).filter(Boolean).slice(0,8).join(', '));
+  const planTitles=(Array.isArray(c.plan)?c.plan:[]).map(p=>p&&String(p.title||'').trim()).filter(Boolean);
+  if(planTitles.length) parts.push('План: '+planTitles.slice(0,6).join('; '));
   const agents=c.agents&&typeof c.agents==='object'?c.agents:{};
   for(const [id,a] of Object.entries(agents)){
     if(a&&a.summary) parts.push(`${id}: ${String(a.summary).slice(0,160)}`);
@@ -484,6 +494,7 @@ function sanitizeState(state){
   if(s.last_error&&typeof s.last_error==='object') s.last_error=slimError(s.last_error);
   s.error_count=Number(s.error_count||(s.last_error&&s.last_error.count)||0)||0;
   s.ledger=sanitizeLedger(s.ledger);
+  s.plan=sanitizePlan(s.plan);
   reconcileLedgerAnswers(s);
   return s;
 }
@@ -664,6 +675,99 @@ function compactLedger(state){
   });
   return {history:rows,stall_count:l.stall_count,completed_agents:[...new Set(l.history.filter(e=>e.kind==='agent'&&e.status==='completed').map(e=>e.agent_id).filter(Boolean))]};
 }
+/* Plan (O13): the orchestrator's own decomposition of the goal — a short list of results to obtain, each
+   optionally owned by an agent. The Decision LLM writes it through `plan_update`; deterministic code keeps
+   it in step with what actually happened (call_agent → active, agent completed → done) and the finish guard
+   treats open items as uncovered parts. Python twin: state_shape.sanitize_plan / plan_open_items. */
+const PLAN_STATUSES=__PLAN_STATUSES__;
+const PLAN_OPEN_STATUSES=__PLAN_OPEN_STATUSES__;
+const PLAN_MAX_ITEMS=12;
+function sanitizePlanItem(item){
+  if(!item||typeof item!=='object'||Array.isArray(item)) return null;
+  const id=String(item.id==null?'':item.id).trim().slice(0,40);
+  if(!id) return null;
+  const out={id,title:String(item.title||'').trim().slice(0,200),status:PLAN_STATUSES.includes(String(item.status||''))?String(item.status):'pending'};
+  const agentId=String(item.agent_id||'').trim();
+  if(agentId) out.agent_id=agentId;
+  const deps=(Array.isArray(item.depends_on)?item.depends_on:[]).map(d=>String(d==null?'':d).trim()).filter(Boolean).slice(0,8);
+  if(deps.length) out.depends_on=deps;
+  const note=String(item.note||'').trim().slice(0,300);
+  if(note) out.note=note;
+  return out;
+}
+function sanitizePlan(plan){
+  const out=[];const seen=new Set();
+  for(const raw of (Array.isArray(plan)?plan:[])){
+    const item=sanitizePlanItem(raw);
+    if(!item||seen.has(item.id)) continue;
+    seen.add(item.id); out.push(item);
+    if(out.length>=PLAN_MAX_ITEMS) break;
+  }
+  return out;
+}
+/* agent_id as the model wrote it → registry id (the model tends to write the agent's title instead). */
+function planAgentId(value, registry){
+  const v=String(value||'').trim();
+  if(!v) return '';
+  const rows=Array.isArray(registry)?registry:[];
+  if(!rows.length) return v;
+  const byId=rows.find(r=>r&&String(r.agent_id||'')===v);
+  if(byId) return v;
+  const byTitle=rows.find(r=>r&&String(r.title||'').trim().toLowerCase()===v.toLowerCase());
+  return byTitle?String(byTitle.agent_id):'';
+}
+/* Merge `plan_update` into state.plan. Items match by id; an item without id is rejected — the model wrote
+   «step 1 — agent X» prose instead of a plan row (CASE-6a9fa129-5ae077: the whole plan was lost that way).
+   Fields the update omits keep their previous value. Returns {accepted, rejected}. */
+function applyPlanUpdate(state, updates, registry){
+  const plan=sanitizePlan(state.plan);
+  const by=new Map(plan.map(p=>[p.id,p]));
+  let accepted=0, rejected=0;
+  for(const raw of (Array.isArray(updates)?updates:[])){
+    const item=sanitizePlanItem(raw);
+    if(!item){rejected+=1;continue;}
+    const prev=by.get(item.id);
+    if(!prev&&by.size>=PLAN_MAX_ITEMS){rejected+=1;continue;}
+    const merged={...(prev||{}),...item};
+    if(!item.title&&prev&&prev.title) merged.title=prev.title;
+    if((raw.status===undefined||raw.status===null||raw.status==='')&&prev) merged.status=prev.status;
+    if(!merged.title) merged.title=merged.id;
+    const agentId=planAgentId(merged.agent_id, registry);
+    if(agentId) merged.agent_id=agentId; else delete merged.agent_id;
+    by.set(item.id,merged); accepted+=1;
+  }
+  state.plan=[...by.values()];
+  return {accepted,rejected};
+}
+/* Actions drive statuses (flags are the model's habit, actions are its intent): the first pending item of
+   the agent being called becomes active; when that agent returns completed its active items are done. */
+function planMarkAgentActive(state, agentId){
+  const plan=sanitizePlan(state.plan);
+  const id=String(agentId||'').trim();
+  if(id&&!plan.some(p=>p.agent_id===id&&p.status==='active')){
+    const next=plan.find(p=>p.agent_id===id&&p.status==='pending');
+    if(next) next.status='active';
+  }
+  state.plan=plan;
+}
+function planMarkAgentDone(state, agentId){
+  const plan=sanitizePlan(state.plan);
+  const id=String(agentId||'').trim();
+  for(const p of plan){ if(id&&p.agent_id===id&&p.status==='active') p.status='done'; }
+  state.plan=plan;
+}
+function planOpenItems(plan){
+  return sanitizePlan(plan).filter(p=>PLAN_OPEN_STATUSES.includes(p.status));
+}
+/* The plan as the Decision LLM (and the completion check) read it in planner_input. */
+function planLines(plan){
+  return sanitizePlan(plan).map(p=>{
+    const agent=p.agent_id?` — agent_id: ${p.agent_id}`:'';
+    const deps=(p.depends_on||[]).length?` (после: ${p.depends_on.join(', ')})`:'';
+    const note=p.note?` — ${p.note}`:'';
+    return `- ${p.id} [${p.status}] ${p.title}${agent}${deps}${note}`;
+  });
+}
 /* One agent_result → case state. Used by `Merge agent result` (synchronous agents) and by the
    `resume source=agent` path (long agents that returned `in_progress` and finish later through the
    Activity run endpoint). Domain-free: it knows statuses and slots, not agents.
@@ -727,9 +831,7 @@ function applyAgentResult(state, agentId, taskId, result, registry){
   }
   const artifactsAdded=Object.keys(flattenArtifacts(state.artifacts||{})).filter(k=>!artifactsBefore.has(k));
   ledgerPush(state,{kind:'agent',step,agent_id:agentId,task_id:taskId,status,summary:message.slice(0,400),artifacts_added:artifactsAdded,data_keys:Object.keys(obj(res.data)?res.data:{}).slice(0,12)});
-  if(Array.isArray(state.plan)&&status==='completed'){
-    state.plan=state.plan.map(p=>(p&&typeof p==='object'&&String(p.status)==='running')?{...p,status:'done'}:p);
-  }
+  if(status==='completed') planMarkAgentDone(state, agentId);
   state.agents=sanitizeAgents(agents);
   return {status,next_status:nextStatus,should_continue:shouldContinue,events,message};
 }
@@ -746,7 +848,7 @@ function compactAgents(agents){
    state_shape.compact_decision_context. */
 function buildCompact(state){
   const artifacts=state.artifacts||{};
-  const plan=Array.isArray(state.plan)?state.plan:[];
+  const plan=sanitizePlan(state.plan);
   const hitl=state.hitl||{};
   const counts=fileCounts(artifacts);
   const questions=Array.isArray(hitl.questions)?hitl.questions:[];
@@ -764,7 +866,7 @@ function buildCompact(state){
     inputs_total:inputCards.length,
     deliverables:deliverables(artifacts).map(d=>({producer:d.producer,artifact_id:d.artifact_id,filename:d.filename})),
     agents:compactAgents(state.agents),
-    plan:plan.map(p=>({id:p.id,status:p.status})),
+    plan:plan.map(p=>({id:p.id,title:p.title,status:p.status,...(p.agent_id?{agent_id:p.agent_id}:{})})),
     current_task:cur&&typeof cur==='object'?{task_id:cur.task_id||null,agent_id:cur.agent_id||null}:null,
     hitl_pending:pending,
     hitl_question:pending?(String(q0.question||'').slice(0,200)||null):null,
@@ -778,3 +880,7 @@ function buildCompact(state){
 }
 /* mas_state_utils end */
 """
+
+STATE_SHAPE_JS = _STATE_SHAPE_JS_TEMPLATE.replace("__PLAN_STATUSES__", json.dumps(list(PLAN_STATUSES))).replace(
+    "__PLAN_OPEN_STATUSES__", json.dumps(list(PLAN_OPEN_STATUSES))
+)

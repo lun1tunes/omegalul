@@ -517,6 +517,57 @@ def bump_version(state: dict[str, Any]) -> dict[str, Any]:
     return state
 
 
+# Plan (O13): the orchestrator's decomposition of the goal into results, each optionally owned by an agent.
+# JS twin: mas_state_utils.sanitizePlan / planOpenItems (statuses are asserted equal in tests).
+PLAN_STATUSES = ("pending", "active", "done", "blocked", "dropped")
+PLAN_OPEN_STATUSES = ("pending", "active", "blocked")
+PLAN_MAX_ITEMS = 12
+
+
+def sanitize_plan_item(item: Any) -> dict[str, Any] | None:
+    if not isinstance(item, dict):
+        return None
+    item_id = str(item.get("id") if item.get("id") is not None else "").strip()[:40]
+    if not item_id:
+        return None
+    status = str(item.get("status") or "")
+    out: dict[str, Any] = {
+        "id": item_id,
+        "title": str(item.get("title") or "").strip()[:200],
+        "status": status if status in PLAN_STATUSES else "pending",
+    }
+    agent_id = str(item.get("agent_id") or "").strip()
+    if agent_id:
+        out["agent_id"] = agent_id
+    deps_raw = item.get("depends_on") if isinstance(item.get("depends_on"), list) else []
+    deps = [str(d if d is not None else "").strip() for d in deps_raw]
+    deps = [d for d in deps if d][:8]
+    if deps:
+        out["depends_on"] = deps
+    note = str(item.get("note") or "").strip()[:300]
+    if note:
+        out["note"] = note
+    return out
+
+
+def sanitize_plan(plan: Any) -> list[dict[str, Any]]:
+    out: list[dict[str, Any]] = []
+    seen: set[str] = set()
+    for raw in plan if isinstance(plan, list) else []:
+        item = sanitize_plan_item(raw)
+        if item is None or item["id"] in seen:
+            continue
+        seen.add(item["id"])
+        out.append(item)
+        if len(out) >= PLAN_MAX_ITEMS:
+            break
+    return out
+
+
+def plan_open_items(plan: Any) -> list[dict[str, Any]]:
+    return [item for item in sanitize_plan(plan) if item["status"] in PLAN_OPEN_STATUSES]
+
+
 def sanitize_case_state(state: Any) -> dict[str, Any]:
     src = dict(state) if isinstance(state, dict) else {}
     arts = src.get("artifacts") if isinstance(src.get("artifacts"), dict) else {}
@@ -541,6 +592,7 @@ def sanitize_case_state(state: Any) -> dict[str, Any]:
     src["current_task"] = slim_current_task(cur, src.get("artifacts"), src.get("agents")) if isinstance(cur, dict) else None
     if src.get("last_error") is not None:
         src["last_error"] = slim_error(src.get("last_error"))
+    src["plan"] = sanitize_plan(src.get("plan"))
     return src
 
 
@@ -593,9 +645,13 @@ def compact_decision_context(state: dict[str, Any]) -> dict[str, Any]:
             for agent_id, slot in agents.items()
         },
         "plan": [
-            {"id": item.get("id"), "status": item.get("status")}
+            {
+                "id": item["id"],
+                "title": item["title"],
+                "status": item["status"],
+                **({"agent_id": item["agent_id"]} if item.get("agent_id") else {}),
+            }
             for item in plan
-            if isinstance(item, dict)
         ],
         "current_task": current,
         "hitl_pending": pending,
