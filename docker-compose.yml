@@ -96,6 +96,7 @@ services:
       - ORCHESTRATOR_AUTH_HEADER=${ORCHESTRATOR_AUTH_HEADER:-Authorization}
       - ORCHESTRATOR_AUTH_VALUE=${ORCHESTRATOR_AUTH_VALUE:-local-orch-inbound}
       - N8N_BASE_URL=http://n8n:5678
+      - N8N_PUBLIC_URL=http://localhost:5678
       - KNOWLEDGE_INGEST_URL=http://n8n:5678/webhook/mas-knowledge-ingest
       - ORCHESTRATOR_WORKFLOW_ID=e9bbdb6e-3b7c-5dc0-851a-30bd9f2eb0d6
       - ACTIVITY_TLS_VERIFY=${ACTIVITY_TLS_VERIFY:-true}

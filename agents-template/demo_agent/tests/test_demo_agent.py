@@ -136,9 +136,16 @@ def test_long_job_returns_in_progress_then_finishes_through_activity(client: Tes
     final = payload["agent_result"]
     assert final["status"] == "completed" and final["data"]["wells"] == ["1601", "1735"] and final["data"]["well_count"] == 2
     assert final["message"].startswith("Прогон демо-модели завершён: обработано 2 скважины")
-    progress = [c["json"] for c in _FakeActivity.calls if c["path"].endswith("/events")]
-    assert progress and all(e["kind"] == "agent.progress" and e["status"] == "waiting_agent" for e in progress)
+    events = [c["json"] for c in _FakeActivity.calls if c["path"].endswith("/events")]
+    # Engineer-facing lines: only agent.progress while the job runs, all in plain Russian.
+    progress = [e for e in events if e["kind"] == "agent.progress"]
+    assert progress and all(e["status"] == "waiting_agent" for e in progress)
     assert all(human_text_problems(e["status_message"]) == [] for e in progress)
+    # Developer log: the router traces the tool call itself (hidden from the chat, shown in «Лог»).
+    traces = [e for e in events if e["kind"] == "trace.tool"]
+    assert [t["payload"]["tool"] for t in traces] == ["start_long_job"]
+    assert traces[0]["payload"]["ok"] is True and traces[0]["payload"]["duration_ms"] >= 0 and traces[0]["payload"]["args"] == {"label": "Прогон демо-модели"}
+    assert {e["kind"] for e in events} == {"agent.progress", "trace.tool"}
     # The session keeps the final result too (a poller can read it until the workflow closes the session).
     assert client.get(f"/sessions/{sid}/result").json()["status"] == "completed"
 

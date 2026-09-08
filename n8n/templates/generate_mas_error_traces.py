@@ -69,15 +69,23 @@ const root=$json||{};
 const exec=root.execution&&typeof root.execution==='object'?root.execution:(root);
 const error=exec.error&&typeof exec.error==='object'?exec.error:(root.error||{});
 const executionId=String(exec.id||exec.executionId||root.execution_id||'');
-const workflowName=String((exec.workflow&&exec.workflow.name)||exec.workflowName||root.workflow_name||'');
-const nodeName=String(exec.lastNodeExecuted||error.node||root.node_name||'');
+const executionUrl=String(exec.url||root.execution_url||'');
+const wfObj=root.workflow&&typeof root.workflow==='object'?root.workflow:(exec.workflow&&typeof exec.workflow==='object'?exec.workflow:{});
+const workflowName=String(wfObj.name||exec.workflowName||root.workflow_name||'');
+const workflowId=String(wfObj.id||root.workflow_id||'');
+const errNode=error.node&&typeof error.node==='object'?error.node:null;
+const nodeName=String(exec.lastNodeExecuted||(errNode?errNode.name:error.node)||root.node_name||'');
+const nodeType=String((errNode&&errNode.type)||'');
 const message=String(error.message||root.message||'n8n node failed');
 const errorType=String(error.name||error.type||'Error');
 const stack=String(error.stack||'');
 return [{json:{
   execution_id:executionId,
+  execution_url:executionUrl,
   workflow_name:workflowName,
+  workflow_id:workflowId,
   node_name:nodeName,
+  node_type:nodeType,
   error_message:message.slice(0,4000),
   error_type:errorType.slice(0,200),
   stack:stack.slice(0,8000),
@@ -92,7 +100,7 @@ const caseId=String(look.case_id||n.case_id||'').trim()||null;
 return [{json:{
   ...n,
   case_id:caseId,
-  trace_sql_parameters:[caseId, n.execution_id, n.workflow_name, n.node_name, n.error_message, n.error_type, n.stack, JSON.stringify({execution_id:n.execution_id})],
+  trace_sql_parameters:[caseId, n.execution_id, n.workflow_name, n.node_name, n.error_message, n.error_type, n.stack, JSON.stringify({execution_id:n.execution_id,execution_url:n.execution_url,workflow_id:n.workflow_id,node_type:n.node_type})],
 }}];
 """
 
@@ -112,7 +120,8 @@ return [{json:{
     'error',
     `Упал узел ${x.node_name||'unknown'}`,
     null,
-    JSON.stringify({error_id:errorId, execution_id:x.execution_id, node_name:x.node_name, error_type:x.error_type})
+    /* Developer log («Лог»): enough to read the failure without opening Postgres; the full stack stays in error_traces. */
+    JSON.stringify({error_id:errorId, execution_id:x.execution_id, execution_url:x.execution_url, workflow_id:x.workflow_id, workflow_name:x.workflow_name, node_name:x.node_name, node_type:x.node_type, error_type:x.error_type, error_message:String(x.error_message||'').slice(0,600), stack:String(x.stack||'').slice(0,1500)})
   ]
 }}];
 """

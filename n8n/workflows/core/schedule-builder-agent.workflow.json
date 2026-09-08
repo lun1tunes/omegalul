@@ -6,7 +6,7 @@
   "nodes": [
     {
       "parameters": {
-        "content": "## edit after import\n\n**Agent — Schedule Builder** — один LLM + FastAPI tools (сгенерировано из `agents/schedule_builder.py`).\n\n1. Bind **Qwen** credential on Schedule Builder Chat Model — Qwen\n2. Bind **Runtime configuration** → `MAS — Runtime Config` (поле `schedule_service_url` = URL сервиса).\n3. Bind **Call Knowledge Retrieval** → `MAS — Knowledge Retrieval` (срез `schedule_mvp`).\n4. Оркестратор вызывает этот workflow через универсальный `Call agent (n8n)` по id из `agent_registry.invoke`. После импорта через UI id меняется — впишите новый id (из URL этого workflow) в `MAS — Runtime Config` → `agent_workflow_ids`.\n\nИнструмент выбирает LLM по задаче (нет regex-роутера). Вопрос инженеру — только `ask_engineer` прозой с вариантами; ошибки аргументов возвращаются LLM, не человеку. Результат читается из GET /sessions/{id}/result, сессия закрывается POST /sessions/{id}/close.",
+        "content": "## edit after import\n\n**Agent — Schedule Builder** — один LLM + FastAPI tools (сгенерировано из `agents/schedule_builder.py`).\n\n1. Bind **Qwen** credential on Schedule Builder Chat Model — Qwen\n2. Bind **Runtime configuration** → `MAS — Runtime Config` (поле `schedule_service_url` = URL сервиса).\n3. Bind **Call Knowledge Retrieval** → `MAS — Knowledge Retrieval` (срез `schedule_mvp`).\n4. Оркестратор вызывает этот workflow через универсальный `Call agent (n8n)` по id из `agent_registry.invoke`. После импорта через UI id меняется — впишите новый id (из URL этого workflow) в `MAS — Runtime Config` → `agent_workflow_ids`.\n5. Settings → **Error workflow** = `Error — MAS Node Traces` (после импорта через UI ссылка по id теряется): упавший узел попадёт в лог кейса (Activity → Режим разработчика → Лог).\n\nИнструмент выбирает LLM по задаче (нет regex-роутера). Вопрос инженеру — только `ask_engineer` прозой с вариантами; ошибки аргументов возвращаются LLM, не человеку. Результат читается из GET /sessions/{id}/result, сессия закрывается POST /sessions/{id}/close.",
         "height": 360,
         "width": 480,
         "color": 1
@@ -189,7 +189,7 @@
         },
         "sendBody": true,
         "specifyBody": "json",
-        "jsonBody": "={{ ({kind: \"agent.accepted\", actor: \"schedule_builder\", agent_id: \"schedule_builder\", task_id: $('Normalize schedule task').first().json.agent_task.task_id, status: 'running', status_message: \"Schedule Builder принял задачу и анализирует исходный schedule.\", payload: {source: \"schedule-builder-agent-workflow\"}}) }}"
+        "jsonBody": "={{ ({kind: \"agent.accepted\", actor: \"schedule_builder\", agent_id: \"schedule_builder\", task_id: $('Normalize schedule task').first().json.agent_task.task_id, status: 'running', status_message: \"Schedule Builder принял задачу и анализирует исходный schedule.\", payload: {source: \"schedule-builder-agent-workflow\", execution_id: String($execution.id || ''), workflow_id: String($workflow.id || ''), workflow_name: String($workflow.name || '')}}) }}"
       },
       "id": "86a96e9e-e91b-547c-9c5e-347ca0339933",
       "name": "Activity — Schedule Builder accepted",
@@ -240,7 +240,7 @@
         },
         "sendBody": true,
         "specifyBody": "json",
-        "jsonBody": "={{ ({kind: \"agent.progress\", actor: \"schedule_builder\", agent_id: \"schedule_builder\", task_id: $('Normalize schedule task').first().json.agent_task.task_id, status: 'running', status_message: \"Schedule Builder проверяет структуру скважин, даты и прогнозные controls.\", payload: {source: \"schedule-builder-agent-workflow\"}}) }}"
+        "jsonBody": "={{ ({kind: \"agent.progress\", actor: \"schedule_builder\", agent_id: \"schedule_builder\", task_id: $('Normalize schedule task').first().json.agent_task.task_id, status: 'running', status_message: \"Schedule Builder проверяет структуру скважин, даты и прогнозные controls.\", payload: {source: \"schedule-builder-agent-workflow\", execution_id: String($execution.id || ''), workflow_id: String($workflow.id || ''), workflow_name: String($workflow.name || '')}}) }}"
       },
       "id": "5dc68398-8825-52fd-964b-065a00102a56",
       "name": "Activity — Schedule Builder progress",
@@ -430,7 +430,7 @@
         },
         "sendBody": true,
         "specifyBody": "json",
-        "jsonBody": "={{ ({kind: $json.activity_kind || 'agent.progress', actor: \"schedule_builder\", agent_id: \"schedule_builder\", task_id: $('Normalize schedule task').first().json.agent_task.task_id, status: $json.status || 'running', status_message: $json.status_message || '', payload: $json.activity_payload || {source: \"schedule-builder-agent-workflow\"}}) }}"
+        "jsonBody": "={{ ({kind: $json.activity_kind || 'agent.progress', actor: \"schedule_builder\", agent_id: \"schedule_builder\", task_id: $('Normalize schedule task').first().json.agent_task.task_id, status: $json.status || 'running', status_message: $json.status_message || '', payload: Object.assign({source: \"schedule-builder-agent-workflow\"}, $json.activity_payload || {}, {execution_id: String($execution.id || ''), workflow_id: String($workflow.id || ''), workflow_name: String($workflow.name || '')})}) }}"
       },
       "id": "25bb1f57-6ac5-5783-b3e1-5b54071ce9e3",
       "name": "Activity — Schedule Builder tools",
@@ -1491,7 +1491,7 @@
     "executionOrder": "v1",
     "saveManualExecutions": true,
     "callerPolicy": "workflowsFromSameOwner",
-    "errorWorkflow": "",
+    "errorWorkflow": "63116836-8724-595e-bc5e-dd6e743e2586",
     "executionTimeout": 900
   },
   "meta": {
@@ -1500,5 +1500,5 @@
   },
   "tags": [],
   "pinData": {},
-  "versionId": "648a981e-3855-4c28-afae-7bf401d4b26b"
+  "versionId": "05e6b87c-96f5-4808-bc3d-cf18efb137a2"
 }

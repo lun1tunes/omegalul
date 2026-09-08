@@ -27,6 +27,7 @@ Subclass, set ``agent_id`` / ``store`` / ``tools``, implement ``open_session`` a
 from __future__ import annotations
 
 import os
+import time
 from typing import Any
 
 from fastapi import APIRouter, Body, FastAPI, HTTPException, Request
@@ -70,11 +71,30 @@ class AgentService:
         return ActivityClient.from_task(task, agent_id=self.agent_id, default_base_url=self.activity_base_url)
 
     def activity_for_state(self, state: dict[str, Any]) -> ActivityClient:
+        inputs = state.get("inputs") if isinstance(state.get("inputs"), dict) else {}
         return ActivityClient(
-            str(state.get("activity_base_url") or self.activity_base_url),
+            str(state.get("activity_base_url") or inputs.get("activity_base_url") or self.activity_base_url),
             agent_id=self.agent_id,
             case_id=str(state.get("case_id") or ""),
             task_id=str(state.get("task_id") or ""),
+        )
+
+    def trace_tool(self, state: dict[str, Any], tool_name: str, args: dict[str, Any], result: dict[str, Any], duration_ms: int) -> None:
+        """Developer log line per tool call (``trace.tool``); the chat never shows it. Override to mute.
+
+        ``call`` is the ordinal of this LLM-driven call in the session (``state["llm_calls"]``, counted by
+        the router) — internal registry runs inside ``open_session`` (inventory, introspection) are not counted.
+        """
+        ok = result.get("ok") is not False
+        self.activity_for_state(state).trace_tool(
+            tool_name,
+            ok=ok,
+            duration_ms=duration_ms,
+            call=int(state.get("llm_calls") or 0) or 1,
+            args=args,
+            result={k: v for k, v in result.items() if k != "ok"},
+            error="" if ok else str(result.get("error") or "error"),
+            session_id=str(state.get("session_id") or ""),
         )
 
     def packet(self, task: dict[str, Any]) -> CasePacket:
@@ -141,14 +161,18 @@ def agent_router(agent: AgentService, *, dependencies: list[Any] | None = None) 
             raise HTTPException(status_code=422, detail="session_id is required")
         # n8n tools send arguments top-level; older exports wrap them in ``input`` / ``args``.
         args = body.get("input") if isinstance(body.get("input"), dict) else body.get("args") if isinstance(body.get("args"), dict) else body
+        started = time.monotonic()
         try:
             with agent.store.lock(session_id):
                 state = agent.store.load(session_id)
-                result = agent.tools.run(state, tool_name, agent.normalize_args(tool_name, dict(args)))
+                args = agent.normalize_args(tool_name, dict(args))
+                state["llm_calls"] = int(state.get("llm_calls") or 0) + 1  # persisted by the registry's history save
+                result = agent.tools.run(state, tool_name, args)
         except SessionNotFound as exc:
             raise HTTPException(status_code=404, detail="session_not_found") from exc
         except ValueError as exc:
             raise HTTPException(status_code=422, detail=str(exc)) from exc
+        agent.trace_tool(state, tool_name, args, result, int((time.monotonic() - started) * 1000))
         agent.after_tool(state, tool_name, result)
         return result
 

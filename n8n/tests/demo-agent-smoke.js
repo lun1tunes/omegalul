@@ -49,6 +49,26 @@ for (const node of wf.nodes.filter((n) => n.type === 'n8n-nodes-base.httpRequest
   assert.equal(String(node.parameters.url).includes('demo-agent:8300'), false, `${node.name}: no Compose DNS in runtime nodes`);
 }
 
+// -- developer log («Лог»): every Activity line names its n8n execution; node failures reach the case --
+const errorWf = read('n8n/workflows/core/mas-error-traces.workflow.json');
+for (const rel of [
+  'n8n/workflows/support/demo-agent.workflow.json',
+  'n8n/workflows/core/excel-extractor-agent.workflow.json',
+  'n8n/workflows/core/schedule-builder-agent.workflow.json',
+]) {
+  const w = read(rel);
+  assert.equal(w.settings.errorWorkflow, errorWf.id, `${rel}: settings.errorWorkflow → Error — MAS Node Traces (same id as the orchestrator)`);
+  const activityNodes = w.nodes.filter((n) => n.type === 'n8n-nodes-base.httpRequest' && String(n.parameters.url).includes("'/events'"));
+  assert.ok(activityNodes.length >= 3, `${rel}: accepted / progress / tools Activity lines`);
+  for (const node of activityNodes) {
+    const body = String(node.parameters.jsonBody);
+    assert.match(body, /execution_id: String\(\$execution\.id \|\| ''\)/, `${node.name}: payload.execution_id lets Activity map this execution to the case`);
+    assert.match(body, /workflow_id: String\(\$workflow\.id \|\| ''\)/, `${node.name}: payload.workflow_id builds the n8n link in the log`);
+    assert.equal(node.onError, 'continueRegularOutput', `${node.name}: a dead Activity never fails the agent`);
+  }
+}
+assert.equal(orch.settings.errorWorkflow, errorWf.id, 'orchestrator and agents share one error workflow');
+
 // -- the orchestrator is untouched: the registry row is the only binding ----------------------------
 assert.equal(JSON.stringify(orch).includes('demo_agent'), false, 'adding an agent must not edit the orchestrator');
 const row = seed.find((r) => r.agent_id === 'demo_agent');

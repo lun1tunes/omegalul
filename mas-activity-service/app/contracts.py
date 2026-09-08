@@ -30,8 +30,18 @@ EVENT_KINDS = (
     "hitl.request",
     "hitl.answered",
     "system.node_error",
+    # Developer trace (hidden from the chat, shown in the «Лог» tab): one FastAPI tool call of an
+    # agent (`trace.tool`) or a free-form technical note (`trace.note`). Same table, same stream.
+    "trace.tool",
+    "trace.note",
 )
 AGENT_EVENT_KINDS = ("agent.accepted", "agent.progress", "agent.result", "agent.failed")
+TRACE_EVENT_PREFIX = "trace."
+
+
+def is_trace_kind(kind: Any) -> bool:
+    """Technical events never become chat turns; the developer log shows them."""
+    return str(kind or "").startswith(TRACE_EVENT_PREFIX)
 MAX_STEPS = 24
 
 

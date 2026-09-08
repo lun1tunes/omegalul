@@ -6,7 +6,7 @@
   "nodes": [
     {
       "parameters": {
-        "content": "## edit after import\n\n**Agent — Demo Agent** — один LLM + FastAPI tools (сгенерировано из `agents/demo_agent.py`).\n\n1. Bind **Qwen** credential on Demo Agent Chat Model — Qwen\n2. Bind **Runtime configuration** → `MAS — Runtime Config` (поле `demo_agent_url` = URL сервиса).\n3. Bind **Call Knowledge Retrieval** → `MAS — Knowledge Retrieval` (срез `excel_protocol`).\n4. Оркестратор вызывает этот workflow через универсальный `Call agent (n8n)` по id из `agent_registry.invoke`. После импорта через UI id меняется — впишите новый id (из URL этого workflow) в `MAS — Runtime Config` → `agent_workflow_ids`.\n\nИнструмент выбирает LLM по задаче (нет regex-роутера). Вопрос инженеру — только `ask_engineer` прозой с вариантами; ошибки аргументов возвращаются LLM, не человеку. Результат читается из GET /sessions/{id}/result, сессия закрывается POST /sessions/{id}/close.",
+        "content": "## edit after import\n\n**Agent — Demo Agent** — один LLM + FastAPI tools (сгенерировано из `agents/demo_agent.py`).\n\n1. Bind **Qwen** credential on Demo Agent Chat Model — Qwen\n2. Bind **Runtime configuration** → `MAS — Runtime Config` (поле `demo_agent_url` = URL сервиса).\n3. Bind **Call Knowledge Retrieval** → `MAS — Knowledge Retrieval` (срез `excel_protocol`).\n4. Оркестратор вызывает этот workflow через универсальный `Call agent (n8n)` по id из `agent_registry.invoke`. После импорта через UI id меняется — впишите новый id (из URL этого workflow) в `MAS — Runtime Config` → `agent_workflow_ids`.\n5. Settings → **Error workflow** = `Error — MAS Node Traces` (после импорта через UI ссылка по id теряется): упавший узел попадёт в лог кейса (Activity → Режим разработчика → Лог).\n\nИнструмент выбирает LLM по задаче (нет regex-роутера). Вопрос инженеру — только `ask_engineer` прозой с вариантами; ошибки аргументов возвращаются LLM, не человеку. Результат читается из GET /sessions/{id}/result, сессия закрывается POST /sessions/{id}/close.",
         "height": 360,
         "width": 480,
         "color": 1
@@ -189,7 +189,7 @@
         },
         "sendBody": true,
         "specifyBody": "json",
-        "jsonBody": "={{ ({kind: \"agent.accepted\", actor: \"demo_agent\", agent_id: \"demo_agent\", task_id: $('Normalize demo task').first().json.agent_task.task_id, status: 'running', status_message: \"Demo Agent принял задачу\", payload: {source: \"demo-agent-agent-workflow\"}}) }}"
+        "jsonBody": "={{ ({kind: \"agent.accepted\", actor: \"demo_agent\", agent_id: \"demo_agent\", task_id: $('Normalize demo task').first().json.agent_task.task_id, status: 'running', status_message: \"Demo Agent принял задачу\", payload: {source: \"demo-agent-agent-workflow\", execution_id: String($execution.id || ''), workflow_id: String($workflow.id || ''), workflow_name: String($workflow.name || '')}}) }}"
       },
       "id": "e99d810e-6176-51c6-9a2a-a85522524193",
       "name": "Activity — Demo Agent accepted",
@@ -240,7 +240,7 @@
         },
         "sendBody": true,
         "specifyBody": "json",
-        "jsonBody": "={{ ({kind: \"agent.progress\", actor: \"demo_agent\", agent_id: \"demo_agent\", task_id: $('Normalize demo task').first().json.agent_task.task_id, status: 'running', status_message: \"Demo Agent разбирает задачу и выбирает инструмент.\", payload: {source: \"demo-agent-agent-workflow\"}}) }}"
+        "jsonBody": "={{ ({kind: \"agent.progress\", actor: \"demo_agent\", agent_id: \"demo_agent\", task_id: $('Normalize demo task').first().json.agent_task.task_id, status: 'running', status_message: \"Demo Agent разбирает задачу и выбирает инструмент.\", payload: {source: \"demo-agent-agent-workflow\", execution_id: String($execution.id || ''), workflow_id: String($workflow.id || ''), workflow_name: String($workflow.name || '')}}) }}"
       },
       "id": "e6bc841e-53ed-5649-a890-8aee9f8b3198",
       "name": "Activity — Demo Agent progress",
@@ -430,7 +430,7 @@
         },
         "sendBody": true,
         "specifyBody": "json",
-        "jsonBody": "={{ ({kind: $json.activity_kind || 'agent.progress', actor: \"demo_agent\", agent_id: \"demo_agent\", task_id: $('Normalize demo task').first().json.agent_task.task_id, status: $json.status || 'running', status_message: $json.status_message || '', payload: $json.activity_payload || {source: \"demo-agent-agent-workflow\"}}) }}"
+        "jsonBody": "={{ ({kind: $json.activity_kind || 'agent.progress', actor: \"demo_agent\", agent_id: \"demo_agent\", task_id: $('Normalize demo task').first().json.agent_task.task_id, status: $json.status || 'running', status_message: $json.status_message || '', payload: Object.assign({source: \"demo-agent-agent-workflow\"}, $json.activity_payload || {}, {execution_id: String($execution.id || ''), workflow_id: String($workflow.id || ''), workflow_name: String($workflow.name || '')})}) }}"
       },
       "id": "a520771a-a26c-572e-8214-cb6a79ebbc95",
       "name": "Activity — Demo Agent tools",
@@ -981,7 +981,7 @@
     "executionOrder": "v1",
     "saveManualExecutions": true,
     "callerPolicy": "workflowsFromSameOwner",
-    "errorWorkflow": "",
+    "errorWorkflow": "63116836-8724-595e-bc5e-dd6e743e2586",
     "executionTimeout": 900
   },
   "meta": {
@@ -990,5 +990,5 @@
   },
   "tags": [],
   "pinData": {},
-  "versionId": "56ab69f1-6d99-4a85-ba9b-70f8e71d1f15"
+  "versionId": "2815d981-5150-4ea6-9934-319aa86422e3"
 }

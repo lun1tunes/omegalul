@@ -12,7 +12,7 @@ This is a plain module of the repository, not a pip package: a service makes it 
 Runtime needs: ``fastapi`` and ``filelock`` (``requirements.txt`` next to this folder).
 """
 
-from .activity import ActivityClient
+from .activity import ActivityClient, compact_for_log
 from .agent import AgentService, agent_router, create_agent_app
 from .errors import SessionNotFound, ToolError, error_envelope
 from .hitl import engineer_answers, engineer_request_from_args, hitl_payloads
@@ -34,6 +34,7 @@ __all__ = [
     "ToolRegistry",
     "agent_result",
     "agent_router",
+    "compact_for_log",
     "create_agent_app",
     "engineer_answers",
     "engineer_request",

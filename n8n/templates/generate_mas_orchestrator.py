@@ -214,7 +214,7 @@ if(!applied.accepted){
   state.hitl={pending:true,questions:[q],answers};
   state.status='waiting_user';
   state.version=Number(state.version||0)+1;
-  const persistEvents=[[prev.case_id,'','hitl.request','orchestrator','','waiting_user',q.question,'',JSON.stringify(q)]];
+  const persistEvents=[[prev.case_id,'','hitl.request','orchestrator','','waiting_user',q.question,'',JSON.stringify({...q,...execRef()})]];
   return [{json:{
     ...prev,
     state,
@@ -237,7 +237,7 @@ ledgerPush(state,{kind:'human',step:Number(state.step_count||0),question_id:qid,
 state.ledger.last_human_step=Number(state.step_count||0);
 state.ledger.stall_count=0;
 const said=humanAnswerText(applied.answer);
-const persistEvents=[[prev.case_id,'','hitl.answered','user','','answered',said?('Пользователь ответил: '+said):'Пользователь ответил','',JSON.stringify({question_id:qid,answer:applied.answer})]];
+const persistEvents=[[prev.case_id,'','hitl.answered','user','','answered',said?('Пользователь ответил: '+said):'Пользователь ответил','',JSON.stringify({question_id:qid,answer:applied.answer,...execRef()})]];
 return [{json:{
   ...prev,
   state,
@@ -637,7 +637,7 @@ if(req.is_resume===true){
   state.ledger.last_human_step=Number(state.step_count||0);
   state.ledger.stall_count=0;
   const said=humanAnswerText(stored);
-  const persistEvents=[[req.case_id,'','hitl.answered','user','','answered',said?('Пользователь ответил: '+said):'Пользователь ответил','',JSON.stringify({question_id:qid,answer:stored})]];
+  const persistEvents=[[req.case_id,'','hitl.answered','user','','answered',said?('Пользователь ответил: '+said):'Пользователь ответил','',JSON.stringify({question_id:qid,answer:stored,...execRef()})]];
   return [{json:{
     ...req,
     state,
@@ -868,11 +868,14 @@ else if(guard==='completion_unverified'){
   statusMessage=(verdict&&!looksMachineText(verdict)?verdict.replace(/\.?$/,'. '):'Проверка завершения: задача ещё не выполнена целиком. ')+(gaps?`Не хватает: ${gaps}. `:'')+'Продолжаю работу.';
 }
 else if(guard==='completion_review') statusMessage='Проверка завершения снова нашла пробел — прошу инженера принять результат или уточнить, что нужно получить.';
+/* Developer log: the LLM's decision as it came (before guards), bounded — this is what a developer
+   compares with the guard/verification fields when a step went wrong. */
+const decisionRaw=boundedForLog({...decision,action:obj(decision.action)?decision.action:null},4000);
 const decisionEvent={
   kind:'orchestrator.decision',
   actor:'orchestrator',
   status_message:statusMessage,
-  payload:{action_type:type,agent_id:action.agent_id||null,step_count:state.step_count,version:state.version,progress:{goal_satisfied:progress.goal_satisfied===true,evidence:String(progress.evidence||'').slice(0,300),missing:String(progress.missing||'').slice(0,300)},...(guard?{guard}:{}),...(verification?{verification:{all_covered:verification.all_covered===true,goal_parts:(Array.isArray(verification.goal_parts)?verification.goal_parts:[]).slice(0,6).map(p=>({part:String((p&&p.part)||'').slice(0,160),covered:Boolean(p&&p.covered)}))}}:{})}
+  payload:{action_type:type,agent_id:action.agent_id||null,step_count:state.step_count,version:state.version,progress:{goal_satisfied:progress.goal_satisfied===true,evidence:String(progress.evidence||'').slice(0,300),missing:String(progress.missing||'').slice(0,300)},...(guard?{guard}:{}),...(verification?{verification:{all_covered:verification.all_covered===true,goal_parts:(Array.isArray(verification.goal_parts)?verification.goal_parts:[]).slice(0,6).map(p=>({part:String((p&&p.part)||'').slice(0,160),covered:Boolean(p&&p.covered)}))}}:{}),decision:decisionRaw,...execRef()}
 };
 const events=[];
 let nextStatus='running';
@@ -915,20 +918,21 @@ if(type==='call_agent'){
     task_id:taskId,
     status_message:statusMessage,
     handoff_message:agentTask.handoff_message,
-    payload:{task_id:taskId}
+    /* Developer log: the exact agent_task the agent received (inputs are references, so it is small). */
+    payload:{task_id:taskId,agent_task:boundedForLog(agentTask,6000),...execRef()}
   });
 } else if(type==='ask_user'){
   nextStatus='waiting_user';
   const q={question_id:String(action.question_id||`Q-${state.step_count}`),question:String(action.question||'Нужно уточнение'),options:Array.isArray(action.options)?action.options:[],...(action.kind?{kind:action.kind}:{})};
   state.hitl={pending:true,questions:[q],answers:(state.hitl&&state.hitl.answers)||{}};
   state.current_task=null;
-  events.push(decisionEvent, {kind:'hitl.request',actor:'orchestrator',status:'waiting_user',status_message:statusMessage,payload:q});
+  events.push(decisionEvent, {kind:'hitl.request',actor:'orchestrator',status:'waiting_user',status_message:statusMessage,payload:{...q,...execRef()}});
 } else if(type==='continue'){
   /* Completion check rejected the finish: no agent, no question — the next step re-decides with the
      gaps written into the journal. The loop is continued by "No agent this step" → "Continue loop?". */
   nextStatus='running';
   state.current_task=null;
-  events.push(decisionEvent, {kind:'orchestrator.status',actor:'orchestrator',status:'running',status_message:statusMessage,payload:{action_type:'continue',uncovered:action.uncovered||[]}});
+  events.push(decisionEvent, {kind:'orchestrator.status',actor:'orchestrator',status:'running',status_message:statusMessage,payload:{action_type:'continue',uncovered:action.uncovered||[],...execRef()}});
 } else if(type==='finish'){
   nextStatus='done';
   state.current_task=null;
@@ -943,12 +947,12 @@ if(type==='call_agent'){
   const result={...(obj(action.result)?action.result:{}),summary_for_human:summary,done_by_agents:journalSummary,deliverables:deliverables(state.artifacts),...(guard?{guard}:{}),...(verification?{completion_verified:verification.all_covered===true}:{})};
   state.data={...(state.data||{}),result};
   statusMessage=summary;
-  events.push({kind:'case.finished',actor:'orchestrator',status:'done',status_message:summary,payload:{...result,action_type:'finish'}});
+  events.push({kind:'case.finished',actor:'orchestrator',status:'done',status_message:summary,payload:{...result,action_type:'finish',...execRef()}});
 } else {
   nextStatus='waiting_user';
   const q={question_id:'Q-unknown',question:'Оркестратор вернул неизвестное действие',options:[]};
   state.hitl={pending:true,questions:[q],answers:{}};
-  events.push({kind:'hitl.request',actor:'orchestrator',status:'waiting_user',status_message:statusMessage,payload:q});
+  events.push({kind:'hitl.request',actor:'orchestrator',status:'waiting_user',status_message:statusMessage,payload:{...q,...execRef()}});
 }
 state.status=nextStatus;
 const persistEvents=events.map(e=>[
@@ -1097,10 +1101,10 @@ if(Number(state.step_count||0)>=maxSteps&&nextStatus==='running'){
     const review=buildResultReviewQuestion(state, agentId, registry, 'step_limit');
     state.hitl={pending:true,questions:[review],answers:(state.hitl&&state.hitl.answers)||{}};
     state.ledger.reviews=Number(state.ledger.reviews||0)+1;
-    events.push({kind:'hitl.request',actor:'orchestrator',status:'waiting_user',status_message:`Лимит шагов (${maxSteps}) исчерпан — прошу инженера принять результат или описать доработку.`,payload:review});
+    events.push({kind:'hitl.request',actor:'orchestrator',status:'waiting_user',status_message:`Лимит шагов (${maxSteps}) исчерпан — прошу инженера принять результат или описать доработку.`,payload:{...review,...execRef()}});
   } else {
     nextStatus='failed';
-    events.push({kind:'case.failed',actor:'orchestrator',status:'failed',status_message:`Превышен лимит шагов оркестратора (${maxSteps}), результата нет.`});
+    events.push({kind:'case.failed',actor:'orchestrator',status:'failed',status_message:`Превышен лимит шагов оркестратора (${maxSteps}), результата нет.`,payload:{reason:'step_limit',max_steps:maxSteps,...execRef()}});
   }
 }
 state.data=data;

@@ -20,7 +20,10 @@
   const chatView = $("chatView");
   const viewChatBtn = $("viewChatBtn");
   const viewSchemaBtn = $("viewSchemaBtn");
+  const viewLogBtn = $("viewLogBtn");
   const schemaView = $("schemaView");
+  const logView = $("logView");
+  const devModeToggle = $("devModeToggle");
   const requestPanel = $("requestPanel");
   const requestText = $("requestText");
   const requestFiles = $("requestFiles");
@@ -235,6 +238,7 @@
   let feedGeneration = 0;
   let lastCaseFeed = emptyFeed();
   let workspaceView = "chat";
+  let devMode = false;
   let startResumeTask = null;
   let source = null;
   let feedPollTimer = null;
@@ -505,23 +509,40 @@
 
   // ------------------------------------------------------------------ workspace views
   function setWorkspaceView(mode, { persist = true } = {}) {
-    workspaceView = mode === "schema" ? "schema" : "chat";
+    // «Лог» exists only in developer mode; without it the request falls back to the chat.
+    workspaceView = mode === "schema" ? "schema" : mode === "log" && devMode ? "log" : "chat";
     workspace.classList.toggle("mode-schema", workspaceView === "schema");
     workspace.classList.toggle("mode-chat", workspaceView === "chat");
-    chatView.hidden = workspaceView === "schema";
+    workspace.classList.toggle("mode-log", workspaceView === "log");
+    chatView.hidden = workspaceView !== "chat";
     schemaView.hidden = workspaceView !== "schema";
-    viewChatBtn.setAttribute("aria-selected", String(workspaceView === "chat"));
-    viewSchemaBtn.setAttribute("aria-selected", String(workspaceView === "schema"));
-    viewChatBtn.classList.toggle("is-active", workspaceView === "chat");
-    viewSchemaBtn.classList.toggle("is-active", workspaceView === "schema");
+    logView.hidden = workspaceView !== "log";
+    for (const [btn, name] of [[viewChatBtn, "chat"], [viewSchemaBtn, "schema"], [viewLogBtn, "log"]]) {
+      btn.setAttribute("aria-selected", String(workspaceView === name));
+      btn.classList.toggle("is-active", workspaceView === name);
+    }
     if (persist) { try { sessionStorage.setItem("masActivityView", workspaceView); } catch (_) { /* ignore */ } }
+    if (window.MasLog) window.MasLog.setVisible(workspaceView === "log");
     if (workspaceView === "schema") {
       schemaView.focus({ preventScroll: true });
       if (window.MasSchema && typeof window.MasSchema.relayout === "function") requestAnimationFrame(() => window.MasSchema.relayout());
+    } else if (workspaceView === "log") {
+      logView.focus({ preventScroll: true });
     } else {
       // Turns appended while the chat was hidden could not scroll a 0-height pane — catch up now.
       requestAnimationFrame(() => { chatView.scrollTop = chatView.scrollHeight; });
     }
+  }
+
+  // Developer mode: a persistent switch (localStorage) that reveals the «Лог» tab — the technical
+  // trace of the case (decisions, handoffs, tool calls, HITL, n8n node errors). Nothing else changes.
+  function setDevMode(on, { persist = true } = {}) {
+    devMode = Boolean(on);
+    devModeToggle.checked = devMode;
+    document.body.classList.toggle("dev-mode", devMode);
+    viewLogBtn.hidden = !devMode;
+    if (persist) { try { localStorage.setItem("masDevMode", devMode ? "1" : "0"); } catch (_) { /* ignore */ } }
+    if (!devMode && workspaceView === "log") setWorkspaceView("chat");
   }
 
   function setInspectorOpen(open) {
@@ -1235,6 +1256,15 @@
       const chips = deliverableChips(files);
       if (chips) main.append(chips);
     }
+    if (isError && turn.event_id != null) {
+      // Visible in developer mode only (CSS): jumps to this event's record — node, execution, stack.
+      const link = document.createElement("a");
+      link.className = "turn-log-link";
+      link.href = "#log";
+      link.dataset.seq = String(turn.event_id);
+      link.textContent = "Подробности в логе";
+      main.append(link);
+    }
 
     li.append(main);
 
@@ -1429,9 +1459,14 @@
           applyFeedMeta(msg);
           refreshFinalChips();
           syncSchema(lastCaseFeed);
+        } else if (msg.type === "trace") {
+          // Developer-only rows (tool calls, technical notes): never in the chat, only in «Лог».
+          if (window.MasLog) window.MasLog.notify(msg.log);
+          if (msg.status) lastCaseFeed.status = msg.status;
         } else if (msg.type === "turn") {
           renderTurn(msg.turn, { animate: true });
           applyFeedMeta(msg);
+          if (window.MasLog) window.MasLog.notify(msg.log);
           if (msg.event && msg.event.event_id != null) {
             const events = Array.isArray(lastCaseFeed.events) ? lastCaseFeed.events.slice() : [];
             if (!events.some((row) => row && row.event_id === msg.event.event_id)) events.push(msg.event);
@@ -1456,6 +1491,7 @@
     hideNotFound();
     artifactCards = [];
     lastCaseFeed = emptyFeed();
+    if (window.MasLog) window.MasLog.clear();
     renderRequest(null);
     renderGate(null, { awaiting: false });
     setRestartable(false);
@@ -1562,6 +1598,7 @@
     hideNotFound();
     currentTask = taskId;
     currentTaskName = catalogTaskName(taskId);
+    if (window.MasLog) window.MasLog.setCase(taskId);
     const gen = bumpFeedGeneration();
     history.replaceState({}, "", `/t/${encodeURIComponent(taskId)}`);
     clearThread();
@@ -1831,6 +1868,17 @@
 
   viewChatBtn.addEventListener("click", () => setWorkspaceView("chat"));
   viewSchemaBtn.addEventListener("click", () => setWorkspaceView("schema"));
+  viewLogBtn.addEventListener("click", () => setWorkspaceView("log"));
+  devModeToggle.addEventListener("change", () => setDevMode(devModeToggle.checked));
+  // Chat → «в логе»: an error turn links to its record in the developer log.
+  thread.addEventListener("click", (e) => {
+    const link = e.target.closest(".turn-log-link");
+    if (!link) return;
+    e.preventDefault();
+    if (!devMode) setDevMode(true);
+    setWorkspaceView("log");
+    if (window.MasLog) window.MasLog.focus(link.dataset.seq);
+  });
   inspectorToggle.addEventListener("click", () => setInspectorOpen(!inspector.classList.contains("is-open")));
   inspectorClose.addEventListener("click", () => setInspectorOpen(false));
   if (railToggle) railToggle.addEventListener("click", () => setRailOpen(!taskRail.classList.contains("is-open")));
@@ -1862,7 +1910,11 @@
   wireDropzone(startDropzone, startFileInput, addFiles);
   wireDropzone(hitlDropzone, hitlFileInput, addHitlFiles, { clickOpens: false });
 
-  try { if (sessionStorage.getItem("masActivityView") === "schema") setWorkspaceView("schema", { persist: false }); } catch (_) { /* ignore */ }
+  try { setDevMode(localStorage.getItem("masDevMode") === "1", { persist: false }); } catch (_) { /* ignore */ }
+  try {
+    const saved = sessionStorage.getItem("masActivityView");
+    if (saved === "schema" || saved === "log") setWorkspaceView(saved, { persist: false });
+  } catch (_) { /* ignore */ }
   setWorkspaceView(workspaceView, { persist: false });
   renderInspector();
 

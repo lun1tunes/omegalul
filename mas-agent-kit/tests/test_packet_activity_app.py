@@ -178,6 +178,38 @@ class _DemoAgent(AgentService):
         return args
 
 
+def test_router_traces_every_tool_call_to_the_developer_log(tmp_path: Path, activity_server: str) -> None:
+    """Each POST /agent-tools/{tool} → one trace.tool event: tool, ok/error, duration, bounded args (hidden from the chat).
+
+    ``call`` counts LLM-driven calls only: internal registry runs (Excel inventory in ``open_session``) made the
+    first live trace read ``call: 4`` for the single tool the model used (CASE-6a9fa129-5ae077).
+    """
+    agent = _DemoAgent(tmp_path)
+    client = TestClient(create_agent_app(agent, title="demo"))
+    task = {"case_id": "CASE-7", "task_id": "T-7", "objective": "Привет", "inputs": {"activity_base_url": activity_server}, "context": {}}
+    sid = client.post("/agent-tools/open_session", json=task).json()["session_id"]
+    with agent.store.lock(sid):  # service-internal run (inventory-style): in tool_history, not an LLM call
+        agent.tools.run(agent.store.load(sid), "echo", {"text": "внутренний"})
+    client.post("/agent-tools/echo", json={"session_id": sid})
+    client.post("/agent-tools/echo", json={"session_id": sid, "text": "т" * 5000, "items": list(range(50))})
+    traces = [c["json"] for c in _FakeActivity.calls if c["path"] == "/cases/CASE-7/events" and c["json"]["kind"] == "trace.tool"]
+    assert len(traces) == 2
+    bad, ok = traces
+    assert bad["actor"] == "demo" and bad["task_id"] == "T-7" and bad["payload"]["tool"] == "echo" and bad["payload"]["ok"] is False
+    assert bad["payload"]["error"] == "spec_incomplete" and bad["payload"]["call"] == 1 and bad["status_message"].startswith("echo → ошибка spec_incomplete")
+    assert ok["payload"]["ok"] is True and ok["payload"]["call"] == 2 and ok["payload"]["duration_ms"] >= 0 and ok["payload"]["session_id"] == sid
+    # Arguments are bounded, never dropped: the log must show what the LLM sent without growing the event table.
+    assert ok["payload"]["args"]["text"].endswith("…") and len(ok["payload"]["args"]["text"]) < 600
+    assert ok["payload"]["args"]["items"][-1] == "… ещё 30" and ok["payload"]["result"] == {"status": "completed"}
+    # No Activity in the task → nothing is posted and nothing breaks.
+    quiet = _DemoAgent(tmp_path / "quiet")
+    qc = TestClient(create_agent_app(quiet, title="quiet"))
+    qsid = qc.post("/agent-tools/open_session", json={"case_id": "CASE-8", "task_id": "T-8", "objective": "Привет", "inputs": {}, "context": {}}).json()["session_id"]
+    before = len(_FakeActivity.calls)
+    assert qc.post("/agent-tools/echo", json={"session_id": qsid, "text": "x"}).json()["ok"] is True
+    assert len(_FakeActivity.calls) == before
+
+
 def test_agent_app_routes(tmp_path: Path) -> None:
     agent = _DemoAgent(tmp_path)
     client = TestClient(create_agent_app(agent, title="demo"))

@@ -12,12 +12,13 @@ from pathlib import Path
 from typing import Any
 
 from fastapi import APIRouter, BackgroundTasks, File, Form, HTTPException, Query, Request, UploadFile
-from fastapi.responses import StreamingResponse
+from fastapi.responses import PlainTextResponse, StreamingResponse
 
 from app import artifact_store
+from app import case_log
 from app import case_watch
 from app import control_plane
-from app.contracts import AGENT_EVENT_KINDS, AgentRegistryIn, CaseAnswerIn, CaseEventIn, CaseNameIn, MAX_STEPS
+from app.contracts import AGENT_EVENT_KINDS, AgentRegistryIn, CaseAnswerIn, CaseEventIn, CaseNameIn, MAX_STEPS, is_trace_kind
 from app.state_shape import (
     artifact_cards,
     artifact_filenames,
@@ -158,6 +159,9 @@ def collapse_duplicate_events(events: list[dict[str, Any]] | None) -> list[dict[
         if not isinstance(event, dict):
             continue
         kind = str(event.get("kind") or "")
+        if is_trace_kind(kind):
+            # Developer trace rows (tool calls, technical notes) live in the «Лог» tab only.
+            continue
         msg = _event_message(event)
         if kind in AGENT_DUP_KINDS and out and _same_agent_line(out[-1], event):
             continue
@@ -684,6 +688,46 @@ def get_errors(case_id: str) -> dict[str, Any]:
     return {"case_id": case_id, "errors": control_plane.list_errors(case_id)}
 
 
+def _n8n_base() -> str:
+    """Browser-facing n8n root for execution links in the developer log ('' when n8n is not configured)."""
+    try:
+        return get_settings().n8n_public_base
+    except Exception:  # noqa: BLE001 — the log must render without n8n configured
+        return ""
+
+
+@router.get("/cases/{case_id}/log")
+def get_case_log(case_id: str, format: str = Query(default="json")) -> Any:
+    """Developer log («Лог» tab): every event with level/source/step, n8n links, error stacks.
+
+    ``?format=ndjson`` downloads the same records one per line — the file to attach to a bug report
+    or to feed ``scripts/mas_trace_case.py``.
+    """
+    log = case_log.build_case_log(case_id, n8n_base=_n8n_base())
+    if log is None:
+        raise HTTPException(status_code=404, detail="case not found")
+    if format == "ndjson":
+        return PlainTextResponse(
+            case_log.to_ndjson(log),
+            media_type="application/x-ndjson",
+            headers={"Content-Disposition": f'attachment; filename="{case_id}.log.ndjson"'},
+        )
+    return log
+
+
+def _record_execution_from_payload(case_id: str, actor: str, payload: dict[str, Any]) -> None:
+    """Any producer that knows its n8n execution id maps it to the case (agent workflows send it on
+    ``agent.accepted``): the Error Trigger of that workflow can then attribute its failure to the case."""
+    execution_id = str(payload.get("execution_id") or "").strip()
+    if not execution_id:
+        return
+    workflow_name = str(payload.get("workflow_name") or actor or "agent").strip()
+    try:
+        control_plane.record_execution(execution_id, case_id, workflow_name=workflow_name)
+    except Exception as exc:  # noqa: BLE001 — a missing link must not fail the event write
+        logger.warning("record_execution failed case_id=%s execution_id=%s: %s", case_id, execution_id, exc)
+
+
 @router.post("/cases/{case_id}/events")
 def post_event(case_id: str, body: CaseEventIn) -> dict[str, Any]:
     if control_plane.get_case(case_id) is None:
@@ -702,6 +746,7 @@ def post_event(case_id: str, body: CaseEventIn) -> dict[str, Any]:
         task_id=body.task_id,
         payload=body.payload,
     )
+    _record_execution_from_payload(case_id, body.actor, body.payload)
     return {"ok": True, "event": event, "idempotent": bool(event.get("idempotent"))}
 
 
@@ -1003,6 +1048,8 @@ async def stream_case(case_id: str, request: Request) -> StreamingResponse:
     if snap["case"] is None:
         raise HTTPException(status_code=404, detail="case not found")
 
+    n8n_base = _n8n_base()
+
     async def gen():
         all_raw: list[dict[str, Any]] = list(snap["events"] or [])
         snapshot = _feed_from_row(case_id, snap["case"], collapse_duplicate_events(all_raw), 0)
@@ -1059,9 +1106,23 @@ async def stream_case(case_id: str, request: Request) -> StreamingResponse:
                 feed = _feed_from_row(case_id, row, [], last)
                 meta = _stream_meta(feed)
                 updated = str(row.get("updated_at") or "")
+                # Developer log rows ride the same stream: chat events carry their record inside the
+                # turn message, trace.* events (hidden from the chat) go as `trace` messages.
+                log_by_id = {
+                    record["seq"]: record
+                    for record in case_log.records_from_events(all_raw, n8n_base=n8n_base)
+                    if record.get("seq") is not None
+                }
+                for event in raw_new:
+                    if event.get("event_id") is None or not is_trace_kind(event.get("kind")):
+                        continue
+                    record = log_by_id.get(int(event["event_id"]))
+                    if record is not None:
+                        yield f"data: {json.dumps({'type': 'trace', 'log': record, **meta}, default=str)}\n\n"
                 for event in emit:
                     seen_ids.add(int(event["event_id"]))
-                    yield f"data: {json.dumps({'type': 'turn', 'turn': event_to_turn(event), 'event': event, **meta}, default=str)}\n\n"
+                    record = log_by_id.get(int(event["event_id"]))
+                    yield f"data: {json.dumps({'type': 'turn', 'turn': event_to_turn(event), 'event': event, 'log': record, **meta}, default=str)}\n\n"
                 if not emit and updated != last_updated:
                     yield f"data: {json.dumps({'type': 'meta', **meta}, default=str)}\n\n"
                 last_updated = updated

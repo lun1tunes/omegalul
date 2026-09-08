@@ -90,7 +90,7 @@ flowchart TB
 6. **Результаты** — deliverables агентов: всё, что агент вернул в `artifacts`, оркестратор помечает `kind=deliverable, producer=<agent_id>`. Activity отдаёт `GET /cases/{id}/artifacts?kind=&producer=` и показывает их у сообщения агента, в панели «Результаты» и в итоге. `.INC` и diff Schedule Builder — два из них.
 7. **Завершение** — только доказанное по журналу (§1.3). `case.finished` показывает итог оркестратора по фактам («Сдвинул даты ввода 4 скважин: …»).
 
-Ошибки нод n8n пишет `Error — MAS Node Traces` напрямую в Postgres (`error_traces` + `events`). Health Check — **форма n8n**, адреса берёт из Runtime Config.
+Ошибки нод n8n пишет `Error — MAS Node Traces` напрямую в Postgres (`error_traces` + `events`); вместе с handoff'ами, HITL, решениями оркестратора и вызовами инструментов они складываются в **лог разработчика** кейса (§1.5). Health Check — **форма n8n**, адреса берёт из Runtime Config.
 
 `MAS — Runtime Config` (Set `Runtime URLs`): `activity_base_url`, `excel_tools_url`, `schedule_service_url`, `math_url` (без `/agent/run`), `orchestrator_step_url`, `max_steps` (бюджет шагов на кейс, по умолчанию 12), `agent_workflow_ids` (JSON `{"<agent_id>":"<workflow id>"}`, привязка агентов после UI-импорта — §2 Шаг 3). Ключ Excel сюда не кладут.
 
@@ -145,6 +145,25 @@ Decision LLM видит все колонки, кроме `invoke`; `invoke` ч�
 
 Статусы кейса: `new`, `running`, `waiting_user` (HITL), `waiting_agent` (долгий агент вернул `in_progress`, §6.1), `done`, `failed`. Список — `contracts.CASE_STATUSES` в Activity и `CASE_STATUSES` в `generate_mas_control_plane_proxy.py`; `schema` прокси пересоздаёт CHECK-ограничение `cases_status_check`, поэтому существующая база подхватывает новые статусы без ручного SQL.
 
+### 1.5. Лог разработчика (трасса кейса в UI)
+
+Лента в чате — для инженера; всё техническое живёт в **логе разработчика**: `GET /cases/{id}/log` и вкладка **«Лог»** в Activity (появляется после галочки **«Режим разработчика»** в шапке; выбор запоминается в браузере). Отдельной таблицы нет — лог собирается из тех же `events` + `error_traces` кейса, поэтому ничего дополнительно не настраивается.
+
+Что попадает в лог (и откуда):
+
+| Источник | События | Что видно в подробностях |
+|---|---|---|
+| Оркестратор (`Orchestrator — MAS`) | `orchestrator.decision` (в т.ч. `guard`), `agent.handoff`, `hitl.request`, `hitl.answered`, `orchestrator.resume`, `case.finished/failed`, `agent.failed` | усечённая копия решения LLM (`decision`), переданная агенту `agent_task`, вопрос и варианты, ответ инженера, `execution_id`/`workflow_id` |
+| Workflow агентов (`Agent — …`) | `agent.accepted`, `agent.progress`, `agent.result` | `issues`, `assumptions`, `execution_id`/`workflow_id` |
+| FastAPI-сервисы агентов (kit) | `trace.tool` — каждый вызов `POST /agent-tools/{name}`: аргументы, результат или код ошибки, `duration_ms`, `ok`; `trace.note` — заметки агента (`activity.trace(...)`, свой `level`) | аргументы/результаты ограничены по размеру (`compact_for_log`); бинарь и длинный текст — метки, не содержимое |
+| Error Trigger (`Error — MAS Node Traces`) | `system.node_error` + строка `error_traces` (склеиваются в одну запись; для старых трасс без события создаётся синтетическая) | workflow, узел, тип узла, сообщение, усечённый stack, ссылка на execution |
+
+Каждая запись: `seq, at, level (debug|info|warn|error), source (engineer|orchestrator|agent:<id>|n8n), kind, step, task_id, agent_id, title, message, execution_id, execution_url, duration_ms, detail`. `level` выводится детерминированно: `agent.failed`/`system.node_error`/`case.failed` и `agent.result status=failed` → `error`; `orchestrator.decision` с `guard` и `trace.tool ok=false` → `warn`; прогресс и `trace.*` → `debug`. Записи группируются по **шагам оркестратора** (`orchestrator.decision` открывает шаг; заголовок шага — решение, агент, длительность, число вызовов инструментов, ошибки); `summary` — шаги, handoff'ы, HITL, инструменты, ошибки, длительность. `?format=ndjson` — выгрузка (кнопка «Скачать» во вкладке).
+
+Ссылка на execution n8n собирается из `execution_id` + `workflow_id` и базового URL `N8N_PUBLIC_URL` из `mas-activity.env` — это адрес n8n **как его открывает браузер инженера** (`http://<URL-n8n>`), не адрес, по которому Activity ходит в webhooks. Пусто → `N8N_BASE_URL`, иначе хост из `ORCHESTRATOR_WEBHOOK_URL` (на поле это один и тот же корпоративный адрес, переменную можно не задавать). Error Trigger присылает готовый `execution_url`.
+
+Вкладка «Лог»: фильтры по уровню и источнику, поиск по заголовку/сообщению/подробностям, «следовать за хвостом», раскрытие записи → JSON `detail` и ссылка «execution n8n»; в чате у сообщений об ошибке есть ссылка «Подробности в логе» (включает режим разработчика и открывает запись). События `trace.*` в чат не попадают и по SSE идут отдельным типом `trace` — лента инженера остаётся чистой. Из кода агента: `agent.activity_for_state(state).trace("что произошло", level="warn", **детали)`; вызовы инструментов kit трассирует сам (`agent_router`), писать `trace.tool` руками не нужно.
+
 ---
 
 ## 2. Развёртывание с нуля (Windows + корпоративный n8n)
@@ -186,6 +205,7 @@ Excel Tools и Schedule Builder (и любой новый агент, §6) ст�
 | `KNOWLEDGE_INGEST_URL` | `http://<URL-n8n>/webhook/mas-knowledge-ingest` |
 | `MAS_ACTIVITY_HOST` | `0.0.0.0`, если n8n не на этом ПК |
 | `ACTIVITY_CA_BUNDLE` | PEM корпоративного CA, если n8n за TLS |
+| `N8N_PUBLIC_URL` | адрес n8n для браузера (ссылки «execution n8n» в логе разработчика, §1.5); на поле обычно пусто — берётся хост webhook'а |
 
 Проверка: `check-windows.bat` → `/health` содержит `"control_plane_backend": "n8n_proxy"`, `/ready` = 200 (в JSON видно, какой webhook n8n не отвечает).
 
@@ -235,7 +255,7 @@ n8n → Import from File, в порядке `runtime_import_order`. **Ничег
 
 Агент, выбранный LLM, но не привязанный или `enabled=false`, даёт в журнал failed-результат «агент недоступен» — видно в ленте сразу.
 
-Settings → **Error workflow** = `Error — MAS Node Traces` у оркестратора, обоих агентов, Retrieval, Ingestion. Не ставить на сам `Error — MAS Node Traces` и на `MAS — Control Plane Proxy`.
+Settings → **Error workflow** = `Error — MAS Node Traces` у оркестратора, всех `Agent — …`, Retrieval, Ingestion. В JSON агентов ссылка на error workflow уже стоит, но после импорта id новый — проверить в Settings каждого workflow. Не ставить на сам `Error — MAS Node Traces` и на `MAS — Control Plane Proxy`. Без этой привязки падение узла не попадёт в лог разработчика (§1.5) — только в Executions n8n.
 
 ### Шаг 4. Control Plane Proxy
 
@@ -267,7 +287,7 @@ Settings → **Error workflow** = `Error — MAS Node Traces` у оркестр�
 
 ### Шаг 7. Работа инженера
 
-Activity `http://<IP-Windows>:8200`: новая задача — цель текстом и файлы; лента обновляется сама; статус «ждём ответ» — ответить кнопкой и/или текстом, файлы перетаскиванием; результаты — панель «Результаты» (по агентам) и чипы под сообщениями; вкладка «Схема» — граф агентов из реестра с проигрыванием шагов; «База знаний» — карточки RAG по агентам и загрузка. После обновления статики Activity — hard-refresh.
+Activity `http://<IP-Windows>:8200`: новая задача — цель текстом и файлы; лента обновляется сама; статус «ждём ответ» — ответить кнопкой и/или текстом, файлы перетаскиванием; результаты — панель «Результаты» (по агентам) и чипы под сообщениями; вкладка «Схема» — граф агентов из реестра с проигрыванием шагов; «База знаний» — карточки RAG по агентам и загрузка. Галочка **«Режим разработчика»** в шапке открывает третью вкладку **«Лог»** (§1.5) — трасса кейса: решения, handoff'ы, HITL, вызовы инструментов, ошибки узлов n8n со ссылками на executions. После обновления статики Activity — hard-refresh.
 
 ---
 
@@ -313,7 +333,10 @@ Activity `http://<IP-Windows>:8200`: новая задача — цель тек
 | Knowledge Ingestion timeout | Embeddings `batchSize=16`, `timeout=600` |
 | «Загрузить в RAG» → 404 | Ingestion не Active |
 | Пустая лента при живом n8n | прокси переимпортирован → перезапустить Activity |
-| Один и тот же вопрос дважды / задача крутится | трасса кейса (`scripts/mas_trace_case.py`, lab) — смотреть `guard` в `orchestrator.decision`; проверить, что сервис агента работает на актуальном коде |
+| Один и тот же вопрос дважды / задача крутится | Activity → «Режим разработчика» → **«Лог»**: записи `warn` «Решение … · guard …» показывают, какой предохранитель сработал; в шаге видно, что агент вернул (`agent.result`) и какие инструменты вызывал (`trace.tool`). Lab: `scripts/mas_trace_case.py`. Проверить, что сервис агента работает на актуальном коде |
+| Агент упал / «узел не выполнился» | «Лог» → запись `n8n: упал узел …` (источник `n8n`): workflow, узел, сообщение, stack, ссылка «execution n8n». Если записи нет — у workflow не выставлен Error workflow (Шаг 3) |
+| Инструмент агента отвечает ошибкой | «Лог» → `trace.tool` уровня `warn`: аргументы, которые прислала LLM, и код ошибки (`column_not_found`, `spec_incomplete` …) — это диалог LLM ↔ сервис, инженеру такое не показывается |
+| В логе нет ссылок на executions | `N8N_PUBLIC_URL` (или `N8N_BASE_URL`) в `mas-activity.env` не абсолютный URL; для старых кейсов (до этой версии workflow) `execution_id` в событиях отсутствует |
 | Qwen 503 / «Gateway timed out» | оркестратор повторит делегирование один раз сам; при повторе — другой OpenAI-compatible credential |
 
 ---
@@ -322,7 +345,7 @@ Activity `http://<IP-Windows>:8200`: новая задача — цель тек
 
 Compose на Linux: n8n `http://127.0.0.1:${N8N_HOST_PORT}` (скрипты ждут **15678**), Postgres `127.0.0.1:${POSTGRES_HOST_PORT}`, с хоста Excel `:8000`, Schedule `:8090`, Math `:8100`, Activity `:8200`; Docker DNS для нод n8n — `excel-tools`, `schedule-builder`, `math-service`, `mas-activity`; Code-ноды — `n8n-runners:5680`. **Не** `docker compose down -v` — снесёт Postgres и RAG.
 
-Один вердикт: `python3 scripts/mas_gate.py` — регенерация всех workflow с проверкой дрейфа, 15 smokes, пять pytest-наборов (kit, Activity, Schedule Builder, Excel Tools, demo agent), offline combat; `--live` добавляет `lab_soft_redeploy.py` (импорт workflows, SQL, рестарт Python-сервисов; падает, если сервис не поднялся) и семь живых кейсов через Activity: шесть `run_live_five.py` (golden 1–2, combat 0–3; `done`, `mismatch_count: 0`, без повторных HITL / review / циклов) + `run_live_demo_agent.py` (агент-шаблон: `in_progress` → `waiting_agent` → `resume source=agent` → `done`; `--cases demo_agent` гонит только его). Разбор кейса: `python3 scripts/mas_trace_case.py CASE-… [--n8n --node "Parse decision"]` — лента, state (`agents.<id>`, журнал, HITL), аудит машинного текста, подсказки, n8n executions. Правила работы — `AGENTS.md`, `.cursor/rules/`, `.cursor/skills/`.
+Один вердикт: `python3 scripts/mas_gate.py` — регенерация всех workflow с проверкой дрейфа, 16 smokes, пять pytest-наборов (kit, Activity, Schedule Builder, Excel Tools, demo agent), offline combat; `--live` добавляет `lab_soft_redeploy.py` (импорт workflows, SQL, рестарт Python-сервисов; падает, если сервис не поднялся) и семь живых кейсов через Activity: шесть `run_live_five.py` (golden 1–2, combat 0–3; `done`, `mismatch_count: 0`, без повторных HITL / review / циклов) + `run_live_demo_agent.py` (агент-шаблон: `in_progress` → `waiting_agent` → `resume source=agent` → `done`; `--cases demo_agent` гонит только его). Разбор кейса: `python3 scripts/mas_trace_case.py CASE-… [--n8n --node "Parse decision"]` — лента, state (`agents.<id>`, журнал, HITL), аудит машинного текста, подсказки, n8n executions; то же без консоли — `http://127.0.0.1:8200/cases/CASE-…/log` и вкладка «Лог» (§1.5; в lab `N8N_PUBLIC_URL=http://localhost:5678` в compose, чтобы ссылки на executions открывались из браузера). Правила работы — `AGENTS.md`, `.cursor/rules/`, `.cursor/skills/`.
 
 По частям:
 
@@ -392,7 +415,7 @@ PYTHONPATH=mas-activity-service mas-activity-service/.venv/bin/python simulation
 
 **Долгий агент** (часы): инструмент фиксирует `in_progress` и запускает работу в фоне; фон пишет в ленту `activity.progress("…прошло 30 минут.", status="waiting_agent")` и по завершении отдаёт итог `activity.finish_task(agent_result)` → `POST /cases/{id}/run {"action":"resume","source":"agent","task_id":"…","agent_result":{…}}`. Оркестратор применяет результат тем же `applyAgentResult`, что и синхронный, и продолжает план. Живой образец — `start_long_job` в `agents-template/demo_agent`.
 
-**События в ленту** (`POST {activity_base_url}/cases/{case_id}/events`): `agent.accepted`, `agent.progress` — шлёт агент (`activity.accepted(...)`, `activity.progress(...)`); `agent.result` / `agent.failed` / `hitl.request` пишет оркестратор.
+**События в ленту** (`POST {activity_base_url}/cases/{case_id}/events`): `agent.accepted`, `agent.progress` — шлёт агент (`activity.accepted(...)`, `activity.progress(...)`); `agent.result` / `agent.failed` / `hitl.request` пишет оркестратор. **В лог разработчика** (не в чат, §1.5): `trace.tool` пишет `agent_router` kit'а на каждый вызов инструмента сам; свои заметки — `activity.trace("что произошло", level="info|warn|error", **детали)` → `trace.note`. Если событие содержит `execution_id`, Activity привязывает execution n8n к кейсу (`record_execution`) — так лог получает ссылки на executions.
 
 **Текст для человека** (`message`, `status_message`, `requests[].question`, `options[].label`): русская проза без snake_case, `key=value`, JSON, `a|b`; имена файлов и листов — в `data`, не в текст. Kit проверяет это `human_text_problems` (`ask_engineer` вернёт LLM `question_not_human`); харнесс валит кейс за нарушение.
 

@@ -939,6 +939,8 @@ async function run(name, json, nodes = {}, binary = {}) {
   assert.equal(interpretedUnsure.state.hitl.pending, true);
   assert.match(String(interpretedUnsure.state.hitl.questions[0].question), /Не удалось однозначно понять ответ/);
   assert.equal(interpretedUnsure.persist_events[0][2], 'hitl.request');
+  // Developer log: the re-ask carries the execution reference like every other orchestrator event.
+  assert.equal(JSON.parse(interpretedUnsure.persist_events[0][8]).execution_id, 'exec-1');
 
   const agentResume = await run(
     'Apply request extras',
@@ -1080,6 +1082,17 @@ async function run(name, json, nodes = {}, binary = {}) {
   assert.equal(parsed.next_status, 'running');
   assert.deepEqual(parsed.events.map((e) => e.kind), ['orchestrator.decision', 'agent.handoff']);
   assert.equal(parsed.events.some((e) => e.kind === 'orchestrator.status'), false);
+  // Developer log («Лог»): the raw LLM decision and the exact agent_task ride on the events together
+  // with the n8n execution reference (this harness mocks $execution.id = exec-1; $workflow is absent → '').
+  const [decisionEv, handoffEv] = parsed.events;
+  assert.equal(decisionEv.payload.decision.action.type, 'call_agent');
+  assert.equal(decisionEv.payload.decision.action.handoff_message, 'Достань даты');
+  assert.deepEqual(decisionEv.payload.decision.action.task.facts, [{ well: '295R', date: '2019-10-01' }], 'what the LLM invented is visible in the log, never in inputs');
+  assert.deepEqual({ e: decisionEv.payload.execution_id, w: decisionEv.payload.workflow_id }, { e: 'exec-1', w: '' });
+  assert.equal(handoffEv.payload.agent_task.task_id, 'TASK-1');
+  assert.deepEqual(handoffEv.payload.agent_task.inputs, parsed.agent_task.inputs);
+  assert.equal(handoffEv.payload.execution_id, 'exec-1');
+  assert.equal(parsed.state.current_task.agent_task, undefined, 'state does not grow: the copy lives in the event only');
 
   const afterHitl = await run(
     'Parse decision',
@@ -1442,6 +1455,7 @@ async function run(name, json, nodes = {}, binary = {}) {
     const finished = finish.events.find((e) => e.kind === 'case.finished');
     assert.equal(finished.status_message, 'Скважины 1601 и 1602 переведены в группу DKS с GRAT 200000; новый SCHEDULE готов.');
     assert.match(finished.payload.done_by_agents, /Schedule Builder: Перепривязал 2 скважины/);
+    assert.equal(finished.payload.execution_id, 'exec-1', 'developer log links the finish to its n8n execution');
     // Phase 1.5: the finish carries the case result as deliverable cards by producer, not "the schedule".
     assert.deepEqual(finished.payload.deliverables.map((d) => [d.producer, d.artifact_id, d.filename]), [
       ['schedule_builder', 'schedule_out', 'schedule_result.inc'],
@@ -1496,6 +1510,9 @@ async function run(name, json, nodes = {}, binary = {}) {
     });
     assert.equal(asked.next_status, 'waiting_user');
     assert.equal(asked.state.ledger.history.at(-1).status, 'needs_input');
+    const askedEv = asked.events.find((e) => e.kind === 'hitl.request');
+    assert.equal(askedEv.payload.question_id, 'unlisted_wells_policy');
+    assert.equal(askedEv.payload.execution_id, 'exec-1', 'agent question in the developer log links to the merge execution');
     const activityWritten = {
       ...asked.state,
       hitl: { ...asked.state.hitl, pending: false, answers: { unlisted_wells_policy: { choice: 'remove', text: 'Убрать из прогноза', label: 'Убрать из прогноза' } } },

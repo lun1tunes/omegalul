@@ -391,6 +391,22 @@ function slimError(err){
   const count=Number(err.count||0);
   return {message:err.message||'',agent_id:err.agent_id||null,count:Number.isFinite(count)?count:0};
 }
+/* Developer log («Лог» tab): which n8n execution wrote an event. Empty outside n8n (Node smokes). */
+function execRef(){
+  try{
+    const ex=typeof $execution!=='undefined'&&$execution?$execution:{};
+    const wf=typeof $workflow!=='undefined'&&$workflow?$workflow:{};
+    return {execution_id:String(ex.id||''),workflow_id:String(wf.id||''),workflow_name:String(wf.name||'')};
+  }catch{return {execution_id:'',workflow_id:'',workflow_name:''};}
+}
+/* Size-bounded copy for event payloads: full value when it fits, otherwise a JSON preview. */
+function boundedForLog(value, limit){
+  let text='';
+  try{text=JSON.stringify(value===undefined?null:value);}catch{text=String(value);}
+  if(text==null) return null;
+  if(text.length<=limit) return value;
+  return {truncated:true,length:text.length,preview:text.slice(0,limit)};
+}
 function mergeIncomingArtifacts(artifacts,incoming,producer){
   /* Everything an agent returns under `artifacts` is a deliverable of that agent (kind/producer are
      stamped here, agents do not know these fields). `excel_session` is a service handle, not an artifact. */
@@ -676,7 +692,8 @@ function applyAgentResult(state, agentId, taskId, result, registry){
     state.last_error=null;
     state.error_count=0;
     events.push({kind:'agent.result',actor:agentId||'agent',agent_id:agentId,task_id:taskId,status:'completed',status_message:message,
-      payload:{data_keys:Object.keys(obj(res.data)?res.data:{}),artifacts:Object.keys(obj(res.artifacts)?res.artifacts:{}),deliverables:deliverables(state.artifacts).filter(d=>d.producer===agentId)}});
+      payload:{data_keys:Object.keys(obj(res.data)?res.data:{}),artifacts:Object.keys(obj(res.artifacts)?res.artifacts:{}),deliverables:deliverables(state.artifacts).filter(d=>d.producer===agentId),
+        issues:(Array.isArray(res.issues)?res.issues:[]).slice(0,6),assumptions:(Array.isArray(res.assumptions)?res.assumptions:[]).slice(0,6),...execRef()}});
   } else if(status==='in_progress'){
     /* Long job: the case waits for an external event, no step is spent, finish is impossible until the
        agent reports completed. `watch` is whatever the agent wants shown/polled (kind, ref, poll_hint). */
@@ -684,14 +701,14 @@ function applyAgentResult(state, agentId, taskId, result, registry){
     shouldContinue=false;
     agents[agentId]={status,summary:message.slice(0,400),task_id:taskId,step,data:obj(prevSlot.data)?prevSlot.data:{}};
     state.current_task={task_id:taskId,agent_id:agentId};
-    events.push({kind:'agent.progress',actor:agentId||'agent',agent_id:agentId,task_id:taskId,status:'waiting_agent',status_message:message,payload:{watch:obj(res.watch)?res.watch:{}}});
+    events.push({kind:'agent.progress',actor:agentId||'agent',agent_id:agentId,task_id:taskId,status:'waiting_agent',status_message:message,payload:{watch:obj(res.watch)?res.watch:{},...execRef()}});
   } else if(status==='needs_input'){
     nextStatus='waiting_user';
     shouldContinue=false;
     const reqs=Array.isArray(res.requests)?res.requests:[];
     const q=reqs[0]||{question_id:'Q-agent',question:message,options:[]};
     state.hitl={pending:true,questions:reqs.length?reqs:[q],answers:(state.hitl&&state.hitl.answers)||{}};
-    events.push({kind:'hitl.request',actor:'orchestrator',agent_id:agentId,status:'waiting_user',status_message:q.question,payload:q});
+    events.push({kind:'hitl.request',actor:'orchestrator',agent_id:agentId,status:'waiting_user',status_message:q.question,payload:{...q,...execRef()}});
   } else {
     const prevErr=obj(state.last_error)?state.last_error:{};
     const sameAgent=Boolean(agentId)&&String(prevErr.agent_id||'')===agentId;
@@ -701,11 +718,11 @@ function applyAgentResult(state, agentId, taskId, result, registry){
     /* A failed attempt is recorded in the slot (status + summary) but never overwrites data a previous
        completed run of the same agent produced. */
     agents[agentId]={...prevSlot,status:'failed',summary:message.slice(0,400),task_id:taskId,step,data:obj(prevSlot.data)?prevSlot.data:{}};
-    events.push({kind:'agent.failed',actor:agentId||'agent',agent_id:agentId,status:'failed',status_message:message,payload:{message,issues:res.issues||[],error_count:errorCount}});
+    events.push({kind:'agent.failed',actor:agentId||'agent',agent_id:agentId,status:'failed',status_message:message,payload:{message,issues:res.issues||[],error_count:errorCount,...execRef()}});
     if(errorCount>=3){
       nextStatus='failed';
       shouldContinue=false;
-      events.push({kind:'case.failed',actor:'orchestrator',status:'failed',status_message:`Агент «${title}» вернул ошибку ${errorCount} раза подряд`,payload:{agent_id:agentId,error_count:errorCount}});
+      events.push({kind:'case.failed',actor:'orchestrator',status:'failed',status_message:`Агент «${title}» вернул ошибку ${errorCount} раза подряд`,payload:{agent_id:agentId,error_count:errorCount,...execRef()}});
     }
   }
   const artifactsAdded=Object.keys(flattenArtifacts(state.artifacts||{})).filter(k=>!artifactsBefore.has(k));

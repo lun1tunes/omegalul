@@ -9,7 +9,7 @@
   <link rel="preconnect" href="https://fonts.googleapis.com" />
   <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
   <link href="https://fonts.googleapis.com/css2?family=IBM+Plex+Sans:wght@400;500;600;700&family=IBM+Plex+Mono:wght@400;500&display=swap" rel="stylesheet" />
-  <link rel="stylesheet" href="/static/app.css?v=100" />
+  <link rel="stylesheet" href="/static/app.css?v=101" />
 </head>
 <body>
   <svg width="0" height="0" style="position:absolute" aria-hidden="true">
@@ -53,6 +53,11 @@
       <a class="nav-link is-current" href="/">Задачи</a>
       <a class="nav-link" href="/knowledge">База знаний</a>
       <a class="nav-link" href="/registry">Агенты</a>
+      <label class="dev-switch" title="Показывает вкладку «Лог»: решения оркестратора, передачи задач, вызовы инструментов, вопросы инженеру и ошибки узлов n8n">
+        <input type="checkbox" id="devModeToggle" />
+        <span class="dev-switch-track" aria-hidden="true"><span class="dev-switch-knob"></span></span>
+        <span class="dev-switch-label">Режим разработчика</span>
+      </label>
     </nav>
   </header>
 
@@ -101,6 +106,7 @@
           <div class="view-toggle" role="tablist" aria-label="Представление задачи">
             <button type="button" id="viewChatBtn" class="view-toggle-btn" role="tab" aria-selected="true" aria-controls="chatView">Чат</button>
             <button type="button" id="viewSchemaBtn" class="view-toggle-btn" role="tab" aria-selected="false" aria-controls="schemaView">Схема</button>
+            <button type="button" id="viewLogBtn" class="view-toggle-btn" role="tab" aria-selected="false" aria-controls="logView" hidden>Лог</button>
           </div>
           <button type="button" class="btn btn-quiet inspector-toggle" id="inspectorToggle" aria-controls="inspector" aria-expanded="false">
             <svg class="icon" aria-hidden="true"><use href="#i-panel"/></svg>
@@ -153,6 +159,26 @@
               <button type="button" class="icon-btn schema-step-btn" id="schemaNext" aria-label="Следующий шаг"><svg class="icon" aria-hidden="true"><use href="#i-chevron"/></svg></button>
             </div>
           </footer>
+        </section>
+
+        <section class="log-view" id="logView" hidden aria-label="Лог задачи">
+          <header class="log-toolbar">
+            <div class="log-filters" role="group" aria-label="Уровень записей">
+              <button type="button" class="log-chip is-on" data-level="error" aria-pressed="true"><span class="log-dot"></span>Ошибки <span class="log-chip-count">0</span></button>
+              <button type="button" class="log-chip is-on" data-level="warn" aria-pressed="true"><span class="log-dot"></span>Внимание <span class="log-chip-count">0</span></button>
+              <button type="button" class="log-chip is-on" data-level="info" aria-pressed="true"><span class="log-dot"></span>События <span class="log-chip-count">0</span></button>
+              <button type="button" class="log-chip is-on" data-level="debug" aria-pressed="true"><span class="log-dot"></span>Отладка <span class="log-chip-count">0</span></button>
+            </div>
+            <select id="logSource" class="log-select" aria-label="Источник записей"><option value="">Все источники</option></select>
+            <input id="logSearch" class="log-search" type="search" placeholder="Поиск: узел, инструмент, скважина, id…" aria-label="Поиск по логу" />
+            <label class="log-follow" title="Прокручивать к новым записям"><input type="checkbox" id="logFollow" checked /> Следить</label>
+            <a class="btn btn-quiet log-download" id="logDownload" href="#" download title="Скачать лог задачи одним файлом (NDJSON) — приложите к отчёту об ошибке">Скачать</a>
+          </header>
+          <div class="log-summary" id="logSummary" aria-live="polite"></div>
+          <div class="log-body" id="logBody" tabindex="0">
+            <ol class="log-steps" id="logSteps"></ol>
+            <p class="log-empty" id="logEmpty" hidden>Событий пока нет.</p>
+          </div>
         </section>
 
         <form class="composer start-composer" id="startComposer" autocomplete="off" hidden>
@@ -249,6 +275,7 @@
   </main>
 
   <script src="/static/schema.js?v=31"></script>
-  <script src="/static/app.js?v=103"></script>
+  <script src="/static/log.js?v=1"></script>
+  <script src="/static/app.js?v=104"></script>
 </body>
 </html>

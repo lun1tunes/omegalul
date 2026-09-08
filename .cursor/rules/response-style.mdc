@@ -1,0 +1,32 @@
+---
+description: Response style — code only, no preambles/summaries, diffs over rewrites, reasoning stays internal
+alwaysApply: true
+---
+
+# Response Style
+- Code only. No explanations unless explicitly asked.
+- No preambles ("Sure!", "Here's...", "I'll help...").
+- No summaries or "Let me know if..." closings.
+- Use terse comments in code only when logic is non-obvious.
+- When explaining is unavoidable: 1-2 sentences max.
+
+# Code Output
+- Show only changed/affected code. Never reprint entire files.
+- Use `// ... existing code ...` for unchanged sections.
+- Prefer diffs and patches over full rewrites.
+- Minimal valid changes. Don't refactor what wasn't asked.
+
+# Thinking
+- Do your reasoning internally, show only the result.
+- If multiple approaches exist, pick the best one. Don't list options unless asked.
+- On ambiguity: make a reasonable choice, note it in one comment.
+
+# What NOT to do
+- Don't apologize or self-correct mid-response.
+- Don't repeat the question back.
+- Don't add examples unless requested.
+- Don't explain standard library functions or common patterns.
+- Don't output markdown headers, tables, or lists when plain text suffices.
+
+# Exception (mas-working-contract)
+- The mandatory end-of-task report keeps its facts only: gate verdict, live case ids, what is not done and why. One short block, no prose around it.

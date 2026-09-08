@@ -92,6 +92,10 @@ class Settings(BaseSettings):
     ca_bundle: str = Field(default="", validation_alias="ACTIVITY_CA_BUNDLE")
 
     n8n_base_url: str = Field(default="", validation_alias="N8N_BASE_URL")
+    # Browser-facing n8n URL for links in the developer log («Лог» → «n8n ↗»). Field: the same
+    # corporate URL as N8N_BASE_URL (leave empty). Lab: Activity talks to http://n8n:5678 while the
+    # engineer's browser opens http://localhost:5678 — set this one to the latter.
+    n8n_public_url: str = Field(default="", validation_alias="N8N_PUBLIC_URL")
     n8n_username: str = Field(default="", validation_alias="N8N_USERNAME")
     n8n_password: str = Field(default="", validation_alias="N8N_PASSWORD")
     orchestrator_workflow_id: str = Field(
@@ -134,6 +138,7 @@ class Settings(BaseSettings):
 
     @field_validator(
         "n8n_base_url",
+        "n8n_public_url",
         "control_plane_proxy_url",
         "control_plane_proxy_auth_header",
         "control_plane_proxy_auth_value",
@@ -179,6 +184,12 @@ class Settings(BaseSettings):
             marker = "/webhook/"
             root = webhook.split(marker, 1)[0] if marker in webhook else ""
         return root if _is_absolute_http_url(root) else ""
+
+    @property
+    def n8n_public_base(self) -> str:
+        """Where a browser can open n8n executions: N8N_PUBLIC_URL, else the same base Activity uses."""
+        root = self.n8n_public_url.rstrip("/")
+        return root if _is_absolute_http_url(root) else self.n8n_base
 
     @property
     def httpx_verify(self) -> bool | str:

@@ -542,9 +542,15 @@ def test_ready_health_and_static_assets() -> None:
     ):
         assert gone not in html, gone
     # Cache busting: the HTML must reference the current asset versions.
-    assert "app.js?v=103" in html
+    assert "app.js?v=104" in html
     assert "schema.js?v=31" in html
-    assert "app.css?v=100" in html
+    assert "log.js?v=1" in html
+    assert "app.css?v=101" in html
+    # Developer mode: the switch and the «Лог» tab (hidden until the switch is on) ship with the page.
+    for anchor in ('id="devModeToggle"', "Режим разработчика", 'id="viewLogBtn"', 'id="logView"', 'id="logSteps"', 'id="logDownload"'):
+        assert anchor in html, anchor
+    log_js = (STATIC / "log.js").read_text(encoding="utf-8")
+    assert "/log?format=ndjson" in log_js and "window.MasLog" in log_js
 
     js_text = (STATIC / "app.js").read_text(encoding="utf-8")
     assert "X-Activity-Key" not in js_text

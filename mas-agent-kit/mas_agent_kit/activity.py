@@ -24,7 +24,35 @@ from urllib.request import Request, urlopen
 
 logger = logging.getLogger(__name__)
 
-EVENT_KINDS = ("agent.accepted", "agent.progress", "agent.failed")
+EVENT_KINDS = ("agent.accepted", "agent.progress", "agent.failed", "trace.tool", "trace.note")
+
+
+def compact_for_log(value: Any, limit: int = 2000, *, _depth: int = 0) -> Any:
+    """JSON-safe, size-bounded copy for the developer log: long strings are cut, long lists and
+    dicts keep their head plus a ``…`` marker, unknown objects become ``str``. Never raises."""
+    if value is None or isinstance(value, (bool, int, float)):
+        return value
+    if isinstance(value, str):
+        return value if len(value) <= limit else value[: limit - 1] + "…"
+    if _depth >= 6:
+        return "…"
+    if isinstance(value, dict):
+        out: dict[str, Any] = {}
+        for i, (key, item) in enumerate(value.items()):
+            if i >= 40:
+                out["…"] = f"+{len(value) - 40} ключей"
+                break
+            out[str(key)] = compact_for_log(item, max(80, limit // 4), _depth=_depth + 1)
+        return out
+    if isinstance(value, (list, tuple, set)):
+        items = list(value)
+        head = [compact_for_log(item, max(80, limit // 4), _depth=_depth + 1) for item in items[:20]]
+        if len(items) > 20:
+            head.append(f"… ещё {len(items) - 20}")
+        return head
+    if isinstance(value, (bytes, bytearray)):
+        return f"<{len(value)} байт>"
+    return compact_for_log(str(value), limit, _depth=_depth)
 
 
 class ActivityClient:
@@ -129,6 +157,35 @@ class ActivityClient:
 
     def failed(self, message: str) -> bool:
         return self.event("agent.failed", message, status="failed")
+
+    # -- developer trace (hidden from the chat, shown in the «Лог» tab) ---------------------------
+
+    def trace(self, title: str, *, level: str = "debug", **detail: Any) -> bool:
+        """Technical note for developers: identifiers, counts, timings are fine here."""
+        payload = {"title": str(title or "")[:200], "level": level, **compact_for_log(detail)}
+        return self.event("trace.note", title, payload=payload)
+
+    def trace_tool(self, tool: str, *, ok: bool, duration_ms: int, call: int, args: dict[str, Any] | None = None,
+                   result: dict[str, Any] | None = None, error: str = "", session_id: str = "") -> bool:
+        """One FastAPI tool call as the LLM made it: arguments, outcome, timing.
+
+        ``call`` (ordinal within the session) keeps consecutive identical calls distinct — Activity
+        de-duplicates a repeated ``status_message`` on the same kind.
+        """
+        outcome = "ok" if ok else f"ошибка {error}".strip()
+        message = f"{tool} → {outcome} · {int(duration_ms)} мс · вызов {int(call)}"
+        payload: dict[str, Any] = {
+            "tool": tool,
+            "ok": bool(ok),
+            "duration_ms": int(duration_ms),
+            "call": int(call),
+            "session_id": session_id,
+            "args": compact_for_log(args or {}),
+            "result": compact_for_log(result or {}, limit=1200),
+        }
+        if error:
+            payload["error"] = error
+        return self.event("trace.tool", message, payload=payload)
 
     # -- write ----------------------------------------------------------------------------------
 

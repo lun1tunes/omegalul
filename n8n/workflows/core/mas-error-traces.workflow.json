@@ -33,7 +33,7 @@
     },
     {
       "parameters": {
-        "jsCode": "\nconst root=$json||{};\nconst exec=root.execution&&typeof root.execution==='object'?root.execution:(root);\nconst error=exec.error&&typeof exec.error==='object'?exec.error:(root.error||{});\nconst executionId=String(exec.id||exec.executionId||root.execution_id||'');\nconst workflowName=String((exec.workflow&&exec.workflow.name)||exec.workflowName||root.workflow_name||'');\nconst nodeName=String(exec.lastNodeExecuted||error.node||root.node_name||'');\nconst message=String(error.message||root.message||'n8n node failed');\nconst errorType=String(error.name||error.type||'Error');\nconst stack=String(error.stack||'');\nreturn [{json:{\n  execution_id:executionId,\n  workflow_name:workflowName,\n  node_name:nodeName,\n  error_message:message.slice(0,4000),\n  error_type:errorType.slice(0,200),\n  stack:stack.slice(0,8000),\n  lookup_sql_parameters:[executionId],\n}}];\n"
+        "jsCode": "\nconst root=$json||{};\nconst exec=root.execution&&typeof root.execution==='object'?root.execution:(root);\nconst error=exec.error&&typeof exec.error==='object'?exec.error:(root.error||{});\nconst executionId=String(exec.id||exec.executionId||root.execution_id||'');\nconst executionUrl=String(exec.url||root.execution_url||'');\nconst wfObj=root.workflow&&typeof root.workflow==='object'?root.workflow:(exec.workflow&&typeof exec.workflow==='object'?exec.workflow:{});\nconst workflowName=String(wfObj.name||exec.workflowName||root.workflow_name||'');\nconst workflowId=String(wfObj.id||root.workflow_id||'');\nconst errNode=error.node&&typeof error.node==='object'?error.node:null;\nconst nodeName=String(exec.lastNodeExecuted||(errNode?errNode.name:error.node)||root.node_name||'');\nconst nodeType=String((errNode&&errNode.type)||'');\nconst message=String(error.message||root.message||'n8n node failed');\nconst errorType=String(error.name||error.type||'Error');\nconst stack=String(error.stack||'');\nreturn [{json:{\n  execution_id:executionId,\n  execution_url:executionUrl,\n  workflow_name:workflowName,\n  workflow_id:workflowId,\n  node_name:nodeName,\n  node_type:nodeType,\n  error_message:message.slice(0,4000),\n  error_type:errorType.slice(0,200),\n  stack:stack.slice(0,8000),\n  lookup_sql_parameters:[executionId],\n}}];\n"
       },
       "id": "593d20c6-a465-57b2-bd54-06ea55e72506",
       "name": "Normalize n8n error trigger",
@@ -73,7 +73,7 @@
     },
     {
       "parameters": {
-        "jsCode": "\nconst n=$('Normalize n8n error trigger').first().json||{};\nconst look=$json||{};\nconst caseId=String(look.case_id||n.case_id||'').trim()||null;\nreturn [{json:{\n  ...n,\n  case_id:caseId,\n  trace_sql_parameters:[caseId, n.execution_id, n.workflow_name, n.node_name, n.error_message, n.error_type, n.stack, JSON.stringify({execution_id:n.execution_id})],\n}}];\n"
+        "jsCode": "\nconst n=$('Normalize n8n error trigger').first().json||{};\nconst look=$json||{};\nconst caseId=String(look.case_id||n.case_id||'').trim()||null;\nreturn [{json:{\n  ...n,\n  case_id:caseId,\n  trace_sql_parameters:[caseId, n.execution_id, n.workflow_name, n.node_name, n.error_message, n.error_type, n.stack, JSON.stringify({execution_id:n.execution_id,execution_url:n.execution_url,workflow_id:n.workflow_id,node_type:n.node_type})],\n}}];\n"
       },
       "id": "46d82464-d79a-5d4d-829f-f86748f30d6f",
       "name": "Attach case_id",
@@ -113,7 +113,7 @@
     },
     {
       "parameters": {
-        "jsCode": "\nconst x=$json;\nconst errorId=x.error_id||x.errorId||null;\nif(!x.case_id) return [{json:{...x, skip_event:true, event_sql_parameters:null}}];\nreturn [{json:{\n  ...x,\n  skip_event:false,\n  event_sql_parameters:[\n    x.case_id,\n    null,\n    'system.node_error',\n    'n8n',\n    null,\n    'error',\n    `Упал узел ${x.node_name||'unknown'}`,\n    null,\n    JSON.stringify({error_id:errorId, execution_id:x.execution_id, node_name:x.node_name, error_type:x.error_type})\n  ]\n}}];\n"
+        "jsCode": "\nconst x=$json;\nconst errorId=x.error_id||x.errorId||null;\nif(!x.case_id) return [{json:{...x, skip_event:true, event_sql_parameters:null}}];\nreturn [{json:{\n  ...x,\n  skip_event:false,\n  event_sql_parameters:[\n    x.case_id,\n    null,\n    'system.node_error',\n    'n8n',\n    null,\n    'error',\n    `Упал узел ${x.node_name||'unknown'}`,\n    null,\n    /* Developer log («Лог»): enough to read the failure without opening Postgres; the full stack stays in error_traces. */\n    JSON.stringify({error_id:errorId, execution_id:x.execution_id, execution_url:x.execution_url, workflow_id:x.workflow_id, workflow_name:x.workflow_name, node_name:x.node_name, node_type:x.node_type, error_type:x.error_type, error_message:String(x.error_message||'').slice(0,600), stack:String(x.stack||'').slice(0,1500)})\n  ]\n}}];\n"
       },
       "id": "2fde5772-876b-5e02-b108-39e0a06cb351",
       "name": "Prepare system.node_error",
@@ -255,5 +255,5 @@
   },
   "tags": [],
   "pinData": {},
-  "versionId": "963ec2c0-fc54-482e-9dbc-267cbd2f9cb3"
+  "versionId": "1603e2fe-501c-4ad6-aacd-6663b8a14cb2"
 }

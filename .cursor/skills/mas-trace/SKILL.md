@@ -17,6 +17,8 @@ python3 scripts/mas_trace_case.py CASE-… --json > /tmp/case.json           # r
 
 n8n part needs lab `.env` (`N8N_USERNAME`, `N8N_PASSWORD`, `N8N_HOST_PORT`). In the field: n8n UI → Executions, filter by workflow, open the execution and read the same nodes.
 
+**Without a console (field and lab):** Activity → tick «Режим разработчика» → tab «Лог», or `GET http://<activity>/cases/CASE-…/log` (`?format=ndjson` to download). Same data as the script: records grouped by orchestrator step, `level` (`warn` = a guard fired or a tool call failed, `error` = agent/node failure), `source` (`orchestrator`, `agent:<id>`, `n8n`, `engineer`), `detail` with the bounded LLM decision, `agent_task`, tool args/result, node error + stack, and an «execution n8n» link when the payload carries `execution_id`/`workflow_id`. `trace.tool` rows show exactly what the agent LLM sent to `/agent-tools/*` and what came back — read them before blaming the prompt.
+
 ## How to read it
 
 1. **Timeline** — who did what. Key kinds: `agent.handoff` (orchestrator decision + handoff text), `agent.progress`/`agent.result` (what the agent actually did), `hitl.request`/`hitl.answered`, `orchestrator.decision` (payload: `action_type`, `guard`, `verification.all_covered`), `case.finished`.

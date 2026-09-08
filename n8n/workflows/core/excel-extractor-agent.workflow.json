@@ -6,7 +6,7 @@
   "nodes": [
     {
       "parameters": {
-        "content": "## edit after import\n\n**Agent — Excel Extractor** — один LLM + FastAPI tools (сгенерировано из `agents/excel_extractor.py`).\n\n1. Bind **Qwen** credential on Excel Extractor Chat Model — Qwen\n2. Bind **Runtime configuration** → `MAS — Runtime Config` (поле `excel_tools_url` = URL сервиса). Ключ сервиса — credential Header Auth на HTTP-нодах, не Set.\n3. Bind **Call Knowledge Retrieval** → `MAS — Knowledge Retrieval` (срез `excel_protocol`).\n4. Оркестратор вызывает этот workflow через универсальный `Call agent (n8n)` по id из `agent_registry.invoke`. После импорта через UI id меняется — впишите новый id (из URL этого workflow) в `MAS — Runtime Config` → `agent_workflow_ids`.\n\nИнструмент выбирает LLM по задаче (нет regex-роутера). Вопрос инженеру — только `ask_engineer` прозой с вариантами; ошибки аргументов возвращаются LLM, не человеку. Результат читается из GET /sessions/{id}/result, сессия закрывается POST /sessions/{id}/close.",
+        "content": "## edit after import\n\n**Agent — Excel Extractor** — один LLM + FastAPI tools (сгенерировано из `agents/excel_extractor.py`).\n\n1. Bind **Qwen** credential on Excel Extractor Chat Model — Qwen\n2. Bind **Runtime configuration** → `MAS — Runtime Config` (поле `excel_tools_url` = URL сервиса). Ключ сервиса — credential Header Auth на HTTP-нодах, не Set.\n3. Bind **Call Knowledge Retrieval** → `MAS — Knowledge Retrieval` (срез `excel_protocol`).\n4. Оркестратор вызывает этот workflow через универсальный `Call agent (n8n)` по id из `agent_registry.invoke`. После импорта через UI id меняется — впишите новый id (из URL этого workflow) в `MAS — Runtime Config` → `agent_workflow_ids`.\n5. Settings → **Error workflow** = `Error — MAS Node Traces` (после импорта через UI ссылка по id теряется): упавший узел попадёт в лог кейса (Activity → Режим разработчика → Лог).\n\nИнструмент выбирает LLM по задаче (нет regex-роутера). Вопрос инженеру — только `ask_engineer` прозой с вариантами; ошибки аргументов возвращаются LLM, не человеку. Результат читается из GET /sessions/{id}/result, сессия закрывается POST /sessions/{id}/close.",
         "height": 380,
         "width": 480,
         "color": 1
@@ -197,7 +197,7 @@
         },
         "sendBody": true,
         "specifyBody": "json",
-        "jsonBody": "={{ ({kind: \"agent.accepted\", actor: \"excel_extractor\", agent_id: \"excel_extractor\", task_id: $('Normalize excel task').first().json.agent_task.task_id, status: 'running', status_message: \"Excel Extractor принял задачу и анализирует workbook\", payload: {source: \"excel-extractor-agent-workflow\"}}) }}"
+        "jsonBody": "={{ ({kind: \"agent.accepted\", actor: \"excel_extractor\", agent_id: \"excel_extractor\", task_id: $('Normalize excel task').first().json.agent_task.task_id, status: 'running', status_message: \"Excel Extractor принял задачу и анализирует workbook\", payload: {source: \"excel-extractor-agent-workflow\", execution_id: String($execution.id || ''), workflow_id: String($workflow.id || ''), workflow_name: String($workflow.name || '')}}) }}"
       },
       "id": "2ba996b4-4630-51b0-b2eb-775f8a69bfe5",
       "name": "Activity — Excel Extractor accepted",
@@ -248,7 +248,7 @@
         },
         "sendBody": true,
         "specifyBody": "json",
-        "jsonBody": "={{ ({kind: \"agent.progress\", actor: \"excel_extractor\", agent_id: \"excel_extractor\", task_id: $('Normalize excel task').first().json.agent_task.task_id, status: 'running', status_message: \"Excel Extractor читает листы и таблицы приложенных книг.\", payload: {source: \"excel-extractor-agent-workflow\"}}) }}"
+        "jsonBody": "={{ ({kind: \"agent.progress\", actor: \"excel_extractor\", agent_id: \"excel_extractor\", task_id: $('Normalize excel task').first().json.agent_task.task_id, status: 'running', status_message: \"Excel Extractor читает листы и таблицы приложенных книг.\", payload: {source: \"excel-extractor-agent-workflow\", execution_id: String($execution.id || ''), workflow_id: String($workflow.id || ''), workflow_name: String($workflow.name || '')}}) }}"
       },
       "id": "235a036f-7fa6-5d14-bab4-dd96bbbc2669",
       "name": "Activity — Excel Extractor progress",
@@ -438,7 +438,7 @@
         },
         "sendBody": true,
         "specifyBody": "json",
-        "jsonBody": "={{ ({kind: $json.activity_kind || 'agent.progress', actor: \"excel_extractor\", agent_id: \"excel_extractor\", task_id: $('Normalize excel task').first().json.agent_task.task_id, status: $json.status || 'running', status_message: $json.status_message || '', payload: $json.activity_payload || {source: \"excel-extractor-agent-workflow\"}}) }}"
+        "jsonBody": "={{ ({kind: $json.activity_kind || 'agent.progress', actor: \"excel_extractor\", agent_id: \"excel_extractor\", task_id: $('Normalize excel task').first().json.agent_task.task_id, status: $json.status || 'running', status_message: $json.status_message || '', payload: Object.assign({source: \"excel-extractor-agent-workflow\"}, $json.activity_payload || {}, {execution_id: String($execution.id || ''), workflow_id: String($workflow.id || ''), workflow_name: String($workflow.name || '')})}) }}"
       },
       "id": "b69862bc-7271-5f43-9eeb-badc4d50fe1e",
       "name": "Activity — Excel Extractor tools",
@@ -1442,7 +1442,7 @@
     "executionOrder": "v1",
     "saveManualExecutions": true,
     "callerPolicy": "workflowsFromSameOwner",
-    "errorWorkflow": "",
+    "errorWorkflow": "63116836-8724-595e-bc5e-dd6e743e2586",
     "executionTimeout": 900
   },
   "meta": {
@@ -1451,5 +1451,5 @@
   },
   "tags": [],
   "pinData": {},
-  "versionId": "f90197ab-b722-45d9-bdf0-f74701829c16"
+  "versionId": "f594ddca-6ac1-4829-8a6d-6e338b4f40ea"
 }

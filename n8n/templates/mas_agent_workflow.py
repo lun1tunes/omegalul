@@ -29,6 +29,7 @@ import uuid
 from pathlib import Path
 from typing import Any
 
+from generate_mas_error_traces import WF_ID as ERROR_WF_ID
 from generate_mas_runtime_config import runtime_config_execute_params
 from llm_runtime_options import chat_model_options
 from mas_agent_spec import AgentSpec
@@ -183,8 +184,15 @@ class AgentWorkflow:
     def source_tag(self) -> str:
         return f"{self.spec.agent_id.replace('_', '-')}-agent-workflow"
 
+    @property
+    def exec_ref_js(self) -> str:
+        """Developer log: Activity maps ``execution_id`` → case, so the Error Trigger of this workflow
+        can attribute a failed node to the case (``GET /cases/{id}/log``)."""
+        return "execution_id: String($execution.id || ''), workflow_id: String($workflow.id || ''), workflow_name: String($workflow.name || '')"
+
     def activity_event(self, name: str, pos: tuple[int, int], kind: str, message: str) -> dict[str, Any]:
-        body = self._event_body(json.dumps(kind), "'running'", json.dumps(message, ensure_ascii=False), f"{{source: {json.dumps(self.source_tag)}}}")
+        payload = f"{{source: {json.dumps(self.source_tag)}, {self.exec_ref_js}}}"
+        body = self._event_body(json.dumps(kind), "'running'", json.dumps(message, ensure_ascii=False), payload)
         return self.http_json(name, pos, "POST", self.events_url, body, timeout=2000, activity=True)
 
     def activity_event_dynamic(self, name: str, pos: tuple[int, int]) -> dict[str, Any]:
@@ -192,7 +200,7 @@ class AgentWorkflow:
             "$json.activity_kind || 'agent.progress'",
             "$json.status || 'running'",
             "$json.status_message || ''",
-            f"$json.activity_payload || {{source: {json.dumps(self.source_tag)}}}",
+            f"Object.assign({{source: {json.dumps(self.source_tag)}}}, $json.activity_payload || {{}}, {{{self.exec_ref_js}}})",
         )
         return self.http_json(name, pos, "POST", self.events_url, body, timeout=2000, activity=True)
 
@@ -490,7 +498,7 @@ class AgentWorkflow:
             "isArchived": False,
             "nodes": self.nodes,
             "connections": self.connections,
-            "settings": {"executionOrder": "v1", "saveManualExecutions": True, "callerPolicy": "workflowsFromSameOwner", "errorWorkflow": "", "executionTimeout": 900},
+            "settings": {"executionOrder": "v1", "saveManualExecutions": True, "callerPolicy": "workflowsFromSameOwner", "errorWorkflow": ERROR_WF_ID, "executionTimeout": 900},
             "meta": {"templateCredsSetupCompleted": True, "targetN8nVersion": "2.30.8"},
             "tags": [],
             "pinData": {},
@@ -509,7 +517,9 @@ class AgentWorkflow:
             f"2. Bind **Runtime configuration** → `MAS — Runtime Config` (поле `{spec.service_url_key}` = URL сервиса)." + auth
             + f"3. Bind **Call Knowledge Retrieval** → `MAS — Knowledge Retrieval` (срез `{SELECTORS[spec.rag_selector]['target_base']}`).\n"
             "4. Оркестратор вызывает этот workflow через универсальный `Call agent (n8n)` по id из `agent_registry.invoke`. "
-            "После импорта через UI id меняется — впишите новый id (из URL этого workflow) в `MAS — Runtime Config` → `agent_workflow_ids`.\n\n"
+            "После импорта через UI id меняется — впишите новый id (из URL этого workflow) в `MAS — Runtime Config` → `agent_workflow_ids`.\n"
+            "5. Settings → **Error workflow** = `Error — MAS Node Traces` (после импорта через UI ссылка по id теряется): "
+            "упавший узел попадёт в лог кейса (Activity → Режим разработчика → Лог).\n\n"
             "Инструмент выбирает LLM по задаче (нет regex-роутера). Вопрос инженеру — только `ask_engineer` прозой с вариантами; "
             "ошибки аргументов возвращаются LLM, не человеку. Результат читается из GET /sessions/{id}/result, "
             "сессия закрывается POST /sessions/{id}/close."
