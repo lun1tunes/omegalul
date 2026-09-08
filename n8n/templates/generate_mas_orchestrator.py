@@ -9,6 +9,7 @@ from pathlib import Path
 
 from llm_runtime_options import chat_model_options, structured_parser_params
 from generate_mas_runtime_config import runtime_config_execute_params
+from mas_agent_registry import PLANNER_COLUMNS, list_agents_sql
 from mas_retrieval_client import (
     SELECTORS,
     attach_orchestrator_rag_js,
@@ -70,15 +71,22 @@ DECISION_SCHEMA = {
     },
 }
 
-SYSTEM = """Ты оркестратор инженерной задачи.
+SYSTEM = """Ты оркестратор инженерной задачи. Предметной области ты не знаешь заранее: что умеют агенты, написано в реестре («Доступные агенты» в planner_input), а политика декомпозиции — в карточках знаний (срез target_base=orchestrator_routing, knowledge_type=routing_card). Другие срезы базы знаний сюда не подмешивают.
 
-Перед решением в planner_input приходит срез RAG: target_base=orchestrator_routing, knowledge_type=routing_card. Это карточки маршрутизации из общей базы знаний. Не протокол Excel (excel_protocol) и не keyword_instruction SCHEDULE (schedule_mvp) — другие срезы той же базы сюда не подмешивают.
+Как читать реестр:
+- agent_id — значение для action.agent_id; title — так агента называют инженеру.
+- when_to_use — что агент делает и когда его звать.
+- input_required — роли файлов, которые ему нужны; сравнивай с ролями приложенных файлов (inputs[].role, files) в текущем состоянии.
+- output_provides — какие данные и файлы он возвращает; в журнале они видны как «данные: …» и «артефакты: …».
+- input_schema.data — данные, которые агент берёт из результатов других агентов; output_schema — что он отдаёт.
+- hitl_policy=agent_asks — агент сам спросит инженера, если ему не хватит данных; не спрашивай за него.
 
-Используй карточки для декомпозиции, plan_update и handoff_message. agent_id бери только из реестра ниже. Если в карточке старое имя — маппинг: excel_extraction_specialist→excel_extractor, schedule_builder_specialist→schedule_builder, engineering_calculation_specialist→calculation_agent. cluster_calculation_specialist / binary_results_specialist / presentation_specialist в live registry нет — не вызывай.
+Правила выбора агента:
+- Вызывай только агентов из реестра и только тех, чьи input_required есть среди приложенных файлов.
+- Если агенту нужны данные (input_schema.data), которые даёт другой агент (output_provides), а в журнале их ещё нет — сначала вызови того агента.
+- Если карточки знаний недоступны (status=empty или unavailable) — решай по реестру и состоянию. Не спрашивай инженера про базу знаний.
 
-Если RAG status=empty или unavailable — решай по реестру и compact. Не спрашивай HITL про базу знаний.
-
-Сначала заполни progress — оценку хода задачи по журналу (compact.journal.history: результаты агентов с summary и добавленными артефактами, ответы человека):
+Сначала заполни progress — оценку хода задачи по журналу (compact.journal.history: результаты агентов с summary, данными и добавленными артефактами, ответы человека):
 - goal_satisfied: true, только если результаты в журнале покрывают цель целиком. Если ты выбираешь call_agent — цель ещё не достигнута: goal_satisfied=false, в missing напиши, чего не хватает.
 - evidence: что именно в журнале это подтверждает (или чего не хватает).
 - missing: что ещё нужно сделать (пусто, если цель достигнута).
@@ -91,30 +99,21 @@ SYSTEM = """Ты оркестратор инженерной задачи.
 
 Завершение:
 - Если goal_satisfied — только finish. В action.result.summary_for_human напиши по-русски, что фактически сделано, опираясь на summary агентов из журнала (не на шаблон «вызвал агента»).
-- summary_for_human и question читает инженер, не программа: обычные русские фразы без технических идентификаторов — ни agent_id (schedule_builder), ни имён артефактов (schedule_out, diff), ни ключей JSON. Агентов называй по title из реестра, результат — файлом («новый schedule.inc»), скважины и даты — как в summary агентов.
+- summary_for_human и question читает инженер, не программа: обычные русские фразы без технических идентификаторов — ни agent_id, ни имён артефактов из журнала, ни ключей JSON. Агентов называй по title из реестра, результат — файлом («новый schedule.inc»), скважины и даты — как в summary агентов.
 - Агент, который вернул completed, свою часть сделал: его результат уже в артефактах. Не вызывай его снова «для проверки» или «чтобы применить ещё раз».
 - Повторный call_agent того же агента допустим только если появились новые данные (ответ человека, новые файлы) или ты нашёл конкретный недостаток в его результате — тогда обязательно заполни action.rework_reason и опиши недостаток в handoff_message.
 - Если человек в журнале принял результат (review_accept) — finish.
 - Если агент вернул needs_input (задал вопрос) и человек ответил — верни задачу этому же агенту (call_agent) и передай ответ в handoff_message. Пока этот агент не вернул completed, цель не достигнута и finish невозможен.
 - finish проверяется отдельно: каждая часть цели должна быть покрыта записью журнала со статусом completed. Если в журнале есть «проверка завершения отклонила finish — не покрыто: …», цель не достигнута: закрой именно эти части через call_agent. Не повторяй finish без новых результатов агентов.
 
-Агенты в реестре:
-- excel_extractor — Excel: скважины, даты ввода, дебиты. Не пишет SCHEDULE. Вызывай только если в artifacts есть excel.
-- calculation_agent — поверхность + траектория → top_perforation_md.
-- schedule_builder — исходный SCHEDULE (.inc) → новый .INC через свой LLM + FastAPI tools (даты ввода, перепривязка групп). Не пишет .INC сам.
-
 Правила:
-- Если не хватает данных, выбери ask_user. Не придумывай даты, скважины и строки .INC.
-- Типичный путь «новые даты ввода»: excel_extractor, затем schedule_builder, затем finish.
-- Типичный путь «перепривязка в группу / групповой контроль»: сразу schedule_builder (Excel не нужен), затем finish. Даты ввода этих скважин брать из baseline SCHEDULE.
-- Не вызывай excel_extractor, если Excel нет в artifacts.
-- Имена INCLUDE-файлов (GRUPTREE.GRDECL и т.п.) — это состав пакета, не просьба менять группы. Не пиши в handoff про перепривязку групп, если пользователь об этом не просил.
+- Если не хватает данных, которых нет ни в приложенных файлах, ни в результатах агентов и ни один агент их не даст — выбери ask_user. Не придумывай факты (даты, имена объектов, параметры) и не пиши содержимое файлов сам.
+- Имена приложенных файлов — это состав пакета, а не постановка задачи: делай только то, о чём просит цель, и не дописывай в handoff_message работу, которую инженер не просил.
 - Если следующий шаг очевиден, выбери call_agent.
-- Не вызывай агента, которого нет в реестре.
-- Не разбирай SCHEDULE/.INC сам. Retrieval уже выполнен до тебя (только срез orchestrator_routing).
+- Не разбирай содержимое файлов сам. Retrieval уже выполнен до тебя (только срез orchestrator_routing).
 - Возвращай только JSON.
 - status_message пиши по-русски, коротко, в стиле текущего шага.
-- handoff_message — человекопонятное обращение к агенту, например: «Агент Excel, достань из файла данные по датам ввода скважин.»
+- handoff_message — человекопонятное обращение к агенту (по title): что сделать, на основании каких файлов и данных, что уже известно из журнала (ответы инженера, результаты других агентов).
 """
 
 # Completion check: a second, sceptical LLM pass that runs only when the Decision LLM proposes
@@ -341,7 +340,13 @@ def http_json(name, pos, url, body, timeout=180000):
     )
 
 
-def execute_workflow(name, pos, placeholder, cached_name, inputs):
+def execute_workflow_by_expression(name, pos, workflow_id_expr, inputs):
+    """executeWorkflow whose target is decided at runtime (Phase 2: id comes from ``agent_registry.invoke``).
+
+    Verified on n8n 2.30.8: ``workflowId`` accepts ``{"__rl": True, "mode": "id", "value": "={{ … }}"}``;
+    an unknown id fails the node cleanly (caught by ``onError=continueRegularOutput`` → Merge records a
+    failed agent result). No ``cachedResultName`` — nothing to bind in the UI.
+    """
     return node(
         name,
         "n8n-nodes-base.executeWorkflow",
@@ -349,12 +354,7 @@ def execute_workflow(name, pos, placeholder, cached_name, inputs):
         pos,
         {
             "source": "database",
-            "workflowId": {
-                "__rl": True,
-                "value": placeholder,
-                "mode": "list",
-                "cachedResultName": cached_name,
-            },
+            "workflowId": {"__rl": True, "value": workflow_id_expr, "mode": "id"},
             "workflowInputs": {
                 "mappingMode": "defineBelow",
                 "value": inputs,
@@ -565,22 +565,35 @@ if(req.is_resume===true){
   const source=String(req.source||'human').toLowerCase();
   if(source==='agent'||source==='system'){
     const taskId=String(req.task_id||'');
-    const agentId=String(req.agent_id||'');
-    const summary=humanAnswerText(decodeHitlAnswer(String(req.human_response||'').trim()))||'событие';
-    ledgerPush(state,{kind:'external',source,task_id:taskId,agent_id:agentId,step:Number(state.step_count||0),summary:String(summary).slice(0,300)});
-    state.status='running';
+    const slot=state.agents&&state.agents[String(req.agent_id||'')];
+    const waiting=state.current_task&&typeof state.current_task==='object'?state.current_task:{};
+    const agentId=String(req.agent_id||waiting.agent_id||'');
+    const payload=parseJsonish(String(req.human_response||'').trim(),null);
+    const events=[];
+    let nextStatus='running';
+    if(source==='agent'&&payload&&typeof payload.status==='string'){
+      /* A long agent finished (or asked / failed) after returning in_progress: same merge as a synchronous result. */
+      const applied=applyAgentResult(state, agentId, taskId||String(waiting.task_id||(slot&&slot.task_id)||''), payload, Array.isArray(req.registry)?req.registry:[]);
+      nextStatus=applied.next_status;
+      events.push(...applied.events);
+    } else {
+      const summary=humanAnswerText(decodeHitlAnswer(String(req.human_response||'').trim()))||'событие';
+      ledgerPush(state,{kind:'external',source,task_id:taskId,agent_id:agentId,step:Number(state.step_count||0),summary:String(summary).slice(0,300)});
+    }
+    state.status=nextStatus;
     state.version=Number(state.version||0)+1;
     state.ledger.last_human_step=Number(state.step_count||0);
     state.ledger.stall_count=0;
-    const persistEvents=[[req.case_id,taskId,'orchestrator.resume',source,agentId,'running','Продолжение по событию агента или системы','',JSON.stringify({source,task_id:taskId})]];
+    const persistEvents=[[req.case_id,taskId,'orchestrator.resume',source,agentId,nextStatus,'Продолжение по событию агента или системы','',JSON.stringify({source,task_id:taskId})],
+      ...events.map(e=>[req.case_id,e.task_id||'',e.kind,e.actor,e.agent_id||'',e.status||'',e.status_message||'',e.handoff_message||'',JSON.stringify(e.payload||{})])];
     return [{json:{
       ...req,
       state,
       did_resume:true,
       needs_interpret:false,
       is_status:false,
-      next_status:'running',
-      update_sql_parameters:[JSON.stringify(state),'running',req.case_id],
+      next_status:nextStatus,
+      update_sql_parameters:[JSON.stringify(state),nextStatus,req.case_id],
       persist_events:persistEvents,
       event_sql_parameters:persistEvents[0]
     }}];
@@ -665,6 +678,7 @@ PREPARE_DECISION = STATE_SHAPE_JS + (
     "const ORCH_RAG_ACCESS_SCOPE=" + json.dumps(_ORCH_SEL["access_scope"]) + ";\n"
     "const ORCH_RAG_KNOWLEDGE_TYPES=" + json.dumps(_ORCH_SEL["knowledge_types"]) + ";\n"
     "const ORCH_RAG_TOP_K=" + str(int(_ORCH_SEL["top_k"])) + ";\n"
+    "const PLANNER_COLUMNS=" + json.dumps(list(PLANNER_COLUMNS)) + ";\n"
     + r"""
 const req=$('Normalize step request').first().json||{};
 const interpreted=(()=>{try{return $('Apply interpreted answer').first().json}catch{return null}})();
@@ -675,14 +689,23 @@ const fromResume=(interpreted&&interpreted.state)?interpreted:extras;
 const rawState=(fromResume&&fromResume.state&&typeof fromResume.state==='object')?fromResume.state:parse(load.state||load.State||{});
 const state=sanitizeState(rawState);
 const status=String((fromResume&&fromResume.next_status)||load.status||state.status||'running');
+/* Phase 2: the registry is the only source of "who can do what". Rows come from Postgres (enabled=true);
+   the Decision LLM sees PLANNER_COLUMNS only — `invoke` is a deployment detail resolved in Prepare agent call. */
 const registry=$('Load agent registry').all().map(i=>i.json||{}).filter(r=>r&&r.agent_id);
+if(!registry.length) throw new Error('agent_registry has no enabled agents — seed it via Control Plane Proxy (upsert_agent) before running cases');
+const plannerRegistry=registry.map(r=>{
+  const o={};
+  for(const c of PLANNER_COLUMNS){ if(r[c]!==undefined&&r[c]!==null) o[c]=parseJsonish(r[c],r[c]); }
+  return o;
+});
 const compact=buildCompact(state);
 /* No rule-based routing hint here: the Decision LLM reasons from goal + journal + state + registry + RAG policy cards. */
 const journalLines=(compact.journal&&Array.isArray(compact.journal.history)?compact.journal.history:[]).map(e=>{
   if(e.kind==='human') return `- шаг ${e.step}: человек ответил${e.review_accept?' (принял результат)':''}: «${e.answer}»${e.question?` — на вопрос «${e.question}»`:''}`;
   if(e.kind==='verification') return `- шаг ${e.step}: проверка завершения отклонила finish — не покрыто: ${(e.uncovered||[]).join('; ')||'(не указано)'}`;
+  const data=(e.data_keys||[]).length?`; данные: ${e.data_keys.join(', ')}`:'';
   const arts=(e.artifacts_added||[]).length?`; артефакты: ${e.artifacts_added.join(', ')}`:'';
-  return `- шаг ${e.step}: ${e.agent_id} → ${e.status}: ${e.summary||'(без описания)'}${arts}${e.rework_reason?` (доработка: ${e.rework_reason})`:''}`;
+  return `- шаг ${e.step}: ${e.agent_id} → ${e.status}: ${e.summary||'(без описания)'}${data}${arts}${e.rework_reason?` (доработка: ${e.rework_reason})`:''}`;
 });
 /* Step 0 of the journal is what the engineer handed in (artifact cards with kind=input). Without it the completion
    check has no evidence that the source files exist and may invent an uncoverable "get the source file" part
@@ -691,28 +714,23 @@ const inputCards=artifactCards(state.artifacts||{}).filter(c=>c.kind==='input');
 const inputNames=inputCards.map(c=>String(c.filename||c.artifact_id||'').trim()).filter(Boolean);
 const inputsLine=inputNames.length?`- шаг 0: инженер приложил ${inputNames.length} файл(ов): ${inputNames.slice(0,6).join(', ')}${inputNames.length>6?` и ещё ${inputNames.length-6}`:''}`:'';
 const journalText=[inputsLine,...journalLines].filter(Boolean).join('\n')||'- пока ничего не сделано';
-const prompt=`Цель:\n${compact.goal}\n\nЖурнал задачи (что уже сделано, по шагам):\n${journalText}\n\nТекущее состояние:\n${JSON.stringify(compact,null,2)}\n\nДоступные агенты (реестр):\n${JSON.stringify(registry,null,2)}\n`;
+const prompt=`Цель:\n${compact.goal}\n\nЖурнал задачи (что уже сделано, по шагам):\n${journalText}\n\nТекущее состояние:\n${JSON.stringify(compact,null,2)}\n\nДоступные агенты (реестр):\n${JSON.stringify(plannerRegistry,null,2)}\n`;
 const retrieval_selector={target_base:ORCH_RAG_TARGET_BASE,knowledge_types:ORCH_RAG_KNOWLEDGE_TYPES};
-const query=inferRetrievalQuery(compact);
+/* Plain-text query: goal + inputs + agent summaries. Selectors (target_base / knowledge_types) do the filtering;
+   no regex-derived topics or keyword families (Phase 2). */
 const schedule_retrieval_request={
-  query,
+  query:buildRetrievalQuery(compact),
   filters:{
     target_base:ORCH_RAG_TARGET_BASE,
     access_scope:ORCH_RAG_ACCESS_SCOPE,
-    knowledge_types:ORCH_RAG_KNOWLEDGE_TYPES,
-    keyword_families:inferRoutingKeywordFamilies(compact),
-    topics:inferRoutingTopics(compact),
-    task_patterns:inferTaskPatterns(compact)
+    knowledge_types:ORCH_RAG_KNOWLEDGE_TYPES
   },
   top_k:ORCH_RAG_TOP_K
 };
 const endpoints=$('Runtime endpoints').first().json||{};
-const math=String(endpoints.math_url||endpoints.calculation_agent_url||'').replace(/\/$/,'');
-const calculationAgentUrl=math?(math.endsWith('/agent/run')?math:`${math}/agent/run`):'';
 return [{json:{
   ...req,
   ...endpoints,
-  calculation_agent_url:calculationAgentUrl,
   activity_base_url:String(endpoints.activity_base_url||req.activity_base_url||'http://mas-activity:8200').replace(/\/$/,''),
   orchestrator_step_url:String(endpoints.orchestrator_step_url||req.orchestrator_step_url||'http://127.0.0.1:5678/webhook/mas-orchestrator-step').replace(/\/$/,''),
   case_id:req.case_id,
@@ -880,14 +898,16 @@ if(type==='call_agent'){
       activity_base_url:String(prev.activity_base_url||'http://mas-activity:8200').replace(/\/$/,''),
       schedule_root:state.schedule_root||'',
       artifact_ids:artifactIds,
-      data_refs:Object.keys(state.data||{}),
+      /* Phase 2: results of earlier agents live in state.agents[<agent_id>].data; the callee reads them from
+         GET /cases/{id}/state. data_refs lists which agents already produced data (not domain buckets). */
+      data_refs:Object.keys(state.agents||{}),
       ...(unlistedPolicy?{unlisted_wells_policy:unlistedPolicy}:{}),
       ...(reworkReason?{rework_reason:reworkReason}:{})
     },
     context:{hitl:{pending:Boolean(hitlState.pending),answer_ids:Object.keys(hitlAnswers),answers:hitlAnswers}},
     constraints:{units:'METRIC'}
   };
-  state.current_task=slimCurrentTask({task_id:taskId,agent_id:agentTask.agent_id},state.artifacts,state.data);
+  state.current_task=slimCurrentTask({task_id:taskId,agent_id:agentTask.agent_id},state.artifacts,state.agents);
   events.push(decisionEvent, {
     kind:'agent.handoff',
     actor:'orchestrator',
@@ -915,7 +935,7 @@ if(type==='call_agent'){
   /* Honest completion: what agents actually did (their summaries), not "called N agents". */
   const llmSummary=String((obj(action.result)&&action.result.summary_for_human)||'').trim();
   const journalSummary=composeDoneSummary(state, registry);
-  /* The engineer reads this line: if the LLM leaked ids (schedule_builder, schedule_out, JSON) or the
+  /* The engineer reads this line: if the LLM leaked ids (agent ids, artifact ids, JSON) or the
      completion check found claims the journal does not support, prefer the journal. */
   const unsupported=verification&&Array.isArray(verification.unsupported_claims)&&verification.unsupported_claims.length>0;
   const summary=(llmSummary&&!looksMachineText(llmSummary)&&!(unsupported&&journalSummary))?llmSummary:(journalSummary||llmSummary||statusMessage);
@@ -988,16 +1008,41 @@ return rows.map(params=>{
 });
 """
 
-ROUTE = r"""
+ROUTE = STATE_SHAPE_JS + r"""
+/* Phase 2: no agent names here. The registry row (`invoke`) says how the agent is reached:
+   n8n sub-workflow by id (executeWorkflow with expression workflowId) or HTTP POST. Runtime Config may
+   override workflow ids per agent (agent_workflow_ids JSON) — field engineers re-point without regen. */
 const x=$json;
 const id=String(x.agent_id||'').trim();
-let route='none';
-if(x.should_call_agent!==true) route='none';
-else if(id==='excel_extractor') route='excel';
-else if(id==='calculation_agent') route='calc';
-else if(id==='schedule_builder') route='schedule';
-else route='unknown';
-return [{json:{...x,route}}];
+if(x.should_call_agent!==true||!id) return [{json:{...x,route:'none'}}];
+const endpoints=(()=>{try{return $('Runtime endpoints').first().json||{}}catch{return {}}})();
+const registry=Array.isArray(x.registry)?x.registry:[];
+const inv=resolveInvoke(id, registry, endpoints);
+return [{json:{
+  ...x,
+  route:inv.route,
+  invoke_workflow_id:inv.workflow_id||'',
+  invoke_workflow_name:inv.workflow_name||'',
+  invoke_url:inv.url||'',
+  invoke_reason:inv.reason||'',
+  invoke_message:inv.route==='unbound'?unboundAgentMessage(inv,registry):''
+}}];
+"""
+
+AGENT_UNBOUND = r"""
+/* An agent the Decision LLM picked cannot be reached (not in registry, disabled, no invoke). Shaped as a
+   failed agent_result so Merge agent result records it in the journal and the loop re-decides or fails. */
+const x=$json||{};
+return [{json:{
+  status:'failed',
+  agent_id:String(x.agent_id||''),
+  message:String(x.invoke_message||'Агент недоступен для вызова.'),
+  data:{},
+  artifacts:{},
+  issues:[{code:'agent_unbound',reason:String(x.invoke_reason||'')}],
+  assumptions:[],
+  requests:[]
+}}];
 """
 
 MERGE = STATE_SHAPE_JS + r"""
@@ -1013,6 +1058,7 @@ const unwrap=v=>{
   if(Array.isArray(v)&&v.length&&obj(v[0])) return v[0];
   return {};
 };
+/* 1. Unwrap what Execute Workflow / HTTP Request returned into one agent_result object. */
 const execError=http.error||http.executionError||null;
 const result=unwrap(
   (http.body&&typeof http.body==='object')?http.body
@@ -1023,98 +1069,32 @@ const result=unwrap(
 const rawStatus=clean(result.status);
 const errorMessage=clean((execError&&(execError.message||execError.description))||(result.error&&(result.error.message||result.error.description))||http.message);
 const failed=!rawStatus&&Boolean(execError||result.error||errorMessage&&!result.task_id);
-const status=rawStatus|| (failed?'failed':'completed');
-const resultMessage=clean(result.message)||errorMessage;
-const fallbackMessage=status==='completed'
-  ? 'Schedule Builder завершил обработку schedule.'
-  : status==='needs_input'
-    ? 'Schedule Builder запросил дополнительные данные.'
-    : 'Schedule Builder вернул ошибку.';
+const agentResult={...result,status:rawStatus||(failed?'failed':'completed'),message:clean(result.message)||errorMessage};
+/* 2. Apply it to the case (slot, artifacts, journal, events) — shared with the resume source=agent path. */
 const state=sanitizeState(obj(prev.state)?{...prev.state}:{});
 const data=obj(state.data)?{...state.data}:{};
 delete data.facts;
 const agentId=String(prev.agent_id||result.agent_id||'');
-const bucket=agentId==='excel_extractor'?'excel':(agentId==='calculation_agent'?'calc':(agentId==='schedule_builder'?'schedule':'agent'));
-const artifactsBefore=new Set(Object.keys(flattenArtifacts(state.artifacts||{})));
-if(status==='completed'){
-  const raw=obj(result.data)?result.data:{};
-  if(bucket==='excel') data.excel=slimExcel(raw);
-  else {
-    data[bucket]={summary:result.message||'',keys:Object.keys(raw)};
-    if(bucket==='calc'&&raw.top_perforation_md!=null) data.calc.top_perforation_md=raw.top_perforation_md;
-  }
-  state.artifacts=mergeIncomingArtifacts(state.artifacts, result.artifacts||{}, agentId);
-  state.current_task=null;
-  state.last_error=null;
-  state.error_count=0;
-}
-/* Journal entry: what this agent actually did on this task (drives completion reasoning + loop guard). */
-const artifactsAdded=Object.keys(flattenArtifacts(state.artifacts||{})).filter(k=>!artifactsBefore.has(k));
+const registry=Array.isArray(prev.registry)?prev.registry:[];
 const agentTaskIn=obj(prev.agent_task)?prev.agent_task:{};
-ledgerPush(state,{
-  kind:'agent',
-  step:Number(state.step_count||0),
-  agent_id:agentId,
-  task_id:String(agentTaskIn.task_id||''),
-  status,
-  summary:String(resultMessage||fallbackMessage).slice(0,400),
-  artifacts_added:artifactsAdded,
-  data_keys:Object.keys(obj(result.data)?result.data:{}).slice(0,12),
-  ...(agentTaskIn.inputs&&agentTaskIn.inputs.rework_reason?{rework_reason:String(agentTaskIn.inputs.rework_reason)}:{})
-});
-if(Array.isArray(state.plan)){
-  state.plan=state.plan.map(p=>{
-    if(!p||typeof p!=='object') return p;
-    if(status==='completed'&&String(p.status)==='running') return {...p,status:'done'};
-    return p;
-  });
+const taskId=String(agentTaskIn.task_id||'');
+const applied=applyAgentResult(state, agentId, taskId, agentResult, registry);
+if(agentTaskIn.inputs&&agentTaskIn.inputs.rework_reason){
+  const last=state.ledger.history[state.ledger.history.length-1];
+  if(last&&last.kind==='agent') last.rework_reason=String(agentTaskIn.inputs.rework_reason);
 }
-let nextStatus='running';
-let shouldContinue=true;
-const events=[];
-if(status==='needs_input'){
-  nextStatus='waiting_user';
-  shouldContinue=false;
-  const reqs=Array.isArray(result.requests)?result.requests:[];
-  const q=reqs[0]||{question_id:'Q-agent',question:resultMessage||'Агенту нужны данные',options:[]};
-  state.hitl={pending:true,questions:reqs.length?reqs:[q],answers:(state.hitl&&state.hitl.answers)||{}};
-  events.push({kind:'hitl.request',actor:'orchestrator',agent_id:agentId,status:'waiting_user',status_message:q.question,payload:q});
-} else if(status==='completed'){
-  events.push({
-    kind:'agent.result',
-    actor:agentId||'agent',
-    agent_id:agentId,
-    task_id:(prev.agent_task&&prev.agent_task.task_id)||'',
-    status:'completed',
-    status_message:resultMessage||fallbackMessage,
-    payload:{data_keys:Object.keys((result.data&&typeof result.data==='object')?result.data:{}),artifacts:Object.keys((result.artifacts&&typeof result.artifacts==='object')?result.artifacts:{}),deliverables:deliverables(state.artifacts).filter(d=>d.producer===agentId)}
-  });
-} else if(status==='failed'||execError){
-  const prevErr=state.last_error&&typeof state.last_error==='object'?state.last_error:{};
-  const sameAgent=Boolean(agentId)&&String(prevErr.agent_id||'')===agentId;
-  const errorCount=(sameAgent?Number(prevErr.count||state.error_count||0):0)+1;
-  state.error_count=errorCount;
-  state.last_error={message:resultMessage||fallbackMessage,agent_id:agentId,count:errorCount};
-  data[bucket]={summary:state.last_error.message,keys:Object.keys((result.data&&typeof result.data==='object')?result.data:{})};
-  events.push({kind:'agent.failed',actor:agentId||'agent',agent_id:agentId,status:'failed',status_message:state.last_error.message,payload:{message:state.last_error.message,issues:result.issues||[],error_count:errorCount}});
-  if(errorCount>=3){
-    nextStatus='failed';
-    shouldContinue=false;
-    events.push({kind:'case.failed',actor:'orchestrator',status:'failed',status_message:'Агент '+agentId+' упал '+errorCount+' раза подряд',payload:{agent_id:agentId,error_count:errorCount}});
-  } else {
-    nextStatus='running';
-    shouldContinue=true;
-  }
-}
-/* Step budget comes from MAS — Runtime Config (max_steps, UI-editable). Hitting it is not a silent
+let nextStatus=applied.next_status;
+let shouldContinue=applied.should_continue;
+const events=applied.events;
+/* 3. Step budget comes from MAS — Runtime Config (max_steps, UI-editable). Hitting it is not a silent
    failure: if there is a completed result, the engineer reviews it; only with nothing to show we fail. */
 const maxSteps=Math.max(3,Number(prev.max_steps)||12);
 if(Number(state.step_count||0)>=maxSteps&&nextStatus==='running'){
   shouldContinue=false;
-  const done=composeDoneSummary(state, Array.isArray(prev.registry)?prev.registry:[]);
+  const done=composeDoneSummary(state, registry);
   if(done){
     nextStatus='waiting_user';
-    const review=buildResultReviewQuestion(state, agentId, Array.isArray(prev.registry)?prev.registry:[], 'step_limit');
+    const review=buildResultReviewQuestion(state, agentId, registry, 'step_limit');
     state.hitl={pending:true,questions:[review],answers:(state.hitl&&state.hitl.answers)||{}};
     state.ledger.reviews=Number(state.ledger.reviews||0)+1;
     events.push({kind:'hitl.request',actor:'orchestrator',status:'waiting_user',status_message:`Лимит шагов (${maxSteps}) исчерпан — прошу инженера принять результат или описать доработку.`,payload:review});
@@ -1131,7 +1111,7 @@ const persistEvents=events.map(e=>[
 ]);
 return [{json:{
   ...prev,
-  agent_result:result,
+  agent_result:agentResult,
   state,
   next_status:nextStatus,
   should_continue:shouldContinue&&nextStatus==='running',
@@ -1204,9 +1184,9 @@ ORCH_LAYOUT: dict[str, tuple[int, int]] = {
     "Restore parsed decision": (6 * CX, 6 * CY),
     "Prepare agent call": (7 * CX, 5 * CY),
     "Action router": (7 * CX, 6 * CY),
-    "Call Excel Extractor": (0, 7 * CY),
-    "Call Calculation Agent": (0, 8 * CY),
-    "Call Schedule Builder": (0, 9 * CY),
+    "Call agent (n8n)": (0, 7 * CY),
+    "Call agent (HTTP)": (0, 8 * CY),
+    "Agent not bound": (0, 9 * CY),
     "No agent this step": (0, 10 * CY),
     "Merge agent result": (CX, 8 * CY),
     "Update case after agent": (2 * CX, 8 * CY),
@@ -1236,7 +1216,7 @@ def main() -> None:
         note(
             "edit after import",
             (-200, -420),
-            "## edit after import\n\n**Orchestrator — MAS** — thin loop:\n- Bind Postgres on load/insert/update\n- Bind **Qwen** OpenAI-compatible credential on Decision Chat Model (also Interpret free-text answer + Verify completion)\n- Bind inbound header auth on webhook **and** POST continue run\n- Bind **Runtime endpoints** → `MAS — Runtime Config` (один Set URL на весь контур)\n- Bind **Call Excel Extractor** → `Agent — Excel Extractor` (executeWorkflow)\n- Bind **Call Schedule Builder** → `Agent — Schedule Builder` (executeWorkflow)\n- Bind **Call Knowledge Retrieval** → `MAS — Knowledge Retrieval` (срез `orchestrator_routing` / `routing_card`; не excel_protocol и не schedule_mvp)\n- Excel `X-API-Key` — credential на Agent — Excel Extractor, не этот workflow\n\n`action`: probe | status | start | create | step | resume\n- **resume** `source`: human (Activity `/answer`) | agent | system (`POST /cases/{id}/run`). Кнопка HITL = `choice`; свободный текст при вариантах — Interpret free-text answer (тот же Qwen).\n- Activity `/cases` stores files; specialists fetch `/cases/{id}/artifacts/{id}` from their FastAPI tools. n8n never carries binaries.\n- **status** loads case and returns `human_gate` without LLM\n- Decision is Basic LLM Chain + Structured Output (no Agent tools)\n- Loop: **POST continue run** → own webhook (`orchestrator_step_url` in Runtime Config). Activity starts/resumes cases; it does not drive the step loop.\n\nOne execution = one step.",
+            "## edit after import\n\n**Orchestrator — MAS** — thin loop:\n- Bind Postgres on load/insert/update\n- Bind **Qwen** OpenAI-compatible credential on Decision Chat Model (also Interpret free-text answer + Verify completion)\n- Bind inbound header auth on webhook **and** POST continue run\n- Bind **Runtime endpoints** → `MAS — Runtime Config` (один Set URL на весь контур)\n- **Call agent (n8n)** — universal: workflowId is an expression from `agent_registry.invoke.workflow_id` (or Runtime Config `agent_workflow_ids` JSON `{\"<agent_id>\":\"<id>\"}` when the field import assigned new ids). No per-agent nodes; adding an agent = `upsert_agent` in Control Plane Proxy + RAG routing card.\n- **Call agent (HTTP)** — `invoke.kind=http`, url with `{math_url}`-style placeholders from Runtime Config\n- Bind **Call Knowledge Retrieval** → `MAS — Knowledge Retrieval` (срез `orchestrator_routing` / `routing_card`; не excel_protocol и не schedule_mvp)\n- Excel `X-API-Key` — credential на Agent — Excel Extractor, не этот workflow\n\n`action`: probe | status | start | create | step | resume\n- **resume** `source`: human (Activity `/answer`) | agent | system (`POST /cases/{id}/run`). Кнопка HITL = `choice`; свободный текст при вариантах — Interpret free-text answer (тот же Qwen).\n- Activity `/cases` stores files; specialists fetch `/cases/{id}/artifacts/{id}` from their FastAPI tools. n8n never carries binaries.\n- **status** loads case and returns `human_gate` without LLM\n- Decision is Basic LLM Chain + Structured Output (no Agent tools)\n- Loop: **POST continue run** → own webhook (`orchestrator_step_url` in Runtime Config). Activity starts/resumes cases; it does not drive the step loop.\n\nOne execution = one step.",
             480,
             420,
             1,
@@ -1362,7 +1342,7 @@ def main() -> None:
         postgres(
             "Load agent registry",
             (960, 80),
-            "SELECT agent_id, title, when_to_use, input_required, output_provides FROM agent_registry ORDER BY agent_id",
+            list_agents_sql(enabled_only=True),
             "={{ [] }}",
         ),
         code("Prepare decision context", (1200, 0), PREPARE_DECISION),
@@ -1475,23 +1455,17 @@ def main() -> None:
             "n8n-nodes-base.switch",
             3.4,
             (2880, 0),
-            {"mode": "expression", "numberOutputs": 4, "output": "={{ ({excel:0,calc:1,schedule:2,none:3,unknown:3})[$json.route] ?? 3 }}"},
+            {"mode": "expression", "numberOutputs": 4, "output": "={{ ({workflow:0,http:1,unbound:2,none:3})[$json.route] ?? 3 }}"},
         ),
-        execute_workflow(
-            "Call Excel Extractor",
+        # Phase 2: one call node per invocation kind, target resolved from the registry row at runtime.
+        execute_workflow_by_expression(
+            "Call agent (n8n)",
             (3120, -240),
-            "REPLACE_EXCEL_EXTRACTION_AGENT_IN_UI",
-            "Agent — Excel Extractor",
+            "={{ $json.invoke_workflow_id }}",
             {"agent_task": "={{ $json.agent_task }}"},
         ),
-        http_json("Call Calculation Agent", (3120, -40), "={{ $json.calculation_agent_url }}", "={{ $json.agent_task }}"),
-        execute_workflow(
-            "Call Schedule Builder",
-            (3120, 160),
-            "REPLACE_SCHEDULE_BUILDER_AGENT_IN_UI",
-            "Agent — Schedule Builder",
-            {"agent_task": "={{ $json.agent_task }}"},
-        ),
+        http_json("Call agent (HTTP)", (3120, -40), "={{ $json.invoke_url }}", "={{ $json.agent_task }}"),
+        code("Agent not bound", (3120, 160), AGENT_UNBOUND),
         code("No agent this step", (3120, 360), FINISH_NONE),
         code("Merge agent result", (3360, -40), MERGE),
         postgres(
@@ -1641,13 +1615,13 @@ return [{json:{...x,activity_sync:Boolean(x.case_id&&!x.is_probe&&x.activity_bas
     connect(connections, "Insert decision events", "Restore parsed decision")
     connect(connections, "Restore parsed decision", "Prepare agent call")
     connect(connections, "Prepare agent call", "Action router")
-    connect(connections, "Action router", "Call Excel Extractor", si=0)
-    connect(connections, "Action router", "Call Calculation Agent", si=1)
-    connect(connections, "Action router", "Call Schedule Builder", si=2)
+    connect(connections, "Action router", "Call agent (n8n)", si=0)
+    connect(connections, "Action router", "Call agent (HTTP)", si=1)
+    connect(connections, "Action router", "Agent not bound", si=2)
     connect(connections, "Action router", "No agent this step", si=3)
-    connect(connections, "Call Excel Extractor", "Merge agent result")
-    connect(connections, "Call Calculation Agent", "Merge agent result")
-    connect(connections, "Call Schedule Builder", "Merge agent result")
+    connect(connections, "Call agent (n8n)", "Merge agent result")
+    connect(connections, "Call agent (HTTP)", "Merge agent result")
+    connect(connections, "Agent not bound", "Merge agent result")
     # A `continue` step (completion check rejected a finish) re-enters the loop like an agent step would.
     connect(connections, "No agent this step", "Continue loop?")
     connect(connections, "Merge agent result", "Update case after agent")

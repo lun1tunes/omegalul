@@ -21,6 +21,8 @@ import json
 import uuid
 from pathlib import Path
 
+from agents import ALL as AGENT_SPECS
+
 from generate_mas_runtime_config import PLACEHOLDER as RUNTIME_PLACEHOLDER
 from generate_mas_runtime_config import WF_NAME as RUNTIME_WF_NAME
 from generate_mas_runtime_config import runtime_config_execute_params
@@ -41,16 +43,37 @@ HDR = {
     }
 }
 
+# Agent services come from the specs (n8n/templates/agents/*.py): one probe per service URL in Runtime Config.
+# Agents seeded ``enabled=False`` (the demo/template agent) are optional: not probed, not required in the registry.
+ENABLED_SPECS = tuple(spec for spec in AGENT_SPECS if spec.enabled)
+AGENT_SERVICES = tuple((spec.service_label, spec.service_url_key, spec.health_url_key, spec.lab_host) for spec in ENABLED_SPECS if spec.service_url_key)
 SERVICE_PROBES = (
     # node name, urls.<key>, human label
     ("Probe Activity /health", "activity_health", "Activity"),
     ("Probe Activity /ready", "activity_ready", "Activity"),
-    ("Probe Excel Tools /health", "excel_health", "Excel Tools"),
-    ("Probe Schedule Builder /health", "schedule_health", "Schedule Builder"),
-    ("Probe Math /health", "math_health", "Math"),
+    *[(f"Probe {label} /health", health_key, label) for label, _url_key, health_key, _host in AGENT_SERVICES],
 )
+RUNTIME_KEYS = ["activity_base_url", *[url_key for _l, url_key, _h, _host in AGENT_SERVICES], "orchestrator_step_url"]
+LAB_HOSTS = ["mas-activity", *[host for _l, _u, _h, host in AGENT_SERVICES]]
+REQUIRED_AGENTS = [spec.agent_id for spec in ENABLED_SPECS]
 ORCH_PROBE = "Probe Orchestrator webhook"
 PROXY_PROBE = "Probe Control Plane Proxy webhook"
+
+
+def _fill(js: str) -> str:
+    """Inline the spec-derived lists into the Code nodes (n8n Code nodes cannot import anything)."""
+    health_urls = "\n".join(f"  {hk}: join(runtime.{uk}, '/health')," for _l, uk, hk, _h in AGENT_SERVICES)
+    health_checks = "\n".join(
+        f"svc('Probe {label} /health', '{label} /health', urls.{hk}, (b) => b && (b.status === 'ok' || b.ok === true));"
+        for label, _u, hk, _h in AGENT_SERVICES
+    )
+    return (
+        js.replace("__RUNTIME_KEYS__", json.dumps(RUNTIME_KEYS))
+        .replace("__LAB_HOSTS__", json.dumps(LAB_HOSTS))
+        .replace("__REQUIRED_AGENTS__", json.dumps(REQUIRED_AGENTS))
+        .replace("__AGENT_HEALTH_URLS__", health_urls)
+        .replace("__AGENT_HEALTH_CHECKS__", health_checks)
+    )
 
 
 def nid(name: str) -> str:
@@ -146,11 +169,11 @@ try {
 } catch (e) {
   cfgError = String(e.message || e);
 }
-const KEYS = ['activity_base_url', 'excel_tools_url', 'schedule_service_url', 'math_url', 'orchestrator_step_url'];
+const KEYS = __RUNTIME_KEYS__;
 const trim = (v) => String(v || '').trim().replace(/\/+$/, '');
 const runtime = {};
 for (const k of KEYS) runtime[k] = trim(cfg[k]);
-const LAB_DNS = /^https?:\/\/(mas-activity|excel-tools|schedule-builder|math-service)(:\d+)?$/i;
+const LAB_DNS = new RegExp('^https?://(' + __LAB_HOSTS__.join('|') + ')(:\\d+)?$', 'i');
 const runtime_issues = [];
 if (cfgError) runtime_issues.push({ key: '*', kind: 'unbound', detail: cfgError });
 for (const k of KEYS) {
@@ -168,9 +191,7 @@ const join = (base, path) => (base ? `${base}${path}` : '');
 const urls = {
   activity_health: join(runtime.activity_base_url, '/health'),
   activity_ready: join(runtime.activity_base_url, '/ready'),
-  excel_health: join(runtime.excel_tools_url, '/health'),
-  schedule_health: join(runtime.schedule_service_url, '/health'),
-  math_health: join(runtime.math_url, '/health'),
+__AGENT_HEALTH_URLS__
   orchestrator_webhook: runtime.orchestrator_step_url,
   control_plane_webhook: webhookBase && webhookBase !== runtime.orchestrator_step_url ? `${webhookBase}/mas-control-plane` : '',
 };
@@ -278,9 +299,7 @@ const ready = readHttp('Probe Activity /ready');
     'From the Windows PC Activity must reach this n8n: ORCHESTRATOR_WEBHOOK_URL / CONTROL_PLANE_PROXY_URL / KNOWLEDGE_INGEST_URL in mas-activity.env; corporate TLS → ACTIVITY_CA_BUNDLE; webhooks Active',
     ready.ok ? ready.detail : `${ready.detail}${failing.length ? ` failing=${failing.join(',')}` : ''}${missing.length ? ` missing_config=${missing.join(',')}` : ''}`);
 }
-svc('Probe Excel Tools /health', 'Excel Tools /health', urls.excel_health, (b) => b && (b.status === 'ok' || b.ok === true));
-svc('Probe Schedule Builder /health', 'Schedule Builder /health', urls.schedule_health, (b) => b && (b.status === 'ok' || b.ok === true));
-svc('Probe Math /health', 'Math /health', urls.math_health, (b) => b && (b.status === 'ok' || b.ok === true));
+__AGENT_HEALTH_CHECKS__
 
 /* 3. n8n webhooks (this n8n calling itself — same path the Orchestrator self-POST uses) */
 const webhookFix = (wf) => `n8n: ${wf} Active; Header Auth credential on this form's probe = the one on the ${wf} webhook; orchestrator_step_url in MAS — Runtime Config = URL this n8n can reach itself on`;
@@ -299,7 +318,7 @@ const proxy = readHttp('Probe Control Plane Proxy webhook');
 {
   const b = proxy.body && typeof proxy.body === 'object' ? proxy.body : {};
   const agents = Array.isArray(b.result) ? b.result.map((a) => String((a && a.agent_id) || '')).filter(Boolean) : [];
-  const REQUIRED = ['excel_extractor', 'schedule_builder', 'calculation_agent'];
+  const REQUIRED = __REQUIRED_AGENTS__;
   const missing = REQUIRED.filter((id) => !agents.includes(id));
   let status = 'FAIL';
   let detail = proxy.detail;
@@ -322,7 +341,7 @@ const todo = checks.filter((c) => c.status === 'TODO');
 const overall = fail.length ? 'FAIL' : (todo.length ? 'PASS_WITH_TODO' : 'PASS');
 
 const MANUAL = [
-  'Execute Workflow bindings: Orchestrator — MAS → Runtime endpoints / Call Excel Extractor / Call Schedule Builder / Call Knowledge Retrieval; Agent — Excel Extractor and Agent — Schedule Builder → Runtime configuration / Call Knowledge Retrieval.',
+  'Execute Workflow bindings: Orchestrator — MAS → Runtime endpoints / Call Knowledge Retrieval; Agent — Excel Extractor and Agent — Schedule Builder → Runtime configuration / Call Knowledge Retrieval. Agents are not bound as nodes: Call agent (n8n) reads the workflow id from agent_registry.invoke — after UI import put the new ids into MAS — Runtime Config → agent_workflow_ids.',
   'Credentials: LLM on the three Chat Models; embeddings on Ingestion / Retrieval; Postgres on Ingestion / Retrieval / Orchestrator / Control Plane Proxy; Header Auth on Orchestrator webhook + POST continue run + Control Plane Proxy webhook; Excel Tools X-API-Key on Agent — Excel Extractor HTTP nodes.',
   'Settings → Error workflow = Error — MAS Node Traces on Orchestrator, Excel Extractor, Schedule Builder, Retrieval, Ingestion.',
   'Export each workflow JSON and search REPLACE_ — none may remain.',
@@ -427,7 +446,7 @@ def main() -> None:
             onError="continueRegularOutput",
             alwaysOutputData=True,
         ),
-        code("Prepare health probes", (560, 0), PREPARE),
+        code("Prepare health probes", (560, 0), _fill(PREPARE)),
     ]
     x = 840
     for name, key, _label in SERVICE_PROBES:
@@ -437,7 +456,7 @@ def main() -> None:
     x += 280
     nodes.append(http_post_auth(PROXY_PROBE, (x, 0), "control_plane_webhook", "control_plane_list_agents"))
     x += 280
-    nodes.append(code("Build health report", (x, 0), REPORT))
+    nodes.append(code("Build health report", (x, 0), _fill(REPORT)))
     x += 280
     nodes.append(
         node(

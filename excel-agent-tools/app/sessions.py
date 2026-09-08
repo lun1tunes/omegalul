@@ -1,134 +1,34 @@
-"""Disk-backed session storage for the deterministic Excel tools service."""
+"""Excel sessions on the shared kit store (disk-backed, one directory per uploaded workbook).
+
+Thin names over ``mas_agent_kit.SessionStore`` so the tool modules and tests keep calling
+``load_state`` / ``save_state`` / ``locked_session`` / ``session_file``. Ids look like ``sess_<hex>``.
+"""
 from __future__ import annotations
 
-import json
-import os
 import re
-import shutil
-import sys
-import tempfile
-import threading
-import uuid
-from contextlib import contextmanager
-from datetime import UTC, datetime, timedelta
-from pathlib import Path
 from typing import Any
 
-from filelock import FileLock, Timeout
+from mas_agent_kit import SessionStore
+from mas_agent_kit.session import utcnow
 
-SESSION_RE = re.compile(r"^sess_[A-Za-z0-9_-]{12,60}$")
 ARTIFACT_RE = re.compile(r"^(?:res|art|clr)_[A-Za-z0-9_-]{8,64}$")
-_CLEANUP_LOCK = threading.Lock()
 
+STORE = SessionStore(prefix="sess", app_name="excel_agent")
 
-def session_root() -> Path:
-    default_dir = "/data/sessions" if sys.platform != "win32" else os.path.join(tempfile.gettempdir(), "excel_agent_sessions")
-    path = Path(os.getenv("SESSION_DIR", default_dir)).resolve()
-    path.mkdir(parents=True, exist_ok=True)
-    return path
-
-
-def new_session_id() -> str:
-    return f"sess_{uuid.uuid4().hex}"
-
-
-def validate_session_id(session_id: str) -> None:
-    if not SESSION_RE.fullmatch(session_id):
-        raise ValueError("Invalid session_id")
-
-
-def session_dir(session_id: str, *, create: bool = False) -> Path:
-    validate_session_id(session_id)
-    path = session_root() / session_id
-    if create:
-        path.mkdir(mode=0o700, parents=False, exist_ok=False)
-    return path
-
-
-def session_file(session_id: str, relative_path: str) -> Path:
-    """Return a path below a session directory; never accept path traversal."""
-    base = session_dir(session_id).resolve()
-    candidate = (base / relative_path).resolve()
-    if candidate != base and base not in candidate.parents:
-        raise ValueError("Invalid session-relative path")
-    return candidate
-
-
-def session_lock_path(session_id: str) -> Path:
-    """Keep locks outside session directories so Windows can delete expired data."""
-    validate_session_id(session_id)
-    locks = session_root() / ".locks"
-    locks.mkdir(mode=0o700, exist_ok=True)
-    return locks / f"{session_id}.lock"
-
-
-@contextmanager
-def locked_session(session_id: str):
-    """Serialize state-changing tool calls for one disk-backed session.
-
-    n8n executes calls in order, but the public API can receive concurrent requests
-    for the same session. The lock prevents a stale load/save cycle from discarding
-    another call's result. FileLock uses platform-native locking (``msvcrt`` on
-    Windows and ``fcntl`` on Unix), so a native Windows FastAPI service has the
-    same per-session cross-process serialization as the Docker/Linux service.
-    """
-    directory = session_dir(session_id)
-    if not directory.is_dir():
-        raise ValueError("Session not found")
-    # No finite timeout: a slow workbook operation must serialize rather than
-    # cause the client to retry a conflicting state mutation.
-    with FileLock(str(session_lock_path(session_id))):
-        # Cleanup may have removed the directory after the pre-lock check but
-        # before this request acquired the lock. Recheck under the lock so an
-        # expired session is never resurrected or exposed as an internal error.
-        if not directory.is_dir():
-            raise ValueError("Session not found")
-        yield
-
-
-def state_path(session_id: str) -> Path:
-    return session_dir(session_id) / "state.json"
-
-
-def utcnow() -> str:
-    return datetime.now(UTC).isoformat()
-
-
-def load_state(session_id: str) -> dict[str, Any]:
-    validate_session_id(session_id)
-    path = state_path(session_id)
-    if not path.is_file():
-        raise ValueError("Session not found")
-    try:
-        with path.open("r", encoding="utf-8") as file:
-            state = json.load(file)
-    except (OSError, json.JSONDecodeError) as error:
-        raise ValueError("Session state is unavailable") from error
-    if state.get("session_id") != session_id:
-        raise ValueError("Session state is invalid")
-    return state
+new_session_id = STORE.new_id
+session_dir = STORE.dir
+session_file = STORE.file
+session_lock_path = STORE.lock_path
+locked_session = STORE.lock
+load_state = STORE.load
+cleanup_expired_sessions = STORE.cleanup
+close_session = STORE.close
 
 
 def save_state(session_id: str, state: dict[str, Any]) -> None:
-    validate_session_id(session_id)
     if state.get("session_id") != session_id:
         raise ValueError("State belongs to another session")
-    directory = session_dir(session_id)
-    if not directory.is_dir():
-        raise ValueError("Session not found")
-
-    state["updated_at"] = utcnow()
-    target = state_path(session_id)
-    fd, tmp_name = tempfile.mkstemp(prefix=".state-", suffix=".json", dir=directory)
-    try:
-        with os.fdopen(fd, "w", encoding="utf-8") as file:
-            json.dump(state, file, ensure_ascii=False, indent=2, default=str)
-            file.flush()
-            os.fsync(file.fileno())
-        os.replace(tmp_name, target)
-    finally:
-        if os.path.exists(tmp_name):
-            os.unlink(tmp_name)
+    STORE.save(state)
 
 
 def init_state(
@@ -139,7 +39,13 @@ def init_state(
     file_hash: str,
     file_size: int,
     payload: dict[str, Any],
+    **case_fields: Any,
 ) -> dict[str, Any]:
+    """First ``state.json`` of a session whose directory and input file already exist.
+
+    ``case_fields`` are the agent-task fields (``case_id``, ``task_id``, ``objective``, ``activity_base_url``…)
+    the kit helpers read from the state; the legacy upload API passes none.
+    """
     now = utcnow()
     state: dict[str, Any] = {
         "session_id": session_id,
@@ -164,79 +70,6 @@ def init_state(
         # API state serializers must never expose it to clients or the model.
         "tool_cache": {},
         "tool_history": [],
+        **case_fields,
     }
-    save_state(session_id, state)
-    return state
-
-
-def cleanup_expired_sessions() -> int:
-    """Best-effort TTL cleanup, called while creating a new session.
-
-    Only directories with a valid generated session id are ever deleted.
-    """
-    # Uploads schedule this work in FastAPI's threadpool. Under a burst, retain
-    # one bounded scan rather than starting an O(number_of_sessions) scan per
-    # request. A later upload will retry if this pass is still in progress.
-    if not _CLEANUP_LOCK.acquire(blocking=False):
-        return 0
-    try:
-        return _cleanup_expired_sessions()
-    finally:
-        _CLEANUP_LOCK.release()
-
-
-def _cleanup_expired_sessions() -> int:
-    try:
-        ttl_hours = int(os.getenv("SESSION_TTL_HOURS", "24"))
-    except ValueError:
-        ttl_hours = 24
-    if ttl_hours <= 0:
-        return 0
-
-    threshold = datetime.now(UTC) - timedelta(hours=ttl_hours)
-    deleted = 0
-    for directory in session_root().iterdir():
-        if not directory.is_dir() or not SESSION_RE.fullmatch(directory.name):
-            continue
-        try:
-            # Never remove a session while a tool is in its load/execute/save
-            # critical section. This matters for long workbook operations that
-            # can outlive a short TTL. A busy session is retried by a later scan.
-            lock_path = session_lock_path(directory.name)
-            with FileLock(str(lock_path), timeout=0):
-                with (directory / "state.json").open("r", encoding="utf-8") as file:
-                    created_at = datetime.fromisoformat(json.load(file)["created_at"])
-                if created_at.tzinfo is None:
-                    created_at = created_at.replace(tzinfo=UTC)
-                if created_at < threshold:
-                    shutil.rmtree(directory)
-                    deleted += 1
-        except Timeout:
-            continue
-        except (OSError, ValueError, KeyError, json.JSONDecodeError):
-            # Corrupt/incomplete sessions must not make new uploads fail. Leave them for an operator.
-            continue
-    return deleted
-
-
-def close_session(session_id: str) -> dict[str, Any]:
-    """Drop a session directory after the n8n agent has fetched the result."""
-    try:
-        validate_session_id(session_id)
-    except ValueError:
-        return {"ok": True, "closed": False, "session_id": session_id}
-    directory = session_root() / session_id
-    if not directory.is_dir():
-        return {"ok": True, "closed": False, "session_id": session_id}
-    try:
-        with FileLock(str(session_lock_path(session_id)), timeout=5):
-            if directory.is_dir():
-                shutil.rmtree(directory)
-        lock_path = session_lock_path(session_id)
-        try:
-            lock_path.unlink(missing_ok=True)
-        except OSError:
-            pass
-        return {"ok": True, "closed": True, "session_id": session_id}
-    except Timeout:
-        return {"ok": False, "closed": False, "session_id": session_id, "busy": True}
+    return STORE.save(state)

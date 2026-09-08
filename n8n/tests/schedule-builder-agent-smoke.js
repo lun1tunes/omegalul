@@ -118,8 +118,8 @@ assert.equal(wf.connections['Prepare AI Agent input'].main[0][0].node, 'Call Kno
 assert.equal(wf.connections['Call Knowledge Retrieval'].main[0][0].node, 'Attach schedule RAG evidence');
 assert.equal(wf.connections['Attach schedule RAG evidence'].main[0][0].node, 'Schedule Builder AI Agent');
 assert.equal(wf.connections['Schedule Builder AI Agent'].main[0][0].node, 'Summarize AI steps');
-assert.equal(wf.connections['AI applied?'].main[0][0].node, 'Format schedule result');
-assert.equal(wf.connections['AI applied?'].main[1][0].node, 'Fetch schedule result');
+assert.equal(wf.connections['Result stored?'].main[0][0].node, 'Format schedule result');
+assert.equal(wf.connections['Result stored?'].main[1][0].node, 'Fetch schedule result');
 assert.equal(wf.connections['Format schedule result'].main[0][0].node, 'Close schedule session');
 assert.equal(agent.parameters.options.maxIterations, 8);
 assert.equal(wf.settings.executionTimeout, 900);
@@ -150,14 +150,24 @@ assert.match(sourceCode('Attach schedule RAG evidence'), /schedule_mvp/);
 const cfg = orch.nodes.find((n) => n.name === 'Runtime endpoints');
 assert.equal(cfg.type, 'n8n-nodes-base.executeWorkflow');
 assert.equal(cfg.parameters.workflowId.value, 'REPLACE_MAS_RUNTIME_CONFIG_IN_UI');
-const call = orch.nodes.find((n) => n.name === 'Call Schedule Builder');
+// Phase 2: the orchestrator reaches this agent through the universal "Call agent (n8n)" node; the target
+// is agent_registry.invoke.workflow_id, which must be this workflow's id (lab CLI import keeps ids).
+assert.equal(orch.nodes.some((n) => n.name === 'Call Schedule Builder'), false, 'no per-agent call node');
+const call = orch.nodes.find((n) => n.name === 'Call agent (n8n)');
 assert.equal(call.type, 'n8n-nodes-base.executeWorkflow');
 assert.equal(call.typeVersion, 1.3);
 assert.equal(call.onError, 'continueRegularOutput');
-assert.equal(call.parameters.workflowId.value, 'REPLACE_SCHEDULE_BUILDER_AGENT_IN_UI');
-assert.equal(call.parameters.workflowId.cachedResultName, 'Agent — Schedule Builder');
+assert.equal(call.parameters.workflowId.value, '={{ $json.invoke_workflow_id }}');
 assert.equal(call.parameters.options.waitForSubWorkflow, true);
 assert.deepEqual(Object.keys(call.parameters.workflowInputs.value), ['agent_task']);
+{
+  const seed = JSON.parse(fs.readFileSync(path.join(workspace, 'mas-activity-service/app/sql/agent_registry_seed.json'), 'utf8'));
+  const row = seed.find((r) => r.agent_id === 'schedule_builder');
+  assert.ok(row, 'schedule_builder is seeded in agent_registry');
+  assert.equal(row.invoke.kind, 'n8n_workflow');
+  assert.equal(row.invoke.workflow_id, wf.id, 'registry points at this workflow id');
+  assert.equal(row.enabled, true);
+}
 const orchPrepare = orch.nodes.find((n) => n.name === 'Prepare decision context');
 assert.equal(orchPrepare.parameters.jsCode.includes('schedule_mvp'), false);
 assert.equal(orchPrepare.parameters.jsCode.includes('excel_protocol'), false);
@@ -274,7 +284,7 @@ async function run(name, json, nodes = {}) {
     opened,
   );
   assert.equal(asked.skip_fetch, false);
-  assert.equal(asked.has_apply, true);
+  assert.equal(asked.has_result, true);
   assert.equal(asked.status_message, 'Спросил инженера, в какую группу поместить скважину.');
   const applied = await run(
     'Summarize AI steps',

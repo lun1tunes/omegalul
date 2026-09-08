@@ -120,6 +120,7 @@
     done: "Готово",
     failed: "Сбой",
     waiting_user: "Ждём вас",
+    waiting_agent: "Агент работает",
     retryable_error: "Ошибка",
     fatal_error: "Сбой",
     error: "Ошибка",

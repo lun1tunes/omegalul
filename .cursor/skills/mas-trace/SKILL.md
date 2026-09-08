@@ -20,7 +20,7 @@ n8n part needs lab `.env` (`N8N_USERNAME`, `N8N_PASSWORD`, `N8N_HOST_PORT`). In 
 ## How to read it
 
 1. **Timeline** — who did what. Key kinds: `agent.handoff` (orchestrator decision + handoff text), `agent.progress`/`agent.result` (what the agent actually did), `hitl.request`/`hitl.answered`, `orchestrator.decision` (payload: `action_type`, `guard`, `verification.all_covered`), `case.finished`.
-2. **State** — `ledger.history` is the orchestrator's memory (one row per agent step / human answer); `hitl.answers` keys are question ids (`unlisted_wells_policy`, `Q-…`); `data.excel` (`facts`, `new_wells`), `data.schedule`; artifacts flat ids with filenames.
+2. **State** — `ledger.history` is the orchestrator's memory (one row per agent step / human answer); `hitl.answers` keys are question ids (`unlisted_wells_policy`, `Q-…`); `agents.<agent_id>` slots (`status`, `step`, `facts`/`new_wells` counts, data keys) — Phase 2 replaced `data.excel`/`data.schedule`; artifacts flat ids with filenames.
 3. **Human-text audit** — any snake_case / `key=value` / JSON in engineer-facing strings is a defect in the agent summary or HITL composer, not in the harness.
 4. **Hints** — repeat handoff without new input (loop), same HITL question twice, `completion_unverified`/`completion_review` guards, `step_count > 8`, `done` without `schedule_out`.
 

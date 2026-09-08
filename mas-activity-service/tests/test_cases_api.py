@@ -67,6 +67,24 @@ def test_ensure_schema_is_noop_without_database() -> None:
     assert control_plane.sql_statements(sql) == control_plane.sql_statements(init)
 
 
+def test_cases_status_check_accepts_every_case_status() -> None:
+    """CASE-6a9f3a76-38506f: the first in_progress agent parked the case as waiting_agent and Postgres rejected the
+    UPDATE — the CHECK constraint still listed the old statuses. The DDL must carry every status Activity knows and
+    re-create the constraint so an existing database is upgraded on the next ``schema`` run."""
+    import re
+
+    from app import contracts, control_plane
+
+    sql = control_plane.control_plane_sql()
+    checks = re.findall(r"CONSTRAINT cases_status_check CHECK \(\s*status IN \(([^)]*)\)", sql)
+    assert len(checks) == 2, "CREATE TABLE + ALTER TABLE ADD CONSTRAINT (upgrade path)"
+    for found in checks:
+        assert set(re.findall(r"'([a-z_]+)'", found)) == set(contracts.CASE_STATUSES)
+    assert "ALTER TABLE cases DROP CONSTRAINT IF EXISTS cases_status_check" in sql
+    proxy = json.loads((ROOT.parent / "n8n" / "workflows" / "core" / "mas-control-plane-proxy.workflow.json").read_text(encoding="utf-8"))
+    assert "'waiting_agent'" in json.dumps(proxy), "the proxy `schema` operation carries the same DDL"
+
+
 def test_wipe_data_clears_memory_backend_only() -> None:
     from app import control_plane
 
@@ -1016,6 +1034,15 @@ def test_run_resume_agent_source_wakes_orchestrator(monkeypatch) -> None:
     kinds = [e["kind"] for e in client.get(f"/cases/{case_id}/events").json()["events"]]
     assert "hitl.answered" not in kinds
 
+    # Phase 4.5: the kit's finish_task sends ``agent_result``; it is forwarded verbatim for the orchestrator to merge.
+    kit = client.post(
+        f"/cases/{case_id}/run",
+        json={"action": "resume", "source": "agent", "task_id": "TASK-long", "agent_id": "long_agent",
+              "agent_result": {"task_id": "TASK-long", "status": "completed", "message": "Расчёт готов.", "data": {"top_perforation_md": 2540}}},
+    )
+    assert kit.status_code == 200 and kit.json()["accepted"] is True
+    assert json.loads(captured[1]["human_response"]) == {"task_id": "TASK-long", "status": "completed", "message": "Расчёт готов.", "data": {"top_perforation_md": 2540}}
+
     human = client.post(f"/cases/{case_id}/run", json={"action": "resume", "source": "human", "human_response": "да"})
     assert human.status_code == 400
     assert "поле ответа" in human.json()["detail"]
@@ -1246,6 +1273,58 @@ def test_agents_registry_for_ui() -> None:
     ids = {a["agent_id"]: a for a in body["agents"]}
     assert "schedule_builder" in ids and ids["schedule_builder"]["title"] == "Schedule Builder"
     assert "output_provides" in ids["schedule_builder"]
+    # Phase 2: the executable registry is visible as-is (invoke / enabled / hitl_policy / version).
+    sb = ids["schedule_builder"]
+    assert sb["invoke"]["kind"] == "n8n_workflow" and sb["invoke"]["workflow_id"]
+    assert sb["enabled"] is True and sb["hitl_policy"] == "agent_asks" and sb["version"]
+    assert ids["calculation_agent"]["invoke"] == {"kind": "http", "url": "{math_url}/agent/run"}
+
+
+def test_put_agent_binds_workflow_without_orchestrator_regeneration() -> None:
+    """Phase 2 field path: bind a UI-imported workflow id / add an agent via PUT, no JSON regeneration.
+
+    The orchestrator's ``Call agent (n8n)`` resolves ``invoke.workflow_id`` from this row at runtime.
+    """
+    from app import control_plane
+
+    before = {a["agent_id"]: a for a in client.get("/agents").json()["agents"]}
+    original = before["excel_extractor"]
+    try:
+        # 1) Partial update: only invoke → other columns are kept.
+        res = client.put("/agents/excel_extractor", json={"invoke": {"kind": "n8n_workflow", "workflow_id": "wf-ui-42"}})
+        assert res.status_code == 200, res.text
+        after = {a["agent_id"]: a for a in client.get("/agents").json()["agents"]}["excel_extractor"]
+        assert after["invoke"]["workflow_id"] == "wf-ui-42"
+        assert after["title"] == original["title"] and after["when_to_use"] == original["when_to_use"]
+        assert after["output_provides"] == original["output_provides"] and after["enabled"] is True
+
+        # 2) A brand-new agent: needs title + when_to_use, everything else defaults.
+        res = client.put("/agents/echo_agent", json={"invoke": {"kind": "n8n_workflow", "workflow_id": "wf-echo"}})
+        assert res.status_code == 400
+        res = client.put(
+            "/agents/echo_agent",
+            json={
+                "title": "Эхо",
+                "when_to_use": "Повторяет текст задачи инженера без изменений.",
+                "invoke": {"kind": "n8n_workflow", "workflow_id": "wf-echo"},
+            },
+        )
+        assert res.status_code == 200, res.text
+        echo = {a["agent_id"]: a for a in client.get("/agents").json()["agents"]}["echo_agent"]
+        assert echo["enabled"] is True and echo["hitl_policy"] == "agent_asks" and echo["version"] == "1"
+        assert echo["input_required"] == [] and echo["input_schema"] == {}
+
+        # 3) Disable and validate invoke shapes.
+        assert client.put("/agents/echo_agent", json={"enabled": False}).status_code == 200
+        echo = {a["agent_id"]: a for a in client.get("/agents").json()["agents"]}["echo_agent"]
+        assert echo["enabled"] is False and echo["invoke"]["workflow_id"] == "wf-echo"
+        assert client.put("/agents/echo_agent", json={"invoke": {"kind": "n8n_workflow"}}).status_code == 422
+        assert client.put("/agents/echo_agent", json={"invoke": {"kind": "ftp", "url": "x"}}).status_code == 422
+        assert client.put("/agents/bad id", json={"title": "x", "when_to_use": "y"}).status_code == 400
+    finally:
+        control_plane.upsert_agent(original)
+        with control_plane._LOCK:
+            control_plane._REGISTRY[:] = [r for r in control_plane._REGISTRY if r["agent_id"] != "echo_agent"]
 
 
 def test_result_filename_does_not_reuse_baseline_name() -> None:
@@ -1444,3 +1523,56 @@ def test_post_run_restarts_failed_and_done_cases(monkeypatch) -> None:
     assert again.json()["accepted"] is True
     assert invoked == [case_id]
     assert control_plane.get_case(case_id)["status"] == "running"
+
+
+def test_agent_uploads_binary_deliverable_and_gets_card(tmp_path, monkeypatch) -> None:
+    """Phase 4.3 (K3): POST /cases/{id}/artifacts stores an agent's bytes and returns the card for agent_result.artifacts."""
+    monkeypatch.setenv("ORCHESTRATOR_WEBHOOK_URL", "http://127.0.0.1:9/webhook/mas-orchestrator-step")
+    monkeypatch.setenv("ACTIVITY_BINARIES_PATH", str(tmp_path / "bins"))
+    from app.settings import Settings
+
+    monkeypatch.setattr("app.cases_api.get_settings", lambda: Settings())
+    monkeypatch.setattr("app.cases_api._invoke_create", lambda case_id: None)
+    res = client.post(
+        "/cases",
+        data={"task_description": "отчёт", "requested_by": "tester"},
+        files=[("file", ("wells.xlsx", b"PK\x03\x04fake", "application/octet-stream"))],
+    )
+    case_id = res.json()["case_id"]
+
+    up = client.post(
+        f"/cases/{case_id}/artifacts",
+        data={"artifact_id": "report", "producer": "demo_agent", "summary": "Сводка по 3 скважинам"},
+        files=[("file", ("report.xlsx", b"PK\x03\x04report", "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"))],
+    )
+    assert up.status_code == 200, up.text
+    card = up.json()["artifact"]
+    assert card["artifact_id"] == "report" and card["kind"] == "deliverable" and card["producer"] == "demo_agent"
+    assert card["role"] == "attachment" and card["bytes"] == len(b"PK\x03\x04report")
+    assert card["download_path"] == f"/cases/{case_id}/artifacts/report"
+    got = client.get(card["download_path"])
+    assert got.status_code == 200 and got.content == b"PK\x03\x04report"
+
+    # Russian file names must not crash the download (headers are latin-1; RFC 5987 carries the UTF-8 name).
+    ru = client.post(
+        f"/cases/{case_id}/artifacts",
+        data={"artifact_id": "svodka", "producer": "demo_agent"},
+        files=[("file", ("сводка по скважинам.xlsx", b"PK\x03\x04ru", "application/octet-stream"))],
+    )
+    dl = client.get(ru.json()["artifact"]["download_path"])
+    assert dl.status_code == 200 and dl.content == b"PK\x03\x04ru"
+    assert "filename*=UTF-8''%D1%81%D0%B2%D0%BE%D0%B4%D0%BA%D0%B0" in dl.headers["content-disposition"]
+
+    # Feed shows it as the agent's deliverable next to the engineer's input; the input is untouched.
+    cards = client.get(f"/cases/{case_id}/artifacts", params={"producer": "demo_agent"}).json()["artifacts"]
+    assert [c["artifact_id"] for c in cards] == ["report", "svodka"]
+    assert client.get(f"/cases/{case_id}/artifacts/excel").content.startswith(b"PK")
+
+    # A second upload with the same id does not overwrite; an input slot name is never taken.
+    again = client.post(f"/cases/{case_id}/artifacts", data={"artifact_id": "report", "producer": "demo_agent"}, files=[("file", ("r2.bin", b"x", "application/octet-stream"))])
+    assert again.json()["artifact"]["artifact_id"] == "report_1"
+    steal = client.post(f"/cases/{case_id}/artifacts", data={"artifact_id": "excel", "producer": "demo_agent"}, files=[("file", ("e.bin", b"x", "application/octet-stream"))])
+    assert steal.json()["artifact"]["artifact_id"] == "out_excel"
+    assert steal.json()["artifact"]["role"] == "attachment"
+    bad = client.post(f"/cases/{case_id}/artifacts", data={"artifact_id": "x", "producer": "user"}, files=[("file", ("e.bin", b"x", "application/octet-stream"))])
+    assert bad.status_code == 400

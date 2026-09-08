@@ -35,8 +35,11 @@ assert.deepEqual(fields, {
   excel_tools_url: 'http://excel-tools:8000',
   schedule_service_url: 'http://schedule-builder:8090',
   math_url: 'http://math-service:8100',
+  // Template agent (agents-template/demo_agent): the field stays even while the registry row is disabled.
+  demo_agent_url: 'http://demo-agent:8300',
   orchestrator_step_url: 'http://127.0.0.1:5678/webhook/mas-orchestrator-step',
   max_steps: '12',
+  agent_workflow_ids: '{}',
 });
 const blob = JSON.stringify(wf);
 assert.equal(blob.includes('excel_tools_api_key'), false);

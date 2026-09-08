@@ -269,7 +269,7 @@ WCONPROD
 
 
 def test_inspect_schedule_exposes_well_object_and_control_history() -> None:
-    from app.agent_tools import _compact_inspect
+    from app.agent import compact_inspect
 
     source = """DATES
   1 JAN 2020 /
@@ -291,7 +291,7 @@ WCONPROD
   1601 OPEN GRAT 1* 1* 250000 /
 /
 """
-    item = _compact_inspect(source)["well_objects"][0]
+    item = compact_inspect(source)["well_objects"][0]
     assert item["well"] == "1601"
     assert item["identity"]["group"] == "G1"
     assert item["first_wconprod"]["date"] == "1 JAN 2020"
@@ -299,8 +299,7 @@ WCONPROD
 
 
 def test_analyze_forecast_controls_distinguishes_overrides_economics_and_policies() -> None:
-    from app.agent_tools import _compact_inspect, execute_tool
-    from app import sessions
+    from app.agent import agent
 
     source = """DATES
   1 JAN 2020 /
@@ -346,8 +345,8 @@ WPIMULT
   P1 1.2 /
 /
 """
-    state = sessions.put({
-        "session_id": sessions.new_session_id(),
+    state = agent.store.create({
+        "session_id": agent.store.new_id(),
         "task_id": "analysis",
         "source_text": source,
         "working_text": source,
@@ -357,7 +356,7 @@ WPIMULT
         "context": {},
         "facts": [],
     })
-    result = execute_tool(state["session_id"], "analyze_forecast_controls", {"well": "P1"})
+    result = agent.tools.run(agent.store.load(state["session_id"]), "analyze_forecast_controls", {"well": "P1"})
     assert result["ok"] is True
     assert result["commissioning_anchor"]["keyword"] == "WCONPROD"
     assert result["control_overrides"][0]["keyword"] == "WELTARG"
@@ -369,8 +368,7 @@ WPIMULT
 
 
 def test_generic_operations_protect_factual_control_and_require_weltarg_base() -> None:
-    from app.agent_tools import execute_tool
-    from app import sessions
+    from app.agent import agent
 
     source = """DATES
   1 JAN 2020 /
@@ -380,8 +378,8 @@ WCONPROD
   P1 OPEN GRAT 1* 1* 120000 / -- ФАКТ
 /
 """
-    state = sessions.put({
-        "session_id": sessions.new_session_id(),
+    state = agent.store.create({
+        "session_id": agent.store.new_id(),
         "task_id": "semantic",
         "source_text": source,
         "working_text": source,
@@ -391,20 +389,20 @@ WCONPROD
         "context": {},
         "facts": [],
     })
-    factual = execute_tool(state["session_id"], "apply_operations", {
+    factual = agent.tools.run(agent.store.load(state["session_id"]), "apply_operations", {
         "operations": [{"keyword": "WCONPROD", "operation": "MODIFY", "fields": {"well": "P1", "ORAT": 1}}],
     })
     assert factual["status"] == "failed"
     assert factual["issues"][0]["code"] == "FACTUAL_WCONPROD_PROTECTED"
 
     no_base_source = "DATES\n  1 JAN 2020 /\n/\n\nWELSPECS\n  P1 G1 1 1 1000 OIL /\n/\n"
-    no_base_state = sessions.put({
+    no_base_state = agent.store.create({
         **state,
-        "session_id": sessions.new_session_id(),
+        "session_id": agent.store.new_id(),
         "source_text": no_base_source,
         "working_text": no_base_source,
     })
-    missing = execute_tool(no_base_state["session_id"], "apply_operations", {
+    missing = agent.tools.run(agent.store.load(no_base_state["session_id"]), "apply_operations", {
         "operations": [{"keyword": "WELTARG", "operation": "ADD", "fields": {"well": "P1", "quantity": "BHP", "value": 100}}],
     })
     assert missing["status"] == "failed"
@@ -566,6 +564,8 @@ def test_load_source_fetches_from_activity_artifact(monkeypatch) -> None:
     from app.io import load_source
 
     class _Resp:
+        headers: dict[str, str] = {}
+
         def read(self):
             return b"DATES\n/"
 
@@ -577,11 +577,12 @@ def test_load_source_fetches_from_activity_artifact(monkeypatch) -> None:
 
     seen: dict[str, str] = {}
 
-    def fake_urlopen(url, timeout=30):
-        seen["url"] = url
+    def fake_urlopen(req, timeout=30):
+        seen["url"] = getattr(req, "full_url", req)
         return _Resp()
 
-    monkeypatch.setattr("app.io.urlopen", fake_urlopen)
+    # Downloads go through the kit's ActivityClient (stdlib urlopen).
+    monkeypatch.setattr("mas_agent_kit.activity.urlopen", fake_urlopen)
     text = load_source(
         {
             "activity_base_url": "http://mas-activity:8200",
@@ -621,11 +622,23 @@ def test_bind_case_packet_hydrates_nested_artifacts_and_facts(monkeypatch) -> No
                     "includes": [{"filename": "VFP.INC", "artifact_id": "schedule_source_2"}],
                 },
             },
-            "data": {"excel": {"facts": [{"well": "P1", "date": "1 JAN 2020"}]}},
+            # Phase 2: agent results live in state.agents[<agent_id>].data — the Builder does not know the
+            # producer's name, it takes `facts` / `new_wells` from whichever completed agent produced them.
+            "agents": {
+                "excel_extractor": {
+                    "status": "completed",
+                    "step": 1,
+                    "data": {"facts": [{"well": "P1", "date": "1 JAN 2020"}], "new_wells": [{"well": "N1", "group": "G"}]},
+                },
+                "some_failed_agent": {"status": "failed", "step": 2, "data": {"facts": [{"well": "WRONG", "date": "1 JAN 1999"}]}},
+            },
+            "data": {},
         }
     }
 
     class _Resp:
+        headers: dict[str, str] = {}
+
         def __init__(self, body: bytes):
             self._body = body
 
@@ -638,12 +651,12 @@ def test_bind_case_packet_hydrates_nested_artifacts_and_facts(monkeypatch) -> No
         def __exit__(self, *args):
             return False
 
-    def fake_urlopen(url, timeout=15):
-        if "/state" in str(url):
+    def fake_urlopen(req, timeout=15):
+        if "/state" in str(getattr(req, "full_url", req)):
             return _Resp(json.dumps(packet).encode())
         return _Resp(b"DATES\n/")
 
-    monkeypatch.setattr("app.io.urlopen", fake_urlopen)
+    monkeypatch.setattr("mas_agent_kit.activity.urlopen", fake_urlopen)
     inputs, context = bind_case_packet(
         {"activity_base_url": "http://mas-activity:8200", "artifact_ids": ["excel", "schedule_source"]},
         {"hitl": {"pending": False}},
@@ -652,9 +665,31 @@ def test_bind_case_packet_hydrates_nested_artifacts_and_facts(monkeypatch) -> No
     assert inputs["artifacts"]["schedule_source"]["filename"] == "base.inc"
     assert inputs["artifacts"]["schedule_source_1"]["filename"] == "G.GRDECL"
     assert inputs["schedule_root"] == "base.inc"
-    assert context["excel"]["facts"][0]["well"] == "P1"
+    assert context["excel"]["facts"] == [{"well": "P1", "date": "1 JAN 2020"}], "failed agents contribute nothing"
+    assert context["excel"]["new_wells"] == [{"well": "N1", "group": "G"}]
     assert commissioning_facts(context, inputs)[0]["well"] == "P1"
     assert "DATES" in load_source(inputs, "CASE-1", "http://mas-activity:8200")
+
+
+def test_upstream_agent_data_merges_agents_by_step_and_honours_legacy_bucket() -> None:
+    """Phase 2 twin of the orchestrator's state.agents: later completed steps win, omitted_keys is not
+    data, and a pre-Phase-2 case with ``state.data.excel`` still yields its facts."""
+    from app.io import upstream_agent_data
+
+    state = {
+        "data": {"excel": {"facts": [{"well": "OLD", "date": "1 JAN 2000"}], "omitted_keys": ["blob"]}},
+        "agents": {
+            "b": {"status": "completed", "step": 3, "data": {"facts": [{"well": "B", "date": "1 JAN 2003"}], "omitted_keys": ["x"]}},
+            "a": {"status": "completed", "step": 2, "data": {"facts": [{"well": "A", "date": "1 JAN 2002"}], "new_wells": [{"well": "N"}]}},
+        },
+    }
+    merged = upstream_agent_data(state)
+    assert merged["facts"] == [{"well": "B", "date": "1 JAN 2003"}]
+    assert merged["new_wells"] == [{"well": "N"}]
+    assert "omitted_keys" not in merged
+    assert upstream_agent_data({"data": {"excel": {"facts": [{"well": "OLD"}]}}})["facts"] == [{"well": "OLD"}]
+    assert upstream_agent_data({}) == {}
+    assert upstream_agent_data("nope") == {}
 
 
 def test_agent_tools_open_inspect_search_and_operations() -> None:
@@ -866,8 +901,9 @@ def test_engineer_new_well_facts_win_over_orchestrator_echo_of_well_names() -> N
 
 
 def test_new_well_facts_come_from_excel_extractor_before_orchestrator_inputs() -> None:
-    """Excel Extractor ``extract_well_parameters`` stores the parameters table under
-    ``state.data.excel.new_wells``; the engineer attaches a workbook, nobody types JSON."""
+    """Excel Extractor ``extract_well_parameters`` returns the parameters table as ``new_wells``; the
+    orchestrator stores it in that agent's slot of ``state.agents`` and ``bind_case_packet`` binds it into
+    the Builder context. The engineer attaches a workbook, nobody types JSON."""
     from app.agent_tools import _new_well_defs
 
     from_excel = [
@@ -921,7 +957,8 @@ def test_every_engineer_facing_text_from_tools_is_human() -> None:
     """Every needs_input a Schedule Builder tool can emit: Russian prose, no ids/enums/JSON."""
     from fastapi.testclient import TestClient
 
-    from app.agent_tools import NO_APPLY_QUESTION, human_text_problems
+    from app.agent import NO_APPLY_QUESTION
+    from app.agent_tools import human_text_problems
     from app.main import app
 
     client = TestClient(app)
@@ -963,21 +1000,19 @@ def test_session_result_needs_input_without_apply_then_close() -> None:
 
 
 def test_session_result_autobuilds_dirty_working_text() -> None:
-    from app import sessions
-    from app.agent_tools import open_session, session_result
+    from app.agent import agent
 
-    opened = open_session(
+    opened = agent.open_session(
         {
             "task_id": "t-build",
             "objective": "сборка",
             "inputs": {"schedule_text": "DATES\n  1 JAN 2026 /\n/\n"},
         }
     )
-    sid = opened["session_id"]
-    state = sessions.get(sid)
+    state = agent.store.load(opened["session_id"])
     state["working_text"] = "DATES\n  2 JAN 2026 /\n/\n"
-    sessions.save(state)
-    result = session_result(sid)
+    agent.store.save(state)
+    result = agent.result(state)
     assert result["status"] in {"completed", "failed"}
     assert "2 JAN 2026" in result["artifacts"]["schedule_out"]
 

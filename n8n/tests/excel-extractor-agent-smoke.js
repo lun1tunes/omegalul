@@ -130,8 +130,8 @@ assert.equal(system.includes('suggested_capability'), false);
 assert.equal(wf.connections['Call Knowledge Retrieval'].main[0][0].node, 'Attach excel RAG evidence');
 assert.equal(wf.connections['Attach excel RAG evidence'].main[0][0].node, 'Excel Extractor AI Agent');
 assert.equal(wf.connections['Excel Extractor AI Agent'].main[0][0].node, 'Summarize AI steps');
-assert.equal(wf.connections['AI extracted?'].main[0][0].node, 'Format excel result');
-assert.equal(wf.connections['AI extracted?'].main[1][0].node, 'Fetch excel result');
+assert.equal(wf.connections['Result stored?'].main[0][0].node, 'Format excel result');
+assert.equal(wf.connections['Result stored?'].main[1][0].node, 'Fetch excel result');
 assert.equal(wf.connections['Format excel result'].main[0][0].node, 'Close excel session');
 assert.equal(agent.parameters.options.maxIterations, 8);
 assert.equal(wf.settings.executionTimeout, 900);
@@ -178,14 +178,24 @@ assert.match(String(agent.parameters.options.systemMessage || ''), /excel_protoc
 const cfg = orch.nodes.find((n) => n.name === 'Runtime endpoints');
 assert.equal(cfg.type, 'n8n-nodes-base.executeWorkflow');
 assert.equal(cfg.parameters.workflowId.value, 'REPLACE_MAS_RUNTIME_CONFIG_IN_UI');
-const call = orch.nodes.find((n) => n.name === 'Call Excel Extractor');
+// Phase 2: the orchestrator reaches this agent through the universal "Call agent (n8n)" node; the target
+// is agent_registry.invoke.workflow_id, which must be this workflow's id (lab CLI import keeps ids).
+assert.equal(orch.nodes.some((n) => n.name === 'Call Excel Extractor'), false, 'no per-agent call node');
+const call = orch.nodes.find((n) => n.name === 'Call agent (n8n)');
 assert.equal(call.type, 'n8n-nodes-base.executeWorkflow');
 assert.equal(call.typeVersion, 1.3);
 assert.equal(call.onError, 'continueRegularOutput');
-assert.equal(call.parameters.workflowId.value, 'REPLACE_EXCEL_EXTRACTION_AGENT_IN_UI');
-assert.equal(call.parameters.workflowId.cachedResultName, 'Agent — Excel Extractor');
+assert.equal(call.parameters.workflowId.value, '={{ $json.invoke_workflow_id }}');
 assert.equal(call.parameters.options.waitForSubWorkflow, true);
 assert.deepEqual(Object.keys(call.parameters.workflowInputs.value), ['agent_task']);
+{
+  const seed = JSON.parse(fs.readFileSync(path.join(workspace, 'mas-activity-service/app/sql/agent_registry_seed.json'), 'utf8'));
+  const row = seed.find((r) => r.agent_id === 'excel_extractor');
+  assert.ok(row, 'excel_extractor is seeded in agent_registry');
+  assert.equal(row.invoke.kind, 'n8n_workflow');
+  assert.equal(row.invoke.workflow_id, wf.id, 'registry points at this workflow id');
+  assert.equal(row.enabled, true);
+}
 const orchPrepare = orch.nodes.find((n) => n.name === 'Prepare decision context');
 assert.equal(orchPrepare.parameters.jsCode.includes('excel_protocol'), false);
 assert.equal(orchPrepare.parameters.jsCode.includes('schedule_mvp'), false);
@@ -262,7 +272,7 @@ async function run(name, json, nodes = {}) {
     { 'Open excel session': opened },
   );
   assert.equal(summarized.skip_fetch, false);
-  assert.equal(summarized.has_extraction, true);
+  assert.equal(summarized.has_result, true);
   assert.equal(summarized.status_message, 'Извлёк даты ввода для 14 скважин.');
   const noResult = await run(
     'Summarize AI steps',

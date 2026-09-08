@@ -72,6 +72,7 @@ PUBLISH = [
     "Error — MAS Node Traces",
     "Agent — Schedule Builder",
     "Agent — Excel Extractor",
+    "Agent — Demo Agent",
     "Orchestrator — MAS",
     "Form — MAS Deployment Health Check",
 ]
@@ -1030,9 +1031,14 @@ def ensure_compose_up() -> None:
             "excel-tools",
             "math-service",
             "schedule-builder",
+            "demo-agent",
         ],
         timeout=300,
     )
+    # The Python services bind-mount the repo but run uvicorn without --reload: `up -d` keeps an already
+    # running container (and its stale modules). Restart them so the live gate exercises the current code
+    # (CASE-6a9efd37-367ae1: Builder still read state.data.excel after the Phase 2 move to state.agents).
+    run(["docker", "compose", "restart", "excel-tools", "math-service", "schedule-builder", "demo-agent"], check=False, timeout=300)
     env = load_env()
     n8n_port = env.get("N8N_HOST_PORT", "15678")
     wait_url(f"http://127.0.0.1:{n8n_port}/healthz")
@@ -1040,6 +1046,7 @@ def ensure_compose_up() -> None:
         ("math-service", "http://127.0.0.1:8100/health"),
         ("schedule-builder", "http://127.0.0.1:8090/health"),
         ("excel-tools", "http://127.0.0.1:8000/health"),
+        ("demo-agent", "http://127.0.0.1:8300/health"),
     ):
         print(f"wait {service} {inner}")
         for _ in range(90):
@@ -1061,7 +1068,10 @@ def ensure_compose_up() -> None:
                 break
             time.sleep(2)
         else:
-            print(f"warn: {service} not healthy yet")
+            # A dead agent service turns every live case into a false HITL ("К задаче не приложен исходный SCHEDULE",
+            # 6/6 on 2026-09-07 when schedule-builder exited on a pip race) — stop here instead of running cases.
+            logs = run(["docker", "compose", "logs", "--tail", "15", service], check=False, timeout=30)
+            raise SystemExit(f"{service} did not become healthy at {inner}:\n{(logs.stdout or logs.stderr)[-1500:]}")
 
 
 def main() -> int:

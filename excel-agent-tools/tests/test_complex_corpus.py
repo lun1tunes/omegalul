@@ -38,7 +38,7 @@ def _tool(client: TestClient, session_id: str, name: str, args: dict[str, Any]) 
     assert response.status_code == 200, response.text
     payload = response.json()
     assert payload["ok"], payload
-    return payload["result"]
+    return {key: value for key, value in payload.items() if key != "ok"}
 
 
 def _upload_fixture(client: TestClient, path: Path) -> str:

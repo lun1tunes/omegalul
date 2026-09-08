@@ -542,7 +542,7 @@ def test_ready_health_and_static_assets() -> None:
     ):
         assert gone not in html, gone
     # Cache busting: the HTML must reference the current asset versions.
-    assert "app.js?v=102" in html
+    assert "app.js?v=103" in html
     assert "schema.js?v=31" in html
     assert "app.css?v=100" in html
 
@@ -607,6 +607,18 @@ def test_ready_health_and_static_assets() -> None:
         assert anchor in knowledge.text, anchor
     assert "knowledge.css?v=100" in knowledge.text
     assert "knowledge.js?v=100" in knowledge.text
+
+    # Phase 4.4 (O21): the Agents page is the registry UI over GET/PUT /agents; no agent is hardcoded in it.
+    registry = client.get("/registry")
+    assert registry.status_code == 200
+    for anchor in ("agentList", "addAgentBtn", "createPanel", "createId", "createKind", "createTarget", 'href="/knowledge"', 'href="/"'):
+        assert anchor in registry.text, anchor
+    assert 'href="/registry"' in html and 'href="/registry"' in knowledge.text
+    agents_js = client.get("/static/agents.js")
+    assert agents_js.status_code == 200
+    assert 'fetch("/agents")' in agents_js.text and "/agents/${encodeURIComponent(agentId)}" in agents_js.text
+    for hardcoded in ("excel_extractor", "schedule_builder", "calculation_agent"):
+        assert hardcoded not in agents_js.text and hardcoded not in registry.text, hardcoded
 
 
 def test_cors_preflight_and_get_allow_any_origin() -> None:

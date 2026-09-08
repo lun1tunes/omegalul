@@ -1,3 +1,5 @@
+# The shared agent core (mas_agent_kit: sessions, tools, agent_result, Activity client) is not installed:
+# it is the repo folder ../mas-agent-kit, put on sys.path by app/__init__.py. Its needs (fastapi, filelock) are below.
 # Keep the FastAPI/Starlette pair on the tested 0.115 line. Newer Starlette 1.x
 # releases changed TestClient behaviour and currently hang with our supported
 # Python 3.13 test setup.

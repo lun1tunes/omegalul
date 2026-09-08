@@ -12,28 +12,37 @@ import json
 import uuid
 from pathlib import Path
 
+from agents import ALL as AGENT_SPECS
+from mas_agent_spec import EXCEL_KEY_CRED  # noqa: F401  (re-exported for callers that bind the Excel credential)
+
 ROOT = Path(__file__).resolve().parents[1]
 OUT = ROOT / "workflows/core/mas-runtime-config.workflow.json"
 WF_ID = str(uuid.uuid5(uuid.NAMESPACE_URL, "mas-runtime-config"))
 WF_NAME = "MAS — Runtime Config"
 PLACEHOLDER = "REPLACE_MAS_RUNTIME_CONFIG_IN_UI"
-EXCEL_KEY_CRED = {
-    "httpHeaderAuth": {
-        "id": "REPLACE_IN_UI",
-        "name": "REPLACE: Excel Tools X-API-Key",
-    }
-}
+
+
+def _agent_service_urls() -> tuple[tuple[str, str], ...]:
+    """One ``<service_url_key>`` field per agent spec (n8n/templates/agents/*.py) that has a service."""
+    seen: dict[str, str] = {}
+    for spec in AGENT_SPECS:
+        if spec.service_url_key and spec.service_url_key not in seen:
+            seen[spec.service_url_key] = spec.lab_url
+    return tuple(seen.items())
+
 
 # Lab Compose DNS. Field: overwrite these values in the Set after UI import.
 LAB_URLS = (
     ("activity_base_url", "http://mas-activity:8200"),
-    ("excel_tools_url", "http://excel-tools:8000"),
-    ("schedule_service_url", "http://schedule-builder:8090"),
-    ("math_url", "http://math-service:8100"),
+    *_agent_service_urls(),
     ("orchestrator_step_url", "http://127.0.0.1:5678/webhook/mas-orchestrator-step"),
     # Orchestrator step budget per case (not a URL). When reached with a completed result the
     # engineer is asked to accept / rework; without any result the case fails. UI-editable.
     ("max_steps", "12"),
+    # Phase 2: the orchestrator calls agents by the workflow id stored in agent_registry.invoke.
+    # UI "Import from File" assigns new ids, so the field engineer maps agent_id → live workflow id
+    # here (JSON object). Empty = trust the registry. Lab (CLI import keeps ids) leaves it empty.
+    ("agent_workflow_ids", "{}"),
 )
 
 
@@ -108,9 +117,12 @@ def main() -> None:
                     "Agent — Excel Extractor.\n\n"
                     "Возвращает "
                     "`activity_base_url`, `excel_tools_url`, `schedule_service_url`, "
-                    "`math_url`, `orchestrator_step_url`, `max_steps`. Ничего не оркестрирует.\n\n"
+                    "`math_url`, `orchestrator_step_url`, `max_steps`, `agent_workflow_ids`. Ничего не оркестрирует.\n\n"
                     "`max_steps` — бюджет шагов оркестратора на кейс (по умолчанию 12): при достижении "
                     "с готовым результатом инженеру предлагается принять/доработать, без результата — кейс failed.\n\n"
+                    "`agent_workflow_ids` — JSON `{\"<agent_id>\": \"<id workflow в этом n8n>\"}`. Оркестратор "
+                    "вызывает агентов по id из `agent_registry`; после импорта через UI n8n выдаёт новые id — "
+                    "впишите их здесь (id виден в URL открытого workflow). `{}` — доверять реестру.\n\n"
                     "`orchestrator_step_url` — внутренний webhook оркестратора "
                     "(loop сам себя, не через Activity `/run`). Lab: "
                     "`http://127.0.0.1:5678/webhook/mas-orchestrator-step`."

@@ -12,7 +12,9 @@ from app.state_shape import (
     flatten_artifacts,
     is_unlisted_wells_gate,
     nest_artifacts,
-    slim_excel_data,
+    sanitize_agents,
+    sanitize_case_state,
+    slim_agent_data,
 )
 
 
@@ -131,23 +133,46 @@ def test_decode_hitl_answer_parses_nested_json_string() -> None:
     assert decode_hitl_answer('"{\\"text\\":\\"ok\\"}"') == {"text": "ok"}
 
 
-def test_slim_excel_keeps_fact_count_and_caps_preview() -> None:
-    slim = slim_excel_data(
+def test_slim_agent_data_is_a_byte_budget_not_a_schema() -> None:
+    """Phase 2: the orchestrator does not know what an agent's data means — it only caps it by size.
+
+    Same numbers as the JS twin (mas_state_utils.slimAgentData): 24000 total, 12000 per key; smaller keys
+    survive, the oversized key is dropped and listed in ``omitted_keys``; previously omitted keys stay listed.
+    """
+    slim = slim_agent_data(
         {
             "facts": [{"well": "A", "date": "2020-01-01", "values": {"x": 1}}],
-            "normalized_rows": [
-                {
-                    "table_id": "t1",
-                    "columns": ["well"],
-                    "preview": [{"well": "A"}, {"well": "B"}, {"well": "C"}, {"well": "D"}],
-                    "row_count": 14,
-                }
-            ],
+            "blob": "z" * 13000,
+            "omitted_keys": ["earlier"],
         }
     )
-    assert slim["facts"] == [{"well": "A", "date": "2020-01-01"}]
-    assert slim["normalized_rows"][0]["preview_count"] == 14
-    assert len(slim["normalized_rows"][0]["preview"]) == 3
+    assert slim["facts"] == [{"well": "A", "date": "2020-01-01", "values": {"x": 1}}], "content is not reshaped"
+    assert "blob" not in slim
+    assert slim["omitted_keys"] == ["earlier", "blob"]
+    many = {f"k{i}": "y" * 5000 for i in range(10)}
+    kept = slim_agent_data(many)
+    assert len([k for k in kept if k != "omitted_keys"]) == 4  # 4 × ~5 KB fit into 24 KB
+    assert len(kept["omitted_keys"]) == 6
+    assert slim_agent_data("not a dict") == {}
+
+
+def test_sanitize_agents_shapes_slots_and_state_keeps_legacy_buckets() -> None:
+    agents = sanitize_agents(
+        {
+            "excel_extractor": {"status": "completed", "summary": "Извлечено 14 дат", "task_id": "TASK-1", "step": "1", "data": {"facts": [1], "blob": "z" * 13000}},
+            "broken": "not a slot",
+        }
+    )
+    assert list(agents) == ["excel_extractor"]
+    assert agents["excel_extractor"]["step"] == 1
+    assert agents["excel_extractor"]["data_keys"] == ["facts"]
+    assert agents["excel_extractor"]["data"]["omitted_keys"] == ["blob"]
+    # Cases from before Phase 2 carry data.excel — kept, slimmed by the same budget, never renamed.
+    state = sanitize_case_state({"data": {"facts": [1], "excel": {"facts": [1], "blob": "z" * 13000}, "result": {"summary_for_human": "x" * 13000}}})
+    assert "facts" not in state["data"]
+    assert state["data"]["excel"]["omitted_keys"] == ["blob"]
+    assert len(state["data"]["result"]["summary_for_human"]) == 13000, "the case result is not agent data"
+    assert state["agents"] == {}
 
 
 def test_compact_does_not_copy_facts_or_current_task_body() -> None:
@@ -160,9 +185,15 @@ def test_compact_does_not_copy_facts_or_current_task_body() -> None:
                 "schedule_source": {"filename": "base.inc", "artifact_id": "schedule_source"},
                 "schedule_source_1": {"filename": "G.GRDECL", "artifact_id": "schedule_source_1"},
             },
-            "data": {
-                "facts": [{"well": "dup"}],
-                "excel": {"facts": [{"well": "A", "date": "2020-01-01", "values": {"row": True}}]},
+            "data": {"facts": [{"well": "dup"}]},
+            "agents": {
+                "excel_extractor": {
+                    "status": "completed",
+                    "summary": "Извлечено 1 дата",
+                    "task_id": "TASK-1",
+                    "step": 1,
+                    "data": {"facts": [{"well": "A", "date": "2020-01-01", "values": {"row": True}}]},
+                }
             },
             "current_task": {
                 "task_id": "TASK-1",
@@ -175,9 +206,13 @@ def test_compact_does_not_copy_facts_or_current_task_body() -> None:
     assert ctx["files"]["excel"] == 1
     assert ctx["files"]["grdecl"] == 1
     assert ctx["files"]["includes"] == 0
-    assert ctx["excel_facts"] == 1
-    assert ctx["excel_filename"] == "a.xlsx"
-    assert ctx["wells_in_excel"] == ["A"]
+    # Phase 2: no domain fields; inputs by role/name, agents by id with status/summary/data_keys.
+    for legacy in ("has_excel", "has_schedule_source", "excel_filename", "excel_facts", "wells_in_excel", "schedule_source_filename"):
+        assert legacy not in ctx
+    assert [i["filename"] for i in ctx["inputs"]] == ["a.xlsx", "base.inc", "G.GRDECL"]
+    assert ctx["inputs_total"] == 3
+    assert ctx["agents"] == {"excel_extractor": {"status": "completed", "step": 1, "summary": "Извлечено 1 дата", "data_keys": ["facts"]}}
+    assert "row" not in str(ctx), "agent data bodies never enter the compact"
     assert ctx["current_task"] == {"task_id": "TASK-1", "agent_id": "excel_extractor"}
     assert ctx["hitl_answer_ids"] == ["Q-1"]
     assert ctx["unlisted_wells_policy"] is None

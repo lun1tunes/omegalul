@@ -17,7 +17,7 @@ from fastapi.responses import StreamingResponse
 from app import artifact_store
 from app import case_watch
 from app import control_plane
-from app.contracts import AGENT_EVENT_KINDS, CaseAnswerIn, CaseEventIn, CaseNameIn, MAX_STEPS
+from app.contracts import AGENT_EVENT_KINDS, AgentRegistryIn, CaseAnswerIn, CaseEventIn, CaseNameIn, MAX_STEPS
 from app.state_shape import (
     artifact_cards,
     artifact_filenames,
@@ -915,7 +915,12 @@ async def post_run(case_id: str, request: Request, background_tasks: BackgroundT
             "source": source,
             "task_id": str(body.get("task_id") or ""),
             "agent_id": str(body.get("agent_id") or ""),
-            "human_response": json.dumps(body.get("payload") if body.get("payload") is not None else body.get("result") or {}, ensure_ascii=False),
+            # A long agent's final ``agent_result`` (kit ``ActivityClient.finish_task``) rides in ``human_response``;
+            # the orchestrator merges it like a synchronous result. ``payload`` / ``result`` are older spellings.
+            "human_response": json.dumps(
+                next((body[k] for k in ("agent_result", "payload", "result") if isinstance(body.get(k), dict)), {}),
+                ensure_ascii=False,
+            ),
             "requested_by": str(body.get("requested_by") or "mas activity user"),
         }
         background_tasks.add_task(_invoke_resume, case_id, extra)
@@ -1067,22 +1072,75 @@ async def stream_case(case_id: str, request: Request) -> StreamingResponse:
     return StreamingResponse(gen(), media_type="text/event-stream")
 
 
+_AGENT_JSON_LISTS = ("input_required", "output_provides")
+_AGENT_JSON_OBJECTS = ("invoke", "input_schema", "output_schema")
+
+
+def _agent_row_view(row: dict[str, Any]) -> dict[str, Any]:
+    """One ``agent_registry`` row as the API shows it (JSON columns may arrive as strings from the proxy)."""
+
+    def _json(value: Any, default: Any) -> Any:
+        if isinstance(value, str):
+            try:
+                value = json.loads(value)
+            except ValueError:
+                return default
+        return value if isinstance(value, type(default)) else default
+
+    enabled = row.get("enabled")
+    if isinstance(enabled, str):
+        enabled = enabled.strip().lower() in ("t", "true", "1", "yes")
+    return {
+        "agent_id": str(row.get("agent_id")),
+        "title": str(row.get("title") or row.get("agent_id")),
+        "when_to_use": str(row.get("when_to_use") or ""),
+        **{k: _json(row.get(k), []) for k in _AGENT_JSON_LISTS},
+        **{k: _json(row.get(k), {}) for k in _AGENT_JSON_OBJECTS},
+        "hitl_policy": str(row.get("hitl_policy") or "agent_asks"),
+        "enabled": True if enabled is None else bool(enabled),
+        "version": str(row.get("version") or "1"),
+    }
+
+
 @router.get("/agents")
 def list_agents() -> dict[str, Any]:
-    """Agent registry for the UI (titles for feed / schema / results) — the UI hardcodes no agent."""
-    rows = []
-    for row in control_plane.list_agents():
-        if not isinstance(row, dict) or not row.get("agent_id"):
-            continue
-        rows.append(
-            {
-                "agent_id": str(row.get("agent_id")),
-                "title": str(row.get("title") or row.get("agent_id")),
-                "when_to_use": str(row.get("when_to_use") or ""),
-                "output_provides": list(row.get("output_provides") or []),
-            }
-        )
+    """Agent registry (Phase 2, executable): the UI hardcodes no agent, the orchestrator reads the same rows."""
+    rows = [
+        _agent_row_view(row)
+        for row in control_plane.list_agents()
+        if isinstance(row, dict) and row.get("agent_id")
+    ]
     return {"agents": rows}
+
+
+@router.put("/agents/{agent_id}")
+def upsert_agent(agent_id: str, body: AgentRegistryIn) -> dict[str, Any]:
+    """Bind or edit one agent without touching the orchestrator JSON.
+
+    Field path (n8n UI-only): after importing an agent workflow the engineer copies its new id from the URL
+    and sends ``{"invoke": {"kind": "n8n_workflow", "workflow_id": "<id>"}}`` here (FastAPI ``/docs`` on the
+    Windows workstation). Missing fields keep the stored values; a new ``agent_id`` needs at least ``title``
+    and ``when_to_use`` so the Decision LLM can choose it.
+    """
+    agent_id = agent_id.strip()
+    if not agent_id or not all(ch.isalnum() or ch in "_-" for ch in agent_id):
+        raise HTTPException(status_code=400, detail="agent_id must be [A-Za-z0-9_-]+")
+    current = next(
+        (
+            _agent_row_view(row)
+            for row in control_plane.list_agents()
+            if isinstance(row, dict) and str(row.get("agent_id")) == agent_id
+        ),
+        None,
+    )
+    patch = {k: v for k, v in body.model_dump().items() if v is not None}
+    if current is None:
+        if not patch.get("title") or not patch.get("when_to_use"):
+            raise HTTPException(status_code=400, detail="new agent needs title and when_to_use")
+        current = _agent_row_view({"agent_id": agent_id, **patch})
+    merged = {**current, **patch, "agent_id": agent_id}
+    control_plane.upsert_agent(merged)
+    return {"ok": True, "agent": merged}
 
 
 @router.get("/cases/{case_id}/artifacts")
@@ -1110,6 +1168,93 @@ def list_artifacts(
     return {"ok": True, "case_id": case_id, "artifacts": cards}
 
 
+def content_disposition(filename: str) -> str:
+    """``attachment`` header that survives Russian file names (HTTP headers are latin-1; RFC 5987 carries UTF-8)."""
+    from urllib.parse import quote
+
+    name = str(filename or "artifact").replace('"', "").replace("\r", "").replace("\n", "")
+    ascii_name = name.encode("ascii", "ignore").decode("ascii").strip() or "artifact"
+    if ascii_name == name:
+        return f'attachment; filename="{name}"'
+    return f"attachment; filename=\"{ascii_name}\"; filename*=UTF-8''{quote(name)}"
+
+
+def _slug_artifact_id(raw: str, filename: str) -> str:
+    base = (raw or "").strip() or Path(filename or "artifact").stem
+    slug = "".join(ch if ch.isalnum() else "_" for ch in base.lower()).strip("_")
+    return slug or "artifact"
+
+
+@router.post("/cases/{case_id}/artifacts")
+async def upload_agent_artifact(
+    case_id: str,
+    file: UploadFile = File(...),
+    artifact_id: str = Form(default=""),
+    producer: str = Form(default=""),
+    summary: str = Form(default=""),
+    kind: str = Form(default="deliverable"),
+) -> dict[str, Any]:
+    """An agent stores a binary deliverable (report, workbook, plot) and gets back its card.
+
+    The agent puts the returned card under ``agent_result.artifacts[artifact_id]``; the orchestrator
+    merges it into ``state.artifacts`` and the feed shows it as that agent's result
+    (``kind=deliverable``, ``producer=<agent_id>``). Text deliverables of the Schedule Builder
+    (``schedule_out``, ``diff``) still travel inline in ``agent_result`` — this route is for bytes.
+    Kit call: ``ActivityClient.upload(artifact_id, filename, content, mime)``.
+    """
+    row = control_plane.get_case(case_id)
+    if row is None:
+        raise HTTPException(status_code=404, detail="case not found")
+    want_kind = (kind or "deliverable").strip().lower()
+    if want_kind not in {"deliverable", "intermediate"}:
+        raise HTTPException(status_code=400, detail="kind must be deliverable or intermediate")
+    who = (producer or "").strip()
+    if not who or who == "user":
+        raise HTTPException(status_code=400, detail="producer must be the agent_id")
+    content = await file.read()
+    if not content:
+        raise HTTPException(status_code=400, detail="empty file")
+    filename = Path(file.filename or "artifact").name
+    mime = file.content_type or "application/octet-stream"
+
+    state = dict(row.get("state") or {})
+    artifacts = nest_artifacts(state.get("artifacts") or {})
+    flat = flatten_artifacts(artifacts)
+    binary = load_task_binaries(case_id) if not artifact_store.configured() else {}
+    used = set(flat.keys()) | set(binary.keys())
+    base = _slug_artifact_id(artifact_id, filename)
+    if role_for_artifact_id(base) != "attachment":
+        base = f"out_{base}"  # never take an input slot (excel, schedule_source, …): agent bytes are attachments by role
+    key, n = base, 0
+    while key in used:
+        n += 1
+        key = f"{base}_{n}"
+    card = {
+        "artifact_id": key,
+        "role": role_for_artifact_id(key),
+        "kind": want_kind,
+        "producer": who,
+        "filename": filename,
+        "mime_type": mime,
+        "bytes": len(content),
+        "created_at": datetime.now(timezone.utc).isoformat(),
+    }
+    if summary.strip():
+        card["summary"] = summary.strip()[:400]
+    if artifact_store.configured():
+        try:
+            await artifact_store.put(case_id, key, filename, content, mime)
+        except Exception as exc:
+            raise HTTPException(status_code=502, detail=f"artifact proxy upload failed: {exc}") from exc
+    else:
+        binary[key] = (filename, content, mime)
+        save_task_binaries(case_id, binary)
+    flat[key] = card
+    state["artifacts"] = nest_artifacts(flat)
+    control_plane.update_case(case_id, state=state, status=row.get("status") or "running")
+    return {"ok": True, "case_id": case_id, "artifact": {**card, "download_path": f"/cases/{case_id}/artifacts/{key}"}}
+
+
 @router.get("/cases/{case_id}/schedule")
 def get_schedule(case_id: str):
     """Compatibility alias for the Schedule Builder deliverable (``role == schedule_out``).
@@ -1127,11 +1272,10 @@ def get_schedule(case_id: str):
         raise HTTPException(status_code=404, detail="schedule not ready")
     from fastapi.responses import Response
 
-    filename = _result_filename(artifacts).replace('"', "")
     return Response(
         content=text.encode("utf-8"),
         media_type="text/plain; charset=utf-8",
-        headers={"Content-Disposition": f'attachment; filename="{filename}"'},
+        headers={"Content-Disposition": content_disposition(_result_filename(artifacts))},
     )
 
 
@@ -1176,5 +1320,5 @@ async def get_artifact(case_id: str, artifact_id: str):
     return Response(
         content=content,
         media_type=mime or "application/octet-stream",
-        headers={"Content-Disposition": f'attachment; filename="{filename}"'},
+        headers={"Content-Disposition": content_disposition(filename)},
     )

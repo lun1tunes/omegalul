@@ -6,7 +6,7 @@
   "nodes": [
     {
       "parameters": {
-        "content": "## edit after import\n\n**Agent — Schedule Builder** — один LLM + FastAPI tools.\n\n1. Bind **Qwen** credential on Schedule Builder Chat Model\n2. Bind **Runtime configuration** → `MAS — Runtime Config` (URL FastAPI). Field: Windows/host URL.\n3. Bind **Call Knowledge Retrieval** → `MAS — Knowledge Retrieval` (срез `schedule_mvp` / `keyword_instruction`; LLM-ветка operations). Commissioning / group_rebind RAG не вызывают.\n4. Orchestrator — MAS вызывает этот workflow через `executeWorkflow` (`Call Schedule Builder`), как Excel Extractor. Webhook не нужен.\n\nLLM не пишет .INC. parse/apply/emit остаются в сервисе.\nИнструмент выбирает LLM по задаче (нет regex-роутера): `apply_commissioning` для дат ввода, `apply_group_rebind` со spec от LLM, `apply_operations`/`render_ir` для точечных правок. Вопрос инженеру — только `ask_engineer` прозой с вариантами; неполный spec возвращается LLM, не человеку. Результат читается из GET /sessions/{id}/result, сессия закрывается POST /sessions/{id}/close. Скважины/даты не хардкодятся.",
+        "content": "## edit after import\n\n**Agent — Schedule Builder** — один LLM + FastAPI tools (сгенерировано из `agents/schedule_builder.py`).\n\n1. Bind **Qwen** credential on Schedule Builder Chat Model — Qwen\n2. Bind **Runtime configuration** → `MAS — Runtime Config` (поле `schedule_service_url` = URL сервиса).\n3. Bind **Call Knowledge Retrieval** → `MAS — Knowledge Retrieval` (срез `schedule_mvp`).\n4. Оркестратор вызывает этот workflow через универсальный `Call agent (n8n)` по id из `agent_registry.invoke`. После импорта через UI id меняется — впишите новый id (из URL этого workflow) в `MAS — Runtime Config` → `agent_workflow_ids`.\n\nИнструмент выбирает LLM по задаче (нет regex-роутера). Вопрос инженеру — только `ask_engineer` прозой с вариантами; ошибки аргументов возвращаются LLM, не человеку. Результат читается из GET /sessions/{id}/result, сессия закрывается POST /sessions/{id}/close.",
         "height": 360,
         "width": 480,
         "color": 1
@@ -23,7 +23,7 @@
     {
       "parameters": {
         "inputSource": "jsonExample",
-        "jsonExample": "{\"agent_task\": {\"case_id\": \"CASE-example\", \"task_id\": \"TASK-002\", \"agent_id\": \"schedule_builder\", \"objective\": \"Сдвинь даты ввода по Excel\", \"inputs\": {}, \"context\": {}}}"
+        "jsonExample": "{\"agent_task\": {\"case_id\": \"CASE-example\", \"task_id\": \"TASK-001\", \"agent_id\": \"schedule_builder\", \"objective\": \"Сдвинь даты ввода по Excel\", \"inputs\": {}, \"context\": {}}}"
       },
       "id": "41fb33ca-e522-5fbf-9fc4-70e19009f1b6",
       "name": "When executed by another workflow",
@@ -67,7 +67,7 @@
     },
     {
       "parameters": {
-        "jsCode": "\nconst incoming=(()=>{try{return $('When executed by another workflow').first().json||{}}catch{return $json||{}}})();\nconst root=incoming&&typeof incoming==='object'?incoming:{};\nconst body=root.body&&typeof root.body==='object'?root.body:root;\nlet task=body.agent_task&&typeof body.agent_task==='object'?body.agent_task:(body.case_id||body.task_id||body.objective?body:null);\nif(!task||typeof task!=='object') task={};\n// Contract: agent_task only (retired specialist_packet is not accepted).\ntask.agent_id='schedule_builder';\ntask.case_id=String(task.case_id||'');\ntask.task_id=String(task.task_id||'');\ntask.objective=String(task.objective||'');\ntask.handoff_message=String(task.handoff_message||'');\ntask.inputs=task.inputs&&typeof task.inputs==='object'?task.inputs:{};\ntask.context=task.context&&typeof task.context==='object'?task.context:{};\nconst cfg=$('Runtime configuration').first().json||{};\nif(!task.inputs.activity_base_url&&cfg.activity_base_url) task.inputs={...task.inputs, activity_base_url:cfg.activity_base_url};\nreturn [{json:{...cfg, agent_task:task, case_id:task.case_id, task_id:task.task_id}}];\n"
+        "jsCode": "const incoming=(()=>{try{return $('When executed by another workflow').first().json||{}}catch{return $json||{}}})();\nconst root=incoming&&typeof incoming==='object'?incoming:{};\nconst body=root.body&&typeof root.body==='object'?root.body:root;\nlet task=body.agent_task&&typeof body.agent_task==='object'?body.agent_task:(body.case_id||body.task_id||body.objective?body:null);\nif(!task||typeof task!=='object') task={};\n// Contract: agent_task only (retired specialist_packet is not accepted).\ntask.agent_id=\"schedule_builder\";\ntask.case_id=String(task.case_id||'');\ntask.task_id=String(task.task_id||'');\ntask.objective=String(task.objective||'');\ntask.handoff_message=String(task.handoff_message||'');\ntask.inputs=task.inputs&&typeof task.inputs==='object'?task.inputs:{};\ntask.context=task.context&&typeof task.context==='object'?task.context:{};\nconst cfg=$('Runtime configuration').first().json||{};\nif(!task.inputs.activity_base_url&&cfg.activity_base_url) task.inputs={...task.inputs, activity_base_url:cfg.activity_base_url};\nreturn [{json:{...cfg, agent_task:task, case_id:task.case_id, task_id:task.task_id}}];\n"
       },
       "id": "107fff28-ec6f-5420-a95e-bbf2be2f0f3b",
       "name": "Normalize schedule task",
@@ -129,7 +129,7 @@
           },
           "conditions": [
             {
-              "id": "f50e3b7e-c002-585b-b759-e91cc079e24a",
+              "id": "d8a9a1b6-1642-5102-865a-265f7678e243",
               "leftValue": "={{ $json.ok === true }}",
               "rightValue": true,
               "operator": {
@@ -153,7 +153,7 @@
     },
     {
       "parameters": {
-        "jsCode": "\nconst opened=$json||{};\nconst result=opened.result&&typeof opened.result==='object'?opened.result:{};\nreturn [{json:{\n  task_id:result.task_id||opened.task_id||'',\n  agent_id:'schedule_builder',\n  status:result.status||'needs_input',\n  message:result.message||opened.message||'Нет исходного SCHEDULE',\n  data:result.data||{},\n  artifacts:result.artifacts||{},\n  issues:result.issues||[{type:'missing_schedule_source'}],\n  assumptions:result.assumptions||[],\n  requests:result.requests||[{question_id:'Q-sched',question:'Приложите baseline .inc',options:[]}]\n}}];\n"
+        "jsCode": "const opened=$json||{};\nconst result=opened.result&&typeof opened.result==='object'?opened.result:{};\nreturn [{json:{\n  task_id:result.task_id||opened.task_id||'',\n  agent_id:\"schedule_builder\",\n  status:result.status||'needs_input',\n  message:result.message||opened.message||\"Нет исходного SCHEDULE\",\n  data:result.data||{},\n  artifacts:result.artifacts||{},\n  issues:result.issues||[{type:\"missing_schedule_source\"}],\n  assumptions:result.assumptions||[],\n  requests:result.requests||[{question_id:\"Q-apply\",question:\"К задаче не приложен исходный SCHEDULE. Приложите baseline .inc, который нужно изменить.\",options:[],accepts:{free_text:true,files:[\"xlsx\", \".inc\"]}}]\n}}];\n"
       },
       "id": "420bab3a-3704-5360-b4c8-f97189511343",
       "name": "Format missing schedule",
@@ -189,7 +189,7 @@
         },
         "sendBody": true,
         "specifyBody": "json",
-        "jsonBody": "={{ ({kind: \"agent.accepted\", actor: 'schedule_builder', agent_id: 'schedule_builder', task_id: $('Normalize schedule task').first().json.agent_task.task_id, status: \"running\", status_message: \"Schedule Builder \\u043f\\u0440\\u0438\\u043d\\u044f\\u043b \\u0437\\u0430\\u0434\\u0430\\u0447\\u0443 \\u0438 \\u0430\\u043d\\u0430\\u043b\\u0438\\u0437\\u0438\\u0440\\u0443\\u0435\\u0442 \\u0438\\u0441\\u0445\\u043e\\u0434\\u043d\\u044b\\u0439 schedule.\", payload: {source: 'schedule-builder-agent-workflow'}}) }}"
+        "jsonBody": "={{ ({kind: \"agent.accepted\", actor: \"schedule_builder\", agent_id: \"schedule_builder\", task_id: $('Normalize schedule task').first().json.agent_task.task_id, status: 'running', status_message: \"Schedule Builder принял задачу и анализирует исходный schedule.\", payload: {source: \"schedule-builder-agent-workflow\"}}) }}"
       },
       "id": "86a96e9e-e91b-547c-9c5e-347ca0339933",
       "name": "Activity — Schedule Builder accepted",
@@ -240,7 +240,7 @@
         },
         "sendBody": true,
         "specifyBody": "json",
-        "jsonBody": "={{ ({kind: \"agent.progress\", actor: 'schedule_builder', agent_id: 'schedule_builder', task_id: $('Normalize schedule task').first().json.agent_task.task_id, status: \"running\", status_message: \"Schedule Builder \\u043f\\u0440\\u043e\\u0432\\u0435\\u0440\\u044f\\u0435\\u0442 \\u0441\\u0442\\u0440\\u0443\\u043a\\u0442\\u0443\\u0440\\u0443 \\u0441\\u043a\\u0432\\u0430\\u0436\\u0438\\u043d, \\u0434\\u0430\\u0442\\u044b \\u0438 \\u043f\\u0440\\u043e\\u0433\\u043d\\u043e\\u0437\\u043d\\u044b\\u0435 controls.\", payload: {source: 'schedule-builder-agent-workflow'}}) }}"
+        "jsonBody": "={{ ({kind: \"agent.progress\", actor: \"schedule_builder\", agent_id: \"schedule_builder\", task_id: $('Normalize schedule task').first().json.agent_task.task_id, status: 'running', status_message: \"Schedule Builder проверяет структуру скважин, даты и прогнозные controls.\", payload: {source: \"schedule-builder-agent-workflow\"}}) }}"
       },
       "id": "5dc68398-8825-52fd-964b-065a00102a56",
       "name": "Activity — Schedule Builder progress",
@@ -281,7 +281,7 @@
     },
     {
       "parameters": {
-        "jsCode": "const RAG_TARGET_BASE=\"schedule_mvp\";\nconst RAG_ACCESS_SCOPE=\"petroleum-engineering\";\nconst RAG_KNOWLEDGE_TYPES=[\"keyword_instruction\", \"worked_example\"];\nconst RAG_TOP_K=10;\nconst ALLOWED_KEYWORDS=[\"DATES\", \"INCLUDE\", \"GRUPTREE\", \"WELSPECS\", \"WELLTRACK\", \"COMPDATMD\", \"WCONHIST\", \"WCONPROD\", \"WCONINJE\", \"GCONPROD\", \"GCONINJE\", \"GUIDERAT\", \"GSATPROD\", \"GSATINJE\", \"WELLSTRE\", \"WINJGAS\", \"GINJGAS\", \"BRANPROP\", \"NODEPROP\", \"GNETDP\", \"NETBALAN\", \"FRACTURE_TEMPLATE\", \"FRACTURE_SPECS\", \"FRACTURE_STAGE\", \"WECON\", \"WTEST\", \"WELTARG\", \"WNETDP\", \"WPIMULT\", \"WDFAC\", \"WEFAC\", \"WELOPEN\", \"WELDRAW\", \"WLIST\", \"WFRACP\", \"WFRACPL\", \"VFPPROD\", \"WVFPDP\", \"ACTIONX\", \"DELAYACT\", \"ENDACTIO\", \"UDQ\", \"UDT\", \"APPLYSCRIPT\"];\n\nconst opened=$json||{};\nconst task=$('Normalize schedule task').first().json.agent_task||{};\nconst objective=String(opened.objective||task.objective||'');\nconst handoff=String(opened.handoff_message||task.handoff_message||'');\nconst blob=[objective,handoff].join('\\n');\nconst allowed=new Set(ALLOWED_KEYWORDS);\nconst fromText=[...new Set((blob.match(/\\b[A-Z][A-Z0-9_]{2,}\\b/g)||[]).filter(k=>allowed.has(k)))];\nconst low=blob.toLowerCase();\nconst mapped=[];\nif(/дат[аые].{0,24}ввод|ввод.{0,16}скважин|commission/.test(low)) mapped.push('DATES','WCONPROD');\nif(/групп|перепривяз|gruptree/.test(low)) mapped.push('GRUPTREE','GCONPROD','WELSPECS');\nif(/\\borat\\b|\\bwrat\\b|\\bgrat\\b|дебит|лимит.{0,24}нефт|wconprod|weltarg/.test(low)) mapped.push('WCONPROD','WELTARG');\nif(/грп|гидроразрыв|fracture/.test(low)) mapped.push('FRACTURE_SPECS','FRACTURE_STAGE');\nif(/vfp/.test(low)) mapped.push('VFPPROD','WVFPDP');\nif(/перфорац|compdat/.test(low)) mapped.push('COMPDATMD');\nif(/закачк|инъект|wconinje/.test(low)) mapped.push('WCONINJE');\nconst keyword_families=[...new Set([...fromText,...mapped])].filter(k=>allowed.has(k)).slice(0,6);\nconst topics=[];\nconst task_patterns=[];\nif(/дат|ввод/.test(low)){topics.push('календарь');task_patterns.push('даты ввода');}\nif(/групп|перепривяз/.test(low)){topics.push('группы');task_patterns.push('перепривязка групп');}\nif(/дебит|orat|лимит/.test(low)){topics.push('контроль');task_patterns.push('прогнозный режим');}\nif(/грп|fracture/.test(low)){topics.push('ГРП');task_patterns.push('гидроразрыв');}\nconst query=blob.trim().replace(/\\b[\\w.-]+\\.(xlsx|xls|xlsm|inc|dev|txt|csv)\\b/gi,' ').replace(/\\s+/g,' ').trim().slice(0,800)||'schedule keyword instruction';\nconst retrieval_selector={target_base:RAG_TARGET_BASE,knowledge_types:RAG_KNOWLEDGE_TYPES};\nconst schedule_retrieval_request={\n  query,\n  filters:{\n    target_base:RAG_TARGET_BASE,\n    access_scope:RAG_ACCESS_SCOPE,\n    knowledge_types:RAG_KNOWLEDGE_TYPES,\n    keyword_families,\n    topics:[...new Set(topics)],\n    task_patterns:[...new Set(task_patterns)]\n  },\n  top_k:RAG_TOP_K\n};\n// The LLM decides which tool fits: task text + baseline inventory + what the engineer already answered.\nconst engineerAnswers=Array.isArray(opened.engineer_answers)?opened.engineer_answers:[];\nconst reworkReason=String(opened.rework_reason||(task.inputs&&task.inputs.rework_reason)||'').trim();\nconst planner_input=JSON.stringify({\n  objective,\n  handoff_message:handoff,\n  inspect:opened.inspect||{},\n  fact_count:opened.fact_count||0,\n  facts_preview:opened.facts_preview||[],\n  engineer_answers:engineerAnswers,\n  ...(reworkReason?{rework_reason:reworkReason}:{})\n});\nreturn [{json:{...opened,session_id:opened.session_id,agent_input:planner_input,planner_input,schedule_retrieval_request,retrieval_selector}}];\n"
+        "jsCode": "const RAG_TARGET_BASE=\"schedule_mvp\";\nconst RAG_ACCESS_SCOPE=\"petroleum-engineering\";\nconst RAG_KNOWLEDGE_TYPES=[\"keyword_instruction\", \"worked_example\"];\nconst RAG_TOP_K=10;\nconst RAG_TOPICS=[];\nconst opened=$json||{};\nconst task=$('Normalize schedule task').first().json.agent_task||{};\nconst objective=String(opened.objective||task.objective||'');\nconst handoff=String(opened.handoff_message||task.handoff_message||'');\nconst blob=[objective,handoff].join('\\n');\nconst low=blob.toLowerCase();\n// Retrieval filters. Hints below only narrow the RAG slice — they never pick a tool.\nconst keyword_families=[];\nconst topics=RAG_TOPICS.slice();\nconst task_patterns=[];\nconst ALLOWED_KEYWORDS=[\"DATES\", \"INCLUDE\", \"GRUPTREE\", \"WELSPECS\", \"WELLTRACK\", \"COMPDATMD\", \"WCONHIST\", \"WCONPROD\", \"WCONINJE\", \"GCONPROD\", \"GCONINJE\", \"GUIDERAT\", \"GSATPROD\", \"GSATINJE\", \"WELLSTRE\", \"WINJGAS\", \"GINJGAS\", \"BRANPROP\", \"NODEPROP\", \"GNETDP\", \"NETBALAN\", \"FRACTURE_TEMPLATE\", \"FRACTURE_SPECS\", \"FRACTURE_STAGE\", \"WECON\", \"WTEST\", \"WELTARG\", \"WNETDP\", \"WPIMULT\", \"WDFAC\", \"WEFAC\", \"WELOPEN\", \"WELDRAW\", \"WLIST\", \"WFRACP\", \"WFRACPL\", \"VFPPROD\", \"WVFPDP\", \"ACTIONX\", \"DELAYACT\", \"ENDACTIO\", \"UDQ\", \"UDT\", \"APPLYSCRIPT\"];\n\nconst allowed=new Set(ALLOWED_KEYWORDS);\nfor(const k of (blob.match(/\\b[A-Z][A-Z0-9_]{2,}\\b/g)||[])) if(allowed.has(k)) keyword_families.push(k);\nconst mapped=[];\nif(/дат[аые].{0,24}ввод|ввод.{0,16}скважин|commission/.test(low)) mapped.push('DATES','WCONPROD');\nif(/групп|перепривяз|gruptree/.test(low)) mapped.push('GRUPTREE','GCONPROD','WELSPECS');\nif(/\\borat\\b|\\bwrat\\b|\\bgrat\\b|дебит|лимит.{0,24}нефт|wconprod|weltarg/.test(low)) mapped.push('WCONPROD','WELTARG');\nif(/грп|гидроразрыв|fracture/.test(low)) mapped.push('FRACTURE_SPECS','FRACTURE_STAGE');\nif(/vfp/.test(low)) mapped.push('VFPPROD','WVFPDP');\nif(/перфорац|compdat/.test(low)) mapped.push('COMPDATMD');\nif(/закачк|инъект|wconinje/.test(low)) mapped.push('WCONINJE');\nfor(const k of mapped) if(allowed.has(k)) keyword_families.push(k);\nif(/дат|ввод/.test(low)){topics.push('календарь');task_patterns.push('даты ввода');}\nif(/групп|перепривяз/.test(low)){topics.push('группы');task_patterns.push('перепривязка групп');}\nif(/дебит|orat|лимит/.test(low)){topics.push('контроль');task_patterns.push('прогнозный режим');}\nif(/грп|fracture/.test(low)){topics.push('ГРП');task_patterns.push('гидроразрыв');}\nconst query=blob.trim().replace(/\\b[\\w.-]+\\.(xlsx|xls|xlsm|inc|dev|txt|csv)\\b/gi,' ').replace(/\\s+/g,' ').trim().slice(0,800)||\"schedule_mvp instruction\";\nconst retrieval_selector={target_base:RAG_TARGET_BASE,knowledge_types:RAG_KNOWLEDGE_TYPES};\nconst schedule_retrieval_request={\n  query,\n  filters:{target_base:RAG_TARGET_BASE,access_scope:RAG_ACCESS_SCOPE,knowledge_types:RAG_KNOWLEDGE_TYPES,keyword_families:[...new Set(keyword_families)].slice(0,6),topics:[...new Set(topics)],task_patterns:[...new Set(task_patterns)]},\n  top_k:RAG_TOP_K\n};\n// The LLM decides which tool fits: task text + what open_session found + what the engineer already answered.\nconst engineerAnswers=Array.isArray(opened.engineer_answers)?opened.engineer_answers:[];\nconst reworkReason=String(opened.rework_reason||(task.inputs&&task.inputs.rework_reason)||'').trim();\nconst planner_input=JSON.stringify({\n  objective,\n  handoff_message:handoff,\n  inspect:opened.inspect||{},\n  fact_count:opened.fact_count||0,\n  facts_preview:opened.facts_preview||[],\n  engineer_answers:engineerAnswers,\n  ...(reworkReason?{rework_reason:reworkReason}:{})\n});\nreturn [{json:{...opened,session_id:opened.session_id,agent_input:planner_input,planner_input,schedule_retrieval_request,retrieval_selector}}];\n"
       },
       "id": "0efd1b65-b426-5dd1-9cdd-2a66eb50c4e3",
       "name": "Prepare AI Agent input",
@@ -388,13 +388,13 @@
       "credentials": {
         "openAiApi": {
           "id": "REPLACE_IN_UI",
-          "name": "REPLACE: Qwen OpenAI-compatible schedule builder credential"
+          "name": "REPLACE: Qwen OpenAI-compatible agent credential"
         }
       }
     },
     {
       "parameters": {
-        "jsCode": "\nconst agent=$json||{};\nconst opened=$('Open schedule session').first().json||{};\nconst steps=Array.isArray(agent.intermediateSteps)?agent.intermediateSteps:(Array.isArray(agent.intermediate_steps)?agent.intermediate_steps:[]);\nconst toolName=step=>{\n  if(!step||typeof step!=='object') return '';\n  const a=step.action&&typeof step.action==='object'?step.action:step;\n  return String(a.tool||a.toolName||a.name||step.tool||'');\n};\nconst tools=steps.map(toolName).filter(Boolean);\nconst unique=[...new Set(tools)];\nconst counts={};\nfor(const name of tools) counts[name]=(counts[name]||0)+1;\nconst repeated=Object.keys(counts).some(name=>counts[name]>3);\n// A stored result exists after apply_* / build_schedule (completed) or ask_engineer (needs_input).\nconst hasResult=tools.some(n=>n.indexOf('apply_')===0||n.indexOf('build_')===0||n==='ask_engineer');\nconst skipFetch=!hasResult;\nconst finalText=String(agent.output||agent.text||'').trim();\n// Engineer-facing fallback when the LLM ended without fixing a result: plain Russian, no tool names.\nconst question=repeated\n  ? 'Schedule Builder не смог продвинуться по задаче: несколько раз проверял SCHEDULE, но не понял, что именно изменить. Опишите задачу подробнее: какие скважины, какие даты или режимы работы и откуда взять значения.'\n  : 'Schedule Builder не внёс изменений в SCHEDULE: не хватило данных, чтобы понять задачу. Опишите, что именно нужно изменить (скважины, даты, режимы) и откуда взять значения (Excel, текст, baseline).';\nconst message=hasResult\n  ? (finalText||'Schedule Builder завершил работу с инструментами.')\n  : (finalText?finalText+' ':'')+question;\nreturn [{json:{\n  ...(skipFetch?{\n    task_id:opened.task_id||'',\n    agent_id:'schedule_builder',\n    status:'needs_input',\n    message:question,\n    data:{tools_used:unique,total_calls:steps.length,llm_final_text:finalText.slice(0,600)},\n    artifacts:{},\n    issues:[{type:repeated?'repeated_tools':'no_apply'}],\n    assumptions:[],\n    requests:[{question_id:'Q-apply',question,options:[],accepts:{free_text:true,files:['xlsx','.inc']}}]\n  }:agent),\n  skip_fetch:skipFetch,\n  has_apply:hasResult,\n  activity_kind:'agent.progress',\n  status_message:message.slice(0,400),\n  activity_payload:{source:'schedule-builder-agent-workflow',total_calls:steps.length,tools_used:unique,iterations:steps.length}\n}}];\n"
+        "jsCode": "const agent=$json||{};\nconst opened=$('Open schedule session').first().json||{};\nconst steps=Array.isArray(agent.intermediateSteps)?agent.intermediateSteps:(Array.isArray(agent.intermediate_steps)?agent.intermediate_steps:[]);\nconst toolName=step=>{\n  if(!step||typeof step!=='object') return '';\n  const a=step.action&&typeof step.action==='object'?step.action:step;\n  return String(a.tool||a.toolName||a.name||step.tool||'');\n};\nconst tools=steps.map(toolName).filter(Boolean);\nconst unique=[...new Set(tools)];\nconst counts={};\nfor(const name of tools) counts[name]=(counts[name]||0)+1;\nconst repeated=Object.keys(counts).some(name=>counts[name]>3);\n// A stored result exists after one of the result tools (completed) or ask_engineer (needs_input); the session is authoritative.\nconst hasResult=tools.some(n=>n.indexOf('apply_')===0 || n.indexOf('build_')===0 || n==='ask_engineer');\nconst skipFetch=!hasResult;\nconst finalText=String(agent.output||agent.text||'').trim();\n// Engineer-facing fallback when the LLM ended without fixing a result: plain Russian, no tool names.\nconst question=repeated?\"Schedule Builder не смог продвинуться по задаче: несколько раз проверял SCHEDULE, но не понял, что именно изменить. Опишите задачу подробнее: какие скважины, какие даты или режимы работы и откуда взять значения.\":\"Schedule Builder не внёс изменений в SCHEDULE: не хватило данных, чтобы понять задачу. Опишите, что именно нужно изменить (скважины, даты, режимы) и откуда взять значения (Excel, текст, baseline).\";\nconst message=hasResult?(finalText||\"Schedule Builder завершил работу с инструментами.\"):(finalText?finalText+' ':'')+question;\nreturn [{json:{\n  ...(skipFetch?{\n    task_id:opened.task_id||'',\n    agent_id:\"schedule_builder\",\n    status:'needs_input',\n    message:question,\n    data:{tools_used:unique,total_calls:steps.length,llm_final_text:finalText.slice(0,600)},\n    artifacts:{},\n    issues:[{type:repeated?'repeated_tools':\"no_apply\"}],\n    assumptions:[],\n    requests:[{question_id:\"Q-apply\",question,options:[],accepts:{free_text:true,files:[\"xlsx\", \".inc\"]}}]\n  }:agent),\n  skip_fetch:skipFetch,\n  has_result:hasResult,\n  activity_kind:'agent.progress',\n  status_message:message.slice(0,400),\n  activity_payload:{source:\"schedule-builder-agent-workflow\",total_calls:steps.length,tools_used:unique,iterations:steps.length}\n}}];\n"
       },
       "id": "a068d7f6-510e-5983-ba46-3ef5c8735285",
       "name": "Summarize AI steps",
@@ -430,7 +430,7 @@
         },
         "sendBody": true,
         "specifyBody": "json",
-        "jsonBody": "={{ ({kind: $json.activity_kind || 'agent.progress', actor: 'schedule_builder', agent_id: 'schedule_builder', task_id: $('Normalize schedule task').first().json.agent_task.task_id, status: $json.status || 'running', status_message: $json.status_message || '', payload: $json.activity_payload || {source: 'schedule-builder-agent-workflow'}}) }}"
+        "jsonBody": "={{ ({kind: $json.activity_kind || 'agent.progress', actor: \"schedule_builder\", agent_id: \"schedule_builder\", task_id: $('Normalize schedule task').first().json.agent_task.task_id, status: $json.status || 'running', status_message: $json.status_message || '', payload: $json.activity_payload || {source: \"schedule-builder-agent-workflow\"}}) }}"
       },
       "id": "25bb1f57-6ac5-5783-b3e1-5b54071ce9e3",
       "name": "Activity — Schedule Builder tools",
@@ -467,7 +467,7 @@
           },
           "conditions": [
             {
-              "id": "10027cba-9f59-5d4f-b7ad-af2bdbaec770",
+              "id": "b0883cea-1055-5cbf-bc13-6adf30e732d8",
               "leftValue": "={{ Boolean($json.skip_fetch) }}",
               "rightValue": true,
               "operator": {
@@ -480,8 +480,8 @@
         },
         "options": {}
       },
-      "id": "e44a2f01-41d6-5204-bcf7-cdb01d734246",
-      "name": "AI applied?",
+      "id": "6b9dbfef-6677-5c4e-a3c9-844471bfdce4",
+      "name": "Result stored?",
       "type": "n8n-nodes-base.if",
       "typeVersion": 2.3,
       "position": [
@@ -528,7 +528,7 @@
     },
     {
       "parameters": {
-        "jsCode": "\nconst fetched=$json||{};\nconst opened=$('Open schedule session').first().json||{};\nconst arts=fetched.artifacts&&typeof fetched.artifacts==='object'?fetched.artifacts:{};\nconst artifacts=(typeof arts.schedule_out==='boolean')?{}:arts;\nif(fetched.status){\n  return [{json:{\n    task_id:fetched.task_id||opened.task_id||'',\n    agent_id:'schedule_builder',\n    status:fetched.status,\n    message:fetched.message||'',\n    data:fetched.data||{},\n    artifacts,\n    issues:fetched.issues||[],\n    assumptions:fetched.assumptions||[],\n    requests:fetched.requests||[]\n  }}];\n}\nreturn [{json:{\n  task_id:opened.task_id||'',\n  agent_id:'schedule_builder',\n  status:'failed',\n  message:String(fetched.message||fetched.error||'Schedule Builder не вернул SCHEDULE'),\n  data:{},\n  artifacts:{},\n  issues:[{type:'schedule_agent_no_result'}],\n  assumptions:[],\n  requests:[]\n}}];\n"
+        "jsCode": "const fetched=$json||{};\nconst opened=$('Open schedule session').first().json||{};\nconst arts=fetched.artifacts&&typeof fetched.artifacts==='object'?fetched.artifacts:{};\n// n8n may coerce an empty artifact text to a boolean; a boolean card is no card.\nconst artifacts=Object.fromEntries(Object.entries(arts).filter(([,v])=>typeof v!=='boolean'));\nif(fetched.status){\n  return [{json:{\n    task_id:fetched.task_id||opened.task_id||'',\n    agent_id:\"schedule_builder\",\n    status:fetched.status,\n    message:fetched.message||'',\n    data:fetched.data||{},\n    artifacts,\n    issues:fetched.issues||[],\n    assumptions:fetched.assumptions||[],\n    requests:fetched.requests||[],\n    // in_progress (long job): what the feed/monitor may show or poll (CASE-6a9f3bc9-10cb9f: was dropped here).\n    ...(fetched.watch&&typeof fetched.watch==='object'?{watch:fetched.watch}:{})\n  }}];\n}\nreturn [{json:{\n  task_id:opened.task_id||'',\n  agent_id:\"schedule_builder\",\n  status:'failed',\n  message:String(fetched.message||fetched.error||\"Schedule Builder не вернул SCHEDULE\"),\n  data:{},\n  artifacts:{},\n  issues:[{type:\"schedule_agent_no_result\"}],\n  assumptions:[],\n  requests:[]\n}}];\n"
       },
       "id": "0f545993-1de6-527f-9df0-cf396719357c",
       "name": "Format schedule result",
@@ -553,12 +553,11 @@
           ]
         },
         "options": {
-          "timeout": 2000,
+          "timeout": 5000,
           "response": {
             "response": {
               "fullResponse": false,
-              "responseFormat": "json",
-              "neverError": true
+              "responseFormat": "json"
             }
           }
         },
@@ -1429,14 +1428,14 @@
       "main": [
         [
           {
-            "node": "AI applied?",
+            "node": "Result stored?",
             "type": "main",
             "index": 0
           }
         ]
       ]
     },
-    "AI applied?": {
+    "Result stored?": {
       "main": [
         [
           {
@@ -1501,5 +1500,5 @@
   },
   "tags": [],
   "pinData": {},
-  "versionId": "283787f0-6b53-49ce-9e48-e43a34df8a24"
+  "versionId": "648a981e-3855-4c28-afae-7bf401d4b26b"
 }

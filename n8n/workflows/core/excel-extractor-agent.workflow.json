@@ -6,7 +6,7 @@
   "nodes": [
     {
       "parameters": {
-        "content": "## edit after import\n\n**Agent — Excel Extractor** — один LLM + excel-tools FastAPI.\n\n1. Bind **Qwen** credential on Excel Extractor Chat Model\n2. Bind **Runtime configuration** → `MAS — Runtime Config` (URL сервисов). Ключ Excel: credential Header Auth **Excel Tools X-API-Key** (`X-API-Key`), не Set. Activity events ключ Excel не используют.\n3. Bind **Call Knowledge Retrieval** → `MAS — Knowledge Retrieval` (срез `excel_protocol` / `protocol_instruction`).\n4. Orchestrator — MAS вызывает этот workflow через `executeWorkflow` (`Call Excel Extractor`). Webhook не нужен.\n\nФайлы не грузятся в n8n. `open_session` сам забирает все Excel-вложения кейса (`/cases/{id}/artifacts/excel`, `excel_1`, …) в одну сессию и возвращает инвентарь (листы, таблицы, колонки, первые строки). Никакого regex-роутера: LLM сам выбирает таблицу и колонки и вызывает `extract_commissioning` / `extract_well_parameters` (детерминированное извлечение, проверка колонок) или `ask_engineer` (вопрос прозой). Инструменты — HTTP Request (as tool) с `$fromAI`. Результат читается GET /sessions/{id}/result, сессия закрывается POST /sessions/{id}/close. Скважины/даты не хардкодятся.",
+        "content": "## edit after import\n\n**Agent — Excel Extractor** — один LLM + FastAPI tools (сгенерировано из `agents/excel_extractor.py`).\n\n1. Bind **Qwen** credential on Excel Extractor Chat Model — Qwen\n2. Bind **Runtime configuration** → `MAS — Runtime Config` (поле `excel_tools_url` = URL сервиса). Ключ сервиса — credential Header Auth на HTTP-нодах, не Set.\n3. Bind **Call Knowledge Retrieval** → `MAS — Knowledge Retrieval` (срез `excel_protocol`).\n4. Оркестратор вызывает этот workflow через универсальный `Call agent (n8n)` по id из `agent_registry.invoke`. После импорта через UI id меняется — впишите новый id (из URL этого workflow) в `MAS — Runtime Config` → `agent_workflow_ids`.\n\nИнструмент выбирает LLM по задаче (нет regex-роутера). Вопрос инженеру — только `ask_engineer` прозой с вариантами; ошибки аргументов возвращаются LLM, не человеку. Результат читается из GET /sessions/{id}/result, сессия закрывается POST /sessions/{id}/close.",
         "height": 380,
         "width": 480,
         "color": 1
@@ -67,7 +67,7 @@
     },
     {
       "parameters": {
-        "jsCode": "\nconst incoming=(()=>{try{return $('When executed by another workflow').first().json||{}}catch{return $json||{}}})();\nconst root=incoming&&typeof incoming==='object'?incoming:{};\nconst body=root.body&&typeof root.body==='object'?root.body:root;\nlet task=body.agent_task&&typeof body.agent_task==='object'?body.agent_task:(body.case_id||body.task_id||body.objective?body:null);\nif(!task||typeof task!=='object') task={};\n// Contract: agent_task only (retired specialist_packet is not accepted).\ntask.agent_id='excel_extractor';\ntask.case_id=String(task.case_id||'');\ntask.task_id=String(task.task_id||'');\ntask.objective=String(task.objective||'');\ntask.handoff_message=String(task.handoff_message||'');\ntask.inputs=task.inputs&&typeof task.inputs==='object'?task.inputs:{};\ntask.context=task.context&&typeof task.context==='object'?task.context:{};\nconst cfg=$('Runtime configuration').first().json||{};\nif(!task.inputs.activity_base_url&&cfg.activity_base_url) task.inputs={...task.inputs, activity_base_url:cfg.activity_base_url};\nreturn [{json:{...cfg, agent_task:task, case_id:task.case_id, task_id:task.task_id}}];\n"
+        "jsCode": "const incoming=(()=>{try{return $('When executed by another workflow').first().json||{}}catch{return $json||{}}})();\nconst root=incoming&&typeof incoming==='object'?incoming:{};\nconst body=root.body&&typeof root.body==='object'?root.body:root;\nlet task=body.agent_task&&typeof body.agent_task==='object'?body.agent_task:(body.case_id||body.task_id||body.objective?body:null);\nif(!task||typeof task!=='object') task={};\n// Contract: agent_task only (retired specialist_packet is not accepted).\ntask.agent_id=\"excel_extractor\";\ntask.case_id=String(task.case_id||'');\ntask.task_id=String(task.task_id||'');\ntask.objective=String(task.objective||'');\ntask.handoff_message=String(task.handoff_message||'');\ntask.inputs=task.inputs&&typeof task.inputs==='object'?task.inputs:{};\ntask.context=task.context&&typeof task.context==='object'?task.context:{};\nconst cfg=$('Runtime configuration').first().json||{};\nif(!task.inputs.activity_base_url&&cfg.activity_base_url) task.inputs={...task.inputs, activity_base_url:cfg.activity_base_url};\nreturn [{json:{...cfg, agent_task:task, case_id:task.case_id, task_id:task.task_id}}];\n"
       },
       "id": "0bee4cdf-a5e6-5a00-be1c-f713ccef0baa",
       "name": "Normalize excel task",
@@ -116,15 +116,15 @@
       ],
       "onError": "continueRegularOutput",
       "alwaysOutputData": true,
-      "retryOnFail": true,
-      "maxTries": 3,
-      "waitBetweenTries": 2000,
       "credentials": {
         "httpHeaderAuth": {
           "id": "REPLACE_IN_UI",
           "name": "REPLACE: Excel Tools X-API-Key"
         }
-      }
+      },
+      "retryOnFail": true,
+      "maxTries": 3,
+      "waitBetweenTries": 2000
     },
     {
       "parameters": {
@@ -137,7 +137,7 @@
           },
           "conditions": [
             {
-              "id": "9efe4e77-45fd-54bc-9559-eaf2d7dae1d8",
+              "id": "b320f7d7-4879-5353-a36e-8be863a105b8",
               "leftValue": "={{ $json.ok === true }}",
               "rightValue": true,
               "operator": {
@@ -161,7 +161,7 @@
     },
     {
       "parameters": {
-        "jsCode": "\nconst opened=$json||{};\nconst result=opened.result&&typeof opened.result==='object'?opened.result:{};\nreturn [{json:{\n  task_id:result.task_id||opened.task_id||'',\n  agent_id:'excel_extractor',\n  status:result.status||'needs_input',\n  message:result.message||opened.message||'Нет Excel-файла для извлечения',\n  data:result.data||{},\n  artifacts:result.artifacts||{},\n  issues:result.issues||[{type:'missing_excel'}],\n  assumptions:result.assumptions||[],\n  requests:result.requests||[{question_id:'Q-excel',question:'К задаче не приложен Excel-файл с данными. Приложите книгу .xlsx, из которой нужно взять скважины и даты.',options:[],accepts:{free_text:true,files:['xlsx']}}]\n}}];\n"
+        "jsCode": "const opened=$json||{};\nconst result=opened.result&&typeof opened.result==='object'?opened.result:{};\nreturn [{json:{\n  task_id:result.task_id||opened.task_id||'',\n  agent_id:\"excel_extractor\",\n  status:result.status||'needs_input',\n  message:result.message||opened.message||\"Нет Excel-файла для извлечения\",\n  data:result.data||{},\n  artifacts:result.artifacts||{},\n  issues:result.issues||[{type:\"missing_excel\"}],\n  assumptions:result.assumptions||[],\n  requests:result.requests||[{question_id:\"Q-clarify\",question:\"К задаче не приложен Excel-файл с данными. Приложите книгу .xlsx, из которой нужно взять скважины и даты.\",options:[],accepts:{free_text:true,files:[\"xlsx\"]}}]\n}}];\n"
       },
       "id": "65375f59-96fa-5c09-8697-c1becec8677a",
       "name": "Format missing excel",
@@ -197,7 +197,7 @@
         },
         "sendBody": true,
         "specifyBody": "json",
-        "jsonBody": "={{ ({kind: \"agent.accepted\", actor: 'excel_extractor', agent_id: 'excel_extractor', task_id: $('Normalize excel task').first().json.agent_task.task_id, status: \"running\", status_message: \"Excel Extractor \\u043f\\u0440\\u0438\\u043d\\u044f\\u043b \\u0437\\u0430\\u0434\\u0430\\u0447\\u0443 \\u0438 \\u0430\\u043d\\u0430\\u043b\\u0438\\u0437\\u0438\\u0440\\u0443\\u0435\\u0442 workbook\", payload: {source: 'excel-extractor-agent-workflow'}}) }}"
+        "jsonBody": "={{ ({kind: \"agent.accepted\", actor: \"excel_extractor\", agent_id: \"excel_extractor\", task_id: $('Normalize excel task').first().json.agent_task.task_id, status: 'running', status_message: \"Excel Extractor принял задачу и анализирует workbook\", payload: {source: \"excel-extractor-agent-workflow\"}}) }}"
       },
       "id": "2ba996b4-4630-51b0-b2eb-775f8a69bfe5",
       "name": "Activity — Excel Extractor accepted",
@@ -248,7 +248,7 @@
         },
         "sendBody": true,
         "specifyBody": "json",
-        "jsonBody": "={{ ({kind: \"agent.progress\", actor: 'excel_extractor', agent_id: 'excel_extractor', task_id: $('Normalize excel task').first().json.agent_task.task_id, status: \"running\", status_message: \"Excel Extractor \\u0447\\u0438\\u0442\\u0430\\u0435\\u0442 \\u043b\\u0438\\u0441\\u0442\\u044b \\u0438 \\u0442\\u0430\\u0431\\u043b\\u0438\\u0446\\u044b \\u043f\\u0440\\u0438\\u043b\\u043e\\u0436\\u0435\\u043d\\u043d\\u044b\\u0445 \\u043a\\u043d\\u0438\\u0433.\", payload: {source: 'excel-extractor-agent-workflow'}}) }}"
+        "jsonBody": "={{ ({kind: \"agent.progress\", actor: \"excel_extractor\", agent_id: \"excel_extractor\", task_id: $('Normalize excel task').first().json.agent_task.task_id, status: 'running', status_message: \"Excel Extractor читает листы и таблицы приложенных книг.\", payload: {source: \"excel-extractor-agent-workflow\"}}) }}"
       },
       "id": "235a036f-7fa6-5d14-bab4-dd96bbbc2669",
       "name": "Activity — Excel Extractor progress",
@@ -289,7 +289,7 @@
     },
     {
       "parameters": {
-        "jsCode": "const RAG_TARGET_BASE=\"excel_protocol\";\nconst RAG_ACCESS_SCOPE=\"petroleum-engineering\";\nconst RAG_KNOWLEDGE_TYPES=[\"protocol_instruction\"];\nconst RAG_TOP_K=8;\nconst RAG_TOPICS=[\"протокол\", \"clarification\"];\n\nconst opened=$json||{};\nconst task=$('Normalize excel task').first().json.agent_task||{};\nconst objective=String(opened.objective||task.objective||'');\nconst handoff=String(opened.handoff_message||task.handoff_message||'');\nconst blob=[objective,handoff].join('\\n');\nconst low=blob.toLowerCase();\nconst topics=RAG_TOPICS.slice();\nconst task_patterns=[];\nif(/дат|ввод|commission/.test(low)) task_patterns.push('даты ввода');\nif(/таблиц|query|дебит|истори|управлен/.test(low)) task_patterns.push('извлечь таблицу');\nif(/уточн|ambigu|clarif/.test(low)) task_patterns.push('clarification_needed');\nconst query=blob.trim().replace(/\\b[\\w.-]+\\.(xlsx|xls|xlsm|inc|dev|txt|csv)\\b/gi,' ').replace(/\\s+/g,' ').trim().slice(0,800)||'excel protocol instruction';\nconst retrieval_selector={target_base:RAG_TARGET_BASE,knowledge_types:RAG_KNOWLEDGE_TYPES};\nconst schedule_retrieval_request={\n  query,\n  filters:{\n    target_base:RAG_TARGET_BASE,\n    access_scope:RAG_ACCESS_SCOPE,\n    knowledge_types:RAG_KNOWLEDGE_TYPES,\n    keyword_families:[],\n    topics:[...new Set(topics)],\n    task_patterns:[...new Set(task_patterns)]\n  },\n  top_k:RAG_TOP_K\n};\n// The LLM decides which table/columns fit: task text + workbook inventory + what the engineer already answered.\nconst engineerAnswers=Array.isArray(opened.engineer_answers)?opened.engineer_answers:[];\nconst reworkReason=String(opened.rework_reason||(task.inputs&&task.inputs.rework_reason)||'').trim();\nconst planner_input=JSON.stringify({\n  objective,\n  handoff_message:handoff,\n  files:Array.isArray(opened.files)?opened.files:[],\n  inspect:opened.inspect||{},\n  engineer_answers:engineerAnswers,\n  ...(reworkReason?{rework_reason:reworkReason}:{})\n});\nreturn [{json:{...opened,session_id:opened.session_id,agent_input:planner_input,planner_input,schedule_retrieval_request,retrieval_selector}}];\n"
+        "jsCode": "const RAG_TARGET_BASE=\"excel_protocol\";\nconst RAG_ACCESS_SCOPE=\"petroleum-engineering\";\nconst RAG_KNOWLEDGE_TYPES=[\"protocol_instruction\"];\nconst RAG_TOP_K=8;\nconst RAG_TOPICS=[\"протокол\", \"clarification\"];\nconst opened=$json||{};\nconst task=$('Normalize excel task').first().json.agent_task||{};\nconst objective=String(opened.objective||task.objective||'');\nconst handoff=String(opened.handoff_message||task.handoff_message||'');\nconst blob=[objective,handoff].join('\\n');\nconst low=blob.toLowerCase();\n// Retrieval filters. Hints below only narrow the RAG slice — they never pick a tool.\nconst keyword_families=[];\nconst topics=RAG_TOPICS.slice();\nconst task_patterns=[];\nif(/дат|ввод|commission/.test(low)) task_patterns.push('даты ввода');\nif(/таблиц|query|дебит|истори|управлен/.test(low)) task_patterns.push('извлечь таблицу');\nif(/уточн|ambigu|clarif/.test(low)) task_patterns.push('clarification_needed');\nconst query=blob.trim().replace(/\\b[\\w.-]+\\.(xlsx|xls|xlsm|inc|dev|txt|csv)\\b/gi,' ').replace(/\\s+/g,' ').trim().slice(0,800)||\"excel_protocol instruction\";\nconst retrieval_selector={target_base:RAG_TARGET_BASE,knowledge_types:RAG_KNOWLEDGE_TYPES};\nconst schedule_retrieval_request={\n  query,\n  filters:{target_base:RAG_TARGET_BASE,access_scope:RAG_ACCESS_SCOPE,knowledge_types:RAG_KNOWLEDGE_TYPES,keyword_families:[...new Set(keyword_families)].slice(0,6),topics:[...new Set(topics)],task_patterns:[...new Set(task_patterns)]},\n  top_k:RAG_TOP_K\n};\n// The LLM decides which tool fits: task text + what open_session found + what the engineer already answered.\nconst engineerAnswers=Array.isArray(opened.engineer_answers)?opened.engineer_answers:[];\nconst reworkReason=String(opened.rework_reason||(task.inputs&&task.inputs.rework_reason)||'').trim();\nconst planner_input=JSON.stringify({\n  objective,\n  handoff_message:handoff,\n  inspect:opened.inspect||{},\n  files:Array.isArray(opened.files)?opened.files:[],\n  engineer_answers:engineerAnswers,\n  ...(reworkReason?{rework_reason:reworkReason}:{})\n});\nreturn [{json:{...opened,session_id:opened.session_id,agent_input:planner_input,planner_input,schedule_retrieval_request,retrieval_selector}}];\n"
       },
       "id": "2d5a7eba-bd5e-5ccb-895a-b7ca5109b7cc",
       "name": "Prepare AI Agent input",
@@ -353,7 +353,7 @@
         "text": "={{ $json.planner_input }}",
         "hasOutputParser": false,
         "options": {
-          "systemMessage": "Ты — решатель агента Excel Extractor: читаешь задачу инженера и инвентарь приложенных Excel-книг (файлы, листы, таблицы с колонками и первыми строками), сам выбираешь таблицу и колонки и вызываешь инструмент извлечения. Данные извлекают инструменты — ты их не переписываешь и SCHEDULE / .INC не пишешь.\n\nКнигу целиком тебе не показывают — она лежит в сессии FastAPI. session_id привязан workflow: никогда не передавай session_id и обёртку args/input.\n\nКакой инструмент когда:\n- Задача про даты ввода / запуска скважин (таблица «скважина — дата») → extract_commissioning с table_id, well_column и date_column из инвентаря (inspect.tables: columns и sample). Если в таблице несколько колонок с датами — бери новую (плановую) дату ввода, а не baseline / старую / дату из .INC. Один вызов на таблицу.\n- В инвентаре есть таблица параметров скважин (группа, интервал MD, диаметр, режим, дебит, BHP, VFP, файл траектории) и задача упоминает новые скважины или их добавление → extract_well_parameters с table_id, well_column и mapping колонок на поля: date, group, phase, i, j, md_top, md_bot, diameter, control, rate, bhp, thp, vfp_table, welltrack_include. Немаппированные колонки сохраняются под своими заголовками.\n- Обе таблицы есть → оба инструмента, по одному вызову каждый.\n- Инвентаря не хватает (заголовки непонятны, таблица не найдена) → describe_table / sheet_preview / list_column_values / detect_tables / match_tables — не больше трёх вызовов подряд.\n- Другие данные (дебиты, история, режимы, PVT) → detect_tables / describe_table / query_table. select и filters в query_table — JSON-массивы, не объект с ключами \"0\",\"1\". Не выгружай всю книгу.\n- ask_engineer — единственный способ спросить инженера: только когда по инвентарю и ответам инженера (engineer_answers) нельзя выбрать таблицу или колонку (например две колонки дат без пояснений). Один вопрос обычной русской фразой; варианты — как их видит инженер (названия листов и колонок). Никаких имён полей, JSON, enum.\n\nОтветы инструментов:\n- ok:false с error.code spec_incomplete / table_not_found / column_not_found / column_not_dates / no_rows — это тебе, не инженеру: исправь аргументы по инвентарю (details.available_tables / available_columns подсказывают) и вызови инструмент снова.\n- ok:false с error.code question_not_human — переформулируй вопрос прозой и вызови ask_engineer снова.\n- ok:false с error.code too_many_attempts — больше этот инструмент не вызывай: спроси инженера или заверши ответ.\n- status completed от extract_* — результат зафиксирован. Если извлекать больше нечего — STOP. status needs_input от ask_engineer — STOP.\n\nИнварианты:\n- Не придумывай скважины, даты, дебиты, имена листов, table_id и колонок — только из инвентаря и ответов инструментов.\n- rework_reason в задаче — замечание оркестратора к прошлому результату: устрани именно его.\n- Retrieved knowledge — только срез excel_protocol / protocol_instruction (протокол инструментов). Пустой или unavailable срез — работай по инвентарю, инженера про базу знаний не спрашивай.\n\nЗаверши одним коротким фактическим предложением по-русски: что извлечено или чего не хватило.\n",
+          "systemMessage": "Ты — решатель агента Excel Extractor: читаешь задачу инженера и инвентарь приложенных Excel-книг (файлы, листы, таблицы с колонками и первыми строками), сам выбираешь таблицу и колонки и вызываешь инструмент извлечения. Данные извлекают инструменты — ты их не переписываешь и SCHEDULE / .INC не пишешь.\n\nКнигу целиком тебе не показывают — она лежит в сессии FastAPI. session_id привязан workflow: никогда не передавай session_id и обёртку args/input.\n\nКакой инструмент когда:\n- Задача про даты ввода / запуска скважин (таблица «скважина — дата») → extract_commissioning с table_id, well_column и date_column из инвентаря (inspect.tables: columns и sample). Если в таблице несколько колонок с датами — бери новую (плановую) дату ввода, а не baseline / старую / дату из .INC. Один вызов на таблицу.\n- В инвентаре есть таблица параметров скважин (группа, интервал MD, диаметр, режим, дебит, BHP, VFP, файл траектории) и задача упоминает новые скважины или их добавление → extract_well_parameters с table_id, well_column и mapping колонок на поля: date, group, phase, i, j, md_top, md_bot, diameter, control, rate, bhp, thp, vfp_table, welltrack_include. Немаппированные колонки сохраняются под своими заголовками.\n- Обе таблицы есть → оба инструмента, по одному вызову каждый.\n- Инвентаря не хватает (заголовки непонятны, таблица не найдена) → describe_table / sheet_preview / list_column_values / detect_tables / match_tables — не больше трёх вызовов подряд.\n- Другие данные (дебиты, история, режимы, PVT) → detect_tables / describe_table / query_table. select и filters в query_table — JSON-массивы, не объект с ключами \"0\",\"1\". Не выгружай всю книгу.\n- ask_engineer — единственный способ спросить инженера: только когда по инвентарю и ответам инженера (engineer_answers) нельзя выбрать таблицу или колонку (например две колонки дат без пояснений). Один вопрос обычной русской фразой; варианты — как их видит инженер (названия листов и колонок). Никаких имён полей, JSON, enum.\n\nОтветы инструментов:\n- ok:false, error:spec_incomplete / table_not_found / column_not_found / column_not_dates / no_rows — это тебе, не инженеру: исправь аргументы по инвентарю (available_tables / available_columns / missing в том же ответе подсказывают) и вызови инструмент снова.\n- ok:false, error:question_not_human — переформулируй вопрос прозой и вызови ask_engineer снова.\n- ok:false, error:too_many_attempts — больше этот инструмент не вызывай: спроси инженера или заверши ответ.\n- status completed от extract_* — результат зафиксирован. Если извлекать больше нечего — STOP. status needs_input от ask_engineer — STOP.\n\nИнварианты:\n- Не придумывай скважины, даты, дебиты, имена листов, table_id и колонок — только из инвентаря и ответов инструментов.\n- rework_reason в задаче — замечание оркестратора к прошлому результату: устрани именно его.\n- Retrieved knowledge — только срез excel_protocol / protocol_instruction (протокол инструментов). Пустой или unavailable срез — работай по инвентарю, инженера про базу знаний не спрашивай.\n\nЗаверши одним коротким фактическим предложением по-русски: что извлечено или чего не хватило.\n",
           "maxIterations": 8,
           "returnIntermediateSteps": true,
           "passthroughBinaryImages": false,
@@ -396,13 +396,13 @@
       "credentials": {
         "openAiApi": {
           "id": "REPLACE_IN_UI",
-          "name": "REPLACE: Qwen OpenAI-compatible excel extractor credential"
+          "name": "REPLACE: Qwen OpenAI-compatible agent credential"
         }
       }
     },
     {
       "parameters": {
-        "jsCode": "\nconst agent=$json||{};\nconst opened=$('Open excel session').first().json||{};\nconst steps=Array.isArray(agent.intermediateSteps)?agent.intermediateSteps:(Array.isArray(agent.intermediate_steps)?agent.intermediate_steps:[]);\nconst toolName=step=>{\n  if(!step||typeof step!=='object') return '';\n  const a=step.action&&typeof step.action==='object'?step.action:step;\n  return String(a.tool||a.toolName||a.name||step.tool||'');\n};\nconst tools=steps.map(toolName).filter(Boolean);\nconst unique=[...new Set(tools)];\nconst counts={};\nfor(const name of tools) counts[name]=(counts[name]||0)+1;\nconst repeated=Object.keys(counts).some(name=>counts[name]>3);\n// A stored result exists after extract_* (completed) or ask_engineer (needs_input); the session is authoritative.\nconst hasResult=tools.some(n=>n.indexOf('extract_')===0||n==='ask_engineer');\nconst skipFetch=!hasResult;\nconst finalText=String(agent.output||agent.text||'').trim();\n// Engineer-facing fallback when the LLM ended without fixing a result: plain Russian, no tool names.\nconst question=repeated\n  ? 'Excel Extractor несколько раз просматривал книгу, но не смог выбрать таблицу и колонки. Уточните, на каком листе и в каких колонках находятся скважины и нужные значения (даты ввода, режимы, дебиты).'\n  : 'Excel Extractor не смог понять, какие данные взять из приложенной книги. Уточните, на каком листе и в каких колонках находятся скважины и нужные значения (даты ввода, режимы, дебиты).';\nconst message=hasResult\n  ? (finalText||'Excel Extractor извлёк данные из книги.')\n  : (finalText?finalText+' ':'')+question;\nreturn [{json:{\n  ...(skipFetch?{\n    task_id:opened.task_id||'',\n    agent_id:'excel_extractor',\n    status:'needs_input',\n    message:question,\n    data:{tools_used:unique,total_calls:steps.length,llm_final_text:finalText.slice(0,600)},\n    artifacts:{},\n    issues:[{type:repeated?'repeated_tools':'no_extract'}],\n    assumptions:[],\n    requests:[{question_id:'Q-clarify',question,options:[],accepts:{free_text:true,files:['xlsx']}}]\n  }:agent),\n  skip_fetch:skipFetch,\n  has_extraction:hasResult,\n  activity_kind:'agent.progress',\n  status_message:message.slice(0,400),\n  activity_payload:{source:'excel-extractor-agent-workflow',total_calls:steps.length,tools_used:unique,iterations:steps.length}\n}}];\n"
+        "jsCode": "const agent=$json||{};\nconst opened=$('Open excel session').first().json||{};\nconst steps=Array.isArray(agent.intermediateSteps)?agent.intermediateSteps:(Array.isArray(agent.intermediate_steps)?agent.intermediate_steps:[]);\nconst toolName=step=>{\n  if(!step||typeof step!=='object') return '';\n  const a=step.action&&typeof step.action==='object'?step.action:step;\n  return String(a.tool||a.toolName||a.name||step.tool||'');\n};\nconst tools=steps.map(toolName).filter(Boolean);\nconst unique=[...new Set(tools)];\nconst counts={};\nfor(const name of tools) counts[name]=(counts[name]||0)+1;\nconst repeated=Object.keys(counts).some(name=>counts[name]>3);\n// A stored result exists after one of the result tools (completed) or ask_engineer (needs_input); the session is authoritative.\nconst hasResult=tools.some(n=>n.indexOf('extract_')===0 || n==='ask_engineer');\nconst skipFetch=!hasResult;\nconst finalText=String(agent.output||agent.text||'').trim();\n// Engineer-facing fallback when the LLM ended without fixing a result: plain Russian, no tool names.\nconst question=repeated?\"Excel Extractor несколько раз просматривал книгу, но не смог выбрать таблицу и колонки. Уточните, на каком листе и в каких колонках находятся скважины и нужные значения (даты ввода, режимы, дебиты).\":\"Excel Extractor не смог понять, какие данные взять из приложенной книги. Уточните, на каком листе и в каких колонках находятся скважины и нужные значения (даты ввода, режимы, дебиты).\";\nconst message=hasResult?(finalText||\"Excel Extractor извлёк данные из книги.\"):(finalText?finalText+' ':'')+question;\nreturn [{json:{\n  ...(skipFetch?{\n    task_id:opened.task_id||'',\n    agent_id:\"excel_extractor\",\n    status:'needs_input',\n    message:question,\n    data:{tools_used:unique,total_calls:steps.length,llm_final_text:finalText.slice(0,600)},\n    artifacts:{},\n    issues:[{type:repeated?'repeated_tools':\"no_extract\"}],\n    assumptions:[],\n    requests:[{question_id:\"Q-clarify\",question,options:[],accepts:{free_text:true,files:[\"xlsx\"]}}]\n  }:agent),\n  skip_fetch:skipFetch,\n  has_result:hasResult,\n  activity_kind:'agent.progress',\n  status_message:message.slice(0,400),\n  activity_payload:{source:\"excel-extractor-agent-workflow\",total_calls:steps.length,tools_used:unique,iterations:steps.length}\n}}];\n"
       },
       "id": "8e5963b8-e599-57ec-905d-0d75952ce797",
       "name": "Summarize AI steps",
@@ -438,7 +438,7 @@
         },
         "sendBody": true,
         "specifyBody": "json",
-        "jsonBody": "={{ ({kind: $json.activity_kind || 'agent.progress', actor: 'excel_extractor', agent_id: 'excel_extractor', task_id: $('Normalize excel task').first().json.agent_task.task_id, status: $json.status || 'running', status_message: $json.status_message || '', payload: $json.activity_payload || {source: 'excel-extractor-agent-workflow'}}) }}"
+        "jsonBody": "={{ ({kind: $json.activity_kind || 'agent.progress', actor: \"excel_extractor\", agent_id: \"excel_extractor\", task_id: $('Normalize excel task').first().json.agent_task.task_id, status: $json.status || 'running', status_message: $json.status_message || '', payload: $json.activity_payload || {source: \"excel-extractor-agent-workflow\"}}) }}"
       },
       "id": "b69862bc-7271-5f43-9eeb-badc4d50fe1e",
       "name": "Activity — Excel Extractor tools",
@@ -475,7 +475,7 @@
           },
           "conditions": [
             {
-              "id": "668386bc-3a45-5fbd-9ce3-fd61c18ef6a5",
+              "id": "57f74c33-6c5d-5732-b88a-dbadd50eb78d",
               "leftValue": "={{ Boolean($json.skip_fetch) }}",
               "rightValue": true,
               "operator": {
@@ -488,8 +488,8 @@
         },
         "options": {}
       },
-      "id": "3a56e325-e614-52a0-ae57-9f87c50c2f93",
-      "name": "AI extracted?",
+      "id": "30ee313e-c2a8-562c-86b1-aba72d7174e2",
+      "name": "Result stored?",
       "type": "n8n-nodes-base.if",
       "typeVersion": 2.3,
       "position": [
@@ -532,19 +532,19 @@
       ],
       "onError": "continueRegularOutput",
       "alwaysOutputData": true,
-      "retryOnFail": true,
-      "maxTries": 3,
-      "waitBetweenTries": 2000,
       "credentials": {
         "httpHeaderAuth": {
           "id": "REPLACE_IN_UI",
           "name": "REPLACE: Excel Tools X-API-Key"
         }
-      }
+      },
+      "retryOnFail": true,
+      "maxTries": 3,
+      "waitBetweenTries": 2000
     },
     {
       "parameters": {
-        "jsCode": "\nconst fetched=$json||{};\nconst opened=$('Open excel session').first().json||{};\nif(fetched.status){\n  return [{json:{\n    task_id:fetched.task_id||opened.task_id||'',\n    agent_id:'excel_extractor',\n    status:fetched.status,\n    message:fetched.message||'',\n    data:fetched.data||{},\n    artifacts:fetched.artifacts||{},\n    issues:fetched.issues||[],\n    assumptions:fetched.assumptions||[],\n    requests:fetched.requests||[]\n  }}];\n}\nreturn [{json:{\n  task_id:opened.task_id||'',\n  agent_id:'excel_extractor',\n  status:'failed',\n  message:String(fetched.message||fetched.error||'Excel Extractor не вернул факты'),\n  data:{},\n  artifacts:{},\n  issues:[{type:'excel_agent_no_result'}],\n  assumptions:[],\n  requests:[]\n}}];\n"
+        "jsCode": "const fetched=$json||{};\nconst opened=$('Open excel session').first().json||{};\nconst arts=fetched.artifacts&&typeof fetched.artifacts==='object'?fetched.artifacts:{};\n// n8n may coerce an empty artifact text to a boolean; a boolean card is no card.\nconst artifacts=Object.fromEntries(Object.entries(arts).filter(([,v])=>typeof v!=='boolean'));\nif(fetched.status){\n  return [{json:{\n    task_id:fetched.task_id||opened.task_id||'',\n    agent_id:\"excel_extractor\",\n    status:fetched.status,\n    message:fetched.message||'',\n    data:fetched.data||{},\n    artifacts,\n    issues:fetched.issues||[],\n    assumptions:fetched.assumptions||[],\n    requests:fetched.requests||[],\n    // in_progress (long job): what the feed/monitor may show or poll (CASE-6a9f3bc9-10cb9f: was dropped here).\n    ...(fetched.watch&&typeof fetched.watch==='object'?{watch:fetched.watch}:{})\n  }}];\n}\nreturn [{json:{\n  task_id:opened.task_id||'',\n  agent_id:\"excel_extractor\",\n  status:'failed',\n  message:String(fetched.message||fetched.error||\"Excel Extractor не вернул факты\"),\n  data:{},\n  artifacts:{},\n  issues:[{type:\"excel_agent_no_result\"}],\n  assumptions:[],\n  requests:[]\n}}];\n"
       },
       "id": "76537492-0ad0-514e-9053-8685f3bf04b1",
       "name": "Format excel result",
@@ -638,15 +638,15 @@
         3080,
         255
       ],
+      "retryOnFail": true,
+      "maxTries": 3,
+      "waitBetweenTries": 2000,
       "credentials": {
         "httpHeaderAuth": {
           "id": "REPLACE_IN_UI",
           "name": "REPLACE: Excel Tools X-API-Key"
         }
-      },
-      "retryOnFail": true,
-      "maxTries": 3,
-      "waitBetweenTries": 2000
+      }
     },
     {
       "parameters": {
@@ -686,15 +686,15 @@
         3360,
         170
       ],
+      "retryOnFail": true,
+      "maxTries": 3,
+      "waitBetweenTries": 2000,
       "credentials": {
         "httpHeaderAuth": {
           "id": "REPLACE_IN_UI",
           "name": "REPLACE: Excel Tools X-API-Key"
         }
-      },
-      "retryOnFail": true,
-      "maxTries": 3,
-      "waitBetweenTries": 2000
+      }
     },
     {
       "parameters": {
@@ -734,15 +734,15 @@
         3080,
         85
       ],
+      "retryOnFail": true,
+      "maxTries": 3,
+      "waitBetweenTries": 2000,
       "credentials": {
         "httpHeaderAuth": {
           "id": "REPLACE_IN_UI",
           "name": "REPLACE: Excel Tools X-API-Key"
         }
-      },
-      "retryOnFail": true,
-      "maxTries": 3,
-      "waitBetweenTries": 2000
+      }
     },
     {
       "parameters": {
@@ -782,15 +782,15 @@
         3360,
         0
       ],
+      "retryOnFail": true,
+      "maxTries": 3,
+      "waitBetweenTries": 2000,
       "credentials": {
         "httpHeaderAuth": {
           "id": "REPLACE_IN_UI",
           "name": "REPLACE: Excel Tools X-API-Key"
         }
-      },
-      "retryOnFail": true,
-      "maxTries": 3,
-      "waitBetweenTries": 2000
+      }
     },
     {
       "parameters": {
@@ -830,15 +830,15 @@
         3080,
         -85
       ],
+      "retryOnFail": true,
+      "maxTries": 3,
+      "waitBetweenTries": 2000,
       "credentials": {
         "httpHeaderAuth": {
           "id": "REPLACE_IN_UI",
           "name": "REPLACE: Excel Tools X-API-Key"
         }
-      },
-      "retryOnFail": true,
-      "maxTries": 3,
-      "waitBetweenTries": 2000
+      }
     },
     {
       "parameters": {
@@ -878,15 +878,15 @@
         3360,
         -170
       ],
+      "retryOnFail": true,
+      "maxTries": 3,
+      "waitBetweenTries": 2000,
       "credentials": {
         "httpHeaderAuth": {
           "id": "REPLACE_IN_UI",
           "name": "REPLACE: Excel Tools X-API-Key"
         }
-      },
-      "retryOnFail": true,
-      "maxTries": 3,
-      "waitBetweenTries": 2000
+      }
     },
     {
       "parameters": {
@@ -926,15 +926,15 @@
         3080,
         -255
       ],
+      "retryOnFail": true,
+      "maxTries": 3,
+      "waitBetweenTries": 2000,
       "credentials": {
         "httpHeaderAuth": {
           "id": "REPLACE_IN_UI",
           "name": "REPLACE: Excel Tools X-API-Key"
         }
-      },
-      "retryOnFail": true,
-      "maxTries": 3,
-      "waitBetweenTries": 2000
+      }
     },
     {
       "parameters": {
@@ -974,15 +974,15 @@
         3360,
         -340
       ],
+      "retryOnFail": true,
+      "maxTries": 3,
+      "waitBetweenTries": 2000,
       "credentials": {
         "httpHeaderAuth": {
           "id": "REPLACE_IN_UI",
           "name": "REPLACE: Excel Tools X-API-Key"
         }
-      },
-      "retryOnFail": true,
-      "maxTries": 3,
-      "waitBetweenTries": 2000
+      }
     },
     {
       "parameters": {
@@ -1022,15 +1022,15 @@
         3080,
         -425
       ],
+      "retryOnFail": true,
+      "maxTries": 3,
+      "waitBetweenTries": 2000,
       "credentials": {
         "httpHeaderAuth": {
           "id": "REPLACE_IN_UI",
           "name": "REPLACE: Excel Tools X-API-Key"
         }
-      },
-      "retryOnFail": true,
-      "maxTries": 3,
-      "waitBetweenTries": 2000
+      }
     },
     {
       "parameters": {
@@ -1070,15 +1070,15 @@
         3360,
         -510
       ],
+      "retryOnFail": true,
+      "maxTries": 3,
+      "waitBetweenTries": 2000,
       "credentials": {
         "httpHeaderAuth": {
           "id": "REPLACE_IN_UI",
           "name": "REPLACE: Excel Tools X-API-Key"
         }
-      },
-      "retryOnFail": true,
-      "maxTries": 3,
-      "waitBetweenTries": 2000
+      }
     }
   ],
   "connections": {
@@ -1379,14 +1379,14 @@
       "main": [
         [
           {
-            "node": "AI extracted?",
+            "node": "Result stored?",
             "type": "main",
             "index": 0
           }
         ]
       ]
     },
-    "AI extracted?": {
+    "Result stored?": {
       "main": [
         [
           {
@@ -1451,5 +1451,5 @@
   },
   "tags": [],
   "pinData": {},
-  "versionId": "09beb134-140b-4e53-83b0-934080d2bea2"
+  "versionId": "f90197ab-b722-45d9-bdf0-f74701829c16"
 }

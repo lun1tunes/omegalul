@@ -1,3 +1,8 @@
+# Lab-only Compose. Python services bind-mount their code and run uvicorn from a plain python image.
+# The shared core mas_agent_kit is a plain repo folder, not a pip package: it is bind-mounted read-only at
+# /mas-agent-kit and each service's app/__init__.py puts it on sys.path (same rule as on the Windows field
+# checkout, where it sits next to the service folders). Kit edits need `docker compose restart <svc>` like
+# service edits.
 services:
   excel-tools:
     image: python:3.11-slim
@@ -6,6 +11,7 @@ services:
     working_dir: /app
     volumes:
       - ./excel-agent-tools:/app
+      - ./mas-agent-kit:/mas-agent-kit:ro
     environment:
       - API_KEY=${EXCEL_TOOLS_API_KEY:-local-dev-excel-tools-api-key}
       - EXCEL_TOOLS_API_KEY=${EXCEL_TOOLS_API_KEY:-local-dev-excel-tools-api-key}
@@ -42,12 +48,33 @@ services:
     working_dir: /app
     volumes:
       - ./schedule-builder-service:/app
+      - ./mas-agent-kit:/mas-agent-kit:ro
     environment:
       - ACTIVITY_BASE_URL=${ACTIVITY_BASE_URL:-http://mas-activity:8200}
     extra_hosts:
       - host.docker.internal:host-gateway
     ports:
       - 127.0.0.1:${SCHEDULE_BUILDER_HOST_PORT:-8090}:8090
+    networks:
+      - backend
+      - egress
+  # Lab-only: the template agent (agents-template/demo_agent) as a live test of the "add an agent" recipe
+  # and of long-running agents (in_progress → resume source=agent). Disabled in the registry by default.
+  demo-agent:
+    image: python:3.11-slim
+    command: >
+      sh -c "pip install -r requirements.txt && python3 -m uvicorn app.main:app --host 0.0.0.0 --port 8300"
+    working_dir: /app
+    volumes:
+      - ./agents-template/demo_agent:/app
+      - ./mas-agent-kit:/mas-agent-kit:ro
+    environment:
+      - ACTIVITY_BASE_URL=${ACTIVITY_BASE_URL:-http://mas-activity:8200}
+      - DEMO_SESSIONS_DIR=/tmp/demo-sessions
+      - DEMO_JOB_SECONDS=${DEMO_JOB_SECONDS:-40}
+      - DEMO_PROGRESS_EVERY_S=${DEMO_PROGRESS_EVERY_S:-15}
+    ports:
+      - 127.0.0.1:${DEMO_AGENT_HOST_PORT:-8300}:8300
     networks:
       - backend
       - egress

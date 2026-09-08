@@ -1,0 +1,127 @@
+[
+  {
+    "agent_id": "excel_extractor",
+    "title": "Excel Extractor",
+    "when_to_use": "Читает книги Excel, приложенные к задаче, и извлекает из них факты: даты ввода скважин (пары «скважина — дата»), параметры новых скважин (группа, интервал MD, диаметр, режим и дебит, BHP, VFP, траектория) и другие табличные данные. Сам выбирает лист и колонки; если таблица неоднозначна — спрашивает инженера. Не пишет SCHEDULE и не меняет файлы. Нужен хотя бы один приложенный Excel.",
+    "input_required": [
+      "excel"
+    ],
+    "output_provides": [
+      "facts",
+      "new_wells"
+    ],
+    "invoke": {
+      "kind": "n8n_workflow",
+      "workflow_id": "3774c645-a20d-53df-9288-130173c400c2",
+      "workflow_name": "Agent — Excel Extractor"
+    },
+    "input_schema": {
+      "artifacts": {
+        "excel": "книга Excel инженера (одна или несколько)"
+      },
+      "handoff_message": "какие факты извлечь (даты ввода, параметры новых скважин, …)"
+    },
+    "output_schema": {
+      "data": {
+        "facts": "[{well, date}] — даты ввода скважин",
+        "new_wells": "[{well, group, …}] — параметры новых скважин"
+      }
+    },
+    "hitl_policy": "agent_asks",
+    "enabled": true,
+    "version": "2"
+  },
+  {
+    "agent_id": "schedule_builder",
+    "title": "Schedule Builder",
+    "when_to_use": "Исходный SCHEDULE (.inc): сдвиг дат ввода по фактам «скважина — дата»; добавление новых скважин по их параметрам; перепривязка скважин в группу (GRUPTREE/GCONPROD) по тексту задачи и baseline. Факты дат и параметры новых скважин берёт из результатов агента, который читал Excel, и из ответов инженера — сам Excel не читает; для перепривязки групп Excel не нужен. Не выдумывает даты и имена, которых нет в задаче, фактах или baseline. Отдаёт новый .INC и список изменений.",
+    "input_required": [
+      "schedule_source"
+    ],
+    "output_provides": [
+      "schedule_out",
+      "diff"
+    ],
+    "invoke": {
+      "kind": "n8n_workflow",
+      "workflow_id": "c8d5f3b2-6e91-5d22-8a7b-1f0c4e9a2d55",
+      "workflow_name": "Agent — Schedule Builder"
+    },
+    "input_schema": {
+      "artifacts": {
+        "schedule_source": "baseline SCHEDULE .inc и его INCLUDE-файлы"
+      },
+      "data": {
+        "facts": "даты ввода «скважина — дата» (нужны для новых дат ввода)",
+        "new_wells": "параметры новых скважин (нужны, если добавляются скважины)"
+      },
+      "handoff_message": "что изменить в SCHEDULE и на основании чего"
+    },
+    "output_schema": {
+      "artifacts": {
+        "schedule_out": "новый SCHEDULE .inc",
+        "diff": "изменения относительно baseline"
+      }
+    },
+    "hitl_policy": "agent_asks",
+    "enabled": true,
+    "version": "2"
+  },
+  {
+    "agent_id": "calculation_agent",
+    "title": "Calculation Agent",
+    "when_to_use": "Если есть структурная поверхность и траектория скважины, находит их пересечение и начало интервала перфорации (глубина по стволу). Геометрия, не SCHEDULE.",
+    "input_required": [
+      "surface",
+      "trajectory"
+    ],
+    "output_provides": [
+      "top_perforation_md"
+    ],
+    "invoke": {
+      "kind": "http",
+      "url": "{math_url}/agent/run"
+    },
+    "input_schema": {
+      "artifacts": {
+        "surface": "поверхность CPS3",
+        "trajectory": "траектория .dev"
+      }
+    },
+    "output_schema": {
+      "data": {
+        "top_perforation_md": "глубина начала перфорации по стволу"
+      }
+    },
+    "hitl_policy": "never",
+    "enabled": true,
+    "version": "2"
+  },
+  {
+    "agent_id": "demo_agent",
+    "title": "Demo Agent",
+    "when_to_use": "Демонстрационный агент-шаблон: считает скважины, упомянутые в задаче и в фактах других агентов, и умеет запускать долгий расчёт, результат которого приходит позже. Не читает файлы, не пишет SCHEDULE. Использовать только когда инженер прямо просит демонстрацию или подсчёт скважин.",
+    "input_required": [],
+    "output_provides": [
+      "well_count",
+      "wells"
+    ],
+    "invoke": {
+      "kind": "n8n_workflow",
+      "workflow_id": "f8166995-01e4-5712-938c-2d1a492d564f",
+      "workflow_name": "Agent — Demo Agent"
+    },
+    "input_schema": {
+      "handoff_message": "что посчитать или какой расчёт запустить"
+    },
+    "output_schema": {
+      "data": {
+        "well_count": "число скважин",
+        "wells": "[имена скважин]"
+      }
+    },
+    "hitl_policy": "agent_asks",
+    "enabled": false,
+    "version": "2"
+  }
+]

@@ -211,15 +211,14 @@ def attach_orchestrator_rag_js() -> str:
         selector_key="orchestrator",
         fail_open=True,
         ready_note=(
-            "Карточки — срез orchestrator_routing (routing_card), не excel_protocol и не schedule_mvp. "
-            "Используй для декомпозиции, plan_update, выбора агента и handoff_message. "
-            "agent_id только из реестра; старые имена маппинг: excel_extraction_specialist→excel_extractor, "
-            "schedule_builder_specialist→schedule_builder, engineering_calculation_specialist→calculation_agent. "
-            "cluster/binary/presentation в live registry нет — не вызывай."
+            "Карточки — срез orchestrator_routing (routing_card): политика декомпозиции задачи, не протокол "
+            "инструментов и не инструкции по ключевым словам. Используй их для plan_update, порядка вызова "
+            "агентов и handoff_message. Кого именно вызывать (agent_id) и что агент умеет — только из реестра "
+            "«Доступные агенты»; если карточка ссылается на агента, которого в реестре нет, — не вызывай его."
         ),
         empty_note=(
-            "Срез orchestrator_routing пуст или недоступен — решай по реестру и compact. "
-            "Не спрашивай HITL про RAG и не ходи в другие target_base."
+            "Срез orchestrator_routing пуст или недоступен — решай по реестру и состоянию. "
+            "Не спрашивай инженера про базу знаний и не ходи в другие target_base."
         ),
     )
 

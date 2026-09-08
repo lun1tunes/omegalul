@@ -1,11 +1,18 @@
-"""Load baseline SCHEDULE and Excel commissioning facts for a case."""
+"""Load baseline SCHEDULE and Excel commissioning facts for a case.
+
+Case access (state, artifact download, upstream agent data) comes from ``mas_agent_kit``; this module
+keeps what is specific to SCHEDULE: which artifact is the root ``.inc`` and how commissioning facts
+look.
+"""
 
 from __future__ import annotations
 
-import json
 from pathlib import Path
 from typing import Any
-from urllib.request import urlopen
+
+from mas_agent_kit import ActivityClient, CasePacket, upstream_agent_data  # noqa: F401  (re-exported for callers/tests)
+
+AGENT_ID = "schedule_builder"
 
 
 def _filename_base(name: Any) -> str:
@@ -40,80 +47,42 @@ def schedule_meta(inputs: dict[str, Any]) -> dict[str, Any]:
     return meta if isinstance(meta, dict) else {}
 
 
-def artifacts_for_tools(arts: Any) -> dict[str, Any]:
-    """Flat artifact map for load_source: blob ids stay excel / schedule_source / schedule_source_N."""
-    src = arts if isinstance(arts, dict) else {}
-    out: dict[str, Any] = {}
-    sch = src.get("schedule") if isinstance(src.get("schedule"), dict) else {}
-
-    def put(item: Any, fallback: str = "") -> None:
-        if not isinstance(item, dict):
-            return
-        aid = str(item.get("artifact_id") or fallback or "").strip()
-        if aid:
-            out[aid] = item
-
-    put(src.get("excel") if isinstance(src.get("excel"), dict) else None, "excel")
-    put(src.get("surface") if isinstance(src.get("surface"), dict) else None, "surface")
-    put(sch.get("source") if isinstance(sch.get("source"), dict) else None, "schedule_source")
-    for bag in (sch.get("includes") or [], sch.get("grdecl") or []):
-        for item in bag:
-            put(item)
-    put(sch.get("out") if isinstance(sch.get("out"), dict) else None, "schedule_out")
-    for traj in src.get("trajectories") or []:
-        put(traj, "trajectory")
-    for att in src.get("attachments") or []:
-        put(att)
-    for key, item in src.items():
-        if key in {"schedule", "trajectories", "attachments", "excel", "surface"}:
-            continue
-        if key not in out and isinstance(item, dict):
-            put(item, key)
-    return out
-
-
 def bind_case_packet(
     inputs: dict[str, Any] | None,
     context: dict[str, Any] | None,
     case_id: str,
     activity: str = "",
 ) -> tuple[dict[str, Any], dict[str, Any]]:
-    """Fill artifact metas and excel facts from GET /cases/{id}/state when the orchestrator sent refs only."""
+    """Fill artifact cards and upstream facts from the case state when the orchestrator sent refs only.
+
+    ``inputs.artifacts`` becomes the flat ``{artifact_id: card}`` map ``load_source`` needs; data of earlier
+    agents (``facts``, ``new_wells``) lands in ``context.data.excel`` — the Builder's internal slot name for
+    "what the Excel reader found" (see ``excel_bucket``).
+    """
     inputs = dict(inputs or {})
     context = dict(context) if isinstance(context, dict) else {}
     base = str(inputs.get("activity_base_url") or activity).rstrip("/")
     if not base or not str(case_id or "").strip():
         return inputs, context
     existing = inputs.get("artifacts") if isinstance(inputs.get("artifacts"), dict) else {}
-    excel = excel_bucket(context)
-    has_source = bool(
-        existing.get("schedule_source")
-        or (isinstance(existing.get("schedule"), dict) and existing["schedule"].get("source"))
-    )
-    has_facts = bool(excel.get("facts"))
-    if has_source and has_facts:
+    has_source = bool(existing.get("schedule_source") or (isinstance(existing.get("schedule"), dict) and existing["schedule"].get("source")))
+    if has_source and excel_bucket(context).get("facts"):
         return inputs, context
-    try:
-        with urlopen(f"{base}/cases/{case_id}/state", timeout=15) as resp:
-            packet = json.loads(resp.read().decode("utf-8", errors="replace"))
-    except Exception:
+    client = ActivityClient(base, agent_id=AGENT_ID, case_id=case_id)
+    packet = CasePacket({"case_id": case_id, "inputs": {**inputs, "artifacts": {}}, "context": context}, client.case_state(), client)
+    if not packet.state:
         return inputs, context
-    state = packet.get("state") if isinstance(packet, dict) else None
-    if not isinstance(state, dict):
-        return inputs, context
-    from_case = artifacts_for_tools(state.get("artifacts"))
-    if from_case:
-        inputs["artifacts"] = {**from_case, **existing}
-    data = state.get("data") if isinstance(state.get("data"), dict) else {}
-    excel_data = data.get("excel") if isinstance(data.get("excel"), dict) else {}
-    if excel_data:
+    if packet.artifacts:
+        inputs["artifacts"] = {**packet.artifacts, **existing}
+    upstream = packet.upstream_data()
+    if upstream:
         inner = context.get("data") if isinstance(context.get("data"), dict) else {}
         if not isinstance(inner.get("excel"), dict):
-            context["data"] = {**inner, "excel": excel_data}
+            context["data"] = {**inner, "excel": upstream}
         if not isinstance(context.get("excel"), dict):
-            context["excel"] = excel_data
-    if not inputs.get("schedule_root") and state.get("schedule_root"):
-        inputs["schedule_root"] = state["schedule_root"]
+            context["excel"] = upstream
+    if not inputs.get("schedule_root") and packet.schedule_root:
+        inputs["schedule_root"] = packet.schedule_root
     return inputs, context
 
 
@@ -127,13 +96,13 @@ def load_source(inputs: dict[str, Any], case_id: str, activity: str = "") -> str
     base = str(inputs.get("activity_base_url") or activity).rstrip("/")
     artifact_id = (meta or {}).get("artifact_id") or "schedule_source"
     if base and case_id:
-        url = f"{base}/cases/{case_id}/artifacts/{artifact_id}"
-        with urlopen(url, timeout=30) as resp:
-            return resp.read().decode("utf-8", errors="replace")
+        data, _name = ActivityClient(base, agent_id=AGENT_ID, case_id=case_id).download(artifact_id, timeout=30)
+        return data.decode("utf-8", errors="replace")
     return ""
 
 
 def excel_bucket(context: dict[str, Any]) -> dict[str, Any]:
+    """Upstream data as bound into the Builder's context (``context.data.excel`` is the internal slot name)."""
     if not isinstance(context, dict):
         return {}
     data = context.get("data") if isinstance(context.get("data"), dict) else {}

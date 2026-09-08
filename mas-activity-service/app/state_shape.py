@@ -356,39 +356,62 @@ def artifact_filenames(arts: Any) -> list[str]:
     return [name for _rank, _i, name in rows]
 
 
-def slim_excel_data(data: Any) -> Any:
+# Phase 2: agent results live in state.agents[<agent_id>] = {status, summary, task_id, step, data, data_keys}.
+# The orchestrator does not know what an agent's data means; it only keeps it within a byte budget
+# (JS twin: mas_state_utils.slimAgentData / sanitizeAgents — keep the numbers identical).
+AGENT_DATA_BUDGET = 24000
+AGENT_DATA_KEY_BUDGET = 12000
+
+
+def _json_size(value: Any) -> int:
+    try:
+        return len(json.dumps(value, ensure_ascii=False, separators=(",", ":")))
+    except (TypeError, ValueError):
+        return 1 << 62
+
+
+def slim_agent_data(data: Any) -> dict[str, Any]:
+    """Cap one agent's ``data`` by size: smaller keys first, oversized keys dropped and listed in ``omitted_keys``."""
     if not isinstance(data, dict):
-        return data
-    out = dict(data)
-    facts = out.get("facts")
-    if isinstance(facts, list):
-        out["facts"] = [
-            {"well": row.get("well"), "date": row.get("date")}
-            for row in facts
-            if isinstance(row, dict)
-        ]
-    rows = out.get("normalized_rows")
-    if isinstance(rows, list):
-        slim_rows = []
-        for table in rows:
-            if not isinstance(table, dict):
-                continue
-            preview = table.get("preview") if isinstance(table.get("preview"), list) else []
-            count = table.get("preview_count")
-            if count is None:
-                count = table.get("row_count")
-            if count is None:
-                count = len(preview)
-            slim_rows.append(
-                {
-                    "table_id": table.get("table_id"),
-                    "columns": table.get("columns") or [],
-                    "row_count": table.get("row_count") if table.get("row_count") is not None else count,
-                    "preview_count": int(count),
-                    "preview": preview[:PREVIEW_CAP],
-                }
-            )
-        out["normalized_rows"] = slim_rows
+        return {}
+    entries = [(key, value, _json_size(value)) for key, value in data.items() if key != "omitted_keys"]
+    keep: set[str] = set()
+    omitted: list[str] = []
+    total = 0
+    for key, _value, size in sorted(entries, key=lambda e: e[2]):
+        if size > AGENT_DATA_KEY_BUDGET or total + size > AGENT_DATA_BUDGET:
+            omitted.append(key)
+            continue
+        keep.add(key)
+        total += size
+    out: dict[str, Any] = {key: value for key, value, _size in entries if key in keep}
+    prev = data.get("omitted_keys")
+    prev_omitted = [str(k) for k in prev] if isinstance(prev, list) else []
+    all_omitted = list(dict.fromkeys([*prev_omitted, *omitted]))
+    if all_omitted:
+        out["omitted_keys"] = all_omitted
+    return out
+
+
+def sanitize_agents(agents: Any) -> dict[str, dict[str, Any]]:
+    src = agents if isinstance(agents, dict) else {}
+    out: dict[str, dict[str, Any]] = {}
+    for agent_id, raw in src.items():
+        if not isinstance(raw, dict):
+            continue
+        data = slim_agent_data(raw.get("data"))
+        try:
+            step = int(raw.get("step") or 0)
+        except (TypeError, ValueError):
+            step = 0
+        out[str(agent_id)] = {
+            "status": str(raw.get("status") or ""),
+            "summary": str(raw.get("summary") or "")[:400],
+            "task_id": str(raw.get("task_id") or ""),
+            "step": step,
+            "data": data,
+            "data_keys": [key for key in data.keys() if key != "omitted_keys"],
+        }
     return out
 
 
@@ -463,7 +486,8 @@ def hitl_answer_text(answer: Any) -> str:
     return str(answer)
 
 
-def slim_current_task(task: Any, artifacts: Any = None, data: Any = None) -> dict[str, Any] | None:
+def slim_current_task(task: Any, artifacts: Any = None, agents: Any = None) -> dict[str, Any] | None:
+    """``data_keys`` = agents that already produced data (JS twin: slimCurrentTask)."""
     if not isinstance(task, dict):
         return None
     artifact_ids = task.get("artifact_ids")
@@ -471,12 +495,7 @@ def slim_current_task(task: Any, artifacts: Any = None, data: Any = None) -> dic
         artifact_ids = [key for key in flatten_artifacts(artifacts).keys() if key != "diff"]
     data_keys = task.get("data_keys")
     if not isinstance(data_keys, list):
-        if isinstance(data, dict):
-            data_keys = list(data.keys())
-        else:
-            context = task.get("context") if isinstance(task.get("context"), dict) else {}
-            inner = context.get("data") if isinstance(context.get("data"), dict) else {}
-            data_keys = list(inner.keys())
+        data_keys = list(agents.keys()) if isinstance(agents, dict) else []
     if not task.get("task_id") and not task.get("agent_id"):
         return None
     return {
@@ -506,26 +525,36 @@ def sanitize_case_state(state: Any) -> dict[str, Any]:
     if arts.get("schedule_files") and not arts.get("schedule_source") and not is_nested_artifacts(arts):
         arts = {**arts, "schedule_source": arts["schedule_files"]}
     src["artifacts"] = nest_artifacts(arts)
+    # Phase 2: agent results live in state.agents; state.data keeps the case result and, for cases from
+    # before Phase 2, legacy buckets — slimmed with the same byte budget (JS twin: sanitizeState).
+    src["agents"] = sanitize_agents(src.get("agents"))
     data = dict(src["data"]) if isinstance(src.get("data"), dict) else {}
     data.pop("facts", None)
-    if isinstance(data.get("excel"), dict):
-        data["excel"] = slim_excel_data(data["excel"])
+    for key, value in list(data.items()):
+        if key != "result" and isinstance(value, dict):
+            data[key] = slim_agent_data(value)
     src["data"] = data
     hitl = dict(src["hitl"]) if isinstance(src.get("hitl"), dict) else {"pending": False, "questions": [], "answers": {}}
     hitl["answers"] = decode_hitl_answers(hitl.get("answers") or {})
     src["hitl"] = hitl
     cur = src.get("current_task")
-    src["current_task"] = slim_current_task(cur, src.get("artifacts"), src.get("data")) if isinstance(cur, dict) else None
+    src["current_task"] = slim_current_task(cur, src.get("artifacts"), src.get("agents")) if isinstance(cur, dict) else None
     if src.get("last_error") is not None:
         src["last_error"] = slim_error(src.get("last_error"))
     return src
 
 
+COMPACT_INPUTS_MAX = 12
+
+
 def compact_decision_context(state: dict[str, Any]) -> dict[str, Any]:
+    """What the Decision LLM sees about the case (JS twin: mas_state_utils.buildCompact).
+
+    Domain-free: files by role, the engineer's inputs by name, agent results by ``agent_id``
+    (status / summary / data_keys), plan, HITL. No per-agent fields (``excel_facts`` and the like).
+    """
     src = sanitize_case_state(state)
     artifacts = src.get("artifacts") if isinstance(src.get("artifacts"), dict) else {}
-    data = src.get("data") if isinstance(src.get("data"), dict) else {}
-    excel = data.get("excel") if isinstance(data.get("excel"), dict) else {}
     plan = src.get("plan") if isinstance(src.get("plan"), list) else []
     hitl = src.get("hitl") if isinstance(src.get("hitl"), dict) else {}
     questions = hitl.get("questions") if isinstance(hitl.get("questions"), list) else []
@@ -533,10 +562,8 @@ def compact_decision_context(state: dict[str, Any]) -> dict[str, Any]:
     pending = bool(hitl.get("pending"))
     counts = artifact_file_counts(artifacts)
     answers = hitl.get("answers") if isinstance(hitl.get("answers"), dict) else {}
-    facts = excel.get("facts") if isinstance(excel.get("facts"), list) else []
-    flat = flatten_artifacts(artifacts)
-    excel_meta = flat.get("excel") if isinstance(flat.get("excel"), dict) else {}
-    source_meta = flat.get("schedule_source") if isinstance(flat.get("schedule_source"), dict) else {}
+    input_cards = [card for card in artifact_cards(artifacts) if card.get("kind") == "input"]
+    agents = src.get("agents") if isinstance(src.get("agents"), dict) else {}
     err = src.get("last_error")
     cur = src.get("current_task")
     current = None
@@ -547,17 +574,24 @@ def compact_decision_context(state: dict[str, Any]) -> dict[str, Any]:
         "task_name": str(src.get("task_name") or "").strip(),
         "status": src.get("status") or "",
         "files": counts,
-        "has_excel": counts["excel"] > 0,
-        "has_schedule_source": counts["schedule_source"] > 0,
+        "inputs": [
+            {"artifact_id": card["artifact_id"], "role": card["role"], "filename": card["filename"]}
+            for card in input_cards[:COMPACT_INPUTS_MAX]
+        ],
+        "inputs_total": len(input_cards),
         "deliverables": [
             {"producer": card["producer"], "artifact_id": card["artifact_id"], "filename": card["filename"]}
             for card in deliverables(artifacts)
         ],
-        "excel_filename": excel_meta.get("filename") or None,
-        "schedule_source_filename": source_meta.get("filename") or None,
-        "excel_facts": len(facts),
-        "wells_in_excel": [str(row.get("well") or "") for row in facts if isinstance(row, dict)][:20],
-        "schedule_root": src.get("schedule_root") or "",
+        "agents": {
+            agent_id: {
+                "status": slot["status"],
+                "step": slot["step"],
+                "summary": slot["summary"][:240],
+                "data_keys": slot["data_keys"],
+            }
+            for agent_id, slot in agents.items()
+        },
         "plan": [
             {"id": item.get("id"), "status": item.get("status")}
             for item in plan

@@ -1,6 +1,6 @@
 # NOVATEK RE MASter — анализ и план рефакторинга «от хардкода к инженерной MAS»
 
-Ревизия 7 — 2026-09-07 (вечер). Статусы ниже сверены с кодом на эту дату; история ревизий — §7. Как работать по плану — `AGENTS.md` (карта, инварианты, цикл задачи), гейт — `python3 scripts/mas_gate.py [--live]`.
+Ревизия 12 — 2026-09-08 (день). Статусы ниже сверены с кодом на эту дату; история ревизий — §7. Как работать по плану — `AGENTS.md` (карта, инварианты, цикл задачи), гейт — `python3 scripts/mas_gate.py [--live]`. **Фаза 4 «Расширяемость как продукт» закрыта** (§4, ревизия 10); очередь — «Ближайшие шаги» (§7).
 
 Ограничения, которые план не нарушает: n8n **2.30.8**, только UI (Import from File, Credentials, Set-ноды); FastAPI на Windows — только Python; вся правка адресов и лимитов — в `MAS — Runtime Config`; секретов в JSON нет.
 
@@ -43,11 +43,11 @@
 
 | # | Где | Что | Статус |
 |---|---|---|---|
-| O1 | `SYSTEM` | Агенты поимённо; «типичный путь excel_extractor → schedule_builder»; legacy-маппинг `*_specialist` | ⬜ Правило «schedule_out есть — finish» заменено журналом. В промпте по-прежнему: список агентов с описаниями, два «Типичных пути», маппинг `excel_extraction_specialist→excel_extractor`, «не вызывай excel_extractor, если Excel нет» (Фаза 2) |
+| O1 | `SYSTEM` | Агенты поимённо; «типичный путь excel_extractor → schedule_builder»; legacy-маппинг `*_specialist` | ✅ Фаза 2: промпт — только протокол (журнал → progress → действие, правила завершения); агенты приходят из `agent_registry` (`PLANNER_COLUMNS`: `title, when_to_use, input_required, output_provides, input_schema, output_schema, hitl_policy`), политика декомпозиции — RAG `orchestrator_routing`. `grep excel_extractor\|schedule_builder\|calculation_agent` по `generate_mas_orchestrator.py` и `mas_state_utils.py` пуст; smoke `mas-orchestrator-smoke.js` это охраняет |
 | O2 | `Prepare decision context` | Rule-based hint «следующий шаг» | ✅ Удалён; smoke проверяет отсутствие маршрутных подсказок в `planner_input` |
-| O3 | `ROUTE`, `MERGE` | `if agent_id==='excel_extractor'…`; bucket `excel/calc/schedule` | ⬜ `MERGE`: `bucket=agentId==='excel_extractor'?'excel':…` и `slimExcel` для Excel; Schedule Builder читает `data.excel` (`excel_bucket`) — при переходе на `state.agents[<id>]` менять оба (Фаза 2) |
-| O4 | `mas_state_utils.py` `inferRouting*` | Regex по goal для RAG-фильтров | ⬜ Фаза 2 |
-| O5 | 8 routing-карточек RAG | Дублируют O1 | ⬜ 8 карточек `orchestrator_routing` в `n8n/rag` — переписать как политики (Фаза 2) |
+| O3 | `ROUTE`, `MERGE` | `if agent_id==='excel_extractor'…`; bucket `excel/calc/schedule` | ✅ Фаза 2: `Prepare agent call` → `resolveInvoke(registry, runtime.agent_workflow_ids)` → один узел `Call agent (n8n)` (executeWorkflow 1.3, `workflowId` = выражение из `invoke.workflow_id`) или `Call agent (HTTP)` (`invoke.url` с `{math_url}`-плейсхолдерами Runtime Config), `Agent not bound` — failed `agent_result` в журнал. `Merge agent result` кладёт `state.agents[<agent_id>] = {status, summary, task_id, step, data, data_keys}` (`slimAgentData` — общий лимит размера, без доменных правил); Schedule Builder берёт `facts`/`new_wells` из `state.agents[*].data` (`upstream_agent_data`, fallback `state.data.excel` для старых кейсов) |
+| O4 | `mas_state_utils.py` `inferRouting*` | Regex по goal для RAG-фильтров | ✅ `inferRetrievalQuery/inferRoutingTopics/inferRoutingKeywordFamilies/inferTaskPatterns` удалены; `buildRetrievalQuery` — текст цели + журнал, без тегов. Теги от LLM в `plan_update` — вместе с O13 |
+| O5 | 8 routing-карточек RAG | Дублируют O1 | ✅ 8 карточек `orchestrator_routing` переписаны как политики декомпозиции (без `agent_id`, без «типичных путей»; агент описывается через поля реестра — «агент, чей `when_to_use` — чтение Excel», «чей `input_required` включает `schedule_source`»); revision bump, в lab старые ревизии `superseded` |
 | O6 | `DECISION_SCHEMA` | `options[]` терялись по дороге к человеку | 🟡 UI рендерит `options[{value,label}]` кнопками; `question_id` LLM-вопросов всё ещё свободный |
 | O7 | `specialist_packet` и retired-контракты | Два контракта | ✅ Не принимаются; retired в `n8n/templates/retired`, `n8n/contracts/retired` |
 | O8 | `MERGE` лимиты | `step_count >= 24` захардкожен, при достижении — тихий `failed` | ✅ `max_steps` в Runtime Config (12); при достижении с результатом — review-гейт с человеком, без результата — честный `failed` |
@@ -95,10 +95,25 @@
 
 ### 2.4 Расширяемость и гигиена
 
-- Добавить агента сегодня = правки `SYSTEM`, `ROUTE`, узел вызова, `MERGE` bucket, sticky, RAG-карточка, SQL seed, agent workflow — ⬜ Фаза 2/4 (рецепт — `AGENTS.md` §6, `docs.md` §6).
-- Добавить инструмент агенту = Python-функция/ветка + строка `tool_http(...)` в генераторе + `SYSTEM` + smoke + pytest — ✅ рецепт зафиксирован (`.cursor/rules/excel-agent-tools.mdc`, `schedule-builder-service.mdc`).
+- Добавить агента = скопировать `agents-template/demo_agent` (сервис на `mas-agent-kit`) + `AgentSpec` в `n8n/templates/agents/` → генерация workflow / поля Runtime Config / seed реестра / пробы Health Check; на поле — импорт workflow, URL в Runtime Config, включить в Activity → Агенты. Оркестратор не правится и не регенерируется — ✅ Фаза 2 (`CASE-6a9f04a5-6f14b7`), ✅ Фаза 4 (`demo_agent`, `CASE-6a9f49ce-9cb933`: `in_progress` → `waiting_agent` → `resume source=agent` → `done`).
+- Добавить инструмент агенту = `@tools.tool(...)` функция в сервисе (`ToolError` для LLM) + строка в `TOOLS` спеки + `system_prompt` + smoke + pytest — ✅ (`agents-template/demo_agent/README.md`, `.cursor/rules/excel-agent-tools.mdc`, `schedule-builder-service.mdc`).
 - `KEYWORDS` один источник — ✅. Retired-контур вне live-генерации/smokes — ✅. Legacy Activity `/v1/tasks*` — 🟡 задокументирован в `main.py`, вынос отложен (связность тестов).
 - Генерация workflow — фиксированная точка: `scripts/mas_gate.py --only regen` (порядок генераторов, relayout последним, `versionId` игнорируется) — ✅.
+
+Цена добавления агента (найдено в ревизии 9 при сверке `docs.md` §6 с кодом) — закрыто Фазой 4 (ревизия 10):
+
+| # | Где | Что | Статус |
+|---|---|---|---|
+| 🆕 K1 | `excel-agent-tools/app/tools.py` `tool_error` ↔ `schedule-builder-service/app/agent_tools.py` | Два конверта ошибок инструмента для LLM | ✅ один конверт `ToolError.envelope()` / `error_envelope` в `mas-agent-kit/errors.py`; оба сервиса на нём |
+| 🆕 K2 | `human_text_problems` в `agent_run.py` и `agent_tools.py`; `_agent_result`, сессии, `ask_engineer`, события Activity | Ядро агента в двух копиях | ✅ `mas-agent-kit` (`text`, `result`, `session`, `tools`, `hitl`, `activity`, `packet`, `agent`); одно `def human_text_problems` |
+| 🆕 K3 | Activity `POST /cases` / `/answer` — единственные пути записи в `mas_artifacts` | Агент не может отдать бинарный deliverable | ✅ `POST /cases/{id}/artifacts` (multipart, `producer`, `summary`, RFC 5987 имена) → карточка `out_*`; kit `ActivityClient.upload` |
+| 🆕 K4 | `generate_excel_extractor_agent.py` / `generate_schedule_builder_agent.py` | Цепочка нод агента продублирована | ✅ `mas_agent_workflow.py` по `AgentSpec` (`n8n/templates/agents/*.py`); генераторы — по три строки |
+| 🆕 K5 | `generate_mas_runtime_config.py` `LAB_URLS` + тест Runtime Config | URL нового сервиса = правка шаблона и теста | ✅ поле из `spec.service_url_key`/`lab_url`; тесты проверяют список из спек |
+| 🆕 O21 | `generate_mas_health_check.py` `REQUIRED = [...]` | Health Check знает агентов по именам | ✅ пробы и `REQUIRED_AGENTS` — из `enabled` спек; `demo_agent` (`enabled=False`) не требуется |
+| 🆕 K6 | `postgres-init/02…`, прокси `schema` | `CREATE TABLE IF NOT EXISTS` не обновляет `cases_status_check`: новый статус `waiting_agent` уронил живую базу (`CASE-6a9f3a76-38506f`) | ✅ `CASE_STATUSES` в генераторе прокси (двойник `contracts.CASE_STATUSES`), `schema` пересоздаёт CHECK; тест `test_cases_status_check_accepts_every_case_status` |
+| 🆕 K7 | `mas_agent_workflow.js_format_result` | Поля `agent_result` вне фиксированного набора (`watch`) терялись между агентом и оркестратором (`CASE-6a9f3bc9-10cb9f`) | ✅ `watch` пропускается; `demo-agent-smoke.js` |
+| 🆕 L1 | `docker-compose.yml`, `lab_soft_redeploy.py` | Три контейнера собирали wheel kit'а в общем bind-mount → `schedule-builder` не поднимался, live 6/6 ложный HITL «нет исходного SCHEDULE»; redeploy только предупреждал | ✅ ревизия 11: kit не ставится вовсе — обычный модуль (`sys.path` в `app/__init__.py`), в контейнер только mount `:ro`; redeploy падает, если `/health` не ответил |
+| 🆕 L2 | `excel-agent-tools/app/{main,agent_run}.py`, `schedule-builder-service/app/{main,agent_tools,sessions}.py` | Три сервиса на одном kit'е, но трёх форм: Excel — свои четыре маршрута `/agent-tools/*` + функции `open_session`/`session_result`/`normalize_agent_tool_args` в `main.py`/`agent_run.py`; Schedule — класс-обёртка в `main.py` над модульными `open_session`/`_store_result`/`_agent_result`; шаблон — класс в `main.py`. Новичок копирует шаблон и получает четвёртую форму | ✅ ревизия 12: у всех `app/agent.py` (`<Имя>Agent(AgentService)` + `agent = …()`), `app/agent_tools.py` (`@agent.tools.tool`, итог `agent.store_result(state, agent.new_result(...))`), `app/main.py` (`create_agent_app`/`agent_router`); Excel: прямой `/api/v1` — `legacy_api.py`; `test_service_shape.py` в гейте |
 
 ### 2.5 Результат кейса как один файл (найдено в ревизии 5)
 
@@ -167,22 +182,23 @@
 
 Критерий: ✅ `mas_gate.py --live` 6/6 (ревизия 6, `CASE-6a9ed4c4`…`CASE-6a9ed655`); ✅ `grep has_schedule_out` пуст; ✅ round-trip трёх видов артефактов.
 
-### Фаза 2 — Оркестратор без домена 🟡 (осталось 4–6 дней)
+### Фаза 2 — Оркестратор без домена ✅ ядро (ревизия 8); хвост — O13 `plan_update`
 
 Сделано (2.0): журнал `state.ledger` (O9), `progress` в решении (O10), инварианты `answer_not_applied` (O11) / `repeat_review` + `rework_reason` (O12) / `goal_flag_ignored` (O14) / `stall_review`, `max_steps` в Runtime Config (O8), проверенное завершение `Verify completion` с детерминированным вердиктом из `goal_parts` (O16), итог инженеру без идентификаторов с fallback на журнал (O15), `nestArtifacts` без потери книг.
 
+Сделано (2.1, ревизия 8 — исполняемый реестр):
+
+1. ✅ `agent_registry` расширен: `invoke`, `input_schema`, `output_schema`, `hitl_policy`, `enabled`, `version`. Единый источник — `n8n/templates/mas_agent_registry.py` (колонки, DDL `ALTER TABLE … ADD COLUMN IF NOT EXISTS`, seed); из него генерируются `MAS — Control Plane Proxy` (новый `generate_mas_control_plane_proxy.py`: `schema`/`list_agents`/`upsert_agent`), `postgres-init/02,03*.sql`, `mas-activity-service/app/sql/control_plane.sql` и `agent_registry_seed.json` (memory-режим Activity). Activity: `GET /agents` отдаёт полную строку, `PUT /agents/{agent_id}` — частичное обновление/новый агент (полевой путь привязки id после UI-импорта; альтернатива — `agent_workflow_ids` в `MAS — Runtime Config`).
+2. ✅ `SYSTEM` без имён агентов, «типичных путей» и legacy-маппинга; агенты — из реестра (`PLANNER_COLUMNS`, без `invoke`), политика — из RAG.
+3. ✅ `Call agent (n8n)` (executeWorkflow 1.3, `workflowId` — выражение из `invoke.workflow_id`, проверено на lab 2.30.8) и `Call agent (HTTP)` (`invoke.url`, плейсхолдеры Runtime Config); `Agent not bound` → failed `agent_result`. Per-agent узлов нет, `REPLACE_*_AGENT_IN_UI` ушли из манифеста.
+4. ✅ `Merge agent result` → `state.agents[<agent_id>]`; bucket'ы `excel/calc/schedule` удалены из JS и Python-двойника (`slim_agent_data`/`sanitize_agents`); Schedule Builder читает `state.agents[*].data`.
+6. ✅ O4: RAG-запрос — текст цели + журнал (`buildRetrievalQuery`), regex-теги удалены.
+7. ✅ RAG `orchestrator_routing`: 8 карточек-политик без `agent_id`.
+8. ✅ Критерий: `mas_gate.py --live` 6/6 `done`, `mismatch_count: 0` (`CASE-6a9f05ae-75f250` … `CASE-6a9f06c8-206357`); smoke `echo_agent` (offline) и live `CASE-6a9f04a5-6f14b7`: агент добавлен `PUT /agents/echo_agent` + импорт workflow, вызван оркестратором без регенерации JSON.
+
 Осталось:
 
-1. `agent_registry` расширить (`invoke`, `input_schema`, `output_schema`, `hitl_policy`, `enabled`, `version`); DDL в `schema` прокси.
-2. `SYSTEM`: убрать «типичные пути», имена агентов, legacy-маппинг; описание агентов — только из реестра. Правила завершения (уже доменно-нейтральные) остаются.
-3. Универсальный вызов `Call agent (n8n)` / `Call agent (HTTP)` по данным реестра; первый шаг — проверить на lab expression в `workflowId` executeWorkflow 1.3.
-4. `MERGE` универсальный: `state.agents[<agent_id>]`; bucket'ы `excel/calc/schedule` уходят (артефакты уже в общей модели после Фазы 1.5). Журнал уже не зависит от bucket'ов.
-5. **O13 `plan_update`**: схема с обязательным `id`/`title`/`agent_id`/`status`; персист; показ в Activity как декомпозиция; журнал и план — вместе в `planner_input`.
-6. O4: RAG-запрос без regex-тегов; теги даёт LLM в `plan_update`.
-7. RAG `orchestrator_routing`: политики вместо маршрутов.
-8. Критерий: golden/combat 6/6 без циклов с промптом без слов `excel_extractor`/`schedule_builder`; тест «`echo_agent` через `upsert_agent` + импорт шаблона — вызывается без регенерации JSON».
-
-Оценка выросла: инварианты и их smokes — отдельная работа; Qwen требует проверки каждого изменения промпта live-прогоном.
+5. ⬜ **O13 `plan_update`**: схема с обязательным `id`/`title`/`agent_id`/`status`; персист; показ в Activity как декомпозиция; журнал и план — вместе в `planner_input`; теги RAG-запроса — от LLM через план.
 
 ### Фаза 3 — Агенты LLM-first ✅ ядро (Schedule Builder ✅, Excel ✅; хвосты 3.5/3.6 ⬜)
 
@@ -194,9 +210,30 @@
 6. ⬜ **3.6** A6 `INTENT_ALIASES` → выборка RAG `keyword_instruction` (низкий приоритет: это подсказка поиска, не выбор инструмента).
 7. Критерий: ✅ golden 2 без `GROUP_INTENT`; ✅ combat 0–3 через LLM-выбор инструмента; ✅ combat 0–3 без `_COMMISSIONING_RE` (Excel); `.INC` сравнивается **семантически** (по решению заказчика: keyword на нужной дате с теми же параметрами; пробелы/пустые строки/формат чисел не важны — `compare_schedules` канонизирует токены записей по шагу DATES); лишних HITL в combat 3 нет — вопрос про скважины вне Excel задаёт LLM прозой, harness отвечает кнопкой.
 
-### Фаза 4 — Расширяемость как продукт ⬜ (3–4 дня, после Фазы 2)
+### Фаза 4 — Расширяемость как продукт ✅ (ревизия 10)
 
-Activity «Агенты» (список, карточка, health, `workflow_id`, «добавить из шаблона»), шаблон агента под `agent_task/agent_result` + FastAPI-скелет (Windows `.bat`), `agent_card` в базе знаний. Уже есть: рецепты в `AGENTS.md` §6 и правилах по областям; `tool_http(...)` как единственный способ дать агенту инструмент. Критерий: новый агент «Расчёт КИН» за час без правок n8n JSON.
+**Зачем.** Фаза 2 сделала добавление агента *возможным* без правки оркестратора (`CASE-6a9f04a5-6f14b7`), но не *дешёвым*: сегодня новый агент = скопировать ~600 строк генератора Excel/Schedule и ~400 строк FastAPI (сессии, `ask_engineer`, `human_text_problems`, конверт ошибок, события Activity) — и копии уже расходятся (K1–K5). Целевая цепь (файлы модели на кластере → запуск tNavigator → мониторинг → выгрузка результатов) — это ещё 3–5 агентов, часть из них долгие и с бинарными результатами (K3, §3 п.10). Цель фазы: **агент = спецификация + детерминированные инструменты + `when_to_use`; всё остальное — из шаблона.** Руководство по текущему (ручному) пути — `docs.md` §6; после фазы оно сокращается до «спека + инструменты + `PUT /agents`».
+
+**Deliverables (в этом порядке):**
+
+1. **4.1 `mas-agent-kit`** — общее ядро (pure Python; зависимости только FastAPI, filelock — wheels для 3.11–3.13) в `mas-agent-kit/` — с ревизии 11 обычный модуль репозитория, не pip-пакет:
+   - `create_agent_app(agent_id, tools, bind_session)` → маршруты `/health`, `POST /agent-tools/open_session`, `POST /agent-tools/{name}`, `GET /sessions/{id}/result`, `POST /sessions/{id}/close`; опционально `X-API-Key`;
+   - `@tool(schema)` + `ToolError(code, message, hint, details)` → **один** конверт ошибки для LLM (K1); `too_many_attempts`, `result_already_stored` — в kit'е;
+   - `SessionStore` (диск, TTL, lock), `CasePacket` (артефакты по `artifact_ids` через Activity, `state.agents[*].data` предыдущих агентов, `hitl.answers` → `engineer_answers`, `rework_reason`);
+   - `ask_engineer` + `human_text_problems` — одна реализация (K2); `agent_result(...)`; `ActivityClient` (state, скачивание артефакта, `agent.accepted/progress`, загрузка deliverable — п. 3, `resume source=agent` — п. 5);
+   - шаблоны `setup/start/check-windows.bat`, `<agent>.env.example`, `tests/conftest.py` с фикстурой кейса.
+   Доказательство: Excel Tools и Schedule Builder переведены на kit без изменения поведения (pytest 87/58 зелёные, `--live` 6/6); `grep -rn "def human_text_problems"` — одно вхождение.
+2. **4.2 `generate_agent_workflow.py` + `AgentSpec`** — один генератор n8n workflow агента из декларативной спецификации `{agent_id, title, service_url_field, target_base, system_prompt, tools:[{name, description, args:[{key, type, description, default}]}], max_iterations}` → цепочка нод как у Excel/Schedule (K4). Из той же спеки: поле URL в `MAS — Runtime Config` и его тест (K5), строка `SEED` реестра (`invoke`, `input_required`/`output_provides`, `input_schema`/`output_schema`), параметризованный smoke `agent-workflow-smoke.js` (структура, `httpRequestTool` 4.4, `$fromAI` на каждый аргумент, без Docker-имён и машинных литералов). `generate_excel_extractor_agent.py` и `generate_schedule_builder_agent.py` становятся спеками (`excel_extractor_spec.py`, `schedule_builder_spec.py`) поверх общего генератора; JSON после миграции — без дрейфа по гейту.
+3. **4.3 Deliverables от агентов** (K3): Activity `POST /cases/{id}/artifacts` (multipart; `producer=<agent_id>`, `kind=deliverable`, `summary`) → прокси `artifact_put`; в `agent_result.artifacts` — карточка `{artifact_id, filename, bytes, summary}` без inline-текста; `mergeIncomingArtifacts` и `nest_artifacts` принимают карточку как есть (round-trip тест в обоих двойниках); UI скачивает через `GET /cases/{id}/artifacts/{artifact_id}`. Inline-текст остаётся для `schedule_out`/`diff`.
+4. **4.4 Activity «Агенты» + Health Check по реестру**: страница поверх `GET/PUT /agents` — список, карточка (`when_to_use`, `invoke`, схемы, `hitl_policy`, `version`), привязка `workflow_id` из UI, проверка `/health` сервиса по `service_url_field`, выключение агента. Health Check: «каждый `enabled` агент — `invoke` привязан, сервис отвечает», `REQUIRED` из кода удалён (O21). Схема и «База знаний» уже читают реестр — правок не требуют.
+5. **4.5 Долгий агент** (§3 п.10): в kit'е — `agent_result.status="in_progress"` с `watch {kind, ref, poll_hint}`, `ActivityClient.progress()` и `ActivityClient.resume(task_id)`; оркестратор — `Merge agent result` принимает `in_progress` как «ждём внешнего события» (доменно-нейтрально: запись в журнал, шаг не тратится, `finish` невозможен), `POST /cases/{id}/run source=agent` доводит результат. Первый долгий агент — lab-mock «Расчёт» (прогресс раз в 20 с, результат через 2 мин) в `run_live_five.py`.
+6. **4.6 Шаблон-агент и документация**: `agents-template/` — пример на kit'е (`demo_agent`: один детерминированный инструмент, один `ask_engineer`, одна карточка `when_to_use`, спека для 4.2) — он же постоянный live-тест расширяемости вместо разового `echo_agent`; `docs.md` §6 переписывается под kit + спеку; `AGENTS.md` §6 «Новый агент» — одна строка на шаг.
+
+**Критерий фазы:** новый агент с одним инструментом и одним вопросом инженеру — **≤ 1 часа** от `AgentSpec` до `done` в live-кейсе, без правок `Orchestrator — MAS`, Activity, UI и без ручного JSON; Excel/Schedule на kit'е и общем генераторе — `mas_gate.py --live` 6/6, `mismatch_count: 0`; одна реализация `human_text_problems` и одного конверта ошибок; Health Check и платформенные workflow без имён агентов (smoke: `grep` по `excel_extractor|schedule_builder|calculation_agent` в `mas-deployment-health-check.workflow.json` пуст).
+
+**Итог (ревизия 10):** все шесть deliverables сделаны; `demo_agent` (`agents-template/demo_agent` + `agents/demo_agent.py`) — постоянный live-тест: `run_live_demo_agent.py` в `mas_gate.py --live` (`CASE-6a9f49ce-9cb933`: `running → waiting_agent → running → done`, `state.agents.demo_agent.data.well_count = 3`, оркестратор не тронут). Отступления от формулировки: имена в спеке — `service_url_key` (не `service_url_field`), генератор — `mas_agent_workflow.py` (не `generate_agent_workflow.py`); smoke не параметризован, а один на агента по образцу `demo-agent-smoke.js`; kit не зависит от httpx (`urllib`); kit — не pip-пакет, а модуль репозитория, подключаемый через `sys.path` в `app/__init__.py` сервиса (ревизия 11, требование поля: `.venv` + `requirements.txt`, без poetry/pyproject). Health Check проверяет «`enabled` агент ↔ строка реестра» по списку из спек, а не читает Postgres в форме — Health Check не имеет доступа к прокси-аутентификации без Credentials, оставлено в долг (см. §7 «Ближайшие шаги»).
+
+**Границы:** доменная логика новых агентов (кластер, tNavigator CLI, парсинг результатов) в фазу не входит — только рельсы. `O13 plan_update` идёт параллельно как отдельный бриф (оркестратор), не блокирует 4.1–4.3.
 
 ### Фаза 5 — Петля качества 🟡 (постоянно)
 
@@ -283,11 +320,51 @@ Activity «Агенты» (список, карточка, health, `workflow_id`
 4. **Гейт.** Offline GREEN (regen без дрейфа, 14 smokes, pytest Activity 157 / Schedule 57 / Excel 87, combat). Live GREEN 6/6, `mismatch_count: 0`, без повторных HITL и review: `CASE-6a9ee8f4-08a7e0` (golden 1), `CASE-6a9ee942-e8bf26` (golden 2), `CASE-6a9ee99b-e17659`, `CASE-6a9ee9cf-0788e8`, `CASE-6a9eea31-dae207`, `CASE-6a9eea8f-5b638c` (combat 0–3; combat 3 — один HITL, ответ кнопкой через `resume`). Interpret-ветка доказана отдельно (шесть кейсов жмут кнопку): `CASE-6a9ee706-8fe25c` — свободный текст «Убери их из прогноза, пожалуйста…» → `choice=remove`, парафраз в ленте, `.INC` = golden; `CASE-6a9eeaed-1e839f` — «Хм, даже не знаю…» → переспрос → кнопка → `done`, `.INC` = golden, в ленте ровно два `hitl.request` и один `hitl.answered`.
 5. Не сделано (осознанно): Фаза 2 не начата — отдельная сессия; `reconcileLedgerAnswers` оставлен как safety net для кейсов до 1.3.
 
+### Ревизия 8 (2026-09-07, ночь) — Фаза 2: оркестратор без домена, исполняемый реестр
+
+1. **O1/O3/O4/O5 закрыты** (бриф `briefs/2026-09-07-phase-2-orchestrator-registry.md`). Один источник реестра `mas_agent_registry.py` → генератор прокси, SQL-файлы, seed Activity; `Prepare agent call` + `Call agent (n8n)`/`Call agent (HTTP)`/`Agent not bound`; `state.agents[<agent_id>]` в JS и Python; `SYSTEM` без домена; RAG-политики; `agent_workflow_ids` в Runtime Config; `PUT /agents/{agent_id}` в Activity. Smokes: промпт/код без имён агентов, `echo_agent` из реестра → `route=workflow`, merge в `state.agents`, seed содержит оба n8n-агента с `invoke.workflow_id` = id их workflow.
+2. **Live-находки.** (a) Первый `--live` после переезда на `state.agents`: 5/6 кейсов — Schedule Builder дважды просил таблицу «скважина — дата» при готовых `agents.excel_extractor.data.facts` (`CASE-6a9efd37-367ae1`). Причина не в коде: контейнер `schedule-builder` (uvicorn без `--reload`, bind-mount) работал 11 часов на модуле до правки `io.py`; `lab_soft_redeploy.py` делал `up -d` и не перезапускал Python-сервисы. Исправлено: redeploy делает `docker compose restart excel-tools math-service schedule-builder`; свежий кейс после рестарта — `CASE-6a9eff84-227d5d` `done`, `mismatch_count: 0`. (b) Второй `--live`: 5/6, `CASE-6a9f0190-944708` — Qwen «Gateway timed out» на первом вызове Builder (`Agent — Schedule Builder` #91116, `NodeApiError` у Chat Model), оркестратор по error-path повторил делегирование, результат = golden; харнесс считал это «повторной передачей без нового ввода». `_assert_no_loop` теперь допускает **один** повтор после `agent.failed` (печатает `note:`), второй повтор и повтор без `agent.failed` — по-прежнему провал (проверено на реальных событиях и синтетике).
+3. **Доказательство расширяемости live:** `CASE-6a9f04a5-6f14b7` — workflow «Agent — Echo (lab proof)» импортирован CLI, строка добавлена `PUT /agents/echo_agent` (без регенерации/переимпорта оркестратора), Decision LLM выбрала `echo_agent` по `when_to_use`, `Call agent (n8n)` вызвал его по `invoke.workflow_id`, результат в `state.agents.echo_agent`, `case.finished`. Строка удалена из реестра после пробы.
+4. **Гейт.** Offline GREEN (regen без дрейфа, 14 smokes, pytest Activity 159 / Schedule 58 / Excel 87, combat). Live GREEN 6/6, `mismatch_count: 0`, без повторных HITL/review/retry: `CASE-6a9f05ae-75f250` (golden 1), `CASE-6a9f05ec-2d2047` (golden 2), `CASE-6a9f0618-c6241a`, `CASE-6a9f064c-9e265e`, `CASE-6a9f0683-66ce64`, `CASE-6a9f06c8-206357` (combat 0–3).
+5. Не сделано (осознанно): O13 `plan_update` (следующий пункт); UI «Агенты» (Фаза 4); `unlisted_wells_policy`/`isUnlistedWellsGate` в оркестраторе (O20). Ingest-инвентарь RAG в lab отвечает `rag_inventory_incomplete` при полностью успешной загрузке (58 добавлено, документы `active`) — косметика ответа `Summarize RAG inventory`, в долг.
+
+### Ревизия 9 (2026-09-08, ночь) — документация под Фазу 2, направление Фазы 4
+
+1. **`docs.md` переписан** как полевой runbook текущего состояния (520 → ~330 строк): убраны retired-негативы (`ACTIVITY_HYDRATE_URL`, `mas-activity-hydrate`, старые формы), история кейсов (живёт здесь, §7), Scoring старого Builder-pipeline (retired), regex-теги RAG-запроса (удалены в O4), «Calculation как исключение» (теперь `invoke.kind=http`), per-agent bindings оркестратора. Добавлены §1.4 «Реестр агентов» и §6 «Интеграция нового агента и его сервиса инструментов» — контракты `agent_task`/`agent_result`/событий/артефактов с JSON-примерами, маршруты сервиса, структура нод workflow, регистрация, знания, проверка, «чего не делать». Нумерация, на которую ссылаются `AGENTS.md` и правила (§1.3, §2 Шаг 3, §3.2, §5, §6), сохранена. Каждое утверждение сверено с кодом (маршруты `main.py` трёх сервисов, `Format schedule result`, `mergeIncomingArtifacts`/`fileItem`, `AGENT_EVENT_KINDS`, `SERVICE_PROBES`, `PLANNER_COLUMNS`, манифест).
+2. **Найдено при сверке (без правок кода):** K1–K5, O21 (§2.4). Два конверта ошибок инструментов и две копии `human_text_problems` — прямое следствие копирования агентов; агент не может отдать бинарный deliverable; Health Check держит имена агентов в `REQUIRED`.
+3. **Фаза 4 сформулирована** как следующая: `mas-agent-kit` → `AgentSpec`-генератор → загрузка deliverables → Activity «Агенты» + Health Check по реестру → долгий агент → `agents-template/`. Критерий — новый агент за ≤ 1 часа без правок оркестратора/Activity/UI, Excel и Schedule переведены на общие рельсы без деградации live.
+4. Кода и workflow не трогали; гейт — состояние ревизии 8.
+
+### Ревизия 10 (2026-09-08, ночь) — Фаза 4 целиком: kit, спеки, deliverables, «Агенты», долгий агент, шаблон
+
+1. **4.1 `mas-agent-kit`** (`mas-agent-kit/mas_agent_kit/`: `errors`, `text`, `session`, `tools`, `result`, `hitl`, `activity`, `packet`, `agent`; 14 тестов). Schedule Builder (58 pytest) и Excel Tools (88) переведены без изменения поведения; один конверт ошибок, одно `human_text_problems`.
+2. **4.2 `AgentSpec` + `mas_agent_workflow.py`**: `agents/excel_extractor.py`, `schedule_builder.py`, `calculation_agent.py` (HTTP-агент через `invoke_override`), `demo_agent.py`; из спеки — workflow, поле Runtime Config, seed реестра (`registry_row()`), пробы Health Check. `generate_*_agent.py` — по три строки. JSON без дрейфа.
+3. **4.3** Activity `POST /cases/{id}/artifacts` (+ `content_disposition` RFC 5987 для русских имён, `out_*` id без коллизий с ролями входа); kit `ActivityClient.upload`.
+4. **4.4** Activity **Агенты** (`/registry`: `static/agents.html|js` поверх `GET/PUT /agents`); Health Check — пробы/`REQUIRED_AGENTS` из `enabled` спек (O21).
+5. **4.5** `in_progress` + `watch` в контракте (`contracts.py`, JSON-схема, kit `in_progress(...)`), `waiting_agent` в статусах кейса и UI; `applyAgentResult` в `mas_state_utils.py` — один путь для `Merge agent result` и `resume source=agent` (`POST /cases/{id}/run` принимает `agent_result`); kit `ActivityClient.finish_task`.
+6. **4.6** `agents-template/demo_agent` (README-рецепт, `count_wells` / `start_long_job` / `ask_engineer`, фоновая работа с прогрессом, 7 pytest, Windows-скрипты) + `n8n/templates/agents/demo_agent.py` (`enabled=False`, `workflows/support/demo-agent.workflow.json`, `optional_or_non_runtime`), `demo-agent-smoke.js`, `run_live_demo_agent.py` в `--live`; compose-сервис `demo-agent:8300` (lab). `docs.md` §0/§1.4/§5/§6, `AGENTS.md` переписаны под kit + спеку.
+7. **Live-находки** (каждая — тест): `CASE-6a9f3a76-38506f` — `waiting_agent` не проходил `cases_status_check` (K6, `schema` пересоздаёт CHECK); `CASE-6a9f3bc9-10cb9f` — `watch` терялся в `Format result` (K7); live 6/6 «К задаче не приложен исходный SCHEDULE» — `schedule-builder` не поднимался из-за гонки сборки wheel kit'а в общем mount, redeploy только предупреждал (L1). Qwen шлёт `label` строчными — демо-агент капитализирует.
+8. **Гейт:** offline GREEN (regen без дрейфа, 15 smokes, pytest kit 14 / Activity 161 / Schedule 58 / Excel 88 / demo 7, combat); `--live` GREEN: golden 1–2 и combat 0–3 `done`, `mismatch_count: 0` (`CASE-6a9f4874-254a03`, `CASE-6a9f48a3-25b876`, `CASE-6a9f48dc-c455f7`, `CASE-6a9f4907-60333a`, `CASE-6a9f4933-3625f1`, `CASE-6a9f497c-3d2bdc`) + `demo_agent_long_job` `CASE-6a9f49ce-9cb933`.
+9. Не сделано (осознанно): Health Check не читает `agent_registry` из Postgres в форме (проверяет список `enabled` спек ↔ seed; полевая проверка привязки — Activity → Агенты); UI «Агенты» не пингует `/health` сервиса агента (адрес в Runtime Config, а не в реестре); O13 `plan_update`, Фазы 3.5/3.6, Фаза 5 — без изменений.
+
+### Ревизия 11 (2026-09-08, утро) — kit как обычный модуль, без pip-пакета
+
+1. По требованию поля (только `.venv` + `requirements.txt`): удалён `mas-agent-kit/pyproject.toml`, kit не ставится pip'ом ни на Windows, ни в compose. `mas_agent_kit` импортируется как обычный модуль репозитория: `app/__init__.py` каждого сервиса (Excel Tools, Schedule Builder, шаблон `demo_agent`) добавляет `<repo>/mas-agent-kit` в `sys.path` (ищет вверх по дереву — тот же код работает на Windows-checkout, в pytest и в контейнере с mount `/mas-agent-kit`). `requirements.txt` сервисов — без `../mas-agent-kit`, `filelock` перечислен явно; `mas-agent-kit/requirements.txt` — только для автономного прогона тестов kit'а. Compose-команды — обычный `pip install -r requirements.txt`; трюк с `/tmp/kit` (L1) не нужен. Conftest'ы — `import app`.
+2. Гейт GREEN: offline (kit 14 / Activity 161 / Schedule 58 / Excel 88 / demo 7; 15 smokes; regen без дрейфа) и `--live` после пересоздания контейнеров с новой командой: 6/6 `done`, `mismatch_count: 0` (`CASE-6a9f4f82-d0dd0e`, `CASE-6a9f4fbb-1caac1`, `CASE-6a9f4fef-9c27ce`, `CASE-6a9f501f-d27d8a`, `CASE-6a9f5053-7fdc96`, `CASE-6a9f5098-fedb07`) + `demo_agent_long_job` `CASE-6a9f50f6-7a98a7`.
+
+### Ревизия 12 (2026-09-08, день) — одна форма сервиса агента
+
+1. Excel Tools и Schedule Builder приведены к форме шаблона (L2). `app/agent.py`: `ExcelExtractorAgent(AgentService)` — сессия над всеми книгами кейса, инвентарь, `normalize_args` (алиасы транспорта n8n, бывший `normalize_agent_tool_args`), `after_tool` (строки ленты, бывший `emit_tool_progress`), `excel_cards`; `ScheduleBuilderAgent(AgentService)` — `open_session`, `result` (автосборка грязного working text), `new_result` (по умолчанию `units: METRIC`), `store_result` (модели — размеры артефактов, не `.INC`). `app/agent_tools.py` в обоих — только инструменты на `agent.tools`; `agent_run.py`, `sessions.py` (Schedule) удалены; прямой Excel-API `/api/v1/*` — `legacy_api.py`. Состояние сессии Excel хранит `case_id`/`task_id`/`activity_base_url` верхнего уровня (как `base_state` kit'а), итог — в `state.result` (было `agent_result`). Шаблон разделён на `app/agent.py` (класс) и `app/main.py` (`create_agent_app`). Ни один контракт HTTP/n8n не изменился: JSON workflow не регенерировались, smokes прежние.
+2. Форма закреплена тестом `mas-agent-kit/tests/test_service_shape.py` (AST: один `AgentService`-класс и `agent = …()` в `agent.py`; `main.py` без своих `/agent-tools`/`/sessions`; нет модульных `open_session`/`_store_result`/…; инструменты через реестр; kit не скопирован в сервис) — 15 проверок для трёх сервисов. `fastapi-math-service` вне формы (HTTP-агент `/agent/run`, без n8n workflow) — сознательно, отдельный контур.
+3. Из venv Activity убрана устаревшая editable-установка kit'а (`__editable__.mas_agent_kit…pth`), маскировавшая импорт по `sys.path`; `test_direct_uvicorn_import…` теперь копирует `mas-agent-kit/` рядом с сервисом, как на полевом checkout.
+4. Гейт GREEN: offline (kit 29 / Activity 161 / Schedule 58 / Excel 88 / demo 7; 15 smokes; regen без дрейфа); `--live` после redeploy: 6/6 `done`, `mismatch_count: 0` (`CASE-6a9f8577-675484`, `CASE-6a9f85d6-e1e4af`, `CASE-6a9f8602-75be1e`, `CASE-6a9f862d-f6a2fc`, `CASE-6a9f8661-771340`, `CASE-6a9f86ae-6d93a5`) + `demo_agent_long_job` `CASE-6a9f8700-9161c1`; Excel `/health` живого контейнера отдаёт `agent_id`/`tools` — новый код.
+
 ### Ближайшие шаги (в этом порядке)
 
 Каждый пункт — отдельный бриф по `/mas-brief` (файл в `briefs/`); перед стартом и в конце — `python3 scripts/mas_gate.py [--live]`.
 
-1. Фаза 2 — реестр исполняемый, промпт без маршрутов (O1/O3/O5), `plan_update` с `id` (O13), RAG без regex-тегов (O4); `MERGE` универсальный поверх общей модели артефактов (Фаза 1.5 сделана).
-2. Фаза 3.5 — smoke «агент вызвал инструмент, а не ответил текстом»; 3.6 — `INTENT_ALIASES` → RAG (A6).
-3. Фаза 4 — Activity «Агенты» и шаблон агента (после Фазы 2).
-4. Фаза 5 — метрики `guard`-срабатываний в Activity; LLM-судья читаемости ленты.
+1. **O13 `plan_update`** (оркестратор) — схема с `id`/`title`/`agent_id`/`status`, персист, показ в Activity как декомпозиция, теги RAG-запроса от LLM.
+2. **Первый боевой агент на рельсах Фазы 4** (по README шаблона; критерий ≤ 1 часа до `done` в live) — кандидат: агент выгрузки результатов tNavigator (бинарные deliverables через `POST /cases/{id}/artifacts`, долгая работа через `in_progress`).
+3. **Health Check ↔ реестр**: форма читает `list_agents` через прокси (нужен Header Auth credential в форме) и проверяет «каждый `enabled` агент — `invoke.workflow_id` существует в n8n»; UI «Агенты» — кнопка «проверить сервис» по `service_url_key` из Runtime Config.
+4. Фаза 3.5 — smoke «агент вызвал инструмент, а не ответил текстом»; 3.6 — `INTENT_ALIASES` → RAG (A6).
+5. Фаза 5 — метрики `guard`-срабатываний в Activity; LLM-судья читаемости ленты; косметика `rag_inventory_incomplete`.

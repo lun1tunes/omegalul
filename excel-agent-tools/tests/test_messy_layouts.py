@@ -42,7 +42,7 @@ def _tool(client: TestClient, session_id: str, name: str, args: dict) -> dict:
     assert response.status_code == 200, response.text
     payload = response.json()
     assert payload["ok"], payload
-    return payload["result"]
+    return {key: value for key, value in payload.items() if key != "ok"}
 
 
 def _pink_sheet_like() -> Workbook:

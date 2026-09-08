@@ -1,0 +1,9 @@
+# mas_agent_kit is a plain module of this repository, not a pip package: nothing here gets installed
+# as "mas-agent-kit". Each agent service puts ../mas-agent-kit on sys.path in its app/__init__.py and
+# imports `from mas_agent_kit import ...`; the service's own requirements.txt already lists these two.
+# Install this file only to run the kit tests on their own:
+#   cd mas-agent-kit && python -m venv .venv && .venv/bin/pip install -r requirements.txt pytest
+#   PYTHONPATH=. .venv/bin/python -m pytest -q tests
+fastapi>=0.115.14,<0.116
+# Cross-platform advisory file locks for disk-backed sessions (Windows msvcrt + Unix fcntl).
+filelock>=3.15,<4.0

@@ -6,7 +6,7 @@
   "nodes": [
     {
       "parameters": {
-        "content": "## Runtime URLs (edit in UI)\n\n**MAS — Runtime Config** — единственный Set с URL сервисов (n8n free: без Variables / Environment в JSON).\n\n1. Пропишите URL в **Runtime URLs**. Lab Compose DNS уже стоит. Поле: `http://<IP-Windows>:8200` / `:8000` / `:8090` / `:8100`.\n2. На Orchestrator / Excel / Schedule привяжите Execute Workflow → этот workflow (ноды **Runtime endpoints** / **Runtime configuration**).\n3. Ключ Excel **не** сюда. Credential Header Auth **Excel Tools X-API-Key**: header name `X-API-Key`, value = `API_KEY` из `excel-tools.env`. Привяжите его на HTTP-нодах Agent — Excel Extractor.\n\nВозвращает `activity_base_url`, `excel_tools_url`, `schedule_service_url`, `math_url`, `orchestrator_step_url`, `max_steps`. Ничего не оркестрирует.\n\n`max_steps` — бюджет шагов оркестратора на кейс (по умолчанию 12): при достижении с готовым результатом инженеру предлагается принять/доработать, без результата — кейс failed.\n\n`orchestrator_step_url` — внутренний webhook оркестратора (loop сам себя, не через Activity `/run`). Lab: `http://127.0.0.1:5678/webhook/mas-orchestrator-step`.",
+        "content": "## Runtime URLs (edit in UI)\n\n**MAS — Runtime Config** — единственный Set с URL сервисов (n8n free: без Variables / Environment в JSON).\n\n1. Пропишите URL в **Runtime URLs**. Lab Compose DNS уже стоит. Поле: `http://<IP-Windows>:8200` / `:8000` / `:8090` / `:8100`.\n2. На Orchestrator / Excel / Schedule привяжите Execute Workflow → этот workflow (ноды **Runtime endpoints** / **Runtime configuration**).\n3. Ключ Excel **не** сюда. Credential Header Auth **Excel Tools X-API-Key**: header name `X-API-Key`, value = `API_KEY` из `excel-tools.env`. Привяжите его на HTTP-нодах Agent — Excel Extractor.\n\nВозвращает `activity_base_url`, `excel_tools_url`, `schedule_service_url`, `math_url`, `orchestrator_step_url`, `max_steps`, `agent_workflow_ids`. Ничего не оркестрирует.\n\n`max_steps` — бюджет шагов оркестратора на кейс (по умолчанию 12): при достижении с готовым результатом инженеру предлагается принять/доработать, без результата — кейс failed.\n\n`agent_workflow_ids` — JSON `{\"<agent_id>\": \"<id workflow в этом n8n>\"}`. Оркестратор вызывает агентов по id из `agent_registry`; после импорта через UI n8n выдаёт новые id — впишите их здесь (id виден в URL открытого workflow). `{}` — доверять реестру.\n\n`orchestrator_step_url` — внутренний webhook оркестратора (loop сам себя, не через Activity `/run`). Lab: `http://127.0.0.1:5678/webhook/mas-orchestrator-step`.",
         "height": 400,
         "width": 520,
         "color": 1
@@ -63,6 +63,12 @@
               "type": "string"
             },
             {
+              "id": "9e54c4b2-72e9-5dc1-b8a2-c36f75806e33",
+              "name": "demo_agent_url",
+              "value": "http://demo-agent:8300",
+              "type": "string"
+            },
+            {
               "id": "5fc128f2-914c-5616-acea-fbc081784744",
               "name": "orchestrator_step_url",
               "value": "http://127.0.0.1:5678/webhook/mas-orchestrator-step",
@@ -72,6 +78,12 @@
               "id": "d7b33404-17f8-5446-941e-cf9f783f68bf",
               "name": "max_steps",
               "value": "12",
+              "type": "string"
+            },
+            {
+              "id": "8b9f830b-afcb-537b-b713-217c89f32a57",
+              "name": "agent_workflow_ids",
+              "value": "{}",
               "type": "string"
             }
           ]
@@ -116,5 +128,5 @@
   },
   "tags": [],
   "pinData": {},
-  "versionId": "1329c752-66b2-4841-89d8-612b0bb38b2c"
+  "versionId": "037db82a-5670-43f2-a606-51d76ca8890c"
 }

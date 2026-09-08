@@ -12,8 +12,9 @@ from app.state_shape import compact_decision_context as compact_decision_context
 
 SCHEMAS = Path(__file__).resolve().parents[1] / "schemas"
 
-CASE_STATUSES = ("new", "running", "waiting_user", "done", "failed")
-AGENT_RESULT_STATUSES = ("completed", "needs_input", "failed")
+# ``waiting_agent``: a long agent returned ``in_progress``; the case waits for ``resume source=agent``.
+CASE_STATUSES = ("new", "running", "waiting_user", "waiting_agent", "done", "failed")
+AGENT_RESULT_STATUSES = ("completed", "needs_input", "failed", "in_progress")
 DECISION_ACTIONS = ("call_agent", "ask_user", "finish")
 EVENT_KINDS = (
     "case.created",
@@ -50,7 +51,7 @@ class CaseState(BaseModel):
     case_id: str
     goal: str = ""
     task_name: str = ""
-    status: Literal["new", "running", "waiting_user", "done", "failed"] = "new"
+    status: Literal["new", "running", "waiting_user", "waiting_agent", "done", "failed"] = "new"
     plan: list[PlanItem] = Field(default_factory=list)
     artifacts: dict[str, Any] = Field(default_factory=dict)
     data: dict[str, Any] = Field(default_factory=dict)
@@ -130,13 +131,15 @@ class AgentRequest(BaseModel):
 
 class AgentResult(BaseModel):
     task_id: str
-    status: Literal["completed", "needs_input", "failed"]
+    status: Literal["completed", "needs_input", "failed", "in_progress"]
     message: str = ""
     data: dict[str, Any] = Field(default_factory=dict)
     artifacts: dict[str, Any] = Field(default_factory=dict)
     issues: list[dict[str, Any]] = Field(default_factory=list)
     assumptions: list[Any] = Field(default_factory=list)
     requests: list[dict[str, Any]] = Field(default_factory=list)
+    #: ``in_progress`` only: what the agent is waiting on (``{"kind": "poll", "ref": "job-1", "poll_hint": "20s"}``).
+    watch: dict[str, Any] = Field(default_factory=dict)
 
 
 class CaseEventIn(BaseModel):
@@ -169,6 +172,42 @@ class CaseAnswerIn(BaseModel):
 
 class CaseNameIn(BaseModel):
     task_name: str = ""
+
+
+class AgentRegistryIn(BaseModel):
+    """``PUT /agents/{agent_id}`` body — a partial ``agent_registry`` row (Phase 2, executable registry).
+
+    Every field is optional: the row is merged over the existing one, so the field engineer can bind a
+    UI-imported workflow with just ``{"invoke": {"kind": "n8n_workflow", "workflow_id": "…"}}`` or disable
+    an agent with ``{"enabled": false}``. Column set mirrors ``n8n/templates/mas_agent_registry.py``.
+    """
+
+    title: str | None = None
+    when_to_use: str | None = None
+    input_required: list[str] | None = None
+    output_provides: list[str] | None = None
+    invoke: dict[str, Any] | None = None
+    input_schema: dict[str, Any] | None = None
+    output_schema: dict[str, Any] | None = None
+    hitl_policy: Literal["agent_asks", "never"] | None = None
+    enabled: bool | None = None
+    version: str | None = None
+
+    @field_validator("invoke")
+    @classmethod
+    def _invoke_shape(cls, value: dict[str, Any] | None) -> dict[str, Any] | None:
+        if value is None or not value:
+            return value
+        kind = str(value.get("kind") or "")
+        if kind == "n8n_workflow":
+            if not str(value.get("workflow_id") or "").strip():
+                raise ValueError("invoke.kind=n8n_workflow requires invoke.workflow_id")
+        elif kind == "http":
+            if not str(value.get("url") or "").strip():
+                raise ValueError("invoke.kind=http requires invoke.url")
+        else:
+            raise ValueError("invoke.kind must be n8n_workflow or http")
+        return value
 
 
 def empty_state(case_id: str, goal: str = "") -> dict[str, Any]:

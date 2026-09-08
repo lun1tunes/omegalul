@@ -190,20 +190,100 @@ function artifactCards(arts){
 function deliverables(arts){
   return artifactCards(arts).filter(c=>c.kind==='deliverable');
 }
-function slimExcel(d){
-  if(!d||typeof d!=='object'||Array.isArray(d)) return d;
-  const out={...d};
-  if(Array.isArray(d.facts)){
-    out.facts=d.facts.filter(x=>x&&typeof x==='object').map(f=>({well:f.well,date:f.date}));
+/* --- Agent results (Phase 2): state.agents[<agent_id>] = {status, summary, task_id, step, data, data_keys}.
+   The orchestrator does not know what an agent's data means; it keeps it within a byte budget so the
+   next agent can read it from the case state served by Activity (Python twin: state_shape.slim_agent_data). */
+const AGENT_DATA_BUDGET=24000;
+const AGENT_DATA_KEY_BUDGET=12000;
+function jsonSize(v){
+  try{return JSON.stringify(v===undefined?null:v).length}catch(_){return Infinity}
+}
+function slimAgentData(data){
+  if(!data||typeof data!=='object'||Array.isArray(data)) return {};
+  const entries=Object.entries(data).filter(([k])=>k!=='omitted_keys').map(([k,v])=>({k,v,size:jsonSize(v)}));
+  const keep=new Set();
+  const omitted=[];
+  let total=0;
+  /* Smaller keys first: many small facts survive one oversized blob. */
+  for(const e of entries.slice().sort((a,b)=>a.size-b.size)){
+    if(e.size>AGENT_DATA_KEY_BUDGET||total+e.size>AGENT_DATA_BUDGET){omitted.push(e.k);continue;}
+    keep.add(e.k);
+    total+=e.size;
   }
-  if(Array.isArray(d.normalized_rows)){
-    out.normalized_rows=d.normalized_rows.filter(t=>t&&typeof t==='object').map(t=>{
-      const prev=Array.isArray(t.preview)?t.preview:[];
-      const count=t.preview_count!=null?Number(t.preview_count):(t.row_count!=null?Number(t.row_count):prev.length);
-      return {table_id:t.table_id,columns:t.columns||[],row_count:t.row_count!=null?t.row_count:count,preview_count:count,preview:prev.slice(0,3)};
-    });
+  const out={};
+  for(const e of entries){ if(keep.has(e.k)) out[e.k]=e.v; }
+  const prevOmitted=Array.isArray(data.omitted_keys)?data.omitted_keys.map(String):[];
+  const allOmitted=[...new Set([...prevOmitted,...omitted])];
+  if(allOmitted.length) out.omitted_keys=allOmitted;
+  return out;
+}
+function sanitizeAgents(agents){
+  const src=agents&&typeof agents==='object'&&!Array.isArray(agents)?agents:{};
+  const out={};
+  for(const [id,raw] of Object.entries(src)){
+    if(!raw||typeof raw!=='object'||Array.isArray(raw)) continue;
+    const data=slimAgentData(raw.data);
+    out[String(id)]={
+      status:String(raw.status||''),
+      summary:String(raw.summary||'').slice(0,400),
+      task_id:String(raw.task_id||''),
+      step:Number(raw.step||0)||0,
+      data,
+      data_keys:Object.keys(data).filter(k=>k!=='omitted_keys')
+    };
   }
   return out;
+}
+function parseJsonish(v, fallback){
+  if(v&&typeof v==='object'&&!Array.isArray(v)) return v;
+  if(typeof v==='string'&&v.trim()){
+    try{const p=JSON.parse(v); return p&&typeof p==='object'&&!Array.isArray(p)?p:fallback}catch(_){return fallback}
+  }
+  return fallback;
+}
+/* Registry row → how to call the agent. Deterministic; no agent name appears here.
+   invoke {kind:'n8n_workflow', workflow_id} → route 'workflow' (executeWorkflow by id, id from an expression);
+   invoke {kind:'http', url:'{math_url}/agent/run'} → route 'http' ({key} placeholders = Runtime Config fields);
+   Runtime Config agent_workflow_ids {"<agent_id>":"<workflow id>"} overrides the workflow id (field binding
+   after a UI import, where n8n assigns a new id). Anything else → 'unbound' with a reason code. */
+function resolveInvoke(agentId, registry, endpoints){
+  const id=String(agentId||'').trim();
+  const rows=Array.isArray(registry)?registry:[];
+  const row=rows.find(r=>r&&String(r.agent_id||'')===id)||null;
+  const cfg=endpoints&&typeof endpoints==='object'?endpoints:{};
+  const overrides=parseJsonish(cfg.agent_workflow_ids,{});
+  const override=String(overrides[id]||'').trim();
+  if(!row) return {route:'unbound',agent_id:id,reason:'not_in_registry'};
+  if(row.enabled===false||String(row.enabled).toLowerCase()==='false') return {route:'unbound',agent_id:id,reason:'disabled'};
+  const inv=parseJsonish(row.invoke,{});
+  const kind=String(inv.kind||'').trim().toLowerCase();
+  if(override||kind==='n8n_workflow'||(!kind&&inv.workflow_id)){
+    const wid=override||String(inv.workflow_id||'').trim();
+    if(!wid) return {route:'unbound',agent_id:id,reason:'no_workflow_id'};
+    return {route:'workflow',agent_id:id,workflow_id:wid,workflow_name:String(inv.workflow_name||'')};
+  }
+  if(kind==='http'){
+    const url=String(inv.url||'').trim().replace(/\{([a-z0-9_]+)\}/gi,(m,key)=>{
+      const v=cfg[key];
+      return v==null||v===''?m:String(v).replace(/\/$/,'');
+    });
+    if(!url||/\{[a-z0-9_]+\}/i.test(url)||!/^https?:\/\//i.test(url)) return {route:'unbound',agent_id:id,reason:'no_url'};
+    return {route:'http',agent_id:id,url};
+  }
+  return {route:'unbound',agent_id:id,reason:'no_invoke'};
+}
+function unboundAgentMessage(resolved, registry){
+  const r=resolved&&typeof resolved==='object'?resolved:{};
+  const title=agentTitle(r.agent_id, registry);
+  const known=Array.isArray(registry)&&registry.some(x=>x&&String(x.agent_id||'')===String(r.agent_id||''));
+  const who=known?`Агент «${title}»`:'Выбранный агент';
+  switch(String(r.reason||'')){
+    case 'not_in_registry': return `${who} не найден в реестре агентов — вызвать его нельзя.`;
+    case 'disabled': return `${who} отключён в реестре агентов.`;
+    case 'no_workflow_id': return `${who} не привязан: в реестре нет идентификатора его рабочего процесса. Укажите его в реестре агентов или в настройках среды.`;
+    case 'no_url': return `${who} не привязан: адрес его сервиса не задан в настройках среды.`;
+    default: return `${who} не привязан: в реестре не описано, как его вызывать.`;
+  }
 }
 function decodeHitlAnswer(v){
   if(v==null||typeof v!=='string') return v;
@@ -283,69 +363,27 @@ function readUnlistedWellsPolicy(answers){
   }
   return null;
 }
-function inferRetrievalQuery(compact){
+/* Retrieval query for the routing slice: the task as the engineer and the journal describe it — plain
+   text for the lexical + semantic branches. No regex-derived tags (O4): the tag branch gets nothing. */
+function buildRetrievalQuery(compact){
   const c=compact&&typeof compact==='object'?compact:{};
-  const facts=Number(c.excel_facts||0);
   const parts=[String(c.goal||'').trim()];
-  if(facts>0) parts.push('Извлечено '+facts+' скважин из Excel');
-  else if(c.has_excel) parts.push('В artifacts есть Excel, фактов ещё нет');
-  const dels=Array.isArray(c.deliverables)?c.deliverables:[];
-  if(c.has_schedule_source&&!dels.length) parts.push('Нужно обновить baseline SCHEDULE');
-  if(dels.length) parts.push('Агенты уже вернули результаты: '+dels.map(d=>d.filename||d.artifact_id).filter(Boolean).join(', '));
-  return parts.filter(Boolean).join('\n').slice(0,800)||'маршрутизация инженерной задачи petroleum-engineering';
-}
-function inferRoutingTopics(compact){
-  const c=compact&&typeof compact==='object'?compact:{};
-  const files=c.files&&typeof c.files==='object'?c.files:{};
-  const out=[];
-  if(c.has_excel) out.push('Excel');
-  if(c.has_schedule_source) out.push('SCHEDULE');
-  if(c.has_excel&&c.has_schedule_source) out.push('handoff','control-plane');
-  if((Number(files.trajectories)||0)>0||(Number(files.surface)||0)>0) out.push('geometry');
-  if(c.hitl_pending) out.push('HITL','required-evidence');
-  if(!out.length) out.push('handoff','control-plane');
-  return [...new Set(out)];
-}
-function inferRoutingKeywordFamilies(compact){
-  const c=compact&&typeof compact==='object'?compact:{};
-  const files=c.files&&typeof c.files==='object'?c.files:{};
-  const goal=String(c.goal||'').toLowerCase();
-  const out=[];
-  if(c.has_excel) out.push('XLSX','EXCEL_EXTRACTOR');
-  if(c.has_schedule_source) out.push('INC','SCHEDULE_BUILDER');
-  if((Number(files.trajectories)||0)>0||(Number(files.surface)||0)>0) out.push('CALCULATION_AGENT','DEV','CPS3');
-  if(c.hitl_pending) out.push('HITL','REQUIRED-EVIDENCE');
-  if(/дат|ввод|запуск|комиссион|commission/.test(goal)) out.push('COMMISSIONING');
-  if(/групп|gruptree|gconprod|перепривяз/.test(goal)) out.push('GROUP_CONTROL');
-  return [...new Set(out)];
-}
-function inferTaskPatterns(compact){
-  const c=compact&&typeof compact==='object'?compact:{};
-  const files=c.files&&typeof c.files==='object'?c.files:{};
-  const goal=String(c.goal||'').toLowerCase();
-  const out=[];
-  const hasDate=/дат|ввод|запуск|комиссион|commission/.test(goal);
-  const hasGroup=/групп|gruptree|gconprod|перепривяз/.test(goal);
-  const hasTraj=/перфорац|траектори|пересечен|welltrack|compdatmd/.test(goal);
-  const hasExtract=/извлечь|extract|таблиц|xlsx|excel/.test(goal);
-  if(hasDate) out.push('новые даты ввода скважин','даты ввода','сдвиг дат','собрать новый schedule.inc','построить прогнозный SCHEDULE','revise schedule');
-  if(hasGroup) out.push('перепривязка скважин в группу','перепривязка групп','групповой контроль');
-  if(hasTraj) out.push('пересечение траектории','well trajectory intersection','перфорация','траектория');
-  if(hasExtract||(c.has_excel&&!c.has_schedule_source)) out.push('извлечь таблицу','extract workbook');
-  if(!out.length){
-    if(c.has_excel&&c.has_schedule_source) out.push('новые даты ввода скважин','даты ввода','сдвиг дат','собрать новый schedule.inc','построить прогнозный SCHEDULE','revise schedule');
-    else if(c.has_schedule_source&&!c.has_excel) out.push('перепривязка скважин в группу','перепривязка групп','групповой контроль','построить прогнозный SCHEDULE','revise schedule');
-    else if(c.has_excel) out.push('извлечь таблицу','extract workbook');
-    if((Number(files.trajectories)||0)>0&&(Number(files.surface)||0)>0) out.push('пересечение траектории','well trajectory intersection','перфорация','траектория');
+  const inputs=Array.isArray(c.inputs)?c.inputs:[];
+  if(inputs.length) parts.push('Приложены файлы: '+inputs.map(i=>i&&(i.filename||i.artifact_id)).filter(Boolean).slice(0,8).join(', '));
+  const agents=c.agents&&typeof c.agents==='object'?c.agents:{};
+  for(const [id,a] of Object.entries(agents)){
+    if(a&&a.summary) parts.push(`${id}: ${String(a.summary).slice(0,160)}`);
   }
-  if(c.hitl_pending) out.push('не хватает исходных данных');
-  return [...new Set(out)];
+  const dels=Array.isArray(c.deliverables)?c.deliverables:[];
+  if(dels.length) parts.push('Уже получены результаты: '+dels.map(d=>d.filename||d.artifact_id).filter(Boolean).join(', '));
+  if(c.hitl_pending&&c.hitl_question) parts.push('Открытый вопрос инженеру: '+String(c.hitl_question).slice(0,160));
+  return parts.filter(Boolean).join('\n').slice(0,800)||'маршрутизация инженерной задачи';
 }
-function slimCurrentTask(task,arts,data){
+function slimCurrentTask(task,arts,agents){
   if(!task||typeof task!=='object') return null;
   if(!task.task_id&&!task.agent_id) return null;
   const ids=Array.isArray(task.artifact_ids)?task.artifact_ids:Object.keys(flattenArtifacts(arts||{})).filter(k=>k!=='diff');
-  const keys=Array.isArray(task.data_keys)?task.data_keys:Object.keys(data&&typeof data==='object'?data:{});
+  const keys=Array.isArray(task.data_keys)?task.data_keys:Object.keys(agents&&typeof agents==='object'&&!Array.isArray(agents)?agents:{});
   return {task_id:task.task_id||null,agent_id:task.agent_id||null,artifact_ids:ids,data_keys:keys};
 }
 function slimError(err){
@@ -414,14 +452,19 @@ function sanitizeState(state){
   if(arts.file&&!arts.excel) arts.excel=arts.file;
   if(arts.schedule_files&&!arts.schedule_source) arts.schedule_source=arts.schedule_files;
   s.artifacts=nestArtifacts(arts);
+  /* Phase 2: agent results live in state.agents[<agent_id>]. state.data keeps only the case result
+     (finish) and, for cases from before Phase 2, whatever legacy buckets they had — slimmed the same way. */
+  s.agents=sanitizeAgents(s.agents);
   const data=s.data&&typeof s.data==='object'&&!Array.isArray(s.data)?{...s.data}:{};
   delete data.facts;
-  if(data.excel) data.excel=slimExcel(data.excel);
+  for(const [k,v] of Object.entries(data)){
+    if(k!=='result'&&v&&typeof v==='object'&&!Array.isArray(v)) data[k]=slimAgentData(v);
+  }
   s.data=data;
   const hitl=s.hitl&&typeof s.hitl==='object'?{...s.hitl}:{pending:false,questions:[],answers:{}};
   hitl.answers=decodeHitlAnswers(hitl.answers||{});
   s.hitl=hitl;
-  s.current_task=slimCurrentTask(s.current_task,s.artifacts,s.data);
+  s.current_task=slimCurrentTask(s.current_task,s.artifacts,s.agents);
   if(s.last_error&&typeof s.last_error==='object') s.last_error=slimError(s.last_error);
   s.error_count=Number(s.error_count||(s.last_error&&s.last_error.count)||0)||0;
   s.ledger=sanitizeLedger(s.ledger);
@@ -605,20 +648,94 @@ function compactLedger(state){
   });
   return {history:rows,stall_count:l.stall_count,completed_agents:[...new Set(l.history.filter(e=>e.kind==='agent'&&e.status==='completed').map(e=>e.agent_id).filter(Boolean))]};
 }
+/* One agent_result → case state. Used by `Merge agent result` (synchronous agents) and by the
+   `resume source=agent` path (long agents that returned `in_progress` and finish later through the
+   Activity run endpoint). Domain-free: it knows statuses and slots, not agents.
+   Returns {status, next_status, should_continue, events, message}; the caller persists state/events. */
+function applyAgentResult(state, agentId, taskId, result, registry){
+  const obj=v=>v&&typeof v==='object'&&!Array.isArray(v);
+  const res=obj(result)?result:{};
+  const status=String(res.status||'completed');
+  const title=agentTitle(agentId, registry);
+  const fallback=status==='completed'?`Агент «${title}» завершил задачу.`
+    :status==='needs_input'?`Агент «${title}» запросил дополнительные данные.`
+    :status==='in_progress'?`Агент «${title}» работает над задачей; результат придёт позже.`
+    :`Агент «${title}» вернул ошибку.`;
+  const message=String(res.message||'').trim()||fallback;
+  const agents=obj(state.agents)?{...state.agents}:{};
+  const prevSlot=obj(agents[agentId])?agents[agentId]:{};
+  const step=Number(state.step_count||0);
+  const artifactsBefore=new Set(Object.keys(flattenArtifacts(state.artifacts||{})));
+  const events=[];
+  let nextStatus='running';
+  let shouldContinue=true;
+  if(status==='completed'){
+    agents[agentId]={status,summary:message.slice(0,400),task_id:taskId,step,data:obj(res.data)?res.data:{}};
+    state.artifacts=mergeIncomingArtifacts(state.artifacts, res.artifacts||{}, agentId);
+    state.current_task=null;
+    state.last_error=null;
+    state.error_count=0;
+    events.push({kind:'agent.result',actor:agentId||'agent',agent_id:agentId,task_id:taskId,status:'completed',status_message:message,
+      payload:{data_keys:Object.keys(obj(res.data)?res.data:{}),artifacts:Object.keys(obj(res.artifacts)?res.artifacts:{}),deliverables:deliverables(state.artifacts).filter(d=>d.producer===agentId)}});
+  } else if(status==='in_progress'){
+    /* Long job: the case waits for an external event, no step is spent, finish is impossible until the
+       agent reports completed. `watch` is whatever the agent wants shown/polled (kind, ref, poll_hint). */
+    nextStatus='waiting_agent';
+    shouldContinue=false;
+    agents[agentId]={status,summary:message.slice(0,400),task_id:taskId,step,data:obj(prevSlot.data)?prevSlot.data:{}};
+    state.current_task={task_id:taskId,agent_id:agentId};
+    events.push({kind:'agent.progress',actor:agentId||'agent',agent_id:agentId,task_id:taskId,status:'waiting_agent',status_message:message,payload:{watch:obj(res.watch)?res.watch:{}}});
+  } else if(status==='needs_input'){
+    nextStatus='waiting_user';
+    shouldContinue=false;
+    const reqs=Array.isArray(res.requests)?res.requests:[];
+    const q=reqs[0]||{question_id:'Q-agent',question:message,options:[]};
+    state.hitl={pending:true,questions:reqs.length?reqs:[q],answers:(state.hitl&&state.hitl.answers)||{}};
+    events.push({kind:'hitl.request',actor:'orchestrator',agent_id:agentId,status:'waiting_user',status_message:q.question,payload:q});
+  } else {
+    const prevErr=obj(state.last_error)?state.last_error:{};
+    const sameAgent=Boolean(agentId)&&String(prevErr.agent_id||'')===agentId;
+    const errorCount=(sameAgent?Number(prevErr.count||state.error_count||0):0)+1;
+    state.error_count=errorCount;
+    state.last_error={message,agent_id:agentId,count:errorCount};
+    /* A failed attempt is recorded in the slot (status + summary) but never overwrites data a previous
+       completed run of the same agent produced. */
+    agents[agentId]={...prevSlot,status:'failed',summary:message.slice(0,400),task_id:taskId,step,data:obj(prevSlot.data)?prevSlot.data:{}};
+    events.push({kind:'agent.failed',actor:agentId||'agent',agent_id:agentId,status:'failed',status_message:message,payload:{message,issues:res.issues||[],error_count:errorCount}});
+    if(errorCount>=3){
+      nextStatus='failed';
+      shouldContinue=false;
+      events.push({kind:'case.failed',actor:'orchestrator',status:'failed',status_message:`Агент «${title}» вернул ошибку ${errorCount} раза подряд`,payload:{agent_id:agentId,error_count:errorCount}});
+    }
+  }
+  const artifactsAdded=Object.keys(flattenArtifacts(state.artifacts||{})).filter(k=>!artifactsBefore.has(k));
+  ledgerPush(state,{kind:'agent',step,agent_id:agentId,task_id:taskId,status,summary:message.slice(0,400),artifacts_added:artifactsAdded,data_keys:Object.keys(obj(res.data)?res.data:{}).slice(0,12)});
+  if(Array.isArray(state.plan)&&status==='completed'){
+    state.plan=state.plan.map(p=>(p&&typeof p==='object'&&String(p.status)==='running')?{...p,status:'done'}:p);
+  }
+  state.agents=sanitizeAgents(agents);
+  return {status,next_status:nextStatus,should_continue:shouldContinue,events,message};
+}
+const COMPACT_INPUTS_MAX=12;
+function compactAgents(agents){
+  const out={};
+  for(const [id,a] of Object.entries(sanitizeAgents(agents))){
+    out[id]={status:a.status,step:a.step,summary:String(a.summary||'').slice(0,240),data_keys:a.data_keys};
+  }
+  return out;
+}
+/* What the Decision LLM sees about the case. Domain-free: files by role (data-model vocabulary, not
+   rules), the engineer's inputs by name, agent results by agent_id, the journal. Python twin:
+   state_shape.compact_decision_context. */
 function buildCompact(state){
   const artifacts=state.artifacts||{};
-  const data=state.data||{};
   const plan=Array.isArray(state.plan)?state.plan:[];
   const hitl=state.hitl||{};
   const counts=fileCounts(artifacts);
-  const excel=data.excel&&typeof data.excel==='object'?data.excel:{};
-  const facts=Array.isArray(excel.facts)?excel.facts:[];
   const questions=Array.isArray(hitl.questions)?hitl.questions:[];
   const q0=questions[0]&&typeof questions[0]==='object'?questions[0]:{};
   const pending=hitl.pending===true;
-  const flat=flattenArtifacts(artifacts);
-  const excelMeta=flat.excel&&typeof flat.excel==='object'?flat.excel:{};
-  const sourceMeta=flat.schedule_source&&typeof flat.schedule_source==='object'?flat.schedule_source:{};
+  const inputCards=artifactCards(artifacts).filter(c=>c.kind==='input');
   const err=state.last_error;
   const cur=state.current_task;
   return {
@@ -626,14 +743,10 @@ function buildCompact(state){
     task_name:state.task_name||'',
     status:state.status||'',
     files:counts,
-    has_excel:counts.excel>0,
-    has_schedule_source:counts.schedule_source>0,
+    inputs:inputCards.slice(0,COMPACT_INPUTS_MAX).map(c=>({artifact_id:c.artifact_id,role:c.role,filename:c.filename})),
+    inputs_total:inputCards.length,
     deliverables:deliverables(artifacts).map(d=>({producer:d.producer,artifact_id:d.artifact_id,filename:d.filename})),
-    excel_filename:excelMeta.filename||null,
-    schedule_source_filename:sourceMeta.filename||null,
-    excel_facts:facts.length,
-    wells_in_excel:facts.map(f=>f&&f.well).filter(Boolean).slice(0,20),
-    schedule_root:state.schedule_root||'',
+    agents:compactAgents(state.agents),
     plan:plan.map(p=>({id:p.id,status:p.status})),
     current_task:cur&&typeof cur==='object'?{task_id:cur.task_id||null,agent_id:cur.agent_id||null}:null,
     hitl_pending:pending,

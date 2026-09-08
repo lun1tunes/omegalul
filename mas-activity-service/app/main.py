@@ -3,7 +3,7 @@
 Live API (used by the Activity UI and by n8n Orchestrator — MAS):
   * ``app.cases_api`` router — ``/cases*`` (Postgres-backed via Control Plane Proxy)
   * ``/health``, ``/ready``, ``/v1/diagnostics/connectivity``
-  * ``/v1/knowledge/*`` (RAG cards editor), static pages ``/``, ``/knowledge``, ``/t/{task_id}``
+  * ``/v1/knowledge/*`` (RAG cards editor), static pages ``/``, ``/knowledge``, ``/registry``, ``/t/{task_id}``
 
 LEGACY (retired contour, kept for the frozen Universal Engineering Orchestrator in
 ``n8n/workflows/retired`` and its tests): the in-memory ``/v1/tasks*``, ``/v1/turns``,
@@ -2515,6 +2515,12 @@ def index() -> FileResponse:
 @app.get("/knowledge")
 def knowledge_page() -> FileResponse:
     return FileResponse(STATIC / "knowledge.html")
+
+
+@app.get("/registry")
+def agents_page() -> FileResponse:
+    """Agents page: the ``agent_registry`` over ``GET/PUT /agents`` (bind imported workflows, edit when_to_use)."""
+    return FileResponse(STATIC / "agents.html")
 
 
 @app.get("/t/{task_id}")

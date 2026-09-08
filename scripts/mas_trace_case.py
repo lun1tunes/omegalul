@@ -9,7 +9,7 @@
 What it prints
   1. Event timeline from Activity (`kind | actor | status | status_message`), HITL questions/answers, handoffs.
   2. State summary: status, step_count, ledger history, HITL pending/answers, artifacts (flat ids + filenames),
-     data buckets (excel facts / new_wells / schedule).
+     agent slots `state.agents[<agent_id>]` (facts / new_wells counts, data keys), legacy data buckets.
   3. Human-text audit: every engineer-facing string (status_message, hitl questions/options, case.finished)
      checked for machine tokens (snake_case ids, key=value, JSON braces, a|b enums).
   4. Verdict hints: loops (repeated handoff to the same agent without new input), review escalation,
@@ -136,6 +136,14 @@ def print_state(st: dict[str, Any]) -> None:
     dels = [(aid, card) for aid, card in flat.items() if str(card.get("kind") or "") == "deliverable" or aid in {"schedule_out", "diff"}]
     if dels:
         print("deliverables: " + ", ".join(f"{aid}←{card.get('producer') or '?'}" for aid, card in dels))
+    # Phase 2: agent results live in state.agents[<agent_id>] = {status, summary, step, data, data_keys}.
+    agents = st.get("agents") if isinstance(st.get("agents"), dict) else {}
+    for agent_id, slot in agents.items():
+        if not isinstance(slot, dict):
+            continue
+        sdata = slot.get("data") if isinstance(slot.get("data"), dict) else {}
+        counts = " ".join(f"{k}={len(v)}" for k, v in sdata.items() if isinstance(v, list) and k in {"facts", "new_wells", "shifted", "added", "removed", "operations"})
+        print(f"agents.{agent_id}: step={slot.get('step')} {slot.get('status') or ''} {counts} keys={list(sdata.keys())[:12]}")
     data = st.get("data") if isinstance(st.get("data"), dict) else {}
     for bucket, value in data.items():
         if isinstance(value, dict):

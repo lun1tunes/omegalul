@@ -1,32 +1,30 @@
-"""Schedule Builder FastAPI: keyword object model, build/apply/diff and the agent-tools session API.
+"""Schedule Builder FastAPI app: the agent routes (``mas_agent_kit.agent_router`` over ``agent``) plus
+deterministic domain routes — keyword catalogue, ``/render``, ``/build``, ``/apply``, ``/diff``.
 
-The agent itself is the n8n workflow ``Agent — Schedule Builder`` (LLM + these tools); there is no
-Python ``/agent/run`` duplicate any more — one source of behaviour.
+The agent itself is the n8n workflow ``Agent — Schedule Builder`` (LLM) + ``app/agent.py`` (session,
+result) + ``app/agent_tools.py`` (tools). No Python ``/agent/run`` duplicate — one source of behaviour.
 """
 
 from __future__ import annotations
 
-import os
 from typing import Any
 
 from fastapi import FastAPI, HTTPException
+from mas_agent_kit import agent_router
 from pydantic import BaseModel, Field
 
+from .agent import UNITS, agent
 from .apply import apply_operations
 from .diff import unified_diff
 from .emit import emit_schedule
 from .keywords import KEYWORDS, all_keywords, keyword_object, search_keywords
+from .parse import parse_schedule
 from .schema_models import IREvent
 from .schema_renderer import validate_and_render
 from .schema_store import load_catalogue
-from .parse import parse_schedule
 from .validate import validate_emitted
-from . import agent_tools
-from . import sessions
 
 app = FastAPI(title="schedule-builder-service", version="0.1.0")
-ACTIVITY = os.getenv("ACTIVITY_BASE_URL", "").rstrip("/")
-UNITS = "METRIC"
 
 
 class BuildRequest(BaseModel):
@@ -49,17 +47,6 @@ class RenderIRRequest(BaseModel):
     mode: str = "CREATE"
     schema_catalogue: dict[str, Any] | None = None
     ir_events: list[dict[str, Any]] = Field(default_factory=list)
-
-
-class AgentTaskBody(BaseModel):
-    case_id: str = ""
-    task_id: str = ""
-    agent_id: str = "schedule_builder"
-    objective: str = ""
-    handoff_message: str = ""
-    inputs: dict[str, Any] = Field(default_factory=dict)
-    context: dict[str, Any] = Field(default_factory=dict)
-    constraints: dict[str, Any] = Field(default_factory=dict)
 
 
 @app.get("/health")
@@ -135,36 +122,4 @@ def diff(req: DiffRequest) -> dict[str, Any]:
     return {"diff": unified_diff(req.before, req.after)}
 
 
-class AgentToolBody(BaseModel):
-    model_config = {"extra": "allow"}
-    session_id: str = ""
-
-
-@app.post("/agent-tools/open_session")
-def open_session(body: AgentTaskBody) -> dict[str, Any]:
-    return agent_tools.open_session(body.model_dump(), activity=ACTIVITY)
-
-
-@app.post("/agent-tools/{tool_name}")
-def call_agent_tool(tool_name: str, body: AgentToolBody) -> dict[str, Any]:
-    payload = body.model_dump()
-    session_id = str(payload.pop("session_id", "") or "")
-    if not session_id:
-        raise HTTPException(status_code=422, detail="session_id is required")
-    try:
-        return agent_tools.execute_tool(session_id, tool_name, payload)
-    except KeyError as exc:
-        raise HTTPException(status_code=404, detail=str(exc)) from exc
-
-
-@app.get("/sessions/{session_id}/result")
-def get_session_result(session_id: str) -> dict[str, Any]:
-    try:
-        return agent_tools.session_result(session_id)
-    except KeyError as exc:
-        raise HTTPException(status_code=404, detail="session_not_found") from exc
-
-
-@app.post("/sessions/{session_id}/close")
-def close_session(session_id: str) -> dict[str, Any]:
-    return sessions.close(session_id)
+app.include_router(agent_router(agent))

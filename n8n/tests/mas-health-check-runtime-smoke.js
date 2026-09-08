@@ -113,7 +113,10 @@ const healthy = (prepared, overrides = {}) => ({
   const labPrepared = await run('Prepare health probes', { operator_note: 'suite' }, { 'Runtime endpoints': LAB });
   assert.equal(labPrepared.urls.activity_health, 'http://mas-activity:8200/health');
   assert.equal(labPrepared.urls.activity_ready, 'http://mas-activity:8200/ready');
-  assert.equal(labPrepared.urls.excel_health, 'http://excel-tools:8000/health');
+  // Phase 4.4 (O21): agent service probes come from the agent specs (urls.<service>_health per Runtime Config key).
+  assert.equal(labPrepared.urls.excel_tools_health, 'http://excel-tools:8000/health');
+  assert.equal(labPrepared.urls.schedule_service_health, 'http://schedule-builder:8090/health');
+  assert.equal(labPrepared.urls.math_health, 'http://math-service:8100/health');
   assert.equal(labPrepared.urls.orchestrator_webhook, LAB.orchestrator_step_url);
   assert.equal(labPrepared.urls.control_plane_webhook, 'http://127.0.0.1:5678/webhook/mas-control-plane');
   assert.deepEqual(labPrepared.bodies.control_plane_list_agents, { operation: 'list_agents' });

@@ -45,6 +45,7 @@ ERROR_AND_STUB_WORKFLOWS = {
     "mas-orchestrator.workflow.json",
     "schedule-builder-agent.workflow.json",
     "excel-extractor-agent.workflow.json",
+    "demo-agent.workflow.json",  # Phase 4 template agent (support/, registry row enabled=false)
     "mas-runtime-config.workflow.json",
     "cluster-calc-specialist-adapter.workflow.json",
     "binary-results-specialist-adapter.workflow.json",
@@ -117,7 +118,7 @@ def test_ui_import_manifest_is_complete_and_matches_static_bindings() -> None:
     assert manifest["target_n8n_version"] == "2.30.8"
     imported = {Path(value).name for value in manifest["full_clean_import_set"]}
     assert imported == {path.name for path in importable_workflow_files()}
-    assert len(imported) == 15
+    assert len(imported) == 16  # 9 core + 7 support (incl. the Phase 4 template agent)
     assert {path.name for path in CORE.glob("*.workflow.json")} == {
         Path(value).name for value in manifest["runtime_import_order"]
     }
@@ -138,12 +139,12 @@ def test_ui_import_manifest_is_complete_and_matches_static_bindings() -> None:
     bindings = manifest["mandatory_execute_workflow_bindings"]
     retired_bindings = manifest["retired_execute_workflow_bindings"]
     future_bindings = manifest["future_enterprise_or_optional_bindings"]
+    # Phase 2: agents are not bound as executeWorkflow nodes any more — the orchestrator's universal
+    # "Call agent (n8n)" takes the workflow id from agent_registry.invoke (Runtime Config may override).
     assert [binding["node"] for binding in bindings] == [
         "Runtime endpoints",
         "Runtime configuration",
         "Runtime configuration",
-        "Call Excel Extractor",
-        "Call Schedule Builder",
         "Call Knowledge Retrieval",
         "Call Knowledge Retrieval",
         "Call Knowledge Retrieval",
@@ -153,11 +154,10 @@ def test_ui_import_manifest_is_complete_and_matches_static_bindings() -> None:
         "Agent — Excel Extractor",
         "Agent — Schedule Builder",
         "Orchestrator — MAS",
-        "Orchestrator — MAS",
-        "Orchestrator — MAS",
         "Agent — Excel Extractor",
         "Agent — Schedule Builder",
     ]
+    assert any("agent_workflow_ids" in line for line in manifest["ui_configuration"])
     assert future_bindings == []
     assert len(retired_bindings) == 24
     assert manifest["health_check"]["ui_name"] == "Form — MAS Deployment Health Check"
@@ -705,8 +705,10 @@ def test_mas_runtime_config_is_the_only_url_set() -> None:
         "excel_tools_url",
         "schedule_service_url",
         "math_url",
+        "demo_agent_url",
         "orchestrator_step_url",
         "max_steps",
+        "agent_workflow_ids",
     ]
     assert urls["parameters"]["includeOtherFields"] is False
     blob = json.dumps(workflow)
@@ -1321,9 +1323,12 @@ def test_schedule_flow_is_orchestrator_mediated_and_multi_stage() -> None:
         for document in ingestible_operating_guide_documents()
         if document.get("knowledge_id") == "route-hitl-required-evidence"
     )
-    assert hitl_card["revision"] == "5"
-    assert "delegate excel_extractor, не HITL" in hitl_card["text"]
-    assert "Builder RAG evidence gate" in hitl_card["text"]
+    # Phase 2: policy card — no agent ids in the text, HITL vs delegate is expressed via registry fields.
+    assert hitl_card["revision"] == "6"
+    assert "hitl_policy agent_asks" in hitl_card["text"]
+    assert "Пустой срез знаний — не вопрос инженеру" in hitl_card["text"]
+    for agent_id in ("excel_extractor", "schedule_builder", "calculation_agent"):
+        assert agent_id not in hitl_card["text"]
 
 
 def test_schedule_builder_is_bounded_and_orchestrator_mediated() -> None:
@@ -1529,8 +1534,13 @@ def test_universal_engineering_instruction_templates_are_portable() -> None:
         "generate_mas_health_check.py",
         "generate_mas_orchestrator.py",
         "generate_mas_runtime_config.py",
+        "generate_mas_control_plane_proxy.py",
+        "mas_agent_registry.py",
+        "mas_agent_spec.py",
+        "mas_agent_workflow.py",
         "generate_schedule_builder_agent.py",
         "generate_excel_extractor_agent.py",
+        "generate_demo_agent.py",
         "mas_state_utils.py",
         "mas_retrieval_client.py",
         "mas_tool_nodes.py",
@@ -1568,13 +1578,18 @@ def test_schedule_generator_and_architecture_decisions_are_portable_and_explicit
     assert "Path(__file__).resolve().parents[2]" in generator
     assert "/home/" not in generator
 
+    # docs.md is the field runbook; the architecture decisions below must stay stated explicitly
+    # (revision 9 dropped the retired Builder-pipeline scoring thresholds from the runbook).
     docs = (ROOT / "docs.md").read_text(encoding="utf-8")
-    assert "никогда не читает Excel-файлы напрямую" in docs
-    assert "returnIntermediateSteps=true" in docs
-    assert "attention_threshold = 85" in docs
-    assert "hitl_threshold = 70" in docs
-    assert "**`CREATE`:** Создание нового файла SCHEDULE" in docs
-    assert "Handoff фактов" in docs
+    assert "Excel читает только Excel Tools" in docs
+    assert "сам `.xlsx` не открывает" in docs
+    assert "`returnIntermediateSteps`" in docs
+    assert "**`CREATE`** — новый SCHEDULE; **`REVISE`**" in docs
+    assert "Сравнение `.INC` с эталоном — **семантическое**" in docs
+    assert "state.agents[<agent_id>]" in docs
+    assert "Оркестратор не правится и не регенерируется" in docs
+    assert "## 6. Интеграция нового агента" in docs
+    assert "### 3.2. Allowlist keywords" in docs
 
 
 def ingestible_operating_guide_documents() -> list[dict]:
@@ -2138,3 +2153,104 @@ def test_excel_protocol_retrieval_boost_baseline_fixture_is_frozen() -> None:
         assert (row.get("examples") or []) == []
         assert str(row["revision"]) in {"1", "3"}
         assert "searchable" in row and len(row["searchable"]) > 500
+
+
+def _demo_spec():
+    import sys
+
+    sys.path.insert(0, str(TEMPLATES))
+    from mas_agent_spec import AgentSpec, FallbackTexts
+
+    return AgentSpec(
+        agent_id="demo_agent",
+        title="Demo Agent",
+        when_to_use="Демонстрационный агент: считает скважины в задаче.",
+        input_required=[],
+        output_provides=["well_count"],
+        service_url_key="demo_agent_url",
+        lab_url="http://demo-agent:8300",
+        slug="demo",
+        system_prompt="Ты — демо-агент. Вызови count_wells, затем заверши ответ одним предложением.",
+        tools=[
+            ("count_wells", "Посчитать скважины в тексте задачи.", [("text", "string", True, "Текст задачи")]),
+            ("ask_engineer", "Спросить инженера одним вопросом по-русски.", [("question", "string", True, "Вопрос прозой")]),
+        ],
+        rag_selector="excel",
+        result_tools=["count_", "ask_engineer"],
+        texts=FallbackTexts(
+            no_result_question="Демо-агент не понял задачу. Опишите, что именно посчитать.",
+            repeated_question="Демо-агент несколько раз пробовал, но не справился. Уточните задачу.",
+            done_message="Демо-агент завершил работу.",
+            no_result_issue="no_count",
+            question_id="Q-demo",
+        ),
+        accepted_message="Демо-агент принял задачу.",
+        progress_message="Демо-агент читает задачу.",
+    )
+
+
+def test_agent_spec_generates_the_uniform_agent_workflow_and_registry_row() -> None:
+    """Phase 4.2: one AgentSpec → n8n workflow + agent_registry row + Runtime Config field, no orchestrator edit."""
+    import sys
+
+    sys.path.insert(0, str(TEMPLATES))
+    from mas_agent_workflow import build_workflow
+
+    spec = _demo_spec()
+    wf = build_workflow(spec)
+    assert wf["name"] == "Agent — Demo Agent"
+    assert wf["id"] == spec.registry_row()["invoke"]["workflow_id"]
+    names = {n["name"] for n in wf["nodes"]}
+    for must in (
+        "When executed by another workflow",
+        "Runtime configuration",
+        "Normalize demo task",
+        "Open demo session",
+        "Session ready?",
+        "Format missing demo",
+        "Activity — Demo Agent accepted",
+        "Prepare AI Agent input",
+        "Call Knowledge Retrieval",
+        "Attach demo RAG evidence",
+        "Demo Agent AI Agent",
+        "Demo Agent Chat Model — Qwen",
+        "Summarize AI steps",
+        "Result stored?",
+        "Fetch demo result",
+        "Format demo result",
+        "Close demo session",
+        "count_wells",
+        "ask_engineer",
+    ):
+        assert must in names, must
+    by_name = {n["name"]: n for n in wf["nodes"]}
+    # Tools are HTTP Request (as tool) nodes on the service URL from Runtime Config; session id is bound by the workflow.
+    tool = by_name["count_wells"]
+    assert tool["type"] == "n8n-nodes-base.httpRequestTool"
+    assert "$('Runtime configuration').first().json.demo_agent_url + '/agent-tools/' + \"count_wells\"" in tool["parameters"]["url"]
+    assert "session_id: $('Open demo session').first().json.session_id" in tool["parameters"]["jsonBody"]
+    assert wf["connections"]["count_wells"] == {"ai_tool": [[{"node": "Demo Agent AI Agent", "type": "ai_tool", "index": 0}]]}
+    assert wf["connections"]["Result stored?"]["main"][1][0]["node"] == "Fetch demo result"
+    assert "n.indexOf('count_')===0 || n==='ask_engineer'" in by_name["Summarize AI steps"]["parameters"]["jsCode"]
+    assert by_name["Demo Agent AI Agent"]["parameters"]["options"]["systemMessage"] == spec.system_prompt
+    assert by_name["Open demo session"]["parameters"]["url"] == "={{ $json.demo_agent_url }}/agent-tools/open_session"
+    # No service credential → no auth on HTTP nodes; Activity events never carry service auth.
+    assert "authentication" not in by_name["Open demo session"]["parameters"]
+    assert "authentication" not in by_name["Activity — Demo Agent accepted"]["parameters"]
+    # Registry row: what the orchestrator plans with.
+    row = spec.registry_row()
+    assert row["invoke"] == {"kind": "n8n_workflow", "workflow_id": wf["id"], "workflow_name": "Agent — Demo Agent"}
+    assert row["hitl_policy"] == "agent_asks" and row["enabled"] is True
+    # The real agents are specs too, and the registry seed / Runtime Config fields come from them.
+    from agents import ALL, EXCEL_EXTRACTOR, SCHEDULE_BUILDER
+    from generate_mas_runtime_config import LAB_URLS
+    from mas_agent_registry import SEED
+
+    assert [r["agent_id"] for r in SEED] == [s.agent_id for s in ALL]
+    keys = [k for k, _ in LAB_URLS]
+    for s in ALL:
+        if s.service_url_key:
+            assert s.service_url_key in keys, s.agent_id
+    assert EXCEL_EXTRACTOR.service_credentials is not None and SCHEDULE_BUILDER.service_credentials is None
+    excel_wf = load_json(CORE / "excel-extractor-agent.workflow.json")
+    assert excel_wf["id"] == EXCEL_EXTRACTOR.resolved_workflow_id == SEED[0]["invoke"]["workflow_id"]

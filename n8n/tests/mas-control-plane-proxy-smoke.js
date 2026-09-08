@@ -84,6 +84,47 @@ const wipeOp = normalize({ body: { operation: 'wipe' } }, 'webhook');
 assert.equal(wipeOp[0].json.wiped, true);
 assert.equal(wipeOp[0].json.query.includes('TRUNCATE TABLE cases'), true);
 
+// Phase 2: the registry is executable. `schema` upgrades a live table in place and fills the new
+// columns for the seeded agents without overwriting engineer edits (fill, not update).
+const REGISTRY_COLUMNS = ['agent_id', 'title', 'when_to_use', 'input_required', 'output_provides', 'invoke', 'input_schema', 'output_schema', 'hitl_policy', 'enabled', 'version'];
+for (const col of ['invoke', 'input_schema', 'output_schema', 'hitl_policy', 'enabled', 'version']) {
+  assert.ok(schemaOnly[0].json.query.includes(`ALTER TABLE agent_registry ADD COLUMN IF NOT EXISTS ${col} `), `schema upgrades ${col}`);
+}
+assert.ok(schemaOnly[0].json.query.includes("CASE WHEN agent_registry.invoke = '{}'::jsonb THEN EXCLUDED.invoke ELSE agent_registry.invoke END"));
+assert.equal(schemaOnly[0].json.query.includes('when_to_use = EXCLUDED.when_to_use'), false, 'schema must not overwrite engineer-edited descriptions');
+assert.ok(schemaOnly[0].json.query.includes('"kind":"n8n_workflow"') && schemaOnly[0].json.query.includes('"kind":"http"'), 'seed carries invoke for every agent');
+assert.ok(schemaOnly[0].json.query.includes('{math_url}/agent/run'), 'HTTP agent URL is a Runtime Config placeholder, not a hardcoded host');
+
+const listAgents = normalize({ body: { operation: 'list_agents' } }, 'webhook');
+assert.equal(listAgents[0].json.query, `SELECT ${REGISTRY_COLUMNS.join(', ')} FROM agent_registry ORDER BY agent_id`);
+
+const upsert = normalize(
+  {
+    body: {
+      operation: 'upsert_agent',
+      row: {
+        agent_id: 'echo_agent',
+        title: 'Эхо',
+        when_to_use: 'Тестовый агент',
+        input_required: [],
+        output_provides: ['echo'],
+        invoke: { kind: 'n8n_workflow', workflow_id: 'wf-echo' },
+        enabled: false,
+        version: '3',
+      },
+    },
+  },
+  'webhook',
+);
+assert.ok(upsert[0].json.query.startsWith(`INSERT INTO agent_registry(${REGISTRY_COLUMNS.join(',')}) VALUES(`));
+assert.ok(upsert[0].json.query.includes('$6::jsonb') && upsert[0].json.query.includes('$10::boolean'));
+assert.deepEqual(upsert[0].json.params, [
+  'echo_agent', 'Эхо', 'Тестовый агент', '[]', '["echo"]', '{"kind":"n8n_workflow","workflow_id":"wf-echo"}', '{}', '{}', 'agent_asks', 'false', '3',
+]);
+const upsertDefaults = normalize({ body: { operation: 'upsert_agent', row: { agent_id: 'x' } } }, 'webhook');
+assert.deepEqual(upsertDefaults[0].json.params.slice(5), ['{}', '{}', '{}', 'agent_asks', 'true', '1']);
+assert.throws(() => normalize({ body: { operation: 'upsert_agent', row: {} } }, 'webhook'), /agent_id/);
+
 const prepared = [
   {
     operation: 'list_cases',

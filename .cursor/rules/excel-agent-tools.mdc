@@ -6,14 +6,16 @@ alwaysApply: false
 
 # Excel Extractor — LLM-first, deterministic extraction
 
-Flow: `open_session(agent_task)` loads **every** Excel attachment of the case (`excel`, `excel_1`, … from `GET /cases/{id}/state`; several `.xlsx` merged into one workbook, sheet = `<sheet> (<file>)`) → returns an **inventory** (`inspect.tables[{table_id,file,sheet,range,columns,sample}]`, `engineer_answers`, `rework_reason`) → the LLM picks table/columns → registry tools extract deterministically → `GET /sessions/{id}/result`.
+Flow: `ExcelExtractorAgent.open_session(agent_task)` (`app/agent.py`) loads **every** Excel attachment of the case (`excel`, `excel_1`, … from `GET /cases/{id}/state`; several `.xlsx` merged into one workbook, sheet = `<sheet> (<file>)`) → returns an **inventory** (`inspect.tables[{table_id,file,sheet,range,columns,sample}]`, `engineer_answers`, `rework_reason`) → the LLM picks table/columns → registry tools extract deterministically → `GET /sessions/{id}/result` = `agent.result(state)`.
+
+Layout (same as every agent service, checked by `mas-agent-kit/tests/test_service_shape.py`): `app/agent.py` — the `AgentService` class (session over the case's workbooks, inventory, `normalize_args` for n8n transport aliases, `after_tool` feed lines) and `agent = ExcelExtractorAgent()`; `app/agent_tools.py` — extraction tools + `ask_engineer`; `app/excel_tools.py` / `state_tools.py` — workbook discovery and session-state tools; `app/main.py` — `agent_router(agent, dependencies=[X-API-Key])` + `legacy_api.router` (`/api/v1/*`, direct API without n8n).
 
 ## Rules
 - No text heuristics decide which table or column holds wells/dates. `_COMMISSIONING_RE`, `suggested_capability`, `WELL_COL`/`DATE_COL` substring matching are gone — do not reintroduce them. The LLM passes `table_id`, `well_column`, `date_column` / `mapping` explicitly.
-- Tools are registry functions in `app/agent_run.py` / `app/excel_tools.py` (`@tool(_schema(...))`), served by the generic `POST /agent-tools/{name}` (`{session_id, …args}`). No per-tool FastAPI routes, no `/agent/run`.
+- Tools are registry functions in `app/agent_tools.py` / `app/excel_tools.py` (`@tool(_schema(...))`, the registry is `agent.tools`), served by the kit's generic `POST /agent-tools/{name}` (`{session_id, …args}`). No per-tool FastAPI routes, no `/agent/run`, no hand-written `/agent-tools` or `/sessions` routes in `main.py`.
 - Argument problems raise `ToolError(code, hint_for_llm, details)` → `{ok:false, error:{code,message,details}}`. Codes: `spec_incomplete`, `table_not_found`, `column_not_found`, `column_not_dates`, `no_rows`, `too_many_attempts` (3 calls), `question_not_human`. Always include `available_tables` / `available_columns` in `details`. These never reach the engineer.
 - Asking a human = `ask_engineer(question, options, topic)` only; the question passes `human_text_problems`. `options` are shown as buttons — use sheet/column names as the engineer sees them.
-- Results accumulate in `state["agent_result"]` via `_merge_result(part, summary, data)`: `data.facts` (dates) and `data.new_wells` (parameters table, canonical fields `NEW_WELL_FIELDS`, unmapped columns kept under their headers). `message` is prose with counts and well previews — never file names or tool names.
+- Results accumulate in `state["result"]` via `_merge_result(part, summary, data)` → `agent.store_result(state, agent.new_result(state, …))`: `data.facts` (dates) and `data.new_wells` (parameters table, canonical fields `NEW_WELL_FIELDS`, unmapped columns kept under their headers). `message` is prose with counts and well previews — never file names or tool names.
 - Optional JSON tool args (`mapping`, `options`) arrive as **strings** from n8n `$fromAI` — parse with `_parse_jsonish`.
 - n8n side: tools in `TOOLS` of `generate_excel_extractor_agent.py` via `tool_http(...)`; `SUMMARIZE_AI` decides skip-fetch only by "did an `extract_*`/`ask_engineer` call happen"; fallback question is prose.
 

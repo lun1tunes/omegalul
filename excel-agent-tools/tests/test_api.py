@@ -46,9 +46,15 @@ def workbook_bytes() -> bytes:
 
 
 def test_direct_uvicorn_import_loads_service_local_env_with_safe_precedence(tmp_path: Path) -> None:
-    """A native CMD launch must not depend on the .bat file to populate env."""
+    """A native CMD launch must not depend on the .bat file to populate env.
+
+    The copy mirrors the field checkout: the service folder next to ``mas-agent-kit/`` (a plain repo
+    module, not pip-installed) — ``app/__init__.py`` must find it from there.
+    """
+    repo = Path(__file__).resolve().parents[2]
     service = tmp_path / "excel-agent-tools"
-    shutil.copytree(Path(__file__).resolve().parents[1] / "app", service / "app")
+    shutil.copytree(repo / "excel-agent-tools" / "app", service / "app")
+    shutil.copytree(repo / "mas-agent-kit" / "mas_agent_kit", tmp_path / "mas-agent-kit" / "mas_agent_kit")
     (service / "excel-tools.env").write_text(
         f"API_KEY=from-excel-tools-env\nSESSION_DIR={tmp_path / 'sessions'}\n",
         encoding="utf-8",
@@ -103,11 +109,12 @@ def tool(client: TestClient, session_id: str, name: str, args: dict) -> dict:
     assert response.status_code == 200, response.text
     payload = response.json()
     assert payload["ok"], payload
-    return payload["result"]
+    return {key: value for key, value in payload.items() if key != "ok"}
 
 
 def test_full_excel_tool_flow_and_artifact(client: TestClient) -> None:
-    assert client.get("/health").json() == {"ok": True}
+    health = client.get("/health").json()
+    assert health["ok"] is True and health["agent_id"] == "excel_extractor" and "extract_commissioning" in health["tools"]
     assert client.get("/api/v1/tools").status_code == 401
     schemas = client.get("/api/v1/tools", headers={"X-API-Key": "test-key"}).json()["tools"]
     names = {item["function"]["name"] for item in schemas}
@@ -159,7 +166,7 @@ def test_successful_finalization_requires_successful_result_validation(client: T
         json={"name": "finalize_extraction", "args": {"status": "success", "data": {}}},
     ).json()
     assert missing_result["ok"] is False
-    assert missing_result["error"]["code"] == "INVALID_FINAL_OUTPUT"
+    assert missing_result["error"] == "INVALID_FINAL_OUTPUT"
 
     table_id = tool(client, session_id, "detect_tables", {"sheet": "Заказы"})["tables"][0]["table_id"]
     queried = tool(client, session_id, "query_table", {"table_id": table_id, "select": ["Заказ №"]})
@@ -170,7 +177,7 @@ def test_successful_finalization_requires_successful_result_validation(client: T
         json={"name": "finalize_extraction", "args": {"status": "success", "data": {"result_id": queried["result_id"]}}},
     ).json()
     assert unvalidated["ok"] is False
-    assert unvalidated["error"]["code"] == "RESULT_NOT_VALIDATED"
+    assert unvalidated["error"] == "RESULT_NOT_VALIDATED"
 
     rejected_validation = tool(
         client,
@@ -185,7 +192,7 @@ def test_successful_finalization_requires_successful_result_validation(client: T
         json={"name": "finalize_extraction", "args": {"status": "success", "data": {"result_id": queried["result_id"]}}},
     ).json()
     assert failed_finalization["ok"] is False
-    assert failed_finalization["error"]["code"] == "RESULT_NOT_VALIDATED"
+    assert failed_finalization["error"] == "RESULT_NOT_VALIDATED"
 
     accepted_validation = tool(client, session_id, "validate_result", {"result_id": queried["result_id"], "required_columns": ["Заказ №"]})
     assert accepted_validation["valid"] is True
@@ -202,7 +209,7 @@ def test_structured_errors_batch_and_clarification(client: TestClient) -> None:
     )
     assert batch.status_code == 200
     results = batch.json()["results"]
-    assert results[0]["ok"] is False and results[0]["error"]["code"] == "UNKNOWN_TOOL"
+    assert results[0]["ok"] is False and results[0]["error"] == "unknown_tool"
     assert results[1]["ok"] is True
     clarification = tool(client, session_id, "submit_clarification", {"questions": [{"id": "amount", "question": "Какую сумму использовать?", "type": "choice", "options": ["Сумма", "Сумма итого"]}]})
     answer = {"token": clarification["token"], "answers": [{"question_id": "amount", "answer": "Сумма итого"}]}
@@ -216,7 +223,7 @@ def test_structured_errors_batch_and_clarification(client: TestClient) -> None:
         headers={"X-API-Key": "test-key"},
         json={"name": "resolve_clarification", "args": {"token": clarification["token"], "answers": [{"question_id": "amount", "answer": "Сумма"}]}},
     ).json()
-    assert conflict["ok"] is False and conflict["error"]["code"] == "CLARIFICATION_ALREADY_RESOLVED"
+    assert conflict["ok"] is False and conflict["error"] == "CLARIFICATION_ALREADY_RESOLVED"
 
 
 def test_agent_tool_transport_accepts_n8n_envelopes_and_top_level_arguments(client: TestClient) -> None:
@@ -252,7 +259,7 @@ def test_agent_tool_transport_accepts_n8n_envelopes_and_top_level_arguments(clie
         json={"session_id": session_id, "table_id": table_id, "sample_rows": 1},
     )
     assert top_level.status_code == 200, top_level.text
-    assert top_level.json()["result"]["table_id"] == table_id
+    assert top_level.json()["table_id"] == table_id
 
     mixed = client.post(
         "/api/v1/agent-tools/describe_table",
@@ -292,7 +299,7 @@ def test_n8n_http_tool_1_1_object_json_fields_are_normalized(client: TestClient)
         },
     )
     assert queried.status_code == 200, queried.text
-    assert queried.json()["result"]["preview_rows"] == [{"Заказ №": "Z-1045", "Статус": "Оплачен"}]
+    assert queried.json()["preview_rows"] == [{"Заказ №": "Z-1045", "Статус": "Оплачен"}]
 
 
 def test_n8n_http_tool_optional_fields_remain_omitted(client: TestClient) -> None:
@@ -315,7 +322,7 @@ def test_n8n_http_tool_optional_fields_remain_omitted(client: TestClient) -> Non
     )
     assert queried.status_code == 200, queried.text
     assert queried.json()["ok"] is True
-    assert queried.json()["result"]["row_count"] == 3
+    assert queried.json()["row_count"] == 3
 
 
 def test_rejects_pathlike_or_non_excel_upload(client: TestClient) -> None:
@@ -331,7 +338,7 @@ def test_rejects_malformed_or_expanding_xlsx(client: TestClient, monkeypatch: py
     )
     assert malformed.status_code == 415
 
-    monkeypatch.setattr("app.main.MAX_ZIP_UNCOMPRESSED_SIZE", 10)
+    monkeypatch.setattr("app.legacy_api.MAX_ZIP_UNCOMPRESSED_SIZE", 10)
     archive = io.BytesIO()
     with zipfile.ZipFile(archive, "w") as zipped:
         zipped.writestr("[Content_Types].xml", "x" * 20)
@@ -346,7 +353,7 @@ def test_rejects_malformed_or_expanding_xlsx(client: TestClient, monkeypatch: py
 
 def test_upload_schedules_ttl_cleanup_in_background(client: TestClient, monkeypatch: pytest.MonkeyPatch) -> None:
     calls: list[bool] = []
-    monkeypatch.setattr("app.main.cleanup_expired_sessions", lambda: calls.append(True))
+    monkeypatch.setattr("app.legacy_api.cleanup_expired_sessions", lambda: calls.append(True))
     upload(client)
     # TestClient waits for response background tasks, proving cleanup is scheduled
     # through FastAPI instead of running inline before session creation.
@@ -593,7 +600,7 @@ def test_n8n_session_endpoints_open_extract_and_tool_alias(client: TestClient) -
     )
     assert incomplete.status_code == 200, incomplete.text
     assert incomplete.json()["ok"] is False
-    assert incomplete.json()["error"]["code"] == "spec_incomplete"
+    assert incomplete.json()["error"] == "spec_incomplete"
     extracted = client.post(
         "/agent-tools/extract_commissioning",
         headers={"X-API-Key": "test-key"},
@@ -601,7 +608,7 @@ def test_n8n_session_endpoints_open_extract_and_tool_alias(client: TestClient) -
     )
     assert extracted.status_code == 200, extracted.text
     assert extracted.json()["ok"] is True
-    assert extracted.json()["result"]["status"] == "completed"
+    assert extracted.json()["status"] == "completed"
     fetched = client.get(f"/sessions/{session_id}/result", headers={"X-API-Key": "test-key"})
     assert fetched.status_code == 200
     result = fetched.json()
@@ -621,11 +628,11 @@ def test_n8n_session_endpoints_open_extract_and_tool_alias(client: TestClient) -
 
 
 def test_n8n_json_sequence_accepts_arrays_and_gapped_numeric_keys() -> None:
-    from app.main import _n8n_json_sequence, normalize_agent_tool_args
+    from app.agent import _n8n_json_sequence, agent
 
     assert _n8n_json_sequence(["well", "date"]) == ["well", "date"]
     assert _n8n_json_sequence({"0": "well", "2": "rate"}) == ["well", "rate"]
-    args = normalize_agent_tool_args(
+    args = agent.normalize_args(
         "query_table",
         {
             "table_id": "t1",
