@@ -2097,10 +2097,11 @@ def test_excel_protocol_cards_use_schedule_aligned_skeleton_and_retrieval_surfac
             "n/a",
         ),
         "excel-agent-query-and-result-protocol": (
-            "tail=true",
+            "extract_table",
+            "query_table",
             "save_agent_plan",
             "validate_result",
-            "bounded query repair",
+            "tail=true",
         ),
         "excel-agent-clarification-and-continuation": (
             "clarification_needed",
@@ -2121,8 +2122,8 @@ def test_excel_protocol_cards_use_schedule_aligned_skeleton_and_retrieval_surfac
         block = cards[kid].get("schedule_knowledge_block") if isinstance(cards[kid].get("schedule_knowledge_block"), dict) else cards[kid]
         expected_revision = {
             "excel-agent-trust-boundary": "4",
-            "excel-agent-discovery-and-tables": "5",
-            "excel-agent-query-and-result-protocol": "4",
+            "excel-agent-discovery-and-tables": "6",
+            "excel-agent-query-and-result-protocol": "5",
             "excel-agent-clarification-and-continuation": "4",
             "excel-agent-rag-and-operations": "4",
         }

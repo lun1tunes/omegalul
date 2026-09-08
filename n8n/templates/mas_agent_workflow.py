@@ -279,7 +279,8 @@ class AgentWorkflow:
             "  inspect:opened.inspect||{},\n"
             + (f"  {extra},\n" if extra else "")
             + "  engineer_answers:engineerAnswers,\n"
-            "  ...(reworkReason?{rework_reason:reworkReason}:{})\n"
+            "  ...(reworkReason?{rework_reason:reworkReason}:{}),\n"
+            "  ...(opened.expected_output&&typeof opened.expected_output==='object'&&Object.keys(opened.expected_output).length?{expected_output:opened.expected_output}:{})\n"
             "});\n"
             "return [{json:{...opened,session_id:opened.session_id,agent_input:planner_input,planner_input,schedule_retrieval_request,retrieval_selector}}];\n"
         )

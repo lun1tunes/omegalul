@@ -19,12 +19,14 @@
       "artifacts": {
         "excel": "книга Excel инженера (одна или несколько)"
       },
-      "handoff_message": "какие факты извлечь (даты ввода, параметры новых скважин, …)"
+      "handoff_message": "какие факты извлечь (даты ввода, параметры новых скважин, произвольная таблица, …)",
+      "expected_output": "форма наборов: datasets[{name, description, fields[{name, type, description}]}] и consumers (что нужно следующим агентам из input_schema.data)"
     },
     "output_schema": {
       "data": {
-        "facts": "[{well, date}] — даты ввода скважин",
-        "new_wells": "[{well, group, …}] — параметры новых скважин"
+        "facts": "[{well, date}] — даты ввода скважин (extract_commissioning)",
+        "new_wells": "[{well, group, …}] — параметры новых скважин (extract_well_parameters)",
+        "<name>": "набор {kind:dataset, name, fields, rows|preview, artifact_id} — любая другая таблица (extract_table); имя из expected_output"
       }
     },
     "hitl_policy": "agent_asks",

@@ -9,14 +9,16 @@ Runs, in order, and prints a summary table (stops at the first failing stage unl
   combat     PUBLISH_ACTIVITY=0 combat-dates-revise/run_integration_cases.py (offline engine check)
   live       (only with --live) scripts/lab_soft_redeploy.py --skip-health + run_live_five.py [6 cases]
              + run_live_demo_agent.py [template agent: in_progress → resume source=agent;
-               three_agent_chain: excel → builder → demo with state.plan]  (~15 min)
+               three_agent_chain: excel → builder → demo with state.plan]
+             + run_live_excel_datasets.py [extract_table: named dataset, not commissioning facts]  (~15 min)
 
 Usage:
   python3 scripts/mas_gate.py                 # offline gate (≈1 min)
-  python3 scripts/mas_gate.py --live          # offline gate + lab redeploy + 6 live cases + 2 demo agent cases
+  python3 scripts/mas_gate.py --live          # offline gate + lab redeploy + 6 live cases + 2 demo agent cases + excel_datasets
   python3 scripts/mas_gate.py --only smokes,pytest
   python3 scripts/mas_gate.py --live --cases combat_case3
   python3 scripts/mas_gate.py --live --cases demo_agent   # only the template agent cases (long job + three-agent chain)
+  python3 scripts/mas_gate.py --live --cases excel_datasets  # extract_table live: events workbook, no .INC
 
 Field note: this script needs Node.js, Docker Compose and the lab .venv — it is developer tooling.
 The field path is docs.md §5 (commands) and the n8n Health Check form.
@@ -147,6 +149,7 @@ def stage_combat() -> tuple[bool, str]:
 
 
 DEMO_CASE = "demo_agent"
+DATASETS_CASE = "excel_datasets"
 
 
 def stage_live(cases: list[str]) -> tuple[bool, str]:
@@ -155,7 +158,8 @@ def stage_live(cases: list[str]) -> tuple[bool, str]:
         return False, "lab_soft_redeploy failed:\n" + tail(out, 20)
     ok = True
     lines: list[str] = []
-    five = [c for c in cases if c != DEMO_CASE]
+    extra = {DEMO_CASE, DATASETS_CASE}
+    five = [c for c in cases if c not in extra]
     if not cases or five:
         code, out = run(
             [py(), "simulation-model-example/run_live_five.py", *five],
@@ -175,13 +179,21 @@ def stage_live(cases: list[str]) -> tuple[bool, str]:
         )
         ok = ok and code == 0
         lines += [ln for ln in out.splitlines() if ln.startswith('{"id"') or ln.startswith("FAIL ")] or [tail(out, 20)]
+    if not cases or DATASETS_CASE in cases:
+        code, out = run(
+            [py(), "simulation-model-example/run_live_excel_datasets.py"],
+            env={"PYTHONPATH": "mas-activity-service"},
+            timeout=1200,
+        )
+        ok = ok and code == 0
+        lines += [ln for ln in out.splitlines() if ln.startswith('{"id"') or ln.startswith("FAIL ")] or [tail(out, 20)]
     return ok, "\n".join(lines)
 
 
 def main() -> int:
     parser = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
     parser.add_argument("--live", action="store_true", help="also redeploy the lab and run the live cases")
-    parser.add_argument("--cases", default="", help="comma-separated run_live_five case ids and/or demo_agent (default: all six + demo_agent)")
+    parser.add_argument("--cases", default="", help="comma-separated run_live_five case ids and/or demo_agent, excel_datasets (default: all six + demo_agent + excel_datasets)")
     parser.add_argument("--only", default="", help="comma-separated stages: regen,smokes,pytest,combat,live")
     parser.add_argument("--keep-going", action="store_true", help="run every stage even after a failure")
     args = parser.parse_args()

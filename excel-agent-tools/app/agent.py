@@ -24,7 +24,7 @@ from datetime import date, datetime
 from pathlib import Path
 from typing import Any
 
-from mas_agent_kit import ActivityClient, AgentService, CasePacket
+from mas_agent_kit import ActivityClient, AgentService, CasePacket, plural_ru
 
 from .sessions import STORE, init_state, session_dir, session_file
 from .tools import TOOLS, execute_tool
@@ -51,8 +51,10 @@ TOOL_ERROR_PROGRESS = {
     "table_not_found": "Уточняю таблицу",
     "column_not_dates": "Выбранная колонка не похожа на даты — подбираю другую",
     "spec_incomplete": "Уточняю, какую таблицу и колонки взять",
+    "name_reserved": "Подбираю имя набора данных",
     "question_not_human": "Формулирую вопрос инженеру",
 }
+EXTRACT_TOOLS = {"extract_commissioning", "extract_well_parameters", "extract_table", "ask_engineer"}
 
 
 def excel_request(question_id: str, question: str) -> dict[str, Any]:
@@ -97,8 +99,26 @@ class ExcelExtractorAgent(AgentService):
     def result(self, state: dict[str, Any]) -> dict[str, Any]:
         result = state.get("result")
         if isinstance(result, dict) and result.get("status"):
-            return result
+            return self._with_expected_coverage(result)
         return self.new_result(state, "needs_input", NO_EXTRACT_QUESTION, issues=[{"type": "no_extract"}], requests=[excel_request("Q-clarify", NO_EXTRACT_QUESTION)])
+
+    @staticmethod
+    def _with_expected_coverage(result: dict[str, Any]) -> dict[str, Any]:
+        """A completed result that lacks datasets the orchestrator asked for says so — as a fact, not a failure.
+
+        ``data.expected`` (``expected_coverage`` in ``agent_tools``) is written by the extraction tools; the
+        orchestrator decides whether to re-delegate (rework) or ask the engineer.
+        """
+        data = result.get("data") if isinstance(result.get("data"), dict) else {}
+        coverage = data.get("expected") if isinstance(data.get("expected"), dict) else {}
+        missing = [str(n) for n in (coverage.get("missing") or []) if str(n)]
+        if result.get("status") != "completed" or not missing:
+            return result
+        issues = [i for i in (result.get("issues") or []) if not (isinstance(i, dict) and i.get("type") == "expected_output_missing")]
+        issues.append({"type": "expected_output_missing", "datasets": missing})
+        tail = " Один из запрошенных наборов данных не извлечён." if len(missing) == 1 else f" Не извлечены {plural_ru(len(missing), 'запрошенный набор данных', 'запрошенных набора данных', 'запрошенных наборов данных')}."
+        message = str(result.get("message") or "")
+        return {**result, "issues": issues, "message": message if tail.strip() in message else (message + tail).strip()}
 
     # -- hooks ----------------------------------------------------------------------------------
 
@@ -141,6 +161,18 @@ class ExcelExtractorAgent(AgentService):
             if isinstance(filters, dict):
                 normalized["filters"] = _canonical_filters(filters)
 
+        if tool_name == "extract_table":
+            # Function-calling vocabulary → the API's names; never invents a table, a name or a column.
+            for alias, canonical in (("dataset", "name"), ("dataset_name", "name"), ("mapping", "columns"), ("fields", "columns"), ("select", "columns"), ("key", "key_field")):
+                if canonical not in normalized and alias in normalized:
+                    normalized[canonical] = normalized.pop(alias)
+            for field in ("columns", "filters", "unpivot", "types"):
+                if isinstance(normalized.get(field), dict):
+                    normalized[field] = _n8n_json_sequence(normalized[field])
+            filters = normalized.get("filters")
+            if isinstance(filters, dict):
+                normalized["filters"] = _canonical_filters(filters)
+
         if tool_name == "save_agent_plan":
             candidate = normalized.get("verified_table")
             table_id = candidate.get("table_id") if isinstance(candidate, dict) else candidate
@@ -174,7 +206,7 @@ class ExcelExtractorAgent(AgentService):
             rows = result.get("preview") or result.get("rows") or result.get("records") or []
             n = result.get("row_count") if isinstance(result.get("row_count"), int) else (len(rows) if isinstance(rows, list) else 0)
             message = f"Читаю таблицу: {n} строк"
-        elif tool_name in {"extract_commissioning", "extract_well_parameters", "ask_engineer"} and not result.get("ok", True):
+        elif tool_name in EXTRACT_TOOLS and not result.get("ok", True):
             message = TOOL_ERROR_PROGRESS.get(str(result.get("code") or ""), "")
         if message:
             self.activity_for_state(state).progress(message)

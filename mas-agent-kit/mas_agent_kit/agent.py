@@ -33,6 +33,7 @@ from typing import Any
 from fastapi import APIRouter, Body, FastAPI, HTTPException, Request
 
 from .activity import ActivityClient
+from .dataset import expected_output
 from .errors import SessionNotFound
 from .hitl import engineer_answers
 from .packet import CasePacket
@@ -124,7 +125,12 @@ class AgentService:
         }
 
     def opened(self, state: dict[str, Any], **brief: Any) -> dict[str, Any]:
-        """``open_session`` success: session id + what the LLM needs to pick a tool."""
+        """``open_session`` success: session id + what the LLM needs to pick a tool.
+
+        ``expected_output`` is the shape the orchestrator asked for (``inputs.expected_output``: datasets with
+        fields, consumers with their ``input_schema.data``) — ``{}`` when it asked for nothing in particular.
+        """
+        inputs = state.get("inputs") if isinstance(state.get("inputs"), dict) else {}
         return {
             "ok": True,
             "session_id": state["session_id"],
@@ -132,7 +138,8 @@ class AgentService:
             "objective": str(state.get("objective") or ""),
             "handoff_message": str(state.get("handoff_message") or ""),
             "engineer_answers": engineer_answers(state.get("context")),
-            "rework_reason": str((state.get("inputs") or {}).get("rework_reason") or "") if isinstance(state.get("inputs"), dict) else "",
+            "rework_reason": str(inputs.get("rework_reason") or ""),
+            "expected_output": expected_output(inputs),
             **brief,
         }
 

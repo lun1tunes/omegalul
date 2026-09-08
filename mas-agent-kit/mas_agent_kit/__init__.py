@@ -14,6 +14,7 @@ Runtime needs: ``fastapi`` and ``filelock`` (``requirements.txt`` next to this f
 
 from .activity import ActivityClient, compact_for_log
 from .agent import AgentService, agent_router, create_agent_app
+from .dataset import dataset_entry, dataset_rows, expected_names, expected_output, is_dataset, upstream_datasets
 from .errors import SessionNotFound, ToolError, error_envelope
 from .hitl import engineer_answers, engineer_request_from_args, hitl_payloads
 from .packet import CasePacket, flatten_artifacts, upstream_agent_data
@@ -36,13 +37,18 @@ __all__ = [
     "agent_router",
     "compact_for_log",
     "create_agent_app",
+    "dataset_entry",
+    "dataset_rows",
     "engineer_answers",
     "engineer_request",
     "engineer_request_from_args",
     "error_envelope",
+    "expected_names",
+    "expected_output",
     "flatten_artifacts",
     "hitl_payloads",
     "human_text_problems",
+    "is_dataset",
     "list_preview",
     "in_progress",
     "needs_input",
@@ -53,4 +59,5 @@ __all__ = [
     "slug",
     "tool_schema",
     "upstream_agent_data",
+    "upstream_datasets",
 ]

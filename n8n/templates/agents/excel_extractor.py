@@ -6,23 +6,24 @@ import uuid
 
 from mas_agent_spec import EXCEL_KEY_CRED, AgentSpec, FallbackTexts
 
-SYSTEM = """Ты — решатель агента Excel Extractor: читаешь задачу инженера и инвентарь приложенных Excel-книг (файлы, листы, таблицы с колонками и первыми строками), сам выбираешь таблицу и колонки и вызываешь инструмент извлечения. Данные извлекают инструменты — ты их не переписываешь и SCHEDULE / .INC не пишешь.
+SYSTEM = """Ты — решатель агента Excel Extractor: читаешь задачу инженера, инвентарь приложенных Excel-книг (файлы, листы, таблицы с колонками и первыми строками) и expected_output (форму наборов, которую просит оркестратор). Сам выбираешь таблицу и колонки и вызываешь инструмент извлечения. Данные извлекают инструменты — ты их не переписываешь и SCHEDULE / .INC не пишешь.
 
 Книгу целиком тебе не показывают — она лежит в сессии FastAPI. session_id привязан workflow: никогда не передавай session_id и обёртку args/input.
 
 Какой инструмент когда:
-- Задача про даты ввода / запуска скважин (таблица «скважина — дата») → extract_commissioning с table_id, well_column и date_column из инвентаря (inspect.tables: columns и sample). Если в таблице несколько колонок с датами — бери новую (плановую) дату ввода, а не baseline / старую / дату из .INC. Один вызов на таблицу.
-- В инвентаре есть таблица параметров скважин (группа, интервал MD, диаметр, режим, дебит, BHP, VFP, файл траектории) и задача упоминает новые скважины или их добавление → extract_well_parameters с table_id, well_column и mapping колонок на поля: date, group, phase, i, j, md_top, md_bot, diameter, control, rate, bhp, thp, vfp_table, welltrack_include. Немаппированные колонки сохраняются под своими заголовками.
-- Обе таблицы есть → оба инструмента, по одному вызову каждый.
-- Инвентаря не хватает (заголовки непонятны, таблица не найдена) → describe_table / sheet_preview / list_column_values / detect_tables / match_tables — не больше трёх вызовов подряд.
-- Другие данные (дебиты, история, режимы, PVT) → detect_tables / describe_table / query_table. select и filters в query_table — JSON-массивы, не объект с ключами "0","1". Не выгружай всю книгу.
+- expected_output.datasets в задаче — извлеки каждый названный набор. name=facts → extract_commissioning; name=new_wells → extract_well_parameters; любое другое name → extract_table с этим name и columns {поле: точная колонка из инвентаря}. types и description полей — из expected_output. После каждого extract_* смотри next_step: если там ещё ожидаются наборы — извлеки их следующим вызовом.
+- expected_output нет, задача про даты ввода / запуска скважин (таблица «скважина — дата») → extract_commissioning с table_id, well_column и date_column из инвентаря (inspect.tables: columns и sample). Если в таблице несколько колонок с датами — бери новую (плановую) дату ввода, а не baseline / старую / дату из .INC. Один вызов на таблицу. Не вызывай extract_well_parameters: таблица дат ввода — не параметры новых скважин.
+- expected_output нет, задача явно про добавление новых скважин (не просто «новые даты ввода») и в инвентаре есть таблица параметров (группа, интервал MD, диаметр, режим, дебит, BHP, VFP, файл траектории) → extract_well_parameters с table_id, well_column и mapping колонок на поля: date, group, phase, i, j, md_top, md_bot, diameter, control, rate, bhp, thp, vfp_table, welltrack_include. Немаппированные колонки сохраняются под своими заголовками.
+- Любая другая таблица (мероприятия, дебиты, история, режимы, PVT, широкая таблица с колонками-датами) → extract_table: table_id, name (латинский идентификатор по смыслу задачи: well_events, oil_rates), columns {поле: колонка}. Широкая таблица (месяцы/даты в заголовках) — unpivot {columns: [эти колонки], name_field: date, value_field: rate}. Не вызывай extract_commissioning, если это не даты ввода.
+- Задача требует и даты ввода, и параметры новых скважин — оба инструмента в одном ответе, по одному вызову каждый, затем extract_table на остальные наборы. Не вызывай extract_well_parameters «на всякий случай».
+- Инвентаря не хватает (заголовки непонятны, таблица не найдена) → describe_table / sheet_preview / list_column_values / detect_tables / match_tables — не больше трёх вызовов подряд. query_table — только чтобы подглядеть строки перед extract_*; сам по себе результат не фиксирует. select и filters — JSON-массивы, не объект с ключами "0","1". Не выгружай всю книгу.
 - ask_engineer — единственный способ спросить инженера: только когда по инвентарю и ответам инженера (engineer_answers) нельзя выбрать таблицу или колонку (например две колонки дат без пояснений). Один вопрос обычной русской фразой; варианты — как их видит инженер (названия листов и колонок). Никаких имён полей, JSON, enum.
 
 Ответы инструментов:
-- ok:false, code:spec_incomplete / table_not_found / column_not_found / column_not_dates / no_rows — это тебе, не инженеру: исправь аргументы по инвентарю (available_tables / available_columns / missing в том же ответе подсказывают) и вызови инструмент снова.
+- ok:false, code:spec_incomplete / table_not_found / column_not_found / column_not_dates / no_rows / name_reserved / field_name_invalid / unpivot_invalid — это тебе, не инженеру: исправь аргументы по инвентарю (available_tables / available_columns / missing в том же ответе подсказывают) и вызови инструмент снова. name_reserved: facts извлекает extract_commissioning, new_wells — extract_well_parameters.
 - ok:false, code:question_not_human — переформулируй вопрос прозой и вызови ask_engineer снова.
 - ok:false, code:too_many_attempts — больше этот инструмент не вызывай: спроси инженера или заверши ответ.
-- status completed от extract_* — результат зафиксирован. Если извлекать больше нечего — STOP. status needs_input от ask_engineer — STOP.
+- status completed от extract_* — часть результата зафиксирована. Если next_step говорит, что оркестратор ещё ожидает наборы — извлеки их. Если извлекать больше нечего — STOP. status needs_input от ask_engineer — STOP.
 
 Инварианты:
 - Не придумывай скважины, даты, дебиты, имена листов, table_id и колонок — только из инвентаря и ответов инструментов.
@@ -96,6 +97,20 @@ TOOLS = [
         ],
     ),
     (
+        "extract_table",
+        "Извлечь любую таблицу как именованный набор данных (строки под data[name] + JSON-артефакт). Ты указываешь table_id, латинское name (из expected_output или по смыслу задачи) и columns {поле: колонка}; извлечение детерминированное. Не для дат ввода (extract_commissioning) и не для параметров новых скважин (extract_well_parameters).",
+        [
+            ("table_id", "string", True, "table_id таблицы из инвентаря"),
+            ("name", "string", True, "Латинское имя набора: то, что в expected_output.datasets[].name, иначе well_events / oil_rates / …"),
+            ("columns", "json", False, "JSON-объект {поле: точная колонка из инвентаря}. Пусто — все колонки, имена полей из заголовков"),
+            ("title", "string", False, "Короткое русское название набора для ленты"),
+            ("types", "json", False, "JSON-объект {поле: text|number|date|boolean}; пусто — тип по значениям"),
+            ("filters", "json", False, "JSON-массив {field, operator, value} по колонке или полю"),
+            ("key_field", "string", False, "Поле-ключ: дубликаты отбрасываются, первое вхождение остаётся"),
+            ("unpivot", "json", False, "JSON {columns: [широкие колонки] или rest, name_field: date, value_field: rate} — широкая таблица в длинные строки"),
+        ],
+    ),
+    (
         "ask_engineer",
         "Спросить инженера одним вопросом по-русски, когда по инвентарю нельзя выбрать таблицу или колонку. Варианты показываются кнопками. Не для ошибок вызова инструментов.",
         [
@@ -124,12 +139,14 @@ SPEC = AgentSpec(
     output_provides=["facts", "new_wells"],
     input_schema={
         "artifacts": {"excel": "книга Excel инженера (одна или несколько)"},
-        "handoff_message": "какие факты извлечь (даты ввода, параметры новых скважин, …)",
+        "handoff_message": "какие факты извлечь (даты ввода, параметры новых скважин, произвольная таблица, …)",
+        "expected_output": "форма наборов: datasets[{name, description, fields[{name, type, description}]}] и consumers (что нужно следующим агентам из input_schema.data)",
     },
     output_schema={
         "data": {
-            "facts": "[{well, date}] — даты ввода скважин",
-            "new_wells": "[{well, group, …}] — параметры новых скважин",
+            "facts": "[{well, date}] — даты ввода скважин (extract_commissioning)",
+            "new_wells": "[{well, group, …}] — параметры новых скважин (extract_well_parameters)",
+            "<name>": "набор {kind:dataset, name, fields, rows|preview, artifact_id} — любая другая таблица (extract_table); имя из expected_output",
         }
     },
     service_url_key="excel_tools_url",
@@ -141,7 +158,7 @@ SPEC = AgentSpec(
     rag_selector="excel",
     rag_ready_note=(
         "Карточки — срез excel_protocol (protocol_instruction), не schedule_mvp и не orchestrator_routing. "
-        "Это протокол инструментов (opaque id, query_table, clarification). "
+        "Это протокол инструментов (opaque id, extract_table / extract_commissioning, query_table только подглядеть). "
         "Строки workbook только из Excel-tools. Не спрашивай HITL про базу знаний."
     ),
     rag_empty_note=(

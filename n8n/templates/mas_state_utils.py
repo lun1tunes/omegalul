@@ -511,7 +511,7 @@ function reconcileLedgerAnswers(state){
     if(seen.has(String(qid))) continue;
     const q=questions.find(x=>x&&String(x.question_id||x.id||'')===String(qid))||{};
     const reviewAccept=isResultReviewGate(qid)&&humanAnswerChoice(ans)==='accept';
-    ledgerPush(state,{kind:'human',step:Number(state.step_count||0),question_id:String(qid),question:String(q.question||'').slice(0,200),answer:humanAnswerText(ans).slice(0,300),...(reviewAccept?{review_accept:true}:{})});
+    ledgerPush(state,{kind:'human',step:Number(state.step_count||0),question_id:String(qid),question:String(q.question||'').slice(0,200),answer:humanAnswerText(ans).slice(0,300),...reviewAcceptFields(reviewAccept, q)});
     state.ledger.last_human_step=Number(state.step_count||0);
     state.ledger.stall_count=0;
     changed=true;
@@ -566,20 +566,32 @@ function ledgerLastAgentEntry(state, agentId){
   return rows.length?rows[rows.length-1]:null;
 }
 function ledgerHasNewInputsSince(state, entry){
-  /* True when a human answered (text / choice / files) after the given journal entry. */
+  /* True when a human answered (text / choice / files) after the given journal entry. Accepting a
+     result in a review gate is not new input for that agent: re-delegating after «принять» is still a repeat. */
   const l=sanitizeLedger(state.ledger);
   const idx=l.history.indexOf(entry);
   const tail=idx>=0?l.history.slice(idx+1):l.history;
-  return tail.some(e=>e.kind==='human');
+  return tail.some(e=>e.kind==='human'&&e.review_accept!==true);
 }
+/* What the human accepted in the last review gate, if nothing ran since: 'case' — the result is the
+   outcome of the whole task (finish); 'agent' — one agent's result is final but the plan has steps
+   for other agents (continue); '' — no acceptance. CASE-6aa00e09-c6d71f: an acceptance about the Excel
+   result finished the case before the Builder ever ran. */
 function ledgerHumanAccepted(state){
   const l=sanitizeLedger(state.ledger);
   for(let i=l.history.length-1;i>=0;i--){
     const e=l.history[i];
-    if(e.kind==='agent') return false;
-    if(e.kind==='human'&&e.review_accept===true) return true;
+    if(e.kind==='agent') return '';
+    if(e.kind==='human'&&e.review_accept===true) return e.review_scope==='agent'?'agent':'case';
   }
-  return false;
+  return '';
+}
+/* Open plan items owned by agents that have not completed anything yet — the part of the plan a
+   review of one agent's result cannot cover. */
+function planOpenForUnstartedAgents(state, exceptAgentId){
+  const done=new Set(ledgerAgentEntries(state).filter(e=>e.status==='completed').map(e=>String(e.agent_id||'')));
+  const skip=String(exceptAgentId||'');
+  return planOpenItems(state.plan).filter(p=>p.agent_id&&p.agent_id!==skip&&!done.has(p.agent_id));
 }
 function humanAnswerText(answer){
   if(answer==null) return '';
@@ -596,6 +608,13 @@ function humanAnswerChoice(answer){
 }
 function isResultReviewGate(qid){
   return String(qid||'').indexOf('result_review')===0;
+}
+/* Journal fields of a human answer that accepted a review gate: what was accepted — the whole task
+   ('case', default) or one agent's result while the plan goes on ('agent', set by the question). */
+function reviewAcceptFields(accepted, question){
+  if(!accepted) return {};
+  const scope=question&&question.review_scope==='agent'?'agent':'case';
+  return {review_accept:true,review_scope:scope};
 }
 function agentTitle(agentId, registry){
   const rows=Array.isArray(registry)?registry:[];
@@ -629,12 +648,21 @@ function buildResultReviewQuestion(state, agentId, registry, reason){
     ?'Оркестратор исчерпал лимит шагов. '
     :`${title} уже выполнил эту задачу, новых данных с тех пор не появилось. `;
   const body=summary?`Результат: ${summary}. `:'';
+  /* The plan still has steps for agents that have not run: accepting this result closes only this
+     agent's part (review_scope 'agent'), the orchestrator goes on with the plan. */
+  const rest=reason==='step_limit'?[]:planOpenForUnstartedAgents(state, agentId);
+  const scope=rest.length?'agent':'case';
+  const restTitles=rest.map(p=>String(p.title||'').trim()).filter(t=>t&&!looksMachineText(t)).slice(0,3);
+  const ask=scope==='agent'
+    ?`Принять этот результат и продолжить остальные шаги${restTitles.length?` (${restTitles.join('; ')})`:''} или нужна доработка? Если доработка — напишите, что именно не так.`
+    :'Принять результат как итог задачи или нужна доработка? Если доработка — напишите, что именно не так.';
   return {
     question_id:`result_review_${Number(state.step_count||0)}`,
     kind:'result_approval',
-    question:`${lead}${body}Принять результат как итог задачи или нужна доработка? Если доработка — напишите, что именно не так.`,
+    review_scope:scope,
+    question:`${lead}${body}${ask}`,
     options:[
-      {value:'accept',label:'Принять результат'},
+      {value:'accept',label:scope==='agent'?'Принять результат и продолжить':'Принять результат'},
       {value:'rework',label:'Нужна доработка — опишу ниже'}
     ]
   };
@@ -661,7 +689,7 @@ function compactLedger(state){
   const l=sanitizeLedger(state.ledger);
   const rows=l.history.slice(-8).map(e=>{
     if(e.kind==='human'){
-      return {step:e.step,kind:'human',question:String(e.question||'').slice(0,120),answer:String(e.answer||'').slice(0,160),...(e.review_accept?{review_accept:true}:{})};
+      return {step:e.step,kind:'human',question:String(e.question||'').slice(0,120),answer:String(e.answer||'').slice(0,160),...(e.review_accept?{review_accept:true,review_scope:e.review_scope==='agent'?'agent':'case'}:{})};
     }
     if(e.kind==='verification'){
       return {step:e.step,kind:'verification',verdict:'rejected',uncovered:(Array.isArray(e.uncovered)?e.uncovered:[]).slice(0,6).map(s=>String(s).slice(0,160))};
@@ -739,21 +767,67 @@ function applyPlanUpdate(state, updates, registry){
   state.plan=[...by.values()];
   return {accepted,rejected};
 }
-/* Actions drive statuses (flags are the model's habit, actions are its intent): the first pending item of
-   the agent being called becomes active; when that agent returns completed its active items are done. */
-function planMarkAgentActive(state, agentId){
+/* Actions drive statuses (flags are the model's habit, actions are its intent): the plan item the call
+   names (action.task_id) becomes active — else the first pending item of the agent being called; when
+   that agent returns completed, its active item is done, and leftover open items it owns close too if
+   the slot already has every output_provides key (a second handoff without new input is a loop). */
+function planMarkAgentActive(state, agentId, taskId){
   const plan=sanitizePlan(state.plan);
   const id=String(agentId||'').trim();
-  if(id&&!plan.some(p=>p.agent_id===id&&p.status==='active')){
+  const named=planItemForCall(plan, id, taskId);
+  if(named) named.status='active';
+  else if(id&&!plan.some(p=>p.agent_id===id&&p.status==='active')){
     const next=plan.find(p=>p.agent_id===id&&p.status==='pending');
     if(next) next.status='active';
   }
   state.plan=plan;
 }
-function planMarkAgentDone(state, agentId){
+/* The plan item a call_agent names: action.task_id equal to an item id owned by that agent (or unowned).
+   Returns the item object of the array given (callers mutate it), not a sanitized copy. */
+function planItemForCall(plan, agentId, taskId){
+  const tid=String(taskId||'').trim();
+  if(!tid) return null;
+  const item=(Array.isArray(plan)?plan:[]).find(p=>p&&String(p.id||'')===tid);
+  if(!item) return null;
+  return (!item.agent_id||String(item.agent_id)===String(agentId||'').trim())?item:null;
+}
+/* A second call to an agent that already completed is new work — not a repeat — when it names an open
+   plan item other than the one the agent completed (CASE-6aa00e09-c6d71f: two results as two items; the
+   second call was sent to review as a repeat and the case finished without the next agent). Leftover
+   items of a completed agent are not open once its data already has every output_provides key
+   (CASE-6aa029de-c5e23d: a second handoff without new input is a loop). The plan is capped
+   (PLAN_MAX_ITEMS) and every step costs budget, so this cannot loop. */
+function planNamesNewWork(state, agentId, taskId){
+  const item=planItemForCall(sanitizePlan(state.plan), agentId, taskId);
+  if(!item||!PLAN_OPEN_STATUSES.includes(item.status)) return false;
+  const doneTasks=new Set(ledgerAgentEntries(state, agentId).filter(e=>e.status==='completed').map(e=>String(e.task_id||'')));
+  return !doneTasks.has(item.id);
+}
+function registryProvides(registry, agentId){
+  const row=(Array.isArray(registry)?registry:[]).find(r=>r&&String(r.agent_id||'')===String(agentId||'').trim());
+  if(!row) return [];
+  let vals=row.output_provides;
+  if(typeof vals==='string'){ try{vals=JSON.parse(vals);}catch{vals=[];} }
+  return (Array.isArray(vals)?vals:[]).map(v=>String(v||'').trim()).filter(Boolean);
+}
+function agentDataCoversProvides(state, agentId, registry){
+  const provides=registryProvides(registry, agentId);
+  if(!provides.length) return false;
+  const raw=(state.agents||{})[agentId];
+  const slot=raw&&typeof raw==='object'&&!Array.isArray(raw)?raw:{};
+  const data=slot.data&&typeof slot.data==='object'&&!Array.isArray(slot.data)?slot.data:{};
+  const keys=new Set([...(Array.isArray(slot.data_keys)?slot.data_keys:[]), ...Object.keys(data)].map(String));
+  keys.delete('omitted_keys');
+  return provides.every(k=>keys.has(k));
+}
+function planMarkAgentDone(state, agentId, registry){
   const plan=sanitizePlan(state.plan);
   const id=String(agentId||'').trim();
-  for(const p of plan){ if(id&&p.agent_id===id&&p.status==='active') p.status='done'; }
+  const coverAll=agentDataCoversProvides(state, id, registry);
+  for(const p of plan){
+    if(!id||p.agent_id!==id) continue;
+    if(p.status==='active'||(coverAll&&p.status==='pending')) p.status='done';
+  }
   state.plan=plan;
 }
 function planOpenItems(plan){
@@ -789,6 +863,74 @@ function planRetrievalTopics(plan, registry){
   }
   return out.slice(0,12);
 }
+/* Shape the callee should produce: datasets the Decision LLM named (latin identifiers, known field
+   types) plus consumers — open plan items of *other* agents and what their input_schema.data lists.
+   Domain-free: names come from the registry / the LLM, not from Excel or SCHEDULE. Empty → omitted
+   from agent_task.inputs (existing commissioning calls stay unchanged). */
+function datasetName(v){
+  const t=String(v||'').trim().toLowerCase().replace(/[-\s]+/g,'_');
+  return /^[a-z][a-z0-9_]{0,63}$/.test(t)?t:'';
+}
+function sanitizeExpectedDatasets(raw){
+  const types=new Set(['text','number','date','boolean']);
+  const out=[];
+  for(const item of (Array.isArray(raw)?raw:[])){
+    if(!item||typeof item!=='object'||Array.isArray(item)) continue;
+    const name=datasetName(item.name);
+    if(!name||out.some(d=>d.name===name)) continue;
+    const fields=[];
+    for(const f of (Array.isArray(item.fields)?item.fields:[])){
+      const fname=datasetName(f&&typeof f==='object'?f.name:f);
+      if(!fname||fields.some(x=>x.name===fname)) continue;
+      const field={name:fname};
+      if(f&&typeof f==='object'){
+        const desc=String(f.description||'').trim().slice(0,160);
+        if(desc) field.description=desc;
+        const t=String(f.type||'').trim().toLowerCase();
+        if(types.has(t)) field.type=t;
+      }
+      fields.push(field);
+      if(fields.length>=24) break;
+    }
+    const entry={name,fields};
+    const desc=String(item.description||'').trim().slice(0,240);
+    if(desc) entry.description=desc;
+    out.push(entry);
+    if(out.length>=6) break;
+  }
+  return out;
+}
+function expectedConsumersFromPlan(state, registry, calleeId){
+  const skip=String(calleeId||'').trim();
+  const rows=Array.isArray(registry)?registry:[];
+  const out=[];
+  for(const p of planOpenItems(state&&state.plan)){
+    const id=String(p.agent_id||'').trim();
+    if(!id||id===skip) continue;
+    const row=rows.find(r=>r&&String(r.agent_id||'')===id);
+    if(!row) continue;
+    let schema=row.input_schema;
+    if(typeof schema==='string'){ try{schema=JSON.parse(schema);}catch{schema={}} }
+    const needs=schema&&typeof schema==='object'&&schema.data&&typeof schema.data==='object'&&!Array.isArray(schema.data)?schema.data:{};
+    const cleaned={};
+    for(const [k,v] of Object.entries(needs)){ if(String(k).trim()) cleaned[String(k)]=String(v==null?'':v).slice(0,200); }
+    if(!Object.keys(cleaned).length||out.some(c=>c.agent_id===id)) continue;
+    out.push({agent_id:id,title:agentTitle(id, registry),needs:cleaned});
+    if(out.length>=6) break;
+  }
+  return out;
+}
+function expectedOutputForCall(action, state, registry, calleeId){
+  const raw=action&&typeof action==='object'&&action.expected_output&&typeof action.expected_output==='object'?action.expected_output:{};
+  const datasets=sanitizeExpectedDatasets(raw.datasets);
+  /* No datasets → omit the key (commissioning calls stay unchanged). Consumers ride along only
+     when the LLM named a shape; they are never taken from action.expected_output.consumers. */
+  if(!datasets.length) return null;
+  const consumers=expectedConsumersFromPlan(state, registry, calleeId);
+  const out={datasets};
+  if(consumers.length) out.consumers=consumers;
+  return out;
+}
 /* One agent_result → case state. Used by `Merge agent result` (synchronous agents) and by the
    `resume source=agent` path (long agents that returned `in_progress` and finish later through the
    Activity run endpoint). Domain-free: it knows statuses and slots, not agents.
@@ -811,7 +953,13 @@ function applyAgentResult(state, agentId, taskId, result, registry){
   let nextStatus='running';
   let shouldContinue=true;
   if(status==='completed'){
-    agents[agentId]={status,summary:message.slice(0,400),task_id:taskId,step,data:obj(res.data)?res.data:{}};
+    /* A later completed call of the same agent overlays data keys; it must not drop keys a previous
+       completed call already fixed (CASE-6aa026d9-45db12: the second result had only new_wells and
+       wiped facts, so the next agent asked Q-facts). Incoming keys win — a rework of `facts` replaces them. */
+    const incoming=obj(res.data)?res.data:{};
+    const prevData=obj(prevSlot.data)?prevSlot.data:{};
+    const data={...prevData,...incoming};
+    agents[agentId]={status,summary:message.slice(0,400),task_id:taskId,step,data};
     state.artifacts=mergeIncomingArtifacts(state.artifacts, res.artifacts||{}, agentId);
     state.current_task=null;
     state.last_error=null;
@@ -852,8 +1000,8 @@ function applyAgentResult(state, agentId, taskId, result, registry){
   }
   const artifactsAdded=Object.keys(flattenArtifacts(state.artifacts||{})).filter(k=>!artifactsBefore.has(k));
   ledgerPush(state,{kind:'agent',step,agent_id:agentId,task_id:taskId,status,summary:message.slice(0,400),artifacts_added:artifactsAdded,data_keys:Object.keys(obj(res.data)?res.data:{}).slice(0,12)});
-  if(status==='completed') planMarkAgentDone(state, agentId);
   state.agents=sanitizeAgents(agents);
+  if(status==='completed') planMarkAgentDone(state, agentId, registry);
   return {status,next_status:nextStatus,should_continue:shouldContinue,events,message};
 }
 const COMPACT_INPUTS_MAX=12;

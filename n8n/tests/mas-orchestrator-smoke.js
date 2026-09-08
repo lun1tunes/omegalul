@@ -198,6 +198,7 @@ async function run(name, json, nodes = {}, binary = {}) {
     assert.ok(js.includes('function resolveInvoke'), name);
     assert.ok(js.includes('function sanitizeAgents'), name);
     assert.ok(js.includes('function buildRetrievalQuery'), name);
+    assert.ok(js.includes('function expectedOutputForCall'), name);
     // Phase 2: regex-derived routing tags are gone (plan §2 debt).
     for (const gone of ['inferTaskPatterns', 'inferRetrievalQuery', 'inferRoutingTopics', 'inferRoutingKeywordFamilies', 'parseKeepRemove', 'slimExcel']) {
       assert.equal(js.includes(gone), false, `${name}: ${gone}`);
@@ -1078,6 +1079,7 @@ async function run(name, json, nodes = {}, binary = {}) {
   assert.equal(parsed.agent_task.inputs.facts, undefined);
   assert.equal(parsed.agent_task.inputs.excel_artifact, undefined);
   assert.deepEqual(Object.keys(parsed.agent_task.inputs).sort(), ['activity_base_url', 'artifact_ids', 'data_refs', 'schedule_root']);
+  assert.equal(parsed.agent_task.inputs.expected_output, undefined, 'omitted expected_output does not appear on commissioning calls');
   assert.equal(parsed.state.current_task.task_id, 'TASK-1');
   assert.equal(parsed.state.current_task.context, undefined);
   assert.equal(parsed.state.version, 1);
@@ -1095,6 +1097,78 @@ async function run(name, json, nodes = {}, binary = {}) {
   assert.deepEqual(handoffEv.payload.agent_task.inputs, parsed.agent_task.inputs);
   assert.equal(handoffEv.payload.execution_id, 'exec-1');
   assert.equal(parsed.state.current_task.agent_task, undefined, 'state does not grow: the copy lives in the event only');
+
+  const shaped = await run(
+    'Parse decision',
+    {
+      output: {
+        status_message: 'Читаю таблицу мероприятий',
+        action: {
+          type: 'call_agent',
+          agent_id: 'excel_extractor',
+          task_id: 'p1',
+          handoff_message: 'Извлеки мероприятия по скважинам.',
+          expected_output: {
+            datasets: [
+              {
+                name: 'well_events',
+                description: 'мероприятия по скважинам',
+                fields: [
+                  { name: 'well', description: 'скважина', type: 'text' },
+                  { name: 'date', type: 'date' },
+                  { name: 'kind', type: 'text' },
+                  { name: '???', type: 'text' },
+                ],
+              },
+              { name: 'Мероприятия' },
+              { name: '1bad' },
+              { name: 'well_events' },
+            ],
+            consumers: [{ agent_id: 'invented_agent', title: 'Выдуманный', needs: { secrets: 'x' } }],
+          },
+        },
+      },
+    },
+    {
+      'Prepare decision context': {
+        case_id: 'CASE-ds',
+        registry: [
+          { agent_id: 'excel_extractor', title: 'Excel Extractor', input_schema: {} },
+          {
+            agent_id: 'schedule_builder',
+            title: 'Schedule Builder',
+            input_schema: { data: { facts: 'даты ввода «скважина — дата»', new_wells: 'параметры новых скважин' } },
+          },
+        ],
+        state: {
+          goal: 'мероприятия',
+          artifacts: { excel: 'events.xlsx' },
+          data: {},
+          plan: [
+            { id: 'p1', title: 'Таблица мероприятий', agent_id: 'excel_extractor', status: 'pending' },
+            { id: 'p2', title: 'Новый schedule', agent_id: 'schedule_builder', status: 'pending', depends_on: ['p1'] },
+          ],
+          step_count: 0,
+        },
+        activity_base_url: 'http://activity:8200',
+      },
+    },
+  );
+  assert.deepEqual(shaped.agent_task.inputs.expected_output.datasets, [
+    {
+      name: 'well_events',
+      description: 'мероприятия по скважинам',
+      fields: [
+        { name: 'well', description: 'скважина', type: 'text' },
+        { name: 'date', type: 'date' },
+        { name: 'kind', type: 'text' },
+      ],
+    },
+  ]);
+  assert.deepEqual(shaped.agent_task.inputs.expected_output.consumers, [
+    { agent_id: 'schedule_builder', title: 'Schedule Builder', needs: { facts: 'даты ввода «скважина — дата»', new_wells: 'параметры новых скважин' } },
+  ], 'consumers come from open plan items, not from the LLM');
+  assert.equal(Object.keys(shaped.agent_task.inputs).includes('expected_output'), true);
 
   const afterHitl = await run(
     'Parse decision',
@@ -1493,10 +1567,12 @@ async function run(name, json, nodes = {}, binary = {}) {
     const human = resumed.state.ledger.history.at(-1);
     assert.equal(human.kind, 'human');
     assert.equal(human.review_accept, true);
+    assert.equal(human.review_scope, 'case', 'no plan steps for other agents → the acceptance is the outcome of the task');
+    assert.equal(gate.review_scope, 'case');
     assert.equal(human.answer, 'Принять результат');
     assert.equal(resumed.state.ledger.stall_count, 0);
     const preparedAccepted = await prepare(resumed.state);
-    assert.match(preparedAccepted.planner_input, /человек ответил \(принял результат\)/);
+    assert.match(preparedAccepted.planner_input, /человек ответил \(принял результат как итог задачи\)/);
     const afterAccept = await decide(preparedAccepted, delegate);
     assert.equal(afterAccept.action_type, 'finish');
     assert.equal(afterAccept.events.find((e) => e.kind === 'case.finished').payload.guard, 'human_accepted');
@@ -1845,6 +1921,74 @@ async function run(name, json, nodes = {}, binary = {}) {
     assert.equal(decisionPayload(stillOpen).guard, 'completion_review');
     assert.match(stillOpen.state.hitl.questions[0].question, /Не хватает: Новый schedule на основе baseline/);
     assert.equal(/[a-z]+_[a-z_]+|[{}[\]]/.test(stillOpen.state.hitl.questions[0].question), false, stillOpen.state.hitl.questions[0].question);
+
+    // -------------------------------------------------------------------------------------------
+    // CASE-6aa00e09-c6d71f (live combat 3): the model planned two results of the same agent as two items
+    // (p1, p2) and the next agent as p3. The second call — for p2 — was treated as a repeat
+    // (repeat_review), the harness accepted, and human_accepted finished the case: no next agent.
+    // A call that names another open plan item is new work — but only while the first completed
+    // result does not yet carry every output_provides key.
+    // CASE-6aa029de-c5e23d: the first result already had every key; a second handoff without new
+    // input is a loop for the live harness. Leftover items of that agent close on completed.
+    // -------------------------------------------------------------------------------------------
+    const twoExcel = await decide(await prepare(baseState), { ...callExcel, action: { ...callExcel.action, task_id: 'p1' }, plan_update: [
+      { id: 'p1', title: 'Извлечь из Excel новые даты ввода скважин', agent_id: 'excel_extractor' },
+      { id: 'p2', title: 'Извлечь из Excel параметры новых скважин', agent_id: 'excel_extractor', depends_on: ['p1'] },
+      { id: 'p3', title: 'Обновить прогнозный schedule по новым датам и составу скважин', agent_id: 'schedule_builder', depends_on: ['p1', 'p2'] },
+    ] });
+    assert.equal(twoExcel.agent_task.task_id, 'p1');
+    assert.deepEqual(twoExcel.state.plan.map((p) => [p.id, p.status]), [['p1', 'active'], ['p2', 'pending'], ['p3', 'pending']]);
+    let incomplete = await merge(twoExcel, { status: 'completed', agent_id: 'excel_extractor', message: 'Даты ввода: 14 скважин.', data: { facts: [1] } });
+    assert.deepEqual(incomplete.state.plan.map((p) => [p.id, p.status]), [['p1', 'done'], ['p2', 'pending'], ['p3', 'pending']]);
+    const secondExcel = await decide(await prepare(incomplete.state), { ...callExcel, action: { ...callExcel.action, task_id: 'p2', handoff_message: 'Извлеки параметры новых скважин.' } });
+    assert.equal(secondExcel.action_type, 'call_agent', 'a call for another open plan item is new work, not a repeat');
+    assert.equal(secondExcel.agent_task.task_id, 'p2');
+    assert.equal(decisionPayload(secondExcel).guard, undefined);
+    assert.deepEqual(secondExcel.state.plan.map((p) => [p.id, p.status]), [['p1', 'done'], ['p2', 'active'], ['p3', 'pending']]);
+    incomplete = await merge(secondExcel, { status: 'completed', agent_id: 'excel_extractor', message: 'Параметры новых скважин: 10.', data: { new_wells: [1] } });
+    assert.deepEqual(incomplete.state.plan.map((p) => [p.id, p.status]), [['p1', 'done'], ['p2', 'done'], ['p3', 'pending']]);
+    // CASE-6aa026d9-45db12: the second completed result had only new_wells and used to wipe facts.
+    assert.deepEqual(incomplete.state.agents.excel_extractor.data.facts, [1]);
+    assert.deepEqual(incomplete.state.agents.excel_extractor.data.new_wells, [1]);
+    let chain = await merge(twoExcel, { status: 'completed', agent_id: 'excel_extractor', message: 'Даты ввода: 14 скважин. Параметры новых скважин: 10.', data: { facts: [1], new_wells: [1] } });
+    assert.deepEqual(chain.state.plan.map((p) => [p.id, p.status]), [['p1', 'done'], ['p2', 'done'], ['p3', 'pending']], 'CASE-6aa029de-c5e23d: leftover item closes when output_provides are already in data');
+    const extraExcel = await decide(await prepare(chain.state), { ...callExcel, action: { ...callExcel.action, task_id: 'p2', handoff_message: 'Извлеки параметры новых скважин.' } });
+    assert.equal(decisionPayload(extraExcel).guard, 'repeat_review');
+    // The same agent again for an item that is already done (or with no task_id) → repeat → review as before.
+    const thirdExcel = await decide(await prepare(chain.state), { ...callExcel, action: { ...callExcel.action, task_id: 'p1' } });
+    assert.equal(decisionPayload(thirdExcel).guard, 'repeat_review');
+    const noTask = await decide(await prepare(chain.state), { ...callExcel, action: { ...callExcel.action, task_id: 'TASK-7' } });
+    assert.equal(decisionPayload(noTask).guard, 'repeat_review');
+    // The review question says what accepting means here: the plan still has the Builder step, so the
+    // acceptance covers this agent's result only (review_scope 'agent'), and the chat option says so.
+    const reviewQ2 = extraExcel.state.hitl.questions[0];
+    assert.equal(reviewQ2.review_scope, 'agent');
+    assert.match(reviewQ2.question, /Принять этот результат и продолжить остальные шаги \(Обновить прогнозный schedule по новым датам и составу скважин\)/);
+    assert.deepEqual(reviewQ2.options.map((o) => o.label), ['Принять результат и продолжить', 'Нужна доработка — опишу ниже']);
+    assert.equal(/[a-z]+_[a-z_]+|[{}[\]]|\w\|\w/.test(reviewQ2.question), false, reviewQ2.question);
+    const acceptedAgent = await run('Apply request extras', { state: JSON.stringify(extraExcel.state), status: 'waiting_user' }, {
+      'Normalize step request': { ...req, is_resume: true, action: 'resume', source: 'human', gate_id: reviewQ2.question_id, human_response: JSON.stringify({ choice: 'accept', text: 'Принять результат и продолжить', label: 'Принять результат и продолжить' }) },
+    });
+    assert.deepEqual([acceptedAgent.state.ledger.history.at(-1).review_accept, acceptedAgent.state.ledger.history.at(-1).review_scope], [true, 'agent']);
+    const preparedAgentAccept = await prepare(acceptedAgent.state);
+    assert.match(preparedAgentAccept.planner_input, /принял результат этого агента, остальные шаги плана продолжать/);
+    // After such an acceptance the Builder call stands (no forced finish) …
+    const builderAfterAccept = await decide(preparedAgentAccept, { ...callExcel, action: { type: 'call_agent', agent_id: 'schedule_builder', task_id: 'p3', handoff_message: 'Собери schedule.' } });
+    assert.equal(builderAfterAccept.action_type, 'call_agent');
+    assert.equal(builderAfterAccept.agent_task.agent_id, 'schedule_builder');
+    assert.equal(decisionPayload(builderAfterAccept).guard, undefined);
+    // … a finish is still verified against the open plan (p3) …
+    const finishAfterAccept = await decide(preparedAgentAccept, finish, allCovered);
+    assert.equal(decisionPayload(finishAfterAccept).guard, 'completion_unverified');
+    // … and the accepted agent is not re-delegated: «принять» is not new input for a rework.
+    const excelAfterAccept = await decide(preparedAgentAccept, { ...callExcel, action: { ...callExcel.action, task_id: 'p1' } });
+    assert.equal(decisionPayload(excelAfterAccept).guard, 'repeat_review');
+    // Builder completes → p3 done → verified finish; the whole chain leaves no open item.
+    chain = await merge(builderAfterAccept, { status: 'completed', agent_id: 'schedule_builder', message: 'Сдвинул даты 14 скважин', artifacts: { schedule_out: 'DATES\n/\n', diff: 'd' } });
+    assert.deepEqual(chain.state.plan.map((p) => p.status), ['done', 'done', 'done']);
+    const chainDone = await decide(await prepare(chain.state), finish, allCovered);
+    assert.equal(chainDone.action_type, 'finish');
+    assert.equal(decisionPayload(chainDone).guard, undefined);
   }
 
   // ---------------------------------------------------------------------------------------------

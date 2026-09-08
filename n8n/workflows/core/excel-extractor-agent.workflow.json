@@ -289,7 +289,7 @@
     },
     {
       "parameters": {
-        "jsCode": "const RAG_TARGET_BASE=\"excel_protocol\";\nconst RAG_ACCESS_SCOPE=\"petroleum-engineering\";\nconst RAG_KNOWLEDGE_TYPES=[\"protocol_instruction\"];\nconst RAG_TOP_K=8;\nconst RAG_TOPICS=[\"протокол\", \"clarification\"];\nconst opened=$json||{};\nconst task=$('Normalize excel task').first().json.agent_task||{};\nconst objective=String(opened.objective||task.objective||'');\nconst handoff=String(opened.handoff_message||task.handoff_message||'');\nconst blob=[objective,handoff].join('\\n');\nconst low=blob.toLowerCase();\n// Retrieval filters. Hints below only narrow the RAG slice — they never pick a tool.\nconst keyword_families=[];\nconst topics=RAG_TOPICS.slice();\nconst task_patterns=[];\nif(/дат|ввод|commission/.test(low)) task_patterns.push('даты ввода');\nif(/таблиц|query|дебит|истори|управлен/.test(low)) task_patterns.push('извлечь таблицу');\nif(/уточн|ambigu|clarif/.test(low)) task_patterns.push('clarification_needed');\nconst query=blob.trim().replace(/\\b[\\w.-]+\\.(xlsx|xls|xlsm|inc|dev|txt|csv)\\b/gi,' ').replace(/\\s+/g,' ').trim().slice(0,800)||\"excel_protocol instruction\";\nconst retrieval_selector={target_base:RAG_TARGET_BASE,knowledge_types:RAG_KNOWLEDGE_TYPES};\nconst schedule_retrieval_request={\n  query,\n  filters:{target_base:RAG_TARGET_BASE,access_scope:RAG_ACCESS_SCOPE,knowledge_types:RAG_KNOWLEDGE_TYPES,keyword_families:[...new Set(keyword_families)].slice(0,6),topics:[...new Set(topics)],task_patterns:[...new Set(task_patterns)]},\n  top_k:RAG_TOP_K\n};\n// The LLM decides which tool fits: task text + what open_session found + what the engineer already answered.\nconst engineerAnswers=Array.isArray(opened.engineer_answers)?opened.engineer_answers:[];\nconst reworkReason=String(opened.rework_reason||(task.inputs&&task.inputs.rework_reason)||'').trim();\nconst planner_input=JSON.stringify({\n  objective,\n  handoff_message:handoff,\n  inspect:opened.inspect||{},\n  files:Array.isArray(opened.files)?opened.files:[],\n  engineer_answers:engineerAnswers,\n  ...(reworkReason?{rework_reason:reworkReason}:{})\n});\nreturn [{json:{...opened,session_id:opened.session_id,agent_input:planner_input,planner_input,schedule_retrieval_request,retrieval_selector}}];\n"
+        "jsCode": "const RAG_TARGET_BASE=\"excel_protocol\";\nconst RAG_ACCESS_SCOPE=\"petroleum-engineering\";\nconst RAG_KNOWLEDGE_TYPES=[\"protocol_instruction\"];\nconst RAG_TOP_K=8;\nconst RAG_TOPICS=[\"протокол\", \"clarification\"];\nconst opened=$json||{};\nconst task=$('Normalize excel task').first().json.agent_task||{};\nconst objective=String(opened.objective||task.objective||'');\nconst handoff=String(opened.handoff_message||task.handoff_message||'');\nconst blob=[objective,handoff].join('\\n');\nconst low=blob.toLowerCase();\n// Retrieval filters. Hints below only narrow the RAG slice — they never pick a tool.\nconst keyword_families=[];\nconst topics=RAG_TOPICS.slice();\nconst task_patterns=[];\nif(/дат|ввод|commission/.test(low)) task_patterns.push('даты ввода');\nif(/таблиц|query|дебит|истори|управлен/.test(low)) task_patterns.push('извлечь таблицу');\nif(/уточн|ambigu|clarif/.test(low)) task_patterns.push('clarification_needed');\nconst query=blob.trim().replace(/\\b[\\w.-]+\\.(xlsx|xls|xlsm|inc|dev|txt|csv)\\b/gi,' ').replace(/\\s+/g,' ').trim().slice(0,800)||\"excel_protocol instruction\";\nconst retrieval_selector={target_base:RAG_TARGET_BASE,knowledge_types:RAG_KNOWLEDGE_TYPES};\nconst schedule_retrieval_request={\n  query,\n  filters:{target_base:RAG_TARGET_BASE,access_scope:RAG_ACCESS_SCOPE,knowledge_types:RAG_KNOWLEDGE_TYPES,keyword_families:[...new Set(keyword_families)].slice(0,6),topics:[...new Set(topics)],task_patterns:[...new Set(task_patterns)]},\n  top_k:RAG_TOP_K\n};\n// The LLM decides which tool fits: task text + what open_session found + what the engineer already answered.\nconst engineerAnswers=Array.isArray(opened.engineer_answers)?opened.engineer_answers:[];\nconst reworkReason=String(opened.rework_reason||(task.inputs&&task.inputs.rework_reason)||'').trim();\nconst planner_input=JSON.stringify({\n  objective,\n  handoff_message:handoff,\n  inspect:opened.inspect||{},\n  files:Array.isArray(opened.files)?opened.files:[],\n  engineer_answers:engineerAnswers,\n  ...(reworkReason?{rework_reason:reworkReason}:{}),\n  ...(opened.expected_output&&typeof opened.expected_output==='object'&&Object.keys(opened.expected_output).length?{expected_output:opened.expected_output}:{})\n});\nreturn [{json:{...opened,session_id:opened.session_id,agent_input:planner_input,planner_input,schedule_retrieval_request,retrieval_selector}}];\n"
       },
       "id": "2d5a7eba-bd5e-5ccb-895a-b7ca5109b7cc",
       "name": "Prepare AI Agent input",
@@ -336,7 +336,7 @@
     },
     {
       "parameters": {
-        "jsCode": "function unwrapRetrieval(raw){\n  const obj=v=>v&&typeof v==='object'&&!Array.isArray(v);\n  const src=obj(raw)?raw:{};\n  if(obj(src.schedule_retrieval_result)) return src.schedule_retrieval_result;\n  if(obj(src.body)&&obj(src.body.schedule_retrieval_result)) return src.body.schedule_retrieval_result;\n  if(String(src.contract||'')==='schedule_retrieval_result') return src;\n  if(src.error||Number(src.statusCode)>=400) return {status:'failed',findings:[{code:'RETRIEVAL_CALL_FAILED'}],results:[]};\n  return src;\n}\nfunction compactRetrievalCards(result, selector, limit, textLimit){\n  const rows=Array.isArray(result.results)?result.results:[];\n  const wantedBase=String(selector.target_base||'');\n  const wantedTypes=new Set((selector.knowledge_types||[]).map(v=>String(v).toLowerCase()));\n  const cap=Number(limit)||6;\n  const cut=Number(textLimit)||700;\n  const minText=50;\n  const relKeep=0.45;\n  const scored=[];\n  for(const r of rows){\n    if(!r||typeof r!=='object') continue;\n    const body=r.body&&typeof r.body==='object'?r.body:{};\n    const base=String(r.target_base||body.target_base||(result.filters&&result.filters.target_base)||'');\n    const kt=String(r.knowledge_type||body.knowledge_type||'').toLowerCase();\n    if(wantedBase&&base&&base!==wantedBase) continue;\n    if(wantedTypes.size&&kt&&!wantedTypes.has(kt)) continue;\n    const text=String(body.text||body.instruction||r.text||'').trim();\n    if(text.length<minText) continue;\n    const score=r.rrf_score!=null?Number(r.rrf_score):(body.rrf_score!=null?Number(body.rrf_score):null);\n    if(Number.isFinite(score)&&score<=0) continue;\n    scored.push({\n      knowledge_id:String(r.knowledge_id||body.knowledge_id||''),\n      title:String(r.title||body.title||'').slice(0,160),\n      knowledge_type:kt||null,\n      text:text.slice(0,cut),\n      _score:Number.isFinite(score)?score:null\n    });\n  }\n  const finite=scored.map(c=>c._score).filter(s=>s!=null);\n  const best=finite.length?Math.max.apply(null,finite):0;\n  const floor=best>0?best*relKeep:0;\n  const kept=scored.filter(c=>c._score==null||floor<=0||c._score>=floor);\n  kept.sort((a,b)=>{\n    if(a._score==null&&b._score==null) return 0;\n    if(a._score==null) return 1;\n    if(b._score==null) return -1;\n    return b._score-a._score;\n  });\n  return kept.slice(0,cap).map(c=>({knowledge_id:c.knowledge_id,title:c.title,knowledge_type:c.knowledge_type,text:c.text}));\n}\nconst prev=$(\"Prepare AI Agent input\").first().json||{};\nconst raw=$json||{};\nconst result=unwrapRetrieval(raw);\nconst fallbackSelector={\"target_base\": \"excel_protocol\", \"knowledge_types\": [\"protocol_instruction\"]};\nconst fromPrev=prev.retrieval_selector;\nconst selector=(fromPrev&&fromPrev.target_base)?{target_base:String(fromPrev.target_base),knowledge_types:Array.isArray(fromPrev.knowledge_types)&&fromPrev.knowledge_types.length?fromPrev.knowledge_types:fallbackSelector.knowledge_types}:fallbackSelector;\nconst failed=result.status==='abstain'||result.status==='failed'||result.status==='needs_input'||Boolean(raw.error);\nconst cards=failed?[]:compactRetrievalCards(result,selector,8,1200);\nconst rag={contract:'mas_rag_evidence',contract_version:'1.0',target_base:selector.target_base,knowledge_types:selector.knowledge_types,status:failed?'unavailable':(cards.length?'ready':'empty'),cards,findings:(Array.isArray(result.findings)?result.findings:[]).slice(0,6).map(f=>f&&f.code).filter(Boolean)};\nconst note=rag.status==='ready'?\"Карточки — срез excel_protocol (protocol_instruction), не schedule_mvp и не orchestrator_routing. Это протокол инструментов (opaque id, query_table, clarification). Строки workbook только из Excel-tools. Не спрашивай HITL про базу знаний.\":\"Срез excel_protocol пуст или недоступен — работай правилами инструментов. Не спрашивай HITL про RAG и не ходи в другие target_base.\";\nconst planner=`${prev.planner_input||prev.agent_input||''}\\n\\nRetrieved knowledge (target_base=${selector.target_base}):\\n${JSON.stringify(rag,null,2)}\\n\\n${note}\\n`;\nreturn [{json:{...prev,rag,planner_input:planner,agent_input:planner}}];\n"
+        "jsCode": "function unwrapRetrieval(raw){\n  const obj=v=>v&&typeof v==='object'&&!Array.isArray(v);\n  const src=obj(raw)?raw:{};\n  if(obj(src.schedule_retrieval_result)) return src.schedule_retrieval_result;\n  if(obj(src.body)&&obj(src.body.schedule_retrieval_result)) return src.body.schedule_retrieval_result;\n  if(String(src.contract||'')==='schedule_retrieval_result') return src;\n  if(src.error||Number(src.statusCode)>=400) return {status:'failed',findings:[{code:'RETRIEVAL_CALL_FAILED'}],results:[]};\n  return src;\n}\nfunction compactRetrievalCards(result, selector, limit, textLimit){\n  const rows=Array.isArray(result.results)?result.results:[];\n  const wantedBase=String(selector.target_base||'');\n  const wantedTypes=new Set((selector.knowledge_types||[]).map(v=>String(v).toLowerCase()));\n  const cap=Number(limit)||6;\n  const cut=Number(textLimit)||700;\n  const minText=50;\n  const relKeep=0.45;\n  const scored=[];\n  for(const r of rows){\n    if(!r||typeof r!=='object') continue;\n    const body=r.body&&typeof r.body==='object'?r.body:{};\n    const base=String(r.target_base||body.target_base||(result.filters&&result.filters.target_base)||'');\n    const kt=String(r.knowledge_type||body.knowledge_type||'').toLowerCase();\n    if(wantedBase&&base&&base!==wantedBase) continue;\n    if(wantedTypes.size&&kt&&!wantedTypes.has(kt)) continue;\n    const text=String(body.text||body.instruction||r.text||'').trim();\n    if(text.length<minText) continue;\n    const score=r.rrf_score!=null?Number(r.rrf_score):(body.rrf_score!=null?Number(body.rrf_score):null);\n    if(Number.isFinite(score)&&score<=0) continue;\n    scored.push({\n      knowledge_id:String(r.knowledge_id||body.knowledge_id||''),\n      title:String(r.title||body.title||'').slice(0,160),\n      knowledge_type:kt||null,\n      text:text.slice(0,cut),\n      _score:Number.isFinite(score)?score:null\n    });\n  }\n  const finite=scored.map(c=>c._score).filter(s=>s!=null);\n  const best=finite.length?Math.max.apply(null,finite):0;\n  const floor=best>0?best*relKeep:0;\n  const kept=scored.filter(c=>c._score==null||floor<=0||c._score>=floor);\n  kept.sort((a,b)=>{\n    if(a._score==null&&b._score==null) return 0;\n    if(a._score==null) return 1;\n    if(b._score==null) return -1;\n    return b._score-a._score;\n  });\n  return kept.slice(0,cap).map(c=>({knowledge_id:c.knowledge_id,title:c.title,knowledge_type:c.knowledge_type,text:c.text}));\n}\nconst prev=$(\"Prepare AI Agent input\").first().json||{};\nconst raw=$json||{};\nconst result=unwrapRetrieval(raw);\nconst fallbackSelector={\"target_base\": \"excel_protocol\", \"knowledge_types\": [\"protocol_instruction\"]};\nconst fromPrev=prev.retrieval_selector;\nconst selector=(fromPrev&&fromPrev.target_base)?{target_base:String(fromPrev.target_base),knowledge_types:Array.isArray(fromPrev.knowledge_types)&&fromPrev.knowledge_types.length?fromPrev.knowledge_types:fallbackSelector.knowledge_types}:fallbackSelector;\nconst failed=result.status==='abstain'||result.status==='failed'||result.status==='needs_input'||Boolean(raw.error);\nconst cards=failed?[]:compactRetrievalCards(result,selector,8,1200);\nconst rag={contract:'mas_rag_evidence',contract_version:'1.0',target_base:selector.target_base,knowledge_types:selector.knowledge_types,status:failed?'unavailable':(cards.length?'ready':'empty'),cards,findings:(Array.isArray(result.findings)?result.findings:[]).slice(0,6).map(f=>f&&f.code).filter(Boolean)};\nconst note=rag.status==='ready'?\"Карточки — срез excel_protocol (protocol_instruction), не schedule_mvp и не orchestrator_routing. Это протокол инструментов (opaque id, extract_table / extract_commissioning, query_table только подглядеть). Строки workbook только из Excel-tools. Не спрашивай HITL про базу знаний.\":\"Срез excel_protocol пуст или недоступен — работай правилами инструментов. Не спрашивай HITL про RAG и не ходи в другие target_base.\";\nconst planner=`${prev.planner_input||prev.agent_input||''}\\n\\nRetrieved knowledge (target_base=${selector.target_base}):\\n${JSON.stringify(rag,null,2)}\\n\\n${note}\\n`;\nreturn [{json:{...prev,rag,planner_input:planner,agent_input:planner}}];\n"
       },
       "id": "10aa56ce-c69e-532e-a7c2-0efd4561415d",
       "name": "Attach excel RAG evidence",
@@ -344,7 +344,7 @@
       "typeVersion": 2,
       "position": [
         3080,
-        425
+        510
       ]
     },
     {
@@ -353,7 +353,7 @@
         "text": "={{ $json.planner_input }}",
         "hasOutputParser": false,
         "options": {
-          "systemMessage": "Ты — решатель агента Excel Extractor: читаешь задачу инженера и инвентарь приложенных Excel-книг (файлы, листы, таблицы с колонками и первыми строками), сам выбираешь таблицу и колонки и вызываешь инструмент извлечения. Данные извлекают инструменты — ты их не переписываешь и SCHEDULE / .INC не пишешь.\n\nКнигу целиком тебе не показывают — она лежит в сессии FastAPI. session_id привязан workflow: никогда не передавай session_id и обёртку args/input.\n\nКакой инструмент когда:\n- Задача про даты ввода / запуска скважин (таблица «скважина — дата») → extract_commissioning с table_id, well_column и date_column из инвентаря (inspect.tables: columns и sample). Если в таблице несколько колонок с датами — бери новую (плановую) дату ввода, а не baseline / старую / дату из .INC. Один вызов на таблицу.\n- В инвентаре есть таблица параметров скважин (группа, интервал MD, диаметр, режим, дебит, BHP, VFP, файл траектории) и задача упоминает новые скважины или их добавление → extract_well_parameters с table_id, well_column и mapping колонок на поля: date, group, phase, i, j, md_top, md_bot, diameter, control, rate, bhp, thp, vfp_table, welltrack_include. Немаппированные колонки сохраняются под своими заголовками.\n- Обе таблицы есть → оба инструмента, по одному вызову каждый.\n- Инвентаря не хватает (заголовки непонятны, таблица не найдена) → describe_table / sheet_preview / list_column_values / detect_tables / match_tables — не больше трёх вызовов подряд.\n- Другие данные (дебиты, история, режимы, PVT) → detect_tables / describe_table / query_table. select и filters в query_table — JSON-массивы, не объект с ключами \"0\",\"1\". Не выгружай всю книгу.\n- ask_engineer — единственный способ спросить инженера: только когда по инвентарю и ответам инженера (engineer_answers) нельзя выбрать таблицу или колонку (например две колонки дат без пояснений). Один вопрос обычной русской фразой; варианты — как их видит инженер (названия листов и колонок). Никаких имён полей, JSON, enum.\n\nОтветы инструментов:\n- ok:false, code:spec_incomplete / table_not_found / column_not_found / column_not_dates / no_rows — это тебе, не инженеру: исправь аргументы по инвентарю (available_tables / available_columns / missing в том же ответе подсказывают) и вызови инструмент снова.\n- ok:false, code:question_not_human — переформулируй вопрос прозой и вызови ask_engineer снова.\n- ok:false, code:too_many_attempts — больше этот инструмент не вызывай: спроси инженера или заверши ответ.\n- status completed от extract_* — результат зафиксирован. Если извлекать больше нечего — STOP. status needs_input от ask_engineer — STOP.\n\nИнварианты:\n- Не придумывай скважины, даты, дебиты, имена листов, table_id и колонок — только из инвентаря и ответов инструментов.\n- rework_reason в задаче — замечание оркестратора к прошлому результату: устрани именно его.\n- Retrieved knowledge — только срез excel_protocol / protocol_instruction (протокол инструментов). Пустой или unavailable срез — работай по инвентарю, инженера про базу знаний не спрашивай.\n\nЗаверши одним коротким фактическим предложением по-русски: что извлечено или чего не хватило.\n",
+          "systemMessage": "Ты — решатель агента Excel Extractor: читаешь задачу инженера, инвентарь приложенных Excel-книг (файлы, листы, таблицы с колонками и первыми строками) и expected_output (форму наборов, которую просит оркестратор). Сам выбираешь таблицу и колонки и вызываешь инструмент извлечения. Данные извлекают инструменты — ты их не переписываешь и SCHEDULE / .INC не пишешь.\n\nКнигу целиком тебе не показывают — она лежит в сессии FastAPI. session_id привязан workflow: никогда не передавай session_id и обёртку args/input.\n\nКакой инструмент когда:\n- expected_output.datasets в задаче — извлеки каждый названный набор. name=facts → extract_commissioning; name=new_wells → extract_well_parameters; любое другое name → extract_table с этим name и columns {поле: точная колонка из инвентаря}. types и description полей — из expected_output. После каждого extract_* смотри next_step: если там ещё ожидаются наборы — извлеки их следующим вызовом.\n- expected_output нет, задача про даты ввода / запуска скважин (таблица «скважина — дата») → extract_commissioning с table_id, well_column и date_column из инвентаря (inspect.tables: columns и sample). Если в таблице несколько колонок с датами — бери новую (плановую) дату ввода, а не baseline / старую / дату из .INC. Один вызов на таблицу. Не вызывай extract_well_parameters: таблица дат ввода — не параметры новых скважин.\n- expected_output нет, задача явно про добавление новых скважин (не просто «новые даты ввода») и в инвентаре есть таблица параметров (группа, интервал MD, диаметр, режим, дебит, BHP, VFP, файл траектории) → extract_well_parameters с table_id, well_column и mapping колонок на поля: date, group, phase, i, j, md_top, md_bot, diameter, control, rate, bhp, thp, vfp_table, welltrack_include. Немаппированные колонки сохраняются под своими заголовками.\n- Любая другая таблица (мероприятия, дебиты, история, режимы, PVT, широкая таблица с колонками-датами) → extract_table: table_id, name (латинский идентификатор по смыслу задачи: well_events, oil_rates), columns {поле: колонка}. Широкая таблица (месяцы/даты в заголовках) — unpivot {columns: [эти колонки], name_field: date, value_field: rate}. Не вызывай extract_commissioning, если это не даты ввода.\n- Задача требует и даты ввода, и параметры новых скважин — оба инструмента в одном ответе, по одному вызову каждый, затем extract_table на остальные наборы. Не вызывай extract_well_parameters «на всякий случай».\n- Инвентаря не хватает (заголовки непонятны, таблица не найдена) → describe_table / sheet_preview / list_column_values / detect_tables / match_tables — не больше трёх вызовов подряд. query_table — только чтобы подглядеть строки перед extract_*; сам по себе результат не фиксирует. select и filters — JSON-массивы, не объект с ключами \"0\",\"1\". Не выгружай всю книгу.\n- ask_engineer — единственный способ спросить инженера: только когда по инвентарю и ответам инженера (engineer_answers) нельзя выбрать таблицу или колонку (например две колонки дат без пояснений). Один вопрос обычной русской фразой; варианты — как их видит инженер (названия листов и колонок). Никаких имён полей, JSON, enum.\n\nОтветы инструментов:\n- ok:false, code:spec_incomplete / table_not_found / column_not_found / column_not_dates / no_rows / name_reserved / field_name_invalid / unpivot_invalid — это тебе, не инженеру: исправь аргументы по инвентарю (available_tables / available_columns / missing в том же ответе подсказывают) и вызови инструмент снова. name_reserved: facts извлекает extract_commissioning, new_wells — extract_well_parameters.\n- ok:false, code:question_not_human — переформулируй вопрос прозой и вызови ask_engineer снова.\n- ok:false, code:too_many_attempts — больше этот инструмент не вызывай: спроси инженера или заверши ответ.\n- status completed от extract_* — часть результата зафиксирована. Если next_step говорит, что оркестратор ещё ожидает наборы — извлеки их. Если извлекать больше нечего — STOP. status needs_input от ask_engineer — STOP.\n\nИнварианты:\n- Не придумывай скважины, даты, дебиты, имена листов, table_id и колонок — только из инвентаря и ответов инструментов.\n- rework_reason в задаче — замечание оркестратора к прошлому результату: устрани именно его.\n- Retrieved knowledge — только срез excel_protocol / protocol_instruction (протокол инструментов). Пустой или unavailable срез — работай по инвентарю, инженера про базу знаний не спрашивай.\n\nЗаверши одним коротким фактическим предложением по-русски: что извлечено или чего не хватило.\n",
           "maxIterations": 8,
           "returnIntermediateSteps": true,
           "passthroughBinaryImages": false,
@@ -636,7 +636,7 @@
       "typeVersion": 4.4,
       "position": [
         3080,
-        255
+        340
       ],
       "retryOnFail": true,
       "maxTries": 3,
@@ -732,7 +732,7 @@
       "typeVersion": 4.4,
       "position": [
         3080,
-        85
+        170
       ],
       "retryOnFail": true,
       "maxTries": 3,
@@ -828,7 +828,7 @@
       "typeVersion": 4.4,
       "position": [
         3080,
-        -85
+        0
       ],
       "retryOnFail": true,
       "maxTries": 3,
@@ -924,7 +924,7 @@
       "typeVersion": 4.4,
       "position": [
         3080,
-        -255
+        -170
       ],
       "retryOnFail": true,
       "maxTries": 3,
@@ -1020,7 +1020,55 @@
       "typeVersion": 4.4,
       "position": [
         3080,
-        -425
+        -340
+      ],
+      "retryOnFail": true,
+      "maxTries": 3,
+      "waitBetweenTries": 2000,
+      "credentials": {
+        "httpHeaderAuth": {
+          "id": "REPLACE_IN_UI",
+          "name": "REPLACE: Excel Tools X-API-Key"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "toolDescription": "Извлечь любую таблицу как именованный набор данных (строки под data[name] + JSON-артефакт). Ты указываешь table_id, латинское name (из expected_output или по смыслу задачи) и columns {поле: колонка}; извлечение детерминированное. Не для дат ввода (extract_commissioning) и не для параметров новых скважин (extract_well_parameters).",
+        "descriptionType": "manual",
+        "method": "POST",
+        "url": "={{ $('Runtime configuration').first().json.excel_tools_url + '/agent-tools/' + \"extract_table\" }}",
+        "sendHeaders": true,
+        "headerParameters": {
+          "parameters": [
+            {
+              "name": "Content-Type",
+              "value": "application/json"
+            }
+          ]
+        },
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "={{ ({session_id: $('Open excel session').first().json.session_id, table_id: $fromAI(\"table_id\", \"table_id таблицы из инвентаря\", \"string\"), name: $fromAI(\"name\", \"Латинское имя набора: то, что в expected_output.datasets[].name, иначе well_events / oil_rates / …\", \"string\"), columns: $fromAI(\"columns\", \"JSON-текст. JSON-объект {поле: точная колонка из инвентаря}. Пусто — все колонки, имена полей из заголовков\", \"string\", \"\"), title: $fromAI(\"title\", \"Короткое русское название набора для ленты\", \"string\", \"\"), types: $fromAI(\"types\", \"JSON-текст. JSON-объект {поле: text|number|date|boolean}; пусто — тип по значениям\", \"string\", \"\"), filters: $fromAI(\"filters\", \"JSON-текст. JSON-массив {field, operator, value} по колонке или полю\", \"string\", \"\"), key_field: $fromAI(\"key_field\", \"Поле-ключ: дубликаты отбрасываются, первое вхождение остаётся\", \"string\", \"\"), unpivot: $fromAI(\"unpivot\", \"JSON-текст. JSON {columns: [широкие колонки] или rest, name_field: date, value_field: rate} — широкая таблица в длинные строки\", \"string\", \"\")}) }}",
+        "options": {
+          "timeout": 180000,
+          "response": {
+            "response": {
+              "fullResponse": false,
+              "responseFormat": "json"
+            }
+          }
+        },
+        "authentication": "genericCredentialType",
+        "genericAuthType": "httpHeaderAuth"
+      },
+      "id": "986f064f-3468-5659-bee4-c643aa5d373c",
+      "name": "extract_table",
+      "type": "n8n-nodes-base.httpRequestTool",
+      "typeVersion": 4.4,
+      "position": [
+        3360,
+        -510
       ],
       "retryOnFail": true,
       "maxTries": 3,
@@ -1067,7 +1115,7 @@
       "type": "n8n-nodes-base.httpRequestTool",
       "typeVersion": 4.4,
       "position": [
-        3360,
+        3080,
         -510
       ],
       "retryOnFail": true,
@@ -1331,6 +1379,17 @@
         ]
       ]
     },
+    "extract_table": {
+      "ai_tool": [
+        [
+          {
+            "node": "Excel Extractor AI Agent",
+            "type": "ai_tool",
+            "index": 0
+          }
+        ]
+      ]
+    },
     "ask_engineer": {
       "ai_tool": [
         [
@@ -1451,5 +1510,5 @@
   },
   "tags": [],
   "pinData": {},
-  "versionId": "565cb498-4eea-410e-b02a-5c9c71bdfbe8"
+  "versionId": "51378f41-90c6-4d1a-8dcd-e82b349e50cc"
 }

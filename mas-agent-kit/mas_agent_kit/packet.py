@@ -201,6 +201,26 @@ class CasePacket:
     def upstream_data(self) -> dict[str, Any]:
         return upstream_agent_data(self.state)
 
+    def datasets(self) -> dict[str, dict[str, Any]]:
+        """Datasets fixed by earlier agents (``mas_agent_kit.dataset``), by name."""
+        from .dataset import upstream_datasets
+
+        return upstream_datasets(self.state)
+
+    def dataset(self, name: str) -> list[dict[str, Any]]:
+        """All rows of an upstream dataset — inline or downloaded from its artifact; ``[]`` when absent."""
+        from .dataset import dataset_rows
+
+        entry = self.datasets().get(str(name or ""))
+        return dataset_rows(entry, self.activity) if entry else []
+
+    @property
+    def expected_output(self) -> dict[str, Any]:
+        """What the orchestrator asked this call to produce (``inputs.expected_output``, sanitised)."""
+        from .dataset import expected_output
+
+        return expected_output(self.inputs)
+
     def engineer_answers(self) -> list[dict[str, Any]]:
         return engineer_answers(self.context)
 

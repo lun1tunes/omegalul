@@ -82,6 +82,32 @@ DECISION_SCHEMA = {
                     "type": "object",
                     "properties": {"summary_for_human": {"type": "string"}},
                 },
+                "expected_output": {
+                    "type": "object",
+                    "properties": {
+                        "datasets": {
+                            "type": "array",
+                            "items": {
+                                "type": "object",
+                                "properties": {
+                                    "name": {"type": "string"},
+                                    "description": {"type": "string"},
+                                    "fields": {
+                                        "type": "array",
+                                        "items": {
+                                            "type": "object",
+                                            "properties": {
+                                                "name": {"type": "string"},
+                                                "description": {"type": "string"},
+                                                "type": {"enum": ["text", "number", "date", "boolean"]},
+                                            },
+                                        },
+                                    },
+                                },
+                            },
+                        }
+                    },
+                },
             },
         },
     },
@@ -110,9 +136,11 @@ SYSTEM = """Ты оркестратор инженерной задачи. Пр�
 
 Затем веди план (plan_update) — свою декомпозицию цели на результаты, которые инженер должен получить (1–5 пунктов), а не список вызовов:
 - На первом шаге составь план целиком; дальше присылай в plan_update только изменившиеся пункты. Текущий план показан в блоке «План задачи» planner_input.
+- Один агент — один пункт на все его результаты по задаче. Не ставь два пункта с одним agent_id: один вызов должен дать всё, что этот агент умеет для цели.
 - Пункт: id (короткий стабильный идентификатор латиницей: p1, p2, …), title (по-русски: какой результат будет получен), agent_id (агент из реестра, который даёт этот результат — обязателен, если результат даёт агент), status (pending — не начат, active — в работе, done — результат есть в журнале, blocked — нельзя получить без инженера, dropped — оказался не нужен), depends_on (id пунктов, без которых этот не начать), note (коротко, почему blocked или dropped).
 - Пункт без id отбрасывается. Не добавляй пункты «проверить результат», «завершить задачу» и работу, о которой инженер не просил.
 - Статусы pending → active → done по вызовам агентов оркестратор проставляет сам. Меняй статус вручную только для blocked, dropped и для пунктов без агента.
+- При call_agent укажи в action.task_id id пункта плана, который этот вызов выполняет.
 - finish возможен, только когда в плане нет пунктов pending, active или blocked. Если пункт по журналу выполнен, но остался открытым — закрой его в plan_update в том же ответе, что и finish.
 
 Затем выбери одно действие:
@@ -124,8 +152,8 @@ SYSTEM = """Ты оркестратор инженерной задачи. Пр�
 - Если goal_satisfied — только finish. В action.result.summary_for_human напиши по-русски, что фактически сделано, опираясь на summary агентов из журнала (не на шаблон «вызвал агента»).
 - summary_for_human и question читает инженер, не программа: обычные русские фразы без технических идентификаторов — ни agent_id, ни имён артефактов из журнала, ни ключей JSON. Агентов называй по title из реестра, результат — файлом («новый schedule.inc»), скважины и даты — как в summary агентов.
 - Агент, который вернул completed, свою часть сделал: его результат уже в артефактах. Не вызывай его снова «для проверки» или «чтобы применить ещё раз».
-- Повторный call_agent того же агента допустим только если появились новые данные (ответ человека, новые файлы) или ты нашёл конкретный недостаток в его результате — тогда обязательно заполни action.rework_reason и опиши недостаток в handoff_message.
-- Если человек в журнале принял результат (review_accept) — finish.
+- Повторный call_agent того же агента допустим только если появились новые данные (ответ человека, новые файлы), ты нашёл конкретный недостаток в его результате (тогда обязательно заполни action.rework_reason и опиши недостаток в handoff_message) или в плане у этого агента есть другой ещё не выполненный пункт и в журнале ещё нет полного результата этого агента — тогда в action.task_id укажи id этого пункта. Если агент уже completed и в его данных уже есть все ключи output_provides из реестра — закрой оставшиеся его пункты (done) и вызывай следующего агента, не читай исходник повторно.
+- Если человек в журнале принял результат как итог задачи (review_accept) — finish. Если он принял результат одного агента и просил продолжить остальные шаги — не вызывай этого агента снова, иди дальше по плану.
 - Если агент вернул needs_input (задал вопрос) и человек ответил — верни задачу этому же агенту (call_agent) и передай ответ в handoff_message. Пока этот агент не вернул completed, цель не достигнута и finish невозможен.
 - finish проверяется отдельно: каждая часть цели должна быть покрыта записью журнала со статусом completed. Если в журнале есть «проверка завершения отклонила finish — не покрыто: …», цель не достигнута: закрой именно эти части через call_agent. Не повторяй finish без новых результатов агентов.
 
@@ -137,6 +165,7 @@ SYSTEM = """Ты оркестратор инженерной задачи. Пр�
 - Возвращай только JSON.
 - status_message пиши по-русски, коротко, в стиле текущего шага.
 - handoff_message — человекопонятное обращение к агенту (по title): что сделать, на основании каких файлов и данных, что уже известно из журнала (ответы инженера, результаты других агентов).
+- Если агент читает файлы и должен отдать табличные данные следующему агенту — заполни action.expected_output.datasets: [{name (латинский идентификатор: то же имя, что в input_schema.data потребителя, либо своё, если потребителю нужен произвольный набор), description (по-русски, что за таблица), fields: [{name, description, type: text|number|date|boolean}]}]. Не выдумывай значения ячеек — только форму набора. Если output_schema вызываемого агента уже совпадает с тем, что нужно потребителю — можно не заполнять. Consumers оркестратор допишет сам из плана.
 """
 
 # Completion check: a second, sceptical LLM pass that runs only when the Decision LLM proposes
@@ -256,7 +285,7 @@ state.hitl={pending:false,questions,answers};
 state.status='running';
 state.version=Number(state.version||0)+1;
 const reviewAccept=isResultReviewGate(qid)&&humanAnswerChoice(applied.answer)==='accept';
-ledgerPush(state,{kind:'human',step:Number(state.step_count||0),question_id:qid,question:String(q0.question||'').slice(0,200),answer:humanAnswerText(applied.answer).slice(0,300),...(reviewAccept?{review_accept:true}:{})});
+ledgerPush(state,{kind:'human',step:Number(state.step_count||0),question_id:qid,question:String(q0.question||'').slice(0,200),answer:humanAnswerText(applied.answer).slice(0,300),...reviewAcceptFields(reviewAccept, q0)});
 state.ledger.last_human_step=Number(state.step_count||0);
 state.ledger.stall_count=0;
 const said=humanAnswerText(applied.answer);
@@ -656,7 +685,7 @@ if(req.is_resume===true){
   state.status='running';
   state.version=Number(state.version||0)+1;
   const reviewAccept=isResultReviewGate(qid)&&humanAnswerChoice(stored)==='accept';
-  ledgerPush(state,{kind:'human',step:Number(state.step_count||0),question_id:qid,question:String(q0.question||'').slice(0,200),answer:humanAnswerText(stored).slice(0,300),...(reviewAccept?{review_accept:true}:{})});
+  ledgerPush(state,{kind:'human',step:Number(state.step_count||0),question_id:qid,question:String(q0.question||'').slice(0,200),answer:humanAnswerText(stored).slice(0,300),...reviewAcceptFields(reviewAccept, q0)});
   state.ledger.last_human_step=Number(state.step_count||0);
   state.ledger.stall_count=0;
   const said=humanAnswerText(stored);
@@ -724,7 +753,7 @@ const plannerRegistry=registry.map(r=>{
 const compact=buildCompact(state);
 /* No rule-based routing hint here: the Decision LLM reasons from goal + journal + state + registry + RAG policy cards. */
 const journalLines=(compact.journal&&Array.isArray(compact.journal.history)?compact.journal.history:[]).map(e=>{
-  if(e.kind==='human') return `- шаг ${e.step}: человек ответил${e.review_accept?' (принял результат)':''}: «${e.answer}»${e.question?` — на вопрос «${e.question}»`:''}`;
+  if(e.kind==='human') return `- шаг ${e.step}: человек ответил${e.review_accept?(e.review_scope==='agent'?' (принял результат этого агента, остальные шаги плана продолжать)':' (принял результат как итог задачи)'):''}: «${e.answer}»${e.question?` — на вопрос «${e.question}»`:''}`;
   if(e.kind==='verification') return `- шаг ${e.step}: проверка завершения отклонила finish — не покрыто: ${(e.uncovered||[]).join('; ')||'(не указано)'}`;
   const data=(e.data_keys||[]).length?`; данные: ${e.data_keys.join(', ')}`:'';
   const arts=(e.artifacts_added||[]).length?`; артефакты: ${e.artifacts_added.join(', ')}`:'';
@@ -811,21 +840,28 @@ state.version=Number(state.version||0)+1;
    Items without id are rejected and counted (developer log), never silently dropped. */
 const planMerge=applyPlanUpdate(state, decision.plan_update, registry);
 /* --- Completion guards (deterministic safety around the LLM decision; no domain knowledge) ---
-   1. The human accepted the result in a review gate → the case is finished, whatever the LLM picked.
+   1. The human accepted the result in a review gate as the outcome of the task → finished, whatever the
+      LLM picked. Accepted one agent's result while the plan has steps for agents that never ran
+      (review_scope 'agent') → the LLM's decision stands; that agent is not re-delegated.
    2. The LLM says goal_satisfied yet re-delegates to an agent that already completed (habit) → finish.
       A first delegation with a wrong goal_satisfied flag is the opposite case: the action is the
       intent, the flag is the slip — the flag is ignored and the agent is called.
    3. Re-delegating to an agent that already returned completed, with no new human input since:
-      allowed once with an explicit rework_reason; otherwise → result review with the human. */
+      allowed once with an explicit rework_reason; otherwise → result review with the human. A call that
+      names another open plan item of that agent is new work, not a repeat (planNamesNewWork). Completing
+      the agent closes leftover items it owns when its data already has every output_provides key. */
 let guard=null;
 let reworkReason='';
 const answered=ledgerAnsweredAgentQuestion(state);
+const accepted=ledgerHumanAccepted(state);
 /* Open plan items (pending / active / blocked) are uncovered parts of the goal by definition: a finish
    with them behaves like a rejected completion check (one continue step, then the engineer). */
 const planOpen=type==='finish'?planOpenItems(state.plan):[];
-const repeatDelegation=(agentId)=>{
-  const last=ledgerLastAgentEntry(state, String(agentId||'').trim());
-  return Boolean(last)&&String(last.status||'')==='completed'&&!ledgerHasNewInputsSince(state, last);
+const repeatDelegation=(agentId, taskId)=>{
+  const id=String(agentId||'').trim();
+  const last=ledgerLastAgentEntry(state, id);
+  if(!last||String(last.status||'')!=='completed'||ledgerHasNewInputsSince(state, last)) return false;
+  return !planNamesNewWork(state, id, taskId);
 };
 if(type==='finish'&&answered){
   /* 0. An agent asked, the human answered, the agent has not run since → the answer must reach the
@@ -838,11 +874,11 @@ if(type==='finish'&&answered){
     handoff_message:`Инженер ответил на ваш вопрос («${answered.question.slice(0,160)}»): «${answered.answer.slice(0,200)}». Продолжите задачу с учётом этого ответа.`,
     task:{objective:String(state.goal||'')}
   };
-} else if(type!=='finish'&&ledgerHumanAccepted(state)){
+} else if(type!=='finish'&&accepted==='case'){
   guard='human_accepted';
   type='finish';
   action={type:'finish',result:{summary_for_human:String((obj(action.result)&&action.result.summary_for_human)||'')}};
-} else if(type==='finish'&&!ledgerHumanAccepted(state)&&((verification&&verification.all_covered===false)||planOpen.length)){
+} else if(type==='finish'&&accepted!=='case'&&((verification&&verification.all_covered===false)||planOpen.length)){
   /* 4. Verified completion: the LLM proposed finish, but the completion check found parts of the goal
         without a completed journal entry and/or its own plan still has open items. First time — one
         more step with the gaps in the journal (the Decision LLM must close them); second time — the
@@ -864,13 +900,13 @@ if(type==='finish'&&answered){
     type='ask_user';
     action={type:'ask_user',...review};
   }
-} else if(type==='call_agent'&&progress.goal_satisfied===true&&!answered&&repeatDelegation(action.agent_id)){
+} else if(type==='call_agent'&&progress.goal_satisfied===true&&!answered&&repeatDelegation(action.agent_id, action.task_id)){
   guard='goal_satisfied';
   type='finish';
   action={type:'finish',result:{summary_for_human:String(progress.evidence||'')}};
 } else if(type==='call_agent'){
   const agentId=String(action.agent_id||'').trim();
-  const repeat=repeatDelegation(agentId);
+  const repeat=repeatDelegation(agentId, action.task_id);
   if(progress.goal_satisfied===true&&!repeat) guard='goal_flag_ignored';
   if(repeat){
     reworkReason=String(action.rework_reason||'').trim();
@@ -920,11 +956,14 @@ if(type==='call_agent'){
   /* inputs are references owned by the orchestrator (artifact ids, data buckets, HITL policy). The LLM talks to
      the agent through handoff_message only: anything it puts into action.task (e.g. its own `facts` with dates)
      is a paraphrase, and an agent that trusted it would override the deterministic result of a previous agent
-     (CASE-6a9ec6b3-74e34e: invented per-well dates replaced data.excel.facts). */
+     (CASE-6a9ec6b3-74e34e: invented per-well dates replaced data.excel.facts). expected_output is the shape
+     of what to extract (field names, types) — not cell values. */
+  const calleeId=String(action.agent_id||'').trim();
+  const expected=expectedOutputForCall(action, state, registry, calleeId);
   agentTask={
     case_id:prev.case_id,
     task_id:taskId,
-    agent_id:String(action.agent_id||'').trim(),
+    agent_id:calleeId,
     objective:String(action.task&&action.task.objective||state.goal||''),
     handoff_message:String(action.handoff_message||''),
     inputs:{
@@ -935,13 +974,14 @@ if(type==='call_agent'){
          GET /cases/{id}/state. data_refs lists which agents already produced data (not domain buckets). */
       data_refs:Object.keys(state.agents||{}),
       ...(unlistedPolicy?{unlisted_wells_policy:unlistedPolicy}:{}),
-      ...(reworkReason?{rework_reason:reworkReason}:{})
+      ...(reworkReason?{rework_reason:reworkReason}:{}),
+      ...(expected?{expected_output:expected}:{})
     },
     context:{hitl:{pending:Boolean(hitlState.pending),answer_ids:Object.keys(hitlAnswers),answers:hitlAnswers}},
     constraints:{units:'METRIC'}
   };
   state.current_task=slimCurrentTask({task_id:taskId,agent_id:agentTask.agent_id},state.artifacts,state.agents);
-  planMarkAgentActive(state, agentTask.agent_id);
+  planMarkAgentActive(state, agentTask.agent_id, taskId);
   events.push(decisionEvent, {
     kind:'agent.handoff',
     actor:'orchestrator',
@@ -954,7 +994,7 @@ if(type==='call_agent'){
   });
 } else if(type==='ask_user'){
   nextStatus='waiting_user';
-  const q={question_id:String(action.question_id||`Q-${state.step_count}`),question:String(action.question||'Нужно уточнение'),options:Array.isArray(action.options)?action.options:[],...(action.kind?{kind:action.kind}:{})};
+  const q={question_id:String(action.question_id||`Q-${state.step_count}`),question:String(action.question||'Нужно уточнение'),options:Array.isArray(action.options)?action.options:[],...(action.kind?{kind:action.kind}:{}),...(action.review_scope?{review_scope:action.review_scope}:{})};
   state.hitl={pending:true,questions:[q],answers:(state.hitl&&state.hitl.answers)||{}};
   state.current_task=null;
   events.push(decisionEvent, {kind:'hitl.request',actor:'orchestrator',status:'waiting_user',status_message:statusMessage,payload:{...q,...execRef()}});

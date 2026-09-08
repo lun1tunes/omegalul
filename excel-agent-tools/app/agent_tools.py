@@ -5,11 +5,15 @@ the n8n workflow calls them through ``POST /agent-tools/{name}``.
 
 * ``extract_commissioning(table_id, well_column, date_column)`` → facts «скважина — дата ввода»;
 * ``extract_well_parameters(table_id, well_column, mapping)`` → per-well parameters of new wells;
+* ``extract_table(table_id, name, columns, …)`` → any other table as a **dataset** (``mas_agent_kit.dataset``):
+  typed rows under ``data[<name>]`` plus a JSON artifact; the shape the orchestrator asked for comes in
+  ``inputs.expected_output`` and the tool reports which requested fields the table could not provide;
 * ``ask_engineer(question, options, topic)`` — the only way the LLM asks a human (prose, validated).
 
 Argument problems raise ``ToolError`` for the LLM (``spec_incomplete``, ``table_not_found``,
-``column_not_found``, ``column_not_dates``, ``no_rows``, ``too_many_attempts``) — never a question to the
-engineer. Parts (dates, parameters) accumulate into one ``completed`` result via ``_merge_result``.
+``column_not_found``, ``column_not_dates``, ``no_rows``, ``name_reserved``, ``too_many_attempts``) — never a
+question to the engineer. Parts (dates, parameters, datasets) accumulate into one ``completed`` result via
+``_merge_result``; its ``next_step`` tells the model which expected datasets are still missing.
 """
 
 from __future__ import annotations
@@ -20,18 +24,29 @@ from typing import Any
 
 from mas_agent_kit import (
     ToolError,
+    dataset_entry,
     engineer_request_from_args,
+    expected_names,
+    expected_output,
     human_text_problems,  # noqa: F401  (re-exported: tests import it from here)
     list_preview,
     parse_jsonish,
     plural_ru,
 )
+from mas_agent_kit.dataset import artifact_id_for, dataset_json_bytes, dataset_name
 
+from . import dataset_extract as ds
 from .agent import agent
 from .excel_tools import _record, _rows_for_table, _schema, _table
 from .tools import tool
 
 MAX_TOOL_REPEATS = 3
+# ``data`` keys with a fixed meaning for consumers / bookkeeping: a dataset may not take them.
+RESERVED_DATA_KEYS = frozenset(
+    {"facts", "new_wells", "parts", "session_id", "file_name", "files", "preview", "total_count", "excel_table", "table_ids", "commissioning_source", "new_wells_source", "omitted_keys", "asked_by", "expected"}
+)
+# Which ``data`` key each result part fixes — for the expected_output coverage.
+PART_DATA_KEY = {"commissioning": "facts", "well_parameters": "new_wells"}
 # Canonical engineering facts for a new well (Schedule Builder renders WELSPECS / COMPDATMD / WCONPROD
 # from them; see schedule-builder-service timeline_ops.NEW_WELL_FACT_COLUMNS). Anything else in the
 # row is passed through under its original header.
@@ -144,8 +159,47 @@ def _repeat_guard(state: dict[str, Any], name: str) -> None:
     agent.tools.repeat_guard(state, name, limit=MAX_TOOL_REPEATS, hint="Если данных в книге нет — спроси инженера через ask_engineer, иначе заверши ответ.")
 
 
-def _merge_result(state: dict[str, Any], part: str, summary: str, data: dict[str, Any]) -> dict[str, Any]:
-    """Accumulate extraction parts (dates, well parameters) into one completed agent result."""
+def _produced_keys(parts: dict[str, Any]) -> list[str]:
+    """``data`` keys the accumulated parts fixed: facts / new_wells / dataset names (``dataset:<name>``)."""
+    out: list[str] = []
+    for part in parts:
+        key = PART_DATA_KEY.get(part) or (part.split(":", 1)[1] if part.startswith("dataset:") else "")
+        if key and key not in out:
+            out.append(key)
+    return out
+
+
+def expected_coverage(state: dict[str, Any], parts: dict[str, Any]) -> dict[str, Any]:
+    """What the orchestrator asked for (``inputs.expected_output.datasets``) versus what the tools fixed."""
+    requested = expected_names(state.get("inputs"))
+    produced = _produced_keys(parts)
+    return {"requested": requested, "produced": produced, "missing": [n for n in requested if n not in produced]}
+
+
+def _expected_descriptions(state: dict[str, Any]) -> dict[str, str]:
+    exp = expected_output(state.get("inputs"))
+    return {d["name"]: str(d.get("description") or "") for d in exp.get("datasets") or []}
+
+
+def remaining_hint(state: dict[str, Any], coverage: dict[str, Any]) -> str:
+    """``next_step`` for the model after a part was fixed: stop, or extract the datasets still expected."""
+    missing = list(coverage.get("missing") or [])
+    if not missing:
+        return ""
+    descriptions = _expected_descriptions(state)
+    names = ", ".join(f"{n}" + (f" ({descriptions[n]})" if descriptions.get(n) else "") for n in missing)
+    return (
+        f"Часть результата зафиксирована. Оркестратор ещё ожидает наборы данных: {names}. "
+        "Извлеки их следующими вызовами (facts → extract_commissioning, new_wells → extract_well_parameters, остальные → extract_table с тем же name), "
+        "затем заверши ответ одним предложением. Если такой таблицы в книге нет — так и напиши в ответе, инженера спрашивай только если без него нельзя выбрать таблицу."
+    )
+
+
+def _merge_result(state: dict[str, Any], part: str, summary: str, data: dict[str, Any], artifacts: dict[str, Any] | None = None) -> dict[str, Any]:
+    """Accumulate extraction parts (dates, well parameters, datasets) into one completed agent result.
+
+    Returns the model view of the stored result; ``next_step`` names the expected datasets still missing.
+    """
     payload = state.get("payload") if isinstance(state.get("payload"), dict) else {}
     existing = state.get("result") if isinstance(state.get("result"), dict) else {}
     parts = existing.get("data", {}).get("parts") if isinstance(existing.get("data"), dict) else None
@@ -157,15 +211,26 @@ def _merge_result(state: dict[str, Any], part: str, summary: str, data: dict[str
     merged["session_id"] = str(state.get("session_id") or "")
     merged["file_name"] = str(state.get("file_name") or "")
     merged["files"] = list(payload.get("files") or [])
+    coverage = expected_coverage(state, parts)
+    if coverage["requested"]:
+        merged["expected"] = coverage
+    ordered = [k for k in ("commissioning", "well_parameters") if k in parts] + [k for k in parts if k not in PART_DATA_KEY]
+    cards = {k: v for k, v in (existing.get("artifacts") or {}).items()} if isinstance(existing.get("artifacts"), dict) else {}
+    cards.update(artifacts or {})
+    cards["excel_session"] = str(state.get("session_id") or "")
     result = agent.new_result(
         state,
         "completed",
-        " ".join(parts[k] for k in ("commissioning", "well_parameters") if k in parts).strip(),
+        " ".join(parts[k] for k in ordered).strip(),
         data=merged,
-        artifacts={"excel_session": str(state.get("session_id") or "")},
+        artifacts=cards,
         assumptions=list(existing.get("assumptions") or []),
     )
-    return agent.store_result(state, result)
+    view = agent.store_result(state, result)
+    hint = remaining_hint(state, coverage)
+    if hint:
+        view["next_step"] = hint
+    return view
 
 
 # --------------------------------------------------------------------------------------------------
@@ -299,7 +364,7 @@ def extract_commissioning_tool(ctx: dict[str, Any], args: dict[str, Any]) -> dic
     }
     result = _merge_result(state, "commissioning", summary, data)
     agent.activity_for_state(state).progress(summary, status="completed")
-    return {"status": result["status"], "message": summary, "facts_count": len(facts), "preview": facts[:5]}
+    return {"status": result["status"], "message": summary, "facts_count": len(facts), "preview": facts[:5], "next_step": result.get("next_step", "")}
 
 
 def _mapping_from_args(raw: Any) -> dict[str, str]:
@@ -426,7 +491,146 @@ def extract_well_parameters_tool(ctx: dict[str, Any], args: dict[str, Any]) -> d
     }
     result = _merge_result(state, "well_parameters", summary, data)
     agent.activity_for_state(state).progress(summary, status="completed")
-    return {"status": result["status"], "message": summary, "wells_count": len(rows_out), "preview": rows_out[:3]}
+    return {"status": result["status"], "message": summary, "wells_count": len(rows_out), "preview": rows_out[:3], "next_step": result.get("next_step", "")}
+
+
+# --------------------------------------------------------------------------------------------------
+# extract_table — any table as a dataset (the flexible output; shape comes from the orchestrator)
+# --------------------------------------------------------------------------------------------------
+
+
+def _dataset_title(state: dict[str, Any], args: dict[str, Any], table: dict[str, Any], name: str) -> str:
+    """Russian title for the feed: the model's title, else the description the orchestrator put on this dataset."""
+    del table  # detect_tables preamble is not a dataset title
+    for candidate in (args.get("title"), args.get("description"), _expected_descriptions(state).get(name)):
+        text = str(candidate or "").strip()
+        if text and not human_text_problems(text, min_length=1):
+            return text[:120]
+    return ""
+
+
+def _requested_fields(state: dict[str, Any], name: str) -> list[dict[str, Any]]:
+    """Field descriptors the orchestrator asked for under this dataset name (``[{name, description?, type?}]``)."""
+    for d in expected_output(state.get("inputs")).get("datasets") or []:
+        if d.get("name") == name:
+            return [dict(f) for f in d.get("fields") or []]
+    return []
+
+
+def _upload_dataset(state: dict[str, Any], entry: dict[str, Any], rows: list[dict[str, Any]], summary: str) -> dict[str, Any] | None:
+    """Full rows → Activity JSON artifact (survives the orchestrator's state budget; downloadable in the UI)."""
+    activity = agent.activity_for_state(state)
+    if not activity.configured:
+        return None
+    try:
+        card = activity.upload(artifact_id_for(entry["name"]), f"{entry['name']}.json", dataset_json_bytes(entry, rows), "application/json", summary=summary)
+    except Exception as exc:  # noqa: BLE001 — the inline rows / preview still carry the result
+        activity.trace("Не удалось сохранить набор данных как артефакт", level="warn", dataset=entry["name"], error=str(exc)[:300])
+        return None
+    return {k: v for k, v in card.items() if k != "download_path"}
+
+
+@tool(
+    _schema(
+        "extract_table",
+        "Extract any table as a named dataset: typed rows under data[name] plus a JSON artifact. The model names the table, the dataset and (optionally) field→column mapping, types, filters, a key field and an unpivot rule; extraction is deterministic.",
+        {
+            "table_id": {"type": "string", "minLength": 1},
+            "name": {"type": "string", "minLength": 1},
+            "columns": {"type": ["object", "array", "string"]},
+            "title": {"type": "string"},
+            "types": {"type": ["object", "string"]},
+            "filters": {"type": ["array", "object", "string"]},
+            "key_field": {"type": "string"},
+            "unpivot": {"type": ["object", "string"]},
+        },
+        ["table_id", "name"],
+    )
+)
+def extract_table_tool(ctx: dict[str, Any], args: dict[str, Any]) -> dict[str, Any]:
+    state = ctx["state"]
+    _repeat_guard(state, "extract_table")
+    if not str(args.get("table_id") or "").strip():
+        raise _args_error(
+            "spec_incomplete",
+            "Укажи table_id из инвентаря и name — латинское имя набора данных (то, что просил оркестратор в expected_output, иначе своё: well_events, oil_rates). Это ошибка вызова, инженера спрашивать не нужно.",
+            missing=["table_id"],
+            available_tables=_available_tables(state),
+        )
+    name = dataset_name(args.get("name"))
+    if not name:
+        raise _args_error(
+            "spec_incomplete",
+            "name — латинский идентификатор набора данных (например well_events, oil_rates); если оркестратор назвал набор в expected_output — используй то имя. Это ошибка вызова, инженера спрашивать не нужно.",
+            missing=["name"],
+            got=str(args.get("name") or ""),
+        )
+    if name in RESERVED_DATA_KEYS:
+        raise _args_error(
+            "name_reserved",
+            "Это имя занято: facts извлекает extract_commissioning, new_wells — extract_well_parameters; для прочих таблиц выбери другое имя набора.",
+            name=name,
+            use_instead={"facts": "extract_commissioning", "new_wells": "extract_well_parameters"}.get(name, "другое имя"),
+        )
+    table = _resolve_table(state, args)
+    columns = [str(c) for c in (table.get("columns") or [])]
+    mapping, missing_cols = ds.resolve_columns(columns, args.get("columns"))
+    if missing_cols:
+        raise _args_error(
+            "column_not_found",
+            "В columns указаны колонки, которых нет в таблице. Возьми точные имена из available_columns. Это ошибка вызова, инженера спрашивать не нужно.",
+            not_found=missing_cols,
+            available_columns=columns,
+        )
+    if not mapping:
+        raise _args_error("spec_incomplete", "В таблице не осталось колонок для набора данных.", available_columns=columns)
+    filters = ds.resolve_filters(columns, mapping, args.get("filters"))
+    unpivot = ds.resolve_unpivot(columns, mapping, args.get("unpivot"))
+    key_field = dataset_name(args.get("key_field"))
+    known_fields = set(mapping) | ({unpivot.name_field, unpivot.value_field} if unpivot else set())
+    if key_field and key_field not in known_fields:
+        raise _args_error("column_not_found", "key_field должен быть одним из полей набора (ключей columns).", key_field=key_field, fields=sorted(known_fields))
+    # Types: the model's declaration > the type the orchestrator asked for in expected_output > inference.
+    requested = _requested_fields(state, name)
+    types = {f["name"]: f["type"] for f in requested if f.get("type") and f["name"] in known_fields}
+    types.update(ds.resolve_types(known_fields, args.get("types")))
+    built = ds.build_dataset((_record(columns, row) for row in _rows_for_table(state, table)), mapping, types=types, filters=filters, key_field=key_field, unpivot=unpivot)
+    if not built.rows:
+        raise _args_error(
+            "no_rows",
+            "После выбора колонок и фильтров в таблице не осталось ни одной строки. Проверь columns/filters по sample или выбери другую таблицу.",
+            available_columns=columns,
+            **({"filtered_out": built.issues["filtered_out"]} if "filtered_out" in built.issues else {}),
+        )
+    produced = {f["name"] for f in built.fields}
+    requested_missing = [f["name"] for f in requested if f["name"] not in produced]
+    issues = dict(built.issues)
+    if requested_missing:
+        issues["requested_fields_missing"] = requested_missing
+    title = _dataset_title(state, args, table, name)
+    source = {"table_id": table.get("table_id"), "sheet": table.get("sheet"), "range": table.get("range"), "columns": columns}
+    entry = dataset_entry(name, built.fields, built.rows, title=title, source=source, issues=issues)
+    field_words = ", ".join(f["name"] for f in built.fields)
+    summary = f"Извлёк набор данных{f' «{title}»' if title else ''}: {_plural(len(built.rows), 'строка', 'строки', 'строк')}, {_plural(len(built.fields), 'поле', 'поля', 'полей')}."
+    if requested_missing:
+        # Field names are identifiers — they stay in issues (data); the feed line only says how many.
+        summary += f" В таблице не нашлось {_plural(len(requested_missing), 'запрошенного поля', 'запрошенных полей', 'запрошенных полей')}."
+    card = _upload_dataset(state, entry, built.rows, summary)
+    if card:
+        entry["artifact_id"] = str(card.get("artifact_id") or entry.get("artifact_id") or "")
+    result = _merge_result(state, f"dataset:{name}", summary, {name: entry}, artifacts={card["artifact_id"]: card} if card else None)
+    agent.activity_for_state(state).progress(summary, status="completed")
+    return {
+        "status": result["status"],
+        "message": summary,
+        "dataset": name,
+        "row_count": len(built.rows),
+        "fields": built.fields,
+        "preview": built.rows[:3],
+        "issues": issues,
+        "field_names": field_words,
+        "next_step": result.get("next_step", ""),
+    }
 
 
 # --------------------------------------------------------------------------------------------------
