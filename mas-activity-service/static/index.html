@@ -9,7 +9,7 @@
   <link rel="preconnect" href="https://fonts.googleapis.com" />
   <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
   <link href="https://fonts.googleapis.com/css2?family=IBM+Plex+Sans:wght@400;500;600;700&family=IBM+Plex+Mono:wght@400;500&display=swap" rel="stylesheet" />
-  <link rel="stylesheet" href="/static/app.css?v=102" />
+  <link rel="stylesheet" href="/static/app.css?v=103" />
 </head>
 <body>
   <svg width="0" height="0" style="position:absolute" aria-hidden="true">
@@ -247,11 +247,16 @@
             <span>Ответить</span>
             <svg class="icon" aria-hidden="true"><use href="#i-send"/></svg>
           </button>
+          <button type="button" class="btn btn-quiet" id="closeTaskHitlBtn" hidden>Закрыть задачу</button>
         </div>
       </div>
       <div class="composer-idle" id="composerIdle" hidden>
         <span class="composer-idle-text" id="composerIdleText">Задача завершена.</span>
-        <button type="button" class="btn btn-quiet" id="restartBtn">Перезапустить с теми же файлами</button>
+        <div class="composer-idle-actions">
+          <button type="button" class="btn btn-quiet" id="resumeRunBtn" hidden>Продолжить</button>
+          <button type="button" class="btn btn-quiet" id="restartBtn">Перезапустить с теми же файлами</button>
+          <button type="button" class="btn btn-quiet" id="closeTaskBtn" hidden>Закрыть задачу</button>
+        </div>
       </div>
       <p class="composer-hint" id="composerHint" hidden></p>
       <p class="composer-drop-hint" id="composerDropHint">Файлы можно перетащить прямо в поле ответа — Excel, schedule, недостающий INCLUDE, траектории.</p>
@@ -280,6 +285,6 @@
 
   <script src="/static/schema.js?v=32"></script>
   <script src="/static/log.js?v=1"></script>
-  <script src="/static/app.js?v=105"></script>
+  <script src="/static/app.js?v=106"></script>
 </body>
 </html>

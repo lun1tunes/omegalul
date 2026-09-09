@@ -150,6 +150,24 @@ def test_log_endpoint_json_and_ndjson_and_chat_hides_trace() -> None:
     assert client.get("/cases/CASE-nope/log").status_code == 404
 
 
+def test_case_cancelled_is_info_from_engineer() -> None:
+    case_id = _seed("CASE-log-cancel")
+    control_plane.append_event(
+        case_id,
+        kind="case.cancelled",
+        actor="user",
+        status="cancelled",
+        status_message="Задача закрыта инженером",
+    )
+    log = case_log.build_case_log(case_id, n8n_base="https://n8n.corp")
+    cancelled = [r for r in log["records"] if r["kind"] == "case.cancelled"]
+    assert len(cancelled) == 1
+    assert cancelled[0]["level"] == "info"
+    assert cancelled[0]["source"] == "engineer"
+    assert cancelled[0]["title"] == "Задача закрыта"
+
+
+
 def test_post_event_with_execution_id_maps_execution_to_case_and_accepts_trace_kinds() -> None:
     case_id = _seed("CASE-log-exec")
     res = client.post(f"/cases/{case_id}/events", json={

@@ -135,6 +135,8 @@ class Settings(BaseSettings):
     mas_knowledge_corpus: str = Field(default="", validation_alias="MAS_KNOWLEDGE_CORPUS")
     n8n_health_path: str = Field(default="/healthz", validation_alias="N8N_HEALTH_PATH")
     n8n_webhook_checks: str = Field(default="", validation_alias="N8N_WEBHOOK_CHECKS")
+    # «Продолжить» is allowed on running/waiting_agent only when the last event is this old (seconds).
+    resume_stale_s: float = Field(default=120.0, validation_alias="RESUME_STALE_S")
 
     @field_validator(
         "n8n_base_url",

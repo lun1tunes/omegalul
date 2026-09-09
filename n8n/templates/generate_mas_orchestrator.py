@@ -829,8 +829,11 @@ const verification=(()=>{
       unsupported_claims:(Array.isArray(p.unsupported_claims)?p.unsupported_claims:[]).map(s=>String(s||'').trim()).filter(Boolean).slice(0,6)};
   }catch{return null}
 })();
-let action=obj(decision.action)?{...decision.action}:{type:'ask_user',question_id:'Q-parse',question:'Не удалось разобрать решение оркестратора',options:[]};
+const KNOWN_ACTIONS=['call_agent','ask_user','continue','finish'];
+const parsedAction=obj(decision.action);
+let action=parsedAction?{...decision.action}:{};
 let type=String(action.type||'').trim();
+const unparsed=!parsedAction||!KNOWN_ACTIONS.includes(type);
 const progress=obj(decision.progress)?decision.progress:{};
 const registry=Array.isArray(prev.registry)?prev.registry:[];
 const state=sanitizeState(obj(prev.state)?{...prev.state}:{});
@@ -854,6 +857,21 @@ let guard=null;
 let reworkReason='';
 const answered=ledgerAnsweredAgentQuestion(state);
 const accepted=ledgerHumanAccepted(state);
+if(unparsed){
+  const fails=Number(state.ledger.parse_failures||0)+1;
+  state.ledger.parse_failures=fails;
+  ledgerPush(state,{kind:'verification',verdict:'rejected',uncovered:['решение оркестратора не разобрано']});
+  guard='decision_unparsed';
+  if(fails<2){
+    type='continue';
+    action={type:'continue'};
+  } else {
+    type='fail_case';
+    action={type:'fail_case'};
+  }
+} else {
+  state.ledger.parse_failures=0;
+}
 /* Open plan items (pending / active / blocked) are uncovered parts of the goal by definition: a finish
    with them behaves like a rejected completion check (one continue step, then the engineer). */
 const planOpen=type==='finish'?planOpenItems(state.plan):[];
@@ -863,7 +881,10 @@ const repeatDelegation=(agentId, taskId)=>{
   if(!last||String(last.status||'')!=='completed'||ledgerHasNewInputsSince(state, last)) return false;
   return !planNamesNewWork(state, id, taskId);
 };
-if(type==='finish'&&answered){
+if(unparsed){
+  /* Unparseable / unknown action: one continue so Decision retries; second consecutive → case.failed.
+     Never a HITL question — the engineer cannot repair a broken LLM envelope. */
+} else if(type==='finish'&&answered){
   /* 0. An agent asked, the human answered, the agent has not run since → the answer must reach the
         agent that asked. Finishing here would silently drop the engineer's decision. */
   guard='answer_not_applied';
@@ -925,7 +946,9 @@ if(type==='finish'&&answered){
   }
 }
 let statusMessage=String(decision.status_message||'').trim()||'Шаг оркестратора';
-if(guard==='repeat_review'||guard==='stall_review') statusMessage='Результат уже получен — прошу инженера принять его или описать доработку.';
+if(guard==='decision_unparsed'&&type==='continue') statusMessage='Не удалось разобрать следующий шаг. Формулирую решение заново.';
+else if(guard==='decision_unparsed'&&type==='fail_case') statusMessage='Оркестратор дважды не смог сформулировать следующий шаг. Перезапустите задачу или уточните формулировку.';
+else if(guard==='repeat_review'||guard==='stall_review') statusMessage='Результат уже получен — прошу инженера принять его или описать доработку.';
 else if(guard==='answer_not_applied') statusMessage=`Передаю ответ инженера агенту ${agentTitle(action.agent_id, registry)}.`;
 else if(guard==='human_accepted') statusMessage='Инженер принял результат — завершаю задачу.';
 else if(guard==='completion_unverified'){
@@ -959,6 +982,7 @@ if(type==='call_agent'){
      (CASE-6a9ec6b3-74e34e: invented per-well dates replaced data.excel.facts). expected_output is the shape
      of what to extract (field names, types) — not cell values. */
   const calleeId=String(action.agent_id||'').trim();
+  if(!reworkReason) reworkReason=ledgerPendingRework(state);
   const expected=expectedOutputForCall(action, state, registry, calleeId);
   agentTask={
     case_id:prev.case_id,
@@ -1022,11 +1046,17 @@ if(type==='call_agent'){
      guard) as the last step's decision; the chat collapses it into case.finished (same status_message). */
   decisionEvent.status_message=summary;
   events.push(decisionEvent, {kind:'case.finished',actor:'orchestrator',status:'done',status_message:summary,payload:{...result,action_type:'finish',plan:state.plan,...execRef()}});
+} else if(type==='fail_case'){
+  nextStatus='failed';
+  state.current_task=null;
+  decisionEvent.status_message=statusMessage;
+  events.push(decisionEvent, {kind:'case.failed',actor:'orchestrator',status:'failed',status_message:statusMessage,payload:{reason:'decision_unparsed',...execRef()}});
 } else {
-  nextStatus='waiting_user';
-  const q={question_id:'Q-unknown',question:'Оркестратор вернул неизвестное действие',options:[]};
-  state.hitl={pending:true,questions:[q],answers:{}};
-  events.push({kind:'hitl.request',actor:'orchestrator',status:'waiting_user',status_message:statusMessage,payload:{...q,...execRef()}});
+  nextStatus='failed';
+  state.current_task=null;
+  statusMessage='Оркестратор дважды не смог сформулировать следующий шаг. Перезапустите задачу или уточните формулировку.';
+  decisionEvent.status_message=statusMessage;
+  events.push(decisionEvent, {kind:'case.failed',actor:'orchestrator',status:'failed',status_message:statusMessage,payload:{reason:'decision_unparsed',...execRef()}});
 }
 state.status=nextStatus;
 const persistEvents=events.map(e=>[
@@ -1166,7 +1196,7 @@ let shouldContinue=applied.should_continue;
 const events=applied.events;
 /* 3. Step budget comes from MAS — Runtime Config (max_steps, UI-editable). Hitting it is not a silent
    failure: if there is a completed result, the engineer reviews it; only with nothing to show we fail. */
-const maxSteps=Math.max(3,Number(prev.max_steps)||12);
+const maxSteps=Math.max(1,Number(prev.max_steps)||12);
 if(Number(state.step_count||0)>=maxSteps&&nextStatus==='running'){
   shouldContinue=false;
   const done=composeDoneSummary(state, registry);
@@ -1452,6 +1482,11 @@ def main() -> None:
                     ]
                 },
             },
+            retryOnFail=True,
+            maxTries=3,
+            waitBetweenTries=2000,
+            onError="continueRegularOutput",
+            alwaysOutputData=True,
         ),
         node(
             "Decision Chat Model — configure in UI",
@@ -1498,6 +1533,11 @@ def main() -> None:
                     ]
                 },
             },
+            retryOnFail=True,
+            maxTries=3,
+            waitBetweenTries=2000,
+            onError="continueRegularOutput",
+            alwaysOutputData=True,
         ),
         node(
             "Verification Structured Output",

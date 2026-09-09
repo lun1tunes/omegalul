@@ -83,7 +83,7 @@ def record_level(kind: str, event: dict[str, Any]) -> str:
 def record_source(kind: str, event: dict[str, Any]) -> str:
     actor = str(event.get("actor") or "").strip()
     agent_id = str(event.get("agent_id") or "").strip()
-    if kind in {"case.created", "hitl.answered"}:
+    if kind in {"case.created", "hitl.answered", "case.cancelled"}:
         return "engineer"
     if kind == "system.node_error":
         return "n8n"
@@ -144,6 +144,8 @@ def record_title(kind: str, event: dict[str, Any]) -> str:
         return "Задача завершена"
     if kind == "case.failed":
         return "Задача завершилась с ошибкой"
+    if kind == "case.cancelled":
+        return "Задача закрыта"
     if kind == "system.node_error":
         node = str(payload.get("node_name") or "?")
         wf = str(payload.get("workflow_name") or "")

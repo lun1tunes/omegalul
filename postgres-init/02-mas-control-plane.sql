@@ -8,14 +8,14 @@ CREATE TABLE IF NOT EXISTS cases (
     status TEXT NOT NULL,
     updated_at TIMESTAMPTZ NOT NULL DEFAULT now(),
     CONSTRAINT cases_status_check CHECK (
-        status IN ('new', 'running', 'waiting_user', 'waiting_agent', 'done', 'failed')
+        status IN ('new', 'running', 'waiting_user', 'waiting_agent', 'done', 'failed', 'cancelled')
     )
 );
 
 -- Existing databases: re-create the CHECK so new statuses (waiting_agent) are accepted.
 ALTER TABLE cases DROP CONSTRAINT IF EXISTS cases_status_check;
 ALTER TABLE cases ADD CONSTRAINT cases_status_check CHECK (
-    status IN ('new', 'running', 'waiting_user', 'waiting_agent', 'done', 'failed')
+    status IN ('new', 'running', 'waiting_user', 'waiting_agent', 'done', 'failed', 'cancelled')
 );
 
 CREATE TABLE IF NOT EXISTS events (

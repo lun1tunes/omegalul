@@ -1478,6 +1478,9 @@ def test_post_run_restarts_failed_and_done_cases(monkeypatch) -> None:
     invoked.clear()
     state = dict(control_plane.get_case(case_id)["state"])
     state["data"] = {"facts": [1]}
+    state["agents"] = {"excel_extractor": {"status": "failed", "summary": "down"}}
+    state["ledger"] = {"history": [{"kind": "agent", "agent_id": "excel_extractor"}], "stall_count": 2}
+    state["plan"] = [{"id": "p1", "title": "Excel", "status": "active"}]
     state["step_count"] = MAX_STEPS
     state["last_error"] = {"message": "boom"}
     control_plane.update_case(case_id, state=state, status="failed")
@@ -1508,11 +1511,18 @@ def test_post_run_restarts_failed_and_done_cases(monkeypatch) -> None:
     after = control_plane.get_case(case_id)
     assert after["status"] == "running"
     assert after["state"]["goal"] == "keep goal"
-    assert after["state"]["data"] == {"facts": [1]}
+    assert after["state"]["data"] == {}
+    assert after["state"].get("agents") in ({}, None)
+    assert (after["state"].get("ledger") or {}).get("history") in ([], None)
+    assert after["state"].get("plan") in ([], None)
     assert after["state"].get("last_error") is None
     assert int(after["state"].get("step_count") or 0) == 0
     kinds = [event["kind"] for event in control_plane.list_events(case_id)]
     assert "orchestrator.status" in kinds
+    assert any(
+        e.get("kind") == "orchestrator.status" and "исходными файлами" in str(e.get("status_message") or "")
+        for e in control_plane.list_events(case_id)
+    )
     assert client.get(f"/cases/{case_id}").json()["restartable"] is False
 
     invoked.clear()
@@ -1607,3 +1617,124 @@ def test_feed_and_stream_meta_carry_the_orchestrator_plan(monkeypatch) -> None:
     ]
     meta = _stream_meta(_feed_from_row(case_id, control_plane.get_case(case_id), [], 0))
     assert meta["plan"] == feed["plan"]
+
+
+def test_cancel_from_allowed_statuses_and_rejects_done(monkeypatch) -> None:
+    monkeypatch.setenv("ORCHESTRATOR_WEBHOOK_URL", "http://127.0.0.1:9/webhook/mas-orchestrator-step")
+    from app.settings import Settings
+    from app import control_plane
+
+    monkeypatch.setattr("app.cases_api.get_settings", lambda: Settings())
+    monkeypatch.setattr("app.cases_api._invoke_create", lambda case_id: None)
+    invoked: list[str] = []
+    monkeypatch.setattr("app.cases_api._invoke_step", lambda case_id: invoked.append(case_id))
+    monkeypatch.setattr("app.cases_api._invoke_resume", lambda case_id, extra=None: invoked.append(f"resume:{case_id}"))
+
+    for status in ("running", "waiting_user", "waiting_agent", "failed"):
+        res = client.post("/cases", data={"task_description": f"закрыть {status}", "requested_by": "tester"})
+        case_id = res.json()["case_id"]
+        state = dict(control_plane.get_case(case_id)["state"])
+        state["hitl"] = {"pending": True, "questions": [{"question_id": "Q-1", "question": "Что дальше?"}], "answers": {}}
+        state["current_task"] = {"task_id": "TASK-1", "agent_id": "excel_extractor"}
+        control_plane.update_case(case_id, state=state, status=status)
+        invoked.clear()
+        closed = client.post(f"/cases/{case_id}/run", json={"action": "cancel"})
+        assert closed.status_code == 200, closed.text
+        body = closed.json()
+        assert body["status"] == "cancelled" and body["restartable"] is True
+        row = control_plane.get_case(case_id)
+        assert row["status"] == "cancelled"
+        assert row["state"]["hitl"]["pending"] is False
+        assert row["state"]["current_task"] is None
+        events = control_plane.list_events(case_id)
+        assert any(e.get("kind") == "case.cancelled" and e.get("status_message") == "Задача закрыта инженером" for e in events)
+        assert invoked == []
+
+    res = client.post("/cases", data={"task_description": "уже готово", "requested_by": "tester"})
+    case_id = res.json()["case_id"]
+    control_plane.update_case(case_id, status="done")
+    denied = client.post(f"/cases/{case_id}/run", json={"action": "cancel"})
+    assert denied.status_code == 409
+    assert "нельзя закрыть" in denied.json()["detail"]
+
+
+def test_resume_system_stale_then_fresh(monkeypatch) -> None:
+    monkeypatch.setenv("ORCHESTRATOR_WEBHOOK_URL", "http://127.0.0.1:9/webhook/mas-orchestrator-step")
+    from app.settings import Settings
+    from app import control_plane
+
+    monkeypatch.setattr("app.cases_api._invoke_create", lambda case_id: None)
+    resumed: list[str] = []
+    monkeypatch.setattr("app.cases_api._invoke_resume", lambda case_id, extra=None: resumed.append(str((extra or {}).get("source"))))
+
+    res = client.post("/cases", data={"task_description": "зависшая", "requested_by": "tester"})
+    case_id = res.json()["case_id"]
+    control_plane.update_case(case_id, status="waiting_agent")
+
+    monkeypatch.setenv("RESUME_STALE_S", "10000")
+    monkeypatch.setattr("app.cases_api.get_settings", lambda: Settings())
+    too_soon = client.post(f"/cases/{case_id}/run", json={"action": "resume", "source": "system"})
+    assert too_soon.status_code == 409
+    assert "подождите" in too_soon.json()["detail"]
+    assert resumed == []
+
+    monkeypatch.setenv("RESUME_STALE_S", "0")
+    monkeypatch.setattr("app.cases_api.get_settings", lambda: Settings())
+    feed = client.get(f"/cases/{case_id}").json()
+    assert feed["resume_stale"] is True
+    ok = client.post(f"/cases/{case_id}/run", json={"action": "resume", "source": "system"})
+    assert ok.status_code == 200, ok.text
+    assert ok.json()["accepted"] is True
+    assert resumed == ["system"]
+
+
+def test_feed_status_message_from_case_failed(monkeypatch) -> None:
+    monkeypatch.setenv("ORCHESTRATOR_WEBHOOK_URL", "http://127.0.0.1:9/webhook/mas-orchestrator-step")
+    from app.settings import Settings
+    from app import control_plane
+
+    monkeypatch.setattr("app.cases_api.get_settings", lambda: Settings())
+    monkeypatch.setattr("app.cases_api._invoke_create", lambda case_id: None)
+    res = client.post("/cases", data={"task_description": "сбой", "requested_by": "tester"})
+    case_id = res.json()["case_id"]
+    control_plane.update_case_and_append(
+        case_id,
+        state=control_plane.get_case(case_id)["state"],
+        status="failed",
+        kind="case.failed",
+        actor="orchestrator",
+        event_status="failed",
+        status_message="Сервис агента не отвечает. Проверьте, что он запущен.",
+    )
+    feed = client.get(f"/cases/{case_id}").json()
+    assert feed["status"] == "failed"
+    assert feed["status_message"] == "Сервис агента не отвечает. Проверьте, что он запущен."
+
+
+def test_invoke_action_writes_russian_on_orchestrator_error(monkeypatch) -> None:
+    import asyncio
+
+    monkeypatch.setenv("ORCHESTRATOR_WEBHOOK_URL", "http://127.0.0.1:9/webhook/mas-orchestrator-step")
+    from app import cases_api, control_plane
+    from app.orchestrator import OrchestratorError
+    from app.settings import Settings
+
+    monkeypatch.setattr("app.cases_api.get_settings", lambda: Settings())
+    monkeypatch.setattr("app.cases_api._invoke_create", lambda case_id: None)
+
+    async def boom(payload, *, files=None, timeout_s=90.0):
+        raise OrchestratorError("Connection refused to n8n", status_code=502)
+
+    monkeypatch.setattr("app.cases_api.invoke_orchestrator", boom)
+    res = client.post("/cases", data={"task_description": "нет оркестратора", "requested_by": "tester"})
+    case_id = res.json()["case_id"]
+    asyncio.run(cases_api._invoke_action(case_id, action="step"))
+    row = control_plane.get_case(case_id)
+    assert row["status"] == "failed"
+    failed = [e for e in control_plane.list_events(case_id) if e.get("kind") == "case.failed"]
+    assert failed
+    assert failed[-1]["status_message"] == "Не удалось передать задачу оркестратору. Проверьте адрес оркестратора в настройках и повторите."
+    assert "Connection refused" in str((failed[-1].get("payload") or {}).get("detail") or "")
+    feed = client.get(f"/cases/{case_id}").json()
+    assert feed["status_message"] == failed[-1]["status_message"]
+

@@ -533,6 +533,7 @@ def test_ready_health_and_static_assets() -> None:
         "renameTaskBtn", "statusDot", "statusPill", "titleText",
         "NOVATEK RE MASter", "Workspace", "Novatek STC reservoir engineering multi-agent system",
         'href="/knowledge"',
+        'id="resumeRunBtn"', 'id="closeTaskBtn"', 'id="closeTaskHitlBtn"',
     ):
         assert anchor in html, anchor
     # Retired controls and the single-file framing must not come back.
@@ -542,10 +543,10 @@ def test_ready_health_and_static_assets() -> None:
     ):
         assert gone not in html, gone
     # Cache busting: the HTML must reference the current asset versions.
-    assert "app.js?v=105" in html
+    assert "app.js?v=106" in html
     assert "schema.js?v=32" in html
     assert "log.js?v=1" in html
-    assert "app.css?v=102" in html
+    assert "app.css?v=103" in html
     # Developer mode: the switch and the «Лог» tab (hidden until the switch is on) ship with the page.
     for anchor in ('id="devModeToggle"', "Режим разработчика", 'id="viewLogBtn"', 'id="logView"', 'id="logSteps"', 'id="logDownload"'):
         assert anchor in html, anchor

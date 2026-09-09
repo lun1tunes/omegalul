@@ -55,6 +55,9 @@
   const composerHint = $("composerHint");
   const replyBtn = $("replyBtn");
   const restartBtn = $("restartBtn");
+  const resumeRunBtn = $("resumeRunBtn");
+  const closeTaskBtn = $("closeTaskBtn");
+  const closeTaskHitlBtn = $("closeTaskHitlBtn");
   const composerIdle = $("composerIdle");
   const composerIdleText = $("composerIdleText");
   const composerDropHint = $("composerDropHint");
@@ -125,6 +128,7 @@
     new: "Новая",
     done: "Готово",
     failed: "Сбой",
+    cancelled: "Закрыта",
     waiting_user: "Ждём вас",
     waiting_agent: "Агент работает",
     retryable_error: "Ошибка",
@@ -145,7 +149,8 @@
     const s = String(status || "").trim();
     const lower = s.toLowerCase();
     if (awaiting || /awaiting|waiting_user|needs_|human_gate|hitl|approval/i.test(lower)) return "waiting";
-    if (/ошибк|conflict|error|fail|reject|cancel|denied|stall|abort/i.test(lower)) return "failed";
+    if (lower === "cancelled" || lower === "canceled") return "idle";
+    if (/ошибк|conflict|error|fail|reject|denied|stall|abort/i.test(lower)) return "failed";
     if (/^(done|completed|succeeded|verified)$/i.test(lower)) return "done";
     if (!s || s === "—" || s === "…") return "idle";
     return "running";
@@ -301,7 +306,8 @@
   function emptyFeedMessage(data) {
     const st = String(data?.status || "").trim().toLowerCase();
     if (st === "planning") return "Задача создана, оркестратор ещё не прислал первое сообщение.";
-    if (/conflict|error|fail|cancel|reject/.test(st)) {
+    if (st === "cancelled") return data?.status_message || "Задача закрыта инженером.";
+    if (/conflict|error|fail|reject/.test(st)) {
       return data?.status_message || "Задача завершилась с ошибкой, а события в ленту не пришли.";
     }
     return "Ждём первые сообщения оркестратора — лента обновится сама.";
@@ -492,9 +498,10 @@
     const st = String(status || "").trim();
     const msg = String(message || "").trim();
     const isConflict = /conflict/i.test(st);
-    const isError = /error|fail|reject|cancel/i.test(st);
+    const isCancelled = /^(cancelled|canceled)$/i.test(st);
+    const isError = /error|fail|reject/i.test(st) && !isCancelled;
     const isDone = /^done$/i.test(st);
-    if (!msg && !isConflict && !isError) {
+    if (!msg && !isConflict && !isError && !isCancelled) {
       statusBanner.hidden = true;
       statusBannerText.textContent = "";
       return;
@@ -505,8 +512,8 @@
       return;
     }
     statusBanner.hidden = false;
-    statusBanner.dataset.tone = isConflict || isError ? "failed" : isDone ? "done" : "waiting";
-    statusBannerLabel.textContent = isConflict ? "Конфликт" : isError ? "Ошибка" : isDone ? "Итог" : "Статус";
+    statusBanner.dataset.tone = isConflict || isError ? "failed" : isDone ? "done" : isCancelled ? "idle" : "waiting";
+    statusBannerLabel.textContent = isConflict ? "Конфликт" : isError ? "Ошибка" : isDone ? "Итог" : isCancelled ? "Закрыта" : "Статус";
     statusBannerText.textContent = msg || (isConflict ? "Оркестратор отклонил запрос. Создайте задачу заново — причина обычно есть в ленте." : st);
   }
 
@@ -640,7 +647,11 @@
 
   function setComposerArmed(armed) {
     awaitingHuman = Boolean(armed);
-    const showComposer = !startOpen && (awaitingHuman || restartableCase);
+    const status = String(lastCaseFeed.status || "").toLowerCase();
+    const canClose = ["running", "waiting_user", "waiting_agent", "failed"].includes(status);
+    const resumeStale = Boolean(lastCaseFeed.resume_stale);
+    const showRecovery = !startOpen && Boolean(currentTask) && (restartableCase || resumeStale || canClose);
+    const showComposer = !startOpen && (awaitingHuman || showRecovery);
     composer.hidden = !showComposer;
     composer.classList.toggle("is-disabled", !awaitingHuman);
     hitlDropzone.hidden = !awaitingHuman;
@@ -649,13 +660,33 @@
     replyBtn.disabled = !awaitingHuman || startOpen;
     humanResponse.disabled = !awaitingHuman;
     hitlAttachBtn.disabled = !awaitingHuman;
-    composerIdle.hidden = awaitingHuman || !restartableCase || startOpen;
+    composerIdle.hidden = !showRecovery;
+    if (resumeRunBtn) {
+      resumeRunBtn.hidden = !resumeStale || startOpen;
+      resumeRunBtn.disabled = !resumeStale || startOpen || !currentTask;
+    }
+    restartBtn.hidden = !restartableCase;
     restartBtn.disabled = !restartableCase || startOpen || !currentTask;
+    if (closeTaskBtn) {
+      closeTaskBtn.hidden = !canClose || startOpen;
+      closeTaskBtn.disabled = !canClose || startOpen || !currentTask;
+    }
+    if (closeTaskHitlBtn) {
+      closeTaskHitlBtn.hidden = !awaitingHuman || !canClose || startOpen;
+      closeTaskHitlBtn.disabled = !awaitingHuman || !canClose || startOpen || !currentTask;
+    }
     if (!composerIdle.hidden) {
-      const tone = toneFor(lastCaseFeed.status, false);
-      composerIdleText.textContent = tone === "failed"
-        ? "Задача остановилась с ошибкой. Можно перезапустить её с теми же исходными файлами."
-        : "Задача завершена. Если нужно пересчитать — перезапустите её с теми же файлами.";
+      if (status === "cancelled") {
+        composerIdleText.textContent = "Задача закрыта. Можно перезапустить её с теми же исходными файлами.";
+      } else if (resumeStale) {
+        composerIdleText.textContent = "Оркестратор давно не отвечает. Можно продолжить задачу или закрыть её.";
+      } else if (toneFor(status, false) === "failed") {
+        composerIdleText.textContent = "Задача остановилась с ошибкой. Можно перезапустить её с теми же исходными файлами или закрыть.";
+      } else if (canClose && !restartableCase) {
+        composerIdleText.textContent = "Оркестратор работает. Если задача зависла — дождитесь кнопки «Продолжить» или закройте её.";
+      } else {
+        composerIdleText.textContent = "Задача завершена. Если нужно пересчитать — перезапустите её с теми же файлами.";
+      }
     }
     applyResumeWaitHint();
   }
@@ -1429,6 +1460,8 @@
       renderRequest(objective, attachedFilesFromFeed(data.attached_files ? data : lastCaseFeed));
     }
     renderStatusBanner(data.status, data.status_message || data.message);
+    if (Object.prototype.hasOwnProperty.call(data, "resume_stale")) lastCaseFeed.resume_stale = Boolean(data.resume_stale);
+    if (Object.prototype.hasOwnProperty.call(data, "status_message") && data.status_message) lastCaseFeed.status_message = data.status_message;
     setRestartable(Boolean(data.restartable) || Boolean(data.human_gate?.restartable) || String(data.status || "").toLowerCase() === "retryable_error");
     if (data.version != null) taskVersion = data.version;
     else if (data.human_gate?.expected_version != null) taskVersion = data.human_gate.expected_version;
@@ -1886,6 +1919,66 @@
       hideWait();
     }
   });
+
+  async function postCaseRun(payload, { waitLabel, okFlash, failFlash }) {
+    if (!currentTask) { showFlash("Сначала выберите задачу."); return; }
+    composer.classList.add("busy");
+    showWait(waitLabel);
+    try {
+      const res = await fetch(`/cases/${encodeURIComponent(currentTask)}/run`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ ...payload, requested_by: REQUESTED_BY }),
+      });
+      const data = await res.json().catch(() => ({}));
+      if (!res.ok) {
+        const detail = typeof data.detail === "string" ? data.detail : failFlash;
+        showFlash(detail);
+        return;
+      }
+      if (data.ok === false || data.skipped || data.accepted === false) {
+        showFlash(`${failFlash}: ${data.reason || data.status || "пропущен"}`);
+        return;
+      }
+      applyFeedMeta({
+        status: data.orchestrator?.status || data.status,
+        version: data.orchestrator?.version || data.version,
+        awaiting_human: data.awaiting_human,
+        restartable: data.restartable,
+        resume_stale: data.resume_stale,
+        human_gate: data.human_gate,
+        status_message: data.status_message || data.orchestrator?.message,
+        semantic_diff: data.semantic_diff,
+      });
+      showFlash(okFlash, { ok: true });
+      await pollFeed();
+      await refreshRail();
+    } catch (err) {
+      showFlash(`${failFlash}: ${err}`);
+    } finally {
+      composer.classList.remove("busy");
+      hideWait();
+    }
+  }
+
+  if (resumeRunBtn) {
+    resumeRunBtn.addEventListener("click", async () => {
+      await postCaseRun(
+        { action: "resume", source: "system" },
+        { waitLabel: "Продолжаем задачу…", okFlash: "Продолжение принято — лента обновится сама.", failFlash: "Не удалось продолжить задачу" },
+      );
+    });
+  }
+
+  async function closeCurrentTask() {
+    if (!window.confirm("Закрыть задачу? Её можно будет перезапустить с теми же файлами.")) return;
+    await postCaseRun(
+      { action: "cancel" },
+      { waitLabel: "Закрываем задачу…", okFlash: "Задача закрыта.", failFlash: "Не удалось закрыть задачу" },
+    );
+  }
+  if (closeTaskBtn) closeTaskBtn.addEventListener("click", closeCurrentTask);
+  if (closeTaskHitlBtn) closeTaskHitlBtn.addEventListener("click", closeCurrentTask);
 
   // ------------------------------------------------------------------ wiring
   function autosize(el) {

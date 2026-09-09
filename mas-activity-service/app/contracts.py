@@ -13,13 +13,14 @@ from app.state_shape import compact_decision_context as compact_decision_context
 SCHEMAS = Path(__file__).resolve().parents[1] / "schemas"
 
 # ``waiting_agent``: a long agent returned ``in_progress``; the case waits for ``resume source=agent``.
-CASE_STATUSES = ("new", "running", "waiting_user", "waiting_agent", "done", "failed")
+CASE_STATUSES = ("new", "running", "waiting_user", "waiting_agent", "done", "failed", "cancelled")
 AGENT_RESULT_STATUSES = ("completed", "needs_input", "failed", "in_progress")
 DECISION_ACTIONS = ("call_agent", "ask_user", "finish")
 EVENT_KINDS = (
     "case.created",
     "case.finished",
     "case.failed",
+    "case.cancelled",
     "orchestrator.status",
     "orchestrator.decision",
     "agent.handoff",
@@ -61,7 +62,7 @@ class CaseState(BaseModel):
     case_id: str
     goal: str = ""
     task_name: str = ""
-    status: Literal["new", "running", "waiting_user", "waiting_agent", "done", "failed"] = "new"
+    status: Literal["new", "running", "waiting_user", "waiting_agent", "done", "failed", "cancelled"] = "new"
     plan: list[PlanItem] = Field(default_factory=list)
     artifacts: dict[str, Any] = Field(default_factory=dict)
     data: dict[str, Any] = Field(default_factory=dict)

@@ -548,7 +548,8 @@ function sanitizeLedger(raw){
     stall_count:Number(l.stall_count||0)||0,
     last_human_step:Number(l.last_human_step||0)||0,
     reviews:Number(l.reviews||0)||0,
-    verify_rejections:Number(l.verify_rejections||0)||0
+    verify_rejections:Number(l.verify_rejections||0)||0,
+    parse_failures:Number(l.parse_failures||0)||0
   };
 }
 function ledgerPush(state, entry){
@@ -583,6 +584,19 @@ function ledgerHumanAccepted(state){
     const e=l.history[i];
     if(e.kind==='agent') return '';
     if(e.kind==='human'&&e.review_accept===true) return e.review_scope==='agent'?'agent':'case';
+  }
+  return '';
+}
+/* Engineer asked for rework on a result-review gate and no agent has run since: pass their text
+   to the next agent as inputs.rework_reason (even when that agent has not completed yet — α1 E5). */
+function ledgerPendingRework(state){
+  const l=sanitizeLedger(state.ledger);
+  for(let i=l.history.length-1;i>=0;i--){
+    const e=l.history[i];
+    if(e.kind==='agent') return '';
+    if(e.kind==='human'&&isResultReviewGate(e.question_id)&&e.review_accept!==true){
+      return String(e.answer||'').trim();
+    }
   }
   return '';
 }
@@ -991,11 +1005,13 @@ function applyAgentResult(state, agentId, taskId, result, registry){
     /* A failed attempt is recorded in the slot (status + summary) but never overwrites data a previous
        completed run of the same agent produced. */
     agents[agentId]={...prevSlot,status:'failed',summary:message.slice(0,400),task_id:taskId,step,data:obj(prevSlot.data)?prevSlot.data:{}};
-    events.push({kind:'agent.failed',actor:agentId||'agent',agent_id:agentId,status:'failed',status_message:message,payload:{message,issues:res.issues||[],error_count:errorCount,...execRef()}});
-    if(errorCount>=3){
+    const issues=Array.isArray(res.issues)?res.issues:[];
+    const unreachable=issues.some(i=>i&&String(i.code||'')==='service_unreachable');
+    events.push({kind:'agent.failed',actor:agentId||'agent',agent_id:agentId,status:'failed',status_message:message,payload:{message,issues,error_count:errorCount,...execRef()}});
+    if(unreachable||errorCount>=3){
       nextStatus='failed';
       shouldContinue=false;
-      events.push({kind:'case.failed',actor:'orchestrator',status:'failed',status_message:`Агент «${title}» вернул ошибку ${errorCount} раза подряд`,payload:{agent_id:agentId,error_count:errorCount,...execRef()}});
+      events.push({kind:'case.failed',actor:'orchestrator',status:'failed',status_message:unreachable?message:`Агент «${title}» вернул ошибку ${errorCount} раза подряд`,payload:{agent_id:agentId,error_count:errorCount,...(unreachable?{code:'service_unreachable'}:{}),...execRef()}});
     }
   }
   const artifactsAdded=Object.keys(flattenArtifacts(state.artifacts||{})).filter(k=>!artifactsBefore.has(k));

@@ -161,7 +161,7 @@
     },
     {
       "parameters": {
-        "jsCode": "const opened=$json||{};\nconst result=opened.result&&typeof opened.result==='object'?opened.result:{};\nreturn [{json:{\n  task_id:result.task_id||opened.task_id||'',\n  agent_id:\"excel_extractor\",\n  status:result.status||'needs_input',\n  message:result.message||opened.message||\"Нет Excel-файла для извлечения\",\n  data:result.data||{},\n  artifacts:result.artifacts||{},\n  issues:result.issues||[{type:\"missing_excel\"}],\n  assumptions:result.assumptions||[],\n  requests:result.requests||[{question_id:\"Q-clarify\",question:\"К задаче не приложен Excel-файл с данными. Приложите книгу .xlsx, из которой нужно взять скважины и даты.\",options:[],accepts:{free_text:true,files:[\"xlsx\"]}}]\n}}];\n"
+        "jsCode": "const opened=$json||{};\nconst runtime=(()=>{try{return $('Runtime configuration').first().json||{}}catch{return {}}})();\nconst result=opened.result&&typeof opened.result==='object'?opened.result:{};\nif(typeof opened.ok!=='boolean'){\n  return [{json:{\n    task_id:result.task_id||opened.task_id||'',\n    agent_id:\"excel_extractor\",\n    status:'failed',\n    message:\"Сервис агента „Excel Extractor“ не отвечает по адресу из настроек среды. Проверьте, что он запущен, и перезапустите задачу.\",\n    data:{},\n    artifacts:{},\n    issues:[{code:'service_unreachable',url:String(runtime[\"excel_tools_url\"]||'')}],\n    assumptions:[],\n    requests:[]\n  }}];\n}\nreturn [{json:{\n  task_id:result.task_id||opened.task_id||'',\n  agent_id:\"excel_extractor\",\n  status:result.status||'needs_input',\n  message:result.message||opened.message||\"Нет Excel-файла для извлечения\",\n  data:result.data||{},\n  artifacts:result.artifacts||{},\n  issues:result.issues||[{type:\"missing_excel\"}],\n  assumptions:result.assumptions||[],\n  requests:result.requests||[{question_id:\"Q-clarify\",question:\"К задаче не приложен Excel-файл с данными. Приложите книгу .xlsx, из которой нужно взять скважины и даты.\",options:[],accepts:{free_text:true,files:[\"xlsx\"]}}]\n}}];\n"
       },
       "id": "65375f59-96fa-5c09-8697-c1becec8677a",
       "name": "Format missing excel",
@@ -1510,5 +1510,5 @@
   },
   "tags": [],
   "pinData": {},
-  "versionId": "6cda9040-7ec3-4afd-ae35-fe6d53f9ebd6"
+  "versionId": "a6a6be9a-8582-4595-9766-89cdd52a6ad0"
 }

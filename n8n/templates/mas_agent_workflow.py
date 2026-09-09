@@ -335,9 +335,27 @@ class AgentWorkflow:
     def js_format_missing(self) -> str:
         t = self.spec.texts
         assert t is not None
+        down = (
+            f"Сервис агента „{self.spec.title}“ не отвечает по адресу из настроек среды. "
+            "Проверьте, что он запущен, и перезапустите задачу."
+        )
         return (
             "const opened=$json||{};\n"
+            "const runtime=(()=>{try{return $('Runtime configuration').first().json||{}}catch{return {}}})();\n"
             "const result=opened.result&&typeof opened.result==='object'?opened.result:{};\n"
+            "if(typeof opened.ok!=='boolean'){\n"
+            "  return [{json:{\n"
+            "    task_id:result.task_id||opened.task_id||'',\n"
+            f"    agent_id:{json.dumps(self.spec.agent_id)},\n"
+            "    status:'failed',\n"
+            f"    message:{json.dumps(down, ensure_ascii=False)},\n"
+            "    data:{},\n"
+            "    artifacts:{},\n"
+            f"    issues:[{{code:'service_unreachable',url:String(runtime[{json.dumps(self.spec.service_url_key)}]||'')}}],\n"
+            "    assumptions:[],\n"
+            "    requests:[]\n"
+            "  }}];\n"
+            "}\n"
             "return [{json:{\n"
             "  task_id:result.task_id||opened.task_id||'',\n"
             f"  agent_id:{json.dumps(self.spec.agent_id)},\n"

@@ -510,6 +510,7 @@ a:hover { text-decoration: underline; text-decoration-thickness: 1px; text-under
 .status-pill[data-tone="waiting"] { background: var(--wait-100); color: #8a5a06; }
 .status-pill[data-tone="done"] { background: var(--ok-100); color: #0b6b4a; }
 .status-pill[data-tone="failed"] { background: var(--red-100); color: #a10a33; }
+.status-pill[data-tone="idle"] { background: var(--panel-2); color: var(--ink-2); }
 
 .head-tools { display: flex; align-items: center; gap: 10px; flex: none; }
 
@@ -638,6 +639,7 @@ a:hover { text-decoration: underline; text-decoration-thickness: 1px; text-under
 .status-banner[data-tone="waiting"] { background: var(--wait-100); color: #6b4600; }
 .status-banner[data-tone="failed"] { background: var(--red-50); color: #8f0a2f; }
 .status-banner[data-tone="done"] { background: var(--ok-100); color: #0b5c40; }
+.status-banner[data-tone="idle"] { background: var(--panel); color: var(--ink-2); }
 .status-banner-label { font-size: 12px; font-weight: 600; text-transform: uppercase; letter-spacing: 0.06em; opacity: 0.8; }
 .status-banner-text { margin: 0; font-size: 13.5px; }
 
@@ -942,7 +944,8 @@ a.file-chip:hover .icon { color: var(--brand-blue); }
   background: var(--panel);
   box-shadow: inset 0 0 0 1px var(--line);
 }
-.composer-idle-text { font-size: 13px; color: var(--muted); }
+.composer-idle-text { font-size: 13px; color: var(--muted); flex: 1 1 220px; }
+.composer-idle-actions { display: flex; flex-wrap: wrap; gap: 8px; align-items: center; justify-content: flex-end; }
 
 .file-chip-more {
   border-style: dashed;

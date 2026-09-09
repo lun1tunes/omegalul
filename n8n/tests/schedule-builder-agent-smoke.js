@@ -312,6 +312,23 @@ async function run(name, json, nodes = {}) {
   assert.equal(looped.issues[0].type, 'repeated_tools');
   assert.match(looped.requests[0].question, /не смог продвинуться/);
 
+  const MACHINE_DOWN = /[a-z]+_[a-z_]+|[a-z_]+=[a-z0-9]+|[{}\[\]]|\w\|\w/;
+  const down = await run(
+    'Format missing schedule',
+    { error: { message: 'connect ECONNREFUSED' } },
+    { 'Runtime configuration': { schedule_service_url: 'http://127.0.0.1:8090' } },
+  );
+  assert.equal(down.status, 'failed');
+  assert.equal(down.issues[0].code, 'service_unreachable');
+  assert.match(down.message, /Schedule Builder/);
+  assert.equal(MACHINE_DOWN.test(down.message), false, down.message);
+  const stillMissing = await run(
+    'Format missing schedule',
+    { ok: false, status: 'needs_input', result: { status: 'needs_input', message: 'Нет исходного SCHEDULE', requests: [{ question: 'К задаче не приложен исходный SCHEDULE. Приложите файл .INC.' }] } },
+    { 'Runtime configuration': { schedule_service_url: 'http://127.0.0.1:8090' } },
+  );
+  assert.equal(stillMissing.status, 'needs_input');
+
   console.log('schedule-builder-agent-smoke: ok');
 })().catch((err) => {
   console.error(err);

@@ -59,7 +59,7 @@ STICKY = (
 # `waiting_agent` = a long-running agent returned in_progress (Phase 4). The CHECK constraint is re-created on
 # every `schema` run so an existing lab/field database picks up new statuses (CASE-6a9f3a76-38506f: the first
 # in_progress result hit the old constraint in `Update case after agent`).
-CASE_STATUSES = ("new", "running", "waiting_user", "waiting_agent", "done", "failed")
+CASE_STATUSES = ("new", "running", "waiting_user", "waiting_agent", "done", "failed", "cancelled")
 _STATUS_LIST = ",".join(f"'{s}'" for s in CASE_STATUSES)
 CASES_STATUS_CHECK_SQL = (
     "ALTER TABLE cases DROP CONSTRAINT IF EXISTS cases_status_check;"

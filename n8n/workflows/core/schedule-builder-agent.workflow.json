@@ -153,7 +153,7 @@
     },
     {
       "parameters": {
-        "jsCode": "const opened=$json||{};\nconst result=opened.result&&typeof opened.result==='object'?opened.result:{};\nreturn [{json:{\n  task_id:result.task_id||opened.task_id||'',\n  agent_id:\"schedule_builder\",\n  status:result.status||'needs_input',\n  message:result.message||opened.message||\"Нет исходного SCHEDULE\",\n  data:result.data||{},\n  artifacts:result.artifacts||{},\n  issues:result.issues||[{type:\"missing_schedule_source\"}],\n  assumptions:result.assumptions||[],\n  requests:result.requests||[{question_id:\"Q-apply\",question:\"К задаче не приложен исходный файл schedule. Приложите прогнозный .inc, который нужно изменить.\",options:[],accepts:{free_text:true,files:[\"xlsx\", \".inc\"]}}]\n}}];\n"
+        "jsCode": "const opened=$json||{};\nconst runtime=(()=>{try{return $('Runtime configuration').first().json||{}}catch{return {}}})();\nconst result=opened.result&&typeof opened.result==='object'?opened.result:{};\nif(typeof opened.ok!=='boolean'){\n  return [{json:{\n    task_id:result.task_id||opened.task_id||'',\n    agent_id:\"schedule_builder\",\n    status:'failed',\n    message:\"Сервис агента „Schedule Builder“ не отвечает по адресу из настроек среды. Проверьте, что он запущен, и перезапустите задачу.\",\n    data:{},\n    artifacts:{},\n    issues:[{code:'service_unreachable',url:String(runtime[\"schedule_service_url\"]||'')}],\n    assumptions:[],\n    requests:[]\n  }}];\n}\nreturn [{json:{\n  task_id:result.task_id||opened.task_id||'',\n  agent_id:\"schedule_builder\",\n  status:result.status||'needs_input',\n  message:result.message||opened.message||\"Нет исходного SCHEDULE\",\n  data:result.data||{},\n  artifacts:result.artifacts||{},\n  issues:result.issues||[{type:\"missing_schedule_source\"}],\n  assumptions:result.assumptions||[],\n  requests:result.requests||[{question_id:\"Q-apply\",question:\"К задаче не приложен исходный файл schedule. Приложите прогнозный .inc, который нужно изменить.\",options:[],accepts:{free_text:true,files:[\"xlsx\", \".inc\"]}}]\n}}];\n"
       },
       "id": "420bab3a-3704-5360-b4c8-f97189511343",
       "name": "Format missing schedule",
@@ -1500,5 +1500,5 @@
   },
   "tags": [],
   "pinData": {},
-  "versionId": "ad7d3fc9-f203-411b-99fc-fad7580d8b6b"
+  "versionId": "8a0abf5e-5c8b-4cd2-8d04-6417c4c3604e"
 }

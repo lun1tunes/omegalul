@@ -22,6 +22,7 @@ from app.contracts import AGENT_EVENT_KINDS, AgentRegistryIn, CaseAnswerIn, Case
 from app.state_shape import (
     artifact_cards,
     artifact_filenames,
+    artifact_kind,
     artifact_text,
     artifacts_from_indexed,
     bump_version,
@@ -47,8 +48,11 @@ SCHED_EXT = (".inc", ".data", ".sch", ".grdecl", ".txt")
 ORCH = "orchestrator"
 USER = "user"
 TASK_NAME_MAX = 120
-RESTARTABLE_STATUSES = frozenset({"done", "failed", "retryable_error"})
+RESTARTABLE_STATUSES = frozenset({"done", "failed", "retryable_error", "cancelled"})
 RESTART_ACTIONS = frozenset({"retry", "restart"})
+CANCEL_FROM_STATUSES = frozenset({"running", "waiting_user", "waiting_agent", "failed"})
+STALE_RESUME_STATUSES = frozenset({"running", "waiting_agent"})
+STATUS_MESSAGE_KINDS = ("case.failed", "case.cancelled", "case.finished", "agent.failed")
 
 
 def _parse_expected_version(raw: Any) -> int | None:
@@ -69,6 +73,63 @@ def _assert_state_version(state: dict[str, Any], expected: int | None) -> None:
             status_code=409,
             detail=f"Version mismatch: expected {expected}, got {current}. Reload status.",
         )
+
+
+def _parse_dt(value: Any) -> datetime | None:
+    if value is None:
+        return None
+    if isinstance(value, datetime):
+        return value if value.tzinfo else value.replace(tzinfo=timezone.utc)
+    text = str(value).strip()
+    if not text:
+        return None
+    try:
+        parsed = datetime.fromisoformat(text.replace("Z", "+00:00"))
+    except ValueError:
+        return None
+    return parsed if parsed.tzinfo else parsed.replace(tzinfo=timezone.utc)
+
+
+def _seconds_since(value: Any) -> float | None:
+    parsed = _parse_dt(value)
+    if parsed is None:
+        return None
+    return max(0.0, (datetime.now(timezone.utc) - parsed.astimezone(timezone.utc)).total_seconds())
+
+
+def _last_activity_at(row: dict[str, Any], events: list[dict[str, Any]]) -> Any:
+    for event in reversed(events):
+        if event.get("created_at"):
+            return event.get("created_at")
+    return row.get("updated_at")
+
+
+def _is_resume_stale(row: dict[str, Any], events: list[dict[str, Any]]) -> bool:
+    status = str(row.get("status") or "")
+    if status not in STALE_RESUME_STATUSES:
+        return False
+    age = _seconds_since(_last_activity_at(row, events))
+    if age is None:
+        return False
+    return age >= float(get_settings().resume_stale_s)
+
+
+def _case_status_message(events: list[dict[str, Any]]) -> str:
+    for event in reversed(events):
+        kind = str(event.get("kind") or "")
+        if kind in STATUS_MESSAGE_KINDS:
+            message = _event_message(event)
+            if message:
+                return message
+    return ""
+
+
+def _keep_input_artifacts(artifacts: Any) -> dict[str, Any]:
+    kept: dict[str, Any] = {}
+    for key, item in flatten_artifacts(artifacts).items():
+        if artifact_kind(item) == "input":
+            kept[key] = item
+    return nest_artifacts(kept)
 
 
 def _normalize_task_name(value: Any) -> str:
@@ -99,7 +160,7 @@ def event_lane(event: dict[str, Any]) -> tuple[str, str | None, str]:
         return agent or actor, None, "none"
     if kind in {"agent.result", "agent.failed"}:
         return ORCH, agent or actor, "in"
-    if kind.startswith("orchestrator.") or kind in {"case.finished", "case.failed", "system.node_error"}:
+    if kind.startswith("orchestrator.") or kind in {"case.finished", "case.failed", "case.cancelled", "system.node_error"}:
         return ORCH, None, "none"
     if agent and agent not in {actor, ORCH}:
         return actor, agent, "out"
@@ -110,7 +171,7 @@ def event_lane(event: dict[str, Any]) -> tuple[str, str | None, str]:
 
 ORCH_ECHO_KINDS = {"orchestrator.status", "orchestrator.decision"}
 AGENT_DUP_KINDS = {"agent.result", "agent.failed", "agent.accepted", "agent.progress"}
-TERMINAL_KINDS = {"case.finished", "case.failed"}
+TERMINAL_KINDS = {"case.finished", "case.failed", "case.cancelled"}
 
 
 def _event_message(event: dict[str, Any]) -> str:
@@ -132,6 +193,7 @@ def _event_display_message(kind: str, event: dict[str, Any]) -> str:
         "agent.failed": "Агент завершил работу с ошибкой.",
         "hitl.request": "Нужно уточнение от пользователя.",
         "case.failed": "Задача завершилась с ошибкой.",
+        "case.cancelled": "Задача закрыта инженером.",
     }.get(kind, kind or "Событие зафиксировано.")
 
 
@@ -402,6 +464,7 @@ def _feed_from_row(
         "title": (name or state.get("goal") or case_id)[:120],
         "objective": state.get("goal") or "",
         "status": row.get("status"),
+        "status_message": _case_status_message(events),
         "state": state,
         "attached_files": attached,
         "awaiting_human": row.get("status") == "waiting_user",
@@ -416,6 +479,7 @@ def _feed_from_row(
         # O13: the orchestrator's decomposition (state.plan) — the UI shows it under the task statement.
         "plan": sanitize_plan(state.get("plan")),
         "restartable": case_is_restartable(row),
+        "resume_stale": _is_resume_stale(row, events),
     }
 
 
@@ -535,8 +599,8 @@ async def _invoke_action(case_id: str, *, action: str, extra: dict[str, Any] | N
                 kind="case.failed",
                 actor="orchestrator",
                 event_status="failed",
-                status_message=str(exc)[:500],
-                payload={"status_code": exc.status_code},
+                status_message="Не удалось передать задачу оркестратору. Проверьте адрес оркестратора в настройках и повторите.",
+                payload={"status_code": exc.status_code, "detail": str(exc)[:500]},
             )
         except KeyError:
             control_plane.append_event(
@@ -544,8 +608,8 @@ async def _invoke_action(case_id: str, *, action: str, extra: dict[str, Any] | N
                 kind="case.failed",
                 actor="orchestrator",
                 status="failed",
-                status_message=str(exc)[:500],
-                payload={"status_code": exc.status_code},
+                status_message="Не удалось передать задачу оркестратору. Проверьте адрес оркестратора в настройках и повторите.",
+                payload={"status_code": exc.status_code, "detail": str(exc)[:500]},
             )
 
 
@@ -922,15 +986,26 @@ async def _run_body(request: Request) -> dict[str, Any]:
 
 
 def _prepare_case_restart(case_id: str, row: dict[str, Any]) -> dict[str, Any]:
-    """Keep goal/name/artifacts/data; clear error and step budget for a new run."""
+    """Keep goal/name/input artifacts; clear agents, journal, plan, HITL and the step budget."""
     state = dict(row.get("state") or {})
     state["last_error"] = None
     state["current_task"] = None
     state["status"] = "running"
     state["step_count"] = 0
-    hitl = dict(state.get("hitl") or {})
-    hitl["pending"] = False
-    state["hitl"] = hitl
+    state["error_count"] = 0
+    state["agents"] = {}
+    state["ledger"] = {
+        "history": [],
+        "stall_count": 0,
+        "last_human_step": 0,
+        "reviews": 0,
+        "verify_rejections": 0,
+        "parse_failures": 0,
+    }
+    state["plan"] = []
+    state["data"] = {}
+    state["hitl"] = {"pending": False, "questions": [], "answers": {}}
+    state["artifacts"] = _keep_input_artifacts(state.get("artifacts"))
     bump_version(state)
     control_plane.update_case_and_append(
         case_id,
@@ -939,7 +1014,7 @@ def _prepare_case_restart(case_id: str, row: dict[str, Any]) -> dict[str, Any]:
         kind="orchestrator.status",
         actor="orchestrator",
         event_status="running",
-        status_message="Перезапуск задачи",
+        status_message="Перезапуск задачи с исходными файлами",
     )
     return state
 
@@ -953,12 +1028,48 @@ async def post_run(case_id: str, request: Request, background_tasks: BackgroundT
     action = str(body.get("action") or "step").strip().lower() or "step"
     if get_settings().n8n_transport == "unconfigured":
         raise HTTPException(status_code=503, detail=UNCONFIGURED_N8N)
+    if action == "cancel":
+        status = str(row.get("status") or "")
+        if status not in CANCEL_FROM_STATUSES:
+            raise HTTPException(status_code=409, detail="Эту задачу уже нельзя закрыть.")
+        state = dict(row.get("state") or {})
+        hitl = dict(state.get("hitl") or {})
+        hitl["pending"] = False
+        state["hitl"] = hitl
+        state["current_task"] = None
+        state["status"] = "cancelled"
+        bump_version(state)
+        control_plane.update_case_and_append(
+            case_id,
+            state=state,
+            status="cancelled",
+            kind="case.cancelled",
+            actor="user",
+            event_status="cancelled",
+            status_message="Задача закрыта инженером",
+        )
+        return {
+            "ok": True,
+            "accepted": True,
+            "skipped": False,
+            "status": "cancelled",
+            "restartable": True,
+            "case_id": case_id,
+            "task_id": case_id,
+        }
     if action == "resume":
         source = str(body.get("source") or "agent").strip().lower()
         if source == "human":
             raise HTTPException(status_code=400, detail="Ответ инженера отправляйте через поле ответа в задаче.")
         if source not in {"agent", "system"}:
             raise HTTPException(status_code=400, detail="Будить задачу может агент или система.")
+        if source == "system":
+            events = control_plane.list_events(case_id)
+            status = str(row.get("status") or "")
+            if status not in STALE_RESUME_STATUSES:
+                raise HTTPException(status_code=409, detail="Задачу в этом состоянии нельзя продолжить.")
+            if not _is_resume_stale(row, events):
+                raise HTTPException(status_code=409, detail="Оркестратор ещё работает, подождите…")
         extra = {
             "source": source,
             "task_id": str(body.get("task_id") or ""),
@@ -1035,6 +1146,8 @@ def _stream_meta(feed: dict[str, Any]) -> dict[str, Any]:
         "awaiting_human": feed.get("awaiting_human"),
         "human_gate": feed.get("human_gate"),
         "restartable": feed.get("restartable"),
+        "resume_stale": feed.get("resume_stale"),
+        "status_message": feed.get("status_message"),
         "artifacts": feed.get("artifacts"),
         "deliverables": feed.get("deliverables"),
         "plan": feed.get("plan"),

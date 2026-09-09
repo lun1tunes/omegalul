@@ -101,6 +101,13 @@ async function run(name, json, nodes = {}, binary = {}) {
   assert.equal(decision.type, '@n8n/n8n-nodes-langchain.chainLlm');
   assert.equal(decision.typeVersion, 1.9);
   assert.equal(decision.parameters.hasOutputParser, true);
+  // CASE-6aa19313-dadd64: Verify 503 killed the execution and left the case running with .INC already built.
+  const verify = wf.nodes.find((n) => n.name === 'Verify completion');
+  for (const llm of [decision, verify]) {
+    assert.equal(llm.retryOnFail, true, `${llm.name} retries a model 503`);
+    assert.equal(llm.maxTries, 3);
+    assert.equal(llm.onError, 'continueRegularOutput');
+  }
   assert.equal(text.includes('"Decision Agent"'), false);
 
   const model = wf.nodes.find((n) => n.name === 'Decision Chat Model — configure in UI');
@@ -1375,6 +1382,24 @@ async function run(name, json, nodes = {}, binary = {}) {
   assert.equal(thirdFail.state.error_count, 3);
   assert.deepEqual(thirdFail.events.map((e) => e.kind), ['agent.failed', 'case.failed']);
 
+  const downOnce = await run(
+    'Merge agent result',
+    {
+      status: 'failed',
+      message: 'Сервис агента „Excel Extractor“ не отвечает по адресу из настроек среды. Проверьте, что он запущен, и перезапустите задачу.',
+      issues: [{ code: 'service_unreachable', url: 'http://127.0.0.1:8000' }],
+    },
+    {
+      'Parse decision': parsed,
+      'Prepare agent call': { ...parsed, agent_id: 'excel_extractor', activity_base_url: 'http://activity:8200' },
+    },
+  );
+  assert.equal(downOnce.next_status, 'failed');
+  assert.equal(downOnce.should_continue, false);
+  assert.deepEqual(downOnce.events.map((e) => e.kind), ['agent.failed', 'case.failed']);
+  assert.match(downOnce.events.find((e) => e.kind === 'case.failed').status_message, /не отвечает/);
+  assert.equal(downOnce.events.find((e) => e.kind === 'case.failed').payload.code, 'service_unreachable');
+
   const execFail = await run(
     'Merge agent result',
     { error: { message: 'Subworkflow failed' } },
@@ -2047,6 +2072,104 @@ async function run(name, json, nodes = {}, binary = {}) {
     }
     const none = await run('Prepare agent call', { should_call_agent: false, agent_id: 'echo_agent', registry }, {});
     assert.equal(none.route, 'none');
+  }
+
+  // α1: unparseable Decision / unknown action → continue then failed; step-limit both branches.
+  {
+    const MACHINE = /[a-z]+_[a-z_]+|[a-z_]+=[a-z0-9]+|[{}\[\]]|\w\|\w/;
+    const registry = [
+      { agent_id: 'schedule_builder', title: 'Schedule Builder' },
+      { agent_id: 'excel_extractor', title: 'Excel Extractor' },
+    ];
+    const req = { case_id: 'CASE-PARSE', action: 'step', is_status: false, is_resume: false };
+    const baseState = {
+      case_id: 'CASE-PARSE',
+      goal: 'Собрать schedule по датам ввода',
+      status: 'running',
+      step_count: 0,
+      version: 1,
+      artifacts: { schedule: { source: { artifact_id: 'schedule_source', filename: 'baseline.inc' } } },
+      data: {},
+      hitl: { pending: false, questions: [], answers: {} },
+      plan: [],
+    };
+    const prepare = (state, extra = {}) => run('Prepare decision context', {}, {
+      'Apply request extras': { ...req, state, next_status: 'running' },
+      'Load case': { case_id: 'CASE-PARSE', state: JSON.stringify(state), status: 'running' },
+      'Load agent registry': registry,
+      'Runtime endpoints': { activity_base_url: 'http://mas-activity:8200', max_steps: '12', ...extra },
+    });
+    const decide = (prepared, output) => run('Parse decision', { output }, { 'Prepare decision context': prepared });
+    const merge = (parsed, body) => run('Merge agent result', { body }, { 'Prepare agent call': parsed, 'Parse decision': parsed });
+    const prepared = await prepare(baseState);
+    const blank = { progress: { goal_satisfied: false, evidence: '', missing: '' }, status_message: 'Думаю над следующим шагом.' };
+    const first = await decide(prepared, blank);
+    assert.equal(first.action_type, 'continue');
+    assert.equal(first.next_status, 'running');
+    assert.equal(first.should_call_agent, false);
+    assert.equal(first.state.ledger.parse_failures, 1);
+    assert.equal(first.events.find((e) => e.kind === 'orchestrator.decision').payload.guard, 'decision_unparsed');
+    assert.ok(first.events.find((e) => e.kind === 'orchestrator.decision').payload.decision);
+    assert.match(first.events.find((e) => e.kind === 'orchestrator.status').status_message, /Формулирую решение заново/);
+    const vEntry = first.state.ledger.history.at(-1);
+    assert.equal(vEntry.kind, 'verification');
+    assert.deepEqual(vEntry.uncovered, ['решение оркестратора не разобрано']);
+    assert.equal(first.events.some((e) => e.kind === 'hitl.request'), false);
+    const second = await decide({ ...prepared, state: first.state }, blank);
+    assert.equal(second.next_status, 'failed');
+    assert.equal(second.action_type, 'fail_case');
+    const failedEvt = second.events.find((e) => e.kind === 'case.failed');
+    assert.ok(failedEvt);
+    assert.match(failedEvt.status_message, /дважды не смог сформулировать следующий шаг/);
+    assert.equal(MACHINE.test(failedEvt.status_message), false, failedEvt.status_message);
+    assert.equal(second.events.find((e) => e.kind === 'orchestrator.decision').payload.guard, 'decision_unparsed');
+    const unknown = await decide(prepared, { action: { type: 'launch' }, progress: blank.progress, status_message: 'Непонятно.' });
+    assert.equal(unknown.action_type, 'continue');
+    assert.equal(unknown.events.find((e) => e.kind === 'orchestrator.decision').payload.guard, 'decision_unparsed');
+    const parsedCall = await decide(prepared, {
+      progress: { goal_satisfied: false, evidence: 'ничего не сделано', missing: 'даты' },
+      status_message: 'Передаю задачу агенту Excel.',
+      action: { type: 'call_agent', agent_id: 'excel_extractor', handoff_message: 'Извлеки даты ввода.' },
+    });
+    const withSummary = await merge(
+      { ...parsedCall, max_steps: 1, agent_id: 'excel_extractor', state: { ...parsedCall.state, step_count: 1 } },
+      { status: 'completed', agent_id: 'excel_extractor', message: 'Даты ввода: 14 скважин', data: { facts: [] }, artifacts: {} },
+    );
+    assert.equal(withSummary.next_status, 'waiting_user');
+    const review = withSummary.events.find((e) => e.kind === 'hitl.request');
+    assert.ok(review);
+    assert.match(review.payload.question, /^Оркестратор исчерпал лимит шагов/);
+    assert.equal(MACHINE.test(review.payload.question), false, review.payload.question);
+    const without = await merge(
+      { ...parsedCall, max_steps: 1, agent_id: 'excel_extractor', state: { ...parsedCall.state, step_count: 1, ledger: { history: [] } } },
+      { status: 'failed', message: 'нет результата', data: {}, artifacts: {} },
+    );
+    assert.equal(without.next_status, 'failed');
+    const limitFail = without.events.find((e) => e.kind === 'case.failed');
+    assert.match(limitFail.status_message, /Превышен лимит шагов/);
+    assert.equal(MACHINE.test(limitFail.status_message), false, limitFail.status_message);
+    const reworkState = {
+      ...withSummary.state,
+      hitl: { pending: false, questions: [], answers: {} },
+      status: 'running',
+    };
+    reworkState.ledger = {
+      ...(reworkState.ledger || {}),
+      history: [
+        ...((reworkState.ledger && reworkState.ledger.history) || []),
+        { kind: 'human', question_id: 'result_review_1', answer: 'Обновите schedule по извлечённым датам ввода' },
+      ],
+    };
+    const afterRework = await decide(
+      { ...prepared, state: reworkState },
+      {
+        progress: { goal_satisfied: false, evidence: 'даты извлечены', missing: 'новый schedule' },
+        status_message: 'Передаю сборщику.',
+        action: { type: 'call_agent', agent_id: 'schedule_builder', handoff_message: 'Соберите schedule по извлечённым датам.' },
+      },
+    );
+    assert.equal(afterRework.action_type, 'call_agent');
+    assert.equal(afterRework.agent_task.inputs.rework_reason, 'Обновите schedule по извлечённым датам ввода');
   }
 
   assert.equal(err.name, 'Error — MAS Node Traces');

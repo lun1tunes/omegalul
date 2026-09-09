@@ -1,6 +1,6 @@
 ---
 name: mas-gate
-description: Runs the NOVATEK RE MASter verification gate (workflow regeneration, n8n smokes, pytest suites, offline combat cases, optional lab redeploy + six live cases) and interprets the result. Use before reporting any change as done, when the user asks to verify/test/check the MAS, or when a live case failed.
+description: Runs the NOVATEK RE MASter verification gate (workflow regeneration, n8n smokes, pytest suites, offline combat cases, optional lab redeploy + twelve live cases) and interprets the result. Use before reporting any change as done, when the user asks to verify/test/check the MAS, or when a live case failed.
 ---
 
 # MAS gate
@@ -8,8 +8,9 @@ description: Runs the NOVATEK RE MASter verification gate (workflow regeneration
 ## Run
 
 ```bash
-python3 scripts/mas_gate.py                 # offline: regen drift, n8n/tests/*-smoke.js, 4 pytest suites, combat engine (~1–2 min)
-python3 scripts/mas_gate.py --live          # + lab redeploy + run_live_five (6 cases, ~10 min)
+python3 scripts/mas_gate.py                 # offline: regen drift, 16 n8n/tests/*-smoke.js, 5 pytest suites, combat engine (~1–2 min)
+python3 scripts/mas_gate.py --live          # + lab redeploy + 12 live cases (~20 min, streamed): 6 run_live_five in parallel + demo_agent_long_job ∥ excel_datasets + three_agent_chain + 3 recovery
+python3 scripts/mas_gate.py --only live     # skip offline stages after a GREEN `mas_gate.py`
 python3 scripts/mas_gate.py --live --cases combat_case3
 python3 scripts/mas_gate.py --only smokes,pytest --keep-going
 ```

@@ -152,6 +152,18 @@ async function run(name, json, nodes = {}) {
   assert.match(noResult.requests[0].question, /Опишите задачу/);
   assert.equal(/[a-z]+_[a-z_]+/.test(noResult.requests[0].question), false, 'engineer question has no snake_case');
   assert.deepEqual(noResult.requests[0].accepts.files, []);
+
+  const MACHINE = /[a-z]+_[a-z_]+|[a-z_]+=[a-z0-9]+|[{}\[\]]|\w\|\w/;
+  const down = await run(
+    'Format missing demo',
+    { error: { message: 'connect ECONNREFUSED' } },
+    { 'Runtime configuration': { demo_agent_url: 'http://127.0.0.1:8300' } },
+  );
+  assert.equal(down.status, 'failed');
+  assert.equal(down.issues[0].code, 'service_unreachable');
+  assert.match(down.message, /Demo Agent/);
+  assert.equal(MACHINE.test(down.message), false, down.message);
+
   console.log('demo-agent-smoke: ok');
 })().catch((err) => {
   console.error(err);

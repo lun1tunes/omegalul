@@ -153,7 +153,7 @@
     },
     {
       "parameters": {
-        "jsCode": "const opened=$json||{};\nconst result=opened.result&&typeof opened.result==='object'?opened.result:{};\nreturn [{json:{\n  task_id:result.task_id||opened.task_id||'',\n  agent_id:\"demo_agent\",\n  status:result.status||'needs_input',\n  message:result.message||opened.message||\"Нет задачи для демонстрационного агента\",\n  data:result.data||{},\n  artifacts:result.artifacts||{},\n  issues:result.issues||[{type:\"missing_objective\"}],\n  assumptions:result.assumptions||[],\n  requests:result.requests||[{question_id:\"Q-demo\",question:\"Опишите задачу: что именно посчитать или запустить.\",options:[],accepts:{free_text:true,files:[]}}]\n}}];\n"
+        "jsCode": "const opened=$json||{};\nconst runtime=(()=>{try{return $('Runtime configuration').first().json||{}}catch{return {}}})();\nconst result=opened.result&&typeof opened.result==='object'?opened.result:{};\nif(typeof opened.ok!=='boolean'){\n  return [{json:{\n    task_id:result.task_id||opened.task_id||'',\n    agent_id:\"demo_agent\",\n    status:'failed',\n    message:\"Сервис агента „Demo Agent“ не отвечает по адресу из настроек среды. Проверьте, что он запущен, и перезапустите задачу.\",\n    data:{},\n    artifacts:{},\n    issues:[{code:'service_unreachable',url:String(runtime[\"demo_agent_url\"]||'')}],\n    assumptions:[],\n    requests:[]\n  }}];\n}\nreturn [{json:{\n  task_id:result.task_id||opened.task_id||'',\n  agent_id:\"demo_agent\",\n  status:result.status||'needs_input',\n  message:result.message||opened.message||\"Нет задачи для демонстрационного агента\",\n  data:result.data||{},\n  artifacts:result.artifacts||{},\n  issues:result.issues||[{type:\"missing_objective\"}],\n  assumptions:result.assumptions||[],\n  requests:result.requests||[{question_id:\"Q-demo\",question:\"Опишите задачу: что именно посчитать или запустить.\",options:[],accepts:{free_text:true,files:[]}}]\n}}];\n"
       },
       "id": "0768b0aa-eb55-5db3-b5d8-819f21ca3d32",
       "name": "Format missing demo",
@@ -990,5 +990,5 @@
   },
   "tags": [],
   "pinData": {},
-  "versionId": "7e6c971a-5d6c-4c0b-96ee-cfe961b8ac36"
+  "versionId": "30cdd396-09e4-4702-9e74-1eb90cf9c852"
 }

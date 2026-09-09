@@ -349,6 +349,43 @@ async function run(name, json, nodes = {}) {
   assert.match(attachedFail.planner_input, /Не спрашивай HITL про RAG/);
   assert.ok(attachedFail.session_id === 'sess-1');
 
+  const MACHINE = /[a-z]+_[a-z_]+|[a-z_]+=[a-z0-9]+|[{}\[\]]|\w\|\w/;
+  const down = await run(
+    'Format missing excel',
+    { error: { message: 'connect ECONNREFUSED' } },
+    { 'Runtime configuration': { excel_tools_url: 'http://127.0.0.1:8000' } },
+  );
+  assert.equal(down.status, 'failed');
+  assert.equal(down.issues[0].code, 'service_unreachable');
+  assert.equal(down.issues[0].url, 'http://127.0.0.1:8000');
+  assert.match(down.message, /Excel Extractor/);
+  assert.match(down.message, /не отвечает/);
+  assert.equal(MACHINE.test(down.message), false, down.message);
+  assert.equal(down.message.includes('http'), false);
+  const emptyBody = await run(
+    'Format missing excel',
+    {},
+    { 'Runtime configuration': { excel_tools_url: 'http://127.0.0.1:8000' } },
+  );
+  assert.equal(emptyBody.status, 'failed');
+  assert.equal(emptyBody.issues[0].code, 'service_unreachable');
+  const missingFile = await run(
+    'Format missing excel',
+    {
+      ok: false,
+      status: 'needs_input',
+      result: {
+        status: 'needs_input',
+        message: 'Нет Excel-файла для извлечения',
+        requests: [{ question_id: 'Q-clarify', question: 'К задаче не приложен Excel-файл с данными. Приложите книгу .xlsx, из которой нужно взять скважины и даты.', options: [] }],
+      },
+    },
+    { 'Runtime configuration': { excel_tools_url: 'http://127.0.0.1:8000' } },
+  );
+  assert.equal(missingFile.status, 'needs_input');
+  assert.match(missingFile.requests[0].question, /Приложите книгу/);
+  assert.equal(MACHINE.test(missingFile.requests[0].question), false);
+
   console.log('excel-extractor-agent-smoke: ok');
 })().catch((err) => {
   console.error(err);

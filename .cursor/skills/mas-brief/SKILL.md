@@ -38,7 +38,7 @@ Read first: `AGENTS.md` (all), `MAS_REFACTORING_PLAN.md` §<n>, <specific rule .
 - [ ] <behavioural criterion, observable in a trace or test>
 - [ ] `python3 scripts/mas_gate.py` GREEN
 - [ ] `python3 scripts/mas_gate.py --live [--cases …]` GREEN (if orchestrator/agents/emit/artifacts touched)
-- [ ] `MAS_REFACTORING_PLAN.md` row updated + «Ревизия N» entry; `docs.md` if a contract/command changed
+- [ ] `MAS_REFACTORING_PLAN.md` row + «Ревизия N»; header / §3 «Состояние» / §4 current-gate / §2.7 / «Ближайшие шаги» match code (do not rewrite §7 history); `docs.md` if a contract/command changed
 
 ## Forbidden
 - regex/keyword heuristics instead of an LLM decision; domain facts in the orchestrator prompt
