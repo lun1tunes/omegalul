@@ -101,7 +101,7 @@ def normalize_group_rebind_spec(
     roots = [str(r) for r in (baseline.get("roots") or []) if str(r).strip()]
     if not parent_of_parent and len(roots) == 1:
         parent_of_parent = roots[0].upper()
-        assumptions.append({"parent_of_parent": f"корень baseline GRUPTREE: {parent_of_parent}"})
+        assumptions.append({"parent_of_parent": f"корень GRUPTREE исходного файла: {parent_of_parent}"})
 
     spec: dict[str, Any] = {
         "wells": wells,

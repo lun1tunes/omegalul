@@ -120,7 +120,7 @@ def summarize_commissioning_result(revised: dict[str, Any]) -> dict[str, Any]:
         tail = f" и ещё {len(shifted_wells) - 4}" if len(shifted_wells) > 4 else ""
         parts.append(f"Сдвинул даты ввода {_plural_wells(len(shifted_wells))}: {sample}{tail}.")
     if unchanged:
-        parts.append(f"Даты {_plural_wells(len(unchanged))} из Excel уже совпадали с baseline ({_wells_phrase(unchanged)}).")
+        parts.append(f"Даты {_plural_wells(len(unchanged))} из Excel уже совпадали с исходным файлом ({_wells_phrase(unchanged)}).")
     if added:
         parts.append(
             f"Добавил {_plural_wells(len(added), 'acc')} ({_wells_phrase(added)}) — WELSPECS, COMPDATMD и WCONPROD на датах ввода."
@@ -128,10 +128,10 @@ def summarize_commissioning_result(revised: dict[str, Any]) -> dict[str, Any]:
     if removed:
         parts.append(f"Убрал из прогноза {_plural_wells(len(removed), 'acc')} вне Excel: {_wells_phrase(removed)}.")
     if kept:
-        parts.append(f"{_plural_wells(len(kept), 'acc').capitalize()} вне Excel оставил как в baseline: {_wells_phrase(kept)}.")
+        parts.append(f"{_plural_wells(len(kept), 'acc').capitalize()} вне Excel оставил как в исходном файле: {_wells_phrase(kept)}.")
     status = str(revised.get("status") or "")
     if not parts:
-        parts.append("SCHEDULE без изменений: даты из Excel совпадают с baseline." if status == "noop" else "SCHEDULE без изменений.")
+        parts.append("SCHEDULE без изменений: даты из Excel совпадают с исходным файлом." if status == "noop" else "SCHEDULE без изменений.")
     return {
         "message": " ".join(parts),
         "changed_keywords": keywords,
@@ -250,7 +250,7 @@ def _spec_incomplete(
     where = {
         "wells": "имена скважин из текста задачи; проверь по inspect_schedule.wells",
         "parent_group": "имя новой/целевой группы из текста задачи (в кавычках у инженера)",
-        "parent_of_parent": "родитель группы: корень baseline GRUPTREE (см. baseline.roots) или группа из задачи",
+        "parent_of_parent": "родитель группы: корень GRUPTREE исходного файла (inspect_schedule) или группа из задачи",
         "control": "тип группового контроля из задачи: газ → GRAT, нефть → ORAT, вода → WRAT, жидкость → LRAT",
         "gas_rate": "целевой дебит числом в м3/сут (например «200 тыс. м3 газа в сут.» → 200000)",
     }
@@ -259,7 +259,7 @@ def _spec_incomplete(
         (
             "Спецификация перепривязки не полная. Заполни недостающие поля из текста задачи и inspect_schedule "
             "и вызови apply_group_rebind ещё раз. Если в задаче этих данных действительно нет — спроси инженера "
-            "через ask_engineer одним вопросом по-русски (варианты групп — из baseline.groups)."
+            "через ask_engineer одним вопросом по-русски (варианты групп — из inspect_schedule, дерево групп исходного файла)."
         ),
         missing=missing,
         spec=spec,
@@ -300,11 +300,11 @@ def _guard_result(state: dict[str, Any], name: str) -> None:
 def _well_or_error(source: str, name: Any) -> dict[str, Any]:
     well = find_well(build_well_objects(parse_schedule(source)), name)
     if well is None:
-        raise ToolError("well_not_found", "Скважина не найдена в baseline SCHEDULE.", well=str(name or ""))
+        raise ToolError("well_not_found", "Скважина не найдена в исходном файле schedule.", well=str(name or ""))
     return well
 
 
-@tool("inspect_schedule", "Объектная инвентаризация baseline без полного .INC.")
+@tool("inspect_schedule", "Объектная инвентаризация исходного SCHEDULE без полного .INC.")
 def inspect_schedule(ctx: ToolContext, args: dict[str, Any]) -> dict[str, Any]:
     return {"inspect": compact_inspect(_source(ctx.state)), "fact_count": len(ctx.state.get("facts") or [])}
 
@@ -531,12 +531,12 @@ def apply_group_rebind(ctx: ToolContext, args: dict[str, Any]) -> dict[str, Any]
         if "GROUP_REBIND_COMMISSIONING_DATE_MISSING" in codes:
             raise ToolError(
                 "effective_date_unknown",
-                "У этих скважин в baseline нет даты ввода, с которой начать групповой контроль. "
+                "У этих скважин в исходном файле нет даты ввода, с которой начать групповой контроль. "
                 "Передай effective_at (дата в формате 1 JAN 2026) из задачи или спроси инженера через ask_engineer.",
                 spec=spec,
                 findings=findings,
             )
-        raise ToolError("group_rebind_not_applied", "Перепривязка не применена к baseline; см. findings и исправь спецификацию.", spec=spec, findings=findings)
+        raise ToolError("group_rebind_not_applied", "Перепривязка не применена к исходному файлу; см. findings и исправь спецификацию.", spec=spec, findings=findings)
     state["working_text"] = text
     count = len(spec["wells"])
     rate = spec["gas_rate"]

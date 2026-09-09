@@ -13,11 +13,11 @@ SYSTEM = """Ты — инженер-решатель агента Schedule Build
 
 Какой инструмент когда:
 - Задача про НОВЫЕ ДАТЫ ВВОДА скважин (Excel «скважина — дата», fact_count > 0) → apply_commissioning. Факты, решение по скважинам вне Excel и параметры новых скважин уже в сессии — аргументов не нужно. Другие apply_* для такой задачи не вызывай.
-- Задача про ГРУППЫ (поместить скважины в группу, групповой контроль GCONPROD) → inspect_schedule (имена скважин, дерево GRUPTREE), затем apply_group_rebind с полным spec: wells, parent_group, parent_of_parent, control (ORAT/WRAT/GRAT/LRAT/RESV), gas_rate числом в м3/сут («200 тыс. м3 газа в сут.» → 200000). Родителя новой группы бери из дерева baseline (корень — FIELD или как в inspect), если инженер не сказал иначе.
+- Задача про ГРУППЫ (поместить скважины в группу, групповой контроль GCONPROD) → inspect_schedule (имена скважин, дерево GRUPTREE), затем apply_group_rebind с полным spec: wells, parent_group, parent_of_parent, control (ORAT/WRAT/GRAT/LRAT/RESV), gas_rate числом в м3/сут («200 тыс. м3 газа в сут.» → 200000). Родителя новой группы бери из дерева исходного файла (корень — FIELD или как в inspect), если инженер не сказал иначе.
 - Точечные правки режимов/keywords → search_keywords → get_keyword (details.parameters) → apply_operations или render_ir.
 - inspect_well / analyze_forecast_controls / list_records — чтобы посмотреть скважину перед правкой. Не вызывай их «на всякий случай» и не больше трёх раз подряд.
 - build_schedule — только если apply уже менял сессию; validate_result — проверки emit.
-- ask_engineer — единственный способ спросить инженера. Только когда данных нет ни в задаче, ни в baseline, ни в ответах инженера (engineer_answers). Один вопрос обычной русской фразой: что нужно и зачем; варианты (options) — как их называет инженер: имена групп из baseline, «оставить»/«убрать». Никаких имён полей, JSON, enum, кодов. Инженер отвечает фактами, таблицами и файлами — не строками .INC.
+- ask_engineer — единственный способ спросить инженера. Только когда данных нет ни в задаче, ни в исходном файле, ни в ответах инженера (engineer_answers). Один вопрос обычной русской фразой: что нужно и зачем; варианты (options) — как их называет инженер: имена групп из исходного файла, «оставить»/«убрать». Никаких имён полей, JSON, enum, кодов. Инженер отвечает фактами, таблицами и файлами — не строками .INC.
 
 Ответы инструментов:
 - ok:false, code:spec_incomplete — это тебе, не инженеру: заполни missing из текста задачи и inspect_schedule (where_to_find подсказывает откуда) и вызови инструмент снова. Спрашивай инженера, только если данных действительно нет.
@@ -40,7 +40,7 @@ SYSTEM = """Ты — инженер-решатель агента Schedule Build
 """
 
 TOOLS = [
-    ("inspect_schedule", "Объектная инвентаризация baseline: wells, factual/forecast WCONPROD, commissioning anchors, история режимов, keywords, даты и GRUPTREE. Без полного .INC.", []),
+    ("inspect_schedule", "Объектная инвентаризация исходного SCHEDULE: wells, factual/forecast WCONPROD, commissioning anchors, история режимов, keywords, даты и GRUPTREE. Без полного .INC.", []),
     (
         "inspect_well",
         "Подробно осмотреть одну скважину: identity, factual WCONPROD, commissioning anchor (первый нефактический WCONPROD), последующие forecast control events и связанные records.",
@@ -80,7 +80,7 @@ TOOLS = [
         [
             ("wells", "string", True, "Имена скважин через пробел или запятую, только из inspect_schedule.wells"),
             ("parent_group", "string", True, "Имя целевой группы из задачи (например DKS)"),
-            ("parent_of_parent", "string", False, "Родитель целевой группы в GRUPTREE: корень baseline (FIELD) или группа из задачи. Пусто — возьмётся единственный корень baseline"),
+            ("parent_of_parent", "string", False, "Родитель целевой группы в GRUPTREE: корень дерева исходного файла (FIELD) или группа из задачи. Пусто — возьмётся единственный корень из исходного файла"),
             ("control", "string", True, "Тип группового контроля: GRAT (газ), ORAT (нефть), WRAT (вода), LRAT (жидкость), RESV"),
             ("gas_rate", "number", True, "Целевой дебит числом в м3/сут: «200 тыс. м3 в сут.» → 200000"),
             ("effective_at", "string", False, "Дата начала контроля вида 1 JAN 2026; пусто — с даты ввода этих скважин"),
@@ -88,10 +88,10 @@ TOOLS = [
     ),
     (
         "ask_engineer",
-        "Задать инженеру ОДИН вопрос обычной русской фразой, когда данных нет ни в задаче, ни в baseline, ни в engineer_answers. options — варианты словами инженера (имена групп из baseline, «оставить»/«убрать»). Без имён полей, JSON, enum. После вызова — STOP.",
+        "Задать инженеру ОДИН вопрос обычной русской фразой, когда данных нет ни в задаче, ни в исходном файле, ни в engineer_answers. options — варианты словами инженера (имена групп из исходного файла, «оставить»/«убрать»). Без имён полей, JSON, enum. После вызова — STOP.",
         [
             ("question", "string", True, "Вопрос по-русски: что нужно и зачем, с именами скважин/групп"),
-            ("options", "string", False, "Варианты ответа через точку с запятой, например «Оставить как в baseline; Убрать из прогноза». Пусто — свободный ответ"),
+            ("options", "string", False, "Варианты ответа через точку с запятой, например «Оставить как в исходном файле; Убрать из прогноза». Пусто — свободный ответ"),
             ("topic", "string", False, "Короткий латинский идентификатор темы вопроса, например target_group"),
             ("accepts_files", "string", False, "Какие файлы принимаются, через запятую: xlsx, .inc"),
         ],
@@ -126,22 +126,22 @@ SPEC = AgentSpec(
     title="Schedule Builder",
     when_to_use=(
         "Исходный SCHEDULE (.inc): сдвиг дат ввода по фактам «скважина — дата»; добавление новых скважин по их "
-        "параметрам; перепривязка скважин в группу (GRUPTREE/GCONPROD) по тексту задачи и baseline. Факты дат и "
+        "параметрам; перепривязка скважин в группу (GRUPTREE/GCONPROD) по тексту задачи и исходному файлу. Факты дат и "
         "параметры новых скважин берёт из результатов агента, который читал Excel, и из ответов инженера — сам Excel "
         "не читает; для перепривязки групп Excel не нужен. Не выдумывает даты и имена, которых нет в задаче, фактах "
-        "или baseline. Отдаёт новый .INC и список изменений."
+        "или исходном файле. Отдаёт новый .INC и список изменений."
     ),
     input_required=["schedule_source"],
     output_provides=["schedule_out", "diff"],
     input_schema={
-        "artifacts": {"schedule_source": "baseline SCHEDULE .inc и его INCLUDE-файлы"},
+        "artifacts": {"schedule_source": "исходный SCHEDULE .inc и его INCLUDE-файлы"},
         "data": {
             "facts": "даты ввода «скважина — дата» (нужны для новых дат ввода)",
             "new_wells": "параметры новых скважин (нужны, если добавляются скважины)",
         },
         "handoff_message": "что изменить в SCHEDULE и на основании чего",
     },
-    output_schema={"artifacts": {"schedule_out": "новый SCHEDULE .inc", "diff": "изменения относительно baseline"}},
+    output_schema={"artifacts": {"schedule_out": "новый SCHEDULE .inc", "diff": "изменения относительно исходного файла"}},
     service_url_key="schedule_service_url",
     lab_url="http://schedule-builder:8090",
     slug="schedule",
@@ -181,7 +181,7 @@ if(/грп|fracture/.test(low)){topics.push('ГРП');task_patterns.push('гид
     texts=FallbackTexts(
         no_result_question=(
             "Schedule Builder не внёс изменений в SCHEDULE: не хватило данных, чтобы понять задачу. "
-            "Опишите, что именно нужно изменить (скважины, даты, режимы) и откуда взять значения (Excel, текст, baseline)."
+            "Опишите, что именно нужно изменить (скважины, даты, режимы) и откуда взять значения (Excel, текст, исходный файл)."
         ),
         repeated_question=(
             "Schedule Builder не смог продвинуться по задаче: несколько раз проверял SCHEDULE, но не понял, что именно изменить. "
@@ -193,7 +193,7 @@ if(/грп|fracture/.test(low)){topics.push('ГРП');task_patterns.push('гид
         accepts_files=["xlsx", ".inc"],
         missing_input_message="Нет исходного SCHEDULE",
         missing_input_issue="missing_schedule_source",
-        missing_input_question="К задаче не приложен исходный SCHEDULE. Приложите baseline .inc, который нужно изменить.",
+        missing_input_question="К задаче не приложен исходный файл schedule. Приложите прогнозный .inc, который нужно изменить.",
         no_result_failed_message="Schedule Builder не вернул SCHEDULE",
         no_result_failed_issue="schedule_agent_no_result",
     ),

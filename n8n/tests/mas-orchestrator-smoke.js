@@ -216,7 +216,7 @@ async function run(name, json, nodes = {}, binary = {}) {
     assert.equal(helpers.normalizeHitlAnswer('unlisted_wells_policy', clicked, '').unlisted_wells_policy, 'remove');
     assert.equal(helpers.readUnlistedWellsPolicy({ unlisted_wells_policy: clicked }), 'remove');
     assert.equal(helpers.readUnlistedWellsPolicy({ 'Q-parent-group': clicked }), null, 'choice is gated by the question id');
-    assert.equal(helpers.readUnlistedWellsPolicy({ unlisted_wells_policy: { choice: 'keep', text: 'Оставить как в baseline' } }), 'keep');
+    assert.equal(helpers.readUnlistedWellsPolicy({ unlisted_wells_policy: { choice: 'keep', text: 'Оставить как в исходном файле' } }), 'keep');
     const q = {
       question_id: 'unlisted_wells_policy',
       question: 'В Excel нет скважин. Оставить или убрать?',
@@ -231,6 +231,8 @@ async function run(name, json, nodes = {}, binary = {}) {
     const clarify = helpers.buildClarifyQuestion(q);
     assert.match(clarify.question, /Не удалось однозначно понять ответ/);
     assert.equal(helpers.looksMachineText(clarify.question), false);
+    assert.equal(helpers.looksMachineText('Оставить скважины как в исходном файле, пожалуйста.'), false);
+    assert.equal(helpers.looksMachineText('Оставить скважины как в baseline, пожалуйста.'), true);
   }
   {
     // Two workbooks in one case: the first keeps the `excel` slot, the second survives as an attachment
@@ -730,7 +732,7 @@ async function run(name, json, nodes = {}, binary = {}) {
     question_id: 'unlisted_wells_policy',
     question: 'В Excel нет скважин: 201. Оставить или убрать?',
     options: [
-      { value: 'keep', label: 'Оставить как в baseline' },
+      { value: 'keep', label: 'Оставить как в исходном файле' },
       { value: 'remove', label: 'Убрать из прогноза' },
     ],
   };
@@ -1660,6 +1662,8 @@ async function run(name, json, nodes = {}, binary = {}) {
     assert.equal(verify.type, '@n8n/n8n-nodes-langchain.chainLlm');
     const verifySystem = verify.parameters.messages.messageValues[0].message;
     assert.match(verifySystem, /извлечь данные ≠ построить/);
+    assert.match(verifySystem, /План оркестратора — подсказка, не источник требований/);
+    assert.match(verifySystem, /пункт плана, которого нет в цели, не делай обязательной частью/);
     assert.equal(/excel_extractor|schedule_builder|WCONPROD|Excel/.test(verifySystem), false, 'completion check knows no domain');
     assert.equal(wf.connections['No agent this step'].main[0][0].node, 'Continue loop?', 'a continue step re-enters the loop');
     // Runtime: Excel done, LLM proposes finish, the check says the deliverable is not covered.
@@ -1812,6 +1816,13 @@ async function run(name, json, nodes = {}, binary = {}) {
     assert.match(system, /plan_update/);
     assert.match(system, /Пункт без id отбрасывается/);
     assert.match(system, /finish возможен, только когда в плане нет пунктов pending, active или blocked/);
+    assert.match(system, /output_provides — каталог возможностей/);
+    assert.match(system, /не чек-лист на каждую задачу/);
+    assert.match(system, /Заголовок пункта — то, что инженер просил получить/);
+    assert.match(system, /Не копируй в datasets все ключи output_provides/);
+    assert.match(system, /Не считай недостатком отсутствие ключа output_provides, которого цель не требовала/);
+    assert.equal(system.includes('excel_extractor'), false);
+    assert.equal(system.includes('schedule_builder'), false);
     const schema = JSON.parse(wf.nodes.find((n) => n.name === 'Decision Structured Output').parameters.inputSchema);
     assert.deepEqual(schema.properties.plan_update.items.required, ['id']);
     assert.deepEqual(schema.properties.plan_update.items.properties.status.enum, ['pending', 'active', 'done', 'blocked', 'dropped']);

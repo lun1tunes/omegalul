@@ -1324,11 +1324,36 @@ def test_schedule_flow_is_orchestrator_mediated_and_multi_stage() -> None:
         if document.get("knowledge_id") == "route-hitl-required-evidence"
     )
     # Phase 2: policy card — no agent ids in the text, HITL vs delegate is expressed via registry fields.
-    assert hitl_card["revision"] == "6"
+    assert hitl_card["revision"] == "7"
     assert "hitl_policy agent_asks" in hitl_card["text"]
     assert "Пустой срез знаний — не вопрос инженеру" in hitl_card["text"]
+    assert "baseline" not in hitl_card["text"]
     for agent_id in ("excel_extractor", "schedule_builder", "calculation_agent"):
         assert agent_id not in hitl_card["text"]
+
+
+def test_orchestrator_routing_cards_plan_follows_the_goal_not_output_provides() -> None:
+    """CASE-6aa052eb: Luna copied Excel output_provides (facts+new_wells) into expected_output on a dates-only goal."""
+    cards = {
+        document.get("knowledge_id"): document
+        for document in ingestible_operating_guide_documents()
+        if str(document.get("knowledge_id") or "").startswith("route-")
+    }
+    excel = cards["route-excel-extractor"]
+    thin = cards["route-mas-thin-orchestrator"]
+    builder = cards["route-schedule-builder"]
+    assert excel["revision"] == "9"
+    assert thin["revision"] == "7"
+    assert builder["revision"] == "10"
+    for card in (excel, thin, builder):
+        assert "baseline" not in card["text"]
+        for agent_id in ("excel_extractor", "schedule_builder", "calculation_agent"):
+            assert agent_id not in card["text"]
+    assert "не заказывай параметры новых скважин «на всякий случай»" in excel["text"]
+    assert "не копируй все ключи output_provides" in excel["text"]
+    assert "не каталога агента" in thin["text"]
+    assert "не ожидая ключей output_provides, которых цель не требовала" in thin["text"]
+    assert "для сдвига дат — факты ввода" in builder["text"]
 
 
 def test_schedule_builder_is_bounded_and_orchestrator_mediated() -> None:

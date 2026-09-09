@@ -13,6 +13,7 @@ from typing import Any
 # snake_case ids, key=value, JSON braces / brackets, a|b enums.
 MACHINE_TOKEN_RE = re.compile(r"[a-z]+_[a-z_]+|[a-z_]+=[a-z0-9]+|[{}\[\]<>]|\w\|\w")
 _CYRILLIC_RE = re.compile(r"[А-Яа-яЁё]{3,}")
+_BASELINE_WORD_RE = re.compile(r"\bbaseline\b", re.I)
 
 
 def human_text_problems(text: Any, *, min_length: int = 12) -> list[str]:
@@ -29,6 +30,8 @@ def human_text_problems(text: Any, *, min_length: int = 12) -> list[str]:
     tokens = sorted({m.group(0) for m in MACHINE_TOKEN_RE.finditer(stripped)})
     if tokens:
         problems.append("машинные токены: " + ", ".join(tokens[:6]))
+    if _BASELINE_WORD_RE.search(stripped):
+        problems.append("не говорите «baseline» инженеру — исходный файл schedule")
     return problems
 
 

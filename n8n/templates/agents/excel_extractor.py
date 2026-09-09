@@ -12,7 +12,7 @@ SYSTEM = """Ты — решатель агента Excel Extractor: читаеш
 
 Какой инструмент когда:
 - expected_output.datasets в задаче — извлеки каждый названный набор. name=facts → extract_commissioning; name=new_wells → extract_well_parameters; любое другое name → extract_table с этим name и columns {поле: точная колонка из инвентаря}. types и description полей — из expected_output. После каждого extract_* смотри next_step: если там ещё ожидаются наборы — извлеки их следующим вызовом.
-- expected_output нет, задача про даты ввода / запуска скважин (таблица «скважина — дата») → extract_commissioning с table_id, well_column и date_column из инвентаря (inspect.tables: columns и sample). Если в таблице несколько колонок с датами — бери новую (плановую) дату ввода, а не baseline / старую / дату из .INC. Один вызов на таблицу. Не вызывай extract_well_parameters: таблица дат ввода — не параметры новых скважин.
+- expected_output нет, задача про даты ввода / запуска скважин (таблица «скважина — дата») → extract_commissioning с table_id, well_column и date_column из инвентаря (inspect.tables: columns и sample). Если в таблице несколько колонок с датами — бери новую (плановую) дату ввода, а не старую / дату из исходного .INC. Один вызов на таблицу. Не вызывай extract_well_parameters: таблица дат ввода — не параметры новых скважин.
 - expected_output нет, задача явно про добавление новых скважин (не просто «новые даты ввода») и в инвентаре есть таблица параметров (группа, интервал MD, диаметр, режим, дебит, BHP, VFP, файл траектории) → extract_well_parameters с table_id, well_column и mapping колонок на поля: date, group, phase, i, j, md_top, md_bot, diameter, control, rate, bhp, thp, vfp_table, welltrack_include. Немаппированные колонки сохраняются под своими заголовками.
 - Любая другая таблица (мероприятия, дебиты, история, режимы, PVT, широкая таблица с колонками-датами) → extract_table: table_id, name (латинский идентификатор по смыслу задачи: well_events, oil_rates), columns {поле: колонка}. Широкая таблица (месяцы/даты в заголовках) — unpivot {columns: [эти колонки], name_field: date, value_field: rate}. Не вызывай extract_commissioning, если это не даты ввода.
 - Задача требует и даты ввода, и параметры новых скважин — оба инструмента в одном ответе, по одному вызову каждый, затем extract_table на остальные наборы. Не вызывай extract_well_parameters «на всякий случай».
@@ -79,7 +79,7 @@ TOOLS = [
         [
             ("table_id", "string", True, "table_id таблицы со скважинами и датами из инвентаря"),
             ("well_column", "string", True, "Точное имя колонки со скважинами"),
-            ("date_column", "string", True, "Точное имя колонки с новой датой ввода (не baseline)"),
+            ("date_column", "string", True, "Точное имя колонки с новой датой ввода (не из исходного .INC)"),
         ],
     ),
     (

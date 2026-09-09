@@ -227,8 +227,8 @@ def test_ask_engineer_requires_prose_and_stores_needs_input() -> None:
         state,
         "ask_engineer",
         {
-            "question": "В таблице две колонки с датами — «Дата ввода» и «Дата ввода (baseline в .INC)». Какую из них считать новой датой ввода?",
-            "options": "Дата ввода; Дата ввода (baseline в .INC)",
+            "question": "В таблице две колонки с датами — «Дата ввода» и «Дата ввода (из .INC)». Какую из них считать новой датой ввода?",
+            "options": "Дата ввода; Дата ввода (из .INC)",
             "topic": "date_column",
         },
     )
@@ -237,7 +237,7 @@ def test_ask_engineer_requires_prose_and_stores_needs_input() -> None:
     assert result["status"] == "needs_input"
     request = result["requests"][0]
     assert request["question_id"] == "Q-date_column"
-    assert [opt["label"] for opt in request["options"]] == ["Дата ввода", "Дата ввода (baseline в .INC)"]
+    assert [opt["label"] for opt in request["options"]] == ["Дата ввода", "Дата ввода (из .INC)"]
     assert request["accepts"]["free_text"] is True
 
 

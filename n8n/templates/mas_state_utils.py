@@ -621,11 +621,11 @@ function agentTitle(agentId, registry){
   const hit=rows.find(r=>r&&String(r.agent_id||'')===String(agentId||''));
   return (hit&&hit.title)||String(agentId||'агент');
 }
-/* Engineer-facing text must be prose: no snake_case ids, key=value pairs, JSON braces or pipes. */
+/* Engineer-facing text must be prose: no snake_case ids, key=value pairs, JSON braces, pipes, or «baseline». */
 function looksMachineText(text){
   const s=String(text||'');
   if(!s.trim()) return false;
-  return /[a-z]+_[a-z_]+|[a-z_]+=[a-z0-9]+|[{}\[\]]|\w\|\w/.test(s)||!/[А-Яа-яЁё]{3,}/.test(s);
+  return /[a-z]+_[a-z_]+|[a-z_]+=[a-z0-9]+|[{}\[\]]|\w\|\w/.test(s)||/\bbaseline\b/i.test(s)||!/[А-Яа-яЁё]{3,}/.test(s);
 }
 function composeDoneSummary(state, registry){
   const done=ledgerAgentEntries(state).filter(e=>e.status==='completed'&&String(e.summary||'').trim());

@@ -904,7 +904,7 @@ def test_hitl_answer_option_button_forwards_choice_without_writing_state(monkeyp
         "question_id": "unlisted_wells_policy",
         "question": "В Excel нет скважин: 201. Оставить или убрать?",
         "options": [
-            {"value": "keep", "label": "Оставить как в baseline"},
+            {"value": "keep", "label": "Оставить как в исходном файле"},
             {"value": "remove", "label": "Убрать из прогноза"},
         ],
     }

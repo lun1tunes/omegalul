@@ -850,7 +850,7 @@ def test_ask_engineer_is_the_only_human_question_path_and_must_be_prose() -> Non
         json={
             "session_id": sid,
             "topic": "target_group",
-            "question": "В какую группу поместить скважину P1? В baseline пока нет дерева групп, поэтому нужно её имя и родитель.",
+            "question": "В какую группу поместить скважину P1? В исходном файле пока нет дерева групп, поэтому нужно её имя и родитель.",
             "options": [{"value": "NEW", "label": "Новая группа — назову ниже"}, "Оставить без группового контроля"],
             "accepts_files": "xlsx",
         },
@@ -877,7 +877,7 @@ def test_ask_engineer_is_the_only_human_question_path_and_must_be_prose() -> Non
     # Read-only tools keep working.
     assert client.post("/agent-tools/inspect_schedule", json={"session_id": sid}).json()["ok"] is True
 
-    assert human_text_problems("В Excel нет скважин: H_304R, 1601. Оставить их запуски как в baseline?") == []
+    assert human_text_problems("В Excel нет скважин: H_304R, 1601. Оставить их запуски как в исходном файле?") == []
     assert human_text_problems("Уточните rate для перепривязки групп.") == []  # plain words pass; ids don't
     assert human_text_problems("unlisted_wells_policy=keep") != []
     assert human_text_problems('{"decision": "keep"}') != []
@@ -1456,6 +1456,6 @@ def test_commissioning_summary_describes_actual_changes() -> None:
         "unlisted_wells_policy": "keep",
     })
     assert kept["message"] == (
-        "Сдвинул даты ввода 1 скважины: 201 → 01 FEB 2026. 2 скважины вне Excel оставил как в baseline: 301, 302."
+        "Сдвинул даты ввода 1 скважины: 201 → 01 FEB 2026. 2 скважины вне Excel оставил как в исходном файле: 301, 302."
     )
     assert summarize_commissioning_result({"status": "noop"})["message"].startswith("SCHEDULE без изменений")

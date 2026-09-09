@@ -86,7 +86,7 @@ for (const key of ['table_id', 'well_column', 'date_column']) {
   assert.equal(arg.type, 'string', key);
   assert.equal(arg.required, true, key);
 }
-assert.match(fromAI(extractTool, 'date_column').description, /не baseline/);
+assert.match(fromAI(extractTool, 'date_column').description, /не из исходного \.INC/);
 const paramsTool = wf.nodes.find((n) => n.name === 'extract_well_parameters');
 assert.equal(fromAI(paramsTool, 'table_id').required, true);
 assert.equal(fromAI(paramsTool, 'well_column').required, true);

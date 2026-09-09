@@ -202,7 +202,7 @@ async function run(name, json, nodes = {}) {
       fact_count: 2,
       facts_preview: [],
       session_id: 'sess-s',
-      engineer_answers: [{ question_id: 'unlisted_wells_policy', choice: 'keep', label: 'Оставить как в baseline' }],
+      engineer_answers: [{ question_id: 'unlisted_wells_policy', choice: 'keep', label: 'Оставить как в исходном файле' }],
     },
     {
       'Normalize schedule task': {
@@ -212,7 +212,7 @@ async function run(name, json, nodes = {}) {
   );
   const plannerInput = JSON.parse(prepared.planner_input);
   assert.equal('suggested_capability' in plannerInput, false, 'the LLM picks the tool, no regex hint');
-  assert.equal(plannerInput.engineer_answers[0].label, 'Оставить как в baseline');
+  assert.equal(plannerInput.engineer_answers[0].label, 'Оставить как в исходном файле');
   assert.equal(plannerInput.rework_reason, 'Скважина 1602 не сдвинута');
   assert.equal(prepared.schedule_retrieval_request.filters.target_base, 'schedule_mvp');
   assert.deepEqual(prepared.schedule_retrieval_request.filters.knowledge_types, [

@@ -24,12 +24,14 @@ def test_human_text_gate_accepts_prose_and_rejects_machine_tokens() -> None:
     assert any("машинные токены" in p for p in problems)
     assert "вопрос должен быть по-русски" in human_text_problems("Choose a table please")
     assert "слишком коротко для вопроса инженеру" in human_text_problems("Да?")
+    assert any("baseline" in p for p in human_text_problems("Оставить скважины как в baseline, пожалуйста."))
+    assert human_text_problems("Оставить скважины как в исходном файле, пожалуйста.") == []
 
 
 def test_options_and_plural_helpers() -> None:
     assert options_for_human("Оставить; Убрать") == [{"value": "Оставить", "label": "Оставить"}, {"value": "Убрать", "label": "Убрать"}]
-    assert options_for_human('[{"value":"keep","label":"Оставить","hint":"как в baseline"}]') == [
-        {"value": "keep", "label": "Оставить", "hint": "как в baseline"}
+    assert options_for_human('[{"value":"keep","label":"Оставить","hint":"как в исходном файле"}]') == [
+        {"value": "keep", "label": "Оставить", "hint": "как в исходном файле"}
     ]
     assert options_for_human(None) == []
     assert plural_ru(1, "скважина", "скважины", "скважин") == "1 скважина"
@@ -76,7 +78,7 @@ def test_hitl_answers_are_compact_for_the_llm() -> None:
     context = {
         "hitl": {
             "answers": {
-                "Q-unlisted": '{"choice":"keep","label":"Оставить как в baseline"}',
+                "Q-unlisted": '{"choice":"keep","label":"Оставить как в исходном файле"}',
                 "Q-facts": {"text": "1601 — 1 мар 2026", "new_wells": [{"well": "N1"}]},
                 "Q-free": "просто текст",
                 "Q-empty": "",
@@ -84,7 +86,7 @@ def test_hitl_answers_are_compact_for_the_llm() -> None:
         }
     }
     rows = engineer_answers({"context": context})
-    assert rows[0] == {"question_id": "Q-unlisted", "choice": "keep", "label": "Оставить как в baseline"}
+    assert rows[0] == {"question_id": "Q-unlisted", "choice": "keep", "label": "Оставить как в исходном файле"}
     assert rows[1]["attached_facts"] == "new_wells: 1 записей"
     assert rows[2] == {"question_id": "Q-free", "text": "просто текст"}
     assert len(rows) == 3

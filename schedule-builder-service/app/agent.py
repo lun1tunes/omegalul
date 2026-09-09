@@ -26,9 +26,9 @@ MAX_WELLS = 200
 NO_APPLY_QUESTION = (
     "Schedule Builder не смог определить, что именно изменить в SCHEDULE. "
     "Опишите задачу подробнее: какие скважины, какие даты или режимы работы и откуда взять значения "
-    "(Excel, текст, baseline)."
+    "(Excel, текст, исходный файл)."
 )
-NO_SOURCE_REQUEST = {"question_id": "Q-sched", "question": "Приложите baseline .inc", "options": []}
+NO_SOURCE_REQUEST = {"question_id": "Q-sched", "question": "Приложите исходный файл schedule (.inc)", "options": []}
 
 
 def compact_inspect(source: str) -> dict[str, Any]:

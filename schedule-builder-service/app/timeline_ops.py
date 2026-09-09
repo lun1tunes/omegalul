@@ -683,7 +683,7 @@ def commissioning_revise(
             "id": "unlisted_wells_policy",
             "question": (
                 f"В Excel нет скважин: {', '.join(unlisted[:20])}"
-                f"{'…' if len(unlisted) > 20 else ''}. В baseline у них есть даты ввода. "
+                f"{'…' if len(unlisted) > 20 else ''}. В исходном файле schedule у них есть даты ввода. "
                 "Оставить эти запуски как есть или убрать их из прогноза?"
             ),
             "required": True,
@@ -691,7 +691,7 @@ def commissioning_revise(
             "options": [
                 {
                     "value": "keep",
-                    "label": "Оставить как в baseline",
+                    "label": "Оставить как в исходном файле",
                     "hint": "Даты ввода этих скважин не меняются",
                 },
                 {

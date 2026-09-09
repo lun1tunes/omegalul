@@ -15,6 +15,7 @@ const hitlLooksMachine=text=>{
   if(!t) return true;
   if(HITL_CODE_ONLY.test(t)) return true;
   if(!HITL_CYRILLIC.test(t)) return true;
+  if(/\bbaseline\b/i.test(t)) return true;
   return false;
 };
 const hitlBaseName=p=>{
@@ -51,7 +52,7 @@ const hitlSlots=f=>{
 const HITL_STAGE={
   schedule_intake_result:'Проверка входных данных задачи',
   baseline_analysis:'Проверка пакета schedule (INCLUDE и корневой файл)',
-  baseline_decode_result:'Разбор записей baseline',
+  baseline_decode_result:'Разбор записей исходного файла',
   schedule_validation_result:'Проверка синтаксиса, дат и семантики',
   schedule_render_result:'Сборка текста по схеме keyword',
   schedule_merge_result:'Сборка итогового schedule',
@@ -59,7 +60,7 @@ const HITL_STAGE={
   schedule_group_rebind_revise_result:'Перепривязка групп скважин',
   schedule_builder_stage_result:'Проверка черновика Builder',
   schedule_verifier_result:'Независимая проверка выпуска',
-  baseline_inventory_query_result:'Выборка записей baseline',
+  baseline_inventory_query_result:'Выборка записей исходного файла',
 };
 const hitlDedupeKey=f=>{
   const s=hitlSlots(f);
@@ -94,7 +95,7 @@ const HITL_COPY={
   FILE_LIMIT:{cluster:'Слишком много файлов в пакете. Сократите набор INCLUDE.', item:'Превышен лимит файлов пакета.'},
   PACKAGE_SIZE_LIMIT:{cluster:'Пакет schedule слишком большой. Сократите набор файлов.', item:'Превышен размер пакета schedule.'},
   CST_NODE_LIMIT:{cluster:'В schedule слишком много блоков. Сократите пакет или уточните задачу.', item:'Слишком много блоков в schedule.'},
-  CREATE_BASELINE_CONFLICT_REQUIRES_DECISION:{cluster:'Приложен baseline, но задача помечена как CREATE. Напишите: править существующий schedule или собрать новый и отбросить вложение.', item:'Напишите: REVISE существующего schedule или CREATE с отбрасыванием вложения.'},
+  CREATE_BASELINE_CONFLICT_REQUIRES_DECISION:{cluster:'Приложен исходный файл schedule, но задача помечена как CREATE. Напишите: править существующий schedule или собрать новый и отбросить вложение.', item:'Напишите: REVISE существующего schedule или CREATE с отбрасыванием вложения.'},
   PRESERVATION_POLICY_REQUIRED:{cluster:'Для REVISE нужно сохранить не упомянутые записи. Подтвердите это в ответе или приложите полный пакет.', item:'Подтвердите сохранение не упомянутых записей (preserve_unmentioned) или уточните политику.'},
   SIMULATOR_PROFILE_NOT_APPROVED:{cluster:'Рабочий профиль — tNavigator 22.2 METRIC. Напишите, только если задача для другого симулятора.', item:'Укажите другой согласованный профиль, если это не tNavigator 22.2.'},
   METRIC_UNIT_SYSTEM_REQUIRED:{cluster:'В этом контуре единицы всегда METRIC. FIELD и другие системы не используются.', item:'Нужна система единиц METRIC — другие не поддерживаются.'},
@@ -147,7 +148,7 @@ const HITL_COPY={
   SOURCE_FACTS_WELL_IDENTITY_MISSING:{cluster:'Для сдвига дат ввода нет имени скважины. Укажите скважины или приложите Excel.', item:'Укажите имена скважин (Скважина / WELL) для commissioning.'},
   NEW_WELL_DATE_INVALID:{cluster:'Дата ввода новой скважины неверна. Напишите дату YYYY-MM-DD.', item:s=>s.entity?`Для скважины ${s.entity} укажите дату ввода в формате YYYY-MM-DD.`:'Укажите дату ввода новой скважины в формате YYYY-MM-DD.'},
   COMMISSIONING_DATE_INVALID:{cluster:'Дата ввода скважины неверна. Напишите дату YYYY-MM-DD.', item:s=>s.entity?`Для скважины ${s.entity} исправьте дату ввода (YYYY-MM-DD).`:'Исправьте дату ввода скважины (YYYY-MM-DD).'},
-  DATES_STEP_REMOVED:{cluster:'Из schedule пропал шаг DATES, который был в baseline. Верните дату или подтвердите удаление.', item:'Верните пропавший шаг DATES или явно подтвердите его удаление.'},
+  DATES_STEP_REMOVED:{cluster:'Из schedule пропал шаг DATES, который был в исходном файле. Верните дату или подтвердите удаление.', item:'Верните пропавший шаг DATES или явно подтвердите его удаление.'},
   GROUP_REBIND_COMMISSIONING_DATE_MISSING:{cluster:'Для перепривязки групп нет даты ввода скважин. Укажите даты или приложите Excel.', item:'Укажите даты ввода скважин для group_membership_rebind.'},
   KEYWORD_SCHEMA_NOT_APPROVED:{cluster:'Для keyword нет утверждённой schema. Догрузите schema или уберите keyword из задачи.', item:s=>s.keyword?`Нет утверждённой schema для ${s.keyword}. Догрузите карточку или уберите keyword.`:'Нет утверждённой schema keyword. Догрузите каталог или сузьте задачу.'},
   DATES_NOT_STRICTLY_INCREASING:{cluster:'Даты DATES идут не по возрастанию. Исправьте порядок дат в schedule.', item:'Исправьте DATES: каждая следующая дата должна быть строго позже предыдущей.'},
@@ -155,7 +156,7 @@ const HITL_COPY={
   SCHEDULE_TEXT_REQUIRED:{cluster:'Нет текста schedule. Прикрепите корневой .inc / .data.', item:'Прикрепите текст schedule (.inc или .data).'},
   INVALID_EXCEL_SPECIALIST_PACKET:{cluster:'Пакет для Excel Extractor собран неверно. Создайте задачу заново и приложите книгу .xlsx.', item:'Создайте задачу заново из Activity и приложите книгу Excel.'},
   INVALID_SCHEDULE_SPECIALIST_PACKET:{cluster:'Пакет задачи для Schedule Builder собран неверно. Создайте задачу заново из Activity.', item:'Создайте задачу заново из Activity, приложив schedule и описание.'},
-  BASELINE_PACKAGE_INVALID:{cluster:'Пакет baseline разобран неверно. Прикрепите корневой файл и все INCLUDE заново.', item:'Прикрепите полный пакет schedule ещё раз.'},
+  BASELINE_PACKAGE_INVALID:{cluster:'Пакет исходного schedule разобран неверно. Прикрепите корневой файл и все INCLUDE заново.', item:'Прикрепите полный пакет schedule ещё раз.'},
   CHANGE_EFFECTIVE_FROM_REQUIRED:{cluster:'Дата начала правки нужна, только если задача задаёт срез с конкретной даты. Для снятия keyword целиком граница не требуется.', item:'Укажите change_effective_from в формате YYYY-MM-DD, только если правка действует с конкретной даты.'},
   BASELINE_EFFECTIVE_DATE_REQUIRED:{cluster:'Запись стоит до первого DATES — оставляем как есть. model_start_date не нужен.', item:s=>s.keyword?`${s.keyword} до первого DATES: оставляем на месте, если нет явной команды переместить.`:'Запись до первого DATES оставляем как есть.'},
   SCHEMA_CATALOGUE_NOT_APPROVED:{cluster:'Каталог schema keyword не утверждён. Загрузите утверждённый каталог через Knowledge.', item:'Через Knowledge загрузите утверждённый schema_catalogue в schedule_mvp.'},

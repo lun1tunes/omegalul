@@ -284,7 +284,7 @@ def extract_commissioning_tool(ctx: dict[str, Any], args: dict[str, Any]) -> dic
             where_to_find={
                 "table_id": "inspect.tables[].table_id",
                 "well_column": "колонка со скважинами в inspect.tables[].columns",
-                "date_column": "колонка с новой датой ввода (не baseline) в inspect.tables[].columns",
+                "date_column": "колонка с новой датой ввода (не из исходного .INC) в inspect.tables[].columns",
             },
             available_tables=_available_tables(state),
         )
