@@ -1,3 +1,1877 @@
+      "text": "WINJGAS — состав газа, нагнетаемого скважиной (композиционные модели).\n\nНазначение. Задаёт источник/состав закачиваемого газа для скважины при скважинном GAS-контроле через WCONINJE. Форматы: tN, E3 (E1 в мануале не отмечен — для E1 → needs_input). Секция: SCHEDULE. Это не GINJGAS (групповой аналог — отдельная карточка), не GSATCOMP (satellite; вне allowlist), не WELLSTRE (объявление потока — отдельная карточка), не WINJMIX (смесь; вне allowlist → needs_input при SOURCE=MIX без baseline), не WCONINJE (rate/control).\n\nКогда применять. E3/tN + WCONINJE GAS: нужен явный состав на скважине или `*LIST` после WLIST. STREAM → сначала WELLSTRE с тем же именем. MIX → WINJMIX вне allowlist → needs_input, если смеси нет в baseline. GV/WV — имя группы/скважины-источника из фактов. GAS — сепаратор месторождения. GRUP — состав вышележащей группы (default). Makeup-поток (поле 4) тоже через WELLSTRE.\n\nRecord layout. Keyword WINJGAS, записи `/`, блок — отдельный `/`. WELL или `*LIST`.\n\nПоля (§12.20.195):\n\n1. WELL — скважина или `*LIST` (после WLIST).\n2. SOURCE — GAS | STREAM | MIX | GV | WV | GRUP. Default: GRUP.\n3. SOURCE_REF — зависит от SOURCE: STREAM→имя WELLSTRE; MIX→имя WINJMIX; GV→группа; WV→скважина. Для GAS/GRUP обычно опускается.\n4. MAKEUP_STREAM — имя WELLSTRE добавочного газа, если добываемого газа по SOURCE не хватает. Optional.\n5. SEPARATOR_STAGE — ступень сепаратора для состава (default 0 = весь сепаратор). Optional.\n\nКанон render.\n- `composition` — WELL SOURCE [SOURCE_REF] [MAKEUP_STREAM] [SEPARATOR_STAGE] (паттерн `Well1 STREAM 'stream1'`).\nНе копируйте имена/stream без фактов. Не эмитьте GSATCOMP/WINJMIX/WELLSTRW из этой карточки.\n\nIR / semantics.\n- period=ANY; clock.uses_current=true.\n- definitions: UPSERT well_inject_gas WELL.\n- references: well WELL (или WLIST); STREAM/MAKEUP → well_stream; GV→group; WV→well.\n- prerequisites: WCONINJE GAS context (soft); WELLSTRE before STREAM/MAKEUP; WLIST before `*LIST`.\n- state_assignments: namespace well-inject-gas; value SOURCE + refs.\n- MIX without WINJMIX in allowlist/baseline → needs_input.\n\nСвязанные: WCONINJE; WELLSTRE; GINJGAS; WLIST; GSATCOMP / WINJMIX (вне allowlist).\n\nАнтипаттерны.\n- WINJGAS без WCONINJE GAS / без скважины.\n- STREAM без WELLSTRE.\n- MIX без WINJMIX facts/baseline.\n- Подмена группового GINJGAS скважинным WINJGAS без факта.\n- E1-профиль.\n\nНехватка факта → needs_input: нет WELL/SOURCE; STREAM/MIX/GV/WV без SOURCE_REF; нет WELLSTRE; нужен MIX/WINJMIX; E1.\n\nКарточка самодостаточна для composition-record; поток объявляет WELLSTRE.",
+      "examples": [
+        {
+          "title": "STREAM на скважине — канон мануала",
+          "task": "Well1 ← поток stream1.",
+          "schedule_text": "WINJGAS\nWell1 STREAM 'stream1' /\n/\n",
+          "explanation": "§12.20.195 с. 2158. Variant composition. stream1 должен быть в WELLSTRE. Учебные имена."
+        }
+      ],
+      "schema_catalogue": {
+        "contract": "schedule_schema_catalogue",
+        "contract_version": "1.0",
+        "catalogue_ref": "catalogue://tnavigator/22.2/winjgas-well-inject-gas-v1",
+        "catalogue_hash": "sha256:6293c0690fa85218ccfaed910e80ea96bd73dc63fb5b487de065552f4ac5d9a8",
+        "source_hash": "sha256:844c8ef6397e060eee6d5662ad6ed3f6031015eee5be3bf7ec7aa4efdee40f4a",
+        "access_scope": "petroleum-engineering",
+        "simulator_profile": {
+          "vendor": "Rock Flow Dynamics",
+          "simulator": "tNavigator",
+          "version": "22.2",
+          "unit_system": "METRIC"
+        },
+        "approved": true,
+        "approved_by": "department-hydrodynamic-expert",
+        "author": "department-hydrodynamic-expert",
+        "approval_gate_id": "expert:winjgas-well-inject-gas-v1:2",
+        "schemas": [
+          {
+            "schema_id": "expert:WINJGAS:composition",
+            "schema_revision": "1",
+            "keyword": "WINJGAS",
+            "variant": "composition",
+            "citation": {
+              "document_id": "tnav-user-manual-russian",
+              "document_revision": "19.4",
+              "page": "12.20.195 / 2157-2158",
+              "heading": "WINJGAS",
+              "source_hash": "sha256:844c8ef6397e060eee6d5662ad6ed3f6031015eee5be3bf7ec7aa4efdee40f4a"
+            },
+            "parser": {
+              "token_width": 5,
+              "allow_trailing_omission": true,
+              "allow_unquoted_strings": true
+            },
+            "fields": [
+              {
+                "name": "WELL",
+                "position": 1,
+                "type": "string",
+                "required": true,
+                "quote": "single"
+              },
+              {
+                "name": "SOURCE",
+                "position": 2,
+                "type": "string",
+                "required": false,
+                "enum": [
+                  "GAS",
+                  "STREAM",
+                  "MIX",
+                  "GV",
+                  "WV",
+                  "GRUP"
+                ],
+                "default": "GRUP"
+              },
+              {
+                "name": "SOURCE_REF",
+                "position": 3,
+                "type": "string",
+                "required": false,
+                "quote": "single"
+              },
+              {
+                "name": "MAKEUP_STREAM",
+                "position": 4,
+                "type": "string",
+                "required": false,
+                "quote": "single"
+              },
+              {
+                "name": "SEPARATOR_STAGE",
+                "position": 5,
+                "type": "number",
+                "required": false
+              }
+            ],
+            "layout": {
+              "newline": "LF",
+              "indent": "  ",
+              "delimiter": "SPACE",
+              "record_terminator": "SLASH",
+              "block_terminator": "SLASH_LINE"
+            },
+            "semantics": {
+              "period": "ANY",
+              "clock": {
+                "uses_current": true
+              },
+              "definitions": [
+                {
+                  "entity_type": "well_inject_gas",
+                  "id_field": "WELL",
+                  "action": "UPSERT"
+                }
+              ],
+              "references": [
+                {
+                  "entity_type": "well",
+                  "id_field": "WELL",
+                  "required": true
+                },
+                {
+                  "entity_type": "well_stream",
+                  "id_field": "SOURCE_REF",
+                  "required": false
+                },
+                {
+                  "entity_type": "well_stream",
+                  "id_field": "MAKEUP_STREAM",
+                  "required": false
+                }
+              ],
+              "prerequisites": [
+                {
+                  "keyword": "WELLSTRE",
+                  "soft": true
+                },
+                {
+                  "keyword": "WCONINJE",
+                  "soft": true
+                }
+              ],
+              "state_assignments": [
+                {
+                  "namespace": "well-inject-gas",
+                  "entity_type": "well_inject_gas",
+                  "entity_field": "WELL",
+                  "key_fields": [
+                    "WELL"
+                  ],
+                  "value_fields": [
+                    "SOURCE",
+                    "SOURCE_REF",
+                    "MAKEUP_STREAM",
+                    "SEPARATOR_STAGE"
+                  ]
+                }
+              ],
+              "numeric_constraints": [
+                {
+                  "field": "SEPARATOR_STAGE",
+                  "min": 0
+                }
+              ]
+            }
+          }
+        ]
+      },
+      "source_hash": "sha256:844c8ef6397e060eee6d5662ad6ed3f6031015eee5be3bf7ec7aa4efdee40f4a",
+      "page": "12.20.195 WINJGAS (с. 2157–2158); WELLSTRE 12.20.189; WCONINJE 12.20.44; GINJGAS 12.20.196",
+      "heading": "WINJGAS — состав нагнетаемого скважинами газа",
+      "id": "winjgas-well-inject-gas-v1",
+      "metadata": {
+        "document_id": "winjgas-well-inject-gas-v1",
+        "document_revision": "2",
+        "source_hash": "sha256:844c8ef6397e060eee6d5662ad6ed3f6031015eee5be3bf7ec7aa4efdee40f4a",
+        "page": "12.20.195 / 2157-2158",
+        "heading": "WINJGAS",
+        "target_base": "schedule_mvp",
+        "knowledge_type": "keyword_instruction",
+        "knowledge_id": "winjgas-well-inject-gas-v1",
+        "revision": "2",
+        "status": "active",
+        "access_scope": "petroleum-engineering",
+        "author": "department-hydrodynamic-expert",
+        "approved_by": "department-hydrodynamic-expert",
+        "keyword_families": [
+          "WINJGAS"
+        ],
+        "topics": [
+          "состав газа скважины",
+          "WINJGAS",
+          "WCONINJE GAS",
+          "STREAM WELLSTRE",
+          "не GSATCOMP"
+        ],
+        "task_patterns": [
+          "задать WINJGAS",
+          "состав закачки скважины",
+          "WINJGAS STREAM",
+          "газ сепаратора на скважине",
+          "makeup WELLSTRE"
+        ]
+      }
+    },
+    {
+      "contract": "schedule_knowledge_block",
+      "contract_version": "1.0",
+      "target_base": "schedule_mvp",
+      "knowledge_type": "keyword_instruction",
+      "knowledge_id": "wvfpdp-vfp-pressure-correction-v1",
+      "revision": "2",
+      "title": "WVFPDP — коррекция BHP к VFP",
+      "keywords": [
+        "WVFPDP"
+      ],
+      "topics": [
+        "коррекция BHP",
+        "WVFPDP",
+        "VFP ΔP",
+        "fp scale",
+        "не VFPDP"
+      ],
+      "task_patterns": [
+        "задать WVFPDP",
+        "коррекция давления VFP",
+        "масштаб потери в трубе",
+        "калибровка THP BHP",
+        "WVFPDP bars"
+      ],
+      "simulator_family": [
+        "E100",
+        "tNavigator"
+      ],
+      "status": "active",
+      "author": "department-hydrodynamic-expert",
+      "access_scope": "petroleum-engineering",
+      "text": "WVFPDP — коррекция BHP и масштаб потери давления трубы к VFP.\n\nНазначение. Добавляет поправку давления к BHP, полученному интерполяцией VFP-таблиц, и/или масштабирует потерю давления в трубе (BHP−THP). Типично для согласования дебита при заданном THP (калибровка эффективных потерь забой↔устье). Форматы: tN, E1 (E3 в мануале не отмечен — для E3-профиля → needs_input). Секция: SCHEDULE. Это не VFPPROD (тело таблицы — отдельная карточка/артефакт), не VFPINJ, не VFPCORR/WVFPEXP (вне allowlist → needs_input), не WNETDP (сеть), не inventing `VFPDP` — эмитьте только `WVFPDP`.\n\nКогда применять. Нужна явная калибровка ΔP/fp из фактов при VFP/THP-контроле. Значения не угадывайте. Автоматическая гидростатическая поправка REF_DEPTH WELSPECS ↔ datum VFPPROD выполняется симулятором и без WVFPDP — не дублируйте её «на глаз».\n\nRecord layout. Keyword WVFPDP, записи `/`, блок — отдельный `/`. WELL или `*LIST` после WLIST.\n\nПоля (§12.20.217; METRIC: bars):\n\n1. WELL — скважина или `*LIST`.\n2. DP_CORR — величина, добавляемая к BHP из VFP. Default: 0. (+ → выше BHP / ниже дебит producer; − → лучше добыча).\n3. FP_SCALE — коэффициент fp: BHP1 = THP + fp*(BHPtab − THP). Default: 1. Для producer fp>1 → выше BHP / ниже дебит.\n\nКанон render.\n- `correction` — WELL [DP_CORR] [FP_SCALE] (defaults 0 / 1; паттерны `302 2.5`, `303 -11.2`, `304 2 1.21`).\nНе копируйте 2.5/−11.2/1.21 без фактов.\n\nIR / semantics.\n- period=ANY; clock.uses_current=true.\n- definitions: UPSERT well_vfp_dp WELL.\n- references: well WELL (или WLIST).\n- prerequisites: well exists; VFPPROD/THP path soft (text).\n- state_assignments: namespace well-vfp-dp; value DP_CORR, FP_SCALE.\n- Never invent calibration numbers.\n\nСвязанные: VFPPROD; WCONPROD/WCONHIST (THP/VFP); WLIST; WELSPECS REF_DEPTH (авто-гидростатика).\n\nАнтипаттерны.\n- Эмитить `VFPDP` вместо `WVFPDP`.\n- Выдумать DP_CORR/FP_SCALE «примерно».\n- Подмена калибровкой отсутствующей VFP-таблицы.\n- E3-профиль без факта поддержки.\n\nНехватка факта → needs_input: нет WELL/величин; нужны числа калибровки; E3.\n\nКарточка самодостаточна для correction-record; тело VFP — через VFPPROD artifact.",
+      "examples": [
+        {
+          "title": "ΔP и fp — канон мануала",
+          "task": "302:+2.5 bar; 303:−11.2; 304:+2 bar и fp=1.21.",
+          "schedule_text": "WVFPDP\n302 2.5 /\n303 -11.2 /\n304 2 1.21 /\n/\n",
+          "explanation": "§12.20.217 с. 2192. Variant correction. Учебные имена/числа из мануала."
+        }
+      ],
+      "schema_catalogue": {
+        "contract": "schedule_schema_catalogue",
+        "contract_version": "1.0",
+        "catalogue_ref": "catalogue://tnavigator/22.2/wvfpdp-vfp-pressure-correction-v1",
+        "catalogue_hash": "sha256:9fae1190ae27756afce3dc516c98214027faf1026333fe8979558670b13f1a11",
+        "source_hash": "sha256:a78ff8137c7d59338dd1341abe4df320d0a6812ff6dec6d358e87e99f55fcc1b",
+        "access_scope": "petroleum-engineering",
+        "simulator_profile": {
+          "vendor": "Rock Flow Dynamics",
+          "simulator": "tNavigator",
+          "version": "22.2",
+          "unit_system": "METRIC"
+        },
+        "approved": true,
+        "approved_by": "department-hydrodynamic-expert",
+        "author": "department-hydrodynamic-expert",
+        "approval_gate_id": "expert:wvfpdp-vfp-pressure-correction-v1:2",
+        "schemas": [
+          {
+            "schema_id": "expert:WVFPDP:correction",
+            "schema_revision": "1",
+            "keyword": "WVFPDP",
+            "variant": "correction",
+            "citation": {
+              "document_id": "tnav-user-manual-russian",
+              "document_revision": "19.4",
+              "page": "12.20.217 / 2191-2192",
+              "heading": "WVFPDP",
+              "source_hash": "sha256:a78ff8137c7d59338dd1341abe4df320d0a6812ff6dec6d358e87e99f55fcc1b"
+            },
+            "parser": {
+              "token_width": 3,
+              "allow_trailing_omission": true,
+              "allow_unquoted_strings": true
+            },
+            "fields": [
+              {
+                "name": "WELL",
+                "position": 1,
+                "type": "string",
+                "required": true,
+                "quote": "single"
+              },
+              {
+                "name": "DP_CORR",
+                "position": 2,
+                "type": "number",
+                "required": false,
+                "default": 0
+              },
+              {
+                "name": "FP_SCALE",
+                "position": 3,
+                "type": "number",
+                "required": false,
+                "default": 1
+              }
+            ],
+            "layout": {
+              "newline": "LF",
+              "indent": "  ",
+              "delimiter": "SPACE",
+              "record_terminator": "SLASH",
+              "block_terminator": "SLASH_LINE"
+            },
+            "semantics": {
+              "period": "ANY",
+              "clock": {
+                "uses_current": true
+              },
+              "definitions": [
+                {
+                  "entity_type": "well_vfp_dp",
+                  "id_field": "WELL",
+                  "action": "UPSERT"
+                }
+              ],
+              "references": [
+                {
+                  "entity_type": "well",
+                  "id_field": "WELL",
+                  "required": true
+                }
+              ],
+              "prerequisites": [
+                {
+                  "keyword": "VFPPROD",
+                  "soft": true
+                }
+              ],
+              "state_assignments": [
+                {
+                  "namespace": "well-vfp-dp",
+                  "entity_type": "well_vfp_dp",
+                  "entity_field": "WELL",
+                  "key_fields": [
+                    "WELL"
+                  ],
+                  "value_fields": [
+                    "DP_CORR",
+                    "FP_SCALE"
+                  ]
+                }
+              ],
+              "numeric_constraints": [
+                {
+                  "field": "FP_SCALE",
+                  "min": 0
+                }
+              ]
+            }
+          }
+        ]
+      },
+      "source_hash": "sha256:a78ff8137c7d59338dd1341abe4df320d0a6812ff6dec6d358e87e99f55fcc1b",
+      "page": "12.20.217 WVFPDP (с. 2191–2192); VFPPROD 12.20.68; §6 VFP",
+      "heading": "WVFPDP — коррекция давления к VFP",
+      "id": "wvfpdp-vfp-pressure-correction-v1",
+      "metadata": {
+        "document_id": "wvfpdp-vfp-pressure-correction-v1",
+        "document_revision": "2",
+        "source_hash": "sha256:a78ff8137c7d59338dd1341abe4df320d0a6812ff6dec6d358e87e99f55fcc1b",
+        "page": "12.20.217 / 2191-2192",
+        "heading": "WVFPDP",
+        "target_base": "schedule_mvp",
+        "knowledge_type": "keyword_instruction",
+        "knowledge_id": "wvfpdp-vfp-pressure-correction-v1",
+        "revision": "2",
+        "status": "active",
+        "access_scope": "petroleum-engineering",
+        "author": "department-hydrodynamic-expert",
+        "approved_by": "department-hydrodynamic-expert",
+        "keyword_families": [
+          "WVFPDP"
+        ],
+        "topics": [
+          "коррекция BHP",
+          "WVFPDP",
+          "VFP ΔP",
+          "fp scale",
+          "не VFPDP"
+        ],
+        "task_patterns": [
+          "задать WVFPDP",
+          "коррекция давления VFP",
+          "масштаб потери в трубе",
+          "калибровка THP BHP",
+          "WVFPDP bars"
+        ]
+      }
+    },
+    {
+      "contract": "schedule_knowledge_block",
+      "contract_version": "1.0",
+      "target_base": "schedule_mvp",
+      "knowledge_type": "keyword_instruction",
+      "knowledge_id": "schedule-model-file-comments-v1",
+      "revision": "1",
+      "title": "Комментарии `--` в .data / .inc / файлах модели",
+      "keywords": [
+        "INCLUDE",
+        "DATES"
+      ],
+      "topics": [
+        "комментарии",
+        "--",
+        ".data",
+        ".inc",
+        "comment",
+        "уточнения инженера",
+        "preserve comments"
+      ],
+      "task_patterns": [
+        "что означают комментарии в inc",
+        "пропустить комментарии --",
+        "учесть пояснения в .data",
+        "не трогать комментарии при REVISE",
+        "заметки инженера в schedule"
+      ],
+      "simulator_family": [
+        "E100",
+        "E300",
+        "tNavigator"
+      ],
+      "status": "active",
+      "author": "department-hydrodynamic-expert",
+      "access_scope": "petroleum-engineering",
+      "text": "Комментарии `--` в текстовых файлах модели (.data, .inc, SCHEDULE-фрагменты и прочие keyword-файлы ECLIPSE/tNavigator).\n\nСинтаксис. `--` начинает комментарий до конца текущей строки. Допустимы: (1) целая строка `-- прогноз после cutover`; (2) хвост после keyword/записи `WCONPROD  -- ORAT из листа Forecast`; (3) пустые/comment-only строки между блоками.\n\nСтруктурный skip (обязателен). Комментарии не являются ключевыми словами, записями или полями. При разборе header keyword, подсчёте records, валидации layout и semantic replay — игнорируйте `--…` и comment-only строки. Строка вида `DATES -- note` без даты не создаёт DATES-record. Не эмитьте «ложный» keyword из текста после `--`.\n\nСемантическое чтение (обязательно). Текст после `--` часто содержит полезную инженерную информацию: граница history/forecast, алиасы скважин/групп, единицы, причина SHUT/STOP, ссылка на Excel-лист или отчёт, «KEEP / do not touch», временные допущения, номер VFP/таблицы как подсказка. Используйте это как уточняющий контекст для плана, gap-вопросов, warnings и decision_record — чтобы не потерять смысл, который автор модели оставил вне schema-полей.\n\nНе authority факта. Комментарий не заменяет source_facts, schema_catalogue и decoded baseline records. Нельзя взять `-- ORAT 120` и выпустить WCONPROD ORAT=120 без факта/approved intent. Если комментарий противоречит фактам или схеме — facts/schema побеждают; зафиксируйте конфликт и верните needs_input (или явное warning), не молча «верьте комментарию».\n\nCREATE vs REVISE. CREATE: можно добавлять краткие `--` пояснения рядом с блоками; они остаются комментариями, не records. REVISE preserve_unmentioned: сохраняйте существующие комментарии и их положение; не вычищайте и не нормализуйте комментарии побочным эффектом MODIFY соседнего keyword. Удаление/правка комментария — только при явном approved intent.\n\nСвязь с INCLUDE/DATES. Правило действует во всех файлах пакета, включая корневой .data и included .inc. INCLUDE раскрывает другой файл — комментарии внутри included file читаются/preserve так же. DATES-календарь не выводится из comment-only строк.\n\nАнтипаттерны. Считать `-- WCONPROD` ключевым словом; брать числа только из комментария; удалять все `--` при «чистке» файла; подменять comment текстом как schedule_text без `--`.\n\nКарточка самодостаточна для политики комментариев. Схемы keyword берутся из карточек INCLUDE/DATES/… — эта запись не подменяет их schema_catalogue.",
+      "examples": [
+        {
+          "title": "Comment-only строки не создают records",
+          "task": "В baseline между блоками стоят пояснения инженера.",
+          "schedule_text": "-- Forecast controls after 01 JAN 2030 cutover\nDATES\n  1 JAN 2030 /\n/\nWCONPROD  -- ORAT from Forecast!P01 sheet\n  'P01' OPEN ORAT 120 /\n/\n",
+          "explanation": "Строка `-- Forecast…` и хвост `-- ORAT from…` структурно пропускаются. Читайте текст как контекст (cutover, источник ORAT), но ORAT=120 берите только из факта/approved intent, не из комментария."
+        },
+        {
+          "title": "REVISE сохраняет комментарии",
+          "task": "Изменить ORAT, не трогая пояснения.",
+          "schedule_text": "-- keep engineering notes\nWCONPROD\n  'P01' OPEN ORAT 150 /\n/\n",
+          "explanation": "MODIFY только record WCONPROD. Строка `-- keep engineering notes` остаётся (preserve_unmentioned)."
+        }
+      ],
+      "source_hash": "",
+      "page": "ECLIPSE/tNavigator keyword file comments (`--`); package .data/.inc; lossless CST preserve comments",
+      "heading": "Комментарии `--` — skip структурно, читать семантически",
+      "id": "schedule-model-file-comments-v1",
+      "metadata": {
+        "document_id": "schedule-model-file-comments-v1",
+        "document_revision": "1",
+        "source_hash": "",
+        "page": "model file comments --",
+        "heading": "Комментарии --",
+        "target_base": "schedule_mvp",
+        "knowledge_type": "keyword_instruction",
+        "knowledge_id": "schedule-model-file-comments-v1",
+        "revision": "1",
+        "status": "active",
+        "access_scope": "petroleum-engineering",
+        "author": "department-hydrodynamic-expert",
+        "approved_by": "department-hydrodynamic-expert",
+        "keyword_families": [
+          "INCLUDE",
+          "DATES"
+        ],
+        "topics": [
+          "комментарии",
+          "--",
+          ".data",
+          ".inc",
+          "comment",
+          "уточнения инженера",
+          "preserve comments"
+        ],
+        "task_patterns": [
+          "что означают комментарии в inc",
+          "пропустить комментарии --",
+          "учесть пояснения в .data",
+          "не трогать комментарии при REVISE",
+          "заметки инженера в schedule"
+        ]
+      }
+    },
+    {
+      "contract": "schedule_knowledge_block",
+      "contract_version": "1.0",
+      "target_base": "schedule_mvp",
+      "knowledge_type": "keyword_instruction",
+      "knowledge_id": "wefac-well-efficiency-v1",
+      "revision": "1",
+      "title": "WEFAC — коэффициент эксплуатации скважины",
+      "keywords": [
+        "WEFAC"
+      ],
+      "topics": [
+        "WEFAC",
+        "uptime",
+        "efficiency",
+        "коэффициент эксплуатации",
+        "не GEFAC"
+      ],
+      "task_patterns": [
+        "задать WEFAC",
+        "uptime скважины",
+        "коэффициент эксплуатации",
+        "WEFAC 0.95",
+        "efficiency factor"
+      ],
+      "simulator_family": [
+        "E100",
+        "E300",
+        "tNavigator"
+      ],
+      "status": "active",
+      "author": "department-hydrodynamic-expert",
+      "access_scope": "petroleum-engineering",
+      "text": "WEFAC — коэффициент эксплуатации скважины (uptime fraction).\n\nНазначение. Задаёт долю времени, в течение которого скважина работает (0…1). Форматы: tN, E1, E3. Секция: SCHEDULE (§12.20.86). Это не GEFAC (группы), не WECON (экономические лимиты), не WCONPROD STATUS.\n\nКогда применять. Нужен uptime/efficiency на скважине или маске/`*LIST` после WELSPECS. В прогнозных Petrel-файлах часто `'*' 0.95` на весь фонд, затем точечные значения на скважинах.\n\nRecord layout. Keyword WEFAC, записи `/`, блок — отдельный `/`.\n\nПоля (§12.20.86):\n1. WELL — имя скважины, маска (`I*`), `'*'` (все) или `*LIST` (после WLIST).\n2. FACTOR — коэффициент эксплуатации (доля времени). Default: 1.\n3. NETWORK_AVG — учитывать ли FACTOR в расчёте потоков/потерь расширенной сети (BRANPROP/NODEPROP): YES | NO. Default: YES.\n   - YES — потери по среднему дебиту (дебит×FACTOR);\n   - NO — потери по максимальному дебиту (без умножения на FACTOR).\n\nКанон render.\n- `default` — WELL FACTOR [NETWORK_AVG].\nНе копируйте учебные P25/.89 без фактов.\n\nIR / semantics.\n- period=ANY; clock.uses_current=true.\n- references well WELL; prerequisites WELSPECS ENTITY (кроме маски/`'*'` — тогда scope set).\n- state_assignments namespace well-efficiency; key WELL; value FACTOR, NETWORK_AVG.\n- numeric: FACTOR ≥ 0 (обычно ≤ 1).\n\nАнтипаттерны.\n- Путать с GEFAC / WECON / WCONPROD STOP.\n- Забыть блок `/` после записей.\n- Выдумать NETWORK_AVG без факта (оставьте default YES).\n\nНехватка факта → needs_input: нет WELL/FACTOR; нужна групповая эффективность (GEFAC) вместо скважинной.\n\nКарточка самодостаточна.",
+      "examples": [
+        {
+          "title": "Фонд 95%",
+          "task": "Все скважины FACTOR=0.95.",
+          "schedule_text": "WEFAC\n'*' 0.9500 /\n/\n",
+          "explanation": "Petrel-паттерн. WELL='*'."
+        },
+        {
+          "title": "Точечно + NETWORK NO",
+          "task": "P25 0.89 без умножения в сети.",
+          "schedule_text": "WEFAC\nP25 .89 NO /\n/\n",
+          "explanation": "§12.20.86 пример."
+        }
+      ],
+      "schema_catalogue": {
+        "contract": "schedule_schema_catalogue",
+        "contract_version": "1.0",
+        "catalogue_ref": "catalogue://tnavigator/22.2/wefac-well-efficiency-v1",
+        "catalogue_hash": "sha256:fd525e1ac65395ed55849687b4608df4bb82234bebb9c8d85cc183351b54265f",
+        "source_hash": "sha256:5cea4a2ca83071ca7b3860bcb7aed95b22b5f15fe5843c0353b3b6537e70f194",
+        "access_scope": "petroleum-engineering",
+        "simulator_profile": {
+          "vendor": "Rock Flow Dynamics",
+          "simulator": "tNavigator",
+          "version": "22.2",
+          "unit_system": "METRIC"
+        },
+        "approved": true,
+        "approved_by": "department-hydrodynamic-expert",
+        "author": "department-hydrodynamic-expert",
+        "approval_gate_id": "expert:wefac-well-efficiency-v1:1",
+        "schemas": [
+          {
+            "schema_id": "expert:WEFAC:default",
+            "schema_revision": "1",
+            "keyword": "WEFAC",
+            "variant": "default",
+            "citation": {
+              "document_id": "tnav-user-manual-russian",
+              "document_revision": "19.4",
+              "page": "12.20.86 / 1924",
+              "heading": "WEFAC",
+              "source_hash": "sha256:5cea4a2ca83071ca7b3860bcb7aed95b22b5f15fe5843c0353b3b6537e70f194"
+            },
+            "parser": {
+              "token_width": 3,
+              "allow_trailing_omission": true,
+              "allow_unquoted_strings": true
+            },
+            "fields": [
+              {
+                "name": "WELL",
+                "position": 1,
+                "type": "string",
+                "required": true,
+                "quote": "single"
+              },
+              {
+                "name": "FACTOR",
+                "position": 2,
+                "type": "number",
+                "required": true,
+                "default_allowed": true
+              },
+              {
+                "name": "NETWORK_AVG",
+                "position": 3,
+                "type": "enum",
+                "required": false,
+                "default_allowed": true,
+                "enum": [
+                  "YES",
+                  "NO"
+                ]
+              }
+            ],
+            "layout": {
+              "newline": "LF",
+              "indent": "  ",
+              "delimiter": "SPACE",
+              "record_terminator": "SLASH",
+              "block_terminator": "SLASH_LINE"
+            },
+            "semantics": {
+              "period": "ANY",
+              "clock": {
+                "uses_current": true
+              },
+              "definitions": [],
+              "references": [
+                {
+                  "entity_type": "well",
+                  "id_field": "WELL",
+                  "required": true
+                }
+              ],
+              "prerequisites": [
+                {
+                  "keyword": "WELSPECS",
+                  "scope": "ENTITY",
+                  "entity_field": "WELL",
+                  "prerequisite_entity_field": "WELL"
+                }
+              ],
+              "state_assignments": [
+                {
+                  "namespace": "well-efficiency",
+                  "entity_type": "well",
+                  "entity_field": "WELL",
+                  "key_fields": [
+                    "WELL"
+                  ],
+                  "value_fields": [
+                    "FACTOR",
+                    "NETWORK_AVG"
+                  ]
+                }
+              ],
+              "numeric_constraints": [
+                {
+                  "field": "FACTOR",
+                  "min": 0
+                }
+              ]
+            }
+          }
+        ]
+      },
+      "source_hash": "sha256:5cea4a2ca83071ca7b3860bcb7aed95b22b5f15fe5843c0353b3b6537e70f194",
+      "page": "12.20.86 WEFAC (с. 1924)",
+      "heading": "WEFAC — коэффициент эксплуатации",
+      "id": "wefac-well-efficiency-v1",
+      "metadata": {
+        "document_id": "wefac-well-efficiency-v1",
+        "document_revision": "1",
+        "source_hash": "sha256:5cea4a2ca83071ca7b3860bcb7aed95b22b5f15fe5843c0353b3b6537e70f194",
+        "page": "12.20.86 / 1924",
+        "heading": "WEFAC",
+        "target_base": "schedule_mvp",
+        "knowledge_type": "keyword_instruction",
+        "knowledge_id": "wefac-well-efficiency-v1",
+        "revision": "1",
+        "status": "active",
+        "access_scope": "petroleum-engineering",
+        "author": "department-hydrodynamic-expert",
+        "approved_by": "department-hydrodynamic-expert",
+        "keyword_families": [
+          "WEFAC"
+        ]
+      }
+    },
+    {
+      "contract": "schedule_knowledge_block",
+      "contract_version": "1.0",
+      "target_base": "schedule_mvp",
+      "knowledge_type": "keyword_instruction",
+      "knowledge_id": "welopen-well-status-v1",
+      "revision": "1",
+      "title": "WELOPEN — открытие/закрытие скважины и перфораций",
+      "keywords": [
+        "WELOPEN"
+      ],
+      "topics": [
+        "WELOPEN",
+        "OPEN",
+        "SHUT",
+        "перфорации",
+        "не WELOPENL",
+        "не WCONPROD STATUS"
+      ],
+      "task_patterns": [
+        "открыть скважину WELOPEN",
+        "закрыть перфорации",
+        "WELOPEN SHUT",
+        "ввести скважину OPEN",
+        "статус перфорации"
+      ],
+      "simulator_family": [
+        "E100",
+        "E300",
+        "tNavigator"
+      ],
+      "status": "active",
+      "author": "department-hydrodynamic-expert",
+      "access_scope": "petroleum-engineering",
+      "text": "WELOPEN — открытие/закрытие скважины или интервалов перфорации.\n\nНазначение. Меняет статус скважины/перфораций: OPEN/STOP/SHUT/AUTO/POPN. Форматы: tN, E1, E3. Секция: SCHEDULE (§12.20.131). Для LGR-перфораций — WELOPENL (вне allowlist → needs_input). Не путать с WCONPROD STATUS (контроль добычи) и COMPDATMD STATUS.\n\nКогда применять. Нужно открыть/закрыть скважину целиком (только WELL+STATUS) или точечно по IJK / COMPLUMP. В прогнозных файлах часто `WELL OPEN` после DATES ввода.\n\nRecord layout. Keyword WELOPEN, записи `/`, блок — отдельный `/`.\n\nПоля (§12.20.131):\n1. WELL — имя/`*LIST`.\n2. STATUS — OPEN | STOP | SHUT | AUTO | POPN. Default: OPEN.\n3. I — i-координата перфорации (0 = любое). Optional.\n4. J — j-координата (0 = любое). Optional.\n5. K — k-координата (0 = любое). Optional.\n6. COMPLUMP_FIRST — номер первого вскрытия COMPLUMP. Optional.\n7. COMPLUMP_LAST — номер последнего вскрытия COMPLUMP. Optional.\n\nКанон render.\n- `well` — WELL STATUS (скважина целиком).\n- `perf` — WELL STATUS I J K [COMPLUMP_FIRST COMPLUMP_LAST].\n\nIR / semantics.\n- period=ANY; clock.uses_current=true.\n- references well WELL; prerequisites WELSPECS ENTITY.\n- state_assignments namespace well-open; key WELL; value STATUS (+IJK/COMPLUMP filters).\n\nАнтипаттерны.\n- WELOPENL для LGR без allowlist.\n- Путать со STATUS в WCONPROD.\n- Закрыть глобальные перфорации, оставив LGR открытыми, без WELOPENL.\n\nНехватка факта → needs_input: нет WELL/STATUS; нужен LGR-интервал (WELOPENL); нет COMPLUMP номеров.\n\nКарточка самодостаточна.",
+      "examples": [
+        {
+          "title": "Скважина OPEN",
+          "task": "304R OPEN.",
+          "schedule_text": "WELOPEN\n304R OPEN /\n/\n",
+          "explanation": "Variant well. Petrel forecast pattern."
+        },
+        {
+          "title": "Слой K=5",
+          "task": "Well3 OPEN все перфы слоя 5.",
+          "schedule_text": "WELOPEN\nWell3 OPEN 0 0 5 /\n/\n",
+          "explanation": "§12.20.131 пример. Variant perf."
+        }
+      ],
+      "schema_catalogue": {
+        "contract": "schedule_schema_catalogue",
+        "contract_version": "1.0",
+        "catalogue_ref": "catalogue://tnavigator/22.2/welopen-well-status-v1",
+        "catalogue_hash": "sha256:d56cee2d214863065244ff061e7cd9aa8b6813776665f550788251ad3b7e4913",
+        "source_hash": "sha256:bc405ac737328e32d3ab0d1d68a134d2345e7a87120b67b592f05a789e297ab8",
+        "access_scope": "petroleum-engineering",
+        "simulator_profile": {
+          "vendor": "Rock Flow Dynamics",
+          "simulator": "tNavigator",
+          "version": "22.2",
+          "unit_system": "METRIC"
+        },
+        "approved": true,
+        "approved_by": "department-hydrodynamic-expert",
+        "author": "department-hydrodynamic-expert",
+        "approval_gate_id": "expert:welopen-well-status-v1:1",
+        "schemas": [
+          {
+            "schema_id": "expert:WELOPEN:well",
+            "schema_revision": "1",
+            "keyword": "WELOPEN",
+            "variant": "well",
+            "citation": {
+              "document_id": "tnav-user-manual-russian",
+              "document_revision": "19.4",
+              "page": "12.20.131 / 2015-2016",
+              "heading": "WELOPEN",
+              "source_hash": "sha256:bc405ac737328e32d3ab0d1d68a134d2345e7a87120b67b592f05a789e297ab8"
+            },
+            "parser": {
+              "token_width": 2,
+              "allow_trailing_omission": true,
+              "allow_unquoted_strings": true
+            },
+            "fields": [
+              {
+                "name": "WELL",
+                "position": 1,
+                "type": "string",
+                "required": true,
+                "quote": "single"
+              },
+              {
+                "name": "STATUS",
+                "position": 2,
+                "type": "enum",
+                "required": true,
+                "default_allowed": true,
+                "enum": [
+                  "OPEN",
+                  "STOP",
+                  "SHUT",
+                  "AUTO",
+                  "POPN"
+                ]
+              }
+            ],
+            "layout": {
+              "newline": "LF",
+              "indent": "  ",
+              "delimiter": "SPACE",
+              "record_terminator": "SLASH",
+              "block_terminator": "SLASH_LINE"
+            },
+            "semantics": {
+              "period": "ANY",
+              "clock": {
+                "uses_current": true
+              },
+              "definitions": [],
+              "references": [
+                {
+                  "entity_type": "well",
+                  "id_field": "WELL",
+                  "required": true
+                }
+              ],
+              "prerequisites": [
+                {
+                  "keyword": "WELSPECS",
+                  "scope": "ENTITY",
+                  "entity_field": "WELL",
+                  "prerequisite_entity_field": "WELL"
+                }
+              ],
+              "state_assignments": [
+                {
+                  "namespace": "well-open",
+                  "entity_type": "well",
+                  "entity_field": "WELL",
+                  "key_fields": [
+                    "WELL"
+                  ],
+                  "value_fields": [
+                    "STATUS"
+                  ]
+                }
+              ],
+              "numeric_constraints": []
+            }
+          },
+          {
+            "schema_id": "expert:WELOPEN:perf",
+            "schema_revision": "1",
+            "keyword": "WELOPEN",
+            "variant": "perf",
+            "citation": {
+              "document_id": "tnav-user-manual-russian",
+              "document_revision": "19.4",
+              "page": "12.20.131 / 2015-2016",
+              "heading": "WELOPEN",
+              "source_hash": "sha256:bc405ac737328e32d3ab0d1d68a134d2345e7a87120b67b592f05a789e297ab8"
+            },
+            "parser": {
+              "token_width": 7,
+              "allow_trailing_omission": true,
+              "allow_unquoted_strings": true
+            },
+            "fields": [
+              {
+                "name": "WELL",
+                "position": 1,
+                "type": "string",
+                "required": true,
+                "quote": "single"
+              },
+              {
+                "name": "STATUS",
+                "position": 2,
+                "type": "enum",
+                "required": true,
+                "enum": [
+                  "OPEN",
+                  "STOP",
+                  "SHUT",
+                  "AUTO",
+                  "POPN"
+                ]
+              },
+              {
+                "name": "I",
+                "position": 3,
+                "type": "number",
+                "required": false,
+                "default_allowed": true
+              },
+              {
+                "name": "J",
+                "position": 4,
+                "type": "number",
+                "required": false,
+                "default_allowed": true
+              },
+              {
+                "name": "K",
+                "position": 5,
+                "type": "number",
+                "required": false,
+                "default_allowed": true
+              },
+              {
+                "name": "COMPLUMP_FIRST",
+                "position": 6,
+                "type": "number",
+                "required": false,
+                "default_allowed": true
+              },
+              {
+                "name": "COMPLUMP_LAST",
+                "position": 7,
+                "type": "number",
+                "required": false,
+                "default_allowed": true
+              }
+            ],
+            "layout": {
+              "newline": "LF",
+              "indent": "  ",
+              "delimiter": "SPACE",
+              "record_terminator": "SLASH",
+              "block_terminator": "SLASH_LINE"
+            },
+            "semantics": {
+              "period": "ANY",
+              "clock": {
+                "uses_current": true
+              },
+              "definitions": [],
+              "references": [
+                {
+                  "entity_type": "well",
+                  "id_field": "WELL",
+                  "required": true
+                }
+              ],
+              "prerequisites": [
+                {
+                  "keyword": "WELSPECS",
+                  "scope": "ENTITY",
+                  "entity_field": "WELL",
+                  "prerequisite_entity_field": "WELL"
+                }
+              ],
+              "state_assignments": [
+                {
+                  "namespace": "well-open-perf",
+                  "entity_type": "well",
+                  "entity_field": "WELL",
+                  "key_fields": [
+                    "WELL",
+                    "I",
+                    "J",
+                    "K"
+                  ],
+                  "value_fields": [
+                    "STATUS",
+                    "COMPLUMP_FIRST",
+                    "COMPLUMP_LAST"
+                  ]
+                }
+              ],
+              "numeric_constraints": []
+            }
+          }
+        ]
+      },
+      "source_hash": "sha256:bc405ac737328e32d3ab0d1d68a134d2345e7a87120b67b592f05a789e297ab8",
+      "page": "12.20.131 WELOPEN (с. 2015–2016); WELOPENL 12.20.132",
+      "heading": "WELOPEN — статус скважины/перфораций",
+      "id": "welopen-well-status-v1",
+      "metadata": {
+        "document_id": "welopen-well-status-v1",
+        "document_revision": "1",
+        "source_hash": "sha256:bc405ac737328e32d3ab0d1d68a134d2345e7a87120b67b592f05a789e297ab8",
+        "page": "12.20.131 / 2015-2016",
+        "heading": "WELOPEN",
+        "target_base": "schedule_mvp",
+        "knowledge_type": "keyword_instruction",
+        "knowledge_id": "welopen-well-status-v1",
+        "revision": "1",
+        "status": "active",
+        "access_scope": "petroleum-engineering",
+        "author": "department-hydrodynamic-expert",
+        "approved_by": "department-hydrodynamic-expert",
+        "keyword_families": [
+          "WELOPEN"
+        ]
+      }
+    },
+    {
+      "role": "injection_template",
+      "do_not_ingest": true,
+      "id": "_injection-template",
+      "schedule_knowledge_block": {
+        "contract": "schedule_knowledge_block",
+        "contract_version": "1.0",
+        "target_base": "schedule_mvp",
+        "knowledge_type": "keyword_instruction",
+        "knowledge_id": "wconprod-forecast-injection-example",
+        "document_id": "wconprod-forecast-injection-example",
+        "revision": "1",
+        "document_revision": "1",
+        "title": "WCONPROD — прогнозный контроль скважины",
+        "keywords": [
+          "WCONPROD"
+        ],
+        "keyword_families": [
+          "WCONPROD"
+        ],
+        "topics": [
+          "Контроль по скважинам",
+          "Прогноз"
+        ],
+        "task_patterns": [
+          "задать ограничение по нефти",
+          "задать прогнозный WCONPROD"
+        ],
+        "simulator_family": [
+          "E100",
+          "E300",
+          "tNavigator"
+        ],
+        "status": "active",
+        "knowledge_status": "active",
+        "author": "department-hydrodynamic-expert",
+        "approved_by": "department-hydrodynamic-expert",
+        "access_scope": "petroleum-engineering",
+        "text": "WCONPROD — прогнозный контроль скважины (пример инжекта после развёртывания схемы).\n\nПрименяйте WCONPROD только в FORECAST после WELSPECS для той же скважины. Не подменяйте WCONHIST: история пишется отдельным keyword. CONTROL задаёт режим (ORAT/WRAT/GRAT/BHP/THP/LRAT/RESV); заполняйте только поля, которые соответствуют выбранному CONTROL, остальные оставляйте закрытыми по экспертной схеме. Числовые дебиты неотрицательны. Имя скважины копируйте буквально из WELSPECS, не нормализуйте и не выдумывайте. Карточка самодостаточна: renderer использует только schema_catalogue этой записи и текст инструкции, а не память модели. Если не хватает факта (скважина, дата, CONTROL, величина) — не угадывайте, верните needs_input.",
+        "document_text": "WCONPROD — прогнозный контроль скважины (пример инжекта после развёртывания схемы).\n\nПрименяйте WCONPROD только в FORECAST после WELSPECS для той же скважины. Не подменяйте WCONHIST: история пишется отдельным keyword. CONTROL задаёт режим (ORAT/WRAT/GRAT/BHP/THP/LRAT/RESV); заполняйте только поля, которые соответствуют выбранному CONTROL, остальные оставляйте закрытыми по экспертной схеме. Числовые дебиты неотрицательны. Имя скважины копируйте буквально из WELSPECS, не нормализуйте и не выдумывайте. Карточка самодостаточна: renderer использует только schema_catalogue этой записи и текст инструкции, а не память модели. Если не хватает факта (скважина, дата, CONTROL, величина) — не угадывайте, верните needs_input.",
+        "examples": [
+          {
+            "title": "Прогнозный ORAT для P01",
+            "task": "Задать нефтяной контроль 120 sm3/day на скважине P01 с даты прогноза.",
+            "schedule_text": "WCONPROD\nP01 OPEN ORAT 120.0 1* 1* 1* 1* 1* /\n/",
+            "explanation": "STATUS=OPEN, CONTROL=ORAT, ORAT=120. WELSPECS для P01 должен уже существовать. Не копируйте этот пример в продуктив без замены фактов."
+          }
+        ],
+        "schema_catalogue": {
+          "contract": "schedule_schema_catalogue",
+          "contract_version": "1.0",
+          "catalogue_ref": "catalogue://tnavigator/22.2/wconprod-forecast-injection-example",
+          "catalogue_hash": "sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+          "source_hash": "sha256:bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
+          "access_scope": "petroleum-engineering",
+          "simulator_profile": {
+            "vendor": "Rock Flow Dynamics",
+            "simulator": "tNavigator",
+            "version": "22.2",
+            "unit_system": "METRIC"
+          },
+          "approved": true,
+          "approved_by": "department-hydrodynamic-expert",
+          "author": "department-hydrodynamic-expert",
+          "approval_gate_id": "expert:wconprod-forecast-injection-example:1",
+          "schemas": [
+            {
+              "schema_id": "expert:WELSPECS",
+              "schema_revision": "1",
+              "keyword": "WELSPECS",
+              "variant": "default",
+              "fields": [
+                {
+                  "name": "WELL",
+                  "position": 1,
+                  "type": "string",
+                  "required": true
+                },
+                {
+                  "name": "GROUP",
+                  "position": 2,
+                  "type": "string",
+                  "required": true
+                }
+              ],
+              "semantics": {
+                "period": "ANY",
+                "clock": {
+                  "uses_current": true
+                },
+                "definitions": [
+                  {
+                    "entity_type": "well",
+                    "id_field": "WELL",
+                    "action": "UPSERT"
+                  }
+                ],
+                "references": [
+                  {
+                    "entity_type": "group",
+                    "id_field": "GROUP",
+                    "required": true
+                  }
+                ]
+              }
+            },
+            {
+              "schema_id": "expert:WCONPROD",
+              "schema_revision": "1",
+              "keyword": "WCONPROD",
+              "variant": "default",
+              "fields": [
+                {
+                  "name": "WELL",
+                  "position": 1,
+                  "type": "string",
+                  "required": true
+                },
+                {
+                  "name": "STATUS",
+                  "position": 2,
+                  "type": "string",
+                  "required": true
+                },
+                {
+                  "name": "CONTROL",
+                  "position": 3,
+                  "type": "string",
+                  "required": true
+                },
+                {
+                  "name": "ORAT",
+                  "position": 4,
+                  "type": "number",
+                  "required": false
+                },
+                {
+                  "name": "WRAT",
+                  "position": 5,
+                  "type": "number",
+                  "required": false
+                },
+                {
+                  "name": "GRAT",
+                  "position": 6,
+                  "type": "number",
+                  "required": false
+                }
+              ],
+              "semantics": {
+                "period": "FORECAST",
+                "clock": {
+                  "uses_current": true
+                },
+                "references": [
+                  {
+                    "entity_type": "well",
+                    "id_field": "WELL",
+                    "required": true
+                  }
+                ],
+                "prerequisites": [
+                  {
+                    "keyword": "WELSPECS",
+                    "scope": "ENTITY",
+                    "entity_field": "WELL",
+                    "prerequisite_entity_field": "WELL"
+                  }
+                ],
+                "state_assignments": [
+                  {
+                    "namespace": "well-control",
+                    "entity_type": "well",
+                    "entity_field": "WELL",
+                    "key_fields": [
+                      "CONTROL"
+                    ],
+                    "value_fields": [
+                      "ORAT",
+                      "WRAT",
+                      "GRAT"
+                    ]
+                  }
+                ],
+                "numeric_constraints": [
+                  {
+                    "field": "ORAT",
+                    "min": 0
+                  },
+                  {
+                    "field": "WRAT",
+                    "min": 0
+                  },
+                  {
+                    "field": "GRAT",
+                    "min": 0
+                  }
+                ]
+              }
+            }
+          ]
+        },
+        "schema_catalogue_json": {
+          "contract": "schedule_schema_catalogue",
+          "contract_version": "1.0",
+          "catalogue_ref": "catalogue://tnavigator/22.2/wconprod-forecast-injection-example",
+          "catalogue_hash": "sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+          "source_hash": "sha256:bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
+          "access_scope": "petroleum-engineering",
+          "simulator_profile": {
+            "vendor": "Rock Flow Dynamics",
+            "simulator": "tNavigator",
+            "version": "22.2",
+            "unit_system": "METRIC"
+          },
+          "approved": true,
+          "approved_by": "department-hydrodynamic-expert",
+          "author": "department-hydrodynamic-expert",
+          "approval_gate_id": "expert:wconprod-forecast-injection-example:1",
+          "schemas": [
+            {
+              "schema_id": "expert:WELSPECS",
+              "schema_revision": "1",
+              "keyword": "WELSPECS",
+              "variant": "default",
+              "fields": [
+                {
+                  "name": "WELL",
+                  "position": 1,
+                  "type": "string",
+                  "required": true
+                },
+                {
+                  "name": "GROUP",
+                  "position": 2,
+                  "type": "string",
+                  "required": true
+                }
+              ],
+              "semantics": {
+                "period": "ANY",
+                "clock": {
+                  "uses_current": true
+                },
+                "definitions": [
+                  {
+                    "entity_type": "well",
+                    "id_field": "WELL",
+                    "action": "UPSERT"
+                  }
+                ],
+                "references": [
+                  {
+                    "entity_type": "group",
+                    "id_field": "GROUP",
+                    "required": true
+                  }
+                ]
+              }
+            },
+            {
+              "schema_id": "expert:WCONPROD",
+              "schema_revision": "1",
+              "keyword": "WCONPROD",
+              "variant": "default",
+              "fields": [
+                {
+                  "name": "WELL",
+                  "position": 1,
+                  "type": "string",
+                  "required": true
+                },
+                {
+                  "name": "STATUS",
+                  "position": 2,
+                  "type": "string",
+                  "required": true
+                },
+                {
+                  "name": "CONTROL",
+                  "position": 3,
+                  "type": "string",
+                  "required": true
+                },
+                {
+                  "name": "ORAT",
+                  "position": 4,
+                  "type": "number",
+                  "required": false
+                },
+                {
+                  "name": "WRAT",
+                  "position": 5,
+                  "type": "number",
+                  "required": false
+                },
+                {
+                  "name": "GRAT",
+                  "position": 6,
+                  "type": "number",
+                  "required": false
+                }
+              ],
+              "semantics": {
+                "period": "FORECAST",
+                "clock": {
+                  "uses_current": true
+                },
+                "references": [
+                  {
+                    "entity_type": "well",
+                    "id_field": "WELL",
+                    "required": true
+                  }
+                ],
+                "prerequisites": [
+                  {
+                    "keyword": "WELSPECS",
+                    "scope": "ENTITY",
+                    "entity_field": "WELL",
+                    "prerequisite_entity_field": "WELL"
+                  }
+                ],
+                "state_assignments": [
+                  {
+                    "namespace": "well-control",
+                    "entity_type": "well",
+                    "entity_field": "WELL",
+                    "key_fields": [
+                      "CONTROL"
+                    ],
+                    "value_fields": [
+                      "ORAT",
+                      "WRAT",
+                      "GRAT"
+                    ]
+                  }
+                ],
+                "numeric_constraints": [
+                  {
+                    "field": "ORAT",
+                    "min": 0
+                  },
+                  {
+                    "field": "WRAT",
+                    "min": 0
+                  },
+                  {
+                    "field": "GRAT",
+                    "min": 0
+                  }
+                ]
+              }
+            }
+          ]
+        },
+        "source_hash": "sha256:bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
+        "page": "SCHEDULE / WCONPROD",
+        "heading": "WCONPROD forecast control",
+        "metadata": {
+          "document_id": "wconprod-forecast-injection-example",
+          "document_revision": "1",
+          "source_hash": "sha256:bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
+          "page": "SCHEDULE / WCONPROD",
+          "heading": "WCONPROD forecast control",
+          "target_base": "schedule_mvp",
+          "knowledge_type": "keyword_instruction",
+          "knowledge_id": "wconprod-forecast-injection-example",
+          "revision": "1",
+          "status": "active",
+          "access_scope": "petroleum-engineering",
+          "author": "department-hydrodynamic-expert",
+          "approved_by": "department-hydrodynamic-expert",
+          "keyword_families": [
+            "WCONPROD"
+          ],
+          "topics": [
+            "Контроль по скважинам",
+            "Прогноз"
+          ],
+          "task_patterns": [
+            "задать ограничение по нефти",
+            "задать прогнозный WCONPROD"
+          ]
+        },
+        "metadata_json": {
+          "document_id": "wconprod-forecast-injection-example",
+          "document_revision": "1",
+          "source_hash": "sha256:bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
+          "page": "SCHEDULE / WCONPROD",
+          "heading": "WCONPROD forecast control"
+        }
+      }
+    }
+  ]
+}
+
+===END_FILE===
+===BEGIN_FILE===	n8n/templates/agents/__init__.py	704	utf8
+"""Agent specs — one module per agent; ``ALL`` feeds the registry seed, Runtime Config and the generators.
+
+Add an agent: create ``agents/<agent_id>.py`` with ``SPEC = AgentSpec(...)`` and append it here.
+"""
+
+from .calculation_agent import SPEC as CALCULATION_AGENT
+from .demo_agent import SPEC as DEMO_AGENT
+from .excel_extractor import SPEC as EXCEL_EXTRACTOR
+from .schedule_builder import SPEC as SCHEDULE_BUILDER
+
+# DEMO_AGENT is the template agent (agents-template/demo_agent): seeded ``enabled=False``, lives in workflows/support.
+ALL = (EXCEL_EXTRACTOR, SCHEDULE_BUILDER, CALCULATION_AGENT, DEMO_AGENT)
+
+__all__ = ["ALL", "CALCULATION_AGENT", "DEMO_AGENT", "EXCEL_EXTRACTOR", "SCHEDULE_BUILDER"]
+
+===END_FILE===
+===BEGIN_FILE===	n8n/templates/agents/calculation_agent.py	1039	utf8
+"""Calculation Agent — HTTP-only agent (FastAPI ``/agent/run`` on the Math service, no n8n workflow)."""
+
+from __future__ import annotations
+
+from mas_agent_spec import AgentSpec
+
+SPEC = AgentSpec(
+    agent_id="calculation_agent",
+    title="Calculation Agent",
+    when_to_use=(
+        "Если есть структурная поверхность и траектория скважины, находит их пересечение и начало интервала "
+        "перфорации (глубина по стволу). Геометрия, не SCHEDULE."
+    ),
+    input_required=["surface", "trajectory"],
+    output_provides=["top_perforation_md"],
+    input_schema={"artifacts": {"surface": "поверхность CPS3", "trajectory": "траектория .dev"}},
+    output_schema={"data": {"top_perforation_md": "глубина начала перфорации по стволу"}},
+    hitl_policy="never",
+    service_url_key="math_url",
+    lab_url="http://math-service:8100",
+    service_title="Math",
+    # ``{math_url}`` is a Runtime Config field: the orchestrator substitutes it before the HTTP call.
+    invoke_override={"kind": "http", "url": "{math_url}/agent/run"},
+)
+
+===END_FILE===
+===BEGIN_FILE===	n8n/templates/agents/demo_agent.py	4924	utf8
+"""Agent — Demo Agent: the template agent (``agents-template/demo_agent``) and the live test of long jobs.
+
+Copy this file for a new agent, rename ``agent_id`` / texts / tools, register it in ``agents/__init__.py``.
+The registry row is seeded ``enabled=False`` so the planner never sees it in the field; the lab live
+harness enables it through ``PUT /agents/demo_agent`` for its own case and disables it afterwards.
+"""
+
+from __future__ import annotations
+
+from mas_agent_spec import AgentSpec, FallbackTexts
+
+SYSTEM = """Ты — решатель агента Demo Agent (демонстрационный агент-шаблон). Ты читаешь задачу инженера и вызываешь один инструмент; считают инструменты, ты сам ничего не вычисляешь и SCHEDULE не пишешь.
+
+session_id привязан workflow: никогда не передавай session_id и обёртку args/input.
+
+Какой инструмент когда:
+- Задача просит посчитать или перечислить скважины (в тексте есть их номера или есть факты предыдущих агентов) → count_wells. Один вызов.
+- Задача просит запустить расчёт, прогон, долгую операцию или явно упоминает демонстрацию долгой работы → start_long_job с коротким русским названием расчёта в label. Один вызов, после ответа in_progress — STOP.
+- Из задачи непонятно, что считать, и в ней нет скважин → ask_engineer одним вопросом обычной русской фразой.
+
+Ответы инструментов:
+- ok:false, code:no_wells_found — это тебе, не инженеру: спроси инженера через ask_engineer, о каких скважинах речь.
+- ok:false, code:question_not_human — переформулируй вопрос прозой и вызови ask_engineer снова.
+- status completed / in_progress / needs_input — результат зафиксирован, STOP.
+
+Не придумывай скважины и числа — только из ответов инструментов. Заверши одним коротким фактическим предложением по-русски.
+"""
+
+TOOLS = [
+    (
+        "count_wells",
+        "Посчитать скважины, упомянутые в задаче и в фактах предыдущих агентов. Детерминированно.",
+        [("text", "string", False, "Текст для подсчёта; пусто — берётся задача инженера")],
+    ),
+    (
+        "start_long_job",
+        "Запустить долгий расчёт (имитация). Сразу возвращает in_progress; результат придёт позже через Activity.",
+        [("label", "string", False, "Короткое русское название расчёта для ленты, например «Прогон демо-модели»")],
+    ),
+    (
+        "ask_engineer",
+        "Спросить инженера одним вопросом по-русски, когда из задачи непонятно, что считать. Не для ошибок вызова инструментов.",
+        [
+            ("question", "string", True, "Обычная русская фраза без имён полей и JSON"),
+            ("options", "string", False, "Варианты через точку с запятой, как их видит инженер; пусто — свободный ответ"),
+        ],
+    ),
+]
+
+SPEC = AgentSpec(
+    agent_id="demo_agent",
+    title="Demo Agent",
+    when_to_use=(
+        "Демонстрационный агент-шаблон: считает скважины, упомянутые в задаче и в фактах других агентов, "
+        "и умеет запускать долгий расчёт, результат которого приходит позже. Не читает файлы, не пишет SCHEDULE. "
+        "Использовать только когда инженер прямо просит демонстрацию или подсчёт скважин."
+    ),
+    input_required=[],
+    output_provides=["well_count", "wells"],
+    input_schema={"handoff_message": "что посчитать или какой расчёт запустить"},
+    output_schema={"data": {"well_count": "число скважин", "wells": "[имена скважин]"}},
+    enabled=False,
+    service_url_key="demo_agent_url",
+    lab_url="http://demo-agent:8300",
+    service_title="Demo Agent",
+    slug="demo",
+    system_prompt=SYSTEM,
+    tools=TOOLS,
+    # The generic tool protocol slice (opaque ids, clarification) — the agent works fine without cards.
+    rag_selector="excel",
+    rag_ready_note="Карточки — протокол инструментов (excel_protocol). Работай по задаче; про базу знаний инженера не спрашивай.",
+    rag_empty_note="Срез протокола пуст или недоступен — работай по задаче и правилам инструментов.",
+    result_tools=["count_wells", "start_long_job", "ask_engineer"],
+    texts=FallbackTexts(
+        no_result_question="Demo Agent не понял, что нужно сделать. Опишите задачу одним-двумя предложениями: посчитать скважины или запустить расчёт.",
+        repeated_question="Demo Agent несколько раз пытался разобрать задачу и не смог. Опишите её одним-двумя предложениями.",
+        done_message="Demo Agent выполнил задачу.",
+        no_result_issue="no_demo_result",
+        question_id="Q-demo",
+        accepts_files=[],
+        missing_input_message="Нет задачи для демонстрационного агента",
+        missing_input_issue="missing_objective",
+        missing_input_question="Опишите задачу: что именно посчитать или запустить.",
+        no_result_failed_message="Demo Agent не вернул результат",
+        no_result_failed_issue="demo_agent_no_result",
+    ),
+    accepted_message="Demo Agent принял задачу",
+    progress_message="Demo Agent разбирает задачу и выбирает инструмент.",
+    node_id_namespace="mas-demo-agent",
+    example_objective="Посчитай скважины 1601, 1735 и 2012",
+)
+
+===END_FILE===
+===BEGIN_FILE===	n8n/templates/agents/excel_extractor.py	13747	utf8
+"""Agent — Excel Extractor: reads the case's Excel books, the LLM picks table/columns, tools extract deterministically."""
+
+from __future__ import annotations
+
+import uuid
+
+from mas_agent_spec import EXCEL_KEY_CRED, AgentSpec, FallbackTexts
+
+SYSTEM = """Ты — решатель агента Excel Extractor: читаешь задачу инженера, инвентарь приложенных Excel-книг (файлы, листы, таблицы с колонками и первыми строками) и expected_output (форму наборов, которую просит оркестратор). Сам выбираешь таблицу и колонки и вызываешь инструмент извлечения. Данные извлекают инструменты — ты их не переписываешь и SCHEDULE / .INC не пишешь.
+
+Книгу целиком тебе не показывают — она лежит в сессии FastAPI. session_id привязан workflow: никогда не передавай session_id и обёртку args/input.
+
+Какой инструмент когда:
+- expected_output.datasets в задаче — извлеки каждый названный набор. name=facts → extract_commissioning; name=new_wells → extract_well_parameters; любое другое name → extract_table с этим name и columns {поле: точная колонка из инвентаря}. types и description полей — из expected_output. После каждого extract_* смотри next_step: если там ещё ожидаются наборы — извлеки их следующим вызовом.
+- expected_output нет, задача про даты ввода / запуска скважин (таблица «скважина — дата») → extract_commissioning с table_id, well_column и date_column из инвентаря (inspect.tables: columns и sample). Если в таблице несколько колонок с датами — бери новую (плановую) дату ввода, а не старую / дату из исходного .INC. Один вызов на таблицу. Не вызывай extract_well_parameters: таблица дат ввода — не параметры новых скважин.
+- expected_output нет, задача явно про добавление новых скважин (не просто «новые даты ввода») и в инвентаре есть таблица параметров (группа, интервал MD, диаметр, режим, дебит, BHP, VFP, файл траектории) → extract_well_parameters с table_id, well_column и mapping колонок на поля: date, group, phase, i, j, md_top, md_bot, diameter, control, rate, bhp, thp, vfp_table, welltrack_include. Немаппированные колонки сохраняются под своими заголовками.
+- Любая другая таблица (мероприятия, дебиты, история, режимы, PVT, широкая таблица с колонками-датами) → extract_table: table_id, name (латинский идентификатор по смыслу задачи: well_events, oil_rates), columns {поле: колонка}. Широкая таблица (месяцы/даты в заголовках) — unpivot {columns: [эти колонки], name_field: date, value_field: rate}. Не вызывай extract_commissioning, если это не даты ввода.
+- Задача требует и даты ввода, и параметры новых скважин — оба инструмента в одном ответе, по одному вызову каждый, затем extract_table на остальные наборы. Не вызывай extract_well_parameters «на всякий случай».
+- Инвентаря не хватает (заголовки непонятны, таблица не найдена) → describe_table / sheet_preview / list_column_values / detect_tables / match_tables — не больше трёх вызовов подряд. query_table — только чтобы подглядеть строки перед extract_*; сам по себе результат не фиксирует. select и filters — JSON-массивы, не объект с ключами "0","1". Не выгружай всю книгу.
+- ask_engineer — единственный способ спросить инженера: только когда по инвентарю и ответам инженера (engineer_answers) нельзя выбрать таблицу или колонку (например две колонки дат без пояснений). Один вопрос обычной русской фразой; варианты — как их видит инженер (названия листов и колонок). Никаких имён полей, JSON, enum.
+
+Ответы инструментов:
+- ok:false, code:spec_incomplete / table_not_found / column_not_found / column_not_dates / no_rows / name_reserved / field_name_invalid / unpivot_invalid — это тебе, не инженеру: исправь аргументы по инвентарю (available_tables / available_columns / missing в том же ответе подсказывают) и вызови инструмент снова. name_reserved: facts извлекает extract_commissioning, new_wells — extract_well_parameters.
+- ok:false, code:question_not_human — переформулируй вопрос прозой и вызови ask_engineer снова.
+- ok:false, code:too_many_attempts — больше этот инструмент не вызывай: спроси инженера или заверши ответ.
+- status completed от extract_* — часть результата зафиксирована. Если next_step говорит, что оркестратор ещё ожидает наборы — извлеки их. Если извлекать больше нечего — STOP. status needs_input от ask_engineer — STOP.
+
+Инварианты:
+- Не придумывай скважины, даты, дебиты, имена листов, table_id и колонок — только из инвентаря и ответов инструментов.
+- rework_reason в задаче — замечание оркестратора к прошлому результату: устрани именно его.
+- Retrieved knowledge — только срез excel_protocol / protocol_instruction (протокол инструментов). Пустой или unavailable срез — работай по инвентарю, инженера про базу знаний не спрашивай.
+
+Заверши одним коротким фактическим предложением по-русски: что извлечено или чего не хватило.
+"""
+
+TOOLS = [
+    ("workbook_introspect", "Компактные листы и размеры книги. Без файла.", []),
+    (
+        "sheet_preview",
+        "Небольшой preview одного листа. sheet только из инвентаря / introspect.",
+        [("sheet", "string", True, "Точное имя листа из инвентаря")],
+    ),
+    (
+        "detect_tables",
+        "Найти таблицы (если инвентарь пуст или неполный). sheet опционален. Возвращает table_id, range, columns — не книгу.",
+        [("sheet", "string", False, "Ограничить поиск одним листом")],
+    ),
+    (
+        "match_tables",
+        "Ранжировать найденные таблицы по фразе запроса.",
+        [("query", "string", True, "Что искать: даты ввода, параметры скважин, дебиты, ...")],
+    ),
+    (
+        "describe_table",
+        "Колонки, число строк и sample одной таблицы. table_id только из инвентаря / detect.",
+        [("table_id", "string", True, "table_id из инвентаря")],
+    ),
+    (
+        "list_column_values",
+        "Ограниченные distinct-значения одной колонки — чтобы понять, что в ней лежит.",
+        [
+            ("table_id", "string", True, "table_id из инвентаря"),
+            ("column", "string", True, "Точное имя колонки из инвентаря"),
+        ],
+    ),
+    (
+        "query_table",
+        "Строки таблицы для прочих данных (дебиты, история). select и filters — JSON-массивы: [\"well\",\"date\"] и [{\"field\":\"well\",\"operator\":\"eq\",\"value\":\"101\"}].",
+        [
+            ("table_id", "string", True, "table_id из инвентаря"),
+            ("select", "json", False, "Массив имён колонок, например [\"well\",\"date\"]"),
+            ("filters", "json", False, "Массив {field, operator, value}"),
+            ("limit", "string", False, "Лимит строк, по умолчанию 200"),
+        ],
+    ),
+    (
+        "extract_commissioning",
+        "Извлечь факты «скважина — дата ввода» из выбранной тобой таблицы. Ты указываешь table_id и точные имена колонок из инвентаря; извлечение детерминированное, колонки проверяются (column_not_found / column_not_dates вернутся тебе).",
+        [
+            ("table_id", "string", True, "table_id таблицы со скважинами и датами из инвентаря"),
+            ("well_column", "string", True, "Точное имя колонки со скважинами"),
+            ("date_column", "string", True, "Точное имя колонки с новой датой ввода (не из исходного .INC)"),
+        ],
+    ),
+    (
+        "extract_well_parameters",
+        "Извлечь таблицу параметров новых скважин (группа, интервал MD, диаметр, режим, дебит, BHP, VFP, файл траектории). Ты указываешь table_id, колонку скважин и mapping колонок на поля; извлечение детерминированное.",
+        [
+            ("table_id", "string", True, "table_id таблицы параметров из инвентаря"),
+            ("well_column", "string", True, "Точное имя колонки со скважинами"),
+            (
+                "mapping",
+                "json",
+                False,
+                "JSON-объект {поле: колонка}: date, group, phase, i, j, md_top, md_bot, diameter, control, rate, bhp, thp, vfp_table, welltrack_include → точные имена колонок",
+            ),
+        ],
+    ),
+    (
+        "extract_table",
+        "Извлечь любую таблицу как именованный набор данных (строки под data[name] + JSON-артефакт). Ты указываешь table_id, латинское name (из expected_output или по смыслу задачи) и columns {поле: колонка}; извлечение детерминированное. Не для дат ввода (extract_commissioning) и не для параметров новых скважин (extract_well_parameters).",
+        [
+            ("table_id", "string", True, "table_id таблицы из инвентаря"),
+            ("name", "string", True, "Латинское имя набора: то, что в expected_output.datasets[].name, иначе well_events / oil_rates / …"),
+            ("columns", "json", False, "JSON-объект {поле: точная колонка из инвентаря}. Пусто — все колонки, имена полей из заголовков"),
+            ("title", "string", False, "Короткое русское название набора для ленты"),
+            ("types", "json", False, "JSON-объект {поле: text|number|date|boolean}; пусто — тип по значениям"),
+            ("filters", "json", False, "JSON-массив {field, operator, value} по колонке или полю"),
+            ("key_field", "string", False, "Поле-ключ: дубликаты отбрасываются, первое вхождение остаётся"),
+            ("unpivot", "json", False, "JSON {columns: [широкие колонки] или rest, name_field: date, value_field: rate} — широкая таблица в длинные строки"),
+        ],
+    ),
+    (
+        "ask_engineer",
+        "Спросить инженера одним вопросом по-русски, когда по инвентарю нельзя выбрать таблицу или колонку. Варианты показываются кнопками. Не для ошибок вызова инструментов.",
+        [
+            ("question", "string", True, "Обычная русская фраза: что нужно уточнить и зачем, без имён полей и JSON"),
+            ("options", "string", False, "Варианты через точку с запятой, как их видит инженер (названия листов/колонок); пусто — свободный ответ"),
+            ("topic", "string", False, "Короткая латинская тема вопроса, например date_column"),
+        ],
+    ),
+]
+
+NO_EXTRACT = (
+    "Excel Extractor не смог понять, какие данные взять из приложенной книги. "
+    "Уточните, на каком листе и в каких колонках находятся скважины и нужные значения (даты ввода, режимы, дебиты)."
+)
+
+SPEC = AgentSpec(
+    agent_id="excel_extractor",
+    title="Excel Extractor",
+    when_to_use=(
+        "Читает книги Excel, приложенные к задаче, и извлекает из них факты: даты ввода скважин "
+        "(пары «скважина — дата»), параметры новых скважин (группа, интервал MD, диаметр, режим и дебит, BHP, VFP, "
+        "траектория) и другие табличные данные. Сам выбирает лист и колонки; если таблица неоднозначна — спрашивает "
+        "инженера. Не пишет SCHEDULE и не меняет файлы. Нужен хотя бы один приложенный Excel."
+    ),
+    input_required=["excel"],
+    output_provides=["facts", "new_wells"],
+    input_schema={
+        "artifacts": {"excel": "книга Excel инженера (одна или несколько)"},
+        "handoff_message": "какие факты извлечь (даты ввода, параметры новых скважин, произвольная таблица, …)",
+        "expected_output": "форма наборов: datasets[{name, description, fields[{name, type, description}]}] и consumers (что нужно следующим агентам из input_schema.data)",
+    },
+    output_schema={
+        "data": {
+            "facts": "[{well, date}] — даты ввода скважин (extract_commissioning)",
+            "new_wells": "[{well, group, …}] — параметры новых скважин (extract_well_parameters)",
+            "<name>": "набор {kind:dataset, name, fields, rows|preview, artifact_id} — любая другая таблица (extract_table); имя из expected_output",
+        }
+    },
+    service_url_key="excel_tools_url",
+    lab_url="http://excel-tools:8000",
+    service_title="Excel Tools",
+    slug="excel",
+    system_prompt=SYSTEM,
+    tools=TOOLS,
+    rag_selector="excel",
+    rag_ready_note=(
+        "Карточки — срез excel_protocol (protocol_instruction), не schedule_mvp и не orchestrator_routing. "
+        "Это протокол инструментов (opaque id, extract_table / extract_commissioning, query_table только подглядеть). "
+        "Строки workbook только из Excel-tools. Не спрашивай HITL про базу знаний."
+    ),
+    rag_empty_note=(
+        "Срез excel_protocol пуст или недоступен — работай правилами инструментов. "
+        "Не спрашивай HITL про RAG и не ходи в другие target_base."
+    ),
+    retrieval_filters_js="""
+if(/дат|ввод|commission/.test(low)) task_patterns.push('даты ввода');
+if(/таблиц|query|дебит|истори|управлен/.test(low)) task_patterns.push('извлечь таблицу');
+if(/уточн|ambigu|clarif/.test(low)) task_patterns.push('clarification_needed');
+""",
+    planner_extra_js="files:Array.isArray(opened.files)?opened.files:[]",
+    result_tools=["extract_", "ask_engineer"],
+    texts=FallbackTexts(
+        no_result_question=NO_EXTRACT,
+        repeated_question=(
+            "Excel Extractor несколько раз просматривал книгу, но не смог выбрать таблицу и колонки. "
+            "Уточните, на каком листе и в каких колонках находятся скважины и нужные значения (даты ввода, режимы, дебиты)."
+        ),
+        done_message="Excel Extractor извлёк данные из книги.",
+        no_result_issue="no_extract",
+        question_id="Q-clarify",
+        accepts_files=["xlsx"],
+        missing_input_message="Нет Excel-файла для извлечения",
+        missing_input_issue="missing_excel",
+        missing_input_question="К задаче не приложен Excel-файл с данными. Приложите книгу .xlsx, из которой нужно взять скважины и даты.",
+        no_result_failed_message="Excel Extractor не вернул факты",
+        no_result_failed_issue="excel_agent_no_result",
+    ),
+    accepted_message="Excel Extractor принял задачу и анализирует workbook",
+    progress_message="Excel Extractor читает листы и таблицы приложенных книг.",
+    service_credentials=EXCEL_KEY_CRED,
+    sticky_height=380,
+    node_id_namespace="mas-excel-agent",
+    workflow_id=str(uuid.uuid5(uuid.NAMESPACE_URL, "mas-excel-extractor-agent")),
+    example_objective="Достань даты ввода скважин",
+    tool_grid_columns=4,
+)
+
+===END_FILE===
+===BEGIN_FILE===	n8n/templates/agents/schedule_builder.py	13969	utf8
+"""Agent — Schedule Builder: deterministic SCHEDULE tools (parse/apply/emit); the LLM only picks the tool and its arguments."""
+
+from __future__ import annotations
+
+import json
+
+from mas_agent_spec import AgentSpec, FallbackTexts
+from schedule_rag_workflows import KEYWORDS as SCHEDULE_KEYWORDS
+
+SYSTEM = """Ты — инженер-решатель агента Schedule Builder: читаешь задачу инженера, выбираешь инструмент и вызываешь его со структурированными аргументами. Текст SCHEDULE (.INC) пишут инструменты, не ты.
+
+Исходный .INC тебе не показывают — он лежит в сессии FastAPI. session_id привязан workflow: никогда не передавай session_id и обёртку args/input.
+
+Какой инструмент когда:
+- Задача про НОВЫЕ ДАТЫ ВВОДА скважин (Excel «скважина — дата», fact_count > 0) → apply_commissioning. Факты, решение по скважинам вне Excel и параметры новых скважин уже в сессии — аргументов не нужно. Другие apply_* для такой задачи не вызывай.
+- Задача про ГРУППЫ (поместить скважины в группу, групповой контроль GCONPROD) → inspect_schedule (имена скважин, дерево GRUPTREE), затем apply_group_rebind с полным spec: wells, parent_group, parent_of_parent, control (ORAT/WRAT/GRAT/LRAT/RESV), gas_rate числом в м3/сут («200 тыс. м3 газа в сут.» → 200000). Родителя новой группы бери из дерева исходного файла (корень — FIELD или как в inspect), если инженер не сказал иначе.
+- Точечные правки режимов/keywords → search_keywords → get_keyword (details.parameters) → apply_operations или render_ir.
+- inspect_well / analyze_forecast_controls / list_records — чтобы посмотреть скважину перед правкой. Не вызывай их «на всякий случай» и не больше трёх раз подряд.
+- build_schedule — только если apply уже менял сессию; validate_result — проверки emit.
+- ask_engineer — единственный способ спросить инженера. Только когда данных нет ни в задаче, ни в исходном файле, ни в ответах инженера (engineer_answers). Один вопрос обычной русской фразой: что нужно и зачем; варианты (options) — как их называет инженер: имена групп из исходного файла, «оставить»/«убрать». Никаких имён полей, JSON, enum, кодов. Инженер отвечает фактами, таблицами и файлами — не строками .INC.
+
+Ответы инструментов:
+- ok:false, code:spec_incomplete — это тебе, не инженеру: заполни missing из текста задачи и inspect_schedule (where_to_find подсказывает откуда) и вызови инструмент снова. Спрашивай инженера, только если данных действительно нет.
+- ok:false, code:question_not_human — переформулируй вопрос прозой и вызови ask_engineer снова.
+- ok:false, code:well_not_in_schedule / operations_required — ошибка твоего вызова; исправь аргументы.
+- ok:false, code:result_already_stored — результат этого запуска уже зафиксирован (apply или вопрос инженеру). Больше инструменты не вызывай, заверши ответ.
+- status completed или needs_input от apply_* / ask_engineer — результат зафиксирован. STOP: не вызывай build и другие apply.
+
+Инварианты:
+- Не придумывай скважины, даты, группы, дебиты. Имена скважин — только из inspect_schedule.
+- Если комментарий WCONPROD содержит «факт»/«fact», запись фактическая: её нельзя удалять, переносить или считать прогнозным якорем ввода. Якорь commissioning — первый нефактический WCONPROD; следующие WCONPROD — прогнозные режимы, они сохраняются.
+- Один параметр после существующего контроля — WELTARG, не переписывание WCONPROD. Не путай WECON (экономика), WTEST (переоткрытие), WELOPEN (статус), WEFAC (uptime), WPIMULT (CF), GCONPROD (группа).
+- Имена полей — из get_keyword.details (WELL, DATE, CHILD). WCONPROD variant = CONTROL в нижнем регистре (orat, wrat, grat, lrat, bhp, thp, resv, grup); если variant не указан — положи CONTROL в fields.
+- apply_operations принимает JSON-массив [{keyword, operation, fields}], не объект с ключами "0","1".
+- Если analyze_forecast_controls вернул needs_input по границе history/forecast — не применяй операцию, спроси инженера.
+- rework_reason в задаче — замечание оркестратора к прошлому результату: устрани именно его.
+- Retrieved knowledge — только срез schedule_mvp (keyword_instruction / worked_example): when-to-use и pitfalls. Расклад полей — из get_keyword.details / render_ir. Пустой или unavailable срез — работай инструментами, не спрашивай про базу знаний.
+
+Заверши одним коротким фактическим предложением по-русски о том, что сделано или чего не хватило.
+"""
+
+TOOLS = [
+    ("inspect_schedule", "Объектная инвентаризация исходного SCHEDULE: wells, factual/forecast WCONPROD, commissioning anchors, история режимов, keywords, даты и GRUPTREE. Без полного .INC.", []),
+    (
+        "inspect_well",
+        "Подробно осмотреть одну скважину: identity, factual WCONPROD, commissioning anchor (первый нефактический WCONPROD), последующие forecast control events и связанные records.",
+        [("well", "string", True, "Точное имя скважины из inspect_schedule")],
+    ),
+    (
+        "analyze_forecast_controls",
+        "Детерминированно разобрать timeline одной скважины: history/forecast controls, commissioning, WELTARG, WECON, WTEST, WELOPEN, WEFAC, WPIMULT и правила выбора keyword.",
+        [("well", "string", True, "Точное имя скважины из inspect_schedule")],
+    ),
+    (
+        "search_keywords",
+        "Найти keywords и methods по intent (даты ввода, группы, дебиты, перфорация, ГРП).",
+        [("intent", "string", True, "Фраза задачи: даты ввода, перепривязка групп, ORAT, ...")],
+    ),
+    (
+        "get_keyword",
+        "Объект keyword: details.kind=schedule_keyword, parameters[{name,position,type,required,unit,description,enum}]. Имена полей только отсюда.",
+        [("keyword", "string", True, "DATES / WCONPROD / GRUPTREE / ...")],
+    ),
+    (
+        "list_records",
+        "Компактные records keyword. well опционален. Не больше 40 строк.",
+        [
+            ("keyword", "string", True, "Имя keyword"),
+            ("well", "string", False, "Точное имя скважины из inspect"),
+        ],
+    ),
+    (
+        "apply_commissioning",
+        "Сдвинуть даты ввода скважин по фактам «скважина — дата» из Excel, уже лежащим в сессии (fact_count). Решение по скважинам вне Excel и параметры новых скважин тоже берутся из сессии. Аргументов нет. Для задач про даты ввода — это единственный нужный apply.",
+        [],
+    ),
+    (
+        "apply_group_rebind",
+        "Поместить скважины в группу с групповым контролем (WELSPECS + GRUPTREE + GCONPROD). Spec заполняешь ты из задачи и inspect_schedule; ничего не выводится из текста автоматически. Неполный spec вернётся как ok:false spec_incomplete с missing и where_to_find — дополни и вызови снова.",
+        [
+            ("wells", "string", True, "Имена скважин через пробел или запятую, только из inspect_schedule.wells"),
+            ("parent_group", "string", True, "Имя целевой группы из задачи (например DKS)"),
+            ("parent_of_parent", "string", False, "Родитель целевой группы в GRUPTREE: корень дерева исходного файла (FIELD) или группа из задачи. Пусто — возьмётся единственный корень из исходного файла"),
+            ("control", "string", True, "Тип группового контроля: GRAT (газ), ORAT (нефть), WRAT (вода), LRAT (жидкость), RESV"),
+            ("gas_rate", "number", True, "Целевой дебит числом в м3/сут: «200 тыс. м3 в сут.» → 200000"),
+            ("effective_at", "string", False, "Дата начала контроля вида 1 JAN 2026; пусто — с даты ввода этих скважин"),
+        ],
+    ),
+    (
+        "ask_engineer",
+        "Задать инженеру ОДИН вопрос обычной русской фразой, когда данных нет ни в задаче, ни в исходном файле, ни в engineer_answers. options — варианты словами инженера (имена групп из исходного файла, «оставить»/«убрать»). Без имён полей, JSON, enum. После вызова — STOP.",
+        [
+            ("question", "string", True, "Вопрос по-русски: что нужно и зачем, с именами скважин/групп"),
+            ("options", "string", False, "Варианты ответа через точку с запятой, например «Оставить как в исходном файле; Убрать из прогноза». Пусто — свободный ответ"),
+            ("topic", "string", False, "Короткий латинский идентификатор темы вопроса, например target_group"),
+            ("accepts_files", "string", False, "Какие файлы принимаются, через запятую: xlsx, .inc"),
+        ],
+    ),
+    (
+        "apply_operations",
+        "Применить operations. JSON-массив: [{\"keyword\":\"WCONPROD\",\"operation\":\"MODIFY\",\"fields\":{...}}].",
+        [("operations", "json", True, "Массив {keyword, operation, fields}. Не объект с ключами 0,1,2.")],
+    ),
+    (
+        "render_ir",
+        "Собрать текст keyword по schema_catalogue: ir_events[{event_id,operation,keyword,variant,fields,provenance}]. Не пиши .INC руками.",
+        [
+            ("mode", "string", False, "CREATE или REVISE"),
+            ("ir_events", "json", True, "Массив IR-событий с fields по get_keyword.details.parameters"),
+        ],
+    ),
+    (
+        "build_schedule",
+        "Собрать текущий working SCHEDULE, если apply уже отработал. Не вызывай вместо commissioning/group_rebind.",
+        [],
+    ),
+    (
+        "validate_result",
+        "Проверить текущий working text: findings без полного файла.",
+        [],
+    ),
+]
+
+SPEC = AgentSpec(
+    agent_id="schedule_builder",
+    title="Schedule Builder",
+    when_to_use=(
+        "Исходный SCHEDULE (.inc): сдвиг дат ввода по фактам «скважина — дата»; добавление новых скважин по их "
+        "параметрам; перепривязка скважин в группу (GRUPTREE/GCONPROD) по тексту задачи и исходному файлу. Факты дат и "
+        "параметры новых скважин берёт из результатов агента, который читал Excel, и из ответов инженера — сам Excel "
+        "не читает; для перепривязки групп Excel не нужен. Не выдумывает даты и имена, которых нет в задаче, фактах "
+        "или исходном файле. Отдаёт новый .INC и список изменений."
+    ),
+    input_required=["schedule_source"],
+    output_provides=["schedule_out", "diff"],
+    input_schema={
+        "artifacts": {"schedule_source": "исходный SCHEDULE .inc и его INCLUDE-файлы"},
+        "data": {
+            "facts": "даты ввода «скважина — дата» (нужны для новых дат ввода)",
+            "new_wells": "параметры новых скважин (нужны, если добавляются скважины)",
+        },
+        "handoff_message": "что изменить в SCHEDULE и на основании чего",
+    },
+    output_schema={"artifacts": {"schedule_out": "новый SCHEDULE .inc", "diff": "изменения относительно исходного файла"}},
+    service_url_key="schedule_service_url",
+    lab_url="http://schedule-builder:8090",
+    slug="schedule",
+    system_prompt=SYSTEM,
+    tools=TOOLS,
+    rag_selector="schedule",
+    rag_ready_note=(
+        "Карточки — срез schedule_mvp (keyword_instruction / worked_example), "
+        "не excel_protocol и не orchestrator_routing. "
+        "Это when-to-use и pitfalls. Расклад полей — get_keyword.details / render_ir, "
+        "не schema_catalogue из RAG."
+    ),
+    rag_empty_note=(
+        "Срез schedule_mvp пуст или недоступен — работай инструментами. "
+        "Не спрашивай HITL про RAG и не ходи в другие target_base."
+    ),
+    # Keyword families / topics narrow the RAG slice to the cards about the keywords the task names.
+    retrieval_filters_js="const ALLOWED_KEYWORDS=" + json.dumps(SCHEDULE_KEYWORDS) + ";\n" + r"""
+const allowed=new Set(ALLOWED_KEYWORDS);
+for(const k of (blob.match(/\b[A-Z][A-Z0-9_]{2,}\b/g)||[])) if(allowed.has(k)) keyword_families.push(k);
+const mapped=[];
+if(/дат[аые].{0,24}ввод|ввод.{0,16}скважин|commission/.test(low)) mapped.push('DATES','WCONPROD');
+if(/групп|перепривяз|gruptree/.test(low)) mapped.push('GRUPTREE','GCONPROD','WELSPECS');
+if(/\borat\b|\bwrat\b|\bgrat\b|дебит|лимит.{0,24}нефт|wconprod|weltarg/.test(low)) mapped.push('WCONPROD','WELTARG');
+if(/грп|гидроразрыв|fracture/.test(low)) mapped.push('FRACTURE_SPECS','FRACTURE_STAGE');
+if(/vfp/.test(low)) mapped.push('VFPPROD','WVFPDP');
+if(/перфорац|compdat/.test(low)) mapped.push('COMPDATMD');
 if(/закачк|инъект|wconinje/.test(low)) mapped.push('WCONINJE');
 for(const k of mapped) if(allowed.has(k)) keyword_families.push(k);
 if(/дат|ввод/.test(low)){topics.push('календарь');task_patterns.push('даты ввода');}
@@ -12771,764 +14645,3 @@ const plan=$('Validate SCHEDULE pipeline plan').first().json;
 let baseline=null;try{baseline=$('Analyze lossless baseline inventory').first().json}catch{}
 let decoded=null;try{decoded=$('Decode typed baseline records').first().json}catch{}
 let replay=null;try{replay=$('Replay baseline prefix into semantic boundary').first().json}catch{}
-let baselineQuery=null;try{baselineQuery=$('Query targeted baseline records').first().json}catch{}
-const req=root.request;const obj=v=>v&&typeof v==='object'&&!Array.isArray(v),arr=Array.isArray,clean=v=>typeof v==='string'?v.trim():'';
-const slimFacts=packet=>{if(!obj(packet))return packet;const pick=(row,keys)=>{if(!obj(row))return null;for(const k of keys){if(row[k]!==undefined&&row[k]!==null&&String(row[k]).trim()!=='')return row[k]}return null};const facts=arr(packet.facts)?packet.facts.slice(0,200).map(f=>{const values=obj(f.values)?f.values:(obj(f.row)?f.row:null);const well=f.well||f.entity_id||f.object_id||pick(values,['Скважина','скважина','WELL','Well','well','WellName'])||null;const value=f.value??f.raw_value??pick(values,['Дата ввода','дата ввода','Date','date','commissioning_date','value'])??null;const field=f.field||f.column||(value!==null?'Дата ввода':null);return {fact_id:f.fact_id||f.id||null,well,field,value,unit:f.unit||null,sheet:f.sheet||null,values:values||undefined}}):[];return {contract:packet.contract||null,contract_version:packet.contract_version||null,source_snapshot_hash:packet.source_snapshot_hash||null,correlation_id:packet.correlation_id||null,fact_count:facts.length||Number(packet.fact_count)||0,facts,conflicts:arr(packet.conflicts)?packet.conflicts.slice(0,20):[],columns:arr(packet.columns)?packet.columns.slice(0,50):undefined}};
-const slimRag=rag=>{if(!obj(rag))return rag;const catalogue=obj(rag.schema_catalogue)?{contract:rag.schema_catalogue.contract||'schedule_schema_catalogue',contract_version:rag.schema_catalogue.contract_version||'1.0',catalogue_ref:rag.schema_catalogue.catalogue_ref||null,catalogue_hash:rag.schema_catalogue.catalogue_hash||null,source_hash:rag.schema_catalogue.source_hash||null,approved:rag.schema_catalogue.approved===true,approved_by:rag.schema_catalogue.approved_by||rag.schema_catalogue.author||null,author:rag.schema_catalogue.author||null,simulator_profile:obj(rag.schema_catalogue.simulator_profile)?rag.schema_catalogue.simulator_profile:{vendor:'Rock Flow Dynamics',simulator:'tNavigator',version:'22.2'},schemas:(arr(rag.schema_catalogue.schemas)?rag.schema_catalogue.schemas:[]).slice(0,40).map(s=>({keyword:s.keyword,variant:s.variant||'default',schema_id:s.schema_id||null,schema_revision:s.schema_revision||null,citation:obj(s.citation)?s.citation:null,semantics:obj(s.semantics)?s.semantics:null,layout:obj(s.layout)?s.layout:null,fields:(arr(s.fields)?s.fields:[]).slice(0,40)}))}:null;const results=(arr(rag.results)?rag.results:[]).slice(0,12).map(r=>{const meta=obj(r.metadata)?r.metadata:{};return {knowledge_id:r.knowledge_id||meta.knowledge_id||null,knowledge_type:r.knowledge_type||meta.knowledge_type||null,title:r.title||meta.title||null,keywords:r.keywords||meta.keyword_families||meta.keywords||[],score:r.score??r.rrf_score??null,snippet:clean(r.page_content||r.text||r.content||'').slice(0,600)}});return {contract:rag.contract,citations:(arr(rag.citations)?rag.citations:[]).slice(0,30),results,schema_catalogue:catalogue,findings:(arr(rag.findings)?rag.findings:[]).slice(0,20)}};
-const slimInventory=inv=>{if(!obj(inv))return null;const files=(arr(inv.files)?inv.files:[]).slice(0,50).map(f=>{const nodes=arr(f.nodes)?f.nodes:[];const keyword_counts={};for(const n of nodes){const kw=clean(n.keyword).toUpperCase();if(kw)keyword_counts[kw]=(keyword_counts[kw]||0)+1}return {file_ref:f.file_ref||f.path||null,byte_length:f.manifest?.byte_length||f.byte_length||null,node_count:nodes.length,keyword_counts}});return {root_path:inv.root_path||null,package_hash:inv.package_hash||null,keyword_inventory:inv.keyword_inventory||null,files}};
-const compactBaseline=baseline&&typeof baseline==='object'?{contract:baseline.contract,status:baseline.status,package_hash:baseline.package?.package_hash||null,compact_inventory:slimInventory(baseline.compact_inventory),keyword_inventory:baseline.keyword_inventory||{},findings:(arr(baseline.findings)?baseline.findings:[]).slice(0,20),preservation_token:baseline.preservation_token||null}:null;
-const decodedInventory=baselineQuery&&typeof baselineQuery==='object'?{contract:baselineQuery.contract,status:baselineQuery.status,summary:baselineQuery.summary||{},records:(arr(baselineQuery.records)?baselineQuery.records:[]).slice(0,200),total_matches:baselineQuery.total_matches||0,findings:(arr(baselineQuery.findings)?baselineQuery.findings:[]).slice(0,20)}:null;
-const semanticBoundary=replay&&replay.semantic_state_snapshot?{snapshot_kind:replay.semantic_state_snapshot.snapshot_kind,replay_through:replay.semantic_state_snapshot.replay_through,change_effective_from:replay.semantic_state_snapshot.change_effective_from,boundary_hash:replay.semantic_state_snapshot.boundary_hash,entity_count:Array.isArray(replay.semantic_state_snapshot.entities)?replay.semantic_state_snapshot.entities.length:(replay.semantic_replay?.entities||0)}:null;
-const humanInstruction=clean(req.human_instruction)||clean(root.packet?.inputs?.human_instruction)||clean(req.hitl_reply_text)||(obj(root.latest_human_response)?clean(root.latest_human_response.text||root.latest_human_response.human_response||''):'');
-const intakeChange=obj(intake.requested_change_scope)?intake.requested_change_scope:{};
-const reqChange=obj(req.requested_change_scope)?req.requested_change_scope:{};
-const merged=mergeObservedScheduleRequest(req,intake);
-const mergedChange=obj(merged.requested_change_scope)?merged.requested_change_scope:{...intakeChange,...reqChange};
-if(!(arr(mergedChange.wells)&&mergedChange.wells.length)&&arr(intakeChange.wells)&&intakeChange.wells.length) mergedChange.wells=intakeChange.wells;
-if(!mergedChange.group_rebind&&intakeChange.group_rebind) mergedChange.group_rebind=intakeChange.group_rebind;
-const mergedCaps=arr(merged.requested_capability_scope)?merged.requested_capability_scope:[...new Set([...(arr(intake.requested_capability_scope)?intake.requested_capability_scope:[]),...(arr(req.requested_capability_scope)?req.requested_capability_scope:[])].map(clean).filter(Boolean))];
-const scheduleMeta={build_mode:req.build_mode||intake.build_mode,root_path:req.root_path||null,requested_keyword_scope:(arr(intake.requested_keyword_scope)&&intake.requested_keyword_scope.length)?intake.requested_keyword_scope:(req.requested_keyword_scope||[]),requested_capability_scope:mergedCaps.length?mergedCaps:(req.requested_capability_scope||intake.requested_capability_scope||[]),capability_id:merged.capability_id||req.capability_id||intake.capability_id||mergedChange.capability_id||null,requested_change_scope:Object.keys(mergedChange).length?mergedChange:{},change_effective_from:req.change_effective_from||null,preservation_policy:req.preservation_policy||'preserve_unmentioned',simulator_profile:req.simulator_profile||intake.simulator_profile||{},human_instruction:humanInstruction||null};
-const payload={schedule_request:scheduleMeta,intake_result:{objective:intake.objective,build_mode:intake.build_mode,requested_keyword_scope:intake.requested_keyword_scope,requested_capability_scope:intake.requested_capability_scope,simulator_profile:intake.simulator_profile},approved_plan:{status:plan.status,build_mode:plan.build_mode,keyword_scope:plan.keyword_scope,stages:plan.stages,preservation_policy:plan.preservation_policy,rationale:plan.rationale},baseline_analysis:compactBaseline,decoded_baseline_inventory:decodedInventory,semantic_boundary:semanticBoundary,source_facts_packet:slimFacts(req.source_facts_packet),rag_evidence:slimRag(req.rag_evidence),human_instruction:humanInstruction||null,latest_human_response:obj(root.latest_human_response)?root.latest_human_response:null,instruction:'Match wells ONLY by SCHEDULE name (source_facts_packet.facts[].well / values.Скважина). Do not empty ir_events to force a special path. Deterministic commissioning timeline runs only when capability is commissioning_date_retarget|shift_commissioning_dates|commissioning_revise|timeline_revise AND well/date facts exist. Deterministic group rebind runs only when capability is group_membership_rebind|group_rebind AND a complete structured spec is present (wells, parent_group, parent_of_parent, well_groups, gas_rate/rate, control). Never infer DKS, FIELD, G{well}, or GRAT from prose. Otherwise emit typed IR. Human HITL answers are authoritative.'+(humanInstruction?` Human correction (authoritative): ${humanInstruction}`:'')};
-return[{json:{builder_context:payload,builder_input:JSON.stringify(payload)}}];
-"""
-)
-
-
-def validate_builder(keywords: list[str]) -> str:
-    allowed = json.dumps(keywords, ensure_ascii=False)
-    return (
-        r"""
-const root=$('Normalize SCHEDULE pipeline packet').first().json;
-const req=root.request,plan=$('Validate SCHEDULE pipeline plan').first().json;
-const agentEnvelope=$json;let work=$json.output??$json;if(typeof work==='string'){try{work=JSON.parse(work)}catch{work={}}}
-const obj=v=>v&&typeof v==='object'&&!Array.isArray(v),arr=Array.isArray,clean=v=>typeof v==='string'?v.trim():'';
-"""
-        + capability_dispatch_js()
-        + r"""
-const boundedHash=value=>{let text='';try{text=JSON.stringify(value)}catch{text=String(value??'')}let h=2166136261;for(const ch of text){h^=ch.charCodeAt(0);h=Math.imul(h,16777619)}return{hash:`fnv1a32:${(h>>>0).toString(16).padStart(8,'0')}`,bytes:new TextEncoder().encode(text).length}};
-const intermediate=arr(agentEnvelope.intermediateSteps)?agentEnvelope.intermediateSteps.slice(0,50):[];const agentToolTrace=intermediate.map((step,index)=>{const action=obj(step?.action)?step.action:{},input=action.toolInput??action.tool_input??step?.toolInput??null,output=step?.observation??step?.output??null,inputMeta=boundedHash(input),outputMeta=boundedHash(output);return{name:clean(action.tool||step?.tool)||'schedule_agent_tool',tool_call_id:clean(action.toolCallId||action.tool_call_id||step?.toolCallId)||null,status:step?.error?'error':'completed',stage:'builder',sequence:index+1,input_hash:inputMeta.hash,input_bytes:inputMeta.bytes,output_hash:outputMeta.hash,output_bytes:outputMeta.bytes}});
-const allowed=new Set(__KEYWORDS__),findings=[];
-const mode=clean(work.build_mode||plan.build_mode).toUpperCase();
-const scope=[...new Set((arr(plan.keyword_scope)?plan.keyword_scope:[]).map(v=>clean(v).toUpperCase()).filter(Boolean))];
-const changes=arr(work.changes)?work.changes.filter(obj):[];
-const evidenceGapRequired=['entity','effective_at','keyword','field','reason','expected_format'];
-const rawGaps=arr(work.evidence_gap)?work.evidence_gap.filter(obj):[];
-let gaps=rawGaps.filter(g=>evidenceGapRequired.every(k=>clean(g[k]))).map(g=>({entity:clean(g.entity),effective_at:clean(g.effective_at),keyword:clean(g.keyword).toUpperCase(),field:clean(g.field),reason:clean(g.reason),expected_format:clean(g.expected_format),...(clean(g.question)?{question:clean(g.question)}:{})}));
-if(rawGaps.length&&!gaps.length)findings.push({code:'MALFORMED_EVIDENCE_GAP',severity:'error',dropped:rawGaps.length});
-else if(rawGaps.length>gaps.length)findings.push({code:'PARTIAL_EVIDENCE_GAP_DROPPED',severity:'warning',dropped:rawGaps.length-gaps.length,kept:gaps.length});
-let irEvents=arr(work.ir_events)?work.ir_events.filter(obj):[];
-const requirements=arr(work.requirements_matrix)?work.requirements_matrix.filter(obj):[];
-let sourceMap=arr(work.source_map)?work.source_map.filter(obj):[];
-const evidencePacket=obj(req.source_facts_packet)?req.source_facts_packet:{},facts=arr(evidencePacket.facts)?evidencePacket.facts:(arr(req.source_facts)?req.source_facts:[]),conflicts=arr(evidencePacket.conflicts)?evidencePacket.conflicts:[];
-const rag=obj(req.rag_evidence)?req.rag_evidence:{},citations=arr(rag.citations)?rag.citations.filter(obj).slice(0,100):[],ragResults=arr(rag.results)?rag.results.filter(obj):[];
-const tags=v=>{const m=obj(v.metadata)?v.metadata:{},raw=v.keyword_families??v.keyword_family??v.keyword??m.keyword_families??m.keyword_family??m.keyword??[];if(arr(raw))return raw.map(x=>clean(x).toUpperCase()).filter(Boolean);if(typeof raw==='string'){try{const p=JSON.parse(raw);if(arr(p))return p.map(x=>clean(x).toUpperCase()).filter(Boolean)}catch{}return raw.split(/[,;|\s]+/).map(x=>clean(x).toUpperCase()).filter(Boolean)}return[]};
-const citedKeywords=new Set([...ragResults,...citations].flatMap(tags).filter(k=>allowed.has(k)));
-const approval=obj(req.remove_approval)?req.remove_approval:{};
-let intake=null;try{intake=$('Run deterministic SCHEDULE intake').first().json}catch{}
-const capReq=mergeObservedScheduleRequest(req,intake);
-const observedRemove=clean(intake?.requested_change_scope?.operation).toLowerCase()==='remove'||clean(capReq.requested_change_scope?.operation).toLowerCase()==='remove';
-const accountableRemove=(req.explicit_remove_approved===true&&clean(approval.actor)&&clean(approval.reason)&&clean(approval.gate_id))||observedRemove||clean(req.requested_change_scope?.operation).toLowerCase()==='remove';
-let baselineQuery=null;try{baselineQuery=$('Query targeted baseline records').first().json}catch{}
-const queriedRecords=arr(baselineQuery?.records)?baselineQuery.records.filter(obj):[],targetMap=new Map();for(const r of queriedRecords){const id=clean(r.target_node_id||r.source_node_id);if(id&&!targetMap.has(id))targetMap.set(id,r)}
-const wellFacts=facts.map(pickWellDateFact).filter(f=>f.well&&f.date!==null&&f.date!==undefined&&String(f.date).trim()!=='');
-const toTnavDate=raw=>{const s=String(raw||'').trim();const iso=s.match(/^(\d{4})-(\d{2})-(\d{2})/);if(iso){const months=['JAN','FEB','MAR','APR','MAY','JUN','JUL','AUG','SEP','OCT','NOV','DEC'];return `1 ${months[Number(iso[2])-1]} ${iso[1]}`}const already=s.match(/^(\d{1,2})\s+([A-Za-z]{3})\s+(\d{4})$/);return already?`${Number(already[1])} ${already[2].toUpperCase()} ${already[3]}`:s};
-const capTokens=collectCapabilityTokens(capReq,intake);
-const groupSpecRead=readGroupRebindSpec(capReq);
-const groupSpec=groupSpecRead&&groupSpecRead.ok?groupSpecRead.spec:null;
-const exclusive=exclusiveScheduleCaps(capTokens,capReq.requested_change_scope||{},!!(groupSpecRead&&groupSpecRead.ok));
-const wantsCommissioning=exclusive.wantsCommissioning;
-const wantsGroupRebind=exclusive.wantsGroupRebind;
-const useTimelineCommissioning=mode==='REVISE'&&wellFacts.length>0&&wantsCommissioning&&!wantsGroupRebind;
-const groupRevise=mode==='REVISE'&&wantsGroupRebind&&!!groupSpec;
-const useDeterministicRevise=useTimelineCommissioning||groupRevise;
-if(mode==='REVISE'&&wantsCommissioning&&!wellFacts.length){
-  findings.push({code:'COMMISSIONING_FACTS_REQUIRED',severity:'error'});
-}
-if(mode==='REVISE'&&wantsGroupRebind&&!groupSpec){
-  findings.push({code:'GROUP_REBIND_SPEC_REQUIRED',severity:'error',missing:groupSpecRead&&groupSpecRead.missing||[],field:(groupSpecRead&&groupSpecRead.missing||[]).join(', ')});
-}
-if(groupRevise){
-  irEvents=[];
-  if(['needs_input','retryable_error','partial',''].includes(clean(work.status)))work.status='succeeded';
-  sourceMap=[{keyword:'WELSPECS',entity:'group_rebind',source:'group_rebind_spec',path:'timeline_group_revise'}];
-  findings.push({code:'GROUP_REBIND_TIMELINE_PATH',severity:'warning',note:'parse→ADD WELSPECS/GRUPTREE/GCONPROD + re-emit WECON/WPIMULT on first WCONPROD DATES→emit'});
-  if(!obj(work.self_check)||!work.self_check.passed)work.self_check={performed:true,passed:true,checks:[{check:'timeline_group_rebind_path',passed:true}],reproducibility:'Explicit group_membership_rebind spec drives deterministic group rebind after merge.'};
-  gaps=[];
-  for(let i=findings.length-1;i>=0;i-=1){
-    if(['MALFORMED_EVIDENCE_GAP','PARTIAL_EVIDENCE_GAP_DROPPED','COMMISSIONING_FACTS_REQUIRED','COMMISSIONING_TIMELINE_PATH'].includes(findings[i].code)) findings.splice(i,1);
-  }
-}else if(useTimelineCommissioning){
-  irEvents=[];
-  if(['needs_input','retryable_error','partial',''].includes(clean(work.status)))work.status='succeeded';
-  sourceMap=wellFacts.map(f=>({keyword:'WCONPROD',entity:f.well,fact_id:f.fact_id||null,source:`source_facts_packet:${f.fact_id||f.well}`,value:f.date,commissioning_date:toTnavDate(f.date),path:'timeline_commissioning_revise'}));
-  findings.push({code:'COMMISSIONING_TIMELINE_PATH',severity:'warning',wells:wellFacts.map(f=>f.well).slice(0,20),note:'parse→edit retarget first WCONPROD(+WELOPEN/WEFAC) onto target DATES→emit; DATES steps preserved'});
-  if(!obj(work.self_check)||!work.self_check.passed)work.self_check={performed:true,passed:true,checks:[{check:'timeline_commissioning_path',passed:true}],reproducibility:'Explicit commissioning capability + Excel wells by SCHEDULE name drive deterministic timeline revise after merge.'};
-  gaps=[];
-  for(let i=findings.length-1;i>=0;i-=1){
-    if(['MALFORMED_EVIDENCE_GAP','PARTIAL_EVIDENCE_GAP_DROPPED'].includes(findings[i].code)) findings.splice(i,1);
-  }
-}
-const removeKeywords=[...new Set([
-  ...scope,
-  ...(arr(req.requested_keyword_scope)?req.requested_keyword_scope:[]),
-  ...(arr(req.requested_change_scope?.keywords)?req.requested_change_scope.keywords:[]),
-  ...(arr(req.requested_change_scope?.must_remove)?req.requested_change_scope.must_remove.map(v=>obj(v)?v.keyword:v):[]),
-].map(v=>clean(v).toUpperCase()).filter(k=>allowed.has(k)))];
-let keywordRemovePath=false;
-if(mode==='REVISE'&&accountableRemove&&removeKeywords.length&&!useTimelineCommissioning&&!groupRevise){
-  const hitsRaw=queriedRecords.filter(r=>{
-    const id=clean(r.target_node_id||r.source_node_id);
-    const hash=clean(r.expected_raw_hash);
-    if(!id||!hash)return false;
-    const kw=clean(r.keyword).toUpperCase();
-    if(kw)return removeKeywords.includes(kw);
-    return true;
-  });
-  const seenTargets=new Set();
-  const hits=[];
-  for(const r of hitsRaw){
-    const id=clean(r.target_node_id||r.source_node_id);
-    if(seenTargets.has(id))continue;
-    seenTargets.add(id);
-    hits.push(r);
-  }
-  if(!hits.length){
-    findings.push({code:'KEYWORD_REMOVE_TARGETS_REQUIRED',severity:'error',keywords:removeKeywords});
-  }else{
-    keywordRemovePath=true;
-    irEvents=hits.map((r,i)=>{
-      const id=clean(r.target_node_id||r.source_node_id);
-      const kw=clean(r.keyword).toUpperCase()||removeKeywords[0];
-      return {
-        operation:'REMOVE',
-        keyword:kw,
-        target_node_id:id,
-        source_node_id:clean(r.source_node_id)||id,
-        expected_raw_hash:clean(r.expected_raw_hash),
-        file_ref:r.file_ref||null,
-        event_id:`remove:${kw.toLowerCase()}:${i+1}`,
-        variant:clean(r.variant)||'default',
-        schema_id:r.schema_id||null,
-        schema_revision:r.schema_revision||null,
-        fields:obj(r.fields)?r.fields:{},
-        provenance:arr(r.provenance)&&r.provenance.length?r.provenance:[{source_ref:'task_text:keyword_remove',raw_hash:r.expected_raw_hash}],
-      };
-    });
-    if(['needs_input','retryable_error','partial',''].includes(clean(work.status)))work.status='succeeded';
-    sourceMap=hits.map((r,i)=>{
-      const fields=obj(r.fields)?r.fields:{};
-      return {
-        keyword:clean(r.keyword).toUpperCase()||removeKeywords[0],
-        target_node_id:clean(r.target_node_id||r.source_node_id),
-        entity:clean(fields.WELL||fields.well||fields.GROUP||fields.group||''),
-        source:'task_text:keyword_remove',
-        path:'keyword_remove',
-      };
-    });
-    findings.push({code:'KEYWORD_REMOVE_PATH',severity:'warning',count:hits.length,keywords:removeKeywords});
-    gaps=[];
-    for(let i=findings.length-1;i>=0;i-=1){
-      if(['MALFORMED_EVIDENCE_GAP','PARTIAL_EVIDENCE_GAP_DROPPED','TYPED_IR_REQUIRED_FOR_CATALOGUE_RENDER'].includes(findings[i].code)) findings.splice(i,1);
-    }
-  }
-}
-let operations=irEvents.length?irEvents:changes;
-// Enrich IR with event_id + schema citation from targeted baseline records (required by deterministic renderer).
-operations=operations.map((c,i)=>{
-  const id=clean(c.target_node_id||c.source_node_id||c.node_id);
-  const hit=id?targetMap.get(id):null;
-  const eventId=clean(c.event_id)&&!String(c.event_id).startsWith('baseline:')?clean(c.event_id):`revise:${clean(c.keyword).toLowerCase()||'kw'}:${clean(c.entity)||(hit&&(hit.fields&&(hit.fields.WELL||hit.fields.well)))||i}:${i+1}`;
-  const schemaId=clean(c.schema_id)||(hit&&clean(hit.schema_id))||'';
-  const schemaRevision=clean(String(c.schema_revision??''))||(hit&&clean(String(hit.schema_revision??'')))||'';
-  const variant=clean(c.variant)||(hit&&clean(hit.variant))||'default';
-  const fields=obj(c.fields)?c.fields:(hit&&obj(hit.fields)?hit.fields:{});
-  const provenance=arr(c.provenance)&&c.provenance.length?c.provenance:(hit&&arr(hit.provenance)?hit.provenance:[{source_ref:`source_facts:${clean(c.fact_id||c.entity)||'excel'}`,raw_hash:c.expected_raw_hash||(hit&&hit.expected_raw_hash)||null}]);
-  return {...c,event_id:eventId,schema_id:schemaId||c.schema_id,schema_revision:schemaRevision||c.schema_revision,variant,fields,provenance,source_node_id:c.source_node_id||(hit&&hit.source_node_id)||id||null,target_node_id:id||c.target_node_id||null,expected_raw_hash:c.expected_raw_hash||(hit&&hit.expected_raw_hash)||null,file_ref:c.file_ref||(hit&&hit.file_ref)||null};
-});
-operations=operations.filter(c=>clean(c.operation)&&clean(c.keyword));
-if(useDeterministicRevise){operations=[];}
-irEvents=operations.filter(c=>clean(c.operation));
-if(!['CREATE','REVISE'].includes(mode))findings.push({code:'INVALID_BUILD_MODE',severity:'error'});
-if(mode==='REVISE'&&clean(work.preservation_report?.policy)&&work.preservation_report.policy!=='preserve_unmentioned')findings.push({code:'PRESERVATION_POLICY_REQUIRED',severity:'error'});
-if(mode==='REVISE'&&baselineQuery&&baselineQuery.status&&baselineQuery.status!=='succeeded'&&['succeeded','partial'].includes(clean(work.status)))findings.push({code:'TARGETED_BASELINE_QUERY_REQUIRED',severity:'error',status:baselineQuery?.status||'missing'});
-for(const c of operations){const op=clean(c.operation).toUpperCase(),kw=clean(c.keyword).toUpperCase();if(!['KEEP','MODIFY','ADD','REMOVE'].includes(op))findings.push({code:'INVALID_CHANGE_OPERATION',severity:'error',operation:op});if(!allowed.has(kw))findings.push({code:'UNSUPPORTED_KEYWORD',severity:'error',keyword:kw});if(op==='REMOVE'&&!accountableRemove)findings.push({code:'REMOVE_REQUIRES_ACCOUNTABLE_APPROVAL',severity:'error',keyword:kw});if(mode==='REVISE'&&['MODIFY','REMOVE'].includes(op)){const id=clean(c.target_node_id||c.source_node_id||c.node_id),hit=targetMap.get(id);if(!id||!hit)findings.push({code:'CHANGE_TARGET_OUTSIDE_BASELINE_QUERY',severity:'error',keyword:kw,target_node_id:id||null});else if(clean(c.expected_raw_hash).toLowerCase()!==clean(hit.expected_raw_hash).toLowerCase())findings.push({code:'CHANGE_TARGET_HASH_MISMATCH',severity:'error',keyword:kw,target_node_id:id})}}
-const nonKeep=operations.filter(c=>clean(c.operation).toUpperCase()!=='KEEP'),represented=new Set([...operations,...requirements].map(v=>clean(v.keyword).toUpperCase()).filter(Boolean));
-if((obj(req.schema_catalogue)||obj(req.rag_evidence?.schema_catalogue))&&!irEvents.length&&changes.length&&!useDeterministicRevise&&!keywordRemovePath)findings.push({code:'TYPED_IR_REQUIRED_FOR_CATALOGUE_RENDER',severity:'error'});
-if(mode==='CREATE'&&['succeeded','partial'].includes(work.status)&&!requirements.length)findings.push({code:'REQUIRED_DATA_MATRIX_MISSING',severity:'error'});
-if(!sourceMap.length){sourceMap=irEvents.flatMap((c,i)=>{if(obj(c.source_map))return[{...c.source_map,keyword:clean(c.keyword).toUpperCase()||null,target_node_id:c.target_node_id||c.node_id||null,index:i}];if(arr(c.source_map))return c.source_map.filter(obj).map(s=>({...s,keyword:clean(c.keyword).toUpperCase()||null,target_node_id:c.target_node_id||c.node_id||null,index:i}));return[]})}
-if(nonKeep.length&&sourceMap.length<nonKeep.length){
-  sourceMap=nonKeep.map((c,i)=>{const id=clean(c.target_node_id||c.source_node_id||c.node_id);const hit=targetMap.get(id)||{};const fields=obj(hit.fields)?hit.fields:{};const well=clean(fields.WELL||fields.well||c.entity||c.well||(obj(c.fields)?(c.fields.WELL||c.fields.well||c.fields.GROUP||c.fields.CHILD):''));const fact=wellFacts.find(f=>f.well===well)||wellFacts[i]||null;return{keyword:clean(c.keyword).toUpperCase(),target_node_id:id||null,entity:well||fact?.well||(groupRevise?clean(c.keyword):null),fact_id:fact?.fact_id||c.fact_id||null,source:fact?`source_facts_packet:${fact.fact_id||well||'excel'}`:(clean(c.fact_id)?`change:${clean(c.fact_id)}`:(groupRevise?`hitl:group_revise:${clean(c.keyword).toUpperCase()||i}`:null)),value:fact?.date??c.commissioning_date??null}});
-  findings.push({code:'SOURCE_MAP_SYNTHESIZED_FROM_FACTS',severity:'warning',mapped:sourceMap.length});
-}
-const groundedSourceMap=sourceMap.filter(s=>clean(s.fact_id)||clean(s.source)||clean(s.source_ref)||clean(s.entity));
-if(nonKeep.length&&groundedSourceMap.length<nonKeep.length)findings.push({code:'SOURCE_MAP_INCOMPLETE',severity:'error',required:nonKeep.length,mapped:groundedSourceMap.length});
-const missingCitationScope=scope.filter(k=>!citedKeywords.has(k));if(missingCitationScope.length&&['succeeded','partial'].includes(clean(work.status))&&!useDeterministicRevise&&!keywordRemovePath)findings.push({code:'RAG_KEYWORD_COVERAGE_MISSING',severity:'error',keywords:missingCitationScope});
-if(conflicts.length)findings.push({code:'CONFLICTING_SOURCE_FACTS',severity:'error',count:conflicts.length});
-const modelDecision=obj(work.decision_record)?work.decision_record:{};if(modelDecision.contract&&(modelDecision.contract!=='decision_record'||modelDecision.contract_version!=='1.0'||!clean(modelDecision.objective)||!obj(modelDecision.selected_action)||!arr(modelDecision.selected_action?.reason_codes)))findings.push({code:'DECISION_RECORD_INVALID',severity:'warning'});
-if(['succeeded','partial'].includes(clean(work.status))&&facts.length&&!wellFacts.length&&wantsCommissioning){
-  const looksCommissioning=facts.some(f=>{
-    const values=obj(f.values)?f.values:{};
-    const date=f.value??f.raw_value??values['Дата ввода']??values.date??values.commissioning_date??null;
-    const field=clean(f.field||f.column||'');
-    return (date!==null&&date!==undefined&&String(date).trim()!=='')||/дата|date|commission/i.test(field);
-  });
-  if(looksCommissioning)findings.push({code:'SOURCE_FACTS_WELL_IDENTITY_MISSING',severity:'error',fact_count:facts.length});
-}
-let status=new Set(['succeeded','partial','needs_input','needs_decision','needs_approval','retryable_error','fatal_error']).has(work.status)?work.status:'retryable_error';
-if(!useTimelineCommissioning&&!operations.length&&wellFacts.length&&wantsCommissioning&&['needs_input','retryable_error'].includes(status)&&!gaps.length){status='needs_input';findings.push({code:'COMMISSIONING_FACTS_PRESENT_IR_REQUIRED',severity:'error',wells:wellFacts.map(f=>f.well).slice(0,20)});}
-if(gaps.length&&['succeeded','partial'].includes(status)&&!useDeterministicRevise&&!keywordRemovePath)status='needs_input';
-if(findings.some(f=>f.severity==='error')&&['succeeded','partial'].includes(status))status=findings.some(f=>f.code==='REMOVE_REQUIRES_ACCOUNTABLE_APPROVAL')?'needs_approval':'needs_input';
-if(['succeeded','partial'].includes(status)&&(!work.self_check?.performed||!work.self_check?.passed))work.self_check={performed:true,passed:true,checks:[{check:'builder_stage_accepted',passed:true}],reproducibility:'Deterministic builder validate accepted IR with SCHEDULE-name identity.'};
-const supported=r=>['supported','covered','resolved','approved'].includes(clean(r.status).toLowerCase())||clean(r.source_ref)||clean(r.fact_id)||(arr(r.source_refs)&&r.source_refs.length>0);
-const required=requirements.filter(r=>r.required!==false),requiredSupported=required.filter(supported).length;
-const requirementCoverage=required.length?Math.round(100*requiredSupported/required.length):(nonKeep.length?Math.min(100,Math.round(100*sourceMap.length/nonKeep.length)):100);
-const sourceCoverage=useDeterministicRevise||keywordRemovePath?100:(nonKeep.length?Math.min(100,Math.round(100*sourceMap.length/nonKeep.length)):100);
-const scopeFit=useDeterministicRevise||keywordRemovePath?100:(scope.length?Math.round(100*scope.filter(k=>represented.has(k)).length/scope.length):0);
-const evidenceCompleteness=Math.round(.6*requirementCoverage+.4*sourceCoverage);
-const sourceAuthority=useDeterministicRevise||keywordRemovePath?100:(scope.length?Math.round(100*scope.filter(k=>citedKeywords.has(k)).length/scope.length):0);
-const entityTemporalConsistency=(gaps.length||conflicts.length)?0:100;
-const errorFindings=findings.filter(f=>f.severity==='error');
-const deterministicValidationHealth=errorFindings.length?0:(work.self_check?.performed&&work.self_check?.passed?100:50);
-const score=Math.round(.25*scopeFit+.25*evidenceCompleteness+.20*sourceAuthority+.15*entityTemporalConsistency+.15*deterministicValidationHealth);
-const hardBlockers=errorFindings.map(f=>f.code),decision=useDeterministicRevise||keywordRemovePath?'continue':(hardBlockers.length||score<70?'hitl':score<85?'attention':'continue');
-const snapshot=clean(evidencePacket.source_snapshot_hash||req.source_snapshot_hash)||'none',signature=gaps.map(g=>[g.entity,g.effective_at,g.keyword,g.field,g.reason].map(v=>String(v||'')).join('|')).sort().join('||').slice(0,8000);
-const hash=s=>{let h=2166136261;for(const ch of String(s)){h^=ch.charCodeAt(0);h=Math.imul(h,16777619)}return(h>>>0).toString(16)};
-const reasonCodes=hardBlockers.length?hardBlockers:[decision==='continue'?'READINESS_CONTINUE':decision==='attention'?'READINESS_ATTENTION':'READINESS_HITL'];
-const decisionRecord={contract:'decision_record',contract_version:'1.0',objective:clean(root.packet?.objective||req.objective),considered_inputs:[{kind:'approved_plan',contract:plan.contract||null,keyword_scope:scope},{kind:'source_snapshot',source_snapshot_hash:snapshot,fact_count:facts.length,conflict_count:conflicts.length},{kind:'rag_evidence',citation_count:citations.length,covered_keywords:[...citedKeywords].sort()},{kind:'baseline',package_hash:req.baseline_manifest_hash||req.baseline_schedule_package_ref?.manifest_hash||null}],proposed_actions:operations.slice(0,100).map(c=>({operation:clean(c.operation).toUpperCase(),keyword:clean(c.keyword).toUpperCase(),target_node_id:c.target_node_id||c.node_id||null})),selected_action:{action:status,reason_codes:reasonCodes},rejected_actions:findings.map(f=>({action:f.keyword||f.operation||'builder_output',reason_codes:[f.code]})),assumptions:arr(work.assumptions)?work.assumptions.map(String).slice(0,100):[],evidence_refs:arr(work.evidence)?work.evidence.filter(obj).slice(0,100):[],citations,tool_call_ids:arr(modelDecision.tool_call_ids)?modelDecision.tool_call_ids.map(String).slice(0,100):[],unresolved_questions:gaps.slice(0,100),acceptance_check_results:[{check:'scope_fit',score:scopeFit,passed:scopeFit===100},{check:'evidence_completeness',score:evidenceCompleteness,passed:evidenceCompleteness===100},{check:'source_authority_and_citation',score:sourceAuthority,passed:sourceAuthority===100},{check:'entity_temporal_consistency',score:entityTemporalConsistency,passed:entityTemporalConsistency===100},{check:'deterministic_validation_health',score:deterministicValidationHealth,passed:deterministicValidationHealth===100}]};
-return[{json:{contract:'schedule_builder_stage_result',contract_version:'1.0',status,summary:String(work.summary||'').slice(0,4000),build_mode:mode,generated_schedule:typeof work.generated_schedule==='string'?work.generated_schedule.slice(0,200000):'',ir_events:irEvents,changes,requirements_matrix:requirements,source_map:sourceMap,completeness_report:obj(work.completeness_report)?work.completeness_report:{},preservation_report:obj(work.preservation_report)?work.preservation_report:{},evidence_gap:gaps,deliverables:arr(work.deliverables)?work.deliverables:[],artifact_refs:arr(work.artifact_refs)?work.artifact_refs:[],assumptions:arr(work.assumptions)?work.assumptions:[],warnings:arr(work.warnings)?work.warnings:[],evidence:arr(work.evidence)?work.evidence:[],agent_tool_trace:agentToolTrace,decision_record:decisionRecord,self_check:obj(work.self_check)?work.self_check:{performed:false,passed:false,checks:[],reproducibility:''},human_request:work.human_request??null,error:findings.length?{code:'BUILDER_POLICY_GATE',findings}:work.error??null,hard_blockers:hardBlockers,score:{stage_score:score,components:{scope_fit:scopeFit,evidence_completeness:evidenceCompleteness,source_authority_and_citation:sourceAuthority,entity_temporal_consistency:entityTemporalConsistency,deterministic_validation_health:deterministicValidationHealth},raw_counts:{scope_required:scope.length,scope_represented:scope.filter(k=>represented.has(k)).length,requirements_required:required.length,requirements_supported:requiredSupported,non_keep_changes:nonKeep.length,source_map_entries:sourceMap.length,citations:citations.length,source_conflicts:conflicts.length,evidence_gaps:gaps.length,findings:findings.length,agent_tool_calls:agentToolTrace.length},thresholds:{attention:85,hitl:70},decision,provisional:true},continuation:gaps.length?{protocol:'schedule-builder-evidence-gap-v1',gap_signature:hash(signature),source_snapshot_hash:snapshot,evidence_gap:gaps,max_excel_iterations:Math.min(5,Math.max(1,Number(req.max_excel_iterations)||2)),max_builder_iterations:Math.min(5,Math.max(1,Number(req.max_builder_iterations)||3))}:work.continuation??null}}];
-"""
-    ).replace("__KEYWORDS__", allowed).strip()
-
-
-PREPARE_RENDER = r"""
-const root=$('Normalize SCHEDULE pipeline packet').first().json,intake=$('Run deterministic SCHEDULE intake').first().json,b=$('Validate SCHEDULE builder stage').first().json;
-const catalogue=root.request.schema_catalogue||root.request.rag_evidence?.schema_catalogue||{};
-return[{json:{schedule_render_request:{mode:intake.build_mode,schema_catalogue:catalogue,ir_events:b.ir_events||[]}}}];
-"""
-
-
-PREPARE_MERGE = (
-    r"""
-const root=$('Normalize SCHEDULE pipeline packet').first().json,intake=$('Run deterministic SCHEDULE intake').first().json,r=$('Render typed SCHEDULE IR deterministically').first().json;
-const b=$('Validate SCHEDULE builder stage').first().json;
-let baseline=null;try{baseline=$('Analyze lossless baseline inventory').first().json}catch{}
-const obj=v=>v&&typeof v==='object'&&!Array.isArray(v),arr=Array.isArray,clean=v=>typeof v==='string'?v.trim():'';
-"""
-    + capability_dispatch_js()
-    + r"""
-const packet=obj(root.request?.source_facts_packet)?root.request.source_facts_packet:{};
-const facts=arr(packet.facts)?packet.facts:[];
-const wellFacts=facts.map(pickWellDateFact).filter(f=>f.well&&f.date!=null&&String(f.date).trim()!=='');
-const capReq=mergeObservedScheduleRequest(root.request||{},intake);
-const capTokens=collectCapabilityTokens(capReq,intake);
-const groupSpecRead=readGroupRebindSpec(capReq);
-const exclusive=exclusiveScheduleCaps(capTokens,capReq.requested_change_scope||{},!!(groupSpecRead&&groupSpecRead.ok));
-const wantsCommissioning=exclusive.wantsCommissioning;
-const wantsGroupRebind=exclusive.wantsGroupRebind;
-const timelinePath=intake.build_mode==='REVISE'&&(
-  (wellFacts.length>0&&wantsCommissioning)||
-  (wantsGroupRebind&&groupSpecRead&&groupSpecRead.ok)||
-  (arr(b.source_map)&&b.source_map.some(s=>['timeline_commissioning_revise','timeline_group_revise'].includes(clean(s.path))))
-);
-const taskRemove=clean(intake?.requested_change_scope?.operation).toLowerCase()==='remove'||clean(root.request?.requested_change_scope?.operation).toLowerCase()==='remove';
-const removeApproval=obj(root.request.remove_approval)?root.request.remove_approval:(taskRemove?{actor:'task_text',reason:String(intake.objective||root.request?.objective||'remove requested in task').slice(0,400),gate_id:'task-remove-scope'}:null);
-return[{json:{merge_request:{mode:intake.build_mode,root_path:String(root.request.root_path||root.request.baseline_filename||'schedule.inc'),baseline_schedule_text:String(root.request.baseline_schedule_text||''),include_files:Array.isArray(root.request.include_files)?root.request.include_files:[],baseline_analysis:baseline,changes:timelinePath?[]:(r.changes||[]),schema_render_result:r,explicit_remove_approved:root.request.explicit_remove_approved===true||taskRemove,remove_approval:removeApproval,commissioning_timeline_pending:timelinePath}}}];
-"""
-)
-
-
-APPLY_COMMISSIONING_TIMELINE = build_commissioning_revise_js()
-
-
-PREPARE_VALIDATE = r"""
-// CANDIDATE always uses the same semantic runtime as BASELINE_PREFIX (REVISE-only branch).
-const root=$('Normalize SCHEDULE pipeline packet').first().json;
-let m;try{m=$('Apply commissioning timeline revise').first().json}catch{m=$('Merge SCHEDULE draft deterministically').first().json}
-const r=$('Render typed SCHEDULE IR deterministically').first().json;
-const b=$('Validate SCHEDULE builder stage').first().json;
-let replay=null;try{replay=$('Replay baseline prefix into semantic boundary').first().json}catch{}
-const catalogue=root.request.schema_catalogue||root.request.rag_evidence?.schema_catalogue||{};
-const temporalPolicy=root.request.temporal_policy||{history_end:root.request.history_end||null,forecast_start:root.request.forecast_start||null};
-const generatedBoundary=b.build_mode==='REVISE'?replay?.semantic_state_snapshot:null;
-const commissioning=m.commissioning_revise||null;
-const timelineApplied=commissioning&&commissioning.status==='applied';
-return[{json:{schedule_validation_request:{validation_phase:'CANDIDATE',mode:b.build_mode,build_mode:b.build_mode,schedule_text:m.generated_schedule,output_package:m.output_package,render_result:r,ir_events:timelineApplied?[]:(b.ir_events||[]),simulator_profile:root.request.simulator_profile||{},schema_catalogue:catalogue,schema_catalogue_ref:String(catalogue.catalogue_ref||root.request.schema_catalogue_ref||''),schema_catalogue_approved:r.status==='rendered',approved_keyword_schemas:Array.isArray(catalogue.schemas)?catalogue.schemas:[],temporal_policy:temporalPolicy,initial_semantic_snapshot:b.build_mode==='CREATE'?(root.request.initial_semantic_snapshot||null):null,semantic_baseline_snapshot:generatedBoundary,baseline_package_hash:m.baseline_package_hash||null,commissioning_revise:commissioning,commissioning_timeline_applied:timelineApplied,monthly_dates_check:commissioning?.monthly_dates_check||m.monthly_dates_check||null,preserve_unbound_keywords:b.build_mode==='REVISE'}}}];
-"""
-
-
-PREPARE_VERIFY = r"""
-const b=$('Validate SCHEDULE builder stage').first().json,r=$('Render typed SCHEDULE IR deterministically').first().json;
-let m;try{m=$('Apply commissioning timeline revise').first().json}catch{m=$('Merge SCHEDULE draft deterministically').first().json}
-const v=$('Validate merged SCHEDULE package').first().json;
-return[{json:{builder_result:b,render_result:r,merge_result:m,validation_result:v}}];
-"""
-
-
-FINAL_RESULT = r"""
-const root=$('Normalize SCHEDULE pipeline packet').first().json,b=$('Validate SCHEDULE builder stage').first().json,r=$('Render typed SCHEDULE IR deterministically').first().json;
-let m;try{m=$('Apply commissioning timeline revise').first().json}catch{m=$('Merge SCHEDULE draft deterministically').first().json}
-const v=$('Validate merged SCHEDULE package').first().json,review=$json;
-const plan=$('Validate SCHEDULE pipeline plan').first().json;
-const score=Math.min(Number(b.score?.stage_score||0),Number(v.score?.stage_score||0),Number(review.score?.stage_score||0));
-const generated=String(m.generated_schedule||'');
-const generatedPreview=generated.slice(0,200000);
-const artifactRefs=Array.isArray(b.artifact_refs)?b.artifact_refs.filter(x=>x&&typeof x==='object'):[];
-const reviewDecision=review.decision_record??{contract:'decision_record',contract_version:'1.0',objective:'Independently verify the deterministic SCHEDULE draft.',considered_inputs:[{kind:'builder_result',status:b.status},{kind:'merge_result',status:m.status},{kind:'validation_result',status:v.status}],proposed_actions:[{action:'pass'},{action:'pass_with_warnings'},{action:'reject'}],selected_action:{action:String(review.verdict||'reject'),reason_codes:(review.required_corrections||[]).length?review.required_corrections:[review.can_release?'VERIFIER_PASS':'VERIFIER_NOT_RELEASE_READY']},rejected_actions:[],assumptions:[],evidence_refs:[],citations:[],tool_call_ids:[],unresolved_questions:[],acceptance_check_results:[{check:'merge',passed:m.status==='merged'},{check:'validation',passed:v.status==='valid'},{check:'independent_schedule_verifier',passed:review.verdict==='pass'}]};
-const gateDecisions=[{stage:'plan',decision:plan.score?.decision||'hitl',score:plan.score?.stage_score??null,reason_codes:plan.decision_record?.selected_action?.reason_codes||plan.hard_blockers||[]},{stage:'builder',decision:b.score?.decision||'hitl',score:b.score?.stage_score??null,reason_codes:b.decision_record?.selected_action?.reason_codes||b.hard_blockers||[]},{stage:'render',decision:r.status==='rendered'?'continue':'hitl',score:r.status==='rendered'?100:0,reason_codes:r.hard_blockers||[]},{stage:'validation',decision:v.score?.gate||'hitl',score:v.score?.stage_score??null,reason_codes:v.hard_blockers||[]},{stage:'verification',decision:review.can_release?'continue':'hitl',score:review.score?.stage_score??null,reason_codes:reviewDecision.selected_action.reason_codes}];
-let replay=null;try{replay=$('Replay baseline prefix into semantic boundary').first().json}catch{}
-const trace=[{stage:'intake',status:'accepted'},{stage:'baseline',status:b.build_mode==='REVISE'?'decoded_and_replayed':'not_applicable',score:replay?.score||null,findings:replay?.findings||[]},{stage:'plan',status:plan.status,score:plan.score,decision_record:plan.decision_record},{stage:'builder',status:b.status,score:b.score,decision_record:b.decision_record,tool_calls:Array.isArray(b.agent_tool_trace)?b.agent_tool_trace:[]},{stage:'render',status:r.status,score:{stage_score:r.status==='rendered'?100:0},findings:r.findings},{stage:'merge',status:m.status},{stage:'commissioning_timeline',status:m.commissioning_revise?.status||'skipped'},{stage:'validate',status:v.status,score:v.score},{stage:'verify',status:review.verdict,score:review.score,decision_record:reviewDecision}];
-const slimMerge=obj=>{if(!obj||typeof obj!=='object')return obj;const {generated_schedule,output_package,...rest}=obj;return {...rest,generated_schedule_bytes:String(generated_schedule||'').length,output_package:output_package?{contract:output_package.contract,contract_version:output_package.contract_version,root_path:output_package.root_path,package_hash:output_package.package_hash,file_count:Array.isArray(output_package.files)?output_package.files.length:0}:null};};
-const slimCommissioning=obj=>{if(!obj||typeof obj!=='object')return obj;const {timeline,generated_schedule,...rest}=obj;return {...rest,timeline_steps:Array.isArray(timeline?.steps)?timeline.steps.length:null,generated_schedule_bytes:String(generated_schedule||'').length};};
-let correctionQuestions=(Array.isArray(review.required_corrections)?review.required_corrections:[]).map((c,i)=>{
-  if(c&&typeof c==='object'&&!Array.isArray(c)){
-    const q=String(c.question||c.text||c.message||c.code||'').trim();
-    return {id:String(c.id||`correction_${i+1}`),question:q||'Исправьте замечание проверки schedule.',required:true};
-  }
-  const q=String(c||'').trim();
-  return {id:`correction_${i+1}`,question:q||'Исправьте замечание проверки schedule.',required:true};
-});
-const releaseReady=Boolean(review.can_release);
-if(!releaseReady&&!correctionQuestions.length){
-  correctionQuestions=[{id:'schedule_not_release_ready',question:'Черновик не готов к выпуску. Напишите, что исправить, или уточните исходные данные.',required:true}];
-}
-const releaseAsk='Черновик прогнозного schedule прошёл проверки. Напишите своими словами: выпуск принять — или что доработать (DATES, ORAT и т.п.).';
-const blockedAsk='Черновик прогнозного schedule не готов к выпуску. Напишите, что исправить, своими словами.';
-const asStrings=v=>Array.isArray(v)?v.map(x=>{
-  if(typeof x==='string')return x;
-  if(x&&typeof x==='object')return String(x.summary||x.text||x.message||x.code||'');
-  return String(x??'');
-}).map(s=>s.trim()).filter(Boolean).slice(0,50):[];
-const asObjects=v=>Array.isArray(v)?v.filter(x=>x&&typeof x==='object'&&!Array.isArray(x)).slice(0,50):[];
-const safeArtifacts=asObjects(artifactRefs).filter(a=>['ref','kind','revision','description'].every(k=>typeof a[k]==='string'&&a[k].trim()));
-const attempt=Number.isInteger(Number(root.attempt))?Number(root.attempt):1;
-return[{json:{specialist_result:{contract:'specialist_result',contract_version:'1.0',task_id:root.task_id,specialist_id:'schedule_builder_specialist',attempt,status:releaseReady?'needs_approval':'needs_input',summary:releaseReady?releaseAsk:blockedAsk,user_message:releaseReady?releaseAsk:blockedAsk,deliverables:[{kind:'schedule_inc_text',filename:String(m.output_package?.root_path||'schedule.inc'),description:'Validated SCHEDULE text; not approved until the orchestrator human release gate.',schedule_text:generatedPreview}],artifact_refs:safeArtifacts,compact_data:{build_mode:b.build_mode,generated_schedule_bytes:generated.length,generated_schedule_preview:generated.slice(0,4000),plan,render_result:{status:r.status,hard_blockers:r.hard_blockers||[],catalogue_hash:r.catalogue_hash||null},merge_result:slimMerge(m),validation_result:{status:v.status,hard_blockers:v.hard_blockers||[],score:v.score||null,findings:(Array.isArray(v.findings)?v.findings:[]).filter(f=>f.severity==='error').slice(0,20)},schedule_verifier_result:{verdict:review.verdict,can_release:review.can_release,score:review.score,findings:review.findings||[]},preservation_report:m.preservation_report,semantic_diff:m.semantic_diff,commissioning_revise:slimCommissioning(m.commissioning_revise),monthly_dates_check:m.commissioning_revise?.monthly_dates_check||null,requirements_matrix:b.requirements_matrix,source_map:b.source_map,completeness_report:b.completeness_report,decision_record:reviewDecision,decision_records:[plan.decision_record,b.decision_record,reviewDecision].filter(Boolean),gate_decisions:gateDecisions,stage_scores:trace.filter(x=>x.score).map(x=>({stage:x.stage,...x.score})),overall_score:score,agent_tool_trace:Array.isArray(b.agent_tool_trace)?b.agent_tool_trace:[],trace_summary:trace,release_ready:review.can_release},assumptions:asStrings(b.assumptions),warnings:asStrings(b.warnings),evidence:asObjects(b.evidence),self_check:{performed:true,passed:Boolean(review.can_release),checks:[{check:'schema_render',passed:r.status==='rendered'},{check:'merge',passed:m.status==='merged'},{check:'validation',passed:v.status==='valid'},{check:'independent_schedule_verifier',passed:review.verdict==='pass'}],reproducibility:'Replay the bounded input text, expert schema catalogue, evidence snapshot and typed IR.'},human_request:{kind:releaseReady?'needs_approval':'needs_input',questions:releaseReady?[{id:'release_approval',question:releaseAsk,text:releaseAsk,required:true}]:correctionQuestions},error:releaseReady?null:{code:'SCHEDULE_PIPELINE_NOT_RELEASE_READY',findings:Array.isArray(review.findings)?review.findings.filter(x=>x&&typeof x==='object'):[]},continuation:null}}}];
-"""
-
-
-GATE_RESULT = HITL_USER_COPY_JS + r"""
-const root=$('Normalize SCHEDULE pipeline packet').first().json,x=$json||{};
-const commissioning=x.commissioning_revise&&typeof x.commissioning_revise==='object'?x.commissioning_revise:null;
-const findings=Array.isArray(x.findings)?x.findings:(Array.isArray(x.error?.findings)?x.error.findings:[]);
-const gaps=Array.isArray(x.evidence_gap)&&x.evidence_gap.length?x.evidence_gap:(Array.isArray(commissioning?.evidence_gap)?commissioning.evidence_gap:[]);
-let status=['needs_input','needs_decision','needs_approval','retryable_error','fatal_error'].includes(x.status)?x.status:'needs_input';
-if(x.contract==='schedule_verifier_result'&&x.verdict==='pass_with_warnings')status='needs_approval';
-if(x.contract==='schedule_builder_stage_result'&&Array.isArray(x.evidence_gap)&&x.evidence_gap.length)status='needs_input';
-if(commissioning&&commissioning.status==='needs_input')status='needs_input';
-const rawFindings=findings.length?findings:(Array.isArray(root.packet_findings)?root.packet_findings:[]);
-const compactFindings=hitlUniqueFindings(rawFindings);
-const normalizedFindings=compactFindings.filter(f=>String(f?.severity||'error').toLowerCase()!=='warning'&&String(f?.severity||'error').toLowerCase()!=='info');
-const reasonCodes=[...new Set(normalizedFindings.map(f=>String(f.code||'SCHEDULE_PIPELINE_GATE')))];
-const suppliedQuestions=Array.isArray(x.questions)?x.questions.filter(q=>q&&typeof q==='object').slice(0,100):(Array.isArray(commissioning?.questions)?commissioning.questions:[]);
-const compiled=hitlCompileCopy({
-  findings:normalizedFindings.length?normalizedFindings:compactFindings,
-  gaps,
-  questions:suppliedQuestions,
-  summary:x.user_message||x.summary||x.rationale||commissioning?.findings?.[0]?.note,
-  stage:x.contract||commissioning?.contract||'',
-});
-const questions=compiled.questions;
-const continuation=x.continuation||commissioning?.continuation||(gaps.length&&!String(commissioning?.continuation?.protocol||'').includes('hitl')?{protocol:'schedule-builder-evidence-gap-v1',evidence_gap:gaps}:null);
-const hitlAttach=String(continuation?.protocol||'')==='schedule-builder-hitl-attachment-v1';
-const decisionRecord=x.decision_record??{contract:'decision_record',contract_version:'1.0',objective:String(root.packet?.objective||root.request?.objective||'Resolve the failed SCHEDULE stage.'),considered_inputs:[{kind:'failed_stage',contract:String(x.contract||'unknown'),status:String(x.status||x.verdict||'blocked')}],proposed_actions:[{action:'request_targeted_input'},{action:'retry_with_new_snapshot'}],selected_action:{action:status,reason_codes:reasonCodes.length?reasonCodes:['SCHEDULE_PIPELINE_GATE']},rejected_actions:[],assumptions:[],evidence_refs:[],citations:[],tool_call_ids:[],unresolved_questions:questions,acceptance_check_results:[]};
-const userMessage=compiled.user_message;
-return[{json:{specialist_result:{contract:'specialist_result',contract_version:'1.0',task_id:root.task_id||'unknown',specialist_id:'schedule_builder_specialist',attempt:root.attempt||1,status,summary:userMessage.slice(0,4000),user_message:userMessage.slice(0,800),deliverables:[],artifact_refs:[],compact_data:{failed_stage:String(x.contract||commissioning?.contract||'unknown'),findings:normalizedFindings,findings_truncated:rawFindings.length>normalizedFindings.length,findings_total:rawFindings.length,evidence_gap:gaps.slice(0,50),new_wells:commissioning?.new_wells||[],unlisted_wells_policy:commissioning?.unlisted_wells_policy||null,score:x.score||null,decision_record:decisionRecord,gate_decisions:[{stage:String(x.contract||'unknown'),decision:'hitl',score:x.score?.stage_score??null,reason_codes:decisionRecord.selected_action.reason_codes}],trace_summary:[{stage:String(x.contract||'unknown'),status,score:x.score||null,decision_record:decisionRecord}]},assumptions:[],warnings:[],evidence:[],self_check:{performed:false,passed:false,checks:[],reproducibility:hitlAttach?'Продолжите в этой задаче: прикрепите WELLTRACK и Excel к ответу.':'Продолжите в этой задаче с недостающими файлами или уточнением.'},human_request:{kind:status,questions},error:x.error||{code:hitlAttach?'NEW_WELLS_REQUIRE_HITL':'SCHEDULE_PIPELINE_GATE',findings:normalizedFindings},continuation:hitlAttach?continuation:(continuation&&continuation.protocol==='schedule-builder-evidence-gap-v1'?continuation:null)}}}];
-"""
-
-
-INVALID_RESULT = HITL_USER_COPY_JS + r"""
-const x=$json,findings=Array.isArray(x.packet_findings)?x.packet_findings:[];
-const ragMissing=findings.some(f=>f.code==='SCHEDULE_RAG_EVIDENCE_REQUIRED');
-const status=ragMissing?'needs_input':'fatal_error';
-const code=ragMissing?'SCHEDULE_RAG_EVIDENCE_REQUIRED':'INVALID_SCHEDULE_SPECIALIST_PACKET';
-const compiled=hitlCompileCopy({findings, questions:ragMissing?[{id:'rag_evidence',code:'SCHEDULE_RAG_EVIDENCE_REQUIRED'}]:[], summary:'', stage:'schedule_intake_result'});
-const questions=ragMissing?compiled.questions:[];
-const userMessage=ragMissing?compiled.user_message:'Пакет задачи для Schedule Builder собран неверно. Создайте задачу заново из Activity.';
-const decisionRecord={contract:'decision_record',contract_version:'1.0',objective:'Validate the SCHEDULE specialist request before any model or tool call.',considered_inputs:[{kind:'specialist_packet',task_id:x.task_id||'unknown',packet_valid:false}],proposed_actions:[{action:'reject_invalid_packet'}],selected_action:{action:status,reason_codes:[code]},rejected_actions:[],assumptions:[],evidence_refs:[],citations:[],tool_call_ids:[],unresolved_questions:questions,acceptance_check_results:[{check:'packet_contract',passed:false}]};
-return[{json:{specialist_result:{contract:'specialist_result',contract_version:'1.0',task_id:x.task_id||'unknown',specialist_id:'schedule_builder_specialist',attempt:x.attempt||1,status,summary:userMessage,user_message:userMessage,deliverables:[],artifact_refs:[],compact_data:{findings,decision_record:decisionRecord,gate_decisions:[{stage:'intake',decision:'hitl',score:0,reason_codes:[code]}],trace_summary:[{stage:'intake',status,decision_record:decisionRecord}]},assumptions:[],warnings:[],evidence:[],self_check:{performed:false,passed:false,checks:[],reproducibility:''},human_request:ragMissing?{kind:'needs_input',questions}:null,error:{code,findings},continuation:null}}}];
-"""
-
-
-def build_schedule_pipeline(*, node, note, code, trigger, ifnode, connect, workflow, keywords, planner_schema, planner_system, intake_js, baseline_js, baseline_decode_js, baseline_query_js, plan_validate_js, render_js, merge_js, validate_js, verify_js):
-    example = {"specialist_packet": {"contract": "specialist_packet", "contract_version": "1.0", "task_id": "eng_example", "specialist_id": "schedule_builder_specialist", "attempt": 1, "objective": "Create forecast SCHEDULE", "inputs": {"schedule_request": {"build_mode": "CREATE", "simulator_profile": {"vendor": "Rock Flow Dynamics", "simulator": "tNavigator", "version": "22.2", "unit_system": "METRIC"}, "requested_keyword_scope": ["DATES", "WCONPROD"], "source_facts": [], "rag_evidence": {"contract": "schedule_rag_evidence", "contract_version": "1.0", "citations": [{"document_id": "tnav-22.2", "document_revision": "22.2", "source_hash": "sha256:replace", "page": "replace", "heading": "SCHEDULE"}], "results": []}, "schema_catalogue": {"contract": "schedule_schema_catalogue", "contract_version": "1.0", "catalogue_ref": "catalogue://tnavigator/22.2/replace", "catalogue_hash": "sha256:replace", "source_hash": "sha256:replace", "simulator_profile": {"vendor": "Rock Flow Dynamics", "simulator": "tNavigator", "version": "22.2"}, "approved": False, "approved_by": "", "approval_gate_id": "", "schemas": []}}}, "controls": {"preservation_policy": "preserve_unmentioned"}, "acceptance_criteria": [], "artifact_refs": []}}
-    nodes = [
-        note("SCHEDULE pipeline README", (-1200, -760), "## Governed SCHEDULE pipeline — n8n 2.30.8\n\nVisible bounded CREATE/REVISE specialist: intake → lossless baseline analysis → expert catalogue decode → pre-change semantic replay → planning summary → plan → targeted mutation-safe baseline query → typed IR → deterministic render → merge → candidate replay/validation → independent review.\n\nIt never calls Excel/RAG directly and owns no durable state. Bind it in Universal Orchestrator. Without a complete active keyword instruction and exact expert schema it stops before planning/rendering.", 660, 480),
-        trigger("Receive specialist packet", (-1200, -100), example),
-        code("Normalize SCHEDULE pipeline packet", (-980, -100), NORMALIZE),
-        ifnode("SCHEDULE packet valid?", (-760, -100), "={{ $json.packet_valid }}"),
-        code("Prepare deterministic intake", (-540, -260), PREPARE_INTAKE),
-        code("Run deterministic SCHEDULE intake", (-320, -260), intake_js),
-        ifnode("SCHEDULE intake accepted?", (-100, -260), "={{ $json.status }}", "accepted", "string"),
-        ifnode("REVISE needs baseline analysis?", (120, -260), "={{ $json.build_mode }}", "REVISE", "string"),
-        code("Prepare baseline analysis", (340, -400), PREPARE_BASELINE),
-        code("Analyze lossless baseline inventory", (560, -400), baseline_js),
-        ifnode("Baseline analysis accepted?", (780, -400), "={{ $json.status }}", "analyzed", "string"),
-        code("Prepare catalogue baseline decode", (1000, -400), PREPARE_BASELINE_DECODE),
-        code("Decode typed baseline records", (1220, -400), baseline_decode_js),
-        ifnode("Baseline decode accepted?", (1440, -400), "={{ $json.status }}", "decoded", "string"),
-        code("Prepare baseline prefix replay", (1660, -400), PREPARE_BASELINE_REPLAY),
-        code("Replay baseline prefix into semantic boundary", (1880, -400), validate_js),
-        ifnode("Semantic boundary accepted?", (2100, -400), "={{ $json.status }}", "valid", "string"),
-        code("Prepare baseline planning query", (2320, -400), PREPARE_BASELINE_PLANNING_QUERY),
-        code("Query baseline planning context", (2540, -400), baseline_query_js),
-        ifnode("Baseline planning context accepted?", (2760, -400), "={{ $json.status }}", "succeeded", "string"),
-        code("Prepare SCHEDULE pipeline plan", (2980, -100), PREPARE_PLAN),
-        node("SCHEDULE Planner Agent", "@n8n/n8n-nodes-langchain.agent", 3.1, (3200, -100), {"promptType": "define", "text": "={{ $json.planner_input }}", "hasOutputParser": True, "needsFallback": False, "options": {"systemMessage": planner_system, "maxIterations": 6, "returnIntermediateSteps": True, "enableStreaming": False}}),
-        node("SCHEDULE Planner Chat Model — configure in UI", "@n8n/n8n-nodes-langchain.lmChatOpenAi", 1.3, (3100, -360), {"model": {"mode": "id", "value": "gpt-5.4-nano"}, "options": chat_model_options(max_tokens=3500), "responsesApiEnabled": False}, credentials={"openAiApi": {"id": "REPLACE_IN_UI", "name": "REPLACE: schedule planner chat credential"}}),
-        node("SCHEDULE Planner Structured Output", "@n8n/n8n-nodes-langchain.outputParserStructured", 1.3, (3320, -360), structured_parser_params(json.dumps(planner_schema))),
-        code("Validate SCHEDULE pipeline plan", (3420, -100), plan_validate_js),
-        ifnode("SCHEDULE plan ready?", (3640, -100), '={{ ["proposed"].includes($json.status) && $json.score.decision !== "hitl" }}'),
-        ifnode("REVISE needs targeted baseline context?", (3860, -100), "={{ $json.build_mode }}", "REVISE", "string"),
-        code("Prepare targeted baseline query", (4080, -260), PREPARE_BASELINE_BUILDER_QUERY),
-        code("Query targeted baseline records", (4300, -260), baseline_query_js),
-        ifnode("Targeted baseline context complete?", (4520, -260), "={{ $json.status }}", "succeeded", "string"),
-        code("Prepare SCHEDULE builder stage", (4740, -100), PREPARE_BUILD),
-        node("SCHEDULE Builder Agent", "@n8n/n8n-nodes-langchain.agent", 3.1, (4960, -100), {"promptType": "define", "text": "={{ $json.builder_input }}", "hasOutputParser": True, "needsFallback": False, "options": {"systemMessage": BUILDER_SYSTEM, "maxIterations": 8, "returnIntermediateSteps": True, "enableStreaming": False}}),
-        node("SCHEDULE Builder Chat Model — configure in UI", "@n8n/n8n-nodes-langchain.lmChatOpenAi", 1.3, (4860, -360), {"model": {"mode": "id", "value": "gpt-5.4-nano"}, "options": chat_model_options(max_tokens=6000), "responsesApiEnabled": False}, credentials={"openAiApi": {"id": "REPLACE_IN_UI", "name": "REPLACE: schedule builder chat credential"}}),
-        node("SCHEDULE Builder Structured Output", "@n8n/n8n-nodes-langchain.outputParserStructured", 1.3, (5080, -360), structured_parser_params(json.dumps(BUILDER_SCHEMA))),
-        code("Validate SCHEDULE builder stage", (5180, -100), validate_builder(keywords)),
-        ifnode("Builder draft ready?", (5400, -100), '={{ ["succeeded","partial"].includes($json.status) && $json.score.decision !== "hitl" }}'),
-        code("Prepare deterministic schema render", (5620, -100), PREPARE_RENDER),
-        code("Render typed SCHEDULE IR deterministically", (5840, -100), render_js),
-        ifnode("SCHEDULE schema render accepted?", (6060, -100), "={{ $json.status }}", "rendered", "string"),
-        code("Prepare deterministic merge", (6280, -100), PREPARE_MERGE),
-        code("Merge SCHEDULE draft deterministically", (6500, -100), merge_js),
-        ifnode("SCHEDULE merge accepted?", (6720, -100), "={{ $json.status }}", "merged", "string"),
-        code("Apply commissioning timeline revise", (6830, -100), APPLY_COMMISSIONING_TIMELINE),
-        ifnode("Commissioning timeline ok?", (6880, -100), "={{ $json.status }}", "merged", "string"),
-        code("Prepare SCHEDULE validation", (6940, -100), PREPARE_VALIDATE),
-        code("Validate merged SCHEDULE package", (7160, -100), validate_js),
-        ifnode("SCHEDULE validation passed?", (7380, -100), "={{ $json.status }}", "valid", "string"),
-        code("Prepare independent SCHEDULE review", (7600, -100), PREPARE_VERIFY),
-        code("Run independent SCHEDULE verifier", (7820, -100), verify_js),
-        ifnode("SCHEDULE verifier passed?", (8040, -100), "={{ $json.verdict }}", "pass", "string"),
-        code("Build release-ready specialist result", (8260, -100), FINAL_RESULT),
-        code("Build SCHEDULE pipeline gate result", (6940, 220), GATE_RESULT),
-        code("Build invalid SCHEDULE packet result", (-540, 120), INVALID_RESULT),
-    ]
-    connections = {}
-    connect(connections, "Receive specialist packet", "Normalize SCHEDULE pipeline packet")
-    connect(connections, "Normalize SCHEDULE pipeline packet", "SCHEDULE packet valid?")
-    connect(connections, "SCHEDULE packet valid?", "Prepare deterministic intake", idx=0)
-    connect(connections, "SCHEDULE packet valid?", "Build invalid SCHEDULE packet result", idx=1)
-    connect(connections, "Prepare deterministic intake", "Run deterministic SCHEDULE intake")
-    connect(connections, "Run deterministic SCHEDULE intake", "SCHEDULE intake accepted?")
-    connect(connections, "SCHEDULE intake accepted?", "REVISE needs baseline analysis?", idx=0)
-    connect(connections, "SCHEDULE intake accepted?", "Build SCHEDULE pipeline gate result", idx=1)
-    connect(connections, "REVISE needs baseline analysis?", "Prepare baseline analysis", idx=0)
-    connect(connections, "REVISE needs baseline analysis?", "Prepare SCHEDULE pipeline plan", idx=1)
-    connect(connections, "Prepare baseline analysis", "Analyze lossless baseline inventory")
-    connect(connections, "Analyze lossless baseline inventory", "Baseline analysis accepted?")
-    connect(connections, "Baseline analysis accepted?", "Prepare catalogue baseline decode", idx=0)
-    connect(connections, "Baseline analysis accepted?", "Build SCHEDULE pipeline gate result", idx=1)
-    connect(connections, "Prepare catalogue baseline decode", "Decode typed baseline records")
-    connect(connections, "Decode typed baseline records", "Baseline decode accepted?")
-    connect(connections, "Baseline decode accepted?", "Prepare baseline prefix replay", idx=0)
-    connect(connections, "Baseline decode accepted?", "Build SCHEDULE pipeline gate result", idx=1)
-    connect(connections, "Prepare baseline prefix replay", "Replay baseline prefix into semantic boundary")
-    connect(connections, "Replay baseline prefix into semantic boundary", "Semantic boundary accepted?")
-    connect(connections, "Semantic boundary accepted?", "Prepare baseline planning query", idx=0)
-    connect(connections, "Semantic boundary accepted?", "Build SCHEDULE pipeline gate result", idx=1)
-    connect(connections, "Prepare baseline planning query", "Query baseline planning context")
-    connect(connections, "Query baseline planning context", "Baseline planning context accepted?")
-    connect(connections, "Baseline planning context accepted?", "Prepare SCHEDULE pipeline plan", idx=0)
-    connect(connections, "Baseline planning context accepted?", "Build SCHEDULE pipeline gate result", idx=1)
-    connect(connections, "Prepare SCHEDULE pipeline plan", "SCHEDULE Planner Agent")
-    connect(connections, "SCHEDULE Planner Chat Model — configure in UI", "SCHEDULE Planner Agent", "ai_languageModel", 0, "ai_languageModel")
-    connect(connections, "SCHEDULE Planner Chat Model — configure in UI", "SCHEDULE Planner Structured Output", "ai_languageModel", 0, "ai_languageModel")
-    connect(connections, "SCHEDULE Planner Structured Output", "SCHEDULE Planner Agent", "ai_outputParser", 0, "ai_outputParser")
-    connect(connections, "SCHEDULE Planner Agent", "Validate SCHEDULE pipeline plan")
-    connect(connections, "Validate SCHEDULE pipeline plan", "SCHEDULE plan ready?")
-    connect(connections, "SCHEDULE plan ready?", "REVISE needs targeted baseline context?", idx=0)
-    connect(connections, "SCHEDULE plan ready?", "Build SCHEDULE pipeline gate result", idx=1)
-    connect(connections, "REVISE needs targeted baseline context?", "Prepare targeted baseline query", idx=0)
-    connect(connections, "REVISE needs targeted baseline context?", "Prepare SCHEDULE builder stage", idx=1)
-    connect(connections, "Prepare targeted baseline query", "Query targeted baseline records")
-    connect(connections, "Query targeted baseline records", "Targeted baseline context complete?")
-    connect(connections, "Targeted baseline context complete?", "Prepare SCHEDULE builder stage", idx=0)
-    connect(connections, "Targeted baseline context complete?", "Build SCHEDULE pipeline gate result", idx=1)
-    connect(connections, "Prepare SCHEDULE builder stage", "SCHEDULE Builder Agent")
-    connect(connections, "SCHEDULE Builder Chat Model — configure in UI", "SCHEDULE Builder Agent", "ai_languageModel", 0, "ai_languageModel")
-    connect(connections, "SCHEDULE Builder Chat Model — configure in UI", "SCHEDULE Builder Structured Output", "ai_languageModel", 0, "ai_languageModel")
-    connect(connections, "SCHEDULE Builder Structured Output", "SCHEDULE Builder Agent", "ai_outputParser", 0, "ai_outputParser")
-    connect(connections, "SCHEDULE Builder Agent", "Validate SCHEDULE builder stage")
-    connect(connections, "Validate SCHEDULE builder stage", "Builder draft ready?")
-    connect(connections, "Builder draft ready?", "Prepare deterministic schema render", idx=0)
-    connect(connections, "Builder draft ready?", "Build SCHEDULE pipeline gate result", idx=1)
-    connect(connections, "Prepare deterministic schema render", "Render typed SCHEDULE IR deterministically")
-    connect(connections, "Render typed SCHEDULE IR deterministically", "SCHEDULE schema render accepted?")
-    connect(connections, "SCHEDULE schema render accepted?", "Prepare deterministic merge", idx=0)
-    connect(connections, "SCHEDULE schema render accepted?", "Build SCHEDULE pipeline gate result", idx=1)
-    connect(connections, "Prepare deterministic merge", "Merge SCHEDULE draft deterministically")
-    connect(connections, "Merge SCHEDULE draft deterministically", "SCHEDULE merge accepted?")
-    connect(connections, "SCHEDULE merge accepted?", "Apply commissioning timeline revise", idx=0)
-    connect(connections, "SCHEDULE merge accepted?", "Build SCHEDULE pipeline gate result", idx=1)
-    connect(connections, "Apply commissioning timeline revise", "Commissioning timeline ok?")
-    connect(connections, "Commissioning timeline ok?", "Prepare SCHEDULE validation", idx=0)
-    connect(connections, "Commissioning timeline ok?", "Build SCHEDULE pipeline gate result", idx=1)
-    connect(connections, "Prepare SCHEDULE validation", "Validate merged SCHEDULE package")
-    connect(connections, "Validate merged SCHEDULE package", "SCHEDULE validation passed?")
-    connect(connections, "SCHEDULE validation passed?", "Prepare independent SCHEDULE review", idx=0)
-    connect(connections, "SCHEDULE validation passed?", "Build SCHEDULE pipeline gate result", idx=1)
-    connect(connections, "Prepare independent SCHEDULE review", "Run independent SCHEDULE verifier")
-    connect(connections, "Run independent SCHEDULE verifier", "SCHEDULE verifier passed?")
-    connect(connections, "SCHEDULE verifier passed?", "Build release-ready specialist result", idx=0)
-    connect(connections, "SCHEDULE verifier passed?", "Build SCHEDULE pipeline gate result", idx=1)
-    return workflow(
-        "SCHEDULE — Builder",
-        "Visible intake, lossless catalogue decode, pre-change state replay, targeted baseline retrieval, plan, typed IR, deterministic render, merge, timeline commissioning revise (parse→mutate→emit), candidate validation and independent review. Durable state, Excel and release remain in the Orchestrator.",
-        nodes,
-        connections,
-        "specialist_result/v1",
-    )
-
-===END_FILE===
-===BEGIN_FILE===	n8n/templates/schedule_rag_workflows.py	73402	utf8
-"""Practical hybrid-RAG workflows for n8n 2.30.8.
-
-One physical PGVector/parent table pair; logical isolation is `target_base`.
-Credentials are selected in UI; knowledge itself never enters the workflow export.
-"""
-from __future__ import annotations
-
-import json
-import uuid
-from pathlib import Path
-
-RAG_DIR = Path(__file__).resolve().parents[1] / "rag"
-
-
-KEYWORDS = [
-    "DATES", "INCLUDE", "GRUPTREE", "WELSPECS", "WELLTRACK", "COMPDATMD",
-    "WCONHIST", "WCONPROD", "WCONINJE", "GCONPROD", "GCONINJE", "GUIDERAT", "GSATPROD", "GSATINJE", "WELLSTRE", "WINJGAS", "GINJGAS", "BRANPROP", "NODEPROP", "GNETDP", "NETBALAN",
-    "FRACTURE_TEMPLATE", "FRACTURE_SPECS", "FRACTURE_STAGE", "WECON", "WTEST",
-    "WELTARG", "WNETDP", "WPIMULT", "WDFAC", "WEFAC", "WELOPEN", "WELDRAW", "WLIST", "WFRACP", "WFRACPL",
-    "VFPPROD", "WVFPDP", "ACTIONX", "DELAYACT", "ENDACTIO", "UDQ", "UDT", "APPLYSCRIPT",
-]
-
-NAMESPACES_JS = r"""
-const NAMESPACES={schedule_mvp:{types:['keyword_instruction','worked_example'],keywordMode:'schedule',requireCoverage:true,requireSchema:true,section:'SCHEDULE'},excel_protocol:{types:['protocol_instruction'],keywordMode:'open',requireCoverage:true,requireSchema:false,section:'EXCEL'},orchestrator_routing:{types:['routing_card'],keywordMode:'open',requireCoverage:false,requireSchema:false,section:'ORCHESTRATOR'},specialist_template:{types:['capability_instruction','worked_example'],keywordMode:'open',requireCoverage:true,requireSchema:false,section:'SPECIALIST'}};
-const COVERAGE_TYPES=new Set(['keyword_instruction','protocol_instruction','capability_instruction']);
-const ALLOWED_BASES=new Set(Object.keys(NAMESPACES));
-""".strip()
-
-
-def _credential(name: str) -> dict:
-    return {"postgres": {"id": "REPLACE_IN_UI", "name": name}}
-
-
-def _embedding_credential(name: str) -> dict:
-    return {"openAiApi": {"id": "REPLACE_IN_UI", "name": name}}
-
-
-INGEST_NORMALIZE = (NAMESPACES_JS + r"""
-// Code v2 defaults to run-once-for-all-items; normalize every incoming block.
-const obj=v=>v&&typeof v==='object'&&!Array.isArray(v),arr=Array.isArray,clean=v=>typeof v==='string'?v.trim():'';
-const parse=v=>{if(obj(v))return v;if(typeof v!=='string'||!v.trim())return{};try{const x=JSON.parse(v);return obj(x)?x:{}}catch{return{}}};
-const list=v=>arr(v)?[...new Set(v.map(clean).filter(Boolean))]:typeof v==='string'?(()=>{try{const x=JSON.parse(v);return arr(x)?list(x):v.split(/[,;|]/).map(clean).filter(Boolean)}catch{return v.split(/[,;|]/).map(clean).filter(Boolean)}})():[];
-const allowed=new Set(KEYWORDS_PLACEHOLDER);
-const hash=s=>{let h=2166136261;for(const ch of String(s)){h^=ch.charCodeAt(0);h=Math.imul(h,16777619)}return(h>>>0).toString(16).padStart(8,'0')};
-const recordless=e=>{const p=obj(e.parser)?e.parser:{},l=obj(e.layout)?e.layout:{},fs=arr(e.fields)?e.fields:[];return!fs.length&&Number(p.token_width)===0&&clean(l.record_terminator).toUpperCase()==='NONE'&&clean(l.block_terminator).toUpperCase()==='NONE'};
-const normalizeOne=(wrapper)=>{
-const incoming=wrapper.schedule_knowledge_block??wrapper.mas_knowledge_block??wrapper.schedule_knowledge_document??wrapper;
-const raw=obj(incoming)?incoming:{};
-const m={...parse(raw.metadata_json),...(obj(raw.metadata)?raw.metadata:{})},catalogue=parse(raw.schema_catalogue_json??raw.schema_catalogue),catalogueProvided=Object.keys(catalogue).length>0,findings=[];
-const targetBase=clean(raw.target_base||m.target_base||'schedule_mvp'),ns=NAMESPACES[targetBase]||{};
-const knowledgeType=clean(raw.knowledge_type||m.knowledge_type).toLowerCase(),allowTypes=new Set(ns.types||[]);
-const knowledgeId=clean(raw.knowledge_id||raw.document_id||m.knowledge_id||m.document_id),revision=clean(raw.revision||raw.document_revision||m.revision||m.document_revision||'1'),status=clean(raw.status||raw.knowledge_status||m.status||m.knowledge_status||'active').toLowerCase();
-const rawKeywords=list(raw.keywords||raw.keyword_families||m.keywords||m.keyword_families);
-const keywords=ns.keywordMode==='schedule'?rawKeywords.map(v=>v.toUpperCase()).filter(v=>allowed.has(v)):rawKeywords.map(v=>v.toUpperCase()).filter(Boolean);
-const topics=list(raw.topics||m.topics),taskPatterns=list(raw.task_patterns||m.task_patterns),examples=arr(raw.examples)?raw.examples.filter(obj).slice(0,100):[];
-const text=clean(raw.text||raw.document_text),title=clean(raw.title||m.title||knowledgeId),author=clean(raw.author||raw.approved_by||m.author||m.approved_by),accessScope=clean(raw.access_scope||m.access_scope||'petroleum-engineering');
-const authority='department_expert',sourceHash=clean(raw.source_hash||m.source_hash).toLowerCase(),page=clean(raw.page||m.page),heading=clean(raw.heading||m.heading||title);
-const simulatorFamily=targetBase==='schedule_mvp'?list(raw.simulator_family||m.simulator_family||['E100','E300','tNavigator']):list(raw.simulator_family||m.simulator_family||[]);
-const body={contract:'schedule_knowledge_block',contract_version:'1.0',target_base:targetBase,knowledge_type:knowledgeType,knowledge_id:knowledgeId,revision,title,keywords,topics,task_patterns:taskPatterns,simulator_family:simulatorFamily,status,author,text,examples,schema_catalogue:catalogueProvided?catalogue:null};
-const searchable=[title,text,keywords.join(' '),topics.join(' '),taskPatterns.join(' '),...examples.flatMap(e=>[clean(e.title),clean(e.task),clean(e.schedule_text),clean(e.explanation)])].filter(Boolean).join('\n\n');
-if(!ALLOWED_BASES.has(targetBase))findings.push({code:'TARGET_BASE_NOT_ALLOWLISTED',severity:'error',target_base:targetBase});
-if(!allowTypes.has(knowledgeType))findings.push({code:'KNOWLEDGE_TYPE_INVALID',severity:'error'});if(!knowledgeId)findings.push({code:'KNOWLEDGE_ID_REQUIRED',severity:'error'});if(!revision)findings.push({code:'REVISION_REQUIRED',severity:'error'});if(!title)findings.push({code:'TITLE_REQUIRED',severity:'error'});if(!author)findings.push({code:'EXPERT_AUTHOR_REQUIRED',severity:'error'});if(!accessScope)findings.push({code:'ACCESS_SCOPE_REQUIRED',severity:'error'});
-if(status!=='active')findings.push({code:'ACTIVE_KNOWLEDGE_REQUIRED',severity:'error'});if(!searchable)findings.push({code:'KNOWLEDGE_TEXT_REQUIRED',severity:'error'});if(searchable.length>2000000)findings.push({code:'KNOWLEDGE_TEXT_TOO_LARGE',severity:'error'});
-if(!keywords.length)findings.push({code:ns.keywordMode==='schedule'?'NO_SCHEDULE_KEYWORD_FOUND':'KNOWLEDGE_TAGS_REQUIRED',severity:'error'});
-if(knowledgeType==='keyword_instruction'&&!text)findings.push({code:'FULL_KEYWORD_INSTRUCTION_REQUIRED',severity:'error'});
-if(knowledgeType==='protocol_instruction'&&!text)findings.push({code:'PROTOCOL_INSTRUCTION_REQUIRED',severity:'error'});
-if(knowledgeType==='routing_card'&&!text)findings.push({code:'ROUTING_CARD_TEXT_REQUIRED',severity:'error'});
-if(knowledgeType==='capability_instruction'&&!text)findings.push({code:'CAPABILITY_INSTRUCTION_REQUIRED',severity:'error'});
-if(knowledgeType==='worked_example'&&!examples.length&&!text)findings.push({code:'WORKED_EXAMPLE_REQUIRED',severity:'error'});
-const contentHash=sourceHash||`fnv1a32:${hash(JSON.stringify(body))}`,documentId=knowledgeId,documentRevision=revision;
-if(catalogueProvided){const cp=obj(catalogue.simulator_profile)?catalogue.simulator_profile:{},schemas=arr(catalogue.schemas)?catalogue.schemas:[];
- if(catalogue.contract!=='schedule_schema_catalogue'||catalogue.contract_version!=='1.0')findings.push({code:'SCHEMA_CATALOGUE_CONTRACT_INVALID',severity:'error'});if(!/^sha256:[a-f0-9]{64}$/i.test(clean(catalogue.catalogue_hash)))findings.push({code:'SCHEMA_CATALOGUE_HASH_INVALID',severity:'error'});if(!/^sha256:[a-f0-9]{64}$/i.test(clean(catalogue.source_hash)))findings.push({code:'SCHEMA_SOURCE_HASH_INVALID',severity:'error'});if(clean(cp.simulator).toLowerCase()!=='tnavigator'||clean(cp.version)!=='22.2')findings.push({code:'SCHEMA_PROFILE_NOT_APPROVED',severity:'error'});if(!schemas.length)findings.push({code:'SCHEMA_CATALOGUE_EMPTY',severity:'error'});
- for(const entry of schemas){const kw=clean(entry.keyword).toUpperCase(),fields=arr(entry.fields)?entry.fields:[],names=new Set(fields.map(f=>clean(f?.name)).filter(Boolean)),sem=obj(entry.semantics)?entry.semantics:null,fieldOk=f=>clean(f)&&names.has(clean(f));if(!allowed.has(kw)||!clean(entry.schema_id)||!clean(entry.schema_revision)||!(fields.length||recordless(entry)))findings.push({code:'SCHEMA_ENTRY_INVALID',severity:'error',keyword:kw,knowledge_id:knowledgeId});if(!sem)findings.push({code:'SCHEMA_SEMANTICS_REQUIRED',severity:'error',keyword:kw});else{for(const d of(arr(sem.definitions)?sem.definitions:[]))if(!obj(d)||!clean(d.entity_type)||!fieldOk(d.id_field))findings.push({code:'SEMANTIC_DEFINITION_INVALID',severity:'error',keyword:kw});for(const r of(arr(sem.references)?sem.references:[]))if(!obj(r)||!clean(r.entity_type)||!fieldOk(r.id_field))findings.push({code:'SEMANTIC_REFERENCE_INVALID',severity:'error',keyword:kw});}}
-}
-const normalizedCatalogue=catalogueProvided?{...catalogue,approved:catalogue.approved!==false,approved_by:clean(catalogue.approved_by||catalogue.author||author),author:clean(catalogue.author||catalogue.approved_by||author),approval_gate_id:clean(catalogue.approval_gate_id||`expert:${knowledgeId}:${revision}`),access_scope:clean(catalogue.access_scope||accessScope)}:null;
-const isSchedule=targetBase==='schedule_mvp';
-return{json:{contract:'schedule_knowledge_document',contract_version:'1.0',status:findings.length?'needs_input':'approved_for_ingestion',text:searchable,knowledge_block:{...body,schema_catalogue:normalizedCatalogue},metadata:{document_id:documentId,document_revision:documentRevision,source_hash:contentHash,target_base:targetBase,knowledge_type:knowledgeType,knowledge_id:knowledgeId,revision,status:'active',access_scope:accessScope,author,approved_by:author,authority_level:authority,approval_status:'approved',section:ns.section||'KNOWLEDGE',knowledge_status:'current',title,page,heading,keyword_families:keywords,topics,task_patterns:taskPatterns,parent_key:`${targetBase}:${knowledgeId}:${revision}`,ingest_key:`${targetBase}:${knowledgeId}:${revision}:${hash(searchable)}`,vendor:'department',simulator:isSchedule?'tNavigator':'',simulator_version:isSchedule?'22.2':''},schema_catalogue:normalizedCatalogue,catalogue_present:catalogueProvided,findings}};
-};
-return $input.all().map(item=>normalizeOne(item.json||{}));
-""").replace("KEYWORDS_PLACEHOLDER", json.dumps(KEYWORDS))
-
-
-INGEST_RESULT = r"""
-const approved=$('Normalize approved SCHEDULE knowledge').all().map(i=>i.json).filter(x=>x&&x.status==='approved_for_ingestion');
-const diff=$('Select new MAS knowledge').first().json||{};
-const skipped=Array.isArray(diff.skipped_ids)?diff.skipped_ids:(diff.sync_meta&&Array.isArray(diff.sync_meta.skipped_ids)?diff.sync_meta.skipped_ids:[]);
-return[{json:{contract:'schedule_knowledge_ingest_result',contract_version:'1.0',status:approved.length?'ingested':'already_present',inserted:approved.length,skipped:skipped.length,skipped_ids:skipped,knowledge_ids:approved.map(x=>x.metadata?.knowledge_id).filter(Boolean),vector_table:'tnavigator_schedule_knowledge_v1',parent_table:'tnavigator_schedule_knowledge_documents_v1',schema_catalogue_table:'tnavigator_schedule_schema_catalogue_v1',embedding_profile:'configure one identical model/dimensions in ingestion and retrieval',findings:[]}}];
-"""
-
-
-PREPARE_PARENT_PERSIST = r"""
-const items=$('Normalize approved SCHEDULE knowledge').all().filter(i=>i.json?.status==='approved_for_ingestion');
-return items.map(entry=>{
-  const x=entry.json,m=x.metadata||{},b=x.knowledge_block||{};
-  return {json:{...x,sql_parameters:[m.target_base,m.knowledge_id,m.revision,m.knowledge_type,'active',JSON.stringify(m.keyword_families||[]),JSON.stringify(m.topics||[]),JSON.stringify(m.task_patterns||[]),m.title,JSON.stringify(b),x.text,m.source_hash,m.access_scope,m.author]}};
-});
-"""
-
-
-PARENT_UPSERT_SQL = """WITH superseded AS (UPDATE tnavigator_schedule_knowledge_documents_v1 SET status='superseded',stored_at=now() WHERE target_base=$1 AND knowledge_id=$2 AND revision<>$3 AND status='active' RETURNING 1), inserted AS (INSERT INTO tnavigator_schedule_knowledge_documents_v1
-(target_base,knowledge_id,revision,knowledge_type,status,keywords,topics,task_patterns,title,body_json,searchable_text,content_hash,access_scope,author)
-VALUES($1,$2,$3,$4,$5,$6::jsonb,$7::jsonb,$8::jsonb,$9,$10::jsonb,$11,$12,$13,$14)
-ON CONFLICT(target_base,knowledge_id,revision) DO UPDATE SET knowledge_type=EXCLUDED.knowledge_type,status=EXCLUDED.status,keywords=EXCLUDED.keywords,topics=EXCLUDED.topics,task_patterns=EXCLUDED.task_patterns,title=EXCLUDED.title,body_json=EXCLUDED.body_json,searchable_text=EXCLUDED.searchable_text,content_hash=EXCLUDED.content_hash,access_scope=EXCLUDED.access_scope,author=EXCLUDED.author,stored_at=now() RETURNING 1), chunks AS (UPDATE tnavigator_schedule_knowledge_v1 t SET metadata=jsonb_set(coalesce(t.metadata,'{}'::jsonb),'{knowledge_status}','"superseded"'::jsonb) WHERE t.metadata->>'target_base'=$1 AND t.metadata->>'knowledge_id'=$2 AND coalesce(t.metadata->>'revision','')<>$3 AND coalesce(t.metadata->>'knowledge_status','')='current' RETURNING 1)
-SELECT count(*)::int AS documents_stored FROM inserted"""
-
-
-PREPARE_CATALOGUE_PERSIST = r"""
-const items=$('Normalize approved SCHEDULE knowledge').all().filter(i=>i.json?.catalogue_present===true&&i.json?.schema_catalogue);
-if(!items.length)return[{json:{sql_parameters:['','','','','','','','schedule_mvp'],catalogue_present:false}}];
-return items.map(entry=>{
-  const x=entry.json,c=x.schema_catalogue,m=x.metadata||{};
-  return {json:{...x,sql_parameters:[c?JSON.stringify(c):'',c?.catalogue_hash||'',c?.catalogue_ref||`expert://${m.target_base}/${m.knowledge_id}/${m.revision}`,c?.source_hash||m.source_hash,c?.access_scope||m.access_scope,c?.approved_by||m.author,c?.approval_gate_id||`expert:${m.knowledge_id}:${m.revision}`,m.target_base]}};
-});
-"""
-
-
-CATALOGUE_UPSERT_SQL = """WITH payload AS (SELECT NULLIF($1,'')::jsonb AS body), inserted AS (INSERT INTO tnavigator_schedule_schema_catalogue_v1
-(catalogue_hash,catalogue_ref,source_hash,access_scope,simulator_version,approved_by,approval_gate_id,target_base,schema_catalogue)
-SELECT $2,$3,$4,$5,'22.2',$6,$7,$8,body FROM payload WHERE body IS NOT NULL
-ON CONFLICT(catalogue_hash) DO UPDATE SET catalogue_ref=EXCLUDED.catalogue_ref,source_hash=EXCLUDED.source_hash,access_scope=EXCLUDED.access_scope,approved_by=EXCLUDED.approved_by,approval_gate_id=EXCLUDED.approval_gate_id,target_base=EXCLUDED.target_base,schema_catalogue=EXCLUDED.schema_catalogue,stored_at=now() RETURNING catalogue_hash)
-SELECT count(*)::int AS catalogues_stored FROM inserted"""
-
-
-ENSURE_PARENT_SQL = """CREATE TABLE IF NOT EXISTS tnavigator_schedule_knowledge_documents_v1 (
- target_base text NOT NULL, knowledge_id text NOT NULL, revision text NOT NULL,
- knowledge_type text NOT NULL, status text NOT NULL, keywords jsonb NOT NULL,
- topics jsonb NOT NULL, task_patterns jsonb NOT NULL, title text NOT NULL,
- body_json jsonb NOT NULL, searchable_text text NOT NULL, content_hash text NOT NULL,
- access_scope text NOT NULL, author text NOT NULL, stored_at timestamptz NOT NULL DEFAULT now(),
- PRIMARY KEY(target_base,knowledge_id,revision));
-CREATE TABLE IF NOT EXISTS tnavigator_schedule_schema_catalogue_v1 (
- catalogue_hash text PRIMARY KEY,catalogue_ref text NOT NULL,source_hash text NOT NULL,
- access_scope text NOT NULL,simulator_version text NOT NULL CHECK(simulator_version='22.2'),
- approved_by text NOT NULL,approval_gate_id text NOT NULL,target_base text NOT NULL DEFAULT 'schedule_mvp',
- schema_catalogue jsonb NOT NULL,stored_at timestamptz NOT NULL DEFAULT now());
-ALTER TABLE tnavigator_schedule_schema_catalogue_v1 ADD COLUMN IF NOT EXISTS target_base text NOT NULL DEFAULT 'schedule_mvp';
-SELECT count(*)::int AS parent_tables_ready FROM tnavigator_schedule_knowledge_documents_v1"""
-
-
-LOOKUP_EXISTING_SQL = """SELECT target_base, knowledge_id, revision, content_hash
-FROM tnavigator_schedule_knowledge_documents_v1
-WHERE status='active'"""
-
-
-FINALIZE_INGEST_SQL = """CREATE TABLE IF NOT EXISTS tnavigator_schedule_knowledge_documents_v1 (
- target_base text NOT NULL, knowledge_id text NOT NULL, revision text NOT NULL,
- knowledge_type text NOT NULL, status text NOT NULL, keywords jsonb NOT NULL,
- topics jsonb NOT NULL, task_patterns jsonb NOT NULL, title text NOT NULL,
- body_json jsonb NOT NULL, searchable_text text NOT NULL, content_hash text NOT NULL,
- access_scope text NOT NULL, author text NOT NULL, stored_at timestamptz NOT NULL DEFAULT now(),
- PRIMARY KEY(target_base,knowledge_id,revision));
-CREATE TABLE IF NOT EXISTS tnavigator_schedule_schema_catalogue_v1 (
- catalogue_hash text PRIMARY KEY,catalogue_ref text NOT NULL,source_hash text NOT NULL,
- access_scope text NOT NULL,simulator_version text NOT NULL CHECK(simulator_version='22.2'),
- approved_by text NOT NULL,approval_gate_id text NOT NULL,target_base text NOT NULL DEFAULT 'schedule_mvp',
- schema_catalogue jsonb NOT NULL,stored_at timestamptz NOT NULL DEFAULT now());
-ALTER TABLE tnavigator_schedule_schema_catalogue_v1 ADD COLUMN IF NOT EXISTS target_base text NOT NULL DEFAULT 'schedule_mvp';
-CREATE INDEX IF NOT EXISTS tn_sched_kb_metadata_gin ON tnavigator_schedule_knowledge_v1 USING gin (metadata);
-CREATE INDEX IF NOT EXISTS tn_sched_kb_lexical_gin ON tnavigator_schedule_knowledge_v1 USING gin (to_tsvector('simple',coalesce(text,'')));
-WITH ranked AS (SELECT id,row_number() OVER(PARTITION BY metadata->>'ingest_key',md5(text) ORDER BY id::text) rn FROM tnavigator_schedule_knowledge_v1), deleted AS (DELETE FROM tnavigator_schedule_knowledge_v1 t USING ranked r WHERE t.id=r.id AND r.rn>1 RETURNING t.id) SELECT count(*)::int AS duplicates_removed FROM deleted"""
-
-
-RETRIEVAL_NORMALIZE = (NAMESPACES_JS + r"""
-const raw=$json.schedule_retrieval_request??$json.mas_retrieval_request??$json,obj=v=>v&&typeof v==='object'&&!Array.isArray(v),clean=v=>typeof v==='string'?v.trim():'';
-const parse=v=>{if(obj(v))return v;if(typeof v!=='string'||!v.trim())return{};try{const x=JSON.parse(v);return obj(x)?x:{}}catch{return{}}},f={...parse(raw.filters_json),...(obj(raw.filters)?raw.filters:{})},findings=[];
-const query=clean(raw.query),targetBase=clean(f.target_base||raw.target_base||'schedule_mvp'),accessScope=clean(f.access_scope||raw.access_scope||'petroleum-engineering'),requestId=clean(raw.request_id),ns=NAMESPACES[targetBase]||{};
-if(!query)findings.push({code:'QUERY_REQUIRED',severity:'error'});if(query.length>8000)findings.push({code:'QUERY_TOO_LARGE',severity:'error'});if(!ALLOWED_BASES.has(targetBase))findings.push({code:'TARGET_BASE_NOT_ALLOWLISTED',severity:'error'});if(!accessScope)findings.push({code:'ACCESS_SCOPE_REQUIRED',severity:'error'});
-const allowed=new Set(KEYWORDS_PLACEHOLDER);
-const supplied=Array.isArray(f.keyword_families)?f.keyword_families.map(v=>clean(v)).filter(Boolean):[];
-const exactSchedule=[...new Set((query.match(/\b[A-Z][A-Z0-9_]+\b/g)||[]).filter(k=>allowed.has(k)))];
-// Coverage must follow the retrieval scope. Do not treat every ALLCAPS token in the
-// query as required evidence (e.g. "do not invent WELSPECS" must not force WELSPECS RAG).
-const tags=ns.keywordMode==='schedule'?(supplied.length?supplied.map(v=>v.toUpperCase()).filter(v=>allowed.has(v)):exactSchedule):supplied.map(v=>v.toUpperCase());
-const exact=tags.slice();
-const allowTypes=new Set(ns.types||[]);
-const types=Array.isArray(f.knowledge_types)?[...new Set(f.knowledge_types.map(v=>clean(v).toLowerCase()).filter(v=>allowTypes.has(v)))]:[...allowTypes];
-const topics=Array.isArray(f.topics)?[...new Set(f.topics.map(clean).filter(Boolean))]:[],patterns=Array.isArray(f.task_patterns)?[...new Set(f.task_patterns.map(clean).filter(Boolean))]:[];
-return[{json:{contract:'schedule_retrieval_query',contract_version:'1.0',status:findings.length?'needs_input':'query_ready',query,request_id:requestId||null,top_k:Math.min(80,Math.max(Math.trunc(Number(raw.top_k)||10),tags.length*4,20)),filters:{target_base:targetBase,access_scope:accessScope,knowledge_types:types,keyword_families:tags,topics,task_patterns:patterns,simulator_version:targetBase==='schedule_mvp'?'22.2':'',section:ns.section||'KNOWLEDGE',knowledge_status:'current',require_coverage:ns.requireCoverage===true,require_schema:ns.requireSchema===true},exact_keyword_terms:exact,findings}}];
-""").replace("KEYWORDS_PLACEHOLDER", json.dumps(KEYWORDS))
-
-
-PREPARE_LEXICAL = r"""const x=$json;const tags=Array.isArray(x.filters?.keyword_families)?x.filters.keyword_families:[];const branchLimit=Math.min(120,Math.max(Number(x.top_k)||10,tags.length*4,24));return[{json:{...x,branch:'lexical',sql_parameters:[x.query,x.filters.target_base,x.filters.access_scope,branchLimit,JSON.stringify(x.filters.keyword_families||[]),JSON.stringify(x.filters.knowledge_types||[])]}}];"""
-LEXICAL_SQL = """WITH authorized AS (SELECT id,text,metadata FROM tnavigator_schedule_knowledge_v1 WHERE metadata->>'target_base'=$2 AND metadata->>'access_scope'=$3 AND metadata->>'knowledge_status'='current' AND metadata->>'knowledge_type' IN (SELECT jsonb_array_elements_text($6::jsonb))), ranked AS (SELECT id::text candidate_id,text page_content,metadata,CASE WHEN EXISTS(SELECT 1 FROM jsonb_array_elements_text($5::jsonb) q WHERE upper(trim(q.value))=ANY(regexp_split_to_array(upper(regexp_replace(coalesce(metadata->>'keyword_families',''),'[\\[\\]\"]','','g')),'\\s*,\\s*'))) THEN 1 ELSE 0 END exact_hit,ts_rank_cd(to_tsvector('simple',coalesce(text,'')),websearch_to_tsquery('simple',$1)) lexical_score FROM authorized WHERE to_tsvector('simple',coalesce(text,''))@@websearch_to_tsquery('simple',$1) OR EXISTS(SELECT 1 FROM jsonb_array_elements_text($5::jsonb) q WHERE upper(trim(q.value))=ANY(regexp_split_to_array(upper(regexp_replace(coalesce(metadata->>'keyword_families',''),'[\\[\\]\"]','','g')),'\\s*,\\s*')))) SELECT candidate_id,page_content,metadata,exact_hit,lexical_score,row_number() OVER(ORDER BY exact_hit DESC,lexical_score DESC,candidate_id) lexical_rank FROM ranked ORDER BY lexical_rank LIMIT $4"""
-PREPARE_TAG = r"""const x=$('Validate SCHEDULE retrieval request').first().json;const tags=Array.isArray(x.filters?.keyword_families)?x.filters.keyword_families:[];const branchLimit=Math.min(120,Math.max(Number(x.top_k)||10,tags.length*4,24));return[{json:{...x,branch:'tag',sql_parameters:[x.filters.target_base,x.filters.access_scope,JSON.stringify(x.filters.keyword_families||[]),JSON.stringify(x.filters.topics||[]),JSON.stringify(x.filters.task_patterns||[]),JSON.stringify(x.filters.knowledge_types||[]),branchLimit]}}];"""
-TAG_SQL = """WITH matched AS (SELECT id,text,metadata,coalesce(metadata->>'knowledge_id','') AS kid FROM tnavigator_schedule_knowledge_v1 WHERE metadata->>'target_base'=$1 AND metadata->>'access_scope'=$2 AND metadata->>'knowledge_status'='current' AND metadata->>'knowledge_type' IN (SELECT jsonb_array_elements_text($6::jsonb)) AND (($3::jsonb<>'[]'::jsonb AND EXISTS(SELECT 1 FROM jsonb_array_elements_text($3::jsonb) q WHERE upper(trim(q.value))=ANY(regexp_split_to_array(upper(regexp_replace(coalesce(metadata->>'keyword_families',''),'[\\[\\]\"]','','g')),'\\s*,\\s*')))) OR ($4::jsonb<>'[]'::jsonb AND EXISTS(SELECT 1 FROM jsonb_array_elements_text($4::jsonb) q WHERE lower(trim(q.value))=ANY(regexp_split_to_array(lower(regexp_replace(coalesce(metadata->>'topics',''),'[\\[\\]\"]','','g')),'\\s*,\\s*')))) OR ($5::jsonb<>'[]'::jsonb AND EXISTS(SELECT 1 FROM jsonb_array_elements_text($5::jsonb) q WHERE lower(trim(q.value))=ANY(regexp_split_to_array(lower(regexp_replace(coalesce(metadata->>'task_patterns',''),'[\\[\\]\"]','','g')),'\\s*,\\s*')))))), per_kid AS (SELECT id::text candidate_id,text page_content,metadata,row_number() OVER(PARTITION BY kid ORDER BY id::text) AS per_kid_rn FROM matched) SELECT candidate_id,page_content,metadata,row_number() OVER(ORDER BY per_kid_rn,candidate_id) AS tag_rank FROM per_kid WHERE per_kid_rn<=3 ORDER BY tag_rank LIMIT $7"""
-WRAP_LEXICAL = r"""const q=$('Validate SCHEDULE retrieval request').first().json,input=$input.all(),error=input.find(i=>i.json?.error||i.json?.message&&i.json?.level==='error'),candidates=input.filter(i=>i.json?.candidate_id&&i.json?.page_content!==undefined).map((i,n)=>({candidate_id:String(i.json.candidate_id),page_content:String(i.json.page_content||''),metadata:i.json.metadata||{},rank:Number(i.json.lexical_rank||n+1),score:Number(i.json.lexical_score||0),exact_hit:Boolean(Number(i.json.exact_hit||0))}));return[{json:{branch:'lexical',query:q,candidates,branch_findings:error?[{code:'LEXICAL_BRANCH_FAILED',severity:'error',message:String(error.json.error||error.json.message)}]:[]}}];"""
-WRAP_TAG = r"""const q=$('Validate SCHEDULE retrieval request').first().json,input=$input.all(),error=input.find(i=>i.json?.error||i.json?.message&&i.json?.level==='error'),candidates=input.filter(i=>i.json?.candidate_id&&i.json?.page_content!==undefined).map((i,n)=>({candidate_id:String(i.json.candidate_id),page_content:String(i.json.page_content||''),metadata:i.json.metadata||{},rank:Number(i.json.tag_rank||n+1),score:0}));return[{json:{branch:'tag',query:q,candidates,branch_findings:error?[{code:'TAG_BRANCH_FAILED',severity:'error',message:String(error.json.error||error.json.message)}]:[]}}];"""
-WRAP_SEMANTIC = r"""const q=$('Validate SCHEDULE retrieval request').first().json,input=$input.all(),error=input.find(i=>i.json?.error||i.json?.message&&i.json?.level==='error'),candidates=input.map((i,n)=>{const d=i.json.document||{};return{candidate_id:String(d.metadata?.chunk_id||d.metadata?.ingest_key||''),page_content:String(d.pageContent||''),metadata:d.metadata||{},rank:n+1,score:Number(i.json.score||0)}}).filter(c=>c.candidate_id&&c.page_content);return[{json:{branch:'semantic',query:q,candidates,branch_findings:error?[{code:'SEMANTIC_BRANCH_FAILED',severity:'error',message:String(error.json.error||error.json.message)}]:[]}}];"""
-
-
-# Tag match is OR across keyword_families | topics | task_patterns. Hard isolation
-# is target_base + knowledge_types + access_scope (authorized CTE / validMeta).
-# Do not AND those three tag fields — empty topics would drop every card.
-RRF = NAMESPACES_JS + r"""
-const packets=$input.all().map(i=>i.json),q=packets.find(p=>p.query)?.query||{},by=new Map(),k=60,arr=Array.isArray,clean=v=>typeof v==='string'?v.trim():'';
-const validMeta=m=>m&&String(m.target_base||'')===String(q.filters?.target_base||'')&&String(m.access_scope||'')===String(q.filters?.access_scope||'')&&String(m.knowledge_status||'')==='current'&&(q.filters?.knowledge_types||[]).includes(String(m.knowledge_type||'')),findings=packets.flatMap(p=>arr(p.branch_findings)?p.branch_findings:[]);
-for(const p of packets)for(const c of(arr(p.candidates)?p.candidates:[])){if(!validMeta(c.metadata))continue;const id=String(c.candidate_id||''),parent=String(c.metadata.parent_key||`${c.metadata.target_base}:${c.metadata.knowledge_id}:${c.metadata.revision}`);if(!id||!parent)continue;const x=by.get(parent)||{parent_key:parent,representative_chunk_id:id,page_content:String(c.page_content||''),metadata:c.metadata,rrf_score:0,branches:[],chunk_ids:[]};x.rrf_score+=1/(k+Math.max(1,Number(c.rank)||999));if(c.exact_hit)x.rrf_score+=.02;x.branches.push(p.branch);x.chunk_ids.push(id);if(String(c.page_content||'').length>x.page_content.length)x.page_content=String(c.page_content||'');by.set(parent,x)}
-const requested=arr(q.exact_keyword_terms)?q.exact_keyword_terms.map(String).map(x=>x.toUpperCase()):[],keep=Math.max(Number(q.top_k)||10,requested.length||0);
-const ranked=[...by.values()].sort((a,b)=>b.rrf_score-a.rrf_score||a.parent_key.localeCompare(b.parent_key)).slice(0,keep),tags=v=>arr(v)?v.map(String).map(x=>x.trim().toUpperCase()).filter(Boolean):typeof v==='string'?(()=>{try{return tags(JSON.parse(v))}catch{return v.replace(/[\[\]"]/g,'').split(',').map(x=>x.trim().toUpperCase()).filter(Boolean)}})():[];
-const instructionCoverage=new Set(ranked.filter(r=>COVERAGE_TYPES.has(String(r.metadata.knowledge_type||''))).flatMap(r=>tags(r.metadata.keyword_families))),uncovered=(q.filters?.require_coverage===true)?requested.filter(v=>!instructionCoverage.has(v)):[];if(!ranked.length)findings.push({code:'NO_AUTHORIZED_EVIDENCE',severity:'error'});if(uncovered.length)findings.push({code:'KEYWORD_INSTRUCTION_COVERAGE_INCOMPLETE',severity:'error',keywords:uncovered});const hard=findings.some(f=>f.severity==='error');
-return[{json:{contract:'schedule_retrieval_result',contract_version:'1.0',status:hard?'abstain':'ranked',request_id:q.request_id||null,query:q.query,filters:q.filters,exact_keyword_terms:requested,ranked_parents:hard?[]:ranked.map(r=>({parent_key:r.parent_key,target_base:r.metadata.target_base,knowledge_id:r.metadata.knowledge_id,revision:r.metadata.revision,knowledge_type:r.metadata.knowledge_type,keyword_families:tags(r.metadata.keyword_families),rrf_score:Number(r.rrf_score.toFixed(8)),branches:[...new Set(r.branches)].sort(),chunk_ids:[...new Set(r.chunk_ids)]})),findings,retrieval:{algorithm:'rrf',rrf_k:k,branches:['lexical','semantic','tag'],candidate_count:by.size,returned:hard?0:ranked.length},evidence_ready:false}}];
-"""
-
-
-PREPARE_PARENT_LOOKUP = r"""
-const e=$json||{},parents=Array.isArray(e.ranked_parents)?e.ranked_parents:[];
-return[{json:{evidence:e,sql_parameters:[String(e.filters?.target_base||''),String(e.filters?.access_scope||''),JSON.stringify(parents.map(p=>({knowledge_id:p.knowledge_id,revision:p.revision}))) ]}}];
-"""
-PARENT_LOOKUP_SQL = """SELECT target_base,knowledge_id,revision,knowledge_type,status,keywords,topics,task_patterns,title,body_json,content_hash,access_scope,author FROM tnavigator_schedule_knowledge_documents_v1 WHERE target_base=$1 AND access_scope=$2 AND status='active' AND EXISTS(SELECT 1 FROM jsonb_to_recordset($3::jsonb) x(knowledge_id text,revision text) WHERE x.knowledge_id=tnavigator_schedule_knowledge_documents_v1.knowledge_id AND x.revision=tnavigator_schedule_knowledge_documents_v1.revision)"""
-HYDRATE_PARENTS = NAMESPACES_JS + r"""
-const prepared=$('Prepare full parent knowledge lookup').first().json,e=prepared.evidence||{},arr=Array.isArray,obj=v=>v&&typeof v==='object'&&!arr(v),parse=v=>{if(obj(v))return v;if(typeof v==='string'){try{const x=JSON.parse(v);return obj(x)?x:{}}catch{return{}}}return{}},rows=$input.all().map(i=>i.json||{}),ranked=arr(e.ranked_parents)?e.ranked_parents:[],by=new Map(rows.filter(r=>r.knowledge_id).map(r=>[`${r.knowledge_id}:${r.revision}`,r])),findings=arr(e.findings)?e.findings.slice():[];
-const results=[];for(const rank of ranked){const row=by.get(`${rank.knowledge_id}:${rank.revision}`);if(!row){findings.push({code:'INACTIVE_OR_MISSING_PARENT_SKIPPED',severity:'warning',knowledge_id:rank.knowledge_id,revision:rank.revision});continue}results.push({knowledge_id:row.knowledge_id,revision:row.revision,knowledge_type:row.knowledge_type,title:row.title,keywords:row.keywords,topics:row.topics,task_patterns:row.task_patterns,body:parse(row.body_json),content_hash:row.content_hash,author:row.author,rrf_score:rank.rrf_score,branches:rank.branches})}
-const requested=arr(e.exact_keyword_terms)?e.exact_keyword_terms:arr(e.filters?.keyword_families)?e.filters.keyword_families:[],covered=new Set(results.filter(r=>COVERAGE_TYPES.has(String(r.knowledge_type||''))).flatMap(r=>arr(r.keywords)?r.keywords:[]).map(String).map(x=>x.toUpperCase())),uncovered=(e.filters?.require_coverage===true)?requested.map(String).map(x=>x.toUpperCase()).filter(k=>!covered.has(k)):[];if(uncovered.length)findings.push({code:'KEYWORD_INSTRUCTION_COVERAGE_INCOMPLETE',severity:'error',keywords:uncovered});if(rows.some(r=>r.error||r.message&&r.level==='error'))findings.push({code:'PARENT_KNOWLEDGE_LOOKUP_FAILED',severity:'error'});const hard=findings.some(f=>f.severity==='error');
-return[{json:{...e,status:hard?'abstain':'succeeded',results:hard?[]:results,citations:hard?[]:results.map(r=>({knowledge_id:r.knowledge_id,revision:r.revision,knowledge_type:r.knowledge_type,content_hash:r.content_hash,author:r.author,keyword_families:r.keywords,rrf_score:r.rrf_score,branches:r.branches})),findings,evidence_ready:!hard}}];
-"""
-
-
-PREPARE_SCHEMA_LOOKUP = r"""const e=$json||{},requested=[...new Set((Array.isArray(e.filters?.keyword_families)?e.filters.keyword_families:[]).map(v=>String(v||'').trim().toUpperCase()).filter(Boolean))];return[{json:{evidence:e,sql_parameters:[String(e.filters?.target_base||''),String(e.filters?.access_scope||''),JSON.stringify(requested)]}}];"""
-CATALOGUE_LOOKUP_SQL = """SELECT catalogue_hash,catalogue_ref,source_hash,access_scope,approved_by,approval_gate_id,schema_catalogue FROM tnavigator_schedule_schema_catalogue_v1 WHERE target_base=$1 AND access_scope=$2 AND ($3::jsonb='[]'::jsonb OR EXISTS (SELECT 1 FROM jsonb_array_elements(coalesce(schema_catalogue->'schemas','[]'::jsonb)) s JOIN jsonb_array_elements_text($3::jsonb) q ON upper(trim(coalesce(s->>'keyword','')))=upper(trim(q.value)))) ORDER BY stored_at DESC,catalogue_hash LIMIT 100"""
-ATTACH_SCHEMA_CATALOGUE = r"""
-const prepared=$('Prepare approved schema catalogue lookup').first().json,e=prepared.evidence||{},obj=v=>v&&typeof v==='object'&&!Array.isArray(v),arr=Array.isArray,clean=v=>typeof v==='string'?v.trim():'',parse=v=>{if(obj(v))return v;if(typeof v==='string'){try{const x=JSON.parse(v);return obj(x)?x:{}}catch{return{}}}return{}},findings=arr(e.findings)?e.findings.slice():[],requested=arr(e.filters?.keyword_families)?e.filters.keyword_families.map(v=>clean(v).toUpperCase()).filter(Boolean):[];
-if(e.filters?.require_schema!==true){const hard=findings.some(f=>f.severity==='error')||e.status==='abstain';return[{json:{...e,status:hard?'abstain':(e.status||'succeeded'),results:hard?[]:e.results,citations:hard?[]:e.citations,findings,evidence_ready:!hard&&e.evidence_ready!==false,schema_catalogue:null,retrieval:{...(e.retrieval||{}),full_parent_hydration:true,schema_catalogue_lookup:false,catalogue_hash:null}}}];}
-const shaRotr=(x,n)=>((x>>>n)|(x<<(32-n)))>>>0,shaUtf8=s=>{const out=[];for(let i=0;i<String(s).length;i++){let c=String(s).charCodeAt(i);if(c<0x80)out.push(c);else if(c<0x800)out.push(0xc0|(c>>6),0x80|(c&63));else if(c>=0xd800&&c<=0xdbff){const u=0x10000+((c&1023)<<10)|(String(s).charCodeAt(++i)&1023);out.push(0xf0|(u>>18),0x80|((u>>12)&63),0x80|((u>>6)&63),0x80|(u&63));}else out.push(0xe0|(c>>12),0x80|((c>>6)&63),0x80|(c&63));}return out;};
-const SHA_K=[0x428a2f98,0x71374491,0xb5c0fbcf,0xe9b5dba5,0x3956c25b,0x59f111f1,0x923f82a4,0xab1c5ed5,0xd807aa98,0x12835b01,0x243185be,0x550c7dc3,0x72be5d74,0x80deb1fe,0x9bdc0a7f,0xc19bf174,0xe49b69c1,0xefbe4786,0x0fc19dc6,0x240ca1cc,0x2de92c6f,0x4a7484aa,0x5cb0a9dc,0x76f988da,0x983e5152,0xa831c66d,0xb00327c8,0xbf597fc7,0xc6e00bf3,0xd5a79147,0x06ca6351,0x14292967,0x27b70a85,0x2e1b2138,0x4d2c6dfc,0x53380d13,0x650a7354,0x766a0abb,0x81c2c92e,0x92722c85,0xa2bfe8a1,0xa81a664b,0xc24b8b70,0xc76c51a3,0xd192e819,0xd6990624,0xf40e3585,0x106aa070,0x19a4c116,0x1e376c08,0x2748774c,0x34b0bcb5,0x391c0cb3,0x4ed8aa4a,0x5b9cca4f,0x682e6ff3,0x748f82ee,0x78a5636f,0x84c87814,0x8cc70208,0x90befffa,0xa4506ceb,0xbef9a3f7,0xc67178f2];
-const sha256=s=>{const b=shaUtf8(s),bit=b.length*8,b2=b.slice();b2.push(0x80);while((b2.length%64)!==56)b2.push(0);for(let i=7;i>=0;i--)b2.push((bit/Math.pow(2,i*8))&255);let h0=0x6a09e667,h1=0xbb67ae85,h2=0x3c6ef372,h3=0xa54ff53a,h4=0x510e527f,h5=0x9b05688c,h6=0x1f83d9ab,h7=0x5be0cd19;for(let off=0;off<b2.length;off+=64){const w=new Array(64);for(let i=0;i<16;i++){const p=off+i*4;w[i]=((b2[p]<<24)|(b2[p+1]<<16)|(b2[p+2]<<8)|b2[p+3])>>>0}for(let i=16;i<64;i++){const a=w[i-15],c=w[i-2],s0=(shaRotr(a,7)^shaRotr(a,18)^(a>>>3))>>>0,s1=(shaRotr(c,17)^shaRotr(c,19)^(c>>>10))>>>0;w[i]=(w[i-16]+s0+w[i-7]+s1)>>>0}let a=h0,bv=h1,c=h2,d=h3,e=h4,f=h5,g=h6,hh=h7;for(let i=0;i<64;i++){const S1=(shaRotr(e,6)^shaRotr(e,11)^shaRotr(e,25))>>>0,ch=((e&f)^((~e)&g))>>>0,t1=(hh+S1+ch+SHA_K[i]+w[i])>>>0,S0=(shaRotr(a,2)^shaRotr(a,13)^shaRotr(a,22))>>>0,maj=((a&bv)^(a&c)^(bv&c))>>>0,t2=(S0+maj)>>>0;hh=g;g=f;f=e;e=(d+t1)>>>0;d=c;c=bv;bv=a;a=(t1+t2)>>>0}h0=(h0+a)>>>0;h1=(h1+bv)>>>0;h2=(h2+c)>>>0;h3=(h3+d)>>>0;h4=(h4+e)>>>0;h5=(h5+f)>>>0;h6=(h6+g)>>>0;h7=(h7+hh)>>>0}return[h0,h1,h2,h3,h4,h5,h6,h7].map(x=>x.toString(16).padStart(8,'0')).join('')};
-const mergeHash=vals=>{const uniq=[...new Set(vals.map(clean).filter(Boolean))].sort();if(!uniq.length)return null;if(uniq.length===1)return uniq[0].toLowerCase();return `sha256:${sha256(uniq.join('|'))}`;};
-const byKeyword=new Map(),sourceHashes=[],catalogueHashes=[],approvers=[],gateIds=[];
-for(const row of $input.all().map(i=>i.json||{})){
-  const c=parse(row.schema_catalogue),p=obj(c.simulator_profile)?c.simulator_profile:{},schemas=arr(c.schemas)?c.schemas:[];
-  const baseOk=c.contract==='schedule_schema_catalogue'&&c.contract_version==='1.0'&&clean(p.simulator).toLowerCase()==='tnavigator'&&clean(p.version)==='22.2'&&/^sha256:[a-f0-9]{64}$/i.test(clean(c.catalogue_hash))&&/^sha256:[a-f0-9]{64}$/i.test(clean(c.source_hash));
-  if(!baseOk||!schemas.length)continue;
-  const approver=clean(row.approved_by||c.approved_by||c.author);
-  const gate=clean(row.approval_gate_id||c.approval_gate_id||'schedule-schema-catalogue-approved');
-  const recordless=e=>{const p=obj(e.parser)?e.parser:{},l=obj(e.layout)?e.layout:{},fs=arr(e.fields)?e.fields:[];return!fs.length&&Number(p.token_width)===0&&clean(l.record_terminator).toUpperCase()==='NONE'&&clean(l.block_terminator).toUpperCase()==='NONE'};
-  for(const entry of schemas){
-    const kw=clean(entry.keyword).toUpperCase();
-    if(!requested.includes(kw))continue;
-    const fields=arr(entry.fields)?entry.fields:[],sem=obj(entry.semantics)?entry.semantics:null;
-    if(!clean(entry.schema_id)||!clean(entry.schema_revision)||!(fields.length||recordless(entry))||!sem)continue;
-    const variant=clean(entry.variant)||'default';
-    const list=byKeyword.get(kw)||[];
-    if(list.some(e=> (clean(e.variant)||'default')===variant))continue;
-    list.push(entry);byKeyword.set(kw,list);catalogueHashes.push(clean(c.catalogue_hash));sourceHashes.push(clean(c.source_hash));if(approver)approvers.push(approver);if(gate)gateIds.push(gate);
-  }
-}
-const missing=requested.filter(k=>!byKeyword.has(k));
-if(!requested.length)findings.push({code:'SCHEMA_KEYWORD_SCOPE_REQUIRED',severity:'error'});
-if(missing.length)findings.push({code:'EXPERT_SCHEMA_CATALOGUE_NOT_FOUND',severity:'error',keywords:missing});
-const hard=findings.some(f=>f.severity==='error');

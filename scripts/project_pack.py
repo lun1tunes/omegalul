@@ -14,6 +14,8 @@ END = "===END_FILE==="
 DEFAULT_CHUNK_SIZE = 1_000_000
 
 PACK_DIRS = (
+    "agents-template",
+    "mas-agent-kit",
     "excel-agent-tools",
     "fastapi-math-service",
     "mas-activity-service",

@@ -1,3 +1,200 @@
+        "jsCode": "const response = $input.first().json || {};\nconst escapeHtml = (value) => String(value ?? '')\n  .replace(/&/g, '&amp;')\n  .replace(/</g, '&lt;')\n  .replace(/>/g, '&gt;')\n  .replace(/\\\"/g, '&quot;')\n  .replace(/'/g, '&#39;');\nconst prettyJson = (value, limit = 16000) => {\n  let text;\n  try { text = JSON.stringify(value, null, 2); } catch { text = String(value); }\n  return text.length > limit ? `${text.slice(0, limit)}\\n… truncated for display` : text;\n};\nconst questionText = (q) => {\n  if (!q || typeof q !== 'object') return String(q ?? '');\n  return String(q.text || q.question || q.message || q.id || '').trim();\n};\nconst result = response.result && typeof response.result === 'object' ? response.result : null;\nconst deliverables = Array.isArray(result?.deliverables) ? result.deliverables : [];\nconst scheduleText = response.schedule_text\n  || result?.release?.schedule_text\n  || result?.compact_data?.generated_schedule\n  || deliverables.find((value) => typeof value?.schedule_text === 'string')?.schedule_text\n  || null;\nconst gate = response.human_gate && typeof response.human_gate === 'object' ? response.human_gate : null;\nconst questions = Array.isArray(gate?.questions) ? gate.questions : [];\nconst status = String(response.status || 'error');\nconst taskId = String(response.task_id || '');\nconst version = response.version ?? null;\nconst message = String(response.message || (scheduleText ? 'SCHEDULE generated.' : 'MAS task completed.'));\nconst questionItems = questions\n  .map((q, index) => `<li><strong>${escapeHtml(String(q.id || `q${index + 1}`))}</strong>: ${escapeHtml(questionText(q))}${q.expected_format ? ` <em>(format: ${escapeHtml(q.expected_format)})</em>` : ''}${q.required === false ? '' : ' <strong>*</strong>'}</li>`)\n  .join('');\nconst gateBlock = gate\n  ? `<section>\n<h2>Human input required</h2>\n<p><strong>What is wrong / why stopped:</strong> ${escapeHtml(gate.reason || message)}</p>\n<p><strong>Gate kind:</strong> <code>${escapeHtml(gate.kind || 'needs_input')}</code></p>\n${questionItems ? `<p><strong>What the orchestrator needs from you:</strong></p><ol>${questionItems}</ol>` : '<p>No structured questions were returned; use the reason above.</p>'}\n<p><strong>What you should do next:</strong></p>\n<ol>\n<li>Copy Task ID <code>${escapeHtml(taskId)}</code></li>\n<li>Open the published form <strong>Form — MAS Human Gate</strong> (<code>/form/mas-human-gate</code>)</li>\n<li>Paste the Task ID, choose action (<code>reply</code> / <code>approve</code> / <code>reject</code>), and answer in plain language</li>\n<li>Do <em>not</em> copy version/gate_id manually — Human Gate loads them from task status</li>\n</ol>\n</section>`\n  : '';\nconst scheduleBlock = scheduleText\n  ? `<section><h2>schedule.inc</h2><pre>${escapeHtml(String(scheduleText).slice(0, 100000))}</pre></section>`\n  : '';\nconst html = `<main>\n<h1>MAS task result</h1>\n<p>Status: <strong>${escapeHtml(status)}</strong></p>\n<p>${escapeHtml(message)}</p>\n<p>Task ID: <code>${escapeHtml(taskId || 'n/a')}</code></p>\n<p>Version: <code>${escapeHtml(version ?? 'n/a')}</code></p>\n${gateBlock}\n${scheduleBlock}\n<details><summary>Structured orchestrator response</summary><pre>${escapeHtml(prettyJson(response))}</pre></details>\n</main>`;\nreturn [{ json: {\n  task_id: taskId || null,\n  status,\n  message,\n  version,\n  schedule_text: scheduleText,\n  human_gate: gate,\n  result: result || response,\n  form_response_html: html,\n}}];"
+      },
+      "id": "677238b1-42dc-49f5-aa4f-51090ded7794",
+      "name": "Build safe MAS form response",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        840,
+        0
+      ]
+    },
+    {
+      "parameters": {
+        "operation": "completion",
+        "respondWith": "showText",
+        "responseText": "={{ $json.form_response_html }}"
+      },
+      "id": "a1b2c3d4-e5f6-7788-9900-aabbccddeeff",
+      "name": "Show MAS result",
+      "type": "n8n-nodes-base.form",
+      "typeVersion": 2.5,
+      "position": [
+        1120,
+        0
+      ]
+    }
+  ],
+  "pinData": {},
+  "connections": {
+    "MAS task form": {
+      "main": [
+        [
+          {
+            "node": "Prepare orchestrator request",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Prepare orchestrator request": {
+      "main": [
+        [
+          {
+            "node": "Call Universal Engineering Orchestrator",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Call Universal Engineering Orchestrator": {
+      "main": [
+        [
+          {
+            "node": "Build safe MAS form response",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Build safe MAS form response": {
+      "main": [
+        [
+          {
+            "node": "Show MAS result",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    }
+  },
+  "versionId": "65ee5750-e77a-41a9-af57-d8aed364137a",
+  "meta": {
+    "templateCredsSetupCompleted": false,
+    "targetN8nVersion": "2.30.8",
+    "contractVersion": "mas_entry_form/v1"
+  },
+  "tags": []
+}
+
+===END_FILE===
+===BEGIN_FILE===	n8n/workflows/retired/tnavigator-schedule-builder.workflow.json	537557	utf8
+{
+  "id": "974c652d-be5b-523f-9591-67b27165272a",
+  "name": "SCHEDULE — Builder",
+  "description": "Visible intake, lossless catalogue decode, pre-change state replay, targeted baseline retrieval, plan, typed IR, deterministic render, merge, timeline commissioning revise (parse→mutate→emit), candidate validation and independent review. Durable state, Excel and release remain in the Orchestrator.",
+  "nodes": [
+    {
+      "parameters": {
+        "content": "## edit after import\n\n**SCHEDULE — Builder** — after UI import, complete bindings before activate:\n\n- Confirm model wiring for agent **SCHEDULE Planner Agent**\n- Set OpenAI credentials on **SCHEDULE Planner Chat Model — configure in UI**\n- Confirm model wiring for agent **SCHEDULE Builder Agent**\n- Set OpenAI credentials on **SCHEDULE Builder Chat Model — configure in UI**\n\nDo not rely on env()/Globals for corporate UI import.",
+        "height": 272,
+        "width": 440,
+        "color": 1
+      },
+      "id": "ef95f01e-bf3b-5889-9de9-fb9b044607a6",
+      "name": "edit after import",
+      "type": "n8n-nodes-base.stickyNote",
+      "typeVersion": 1,
+      "position": [
+        -40,
+        -502
+      ]
+    },
+    {
+      "parameters": {
+        "content": "## Governed SCHEDULE pipeline — n8n 2.30.8\n\nVisible bounded CREATE/REVISE specialist: intake → lossless baseline analysis → expert catalogue decode → pre-change semantic replay → planning summary → plan → targeted mutation-safe baseline query → typed IR → deterministic render → merge → candidate replay/validation → independent review.\n\nIt never calls Excel/RAG directly and owns no durable state. Bind it in Universal Orchestrator. Without a complete active keyword instruction and exact expert schema it stops before planning/rendering.",
+        "width": 660,
+        "height": 480,
+        "color": 5
+      },
+      "id": "12aa8916-bb4a-5a6b-8a32-5fcd5a39e210",
+      "name": "SCHEDULE pipeline README",
+      "type": "n8n-nodes-base.stickyNote",
+      "typeVersion": 1,
+      "position": [
+        -740,
+        -690
+      ]
+    },
+    {
+      "parameters": {
+        "inputSource": "jsonExample",
+        "jsonExample": "{\"specialist_packet\": {\"contract\": \"specialist_packet\", \"contract_version\": \"1.0\", \"task_id\": \"eng_example\", \"specialist_id\": \"schedule_builder_specialist\", \"attempt\": 1, \"objective\": \"Create forecast SCHEDULE\", \"inputs\": {\"schedule_request\": {\"build_mode\": \"CREATE\", \"simulator_profile\": {\"vendor\": \"Rock Flow Dynamics\", \"simulator\": \"tNavigator\", \"version\": \"22.2\", \"unit_system\": \"METRIC\"}, \"requested_keyword_scope\": [\"DATES\", \"WCONPROD\"], \"source_facts\": [], \"rag_evidence\": {\"contract\": \"schedule_rag_evidence\", \"contract_version\": \"1.0\", \"citations\": [{\"document_id\": \"tnav-22.2\", \"document_revision\": \"22.2\", \"source_hash\": \"sha256:replace\", \"page\": \"replace\", \"heading\": \"SCHEDULE\"}], \"results\": []}, \"schema_catalogue\": {\"contract\": \"schedule_schema_catalogue\", \"contract_version\": \"1.0\", \"catalogue_ref\": \"catalogue://tnavigator/22.2/replace\", \"catalogue_hash\": \"sha256:replace\", \"source_hash\": \"sha256:replace\", \"simulator_profile\": {\"vendor\": \"Rock Flow Dynamics\", \"simulator\": \"tNavigator\", \"version\": \"22.2\"}, \"approved\": false, \"approved_by\": \"\", \"approval_gate_id\": \"\", \"schemas\": []}}}, \"controls\": {\"preservation_policy\": \"preserve_unmentioned\"}, \"acceptance_criteria\": [], \"artifact_refs\": []}}"
+      },
+      "id": "4609215c-11ae-5666-9186-86d52271fc97",
+      "name": "Receive specialist packet",
+      "type": "n8n-nodes-base.executeWorkflowTrigger",
+      "typeVersion": 1.2,
+      "position": [
+        0,
+        0
+      ]
+    },
+    {
+      "parameters": {
+        "jsCode": "const incoming=$json||{};\nconst obj=v=>v&&typeof v==='object'&&!Array.isArray(v);\nconst parse=v=>{if(obj(v))return v;if(typeof v==='string'){try{const p=JSON.parse(v);return obj(p)?p:{}}catch{return {}}}return {}};\nconst clean=v=>typeof v==='string'?v.trim():'';\nconst packet=parse(incoming.specialist_packet??incoming);\nconst previous=parse(incoming.previous_specialist_result);\nconst request=obj(packet.inputs?.schedule_request)?packet.inputs.schedule_request:{};\nconst defaultArtDesc=a=>{\n  const kind=clean(a?.kind)||'artifact';\n  if(kind==='tabular-extract') return 'Excel extraction artifact produced by the governed specialist workflow.';\n  if(kind==='query-result') return 'Immutable Excel query result reference.';\n  if(kind==='baseline-inc') return 'Baseline SCHEDULE .inc provided with the engineering task.';\n  return `${kind} reference for SCHEDULE build.`;\n};\nconst normalizeArts=list=> (Array.isArray(list)?list:[]).filter(obj).map(a=>({\n  ref:clean(a.ref),\n  kind:clean(a.kind)||'artifact',\n  revision:clean(a.revision)||'runtime',\n  description:clean(a.description)||defaultArtDesc(a),\n})).filter(a=>a.ref);\nconst artifacts=normalizeArts(packet.artifact_refs);\npacket.artifact_refs=artifacts;\nlet size=999999;try{size=JSON.stringify(packet).length}catch{}\nconst baselineBytes=typeof request.baseline_schedule_text==='string'?request.baseline_schedule_text.length:0;\nconst includeBytes=Array.isArray(request.include_files)?request.include_files.reduce((n,f)=>n+(typeof f?.content==='string'?f.content.length:0),0):0;\n// Align with orchestrator intake: REVISE packets carry baseline text and legitimately exceed 256 KiB.\nconst sizeLimit=(baselineBytes||includeBytes)?2359296:262144;\nconst rag=obj(request.rag_evidence)?request.rag_evidence:{};const ragValid=rag.contract==='schedule_rag_evidence'&&rag.contract_version==='1.0'&&rag.filters?.target_base==='schedule_mvp'&&Array.isArray(rag.results)&&rag.results.some(r=>obj(r)&&r.knowledge_type==='keyword_instruction'&&obj(r.body))&&Array.isArray(rag.citations)&&rag.citations.length>0&&rag.citations.every(c=>obj(c)&&typeof c.knowledge_id==='string'&&c.knowledge_id.trim()&&typeof c.revision==='string'&&c.revision.trim()&&typeof c.content_hash==='string'&&c.content_hash.trim()&&typeof c.author==='string'&&c.author.trim());\nconst artsOk=artifacts.every(a=>['ref','kind','revision','description'].every(k=>typeof a[k]==='string'&&a[k].trim()));\nconst sizeOk=size<=sizeLimit;\nconst valid=packet.contract==='specialist_packet'&&packet.contract_version==='1.0'&&packet.specialist_id==='schedule_builder_specialist'&&typeof packet.task_id==='string'&&packet.task_id.trim()&&Number.isInteger(packet.attempt)&&packet.attempt>=1&&typeof packet.objective==='string'&&packet.objective.trim()&&obj(packet.inputs)&&obj(packet.controls)&&Array.isArray(packet.acceptance_criteria)&&artsOk&&sizeOk&&ragValid;\nconst findings=[];\nif(!ragValid) findings.push({code:'SCHEDULE_RAG_EVIDENCE_REQUIRED',severity:'error'});\nif(!artsOk) findings.push({code:'SCHEDULE_PACKET_ARTIFACT_REFS_INVALID',severity:'error'});\nif(!sizeOk) findings.push({code:'SCHEDULE_PACKET_TOO_LARGE',severity:'error',size,size_limit:sizeLimit,baseline_bytes:baselineBytes});\nconst inherited=previous.specialist_id==='excel_extraction_specialist'&&obj(previous.compact_data)?previous.compact_data:null;\nconst normalizedRequest={...request,objective:String(request.objective||packet.objective||''),artifact_refs:[...normalizeArts(request.artifact_refs),...artifacts],source_facts_packet:obj(request.source_facts_packet)?request.source_facts_packet:inherited};\nreturn[{json:{packet,request:normalizedRequest,previous_specialist_result:previous,latest_human_response:incoming.latest_human_response??null,packet_valid:Boolean(valid),packet_findings:findings,task_id:String(packet.task_id||''),attempt:Number(packet.attempt||1),trace_id:String(request.trace_id||`trace_${packet.task_id||'invalid'}`)}}];"
+      },
+      "id": "17f35b23-4eb8-5659-a92d-ca5135d484e9",
+      "name": "Normalize SCHEDULE pipeline packet",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        280,
+        0
+      ]
+    },
+    {
+      "parameters": {
+        "conditions": {
+          "options": {
+            "caseSensitive": true,
+            "leftValue": "",
+            "typeValidation": "strict",
+            "version": 2
+          },
+          "conditions": [
+            {
+              "id": "add7471c-d392-5370-afc5-25b3c8b736f7",
+              "leftValue": "={{ $json.packet_valid }}",
+              "rightValue": true,
+              "operator": {
+                "type": "boolean",
+                "operation": "equals"
+              }
+            }
+          ],
+          "combinator": "and"
+        },
+        "options": {}
+      },
+      "id": "0b946b95-edcb-5690-8240-6d6f99ed37a4",
+      "name": "SCHEDULE packet valid?",
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2.2,
+      "position": [
+        560,
+        0
+      ]
+    },
+    {
+      "parameters": {
+        "jsCode": "const root=$json,request=root.request||{},packet=root.packet||{},controls=packet.controls&&typeof packet.controls==='object'?packet.controls:{},artifacts=Array.isArray(request.artifact_refs)?request.artifact_refs:[];\nconst expectedVersion=Number.isInteger(Number(controls.expected_version))?Number(controls.expected_version):(Number.isInteger(Number(request.expected_version))?Number(request.expected_version):0);\nconst idempotency=String(controls.idempotency_key||request.idempotency_key||`${root.task_id}:schedule-build:${root.attempt}`).slice(0,240);\nreturn[{json:{schedule_intake_request:{...request,contract:'schedule_build_request',contract_version:'1.0',task_id:root.task_id,orchestrator_task_id:root.task_id,trace_id:root.trace_id,expected_version:expectedVersion,idempotency_key:idempotency,policy_version:String(controls.policy_version||request.policy_version||'petroleum-schedule-policy-v1'),objective:request.objective,source_artifact_refs:artifacts,acceptance_criteria:Array.isArray(request.acceptance_criteria)?request.acceptance_criteria:(Array.isArray(packet.acceptance_criteria)?packet.acceptance_criteria:[]),stage_gate_policy:{attention_threshold:85,hitl_threshold:70,hard_blockers:Array.isArray(request.stage_gate_policy?.hard_blockers)?request.stage_gate_policy.hard_blockers:[]}}}}];"
+      },
+      "id": "d64328f2-a7af-5f5e-a81f-ca3c181cea69",
+      "name": "Prepare deterministic intake",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        840,
+        -85
+      ]
+    },
+    {
+      "parameters": {
         "jsCode": "const HITL_CYRILLIC=/[А-Яа-яЁё]/;\nconst HITL_CODE_ONLY=/^[A-Z][A-Z0-9_]{3,}$/;\nconst hitlClean=v=>typeof v==='string'?v.trim():'';\nconst hitlLooksMachine=text=>{\n  const t=hitlClean(text);\n  if(!t) return true;\n  if(HITL_CODE_ONLY.test(t)) return true;\n  if(!HITL_CYRILLIC.test(t)) return true;\n  if(/\\bbaseline\\b/i.test(t)) return true;\n  return false;\n};\nconst hitlBaseName=p=>{\n  const s=hitlClean(p).replace(/\\\\/g,'/');\n  if(!s) return '';\n  const parts=s.split('/').filter(Boolean);\n  return parts[parts.length-1]||s;\n};\nconst hitlSlot=(f,keys)=>{\n  if(!f||typeof f!=='object') return '';\n  for(const k of keys){\n    const v=hitlClean(f[k]);\n    if(v) return v;\n  }\n  return '';\n};\nconst hitlSlots=f=>{\n  const rawPath=hitlSlot(f,['path','target_file_ref','raw_path','include_path']);\n  const rawFrom=hitlSlot(f,['file_ref','source_file_ref','root_path']);\n  const path=hitlBaseName(rawPath)||(!rawPath?hitlBaseName(rawFrom):'');\n  const from=rawPath?hitlBaseName(rawFrom):'';\n  const keywords=Array.isArray(f?.keywords)?f.keywords.map(v=>hitlClean(v).toUpperCase()).filter(Boolean).slice(0,12):[];\n  const cycle=Array.isArray(f?.cycle)?f.cycle.map(hitlBaseName).filter(Boolean):[];\n  const wells=Array.isArray(f?.wells)?f.wells.map(hitlClean).filter(Boolean).slice(0,12):[];\n  return {\n    code:hitlClean(f?.code||f?.id||''),\n    path, from,\n    keyword:hitlClean(f?.keyword||'').toUpperCase(),\n    entity:hitlClean(f?.entity||f?.well||''),\n    field:hitlClean(f?.field||''),\n    keywords, cycle, wells,\n  };\n};\nconst HITL_STAGE={\n  schedule_intake_result:'Проверка входных данных задачи',\n  baseline_analysis:'Проверка пакета schedule (INCLUDE и корневой файл)',\n  baseline_decode_result:'Разбор записей исходного файла',\n  schedule_validation_result:'Проверка синтаксиса, дат и семантики',\n  schedule_render_result:'Сборка текста по схеме keyword',\n  schedule_merge_result:'Сборка итогового schedule',\n  schedule_commissioning_revise_result:'Сдвиг дат ввода (commissioning)',\n  schedule_group_rebind_revise_result:'Перепривязка групп скважин',\n  schedule_builder_stage_result:'Проверка черновика Builder',\n  schedule_verifier_result:'Независимая проверка выпуска',\n  baseline_inventory_query_result:'Выборка записей исходного файла',\n};\nconst hitlDedupeKey=f=>{\n  const s=hitlSlots(f);\n  return [s.code,s.path,s.from,s.keyword,s.entity,s.field].join('|');\n};\nconst HITL_GENERIC_CLUSTER='Проверка остановила задачу: не хватает исходных данных. Прикрепите недостающие файлы или напишите, как продолжать, и нажмите Ответить.';\nconst HITL_GENERIC_ITEM='Нужны исходные данные. Прикрепите недостающие файлы или напишите, как продолжать.';\nconst HITL_COPY={\n  INCLUDE_NOT_FOUND:{\n    cluster:'Тела INCLUDE не приложены — ссылки в корне оставляем как есть на той же дате. Прикрепите .inc, только если нужно править содержимое этого файла.',\n    item:s=>s.path?`INCLUDE «${s.path}» без тела${s.from?`, ссылка из «${s.from}»`:''}: оставляем вызов на той же дате. Приложите файл, только если нужно править его содержимое.`:'INCLUDE без тела: оставляем вызов на той же дате. Приложите файл, только если нужно править содержимое.',\n  },\n  INCLUDE_BODY_REQUIRED:{\n    cluster:'Задача правит содержимое INCLUDE, а тело файла не приложено. Прикрепите этот .inc и нажмите Ответить.',\n    item:s=>s.path?`Нужно тело INCLUDE «${s.path}»${s.from?`, ссылка из «${s.from}»`:''}: приложите этот .inc, иначе содержимое нечем править.`:'Нужно тело INCLUDE. Приложите этот .inc, иначе содержимое нечем править.',\n  },\n  INCLUDE_PATH_INVALID:{cluster:'Путь INCLUDE в пакете недопустим. Исправьте ссылку или приложите файл с корректным именем.', item:s=>`Недопустимый путь INCLUDE${s.path?` «${s.path}»`:''}${s.from?` в «${s.from}»`:''}.`},\n  INCLUDE_PATH_UNSAFE:{cluster:'Путь INCLUDE выходит за пределы пакета. Оставьте только файлы внутри загруженного набора.', item:s=>`Небезопасный путь INCLUDE${s.path?` «${s.path}»`:''}. Приложите файл из того же пакета, без «..».`},\n  INCLUDE_FILE_INVALID:{cluster:'Один из приложенных INCLUDE нельзя прочитать. Прикрепите его ещё раз как текстовый .inc.', item:'Приложенный INCLUDE без текста. Прикрепите файл .inc ещё раз.'},\n  INCLUDE_CYCLE:{cluster:'В пакете цикл INCLUDE. Исправьте ссылки, чтобы файлы не включали друг друга по кругу.', item:s=>s.cycle.length?`Цикл INCLUDE: ${s.cycle.join(' → ')}. Исправьте ссылки в пакете.`:'В пакете цикл INCLUDE. Исправьте ссылки.'},\n  INCLUDE_DEPTH_LIMIT:{cluster:'Слишком глубокая вложенность INCLUDE. Упростите пакет или приложите развёрнутый набор файлов.', item:'Слишком глубокая вложенность INCLUDE.'},\n  INCLUDE_MULTIPLE_EXPANSION:{cluster:'Один INCLUDE раскрывается несколько раз. Проверьте дубли ссылок в пакете.', item:s=>`Файл «${s.path||s.from||'INCLUDE'}» раскрывается повторно.`},\n  UNREACHABLE_INCLUDE_FILE:{cluster:'В пакете есть файл, до которого нет пути от корня. Укажите корневой schedule или уберите лишний файл.', item:s=>`Файл «${s.path||s.from}» не достигается от корня пакета.`},\n  BASELINE_TEXT_REQUIRED:{cluster:'Нет текста корневого schedule. Прикрепите главный .inc / .data.', item:'Прикрепите корневой schedule (.inc или .data) — без него REVISE нельзя разобрать.'},\n  BASELINE_REQUIRED:{cluster:'Для REVISE нужен предыдущий schedule. Прикрепите корневой .inc / .data.', item:'Прикрепите предыдущий schedule (.inc / .data) для режима REVISE.'},\n  BASELINE_ANALYSIS_REQUIRED:{cluster:'Не разобран корневой schedule. Прикрепите главный .inc / .data. Тела INCLUDE не обязательны.', item:'Сначала нужен разобранный корневой schedule. Прикрепите главный .inc / .data; INCLUDE без тел оставляем как есть.'},\n  BASELINE_ROOT_REQUIRED:{cluster:'Не указан корневой файл пакета. Выберите главный .inc / .data.', item:'Укажите, какой .inc / .data главный в пакете.'},\n  ROOT_PATH_INVALID:{cluster:'Имя корневого schedule недопустимо. Выберите файл с обычным именем .inc / .data.', item:'Недопустимое имя корневого schedule.'},\n  ROOT_PATH_UNSAFE:{cluster:'Путь корневого schedule небезопасен. Приложите файл из пакета, без выхода наверх по каталогам.', item:'Небезопасный путь корневого schedule.'},\n  ROOT_FILE_MISSING:{cluster:'В пакете нет корневого файла. Прикрепите главный .inc / .data.', item:'Нет корневого файла schedule в пакете.'},\n  DUPLICATE_FILE_REF:{cluster:'В пакете два файла с одним путём. Оставьте один экземпляр.', item:s=>`Дублируется файл «${s.path||s.from}». Оставьте один.`},\n  FILE_LIMIT:{cluster:'Слишком много файлов в пакете. Сократите набор INCLUDE.', item:'Превышен лимит файлов пакета.'},\n  PACKAGE_SIZE_LIMIT:{cluster:'Пакет schedule слишком большой. Сократите набор файлов.', item:'Превышен размер пакета schedule.'},\n  CST_NODE_LIMIT:{cluster:'В schedule слишком много блоков. Сократите пакет или уточните задачу.', item:'Слишком много блоков в schedule.'},\n  CREATE_BASELINE_CONFLICT_REQUIRES_DECISION:{cluster:'Приложен исходный файл schedule, но задача помечена как CREATE. Напишите: править существующий schedule или собрать новый и отбросить вложение.', item:'Напишите: REVISE существующего schedule или CREATE с отбрасыванием вложения.'},\n  PRESERVATION_POLICY_REQUIRED:{cluster:'Для REVISE нужно сохранить не упомянутые записи. Подтвердите это в ответе или приложите полный пакет.', item:'Подтвердите сохранение не упомянутых записей (preserve_unmentioned) или уточните политику.'},\n  SIMULATOR_PROFILE_NOT_APPROVED:{cluster:'Рабочий профиль — tNavigator 22.2 METRIC. Напишите, только если задача для другого симулятора.', item:'Укажите другой согласованный профиль, если это не tNavigator 22.2.'},\n  METRIC_UNIT_SYSTEM_REQUIRED:{cluster:'В этом контуре единицы всегда METRIC. FIELD и другие системы не используются.', item:'Нужна система единиц METRIC — другие не поддерживаются.'},\n  MODEL_START_DATE_REQUIRED:{cluster:'Для CREATE нужна дата старта модели (YYYY-MM-DD). Для REVISE без этой даты записи до первого DATES оставляем как есть.', item:'Укажите model_start_date в формате YYYY-MM-DD — только если собираете новый schedule или явно задаёте старт модели.'},\n  FORECAST_START_DATE_REQUIRED:{cluster:'Нужна дата начала прогноза (YYYY-MM-DD).', item:'Укажите forecast_start в формате YYYY-MM-DD.'},\n  FORECAST_END_DATE_REQUIRED:{cluster:'Нужна дата конца прогноза (YYYY-MM-DD).', item:'Укажите forecast_end в формате YYYY-MM-DD.'},\n  FORECAST_HORIZON_INVALID:{cluster:'Конец прогноза раньше начала. Исправьте даты.', item:'forecast_end должен быть не раньше forecast_start.'},\n  FORECAST_BEFORE_MODEL_START:{cluster:'Прогноз раньше старта модели. Исправьте даты.', item:'forecast_start не должен быть раньше model_start_date.'},\n  HISTORY_INTERVAL_INCOMPLETE:{cluster:'Для истории нужны обе даты: начало и конец.', item:'Укажите и history_start, и history_end.'},\n  HISTORY_INTERVAL_INVALID:{cluster:'Интервал истории задан неверно. Проверьте даты YYYY-MM-DD.', item:'Исправьте history_start / history_end.'},\n  HISTORY_FORECAST_OVERLAP:{cluster:'История пересекается с прогнозом. Разведите интервалы.', item:'history_end не должен быть позже forecast_start.'},\n  HISTORY_SCOPE_REQUIRES_INTERVAL:{cluster:'Для WCONHIST нужен интервал истории. Укажите history_start и history_end.', item:'Укажите history_start и history_end для WCONHIST.'},\n  KEYWORD_SCOPE_UNRESOLVED:{cluster:'Не выбран набор keyword schedule. Напишите, какие секции менять (например WCONPROD, DATES).', item:'Укажите keyword, которые нужно менять.'},\n  UNSUPPORTED_KEYWORD:{cluster:'В задаче есть keyword вне текущего allowlist. Уберите их или сузьте задачу.', item:s=>s.keywords.length?`Не поддерживаются keyword: ${s.keywords.join(', ')}.`:'Есть keyword вне allowlist. Уберите их из задачи.'},\n  CREATE_CAPABILITY_SCOPE_REQUIRED:{cluster:'Для CREATE напишите, что именно собрать (какие скважины, контроли, период).', item:'Перечислите, что должно появиться в новом schedule.'},\n  CREATE_REQUIRED_OUTPUTS_REQUIRED:{cluster:'Для CREATE укажите ожидаемый результат (например прогнозный .inc).', item:'Опишите, какой файл/результат нужен на выходе.'},\n  REVISE_CHANGE_SCOPE_REQUIRED:{cluster:'Для REVISE напишите, что менять, а что оставить.', item:'Опишите requested_change_scope: что менять в существующем schedule.'},\n  OBJECTIVE_REQUIRED:{cluster:'Нужна формулировка задачи своими словами.', item:'Сформулируйте измеримую цель и нужный результат.'},\n  ACCEPTANCE_CRITERIA_REQUIRED:{cluster:'Нужен критерий приёмки: по чему понять, что задача сделана.', item:'Напишите, как проверить результат.'},\n  EXPERT_KNOWLEDGE_AND_CATALOGUE_BINDING_REQUIRED:{cluster:'В базе знаний нет полной инструкции и схемы keyword. Загрузите корпус через Knowledge.', item:'Через Knowledge загрузите keyword_instruction и schema JSON в schedule_mvp.'},\n  KEYWORD_INSTRUCTION_SCOPE_INCOMPLETE:{cluster:'Для части keyword нет экспертной инструкции. Догрузите карточки или сузьте набор keyword.', item:s=>s.keywords.length?`Нет инструкции для: ${s.keywords.join(', ')}. Загрузите карточки или уберите эти keyword.`:'Догрузите keyword_instruction для всех запрошенных keyword.'},\n  SCHEDULE_RAG_EVIDENCE_REQUIRED:{cluster:'Builder не запущен: в базе нет полной экспертной инструкции или schema. Загрузите корпус через Knowledge.', item:'Через Knowledge загрузите active keyword_instruction и schema JSON в schedule_mvp.'},\n  EXCEL_PROTOCOL_RAG_REQUIRED:{cluster:'Excel Extractor не запущен: нет operating protocol в базе. Загрузите excel_protocol через Knowledge.', item:'Через Knowledge загрузите protocol_instruction в excel_protocol.'},\n  EXCEL_PROTOCOL_RAG_UNAVAILABLE:{cluster:'Excel Extractor не запущен: нет operating protocol в базе. Загрузите excel_protocol через Knowledge.', item:'Через Knowledge загрузите protocol_instruction в excel_protocol.'},\n  SCHEDULE_RAG_UNAVAILABLE:{cluster:'Builder не запущен: в базе нет полной экспертной инструкции или schema. Загрузите корпус через Knowledge.', item:'Через Knowledge загрузите active keyword_instruction и schema JSON в schedule_mvp.'},\n  STAGE_GATE_POLICY_INVALID:{cluster:'Политика гейтов не совпадает с утверждённой (attention 85 / HITL 70). Продолжите в этой задаче.', item:'Нужна политика attention_threshold=85, hitl_threshold=70.'},\n  HISTORY_BEFORE_MODEL_START:{cluster:'История раньше старта модели. Исправьте даты.', item:'history_start не должен быть раньше model_start_date.'},\n  INVALID_BUILD_MODE:{cluster:'Режим сборки не CREATE и не REVISE. Напишите, какой режим нужен.', item:'Укажите build_mode: CREATE или REVISE.'},\n  EXCEL_WORKBOOK_REQUIRED:{cluster:'Нет книги Excel. Прикрепите файл .xlsx к ответу.', item:'Прикрепите книгу Excel (.xlsx или .xls) к ответу.'},\n  EXCEL_CLARIFICATION_REQUIRED:{cluster:'Нужны ответы на уточнения по Excel. Напишите их в поле ответа.', item:'Ответьте на уточнения по таблице Excel.'},\n  SCHEDULE_BUILD_CONTRACT_INVALID:{cluster:'Пакет задачи собран неверно. Создайте задачу заново из Activity с файлами.', item:'Пересоздайте задачу из Activity, приложив schedule и описание.'},\n  SCHEDULE_BUILD_IDENTITY_REQUIRED:{cluster:'Потерян идентификатор задачи. Откройте задачу из списка слева или создайте заново.', item:'Продолжите из текущей задачи Activity, не копируя чужой пакет.'},\n  SCHEDULE_BUILD_TASK_MISMATCH:{cluster:'Пакет относится к другой задаче. Работайте в текущей карточке Activity.', item:'Не переиспользуйте пакет другой задачи. Откройте нужную из списка.'},\n  SCHEDULE_POLICY_VERSION_NOT_APPROVED:{cluster:'Версия политики schedule не совпадает. Продолжите в этой задаче или напишите, если нужен другой профиль.', item:'Нужна политика petroleum-schedule-policy-v1 либо явное согласование.'},\n  EVIDENCE_GAP:{cluster:'Не хватает фактов для записи schedule. Укажите значения в ответе или приложите Excel.', item:s=>{\n    const who=[s.keyword,s.entity,s.field].filter(Boolean).join(' / ');\n    return who?`Не хватает ${who}. Напишите значение или приложите Excel.`:'Не хватает поля для schedule. Напишите значение или приложите Excel.';\n  }},\n  MALFORMED_EVIDENCE_GAP:{cluster:'Запрос уточнения по Excel собран неверно. Напишите недостающие факты вручную.', item:'Укажите недостающие поля вручную в ответе.'},\n  STALLED_EVIDENCE_LOOP:{cluster:'Уточнение по Excel зациклилось на тех же данных. Напишите факты вручную, смените файл или сузьте задачу.', item:'Напишите недостающие факты вручную, приложите другую книгу Excel или сузьте задачу.'},\n  EXCEL_EVIDENCE_BUDGET_EXHAUSTED:{cluster:'Исчерпан лимит запросов к Excel. Напишите недостающие факты вручную или сузьте задачу.', item:'Напишите недостающие поля вручную — автоматический запрос к Excel больше не запускается.'},\n  BUILDER_ITERATION_BUDGET_EXHAUSTED:{cluster:'Исчерпан лимит повторов Schedule Builder. Напишите, как продолжать, или сузьте задачу.', item:'Напишите недостающие факты вручную или сузьте задачу — автоматический повтор Builder остановлен.'},\n  SCHEDULE_BUILD_EXPECTED_VERSION_INVALID:{cluster:'Номер версии задачи некорректен. Откройте задачу заново из Activity.', item:'Продолжите из текущей карточки Activity, не копируя чужой пакет.'},\n  SOURCE_ARTIFACT_REF_INVALID:{cluster:'Ссылка на исходный файл собрана неверно. Приложите файлы заново к ответу.', item:'Прикрепите исходные файлы к ответу ещё раз.'},\n  SOURCE_ARTIFACT_LIMIT:{cluster:'Слишком много ссылок на исходные файлы. Сократите набор вложений.', item:'Сократите набор приложенных файлов.'},\n  SCHEDULE_BUILD_REQUEST_TOO_LARGE:{cluster:'Пакет задачи слишком большой. Сократите текст schedule или набор INCLUDE.', item:'Сократите корневой schedule или число INCLUDE и повторите.'},\n  EXPERT_KNOWLEDGE_CITATION_INVALID:{cluster:'Карточки знаний собраны неверно. Загрузите корпус заново через Knowledge.', item:'Через Knowledge загрузите keyword_instruction с полными citation-полями.'},\n  OPAQUE_BASELINE_SEMANTICS_UNAVAILABLE:{cluster:'Для запрошенного keyword нет схемы разбора. Догрузите schema или уберите keyword из задачи.', item:s=>s.keyword?`Для ${s.keyword} нет схемы разбора. Догрузите schema в schedule_mvp или уберите этот keyword.`:'Для keyword нет схемы разбора. Догрузите schema или сузьте набор keyword.'},\n  OPAQUE_NODE_MUTATION_FORBIDDEN:{cluster:'Нельзя менять непрозрачный блок schedule без схемы. Догрузите schema или оставьте блок как есть.', item:s=>s.keyword?`Блок ${s.keyword} непрозрачный — его нельзя править без schema.`:'Непрозрачный блок schedule нельзя менять без schema.'},\n  SOURCE_FACTS_WELL_IDENTITY_MISSING:{cluster:'Для сдвига дат ввода нет имени скважины. Укажите скважины или приложите Excel.', item:'Укажите имена скважин (Скважина / WELL) для commissioning.'},\n  NEW_WELL_DATE_INVALID:{cluster:'Дата ввода новой скважины неверна. Напишите дату YYYY-MM-DD.', item:s=>s.entity?`Для скважины ${s.entity} укажите дату ввода в формате YYYY-MM-DD.`:'Укажите дату ввода новой скважины в формате YYYY-MM-DD.'},\n  COMMISSIONING_DATE_INVALID:{cluster:'Дата ввода скважины неверна. Напишите дату YYYY-MM-DD.', item:s=>s.entity?`Для скважины ${s.entity} исправьте дату ввода (YYYY-MM-DD).`:'Исправьте дату ввода скважины (YYYY-MM-DD).'},\n  DATES_STEP_REMOVED:{cluster:'Из schedule пропал шаг DATES, который был в исходном файле. Верните дату или подтвердите удаление.', item:'Верните пропавший шаг DATES или явно подтвердите его удаление.'},\n  GROUP_REBIND_COMMISSIONING_DATE_MISSING:{cluster:'Для перепривязки групп нет даты ввода скважин. Укажите даты или приложите Excel.', item:'Укажите даты ввода скважин для group_membership_rebind.'},\n  KEYWORD_SCHEMA_NOT_APPROVED:{cluster:'Для keyword нет утверждённой schema. Догрузите schema или уберите keyword из задачи.', item:s=>s.keyword?`Нет утверждённой schema для ${s.keyword}. Догрузите карточку или уберите keyword.`:'Нет утверждённой schema keyword. Догрузите каталог или сузьте задачу.'},\n  DATES_NOT_STRICTLY_INCREASING:{cluster:'Даты DATES идут не по возрастанию. Исправьте порядок дат в schedule.', item:'Исправьте DATES: каждая следующая дата должна быть строго позже предыдущей.'},\n  INCLUDE_TARGET_MISSING:{cluster:'В INCLUDE нет имени файла. Укажите путь .inc в кавычках.', item:s=>s.from?`В «${s.from}» у INCLUDE нет пути файла. Укажите имя .inc.`:'У INCLUDE нет пути файла. Укажите имя .inc в кавычках.'},\n  SCHEDULE_TEXT_REQUIRED:{cluster:'Нет текста schedule. Прикрепите корневой .inc / .data.', item:'Прикрепите текст schedule (.inc или .data).'},\n  INVALID_EXCEL_SPECIALIST_PACKET:{cluster:'Пакет для Excel Extractor собран неверно. Создайте задачу заново и приложите книгу .xlsx.', item:'Создайте задачу заново из Activity и приложите книгу Excel.'},\n  INVALID_SCHEDULE_SPECIALIST_PACKET:{cluster:'Пакет задачи для Schedule Builder собран неверно. Создайте задачу заново из Activity.', item:'Создайте задачу заново из Activity, приложив schedule и описание.'},\n  BASELINE_PACKAGE_INVALID:{cluster:'Пакет исходного schedule разобран неверно. Прикрепите корневой файл и все INCLUDE заново.', item:'Прикрепите полный пакет schedule ещё раз.'},\n  CHANGE_EFFECTIVE_FROM_REQUIRED:{cluster:'Дата начала правки нужна, только если задача задаёт срез с конкретной даты. Для снятия keyword целиком граница не требуется.', item:'Укажите change_effective_from в формате YYYY-MM-DD, только если правка действует с конкретной даты.'},\n  BASELINE_EFFECTIVE_DATE_REQUIRED:{cluster:'Запись стоит до первого DATES — оставляем как есть. model_start_date не нужен.', item:s=>s.keyword?`${s.keyword} до первого DATES: оставляем на месте, если нет явной команды переместить.`:'Запись до первого DATES оставляем как есть.'},\n  SCHEMA_CATALOGUE_NOT_APPROVED:{cluster:'Каталог schema keyword не утверждён. Загрузите утверждённый каталог через Knowledge.', item:'Через Knowledge загрузите утверждённый schema_catalogue в schedule_mvp.'},\n  APPROVED_KEYWORD_SCHEMAS_REQUIRED:{cluster:'Нет утверждённых schema keyword. Загрузите каталог через Knowledge.', item:'Загрузите schema JSON для запрошенных keyword.'},\n  PROFILE_NOT_APPROVED:{cluster:'Рабочий профиль — tNavigator 22.2 METRIC. Напишите, только если задача для другого симулятора.', item:'Укажите другой согласованный профиль, если это не tNavigator 22.2.'},\n  REMOVE_REQUIRES_ACCOUNTABLE_APPROVAL:{cluster:'Удаление записей из schedule нужно явно подтвердить в ответе.', item:s=>`Подтвердите удаление ${s.keyword||'записей'} или напишите, что их сохранить.`},\n  NEW_WELLS_REQUIRE_HITL:{cluster:'Проверка новых скважин не прошла: нет траектории и спецификации. Прикрепите .dev и недостающие данные.', item:'Прикрепите WELLTRACK (.dev) и данные WELSPECS/COMPDATMD для новых скважин.'},\n  NEW_WELL_CONTROL_LINE_REQUIRED:{cluster:'Для новой скважины нужна явная строка WCONPROD или WCONINJE. Значения по умолчанию не подставляются.', item:s=>s.entity?`Для скважины ${s.entity} укажите стартовую строку WCONPROD или WCONINJE — без GRAT/дебита по умолчанию.`:'Укажите стартовую строку WCONPROD или WCONINJE для новой скважины.'},\n  NEW_WELL_TYPED_LINES_REQUIRED:{cluster:'Для новой скважины нужны явные строки keyword (WELSPECS, COMPDATMD, WCONPROD/WCONINJE). Ничего не выдумываем.', item:s=>s.entity?`Для скважины ${s.entity} пришлите typed-строки keyword, без шаблонов по умолчанию.`:'Пришлите typed-строки keyword для новой скважины.'},\n  COMMISSIONING_CAPABILITY_REQUIRED:{cluster:'В Excel есть скважины и даты, но не сказано, что это сдвиг дат ввода. Напишите commissioning_date_retarget или уточните другую операцию.', item:s=>s.wells.length?`Для скважин ${s.wells.join(', ')} есть даты. Напишите, сдвигать даты ввода (commissioning_date_retarget) или это другая правка.`:'Есть скважины и даты. Напишите, сдвигать даты ввода или это другая правка.'},\n  COMMISSIONING_FACTS_REQUIRED:{cluster:'Запрошен сдвиг дат ввода, но нет фактов скважина+дата. Приложите Excel или перечислите скважины и даты.', item:'Приложите факты скважина + дата ввода для commissioning_date_retarget.'},\n  GROUP_REBIND_SPEC_REQUIRED:{cluster:'Для перепривязки групп нужен полный spec: скважины, parent_group, parent_of_parent, well_groups, контроль и дебит. Из текста DKS/FIELD не угадаем.', item:s=>`Укажите structured spec для group_membership_rebind${s.field?` (нет: ${s.field})`:''}: wells, parent_group, parent_of_parent, well_groups, control, rate.`},\n  UNLISTED_WELLS_POLICY_REQUIRED:{cluster:'Проверка скважин вне Excel: нужно решить, сохранить их запуски или убрать. Напишите keep или remove и при необходимости имена скважин.', item:s=>s.wells.length?`В Excel нет скважин: ${s.wells.join(', ')}. Напишите: сохранить запуски (keep) или убрать (remove).`:'В Excel нет части скважин из schedule. Напишите keep или remove.'},\n  SCHEDULE_PIPELINE_NOT_RELEASE_READY:{cluster:'Независимая проверка выпуска не прошла. Напишите, что исправить в черновике, своими словами.', item:'Черновик не готов к выпуску. Напишите, что проверить или доработать.'},\n};\nconst hitlItemText=f=>{\n  const s=hitlSlots(f);\n  const spec=HITL_COPY[s.code];\n  if(spec&&typeof spec.item==='function') return spec.item(s);\n  if(spec&&typeof spec.item==='string') return spec.item;\n  const bits=[s.path,s.from,s.keyword,s.entity,s.field].filter(Boolean);\n  return bits.length?`Нужны данные: ${bits.join(', ')}. Прикрепите файл или напишите уточнение.`:HITL_GENERIC_ITEM;\n};\nconst hitlClusterText=findings=>{\n  const codes=[...new Set((Array.isArray(findings)?findings:[]).map(f=>hitlClean(f?.code)).filter(Boolean))];\n  const clusters=codes.map(c=>HITL_COPY[c]&&HITL_COPY[c].cluster).filter(Boolean);\n  const uniq=[...new Set(clusters)];\n  if(uniq.length===1) return uniq[0];\n  if(uniq.length>1) return uniq.slice(0,2).join(' ');\n  return HITL_GENERIC_CLUSTER;\n};\nconst hitlUniqueFindings=findings=>{\n  const seen=new Set(), out=[];\n  for(const f of (Array.isArray(findings)?findings:[])){\n    if(!f||typeof f!=='object') continue;\n    const key=hitlDedupeKey(f);\n    if(seen.has(key)) continue;\n    seen.add(key);\n    out.push(f);\n    if(out.length>=30) break;\n  }\n  return out;\n};\nconst hitlCompileCopy=(opts={})=>{\n  const unique=hitlUniqueFindings(opts.findings);\n  const supplied=Array.isArray(opts.questions)?opts.questions.filter(q=>q&&typeof q==='object'):[];\n  const gaps=Array.isArray(opts.gaps)?opts.gaps.filter(g=>g&&typeof g==='object'):[];\n  let asks=[];\n  const toAsk=(q,i,fallbackId)=>{\n    const raw=hitlClean(q.text||q.question||q.message);\n    const merged={...q, code:q.code||q.id, message:raw};\n    const compiled=hitlLooksMachine(raw)?hitlItemText(merged):raw;\n    const text=compiled||HITL_GENERIC_ITEM;\n    const s=hitlSlots(merged);\n    return {\n      id:hitlClean(q.id)||`${fallbackId}_${i+1}`,\n      text, question:text,\n      required:q.required!==false,\n      ...(q.type?{type:q.type}:{}),\n      ...(s.code?{code:s.code}:{}),\n      ...(s.path?{path:s.path}:{}),\n      ...(s.from?{file_ref:s.from}:{}),\n      ...(s.keyword?{keyword:s.keyword}:{}),\n      ...(s.entity?{entity:s.entity}:{}),\n    };\n  };\n  const suppliedMachine=supplied.length&&supplied.every(q=>hitlLooksMachine(q.text||q.question||q.message||q.code));\n  if(supplied.length&&!(suppliedMachine&&unique.length)){\n    asks=supplied.map((q,i)=>toAsk(q,i,'hitl'));\n  } else if(gaps.length){\n    asks=gaps.map((g,i)=>toAsk({...g, code:g.code||'EVIDENCE_GAP'}, i, 'schedule_gap'));\n  } else {\n    asks=unique.map((f,i)=>toAsk({...f, text:f.message}, i, 'schedule_finding'));\n  }\n  const seen=new Set();\n  asks=asks.filter(a=>{\n    const k=a.text;\n    if(!k||seen.has(k)) return false;\n    seen.add(k);\n    return true;\n  }).slice(0,20);\n  if(!asks.length) asks=[{id:'hitl_needed', text:HITL_GENERIC_ITEM, question:HITL_GENERIC_ITEM, required:true}];\n  const preferred=hitlClean(opts.summary);\n  let user_message=hitlLooksMachine(preferred)?hitlClusterText(unique):preferred;\n  const stageLabel=HITL_STAGE[hitlClean(opts.stage)]||'';\n  if(stageLabel&&user_message&&!user_message.includes(stageLabel)) user_message=`${stageLabel} не прошла. ${user_message}`;\n  return {user_message, questions:asks};\n};\nconst SCHEDULE_KEYWORD_ORDER=[\"DATES\", \"INCLUDE\", \"GRUPTREE\", \"WELSPECS\", \"WELLTRACK\", \"COMPDATMD\", \"WCONHIST\", \"WCONPROD\", \"WCONINJE\", \"GCONPROD\", \"GCONINJE\", \"GUIDERAT\", \"GSATPROD\", \"GSATINJE\", \"WELLSTRE\", \"WINJGAS\", \"GINJGAS\", \"BRANPROP\", \"NODEPROP\", \"GNETDP\", \"NETBALAN\", \"FRACTURE_TEMPLATE\", \"FRACTURE_SPECS\", \"FRACTURE_STAGE\", \"WECON\", \"WTEST\", \"WELTARG\", \"WNETDP\", \"WPIMULT\", \"WDFAC\", \"WEFAC\", \"WELOPEN\", \"WELDRAW\", \"WLIST\", \"WFRACP\", \"WFRACPL\", \"VFPPROD\", \"WVFPDP\", \"ACTIONX\", \"DELAYACT\", \"ENDACTIO\", \"UDQ\", \"UDT\", \"APPLYSCRIPT\"];\nconst SCHEDULE_ALLOWLIST=new Set(SCHEDULE_KEYWORD_ORDER);\nconst SCHEDULE_ENGLISH_COLLISION=new Set(['DATES','INCLUDE']);\nconst petroleumProfileDefaults=()=>({vendor:'Rock Flow Dynamics',simulator:'tNavigator',version:'22.2',unit_system:'METRIC'});\nconst applyPetroleumProfile=profile=>{\n  const p=profile&&typeof profile==='object'&&!Array.isArray(profile)?profile:{};\n  const d=petroleumProfileDefaults();\n  const unit=String(p.unit_system||'').trim().toUpperCase();\n  return{\n    vendor:String(p.vendor||'').trim()||d.vendor,\n    simulator:String(p.simulator||'').trim()||d.simulator,\n    version:String(p.version||'').trim()||d.version,\n    unit_system:unit||d.unit_system,\n  };\n};\nconst observeAllowlistedKeywords=text=>{\n  const blob=String(text||'');\n  const out=[];\n  for(const k of SCHEDULE_KEYWORD_ORDER){\n    const flags=SCHEDULE_ENGLISH_COLLISION.has(k)?'':'i';\n    const re=new RegExp('\\\\b'+k.replace(/[.*+?^${}()|[\\]\\\\]/g,'\\\\$&')+'\\\\b',flags);\n    if(re.test(blob)) out.push(k);\n  }\n  return out;\n};\nconst taskProseBlob=x=>{\n  const src=x&&typeof x==='object'&&!Array.isArray(x)?x:{};\n  const parts=[];\n  const push=v=>{if(typeof v==='string'&&v.trim()) parts.push(v)};\n  push(src.objective);push(src.problem_statement);push(src.request_text);push(src.task_description);\n  push(src.user_goal);push(src.instruction);push(src.human_instruction);push(src.hitl_reply_text);\n  if(src.task&&typeof src.task==='object') push(src.task.objective);\n  return parts.join('\\n');\n};\nconst COMMISSIONING_KEYWORDS=['DATES','WELOPEN','WCONPROD','WEFAC'];\nconst GROUP_REBIND_KEYWORDS=['WELSPECS','GRUPTREE','GCONPROD','WECON','WPIMULT'];\nconst COMMISSIONING_CAP_IDS=['commissioning_date_retarget','shift_commissioning_dates','commissioning_revise','timeline_revise'];\nconst GROUP_REBIND_CAP_IDS=['group_membership_rebind','group_rebind'];\nconst capToken=v=>String(v==null?'':v).trim().toLowerCase().replace(/-/g,'_');\nconst withoutCapIds=(list,drop)=>list.filter(v=>!drop.includes(capToken(v)));\nconst inferChangeOperation=text=>{\n  const t=String(text||'');\n  if(/(убер[а-яё]*|удал[а-яё]*|вырез[а-яё]*|исключ[а-яё]*|\\bremove\\b|\\bdelete\\b|\\bstrip\\b|\\bdrop\\b)/i.test(t)) return 'remove';\n  if(/(добав[а-яё]*|встав[а-яё]*|созда[а-яё]*|\\badd\\b|\\bcreate\\b|\\binsert\\b)/i.test(t)) return 'add';\n  if(/(измен[а-яё]*|замен[а-яё]*|сдвин[а-яё]*|поменя[а-яё]*|правк[а-яё]*|\\bchange\\b|\\brevise\\b|\\breplace\\b|\\bshift\\b|\\bupdate\\b|собрать)/i.test(t)) return 'change';\n  return '';\n};\nconst changeScopeMeaningful=change=>{\n  if(!change||typeof change!=='object'||Array.isArray(change)) return false;\n  if(String(change.operation||change.intent||change.kind||change.capability_id||'').trim()) return true;\n  if(String(change.summary||change.description||change.human_correction||'').trim()) return true;\n  if(change.parent_group||change.rate||change.gas_rate||change.group_rebind) return true;\n  return ['must_remove','must_add','must_change','must_preserve','keywords','wells','groups'].some(k=>Array.isArray(change[k])&&change[k].length);\n};\nconst looksCommissioningProse=t=>/дат[а-яё]*\\s*ввод|ввод[аы]?\\s+скважин|commissioning/i.test(String(t||''));\nconst looksGroupRebindProse=t=>{\n  const s=String(t||'');\n  if(!/групп/i.test(s)) return false;\n  return /контрол|gconprod|gruptree|помести|перевед|перенес|rebind|отдельн/i.test(s);\n};\nconst extractWellsFromProse=t=>{\n  const s=String(t||'');\n  const m=s.match(/скважин[аыуе]{0,3}\\s+((?:[A-Za-z0-9][A-Za-z0-9_.\\-]{0,15})(?:\\s*(?:,|;|и|and|&)\\s*[A-Za-z0-9][A-Za-z0-9_.\\-]{0,15})*)/i)\n    ||s.match(/\\bwells?\\s+((?:[A-Za-z0-9][A-Za-z0-9_.\\-]{0,15})(?:\\s*(?:,|;|и|and|&)\\s*[A-Za-z0-9][A-Za-z0-9_.\\-]{0,15})*)/i);\n  if(!m) return [];\n  return [...new Set(m[1].split(/\\s*(?:,|;|и|and|&)\\s*/i).map(v=>String(v||'').trim()).filter(v=>/^[A-Za-z0-9][A-Za-z0-9_.\\-]{0,15}$/.test(v)))];\n};\nconst extractParentGroupFromProse=t=>{\n  const s=String(t||'');\n  const quoted=s.match(/групп[аыуе]{0,2}[^«\"'\\n]{0,40}[«\"']([A-Za-z][A-Za-z0-9_]{0,24})[»\"']/i)\n    ||s.match(/[«\"']([A-Za-z][A-Za-z0-9_]{0,24})[»\"'][^.\\n]{0,40}групп/i);\n  if(quoted) return quoted[1].toUpperCase();\n  const named=s.match(/групп[аыуе]{0,2}\\s*[-—:]\\s*([A-Za-z][A-Za-z0-9_]{1,24})/i);\n  return named?named[1].toUpperCase():'';\n};\nconst extractGasRateFromProse=t=>{\n  const m=String(t||'').match(/(\\d+(?:[.,]\\d+)?)\\s*(тыс\\.?|тыс|thousand)?\\s*(м³|м3|m3)/i);\n  if(!m) return null;\n  let n=Number(String(m[1]).replace(',', '.'));\n  if(!Number.isFinite(n)||n<=0) return null;\n  if(m[2]) n=n*1000;\n  return n;\n};\nconst extractControlFromProse=t=>{\n  const s=String(t||'');\n  if(/\\bORAT\\b|нефть|oil/i.test(s)&&!/газ|gas/i.test(s)) return 'ORAT';\n  if(/\\bWRAT\\b|вод[аыеу]|water/i.test(s)&&!/газ|gas/i.test(s)) return 'WRAT';\n  if(/\\bGRAT\\b|газ|gas|м3|м³|m3/i.test(s)) return 'GRAT';\n  return '';\n};\nconst observeGroupRebindFromProse=t=>{\n  if(!looksGroupRebindProse(t)) return null;\n  const wells=extractWellsFromProse(t);\n  const parent=extractParentGroupFromProse(t);\n  const rate=extractGasRateFromProse(t);\n  const control=extractControlFromProse(t)||(rate?'GRAT':'');\n  if(!wells.length||!parent||!rate||!control) return null;\n  const well_groups={};\n  for(const w of wells) well_groups[w]='G'+w;\n  return {\n    wells,\n    parent_group:parent,\n    parent_of_parent:'FIELD',\n    well_groups,\n    rate,\n    gas_rate:rate,\n    control,\n  };\n};\nconst pickDateFromFactRow=(row,values)=>{\n  const coerce=v=>{\n    if(v==null||v==='') return null;\n    if(v instanceof Date&&!Number.isNaN(v.getTime())) return v.toISOString().slice(0,10);\n    if(typeof v==='object'&&!Array.isArray(v)){\n      if(Number.isFinite(Number(v.year))&&Number.isFinite(Number(v.month))&&Number.isFinite(Number(v.day))){\n        const y=String(Number(v.year)).padStart(4,'0'),m=String(Number(v.month)).padStart(2,'0'),d=String(Number(v.day)).padStart(2,'0');\n        return `${y}-${m}-${d}`;\n      }\n      if(v.value!=null&&v.value!==v) return coerce(v.value);\n      if(v.iso) return coerce(v.iso);\n      if(v.tnav) return coerce(v.tnav);\n    }\n    const s=String(v).trim();\n    return s===''?null:s;\n  };\n  const named=coerce(row.value??row.raw_value??values['Дата ввода']??values['дата ввода']??values.date??values.Date??values.commissioning_date??null);\n  if(named) return {date:named,field:String(row.field||row.column||'Дата ввода')};\n  const hit=Object.keys(values).find(k=>/дата|date|commission|ввод/i.test(String(k||'')));\n  if(hit!=null){\n    const d=coerce(values[hit]);\n    if(d) return {date:d,field:String(hit)};\n  }\n  const others=Object.keys(values).filter(k=>!/скважин|well|групп|group|факт|id$/i.test(String(k||'')));\n  if(others.length===1){\n    const d=coerce(values[others[0]]);\n    if(d) return {date:d,field:String(others[0])};\n  }\n  return {date:null,field:String(row.field||row.column||'')};\n};\nconst commissioningFactsFromPacket=packet=>{\n  const src=packet&&typeof packet==='object'&&!Array.isArray(packet)?packet:{};\n  const facts=Array.isArray(src.facts)?src.facts:[];\n  return facts.map(f=>{\n    const row=f&&typeof f==='object'?f:{};\n    const values=row.values&&typeof row.values==='object'&&!Array.isArray(row.values)?row.values:(row.row&&typeof row.row==='object'?row.row:{});\n    const well=String(row.well||row.entity||row.entity_id||values['Скважина']||values.скважина||values.WELL||values.well||'').trim();\n    const picked=pickDateFromFactRow(row,values);\n    return {well,date:picked.date,field:picked.field};\n  }).filter(f=>f.well&&f.date!=null&&String(f.date).trim()!=='');\n};\nconst looksCommissioningFacts=facts=>facts.some(f=>/дата|date|commission|ввод/i.test(String(f.field||'')));\nconst observeKeywordScope=x=>{\n  const src=x&&typeof x==='object'&&!Array.isArray(x)?x:{};\n  const existing=(Array.isArray(src.requested_keyword_scope)?src.requested_keyword_scope:[]).map(v=>String(v||'').trim().toUpperCase()).filter(k=>SCHEDULE_ALLOWLIST.has(k));\n  return [...new Set([...existing,...observeAllowlistedKeywords(taskProseBlob(src))])];\n};\nconst observeChangeScope=(x,keywords)=>{\n  const src=x&&typeof x==='object'&&!Array.isArray(x)?x:{};\n  if(changeScopeMeaningful(src.requested_change_scope)) return src.requested_change_scope;\n  const prose=taskProseBlob(src);\n  const op=inferChangeOperation(prose);\n  const summary=String(src.objective||src.problem_statement||src.request_text||prose).trim().slice(0,500);\n  if(!keywords.length&&!op&&!summary) return src.requested_change_scope||null;\n  const scope={source:'task_text'};\n  if(op) scope.operation=op;\n  if(keywords.length) scope.keywords=keywords;\n  if(summary) scope.summary=summary;\n  const rows=keywords.map(keyword=>({keyword}));\n  if(op==='remove'&&rows.length) scope.must_remove=rows;\n  else if(op==='add'&&rows.length) scope.must_add=rows;\n  else if(op==='change'&&rows.length) scope.must_change=rows;\n  return scope;\n};\nconst observeSchedulePacketFacts=x=>{\n  const src=x&&typeof x==='object'&&!Array.isArray(x)?x:{};\n  const simulator_profile=applyPetroleumProfile(src.simulator_profile);\n  const prose=taskProseBlob(src);\n  const wellDateFacts=commissioningFactsFromPacket(src.source_facts_packet);\n  const groupSpec=observeGroupRebindFromProse(prose);\n  const commissioning=looksCommissioningProse(prose)||(wellDateFacts.length>0&&looksCommissioningFacts(wellDateFacts));\n  let requested_keyword_scope=observeKeywordScope(src);\n  let requested_capability_scope=(Array.isArray(src.requested_capability_scope)?src.requested_capability_scope:[]).map(v=>String(v||'').trim()).filter(Boolean);\n  let requested_change_scope=src.requested_change_scope&&changeScopeMeaningful(src.requested_change_scope)?src.requested_change_scope:null;\n  if(groupSpec){\n    requested_capability_scope=[...new Set([...withoutCapIds(requested_capability_scope,COMMISSIONING_CAP_IDS),'group_membership_rebind'])];\n    requested_keyword_scope=[...new Set([...requested_keyword_scope,...GROUP_REBIND_KEYWORDS.filter(k=>SCHEDULE_ALLOWLIST.has(k))])];\n    const prev=requested_change_scope&&typeof requested_change_scope==='object'&&!Array.isArray(requested_change_scope)?requested_change_scope:{};\n    const prevGroups=prev.well_groups&&typeof prev.well_groups==='object'&&!Array.isArray(prev.well_groups)?prev.well_groups:null;\n    requested_change_scope={\n      ...prev,\n      source:prev.source||'task_text',\n      capability_id:'group_membership_rebind',\n      intent:'group_membership_rebind',\n      operation:prev.operation||'change',\n      keywords:[...new Set([...(Array.isArray(prev.keywords)?prev.keywords:[]),...GROUP_REBIND_KEYWORDS.filter(k=>SCHEDULE_ALLOWLIST.has(k))])],\n      summary:prev.summary||prose.slice(0,500),\n      wells:(Array.isArray(prev.wells)&&prev.wells.length)?prev.wells:groupSpec.wells,\n      parent_group:prev.parent_group||groupSpec.parent_group,\n      parent_of_parent:prev.parent_of_parent||groupSpec.parent_of_parent,\n      well_groups:prevGroups||groupSpec.well_groups,\n      rate:prev.rate??groupSpec.rate,\n      gas_rate:prev.gas_rate??groupSpec.gas_rate,\n      control:prev.control||groupSpec.control,\n      group_rebind:prev.group_rebind||groupSpec,\n    };\n  }else if(commissioning){\n    requested_capability_scope=[...new Set([...withoutCapIds(requested_capability_scope,GROUP_REBIND_CAP_IDS),'commissioning_date_retarget'])];\n    requested_keyword_scope=[...new Set([...requested_keyword_scope,...COMMISSIONING_KEYWORDS.filter(k=>SCHEDULE_ALLOWLIST.has(k))])];\n    const prev=requested_change_scope&&typeof requested_change_scope==='object'&&!Array.isArray(requested_change_scope)?requested_change_scope:{};\n    const prevCap=capToken(prev.capability_id);\n    requested_change_scope={\n      ...prev,\n      source:prev.source||'task_text',\n      capability_id:COMMISSIONING_CAP_IDS.includes(prevCap)?prev.capability_id:'commissioning_date_retarget',\n      intent:COMMISSIONING_CAP_IDS.includes(capToken(prev.intent))?prev.intent:'shift_commissioning_dates',\n      operation:prev.operation||'change',\n      keywords:[...new Set([...(Array.isArray(prev.keywords)?prev.keywords:[]),...COMMISSIONING_KEYWORDS.filter(k=>SCHEDULE_ALLOWLIST.has(k))])],\n      summary:prev.summary||prose.slice(0,500),\n    };\n    delete requested_change_scope.group_rebind;\n  }else if(!requested_change_scope){\n    requested_change_scope=observeChangeScope(src,requested_keyword_scope);\n  }\n  if(!requested_keyword_scope.length&&requested_change_scope&&Array.isArray(requested_change_scope.keywords)){\n    requested_keyword_scope=requested_change_scope.keywords.map(v=>String(v||'').trim().toUpperCase()).filter(k=>SCHEDULE_ALLOWLIST.has(k));\n  }\n  return {simulator_profile,requested_keyword_scope,requested_change_scope,requested_capability_scope};\n};const raw=$json.schedule_intake_request??$json,obj=v=>v&&typeof v==='object'&&!Array.isArray(v),arr=Array.isArray,clean=v=>typeof v==='string'?v.trim():'';\nconst x=obj(raw)?raw:{},allowed=new Set([\"DATES\", \"INCLUDE\", \"GRUPTREE\", \"WELSPECS\", \"WELLTRACK\", \"COMPDATMD\", \"WCONHIST\", \"WCONPROD\", \"WCONINJE\", \"GCONPROD\", \"GCONINJE\", \"GUIDERAT\", \"GSATPROD\", \"GSATINJE\", \"WELLSTRE\", \"WINJGAS\", \"GINJGAS\", \"BRANPROP\", \"NODEPROP\", \"GNETDP\", \"NETBALAN\", \"FRACTURE_TEMPLATE\", \"FRACTURE_SPECS\", \"FRACTURE_STAGE\", \"WECON\", \"WTEST\", \"WELTARG\", \"WNETDP\", \"WPIMULT\", \"WDFAC\", \"WEFAC\", \"WELOPEN\", \"WELDRAW\", \"WLIST\", \"WFRACP\", \"WFRACPL\", \"VFPPROD\", \"WVFPDP\", \"ACTIONX\", \"DELAYACT\", \"ENDACTIO\", \"UDQ\", \"UDT\", \"APPLYSCRIPT\"]),sha=/^sha256:[a-f0-9]{64}$/i,iso=/^\\d{4}-\\d{2}-\\d{2}$/;\nconst findings=[],add=(code,severity='error',details={})=>findings.push({code,severity,...details}),validDate=value=>{const s=clean(value);if(!iso.test(s))return false;const d=new Date(`${s}T00:00:00Z`);return Number.isFinite(d.getTime())&&d.toISOString().slice(0,10)===s};\nconst observed=observeSchedulePacketFacts(x);\nconst profile=observed.simulator_profile,refs=arr(x.source_artifact_refs)?x.source_artifact_refs:(arr(x.artifact_refs)?x.artifact_refs:[]),scope=observed.requested_keyword_scope,changeScope=observed.requested_change_scope;\nconst inlineBaseline=typeof x.baseline_schedule_text==='string'&&x.baseline_schedule_text.length>0,baselinePresent=inlineBaseline,modeRaw=clean(x.build_mode||'AUTO').toUpperCase(),mode=modeRaw==='AUTO'?(baselinePresent?'REVISE':'CREATE'):modeRaw;\nconst rag=obj(x.rag_evidence)?x.rag_evidence:{},catalogue=obj(rag.schema_catalogue)?rag.schema_catalogue:(obj(x.schema_catalogue)?x.schema_catalogue:{}),citations=arr(rag.citations)?rag.citations:[];\nconst policyIn=obj(x.stage_gate_policy)?x.stage_gate_policy:{};\nconst policy={attention_threshold:85,hitl_threshold:70,hard_blockers:arr(policyIn.hard_blockers)?policyIn.hard_blockers:[]};\nif(('attention_threshold' in policyIn&&Number(policyIn.attention_threshold)!==85)||('hitl_threshold' in policyIn&&Number(policyIn.hitl_threshold)!==70))add('STAGE_GATE_POLICY_NORMALIZED','warning');\nconst monthMap={JAN:'01',FEB:'02',MAR:'03',APR:'04',MAY:'05',JUN:'06',JUL:'07',AUG:'08',SEP:'09',OCT:'10',NOV:'11',DEC:'12'};\nconst parseBaselineDates=text=>{const out=[];const re=/\\b(\\d{1,2})\\s+(JAN|FEB|MAR|APR|MAY|JUN|JUL|AUG|SEP|OCT|NOV|DEC)\\s+(\\d{4})\\b/gi;let m;while((m=re.exec(String(text||'')))){out.push(`${m[3]}-${monthMap[m[2].toUpperCase()]}-${String(m[1]).padStart(2,'0')}`);}return out;};\nlet historyStart=clean(x.history_start),historyEnd=clean(x.history_end),forecastStart=clean(x.forecast_start),forecastEnd=clean(x.forecast_end),modelStart=clean(x.model_start_date);\n// REVISE only: observe DATES already in the attached baseline. CREATE never invents dates.\nif(mode==='REVISE'&&baselinePresent){\n  const observedDates=parseBaselineDates(x.baseline_schedule_text);\n  const first=observedDates[0]||'';\n  const last=observedDates.length?observedDates[observedDates.length-1]:'';\n  if(!validDate(forecastStart)&&first) forecastStart=first;\n  if(!validDate(forecastEnd)&&last) forecastEnd=last;\n}\nif(x.contract!=='schedule_build_request'||x.contract_version!=='1.0')add('SCHEDULE_BUILD_CONTRACT_INVALID');\nif(!clean(x.task_id)||!clean(x.trace_id)||!clean(x.idempotency_key)||!clean(x.policy_version))add('SCHEDULE_BUILD_IDENTITY_REQUIRED');\nif(clean(x.orchestrator_task_id)&&clean(x.task_id)!==clean(x.orchestrator_task_id))add('SCHEDULE_BUILD_TASK_MISMATCH');\nif(!Number.isInteger(Number(x.expected_version))||Number(x.expected_version)<0)add('SCHEDULE_BUILD_EXPECTED_VERSION_INVALID');\nif(clean(x.policy_version)!=='petroleum-schedule-policy-v1')add('SCHEDULE_POLICY_VERSION_NOT_APPROVED','error',{policy_version:clean(x.policy_version)});\nif(!['CREATE','REVISE'].includes(mode))add('INVALID_BUILD_MODE');\nif(modeRaw==='CREATE'&&baselinePresent)add('CREATE_BASELINE_CONFLICT_REQUIRES_DECISION','decision',{message:'A baseline is attached while CREATE was requested; choose CREATE and explicitly discard it, or use REVISE.'});\nif(mode==='REVISE'&&!baselinePresent)add('BASELINE_REQUIRED');\nconst preservation=mode==='REVISE'?(clean(x.preservation_policy)||'preserve_unmentioned'):clean(x.preservation_policy);\nif(mode==='REVISE'&&preservation!=='preserve_unmentioned')add('PRESERVATION_POLICY_REQUIRED');\nif(clean(profile.vendor)!=='Rock Flow Dynamics'||clean(profile.simulator).toLowerCase()!=='tnavigator'||clean(profile.version)!=='22.2')add('SIMULATOR_PROFILE_NOT_APPROVED');\nif(clean(profile.unit_system).toUpperCase()!=='METRIC')add('METRIC_UNIT_SYSTEM_REQUIRED');\nif(mode==='CREATE'){if(!validDate(modelStart))add('MODEL_START_DATE_REQUIRED');if(!validDate(forecastStart))add('FORECAST_START_DATE_REQUIRED');if(!validDate(forecastEnd))add('FORECAST_END_DATE_REQUIRED')}\nif(validDate(forecastStart)&&validDate(forecastEnd)&&forecastEnd<forecastStart)add('FORECAST_HORIZON_INVALID');if(validDate(modelStart)&&validDate(forecastStart)&&forecastStart<modelStart)add('FORECAST_BEFORE_MODEL_START');\nif(Boolean(historyStart)!==Boolean(historyEnd))add('HISTORY_INTERVAL_INCOMPLETE');if(historyStart&&(!validDate(historyStart)||!validDate(historyEnd)))add('HISTORY_INTERVAL_INVALID');if(validDate(historyStart)&&validDate(historyEnd)&&historyEnd<historyStart)add('HISTORY_INTERVAL_INVALID');if(validDate(modelStart)&&validDate(historyStart)&&historyStart<modelStart)add('HISTORY_BEFORE_MODEL_START');if(validDate(historyEnd)&&validDate(forecastStart)&&forecastStart<historyEnd)add('HISTORY_FORECAST_OVERLAP');\nif(scope.includes('WCONHIST')&&(!validDate(historyStart)||!validDate(historyEnd)))add('HISTORY_SCOPE_REQUIRES_INTERVAL');\nif(!scope.length)add('KEYWORD_SCOPE_UNRESOLVED','warning');const requestedRaw=arr(x.requested_keyword_scope)?x.requested_keyword_scope.map(v=>clean(v).toUpperCase()).filter(Boolean):[];const unsupported=requestedRaw.filter(k=>!allowed.has(k));if(unsupported.length)add('UNSUPPORTED_KEYWORD','error',{keywords:unsupported});\nconst exclusiveCapIds=new Set([...COMMISSIONING_CAP_IDS,...GROUP_REBIND_CAP_IDS]);\nconst incomingCaps=(arr(x.requested_capability_scope)?x.requested_capability_scope.map(clean).filter(Boolean):[]);\nconst observedCaps=(arr(observed.requested_capability_scope)?observed.requested_capability_scope.map(clean).filter(Boolean):[]);\nconst capabilities=[...new Set([...incomingCaps.filter(c=>!exclusiveCapIds.has(capToken(c))),...observedCaps])];\nconst outputs=arr(x.required_outputs)?x.required_outputs.filter(v=>typeof v==='string'?clean(v):obj(v)):[];\nif(mode==='CREATE'&&!capabilities.length)add('CREATE_CAPABILITY_SCOPE_REQUIRED');if(mode==='CREATE'&&!outputs.length)add('CREATE_REQUIRED_OUTPUTS_REQUIRED');\nif(mode==='REVISE'&&!obj(changeScope))add('REVISE_CHANGE_SCOPE_REQUIRED','warning');\nif(!clean(x.objective||x.task?.objective||x.problem_statement))add('OBJECTIVE_REQUIRED');if(!arr(x.acceptance_criteria)||!x.acceptance_criteria.length)add('ACCEPTANCE_CRITERIA_REQUIRED','warning');\nif(!refs.every(r=>obj(r)&&clean(r.ref)&&clean(r.kind)&&clean(r.revision||r.manifest_hash)&&clean(r.description)))add('SOURCE_ARTIFACT_REF_INVALID');if(refs.length>100)add('SOURCE_ARTIFACT_LIMIT','error',{count:refs.length,max:100});\nconst catalogueProfile=obj(catalogue.simulator_profile)?catalogue.simulator_profile:{},ragAccess=clean(rag.filters?.access_scope),ragBase=clean(rag.filters?.target_base),catalogueSourceHash=clean(catalogue.source_hash).toLowerCase();if(rag.contract!=='schedule_rag_evidence'||rag.contract_version!=='1.0'||!citations.length||!ragAccess||ragBase!=='schedule_mvp'||catalogue.contract!=='schedule_schema_catalogue'||catalogue.contract_version!=='1.0'||!clean(catalogue.approved_by||catalogue.author)||!sha.test(clean(catalogue.catalogue_hash))||!sha.test(catalogueSourceHash)||clean(catalogueProfile.simulator).toLowerCase()!=='tnavigator'||clean(catalogueProfile.version)!=='22.2')add('EXPERT_KNOWLEDGE_AND_CATALOGUE_BINDING_REQUIRED');\nconst covered=new Set(citations.filter(c=>clean(c.knowledge_type)==='keyword_instruction').flatMap(c=>{const raw=c?.keyword_families??c?.keywords??[];return arr(raw)?raw.map(v=>clean(v).toUpperCase()):[]}));const missingCitationScope=scope.filter(k=>!covered.has(k));if(missingCitationScope.length)add('KEYWORD_INSTRUCTION_SCOPE_INCOMPLETE','warning',{keywords:missingCitationScope});\nif(citations.some(c=>!obj(c)||!clean(c.knowledge_id)||!clean(c.revision)||!clean(c.content_hash)||!clean(c.author)||!clean(c.knowledge_type)))add('EXPERT_KNOWLEDGE_CITATION_INVALID');\nconst maxRequestBytes=inlineBaseline?2359296:524288;let requestBytes=Number.MAX_SAFE_INTEGER;try{requestBytes=new TextEncoder().encode(JSON.stringify(x)).length}catch{}if(requestBytes>maxRequestBytes)add('SCHEDULE_BUILD_REQUEST_TOO_LARGE','error',{byte_length:requestBytes,max_bytes:maxRequestBytes});\nconst hard=findings.filter(f=>f.severity==='error'),decisionFindings=findings.filter(f=>f.severity==='decision'),status=decisionFindings.length?'needs_decision':hard.length?'needs_input':'accepted';\nconst compiled=hitlCompileCopy({findings, summary:'', stage:'schedule_intake_result'});\nconst questions=compiled.questions.map((q,index)=>({id:q.id||`intake_${index+1}`,code:q.code,question:q.question||q.text,text:q.text,expected_format:/DATE|HORIZON|INTERVAL/.test(String(q.code||''))?'YYYY-MM-DD':'',required:true}));\nconst blocking=findings.filter(f=>f.severity==='error'||f.severity==='decision');\nconst components={identity:(!blocking.some(f=>/CONTRACT|IDENTITY|TASK_MISMATCH|EXPECTED_VERSION|POLICY_VERSION/.test(f.code)))?100:0,profile_and_units:(!blocking.some(f=>/PROFILE|UNIT_SYSTEM/.test(f.code)))?100:0,temporal_scope:(!blocking.some(f=>/DATE|HISTORY|FORECAST|HORIZON/.test(f.code)))?100:0,evidence_and_scope:(!blocking.some(f=>/KEYWORD|CAPABILITY|OUTPUTS|CHANGE_SCOPE|KNOWLEDGE|CATALOGUE|RAG/.test(f.code)))?100:0};const stageScore=Math.round(.20*components.identity+.25*components.profile_and_units+.25*components.temporal_scope+.30*components.evidence_and_scope),gate=hard.length||decisionFindings.length||stageScore<70?'hitl':stageScore<85?'attention':'continue';\nreturn[{json:{contract:'schedule_intake_result',contract_version:'1.0',status,build_mode:mode,objective:clean(x.objective||x.task?.objective||x.problem_statement),task_id:clean(x.task_id),trace_id:clean(x.trace_id),idempotency_key:clean(x.idempotency_key),policy_version:clean(x.policy_version),expected_version:Number.isInteger(Number(x.expected_version))?Number(x.expected_version):null,simulator_profile:{vendor:'Rock Flow Dynamics',simulator:'tNavigator',version:'22.2',unit_system:clean(profile.unit_system).toUpperCase()||'METRIC'},baseline_present:baselinePresent,baseline_manifest_hash:clean(x.baseline_manifest_hash||x.baseline_source_hash).toLowerCase()||null,model_start_date:modelStart||null,history_start:historyStart||null,history_end:historyEnd||null,forecast_start:forecastStart||null,forecast_end:forecastEnd||null,requested_keyword_scope:scope,requested_capability_scope:capabilities,required_outputs:outputs,requested_change_scope:obj(changeScope)?changeScope:{},preservation_policy:mode==='REVISE'?'preserve_unmentioned':'not_applicable',source_artifact_refs:refs,knowledge_binding:{target_base:ragBase,knowledge_ids:[...new Set(citations.map(c=>clean(c.knowledge_id)).filter(Boolean))],content_hashes:[...new Set(citations.map(c=>clean(c.content_hash)).filter(Boolean))],catalogue_hash:clean(catalogue.catalogue_hash).toLowerCase()||null},stage_gate_policy:{attention_threshold:85,hitl_threshold:70,hard_blockers:arr(policy.hard_blockers)?policy.hard_blockers.slice(0,100):[]},findings,hard_blockers:hard.map(f=>f.code),questions,score:{stage_score:stageScore,components,raw_counts:{findings:findings.length,hard_blockers:hard.length,decision_findings:decisionFindings.length,requested_keywords:scope.length,capabilities:capabilities.length,required_outputs:outputs.length,citations:citations.length,source_artifacts:refs.length},thresholds:{attention:85,hitl:70},decision:gate,provisional:false},next_action:status==='accepted'?'plan':status==='needs_decision'?'ask_human_decision':'ask_human_input'}}];"
       },
       "id": "492e4573-90ab-5367-944b-2ceb987ed3cc",
@@ -3992,779 +4189,3 @@
     },
     {
       "parameters": {
-        "jsCode": "const x=$json;const parse=(v,f)=>{try{return typeof v==='string'?JSON.parse(v):v??f}catch{return f}};\nconst pending=parse(x.gate_json,{});const result=parse(x.result_json,{});const verification=parse(x.verification_json,{});const runtime=parse(x.runtime_json,{});\nconst chatRoles={\"excel_extraction_specialist\": \"Excel Extractor\", \"schedule_builder_specialist\": \"Schedule Builder\", \"engineering_calculation_specialist\": \"Calculation Specialist\", \"engineering_data_specialist\": \"Data Specialist\", \"engineering_document_specialist\": \"Document Specialist\", \"cluster_calculation_specialist\": \"Cluster Calculation\", \"binary_results_specialist\": \"Binary Results Extractor\", \"presentation_specialist\": \"Presentation Assembler\"};\nconst activity=(Array.isArray(runtime.handoff_events)?runtime.handoff_events:[]).map((turn,index)=>({\n  turn_id:index+1,\n  at:turn.at||null,\n  kind:'handoff',\n  from:{specialist_id:turn.from_specialist||null,role:turn.from_role||chatRoles[turn.from_specialist]||turn.from_specialist||'Orchestrator'},\n  to:{specialist_id:turn.to_specialist||null,role:turn.to_role||chatRoles[turn.to_specialist]||turn.to_specialist||'Orchestrator'},\n  status:turn.status||null,\n  text:String(turn.summary||'').slice(0,500),\n  brief:String(turn.brief||turn.summary||'').slice(0,800),\n  duration_ms:Number.isFinite(Number(turn.duration_ms))?Math.trunc(Number(turn.duration_ms)):null,\n  chips:Object.entries(turn.details&&typeof turn.details==='object'?turn.details:{}).filter(([k,v])=>['string','number','boolean'].includes(typeof v)&&!/(prompt|secret|token|password|authorization|api[_-]?key)/i.test(k)).slice(0,6).map(([k,v])=>({id:k,label:String(k),value:v}))\n}));\nreturn [{json:{contract:'orchestrator_response',contract_version:'1.0',task_id:x.task_id||null,version:Number(x.version||x.stored_version||0)||null,status:x.status||'error',\n message:x.message||({planning:'Планируем задачу.',delegated:'Задачу передали специалисту.',awaiting_human:'Нужен ваш ответ или утверждение.',completed:'Задача завершена после проверки.',failed:'Задача завершилась с ошибкой.',rejected:'Задача отклонена.',cancelled:'Задача отменена.',conflict:'Конфликт версии или gate — обновите статус.',not_found:'Задача не найдена.'}[x.status]||'Запрос обработан.'),\n next_action:x.status==='awaiting_human'?'resume_with_task_id_expected_version_gate_id_and_action':x.status==='conflict'?'reload_status':x.status==='retryable_error'?'automatic_replan':null,\n human_gate:Object.keys(pending).length?pending:null,result:Object.keys(result).length?result:null,verification:Object.keys(verification).length?verification:null,\n activity,activity_contract:'mas_activity_feed/v1.1',\n audit:{risk_class:x.risk_class||null,retry_count:Number(x.retry_count||0),max_retries:Number(x.max_retries||0),updated_at:x.updated_at||null,handoff_count:activity.length}}}];"
-      },
-      "id": "43c3bfc8-e062-5f9f-be0e-d137b3c00544",
-      "name": "Format orchestrator response",
-      "type": "n8n-nodes-base.code",
-      "typeVersion": 2,
-      "position": [
-        4480,
-        255
-      ],
-      "executeOnce": true
-    }
-  ],
-  "pinData": {},
-  "connections": {
-    "Mark HTTP entrypoint": {
-      "main": [
-        [
-          {
-            "node": "Materialize SCHEDULE uploads",
-            "type": "main",
-            "index": 0
-          }
-        ]
-      ]
-    },
-    "Mark Sub-workflow entrypoint": {
-      "main": [
-        [
-          {
-            "node": "Materialize SCHEDULE uploads",
-            "type": "main",
-            "index": 0
-          }
-        ]
-      ]
-    },
-    "Authenticated engineering webhook": {
-      "main": [
-        [
-          {
-            "node": "Mark HTTP entrypoint",
-            "type": "main",
-            "index": 0
-          }
-        ]
-      ]
-    },
-    "Engineering task form": {
-      "main": [
-        [
-          {
-            "node": "Mark Form entrypoint",
-            "type": "main",
-            "index": 0
-          }
-        ]
-      ]
-    },
-    "Mark Form entrypoint": {
-      "main": [
-        [
-          {
-            "node": "Form has SCHEDULE upload?",
-            "type": "main",
-            "index": 0
-          }
-        ]
-      ]
-    },
-    "Form has SCHEDULE upload?": {
-      "main": [
-        [
-          {
-            "node": "Materialize SCHEDULE uploads",
-            "type": "main",
-            "index": 0
-          }
-        ],
-        [
-          {
-            "node": "Materialize SCHEDULE uploads",
-            "type": "main",
-            "index": 0
-          }
-        ]
-      ]
-    },
-    "Materialize SCHEDULE uploads": {
-      "main": [
-        [
-          {
-            "node": "Normalize invocation",
-            "type": "main",
-            "index": 0
-          }
-        ]
-      ]
-    },
-    "When called by another workflow": {
-      "main": [
-        [
-          {
-            "node": "Mark Sub-workflow entrypoint",
-            "type": "main",
-            "index": 0
-          }
-        ]
-      ]
-    },
-    "Normalize invocation": {
-      "main": [
-        [
-          {
-            "node": "Route invocation action",
-            "type": "main",
-            "index": 0
-          }
-        ]
-      ]
-    },
-    "Route invocation action": {
-      "main": [
-        [
-          {
-            "node": "Action router",
-            "type": "main",
-            "index": 0
-          }
-        ]
-      ]
-    },
-    "Action router": {
-      "main": [
-        [
-          {
-            "node": "Prepare new task",
-            "type": "main",
-            "index": 0
-          }
-        ],
-        [
-          {
-            "node": "Load task by ID",
-            "type": "main",
-            "index": 0
-          }
-        ],
-        [
-          {
-            "node": "Build invalid invocation response",
-            "type": "main",
-            "index": 0
-          }
-        ],
-        [
-          {
-            "node": "Prepare final MAS trace event",
-            "type": "main",
-            "index": 0
-          }
-        ]
-      ]
-    },
-    "Prepare new task": {
-      "main": [
-        [
-          {
-            "node": "Call CAS persist — insert new task",
-            "type": "main",
-            "index": 0
-          }
-        ]
-      ]
-    },
-    "Call CAS persist — insert new task": {
-      "main": [
-        [
-          {
-            "node": "Should new task be planned?",
-            "type": "main",
-            "index": 0
-          }
-        ]
-      ]
-    },
-    "Should new task be planned?": {
-      "main": [
-        [
-          {
-            "node": "Prepare governed routing RAG request",
-            "type": "main",
-            "index": 0
-          }
-        ],
-        [
-          {
-            "node": "Prepare final MAS trace event",
-            "type": "main",
-            "index": 0
-          }
-        ]
-      ]
-    },
-    "Load task by ID": {
-      "main": [
-        [
-          {
-            "node": "Validate loaded task state",
-            "type": "main",
-            "index": 0
-          }
-        ]
-      ]
-    },
-    "Validate loaded task state": {
-      "main": [
-        [
-          {
-            "node": "Apply action and version guard",
-            "type": "main",
-            "index": 0
-          }
-        ]
-      ]
-    },
-    "Apply action and version guard": {
-      "main": [
-        [
-          {
-            "node": "Resume action router",
-            "type": "main",
-            "index": 0
-          }
-        ]
-      ]
-    },
-    "Resume action router": {
-      "main": [
-        [
-          {
-            "node": "Call CAS persist — human action then plan",
-            "type": "main",
-            "index": 0
-          }
-        ],
-        [
-          {
-            "node": "Call CAS persist — terminal human action",
-            "type": "main",
-            "index": 0
-          }
-        ],
-        [
-          {
-            "node": "Prepare final MAS trace event",
-            "type": "main",
-            "index": 0
-          }
-        ]
-      ]
-    },
-    "Call CAS persist — human action then plan": {
-      "main": [
-        [
-          {
-            "node": "Human action planning CAS succeeded?",
-            "type": "main",
-            "index": 0
-          }
-        ]
-      ]
-    },
-    "Human action planning CAS succeeded?": {
-      "main": [
-        [
-          {
-            "node": "Approved or continued task delegates directly?",
-            "type": "main",
-            "index": 0
-          }
-        ],
-        [
-          {
-            "node": "Prepare final MAS trace event",
-            "type": "main",
-            "index": 0
-          }
-        ]
-      ]
-    },
-    "Approved or continued task delegates directly?": {
-      "main": [
-        [
-          {
-            "node": "Resolve allowlisted specialist",
-            "type": "main",
-            "index": 0
-          }
-        ],
-        [
-          {
-            "node": "Prepare governed routing RAG request",
-            "type": "main",
-            "index": 0
-          }
-        ]
-      ]
-    },
-    "Call CAS persist — terminal human action": {
-      "main": [
-        [
-          {
-            "node": "Prepare final MAS trace event",
-            "type": "main",
-            "index": 0
-          }
-        ]
-      ]
-    },
-    "Prepare governed routing RAG request": {
-      "main": [
-        [
-          {
-            "node": "Call routing Hybrid Retrieval",
-            "type": "main",
-            "index": 0
-          }
-        ]
-      ]
-    },
-    "Call routing Hybrid Retrieval": {
-      "main": [
-        [
-          {
-            "node": "Attach governed routing RAG evidence",
-            "type": "main",
-            "index": 0
-          }
-        ]
-      ]
-    },
-    "Attach governed routing RAG evidence": {
-      "main": [
-        [
-          {
-            "node": "Routing RAG evidence ready?",
-            "type": "main",
-            "index": 0
-          }
-        ]
-      ]
-    },
-    "Routing RAG evidence ready?": {
-      "main": [
-        [
-          {
-            "node": "Prepare planner input",
-            "type": "main",
-            "index": 0
-          }
-        ],
-        [
-          {
-            "node": "Build routing RAG evidence gate",
-            "type": "main",
-            "index": 0
-          }
-        ]
-      ]
-    },
-    "Build routing RAG evidence gate": {
-      "main": [
-        [
-          {
-            "node": "Call CAS persist — routing gate",
-            "type": "main",
-            "index": 0
-          }
-        ]
-      ]
-    },
-    "Prepare planner input": {
-      "main": [
-        [
-          {
-            "node": "Engineering Planner Agent",
-            "type": "main",
-            "index": 0
-          }
-        ]
-      ]
-    },
-    "Planner Chat Model — configure in UI": {
-      "ai_languageModel": [
-        [
-          {
-            "node": "Engineering Planner Agent",
-            "type": "ai_languageModel",
-            "index": 0
-          },
-          {
-            "node": "Planner Structured Output",
-            "type": "ai_languageModel",
-            "index": 0
-          }
-        ]
-      ]
-    },
-    "Planner Structured Output": {
-      "ai_outputParser": [
-        [
-          {
-            "node": "Engineering Planner Agent",
-            "type": "ai_outputParser",
-            "index": 0
-          }
-        ]
-      ]
-    },
-    "Engineering Planner Agent": {
-      "main": [
-        [
-          {
-            "node": "Validate and apply plan",
-            "type": "main",
-            "index": 0
-          }
-        ]
-      ]
-    },
-    "Validate and apply plan": {
-      "main": [
-        [
-          {
-            "node": "Call CAS persist — plan or human gate",
-            "type": "main",
-            "index": 0
-          }
-        ]
-      ]
-    },
-    "Call CAS persist — plan or human gate": {
-      "main": [
-        [
-          {
-            "node": "Plan delegates now?",
-            "type": "main",
-            "index": 0
-          }
-        ]
-      ]
-    },
-    "Plan delegates now?": {
-      "main": [
-        [
-          {
-            "node": "Resolve allowlisted specialist",
-            "type": "main",
-            "index": 0
-          }
-        ],
-        [
-          {
-            "node": "Prepare final MAS trace event",
-            "type": "main",
-            "index": 0
-          }
-        ]
-      ]
-    },
-    "Resolve allowlisted specialist": {
-      "main": [
-        [
-          {
-            "node": "Delegation allowlisted?",
-            "type": "main",
-            "index": 0
-          }
-        ]
-      ]
-    },
-    "Delegation allowlisted?": {
-      "main": [
-        [
-          {
-            "node": "Prepare specialist invocation context",
-            "type": "main",
-            "index": 0
-          }
-        ],
-        [
-          {
-            "node": "Build allowlist configuration gate",
-            "type": "main",
-            "index": 0
-          }
-        ]
-      ]
-    },
-    "Build allowlist configuration gate": {
-      "main": [
-        [
-          {
-            "node": "Call CAS persist — routing gate",
-            "type": "main",
-            "index": 0
-          }
-        ]
-      ]
-    },
-    "Call CAS persist — routing gate": {
-      "main": [
-        [
-          {
-            "node": "Prepare final MAS trace event",
-            "type": "main",
-            "index": 0
-          }
-        ]
-      ]
-    },
-    "Prepare specialist invocation context": {
-      "main": [
-        [
-          {
-            "node": "Configured specialist router",
-            "type": "main",
-            "index": 0
-          }
-        ]
-      ]
-    },
-    "Configured specialist router": {
-      "main": [
-        [
-          {
-            "node": "Prepare governed Excel protocol RAG request",
-            "type": "main",
-            "index": 0
-          }
-        ],
-        [
-          {
-            "node": "Prepare governed SCHEDULE RAG request",
-            "type": "main",
-            "index": 0
-          }
-        ],
-        [
-          {
-            "node": "Call Calculation Specialist",
-            "type": "main",
-            "index": 0
-          }
-        ],
-        [
-          {
-            "node": "Call Data Specialist",
-            "type": "main",
-            "index": 0
-          }
-        ],
-        [
-          {
-            "node": "Call Document Specialist",
-            "type": "main",
-            "index": 0
-          }
-        ],
-        [
-          {
-            "node": "Call Cluster Calculation Specialist",
-            "type": "main",
-            "index": 0
-          }
-        ],
-        [
-          {
-            "node": "Call Binary Results Specialist",
-            "type": "main",
-            "index": 0
-          }
-        ],
-        [
-          {
-            "node": "Call Presentation Specialist",
-            "type": "main",
-            "index": 0
-          }
-        ]
-      ]
-    },
-    "Prepare governed Excel protocol RAG request": {
-      "main": [
-        [
-          {
-            "node": "Call Excel protocol Hybrid Retrieval",
-            "type": "main",
-            "index": 0
-          }
-        ]
-      ]
-    },
-    "Call Excel protocol Hybrid Retrieval": {
-      "main": [
-        [
-          {
-            "node": "Attach governed Excel protocol RAG evidence",
-            "type": "main",
-            "index": 0
-          }
-        ]
-      ]
-    },
-    "Attach governed Excel protocol RAG evidence": {
-      "main": [
-        [
-          {
-            "node": "Excel protocol RAG evidence ready?",
-            "type": "main",
-            "index": 0
-          }
-        ]
-      ]
-    },
-    "Excel protocol RAG evidence ready?": {
-      "main": [
-        [
-          {
-            "node": "Call Excel Extraction Specialist",
-            "type": "main",
-            "index": 0
-          }
-        ],
-        [
-          {
-            "node": "Build Excel protocol RAG evidence gate",
-            "type": "main",
-            "index": 0
-          }
-        ]
-      ]
-    },
-    "Build Excel protocol RAG evidence gate": {
-      "main": [
-        [
-          {
-            "node": "Normalize specialist result",
-            "type": "main",
-            "index": 0
-          }
-        ]
-      ]
-    },
-    "Call Excel Extraction Specialist": {
-      "main": [
-        [
-          {
-            "node": "Normalize specialist result",
-            "type": "main",
-            "index": 0
-          }
-        ]
-      ]
-    },
-    "Prepare governed SCHEDULE RAG request": {
-      "main": [
-        [
-          {
-            "node": "Call SCHEDULE Hybrid Retrieval",
-            "type": "main",
-            "index": 0
-          }
-        ]
-      ]
-    },
-    "Call SCHEDULE Hybrid Retrieval": {
-      "main": [
-        [
-          {
-            "node": "Attach governed SCHEDULE RAG evidence",
-            "type": "main",
-            "index": 0
-          }
-        ]
-      ]
-    },
-    "Attach governed SCHEDULE RAG evidence": {
-      "main": [
-        [
-          {
-            "node": "SCHEDULE RAG evidence ready?",
-            "type": "main",
-            "index": 0
-          }
-        ]
-      ]
-    },
-    "SCHEDULE RAG evidence ready?": {
-      "main": [
-        [
-          {
-            "node": "Call SCHEDULE Builder Specialist",
-            "type": "main",
-            "index": 0
-          }
-        ],
-        [
-          {
-            "node": "Build SCHEDULE RAG evidence gate",
-            "type": "main",
-            "index": 0
-          }
-        ]
-      ]
-    },
-    "Build SCHEDULE RAG evidence gate": {
-      "main": [
-        [
-          {
-            "node": "Normalize specialist result",
-            "type": "main",
-            "index": 0
-          }
-        ]
-      ]
-    },
-    "Call SCHEDULE Builder Specialist": {
-      "main": [
-        [
-          {
-            "node": "Normalize specialist result",
-            "type": "main",
-            "index": 0
-          }
-        ]
-      ]
-    },
-    "Call Calculation Specialist": {
-      "main": [
-        [
-          {
-            "node": "Normalize specialist result",
-            "type": "main",
-            "index": 0
-          }
-        ]
-      ]
-    },
-    "Call Data Specialist": {
-      "main": [
-        [
-          {
-            "node": "Normalize specialist result",
-            "type": "main",
-            "index": 0
-          }
-        ]
-      ]
-    },
-    "Call Document Specialist": {
-      "main": [
-        [
-          {
-            "node": "Normalize specialist result",
-            "type": "main",
-            "index": 0
-          }
-        ]
-      ]
-    },
-    "Call Cluster Calculation Specialist": {
-      "main": [
-        [
-          {

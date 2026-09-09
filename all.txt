@@ -142,6 +142,395 @@ python3 scripts/test_project_pack.py
 ```
 
 ===END_FILE===
+===BEGIN_FILE===	agents-template/demo_agent/README.md	6113	utf8
+# Demo Agent — шаблон нового агента MAS
+
+Минимальный агент на `mas-agent-kit`, который показывает весь контракт: сессия, инструменты для LLM,
+вопрос инженеру, долгая работа с результатом «позже». Скопируйте папку — и через час у вас свой агент.
+
+```
+agents-template/demo_agent/
+├── app/__init__.py        # добавляет ../../mas-agent-kit в sys.path — kit это модуль репозитория, не pip-пакет
+├── app/agent.py           # DemoAgent(AgentService): open_session, result, три инструмента, фоновая «долгая» работа; agent = DemoAgent()
+├── app/main.py            # app = create_agent_app(agent) — /health + /agent-tools/* + /sessions/*
+├── tests/                 # pytest: контракт агента через HTTP + фейковый Activity (без n8n)
+├── requirements.txt       # fastapi/uvicorn/filelock — классический .venv + pip, только Windows wheels
+├── demo-agent.env.example # порт, адрес Activity, длительность «расчёта»
+└── setup-windows.bat / start-windows.bat / start-linux.sh
+```
+
+Вторая половина агента — его **спека** `n8n/templates/agents/demo_agent.py` (`AgentSpec`): из неё генерируются
+workflow n8n (`n8n/workflows/support/demo-agent.workflow.json`), поле `demo_agent_url` в `MAS — Runtime Config`
+и строка `agent_registry` (seed). Оркестратор при этом не меняется.
+
+## Как агент разговаривает с MAS
+
+```
+n8n (Agent — Demo Agent)                      FastAPI (этот сервис)
+POST /agent-tools/open_session {agent_task} → DemoAgent.open_session → {"ok":true,"session_id",...inspect}
+POST /agent-tools/<tool> {session_id, args} → ToolRegistry.run → плоский ответ (ok / status / error+hint)
+GET  /sessions/{id}/result                  → DemoAgent.result   → agent_result {status, message, data, requests…}
+POST /sessions/{id}/close
+```
+
+`agent_result.status`:
+
+| status | что делает оркестратор | как получить в коде |
+|---|---|---|
+| `completed` | пишет `data` в `state.agents.<agent_id>`, идёт дальше | `self.new_result(state, "completed", "Насчитал 3 скважины: …", data={...})` |
+| `needs_input` | задаёт инженеру вопрос из `requests[0]`, ждёт ответ | инструмент `ask_engineer` → `engineer_request_from_args` |
+| `in_progress` | ставит кейс в `waiting_agent` и ждёт | `in_progress(agent_id, task_id, "Расчёт запущен, около двух минут.", watch={...})` |
+| `failed` | считает ошибку; 3 подряд — кейс `failed` | `self.new_result(state, "failed", "…")` |
+
+**Долгая работа.** `start_long_job` возвращает `in_progress` и запускает поток. Поток пишет в ленту
+`activity.progress("…прошло 30 секунд.", status="waiting_agent")` и по завершении отдаёт итог оркестратору:
+`activity.finish_task(final_result)` → `POST /cases/{id}/run {action:resume, source:agent, agent_result}`.
+Оркестратор применяет результат тем же `applyAgentResult`, что и для синхронных агентов, и продолжает план.
+Файлы-результаты (xlsx, отчёты) кладите через `activity.upload(...)` — карточка вернётся в `agent_result.artifacts`.
+
+**Ошибки аргументов — для LLM, не для инженера.** `raise ToolError("no_wells_found", "…подсказка модели…", …)`
+превращается в `{"ok": false, "code": "no_wells_found", "message": "…"}`; модель исправит вызов. Ключ — `code`, не `error`: item с `json.error` n8n считает упавшим и при `retryOnFail` повторяет HTTP-вызов.
+Инженера спрашивает только `ask_engineer`, и только прозой: `human_text_problems` отклонит `well_column`, `key=value`, JSON.
+
+## Сделать свой агент за 6 шагов
+
+1. **Скопировать** `agents-template/demo_agent` → `<my-agent-service>/` (рядом с `mas-agent-kit/` — `app/__init__.py`
+   ищет kit вверх по дереву, его не трогать). В `app/agent.py` переименовать класс и
+   `agent_id` (snake_case), заменить инструменты. У каждого инструмента: schema для LLM (`name`, описание,
+   `properties`) + функция `(ctx, args) -> dict`. Итог фиксируется `self.store_result(ctx.state, result)`.
+   Когда инструментов становится много — вынести их в `app/agent_tools.py` как `@agent.tools.tool(...)`-функции
+   (импорт внизу `agent.py`), как в `schedule-builder-service` и `excel-agent-tools`; `main.py` не меняется.
+   Форму (класс в `agent.py`, маршруты от kit'а, инструменты через реестр) проверяет `mas-agent-kit/tests/test_service_shape.py`.
+2. **Тесты** — поправить `tests/test_demo_agent.py` под свои инструменты (фейковый Activity уже есть).
+3. **Спека** — скопировать `n8n/templates/agents/demo_agent.py` → `agents/<agent_id>.py`: `when_to_use` (русская
+   проза — по ней Decision LLM выбирает агента), `input_required` / `output_provides`, `service_url_key`,
+   `lab_url`, `system_prompt` («какой инструмент когда»), `tools` (те же имена, что маршруты `/agent-tools/<name>`),
+   `texts` (фразы инженеру, когда LLM закончил без результата). Добавить в `agents/__init__.py` → `ALL`.
+   Генератор — копия `generate_demo_agent.py` (для боевого агента пишите в `OUT_DIR`, не в `support`).
+4. **Сгенерировать**: `cd n8n/templates && python3 generate_<agent>.py && python3 generate_mas_runtime_config.py
+   && python3 generate_mas_control_plane_proxy.py && python3 generate_mas_health_check.py`. Smoke по образцу
+   `n8n/tests/demo-agent-smoke.js`; `python3 scripts/mas_gate.py`.
+5. **Поле (UI n8n 2.30.8 + Windows):** `setup-windows.bat`, `copy demo-agent.env.example demo-agent.env`, `start-windows.bat`;
+   в n8n *Import from File* workflow агента, привязать Qwen / Runtime Config / Knowledge Retrieval (жёлтая заметка
+   в workflow), вписать `<service_url_key>` = `http://<IP-Windows>:<port>` в `MAS — Runtime Config`; после UI-импорта id
+   workflow новый — вписать его в `agent_workflow_ids` там же или в `invoke.workflow_id` строки агента; включить строку
+   в Activity → **Агенты** (`/registry`) или `PUT /agents/<agent_id> {"enabled": true}`.
+6. **Live-проверка** (lab): `python3 scripts/mas_gate.py --live --cases demo_agent` — сценарий
+   `simulation-model-example/run_live_demo_agent.py` включает строку, гонит кейс через `waiting_agent` до `done`, выключает.
+
+Чего не делать: не добавлять имя агента в промпт оркестратора; не выбирать инструмент regex'ом по тексту задачи;
+не писать инженеру `snake_case`/JSON; не звать другие агенты из своего сервиса — данные предыдущих агентов уже
+лежат в `packet.upstream_data()`.
+
+===END_FILE===
+===BEGIN_FILE===	agents-template/demo_agent/app/__init__.py	818	utf8
+"""Demo Agent service (template).
+
+The shared agent core ``mas_agent_kit`` is a plain folder of this repository (``<repo>/mas-agent-kit``),
+not a pip package. Python only looks next to the entry point, so we add that folder to ``sys.path`` here,
+before the first ``from mas_agent_kit import ...`` in ``app.main``. Works the same for ``uvicorn app.main:app``,
+pytest and the lab container (the kit is mounted at ``/mas-agent-kit``). Copy this file into your agent as is.
+"""
+
+import sys
+from pathlib import Path
+
+
+def _use_repo_kit() -> None:
+    for parent in Path(__file__).resolve().parents:
+        kit = parent / "mas-agent-kit"
+        if (kit / "mas_agent_kit" / "__init__.py").is_file():
+            if str(kit) not in sys.path:
+                sys.path.insert(0, str(kit))
+            return
+
+
+_use_repo_kit()
+
+===END_FILE===
+===BEGIN_FILE===	agents-template/demo_agent/app/agent.py	8616	utf8
+"""Demo Agent — the template for a new MAS agent on ``mas-agent-kit``: the ``AgentService`` class.
+
+What it does (on purpose trivial, so the plumbing is the point):
+
+* ``count_wells``   — counts well names in the task text and in facts of upstream agents; ``completed``.
+* ``start_long_job`` — a "long calculation": returns ``in_progress`` right away, posts ``agent.progress``
+  lines while it runs and, when done, hands the final ``agent_result`` to the orchestrator through
+  Activity (``ActivityClient.finish_task``). This is how hour-long agents work in the MAS.
+* ``ask_engineer``  — one Russian question to the engineer (``needs_input``).
+
+Tools here are closures inside ``_register_tools`` (the agent is small); a bigger agent keeps them in
+``app/agent_tools.py`` as ``@agent.tools.tool`` functions — see ``schedule-builder-service`` and
+``excel-agent-tools``. Copy this folder, rename ``agent_id`` / tools / texts, add the ``AgentSpec`` in
+``n8n/templates/agents/<agent_id>.py`` — the orchestrator is not touched (see README.md).
+"""
+
+from __future__ import annotations
+
+import os
+import re
+import threading
+import time
+from typing import Any
+
+from mas_agent_kit import (
+    ActivityClient,
+    AgentService,
+    SessionNotFound,
+    SessionStore,
+    ToolError,
+    ToolRegistry,
+    engineer_request_from_args,
+    in_progress,
+    plural_ru,
+)
+
+AGENT_ID = "demo_agent"
+# Lab default: 40 s of "calculation" with a progress line every 15 s. Field: set in the service env.
+JOB_SECONDS = float(os.getenv("DEMO_JOB_SECONDS", "40"))
+PROGRESS_EVERY_S = float(os.getenv("DEMO_PROGRESS_EVERY_S", "15"))
+# A well name in engineering texts: 3–5 digits with an optional letter suffix (1601, 1735, 2012G).
+_WELL_TOKEN = re.compile(r"(?<![\w.])(\d{3,5}[A-Za-zА-Яа-я]?)(?![\w.])")
+
+
+def wells_in(text: str) -> list[str]:
+    """Deterministic helper: unique well-like tokens in reading order."""
+    seen: list[str] = []
+    for token in _WELL_TOKEN.findall(str(text or "")):
+        if token not in seen:
+            seen.append(token)
+    return seen
+
+
+class DemoAgent(AgentService):
+    agent_id = AGENT_ID
+
+    def __init__(self, root: str | None = None, *, job_seconds: float = JOB_SECONDS, progress_every_s: float = PROGRESS_EVERY_S):
+        self.store = SessionStore(prefix="demo", root=root or os.getenv("DEMO_SESSIONS_DIR") or "data/sessions")
+        self.tools = ToolRegistry(self.store)
+        self.job_seconds = job_seconds
+        self.progress_every_s = progress_every_s
+        self.jobs: dict[str, threading.Thread] = {}
+        self._register_tools()
+
+    # -- session --------------------------------------------------------------------------------
+
+    def open_session(self, task: dict[str, Any]) -> dict[str, Any]:
+        packet = self.packet(task)
+        if not packet.objective.strip():
+            return self.not_opened(self.needs_input({"task_id": packet.task_id}, "Опишите задачу: что именно нужно посчитать или запустить."))
+        state = self.store.create({**self.base_state(packet), "upstream_facts": packet.upstream_data().get("facts") or []})
+        # ``inspect`` is what the LLM sees before choosing a tool — keep it short and factual.
+        return self.opened(state, inspect={"wells_in_task": wells_in(packet.objective), "upstream_fact_count": len(state["upstream_facts"])})
+
+    def result(self, state: dict[str, Any]) -> dict[str, Any]:
+        return state.get("result") or self.needs_input(state, "Демо-агент не понял, что нужно сделать. Опишите задачу одним-двумя предложениями.")
+
+    # -- tools ----------------------------------------------------------------------------------
+
+    def _register_tools(self) -> None:
+        @self.tools.tool(
+            "count_wells",
+            "Посчитать скважины, упомянутые в тексте задачи и в фактах предыдущих агентов.",
+            {"text": {"type": "string", "description": "Текст для подсчёта; по умолчанию — задача инженера."}},
+        )
+        def count_wells(ctx, args):
+            text = str(args.get("text") or ctx.state.get("objective") or "")
+            wells = wells_in(text)
+            for fact in ctx.state.get("upstream_facts") or []:
+                well = str(fact.get("well") or "") if isinstance(fact, dict) else ""
+                if well and well not in wells:
+                    wells.append(well)
+            if not wells:
+                raise ToolError("no_wells_found", "В тексте нет имён скважин — уточни у инженера через ask_engineer, о каких скважинах речь.", text_preview=text[:120])
+            message = f"Насчитал {plural_ru(len(wells), 'скважину', 'скважины', 'скважин')}: {', '.join(wells[:12])}."
+            self.store_result(ctx.state, self.new_result(ctx.state, "completed", message, data={"well_count": len(wells), "wells": wells}))
+            return {"status": "completed", "well_count": len(wells), "wells": wells}
+
+        @self.tools.tool(
+            "start_long_job",
+            "Запустить долгий расчёт (имитация): агент сразу вернёт статус «в работе», а результат придёт позже через Activity.",
+            {"label": {"type": "string", "description": "Как назвать расчёт в ленте (по-русски)."}},
+        )
+        def start_long_job(ctx, args):
+            label = str(args.get("label") or "Демонстрационный расчёт").strip().rstrip(".")
+            label = label[:1].upper() + label[1:]  # the LLM tends to send lowercase labels; feed lines are sentences
+            minutes = max(1, round(self.job_seconds / 60))
+            message = f"{label} запущен, ориентировочно {plural_ru(minutes, 'минута', 'минуты', 'минут')}."
+            self.store_result(
+                ctx.state,
+                in_progress(self.agent_id, str(ctx.state.get("task_id") or ""), message, watch={"kind": "timer", "ref": ctx.session_id, "poll_hint": f"{int(self.progress_every_s)}s"}),
+            )
+            self._spawn_job(dict(ctx.state), label)
+            return {"status": "in_progress", "message": message}
+
+        @self.tools.tool(
+            "ask_engineer",
+            "Задать инженеру один вопрос по-русски, если без ответа задачу не решить.",
+            {"question": {"type": "string"}, "options": {"type": "string", "description": "Варианты через точку с запятой (необязательно)."}},
+            required=["question"],
+        )
+        def ask_engineer(ctx, args):
+            request = engineer_request_from_args(args, default_topic="demo", default_files=())
+            result = self.new_result(ctx.state, "needs_input", request["question"], requests=[request], issues=[{"type": "engineer_input_required", "topic": request["question_id"]}])
+            self.store_result(ctx.state, result)
+            return {"status": "needs_input", "question_id": request["question_id"]}
+
+    # -- the long job ---------------------------------------------------------------------------
+
+    def _spawn_job(self, state: dict[str, Any], label: str) -> None:
+        thread = threading.Thread(target=self.run_job, args=(state, label), daemon=True, name=f"demo-job-{state.get('session_id')}")
+        self.jobs[str(state.get("session_id"))] = thread
+        thread.start()
+
+    def run_job(self, state: dict[str, Any], label: str) -> dict[str, Any]:
+        """Runs outside the HTTP request: progress lines to the feed, then the final result to the orchestrator."""
+        activity: ActivityClient = self.activity_for_state(state)
+        started = time.monotonic()
+        wells = wells_in(str(state.get("objective") or ""))
+        while True:
+            left = self.job_seconds - (time.monotonic() - started)
+            if left <= 0:
+                break
+            time.sleep(min(self.progress_every_s, left))
+            elapsed = int(time.monotonic() - started)
+            if elapsed < self.job_seconds:
+                activity.progress(f"{label}: выполняется, прошло {plural_ru(elapsed, 'секунда', 'секунды', 'секунд')}.", status="waiting_agent")
+        checksum = sum(int(re.sub(r"\D", "", w) or 0) for w in wells)
+        message = f"{label} завершён: обработано {plural_ru(len(wells), 'скважина', 'скважины', 'скважин')}, контрольная сумма {checksum}."
+        final = self.new_result(state, "completed", message, data={"well_count": len(wells), "wells": wells, "seconds": int(self.job_seconds)})
+        try:
+            with self.store.lock(str(state["session_id"])):
+                self.store_result(self.store.load(str(state["session_id"])), final)
+        except SessionNotFound:
+            pass  # the workflow already closed the session — the result still reaches the orchestrator
+        activity.finish_task(final)
+        return final
+
+
+agent = DemoAgent()
+
+===END_FILE===
+===BEGIN_FILE===	agents-template/demo_agent/app/main.py	400	utf8
+"""Demo Agent FastAPI app: ``create_agent_app`` gives ``/health`` and the four agent routes over ``agent``.
+
+Run: ``python -m uvicorn app.main:app --host 0.0.0.0 --port 8300`` (see start-windows.bat / start-linux.sh).
+"""
+
+from __future__ import annotations
+
+from mas_agent_kit import create_agent_app
+
+from .agent import agent
+
+app = create_agent_app(agent, title="MAS Demo Agent", version="0.1.0")
+
+===END_FILE===
+===BEGIN_FILE===	agents-template/demo_agent/demo-agent.env.example	455	utf8
+# Demo Agent FastAPI. Copy to demo-agent.env.
+# 127.0.0.1: only this PC. 0.0.0.0: allow the corporate n8n host to reach the service.
+DEMO_AGENT_HOST=127.0.0.1
+DEMO_AGENT_PORT=8300
+# Activity on this workstation; the task normally carries inputs.activity_base_url, this is the fallback.
+ACTIVITY_BASE_URL=http://127.0.0.1:8200
+# How long the "long calculation" runs and how often it reports progress (seconds).
+DEMO_JOB_SECONDS=40
+DEMO_PROGRESS_EVERY_S=15
+
+===END_FILE===
+===BEGIN_FILE===	agents-template/demo_agent/requirements.txt	467	utf8
+# The shared agent core (mas_agent_kit: sessions, tools, agent_result, Activity client) is not installed:
+# it is the repo folder ../../mas-agent-kit, put on sys.path by app/__init__.py. Its needs (fastapi, filelock) are below.
+fastapi>=0.115.14,<0.116
+uvicorn[standard]>=0.30,<1.0
+pydantic>=2.7,<3.0
+python-multipart>=0.0.9,<1.0
+# Cross-platform advisory locks for disk-backed session state (Windows + Unix) — used by mas_agent_kit.SessionStore.
+filelock>=3.15,<4.0
+
+===END_FILE===
+===BEGIN_FILE===	agents-template/demo_agent/setup-windows.bat	847	utf8
+@echo off
+setlocal
+cd /d "%~dp0"
+
+where py >nul 2>nul
+if errorlevel 1 (
+  echo ERROR: Python Launcher "py" was not found. Install Python 3.11-3.13 and enable the launcher.
+  exit /b 1
+)
+
+py -3 -c "import sys; raise SystemExit(0 if sys.version_info[:2] in ((3, 11), (3, 12), (3, 13)) else 1)"
+if errorlevel 1 (
+  echo ERROR: Python 3.11, 3.12 or 3.13 is required.
+  py -3 --version
+  exit /b 1
+)
+
+if not exist ".venv\Scripts\python.exe" (
+  echo Creating virtual environment...
+  py -3 -m venv .venv
+  if errorlevel 1 exit /b 1
+)
+
+echo Installing Demo Agent dependencies...
+".venv\Scripts\python.exe" -m pip install --upgrade pip
+if errorlevel 1 exit /b 1
+".venv\Scripts\python.exe" -m pip install -r requirements.txt
+if errorlevel 1 exit /b 1
+
+echo.
+echo Ready. Copy demo-agent.env.example to demo-agent.env, then run start-windows.bat.
+exit /b 0
+
+===END_FILE===
+===BEGIN_FILE===	agents-template/demo_agent/start-linux.sh	655	utf8
+#!/usr/bin/env bash
+set -euo pipefail
+cd "$(dirname "$0")"
+if [[ ! -d .venv ]]; then
+  echo "ERROR: .venv missing. Run: python3 -m venv .venv && .venv/bin/pip install -r requirements.txt"
+  exit 1
+fi
+if [[ ! -f demo-agent.env ]]; then
+  echo "ERROR: demo-agent.env missing. Copy demo-agent.env.example → demo-agent.env"
+  exit 1
+fi
+set -a
+# shellcheck disable=SC1091
+source demo-agent.env
+set +a
+echo "Starting Demo Agent at http://${DEMO_AGENT_HOST:-127.0.0.1}:${DEMO_AGENT_PORT:-8300}"
+echo "Keep this terminal open. Ctrl+C to stop."
+exec .venv/bin/python -m uvicorn app.main:app --host "${DEMO_AGENT_HOST:-127.0.0.1}" --port "${DEMO_AGENT_PORT:-8300}"
+
+===END_FILE===
+===BEGIN_FILE===	agents-template/demo_agent/start-windows.bat	768	utf8
+@echo off
+setlocal
+cd /d "%~dp0"
+
+if not exist ".venv\Scripts\python.exe" (
+  echo ERROR: .venv is missing. Run setup-windows.bat first.
+  exit /b 1
+)
+if not exist "demo-agent.env" (
+  echo ERROR: demo-agent.env is missing.
+  echo Run: copy demo-agent.env.example demo-agent.env
+  exit /b 1
+)
+
+for /f "usebackq eol=# tokens=1,* delims==" %%A in ("demo-agent.env") do if not "%%A"=="" set "%%A=%%B"
+
+if not defined DEMO_AGENT_HOST set "DEMO_AGENT_HOST=127.0.0.1"
+if not defined DEMO_AGENT_PORT set "DEMO_AGENT_PORT=8300"
+
+echo Starting Demo Agent at http://%DEMO_AGENT_HOST%:%DEMO_AGENT_PORT%
+echo Keep this window open. Press Ctrl+C to stop.
+".venv\Scripts\python.exe" -m uvicorn app.main:app --host "%DEMO_AGENT_HOST%" --port "%DEMO_AGENT_PORT%"
+exit /b %errorlevel%
+
+===END_FILE===
 ===BEGIN_FILE===	docker-compose.yml	9657	utf8
 # Lab-only Compose. Python services bind-mount their code and run uvicorn from a plain python image.
 # The shared core mas_agent_kit is a plain repo folder, not a pip package: it is bind-mounted read-only at
@@ -21911,6 +22300,1858 @@ body.dev-mode .turn-log-link { display: inline-block; }
 
   reset();
 })();
+
+===END_FILE===
+===BEGIN_FILE===	mas-agent-kit/mas_agent_kit/__init__.py	2316	utf8
+"""mas_agent_kit — shared core of NOVATEK RE MASter agent services.
+
+    from mas_agent_kit import AgentService, SessionStore, ToolRegistry, ToolError, agent_router
+
+One place for: session storage, the tool registry and error envelope, ``agent_result`` builders,
+HITL helpers (``human_text_problems``, ``ask_engineer`` validation), the Activity client and the
+FastAPI router that every agent service exposes. Domain logic (Excel, SCHEDULE, …) stays in the
+service that owns it.
+
+This is a plain module of the repository, not a pip package: a service makes it importable by adding
+``<repo>/mas-agent-kit`` to ``sys.path`` in its ``app/__init__.py`` (see ``agents-template/demo_agent``).
+Runtime needs: ``fastapi`` and ``filelock`` (``requirements.txt`` next to this folder).
+"""
+
+from .activity import ActivityClient, compact_for_log
+from .agent import AgentService, agent_router, create_agent_app
+from .dataset import dataset_entry, dataset_rows, expected_names, expected_output, is_dataset, upstream_datasets
+from .errors import SessionNotFound, ToolError, error_envelope
+from .hitl import engineer_answers, engineer_request_from_args, hitl_payloads
+from .packet import CasePacket, flatten_artifacts, upstream_agent_data
+from .result import STATUSES, agent_result, engineer_request, in_progress, needs_input, result_text_problems
+from .session import SessionStore
+from .text import human_text_problems, list_preview, options_for_human, parse_jsonish, plural_ru, slug
+from .tools import ToolContext, ToolRegistry, tool_schema
+
+__all__ = [
+    "STATUSES",
+    "ActivityClient",
+    "AgentService",
+    "CasePacket",
+    "SessionNotFound",
+    "SessionStore",
+    "ToolContext",
+    "ToolError",
+    "ToolRegistry",
+    "agent_result",
+    "agent_router",
+    "compact_for_log",
+    "create_agent_app",
+    "dataset_entry",
+    "dataset_rows",
+    "engineer_answers",
+    "engineer_request",
+    "engineer_request_from_args",
+    "error_envelope",
+    "expected_names",
+    "expected_output",
+    "flatten_artifacts",
+    "hitl_payloads",
+    "human_text_problems",
+    "is_dataset",
+    "list_preview",
+    "in_progress",
+    "needs_input",
+    "options_for_human",
+    "parse_jsonish",
+    "plural_ru",
+    "result_text_problems",
+    "slug",
+    "tool_schema",
+    "upstream_agent_data",
+    "upstream_datasets",
+]
+
+===END_FILE===
+===BEGIN_FILE===	mas-agent-kit/mas_agent_kit/activity.py	11340	utf8
+"""HTTP client for MAS Activity (``:8200``) — the only service an agent talks to besides its own tools.
+
+    activity = ActivityClient.from_task(agent_task, agent_id="schedule_builder")
+    state = activity.case_state()                       # GET  /cases/{id}/state → state
+    data, name = activity.download("schedule_source")   # GET  /cases/{id}/artifacts/{artifact_id}
+    activity.progress("Читаю baseline: 14 скважин")    # POST /cases/{id}/events (agent.progress)
+    card = activity.upload("report", "report.xlsx", b"…", mime)   # POST /cases/{id}/artifacts → card
+    activity.finish_task(result)                        # POST /cases/{id}/run  resume source=agent (long jobs)
+
+Event posting never raises: a dead Activity must not break the agent. Standard library only —
+the field service has pip wheels but no extra HTTP stack requirement.
+"""
+
+from __future__ import annotations
+
+import json
+import logging
+import re
+import uuid
+from typing import Any
+from urllib.error import HTTPError, URLError
+from urllib.parse import quote, unquote
+from urllib.request import Request, urlopen
+
+logger = logging.getLogger(__name__)
+
+EVENT_KINDS = ("agent.accepted", "agent.progress", "agent.failed", "trace.tool", "trace.note")
+
+
+def compact_for_log(value: Any, limit: int = 2000, *, _depth: int = 0) -> Any:
+    """JSON-safe, size-bounded copy for the developer log: long strings are cut, long lists and
+    dicts keep their head plus a ``…`` marker, unknown objects become ``str``. Never raises."""
+    if value is None or isinstance(value, (bool, int, float)):
+        return value
+    if isinstance(value, str):
+        return value if len(value) <= limit else value[: limit - 1] + "…"
+    if _depth >= 6:
+        return "…"
+    if isinstance(value, dict):
+        out: dict[str, Any] = {}
+        for i, (key, item) in enumerate(value.items()):
+            if i >= 40:
+                out["…"] = f"+{len(value) - 40} ключей"
+                break
+            out[str(key)] = compact_for_log(item, max(80, limit // 4), _depth=_depth + 1)
+        return out
+    if isinstance(value, (list, tuple, set)):
+        items = list(value)
+        head = [compact_for_log(item, max(80, limit // 4), _depth=_depth + 1) for item in items[:20]]
+        if len(items) > 20:
+            head.append(f"… ещё {len(items) - 20}")
+        return head
+    if isinstance(value, (bytes, bytearray)):
+        return f"<{len(value)} байт>"
+    return compact_for_log(str(value), limit, _depth=_depth)
+
+
+class ActivityClient:
+    def __init__(
+        self,
+        base_url: str,
+        *,
+        agent_id: str,
+        case_id: str = "",
+        task_id: str = "",
+        timeout: float = 15.0,
+        headers: dict[str, str] | None = None,
+    ):
+        self.base_url = str(base_url or "").rstrip("/")
+        self.agent_id = str(agent_id or "")
+        self.case_id = str(case_id or "")
+        self.task_id = str(task_id or "")
+        self.timeout = timeout
+        self.headers = dict(headers or {})
+
+    @classmethod
+    def from_task(cls, task: dict[str, Any], *, agent_id: str, default_base_url: str = "", **kw: Any) -> "ActivityClient":
+        inputs = task.get("inputs") if isinstance(task.get("inputs"), dict) else {}
+        base = str(inputs.get("activity_base_url") or default_base_url or "")
+        return cls(base, agent_id=agent_id, case_id=str(task.get("case_id") or ""), task_id=str(task.get("task_id") or ""), **kw)
+
+    @property
+    def configured(self) -> bool:
+        return bool(self.base_url and self.case_id)
+
+    def _url(self, path: str) -> str:
+        return f"{self.base_url}/cases/{quote(self.case_id, safe='')}{path}"
+
+    def _request(self, method: str, url: str, *, body: bytes | None = None, content_type: str = "", timeout: float | None = None) -> tuple[bytes, dict[str, str]]:
+        headers = {**self.headers}
+        if content_type:
+            headers["Content-Type"] = content_type
+        req = Request(url, data=body, headers=headers, method=method)
+        with urlopen(req, timeout=timeout or self.timeout) as resp:  # noqa: S310 — URL comes from Runtime Config
+            return resp.read(), {k.lower(): v for k, v in resp.headers.items()}
+
+    def _json(self, method: str, path: str, payload: dict[str, Any] | None = None, *, timeout: float | None = None) -> Any:
+        body = json.dumps(payload, ensure_ascii=False).encode("utf-8") if payload is not None else None
+        raw, _ = self._request(method, self._url(path), body=body, content_type="application/json" if body else "", timeout=timeout)
+        return json.loads(raw.decode("utf-8", errors="replace")) if raw else {}
+
+    # -- read -----------------------------------------------------------------------------------
+
+    def case_state(self) -> dict[str, Any]:
+        """Case state (artifact cards, ``agents`` slots, ``hitl``); ``{}`` when Activity is unreachable."""
+        if not self.configured:
+            return {}
+        try:
+            packet = self._json("GET", "/state")
+        except (HTTPError, URLError, OSError, ValueError) as exc:
+            logger.warning("activity state unavailable case_id=%s: %s", self.case_id, exc)
+            return {}
+        state = packet.get("state") if isinstance(packet, dict) else None
+        return state if isinstance(state, dict) else {}
+
+    def download(self, artifact_id: str, *, timeout: float = 60.0) -> tuple[bytes, str]:
+        """Artifact bytes and the filename from ``Content-Disposition`` (may be empty). Raises on HTTP errors."""
+        return self.download_url(self.artifact_url(artifact_id), timeout=timeout)
+
+    def download_url(self, url: str, *, timeout: float = 60.0) -> tuple[bytes, str]:
+        """Same as ``download`` for an explicit URL (e.g. ``inputs.excel_url`` given by the orchestrator)."""
+        raw, headers = self._request("GET", str(url), timeout=timeout)
+        return raw, _disposition_filename(headers.get("content-disposition", ""))
+
+    def artifact_url(self, artifact_id: str) -> str:
+        return self._url(f"/artifacts/{quote(str(artifact_id), safe='')}")
+
+    # -- events ---------------------------------------------------------------------------------
+
+    def event(self, kind: str, message: str, *, status: str = "", payload: dict[str, Any] | None = None) -> bool:
+        """Feed line for the engineer. Never raises; returns whether Activity accepted it."""
+        if not self.configured:
+            return False
+        body: dict[str, Any] = {
+            "kind": kind,
+            "actor": self.agent_id,
+            "agent_id": self.agent_id,
+            "task_id": self.task_id,
+            "status_message": str(message or "")[:400],
+        }
+        if status:
+            body["status"] = status
+        if payload:
+            body["payload"] = payload
+        try:
+            self._json("POST", "/events", body, timeout=8.0)
+            return True
+        except (HTTPError, URLError, OSError, ValueError) as exc:
+            logger.warning("activity event failed case_id=%s kind=%s: %s", self.case_id, kind, exc)
+            return False
+
+    def accepted(self, message: str) -> bool:
+        return self.event("agent.accepted", message)
+
+    def progress(self, message: str, *, status: str = "", payload: dict[str, Any] | None = None) -> bool:
+        return self.event("agent.progress", message, status=status, payload=payload)
+
+    def failed(self, message: str) -> bool:
+        return self.event("agent.failed", message, status="failed")
+
+    # -- developer trace (hidden from the chat, shown in the «Лог» tab) ---------------------------
+
+    def trace(self, title: str, *, level: str = "debug", **detail: Any) -> bool:
+        """Technical note for developers: identifiers, counts, timings are fine here."""
+        payload = {"title": str(title or "")[:200], "level": level, **compact_for_log(detail)}
+        return self.event("trace.note", title, payload=payload)
+
+    def trace_tool(self, tool: str, *, ok: bool, duration_ms: int, call: int, args: dict[str, Any] | None = None,
+                   result: dict[str, Any] | None = None, error: str = "", session_id: str = "") -> bool:
+        """One FastAPI tool call as the LLM made it: arguments, outcome, timing.
+
+        ``call`` (ordinal within the session) keeps consecutive identical calls distinct — Activity
+        de-duplicates a repeated ``status_message`` on the same kind.
+        """
+        outcome = "ok" if ok else f"ошибка {error}".strip()
+        message = f"{tool} → {outcome} · {int(duration_ms)} мс · вызов {int(call)}"
+        payload: dict[str, Any] = {
+            "tool": tool,
+            "ok": bool(ok),
+            "duration_ms": int(duration_ms),
+            "call": int(call),
+            "session_id": session_id,
+            "args": compact_for_log(args or {}),
+            "result": compact_for_log(result or {}, limit=1200),
+        }
+        if error:
+            payload["error"] = error
+        return self.event("trace.tool", message, payload=payload)
+
+    # -- write ----------------------------------------------------------------------------------
+
+    def upload(self, artifact_id: str, filename: str, content: bytes, mime_type: str = "application/octet-stream", *, summary: str = "") -> dict[str, Any]:
+        """Store a binary deliverable in the case; returns the artifact card to put into ``agent_result.artifacts``."""
+        boundary = "----mas-agent-kit-" + uuid.uuid4().hex
+        fields = {"artifact_id": str(artifact_id), "producer": self.agent_id, "summary": summary or ""}
+        parts: list[bytes] = []
+        for key, value in fields.items():
+            parts.append(f"--{boundary}\r\nContent-Disposition: form-data; name=\"{key}\"\r\n\r\n{value}\r\n".encode("utf-8"))
+        safe_name = str(filename or artifact_id).replace('"', "'")
+        parts.append(
+            f"--{boundary}\r\nContent-Disposition: form-data; name=\"file\"; filename=\"{safe_name}\"\r\n"
+            f"Content-Type: {mime_type or 'application/octet-stream'}\r\n\r\n".encode("utf-8")
+        )
+        parts.append(content)
+        parts.append(f"\r\n--{boundary}--\r\n".encode("utf-8"))
+        raw, _ = self._request("POST", self._url("/artifacts"), body=b"".join(parts), content_type=f"multipart/form-data; boundary={boundary}", timeout=120.0)
+        packet = json.loads(raw.decode("utf-8", errors="replace")) if raw else {}
+        card = packet.get("artifact") if isinstance(packet, dict) else None
+        if not isinstance(card, dict):
+            raise ValueError("activity did not return an artifact card")
+        return card
+
+    def finish_task(self, agent_result: dict[str, Any]) -> dict[str, Any]:
+        """Long job done: hand the final ``agent_result`` to the orchestrator (``resume source=agent``)."""
+        payload = {
+            "action": "resume",
+            "source": "agent",
+            "agent_id": self.agent_id,
+            "task_id": str(agent_result.get("task_id") or self.task_id),
+            "agent_result": agent_result,
+        }
+        return self._json("POST", "/run", payload, timeout=30.0)
+
+
+def _disposition_filename(disposition: str) -> str:
+    m = re.search(r"filename\*=UTF-8''([^;]+)", disposition or "")
+    if m:
+        return unquote(m.group(1).strip())
+    m = re.search(r'filename="?([^";]+)"?', disposition or "")
+    return m.group(1).strip() if m else ""
+
+===END_FILE===
+===BEGIN_FILE===	mas-agent-kit/mas_agent_kit/agent.py	11659	utf8
+"""``AgentService`` — the object a new agent implements; ``agent_router`` exposes it over HTTP.
+
+The n8n workflow of an agent (generated from its ``AgentSpec``) talks to the service like this:
+
+    POST /agent-tools/open_session   {agent_task}            → {"ok": true, "session_id", ...brief for the LLM}
+                                                            or {"ok": false, "status", "result": agent_result}
+    POST /agent-tools/{tool}         {session_id, ...args}   → flat tool envelope (ToolRegistry.run)
+    GET  /sessions/{id}/result                               → agent_result fixed by the tools
+    POST /sessions/{id}/close                                → {"ok": true, "closed": bool}
+
+Subclass, set ``agent_id`` / ``store`` / ``tools``, implement ``open_session`` and ``result``:
+
+    class DemoAgent(AgentService):
+        agent_id = "demo_agent"
+        store = SessionStore(prefix="demo")
+        tools = ToolRegistry(store)
+
+        def open_session(self, task):
+            packet = self.packet(task)
+            state = self.store.create({"case_id": packet.case_id, "task_id": packet.task_id, ...})
+            return self.opened(state, inspect={...})
+
+        def result(self, state):
+            return state.get("result") or self.needs_input(state, "Что именно посчитать?")
+"""
+
+from __future__ import annotations
+
+import os
+import time
+from typing import Any
+
+from fastapi import APIRouter, Body, FastAPI, HTTPException, Request
+
+from .activity import ActivityClient
+from .dataset import expected_output
+from .errors import SessionNotFound
+from .hitl import engineer_answers
+from .packet import CasePacket
+from .result import agent_result, needs_input
+from .session import SessionStore
+from .tools import ToolRegistry
+
+#: ``next_step`` the model reads after a tool fixed the session result — who acts next, so it stops.
+RESULT_NEXT_STEP: dict[str, str] = {
+    "needs_input": "Вопрос инженеру уже поставлен этим результатом — оркестратор передаст его инженеру и вернётся с ответом. "
+    "ask_engineer не нужен; больше инструменты не вызывай, заверши ответ одним предложением.",
+    "completed": "Результат зафиксирован. Больше инструменты не вызывай, заверши ответ одним предложением о том, что сделано.",
+    "in_progress": "Работа запущена, результат придёт позже через Activity. Больше инструменты не вызывай, заверши ответ одним предложением.",
+    "failed": "Результат зафиксирован как неудача. Больше инструменты не вызывай, одним предложением опиши, чего не хватило.",
+}
+
+
+class AgentService:
+    agent_id: str = ""
+    store: SessionStore
+    tools: ToolRegistry
+    #: Activity URL when the task does not carry ``inputs.activity_base_url`` (lab: compose env).
+    activity_base_url: str = os.getenv("ACTIVITY_BASE_URL", "")
+
+    # -- to implement ---------------------------------------------------------------------------
+
+    def open_session(self, task: dict[str, Any]) -> dict[str, Any]:
+        raise NotImplementedError
+
+    def result(self, state: dict[str, Any]) -> dict[str, Any]:
+        raise NotImplementedError
+
+    # -- hooks ----------------------------------------------------------------------------------
+
+    def normalize_args(self, tool_name: str, args: dict[str, Any]) -> dict[str, Any]:
+        """Accept transport aliases of your LLM tools before validation (default: as is)."""
+        return args
+
+    def after_tool(self, state: dict[str, Any], tool_name: str, result: dict[str, Any]) -> None:
+        """E.g. post a progress line to Activity for long tools (default: nothing)."""
+
+    # -- helpers --------------------------------------------------------------------------------
+
+    def activity(self, task: dict[str, Any]) -> ActivityClient:
+        return ActivityClient.from_task(task, agent_id=self.agent_id, default_base_url=self.activity_base_url)
+
+    def activity_for_state(self, state: dict[str, Any]) -> ActivityClient:
+        inputs = state.get("inputs") if isinstance(state.get("inputs"), dict) else {}
+        return ActivityClient(
+            str(state.get("activity_base_url") or inputs.get("activity_base_url") or self.activity_base_url),
+            agent_id=self.agent_id,
+            case_id=str(state.get("case_id") or ""),
+            task_id=str(state.get("task_id") or ""),
+        )
+
+    def trace_tool(self, state: dict[str, Any], tool_name: str, args: dict[str, Any], result: dict[str, Any], duration_ms: int) -> None:
+        """Developer log line per tool call (``trace.tool``); the chat never shows it. Override to mute.
+
+        ``call`` is the ordinal of this LLM-driven call in the session (``state["llm_calls"]``, counted by
+        the router) — internal registry runs inside ``open_session`` (inventory, introspection) are not counted.
+        """
+        ok = result.get("ok") is not False
+        self.activity_for_state(state).trace_tool(
+            tool_name,
+            ok=ok,
+            duration_ms=duration_ms,
+            call=int(state.get("llm_calls") or 0) or 1,
+            args=args,
+            result={k: v for k, v in result.items() if k != "ok"},
+            error="" if ok else str(result.get("code") or "error"),
+            session_id=str(state.get("session_id") or ""),
+        )
+
+    def packet(self, task: dict[str, Any]) -> CasePacket:
+        return CasePacket.load(task, self.activity(task))
+
+    def base_state(self, packet: CasePacket) -> dict[str, Any]:
+        """Common session fields; extend with what your tools need (source text, file paths…)."""
+        return {
+            "agent_id": self.agent_id,
+            "case_id": packet.case_id,
+            "task_id": packet.task_id,
+            "objective": packet.objective,
+            "handoff_message": packet.handoff_message,
+            "activity_base_url": packet.activity.base_url if packet.activity else self.activity_base_url,
+            "inputs": packet.inputs,
+            "context": packet.context,
+            "result": None,
+        }
+
+    def opened(self, state: dict[str, Any], **brief: Any) -> dict[str, Any]:
+        """``open_session`` success: session id + what the LLM needs to pick a tool.
+
+        ``expected_output`` is the shape the orchestrator asked for (``inputs.expected_output``: datasets with
+        fields, consumers with their ``input_schema.data``) — ``{}`` when it asked for nothing in particular.
+        """
+        inputs = state.get("inputs") if isinstance(state.get("inputs"), dict) else {}
+        return {
+            "ok": True,
+            "session_id": state["session_id"],
+            "task_id": str(state.get("task_id") or ""),
+            "objective": str(state.get("objective") or ""),
+            "handoff_message": str(state.get("handoff_message") or ""),
+            "engineer_answers": engineer_answers(state.get("context")),
+            "rework_reason": str(inputs.get("rework_reason") or ""),
+            "expected_output": expected_output(inputs),
+            **brief,
+        }
+
+    @staticmethod
+    def not_opened(result: dict[str, Any]) -> dict[str, Any]:
+        """``open_session`` could not start (no input file, load error): the result is final."""
+        return {"ok": False, "status": result.get("status", "failed"), "task_id": result.get("task_id", ""), "result": result}
+
+    def new_result(self, state: dict[str, Any], status: str, message: str, **kw: Any) -> dict[str, Any]:
+        return agent_result(self.agent_id, str(state.get("task_id") or ""), status, message, **kw)
+
+    def needs_input(self, state: dict[str, Any], question: str, **kw: Any) -> dict[str, Any]:
+        return needs_input(self.agent_id, str(state.get("task_id") or ""), question, **kw)
+
+    def store_result(self, state: dict[str, Any], result: dict[str, Any]) -> dict[str, Any]:
+        """Fix the session result and return what the LLM should see (``model_view``)."""
+        state["result"] = result
+        self.store.save(state)
+        return self.model_view(result)
+
+    def model_view(self, result: dict[str, Any]) -> dict[str, Any]:
+        """The stored result plus a ``next_step`` line for the model.
+
+        The result itself is the orchestrator's contract (``requests[]`` becomes the HITL question). Shown
+        raw to the model, a ``needs_input`` result read as «now ask the engineer»: Qwen re-asked the same
+        question through ``ask_engineer`` and got ``result_already_stored`` (CASE-6aa008a4-5e33bd,
+        CASE-6aa008f6-67123d). The hint says who acts next, so the model can stop.
+        """
+        view = dict(result)
+        hint = RESULT_NEXT_STEP.get(str(result.get("status") or ""))
+        if hint:
+            view["next_step"] = hint
+        return view
+
+
+def agent_router(agent: AgentService, *, dependencies: list[Any] | None = None) -> APIRouter:
+    router = APIRouter(dependencies=dependencies or [])
+
+    @router.post("/agent-tools/open_session")
+    def open_session(task: dict[str, Any] = Body(...)) -> dict[str, Any]:
+        return agent.open_session(task if isinstance(task, dict) else {})
+
+    @router.post("/agent-tools/{tool_name}")
+    async def call_tool(tool_name: str, request: Request) -> dict[str, Any]:
+        body = await request.json()
+        if not isinstance(body, dict):
+            raise HTTPException(status_code=422, detail="body must be an object")
+        session_id = str(body.pop("session_id", "") or "")
+        if not session_id:
+            raise HTTPException(status_code=422, detail="session_id is required")
+        # n8n tools send arguments top-level; older exports wrap them in ``input`` / ``args``.
+        args = body.get("input") if isinstance(body.get("input"), dict) else body.get("args") if isinstance(body.get("args"), dict) else body
+        started = time.monotonic()
+        try:
+            with agent.store.lock(session_id):
+                state = agent.store.load(session_id)
+                args = agent.normalize_args(tool_name, dict(args))
+                state["llm_calls"] = int(state.get("llm_calls") or 0) + 1  # persisted by the registry's history save
+                result = agent.tools.run(state, tool_name, args)
+        except SessionNotFound as exc:
+            raise HTTPException(status_code=404, detail="session_not_found") from exc
+        except ValueError as exc:
+            raise HTTPException(status_code=422, detail=str(exc)) from exc
+        agent.trace_tool(state, tool_name, args, result, int((time.monotonic() - started) * 1000))
+        agent.after_tool(state, tool_name, result)
+        return result
+
+    @router.get("/sessions/{session_id}/result")
+    def session_result(session_id: str) -> dict[str, Any]:
+        try:
+            with agent.store.lock(session_id):
+                return agent.result(agent.store.load(session_id))
+        except SessionNotFound as exc:
+            raise HTTPException(status_code=404, detail="session_not_found") from exc
+        except ValueError as exc:
+            raise HTTPException(status_code=422, detail=str(exc)) from exc
+
+    @router.post("/sessions/{session_id}/close")
+    def close_session(session_id: str) -> dict[str, Any]:
+        return agent.store.close(session_id)
+
+    return router
+
+
+def create_agent_app(agent: AgentService, *, title: str = "", version: str = "0.1.0", dependencies: list[Any] | None = None) -> FastAPI:
+    """FastAPI app with the agent routes and ``GET /health`` (what the Health Check form probes)."""
+    app = FastAPI(title=title or f"{agent.agent_id}-service", version=version)
+
+    @app.get("/health")
+    def health() -> dict[str, Any]:
+        return {"ok": True, "agent_id": agent.agent_id, "tools": agent.tools.names}
+
+    app.include_router(agent_router(agent, dependencies=dependencies))
+    return app
+
+===END_FILE===
+===BEGIN_FILE===	mas-agent-kit/mas_agent_kit/dataset.py	8679	utf8
+"""Datasets — the flexible data contract between agents.
+
+An agent that reads tables (Excel Extractor) fixes what it found as a *dataset*: rows with declared
+fields under ``agent_result.data[<name>]``::
+
+    {"kind": "dataset", "name": "well_events", "title": "Мероприятия по скважинам",
+     "fields": [{"name": "well", "type": "text", "source_column": "Скважина"}, …],
+     "row_count": 12, "rows": [{…}, …] | "preview": [{…}, …],
+     "artifact_id": "dataset_well_events", "source": {"file", "sheet", "table_id", "range"}}
+
+Small tables travel inline (``rows``, ≤ ``INLINE_ROWS_BYTES``); every dataset is also uploaded to Activity
+as a JSON artifact so the rows survive the orchestrator's state budget and the engineer can download
+them. Consumers read rows with ``dataset_rows(entry, activity)`` / ``CasePacket.dataset(name)`` and never
+care which of the two transports was used.
+
+The orchestrator asks for a shape in the same vocabulary — ``agent_task.inputs.expected_output``::
+
+    {"datasets": [{"name": "well_events", "description": "мероприятия по скважинам",
+                   "fields": [{"name": "well", "description": "скважина", "type": "text"}, …]}],
+     "consumers": [{"agent_id": "schedule_builder", "title": "Schedule Builder",
+                    "needs": {"facts": "даты ввода «скважина — дата»"}}]}
+
+``datasets`` is what the Decision LLM wrote from the goal; ``consumers`` is deterministic — the
+``input_schema.data`` of agents with open plan items. ``expected_output(inputs)`` sanitises both.
+"""
+
+from __future__ import annotations
+
+import json
+import re
+from typing import Any
+
+from .activity import ActivityClient
+
+DATASET_KIND = "dataset"
+FIELD_TYPES = ("text", "number", "date", "boolean")
+#: Rows are kept inline in ``data[<name>]`` while their JSON stays under this size (the orchestrator keeps
+#: 12 000 bytes per data key — ``AGENT_DATA_KEY_BUDGET`` in ``mas_state_utils.py``).
+INLINE_ROWS_BYTES = 9000
+PREVIEW_ROWS = 5
+MAX_EXPECTED_DATASETS = 6
+MAX_EXPECTED_FIELDS = 24
+_NAME_RE = re.compile(r"^[a-z][a-z0-9_]{0,63}$")
+
+
+def dataset_name(value: Any) -> str:
+    """Canonical dataset / field name: latin identifier (``well_events``); '' when it cannot be one."""
+    text = str(value or "").strip().lower().replace("-", "_").replace(" ", "_")
+    return text if _NAME_RE.fullmatch(text) else ""
+
+
+def artifact_id_for(name: str) -> str:
+    return f"dataset_{name}"
+
+
+def is_dataset(value: Any) -> bool:
+    return isinstance(value, dict) and value.get("kind") == DATASET_KIND and isinstance(value.get("fields"), list)
+
+
+def _json_size(value: Any) -> int:
+    try:
+        return len(json.dumps(value, ensure_ascii=False, default=str))
+    except (TypeError, ValueError):
+        return 1 << 30
+
+
+def dataset_entry(
+    name: str,
+    fields: list[dict[str, Any]],
+    rows: list[dict[str, Any]],
+    *,
+    title: str = "",
+    source: dict[str, Any] | None = None,
+    artifact_id: str = "",
+    issues: dict[str, Any] | None = None,
+) -> dict[str, Any]:
+    """The ``data[<name>]`` value: rows inline when small, otherwise a preview plus the artifact reference."""
+    entry: dict[str, Any] = {
+        "kind": DATASET_KIND,
+        "name": name,
+        "title": str(title or ""),
+        "fields": [dict(f) for f in fields],
+        "row_count": len(rows),
+        "source": dict(source or {}),
+    }
+    if artifact_id:
+        entry["artifact_id"] = artifact_id
+    if _json_size(rows) <= INLINE_ROWS_BYTES:
+        entry["rows"] = rows
+    else:
+        entry["preview"] = rows[:PREVIEW_ROWS]
+    if issues:
+        entry["issues"] = dict(issues)
+    return entry
+
+
+def dataset_json_bytes(entry: dict[str, Any], rows: list[dict[str, Any]]) -> bytes:
+    """The artifact body: the full dataset (rows included) as UTF-8 JSON."""
+    body = {k: v for k, v in entry.items() if k not in {"rows", "preview", "artifact_id"}}
+    body["rows"] = rows
+    return json.dumps(body, ensure_ascii=False, indent=1, default=str).encode("utf-8")
+
+
+def dataset_rows(entry: dict[str, Any], activity: ActivityClient | None = None) -> list[dict[str, Any]]:
+    """All rows of a dataset entry: inline ``rows`` or the artifact downloaded from Activity.
+
+    Raises ``FileNotFoundError`` when the rows are not inline and no Activity is configured to fetch them.
+    """
+    if not is_dataset(entry):
+        return []
+    if isinstance(entry.get("rows"), list):
+        return [r for r in entry["rows"] if isinstance(r, dict)]
+    artifact_id = str(entry.get("artifact_id") or "")
+    if not artifact_id or activity is None or not activity.configured:
+        raise FileNotFoundError(f"dataset {entry.get('name')!r}: rows are not inline and no artifact to download")
+    raw, _ = activity.download(artifact_id)
+    body = json.loads(raw.decode("utf-8"))
+    rows = body.get("rows") if isinstance(body, dict) else None
+    return [r for r in rows if isinstance(r, dict)] if isinstance(rows, list) else []
+
+
+def upstream_datasets(state: dict[str, Any]) -> dict[str, dict[str, Any]]:
+    """Every dataset fixed by completed agents of the case, by name (later steps win)."""
+    from .packet import upstream_agent_data  # local import: packet imports this module
+
+    return {name: value for name, value in upstream_agent_data(state).items() if is_dataset(value)}
+
+
+# -- expected_output (what the orchestrator asked for) -----------------------------------------------
+
+
+def _clip(value: Any, limit: int) -> str:
+    return str(value or "").strip()[:limit]
+
+
+def expected_datasets(raw: Any) -> list[dict[str, Any]]:
+    """Sanitised ``expected_output.datasets``: valid names, ≤ 6 datasets, ≤ 24 fields each, known types."""
+    out: list[dict[str, Any]] = []
+    for item in raw if isinstance(raw, list) else []:
+        if not isinstance(item, dict):
+            continue
+        name = dataset_name(item.get("name"))
+        if not name or any(d["name"] == name for d in out):
+            continue
+        fields: list[dict[str, Any]] = []
+        for f in item.get("fields") if isinstance(item.get("fields"), list) else []:
+            fname = dataset_name(f.get("name") if isinstance(f, dict) else f)
+            if not fname or any(x["name"] == fname for x in fields):
+                continue
+            field: dict[str, Any] = {"name": fname}
+            if isinstance(f, dict):
+                if _clip(f.get("description"), 160):
+                    field["description"] = _clip(f.get("description"), 160)
+                ftype = str(f.get("type") or "").strip().lower()
+                if ftype in FIELD_TYPES:
+                    field["type"] = ftype
+            fields.append(field)
+            if len(fields) >= MAX_EXPECTED_FIELDS:
+                break
+        entry: dict[str, Any] = {"name": name, "fields": fields}
+        if _clip(item.get("description"), 240):
+            entry["description"] = _clip(item.get("description"), 240)
+        out.append(entry)
+        if len(out) >= MAX_EXPECTED_DATASETS:
+            break
+    return out
+
+
+def expected_consumers(raw: Any) -> list[dict[str, Any]]:
+    """Sanitised ``expected_output.consumers``: agents with open plan items and what their input_schema.data names."""
+    out: list[dict[str, Any]] = []
+    for item in raw if isinstance(raw, list) else []:
+        if not isinstance(item, dict):
+            continue
+        needs = item.get("needs") if isinstance(item.get("needs"), dict) else {}
+        needs = {str(k): _clip(v, 200) for k, v in needs.items() if str(k).strip()}
+        if not needs:
+            continue
+        out.append({"agent_id": _clip(item.get("agent_id"), 64), "title": _clip(item.get("title"), 80), "needs": needs})
+        if len(out) >= MAX_EXPECTED_DATASETS:
+            break
+    return out
+
+
+def expected_output(inputs: Any) -> dict[str, Any]:
+    """``agent_task.inputs.expected_output`` for the LLM brief; ``{}`` when the orchestrator asked for nothing."""
+    raw = inputs.get("expected_output") if isinstance(inputs, dict) else None
+    if not isinstance(raw, dict):
+        return {}
+    datasets = expected_datasets(raw.get("datasets"))
+    consumers = expected_consumers(raw.get("consumers"))
+    out: dict[str, Any] = {}
+    if datasets:
+        out["datasets"] = datasets
+    if consumers:
+        out["consumers"] = consumers
+    return out
+
+
+def expected_names(inputs: Any) -> list[str]:
+    """Dataset names the orchestrator explicitly asked for (``datasets``), in order.
+
+    ``consumers`` is context, not a requirement: a consumer's ``input_schema.data`` lists everything it can
+    use (``facts`` *and* ``new_wells``), while the task may need only one of them.
+    """
+    return [d["name"] for d in expected_output(inputs).get("datasets") or []]
+
+===END_FILE===
+===BEGIN_FILE===	mas-agent-kit/mas_agent_kit/errors.py	2398	utf8
+"""One error envelope for every tool of every agent.
+
+A tool that cannot do what the LLM asked raises ``ToolError``. The registry turns it into
+
+    {"ok": false, "code": "<code>", "message": "<hint for the LLM>", ...details}
+
+Codes are snake_case and stable (``spec_incomplete``, ``column_not_found``, ``question_not_human``,
+``too_many_attempts``, ``result_already_stored``, ``unknown_tool``, ``tool_failed``). Details such as
+``available_columns`` / ``where_to_find`` / ``missing`` sit at the top level so the model sees them
+right away. These envelopes are for the LLM — the engineer is asked only through ``ask_engineer``.
+
+The key is ``code``, never ``error``: n8n 2.30.8 treats a node output whose first item has a truthy
+``json.error`` as a failed run and, with ``retryOnFail`` on the tool node, re-sends the same HTTP call
+(``maxTries`` times, ``waitBetweenTries`` apart) before handing the envelope to the model
+(CASE-6a9ffb35-bebdb8: one ``ask_engineer`` from Qwen → three ``result_already_stored`` warnings).
+"""
+
+from __future__ import annotations
+
+from typing import Any
+
+
+class ToolError(Exception):
+    """Argument or protocol problem the LLM can fix by calling the tool differently."""
+
+    def __init__(self, code: str, message: str, details: dict[str, Any] | None = None, **extra: Any):
+        self.code = str(code)
+        self.message = str(message)
+        self.details: dict[str, Any] = {**(details or {}), **extra}
+        super().__init__(self.message)
+
+    def envelope(self) -> dict[str, Any]:
+        return error_envelope(self.code, self.message, **self.details)
+
+
+class SessionNotFound(KeyError):
+    """The session id is unknown, expired or malformed. Routers map it to HTTP 404."""
+
+    def __init__(self, session_id: str = ""):
+        super().__init__("session_not_found")
+        self.session_id = str(session_id or "")
+
+    def __str__(self) -> str:  # KeyError quotes its message; keep it plain for HTTP details
+        return "session_not_found"
+
+
+ENVELOPE_RESERVED_KEY = "error"  # n8n's node-failure marker — a tool envelope must never carry it
+
+
+def error_envelope(code: str, message: str, **details: Any) -> dict[str, Any]:
+    body: dict[str, Any] = {"ok": False, "code": str(code), "message": str(message)}
+    for key, value in details.items():
+        if key not in body and key != ENVELOPE_RESERVED_KEY:
+            body[key] = value
+    return body
+
+===END_FILE===
+===BEGIN_FILE===	mas-agent-kit/mas_agent_kit/hitl.py	4474	utf8
+"""What the engineer already answered, and how an agent asks one more question.
+
+The orchestrator passes HITL answers in ``agent_task.context.hitl.answers`` as
+``{question_id: {"choice": ..., "label": ..., "text": ...} | "<free text>"}`` (values may arrive as
+JSON strings). Agents show the LLM a compact view (``engineer_answers``) so it does not re-ask,
+and read facts from them (``hitl_payloads``).
+"""
+
+from __future__ import annotations
+
+from typing import Any
+
+from .errors import ToolError
+from .result import engineer_request
+from .text import human_text_problems, option_problems, options_for_human, parse_jsonish, slug
+
+FACT_LIST_KEYS = ("new_wells", "new_well_defs")
+
+
+def _answers(task_or_context: dict[str, Any] | None) -> dict[str, Any]:
+    node = task_or_context if isinstance(task_or_context, dict) else {}
+    context = node.get("context") if isinstance(node.get("context"), dict) else node
+    hitl = context.get("hitl") if isinstance(context.get("hitl"), dict) else {}
+    answers = hitl.get("answers") if isinstance(hitl.get("answers"), dict) else {}
+    return answers
+
+
+def engineer_answers(task_or_context: dict[str, Any] | None, *, limit: int = 12) -> list[dict[str, Any]]:
+    """Compact view for the LLM: question id, chosen option, text — never raw JSON blobs."""
+    out: list[dict[str, Any]] = []
+    for key, value in _answers(task_or_context).items():
+        parsed = value if isinstance(value, dict) else parse_jsonish(value)
+        row: dict[str, Any] = {"question_id": str(key)}
+        if isinstance(parsed, dict):
+            for field in ("choice", "label"):
+                if str(parsed.get(field) or "").strip():
+                    row[field] = str(parsed[field]).strip()
+            text = str(parsed.get("text") or parsed.get("answer") or "").strip()
+            if text:
+                row["text"] = text[:400]
+            for facts_key in FACT_LIST_KEYS:
+                if isinstance(parsed.get(facts_key), list):
+                    row["attached_facts"] = f"{facts_key}: {len(parsed[facts_key])} записей"
+            if parsed.get("unlisted_wells_policy"):
+                row["unlisted_wells_policy"] = str(parsed["unlisted_wells_policy"])
+        elif isinstance(value, str) and value.strip():
+            row["text"] = value.strip()[:400]
+        else:
+            continue
+        out.append(row)
+    return out[:limit]
+
+
+def hitl_payloads(task_or_context: dict[str, Any] | None) -> list[Any]:
+    """Parsed answers in order: dicts / lists as given, plain strings as strings."""
+    out: list[Any] = []
+    for value in _answers(task_or_context).values():
+        parsed = parse_jsonish(value) if not isinstance(value, dict) else value
+        if parsed is not None:
+            out.append(parsed)
+        elif isinstance(value, str) and value.strip():
+            out.append(value)
+    return out
+
+
+def engineer_request_from_args(
+    args: dict[str, Any],
+    *,
+    default_topic: str,
+    default_files: list[str] | tuple[str, ...] = ("xlsx",),
+    question_prefix: str = "Q-",
+) -> dict[str, Any]:
+    """Validate an ``ask_engineer`` tool call and build the HITL request row.
+
+    ``args``: ``question`` (Russian prose), optional ``options`` (``"a; b"`` or list), ``topic``
+    (latin slug), ``accepts_files`` (``"xlsx, .inc"`` or list). Machine-looking text raises
+    ``ToolError("question_not_human")`` back to the LLM — the engineer never sees it.
+    """
+    question = str(args.get("question") or "").strip()
+    options = options_for_human(args.get("options"))
+    problems = human_text_problems(question) + option_problems(options)
+    if problems:
+        raise ToolError(
+            "question_not_human",
+            "Переформулируй вопрос для инженера: обычная русская фраза, что именно нужно и зачем; "
+            "варианты — как их называет инженер (имена групп, листов, колонок; «оставить»/«убрать»), без имён полей, JSON и enum.",
+            problems=problems,
+        )
+    files_raw = args.get("accepts_files")
+    if isinstance(files_raw, str) and files_raw.strip():
+        files = [part.strip() for part in files_raw.split(",") if part.strip()]
+    elif isinstance(files_raw, list) and files_raw:
+        files = [str(part).strip() for part in files_raw if str(part).strip()]
+    else:
+        files = list(default_files)
+    topic = slug(args.get("topic"), default_topic)
+    return engineer_request(question, question_id=f"{question_prefix}{topic}", options=options, accepts_files=files)
+
+===END_FILE===
+===BEGIN_FILE===	mas-agent-kit/mas_agent_kit/packet.py	9783	utf8
+"""``CasePacket`` — everything an agent needs to know about its case, read once.
+
+The orchestrator sends ``agent_task`` with references only (``inputs.artifact_ids``, ``data_refs``);
+artifact cards and the results of earlier agents live in the case state served by Activity
+(``GET /cases/{id}/state``). The packet binds both:
+
+    packet = CasePacket.load(task, activity)
+    packet.artifacts                 # {artifact_id: card} — flat, whatever nesting the state uses
+    packet.cards(role="excel")       # cards by role (excel / schedule_source / schedule_include / …)
+    packet.upstream_data()           # merged ``data`` of completed agents (later steps win)
+    packet.engineer_answers()        # compact HITL view for the LLM
+    packet.rework_reason             # orchestrator's remark on the previous result, if any
+
+The flatten algorithm mirrors ``mas-activity-service/app/state_shape.flatten_artifacts`` and the JS twin
+in ``n8n/templates/mas_state_utils.py`` (tested against the Activity copy in ``tests/test_packet.py``).
+"""
+
+from __future__ import annotations
+
+from typing import Any
+
+from .activity import ActivityClient
+from .hitl import engineer_answers, hitl_payloads
+
+INLINE_TEXT_ROLES = frozenset({"schedule_out", "diff"})
+NESTED_KEYS = frozenset({"excel", "surface", "schedule", "trajectories", "attachments"})
+
+
+def role_for_artifact_id(artifact_id: str) -> str:
+    key = str(artifact_id or "")
+    if key == "excel" or key.startswith("excel_"):
+        return "excel"
+    if key == "surface":
+        return "surface"
+    if key == "schedule_source":
+        return "schedule_source"
+    if key.startswith("schedule_source_"):
+        return "schedule_include"
+    if key == "schedule_out":
+        return "schedule_out"
+    if key == "trajectory" or key.startswith("trajectory_"):
+        return "trajectory"
+    if key == "diff":
+        return "diff"
+    return "attachment"
+
+
+def _is_nested(arts: Any) -> bool:
+    if not isinstance(arts, dict):
+        return False
+    sch = arts.get("schedule")
+    if isinstance(sch, dict) and any(name in sch for name in ("source", "includes", "grdecl", "out", "diff")):
+        return True
+    return isinstance(arts.get("trajectories"), list) or isinstance(arts.get("attachments"), list)
+
+
+def _as_card(artifact_id: str, value: Any) -> dict[str, Any] | None:
+    if value is None or value in ("", [], {}):
+        return None
+    role = role_for_artifact_id(artifact_id)
+    if isinstance(value, str):
+        if role in INLINE_TEXT_ROLES:
+            return {"artifact_id": artifact_id or role, "role": role, "bytes": len(value.encode("utf-8")), "text": value} if value.strip() else None
+        return {"artifact_id": artifact_id, "filename": value, "role": role}
+    if not isinstance(value, dict):
+        return None
+    card = dict(value)
+    aid = str(card.get("artifact_id") or artifact_id or "").strip()
+    if not aid:
+        return None
+    card["artifact_id"] = aid
+    card["role"] = str(card.get("role") or role_for_artifact_id(aid))
+    return card
+
+
+def flatten_artifacts(arts: Any) -> dict[str, dict[str, Any]]:
+    """Nested (``schedule.source`` / ``includes`` / ``attachments`` …) or flat state artifacts → ``{id: card}``."""
+    src = arts if isinstance(arts, dict) else {}
+    out: dict[str, dict[str, Any]] = {}
+
+    def put(value: Any, fallback_id: str = "") -> None:
+        card = _as_card(fallback_id, value)
+        if card:
+            out[str(card["artifact_id"])] = card
+
+    if _is_nested(src):
+        put(src.get("excel"), "excel")
+        put(src.get("surface"), "surface")
+        sch = src.get("schedule") if isinstance(src.get("schedule"), dict) else {}
+        put(sch.get("source"), "schedule_source")
+        for bag in (sch.get("includes") or [], sch.get("grdecl") or []):
+            for item in bag:
+                if isinstance(item, dict):
+                    put(item, str(item.get("artifact_id") or ""))
+        put(sch.get("out"), "schedule_out")
+        put(sch.get("diff"), "diff")
+        for traj in src.get("trajectories") or []:
+            if isinstance(traj, dict):
+                put(traj, str(traj.get("artifact_id") or "trajectory"))
+        for att in src.get("attachments") or []:
+            if isinstance(att, dict):
+                put(att, str(att.get("artifact_id") or ""))
+        for key, value in src.items():
+            if key not in NESTED_KEYS and key not in out:
+                put(value, key)
+        return out
+    for key, value in src.items():
+        if key not in {"schedule", "trajectories", "attachments"}:
+            put(value, key)
+    return out
+
+
+def upstream_agent_data(state: dict[str, Any]) -> dict[str, Any]:
+    """``data`` of every completed agent of the case, merged in step order (later wins).
+
+    Agents do not know each other's names: they take the keys they consume (``facts``, ``new_wells``…)
+    from whichever agent produced them. ``state.data.excel`` is honoured for pre-Phase-2 cases.
+    ``omitted_keys`` (dropped by the orchestrator for size) is bookkeeping, not data.
+    """
+    merged: dict[str, Any] = {}
+    if not isinstance(state, dict):
+        return merged
+    data = state.get("data") if isinstance(state.get("data"), dict) else {}
+    legacy = data.get("excel") if isinstance(data.get("excel"), dict) else {}
+    merged.update({k: v for k, v in legacy.items() if k != "omitted_keys"})
+    agents = state.get("agents") if isinstance(state.get("agents"), dict) else {}
+    slots = [s for s in agents.values() if isinstance(s, dict) and isinstance(s.get("data"), dict)]
+    slots.sort(key=lambda s: int(s.get("step") or 0))
+    for slot in slots:
+        if str(slot.get("status") or "") in ("", "completed"):
+            merged.update({k: v for k, v in slot["data"].items() if k != "omitted_keys"})
+    return merged
+
+
+class CasePacket:
+    def __init__(self, task: dict[str, Any], state: dict[str, Any] | None = None, activity: ActivityClient | None = None):
+        self.task = task if isinstance(task, dict) else {}
+        self.state = state if isinstance(state, dict) else {}
+        self.activity = activity
+        self.inputs: dict[str, Any] = dict(self.task.get("inputs") or {}) if isinstance(self.task.get("inputs"), dict) else {}
+        self.context: dict[str, Any] = dict(self.task.get("context") or {}) if isinstance(self.task.get("context"), dict) else {}
+
+    @classmethod
+    def load(cls, task: dict[str, Any], activity: ActivityClient | None) -> "CasePacket":
+        """Fetch the case state once (tolerant: no Activity → task-only packet)."""
+        state = activity.case_state() if activity is not None and activity.configured else {}
+        return cls(task, state, activity)
+
+    # -- identity -------------------------------------------------------------------------------
+
+    @property
+    def case_id(self) -> str:
+        return str(self.task.get("case_id") or "")
+
+    @property
+    def task_id(self) -> str:
+        return str(self.task.get("task_id") or "")
+
+    @property
+    def objective(self) -> str:
+        return str(self.task.get("objective") or "")
+
+    @property
+    def handoff_message(self) -> str:
+        return str(self.task.get("handoff_message") or "")
+
+    @property
+    def rework_reason(self) -> str:
+        return str(self.inputs.get("rework_reason") or "")
+
+    @property
+    def schedule_root(self) -> str:
+        return str(self.inputs.get("schedule_root") or self.state.get("schedule_root") or "")
+
+    # -- artifacts ------------------------------------------------------------------------------
+
+    @property
+    def artifacts(self) -> dict[str, dict[str, Any]]:
+        """Cards from the case state, overridden by cards the orchestrator put into ``inputs.artifacts``."""
+        merged = flatten_artifacts(self.state.get("artifacts"))
+        merged.update(flatten_artifacts(self.inputs.get("artifacts")))
+        return merged
+
+    def cards(self, *, role: str | None = None, suffixes: tuple[str, ...] = ()) -> list[dict[str, Any]]:
+        out = []
+        for card in self.artifacts.values():
+            if role and str(card.get("role") or "") != role:
+                continue
+            if suffixes and not str(card.get("filename") or "").lower().endswith(suffixes):
+                continue
+            out.append(card)
+        return out
+
+    def download(self, artifact_id: str) -> tuple[bytes, str]:
+        if self.activity is None or not self.activity.configured:
+            raise FileNotFoundError(f"activity is not configured; cannot download {artifact_id}")
+        return self.activity.download(artifact_id)
+
+    # -- facts from other actors ----------------------------------------------------------------
+
+    def upstream_data(self) -> dict[str, Any]:
+        return upstream_agent_data(self.state)
+
+    def datasets(self) -> dict[str, dict[str, Any]]:
+        """Datasets fixed by earlier agents (``mas_agent_kit.dataset``), by name."""
+        from .dataset import upstream_datasets
+
+        return upstream_datasets(self.state)
+
+    def dataset(self, name: str) -> list[dict[str, Any]]:
+        """All rows of an upstream dataset — inline or downloaded from its artifact; ``[]`` when absent."""
+        from .dataset import dataset_rows
+
+        entry = self.datasets().get(str(name or ""))
+        return dataset_rows(entry, self.activity) if entry else []
+
+    @property
+    def expected_output(self) -> dict[str, Any]:
+        """What the orchestrator asked this call to produce (``inputs.expected_output``, sanitised)."""
+        from .dataset import expected_output
+
+        return expected_output(self.inputs)
+
+    def engineer_answers(self) -> list[dict[str, Any]]:
+        return engineer_answers(self.context)
+
+    def hitl_payloads(self) -> list[Any]:
+        return hitl_payloads(self.context)
+
+===END_FILE===
+===BEGIN_FILE===	mas-agent-kit/mas_agent_kit/result.py	4372	utf8
+"""``agent_result`` — the one contract every agent returns to the orchestrator.
+
+    {task_id, agent_id, status, message, data, artifacts, issues, assumptions, requests}
+
+``status``: ``completed`` | ``needs_input`` (``requests`` holds the question) | ``failed`` |
+``in_progress`` (long job; the agent later calls ``ActivityClient.finish_task``).
+``message`` is prose for the engineer — what actually happened, with counts and names.
+"""
+
+from __future__ import annotations
+
+from typing import Any
+
+from .text import human_text_problems
+
+STATUSES = ("completed", "needs_input", "failed", "in_progress")
+
+
+def agent_result(
+    agent_id: str,
+    task_id: str,
+    status: str,
+    message: str,
+    *,
+    data: dict[str, Any] | None = None,
+    artifacts: dict[str, Any] | None = None,
+    issues: list[Any] | None = None,
+    requests: list[Any] | None = None,
+    assumptions: list[Any] | None = None,
+    watch: dict[str, Any] | None = None,
+) -> dict[str, Any]:
+    if status not in STATUSES:
+        raise ValueError(f"unknown agent_result status: {status!r}")
+    out = {
+        "task_id": str(task_id or ""),
+        "agent_id": str(agent_id or ""),
+        "status": status,
+        "message": str(message or ""),
+        "data": dict(data or {}),
+        "artifacts": dict(artifacts or {}),
+        "issues": list(issues or []),
+        "assumptions": list(assumptions or []),
+        "requests": list(requests or []),
+    }
+    if status == "in_progress":
+        out["watch"] = dict(watch or {})
+    return out
+
+
+def in_progress(agent_id: str, task_id: str, message: str, *, watch: dict[str, Any] | None = None) -> dict[str, Any]:
+    """Long job started: the orchestrator parks the case (``waiting_agent``) until ``ActivityClient.finish_task``.
+
+    ``watch`` is free-form for the feed / a monitor: ``{"kind": "poll", "ref": "job-17", "poll_hint": "20s"}``.
+    ``message`` tells the engineer what is running and roughly how long ("Расчёт запущен, около двух минут.").
+    """
+    return agent_result(agent_id, task_id, "in_progress", message, watch=watch)
+
+
+def engineer_request(
+    question: str,
+    *,
+    question_id: str = "Q-engineer",
+    options: list[dict[str, str]] | None = None,
+    accepts_files: list[str] | tuple[str, ...] | None = None,
+    required: bool = True,
+) -> dict[str, Any]:
+    """One HITL request row. ``options`` are ``[{value, label}]`` buttons; free text is always allowed."""
+    opts = list(options or [])
+    accepts: dict[str, Any] = {"free_text": True}
+    if accepts_files:
+        accepts["files"] = [str(part).strip() for part in accepts_files if str(part).strip()]
+    return {
+        "question_id": question_id,
+        "question": str(question),
+        "required": bool(required),
+        "type": "choice" if opts else "text",
+        "options": opts,
+        "accepts": accepts,
+    }
+
+
+def needs_input(
+    agent_id: str,
+    task_id: str,
+    question: str,
+    *,
+    question_id: str = "Q-engineer",
+    options: list[dict[str, str]] | None = None,
+    accepts_files: list[str] | tuple[str, ...] | None = None,
+    issue_type: str = "engineer_input_required",
+    data: dict[str, Any] | None = None,
+    artifacts: dict[str, Any] | None = None,
+) -> dict[str, Any]:
+    """Shortcut: a ``needs_input`` result carrying exactly one question."""
+    return agent_result(
+        agent_id,
+        task_id,
+        "needs_input",
+        question,
+        data=data,
+        artifacts=artifacts,
+        issues=[{"type": issue_type, "topic": question_id}],
+        requests=[engineer_request(question, question_id=question_id, options=options, accepts_files=accepts_files)],
+    )
+
+
+def result_text_problems(result: dict[str, Any]) -> list[str]:
+    """Audit of the human-facing strings of a result (``message``, questions, option labels)."""
+    problems = [f"message: {p}" for p in human_text_problems(result.get("message", ""), min_length=1)]
+    for req in result.get("requests") or []:
+        if not isinstance(req, dict):
+            continue
+        problems += [f"question: {p}" for p in human_text_problems(req.get("question", ""))]
+        for opt in req.get("options") or []:
+            label = opt.get("label", "") if isinstance(opt, dict) else str(opt)
+            problems += [f"option «{label}»: {p}" for p in human_text_problems(label, min_length=1) if "по-русски" not in p]
+    return problems
+
+===END_FILE===
+===BEGIN_FILE===	mas-agent-kit/mas_agent_kit/session.py	9185	utf8
+"""Disk-backed sessions: one directory per session with ``state.json`` and any files the agent keeps.
+
+The LLM never sees the files — it works through tools that read them from the session. State
+survives a service restart (field: the Windows service may be restarted mid-case) and is
+serialised per session with a cross-process file lock (``filelock``: msvcrt on Windows, fcntl on
+Unix). Expired sessions are swept on ``create``.
+
+    store = SessionStore(prefix="sch")                 # ids look like sch_<hex>
+    state = store.create({"case_id": ..., "task_id": ...})
+    with store.lock(state["session_id"]):
+        state = store.load(sid); ...; store.save(state)
+    store.close(sid)
+
+Root directory: ``SESSION_DIR`` env var, else ``/data/sessions`` on Unix when writable, else the
+system temp dir. Each service can pass its own ``root``.
+"""
+
+from __future__ import annotations
+
+import json
+import os
+import re
+import shutil
+import sys
+import tempfile
+import threading
+import uuid
+from collections.abc import Iterator
+from contextlib import contextmanager
+from datetime import UTC, datetime, timedelta
+from pathlib import Path
+from typing import Any
+
+from filelock import FileLock, Timeout
+
+from .errors import SessionNotFound
+
+_ID_BODY = r"[A-Za-z0-9_-]{12,60}"
+
+
+def utcnow() -> str:
+    return datetime.now(UTC).isoformat()
+
+
+def default_session_root(app_name: str = "mas_agent") -> Path:
+    env = os.getenv("SESSION_DIR")
+    if env:
+        return Path(env)
+    if sys.platform != "win32":
+        unix_default = Path("/data/sessions")
+        try:
+            unix_default.mkdir(parents=True, exist_ok=True)
+            if os.access(unix_default, os.W_OK):
+                return unix_default
+        except OSError:
+            pass
+    return Path(tempfile.gettempdir()) / f"{app_name}_sessions"
+
+
+class SessionStore:
+    def __init__(self, prefix: str = "sess", root: Path | str | None = None, *, ttl_hours: int | None = None, app_name: str = ""):
+        if not re.fullmatch(r"[a-z][a-z0-9]{0,15}", prefix):
+            raise ValueError("session prefix must be a short lowercase identifier")
+        self.prefix = prefix
+        self._root = Path(root) if root else None
+        self.app_name = app_name or prefix
+        self._ttl_hours = ttl_hours
+        self._id_re = re.compile(rf"^{re.escape(prefix)}_{_ID_BODY}$")
+        self._cleanup_guard = threading.Lock()
+
+    # -- ids and paths --------------------------------------------------------------------------
+
+    @property
+    def root(self) -> Path:
+        path = (self._root or default_session_root(self.app_name)).resolve()
+        path.mkdir(parents=True, exist_ok=True)
+        return path
+
+    @property
+    def ttl_hours(self) -> int:
+        if self._ttl_hours is not None:
+            return self._ttl_hours
+        try:
+            return int(os.getenv("SESSION_TTL_HOURS", "24"))
+        except ValueError:
+            return 24
+
+    def new_id(self) -> str:
+        return f"{self.prefix}_{uuid.uuid4().hex}"
+
+    def is_valid_id(self, session_id: Any) -> bool:
+        return isinstance(session_id, str) and bool(self._id_re.fullmatch(session_id))
+
+    def validate(self, session_id: Any) -> str:
+        if not self.is_valid_id(session_id):
+            raise SessionNotFound(str(session_id or ""))
+        return str(session_id)
+
+    def dir(self, session_id: str, *, create: bool = False) -> Path:
+        path = self.root / self.validate(session_id)
+        if create:
+            path.mkdir(mode=0o700, parents=False, exist_ok=False)
+        return path
+
+    def file(self, session_id: str, relative_path: str) -> Path:
+        """A path below the session directory; path traversal is rejected."""
+        base = self.dir(session_id).resolve()
+        candidate = (base / relative_path).resolve()
+        if candidate != base and base not in candidate.parents:
+            raise ValueError("Invalid session-relative path")
+        return candidate
+
+    def exists(self, session_id: Any) -> bool:
+        return self.is_valid_id(session_id) and (self.root / str(session_id) / "state.json").is_file()
+
+    def lock_path(self, session_id: str) -> Path:
+        """Lock files live outside session directories so Windows can delete expired sessions."""
+        locks = self.root / ".locks"
+        locks.mkdir(mode=0o700, exist_ok=True)
+        return locks / f"{self.validate(session_id)}.lock"
+
+    # -- state ----------------------------------------------------------------------------------
+
+    @contextmanager
+    def lock(self, session_id: str) -> Iterator[None]:
+        """Serialise state-changing calls of one session across threads and processes."""
+        directory = self.dir(session_id)
+        if not directory.is_dir():
+            raise SessionNotFound(session_id)
+        with FileLock(str(self.lock_path(session_id))):
+            if not directory.is_dir():  # swept between the check and the lock
+                raise SessionNotFound(session_id)
+            yield
+
+    def load(self, session_id: str) -> dict[str, Any]:
+        path = self.dir(session_id) / "state.json"
+        if not path.is_file():
+            raise SessionNotFound(session_id)
+        try:
+            with path.open("r", encoding="utf-8") as fh:
+                state = json.load(fh)
+        except (OSError, json.JSONDecodeError) as exc:
+            raise ValueError("Session state is unavailable") from exc
+        if not isinstance(state, dict) or state.get("session_id") != session_id:
+            raise ValueError("Session state is invalid")
+        return state
+
+    def save(self, state: dict[str, Any]) -> dict[str, Any]:
+        session_id = self.validate(state.get("session_id"))
+        directory = self.dir(session_id)
+        if not directory.is_dir():
+            raise SessionNotFound(session_id)
+        state["updated_at"] = utcnow()
+        target = directory / "state.json"
+        fd, tmp_name = tempfile.mkstemp(prefix=".state-", suffix=".json", dir=directory)
+        try:
+            with os.fdopen(fd, "w", encoding="utf-8") as fh:
+                json.dump(state, fh, ensure_ascii=False, indent=2, default=str)
+                fh.flush()
+                os.fsync(fh.fileno())
+            os.replace(tmp_name, target)
+        finally:
+            if os.path.exists(tmp_name):
+                os.unlink(tmp_name)
+        return state
+
+    def create(self, state: dict[str, Any] | None = None) -> dict[str, Any]:
+        """New session directory + first ``state.json``. Sweeps expired sessions first."""
+        self.cleanup()
+        state = dict(state or {})
+        session_id = str(state.get("session_id") or "")
+        if not session_id:
+            session_id = self.new_id()
+        state["session_id"] = self.validate(session_id)
+        state.setdefault("created_at", utcnow())
+        self.dir(session_id, create=True)
+        return self.save(state)
+
+    def close(self, session_id: str) -> dict[str, Any]:
+        """Drop the session directory (after the workflow fetched the result)."""
+        if not self.is_valid_id(session_id):
+            return {"ok": True, "closed": False, "session_id": str(session_id or "")}
+        directory = self.root / session_id
+        if not directory.is_dir():
+            return {"ok": True, "closed": False, "session_id": session_id}
+        try:
+            with FileLock(str(self.lock_path(session_id)), timeout=5):
+                if directory.is_dir():
+                    shutil.rmtree(directory)
+            try:
+                self.lock_path(session_id).unlink(missing_ok=True)
+            except OSError:
+                pass
+            return {"ok": True, "closed": True, "session_id": session_id}
+        except Timeout:
+            return {"ok": False, "closed": False, "session_id": session_id, "busy": True}
+
+    def cleanup(self) -> int:
+        """Best-effort TTL sweep; one scan at a time; busy sessions are left for the next pass."""
+        ttl = self.ttl_hours
+        if ttl <= 0 or not self._cleanup_guard.acquire(blocking=False):
+            return 0
+        try:
+            threshold = datetime.now(UTC) - timedelta(hours=ttl)
+            deleted = 0
+            for directory in self.root.iterdir():
+                if not directory.is_dir() or not self._id_re.fullmatch(directory.name):
+                    continue
+                try:
+                    with FileLock(str(self.lock_path(directory.name)), timeout=0):
+                        with (directory / "state.json").open("r", encoding="utf-8") as fh:
+                            created_at = datetime.fromisoformat(json.load(fh)["created_at"])
+                        if created_at.tzinfo is None:
+                            created_at = created_at.replace(tzinfo=UTC)
+                        if created_at < threshold:
+                            shutil.rmtree(directory)
+                            deleted += 1
+                except Timeout:
+                    continue
+                except (OSError, ValueError, KeyError, json.JSONDecodeError):
+                    continue  # corrupt session must not break new uploads; an operator removes it
+            return deleted
+        finally:
+            self._cleanup_guard.release()
+
+===END_FILE===
+===BEGIN_FILE===	mas-agent-kit/mas_agent_kit/text.py	4216	utf8
+"""Text for the engineer: the one ``human_text_problems`` gate and small Russian prose helpers.
+
+Every question, option label, ``status_message`` and summary shown to a human goes through
+``human_text_problems``. It is a *gate* (rejects machine-looking text), never a router.
+"""
+
+from __future__ import annotations
+
+import json
+import re
+from typing import Any
+
+# snake_case ids, key=value, JSON braces / brackets, a|b enums.
+MACHINE_TOKEN_RE = re.compile(r"[a-z]+_[a-z_]+|[a-z_]+=[a-z0-9]+|[{}\[\]<>]|\w\|\w")
+_CYRILLIC_RE = re.compile(r"[А-Яа-яЁё]{3,}")
+_BASELINE_WORD_RE = re.compile(r"\bbaseline\b", re.I)
+
+
+def human_text_problems(text: Any, *, min_length: int = 12) -> list[str]:
+    """Why a string is not fit for an engineer. Empty list = fine.
+
+    Cyrillic prose with well names (1601, H_304R — uppercase) and keywords (WCONPROD) passes.
+    """
+    problems: list[str] = []
+    stripped = str(text or "").strip()
+    if len(stripped) < min_length:
+        problems.append("слишком коротко для вопроса инженеру")
+    if not _CYRILLIC_RE.search(stripped):
+        problems.append("вопрос должен быть по-русски")
+    tokens = sorted({m.group(0) for m in MACHINE_TOKEN_RE.finditer(stripped)})
+    if tokens:
+        problems.append("машинные токены: " + ", ".join(tokens[:6]))
+    if _BASELINE_WORD_RE.search(stripped):
+        problems.append("не говорите «baseline» инженеру — исходный файл schedule")
+    return problems
+
+
+def option_problems(options: list[dict[str, str]]) -> list[str]:
+    """Option labels are short by nature — only the machine-token / language checks apply."""
+    out: list[str] = []
+    for opt in options:
+        for problem in human_text_problems(opt.get("label", "")):
+            if "коротко" in problem or "по-русски" in problem:
+                continue
+            out.append(f"вариант «{opt.get('label', '')}»: {problem}")
+    return out
+
+
+def parse_jsonish(value: Any) -> Any:
+    """``dict``/``list`` as-is; a JSON string → parsed value; anything else → ``None``."""
+    if isinstance(value, (dict, list)):
+        return value
+    if isinstance(value, str) and value.strip()[:1] in "{[":
+        try:
+            return json.loads(value)
+        except json.JSONDecodeError:
+            return None
+    return None
+
+
+def options_for_human(raw: Any, *, limit: int = 8) -> list[dict[str, str]]:
+    """Normalise LLM-supplied options: JSON list, ``[{value,label,hint}]`` or ``"a; b; c"`` → ``[{value,label}]``."""
+    items = raw
+    if isinstance(raw, str):
+        parsed = parse_jsonish(raw)
+        items = parsed if isinstance(parsed, list) else [part.strip() for part in raw.split(";") if part.strip()]
+    if not isinstance(items, list):
+        return []
+    out: list[dict[str, str]] = []
+    for item in items:
+        if isinstance(item, dict):
+            label = str(item.get("label") or item.get("text") or item.get("value") or "").strip()
+            value = str(item.get("value") or label).strip()
+            hint = str(item.get("hint") or "").strip()
+        else:
+            label = str(item).strip()
+            value = label
+            hint = ""
+        if not label:
+            continue
+        row = {"value": value, "label": label}
+        if hint:
+            row["hint"] = hint
+        out.append(row)
+    return out[:limit]
+
+
+def plural_ru(n: int, one: str, few: str, many: str) -> str:
+    """Russian plural with the number: ``plural_ru(3, "скважина", "скважины", "скважин")`` → ``"3 скважины"``."""
+    n10, n100 = n % 10, n % 100
+    if n10 == 1 and n100 != 11:
+        return f"{n} {one}"
+    if 2 <= n10 <= 4 and not 12 <= n100 <= 14:
+        return f"{n} {few}"
+    return f"{n} {many}"
+
+
+def list_preview(items: list[Any], limit: int = 6) -> str:
+    """``"a, b, c и ещё 4"`` — short enumerations for summaries."""
+    shown = ", ".join(str(item) for item in items[:limit])
+    if len(items) > limit:
+        shown += f" и ещё {len(items) - limit}"
+    return shown
+
+
+def slug(text: Any, default: str = "engineer") -> str:
+    """Latin identifier for question ids / topics (``"Target group!"`` → ``"target_group"``)."""
+    cleaned = re.sub(r"[^a-z0-9_]+", "_", str(text or "").strip().lower()).strip("_")
+    return cleaned or default
+
+===END_FILE===
+===BEGIN_FILE===	mas-agent-kit/mas_agent_kit/tools.py	10622	utf8
+"""Tool registry: ``@tools.tool(...)`` functions the n8n AI Agent calls through ``POST /agent-tools/{name}``.
+
+    tools = ToolRegistry(store)
+
+    @tools.tool("inspect_well", "Осмотреть одну скважину", {"well": {"type": "string"}}, required=["well"])
+    def inspect_well(ctx: ToolContext, args: dict) -> dict:
+        well = find(ctx.state, args["well"])
+        if well is None:
+            raise ToolError("well_not_found", "Скважина не найдена; имена — из inspect_schedule.", well=args["well"])
+        return {"well": well}
+
+    tools.run(state, "inspect_well", {"well": "P1"})   # → {"ok": true, "well": {...}}
+
+``run`` returns the flat envelope (``{"ok": true, ...result}`` or ``{"ok": false, "code", "message", ...}``),
+coerces JSON-typed arguments the LLM sent as strings, keeps a bounded ``tool_history`` in the state
+and saves the state through the store. Guards: ``repeat_guard`` (``too_many_attempts``) and
+``result_guard`` (``result_already_stored``) are explicit calls, so every agent decides its own protocol.
+"""
+
+from __future__ import annotations
+
+import copy
+import hashlib
+import json
+import logging
+from collections.abc import Callable, Iterable
+from typing import Any
+
+from .errors import ToolError, error_envelope
+from .text import parse_jsonish
+
+logger = logging.getLogger(__name__)
+
+HISTORY_LIMIT = 100
+MAX_CACHE_ENTRIES = 64
+
+
+def tool_schema(name: str, description: str, properties: dict[str, Any] | None = None, required: Iterable[str] = ()) -> dict[str, Any]:
+    """OpenAI-style function schema; ``properties`` are JSON-schema fragments per argument."""
+    return {
+        "type": "function",
+        "function": {
+            "name": name,
+            "description": description,
+            "parameters": {
+                "type": "object",
+                "properties": dict(properties or {}),
+                "required": list(required),
+                "additionalProperties": False,
+            },
+        },
+    }
+
+
+class ToolContext:
+    """What a tool receives besides its arguments. ``ctx["state"]`` works too (older tools)."""
+
+    def __init__(self, state: dict[str, Any], registry: "ToolRegistry"):
+        self.state = state
+        self.session_id = str(state.get("session_id") or "")
+        self.registry = registry
+
+    def __getitem__(self, key: str) -> Any:
+        if key == "state":
+            return self.state
+        if key == "session_id":
+            return self.session_id
+        raise KeyError(key)
+
+
+ToolFunc = Callable[[ToolContext, dict[str, Any]], dict[str, Any]]
+
+
+class ToolRegistry:
+    def __init__(
+        self,
+        store: Any | None = None,
+        *,
+        cacheable: Iterable[str] = (),
+        cache_key: Callable[[dict[str, Any]], Any] | None = None,
+    ):
+        self.store = store
+        self._funcs: dict[str, ToolFunc] = {}
+        self._schemas: dict[str, dict[str, Any]] = {}
+        self.cacheable = frozenset(cacheable)
+        self._cache_key = cache_key
+
+    # -- registration ---------------------------------------------------------------------------
+
+    def tool(
+        self,
+        name_or_schema: str | dict[str, Any],
+        description: str = "",
+        properties: dict[str, Any] | None = None,
+        required: Iterable[str] = (),
+    ) -> Callable[[ToolFunc], ToolFunc]:
+        schema = name_or_schema if isinstance(name_or_schema, dict) else tool_schema(name_or_schema, description, properties, required)
+        name = str(schema.get("function", {}).get("name") or "")
+        if not name:
+            raise ValueError("Tool schema must contain function.name")
+
+        def decorator(fn: ToolFunc) -> ToolFunc:
+            if name in self._funcs:
+                raise ValueError(f"Duplicate tool registration: {name}")
+            self._funcs[name] = fn
+            self._schemas[name] = schema
+            return fn
+
+        return decorator
+
+    def add(self, name: str, fn: ToolFunc, description: str = "", properties: dict[str, Any] | None = None, required: Iterable[str] = ()) -> None:
+        self.tool(name, description, properties, required)(fn)
+
+    @property
+    def names(self) -> list[str]:
+        return list(self._funcs)
+
+    @property
+    def funcs(self) -> dict[str, ToolFunc]:
+        """Live name → function map (tests monkeypatch entries here)."""
+        return self._funcs
+
+    @property
+    def schemas(self) -> list[dict[str, Any]]:
+        return list(self._schemas.values())
+
+    def __contains__(self, name: object) -> bool:
+        return name in self._funcs
+
+    # -- execution ------------------------------------------------------------------------------
+
+    def run(self, state: dict[str, Any], name: str, args: dict[str, Any] | None) -> dict[str, Any]:
+        if name not in self._funcs:
+            return error_envelope("unknown_tool", f"Инструмента {name} нет.", available_tools=self.names)
+        if args is None:
+            args = {}
+        if not isinstance(args, dict):
+            return error_envelope("invalid_arguments", "Аргументы инструмента должны быть объектом.")
+        args = self.coerce_args(name, args)
+        ctx = ToolContext(state, self)
+        try:
+            result = self._cached(state, name, args)
+            if result is None:
+                result = self._funcs[name](ctx, args)
+                self._store_cached(state, name, args, result)
+            self._remember(state, name, ok=True)
+            return {"ok": True, **(result if isinstance(result, dict) else {"result": result})}
+        except ToolError as error:
+            self._remember(state, name, ok=False, code=error.code)
+            return error.envelope()
+        except Exception:  # never leak paths / stack traces to the model
+            logger.exception("tool %s failed", name)
+            self._remember(state, name, ok=False, code="tool_failed")
+            return error_envelope("tool_failed", "Инструмент завершился с внутренней ошибкой; попробуй другой путь или сообщи об этом в итоге.")
+
+    def coerce_args(self, name: str, args: dict[str, Any]) -> dict[str, Any]:
+        """JSON typed as object/array but sent as text or as ``{"0": …, "1": …}`` (n8n quirk) → real values."""
+        props = self._schemas.get(name, {}).get("function", {}).get("parameters", {}).get("properties", {})
+        out = dict(args)
+        for key, spec in props.items():
+            if key not in out or not isinstance(spec, dict):
+                continue
+            types = spec.get("type")
+            types = set(types) if isinstance(types, list) else {types}
+            value = out[key]
+            if isinstance(value, str) and types & {"object", "array"}:
+                parsed = parse_jsonish(value)
+                if parsed is not None:
+                    value = parsed
+                elif not value.strip():
+                    out.pop(key)
+                    continue
+            if isinstance(value, dict) and "array" in types and value and all(str(k).isdigit() for k in value):
+                value = [value[k] for k in sorted(value, key=lambda k: int(k))]
+            out[key] = value
+        return out
+
+    # -- guards ---------------------------------------------------------------------------------
+
+    @staticmethod
+    def calls(state: dict[str, Any], name: str) -> int:
+        history = state.get("tool_history") if isinstance(state.get("tool_history"), list) else []
+        return sum(1 for item in history if isinstance(item, dict) and item.get("tool") == name)
+
+    def repeat_guard(self, state: dict[str, Any], name: str, limit: int = 3, hint: str = "") -> None:
+        n = self.calls(state, name)
+        if n >= limit:
+            raise ToolError(
+                "too_many_attempts",
+                f"{name} уже вызывался {n} раза. " + (hint or "Если данных нет — спроси инженера через ask_engineer, иначе заверши ответ."),
+            )
+
+    @staticmethod
+    def result_guard(state: dict[str, Any], *, key: str = "result", when: Callable[[dict[str, Any]], bool] | None = None) -> None:
+        """One stored result per session: once fixed, further result-producing calls are refused."""
+        stored = state.get(key) if isinstance(state.get(key), dict) else None
+        if not stored or not stored.get("status"):
+            return
+        if when is not None and not when(stored):
+            return
+        raise ToolError(
+            "result_already_stored",
+            "Результат уже зафиксирован в сессии (" + str(stored.get("status") or "") + "): "
+            + str(stored.get("message") or "")[:300]
+            + " Больше инструменты не вызывай — заверши ответ одним предложением.",
+            status=str(stored.get("status") or ""),
+        )
+
+    # -- internals ------------------------------------------------------------------------------
+
+    def _remember(self, state: dict[str, Any], name: str, *, ok: bool, code: str = "") -> None:
+        history = state.get("tool_history") if isinstance(state.get("tool_history"), list) else []
+        entry: dict[str, Any] = {"tool": name, "ok": ok}
+        if code:
+            entry["error_code"] = code
+        history.append(entry)
+        state["tool_history"] = history[-HISTORY_LIMIT:]
+        if self.store is not None and state.get("session_id"):
+            self.store.save(state)
+
+    def _cache_id(self, state: dict[str, Any], name: str, args: dict[str, Any]) -> str:
+        binding = self._cache_key(state) if self._cache_key else state.get("session_id")
+        payload = json.dumps({"bind": binding, "tool": name, "args": args}, ensure_ascii=False, sort_keys=True, default=str)
+        return hashlib.sha256(payload.encode("utf-8")).hexdigest()
+
+    def _cached(self, state: dict[str, Any], name: str, args: dict[str, Any]) -> dict[str, Any] | None:
+        if name not in self.cacheable:
+            return None
+        cache = state.get("tool_cache") if isinstance(state.get("tool_cache"), dict) else {}
+        hit = cache.get(self._cache_id(state, name, args))
+        if not isinstance(hit, dict) or hit.get("tool") != name or not isinstance(hit.get("result"), dict):
+            return None
+        return copy.deepcopy(hit["result"])
+
+    def _store_cached(self, state: dict[str, Any], name: str, args: dict[str, Any], result: Any) -> None:
+        if name not in self.cacheable or not isinstance(result, dict):
+            return
+        cache = state.get("tool_cache") if isinstance(state.get("tool_cache"), dict) else {}
+        if len(cache) >= MAX_CACHE_ENTRIES:
+            cache.pop(next(iter(cache)))
+        cache[self._cache_id(state, name, args)] = {"tool": name, "result": copy.deepcopy(result)}
+        state["tool_cache"] = cache
+
+===END_FILE===
+===BEGIN_FILE===	mas-agent-kit/requirements.txt	654	utf8
+# mas_agent_kit is a plain module of this repository, not a pip package: nothing here gets installed
+# as "mas-agent-kit". Each agent service puts ../mas-agent-kit on sys.path in its app/__init__.py and
+# imports `from mas_agent_kit import ...`; the service's own requirements.txt already lists these two.
+# Install this file only to run the kit tests on their own:
+#   cd mas-agent-kit && python -m venv .venv && .venv/bin/pip install -r requirements.txt pytest
+#   PYTHONPATH=. .venv/bin/python -m pytest -q tests
+fastapi>=0.115.14,<0.116
+# Cross-platform advisory file locks for disk-backed sessions (Windows msvcrt + Unix fcntl).
+filelock>=3.15,<4.0
 
 ===END_FILE===
 ===BEGIN_FILE===	n8n/README.md	1222	utf8
@@ -121174,7 +123415,7 @@ if __name__ == "__main__":
     sys.exit(main())
 
 ===END_FILE===
-===BEGIN_FILE===	scripts/project_pack.py	10437	utf8
+===BEGIN_FILE===	scripts/project_pack.py	10481	utf8
 #!/usr/bin/env python3
 """Pack and unpack the MAS deployment tree into a portable text archive."""
 from __future__ import annotations
@@ -121191,6 +123432,8 @@ END = "===END_FILE==="
 DEFAULT_CHUNK_SIZE = 1_000_000
 
 PACK_DIRS = (
+    "agents-template",
+    "mas-agent-kit",
     "excel-agent-tools",
     "fastapi-math-service",
     "mas-activity-service",

@@ -1,3 +1,1453 @@
+                  "text": "WNETDP — фиксированный перепад давления между узлом сети и устьем скважины.\n\nНазначение. WNETDP задаёт постоянный ΔP (METRIC: bar, FIELD: psi) между узлом группы в расширенной сети и устьевым давлением скважины. Только при опции NETWORK (§2.14.11 / RUNSPEC NETWORK; вне allowlist Builder). Форматы: tN, E1, E3. Секция: SCHEDULE. Это не BRANPROP/NODEPROP (топология узлов), не GNETDP (динамическая подстройка фиксированного давления группы/узла), не THP в WCONPROD/WELTARG, не VFP-таблица потерь в стволе/трубе.\n\nКогда применять. Extended network включён; нужно явное фиксированное падение давления wellhead↔network node. После WELSPECS; сеть (BRANPROP/NODEPROP) обычно уже задана. Если NETWORK нет в base → needs_input.\n\nRecord layout. Keyword WNETDP, записи `/`, блок — отдельный `/`.\n\nПоля (§12.20.253):\n\n1. WELL — имя скважины или `*LIST` (после WLIST); сырые маски без WLIST → needs_input.\n2. DP — фиксированное падение давления (bar). Default симулятора: 0.\n\nКанон render.\n- `default` — WELL DP.\nИмена quoted. Не копируйте '28'/5.0 без фактов.\n\nIR / semantics.\n- period=ANY; clock.uses_current=true.\n- references: well WELL required.\n- prerequisites: WELSPECS scope=ENTITY; текстово NETWORK feature + узлы сети для группы скважины.\n- state_assignments: namespace well-network-dp; key WELL; value DP.\n- numeric_constraints: DP min 0 (явный 0 допустим = нет добавочного ΔP).\n\nСвязанные keywords.\n- BRANPROP / NODEPROP — топология сети.\n- WCONPROD THP / WELTARG THP|TARGTHP — устьевое давление контроля, не этот ΔP.\n- WEFAC — не путать с efficiency.\n\nВалидация / антипаттерны.\n- WELL существует; DP finite ≥0.\n- Не эмитить без NETWORK authority.\n- Не подменять WNETDP сменой THP.\n\nТеория (§2.14.11 — NETWORK).\n- WNETDP задаёт фиксированную величину падения давления между узлом расширенной сети и устьевым давлением скважины (§2.14.11).\n- Имеет смысл только при включённом NETWORK + согласованных BRANPROP/NODEPROP; без сети → needs_input.\n\nНехватка факта → needs_input: нет WELL/DP; нет NETWORK; конфликт baseline без REVISE target.\n\nКарточка самодостаточна: renderer использует только schema_catalogue этой записи и выбранный variant.",
+                  "examples": [
+                    {
+                      "title": "Три скважины — канон мануала",
+                      "task": "ΔP: 28→5 bar, 29→2 bar, 30→5 bar.",
+                      "schedule_text": "WNETDP\n'28' 5.0 /\n'29' 2.0 /\n'30' 5.0 /\n/\n",
+                      "explanation": "§12.20.253 с. 2250. Variant default. Учебные имена."
+                    },
+                    {
+                      "title": "Одна скважина",
+                      "task": "P01: фиксированный ΔP сеть–устье 3.5 bar.",
+                      "schedule_text": "WNETDP\n  'P01' 3.5 /\n/\n",
+                      "explanation": "NETWORK+ветви/узлы должны быть в модели. Число из фактов."
+                    }
+                  ],
+                  "schema_catalogue": {
+                    "contract": "schedule_schema_catalogue",
+                    "contract_version": "1.0",
+                    "catalogue_ref": "catalogue://tnavigator/22.2/wnetdp-network-delta-p-v1",
+                    "catalogue_hash": "sha256:b331c61be43640554aaad8f2f5b63120ffbabdcba634938fc92aa0ca62324ad6",
+                    "source_hash": "sha256:976e3d11894bb233e2b2f08675534bf106559cd72c30d52bc46c771dae69bd78",
+                    "access_scope": "petroleum-engineering",
+                    "simulator_profile": {
+                      "vendor": "Rock Flow Dynamics",
+                      "simulator": "tNavigator",
+                      "version": "22.2",
+                      "unit_system": "METRIC"
+                    },
+                    "approved": true,
+                    "approved_by": "department-hydrodynamic-expert",
+                    "author": "department-hydrodynamic-expert",
+                    "approval_gate_id": "expert:wnetdp-network-delta-p-v1:2",
+                    "schemas": [
+                      {
+                        "schema_id": "expert:WNETDP",
+                        "schema_revision": "1",
+                        "keyword": "WNETDP",
+                        "variant": "default",
+                        "citation": {
+                          "document_id": "tnav-user-manual-russian",
+                          "document_revision": "19.4",
+                          "page": "12.20.253 / 2250",
+                          "heading": "WNETDP",
+                          "source_hash": "sha256:976e3d11894bb233e2b2f08675534bf106559cd72c30d52bc46c771dae69bd78"
+                        },
+                        "parser": {
+                          "token_width": 2,
+                          "allow_trailing_omission": false,
+                          "allow_unquoted_strings": true
+                        },
+                        "fields": [
+                          {
+                            "name": "WELL",
+                            "position": 1,
+                            "type": "string",
+                            "required": true,
+                            "quote": "single"
+                          },
+                          {
+                            "name": "DP",
+                            "position": 2,
+                            "type": "number",
+                            "required": true
+                          }
+                        ],
+                        "layout": {
+                          "newline": "LF",
+                          "indent": "  ",
+                          "delimiter": "SPACE",
+                          "record_terminator": "SLASH",
+                          "block_terminator": "SLASH_LINE"
+                        },
+                        "semantics": {
+                          "period": "ANY",
+                          "clock": {
+                            "uses_current": true
+                          },
+                          "references": [
+                            {
+                              "entity_type": "well",
+                              "id_field": "WELL",
+                              "required": true
+                            }
+                          ],
+                          "prerequisites": [
+                            {
+                              "keyword": "WELSPECS",
+                              "scope": "ENTITY",
+                              "entity_field": "WELL",
+                              "prerequisite_entity_field": "WELL"
+                            }
+                          ],
+                          "state_assignments": [
+                            {
+                              "namespace": "well-network-dp",
+                              "entity_type": "well",
+                              "entity_field": "WELL",
+                              "key_fields": [
+                                "WELL"
+                              ],
+                              "value_fields": [
+                                "DP"
+                              ]
+                            }
+                          ],
+                          "numeric_constraints": [
+                            {
+                              "field": "DP",
+                              "min": 0
+                            }
+                          ]
+                        }
+                      }
+                    ]
+                  }
+                },
+                {
+                  "contract": "schedule_knowledge_block",
+                  "contract_version": "1.0",
+                  "target_base": "schedule_mvp",
+                  "knowledge_type": "keyword_instruction",
+                  "knowledge_id": "wconhist-history-control-v1",
+                  "revision": "3",
+                  "title": "WCONHIST — исторический контроль добывающей скважины",
+                  "keywords": [
+                    "WCONHIST"
+                  ],
+                  "topics": [
+                    "history matching",
+                    "WCONHIST",
+                    "исторические дебиты",
+                    "не WCONPROD",
+                    "HISTORY"
+                  ],
+                  "task_patterns": [
+                    "задать WCONHIST",
+                    "исторический дебит скважины",
+                    "history matching control",
+                    "LRAT по истории",
+                    "hist BHP в WCONHIST"
+                  ],
+                  "simulator_family": [
+                    "E100",
+                    "E300",
+                    "tNavigator"
+                  ],
+                  "status": "active",
+                  "author": "department-hydrodynamic-expert",
+                  "access_scope": "petroleum-engineering",
+                  "text": "WCONHIST — исторический контроль добывающей скважины (history matching).\n\nНазначение. WCONHIST задаёт статус и режим управления по историческим дебитам/давлениям для адаптации. Указывается вместо WCONPROD для history interval. Нагнетание в hist — WCONINJH (вне allowlist). Одновременная закачка MULTI (§2.14.6) — не через WCONHIST. Форматы: tN, E1, E3. Секция: SCHEDULE.\n\nКогда применять. HISTORY / до cutover. Не эмитьте WCONHIST в FORECAST — там WCONPROD. После WELSPECS. VFP_TABLE (поле 7) — номер VFPPROD из package/Prosper (0 → THP не считается); ALQ в единицах той таблицы. BHP/THP в записи — исторические наблюдения, не лимиты; лимит BHP задавайте WELTARG, иначе default patm + предупреждение.\n\nRecord layout. Keyword WCONHIST, записи `/`, блок — отдельный `/`.\n\nПоля (§12.20.43; METRIC):\n\n1. WELL — имя скважины или `*LIST` (после WLIST).\n2. STATUS — OPEN | STOP | SHUT. Default: OPEN.\n3. CONTROL — LRAT | ORAT | WRAT | GRAT | RESV | BHP | THP | NONE (schema variants). WGRA(E3) | TGRUP → needs_input.\n   - NONE — нет контроля: скважина закрыта, но hist визуализируется.\n   - RESV — из hist дебитов с учётом WELSPECS param 13.\n   - TGRUP — доля от GRUPTARG (вне allowlist → needs_input без baseline GRUPTARG).\n4. ORAT — hist нефть sm3/day.\n5. WRAT — hist вода.\n6. GRAT — hist газ.\n7. VFP_TABLE — VFPPROD/VFPCORR; 0 → THP не считается. Default: последнее указанное.\n8. ALQ — для расчёта THP.\n9. THP — hist устьевое barsa. Default: 0.\n10. BHP — hist забойное barsa. Default: 0.\n11. WGRA — hist жирный газ. Default: 0.\n12. NGL — hist ШФЛУ. Default: 0.\n\nПоведение. Контроль по поверхностному дебиту из hist (LRAT = ORAT+WRAT). Давления — для истории/сравнения. Если расчётный pBH < лимит BHP (из WELTARG или default atm) — переключение на BHP; возврат на rate-контроль, если снова допустимо.\n\nКанон render.\n- `lrat` / `orat` / `wrat` / `grat` / `resv` / `bhp` / `thp` — WELL STATUS CONTROL=<mode> ORAT WRAT GRAT [VFP ALQ THP BHP] (позиции hist rates/pressures те же).\n- `none` — CONTROL=NONE.\n- CONTROL=WGRA (E3) / TGRUP → needs_input.\nНе копируйте 1043/18.9 без фактов.\n\nIR / semantics.\n- period=HISTORY; clock.uses_current=true.\n- references well WELL; prerequisites WELSPECS ENTITY.\n- state_assignments namespace well-control-hist; key CONTROL; value rates/pressures.\n- numeric_constraints: rates/pressures min 0.\n\nСвязанные: WCONPROD (forecast), WELTARG (BHP limit), WELSPECS.\n\nНехватка факта → needs_input: нет WELL/CONTROL/hist rates; cutover неясен; WCONPROD вместо hist.\n\nКарточка самодостаточна.",
+                  "examples": [
+                    {
+                      "title": "LRAT hist — канон мануала",
+                      "task": "1043 OPEN LRAT: нефть 18.9, вода/газ 0.",
+                      "schedule_text": "WCONHIST\n1043 OPEN LRAT 18.9\n0 0 /\n/\n",
+                      "explanation": "§12.20.43 с. 1827. Variant lrat. Учебные числа."
+                    },
+                    {
+                      "title": "LRAT + hist BHP",
+                      "task": "1054 OPEN LRAT ORAT=16.38 WRAT=1.765, hist BHP=57.",
+                      "schedule_text": "WCONHIST\n1054 OPEN LRAT 16.38 1.765 0 3* 57 /\n/\n",
+                      "explanation": "3* = VFP/ALQ/THP default, затем BHP=57."
+                    },
+                    {
+                      "title": "P01 ORAT hist",
+                      "task": "P01 OPEN ORAT 100 sm3/day.",
+                      "schedule_text": "WCONHIST\n  'P01' OPEN ORAT 100 /\n/\n",
+                      "explanation": "Variant orat. Факты пакета."
+                    }
+                  ],
+                  "schema_catalogue": {
+                    "contract": "schedule_schema_catalogue",
+                    "contract_version": "1.0",
+                    "catalogue_ref": "catalogue://tnavigator/22.2/wconhist-history-control-v1",
+                    "catalogue_hash": "sha256:410787b251d7a2f15698cf0c75e08471beb4813e6fe13ccaf206937cca5e3a30",
+                    "source_hash": "sha256:1d508712eb7f225cb5a126bef790baf0166163b63b360b38bb3ae2cbf32fa8d6",
+                    "access_scope": "petroleum-engineering",
+                    "simulator_profile": {
+                      "vendor": "Rock Flow Dynamics",
+                      "simulator": "tNavigator",
+                      "version": "22.2",
+                      "unit_system": "METRIC"
+                    },
+                    "approved": true,
+                    "approved_by": "department-hydrodynamic-expert",
+                    "author": "department-hydrodynamic-expert",
+                    "approval_gate_id": "expert:wconhist-history-control-v1:2",
+                    "schemas": [
+                      {
+                        "schema_id": "expert:WCONHIST:lrat",
+                        "schema_revision": "1",
+                        "keyword": "WCONHIST",
+                        "variant": "lrat",
+                        "citation": {
+                          "document_id": "tnav-user-manual-russian",
+                          "document_revision": "19.4",
+                          "page": "12.20.43 / 1825-1827",
+                          "heading": "WCONHIST",
+                          "source_hash": "sha256:1d508712eb7f225cb5a126bef790baf0166163b63b360b38bb3ae2cbf32fa8d6"
+                        },
+                        "parser": {
+                          "token_width": 12,
+                          "allow_trailing_omission": true,
+                          "allow_unquoted_strings": true
+                        },
+                        "fields": [
+                          {
+                            "name": "WELL",
+                            "position": 1,
+                            "type": "string",
+                            "required": true,
+                            "quote": "single"
+                          },
+                          {
+                            "name": "STATUS",
+                            "position": 2,
+                            "type": "string",
+                            "required": true,
+                            "enum": [
+                              "OPEN",
+                              "STOP",
+                              "SHUT"
+                            ]
+                          },
+                          {
+                            "name": "CONTROL",
+                            "position": 3,
+                            "type": "string",
+                            "required": true,
+                            "enum": [
+                              "LRAT"
+                            ]
+                          },
+                          {
+                            "name": "ORAT",
+                            "position": 4,
+                            "type": "number",
+                            "required": false,
+                            "default_allowed": true
+                          },
+                          {
+                            "name": "WRAT",
+                            "position": 5,
+                            "type": "number",
+                            "required": false,
+                            "default_allowed": true
+                          },
+                          {
+                            "name": "GRAT",
+                            "position": 6,
+                            "type": "number",
+                            "required": false,
+                            "default_allowed": true
+                          },
+                          {
+                            "name": "VFP_TABLE",
+                            "position": 7,
+                            "type": "number",
+                            "required": false,
+                            "default_allowed": true
+                          },
+                          {
+                            "name": "ALQ",
+                            "position": 8,
+                            "type": "number",
+                            "required": false,
+                            "default_allowed": true
+                          },
+                          {
+                            "name": "THP",
+                            "position": 9,
+                            "type": "number",
+                            "required": false,
+                            "default_allowed": true
+                          },
+                          {
+                            "name": "BHP",
+                            "position": 10,
+                            "type": "number",
+                            "required": false,
+                            "default_allowed": true
+                          }
+                        ],
+                        "layout": {
+                          "newline": "LF",
+                          "indent": "  ",
+                          "delimiter": "SPACE",
+                          "record_terminator": "SLASH",
+                          "block_terminator": "SLASH_LINE"
+                        },
+                        "semantics": {
+                          "period": "HISTORY",
+                          "clock": {
+                            "uses_current": true
+                          },
+                          "references": [
+                            {
+                              "entity_type": "well",
+                              "id_field": "WELL",
+                              "required": true
+                            }
+                          ],
+                          "prerequisites": [
+                            {
+                              "keyword": "WELSPECS",
+                              "scope": "ENTITY",
+                              "entity_field": "WELL",
+                              "prerequisite_entity_field": "WELL"
+                            }
+                          ],
+                          "state_assignments": [
+                            {
+                              "namespace": "well-control-hist",
+                              "entity_type": "well",
+                              "entity_field": "WELL",
+                              "key_fields": [
+                                "CONTROL"
+                              ],
+                              "value_fields": [
+                                "ORAT",
+                                "WRAT",
+                                "GRAT",
+                                "THP",
+                                "BHP"
+                              ]
+                            }
+                          ],
+                          "numeric_constraints": [
+                            {
+                              "field": "ORAT",
+                              "min": 0
+                            },
+                            {
+                              "field": "WRAT",
+                              "min": 0
+                            },
+                            {
+                              "field": "GRAT",
+                              "min": 0
+                            },
+                            {
+                              "field": "THP",
+                              "min": 0
+                            },
+                            {
+                              "field": "BHP",
+                              "min": 0
+                            }
+                          ]
+                        }
+                      },
+                      {
+                        "schema_id": "expert:WCONHIST:orat",
+                        "schema_revision": "1",
+                        "keyword": "WCONHIST",
+                        "variant": "orat",
+                        "citation": {
+                          "document_id": "tnav-user-manual-russian",
+                          "document_revision": "19.4",
+                          "page": "12.20.43 / 1825-1827",
+                          "heading": "WCONHIST",
+                          "source_hash": "sha256:1d508712eb7f225cb5a126bef790baf0166163b63b360b38bb3ae2cbf32fa8d6"
+                        },
+                        "parser": {
+                          "token_width": 12,
+                          "allow_trailing_omission": true,
+                          "allow_unquoted_strings": true
+                        },
+                        "fields": [
+                          {
+                            "name": "WELL",
+                            "position": 1,
+                            "type": "string",
+                            "required": true,
+                            "quote": "single"
+                          },
+                          {
+                            "name": "STATUS",
+                            "position": 2,
+                            "type": "string",
+                            "required": true,
+                            "enum": [
+                              "OPEN",
+                              "STOP",
+                              "SHUT"
+                            ]
+                          },
+                          {
+                            "name": "CONTROL",
+                            "position": 3,
+                            "type": "string",
+                            "required": true,
+                            "enum": [
+                              "ORAT"
+                            ]
+                          },
+                          {
+                            "name": "ORAT",
+                            "position": 4,
+                            "type": "number",
+                            "required": true
+                          },
+                          {
+                            "name": "WRAT",
+                            "position": 5,
+                            "type": "number",
+                            "required": false,
+                            "default_allowed": true
+                          },
+                          {
+                            "name": "GRAT",
+                            "position": 6,
+                            "type": "number",
+                            "required": false,
+                            "default_allowed": true
+                          },
+                          {
+                            "name": "VFP_TABLE",
+                            "position": 7,
+                            "type": "number",
+                            "required": false,
+                            "default_allowed": true
+                          },
+                          {
+                            "name": "ALQ",
+                            "position": 8,
+                            "type": "number",
+                            "required": false,
+                            "default_allowed": true
+                          },
+                          {
+                            "name": "THP",
+                            "position": 9,
+                            "type": "number",
+                            "required": false,
+                            "default_allowed": true
+                          },
+                          {
+                            "name": "BHP",
+                            "position": 10,
+                            "type": "number",
+                            "required": false,
+                            "default_allowed": true
+                          }
+                        ],
+                        "layout": {
+                          "newline": "LF",
+                          "indent": "  ",
+                          "delimiter": "SPACE",
+                          "record_terminator": "SLASH",
+                          "block_terminator": "SLASH_LINE"
+                        },
+                        "semantics": {
+                          "period": "HISTORY",
+                          "clock": {
+                            "uses_current": true
+                          },
+                          "references": [
+                            {
+                              "entity_type": "well",
+                              "id_field": "WELL",
+                              "required": true
+                            }
+                          ],
+                          "prerequisites": [
+                            {
+                              "keyword": "WELSPECS",
+                              "scope": "ENTITY",
+                              "entity_field": "WELL",
+                              "prerequisite_entity_field": "WELL"
+                            }
+                          ],
+                          "state_assignments": [
+                            {
+                              "namespace": "well-control-hist",
+                              "entity_type": "well",
+                              "entity_field": "WELL",
+                              "key_fields": [
+                                "CONTROL"
+                              ],
+                              "value_fields": [
+                                "ORAT",
+                                "WRAT",
+                                "GRAT",
+                                "THP",
+                                "BHP"
+                              ]
+                            }
+                          ],
+                          "numeric_constraints": [
+                            {
+                              "field": "ORAT",
+                              "min": 0
+                            },
+                            {
+                              "field": "WRAT",
+                              "min": 0
+                            },
+                            {
+                              "field": "GRAT",
+                              "min": 0
+                            },
+                            {
+                              "field": "BHP",
+                              "min": 0
+                            }
+                          ]
+                        }
+                      },
+                      {
+                        "schema_id": "expert:WCONHIST:wrat",
+                        "schema_revision": "1",
+                        "keyword": "WCONHIST",
+                        "variant": "wrat",
+                        "citation": {
+                          "document_id": "tnav-user-manual-russian",
+                          "document_revision": "19.4",
+                          "page": "12.20.43 / 1825-1827",
+                          "heading": "WCONHIST",
+                          "source_hash": "sha256:1d508712eb7f225cb5a126bef790baf0166163b63b360b38bb3ae2cbf32fa8d6"
+                        },
+                        "parser": {
+                          "token_width": 12,
+                          "allow_trailing_omission": true,
+                          "allow_unquoted_strings": true
+                        },
+                        "fields": [
+                          {
+                            "name": "WELL",
+                            "position": 1,
+                            "type": "string",
+                            "required": true,
+                            "quote": "single"
+                          },
+                          {
+                            "name": "STATUS",
+                            "position": 2,
+                            "type": "string",
+                            "required": true,
+                            "enum": [
+                              "OPEN",
+                              "STOP",
+                              "SHUT"
+                            ]
+                          },
+                          {
+                            "name": "CONTROL",
+                            "position": 3,
+                            "type": "string",
+                            "required": true,
+                            "enum": [
+                              "WRAT"
+                            ]
+                          },
+                          {
+                            "name": "ORAT",
+                            "position": 4,
+                            "type": "number",
+                            "required": false,
+                            "default_allowed": true
+                          },
+                          {
+                            "name": "WRAT",
+                            "position": 5,
+                            "type": "number",
+                            "required": false,
+                            "default_allowed": true
+                          },
+                          {
+                            "name": "GRAT",
+                            "position": 6,
+                            "type": "number",
+                            "required": false,
+                            "default_allowed": true
+                          },
+                          {
+                            "name": "VFP_TABLE",
+                            "position": 7,
+                            "type": "number",
+                            "required": false,
+                            "default_allowed": true
+                          },
+                          {
+                            "name": "ALQ",
+                            "position": 8,
+                            "type": "number",
+                            "required": false,
+                            "default_allowed": true
+                          },
+                          {
+                            "name": "THP",
+                            "position": 9,
+                            "type": "number",
+                            "required": false,
+                            "default_allowed": true
+                          },
+                          {
+                            "name": "BHP",
+                            "position": 10,
+                            "type": "number",
+                            "required": false,
+                            "default_allowed": true
+                          }
+                        ],
+                        "layout": {
+                          "newline": "LF",
+                          "indent": "  ",
+                          "delimiter": "SPACE",
+                          "record_terminator": "SLASH",
+                          "block_terminator": "SLASH_LINE"
+                        },
+                        "semantics": {
+                          "period": "HISTORY",
+                          "clock": {
+                            "uses_current": true
+                          },
+                          "references": [
+                            {
+                              "entity_type": "well",
+                              "id_field": "WELL",
+                              "required": true
+                            }
+                          ],
+                          "prerequisites": [
+                            {
+                              "keyword": "WELSPECS",
+                              "scope": "ENTITY",
+                              "entity_field": "WELL",
+                              "prerequisite_entity_field": "WELL"
+                            }
+                          ],
+                          "state_assignments": [
+                            {
+                              "namespace": "well-control-hist",
+                              "entity_type": "well",
+                              "entity_field": "WELL",
+                              "key_fields": [
+                                "CONTROL"
+                              ],
+                              "value_fields": [
+                                "ORAT",
+                                "WRAT",
+                                "GRAT",
+                                "THP",
+                                "BHP"
+                              ]
+                            }
+                          ],
+                          "numeric_constraints": [
+                            {
+                              "field": "ORAT",
+                              "min": 0
+                            },
+                            {
+                              "field": "WRAT",
+                              "min": 0
+                            },
+                            {
+                              "field": "GRAT",
+                              "min": 0
+                            },
+                            {
+                              "field": "THP",
+                              "min": 0
+                            },
+                            {
+                              "field": "BHP",
+                              "min": 0
+                            }
+                          ]
+                        }
+                      },
+                      {
+                        "schema_id": "expert:WCONHIST:grat",
+                        "schema_revision": "1",
+                        "keyword": "WCONHIST",
+                        "variant": "grat",
+                        "citation": {
+                          "document_id": "tnav-user-manual-russian",
+                          "document_revision": "19.4",
+                          "page": "12.20.43 / 1825-1827",
+                          "heading": "WCONHIST",
+                          "source_hash": "sha256:1d508712eb7f225cb5a126bef790baf0166163b63b360b38bb3ae2cbf32fa8d6"
+                        },
+                        "parser": {
+                          "token_width": 12,
+                          "allow_trailing_omission": true,
+                          "allow_unquoted_strings": true
+                        },
+                        "fields": [
+                          {
+                            "name": "WELL",
+                            "position": 1,
+                            "type": "string",
+                            "required": true,
+                            "quote": "single"
+                          },
+                          {
+                            "name": "STATUS",
+                            "position": 2,
+                            "type": "string",
+                            "required": true,
+                            "enum": [
+                              "OPEN",
+                              "STOP",
+                              "SHUT"
+                            ]
+                          },
+                          {
+                            "name": "CONTROL",
+                            "position": 3,
+                            "type": "string",
+                            "required": true,
+                            "enum": [
+                              "GRAT"
+                            ]
+                          },
+                          {
+                            "name": "ORAT",
+                            "position": 4,
+                            "type": "number",
+                            "required": false,
+                            "default_allowed": true
+                          },
+                          {
+                            "name": "WRAT",
+                            "position": 5,
+                            "type": "number",
+                            "required": false,
+                            "default_allowed": true
+                          },
+                          {
+                            "name": "GRAT",
+                            "position": 6,
+                            "type": "number",
+                            "required": false,
+                            "default_allowed": true
+                          },
+                          {
+                            "name": "VFP_TABLE",
+                            "position": 7,
+                            "type": "number",
+                            "required": false,
+                            "default_allowed": true
+                          },
+                          {
+                            "name": "ALQ",
+                            "position": 8,
+                            "type": "number",
+                            "required": false,
+                            "default_allowed": true
+                          },
+                          {
+                            "name": "THP",
+                            "position": 9,
+                            "type": "number",
+                            "required": false,
+                            "default_allowed": true
+                          },
+                          {
+                            "name": "BHP",
+                            "position": 10,
+                            "type": "number",
+                            "required": false,
+                            "default_allowed": true
+                          }
+                        ],
+                        "layout": {
+                          "newline": "LF",
+                          "indent": "  ",
+                          "delimiter": "SPACE",
+                          "record_terminator": "SLASH",
+                          "block_terminator": "SLASH_LINE"
+                        },
+                        "semantics": {
+                          "period": "HISTORY",
+                          "clock": {
+                            "uses_current": true
+                          },
+                          "references": [
+                            {
+                              "entity_type": "well",
+                              "id_field": "WELL",
+                              "required": true
+                            }
+                          ],
+                          "prerequisites": [
+                            {
+                              "keyword": "WELSPECS",
+                              "scope": "ENTITY",
+                              "entity_field": "WELL",
+                              "prerequisite_entity_field": "WELL"
+                            }
+                          ],
+                          "state_assignments": [
+                            {
+                              "namespace": "well-control-hist",
+                              "entity_type": "well",
+                              "entity_field": "WELL",
+                              "key_fields": [
+                                "CONTROL"
+                              ],
+                              "value_fields": [
+                                "ORAT",
+                                "WRAT",
+                                "GRAT",
+                                "THP",
+                                "BHP"
+                              ]
+                            }
+                          ],
+                          "numeric_constraints": [
+                            {
+                              "field": "ORAT",
+                              "min": 0
+                            },
+                            {
+                              "field": "WRAT",
+                              "min": 0
+                            },
+                            {
+                              "field": "GRAT",
+                              "min": 0
+                            },
+                            {
+                              "field": "THP",
+                              "min": 0
+                            },
+                            {
+                              "field": "BHP",
+                              "min": 0
+                            }
+                          ]
+                        }
+                      },
+                      {
+                        "schema_id": "expert:WCONHIST:resv",
+                        "schema_revision": "1",
+                        "keyword": "WCONHIST",
+                        "variant": "resv",
+                        "citation": {
+                          "document_id": "tnav-user-manual-russian",
+                          "document_revision": "19.4",
+                          "page": "12.20.43 / 1825-1827",
+                          "heading": "WCONHIST",
+                          "source_hash": "sha256:1d508712eb7f225cb5a126bef790baf0166163b63b360b38bb3ae2cbf32fa8d6"
+                        },
+                        "parser": {
+                          "token_width": 12,
+                          "allow_trailing_omission": true,
+                          "allow_unquoted_strings": true
+                        },
+                        "fields": [
+                          {
+                            "name": "WELL",
+                            "position": 1,
+                            "type": "string",
+                            "required": true,
+                            "quote": "single"
+                          },
+                          {
+                            "name": "STATUS",
+                            "position": 2,
+                            "type": "string",
+                            "required": true,
+                            "enum": [
+                              "OPEN",
+                              "STOP",
+                              "SHUT"
+                            ]
+                          },
+                          {
+                            "name": "CONTROL",
+                            "position": 3,
+                            "type": "string",
+                            "required": true,
+                            "enum": [
+                              "RESV"
+                            ]
+                          },
+                          {
+                            "name": "ORAT",
+                            "position": 4,
+                            "type": "number",
+                            "required": false,
+                            "default_allowed": true
+                          },
+                          {
+                            "name": "WRAT",
+                            "position": 5,
+                            "type": "number",
+                            "required": false,
+                            "default_allowed": true
+                          },
+                          {
+                            "name": "GRAT",
+                            "position": 6,
+                            "type": "number",
+                            "required": false,
+                            "default_allowed": true
+                          },
+                          {
+                            "name": "VFP_TABLE",
+                            "position": 7,
+                            "type": "number",
+                            "required": false,
+                            "default_allowed": true
+                          },
+                          {
+                            "name": "ALQ",
+                            "position": 8,
+                            "type": "number",
+                            "required": false,
+                            "default_allowed": true
+                          },
+                          {
+                            "name": "THP",
+                            "position": 9,
+                            "type": "number",
+                            "required": false,
+                            "default_allowed": true
+                          },
+                          {
+                            "name": "BHP",
+                            "position": 10,
+                            "type": "number",
+                            "required": false,
+                            "default_allowed": true
+                          }
+                        ],
+                        "layout": {
+                          "newline": "LF",
+                          "indent": "  ",
+                          "delimiter": "SPACE",
+                          "record_terminator": "SLASH",
+                          "block_terminator": "SLASH_LINE"
+                        },
+                        "semantics": {
+                          "period": "HISTORY",
+                          "clock": {
+                            "uses_current": true
+                          },
+                          "references": [
+                            {
+                              "entity_type": "well",
+                              "id_field": "WELL",
+                              "required": true
+                            }
+                          ],
+                          "prerequisites": [
+                            {
+                              "keyword": "WELSPECS",
+                              "scope": "ENTITY",
+                              "entity_field": "WELL",
+                              "prerequisite_entity_field": "WELL"
+                            }
+                          ],
+                          "state_assignments": [
+                            {
+                              "namespace": "well-control-hist",
+                              "entity_type": "well",
+                              "entity_field": "WELL",
+                              "key_fields": [
+                                "CONTROL"
+                              ],
+                              "value_fields": [
+                                "ORAT",
+                                "WRAT",
+                                "GRAT",
+                                "THP",
+                                "BHP"
+                              ]
+                            }
+                          ],
+                          "numeric_constraints": [
+                            {
+                              "field": "ORAT",
+                              "min": 0
+                            },
+                            {
+                              "field": "WRAT",
+                              "min": 0
+                            },
+                            {
+                              "field": "GRAT",
+                              "min": 0
+                            },
+                            {
+                              "field": "THP",
+                              "min": 0
+                            },
+                            {
+                              "field": "BHP",
+                              "min": 0
+                            }
+                          ]
+                        }
+                      },
+                      {
+                        "schema_id": "expert:WCONHIST:bhp",
+                        "schema_revision": "1",
+                        "keyword": "WCONHIST",
+                        "variant": "bhp",
+                        "citation": {
+                          "document_id": "tnav-user-manual-russian",
+                          "document_revision": "19.4",
+                          "page": "12.20.43 / 1825-1827",
+                          "heading": "WCONHIST",
+                          "source_hash": "sha256:1d508712eb7f225cb5a126bef790baf0166163b63b360b38bb3ae2cbf32fa8d6"
+                        },
+                        "parser": {
+                          "token_width": 12,
+                          "allow_trailing_omission": true,
+                          "allow_unquoted_strings": true
+                        },
+                        "fields": [
+                          {
+                            "name": "WELL",
+                            "position": 1,
+                            "type": "string",
+                            "required": true,
+                            "quote": "single"
+                          },
+                          {
+                            "name": "STATUS",
+                            "position": 2,
+                            "type": "string",
+                            "required": true,
+                            "enum": [
+                              "OPEN",
+                              "STOP",
+                              "SHUT"
+                            ]
+                          },
+                          {
+                            "name": "CONTROL",
+                            "position": 3,
+                            "type": "string",
+                            "required": true,
+                            "enum": [
+                              "BHP"
+                            ]
+                          },
+                          {
+                            "name": "ORAT",
+                            "position": 4,
+                            "type": "number",
+                            "required": false,
+                            "default_allowed": true
+                          },
+                          {
+                            "name": "WRAT",
+                            "position": 5,
+                            "type": "number",
+                            "required": false,
+                            "default_allowed": true
+                          },
+                          {
+                            "name": "GRAT",
+                            "position": 6,
+                            "type": "number",
+                            "required": false,
+                            "default_allowed": true
+                          },
+                          {
+                            "name": "VFP_TABLE",
+                            "position": 7,
+                            "type": "number",
+                            "required": false,
+                            "default_allowed": true
+                          },
+                          {
+                            "name": "ALQ",
+                            "position": 8,
+                            "type": "number",
+                            "required": false,
+                            "default_allowed": true
+                          },
+                          {
+                            "name": "THP",
+                            "position": 9,
+                            "type": "number",
+                            "required": false,
+                            "default_allowed": true
+                          },
+                          {
+                            "name": "BHP",
+                            "position": 10,
+                            "type": "number",
+                            "required": false,
+                            "default_allowed": true
+                          }
+                        ],
+                        "layout": {
+                          "newline": "LF",
+                          "indent": "  ",
+                          "delimiter": "SPACE",
+                          "record_terminator": "SLASH",
+                          "block_terminator": "SLASH_LINE"
+                        },
+                        "semantics": {
+                          "period": "HISTORY",
+                          "clock": {
+                            "uses_current": true
+                          },
+                          "references": [
+                            {
+                              "entity_type": "well",
+                              "id_field": "WELL",
+                              "required": true
+                            }
+                          ],
+                          "prerequisites": [
+                            {
+                              "keyword": "WELSPECS",
+                              "scope": "ENTITY",
+                              "entity_field": "WELL",
+                              "prerequisite_entity_field": "WELL"
+                            }
+                          ],
+                          "state_assignments": [
+                            {
+                              "namespace": "well-control-hist",
+                              "entity_type": "well",
+                              "entity_field": "WELL",
+                              "key_fields": [
+                                "CONTROL"
+                              ],
+                              "value_fields": [
+                                "ORAT",
+                                "WRAT",
+                                "GRAT",
+                                "THP",
+                                "BHP"
+                              ]
+                            }
+                          ],
+                          "numeric_constraints": [
+                            {
+                              "field": "ORAT",
+                              "min": 0
+                            },
+                            {
+                              "field": "WRAT",
+                              "min": 0
+                            },
+                            {
+                              "field": "GRAT",
+                              "min": 0
+                            },
+                            {
+                              "field": "THP",
+                              "min": 0
+                            },
+                            {
+                              "field": "BHP",
+                              "min": 0
+                            }
+                          ]
+                        }
+                      },
+                      {
+                        "schema_id": "expert:WCONHIST:thp",
+                        "schema_revision": "1",
+                        "keyword": "WCONHIST",
+                        "variant": "thp",
+                        "citation": {
+                          "document_id": "tnav-user-manual-russian",
+                          "document_revision": "19.4",
+                          "page": "12.20.43 / 1825-1827",
+                          "heading": "WCONHIST",
+                          "source_hash": "sha256:1d508712eb7f225cb5a126bef790baf0166163b63b360b38bb3ae2cbf32fa8d6"
+                        },
+                        "parser": {
+                          "token_width": 12,
+                          "allow_trailing_omission": true,
+                          "allow_unquoted_strings": true
+                        },
+                        "fields": [
+                          {
+                            "name": "WELL",
+                            "position": 1,
+                            "type": "string",
+                            "required": true,
+                            "quote": "single"
+                          },
+                          {
+                            "name": "STATUS",
+                            "position": 2,
+                            "type": "string",
+                            "required": true,
+                            "enum": [
+                              "OPEN",
+                              "STOP",
+                              "SHUT"
+                            ]
+                          },
+                          {
+                            "name": "CONTROL",
+                            "position": 3,
+                            "type": "string",
+                            "required": true,
+                            "enum": [
+                              "THP"
+                            ]
+                          },
+                          {
+                            "name": "ORAT",
+                            "position": 4,
+                            "type": "number",
+                            "required": false,
+                            "default_allowed": true
+                          },
+                          {
+                            "name": "WRAT",
+                            "position": 5,
+                            "type": "number",
+                            "required": false,
+                            "default_allowed": true
+                          },
+                          {
+                            "name": "GRAT",
+                            "position": 6,
+                            "type": "number",
+                            "required": false,
+                            "default_allowed": true
+                          },
+                          {
+                            "name": "VFP_TABLE",
+                            "position": 7,
+                            "type": "number",
+                            "required": false,
+                            "default_allowed": true
+                          },
+                          {
+                            "name": "ALQ",
+                            "position": 8,
+                            "type": "number",
+                            "required": false,
+                            "default_allowed": true
+                          },
+                          {
+                            "name": "THP",
+                            "position": 9,
+                            "type": "number",
+                            "required": false,
+                            "default_allowed": true
+                          },
+                          {
+                            "name": "BHP",
+                            "position": 10,
+                            "type": "number",
+                            "required": false,
+                            "default_allowed": true
+                          }
+                        ],
+                        "layout": {
+                          "newline": "LF",
+                          "indent": "  ",
+                          "delimiter": "SPACE",
+                          "record_terminator": "SLASH",
+                          "block_terminator": "SLASH_LINE"
+                        },
+                        "semantics": {
+                          "period": "HISTORY",
+                          "clock": {
+                            "uses_current": true
+                          },
+                          "references": [
+                            {
+                              "entity_type": "well",
+                              "id_field": "WELL",
+                              "required": true
+                            }
+                          ],
+                          "prerequisites": [
+                            {
+                              "keyword": "WELSPECS",
+                              "scope": "ENTITY",
+                              "entity_field": "WELL",
+                              "prerequisite_entity_field": "WELL"
+                            }
+                          ],
+                          "state_assignments": [
+                            {
+                              "namespace": "well-control-hist",
+                              "entity_type": "well",
+                              "entity_field": "WELL",
+                              "key_fields": [
+                                "CONTROL"
+                              ],
+                              "value_fields": [
+                                "ORAT",
+                                "WRAT",
+                                "GRAT",
+                                "THP",
+                                "BHP"
+                              ]
+                            }
+                          ],
+                          "numeric_constraints": [
+                            {
+                              "field": "ORAT",
+                              "min": 0
+                            },
+                            {
+                              "field": "WRAT",
+                              "min": 0
+                            },
+                            {
+                              "field": "GRAT",
+                              "min": 0
+                            },
+                            {
+                              "field": "THP",
+                              "min": 0
+                            },
+                            {
+                              "field": "BHP",
+                              "min": 0
+                            }
+                          ]
+                        }
+                      },
+                      {
+                        "schema_id": "expert:WCONHIST:none",
+                        "schema_revision": "1",
+                        "keyword": "WCONHIST",
+                        "variant": "none",
+                        "citation": {
+                          "document_id": "tnav-user-manual-russian",
+                          "document_revision": "19.4",
+                          "page": "12.20.43 / 1825-1827",
+                          "heading": "WCONHIST",
+                          "source_hash": "sha256:1d508712eb7f225cb5a126bef790baf0166163b63b360b38bb3ae2cbf32fa8d6"
+                        },
+                        "parser": {
+                          "token_width": 12,
+                          "allow_trailing_omission": true,
+                          "allow_unquoted_strings": true
+                        },
+                        "fields": [
+                          {
+                            "name": "WELL",
+                            "position": 1,
+                            "type": "string",
+                            "required": true,
+                            "quote": "single"
+                          },
+                          {
+                            "name": "STATUS",
+                            "position": 2,
+                            "type": "string",
+                            "required": true,
+                            "enum": [
+                              "OPEN",
+                              "STOP",
+                              "SHUT"
+                            ]
+                          },
+                          {
+                            "name": "CONTROL",
+                            "position": 3,
+                            "type": "string",
+                            "required": true,
+                            "enum": [
+                              "NONE"
+                            ]
+                          }
+                        ],
+                        "layout": {
+                          "newline": "LF",
+                          "indent": "  ",
+                          "delimiter": "SPACE",
+                          "record_terminator": "SLASH",
+                          "block_terminator": "SLASH_LINE"
+                        },
+                        "semantics": {
+                          "period": "HISTORY",
+                          "clock": {
+                            "uses_current": true
+                          },
+                          "references": [
+                            {
+                              "entity_type": "well",
+                              "id_field": "WELL",
+                              "required": true
+                            }
+                          ],
+                          "prerequisites": [
+                            {
+                              "keyword": "WELSPECS",
+                              "scope": "ENTITY",
+                              "entity_field": "WELL",
+                              "prerequisite_entity_field": "WELL"
+                            }
+                          ],
+                          "state_assignments": [
+                            {
+                              "namespace": "well-control-hist",
+                              "entity_type": "well",
+                              "entity_field": "WELL",
+                              "key_fields": [
+                                "CONTROL"
+                              ],
+                              "value_fields": [
+                                "STATUS"
+                              ]
+                            }
+                          ],
+                          "numeric_constraints": []
+                        }
+                      }
+                    ]
+                  }
+                },
+                {
+                  "contract": "schedule_knowledge_block",
+                  "contract_version": "1.0",
+                  "target_base": "schedule_mvp",
+                  "knowledge_type": "keyword_instruction",
+                  "knowledge_id": "vfpprod-table-ref-v1",
+                  "revision": "2",
+                  "title": "VFPPROD — номер VFP-таблицы и связь с контролем",
+                  "keywords": [
+                    "VFPPROD"
+                  ],
+                  "topics": [
+                    "VFPPROD",
+                    "номер VFP таблицы",
+                    "Prosper",
+                    "связь WCONPROD",
+                    "связь WCONHIST",
+                    "не генерировать тело"
+                  ],
+                  "task_patterns": [
+                    "VFP таблица номер",
+                    "связать VFPPROD с WCONPROD",
+                    "VFP_TABLE в WCONHIST",
+                    "Prosper VFP",
+                    "THP контроль VFP"
+                  ],
+                  "simulator_family": [
+                    "E100",
+                    "E300",
+                    "tNavigator"
+                  ],
+                  "status": "active",
+                  "author": "department-hydrodynamic-expert",
+                  "access_scope": "petroleum-engineering",
                   "text": "VFPPROD — VFP-таблица забойного давления для добывающих скважин.\n\nРоль в MVP (важно). Тело VFPPROD — большая эмпирическая таблица (обычно Prosper / другой well-performance софт / готовый `.inc` в baseline). Builder **не генерирует** оси FLO/THP/WFR/GFR/ALQ и сетку BHP. Задача корпуса:\n1) знать **номер таблицы** TABLE_ID (1 … VFPPDIMS param 6);\n2) связать его с `WCONPROD` / `WCONHIST` полем VFP_TABLE (и согласованным ALQ);\n3) в REVISE — KEEP существующие блоки VFPPROD (preserve_unmentioned), пока нет явного REMOVE/замены артефакта.\n\nНазначение в мануале (§12.20.68). Таблица BHP (или TEMP) как функция FLO, THP, WFR, GFR, ALQ для producers. Нужна ≥1 таблица, если скважинам считают THP. Несколько таблиц — несколько отдельных VFPPROD. Газлифт — §2.14.9. Автогенерация корреляцией — VFPCORR (§12.20.73; вне allowlist → needs_input). Теория создания таблиц — гл. 6.\n\nКогда применять.\n- Ссылка: факт/baseline даёт TABLE_ID → проставить VFP_TABLE=N в WCONPROD (forecast) или WCONHIST (history); 0 = THP не считается.\n- Артефакт: новый/заменённый Prosper-файл → INCLUDE/baseline package, не «нарисовать» таблицу в IR.\n- CREATE без таблицы при THP/ALQ-контроле → needs_input (нужен VFPPROD artifact).\n\nСвязь с контролем (§12.20.42 / §12.20.43).\n- WCONPROD / WCONHIST: поле VFP_TABLE = номер VFPPROD; поле ALQ — в единицах, заданных определением ALQ этой таблицы (GRAT/IGLR/PUMP/COMP).\n- WELTARG QUANTITY=VFP|LIFT|TARGTHP — смена номера/ALQ/лимита без переписи всей таблицы.\n- WVFPDP — коррекция BHP / fp к интерполированному VFP (§12.20.217; отдельная карточка).\n- Не путать с VFPINJ (injectors / WCONINJE) — другая семья таблиц.\n\nRecord layout (справка; тело не эмитим из фактов Excel).\n1. Header: TABLE_ID, DATUM_DEPTH, FLO_TYPE, WFR_TYPE, GFR_TYPE, THP, ALQ_TYPE, UNITS, DATA_TYPE(BHP|TEMP) /\n2–6. Возрастающие оси FLO, THP, WFR, GFR, ALQ — каждая строка `/`\n7+. Тело значений BHP (размерность по осям) — `/`\nКаждая таблица — отдельный keyword VFPPROD.\n\nКанон render MVP.\n- `table_id_ref` — только фиксация TABLE_ID в IR/requirements (связка с well control); **не** schedule_text полной таблицы.\n- Полный VFPPROD text — только KEEP/ADD из verified artifact_ref (Prosper/.inc), не из «типовых» чисел.\n\nIR / semantics.\n- definitions UPSERT vfp_table TABLE_ID (metadata: source=external|baseline).\n- referenced_by: WCONPROD/WCONHIST.VFP_TABLE; optionally tuned by WVFPDP.\n- numeric: TABLE_ID ≥ 1.\n\nАнтипаттерны.\n- Выдумать FLO/THP сетку или BHP-значения.\n- Сослаться на N, которого нет в baseline/артефактах.\n- Подменить VFPPROD на VFPCORR «на глаз».\n- Использовать VFPINJ номер в WCONPROD.\n\nНехватка факта → needs_input: нужен THP/VFP-контроль без TABLE_ID; нет Prosper/.inc; конфликт номеров; нужна новая таблица без артефакта.\n\nКарточка самодостаточна.",
                   "examples": [
                     {
@@ -17651,203 +19101,6 @@
       "position": [
         560,
         0
-      ]
-    },
-    {
-      "parameters": {
-        "jsCode": "const response = $input.first().json || {};\nconst escapeHtml = (value) => String(value ?? '')\n  .replace(/&/g, '&amp;')\n  .replace(/</g, '&lt;')\n  .replace(/>/g, '&gt;')\n  .replace(/\\\"/g, '&quot;')\n  .replace(/'/g, '&#39;');\nconst prettyJson = (value, limit = 16000) => {\n  let text;\n  try { text = JSON.stringify(value, null, 2); } catch { text = String(value); }\n  return text.length > limit ? `${text.slice(0, limit)}\\n… truncated for display` : text;\n};\nconst questionText = (q) => {\n  if (!q || typeof q !== 'object') return String(q ?? '');\n  return String(q.text || q.question || q.message || q.id || '').trim();\n};\nconst result = response.result && typeof response.result === 'object' ? response.result : null;\nconst deliverables = Array.isArray(result?.deliverables) ? result.deliverables : [];\nconst scheduleText = response.schedule_text\n  || result?.release?.schedule_text\n  || result?.compact_data?.generated_schedule\n  || deliverables.find((value) => typeof value?.schedule_text === 'string')?.schedule_text\n  || null;\nconst gate = response.human_gate && typeof response.human_gate === 'object' ? response.human_gate : null;\nconst questions = Array.isArray(gate?.questions) ? gate.questions : [];\nconst status = String(response.status || 'error');\nconst taskId = String(response.task_id || '');\nconst version = response.version ?? null;\nconst message = String(response.message || (scheduleText ? 'SCHEDULE generated.' : 'MAS task completed.'));\nconst questionItems = questions\n  .map((q, index) => `<li><strong>${escapeHtml(String(q.id || `q${index + 1}`))}</strong>: ${escapeHtml(questionText(q))}${q.expected_format ? ` <em>(format: ${escapeHtml(q.expected_format)})</em>` : ''}${q.required === false ? '' : ' <strong>*</strong>'}</li>`)\n  .join('');\nconst gateBlock = gate\n  ? `<section>\n<h2>Human input required</h2>\n<p><strong>What is wrong / why stopped:</strong> ${escapeHtml(gate.reason || message)}</p>\n<p><strong>Gate kind:</strong> <code>${escapeHtml(gate.kind || 'needs_input')}</code></p>\n${questionItems ? `<p><strong>What the orchestrator needs from you:</strong></p><ol>${questionItems}</ol>` : '<p>No structured questions were returned; use the reason above.</p>'}\n<p><strong>What you should do next:</strong></p>\n<ol>\n<li>Copy Task ID <code>${escapeHtml(taskId)}</code></li>\n<li>Open the published form <strong>Form — MAS Human Gate</strong> (<code>/form/mas-human-gate</code>)</li>\n<li>Paste the Task ID, choose action (<code>reply</code> / <code>approve</code> / <code>reject</code>), and answer in plain language</li>\n<li>Do <em>not</em> copy version/gate_id manually — Human Gate loads them from task status</li>\n</ol>\n</section>`\n  : '';\nconst scheduleBlock = scheduleText\n  ? `<section><h2>schedule.inc</h2><pre>${escapeHtml(String(scheduleText).slice(0, 100000))}</pre></section>`\n  : '';\nconst html = `<main>\n<h1>MAS task result</h1>\n<p>Status: <strong>${escapeHtml(status)}</strong></p>\n<p>${escapeHtml(message)}</p>\n<p>Task ID: <code>${escapeHtml(taskId || 'n/a')}</code></p>\n<p>Version: <code>${escapeHtml(version ?? 'n/a')}</code></p>\n${gateBlock}\n${scheduleBlock}\n<details><summary>Structured orchestrator response</summary><pre>${escapeHtml(prettyJson(response))}</pre></details>\n</main>`;\nreturn [{ json: {\n  task_id: taskId || null,\n  status,\n  message,\n  version,\n  schedule_text: scheduleText,\n  human_gate: gate,\n  result: result || response,\n  form_response_html: html,\n}}];"
-      },
-      "id": "677238b1-42dc-49f5-aa4f-51090ded7794",
-      "name": "Build safe MAS form response",
-      "type": "n8n-nodes-base.code",
-      "typeVersion": 2,
-      "position": [
-        840,
-        0
-      ]
-    },
-    {
-      "parameters": {
-        "operation": "completion",
-        "respondWith": "showText",
-        "responseText": "={{ $json.form_response_html }}"
-      },
-      "id": "a1b2c3d4-e5f6-7788-9900-aabbccddeeff",
-      "name": "Show MAS result",
-      "type": "n8n-nodes-base.form",
-      "typeVersion": 2.5,
-      "position": [
-        1120,
-        0
-      ]
-    }
-  ],
-  "pinData": {},
-  "connections": {
-    "MAS task form": {
-      "main": [
-        [
-          {
-            "node": "Prepare orchestrator request",
-            "type": "main",
-            "index": 0
-          }
-        ]
-      ]
-    },
-    "Prepare orchestrator request": {
-      "main": [
-        [
-          {
-            "node": "Call Universal Engineering Orchestrator",
-            "type": "main",
-            "index": 0
-          }
-        ]
-      ]
-    },
-    "Call Universal Engineering Orchestrator": {
-      "main": [
-        [
-          {
-            "node": "Build safe MAS form response",
-            "type": "main",
-            "index": 0
-          }
-        ]
-      ]
-    },
-    "Build safe MAS form response": {
-      "main": [
-        [
-          {
-            "node": "Show MAS result",
-            "type": "main",
-            "index": 0
-          }
-        ]
-      ]
-    }
-  },
-  "versionId": "65ee5750-e77a-41a9-af57-d8aed364137a",
-  "meta": {
-    "templateCredsSetupCompleted": false,
-    "targetN8nVersion": "2.30.8",
-    "contractVersion": "mas_entry_form/v1"
-  },
-  "tags": []
-}
-
-===END_FILE===
-===BEGIN_FILE===	n8n/workflows/retired/tnavigator-schedule-builder.workflow.json	537557	utf8
-{
-  "id": "974c652d-be5b-523f-9591-67b27165272a",
-  "name": "SCHEDULE — Builder",
-  "description": "Visible intake, lossless catalogue decode, pre-change state replay, targeted baseline retrieval, plan, typed IR, deterministic render, merge, timeline commissioning revise (parse→mutate→emit), candidate validation and independent review. Durable state, Excel and release remain in the Orchestrator.",
-  "nodes": [
-    {
-      "parameters": {
-        "content": "## edit after import\n\n**SCHEDULE — Builder** — after UI import, complete bindings before activate:\n\n- Confirm model wiring for agent **SCHEDULE Planner Agent**\n- Set OpenAI credentials on **SCHEDULE Planner Chat Model — configure in UI**\n- Confirm model wiring for agent **SCHEDULE Builder Agent**\n- Set OpenAI credentials on **SCHEDULE Builder Chat Model — configure in UI**\n\nDo not rely on env()/Globals for corporate UI import.",
-        "height": 272,
-        "width": 440,
-        "color": 1
-      },
-      "id": "ef95f01e-bf3b-5889-9de9-fb9b044607a6",
-      "name": "edit after import",
-      "type": "n8n-nodes-base.stickyNote",
-      "typeVersion": 1,
-      "position": [
-        -40,
-        -502
-      ]
-    },
-    {
-      "parameters": {
-        "content": "## Governed SCHEDULE pipeline — n8n 2.30.8\n\nVisible bounded CREATE/REVISE specialist: intake → lossless baseline analysis → expert catalogue decode → pre-change semantic replay → planning summary → plan → targeted mutation-safe baseline query → typed IR → deterministic render → merge → candidate replay/validation → independent review.\n\nIt never calls Excel/RAG directly and owns no durable state. Bind it in Universal Orchestrator. Without a complete active keyword instruction and exact expert schema it stops before planning/rendering.",
-        "width": 660,
-        "height": 480,
-        "color": 5
-      },
-      "id": "12aa8916-bb4a-5a6b-8a32-5fcd5a39e210",
-      "name": "SCHEDULE pipeline README",
-      "type": "n8n-nodes-base.stickyNote",
-      "typeVersion": 1,
-      "position": [
-        -740,
-        -690
-      ]
-    },
-    {
-      "parameters": {
-        "inputSource": "jsonExample",
-        "jsonExample": "{\"specialist_packet\": {\"contract\": \"specialist_packet\", \"contract_version\": \"1.0\", \"task_id\": \"eng_example\", \"specialist_id\": \"schedule_builder_specialist\", \"attempt\": 1, \"objective\": \"Create forecast SCHEDULE\", \"inputs\": {\"schedule_request\": {\"build_mode\": \"CREATE\", \"simulator_profile\": {\"vendor\": \"Rock Flow Dynamics\", \"simulator\": \"tNavigator\", \"version\": \"22.2\", \"unit_system\": \"METRIC\"}, \"requested_keyword_scope\": [\"DATES\", \"WCONPROD\"], \"source_facts\": [], \"rag_evidence\": {\"contract\": \"schedule_rag_evidence\", \"contract_version\": \"1.0\", \"citations\": [{\"document_id\": \"tnav-22.2\", \"document_revision\": \"22.2\", \"source_hash\": \"sha256:replace\", \"page\": \"replace\", \"heading\": \"SCHEDULE\"}], \"results\": []}, \"schema_catalogue\": {\"contract\": \"schedule_schema_catalogue\", \"contract_version\": \"1.0\", \"catalogue_ref\": \"catalogue://tnavigator/22.2/replace\", \"catalogue_hash\": \"sha256:replace\", \"source_hash\": \"sha256:replace\", \"simulator_profile\": {\"vendor\": \"Rock Flow Dynamics\", \"simulator\": \"tNavigator\", \"version\": \"22.2\"}, \"approved\": false, \"approved_by\": \"\", \"approval_gate_id\": \"\", \"schemas\": []}}}, \"controls\": {\"preservation_policy\": \"preserve_unmentioned\"}, \"acceptance_criteria\": [], \"artifact_refs\": []}}"
-      },
-      "id": "4609215c-11ae-5666-9186-86d52271fc97",
-      "name": "Receive specialist packet",
-      "type": "n8n-nodes-base.executeWorkflowTrigger",
-      "typeVersion": 1.2,
-      "position": [
-        0,
-        0
-      ]
-    },
-    {
-      "parameters": {
-        "jsCode": "const incoming=$json||{};\nconst obj=v=>v&&typeof v==='object'&&!Array.isArray(v);\nconst parse=v=>{if(obj(v))return v;if(typeof v==='string'){try{const p=JSON.parse(v);return obj(p)?p:{}}catch{return {}}}return {}};\nconst clean=v=>typeof v==='string'?v.trim():'';\nconst packet=parse(incoming.specialist_packet??incoming);\nconst previous=parse(incoming.previous_specialist_result);\nconst request=obj(packet.inputs?.schedule_request)?packet.inputs.schedule_request:{};\nconst defaultArtDesc=a=>{\n  const kind=clean(a?.kind)||'artifact';\n  if(kind==='tabular-extract') return 'Excel extraction artifact produced by the governed specialist workflow.';\n  if(kind==='query-result') return 'Immutable Excel query result reference.';\n  if(kind==='baseline-inc') return 'Baseline SCHEDULE .inc provided with the engineering task.';\n  return `${kind} reference for SCHEDULE build.`;\n};\nconst normalizeArts=list=> (Array.isArray(list)?list:[]).filter(obj).map(a=>({\n  ref:clean(a.ref),\n  kind:clean(a.kind)||'artifact',\n  revision:clean(a.revision)||'runtime',\n  description:clean(a.description)||defaultArtDesc(a),\n})).filter(a=>a.ref);\nconst artifacts=normalizeArts(packet.artifact_refs);\npacket.artifact_refs=artifacts;\nlet size=999999;try{size=JSON.stringify(packet).length}catch{}\nconst baselineBytes=typeof request.baseline_schedule_text==='string'?request.baseline_schedule_text.length:0;\nconst includeBytes=Array.isArray(request.include_files)?request.include_files.reduce((n,f)=>n+(typeof f?.content==='string'?f.content.length:0),0):0;\n// Align with orchestrator intake: REVISE packets carry baseline text and legitimately exceed 256 KiB.\nconst sizeLimit=(baselineBytes||includeBytes)?2359296:262144;\nconst rag=obj(request.rag_evidence)?request.rag_evidence:{};const ragValid=rag.contract==='schedule_rag_evidence'&&rag.contract_version==='1.0'&&rag.filters?.target_base==='schedule_mvp'&&Array.isArray(rag.results)&&rag.results.some(r=>obj(r)&&r.knowledge_type==='keyword_instruction'&&obj(r.body))&&Array.isArray(rag.citations)&&rag.citations.length>0&&rag.citations.every(c=>obj(c)&&typeof c.knowledge_id==='string'&&c.knowledge_id.trim()&&typeof c.revision==='string'&&c.revision.trim()&&typeof c.content_hash==='string'&&c.content_hash.trim()&&typeof c.author==='string'&&c.author.trim());\nconst artsOk=artifacts.every(a=>['ref','kind','revision','description'].every(k=>typeof a[k]==='string'&&a[k].trim()));\nconst sizeOk=size<=sizeLimit;\nconst valid=packet.contract==='specialist_packet'&&packet.contract_version==='1.0'&&packet.specialist_id==='schedule_builder_specialist'&&typeof packet.task_id==='string'&&packet.task_id.trim()&&Number.isInteger(packet.attempt)&&packet.attempt>=1&&typeof packet.objective==='string'&&packet.objective.trim()&&obj(packet.inputs)&&obj(packet.controls)&&Array.isArray(packet.acceptance_criteria)&&artsOk&&sizeOk&&ragValid;\nconst findings=[];\nif(!ragValid) findings.push({code:'SCHEDULE_RAG_EVIDENCE_REQUIRED',severity:'error'});\nif(!artsOk) findings.push({code:'SCHEDULE_PACKET_ARTIFACT_REFS_INVALID',severity:'error'});\nif(!sizeOk) findings.push({code:'SCHEDULE_PACKET_TOO_LARGE',severity:'error',size,size_limit:sizeLimit,baseline_bytes:baselineBytes});\nconst inherited=previous.specialist_id==='excel_extraction_specialist'&&obj(previous.compact_data)?previous.compact_data:null;\nconst normalizedRequest={...request,objective:String(request.objective||packet.objective||''),artifact_refs:[...normalizeArts(request.artifact_refs),...artifacts],source_facts_packet:obj(request.source_facts_packet)?request.source_facts_packet:inherited};\nreturn[{json:{packet,request:normalizedRequest,previous_specialist_result:previous,latest_human_response:incoming.latest_human_response??null,packet_valid:Boolean(valid),packet_findings:findings,task_id:String(packet.task_id||''),attempt:Number(packet.attempt||1),trace_id:String(request.trace_id||`trace_${packet.task_id||'invalid'}`)}}];"
-      },
-      "id": "17f35b23-4eb8-5659-a92d-ca5135d484e9",
-      "name": "Normalize SCHEDULE pipeline packet",
-      "type": "n8n-nodes-base.code",
-      "typeVersion": 2,
-      "position": [
-        280,
-        0
-      ]
-    },
-    {
-      "parameters": {
-        "conditions": {
-          "options": {
-            "caseSensitive": true,
-            "leftValue": "",
-            "typeValidation": "strict",
-            "version": 2
-          },
-          "conditions": [
-            {
-              "id": "add7471c-d392-5370-afc5-25b3c8b736f7",
-              "leftValue": "={{ $json.packet_valid }}",
-              "rightValue": true,
-              "operator": {
-                "type": "boolean",
-                "operation": "equals"
-              }
-            }
-          ],
-          "combinator": "and"
-        },
-        "options": {}
-      },
-      "id": "0b946b95-edcb-5690-8240-6d6f99ed37a4",
-      "name": "SCHEDULE packet valid?",
-      "type": "n8n-nodes-base.if",
-      "typeVersion": 2.2,
-      "position": [
-        560,
-        0
-      ]
-    },
-    {
-      "parameters": {
-        "jsCode": "const root=$json,request=root.request||{},packet=root.packet||{},controls=packet.controls&&typeof packet.controls==='object'?packet.controls:{},artifacts=Array.isArray(request.artifact_refs)?request.artifact_refs:[];\nconst expectedVersion=Number.isInteger(Number(controls.expected_version))?Number(controls.expected_version):(Number.isInteger(Number(request.expected_version))?Number(request.expected_version):0);\nconst idempotency=String(controls.idempotency_key||request.idempotency_key||`${root.task_id}:schedule-build:${root.attempt}`).slice(0,240);\nreturn[{json:{schedule_intake_request:{...request,contract:'schedule_build_request',contract_version:'1.0',task_id:root.task_id,orchestrator_task_id:root.task_id,trace_id:root.trace_id,expected_version:expectedVersion,idempotency_key:idempotency,policy_version:String(controls.policy_version||request.policy_version||'petroleum-schedule-policy-v1'),objective:request.objective,source_artifact_refs:artifacts,acceptance_criteria:Array.isArray(request.acceptance_criteria)?request.acceptance_criteria:(Array.isArray(packet.acceptance_criteria)?packet.acceptance_criteria:[]),stage_gate_policy:{attention_threshold:85,hitl_threshold:70,hard_blockers:Array.isArray(request.stage_gate_policy?.hard_blockers)?request.stage_gate_policy.hard_blockers:[]}}}}];"
-      },
-      "id": "d64328f2-a7af-5f5e-a81f-ca3c181cea69",
-      "name": "Prepare deterministic intake",
-      "type": "n8n-nodes-base.code",
-      "typeVersion": 2,
-      "position": [
-        840,
-        -85
       ]
     },
     {

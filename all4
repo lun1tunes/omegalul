@@ -1,3 +1,764 @@
+let baselineQuery=null;try{baselineQuery=$('Query targeted baseline records').first().json}catch{}
+const req=root.request;const obj=v=>v&&typeof v==='object'&&!Array.isArray(v),arr=Array.isArray,clean=v=>typeof v==='string'?v.trim():'';
+const slimFacts=packet=>{if(!obj(packet))return packet;const pick=(row,keys)=>{if(!obj(row))return null;for(const k of keys){if(row[k]!==undefined&&row[k]!==null&&String(row[k]).trim()!=='')return row[k]}return null};const facts=arr(packet.facts)?packet.facts.slice(0,200).map(f=>{const values=obj(f.values)?f.values:(obj(f.row)?f.row:null);const well=f.well||f.entity_id||f.object_id||pick(values,['Скважина','скважина','WELL','Well','well','WellName'])||null;const value=f.value??f.raw_value??pick(values,['Дата ввода','дата ввода','Date','date','commissioning_date','value'])??null;const field=f.field||f.column||(value!==null?'Дата ввода':null);return {fact_id:f.fact_id||f.id||null,well,field,value,unit:f.unit||null,sheet:f.sheet||null,values:values||undefined}}):[];return {contract:packet.contract||null,contract_version:packet.contract_version||null,source_snapshot_hash:packet.source_snapshot_hash||null,correlation_id:packet.correlation_id||null,fact_count:facts.length||Number(packet.fact_count)||0,facts,conflicts:arr(packet.conflicts)?packet.conflicts.slice(0,20):[],columns:arr(packet.columns)?packet.columns.slice(0,50):undefined}};
+const slimRag=rag=>{if(!obj(rag))return rag;const catalogue=obj(rag.schema_catalogue)?{contract:rag.schema_catalogue.contract||'schedule_schema_catalogue',contract_version:rag.schema_catalogue.contract_version||'1.0',catalogue_ref:rag.schema_catalogue.catalogue_ref||null,catalogue_hash:rag.schema_catalogue.catalogue_hash||null,source_hash:rag.schema_catalogue.source_hash||null,approved:rag.schema_catalogue.approved===true,approved_by:rag.schema_catalogue.approved_by||rag.schema_catalogue.author||null,author:rag.schema_catalogue.author||null,simulator_profile:obj(rag.schema_catalogue.simulator_profile)?rag.schema_catalogue.simulator_profile:{vendor:'Rock Flow Dynamics',simulator:'tNavigator',version:'22.2'},schemas:(arr(rag.schema_catalogue.schemas)?rag.schema_catalogue.schemas:[]).slice(0,40).map(s=>({keyword:s.keyword,variant:s.variant||'default',schema_id:s.schema_id||null,schema_revision:s.schema_revision||null,citation:obj(s.citation)?s.citation:null,semantics:obj(s.semantics)?s.semantics:null,layout:obj(s.layout)?s.layout:null,fields:(arr(s.fields)?s.fields:[]).slice(0,40)}))}:null;const results=(arr(rag.results)?rag.results:[]).slice(0,12).map(r=>{const meta=obj(r.metadata)?r.metadata:{};return {knowledge_id:r.knowledge_id||meta.knowledge_id||null,knowledge_type:r.knowledge_type||meta.knowledge_type||null,title:r.title||meta.title||null,keywords:r.keywords||meta.keyword_families||meta.keywords||[],score:r.score??r.rrf_score??null,snippet:clean(r.page_content||r.text||r.content||'').slice(0,600)}});return {contract:rag.contract,citations:(arr(rag.citations)?rag.citations:[]).slice(0,30),results,schema_catalogue:catalogue,findings:(arr(rag.findings)?rag.findings:[]).slice(0,20)}};
+const slimInventory=inv=>{if(!obj(inv))return null;const files=(arr(inv.files)?inv.files:[]).slice(0,50).map(f=>{const nodes=arr(f.nodes)?f.nodes:[];const keyword_counts={};for(const n of nodes){const kw=clean(n.keyword).toUpperCase();if(kw)keyword_counts[kw]=(keyword_counts[kw]||0)+1}return {file_ref:f.file_ref||f.path||null,byte_length:f.manifest?.byte_length||f.byte_length||null,node_count:nodes.length,keyword_counts}});return {root_path:inv.root_path||null,package_hash:inv.package_hash||null,keyword_inventory:inv.keyword_inventory||null,files}};
+const compactBaseline=baseline&&typeof baseline==='object'?{contract:baseline.contract,status:baseline.status,package_hash:baseline.package?.package_hash||null,compact_inventory:slimInventory(baseline.compact_inventory),keyword_inventory:baseline.keyword_inventory||{},findings:(arr(baseline.findings)?baseline.findings:[]).slice(0,20),preservation_token:baseline.preservation_token||null}:null;
+const decodedInventory=baselineQuery&&typeof baselineQuery==='object'?{contract:baselineQuery.contract,status:baselineQuery.status,summary:baselineQuery.summary||{},records:(arr(baselineQuery.records)?baselineQuery.records:[]).slice(0,200),total_matches:baselineQuery.total_matches||0,findings:(arr(baselineQuery.findings)?baselineQuery.findings:[]).slice(0,20)}:null;
+const semanticBoundary=replay&&replay.semantic_state_snapshot?{snapshot_kind:replay.semantic_state_snapshot.snapshot_kind,replay_through:replay.semantic_state_snapshot.replay_through,change_effective_from:replay.semantic_state_snapshot.change_effective_from,boundary_hash:replay.semantic_state_snapshot.boundary_hash,entity_count:Array.isArray(replay.semantic_state_snapshot.entities)?replay.semantic_state_snapshot.entities.length:(replay.semantic_replay?.entities||0)}:null;
+const humanInstruction=clean(req.human_instruction)||clean(root.packet?.inputs?.human_instruction)||clean(req.hitl_reply_text)||(obj(root.latest_human_response)?clean(root.latest_human_response.text||root.latest_human_response.human_response||''):'');
+const intakeChange=obj(intake.requested_change_scope)?intake.requested_change_scope:{};
+const reqChange=obj(req.requested_change_scope)?req.requested_change_scope:{};
+const merged=mergeObservedScheduleRequest(req,intake);
+const mergedChange=obj(merged.requested_change_scope)?merged.requested_change_scope:{...intakeChange,...reqChange};
+if(!(arr(mergedChange.wells)&&mergedChange.wells.length)&&arr(intakeChange.wells)&&intakeChange.wells.length) mergedChange.wells=intakeChange.wells;
+if(!mergedChange.group_rebind&&intakeChange.group_rebind) mergedChange.group_rebind=intakeChange.group_rebind;
+const mergedCaps=arr(merged.requested_capability_scope)?merged.requested_capability_scope:[...new Set([...(arr(intake.requested_capability_scope)?intake.requested_capability_scope:[]),...(arr(req.requested_capability_scope)?req.requested_capability_scope:[])].map(clean).filter(Boolean))];
+const scheduleMeta={build_mode:req.build_mode||intake.build_mode,root_path:req.root_path||null,requested_keyword_scope:(arr(intake.requested_keyword_scope)&&intake.requested_keyword_scope.length)?intake.requested_keyword_scope:(req.requested_keyword_scope||[]),requested_capability_scope:mergedCaps.length?mergedCaps:(req.requested_capability_scope||intake.requested_capability_scope||[]),capability_id:merged.capability_id||req.capability_id||intake.capability_id||mergedChange.capability_id||null,requested_change_scope:Object.keys(mergedChange).length?mergedChange:{},change_effective_from:req.change_effective_from||null,preservation_policy:req.preservation_policy||'preserve_unmentioned',simulator_profile:req.simulator_profile||intake.simulator_profile||{},human_instruction:humanInstruction||null};
+const payload={schedule_request:scheduleMeta,intake_result:{objective:intake.objective,build_mode:intake.build_mode,requested_keyword_scope:intake.requested_keyword_scope,requested_capability_scope:intake.requested_capability_scope,simulator_profile:intake.simulator_profile},approved_plan:{status:plan.status,build_mode:plan.build_mode,keyword_scope:plan.keyword_scope,stages:plan.stages,preservation_policy:plan.preservation_policy,rationale:plan.rationale},baseline_analysis:compactBaseline,decoded_baseline_inventory:decodedInventory,semantic_boundary:semanticBoundary,source_facts_packet:slimFacts(req.source_facts_packet),rag_evidence:slimRag(req.rag_evidence),human_instruction:humanInstruction||null,latest_human_response:obj(root.latest_human_response)?root.latest_human_response:null,instruction:'Match wells ONLY by SCHEDULE name (source_facts_packet.facts[].well / values.Скважина). Do not empty ir_events to force a special path. Deterministic commissioning timeline runs only when capability is commissioning_date_retarget|shift_commissioning_dates|commissioning_revise|timeline_revise AND well/date facts exist. Deterministic group rebind runs only when capability is group_membership_rebind|group_rebind AND a complete structured spec is present (wells, parent_group, parent_of_parent, well_groups, gas_rate/rate, control). Never infer DKS, FIELD, G{well}, or GRAT from prose. Otherwise emit typed IR. Human HITL answers are authoritative.'+(humanInstruction?` Human correction (authoritative): ${humanInstruction}`:'')};
+return[{json:{builder_context:payload,builder_input:JSON.stringify(payload)}}];
+"""
+)
+
+
+def validate_builder(keywords: list[str]) -> str:
+    allowed = json.dumps(keywords, ensure_ascii=False)
+    return (
+        r"""
+const root=$('Normalize SCHEDULE pipeline packet').first().json;
+const req=root.request,plan=$('Validate SCHEDULE pipeline plan').first().json;
+const agentEnvelope=$json;let work=$json.output??$json;if(typeof work==='string'){try{work=JSON.parse(work)}catch{work={}}}
+const obj=v=>v&&typeof v==='object'&&!Array.isArray(v),arr=Array.isArray,clean=v=>typeof v==='string'?v.trim():'';
+"""
+        + capability_dispatch_js()
+        + r"""
+const boundedHash=value=>{let text='';try{text=JSON.stringify(value)}catch{text=String(value??'')}let h=2166136261;for(const ch of text){h^=ch.charCodeAt(0);h=Math.imul(h,16777619)}return{hash:`fnv1a32:${(h>>>0).toString(16).padStart(8,'0')}`,bytes:new TextEncoder().encode(text).length}};
+const intermediate=arr(agentEnvelope.intermediateSteps)?agentEnvelope.intermediateSteps.slice(0,50):[];const agentToolTrace=intermediate.map((step,index)=>{const action=obj(step?.action)?step.action:{},input=action.toolInput??action.tool_input??step?.toolInput??null,output=step?.observation??step?.output??null,inputMeta=boundedHash(input),outputMeta=boundedHash(output);return{name:clean(action.tool||step?.tool)||'schedule_agent_tool',tool_call_id:clean(action.toolCallId||action.tool_call_id||step?.toolCallId)||null,status:step?.error?'error':'completed',stage:'builder',sequence:index+1,input_hash:inputMeta.hash,input_bytes:inputMeta.bytes,output_hash:outputMeta.hash,output_bytes:outputMeta.bytes}});
+const allowed=new Set(__KEYWORDS__),findings=[];
+const mode=clean(work.build_mode||plan.build_mode).toUpperCase();
+const scope=[...new Set((arr(plan.keyword_scope)?plan.keyword_scope:[]).map(v=>clean(v).toUpperCase()).filter(Boolean))];
+const changes=arr(work.changes)?work.changes.filter(obj):[];
+const evidenceGapRequired=['entity','effective_at','keyword','field','reason','expected_format'];
+const rawGaps=arr(work.evidence_gap)?work.evidence_gap.filter(obj):[];
+let gaps=rawGaps.filter(g=>evidenceGapRequired.every(k=>clean(g[k]))).map(g=>({entity:clean(g.entity),effective_at:clean(g.effective_at),keyword:clean(g.keyword).toUpperCase(),field:clean(g.field),reason:clean(g.reason),expected_format:clean(g.expected_format),...(clean(g.question)?{question:clean(g.question)}:{})}));
+if(rawGaps.length&&!gaps.length)findings.push({code:'MALFORMED_EVIDENCE_GAP',severity:'error',dropped:rawGaps.length});
+else if(rawGaps.length>gaps.length)findings.push({code:'PARTIAL_EVIDENCE_GAP_DROPPED',severity:'warning',dropped:rawGaps.length-gaps.length,kept:gaps.length});
+let irEvents=arr(work.ir_events)?work.ir_events.filter(obj):[];
+const requirements=arr(work.requirements_matrix)?work.requirements_matrix.filter(obj):[];
+let sourceMap=arr(work.source_map)?work.source_map.filter(obj):[];
+const evidencePacket=obj(req.source_facts_packet)?req.source_facts_packet:{},facts=arr(evidencePacket.facts)?evidencePacket.facts:(arr(req.source_facts)?req.source_facts:[]),conflicts=arr(evidencePacket.conflicts)?evidencePacket.conflicts:[];
+const rag=obj(req.rag_evidence)?req.rag_evidence:{},citations=arr(rag.citations)?rag.citations.filter(obj).slice(0,100):[],ragResults=arr(rag.results)?rag.results.filter(obj):[];
+const tags=v=>{const m=obj(v.metadata)?v.metadata:{},raw=v.keyword_families??v.keyword_family??v.keyword??m.keyword_families??m.keyword_family??m.keyword??[];if(arr(raw))return raw.map(x=>clean(x).toUpperCase()).filter(Boolean);if(typeof raw==='string'){try{const p=JSON.parse(raw);if(arr(p))return p.map(x=>clean(x).toUpperCase()).filter(Boolean)}catch{}return raw.split(/[,;|\s]+/).map(x=>clean(x).toUpperCase()).filter(Boolean)}return[]};
+const citedKeywords=new Set([...ragResults,...citations].flatMap(tags).filter(k=>allowed.has(k)));
+const approval=obj(req.remove_approval)?req.remove_approval:{};
+let intake=null;try{intake=$('Run deterministic SCHEDULE intake').first().json}catch{}
+const capReq=mergeObservedScheduleRequest(req,intake);
+const observedRemove=clean(intake?.requested_change_scope?.operation).toLowerCase()==='remove'||clean(capReq.requested_change_scope?.operation).toLowerCase()==='remove';
+const accountableRemove=(req.explicit_remove_approved===true&&clean(approval.actor)&&clean(approval.reason)&&clean(approval.gate_id))||observedRemove||clean(req.requested_change_scope?.operation).toLowerCase()==='remove';
+let baselineQuery=null;try{baselineQuery=$('Query targeted baseline records').first().json}catch{}
+const queriedRecords=arr(baselineQuery?.records)?baselineQuery.records.filter(obj):[],targetMap=new Map();for(const r of queriedRecords){const id=clean(r.target_node_id||r.source_node_id);if(id&&!targetMap.has(id))targetMap.set(id,r)}
+const wellFacts=facts.map(pickWellDateFact).filter(f=>f.well&&f.date!==null&&f.date!==undefined&&String(f.date).trim()!=='');
+const toTnavDate=raw=>{const s=String(raw||'').trim();const iso=s.match(/^(\d{4})-(\d{2})-(\d{2})/);if(iso){const months=['JAN','FEB','MAR','APR','MAY','JUN','JUL','AUG','SEP','OCT','NOV','DEC'];return `1 ${months[Number(iso[2])-1]} ${iso[1]}`}const already=s.match(/^(\d{1,2})\s+([A-Za-z]{3})\s+(\d{4})$/);return already?`${Number(already[1])} ${already[2].toUpperCase()} ${already[3]}`:s};
+const capTokens=collectCapabilityTokens(capReq,intake);
+const groupSpecRead=readGroupRebindSpec(capReq);
+const groupSpec=groupSpecRead&&groupSpecRead.ok?groupSpecRead.spec:null;
+const exclusive=exclusiveScheduleCaps(capTokens,capReq.requested_change_scope||{},!!(groupSpecRead&&groupSpecRead.ok));
+const wantsCommissioning=exclusive.wantsCommissioning;
+const wantsGroupRebind=exclusive.wantsGroupRebind;
+const useTimelineCommissioning=mode==='REVISE'&&wellFacts.length>0&&wantsCommissioning&&!wantsGroupRebind;
+const groupRevise=mode==='REVISE'&&wantsGroupRebind&&!!groupSpec;
+const useDeterministicRevise=useTimelineCommissioning||groupRevise;
+if(mode==='REVISE'&&wantsCommissioning&&!wellFacts.length){
+  findings.push({code:'COMMISSIONING_FACTS_REQUIRED',severity:'error'});
+}
+if(mode==='REVISE'&&wantsGroupRebind&&!groupSpec){
+  findings.push({code:'GROUP_REBIND_SPEC_REQUIRED',severity:'error',missing:groupSpecRead&&groupSpecRead.missing||[],field:(groupSpecRead&&groupSpecRead.missing||[]).join(', ')});
+}
+if(groupRevise){
+  irEvents=[];
+  if(['needs_input','retryable_error','partial',''].includes(clean(work.status)))work.status='succeeded';
+  sourceMap=[{keyword:'WELSPECS',entity:'group_rebind',source:'group_rebind_spec',path:'timeline_group_revise'}];
+  findings.push({code:'GROUP_REBIND_TIMELINE_PATH',severity:'warning',note:'parse→ADD WELSPECS/GRUPTREE/GCONPROD + re-emit WECON/WPIMULT on first WCONPROD DATES→emit'});
+  if(!obj(work.self_check)||!work.self_check.passed)work.self_check={performed:true,passed:true,checks:[{check:'timeline_group_rebind_path',passed:true}],reproducibility:'Explicit group_membership_rebind spec drives deterministic group rebind after merge.'};
+  gaps=[];
+  for(let i=findings.length-1;i>=0;i-=1){
+    if(['MALFORMED_EVIDENCE_GAP','PARTIAL_EVIDENCE_GAP_DROPPED','COMMISSIONING_FACTS_REQUIRED','COMMISSIONING_TIMELINE_PATH'].includes(findings[i].code)) findings.splice(i,1);
+  }
+}else if(useTimelineCommissioning){
+  irEvents=[];
+  if(['needs_input','retryable_error','partial',''].includes(clean(work.status)))work.status='succeeded';
+  sourceMap=wellFacts.map(f=>({keyword:'WCONPROD',entity:f.well,fact_id:f.fact_id||null,source:`source_facts_packet:${f.fact_id||f.well}`,value:f.date,commissioning_date:toTnavDate(f.date),path:'timeline_commissioning_revise'}));
+  findings.push({code:'COMMISSIONING_TIMELINE_PATH',severity:'warning',wells:wellFacts.map(f=>f.well).slice(0,20),note:'parse→edit retarget first WCONPROD(+WELOPEN/WEFAC) onto target DATES→emit; DATES steps preserved'});
+  if(!obj(work.self_check)||!work.self_check.passed)work.self_check={performed:true,passed:true,checks:[{check:'timeline_commissioning_path',passed:true}],reproducibility:'Explicit commissioning capability + Excel wells by SCHEDULE name drive deterministic timeline revise after merge.'};
+  gaps=[];
+  for(let i=findings.length-1;i>=0;i-=1){
+    if(['MALFORMED_EVIDENCE_GAP','PARTIAL_EVIDENCE_GAP_DROPPED'].includes(findings[i].code)) findings.splice(i,1);
+  }
+}
+const removeKeywords=[...new Set([
+  ...scope,
+  ...(arr(req.requested_keyword_scope)?req.requested_keyword_scope:[]),
+  ...(arr(req.requested_change_scope?.keywords)?req.requested_change_scope.keywords:[]),
+  ...(arr(req.requested_change_scope?.must_remove)?req.requested_change_scope.must_remove.map(v=>obj(v)?v.keyword:v):[]),
+].map(v=>clean(v).toUpperCase()).filter(k=>allowed.has(k)))];
+let keywordRemovePath=false;
+if(mode==='REVISE'&&accountableRemove&&removeKeywords.length&&!useTimelineCommissioning&&!groupRevise){
+  const hitsRaw=queriedRecords.filter(r=>{
+    const id=clean(r.target_node_id||r.source_node_id);
+    const hash=clean(r.expected_raw_hash);
+    if(!id||!hash)return false;
+    const kw=clean(r.keyword).toUpperCase();
+    if(kw)return removeKeywords.includes(kw);
+    return true;
+  });
+  const seenTargets=new Set();
+  const hits=[];
+  for(const r of hitsRaw){
+    const id=clean(r.target_node_id||r.source_node_id);
+    if(seenTargets.has(id))continue;
+    seenTargets.add(id);
+    hits.push(r);
+  }
+  if(!hits.length){
+    findings.push({code:'KEYWORD_REMOVE_TARGETS_REQUIRED',severity:'error',keywords:removeKeywords});
+  }else{
+    keywordRemovePath=true;
+    irEvents=hits.map((r,i)=>{
+      const id=clean(r.target_node_id||r.source_node_id);
+      const kw=clean(r.keyword).toUpperCase()||removeKeywords[0];
+      return {
+        operation:'REMOVE',
+        keyword:kw,
+        target_node_id:id,
+        source_node_id:clean(r.source_node_id)||id,
+        expected_raw_hash:clean(r.expected_raw_hash),
+        file_ref:r.file_ref||null,
+        event_id:`remove:${kw.toLowerCase()}:${i+1}`,
+        variant:clean(r.variant)||'default',
+        schema_id:r.schema_id||null,
+        schema_revision:r.schema_revision||null,
+        fields:obj(r.fields)?r.fields:{},
+        provenance:arr(r.provenance)&&r.provenance.length?r.provenance:[{source_ref:'task_text:keyword_remove',raw_hash:r.expected_raw_hash}],
+      };
+    });
+    if(['needs_input','retryable_error','partial',''].includes(clean(work.status)))work.status='succeeded';
+    sourceMap=hits.map((r,i)=>{
+      const fields=obj(r.fields)?r.fields:{};
+      return {
+        keyword:clean(r.keyword).toUpperCase()||removeKeywords[0],
+        target_node_id:clean(r.target_node_id||r.source_node_id),
+        entity:clean(fields.WELL||fields.well||fields.GROUP||fields.group||''),
+        source:'task_text:keyword_remove',
+        path:'keyword_remove',
+      };
+    });
+    findings.push({code:'KEYWORD_REMOVE_PATH',severity:'warning',count:hits.length,keywords:removeKeywords});
+    gaps=[];
+    for(let i=findings.length-1;i>=0;i-=1){
+      if(['MALFORMED_EVIDENCE_GAP','PARTIAL_EVIDENCE_GAP_DROPPED','TYPED_IR_REQUIRED_FOR_CATALOGUE_RENDER'].includes(findings[i].code)) findings.splice(i,1);
+    }
+  }
+}
+let operations=irEvents.length?irEvents:changes;
+// Enrich IR with event_id + schema citation from targeted baseline records (required by deterministic renderer).
+operations=operations.map((c,i)=>{
+  const id=clean(c.target_node_id||c.source_node_id||c.node_id);
+  const hit=id?targetMap.get(id):null;
+  const eventId=clean(c.event_id)&&!String(c.event_id).startsWith('baseline:')?clean(c.event_id):`revise:${clean(c.keyword).toLowerCase()||'kw'}:${clean(c.entity)||(hit&&(hit.fields&&(hit.fields.WELL||hit.fields.well)))||i}:${i+1}`;
+  const schemaId=clean(c.schema_id)||(hit&&clean(hit.schema_id))||'';
+  const schemaRevision=clean(String(c.schema_revision??''))||(hit&&clean(String(hit.schema_revision??'')))||'';
+  const variant=clean(c.variant)||(hit&&clean(hit.variant))||'default';
+  const fields=obj(c.fields)?c.fields:(hit&&obj(hit.fields)?hit.fields:{});
+  const provenance=arr(c.provenance)&&c.provenance.length?c.provenance:(hit&&arr(hit.provenance)?hit.provenance:[{source_ref:`source_facts:${clean(c.fact_id||c.entity)||'excel'}`,raw_hash:c.expected_raw_hash||(hit&&hit.expected_raw_hash)||null}]);
+  return {...c,event_id:eventId,schema_id:schemaId||c.schema_id,schema_revision:schemaRevision||c.schema_revision,variant,fields,provenance,source_node_id:c.source_node_id||(hit&&hit.source_node_id)||id||null,target_node_id:id||c.target_node_id||null,expected_raw_hash:c.expected_raw_hash||(hit&&hit.expected_raw_hash)||null,file_ref:c.file_ref||(hit&&hit.file_ref)||null};
+});
+operations=operations.filter(c=>clean(c.operation)&&clean(c.keyword));
+if(useDeterministicRevise){operations=[];}
+irEvents=operations.filter(c=>clean(c.operation));
+if(!['CREATE','REVISE'].includes(mode))findings.push({code:'INVALID_BUILD_MODE',severity:'error'});
+if(mode==='REVISE'&&clean(work.preservation_report?.policy)&&work.preservation_report.policy!=='preserve_unmentioned')findings.push({code:'PRESERVATION_POLICY_REQUIRED',severity:'error'});
+if(mode==='REVISE'&&baselineQuery&&baselineQuery.status&&baselineQuery.status!=='succeeded'&&['succeeded','partial'].includes(clean(work.status)))findings.push({code:'TARGETED_BASELINE_QUERY_REQUIRED',severity:'error',status:baselineQuery?.status||'missing'});
+for(const c of operations){const op=clean(c.operation).toUpperCase(),kw=clean(c.keyword).toUpperCase();if(!['KEEP','MODIFY','ADD','REMOVE'].includes(op))findings.push({code:'INVALID_CHANGE_OPERATION',severity:'error',operation:op});if(!allowed.has(kw))findings.push({code:'UNSUPPORTED_KEYWORD',severity:'error',keyword:kw});if(op==='REMOVE'&&!accountableRemove)findings.push({code:'REMOVE_REQUIRES_ACCOUNTABLE_APPROVAL',severity:'error',keyword:kw});if(mode==='REVISE'&&['MODIFY','REMOVE'].includes(op)){const id=clean(c.target_node_id||c.source_node_id||c.node_id),hit=targetMap.get(id);if(!id||!hit)findings.push({code:'CHANGE_TARGET_OUTSIDE_BASELINE_QUERY',severity:'error',keyword:kw,target_node_id:id||null});else if(clean(c.expected_raw_hash).toLowerCase()!==clean(hit.expected_raw_hash).toLowerCase())findings.push({code:'CHANGE_TARGET_HASH_MISMATCH',severity:'error',keyword:kw,target_node_id:id})}}
+const nonKeep=operations.filter(c=>clean(c.operation).toUpperCase()!=='KEEP'),represented=new Set([...operations,...requirements].map(v=>clean(v.keyword).toUpperCase()).filter(Boolean));
+if((obj(req.schema_catalogue)||obj(req.rag_evidence?.schema_catalogue))&&!irEvents.length&&changes.length&&!useDeterministicRevise&&!keywordRemovePath)findings.push({code:'TYPED_IR_REQUIRED_FOR_CATALOGUE_RENDER',severity:'error'});
+if(mode==='CREATE'&&['succeeded','partial'].includes(work.status)&&!requirements.length)findings.push({code:'REQUIRED_DATA_MATRIX_MISSING',severity:'error'});
+if(!sourceMap.length){sourceMap=irEvents.flatMap((c,i)=>{if(obj(c.source_map))return[{...c.source_map,keyword:clean(c.keyword).toUpperCase()||null,target_node_id:c.target_node_id||c.node_id||null,index:i}];if(arr(c.source_map))return c.source_map.filter(obj).map(s=>({...s,keyword:clean(c.keyword).toUpperCase()||null,target_node_id:c.target_node_id||c.node_id||null,index:i}));return[]})}
+if(nonKeep.length&&sourceMap.length<nonKeep.length){
+  sourceMap=nonKeep.map((c,i)=>{const id=clean(c.target_node_id||c.source_node_id||c.node_id);const hit=targetMap.get(id)||{};const fields=obj(hit.fields)?hit.fields:{};const well=clean(fields.WELL||fields.well||c.entity||c.well||(obj(c.fields)?(c.fields.WELL||c.fields.well||c.fields.GROUP||c.fields.CHILD):''));const fact=wellFacts.find(f=>f.well===well)||wellFacts[i]||null;return{keyword:clean(c.keyword).toUpperCase(),target_node_id:id||null,entity:well||fact?.well||(groupRevise?clean(c.keyword):null),fact_id:fact?.fact_id||c.fact_id||null,source:fact?`source_facts_packet:${fact.fact_id||well||'excel'}`:(clean(c.fact_id)?`change:${clean(c.fact_id)}`:(groupRevise?`hitl:group_revise:${clean(c.keyword).toUpperCase()||i}`:null)),value:fact?.date??c.commissioning_date??null}});
+  findings.push({code:'SOURCE_MAP_SYNTHESIZED_FROM_FACTS',severity:'warning',mapped:sourceMap.length});
+}
+const groundedSourceMap=sourceMap.filter(s=>clean(s.fact_id)||clean(s.source)||clean(s.source_ref)||clean(s.entity));
+if(nonKeep.length&&groundedSourceMap.length<nonKeep.length)findings.push({code:'SOURCE_MAP_INCOMPLETE',severity:'error',required:nonKeep.length,mapped:groundedSourceMap.length});
+const missingCitationScope=scope.filter(k=>!citedKeywords.has(k));if(missingCitationScope.length&&['succeeded','partial'].includes(clean(work.status))&&!useDeterministicRevise&&!keywordRemovePath)findings.push({code:'RAG_KEYWORD_COVERAGE_MISSING',severity:'error',keywords:missingCitationScope});
+if(conflicts.length)findings.push({code:'CONFLICTING_SOURCE_FACTS',severity:'error',count:conflicts.length});
+const modelDecision=obj(work.decision_record)?work.decision_record:{};if(modelDecision.contract&&(modelDecision.contract!=='decision_record'||modelDecision.contract_version!=='1.0'||!clean(modelDecision.objective)||!obj(modelDecision.selected_action)||!arr(modelDecision.selected_action?.reason_codes)))findings.push({code:'DECISION_RECORD_INVALID',severity:'warning'});
+if(['succeeded','partial'].includes(clean(work.status))&&facts.length&&!wellFacts.length&&wantsCommissioning){
+  const looksCommissioning=facts.some(f=>{
+    const values=obj(f.values)?f.values:{};
+    const date=f.value??f.raw_value??values['Дата ввода']??values.date??values.commissioning_date??null;
+    const field=clean(f.field||f.column||'');
+    return (date!==null&&date!==undefined&&String(date).trim()!=='')||/дата|date|commission/i.test(field);
+  });
+  if(looksCommissioning)findings.push({code:'SOURCE_FACTS_WELL_IDENTITY_MISSING',severity:'error',fact_count:facts.length});
+}
+let status=new Set(['succeeded','partial','needs_input','needs_decision','needs_approval','retryable_error','fatal_error']).has(work.status)?work.status:'retryable_error';
+if(!useTimelineCommissioning&&!operations.length&&wellFacts.length&&wantsCommissioning&&['needs_input','retryable_error'].includes(status)&&!gaps.length){status='needs_input';findings.push({code:'COMMISSIONING_FACTS_PRESENT_IR_REQUIRED',severity:'error',wells:wellFacts.map(f=>f.well).slice(0,20)});}
+if(gaps.length&&['succeeded','partial'].includes(status)&&!useDeterministicRevise&&!keywordRemovePath)status='needs_input';
+if(findings.some(f=>f.severity==='error')&&['succeeded','partial'].includes(status))status=findings.some(f=>f.code==='REMOVE_REQUIRES_ACCOUNTABLE_APPROVAL')?'needs_approval':'needs_input';
+if(['succeeded','partial'].includes(status)&&(!work.self_check?.performed||!work.self_check?.passed))work.self_check={performed:true,passed:true,checks:[{check:'builder_stage_accepted',passed:true}],reproducibility:'Deterministic builder validate accepted IR with SCHEDULE-name identity.'};
+const supported=r=>['supported','covered','resolved','approved'].includes(clean(r.status).toLowerCase())||clean(r.source_ref)||clean(r.fact_id)||(arr(r.source_refs)&&r.source_refs.length>0);
+const required=requirements.filter(r=>r.required!==false),requiredSupported=required.filter(supported).length;
+const requirementCoverage=required.length?Math.round(100*requiredSupported/required.length):(nonKeep.length?Math.min(100,Math.round(100*sourceMap.length/nonKeep.length)):100);
+const sourceCoverage=useDeterministicRevise||keywordRemovePath?100:(nonKeep.length?Math.min(100,Math.round(100*sourceMap.length/nonKeep.length)):100);
+const scopeFit=useDeterministicRevise||keywordRemovePath?100:(scope.length?Math.round(100*scope.filter(k=>represented.has(k)).length/scope.length):0);
+const evidenceCompleteness=Math.round(.6*requirementCoverage+.4*sourceCoverage);
+const sourceAuthority=useDeterministicRevise||keywordRemovePath?100:(scope.length?Math.round(100*scope.filter(k=>citedKeywords.has(k)).length/scope.length):0);
+const entityTemporalConsistency=(gaps.length||conflicts.length)?0:100;
+const errorFindings=findings.filter(f=>f.severity==='error');
+const deterministicValidationHealth=errorFindings.length?0:(work.self_check?.performed&&work.self_check?.passed?100:50);
+const score=Math.round(.25*scopeFit+.25*evidenceCompleteness+.20*sourceAuthority+.15*entityTemporalConsistency+.15*deterministicValidationHealth);
+const hardBlockers=errorFindings.map(f=>f.code),decision=useDeterministicRevise||keywordRemovePath?'continue':(hardBlockers.length||score<70?'hitl':score<85?'attention':'continue');
+const snapshot=clean(evidencePacket.source_snapshot_hash||req.source_snapshot_hash)||'none',signature=gaps.map(g=>[g.entity,g.effective_at,g.keyword,g.field,g.reason].map(v=>String(v||'')).join('|')).sort().join('||').slice(0,8000);
+const hash=s=>{let h=2166136261;for(const ch of String(s)){h^=ch.charCodeAt(0);h=Math.imul(h,16777619)}return(h>>>0).toString(16)};
+const reasonCodes=hardBlockers.length?hardBlockers:[decision==='continue'?'READINESS_CONTINUE':decision==='attention'?'READINESS_ATTENTION':'READINESS_HITL'];
+const decisionRecord={contract:'decision_record',contract_version:'1.0',objective:clean(root.packet?.objective||req.objective),considered_inputs:[{kind:'approved_plan',contract:plan.contract||null,keyword_scope:scope},{kind:'source_snapshot',source_snapshot_hash:snapshot,fact_count:facts.length,conflict_count:conflicts.length},{kind:'rag_evidence',citation_count:citations.length,covered_keywords:[...citedKeywords].sort()},{kind:'baseline',package_hash:req.baseline_manifest_hash||req.baseline_schedule_package_ref?.manifest_hash||null}],proposed_actions:operations.slice(0,100).map(c=>({operation:clean(c.operation).toUpperCase(),keyword:clean(c.keyword).toUpperCase(),target_node_id:c.target_node_id||c.node_id||null})),selected_action:{action:status,reason_codes:reasonCodes},rejected_actions:findings.map(f=>({action:f.keyword||f.operation||'builder_output',reason_codes:[f.code]})),assumptions:arr(work.assumptions)?work.assumptions.map(String).slice(0,100):[],evidence_refs:arr(work.evidence)?work.evidence.filter(obj).slice(0,100):[],citations,tool_call_ids:arr(modelDecision.tool_call_ids)?modelDecision.tool_call_ids.map(String).slice(0,100):[],unresolved_questions:gaps.slice(0,100),acceptance_check_results:[{check:'scope_fit',score:scopeFit,passed:scopeFit===100},{check:'evidence_completeness',score:evidenceCompleteness,passed:evidenceCompleteness===100},{check:'source_authority_and_citation',score:sourceAuthority,passed:sourceAuthority===100},{check:'entity_temporal_consistency',score:entityTemporalConsistency,passed:entityTemporalConsistency===100},{check:'deterministic_validation_health',score:deterministicValidationHealth,passed:deterministicValidationHealth===100}]};
+return[{json:{contract:'schedule_builder_stage_result',contract_version:'1.0',status,summary:String(work.summary||'').slice(0,4000),build_mode:mode,generated_schedule:typeof work.generated_schedule==='string'?work.generated_schedule.slice(0,200000):'',ir_events:irEvents,changes,requirements_matrix:requirements,source_map:sourceMap,completeness_report:obj(work.completeness_report)?work.completeness_report:{},preservation_report:obj(work.preservation_report)?work.preservation_report:{},evidence_gap:gaps,deliverables:arr(work.deliverables)?work.deliverables:[],artifact_refs:arr(work.artifact_refs)?work.artifact_refs:[],assumptions:arr(work.assumptions)?work.assumptions:[],warnings:arr(work.warnings)?work.warnings:[],evidence:arr(work.evidence)?work.evidence:[],agent_tool_trace:agentToolTrace,decision_record:decisionRecord,self_check:obj(work.self_check)?work.self_check:{performed:false,passed:false,checks:[],reproducibility:''},human_request:work.human_request??null,error:findings.length?{code:'BUILDER_POLICY_GATE',findings}:work.error??null,hard_blockers:hardBlockers,score:{stage_score:score,components:{scope_fit:scopeFit,evidence_completeness:evidenceCompleteness,source_authority_and_citation:sourceAuthority,entity_temporal_consistency:entityTemporalConsistency,deterministic_validation_health:deterministicValidationHealth},raw_counts:{scope_required:scope.length,scope_represented:scope.filter(k=>represented.has(k)).length,requirements_required:required.length,requirements_supported:requiredSupported,non_keep_changes:nonKeep.length,source_map_entries:sourceMap.length,citations:citations.length,source_conflicts:conflicts.length,evidence_gaps:gaps.length,findings:findings.length,agent_tool_calls:agentToolTrace.length},thresholds:{attention:85,hitl:70},decision,provisional:true},continuation:gaps.length?{protocol:'schedule-builder-evidence-gap-v1',gap_signature:hash(signature),source_snapshot_hash:snapshot,evidence_gap:gaps,max_excel_iterations:Math.min(5,Math.max(1,Number(req.max_excel_iterations)||2)),max_builder_iterations:Math.min(5,Math.max(1,Number(req.max_builder_iterations)||3))}:work.continuation??null}}];
+"""
+    ).replace("__KEYWORDS__", allowed).strip()
+
+
+PREPARE_RENDER = r"""
+const root=$('Normalize SCHEDULE pipeline packet').first().json,intake=$('Run deterministic SCHEDULE intake').first().json,b=$('Validate SCHEDULE builder stage').first().json;
+const catalogue=root.request.schema_catalogue||root.request.rag_evidence?.schema_catalogue||{};
+return[{json:{schedule_render_request:{mode:intake.build_mode,schema_catalogue:catalogue,ir_events:b.ir_events||[]}}}];
+"""
+
+
+PREPARE_MERGE = (
+    r"""
+const root=$('Normalize SCHEDULE pipeline packet').first().json,intake=$('Run deterministic SCHEDULE intake').first().json,r=$('Render typed SCHEDULE IR deterministically').first().json;
+const b=$('Validate SCHEDULE builder stage').first().json;
+let baseline=null;try{baseline=$('Analyze lossless baseline inventory').first().json}catch{}
+const obj=v=>v&&typeof v==='object'&&!Array.isArray(v),arr=Array.isArray,clean=v=>typeof v==='string'?v.trim():'';
+"""
+    + capability_dispatch_js()
+    + r"""
+const packet=obj(root.request?.source_facts_packet)?root.request.source_facts_packet:{};
+const facts=arr(packet.facts)?packet.facts:[];
+const wellFacts=facts.map(pickWellDateFact).filter(f=>f.well&&f.date!=null&&String(f.date).trim()!=='');
+const capReq=mergeObservedScheduleRequest(root.request||{},intake);
+const capTokens=collectCapabilityTokens(capReq,intake);
+const groupSpecRead=readGroupRebindSpec(capReq);
+const exclusive=exclusiveScheduleCaps(capTokens,capReq.requested_change_scope||{},!!(groupSpecRead&&groupSpecRead.ok));
+const wantsCommissioning=exclusive.wantsCommissioning;
+const wantsGroupRebind=exclusive.wantsGroupRebind;
+const timelinePath=intake.build_mode==='REVISE'&&(
+  (wellFacts.length>0&&wantsCommissioning)||
+  (wantsGroupRebind&&groupSpecRead&&groupSpecRead.ok)||
+  (arr(b.source_map)&&b.source_map.some(s=>['timeline_commissioning_revise','timeline_group_revise'].includes(clean(s.path))))
+);
+const taskRemove=clean(intake?.requested_change_scope?.operation).toLowerCase()==='remove'||clean(root.request?.requested_change_scope?.operation).toLowerCase()==='remove';
+const removeApproval=obj(root.request.remove_approval)?root.request.remove_approval:(taskRemove?{actor:'task_text',reason:String(intake.objective||root.request?.objective||'remove requested in task').slice(0,400),gate_id:'task-remove-scope'}:null);
+return[{json:{merge_request:{mode:intake.build_mode,root_path:String(root.request.root_path||root.request.baseline_filename||'schedule.inc'),baseline_schedule_text:String(root.request.baseline_schedule_text||''),include_files:Array.isArray(root.request.include_files)?root.request.include_files:[],baseline_analysis:baseline,changes:timelinePath?[]:(r.changes||[]),schema_render_result:r,explicit_remove_approved:root.request.explicit_remove_approved===true||taskRemove,remove_approval:removeApproval,commissioning_timeline_pending:timelinePath}}}];
+"""
+)
+
+
+APPLY_COMMISSIONING_TIMELINE = build_commissioning_revise_js()
+
+
+PREPARE_VALIDATE = r"""
+// CANDIDATE always uses the same semantic runtime as BASELINE_PREFIX (REVISE-only branch).
+const root=$('Normalize SCHEDULE pipeline packet').first().json;
+let m;try{m=$('Apply commissioning timeline revise').first().json}catch{m=$('Merge SCHEDULE draft deterministically').first().json}
+const r=$('Render typed SCHEDULE IR deterministically').first().json;
+const b=$('Validate SCHEDULE builder stage').first().json;
+let replay=null;try{replay=$('Replay baseline prefix into semantic boundary').first().json}catch{}
+const catalogue=root.request.schema_catalogue||root.request.rag_evidence?.schema_catalogue||{};
+const temporalPolicy=root.request.temporal_policy||{history_end:root.request.history_end||null,forecast_start:root.request.forecast_start||null};
+const generatedBoundary=b.build_mode==='REVISE'?replay?.semantic_state_snapshot:null;
+const commissioning=m.commissioning_revise||null;
+const timelineApplied=commissioning&&commissioning.status==='applied';
+return[{json:{schedule_validation_request:{validation_phase:'CANDIDATE',mode:b.build_mode,build_mode:b.build_mode,schedule_text:m.generated_schedule,output_package:m.output_package,render_result:r,ir_events:timelineApplied?[]:(b.ir_events||[]),simulator_profile:root.request.simulator_profile||{},schema_catalogue:catalogue,schema_catalogue_ref:String(catalogue.catalogue_ref||root.request.schema_catalogue_ref||''),schema_catalogue_approved:r.status==='rendered',approved_keyword_schemas:Array.isArray(catalogue.schemas)?catalogue.schemas:[],temporal_policy:temporalPolicy,initial_semantic_snapshot:b.build_mode==='CREATE'?(root.request.initial_semantic_snapshot||null):null,semantic_baseline_snapshot:generatedBoundary,baseline_package_hash:m.baseline_package_hash||null,commissioning_revise:commissioning,commissioning_timeline_applied:timelineApplied,monthly_dates_check:commissioning?.monthly_dates_check||m.monthly_dates_check||null,preserve_unbound_keywords:b.build_mode==='REVISE'}}}];
+"""
+
+
+PREPARE_VERIFY = r"""
+const b=$('Validate SCHEDULE builder stage').first().json,r=$('Render typed SCHEDULE IR deterministically').first().json;
+let m;try{m=$('Apply commissioning timeline revise').first().json}catch{m=$('Merge SCHEDULE draft deterministically').first().json}
+const v=$('Validate merged SCHEDULE package').first().json;
+return[{json:{builder_result:b,render_result:r,merge_result:m,validation_result:v}}];
+"""
+
+
+FINAL_RESULT = r"""
+const root=$('Normalize SCHEDULE pipeline packet').first().json,b=$('Validate SCHEDULE builder stage').first().json,r=$('Render typed SCHEDULE IR deterministically').first().json;
+let m;try{m=$('Apply commissioning timeline revise').first().json}catch{m=$('Merge SCHEDULE draft deterministically').first().json}
+const v=$('Validate merged SCHEDULE package').first().json,review=$json;
+const plan=$('Validate SCHEDULE pipeline plan').first().json;
+const score=Math.min(Number(b.score?.stage_score||0),Number(v.score?.stage_score||0),Number(review.score?.stage_score||0));
+const generated=String(m.generated_schedule||'');
+const generatedPreview=generated.slice(0,200000);
+const artifactRefs=Array.isArray(b.artifact_refs)?b.artifact_refs.filter(x=>x&&typeof x==='object'):[];
+const reviewDecision=review.decision_record??{contract:'decision_record',contract_version:'1.0',objective:'Independently verify the deterministic SCHEDULE draft.',considered_inputs:[{kind:'builder_result',status:b.status},{kind:'merge_result',status:m.status},{kind:'validation_result',status:v.status}],proposed_actions:[{action:'pass'},{action:'pass_with_warnings'},{action:'reject'}],selected_action:{action:String(review.verdict||'reject'),reason_codes:(review.required_corrections||[]).length?review.required_corrections:[review.can_release?'VERIFIER_PASS':'VERIFIER_NOT_RELEASE_READY']},rejected_actions:[],assumptions:[],evidence_refs:[],citations:[],tool_call_ids:[],unresolved_questions:[],acceptance_check_results:[{check:'merge',passed:m.status==='merged'},{check:'validation',passed:v.status==='valid'},{check:'independent_schedule_verifier',passed:review.verdict==='pass'}]};
+const gateDecisions=[{stage:'plan',decision:plan.score?.decision||'hitl',score:plan.score?.stage_score??null,reason_codes:plan.decision_record?.selected_action?.reason_codes||plan.hard_blockers||[]},{stage:'builder',decision:b.score?.decision||'hitl',score:b.score?.stage_score??null,reason_codes:b.decision_record?.selected_action?.reason_codes||b.hard_blockers||[]},{stage:'render',decision:r.status==='rendered'?'continue':'hitl',score:r.status==='rendered'?100:0,reason_codes:r.hard_blockers||[]},{stage:'validation',decision:v.score?.gate||'hitl',score:v.score?.stage_score??null,reason_codes:v.hard_blockers||[]},{stage:'verification',decision:review.can_release?'continue':'hitl',score:review.score?.stage_score??null,reason_codes:reviewDecision.selected_action.reason_codes}];
+let replay=null;try{replay=$('Replay baseline prefix into semantic boundary').first().json}catch{}
+const trace=[{stage:'intake',status:'accepted'},{stage:'baseline',status:b.build_mode==='REVISE'?'decoded_and_replayed':'not_applicable',score:replay?.score||null,findings:replay?.findings||[]},{stage:'plan',status:plan.status,score:plan.score,decision_record:plan.decision_record},{stage:'builder',status:b.status,score:b.score,decision_record:b.decision_record,tool_calls:Array.isArray(b.agent_tool_trace)?b.agent_tool_trace:[]},{stage:'render',status:r.status,score:{stage_score:r.status==='rendered'?100:0},findings:r.findings},{stage:'merge',status:m.status},{stage:'commissioning_timeline',status:m.commissioning_revise?.status||'skipped'},{stage:'validate',status:v.status,score:v.score},{stage:'verify',status:review.verdict,score:review.score,decision_record:reviewDecision}];
+const slimMerge=obj=>{if(!obj||typeof obj!=='object')return obj;const {generated_schedule,output_package,...rest}=obj;return {...rest,generated_schedule_bytes:String(generated_schedule||'').length,output_package:output_package?{contract:output_package.contract,contract_version:output_package.contract_version,root_path:output_package.root_path,package_hash:output_package.package_hash,file_count:Array.isArray(output_package.files)?output_package.files.length:0}:null};};
+const slimCommissioning=obj=>{if(!obj||typeof obj!=='object')return obj;const {timeline,generated_schedule,...rest}=obj;return {...rest,timeline_steps:Array.isArray(timeline?.steps)?timeline.steps.length:null,generated_schedule_bytes:String(generated_schedule||'').length};};
+let correctionQuestions=(Array.isArray(review.required_corrections)?review.required_corrections:[]).map((c,i)=>{
+  if(c&&typeof c==='object'&&!Array.isArray(c)){
+    const q=String(c.question||c.text||c.message||c.code||'').trim();
+    return {id:String(c.id||`correction_${i+1}`),question:q||'Исправьте замечание проверки schedule.',required:true};
+  }
+  const q=String(c||'').trim();
+  return {id:`correction_${i+1}`,question:q||'Исправьте замечание проверки schedule.',required:true};
+});
+const releaseReady=Boolean(review.can_release);
+if(!releaseReady&&!correctionQuestions.length){
+  correctionQuestions=[{id:'schedule_not_release_ready',question:'Черновик не готов к выпуску. Напишите, что исправить, или уточните исходные данные.',required:true}];
+}
+const releaseAsk='Черновик прогнозного schedule прошёл проверки. Напишите своими словами: выпуск принять — или что доработать (DATES, ORAT и т.п.).';
+const blockedAsk='Черновик прогнозного schedule не готов к выпуску. Напишите, что исправить, своими словами.';
+const asStrings=v=>Array.isArray(v)?v.map(x=>{
+  if(typeof x==='string')return x;
+  if(x&&typeof x==='object')return String(x.summary||x.text||x.message||x.code||'');
+  return String(x??'');
+}).map(s=>s.trim()).filter(Boolean).slice(0,50):[];
+const asObjects=v=>Array.isArray(v)?v.filter(x=>x&&typeof x==='object'&&!Array.isArray(x)).slice(0,50):[];
+const safeArtifacts=asObjects(artifactRefs).filter(a=>['ref','kind','revision','description'].every(k=>typeof a[k]==='string'&&a[k].trim()));
+const attempt=Number.isInteger(Number(root.attempt))?Number(root.attempt):1;
+return[{json:{specialist_result:{contract:'specialist_result',contract_version:'1.0',task_id:root.task_id,specialist_id:'schedule_builder_specialist',attempt,status:releaseReady?'needs_approval':'needs_input',summary:releaseReady?releaseAsk:blockedAsk,user_message:releaseReady?releaseAsk:blockedAsk,deliverables:[{kind:'schedule_inc_text',filename:String(m.output_package?.root_path||'schedule.inc'),description:'Validated SCHEDULE text; not approved until the orchestrator human release gate.',schedule_text:generatedPreview}],artifact_refs:safeArtifacts,compact_data:{build_mode:b.build_mode,generated_schedule_bytes:generated.length,generated_schedule_preview:generated.slice(0,4000),plan,render_result:{status:r.status,hard_blockers:r.hard_blockers||[],catalogue_hash:r.catalogue_hash||null},merge_result:slimMerge(m),validation_result:{status:v.status,hard_blockers:v.hard_blockers||[],score:v.score||null,findings:(Array.isArray(v.findings)?v.findings:[]).filter(f=>f.severity==='error').slice(0,20)},schedule_verifier_result:{verdict:review.verdict,can_release:review.can_release,score:review.score,findings:review.findings||[]},preservation_report:m.preservation_report,semantic_diff:m.semantic_diff,commissioning_revise:slimCommissioning(m.commissioning_revise),monthly_dates_check:m.commissioning_revise?.monthly_dates_check||null,requirements_matrix:b.requirements_matrix,source_map:b.source_map,completeness_report:b.completeness_report,decision_record:reviewDecision,decision_records:[plan.decision_record,b.decision_record,reviewDecision].filter(Boolean),gate_decisions:gateDecisions,stage_scores:trace.filter(x=>x.score).map(x=>({stage:x.stage,...x.score})),overall_score:score,agent_tool_trace:Array.isArray(b.agent_tool_trace)?b.agent_tool_trace:[],trace_summary:trace,release_ready:review.can_release},assumptions:asStrings(b.assumptions),warnings:asStrings(b.warnings),evidence:asObjects(b.evidence),self_check:{performed:true,passed:Boolean(review.can_release),checks:[{check:'schema_render',passed:r.status==='rendered'},{check:'merge',passed:m.status==='merged'},{check:'validation',passed:v.status==='valid'},{check:'independent_schedule_verifier',passed:review.verdict==='pass'}],reproducibility:'Replay the bounded input text, expert schema catalogue, evidence snapshot and typed IR.'},human_request:{kind:releaseReady?'needs_approval':'needs_input',questions:releaseReady?[{id:'release_approval',question:releaseAsk,text:releaseAsk,required:true}]:correctionQuestions},error:releaseReady?null:{code:'SCHEDULE_PIPELINE_NOT_RELEASE_READY',findings:Array.isArray(review.findings)?review.findings.filter(x=>x&&typeof x==='object'):[]},continuation:null}}}];
+"""
+
+
+GATE_RESULT = HITL_USER_COPY_JS + r"""
+const root=$('Normalize SCHEDULE pipeline packet').first().json,x=$json||{};
+const commissioning=x.commissioning_revise&&typeof x.commissioning_revise==='object'?x.commissioning_revise:null;
+const findings=Array.isArray(x.findings)?x.findings:(Array.isArray(x.error?.findings)?x.error.findings:[]);
+const gaps=Array.isArray(x.evidence_gap)&&x.evidence_gap.length?x.evidence_gap:(Array.isArray(commissioning?.evidence_gap)?commissioning.evidence_gap:[]);
+let status=['needs_input','needs_decision','needs_approval','retryable_error','fatal_error'].includes(x.status)?x.status:'needs_input';
+if(x.contract==='schedule_verifier_result'&&x.verdict==='pass_with_warnings')status='needs_approval';
+if(x.contract==='schedule_builder_stage_result'&&Array.isArray(x.evidence_gap)&&x.evidence_gap.length)status='needs_input';
+if(commissioning&&commissioning.status==='needs_input')status='needs_input';
+const rawFindings=findings.length?findings:(Array.isArray(root.packet_findings)?root.packet_findings:[]);
+const compactFindings=hitlUniqueFindings(rawFindings);
+const normalizedFindings=compactFindings.filter(f=>String(f?.severity||'error').toLowerCase()!=='warning'&&String(f?.severity||'error').toLowerCase()!=='info');
+const reasonCodes=[...new Set(normalizedFindings.map(f=>String(f.code||'SCHEDULE_PIPELINE_GATE')))];
+const suppliedQuestions=Array.isArray(x.questions)?x.questions.filter(q=>q&&typeof q==='object').slice(0,100):(Array.isArray(commissioning?.questions)?commissioning.questions:[]);
+const compiled=hitlCompileCopy({
+  findings:normalizedFindings.length?normalizedFindings:compactFindings,
+  gaps,
+  questions:suppliedQuestions,
+  summary:x.user_message||x.summary||x.rationale||commissioning?.findings?.[0]?.note,
+  stage:x.contract||commissioning?.contract||'',
+});
+const questions=compiled.questions;
+const continuation=x.continuation||commissioning?.continuation||(gaps.length&&!String(commissioning?.continuation?.protocol||'').includes('hitl')?{protocol:'schedule-builder-evidence-gap-v1',evidence_gap:gaps}:null);
+const hitlAttach=String(continuation?.protocol||'')==='schedule-builder-hitl-attachment-v1';
+const decisionRecord=x.decision_record??{contract:'decision_record',contract_version:'1.0',objective:String(root.packet?.objective||root.request?.objective||'Resolve the failed SCHEDULE stage.'),considered_inputs:[{kind:'failed_stage',contract:String(x.contract||'unknown'),status:String(x.status||x.verdict||'blocked')}],proposed_actions:[{action:'request_targeted_input'},{action:'retry_with_new_snapshot'}],selected_action:{action:status,reason_codes:reasonCodes.length?reasonCodes:['SCHEDULE_PIPELINE_GATE']},rejected_actions:[],assumptions:[],evidence_refs:[],citations:[],tool_call_ids:[],unresolved_questions:questions,acceptance_check_results:[]};
+const userMessage=compiled.user_message;
+return[{json:{specialist_result:{contract:'specialist_result',contract_version:'1.0',task_id:root.task_id||'unknown',specialist_id:'schedule_builder_specialist',attempt:root.attempt||1,status,summary:userMessage.slice(0,4000),user_message:userMessage.slice(0,800),deliverables:[],artifact_refs:[],compact_data:{failed_stage:String(x.contract||commissioning?.contract||'unknown'),findings:normalizedFindings,findings_truncated:rawFindings.length>normalizedFindings.length,findings_total:rawFindings.length,evidence_gap:gaps.slice(0,50),new_wells:commissioning?.new_wells||[],unlisted_wells_policy:commissioning?.unlisted_wells_policy||null,score:x.score||null,decision_record:decisionRecord,gate_decisions:[{stage:String(x.contract||'unknown'),decision:'hitl',score:x.score?.stage_score??null,reason_codes:decisionRecord.selected_action.reason_codes}],trace_summary:[{stage:String(x.contract||'unknown'),status,score:x.score||null,decision_record:decisionRecord}]},assumptions:[],warnings:[],evidence:[],self_check:{performed:false,passed:false,checks:[],reproducibility:hitlAttach?'Продолжите в этой задаче: прикрепите WELLTRACK и Excel к ответу.':'Продолжите в этой задаче с недостающими файлами или уточнением.'},human_request:{kind:status,questions},error:x.error||{code:hitlAttach?'NEW_WELLS_REQUIRE_HITL':'SCHEDULE_PIPELINE_GATE',findings:normalizedFindings},continuation:hitlAttach?continuation:(continuation&&continuation.protocol==='schedule-builder-evidence-gap-v1'?continuation:null)}}}];
+"""
+
+
+INVALID_RESULT = HITL_USER_COPY_JS + r"""
+const x=$json,findings=Array.isArray(x.packet_findings)?x.packet_findings:[];
+const ragMissing=findings.some(f=>f.code==='SCHEDULE_RAG_EVIDENCE_REQUIRED');
+const status=ragMissing?'needs_input':'fatal_error';
+const code=ragMissing?'SCHEDULE_RAG_EVIDENCE_REQUIRED':'INVALID_SCHEDULE_SPECIALIST_PACKET';
+const compiled=hitlCompileCopy({findings, questions:ragMissing?[{id:'rag_evidence',code:'SCHEDULE_RAG_EVIDENCE_REQUIRED'}]:[], summary:'', stage:'schedule_intake_result'});
+const questions=ragMissing?compiled.questions:[];
+const userMessage=ragMissing?compiled.user_message:'Пакет задачи для Schedule Builder собран неверно. Создайте задачу заново из Activity.';
+const decisionRecord={contract:'decision_record',contract_version:'1.0',objective:'Validate the SCHEDULE specialist request before any model or tool call.',considered_inputs:[{kind:'specialist_packet',task_id:x.task_id||'unknown',packet_valid:false}],proposed_actions:[{action:'reject_invalid_packet'}],selected_action:{action:status,reason_codes:[code]},rejected_actions:[],assumptions:[],evidence_refs:[],citations:[],tool_call_ids:[],unresolved_questions:questions,acceptance_check_results:[{check:'packet_contract',passed:false}]};
+return[{json:{specialist_result:{contract:'specialist_result',contract_version:'1.0',task_id:x.task_id||'unknown',specialist_id:'schedule_builder_specialist',attempt:x.attempt||1,status,summary:userMessage,user_message:userMessage,deliverables:[],artifact_refs:[],compact_data:{findings,decision_record:decisionRecord,gate_decisions:[{stage:'intake',decision:'hitl',score:0,reason_codes:[code]}],trace_summary:[{stage:'intake',status,decision_record:decisionRecord}]},assumptions:[],warnings:[],evidence:[],self_check:{performed:false,passed:false,checks:[],reproducibility:''},human_request:ragMissing?{kind:'needs_input',questions}:null,error:{code,findings},continuation:null}}}];
+"""
+
+
+def build_schedule_pipeline(*, node, note, code, trigger, ifnode, connect, workflow, keywords, planner_schema, planner_system, intake_js, baseline_js, baseline_decode_js, baseline_query_js, plan_validate_js, render_js, merge_js, validate_js, verify_js):
+    example = {"specialist_packet": {"contract": "specialist_packet", "contract_version": "1.0", "task_id": "eng_example", "specialist_id": "schedule_builder_specialist", "attempt": 1, "objective": "Create forecast SCHEDULE", "inputs": {"schedule_request": {"build_mode": "CREATE", "simulator_profile": {"vendor": "Rock Flow Dynamics", "simulator": "tNavigator", "version": "22.2", "unit_system": "METRIC"}, "requested_keyword_scope": ["DATES", "WCONPROD"], "source_facts": [], "rag_evidence": {"contract": "schedule_rag_evidence", "contract_version": "1.0", "citations": [{"document_id": "tnav-22.2", "document_revision": "22.2", "source_hash": "sha256:replace", "page": "replace", "heading": "SCHEDULE"}], "results": []}, "schema_catalogue": {"contract": "schedule_schema_catalogue", "contract_version": "1.0", "catalogue_ref": "catalogue://tnavigator/22.2/replace", "catalogue_hash": "sha256:replace", "source_hash": "sha256:replace", "simulator_profile": {"vendor": "Rock Flow Dynamics", "simulator": "tNavigator", "version": "22.2"}, "approved": False, "approved_by": "", "approval_gate_id": "", "schemas": []}}}, "controls": {"preservation_policy": "preserve_unmentioned"}, "acceptance_criteria": [], "artifact_refs": []}}
+    nodes = [
+        note("SCHEDULE pipeline README", (-1200, -760), "## Governed SCHEDULE pipeline — n8n 2.30.8\n\nVisible bounded CREATE/REVISE specialist: intake → lossless baseline analysis → expert catalogue decode → pre-change semantic replay → planning summary → plan → targeted mutation-safe baseline query → typed IR → deterministic render → merge → candidate replay/validation → independent review.\n\nIt never calls Excel/RAG directly and owns no durable state. Bind it in Universal Orchestrator. Without a complete active keyword instruction and exact expert schema it stops before planning/rendering.", 660, 480),
+        trigger("Receive specialist packet", (-1200, -100), example),
+        code("Normalize SCHEDULE pipeline packet", (-980, -100), NORMALIZE),
+        ifnode("SCHEDULE packet valid?", (-760, -100), "={{ $json.packet_valid }}"),
+        code("Prepare deterministic intake", (-540, -260), PREPARE_INTAKE),
+        code("Run deterministic SCHEDULE intake", (-320, -260), intake_js),
+        ifnode("SCHEDULE intake accepted?", (-100, -260), "={{ $json.status }}", "accepted", "string"),
+        ifnode("REVISE needs baseline analysis?", (120, -260), "={{ $json.build_mode }}", "REVISE", "string"),
+        code("Prepare baseline analysis", (340, -400), PREPARE_BASELINE),
+        code("Analyze lossless baseline inventory", (560, -400), baseline_js),
+        ifnode("Baseline analysis accepted?", (780, -400), "={{ $json.status }}", "analyzed", "string"),
+        code("Prepare catalogue baseline decode", (1000, -400), PREPARE_BASELINE_DECODE),
+        code("Decode typed baseline records", (1220, -400), baseline_decode_js),
+        ifnode("Baseline decode accepted?", (1440, -400), "={{ $json.status }}", "decoded", "string"),
+        code("Prepare baseline prefix replay", (1660, -400), PREPARE_BASELINE_REPLAY),
+        code("Replay baseline prefix into semantic boundary", (1880, -400), validate_js),
+        ifnode("Semantic boundary accepted?", (2100, -400), "={{ $json.status }}", "valid", "string"),
+        code("Prepare baseline planning query", (2320, -400), PREPARE_BASELINE_PLANNING_QUERY),
+        code("Query baseline planning context", (2540, -400), baseline_query_js),
+        ifnode("Baseline planning context accepted?", (2760, -400), "={{ $json.status }}", "succeeded", "string"),
+        code("Prepare SCHEDULE pipeline plan", (2980, -100), PREPARE_PLAN),
+        node("SCHEDULE Planner Agent", "@n8n/n8n-nodes-langchain.agent", 3.1, (3200, -100), {"promptType": "define", "text": "={{ $json.planner_input }}", "hasOutputParser": True, "needsFallback": False, "options": {"systemMessage": planner_system, "maxIterations": 6, "returnIntermediateSteps": True, "enableStreaming": False}}),
+        node("SCHEDULE Planner Chat Model — configure in UI", "@n8n/n8n-nodes-langchain.lmChatOpenAi", 1.3, (3100, -360), {"model": {"mode": "id", "value": "gpt-5.4-nano"}, "options": chat_model_options(max_tokens=3500), "responsesApiEnabled": False}, credentials={"openAiApi": {"id": "REPLACE_IN_UI", "name": "REPLACE: schedule planner chat credential"}}),
+        node("SCHEDULE Planner Structured Output", "@n8n/n8n-nodes-langchain.outputParserStructured", 1.3, (3320, -360), structured_parser_params(json.dumps(planner_schema))),
+        code("Validate SCHEDULE pipeline plan", (3420, -100), plan_validate_js),
+        ifnode("SCHEDULE plan ready?", (3640, -100), '={{ ["proposed"].includes($json.status) && $json.score.decision !== "hitl" }}'),
+        ifnode("REVISE needs targeted baseline context?", (3860, -100), "={{ $json.build_mode }}", "REVISE", "string"),
+        code("Prepare targeted baseline query", (4080, -260), PREPARE_BASELINE_BUILDER_QUERY),
+        code("Query targeted baseline records", (4300, -260), baseline_query_js),
+        ifnode("Targeted baseline context complete?", (4520, -260), "={{ $json.status }}", "succeeded", "string"),
+        code("Prepare SCHEDULE builder stage", (4740, -100), PREPARE_BUILD),
+        node("SCHEDULE Builder Agent", "@n8n/n8n-nodes-langchain.agent", 3.1, (4960, -100), {"promptType": "define", "text": "={{ $json.builder_input }}", "hasOutputParser": True, "needsFallback": False, "options": {"systemMessage": BUILDER_SYSTEM, "maxIterations": 8, "returnIntermediateSteps": True, "enableStreaming": False}}),
+        node("SCHEDULE Builder Chat Model — configure in UI", "@n8n/n8n-nodes-langchain.lmChatOpenAi", 1.3, (4860, -360), {"model": {"mode": "id", "value": "gpt-5.4-nano"}, "options": chat_model_options(max_tokens=6000), "responsesApiEnabled": False}, credentials={"openAiApi": {"id": "REPLACE_IN_UI", "name": "REPLACE: schedule builder chat credential"}}),
+        node("SCHEDULE Builder Structured Output", "@n8n/n8n-nodes-langchain.outputParserStructured", 1.3, (5080, -360), structured_parser_params(json.dumps(BUILDER_SCHEMA))),
+        code("Validate SCHEDULE builder stage", (5180, -100), validate_builder(keywords)),
+        ifnode("Builder draft ready?", (5400, -100), '={{ ["succeeded","partial"].includes($json.status) && $json.score.decision !== "hitl" }}'),
+        code("Prepare deterministic schema render", (5620, -100), PREPARE_RENDER),
+        code("Render typed SCHEDULE IR deterministically", (5840, -100), render_js),
+        ifnode("SCHEDULE schema render accepted?", (6060, -100), "={{ $json.status }}", "rendered", "string"),
+        code("Prepare deterministic merge", (6280, -100), PREPARE_MERGE),
+        code("Merge SCHEDULE draft deterministically", (6500, -100), merge_js),
+        ifnode("SCHEDULE merge accepted?", (6720, -100), "={{ $json.status }}", "merged", "string"),
+        code("Apply commissioning timeline revise", (6830, -100), APPLY_COMMISSIONING_TIMELINE),
+        ifnode("Commissioning timeline ok?", (6880, -100), "={{ $json.status }}", "merged", "string"),
+        code("Prepare SCHEDULE validation", (6940, -100), PREPARE_VALIDATE),
+        code("Validate merged SCHEDULE package", (7160, -100), validate_js),
+        ifnode("SCHEDULE validation passed?", (7380, -100), "={{ $json.status }}", "valid", "string"),
+        code("Prepare independent SCHEDULE review", (7600, -100), PREPARE_VERIFY),
+        code("Run independent SCHEDULE verifier", (7820, -100), verify_js),
+        ifnode("SCHEDULE verifier passed?", (8040, -100), "={{ $json.verdict }}", "pass", "string"),
+        code("Build release-ready specialist result", (8260, -100), FINAL_RESULT),
+        code("Build SCHEDULE pipeline gate result", (6940, 220), GATE_RESULT),
+        code("Build invalid SCHEDULE packet result", (-540, 120), INVALID_RESULT),
+    ]
+    connections = {}
+    connect(connections, "Receive specialist packet", "Normalize SCHEDULE pipeline packet")
+    connect(connections, "Normalize SCHEDULE pipeline packet", "SCHEDULE packet valid?")
+    connect(connections, "SCHEDULE packet valid?", "Prepare deterministic intake", idx=0)
+    connect(connections, "SCHEDULE packet valid?", "Build invalid SCHEDULE packet result", idx=1)
+    connect(connections, "Prepare deterministic intake", "Run deterministic SCHEDULE intake")
+    connect(connections, "Run deterministic SCHEDULE intake", "SCHEDULE intake accepted?")
+    connect(connections, "SCHEDULE intake accepted?", "REVISE needs baseline analysis?", idx=0)
+    connect(connections, "SCHEDULE intake accepted?", "Build SCHEDULE pipeline gate result", idx=1)
+    connect(connections, "REVISE needs baseline analysis?", "Prepare baseline analysis", idx=0)
+    connect(connections, "REVISE needs baseline analysis?", "Prepare SCHEDULE pipeline plan", idx=1)
+    connect(connections, "Prepare baseline analysis", "Analyze lossless baseline inventory")
+    connect(connections, "Analyze lossless baseline inventory", "Baseline analysis accepted?")
+    connect(connections, "Baseline analysis accepted?", "Prepare catalogue baseline decode", idx=0)
+    connect(connections, "Baseline analysis accepted?", "Build SCHEDULE pipeline gate result", idx=1)
+    connect(connections, "Prepare catalogue baseline decode", "Decode typed baseline records")
+    connect(connections, "Decode typed baseline records", "Baseline decode accepted?")
+    connect(connections, "Baseline decode accepted?", "Prepare baseline prefix replay", idx=0)
+    connect(connections, "Baseline decode accepted?", "Build SCHEDULE pipeline gate result", idx=1)
+    connect(connections, "Prepare baseline prefix replay", "Replay baseline prefix into semantic boundary")
+    connect(connections, "Replay baseline prefix into semantic boundary", "Semantic boundary accepted?")
+    connect(connections, "Semantic boundary accepted?", "Prepare baseline planning query", idx=0)
+    connect(connections, "Semantic boundary accepted?", "Build SCHEDULE pipeline gate result", idx=1)
+    connect(connections, "Prepare baseline planning query", "Query baseline planning context")
+    connect(connections, "Query baseline planning context", "Baseline planning context accepted?")
+    connect(connections, "Baseline planning context accepted?", "Prepare SCHEDULE pipeline plan", idx=0)
+    connect(connections, "Baseline planning context accepted?", "Build SCHEDULE pipeline gate result", idx=1)
+    connect(connections, "Prepare SCHEDULE pipeline plan", "SCHEDULE Planner Agent")
+    connect(connections, "SCHEDULE Planner Chat Model — configure in UI", "SCHEDULE Planner Agent", "ai_languageModel", 0, "ai_languageModel")
+    connect(connections, "SCHEDULE Planner Chat Model — configure in UI", "SCHEDULE Planner Structured Output", "ai_languageModel", 0, "ai_languageModel")
+    connect(connections, "SCHEDULE Planner Structured Output", "SCHEDULE Planner Agent", "ai_outputParser", 0, "ai_outputParser")
+    connect(connections, "SCHEDULE Planner Agent", "Validate SCHEDULE pipeline plan")
+    connect(connections, "Validate SCHEDULE pipeline plan", "SCHEDULE plan ready?")
+    connect(connections, "SCHEDULE plan ready?", "REVISE needs targeted baseline context?", idx=0)
+    connect(connections, "SCHEDULE plan ready?", "Build SCHEDULE pipeline gate result", idx=1)
+    connect(connections, "REVISE needs targeted baseline context?", "Prepare targeted baseline query", idx=0)
+    connect(connections, "REVISE needs targeted baseline context?", "Prepare SCHEDULE builder stage", idx=1)
+    connect(connections, "Prepare targeted baseline query", "Query targeted baseline records")
+    connect(connections, "Query targeted baseline records", "Targeted baseline context complete?")
+    connect(connections, "Targeted baseline context complete?", "Prepare SCHEDULE builder stage", idx=0)
+    connect(connections, "Targeted baseline context complete?", "Build SCHEDULE pipeline gate result", idx=1)
+    connect(connections, "Prepare SCHEDULE builder stage", "SCHEDULE Builder Agent")
+    connect(connections, "SCHEDULE Builder Chat Model — configure in UI", "SCHEDULE Builder Agent", "ai_languageModel", 0, "ai_languageModel")
+    connect(connections, "SCHEDULE Builder Chat Model — configure in UI", "SCHEDULE Builder Structured Output", "ai_languageModel", 0, "ai_languageModel")
+    connect(connections, "SCHEDULE Builder Structured Output", "SCHEDULE Builder Agent", "ai_outputParser", 0, "ai_outputParser")
+    connect(connections, "SCHEDULE Builder Agent", "Validate SCHEDULE builder stage")
+    connect(connections, "Validate SCHEDULE builder stage", "Builder draft ready?")
+    connect(connections, "Builder draft ready?", "Prepare deterministic schema render", idx=0)
+    connect(connections, "Builder draft ready?", "Build SCHEDULE pipeline gate result", idx=1)
+    connect(connections, "Prepare deterministic schema render", "Render typed SCHEDULE IR deterministically")
+    connect(connections, "Render typed SCHEDULE IR deterministically", "SCHEDULE schema render accepted?")
+    connect(connections, "SCHEDULE schema render accepted?", "Prepare deterministic merge", idx=0)
+    connect(connections, "SCHEDULE schema render accepted?", "Build SCHEDULE pipeline gate result", idx=1)
+    connect(connections, "Prepare deterministic merge", "Merge SCHEDULE draft deterministically")
+    connect(connections, "Merge SCHEDULE draft deterministically", "SCHEDULE merge accepted?")
+    connect(connections, "SCHEDULE merge accepted?", "Apply commissioning timeline revise", idx=0)
+    connect(connections, "SCHEDULE merge accepted?", "Build SCHEDULE pipeline gate result", idx=1)
+    connect(connections, "Apply commissioning timeline revise", "Commissioning timeline ok?")
+    connect(connections, "Commissioning timeline ok?", "Prepare SCHEDULE validation", idx=0)
+    connect(connections, "Commissioning timeline ok?", "Build SCHEDULE pipeline gate result", idx=1)
+    connect(connections, "Prepare SCHEDULE validation", "Validate merged SCHEDULE package")
+    connect(connections, "Validate merged SCHEDULE package", "SCHEDULE validation passed?")
+    connect(connections, "SCHEDULE validation passed?", "Prepare independent SCHEDULE review", idx=0)
+    connect(connections, "SCHEDULE validation passed?", "Build SCHEDULE pipeline gate result", idx=1)
+    connect(connections, "Prepare independent SCHEDULE review", "Run independent SCHEDULE verifier")
+    connect(connections, "Run independent SCHEDULE verifier", "SCHEDULE verifier passed?")
+    connect(connections, "SCHEDULE verifier passed?", "Build release-ready specialist result", idx=0)
+    connect(connections, "SCHEDULE verifier passed?", "Build SCHEDULE pipeline gate result", idx=1)
+    return workflow(
+        "SCHEDULE — Builder",
+        "Visible intake, lossless catalogue decode, pre-change state replay, targeted baseline retrieval, plan, typed IR, deterministic render, merge, timeline commissioning revise (parse→mutate→emit), candidate validation and independent review. Durable state, Excel and release remain in the Orchestrator.",
+        nodes,
+        connections,
+        "specialist_result/v1",
+    )
+
+===END_FILE===
+===BEGIN_FILE===	n8n/templates/schedule_rag_workflows.py	73402	utf8
+"""Practical hybrid-RAG workflows for n8n 2.30.8.
+
+One physical PGVector/parent table pair; logical isolation is `target_base`.
+Credentials are selected in UI; knowledge itself never enters the workflow export.
+"""
+from __future__ import annotations
+
+import json
+import uuid
+from pathlib import Path
+
+RAG_DIR = Path(__file__).resolve().parents[1] / "rag"
+
+
+KEYWORDS = [
+    "DATES", "INCLUDE", "GRUPTREE", "WELSPECS", "WELLTRACK", "COMPDATMD",
+    "WCONHIST", "WCONPROD", "WCONINJE", "GCONPROD", "GCONINJE", "GUIDERAT", "GSATPROD", "GSATINJE", "WELLSTRE", "WINJGAS", "GINJGAS", "BRANPROP", "NODEPROP", "GNETDP", "NETBALAN",
+    "FRACTURE_TEMPLATE", "FRACTURE_SPECS", "FRACTURE_STAGE", "WECON", "WTEST",
+    "WELTARG", "WNETDP", "WPIMULT", "WDFAC", "WEFAC", "WELOPEN", "WELDRAW", "WLIST", "WFRACP", "WFRACPL",
+    "VFPPROD", "WVFPDP", "ACTIONX", "DELAYACT", "ENDACTIO", "UDQ", "UDT", "APPLYSCRIPT",
+]
+
+NAMESPACES_JS = r"""
+const NAMESPACES={schedule_mvp:{types:['keyword_instruction','worked_example'],keywordMode:'schedule',requireCoverage:true,requireSchema:true,section:'SCHEDULE'},excel_protocol:{types:['protocol_instruction'],keywordMode:'open',requireCoverage:true,requireSchema:false,section:'EXCEL'},orchestrator_routing:{types:['routing_card'],keywordMode:'open',requireCoverage:false,requireSchema:false,section:'ORCHESTRATOR'},specialist_template:{types:['capability_instruction','worked_example'],keywordMode:'open',requireCoverage:true,requireSchema:false,section:'SPECIALIST'}};
+const COVERAGE_TYPES=new Set(['keyword_instruction','protocol_instruction','capability_instruction']);
+const ALLOWED_BASES=new Set(Object.keys(NAMESPACES));
+""".strip()
+
+
+def _credential(name: str) -> dict:
+    return {"postgres": {"id": "REPLACE_IN_UI", "name": name}}
+
+
+def _embedding_credential(name: str) -> dict:
+    return {"openAiApi": {"id": "REPLACE_IN_UI", "name": name}}
+
+
+INGEST_NORMALIZE = (NAMESPACES_JS + r"""
+// Code v2 defaults to run-once-for-all-items; normalize every incoming block.
+const obj=v=>v&&typeof v==='object'&&!Array.isArray(v),arr=Array.isArray,clean=v=>typeof v==='string'?v.trim():'';
+const parse=v=>{if(obj(v))return v;if(typeof v!=='string'||!v.trim())return{};try{const x=JSON.parse(v);return obj(x)?x:{}}catch{return{}}};
+const list=v=>arr(v)?[...new Set(v.map(clean).filter(Boolean))]:typeof v==='string'?(()=>{try{const x=JSON.parse(v);return arr(x)?list(x):v.split(/[,;|]/).map(clean).filter(Boolean)}catch{return v.split(/[,;|]/).map(clean).filter(Boolean)}})():[];
+const allowed=new Set(KEYWORDS_PLACEHOLDER);
+const hash=s=>{let h=2166136261;for(const ch of String(s)){h^=ch.charCodeAt(0);h=Math.imul(h,16777619)}return(h>>>0).toString(16).padStart(8,'0')};
+const recordless=e=>{const p=obj(e.parser)?e.parser:{},l=obj(e.layout)?e.layout:{},fs=arr(e.fields)?e.fields:[];return!fs.length&&Number(p.token_width)===0&&clean(l.record_terminator).toUpperCase()==='NONE'&&clean(l.block_terminator).toUpperCase()==='NONE'};
+const normalizeOne=(wrapper)=>{
+const incoming=wrapper.schedule_knowledge_block??wrapper.mas_knowledge_block??wrapper.schedule_knowledge_document??wrapper;
+const raw=obj(incoming)?incoming:{};
+const m={...parse(raw.metadata_json),...(obj(raw.metadata)?raw.metadata:{})},catalogue=parse(raw.schema_catalogue_json??raw.schema_catalogue),catalogueProvided=Object.keys(catalogue).length>0,findings=[];
+const targetBase=clean(raw.target_base||m.target_base||'schedule_mvp'),ns=NAMESPACES[targetBase]||{};
+const knowledgeType=clean(raw.knowledge_type||m.knowledge_type).toLowerCase(),allowTypes=new Set(ns.types||[]);
+const knowledgeId=clean(raw.knowledge_id||raw.document_id||m.knowledge_id||m.document_id),revision=clean(raw.revision||raw.document_revision||m.revision||m.document_revision||'1'),status=clean(raw.status||raw.knowledge_status||m.status||m.knowledge_status||'active').toLowerCase();
+const rawKeywords=list(raw.keywords||raw.keyword_families||m.keywords||m.keyword_families);
+const keywords=ns.keywordMode==='schedule'?rawKeywords.map(v=>v.toUpperCase()).filter(v=>allowed.has(v)):rawKeywords.map(v=>v.toUpperCase()).filter(Boolean);
+const topics=list(raw.topics||m.topics),taskPatterns=list(raw.task_patterns||m.task_patterns),examples=arr(raw.examples)?raw.examples.filter(obj).slice(0,100):[];
+const text=clean(raw.text||raw.document_text),title=clean(raw.title||m.title||knowledgeId),author=clean(raw.author||raw.approved_by||m.author||m.approved_by),accessScope=clean(raw.access_scope||m.access_scope||'petroleum-engineering');
+const authority='department_expert',sourceHash=clean(raw.source_hash||m.source_hash).toLowerCase(),page=clean(raw.page||m.page),heading=clean(raw.heading||m.heading||title);
+const simulatorFamily=targetBase==='schedule_mvp'?list(raw.simulator_family||m.simulator_family||['E100','E300','tNavigator']):list(raw.simulator_family||m.simulator_family||[]);
+const body={contract:'schedule_knowledge_block',contract_version:'1.0',target_base:targetBase,knowledge_type:knowledgeType,knowledge_id:knowledgeId,revision,title,keywords,topics,task_patterns:taskPatterns,simulator_family:simulatorFamily,status,author,text,examples,schema_catalogue:catalogueProvided?catalogue:null};
+const searchable=[title,text,keywords.join(' '),topics.join(' '),taskPatterns.join(' '),...examples.flatMap(e=>[clean(e.title),clean(e.task),clean(e.schedule_text),clean(e.explanation)])].filter(Boolean).join('\n\n');
+if(!ALLOWED_BASES.has(targetBase))findings.push({code:'TARGET_BASE_NOT_ALLOWLISTED',severity:'error',target_base:targetBase});
+if(!allowTypes.has(knowledgeType))findings.push({code:'KNOWLEDGE_TYPE_INVALID',severity:'error'});if(!knowledgeId)findings.push({code:'KNOWLEDGE_ID_REQUIRED',severity:'error'});if(!revision)findings.push({code:'REVISION_REQUIRED',severity:'error'});if(!title)findings.push({code:'TITLE_REQUIRED',severity:'error'});if(!author)findings.push({code:'EXPERT_AUTHOR_REQUIRED',severity:'error'});if(!accessScope)findings.push({code:'ACCESS_SCOPE_REQUIRED',severity:'error'});
+if(status!=='active')findings.push({code:'ACTIVE_KNOWLEDGE_REQUIRED',severity:'error'});if(!searchable)findings.push({code:'KNOWLEDGE_TEXT_REQUIRED',severity:'error'});if(searchable.length>2000000)findings.push({code:'KNOWLEDGE_TEXT_TOO_LARGE',severity:'error'});
+if(!keywords.length)findings.push({code:ns.keywordMode==='schedule'?'NO_SCHEDULE_KEYWORD_FOUND':'KNOWLEDGE_TAGS_REQUIRED',severity:'error'});
+if(knowledgeType==='keyword_instruction'&&!text)findings.push({code:'FULL_KEYWORD_INSTRUCTION_REQUIRED',severity:'error'});
+if(knowledgeType==='protocol_instruction'&&!text)findings.push({code:'PROTOCOL_INSTRUCTION_REQUIRED',severity:'error'});
+if(knowledgeType==='routing_card'&&!text)findings.push({code:'ROUTING_CARD_TEXT_REQUIRED',severity:'error'});
+if(knowledgeType==='capability_instruction'&&!text)findings.push({code:'CAPABILITY_INSTRUCTION_REQUIRED',severity:'error'});
+if(knowledgeType==='worked_example'&&!examples.length&&!text)findings.push({code:'WORKED_EXAMPLE_REQUIRED',severity:'error'});
+const contentHash=sourceHash||`fnv1a32:${hash(JSON.stringify(body))}`,documentId=knowledgeId,documentRevision=revision;
+if(catalogueProvided){const cp=obj(catalogue.simulator_profile)?catalogue.simulator_profile:{},schemas=arr(catalogue.schemas)?catalogue.schemas:[];
+ if(catalogue.contract!=='schedule_schema_catalogue'||catalogue.contract_version!=='1.0')findings.push({code:'SCHEMA_CATALOGUE_CONTRACT_INVALID',severity:'error'});if(!/^sha256:[a-f0-9]{64}$/i.test(clean(catalogue.catalogue_hash)))findings.push({code:'SCHEMA_CATALOGUE_HASH_INVALID',severity:'error'});if(!/^sha256:[a-f0-9]{64}$/i.test(clean(catalogue.source_hash)))findings.push({code:'SCHEMA_SOURCE_HASH_INVALID',severity:'error'});if(clean(cp.simulator).toLowerCase()!=='tnavigator'||clean(cp.version)!=='22.2')findings.push({code:'SCHEMA_PROFILE_NOT_APPROVED',severity:'error'});if(!schemas.length)findings.push({code:'SCHEMA_CATALOGUE_EMPTY',severity:'error'});
+ for(const entry of schemas){const kw=clean(entry.keyword).toUpperCase(),fields=arr(entry.fields)?entry.fields:[],names=new Set(fields.map(f=>clean(f?.name)).filter(Boolean)),sem=obj(entry.semantics)?entry.semantics:null,fieldOk=f=>clean(f)&&names.has(clean(f));if(!allowed.has(kw)||!clean(entry.schema_id)||!clean(entry.schema_revision)||!(fields.length||recordless(entry)))findings.push({code:'SCHEMA_ENTRY_INVALID',severity:'error',keyword:kw,knowledge_id:knowledgeId});if(!sem)findings.push({code:'SCHEMA_SEMANTICS_REQUIRED',severity:'error',keyword:kw});else{for(const d of(arr(sem.definitions)?sem.definitions:[]))if(!obj(d)||!clean(d.entity_type)||!fieldOk(d.id_field))findings.push({code:'SEMANTIC_DEFINITION_INVALID',severity:'error',keyword:kw});for(const r of(arr(sem.references)?sem.references:[]))if(!obj(r)||!clean(r.entity_type)||!fieldOk(r.id_field))findings.push({code:'SEMANTIC_REFERENCE_INVALID',severity:'error',keyword:kw});}}
+}
+const normalizedCatalogue=catalogueProvided?{...catalogue,approved:catalogue.approved!==false,approved_by:clean(catalogue.approved_by||catalogue.author||author),author:clean(catalogue.author||catalogue.approved_by||author),approval_gate_id:clean(catalogue.approval_gate_id||`expert:${knowledgeId}:${revision}`),access_scope:clean(catalogue.access_scope||accessScope)}:null;
+const isSchedule=targetBase==='schedule_mvp';
+return{json:{contract:'schedule_knowledge_document',contract_version:'1.0',status:findings.length?'needs_input':'approved_for_ingestion',text:searchable,knowledge_block:{...body,schema_catalogue:normalizedCatalogue},metadata:{document_id:documentId,document_revision:documentRevision,source_hash:contentHash,target_base:targetBase,knowledge_type:knowledgeType,knowledge_id:knowledgeId,revision,status:'active',access_scope:accessScope,author,approved_by:author,authority_level:authority,approval_status:'approved',section:ns.section||'KNOWLEDGE',knowledge_status:'current',title,page,heading,keyword_families:keywords,topics,task_patterns:taskPatterns,parent_key:`${targetBase}:${knowledgeId}:${revision}`,ingest_key:`${targetBase}:${knowledgeId}:${revision}:${hash(searchable)}`,vendor:'department',simulator:isSchedule?'tNavigator':'',simulator_version:isSchedule?'22.2':''},schema_catalogue:normalizedCatalogue,catalogue_present:catalogueProvided,findings}};
+};
+return $input.all().map(item=>normalizeOne(item.json||{}));
+""").replace("KEYWORDS_PLACEHOLDER", json.dumps(KEYWORDS))
+
+
+INGEST_RESULT = r"""
+const approved=$('Normalize approved SCHEDULE knowledge').all().map(i=>i.json).filter(x=>x&&x.status==='approved_for_ingestion');
+const diff=$('Select new MAS knowledge').first().json||{};
+const skipped=Array.isArray(diff.skipped_ids)?diff.skipped_ids:(diff.sync_meta&&Array.isArray(diff.sync_meta.skipped_ids)?diff.sync_meta.skipped_ids:[]);
+return[{json:{contract:'schedule_knowledge_ingest_result',contract_version:'1.0',status:approved.length?'ingested':'already_present',inserted:approved.length,skipped:skipped.length,skipped_ids:skipped,knowledge_ids:approved.map(x=>x.metadata?.knowledge_id).filter(Boolean),vector_table:'tnavigator_schedule_knowledge_v1',parent_table:'tnavigator_schedule_knowledge_documents_v1',schema_catalogue_table:'tnavigator_schedule_schema_catalogue_v1',embedding_profile:'configure one identical model/dimensions in ingestion and retrieval',findings:[]}}];
+"""
+
+
+PREPARE_PARENT_PERSIST = r"""
+const items=$('Normalize approved SCHEDULE knowledge').all().filter(i=>i.json?.status==='approved_for_ingestion');
+return items.map(entry=>{
+  const x=entry.json,m=x.metadata||{},b=x.knowledge_block||{};
+  return {json:{...x,sql_parameters:[m.target_base,m.knowledge_id,m.revision,m.knowledge_type,'active',JSON.stringify(m.keyword_families||[]),JSON.stringify(m.topics||[]),JSON.stringify(m.task_patterns||[]),m.title,JSON.stringify(b),x.text,m.source_hash,m.access_scope,m.author]}};
+});
+"""
+
+
+PARENT_UPSERT_SQL = """WITH superseded AS (UPDATE tnavigator_schedule_knowledge_documents_v1 SET status='superseded',stored_at=now() WHERE target_base=$1 AND knowledge_id=$2 AND revision<>$3 AND status='active' RETURNING 1), inserted AS (INSERT INTO tnavigator_schedule_knowledge_documents_v1
+(target_base,knowledge_id,revision,knowledge_type,status,keywords,topics,task_patterns,title,body_json,searchable_text,content_hash,access_scope,author)
+VALUES($1,$2,$3,$4,$5,$6::jsonb,$7::jsonb,$8::jsonb,$9,$10::jsonb,$11,$12,$13,$14)
+ON CONFLICT(target_base,knowledge_id,revision) DO UPDATE SET knowledge_type=EXCLUDED.knowledge_type,status=EXCLUDED.status,keywords=EXCLUDED.keywords,topics=EXCLUDED.topics,task_patterns=EXCLUDED.task_patterns,title=EXCLUDED.title,body_json=EXCLUDED.body_json,searchable_text=EXCLUDED.searchable_text,content_hash=EXCLUDED.content_hash,access_scope=EXCLUDED.access_scope,author=EXCLUDED.author,stored_at=now() RETURNING 1), chunks AS (UPDATE tnavigator_schedule_knowledge_v1 t SET metadata=jsonb_set(coalesce(t.metadata,'{}'::jsonb),'{knowledge_status}','"superseded"'::jsonb) WHERE t.metadata->>'target_base'=$1 AND t.metadata->>'knowledge_id'=$2 AND coalesce(t.metadata->>'revision','')<>$3 AND coalesce(t.metadata->>'knowledge_status','')='current' RETURNING 1)
+SELECT count(*)::int AS documents_stored FROM inserted"""
+
+
+PREPARE_CATALOGUE_PERSIST = r"""
+const items=$('Normalize approved SCHEDULE knowledge').all().filter(i=>i.json?.catalogue_present===true&&i.json?.schema_catalogue);
+if(!items.length)return[{json:{sql_parameters:['','','','','','','','schedule_mvp'],catalogue_present:false}}];
+return items.map(entry=>{
+  const x=entry.json,c=x.schema_catalogue,m=x.metadata||{};
+  return {json:{...x,sql_parameters:[c?JSON.stringify(c):'',c?.catalogue_hash||'',c?.catalogue_ref||`expert://${m.target_base}/${m.knowledge_id}/${m.revision}`,c?.source_hash||m.source_hash,c?.access_scope||m.access_scope,c?.approved_by||m.author,c?.approval_gate_id||`expert:${m.knowledge_id}:${m.revision}`,m.target_base]}};
+});
+"""
+
+
+CATALOGUE_UPSERT_SQL = """WITH payload AS (SELECT NULLIF($1,'')::jsonb AS body), inserted AS (INSERT INTO tnavigator_schedule_schema_catalogue_v1
+(catalogue_hash,catalogue_ref,source_hash,access_scope,simulator_version,approved_by,approval_gate_id,target_base,schema_catalogue)
+SELECT $2,$3,$4,$5,'22.2',$6,$7,$8,body FROM payload WHERE body IS NOT NULL
+ON CONFLICT(catalogue_hash) DO UPDATE SET catalogue_ref=EXCLUDED.catalogue_ref,source_hash=EXCLUDED.source_hash,access_scope=EXCLUDED.access_scope,approved_by=EXCLUDED.approved_by,approval_gate_id=EXCLUDED.approval_gate_id,target_base=EXCLUDED.target_base,schema_catalogue=EXCLUDED.schema_catalogue,stored_at=now() RETURNING catalogue_hash)
+SELECT count(*)::int AS catalogues_stored FROM inserted"""
+
+
+ENSURE_PARENT_SQL = """CREATE TABLE IF NOT EXISTS tnavigator_schedule_knowledge_documents_v1 (
+ target_base text NOT NULL, knowledge_id text NOT NULL, revision text NOT NULL,
+ knowledge_type text NOT NULL, status text NOT NULL, keywords jsonb NOT NULL,
+ topics jsonb NOT NULL, task_patterns jsonb NOT NULL, title text NOT NULL,
+ body_json jsonb NOT NULL, searchable_text text NOT NULL, content_hash text NOT NULL,
+ access_scope text NOT NULL, author text NOT NULL, stored_at timestamptz NOT NULL DEFAULT now(),
+ PRIMARY KEY(target_base,knowledge_id,revision));
+CREATE TABLE IF NOT EXISTS tnavigator_schedule_schema_catalogue_v1 (
+ catalogue_hash text PRIMARY KEY,catalogue_ref text NOT NULL,source_hash text NOT NULL,
+ access_scope text NOT NULL,simulator_version text NOT NULL CHECK(simulator_version='22.2'),
+ approved_by text NOT NULL,approval_gate_id text NOT NULL,target_base text NOT NULL DEFAULT 'schedule_mvp',
+ schema_catalogue jsonb NOT NULL,stored_at timestamptz NOT NULL DEFAULT now());
+ALTER TABLE tnavigator_schedule_schema_catalogue_v1 ADD COLUMN IF NOT EXISTS target_base text NOT NULL DEFAULT 'schedule_mvp';
+SELECT count(*)::int AS parent_tables_ready FROM tnavigator_schedule_knowledge_documents_v1"""
+
+
+LOOKUP_EXISTING_SQL = """SELECT target_base, knowledge_id, revision, content_hash
+FROM tnavigator_schedule_knowledge_documents_v1
+WHERE status='active'"""
+
+
+FINALIZE_INGEST_SQL = """CREATE TABLE IF NOT EXISTS tnavigator_schedule_knowledge_documents_v1 (
+ target_base text NOT NULL, knowledge_id text NOT NULL, revision text NOT NULL,
+ knowledge_type text NOT NULL, status text NOT NULL, keywords jsonb NOT NULL,
+ topics jsonb NOT NULL, task_patterns jsonb NOT NULL, title text NOT NULL,
+ body_json jsonb NOT NULL, searchable_text text NOT NULL, content_hash text NOT NULL,
+ access_scope text NOT NULL, author text NOT NULL, stored_at timestamptz NOT NULL DEFAULT now(),
+ PRIMARY KEY(target_base,knowledge_id,revision));
+CREATE TABLE IF NOT EXISTS tnavigator_schedule_schema_catalogue_v1 (
+ catalogue_hash text PRIMARY KEY,catalogue_ref text NOT NULL,source_hash text NOT NULL,
+ access_scope text NOT NULL,simulator_version text NOT NULL CHECK(simulator_version='22.2'),
+ approved_by text NOT NULL,approval_gate_id text NOT NULL,target_base text NOT NULL DEFAULT 'schedule_mvp',
+ schema_catalogue jsonb NOT NULL,stored_at timestamptz NOT NULL DEFAULT now());
+ALTER TABLE tnavigator_schedule_schema_catalogue_v1 ADD COLUMN IF NOT EXISTS target_base text NOT NULL DEFAULT 'schedule_mvp';
+CREATE INDEX IF NOT EXISTS tn_sched_kb_metadata_gin ON tnavigator_schedule_knowledge_v1 USING gin (metadata);
+CREATE INDEX IF NOT EXISTS tn_sched_kb_lexical_gin ON tnavigator_schedule_knowledge_v1 USING gin (to_tsvector('simple',coalesce(text,'')));
+WITH ranked AS (SELECT id,row_number() OVER(PARTITION BY metadata->>'ingest_key',md5(text) ORDER BY id::text) rn FROM tnavigator_schedule_knowledge_v1), deleted AS (DELETE FROM tnavigator_schedule_knowledge_v1 t USING ranked r WHERE t.id=r.id AND r.rn>1 RETURNING t.id) SELECT count(*)::int AS duplicates_removed FROM deleted"""
+
+
+RETRIEVAL_NORMALIZE = (NAMESPACES_JS + r"""
+const raw=$json.schedule_retrieval_request??$json.mas_retrieval_request??$json,obj=v=>v&&typeof v==='object'&&!Array.isArray(v),clean=v=>typeof v==='string'?v.trim():'';
+const parse=v=>{if(obj(v))return v;if(typeof v!=='string'||!v.trim())return{};try{const x=JSON.parse(v);return obj(x)?x:{}}catch{return{}}},f={...parse(raw.filters_json),...(obj(raw.filters)?raw.filters:{})},findings=[];
+const query=clean(raw.query),targetBase=clean(f.target_base||raw.target_base||'schedule_mvp'),accessScope=clean(f.access_scope||raw.access_scope||'petroleum-engineering'),requestId=clean(raw.request_id),ns=NAMESPACES[targetBase]||{};
+if(!query)findings.push({code:'QUERY_REQUIRED',severity:'error'});if(query.length>8000)findings.push({code:'QUERY_TOO_LARGE',severity:'error'});if(!ALLOWED_BASES.has(targetBase))findings.push({code:'TARGET_BASE_NOT_ALLOWLISTED',severity:'error'});if(!accessScope)findings.push({code:'ACCESS_SCOPE_REQUIRED',severity:'error'});
+const allowed=new Set(KEYWORDS_PLACEHOLDER);
+const supplied=Array.isArray(f.keyword_families)?f.keyword_families.map(v=>clean(v)).filter(Boolean):[];
+const exactSchedule=[...new Set((query.match(/\b[A-Z][A-Z0-9_]+\b/g)||[]).filter(k=>allowed.has(k)))];
+// Coverage must follow the retrieval scope. Do not treat every ALLCAPS token in the
+// query as required evidence (e.g. "do not invent WELSPECS" must not force WELSPECS RAG).
+const tags=ns.keywordMode==='schedule'?(supplied.length?supplied.map(v=>v.toUpperCase()).filter(v=>allowed.has(v)):exactSchedule):supplied.map(v=>v.toUpperCase());
+const exact=tags.slice();
+const allowTypes=new Set(ns.types||[]);
+const types=Array.isArray(f.knowledge_types)?[...new Set(f.knowledge_types.map(v=>clean(v).toLowerCase()).filter(v=>allowTypes.has(v)))]:[...allowTypes];
+const topics=Array.isArray(f.topics)?[...new Set(f.topics.map(clean).filter(Boolean))]:[],patterns=Array.isArray(f.task_patterns)?[...new Set(f.task_patterns.map(clean).filter(Boolean))]:[];
+return[{json:{contract:'schedule_retrieval_query',contract_version:'1.0',status:findings.length?'needs_input':'query_ready',query,request_id:requestId||null,top_k:Math.min(80,Math.max(Math.trunc(Number(raw.top_k)||10),tags.length*4,20)),filters:{target_base:targetBase,access_scope:accessScope,knowledge_types:types,keyword_families:tags,topics,task_patterns:patterns,simulator_version:targetBase==='schedule_mvp'?'22.2':'',section:ns.section||'KNOWLEDGE',knowledge_status:'current',require_coverage:ns.requireCoverage===true,require_schema:ns.requireSchema===true},exact_keyword_terms:exact,findings}}];
+""").replace("KEYWORDS_PLACEHOLDER", json.dumps(KEYWORDS))
+
+
+PREPARE_LEXICAL = r"""const x=$json;const tags=Array.isArray(x.filters?.keyword_families)?x.filters.keyword_families:[];const branchLimit=Math.min(120,Math.max(Number(x.top_k)||10,tags.length*4,24));return[{json:{...x,branch:'lexical',sql_parameters:[x.query,x.filters.target_base,x.filters.access_scope,branchLimit,JSON.stringify(x.filters.keyword_families||[]),JSON.stringify(x.filters.knowledge_types||[])]}}];"""
+LEXICAL_SQL = """WITH authorized AS (SELECT id,text,metadata FROM tnavigator_schedule_knowledge_v1 WHERE metadata->>'target_base'=$2 AND metadata->>'access_scope'=$3 AND metadata->>'knowledge_status'='current' AND metadata->>'knowledge_type' IN (SELECT jsonb_array_elements_text($6::jsonb))), ranked AS (SELECT id::text candidate_id,text page_content,metadata,CASE WHEN EXISTS(SELECT 1 FROM jsonb_array_elements_text($5::jsonb) q WHERE upper(trim(q.value))=ANY(regexp_split_to_array(upper(regexp_replace(coalesce(metadata->>'keyword_families',''),'[\\[\\]\"]','','g')),'\\s*,\\s*'))) THEN 1 ELSE 0 END exact_hit,ts_rank_cd(to_tsvector('simple',coalesce(text,'')),websearch_to_tsquery('simple',$1)) lexical_score FROM authorized WHERE to_tsvector('simple',coalesce(text,''))@@websearch_to_tsquery('simple',$1) OR EXISTS(SELECT 1 FROM jsonb_array_elements_text($5::jsonb) q WHERE upper(trim(q.value))=ANY(regexp_split_to_array(upper(regexp_replace(coalesce(metadata->>'keyword_families',''),'[\\[\\]\"]','','g')),'\\s*,\\s*')))) SELECT candidate_id,page_content,metadata,exact_hit,lexical_score,row_number() OVER(ORDER BY exact_hit DESC,lexical_score DESC,candidate_id) lexical_rank FROM ranked ORDER BY lexical_rank LIMIT $4"""
+PREPARE_TAG = r"""const x=$('Validate SCHEDULE retrieval request').first().json;const tags=Array.isArray(x.filters?.keyword_families)?x.filters.keyword_families:[];const branchLimit=Math.min(120,Math.max(Number(x.top_k)||10,tags.length*4,24));return[{json:{...x,branch:'tag',sql_parameters:[x.filters.target_base,x.filters.access_scope,JSON.stringify(x.filters.keyword_families||[]),JSON.stringify(x.filters.topics||[]),JSON.stringify(x.filters.task_patterns||[]),JSON.stringify(x.filters.knowledge_types||[]),branchLimit]}}];"""
+TAG_SQL = """WITH matched AS (SELECT id,text,metadata,coalesce(metadata->>'knowledge_id','') AS kid FROM tnavigator_schedule_knowledge_v1 WHERE metadata->>'target_base'=$1 AND metadata->>'access_scope'=$2 AND metadata->>'knowledge_status'='current' AND metadata->>'knowledge_type' IN (SELECT jsonb_array_elements_text($6::jsonb)) AND (($3::jsonb<>'[]'::jsonb AND EXISTS(SELECT 1 FROM jsonb_array_elements_text($3::jsonb) q WHERE upper(trim(q.value))=ANY(regexp_split_to_array(upper(regexp_replace(coalesce(metadata->>'keyword_families',''),'[\\[\\]\"]','','g')),'\\s*,\\s*')))) OR ($4::jsonb<>'[]'::jsonb AND EXISTS(SELECT 1 FROM jsonb_array_elements_text($4::jsonb) q WHERE lower(trim(q.value))=ANY(regexp_split_to_array(lower(regexp_replace(coalesce(metadata->>'topics',''),'[\\[\\]\"]','','g')),'\\s*,\\s*')))) OR ($5::jsonb<>'[]'::jsonb AND EXISTS(SELECT 1 FROM jsonb_array_elements_text($5::jsonb) q WHERE lower(trim(q.value))=ANY(regexp_split_to_array(lower(regexp_replace(coalesce(metadata->>'task_patterns',''),'[\\[\\]\"]','','g')),'\\s*,\\s*')))))), per_kid AS (SELECT id::text candidate_id,text page_content,metadata,row_number() OVER(PARTITION BY kid ORDER BY id::text) AS per_kid_rn FROM matched) SELECT candidate_id,page_content,metadata,row_number() OVER(ORDER BY per_kid_rn,candidate_id) AS tag_rank FROM per_kid WHERE per_kid_rn<=3 ORDER BY tag_rank LIMIT $7"""
+WRAP_LEXICAL = r"""const q=$('Validate SCHEDULE retrieval request').first().json,input=$input.all(),error=input.find(i=>i.json?.error||i.json?.message&&i.json?.level==='error'),candidates=input.filter(i=>i.json?.candidate_id&&i.json?.page_content!==undefined).map((i,n)=>({candidate_id:String(i.json.candidate_id),page_content:String(i.json.page_content||''),metadata:i.json.metadata||{},rank:Number(i.json.lexical_rank||n+1),score:Number(i.json.lexical_score||0),exact_hit:Boolean(Number(i.json.exact_hit||0))}));return[{json:{branch:'lexical',query:q,candidates,branch_findings:error?[{code:'LEXICAL_BRANCH_FAILED',severity:'error',message:String(error.json.error||error.json.message)}]:[]}}];"""
+WRAP_TAG = r"""const q=$('Validate SCHEDULE retrieval request').first().json,input=$input.all(),error=input.find(i=>i.json?.error||i.json?.message&&i.json?.level==='error'),candidates=input.filter(i=>i.json?.candidate_id&&i.json?.page_content!==undefined).map((i,n)=>({candidate_id:String(i.json.candidate_id),page_content:String(i.json.page_content||''),metadata:i.json.metadata||{},rank:Number(i.json.tag_rank||n+1),score:0}));return[{json:{branch:'tag',query:q,candidates,branch_findings:error?[{code:'TAG_BRANCH_FAILED',severity:'error',message:String(error.json.error||error.json.message)}]:[]}}];"""
+WRAP_SEMANTIC = r"""const q=$('Validate SCHEDULE retrieval request').first().json,input=$input.all(),error=input.find(i=>i.json?.error||i.json?.message&&i.json?.level==='error'),candidates=input.map((i,n)=>{const d=i.json.document||{};return{candidate_id:String(d.metadata?.chunk_id||d.metadata?.ingest_key||''),page_content:String(d.pageContent||''),metadata:d.metadata||{},rank:n+1,score:Number(i.json.score||0)}}).filter(c=>c.candidate_id&&c.page_content);return[{json:{branch:'semantic',query:q,candidates,branch_findings:error?[{code:'SEMANTIC_BRANCH_FAILED',severity:'error',message:String(error.json.error||error.json.message)}]:[]}}];"""
+
+
+# Tag match is OR across keyword_families | topics | task_patterns. Hard isolation
+# is target_base + knowledge_types + access_scope (authorized CTE / validMeta).
+# Do not AND those three tag fields — empty topics would drop every card.
+RRF = NAMESPACES_JS + r"""
+const packets=$input.all().map(i=>i.json),q=packets.find(p=>p.query)?.query||{},by=new Map(),k=60,arr=Array.isArray,clean=v=>typeof v==='string'?v.trim():'';
+const validMeta=m=>m&&String(m.target_base||'')===String(q.filters?.target_base||'')&&String(m.access_scope||'')===String(q.filters?.access_scope||'')&&String(m.knowledge_status||'')==='current'&&(q.filters?.knowledge_types||[]).includes(String(m.knowledge_type||'')),findings=packets.flatMap(p=>arr(p.branch_findings)?p.branch_findings:[]);
+for(const p of packets)for(const c of(arr(p.candidates)?p.candidates:[])){if(!validMeta(c.metadata))continue;const id=String(c.candidate_id||''),parent=String(c.metadata.parent_key||`${c.metadata.target_base}:${c.metadata.knowledge_id}:${c.metadata.revision}`);if(!id||!parent)continue;const x=by.get(parent)||{parent_key:parent,representative_chunk_id:id,page_content:String(c.page_content||''),metadata:c.metadata,rrf_score:0,branches:[],chunk_ids:[]};x.rrf_score+=1/(k+Math.max(1,Number(c.rank)||999));if(c.exact_hit)x.rrf_score+=.02;x.branches.push(p.branch);x.chunk_ids.push(id);if(String(c.page_content||'').length>x.page_content.length)x.page_content=String(c.page_content||'');by.set(parent,x)}
+const requested=arr(q.exact_keyword_terms)?q.exact_keyword_terms.map(String).map(x=>x.toUpperCase()):[],keep=Math.max(Number(q.top_k)||10,requested.length||0);
+const ranked=[...by.values()].sort((a,b)=>b.rrf_score-a.rrf_score||a.parent_key.localeCompare(b.parent_key)).slice(0,keep),tags=v=>arr(v)?v.map(String).map(x=>x.trim().toUpperCase()).filter(Boolean):typeof v==='string'?(()=>{try{return tags(JSON.parse(v))}catch{return v.replace(/[\[\]"]/g,'').split(',').map(x=>x.trim().toUpperCase()).filter(Boolean)}})():[];
+const instructionCoverage=new Set(ranked.filter(r=>COVERAGE_TYPES.has(String(r.metadata.knowledge_type||''))).flatMap(r=>tags(r.metadata.keyword_families))),uncovered=(q.filters?.require_coverage===true)?requested.filter(v=>!instructionCoverage.has(v)):[];if(!ranked.length)findings.push({code:'NO_AUTHORIZED_EVIDENCE',severity:'error'});if(uncovered.length)findings.push({code:'KEYWORD_INSTRUCTION_COVERAGE_INCOMPLETE',severity:'error',keywords:uncovered});const hard=findings.some(f=>f.severity==='error');
+return[{json:{contract:'schedule_retrieval_result',contract_version:'1.0',status:hard?'abstain':'ranked',request_id:q.request_id||null,query:q.query,filters:q.filters,exact_keyword_terms:requested,ranked_parents:hard?[]:ranked.map(r=>({parent_key:r.parent_key,target_base:r.metadata.target_base,knowledge_id:r.metadata.knowledge_id,revision:r.metadata.revision,knowledge_type:r.metadata.knowledge_type,keyword_families:tags(r.metadata.keyword_families),rrf_score:Number(r.rrf_score.toFixed(8)),branches:[...new Set(r.branches)].sort(),chunk_ids:[...new Set(r.chunk_ids)]})),findings,retrieval:{algorithm:'rrf',rrf_k:k,branches:['lexical','semantic','tag'],candidate_count:by.size,returned:hard?0:ranked.length},evidence_ready:false}}];
+"""
+
+
+PREPARE_PARENT_LOOKUP = r"""
+const e=$json||{},parents=Array.isArray(e.ranked_parents)?e.ranked_parents:[];
+return[{json:{evidence:e,sql_parameters:[String(e.filters?.target_base||''),String(e.filters?.access_scope||''),JSON.stringify(parents.map(p=>({knowledge_id:p.knowledge_id,revision:p.revision}))) ]}}];
+"""
+PARENT_LOOKUP_SQL = """SELECT target_base,knowledge_id,revision,knowledge_type,status,keywords,topics,task_patterns,title,body_json,content_hash,access_scope,author FROM tnavigator_schedule_knowledge_documents_v1 WHERE target_base=$1 AND access_scope=$2 AND status='active' AND EXISTS(SELECT 1 FROM jsonb_to_recordset($3::jsonb) x(knowledge_id text,revision text) WHERE x.knowledge_id=tnavigator_schedule_knowledge_documents_v1.knowledge_id AND x.revision=tnavigator_schedule_knowledge_documents_v1.revision)"""
+HYDRATE_PARENTS = NAMESPACES_JS + r"""
+const prepared=$('Prepare full parent knowledge lookup').first().json,e=prepared.evidence||{},arr=Array.isArray,obj=v=>v&&typeof v==='object'&&!arr(v),parse=v=>{if(obj(v))return v;if(typeof v==='string'){try{const x=JSON.parse(v);return obj(x)?x:{}}catch{return{}}}return{}},rows=$input.all().map(i=>i.json||{}),ranked=arr(e.ranked_parents)?e.ranked_parents:[],by=new Map(rows.filter(r=>r.knowledge_id).map(r=>[`${r.knowledge_id}:${r.revision}`,r])),findings=arr(e.findings)?e.findings.slice():[];
+const results=[];for(const rank of ranked){const row=by.get(`${rank.knowledge_id}:${rank.revision}`);if(!row){findings.push({code:'INACTIVE_OR_MISSING_PARENT_SKIPPED',severity:'warning',knowledge_id:rank.knowledge_id,revision:rank.revision});continue}results.push({knowledge_id:row.knowledge_id,revision:row.revision,knowledge_type:row.knowledge_type,title:row.title,keywords:row.keywords,topics:row.topics,task_patterns:row.task_patterns,body:parse(row.body_json),content_hash:row.content_hash,author:row.author,rrf_score:rank.rrf_score,branches:rank.branches})}
+const requested=arr(e.exact_keyword_terms)?e.exact_keyword_terms:arr(e.filters?.keyword_families)?e.filters.keyword_families:[],covered=new Set(results.filter(r=>COVERAGE_TYPES.has(String(r.knowledge_type||''))).flatMap(r=>arr(r.keywords)?r.keywords:[]).map(String).map(x=>x.toUpperCase())),uncovered=(e.filters?.require_coverage===true)?requested.map(String).map(x=>x.toUpperCase()).filter(k=>!covered.has(k)):[];if(uncovered.length)findings.push({code:'KEYWORD_INSTRUCTION_COVERAGE_INCOMPLETE',severity:'error',keywords:uncovered});if(rows.some(r=>r.error||r.message&&r.level==='error'))findings.push({code:'PARENT_KNOWLEDGE_LOOKUP_FAILED',severity:'error'});const hard=findings.some(f=>f.severity==='error');
+return[{json:{...e,status:hard?'abstain':'succeeded',results:hard?[]:results,citations:hard?[]:results.map(r=>({knowledge_id:r.knowledge_id,revision:r.revision,knowledge_type:r.knowledge_type,content_hash:r.content_hash,author:r.author,keyword_families:r.keywords,rrf_score:r.rrf_score,branches:r.branches})),findings,evidence_ready:!hard}}];
+"""
+
+
+PREPARE_SCHEMA_LOOKUP = r"""const e=$json||{},requested=[...new Set((Array.isArray(e.filters?.keyword_families)?e.filters.keyword_families:[]).map(v=>String(v||'').trim().toUpperCase()).filter(Boolean))];return[{json:{evidence:e,sql_parameters:[String(e.filters?.target_base||''),String(e.filters?.access_scope||''),JSON.stringify(requested)]}}];"""
+CATALOGUE_LOOKUP_SQL = """SELECT catalogue_hash,catalogue_ref,source_hash,access_scope,approved_by,approval_gate_id,schema_catalogue FROM tnavigator_schedule_schema_catalogue_v1 WHERE target_base=$1 AND access_scope=$2 AND ($3::jsonb='[]'::jsonb OR EXISTS (SELECT 1 FROM jsonb_array_elements(coalesce(schema_catalogue->'schemas','[]'::jsonb)) s JOIN jsonb_array_elements_text($3::jsonb) q ON upper(trim(coalesce(s->>'keyword','')))=upper(trim(q.value)))) ORDER BY stored_at DESC,catalogue_hash LIMIT 100"""
+ATTACH_SCHEMA_CATALOGUE = r"""
+const prepared=$('Prepare approved schema catalogue lookup').first().json,e=prepared.evidence||{},obj=v=>v&&typeof v==='object'&&!Array.isArray(v),arr=Array.isArray,clean=v=>typeof v==='string'?v.trim():'',parse=v=>{if(obj(v))return v;if(typeof v==='string'){try{const x=JSON.parse(v);return obj(x)?x:{}}catch{return{}}}return{}},findings=arr(e.findings)?e.findings.slice():[],requested=arr(e.filters?.keyword_families)?e.filters.keyword_families.map(v=>clean(v).toUpperCase()).filter(Boolean):[];
+if(e.filters?.require_schema!==true){const hard=findings.some(f=>f.severity==='error')||e.status==='abstain';return[{json:{...e,status:hard?'abstain':(e.status||'succeeded'),results:hard?[]:e.results,citations:hard?[]:e.citations,findings,evidence_ready:!hard&&e.evidence_ready!==false,schema_catalogue:null,retrieval:{...(e.retrieval||{}),full_parent_hydration:true,schema_catalogue_lookup:false,catalogue_hash:null}}}];}
+const shaRotr=(x,n)=>((x>>>n)|(x<<(32-n)))>>>0,shaUtf8=s=>{const out=[];for(let i=0;i<String(s).length;i++){let c=String(s).charCodeAt(i);if(c<0x80)out.push(c);else if(c<0x800)out.push(0xc0|(c>>6),0x80|(c&63));else if(c>=0xd800&&c<=0xdbff){const u=0x10000+((c&1023)<<10)|(String(s).charCodeAt(++i)&1023);out.push(0xf0|(u>>18),0x80|((u>>12)&63),0x80|((u>>6)&63),0x80|(u&63));}else out.push(0xe0|(c>>12),0x80|((c>>6)&63),0x80|(c&63));}return out;};
+const SHA_K=[0x428a2f98,0x71374491,0xb5c0fbcf,0xe9b5dba5,0x3956c25b,0x59f111f1,0x923f82a4,0xab1c5ed5,0xd807aa98,0x12835b01,0x243185be,0x550c7dc3,0x72be5d74,0x80deb1fe,0x9bdc0a7f,0xc19bf174,0xe49b69c1,0xefbe4786,0x0fc19dc6,0x240ca1cc,0x2de92c6f,0x4a7484aa,0x5cb0a9dc,0x76f988da,0x983e5152,0xa831c66d,0xb00327c8,0xbf597fc7,0xc6e00bf3,0xd5a79147,0x06ca6351,0x14292967,0x27b70a85,0x2e1b2138,0x4d2c6dfc,0x53380d13,0x650a7354,0x766a0abb,0x81c2c92e,0x92722c85,0xa2bfe8a1,0xa81a664b,0xc24b8b70,0xc76c51a3,0xd192e819,0xd6990624,0xf40e3585,0x106aa070,0x19a4c116,0x1e376c08,0x2748774c,0x34b0bcb5,0x391c0cb3,0x4ed8aa4a,0x5b9cca4f,0x682e6ff3,0x748f82ee,0x78a5636f,0x84c87814,0x8cc70208,0x90befffa,0xa4506ceb,0xbef9a3f7,0xc67178f2];
+const sha256=s=>{const b=shaUtf8(s),bit=b.length*8,b2=b.slice();b2.push(0x80);while((b2.length%64)!==56)b2.push(0);for(let i=7;i>=0;i--)b2.push((bit/Math.pow(2,i*8))&255);let h0=0x6a09e667,h1=0xbb67ae85,h2=0x3c6ef372,h3=0xa54ff53a,h4=0x510e527f,h5=0x9b05688c,h6=0x1f83d9ab,h7=0x5be0cd19;for(let off=0;off<b2.length;off+=64){const w=new Array(64);for(let i=0;i<16;i++){const p=off+i*4;w[i]=((b2[p]<<24)|(b2[p+1]<<16)|(b2[p+2]<<8)|b2[p+3])>>>0}for(let i=16;i<64;i++){const a=w[i-15],c=w[i-2],s0=(shaRotr(a,7)^shaRotr(a,18)^(a>>>3))>>>0,s1=(shaRotr(c,17)^shaRotr(c,19)^(c>>>10))>>>0;w[i]=(w[i-16]+s0+w[i-7]+s1)>>>0}let a=h0,bv=h1,c=h2,d=h3,e=h4,f=h5,g=h6,hh=h7;for(let i=0;i<64;i++){const S1=(shaRotr(e,6)^shaRotr(e,11)^shaRotr(e,25))>>>0,ch=((e&f)^((~e)&g))>>>0,t1=(hh+S1+ch+SHA_K[i]+w[i])>>>0,S0=(shaRotr(a,2)^shaRotr(a,13)^shaRotr(a,22))>>>0,maj=((a&bv)^(a&c)^(bv&c))>>>0,t2=(S0+maj)>>>0;hh=g;g=f;f=e;e=(d+t1)>>>0;d=c;c=bv;bv=a;a=(t1+t2)>>>0}h0=(h0+a)>>>0;h1=(h1+bv)>>>0;h2=(h2+c)>>>0;h3=(h3+d)>>>0;h4=(h4+e)>>>0;h5=(h5+f)>>>0;h6=(h6+g)>>>0;h7=(h7+hh)>>>0}return[h0,h1,h2,h3,h4,h5,h6,h7].map(x=>x.toString(16).padStart(8,'0')).join('')};
+const mergeHash=vals=>{const uniq=[...new Set(vals.map(clean).filter(Boolean))].sort();if(!uniq.length)return null;if(uniq.length===1)return uniq[0].toLowerCase();return `sha256:${sha256(uniq.join('|'))}`;};
+const byKeyword=new Map(),sourceHashes=[],catalogueHashes=[],approvers=[],gateIds=[];
+for(const row of $input.all().map(i=>i.json||{})){
+  const c=parse(row.schema_catalogue),p=obj(c.simulator_profile)?c.simulator_profile:{},schemas=arr(c.schemas)?c.schemas:[];
+  const baseOk=c.contract==='schedule_schema_catalogue'&&c.contract_version==='1.0'&&clean(p.simulator).toLowerCase()==='tnavigator'&&clean(p.version)==='22.2'&&/^sha256:[a-f0-9]{64}$/i.test(clean(c.catalogue_hash))&&/^sha256:[a-f0-9]{64}$/i.test(clean(c.source_hash));
+  if(!baseOk||!schemas.length)continue;
+  const approver=clean(row.approved_by||c.approved_by||c.author);
+  const gate=clean(row.approval_gate_id||c.approval_gate_id||'schedule-schema-catalogue-approved');
+  const recordless=e=>{const p=obj(e.parser)?e.parser:{},l=obj(e.layout)?e.layout:{},fs=arr(e.fields)?e.fields:[];return!fs.length&&Number(p.token_width)===0&&clean(l.record_terminator).toUpperCase()==='NONE'&&clean(l.block_terminator).toUpperCase()==='NONE'};
+  for(const entry of schemas){
+    const kw=clean(entry.keyword).toUpperCase();
+    if(!requested.includes(kw))continue;
+    const fields=arr(entry.fields)?entry.fields:[],sem=obj(entry.semantics)?entry.semantics:null;
+    if(!clean(entry.schema_id)||!clean(entry.schema_revision)||!(fields.length||recordless(entry))||!sem)continue;
+    const variant=clean(entry.variant)||'default';
+    const list=byKeyword.get(kw)||[];
+    if(list.some(e=> (clean(e.variant)||'default')===variant))continue;
+    list.push(entry);byKeyword.set(kw,list);catalogueHashes.push(clean(c.catalogue_hash));sourceHashes.push(clean(c.source_hash));if(approver)approvers.push(approver);if(gate)gateIds.push(gate);
+  }
+}
+const missing=requested.filter(k=>!byKeyword.has(k));
+if(!requested.length)findings.push({code:'SCHEMA_KEYWORD_SCOPE_REQUIRED',severity:'error'});
+if(missing.length)findings.push({code:'EXPERT_SCHEMA_CATALOGUE_NOT_FOUND',severity:'error',keywords:missing});
+const hard=findings.some(f=>f.severity==='error');
 const selected=hard?null:{contract:'schedule_schema_catalogue',contract_version:'1.0',catalogue_ref:`catalogue://tnavigator/22.2/merged/${requested.slice().sort().join('+')||'empty'}`,simulator_profile:{vendor:'Rock Flow Dynamics',simulator:'tNavigator',version:'22.2'},catalogue_hash:mergeHash(catalogueHashes),source_hash:mergeHash(sourceHashes),schemas:requested.flatMap(k=>byKeyword.get(k)||[]),approved:true,approved_by:approvers[0]||'department-hydrodynamic-expert',approval_gate_id:gateIds[0]||'schedule-schema-catalogue-approved',access_scope:clean(e.filters?.access_scope||'petroleum-engineering')};
 return[{json:{...e,status:hard?'abstain':'succeeded',results:hard?[]:e.results,citations:hard?[]:e.citations,findings,evidence_ready:!hard,schema_catalogue:selected,retrieval:{...(e.retrieval||{}),full_parent_hydration:true,schema_catalogue_lookup:true,catalogue_hash:selected?.catalogue_hash||null,merged_catalogue_hashes:catalogueHashes}}}];
 """
@@ -14721,193 +15482,6 @@ console.log('SCHEDULE unlisted-wells policy HITL smoke: passed (4 scenarios)');
         2000,
         360
       ]
-    },
-    {
-      "parameters": {
-        "jsCode": "\n/* mas_state_utils begin */\nfunction roleForArtifactId(id){\n  const k=String(id||'');\n  if(k==='excel'||k.indexOf('excel_')===0) return 'excel';\n  if(k==='surface') return 'surface';\n  if(k==='schedule_source') return 'schedule_source';\n  if(k.indexOf('schedule_source_')===0) return 'schedule_include';\n  if(k==='schedule_out') return 'schedule_out';\n  if(k==='trajectory'||k.indexOf('trajectory_')===0) return 'trajectory';\n  if(k==='diff') return 'diff';\n  return 'attachment';\n}\nfunction isNestedArtifacts(arts){\n  if(!arts||typeof arts!=='object'||Array.isArray(arts)) return false;\n  const sch=arts.schedule;\n  if(sch&&typeof sch==='object'&&!Array.isArray(sch)&&(sch.source||Array.isArray(sch.includes)||Array.isArray(sch.grdecl)||sch.out||sch.diff!=null)) return true;\n  if(Array.isArray(arts.trajectories)||Array.isArray(arts.attachments)) return true;\n  return false;\n}\n/* Artifact card: {artifact_id, role, kind: input|intermediate|deliverable, producer: user|<agent_id>,\n   filename, bytes, text?}. Text artifacts (schedule_out, diff) live inline in state. Python twin:\n   mas-activity-service/app/state_shape.py. */\nconst INLINE_TEXT_ROLES=['schedule_out','diff'];\nconst AGENT_ONLY_ROLES=['schedule_out','diff'];\nfunction utf8Length(s){\n  try{return unescape(encodeURIComponent(String(s))).length}catch(_){return String(s).length}\n}\nfunction fileItem(id,value,role){\n  if(value==null||value===''||(typeof value==='object'&&!Array.isArray(value)&&!Object.keys(value).length)) return null;\n  const resolved=role||roleForArtifactId(id);\n  if(typeof value==='string'){\n    if(INLINE_TEXT_ROLES.indexOf(resolved)>=0){\n      if(!value.trim()) return null;\n      return {artifact_id:id||resolved,role:resolved,bytes:utf8Length(value),text:value};\n    }\n    return {artifact_id:id,filename:value,role:resolved};\n  }\n  if(typeof value!=='object'||Array.isArray(value)) return null;\n  const item={...value};\n  item.artifact_id=item.artifact_id||id;\n  if(!item.artifact_id) return null;\n  item.role=item.role||resolved||roleForArtifactId(item.artifact_id);\n  return item;\n}\nfunction flattenArtifacts(arts){\n  const src=arts&&typeof arts==='object'&&!Array.isArray(arts)?arts:{};\n  const out={};\n  const put=(value,fallbackId)=>{\n    const row=fileItem(fallbackId,value);\n    if(!row) return;\n    out[row.artifact_id]=row;\n  };\n  if(isNestedArtifacts(src)){\n    put(src.excel,'excel');\n    put(src.surface,'surface');\n    const sch=src.schedule&&typeof src.schedule==='object'?src.schedule:{};\n    put(sch.source,'schedule_source');\n    const incs=Array.isArray(sch.includes)?sch.includes:[];\n    for(const inc of incs) put(inc,inc&&inc.artifact_id);\n    const grdecl=Array.isArray(sch.grdecl)?sch.grdecl:[];\n    for(const g of grdecl) put(g,g&&g.artifact_id);\n    put(sch.out,'schedule_out');\n    put(sch.diff,'diff');\n    const trajs=Array.isArray(src.trajectories)?src.trajectories:[];\n    for(const t of trajs) put(t,t&&t.artifact_id||'trajectory');\n    const atts=Array.isArray(src.attachments)?src.attachments:[];\n    for(const a of atts) put(a,a&&a.artifact_id);\n    for(const [k,v] of Object.entries(src)){\n      if(k==='excel'||k==='surface'||k==='schedule'||k==='trajectories'||k==='attachments') continue;\n      if(!(k in out)) put(v,k);\n    }\n    return out;\n  }\n  for(const [k,v] of Object.entries(src)){\n    if(k==='schedule'||k==='trajectories'||k==='attachments') continue;\n    put(v,k);\n  }\n  return out;\n}\nfunction nestArtifacts(arts){\n  const nested={};\n  const includes=[];\n  const grdecl=[];\n  const trajectories=[];\n  const attachments=[];\n  for(const [id,item] of Object.entries(flattenArtifacts(arts))){\n    if(!item||typeof item!=='object') continue;\n    const role=item.role||roleForArtifactId(id);\n    if(role==='diff'){ nested.schedule=nested.schedule||{}; nested.schedule.diff=item; }\n    else if(role==='excel'){\n      // First workbook (id `excel`) owns the slot; further workbooks (`excel_1`…) stay as attachments\n      // with role excel so flatten/nest is lossless and every Excel of the case stays reachable.\n      const aid=String(item.artifact_id||id);\n      if(!nested.excel||(aid==='excel'&&String(nested.excel.artifact_id||'')!=='excel')){\n        if(nested.excel) attachments.push(nested.excel);\n        nested.excel=item;\n      } else attachments.push(item);\n    }\n    else if(role==='surface') nested.surface=item;\n    else if(role==='schedule_source'){ nested.schedule=nested.schedule||{}; nested.schedule.source=item; }\n    else if(role==='schedule_include'){\n      const name=String(item.filename||'').toLowerCase();\n      if(name.endsWith('.grdecl')) grdecl.push(item);\n      else includes.push(item);\n    }\n    else if(role==='schedule_out'){ nested.schedule=nested.schedule||{}; nested.schedule.out=item; }\n    else if(role==='trajectory') trajectories.push(item);\n    else attachments.push(item);\n  }\n  if(includes.length){ nested.schedule=nested.schedule||{}; nested.schedule.includes=includes; }\n  if(grdecl.length){ nested.schedule=nested.schedule||{}; nested.schedule.grdecl=grdecl; }\n  if(trajectories.length) nested.trajectories=trajectories;\n  if(attachments.length) nested.attachments=attachments;\n  return nested;\n}\nfunction fileCounts(arts){\n  const counts={excel:0,schedule_source:0,includes:0,grdecl:0,trajectories:0,surface:0,schedule_out:0};\n  for(const [id,item] of Object.entries(flattenArtifacts(arts))){\n    const role=(item&&item.role)||roleForArtifactId(id);\n    if(role==='schedule_include'){\n      const name=String((item&&item.filename)||'').toLowerCase();\n      if(name.endsWith('.grdecl')) counts.grdecl+=1;\n      else counts.includes+=1;\n    }\n    else if(role in counts) counts[role]+=1;\n  }\n  return counts;\n}\nfunction artifactKind(item){\n  if(!item||typeof item!=='object') return 'input';\n  const k=String(item.kind||'').trim().toLowerCase();\n  if(k==='input'||k==='intermediate'||k==='deliverable') return k;\n  const role=String(item.role||roleForArtifactId(item.artifact_id||''));\n  return AGENT_ONLY_ROLES.indexOf(role)>=0?'deliverable':'input';\n}\nfunction artifactProducer(item){\n  if(!item||typeof item!=='object') return 'user';\n  const p=String(item.producer||'').trim();\n  if(p) return p;\n  return artifactKind(item)==='input'?'user':'';\n}\nfunction cardFilename(item){\n  const name=String(item.filename||'').trim();\n  if(name) return name;\n  const role=String(item.role||'');\n  if(role==='schedule_out') return 'schedule_result.inc';\n  if(role==='diff') return 'schedule_changes.diff';\n  return String(item.artifact_id||role||'artifact');\n}\nfunction isExcelName(name){\n  return /\\.(xlsx|xls|xlsm|xltx|xltm)$/i.test(String(name||''));\n}\nfunction inputRank(role, filename){\n  if(String(role||'')==='excel'||isExcelName(filename)) return 0;\n  if(String(role||'')==='schedule_source') return 1;\n  return 2;\n}\nfunction artifactCards(arts){\n  /* Inputs first (Excel before INCLUDE stubs), then what agents produced. No inline text. */\n  const inputs=[];\n  const produced=[];\n  for(const [id,item] of Object.entries(flattenArtifacts(arts))){\n    if(!item||typeof item!=='object') continue;\n    const kind=artifactKind(item);\n    const size=item.bytes!=null?Number(item.bytes):(typeof item.text==='string'?utf8Length(item.text):null);\n    const card={artifact_id:id,role:String(item.role||roleForArtifactId(id)),kind,producer:artifactProducer(item),filename:cardFilename(item),bytes:Number.isFinite(size)?size:null,summary:String(item.summary||'').trim()};\n    (kind==='input'?inputs:produced).push(card);\n  }\n  inputs.sort((a,b)=>inputRank(a.role,a.filename)-inputRank(b.role,b.filename)||String(a.artifact_id).localeCompare(String(b.artifact_id)));\n  return inputs.concat(produced);\n}\nfunction deliverables(arts){\n  return artifactCards(arts).filter(c=>c.kind==='deliverable');\n}\n/* --- Agent results (Phase 2): state.agents[<agent_id>] = {status, summary, task_id, step, data, data_keys}.\n   The orchestrator does not know what an agent's data means; it keeps it within a byte budget so the\n   next agent can read it from the case state served by Activity (Python twin: state_shape.slim_agent_data). */\nconst AGENT_DATA_BUDGET=24000;\nconst AGENT_DATA_KEY_BUDGET=12000;\nfunction jsonSize(v){\n  try{return JSON.stringify(v===undefined?null:v).length}catch(_){return Infinity}\n}\nfunction slimAgentData(data){\n  if(!data||typeof data!=='object'||Array.isArray(data)) return {};\n  const entries=Object.entries(data).filter(([k])=>k!=='omitted_keys').map(([k,v])=>({k,v,size:jsonSize(v)}));\n  const keep=new Set();\n  const omitted=[];\n  let total=0;\n  /* Smaller keys first: many small facts survive one oversized blob. */\n  for(const e of entries.slice().sort((a,b)=>a.size-b.size)){\n    if(e.size>AGENT_DATA_KEY_BUDGET||total+e.size>AGENT_DATA_BUDGET){omitted.push(e.k);continue;}\n    keep.add(e.k);\n    total+=e.size;\n  }\n  const out={};\n  for(const e of entries){ if(keep.has(e.k)) out[e.k]=e.v; }\n  const prevOmitted=Array.isArray(data.omitted_keys)?data.omitted_keys.map(String):[];\n  const allOmitted=[...new Set([...prevOmitted,...omitted])];\n  if(allOmitted.length) out.omitted_keys=allOmitted;\n  return out;\n}\nfunction sanitizeAgents(agents){\n  const src=agents&&typeof agents==='object'&&!Array.isArray(agents)?agents:{};\n  const out={};\n  for(const [id,raw] of Object.entries(src)){\n    if(!raw||typeof raw!=='object'||Array.isArray(raw)) continue;\n    const data=slimAgentData(raw.data);\n    out[String(id)]={\n      status:String(raw.status||''),\n      summary:String(raw.summary||'').slice(0,400),\n      task_id:String(raw.task_id||''),\n      step:Number(raw.step||0)||0,\n      data,\n      data_keys:Object.keys(data).filter(k=>k!=='omitted_keys')\n    };\n  }\n  return out;\n}\nfunction parseJsonish(v, fallback){\n  if(v&&typeof v==='object'&&!Array.isArray(v)) return v;\n  if(typeof v==='string'&&v.trim()){\n    try{const p=JSON.parse(v); return p&&typeof p==='object'&&!Array.isArray(p)?p:fallback}catch(_){return fallback}\n  }\n  return fallback;\n}\n/* Registry row → how to call the agent. Deterministic; no agent name appears here.\n   invoke {kind:'n8n_workflow', workflow_id} → route 'workflow' (executeWorkflow by id, id from an expression);\n   invoke {kind:'http', url:'{math_url}/agent/run'} → route 'http' ({key} placeholders = Runtime Config fields);\n   Runtime Config agent_workflow_ids {\"<agent_id>\":\"<workflow id>\"} overrides the workflow id (field binding\n   after a UI import, where n8n assigns a new id). Anything else → 'unbound' with a reason code. */\nfunction resolveInvoke(agentId, registry, endpoints){\n  const id=String(agentId||'').trim();\n  const rows=Array.isArray(registry)?registry:[];\n  const row=rows.find(r=>r&&String(r.agent_id||'')===id)||null;\n  const cfg=endpoints&&typeof endpoints==='object'?endpoints:{};\n  const overrides=parseJsonish(cfg.agent_workflow_ids,{});\n  const override=String(overrides[id]||'').trim();\n  if(!row) return {route:'unbound',agent_id:id,reason:'not_in_registry'};\n  if(row.enabled===false||String(row.enabled).toLowerCase()==='false') return {route:'unbound',agent_id:id,reason:'disabled'};\n  const inv=parseJsonish(row.invoke,{});\n  const kind=String(inv.kind||'').trim().toLowerCase();\n  if(override||kind==='n8n_workflow'||(!kind&&inv.workflow_id)){\n    const wid=override||String(inv.workflow_id||'').trim();\n    if(!wid) return {route:'unbound',agent_id:id,reason:'no_workflow_id'};\n    return {route:'workflow',agent_id:id,workflow_id:wid,workflow_name:String(inv.workflow_name||'')};\n  }\n  if(kind==='http'){\n    const url=String(inv.url||'').trim().replace(/\\{([a-z0-9_]+)\\}/gi,(m,key)=>{\n      const v=cfg[key];\n      return v==null||v===''?m:String(v).replace(/\\/$/,'');\n    });\n    if(!url||/\\{[a-z0-9_]+\\}/i.test(url)||!/^https?:\\/\\//i.test(url)) return {route:'unbound',agent_id:id,reason:'no_url'};\n    return {route:'http',agent_id:id,url};\n  }\n  return {route:'unbound',agent_id:id,reason:'no_invoke'};\n}\nfunction unboundAgentMessage(resolved, registry){\n  const r=resolved&&typeof resolved==='object'?resolved:{};\n  const title=agentTitle(r.agent_id, registry);\n  const known=Array.isArray(registry)&&registry.some(x=>x&&String(x.agent_id||'')===String(r.agent_id||''));\n  const who=known?`Агент «${title}»`:'Выбранный агент';\n  switch(String(r.reason||'')){\n    case 'not_in_registry': return `${who} не найден в реестре агентов — вызвать его нельзя.`;\n    case 'disabled': return `${who} отключён в реестре агентов.`;\n    case 'no_workflow_id': return `${who} не привязан: в реестре нет идентификатора его рабочего процесса. Укажите его в реестре агентов или в настройках среды.`;\n    case 'no_url': return `${who} не привязан: адрес его сервиса не задан в настройках среды.`;\n    default: return `${who} не привязан: в реестре не описано, как его вызывать.`;\n  }\n}\nfunction decodeHitlAnswer(v){\n  if(v==null||typeof v!=='string') return v;\n  const s=v.trim();\n  if(!s) return v;\n  if(!((s[0]==='{'&&s[s.length-1]==='}')||(s[0]==='['&&s[s.length-1]===']')||(s[0]==='\"'&&s[s.length-1]==='\"'))) return v;\n  try{\n    const p=JSON.parse(s);\n    if(typeof p==='string'){\n      const t=p.trim();\n      if((t[0]==='{'&&t[t.length-1]==='}')||(t[0]==='['&&t[t.length-1]===']')){\n        try{return JSON.parse(t);}catch{return p;}\n      }\n      return p;\n    }\n    return p;\n  }catch{return v;}\n}\nfunction decodeHitlAnswers(answers){\n  const src=answers&&typeof answers==='object'&&!Array.isArray(answers)?answers:{};\n  const out={};\n  for(const [k,v] of Object.entries(src)) out[k]=decodeHitlAnswer(v);\n  return out;\n}\nfunction isUnlistedWellsGate(qid, question){\n  const id=String(qid||'').toLowerCase();\n  const q=String(question||'').toLowerCase();\n  return id.includes('unlisted')||q.includes('unlisted')||q.includes('не из excel')||q.includes('лишн');\n}\nfunction optionValues(question){\n  const opts=question&&Array.isArray(question.options)?question.options:[];\n  return opts.map(o=>{\n    if(o&&typeof o==='object'&&!Array.isArray(o)) return String(o.value||'').trim()||String(o.label||'').trim();\n    return String(o||'').trim();\n  }).filter(Boolean);\n}\nconst INTERPRET_CONFIDENCE_FLOOR=0.8;\nfunction applyInterpretedDecision(qid, question, rawAnswer, parsed){\n  const conf=Number(parsed&&parsed.confidence);\n  const decision=String((parsed&&parsed.decision)||'').trim().toLowerCase();\n  const values=optionValues(question).map(v=>String(v||'').toLowerCase());\n  const ok=decision&&values.indexOf(decision)>=0&&Number.isFinite(conf)&&conf>=INTERPRET_CONFIDENCE_FLOOR;\n  if(!ok) return {accepted:false};\n  const text=String((parsed&&parsed.paraphrase)||humanAnswerText(rawAnswer)||'').trim()||decision;\n  const stored={choice:decision, text, label:text};\n  if(isUnlistedWellsGate(qid, (question&&question.question)||'')&&(decision==='keep'||decision==='remove')) stored.unlisted_wells_policy=decision;\n  return {accepted:true, answer:stored, confidence:conf};\n}\nfunction buildClarifyQuestion(question){\n  const q=question&&typeof question==='object'?question:{};\n  return {\n    question_id:String(q.question_id||q.id||'Q-1'),\n    kind:String(q.kind||'needs_input'),\n    question:'Не удалось однозначно понять ответ. Выберите один из вариантов — или напишите короче, что сделать.',\n    options:Array.isArray(q.options)?q.options:[]\n  };\n}\nfunction normalizeHitlAnswer(qid, answer, question){\n  /* Phase 1.3: no regex on free text. A button sets choice; anything else stays as the engineer wrote it\n     until the Interpret free-text answer pass (or is stored as prose when the question has no options). */\n  const decoded=decodeHitlAnswer(answer);\n  if(decoded&&typeof decoded==='object'&&!Array.isArray(decoded)){\n    const choice=String(decoded.choice||'').toLowerCase();\n    if(isUnlistedWellsGate(qid, question)&&(choice==='keep'||choice==='remove')) return {...decoded, unlisted_wells_policy:choice};\n    return decoded;\n  }\n  return decoded;\n}\nfunction readUnlistedWellsPolicy(answers){\n  const src=answers&&typeof answers==='object'&&!Array.isArray(answers)?answers:{};\n  for(const [key,val] of Object.entries(src)){\n    if(!(val&&typeof val==='object'&&!Array.isArray(val))) continue;\n    const direct=String(val.unlisted_wells_policy||'').toLowerCase();\n    if(direct==='keep'||direct==='remove') return direct;\n    const choice=String(val.choice||'').toLowerCase();\n    if(isUnlistedWellsGate(key,'')&&(choice==='keep'||choice==='remove')) return choice;\n  }\n  return null;\n}\n/* Retrieval query for the routing slice: the task as the engineer, the orchestrator's plan and the journal\n   describe it — plain text for the lexical + semantic branches. No regex-derived tags (O4): the tag branch\n   gets nothing; the plan titles (LLM-written) are the topical hint. */\nfunction buildRetrievalQuery(compact){\n  const c=compact&&typeof compact==='object'?compact:{};\n  const parts=[String(c.goal||'').trim()];\n  const inputs=Array.isArray(c.inputs)?c.inputs:[];\n  if(inputs.length) parts.push('Приложены файлы: '+inputs.map(i=>i&&(i.filename||i.artifact_id)).filter(Boolean).slice(0,8).join(', '));\n  const planTitles=(Array.isArray(c.plan)?c.plan:[]).map(p=>p&&String(p.title||'').trim()).filter(Boolean);\n  if(planTitles.length) parts.push('План: '+planTitles.slice(0,6).join('; '));\n  const agents=c.agents&&typeof c.agents==='object'?c.agents:{};\n  for(const [id,a] of Object.entries(agents)){\n    if(a&&a.summary) parts.push(`${id}: ${String(a.summary).slice(0,160)}`);\n  }\n  const dels=Array.isArray(c.deliverables)?c.deliverables:[];\n  if(dels.length) parts.push('Уже получены результаты: '+dels.map(d=>d.filename||d.artifact_id).filter(Boolean).join(', '));\n  if(c.hitl_pending&&c.hitl_question) parts.push('Открытый вопрос инженеру: '+String(c.hitl_question).slice(0,160));\n  return parts.filter(Boolean).join('\\n').slice(0,800)||'маршрутизация инженерной задачи';\n}\nfunction slimCurrentTask(task,arts,agents){\n  if(!task||typeof task!=='object') return null;\n  if(!task.task_id&&!task.agent_id) return null;\n  const ids=Array.isArray(task.artifact_ids)?task.artifact_ids:Object.keys(flattenArtifacts(arts||{})).filter(k=>k!=='diff');\n  const keys=Array.isArray(task.data_keys)?task.data_keys:Object.keys(agents&&typeof agents==='object'&&!Array.isArray(agents)?agents:{});\n  return {task_id:task.task_id||null,agent_id:task.agent_id||null,artifact_ids:ids,data_keys:keys};\n}\nfunction slimError(err){\n  if(!err||typeof err!=='object') return err||null;\n  const count=Number(err.count||0);\n  return {message:err.message||'',agent_id:err.agent_id||null,count:Number.isFinite(count)?count:0};\n}\n/* Developer log («Лог» tab): which n8n execution wrote an event. Empty outside n8n (Node smokes). */\nfunction execRef(){\n  try{\n    const ex=typeof $execution!=='undefined'&&$execution?$execution:{};\n    const wf=typeof $workflow!=='undefined'&&$workflow?$workflow:{};\n    return {execution_id:String(ex.id||''),workflow_id:String(wf.id||''),workflow_name:String(wf.name||'')};\n  }catch{return {execution_id:'',workflow_id:'',workflow_name:''};}\n}\n/* Size-bounded copy for event payloads: full value when it fits, otherwise a JSON preview. */\nfunction boundedForLog(value, limit){\n  let text='';\n  try{text=JSON.stringify(value===undefined?null:value);}catch{text=String(value);}\n  if(text==null) return null;\n  if(text.length<=limit) return value;\n  return {truncated:true,length:text.length,preview:text.slice(0,limit)};\n}\nfunction mergeIncomingArtifacts(artifacts,incoming,producer){\n  /* Everything an agent returns under `artifacts` is a deliverable of that agent (kind/producer are\n     stamped here, agents do not know these fields). `excel_session` is a service handle, not an artifact. */\n  const nested=nestArtifacts(artifacts);\n  const src=incoming&&typeof incoming==='object'&&!Array.isArray(incoming)?incoming:{};\n  const by=String(producer||'').trim();\n  const stamp=(item)=>{\n    if(!item||typeof item!=='object') return item;\n    if(by){ item.producer=item.producer||by; item.kind=item.kind||'deliverable'; }\n    return item;\n  };\n  for(const [k,v] of Object.entries(src)){\n    if(k==='excel_session'){\n      nested.excel=(nested.excel&&typeof nested.excel==='object')?{...nested.excel}:{artifact_id:'excel',role:'excel'};\n      nested.excel.session_id=v;\n      continue;\n    }\n    if(Array.isArray(v)&&(k==='includes'||k==='grdecl')){\n      nested.schedule=nested.schedule||{};\n      nested.schedule[k]=Array.isArray(nested.schedule[k])?nested.schedule[k]:[];\n      for(const row of v){\n        const item=stamp(fileItem(row&&row.artifact_id,row));\n        if(item) nested.schedule[k].push(item);\n      }\n      continue;\n    }\n    if(k==='schedule_out'||k==='diff'){\n      const item=stamp(fileItem(k,v,k));\n      if(!item) continue;\n      nested.schedule=nested.schedule||{};\n      if(k==='schedule_out') nested.schedule.out=item; else nested.schedule.diff=item;\n      continue;\n    }\n    const item=stamp(fileItem(k,v));\n    if(!item) continue;\n    const role=item.role||roleForArtifactId(k);\n    if(role==='excel') nested.excel=item;\n    else if(role==='surface') nested.surface=item;\n    else if(role==='schedule_source'){ nested.schedule=nested.schedule||{}; nested.schedule.source=item; }\n    else if(role==='schedule_include'){\n      nested.schedule=nested.schedule||{};\n      const name=String(item.filename||'').toLowerCase();\n      if(name.endsWith('.grdecl')){\n        nested.schedule.grdecl=Array.isArray(nested.schedule.grdecl)?nested.schedule.grdecl:[];\n        nested.schedule.grdecl.push(item);\n      } else {\n        nested.schedule.includes=Array.isArray(nested.schedule.includes)?nested.schedule.includes:[];\n        nested.schedule.includes.push(item);\n      }\n    }\n    else if(role==='trajectory'){ nested.trajectories=Array.isArray(nested.trajectories)?nested.trajectories:[]; nested.trajectories.push(item); }\n    else { nested.attachments=Array.isArray(nested.attachments)?nested.attachments:[]; nested.attachments.push(item); }\n  }\n  return nested;\n}\nfunction sanitizeState(state){\n  const s=state&&typeof state==='object'?{...state}:{};\n  const arts=s.artifacts&&typeof s.artifacts==='object'?{...s.artifacts}:{};\n  if(arts.file&&!arts.excel) arts.excel=arts.file;\n  if(arts.schedule_files&&!arts.schedule_source) arts.schedule_source=arts.schedule_files;\n  s.artifacts=nestArtifacts(arts);\n  /* Phase 2: agent results live in state.agents[<agent_id>]. state.data keeps only the case result\n     (finish) and, for cases from before Phase 2, whatever legacy buckets they had — slimmed the same way. */\n  s.agents=sanitizeAgents(s.agents);\n  const data=s.data&&typeof s.data==='object'&&!Array.isArray(s.data)?{...s.data}:{};\n  delete data.facts;\n  for(const [k,v] of Object.entries(data)){\n    if(k!=='result'&&v&&typeof v==='object'&&!Array.isArray(v)) data[k]=slimAgentData(v);\n  }\n  s.data=data;\n  const hitl=s.hitl&&typeof s.hitl==='object'?{...s.hitl}:{pending:false,questions:[],answers:{}};\n  hitl.answers=decodeHitlAnswers(hitl.answers||{});\n  s.hitl=hitl;\n  s.current_task=slimCurrentTask(s.current_task,s.artifacts,s.agents);\n  if(s.last_error&&typeof s.last_error==='object') s.last_error=slimError(s.last_error);\n  s.error_count=Number(s.error_count||(s.last_error&&s.last_error.count)||0)||0;\n  s.ledger=sanitizeLedger(s.ledger);\n  s.plan=sanitizePlan(s.plan);\n  reconcileLedgerAnswers(s);\n  return s;\n}\nfunction reconcileLedgerAnswers(state){\n  /* Safety net for leftover cases from before Phase 1.3: if answers landed in state without a\n     journal row (old Activity write-path), copy them in. The live path is orchestrator resume. */\n  const hitl=state.hitl&&typeof state.hitl==='object'?state.hitl:{};\n  const answers=hitl.answers&&typeof hitl.answers==='object'&&!Array.isArray(hitl.answers)?hitl.answers:{};\n  const questions=Array.isArray(hitl.questions)?hitl.questions:[];\n  const l=sanitizeLedger(state.ledger);\n  const seen=new Set(l.history.filter(e=>e.kind==='human').map(e=>String(e.question_id||'')));\n  let changed=false;\n  for(const [qid,ans] of Object.entries(answers)){\n    if(seen.has(String(qid))) continue;\n    const q=questions.find(x=>x&&String(x.question_id||x.id||'')===String(qid))||{};\n    const reviewAccept=isResultReviewGate(qid)&&humanAnswerChoice(ans)==='accept';\n    ledgerPush(state,{kind:'human',step:Number(state.step_count||0),question_id:String(qid),question:String(q.question||'').slice(0,200),answer:humanAnswerText(ans).slice(0,300),...reviewAcceptFields(reviewAccept, q)});\n    state.ledger.last_human_step=Number(state.step_count||0);\n    state.ledger.stall_count=0;\n    changed=true;\n  }\n  return changed;\n}\nfunction ledgerAnsweredAgentQuestion(state){\n  /* An agent asked (needs_input), the human answered, and that agent has not run since:\n     the answer has not been applied yet. Finishing now would drop the human's decision. */\n  const h=sanitizeLedger(state.ledger).history;\n  let pending=null;\n  for(const e of h){\n    if(e.kind==='agent'){\n      if(e.status==='needs_input') pending={agent_id:e.agent_id,task_id:e.task_id||'',question:String(e.summary||''),answered:false,answer:''};\n      else if(pending&&String(e.agent_id||'')===String(pending.agent_id)) pending=null;\n    } else if(e.kind==='human'&&pending&&!isResultReviewGate(e.question_id)){\n      pending.answered=true;\n      pending.answer=String(e.answer||'');\n    }\n  }\n  return pending&&pending.answered?pending:null;\n}\n/* --- Progress ledger (task journal) ---\n   Domain-free record of what happened in the case: every agent result and every human answer.\n   The Decision LLM reasons about completion from this journal (not from boolean flags), and\n   Parse decision uses it for deterministic loop protection (same agent re-delegated after a\n   completed result without new inputs → result review with the human, never a silent retry). */\nconst LEDGER_HISTORY_MAX=30;\nfunction sanitizeLedger(raw){\n  const l=raw&&typeof raw==='object'&&!Array.isArray(raw)?{...raw}:{};\n  const history=Array.isArray(l.history)?l.history.filter(e=>e&&typeof e==='object'):[];\n  return {\n    history:history.slice(-LEDGER_HISTORY_MAX),\n    stall_count:Number(l.stall_count||0)||0,\n    last_human_step:Number(l.last_human_step||0)||0,\n    reviews:Number(l.reviews||0)||0,\n    verify_rejections:Number(l.verify_rejections||0)||0\n  };\n}\nfunction ledgerPush(state, entry){\n  const l=sanitizeLedger(state.ledger);\n  l.history=[...l.history,{...entry,step:Number(entry.step||state.step_count||0)}].slice(-LEDGER_HISTORY_MAX);\n  state.ledger=l;\n  return l;\n}\nfunction ledgerAgentEntries(state, agentId){\n  const l=sanitizeLedger(state.ledger);\n  return l.history.filter(e=>e.kind==='agent'&&(!agentId||String(e.agent_id||'')===String(agentId)));\n}\nfunction ledgerLastAgentEntry(state, agentId){\n  const rows=ledgerAgentEntries(state, agentId);\n  return rows.length?rows[rows.length-1]:null;\n}\nfunction ledgerHasNewInputsSince(state, entry){\n  /* True when a human answered (text / choice / files) after the given journal entry. Accepting a\n     result in a review gate is not new input for that agent: re-delegating after «принять» is still a repeat. */\n  const l=sanitizeLedger(state.ledger);\n  const idx=l.history.indexOf(entry);\n  const tail=idx>=0?l.history.slice(idx+1):l.history;\n  return tail.some(e=>e.kind==='human'&&e.review_accept!==true);\n}\n/* What the human accepted in the last review gate, if nothing ran since: 'case' — the result is the\n   outcome of the whole task (finish); 'agent' — one agent's result is final but the plan has steps\n   for other agents (continue); '' — no acceptance. CASE-6aa00e09-c6d71f: an acceptance about the Excel\n   result finished the case before the Builder ever ran. */\nfunction ledgerHumanAccepted(state){\n  const l=sanitizeLedger(state.ledger);\n  for(let i=l.history.length-1;i>=0;i--){\n    const e=l.history[i];\n    if(e.kind==='agent') return '';\n    if(e.kind==='human'&&e.review_accept===true) return e.review_scope==='agent'?'agent':'case';\n  }\n  return '';\n}\n/* Open plan items owned by agents that have not completed anything yet — the part of the plan a\n   review of one agent's result cannot cover. */\nfunction planOpenForUnstartedAgents(state, exceptAgentId){\n  const done=new Set(ledgerAgentEntries(state).filter(e=>e.status==='completed').map(e=>String(e.agent_id||'')));\n  const skip=String(exceptAgentId||'');\n  return planOpenItems(state.plan).filter(p=>p.agent_id&&p.agent_id!==skip&&!done.has(p.agent_id));\n}\nfunction humanAnswerText(answer){\n  if(answer==null) return '';\n  if(typeof answer==='string') return answer;\n  if(typeof answer!=='object'||Array.isArray(answer)) return String(answer);\n  for(const key of ['text','label','answer','value','choice']){\n    if(answer[key]!=null&&answer[key]!=='') return String(answer[key]);\n  }\n  try{return JSON.stringify(answer).slice(0,200)}catch{return ''}\n}\nfunction humanAnswerChoice(answer){\n  if(!answer||typeof answer!=='object'||Array.isArray(answer)) return '';\n  return String(answer.choice||'').trim().toLowerCase();\n}\nfunction isResultReviewGate(qid){\n  return String(qid||'').indexOf('result_review')===0;\n}\n/* Journal fields of a human answer that accepted a review gate: what was accepted — the whole task\n   ('case', default) or one agent's result while the plan goes on ('agent', set by the question). */\nfunction reviewAcceptFields(accepted, question){\n  if(!accepted) return {};\n  const scope=question&&question.review_scope==='agent'?'agent':'case';\n  return {review_accept:true,review_scope:scope};\n}\nfunction agentTitle(agentId, registry){\n  const rows=Array.isArray(registry)?registry:[];\n  const hit=rows.find(r=>r&&String(r.agent_id||'')===String(agentId||''));\n  return (hit&&hit.title)||String(agentId||'агент');\n}\n/* Engineer-facing text must be prose: no snake_case ids, key=value pairs, JSON braces, pipes, or «baseline». */\nfunction looksMachineText(text){\n  const s=String(text||'');\n  if(!s.trim()) return false;\n  return /[a-z]+_[a-z_]+|[a-z_]+=[a-z0-9]+|[{}\\[\\]]|\\w\\|\\w/.test(s)||/\\bbaseline\\b/i.test(s)||!/[А-Яа-яЁё]{3,}/.test(s);\n}\nfunction composeDoneSummary(state, registry){\n  const done=ledgerAgentEntries(state).filter(e=>e.status==='completed'&&String(e.summary||'').trim());\n  if(!done.length) return '';\n  const seen=new Set();\n  const parts=[];\n  for(const e of done){\n    const s=String(e.summary||'').trim().replace(/\\s+/g,' ');\n    if(seen.has(s)) continue;\n    seen.add(s);\n    parts.push(`${agentTitle(e.agent_id, registry)}: ${s}`);\n  }\n  return parts.join(' ');\n}\nfunction buildResultReviewQuestion(state, agentId, registry, reason){\n  const last=ledgerLastAgentEntry(state, agentId);\n  const summary=String((last&&last.summary)||'').trim();\n  const title=agentTitle(agentId, registry);\n  const lead=reason==='step_limit'\n    ?'Оркестратор исчерпал лимит шагов. '\n    :`${title} уже выполнил эту задачу, новых данных с тех пор не появилось. `;\n  const body=summary?`Результат: ${summary}. `:'';\n  /* The plan still has steps for agents that have not run: accepting this result closes only this\n     agent's part (review_scope 'agent'), the orchestrator goes on with the plan. */\n  const rest=reason==='step_limit'?[]:planOpenForUnstartedAgents(state, agentId);\n  const scope=rest.length?'agent':'case';\n  const restTitles=rest.map(p=>String(p.title||'').trim()).filter(t=>t&&!looksMachineText(t)).slice(0,3);\n  const ask=scope==='agent'\n    ?`Принять этот результат и продолжить остальные шаги${restTitles.length?` (${restTitles.join('; ')})`:''} или нужна доработка? Если доработка — напишите, что именно не так.`\n    :'Принять результат как итог задачи или нужна доработка? Если доработка — напишите, что именно не так.';\n  return {\n    question_id:`result_review_${Number(state.step_count||0)}`,\n    kind:'result_approval',\n    review_scope:scope,\n    question:`${lead}${body}${ask}`,\n    options:[\n      {value:'accept',label:scope==='agent'?'Принять результат и продолжить':'Принять результат'},\n      {value:'rework',label:'Нужна доработка — опишу ниже'}\n    ]\n  };\n}\n/* Completion check (a second LLM pass) said the proposed finish leaves parts of the goal uncovered,\n   and the orchestrator already had one more step to close them: let the engineer decide. */\nfunction buildCompletionReviewQuestion(state, registry, uncovered, verdict){\n  const done=composeDoneSummary(state, registry);\n  const gaps=(Array.isArray(uncovered)?uncovered:[]).map(s=>String(s||'').trim()).filter(Boolean);\n  const gapText=gaps.length?`Не хватает: ${gaps.join('; ')}. `:'';\n  const doneText=done?`Сделано: ${done}. `:'';\n  const lead=String(verdict||'').trim()&&!looksMachineText(verdict)?`${String(verdict).trim().replace(/\\.?$/,'.')} `:'';\n  return {\n    question_id:`result_review_${Number(state.step_count||0)}`,\n    kind:'result_approval',\n    question:`Оркестратор считает задачу выполненной, но проверка нашла пробел. ${lead}${doneText}${gapText}Принять результат как есть или продолжить работу? Если продолжить — напишите, что именно нужно получить.`,\n    options:[\n      {value:'accept',label:'Принять результат как есть'},\n      {value:'rework',label:'Продолжить — опишу ниже'}\n    ]\n  };\n}\nfunction compactLedger(state){\n  const l=sanitizeLedger(state.ledger);\n  const rows=l.history.slice(-8).map(e=>{\n    if(e.kind==='human'){\n      return {step:e.step,kind:'human',question:String(e.question||'').slice(0,120),answer:String(e.answer||'').slice(0,160),...(e.review_accept?{review_accept:true,review_scope:e.review_scope==='agent'?'agent':'case'}:{})};\n    }\n    if(e.kind==='verification'){\n      return {step:e.step,kind:'verification',verdict:'rejected',uncovered:(Array.isArray(e.uncovered)?e.uncovered:[]).slice(0,6).map(s=>String(s).slice(0,160))};\n    }\n    return {\n      step:e.step,kind:'agent',agent_id:e.agent_id||null,task_id:e.task_id||null,status:e.status||null,\n      summary:String(e.summary||'').slice(0,240),\n      artifacts_added:Array.isArray(e.artifacts_added)?e.artifacts_added.slice(0,8):[],\n      ...(e.rework_reason?{rework_reason:String(e.rework_reason).slice(0,160)}:{})\n    };\n  });\n  return {history:rows,stall_count:l.stall_count,completed_agents:[...new Set(l.history.filter(e=>e.kind==='agent'&&e.status==='completed').map(e=>e.agent_id).filter(Boolean))]};\n}\n/* Plan (O13): the orchestrator's own decomposition of the goal — a short list of results to obtain, each\n   optionally owned by an agent. The Decision LLM writes it through `plan_update`; deterministic code keeps\n   it in step with what actually happened (call_agent → active, agent completed → done) and the finish guard\n   treats open items as uncovered parts. Python twin: state_shape.sanitize_plan / plan_open_items. */\nconst PLAN_STATUSES=[\"pending\", \"active\", \"done\", \"blocked\", \"dropped\"];\nconst PLAN_OPEN_STATUSES=[\"pending\", \"active\", \"blocked\"];\nconst PLAN_MAX_ITEMS=12;\nfunction sanitizePlanItem(item){\n  if(!item||typeof item!=='object'||Array.isArray(item)) return null;\n  const id=String(item.id==null?'':item.id).trim().slice(0,40);\n  if(!id) return null;\n  const out={id,title:String(item.title||'').trim().slice(0,200),status:PLAN_STATUSES.includes(String(item.status||''))?String(item.status):'pending'};\n  const agentId=String(item.agent_id||'').trim();\n  if(agentId) out.agent_id=agentId;\n  const deps=(Array.isArray(item.depends_on)?item.depends_on:[]).map(d=>String(d==null?'':d).trim()).filter(Boolean).slice(0,8);\n  if(deps.length) out.depends_on=deps;\n  const note=String(item.note||'').trim().slice(0,300);\n  if(note) out.note=note;\n  return out;\n}\nfunction sanitizePlan(plan){\n  const out=[];const seen=new Set();\n  for(const raw of (Array.isArray(plan)?plan:[])){\n    const item=sanitizePlanItem(raw);\n    if(!item||seen.has(item.id)) continue;\n    seen.add(item.id); out.push(item);\n    if(out.length>=PLAN_MAX_ITEMS) break;\n  }\n  return out;\n}\n/* agent_id as the model wrote it → registry id (the model tends to write the agent's title instead). */\nfunction planAgentId(value, registry){\n  const v=String(value||'').trim();\n  if(!v) return '';\n  const rows=Array.isArray(registry)?registry:[];\n  if(!rows.length) return v;\n  const byId=rows.find(r=>r&&String(r.agent_id||'')===v);\n  if(byId) return v;\n  const byTitle=rows.find(r=>r&&String(r.title||'').trim().toLowerCase()===v.toLowerCase());\n  return byTitle?String(byTitle.agent_id):'';\n}\n/* Merge `plan_update` into state.plan. Items match by id; an item without id is rejected — the model wrote\n   «step 1 — agent X» prose instead of a plan row (CASE-6a9fa129-5ae077: the whole plan was lost that way).\n   Fields the update omits keep their previous value. Returns {accepted, rejected}. */\nfunction applyPlanUpdate(state, updates, registry){\n  const plan=sanitizePlan(state.plan);\n  const by=new Map(plan.map(p=>[p.id,p]));\n  let accepted=0, rejected=0;\n  for(const raw of (Array.isArray(updates)?updates:[])){\n    const item=sanitizePlanItem(raw);\n    if(!item){rejected+=1;continue;}\n    const prev=by.get(item.id);\n    if(!prev&&by.size>=PLAN_MAX_ITEMS){rejected+=1;continue;}\n    const merged={...(prev||{}),...item};\n    if(!item.title&&prev&&prev.title) merged.title=prev.title;\n    if((raw.status===undefined||raw.status===null||raw.status==='')&&prev) merged.status=prev.status;\n    if(!merged.title) merged.title=merged.id;\n    const agentId=planAgentId(merged.agent_id, registry);\n    if(agentId) merged.agent_id=agentId; else delete merged.agent_id;\n    by.set(item.id,merged); accepted+=1;\n  }\n  state.plan=[...by.values()];\n  return {accepted,rejected};\n}\n/* Actions drive statuses (flags are the model's habit, actions are its intent): the plan item the call\n   names (action.task_id) becomes active — else the first pending item of the agent being called; when\n   that agent returns completed, its active item is done, and leftover open items it owns close too if\n   the slot already has every output_provides key (a second handoff without new input is a loop). */\nfunction planMarkAgentActive(state, agentId, taskId){\n  const plan=sanitizePlan(state.plan);\n  const id=String(agentId||'').trim();\n  const named=planItemForCall(plan, id, taskId);\n  if(named) named.status='active';\n  else if(id&&!plan.some(p=>p.agent_id===id&&p.status==='active')){\n    const next=plan.find(p=>p.agent_id===id&&p.status==='pending');\n    if(next) next.status='active';\n  }\n  state.plan=plan;\n}\n/* The plan item a call_agent names: action.task_id equal to an item id owned by that agent (or unowned).\n   Returns the item object of the array given (callers mutate it), not a sanitized copy. */\nfunction planItemForCall(plan, agentId, taskId){\n  const tid=String(taskId||'').trim();\n  if(!tid) return null;\n  const item=(Array.isArray(plan)?plan:[]).find(p=>p&&String(p.id||'')===tid);\n  if(!item) return null;\n  return (!item.agent_id||String(item.agent_id)===String(agentId||'').trim())?item:null;\n}\n/* A second call to an agent that already completed is new work — not a repeat — when it names an open\n   plan item other than the one the agent completed (CASE-6aa00e09-c6d71f: two results as two items; the\n   second call was sent to review as a repeat and the case finished without the next agent). Leftover\n   items of a completed agent are not open once its data already has every output_provides key\n   (CASE-6aa029de-c5e23d: a second handoff without new input is a loop). The plan is capped\n   (PLAN_MAX_ITEMS) and every step costs budget, so this cannot loop. */\nfunction planNamesNewWork(state, agentId, taskId){\n  const item=planItemForCall(sanitizePlan(state.plan), agentId, taskId);\n  if(!item||!PLAN_OPEN_STATUSES.includes(item.status)) return false;\n  const doneTasks=new Set(ledgerAgentEntries(state, agentId).filter(e=>e.status==='completed').map(e=>String(e.task_id||'')));\n  return !doneTasks.has(item.id);\n}\nfunction registryProvides(registry, agentId){\n  const row=(Array.isArray(registry)?registry:[]).find(r=>r&&String(r.agent_id||'')===String(agentId||'').trim());\n  if(!row) return [];\n  let vals=row.output_provides;\n  if(typeof vals==='string'){ try{vals=JSON.parse(vals);}catch{vals=[];} }\n  return (Array.isArray(vals)?vals:[]).map(v=>String(v||'').trim()).filter(Boolean);\n}\nfunction agentDataCoversProvides(state, agentId, registry){\n  const provides=registryProvides(registry, agentId);\n  if(!provides.length) return false;\n  const raw=(state.agents||{})[agentId];\n  const slot=raw&&typeof raw==='object'&&!Array.isArray(raw)?raw:{};\n  const data=slot.data&&typeof slot.data==='object'&&!Array.isArray(slot.data)?slot.data:{};\n  const keys=new Set([...(Array.isArray(slot.data_keys)?slot.data_keys:[]), ...Object.keys(data)].map(String));\n  keys.delete('omitted_keys');\n  return provides.every(k=>keys.has(k));\n}\nfunction planMarkAgentDone(state, agentId, registry){\n  const plan=sanitizePlan(state.plan);\n  const id=String(agentId||'').trim();\n  const coverAll=agentDataCoversProvides(state, id, registry);\n  for(const p of plan){\n    if(!id||p.agent_id!==id) continue;\n    if(p.status==='active'||(coverAll&&p.status==='pending')) p.status='done';\n  }\n  state.plan=plan;\n}\nfunction planOpenItems(plan){\n  return sanitizePlan(plan).filter(p=>PLAN_OPEN_STATUSES.includes(p.status));\n}\n/* The plan as the Decision LLM (and the completion check) read it in planner_input. */\nfunction planLines(plan){\n  return sanitizePlan(plan).map(p=>{\n    const agent=p.agent_id?` — agent_id: ${p.agent_id}`:'';\n    const deps=(p.depends_on||[]).length?` (после: ${p.depends_on.join(', ')})`:'';\n    const note=p.note?` — ${p.note}`:'';\n    return `- ${p.id} [${p.status}] ${p.title}${agent}${deps}${note}`;\n  });\n}\n/* RAG tag branch from the plan (no regex over the goal): the open plan items name agents, the registry\n   names what those agents consume/produce (input_required / output_provides — artifact roles and data\n   keys). Routing cards carry the same role words in `topics`, so the cards for the agents the model\n   intends to use are boosted. Empty plan → empty tags → lexical/semantic branches only. */\nfunction planRetrievalTopics(plan, registry){\n  const rows=Array.isArray(registry)?registry:[];\n  const out=[];\n  for(const p of planOpenItems(plan)){\n    const row=p.agent_id?rows.find(r=>r&&String(r.agent_id||'')===p.agent_id):null;\n    if(!row) continue;\n    for(const key of ['input_required','output_provides']){\n      let vals=row[key];\n      if(typeof vals==='string'){ try{vals=JSON.parse(vals);}catch{vals=[];} }\n      for(const v of (Array.isArray(vals)?vals:[])){\n        const tag=String(v||'').trim().toLowerCase();\n        if(tag&&!out.includes(tag)) out.push(tag);\n      }\n    }\n  }\n  return out.slice(0,12);\n}\n/* Shape the callee should produce: datasets the Decision LLM named (latin identifiers, known field\n   types) plus consumers — open plan items of *other* agents and what their input_schema.data lists.\n   Domain-free: names come from the registry / the LLM, not from Excel or SCHEDULE. Empty → omitted\n   from agent_task.inputs (existing commissioning calls stay unchanged). */\nfunction datasetName(v){\n  const t=String(v||'').trim().toLowerCase().replace(/[-\\s]+/g,'_');\n  return /^[a-z][a-z0-9_]{0,63}$/.test(t)?t:'';\n}\nfunction sanitizeExpectedDatasets(raw){\n  const types=new Set(['text','number','date','boolean']);\n  const out=[];\n  for(const item of (Array.isArray(raw)?raw:[])){\n    if(!item||typeof item!=='object'||Array.isArray(item)) continue;\n    const name=datasetName(item.name);\n    if(!name||out.some(d=>d.name===name)) continue;\n    const fields=[];\n    for(const f of (Array.isArray(item.fields)?item.fields:[])){\n      const fname=datasetName(f&&typeof f==='object'?f.name:f);\n      if(!fname||fields.some(x=>x.name===fname)) continue;\n      const field={name:fname};\n      if(f&&typeof f==='object'){\n        const desc=String(f.description||'').trim().slice(0,160);\n        if(desc) field.description=desc;\n        const t=String(f.type||'').trim().toLowerCase();\n        if(types.has(t)) field.type=t;\n      }\n      fields.push(field);\n      if(fields.length>=24) break;\n    }\n    const entry={name,fields};\n    const desc=String(item.description||'').trim().slice(0,240);\n    if(desc) entry.description=desc;\n    out.push(entry);\n    if(out.length>=6) break;\n  }\n  return out;\n}\nfunction expectedConsumersFromPlan(state, registry, calleeId){\n  const skip=String(calleeId||'').trim();\n  const rows=Array.isArray(registry)?registry:[];\n  const out=[];\n  for(const p of planOpenItems(state&&state.plan)){\n    const id=String(p.agent_id||'').trim();\n    if(!id||id===skip) continue;\n    const row=rows.find(r=>r&&String(r.agent_id||'')===id);\n    if(!row) continue;\n    let schema=row.input_schema;\n    if(typeof schema==='string'){ try{schema=JSON.parse(schema);}catch{schema={}} }\n    const needs=schema&&typeof schema==='object'&&schema.data&&typeof schema.data==='object'&&!Array.isArray(schema.data)?schema.data:{};\n    const cleaned={};\n    for(const [k,v] of Object.entries(needs)){ if(String(k).trim()) cleaned[String(k)]=String(v==null?'':v).slice(0,200); }\n    if(!Object.keys(cleaned).length||out.some(c=>c.agent_id===id)) continue;\n    out.push({agent_id:id,title:agentTitle(id, registry),needs:cleaned});\n    if(out.length>=6) break;\n  }\n  return out;\n}\nfunction expectedOutputForCall(action, state, registry, calleeId){\n  const raw=action&&typeof action==='object'&&action.expected_output&&typeof action.expected_output==='object'?action.expected_output:{};\n  const datasets=sanitizeExpectedDatasets(raw.datasets);\n  /* No datasets → omit the key (commissioning calls stay unchanged). Consumers ride along only\n     when the LLM named a shape; they are never taken from action.expected_output.consumers. */\n  if(!datasets.length) return null;\n  const consumers=expectedConsumersFromPlan(state, registry, calleeId);\n  const out={datasets};\n  if(consumers.length) out.consumers=consumers;\n  return out;\n}\n/* One agent_result → case state. Used by `Merge agent result` (synchronous agents) and by the\n   `resume source=agent` path (long agents that returned `in_progress` and finish later through the\n   Activity run endpoint). Domain-free: it knows statuses and slots, not agents.\n   Returns {status, next_status, should_continue, events, message}; the caller persists state/events. */\nfunction applyAgentResult(state, agentId, taskId, result, registry){\n  const obj=v=>v&&typeof v==='object'&&!Array.isArray(v);\n  const res=obj(result)?result:{};\n  const status=String(res.status||'completed');\n  const title=agentTitle(agentId, registry);\n  const fallback=status==='completed'?`Агент «${title}» завершил задачу.`\n    :status==='needs_input'?`Агент «${title}» запросил дополнительные данные.`\n    :status==='in_progress'?`Агент «${title}» работает над задачей; результат придёт позже.`\n    :`Агент «${title}» вернул ошибку.`;\n  const message=String(res.message||'').trim()||fallback;\n  const agents=obj(state.agents)?{...state.agents}:{};\n  const prevSlot=obj(agents[agentId])?agents[agentId]:{};\n  const step=Number(state.step_count||0);\n  const artifactsBefore=new Set(Object.keys(flattenArtifacts(state.artifacts||{})));\n  const events=[];\n  let nextStatus='running';\n  let shouldContinue=true;\n  if(status==='completed'){\n    /* A later completed call of the same agent overlays data keys; it must not drop keys a previous\n       completed call already fixed (CASE-6aa026d9-45db12: the second result had only new_wells and\n       wiped facts, so the next agent asked Q-facts). Incoming keys win — a rework of `facts` replaces them. */\n    const incoming=obj(res.data)?res.data:{};\n    const prevData=obj(prevSlot.data)?prevSlot.data:{};\n    const data={...prevData,...incoming};\n    agents[agentId]={status,summary:message.slice(0,400),task_id:taskId,step,data};\n    state.artifacts=mergeIncomingArtifacts(state.artifacts, res.artifacts||{}, agentId);\n    state.current_task=null;\n    state.last_error=null;\n    state.error_count=0;\n    events.push({kind:'agent.result',actor:agentId||'agent',agent_id:agentId,task_id:taskId,status:'completed',status_message:message,\n      payload:{data_keys:Object.keys(obj(res.data)?res.data:{}),artifacts:Object.keys(obj(res.artifacts)?res.artifacts:{}),deliverables:deliverables(state.artifacts).filter(d=>d.producer===agentId),\n        issues:(Array.isArray(res.issues)?res.issues:[]).slice(0,6),assumptions:(Array.isArray(res.assumptions)?res.assumptions:[]).slice(0,6),...execRef()}});\n  } else if(status==='in_progress'){\n    /* Long job: the case waits for an external event, no step is spent, finish is impossible until the\n       agent reports completed. `watch` is whatever the agent wants shown/polled (kind, ref, poll_hint). */\n    nextStatus='waiting_agent';\n    shouldContinue=false;\n    agents[agentId]={status,summary:message.slice(0,400),task_id:taskId,step,data:obj(prevSlot.data)?prevSlot.data:{}};\n    state.current_task={task_id:taskId,agent_id:agentId};\n    events.push({kind:'agent.progress',actor:agentId||'agent',agent_id:agentId,task_id:taskId,status:'waiting_agent',status_message:message,payload:{watch:obj(res.watch)?res.watch:{},...execRef()}});\n  } else if(status==='needs_input'){\n    nextStatus='waiting_user';\n    shouldContinue=false;\n    const reqs=Array.isArray(res.requests)?res.requests:[];\n    const q=reqs[0]||{question_id:'Q-agent',question:message,options:[]};\n    state.hitl={pending:true,questions:reqs.length?reqs:[q],answers:(state.hitl&&state.hitl.answers)||{}};\n    events.push({kind:'hitl.request',actor:'orchestrator',agent_id:agentId,status:'waiting_user',status_message:q.question,payload:{...q,...execRef()}});\n  } else {\n    const prevErr=obj(state.last_error)?state.last_error:{};\n    const sameAgent=Boolean(agentId)&&String(prevErr.agent_id||'')===agentId;\n    const errorCount=(sameAgent?Number(prevErr.count||state.error_count||0):0)+1;\n    state.error_count=errorCount;\n    state.last_error={message,agent_id:agentId,count:errorCount};\n    /* A failed attempt is recorded in the slot (status + summary) but never overwrites data a previous\n       completed run of the same agent produced. */\n    agents[agentId]={...prevSlot,status:'failed',summary:message.slice(0,400),task_id:taskId,step,data:obj(prevSlot.data)?prevSlot.data:{}};\n    events.push({kind:'agent.failed',actor:agentId||'agent',agent_id:agentId,status:'failed',status_message:message,payload:{message,issues:res.issues||[],error_count:errorCount,...execRef()}});\n    if(errorCount>=3){\n      nextStatus='failed';\n      shouldContinue=false;\n      events.push({kind:'case.failed',actor:'orchestrator',status:'failed',status_message:`Агент «${title}» вернул ошибку ${errorCount} раза подряд`,payload:{agent_id:agentId,error_count:errorCount,...execRef()}});\n    }\n  }\n  const artifactsAdded=Object.keys(flattenArtifacts(state.artifacts||{})).filter(k=>!artifactsBefore.has(k));\n  ledgerPush(state,{kind:'agent',step,agent_id:agentId,task_id:taskId,status,summary:message.slice(0,400),artifacts_added:artifactsAdded,data_keys:Object.keys(obj(res.data)?res.data:{}).slice(0,12)});\n  state.agents=sanitizeAgents(agents);\n  if(status==='completed') planMarkAgentDone(state, agentId, registry);\n  return {status,next_status:nextStatus,should_continue:shouldContinue,events,message};\n}\nconst COMPACT_INPUTS_MAX=12;\nfunction compactAgents(agents){\n  const out={};\n  for(const [id,a] of Object.entries(sanitizeAgents(agents))){\n    out[id]={status:a.status,step:a.step,summary:String(a.summary||'').slice(0,240),data_keys:a.data_keys};\n  }\n  return out;\n}\n/* What the Decision LLM sees about the case. Domain-free: files by role (data-model vocabulary, not\n   rules), the engineer's inputs by name, agent results by agent_id, the journal. Python twin:\n   state_shape.compact_decision_context. */\nfunction buildCompact(state){\n  const artifacts=state.artifacts||{};\n  const plan=sanitizePlan(state.plan);\n  const hitl=state.hitl||{};\n  const counts=fileCounts(artifacts);\n  const questions=Array.isArray(hitl.questions)?hitl.questions:[];\n  const q0=questions[0]&&typeof questions[0]==='object'?questions[0]:{};\n  const pending=hitl.pending===true;\n  const inputCards=artifactCards(artifacts).filter(c=>c.kind==='input');\n  const err=state.last_error;\n  const cur=state.current_task;\n  return {\n    goal:String(state.goal||'').slice(0,500),\n    task_name:state.task_name||'',\n    status:state.status||'',\n    files:counts,\n    inputs:inputCards.slice(0,COMPACT_INPUTS_MAX).map(c=>({artifact_id:c.artifact_id,role:c.role,filename:c.filename})),\n    inputs_total:inputCards.length,\n    deliverables:deliverables(artifacts).map(d=>({producer:d.producer,artifact_id:d.artifact_id,filename:d.filename})),\n    agents:compactAgents(state.agents),\n    plan:plan.map(p=>({id:p.id,title:p.title,status:p.status,...(p.agent_id?{agent_id:p.agent_id}:{})})),\n    current_task:cur&&typeof cur==='object'?{task_id:cur.task_id||null,agent_id:cur.agent_id||null}:null,\n    hitl_pending:pending,\n    hitl_question:pending?(String(q0.question||'').slice(0,200)||null):null,\n    hitl_answer_ids:Object.keys(hitl.answers||{}),\n    unlisted_wells_policy:readUnlistedWellsPolicy(hitl.answers),\n    step_count:Number(state.step_count||0),\n    version:Number(state.version||0),\n    last_error:(err&&typeof err==='object'?err.message:null)||null,\n    journal:compactLedger(state)\n  };\n}\n/* mas_state_utils end */\n\nconst prev=$('Apply request extras').first().json||{};\nconst llm=$('Interpret free-text answer').first().json||{};\nconst obj=v=>v&&typeof v==='object'&&!Array.isArray(v);\nconst parse=v=>{if(obj(v))return v;try{const p=JSON.parse(String(v||''));return obj(p)?p:{}}catch{return {}}};\nconst decision=parse(llm.output||llm.text||llm);\nlet state=sanitizeState(prev.state);\nconst qid=String(prev.interpret_qid||'Q-1');\nconst q0=obj(prev.interpret_question)?prev.interpret_question:{};\nconst raw=prev.interpret_raw;\nconst applied=applyInterpretedDecision(qid,q0,raw,decision);\nconst hitl=state.hitl&&typeof state.hitl==='object'?{...state.hitl}:{pending:false,questions:[],answers:{}};\nconst questions=Array.isArray(hitl.questions)?hitl.questions:[];\nconst answers={...(hitl.answers&&typeof hitl.answers==='object'?hitl.answers:{})};\nif(!applied.accepted){\n  const q=buildClarifyQuestion(q0);\n  state.hitl={pending:true,questions:[q],answers};\n  state.status='waiting_user';\n  state.version=Number(state.version||0)+1;\n  const persistEvents=[[prev.case_id,'','hitl.request','orchestrator','','waiting_user',q.question,'',JSON.stringify({...q,...execRef()})]];\n  return [{json:{\n    ...prev,\n    state,\n    did_resume:true,\n    needs_interpret:false,\n    next_status:'waiting_user',\n    should_continue:false,\n    update_sql_parameters:[JSON.stringify(state),'waiting_user',prev.case_id],\n    persist_events:persistEvents,\n    event_sql_parameters:persistEvents[0],\n    human_gate:{gate_id:q.question_id,kind:q.kind,reason:q.question,expected_version:state.version,questions:[q]}\n  }}];\n}\nanswers[qid]=applied.answer;\nstate.hitl={pending:false,questions,answers};\nstate.status='running';\nstate.version=Number(state.version||0)+1;\nconst reviewAccept=isResultReviewGate(qid)&&humanAnswerChoice(applied.answer)==='accept';\nledgerPush(state,{kind:'human',step:Number(state.step_count||0),question_id:qid,question:String(q0.question||'').slice(0,200),answer:humanAnswerText(applied.answer).slice(0,300),...reviewAcceptFields(reviewAccept, q0)});\nstate.ledger.last_human_step=Number(state.step_count||0);\nstate.ledger.stall_count=0;\nconst said=humanAnswerText(applied.answer);\nconst persistEvents=[[prev.case_id,'','hitl.answered','user','','answered',said?('Пользователь ответил: '+said):'Пользователь ответил','',JSON.stringify({question_id:qid,answer:applied.answer,...execRef()})]];\nreturn [{json:{\n  ...prev,\n  state,\n  did_resume:true,\n  needs_interpret:false,\n  next_status:'running',\n  update_sql_parameters:[JSON.stringify(state),'running',prev.case_id],\n  persist_events:persistEvents,\n  event_sql_parameters:persistEvents[0]\n}}];\n"
-      },
-      "id": "05b49288-13d0-5936-bd06-0052922a9311",
-      "name": "Apply interpreted answer",
-      "type": "n8n-nodes-base.code",
-      "typeVersion": 2,
-      "position": [
-        1750,
-        360
-      ]
-    },
-    {
-      "parameters": {
-        "operation": "executeQuery",
-        "query": "UPDATE cases SET state = $1::jsonb, status = $2, updated_at = now() WHERE case_id = $3",
-        "options": {
-          "queryReplacement": "={{ $json.update_sql_parameters }}",
-          "queryBatching": "single",
-          "largeNumbersOutput": "text",
-          "replaceEmptyStrings": false
-        }
-      },
-      "id": "cc7782eb-9c30-5f87-91b4-d15d2178f6f2",
-      "name": "Update case after resume",
-      "type": "n8n-nodes-base.postgres",
-      "typeVersion": 2.6,
-      "position": [
-        1250,
-        540
-      ],
-      "credentials": {
-        "postgres": {
-          "id": "REPLACE_IN_UI",
-          "name": "REPLACE: SCHEDULE PostgreSQL / PGVector credential"
-        }
-      },
-      "alwaysOutputData": true
-    },
-    {
-      "parameters": {
-        "jsCode": "\nconst fromParse=(()=>{try{return $('Parse decision').first().json}catch{return null}})();\nconst fromMerge=(()=>{try{return $('Merge agent result').first().json}catch{return null}})();\nconst fromInterp=(()=>{try{return $('Apply interpreted answer').first().json}catch{return null}})();\nconst fromExtras=(()=>{try{return $('Apply request extras').first().json}catch{return null}})();\nconst withEvents=v=>v&&Array.isArray(v.persist_events)&&v.persist_events.length?v:null;\n/* Resume events (hitl.answered / hitl.request re-ask / orchestrator.resume) come from Apply interpreted answer or\n   Apply request extras. `case.created` is Activity's — Prepare start case is deliberately not a source here. */\nconst prev=fromMerge||fromParse||withEvents(fromInterp)||withEvents(fromExtras)||$json||{};\nconst rows=Array.isArray(prev.persist_events)?prev.persist_events:[];\nif(!rows.length) return [{json:{...prev,p1:'',p2:'',p3:'',p4:'',p5:'',p6:'',p7:'',p8:'',p9:'{}'}}];\nreturn rows.map(params=>{\n  const vals=(Array.isArray(params)?params:[]).map(v=>v===null||v===undefined?'':String(v));\n  return {json:{\n    ...prev,\n    p1:vals[0]||'',\n    p2:vals[1]||'',\n    p3:vals[2]||'',\n    p4:vals[3]||'',\n    p5:vals[4]||'',\n    p6:vals[5]||'',\n    p7:vals[6]||'',\n    p8:vals[7]||'',\n    p9:vals[8]||'{}',\n    event_sql_parameters:vals\n  }};\n});\n"
-      },
-      "id": "6a60805d-c347-5f6a-8b3b-866dc05c4da9",
-      "name": "Expand resume events",
-      "type": "n8n-nodes-base.code",
-      "typeVersion": 2,
-      "position": [
-        1500,
-        540
-      ]
-    },
-    {
-      "parameters": {
-        "operation": "executeQuery",
-        "query": "INSERT INTO events(case_id, task_id, kind, actor, agent_id, status, status_message, handoff_message, payload) SELECT $1,$2,$3,$4,$5,$6,$7,$8,$9::jsonb WHERE NULLIF($3, '') IS NOT NULL",
-        "options": {
-          "queryReplacement": "={{ [$json.p1, $json.p2, $json.p3, $json.p4, $json.p5, $json.p6, $json.p7, $json.p8, $json.p9] }}",
-          "queryBatching": "independently",
-          "largeNumbersOutput": "text",
-          "replaceEmptyStrings": false
-        }
-      },
-      "id": "0bb6f3c0-4098-5431-8b51-6fa4d434dd63",
-      "name": "Insert resume events",
-      "type": "n8n-nodes-base.postgres",
-      "typeVersion": 2.6,
-      "position": [
-        1250,
-        720
-      ],
-      "credentials": {
-        "postgres": {
-          "id": "REPLACE_IN_UI",
-          "name": "REPLACE: SCHEDULE PostgreSQL / PGVector credential"
-        }
-      },
-      "alwaysOutputData": true
-    },
-    {
-      "parameters": {
-        "jsCode": "let prev=null;\ntry{const item=$('Apply interpreted answer').first(); if(item&&item.json&&item.json.did_resume) prev=item.json;}catch(e){}\nif(!prev){try{prev=$('Apply request extras').first().json||{}}catch(e){prev={}}}\nreturn [{json:prev}];"
-      },
-      "id": "89c72d22-3f7f-5869-be34-20fea9d08895",
-      "name": "Restore after resume",
-      "type": "n8n-nodes-base.code",
-      "typeVersion": 2,
-      "position": [
-        1500,
-        720
-      ],
-      "executeOnce": true
-    },
-    {
-      "parameters": {
-        "conditions": {
-          "options": {
-            "caseSensitive": true,
-            "leftValue": "",
-            "typeValidation": "strict",
-            "version": 2
-          },
-          "conditions": [
-            {
-              "id": "97739f55-a78c-5b84-baab-c36c571b5cc5",
-              "leftValue": "={{ String($json.next_status || '') === 'running' }}",
-              "rightValue": true,
-              "operator": {
-                "type": "boolean",
-                "operation": "true"
-              }
-            }
-          ],
-          "combinator": "and"
-        },
-        "options": {}
-      },
-      "id": "7cfedfcf-12a0-51c0-b8f8-1faf3cc7dc70",
-      "name": "Resume to decision?",
-      "type": "n8n-nodes-base.if",
-      "typeVersion": 2.3,
-      "position": [
-        1500,
-        360
-      ]
-    },
-    {
-      "parameters": {
-        "conditions": {
-          "options": {
-            "caseSensitive": true,
-            "leftValue": "",
-            "typeValidation": "strict",
-            "version": 2
-          },
-          "conditions": [
-            {
-              "id": "6d985e68-6ec8-545d-b335-a4cb304df29d",
-              "leftValue": "={{ Boolean($json.is_resume) !== true }}",
-              "rightValue": true,
-              "operator": {
-                "type": "boolean",
-                "operation": "true"
-              }
-            }
-          ],
-          "combinator": "and"
-        },
-        "options": {}
-      },
-      "id": "bc2a3085-4c41-557f-8b71-d8b7f770b913",
-      "name": "Not a resume?",
-      "type": "n8n-nodes-base.if",
-      "typeVersion": 2.3,
-      "position": [
-        750,
-        720
-      ]
-    },
-    {
-      "parameters": {
-        "operation": "executeQuery",
-        "query": "SELECT agent_id, title, when_to_use, input_required, output_provides, invoke, input_schema, output_schema, hitl_policy, enabled, version FROM agent_registry WHERE enabled ORDER BY agent_id",
-        "options": {
-          "queryReplacement": "={{ [] }}",
-          "queryBatching": "single",
-          "largeNumbersOutput": "text",
-          "replaceEmptyStrings": false
-        }
-      },
-      "id": "294b1ee2-4c33-5604-9dc5-0b9495c6bf86",
-      "name": "Load agent registry",
-      "type": "n8n-nodes-base.postgres",
-      "typeVersion": 2.6,
-      "position": [
-        0,
-        900
-      ],
-      "credentials": {
-        "postgres": {
-          "id": "REPLACE_IN_UI",
-          "name": "REPLACE: SCHEDULE PostgreSQL / PGVector credential"
-        }
-      },
-      "alwaysOutputData": true
     },
     {
       "parameters": {

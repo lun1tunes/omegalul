@@ -1,3 +1,779 @@
+        "jsCode": "const x=$json;const parse=(v,f)=>{try{return typeof v==='string'?JSON.parse(v):v??f}catch{return f}};\nconst pending=parse(x.gate_json,{});const result=parse(x.result_json,{});const verification=parse(x.verification_json,{});const runtime=parse(x.runtime_json,{});\nconst chatRoles={\"excel_extraction_specialist\": \"Excel Extractor\", \"schedule_builder_specialist\": \"Schedule Builder\", \"engineering_calculation_specialist\": \"Calculation Specialist\", \"engineering_data_specialist\": \"Data Specialist\", \"engineering_document_specialist\": \"Document Specialist\", \"cluster_calculation_specialist\": \"Cluster Calculation\", \"binary_results_specialist\": \"Binary Results Extractor\", \"presentation_specialist\": \"Presentation Assembler\"};\nconst activity=(Array.isArray(runtime.handoff_events)?runtime.handoff_events:[]).map((turn,index)=>({\n  turn_id:index+1,\n  at:turn.at||null,\n  kind:'handoff',\n  from:{specialist_id:turn.from_specialist||null,role:turn.from_role||chatRoles[turn.from_specialist]||turn.from_specialist||'Orchestrator'},\n  to:{specialist_id:turn.to_specialist||null,role:turn.to_role||chatRoles[turn.to_specialist]||turn.to_specialist||'Orchestrator'},\n  status:turn.status||null,\n  text:String(turn.summary||'').slice(0,500),\n  brief:String(turn.brief||turn.summary||'').slice(0,800),\n  duration_ms:Number.isFinite(Number(turn.duration_ms))?Math.trunc(Number(turn.duration_ms)):null,\n  chips:Object.entries(turn.details&&typeof turn.details==='object'?turn.details:{}).filter(([k,v])=>['string','number','boolean'].includes(typeof v)&&!/(prompt|secret|token|password|authorization|api[_-]?key)/i.test(k)).slice(0,6).map(([k,v])=>({id:k,label:String(k),value:v}))\n}));\nreturn [{json:{contract:'orchestrator_response',contract_version:'1.0',task_id:x.task_id||null,version:Number(x.version||x.stored_version||0)||null,status:x.status||'error',\n message:x.message||({planning:'Планируем задачу.',delegated:'Задачу передали специалисту.',awaiting_human:'Нужен ваш ответ или утверждение.',completed:'Задача завершена после проверки.',failed:'Задача завершилась с ошибкой.',rejected:'Задача отклонена.',cancelled:'Задача отменена.',conflict:'Конфликт версии или gate — обновите статус.',not_found:'Задача не найдена.'}[x.status]||'Запрос обработан.'),\n next_action:x.status==='awaiting_human'?'resume_with_task_id_expected_version_gate_id_and_action':x.status==='conflict'?'reload_status':x.status==='retryable_error'?'automatic_replan':null,\n human_gate:Object.keys(pending).length?pending:null,result:Object.keys(result).length?result:null,verification:Object.keys(verification).length?verification:null,\n activity,activity_contract:'mas_activity_feed/v1.1',\n audit:{risk_class:x.risk_class||null,retry_count:Number(x.retry_count||0),max_retries:Number(x.max_retries||0),updated_at:x.updated_at||null,handoff_count:activity.length}}}];"
+      },
+      "id": "43c3bfc8-e062-5f9f-be0e-d137b3c00544",
+      "name": "Format orchestrator response",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        4480,
+        255
+      ],
+      "executeOnce": true
+    }
+  ],
+  "pinData": {},
+  "connections": {
+    "Mark HTTP entrypoint": {
+      "main": [
+        [
+          {
+            "node": "Materialize SCHEDULE uploads",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Mark Sub-workflow entrypoint": {
+      "main": [
+        [
+          {
+            "node": "Materialize SCHEDULE uploads",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Authenticated engineering webhook": {
+      "main": [
+        [
+          {
+            "node": "Mark HTTP entrypoint",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Engineering task form": {
+      "main": [
+        [
+          {
+            "node": "Mark Form entrypoint",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Mark Form entrypoint": {
+      "main": [
+        [
+          {
+            "node": "Form has SCHEDULE upload?",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Form has SCHEDULE upload?": {
+      "main": [
+        [
+          {
+            "node": "Materialize SCHEDULE uploads",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Materialize SCHEDULE uploads",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Materialize SCHEDULE uploads": {
+      "main": [
+        [
+          {
+            "node": "Normalize invocation",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "When called by another workflow": {
+      "main": [
+        [
+          {
+            "node": "Mark Sub-workflow entrypoint",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Normalize invocation": {
+      "main": [
+        [
+          {
+            "node": "Route invocation action",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Route invocation action": {
+      "main": [
+        [
+          {
+            "node": "Action router",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Action router": {
+      "main": [
+        [
+          {
+            "node": "Prepare new task",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Load task by ID",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Build invalid invocation response",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Prepare final MAS trace event",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Prepare new task": {
+      "main": [
+        [
+          {
+            "node": "Call CAS persist — insert new task",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Call CAS persist — insert new task": {
+      "main": [
+        [
+          {
+            "node": "Should new task be planned?",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Should new task be planned?": {
+      "main": [
+        [
+          {
+            "node": "Prepare governed routing RAG request",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Prepare final MAS trace event",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Load task by ID": {
+      "main": [
+        [
+          {
+            "node": "Validate loaded task state",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Validate loaded task state": {
+      "main": [
+        [
+          {
+            "node": "Apply action and version guard",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Apply action and version guard": {
+      "main": [
+        [
+          {
+            "node": "Resume action router",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Resume action router": {
+      "main": [
+        [
+          {
+            "node": "Call CAS persist — human action then plan",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Call CAS persist — terminal human action",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Prepare final MAS trace event",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Call CAS persist — human action then plan": {
+      "main": [
+        [
+          {
+            "node": "Human action planning CAS succeeded?",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Human action planning CAS succeeded?": {
+      "main": [
+        [
+          {
+            "node": "Approved or continued task delegates directly?",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Prepare final MAS trace event",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Approved or continued task delegates directly?": {
+      "main": [
+        [
+          {
+            "node": "Resolve allowlisted specialist",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Prepare governed routing RAG request",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Call CAS persist — terminal human action": {
+      "main": [
+        [
+          {
+            "node": "Prepare final MAS trace event",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Prepare governed routing RAG request": {
+      "main": [
+        [
+          {
+            "node": "Call routing Hybrid Retrieval",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Call routing Hybrid Retrieval": {
+      "main": [
+        [
+          {
+            "node": "Attach governed routing RAG evidence",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Attach governed routing RAG evidence": {
+      "main": [
+        [
+          {
+            "node": "Routing RAG evidence ready?",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Routing RAG evidence ready?": {
+      "main": [
+        [
+          {
+            "node": "Prepare planner input",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Build routing RAG evidence gate",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Build routing RAG evidence gate": {
+      "main": [
+        [
+          {
+            "node": "Call CAS persist — routing gate",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Prepare planner input": {
+      "main": [
+        [
+          {
+            "node": "Engineering Planner Agent",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Planner Chat Model — configure in UI": {
+      "ai_languageModel": [
+        [
+          {
+            "node": "Engineering Planner Agent",
+            "type": "ai_languageModel",
+            "index": 0
+          },
+          {
+            "node": "Planner Structured Output",
+            "type": "ai_languageModel",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Planner Structured Output": {
+      "ai_outputParser": [
+        [
+          {
+            "node": "Engineering Planner Agent",
+            "type": "ai_outputParser",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Engineering Planner Agent": {
+      "main": [
+        [
+          {
+            "node": "Validate and apply plan",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Validate and apply plan": {
+      "main": [
+        [
+          {
+            "node": "Call CAS persist — plan or human gate",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Call CAS persist — plan or human gate": {
+      "main": [
+        [
+          {
+            "node": "Plan delegates now?",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Plan delegates now?": {
+      "main": [
+        [
+          {
+            "node": "Resolve allowlisted specialist",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Prepare final MAS trace event",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Resolve allowlisted specialist": {
+      "main": [
+        [
+          {
+            "node": "Delegation allowlisted?",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Delegation allowlisted?": {
+      "main": [
+        [
+          {
+            "node": "Prepare specialist invocation context",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Build allowlist configuration gate",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Build allowlist configuration gate": {
+      "main": [
+        [
+          {
+            "node": "Call CAS persist — routing gate",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Call CAS persist — routing gate": {
+      "main": [
+        [
+          {
+            "node": "Prepare final MAS trace event",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Prepare specialist invocation context": {
+      "main": [
+        [
+          {
+            "node": "Configured specialist router",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Configured specialist router": {
+      "main": [
+        [
+          {
+            "node": "Prepare governed Excel protocol RAG request",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Prepare governed SCHEDULE RAG request",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Call Calculation Specialist",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Call Data Specialist",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Call Document Specialist",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Call Cluster Calculation Specialist",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Call Binary Results Specialist",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Call Presentation Specialist",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Prepare governed Excel protocol RAG request": {
+      "main": [
+        [
+          {
+            "node": "Call Excel protocol Hybrid Retrieval",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Call Excel protocol Hybrid Retrieval": {
+      "main": [
+        [
+          {
+            "node": "Attach governed Excel protocol RAG evidence",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Attach governed Excel protocol RAG evidence": {
+      "main": [
+        [
+          {
+            "node": "Excel protocol RAG evidence ready?",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Excel protocol RAG evidence ready?": {
+      "main": [
+        [
+          {
+            "node": "Call Excel Extraction Specialist",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Build Excel protocol RAG evidence gate",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Build Excel protocol RAG evidence gate": {
+      "main": [
+        [
+          {
+            "node": "Normalize specialist result",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Call Excel Extraction Specialist": {
+      "main": [
+        [
+          {
+            "node": "Normalize specialist result",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Prepare governed SCHEDULE RAG request": {
+      "main": [
+        [
+          {
+            "node": "Call SCHEDULE Hybrid Retrieval",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Call SCHEDULE Hybrid Retrieval": {
+      "main": [
+        [
+          {
+            "node": "Attach governed SCHEDULE RAG evidence",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Attach governed SCHEDULE RAG evidence": {
+      "main": [
+        [
+          {
+            "node": "SCHEDULE RAG evidence ready?",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "SCHEDULE RAG evidence ready?": {
+      "main": [
+        [
+          {
+            "node": "Call SCHEDULE Builder Specialist",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Build SCHEDULE RAG evidence gate",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Build SCHEDULE RAG evidence gate": {
+      "main": [
+        [
+          {
+            "node": "Normalize specialist result",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Call SCHEDULE Builder Specialist": {
+      "main": [
+        [
+          {
+            "node": "Normalize specialist result",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Call Calculation Specialist": {
+      "main": [
+        [
+          {
+            "node": "Normalize specialist result",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Call Data Specialist": {
+      "main": [
+        [
+          {
+            "node": "Normalize specialist result",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Call Document Specialist": {
+      "main": [
+        [
+          {
+            "node": "Normalize specialist result",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Call Cluster Calculation Specialist": {
+      "main": [
+        [
+          {
             "node": "Normalize specialist result",
             "type": "main",
             "index": 0
@@ -11514,7 +12290,7 @@ if __name__ == "__main__":
     sys.exit(main())
 
 ===END_FILE===
-===BEGIN_FILE===	scripts/project_pack.py	10437	utf8
+===BEGIN_FILE===	scripts/project_pack.py	10481	utf8
 #!/usr/bin/env python3
 """Pack and unpack the MAS deployment tree into a portable text archive."""
 from __future__ import annotations
@@ -11531,6 +12307,8 @@ END = "===END_FILE==="
 DEFAULT_CHUNK_SIZE = 1_000_000
 
 PACK_DIRS = (
+    "agents-template",
+    "mas-agent-kit",
     "excel-agent-tools",
     "fastapi-math-service",
     "mas-activity-service",
