@@ -21,7 +21,7 @@ NAMESPACE_LABELS = {
     "schedule_mvp": "Schedule Builder",
     "excel_protocol": "Excel Extractor",
     "orchestrator_routing": "Orchestrator",
-    "specialist_template": "Specialist template",
+    "specialist_template": "Шаблон специалиста",
 }
 
 _DEFAULT_NAME = "excel-agent-operating-guide.documents.json"

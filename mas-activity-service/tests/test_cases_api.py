@@ -194,7 +194,7 @@ def test_create_case_memory_when_webhook_configured(monkeypatch) -> None:
     assert schema["start_label"] == "Постановка задачи"
     assert schema["end_label"] == "Результат"
     assert schema["frames"][0]["label"] == "Постановка задачи"
-    assert schema["frames"][0]["nodes"]["input"]["tone"] == "active"
+    assert schema["frames"][0]["nodes"]["engineer"]["tone"] == "active"
 
 
 def test_create_action_is_sent_to_n8n_for_new_case(monkeypatch) -> None:

@@ -4,7 +4,7 @@
   const START_LABEL = "Постановка задачи";
   const END_LABEL = "Итог";
   const FINISHED_RESULT_TEXT = "Задача завершена. Загрузите результаты работы.";
-  const FIXED_NODES = ["input", "orchestrator", "user", "output"];
+  const FIXED_NODES = ["engineer", "orchestrator", "output"];
   const KIND_LABELS = {
     "case.created": START_LABEL,
     "case.finished": END_LABEL,
@@ -84,23 +84,49 @@
     return (words[0][0] + words[1][0]).toUpperCase();
   }
   function nodeMeta(key) {
-    if (key === "input") return { kicker: "вход", title: START_LABEL, icon: "i-file" };
+    if (key === "engineer") return { kicker: "вы", title: "Инженер", icon: "i-user" };
     if (key === "orchestrator") return { kicker: "оркестратор", title: "Оркестратор", icon: "i-orch" };
-    if (key === "user") return { kicker: "инженер", title: "Вы", icon: "i-user" };
     if (key === "output") return { kicker: "выход", title: END_LABEL, icon: "i-download" };
     const id = agentIdOf(key);
     return { kicker: "агент", title: humanTitle(id), initials: initials(humanTitle(id)), hint: registry.get(id)?.when_to_use || "" };
   }
-  function statusLabel(key, tone) {
+  function statusLabel(key, tone, spec) {
+    if (key === "engineer") {
+      if (tone === "waiting") return "Вопрос вам";
+      if (tone === "active" && spec && spec.hitl_answer) return "Ваш ответ";
+      if (tone === "active") return "Постановка";
+      if (tone === "done" && spec && spec.hitl_answer) return "Ответил";
+      if (tone === "done") return "Задача поставлена";
+      return "";
+    }
     if (tone === "idle") {
-      if (key === "user") return "Вопросов не было";
       if (key === "orchestrator") return "Ожидает задачу";
       if (key.startsWith("agent:")) return "Не вызывался";
       return "";
     }
     if (key === "output" && tone === "active") return complete ? "Готово" : "Формируется";
-    if (key === "input" && tone === "active") return "Принята";
     return TONE_STATUS[tone] || tone;
+  }
+
+  function payloadOf(event) {
+    return event && event.payload && typeof event.payload === "object" ? event.payload : {};
+  }
+  function hitlQuestionText(event) {
+    const payload = payloadOf(event);
+    return text(event.status_message) || text(payload.question);
+  }
+  function hitlAnswerText(event) {
+    const payload = payloadOf(event);
+    const raw = payload.answer;
+    if (raw && typeof raw === "object") return text(raw.text || raw.label || raw.choice);
+    if (text(raw)) return text(raw);
+    return text(event.status_message).replace(/^(Пользователь|Инженер)\s+ответил[а]?:\s*/i, "");
+  }
+  function formatHitl(question, answer) {
+    const q = text(question);
+    const a = text(answer);
+    if (q && a) return `Вопрос: ${q}\nОтвет: ${a}`;
+    return a || q;
   }
 
   // ------------------------------------------------------------------ frames
@@ -145,12 +171,11 @@
     const nodes = {};
     const edges = {};
     const planned = planByAgent(state);
-    for (const key of FIXED_NODES) nodes[key] = { tone: "idle", bubble: null, caption: "" };
+    for (const key of FIXED_NODES) nodes[key] = { tone: "idle", bubble: null, caption: "", hitl_question: "", hitl_answer: "" };
     for (const id of agents) nodes[agentKey(id)] = { tone: "idle", bubble: null, caption: planned.get(id)?.title || "", planned: planned.has(id) };
-    edges["input>orchestrator"] = { tone: "idle", bubble: null };
+    edges["engineer>orchestrator"] = { tone: "idle", bubble: null };
+    edges["orchestrator>engineer"] = { tone: "idle", bubble: null };
     edges["orchestrator>output"] = { tone: "idle", bubble: null };
-    edges["orchestrator>user"] = { tone: "idle", bubble: null };
-    edges["user>orchestrator"] = { tone: "idle", bubble: null };
     for (const id of agents) {
       edges[`orchestrator>${agentKey(id)}`] = { tone: "idle", bubble: null };
       edges[`${agentKey(id)}>orchestrator`] = { tone: "idle", bubble: null };
@@ -160,6 +185,7 @@
       input: { goal: text(state && state.goal), files: filesFromState(state || {}) },
       output: { result: "", prompt: "" },
       active_node: null, active_edge: null, in_flight: null, last_handoff: {}, last_orch_prompt: "",
+      last_hitl: { question: "", answer: "" },
     };
   }
 
@@ -209,8 +235,12 @@
     return KIND_LABELS[kind] || kind || "Шаг";
   }
   function snapshot(graph, event, idx) {
+    const kind = text(event.kind);
+    let label = frameLabel(event);
+    if (kind === "hitl.request" && graph.last_hitl.question) label = graph.last_hitl.question;
+    if (kind === "hitl.answered") label = formatHitl(graph.last_hitl.question, graph.last_hitl.answer) || label;
     return {
-      index: idx, label: frameLabel(event), kind: text(event.kind), event_id: event.event_id,
+      index: idx, label, kind, event_id: event.event_id,
       agent_id: eventAgent(event),
       nodes: copy(graph.nodes), edges: copy(graph.edges), input: copy(graph.input), output: copy(graph.output),
       active_node: graph.active_node, active_edge: graph.active_edge,
@@ -230,13 +260,13 @@
     if (kind === "case.created") {
       if (Array.isArray(payload.files) && payload.files.length) graph.input.files = payload.files.map(String).filter(Boolean);
       if (!graph.input.goal && statusMessage) graph.input.goal = statusMessage;
-      activateNode(graph, "input", null);
-      setEdge(graph, "input>orchestrator", "active");
+      activateNode(graph, "engineer", null);
+      setEdge(graph, "engineer>orchestrator", "active");
       return;
     }
     if (kind === "orchestrator.status" || kind === "orchestrator.decision") {
-      if (graph.nodes.input.tone === "active") markDone(graph, "input");
-      if (graph.edges["input>orchestrator"].tone === "active") setEdge(graph, "input>orchestrator", "done");
+      if (graph.nodes.engineer.tone === "active") markDone(graph, "engineer");
+      if (graph.edges["engineer>orchestrator"].tone === "active") setEdge(graph, "engineer>orchestrator", "done");
       const flying = graph.in_flight;
       if (flying && graph.edges[`${flying}>orchestrator`]?.tone === "active") setEdge(graph, `${flying}>orchestrator`, "done");
       graph.last_orch_prompt = statusMessage || graph.last_orch_prompt || "";
@@ -289,18 +319,32 @@
       return;
     }
     if (kind === "hitl.request") {
-      const question = statusMessage || text(payload.question);
-      activateNode(graph, "user", question || null);
+      const question = hitlQuestionText(event);
+      graph.last_hitl = { question, answer: "" };
+      const node = graph.nodes.engineer;
+      node.hitl_question = question;
+      node.hitl_answer = "";
+      activateNode(graph, "engineer", question || null);
+      node.tone = "waiting";
       graph.nodes.orchestrator.tone = "waiting";
       graph.nodes.orchestrator.bubble = null;
-      setEdge(graph, "orchestrator>user", "active", question || null);
+      setEdge(graph, "orchestrator>engineer", "active", question || null);
+      graph.active_node = "engineer";
       return;
     }
     if (kind === "hitl.answered") {
-      markDone(graph, "user");
-      setEdge(graph, "orchestrator>user", "done");
-      setEdge(graph, "user>orchestrator", "active", statusMessage || null);
-      activateNode(graph, "orchestrator", statusMessage || null);
+      const question = graph.last_hitl.question || text(payload.question);
+      const answer = hitlAnswerText(event);
+      graph.last_hitl = { question, answer };
+      const node = graph.nodes.engineer;
+      node.hitl_question = question;
+      node.hitl_answer = answer;
+      const both = formatHitl(question, answer);
+      activateNode(graph, "engineer", both || answer || null);
+      setEdge(graph, "orchestrator>engineer", "done");
+      setEdge(graph, "engineer>orchestrator", "active", answer || null);
+      graph.nodes.orchestrator.tone = "pending";
+      graph.nodes.orchestrator.bubble = null;
       return;
     }
     if (kind === "case.finished") {
@@ -357,8 +401,8 @@
     agentIds = collectAgents(rows);
     const graph = blankGraph(state || {}, agentIds);
     if (!rows.length) {
-      activateNode(graph, "input", null);
-      return [{ ...snapshot(graph, { kind: "case.created" }, 0), label: START_LABEL, active_node: "input", active_edge: null }];
+      activateNode(graph, "engineer", null);
+      return [{ ...snapshot(graph, { kind: "case.created" }, 0), label: START_LABEL, active_node: "engineer", active_edge: null }];
     }
     return rows.map((event, idx) => { applyEvent(graph, event); return snapshot(graph, event, idx); });
   }
@@ -380,26 +424,146 @@
   }
 
   // ------------------------------------------------------------------ layout
-  const NODE_W = 196;
+  function clamp(n, lo, hi) { return Math.max(lo, Math.min(hi, n)); }
+  function isCompact() {
+    const w = stage.clientWidth || 900;
+    const h = stage.clientHeight || 400;
+    return w < 700 || h < 360;
+  }
   function layoutCenters() {
-    const centers = { user: { x: 50, y: 13 }, input: { x: 13, y: 50 }, orchestrator: { x: 50, y: 50 }, output: { x: 87, y: 50 } };
+    const compact = isCompact();
+    const stageW = Math.max(stage.clientWidth || 900, 1);
+    const stageH = Math.max(stage.clientHeight || 400, 1);
     const n = agentIds.length;
-    const stageW = stage.clientWidth || 900;
-    // Agents sit on the bottom row; shrink the cards when the stage cannot fit them side by side.
-    let nodeW = NODE_W;
-    if (n > 1) nodeW = Math.max(132, Math.min(NODE_W, (0.94 * stageW) / n - 12));
-    nodesEl.style.setProperty("--node-w", `${Math.round(nodeW)}px`);
-    const minGap = ((nodeW + 12) / stageW) * 100;
-    const spacing = n <= 1 ? 0 : Math.max(minGap, Math.min(26, 76 / (n - 1)));
-    const edge = (nodeW / 2 / stageW) * 100 + 1;
+    const short = stageH < 500;
+    const roomy = !compact && stageW >= 920;
+    root.classList.toggle("is-compact", compact);
+    root.classList.toggle("is-roomy", roomy && !short);
+
+    const padX = Math.max(14, Math.round(stageW * 0.022));
+    const gap = Math.max(12, Math.round(stageW * 0.014));
+    const agentMin = compact ? 148 : 176;
+    const agentMax = Math.round(clamp(stageW * 0.24, 216, 300));
+    let agentW = 216;
+    if (n > 0) {
+      const agentFit = Math.floor((stageW - 2 * padX - Math.max(n - 1, 0) * gap) / n);
+      agentW = clamp(agentFit, agentMin, agentMax);
+    }
+    const hubMin = compact ? 176 : 196;
+    const hubMax = Math.round(clamp(stageW * 0.26, 220, 320));
+    const hubFit = Math.floor((stageW - 2 * padX - 2 * Math.max(gap, 20)) / 3.15);
+    let hubW = clamp(hubFit, hubMin, hubMax);
+    let orchW = clamp(Math.round(hubW * 1.08), hubW, Math.min(hubMax + 28, 340));
+    while (padX + hubW + gap > stageW / 2 - orchW / 2 - 4 && hubW > hubMin) {
+      hubW -= 4;
+      orchW = clamp(Math.round(hubW * 1.08), hubW, Math.min(hubMax + 28, 340));
+    }
+
+    const capLines = compact ? 1 : (roomy && !short ? 4 : 3);
+    const talkLines = compact ? 3 : (roomy && !short ? 6 : 5);
+    nodesEl.style.setProperty("--node-w", `${Math.round(agentW)}px`);
+    nodesEl.style.setProperty("--hub-w", `${Math.round(hubW)}px`);
+    nodesEl.style.setProperty("--orch-w", `${Math.round(orchW)}px`);
+    nodesEl.style.setProperty("--node-typo", roomy ? "1.05" : compact ? "0.96" : "1");
+    nodesEl.style.setProperty("--cap-lines", String(capLines));
+    nodesEl.style.setProperty("--talk-lines", String(talkLines));
+
+    const pctX = (px) => (px / stageW) * 100;
+    const pctY = (px) => (px / stageH) * 100;
+    // Hub row uses the top band (HITL no longer sits there). Agents stay on the bottom
+    // so the bezier handoffs have a clear lane between the two rows.
+    const estAgentH = (compact ? 88 : 128) + capLines * 16;
+    const estHubH = (compact ? 120 : 168) + (roomy ? 24 : 0);
+    const padY = Math.max(16, Math.round(stageH * 0.04));
+    const hubY = clamp(pctY(padY + estHubH / 2), 18, compact ? 34 : 32);
+    const agentY = clamp(pctY(stageH - padY - estAgentH / 2), compact ? 70 : 74, 90);
+    const centers = {
+      engineer: { x: pctX(padX + hubW / 2), y: hubY },
+      orchestrator: { x: 50, y: hubY },
+      output: { x: 100 - pctX(padX + hubW / 2), y: hubY },
+    };
+    const spacing = n <= 1 ? 0 : pctX(agentW + gap);
+    const agentEdge = pctX(agentW / 2) + 0.5;
     agentIds.forEach((id, i) => {
-      const x = 50 + (i - (n - 1) / 2) * spacing;
-      centers[agentKey(id)] = { x: Math.max(edge, Math.min(100 - edge, x)), y: 87 };
+      const x = n <= 1 ? 50 : 50 + (i - (n - 1) / 2) * spacing;
+      centers[agentKey(id)] = { x: clamp(x, agentEdge, 100 - agentEdge), y: agentY };
     });
-    // Side nodes keep clear of the stage border as well.
-    centers.input.x = Math.max(edge, 13);
-    centers.output.x = Math.min(100 - edge, 87);
     return centers;
+  }
+
+  function nodeBox(el, sr) {
+    const b = el.getBoundingClientRect();
+    return { x: b.left - sr.left, y: b.top - sr.top, w: b.width, h: b.height };
+  }
+  function boxesOverlap(a, b) {
+    return a.x < b.x + b.w && a.x + a.w > b.x && a.y < b.y + b.h && a.y + a.h > b.y;
+  }
+  function placeNode(el, box, sr) {
+    el.style.left = `${((box.x + box.w / 2) / sr.width) * 100}%`;
+    el.style.top = `${((box.y + box.h / 2) / sr.height) * 100}%`;
+  }
+  /** Two-row layout: lift the hub band so arrows between orchestrator and agents stay visible. */
+  function uncollide() {
+    const sr = stage.getBoundingClientRect();
+    if (sr.width < 8 || sr.height < 8) return;
+    const nodes = Array.from(nodesEl.querySelectorAll(".schema-node"));
+    const agents = nodes.filter((el) => String(el.dataset.node).startsWith("agent:"));
+    const blockers = nodes.filter((el) => ["engineer", "output", "orchestrator"].includes(el.dataset.node));
+    const pad = 8;
+    const lane = isCompact() ? 36 : 56;
+
+    const clampBox = (el) => {
+      const box = nodeBox(el, sr);
+      box.x = Math.max(0, Math.min(sr.width - box.w, box.x));
+      box.y = Math.max(0, Math.min(sr.height - box.h, box.y));
+      placeNode(el, box, sr);
+    };
+
+    if (agents.length && blockers.length) {
+      let hubTop = sr.height;
+      let hubBottom = 0;
+      for (const el of blockers) {
+        const b = nodeBox(el, sr);
+        hubTop = Math.min(hubTop, b.y);
+        hubBottom = Math.max(hubBottom, b.y + b.h);
+      }
+      let agentTop = sr.height;
+      for (const el of agents) {
+        const a = nodeBox(el, sr);
+        agentTop = Math.min(agentTop, a.y);
+      }
+      const lift = hubBottom + lane - agentTop;
+      if (lift > 0) {
+        const shift = Math.min(lift, Math.max(0, hubTop - pad));
+        if (shift > 0) {
+          for (const el of blockers) {
+            const b = nodeBox(el, sr);
+            b.y -= shift;
+            placeNode(el, b, sr);
+          }
+        }
+      }
+    }
+
+    for (const agentEl of agents) {
+      for (const blockEl of blockers) {
+        const A = nodeBox(agentEl, sr);
+        const B = nodeBox(blockEl, sr);
+        if (!boxesOverlap(A, B)) continue;
+        const up = A.y - lane - B.h;
+        if (up >= pad) {
+          B.y = up;
+          placeNode(blockEl, B, sr);
+          continue;
+        }
+        const down = B.y + B.h + lane;
+        if (down + A.h <= sr.height - pad) {
+          A.y = down;
+          placeNode(agentEl, A, sr);
+        }
+      }
+    }
+    for (const el of nodes) clampBox(el);
   }
 
   function measuredBoxes() {
@@ -421,10 +585,8 @@
 
   function edgeEnds(id) {
     const [a, b] = id.split(">");
-    if (a === "input") return [a, "right", b, "left"];
+    if (a === "engineer") return [a, "right", b, "left"];
     if (b === "output") return [a, "right", b, "left"];
-    if (b === "user") return [a, "top", b, "bottom"];
-    if (a === "user") return [a, "bottom", b, "top"];
     if (a === "orchestrator") return [a, "bottom", b, "top"];
     return [a, "top", b, "bottom"];
   }
@@ -458,13 +620,13 @@
 
   /** Physical wires: one per pair; the logical return edge decides direction/tone when it is live. */
   function drawnEdges() {
-    const ids = ["input>orchestrator", "orchestrator>output", "orchestrator>user"];
+    const ids = ["engineer>orchestrator", "orchestrator>output"];
     for (const id of agentIds) ids.push(`orchestrator>${agentKey(id)}`);
     return ids;
   }
   function backOf(id) {
     const [a, b] = id.split(">");
-    return b === "output" || a === "input" ? null : `${b}>${a}`;
+    return b === "output" ? null : `${b}>${a}`;
   }
   const live = (t) => t === "active" || t === "error";
   function pairVisual(id, edges, activeEdge) {
@@ -490,13 +652,27 @@
     return svg;
   }
 
+  function syncNodeChrome(el) {
+    const meta = nodeMeta(el.dataset.node);
+    const av = el.querySelector(".avatar");
+    const kicker = el.querySelector(".schema-node-kicker");
+    const title = el.querySelector(".schema-node-title");
+    if (kicker) kicker.textContent = meta.kicker;
+    if (title) title.textContent = meta.title;
+    const hint = text(meta.hint);
+    el.dataset.hint = hint;
+    if (av && !av.querySelector("svg")) {
+      if (meta.icon) { av.textContent = ""; av.append(iconUse(meta.icon)); }
+      else av.textContent = meta.initials || "·";
+    }
+  }
+
   function ensureNodes() {
     const wanted = [...FIXED_NODES, ...agentIds.map(agentKey)];
     const existing = new Set(Array.from(nodesEl.querySelectorAll(".schema-node"), (el) => el.dataset.node));
     for (const el of nodesEl.querySelectorAll(".schema-node")) if (!wanted.includes(el.dataset.node)) el.remove();
     for (const key of wanted) {
       if (existing.has(key)) continue;
-      const meta = nodeMeta(key);
       const node = document.createElement("article");
       node.className = "schema-node is-idle";
       node.dataset.node = key;
@@ -505,15 +681,11 @@
       head.className = "schema-node-head";
       const av = document.createElement("span");
       av.className = "avatar";
-      if (meta.icon) av.append(iconUse(meta.icon)); else av.textContent = meta.initials || "·";
       const copyEl = document.createElement("div");
       const kicker = document.createElement("div");
       kicker.className = "schema-node-kicker";
-      kicker.textContent = meta.kicker;
       const title = document.createElement("div");
       title.className = "schema-node-title";
-      title.textContent = meta.title;
-      if (meta.hint) title.title = meta.hint;
       copyEl.append(kicker, title);
       const status = document.createElement("span");
       status.className = "status-pill schema-node-status";
@@ -524,15 +696,19 @@
       files.className = "schema-node-files";
       files.hidden = true;
       node.append(head, caption, files);
-      node.addEventListener("click", (ev) => { if (!ev.target.closest("a")) togglePeek(node); });
+      node.addEventListener("click", (ev) => {
+        if (ev.target.closest("a") || !node.classList.contains("is-peekable")) return;
+        togglePeek(node);
+      });
       node.addEventListener("keydown", (ev) => { if (ev.key === "Enter" || ev.key === " ") { ev.preventDefault(); togglePeek(node); } });
       nodesEl.append(node);
     }
+    for (const el of nodesEl.querySelectorAll(".schema-node")) syncNodeChrome(el);
     // markers once
     if (!edgesEl.querySelector("defs")) {
       const defs = svgEl("defs");
       for (const [id, color] of [["schemaArrowActive", "#00B8F0"], ["schemaArrowDone", "#0033A0"], ["schemaArrowError", "#F90D4B"]]) {
-        const m = svgEl("marker", { id, viewBox: "0 0 10 10", refX: "8", refY: "5", markerWidth: "7", markerHeight: "7", markerUnits: "userSpaceOnUse", orient: "auto" });
+        const m = svgEl("marker", { id, viewBox: "0 0 10 10", refX: "10", refY: "5", markerWidth: "14", markerHeight: "14", markerUnits: "userSpaceOnUse", orient: "auto" });
         m.append(svgEl("path", { d: "M 0 1 L 10 5 L 0 9 Z", fill: color }));
         defs.append(m);
       }
@@ -590,43 +766,101 @@
   }
 
   function paintNodes(frame) {
+    layoutCenters();
+    applyCenters();
     for (const el of nodesEl.querySelectorAll(".schema-node")) {
       const key = el.dataset.node;
       const spec = frame.nodes[key] || { tone: "idle" };
       const tone = spec.tone || "idle";
       el.className = `schema-node is-${tone === "error" ? "failed" : tone}`;
+      const q0 = text(spec.hitl_question);
+      const a0 = text(spec.hitl_answer);
+      el.classList.toggle("is-dialogue", Boolean((q0 && a0) || ((tone === "waiting" || tone === "active") && (q0 || a0))));
       const status = el.querySelector(".schema-node-status");
-      const label = tone === "idle" && spec.planned ? "В плане" : statusLabel(key, tone);
-      status.textContent = label;
-      status.hidden = !label;
-      status.dataset.tone = tone === "error" ? "failed" : tone === "active" || tone === "pending" ? "running" : tone === "waiting" ? "waiting" : tone === "done" ? "done" : "";
+      const label = tone === "idle" && spec.planned ? "В плане" : statusLabel(key, tone, spec);
+      if (status) {
+        status.textContent = label;
+        status.hidden = !label;
+        status.dataset.tone = tone === "error" ? "failed" : tone === "active" || tone === "pending" ? "running" : tone === "waiting" ? "waiting" : tone === "done" ? "done" : "";
+      }
       const caption = el.querySelector(".schema-node-caption");
       const files = el.querySelector(".schema-node-files");
       files.innerHTML = "";
       files.hidden = true;
-      if (key === "input") {
-        caption.textContent = frame.input?.goal || "Нет описания задачи";
-        const cards = prioritizeInputCards(inputCards.length ? inputCards : (frame.input?.files || []).map((f) => ({ filename: f })));
-        if (cards.length) { files.hidden = false; for (const c of cards.slice(0, 4)) files.append(fileChip(c)); }
+      const compact = isCompact();
+      root.classList.toggle("is-compact", compact);
+      syncNodeChrome(el);
+      if (key === "engineer") {
+        const q = q0;
+        const a = a0;
+        if (q && a) {
+          caption.textContent = formatHitl(q, a);
+        } else if ((tone === "waiting" || tone === "active") && (q || a)) {
+          caption.textContent = formatHitl(q, a);
+        } else {
+          caption.textContent = frame.input?.goal || "Нет описания задачи";
+          const cards = prioritizeInputCards(inputCards.length ? inputCards : (frame.input?.files || []).map((f) => ({ filename: f })));
+          if (cards.length && !compact) { files.hidden = false; for (const c of cards.slice(0, 2)) files.append(fileChip(c)); }
+        }
       } else if (key === "output") {
         caption.textContent = frame.output?.result || (complete ? "Нет текста итога" : "Итог появится, когда оркестратор завершит задачу");
-        if (complete && deliverableCards.length && ["active", "done", "error"].includes(tone)) {
+        if (!compact && complete && deliverableCards.length && ["active", "done", "error"].includes(tone)) {
           files.hidden = false;
-          for (const c of deliverableCards.slice(0, 6)) files.append(fileChip(c));
+          for (const c of deliverableCards.slice(0, 3)) files.append(fileChip(c));
         }
       } else {
         const c = text(spec.caption || spec.bubble);
-        caption.textContent = c;
-        caption.hidden = !c;
+        const hint = text(el.dataset.hint);
+        caption.textContent = c || hint;
+        caption.classList.toggle("is-hint", Boolean(hint && !c));
       }
       caption.hidden = !text(caption.textContent);
-      el.classList.toggle("is-peekable", Boolean(text(caption.textContent)) || !files.hidden);
       el.dataset.full = text(caption.textContent);
+      el.classList.toggle("is-peekable", files && !files.hidden);
     }
+  }
+
+  function overflows(el) {
+    if (!el || el.hidden) return false;
+    return el.scrollHeight > el.clientHeight + 1 || el.scrollWidth > el.clientWidth + 1;
+  }
+
+  function setTruncHint(el, full) {
+    if (!el) return false;
+    const clip = overflows(el);
+    el.classList.toggle("is-truncated", clip);
+    const shown = text(full);
+    if (clip && shown) el.setAttribute("title", shown);
+    else el.removeAttribute("title");
+    return clip;
+  }
+
+  function markOverflow() {
+    for (const el of nodesEl.querySelectorAll(".schema-node")) {
+      const caption = el.querySelector(".schema-node-caption");
+      const files = el.querySelector(".schema-node-files");
+      const title = el.querySelector(".schema-node-title");
+      const status = el.querySelector(".schema-node-status");
+      const hint = text(el.dataset.hint);
+      const clip = setTruncHint(caption, el.dataset.full);
+      const hasFiles = Boolean(files && !files.hidden);
+      el.classList.toggle("is-peekable", clip || hasFiles || (Boolean(hint) && !text(el.dataset.full)));
+      if (status && !status.hidden) setTruncHint(status, status.textContent);
+      if (title) {
+        const titleClip = setTruncHint(title, title.textContent);
+        if (!titleClip && hint) title.setAttribute("title", hint);
+      }
+    }
+    for (const slip of stage.querySelectorAll(".schema-slip")) {
+      const clip = setTruncHint(slip, slip.dataset.full);
+      slip.classList.toggle("is-peekable", clip);
+    }
+    if (stepEl) setTruncHint(stepEl, stepEl.textContent);
   }
 
   function paintEdges(frame) {
     applyCenters();
+    uncollide();
     const { boxes, w, h } = measuredBoxes();
     if (!w || !h) return;
     edgesEl.setAttribute("viewBox", `0 0 ${w} ${h}`);
@@ -659,9 +893,11 @@
         slip.style.top = `${(geo.mid.y / h) * 100}%`;
         const full = text(vis.bubble);
         slip.dataset.full = full;
-        slip.textContent = full.length > 64 ? `${full.slice(0, 63).trimEnd()}…` : full;
-        slip.title = full;
-        slip.addEventListener("click", (ev) => { ev.stopPropagation(); togglePeek(slip); });
+        slip.textContent = full;
+        slip.addEventListener("click", (ev) => {
+          ev.stopPropagation();
+          if (slip.classList.contains("is-truncated")) togglePeek(slip);
+        });
         stage.append(slip);
       }
     }
@@ -673,7 +909,6 @@
 
   function paintChrome(frame) {
     stepEl.textContent = frame?.label || "";
-    stepEl.title = frame?.label || "";
     countEl.textContent = frames.length ? `шаг ${index + 1} / ${frames.length}` : "шаг 0 / 0";
     rangeEl.max = String(Math.max(frames.length - 1, 0));
     rangeEl.value = String(index);
@@ -696,14 +931,14 @@
     currentFrame = frame;
     ensureNodes();
     fixMarkerOrientation();
-    const key = `${index}|${JSON.stringify(frame.nodes)}|${JSON.stringify(frame.edges)}|${deliverableCards.length}|${inputCards.length}|${complete}`;
+    const key = `${index}|${JSON.stringify(frame.nodes)}|${JSON.stringify(frame.edges)}|${deliverableCards.length}|${inputCards.length}|${complete}|${stage.clientWidth}|${stage.clientHeight}`;
     if (key !== lastKey) {
       lastKey = key;
       hidePeek();
       paintNodes(frame);
     }
     paintChrome(frame);
-    if (!root.hidden) requestAnimationFrame(() => paintEdges(frame));
+    if (!root.hidden) requestAnimationFrame(() => { paintEdges(frame); markOverflow(); });
   }
 
   // ------------------------------------------------------------------ peek
@@ -725,7 +960,11 @@
     const full = text(anchorEl.dataset.full);
     const node = anchorEl.classList.contains("schema-node") ? anchorEl : null;
     const files = node ? node.querySelector(".schema-node-files") : null;
-    if (!full && (!files || files.hidden)) { hidePeek(); return; }
+    const caption = node ? node.querySelector(".schema-node-caption") : null;
+    const hint = text(node && node.dataset.hint);
+    const clipped = anchorEl.classList.contains("is-truncated") || (caption && caption.classList.contains("is-truncated"));
+    if (!clipped && (!files || files.hidden) && !hint) { hidePeek(); return; }
+    if (!full && (!files || files.hidden) && !hint) { hidePeek(); return; }
     const peek = ensurePeek();
     peek.innerHTML = "";
     peek.classList.add("is-pinned");
@@ -742,7 +981,7 @@
     }
     const body = document.createElement("div");
     body.className = "schema-peek-body";
-    body.textContent = full;
+    body.textContent = full || hint;
     peek.append(title, body);
     if (files && !files.hidden) {
       const list = document.createElement("div");
@@ -795,7 +1034,7 @@
     playTimer = setInterval(() => {
       if (index >= frames.length - 1) { stopPlay(); followLive = true; return; }
       showIndex(index + 1, { user: true });
-    }, 1100);
+    }, 4000);
   }
 
   function setFeed(data) {
@@ -851,7 +1090,16 @@
     if (ev.key === "ArrowLeft") { ev.preventDefault(); stopPlay(); showIndex(index - 1, { user: true }); }
     else if (ev.key === "ArrowRight") { ev.preventDefault(); stopPlay(); showIndex(index + 1, { user: true }); }
   });
-  const relayout = () => { if (currentFrame && !root.hidden) requestAnimationFrame(() => paintEdges(currentFrame)); };
+  const relayout = () => {
+    if (currentFrame && !root.hidden) {
+      lastKey = "";
+      requestAnimationFrame(() => {
+        paintNodes(currentFrame);
+        paintEdges(currentFrame);
+        markOverflow();
+      });
+    }
+  };
   window.addEventListener("resize", () => { clearTimeout(resizeTimer); resizeTimer = setTimeout(relayout, 60); });
   if (typeof ResizeObserver !== "undefined") new ResizeObserver(() => { clearTimeout(resizeTimer); resizeTimer = setTimeout(relayout, 40); }).observe(stage);
   new MutationObserver(() => { if (root.hidden) { hidePeek(); stopPlay(); } else relayout(); }).observe(root, { attributes: true, attributeFilter: ["hidden"] });

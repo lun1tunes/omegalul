@@ -1,3 +1,464 @@
+          "cachedResultName": "CAS — Persist Task State"
+        },
+        "workflowInputs": {
+          "mappingMode": "defineBelow",
+          "value": {
+            "cas_operation": "={{ 'update' }}",
+            "attempted": "={{ $json }}"
+          },
+          "matchingColumns": [],
+          "schema": [],
+          "attemptToConvertTypes": false,
+          "convertFieldsToString": false
+        },
+        "mode": "once",
+        "options": {
+          "waitForSubWorkflow": true
+        }
+      },
+      "id": "bf2c74ec-8c2b-5730-86f6-df18c5077412",
+      "name": "Call CAS persist — verification",
+      "type": "n8n-nodes-base.executeWorkflow",
+      "typeVersion": 1.3,
+      "position": [
+        7280,
+        -85
+      ],
+      "onError": "continueRegularOutput"
+    },
+    {
+      "parameters": {
+        "jsCode": "const x=$json;\nconst parse=(v,f)=>{try{return typeof v==='string'?JSON.parse(v):v??f}catch{return f}};\nconst obj=v=>v&&typeof v==='object'&&!Array.isArray(v);\nconst clean=v=>typeof v==='string'?v.trim():'';\nconst runtime=parse(x.runtime_json,{});\nconst result=obj(x.specialist_result)?x.specialist_result:parse(x.result_json,{});\nconst verification=parse(x.verification_json,{});\nconst last=obj(runtime.last_error)?runtime.last_error:(obj(result.error)?result.error:{});\nconst code=clean(last.code||result.error?.code||'').toUpperCase();\nconst status=clean(x.status);\nconst specialistStatus=clean(result.status);\nconst gateKind=clean(parse(x.gate_json,{}).kind);\n// HITL is ordinary work (input / decision / approval). Error Handler is only for\n// persisted retryable_error or failed — never leftover last_error.code, never awaiting_human.\nconst hitlSpecialist=['needs_input','needs_decision','needs_approval'].includes(specialistStatus);\nconst hitlGate=['needs_input','needs_decision','needs_approval','result_approval','pre_delegation_approval'].includes(gateKind);\nconst isHitl=status==='awaiting_human'||hitlSpecialist||hitlGate;\nconst critical=!isHitl&&['retryable_error','failed'].includes(status);\nif(!critical||!clean(x.task_id)){\n  return[{json:{...x,invoke_error_handler:false,cas_already_persisted:true,mas_error_event:null}}];\n}\nconst findings=[...(Array.isArray(last.findings)?last.findings:[]),...(Array.isArray(verification.findings)?verification.findings:[])].filter(obj).slice(0,20);\n// Never fall back to specialist HITL/success copy (user_message/summary).\nconst errObj=obj(result.error)?result.error:{};\nlet safeMessage=clean(last.safe_message||last.message||errObj.safe_message||errObj.message||'');\nif(!safeMessage) safeMessage=`Сбой case ${x.task_id} — входные данные сохранены.`;\nif(!safeMessage.includes(x.task_id)) safeMessage=`${safeMessage} (case_id=${x.task_id})`;\nconst cas_snapshot={\n  task_id:x.task_id,\n  version:Number(x.version)||1,\n  previous_version:Number(x.previous_version)||Number(x.version)||0,\n  status,\n  risk_class:clean(x.risk_class)||'high',\n  request_json:typeof x.request_json==='string'?x.request_json:JSON.stringify(x.request_json||{}),\n  runtime_json:typeof x.runtime_json==='string'?x.runtime_json:JSON.stringify(runtime),\n  plan_json:typeof x.plan_json==='string'?x.plan_json:JSON.stringify(x.plan_json||{}),\n  packet_json:typeof x.packet_json==='string'?x.packet_json:JSON.stringify(x.packet_json||{}),\n  result_json:typeof x.result_json==='string'?x.result_json:JSON.stringify(result||{}),\n  verification_json:typeof x.verification_json==='string'?x.verification_json:JSON.stringify(verification||{}),\n  gate_json:typeof x.gate_json==='string'?x.gate_json:JSON.stringify(x.gate_json||{}),\n  retry_count:Number(x.retry_count)||0,\n  max_retries:Number(x.max_retries)||2,\n  created_at:clean(x.created_at)||new Date().toISOString(),\n  updated_at:clean(x.updated_at)||new Date().toISOString(),\n};\nconst mas_error_event={\n  contract:'mas_error_event',\n  contract_version:'1.0',\n  task_id:x.task_id,\n  code:code||undefined,\n  stage:status==='retryable_error'?'plan':(status==='awaiting_human'?'hitl':'error'),\n  safe_message:safeMessage,\n  findings,\n  cas_already_persisted:true,\n  cas_snapshot,\n};\nreturn[{json:{...x,invoke_error_handler:true,cas_already_persisted:true,mas_error_event,passthrough:{source:'orchestrator',status,task_id:x.task_id}}}];"
+      },
+      "id": "55b7c7c1-f572-5abe-93eb-eccbcff26482",
+      "name": "Prepare MAS error event (verification)",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        7560,
+        -170
+      ]
+    },
+    {
+      "parameters": {
+        "conditions": {
+          "options": {
+            "caseSensitive": true,
+            "leftValue": "",
+            "typeValidation": "strict",
+            "version": 2
+          },
+          "conditions": [
+            {
+              "id": "ad814ece-fed4-5bab-a162-be029164ee72",
+              "leftValue": "={{ $json.invoke_error_handler }}",
+              "rightValue": true,
+              "operator": {
+                "type": "boolean",
+                "operation": "equals"
+              }
+            }
+          ],
+          "combinator": "and"
+        },
+        "options": {}
+      },
+      "id": "33efab50-6e6a-5fa0-9df3-74975f1c03c7",
+      "name": "Invoke Error Handler (verification)?",
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2.2,
+      "position": [
+        7840,
+        -85
+      ]
+    },
+    {
+      "parameters": {
+        "source": "database",
+        "workflowId": {
+          "__rl": true,
+          "value": "REPLACE_ERROR_HANDLER_IN_UI",
+          "mode": "list",
+          "cachedResultName": "Error — MAS Case Handler"
+        },
+        "workflowInputs": {
+          "mappingMode": "defineBelow",
+          "value": {
+            "mas_error_event": "={{ $json.mas_error_event }}",
+            "cas_already_persisted": "={{ $json.cas_already_persisted }}",
+            "passthrough": "={{ $json.passthrough || {} }}",
+            "task_id": "={{ $json.task_id }}"
+          },
+          "matchingColumns": [],
+          "schema": [],
+          "attemptToConvertTypes": false,
+          "convertFieldsToString": false
+        },
+        "mode": "once",
+        "options": {
+          "waitForSubWorkflow": true
+        }
+      },
+      "id": "b717a6af-08c8-563d-83a1-8767f719138f",
+      "name": "Call Error — MAS Case Handler (verification)",
+      "type": "n8n-nodes-base.executeWorkflow",
+      "typeVersion": 1.3,
+      "position": [
+        8120,
+        -85
+      ],
+      "onError": "continueRegularOutput"
+    },
+    {
+      "parameters": {
+        "jsCode": "let before={};\ntry{before=$('Call CAS persist — verification').first().json||{}}catch{before={}}\nreturn[{json:before&&typeof before==='object'?before:{status:'error',message:'Missing orchestrator state after error handler.'}}];"
+      },
+      "id": "58e880be-0f9c-55ef-ab31-560d40bccbb2",
+      "name": "Restore after verification error handler",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        8120,
+        85
+      ]
+    },
+    {
+      "parameters": {
+        "conditions": {
+          "options": {
+            "caseSensitive": true,
+            "leftValue": "",
+            "typeValidation": "strict",
+            "version": 2
+          },
+          "conditions": [
+            {
+              "id": "18db19af-d398-5ef4-9ff3-de558cde9bbc",
+              "leftValue": "={{ $json.status }}",
+              "rightValue": "retryable_error",
+              "operator": {
+                "type": "string",
+                "operation": "equals"
+              }
+            }
+          ],
+          "combinator": "and"
+        },
+        "options": {}
+      },
+      "id": "f364b56c-d445-56d4-a469-b3bbf19d17fb",
+      "name": "Verification requests replan?",
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2.2,
+      "position": [
+        8400,
+        0
+      ]
+    },
+    {
+      "parameters": {
+        "jsCode": "const x=$json;const r=x.specialist_result;const exhausted=Number(x.retry_count)>=Number(x.max_retries);\nconst clean=v=>typeof v==='string'?v.trim():'';\nconst chatRoles={\"excel_extraction_specialist\": \"Excel Extractor\", \"schedule_builder_specialist\": \"Schedule Builder\", \"engineering_calculation_specialist\": \"Calculation Specialist\", \"engineering_data_specialist\": \"Data Specialist\", \"engineering_document_specialist\": \"Document Specialist\", \"cluster_calculation_specialist\": \"Cluster Calculation\", \"binary_results_specialist\": \"Binary Results Extractor\", \"presentation_specialist\": \"Presentation Assembler\"};\nconst appendHandoffEvent=(runtime,evt)=>{\n  const r=runtime&&typeof runtime==='object'&&!Array.isArray(runtime)?runtime:{};\n  const prev=Array.isArray(r.handoff_events)?r.handoff_events:[];\n  const now=new Date().toISOString();\n  const details=evt.details&&typeof evt.details==='object'&&!Array.isArray(evt.details)?{...evt.details}:{};\n  const timer=r.specialist_timer&&typeof r.specialist_timer==='object'?r.specialist_timer:null;\n  let duration_ms=Number.isFinite(Number(evt.duration_ms))?Math.max(0,Math.trunc(Number(evt.duration_ms))):null;\n  const closesSpecialist=Boolean(timer&&timer.specialist_id&&evt.from_specialist&&evt.from_specialist===timer.specialist_id&&evt.from_specialist!=='universal_orchestrator');\n  if(duration_ms==null&&closesSpecialist&&timer.started_at){\n    const started=Date.parse(String(timer.started_at));\n    const ended=Date.parse(now);\n    if(Number.isFinite(started)&&Number.isFinite(ended)) duration_ms=Math.max(0,ended-started);\n  }\n  if(duration_ms!=null) details.duration_ms=duration_ms;\n  const brief=String(evt.brief||evt.summary||'').slice(0,800);\n  const event={\n    contract:'mas_activity_turn',\n    contract_version:'1.1',\n    event_type:'handoff',\n    at:now,\n    stage:String(evt.stage||'plan'),\n    status:String(evt.status||'observed'),\n    from_specialist:evt.from_specialist||null,\n    to_specialist:evt.to_specialist||null,\n    from_role:evt.from_role||null,\n    to_role:evt.to_role||null,\n    summary:String(evt.summary||'').slice(0,500),\n    brief,\n    duration_ms,\n    details\n  };\n  let nextTimer=timer;\n  if(String(evt.status||'')==='DELEGATED'&&evt.to_specialist&&evt.to_specialist!=='universal_orchestrator'){\n    nextTimer={specialist_id:evt.to_specialist,started_at:now,from_status:'DELEGATED'};\n  }else if(closesSpecialist){\n    nextTimer=null;\n  }else if(evt.to_specialist&&evt.to_specialist!=='universal_orchestrator'&&evt.to_specialist!==(timer&&timer.specialist_id)){\n    nextTimer={specialist_id:evt.to_specialist,started_at:now,from_status:String(evt.status||'handoff')};\n  }\n  return {...r,handoff_events:[...prev,event].slice(-50),specialist_timer:nextTimer||null};\n};\nconst HITL_CYRILLIC=/[А-Яа-яЁё]/;\nconst HITL_CODE_ONLY=/^[A-Z][A-Z0-9_]{3,}$/;\nconst hitlClean=v=>typeof v==='string'?v.trim():'';\nconst hitlLooksMachine=text=>{\n  const t=hitlClean(text);\n  if(!t) return true;\n  if(HITL_CODE_ONLY.test(t)) return true;\n  if(!HITL_CYRILLIC.test(t)) return true;\n  return false;\n};\nconst hitlBaseName=p=>{\n  const s=hitlClean(p).replace(/\\\\/g,'/');\n  if(!s) return '';\n  const parts=s.split('/').filter(Boolean);\n  return parts[parts.length-1]||s;\n};\nconst hitlSlot=(f,keys)=>{\n  if(!f||typeof f!=='object') return '';\n  for(const k of keys){\n    const v=hitlClean(f[k]);\n    if(v) return v;\n  }\n  return '';\n};\nconst hitlSlots=f=>{\n  const rawPath=hitlSlot(f,['path','target_file_ref','raw_path','include_path']);\n  const rawFrom=hitlSlot(f,['file_ref','source_file_ref','root_path']);\n  const path=hitlBaseName(rawPath)||(!rawPath?hitlBaseName(rawFrom):'');\n  const from=rawPath?hitlBaseName(rawFrom):'';\n  const keywords=Array.isArray(f?.keywords)?f.keywords.map(v=>hitlClean(v).toUpperCase()).filter(Boolean).slice(0,12):[];\n  const cycle=Array.isArray(f?.cycle)?f.cycle.map(hitlBaseName).filter(Boolean):[];\n  const wells=Array.isArray(f?.wells)?f.wells.map(hitlClean).filter(Boolean).slice(0,12):[];\n  return {\n    code:hitlClean(f?.code||f?.id||''),\n    path, from,\n    keyword:hitlClean(f?.keyword||'').toUpperCase(),\n    entity:hitlClean(f?.entity||f?.well||''),\n    field:hitlClean(f?.field||''),\n    keywords, cycle, wells,\n  };\n};\nconst HITL_STAGE={\n  schedule_intake_result:'Проверка входных данных задачи',\n  baseline_analysis:'Проверка пакета schedule (INCLUDE и корневой файл)',\n  baseline_decode_result:'Разбор записей baseline',\n  schedule_validation_result:'Проверка синтаксиса, дат и семантики',\n  schedule_render_result:'Сборка текста по схеме keyword',\n  schedule_merge_result:'Сборка итогового schedule',\n  schedule_commissioning_revise_result:'Сдвиг дат ввода (commissioning)',\n  schedule_group_rebind_revise_result:'Перепривязка групп скважин',\n  schedule_builder_stage_result:'Проверка черновика Builder',\n  schedule_verifier_result:'Независимая проверка выпуска',\n  baseline_inventory_query_result:'Выборка записей baseline',\n};\nconst hitlDedupeKey=f=>{\n  const s=hitlSlots(f);\n  return [s.code,s.path,s.from,s.keyword,s.entity,s.field].join('|');\n};\nconst HITL_GENERIC_CLUSTER='Проверка остановила задачу: не хватает исходных данных. Прикрепите недостающие файлы или напишите, как продолжать, и нажмите Ответить.';\nconst HITL_GENERIC_ITEM='Нужны исходные данные. Прикрепите недостающие файлы или напишите, как продолжать.';\nconst HITL_COPY={\n  INCLUDE_NOT_FOUND:{\n    cluster:'Тела INCLUDE не приложены — ссылки в корне оставляем как есть на той же дате. Прикрепите .inc, только если нужно править содержимое этого файла.',\n    item:s=>s.path?`INCLUDE «${s.path}» без тела${s.from?`, ссылка из «${s.from}»`:''}: оставляем вызов на той же дате. Приложите файл, только если нужно править его содержимое.`:'INCLUDE без тела: оставляем вызов на той же дате. Приложите файл, только если нужно править содержимое.',\n  },\n  INCLUDE_BODY_REQUIRED:{\n    cluster:'Задача правит содержимое INCLUDE, а тело файла не приложено. Прикрепите этот .inc и нажмите Ответить.',\n    item:s=>s.path?`Нужно тело INCLUDE «${s.path}»${s.from?`, ссылка из «${s.from}»`:''}: приложите этот .inc, иначе содержимое нечем править.`:'Нужно тело INCLUDE. Приложите этот .inc, иначе содержимое нечем править.',\n  },\n  INCLUDE_PATH_INVALID:{cluster:'Путь INCLUDE в пакете недопустим. Исправьте ссылку или приложите файл с корректным именем.', item:s=>`Недопустимый путь INCLUDE${s.path?` «${s.path}»`:''}${s.from?` в «${s.from}»`:''}.`},\n  INCLUDE_PATH_UNSAFE:{cluster:'Путь INCLUDE выходит за пределы пакета. Оставьте только файлы внутри загруженного набора.', item:s=>`Небезопасный путь INCLUDE${s.path?` «${s.path}»`:''}. Приложите файл из того же пакета, без «..».`},\n  INCLUDE_FILE_INVALID:{cluster:'Один из приложенных INCLUDE нельзя прочитать. Прикрепите его ещё раз как текстовый .inc.', item:'Приложенный INCLUDE без текста. Прикрепите файл .inc ещё раз.'},\n  INCLUDE_CYCLE:{cluster:'В пакете цикл INCLUDE. Исправьте ссылки, чтобы файлы не включали друг друга по кругу.', item:s=>s.cycle.length?`Цикл INCLUDE: ${s.cycle.join(' → ')}. Исправьте ссылки в пакете.`:'В пакете цикл INCLUDE. Исправьте ссылки.'},\n  INCLUDE_DEPTH_LIMIT:{cluster:'Слишком глубокая вложенность INCLUDE. Упростите пакет или приложите развёрнутый набор файлов.', item:'Слишком глубокая вложенность INCLUDE.'},\n  INCLUDE_MULTIPLE_EXPANSION:{cluster:'Один INCLUDE раскрывается несколько раз. Проверьте дубли ссылок в пакете.', item:s=>`Файл «${s.path||s.from||'INCLUDE'}» раскрывается повторно.`},\n  UNREACHABLE_INCLUDE_FILE:{cluster:'В пакете есть файл, до которого нет пути от корня. Укажите корневой schedule или уберите лишний файл.', item:s=>`Файл «${s.path||s.from}» не достигается от корня пакета.`},\n  BASELINE_TEXT_REQUIRED:{cluster:'Нет текста корневого schedule. Прикрепите главный .inc / .data.', item:'Прикрепите корневой schedule (.inc или .data) — без него REVISE нельзя разобрать.'},\n  BASELINE_REQUIRED:{cluster:'Для REVISE нужен предыдущий schedule. Прикрепите корневой .inc / .data.', item:'Прикрепите предыдущий schedule (.inc / .data) для режима REVISE.'},\n  BASELINE_ANALYSIS_REQUIRED:{cluster:'Не разобран корневой schedule. Прикрепите главный .inc / .data. Тела INCLUDE не обязательны.', item:'Сначала нужен разобранный корневой schedule. Прикрепите главный .inc / .data; INCLUDE без тел оставляем как есть.'},\n  BASELINE_ROOT_REQUIRED:{cluster:'Не указан корневой файл пакета. Выберите главный .inc / .data.', item:'Укажите, какой .inc / .data главный в пакете.'},\n  ROOT_PATH_INVALID:{cluster:'Имя корневого schedule недопустимо. Выберите файл с обычным именем .inc / .data.', item:'Недопустимое имя корневого schedule.'},\n  ROOT_PATH_UNSAFE:{cluster:'Путь корневого schedule небезопасен. Приложите файл из пакета, без выхода наверх по каталогам.', item:'Небезопасный путь корневого schedule.'},\n  ROOT_FILE_MISSING:{cluster:'В пакете нет корневого файла. Прикрепите главный .inc / .data.', item:'Нет корневого файла schedule в пакете.'},\n  DUPLICATE_FILE_REF:{cluster:'В пакете два файла с одним путём. Оставьте один экземпляр.', item:s=>`Дублируется файл «${s.path||s.from}». Оставьте один.`},\n  FILE_LIMIT:{cluster:'Слишком много файлов в пакете. Сократите набор INCLUDE.', item:'Превышен лимит файлов пакета.'},\n  PACKAGE_SIZE_LIMIT:{cluster:'Пакет schedule слишком большой. Сократите набор файлов.', item:'Превышен размер пакета schedule.'},\n  CST_NODE_LIMIT:{cluster:'В schedule слишком много блоков. Сократите пакет или уточните задачу.', item:'Слишком много блоков в schedule.'},\n  CREATE_BASELINE_CONFLICT_REQUIRES_DECISION:{cluster:'Приложен baseline, но задача помечена как CREATE. Напишите: править существующий schedule или собрать новый и отбросить вложение.', item:'Напишите: REVISE существующего schedule или CREATE с отбрасыванием вложения.'},\n  PRESERVATION_POLICY_REQUIRED:{cluster:'Для REVISE нужно сохранить не упомянутые записи. Подтвердите это в ответе или приложите полный пакет.', item:'Подтвердите сохранение не упомянутых записей (preserve_unmentioned) или уточните политику.'},\n  SIMULATOR_PROFILE_NOT_APPROVED:{cluster:'Рабочий профиль — tNavigator 22.2 METRIC. Напишите, только если задача для другого симулятора.', item:'Укажите другой согласованный профиль, если это не tNavigator 22.2.'},\n  METRIC_UNIT_SYSTEM_REQUIRED:{cluster:'В этом контуре единицы всегда METRIC. FIELD и другие системы не используются.', item:'Нужна система единиц METRIC — другие не поддерживаются.'},\n  MODEL_START_DATE_REQUIRED:{cluster:'Для CREATE нужна дата старта модели (YYYY-MM-DD). Для REVISE без этой даты записи до первого DATES оставляем как есть.', item:'Укажите model_start_date в формате YYYY-MM-DD — только если собираете новый schedule или явно задаёте старт модели.'},\n  FORECAST_START_DATE_REQUIRED:{cluster:'Нужна дата начала прогноза (YYYY-MM-DD).', item:'Укажите forecast_start в формате YYYY-MM-DD.'},\n  FORECAST_END_DATE_REQUIRED:{cluster:'Нужна дата конца прогноза (YYYY-MM-DD).', item:'Укажите forecast_end в формате YYYY-MM-DD.'},\n  FORECAST_HORIZON_INVALID:{cluster:'Конец прогноза раньше начала. Исправьте даты.', item:'forecast_end должен быть не раньше forecast_start.'},\n  FORECAST_BEFORE_MODEL_START:{cluster:'Прогноз раньше старта модели. Исправьте даты.', item:'forecast_start не должен быть раньше model_start_date.'},\n  HISTORY_INTERVAL_INCOMPLETE:{cluster:'Для истории нужны обе даты: начало и конец.', item:'Укажите и history_start, и history_end.'},\n  HISTORY_INTERVAL_INVALID:{cluster:'Интервал истории задан неверно. Проверьте даты YYYY-MM-DD.', item:'Исправьте history_start / history_end.'},\n  HISTORY_FORECAST_OVERLAP:{cluster:'История пересекается с прогнозом. Разведите интервалы.', item:'history_end не должен быть позже forecast_start.'},\n  HISTORY_SCOPE_REQUIRES_INTERVAL:{cluster:'Для WCONHIST нужен интервал истории. Укажите history_start и history_end.', item:'Укажите history_start и history_end для WCONHIST.'},\n  KEYWORD_SCOPE_UNRESOLVED:{cluster:'Не выбран набор keyword schedule. Напишите, какие секции менять (например WCONPROD, DATES).', item:'Укажите keyword, которые нужно менять.'},\n  UNSUPPORTED_KEYWORD:{cluster:'В задаче есть keyword вне текущего allowlist. Уберите их или сузьте задачу.', item:s=>s.keywords.length?`Не поддерживаются keyword: ${s.keywords.join(', ')}.`:'Есть keyword вне allowlist. Уберите их из задачи.'},\n  CREATE_CAPABILITY_SCOPE_REQUIRED:{cluster:'Для CREATE напишите, что именно собрать (какие скважины, контроли, период).', item:'Перечислите, что должно появиться в новом schedule.'},\n  CREATE_REQUIRED_OUTPUTS_REQUIRED:{cluster:'Для CREATE укажите ожидаемый результат (например прогнозный .inc).', item:'Опишите, какой файл/результат нужен на выходе.'},\n  REVISE_CHANGE_SCOPE_REQUIRED:{cluster:'Для REVISE напишите, что менять, а что оставить.', item:'Опишите requested_change_scope: что менять в существующем schedule.'},\n  OBJECTIVE_REQUIRED:{cluster:'Нужна формулировка задачи своими словами.', item:'Сформулируйте измеримую цель и нужный результат.'},\n  ACCEPTANCE_CRITERIA_REQUIRED:{cluster:'Нужен критерий приёмки: по чему понять, что задача сделана.', item:'Напишите, как проверить результат.'},\n  EXPERT_KNOWLEDGE_AND_CATALOGUE_BINDING_REQUIRED:{cluster:'В базе знаний нет полной инструкции и схемы keyword. Загрузите корпус через Knowledge.', item:'Через Knowledge загрузите keyword_instruction и schema JSON в schedule_mvp.'},\n  KEYWORD_INSTRUCTION_SCOPE_INCOMPLETE:{cluster:'Для части keyword нет экспертной инструкции. Догрузите карточки или сузьте набор keyword.', item:s=>s.keywords.length?`Нет инструкции для: ${s.keywords.join(', ')}. Загрузите карточки или уберите эти keyword.`:'Догрузите keyword_instruction для всех запрошенных keyword.'},\n  SCHEDULE_RAG_EVIDENCE_REQUIRED:{cluster:'Builder не запущен: в базе нет полной экспертной инструкции или schema. Загрузите корпус через Knowledge.', item:'Через Knowledge загрузите active keyword_instruction и schema JSON в schedule_mvp.'},\n  EXCEL_PROTOCOL_RAG_REQUIRED:{cluster:'Excel Extractor не запущен: нет operating protocol в базе. Загрузите excel_protocol через Knowledge.', item:'Через Knowledge загрузите protocol_instruction в excel_protocol.'},\n  EXCEL_PROTOCOL_RAG_UNAVAILABLE:{cluster:'Excel Extractor не запущен: нет operating protocol в базе. Загрузите excel_protocol через Knowledge.', item:'Через Knowledge загрузите protocol_instruction в excel_protocol.'},\n  SCHEDULE_RAG_UNAVAILABLE:{cluster:'Builder не запущен: в базе нет полной экспертной инструкции или schema. Загрузите корпус через Knowledge.', item:'Через Knowledge загрузите active keyword_instruction и schema JSON в schedule_mvp.'},\n  STAGE_GATE_POLICY_INVALID:{cluster:'Политика гейтов не совпадает с утверждённой (attention 85 / HITL 70). Продолжите в этой задаче.', item:'Нужна политика attention_threshold=85, hitl_threshold=70.'},\n  HISTORY_BEFORE_MODEL_START:{cluster:'История раньше старта модели. Исправьте даты.', item:'history_start не должен быть раньше model_start_date.'},\n  INVALID_BUILD_MODE:{cluster:'Режим сборки не CREATE и не REVISE. Напишите, какой режим нужен.', item:'Укажите build_mode: CREATE или REVISE.'},\n  EXCEL_WORKBOOK_REQUIRED:{cluster:'Нет книги Excel. Прикрепите файл .xlsx к ответу.', item:'Прикрепите книгу Excel (.xlsx или .xls) к ответу.'},\n  EXCEL_CLARIFICATION_REQUIRED:{cluster:'Нужны ответы на уточнения по Excel. Напишите их в поле ответа.', item:'Ответьте на уточнения по таблице Excel.'},\n  SCHEDULE_BUILD_CONTRACT_INVALID:{cluster:'Пакет задачи собран неверно. Создайте задачу заново из Activity с файлами.', item:'Пересоздайте задачу из Activity, приложив schedule и описание.'},\n  SCHEDULE_BUILD_IDENTITY_REQUIRED:{cluster:'Потерян идентификатор задачи. Откройте задачу из списка слева или создайте заново.', item:'Продолжите из текущей задачи Activity, не копируя чужой пакет.'},\n  SCHEDULE_BUILD_TASK_MISMATCH:{cluster:'Пакет относится к другой задаче. Работайте в текущей карточке Activity.', item:'Не переиспользуйте пакет другой задачи. Откройте нужную из списка.'},\n  SCHEDULE_POLICY_VERSION_NOT_APPROVED:{cluster:'Версия политики schedule не совпадает. Продолжите в этой задаче или напишите, если нужен другой профиль.', item:'Нужна политика petroleum-schedule-policy-v1 либо явное согласование.'},\n  EVIDENCE_GAP:{cluster:'Не хватает фактов для записи schedule. Укажите значения в ответе или приложите Excel.', item:s=>{\n    const who=[s.keyword,s.entity,s.field].filter(Boolean).join(' / ');\n    return who?`Не хватает ${who}. Напишите значение или приложите Excel.`:'Не хватает поля для schedule. Напишите значение или приложите Excel.';\n  }},\n  MALFORMED_EVIDENCE_GAP:{cluster:'Запрос уточнения по Excel собран неверно. Напишите недостающие факты вручную.', item:'Укажите недостающие поля вручную в ответе.'},\n  STALLED_EVIDENCE_LOOP:{cluster:'Уточнение по Excel зациклилось на тех же данных. Напишите факты вручную, смените файл или сузьте задачу.', item:'Напишите недостающие факты вручную, приложите другую книгу Excel или сузьте задачу.'},\n  EXCEL_EVIDENCE_BUDGET_EXHAUSTED:{cluster:'Исчерпан лимит запросов к Excel. Напишите недостающие факты вручную или сузьте задачу.', item:'Напишите недостающие поля вручную — автоматический запрос к Excel больше не запускается.'},\n  BUILDER_ITERATION_BUDGET_EXHAUSTED:{cluster:'Исчерпан лимит повторов Schedule Builder. Напишите, как продолжать, или сузьте задачу.', item:'Напишите недостающие факты вручную или сузьте задачу — автоматический повтор Builder остановлен.'},\n  SCHEDULE_BUILD_EXPECTED_VERSION_INVALID:{cluster:'Номер версии задачи некорректен. Откройте задачу заново из Activity.', item:'Продолжите из текущей карточки Activity, не копируя чужой пакет.'},\n  SOURCE_ARTIFACT_REF_INVALID:{cluster:'Ссылка на исходный файл собрана неверно. Приложите файлы заново к ответу.', item:'Прикрепите исходные файлы к ответу ещё раз.'},\n  SOURCE_ARTIFACT_LIMIT:{cluster:'Слишком много ссылок на исходные файлы. Сократите набор вложений.', item:'Сократите набор приложенных файлов.'},\n  SCHEDULE_BUILD_REQUEST_TOO_LARGE:{cluster:'Пакет задачи слишком большой. Сократите текст schedule или набор INCLUDE.', item:'Сократите корневой schedule или число INCLUDE и повторите.'},\n  EXPERT_KNOWLEDGE_CITATION_INVALID:{cluster:'Карточки знаний собраны неверно. Загрузите корпус заново через Knowledge.', item:'Через Knowledge загрузите keyword_instruction с полными citation-полями.'},\n  OPAQUE_BASELINE_SEMANTICS_UNAVAILABLE:{cluster:'Для запрошенного keyword нет схемы разбора. Догрузите schema или уберите keyword из задачи.', item:s=>s.keyword?`Для ${s.keyword} нет схемы разбора. Догрузите schema в schedule_mvp или уберите этот keyword.`:'Для keyword нет схемы разбора. Догрузите schema или сузьте набор keyword.'},\n  OPAQUE_NODE_MUTATION_FORBIDDEN:{cluster:'Нельзя менять непрозрачный блок schedule без схемы. Догрузите schema или оставьте блок как есть.', item:s=>s.keyword?`Блок ${s.keyword} непрозрачный — его нельзя править без schema.`:'Непрозрачный блок schedule нельзя менять без schema.'},\n  SOURCE_FACTS_WELL_IDENTITY_MISSING:{cluster:'Для сдвига дат ввода нет имени скважины. Укажите скважины или приложите Excel.', item:'Укажите имена скважин (Скважина / WELL) для commissioning.'},\n  NEW_WELL_DATE_INVALID:{cluster:'Дата ввода новой скважины неверна. Напишите дату YYYY-MM-DD.', item:s=>s.entity?`Для скважины ${s.entity} укажите дату ввода в формате YYYY-MM-DD.`:'Укажите дату ввода новой скважины в формате YYYY-MM-DD.'},\n  COMMISSIONING_DATE_INVALID:{cluster:'Дата ввода скважины неверна. Напишите дату YYYY-MM-DD.', item:s=>s.entity?`Для скважины ${s.entity} исправьте дату ввода (YYYY-MM-DD).`:'Исправьте дату ввода скважины (YYYY-MM-DD).'},\n  DATES_STEP_REMOVED:{cluster:'Из schedule пропал шаг DATES, который был в baseline. Верните дату или подтвердите удаление.', item:'Верните пропавший шаг DATES или явно подтвердите его удаление.'},\n  GROUP_REBIND_COMMISSIONING_DATE_MISSING:{cluster:'Для перепривязки групп нет даты ввода скважин. Укажите даты или приложите Excel.', item:'Укажите даты ввода скважин для group_membership_rebind.'},\n  KEYWORD_SCHEMA_NOT_APPROVED:{cluster:'Для keyword нет утверждённой schema. Догрузите schema или уберите keyword из задачи.', item:s=>s.keyword?`Нет утверждённой schema для ${s.keyword}. Догрузите карточку или уберите keyword.`:'Нет утверждённой schema keyword. Догрузите каталог или сузьте задачу.'},\n  DATES_NOT_STRICTLY_INCREASING:{cluster:'Даты DATES идут не по возрастанию. Исправьте порядок дат в schedule.', item:'Исправьте DATES: каждая следующая дата должна быть строго позже предыдущей.'},\n  INCLUDE_TARGET_MISSING:{cluster:'В INCLUDE нет имени файла. Укажите путь .inc в кавычках.', item:s=>s.from?`В «${s.from}» у INCLUDE нет пути файла. Укажите имя .inc.`:'У INCLUDE нет пути файла. Укажите имя .inc в кавычках.'},\n  SCHEDULE_TEXT_REQUIRED:{cluster:'Нет текста schedule. Прикрепите корневой .inc / .data.', item:'Прикрепите текст schedule (.inc или .data).'},\n  INVALID_EXCEL_SPECIALIST_PACKET:{cluster:'Пакет для Excel Extractor собран неверно. Создайте задачу заново и приложите книгу .xlsx.', item:'Создайте задачу заново из Activity и приложите книгу Excel.'},\n  INVALID_SCHEDULE_SPECIALIST_PACKET:{cluster:'Пакет задачи для Schedule Builder собран неверно. Создайте задачу заново из Activity.', item:'Создайте задачу заново из Activity, приложив schedule и описание.'},\n  BASELINE_PACKAGE_INVALID:{cluster:'Пакет baseline разобран неверно. Прикрепите корневой файл и все INCLUDE заново.', item:'Прикрепите полный пакет schedule ещё раз.'},\n  CHANGE_EFFECTIVE_FROM_REQUIRED:{cluster:'Дата начала правки нужна, только если задача задаёт срез с конкретной даты. Для снятия keyword целиком граница не требуется.', item:'Укажите change_effective_from в формате YYYY-MM-DD, только если правка действует с конкретной даты.'},\n  BASELINE_EFFECTIVE_DATE_REQUIRED:{cluster:'Запись стоит до первого DATES — оставляем как есть. model_start_date не нужен.', item:s=>s.keyword?`${s.keyword} до первого DATES: оставляем на месте, если нет явной команды переместить.`:'Запись до первого DATES оставляем как есть.'},\n  SCHEMA_CATALOGUE_NOT_APPROVED:{cluster:'Каталог schema keyword не утверждён. Загрузите утверждённый каталог через Knowledge.', item:'Через Knowledge загрузите утверждённый schema_catalogue в schedule_mvp.'},\n  APPROVED_KEYWORD_SCHEMAS_REQUIRED:{cluster:'Нет утверждённых schema keyword. Загрузите каталог через Knowledge.', item:'Загрузите schema JSON для запрошенных keyword.'},\n  PROFILE_NOT_APPROVED:{cluster:'Рабочий профиль — tNavigator 22.2 METRIC. Напишите, только если задача для другого симулятора.', item:'Укажите другой согласованный профиль, если это не tNavigator 22.2.'},\n  REMOVE_REQUIRES_ACCOUNTABLE_APPROVAL:{cluster:'Удаление записей из schedule нужно явно подтвердить в ответе.', item:s=>`Подтвердите удаление ${s.keyword||'записей'} или напишите, что их сохранить.`},\n  NEW_WELLS_REQUIRE_HITL:{cluster:'Проверка новых скважин не прошла: нет траектории и спецификации. Прикрепите .dev и недостающие данные.', item:'Прикрепите WELLTRACK (.dev) и данные WELSPECS/COMPDATMD для новых скважин.'},\n  NEW_WELL_CONTROL_LINE_REQUIRED:{cluster:'Для новой скважины нужна явная строка WCONPROD или WCONINJE. Значения по умолчанию не подставляются.', item:s=>s.entity?`Для скважины ${s.entity} укажите стартовую строку WCONPROD или WCONINJE — без GRAT/дебита по умолчанию.`:'Укажите стартовую строку WCONPROD или WCONINJE для новой скважины.'},\n  NEW_WELL_TYPED_LINES_REQUIRED:{cluster:'Для новой скважины нужны явные строки keyword (WELSPECS, COMPDATMD, WCONPROD/WCONINJE). Ничего не выдумываем.', item:s=>s.entity?`Для скважины ${s.entity} пришлите typed-строки keyword, без шаблонов по умолчанию.`:'Пришлите typed-строки keyword для новой скважины.'},\n  COMMISSIONING_CAPABILITY_REQUIRED:{cluster:'В Excel есть скважины и даты, но не сказано, что это сдвиг дат ввода. Напишите commissioning_date_retarget или уточните другую операцию.', item:s=>s.wells.length?`Для скважин ${s.wells.join(', ')} есть даты. Напишите, сдвигать даты ввода (commissioning_date_retarget) или это другая правка.`:'Есть скважины и даты. Напишите, сдвигать даты ввода или это другая правка.'},\n  COMMISSIONING_FACTS_REQUIRED:{cluster:'Запрошен сдвиг дат ввода, но нет фактов скважина+дата. Приложите Excel или перечислите скважины и даты.', item:'Приложите факты скважина + дата ввода для commissioning_date_retarget.'},\n  GROUP_REBIND_SPEC_REQUIRED:{cluster:'Для перепривязки групп нужен полный spec: скважины, parent_group, parent_of_parent, well_groups, контроль и дебит. Из текста DKS/FIELD не угадаем.', item:s=>`Укажите structured spec для group_membership_rebind${s.field?` (нет: ${s.field})`:''}: wells, parent_group, parent_of_parent, well_groups, control, rate.`},\n  UNLISTED_WELLS_POLICY_REQUIRED:{cluster:'Проверка скважин вне Excel: нужно решить, сохранить их запуски или убрать. Напишите keep или remove и при необходимости имена скважин.', item:s=>s.wells.length?`В Excel нет скважин: ${s.wells.join(', ')}. Напишите: сохранить запуски (keep) или убрать (remove).`:'В Excel нет части скважин из schedule. Напишите keep или remove.'},\n  SCHEDULE_PIPELINE_NOT_RELEASE_READY:{cluster:'Независимая проверка выпуска не прошла. Напишите, что исправить в черновике, своими словами.', item:'Черновик не готов к выпуску. Напишите, что проверить или доработать.'},\n};\nconst hitlItemText=f=>{\n  const s=hitlSlots(f);\n  const spec=HITL_COPY[s.code];\n  if(spec&&typeof spec.item==='function') return spec.item(s);\n  if(spec&&typeof spec.item==='string') return spec.item;\n  const bits=[s.path,s.from,s.keyword,s.entity,s.field].filter(Boolean);\n  return bits.length?`Нужны данные: ${bits.join(', ')}. Прикрепите файл или напишите уточнение.`:HITL_GENERIC_ITEM;\n};\nconst hitlClusterText=findings=>{\n  const codes=[...new Set((Array.isArray(findings)?findings:[]).map(f=>hitlClean(f?.code)).filter(Boolean))];\n  const clusters=codes.map(c=>HITL_COPY[c]&&HITL_COPY[c].cluster).filter(Boolean);\n  const uniq=[...new Set(clusters)];\n  if(uniq.length===1) return uniq[0];\n  if(uniq.length>1) return uniq.slice(0,2).join(' ');\n  return HITL_GENERIC_CLUSTER;\n};\nconst hitlUniqueFindings=findings=>{\n  const seen=new Set(), out=[];\n  for(const f of (Array.isArray(findings)?findings:[])){\n    if(!f||typeof f!=='object') continue;\n    const key=hitlDedupeKey(f);\n    if(seen.has(key)) continue;\n    seen.add(key);\n    out.push(f);\n    if(out.length>=30) break;\n  }\n  return out;\n};\nconst hitlCompileCopy=(opts={})=>{\n  const unique=hitlUniqueFindings(opts.findings);\n  const supplied=Array.isArray(opts.questions)?opts.questions.filter(q=>q&&typeof q==='object'):[];\n  const gaps=Array.isArray(opts.gaps)?opts.gaps.filter(g=>g&&typeof g==='object'):[];\n  let asks=[];\n  const toAsk=(q,i,fallbackId)=>{\n    const raw=hitlClean(q.text||q.question||q.message);\n    const merged={...q, code:q.code||q.id, message:raw};\n    const compiled=hitlLooksMachine(raw)?hitlItemText(merged):raw;\n    const text=compiled||HITL_GENERIC_ITEM;\n    const s=hitlSlots(merged);\n    return {\n      id:hitlClean(q.id)||`${fallbackId}_${i+1}`,\n      text, question:text,\n      required:q.required!==false,\n      ...(q.type?{type:q.type}:{}),\n      ...(s.code?{code:s.code}:{}),\n      ...(s.path?{path:s.path}:{}),\n      ...(s.from?{file_ref:s.from}:{}),\n      ...(s.keyword?{keyword:s.keyword}:{}),\n      ...(s.entity?{entity:s.entity}:{}),\n    };\n  };\n  const suppliedMachine=supplied.length&&supplied.every(q=>hitlLooksMachine(q.text||q.question||q.message||q.code));\n  if(supplied.length&&!(suppliedMachine&&unique.length)){\n    asks=supplied.map((q,i)=>toAsk(q,i,'hitl'));\n  } else if(gaps.length){\n    asks=gaps.map((g,i)=>toAsk({...g, code:g.code||'EVIDENCE_GAP'}, i, 'schedule_gap'));\n  } else {\n    asks=unique.map((f,i)=>toAsk({...f, text:f.message}, i, 'schedule_finding'));\n  }\n  const seen=new Set();\n  asks=asks.filter(a=>{\n    const k=a.text;\n    if(!k||seen.has(k)) return false;\n    seen.add(k);\n    return true;\n  }).slice(0,20);\n  if(!asks.length) asks=[{id:'hitl_needed', text:HITL_GENERIC_ITEM, question:HITL_GENERIC_ITEM, required:true}];\n  const preferred=hitlClean(opts.summary);\n  let user_message=hitlLooksMachine(preferred)?hitlClusterText(unique):preferred;\n  const stageLabel=HITL_STAGE[hitlClean(opts.stage)]||'';\n  if(stageLabel&&user_message&&!user_message.includes(stageLabel)) user_message=`${stageLabel} не прошла. ${user_message}`;\n  return {user_message, questions:asks};\n};\nlet status='awaiting_human',kind=r.status;\nconst compiledHitl=hitlCompileCopy({\n  findings:(r.compact_data&&Array.isArray(r.compact_data.findings)?r.compact_data.findings:(r.error&&Array.isArray(r.error.findings)?r.error.findings:[])),\n  gaps:(r.compact_data&&Array.isArray(r.compact_data.evidence_gap)?r.compact_data.evidence_gap:[]),\n  questions:Array.isArray(r.human_request?.questions)?r.human_request.questions:[],\n  summary:r.user_message||r.summary,\n  stage:(r.compact_data&&r.compact_data.failed_stage)||'',\n});\nlet reason=compiledHitl.user_message||'Нужно решение человека.';\nif(r.status==='needs_approval'&&r.compact_data&&r.compact_data.release_ready===true) kind='result_approval';\nlet questions=compiledHitl.questions.slice();\nif(kind==='result_approval'){\n  reason='Черновик schedule прошёл проверки. Напишите своими словами: выпуск принять — или что доработать (DATES, ORAT и т.п.).';\n  questions=[{id:'release_reply',text:reason,question:reason,required:true}];\n}\nif(r.status==='fatal_error'){status='failed';}\nelse if(r.status==='retryable_error'&&!exhausted){status='retryable_error';}\nelse if(r.status==='retryable_error'){kind='needs_decision';reason='Лимит автоматических повторов исчерпан — нужно ваше решение.';questions.push({id:'retry_decision',text:'Уточните ввод, сузьте задачу или отклоните её — напишите, как продолжать.'});}\nconst pending=status==='awaiting_human'?{gate_id:`gate_${x.task_id}_${Number(x.version)+1}_${kind}`,kind,reason,questions,expected_version:Number(x.version)+1}:{};\nlet runtime=(()=>{try{return JSON.parse(x.runtime_json||'{}')}catch{return{}}})();\nif(status==='awaiting_human'){\n  const hitlStatus=kind==='needs_approval'||kind==='result_approval'?'NEEDS_APPROVAL':kind==='needs_input'?'NEEDS_INPUT':'NEEDS_DECISION';\n  const fromId=clean(r.specialist_id)||clean(x.specialist_id)||'schedule_builder_specialist';\n  const specialistComment=clean(r.summary)||reason;\n  runtime=appendHandoffEvent(runtime,{stage:'builder',status:hitlStatus,from_specialist:fromId,to_specialist:'universal_orchestrator',from_role:chatRoles[fromId]||fromId,to_role:'Orchestrator',summary:specialistComment,brief:specialistComment,details:{gate_kind:kind}});\n  runtime=appendHandoffEvent(runtime,{stage:'hitl',status:hitlStatus,from_specialist:'universal_orchestrator',to_specialist:'human_operator',from_role:'Orchestrator',to_role:'User',summary:reason,brief:reason,details:{gate_id:pending.gate_id||null,kind}});\n}\nreturn [{json:{...x,version:Number(x.version)+1,previous_version:Number(x.version),status,gate_json:JSON.stringify(pending),runtime_json:JSON.stringify({...runtime,last_error:status==='retryable_error'?(r.error||null):null}),retry_count:r.status==='retryable_error'&&!exhausted?Number(x.retry_count)+1:Number(x.retry_count),updated_at:new Date().toISOString(),direct_route:r.status==='retryable_error'&&!exhausted?'replan':'respond'}}];"
+      },
+      "id": "959d4513-9412-5dc3-b671-7d4c7ccba6f7",
+      "name": "Build specialist gate or error",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        6440,
+        255
+      ]
+    },
+    {
+      "parameters": {
+        "source": "database",
+        "workflowId": {
+          "__rl": true,
+          "value": "REPLACE_CAS_PERSIST_IN_UI",
+          "mode": "list",
+          "cachedResultName": "CAS — Persist Task State"
+        },
+        "workflowInputs": {
+          "mappingMode": "defineBelow",
+          "value": {
+            "cas_operation": "={{ 'update' }}",
+            "attempted": "={{ $json }}"
+          },
+          "matchingColumns": [],
+          "schema": [],
+          "attemptToConvertTypes": false,
+          "convertFieldsToString": false
+        },
+        "mode": "once",
+        "options": {
+          "waitForSubWorkflow": true
+        }
+      },
+      "id": "e2849737-9829-5f10-bccc-4b6a32f3d26b",
+      "name": "Call CAS persist — specialist gate or error",
+      "type": "n8n-nodes-base.executeWorkflow",
+      "typeVersion": 1.3,
+      "position": [
+        6720,
+        340
+      ],
+      "onError": "continueRegularOutput"
+    },
+    {
+      "parameters": {
+        "jsCode": "const x=$json;\nconst parse=(v,f)=>{try{return typeof v==='string'?JSON.parse(v):v??f}catch{return f}};\nconst obj=v=>v&&typeof v==='object'&&!Array.isArray(v);\nconst clean=v=>typeof v==='string'?v.trim():'';\nconst runtime=parse(x.runtime_json,{});\nconst result=obj(x.specialist_result)?x.specialist_result:parse(x.result_json,{});\nconst verification=parse(x.verification_json,{});\nconst last=obj(runtime.last_error)?runtime.last_error:(obj(result.error)?result.error:{});\nconst code=clean(last.code||result.error?.code||'').toUpperCase();\nconst status=clean(x.status);\nconst specialistStatus=clean(result.status);\nconst gateKind=clean(parse(x.gate_json,{}).kind);\n// HITL is ordinary work (input / decision / approval). Error Handler is only for\n// persisted retryable_error or failed — never leftover last_error.code, never awaiting_human.\nconst hitlSpecialist=['needs_input','needs_decision','needs_approval'].includes(specialistStatus);\nconst hitlGate=['needs_input','needs_decision','needs_approval','result_approval','pre_delegation_approval'].includes(gateKind);\nconst isHitl=status==='awaiting_human'||hitlSpecialist||hitlGate;\nconst critical=!isHitl&&['retryable_error','failed'].includes(status);\nif(!critical||!clean(x.task_id)){\n  return[{json:{...x,invoke_error_handler:false,cas_already_persisted:true,mas_error_event:null}}];\n}\nconst findings=[...(Array.isArray(last.findings)?last.findings:[]),...(Array.isArray(verification.findings)?verification.findings:[])].filter(obj).slice(0,20);\n// Never fall back to specialist HITL/success copy (user_message/summary).\nconst errObj=obj(result.error)?result.error:{};\nlet safeMessage=clean(last.safe_message||last.message||errObj.safe_message||errObj.message||'');\nif(!safeMessage) safeMessage=`Сбой case ${x.task_id} — входные данные сохранены.`;\nif(!safeMessage.includes(x.task_id)) safeMessage=`${safeMessage} (case_id=${x.task_id})`;\nconst cas_snapshot={\n  task_id:x.task_id,\n  version:Number(x.version)||1,\n  previous_version:Number(x.previous_version)||Number(x.version)||0,\n  status,\n  risk_class:clean(x.risk_class)||'high',\n  request_json:typeof x.request_json==='string'?x.request_json:JSON.stringify(x.request_json||{}),\n  runtime_json:typeof x.runtime_json==='string'?x.runtime_json:JSON.stringify(runtime),\n  plan_json:typeof x.plan_json==='string'?x.plan_json:JSON.stringify(x.plan_json||{}),\n  packet_json:typeof x.packet_json==='string'?x.packet_json:JSON.stringify(x.packet_json||{}),\n  result_json:typeof x.result_json==='string'?x.result_json:JSON.stringify(result||{}),\n  verification_json:typeof x.verification_json==='string'?x.verification_json:JSON.stringify(verification||{}),\n  gate_json:typeof x.gate_json==='string'?x.gate_json:JSON.stringify(x.gate_json||{}),\n  retry_count:Number(x.retry_count)||0,\n  max_retries:Number(x.max_retries)||2,\n  created_at:clean(x.created_at)||new Date().toISOString(),\n  updated_at:clean(x.updated_at)||new Date().toISOString(),\n};\nconst mas_error_event={\n  contract:'mas_error_event',\n  contract_version:'1.0',\n  task_id:x.task_id,\n  code:code||undefined,\n  stage:status==='retryable_error'?'plan':(status==='awaiting_human'?'hitl':'error'),\n  safe_message:safeMessage,\n  findings,\n  cas_already_persisted:true,\n  cas_snapshot,\n};\nreturn[{json:{...x,invoke_error_handler:true,cas_already_persisted:true,mas_error_event,passthrough:{source:'orchestrator',status,task_id:x.task_id}}}];"
+      },
+      "id": "6ec069e2-c8d6-522b-aa1a-64884d44071b",
+      "name": "Prepare MAS error event (specialist)",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        7000,
+        170
+      ]
+    },
+    {
+      "parameters": {
+        "conditions": {
+          "options": {
+            "caseSensitive": true,
+            "leftValue": "",
+            "typeValidation": "strict",
+            "version": 2
+          },
+          "conditions": [
+            {
+              "id": "98d2eb93-a937-5590-b378-7164650a0296",
+              "leftValue": "={{ $json.invoke_error_handler }}",
+              "rightValue": true,
+              "operator": {
+                "type": "boolean",
+                "operation": "equals"
+              }
+            }
+          ],
+          "combinator": "and"
+        },
+        "options": {}
+      },
+      "id": "0ff0de81-1f52-5105-b555-526b4b51ecb5",
+      "name": "Invoke Error Handler (specialist)?",
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2.2,
+      "position": [
+        7280,
+        85
+      ]
+    },
+    {
+      "parameters": {
+        "source": "database",
+        "workflowId": {
+          "__rl": true,
+          "value": "REPLACE_ERROR_HANDLER_IN_UI",
+          "mode": "list",
+          "cachedResultName": "Error — MAS Case Handler"
+        },
+        "workflowInputs": {
+          "mappingMode": "defineBelow",
+          "value": {
+            "mas_error_event": "={{ $json.mas_error_event }}",
+            "cas_already_persisted": "={{ $json.cas_already_persisted }}",
+            "passthrough": "={{ $json.passthrough || {} }}",
+            "task_id": "={{ $json.task_id }}"
+          },
+          "matchingColumns": [],
+          "schema": [],
+          "attemptToConvertTypes": false,
+          "convertFieldsToString": false
+        },
+        "mode": "once",
+        "options": {
+          "waitForSubWorkflow": true
+        }
+      },
+      "id": "d26ec155-98fc-5cca-a8e2-499fc6ab6355",
+      "name": "Call Error — MAS Case Handler (specialist)",
+      "type": "n8n-nodes-base.executeWorkflow",
+      "typeVersion": 1.3,
+      "position": [
+        7560,
+        0
+      ],
+      "onError": "continueRegularOutput"
+    },
+    {
+      "parameters": {
+        "jsCode": "let before={};\ntry{before=$('Call CAS persist — specialist gate or error').first().json||{}}catch{before={}}\nreturn[{json:before&&typeof before==='object'?before:{status:'error',message:'Missing orchestrator state after error handler.'}}];"
+      },
+      "id": "ef24077b-b2c8-563e-a3f3-fbd857438ce9",
+      "name": "Restore after specialist error handler",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        7560,
+        170
+      ]
+    },
+    {
+      "parameters": {
+        "conditions": {
+          "options": {
+            "caseSensitive": true,
+            "leftValue": "",
+            "typeValidation": "strict",
+            "version": 2
+          },
+          "conditions": [
+            {
+              "id": "88eb987e-ca27-51b4-a35a-1d043763e69b",
+              "leftValue": "={{ $json.status }}",
+              "rightValue": "retryable_error",
+              "operator": {
+                "type": "string",
+                "operation": "equals"
+              }
+            }
+          ],
+          "combinator": "and"
+        },
+        "options": {}
+      },
+      "id": "2fabb539-67f0-58f1-91cd-f44cffd5050f",
+      "name": "Specialist error requests replan?",
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2.2,
+      "position": [
+        7840,
+        85
+      ]
+    },
+    {
+      "parameters": {
+        "jsCode": "const x=$json;const pending={gate_id:`gate_${x.task_id}_${Number(x.version)+1}_routing`,kind:'needs_decision',reason:'Специалист не привязан в allowlist — маршрут нельзя выполнить.',questions:[{id:'routing',text:'Администратору n8n нужно настроить привязку specialist workflow в allowlist.'}],expected_version:Number(x.version)+1};return [{json:{...x,version:Number(x.version)+1,previous_version:Number(x.version),status:'awaiting_human',gate_json:JSON.stringify(pending),updated_at:new Date().toISOString()}}];"
+      },
+      "id": "795d1f41-94e3-5b05-9f69-3e12894cf0d2",
+      "name": "Build allowlist configuration gate",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        4480,
+        -85
+      ]
+    },
+    {
+      "parameters": {
+        "source": "database",
+        "workflowId": {
+          "__rl": true,
+          "value": "REPLACE_CAS_PERSIST_IN_UI",
+          "mode": "list",
+          "cachedResultName": "CAS — Persist Task State"
+        },
+        "workflowInputs": {
+          "mappingMode": "defineBelow",
+          "value": {
+            "cas_operation": "={{ 'update' }}",
+            "attempted": "={{ $json }}"
+          },
+          "matchingColumns": [],
+          "schema": [],
+          "attemptToConvertTypes": false,
+          "convertFieldsToString": false
+        },
+        "mode": "once",
+        "options": {
+          "waitForSubWorkflow": true
+        }
+      },
+      "id": "43a4cb4d-9bd2-533d-bceb-37cbf40c33dc",
+      "name": "Call CAS persist — routing gate",
+      "type": "n8n-nodes-base.executeWorkflow",
+      "typeVersion": 1.3,
+      "position": [
+        4760,
+        0
+      ],
+      "onError": "continueRegularOutput"
+    },
+    {
+      "parameters": {
+        "jsCode": "return [{json:{...$json,status:'conflict',message:$json.input_error||'Invalid action or missing task_id for a resume action.'}}];"
+      },
+      "id": "f7aa0a91-bf54-59cc-9c88-623ef790dfe5",
+      "name": "Build invalid invocation response",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        1960,
+        170
+      ]
+    },
+    {
+      "parameters": {
+        "jsCode": "const x=$json;const parse=(v,f)=>{try{return typeof v==='string'?JSON.parse(v):v??f}catch{return f}};\nconst pending=parse(x.gate_json,{}),result=parse(x.result_json,{}),verification=parse(x.verification_json,{}),runtime=parse(x.runtime_json,{}),error=(runtime.last_error&&typeof runtime.last_error==='object'?runtime.last_error:{}),plan=parse(x.plan_json,{});\nconst compact=result?.compact_data&&typeof result.compact_data==='object'?result.compact_data:{};\nconst obj=v=>v&&typeof v==='object'&&!Array.isArray(v),arr=Array.isArray,clean=v=>typeof v==='string'?v.trim():'';const digest=value=>{let text='';try{text=JSON.stringify(value)}catch{text=String(value??'')}let h=2166136261;for(const ch of text){h^=ch.charCodeAt(0);h=Math.imul(h,16777619)}return{hash:`fnv1a32:${(h>>>0).toString(16).padStart(8,'0')}`,bytes:new TextEncoder().encode(text).length}};\nconst safeHash=value=>/^(?:fnv1a32:[a-f0-9]{8}|sha256:[a-f0-9]{64})$/i.test(clean(value))?clean(value).toLowerCase():null;\nconst sanitizeToolCall=(value,index=0)=>{const v=obj(value)?value:{},action=obj(v.action)?v.action:{},input=v.input??v.toolInput??action.toolInput??action.tool_input??null,output=v.output??v.observation??null,inputMeta=input===null?null:digest(input),outputMeta=output===null?null:digest(output);return{name:clean(v.name||v.tool||action.tool||'agent_tool').slice(0,120),tool_call_id:clean(v.tool_call_id||v.toolCallId||v.id||action.tool_call_id||action.toolCallId).slice(0,200)||null,status:clean(v.status||(v.error?'error':'observed')).slice(0,30),stage:clean(v.stage).slice(0,40)||null,sequence:Number.isInteger(Number(v.sequence))?Number(v.sequence):index+1,input_hash:safeHash(v.input_hash)||inputMeta?.hash||null,input_bytes:Number.isInteger(Number(v.input_bytes))?Number(v.input_bytes):inputMeta?.bytes??null,output_hash:safeHash(v.output_hash)||outputMeta?.hash||null,output_bytes:Number.isInteger(Number(v.output_bytes))?Number(v.output_bytes):outputMeta?.bytes??null}};\nconst sanitizeToolCalls=value=>(arr(value)?value:[]).slice(0,50).map(sanitizeToolCall);\nconst records=Array.isArray(compact.decision_records)?compact.decision_records:[];\nconst decisionRecord=verification?.decision_record||(records.length?records[records.length-1]:(compact.decision_record||plan.decision_record||null));\nconst normalizedStage=x.status==='awaiting_human'?'hitl':x.status==='completed'?'release':x.status==='delegated'?'builder':x.status==='planning'?'plan':x.status==='retryable_error'?'plan':'error';\nconst stageScores=[...(Array.isArray(plan.score)?plan.score:plan.score?[{stage:'plan',...plan.score}]:[]),...(Array.isArray(compact.stage_scores)?compact.stage_scores:[]),...(verification?.score?[{stage:'verify',...verification.score}]:[])],numericScores=stageScores.map(s=>Number(s.stage_score)).filter(Number.isFinite);const overall=numericScores.length?Math.min(...numericScores):compact.overall_score;\nconst traceId=String(x.trace_id||`trace_${x.task_id||'unknown'}`),baseEvent={trace_id:traceId,task_id:x.task_id||null,actor:String(x.requested_by||'orchestrator')},events=[];\nif(plan.decision_record)events.push({...baseEvent,stage:'plan',event_type:'gate_decision',status:String(plan.planner_decision||plan.decision_record.selected_action?.action||'observed'),summary:'Universal Planner decision and deterministic readiness gate.',score:plan.score||null,decision_record:plan.decision_record});\nfor(const turn of(Array.isArray(runtime.handoff_events)?runtime.handoff_events:[])){const stage=clean(turn.stage).toLowerCase();const mapped=['intake','plan','rag','baseline','excel','builder','merge','validate','verify','hitl','release','error'].includes(stage)?stage:(String(turn.from_specialist||'').includes('excel')?'excel':String(turn.to_specialist||'').includes('excel')?'excel':'builder');const details=obj(turn.details)?{...turn.details}:{};if(Number.isFinite(Number(turn.duration_ms)))details.duration_ms=Math.trunc(Number(turn.duration_ms));events.push({...baseEvent,at:turn.at||undefined,stage:mapped,event_type:'handoff',status:String(turn.status||'observed'),summary:String(turn.summary||'Specialist handoff').slice(0,2000),brief:String(turn.brief||turn.summary||'').slice(0,800),duration_ms:Number.isFinite(Number(turn.duration_ms))?Math.trunc(Number(turn.duration_ms)):null,actor:String(turn.from_role||turn.from_specialist||baseEvent.actor),evidence_refs:[],findings:[],score:null,gate:null,decision_record:null,tool_calls:[],handoff:{from_specialist:turn.from_specialist||null,to_specialist:turn.to_specialist||null,from_role:turn.from_role||null,to_role:turn.to_role||null,brief:String(turn.brief||'').slice(0,800)||null,details}});}\nfor(const entry of(Array.isArray(compact.trace_summary)?compact.trace_summary:[])){const raw=String(entry.stage||'builder').toLowerCase(),mapped=raw.includes('excel')?'excel':raw.includes('plan')?'plan':raw.includes('baseline')?'baseline':raw.includes('merge')?'merge':raw.includes('valid')?'validate':raw.includes('verif')?'verify':raw.includes('rag')?'rag':'builder';events.push({...baseEvent,stage:mapped,event_type:'stage_finished',status:String(entry.status||'observed'),summary:`${mapped} stage completed with observable decision evidence.`,score:entry.score||null,decision_record:entry.decision_record||null,tool_calls:sanitizeToolCalls(entry.tool_calls)});}\nif(verification.decision_record)events.push({...baseEvent,stage:'verify',event_type:'gate_decision',status:String(verification.verdict||'observed'),summary:String(verification.summary||'Independent verification completed.'),score:verification.score||null,findings:Array.isArray(verification.findings)?verification.findings:[],decision_record:verification.decision_record});\nconst lowLevel=[...(arr(compact.agent_tool_trace)?compact.agent_tool_trace:[]),...(arr(compact.tool_calls)?compact.tool_calls:[]),...(arr(compact.intermediateSteps)?compact.intermediateSteps:[])];const traceEvent={...baseEvent,stage:normalizedStage,event_type:'orchestrator_response',status:String(x.status||'observed'),summary:String(x.message||result.summary||verification.summary||`Task ${x.status||'observed'}`).slice(0,2000),tool_calls:sanitizeToolCalls(lowLevel),evidence_refs:Array.isArray(result.evidence)?result.evidence:[],findings:Array.isArray(verification.findings)?verification.findings:(Array.isArray(error.findings)?error.findings:[]),score:overall==null?null:{overall_score:overall,stage_scores:stageScores},gate:Object.keys(pending).length?{gate_id:pending.gate_id||null,kind:pending.kind||null,reason:pending.reason||null}:null,decision_record:decisionRecord};events.push(traceEvent);\nreturn [{json:{mas_trace_event:traceEvent,mas_trace_events:events.slice(0,100),passthrough:x}}];"
+      },
+      "id": "d782c0fc-a32f-59b9-b8bd-c5cf8de27864",
+      "name": "Prepare final MAS trace event",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        3640,
+        85
+      ],
+      "executeOnce": true
+    },
+    {
+      "parameters": {
+        "source": "database",
+        "workflowId": {
+          "__rl": true,
+          "value": "REPLACE_MAS_TRACE_WRITER_IN_UI",
+          "mode": "list",
+          "cachedResultName": "Writer — MAS Trace"
+        },
+        "workflowInputs": {
+          "mappingMode": "defineBelow",
+          "value": {
+            "mas_trace_event": "={{ $json.mas_trace_event }}",
+            "mas_trace_events": "={{ $json.mas_trace_events }}",
+            "passthrough": "={{ $json.passthrough }}"
+          },
+          "matchingColumns": [],
+          "schema": [],
+          "attemptToConvertTypes": false,
+          "convertFieldsToString": false
+        },
+        "mode": "once",
+        "options": {
+          "waitForSubWorkflow": true
+        }
+      },
+      "id": "74e7fbf0-a859-5941-8fe4-ce645615eb6b",
+      "name": "Call MAS Trace Event Writer",
+      "type": "n8n-nodes-base.executeWorkflow",
+      "typeVersion": 1.3,
+      "position": [
+        3920,
+        170
+      ],
+      "onError": "continueRegularOutput"
+    },
+    {
+      "parameters": {
+        "jsCode": "let prepared={};try{prepared=$('Prepare final MAS trace event').first().json}catch{}\nconst restored=$json?.passthrough&&typeof $json.passthrough==='object'?$json.passthrough:prepared.passthrough;\nreturn [{json:restored&&typeof restored==='object'?restored:{status:'error',message:'Trace writer did not return orchestrator state.'}}];"
+      },
+      "id": "c1c5e945-61d3-5739-bf0e-b0d39d749702",
+      "name": "Restore orchestrator state after trace",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        4200,
+        170
+      ],
+      "executeOnce": true
+    },
+    {
+      "parameters": {
         "jsCode": "const x=$json;const parse=(v,f)=>{try{return typeof v==='string'?JSON.parse(v):v??f}catch{return f}};\nconst pending=parse(x.gate_json,{});const result=parse(x.result_json,{});const verification=parse(x.verification_json,{});const runtime=parse(x.runtime_json,{});\nconst chatRoles={\"excel_extraction_specialist\": \"Excel Extractor\", \"schedule_builder_specialist\": \"Schedule Builder\", \"engineering_calculation_specialist\": \"Calculation Specialist\", \"engineering_data_specialist\": \"Data Specialist\", \"engineering_document_specialist\": \"Document Specialist\", \"cluster_calculation_specialist\": \"Cluster Calculation\", \"binary_results_specialist\": \"Binary Results Extractor\", \"presentation_specialist\": \"Presentation Assembler\"};\nconst activity=(Array.isArray(runtime.handoff_events)?runtime.handoff_events:[]).map((turn,index)=>({\n  turn_id:index+1,\n  at:turn.at||null,\n  kind:'handoff',\n  from:{specialist_id:turn.from_specialist||null,role:turn.from_role||chatRoles[turn.from_specialist]||turn.from_specialist||'Orchestrator'},\n  to:{specialist_id:turn.to_specialist||null,role:turn.to_role||chatRoles[turn.to_specialist]||turn.to_specialist||'Orchestrator'},\n  status:turn.status||null,\n  text:String(turn.summary||'').slice(0,500),\n  brief:String(turn.brief||turn.summary||'').slice(0,800),\n  duration_ms:Number.isFinite(Number(turn.duration_ms))?Math.trunc(Number(turn.duration_ms)):null,\n  chips:Object.entries(turn.details&&typeof turn.details==='object'?turn.details:{}).filter(([k,v])=>['string','number','boolean'].includes(typeof v)&&!/(prompt|secret|token|password|authorization|api[_-]?key)/i.test(k)).slice(0,6).map(([k,v])=>({id:k,label:String(k),value:v}))\n}));\nreturn [{json:{contract:'orchestrator_response',contract_version:'1.0',task_id:x.task_id||null,version:Number(x.version||x.stored_version||0)||null,status:x.status||'error',\n message:x.message||({planning:'Планируем задачу.',delegated:'Задачу передали специалисту.',awaiting_human:'Нужен ваш ответ или утверждение.',completed:'Задача завершена после проверки.',failed:'Задача завершилась с ошибкой.',rejected:'Задача отклонена.',cancelled:'Задача отменена.',conflict:'Конфликт версии или gate — обновите статус.',not_found:'Задача не найдена.'}[x.status]||'Запрос обработан.'),\n next_action:x.status==='awaiting_human'?'resume_with_task_id_expected_version_gate_id_and_action':x.status==='conflict'?'reload_status':x.status==='retryable_error'?'automatic_replan':null,\n human_gate:Object.keys(pending).length?pending:null,result:Object.keys(result).length?result:null,verification:Object.keys(verification).length?verification:null,\n activity,activity_contract:'mas_activity_feed/v1.1',\n audit:{risk_class:x.risk_class||null,retry_count:Number(x.retry_count||0),max_retries:Number(x.max_retries||0),updated_at:x.updated_at||null,handoff_count:activity.length}}}];"
       },
       "id": "43c3bfc8-e062-5f9f-be0e-d137b3c00544",
@@ -1634,7 +2095,7 @@
 }
 
 ===END_FILE===
-===BEGIN_FILE===	n8n/workflows/support/demo-agent.workflow.json	39646	utf8
+===BEGIN_FILE===	n8n/workflows/support/demo-agent.workflow.json	40206	utf8
 {
   "id": "f8166995-01e4-5712-938c-2d1a492d564f",
   "name": "Agent — Demo Agent",
@@ -1790,7 +2251,7 @@
     },
     {
       "parameters": {
-        "jsCode": "const opened=$json||{};\nconst result=opened.result&&typeof opened.result==='object'?opened.result:{};\nreturn [{json:{\n  task_id:result.task_id||opened.task_id||'',\n  agent_id:\"demo_agent\",\n  status:result.status||'needs_input',\n  message:result.message||opened.message||\"Нет задачи для демонстрационного агента\",\n  data:result.data||{},\n  artifacts:result.artifacts||{},\n  issues:result.issues||[{type:\"missing_objective\"}],\n  assumptions:result.assumptions||[],\n  requests:result.requests||[{question_id:\"Q-demo\",question:\"Опишите задачу: что именно посчитать или запустить.\",options:[],accepts:{free_text:true,files:[]}}]\n}}];\n"
+        "jsCode": "const opened=$json||{};\nconst runtime=(()=>{try{return $('Runtime configuration').first().json||{}}catch{return {}}})();\nconst result=opened.result&&typeof opened.result==='object'?opened.result:{};\nif(typeof opened.ok!=='boolean'){\n  return [{json:{\n    task_id:result.task_id||opened.task_id||'',\n    agent_id:\"demo_agent\",\n    status:'failed',\n    message:\"Сервис агента „Demo Agent“ не отвечает по адресу из настроек среды. Проверьте, что он запущен, и перезапустите задачу.\",\n    data:{},\n    artifacts:{},\n    issues:[{code:'service_unreachable',url:String(runtime[\"demo_agent_url\"]||'')}],\n    assumptions:[],\n    requests:[]\n  }}];\n}\nreturn [{json:{\n  task_id:result.task_id||opened.task_id||'',\n  agent_id:\"demo_agent\",\n  status:result.status||'needs_input',\n  message:result.message||opened.message||\"Нет задачи для демонстрационного агента\",\n  data:result.data||{},\n  artifacts:result.artifacts||{},\n  issues:result.issues||[{type:\"missing_objective\"}],\n  assumptions:result.assumptions||[],\n  requests:result.requests||[{question_id:\"Q-demo\",question:\"Опишите задачу: что именно посчитать или запустить.\",options:[],accepts:{free_text:true,files:[]}}]\n}}];\n"
       },
       "id": "0768b0aa-eb55-5db3-b5d8-819f21ca3d32",
       "name": "Format missing demo",
@@ -2627,7 +3088,7 @@
   },
   "tags": [],
   "pinData": {},
-  "versionId": "7e6c971a-5d6c-4c0b-96ee-cfe961b8ac36"
+  "versionId": "c4b7182e-7eaf-49ce-8a82-c434f4331eab"
 }
 
 ===END_FILE===
@@ -11591,7 +12052,7 @@ if __name__ == "__main__":
     raise SystemExit(main())
 
 ===END_FILE===
-===BEGIN_FILE===	scripts/mas_gate.py	10439	utf8
+===BEGIN_FILE===	scripts/mas_gate.py	12983	utf8
 #!/usr/bin/env python3
 """Lab-only verification gate for NOVATEK RE MASter — one command, one verdict.
 
@@ -11601,17 +12062,19 @@ Runs, in order, and prints a summary table (stops at the first failing stage unl
   smokes     node n8n/tests/*-smoke.js  (workflow structure + Code-node logic)
   pytest     Agent Kit, Activity, Schedule Builder, Excel Tools, Demo Agent (template) test suites
   combat     PUBLISH_ACTIVITY=0 combat-dates-revise/run_integration_cases.py (offline engine check)
-  live       (only with --live) scripts/lab_soft_redeploy.py --skip-health + run_live_five.py [6 cases]
-             + run_live_demo_agent.py [template agent: in_progress → resume source=agent;
-               three_agent_chain: excel → builder → demo with state.plan]
-             + run_live_excel_datasets.py [extract_table: named dataset, not commissioning facts]  (~15 min)
+  live       (only with --live) scripts/lab_soft_redeploy.py --skip-health + 12 cases.
+             Six run_live_five in parallel (LIVE_FIVE_WORKERS=3); demo long-job + excel_datasets overlap;
+             then three_agent_chain; then recovery serial (mutates excel-tools / max_steps).
+             Streamed to the terminal (~20 min, not a silent 40).
 
 Usage:
   python3 scripts/mas_gate.py                 # offline gate (≈1 min)
-  python3 scripts/mas_gate.py --live          # offline gate + lab redeploy + 6 live cases + 2 demo agent cases + excel_datasets
+  python3 scripts/mas_gate.py --live          # offline gate + lab redeploy + 12 live cases
   python3 scripts/mas_gate.py --only smokes,pytest
+  python3 scripts/mas_gate.py --only live          # skip offline after a GREEN mas_gate.py; implies --live
   python3 scripts/mas_gate.py --live --cases combat_case3
   python3 scripts/mas_gate.py --live --cases demo_agent   # only the template agent cases (long job + three-agent chain)
+  python3 scripts/mas_gate.py --live --cases agent_down_recovery
   python3 scripts/mas_gate.py --live --cases excel_datasets  # extract_table live: events workbook, no .INC
 
 Field note: this script needs Node.js, Docker Compose and the lab .venv — it is developer tooling.
@@ -11624,6 +12087,7 @@ import os
 import subprocess
 import sys
 import time
+from concurrent.futures import ThreadPoolExecutor
 from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[1]
@@ -11647,13 +12111,38 @@ def py() -> str:
     return str(ACTIVITY_PY) if ACTIVITY_PY.is_file() else sys.executable
 
 
-def run(cmd: list[str], *, cwd: Path = ROOT, env: dict[str, str] | None = None, timeout: int = 1800) -> tuple[int, str]:
+def run(cmd: list[str], *, cwd: Path = ROOT, env: dict[str, str] | None = None, timeout: int = 1800, stream: bool = False) -> tuple[int, str]:
     merged = {**os.environ, **(env or {})}
+    if not stream:
+        try:
+            proc = subprocess.run(cmd, cwd=str(cwd), env=merged, capture_output=True, text=True, timeout=timeout)
+        except subprocess.TimeoutExpired:
+            return 124, f"timeout after {timeout}s: {' '.join(cmd)}"
+        return proc.returncode, (proc.stdout or "") + (proc.stderr or "")
     try:
-        proc = subprocess.run(cmd, cwd=str(cwd), env=merged, capture_output=True, text=True, timeout=timeout)
-    except subprocess.TimeoutExpired:
-        return 124, f"timeout after {timeout}s: {' '.join(cmd)}"
-    return proc.returncode, (proc.stdout or "") + (proc.stderr or "")
+        proc = subprocess.Popen(cmd, cwd=str(cwd), env=merged, stdout=subprocess.PIPE, stderr=subprocess.STDOUT, text=True, bufsize=1)
+    except Exception as exc:  # noqa: BLE001
+        return 1, str(exc)
+    chunks: list[str] = []
+    started = time.time()
+    assert proc.stdout is not None
+    while True:
+        line = proc.stdout.readline()
+        if line:
+            sys.stdout.write(line)
+            sys.stdout.flush()
+            chunks.append(line)
+        elif proc.poll() is not None:
+            rest = proc.stdout.read()
+            if rest:
+                sys.stdout.write(rest)
+                sys.stdout.flush()
+                chunks.append(rest)
+            break
+        if time.time() - started > timeout:
+            proc.kill()
+            return 124, "".join(chunks) + f"\ntimeout after {timeout}s: {' '.join(cmd)}"
+    return int(proc.returncode or 0), "".join(chunks)
 
 
 def tail(text: str, n: int = 25) -> str:
@@ -11744,53 +12233,86 @@ def stage_combat() -> tuple[bool, str]:
 
 DEMO_CASE = "demo_agent"
 DATASETS_CASE = "excel_datasets"
+DEMO_NAMES = ("demo_agent_long_job", "three_agent_chain")
+RECOVERY_NAMES = ("agent_down_recovery", "rework_round", "step_limit_review")
+
+
+def _live_lines(out: str) -> list[str]:
+    return [ln for ln in out.splitlines() if ln.startswith('{"id"') or ln.startswith("FAIL ")]
+
+
+def _run_live_script(script: str, args: list[str], *, timeout: int) -> tuple[bool, str]:
+    print(f"-- {script} {' '.join(args)}".rstrip(), flush=True)
+    code, out = run(
+        [py(), script, *args],
+        env={"PYTHONPATH": "mas-activity-service"},
+        timeout=timeout,
+        stream=True,
+    )
+    return code == 0, "\n".join(_live_lines(out) or [tail(out, 20)])
 
 
 def stage_live(cases: list[str]) -> tuple[bool, str]:
-    code, out = run([sys.executable, "scripts/lab_soft_redeploy.py", "--skip-health"], timeout=1200)
+    print("-- lab_soft_redeploy.py --skip-health", flush=True)
+    code, out = run([sys.executable, "scripts/lab_soft_redeploy.py", "--skip-health"], timeout=1200, stream=True)
     if code != 0:
         return False, "lab_soft_redeploy failed:\n" + tail(out, 20)
-    ok = True
-    lines: list[str] = []
-    extra = {DEMO_CASE, DATASETS_CASE}
+    extra = {DEMO_CASE, DATASETS_CASE, *DEMO_NAMES, *RECOVERY_NAMES}
     five = [c for c in cases if c not in extra]
+    notes: list[str] = []
+    ok = True
     if not cases or five:
-        code, out = run(
-            [py(), "simulation-model-example/run_live_five.py", *five],
-            env={"PYTHONPATH": "mas-activity-service"},
-            timeout=3600,
-        )
-        ok = ok and code == 0
-        lines += [ln for ln in out.splitlines() if ln.startswith('{"id"') or ln.startswith("FAIL ")] or [tail(out, 20)]
-    if not cases or DEMO_CASE in cases:
-        # Template agent (agents-template/demo_agent): enables its registry row, runs the text-only long-job case
-        # (in_progress → waiting_agent → resume source=agent) and the three-agent chain (plan on excel → builder →
-        # demo), disables the row again.
-        code, out = run(
-            [py(), "simulation-model-example/run_live_demo_agent.py"],
-            env={"PYTHONPATH": "mas-activity-service"},
-            timeout=900,
-        )
-        ok = ok and code == 0
-        lines += [ln for ln in out.splitlines() if ln.startswith('{"id"') or ln.startswith("FAIL ")] or [tail(out, 20)]
-    if not cases or DATASETS_CASE in cases:
-        code, out = run(
-            [py(), "simulation-model-example/run_live_excel_datasets.py"],
-            env={"PYTHONPATH": "mas-activity-service"},
-            timeout=1200,
-        )
-        ok = ok and code == 0
-        lines += [ln for ln in out.splitlines() if ln.startswith('{"id"') or ln.startswith("FAIL ")] or [tail(out, 20)]
-    return ok, "\n".join(lines)
+        five_ok, five_note = _run_live_script("simulation-model-example/run_live_five.py", five, timeout=3600)
+        ok = ok and five_ok
+        notes.append(five_note)
+    demo_sel: list[str] = []
+    rec_sel: list[str] = []
+    if not cases:
+        demo_sel = list(DEMO_NAMES)
+        rec_sel = list(RECOVERY_NAMES)
+    else:
+        if DEMO_CASE in cases:
+            demo_sel.extend(DEMO_NAMES)
+        demo_sel.extend(c for c in cases if c in DEMO_NAMES)
+        rec_sel.extend(c for c in cases if c in RECOVERY_NAMES)
+        # unique, stable order
+        demo_sel = [n for n in DEMO_NAMES if n in demo_sel]
+        rec_sel = [n for n in RECOVERY_NAMES if n in rec_sel]
+    want_datasets = not cases or DATASETS_CASE in cases
+    # Datasets do not mutate Runtime Config / excel-tools: overlap with the demo-agent cases.
+    # Recovery stops excel-tools and patches max_steps — always last, alone.
+    overlap: list[tuple[str, list[str], int]] = []
+    if demo_sel:
+        overlap.append(("simulation-model-example/run_live_demo_agent.py", demo_sel, 3600))
+    if want_datasets:
+        overlap.append(("simulation-model-example/run_live_excel_datasets.py", [], 1200))
+    if len(overlap) == 1:
+        script, args, timeout = overlap[0]
+        part_ok, part_note = _run_live_script(script, args, timeout=timeout)
+        ok = ok and part_ok
+        notes.append(part_note)
+    elif overlap:
+        with ThreadPoolExecutor(max_workers=2) as pool:
+            futs = [pool.submit(_run_live_script, script, args, timeout=timeout) for script, args, timeout in overlap]
+            for fut in futs:
+                part_ok, part_note = fut.result()
+                ok = ok and part_ok
+                notes.append(part_note)
+    if rec_sel:
+        rec_ok, rec_note = _run_live_script("simulation-model-example/run_live_demo_agent.py", rec_sel, timeout=3600)
+        ok = ok and rec_ok
+        notes.append(rec_note)
+    return ok, "\n".join(n for n in notes if n)
 
 
 def main() -> int:
     parser = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
     parser.add_argument("--live", action="store_true", help="also redeploy the lab and run the live cases")
-    parser.add_argument("--cases", default="", help="comma-separated run_live_five case ids and/or demo_agent, excel_datasets (default: all six + demo_agent + excel_datasets)")
+    parser.add_argument("--cases", default="", help="comma-separated run_live_five case ids and/or demo_agent, excel_datasets, agent_down_recovery, rework_round, step_limit_review (default: all six + demo + recovery + excel_datasets)")
     parser.add_argument("--only", default="", help="comma-separated stages: regen,smokes,pytest,combat,live")
     parser.add_argument("--keep-going", action="store_true", help="run every stage even after a failure")
     args = parser.parse_args()
+    only = {s.strip() for s in args.only.split(",") if s.strip()}
 
     stages: list[tuple[str, object]] = [
         ("regen", stage_regen),
@@ -11798,10 +12320,9 @@ def main() -> int:
         ("pytest", stage_pytest),
         ("combat", stage_combat),
     ]
-    if args.live:
-        cases = [c for c in args.cases.split(",") if c.strip()]
+    if args.live or "live" in only:
+        cases = [c.strip() for c in args.cases.split(",") if c.strip()]
         stages.append(("live", lambda: stage_live(cases)))
-    only = {s.strip() for s in args.only.split(",") if s.strip()}
     if only:
         stages = [(name, fn) for name, fn in stages if name in only]
 

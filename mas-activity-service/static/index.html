@@ -3,13 +3,13 @@
 <head>
   <meta charset="utf-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1" />
-  <title>NOVATEK RE MASter Workspace</title>
+  <title>NOVATEK RE MASter — Задачи</title>
   <meta name="color-scheme" content="light" />
   <link rel="icon" href="data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 100 100'><rect x='14' y='40' width='8' height='20' rx='4' fill='%23001A57'/><rect x='78' y='40' width='8' height='20' rx='4' fill='%23001A57'/><line x1='50' y1='20' x2='50' y2='10' stroke='%230033A0' stroke-width='6' stroke-linecap='round'/><circle cx='50' cy='10' r='6' fill='%2300B8F0'/><rect x='22' y='20' width='56' height='60' rx='12' fill='%230033A0'/><circle cx='36' cy='45' r='7' fill='%2300B8F0'/><circle cx='64' cy='45' r='7' fill='%2300B8F0'/><rect x='36' y='64' width='28' height='6' rx='3' fill='%2300B8F0'/></svg>" />
   <link rel="preconnect" href="https://fonts.googleapis.com" />
   <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
   <link href="https://fonts.googleapis.com/css2?family=IBM+Plex+Sans:wght@400;500;600;700&family=IBM+Plex+Mono:wght@400;500&display=swap" rel="stylesheet" />
-  <link rel="stylesheet" href="/static/app.css?v=103" />
+  <link rel="stylesheet" href="/static/app.css?v=113" />
 </head>
 <body>
   <svg width="0" height="0" style="position:absolute" aria-hidden="true">
@@ -37,16 +37,16 @@
     <button type="button" class="icon-btn rail-toggle" id="railToggle" aria-label="Список задач" aria-controls="taskRail" aria-expanded="false">
       <svg class="icon" aria-hidden="true"><use href="#i-panel"/></svg>
     </button>
-    <a class="brand" href="/" id="brandHome" title="На главную" aria-label="NOVATEK RE MASter Workspace — на главную">
+    <a class="brand" href="/" id="brandHome" title="На главную" aria-label="NOVATEK RE MASter — на главную">
       <span class="brand-mark" aria-hidden="true">
         <svg viewBox="0 0 100 100" width="26" height="26"><rect x="14" y="40" width="8" height="20" rx="4" fill="#001A57"/><rect x="78" y="40" width="8" height="20" rx="4" fill="#001A57"/><line x1="50" y1="20" x2="50" y2="10" stroke="#0033A0" stroke-width="6" stroke-linecap="round"/><circle cx="50" cy="10" r="6" fill="#00B8F0"/><rect x="22" y="20" width="56" height="60" rx="12" fill="#0033A0"/><circle cx="36" cy="45" r="7" fill="#00B8F0"/><circle cx="64" cy="45" r="7" fill="#00B8F0"/><rect x="36" y="64" width="28" height="6" rx="3" fill="#00B8F0"/></svg>
       </span>
       <span class="brand-lockup">
         <span class="brand-row">
           <span class="mark">NOVATEK RE MASter</span>
-          <span class="product">Workspace</span>
+          <span class="product">Задачи</span>
         </span>
-        <span class="brand-sub">Novatek STC reservoir engineering multi-agent system</span>
+        <span class="brand-sub">мультиагентная система гидродинамики НОВАТЭК НТЦ</span>
       </span>
     </a>
     <nav class="top-actions" aria-label="Разделы">
@@ -135,7 +135,7 @@
           <div class="not-found" id="notFound" hidden>
             <p class="not-found-title">Задача не найдена</p>
             <p class="not-found-id" id="notFoundId"></p>
-            <p class="not-found-copy">Нет такой задачи в Workspace.</p>
+            <p class="not-found-copy">Нет такой задачи.</p>
             <a class="btn btn-quiet" href="/" id="notFoundHome">Вернуться на главную</a>
           </div>
         </div>
@@ -202,13 +202,13 @@
             <input id="startFileInput" type="file" multiple hidden accept=".xlsx,.xls,.xlsm,.xltx,.xltm,.data,.inc,.sch,.txt,.grdecl,.dev,.cps3,.grd,.grid" />
             <svg class="icon dropzone-icon" aria-hidden="true"><use href="#i-attach"/></svg>
             <p class="dropzone-title">Перетащите файлы сюда или нажмите, чтобы выбрать</p>
-            <p class="dropzone-hint">Excel, schedule (.data / .inc), траектории (.dev), поверхности CPS3</p>
+            <p class="dropzone-hint">Excel, исходный файл расписания (.DATA / .INC), траектории скважин (.dev), поверхности CPS3</p>
             <ul class="file-chips" id="startFileList" hidden></ul>
           </div>
           <label class="field schedule-root-field" id="scheduleRootField" hidden>
-            <span>Главный schedule среди вложений</span>
-            <select id="scheduleRoot" aria-label="Главный schedule файл среди вложений">
-              <option value="">Какой .data / .INC главный?</option>
+            <span>Главный файл расписания среди вложений</span>
+            <select id="scheduleRoot" aria-label="Главный файл расписания среди вложений">
+              <option value="">Какой файл расписания главный?</option>
             </select>
           </label>
           <div class="start-actions">
@@ -259,7 +259,7 @@
         </div>
       </div>
       <p class="composer-hint" id="composerHint" hidden></p>
-      <p class="composer-drop-hint" id="composerDropHint">Файлы можно перетащить прямо в поле ответа — Excel, schedule, недостающий INCLUDE, траектории.</p>
+      <p class="composer-drop-hint" id="composerDropHint">Файлы можно перетащить прямо в поле ответа — Excel, исходный файл расписания, недостающий INCLUDE, траектории.</p>
     </form>
     </section>
 
@@ -283,8 +283,8 @@
     </aside>
   </main>
 
-  <script src="/static/schema.js?v=32"></script>
+  <script src="/static/schema.js?v=45"></script>
   <script src="/static/log.js?v=1"></script>
-  <script src="/static/app.js?v=106"></script>
+  <script src="/static/app.js?v=108"></script>
 </body>
 </html>

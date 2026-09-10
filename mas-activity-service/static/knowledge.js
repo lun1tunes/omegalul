@@ -21,20 +21,43 @@
   const TAG_GROUPS = [
     {
       key: "keywords",
-      label: "Keywords (теги)",
-      hint: "Поле keywords в corpus. Для Schedule — обычно allowlisted SCHEDULE keywords (DATES, WCONPROD…). В RAG — keyword/tag-фильтр.",
+      label: "Ключевые слова SCHEDULE",
+      hint: "Имена ключевых слов из руководства tNavigator, по которым поиск находит карточку — например DATES, WCONPROD. Необязательно.",
     },
     {
       key: "topics",
-      label: "Topics",
-      hint: "Поле topics. Тематические ярлыки для tag-ветки retrieval (необязательно).",
+      label: "Темы",
+      hint: "О чём карточка простыми словами: ввод скважин, группы, перфорация. Необязательно.",
     },
     {
       key: "task_patterns",
-      label: "Task patterns",
-      hint: "Поле task_patterns. Как инженер формулирует задачу — помогает матчить запрос к карточке.",
+      label: "Как инженер формулирует задачу",
+      hint: "Типичные фразы из постановки («сдвинуть даты ввода», «перепривязать группу»), чтобы карточка находилась по запросу.",
     },
   ];
+  const TYPE_LABELS = {
+    keyword_instruction: "Ключевое слово SCHEDULE",
+    worked_example: "Пример",
+    protocol_instruction: "Правило работы",
+    routing_card: "Как разбирать задачу",
+    capability_instruction: "Что умеет агент",
+    injection_template: "Служебный шаблон",
+  };
+  const STATUS_LABELS = {
+    active: "актуальна",
+    current: "актуальна",
+    superseded: "заменена",
+    draft: "черновик",
+  };
+
+  function typeLabel(value) {
+    const key = String(value || "").trim();
+    return TYPE_LABELS[key] || key.replace(/_/g, " ") || "карточка";
+  }
+  function statusLabel(value) {
+    const key = String(value || "").trim().toLowerCase();
+    return STATUS_LABELS[key] || String(value || "");
+  }
 
   let namespaces = [];
   let currentBase = "";
@@ -138,8 +161,8 @@
       const count = document.createElement("span");
       count.className = "kb-tab-count";
       count.textContent = ns.document_count != null ? String(ns.document_count) : "";
+      btn.dataset.base = ns.id;
       btn.append(label, count);
-      btn.title = ns.id;
       btn.addEventListener("click", () => {
         if (agentSelect) agentSelect.value = ns.id;
         loadDocuments(ns.id);
@@ -151,7 +174,7 @@
   function syncAgentTabs() {
     if (!agentTabs) return;
     for (const btn of agentTabs.querySelectorAll(".kb-tab")) {
-      const active = btn.title === currentBase;
+      const active = btn.dataset.base === currentBase;
       btn.classList.toggle("is-active", active);
       btn.setAttribute("aria-selected", String(active));
     }
@@ -179,14 +202,14 @@
     createType.innerHTML = "";
     for (const t of types) {
       const opt = document.createElement("option");
+      opt.textContent = typeLabel(t);
       opt.value = t;
-      opt.textContent = t;
       createType.append(opt);
     }
     if (!types.length) {
       const opt = document.createElement("option");
       opt.value = "keyword_instruction";
-      opt.textContent = "keyword_instruction";
+      opt.textContent = typeLabel("keyword_instruction");
       createType.append(opt);
     }
   }
@@ -287,7 +310,7 @@
           row.append(el);
         }
       }
-      section.append(label, hint, row);
+      section.append(label, row);
       wrap.append(section);
     }
     return wrap;
@@ -359,7 +382,7 @@
     const res = await fetch("/v1/knowledge/namespaces");
     const data = await res.json().catch(() => ({}));
     if (!res.ok) {
-      showFlash(typeof data.detail === "string" ? data.detail : "Не удалось загрузить namespaces.");
+      showFlash(typeof data.detail === "string" ? data.detail : "Не удалось загрузить список агентов.");
       agentSelect.innerHTML = '<option value="">Нет данных</option>';
       return;
     }
@@ -367,14 +390,14 @@
     agentSelect.innerHTML = "";
     if (!namespaces.length) {
       agentSelect.innerHTML = '<option value="">Нет данных</option>';
-      agentHint.textContent = "В corpus нет namespaces.";
+      agentHint.textContent = "Нет баз знаний агентов.";
       syncAddButton();
       return;
     }
     for (const ns of namespaces) {
       const opt = document.createElement("option");
       opt.value = ns.id;
-      opt.textContent = `${ns.label} (${ns.id})`;
+      opt.textContent = ns.label || ns.id;
       agentSelect.append(opt);
     }
     const first = namespaces[0].id;
@@ -507,7 +530,7 @@
       task_patterns: createDraft.task_patterns,
     };
     if (!payload.knowledge_id || !payload.title || !payload.text.trim()) {
-      showFlash(incompleteMessage || "Нужны knowledge_id, title и text.");
+      showFlash(incompleteMessage || "Нужны код карточки, заголовок и текст.");
       return { ok: false, saved: false };
     }
     try {
@@ -536,7 +559,7 @@
     }
     if (createDraftDirty()) {
       const created = await persistCreateDraft({
-        incompleteMessage: "Сначала сохраните или отмените новую карточку (нужны knowledge_id, title и text).",
+        incompleteMessage: "Сначала сохраните или отмените новую карточку (нужны код, заголовок и текст).",
       });
       if (!created.ok) return false;
     }
@@ -568,7 +591,7 @@
 
       const titleField = document.createElement("label");
       titleField.className = "who-field";
-      titleField.innerHTML = "<span>title</span>";
+      titleField.innerHTML = "<span>Заголовок</span>";
       const titleInput = document.createElement("input");
       titleInput.type = "text";
       titleInput.value = draft.title || "";
@@ -587,16 +610,16 @@
 
       const textLabel = document.createElement("label");
       textLabel.className = "who-field";
-      textLabel.innerHTML = "<span>text (markdown)</span>";
+      textLabel.innerHTML = "<span>Текст карточки</span>";
       const editor = document.createElement("textarea");
       editor.className = "kb-editor";
       editor.value = draft.text || "";
-      editor.setAttribute("aria-label", "Сырой markdown карточки");
+      editor.setAttribute("aria-label", "Текст карточки");
       textLabel.append(editor);
 
       const hint = document.createElement("p");
       hint.className = "kb-ingest";
-      hint.textContent = "Сохранение пишет в JSON corpus и поднимает revision.";
+      hint.textContent = "Сохранение обновляет карточку. Чтобы агент начал её учитывать в поиске, нажмите «Загрузить в RAG».";
 
       body.append(actions, titleField, tagWrap, textLabel, hint);
 
@@ -611,7 +634,7 @@
         try {
           const result = await persistOpenEdit({ force: true });
           if (!result.ok || !result.saved) return;
-          showFlash(`Сохранено, revision ${result.document.revision}.`, { ok: true });
+          showFlash(`Карточка сохранена, версия ${result.document.revision}.`, { ok: true });
           await loadDocuments(currentBase, { keepOpen: result.document.knowledge_id });
         } finally {
           saveBtn.disabled = false;
@@ -638,8 +661,8 @@
     meta.textContent = [
       doc.page || null,
       doc.heading || null,
-      doc.author ? `author ${doc.author}` : null,
-      doc.has_schema_catalogue ? "schema_catalogue" : null,
+      doc.author ? `автор ${doc.author}` : null,
+      doc.has_schema_catalogue ? "есть схема записей SCHEDULE" : null,
     ].filter(Boolean).join(" · ");
 
     body.append(actions, tags, md);
@@ -706,12 +729,16 @@
     title.textContent = summary.title || summary.knowledge_id;
     const type = document.createElement("span");
     type.className = "kb-type";
-    type.textContent = summary.knowledge_type || "card";
+    type.textContent = typeLabel(summary.knowledge_type);
     titleRow.append(title, type);
 
     const meta = document.createElement("div");
     meta.className = "kb-meta";
-    meta.textContent = `${summary.knowledge_id} · rev ${summary.revision} · ${summary.status}`;
+    meta.textContent = [
+      summary.knowledge_id || null,
+      summary.revision ? `версия ${summary.revision}` : null,
+      statusLabel(summary.status),
+    ].filter(Boolean).join(" · ");
 
     const preview = document.createElement("p");
     preview.className = "kb-preview";
@@ -753,7 +780,7 @@
     const ns = namespaces.find((item) => item.id === base);
     syncAgentTabs();
     agentHint.textContent = ns
-      ? `${ns.label} · ${pluralCards(docs.length)} · типы: ${(ns.knowledge_types || []).join(", ") || "—"}`
+      ? `${ns.label} · ${pluralCards(docs.length)} · ${[...new Set((ns.knowledge_types || []).map(typeLabel))].join(", ") || "—"}`
       : pluralCards(docs.length);
     if (kbSearch) kbSearch.value = "";
     if (kbCount) kbCount.textContent = "";
@@ -821,7 +848,7 @@
       const result = await persistCreateDraft();
       if (!result.ok || !result.saved) {
         if (result.ok && !result.saved && !createDraftDirty()) {
-          showFlash("Нужны knowledge_id, title и text.");
+          showFlash("Нужны код карточки, заголовок и текст.");
         }
         return;
       }
@@ -832,5 +859,5 @@
     }
   });
 
-  loadNamespaces().catch(() => showFlash("Сеть недоступна при загрузке namespaces."));
+  loadNamespaces().catch(() => showFlash("Сеть недоступна при загрузке базы знаний."));
 })();

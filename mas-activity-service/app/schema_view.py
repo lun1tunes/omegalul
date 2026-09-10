@@ -7,13 +7,15 @@ node caption stays inside the box; handoff_message rides the edge slip.
 from __future__ import annotations
 
 import json
+import re
 from typing import Any
 
 from app.state_shape import artifact_filenames
 
-NODE_KEYS = ("input", "orchestrator", "excel", "calc", "schedule", "user", "output")
+NODE_KEYS = ("engineer", "orchestrator", "excel", "calc", "schedule", "output")
 EDGE_KEYS = (
-    "in_orch",
+    "engineer_orch",
+    "orch_engineer",
     "orch_out",
     "orch_excel",
     "orch_calc",
@@ -21,9 +23,8 @@ EDGE_KEYS = (
     "excel_orch",
     "calc_orch",
     "schedule_orch",
-    "orch_user",
-    "user_orch",
 )
+_ANSWER_PREFIX = re.compile(r"^(Пользователь|Инженер)\s+ответил[а]?:\s*", re.I)
 AGENT_NODES = {
     "excel_extractor": "excel",
     "calculation_agent": "calc",
@@ -96,8 +97,11 @@ def _result_text(payload: Any, status_message: str) -> str:
 
 
 def _blank_graph(state: dict[str, Any]) -> dict[str, Any]:
+    nodes = {key: {"tone": "idle", "bubble": None, "caption": ""} for key in NODE_KEYS}
+    nodes["engineer"]["hitl_question"] = ""
+    nodes["engineer"]["hitl_answer"] = ""
     return {
-        "nodes": {key: {"tone": "idle", "bubble": None, "caption": ""} for key in NODE_KEYS},
+        "nodes": nodes,
         "edges": {key: {"tone": "idle", "bubble": None} for key in EDGE_KEYS},
         "input": {"goal": _text(state.get("goal")), "files": _files_from_state(state)},
         "output": {"result": "", "prompt": ""},
@@ -106,7 +110,28 @@ def _blank_graph(state: dict[str, Any]) -> dict[str, Any]:
         "in_flight": None,
         "last_handoff": {},
         "last_orch_prompt": "",
+        "last_hitl": {"question": "", "answer": ""},
     }
+
+
+def _hitl_question(event: dict[str, Any], payload: dict[str, Any]) -> str:
+    return _text(event.get("status_message")) or _text(payload.get("question"))
+
+
+def _hitl_answer(event: dict[str, Any], payload: dict[str, Any]) -> str:
+    raw = payload.get("answer")
+    if isinstance(raw, dict):
+        return _text(raw.get("text") or raw.get("label") or raw.get("choice"))
+    if _text(raw):
+        return _text(raw)
+    return _ANSWER_PREFIX.sub("", _text(event.get("status_message"))).strip()
+
+
+def _format_hitl(question: str, answer: str) -> str:
+    q, a = _text(question), _text(answer)
+    if q and a:
+        return f"Вопрос: {q}\nОтвет: {a}"
+    return a or q
 
 
 def _set_caption(graph: dict[str, Any], node_id: str, text: str | None) -> None:
@@ -181,10 +206,17 @@ def _frame_label(event: dict[str, Any]) -> str:
 
 
 def _snapshot(graph: dict[str, Any], event: dict[str, Any], index: int) -> dict[str, Any]:
+    kind = _text(event.get("kind"))
+    label = _frame_label(event)
+    hitl = graph.get("last_hitl") or {}
+    if kind == "hitl.request" and hitl.get("question"):
+        label = hitl["question"]
+    if kind == "hitl.answered":
+        label = _format_hitl(hitl.get("question") or "", hitl.get("answer") or "") or label
     return {
         "index": index,
-        "label": _frame_label(event),
-        "kind": _text(event.get("kind")),
+        "label": label,
+        "kind": kind,
         "event_id": event.get("event_id"),
         "nodes": _copy(graph["nodes"]),
         "edges": _copy(graph["edges"]),
@@ -208,15 +240,15 @@ def _apply_event(graph: dict[str, Any], event: dict[str, Any]) -> None:
             graph["input"]["files"] = [str(name) for name in files if str(name).strip()]
         if not graph["input"]["goal"] and status_message:
             graph["input"]["goal"] = status_message
-        _activate_node(graph, "input", None)
-        _set_edge(graph, "in_orch", "active")
+        _activate_node(graph, "engineer", None)
+        _set_edge(graph, "engineer_orch", "active")
         return
 
     if kind in { "orchestrator.status", "orchestrator.decision" }:
-        if graph["nodes"]["input"]["tone"] == "active":
-            _mark_done(graph, "input")
-        if graph["edges"]["in_orch"]["tone"] == "active":
-            _set_edge(graph, "in_orch", "done")
+        if graph["nodes"]["engineer"]["tone"] == "active":
+            _mark_done(graph, "engineer")
+        if graph["edges"]["engineer_orch"]["tone"] == "active":
+            _set_edge(graph, "engineer_orch", "done")
         in_flight = graph.get("in_flight")
         if in_flight:
             ret = RETURN_EDGE.get(in_flight)
@@ -271,18 +303,32 @@ def _apply_event(graph: dict[str, Any], event: dict[str, Any]) -> None:
         return
 
     if kind == "hitl.request":
-        question = status_message or _text(payload.get("question"))
-        _activate_node(graph, "user", question or None)
+        question = _hitl_question(event, payload)
+        graph["last_hitl"] = {"question": question, "answer": ""}
+        eng = graph["nodes"]["engineer"]
+        eng["hitl_question"] = question
+        eng["hitl_answer"] = ""
+        _activate_node(graph, "engineer", question or None)
+        eng["tone"] = "waiting"
         graph["nodes"]["orchestrator"]["tone"] = "waiting"
         graph["nodes"]["orchestrator"]["bubble"] = None
-        _set_edge(graph, "orch_user", "active", question or None)
+        _set_edge(graph, "orch_engineer", "active", question or None)
+        graph["active_node"] = "engineer"
         return
 
     if kind == "hitl.answered":
-        _mark_done(graph, "user")
-        _set_edge(graph, "orch_user", "done")
-        _set_edge(graph, "user_orch", "active")
-        _activate_node(graph, "orchestrator", status_message or None)
+        question = graph.get("last_hitl", {}).get("question") or _text(payload.get("question"))
+        answer = _hitl_answer(event, payload)
+        graph["last_hitl"] = {"question": question, "answer": answer}
+        eng = graph["nodes"]["engineer"]
+        eng["hitl_question"] = question
+        eng["hitl_answer"] = answer
+        both = _format_hitl(question, answer)
+        _activate_node(graph, "engineer", both or answer or None)
+        _set_edge(graph, "orch_engineer", "done")
+        _set_edge(graph, "engineer_orch", "active", answer or None)
+        graph["nodes"]["orchestrator"]["tone"] = "pending"
+        graph["nodes"]["orchestrator"]["bubble"] = None
         return
 
     if kind == "case.finished":
@@ -333,7 +379,7 @@ def build_schema_frames(events: list[dict[str, Any]] | None, state: dict[str, An
     graph = _blank_graph(state)
     rows = [event for event in (events or []) if isinstance(event, dict)]
     if not rows:
-        _activate_node(graph, "input", None)
+        _activate_node(graph, "engineer", None)
         return [
             {
                 "index": 0,
@@ -344,7 +390,7 @@ def build_schema_frames(events: list[dict[str, Any]] | None, state: dict[str, An
                 "edges": _copy(graph["edges"]),
                 "input": _copy(graph["input"]),
                 "output": _copy(graph["output"]),
-                "active_node": "input",
+                "active_node": "engineer",
                 "active_edge": None,
             }
         ]

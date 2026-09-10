@@ -14,7 +14,7 @@ def _event(kind: str, **kwargs):
 def test_empty_events_start_at_task_statement() -> None:
     frames = build_schema_frames([], state={"goal": "Обновить даты"})
     assert frames[0]["label"] == START_LABEL
-    assert frames[0]["nodes"]["input"]["tone"] == "active"
+    assert frames[0]["nodes"]["engineer"]["tone"] == "active"
     assert frames[0]["input"]["goal"] == "Обновить даты"
 
 
@@ -51,7 +51,7 @@ def test_handoff_lights_edge_and_progress_shows_agent_bubble() -> None:
     ]
     frames = build_schema_frames(events, state={"goal": "Обновить даты ввода", "artifacts": {"excel": {"filename": "wells.xlsx"}}})
     assert frames[0]["label"] == START_LABEL
-    assert frames[0]["edges"]["in_orch"]["tone"] == "active"
+    assert frames[0]["edges"]["engineer_orch"]["tone"] == "active"
     assert "wells.xlsx" in frames[0]["input"]["files"]
 
     orch = frames[1]
@@ -96,22 +96,30 @@ def test_handoff_lights_edge_and_progress_shows_agent_bubble() -> None:
     assert model["end_label"] == END_LABEL
 
 
-def test_hitl_uses_user_node() -> None:
+def test_hitl_uses_engineer_node_with_question_and_answer() -> None:
     events = [
         _event("case.created", actor="user"),
         _event("hitl.request", status_message="Какой корневой INCLUDE главный?"),
-        _event("hitl.answered", actor="user", status_message="Пользователь ответил: MAIN.INC"),
+        _event("hitl.answered", actor="user", status_message="Пользователь ответил: MAIN.INC", payload={"answer": "MAIN.INC"}),
     ]
     frames = build_schema_frames(events)
     ask = frames[1]
-    assert ask["nodes"]["user"]["tone"] == "active"
-    assert ask["nodes"]["user"]["caption"] == "Какой корневой INCLUDE главный?"
+    assert ask["nodes"]["engineer"]["tone"] == "waiting"
+    assert ask["nodes"]["engineer"]["caption"] == "Какой корневой INCLUDE главный?"
+    assert ask["nodes"]["engineer"]["hitl_question"] == "Какой корневой INCLUDE главный?"
     assert ask["nodes"]["orchestrator"]["tone"] == "waiting"
-    assert ask["edges"]["orch_user"]["bubble"] == "Какой корневой INCLUDE главный?"
+    assert ask["edges"]["orch_engineer"]["bubble"] == "Какой корневой INCLUDE главный?"
+    assert ask["label"] == "Какой корневой INCLUDE главный?"
     answered = frames[2]
-    assert answered["nodes"]["orchestrator"]["tone"] == "active"
-    assert answered["nodes"]["user"]["caption"] == "Какой корневой INCLUDE главный?"
-    assert answered["edges"]["user_orch"]["tone"] == "active"
+    assert answered["nodes"]["engineer"]["tone"] == "active"
+    assert "Вопрос: Какой корневой INCLUDE главный?" in answered["nodes"]["engineer"]["caption"]
+    assert "Ответ: MAIN.INC" in answered["nodes"]["engineer"]["caption"]
+    assert answered["nodes"]["engineer"]["hitl_answer"] == "MAIN.INC"
+    assert answered["edges"]["engineer_orch"]["tone"] == "active"
+    assert answered["edges"]["engineer_orch"]["bubble"] == "MAIN.INC"
+    assert answered["nodes"]["orchestrator"]["tone"] == "pending"
+    assert "MAIN.INC" in answered["label"]
+    assert "Какой корневой INCLUDE главный?" in answered["label"]
 
 
 def test_case_finished_uses_user_facing_result_not_kind_name() -> None:

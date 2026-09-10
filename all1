@@ -789,7 +789,7 @@ networks:
   ingress: null
 
 ===END_FILE===
-===BEGIN_FILE===	docs.md	55323	utf8
+===BEGIN_FILE===	docs.md	56351	utf8
 # NOVATEK RE MASter — полевой runbook (n8n 2.30.8)
 
 Что запустить на Windows, что импортировать в корпоративный n8n, как привязать, как проверить и как расширять. Архитектурный план и долг — `MAS_REFACTORING_PLAN.md`; правила работы в репозитории — `AGENTS.md`.
@@ -915,9 +915,9 @@ flowchart TB
 - **Журнал** `state.ledger.history`: шаг 0 — вложения инженера; далее каждый результат агента (`agent_id`, `task_id`, `status`, `summary`, артефакты, `rework_reason`) и каждый ответ человека. Decision LLM видит журнал текстом, а не флаги.
 - **План** `state.plan[{id, title, agent_id?, status, depends_on?, note?}]` — декомпозиция **цели инженера** на результаты (1–5 пунктов), не перечень всего, что агенты умеют (`output_provides` — каталог возможностей, не чек-лист). LLM ведёт план через `plan_update` (пункт без `id` отклоняется и считается в `orchestrator.decision.payload.plan.rejected`; `agent_id` принимается и по title из реестра). Статусы `pending | active | done | blocked | dropped`; `pending → active → done` проставляет сам оркестратор по действиям (`call_agent` → `active`, агент вернул `completed` → его `active`-пункт `done`; если в `data` уже есть все ключи `output_provides` из реестра — закрываются и остальные открытые пункты этого агента, `CASE-6aa029de-c5e23d` — защита от цикла, не требование «достать все ключи»), LLM меняет вручную только `blocked` / `dropped` / пункты без агента. Decision LLM и `Verify completion` видят план блоком «План задачи» рядом с журналом; проверка завершения берёт обязательные части из **цели**, пункт плана сверх цели не дырка (`CASE-6aa052eb-263a16`). Заголовки пунктов идут в текст RAG-запроса, а роли агентов открытых пунктов (`input_required` / `output_provides` из реестра) — в теги `filters.topics` того же запроса (`planRetrievalTopics`). `finish` при открытом пункте (`pending` / `active` / `blocked`) обрабатывается как отказ проверки завершения (см. ниже) — закрыть пункт можно в том же ответе, что и `finish`. Решение `finish` пишется в ленту как `orchestrator.decision` (с планом и счётчиками `plan_done/plan_total`) непосредственно перед `case.finished` — в чате это одна строка, в логе разработчика — отдельный шаг. Итоговый план — в обоих событиях; Activity показывает его блоком «План · N из M» под постановкой задачи (`feed.plan`).
 - **Решение** — Structured Output с обязательным `progress {goal_satisfied, evidence, missing, is_repeating}` и действием `call_agent {agent_id, handoff_message, expected_output?}` / `ask_user {question, options}` / `finish {summary_for_human}`. В `agent_task.inputs` оркестратор кладёт только ссылки (`activity_base_url`, `schedule_root`, `artifact_ids`, `data_refs`, `rework_reason`, `unlisted_wells_policy`) и, если Decision LLM назвал форму набора **нужную цели**, `expected_output` (`datasets` — санитизированные имена/поля, `consumers` — `input_schema.data` открытых пунктов плана). Не копировать в `datasets` все ключи `output_provides`. Факты-значения от LLM в задачу не копируются — поручение агенту передаёт `handoff_message`.
-- **Предохранители в `Parse decision`** (каждый пишет `guard` в `orchestrator.decision.payload`): ответ человека должен дойти до агента, который спросил (`answer_not_applied` — `finish` невозможен, пока тот не вернул `completed`); повторное делегирование агенту с `completed` — один раз и только с `rework_reason`, дальше review-гейт с кнопками «Принять результат / Нужна доработка»; вызов того же агента для **другого открытого пункта плана** (`action.task_id` = id пункта) — не повтор, а новая работа (`planNamesNewWork`; `CASE-6aa00e09-c6d71f`: модель разложила Excel на два пункта, второй вызов ушёл в review, а «принять» завершило кейс без Builder'а), но если в `data` уже есть все `output_provides`, оставшиеся пункты этого агента закрываются и второй handoff — `repeat_review` (`CASE-6aa029de-c5e23d`). Что означает «принять» в review-гейте, определяет план: если в нём остались пункты агентов, которые ещё не работали, — принимается результат одного агента и работа продолжается (`review_scope: agent`, кнопка «Принять результат и продолжить»; повторный вызов принятого агента — снова review, `finish` проверяется по плану); иначе — итог задачи (`review_scope: case`, `human_accepted` → `finish`). Флагу `goal_satisfied` при первом делегировании не верят (`goal_flag_ignored`); ответ человека сбрасывает stall.
+- **Предохранители в `Parse decision`** (каждый пишет `guard` в `orchestrator.decision.payload`): ответ человека должен дойти до агента, который спросил (`answer_not_applied` — `finish` невозможен, пока тот не вернул `completed`); повторное делегирование агенту с `completed` — один раз и только с `rework_reason`, дальше review-гейт с кнопками «Принять результат / Нужна доработка»; вызов того же агента для **другого открытого пункта плана** (`action.task_id` = id пункта) — не повтор, а новая работа (`planNamesNewWork`; `CASE-6aa00e09-c6d71f`: модель разложила Excel на два пункта, второй вызов ушёл в review, а «принять» завершило кейс без Builder'а), но если в `data` уже есть все `output_provides`, оставшиеся пункты этого агента закрываются и второй handoff — `repeat_review` (`CASE-6aa029de-c5e23d`). Что означает «принять» в review-гейте, определяет план: если в нём остались пункты агентов, которые ещё не работали, — принимается результат одного агента и работа продолжается (`review_scope: agent`, кнопка «Принять результат и продолжить»; повторный вызов принятого агента — снова review, `finish` проверяется по плану); иначе — итог задачи (`review_scope: case`, `human_accepted` → `finish`). Флагу `goal_satisfied` при первом делегировании не верят (`goal_flag_ignored`); ответ человека сбрасывает stall. Нечитаемое или неизвестное действие LLM (`call_agent`/`ask_user`/`continue`/`finish`) — `decision_unparsed`: один шаг `continue` с записью в журнал «решение оркестратора не разобрано», второй подряд — `case.failed` по-русски, **не** вопрос инженеру. Сырой ответ модели — в `orchestrator.decision.payload.decision`.
 - **Проверенное завершение:** `finish` не принимается на слово — второй скептический LLM-проход `Verify completion` требует для каждой **части цели инженера** запись журнала `completed` (вложения инженера частью цели не считаются; пункт плана сверх цели не обязателен). Отказ проверки или открытый пункт плана → ещё один шаг с указанием пробела (`completion_unverified`); второй отказ → review-гейт прозой (`completion_review`); человек принял — `finish`. `case.finished.payload.completion_verified` показывает, прошёл ли итог проверку.
-- **Ошибка агента** (`agent.failed`: узел не выполнился, агент не привязан, HTTP 5xx у LLM) — запись в журнал и новое решение; лимит ошибок и `max_steps` — из Runtime Config. По достижении `max_steps` с готовым результатом — review-гейт, без результата — честный `failed`.
+- **Ошибка агента** (`agent.failed`: узел не выполнился, агент не привязан, HTTP 5xx у LLM) — запись в журнал и новое решение; лимит ошибок и `max_steps` — из Runtime Config. По достижении `max_steps` с готовым результатом — review-гейт, без результата — честный `failed`. Недоступный сервис агента (`open_session` без JSON `{ok:…}` после ретраев) — `failed` + `issues[{code: service_unreachable}]`, сразу `case.failed`, не ложный HITL «приложите файл». Decision LLM и Verify completion при 503 модели повторяют вызов (3×2 с) и при окончательной ошибке не роняют execution (`onError` continue).
 - **Итог для инженера** — факты по summary агентов; если LLM написала машинный текст, оркестратор собирает итог из журнала сам.
 
 ### 1.4. Реестр агентов
@@ -936,7 +936,7 @@ flowchart TB
 
 Decision LLM видит все колонки, кроме `invoke`; `invoke` читает только `Prepare agent call`. Результат агента оркестратор хранит в `state.agents[<agent_id>] = {status, summary, task_id, step, data, data_keys}`; следующий агент берёт нужные ключи из `GET /cases/{id}/state`. Источник колонок — `n8n/templates/mas_agent_registry.py`, seed-строки — спеки `n8n/templates/agents/*.py` (`AgentSpec.registry_row()`); из них генерируются JSON прокси и SQL-файлы (`postgres-init/02…`, `03…`, `mas-activity-service/app/sql/*`). Правки на поле — Activity → **Агенты** (`http://<IP>:8200/registry`: включить/выключить, `when_to_use`, `invoke.workflow_id`, схемы) или `PUT /agents/{agent_id}`.
 
-Статусы кейса: `new`, `running`, `waiting_user` (HITL), `waiting_agent` (долгий агент вернул `in_progress`, §6.1), `done`, `failed`. Список — `contracts.CASE_STATUSES` в Activity и `CASE_STATUSES` в `generate_mas_control_plane_proxy.py`; `schema` прокси пересоздаёт CHECK-ограничение `cases_status_check`, поэтому существующая база подхватывает новые статусы без ручного SQL.
+Статусы кейса: `new`, `running`, `waiting_user` (HITL), `waiting_agent` (долгий агент вернул `in_progress`, §6.1), `done`, `failed`, `cancelled` (инженер закрыл задачу; перезапускается с исходными файлами). Список — `contracts.CASE_STATUSES` в Activity и `CASE_STATUSES` в `generate_mas_control_plane_proxy.py`; `schema` прокси пересоздаёт CHECK-ограничение `cases_status_check`, поэтому существующая база подхватывает новые статусы без ручного SQL.
 
 ### 1.5. Лог разработчика (трасса кейса в UI)
 
@@ -946,7 +946,7 @@ Decision LLM видит все колонки, кроме `invoke`; `invoke` ч�
 
 | Источник | События | Что видно в подробностях |
 |---|---|---|
-| Оркестратор (`Orchestrator — MAS`) | `orchestrator.decision` (в т.ч. `guard`), `agent.handoff`, `hitl.request`, `hitl.answered`, `orchestrator.resume`, `case.finished/failed`, `agent.failed` | усечённая копия решения LLM (`decision`), переданная агенту `agent_task`, вопрос и варианты, ответ инженера, `execution_id`/`workflow_id` |
+| Оркестратор (`Orchestrator — MAS`) | `orchestrator.decision` (в т.ч. `guard`), `agent.handoff`, `hitl.request`, `hitl.answered`, `orchestrator.resume`, `case.finished/failed/cancelled`, `agent.failed` | усечённая копия решения LLM (`decision`), переданная агенту `agent_task`, вопрос и варианты, ответ инженера, `execution_id`/`workflow_id` |
 | Workflow агентов (`Agent — …`) | `agent.accepted`, `agent.progress`, `agent.result` | `issues`, `assumptions`, `execution_id`/`workflow_id` |
 | FastAPI-сервисы агентов (kit) | `trace.tool` — каждый вызов `POST /agent-tools/{name}`: аргументы, результат или код ошибки, `duration_ms`, `ok`; `trace.note` — заметки агента (`activity.trace(...)`, свой `level`) | аргументы/результаты ограничены по размеру (`compact_for_log`); бинарь и длинный текст — метки, не содержимое |
 | Error Trigger (`Error — MAS Node Traces`) | `system.node_error` + строка `error_traces` (склеиваются в одну запись; для старых трасс без события создаётся синтетическая) | workflow, узел, тип узла, сообщение, усечённый stack, ссылка на execution |
@@ -1128,6 +1128,8 @@ Activity `http://<IP-Windows>:8200`: новая задача — цель тек
 | Пустая лента при живом n8n | прокси переимпортирован → перезапустить Activity |
 | Один и тот же вопрос дважды / задача крутится | Activity → «Режим разработчика» → **«Лог»**: записи `warn` «Решение … · guard …» показывают, какой предохранитель сработал; в шаге видно, что агент вернул (`agent.result`) и какие инструменты вызывал (`trace.tool`). Lab: `scripts/mas_trace_case.py`. Проверить, что сервис агента работает на актуальном коде |
 | Агент упал / «узел не выполнился» | «Лог» → запись `n8n: упал узел …` (источник `n8n`): workflow, узел, сообщение, stack, ссылка «execution n8n». Если записи нет — у workflow не выставлен Error workflow (Шаг 3) |
+| «Сервис агента не отвечает» / кейс `failed` сразу после старта | сервис на Windows не запущен или адрес в Runtime Config не тот; в логе `issues.code = service_unreachable`. Поднять сервис → в ленте **«Перезапустить с теми же файлами»**. Не путать с вопросом «приложите Excel/SCHEDULE» — файлы уже есть |
+| Баннер «Сбой» с кодом/`failed` | не должен; в ленте русская `status_message`. «Продолжить» — если оркестратор завис (`running`/`waiting_agent` без событий > 2 мин); «Закрыть задачу» — статус `cancelled` |
 | Инструмент агента отвечает ошибкой | «Лог» → `trace.tool` уровня `warn`: аргументы, которые прислала LLM, и код ошибки (`column_not_found`, `spec_incomplete` …) — это диалог LLM ↔ сервис, инженеру такое не показывается |
 | В логе нет ссылок на executions | `N8N_PUBLIC_URL` (или `N8N_BASE_URL`) в `mas-activity.env` не абсолютный URL; для старых кейсов (до этой версии workflow) `execution_id` в событиях отсутствует |
 | Qwen 503 / «Gateway timed out» | оркестратор повторит делегирование один раз сам; при повторе — другой OpenAI-compatible credential |
@@ -1138,7 +1140,7 @@ Activity `http://<IP-Windows>:8200`: новая задача — цель тек
 
 Compose на Linux: n8n `http://127.0.0.1:${N8N_HOST_PORT}` (скрипты ждут **15678**), Postgres `127.0.0.1:${POSTGRES_HOST_PORT}`, с хоста Excel `:8000`, Schedule `:8090`, Math `:8100`, Activity `:8200`; Docker DNS для нод n8n — `excel-tools`, `schedule-builder`, `math-service`, `mas-activity`; Code-ноды — `n8n-runners:5680`. **Не** `docker compose down -v` — снесёт Postgres и RAG.
 
-Один вердикт: `python3 scripts/mas_gate.py` — регенерация всех workflow с проверкой дрейфа, 16 smokes, пять pytest-наборов (kit, Activity, Schedule Builder, Excel Tools, demo agent), offline combat; `--live` добавляет `lab_soft_redeploy.py` (импорт workflows, SQL, рестарт Python-сервисов; падает, если сервис не поднялся) и живые кейсы через Activity: шесть `run_live_five.py` (golden 1–2, combat 0–3; `done`, `mismatch_count: 0`, без повторных HITL / review / циклов) + два `run_live_demo_agent.py` — `demo_agent_long_job` (агент-шаблон: `in_progress` → `waiting_agent` → `resume source=agent` → `done`) и `three_agent_chain` (combat 1 + задача для demo-агента: Excel → Builder → demo; проверяет порядок handoff'ов, `state.plan` из трёх пунктов `done` с `agent_id` фактической цепи, `.INC` семантически равен golden, в логе `warnings: 0`) + `run_live_excel_datasets.py` (`excel_datasets`: книга мероприятий без `.INC`, `extract_table` → `kind:dataset` в `state.agents.excel_extractor.data`, не только `facts`); `--cases demo_agent|three_agent_chain|excel_datasets` гонит один. Разбор кейса: `python3 scripts/mas_trace_case.py CASE-… [--n8n --node "Parse decision"]` — лента, state (`agents.<id>`, журнал, HITL), аудит машинного текста, подсказки, n8n executions; то же без консоли — `http://127.0.0.1:8200/cases/CASE-…/log` и вкладка «Лог» (§1.5; в lab `N8N_PUBLIC_URL=http://localhost:5678` в compose, чтобы ссылки на executions открывались из браузера). Правила работы — `AGENTS.md`, `.cursor/rules/`, `.cursor/skills/`.
+Один вердикт: `python3 scripts/mas_gate.py` — регенерация всех workflow с проверкой дрейфа, 16 smokes, пять pytest-наборов (kit, Activity, Schedule Builder, Excel Tools, demo agent), offline combat; `--live` добавляет `lab_soft_redeploy.py` (импорт workflows, SQL, рестарт Python-сервисов; падает, если сервис не поднялся) и **12 живых кейсов** через Activity: шесть `run_live_five.py` (golden 1–2, combat 0–3; `done`, `mismatch_count: 0`, без повторных HITL / циклов) + `run_live_demo_agent.py` — `demo_agent_long_job`, `three_agent_chain` (Excel → Builder → demo; план из трёх пунктов `done`, `warnings: 0`) + три recovery (`agent_down_recovery`, `rework_round`, `step_limit_review`) + `run_live_excel_datasets.py`; `--cases demo_agent|three_agent_chain|excel_datasets|agent_down_recovery|…` гонит один. После зелёного офлайна: `python3 scripts/mas_gate.py --only live`. Разбор кейса: `python3 scripts/mas_trace_case.py CASE-… [--n8n --node "Parse decision"]` — лента, state (`agents.<id>`, журнал, HITL), аудит машинного текста, подсказки, n8n executions; то же без консоли — `http://127.0.0.1:8200/cases/CASE-…/log` и вкладка «Лог» (§1.5; в lab `N8N_PUBLIC_URL=http://localhost:5678` в compose, чтобы ссылки на executions открывались из браузера). Правила работы — `AGENTS.md`, `.cursor/rules/`, `.cursor/skills/`.
 
 По частям:
 
@@ -6405,7 +6407,7 @@ async def get(case_id: str, artifact_id: str) -> tuple[str, bytes, str]:
     )
 
 ===END_FILE===
-===BEGIN_FILE===	mas-activity-service/app/case_log.py	15374	utf8
+===BEGIN_FILE===	mas-activity-service/app/case_log.py	15457	utf8
 """Developer log of a case («Лог» tab, ``GET /cases/{id}/log``).
 
 The chat shows the engineer what happened; the log shows the developer *how*: every event of the
@@ -6491,7 +6493,7 @@ def record_level(kind: str, event: dict[str, Any]) -> str:
 def record_source(kind: str, event: dict[str, Any]) -> str:
     actor = str(event.get("actor") or "").strip()
     agent_id = str(event.get("agent_id") or "").strip()
-    if kind in {"case.created", "hitl.answered"}:
+    if kind in {"case.created", "hitl.answered", "case.cancelled"}:
         return "engineer"
     if kind == "system.node_error":
         return "n8n"
@@ -6552,6 +6554,8 @@ def record_title(kind: str, event: dict[str, Any]) -> str:
         return "Задача завершена"
     if kind == "case.failed":
         return "Задача завершилась с ошибкой"
+    if kind == "case.cancelled":
+        return "Задача закрыта"
     if kind == "system.node_error":
         node = str(payload.get("node_name") or "?")
         wf = str(payload.get("workflow_name") or "")
@@ -6972,7 +6976,7 @@ def reset() -> None:
     _wakes.clear()
 
 ===END_FILE===
-===BEGIN_FILE===	mas-activity-service/app/cases_api.py	56206	utf8
+===BEGIN_FILE===	mas-activity-service/app/cases_api.py	61954	utf8
 """Case control-plane HTTP API (state, events, SSE, HITL, run)."""
 
 from __future__ import annotations
@@ -6997,6 +7001,7 @@ from app.contracts import AGENT_EVENT_KINDS, AgentRegistryIn, CaseAnswerIn, Case
 from app.state_shape import (
     artifact_cards,
     artifact_filenames,
+    artifact_kind,
     artifact_text,
     artifacts_from_indexed,
     bump_version,
@@ -7006,7 +7011,7 @@ from app.state_shape import (
     sanitize_plan,
 )
 from app.orchestrator import OrchestratorError, invoke_orchestrator
-from app.schema_view import FINISHED_RESULT_TEXT, build_schema_model
+from app.schema_view import FINISHED_RESULT_TEXT, _format_hitl, _hitl_answer, _hitl_question, build_schema_model
 from app.settings import UNCONFIGURED_N8N, get_settings
 from app.task_binaries import load_task_binaries, save_task_binaries
 
@@ -7022,8 +7027,11 @@ SCHED_EXT = (".inc", ".data", ".sch", ".grdecl", ".txt")
 ORCH = "orchestrator"
 USER = "user"
 TASK_NAME_MAX = 120
-RESTARTABLE_STATUSES = frozenset({"done", "failed", "retryable_error"})
+RESTARTABLE_STATUSES = frozenset({"done", "failed", "retryable_error", "cancelled"})
 RESTART_ACTIONS = frozenset({"retry", "restart"})
+CANCEL_FROM_STATUSES = frozenset({"running", "waiting_user", "waiting_agent", "failed"})
+STALE_RESUME_STATUSES = frozenset({"running", "waiting_agent"})
+STATUS_MESSAGE_KINDS = ("case.failed", "case.cancelled", "case.finished", "agent.failed")
 
 
 def _parse_expected_version(raw: Any) -> int | None:
@@ -7044,6 +7052,63 @@ def _assert_state_version(state: dict[str, Any], expected: int | None) -> None:
             status_code=409,
             detail=f"Version mismatch: expected {expected}, got {current}. Reload status.",
         )
+
+
+def _parse_dt(value: Any) -> datetime | None:
+    if value is None:
+        return None
+    if isinstance(value, datetime):
+        return value if value.tzinfo else value.replace(tzinfo=timezone.utc)
+    text = str(value).strip()
+    if not text:
+        return None
+    try:
+        parsed = datetime.fromisoformat(text.replace("Z", "+00:00"))
+    except ValueError:
+        return None
+    return parsed if parsed.tzinfo else parsed.replace(tzinfo=timezone.utc)
+
+
+def _seconds_since(value: Any) -> float | None:
+    parsed = _parse_dt(value)
+    if parsed is None:
+        return None
+    return max(0.0, (datetime.now(timezone.utc) - parsed.astimezone(timezone.utc)).total_seconds())
+
+
+def _last_activity_at(row: dict[str, Any], events: list[dict[str, Any]]) -> Any:
+    for event in reversed(events):
+        if event.get("created_at"):
+            return event.get("created_at")
+    return row.get("updated_at")
+
+
+def _is_resume_stale(row: dict[str, Any], events: list[dict[str, Any]]) -> bool:
+    status = str(row.get("status") or "")
+    if status not in STALE_RESUME_STATUSES:
+        return False
+    age = _seconds_since(_last_activity_at(row, events))
+    if age is None:
+        return False
+    return age >= float(get_settings().resume_stale_s)
+
+
+def _case_status_message(events: list[dict[str, Any]]) -> str:
+    for event in reversed(events):
+        kind = str(event.get("kind") or "")
+        if kind in STATUS_MESSAGE_KINDS:
+            message = _event_message(event)
+            if message:
+                return message
+    return ""
+
+
+def _keep_input_artifacts(artifacts: Any) -> dict[str, Any]:
+    kept: dict[str, Any] = {}
+    for key, item in flatten_artifacts(artifacts).items():
+        if artifact_kind(item) == "input":
+            kept[key] = item
+    return nest_artifacts(kept)
 
 
 def _normalize_task_name(value: Any) -> str:
@@ -7074,7 +7139,7 @@ def event_lane(event: dict[str, Any]) -> tuple[str, str | None, str]:
         return agent or actor, None, "none"
     if kind in {"agent.result", "agent.failed"}:
         return ORCH, agent or actor, "in"
-    if kind.startswith("orchestrator.") or kind in {"case.finished", "case.failed", "system.node_error"}:
+    if kind.startswith("orchestrator.") or kind in {"case.finished", "case.failed", "case.cancelled", "system.node_error"}:
         return ORCH, None, "none"
     if agent and agent not in {actor, ORCH}:
         return actor, agent, "out"
@@ -7085,7 +7150,7 @@ def event_lane(event: dict[str, Any]) -> tuple[str, str | None, str]:
 
 ORCH_ECHO_KINDS = {"orchestrator.status", "orchestrator.decision"}
 AGENT_DUP_KINDS = {"agent.result", "agent.failed", "agent.accepted", "agent.progress"}
-TERMINAL_KINDS = {"case.finished", "case.failed"}
+TERMINAL_KINDS = {"case.finished", "case.failed", "case.cancelled"}
 
 
 def _event_message(event: dict[str, Any]) -> str:
@@ -7107,6 +7172,7 @@ def _event_display_message(kind: str, event: dict[str, Any]) -> str:
         "agent.failed": "Агент завершил работу с ошибкой.",
         "hitl.request": "Нужно уточнение от пользователя.",
         "case.failed": "Задача завершилась с ошибкой.",
+        "case.cancelled": "Задача закрыта инженером.",
     }.get(kind, kind or "Событие зафиксировано.")
 
 
@@ -7166,7 +7232,7 @@ def collapse_duplicate_events(events: list[dict[str, Any]] | None) -> list[dict[
     return out
 
 
-def event_to_turn(event: dict[str, Any]) -> dict[str, Any]:
+def event_to_turn(event: dict[str, Any], *, previous_question: str = "") -> dict[str, Any]:
     kind = str(event.get("kind") or "")
     payload = event.get("payload") if isinstance(event.get("payload"), dict) else {}
     handoff = event.get("handoff_message")
@@ -7189,6 +7255,10 @@ def event_to_turn(event: dict[str, Any]) -> dict[str, Any]:
         brief = summary
     else:
         display_message = _event_display_message(kind, event)
+        if kind == "hitl.answered":
+            answer = _hitl_answer(event, payload)
+            if answer:
+                display_message = _format_hitl(previous_question, answer) if previous_question else answer
         summary = display_message
         text = display_message
         brief = display_message
@@ -7238,6 +7308,18 @@ def _chips(event: dict[str, Any]) -> list[dict[str, Any]]:
     if event.get("kind"):
         chips.append({"id": "kind", "label": "Событие", "value": event["kind"]})
     return chips
+
+
+def turns_from_events(events: list[dict[str, Any]] | None) -> list[dict[str, Any]]:
+    last_q = ""
+    turns: list[dict[str, Any]] = []
+    for event in events or []:
+        kind = str(event.get("kind") or "")
+        payload = event.get("payload") if isinstance(event.get("payload"), dict) else {}
+        if kind == "hitl.request":
+            last_q = _hitl_question(event, payload)
+        turns.append(event_to_turn(event, previous_question=last_q if kind == "hitl.answered" else ""))
+    return turns
 
 
 def _events_for_rail(row: dict[str, Any]) -> list[dict[str, Any]] | None:
@@ -7352,7 +7434,7 @@ def _feed_from_row(
     after_seq: int = 0,
 ) -> dict[str, Any]:
     state = row["state"] if isinstance(row.get("state"), dict) else {}
-    turns = [event_to_turn(event) for event in events]
+    turns = turns_from_events(events)
     pending = state.get("hitl") if isinstance(state.get("hitl"), dict) else {}
     questions = pending.get("questions") if isinstance(pending.get("questions"), list) else []
     gate = None
@@ -7377,6 +7459,7 @@ def _feed_from_row(
         "title": (name or state.get("goal") or case_id)[:120],
         "objective": state.get("goal") or "",
         "status": row.get("status"),
+        "status_message": _case_status_message(events),
         "state": state,
         "attached_files": attached,
         "awaiting_human": row.get("status") == "waiting_user",
@@ -7391,6 +7474,7 @@ def _feed_from_row(
         # O13: the orchestrator's decomposition (state.plan) — the UI shows it under the task statement.
         "plan": sanitize_plan(state.get("plan")),
         "restartable": case_is_restartable(row),
+        "resume_stale": _is_resume_stale(row, events),
     }
 
 
@@ -7510,8 +7594,8 @@ async def _invoke_action(case_id: str, *, action: str, extra: dict[str, Any] | N
                 kind="case.failed",
                 actor="orchestrator",
                 event_status="failed",
-                status_message=str(exc)[:500],
-                payload={"status_code": exc.status_code},
+                status_message="Не удалось передать задачу оркестратору. Проверьте адрес оркестратора в настройках и повторите.",
+                payload={"status_code": exc.status_code, "detail": str(exc)[:500]},
             )
         except KeyError:
             control_plane.append_event(
@@ -7519,8 +7603,8 @@ async def _invoke_action(case_id: str, *, action: str, extra: dict[str, Any] | N
                 kind="case.failed",
                 actor="orchestrator",
                 status="failed",
-                status_message=str(exc)[:500],
-                payload={"status_code": exc.status_code},
+                status_message="Не удалось передать задачу оркестратору. Проверьте адрес оркестратора в настройках и повторите.",
+                payload={"status_code": exc.status_code, "detail": str(exc)[:500]},
             )
 
 
@@ -7656,7 +7740,7 @@ def get_events(case_id: str, after_seq: int = Query(default=0, ge=0)) -> dict[st
     if snap["case"] is None:
         raise HTTPException(status_code=404, detail="case not found")
     events = collapse_duplicate_events(snap["events"])
-    return {"case_id": case_id, "events": events, "activity": [event_to_turn(event) for event in events]}
+    return {"case_id": case_id, "events": events, "activity": turns_from_events(events)}
 
 
 @router.get("/cases/{case_id}/errors")
@@ -7897,15 +7981,26 @@ async def _run_body(request: Request) -> dict[str, Any]:
 
 
 def _prepare_case_restart(case_id: str, row: dict[str, Any]) -> dict[str, Any]:
-    """Keep goal/name/artifacts/data; clear error and step budget for a new run."""
+    """Keep goal/name/input artifacts; clear agents, journal, plan, HITL and the step budget."""
     state = dict(row.get("state") or {})
     state["last_error"] = None
     state["current_task"] = None
     state["status"] = "running"
     state["step_count"] = 0
-    hitl = dict(state.get("hitl") or {})
-    hitl["pending"] = False
-    state["hitl"] = hitl
+    state["error_count"] = 0
+    state["agents"] = {}
+    state["ledger"] = {
+        "history": [],
+        "stall_count": 0,
+        "last_human_step": 0,
+        "reviews": 0,
+        "verify_rejections": 0,
+        "parse_failures": 0,
+    }
+    state["plan"] = []
+    state["data"] = {}
+    state["hitl"] = {"pending": False, "questions": [], "answers": {}}
+    state["artifacts"] = _keep_input_artifacts(state.get("artifacts"))
     bump_version(state)
     control_plane.update_case_and_append(
         case_id,
@@ -7914,7 +8009,7 @@ def _prepare_case_restart(case_id: str, row: dict[str, Any]) -> dict[str, Any]:
         kind="orchestrator.status",
         actor="orchestrator",
         event_status="running",
-        status_message="Перезапуск задачи",
+        status_message="Перезапуск задачи с исходными файлами",
     )
     return state
 
@@ -7928,12 +8023,48 @@ async def post_run(case_id: str, request: Request, background_tasks: BackgroundT
     action = str(body.get("action") or "step").strip().lower() or "step"
     if get_settings().n8n_transport == "unconfigured":
         raise HTTPException(status_code=503, detail=UNCONFIGURED_N8N)
+    if action == "cancel":
+        status = str(row.get("status") or "")
+        if status not in CANCEL_FROM_STATUSES:
+            raise HTTPException(status_code=409, detail="Эту задачу уже нельзя закрыть.")
+        state = dict(row.get("state") or {})
+        hitl = dict(state.get("hitl") or {})
+        hitl["pending"] = False
+        state["hitl"] = hitl
+        state["current_task"] = None
+        state["status"] = "cancelled"
+        bump_version(state)
+        control_plane.update_case_and_append(
+            case_id,
+            state=state,
+            status="cancelled",
+            kind="case.cancelled",
+            actor="user",
+            event_status="cancelled",
+            status_message="Задача закрыта инженером",
+        )
+        return {
+            "ok": True,
+            "accepted": True,
+            "skipped": False,
+            "status": "cancelled",
+            "restartable": True,
+            "case_id": case_id,
+            "task_id": case_id,
+        }
     if action == "resume":
         source = str(body.get("source") or "agent").strip().lower()
         if source == "human":
             raise HTTPException(status_code=400, detail="Ответ инженера отправляйте через поле ответа в задаче.")
         if source not in {"agent", "system"}:
             raise HTTPException(status_code=400, detail="Будить задачу может агент или система.")
+        if source == "system":
+            events = control_plane.list_events(case_id)
+            status = str(row.get("status") or "")
+            if status not in STALE_RESUME_STATUSES:
+                raise HTTPException(status_code=409, detail="Задачу в этом состоянии нельзя продолжить.")
+            if not _is_resume_stale(row, events):
+                raise HTTPException(status_code=409, detail="Оркестратор ещё работает, подождите…")
         extra = {
             "source": source,
             "task_id": str(body.get("task_id") or ""),
@@ -8010,6 +8141,8 @@ def _stream_meta(feed: dict[str, Any]) -> dict[str, Any]:
         "awaiting_human": feed.get("awaiting_human"),
         "human_gate": feed.get("human_gate"),
         "restartable": feed.get("restartable"),
+        "resume_stale": feed.get("resume_stale"),
+        "status_message": feed.get("status_message"),
         "artifacts": feed.get("artifacts"),
         "deliverables": feed.get("deliverables"),
         "plan": feed.get("plan"),
@@ -8101,7 +8234,14 @@ async def stream_case(case_id: str, request: Request) -> StreamingResponse:
                 for event in emit:
                     seen_ids.add(int(event["event_id"]))
                     record = log_by_id.get(int(event["event_id"]))
-                    yield f"data: {json.dumps({'type': 'turn', 'turn': event_to_turn(event), 'event': event, 'log': record, **meta}, default=str)}\n\n"
+                    last_q = ""
+                    for prior in collapsed:
+                        if prior.get("event_id") is not None and int(prior["event_id"]) >= int(event["event_id"]):
+                            break
+                        if str(prior.get("kind") or "") == "hitl.request":
+                            p = prior.get("payload") if isinstance(prior.get("payload"), dict) else {}
+                            last_q = _hitl_question(prior, p)
+                    yield f"data: {json.dumps({'type': 'turn', 'turn': event_to_turn(event, previous_question=last_q if str(event.get('kind') or '') == 'hitl.answered' else ''), 'event': event, 'log': record, **meta}, default=str)}\n\n"
                 if not emit and updated != last_updated:
                     yield f"data: {json.dumps({'type': 'meta', **meta}, default=str)}\n\n"
                 last_updated = updated
@@ -8455,7 +8595,7 @@ def extract_schedule_from_orchestrator(orch: dict[str, Any]) -> tuple[str, str] 
     return None
 
 ===END_FILE===
-===BEGIN_FILE===	mas-activity-service/app/contracts.py	7650	utf8
+===BEGIN_FILE===	mas-activity-service/app/contracts.py	7698	utf8
 """Decision / AgentTask / AgentResult contracts for the thin orchestrator."""
 
 from __future__ import annotations
@@ -8471,13 +8611,14 @@ from app.state_shape import compact_decision_context as compact_decision_context
 SCHEMAS = Path(__file__).resolve().parents[1] / "schemas"
 
 # ``waiting_agent``: a long agent returned ``in_progress``; the case waits for ``resume source=agent``.
-CASE_STATUSES = ("new", "running", "waiting_user", "waiting_agent", "done", "failed")
+CASE_STATUSES = ("new", "running", "waiting_user", "waiting_agent", "done", "failed", "cancelled")
 AGENT_RESULT_STATUSES = ("completed", "needs_input", "failed", "in_progress")
 DECISION_ACTIONS = ("call_agent", "ask_user", "finish")
 EVENT_KINDS = (
     "case.created",
     "case.finished",
     "case.failed",
+    "case.cancelled",
     "orchestrator.status",
     "orchestrator.decision",
     "agent.handoff",
@@ -8519,7 +8660,7 @@ class CaseState(BaseModel):
     case_id: str
     goal: str = ""
     task_name: str = ""
-    status: Literal["new", "running", "waiting_user", "waiting_agent", "done", "failed"] = "new"
+    status: Literal["new", "running", "waiting_user", "waiting_agent", "done", "failed", "cancelled"] = "new"
     plan: list[PlanItem] = Field(default_factory=list)
     artifacts: dict[str, Any] = Field(default_factory=dict)
     data: dict[str, Any] = Field(default_factory=dict)
@@ -9728,7 +9869,7 @@ def enrich_turn(raw: dict[str, Any], *, received_at: str | None = None) -> dict[
     }
 
 ===END_FILE===
-===BEGIN_FILE===	mas-activity-service/app/knowledge.py	19115	utf8
+===BEGIN_FILE===	mas-activity-service/app/knowledge.py	19114	utf8
 """Authoring-side MAS knowledge corpus (JSON sheet) read/write helpers."""
 
 from __future__ import annotations
@@ -9752,7 +9893,7 @@ NAMESPACE_LABELS = {
     "schedule_mvp": "Schedule Builder",
     "excel_protocol": "Excel Extractor",
     "orchestrator_routing": "Orchestrator",
-    "specialist_template": "Specialist template",
+    "specialist_template": "Шаблон специалиста",
 }
 
 _DEFAULT_NAME = "excel-agent-operating-guide.documents.json"
@@ -13789,7 +13930,7 @@ async def probe_n8n_stack(
     }
 
 ===END_FILE===
-===BEGIN_FILE===	mas-activity-service/app/schema_view.py	13591	utf8
+===BEGIN_FILE===	mas-activity-service/app/schema_view.py	15534	utf8
 """Build scrubbable schema frames from control-plane events.
 
 The Activity UI mirrors this mapping in static/schema.js. Keep both aligned:
@@ -13799,13 +13940,15 @@ node caption stays inside the box; handoff_message rides the edge slip.
 from __future__ import annotations
 
 import json
+import re
 from typing import Any
 
 from app.state_shape import artifact_filenames
 
-NODE_KEYS = ("input", "orchestrator", "excel", "calc", "schedule", "user", "output")
+NODE_KEYS = ("engineer", "orchestrator", "excel", "calc", "schedule", "output")
 EDGE_KEYS = (
-    "in_orch",
+    "engineer_orch",
+    "orch_engineer",
     "orch_out",
     "orch_excel",
     "orch_calc",
@@ -13813,9 +13956,8 @@ EDGE_KEYS = (
     "excel_orch",
     "calc_orch",
     "schedule_orch",
-    "orch_user",
-    "user_orch",
 )
+_ANSWER_PREFIX = re.compile(r"^(Пользователь|Инженер)\s+ответил[а]?:\s*", re.I)
 AGENT_NODES = {
     "excel_extractor": "excel",
     "calculation_agent": "calc",
@@ -13888,8 +14030,11 @@ def _result_text(payload: Any, status_message: str) -> str:
 
 
 def _blank_graph(state: dict[str, Any]) -> dict[str, Any]:
+    nodes = {key: {"tone": "idle", "bubble": None, "caption": ""} for key in NODE_KEYS}
+    nodes["engineer"]["hitl_question"] = ""
+    nodes["engineer"]["hitl_answer"] = ""
     return {
-        "nodes": {key: {"tone": "idle", "bubble": None, "caption": ""} for key in NODE_KEYS},
+        "nodes": nodes,
         "edges": {key: {"tone": "idle", "bubble": None} for key in EDGE_KEYS},
         "input": {"goal": _text(state.get("goal")), "files": _files_from_state(state)},
         "output": {"result": "", "prompt": ""},
@@ -13898,7 +14043,28 @@ def _blank_graph(state: dict[str, Any]) -> dict[str, Any]:
         "in_flight": None,
         "last_handoff": {},
         "last_orch_prompt": "",
+        "last_hitl": {"question": "", "answer": ""},
     }
+
+
+def _hitl_question(event: dict[str, Any], payload: dict[str, Any]) -> str:
+    return _text(event.get("status_message")) or _text(payload.get("question"))
+
+
+def _hitl_answer(event: dict[str, Any], payload: dict[str, Any]) -> str:
+    raw = payload.get("answer")
+    if isinstance(raw, dict):
+        return _text(raw.get("text") or raw.get("label") or raw.get("choice"))
+    if _text(raw):
+        return _text(raw)
+    return _ANSWER_PREFIX.sub("", _text(event.get("status_message"))).strip()
+
+
+def _format_hitl(question: str, answer: str) -> str:
+    q, a = _text(question), _text(answer)
+    if q and a:
+        return f"Вопрос: {q}\nОтвет: {a}"
+    return a or q
 
 
 def _set_caption(graph: dict[str, Any], node_id: str, text: str | None) -> None:
@@ -13973,10 +14139,17 @@ def _frame_label(event: dict[str, Any]) -> str:
 
 
 def _snapshot(graph: dict[str, Any], event: dict[str, Any], index: int) -> dict[str, Any]:
+    kind = _text(event.get("kind"))
+    label = _frame_label(event)
+    hitl = graph.get("last_hitl") or {}
+    if kind == "hitl.request" and hitl.get("question"):
+        label = hitl["question"]
+    if kind == "hitl.answered":
+        label = _format_hitl(hitl.get("question") or "", hitl.get("answer") or "") or label
     return {
         "index": index,
-        "label": _frame_label(event),
-        "kind": _text(event.get("kind")),
+        "label": label,
+        "kind": kind,
         "event_id": event.get("event_id"),
         "nodes": _copy(graph["nodes"]),
         "edges": _copy(graph["edges"]),
@@ -14000,15 +14173,15 @@ def _apply_event(graph: dict[str, Any], event: dict[str, Any]) -> None:
             graph["input"]["files"] = [str(name) for name in files if str(name).strip()]
         if not graph["input"]["goal"] and status_message:
             graph["input"]["goal"] = status_message
-        _activate_node(graph, "input", None)
-        _set_edge(graph, "in_orch", "active")
+        _activate_node(graph, "engineer", None)
+        _set_edge(graph, "engineer_orch", "active")
         return
 
     if kind in { "orchestrator.status", "orchestrator.decision" }:
-        if graph["nodes"]["input"]["tone"] == "active":
-            _mark_done(graph, "input")
-        if graph["edges"]["in_orch"]["tone"] == "active":
-            _set_edge(graph, "in_orch", "done")
+        if graph["nodes"]["engineer"]["tone"] == "active":
+            _mark_done(graph, "engineer")
+        if graph["edges"]["engineer_orch"]["tone"] == "active":
+            _set_edge(graph, "engineer_orch", "done")
         in_flight = graph.get("in_flight")
         if in_flight:
             ret = RETURN_EDGE.get(in_flight)
@@ -14063,18 +14236,32 @@ def _apply_event(graph: dict[str, Any], event: dict[str, Any]) -> None:
         return
 
     if kind == "hitl.request":
-        question = status_message or _text(payload.get("question"))
-        _activate_node(graph, "user", question or None)
+        question = _hitl_question(event, payload)
+        graph["last_hitl"] = {"question": question, "answer": ""}
+        eng = graph["nodes"]["engineer"]
+        eng["hitl_question"] = question
+        eng["hitl_answer"] = ""
+        _activate_node(graph, "engineer", question or None)
+        eng["tone"] = "waiting"
         graph["nodes"]["orchestrator"]["tone"] = "waiting"
         graph["nodes"]["orchestrator"]["bubble"] = None
-        _set_edge(graph, "orch_user", "active", question or None)
+        _set_edge(graph, "orch_engineer", "active", question or None)
+        graph["active_node"] = "engineer"
         return
 
     if kind == "hitl.answered":
-        _mark_done(graph, "user")
-        _set_edge(graph, "orch_user", "done")
-        _set_edge(graph, "user_orch", "active")
-        _activate_node(graph, "orchestrator", status_message or None)
+        question = graph.get("last_hitl", {}).get("question") or _text(payload.get("question"))
+        answer = _hitl_answer(event, payload)
+        graph["last_hitl"] = {"question": question, "answer": answer}
+        eng = graph["nodes"]["engineer"]
+        eng["hitl_question"] = question
+        eng["hitl_answer"] = answer
+        both = _format_hitl(question, answer)
+        _activate_node(graph, "engineer", both or answer or None)
+        _set_edge(graph, "orch_engineer", "done")
+        _set_edge(graph, "engineer_orch", "active", answer or None)
+        graph["nodes"]["orchestrator"]["tone"] = "pending"
+        graph["nodes"]["orchestrator"]["bubble"] = None
         return
 
     if kind == "case.finished":
@@ -14125,7 +14312,7 @@ def build_schema_frames(events: list[dict[str, Any]] | None, state: dict[str, An
     graph = _blank_graph(state)
     rows = [event for event in (events or []) if isinstance(event, dict)]
     if not rows:
-        _activate_node(graph, "input", None)
+        _activate_node(graph, "engineer", None)
         return [
             {
                 "index": 0,
@@ -14136,7 +14323,7 @@ def build_schema_frames(events: list[dict[str, Any]] | None, state: dict[str, An
                 "edges": _copy(graph["edges"]),
                 "input": _copy(graph["input"]),
                 "output": _copy(graph["output"]),
-                "active_node": "input",
+                "active_node": "engineer",
                 "active_edge": None,
             }
         ]
@@ -14163,7 +14350,7 @@ def build_schema_model(
     }
 
 ===END_FILE===
-===BEGIN_FILE===	mas-activity-service/app/settings.py	12435	utf8
+===BEGIN_FILE===	mas-activity-service/app/settings.py	12622	utf8
 """Service settings. Env files are loaded from the service directory, like excel-tools."""
 
 from __future__ import annotations
@@ -14301,6 +14488,8 @@ class Settings(BaseSettings):
     mas_knowledge_corpus: str = Field(default="", validation_alias="MAS_KNOWLEDGE_CORPUS")
     n8n_health_path: str = Field(default="/healthz", validation_alias="N8N_HEALTH_PATH")
     n8n_webhook_checks: str = Field(default="", validation_alias="N8N_WEBHOOK_CHECKS")
+    # «Продолжить» is allowed on running/waiting_agent only when the last event is this old (seconds).
+    resume_stale_s: float = Field(default=120.0, validation_alias="RESUME_STALE_S")
 
     @field_validator(
         "n8n_base_url",
@@ -15659,7 +15848,7 @@ echo Keep this window open. Press Ctrl+C to stop.
 exit /b %errorlevel%
 
 ===END_FILE===
-===BEGIN_FILE===	mas-activity-service/static/agents.html	6412	utf8
+===BEGIN_FILE===	mas-activity-service/static/agents.html	6395	utf8
 <!DOCTYPE html>
 <html lang="ru">
 <head>
@@ -15671,8 +15860,8 @@ exit /b %errorlevel%
   <link rel="preconnect" href="https://fonts.googleapis.com" />
   <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
   <link href="https://fonts.googleapis.com/css2?family=IBM+Plex+Sans:wght@400;500;600;700&family=IBM+Plex+Mono:wght@400;500&display=swap" rel="stylesheet" />
-  <link rel="stylesheet" href="/static/app.css?v=100" />
-  <link rel="stylesheet" href="/static/knowledge.css?v=100" />
+  <link rel="stylesheet" href="/static/app.css?v=113" />
+  <link rel="stylesheet" href="/static/knowledge.css?v=101" />
   <style>
     .ag-stage { grid-template-columns: minmax(0, 1fr); }
     .ag-grid { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 0 14px; }
@@ -15732,11 +15921,11 @@ exit /b %errorlevel%
       <section class="kb-create" id="createPanel" hidden>
         <div class="kb-create-head">
           <h2 class="kb-create-title">Новый агент</h2>
-          <p class="kb-create-note">Строка реестра — это всё, что оркестратор знает об агенте: когда его звать, что ему нужно на входе, что он отдаёт и как его вызвать. После импорта workflow в n8n вставьте его id из адресной строки.</p>
+          <p class="kb-create-note">Карточка агента говорит оркестратору, когда его звать, что нужно на входе, что он возвращает и куда обращаться. После импорта сценария в n8n вставьте номер из адресной строки браузера.</p>
         </div>
         <div class="kb-create-grid">
           <label class="field">
-            <span>Идентификатор <em class="optional">snake_case</em></span>
+            <span>Код агента <em class="optional">латиница с подчёркиванием</em></span>
             <input id="createId" type="text" maxlength="64" placeholder="report_agent" />
           </label>
           <label class="field">
@@ -15750,13 +15939,13 @@ exit /b %errorlevel%
           <label class="field">
             <span>Вызов</span>
             <select id="createKind">
-              <option value="n8n_workflow">Workflow n8n</option>
+              <option value="n8n_workflow">Сценарий n8n</option>
               <option value="http">HTTP-сервис</option>
             </select>
           </label>
           <label class="field">
-            <span>Id workflow или URL</span>
-            <input id="createTarget" type="text" placeholder="id из адресной строки n8n или {report_url}/agent/run" />
+            <span>Номер сценария n8n или адрес сервиса</span>
+            <input id="createTarget" type="text" placeholder="номер из адресной строки n8n или адрес …/agent/run" />
           </label>
         </div>
         <div class="kb-actions">
@@ -15766,16 +15955,16 @@ exit /b %errorlevel%
       </section>
 
       <section class="kb-list" id="agentList" aria-live="polite"></section>
-      <p class="empty" id="listEmpty" hidden>Реестр пуст: выполните «schema» в Control Plane Proxy или создайте агента.</p>
+      <p class="empty" id="listEmpty" hidden>Реестр пуст — создайте агента кнопкой выше.</p>
     </section>
   </main>
 
-  <script src="/static/agents.js?v=100"></script>
+  <script src="/static/agents.js?v=102"></script>
 </body>
 </html>
 
 ===END_FILE===
-===BEGIN_FILE===	mas-activity-service/static/agents.js	11830	utf8
+===BEGIN_FILE===	mas-activity-service/static/agents.js	11911	utf8
 /* Agents page: the agent_registry as the field engineer sees it.
  * Reads GET /agents, writes PUT /agents/{agent_id} (partial rows). No agent is hardcoded here —
  * the same rows drive the orchestrator's planner (Phase 2 registry). */
@@ -15823,8 +16012,8 @@ exit /b %errorlevel%
 
   function invokeText(agent) {
     const inv = agent.invoke || {};
-    if (inv.kind === "n8n_workflow") return inv.workflow_id ? `workflow ${inv.workflow_id}` : "workflow не привязан";
-    if (inv.kind === "http") return inv.url ? `HTTP ${inv.url}` : "URL не задан";
+    if (inv.kind === "n8n_workflow") return inv.workflow_id ? `сценарий n8n ${inv.workflow_id}` : "сценарий n8n не привязан";
+    if (inv.kind === "http") return inv.url ? `сервис ${inv.url}` : "адрес сервиса не задан";
     return "вызов не настроен";
   }
 
@@ -15852,7 +16041,7 @@ exit /b %errorlevel%
         <button type="button" class="kb-card-head" data-toggle>
           <div class="kb-card-title-row">
             <h3 class="kb-card-title">${escapeHtml(agent.title)}</h3>
-            <span class="kb-type">${escapeHtml(inv.kind === "http" ? "http" : "n8n")}</span>
+            <span class="kb-type">${escapeHtml(inv.kind === "http" ? "HTTP-сервис" : "сценарий n8n")}</span>
           </div>
           <div class="ag-badges">${badges(agent)}</div>
           <p class="kb-preview">${escapeHtml(agent.when_to_use || "Без описания — планировщик не будет знать, когда звать этого агента.")}</p>
@@ -15878,15 +16067,15 @@ exit /b %errorlevel%
           <label class="field ag-wide"><span>Когда звать <em class="optional">это читает планировщик</em></span><textarea data-field="when_to_use" rows="3">${escapeHtml(agent.when_to_use)}</textarea></label>
           <label class="field"><span>Вызов</span>
             <select data-field="invoke_kind">
-              <option value="n8n_workflow" ${kind === "n8n_workflow" ? "selected" : ""}>Workflow n8n</option>
+              <option value="n8n_workflow" ${kind === "n8n_workflow" ? "selected" : ""}>Сценарий n8n</option>
               <option value="http" ${kind === "http" ? "selected" : ""}>HTTP-сервис</option>
             </select></label>
-          <label class="field"><span>${kind === "http" ? "URL сервиса" : "Id workflow в n8n"} <em class="optional">${kind === "http" ? "поле Runtime Config в фигурных скобках" : "из адресной строки после импорта"}</em></span>
+          <label class="field"><span>${kind === "http" ? "Адрес сервиса" : "Номер сценария в n8n"} <em class="optional">${kind === "http" ? "из Runtime Config, можно в фигурных скобках" : "из адресной строки после импорта"}</em></span>
             <input type="text" data-field="invoke_target" value="${escapeHtml(kind === "http" ? inv.url || "" : inv.workflow_id || "")}" /></label>
           <label class="field"><span>Нужно на входе <em class="optional">через запятую</em></span><input type="text" data-field="input_required" value="${escapeHtml(csv(agent.input_required))}" /></label>
           <label class="field"><span>Отдаёт <em class="optional">через запятую</em></span><input type="text" data-field="output_provides" value="${escapeHtml(csv(agent.output_provides))}" /></label>
-          <label class="field"><span>Схема входа <em class="optional">JSON, подсказка планировщику</em></span><textarea class="ag-mono" data-field="input_schema">${escapeHtml(pretty(agent.input_schema))}</textarea></label>
-          <label class="field"><span>Схема выхода <em class="optional">JSON</em></span><textarea class="ag-mono" data-field="output_schema">${escapeHtml(pretty(agent.output_schema))}</textarea></label>
+          <label class="field"><span>Схема входа <em class="optional">описание для оркестратора</em></span><textarea class="ag-mono" data-field="input_schema">${escapeHtml(pretty(agent.input_schema))}</textarea></label>
+          <label class="field"><span>Схема выхода <em class="optional">описание результата</em></span><textarea class="ag-mono" data-field="output_schema">${escapeHtml(pretty(agent.output_schema))}</textarea></label>
         </div>
         <div class="kb-actions">
           <span class="kb-meta">версия ${escapeHtml(agent.version || "1")}</span>
@@ -15921,7 +16110,7 @@ exit /b %errorlevel%
     for (const key of ["input_schema", "output_schema"]) {
       const text = get(key).value.trim();
       if (!text) { patch[key] = {}; continue; }
-      try { patch[key] = JSON.parse(text); } catch (_) { throw new Error(`Поле «${key === "input_schema" ? "Схема входа" : "Схема выхода"}» — не JSON`); }
+      try { patch[key] = JSON.parse(text); } catch (_) { throw new Error(`Поле «${key === "input_schema" ? "Схема входа" : "Схема выхода"}» должно быть корректным описанием`); }
     }
     return patch;
   }
@@ -16008,7 +16197,7 @@ exit /b %errorlevel%
 })();
 
 ===END_FILE===
-===BEGIN_FILE===	mas-activity-service/static/app.css	54707	utf8
+===BEGIN_FILE===	mas-activity-service/static/app.css	57137	utf8
 /* NOVATEK RE MASter Workspace — design system
    Corporate palette (unchanged): ink #001A57, primary #0033A0, accent #00B8F0, alert #F90D4B.
    Everything else is neutral, calm and spacious: one surface, hairline separators, soft focus rings,
@@ -16510,17 +16699,22 @@ a:hover { text-decoration: underline; text-decoration-thickness: 1px; text-under
   align-items: center;
   gap: 6px;
   height: 22px;
+  max-width: 100%;
   padding: 0 9px;
   border-radius: 999px;
   font-size: 12px;
   font-weight: 600;
   background: var(--panel-2);
   color: var(--ink-2);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
 }
 .status-pill[data-tone="running"] { background: var(--cyan-100); color: #026a8a; }
 .status-pill[data-tone="waiting"] { background: var(--wait-100); color: #8a5a06; }
 .status-pill[data-tone="done"] { background: var(--ok-100); color: #0b6b4a; }
 .status-pill[data-tone="failed"] { background: var(--red-100); color: #a10a33; }
+.status-pill[data-tone="idle"] { background: var(--panel-2); color: var(--ink-2); }
 
 .head-tools { display: flex; align-items: center; gap: 10px; flex: none; }
 
@@ -16649,6 +16843,7 @@ a:hover { text-decoration: underline; text-decoration-thickness: 1px; text-under
 .status-banner[data-tone="waiting"] { background: var(--wait-100); color: #6b4600; }
 .status-banner[data-tone="failed"] { background: var(--red-50); color: #8f0a2f; }
 .status-banner[data-tone="done"] { background: var(--ok-100); color: #0b5c40; }
+.status-banner[data-tone="idle"] { background: var(--panel); color: var(--ink-2); }
 .status-banner-label { font-size: 12px; font-weight: 600; text-transform: uppercase; letter-spacing: 0.06em; opacity: 0.8; }
 .status-banner-text { margin: 0; font-size: 13.5px; }
 
@@ -16953,7 +17148,8 @@ a.file-chip:hover .icon { color: var(--brand-blue); }
   background: var(--panel);
   box-shadow: inset 0 0 0 1px var(--line);
 }
-.composer-idle-text { font-size: 13px; color: var(--muted); }
+.composer-idle-text { font-size: 13px; color: var(--muted); flex: 1 1 220px; }
+.composer-idle-actions { display: flex; flex-wrap: wrap; gap: 8px; align-items: center; justify-content: flex-end; }
 
 .file-chip-more {
   border-style: dashed;
@@ -17159,7 +17355,7 @@ a.file-chip:hover .icon { color: var(--brand-blue); }
 .schema-canvas { flex: 1; min-height: 0; position: relative; padding: 20px 28px 8px; }
 .schema-stage { position: absolute; inset: 20px 28px 8px; }
 .schema-edges { position: absolute; inset: 0; width: 100%; height: 100%; overflow: visible; }
-.schema-nodes { position: absolute; inset: 0; --node-w: 196px; }
+.schema-nodes { position: absolute; inset: 0; --node-w: 216px; --hub-w: 220px; --orch-w: 236px; --node-typo: 1; --cap-lines: 3; --talk-lines: 5; }
 
 .schema-edge {
   fill: none;
@@ -17186,7 +17382,10 @@ a.file-chip:hover .icon { color: var(--brand-blue); }
 .schema-node {
   position: absolute;
   transform: translate(-50%, -50%);
-  width: var(--node-w, 196px);
+  width: var(--node-w, 216px);
+  max-width: 100%;
+  box-sizing: border-box;
+  min-width: 0;
   padding: 12px 14px 12px;
   border-radius: 14px;
   background: var(--paper);
@@ -17203,31 +17402,71 @@ a.file-chip:hover .icon { color: var(--brand-blue); }
 .schema-node.is-peekable { cursor: pointer; }
 .schema-node.is-peekable:hover { transform: translate(-50%, -50%) translateY(-2px); box-shadow: var(--shadow-2); }
 
-.schema-node-head { display: flex; align-items: center; gap: 8px; margin-bottom: 4px; }
-.schema-node .avatar { width: 26px; height: 26px; border-radius: 8px; font-size: 10.5px; }
+.schema-node-head {
+  display: grid;
+  grid-template-columns: auto minmax(0, 1fr);
+  align-items: center;
+  column-gap: 8px;
+  row-gap: 6px;
+  margin-bottom: 4px;
+  min-width: 0;
+  max-width: 100%;
+}
+.schema-node-head > div { min-width: 0; overflow: hidden; }
+.schema-node .avatar { width: 26px; height: 26px; border-radius: 8px; font-size: 10.5px; flex: none; }
 .schema-node-kicker { font-size: 10.5px; font-weight: 600; letter-spacing: 0.06em; text-transform: uppercase; color: var(--muted-2); line-height: 1.2; }
-.schema-node-title { font-weight: 600; font-size: 13px; line-height: 1.25; color: var(--ink); }
-.schema-node-status { margin-left: auto; }
+.schema-node-title { font-weight: 600; font-size: calc(13px * var(--node-typo, 1)); line-height: 1.25; color: var(--ink); overflow-wrap: anywhere; word-break: break-word; }
+.schema-node-status {
+  grid-column: 1 / -1;
+  justify-self: start;
+  margin-left: 0;
+  width: fit-content;
+  max-width: 100%;
+  box-sizing: border-box;
+  height: auto;
+  min-height: 22px;
+  padding: 3px 9px;
+  line-height: 1.25;
+  white-space: normal;
+  overflow: hidden;
+  text-overflow: clip;
+  text-align: left;
+}
 .schema-node-caption {
   margin: 4px 0 0;
-  font-size: 12px;
+  font-size: calc(12px * var(--node-typo, 1));
   line-height: 1.4;
   color: var(--muted);
   overflow: hidden;
+  overflow-wrap: anywhere;
+  word-break: break-word;
   display: -webkit-box;
-  -webkit-line-clamp: 3;
+  -webkit-line-clamp: var(--cap-lines, 3);
   -webkit-box-orient: vertical;
 }
+.schema-node[data-node^="agent:"] .schema-node-caption { -webkit-line-clamp: var(--cap-lines, 3); }
+.schema-view.is-compact .schema-node { padding: 8px 10px; }
+.schema-view.is-compact .schema-node-kicker { display: none; }
+.schema-view.is-compact .schema-node-caption { -webkit-line-clamp: 1; }
+.schema-view.is-compact .schema-node[data-node="engineer"] .schema-node-caption,
+.schema-view.is-compact .schema-node[data-node="output"] .schema-node-caption { -webkit-line-clamp: 1; }
+.schema-node.is-dialogue .schema-node-caption { -webkit-line-clamp: var(--talk-lines, 5); }
+.schema-view.is-compact .schema-node.is-dialogue .schema-node-caption { -webkit-line-clamp: 3; }
+.schema-view.is-roomy .schema-node { padding: 14px 16px 14px; }
+.schema-view.is-roomy .schema-node-files { max-height: 88px; }
 .schema-node.is-active .schema-node-caption { color: var(--ink-2); }
-.schema-node-files { margin-top: 8px; display: flex; flex-direction: column; gap: 4px; }
+.schema-node-caption.is-hint { color: var(--muted-2); }
+.schema-node-files { margin-top: 8px; display: flex; flex-direction: column; gap: 4px; min-width: 0; max-height: 68px; overflow: hidden; }
 .schema-node-files .file-chip { height: 28px; font-size: 12px; padding: 0 8px 0 6px; }
 .schema-node-files .file-chip .ext { width: 18px; height: 18px; font-size: 8.5px; border-radius: 5px; }
 .schema-node-files .file-chip .name { font-size: 11.5px; }
 
-.schema-node[data-node="orchestrator"] { width: 212px; background: linear-gradient(180deg, #fff, var(--blue-50)); }
+.schema-node[data-node="engineer"],
+.schema-node[data-node="output"] { width: var(--hub-w, 220px); }
+.schema-node[data-node="orchestrator"] { width: var(--orch-w, 236px); background: linear-gradient(180deg, #fff, var(--blue-50)); }
 .schema-node[data-node="orchestrator"] .avatar { background: var(--brand-ink); color: #fff; }
-.schema-node[data-node="user"] .avatar { background: var(--panel-2); color: var(--ink-2); }
-.schema-node[data-node="input"] .avatar, .schema-node[data-node="output"] .avatar { background: var(--blue-100); color: var(--brand-blue); }
+.schema-node[data-node="engineer"] .avatar { background: var(--panel-2); color: var(--ink-2); }
+.schema-node[data-node="output"] .avatar { background: var(--blue-100); color: var(--brand-blue); }
 .schema-node[data-node^="agent:"] .avatar { background: var(--cyan-100); color: #026a8a; }
 
 .schema-node.is-current { z-index: 2; }
@@ -17237,22 +17476,29 @@ a.file-chip:hover .icon { color: var(--brand-blue); }
   position: absolute;
   z-index: 3;
   transform: translate(-50%, -50%);
-  max-width: 260px;
-  padding: 5px 10px;
+  max-width: min(340px, 46%);
+  padding: 6px 12px;
   border: 1px solid var(--cyan-200);
-  border-radius: 999px;
+  border-radius: 12px;
   background: rgba(255, 255, 255, 0.96);
   color: #026a8a;
   font: inherit;
   font-size: 12px;
   line-height: 1.35;
-  white-space: nowrap;
+  text-align: left;
+  white-space: normal;
   overflow: hidden;
-  text-overflow: ellipsis;
+  overflow-wrap: anywhere;
+  word-break: break-word;
+  display: -webkit-box;
+  -webkit-line-clamp: 4;
+  -webkit-box-orient: vertical;
   box-shadow: var(--shadow-2);
-  cursor: pointer;
+  cursor: default;
   animation: slip-in var(--t-slow) var(--ease) both;
 }
+.schema-slip.is-peekable,
+.schema-slip.is-truncated { cursor: pointer; }
 .schema-slip:hover { border-color: var(--brand-cyan); }
 @keyframes slip-in { from { opacity: 0; transform: translate(-50%, -30%); } to { opacity: 1; transform: translate(-50%, -50%); } }
 
@@ -17303,7 +17549,16 @@ a.file-chip:hover .icon { color: var(--brand-blue); }
 }
 .schema-step { min-width: 0; }
 .schema-step-count { font-size: 11.5px; font-weight: 600; letter-spacing: 0.06em; text-transform: uppercase; color: var(--muted-2); font-variant-numeric: tabular-nums; }
-.schema-step-label { margin: 2px 0 0; font-size: 13.5px; color: var(--ink); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.schema-step-label {
+  margin: 2px 0 0;
+  font-size: 13.5px;
+  color: var(--ink);
+  overflow: hidden;
+  overflow-wrap: anywhere;
+  display: -webkit-box;
+  -webkit-line-clamp: 2;
+  -webkit-box-orient: vertical;
+}
 .schema-track { display: grid; grid-template-columns: auto 1fr auto; align-items: center; gap: 12px; }
 .schema-track-label { font-size: 12px; color: var(--muted); white-space: nowrap; }
 .schema-track input[type="range"] {
@@ -17621,7 +17876,7 @@ body.dev-mode .turn-log-link { display: inline-block; }
 }
 
 ===END_FILE===
-===BEGIN_FILE===	mas-activity-service/static/app.js	85550	utf8
+===BEGIN_FILE===	mas-activity-service/static/app.js	90382	utf8
 (() => {
   "use strict";
 
@@ -17679,6 +17934,9 @@ body.dev-mode .turn-log-link { display: inline-block; }
   const composerHint = $("composerHint");
   const replyBtn = $("replyBtn");
   const restartBtn = $("restartBtn");
+  const resumeRunBtn = $("resumeRunBtn");
+  const closeTaskBtn = $("closeTaskBtn");
+  const closeTaskHitlBtn = $("closeTaskHitlBtn");
   const composerIdle = $("composerIdle");
   const composerIdleText = $("composerIdleText");
   const composerDropHint = $("composerDropHint");
@@ -17726,9 +17984,7 @@ body.dev-mode .turn-log-link { display: inline-block; }
   }
 
   // ------------------------------------------------------------------ labels
-  const LIVE_LABELS = { idle: "ожидание", connecting: "подключение", live: "онлайн", reconnecting: "переподключение" };
-
-  /** Raw status code → short RU label; the code itself stays in a title attribute for debugging. */
+  /** Raw status code → short RU label. Machine codes stay out of tooltips (dev-mode pill title only). */
   const STATUS_LABELS = {
     DELEGATED: "Передано",
     TASK_STARTED: "Создана",
@@ -17749,6 +18005,7 @@ body.dev-mode .turn-log-link { display: inline-block; }
     new: "Новая",
     done: "Готово",
     failed: "Сбой",
+    cancelled: "Закрыта",
     waiting_user: "Ждём вас",
     waiting_agent: "Агент работает",
     retryable_error: "Ошибка",
@@ -17769,7 +18026,8 @@ body.dev-mode .turn-log-link { display: inline-block; }
     const s = String(status || "").trim();
     const lower = s.toLowerCase();
     if (awaiting || /awaiting|waiting_user|needs_|human_gate|hitl|approval/i.test(lower)) return "waiting";
-    if (/ошибк|conflict|error|fail|reject|cancel|denied|stall|abort/i.test(lower)) return "failed";
+    if (lower === "cancelled" || lower === "canceled") return "idle";
+    if (/ошибк|conflict|error|fail|reject|denied|stall|abort/i.test(lower)) return "failed";
     if (/^(done|completed|succeeded|verified)$/i.test(lower)) return "done";
     if (!s || s === "—" || s === "…") return "idle";
     return "running";
@@ -17925,7 +18183,8 @@ body.dev-mode .turn-log-link { display: inline-block; }
   function emptyFeedMessage(data) {
     const st = String(data?.status || "").trim().toLowerCase();
     if (st === "planning") return "Задача создана, оркестратор ещё не прислал первое сообщение.";
-    if (/conflict|error|fail|cancel|reject/.test(st)) {
+    if (st === "cancelled") return data?.status_message || "Задача закрыта инженером.";
+    if (/conflict|error|fail|reject/.test(st)) {
       return data?.status_message || "Задача завершилась с ошибкой, а события в ленту не пришли.";
     }
     return "Ждём первые сообщения оркестратора — лента обновится сама.";
@@ -18005,9 +18264,18 @@ body.dev-mode .turn-log-link { display: inline-block; }
   }
 
   // ------------------------------------------------------------------ header / status
+  function hintIfTruncated(el, full) {
+    if (!el) return;
+    const shown = String(full || "").trim();
+    requestAnimationFrame(() => {
+      const clip = el.scrollWidth > el.clientWidth + 1 || el.scrollHeight > el.clientHeight + 1;
+      if (clip && shown) el.setAttribute("title", shown);
+      else el.removeAttribute("title");
+    });
+  }
+
   function setLive(state) {
     streamState = state || "idle";
-    if (title) title.title = LIVE_LABELS[streamState] || streamState;
   }
 
   function setHeaderStatus(status, awaiting) {
@@ -18027,7 +18295,8 @@ body.dev-mode .turn-log-link { display: inline-block; }
       statusPill.hidden = false;
       statusPill.dataset.tone = tone;
       statusPill.textContent = awaiting ? "Ждёт вашего ответа" : statusLabel(st);
-      statusPill.title = st;
+      if (document.body.classList.contains("dev-mode")) statusPill.title = st;
+      else statusPill.removeAttribute("title");
     } else {
       statusPill.hidden = true;
     }
@@ -18064,7 +18333,8 @@ body.dev-mode .turn-log-link { display: inline-block; }
       return;
     }
     if (!renamingTask) titleText.textContent = taskDisplayTitle(taskId);
-    title.title = currentTaskName && currentTaskName !== taskId ? `${currentTaskName}\n${taskId}` : taskId;
+    title.removeAttribute("title");
+    hintIfTruncated(titleText, titleText.textContent);
     renameTaskBtn.hidden = renamingTask;
     setHeaderStatus(status, awaiting);
   }
@@ -18116,9 +18386,10 @@ body.dev-mode .turn-log-link { display: inline-block; }
     const st = String(status || "").trim();
     const msg = String(message || "").trim();
     const isConflict = /conflict/i.test(st);
-    const isError = /error|fail|reject|cancel/i.test(st);
+    const isCancelled = /^(cancelled|canceled)$/i.test(st);
+    const isError = /error|fail|reject/i.test(st) && !isCancelled;
     const isDone = /^done$/i.test(st);
-    if (!msg && !isConflict && !isError) {
+    if (!msg && !isConflict && !isError && !isCancelled) {
       statusBanner.hidden = true;
       statusBannerText.textContent = "";
       return;
@@ -18129,8 +18400,8 @@ body.dev-mode .turn-log-link { display: inline-block; }
       return;
     }
     statusBanner.hidden = false;
-    statusBanner.dataset.tone = isConflict || isError ? "failed" : isDone ? "done" : "waiting";
-    statusBannerLabel.textContent = isConflict ? "Конфликт" : isError ? "Ошибка" : isDone ? "Итог" : "Статус";
+    statusBanner.dataset.tone = isConflict || isError ? "failed" : isDone ? "done" : isCancelled ? "idle" : "waiting";
+    statusBannerLabel.textContent = isConflict ? "Конфликт" : isError ? "Ошибка" : isDone ? "Итог" : isCancelled ? "Закрыта" : "Статус";
     statusBannerText.textContent = msg || (isConflict ? "Оркестратор отклонил запрос. Создайте задачу заново — причина обычно есть в ленте." : st);
   }
 
@@ -18264,7 +18535,11 @@ body.dev-mode .turn-log-link { display: inline-block; }
 
   function setComposerArmed(armed) {
     awaitingHuman = Boolean(armed);
-    const showComposer = !startOpen && (awaitingHuman || restartableCase);
+    const status = String(lastCaseFeed.status || "").toLowerCase();
+    const canClose = ["running", "waiting_user", "waiting_agent", "failed"].includes(status);
+    const resumeStale = Boolean(lastCaseFeed.resume_stale);
+    const showRecovery = !startOpen && Boolean(currentTask) && (restartableCase || resumeStale || canClose);
+    const showComposer = !startOpen && (awaitingHuman || showRecovery);
     composer.hidden = !showComposer;
     composer.classList.toggle("is-disabled", !awaitingHuman);
     hitlDropzone.hidden = !awaitingHuman;
@@ -18273,13 +18548,33 @@ body.dev-mode .turn-log-link { display: inline-block; }
     replyBtn.disabled = !awaitingHuman || startOpen;
     humanResponse.disabled = !awaitingHuman;
     hitlAttachBtn.disabled = !awaitingHuman;
-    composerIdle.hidden = awaitingHuman || !restartableCase || startOpen;
+    composerIdle.hidden = !showRecovery;
+    if (resumeRunBtn) {
+      resumeRunBtn.hidden = !resumeStale || startOpen;
+      resumeRunBtn.disabled = !resumeStale || startOpen || !currentTask;
+    }
+    restartBtn.hidden = !restartableCase;
     restartBtn.disabled = !restartableCase || startOpen || !currentTask;
+    if (closeTaskBtn) {
+      closeTaskBtn.hidden = !canClose || startOpen;
+      closeTaskBtn.disabled = !canClose || startOpen || !currentTask;
+    }
+    if (closeTaskHitlBtn) {
+      closeTaskHitlBtn.hidden = !awaitingHuman || !canClose || startOpen;
+      closeTaskHitlBtn.disabled = !awaitingHuman || !canClose || startOpen || !currentTask;
+    }
     if (!composerIdle.hidden) {
-      const tone = toneFor(lastCaseFeed.status, false);
-      composerIdleText.textContent = tone === "failed"
-        ? "Задача остановилась с ошибкой. Можно перезапустить её с теми же исходными файлами."
-        : "Задача завершена. Если нужно пересчитать — перезапустите её с теми же файлами.";
+      if (status === "cancelled") {
+        composerIdleText.textContent = "Задача закрыта. Можно перезапустить её с теми же исходными файлами.";
+      } else if (resumeStale) {
+        composerIdleText.textContent = "Оркестратор давно не отвечает. Можно продолжить задачу или закрыть её.";
+      } else if (toneFor(status, false) === "failed") {
+        composerIdleText.textContent = "Задача остановилась с ошибкой. Можно перезапустить её с теми же исходными файлами или закрыть.";
+      } else if (canClose && !restartableCase) {
+        composerIdleText.textContent = "Оркестратор работает. Если задача зависла — дождитесь кнопки «Продолжить» или закройте её.";
+      } else {
+        composerIdleText.textContent = "Задача завершена. Если нужно пересчитать — перезапустите её с теми же файлами.";
+      }
     }
     applyResumeWaitHint();
   }
@@ -18296,7 +18591,7 @@ body.dev-mode .turn-log-link { display: inline-block; }
     const prev = scheduleRoot.value;
     if (files.length < 2) {
       scheduleRootField.hidden = true;
-      scheduleRoot.innerHTML = '<option value="">Какой .data / .INC главный?</option>';
+      scheduleRoot.innerHTML = '<option value="">Какой файл расписания главный?</option>';
       scheduleRoot.value = "";
       return;
     }
@@ -18304,7 +18599,7 @@ body.dev-mode .turn-log-link { display: inline-block; }
     scheduleRoot.innerHTML = "";
     const placeholder = document.createElement("option");
     placeholder.value = "";
-    placeholder.textContent = "Какой .data / .INC главный?";
+    placeholder.textContent = "Какой файл расписания главный?";
     scheduleRoot.append(placeholder);
     for (const entry of files) {
       const opt = document.createElement("option");
@@ -18598,13 +18893,13 @@ body.dev-mode .turn-log-link { display: inline-block; }
   }
   function roleLabel(role) {
     return ({
-      schedule_out: "итоговый schedule",
-      diff: "изменения относительно исходного",
-      schedule_source: "исходный schedule",
+      schedule_out: "итоговый файл расписания",
+      diff: "изменения относительно исходного файла",
+      schedule_source: "исходный файл расписания",
       excel: "книга Excel",
       trajectory: "траектория",
       surface: "поверхность",
-      include: "INCLUDE",
+      include: "подключаемый файл INCLUDE",
     })[String(role || "")] || "";
   }
 
@@ -18900,7 +19195,10 @@ body.dev-mode .turn-log-link { display: inline-block; }
     if (isError) body.classList.add("turn-error");
     // The speaker is already named in the header — drop reporter prefixes like «Пользователь ответил:».
     const stripReporter = (s) => (/^hitl\.answered$/i.test(eventKind) ? String(s || "").replace(/^(Пользователь|Инженер)\s+ответил[а]?:\s*/i, "") : String(s || ""));
-    body.textContent = stripReporter(turn.brief || turn.text || "");
+    const brief = stripReporter(turn.brief || "").trim();
+    const full = stripReporter(turn.text || "").trim();
+    const bodyText = full && brief && full.length >= brief.length ? full : (brief || full);
+    body.textContent = bodyText;
     main.append(body);
 
     if (turn.handoff_message && turn.handoff_message !== body.textContent) {
@@ -18909,11 +19207,10 @@ body.dev-mode .turn-log-link { display: inline-block; }
       note.textContent = turn.handoff_message;
       main.append(note);
     }
-    const text = stripReporter(turn.text).trim();
-    if (text && text !== body.textContent && CYRILLIC_RE.test(text) && !/^case\.finished$/i.test(eventKind)) {
+    if (full && full !== body.textContent && CYRILLIC_RE.test(full) && !/^case\.finished$/i.test(eventKind)) {
       const note = document.createElement("p");
       note.className = "turn-note";
-      note.textContent = text;
+      note.textContent = full;
       main.append(note);
     }
 
@@ -19014,7 +19311,10 @@ body.dev-mode .turn-log-link { display: inline-block; }
     }
     copy.append(t, meta);
     btn.append(dot, copy);
-    btn.title = [name, task.title && task.title !== name ? task.title : "", task.task_id].filter(Boolean).join("\n");
+    requestAnimationFrame(() => {
+      if (t.scrollHeight > t.clientHeight + 1) btn.title = name || t.textContent;
+      else btn.removeAttribute("title");
+    });
     btn.addEventListener("click", () => {
       startResumeTask = null;
       setStartOpen(false, { resume: false });
@@ -19053,6 +19353,8 @@ body.dev-mode .turn-log-link { display: inline-block; }
       renderRequest(objective, attachedFilesFromFeed(data.attached_files ? data : lastCaseFeed));
     }
     renderStatusBanner(data.status, data.status_message || data.message);
+    if (Object.prototype.hasOwnProperty.call(data, "resume_stale")) lastCaseFeed.resume_stale = Boolean(data.resume_stale);
+    if (Object.prototype.hasOwnProperty.call(data, "status_message") && data.status_message) lastCaseFeed.status_message = data.status_message;
     setRestartable(Boolean(data.restartable) || Boolean(data.human_gate?.restartable) || String(data.status || "").toLowerCase() === "retryable_error");
     if (data.version != null) taskVersion = data.version;
     else if (data.human_gate?.expected_version != null) taskVersion = data.human_gate.expected_version;
@@ -19511,6 +19813,66 @@ body.dev-mode .turn-log-link { display: inline-block; }
     }
   });
 
+  async function postCaseRun(payload, { waitLabel, okFlash, failFlash }) {
+    if (!currentTask) { showFlash("Сначала выберите задачу."); return; }
+    composer.classList.add("busy");
+    showWait(waitLabel);
+    try {
+      const res = await fetch(`/cases/${encodeURIComponent(currentTask)}/run`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ ...payload, requested_by: REQUESTED_BY }),
+      });
+      const data = await res.json().catch(() => ({}));
+      if (!res.ok) {
+        const detail = typeof data.detail === "string" ? data.detail : failFlash;
+        showFlash(detail);
+        return;
+      }
+      if (data.ok === false || data.skipped || data.accepted === false) {
+        showFlash(`${failFlash}: ${data.reason || data.status || "пропущен"}`);
+        return;
+      }
+      applyFeedMeta({
+        status: data.orchestrator?.status || data.status,
+        version: data.orchestrator?.version || data.version,
+        awaiting_human: data.awaiting_human,
+        restartable: data.restartable,
+        resume_stale: data.resume_stale,
+        human_gate: data.human_gate,
+        status_message: data.status_message || data.orchestrator?.message,
+        semantic_diff: data.semantic_diff,
+      });
+      showFlash(okFlash, { ok: true });
+      await pollFeed();
+      await refreshRail();
+    } catch (err) {
+      showFlash(`${failFlash}: ${err}`);
+    } finally {
+      composer.classList.remove("busy");
+      hideWait();
+    }
+  }
+
+  if (resumeRunBtn) {
+    resumeRunBtn.addEventListener("click", async () => {
+      await postCaseRun(
+        { action: "resume", source: "system" },
+        { waitLabel: "Продолжаем задачу…", okFlash: "Продолжение принято — лента обновится сама.", failFlash: "Не удалось продолжить задачу" },
+      );
+    });
+  }
+
+  async function closeCurrentTask() {
+    if (!window.confirm("Закрыть задачу? Её можно будет перезапустить с теми же файлами.")) return;
+    await postCaseRun(
+      { action: "cancel" },
+      { waitLabel: "Закрываем задачу…", okFlash: "Задача закрыта.", failFlash: "Не удалось закрыть задачу" },
+    );
+  }
+  if (closeTaskBtn) closeTaskBtn.addEventListener("click", closeCurrentTask);
+  if (closeTaskHitlBtn) closeTaskHitlBtn.addEventListener("click", closeCurrentTask);
+
   // ------------------------------------------------------------------ wiring
   function autosize(el) {
     el.style.height = "auto";
@@ -19595,19 +19957,19 @@ body.dev-mode .turn-log-link { display: inline-block; }
 })();
 
 ===END_FILE===
-===BEGIN_FILE===	mas-activity-service/static/index.html	20297	utf8
+===BEGIN_FILE===	mas-activity-service/static/index.html	20689	utf8
 <!DOCTYPE html>
 <html lang="ru">
 <head>
   <meta charset="utf-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1" />
-  <title>NOVATEK RE MASter Workspace</title>
+  <title>NOVATEK RE MASter — Задачи</title>
   <meta name="color-scheme" content="light" />
   <link rel="icon" href="data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 100 100'><rect x='14' y='40' width='8' height='20' rx='4' fill='%23001A57'/><rect x='78' y='40' width='8' height='20' rx='4' fill='%23001A57'/><line x1='50' y1='20' x2='50' y2='10' stroke='%230033A0' stroke-width='6' stroke-linecap='round'/><circle cx='50' cy='10' r='6' fill='%2300B8F0'/><rect x='22' y='20' width='56' height='60' rx='12' fill='%230033A0'/><circle cx='36' cy='45' r='7' fill='%2300B8F0'/><circle cx='64' cy='45' r='7' fill='%2300B8F0'/><rect x='36' y='64' width='28' height='6' rx='3' fill='%2300B8F0'/></svg>" />
   <link rel="preconnect" href="https://fonts.googleapis.com" />
   <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
   <link href="https://fonts.googleapis.com/css2?family=IBM+Plex+Sans:wght@400;500;600;700&family=IBM+Plex+Mono:wght@400;500&display=swap" rel="stylesheet" />
-  <link rel="stylesheet" href="/static/app.css?v=102" />
+  <link rel="stylesheet" href="/static/app.css?v=113" />
 </head>
 <body>
   <svg width="0" height="0" style="position:absolute" aria-hidden="true">
@@ -19635,16 +19997,16 @@ body.dev-mode .turn-log-link { display: inline-block; }
     <button type="button" class="icon-btn rail-toggle" id="railToggle" aria-label="Список задач" aria-controls="taskRail" aria-expanded="false">
       <svg class="icon" aria-hidden="true"><use href="#i-panel"/></svg>
     </button>
-    <a class="brand" href="/" id="brandHome" title="На главную" aria-label="NOVATEK RE MASter Workspace — на главную">
+    <a class="brand" href="/" id="brandHome" title="На главную" aria-label="NOVATEK RE MASter — на главную">
       <span class="brand-mark" aria-hidden="true">
         <svg viewBox="0 0 100 100" width="26" height="26"><rect x="14" y="40" width="8" height="20" rx="4" fill="#001A57"/><rect x="78" y="40" width="8" height="20" rx="4" fill="#001A57"/><line x1="50" y1="20" x2="50" y2="10" stroke="#0033A0" stroke-width="6" stroke-linecap="round"/><circle cx="50" cy="10" r="6" fill="#00B8F0"/><rect x="22" y="20" width="56" height="60" rx="12" fill="#0033A0"/><circle cx="36" cy="45" r="7" fill="#00B8F0"/><circle cx="64" cy="45" r="7" fill="#00B8F0"/><rect x="36" y="64" width="28" height="6" rx="3" fill="#00B8F0"/></svg>
       </span>
       <span class="brand-lockup">
         <span class="brand-row">
           <span class="mark">NOVATEK RE MASter</span>
-          <span class="product">Workspace</span>
+          <span class="product">Задачи</span>
         </span>
-        <span class="brand-sub">Novatek STC reservoir engineering multi-agent system</span>
+        <span class="brand-sub">мультиагентная система гидродинамики НОВАТЭК НТЦ</span>
       </span>
     </a>
     <nav class="top-actions" aria-label="Разделы">
@@ -19733,7 +20095,7 @@ body.dev-mode .turn-log-link { display: inline-block; }
           <div class="not-found" id="notFound" hidden>
             <p class="not-found-title">Задача не найдена</p>
             <p class="not-found-id" id="notFoundId"></p>
-            <p class="not-found-copy">Нет такой задачи в Workspace.</p>
+            <p class="not-found-copy">Нет такой задачи.</p>
             <a class="btn btn-quiet" href="/" id="notFoundHome">Вернуться на главную</a>
           </div>
         </div>
@@ -19800,13 +20162,13 @@ body.dev-mode .turn-log-link { display: inline-block; }
             <input id="startFileInput" type="file" multiple hidden accept=".xlsx,.xls,.xlsm,.xltx,.xltm,.data,.inc,.sch,.txt,.grdecl,.dev,.cps3,.grd,.grid" />
             <svg class="icon dropzone-icon" aria-hidden="true"><use href="#i-attach"/></svg>
             <p class="dropzone-title">Перетащите файлы сюда или нажмите, чтобы выбрать</p>
-            <p class="dropzone-hint">Excel, schedule (.data / .inc), траектории (.dev), поверхности CPS3</p>
+            <p class="dropzone-hint">Excel, исходный файл расписания (.DATA / .INC), траектории скважин (.dev), поверхности CPS3</p>
             <ul class="file-chips" id="startFileList" hidden></ul>
           </div>
           <label class="field schedule-root-field" id="scheduleRootField" hidden>
-            <span>Главный schedule среди вложений</span>
-            <select id="scheduleRoot" aria-label="Главный schedule файл среди вложений">
-              <option value="">Какой .data / .INC главный?</option>
+            <span>Главный файл расписания среди вложений</span>
+            <select id="scheduleRoot" aria-label="Главный файл расписания среди вложений">
+              <option value="">Какой файл расписания главный?</option>
             </select>
           </label>
           <div class="start-actions">
@@ -19845,14 +20207,19 @@ body.dev-mode .turn-log-link { display: inline-block; }
             <span>Ответить</span>
             <svg class="icon" aria-hidden="true"><use href="#i-send"/></svg>
           </button>
+          <button type="button" class="btn btn-quiet" id="closeTaskHitlBtn" hidden>Закрыть задачу</button>
         </div>
       </div>
       <div class="composer-idle" id="composerIdle" hidden>
         <span class="composer-idle-text" id="composerIdleText">Задача завершена.</span>
-        <button type="button" class="btn btn-quiet" id="restartBtn">Перезапустить с теми же файлами</button>
+        <div class="composer-idle-actions">
+          <button type="button" class="btn btn-quiet" id="resumeRunBtn" hidden>Продолжить</button>
+          <button type="button" class="btn btn-quiet" id="restartBtn">Перезапустить с теми же файлами</button>
+          <button type="button" class="btn btn-quiet" id="closeTaskBtn" hidden>Закрыть задачу</button>
+        </div>
       </div>
       <p class="composer-hint" id="composerHint" hidden></p>
-      <p class="composer-drop-hint" id="composerDropHint">Файлы можно перетащить прямо в поле ответа — Excel, schedule, недостающий INCLUDE, траектории.</p>
+      <p class="composer-drop-hint" id="composerDropHint">Файлы можно перетащить прямо в поле ответа — Excel, исходный файл расписания, недостающий INCLUDE, траектории.</p>
     </form>
     </section>
 
@@ -19876,14 +20243,14 @@ body.dev-mode .turn-log-link { display: inline-block; }
     </aside>
   </main>
 
-  <script src="/static/schema.js?v=32"></script>
+  <script src="/static/schema.js?v=45"></script>
   <script src="/static/log.js?v=1"></script>
-  <script src="/static/app.js?v=105"></script>
+  <script src="/static/app.js?v=108"></script>
 </body>
 </html>
 
 ===END_FILE===
-===BEGIN_FILE===	mas-activity-service/static/knowledge.css	10672	utf8
+===BEGIN_FILE===	mas-activity-service/static/knowledge.css	10857	utf8
 /* База знаний — reuses the workspace design system (app.css) */
 
 .knowledge-page .flash.flash-ok { background: var(--brand-blue); }
@@ -20061,22 +20428,26 @@ body.dev-mode .turn-log-link { display: inline-block; }
 }
 .kb-card-head:hover { background: var(--blue-50); }
 .kb-card.is-open .kb-card-head { background: linear-gradient(180deg, var(--blue-50), #fff); }
-.kb-card-title-row { display: flex; align-items: start; justify-content: space-between; gap: 14px; }
-.kb-card-title { margin: 0; font-size: 15.5px; font-weight: 600; letter-spacing: -0.005em; line-height: 1.35; color: var(--ink); }
+.kb-card-title-row { display: flex; align-items: start; justify-content: space-between; gap: 14px; min-width: 0; }
+.kb-card-title { margin: 0; font-size: 15.5px; font-weight: 600; letter-spacing: -0.005em; line-height: 1.35; color: var(--ink); min-width: 0; overflow-wrap: anywhere; }
 .kb-type {
   flex: none;
+  max-width: 46%;
   font-size: 11px;
   font-weight: 600;
   letter-spacing: 0.04em;
-  text-transform: uppercase;
+  text-transform: none;
   padding: 3px 8px;
   border-radius: 999px;
   background: var(--blue-100);
   color: var(--brand-blue);
-  white-space: nowrap;
+  white-space: normal;
+  overflow-wrap: anywhere;
+  text-align: right;
+  line-height: 1.25;
 }
-.kb-meta { font-family: var(--mono); font-size: 11.5px; color: var(--muted-2); margin: 0; }
-.kb-preview { margin: 0; color: var(--ink-2); font-size: 13.5px; line-height: 1.5; display: -webkit-box; -webkit-line-clamp: 2; -webkit-box-orient: vertical; overflow: hidden; }
+.kb-meta { font-family: var(--mono); font-size: 11.5px; color: var(--muted-2); margin: 0; overflow-wrap: anywhere; }
+.kb-preview { margin: 0; color: var(--ink-2); font-size: 13.5px; line-height: 1.5; display: -webkit-box; -webkit-line-clamp: 4; -webkit-box-orient: vertical; overflow: hidden; overflow-wrap: anywhere; }
 .kb-card.is-open .kb-preview { display: none; }
 .kb-card.is-open .kb-card-head .kb-tag-fields-compact { display: none; }
 
@@ -20156,7 +20527,7 @@ body.dev-mode .turn-log-link { display: inline-block; }
 }
 
 ===END_FILE===
-===BEGIN_FILE===	mas-activity-service/static/knowledge.html	6817	utf8
+===BEGIN_FILE===	mas-activity-service/static/knowledge.html	6821	utf8
 <!DOCTYPE html>
 <html lang="ru">
 <head>
@@ -20168,8 +20539,8 @@ body.dev-mode .turn-log-link { display: inline-block; }
   <link rel="preconnect" href="https://fonts.googleapis.com" />
   <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
   <link href="https://fonts.googleapis.com/css2?family=IBM+Plex+Sans:wght@400;500;600;700&family=IBM+Plex+Mono:wght@400;500&display=swap" rel="stylesheet" />
-  <link rel="stylesheet" href="/static/app.css?v=100" />
-  <link rel="stylesheet" href="/static/knowledge.css?v=100" />
+  <link rel="stylesheet" href="/static/app.css?v=113" />
+  <link rel="stylesheet" href="/static/knowledge.css?v=101" />
   <script src="https://cdn.jsdelivr.net/npm/marked@15.0.7/marked.min.js" defer></script>
 </head>
 <body class="knowledge-page">
@@ -20241,12 +20612,12 @@ body.dev-mode .turn-log-link { display: inline-block; }
       <section class="kb-create" id="createPanel" hidden>
         <div class="kb-create-head">
           <h2 class="kb-create-title">Новая карточка</h2>
-          <p class="kb-create-note">Карточка сохраняется в корпус агента и попадёт в RAG после загрузки. Теги, темы и формулировки задач помогают поиску найти карточку по запросу инженера.</p>
+          <p class="kb-create-note">Карточка сохранится у этого агента. Чтобы он начал её учитывать в поиске, нажмите «Загрузить в RAG». Ключевые слова, темы и типичные формулировки задач помогают найти карточку по запросу инженера.</p>
         </div>
         <div class="kb-create-grid">
           <label class="field">
-            <span>Идентификатор</span>
-            <input id="createId" type="text" maxlength="119" placeholder="dates-schedule-clock-v1" />
+            <span>Код карточки</span>
+            <input id="createId" type="text" maxlength="119" placeholder="dates-v1" />
           </label>
           <label class="field">
             <span>Тип карточки</span>
@@ -20254,13 +20625,13 @@ body.dev-mode .turn-log-link { display: inline-block; }
           </label>
           <label class="field kb-create-wide">
             <span>Заголовок</span>
-            <input id="createTitle" type="text" maxlength="300" placeholder="Человекочитаемый заголовок" />
+            <input id="createTitle" type="text" maxlength="300" placeholder="Как карточку видит инженер" />
           </label>
         </div>
         <div id="createTagFields" class="kb-tag-fields"></div>
         <label class="field kb-create-text">
-          <span>Текст карточки <em class="optional">markdown</em></span>
-          <textarea id="createText" class="kb-editor" rows="10" placeholder="Полная самодостаточная инструкция…"></textarea>
+          <span>Текст карточки</span>
+          <textarea id="createText" class="kb-editor" rows="10" placeholder="Полная самодостаточная инструкция для агента…"></textarea>
         </label>
         <div class="kb-actions">
           <button type="button" class="btn btn-quiet btn-cancel" id="createCancel">Отмена</button>
@@ -20273,12 +20644,12 @@ body.dev-mode .turn-log-link { display: inline-block; }
     </section>
   </main>
 
-  <script src="/static/knowledge.js?v=100"></script>
+  <script src="/static/knowledge.js?v=103"></script>
 </body>
 </html>
 
 ===END_FILE===
-===BEGIN_FILE===	mas-activity-service/static/knowledge.js	28691	utf8
+===BEGIN_FILE===	mas-activity-service/static/knowledge.js	29677	utf8
 (() => {
   const agentSelect = document.getElementById("agentSelect");
   const agentHint = document.getElementById("agentHint");
@@ -20302,20 +20673,43 @@ body.dev-mode .turn-log-link { display: inline-block; }
   const TAG_GROUPS = [
     {
       key: "keywords",
-      label: "Keywords (теги)",
-      hint: "Поле keywords в corpus. Для Schedule — обычно allowlisted SCHEDULE keywords (DATES, WCONPROD…). В RAG — keyword/tag-фильтр.",
+      label: "Ключевые слова SCHEDULE",
+      hint: "Имена ключевых слов из руководства tNavigator, по которым поиск находит карточку — например DATES, WCONPROD. Необязательно.",
     },
     {
       key: "topics",
-      label: "Topics",
-      hint: "Поле topics. Тематические ярлыки для tag-ветки retrieval (необязательно).",
+      label: "Темы",
+      hint: "О чём карточка простыми словами: ввод скважин, группы, перфорация. Необязательно.",
     },
     {
       key: "task_patterns",
-      label: "Task patterns",
-      hint: "Поле task_patterns. Как инженер формулирует задачу — помогает матчить запрос к карточке.",
+      label: "Как инженер формулирует задачу",
+      hint: "Типичные фразы из постановки («сдвинуть даты ввода», «перепривязать группу»), чтобы карточка находилась по запросу.",
     },
   ];
+  const TYPE_LABELS = {
+    keyword_instruction: "Ключевое слово SCHEDULE",
+    worked_example: "Пример",
+    protocol_instruction: "Правило работы",
+    routing_card: "Как разбирать задачу",
+    capability_instruction: "Что умеет агент",
+    injection_template: "Служебный шаблон",
+  };
+  const STATUS_LABELS = {
+    active: "актуальна",
+    current: "актуальна",
+    superseded: "заменена",
+    draft: "черновик",
+  };
+
+  function typeLabel(value) {
+    const key = String(value || "").trim();
+    return TYPE_LABELS[key] || key.replace(/_/g, " ") || "карточка";
+  }
+  function statusLabel(value) {
+    const key = String(value || "").trim().toLowerCase();
+    return STATUS_LABELS[key] || String(value || "");
+  }
 
   let namespaces = [];
   let currentBase = "";
@@ -20419,8 +20813,8 @@ body.dev-mode .turn-log-link { display: inline-block; }
       const count = document.createElement("span");
       count.className = "kb-tab-count";
       count.textContent = ns.document_count != null ? String(ns.document_count) : "";
+      btn.dataset.base = ns.id;
       btn.append(label, count);
-      btn.title = ns.id;
       btn.addEventListener("click", () => {
         if (agentSelect) agentSelect.value = ns.id;
         loadDocuments(ns.id);
@@ -20432,7 +20826,7 @@ body.dev-mode .turn-log-link { display: inline-block; }
   function syncAgentTabs() {
     if (!agentTabs) return;
     for (const btn of agentTabs.querySelectorAll(".kb-tab")) {
-      const active = btn.title === currentBase;
+      const active = btn.dataset.base === currentBase;
       btn.classList.toggle("is-active", active);
       btn.setAttribute("aria-selected", String(active));
     }
@@ -20460,14 +20854,14 @@ body.dev-mode .turn-log-link { display: inline-block; }
     createType.innerHTML = "";
     for (const t of types) {
       const opt = document.createElement("option");
+      opt.textContent = typeLabel(t);
       opt.value = t;
-      opt.textContent = t;
       createType.append(opt);
     }
     if (!types.length) {
       const opt = document.createElement("option");
       opt.value = "keyword_instruction";
-      opt.textContent = "keyword_instruction";
+      opt.textContent = typeLabel("keyword_instruction");
       createType.append(opt);
     }
   }
@@ -20568,7 +20962,7 @@ body.dev-mode .turn-log-link { display: inline-block; }
           row.append(el);
         }
       }
-      section.append(label, hint, row);
+      section.append(label, row);
       wrap.append(section);
     }
     return wrap;
@@ -20640,7 +21034,7 @@ body.dev-mode .turn-log-link { display: inline-block; }
     const res = await fetch("/v1/knowledge/namespaces");
     const data = await res.json().catch(() => ({}));
     if (!res.ok) {
-      showFlash(typeof data.detail === "string" ? data.detail : "Не удалось загрузить namespaces.");
+      showFlash(typeof data.detail === "string" ? data.detail : "Не удалось загрузить список агентов.");
       agentSelect.innerHTML = '<option value="">Нет данных</option>';
       return;
     }
@@ -20648,14 +21042,14 @@ body.dev-mode .turn-log-link { display: inline-block; }
     agentSelect.innerHTML = "";
     if (!namespaces.length) {
       agentSelect.innerHTML = '<option value="">Нет данных</option>';
-      agentHint.textContent = "В corpus нет namespaces.";
+      agentHint.textContent = "Нет баз знаний агентов.";
       syncAddButton();
       return;
     }
     for (const ns of namespaces) {
       const opt = document.createElement("option");
       opt.value = ns.id;
-      opt.textContent = `${ns.label} (${ns.id})`;
+      opt.textContent = ns.label || ns.id;
       agentSelect.append(opt);
     }
     const first = namespaces[0].id;
@@ -20788,7 +21182,7 @@ body.dev-mode .turn-log-link { display: inline-block; }
       task_patterns: createDraft.task_patterns,
     };
     if (!payload.knowledge_id || !payload.title || !payload.text.trim()) {
-      showFlash(incompleteMessage || "Нужны knowledge_id, title и text.");
+      showFlash(incompleteMessage || "Нужны код карточки, заголовок и текст.");
       return { ok: false, saved: false };
     }
     try {
@@ -20817,7 +21211,7 @@ body.dev-mode .turn-log-link { display: inline-block; }
     }
     if (createDraftDirty()) {
       const created = await persistCreateDraft({
-        incompleteMessage: "Сначала сохраните или отмените новую карточку (нужны knowledge_id, title и text).",
+        incompleteMessage: "Сначала сохраните или отмените новую карточку (нужны код, заголовок и текст).",
       });
       if (!created.ok) return false;
     }
@@ -20849,7 +21243,7 @@ body.dev-mode .turn-log-link { display: inline-block; }
 
       const titleField = document.createElement("label");
       titleField.className = "who-field";
-      titleField.innerHTML = "<span>title</span>";
+      titleField.innerHTML = "<span>Заголовок</span>";
       const titleInput = document.createElement("input");
       titleInput.type = "text";
       titleInput.value = draft.title || "";
@@ -20868,16 +21262,16 @@ body.dev-mode .turn-log-link { display: inline-block; }
 
       const textLabel = document.createElement("label");
       textLabel.className = "who-field";
-      textLabel.innerHTML = "<span>text (markdown)</span>";
+      textLabel.innerHTML = "<span>Текст карточки</span>";
       const editor = document.createElement("textarea");
       editor.className = "kb-editor";
       editor.value = draft.text || "";
-      editor.setAttribute("aria-label", "Сырой markdown карточки");
+      editor.setAttribute("aria-label", "Текст карточки");
       textLabel.append(editor);
 
       const hint = document.createElement("p");
       hint.className = "kb-ingest";
-      hint.textContent = "Сохранение пишет в JSON corpus и поднимает revision.";
+      hint.textContent = "Сохранение обновляет карточку. Чтобы агент начал её учитывать в поиске, нажмите «Загрузить в RAG».";
 
       body.append(actions, titleField, tagWrap, textLabel, hint);
 
@@ -20892,7 +21286,7 @@ body.dev-mode .turn-log-link { display: inline-block; }
         try {
           const result = await persistOpenEdit({ force: true });
           if (!result.ok || !result.saved) return;
-          showFlash(`Сохранено, revision ${result.document.revision}.`, { ok: true });
+          showFlash(`Карточка сохранена, версия ${result.document.revision}.`, { ok: true });
           await loadDocuments(currentBase, { keepOpen: result.document.knowledge_id });
         } finally {
           saveBtn.disabled = false;
@@ -20919,8 +21313,8 @@ body.dev-mode .turn-log-link { display: inline-block; }
     meta.textContent = [
       doc.page || null,
       doc.heading || null,
-      doc.author ? `author ${doc.author}` : null,
-      doc.has_schema_catalogue ? "schema_catalogue" : null,
+      doc.author ? `автор ${doc.author}` : null,
+      doc.has_schema_catalogue ? "есть схема записей SCHEDULE" : null,
     ].filter(Boolean).join(" · ");
 
     body.append(actions, tags, md);
@@ -20987,12 +21381,16 @@ body.dev-mode .turn-log-link { display: inline-block; }
     title.textContent = summary.title || summary.knowledge_id;
     const type = document.createElement("span");
     type.className = "kb-type";
-    type.textContent = summary.knowledge_type || "card";
+    type.textContent = typeLabel(summary.knowledge_type);
     titleRow.append(title, type);
 
     const meta = document.createElement("div");
     meta.className = "kb-meta";
-    meta.textContent = `${summary.knowledge_id} · rev ${summary.revision} · ${summary.status}`;
+    meta.textContent = [
+      summary.knowledge_id || null,
+      summary.revision ? `версия ${summary.revision}` : null,
+      statusLabel(summary.status),
+    ].filter(Boolean).join(" · ");
 
     const preview = document.createElement("p");
     preview.className = "kb-preview";
@@ -21034,7 +21432,7 @@ body.dev-mode .turn-log-link { display: inline-block; }
     const ns = namespaces.find((item) => item.id === base);
     syncAgentTabs();
     agentHint.textContent = ns
-      ? `${ns.label} · ${pluralCards(docs.length)} · типы: ${(ns.knowledge_types || []).join(", ") || "—"}`
+      ? `${ns.label} · ${pluralCards(docs.length)} · ${[...new Set((ns.knowledge_types || []).map(typeLabel))].join(", ") || "—"}`
       : pluralCards(docs.length);
     if (kbSearch) kbSearch.value = "";
     if (kbCount) kbCount.textContent = "";
@@ -21102,7 +21500,7 @@ body.dev-mode .turn-log-link { display: inline-block; }
       const result = await persistCreateDraft();
       if (!result.ok || !result.saved) {
         if (result.ok && !result.saved && !createDraftDirty()) {
-          showFlash("Нужны knowledge_id, title и text.");
+          showFlash("Нужны код карточки, заголовок и текст.");
         }
         return;
       }
@@ -21113,7 +21511,7 @@ body.dev-mode .turn-log-link { display: inline-block; }
     }
   });
 
-  loadNamespaces().catch(() => showFlash("Сеть недоступна при загрузке namespaces."));
+  loadNamespaces().catch(() => showFlash("Сеть недоступна при загрузке базы знаний."));
 })();
 
 ===END_FILE===
@@ -21437,14 +21835,14 @@ body.dev-mode .turn-log-link { display: inline-block; }
 })();
 
 ===END_FILE===
-===BEGIN_FILE===	mas-activity-service/static/schema.js	38670	utf8
+===BEGIN_FILE===	mas-activity-service/static/schema.js	48266	utf8
 (() => {
   "use strict";
 
   const START_LABEL = "Постановка задачи";
   const END_LABEL = "Итог";
   const FINISHED_RESULT_TEXT = "Задача завершена. Загрузите результаты работы.";
-  const FIXED_NODES = ["input", "orchestrator", "user", "output"];
+  const FIXED_NODES = ["engineer", "orchestrator", "output"];
   const KIND_LABELS = {
     "case.created": START_LABEL,
     "case.finished": END_LABEL,
@@ -21524,23 +21922,49 @@ body.dev-mode .turn-log-link { display: inline-block; }
     return (words[0][0] + words[1][0]).toUpperCase();
   }
   function nodeMeta(key) {
-    if (key === "input") return { kicker: "вход", title: START_LABEL, icon: "i-file" };
+    if (key === "engineer") return { kicker: "вы", title: "Инженер", icon: "i-user" };
     if (key === "orchestrator") return { kicker: "оркестратор", title: "Оркестратор", icon: "i-orch" };
-    if (key === "user") return { kicker: "инженер", title: "Вы", icon: "i-user" };
     if (key === "output") return { kicker: "выход", title: END_LABEL, icon: "i-download" };
     const id = agentIdOf(key);
     return { kicker: "агент", title: humanTitle(id), initials: initials(humanTitle(id)), hint: registry.get(id)?.when_to_use || "" };
   }
-  function statusLabel(key, tone) {
+  function statusLabel(key, tone, spec) {
+    if (key === "engineer") {
+      if (tone === "waiting") return "Вопрос вам";
+      if (tone === "active" && spec && spec.hitl_answer) return "Ваш ответ";
+      if (tone === "active") return "Постановка";
+      if (tone === "done" && spec && spec.hitl_answer) return "Ответил";
+      if (tone === "done") return "Задача поставлена";
+      return "";
+    }
     if (tone === "idle") {
-      if (key === "user") return "Вопросов не было";
       if (key === "orchestrator") return "Ожидает задачу";
       if (key.startsWith("agent:")) return "Не вызывался";
       return "";
     }
     if (key === "output" && tone === "active") return complete ? "Готово" : "Формируется";
-    if (key === "input" && tone === "active") return "Принята";
     return TONE_STATUS[tone] || tone;
+  }
+
+  function payloadOf(event) {
+    return event && event.payload && typeof event.payload === "object" ? event.payload : {};
+  }
+  function hitlQuestionText(event) {
+    const payload = payloadOf(event);
+    return text(event.status_message) || text(payload.question);
+  }
+  function hitlAnswerText(event) {
+    const payload = payloadOf(event);
+    const raw = payload.answer;
+    if (raw && typeof raw === "object") return text(raw.text || raw.label || raw.choice);
+    if (text(raw)) return text(raw);
+    return text(event.status_message).replace(/^(Пользователь|Инженер)\s+ответил[а]?:\s*/i, "");
+  }
+  function formatHitl(question, answer) {
+    const q = text(question);
+    const a = text(answer);
+    if (q && a) return `Вопрос: ${q}\nОтвет: ${a}`;
+    return a || q;
   }
 
   // ------------------------------------------------------------------ frames
@@ -21585,12 +22009,11 @@ body.dev-mode .turn-log-link { display: inline-block; }
     const nodes = {};
     const edges = {};
     const planned = planByAgent(state);
-    for (const key of FIXED_NODES) nodes[key] = { tone: "idle", bubble: null, caption: "" };
+    for (const key of FIXED_NODES) nodes[key] = { tone: "idle", bubble: null, caption: "", hitl_question: "", hitl_answer: "" };
     for (const id of agents) nodes[agentKey(id)] = { tone: "idle", bubble: null, caption: planned.get(id)?.title || "", planned: planned.has(id) };
-    edges["input>orchestrator"] = { tone: "idle", bubble: null };
+    edges["engineer>orchestrator"] = { tone: "idle", bubble: null };
+    edges["orchestrator>engineer"] = { tone: "idle", bubble: null };
     edges["orchestrator>output"] = { tone: "idle", bubble: null };
-    edges["orchestrator>user"] = { tone: "idle", bubble: null };
-    edges["user>orchestrator"] = { tone: "idle", bubble: null };
     for (const id of agents) {
       edges[`orchestrator>${agentKey(id)}`] = { tone: "idle", bubble: null };
       edges[`${agentKey(id)}>orchestrator`] = { tone: "idle", bubble: null };
@@ -21600,6 +22023,7 @@ body.dev-mode .turn-log-link { display: inline-block; }
       input: { goal: text(state && state.goal), files: filesFromState(state || {}) },
       output: { result: "", prompt: "" },
       active_node: null, active_edge: null, in_flight: null, last_handoff: {}, last_orch_prompt: "",
+      last_hitl: { question: "", answer: "" },
     };
   }
 
@@ -21649,8 +22073,12 @@ body.dev-mode .turn-log-link { display: inline-block; }
     return KIND_LABELS[kind] || kind || "Шаг";
   }
   function snapshot(graph, event, idx) {
+    const kind = text(event.kind);
+    let label = frameLabel(event);
+    if (kind === "hitl.request" && graph.last_hitl.question) label = graph.last_hitl.question;
+    if (kind === "hitl.answered") label = formatHitl(graph.last_hitl.question, graph.last_hitl.answer) || label;
     return {
-      index: idx, label: frameLabel(event), kind: text(event.kind), event_id: event.event_id,
+      index: idx, label, kind, event_id: event.event_id,
       agent_id: eventAgent(event),
       nodes: copy(graph.nodes), edges: copy(graph.edges), input: copy(graph.input), output: copy(graph.output),
       active_node: graph.active_node, active_edge: graph.active_edge,
@@ -21670,13 +22098,13 @@ body.dev-mode .turn-log-link { display: inline-block; }
     if (kind === "case.created") {
       if (Array.isArray(payload.files) && payload.files.length) graph.input.files = payload.files.map(String).filter(Boolean);
       if (!graph.input.goal && statusMessage) graph.input.goal = statusMessage;
-      activateNode(graph, "input", null);
-      setEdge(graph, "input>orchestrator", "active");
+      activateNode(graph, "engineer", null);
+      setEdge(graph, "engineer>orchestrator", "active");
       return;
     }
     if (kind === "orchestrator.status" || kind === "orchestrator.decision") {
-      if (graph.nodes.input.tone === "active") markDone(graph, "input");
-      if (graph.edges["input>orchestrator"].tone === "active") setEdge(graph, "input>orchestrator", "done");
+      if (graph.nodes.engineer.tone === "active") markDone(graph, "engineer");
+      if (graph.edges["engineer>orchestrator"].tone === "active") setEdge(graph, "engineer>orchestrator", "done");
       const flying = graph.in_flight;
       if (flying && graph.edges[`${flying}>orchestrator`]?.tone === "active") setEdge(graph, `${flying}>orchestrator`, "done");
       graph.last_orch_prompt = statusMessage || graph.last_orch_prompt || "";
@@ -21729,18 +22157,32 @@ body.dev-mode .turn-log-link { display: inline-block; }
       return;
     }
     if (kind === "hitl.request") {
-      const question = statusMessage || text(payload.question);
-      activateNode(graph, "user", question || null);
+      const question = hitlQuestionText(event);
+      graph.last_hitl = { question, answer: "" };
+      const node = graph.nodes.engineer;
+      node.hitl_question = question;
+      node.hitl_answer = "";
+      activateNode(graph, "engineer", question || null);
+      node.tone = "waiting";
       graph.nodes.orchestrator.tone = "waiting";
       graph.nodes.orchestrator.bubble = null;
-      setEdge(graph, "orchestrator>user", "active", question || null);
+      setEdge(graph, "orchestrator>engineer", "active", question || null);
+      graph.active_node = "engineer";
       return;
     }
     if (kind === "hitl.answered") {
-      markDone(graph, "user");
-      setEdge(graph, "orchestrator>user", "done");
-      setEdge(graph, "user>orchestrator", "active", statusMessage || null);
-      activateNode(graph, "orchestrator", statusMessage || null);
+      const question = graph.last_hitl.question || text(payload.question);
+      const answer = hitlAnswerText(event);
+      graph.last_hitl = { question, answer };
+      const node = graph.nodes.engineer;
+      node.hitl_question = question;
+      node.hitl_answer = answer;
+      const both = formatHitl(question, answer);
+      activateNode(graph, "engineer", both || answer || null);
+      setEdge(graph, "orchestrator>engineer", "done");
+      setEdge(graph, "engineer>orchestrator", "active", answer || null);
+      graph.nodes.orchestrator.tone = "pending";
+      graph.nodes.orchestrator.bubble = null;
       return;
     }
     if (kind === "case.finished") {
@@ -21797,8 +22239,8 @@ body.dev-mode .turn-log-link { display: inline-block; }
     agentIds = collectAgents(rows);
     const graph = blankGraph(state || {}, agentIds);
     if (!rows.length) {
-      activateNode(graph, "input", null);
-      return [{ ...snapshot(graph, { kind: "case.created" }, 0), label: START_LABEL, active_node: "input", active_edge: null }];
+      activateNode(graph, "engineer", null);
+      return [{ ...snapshot(graph, { kind: "case.created" }, 0), label: START_LABEL, active_node: "engineer", active_edge: null }];
     }
     return rows.map((event, idx) => { applyEvent(graph, event); return snapshot(graph, event, idx); });
   }
@@ -21820,26 +22262,146 @@ body.dev-mode .turn-log-link { display: inline-block; }
   }
 
   // ------------------------------------------------------------------ layout
-  const NODE_W = 196;
+  function clamp(n, lo, hi) { return Math.max(lo, Math.min(hi, n)); }
+  function isCompact() {
+    const w = stage.clientWidth || 900;
+    const h = stage.clientHeight || 400;
+    return w < 700 || h < 360;
+  }
   function layoutCenters() {
-    const centers = { user: { x: 50, y: 13 }, input: { x: 13, y: 50 }, orchestrator: { x: 50, y: 50 }, output: { x: 87, y: 50 } };
+    const compact = isCompact();
+    const stageW = Math.max(stage.clientWidth || 900, 1);
+    const stageH = Math.max(stage.clientHeight || 400, 1);
     const n = agentIds.length;
-    const stageW = stage.clientWidth || 900;
-    // Agents sit on the bottom row; shrink the cards when the stage cannot fit them side by side.
-    let nodeW = NODE_W;
-    if (n > 1) nodeW = Math.max(132, Math.min(NODE_W, (0.94 * stageW) / n - 12));
-    nodesEl.style.setProperty("--node-w", `${Math.round(nodeW)}px`);
-    const minGap = ((nodeW + 12) / stageW) * 100;
-    const spacing = n <= 1 ? 0 : Math.max(minGap, Math.min(26, 76 / (n - 1)));
-    const edge = (nodeW / 2 / stageW) * 100 + 1;
+    const short = stageH < 500;
+    const roomy = !compact && stageW >= 920;
+    root.classList.toggle("is-compact", compact);
+    root.classList.toggle("is-roomy", roomy && !short);
+
+    const padX = Math.max(14, Math.round(stageW * 0.022));
+    const gap = Math.max(12, Math.round(stageW * 0.014));
+    const agentMin = compact ? 148 : 176;
+    const agentMax = Math.round(clamp(stageW * 0.24, 216, 300));
+    let agentW = 216;
+    if (n > 0) {
+      const agentFit = Math.floor((stageW - 2 * padX - Math.max(n - 1, 0) * gap) / n);
+      agentW = clamp(agentFit, agentMin, agentMax);
+    }
+    const hubMin = compact ? 176 : 196;
+    const hubMax = Math.round(clamp(stageW * 0.26, 220, 320));
+    const hubFit = Math.floor((stageW - 2 * padX - 2 * Math.max(gap, 20)) / 3.15);
+    let hubW = clamp(hubFit, hubMin, hubMax);
+    let orchW = clamp(Math.round(hubW * 1.08), hubW, Math.min(hubMax + 28, 340));
+    while (padX + hubW + gap > stageW / 2 - orchW / 2 - 4 && hubW > hubMin) {
+      hubW -= 4;
+      orchW = clamp(Math.round(hubW * 1.08), hubW, Math.min(hubMax + 28, 340));
+    }
+
+    const capLines = compact ? 1 : (roomy && !short ? 4 : 3);
+    const talkLines = compact ? 3 : (roomy && !short ? 6 : 5);
+    nodesEl.style.setProperty("--node-w", `${Math.round(agentW)}px`);
+    nodesEl.style.setProperty("--hub-w", `${Math.round(hubW)}px`);
+    nodesEl.style.setProperty("--orch-w", `${Math.round(orchW)}px`);
+    nodesEl.style.setProperty("--node-typo", roomy ? "1.05" : compact ? "0.96" : "1");
+    nodesEl.style.setProperty("--cap-lines", String(capLines));
+    nodesEl.style.setProperty("--talk-lines", String(talkLines));
+
+    const pctX = (px) => (px / stageW) * 100;
+    const pctY = (px) => (px / stageH) * 100;
+    // Hub row uses the top band (HITL no longer sits there). Agents stay on the bottom
+    // so the bezier handoffs have a clear lane between the two rows.
+    const estAgentH = (compact ? 88 : 128) + capLines * 16;
+    const estHubH = (compact ? 120 : 168) + (roomy ? 24 : 0);
+    const padY = Math.max(16, Math.round(stageH * 0.04));
+    const hubY = clamp(pctY(padY + estHubH / 2), 18, compact ? 34 : 32);
+    const agentY = clamp(pctY(stageH - padY - estAgentH / 2), compact ? 70 : 74, 90);
+    const centers = {
+      engineer: { x: pctX(padX + hubW / 2), y: hubY },
+      orchestrator: { x: 50, y: hubY },
+      output: { x: 100 - pctX(padX + hubW / 2), y: hubY },
+    };
+    const spacing = n <= 1 ? 0 : pctX(agentW + gap);
+    const agentEdge = pctX(agentW / 2) + 0.5;
     agentIds.forEach((id, i) => {
-      const x = 50 + (i - (n - 1) / 2) * spacing;
-      centers[agentKey(id)] = { x: Math.max(edge, Math.min(100 - edge, x)), y: 87 };
+      const x = n <= 1 ? 50 : 50 + (i - (n - 1) / 2) * spacing;
+      centers[agentKey(id)] = { x: clamp(x, agentEdge, 100 - agentEdge), y: agentY };
     });
-    // Side nodes keep clear of the stage border as well.
-    centers.input.x = Math.max(edge, 13);
-    centers.output.x = Math.min(100 - edge, 87);
     return centers;
+  }
+
+  function nodeBox(el, sr) {
+    const b = el.getBoundingClientRect();
+    return { x: b.left - sr.left, y: b.top - sr.top, w: b.width, h: b.height };
+  }
+  function boxesOverlap(a, b) {
+    return a.x < b.x + b.w && a.x + a.w > b.x && a.y < b.y + b.h && a.y + a.h > b.y;
+  }
+  function placeNode(el, box, sr) {
+    el.style.left = `${((box.x + box.w / 2) / sr.width) * 100}%`;
+    el.style.top = `${((box.y + box.h / 2) / sr.height) * 100}%`;
+  }
+  /** Two-row layout: lift the hub band so arrows between orchestrator and agents stay visible. */
+  function uncollide() {
+    const sr = stage.getBoundingClientRect();
+    if (sr.width < 8 || sr.height < 8) return;
+    const nodes = Array.from(nodesEl.querySelectorAll(".schema-node"));
+    const agents = nodes.filter((el) => String(el.dataset.node).startsWith("agent:"));
+    const blockers = nodes.filter((el) => ["engineer", "output", "orchestrator"].includes(el.dataset.node));
+    const pad = 8;
+    const lane = isCompact() ? 36 : 56;
+
+    const clampBox = (el) => {
+      const box = nodeBox(el, sr);
+      box.x = Math.max(0, Math.min(sr.width - box.w, box.x));
+      box.y = Math.max(0, Math.min(sr.height - box.h, box.y));
+      placeNode(el, box, sr);
+    };
+
+    if (agents.length && blockers.length) {
+      let hubTop = sr.height;
+      let hubBottom = 0;
+      for (const el of blockers) {
+        const b = nodeBox(el, sr);
+        hubTop = Math.min(hubTop, b.y);
+        hubBottom = Math.max(hubBottom, b.y + b.h);
+      }
+      let agentTop = sr.height;
+      for (const el of agents) {
+        const a = nodeBox(el, sr);
+        agentTop = Math.min(agentTop, a.y);
+      }
+      const lift = hubBottom + lane - agentTop;
+      if (lift > 0) {
+        const shift = Math.min(lift, Math.max(0, hubTop - pad));
+        if (shift > 0) {
+          for (const el of blockers) {
+            const b = nodeBox(el, sr);
+            b.y -= shift;
+            placeNode(el, b, sr);
+          }
+        }
+      }
+    }
+
+    for (const agentEl of agents) {
+      for (const blockEl of blockers) {
+        const A = nodeBox(agentEl, sr);
+        const B = nodeBox(blockEl, sr);
+        if (!boxesOverlap(A, B)) continue;
+        const up = A.y - lane - B.h;
+        if (up >= pad) {
+          B.y = up;
+          placeNode(blockEl, B, sr);
+          continue;
+        }
+        const down = B.y + B.h + lane;
+        if (down + A.h <= sr.height - pad) {
+          A.y = down;
+          placeNode(agentEl, A, sr);
+        }
+      }
+    }
+    for (const el of nodes) clampBox(el);
   }
 
   function measuredBoxes() {
@@ -21861,10 +22423,8 @@ body.dev-mode .turn-log-link { display: inline-block; }
 
   function edgeEnds(id) {
     const [a, b] = id.split(">");
-    if (a === "input") return [a, "right", b, "left"];
+    if (a === "engineer") return [a, "right", b, "left"];
     if (b === "output") return [a, "right", b, "left"];
-    if (b === "user") return [a, "top", b, "bottom"];
-    if (a === "user") return [a, "bottom", b, "top"];
     if (a === "orchestrator") return [a, "bottom", b, "top"];
     return [a, "top", b, "bottom"];
   }
@@ -21898,13 +22458,13 @@ body.dev-mode .turn-log-link { display: inline-block; }
 
   /** Physical wires: one per pair; the logical return edge decides direction/tone when it is live. */
   function drawnEdges() {
-    const ids = ["input>orchestrator", "orchestrator>output", "orchestrator>user"];
+    const ids = ["engineer>orchestrator", "orchestrator>output"];
     for (const id of agentIds) ids.push(`orchestrator>${agentKey(id)}`);
     return ids;
   }
   function backOf(id) {
     const [a, b] = id.split(">");
-    return b === "output" || a === "input" ? null : `${b}>${a}`;
+    return b === "output" ? null : `${b}>${a}`;
   }
   const live = (t) => t === "active" || t === "error";
   function pairVisual(id, edges, activeEdge) {
@@ -21930,13 +22490,27 @@ body.dev-mode .turn-log-link { display: inline-block; }
     return svg;
   }
 
+  function syncNodeChrome(el) {
+    const meta = nodeMeta(el.dataset.node);
+    const av = el.querySelector(".avatar");
+    const kicker = el.querySelector(".schema-node-kicker");
+    const title = el.querySelector(".schema-node-title");
+    if (kicker) kicker.textContent = meta.kicker;
+    if (title) title.textContent = meta.title;
+    const hint = text(meta.hint);
+    el.dataset.hint = hint;
+    if (av && !av.querySelector("svg")) {
+      if (meta.icon) { av.textContent = ""; av.append(iconUse(meta.icon)); }
+      else av.textContent = meta.initials || "·";
+    }
+  }
+
   function ensureNodes() {
     const wanted = [...FIXED_NODES, ...agentIds.map(agentKey)];
     const existing = new Set(Array.from(nodesEl.querySelectorAll(".schema-node"), (el) => el.dataset.node));
     for (const el of nodesEl.querySelectorAll(".schema-node")) if (!wanted.includes(el.dataset.node)) el.remove();
     for (const key of wanted) {
       if (existing.has(key)) continue;
-      const meta = nodeMeta(key);
       const node = document.createElement("article");
       node.className = "schema-node is-idle";
       node.dataset.node = key;
@@ -21945,15 +22519,11 @@ body.dev-mode .turn-log-link { display: inline-block; }
       head.className = "schema-node-head";
       const av = document.createElement("span");
       av.className = "avatar";
-      if (meta.icon) av.append(iconUse(meta.icon)); else av.textContent = meta.initials || "·";
       const copyEl = document.createElement("div");
       const kicker = document.createElement("div");
       kicker.className = "schema-node-kicker";
-      kicker.textContent = meta.kicker;
       const title = document.createElement("div");
       title.className = "schema-node-title";
-      title.textContent = meta.title;
-      if (meta.hint) title.title = meta.hint;
       copyEl.append(kicker, title);
       const status = document.createElement("span");
       status.className = "status-pill schema-node-status";
@@ -21964,15 +22534,19 @@ body.dev-mode .turn-log-link { display: inline-block; }
       files.className = "schema-node-files";
       files.hidden = true;
       node.append(head, caption, files);
-      node.addEventListener("click", (ev) => { if (!ev.target.closest("a")) togglePeek(node); });
+      node.addEventListener("click", (ev) => {
+        if (ev.target.closest("a") || !node.classList.contains("is-peekable")) return;
+        togglePeek(node);
+      });
       node.addEventListener("keydown", (ev) => { if (ev.key === "Enter" || ev.key === " ") { ev.preventDefault(); togglePeek(node); } });
       nodesEl.append(node);
     }
+    for (const el of nodesEl.querySelectorAll(".schema-node")) syncNodeChrome(el);
     // markers once
     if (!edgesEl.querySelector("defs")) {
       const defs = svgEl("defs");
       for (const [id, color] of [["schemaArrowActive", "#00B8F0"], ["schemaArrowDone", "#0033A0"], ["schemaArrowError", "#F90D4B"]]) {
-        const m = svgEl("marker", { id, viewBox: "0 0 10 10", refX: "8", refY: "5", markerWidth: "7", markerHeight: "7", markerUnits: "userSpaceOnUse", orient: "auto" });
+        const m = svgEl("marker", { id, viewBox: "0 0 10 10", refX: "10", refY: "5", markerWidth: "14", markerHeight: "14", markerUnits: "userSpaceOnUse", orient: "auto" });
         m.append(svgEl("path", { d: "M 0 1 L 10 5 L 0 9 Z", fill: color }));
         defs.append(m);
       }
@@ -22030,43 +22604,101 @@ body.dev-mode .turn-log-link { display: inline-block; }
   }
 
   function paintNodes(frame) {
+    layoutCenters();
+    applyCenters();
     for (const el of nodesEl.querySelectorAll(".schema-node")) {
       const key = el.dataset.node;
       const spec = frame.nodes[key] || { tone: "idle" };
       const tone = spec.tone || "idle";
       el.className = `schema-node is-${tone === "error" ? "failed" : tone}`;
+      const q0 = text(spec.hitl_question);
+      const a0 = text(spec.hitl_answer);
+      el.classList.toggle("is-dialogue", Boolean((q0 && a0) || ((tone === "waiting" || tone === "active") && (q0 || a0))));
       const status = el.querySelector(".schema-node-status");
-      const label = tone === "idle" && spec.planned ? "В плане" : statusLabel(key, tone);
-      status.textContent = label;
-      status.hidden = !label;
-      status.dataset.tone = tone === "error" ? "failed" : tone === "active" || tone === "pending" ? "running" : tone === "waiting" ? "waiting" : tone === "done" ? "done" : "";
+      const label = tone === "idle" && spec.planned ? "В плане" : statusLabel(key, tone, spec);
+      if (status) {
+        status.textContent = label;
+        status.hidden = !label;
+        status.dataset.tone = tone === "error" ? "failed" : tone === "active" || tone === "pending" ? "running" : tone === "waiting" ? "waiting" : tone === "done" ? "done" : "";
+      }
       const caption = el.querySelector(".schema-node-caption");
       const files = el.querySelector(".schema-node-files");
       files.innerHTML = "";
       files.hidden = true;
-      if (key === "input") {
-        caption.textContent = frame.input?.goal || "Нет описания задачи";
-        const cards = prioritizeInputCards(inputCards.length ? inputCards : (frame.input?.files || []).map((f) => ({ filename: f })));
-        if (cards.length) { files.hidden = false; for (const c of cards.slice(0, 4)) files.append(fileChip(c)); }
+      const compact = isCompact();
+      root.classList.toggle("is-compact", compact);
+      syncNodeChrome(el);
+      if (key === "engineer") {
+        const q = q0;
+        const a = a0;
+        if (q && a) {
+          caption.textContent = formatHitl(q, a);
+        } else if ((tone === "waiting" || tone === "active") && (q || a)) {
+          caption.textContent = formatHitl(q, a);
+        } else {
+          caption.textContent = frame.input?.goal || "Нет описания задачи";
+          const cards = prioritizeInputCards(inputCards.length ? inputCards : (frame.input?.files || []).map((f) => ({ filename: f })));
+          if (cards.length && !compact) { files.hidden = false; for (const c of cards.slice(0, 2)) files.append(fileChip(c)); }
+        }
       } else if (key === "output") {
         caption.textContent = frame.output?.result || (complete ? "Нет текста итога" : "Итог появится, когда оркестратор завершит задачу");
-        if (complete && deliverableCards.length && ["active", "done", "error"].includes(tone)) {
+        if (!compact && complete && deliverableCards.length && ["active", "done", "error"].includes(tone)) {
           files.hidden = false;
-          for (const c of deliverableCards.slice(0, 6)) files.append(fileChip(c));
+          for (const c of deliverableCards.slice(0, 3)) files.append(fileChip(c));
         }
       } else {
         const c = text(spec.caption || spec.bubble);
-        caption.textContent = c;
-        caption.hidden = !c;
+        const hint = text(el.dataset.hint);
+        caption.textContent = c || hint;
+        caption.classList.toggle("is-hint", Boolean(hint && !c));
       }
       caption.hidden = !text(caption.textContent);
-      el.classList.toggle("is-peekable", Boolean(text(caption.textContent)) || !files.hidden);
       el.dataset.full = text(caption.textContent);
+      el.classList.toggle("is-peekable", files && !files.hidden);
     }
+  }
+
+  function overflows(el) {
+    if (!el || el.hidden) return false;
+    return el.scrollHeight > el.clientHeight + 1 || el.scrollWidth > el.clientWidth + 1;
+  }
+
+  function setTruncHint(el, full) {
+    if (!el) return false;
+    const clip = overflows(el);
+    el.classList.toggle("is-truncated", clip);
+    const shown = text(full);
+    if (clip && shown) el.setAttribute("title", shown);
+    else el.removeAttribute("title");
+    return clip;
+  }
+
+  function markOverflow() {
+    for (const el of nodesEl.querySelectorAll(".schema-node")) {
+      const caption = el.querySelector(".schema-node-caption");
+      const files = el.querySelector(".schema-node-files");
+      const title = el.querySelector(".schema-node-title");
+      const status = el.querySelector(".schema-node-status");
+      const hint = text(el.dataset.hint);
+      const clip = setTruncHint(caption, el.dataset.full);
+      const hasFiles = Boolean(files && !files.hidden);
+      el.classList.toggle("is-peekable", clip || hasFiles || (Boolean(hint) && !text(el.dataset.full)));
+      if (status && !status.hidden) setTruncHint(status, status.textContent);
+      if (title) {
+        const titleClip = setTruncHint(title, title.textContent);
+        if (!titleClip && hint) title.setAttribute("title", hint);
+      }
+    }
+    for (const slip of stage.querySelectorAll(".schema-slip")) {
+      const clip = setTruncHint(slip, slip.dataset.full);
+      slip.classList.toggle("is-peekable", clip);
+    }
+    if (stepEl) setTruncHint(stepEl, stepEl.textContent);
   }
 
   function paintEdges(frame) {
     applyCenters();
+    uncollide();
     const { boxes, w, h } = measuredBoxes();
     if (!w || !h) return;
     edgesEl.setAttribute("viewBox", `0 0 ${w} ${h}`);
@@ -22099,633 +22731,9 @@ body.dev-mode .turn-log-link { display: inline-block; }
         slip.style.top = `${(geo.mid.y / h) * 100}%`;
         const full = text(vis.bubble);
         slip.dataset.full = full;
-        slip.textContent = full.length > 64 ? `${full.slice(0, 63).trimEnd()}…` : full;
-        slip.title = full;
-        slip.addEventListener("click", (ev) => { ev.stopPropagation(); togglePeek(slip); });
+        slip.textContent = full;
+        slip.addEventListener("click", (ev) => {
+          ev.stopPropagation();
+          if (slip.classList.contains("is-truncated")) togglePeek(slip);
+        });
         stage.append(slip);
-      }
-    }
-  }
-  /** Back edges put the arrow on `marker-start`; auto-start-reverse flips it to point at the receiver. */
-  function fixMarkerOrientation() {
-    for (const m of edgesEl.querySelectorAll("marker")) m.setAttribute("orient", "auto-start-reverse");
-  }
-
-  function paintChrome(frame) {
-    stepEl.textContent = frame?.label || "";
-    stepEl.title = frame?.label || "";
-    countEl.textContent = frames.length ? `шаг ${index + 1} / ${frames.length}` : "шаг 0 / 0";
-    rangeEl.max = String(Math.max(frames.length - 1, 0));
-    rangeEl.value = String(index);
-    rangeEl.disabled = frames.length < 2;
-    rangeEl.style.setProperty("--progress", `${frames.length < 2 ? 0 : (index / Math.max(frames.length - 1, 1)) * 100}%`);
-    prevBtn.disabled = index <= 0;
-    nextBtn.disabled = index >= frames.length - 1;
-    playBtn.disabled = frames.length < 2;
-    root.dataset.complete = complete ? "true" : "false";
-    if (frame?.agent_id || frame?.active_node) {
-      const key = frame.active_node || agentKey(frame.agent_id);
-      const el = nodesEl.querySelector(`[data-node="${cssEscape(key)}"]`);
-      nodesEl.querySelectorAll(".schema-node.is-current").forEach((n) => n.classList.remove("is-current"));
-      if (el) el.classList.add("is-current");
-    }
-  }
-
-  function renderFrame(frame) {
-    if (!root || !frame) return;
-    currentFrame = frame;
-    ensureNodes();
-    fixMarkerOrientation();
-    const key = `${index}|${JSON.stringify(frame.nodes)}|${JSON.stringify(frame.edges)}|${deliverableCards.length}|${inputCards.length}|${complete}`;
-    if (key !== lastKey) {
-      lastKey = key;
-      hidePeek();
-      paintNodes(frame);
-    }
-    paintChrome(frame);
-    if (!root.hidden) requestAnimationFrame(() => paintEdges(frame));
-  }
-
-  // ------------------------------------------------------------------ peek
-  function ensurePeek() {
-    if (peekEl) return peekEl;
-    peekEl = document.createElement("div");
-    peekEl.className = "schema-peek";
-    peekEl.hidden = true;
-    peekEl.setAttribute("role", "tooltip");
-    stage.append(peekEl);
-    return peekEl;
-  }
-  function hidePeek() {
-    if (peekEl) { peekEl.hidden = true; peekEl.innerHTML = ""; }
-    peekFor = null;
-  }
-  function togglePeek(anchorEl) {
-    if (peekFor === anchorEl) { hidePeek(); return; }
-    const full = text(anchorEl.dataset.full);
-    const node = anchorEl.classList.contains("schema-node") ? anchorEl : null;
-    const files = node ? node.querySelector(".schema-node-files") : null;
-    if (!full && (!files || files.hidden)) { hidePeek(); return; }
-    const peek = ensurePeek();
-    peek.innerHTML = "";
-    peek.classList.add("is-pinned");
-    const title = document.createElement("div");
-    title.className = "schema-peek-title";
-    if (node) {
-      const meta = nodeMeta(node.dataset.node);
-      title.textContent = meta.title;
-      const small = document.createElement("small");
-      small.textContent = node.querySelector(".schema-node-status")?.textContent || "";
-      title.append(small);
-    } else {
-      title.textContent = "Сообщение";
-    }
-    const body = document.createElement("div");
-    body.className = "schema-peek-body";
-    body.textContent = full;
-    peek.append(title, body);
-    if (files && !files.hidden) {
-      const list = document.createElement("div");
-      list.className = "schema-peek-files";
-      for (const chip of files.querySelectorAll(".file-chip .name")) {
-        const s = document.createElement("span");
-        s.textContent = chip.textContent;
-        list.append(s);
-      }
-      peek.append(list);
-    }
-    peek.hidden = false;
-    const sr = stage.getBoundingClientRect();
-    const ar = anchorEl.getBoundingClientRect();
-    const cx = ar.left - sr.left + ar.width / 2;
-    const above = ar.top - sr.top > peek.offsetHeight + 20;
-    peek.classList.toggle("is-below", !above);
-    peek.style.left = `${Math.max(160, Math.min(sr.width - 160, cx))}px`;
-    peek.style.top = `${above ? ar.top - sr.top : ar.bottom - sr.top}px`;
-    peekFor = anchorEl;
-  }
-  document.addEventListener("pointerdown", (ev) => {
-    if (!peekEl || peekEl.hidden) return;
-    if (peekEl.contains(ev.target) || (peekFor && peekFor.contains(ev.target))) return;
-    hidePeek();
-  });
-  document.addEventListener("keydown", (ev) => { if (ev.key === "Escape") { hidePeek(); stopPlay(); } });
-
-  // ------------------------------------------------------------------ navigation / playback
-  function showIndex(next, { user = false } = {}) {
-    if (!frames.length) return;
-    index = Math.max(0, Math.min(frames.length - 1, next));
-    if (user) followLive = index === frames.length - 1;
-    renderFrame(frames[index]);
-  }
-  function stopPlay() {
-    if (playTimer) { clearInterval(playTimer); playTimer = 0; }
-    playBtn.setAttribute("aria-pressed", "false");
-    playBtn.innerHTML = "";
-    playBtn.append(iconUse("i-play"));
-    playBtn.setAttribute("aria-label", "Проиграть шаги");
-  }
-  function startPlay() {
-    if (frames.length < 2) return;
-    if (index >= frames.length - 1) showIndex(0, { user: true });
-    playBtn.setAttribute("aria-pressed", "true");
-    playBtn.innerHTML = "";
-    playBtn.append(iconUse("i-pause"));
-    playBtn.setAttribute("aria-label", "Остановить");
-    playTimer = setInterval(() => {
-      if (index >= frames.length - 1) { stopPlay(); followLive = true; return; }
-      showIndex(index + 1, { user: true });
-    }, 1100);
-  }
-
-  function setFeed(data) {
-    const feed = data && typeof data === "object" ? data : {};
-    lastFeed = feed;
-    const state = { ...(feed.state && typeof feed.state === "object" ? feed.state : {}) };
-    if (feed.objective && !state.goal) state.goal = feed.objective;
-    const attached = Array.isArray(feed.attached_files) ? feed.attached_files : [];
-    if (attached.length && (!state.artifacts || !Object.keys(state.artifacts).length)) {
-      state.artifacts = Object.fromEntries(attached.map((name, i) => [`file_${i}`, { filename: name }]));
-    }
-    const cards = Array.isArray(feed.artifacts) ? feed.artifacts.filter((c) => c && typeof c === "object") : [];
-    deliverableCards = Array.isArray(feed.deliverables) && feed.deliverables.length ? feed.deliverables : cards.filter((c) => c.kind === "deliverable");
-    inputCards = cards.filter((c) => c.kind === "input");
-    const events = eventsFromFeed(feed);
-    const prevLen = frames.length;
-    frames = buildSchemaFrames(events, state);
-    complete = Boolean(feed.schema?.complete) || ["done", "failed"].includes(String(feed.status || "")) || ["case.finished", "case.failed"].includes(frames[frames.length - 1]?.kind);
-    if (followLive || index >= frames.length) index = Math.max(frames.length - 1, 0);
-    index = Math.max(0, Math.min(frames.length - 1, index));
-    if (frames.length !== prevLen) stopPlay();
-    renderFrame(frames[index] || frames[0]);
-  }
-
-  function reset() {
-    stopPlay();
-    lastFeed = null;
-    deliverableCards = [];
-    inputCards = [];
-    frames = buildSchemaFrames([], {});
-    index = 0;
-    followLive = true;
-    complete = false;
-    lastKey = "";
-    hidePeek();
-    renderFrame(frames[0]);
-  }
-
-  function setAgents(list) {
-    for (const row of Array.isArray(list) ? list : []) {
-      if (row && row.agent_id) registry.set(String(row.agent_id), { title: String(row.title || row.agent_id), when_to_use: String(row.when_to_use || "") });
-    }
-    lastKey = "";
-    // Rebuild so registry agents appear on the canvas (idle) even before they are called.
-    if (lastFeed) setFeed(lastFeed); else reset();
-  }
-
-  rangeEl.addEventListener("input", () => { stopPlay(); showIndex(Number(rangeEl.value), { user: true }); });
-  prevBtn.addEventListener("click", () => { stopPlay(); showIndex(index - 1, { user: true }); });
-  nextBtn.addEventListener("click", () => { stopPlay(); showIndex(index + 1, { user: true }); });
-  playBtn.addEventListener("click", () => (playTimer ? stopPlay() : startPlay()));
-  root.addEventListener("keydown", (ev) => {
-    if (ev.key === "ArrowLeft") { ev.preventDefault(); stopPlay(); showIndex(index - 1, { user: true }); }
-    else if (ev.key === "ArrowRight") { ev.preventDefault(); stopPlay(); showIndex(index + 1, { user: true }); }
-  });
-  const relayout = () => { if (currentFrame && !root.hidden) requestAnimationFrame(() => paintEdges(currentFrame)); };
-  window.addEventListener("resize", () => { clearTimeout(resizeTimer); resizeTimer = setTimeout(relayout, 60); });
-  if (typeof ResizeObserver !== "undefined") new ResizeObserver(() => { clearTimeout(resizeTimer); resizeTimer = setTimeout(relayout, 40); }).observe(stage);
-  new MutationObserver(() => { if (root.hidden) { hidePeek(); stopPlay(); } else relayout(); }).observe(root, { attributes: true, attributeFilter: ["hidden"] });
-
-  window.MasSchema = { setFeed, reset, setAgents, buildFrames: buildSchemaFrames, showIndex, relayout, START_LABEL, END_LABEL };
-
-  reset();
-})();
-
-===END_FILE===
-===BEGIN_FILE===	mas-agent-kit/mas_agent_kit/__init__.py	2316	utf8
-"""mas_agent_kit — shared core of NOVATEK RE MASter agent services.
-
-    from mas_agent_kit import AgentService, SessionStore, ToolRegistry, ToolError, agent_router
-
-One place for: session storage, the tool registry and error envelope, ``agent_result`` builders,
-HITL helpers (``human_text_problems``, ``ask_engineer`` validation), the Activity client and the
-FastAPI router that every agent service exposes. Domain logic (Excel, SCHEDULE, …) stays in the
-service that owns it.
-
-This is a plain module of the repository, not a pip package: a service makes it importable by adding
-``<repo>/mas-agent-kit`` to ``sys.path`` in its ``app/__init__.py`` (see ``agents-template/demo_agent``).
-Runtime needs: ``fastapi`` and ``filelock`` (``requirements.txt`` next to this folder).
-"""
-
-from .activity import ActivityClient, compact_for_log
-from .agent import AgentService, agent_router, create_agent_app
-from .dataset import dataset_entry, dataset_rows, expected_names, expected_output, is_dataset, upstream_datasets
-from .errors import SessionNotFound, ToolError, error_envelope
-from .hitl import engineer_answers, engineer_request_from_args, hitl_payloads
-from .packet import CasePacket, flatten_artifacts, upstream_agent_data
-from .result import STATUSES, agent_result, engineer_request, in_progress, needs_input, result_text_problems
-from .session import SessionStore
-from .text import human_text_problems, list_preview, options_for_human, parse_jsonish, plural_ru, slug
-from .tools import ToolContext, ToolRegistry, tool_schema
-
-__all__ = [
-    "STATUSES",
-    "ActivityClient",
-    "AgentService",
-    "CasePacket",
-    "SessionNotFound",
-    "SessionStore",
-    "ToolContext",
-    "ToolError",
-    "ToolRegistry",
-    "agent_result",
-    "agent_router",
-    "compact_for_log",
-    "create_agent_app",
-    "dataset_entry",
-    "dataset_rows",
-    "engineer_answers",
-    "engineer_request",
-    "engineer_request_from_args",
-    "error_envelope",
-    "expected_names",
-    "expected_output",
-    "flatten_artifacts",
-    "hitl_payloads",
-    "human_text_problems",
-    "is_dataset",
-    "list_preview",
-    "in_progress",
-    "needs_input",
-    "options_for_human",
-    "parse_jsonish",
-    "plural_ru",
-    "result_text_problems",
-    "slug",
-    "tool_schema",
-    "upstream_agent_data",
-    "upstream_datasets",
-]
-
-===END_FILE===
-===BEGIN_FILE===	mas-agent-kit/mas_agent_kit/activity.py	11340	utf8
-"""HTTP client for MAS Activity (``:8200``) — the only service an agent talks to besides its own tools.
-
-    activity = ActivityClient.from_task(agent_task, agent_id="schedule_builder")
-    state = activity.case_state()                       # GET  /cases/{id}/state → state
-    data, name = activity.download("schedule_source")   # GET  /cases/{id}/artifacts/{artifact_id}
-    activity.progress("Читаю baseline: 14 скважин")    # POST /cases/{id}/events (agent.progress)
-    card = activity.upload("report", "report.xlsx", b"…", mime)   # POST /cases/{id}/artifacts → card
-    activity.finish_task(result)                        # POST /cases/{id}/run  resume source=agent (long jobs)
-
-Event posting never raises: a dead Activity must not break the agent. Standard library only —
-the field service has pip wheels but no extra HTTP stack requirement.
-"""
-
-from __future__ import annotations
-
-import json
-import logging
-import re
-import uuid
-from typing import Any
-from urllib.error import HTTPError, URLError
-from urllib.parse import quote, unquote
-from urllib.request import Request, urlopen
-
-logger = logging.getLogger(__name__)
-
-EVENT_KINDS = ("agent.accepted", "agent.progress", "agent.failed", "trace.tool", "trace.note")
-
-
-def compact_for_log(value: Any, limit: int = 2000, *, _depth: int = 0) -> Any:
-    """JSON-safe, size-bounded copy for the developer log: long strings are cut, long lists and
-    dicts keep their head plus a ``…`` marker, unknown objects become ``str``. Never raises."""
-    if value is None or isinstance(value, (bool, int, float)):
-        return value
-    if isinstance(value, str):
-        return value if len(value) <= limit else value[: limit - 1] + "…"
-    if _depth >= 6:
-        return "…"
-    if isinstance(value, dict):
-        out: dict[str, Any] = {}
-        for i, (key, item) in enumerate(value.items()):
-            if i >= 40:
-                out["…"] = f"+{len(value) - 40} ключей"
-                break
-            out[str(key)] = compact_for_log(item, max(80, limit // 4), _depth=_depth + 1)
-        return out
-    if isinstance(value, (list, tuple, set)):
-        items = list(value)
-        head = [compact_for_log(item, max(80, limit // 4), _depth=_depth + 1) for item in items[:20]]
-        if len(items) > 20:
-            head.append(f"… ещё {len(items) - 20}")
-        return head
-    if isinstance(value, (bytes, bytearray)):
-        return f"<{len(value)} байт>"
-    return compact_for_log(str(value), limit, _depth=_depth)
-
-
-class ActivityClient:
-    def __init__(
-        self,
-        base_url: str,
-        *,
-        agent_id: str,
-        case_id: str = "",
-        task_id: str = "",
-        timeout: float = 15.0,
-        headers: dict[str, str] | None = None,
-    ):
-        self.base_url = str(base_url or "").rstrip("/")
-        self.agent_id = str(agent_id or "")
-        self.case_id = str(case_id or "")
-        self.task_id = str(task_id or "")
-        self.timeout = timeout
-        self.headers = dict(headers or {})
-
-    @classmethod
-    def from_task(cls, task: dict[str, Any], *, agent_id: str, default_base_url: str = "", **kw: Any) -> "ActivityClient":
-        inputs = task.get("inputs") if isinstance(task.get("inputs"), dict) else {}
-        base = str(inputs.get("activity_base_url") or default_base_url or "")
-        return cls(base, agent_id=agent_id, case_id=str(task.get("case_id") or ""), task_id=str(task.get("task_id") or ""), **kw)
-
-    @property
-    def configured(self) -> bool:
-        return bool(self.base_url and self.case_id)
-
-    def _url(self, path: str) -> str:
-        return f"{self.base_url}/cases/{quote(self.case_id, safe='')}{path}"
-
-    def _request(self, method: str, url: str, *, body: bytes | None = None, content_type: str = "", timeout: float | None = None) -> tuple[bytes, dict[str, str]]:
-        headers = {**self.headers}
-        if content_type:
-            headers["Content-Type"] = content_type
-        req = Request(url, data=body, headers=headers, method=method)
-        with urlopen(req, timeout=timeout or self.timeout) as resp:  # noqa: S310 — URL comes from Runtime Config
-            return resp.read(), {k.lower(): v for k, v in resp.headers.items()}
-
-    def _json(self, method: str, path: str, payload: dict[str, Any] | None = None, *, timeout: float | None = None) -> Any:
-        body = json.dumps(payload, ensure_ascii=False).encode("utf-8") if payload is not None else None
-        raw, _ = self._request(method, self._url(path), body=body, content_type="application/json" if body else "", timeout=timeout)
-        return json.loads(raw.decode("utf-8", errors="replace")) if raw else {}
-
-    # -- read -----------------------------------------------------------------------------------
-
-    def case_state(self) -> dict[str, Any]:
-        """Case state (artifact cards, ``agents`` slots, ``hitl``); ``{}`` when Activity is unreachable."""
-        if not self.configured:
-            return {}
-        try:
-            packet = self._json("GET", "/state")
-        except (HTTPError, URLError, OSError, ValueError) as exc:
-            logger.warning("activity state unavailable case_id=%s: %s", self.case_id, exc)
-            return {}
-        state = packet.get("state") if isinstance(packet, dict) else None
-        return state if isinstance(state, dict) else {}
-
-    def download(self, artifact_id: str, *, timeout: float = 60.0) -> tuple[bytes, str]:
-        """Artifact bytes and the filename from ``Content-Disposition`` (may be empty). Raises on HTTP errors."""
-        return self.download_url(self.artifact_url(artifact_id), timeout=timeout)
-
-    def download_url(self, url: str, *, timeout: float = 60.0) -> tuple[bytes, str]:
-        """Same as ``download`` for an explicit URL (e.g. ``inputs.excel_url`` given by the orchestrator)."""
-        raw, headers = self._request("GET", str(url), timeout=timeout)
-        return raw, _disposition_filename(headers.get("content-disposition", ""))
-
-    def artifact_url(self, artifact_id: str) -> str:
-        return self._url(f"/artifacts/{quote(str(artifact_id), safe='')}")
-
-    # -- events ---------------------------------------------------------------------------------
-
-    def event(self, kind: str, message: str, *, status: str = "", payload: dict[str, Any] | None = None) -> bool:
-        """Feed line for the engineer. Never raises; returns whether Activity accepted it."""
-        if not self.configured:
-            return False
-        body: dict[str, Any] = {
-            "kind": kind,
-            "actor": self.agent_id,
-            "agent_id": self.agent_id,
-            "task_id": self.task_id,
-            "status_message": str(message or "")[:400],
-        }
-        if status:
-            body["status"] = status
-        if payload:
-            body["payload"] = payload
-        try:
-            self._json("POST", "/events", body, timeout=8.0)
-            return True
-        except (HTTPError, URLError, OSError, ValueError) as exc:
-            logger.warning("activity event failed case_id=%s kind=%s: %s", self.case_id, kind, exc)
-            return False
-
-    def accepted(self, message: str) -> bool:
-        return self.event("agent.accepted", message)
-
-    def progress(self, message: str, *, status: str = "", payload: dict[str, Any] | None = None) -> bool:
-        return self.event("agent.progress", message, status=status, payload=payload)
-
-    def failed(self, message: str) -> bool:
-        return self.event("agent.failed", message, status="failed")
-
-    # -- developer trace (hidden from the chat, shown in the «Лог» tab) ---------------------------
-
-    def trace(self, title: str, *, level: str = "debug", **detail: Any) -> bool:
-        """Technical note for developers: identifiers, counts, timings are fine here."""
-        payload = {"title": str(title or "")[:200], "level": level, **compact_for_log(detail)}
-        return self.event("trace.note", title, payload=payload)
-
-    def trace_tool(self, tool: str, *, ok: bool, duration_ms: int, call: int, args: dict[str, Any] | None = None,
-                   result: dict[str, Any] | None = None, error: str = "", session_id: str = "") -> bool:
-        """One FastAPI tool call as the LLM made it: arguments, outcome, timing.
-
-        ``call`` (ordinal within the session) keeps consecutive identical calls distinct — Activity
-        de-duplicates a repeated ``status_message`` on the same kind.
-        """
-        outcome = "ok" if ok else f"ошибка {error}".strip()
-        message = f"{tool} → {outcome} · {int(duration_ms)} мс · вызов {int(call)}"
-        payload: dict[str, Any] = {
-            "tool": tool,
-            "ok": bool(ok),
-            "duration_ms": int(duration_ms),
-            "call": int(call),
-            "session_id": session_id,
-            "args": compact_for_log(args or {}),
-            "result": compact_for_log(result or {}, limit=1200),
-        }
-        if error:
-            payload["error"] = error
-        return self.event("trace.tool", message, payload=payload)
-
-    # -- write ----------------------------------------------------------------------------------
-
-    def upload(self, artifact_id: str, filename: str, content: bytes, mime_type: str = "application/octet-stream", *, summary: str = "") -> dict[str, Any]:
-        """Store a binary deliverable in the case; returns the artifact card to put into ``agent_result.artifacts``."""
-        boundary = "----mas-agent-kit-" + uuid.uuid4().hex
-        fields = {"artifact_id": str(artifact_id), "producer": self.agent_id, "summary": summary or ""}
-        parts: list[bytes] = []
-        for key, value in fields.items():
-            parts.append(f"--{boundary}\r\nContent-Disposition: form-data; name=\"{key}\"\r\n\r\n{value}\r\n".encode("utf-8"))
-        safe_name = str(filename or artifact_id).replace('"', "'")
-        parts.append(
-            f"--{boundary}\r\nContent-Disposition: form-data; name=\"file\"; filename=\"{safe_name}\"\r\n"
-            f"Content-Type: {mime_type or 'application/octet-stream'}\r\n\r\n".encode("utf-8")
-        )
-        parts.append(content)
-        parts.append(f"\r\n--{boundary}--\r\n".encode("utf-8"))
-        raw, _ = self._request("POST", self._url("/artifacts"), body=b"".join(parts), content_type=f"multipart/form-data; boundary={boundary}", timeout=120.0)
-        packet = json.loads(raw.decode("utf-8", errors="replace")) if raw else {}
-        card = packet.get("artifact") if isinstance(packet, dict) else None
-        if not isinstance(card, dict):
-            raise ValueError("activity did not return an artifact card")
-        return card
-
-    def finish_task(self, agent_result: dict[str, Any]) -> dict[str, Any]:
-        """Long job done: hand the final ``agent_result`` to the orchestrator (``resume source=agent``)."""
-        payload = {
-            "action": "resume",
-            "source": "agent",
-            "agent_id": self.agent_id,
-            "task_id": str(agent_result.get("task_id") or self.task_id),
-            "agent_result": agent_result,
-        }
-        return self._json("POST", "/run", payload, timeout=30.0)
-
-
-def _disposition_filename(disposition: str) -> str:
-    m = re.search(r"filename\*=UTF-8''([^;]+)", disposition or "")
-    if m:
-        return unquote(m.group(1).strip())
-    m = re.search(r'filename="?([^";]+)"?', disposition or "")
-    return m.group(1).strip() if m else ""
-
-===END_FILE===
-===BEGIN_FILE===	mas-agent-kit/mas_agent_kit/agent.py	11659	utf8
-"""``AgentService`` — the object a new agent implements; ``agent_router`` exposes it over HTTP.
-
-The n8n workflow of an agent (generated from its ``AgentSpec``) talks to the service like this:
-
-    POST /agent-tools/open_session   {agent_task}            → {"ok": true, "session_id", ...brief for the LLM}
-                                                            or {"ok": false, "status", "result": agent_result}
-    POST /agent-tools/{tool}         {session_id, ...args}   → flat tool envelope (ToolRegistry.run)
-    GET  /sessions/{id}/result                               → agent_result fixed by the tools
-    POST /sessions/{id}/close                                → {"ok": true, "closed": bool}
-
-Subclass, set ``agent_id`` / ``store`` / ``tools``, implement ``open_session`` and ``result``:
-
-    class DemoAgent(AgentService):
-        agent_id = "demo_agent"
-        store = SessionStore(prefix="demo")
-        tools = ToolRegistry(store)
-
-        def open_session(self, task):
-            packet = self.packet(task)
-            state = self.store.create({"case_id": packet.case_id, "task_id": packet.task_id, ...})
-            return self.opened(state, inspect={...})
-
-        def result(self, state):
-            return state.get("result") or self.needs_input(state, "Что именно посчитать?")
-"""
-
-from __future__ import annotations
-
-import os
-import time
-from typing import Any
-
-from fastapi import APIRouter, Body, FastAPI, HTTPException, Request
-
-from .activity import ActivityClient
-from .dataset import expected_output
-from .errors import SessionNotFound
-from .hitl import engineer_answers
-from .packet import CasePacket
-from .result import agent_result, needs_input
-from .session import SessionStore
-from .tools import ToolRegistry
-
-#: ``next_step`` the model reads after a tool fixed the session result — who acts next, so it stops.
-RESULT_NEXT_STEP: dict[str, str] = {
-    "needs_input": "Вопрос инженеру уже поставлен этим результатом — оркестратор передаст его инженеру и вернётся с ответом. "
-    "ask_engineer не нужен; больше инструменты не вызывай, заверши ответ одним предложением.",
-    "completed": "Результат зафиксирован. Больше инструменты не вызывай, заверши ответ одним предложением о том, что сделано.",
-    "in_progress": "Работа запущена, результат придёт позже через Activity. Больше инструменты не вызывай, заверши ответ одним предложением.",
-    "failed": "Результат зафиксирован как неудача. Больше инструменты не вызывай, одним предложением опиши, чего не хватило.",
-}
-
-
-class AgentService:
-    agent_id: str = ""
-    store: SessionStore
-    tools: ToolRegistry
-    #: Activity URL when the task does not carry ``inputs.activity_base_url`` (lab: compose env).
-    activity_base_url: str = os.getenv("ACTIVITY_BASE_URL", "")
-
-    # -- to implement ---------------------------------------------------------------------------
-
-    def open_session(self, task: dict[str, Any]) -> dict[str, Any]:
-        raise NotImplementedError
-
-    def result(self, state: dict[str, Any]) -> dict[str, Any]:
-        raise NotImplementedError
-
-    # -- hooks ----------------------------------------------------------------------------------
-
-    def normalize_args(self, tool_name: str, args: dict[str, Any]) -> dict[str, Any]:
-        """Accept transport aliases of your LLM tools before validation (default: as is)."""
-        return args
-
-    def after_tool(self, state: dict[str, Any], tool_name: str, result: dict[str, Any]) -> None:
-        """E.g. post a progress line to Activity for long tools (default: nothing)."""
-
-    # -- helpers --------------------------------------------------------------------------------
-
-    def activity(self, task: dict[str, Any]) -> ActivityClient:
-        return ActivityClient.from_task(task, agent_id=self.agent_id, default_base_url=self.activity_base_url)
-
-    def activity_for_state(self, state: dict[str, Any]) -> ActivityClient:
-        inputs = state.get("inputs") if isinstance(state.get("inputs"), dict) else {}
-        return ActivityClient(
-            str(state.get("activity_base_url") or inputs.get("activity_base_url") or self.activity_base_url),
-            agent_id=self.agent_id,
-            case_id=str(state.get("case_id") or ""),
-            task_id=str(state.get("task_id") or ""),
-        )
-
-    def trace_tool(self, state: dict[str, Any], tool_name: str, args: dict[str, Any], result: dict[str, Any], duration_ms: int) -> None:
-        """Developer log line per tool call (``trace.tool``); the chat never shows it. Override to mute.
-
-        ``call`` is the ordinal of this LLM-driven call in the session (``state["llm_calls"]``, counted by
-        the router) — internal registry runs inside ``open_session`` (inventory, introspection) are not counted.
-        """
-        ok = result.get("ok") is not False
-        self.activity_for_state(state).trace_tool(
-            tool_name,
-            ok=ok,
-            duration_ms=duration_ms,
-            call=int(state.get("llm_calls") or 0) or 1,
-            args=args,
-            result={k: v for k, v in result.items() if k != "ok"},
-            error="" if ok else str(result.get("code") or "error"),
-            session_id=str(state.get("session_id") or ""),
-        )
-
-    def packet(self, task: dict[str, Any]) -> CasePacket:
-        return CasePacket.load(task, self.activity(task))
-
-    def base_state(self, packet: CasePacket) -> dict[str, Any]:
-        """Common session fields; extend with what your tools need (source text, file paths…)."""
-        return {
-            "agent_id": self.agent_id,
-            "case_id": packet.case_id,
-            "task_id": packet.task_id,
-            "objective": packet.objective,
-            "handoff_message": packet.handoff_message,
-            "activity_base_url": packet.activity.base_url if packet.activity else self.activity_base_url,
-            "inputs": packet.inputs,
-            "context": packet.context,
-            "result": None,
-        }
-
-    def opened(self, state: dict[str, Any], **brief: Any) -> dict[str, Any]:

@@ -531,7 +531,7 @@ def test_ready_health_and_static_assets() -> None:
         'class="gate-panel"', "gatePreview", "gateQuestions",
         "inspector", "resultsPanel", "resultsGroups", "inputsPanel", "diffExpander", "Изменения между версиями",
         "renameTaskBtn", "statusDot", "statusPill", "titleText",
-        "NOVATEK RE MASter", "Workspace", "Novatek STC reservoir engineering multi-agent system",
+        "NOVATEK RE MASter", "Задачи", "мультиагентная система гидродинамики НОВАТЭК НТЦ",
         'href="/knowledge"',
         'id="resumeRunBtn"', 'id="closeTaskBtn"', 'id="closeTaskHitlBtn"',
     ):
@@ -543,10 +543,10 @@ def test_ready_health_and_static_assets() -> None:
     ):
         assert gone not in html, gone
     # Cache busting: the HTML must reference the current asset versions.
-    assert "app.js?v=106" in html
-    assert "schema.js?v=32" in html
+    assert "app.js?v=108" in html
+    assert "schema.js?v=45" in html
     assert "log.js?v=1" in html
-    assert "app.css?v=103" in html
+    assert "app.css?v=113" in html
     # Developer mode: the switch and the «Лог» tab (hidden until the switch is on) ship with the page.
     for anchor in ('id="devModeToggle"', "Режим разработчика", 'id="viewLogBtn"', 'id="logView"', 'id="logSteps"', 'id="logDownload"'):
         assert anchor in html, anchor
@@ -574,6 +574,7 @@ def test_ready_health_and_static_assets() -> None:
         'showLoadError(taskId, "Сеть недоступна при загрузке задачи.")', "li._masTurn = turn", "at_abs", "lane_dir",
         "human_gate ?? data.gate", "duration_label",
         "Ответ принят, ждём оркестратор", "xlsm", "applyResumeWaitHint",
+        "hintIfTruncated", "исходный файл расписания",
     ):
         assert needle in js_text, needle
     # The header shows a human title + status pill, never `task_id: … · Готово (done)`.
@@ -591,6 +592,11 @@ def test_ready_health_and_static_assets() -> None:
         "pairVisual", "schema-slip", "schema-peek", "schemaArrowActive", "schemaArrowDone", "schemaArrowError",
         "auto-start-reverse", "deliverableCards", "download_path", "startPlay", "Постановка задачи",
         "Задача завершена. Загрузите результаты работы.", "Ожидает задачу", "prioritizeInputCards",
+        "function markOverflow", "function uncollide", 'markerWidth: "14"', "}, 4000);",
+        "engineer>orchestrator", "function formatHitl", "Инженер",
+        "--orch-w", "is-roomy", "agentFit", "w < 700 || h < 360",
+        "function syncNodeChrome", "el.dataset.hint", "node.dataset.hint", "is-hint",
+        "const lane = isCompact() ? 36 : 56",
     ):
         assert needle in schema_js, needle
     for agent in ("excel_extractor", "schedule_builder", "calculation_agent"):
@@ -602,18 +608,28 @@ def test_ready_health_and_static_assets() -> None:
         ".flash", ".dropzone", ".rail-item", ".turn", ".day-sep", ".file-chip", ".gate-panel", ".composer-box",
         ".inspector", ".result-group", ".result-file", ".schema-node", ".schema-edge", ".schema-slip", ".schema-peek",
         "@media (max-width: 1180px)", "@media (max-width: 860px)", "prefers-reduced-motion",
+        "-webkit-line-clamp: 4",
+        ".schema-view.is-compact .schema-node-kicker",
+        ".schema-view.is-roomy",
+        "--orch-w:",
+        "--cap-lines:",
+        ".schema-node-caption.is-hint",
     ):
         assert needle in css, needle
     js = client.get("/static/app.js")
     assert js.status_code == 200
     assert "duration_label" in js.text
+    assert "baseline SCHEDULE" not in html
+    assert "Workspace" not in html
+    assert "baseline" not in js_text
+    assert "baseline" not in schema_js
 
     knowledge = client.get("/knowledge")
     assert knowledge.status_code == 200
     for anchor in ("agentTabs", "agentSelect", "kbSearch", "addBtn", "ingestBtn", "cardList", "createPanel", 'href="/"'):
         assert anchor in knowledge.text, anchor
-    assert "knowledge.css?v=100" in knowledge.text
-    assert "knowledge.js?v=100" in knowledge.text
+    assert "knowledge.css?v=101" in knowledge.text
+    assert "knowledge.js?v=103" in knowledge.text
 
     # Phase 4.4 (O21): the Agents page is the registry UI over GET/PUT /agents; no agent is hardcoded in it.
     registry = client.get("/registry")

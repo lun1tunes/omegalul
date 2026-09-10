@@ -312,6 +312,10 @@ def test_knowledge_page_assets() -> None:
     js = client.get("/static/knowledge.js")
     assert js.status_code == 200
     assert "persistPendingBeforeIngest" in js.text
+    assert "Ключевые слова SCHEDULE" in js.text
+    assert "Карточка сохранена, версия" in js.text
+    for banned in ("allowlisted", "JSON corpus", "tag-ветки", "Keywords (теги)", "Task patterns", "В corpus нет"):
+        assert banned not in js.text, banned
     assert "Загрузить в RAG" in client.get("/knowledge").text
     assert client.get("/static/knowledge.css").status_code == 200
     index = client.get("/")

@@ -32,7 +32,7 @@ from app.state_shape import (
     sanitize_plan,
 )
 from app.orchestrator import OrchestratorError, invoke_orchestrator
-from app.schema_view import FINISHED_RESULT_TEXT, build_schema_model
+from app.schema_view import FINISHED_RESULT_TEXT, _format_hitl, _hitl_answer, _hitl_question, build_schema_model
 from app.settings import UNCONFIGURED_N8N, get_settings
 from app.task_binaries import load_task_binaries, save_task_binaries
 
@@ -253,7 +253,7 @@ def collapse_duplicate_events(events: list[dict[str, Any]] | None) -> list[dict[
     return out
 
 
-def event_to_turn(event: dict[str, Any]) -> dict[str, Any]:
+def event_to_turn(event: dict[str, Any], *, previous_question: str = "") -> dict[str, Any]:
     kind = str(event.get("kind") or "")
     payload = event.get("payload") if isinstance(event.get("payload"), dict) else {}
     handoff = event.get("handoff_message")
@@ -276,6 +276,10 @@ def event_to_turn(event: dict[str, Any]) -> dict[str, Any]:
         brief = summary
     else:
         display_message = _event_display_message(kind, event)
+        if kind == "hitl.answered":
+            answer = _hitl_answer(event, payload)
+            if answer:
+                display_message = _format_hitl(previous_question, answer) if previous_question else answer
         summary = display_message
         text = display_message
         brief = display_message
@@ -325,6 +329,18 @@ def _chips(event: dict[str, Any]) -> list[dict[str, Any]]:
     if event.get("kind"):
         chips.append({"id": "kind", "label": "Событие", "value": event["kind"]})
     return chips
+
+
+def turns_from_events(events: list[dict[str, Any]] | None) -> list[dict[str, Any]]:
+    last_q = ""
+    turns: list[dict[str, Any]] = []
+    for event in events or []:
+        kind = str(event.get("kind") or "")
+        payload = event.get("payload") if isinstance(event.get("payload"), dict) else {}
+        if kind == "hitl.request":
+            last_q = _hitl_question(event, payload)
+        turns.append(event_to_turn(event, previous_question=last_q if kind == "hitl.answered" else ""))
+    return turns
 
 
 def _events_for_rail(row: dict[str, Any]) -> list[dict[str, Any]] | None:
@@ -439,7 +455,7 @@ def _feed_from_row(
     after_seq: int = 0,
 ) -> dict[str, Any]:
     state = row["state"] if isinstance(row.get("state"), dict) else {}
-    turns = [event_to_turn(event) for event in events]
+    turns = turns_from_events(events)
     pending = state.get("hitl") if isinstance(state.get("hitl"), dict) else {}
     questions = pending.get("questions") if isinstance(pending.get("questions"), list) else []
     gate = None
@@ -745,7 +761,7 @@ def get_events(case_id: str, after_seq: int = Query(default=0, ge=0)) -> dict[st
     if snap["case"] is None:
         raise HTTPException(status_code=404, detail="case not found")
     events = collapse_duplicate_events(snap["events"])
-    return {"case_id": case_id, "events": events, "activity": [event_to_turn(event) for event in events]}
+    return {"case_id": case_id, "events": events, "activity": turns_from_events(events)}
 
 
 @router.get("/cases/{case_id}/errors")
@@ -1239,7 +1255,14 @@ async def stream_case(case_id: str, request: Request) -> StreamingResponse:
                 for event in emit:
                     seen_ids.add(int(event["event_id"]))
                     record = log_by_id.get(int(event["event_id"]))
-                    yield f"data: {json.dumps({'type': 'turn', 'turn': event_to_turn(event), 'event': event, 'log': record, **meta}, default=str)}\n\n"
+                    last_q = ""
+                    for prior in collapsed:
+                        if prior.get("event_id") is not None and int(prior["event_id"]) >= int(event["event_id"]):
+                            break
+                        if str(prior.get("kind") or "") == "hitl.request":
+                            p = prior.get("payload") if isinstance(prior.get("payload"), dict) else {}
+                            last_q = _hitl_question(prior, p)
+                    yield f"data: {json.dumps({'type': 'turn', 'turn': event_to_turn(event, previous_question=last_q if str(event.get('kind') or '') == 'hitl.answered' else ''), 'event': event, 'log': record, **meta}, default=str)}\n\n"
                 if not emit and updated != last_updated:
                     yield f"data: {json.dumps({'type': 'meta', **meta}, default=str)}\n\n"
                 last_updated = updated

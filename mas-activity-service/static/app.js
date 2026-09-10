@@ -105,9 +105,7 @@
   }
 
   // ------------------------------------------------------------------ labels
-  const LIVE_LABELS = { idle: "ожидание", connecting: "подключение", live: "онлайн", reconnecting: "переподключение" };
-
-  /** Raw status code → short RU label; the code itself stays in a title attribute for debugging. */
+  /** Raw status code → short RU label. Machine codes stay out of tooltips (dev-mode pill title only). */
   const STATUS_LABELS = {
     DELEGATED: "Передано",
     TASK_STARTED: "Создана",
@@ -387,9 +385,18 @@
   }
 
   // ------------------------------------------------------------------ header / status
+  function hintIfTruncated(el, full) {
+    if (!el) return;
+    const shown = String(full || "").trim();
+    requestAnimationFrame(() => {
+      const clip = el.scrollWidth > el.clientWidth + 1 || el.scrollHeight > el.clientHeight + 1;
+      if (clip && shown) el.setAttribute("title", shown);
+      else el.removeAttribute("title");
+    });
+  }
+
   function setLive(state) {
     streamState = state || "idle";
-    if (title) title.title = LIVE_LABELS[streamState] || streamState;
   }
 
   function setHeaderStatus(status, awaiting) {
@@ -409,7 +416,8 @@
       statusPill.hidden = false;
       statusPill.dataset.tone = tone;
       statusPill.textContent = awaiting ? "Ждёт вашего ответа" : statusLabel(st);
-      statusPill.title = st;
+      if (document.body.classList.contains("dev-mode")) statusPill.title = st;
+      else statusPill.removeAttribute("title");
     } else {
       statusPill.hidden = true;
     }
@@ -446,7 +454,8 @@
       return;
     }
     if (!renamingTask) titleText.textContent = taskDisplayTitle(taskId);
-    title.title = currentTaskName && currentTaskName !== taskId ? `${currentTaskName}\n${taskId}` : taskId;
+    title.removeAttribute("title");
+    hintIfTruncated(titleText, titleText.textContent);
     renameTaskBtn.hidden = renamingTask;
     setHeaderStatus(status, awaiting);
   }
@@ -703,7 +712,7 @@
     const prev = scheduleRoot.value;
     if (files.length < 2) {
       scheduleRootField.hidden = true;
-      scheduleRoot.innerHTML = '<option value="">Какой .data / .INC главный?</option>';
+      scheduleRoot.innerHTML = '<option value="">Какой файл расписания главный?</option>';
       scheduleRoot.value = "";
       return;
     }
@@ -711,7 +720,7 @@
     scheduleRoot.innerHTML = "";
     const placeholder = document.createElement("option");
     placeholder.value = "";
-    placeholder.textContent = "Какой .data / .INC главный?";
+    placeholder.textContent = "Какой файл расписания главный?";
     scheduleRoot.append(placeholder);
     for (const entry of files) {
       const opt = document.createElement("option");
@@ -1005,13 +1014,13 @@
   }
   function roleLabel(role) {
     return ({
-      schedule_out: "итоговый schedule",
-      diff: "изменения относительно исходного",
-      schedule_source: "исходный schedule",
+      schedule_out: "итоговый файл расписания",
+      diff: "изменения относительно исходного файла",
+      schedule_source: "исходный файл расписания",
       excel: "книга Excel",
       trajectory: "траектория",
       surface: "поверхность",
-      include: "INCLUDE",
+      include: "подключаемый файл INCLUDE",
     })[String(role || "")] || "";
   }
 
@@ -1307,7 +1316,10 @@
     if (isError) body.classList.add("turn-error");
     // The speaker is already named in the header — drop reporter prefixes like «Пользователь ответил:».
     const stripReporter = (s) => (/^hitl\.answered$/i.test(eventKind) ? String(s || "").replace(/^(Пользователь|Инженер)\s+ответил[а]?:\s*/i, "") : String(s || ""));
-    body.textContent = stripReporter(turn.brief || turn.text || "");
+    const brief = stripReporter(turn.brief || "").trim();
+    const full = stripReporter(turn.text || "").trim();
+    const bodyText = full && brief && full.length >= brief.length ? full : (brief || full);
+    body.textContent = bodyText;
     main.append(body);
 
     if (turn.handoff_message && turn.handoff_message !== body.textContent) {
@@ -1316,11 +1328,10 @@
       note.textContent = turn.handoff_message;
       main.append(note);
     }
-    const text = stripReporter(turn.text).trim();
-    if (text && text !== body.textContent && CYRILLIC_RE.test(text) && !/^case\.finished$/i.test(eventKind)) {
+    if (full && full !== body.textContent && CYRILLIC_RE.test(full) && !/^case\.finished$/i.test(eventKind)) {
       const note = document.createElement("p");
       note.className = "turn-note";
-      note.textContent = text;
+      note.textContent = full;
       main.append(note);
     }
 
@@ -1421,7 +1432,10 @@
     }
     copy.append(t, meta);
     btn.append(dot, copy);
-    btn.title = [name, task.title && task.title !== name ? task.title : "", task.task_id].filter(Boolean).join("\n");
+    requestAnimationFrame(() => {
+      if (t.scrollHeight > t.clientHeight + 1) btn.title = name || t.textContent;
+      else btn.removeAttribute("title");
+    });
     btn.addEventListener("click", () => {
       startResumeTask = null;
       setStartOpen(false, { resume: false });

@@ -1,3 +1,1390 @@
+      "id": "3438e36b-881a-5c01-9668-b9a96adbbab2",
+      "name": "Error Trigger",
+      "type": "n8n-nodes-base.errorTrigger",
+      "typeVersion": 1,
+      "position": [
+        0,
+        -85
+      ]
+    },
+    {
+      "parameters": {
+        "jsCode": "const root=$json||{};\nconst obj=v=>v&&typeof v==='object'&&!Array.isArray(v);\nconst clean=v=>typeof v==='string'?v.trim():'';\nconst exec=obj(root.execution)?root.execution:{};\nconst wf=obj(root.workflow)?root.workflow:{};\nconst err=obj(exec.error)?exec.error:(obj(root.error)?root.error:{});\nconst msg=clean(err.message||err.description||root.message||'');\nconst lastNode=clean(exec.lastNodeExecuted||(obj(err.node)?err.node.name:'')||'');\nconst executionId=clean(String(exec.id||root.executionId||''))||null;\nconst TASK_RE=/\\b((?:eng|act)_[A-Za-z0-9._-]{4,80})\\b/;\nfunction findTaskId(v, depth){\n  if(depth>8||v==null) return '';\n  if(typeof v==='string'){\n    const m=v.match(TASK_RE);\n    return m?m[1]:'';\n  }\n  if(Array.isArray(v)){\n    for(const x of v){const t=findTaskId(x,depth+1); if(t) return t;}\n    return '';\n  }\n  if(typeof v==='object'){\n    for(const k of ['task_id','taskId','case_id','caseId']){\n      const t=clean(v[k]); if(t) return t;\n    }\n    for(const x of Object.values(v)){const t=findTaskId(x,depth+1); if(t) return t;}\n  }\n  return '';\n}\nconst taskId=findTaskId(root,0);\nconst blob=`${msg} ${lastNode} ${clean(wf.name)}`.toLowerCase();\nlet scenario='uncaught';\nif(/timeout|timed out|etimedout/.test(blob)) scenario='calc_timeout';\nelse if(/json|parse|structured/.test(blob)) scenario='invalid_json';\nelse if(/llm|openai|model/.test(blob)) scenario='llm_error';\nconst safe=[\n  lastNode?`Узел «${lastNode}» упал.`:'Неперехваченный сбой n8n.',\n  msg?msg.slice(0,400):'',\n  wf.name?`Workflow: ${wf.name}.`:'',\n  executionId?`execution ${executionId}.`:'',\n].filter(Boolean).join(' ');\nreturn[{json:{\n  mas_error_event:{\n    contract:'mas_error_event',\n    contract_version:'1.0',\n    task_id:taskId||null,\n    scenario,\n    code:scenario==='uncaught'?'UNCAUGHT_NODE_FAILURE':undefined,\n    stage:'uncaught',\n    safe_message:safe,\n    execution_id:executionId,\n    findings:[{code:'UNCAUGHT_NODE_FAILURE',node:lastNode||null,workflow:wf.name||null,message:msg.slice(0,400)||null}],\n  },\n  passthrough:{source:'n8n_error_trigger',workflow_id:wf.id||null,workflow_name:wf.name||null,last_node:lastNode||null,execution_id:executionId},\n}}];"
+      },
+      "id": "2632562a-1112-5ab3-8f5d-c81d6a6d04f2",
+      "name": "Normalize n8n error trigger",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        280,
+        0
+      ]
+    },
+    {
+      "parameters": {
+        "inputSource": "jsonExample",
+        "jsonExample": "{\"mas_error_event\": {\"contract\": \"mas_error_event\", \"contract_version\": \"1.0\", \"task_id\": \"eng_example\", \"scenario\": \"llm_error\", \"stage\": \"plan\", \"safe_message\": \"Модель не вернула ответ. Case eng_example.\", \"findings\": [{\"code\": \"LLM_CALL_FAILED\"}], \"cas_snapshot\": {\"task_id\": \"eng_example\", \"version\": 2, \"status\": \"planning\", \"risk_class\": \"high\", \"request_json\": \"{\\\"objective\\\":\\\"example\\\"}\", \"runtime_json\": \"{}\", \"plan_json\": \"{}\", \"packet_json\": \"{}\", \"result_json\": \"{}\", \"verification_json\": \"{}\", \"gate_json\": \"{}\", \"retry_count\": 0, \"max_retries\": 2, \"created_at\": \"2026-01-01T00:00:00.000Z\", \"updated_at\": \"2026-01-01T00:00:00.000Z\"}}}"
+      },
+      "id": "ceb83e52-aa6e-5e82-a9c9-e007302145df",
+      "name": "Receive MAS error event",
+      "type": "n8n-nodes-base.executeWorkflowTrigger",
+      "typeVersion": 1.2,
+      "position": [
+        0,
+        85
+      ]
+    },
+    {
+      "parameters": {
+        "jsCode": "const root=$json;\nconst obj=v=>v&&typeof v==='object'&&!Array.isArray(v);\nconst clean=v=>typeof v==='string'?v.trim():'';\nconst arr=Array.isArray;\nconst event=obj(root.mas_error_event)?root.mas_error_event:(obj(root)&&root.contract==='mas_error_event'?root:{});\nconst taskId=clean(event.task_id||root.task_id);\nconst scenarioRaw=clean(event.scenario||event.error_scenario||'').toLowerCase();\nconst codeIn=clean(event.code||event.error_code||'').toUpperCase();\nconst stage=clean(event.stage||'error')||'error';\nconst findings=arr(event.findings)?event.findings.filter(obj).slice(0,40):[];\nconst executionId=clean(String(event.execution_id||event.executionId||''))||null;\nconst snap=obj(event.cas_snapshot)?event.cas_snapshot:(obj(root.cas_snapshot)?root.cas_snapshot:null);\nconst passthrough=obj(root.passthrough)?root.passthrough:{};\n\nconst TAXONOMY={\n  llm_error:{code:'LLM_CALL_FAILED',cas_status:'retryable_error',restartable:true,label:'Ошибка LLM'},\n  invalid_json:{code:'INVALID_STRUCTURED_OUTPUT',cas_status:'retryable_error',restartable:true,label:'Невалидный JSON / structured output'},\n  calc_timeout:{code:'CALC_SERVICE_TIMEOUT',cas_status:'retryable_error',restartable:true,label:'Timeout расчётного сервиса'},\n  missing_data:{code:'MISSING_MANDATORY_DATA',cas_status:'awaiting_human',restartable:false,label:'Нет обязательных данных'},\n  validator_reject:{code:'VALIDATOR_REJECTED',cas_status:'awaiting_human',restartable:false,label:'Отказ валидатора'},\n  rag_error:{code:'RAG_UNAVAILABLE',cas_status:'awaiting_human',restartable:false,label:'Ошибка RAG'},\n  document_access:{code:'DOCUMENT_ACCESS_DENIED',cas_status:'awaiting_human',restartable:false,label:'Нет доступа к документу'},\n  approval_error:{code:'APPROVAL_GATE_FAILED',cas_status:'awaiting_human',restartable:false,label:'Ошибка согласования'},\n  uncaught:{code:'UNCAUGHT_NODE_FAILURE',cas_status:'retryable_error',restartable:true,label:'Неперехваченный сбой n8n'},\n};\n\nconst CODE_TO_SCENARIO={\n  LLM_CALL_FAILED:'llm_error',\n  INVALID_STRUCTURED_OUTPUT:'invalid_json',\n  INVALID_SPECIALIST_CONTRACT:'invalid_json',\n  DECISION_RECORD_REQUIRED:'invalid_json',\n  CALC_SERVICE_TIMEOUT:'calc_timeout',\n  MISSING_MANDATORY_DATA:'missing_data',\n  VALIDATOR_REJECTED:'validator_reject',\n  RAG_UNAVAILABLE:'rag_error',\n  SCHEDULE_RAG_UNAVAILABLE:'rag_error',\n  ORCHESTRATOR_ROUTING_RAG_REQUIRED:'rag_error',\n  DOCUMENT_ACCESS_DENIED:'document_access',\n  APPROVAL_GATE_FAILED:'approval_error',\n  CAS_CONFLICT:'approval_error',\n  UNCAUGHT_NODE_FAILURE:'uncaught',\n};\n\nlet scenario=scenarioRaw;\nif(!TAXONOMY[scenario]&&codeIn&&CODE_TO_SCENARIO[codeIn]) scenario=CODE_TO_SCENARIO[codeIn];\nif(!TAXONOMY[scenario]&&clean(snap&&snap.status)==='conflict') scenario='approval_error';\nif(!TAXONOMY[scenario]){\n  const blob=JSON.stringify({code:codeIn,findings,msg:event.safe_message||event.message||'',snap_status:snap&&snap.status,snap_message:snap&&snap.message}).toLowerCase();\n  if(/llm|model|openai|chat/.test(blob)) scenario='llm_error';\n  else if(/json|structured|schema|parse/.test(blob)) scenario='invalid_json';\n  else if(/timeout|timed out|etimedout|calc|math_service/.test(blob)) scenario='calc_timeout';\n  else if(/missing|required data|обязательн/.test(blob)) scenario='missing_data';\n  else if(/validat|reject|self_check/.test(blob)) scenario='validator_reject';\n  else if(/rag|retrieval|abstain/.test(blob)) scenario='rag_error';\n  else if(/access|denied|forbidden|acl|unauthorized/.test(blob)) scenario='document_access';\n  else if(/cas[_-]?conflict|stale expected_version|gate_id does not match|optimistic concurrency|concurrent or non-unique|current expected_version/.test(blob)) scenario='approval_error';\n  else scenario='llm_error';\n}\n\nconst tax=TAXONOMY[scenario];\nconst code=codeIn&&Object.values(TAXONOMY).some(t=>t.code===codeIn)?codeIn:tax.code;\nlet restartable=event.restartable===true||event.restartable===false?Boolean(event.restartable):tax.restartable;\nlet casStatus=clean(event.cas_status)||tax.cas_status;\nconst snapStatus=clean(snap&&snap.status);\n// Never override a terminal CAS row into restartable UI state.\nif(['failed','rejected','cancelled','completed'].includes(snapStatus)){\n  casStatus=snapStatus;\n  restartable=false;\n} else if(['failed','rejected','cancelled','completed'].includes(casStatus)){\n  restartable=false;\n} else if(casStatus==='awaiting_human'){\n  // keep taxonomy restartable flag (usually false)\n} else if(casStatus==='retryable_error' && event.restartable===false){\n  restartable=false;\n}\n\n// Fail closed: never notify UI without case_id.\nif(!taskId){\n  return[{json:{\n    contract:'mas_error_ack',\n    contract_version:'1.0',\n    accepted:false,\n    code:'CASE_ID_REQUIRED',\n    message:'Error workflow refused anonymous failure: task_id/case_id is required.',\n    taxonomy_scenario:scenario,\n    error_code:code,\n    restartable:false,\n    cas_persisted:false,\n    activity_notified:false,\n    passthrough,\n  }}];\n}\n\nlet safeMessage=clean(event.safe_message||event.message||'');\nif(!safeMessage) safeMessage=`${tax.label}. Case ${taskId}.`;\nif(!safeMessage.includes(taskId)) safeMessage=`${safeMessage} (case_id=${taskId})`;\n// Strip secretish fragments from message surface.\nsafeMessage=safeMessage.replace(/(sk-[A-Za-z0-9]+|Bearer\\s+\\S+|api[_-]?key\\s*[:=]\\s*\\S+)/gi,'[redacted]').slice(0,800);\n\nconst lastError={\n  code,\n  scenario,\n  stage,\n  safe_message:safeMessage,\n  findings:findings.slice(0,20),\n  execution_id:executionId,\n  restartable,\n  at:new Date().toISOString(),\n};\n\nreturn[{json:{\n  contract:'mas_error_event',\n  contract_version:'1.0',\n  task_id:taskId,\n  taxonomy_scenario:scenario,\n  error_code:code,\n  stage,\n  cas_status:casStatus,\n  restartable,\n  safe_message:safeMessage,\n  last_error:lastError,\n  findings,\n  execution_id:executionId,\n  cas_snapshot:snap,\n  cas_already_persisted:event.cas_already_persisted===true||root.cas_already_persisted===true,\n  skip_cas:event.skip_cas===true||root.skip_cas===true,\n  passthrough,\n  has_task_id:true,\n}}];"
+      },
+      "id": "19e087f2-b022-5606-abc2-625d712637da",
+      "name": "Classify MAS error event",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        560,
+        0
+      ]
+    },
+    {
+      "parameters": {
+        "conditions": {
+          "options": {
+            "caseSensitive": true,
+            "leftValue": "",
+            "typeValidation": "strict",
+            "version": 2
+          },
+          "conditions": [
+            {
+              "id": "cb496677-0f11-5a80-bba4-b1dfd395bcdb",
+              "leftValue": "={{ $json.has_task_id }}",
+              "rightValue": true,
+              "operator": {
+                "type": "boolean",
+                "operation": "equals"
+              }
+            }
+          ],
+          "combinator": "and"
+        },
+        "options": {}
+      },
+      "id": "04f852dc-e894-5087-a51a-667da12e75c4",
+      "name": "Has case_id?",
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2.2,
+      "position": [
+        840,
+        0
+      ]
+    },
+    {
+      "parameters": {
+        "jsCode": "const x=$json;\nconst obj=v=>v&&typeof v==='object'&&!Array.isArray(v);\nconst clean=v=>typeof v==='string'?v.trim():'';\nconst parse=(v,f)=>{try{const p=typeof v==='string'?JSON.parse(v):v;return obj(p)?p:f}catch{return f}};\nif(!x.has_task_id) return[{json:x}];\nif(x.skip_cas||x.cas_already_persisted){\n  return[{json:{...x,cas_operation:null,should_persist_cas:false,attempted:null}}];\n}\nconst snap=obj(x.cas_snapshot)?x.cas_snapshot:{};\nconst now=new Date().toISOString();\nconst storedVersion=Number.isInteger(Number(snap.version))?Number(snap.version):1;\nconst previousVersion=Number.isInteger(Number(snap.previous_version))?Number(snap.previous_version):(Number.isInteger(Number(snap.version))?Number(snap.version):0);\nconst nextVersion=x.cas_already_persisted?storedVersion:storedVersion+1;\nconst runtime=parse(snap.runtime_json,{});\nconst preservedRequest=typeof snap.request_json==='string'?snap.request_json:JSON.stringify(obj(snap.request)?snap.request:{});\nconst preservedPlan=typeof snap.plan_json==='string'?snap.plan_json:(snap.plan_json!=null?JSON.stringify(snap.plan_json):'{}');\nconst preservedPacket=typeof snap.packet_json==='string'?snap.packet_json:(snap.packet_json!=null?JSON.stringify(snap.packet_json):'{}');\nconst preservedResult=typeof snap.result_json==='string'?snap.result_json:(snap.result_json!=null?JSON.stringify(snap.result_json):'{}');\nconst preservedVerification=typeof snap.verification_json==='string'?snap.verification_json:(snap.verification_json!=null?JSON.stringify(snap.verification_json):'{}');\n\nconst gateNeeded=x.cas_status==='awaiting_human'||(x.cas_status==='retryable_error'&&x.restartable);\nconst gate=gateNeeded?{\n  gate_id:`gate_${x.task_id}_${nextVersion}_error_${String(x.error_code||'ERR').toLowerCase()}`,\n  kind:x.cas_status==='retryable_error'?'needs_decision':'needs_input',\n  reason:x.safe_message,\n  questions:x.restartable?[{id:'error_restart',text:`Перезапустить case ${x.task_id} с сохранёнными входными данными?`,required:true,type:'enum',enum:['restart','cancel']}]:[{id:'error_input',text:x.safe_message,required:true,type:'text'}],\n  expected_version:nextVersion,\n  restartable:Boolean(x.restartable),\n  error_code:x.error_code,\n  taxonomy_scenario:x.taxonomy_scenario,\n}:{};\n\nconst attempted={\n  task_id:x.task_id,\n  version:nextVersion,\n  previous_version:previousVersion||storedVersion,\n  status:x.cas_status,\n  risk_class:clean(snap.risk_class)||'high',\n  request_json:preservedRequest||'{}',\n  runtime_json:JSON.stringify({...runtime,last_error:x.last_error,error_preserved_inputs:true}),\n  plan_json:preservedPlan||'{}',\n  packet_json:preservedPacket||'{}',\n  result_json:preservedResult||'{}',\n  verification_json:preservedVerification||'{}',\n  gate_json:JSON.stringify(gate),\n  retry_count:Number.isInteger(Number(snap.retry_count))?Number(snap.retry_count):0,\n  max_retries:Number.isInteger(Number(snap.max_retries))?Number(snap.max_retries):2,\n  created_at:clean(snap.created_at)||now,\n  updated_at:now,\n};\n\nreturn[{json:{\n  ...x,\n  should_persist_cas:true,\n  cas_operation:'update',\n  attempted,\n  human_gate:Object.keys(gate).length?gate:null,\n}}];"
+      },
+      "id": "67e6f6fc-a2f3-5a64-9b42-ed4c97a39412",
+      "name": "Build CAS error patch",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        1120,
+        -85
+      ]
+    },
+    {
+      "parameters": {
+        "conditions": {
+          "options": {
+            "caseSensitive": true,
+            "leftValue": "",
+            "typeValidation": "strict",
+            "version": 2
+          },
+          "conditions": [
+            {
+              "id": "2d8aff02-0b9f-5ce3-b643-cf9cf5894ad7",
+              "leftValue": "={{ $json.should_persist_cas }}",
+              "rightValue": true,
+              "operator": {
+                "type": "boolean",
+                "operation": "equals"
+              }
+            }
+          ],
+          "combinator": "and"
+        },
+        "options": {}
+      },
+      "id": "b8fa7113-397c-5d28-a245-414e0321d3d7",
+      "name": "Should persist CAS?",
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2.2,
+      "position": [
+        1400,
+        0
+      ]
+    },
+    {
+      "parameters": {
+        "source": "database",
+        "workflowId": {
+          "__rl": true,
+          "value": "REPLACE_CAS_PERSIST_IN_UI",
+          "mode": "list",
+          "cachedResultName": "CAS — Persist Task State"
+        },
+        "workflowInputs": {
+          "mappingMode": "defineBelow",
+          "value": {
+            "cas_operation": "={{ $json.cas_operation }}",
+            "attempted": "={{ $json.attempted }}"
+          },
+          "matchingColumns": [],
+          "schema": [],
+          "attemptToConvertTypes": false,
+          "convertFieldsToString": false
+        },
+        "mode": "once",
+        "options": {
+          "waitForSubWorkflow": true
+        }
+      },
+      "id": "ff1c40f6-3fa8-59aa-9e7f-f3d71de7f9ca",
+      "name": "Call CAS persist — error case",
+      "type": "n8n-nodes-base.executeWorkflow",
+      "typeVersion": 1.3,
+      "position": [
+        1680,
+        0
+      ],
+      "onError": "continueRegularOutput"
+    },
+    {
+      "parameters": {
+        "jsCode": "const built=$('Build CAS error patch').first().json||{};\nconst incoming=$json||{};\nconst x={...built,...incoming,has_task_id:built.has_task_id!==false,task_id:built.task_id||incoming.task_id,safe_message:built.safe_message||incoming.safe_message,error_code:built.error_code||incoming.error_code,taxonomy_scenario:built.taxonomy_scenario||incoming.taxonomy_scenario,cas_status:built.cas_status||incoming.status||incoming.cas_status,restartable:built.restartable,human_gate:built.human_gate||null,last_error:built.last_error||null,findings:built.findings||[],stage:built.stage||'error',execution_id:built.execution_id||null,attempted:built.attempted||null,passthrough:built.passthrough||{}};\nconst obj=v=>v&&typeof v==='object'&&!Array.isArray(v);\nconst clean=v=>typeof v==='string'?v.trim():'';\nif(!x.has_task_id||!x.task_id){\n  return[{json:{...x,activity_sync_ready:false,skip_trace:true}}];\n}\nconst cas=obj(x.attempted)?x.attempted:(obj(x.cas_snapshot)?x.cas_snapshot:{});\nconst version=Number(cas.version||x.human_gate?.expected_version||0)||null;\n// awaiting_human from error path is HITL (wait), not a red CASE_ERROR block.\nconst statusLabel=x.cas_status==='retryable_error'?'RETRYABLE_ERROR'\n  :x.cas_status==='failed'?'FATAL_ERROR'\n  :x.cas_status==='awaiting_human'?(clean(x.error_code)||'NEEDS_DECISION')\n  :'CASE_ERROR';\nconst summary=x.safe_message;\nconst details={\n  error_code:x.error_code,\n  taxonomy_scenario:x.taxonomy_scenario,\n  restartable:Boolean(x.restartable),\n  stage:x.stage,\n  execution_id:x.execution_id||null,\n  case_id:x.task_id,\n  version,\n  findings_count:Array.isArray(x.findings)?x.findings.length:0,\n};\nconst handoff={\n  event_type:'handoff',\n  stage:'error',\n  status:statusLabel,\n  summary,\n  brief:summary,\n  actor:'error_handler',\n  handoff:{\n    from_specialist:'universal_orchestrator',\n    to_specialist:'human_operator',\n    from_role:'Orchestrator',\n    to_role:'User',\n    details,\n  },\n  human_gate:x.human_gate||null,\n};\nconst mas_trace_event={\n  trace_id:`trace_${x.task_id}_${Date.now().toString(36)}`,\n  task_id:x.task_id,\n  stage:'error',\n  event_type:'handoff',\n  actor:'error_handler',\n  status:statusLabel,\n  summary,\n  error_code:x.error_code,\n  safe_message:summary,\n  redacted_args:details,\n};\nreturn[{json:{\n  ...x,\n  skip_trace:false,\n  mas_trace_event,\n  passthrough:{...(obj(x.passthrough)?x.passthrough:{}),skip_activity_sync:true,task_id:x.task_id},\n  activity_status:x.cas_status,\n  activity_version:version,\n  activity_human_gate:x.human_gate||null,\n  activity_status_message:summary,\n  activity_event:handoff,\n}}];"
+      },
+      "id": "1b29c5d2-cc2c-5560-b87f-88c7a5ac5a52",
+      "name": "Prepare structured error trace",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        1960,
+        0
+      ]
+    },
+    {
+      "parameters": {
+        "source": "database",
+        "workflowId": {
+          "__rl": true,
+          "value": "REPLACE_MAS_TRACE_WRITER_IN_UI",
+          "mode": "list",
+          "cachedResultName": "Writer — MAS Trace"
+        },
+        "workflowInputs": {
+          "mappingMode": "defineBelow",
+          "value": {
+            "mas_trace_event": "={{ $json.mas_trace_event }}",
+            "passthrough": "={{ $json.passthrough || { skip_activity_sync: true } }}"
+          },
+          "matchingColumns": [],
+          "schema": [],
+          "attemptToConvertTypes": false,
+          "convertFieldsToString": false
+        },
+        "mode": "once",
+        "options": {
+          "waitForSubWorkflow": true
+        }
+      },
+      "id": "b7912faa-d7f9-502a-b583-c2e4ce13f9aa",
+      "name": "Call Writer — MAS Trace (error)",
+      "type": "n8n-nodes-base.executeWorkflow",
+      "typeVersion": 1.3,
+      "position": [
+        2240,
+        0
+      ],
+      "onError": "continueRegularOutput"
+    },
+    {
+      "parameters": {
+        "assignments": {
+          "assignments": [
+            {
+              "id": "5199ed54-7e7f-57ad-b9d3-777854a32112",
+              "name": "activity_base_url",
+              "value": "http://127.0.0.1:8200",
+              "type": "string"
+            }
+          ]
+        },
+        "options": {},
+        "includeOtherFields": true
+      },
+      "id": "ac31f164-81f3-5adc-b23c-1c85c3de2936",
+      "name": "Activity connection",
+      "type": "n8n-nodes-base.set",
+      "typeVersion": 3.4,
+      "position": [
+        2520,
+        0
+      ]
+    },
+    {
+      "parameters": {
+        "jsCode": "const x=$json;\nif(!x.has_task_id||x.skip_trace){\n  return[{json:{...x,activity_sync_ready:false}}];\n}\nconst ACTIVITY_BASE_URL=String($('Activity connection').first().json.activity_base_url||'').trim();\nconst activityBase=ACTIVITY_BASE_URL.endsWith('/')?ACTIVITY_BASE_URL.slice(0,-1):ACTIVITY_BASE_URL;\nconst body={\n  task_id:x.task_id,\n  trace_id:x.mas_trace_event?.trace_id||null,\n  status:x.activity_status||x.cas_status||null,\n  version:x.activity_version||null,\n  human_gate:x.activity_human_gate||x.human_gate||null,\n  events:[x.activity_event].filter(Boolean),\n};\nreturn[{json:{\n  ...x,\n  activity_sync_ready:Boolean(ACTIVITY_BASE_URL),\n  activity_url:`${activityBase}/v1/sync`,\n  activity_body:body,\n}}];"
+      },
+      "id": "aa10c14a-9338-52fd-9c40-e9ae67304707",
+      "name": "Prepare Activity error sync",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        2800,
+        0
+      ]
+    },
+    {
+      "parameters": {
+        "conditions": {
+          "options": {
+            "caseSensitive": true,
+            "leftValue": "",
+            "typeValidation": "strict",
+            "version": 2
+          },
+          "conditions": [
+            {
+              "id": "26b9ab9b-ec9e-5c5c-841d-b84bef6eb6e9",
+              "leftValue": "={{ $json.activity_sync_ready }}",
+              "rightValue": true,
+              "operator": {
+                "type": "boolean",
+                "operation": "equals"
+              }
+            }
+          ],
+          "combinator": "and"
+        },
+        "options": {}
+      },
+      "id": "278475e3-23d5-5c8c-a897-e7b3f77b03b9",
+      "name": "Activity sync ready?",
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2.2,
+      "position": [
+        3080,
+        0
+      ]
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "={{ $json.activity_url }}",
+        "sendHeaders": true,
+        "headerParameters": {
+          "parameters": [
+            {
+              "name": "Content-Type",
+              "value": "application/json"
+            }
+          ]
+        },
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "={{ $json.activity_body }}",
+        "options": {
+          "timeout": 15000
+        }
+      },
+      "id": "83cc341b-8c1f-5a56-9a6a-c92154d27eb9",
+      "name": "POST error handoff to MAS Activity",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.4,
+      "position": [
+        3360,
+        0
+      ],
+      "onError": "continueRegularOutput",
+      "continueOnFail": true
+    },
+    {
+      "parameters": {
+        "jsCode": "const built=(()=>{try{return $('Build CAS error patch').first().json||{}}catch{return {}}})();\nconst classified=(()=>{try{return $('Classify MAS error event').first().json||{}}catch{return {}}})();\nconst x={...classified,...built,...($json||{})};\nconst obj=v=>v&&typeof v==='object'&&!Array.isArray(v);\nif(x.accepted===false||x.code==='CASE_ID_REQUIRED'||!x.task_id){\n  return[{json:{\n    contract:'mas_error_ack',\n    contract_version:'1.0',\n    accepted:false,\n    code:x.code||'CASE_ID_REQUIRED',\n    message:x.message||'Error workflow refused anonymous failure: task_id/case_id is required.',\n    task_id:null,\n    restartable:false,\n    cas_persisted:false,\n    activity_notified:false,\n    passthrough:x.passthrough||null,\n  }}];\n}\nlet activity={attempted:false,stored:false};\ntry{\n  const http=$('POST error handoff to MAS Activity').first().json||{};\n  activity={attempted:true,stored:Boolean(http.stored||http.ok),count:Number(http.count||0),task_id:http.task_id||x.task_id};\n}catch(_){\n  activity={attempted:false,stored:false,note:'activity_post_skipped_or_failed'};\n}\nlet casOk=Boolean(x.cas_already_persisted||x.skip_cas||!x.should_persist_cas);\ntry{\n  if(x.should_persist_cas){\n    const persisted=$('Call CAS persist — error case').first().json||{};\n    casOk=persisted.cas_succeeded===true||String(persisted.status||'')===String(x.cas_status||'');\n  }\n}catch(_){ /* keep casOk */ }\n\nreturn[{json:{\n  contract:'mas_error_ack',\n  contract_version:'1.0',\n  accepted:true,\n  task_id:x.task_id,\n  version:x.activity_version||x.attempted?.version||null,\n  status:x.cas_status,\n  error_code:x.error_code,\n  taxonomy_scenario:x.taxonomy_scenario,\n  safe_message:x.safe_message,\n  restartable:Boolean(x.restartable),\n  human_gate:x.human_gate||x.activity_human_gate||null,\n  cas_persisted:casOk,\n  activity_notified:Boolean(activity.stored||activity.attempted),\n  activity,\n  last_error:x.last_error||null,\n  passthrough:x.passthrough||null,\n}}];"
+      },
+      "id": "74b00395-7de5-5687-add4-b9510c4c54ac",
+      "name": "Format MAS error ack",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        3640,
+        0
+      ]
+    },
+    {
+      "parameters": {
+        "jsCode": "const x=$json;return[{json:{contract:'mas_error_ack',contract_version:'1.0',accepted:false,code:'CASE_ID_REQUIRED',message:x.message||'Error workflow refused anonymous failure: task_id/case_id is required.',task_id:null,restartable:false,cas_persisted:false,activity_notified:false,passthrough:x.passthrough||null}}];"
+      },
+      "id": "92094de4-eb10-51a3-8304-d35fba84a492",
+      "name": "Reject without case_id",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        1120,
+        85
+      ]
+    }
+  ],
+  "connections": {
+    "Error Trigger": {
+      "main": [
+        [
+          {
+            "node": "Normalize n8n error trigger",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Normalize n8n error trigger": {
+      "main": [
+        [
+          {
+            "node": "Classify MAS error event",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Receive MAS error event": {
+      "main": [
+        [
+          {
+            "node": "Classify MAS error event",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Classify MAS error event": {
+      "main": [
+        [
+          {
+            "node": "Has case_id?",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Has case_id?": {
+      "main": [
+        [
+          {
+            "node": "Build CAS error patch",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Reject without case_id",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Build CAS error patch": {
+      "main": [
+        [
+          {
+            "node": "Should persist CAS?",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Should persist CAS?": {
+      "main": [
+        [
+          {
+            "node": "Call CAS persist — error case",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Prepare structured error trace",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Call CAS persist — error case": {
+      "main": [
+        [
+          {
+            "node": "Prepare structured error trace",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Prepare structured error trace": {
+      "main": [
+        [
+          {
+            "node": "Call Writer — MAS Trace (error)",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Call Writer — MAS Trace (error)": {
+      "main": [
+        [
+          {
+            "node": "Activity connection",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Activity connection": {
+      "main": [
+        [
+          {
+            "node": "Prepare Activity error sync",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Prepare Activity error sync": {
+      "main": [
+        [
+          {
+            "node": "Activity sync ready?",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Activity sync ready?": {
+      "main": [
+        [
+          {
+            "node": "POST error handoff to MAS Activity",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Format MAS error ack",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "POST error handoff to MAS Activity": {
+      "main": [
+        [
+          {
+            "node": "Format MAS error ack",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Reject without case_id": {
+      "main": [
+        [
+          {
+            "node": "Format MAS error ack",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    }
+  },
+  "settings": {
+    "executionOrder": "v1",
+    "callerPolicy": "workflowsFromSameOwner",
+    "errorWorkflow": ""
+  },
+  "meta": {
+    "templateCredsSetupCompleted": true
+  },
+  "tags": [],
+  "pinData": {},
+  "versionId": "97262842-dbe0-4e0a-9b89-262554843c15"
+}
+
+===END_FILE===
+===BEGIN_FILE===	n8n/workflows/retired/mas-human-gate-form.workflow.json	19250	utf8
+{
+  "id": "mas-human-gate-form-v1",
+  "name": "Form — MAS Human Gate",
+  "description": "Native n8n 2.30.8 Form to inspect or answer Orchestrator human_gate. Loads status first and binds expected_version/gate_id automatically; engineer never copies CAS fields by hand.",
+  "active": false,
+  "settings": {
+    "executionOrder": "v1",
+    "saveManualExecutions": true,
+    "callerPolicy": "workflowsFromSameOwner",
+    "errorWorkflow": "e1f0a7c2-9b4d-5e8f-a123-4567890abcde"
+  },
+  "nodes": [
+    {
+      "parameters": {
+        "content": "## edit after import\n\n**Form — MAS Human Gate** — after UI import, complete bindings before activate:\n\n- Bind sub-workflow on **Call Orchestrator status**\n- Bind sub-workflow on **Call Orchestrator resume**\n\nDo not rely on env()/Globals for corporate UI import.",
+        "height": 216,
+        "width": 440,
+        "color": 1
+      },
+      "id": "d0bdb2a7-6395-585d-a762-89d2d789fe5b",
+      "name": "edit after import",
+      "type": "n8n-nodes-base.stickyNote",
+      "typeVersion": 1,
+      "position": [
+        -40,
+        -276
+      ]
+    },
+    {
+      "parameters": {
+        "authentication": "n8nUserAuth",
+        "formTitle": "MAS — Human Gate",
+        "formDescription": "Resume a controlled engineering task that is waiting for human input. Enter the Task ID from Form — MAS Entry. Choose status to only inspect the gate, or reply/approve/reject to continue. For new wells you can attach WELLTRACK files and an xlsx with perforation MD + gas rates. Version and gate_id are loaded automatically.",
+        "formFields": {
+          "values": [
+            {
+              "fieldName": "task_id",
+              "fieldLabel": "Task ID",
+              "fieldType": "text",
+              "placeholder": "mvp_... or eng_...",
+              "requiredField": true
+            },
+            {
+              "fieldName": "action",
+              "fieldLabel": "Action",
+              "fieldType": "dropdown",
+              "fieldOptions": {
+                "values": [
+                  {
+                    "option": "status"
+                  },
+                  {
+                    "option": "reply"
+                  },
+                  {
+                    "option": "approve"
+                  },
+                  {
+                    "option": "reject"
+                  },
+                  {
+                    "option": "cancel"
+                  }
+                ]
+              },
+              "requiredField": true
+            },
+            {
+              "fieldName": "human_response",
+              "fieldLabel": "Your answer / decision rationale",
+              "fieldType": "textarea",
+              "placeholder": "Answer the orchestrator questions in plain language. Required for reply; optional for approve/reject.",
+              "requiredField": false
+            },
+            {
+              "fieldName": "hitl_files",
+              "fieldLabel": "HITL attachments (WELLTRACK .inc/.dev, supplemental .xlsx) — multiple",
+              "fieldType": "file",
+              "multipleFiles": true,
+              "acceptFileTypes": ".inc,.dev,.xlsx,.xls,.txt,.grdecl",
+              "requiredField": false
+            },
+            {
+              "fieldName": "trajectory_files",
+              "fieldLabel": "WELLTRACK / trajectory files (optional alias)",
+              "fieldType": "file",
+              "multipleFiles": true,
+              "acceptFileTypes": ".inc,.dev,.txt",
+              "requiredField": false
+            },
+            {
+              "fieldName": "supplemental_xlsx",
+              "fieldLabel": "Supplemental well params xlsx (COMPDATMD + GRAT)",
+              "fieldType": "file",
+              "multipleFiles": false,
+              "acceptFileTypes": ".xlsx,.xls",
+              "requiredField": false
+            },
+            {
+              "fieldName": "requested_by",
+              "fieldLabel": "Engineering role / accountable identity",
+              "fieldType": "text",
+              "placeholder": "e.g. reservoir-engineer-ivanov",
+              "requiredField": true
+            }
+          ]
+        },
+        "responseMode": "lastNode",
+        "options": {
+          "path": "mas-human-gate",
+          "appendAttribution": false,
+          "buttonLabel": "Submit human gate action",
+          "ignoreBots": true,
+          "includeUserInOutput": true
+        }
+      },
+      "id": "b1000001-0001-4000-8000-000000000001",
+      "name": "Human gate form",
+      "type": "n8n-nodes-base.formTrigger",
+      "typeVersion": 2.6,
+      "position": [
+        0,
+        0
+      ],
+      "webhookId": "b1000001-0001-4000-8000-000000000001"
+    },
+    {
+      "parameters": {
+        "jsCode": "const item = $input.first();\nconst input = item.json || {};\nconst clean = (value) => typeof value === 'string' ? value.trim() : '';\nconst taskId = clean(input.task_id);\nconst action = clean(input.action).toLowerCase() || 'status';\nconst humanResponse = clean(input.human_response);\nconst requestedBy = clean(input.requested_by) || 'anonymous';\nconst allowed = new Set(['status', 'reply', 'approve', 'reject', 'cancel']);\nconst binary = item.binary && typeof item.binary === 'object' ? item.binary : null;\nconst binaryKeys = binary ? Object.keys(binary) : [];\nif (!taskId) {\n  return [{ json: { entrypoint: 'human_gate_form', input_valid: false, status: 'invalid', message: 'task_id is required.', form_action: action, human_response: humanResponse, requested_by: requestedBy, hitl_binary_keys: binaryKeys }, ...(binary ? { binary } : {}) }];\n}\nif (!allowed.has(action)) {\n  return [{ json: { entrypoint: 'human_gate_form', input_valid: false, status: 'invalid', message: 'Unsupported action.', form_action: action, task_id: taskId, human_response: humanResponse, requested_by: requestedBy, hitl_binary_keys: binaryKeys }, ...(binary ? { binary } : {}) }];\n}\nreturn [{ json: {\n  entrypoint: 'human_gate_form',\n  action: 'status',\n  task_id: taskId,\n  requested_by: requestedBy,\n  form_action: action,\n  human_response: humanResponse,\n  hitl_binary_keys: binaryKeys,\n}, ...(binary ? { binary } : {}) }];"
+      },
+      "id": "b1000001-0001-4000-8000-000000000002",
+      "name": "Prepare status lookup",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        280,
+        0
+      ]
+    },
+    {
+      "parameters": {
+        "source": "database",
+        "workflowId": {
+          "__rl": true,
+          "value": "REPLACE_ORCHESTRATOR_ID_IN_UI_HUMAN_GATE_STATUS",
+          "mode": "list",
+          "cachedResultName": "Orchestrator — Engineering MAS"
+        },
+        "mode": "once",
+        "options": {
+          "waitForSubWorkflow": true
+        }
+      },
+      "id": "b1000001-0001-4000-8000-000000000003",
+      "name": "Call Orchestrator status",
+      "type": "n8n-nodes-base.executeWorkflow",
+      "typeVersion": 1.3,
+      "position": [
+        560,
+        0
+      ]
+    },
+    {
+      "parameters": {
+        "jsCode": "const prepared = $('Prepare status lookup').first().json || {};\nconst preparedItem = $('Prepare status lookup').first();\nconst statusResponse = $input.first().json || {};\nconst formAction = String(prepared.form_action || 'status').toLowerCase();\nconst humanResponse = String(prepared.human_response || '').trim();\nconst requestedBy = String(prepared.requested_by || 'anonymous').trim();\nconst gate = statusResponse.human_gate && typeof statusResponse.human_gate === 'object' ? statusResponse.human_gate : null;\nconst awaiting = statusResponse.status === 'awaiting_human' && gate && gate.gate_id;\nconst mutating = ['reply', 'approve', 'reject', 'cancel'].includes(formAction);\nconst binary = preparedItem.binary && typeof preparedItem.binary === 'object' ? preparedItem.binary : null;\nconst binaryKeys = binary ? Object.keys(binary) : (Array.isArray(prepared.hitl_binary_keys) ? prepared.hitl_binary_keys : []);\nlet shouldResume = false;\nlet blockReason = '';\nif (prepared.input_valid === false) {\n  blockReason = prepared.message || 'Invalid form input.';\n} else if (!mutating) {\n  blockReason = 'status_only';\n} else if (!awaiting) {\n  blockReason = statusResponse.status === 'not_found'\n    ? 'Task not found. Check Task ID.'\n    : `Task status is ${statusResponse.status || 'unknown'}; there is no open human_gate to answer.`;\n} else if (formAction === 'reply' && !humanResponse && !binaryKeys.length) {\n  blockReason = 'human_response is required for reply (or attach HITL files with a short reply).';\n} else if (!requestedBy || requestedBy === 'anonymous') {\n  blockReason = 'requested_by must be a named accountable engineering identity.';\n} else {\n  shouldResume = true;\n}\nconst expectedVersion = Number(gate?.expected_version ?? statusResponse.version);\nif (shouldResume && (!Number.isInteger(expectedVersion) || expectedVersion < 1 || !gate?.gate_id)) {\n  shouldResume = false;\n  blockReason = 'Open human_gate is missing integer expected_version or gate_id; reload status or re-open the gate.';\n}\nconst effectiveResponse = humanResponse || (binaryKeys.length ? JSON.stringify({text:'Attached HITL files for new-well definitions.',hitl_files:binaryKeys}) : '');\nconst resumePayload = shouldResume ? {\n  entrypoint: 'human_gate_form',\n  action: formAction,\n  task_id: statusResponse.task_id || prepared.task_id,\n  expected_version: expectedVersion,\n  gate_id: String(gate.gate_id),\n  human_response: effectiveResponse,\n  requested_by: requestedBy,\n  hitl_binary_keys: binaryKeys,\n} : null;\nreturn [{ json: {\n  should_resume: shouldResume,\n  block_reason: blockReason,\n  form_action: formAction,\n  human_response: effectiveResponse,\n  requested_by: requestedBy,\n  status_response: statusResponse,\n  human_gate: gate,\n  resume_payload: resumePayload,\n  hitl_binary_keys: binaryKeys,\n  ...(resumePayload || {}),\n}, ...(binary ? { binary } : {}) }];"
+      },
+      "id": "b1000001-0001-4000-8000-000000000004",
+      "name": "Decide resume from status",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        840,
+        0
+      ]
+    },
+    {
+      "parameters": {
+        "conditions": {
+          "options": {
+            "caseSensitive": true,
+            "leftValue": "",
+            "typeValidation": "strict",
+            "version": 2
+          },
+          "conditions": [
+            {
+              "id": "b1000001-0001-4000-8000-000000000014",
+              "leftValue": "={{ $json.should_resume }}",
+              "rightValue": true,
+              "operator": {
+                "type": "boolean",
+                "operation": "equals"
+              }
+            }
+          ],
+          "combinator": "and"
+        },
+        "options": {}
+      },
+      "id": "b1000001-0001-4000-8000-000000000005",
+      "name": "Should resume gate?",
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2.2,
+      "position": [
+        1120,
+        0
+      ]
+    },
+    {
+      "parameters": {
+        "jsCode": "const decisionItem = $('Decide resume from status').first();\nconst decision = decisionItem.json || {};\nconst payload = decision.resume_payload && typeof decision.resume_payload === 'object' ? decision.resume_payload : {};\nconst binary = decisionItem.binary && typeof decisionItem.binary === 'object' ? decisionItem.binary : null;\nreturn [{ json: { ...payload }, ...(binary ? { binary } : {}) }];"
+      },
+      "id": "b1000001-0001-4000-8000-000000000006",
+      "name": "Prepare resume payload",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        1400,
+        0
+      ]
+    },
+    {
+      "parameters": {
+        "source": "database",
+        "workflowId": {
+          "__rl": true,
+          "value": "REPLACE_ORCHESTRATOR_ID_IN_UI_HUMAN_GATE_RESUME",
+          "mode": "list",
+          "cachedResultName": "Orchestrator — Engineering MAS"
+        },
+        "mode": "once",
+        "options": {
+          "waitForSubWorkflow": true
+        }
+      },
+      "id": "b1000001-0001-4000-8000-000000000007",
+      "name": "Call Orchestrator resume",
+      "type": "n8n-nodes-base.executeWorkflow",
+      "typeVersion": 1.3,
+      "position": [
+        1680,
+        0
+      ]
+    },
+    {
+      "parameters": {
+        "jsCode": "const decision = $('Decide resume from status').first().json || {};\nconst resumed = $json && typeof $json === 'object' ? $json : {};\nconst usedResume = Boolean(decision.should_resume);\nconst response = usedResume ? resumed : (decision.status_response || {});\nconst escapeHtml = (value) => String(value ?? '')\n  .replace(/&/g, '&amp;')\n  .replace(/</g, '&lt;')\n  .replace(/>/g, '&gt;')\n  .replace(/\\\"/g, '&quot;')\n  .replace(/'/g, '&#39;');\nconst prettyJson = (value, limit = 16000) => {\n  let text;\n  try { text = JSON.stringify(value, null, 2); } catch { text = String(value); }\n  return text.length > limit ? `${text.slice(0, limit)}\\n… truncated for display` : text;\n};\nconst questionText = (q) => {\n  if (!q || typeof q !== 'object') return String(q ?? '');\n  return String(q.text || q.question || q.message || q.id || '').trim();\n};\nconst gate = response.human_gate && typeof response.human_gate === 'object'\n  ? response.human_gate\n  : (decision.human_gate || null);\nconst questions = Array.isArray(gate?.questions) ? gate.questions : [];\nconst status = String(response.status || decision.block_reason || 'error');\nconst taskId = String(response.task_id || decision.resume_payload?.task_id || decision.status_response?.task_id || '');\nconst version = response.version ?? decision.status_response?.version ?? null;\nconst message = String(response.message || decision.block_reason || 'Request processed.');\nconst questionItems = questions\n  .map((q, index) => `<li><strong>${escapeHtml(String(q.id || `q${index + 1}`))}</strong>: ${escapeHtml(questionText(q))}${q.expected_format ? ` <em>(format: ${escapeHtml(q.expected_format)})</em>` : ''}</li>`)\n  .join('');\nconst result = response.result && typeof response.result === 'object' ? response.result : null;\nconst deliverables = Array.isArray(result?.deliverables) ? result.deliverables : [];\nconst scheduleText = response.schedule_text\n  || result?.release?.schedule_text\n  || result?.compact_data?.generated_schedule\n  || deliverables.find((value) => typeof value?.schedule_text === 'string')?.schedule_text\n  || null;\nconst autoCas = usedResume\n  ? `<p><strong>CAS fields applied automatically:</strong> expected_version=<code>${escapeHtml(decision.resume_payload?.expected_version)}</code>, gate_id=<code>${escapeHtml(decision.resume_payload?.gate_id)}</code></p>`\n  : '';\nconst inspectHint = !usedResume && gate\n  ? `<section>\n<h2>Open human gate</h2>\n<p><strong>Why the orchestrator is waiting:</strong> ${escapeHtml(gate.reason || message)}</p>\n<p><strong>Gate kind:</strong> <code>${escapeHtml(gate.kind || '')}</code></p>\n${questionItems ? `<p><strong>Answer these points:</strong></p><ol>${questionItems}</ol>` : ''}\n<p>Submit this form again with the same Task ID, action <code>reply</code>/<code>approve</code>/<code>reject</code>, and your answer. Version/gate_id stay automatic.</p>\n</section>`\n  : '';\nconst nextGate = usedResume && gate\n  ? `<section>\n<h2>Still waiting / next gate</h2>\n<p>${escapeHtml(gate.reason || message)}</p>\n${questionItems ? `<ol>${questionItems}</ol>` : ''}\n</section>`\n  : '';\nconst blocked = !usedResume && decision.block_reason && decision.block_reason !== 'status_only'\n  ? `<p><strong>Could not resume:</strong> ${escapeHtml(decision.block_reason)}</p>`\n  : '';\nconst scheduleBlock = scheduleText\n  ? `<section><h2>schedule.inc</h2><pre>${escapeHtml(String(scheduleText).slice(0, 100000))}</pre></section>`\n  : '';\nconst html = `<main>\n<h1>MAS human gate</h1>\n<p>Status: <strong>${escapeHtml(status)}</strong></p>\n<p>${escapeHtml(message)}</p>\n<p>Task ID: <code>${escapeHtml(taskId || 'n/a')}</code></p>\n<p>Version: <code>${escapeHtml(version ?? 'n/a')}</code></p>\n<p>Requested action: <code>${escapeHtml(decision.form_action || '')}</code></p>\n${autoCas}\n${blocked}\n${inspectHint}\n${nextGate}\n${scheduleBlock}\n<details><summary>Structured response</summary><pre>${escapeHtml(prettyJson({ status_response: decision.status_response, resume_response: usedResume ? response : null, decision: { should_resume: decision.should_resume, block_reason: decision.block_reason, form_action: decision.form_action } }))}</pre></details>\n</main>`;\nreturn [{ json: { ...response, form_response_html: html, human_gate: gate } }];"
+      },
+      "id": "b1000001-0001-4000-8000-000000000008",
+      "name": "Build safe human gate response",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        1960,
+        0
+      ]
+    },
+    {
+      "parameters": {
+        "operation": "completion",
+        "respondWith": "showText",
+        "responseText": "={{ $json.form_response_html }}"
+      },
+      "id": "b1000001-0001-4000-8000-000000000009",
+      "name": "Show human gate result",
+      "type": "n8n-nodes-base.form",
+      "typeVersion": 2.5,
+      "position": [
+        2240,
+        0
+      ]
+    }
+  ],
+  "pinData": {},
+  "connections": {
+    "Human gate form": {
+      "main": [
+        [
+          {
+            "node": "Prepare status lookup",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Prepare status lookup": {
+      "main": [
+        [
+          {
+            "node": "Call Orchestrator status",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Call Orchestrator status": {
+      "main": [
+        [
+          {
+            "node": "Decide resume from status",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Decide resume from status": {
+      "main": [
+        [
+          {
+            "node": "Should resume gate?",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Should resume gate?": {
+      "main": [
+        [
+          {
+            "node": "Prepare resume payload",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Build safe human gate response",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Prepare resume payload": {
+      "main": [
+        [
+          {
+            "node": "Call Orchestrator resume",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Call Orchestrator resume": {
+      "main": [
+        [
+          {
+            "node": "Build safe human gate response",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Build safe human gate response": {
+      "main": [
+        [
+          {
+            "node": "Show human gate result",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    }
+  },
+  "versionId": "mas-human-gate-form-v1.1",
+  "meta": {
+    "templateCredsSetupCompleted": false,
+    "targetN8nVersion": "2.30.8",
+    "contractVersion": "mas_human_gate_form/v1.1"
+  },
+  "tags": []
+}
+
+===END_FILE===
+===BEGIN_FILE===	n8n/workflows/retired/mas-trace-event-writer.workflow.json	15371	utf8
+{
+  "id": "3c93b407-5b49-5c3b-b503-2ace753c5582",
+  "name": "Writer — MAS Trace",
+  "description": "Portable durable trace writer with optional MAS Activity UI sync.",
+  "nodes": [
+    {
+      "parameters": {
+        "content": "## edit after import\n\n**Writer — MAS Trace** — after UI import, complete bindings before activate:\n\n- Bind Data Table on **Insert MAS trace event**\n\nDo not rely on env()/Globals for corporate UI import.",
+        "height": 188,
+        "width": 440,
+        "color": 1
+      },
+      "id": "0e26ff9e-347f-5a44-9b68-b3c7a2aa9ee6",
+      "name": "edit after import",
+      "type": "n8n-nodes-base.stickyNote",
+      "typeVersion": 1,
+      "position": [
+        -40,
+        -248
+      ]
+    },
+    {
+      "parameters": {
+        "content": "Structured redacted trace only; no raw prompts, secrets, binary or hidden chain-of-thought. Accepts one event or a bounded event batch. Select Data Table in UI.\n\nOptional: after insert, handoff events POST to mas-activity-service (`/v1/sync`) for the chat presentation UI. Set `activity_base_url` in the **Activity connection** Set node (n8n free — no Variables). continueOnFail keeps Trace durable even if the UI service is down.",
+        "width": 620,
+        "height": 420,
+        "color": 5
+      },
+      "id": "cdef7163-1873-50f5-b8d1-2112f0c6aa74",
+      "name": "Trace writer README",
+      "type": "n8n-nodes-base.stickyNote",
+      "typeVersion": 1,
+      "position": [
+        -700,
+        -460
+      ]
+    },
+    {
+      "parameters": {
+        "inputSource": "jsonExample",
+        "jsonExample": "{\"mas_trace_event\": {\"trace_id\": \"trace_example\", \"task_id\": \"eng_example\", \"stage\": \"builder\", \"event_type\": \"stage_completed\", \"summary\": \"Draft produced\"}, \"mas_trace_events\": [], \"passthrough\": {}}"
+      },
+      "id": "f2837034-3a71-55ac-8038-3a28f3cd90cf",
+      "name": "Receive MAS trace event",
+      "type": "n8n-nodes-base.executeWorkflowTrigger",
+      "typeVersion": 1.2,
+      "position": [
+        0,
+        0
+      ]
+    },
+    {
+      "parameters": {
+        "jsCode": "const root=$json,obj=v=>v&&typeof v==='object'&&!Array.isArray(v),arr=Array.isArray,clean=v=>typeof v==='string'?v.trim():'',allowed=new Set(['intake','plan','rag','baseline','excel','builder','merge','validate','verify','hitl','release','error']);\nconst source=arr(root.mas_trace_events)&&root.mas_trace_events.length?root.mas_trace_events.slice(0,100):(root.mas_trace_event?[root.mas_trace_event]:[root]);\nconst safeRef=v=>obj(v)?Object.fromEntries(Object.entries(v).filter(([k,val])=>!/(prompt|secret|token|password|authorization|binary|content|text)/i.test(k)&&['string','number','boolean'].includes(typeof val)).slice(0,20)):v;\nconst sanitizeDecision=rawDecision=>rawDecision&&rawDecision.contract==='decision_record'&&rawDecision.contract_version==='1.0'&&clean(rawDecision.objective)&&obj(rawDecision.selected_action)&&arr(rawDecision.selected_action.reason_codes)?{contract:'decision_record',contract_version:'1.0',objective:clean(rawDecision.objective).slice(0,1000),considered_inputs:arr(rawDecision.considered_inputs)?rawDecision.considered_inputs.slice(0,100).map(safeRef):[],proposed_actions:arr(rawDecision.proposed_actions)?rawDecision.proposed_actions.slice(0,100).map(safeRef):[],selected_action:{action:clean(rawDecision.selected_action.action).slice(0,300),reason_codes:rawDecision.selected_action.reason_codes.map(v=>clean(v).slice(0,200)).filter(Boolean).slice(0,100)},rejected_actions:arr(rawDecision.rejected_actions)?rawDecision.rejected_actions.slice(0,100).map(safeRef):[],assumptions:arr(rawDecision.assumptions)?rawDecision.assumptions.map(v=>clean(v).slice(0,500)).slice(0,100):[],evidence_refs:arr(rawDecision.evidence_refs)?rawDecision.evidence_refs.slice(0,100).map(safeRef):[],citations:arr(rawDecision.citations)?rawDecision.citations.slice(0,100).map(safeRef):[],tool_call_ids:arr(rawDecision.tool_call_ids)?rawDecision.tool_call_ids.map(v=>clean(v).slice(0,200)).slice(0,100):[],unresolved_questions:arr(rawDecision.unresolved_questions)?rawDecision.unresolved_questions.slice(0,100).map(safeRef):[],acceptance_check_results:arr(rawDecision.acceptance_check_results)?rawDecision.acceptance_check_results.slice(0,100).map(safeRef):[]}:null;\nreturn source.map((candidate,index)=>{const x=obj(candidate)?candidate:{},stage=clean(x.stage).toLowerCase(),now=new Date().toISOString(),decision=sanitizeDecision(obj(x.decision_record)?x.decision_record:null);const safeHash=v=>/^(?:fnv1a32:[a-f0-9]{8}|sha256:[a-f0-9]{64})$/i.test(clean(v))?clean(v).toLowerCase():null,safeCount=v=>Number.isInteger(Number(v))&&Number(v)>=0&&Number(v)<=16777216?Number(v):null;const toolCalls=arr(x.tool_calls)?x.tool_calls.slice(0,50).map((v,i)=>obj(v)?{name:clean(v.name).slice(0,120),tool_call_id:clean(v.tool_call_id).slice(0,200)||null,status:clean(v.status).slice(0,30),stage:clean(v.stage).slice(0,40)||null,sequence:Number.isInteger(Number(v.sequence))?Number(v.sequence):i+1,input_hash:safeHash(v.input_hash),input_bytes:safeCount(v.input_bytes),output_hash:safeHash(v.output_hash),output_bytes:safeCount(v.output_bytes)}:null).filter(Boolean):[];const handoff=obj(x.handoff)?{from_specialist:clean(x.handoff.from_specialist)||null,to_specialist:clean(x.handoff.to_specialist)||null,from_role:clean(x.handoff.from_role)||null,to_role:clean(x.handoff.to_role)||null,details:obj(x.handoff.details)?safeRef(x.handoff.details):{}}:null;const e={contract:'mas_trace_event',contract_version:'1.0',trace_id:clean(x.trace_id)||`trace_${Date.now().toString(36)}`,task_id:clean(x.task_id)||null,event_id:clean(x.event_id)||`evt_${Date.now().toString(36)}_${index}_${Math.random().toString(36).slice(2,8)}`,at:clean(x.at)||now,stage:allowed.has(stage)?stage:'error',event_type:clean(x.event_type)||'stage_event',actor:clean(x.actor)||'system',status:clean(x.status)||'observed',summary:clean(x.summary).slice(0,2000),brief:clean(x.brief||(obj(x.handoff)?x.handoff.brief:'')).slice(0,800)||null,duration_ms:Number.isFinite(Number(x.duration_ms))?Math.trunc(Number(x.duration_ms)):(Number.isFinite(Number(obj(x.handoff)?.details?.duration_ms))?Math.trunc(Number(x.handoff.details.duration_ms)):null),tool_calls:toolCalls,evidence_refs:arr(x.evidence_refs)?x.evidence_refs.slice(0,100).map(safeRef):[],findings:arr(x.findings)?x.findings.slice(0,100).map(safeRef):[],score:obj(x.score)?x.score:null,gate:obj(x.gate)?x.gate:null,decision_record:decision,handoff,redaction:{raw_prompt:false,secret:false,binary:false}};return{json:{trace_event:e,trace_row:{event_id:e.event_id,trace_id:e.trace_id,task_id:e.task_id,at:e.at,stage:e.stage,event_type:e.event_type,actor:e.actor,status:e.status,summary:e.summary,details_json:JSON.stringify({tool_calls:e.tool_calls,evidence_refs:e.evidence_refs,findings:e.findings,score:e.score,gate:e.gate,decision_record:e.decision_record,handoff:e.handoff,brief:e.brief,duration_ms:e.duration_ms})}}}});"
+      },
+      "id": "1903289c-79b6-5621-be75-7684d35fcafa",
+      "name": "Normalize MAS trace event",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        280,
+        0
+      ]
+    },
+    {
+      "parameters": {
+        "operation": "insert",
+        "dataTableId": {
+          "__rl": true,
+          "mode": "list",
+          "value": "REPLACE_IN_UI",
+          "cachedResultName": "MAS trace events v1"
+        },
+        "columns": {
+          "mappingMode": "defineBelow",
+          "value": {
+            "event_id": "={{ $json.trace_row.event_id }}",
+            "trace_id": "={{ $json.trace_row.trace_id }}",
+            "task_id": "={{ $json.trace_row.task_id }}",
+            "at": "={{ $json.trace_row.at }}",
+            "stage": "={{ $json.trace_row.stage }}",
+            "event_type": "={{ $json.trace_row.event_type }}",
+            "actor": "={{ $json.trace_row.actor }}",
+            "status": "={{ $json.trace_row.status }}",
+            "summary": "={{ $json.trace_row.summary }}",
+            "details_json": "={{ $json.trace_row.details_json }}"
+          },
+          "matchingColumns": [],
+          "schema": [],
+          "attemptToConvertTypes": false,
+          "convertFieldsToString": false
+        }
+      },
+      "id": "451ca020-6fce-5610-8767-370201601908",
+      "name": "Insert MAS trace event",
+      "type": "n8n-nodes-base.dataTable",
+      "typeVersion": 1.1,
+      "position": [
+        560,
+        0
+      ]
+    },
+    {
+      "parameters": {
+        "assignments": {
+          "assignments": [
+            {
+              "id": "7980a704-3c14-5718-8ba2-be35caf7f005",
+              "name": "activity_base_url",
+              "value": "http://127.0.0.1:8200",
+              "type": "string"
+            }
+          ]
+        },
+        "options": {},
+        "includeOtherFields": true
+      },
+      "id": "1167429f-7b85-57c5-872c-508a5d80ff47",
+      "name": "Activity connection",
+      "type": "n8n-nodes-base.set",
+      "typeVersion": 3.4,
+      "position": [
+        840,
+        0
+      ]
+    },
+    {
+      "parameters": {
+        "jsCode": "const source=$('Receive MAS trace event').first().json||{};\nconst rows=$('Normalize MAS trace event').all().map(i=>i.json||{});\nconst events=rows.map(r=>r.trace_event).filter(e=>e&&e.event_type==='handoff');\nconst taskId=String(events[0]?.task_id||source.mas_trace_event?.task_id||source.passthrough?.task_id||'').trim();\nconst traceId=String(events[0]?.trace_id||source.mas_trace_event?.trace_id||'').trim();\nconst ACTIVITY_BASE_URL=String($('Activity connection').first().json.activity_base_url||'').trim();\nconst skipActivity=source.passthrough?.skip_activity_sync===true||source.skip_activity_sync===true;\nconst ready=Boolean(!skipActivity&&taskId&&events.length&&ACTIVITY_BASE_URL);\nreturn[{json:{\n  activity_sync_ready:ready,\n  activity_url:`${String(ACTIVITY_BASE_URL).replace(/\\/$/,'')}/v1/sync`,\n  activity_body:{task_id:taskId,trace_id:traceId||null,events},\n  stored_count:rows.length,\n  handoff_count:events.length,\n  event_id:rows[0]?.trace_event?.event_id||null,\n  trace_id:traceId||null,\n  redaction:rows[0]?.trace_event?.redaction||null,\n  passthrough:source.passthrough??null,\n  activity_sync_skipped:skipActivity\n}}];"
+      },
+      "id": "93fee35b-b294-5e35-b2e8-765ef14e0de8",
+      "name": "Prepare MAS activity sync",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        1120,
+        0
+      ]
+    },
+    {
+      "parameters": {
+        "conditions": {
+          "options": {
+            "caseSensitive": true,
+            "leftValue": "",
+            "typeValidation": "strict",
+            "version": 2
+          },
+          "conditions": [
+            {
+              "id": "4e9379e2-b1f6-5c37-930c-4c0eb1792343",
+              "leftValue": "={{ $json.activity_sync_ready }}",
+              "rightValue": true,
+              "operator": {
+                "type": "boolean",
+                "operation": "equals"
+              }
+            }
+          ],
+          "combinator": "and"
+        },
+        "options": {}
+      },
+      "id": "708551c2-10ff-51d8-a6d4-e7737b149bec",
+      "name": "Activity sync needed?",
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2.2,
+      "position": [
+        1400,
+        0
+      ]
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "={{ $json.activity_url }}",
+        "sendHeaders": true,
+        "headerParameters": {
+          "parameters": [
+            {
+              "name": "Content-Type",
+              "value": "application/json"
+            }
+          ]
+        },
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "={{ $json.activity_body }}",
+        "options": {
+          "timeout": 30000,
+          "response": {
+            "response": {
+              "neverError": true
+            }
+          }
+        }
+      },
+      "id": "4d104be4-ac16-566c-9d87-9459bfc0d386",
+      "name": "POST handoffs to MAS Activity",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.4,
+      "position": [
+        1680,
+        0
+      ],
+      "onError": "continueRegularOutput"
+    },
+    {
+      "parameters": {
+        "jsCode": "const prepared=$('Prepare MAS activity sync').first().json||{};\nconst source=$('Receive MAS trace event').first().json||{};\nlet activity={attempted:Boolean(prepared.activity_sync_ready),stored:false,count:0};\ntry{\n  const http=$('POST handoffs to MAS Activity').first().json||{};\n  activity={attempted:true,stored:Boolean(http.stored),count:Number(http.count||0),task_id:http.task_id||prepared.activity_body?.task_id||null};\n}catch(_){ activity={attempted:Boolean(prepared.activity_sync_ready),stored:false,count:0,skipped:!prepared.activity_sync_ready}; }\nreturn[{json:{\n  contract:'mas_trace_ack',\n  contract_version:'1.0',\n  stored:true,\n  stored_count:Number(prepared.stored_count||0),\n  event_id:prepared.event_id||null,\n  trace_id:prepared.trace_id||null,\n  redaction:prepared.redaction||null,\n  activity,\n  passthrough:prepared.passthrough??source.passthrough??null\n}}];"
+      },
+      "id": "bd229fc0-7fc1-5aca-b418-4fd8df03409b",
+      "name": "Return trace acknowledgement",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        1960,
+        0
+      ]
+    }
+  ],
+  "pinData": {},
+  "connections": {
+    "Receive MAS trace event": {
+      "main": [
+        [
+          {
+            "node": "Normalize MAS trace event",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Normalize MAS trace event": {
+      "main": [
+        [
+          {
+            "node": "Insert MAS trace event",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Insert MAS trace event": {
+      "main": [
+        [
+          {
+            "node": "Activity connection",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Activity connection": {
+      "main": [
+        [
+          {
+            "node": "Prepare MAS activity sync",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Prepare MAS activity sync": {
+      "main": [
+        [
+          {
+            "node": "Activity sync needed?",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Activity sync needed?": {
+      "main": [
+        [
+          {
+            "node": "POST handoffs to MAS Activity",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Return trace acknowledgement",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "POST handoffs to MAS Activity": {
+      "main": [
+        [
+          {
+            "node": "Return trace acknowledgement",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    }
+  },
+  "active": false,
+  "settings": {
+    "executionOrder": "v1",
+    "saveManualExecutions": true,
+    "callerPolicy": "workflowsFromSameOwner",
+    "errorWorkflow": ""
+  },
+  "versionId": "75256204-bf72-57b8-b309-6f9cdb5c3575",
+  "meta": {
+    "templateCredsSetupCompleted": false,
+    "targetN8nVersion": "2.30.8",
+    "contractVersion": "mas_trace_event/v1"
+  },
+  "tags": []
+}
+
+===END_FILE===
+===BEGIN_FILE===	n8n/workflows/retired/mvp-entry-form.workflow.json	11444	utf8
+{
+  "id": "f720624a-7bed-455b-b166-bbb213023ee5",
+  "name": "Form — MAS Entry",
+  "description": "Native n8n 2.30.8 Form entry for MAS. Starts the Universal Orchestrator and shows a clear HTML completion page for success or human_gate.",
+  "active": false,
+  "settings": {
+    "executionOrder": "v1",
+    "saveManualExecutions": true,
+    "callerPolicy": "workflowsFromSameOwner",
+    "errorWorkflow": "e1f0a7c2-9b4d-5e8f-a123-4567890abcde"
+  },
+  "nodes": [
+    {
+      "parameters": {
+        "content": "## edit after import\n\n**Form — MAS Entry** — after UI import, complete bindings before activate:\n\n- Bind sub-workflow on **Call Universal Engineering Orchestrator**\n\nDo not rely on env()/Globals for corporate UI import.",
+        "height": 188,
+        "width": 440,
+        "color": 1
+      },
+      "id": "c6377312-2866-5dd2-95fa-545ee11ce5c7",
+      "name": "edit after import",
+      "type": "n8n-nodes-base.stickyNote",
+      "typeVersion": 1,
+      "position": [
+        -40,
+        -248
+      ]
+    },
+    {
+      "parameters": {
+        "formTitle": "MAS MVP — Engineering Task",
+        "formDescription": "Describe the engineering task and attach the input files required by the MAS orchestrator. If the orchestrator needs clarification, this form shows what is wrong and which task_id to resume in Form — MAS Human Gate.",
+        "formFields": {
+          "values": [
+            {
+              "fieldName": "task_description",
+              "fieldLabel": "Task Description",
+              "fieldType": "textarea",
+              "placeholder": "Describe the required engineering result and acceptance criteria.",
+              "requiredField": true
+            },
+            {
+              "fieldName": "file",
+              "fieldLabel": "Excel workbook (.xlsx / .xls)",
+              "fieldType": "file",
+              "multipleFiles": false,
+              "acceptFileTypes": ".xlsx, .xls",
+              "requiredField": false
+            },
+            {
+              "fieldName": "schedule_files",
+              "fieldLabel": "SCHEDULE files (root + INCLUDE fragments; drag-and-drop)",
+              "fieldType": "file",
+              "multipleFiles": true,
+              "acceptFileTypes": ".data, .inc, .sch, .txt, .grdecl",
+              "requiredField": false
+            },
+            {
+              "fieldName": "schedule_root",
+              "fieldLabel": "SCHEDULE root filename (optional)",
+              "fieldType": "text",
+              "requiredField": false
+            },
+            {
+              "fieldName": "trajectory_files",
+              "fieldLabel": "Well trajectories (.dev)",
+              "fieldType": "file",
+              "multipleFiles": true,
+              "acceptFileTypes": ".dev",
+              "requiredField": false
+            },
+            {
+              "fieldName": "surface_file",
+              "fieldLabel": "ASCII CPS3 surface (.cps3 / .grd / .grid / .txt)",
+              "fieldType": "file",
+              "multipleFiles": false,
+              "acceptFileTypes": ".cps3, .grd, .grid, .txt",
+              "requiredField": false
+            }
+          ]
+        },
+        "responseMode": "lastNode",
+        "options": {
+          "path": "mas-mvp-entry",
+          "appendAttribution": false,
+          "buttonLabel": "Run MAS task",
+          "ignoreBots": true
+        }
+      },
+      "id": "7d62b879-a8ea-4fde-8f6f-9ca6d381ff93",
+      "name": "MAS task form",
+      "type": "n8n-nodes-base.formTrigger",
+      "typeVersion": 2.6,
+      "position": [
+        0,
+        0
+      ],
+      "webhookId": "7d62b879-a8ea-4fde-8f6f-9ca6d381ff93"
+    },
+    {
+      "parameters": {
+        "jsCode": "const item = $input.first();\nconst description = String(item.json?.task_description || '').trim();\nconst taskId = `mvp_${Date.now()}_${Math.random().toString(36).slice(2, 10)}`;\nconst binary = item.binary && typeof item.binary === 'object' ? item.binary : {};\nconst inputFiles = Object.entries(binary).map(([field, file]) => ({\n  field,\n  filename: String(file?.fileName || ''),\n  mime_type: String(file?.mimeType || ''),\n}));\n// Keep Orchestrator binary keys: file / schedule_file(s)* / trajectory_files* / surface_file.\nconst mappedBinary = {};\nfor (const [field, file] of Object.entries(binary)) {\n  if (!file) continue;\n  if (field === 'file' || field === 'surface_file' || field === 'trajectory_files' || /^(schedule_file|schedule_files)\\d*$/i.test(field) || /^trajectory_files\\d*$/i.test(field)) {\n    mappedBinary[field] = file;\n  }\n}\nconst scheduleRoot = String(item.json?.schedule_root || '').trim();\nconst request = {\n  objective: description,\n  problem_statement: description,\n  task_description: description,\n  input_files: inputFiles,\n};\nif (scheduleRoot) request.schedule_root = scheduleRoot;\nconst hasSchedule = Object.keys(mappedBinary).some((k) => /^(schedule_file|schedule_files)\\d*$/i.test(k));\nif (hasSchedule) request.build_mode = 'AUTO';\nreturn [{\n  json: {\n    entrypoint: 'mvp_form',\n    action: 'start',\n    task_id: taskId,\n    task_description: description,\n    request_text: description,\n    request,\n    schedule_root: scheduleRoot || undefined,\n    context: {\n      source: 'mvp-entry-form',\n      submitted_task_id: taskId,\n    },\n    requested_by: 'mvp-form-engineer',\n  },\n  binary: mappedBinary,\n}];"
+      },
+      "id": "df644c3e-6d9d-4420-af14-e82a9b632527",
+      "name": "Prepare orchestrator request",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        280,
+        0
+      ]
+    },
+    {
+      "parameters": {
+        "source": "database",
+        "workflowId": {
+          "__rl": true,
+          "value": "REPLACE_ORCHESTRATOR_ID_IN_UI",
+          "mode": "list",
+          "cachedResultName": "Orchestrator — Engineering MAS"
+        },
+        "mode": "once",
+        "options": {
+          "waitForSubWorkflow": true
+        }
+      },
+      "id": "65a0e8a8-5937-49c3-9885-29c86b7e89de",
+      "name": "Call Universal Engineering Orchestrator",
+      "type": "n8n-nodes-base.executeWorkflow",
+      "typeVersion": 1.3,
+      "position": [
+        560,
+        0
+      ]
+    },
+    {
+      "parameters": {
         "jsCode": "const response = $input.first().json || {};\nconst escapeHtml = (value) => String(value ?? '')\n  .replace(/&/g, '&amp;')\n  .replace(/</g, '&lt;')\n  .replace(/>/g, '&gt;')\n  .replace(/\\\"/g, '&quot;')\n  .replace(/'/g, '&#39;');\nconst prettyJson = (value, limit = 16000) => {\n  let text;\n  try { text = JSON.stringify(value, null, 2); } catch { text = String(value); }\n  return text.length > limit ? `${text.slice(0, limit)}\\n… truncated for display` : text;\n};\nconst questionText = (q) => {\n  if (!q || typeof q !== 'object') return String(q ?? '');\n  return String(q.text || q.question || q.message || q.id || '').trim();\n};\nconst result = response.result && typeof response.result === 'object' ? response.result : null;\nconst deliverables = Array.isArray(result?.deliverables) ? result.deliverables : [];\nconst scheduleText = response.schedule_text\n  || result?.release?.schedule_text\n  || result?.compact_data?.generated_schedule\n  || deliverables.find((value) => typeof value?.schedule_text === 'string')?.schedule_text\n  || null;\nconst gate = response.human_gate && typeof response.human_gate === 'object' ? response.human_gate : null;\nconst questions = Array.isArray(gate?.questions) ? gate.questions : [];\nconst status = String(response.status || 'error');\nconst taskId = String(response.task_id || '');\nconst version = response.version ?? null;\nconst message = String(response.message || (scheduleText ? 'SCHEDULE generated.' : 'MAS task completed.'));\nconst questionItems = questions\n  .map((q, index) => `<li><strong>${escapeHtml(String(q.id || `q${index + 1}`))}</strong>: ${escapeHtml(questionText(q))}${q.expected_format ? ` <em>(format: ${escapeHtml(q.expected_format)})</em>` : ''}${q.required === false ? '' : ' <strong>*</strong>'}</li>`)\n  .join('');\nconst gateBlock = gate\n  ? `<section>\n<h2>Human input required</h2>\n<p><strong>What is wrong / why stopped:</strong> ${escapeHtml(gate.reason || message)}</p>\n<p><strong>Gate kind:</strong> <code>${escapeHtml(gate.kind || 'needs_input')}</code></p>\n${questionItems ? `<p><strong>What the orchestrator needs from you:</strong></p><ol>${questionItems}</ol>` : '<p>No structured questions were returned; use the reason above.</p>'}\n<p><strong>What you should do next:</strong></p>\n<ol>\n<li>Copy Task ID <code>${escapeHtml(taskId)}</code></li>\n<li>Open the published form <strong>Form — MAS Human Gate</strong> (<code>/form/mas-human-gate</code>)</li>\n<li>Paste the Task ID, choose action (<code>reply</code> / <code>approve</code> / <code>reject</code>), and answer in plain language</li>\n<li>Do <em>not</em> copy version/gate_id manually — Human Gate loads them from task status</li>\n</ol>\n</section>`\n  : '';\nconst scheduleBlock = scheduleText\n  ? `<section><h2>schedule.inc</h2><pre>${escapeHtml(String(scheduleText).slice(0, 100000))}</pre></section>`\n  : '';\nconst html = `<main>\n<h1>MAS task result</h1>\n<p>Status: <strong>${escapeHtml(status)}</strong></p>\n<p>${escapeHtml(message)}</p>\n<p>Task ID: <code>${escapeHtml(taskId || 'n/a')}</code></p>\n<p>Version: <code>${escapeHtml(version ?? 'n/a')}</code></p>\n${gateBlock}\n${scheduleBlock}\n<details><summary>Structured orchestrator response</summary><pre>${escapeHtml(prettyJson(response))}</pre></details>\n</main>`;\nreturn [{ json: {\n  task_id: taskId || null,\n  status,\n  message,\n  version,\n  schedule_text: scheduleText,\n  human_gate: gate,\n  result: result || response,\n  form_response_html: html,\n}}];"
       },
       "id": "677238b1-42dc-49f5-aa4f-51090ded7794",
@@ -3728,464 +5115,3 @@
           "__rl": true,
           "value": "REPLACE_CAS_PERSIST_IN_UI",
           "mode": "list",
-          "cachedResultName": "CAS — Persist Task State"
-        },
-        "workflowInputs": {
-          "mappingMode": "defineBelow",
-          "value": {
-            "cas_operation": "={{ 'update' }}",
-            "attempted": "={{ $json }}"
-          },
-          "matchingColumns": [],
-          "schema": [],
-          "attemptToConvertTypes": false,
-          "convertFieldsToString": false
-        },
-        "mode": "once",
-        "options": {
-          "waitForSubWorkflow": true
-        }
-      },
-      "id": "bf2c74ec-8c2b-5730-86f6-df18c5077412",
-      "name": "Call CAS persist — verification",
-      "type": "n8n-nodes-base.executeWorkflow",
-      "typeVersion": 1.3,
-      "position": [
-        7280,
-        -85
-      ],
-      "onError": "continueRegularOutput"
-    },
-    {
-      "parameters": {
-        "jsCode": "const x=$json;\nconst parse=(v,f)=>{try{return typeof v==='string'?JSON.parse(v):v??f}catch{return f}};\nconst obj=v=>v&&typeof v==='object'&&!Array.isArray(v);\nconst clean=v=>typeof v==='string'?v.trim():'';\nconst runtime=parse(x.runtime_json,{});\nconst result=obj(x.specialist_result)?x.specialist_result:parse(x.result_json,{});\nconst verification=parse(x.verification_json,{});\nconst last=obj(runtime.last_error)?runtime.last_error:(obj(result.error)?result.error:{});\nconst code=clean(last.code||result.error?.code||'').toUpperCase();\nconst status=clean(x.status);\nconst specialistStatus=clean(result.status);\nconst gateKind=clean(parse(x.gate_json,{}).kind);\n// HITL is ordinary work (input / decision / approval). Error Handler is only for\n// persisted retryable_error or failed — never leftover last_error.code, never awaiting_human.\nconst hitlSpecialist=['needs_input','needs_decision','needs_approval'].includes(specialistStatus);\nconst hitlGate=['needs_input','needs_decision','needs_approval','result_approval','pre_delegation_approval'].includes(gateKind);\nconst isHitl=status==='awaiting_human'||hitlSpecialist||hitlGate;\nconst critical=!isHitl&&['retryable_error','failed'].includes(status);\nif(!critical||!clean(x.task_id)){\n  return[{json:{...x,invoke_error_handler:false,cas_already_persisted:true,mas_error_event:null}}];\n}\nconst findings=[...(Array.isArray(last.findings)?last.findings:[]),...(Array.isArray(verification.findings)?verification.findings:[])].filter(obj).slice(0,20);\n// Never fall back to specialist HITL/success copy (user_message/summary).\nconst errObj=obj(result.error)?result.error:{};\nlet safeMessage=clean(last.safe_message||last.message||errObj.safe_message||errObj.message||'');\nif(!safeMessage) safeMessage=`Сбой case ${x.task_id} — входные данные сохранены.`;\nif(!safeMessage.includes(x.task_id)) safeMessage=`${safeMessage} (case_id=${x.task_id})`;\nconst cas_snapshot={\n  task_id:x.task_id,\n  version:Number(x.version)||1,\n  previous_version:Number(x.previous_version)||Number(x.version)||0,\n  status,\n  risk_class:clean(x.risk_class)||'high',\n  request_json:typeof x.request_json==='string'?x.request_json:JSON.stringify(x.request_json||{}),\n  runtime_json:typeof x.runtime_json==='string'?x.runtime_json:JSON.stringify(runtime),\n  plan_json:typeof x.plan_json==='string'?x.plan_json:JSON.stringify(x.plan_json||{}),\n  packet_json:typeof x.packet_json==='string'?x.packet_json:JSON.stringify(x.packet_json||{}),\n  result_json:typeof x.result_json==='string'?x.result_json:JSON.stringify(result||{}),\n  verification_json:typeof x.verification_json==='string'?x.verification_json:JSON.stringify(verification||{}),\n  gate_json:typeof x.gate_json==='string'?x.gate_json:JSON.stringify(x.gate_json||{}),\n  retry_count:Number(x.retry_count)||0,\n  max_retries:Number(x.max_retries)||2,\n  created_at:clean(x.created_at)||new Date().toISOString(),\n  updated_at:clean(x.updated_at)||new Date().toISOString(),\n};\nconst mas_error_event={\n  contract:'mas_error_event',\n  contract_version:'1.0',\n  task_id:x.task_id,\n  code:code||undefined,\n  stage:status==='retryable_error'?'plan':(status==='awaiting_human'?'hitl':'error'),\n  safe_message:safeMessage,\n  findings,\n  cas_already_persisted:true,\n  cas_snapshot,\n};\nreturn[{json:{...x,invoke_error_handler:true,cas_already_persisted:true,mas_error_event,passthrough:{source:'orchestrator',status,task_id:x.task_id}}}];"
-      },
-      "id": "55b7c7c1-f572-5abe-93eb-eccbcff26482",
-      "name": "Prepare MAS error event (verification)",
-      "type": "n8n-nodes-base.code",
-      "typeVersion": 2,
-      "position": [
-        7560,
-        -170
-      ]
-    },
-    {
-      "parameters": {
-        "conditions": {
-          "options": {
-            "caseSensitive": true,
-            "leftValue": "",
-            "typeValidation": "strict",
-            "version": 2
-          },
-          "conditions": [
-            {
-              "id": "ad814ece-fed4-5bab-a162-be029164ee72",
-              "leftValue": "={{ $json.invoke_error_handler }}",
-              "rightValue": true,
-              "operator": {
-                "type": "boolean",
-                "operation": "equals"
-              }
-            }
-          ],
-          "combinator": "and"
-        },
-        "options": {}
-      },
-      "id": "33efab50-6e6a-5fa0-9df3-74975f1c03c7",
-      "name": "Invoke Error Handler (verification)?",
-      "type": "n8n-nodes-base.if",
-      "typeVersion": 2.2,
-      "position": [
-        7840,
-        -85
-      ]
-    },
-    {
-      "parameters": {
-        "source": "database",
-        "workflowId": {
-          "__rl": true,
-          "value": "REPLACE_ERROR_HANDLER_IN_UI",
-          "mode": "list",
-          "cachedResultName": "Error — MAS Case Handler"
-        },
-        "workflowInputs": {
-          "mappingMode": "defineBelow",
-          "value": {
-            "mas_error_event": "={{ $json.mas_error_event }}",
-            "cas_already_persisted": "={{ $json.cas_already_persisted }}",
-            "passthrough": "={{ $json.passthrough || {} }}",
-            "task_id": "={{ $json.task_id }}"
-          },
-          "matchingColumns": [],
-          "schema": [],
-          "attemptToConvertTypes": false,
-          "convertFieldsToString": false
-        },
-        "mode": "once",
-        "options": {
-          "waitForSubWorkflow": true
-        }
-      },
-      "id": "b717a6af-08c8-563d-83a1-8767f719138f",
-      "name": "Call Error — MAS Case Handler (verification)",
-      "type": "n8n-nodes-base.executeWorkflow",
-      "typeVersion": 1.3,
-      "position": [
-        8120,
-        -85
-      ],
-      "onError": "continueRegularOutput"
-    },
-    {
-      "parameters": {
-        "jsCode": "let before={};\ntry{before=$('Call CAS persist — verification').first().json||{}}catch{before={}}\nreturn[{json:before&&typeof before==='object'?before:{status:'error',message:'Missing orchestrator state after error handler.'}}];"
-      },
-      "id": "58e880be-0f9c-55ef-ab31-560d40bccbb2",
-      "name": "Restore after verification error handler",
-      "type": "n8n-nodes-base.code",
-      "typeVersion": 2,
-      "position": [
-        8120,
-        85
-      ]
-    },
-    {
-      "parameters": {
-        "conditions": {
-          "options": {
-            "caseSensitive": true,
-            "leftValue": "",
-            "typeValidation": "strict",
-            "version": 2
-          },
-          "conditions": [
-            {
-              "id": "18db19af-d398-5ef4-9ff3-de558cde9bbc",
-              "leftValue": "={{ $json.status }}",
-              "rightValue": "retryable_error",
-              "operator": {
-                "type": "string",
-                "operation": "equals"
-              }
-            }
-          ],
-          "combinator": "and"
-        },
-        "options": {}
-      },
-      "id": "f364b56c-d445-56d4-a469-b3bbf19d17fb",
-      "name": "Verification requests replan?",
-      "type": "n8n-nodes-base.if",
-      "typeVersion": 2.2,
-      "position": [
-        8400,
-        0
-      ]
-    },
-    {
-      "parameters": {
-        "jsCode": "const x=$json;const r=x.specialist_result;const exhausted=Number(x.retry_count)>=Number(x.max_retries);\nconst clean=v=>typeof v==='string'?v.trim():'';\nconst chatRoles={\"excel_extraction_specialist\": \"Excel Extractor\", \"schedule_builder_specialist\": \"Schedule Builder\", \"engineering_calculation_specialist\": \"Calculation Specialist\", \"engineering_data_specialist\": \"Data Specialist\", \"engineering_document_specialist\": \"Document Specialist\", \"cluster_calculation_specialist\": \"Cluster Calculation\", \"binary_results_specialist\": \"Binary Results Extractor\", \"presentation_specialist\": \"Presentation Assembler\"};\nconst appendHandoffEvent=(runtime,evt)=>{\n  const r=runtime&&typeof runtime==='object'&&!Array.isArray(runtime)?runtime:{};\n  const prev=Array.isArray(r.handoff_events)?r.handoff_events:[];\n  const now=new Date().toISOString();\n  const details=evt.details&&typeof evt.details==='object'&&!Array.isArray(evt.details)?{...evt.details}:{};\n  const timer=r.specialist_timer&&typeof r.specialist_timer==='object'?r.specialist_timer:null;\n  let duration_ms=Number.isFinite(Number(evt.duration_ms))?Math.max(0,Math.trunc(Number(evt.duration_ms))):null;\n  const closesSpecialist=Boolean(timer&&timer.specialist_id&&evt.from_specialist&&evt.from_specialist===timer.specialist_id&&evt.from_specialist!=='universal_orchestrator');\n  if(duration_ms==null&&closesSpecialist&&timer.started_at){\n    const started=Date.parse(String(timer.started_at));\n    const ended=Date.parse(now);\n    if(Number.isFinite(started)&&Number.isFinite(ended)) duration_ms=Math.max(0,ended-started);\n  }\n  if(duration_ms!=null) details.duration_ms=duration_ms;\n  const brief=String(evt.brief||evt.summary||'').slice(0,800);\n  const event={\n    contract:'mas_activity_turn',\n    contract_version:'1.1',\n    event_type:'handoff',\n    at:now,\n    stage:String(evt.stage||'plan'),\n    status:String(evt.status||'observed'),\n    from_specialist:evt.from_specialist||null,\n    to_specialist:evt.to_specialist||null,\n    from_role:evt.from_role||null,\n    to_role:evt.to_role||null,\n    summary:String(evt.summary||'').slice(0,500),\n    brief,\n    duration_ms,\n    details\n  };\n  let nextTimer=timer;\n  if(String(evt.status||'')==='DELEGATED'&&evt.to_specialist&&evt.to_specialist!=='universal_orchestrator'){\n    nextTimer={specialist_id:evt.to_specialist,started_at:now,from_status:'DELEGATED'};\n  }else if(closesSpecialist){\n    nextTimer=null;\n  }else if(evt.to_specialist&&evt.to_specialist!=='universal_orchestrator'&&evt.to_specialist!==(timer&&timer.specialist_id)){\n    nextTimer={specialist_id:evt.to_specialist,started_at:now,from_status:String(evt.status||'handoff')};\n  }\n  return {...r,handoff_events:[...prev,event].slice(-50),specialist_timer:nextTimer||null};\n};\nconst HITL_CYRILLIC=/[А-Яа-яЁё]/;\nconst HITL_CODE_ONLY=/^[A-Z][A-Z0-9_]{3,}$/;\nconst hitlClean=v=>typeof v==='string'?v.trim():'';\nconst hitlLooksMachine=text=>{\n  const t=hitlClean(text);\n  if(!t) return true;\n  if(HITL_CODE_ONLY.test(t)) return true;\n  if(!HITL_CYRILLIC.test(t)) return true;\n  return false;\n};\nconst hitlBaseName=p=>{\n  const s=hitlClean(p).replace(/\\\\/g,'/');\n  if(!s) return '';\n  const parts=s.split('/').filter(Boolean);\n  return parts[parts.length-1]||s;\n};\nconst hitlSlot=(f,keys)=>{\n  if(!f||typeof f!=='object') return '';\n  for(const k of keys){\n    const v=hitlClean(f[k]);\n    if(v) return v;\n  }\n  return '';\n};\nconst hitlSlots=f=>{\n  const rawPath=hitlSlot(f,['path','target_file_ref','raw_path','include_path']);\n  const rawFrom=hitlSlot(f,['file_ref','source_file_ref','root_path']);\n  const path=hitlBaseName(rawPath)||(!rawPath?hitlBaseName(rawFrom):'');\n  const from=rawPath?hitlBaseName(rawFrom):'';\n  const keywords=Array.isArray(f?.keywords)?f.keywords.map(v=>hitlClean(v).toUpperCase()).filter(Boolean).slice(0,12):[];\n  const cycle=Array.isArray(f?.cycle)?f.cycle.map(hitlBaseName).filter(Boolean):[];\n  const wells=Array.isArray(f?.wells)?f.wells.map(hitlClean).filter(Boolean).slice(0,12):[];\n  return {\n    code:hitlClean(f?.code||f?.id||''),\n    path, from,\n    keyword:hitlClean(f?.keyword||'').toUpperCase(),\n    entity:hitlClean(f?.entity||f?.well||''),\n    field:hitlClean(f?.field||''),\n    keywords, cycle, wells,\n  };\n};\nconst HITL_STAGE={\n  schedule_intake_result:'Проверка входных данных задачи',\n  baseline_analysis:'Проверка пакета schedule (INCLUDE и корневой файл)',\n  baseline_decode_result:'Разбор записей baseline',\n  schedule_validation_result:'Проверка синтаксиса, дат и семантики',\n  schedule_render_result:'Сборка текста по схеме keyword',\n  schedule_merge_result:'Сборка итогового schedule',\n  schedule_commissioning_revise_result:'Сдвиг дат ввода (commissioning)',\n  schedule_group_rebind_revise_result:'Перепривязка групп скважин',\n  schedule_builder_stage_result:'Проверка черновика Builder',\n  schedule_verifier_result:'Независимая проверка выпуска',\n  baseline_inventory_query_result:'Выборка записей baseline',\n};\nconst hitlDedupeKey=f=>{\n  const s=hitlSlots(f);\n  return [s.code,s.path,s.from,s.keyword,s.entity,s.field].join('|');\n};\nconst HITL_GENERIC_CLUSTER='Проверка остановила задачу: не хватает исходных данных. Прикрепите недостающие файлы или напишите, как продолжать, и нажмите Ответить.';\nconst HITL_GENERIC_ITEM='Нужны исходные данные. Прикрепите недостающие файлы или напишите, как продолжать.';\nconst HITL_COPY={\n  INCLUDE_NOT_FOUND:{\n    cluster:'Тела INCLUDE не приложены — ссылки в корне оставляем как есть на той же дате. Прикрепите .inc, только если нужно править содержимое этого файла.',\n    item:s=>s.path?`INCLUDE «${s.path}» без тела${s.from?`, ссылка из «${s.from}»`:''}: оставляем вызов на той же дате. Приложите файл, только если нужно править его содержимое.`:'INCLUDE без тела: оставляем вызов на той же дате. Приложите файл, только если нужно править содержимое.',\n  },\n  INCLUDE_BODY_REQUIRED:{\n    cluster:'Задача правит содержимое INCLUDE, а тело файла не приложено. Прикрепите этот .inc и нажмите Ответить.',\n    item:s=>s.path?`Нужно тело INCLUDE «${s.path}»${s.from?`, ссылка из «${s.from}»`:''}: приложите этот .inc, иначе содержимое нечем править.`:'Нужно тело INCLUDE. Приложите этот .inc, иначе содержимое нечем править.',\n  },\n  INCLUDE_PATH_INVALID:{cluster:'Путь INCLUDE в пакете недопустим. Исправьте ссылку или приложите файл с корректным именем.', item:s=>`Недопустимый путь INCLUDE${s.path?` «${s.path}»`:''}${s.from?` в «${s.from}»`:''}.`},\n  INCLUDE_PATH_UNSAFE:{cluster:'Путь INCLUDE выходит за пределы пакета. Оставьте только файлы внутри загруженного набора.', item:s=>`Небезопасный путь INCLUDE${s.path?` «${s.path}»`:''}. Приложите файл из того же пакета, без «..».`},\n  INCLUDE_FILE_INVALID:{cluster:'Один из приложенных INCLUDE нельзя прочитать. Прикрепите его ещё раз как текстовый .inc.', item:'Приложенный INCLUDE без текста. Прикрепите файл .inc ещё раз.'},\n  INCLUDE_CYCLE:{cluster:'В пакете цикл INCLUDE. Исправьте ссылки, чтобы файлы не включали друг друга по кругу.', item:s=>s.cycle.length?`Цикл INCLUDE: ${s.cycle.join(' → ')}. Исправьте ссылки в пакете.`:'В пакете цикл INCLUDE. Исправьте ссылки.'},\n  INCLUDE_DEPTH_LIMIT:{cluster:'Слишком глубокая вложенность INCLUDE. Упростите пакет или приложите развёрнутый набор файлов.', item:'Слишком глубокая вложенность INCLUDE.'},\n  INCLUDE_MULTIPLE_EXPANSION:{cluster:'Один INCLUDE раскрывается несколько раз. Проверьте дубли ссылок в пакете.', item:s=>`Файл «${s.path||s.from||'INCLUDE'}» раскрывается повторно.`},\n  UNREACHABLE_INCLUDE_FILE:{cluster:'В пакете есть файл, до которого нет пути от корня. Укажите корневой schedule или уберите лишний файл.', item:s=>`Файл «${s.path||s.from}» не достигается от корня пакета.`},\n  BASELINE_TEXT_REQUIRED:{cluster:'Нет текста корневого schedule. Прикрепите главный .inc / .data.', item:'Прикрепите корневой schedule (.inc или .data) — без него REVISE нельзя разобрать.'},\n  BASELINE_REQUIRED:{cluster:'Для REVISE нужен предыдущий schedule. Прикрепите корневой .inc / .data.', item:'Прикрепите предыдущий schedule (.inc / .data) для режима REVISE.'},\n  BASELINE_ANALYSIS_REQUIRED:{cluster:'Не разобран корневой schedule. Прикрепите главный .inc / .data. Тела INCLUDE не обязательны.', item:'Сначала нужен разобранный корневой schedule. Прикрепите главный .inc / .data; INCLUDE без тел оставляем как есть.'},\n  BASELINE_ROOT_REQUIRED:{cluster:'Не указан корневой файл пакета. Выберите главный .inc / .data.', item:'Укажите, какой .inc / .data главный в пакете.'},\n  ROOT_PATH_INVALID:{cluster:'Имя корневого schedule недопустимо. Выберите файл с обычным именем .inc / .data.', item:'Недопустимое имя корневого schedule.'},\n  ROOT_PATH_UNSAFE:{cluster:'Путь корневого schedule небезопасен. Приложите файл из пакета, без выхода наверх по каталогам.', item:'Небезопасный путь корневого schedule.'},\n  ROOT_FILE_MISSING:{cluster:'В пакете нет корневого файла. Прикрепите главный .inc / .data.', item:'Нет корневого файла schedule в пакете.'},\n  DUPLICATE_FILE_REF:{cluster:'В пакете два файла с одним путём. Оставьте один экземпляр.', item:s=>`Дублируется файл «${s.path||s.from}». Оставьте один.`},\n  FILE_LIMIT:{cluster:'Слишком много файлов в пакете. Сократите набор INCLUDE.', item:'Превышен лимит файлов пакета.'},\n  PACKAGE_SIZE_LIMIT:{cluster:'Пакет schedule слишком большой. Сократите набор файлов.', item:'Превышен размер пакета schedule.'},\n  CST_NODE_LIMIT:{cluster:'В schedule слишком много блоков. Сократите пакет или уточните задачу.', item:'Слишком много блоков в schedule.'},\n  CREATE_BASELINE_CONFLICT_REQUIRES_DECISION:{cluster:'Приложен baseline, но задача помечена как CREATE. Напишите: править существующий schedule или собрать новый и отбросить вложение.', item:'Напишите: REVISE существующего schedule или CREATE с отбрасыванием вложения.'},\n  PRESERVATION_POLICY_REQUIRED:{cluster:'Для REVISE нужно сохранить не упомянутые записи. Подтвердите это в ответе или приложите полный пакет.', item:'Подтвердите сохранение не упомянутых записей (preserve_unmentioned) или уточните политику.'},\n  SIMULATOR_PROFILE_NOT_APPROVED:{cluster:'Рабочий профиль — tNavigator 22.2 METRIC. Напишите, только если задача для другого симулятора.', item:'Укажите другой согласованный профиль, если это не tNavigator 22.2.'},\n  METRIC_UNIT_SYSTEM_REQUIRED:{cluster:'В этом контуре единицы всегда METRIC. FIELD и другие системы не используются.', item:'Нужна система единиц METRIC — другие не поддерживаются.'},\n  MODEL_START_DATE_REQUIRED:{cluster:'Для CREATE нужна дата старта модели (YYYY-MM-DD). Для REVISE без этой даты записи до первого DATES оставляем как есть.', item:'Укажите model_start_date в формате YYYY-MM-DD — только если собираете новый schedule или явно задаёте старт модели.'},\n  FORECAST_START_DATE_REQUIRED:{cluster:'Нужна дата начала прогноза (YYYY-MM-DD).', item:'Укажите forecast_start в формате YYYY-MM-DD.'},\n  FORECAST_END_DATE_REQUIRED:{cluster:'Нужна дата конца прогноза (YYYY-MM-DD).', item:'Укажите forecast_end в формате YYYY-MM-DD.'},\n  FORECAST_HORIZON_INVALID:{cluster:'Конец прогноза раньше начала. Исправьте даты.', item:'forecast_end должен быть не раньше forecast_start.'},\n  FORECAST_BEFORE_MODEL_START:{cluster:'Прогноз раньше старта модели. Исправьте даты.', item:'forecast_start не должен быть раньше model_start_date.'},\n  HISTORY_INTERVAL_INCOMPLETE:{cluster:'Для истории нужны обе даты: начало и конец.', item:'Укажите и history_start, и history_end.'},\n  HISTORY_INTERVAL_INVALID:{cluster:'Интервал истории задан неверно. Проверьте даты YYYY-MM-DD.', item:'Исправьте history_start / history_end.'},\n  HISTORY_FORECAST_OVERLAP:{cluster:'История пересекается с прогнозом. Разведите интервалы.', item:'history_end не должен быть позже forecast_start.'},\n  HISTORY_SCOPE_REQUIRES_INTERVAL:{cluster:'Для WCONHIST нужен интервал истории. Укажите history_start и history_end.', item:'Укажите history_start и history_end для WCONHIST.'},\n  KEYWORD_SCOPE_UNRESOLVED:{cluster:'Не выбран набор keyword schedule. Напишите, какие секции менять (например WCONPROD, DATES).', item:'Укажите keyword, которые нужно менять.'},\n  UNSUPPORTED_KEYWORD:{cluster:'В задаче есть keyword вне текущего allowlist. Уберите их или сузьте задачу.', item:s=>s.keywords.length?`Не поддерживаются keyword: ${s.keywords.join(', ')}.`:'Есть keyword вне allowlist. Уберите их из задачи.'},\n  CREATE_CAPABILITY_SCOPE_REQUIRED:{cluster:'Для CREATE напишите, что именно собрать (какие скважины, контроли, период).', item:'Перечислите, что должно появиться в новом schedule.'},\n  CREATE_REQUIRED_OUTPUTS_REQUIRED:{cluster:'Для CREATE укажите ожидаемый результат (например прогнозный .inc).', item:'Опишите, какой файл/результат нужен на выходе.'},\n  REVISE_CHANGE_SCOPE_REQUIRED:{cluster:'Для REVISE напишите, что менять, а что оставить.', item:'Опишите requested_change_scope: что менять в существующем schedule.'},\n  OBJECTIVE_REQUIRED:{cluster:'Нужна формулировка задачи своими словами.', item:'Сформулируйте измеримую цель и нужный результат.'},\n  ACCEPTANCE_CRITERIA_REQUIRED:{cluster:'Нужен критерий приёмки: по чему понять, что задача сделана.', item:'Напишите, как проверить результат.'},\n  EXPERT_KNOWLEDGE_AND_CATALOGUE_BINDING_REQUIRED:{cluster:'В базе знаний нет полной инструкции и схемы keyword. Загрузите корпус через Knowledge.', item:'Через Knowledge загрузите keyword_instruction и schema JSON в schedule_mvp.'},\n  KEYWORD_INSTRUCTION_SCOPE_INCOMPLETE:{cluster:'Для части keyword нет экспертной инструкции. Догрузите карточки или сузьте набор keyword.', item:s=>s.keywords.length?`Нет инструкции для: ${s.keywords.join(', ')}. Загрузите карточки или уберите эти keyword.`:'Догрузите keyword_instruction для всех запрошенных keyword.'},\n  SCHEDULE_RAG_EVIDENCE_REQUIRED:{cluster:'Builder не запущен: в базе нет полной экспертной инструкции или schema. Загрузите корпус через Knowledge.', item:'Через Knowledge загрузите active keyword_instruction и schema JSON в schedule_mvp.'},\n  EXCEL_PROTOCOL_RAG_REQUIRED:{cluster:'Excel Extractor не запущен: нет operating protocol в базе. Загрузите excel_protocol через Knowledge.', item:'Через Knowledge загрузите protocol_instruction в excel_protocol.'},\n  EXCEL_PROTOCOL_RAG_UNAVAILABLE:{cluster:'Excel Extractor не запущен: нет operating protocol в базе. Загрузите excel_protocol через Knowledge.', item:'Через Knowledge загрузите protocol_instruction в excel_protocol.'},\n  SCHEDULE_RAG_UNAVAILABLE:{cluster:'Builder не запущен: в базе нет полной экспертной инструкции или schema. Загрузите корпус через Knowledge.', item:'Через Knowledge загрузите active keyword_instruction и schema JSON в schedule_mvp.'},\n  STAGE_GATE_POLICY_INVALID:{cluster:'Политика гейтов не совпадает с утверждённой (attention 85 / HITL 70). Продолжите в этой задаче.', item:'Нужна политика attention_threshold=85, hitl_threshold=70.'},\n  HISTORY_BEFORE_MODEL_START:{cluster:'История раньше старта модели. Исправьте даты.', item:'history_start не должен быть раньше model_start_date.'},\n  INVALID_BUILD_MODE:{cluster:'Режим сборки не CREATE и не REVISE. Напишите, какой режим нужен.', item:'Укажите build_mode: CREATE или REVISE.'},\n  EXCEL_WORKBOOK_REQUIRED:{cluster:'Нет книги Excel. Прикрепите файл .xlsx к ответу.', item:'Прикрепите книгу Excel (.xlsx или .xls) к ответу.'},\n  EXCEL_CLARIFICATION_REQUIRED:{cluster:'Нужны ответы на уточнения по Excel. Напишите их в поле ответа.', item:'Ответьте на уточнения по таблице Excel.'},\n  SCHEDULE_BUILD_CONTRACT_INVALID:{cluster:'Пакет задачи собран неверно. Создайте задачу заново из Activity с файлами.', item:'Пересоздайте задачу из Activity, приложив schedule и описание.'},\n  SCHEDULE_BUILD_IDENTITY_REQUIRED:{cluster:'Потерян идентификатор задачи. Откройте задачу из списка слева или создайте заново.', item:'Продолжите из текущей задачи Activity, не копируя чужой пакет.'},\n  SCHEDULE_BUILD_TASK_MISMATCH:{cluster:'Пакет относится к другой задаче. Работайте в текущей карточке Activity.', item:'Не переиспользуйте пакет другой задачи. Откройте нужную из списка.'},\n  SCHEDULE_POLICY_VERSION_NOT_APPROVED:{cluster:'Версия политики schedule не совпадает. Продолжите в этой задаче или напишите, если нужен другой профиль.', item:'Нужна политика petroleum-schedule-policy-v1 либо явное согласование.'},\n  EVIDENCE_GAP:{cluster:'Не хватает фактов для записи schedule. Укажите значения в ответе или приложите Excel.', item:s=>{\n    const who=[s.keyword,s.entity,s.field].filter(Boolean).join(' / ');\n    return who?`Не хватает ${who}. Напишите значение или приложите Excel.`:'Не хватает поля для schedule. Напишите значение или приложите Excel.';\n  }},\n  MALFORMED_EVIDENCE_GAP:{cluster:'Запрос уточнения по Excel собран неверно. Напишите недостающие факты вручную.', item:'Укажите недостающие поля вручную в ответе.'},\n  STALLED_EVIDENCE_LOOP:{cluster:'Уточнение по Excel зациклилось на тех же данных. Напишите факты вручную, смените файл или сузьте задачу.', item:'Напишите недостающие факты вручную, приложите другую книгу Excel или сузьте задачу.'},\n  EXCEL_EVIDENCE_BUDGET_EXHAUSTED:{cluster:'Исчерпан лимит запросов к Excel. Напишите недостающие факты вручную или сузьте задачу.', item:'Напишите недостающие поля вручную — автоматический запрос к Excel больше не запускается.'},\n  BUILDER_ITERATION_BUDGET_EXHAUSTED:{cluster:'Исчерпан лимит повторов Schedule Builder. Напишите, как продолжать, или сузьте задачу.', item:'Напишите недостающие факты вручную или сузьте задачу — автоматический повтор Builder остановлен.'},\n  SCHEDULE_BUILD_EXPECTED_VERSION_INVALID:{cluster:'Номер версии задачи некорректен. Откройте задачу заново из Activity.', item:'Продолжите из текущей карточки Activity, не копируя чужой пакет.'},\n  SOURCE_ARTIFACT_REF_INVALID:{cluster:'Ссылка на исходный файл собрана неверно. Приложите файлы заново к ответу.', item:'Прикрепите исходные файлы к ответу ещё раз.'},\n  SOURCE_ARTIFACT_LIMIT:{cluster:'Слишком много ссылок на исходные файлы. Сократите набор вложений.', item:'Сократите набор приложенных файлов.'},\n  SCHEDULE_BUILD_REQUEST_TOO_LARGE:{cluster:'Пакет задачи слишком большой. Сократите текст schedule или набор INCLUDE.', item:'Сократите корневой schedule или число INCLUDE и повторите.'},\n  EXPERT_KNOWLEDGE_CITATION_INVALID:{cluster:'Карточки знаний собраны неверно. Загрузите корпус заново через Knowledge.', item:'Через Knowledge загрузите keyword_instruction с полными citation-полями.'},\n  OPAQUE_BASELINE_SEMANTICS_UNAVAILABLE:{cluster:'Для запрошенного keyword нет схемы разбора. Догрузите schema или уберите keyword из задачи.', item:s=>s.keyword?`Для ${s.keyword} нет схемы разбора. Догрузите schema в schedule_mvp или уберите этот keyword.`:'Для keyword нет схемы разбора. Догрузите schema или сузьте набор keyword.'},\n  OPAQUE_NODE_MUTATION_FORBIDDEN:{cluster:'Нельзя менять непрозрачный блок schedule без схемы. Догрузите schema или оставьте блок как есть.', item:s=>s.keyword?`Блок ${s.keyword} непрозрачный — его нельзя править без schema.`:'Непрозрачный блок schedule нельзя менять без schema.'},\n  SOURCE_FACTS_WELL_IDENTITY_MISSING:{cluster:'Для сдвига дат ввода нет имени скважины. Укажите скважины или приложите Excel.', item:'Укажите имена скважин (Скважина / WELL) для commissioning.'},\n  NEW_WELL_DATE_INVALID:{cluster:'Дата ввода новой скважины неверна. Напишите дату YYYY-MM-DD.', item:s=>s.entity?`Для скважины ${s.entity} укажите дату ввода в формате YYYY-MM-DD.`:'Укажите дату ввода новой скважины в формате YYYY-MM-DD.'},\n  COMMISSIONING_DATE_INVALID:{cluster:'Дата ввода скважины неверна. Напишите дату YYYY-MM-DD.', item:s=>s.entity?`Для скважины ${s.entity} исправьте дату ввода (YYYY-MM-DD).`:'Исправьте дату ввода скважины (YYYY-MM-DD).'},\n  DATES_STEP_REMOVED:{cluster:'Из schedule пропал шаг DATES, который был в baseline. Верните дату или подтвердите удаление.', item:'Верните пропавший шаг DATES или явно подтвердите его удаление.'},\n  GROUP_REBIND_COMMISSIONING_DATE_MISSING:{cluster:'Для перепривязки групп нет даты ввода скважин. Укажите даты или приложите Excel.', item:'Укажите даты ввода скважин для group_membership_rebind.'},\n  KEYWORD_SCHEMA_NOT_APPROVED:{cluster:'Для keyword нет утверждённой schema. Догрузите schema или уберите keyword из задачи.', item:s=>s.keyword?`Нет утверждённой schema для ${s.keyword}. Догрузите карточку или уберите keyword.`:'Нет утверждённой schema keyword. Догрузите каталог или сузьте задачу.'},\n  DATES_NOT_STRICTLY_INCREASING:{cluster:'Даты DATES идут не по возрастанию. Исправьте порядок дат в schedule.', item:'Исправьте DATES: каждая следующая дата должна быть строго позже предыдущей.'},\n  INCLUDE_TARGET_MISSING:{cluster:'В INCLUDE нет имени файла. Укажите путь .inc в кавычках.', item:s=>s.from?`В «${s.from}» у INCLUDE нет пути файла. Укажите имя .inc.`:'У INCLUDE нет пути файла. Укажите имя .inc в кавычках.'},\n  SCHEDULE_TEXT_REQUIRED:{cluster:'Нет текста schedule. Прикрепите корневой .inc / .data.', item:'Прикрепите текст schedule (.inc или .data).'},\n  INVALID_EXCEL_SPECIALIST_PACKET:{cluster:'Пакет для Excel Extractor собран неверно. Создайте задачу заново и приложите книгу .xlsx.', item:'Создайте задачу заново из Activity и приложите книгу Excel.'},\n  INVALID_SCHEDULE_SPECIALIST_PACKET:{cluster:'Пакет задачи для Schedule Builder собран неверно. Создайте задачу заново из Activity.', item:'Создайте задачу заново из Activity, приложив schedule и описание.'},\n  BASELINE_PACKAGE_INVALID:{cluster:'Пакет baseline разобран неверно. Прикрепите корневой файл и все INCLUDE заново.', item:'Прикрепите полный пакет schedule ещё раз.'},\n  CHANGE_EFFECTIVE_FROM_REQUIRED:{cluster:'Дата начала правки нужна, только если задача задаёт срез с конкретной даты. Для снятия keyword целиком граница не требуется.', item:'Укажите change_effective_from в формате YYYY-MM-DD, только если правка действует с конкретной даты.'},\n  BASELINE_EFFECTIVE_DATE_REQUIRED:{cluster:'Запись стоит до первого DATES — оставляем как есть. model_start_date не нужен.', item:s=>s.keyword?`${s.keyword} до первого DATES: оставляем на месте, если нет явной команды переместить.`:'Запись до первого DATES оставляем как есть.'},\n  SCHEMA_CATALOGUE_NOT_APPROVED:{cluster:'Каталог schema keyword не утверждён. Загрузите утверждённый каталог через Knowledge.', item:'Через Knowledge загрузите утверждённый schema_catalogue в schedule_mvp.'},\n  APPROVED_KEYWORD_SCHEMAS_REQUIRED:{cluster:'Нет утверждённых schema keyword. Загрузите каталог через Knowledge.', item:'Загрузите schema JSON для запрошенных keyword.'},\n  PROFILE_NOT_APPROVED:{cluster:'Рабочий профиль — tNavigator 22.2 METRIC. Напишите, только если задача для другого симулятора.', item:'Укажите другой согласованный профиль, если это не tNavigator 22.2.'},\n  REMOVE_REQUIRES_ACCOUNTABLE_APPROVAL:{cluster:'Удаление записей из schedule нужно явно подтвердить в ответе.', item:s=>`Подтвердите удаление ${s.keyword||'записей'} или напишите, что их сохранить.`},\n  NEW_WELLS_REQUIRE_HITL:{cluster:'Проверка новых скважин не прошла: нет траектории и спецификации. Прикрепите .dev и недостающие данные.', item:'Прикрепите WELLTRACK (.dev) и данные WELSPECS/COMPDATMD для новых скважин.'},\n  NEW_WELL_CONTROL_LINE_REQUIRED:{cluster:'Для новой скважины нужна явная строка WCONPROD или WCONINJE. Значения по умолчанию не подставляются.', item:s=>s.entity?`Для скважины ${s.entity} укажите стартовую строку WCONPROD или WCONINJE — без GRAT/дебита по умолчанию.`:'Укажите стартовую строку WCONPROD или WCONINJE для новой скважины.'},\n  NEW_WELL_TYPED_LINES_REQUIRED:{cluster:'Для новой скважины нужны явные строки keyword (WELSPECS, COMPDATMD, WCONPROD/WCONINJE). Ничего не выдумываем.', item:s=>s.entity?`Для скважины ${s.entity} пришлите typed-строки keyword, без шаблонов по умолчанию.`:'Пришлите typed-строки keyword для новой скважины.'},\n  COMMISSIONING_CAPABILITY_REQUIRED:{cluster:'В Excel есть скважины и даты, но не сказано, что это сдвиг дат ввода. Напишите commissioning_date_retarget или уточните другую операцию.', item:s=>s.wells.length?`Для скважин ${s.wells.join(', ')} есть даты. Напишите, сдвигать даты ввода (commissioning_date_retarget) или это другая правка.`:'Есть скважины и даты. Напишите, сдвигать даты ввода или это другая правка.'},\n  COMMISSIONING_FACTS_REQUIRED:{cluster:'Запрошен сдвиг дат ввода, но нет фактов скважина+дата. Приложите Excel или перечислите скважины и даты.', item:'Приложите факты скважина + дата ввода для commissioning_date_retarget.'},\n  GROUP_REBIND_SPEC_REQUIRED:{cluster:'Для перепривязки групп нужен полный spec: скважины, parent_group, parent_of_parent, well_groups, контроль и дебит. Из текста DKS/FIELD не угадаем.', item:s=>`Укажите structured spec для group_membership_rebind${s.field?` (нет: ${s.field})`:''}: wells, parent_group, parent_of_parent, well_groups, control, rate.`},\n  UNLISTED_WELLS_POLICY_REQUIRED:{cluster:'Проверка скважин вне Excel: нужно решить, сохранить их запуски или убрать. Напишите keep или remove и при необходимости имена скважин.', item:s=>s.wells.length?`В Excel нет скважин: ${s.wells.join(', ')}. Напишите: сохранить запуски (keep) или убрать (remove).`:'В Excel нет части скважин из schedule. Напишите keep или remove.'},\n  SCHEDULE_PIPELINE_NOT_RELEASE_READY:{cluster:'Независимая проверка выпуска не прошла. Напишите, что исправить в черновике, своими словами.', item:'Черновик не готов к выпуску. Напишите, что проверить или доработать.'},\n};\nconst hitlItemText=f=>{\n  const s=hitlSlots(f);\n  const spec=HITL_COPY[s.code];\n  if(spec&&typeof spec.item==='function') return spec.item(s);\n  if(spec&&typeof spec.item==='string') return spec.item;\n  const bits=[s.path,s.from,s.keyword,s.entity,s.field].filter(Boolean);\n  return bits.length?`Нужны данные: ${bits.join(', ')}. Прикрепите файл или напишите уточнение.`:HITL_GENERIC_ITEM;\n};\nconst hitlClusterText=findings=>{\n  const codes=[...new Set((Array.isArray(findings)?findings:[]).map(f=>hitlClean(f?.code)).filter(Boolean))];\n  const clusters=codes.map(c=>HITL_COPY[c]&&HITL_COPY[c].cluster).filter(Boolean);\n  const uniq=[...new Set(clusters)];\n  if(uniq.length===1) return uniq[0];\n  if(uniq.length>1) return uniq.slice(0,2).join(' ');\n  return HITL_GENERIC_CLUSTER;\n};\nconst hitlUniqueFindings=findings=>{\n  const seen=new Set(), out=[];\n  for(const f of (Array.isArray(findings)?findings:[])){\n    if(!f||typeof f!=='object') continue;\n    const key=hitlDedupeKey(f);\n    if(seen.has(key)) continue;\n    seen.add(key);\n    out.push(f);\n    if(out.length>=30) break;\n  }\n  return out;\n};\nconst hitlCompileCopy=(opts={})=>{\n  const unique=hitlUniqueFindings(opts.findings);\n  const supplied=Array.isArray(opts.questions)?opts.questions.filter(q=>q&&typeof q==='object'):[];\n  const gaps=Array.isArray(opts.gaps)?opts.gaps.filter(g=>g&&typeof g==='object'):[];\n  let asks=[];\n  const toAsk=(q,i,fallbackId)=>{\n    const raw=hitlClean(q.text||q.question||q.message);\n    const merged={...q, code:q.code||q.id, message:raw};\n    const compiled=hitlLooksMachine(raw)?hitlItemText(merged):raw;\n    const text=compiled||HITL_GENERIC_ITEM;\n    const s=hitlSlots(merged);\n    return {\n      id:hitlClean(q.id)||`${fallbackId}_${i+1}`,\n      text, question:text,\n      required:q.required!==false,\n      ...(q.type?{type:q.type}:{}),\n      ...(s.code?{code:s.code}:{}),\n      ...(s.path?{path:s.path}:{}),\n      ...(s.from?{file_ref:s.from}:{}),\n      ...(s.keyword?{keyword:s.keyword}:{}),\n      ...(s.entity?{entity:s.entity}:{}),\n    };\n  };\n  const suppliedMachine=supplied.length&&supplied.every(q=>hitlLooksMachine(q.text||q.question||q.message||q.code));\n  if(supplied.length&&!(suppliedMachine&&unique.length)){\n    asks=supplied.map((q,i)=>toAsk(q,i,'hitl'));\n  } else if(gaps.length){\n    asks=gaps.map((g,i)=>toAsk({...g, code:g.code||'EVIDENCE_GAP'}, i, 'schedule_gap'));\n  } else {\n    asks=unique.map((f,i)=>toAsk({...f, text:f.message}, i, 'schedule_finding'));\n  }\n  const seen=new Set();\n  asks=asks.filter(a=>{\n    const k=a.text;\n    if(!k||seen.has(k)) return false;\n    seen.add(k);\n    return true;\n  }).slice(0,20);\n  if(!asks.length) asks=[{id:'hitl_needed', text:HITL_GENERIC_ITEM, question:HITL_GENERIC_ITEM, required:true}];\n  const preferred=hitlClean(opts.summary);\n  let user_message=hitlLooksMachine(preferred)?hitlClusterText(unique):preferred;\n  const stageLabel=HITL_STAGE[hitlClean(opts.stage)]||'';\n  if(stageLabel&&user_message&&!user_message.includes(stageLabel)) user_message=`${stageLabel} не прошла. ${user_message}`;\n  return {user_message, questions:asks};\n};\nlet status='awaiting_human',kind=r.status;\nconst compiledHitl=hitlCompileCopy({\n  findings:(r.compact_data&&Array.isArray(r.compact_data.findings)?r.compact_data.findings:(r.error&&Array.isArray(r.error.findings)?r.error.findings:[])),\n  gaps:(r.compact_data&&Array.isArray(r.compact_data.evidence_gap)?r.compact_data.evidence_gap:[]),\n  questions:Array.isArray(r.human_request?.questions)?r.human_request.questions:[],\n  summary:r.user_message||r.summary,\n  stage:(r.compact_data&&r.compact_data.failed_stage)||'',\n});\nlet reason=compiledHitl.user_message||'Нужно решение человека.';\nif(r.status==='needs_approval'&&r.compact_data&&r.compact_data.release_ready===true) kind='result_approval';\nlet questions=compiledHitl.questions.slice();\nif(kind==='result_approval'){\n  reason='Черновик schedule прошёл проверки. Напишите своими словами: выпуск принять — или что доработать (DATES, ORAT и т.п.).';\n  questions=[{id:'release_reply',text:reason,question:reason,required:true}];\n}\nif(r.status==='fatal_error'){status='failed';}\nelse if(r.status==='retryable_error'&&!exhausted){status='retryable_error';}\nelse if(r.status==='retryable_error'){kind='needs_decision';reason='Лимит автоматических повторов исчерпан — нужно ваше решение.';questions.push({id:'retry_decision',text:'Уточните ввод, сузьте задачу или отклоните её — напишите, как продолжать.'});}\nconst pending=status==='awaiting_human'?{gate_id:`gate_${x.task_id}_${Number(x.version)+1}_${kind}`,kind,reason,questions,expected_version:Number(x.version)+1}:{};\nlet runtime=(()=>{try{return JSON.parse(x.runtime_json||'{}')}catch{return{}}})();\nif(status==='awaiting_human'){\n  const hitlStatus=kind==='needs_approval'||kind==='result_approval'?'NEEDS_APPROVAL':kind==='needs_input'?'NEEDS_INPUT':'NEEDS_DECISION';\n  const fromId=clean(r.specialist_id)||clean(x.specialist_id)||'schedule_builder_specialist';\n  const specialistComment=clean(r.summary)||reason;\n  runtime=appendHandoffEvent(runtime,{stage:'builder',status:hitlStatus,from_specialist:fromId,to_specialist:'universal_orchestrator',from_role:chatRoles[fromId]||fromId,to_role:'Orchestrator',summary:specialistComment,brief:specialistComment,details:{gate_kind:kind}});\n  runtime=appendHandoffEvent(runtime,{stage:'hitl',status:hitlStatus,from_specialist:'universal_orchestrator',to_specialist:'human_operator',from_role:'Orchestrator',to_role:'User',summary:reason,brief:reason,details:{gate_id:pending.gate_id||null,kind}});\n}\nreturn [{json:{...x,version:Number(x.version)+1,previous_version:Number(x.version),status,gate_json:JSON.stringify(pending),runtime_json:JSON.stringify({...runtime,last_error:status==='retryable_error'?(r.error||null):null}),retry_count:r.status==='retryable_error'&&!exhausted?Number(x.retry_count)+1:Number(x.retry_count),updated_at:new Date().toISOString(),direct_route:r.status==='retryable_error'&&!exhausted?'replan':'respond'}}];"
-      },
-      "id": "959d4513-9412-5dc3-b671-7d4c7ccba6f7",
-      "name": "Build specialist gate or error",
-      "type": "n8n-nodes-base.code",
-      "typeVersion": 2,
-      "position": [
-        6440,
-        255
-      ]
-    },
-    {
-      "parameters": {
-        "source": "database",
-        "workflowId": {
-          "__rl": true,
-          "value": "REPLACE_CAS_PERSIST_IN_UI",
-          "mode": "list",
-          "cachedResultName": "CAS — Persist Task State"
-        },
-        "workflowInputs": {
-          "mappingMode": "defineBelow",
-          "value": {
-            "cas_operation": "={{ 'update' }}",
-            "attempted": "={{ $json }}"
-          },
-          "matchingColumns": [],
-          "schema": [],
-          "attemptToConvertTypes": false,
-          "convertFieldsToString": false
-        },
-        "mode": "once",
-        "options": {
-          "waitForSubWorkflow": true
-        }
-      },
-      "id": "e2849737-9829-5f10-bccc-4b6a32f3d26b",
-      "name": "Call CAS persist — specialist gate or error",
-      "type": "n8n-nodes-base.executeWorkflow",
-      "typeVersion": 1.3,
-      "position": [
-        6720,
-        340
-      ],
-      "onError": "continueRegularOutput"
-    },
-    {
-      "parameters": {
-        "jsCode": "const x=$json;\nconst parse=(v,f)=>{try{return typeof v==='string'?JSON.parse(v):v??f}catch{return f}};\nconst obj=v=>v&&typeof v==='object'&&!Array.isArray(v);\nconst clean=v=>typeof v==='string'?v.trim():'';\nconst runtime=parse(x.runtime_json,{});\nconst result=obj(x.specialist_result)?x.specialist_result:parse(x.result_json,{});\nconst verification=parse(x.verification_json,{});\nconst last=obj(runtime.last_error)?runtime.last_error:(obj(result.error)?result.error:{});\nconst code=clean(last.code||result.error?.code||'').toUpperCase();\nconst status=clean(x.status);\nconst specialistStatus=clean(result.status);\nconst gateKind=clean(parse(x.gate_json,{}).kind);\n// HITL is ordinary work (input / decision / approval). Error Handler is only for\n// persisted retryable_error or failed — never leftover last_error.code, never awaiting_human.\nconst hitlSpecialist=['needs_input','needs_decision','needs_approval'].includes(specialistStatus);\nconst hitlGate=['needs_input','needs_decision','needs_approval','result_approval','pre_delegation_approval'].includes(gateKind);\nconst isHitl=status==='awaiting_human'||hitlSpecialist||hitlGate;\nconst critical=!isHitl&&['retryable_error','failed'].includes(status);\nif(!critical||!clean(x.task_id)){\n  return[{json:{...x,invoke_error_handler:false,cas_already_persisted:true,mas_error_event:null}}];\n}\nconst findings=[...(Array.isArray(last.findings)?last.findings:[]),...(Array.isArray(verification.findings)?verification.findings:[])].filter(obj).slice(0,20);\n// Never fall back to specialist HITL/success copy (user_message/summary).\nconst errObj=obj(result.error)?result.error:{};\nlet safeMessage=clean(last.safe_message||last.message||errObj.safe_message||errObj.message||'');\nif(!safeMessage) safeMessage=`Сбой case ${x.task_id} — входные данные сохранены.`;\nif(!safeMessage.includes(x.task_id)) safeMessage=`${safeMessage} (case_id=${x.task_id})`;\nconst cas_snapshot={\n  task_id:x.task_id,\n  version:Number(x.version)||1,\n  previous_version:Number(x.previous_version)||Number(x.version)||0,\n  status,\n  risk_class:clean(x.risk_class)||'high',\n  request_json:typeof x.request_json==='string'?x.request_json:JSON.stringify(x.request_json||{}),\n  runtime_json:typeof x.runtime_json==='string'?x.runtime_json:JSON.stringify(runtime),\n  plan_json:typeof x.plan_json==='string'?x.plan_json:JSON.stringify(x.plan_json||{}),\n  packet_json:typeof x.packet_json==='string'?x.packet_json:JSON.stringify(x.packet_json||{}),\n  result_json:typeof x.result_json==='string'?x.result_json:JSON.stringify(result||{}),\n  verification_json:typeof x.verification_json==='string'?x.verification_json:JSON.stringify(verification||{}),\n  gate_json:typeof x.gate_json==='string'?x.gate_json:JSON.stringify(x.gate_json||{}),\n  retry_count:Number(x.retry_count)||0,\n  max_retries:Number(x.max_retries)||2,\n  created_at:clean(x.created_at)||new Date().toISOString(),\n  updated_at:clean(x.updated_at)||new Date().toISOString(),\n};\nconst mas_error_event={\n  contract:'mas_error_event',\n  contract_version:'1.0',\n  task_id:x.task_id,\n  code:code||undefined,\n  stage:status==='retryable_error'?'plan':(status==='awaiting_human'?'hitl':'error'),\n  safe_message:safeMessage,\n  findings,\n  cas_already_persisted:true,\n  cas_snapshot,\n};\nreturn[{json:{...x,invoke_error_handler:true,cas_already_persisted:true,mas_error_event,passthrough:{source:'orchestrator',status,task_id:x.task_id}}}];"
-      },
-      "id": "6ec069e2-c8d6-522b-aa1a-64884d44071b",
-      "name": "Prepare MAS error event (specialist)",
-      "type": "n8n-nodes-base.code",
-      "typeVersion": 2,
-      "position": [
-        7000,
-        170
-      ]
-    },
-    {
-      "parameters": {
-        "conditions": {
-          "options": {
-            "caseSensitive": true,
-            "leftValue": "",
-            "typeValidation": "strict",
-            "version": 2
-          },
-          "conditions": [
-            {
-              "id": "98d2eb93-a937-5590-b378-7164650a0296",
-              "leftValue": "={{ $json.invoke_error_handler }}",
-              "rightValue": true,
-              "operator": {
-                "type": "boolean",
-                "operation": "equals"
-              }
-            }
-          ],
-          "combinator": "and"
-        },
-        "options": {}
-      },
-      "id": "0ff0de81-1f52-5105-b555-526b4b51ecb5",
-      "name": "Invoke Error Handler (specialist)?",
-      "type": "n8n-nodes-base.if",
-      "typeVersion": 2.2,
-      "position": [
-        7280,
-        85
-      ]
-    },
-    {
-      "parameters": {
-        "source": "database",
-        "workflowId": {
-          "__rl": true,
-          "value": "REPLACE_ERROR_HANDLER_IN_UI",
-          "mode": "list",
-          "cachedResultName": "Error — MAS Case Handler"
-        },
-        "workflowInputs": {
-          "mappingMode": "defineBelow",
-          "value": {
-            "mas_error_event": "={{ $json.mas_error_event }}",
-            "cas_already_persisted": "={{ $json.cas_already_persisted }}",
-            "passthrough": "={{ $json.passthrough || {} }}",
-            "task_id": "={{ $json.task_id }}"
-          },
-          "matchingColumns": [],
-          "schema": [],
-          "attemptToConvertTypes": false,
-          "convertFieldsToString": false
-        },
-        "mode": "once",
-        "options": {
-          "waitForSubWorkflow": true
-        }
-      },
-      "id": "d26ec155-98fc-5cca-a8e2-499fc6ab6355",
-      "name": "Call Error — MAS Case Handler (specialist)",
-      "type": "n8n-nodes-base.executeWorkflow",
-      "typeVersion": 1.3,
-      "position": [
-        7560,
-        0
-      ],
-      "onError": "continueRegularOutput"
-    },
-    {
-      "parameters": {
-        "jsCode": "let before={};\ntry{before=$('Call CAS persist — specialist gate or error').first().json||{}}catch{before={}}\nreturn[{json:before&&typeof before==='object'?before:{status:'error',message:'Missing orchestrator state after error handler.'}}];"
-      },
-      "id": "ef24077b-b2c8-563e-a3f3-fbd857438ce9",
-      "name": "Restore after specialist error handler",
-      "type": "n8n-nodes-base.code",
-      "typeVersion": 2,
-      "position": [
-        7560,
-        170
-      ]
-    },
-    {
-      "parameters": {
-        "conditions": {
-          "options": {
-            "caseSensitive": true,
-            "leftValue": "",
-            "typeValidation": "strict",
-            "version": 2
-          },
-          "conditions": [
-            {
-              "id": "88eb987e-ca27-51b4-a35a-1d043763e69b",
-              "leftValue": "={{ $json.status }}",
-              "rightValue": "retryable_error",
-              "operator": {
-                "type": "string",
-                "operation": "equals"
-              }
-            }
-          ],
-          "combinator": "and"
-        },
-        "options": {}
-      },
-      "id": "2fabb539-67f0-58f1-91cd-f44cffd5050f",
-      "name": "Specialist error requests replan?",
-      "type": "n8n-nodes-base.if",
-      "typeVersion": 2.2,
-      "position": [
-        7840,
-        85
-      ]
-    },
-    {
-      "parameters": {
-        "jsCode": "const x=$json;const pending={gate_id:`gate_${x.task_id}_${Number(x.version)+1}_routing`,kind:'needs_decision',reason:'Специалист не привязан в allowlist — маршрут нельзя выполнить.',questions:[{id:'routing',text:'Администратору n8n нужно настроить привязку specialist workflow в allowlist.'}],expected_version:Number(x.version)+1};return [{json:{...x,version:Number(x.version)+1,previous_version:Number(x.version),status:'awaiting_human',gate_json:JSON.stringify(pending),updated_at:new Date().toISOString()}}];"
-      },
-      "id": "795d1f41-94e3-5b05-9f69-3e12894cf0d2",
-      "name": "Build allowlist configuration gate",
-      "type": "n8n-nodes-base.code",
-      "typeVersion": 2,
-      "position": [
-        4480,
-        -85
-      ]
-    },
-    {
-      "parameters": {
-        "source": "database",
-        "workflowId": {
-          "__rl": true,
-          "value": "REPLACE_CAS_PERSIST_IN_UI",
-          "mode": "list",
-          "cachedResultName": "CAS — Persist Task State"
-        },
-        "workflowInputs": {
-          "mappingMode": "defineBelow",
-          "value": {
-            "cas_operation": "={{ 'update' }}",
-            "attempted": "={{ $json }}"
-          },
-          "matchingColumns": [],
-          "schema": [],
-          "attemptToConvertTypes": false,
-          "convertFieldsToString": false
-        },
-        "mode": "once",
-        "options": {
-          "waitForSubWorkflow": true
-        }
-      },
-      "id": "43a4cb4d-9bd2-533d-bceb-37cbf40c33dc",
-      "name": "Call CAS persist — routing gate",
-      "type": "n8n-nodes-base.executeWorkflow",
-      "typeVersion": 1.3,
-      "position": [
-        4760,
-        0
-      ],
-      "onError": "continueRegularOutput"
-    },
-    {
-      "parameters": {
-        "jsCode": "return [{json:{...$json,status:'conflict',message:$json.input_error||'Invalid action or missing task_id for a resume action.'}}];"
-      },
-      "id": "f7aa0a91-bf54-59cc-9c88-623ef790dfe5",
-      "name": "Build invalid invocation response",
-      "type": "n8n-nodes-base.code",
-      "typeVersion": 2,
-      "position": [
-        1960,
-        170
-      ]
-    },
-    {
-      "parameters": {
-        "jsCode": "const x=$json;const parse=(v,f)=>{try{return typeof v==='string'?JSON.parse(v):v??f}catch{return f}};\nconst pending=parse(x.gate_json,{}),result=parse(x.result_json,{}),verification=parse(x.verification_json,{}),runtime=parse(x.runtime_json,{}),error=(runtime.last_error&&typeof runtime.last_error==='object'?runtime.last_error:{}),plan=parse(x.plan_json,{});\nconst compact=result?.compact_data&&typeof result.compact_data==='object'?result.compact_data:{};\nconst obj=v=>v&&typeof v==='object'&&!Array.isArray(v),arr=Array.isArray,clean=v=>typeof v==='string'?v.trim():'';const digest=value=>{let text='';try{text=JSON.stringify(value)}catch{text=String(value??'')}let h=2166136261;for(const ch of text){h^=ch.charCodeAt(0);h=Math.imul(h,16777619)}return{hash:`fnv1a32:${(h>>>0).toString(16).padStart(8,'0')}`,bytes:new TextEncoder().encode(text).length}};\nconst safeHash=value=>/^(?:fnv1a32:[a-f0-9]{8}|sha256:[a-f0-9]{64})$/i.test(clean(value))?clean(value).toLowerCase():null;\nconst sanitizeToolCall=(value,index=0)=>{const v=obj(value)?value:{},action=obj(v.action)?v.action:{},input=v.input??v.toolInput??action.toolInput??action.tool_input??null,output=v.output??v.observation??null,inputMeta=input===null?null:digest(input),outputMeta=output===null?null:digest(output);return{name:clean(v.name||v.tool||action.tool||'agent_tool').slice(0,120),tool_call_id:clean(v.tool_call_id||v.toolCallId||v.id||action.tool_call_id||action.toolCallId).slice(0,200)||null,status:clean(v.status||(v.error?'error':'observed')).slice(0,30),stage:clean(v.stage).slice(0,40)||null,sequence:Number.isInteger(Number(v.sequence))?Number(v.sequence):index+1,input_hash:safeHash(v.input_hash)||inputMeta?.hash||null,input_bytes:Number.isInteger(Number(v.input_bytes))?Number(v.input_bytes):inputMeta?.bytes??null,output_hash:safeHash(v.output_hash)||outputMeta?.hash||null,output_bytes:Number.isInteger(Number(v.output_bytes))?Number(v.output_bytes):outputMeta?.bytes??null}};\nconst sanitizeToolCalls=value=>(arr(value)?value:[]).slice(0,50).map(sanitizeToolCall);\nconst records=Array.isArray(compact.decision_records)?compact.decision_records:[];\nconst decisionRecord=verification?.decision_record||(records.length?records[records.length-1]:(compact.decision_record||plan.decision_record||null));\nconst normalizedStage=x.status==='awaiting_human'?'hitl':x.status==='completed'?'release':x.status==='delegated'?'builder':x.status==='planning'?'plan':x.status==='retryable_error'?'plan':'error';\nconst stageScores=[...(Array.isArray(plan.score)?plan.score:plan.score?[{stage:'plan',...plan.score}]:[]),...(Array.isArray(compact.stage_scores)?compact.stage_scores:[]),...(verification?.score?[{stage:'verify',...verification.score}]:[])],numericScores=stageScores.map(s=>Number(s.stage_score)).filter(Number.isFinite);const overall=numericScores.length?Math.min(...numericScores):compact.overall_score;\nconst traceId=String(x.trace_id||`trace_${x.task_id||'unknown'}`),baseEvent={trace_id:traceId,task_id:x.task_id||null,actor:String(x.requested_by||'orchestrator')},events=[];\nif(plan.decision_record)events.push({...baseEvent,stage:'plan',event_type:'gate_decision',status:String(plan.planner_decision||plan.decision_record.selected_action?.action||'observed'),summary:'Universal Planner decision and deterministic readiness gate.',score:plan.score||null,decision_record:plan.decision_record});\nfor(const turn of(Array.isArray(runtime.handoff_events)?runtime.handoff_events:[])){const stage=clean(turn.stage).toLowerCase();const mapped=['intake','plan','rag','baseline','excel','builder','merge','validate','verify','hitl','release','error'].includes(stage)?stage:(String(turn.from_specialist||'').includes('excel')?'excel':String(turn.to_specialist||'').includes('excel')?'excel':'builder');const details=obj(turn.details)?{...turn.details}:{};if(Number.isFinite(Number(turn.duration_ms)))details.duration_ms=Math.trunc(Number(turn.duration_ms));events.push({...baseEvent,at:turn.at||undefined,stage:mapped,event_type:'handoff',status:String(turn.status||'observed'),summary:String(turn.summary||'Specialist handoff').slice(0,2000),brief:String(turn.brief||turn.summary||'').slice(0,800),duration_ms:Number.isFinite(Number(turn.duration_ms))?Math.trunc(Number(turn.duration_ms)):null,actor:String(turn.from_role||turn.from_specialist||baseEvent.actor),evidence_refs:[],findings:[],score:null,gate:null,decision_record:null,tool_calls:[],handoff:{from_specialist:turn.from_specialist||null,to_specialist:turn.to_specialist||null,from_role:turn.from_role||null,to_role:turn.to_role||null,brief:String(turn.brief||'').slice(0,800)||null,details}});}\nfor(const entry of(Array.isArray(compact.trace_summary)?compact.trace_summary:[])){const raw=String(entry.stage||'builder').toLowerCase(),mapped=raw.includes('excel')?'excel':raw.includes('plan')?'plan':raw.includes('baseline')?'baseline':raw.includes('merge')?'merge':raw.includes('valid')?'validate':raw.includes('verif')?'verify':raw.includes('rag')?'rag':'builder';events.push({...baseEvent,stage:mapped,event_type:'stage_finished',status:String(entry.status||'observed'),summary:`${mapped} stage completed with observable decision evidence.`,score:entry.score||null,decision_record:entry.decision_record||null,tool_calls:sanitizeToolCalls(entry.tool_calls)});}\nif(verification.decision_record)events.push({...baseEvent,stage:'verify',event_type:'gate_decision',status:String(verification.verdict||'observed'),summary:String(verification.summary||'Independent verification completed.'),score:verification.score||null,findings:Array.isArray(verification.findings)?verification.findings:[],decision_record:verification.decision_record});\nconst lowLevel=[...(arr(compact.agent_tool_trace)?compact.agent_tool_trace:[]),...(arr(compact.tool_calls)?compact.tool_calls:[]),...(arr(compact.intermediateSteps)?compact.intermediateSteps:[])];const traceEvent={...baseEvent,stage:normalizedStage,event_type:'orchestrator_response',status:String(x.status||'observed'),summary:String(x.message||result.summary||verification.summary||`Task ${x.status||'observed'}`).slice(0,2000),tool_calls:sanitizeToolCalls(lowLevel),evidence_refs:Array.isArray(result.evidence)?result.evidence:[],findings:Array.isArray(verification.findings)?verification.findings:(Array.isArray(error.findings)?error.findings:[]),score:overall==null?null:{overall_score:overall,stage_scores:stageScores},gate:Object.keys(pending).length?{gate_id:pending.gate_id||null,kind:pending.kind||null,reason:pending.reason||null}:null,decision_record:decisionRecord};events.push(traceEvent);\nreturn [{json:{mas_trace_event:traceEvent,mas_trace_events:events.slice(0,100),passthrough:x}}];"
-      },
-      "id": "d782c0fc-a32f-59b9-b8bd-c5cf8de27864",
-      "name": "Prepare final MAS trace event",
-      "type": "n8n-nodes-base.code",
-      "typeVersion": 2,
-      "position": [
-        3640,
-        85
-      ],
-      "executeOnce": true
-    },
-    {
-      "parameters": {
-        "source": "database",
-        "workflowId": {
-          "__rl": true,
-          "value": "REPLACE_MAS_TRACE_WRITER_IN_UI",
-          "mode": "list",
-          "cachedResultName": "Writer — MAS Trace"
-        },
-        "workflowInputs": {
-          "mappingMode": "defineBelow",
-          "value": {
-            "mas_trace_event": "={{ $json.mas_trace_event }}",
-            "mas_trace_events": "={{ $json.mas_trace_events }}",
-            "passthrough": "={{ $json.passthrough }}"
-          },
-          "matchingColumns": [],
-          "schema": [],
-          "attemptToConvertTypes": false,
-          "convertFieldsToString": false
-        },
-        "mode": "once",
-        "options": {
-          "waitForSubWorkflow": true
-        }
-      },
-      "id": "74e7fbf0-a859-5941-8fe4-ce645615eb6b",
-      "name": "Call MAS Trace Event Writer",
-      "type": "n8n-nodes-base.executeWorkflow",
-      "typeVersion": 1.3,
-      "position": [
-        3920,
-        170
-      ],
-      "onError": "continueRegularOutput"
-    },
-    {
-      "parameters": {
-        "jsCode": "let prepared={};try{prepared=$('Prepare final MAS trace event').first().json}catch{}\nconst restored=$json?.passthrough&&typeof $json.passthrough==='object'?$json.passthrough:prepared.passthrough;\nreturn [{json:restored&&typeof restored==='object'?restored:{status:'error',message:'Trace writer did not return orchestrator state.'}}];"
-      },
-      "id": "c1c5e945-61d3-5739-bf0e-b0d39d749702",
-      "name": "Restore orchestrator state after trace",
-      "type": "n8n-nodes-base.code",
-      "typeVersion": 2,
-      "position": [
-        4200,
-        170
-      ],
-      "executeOnce": true
-    },
-    {
-      "parameters": {

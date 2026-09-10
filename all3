@@ -1,3 +1,586 @@
+              "token_width": 2,
+              "allow_trailing_omission": false,
+              "allow_unquoted_strings": true
+            },
+            "fields": [
+              {
+                "name": "INTERP",
+                "position": 1,
+                "type": "string",
+                "required": true,
+                "enum": [
+                  "NV",
+                  "LC",
+                  "LL"
+                ]
+              },
+              {
+                "name": "NODES",
+                "position": 2,
+                "type": "number",
+                "required": true,
+                "repeatable": true
+              }
+            ],
+            "layout": {
+              "newline": "LF",
+              "indent": "  ",
+              "delimiter": "SPACE",
+              "record_terminator": "SLASH",
+              "block_terminator": "SLASH_LINE"
+            },
+            "semantics": {
+              "period": "ANY",
+              "clock": {
+                "uses_current": true
+              },
+              "definitions": [],
+              "references": [],
+              "prerequisites": [],
+              "state_assignments": [
+                {
+                  "namespace": "udt-axis",
+                  "entity_type": "udt_table",
+                  "entity_field": "INTERP",
+                  "key_fields": [
+                    "INTERP"
+                  ],
+                  "value_fields": [
+                    "NODES"
+                  ]
+                }
+              ],
+              "numeric_constraints": []
+            }
+          },
+          {
+            "schema_id": "expert:UDT:values",
+            "schema_revision": "1",
+            "keyword": "UDT",
+            "variant": "values",
+            "citation": {
+              "document_id": "tnav-user-manual-russian",
+              "document_revision": "19.4",
+              "page": "12.20.169 / 2115-2117",
+              "heading": "UDT",
+              "source_hash": "sha256:854ac087dc4e008da1cba22ddbe654060023bcfb94b1b2476d211a695f94aebe"
+            },
+            "parser": {
+              "token_width": 1,
+              "allow_trailing_omission": false,
+              "allow_unquoted_strings": true
+            },
+            "fields": [
+              {
+                "name": "VALUES",
+                "position": 1,
+                "type": "number",
+                "required": true,
+                "repeatable": true
+              }
+            ],
+            "layout": {
+              "newline": "LF",
+              "indent": "  ",
+              "delimiter": "SPACE",
+              "record_terminator": "SLASH",
+              "block_terminator": "SLASH_LINE"
+            },
+            "semantics": {
+              "period": "ANY",
+              "clock": {
+                "uses_current": true
+              },
+              "definitions": [],
+              "references": [],
+              "prerequisites": [],
+              "state_assignments": [
+                {
+                  "namespace": "udt-values",
+                  "entity_type": "udt_table",
+                  "entity_field": "VALUES",
+                  "key_fields": [
+                    "VALUES"
+                  ],
+                  "value_fields": [
+                    "VALUES"
+                  ]
+                }
+              ],
+              "numeric_constraints": []
+            }
+          }
+        ]
+      },
+      "source_hash": "sha256:854ac087dc4e008da1cba22ddbe654060023bcfb94b1b2476d211a695f94aebe",
+      "page": "12.20.169 UDT (с. 2115–2117); UDQ 12.20.168; UDTDIMS 12.1.47",
+      "heading": "UDT — произвольные таблицы поиска",
+      "id": "udt-lookup-table-v1",
+      "metadata": {
+        "document_id": "udt-lookup-table-v1",
+        "document_revision": "1",
+        "source_hash": "sha256:854ac087dc4e008da1cba22ddbe654060023bcfb94b1b2476d211a695f94aebe",
+        "page": "12.20.169 / 2115-2117",
+        "heading": "UDT",
+        "target_base": "schedule_mvp",
+        "knowledge_type": "keyword_instruction",
+        "knowledge_id": "udt-lookup-table-v1",
+        "revision": "1",
+        "status": "active",
+        "access_scope": "petroleum-engineering",
+        "author": "department-hydrodynamic-expert",
+        "approved_by": "department-hydrodynamic-expert",
+        "keyword_families": [
+          "UDT"
+        ],
+        "topics": [
+          "таблица поиска",
+          "UDT",
+          "TU lookup",
+          "интерполяция NV LC LL",
+          "не UDQPARAM"
+        ],
+        "task_patterns": [
+          "задать UDT",
+          "таблица TU для UDQ",
+          "одномерная UDT",
+          "интерполяция LC",
+          "UDT перед DEFINE"
+        ]
+      }
+    },
+    {
+      "contract": "schedule_knowledge_block",
+      "contract_version": "1.0",
+      "target_base": "schedule_mvp",
+      "knowledge_type": "keyword_instruction",
+      "knowledge_id": "applyscript-python-hook-v1",
+      "revision": "1",
+      "title": "APPLYSCRIPT — Python-хук на timestep",
+      "keywords": [
+        "APPLYSCRIPT"
+      ],
+      "topics": [
+        "Python hook",
+        "APPLYSCRIPT",
+        "скрипт на timestep",
+        "SCRIPT_FILE FUNCTION_NAME",
+        "не GUI calculator"
+      ],
+      "task_patterns": [
+        "задать APPLYSCRIPT",
+        "подключить Python скрипт",
+        "хук на расчётный шаг",
+        "script.py function",
+        "APPLYSCRIPT без тела"
+      ],
+      "simulator_family": [
+        "E100",
+        "E300",
+        "tNavigator"
+      ],
+      "status": "active",
+      "author": "department-hydrodynamic-expert",
+      "access_scope": "petroleum-engineering",
+      "text": "APPLYSCRIPT — подключение Python-скрипта на каждый расчётный шаг SCHEDULE.\n\nНазначение. Включает произвольный скрипт Python: на каждом timestep симулятор вызывает указанную функцию из файла. Доступ к объектам модели — через API скрипта (add_keyword, set_prod_limit, do_like_action, …). Форматы: tN, E1, E3. Секция: SCHEDULE. Это не GUI/графический калькулятор Python (другой контекст), не ACTIONX/DELAYACT (условные блоки keywords), не INCLUDE (вставка .inc).\n\nКогда применять. Нужен per-step Python hook и факты дают путь к `.py` + имя функции. Builder эмитит только запись APPLYSCRIPT — никогда не сочиняет тело скрипта, `__init_script__()`, вызовы API или формулы внутри Python. Файл скрипта должен быть артефактом пакета (как INCLUDE/VFPPROD body discipline). Несколько APPLYSCRIPT могут ссылаться на разные функции одного файла.\n\nПоля (§12.20.171):\n\n1. SCRIPT_FILE — имя/путь файла со скриптом (библиотека функций, не standalone program).\n2. FUNCTION_NAME — имя подпрограммы, вызываемой на каждом шаге.\n\nДанные заканчиваются `/`. Опционально в файле: `__init_script__()` — один раз перед первым шагом (инициализация); Builder её не эмитит в SCHEDULE.\n\nКанон render.\n- `hook` — SCRIPT_FILE FUNCTION_NAME (паттерн мануала `\"script1.py\" \"function1\"`; в MVP render — single quotes).\nСборка: APPLYSCRIPT → record → `/`.\n\nIR / semantics.\n- period=ANY; clock.uses_current=true.\n- definitions: UPSERT apply_script SCRIPT_FILE+FUNCTION_NAME.\n- references: package file SCRIPT_FILE must exist (soft — text/needs_input if missing).\n- state_assignments: namespace apply-script; value file+function.\n- Never invent Python body / API usage (same discipline as VFPPROD bodies).\n\nAPI (справка мануала; не эмитить в SCHEDULE): add_keyword, script_off, get_current_date, increase/get_execute_count, set_prod_limit / set_inj_limit (см. WELTARG), script_set/get_options, do_like_action (как ACTIONX), is_report_step; плюс функции калькулятора графиков §8.2 без индексaции моделью/шагом.\n\nСвязанные: ACTIONX (do_like_action); WELTARG (параметры set_prod_limit); INCLUDE (другой тип вставки файла).\n\nАнтипаттерны.\n- Выдумать `.py` / function name «примерно».\n- Путать с GUI Python calculator.\n- Эмитить тело скрипта как SCHEDULE keywords.\n- APPLYSCRIPT без файла в пакете / без имени функции.\n\nНехватка факта → needs_input: нет SCRIPT_FILE или FUNCTION_NAME; нет `.py` в package; требуется содержимое скрипта, которого нет в facts.\n\nКарточка самодостаточна для hook-record; содержимое Python — внешний артефакт.",
+      "examples": [
+        {
+          "title": "Хук script1.function1 — канон мануала",
+          "task": "Подключить script1.py → function1 на каждый шаг.",
+          "schedule_text": "APPLYSCRIPT\n'script1.py' 'function1'\n/\n",
+          "explanation": "§12.20.171 с. 2123. Variant hook. Учебные имена; `.py` должен быть в пакете. Мануал показывает double quotes — render MVP single."
+        }
+      ],
+      "schema_catalogue": {
+        "contract": "schedule_schema_catalogue",
+        "contract_version": "1.0",
+        "catalogue_ref": "catalogue://tnavigator/22.2/applyscript-python-hook-v1",
+        "catalogue_hash": "sha256:911de673b13a1d06b28087582773cb065c62b51add7fc14b9f7fcbb80d149bce",
+        "source_hash": "sha256:da06918fa70947093ca10f04306f067a872b1bd3addb2bd31e7a639cb7ee5cd4",
+        "access_scope": "petroleum-engineering",
+        "simulator_profile": {
+          "vendor": "Rock Flow Dynamics",
+          "simulator": "tNavigator",
+          "version": "22.2",
+          "unit_system": "METRIC"
+        },
+        "approved": true,
+        "approved_by": "department-hydrodynamic-expert",
+        "author": "department-hydrodynamic-expert",
+        "approval_gate_id": "expert:applyscript-python-hook-v1:1",
+        "schemas": [
+          {
+            "schema_id": "expert:APPLYSCRIPT:hook",
+            "schema_revision": "1",
+            "keyword": "APPLYSCRIPT",
+            "variant": "hook",
+            "citation": {
+              "document_id": "tnav-user-manual-russian",
+              "document_revision": "19.4",
+              "page": "12.20.171 / 2123-2125",
+              "heading": "APPLYSCRIPT",
+              "source_hash": "sha256:da06918fa70947093ca10f04306f067a872b1bd3addb2bd31e7a639cb7ee5cd4"
+            },
+            "parser": {
+              "token_width": 2,
+              "allow_trailing_omission": false,
+              "allow_unquoted_strings": true
+            },
+            "fields": [
+              {
+                "name": "SCRIPT_FILE",
+                "position": 1,
+                "type": "string",
+                "required": true,
+                "quote": "single"
+              },
+              {
+                "name": "FUNCTION_NAME",
+                "position": 2,
+                "type": "string",
+                "required": true,
+                "quote": "single"
+              }
+            ],
+            "layout": {
+              "newline": "LF",
+              "indent": "  ",
+              "delimiter": "SPACE",
+              "record_terminator": "SLASH",
+              "block_terminator": "SLASH_LINE"
+            },
+            "semantics": {
+              "period": "ANY",
+              "clock": {
+                "uses_current": true
+              },
+              "definitions": [
+                {
+                  "entity_type": "apply_script",
+                  "id_field": "SCRIPT_FILE",
+                  "action": "UPSERT"
+                }
+              ],
+              "references": [],
+              "prerequisites": [],
+              "state_assignments": [
+                {
+                  "namespace": "apply-script",
+                  "entity_type": "apply_script",
+                  "entity_field": "SCRIPT_FILE",
+                  "key_fields": [
+                    "SCRIPT_FILE",
+                    "FUNCTION_NAME"
+                  ],
+                  "value_fields": [
+                    "SCRIPT_FILE",
+                    "FUNCTION_NAME"
+                  ]
+                }
+              ],
+              "numeric_constraints": []
+            }
+          }
+        ]
+      },
+      "source_hash": "sha256:da06918fa70947093ca10f04306f067a872b1bd3addb2bd31e7a639cb7ee5cd4",
+      "page": "12.20.171 APPLYSCRIPT (с. 2123–2125); ACTIONX 12.20.165; WELTARG 12.20.62",
+      "heading": "APPLYSCRIPT — произвольный скрипт Python",
+      "id": "applyscript-python-hook-v1",
+      "metadata": {
+        "document_id": "applyscript-python-hook-v1",
+        "document_revision": "1",
+        "source_hash": "sha256:da06918fa70947093ca10f04306f067a872b1bd3addb2bd31e7a639cb7ee5cd4",
+        "page": "12.20.171 / 2123-2125",
+        "heading": "APPLYSCRIPT",
+        "target_base": "schedule_mvp",
+        "knowledge_type": "keyword_instruction",
+        "knowledge_id": "applyscript-python-hook-v1",
+        "revision": "1",
+        "status": "active",
+        "access_scope": "petroleum-engineering",
+        "author": "department-hydrodynamic-expert",
+        "approved_by": "department-hydrodynamic-expert",
+        "keyword_families": [
+          "APPLYSCRIPT"
+        ],
+        "topics": [
+          "Python hook",
+          "APPLYSCRIPT",
+          "скрипт на timestep",
+          "SCRIPT_FILE FUNCTION_NAME",
+          "не GUI calculator"
+        ],
+        "task_patterns": [
+          "задать APPLYSCRIPT",
+          "подключить Python скрипт",
+          "хук на расчётный шаг",
+          "script.py function",
+          "APPLYSCRIPT без тела"
+        ]
+      }
+    },
+    {
+      "contract": "schedule_knowledge_block",
+      "contract_version": "1.0",
+      "target_base": "schedule_mvp",
+      "knowledge_type": "keyword_instruction",
+      "knowledge_id": "ginjgas-group-inject-gas-v1",
+      "revision": "3",
+      "title": "GINJGAS — состав газа закачки группы",
+      "keywords": [
+        "GINJGAS"
+      ],
+      "topics": [
+        "состав газа группы",
+        "GINJGAS",
+        "GCONINJE GAS",
+        "STREAM WELLSTRE",
+        "не WINJGAS"
+      ],
+      "task_patterns": [
+        "задать GINJGAS",
+        "состав закачки группы",
+        "GINJGAS STREAM",
+        "газ с сепаратора группы",
+        "makeup WELLSTRE"
+      ],
+      "simulator_family": [
+        "E300",
+        "tNavigator"
+      ],
+      "status": "active",
+      "author": "department-hydrodynamic-expert",
+      "access_scope": "petroleum-engineering",
+      "text": "GINJGAS — состав газа, нагнетаемого группой (композиционные модели).\n\nНазначение. Задаёт источник/состав закачиваемого газа для группы при групповом GAS-контроле через GCONINJE. Форматы: tN, E3 (E1 в мануале не отмечен — для E1 → needs_input). Секция: SCHEDULE. Это не WINJGAS (скважинный аналог — отдельная карточка), не GSATCOMP (satellite; вне allowlist), не WELLSTRE (объявление потока — отдельная карточка), не WINJMIX (смесь; вне allowlist → needs_input при SOURCE=MIX без baseline), не GCONINJE (rate/control).\n\nКогда применять. E3/tN + GCONINJE GAS: нужен явный состав на группе (или маске `NAME*`). STREAM → сначала WELLSTRE с тем же именем. MIX → WINJMIX вне allowlist → needs_input, если смеси нет в baseline. GV/WV — имя группы/скважины-источника из фактов. GAS — сепаратор месторождения. GRUP — состав вышележащей группы (default). Makeup-поток (поле 4) тоже через WELLSTRE.\n\nRecord layout. Keyword GINJGAS, записи `/`, блок — отдельный `/`. GROUP или маска с `*` на конце.\n\nПоля (§12.20.196):\n\n1. GROUP — имя группы или маска (`…*`).\n2. SOURCE — GAS | STREAM | MIX | GV | WV | GRUP. Default: GRUP.\n3. SOURCE_REF — зависит от SOURCE: STREAM→имя WELLSTRE; MIX→имя WINJMIX; GV→группа; WV→скважина. Для GAS/GRUP обычно опускается.\n4. MAKEUP_STREAM — имя WELLSTRE добавочного газа, если добываемого газа по SOURCE не хватает. Optional.\n5. SEPARATOR_STAGE — ступень сепаратора для состава (default 0 = весь сепаратор). Optional.\n\nКанон render.\n- `composition` — GROUP SOURCE [SOURCE_REF] [MAKEUP_STREAM] [SEPARATOR_STAGE] (паттерны `G1 STREAM 'stream1'`, `G2 GV GROUP1`, `'GINJ3*' GAS`).\nНе копируйте имена/stream без фактов. Не эмитьте GSATCOMP/WINJMIX/WELLSTRW из этой карточки (WINJGAS — отдельная).\n\nIR / semantics.\n- period=ANY; clock.uses_current=true.\n- definitions: UPSERT group_inject_gas GROUP.\n- references: group GROUP (GRUPTREE/FIELD); STREAM/MAKEUP → well_stream; GV→group; WV→well.\n- prerequisites: GCONINJE GAS context (soft); WELLSTRE before STREAM/MAKEUP.\n- state_assignments: namespace group-inject-gas; value SOURCE + refs.\n- MIX without WINJMIX in allowlist/baseline → needs_input.\n\nСвязанные: GCONINJE; WELLSTRE; WINJGAS; GSATCOMP / WINJMIX (вне allowlist).\n\nАнтипаттерны.\n- GINJGAS без GCONINJE GAS / без группы.\n- STREAM без WELLSTRE.\n- MIX без WINJMIX facts/baseline.\n- Подмена скважинного WINJGAS групповым GINJGAS без факта.\n- E1-профиль.\n\nНехватка факта → needs_input: нет GROUP/SOURCE; STREAM/MIX/GV/WV без SOURCE_REF; нет WELLSTRE; нужен MIX/WINJMIX; E1.\n\nКарточка самодостаточна для composition-record; поток объявляет WELLSTRE.",
+      "examples": [
+        {
+          "title": "STREAM / GV / GAS — канон мануала",
+          "task": "G1←stream1; G2←газ группы GROUP1; маска GINJ3*←сепаратор.",
+          "schedule_text": "GINJGAS\nG1 STREAM 'stream1' /\nG2 GV GROUP1 /\n'GINJ3*' GAS /\n/\n",
+          "explanation": "§12.20.196 с. 2160. Variant composition. stream1 должен быть в WELLSTRE. Учебные имена."
+        }
+      ],
+      "schema_catalogue": {
+        "contract": "schedule_schema_catalogue",
+        "contract_version": "1.0",
+        "catalogue_ref": "catalogue://tnavigator/22.2/ginjgas-group-inject-gas-v1",
+        "catalogue_hash": "sha256:05aee4fed01f8e0c82433cebffaa83fe9459eeca93c997f063edf6247b3b4e3c",
+        "source_hash": "sha256:b2bf7c44ba9719880a54b8fc64e240c97875e6407738183f3aa7cb5d3859102e",
+        "access_scope": "petroleum-engineering",
+        "simulator_profile": {
+          "vendor": "Rock Flow Dynamics",
+          "simulator": "tNavigator",
+          "version": "22.2",
+          "unit_system": "METRIC"
+        },
+        "approved": true,
+        "approved_by": "department-hydrodynamic-expert",
+        "author": "department-hydrodynamic-expert",
+        "approval_gate_id": "expert:ginjgas-group-inject-gas-v1:3",
+        "schemas": [
+          {
+            "schema_id": "expert:GINJGAS:composition",
+            "schema_revision": "1",
+            "keyword": "GINJGAS",
+            "variant": "composition",
+            "citation": {
+              "document_id": "tnav-user-manual-russian",
+              "document_revision": "19.4",
+              "page": "12.20.196 / 2159-2160",
+              "heading": "GINJGAS",
+              "source_hash": "sha256:b2bf7c44ba9719880a54b8fc64e240c97875e6407738183f3aa7cb5d3859102e"
+            },
+            "parser": {
+              "token_width": 5,
+              "allow_trailing_omission": true,
+              "allow_unquoted_strings": true
+            },
+            "fields": [
+              {
+                "name": "GROUP",
+                "position": 1,
+                "type": "string",
+                "required": true,
+                "quote": "single"
+              },
+              {
+                "name": "SOURCE",
+                "position": 2,
+                "type": "string",
+                "required": false,
+                "enum": [
+                  "GAS",
+                  "STREAM",
+                  "MIX",
+                  "GV",
+                  "WV",
+                  "GRUP"
+                ],
+                "default": "GRUP"
+              },
+              {
+                "name": "SOURCE_REF",
+                "position": 3,
+                "type": "string",
+                "required": false,
+                "quote": "single"
+              },
+              {
+                "name": "MAKEUP_STREAM",
+                "position": 4,
+                "type": "string",
+                "required": false,
+                "quote": "single"
+              },
+              {
+                "name": "SEPARATOR_STAGE",
+                "position": 5,
+                "type": "number",
+                "required": false
+              }
+            ],
+            "layout": {
+              "newline": "LF",
+              "indent": "  ",
+              "delimiter": "SPACE",
+              "record_terminator": "SLASH",
+              "block_terminator": "SLASH_LINE"
+            },
+            "semantics": {
+              "period": "ANY",
+              "clock": {
+                "uses_current": true
+              },
+              "definitions": [
+                {
+                  "entity_type": "group_inject_gas",
+                  "id_field": "GROUP",
+                  "action": "UPSERT"
+                }
+              ],
+              "references": [
+                {
+                  "entity_type": "group",
+                  "id_field": "GROUP",
+                  "required": true
+                },
+                {
+                  "entity_type": "well_stream",
+                  "id_field": "SOURCE_REF",
+                  "required": false
+                },
+                {
+                  "entity_type": "well_stream",
+                  "id_field": "MAKEUP_STREAM",
+                  "required": false
+                }
+              ],
+              "prerequisites": [
+                {
+                  "keyword": "WELLSTRE",
+                  "soft": true
+                },
+                {
+                  "keyword": "GCONINJE",
+                  "soft": true
+                }
+              ],
+              "state_assignments": [
+                {
+                  "namespace": "group-inject-gas",
+                  "entity_type": "group_inject_gas",
+                  "entity_field": "GROUP",
+                  "key_fields": [
+                    "GROUP"
+                  ],
+                  "value_fields": [
+                    "SOURCE",
+                    "SOURCE_REF",
+                    "MAKEUP_STREAM",
+                    "SEPARATOR_STAGE"
+                  ]
+                }
+              ],
+              "numeric_constraints": [
+                {
+                  "field": "SEPARATOR_STAGE",
+                  "min": 0
+                }
+              ]
+            }
+          }
+        ]
+      },
+      "source_hash": "sha256:b2bf7c44ba9719880a54b8fc64e240c97875e6407738183f3aa7cb5d3859102e",
+      "page": "12.20.196 GINJGAS (с. 2159–2160); WELLSTRE 12.20.189; GCONINJE 12.20.98; WINJGAS 12.20.195",
+      "heading": "GINJGAS — состав нагнетаемого группой газа",
+      "id": "ginjgas-group-inject-gas-v1",
+      "metadata": {
+        "document_id": "ginjgas-group-inject-gas-v1",
+        "document_revision": "3",
+        "source_hash": "sha256:b2bf7c44ba9719880a54b8fc64e240c97875e6407738183f3aa7cb5d3859102e",
+        "page": "12.20.196 / 2159-2160",
+        "heading": "GINJGAS",
+        "target_base": "schedule_mvp",
+        "knowledge_type": "keyword_instruction",
+        "knowledge_id": "ginjgas-group-inject-gas-v1",
+        "revision": "3",
+        "status": "active",
+        "access_scope": "petroleum-engineering",
+        "author": "department-hydrodynamic-expert",
+        "approved_by": "department-hydrodynamic-expert",
+        "keyword_families": [
+          "GINJGAS"
+        ],
+        "topics": [
+          "состав газа группы",
+          "GINJGAS",
+          "GCONINJE GAS",
+          "STREAM WELLSTRE",
+          "не WINJGAS"
+        ],
+        "task_patterns": [
+          "задать GINJGAS",
+          "состав закачки группы",
+          "GINJGAS STREAM",
+          "газ с сепаратора группы",
+          "makeup WELLSTRE"
+        ]
+      }
+    },
+    {
+      "contract": "schedule_knowledge_block",
+      "contract_version": "1.0",
+      "target_base": "schedule_mvp",
+      "knowledge_type": "keyword_instruction",
+      "knowledge_id": "winjgas-well-inject-gas-v1",
+      "revision": "2",
+      "title": "WINJGAS — состав газа закачки скважины",
+      "keywords": [
+        "WINJGAS"
+      ],
+      "topics": [
+        "состав газа скважины",
+        "WINJGAS",
+        "WCONINJE GAS",
+        "STREAM WELLSTRE",
+        "не GSATCOMP"
+      ],
+      "task_patterns": [
+        "задать WINJGAS",
+        "состав закачки скважины",
+        "WINJGAS STREAM",
+        "газ сепаратора на скважине",
+        "makeup WELLSTRE"
+      ],
+      "simulator_family": [
+        "E300",
+        "tNavigator"
+      ],
+      "status": "active",
+      "author": "department-hydrodynamic-expert",
+      "access_scope": "petroleum-engineering",
       "text": "WINJGAS — состав газа, нагнетаемого скважиной (композиционные модели).\n\nНазначение. Задаёт источник/состав закачиваемого газа для скважины при скважинном GAS-контроле через WCONINJE. Форматы: tN, E3 (E1 в мануале не отмечен — для E1 → needs_input). Секция: SCHEDULE. Это не GINJGAS (групповой аналог — отдельная карточка), не GSATCOMP (satellite; вне allowlist), не WELLSTRE (объявление потока — отдельная карточка), не WINJMIX (смесь; вне allowlist → needs_input при SOURCE=MIX без baseline), не WCONINJE (rate/control).\n\nКогда применять. E3/tN + WCONINJE GAS: нужен явный состав на скважине или `*LIST` после WLIST. STREAM → сначала WELLSTRE с тем же именем. MIX → WINJMIX вне allowlist → needs_input, если смеси нет в baseline. GV/WV — имя группы/скважины-источника из фактов. GAS — сепаратор месторождения. GRUP — состав вышележащей группы (default). Makeup-поток (поле 4) тоже через WELLSTRE.\n\nRecord layout. Keyword WINJGAS, записи `/`, блок — отдельный `/`. WELL или `*LIST`.\n\nПоля (§12.20.195):\n\n1. WELL — скважина или `*LIST` (после WLIST).\n2. SOURCE — GAS | STREAM | MIX | GV | WV | GRUP. Default: GRUP.\n3. SOURCE_REF — зависит от SOURCE: STREAM→имя WELLSTRE; MIX→имя WINJMIX; GV→группа; WV→скважина. Для GAS/GRUP обычно опускается.\n4. MAKEUP_STREAM — имя WELLSTRE добавочного газа, если добываемого газа по SOURCE не хватает. Optional.\n5. SEPARATOR_STAGE — ступень сепаратора для состава (default 0 = весь сепаратор). Optional.\n\nКанон render.\n- `composition` — WELL SOURCE [SOURCE_REF] [MAKEUP_STREAM] [SEPARATOR_STAGE] (паттерн `Well1 STREAM 'stream1'`).\nНе копируйте имена/stream без фактов. Не эмитьте GSATCOMP/WINJMIX/WELLSTRW из этой карточки.\n\nIR / semantics.\n- period=ANY; clock.uses_current=true.\n- definitions: UPSERT well_inject_gas WELL.\n- references: well WELL (или WLIST); STREAM/MAKEUP → well_stream; GV→group; WV→well.\n- prerequisites: WCONINJE GAS context (soft); WELLSTRE before STREAM/MAKEUP; WLIST before `*LIST`.\n- state_assignments: namespace well-inject-gas; value SOURCE + refs.\n- MIX without WINJMIX in allowlist/baseline → needs_input.\n\nСвязанные: WCONINJE; WELLSTRE; GINJGAS; WLIST; GSATCOMP / WINJMIX (вне allowlist).\n\nАнтипаттерны.\n- WINJGAS без WCONINJE GAS / без скважины.\n- STREAM без WELLSTRE.\n- MIX без WINJMIX facts/baseline.\n- Подмена группового GINJGAS скважинным WINJGAS без факта.\n- E1-профиль.\n\nНехватка факта → needs_input: нет WELL/SOURCE; STREAM/MIX/GV/WV без SOURCE_REF; нет WELLSTRE; нужен MIX/WINJMIX; E1.\n\nКарточка самодостаточна для composition-record; поток объявляет WELLSTRE.",
       "examples": [
         {
@@ -1937,7 +2520,7 @@ if __name__ == "__main__":
     write_workflow(EXCEL_EXTRACTOR)
 
 ===END_FILE===
-===BEGIN_FILE===	n8n/templates/generate_mas_control_plane_proxy.py	25016	utf8
+===BEGIN_FILE===	n8n/templates/generate_mas_control_plane_proxy.py	25029	utf8
 #!/usr/bin/env python3
 """Generate ``MAS — Control Plane Proxy`` and the control-plane SQL files from one source.
 
@@ -1999,7 +2582,7 @@ STICKY = (
 # `waiting_agent` = a long-running agent returned in_progress (Phase 4). The CHECK constraint is re-created on
 # every `schema` run so an existing lab/field database picks up new statuses (CASE-6a9f3a76-38506f: the first
 # in_progress result hit the old constraint in `Update case after agent`).
-CASE_STATUSES = ("new", "running", "waiting_user", "waiting_agent", "done", "failed")
+CASE_STATUSES = ("new", "running", "waiting_user", "waiting_agent", "done", "failed", "cancelled")
 _STATUS_LIST = ",".join(f"'{s}'" for s in CASE_STATUSES)
 CASES_STATUS_CHECK_SQL = (
     "ALTER TABLE cases DROP CONSTRAINT IF EXISTS cases_status_check;"
@@ -3101,7 +3684,7 @@ if __name__ == "__main__":
     main()
 
 ===END_FILE===
-===BEGIN_FILE===	n8n/templates/generate_mas_orchestrator.py	92627	utf8
+===BEGIN_FILE===	n8n/templates/generate_mas_orchestrator.py	94394	utf8
 #!/usr/bin/env python3
 """Generate the thin MAS orchestrator (one n8n execution = one step)."""
 
@@ -3933,8 +4516,11 @@ const verification=(()=>{
       unsupported_claims:(Array.isArray(p.unsupported_claims)?p.unsupported_claims:[]).map(s=>String(s||'').trim()).filter(Boolean).slice(0,6)};
   }catch{return null}
 })();
-let action=obj(decision.action)?{...decision.action}:{type:'ask_user',question_id:'Q-parse',question:'Не удалось разобрать решение оркестратора',options:[]};
+const KNOWN_ACTIONS=['call_agent','ask_user','continue','finish'];
+const parsedAction=obj(decision.action);
+let action=parsedAction?{...decision.action}:{};
 let type=String(action.type||'').trim();
+const unparsed=!parsedAction||!KNOWN_ACTIONS.includes(type);
 const progress=obj(decision.progress)?decision.progress:{};
 const registry=Array.isArray(prev.registry)?prev.registry:[];
 const state=sanitizeState(obj(prev.state)?{...prev.state}:{});
@@ -3958,6 +4544,21 @@ let guard=null;
 let reworkReason='';
 const answered=ledgerAnsweredAgentQuestion(state);
 const accepted=ledgerHumanAccepted(state);
+if(unparsed){
+  const fails=Number(state.ledger.parse_failures||0)+1;
+  state.ledger.parse_failures=fails;
+  ledgerPush(state,{kind:'verification',verdict:'rejected',uncovered:['решение оркестратора не разобрано']});
+  guard='decision_unparsed';
+  if(fails<2){
+    type='continue';
+    action={type:'continue'};
+  } else {
+    type='fail_case';
+    action={type:'fail_case'};
+  }
+} else {
+  state.ledger.parse_failures=0;
+}
 /* Open plan items (pending / active / blocked) are uncovered parts of the goal by definition: a finish
    with them behaves like a rejected completion check (one continue step, then the engineer). */
 const planOpen=type==='finish'?planOpenItems(state.plan):[];
@@ -3967,7 +4568,10 @@ const repeatDelegation=(agentId, taskId)=>{
   if(!last||String(last.status||'')!=='completed'||ledgerHasNewInputsSince(state, last)) return false;
   return !planNamesNewWork(state, id, taskId);
 };
-if(type==='finish'&&answered){
+if(unparsed){
+  /* Unparseable / unknown action: one continue so Decision retries; second consecutive → case.failed.
+     Never a HITL question — the engineer cannot repair a broken LLM envelope. */
+} else if(type==='finish'&&answered){
   /* 0. An agent asked, the human answered, the agent has not run since → the answer must reach the
         agent that asked. Finishing here would silently drop the engineer's decision. */
   guard='answer_not_applied';
@@ -4029,7 +4633,9 @@ if(type==='finish'&&answered){
   }
 }
 let statusMessage=String(decision.status_message||'').trim()||'Шаг оркестратора';
-if(guard==='repeat_review'||guard==='stall_review') statusMessage='Результат уже получен — прошу инженера принять его или описать доработку.';
+if(guard==='decision_unparsed'&&type==='continue') statusMessage='Не удалось разобрать следующий шаг. Формулирую решение заново.';
+else if(guard==='decision_unparsed'&&type==='fail_case') statusMessage='Оркестратор дважды не смог сформулировать следующий шаг. Перезапустите задачу или уточните формулировку.';
+else if(guard==='repeat_review'||guard==='stall_review') statusMessage='Результат уже получен — прошу инженера принять его или описать доработку.';
 else if(guard==='answer_not_applied') statusMessage=`Передаю ответ инженера агенту ${agentTitle(action.agent_id, registry)}.`;
 else if(guard==='human_accepted') statusMessage='Инженер принял результат — завершаю задачу.';
 else if(guard==='completion_unverified'){
@@ -4063,6 +4669,7 @@ if(type==='call_agent'){
      (CASE-6a9ec6b3-74e34e: invented per-well dates replaced data.excel.facts). expected_output is the shape
      of what to extract (field names, types) — not cell values. */
   const calleeId=String(action.agent_id||'').trim();
+  if(!reworkReason) reworkReason=ledgerPendingRework(state);
   const expected=expectedOutputForCall(action, state, registry, calleeId);
   agentTask={
     case_id:prev.case_id,
@@ -4126,11 +4733,17 @@ if(type==='call_agent'){
      guard) as the last step's decision; the chat collapses it into case.finished (same status_message). */
   decisionEvent.status_message=summary;
   events.push(decisionEvent, {kind:'case.finished',actor:'orchestrator',status:'done',status_message:summary,payload:{...result,action_type:'finish',plan:state.plan,...execRef()}});
+} else if(type==='fail_case'){
+  nextStatus='failed';
+  state.current_task=null;
+  decisionEvent.status_message=statusMessage;
+  events.push(decisionEvent, {kind:'case.failed',actor:'orchestrator',status:'failed',status_message:statusMessage,payload:{reason:'decision_unparsed',...execRef()}});
 } else {
-  nextStatus='waiting_user';
-  const q={question_id:'Q-unknown',question:'Оркестратор вернул неизвестное действие',options:[]};
-  state.hitl={pending:true,questions:[q],answers:{}};
-  events.push({kind:'hitl.request',actor:'orchestrator',status:'waiting_user',status_message:statusMessage,payload:{...q,...execRef()}});
+  nextStatus='failed';
+  state.current_task=null;
+  statusMessage='Оркестратор дважды не смог сформулировать следующий шаг. Перезапустите задачу или уточните формулировку.';
+  decisionEvent.status_message=statusMessage;
+  events.push(decisionEvent, {kind:'case.failed',actor:'orchestrator',status:'failed',status_message:statusMessage,payload:{reason:'decision_unparsed',...execRef()}});
 }
 state.status=nextStatus;
 const persistEvents=events.map(e=>[
@@ -4270,7 +4883,7 @@ let shouldContinue=applied.should_continue;
 const events=applied.events;
 /* 3. Step budget comes from MAS — Runtime Config (max_steps, UI-editable). Hitting it is not a silent
    failure: if there is a completed result, the engineer reviews it; only with nothing to show we fail. */
-const maxSteps=Math.max(3,Number(prev.max_steps)||12);
+const maxSteps=Math.max(1,Number(prev.max_steps)||12);
 if(Number(state.step_count||0)>=maxSteps&&nextStatus==='running'){
   shouldContinue=false;
   const done=composeDoneSummary(state, registry);
@@ -4556,6 +5169,11 @@ def main() -> None:
                     ]
                 },
             },
+            retryOnFail=True,
+            maxTries=3,
+            waitBetweenTries=2000,
+            onError="continueRegularOutput",
+            alwaysOutputData=True,
         ),
         node(
             "Decision Chat Model — configure in UI",
@@ -4602,6 +5220,11 @@ def main() -> None:
                     ]
                 },
             },
+            retryOnFail=True,
+            maxTries=3,
+            waitBetweenTries=2000,
+            onError="continueRegularOutput",
+            alwaysOutputData=True,
         ),
         node(
             "Verification Structured Output",
@@ -6079,7 +6702,7 @@ class AgentSpec:
                 raise ValueError(f"{self.agent_id}: hitl_policy=agent_asks needs an ask_engineer tool")
 
 ===END_FILE===
-===BEGIN_FILE===	n8n/templates/mas_agent_workflow.py	29930	utf8
+===BEGIN_FILE===	n8n/templates/mas_agent_workflow.py	30843	utf8
 #!/usr/bin/env python3
 """Build the n8n workflow of an LLM agent from its ``AgentSpec``.
 
@@ -6417,9 +7040,27 @@ class AgentWorkflow:
     def js_format_missing(self) -> str:
         t = self.spec.texts
         assert t is not None
+        down = (
+            f"Сервис агента „{self.spec.title}“ не отвечает по адресу из настроек среды. "
+            "Проверьте, что он запущен, и перезапустите задачу."
+        )
         return (
             "const opened=$json||{};\n"
+            "const runtime=(()=>{try{return $('Runtime configuration').first().json||{}}catch{return {}}})();\n"
             "const result=opened.result&&typeof opened.result==='object'?opened.result:{};\n"
+            "if(typeof opened.ok!=='boolean'){\n"
+            "  return [{json:{\n"
+            "    task_id:result.task_id||opened.task_id||'',\n"
+            f"    agent_id:{json.dumps(self.spec.agent_id)},\n"
+            "    status:'failed',\n"
+            f"    message:{json.dumps(down, ensure_ascii=False)},\n"
+            "    data:{},\n"
+            "    artifacts:{},\n"
+            f"    issues:[{{code:'service_unreachable',url:String(runtime[{json.dumps(self.spec.service_url_key)}]||'')}}],\n"
+            "    assumptions:[],\n"
+            "    requests:[]\n"
+            "  }}];\n"
+            "}\n"
             "return [{json:{\n"
             "  task_id:result.task_id||opened.task_id||'',\n"
             f"  agent_id:{json.dumps(self.spec.agent_id)},\n"
@@ -6894,7 +7535,7 @@ def attach_schedule_rag_js() -> str:
     )
 
 ===END_FILE===
-===BEGIN_FILE===	n8n/templates/mas_state_utils.py	54273	utf8
+===BEGIN_FILE===	n8n/templates/mas_state_utils.py	55066	utf8
 """Shared orchestrator state helpers prepended into n8n Code nodes.
 
 n8n 2.30 Code cannot import a JS module at runtime. This Python constant is
@@ -7445,7 +8086,8 @@ function sanitizeLedger(raw){
     stall_count:Number(l.stall_count||0)||0,
     last_human_step:Number(l.last_human_step||0)||0,
     reviews:Number(l.reviews||0)||0,
-    verify_rejections:Number(l.verify_rejections||0)||0
+    verify_rejections:Number(l.verify_rejections||0)||0,
+    parse_failures:Number(l.parse_failures||0)||0
   };
 }
 function ledgerPush(state, entry){
@@ -7480,6 +8122,19 @@ function ledgerHumanAccepted(state){
     const e=l.history[i];
     if(e.kind==='agent') return '';
     if(e.kind==='human'&&e.review_accept===true) return e.review_scope==='agent'?'agent':'case';
+  }
+  return '';
+}
+/* Engineer asked for rework on a result-review gate and no agent has run since: pass their text
+   to the next agent as inputs.rework_reason (even when that agent has not completed yet — α1 E5). */
+function ledgerPendingRework(state){
+  const l=sanitizeLedger(state.ledger);
+  for(let i=l.history.length-1;i>=0;i--){
+    const e=l.history[i];
+    if(e.kind==='agent') return '';
+    if(e.kind==='human'&&isResultReviewGate(e.question_id)&&e.review_accept!==true){
+      return String(e.answer||'').trim();
+    }
   }
   return '';
 }
@@ -7888,11 +8543,13 @@ function applyAgentResult(state, agentId, taskId, result, registry){
     /* A failed attempt is recorded in the slot (status + summary) but never overwrites data a previous
        completed run of the same agent produced. */
     agents[agentId]={...prevSlot,status:'failed',summary:message.slice(0,400),task_id:taskId,step,data:obj(prevSlot.data)?prevSlot.data:{}};
-    events.push({kind:'agent.failed',actor:agentId||'agent',agent_id:agentId,status:'failed',status_message:message,payload:{message,issues:res.issues||[],error_count:errorCount,...execRef()}});
-    if(errorCount>=3){
+    const issues=Array.isArray(res.issues)?res.issues:[];
+    const unreachable=issues.some(i=>i&&String(i.code||'')==='service_unreachable');
+    events.push({kind:'agent.failed',actor:agentId||'agent',agent_id:agentId,status:'failed',status_message:message,payload:{message,issues,error_count:errorCount,...execRef()}});
+    if(unreachable||errorCount>=3){
       nextStatus='failed';
       shouldContinue=false;
-      events.push({kind:'case.failed',actor:'orchestrator',status:'failed',status_message:`Агент «${title}» вернул ошибку ${errorCount} раза подряд`,payload:{agent_id:agentId,error_count:errorCount,...execRef()}});
+      events.push({kind:'case.failed',actor:'orchestrator',status:'failed',status_message:unreachable?message:`Агент «${title}» вернул ошибку ${errorCount} раза подряд`,payload:{agent_id:agentId,error_count:errorCount,...(unreachable?{code:'service_unreachable'}:{}),...execRef()}});
     }
   }
   const artifactsAdded=Object.keys(flattenArtifacts(state.artifacts||{})).filter(k=>!artifactsBefore.has(k));
@@ -14424,224 +15081,3 @@ E1/E3 IJK perfs use `COMPDAT` — **not** in MVP allowlist. Do not emit `COMPDAT
 `GRUPTREE` = hierarchy (FIELD root; node-group XOR leaf-group with wells via WELSPECS).
 `GCONPROD` = group production targets; rates split by guide rates (default = well potential §5.6.7), not equally.
 `GCONINJE` = group injection targets (WATER/GAS/OIL; RATE/RESV/REIN/VREP); injector rates split by potentials / guide rates.
-`GUIDERAT` = formula for guide rates used with GCONPROD (especially GUIDE=FORM) and wells without fixed `WGRUPCON` guides.
-`GSATPROD` = fixed production rates for **satellite** (auxiliary) groups — no wells/children; external/other-region offtake sources.
-`GSATINJE` = fixed injection rates for satellite groups (OIL/WAT/GAS; one phase per record).
-Do not emit `WGRUPCON` (outside allowlist) — if fixed per-well guides required → `needs_input`.
-
-### Compositional streams (E3 / tN)
-`WELLSTRE` = named inject stream mole fractions (oil/gas); Σxi = 1; Nc matches model component count. Not for E1. Do not confuse with `WELLSTRW` (multicomponent water; outside allowlist).
-`WINJGAS` = well inject-gas composition for compositional models with `WCONINJE` GAS (SOURCE = GAS|STREAM|MIX|GV|WV|GRUP). STREAM needs prior `WELLSTRE`; MIX needs `WINJMIX` (outside allowlist → `needs_input`). Well or `*LIST` after WLIST.
-`GINJGAS` = group inject-gas composition with `GCONINJE` GAS (same SOURCE enum). Still outside: `GSATCOMP`, `WINJMIX`, `WELLSTRW`.
-Never invent component counts, mole fractions, stream/mix names, or GV/WV sources without facts.
-
-### Network (§2.14.11)
-`BRANPROP` + `NODEPROP` (+ `WNETDP`) only if `NETWORK` already enabled in baseline/profile.
-`GNETDP` = dynamic adjustment of fixed group/node pressure to keep rate in [RATE_MIN, RATE_MAX] (also usable with fixed-pressure groups without inventing NETWORK). `GNETINJE` remains outside allowlist.
-`NETBALAN` = NETWORK balance solver tolerances (node pressure tol, max iterations, auto-choke rate tol). Field 1 ignored (E1/E3 compat). Requires NETWORK in baseline — do not invent NETWORK.
-Leaf groups with wells must still align with `GRUPTREE`. Without NETWORK when topology/solver params are required → `needs_input`, do not invent NETWORK.
-
-### VFP tables (producers)
-`VFPPROD` bodies are large empirical BHP tables (Prosper / well-performance software / baseline `.inc`), not invented in Builder.
-MVP job: know **table number** `N` and wire it into `WCONPROD` / `WCONHIST` field VFP_TABLE (and ALQ units per that table). KEEP existing `VFPPROD` in REVISE. Never fabricate FLO/THP/WFR/GFR/ALQ axes or table body → `needs_input` for missing table artifact.
-`WVFPDP` = per-well BHP add-on (METRIC: bars) and optional tubing ΔP scale `fp` applied to interpolated VFP BHP (`BHP1 = THP + fp*(BHPtab−THP)`). Emit `WVFPDP` only (not inventing `VFPDP`). Values from facts; do not invent calibrations.
-
-### Conditional actions (§12.20.161+)
-`ACTIONX` + `ENDACTIO` = conditional SCHEDULE block (AND/OR conditions on wells/groups/regions/time/FIELD/completions). Emit `ENDACTIO` only (not synonym `ENDACTION`).
-`DELAYACT` + `ENDACTIO` = delayed body after a named trigger action fires (delay days, max activations, delay increment). Trigger is usually an `ACTIONX` name already declared.
-Nested keywords between opener and ENDACTIO must themselves be allowlisted. No `DATES`/`TSTEP` inside the block.
-Still outside allowlist: `ACTION`, `ACTIONG`, `ACTIONR`, `ACTIONW`, `ACTIONC` → `needs_input` if those forms are required.
-Unsupported ACTIONX features in tNavigator (ALWAYS, LGR perfs, aquifer, block) → `needs_input`.
-
-### User-defined quantities
-`UDQ` = DEFINE/ASSIGN/UPDATE named expressions (WU/GU/FU/RU/CU…; ≤8 chars, RU ≤5). Used in ACTIONX conditions and as UDA in many well/group keywords. Expression text must come from facts — never invent SUMMARY mnemonics or formulas.
-`UDT` = lookup tables named `TU*` (axes NV/LC/LL + value grid) consumed by UDQ via `TU*[…]`. Table body only from facts; `UDTDIMS` (RUNSPEC) must already match — outside allowlist → `needs_input` if dims missing. `UDQPARAM` remains outside allowlist.
-
-### Per-timestep Python hook
-`APPLYSCRIPT` = wire a Python library file + entry function that the simulator calls each timestep (`SCRIPT_FILE` + `FUNCTION_NAME`). Emit only the SCHEDULE record from facts — never invent/write the `.py` body, API helpers, or `__init_script__`. Script file must exist as a package artifact. Not the GUI/graph calculator Python path.
-
-### Fractures — two disjoint paths
-- Plane/virtual perfs: `WFRACP` (global); `WFRACPL` (LGR well; needs LGR name + WELSPECL/COMPDATL in baseline).
-- LGR template package (§5.8): `FRACTURE_TEMPLATE` (GRID) → `FRACTURE_SPECS` (emit name; manual § may say FRACTURE_WELL) → `FRACTURE_STAGE` (SCHEDULE ON/OFF).
-Never mix paths or emit both for the same event without facts.
-
-### Names, masks, defaults (§12.20 intro)
-- New wells: exact names only.
-- Named well sets: emit `WLIST` (`*NAME` + NEW/ADD/MOVE/DEL), then reference `*NAME` in consumer keywords. Wells in the list must already exist via WELSPECS.
-- Raw masks `*` `?` `[n-m]` without WLIST alter **existing** wells only and cannot introduce wells. Prefer exact names or WLIST; bare masks → `needs_input` unless REVISE baseline already defines the set.
-- Schema-allowed omission: `*` / `N*` — only when catalogue/facts permit.
-
-## Allowlist (emit only these)
-DATES, INCLUDE, GRUPTREE, WELSPECS, WELLTRACK, COMPDATMD, WCONHIST, WCONPROD, WCONINJE, GCONPROD, GCONINJE, GUIDERAT, GSATPROD, GSATINJE, WELLSTRE, WINJGAS, GINJGAS, BRANPROP, NODEPROP, GNETDP, NETBALAN, FRACTURE_TEMPLATE, FRACTURE_SPECS, FRACTURE_STAGE, WECON, WTEST, WELTARG, WNETDP, WPIMULT, WDFAC, WEFAC, WELOPEN, WELDRAW, WLIST, WFRACP, WFRACPL, VFPPROD, WVFPDP, ACTIONX, DELAYACT, ENDACTIO, UDQ, UDT, APPLYSCRIPT.
-
-## Explicitly out of scope (never invent)
-- SCHEDULE property/region edits listed in §12.20 but not allowlisted: SATNUM, PVTNUM, ROCKNUM, MULTX/Y/Z±, PORO, NTG, PERMX/Y/Z, LX/LY/LZ, SOIL/SWAT/SGAS, …
-- Other ACTION* forms (`ACTION`, `ACTIONG`, `ACTIONR`, `ACTIONW`, `ACTIONC`) and synonym `ENDACTION` (emit `ENDACTIO`); `UDQPARAM` / `UDTDIMS` (RUNSPEC dims); inventing `APPLYSCRIPT` Python **bodies**/helpers; hist injectors (`WCONINJH`); short synonym `WCONINJ` (emit `WCONINJE`); LGR declare (`WELSPECL`/`COMPDATL`) as CREATE emit; `COMPDAT`/`COMPDATL`; `FRACTURE_WELL` synonym (emit `FRACTURE_SPECS`); inventing `VFPPROD`/`VFPINJ` table **bodies** (Prosper/external); fixed per-well guides `WGRUPCON`; satellite/mix/water composition still outside (`GSATCOMP`, `WINJMIX`, `WELLSTRW`); network inject tree `GNETINJE`; econ/group variants outside allowlist (`WECONX`, `GECON*`, `GCONSUMP`, …).
-If the task needs any of the above → `needs_input` (do not approximate with a nearby allowlisted keyword).
-
-## Modes
-CREATE: supported records only; return requirements_matrix, source_map, completeness_report, typed ir_events, ADD ops. Do **not** render keyword text yourself when an approved schema_catalogue is supplied — emit typed IR for the deterministic renderer.
-REVISE: preserve every unmentioned baseline construct (`preserve_unmentioned`). Explicit KEEP/MODIFY/ADD/REMOVE. MODIFY/REMOVE only via target_node_id + expected_raw_hash from decoded_baseline_inventory.records (planning samples are not mutation authority). Missing from new Excel evidence ⇒ KEEP, never REMOVE. REMOVE requires explicit approval.
-
-## Gaps
-Missing/conflicting mandatory fact or citation → `needs_input` with evidence_gap objects (entity, effective_at, keyword, field, reason, expected_format, question).
-Do **not** empty `ir_events` to force a special path. Deterministic commissioning timeline runs only when the packet has an explicit capability (`commissioning_date_retarget` / `shift_commissioning_dates` / `commissioning_revise` / `timeline_revise`) **and** well/date facts. Deterministic group rebind runs only when capability is `group_membership_rebind` / `group_rebind` **and** a complete structured spec is present (`wells`, `parent_group`, `parent_of_parent`, `well_groups`, `rate`/`gas_rate`, `control`). Never infer DKS, FIELD, `G{well}`, or GRAT from prose. Otherwise emit typed IR for the renderer.
-
-## Output
-Required top-level fields: status, summary, build_mode, ir_events.
-Omit empty arrays if unused (`changes`/`evidence_gap` default to [] in Code). Omit decision_record — Code synthesizes it.
-Do not invent full schedule text when schema_catalogue is present — prefer typed IR events for the renderer.
-Human-facing: optional `user_message` — 1–3 short Russian sentences for Activity/HITL; keep keyword/field names in Latin (`WCONPROD`, `ORAT`); no English filler in Russian prose.
-No hidden chain-of-thought. Return exactly the connected schema.
-"""
-
-
-NORMALIZE = r"""
-const incoming=$json||{};
-const obj=v=>v&&typeof v==='object'&&!Array.isArray(v);
-const parse=v=>{if(obj(v))return v;if(typeof v==='string'){try{const p=JSON.parse(v);return obj(p)?p:{}}catch{return {}}}return {}};
-const clean=v=>typeof v==='string'?v.trim():'';
-const packet=parse(incoming.specialist_packet??incoming);
-const previous=parse(incoming.previous_specialist_result);
-const request=obj(packet.inputs?.schedule_request)?packet.inputs.schedule_request:{};
-const defaultArtDesc=a=>{
-  const kind=clean(a?.kind)||'artifact';
-  if(kind==='tabular-extract') return 'Excel extraction artifact produced by the governed specialist workflow.';
-  if(kind==='query-result') return 'Immutable Excel query result reference.';
-  if(kind==='baseline-inc') return 'Baseline SCHEDULE .inc provided with the engineering task.';
-  return `${kind} reference for SCHEDULE build.`;
-};
-const normalizeArts=list=> (Array.isArray(list)?list:[]).filter(obj).map(a=>({
-  ref:clean(a.ref),
-  kind:clean(a.kind)||'artifact',
-  revision:clean(a.revision)||'runtime',
-  description:clean(a.description)||defaultArtDesc(a),
-})).filter(a=>a.ref);
-const artifacts=normalizeArts(packet.artifact_refs);
-packet.artifact_refs=artifacts;
-let size=999999;try{size=JSON.stringify(packet).length}catch{}
-const baselineBytes=typeof request.baseline_schedule_text==='string'?request.baseline_schedule_text.length:0;
-const includeBytes=Array.isArray(request.include_files)?request.include_files.reduce((n,f)=>n+(typeof f?.content==='string'?f.content.length:0),0):0;
-// Align with orchestrator intake: REVISE packets carry baseline text and legitimately exceed 256 KiB.
-const sizeLimit=(baselineBytes||includeBytes)?2359296:262144;
-const rag=obj(request.rag_evidence)?request.rag_evidence:{};const ragValid=rag.contract==='schedule_rag_evidence'&&rag.contract_version==='1.0'&&rag.filters?.target_base==='schedule_mvp'&&Array.isArray(rag.results)&&rag.results.some(r=>obj(r)&&r.knowledge_type==='keyword_instruction'&&obj(r.body))&&Array.isArray(rag.citations)&&rag.citations.length>0&&rag.citations.every(c=>obj(c)&&typeof c.knowledge_id==='string'&&c.knowledge_id.trim()&&typeof c.revision==='string'&&c.revision.trim()&&typeof c.content_hash==='string'&&c.content_hash.trim()&&typeof c.author==='string'&&c.author.trim());
-const artsOk=artifacts.every(a=>['ref','kind','revision','description'].every(k=>typeof a[k]==='string'&&a[k].trim()));
-const sizeOk=size<=sizeLimit;
-const valid=packet.contract==='specialist_packet'&&packet.contract_version==='1.0'&&packet.specialist_id==='schedule_builder_specialist'&&typeof packet.task_id==='string'&&packet.task_id.trim()&&Number.isInteger(packet.attempt)&&packet.attempt>=1&&typeof packet.objective==='string'&&packet.objective.trim()&&obj(packet.inputs)&&obj(packet.controls)&&Array.isArray(packet.acceptance_criteria)&&artsOk&&sizeOk&&ragValid;
-const findings=[];
-if(!ragValid) findings.push({code:'SCHEDULE_RAG_EVIDENCE_REQUIRED',severity:'error'});
-if(!artsOk) findings.push({code:'SCHEDULE_PACKET_ARTIFACT_REFS_INVALID',severity:'error'});
-if(!sizeOk) findings.push({code:'SCHEDULE_PACKET_TOO_LARGE',severity:'error',size,size_limit:sizeLimit,baseline_bytes:baselineBytes});
-const inherited=previous.specialist_id==='excel_extraction_specialist'&&obj(previous.compact_data)?previous.compact_data:null;
-const normalizedRequest={...request,objective:String(request.objective||packet.objective||''),artifact_refs:[...normalizeArts(request.artifact_refs),...artifacts],source_facts_packet:obj(request.source_facts_packet)?request.source_facts_packet:inherited};
-return[{json:{packet,request:normalizedRequest,previous_specialist_result:previous,latest_human_response:incoming.latest_human_response??null,packet_valid:Boolean(valid),packet_findings:findings,task_id:String(packet.task_id||''),attempt:Number(packet.attempt||1),trace_id:String(request.trace_id||`trace_${packet.task_id||'invalid'}`)}}];
-"""
-
-
-PREPARE_INTAKE = r"""
-const root=$json,request=root.request||{},packet=root.packet||{},controls=packet.controls&&typeof packet.controls==='object'?packet.controls:{},artifacts=Array.isArray(request.artifact_refs)?request.artifact_refs:[];
-const expectedVersion=Number.isInteger(Number(controls.expected_version))?Number(controls.expected_version):(Number.isInteger(Number(request.expected_version))?Number(request.expected_version):0);
-const idempotency=String(controls.idempotency_key||request.idempotency_key||`${root.task_id}:schedule-build:${root.attempt}`).slice(0,240);
-return[{json:{schedule_intake_request:{...request,contract:'schedule_build_request',contract_version:'1.0',task_id:root.task_id,orchestrator_task_id:root.task_id,trace_id:root.trace_id,expected_version:expectedVersion,idempotency_key:idempotency,policy_version:String(controls.policy_version||request.policy_version||'petroleum-schedule-policy-v1'),objective:request.objective,source_artifact_refs:artifacts,acceptance_criteria:Array.isArray(request.acceptance_criteria)?request.acceptance_criteria:(Array.isArray(packet.acceptance_criteria)?packet.acceptance_criteria:[]),stage_gate_policy:{attention_threshold:85,hitl_threshold:70,hard_blockers:Array.isArray(request.stage_gate_policy?.hard_blockers)?request.stage_gate_policy.hard_blockers:[]}}}}];
-"""
-
-
-PREPARE_BASELINE = r"""
-const root=$('Normalize SCHEDULE pipeline packet').first().json;
-return[{json:{baseline_request:{root_path:String(root.request.root_path||root.request.baseline_filename||'schedule.inc'),baseline_schedule_text:String(root.request.baseline_schedule_text||''),include_files:Array.isArray(root.request.include_files)?root.request.include_files:[]}}}];
-"""
-
-
-PREPARE_BASELINE_DECODE = r"""
-const root=$('Normalize SCHEDULE pipeline packet').first().json,baseline=$('Analyze lossless baseline inventory').first().json,req=root.request||{};
-let intake={};try{intake=$('Run deterministic SCHEDULE intake').first().json||{}}catch{}
-const catalogue=req.schema_catalogue||req.rag_evidence?.schema_catalogue||{};
-const scope=[...new Set([...(Array.isArray(intake.requested_keyword_scope)?intake.requested_keyword_scope:[]),...(Array.isArray(req.requested_keyword_scope)?req.requested_keyword_scope:[])].map(v=>String(v||'').trim().toUpperCase()).filter(Boolean))];
-return[{json:{baseline_decode_request:{baseline_analysis:baseline,schema_catalogue:catalogue,change_effective_from:String(req.change_effective_from||''),model_start_date:String(req.model_start_date||intake.model_start_date||''),requested_keyword_scope:scope,initial_semantic_snapshot:req.initial_semantic_snapshot||null}}}];
-"""
-
-
-PREPARE_BASELINE_REPLAY = r"""
-const root=$('Normalize SCHEDULE pipeline packet').first().json,decoded=$('Decode typed baseline records').first().json,req=root.request;
-const catalogue=req.schema_catalogue||req.rag_evidence?.schema_catalogue||{},temporalPolicy=req.temporal_policy||{history_end:req.history_end||null,forecast_start:req.forecast_start||null};
-return[{json:{schedule_validation_request:{validation_phase:'BASELINE_PREFIX',mode:'CREATE',ir_events:Array.isArray(decoded.prefix_ir_events)?decoded.prefix_ir_events:[],baseline_decode_result:decoded,baseline_package_hash:decoded.baseline_package_hash||null,change_effective_from:decoded.change_effective_from||req.change_effective_from||null,model_start_date:decoded.model_start_date||req.model_start_date||null,simulator_profile:req.simulator_profile||{},schema_catalogue:catalogue,schema_catalogue_ref:String(catalogue.catalogue_ref||req.schema_catalogue_ref||catalogue.catalogue_hash||'catalogue://tnavigator/22.2/bound'),schema_catalogue_approved:catalogue.approved===true||decoded.status==='decoded',approved_keyword_schemas:Array.isArray(catalogue.schemas)?catalogue.schemas:[],temporal_policy:temporalPolicy,initial_semantic_snapshot:req.initial_semantic_snapshot||null,render_result:{status:'baseline_decoded',catalogue_hash:decoded.catalogue_hash||null,rendered_records:[]}}}}];
-"""
-
-
-PREPARE_BASELINE_PLANNING_QUERY = r"""
-const root=$('Normalize SCHEDULE pipeline packet').first().json,intake=$('Run deterministic SCHEDULE intake').first().json,decoded=$('Decode typed baseline records').first().json,req=root.request;
-const arr=Array.isArray,obj=v=>v&&typeof v==='object'&&!arr(v),clean=v=>typeof v==='string'?v.trim():'';
-const change=obj(req.requested_change_scope)?req.requested_change_scope:{},entries=Object.values(change).flatMap(v=>arr(v)?v:[]).filter(obj);
-const keywords=[...new Set([...(arr(intake.requested_keyword_scope)?intake.requested_keyword_scope:[]),...entries.map(v=>v.keyword)].map(v=>clean(v).toUpperCase()).filter(Boolean))];
-const explicit=obj(req.baseline_query_filters)?req.baseline_query_filters:{};
-return[{json:{baseline_query_request:{baseline_decode_result:decoded,expected_decoded_hash:decoded.decoded_hash,query:{purpose:'PLANNING',phase:'ALL',keywords,source_node_ids:arr(explicit.source_node_ids)?explicit.source_node_ids:[],file_refs:arr(explicit.file_refs)?explicit.file_refs:[],entity_values:arr(explicit.entity_values)?explicit.entity_values:[],field_filters:arr(explicit.field_filters)?explicit.field_filters:[],effective_from:explicit.effective_from||null,effective_to:explicit.effective_to||null,cursor:0,limit:250,summary_only:true,sample_limit:100,require_complete:false}}}}];
-"""
-
-
-PREPARE_BASELINE_BUILDER_QUERY = r"""
-const root=$('Normalize SCHEDULE pipeline packet').first().json,plan=$('Validate SCHEDULE pipeline plan').first().json,decoded=$('Decode typed baseline records').first().json,req=root.request;
-const arr=Array.isArray,obj=v=>v&&typeof v==='object'&&!arr(v),clean=v=>typeof v==='string'?v.trim():'';
-const isClassToken=v=>/^(wells?|groups?|blocks?|entities|field|all|any|global|all wells|all groups|field-wide|скважин[аы]?|групп[аы]?)$/i.test(clean(v));
-const explicit=obj(req.baseline_query_filters)?req.baseline_query_filters:{},change=obj(req.requested_change_scope)?req.requested_change_scope:{},entries=Object.values(change).flatMap(v=>arr(v)?v:[]).filter(obj);
-const factsPacket=obj(req.source_facts_packet)?req.source_facts_packet:{},facts=arr(factsPacket.facts)?factsPacket.facts:[];
-const factWells=facts.map(f=>{const values=obj(f.values)?f.values:{};return clean(f.well||f.entity||f.entity_id||values['Скважина']||values.скважина||values.WELL||values.well||values['Группа']||values.GROUP||values.group)}).filter(Boolean);
-const changeWells=[...(arr(change.wells)?change.wells:[]),...(arr(change.groups)?change.groups:[]),...(arr(change.entities)?change.entities:[])].map(v=>clean(String(v))).filter(Boolean);
-const explicitEntities=arr(explicit.entity_values)?explicit.entity_values:entries.flatMap(v=>[v.entity,v.well,v.group,v.entity_id]).filter(Boolean);
-const plannedEntities=(arr(plan.stages)?plan.stages:[]).flatMap(s=>arr(s.entity_scope)?s.entity_scope:[]).map(clean).filter(v=>v&&!isClassToken(v)&&/^[A-Za-z0-9][A-Za-z0-9_.\-]{0,39}$/.test(v));
-// Prefer concrete SCHEDULE object names from Excel/change scope. Never treat class labels like "wells" as entity ids.
-const preferred=[...factWells,...changeWells,...explicitEntities,...plannedEntities].map(v=>clean(String(v))).filter(v=>v&&!isClassToken(v)&&/^[A-Za-z0-9][A-Za-z0-9_.\-]{0,39}$/.test(v));
-const taskRemove=clean(change.operation).toLowerCase()==='remove'||(arr(change.must_remove)&&change.must_remove.length>0);
-const entityValues=taskRemove&&!factWells.length&&!changeWells.length&&!(arr(explicit.entity_values)&&explicit.entity_values.length)?[]:[...new Set(preferred)];
-const explicitNodes=arr(explicit.source_node_ids)?explicit.source_node_ids:entries.flatMap(v=>[v.source_node_id,v.target_node_id,v.node_id]).filter(Boolean);
-const temporal=(arr(plan.stages)?plan.stages:[]).flatMap(s=>arr(s.temporal_scope)?s.temporal_scope:[]),dates=temporal.flatMap(v=>String(v).match(/\b\d{4}-\d{2}-\d{2}\b/g)||[]).sort();
-const requestedLimit=Number(req.baseline_query_limit||explicit.limit||2000),limit=Number.isInteger(requestedLimit)&&requestedLimit>0&&requestedLimit<=2000?requestedLimit:2000;
-return[{json:{baseline_query_request:{baseline_decode_result:decoded,expected_decoded_hash:decoded.decoded_hash,query:{purpose:'BUILD',phase:'ALL',keywords:arr(plan.keyword_scope)?plan.keyword_scope:[],source_node_ids:explicitNodes,file_refs:arr(explicit.file_refs)?explicit.file_refs:[],entity_values:entityValues,field_filters:arr(explicit.field_filters)?explicit.field_filters:[],effective_from:explicit.effective_from||dates[0]||null,effective_to:explicit.effective_to||dates[dates.length-1]||null,cursor:0,limit,summary_only:false,require_complete:true}}}}];
-"""
-
-
-PREPARE_PLAN = (
-    capability_dispatch_js()
-    + r"""
-const root=$('Normalize SCHEDULE pipeline packet').first().json;
-const intake=$('Run deterministic SCHEDULE intake').first().json;
-let baseline=null;try{baseline=$('Analyze lossless baseline inventory').first().json}catch{}
-let decoded=null;try{decoded=$('Decode typed baseline records').first().json}catch{}
-let replay=null;try{replay=$('Replay baseline prefix into semantic boundary').first().json}catch{}
-let baselineQuery=null;try{baselineQuery=$('Query baseline planning context').first().json}catch{}
-const req=root.request;const obj=v=>v&&typeof v==='object'&&!Array.isArray(v),arr=Array.isArray,clean=v=>typeof v==='string'?v.trim():'';
-const slimFacts=packet=>{if(!obj(packet))return packet;const pick=(row,keys)=>{if(!obj(row))return null;for(const k of keys){if(row[k]!==undefined&&row[k]!==null&&String(row[k]).trim()!=='')return row[k]}return null};const facts=arr(packet.facts)?packet.facts.slice(0,200).map(f=>{const values=obj(f.values)?f.values:(obj(f.row)?f.row:null);const well=f.well||f.entity_id||f.object_id||pick(values,['Скважина','скважина','WELL','Well','well','WellName'])||null;const value=f.value??f.raw_value??pick(values,['Дата ввода','дата ввода','Date','date','commissioning_date','value'])??null;const field=f.field||f.column||(value!==null?'Дата ввода':null);return {fact_id:f.fact_id||f.id||null,well,field,value,unit:f.unit||null,sheet:f.sheet||null,values:values||undefined}}):[];return {contract:packet.contract||null,contract_version:packet.contract_version||null,source_snapshot_hash:packet.source_snapshot_hash||null,correlation_id:packet.correlation_id||null,fact_count:facts.length||Number(packet.fact_count)||0,facts,conflicts:arr(packet.conflicts)?packet.conflicts.slice(0,20):[],columns:arr(packet.columns)?packet.columns.slice(0,50):undefined}};
-const slimRag=rag=>{if(!obj(rag))return rag;const catalogue=obj(rag.schema_catalogue)?{contract:rag.schema_catalogue.contract,catalogue_ref:rag.schema_catalogue.catalogue_ref||null,catalogue_hash:rag.schema_catalogue.catalogue_hash||null,approved:rag.schema_catalogue.approved===true,schemas:(arr(rag.schema_catalogue.schemas)?rag.schema_catalogue.schemas:[]).slice(0,40).map(s=>({keyword:s.keyword,variant:s.variant||null,schema_id:s.schema_id||null,field_count:arr(s.fields)?s.fields.length:0,fields:(arr(s.fields)?s.fields:[]).slice(0,40).map(f=>({name:f.name||null,type:f.type||null,required:f.required===true,position:f.position||null})),semantics:obj(s.semantics)?{period:s.semantics.period||null,clock:s.semantics.clock||null}:null}))}:null;const results=(arr(rag.results)?rag.results:[]).slice(0,20).map(r=>{const meta=obj(r.metadata)?r.metadata:{};const bodyObj=obj(r.body)?r.body:null;const bodyText=clean(typeof r.body==='string'?r.body:(bodyObj?String(bodyObj.text||bodyObj.instruction||bodyObj.body||''):'')||r.page_content||r.text||r.content||'');return {knowledge_id:r.knowledge_id||meta.knowledge_id||null,knowledge_type:r.knowledge_type||meta.knowledge_type||null,title:r.title||meta.title||null,keywords:r.keywords||meta.keyword_families||meta.keywords||[],score:r.score??r.rrf_score??null,snippet:bodyText.slice(0,4000),body:bodyText.slice(0,8000)||undefined}});return {contract:rag.contract,contract_version:rag.contract_version,query:clean(rag.query).slice(0,500),filters:rag.filters||null,citations:(arr(rag.citations)?rag.citations:[]).slice(0,30),results,schema_catalogue:catalogue,retrieval:rag.retrieval||null,findings:(arr(rag.findings)?rag.findings:[]).slice(0,20)}};
-const slimInventory=inv=>{if(!obj(inv))return null;const files=(arr(inv.files)?inv.files:[]).slice(0,50).map(f=>{const nodes=arr(f.nodes)?f.nodes:[];const keyword_counts={};for(const n of nodes){const kw=clean(n.keyword).toUpperCase();if(kw)keyword_counts[kw]=(keyword_counts[kw]||0)+1}return {file_ref:f.file_ref||f.path||null,byte_length:f.manifest?.byte_length||f.byte_length||null,node_count:nodes.length,keyword_counts}});return {root_path:inv.root_path||null,package_hash:inv.package_hash||null,keyword_inventory:inv.keyword_inventory||null,opaque_keywords:inv.opaque_keywords||[],files}};
-const evidence=[];
-if(req.source_facts_packet)evidence.push({kind:'source_facts_packet',value:slimFacts(req.source_facts_packet)});
-if(Array.isArray(req.source_facts))evidence.push(...req.source_facts.slice(0,100).map(f=>obj(f)?{kind:'source_fact',value:{fact_id:f.fact_id||null,well:f.well||null,field:f.field||null,value:f.value??null}}:f));
-if(Array.isArray(req.knowledge_evidence))evidence.push(...req.knowledge_evidence.slice(0,20));
-if(req.rag_evidence)evidence.push({kind:'schedule_rag_evidence',value:slimRag(req.rag_evidence)});
-// Raw package text/CST never enters the LLM prompt.  It remains in the
-// deterministic branch and is handed only to the merger from bounded workflow state.
-const compactBaseline=baseline&&typeof baseline==='object'?{contract:baseline.contract,contract_version:baseline.contract_version,status:baseline.status,cst_version:baseline.cst_version,offset_unit:baseline.offset_unit,package_hash:baseline.package?.package_hash||null,compact_inventory:slimInventory(baseline.compact_inventory),file_manifest:(arr(baseline.file_manifest)?baseline.file_manifest:[]).slice(0,50).map(f=>({file_ref:f.file_ref||f.path||null,byte_length:f.byte_length||null,sha256:f.sha256||f.manifest?.sha256||null})),include_graph:baseline.include_graph||{},keyword_inventory:baseline.keyword_inventory||{},opaque_keywords:baseline.opaque_keywords||[],findings:(arr(baseline.findings)?baseline.findings:[]).slice(0,20),preservation_token:baseline.preservation_token||null}:null;
-const decodedInventory=baselineQuery&&typeof baselineQuery==='object'?{contract:baselineQuery.contract,status:baselineQuery.status,query_hash:baselineQuery.query_hash||null,decoded_hash:baselineQuery.decoded_hash||null,baseline_package_hash:baselineQuery.baseline_package_hash||null,catalogue_hash:baselineQuery.catalogue_hash||null,total_source_records:baselineQuery.total_source_records||0,total_matches:baselineQuery.total_matches||0,summary:baselineQuery.summary||{},samples:(arr(baselineQuery.samples)?baselineQuery.samples:[]).slice(0,30),findings:(arr(baselineQuery.findings)?baselineQuery.findings:[]).slice(0,20)}:null;
-const semanticBoundary=replay&&replay.semantic_state_snapshot?{snapshot_kind:replay.semantic_state_snapshot.snapshot_kind,replay_through:replay.semantic_state_snapshot.replay_through,change_effective_from:replay.semantic_state_snapshot.change_effective_from,boundary_hash:replay.semantic_state_snapshot.boundary_hash,entity_count:replay.semantic_replay?.entities||0,state_assignment_count:replay.semantic_replay?.state_assignments||0}:null;
-const humanInstruction=clean(req.human_instruction)||clean(req.hitl_reply_text)||(obj(root.latest_human_response)?clean(root.latest_human_response.text||root.latest_human_response.human_response||''):'');
-const intakeChange=obj(intake.requested_change_scope)?intake.requested_change_scope:{};
-const reqChange=obj(req.requested_change_scope)?req.requested_change_scope:{};
-const merged=mergeObservedScheduleRequest(req,intake);
-const mergedChange=obj(merged.requested_change_scope)?merged.requested_change_scope:{...intakeChange,...reqChange};
-if(!(arr(mergedChange.wells)&&mergedChange.wells.length)&&arr(intakeChange.wells)&&intakeChange.wells.length) mergedChange.wells=intakeChange.wells;
-if(!mergedChange.group_rebind&&intakeChange.group_rebind) mergedChange.group_rebind=intakeChange.group_rebind;
-const mergedCaps=arr(merged.requested_capability_scope)?merged.requested_capability_scope:[...new Set([...(arr(intake.requested_capability_scope)?intake.requested_capability_scope:[]),...(arr(req.requested_capability_scope)?req.requested_capability_scope:[])].map(clean).filter(Boolean))];
-const plannerRequest={task:{objective:intake.objective},build_mode:intake.build_mode,requested_keyword_scope:(arr(intake.requested_keyword_scope)&&intake.requested_keyword_scope.length)?intake.requested_keyword_scope:(arr(req.requested_keyword_scope)?req.requested_keyword_scope:[]),requested_capability_scope:mergedCaps.length?mergedCaps:(arr(req.requested_capability_scope)?req.requested_capability_scope:[]),capability_id:merged.capability_id||req.capability_id||intake.capability_id||mergedChange.capability_id||null,requested_change_scope:Object.keys(mergedChange).length?mergedChange:{},baseline_analysis:compactBaseline,decoded_baseline_inventory:decodedInventory,semantic_boundary:semanticBoundary,evidence,simulator_profile:intake.simulator_profile,preservation_policy:intake.build_mode==='REVISE'?'preserve_unmentioned':'not_applicable',human_instruction:humanInstruction||null,latest_human_response:obj(root.latest_human_response)?root.latest_human_response:null,source_facts_packet:obj(req.source_facts_packet)?req.source_facts_packet:null};
-return[{json:{planner_request:plannerRequest,planner_input:JSON.stringify(plannerRequest)}}];
-"""
-)
-
-
-PREPARE_BUILD = (
-    capability_dispatch_js()
-    + r"""
-const root=$('Normalize SCHEDULE pipeline packet').first().json;
-const intake=$('Run deterministic SCHEDULE intake').first().json;
-const plan=$('Validate SCHEDULE pipeline plan').first().json;
-let baseline=null;try{baseline=$('Analyze lossless baseline inventory').first().json}catch{}
-let decoded=null;try{decoded=$('Decode typed baseline records').first().json}catch{}
-let replay=null;try{replay=$('Replay baseline prefix into semantic boundary').first().json}catch{}

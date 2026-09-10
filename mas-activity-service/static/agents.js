@@ -45,8 +45,8 @@
 
   function invokeText(agent) {
     const inv = agent.invoke || {};
-    if (inv.kind === "n8n_workflow") return inv.workflow_id ? `workflow ${inv.workflow_id}` : "workflow не привязан";
-    if (inv.kind === "http") return inv.url ? `HTTP ${inv.url}` : "URL не задан";
+    if (inv.kind === "n8n_workflow") return inv.workflow_id ? `сценарий n8n ${inv.workflow_id}` : "сценарий n8n не привязан";
+    if (inv.kind === "http") return inv.url ? `сервис ${inv.url}` : "адрес сервиса не задан";
     return "вызов не настроен";
   }
 
@@ -74,7 +74,7 @@
         <button type="button" class="kb-card-head" data-toggle>
           <div class="kb-card-title-row">
             <h3 class="kb-card-title">${escapeHtml(agent.title)}</h3>
-            <span class="kb-type">${escapeHtml(inv.kind === "http" ? "http" : "n8n")}</span>
+            <span class="kb-type">${escapeHtml(inv.kind === "http" ? "HTTP-сервис" : "сценарий n8n")}</span>
           </div>
           <div class="ag-badges">${badges(agent)}</div>
           <p class="kb-preview">${escapeHtml(agent.when_to_use || "Без описания — планировщик не будет знать, когда звать этого агента.")}</p>
@@ -100,15 +100,15 @@
           <label class="field ag-wide"><span>Когда звать <em class="optional">это читает планировщик</em></span><textarea data-field="when_to_use" rows="3">${escapeHtml(agent.when_to_use)}</textarea></label>
           <label class="field"><span>Вызов</span>
             <select data-field="invoke_kind">
-              <option value="n8n_workflow" ${kind === "n8n_workflow" ? "selected" : ""}>Workflow n8n</option>
+              <option value="n8n_workflow" ${kind === "n8n_workflow" ? "selected" : ""}>Сценарий n8n</option>
               <option value="http" ${kind === "http" ? "selected" : ""}>HTTP-сервис</option>
             </select></label>
-          <label class="field"><span>${kind === "http" ? "URL сервиса" : "Id workflow в n8n"} <em class="optional">${kind === "http" ? "поле Runtime Config в фигурных скобках" : "из адресной строки после импорта"}</em></span>
+          <label class="field"><span>${kind === "http" ? "Адрес сервиса" : "Номер сценария в n8n"} <em class="optional">${kind === "http" ? "из Runtime Config, можно в фигурных скобках" : "из адресной строки после импорта"}</em></span>
             <input type="text" data-field="invoke_target" value="${escapeHtml(kind === "http" ? inv.url || "" : inv.workflow_id || "")}" /></label>
           <label class="field"><span>Нужно на входе <em class="optional">через запятую</em></span><input type="text" data-field="input_required" value="${escapeHtml(csv(agent.input_required))}" /></label>
           <label class="field"><span>Отдаёт <em class="optional">через запятую</em></span><input type="text" data-field="output_provides" value="${escapeHtml(csv(agent.output_provides))}" /></label>
-          <label class="field"><span>Схема входа <em class="optional">JSON, подсказка планировщику</em></span><textarea class="ag-mono" data-field="input_schema">${escapeHtml(pretty(agent.input_schema))}</textarea></label>
-          <label class="field"><span>Схема выхода <em class="optional">JSON</em></span><textarea class="ag-mono" data-field="output_schema">${escapeHtml(pretty(agent.output_schema))}</textarea></label>
+          <label class="field"><span>Схема входа <em class="optional">описание для оркестратора</em></span><textarea class="ag-mono" data-field="input_schema">${escapeHtml(pretty(agent.input_schema))}</textarea></label>
+          <label class="field"><span>Схема выхода <em class="optional">описание результата</em></span><textarea class="ag-mono" data-field="output_schema">${escapeHtml(pretty(agent.output_schema))}</textarea></label>
         </div>
         <div class="kb-actions">
           <span class="kb-meta">версия ${escapeHtml(agent.version || "1")}</span>
@@ -143,7 +143,7 @@
     for (const key of ["input_schema", "output_schema"]) {
       const text = get(key).value.trim();
       if (!text) { patch[key] = {}; continue; }
-      try { patch[key] = JSON.parse(text); } catch (_) { throw new Error(`Поле «${key === "input_schema" ? "Схема входа" : "Схема выхода"}» — не JSON`); }
+      try { patch[key] = JSON.parse(text); } catch (_) { throw new Error(`Поле «${key === "input_schema" ? "Схема входа" : "Схема выхода"}» должно быть корректным описанием`); }
     }
     return patch;
   }

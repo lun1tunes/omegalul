@@ -9,8 +9,8 @@
   <link rel="preconnect" href="https://fonts.googleapis.com" />
   <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
   <link href="https://fonts.googleapis.com/css2?family=IBM+Plex+Sans:wght@400;500;600;700&family=IBM+Plex+Mono:wght@400;500&display=swap" rel="stylesheet" />
-  <link rel="stylesheet" href="/static/app.css?v=100" />
-  <link rel="stylesheet" href="/static/knowledge.css?v=100" />
+  <link rel="stylesheet" href="/static/app.css?v=113" />
+  <link rel="stylesheet" href="/static/knowledge.css?v=101" />
   <script src="https://cdn.jsdelivr.net/npm/marked@15.0.7/marked.min.js" defer></script>
 </head>
 <body class="knowledge-page">
@@ -82,12 +82,12 @@
       <section class="kb-create" id="createPanel" hidden>
         <div class="kb-create-head">
           <h2 class="kb-create-title">Новая карточка</h2>
-          <p class="kb-create-note">Карточка сохраняется в корпус агента и попадёт в RAG после загрузки. Теги, темы и формулировки задач помогают поиску найти карточку по запросу инженера.</p>
+          <p class="kb-create-note">Карточка сохранится у этого агента. Чтобы он начал её учитывать в поиске, нажмите «Загрузить в RAG». Ключевые слова, темы и типичные формулировки задач помогают найти карточку по запросу инженера.</p>
         </div>
         <div class="kb-create-grid">
           <label class="field">
-            <span>Идентификатор</span>
-            <input id="createId" type="text" maxlength="119" placeholder="dates-schedule-clock-v1" />
+            <span>Код карточки</span>
+            <input id="createId" type="text" maxlength="119" placeholder="dates-v1" />
           </label>
           <label class="field">
             <span>Тип карточки</span>
@@ -95,13 +95,13 @@
           </label>
           <label class="field kb-create-wide">
             <span>Заголовок</span>
-            <input id="createTitle" type="text" maxlength="300" placeholder="Человекочитаемый заголовок" />
+            <input id="createTitle" type="text" maxlength="300" placeholder="Как карточку видит инженер" />
           </label>
         </div>
         <div id="createTagFields" class="kb-tag-fields"></div>
         <label class="field kb-create-text">
-          <span>Текст карточки <em class="optional">markdown</em></span>
-          <textarea id="createText" class="kb-editor" rows="10" placeholder="Полная самодостаточная инструкция…"></textarea>
+          <span>Текст карточки</span>
+          <textarea id="createText" class="kb-editor" rows="10" placeholder="Полная самодостаточная инструкция для агента…"></textarea>
         </label>
         <div class="kb-actions">
           <button type="button" class="btn btn-quiet btn-cancel" id="createCancel">Отмена</button>
@@ -114,6 +114,6 @@
     </section>
   </main>
 
-  <script src="/static/knowledge.js?v=100"></script>
+  <script src="/static/knowledge.js?v=103"></script>
 </body>
 </html>

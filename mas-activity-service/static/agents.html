@@ -9,8 +9,8 @@
   <link rel="preconnect" href="https://fonts.googleapis.com" />
   <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
   <link href="https://fonts.googleapis.com/css2?family=IBM+Plex+Sans:wght@400;500;600;700&family=IBM+Plex+Mono:wght@400;500&display=swap" rel="stylesheet" />
-  <link rel="stylesheet" href="/static/app.css?v=100" />
-  <link rel="stylesheet" href="/static/knowledge.css?v=100" />
+  <link rel="stylesheet" href="/static/app.css?v=113" />
+  <link rel="stylesheet" href="/static/knowledge.css?v=101" />
   <style>
     .ag-stage { grid-template-columns: minmax(0, 1fr); }
     .ag-grid { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 0 14px; }
@@ -70,11 +70,11 @@
       <section class="kb-create" id="createPanel" hidden>
         <div class="kb-create-head">
           <h2 class="kb-create-title">Новый агент</h2>
-          <p class="kb-create-note">Строка реестра — это всё, что оркестратор знает об агенте: когда его звать, что ему нужно на входе, что он отдаёт и как его вызвать. После импорта workflow в n8n вставьте его id из адресной строки.</p>
+          <p class="kb-create-note">Карточка агента говорит оркестратору, когда его звать, что нужно на входе, что он возвращает и куда обращаться. После импорта сценария в n8n вставьте номер из адресной строки браузера.</p>
         </div>
         <div class="kb-create-grid">
           <label class="field">
-            <span>Идентификатор <em class="optional">snake_case</em></span>
+            <span>Код агента <em class="optional">латиница с подчёркиванием</em></span>
             <input id="createId" type="text" maxlength="64" placeholder="report_agent" />
           </label>
           <label class="field">
@@ -88,13 +88,13 @@
           <label class="field">
             <span>Вызов</span>
             <select id="createKind">
-              <option value="n8n_workflow">Workflow n8n</option>
+              <option value="n8n_workflow">Сценарий n8n</option>
               <option value="http">HTTP-сервис</option>
             </select>
           </label>
           <label class="field">
-            <span>Id workflow или URL</span>
-            <input id="createTarget" type="text" placeholder="id из адресной строки n8n или {report_url}/agent/run" />
+            <span>Номер сценария n8n или адрес сервиса</span>
+            <input id="createTarget" type="text" placeholder="номер из адресной строки n8n или адрес …/agent/run" />
           </label>
         </div>
         <div class="kb-actions">
@@ -104,10 +104,10 @@
       </section>
 
       <section class="kb-list" id="agentList" aria-live="polite"></section>
-      <p class="empty" id="listEmpty" hidden>Реестр пуст: выполните «schema» в Control Plane Proxy или создайте агента.</p>
+      <p class="empty" id="listEmpty" hidden>Реестр пуст — создайте агента кнопкой выше.</p>
     </section>
   </main>
 
-  <script src="/static/agents.js?v=100"></script>
+  <script src="/static/agents.js?v=102"></script>
 </body>
 </html>
