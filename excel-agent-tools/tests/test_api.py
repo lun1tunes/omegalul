@@ -115,6 +115,7 @@ def tool(client: TestClient, session_id: str, name: str, args: dict) -> dict:
 def test_full_excel_tool_flow_and_artifact(client: TestClient) -> None:
     health = client.get("/health").json()
     assert health["ok"] is True and health["agent_id"] == "excel_extractor" and "extract_commissioning" in health["tools"]
+    assert health["mas_version"]
     assert client.get("/api/v1/tools").status_code == 401
     schemas = client.get("/api/v1/tools", headers={"X-API-Key": "test-key"}).json()["tools"]
     names = {item["function"]["name"] for item in schemas}

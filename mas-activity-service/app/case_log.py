@@ -72,6 +72,8 @@ def record_level(kind: str, event: dict[str, Any]) -> str:
     if kind == "trace.note":
         wanted = str(payload.get("level") or "").strip().lower()
         return wanted if wanted in _LEVEL_RANK else "debug"
+    if kind == "orchestrator.status" and payload.get("reason") == "orchestrator_timeout":
+        return "warn"
     if kind in {"agent.progress", "orchestrator.status"}:
         return "debug"
     if kind == "orchestrator.decision" and payload.get("guard"):
@@ -119,9 +121,29 @@ def record_title(kind: str, event: dict[str, Any]) -> str:
             title += f" → {payload['agent_id']}"
         if payload.get("guard"):
             title += f" · guard {payload['guard']}"
+        parse = payload.get("llm_parse") if isinstance(payload.get("llm_parse"), dict) else {}
+        parse_err = str(parse.get("output_parser") or parse.get("error") or "").strip()
+        if parse_err:
+            title += f" · {parse_err[:80]}"
+        finish = str(parse.get("finish_reason") or "").strip()
+        if finish:
+            title += f" · {finish}"
+        tokens = parse.get("completion_tokens")
+        if tokens not in (None, "", 0):
+            title += f" · {tokens} tok"
+        think = parse.get("reasoning_tokens")
+        if think not in (None, "", 0):
+            title += f" · think {think}"
         return title
     if kind == "orchestrator.status":
-        return f"Оркестратор: {payload.get('action_type') or 'статус'}"
+        if payload.get("reason") == "orchestrator_timeout":
+            elapsed = payload.get("elapsed_s")
+            limit = payload.get("timeout_s")
+            extra = ""
+            if elapsed is not None and limit is not None:
+                extra = f" {elapsed}s / {limit}s"
+            return f"Оркестратор: timeout{extra}"
+        return f"Оркестратор: {payload.get('action_type') or payload.get('reason') or 'статус'}"
     if kind == "orchestrator.resume":
         src = str(payload.get("source") or actor_of(event) or "system")
         return f"Возобновление: источник {src}" + (f" ({payload.get('task_id')})" if payload.get("task_id") else "")
@@ -317,24 +339,129 @@ def step_groups(records: list[dict[str, Any]]) -> list[dict[str, Any]]:
     return out
 
 
+def tool_calls_by_agent(records: list[dict[str, Any]]) -> dict[str, int]:
+    counts: dict[str, int] = {}
+    for record in records:
+        if record.get("kind") != "trace.tool":
+            continue
+        agent_id = str(record.get("agent_id") or "").strip()
+        if not agent_id:
+            continue
+        counts[agent_id] = counts.get(agent_id, 0) + 1
+    return dict(sorted(counts.items()))
+
+
+def _quality_warning(record: dict[str, Any]) -> bool:
+    """α2 warnings: LLM/tool quality, not Activity waiting for a slow webhook ack."""
+    if record.get("level") != "warn":
+        return False
+    detail = record.get("detail") if isinstance(record.get("detail"), dict) else {}
+    if record.get("kind") == "orchestrator.status" and detail.get("reason") == "orchestrator_timeout":
+        return False
+    return True
+
+
 def summarize(records: list[dict[str, Any]], *, status: str | None) -> dict[str, Any]:
     agents = sorted({r["agent_id"] for r in records if r.get("agent_id")})
     started = records[0]["at"] if records else None
     ended = records[-1]["at"] if records else None
+    by_agent = tool_calls_by_agent(records)
     return {
         "status": status,
         "records": len(records),
         "steps": max((int(r["step"]) for r in records if isinstance(r.get("step"), int)), default=0),
         "tool_calls": sum(1 for r in records if r["kind"] == "trace.tool"),
+        "tool_calls_by_agent": by_agent,
         "hitl_rounds": sum(1 for r in records if r["kind"] == "hitl.request"),
         "handoffs": sum(1 for r in records if r["kind"] == "agent.handoff"),
         "errors": sum(1 for r in records if r["level"] == "error"),
-        "warnings": sum(1 for r in records if r["level"] == "warn"),
+        "warnings": sum(1 for r in records if _quality_warning(r)),
         "agents": agents,
         "started_at": started,
         "ended_at": ended,
         "duration_ms": _duration_ms(started, ended),
     }
+
+
+def _pointer(record: dict[str, Any] | None) -> str:
+    if not record:
+        return ""
+    seq = record.get("seq")
+    title = record.get("title") or record.get("kind") or ""
+    return f" seq={seq} {title}".rstrip()
+
+
+def threshold_violations(
+    records: list[dict[str, Any]],
+    *,
+    max_warnings: int | None = 0,
+    max_steps: int | None = 6,
+    max_tool_calls_per_agent: int | None = 4,
+) -> list[str]:
+    """α2: exceeding a live threshold names the first log record over the limit.
+
+    ``None`` skips that check (recovery cases that are *expected* to warn or retry).
+    Guard decisions and failed ``trace.tool`` both count as ``warnings`` — same as ``summarize``.
+    """
+    problems: list[str] = []
+    warns = [r for r in records if _quality_warning(r)]
+    if max_warnings is not None and len(warns) > max_warnings:
+        extra = warns[max_warnings] if len(warns) > max_warnings else warns[-1]
+        problems.append(f"warnings={len(warns)} > {max_warnings}:{_pointer(extra)}")
+    steps = max((int(r["step"]) for r in records if isinstance(r.get("step"), int)), default=0)
+    if max_steps is not None and steps > max_steps:
+        extra = next((r for r in reversed(records) if r.get("step") == steps), None)
+        problems.append(f"steps={steps} > {max_steps}:{_pointer(extra)}")
+    if max_tool_calls_per_agent is not None:
+        by_agent: dict[str, list[dict[str, Any]]] = {}
+        for record in records:
+            if record.get("kind") != "trace.tool":
+                continue
+            agent_id = str(record.get("agent_id") or "").strip()
+            if not agent_id:
+                continue
+            by_agent.setdefault(agent_id, []).append(record)
+        for agent_id, calls in sorted(by_agent.items()):
+            n = len(calls)
+            if n > max_tool_calls_per_agent:
+                extra = calls[max_tool_calls_per_agent]
+                problems.append(f"tool_calls[{agent_id}]={n} > {max_tool_calls_per_agent}:{_pointer(extra)}")
+    return problems
+
+
+def metrics_for_cases(*, since: datetime | None = None, n8n_base: str = "") -> dict[str, Any]:
+    """Compact per-case ``summarize`` for ``GET /metrics/cases`` (no records, no page)."""
+    cases_out: list[dict[str, Any]] = []
+    for row in control_plane.list_cases():
+        case_id = str(row.get("case_id") or "").strip()
+        if not case_id:
+            continue
+        if since is not None:
+            updated = parse_ts(row.get("updated_at") or row.get("created_at"))
+            if updated is not None and updated < since:
+                continue
+        log = build_case_log(case_id, n8n_base=n8n_base)
+        if log is None:
+            continue
+        summary = log.get("summary") or {}
+        started = parse_ts(summary.get("started_at"))
+        if since is not None and (started is None or started < since):
+            continue
+        cases_out.append({"case_id": case_id, "status": log.get("status"), "summary": summary})
+    totals = {
+        "count": len(cases_out),
+        "steps": sum(int((c["summary"] or {}).get("steps") or 0) for c in cases_out),
+        "tool_calls": sum(int((c["summary"] or {}).get("tool_calls") or 0) for c in cases_out),
+        "warnings": sum(int((c["summary"] or {}).get("warnings") or 0) for c in cases_out),
+        "errors": sum(int((c["summary"] or {}).get("errors") or 0) for c in cases_out),
+        "hitl_rounds": sum(int((c["summary"] or {}).get("hitl_rounds") or 0) for c in cases_out),
+        "duration_ms": sum(
+            int(c["summary"]["duration_ms"])
+            for c in cases_out
+            if isinstance((c.get("summary") or {}).get("duration_ms"), int)
+        ),
+    }
+    return {"since": _iso(since) if since else None, "cases": cases_out, "totals": totals}
 
 
 def build_case_log(case_id: str, *, n8n_base: str = "") -> dict[str, Any] | None:
@@ -367,11 +494,15 @@ __all__ = [
     "build_case_log",
     "is_trace_kind",
     "log_record",
+    "metrics_for_cases",
+    "parse_ts",
     "record_level",
     "record_source",
     "record_title",
     "records_from_events",
     "step_groups",
     "summarize",
+    "threshold_violations",
     "to_ndjson",
+    "tool_calls_by_agent",
 ]

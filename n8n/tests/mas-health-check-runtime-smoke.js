@@ -5,6 +5,10 @@ const fs = require('node:fs');
 const path = require('node:path');
 
 const workspace = process.env.WORKSPACE_ROOT || path.resolve(__dirname, '..', '..');
+const masVersion = fs.readFileSync(path.join(workspace, 'VERSION'), 'utf8')
+  .split(/\r?\n/)
+  .map((line) => line.trim())
+  .find((line) => line && !line.startsWith('#')) || '';
 const workflow = JSON.parse(fs.readFileSync(
   path.join(workspace, 'n8n', 'workflows', 'core', 'mas-deployment-health-check.workflow.json'),
   'utf8',
@@ -43,6 +47,7 @@ const LAB = {
   schedule_service_url: 'http://schedule-builder:8090',
   math_url: 'http://math-service:8100',
   orchestrator_step_url: 'http://127.0.0.1:5678/webhook/mas-orchestrator-step',
+  mas_version: masVersion,
 };
 const FIELD = {
   activity_base_url: 'http://10.20.30.40:8200/',
@@ -50,16 +55,17 @@ const FIELD = {
   schedule_service_url: 'http://10.20.30.40:8090',
   math_url: 'http://10.20.30.40:8100',
   orchestrator_step_url: 'https://n8n.corp.example/webhook/mas-orchestrator-step',
+  mas_version: masVersion,
 };
 
 const ok = (body) => [{ json: { statusCode: 200, body } }];
 const healthy = (prepared, overrides = {}) => ({
   'Prepare health probes': prepared,
-  'Probe Activity /health': ok({ status: 'ok', service: 'mas-activity', control_plane_backend: 'n8n_proxy' }),
+  'Probe Activity /health': ok({ status: 'ok', service: 'mas-activity', control_plane_backend: 'n8n_proxy', mas_version: masVersion }),
   'Probe Activity /ready': ok({ ready: true, status: 'ready' }),
-  'Probe Excel Tools /health': ok({ status: 'ok' }),
-  'Probe Schedule Builder /health': ok({ status: 'ok', service: 'schedule-builder-service' }),
-  'Probe Math /health': ok({ status: 'ok', service: 'fastapi-math-service' }),
+  'Probe Excel Tools /health': ok({ status: 'ok', mas_version: masVersion }),
+  'Probe Schedule Builder /health': ok({ status: 'ok', service: 'schedule-builder-service', mas_version: masVersion }),
+  'Probe Math /health': ok({ status: 'ok', service: 'fastapi-math-service', mas_version: masVersion }),
   'Probe Orchestrator webhook': ok({ contract: 'mas_orchestrator_ack', case_id: 'CASE-readiness-probe', status: 'probe' }),
   'Probe Control Plane Proxy webhook': ok({
     ok: true,
@@ -122,11 +128,13 @@ const healthy = (prepared, overrides = {}) => ({
   assert.deepEqual(labPrepared.bodies.control_plane_list_agents, { operation: 'list_agents' });
   assert.equal(labPrepared.bodies.orchestrator_probe.action, 'probe');
   assert.equal(labPrepared.runtime_issues.filter((i) => i.kind === 'lab_dns').length, 4);
+  assert.equal(labPrepared.runtime.mas_version, masVersion);
 
   const fieldPrepared = await run('Prepare health probes', { operator_note: '' }, { 'Runtime endpoints': FIELD });
   assert.equal(fieldPrepared.urls.activity_health, 'http://10.20.30.40:8200/health', 'trailing slash trimmed');
   assert.equal(fieldPrepared.urls.control_plane_webhook, 'https://n8n.corp.example/webhook/mas-control-plane');
   assert.deepEqual(fieldPrepared.runtime_issues, []);
+  assert.equal(fieldPrepared.runtime.mas_version, masVersion);
 
   const unboundPrepared = await run('Prepare health probes', {}, {
     'Runtime endpoints': [{ json: { error: 'Workflow REPLACE_MAS_RUNTIME_CONFIG_IN_UI not found' } }],
@@ -152,6 +160,7 @@ const healthy = (prepared, overrides = {}) => ({
   assert(labReport.checks.some((c) => c.check.startsWith('Live: Orchestrator webhook') && c.status === 'PASS'));
   assert(labReport.checks.some((c) => c.check.startsWith('Live: Control Plane Proxy webhook') && c.detail.includes('excel_extractor')));
   assert(labReport.checks.some((c) => c.status === 'TODO' && c.check.includes('excel_tools_url') && c.where_to_fix.includes('MAS — Runtime Config')));
+  assert(labReport.checks.some((c) => c.check === 'Live: MAS version' && c.status === 'PASS'));
   assert(!JSON.stringify(labReport.checks).includes('engineering_orchestrator_tasks_v1'));
   assert(!JSON.stringify(labReport.checks).includes('Data Table'));
 
@@ -161,6 +170,7 @@ const healthy = (prepared, overrides = {}) => ({
   assert.equal(fieldReport.todo_count, 0);
   assert(fieldReport.form_response_html.includes('Overall: <strong>PASS</strong>'));
   assert(fieldReport.form_response_html.includes('10.20.30.40:8200'));
+  assert(fieldReport.checks.some((c) => c.check === 'Live: MAS version' && c.status === 'PASS'));
 
   /* ---- Report: Runtime Config unbound → FAIL pointing at the binding ---- */
   const unboundReport = await run('Build health report', unboundPrepared, {
@@ -213,7 +223,29 @@ const healthy = (prepared, overrides = {}) => ({
   const reg = unseeded.checks.find((c) => c.check.startsWith('Live: Control Plane Proxy'));
   assert(reg.detail.includes('schedule_builder') && reg.detail.includes('"operation":"schema"'));
 
-  console.log('MAS health-check runtime smoke: 6 scenarios passed');
+  const mismatch = await run('Build health report', fieldPrepared, healthy(fieldPrepared, {
+    'Probe Excel Tools /health': ok({ status: 'ok', mas_version: '0.0.0' }),
+  }));
+  assert.equal(mismatch.overall, 'FAIL');
+  const ver = mismatch.checks.find((c) => c.check === 'Live: MAS version');
+  assert.equal(ver.status, 'FAIL');
+  assert(ver.detail.includes('Excel Tools=0.0.0'));
+
+  const noVerPrepared = await run('Prepare health probes', {}, {
+    'Runtime endpoints': {
+      activity_base_url: FIELD.activity_base_url,
+      excel_tools_url: FIELD.excel_tools_url,
+      schedule_service_url: FIELD.schedule_service_url,
+      math_url: FIELD.math_url,
+      orchestrator_step_url: FIELD.orchestrator_step_url,
+    },
+  });
+  assert.equal(noVerPrepared.runtime.mas_version, '');
+  const noVerReport = await run('Build health report', noVerPrepared, healthy(noVerPrepared));
+  assert.equal(noVerReport.overall, 'PASS');
+  assert(!noVerReport.checks.some((c) => c.check === 'Live: MAS version'));
+
+  console.log('MAS health-check runtime smoke: 8 scenarios passed');
 })().catch((error) => {
   console.error(error.stack || error);
   process.exit(1);

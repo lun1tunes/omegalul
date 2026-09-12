@@ -1315,8 +1315,9 @@ a.file-chip:hover .icon { color: var(--brand-blue); }
   box-shadow: var(--shadow-3);
   transform: translate(-50%, calc(-100% - 12px));
   pointer-events: none;
-  animation: flash-in var(--t-fast) var(--ease);
+  animation: peek-in var(--t-fast) var(--ease);
 }
+@keyframes peek-in { from { opacity: 0; } to { opacity: 1; } }
 .schema-peek::after {
   content: "";
   position: absolute;

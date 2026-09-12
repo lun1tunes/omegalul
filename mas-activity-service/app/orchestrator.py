@@ -28,10 +28,36 @@ _cookie_lock = asyncio.Lock()
 
 
 class OrchestratorError(RuntimeError):
-    def __init__(self, message: str, *, status_code: int = 502, detail: Any = None):
+    def __init__(
+        self,
+        message: str,
+        *,
+        status_code: int = 502,
+        detail: Any = None,
+        reason: str = "orchestrator_error",
+        timeout_s: float | None = None,
+        elapsed_s: float | None = None,
+    ):
         super().__init__(message)
         self.status_code = status_code
         self.detail = detail
+        self.reason = reason
+        self.timeout_s = timeout_s
+        self.elapsed_s = elapsed_s
+
+
+ORCHESTRATOR_TIMEOUT_MESSAGE = (
+    "Оркестратор не подтвердил шаг за отведённое время. Задача может ещё выполняться — смотрите лог."
+)
+ORCHESTRATOR_UNREACHABLE_MESSAGE = (
+    "Не удалось передать задачу оркестратору. Проверьте адрес оркестратора в настройках и повторите."
+)
+
+
+def engineer_message_for_orchestrator_error(exc: OrchestratorError) -> str:
+    if exc.reason == "orchestrator_timeout":
+        return ORCHESTRATOR_TIMEOUT_MESSAGE
+    return ORCHESTRATOR_UNREACHABLE_MESSAGE
 
 
 class N8nClient:
@@ -233,10 +259,35 @@ async def _invoke_webhook(
             else:
                 headers = {**headers, "Content-Type": "application/json"}
                 res = await client.post(url, json=payload, headers=headers)
+    except httpx.ConnectTimeout as exc:
+        elapsed = time.perf_counter() - started
+        raise OrchestratorError(
+            f"Orchestrator webhook ConnectTimeout after {elapsed:.0f}s: {str(exc)[:200]}",
+            status_code=503,
+            reason="orchestrator_unreachable",
+            timeout_s=timeout_s,
+            elapsed_s=elapsed,
+        ) from exc
+    except httpx.TimeoutException as exc:
+        elapsed = time.perf_counter() - started
+        raise OrchestratorError(
+            f"Orchestrator webhook {type(exc).__name__} after {elapsed:.0f}s (limit {timeout_s:.0f}s)",
+            status_code=504,
+            reason="orchestrator_timeout",
+            timeout_s=timeout_s,
+            elapsed_s=elapsed,
+        ) from exc
+    except httpx.ConnectError as exc:
+        raise OrchestratorError(
+            f"Orchestrator webhook request failed: {type(exc).__name__}: {str(exc)[:300]}",
+            status_code=502,
+            reason="orchestrator_unreachable",
+        ) from exc
     except httpx.HTTPError as exc:
         raise OrchestratorError(
             f"Orchestrator webhook request failed: {type(exc).__name__}: {str(exc)[:300]}",
             status_code=502,
+            reason="orchestrator_unreachable",
         ) from exc
     logger.info(
         "n8n webhook POST %s -> %s in %.0fms",
@@ -401,7 +452,13 @@ async def _invoke_n8n_rest(
                     detail={"execution_id": execution_id},
                 )
             await asyncio.sleep(0.6)
-        raise OrchestratorError("Orchestrator execution timed out", status_code=504, detail=last.get("data"))
+        raise OrchestratorError(
+            "Orchestrator execution timed out",
+            status_code=504,
+            reason="orchestrator_timeout",
+            timeout_s=timeout_s,
+            detail=last.get("data"),
+        )
 
 
 def _execution_error_message(execution_payload: dict[str, Any], *, status: str) -> str:

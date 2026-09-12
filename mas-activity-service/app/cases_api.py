@@ -31,7 +31,7 @@ from app.state_shape import (
     role_for_artifact_id,
     sanitize_plan,
 )
-from app.orchestrator import OrchestratorError, invoke_orchestrator
+from app.orchestrator import OrchestratorError, engineer_message_for_orchestrator_error, invoke_orchestrator
 from app.schema_view import FINISHED_RESULT_TEXT, _format_hitl, _hitl_answer, _hitl_question, build_schema_model
 from app.settings import UNCONFIGURED_N8N, get_settings
 from app.task_binaries import load_task_binaries, save_task_binaries
@@ -600,32 +600,45 @@ async def _invoke_action(case_id: str, *, action: str, extra: dict[str, Any] | N
             payload.update({key: value for key, value in extra.items() if value is not None})
         await invoke_orchestrator(
             payload,
-            timeout_s=180.0,
+            timeout_s=get_settings().orchestrator_invoke_timeout_s,
         )
     except OrchestratorError as exc:
-        logger.error("orchestrator %s failed case_id=%s: %s", action, case_id, exc)
+        logger.error("orchestrator %s failed case_id=%s reason=%s: %s", action, case_id, exc.reason, exc)
+        fail = exc.reason != "orchestrator_timeout"
+        message = engineer_message_for_orchestrator_error(exc)
+        extra = {
+            "reason": exc.reason,
+            "status_code": exc.status_code,
+            "detail": str(exc)[:500],
+            "action": action,
+        }
+        if exc.timeout_s is not None:
+            extra["timeout_s"] = exc.timeout_s
+        if exc.elapsed_s is not None:
+            extra["elapsed_s"] = round(exc.elapsed_s, 1)
         try:
             row = control_plane.get_case(case_id)
             state = dict(row["state"] or {}) if row else {}
-            state["last_error"] = {"message": str(exc)[:500]}
+            state["last_error"] = {"message": str(exc)[:500], "reason": exc.reason}
+            keep = str(row.get("status") or "running")
             control_plane.update_case_and_append(
                 case_id,
                 state=state,
-                status="failed",
-                kind="case.failed",
+                status="failed" if fail else keep,
+                kind="case.failed" if fail else "orchestrator.status",
                 actor="orchestrator",
-                event_status="failed",
-                status_message="Не удалось передать задачу оркестратору. Проверьте адрес оркестратора в настройках и повторите.",
-                payload={"status_code": exc.status_code, "detail": str(exc)[:500]},
+                event_status="failed" if fail else "timeout",
+                status_message=message,
+                payload=extra,
             )
         except KeyError:
             control_plane.append_event(
                 case_id,
-                kind="case.failed",
+                kind="case.failed" if fail else "orchestrator.status",
                 actor="orchestrator",
-                status="failed",
-                status_message="Не удалось передать задачу оркестратору. Проверьте адрес оркестратора в настройках и повторите.",
-                payload={"status_code": exc.status_code, "detail": str(exc)[:500]},
+                status="failed" if fail else "timeout",
+                status_message=message,
+                payload=extra,
             )
 
 
@@ -796,6 +809,21 @@ def get_case_log(case_id: str, format: str = Query(default="json")) -> Any:
             headers={"Content-Disposition": f'attachment; filename="{case_id}.log.ndjson"'},
         )
     return log
+
+
+@router.get("/metrics/cases")
+def get_case_metrics(since: str | None = Query(default=None)) -> dict[str, Any]:
+    """α2: JSON over ``case_log.summarize`` for cases whose first event is on or after ``since``.
+
+    Lab/harness surface, not an engineer page. ``since`` is ISO-8601; omit it to summarise
+    the current ``list_cases`` window (up to 200).
+    """
+    since_dt = None
+    if since is not None and str(since).strip():
+        since_dt = case_log.parse_ts(since)
+        if since_dt is None:
+            raise HTTPException(status_code=400, detail="since must be an ISO-8601 timestamp")
+    return case_log.metrics_for_cases(since=since_dt, n8n_base=_n8n_base())
 
 
 def _record_execution_from_payload(case_id: str, actor: str, payload: dict[str, Any]) -> None:

@@ -26,6 +26,8 @@ import uuid
 from dataclasses import dataclass, field
 from typing import Any
 
+from llm_runtime_options import DEFAULT_CHAT_MODEL
+
 # One LLM tool exposed as an HTTP Request node: (arg name, $fromAI type, required, description for the LLM).
 ToolField = tuple[str, str, bool, str]
 # (tool name = FastAPI route /agent-tools/<name>, description for the LLM, fields).
@@ -126,7 +128,7 @@ class AgentSpec:
     tool_grid_columns: int = 3
     max_iterations: int = 8
     #: LLM model id on the OpenAI-compatible endpoint.
-    model: str = "qwen3.6-plus"
+    model: str = DEFAULT_CHAT_MODEL
 
     # -- derived ----------------------------------------------------------------------------------
 

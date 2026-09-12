@@ -367,12 +367,11 @@
       "parameters": {
         "model": {
           "mode": "id",
-          "value": "qwen3.6-plus"
+          "value": "qwen/qwen3.6-27b"
         },
         "options": {
-          "maxTokens": 2048,
           "temperature": 0,
-          "timeout": 300000,
+          "timeout": 600000,
           "maxRetries": 5
         },
         "responsesApiEnabled": false
@@ -1492,7 +1491,7 @@
     "saveManualExecutions": true,
     "callerPolicy": "workflowsFromSameOwner",
     "errorWorkflow": "63116836-8724-595e-bc5e-dd6e743e2586",
-    "executionTimeout": 900
+    "executionTimeout": 1800
   },
   "meta": {
     "templateCredsSetupCompleted": true,
@@ -1500,5 +1499,5 @@
   },
   "tags": [],
   "pinData": {},
-  "versionId": "cd74a5fa-fe47-4c32-ab87-1c039c48e843"
+  "versionId": "36f09a6f-0ed0-4cee-85ed-921cfe761899"
 }

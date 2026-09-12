@@ -43,7 +43,8 @@ function sourceCode(name) {
 const model = wf.nodes.find((n) => n.name === 'Schedule Builder Chat Model — Qwen');
 assert.ok(model);
 assert.equal(model.typeVersion, 1.3);
-assert.equal(model.parameters.options.timeout, 300000);
+assert.equal(model.parameters.model.value, 'qwen/qwen3.6-27b');
+assert.equal(model.parameters.options.timeout, 600000);
 // n8n 2.30.8 + AI Agent v3 executes tools through the engine: the legacy langchain
 // toolHttpRequest (hidden, supplyData-only) fails at runtime; tools must be HTTP Request "as tool".
 assert.equal(wf.nodes.some((n) => n.type === '@n8n/n8n-nodes-langchain.toolHttpRequest'), false);
@@ -122,7 +123,7 @@ assert.equal(wf.connections['Result stored?'].main[0][0].node, 'Format schedule 
 assert.equal(wf.connections['Result stored?'].main[1][0].node, 'Fetch schedule result');
 assert.equal(wf.connections['Format schedule result'].main[0][0].node, 'Close schedule session');
 assert.equal(agent.parameters.options.maxIterations, 8);
-assert.equal(wf.settings.executionTimeout, 900);
+assert.equal(wf.settings.executionTimeout, 1800);
 assert.ok(sourceCode('Summarize AI steps').includes('skip_fetch'));
 assert.ok(sourceCode('Summarize AI steps').includes("n==='ask_engineer'"), 'ask_engineer stores a result → fetch it');
 const applyOps = wf.nodes.find((n) => n.name === 'apply_operations');

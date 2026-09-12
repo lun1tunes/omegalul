@@ -2,7 +2,8 @@
 /**
  * Phase 1.3 structural smoke: engineer-facing Cyrillic string literals in Code nodes
  * must pass looksMachineText (no snake_case, key=value, JSON braces, a|b).
- * Does not scan Decision/Verify/Interpret SYSTEM prompts (chainLlm), only jsCode.
+ * Does not scan Decision/Verify/Interpret SYSTEM prompts (Build decision chat /
+ * Build verify chat / Interpret chainLlm), only engineer-facing jsCode.
  */
 const assert = require('node:assert/strict');
 const fs = require('node:fs');
@@ -34,6 +35,7 @@ for (const file of files) {
   const wf = JSON.parse(fs.readFileSync(path.join(coreDir, file), 'utf8'));
   for (const node of wf.nodes || []) {
     if (node.type !== 'n8n-nodes-base.code') continue;
+    if (['Build decision chat', 'Build verify chat'].includes(node.name)) continue;
     const js = String((node.parameters && node.parameters.jsCode) || '');
     for (const text of extractQuoted(js)) {
       const stripped = text.trim();

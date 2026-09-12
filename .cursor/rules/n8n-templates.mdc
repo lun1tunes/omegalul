@@ -15,4 +15,4 @@ alwaysApply: false
 - Human-facing strings emitted by Code nodes (`status_message`, HITL `question`, `options[].label`, `summary_for_human`) are Russian prose; `looksMachineText` guards fall back to journal-composed text.
 - Every workflow has a smoke in `n8n/tests/<name>-smoke.js` that (a) asserts structure (nodes, versions, connections, credentials placeholders) and (b) executes Code-node `jsCode` with stubbed `$()` for the key scenarios. Extend the smoke with every behaviour change; run all: `for f in n8n/tests/*-smoke.js; do node "$f" || exit 1; done`.
 - Prompts (`SYSTEM`, `VERIFY_SYSTEM`) in agents may be domain-specific; the orchestrator prompt may not (see `mas-llm-first-no-domain-hardcode.mdc`). Prompt edits are verified live (`scripts/mas_gate.py --live`) — Qwen behaviour changes with wording.
-- Lab import: `python3 scripts/lab_soft_redeploy.py [--skip-health]` (reimport + rebind + Health Check). Field import: docs.md §2 (UI «Import from File», bindings, credentials).
+- Lab import: `python3 scripts/lab_soft_redeploy.py [--skip-health]` (reimport + rebind + Health Check). Field import: `docs.md` (UI «Import from File», bindings, credentials).

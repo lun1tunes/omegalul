@@ -1,18 +1,17 @@
 # Petroleum Engineering MAS
 
-**Единственный полевой runbook:** [`docs.md`](docs.md) — пошаговое развёртывание (Windows-сервисы → UI n8n → bindings → Health → activate).
+**Полевой гайд:** [`docs.md`](docs.md) — схема, развёртывание на Windows + корпоративный n8n, как пользоваться.
 
-Перенос на работу без git: `python3 scripts/project_pack.py pack` → скопировать `all.txt` + `scripts/project_pack.py` → `unpack` (см. `docs.md` §0).
+Перенос на работу без git: `python3 scripts/project_pack.py pack` → скопировать `all.txt` + `scripts/project_pack.py` → `unpack` (см. `docs.md`).
 
 | Слой (работа) | Как |
 |---|---|
-| **n8n 2.30.8** | Только UI: Import from File по `runtime_import_order` (9 core JSON). Data Tables для стейта кейсов **не** создаём. |
+| **n8n 2.30.8** | Только UI: Import from File по `IMPORT_ORDER.txt` (9 JSON). Data Tables для стейта кейсов не создаём. |
 | **Excel `:8000` / Schedule `:8090` / Math `:8100` / Activity `:8200`** | Windows CMD: `setup-windows.bat` → `start-windows.bat`. Только Python `.venv`, без Docker и без Node. |
-| **Lab soft-redeploy** | `python3 scripts/lab_soft_redeploy.py` (см. `docs.md` §5–§6) |
+| **Lab soft-redeploy** | `python3 scripts/lab_soft_redeploy.py` (`--hot` если lab уже поднят) |
+| **Lab gate** | `python3 scripts/mas_gate.py` (offline); `--live` 12 сценариев ~20 мин; `--live --repeat 3` — шесть commissioning ×3 + остальные один раз |
 
-Машинный контракт имён: [`n8n/import-manifest.json`](n8n/import-manifest.json) (`runtime_import_order` = поле; `full_clean_import_set` = lab + support). Compose / REST-импорт — только лаборатория (§5 в `docs.md`).
-
-Проверки **лаборатории** (не полевые сервисы). Цикл `node n8n/tests/*-smoke.js` требует Node.js; FastAPI на Windows по-прежнему только `.venv` — см. `docs.md` §5 и §3 (JS timeline не входит в процесс Schedule Builder).
+Машинный контракт имён: [`n8n/import-manifest.json`](n8n/import-manifest.json) (`runtime_import_order` = поле; `full_clean_import_set` = lab + support). Compose / REST-импорт — только лаборатория.
 
 ```bash
 export WORKSPACE_ROOT="$PWD"

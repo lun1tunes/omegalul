@@ -213,7 +213,12 @@ def test_router_traces_every_tool_call_to_the_developer_log(tmp_path: Path, acti
 def test_agent_app_routes(tmp_path: Path) -> None:
     agent = _DemoAgent(tmp_path)
     client = TestClient(create_agent_app(agent, title="demo"))
-    assert client.get("/health").json() == {"ok": True, "agent_id": "demo", "tools": ["echo"]}
+    assert client.get("/health").json() == {
+        "ok": True,
+        "agent_id": "demo",
+        "tools": ["echo"],
+        "mas_version": (ROOT / "VERSION").read_text(encoding="utf-8").splitlines()[0].strip(),
+    }
     task = {"case_id": "CASE-1", "task_id": "T-1", "objective": "Привет мир", "inputs": {}, "context": {"hitl": {"answers": {"Q": "да"}}}}
     opened = client.post("/agent-tools/open_session", json=task).json()
     assert opened["ok"] is True and opened["inspect"] == {"words": 2} and opened["engineer_answers"] == [{"question_id": "Q", "text": "да"}]

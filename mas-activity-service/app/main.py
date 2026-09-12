@@ -962,6 +962,7 @@ def health() -> dict[str, Any]:
         "status": "ok",
         "service": "mas-activity",
         "version": VERSION,
+        "mas_version": VERSION,
         "n8n_transport": settings.n8n_transport,
         "control_plane_backend": "n8n_proxy" if control_plane.configured() else "memory",
         "control_plane_required": settings.control_plane_required,

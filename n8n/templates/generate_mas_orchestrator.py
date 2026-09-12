@@ -7,7 +7,13 @@ import json
 import uuid
 from pathlib import Path
 
-from llm_runtime_options import chat_model_options, structured_parser_params
+from llm_runtime_options import (
+    CHAT_THINKING_OFF,
+    DEFAULT_CHAT_MODEL,
+    LLM_HTTP_TIMEOUT_MS,
+    chat_model_options,
+    structured_parser_params,
+)
 from generate_mas_runtime_config import runtime_config_execute_params
 from mas_agent_registry import PLANNER_COLUMNS, list_agents_sql
 from mas_retrieval_client import (
@@ -31,20 +37,25 @@ OA = {
 }
 HDR = {"httpHeaderAuth": {"id": "REPLACE_IN_UI", "name": "REPLACE: engineering orchestrator inbound key"}}
 
+# Parser contract for Decision LLM. Only fields the model must *choose* are required.
+# Technical leftovers stay out of the schema (Parse decision already derives / defaults them):
+# - action.task — discarded, never copied to agent_task.inputs (CASE-6a9ec6b3-74e34e)
+# - action.question_id — Q-${step_count}
+# - progress.is_repeating — repeatDelegation() from the journal
+# - progress.goal_satisfied — the action type is the verdict; guards still read it if sent
+# - expected_output.datasets[].fields — the callee maps columns from its inventory
+# extra keys remain allowed (additionalProperties) so a verbose model does not fail the parser.
 DECISION_SCHEMA = {
     "type": "object",
     "additionalProperties": True,
-    "required": ["progress", "status_message", "action"],
+    "required": ["status_message", "action"],
     "properties": {
-        # Progress ledger (Magentic-One style): the LLM must first judge completion from the journal.
         "progress": {
             "type": "object",
-            "required": ["goal_satisfied", "evidence"],
             "properties": {
-                "goal_satisfied": {"type": "boolean"},
                 "evidence": {"type": "string"},
                 "missing": {"type": "string"},
-                "is_repeating": {"type": "boolean"},
+                "goal_satisfied": {"type": "boolean"},
             },
         },
         "status_message": {"type": "string"},
@@ -74,8 +85,6 @@ DECISION_SCHEMA = {
                 "task_id": {"type": "string"},
                 "handoff_message": {"type": "string"},
                 "rework_reason": {"type": "string"},
-                "task": {"type": "object"},
-                "question_id": {"type": "string"},
                 "question": {"type": "string"},
                 "options": {"type": "array", "items": {"type": "string"}},
                 "result": {
@@ -89,20 +98,10 @@ DECISION_SCHEMA = {
                             "type": "array",
                             "items": {
                                 "type": "object",
+                                "additionalProperties": True,
                                 "properties": {
                                     "name": {"type": "string"},
                                     "description": {"type": "string"},
-                                    "fields": {
-                                        "type": "array",
-                                        "items": {
-                                            "type": "object",
-                                            "properties": {
-                                                "name": {"type": "string"},
-                                                "description": {"type": "string"},
-                                                "type": {"enum": ["text", "number", "date", "boolean"]},
-                                            },
-                                        },
-                                    },
                                 },
                             },
                         }
@@ -128,11 +127,10 @@ SYSTEM = """Ты оркестратор инженерной задачи. Пр�
 - Если следующему агенту для этой цели нужны данные из input_schema.data, которых ещё нет в журнале — сначала вызови агента, у которого они в output_provides. Не заказывай ключ только потому, что он есть в каталоге.
 - Если карточки знаний недоступны (status=empty или unavailable) — решай по реестру и состоянию. Не спрашивай инженера про базу знаний.
 
-Сначала заполни progress — оценку хода задачи по журналу (compact.journal.history: результаты агентов с summary, данными и добавленными артефактами, ответы человека):
-- goal_satisfied: true, только если результаты в журнале покрывают цель целиком. Если ты выбираешь call_agent — цель ещё не достигнута: goal_satisfied=false, в missing напиши, чего не хватает.
-- evidence: что именно в журнале это подтверждает (или чего не хватает).
-- missing: что ещё нужно сделать (пусто, если цель достигнута).
-- is_repeating: true, если ты собираешься повторить агенту задание, которое он уже выполнил (status completed) без новых данных.
+Сначала заполни progress — короткую оценку хода по журналу (compact.journal.history: итоги агентов, данные, артефакты, ответы человека). Это пояснение, не флаги для программы:
+- evidence: что в журнале это подтверждает (или чего не хватает).
+- missing: что ещё нужно сделать (пусто, если выбираешь finish).
+Действие (call_agent / ask_user / finish) и есть решение. Повтор агента оркестратор видит по журналу сам — не пиши служебные флаги.
 
 Затем веди план (plan_update) — чёткую декомпозицию цели инженера на результаты, которые он должен получить (1–5 пунктов), а не список вызовов и не перечень всего, что агенты умеют:
 - На первом шаге составь план целиком по тексту цели; дальше присылай в plan_update только изменившиеся пункты. Текущий план показан в блоке «План задачи» planner_input.
@@ -149,7 +147,7 @@ SYSTEM = """Ты оркестратор инженерной задачи. Пр�
 3. finish
 
 Завершение:
-- Если goal_satisfied — только finish. В action.result.summary_for_human напиши по-русски, что фактически сделано, опираясь на summary агентов из журнала (не на шаблон «вызвал агента»).
+- Если выбираешь finish — цель покрыта журналом. В action.result.summary_for_human напиши по-русски, что фактически сделано, опираясь на summary агентов из журнала (не на шаблон «вызвал агента»).
 - summary_for_human и question читает инженер, не программа: обычные русские фразы без технических идентификаторов — ни agent_id, ни имён артефактов из журнала, ни ключей JSON. Агентов называй по title из реестра, результат — файлом («новый schedule.inc»), скважины и даты — как в summary агентов.
 - Агент, который вернул completed, свою часть сделал: его результат уже в артефактах. Не вызывай его снова «для проверки» или «чтобы применить ещё раз».
 - Повторный call_agent того же агента допустим только если появились новые данные (ответ человека, новые файлы), ты нашёл конкретный недостаток в его результате относительно цели (тогда обязательно заполни action.rework_reason и опиши недостаток в handoff_message) или в плане у этого агента есть другой ещё не выполненный пункт по цели и в журнале ещё нет этого результата — тогда в action.task_id укажи id этого пункта. Не считай недостатком отсутствие ключа output_provides, которого цель не требовала. Если агент completed и пункт цели закрыт — вызывай следующего, не читай исходник повторно. (Лишние пункты того же агента закроются сами, когда в данных уже есть все ключи output_provides — это защита от цикла, не требование «достать все ключи».)
@@ -165,7 +163,7 @@ SYSTEM = """Ты оркестратор инженерной задачи. Пр�
 - Возвращай только JSON.
 - status_message пиши по-русски, коротко, в стиле текущего шага.
 - handoff_message — человекопонятное обращение к агенту (по title): что сделать, на основании каких файлов и данных, что уже известно из журнала (ответы инженера, результаты других агентов).
-- action.expected_output.datasets — форма наборов, без которых нельзя выполнить эту цель (и следующий пункт плана). Не копируй в datasets все ключи output_provides вызываемого агента и не добавляй набор «на всякий случай». Если цели хватает канона агента по when_to_use — не заполняй expected_output. Имена: латинский идентификатор (то же, что в input_schema.data потребителя, либо своё для произвольного набора), description по-русски, fields: [{name, description, type: text|number|date|boolean}]. Не выдумывай значения ячеек. Consumers оркестратор допишет сам из плана.
+- action.expected_output.datasets — только если цели не хватает канона агента: [{name, description}]. Имя — латинский идентификатор (то же, что в input_schema.data потребителя, либо своё для произвольного набора). Не копируй в datasets все ключи output_provides вызываемого агента и не добавляй набор «на всякий случай». Если цели хватает канона агента по when_to_use — не заполняй expected_output. Не выдумывай значения ячеек и не перечисляй колонки: агент сопоставит их с инвентарём. Consumers оркестратор допишет сам из плана.
 """
 
 # Completion check: a second, sceptical LLM pass that runs only when the Decision LLM proposes
@@ -174,13 +172,13 @@ SYSTEM = """Ты оркестратор инженерной задачи. Пр�
 VERIFY_SCHEMA = {
     "type": "object",
     "additionalProperties": True,
-    "required": ["goal_parts", "all_covered", "verdict_for_human"],
+    "required": ["goal_parts", "verdict_for_human"],
     "properties": {
         "goal_parts": {
             "type": "array",
             "items": {
                 "type": "object",
-                "required": ["part", "covered", "evidence"],
+                "required": ["part", "covered"],
                 "properties": {
                     "part": {"type": "string"},
                     "covered": {"type": "boolean"},
@@ -206,6 +204,102 @@ VERIFY_SYSTEM = """Ты проверяющий завершения инжене
 
 Возвращай только JSON.
 """
+
+FORMAT_OPENAI_CHAT = r"""
+const http=$json||{};
+const obj=v=>v&&typeof v==='object'&&!Array.isArray(v);
+const choice=obj((http.choices||[])[0])?(http.choices||[])[0]:{};
+const msg=obj(choice.message)?choice.message:{};
+const content=typeof msg.content==='string'?msg.content:'';
+const usage=obj(http.usage)?http.usage:{};
+const details=obj(usage.completion_tokens_details)?usage.completion_tokens_details:{};
+const errObj=obj(http.error)?http.error:null;
+const errText=typeof http.error==='string'?http.error:String((errObj&&(errObj.message||errObj.code))||http.message||'');
+const llm_parse={
+  finish_reason:String(choice.finish_reason||''),
+  content_len:String(content||'').length,
+  completion_tokens:Number(usage.completion_tokens||0),
+  prompt_tokens:Number(usage.prompt_tokens||0),
+  reasoning_tokens:Number(details.reasoning_tokens||0)
+};
+let error='';
+let output={};
+if(errText||(!http.choices&&http.statusCode)){
+  error=errText.slice(0,400)||'decision_chat_failed';
+} else if(!String(content||'').trim()){
+  error=llm_parse.finish_reason==='length'?'llm_truncated_empty':'llm_empty_content';
+} else {
+  try{
+    const p=JSON.parse(String(content));
+    if(obj(p)) output=p; else error='llm_json_not_object';
+  }catch(e){
+    error='llm_json_invalid';
+    llm_parse.sample=String(content).slice(0,240);
+  }
+}
+if(error) llm_parse.error=error;
+return [{json:{output,error,llm_parse}}];
+"""
+
+BUILD_DECISION_CHAT = (
+    "const SYSTEM = "
+    + json.dumps(SYSTEM, ensure_ascii=False)
+    + ";\nconst DECISION_SCHEMA = "
+    + json.dumps(DECISION_SCHEMA, ensure_ascii=False)
+    + ";\nconst DEFAULT_CHAT_MODEL = "
+    + json.dumps(DEFAULT_CHAT_MODEL)
+    + ";\nconst THINKING_OFF = "
+    + json.dumps(CHAT_THINKING_OFF)
+    + """;
+const prev=$json||{};
+let cfg={};
+try{cfg=$('Runtime endpoints').first().json||{}}catch(e){cfg={}}
+const model=String(cfg.chat_model||'').trim()||DEFAULT_CHAT_MODEL;
+const base=String(cfg.chat_base_url||'').replace(/[/]+$/,'');
+const chat_url=base?base+'/chat/completions':'';
+const chat_request={
+  model,
+  temperature:0,
+  response_format:{type:'json_object'},
+  ...THINKING_OFF,
+  messages:[
+    {role:'system',content:SYSTEM},
+    {role:'user',content:String(prev.planner_input||'')}
+  ]
+};
+return [{json:{...prev,chat_request,chat_url,decision_schema:DECISION_SCHEMA}}];
+"""
+)
+
+BUILD_VERIFY_CHAT = (
+    "const VERIFY_SYSTEM = "
+    + json.dumps(VERIFY_SYSTEM, ensure_ascii=False)
+    + ";\nconst VERIFY_SCHEMA = "
+    + json.dumps(VERIFY_SCHEMA, ensure_ascii=False)
+    + ";\nconst DEFAULT_CHAT_MODEL = "
+    + json.dumps(DEFAULT_CHAT_MODEL)
+    + ";\nconst THINKING_OFF = "
+    + json.dumps(CHAT_THINKING_OFF)
+    + """;
+const prev=$json||{};
+let cfg={};
+try{cfg=$('Runtime endpoints').first().json||{}}catch(e){cfg={}}
+const model=String(cfg.chat_model||'').trim()||DEFAULT_CHAT_MODEL;
+const base=String(cfg.chat_base_url||'').replace(/[/]+$/,'');
+const chat_url=base?base+'/chat/completions':'';
+const chat_request={
+  model,
+  temperature:0,
+  response_format:{type:'json_object'},
+  ...THINKING_OFF,
+  messages:[
+    {role:'system',content:VERIFY_SYSTEM},
+    {role:'user',content:String(prev.verify_input||'')}
+  ]
+};
+return [{json:{...prev,chat_request,chat_url,verify_schema:VERIFY_SCHEMA}}];
+"""
+)
 
 PREPARE_VERIFY = r"""
 const ctx=$('Prepare decision context').first().json||{};
@@ -389,6 +483,45 @@ def http_json(name, pos, url, body, timeout=180000):
             "options": {"timeout": timeout, "response": {"response": {"fullResponse": False}}},
         },
         onError="continueRegularOutput",
+    )
+
+
+def openai_chat_http(name, pos):
+    """OpenAI-compatible /chat/completions using the same Qwen credential as Chat Model.
+
+    Body is built in the previous Code node (model, messages, CHAT_THINKING_OFF).
+    n8n 2.30.8 lmChatOpenAi cannot send reasoning.enabled=false; this node can.
+    """
+    return node(
+        name,
+        "n8n-nodes-base.httpRequest",
+        4.4,
+        pos,
+        {
+            "method": "POST",
+            "url": "={{ $json.chat_url }}",
+            "authentication": "predefinedCredentialType",
+            "nodeCredentialType": "openAiApi",
+            "sendHeaders": True,
+            "headerParameters": {
+                "parameters": [
+                    {"name": "Content-Type", "value": "application/json"},
+                ]
+            },
+            "sendBody": True,
+            "specifyBody": "json",
+            "jsonBody": "={{ $json.chat_request }}",
+            "options": {
+                "timeout": LLM_HTTP_TIMEOUT_MS,
+                "response": {"response": {"fullResponse": False, "neverError": True}},
+            },
+        },
+        credentials=OA,
+        retryOnFail=True,
+        maxTries=3,
+        waitBetweenTries=2000,
+        onError="continueRegularOutput",
+        alwaysOutputData=True,
     )
 
 
@@ -809,6 +942,23 @@ const prev=$('Prepare decision context').first().json||{};
 const raw=(()=>{try{return $('Decision LLM').first().json||$json}catch{return $json}})();
 const obj=v=>v&&typeof v==='object'&&!Array.isArray(v);
 const parse=v=>{if(obj(v))return v;try{const p=JSON.parse(String(v||''));return obj(p)?p:{}}catch{return {}}};
+/* Developer log: n8n Structured Output onError leaves {error:"Model output doesn't fit required format"}
+   with no engineer-facing text (CASE-6aa50b14-bc43c5). Name the parser/timeout, do not guess a route. */
+const describeLlmRaw=(node)=>{
+  const o=obj(node)?node:{};
+  const prior=obj(o.llm_parse)?o.llm_parse:{};
+  const err=o.error;
+  const errText=typeof err==='string'?err:(obj(err)?String(err.message||err.description||err.name||''):'');
+  const ctx=obj(err)&&obj(err.context)?err.context:(obj(o.context)?o.context:{});
+  return {
+    ...prior,
+    error:(errText||prior.error||'').slice(0,400),
+    output_parser:String(ctx.outputParserFailReason||o.outputParserFailReason||prior.output_parser||'').slice(0,240),
+    keys:Object.keys(o).slice(0,16),
+    sample:prior.sample||boundedForLog({output:o.output,text:o.text,error:errText||null},1200)
+  };
+};
+const llmParse=describeLlmRaw(raw);
 const out=parse(raw.output||raw.text||raw);
 const decision=obj(out.action)?out:(obj(raw)?raw:{});
 const verification=(()=>{
@@ -862,7 +1012,7 @@ if(unparsed){
   state.ledger.parse_failures=fails;
   ledgerPush(state,{kind:'verification',verdict:'rejected',uncovered:['решение оркестратора не разобрано']});
   guard='decision_unparsed';
-  if(fails<2){
+  if(fails<3){
     type='continue';
     action={type:'continue'};
   } else {
@@ -946,8 +1096,14 @@ if(unparsed){
   }
 }
 let statusMessage=String(decision.status_message||'').trim()||'Шаг оркестратора';
-if(guard==='decision_unparsed'&&type==='continue') statusMessage='Не удалось разобрать следующий шаг. Формулирую решение заново.';
-else if(guard==='decision_unparsed'&&type==='fail_case') statusMessage='Оркестратор дважды не смог сформулировать следующий шаг. Перезапустите задачу или уточните формулировку.';
+if(guard==='decision_unparsed'&&type==='continue'){
+  const why=String((llmParse&&llmParse.error)||'');
+  if(why==='llm_truncated_empty') statusMessage='Модель исчерпала лимит ответа размышлением и не вернула JSON. Формулирую решение заново.';
+  else if(why==='llm_empty_content') statusMessage='Модель вернула пустой ответ. Формулирую решение заново.';
+  else if(why==='llm_json_invalid'||why==='llm_json_not_object') statusMessage='Ответ модели не разобрался как JSON. Формулирую решение заново.';
+  else statusMessage='Не удалось разобрать следующий шаг. Формулирую решение заново.';
+}
+else if(guard==='decision_unparsed'&&type==='fail_case') statusMessage='Оркестратор три раза не смог разобрать следующий шаг. Перезапустите задачу или уточните формулировку.';
 else if(guard==='repeat_review'||guard==='stall_review') statusMessage='Результат уже получен — прошу инженера принять его или описать доработку.';
 else if(guard==='answer_not_applied') statusMessage=`Передаю ответ инженера агенту ${agentTitle(action.agent_id, registry)}.`;
 else if(guard==='human_accepted') statusMessage='Инженер принял результат — завершаю задачу.';
@@ -964,7 +1120,7 @@ const decisionEvent={
   kind:'orchestrator.decision',
   actor:'orchestrator',
   status_message:statusMessage,
-  payload:{action_type:type,agent_id:action.agent_id||null,step_count:state.step_count,version:state.version,progress:{goal_satisfied:progress.goal_satisfied===true,evidence:String(progress.evidence||'').slice(0,300),missing:String(progress.missing||'').slice(0,300)},...(guard?{guard}:{}),plan:{total:state.plan.length,open:planOpenItems(state.plan).length,accepted:planMerge.accepted,rejected:planMerge.rejected},...(verification?{verification:{all_covered:verification.all_covered===true,goal_parts:(Array.isArray(verification.goal_parts)?verification.goal_parts:[]).slice(0,6).map(p=>({part:String((p&&p.part)||'').slice(0,160),covered:Boolean(p&&p.covered)}))}}:{}),decision:decisionRaw,...execRef()}
+  payload:{action_type:type,agent_id:action.agent_id||null,step_count:state.step_count,version:state.version,progress:{goal_satisfied:progress.goal_satisfied===true,evidence:String(progress.evidence||'').slice(0,300),missing:String(progress.missing||'').slice(0,300)},...(guard?{guard}:{}),...(unparsed?{llm_parse:{...llmParse,attempt:state.ledger.parse_failures}}:{}),plan:{total:state.plan.length,open:planOpenItems(state.plan).length,accepted:planMerge.accepted,rejected:planMerge.rejected},...(verification?{verification:{all_covered:verification.all_covered===true,goal_parts:(Array.isArray(verification.goal_parts)?verification.goal_parts:[]).slice(0,6).map(p=>({part:String((p&&p.part)||'').slice(0,160),covered:Boolean(p&&p.covered)}))}}:{}),decision:decisionRaw,...execRef()}
 };
 const events=[];
 let nextStatus='running';
@@ -1050,13 +1206,13 @@ if(type==='call_agent'){
   nextStatus='failed';
   state.current_task=null;
   decisionEvent.status_message=statusMessage;
-  events.push(decisionEvent, {kind:'case.failed',actor:'orchestrator',status:'failed',status_message:statusMessage,payload:{reason:'decision_unparsed',...execRef()}});
+  events.push(decisionEvent, {kind:'case.failed',actor:'orchestrator',status:'failed',status_message:statusMessage,payload:{reason:'decision_unparsed',llm_parse:{...llmParse,attempt:state.ledger.parse_failures},...execRef()}});
 } else {
   nextStatus='failed';
   state.current_task=null;
-  statusMessage='Оркестратор дважды не смог сформулировать следующий шаг. Перезапустите задачу или уточните формулировку.';
+  statusMessage='Оркестратор три раза не смог разобрать следующий шаг. Перезапустите задачу или уточните формулировку.';
   decisionEvent.status_message=statusMessage;
-  events.push(decisionEvent, {kind:'case.failed',actor:'orchestrator',status:'failed',status_message:statusMessage,payload:{reason:'decision_unparsed',...execRef()}});
+  events.push(decisionEvent, {kind:'case.failed',actor:'orchestrator',status:'failed',status_message:statusMessage,payload:{reason:'decision_unparsed',llm_parse:{...llmParse,attempt:state.ledger.parse_failures},...execRef()}});
 }
 state.status=nextStatus;
 const persistEvents=events.map(e=>[
@@ -1275,16 +1431,18 @@ ORCH_LAYOUT: dict[str, tuple[int, int]] = {
     "Resume to decision?": (6 * CX, 2 * CY),
     "Not a resume?": (3 * CX, 4 * CY),
     "Decision Chat Model — configure in UI": (2 * CX, 4 * CY),
-    "Decision Structured Output": (3 * CX, 4 * CY),
     "Load agent registry": (0, 5 * CY),
     "Prepare decision context": (CX, 5 * CY),
     "Call Knowledge Retrieval": (CX, 6 * CY),
     "Attach orchestrator RAG evidence": (2 * CX, 6 * CY),
-    "Decision LLM": (2 * CX, 5 * CY),
-    "Finish proposed?": (3 * CX, 5 * CY),
+    "Build decision chat": (2 * CX, 5 * CY),
+    "Decision chat": (3 * CX, 4 * CY),
+    "Decision LLM": (3 * CX, 5 * CY),
+    "Finish proposed?": (4 * CX, 4 * CY),
     "Prepare completion check": (3 * CX, 6 * CY),
-    "Verify completion": (4 * CX, 6 * CY),
-    "Verification Structured Output": (4 * CX, 4 * CY),
+    "Build verify chat": (4 * CX, 6 * CY),
+    "Verify chat": (5 * CX, 4 * CY),
+    "Verify completion": (5 * CX, 7 * CY),
     "Parse decision": (4 * CX, 5 * CY),
     "Update case after decision": (5 * CX, 5 * CY),
     "Expand decision events": (6 * CX, 5 * CY),
@@ -1324,7 +1482,7 @@ def main() -> None:
         note(
             "edit after import",
             (-200, -420),
-            "## edit after import\n\n**Orchestrator — MAS** — thin loop:\n- Bind Postgres on load/insert/update\n- Bind **Qwen** OpenAI-compatible credential on Decision Chat Model (also Interpret free-text answer + Verify completion)\n- Bind inbound header auth on webhook **and** POST continue run\n- Bind **Runtime endpoints** → `MAS — Runtime Config` (один Set URL на весь контур)\n- **Call agent (n8n)** — universal: workflowId is an expression from `agent_registry.invoke.workflow_id` (or Runtime Config `agent_workflow_ids` JSON `{\"<agent_id>\":\"<id>\"}` when the field import assigned new ids). No per-agent nodes; adding an agent = `upsert_agent` in Control Plane Proxy + RAG routing card.\n- **Call agent (HTTP)** — `invoke.kind=http`, url with `{math_url}`-style placeholders from Runtime Config\n- Bind **Call Knowledge Retrieval** → `MAS — Knowledge Retrieval` (срез `orchestrator_routing` / `routing_card`; не excel_protocol и не schedule_mvp)\n- Excel `X-API-Key` — credential на Agent — Excel Extractor, не этот workflow\n\n`action`: probe | status | start | create | step | resume\n- **resume** `source`: human (Activity `/answer`) | agent | system (`POST /cases/{id}/run`). Кнопка HITL = `choice`; свободный текст при вариантах — Interpret free-text answer (тот же Qwen).\n- Activity `/cases` stores files; specialists fetch `/cases/{id}/artifacts/{id}` from their FastAPI tools. n8n never carries binaries.\n- **status** loads case and returns `human_gate` without LLM\n- Decision is Basic LLM Chain + Structured Output (no Agent tools)\n- Loop: **POST continue run** → own webhook (`orchestrator_step_url` in Runtime Config). Activity starts/resumes cases; it does not drive the step loop.\n\nOne execution = one step.",
+            "## edit after import\n\n**Orchestrator — MAS** — thin loop:\n- Bind Postgres on load/insert/update\n- Bind **Qwen** OpenAI-compatible credential on **Decision chat**, **Verify chat**, and Decision Chat Model (Interpret free-text answer)\n- Bind inbound header auth on webhook **and** POST continue run\n- Bind **Runtime endpoints** → `MAS — Runtime Config` (один Set URL на весь контур; `chat_model` + `chat_base_url` — модель и Base URL Decision/Verify)\n- **Call agent (n8n)** — universal: workflowId is an expression from `agent_registry.invoke.workflow_id` (or Runtime Config `agent_workflow_ids` JSON `{\"<agent_id>\":\"<id>\"}` when the field import assigned new ids). No per-agent nodes; adding an agent = `upsert_agent` in Control Plane Proxy + RAG routing card.\n- **Call agent (HTTP)** — `invoke.kind=http`, url with `{math_url}`-style placeholders from Runtime Config\n- Bind **Call Knowledge Retrieval** → `MAS — Knowledge Retrieval` (срез `orchestrator_routing` / `routing_card`; не excel_protocol и не schedule_mvp)\n- Excel `X-API-Key` — credential на Agent — Excel Extractor, не этот workflow\n\n`action`: probe | status | start | create | step | resume\n- **resume** `source`: human (Activity `/answer`) | agent | system (`POST /cases/{id}/run`). Кнопка HITL = `choice`; свободный текст при вариантах — Interpret free-text answer (тот же Qwen).\n- Activity `/cases` stores files; specialists fetch `/cases/{id}/artifacts/{id}` from their FastAPI tools. n8n never carries binaries.\n- **status** loads case and returns `human_gate` without LLM\n- Decision / Verify — HTTP `/chat/completions` with thinking off (`reasoning.enabled=false`); JSON.parse, no Structured Output parser\n- Loop: **POST continue run** → own webhook (`orchestrator_step_url` in Runtime Config). Activity starts/resumes cases; it does not drive the step loop.\n\nOne execution = one step.",
             480,
             420,
             1,
@@ -1463,49 +1621,20 @@ def main() -> None:
             onError="continueRegularOutput",
         ),
         code("Attach orchestrator RAG evidence", (1440, 180), attach_orchestrator_rag_js()),
-        node(
-            "Decision LLM",
-            "@n8n/n8n-nodes-langchain.chainLlm",
-            1.9,
-            (1440, 0),
-            {
-                "promptType": "define",
-                "text": "={{ $json.planner_input }}",
-                "hasOutputParser": True,
-                "needsFallback": False,
-                "messages": {
-                    "messageValues": [
-                        {
-                            "type": "SystemMessagePromptTemplate",
-                            "message": SYSTEM,
-                        }
-                    ]
-                },
-            },
-            retryOnFail=True,
-            maxTries=3,
-            waitBetweenTries=2000,
-            onError="continueRegularOutput",
-            alwaysOutputData=True,
-        ),
+        code("Build decision chat", (1440, 0), BUILD_DECISION_CHAT),
+        openai_chat_http("Decision chat", (1560, 0)),
+        code("Decision LLM", (1680, 0), FORMAT_OPENAI_CHAT, alwaysOutputData=True),
         node(
             "Decision Chat Model — configure in UI",
             "@n8n/n8n-nodes-langchain.lmChatOpenAi",
             1.3,
             (1440, -180),
             {
-                "model": {"mode": "id", "value": "qwen3.6-plus"},
-                "options": chat_model_options(max_tokens=1024),
+                "model": {"mode": "id", "value": DEFAULT_CHAT_MODEL},
+                "options": chat_model_options(),
                 "responsesApiEnabled": False,
             },
             credentials=OA,
-        ),
-        node(
-            "Decision Structured Output",
-            "@n8n/n8n-nodes-langchain.outputParserStructured",
-            1.3,
-            (1680, -180),
-            structured_parser_params(json.dumps(DECISION_SCHEMA, ensure_ascii=False)),
         ),
         # Verified completion: only a proposed `finish` takes the detour through the completion check.
         if_true(
@@ -1514,38 +1643,9 @@ def main() -> None:
             "={{ String(((($json.output || {}).action) || {}).type || '') === 'finish' }}",
         ),
         code("Prepare completion check", (1800, 120), PREPARE_VERIFY),
-        node(
-            "Verify completion",
-            "@n8n/n8n-nodes-langchain.chainLlm",
-            1.9,
-            (1920, 120),
-            {
-                "promptType": "define",
-                "text": "={{ $json.verify_input }}",
-                "hasOutputParser": True,
-                "needsFallback": False,
-                "messages": {
-                    "messageValues": [
-                        {
-                            "type": "SystemMessagePromptTemplate",
-                            "message": VERIFY_SYSTEM,
-                        }
-                    ]
-                },
-            },
-            retryOnFail=True,
-            maxTries=3,
-            waitBetweenTries=2000,
-            onError="continueRegularOutput",
-            alwaysOutputData=True,
-        ),
-        node(
-            "Verification Structured Output",
-            "@n8n/n8n-nodes-langchain.outputParserStructured",
-            1.3,
-            (1920, 300),
-            structured_parser_params(json.dumps(VERIFY_SCHEMA, ensure_ascii=False)),
-        ),
+        code("Build verify chat", (1920, 120), BUILD_VERIFY_CHAT),
+        openai_chat_http("Verify chat", (2040, 120)),
+        code("Verify completion", (2160, 120), FORMAT_OPENAI_CHAT, alwaysOutputData=True),
         code("Parse decision", (2040, 0), PARSE_DECISION),
         postgres(
             "Update case after decision",
@@ -1714,19 +1814,17 @@ return [{json:{...x,activity_sync:Boolean(x.case_id&&!x.is_probe&&x.activity_bas
     connect(connections, "Load agent registry", "Prepare decision context")
     connect(connections, "Prepare decision context", "Call Knowledge Retrieval")
     connect(connections, "Call Knowledge Retrieval", "Attach orchestrator RAG evidence")
-    connect(connections, "Attach orchestrator RAG evidence", "Decision LLM")
-    connect(connections, "Decision Chat Model — configure in UI", "Decision LLM", out="ai_languageModel", tin="ai_languageModel")
-    connect(connections, "Decision Chat Model — configure in UI", "Decision Structured Output", out="ai_languageModel", si=0, tin="ai_languageModel")
-    connect(connections, "Decision Structured Output", "Decision LLM", out="ai_outputParser", tin="ai_outputParser")
+    connect(connections, "Attach orchestrator RAG evidence", "Build decision chat")
+    connect(connections, "Build decision chat", "Decision chat")
+    connect(connections, "Decision chat", "Decision LLM")
     # Verified completion: finish → completion check (second LLM pass) → Parse decision; anything else → Parse decision.
     connect(connections, "Decision LLM", "Finish proposed?")
     connect(connections, "Finish proposed?", "Prepare completion check", si=0)
     connect(connections, "Finish proposed?", "Parse decision", si=1)
-    connect(connections, "Prepare completion check", "Verify completion")
+    connect(connections, "Prepare completion check", "Build verify chat")
+    connect(connections, "Build verify chat", "Verify chat")
+    connect(connections, "Verify chat", "Verify completion")
     connect(connections, "Verify completion", "Parse decision")
-    connect(connections, "Decision Chat Model — configure in UI", "Verify completion", out="ai_languageModel", si=0, tin="ai_languageModel")
-    connect(connections, "Decision Chat Model — configure in UI", "Verification Structured Output", out="ai_languageModel", si=0, tin="ai_languageModel")
-    connect(connections, "Verification Structured Output", "Verify completion", out="ai_outputParser", tin="ai_outputParser")
     connect(connections, "Parse decision", "Update case after decision")
     connect(connections, "Update case after decision", "Expand decision events")
     connect(connections, "Expand decision events", "Insert decision events")

@@ -184,7 +184,7 @@
       "POST {orchestrator_step_url minus /mas-orchestrator-step}/mas-control-plane {\"operation\":\"list_agents\"} (Header Auth; expects excel_extractor, schedule_builder, calculation_agent)"
     ],
     "result": "PASS = 0 FAIL, 0 TODO (field). PASS_WITH_TODO = lab Docker DNS names still in Runtime Config. FAIL lists where_to_fix per check.",
-    "host_health_script": "scripts/mas_stack_health.py",
+    "host_health_script": "scripts/field_check.py (Windows field); scripts/mas_stack_health.py (lab)",
     "does_not_call": [
       "LLM Planner/Verifier",
       "Excel Extractor",

@@ -22,7 +22,7 @@ Read `AGENTS.md` first (map, invariants, recipes, traps). The queue of work is `
 
 ## Gate = definition of done
 - `python3 scripts/mas_gate.py` (regen drift, 16 smokes, 5 pytest suites, offline combat) must be GREEN before reporting.
-- If orchestrator, an agent, prompts, emit or Activity artifacts were touched: `python3 scripts/mas_gate.py --live` → 12/12 `done` (six `run_live_five` + `demo_agent_long_job` + `three_agent_chain` + `excel_datasets` + three recovery), `mismatch_count: 0`, no repeated HITL, no `completion_review` escalation. Lab only: needs Docker Compose + `.env`.
+- If orchestrator, an agent, prompts, emit or Activity artifacts were touched: `python3 scripts/mas_gate.py --live` → 12/12 `done` (six `run_live_five` + `demo_agent_long_job` + `three_agent_chain` + `excel_datasets` + three recovery), `mismatch_count: 0`, no repeated HITL, no `completion_review` escalation; α2 thresholds (`warnings: 0`, `steps ≤ 6` on two-agent cases, `tool_calls` per agent ≤ 4). `--live --repeat 3` = six commissioning ×3 in one pool + the other six once, wall ~20 min — not 12×3. `--hot` when lab is healthy and regen did not change JSON. Lab only: needs Docker Compose + `.env`.
 - Report facts: files, counts, case ids, what is not done and why. No "should work".
 
 ## Close the loop

@@ -13,10 +13,12 @@ import uuid
 from pathlib import Path
 
 from agents import ALL as AGENT_SPECS
+from llm_runtime_options import DEFAULT_CHAT_MODEL
 from mas_agent_spec import EXCEL_KEY_CRED  # noqa: F401  (re-exported for callers that bind the Excel credential)
 
 ROOT = Path(__file__).resolve().parents[1]
 OUT = ROOT / "workflows/core/mas-runtime-config.workflow.json"
+REPO = ROOT.parent
 WF_ID = str(uuid.uuid5(uuid.NAMESPACE_URL, "mas-runtime-config"))
 WF_NAME = "MAS — Runtime Config"
 PLACEHOLDER = "REPLACE_MAS_RUNTIME_CONFIG_IN_UI"
@@ -31,6 +33,17 @@ def _agent_service_urls() -> tuple[tuple[str, str], ...]:
     return tuple(seen.items())
 
 
+def _mas_version() -> str:
+    path = REPO / "VERSION"
+    if not path.is_file():
+        return ""
+    for line in path.read_text(encoding="utf-8").splitlines():
+        text = line.strip()
+        if text and not text.startswith("#"):
+            return text
+    return ""
+
+
 # Lab Compose DNS. Field: overwrite these values in the Set after UI import.
 LAB_URLS = (
     ("activity_base_url", "http://mas-activity:8200"),
@@ -39,10 +52,18 @@ LAB_URLS = (
     # Orchestrator step budget per case (not a URL). When reached with a completed result the
     # engineer is asked to accept / rework; without any result the case fails. UI-editable.
     ("max_steps", "12"),
+    # Decision / Verify HTTP chat (n8n 2.30.8 lmChatOpenAi cannot send reasoning.enabled=false).
+    # Field: same id as the Chat Model pin. Lab overlay: lab_soft_redeploy copies N8N_CHAT_MODEL.
+    ("chat_model", DEFAULT_CHAT_MODEL),
+    # OpenAI-compatible /v1 base (same as the Qwen credential URL). Decision/Verify HTTP
+    # append /chat/completions. n8n 2.30.8 HTTP Request cannot read $credentials.url.
+    ("chat_base_url", "https://openrouter.ai/api/v1"),
     # Phase 2: the orchestrator calls agents by the workflow id stored in agent_registry.invoke.
     # UI "Import from File" assigns new ids, so the field engineer maps agent_id → live workflow id
     # here (JSON object). Empty = trust the registry. Lab (CLI import keeps ids) leaves it empty.
     ("agent_workflow_ids", "{}"),
+    # α3: same string as repo VERSION and FastAPI /health mas_version.
+    ("mas_version", _mas_version()),
 )
 
 
@@ -117,7 +138,11 @@ def main() -> None:
                     "Agent — Excel Extractor.\n\n"
                     "Возвращает "
                     "`activity_base_url`, `excel_tools_url`, `schedule_service_url`, "
-                    "`math_url`, `orchestrator_step_url`, `max_steps`, `agent_workflow_ids`. Ничего не оркестрирует.\n\n"
+                    "`math_url`, `orchestrator_step_url`, `max_steps`, `chat_model`, `agent_workflow_ids`, `mas_version`. Ничего не оркестрирует.\n\n"
+                    "`mas_version` — строка из файла VERSION пакета; должна совпадать с `/health` сервисов на Windows.\n\n"
+                    "`chat_model` — id модели для Decision / Verify. "
+                    "`chat_base_url` — Base URL того же OpenAI-compatible API, что в Qwen-credential "
+                    "(без `/chat/completions`; lab OpenRouter, поле — корпоративный Qwen).\n\n"
                     "`max_steps` — бюджет шагов оркестратора на кейс (по умолчанию 12): при достижении "
                     "с готовым результатом инженеру предлагается принять/доработать, без результата — кейс failed.\n\n"
                     "`agent_workflow_ids` — JSON `{\"<agent_id>\": \"<id workflow в этом n8n>\"}`. Оркестратор "

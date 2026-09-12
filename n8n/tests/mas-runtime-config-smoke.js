@@ -8,6 +8,10 @@ const path = require('node:path');
 
 const workspace = process.env.WORKSPACE_ROOT || path.resolve(__dirname, '../..');
 const read = (rel) => JSON.parse(fs.readFileSync(path.join(workspace, rel), 'utf8'));
+const masVersion = fs.readFileSync(path.join(workspace, 'VERSION'), 'utf8')
+  .split(/\r?\n/)
+  .map((line) => line.trim())
+  .find((line) => line && !line.startsWith('#')) || '';
 const wf = read('n8n/workflows/core/mas-runtime-config.workflow.json');
 const excel = read('n8n/workflows/core/excel-extractor-agent.workflow.json');
 const schedule = read('n8n/workflows/core/schedule-builder-agent.workflow.json');
@@ -39,7 +43,10 @@ assert.deepEqual(fields, {
   demo_agent_url: 'http://demo-agent:8300',
   orchestrator_step_url: 'http://127.0.0.1:5678/webhook/mas-orchestrator-step',
   max_steps: '12',
+  chat_model: 'qwen/qwen3.6-27b',
+  chat_base_url: 'https://openrouter.ai/api/v1',
   agent_workflow_ids: '{}',
+  mas_version: masVersion,
 });
 const blob = JSON.stringify(wf);
 assert.equal(blob.includes('excel_tools_api_key'), false);

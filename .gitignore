@@ -22,6 +22,9 @@ excel-agent-tools/excel.log
 fastapi-math-service/math.log
 mas-activity-service/activity.log
 
+# Field import pack (mas_gate.py --bundle)
+dist/
+
 # Lab / local n8n scratch and health dumps
 .n8n_local/
 *.bak

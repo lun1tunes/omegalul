@@ -1,9 +1,9 @@
 # MAS Activity Service
 
-Чат-лента Orchestrator ↔ specialists, HITL в том же UI, старт задачи drag-and-drop.
+Чат-лента оркестратор ↔ агенты, HITL в том же UI, старт задачи drag-and-drop. Лог разработчика — `GET /cases/{id}/log` и вкладка «Лог»; сводка — `GET /metrics/cases?since=`.
 
 **На работе:** только Windows CMD (ниже). n8n — корпоративный UI-импорт; Activity не поднимают из Docker на полевом ПК.  
-Полный порядок: [`../docs.md`](../docs.md) §0–§2.
+Полный порядок: [`../docs.md`](../docs.md).
 
 Живой вход — **`POST /cases`**. Стейт кейсов — Postgres за `MAS — Control Plane Proxy`. Data Tables / `Activity — Hydrate` / Trace Writer **не используются**. Не задавать `ACTIVITY_HYDRATE_URL`.
 
@@ -69,7 +69,7 @@ Activity пишет `/data/activity_state.json` (volume `activity_data`), что
 
 Открыть [http://127.0.0.1:8200/](http://127.0.0.1:8200/) → **Новая задача**. После правок static — hard-refresh (`app.js?v=…` в `index.html`).
 
-Когда у задачи есть результат SCHEDULE, в шапке **Скачать .INC** → `GET /cases/{id}/schedule`.
+Deliverables — панель «Результаты» и чипы под `agent.result` (`GET /cases/{id}/artifacts`). `/schedule` — алиас на `schedule_out`. Галочка **«Режим разработчика»** → вкладка **«Лог»**. **Агенты** — `/registry`.
 
 **Новая задача** = `POST /cases` (multipart). Оркестратор `action=start` идёт в фоне. Без `ORCHESTRATOR_WEBHOOK_URL` старт отвечает **503**. Живая лента: SSE `GET /cases/{id}/stream`. Счётчик «N turn» на рейле — длина **свёрнутой** ленты, не сырой `COUNT(*)` событий.
 
@@ -95,9 +95,14 @@ Tests: `.venv\Scripts\python.exe -m pytest -q`.
 | `GET` | `/cases/{id}` | snapshot + свёрнутая лента + schema |
 | `GET` | `/cases/{id}/stream` | SSE |
 | `POST` | `/cases/{id}/answer` | HITL |
-| `POST` | `/cases/{id}/run` | retry/restart |
-| `GET` | `/cases/{id}/schedule` | скачать `.INC` |
+| `POST` | `/cases/{id}/run` | resume/retry/cancel (`source=human|agent|system`) |
+| `GET` | `/cases/{id}/schedule` | алиас скачать `schedule_out` |
+| `GET` | `/cases/{id}/artifacts` | список карточек |
+| `POST` | `/cases/{id}/artifacts` | upload deliverable (multipart) |
 | `GET` | `/cases/{id}/artifacts/{id}` | бинарники для Excel/Schedule FastAPI |
+| `GET` | `/cases/{id}/log` | лог разработчика (`?format=ndjson`) |
+| `GET` | `/metrics/cases` | сводка `summarize` (`?since=` ISO-8601) |
+| `GET`/`PUT` | `/agents[/{agent_id}]` | реестр |
 | `POST` | `/v1/knowledge/ingest` | live corpus → n8n Ingestion |
 
 Пути `/v1/tasks/*`, `/v1/sync`, `/v1/hydrate` — совместимость со старым UI/Trace Writer. Живая морда их не зовёт.
@@ -112,7 +117,7 @@ Tests: `.venv\Scripts\python.exe -m pytest -q`.
 - Compose DNS: `http://mas-activity:8200`
 - n8n в Docker → Activity на хосте: `http://host.docker.internal:8200`
 
-Ключ Activity не нужен. Специалисты сами `GET /cases/{id}/artifacts/{id}`.
+Ключ Activity не нужен. Агенты сами `GET /cases/{id}/artifacts/{id}`.
 
 ## CORS
 

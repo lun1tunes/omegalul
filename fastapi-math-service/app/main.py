@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import os
 import re
+from pathlib import Path
 
 import numpy as np
 from fastapi import FastAPI, File, HTTPException, UploadFile
@@ -30,6 +31,18 @@ class TrajectoryIntersectionBatchResponse(BaseModel):
 
 
 _NUMBER = re.compile(r"[-+]?(?:\d+(?:\.\d*)?|\.\d+)(?:[eEdD][-+]?\d+)?")
+_SERVICE_ROOT = Path(__file__).resolve().parents[1]
+
+
+def _mas_version() -> str:
+    for folder in (_SERVICE_ROOT, *_SERVICE_ROOT.parents):
+        path = folder / "VERSION"
+        if path.is_file():
+            for line in path.read_text(encoding="utf-8").splitlines():
+                text = line.strip()
+                if text and not text.startswith("#"):
+                    return text
+    return ""
 
 
 def _decode_text(raw: bytes, filename: str) -> str:
@@ -214,7 +227,7 @@ def _find_intersection(
 
 @app.get("/health")
 def health() -> dict[str, str]:
-    return {"status": "ok", "service": "fastapi-math-service"}
+    return {"status": "ok", "service": "fastapi-math-service", "mas_version": _mas_version()}
 
 
 @app.post("/api/v1/math/trajectory-intersection", response_model=TrajectoryIntersectionBatchResponse)

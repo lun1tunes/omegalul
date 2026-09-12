@@ -952,8 +952,24 @@
     return peekEl;
   }
   function hidePeek() {
-    if (peekEl) { peekEl.hidden = true; peekEl.innerHTML = ""; }
+    if (peekEl) {
+      peekEl.hidden = true;
+      peekEl.innerHTML = "";
+      peekEl.classList.remove("is-below");
+      peekEl.style.visibility = "";
+    }
     peekFor = null;
+  }
+  function placePeek(peek, anchorEl) {
+    const sr = stage.getBoundingClientRect();
+    const ar = anchorEl.getBoundingClientRect();
+    const need = peek.offsetHeight + 16;
+    const spaceAbove = ar.top - sr.top;
+    const spaceBelow = sr.bottom - ar.bottom;
+    const above = spaceAbove >= need || spaceAbove >= spaceBelow;
+    peek.classList.toggle("is-below", !above);
+    peek.style.left = `${Math.max(160, Math.min(sr.width - 160, ar.left - sr.left + ar.width / 2))}px`;
+    peek.style.top = `${above ? ar.top - sr.top : ar.bottom - sr.top}px`;
   }
   function togglePeek(anchorEl) {
     if (peekFor === anchorEl) { hidePeek(); return; }
@@ -968,6 +984,7 @@
     const peek = ensurePeek();
     peek.innerHTML = "";
     peek.classList.add("is-pinned");
+    peek.classList.remove("is-below");
     const title = document.createElement("div");
     title.className = "schema-peek-title";
     if (node) {
@@ -993,14 +1010,13 @@
       }
       peek.append(list);
     }
+    peek.style.visibility = "hidden";
     peek.hidden = false;
-    const sr = stage.getBoundingClientRect();
-    const ar = anchorEl.getBoundingClientRect();
-    const cx = ar.left - sr.left + ar.width / 2;
-    const above = ar.top - sr.top > peek.offsetHeight + 20;
-    peek.classList.toggle("is-below", !above);
-    peek.style.left = `${Math.max(160, Math.min(sr.width - 160, cx))}px`;
-    peek.style.top = `${above ? ar.top - sr.top : ar.bottom - sr.top}px`;
+    placePeek(peek, anchorEl);
+    peek.style.animation = "none";
+    peek.getBoundingClientRect();
+    peek.style.animation = "";
+    peek.style.visibility = "";
     peekFor = anchorEl;
   }
   document.addEventListener("pointerdown", (ev) => {

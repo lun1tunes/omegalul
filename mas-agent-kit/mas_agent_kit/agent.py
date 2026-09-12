@@ -34,6 +34,7 @@ from fastapi import APIRouter, Body, FastAPI, HTTPException, Request
 
 from .activity import ActivityClient
 from .dataset import expected_output
+from .version import read_mas_version
 from .errors import SessionNotFound
 from .hitl import engineer_answers
 from .packet import CasePacket
@@ -230,7 +231,12 @@ def create_agent_app(agent: AgentService, *, title: str = "", version: str = "0.
 
     @app.get("/health")
     def health() -> dict[str, Any]:
-        return {"ok": True, "agent_id": agent.agent_id, "tools": agent.tools.names}
+        return {
+            "ok": True,
+            "agent_id": agent.agent_id,
+            "tools": agent.tools.names,
+            "mas_version": read_mas_version(),
+        }
 
     app.include_router(agent_router(agent, dependencies=dependencies))
     return app

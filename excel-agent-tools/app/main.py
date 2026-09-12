@@ -24,6 +24,7 @@ load_dotenv(SERVICE_ROOT / "excel-tools.env", override=False)
 load_dotenv(SERVICE_ROOT / ".env", override=False)
 
 from mas_agent_kit import agent_router  # noqa: E402
+from mas_agent_kit.version import read_mas_version  # noqa: E402
 
 from . import legacy_api  # noqa: E402
 from .agent import agent  # noqa: E402
@@ -53,7 +54,12 @@ app = FastAPI(
 
 @app.get("/health")
 def health() -> dict[str, Any]:
-    return {"ok": True, "agent_id": agent.agent_id, "tools": agent.tools.names}
+    return {
+        "ok": True,
+        "agent_id": agent.agent_id,
+        "tools": agent.tools.names,
+        "mas_version": read_mas_version(),
+    }
 
 
 app.include_router(agent_router(agent, dependencies=[Depends(require_api_key)]))

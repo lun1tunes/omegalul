@@ -467,7 +467,7 @@ class AgentWorkflow:
             "@n8n/n8n-nodes-langchain.lmChatOpenAi",
             1.3,
             (1720, 40),
-            {"model": {"mode": "id", "value": spec.model}, "options": chat_model_options(max_tokens=2048, temperature=0), "responsesApiEnabled": False},
+            {"model": {"mode": "id", "value": spec.model}, "options": chat_model_options(temperature=0), "responsesApiEnabled": False},
             credentials=CHAT_MODEL_CREDENTIAL,
         )
         self.code(n["summarize"], (1960, 160), self.js_summarize())
@@ -517,7 +517,7 @@ class AgentWorkflow:
             "isArchived": False,
             "nodes": self.nodes,
             "connections": self.connections,
-            "settings": {"executionOrder": "v1", "saveManualExecutions": True, "callerPolicy": "workflowsFromSameOwner", "errorWorkflow": ERROR_WF_ID, "executionTimeout": 900},
+            "settings": {"executionOrder": "v1", "saveManualExecutions": True, "callerPolicy": "workflowsFromSameOwner", "errorWorkflow": ERROR_WF_ID, "executionTimeout": 1800},
             "meta": {"templateCredsSetupCompleted": True, "targetN8nVersion": "2.30.8"},
             "tags": [],
             "pinData": {},

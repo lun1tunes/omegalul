@@ -6,7 +6,7 @@
   "nodes": [
     {
       "parameters": {
-        "content": "## Runtime URLs (edit in UI)\n\n**MAS — Runtime Config** — единственный Set с URL сервисов (n8n free: без Variables / Environment в JSON).\n\n1. Пропишите URL в **Runtime URLs**. Lab Compose DNS уже стоит. Поле: `http://<IP-Windows>:8200` / `:8000` / `:8090` / `:8100`.\n2. На Orchestrator / Excel / Schedule привяжите Execute Workflow → этот workflow (ноды **Runtime endpoints** / **Runtime configuration**).\n3. Ключ Excel **не** сюда. Credential Header Auth **Excel Tools X-API-Key**: header name `X-API-Key`, value = `API_KEY` из `excel-tools.env`. Привяжите его на HTTP-нодах Agent — Excel Extractor.\n\nВозвращает `activity_base_url`, `excel_tools_url`, `schedule_service_url`, `math_url`, `orchestrator_step_url`, `max_steps`, `agent_workflow_ids`. Ничего не оркестрирует.\n\n`max_steps` — бюджет шагов оркестратора на кейс (по умолчанию 12): при достижении с готовым результатом инженеру предлагается принять/доработать, без результата — кейс failed.\n\n`agent_workflow_ids` — JSON `{\"<agent_id>\": \"<id workflow в этом n8n>\"}`. Оркестратор вызывает агентов по id из `agent_registry`; после импорта через UI n8n выдаёт новые id — впишите их здесь (id виден в URL открытого workflow). `{}` — доверять реестру.\n\n`orchestrator_step_url` — внутренний webhook оркестратора (loop сам себя, не через Activity `/run`). Lab: `http://127.0.0.1:5678/webhook/mas-orchestrator-step`.",
+        "content": "## Runtime URLs (edit in UI)\n\n**MAS — Runtime Config** — единственный Set с URL сервисов (n8n free: без Variables / Environment в JSON).\n\n1. Пропишите URL в **Runtime URLs**. Lab Compose DNS уже стоит. Поле: `http://<IP-Windows>:8200` / `:8000` / `:8090` / `:8100`.\n2. На Orchestrator / Excel / Schedule привяжите Execute Workflow → этот workflow (ноды **Runtime endpoints** / **Runtime configuration**).\n3. Ключ Excel **не** сюда. Credential Header Auth **Excel Tools X-API-Key**: header name `X-API-Key`, value = `API_KEY` из `excel-tools.env`. Привяжите его на HTTP-нодах Agent — Excel Extractor.\n\nВозвращает `activity_base_url`, `excel_tools_url`, `schedule_service_url`, `math_url`, `orchestrator_step_url`, `max_steps`, `chat_model`, `agent_workflow_ids`, `mas_version`. Ничего не оркестрирует.\n\n`mas_version` — строка из файла VERSION пакета; должна совпадать с `/health` сервисов на Windows.\n\n`chat_model` — id модели для Decision / Verify. `chat_base_url` — Base URL того же OpenAI-compatible API, что в Qwen-credential (без `/chat/completions`; lab OpenRouter, поле — корпоративный Qwen).\n\n`max_steps` — бюджет шагов оркестратора на кейс (по умолчанию 12): при достижении с готовым результатом инженеру предлагается принять/доработать, без результата — кейс failed.\n\n`agent_workflow_ids` — JSON `{\"<agent_id>\": \"<id workflow в этом n8n>\"}`. Оркестратор вызывает агентов по id из `agent_registry`; после импорта через UI n8n выдаёт новые id — впишите их здесь (id виден в URL открытого workflow). `{}` — доверять реестру.\n\n`orchestrator_step_url` — внутренний webhook оркестратора (loop сам себя, не через Activity `/run`). Lab: `http://127.0.0.1:5678/webhook/mas-orchestrator-step`.",
         "height": 400,
         "width": 520,
         "color": 1
@@ -81,9 +81,27 @@
               "type": "string"
             },
             {
+              "id": "e28d2a06-8e24-5c9d-89c2-0d400e58ff0e",
+              "name": "chat_model",
+              "value": "qwen/qwen3.6-27b",
+              "type": "string"
+            },
+            {
+              "id": "e7c2779c-afaa-542f-8920-14b37ac5f604",
+              "name": "chat_base_url",
+              "value": "https://openrouter.ai/api/v1",
+              "type": "string"
+            },
+            {
               "id": "8b9f830b-afcb-537b-b713-217c89f32a57",
               "name": "agent_workflow_ids",
               "value": "{}",
+              "type": "string"
+            },
+            {
+              "id": "3e44e16f-7d59-5e85-8801-154a1ba222a3",
+              "name": "mas_version",
+              "value": "0.8.0",
               "type": "string"
             }
           ]
@@ -128,5 +146,5 @@
   },
   "tags": [],
   "pinData": {},
-  "versionId": "43daee9a-602f-42dd-9074-0505b4fa6e90"
+  "versionId": "02100379-803c-4702-9d3e-aa3a038c377c"
 }

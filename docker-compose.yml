@@ -12,6 +12,7 @@ services:
     volumes:
       - ./excel-agent-tools:/app
       - ./mas-agent-kit:/mas-agent-kit:ro
+      - ./VERSION:/app/VERSION:ro
     environment:
       - API_KEY=${EXCEL_TOOLS_API_KEY:-local-dev-excel-tools-api-key}
       - EXCEL_TOOLS_API_KEY=${EXCEL_TOOLS_API_KEY:-local-dev-excel-tools-api-key}
@@ -32,6 +33,7 @@ services:
     working_dir: /app
     volumes:
       - ./fastapi-math-service:/app
+      - ./VERSION:/app/VERSION:ro
     environment:
       - ACTIVITY_BASE_URL=${ACTIVITY_BASE_URL:-http://mas-activity:8200}
     extra_hosts:
@@ -49,6 +51,7 @@ services:
     volumes:
       - ./schedule-builder-service:/app
       - ./mas-agent-kit:/mas-agent-kit:ro
+      - ./VERSION:/app/VERSION:ro
     environment:
       - ACTIVITY_BASE_URL=${ACTIVITY_BASE_URL:-http://mas-activity:8200}
     extra_hosts:
@@ -68,6 +71,7 @@ services:
     volumes:
       - ./agents-template/demo_agent:/app
       - ./mas-agent-kit:/mas-agent-kit:ro
+      - ./VERSION:/app/VERSION:ro
     environment:
       - ACTIVITY_BASE_URL=${ACTIVITY_BASE_URL:-http://mas-activity:8200}
       - DEMO_SESSIONS_DIR=/tmp/demo-sessions
@@ -87,6 +91,7 @@ services:
     volumes:
       - ./mas-activity-service:/app
       - ./n8n/rag:/rag
+      - ./VERSION:/app/VERSION:ro
     environment:
       - ORCHESTRATOR_WEBHOOK_URL=http://n8n:5678/webhook/mas-orchestrator-step
       - CONTROL_PLANE_REQUIRED=true

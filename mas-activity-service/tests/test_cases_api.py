@@ -1734,7 +1734,43 @@ def test_invoke_action_writes_russian_on_orchestrator_error(monkeypatch) -> None
     failed = [e for e in control_plane.list_events(case_id) if e.get("kind") == "case.failed"]
     assert failed
     assert failed[-1]["status_message"] == "Не удалось передать задачу оркестратору. Проверьте адрес оркестратора в настройках и повторите."
+    assert (failed[-1].get("payload") or {}).get("reason") == "orchestrator_error"
     assert "Connection refused" in str((failed[-1].get("payload") or {}).get("detail") or "")
     feed = client.get(f"/cases/{case_id}").json()
     assert feed["status_message"] == failed[-1]["status_message"]
+
+
+def test_invoke_action_timeout_does_not_fail_the_case(monkeypatch) -> None:
+    """CASE-6aa50b14: ReadTimeout is not “wrong URL”; n8n may still be running."""
+    import asyncio
+
+    monkeypatch.setenv("ORCHESTRATOR_WEBHOOK_URL", "http://127.0.0.1:9/webhook/mas-orchestrator-step")
+    from app import cases_api, control_plane
+    from app.orchestrator import OrchestratorError
+    from app.settings import Settings
+
+    monkeypatch.setattr("app.cases_api.get_settings", lambda: Settings())
+    monkeypatch.setattr("app.cases_api._invoke_create", lambda case_id: None)
+
+    async def boom(payload, *, files=None, timeout_s=90.0):
+        raise OrchestratorError(
+            "Orchestrator webhook ReadTimeout after 180s (limit 180s)",
+            status_code=504,
+            reason="orchestrator_timeout",
+            timeout_s=180.0,
+            elapsed_s=180.0,
+        )
+
+    monkeypatch.setattr("app.cases_api.invoke_orchestrator", boom)
+    res = client.post("/cases", data={"task_description": "медленный шаг", "requested_by": "tester"})
+    case_id = res.json()["case_id"]
+    asyncio.run(cases_api._invoke_action(case_id, action="create"))
+    row = control_plane.get_case(case_id)
+    assert row["status"] == "running"
+    timed = [e for e in control_plane.list_events(case_id) if e.get("kind") == "orchestrator.status"]
+    assert timed
+    assert timed[-1]["payload"]["reason"] == "orchestrator_timeout"
+    assert timed[-1]["payload"]["timeout_s"] == 180.0
+    assert "адрес оркестратора" not in (timed[-1].get("status_message") or "")
+    assert not [e for e in control_plane.list_events(case_id) if e.get("kind") == "case.failed"]
 

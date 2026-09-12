@@ -9,7 +9,9 @@ description: Runs the NOVATEK RE MASter verification gate (workflow regeneration
 
 ```bash
 python3 scripts/mas_gate.py                 # offline: regen drift, 16 n8n/tests/*-smoke.js, 5 pytest suites, combat engine (~1–2 min)
-python3 scripts/mas_gate.py --live          # + lab redeploy + 12 live cases (~20 min, streamed): 6 run_live_five in parallel + demo_agent_long_job ∥ excel_datasets + three_agent_chain + 3 recovery
+python3 scripts/mas_gate.py --bundle        # dist/mas-<VERSION>.zip (field import pack; not a default offline stage)
+python3 scripts/mas_gate.py --live          # + lab redeploy + 12 live cases (≤20 min): 6 commissioning (LIVE_FIVE_WORKERS=6), then demo_agent_long_job ∥ three_agent_chain ∥ excel_datasets, then recovery (agent_down, then rework ∥ step_limit)
+python3 scripts/mas_gate.py --live --repeat 3   # six commissioning ×3 in one pool (workers=9), demo/chain/datasets/recovery once; --hot if lab healthy / no JSON drift; ~20 min. Not 12×3. Do not enable demo_agent during the six.
 python3 scripts/mas_gate.py --only live     # skip offline stages after a GREEN `mas_gate.py`
 python3 scripts/mas_gate.py --live --cases combat_case3
 python3 scripts/mas_gate.py --only smokes,pytest --keep-going
@@ -23,7 +25,7 @@ When to add `--live`: any change to `generate_mas_orchestrator.py`, agent genera
 - `smokes` failure prints the assertion — fix the generator, not the smoke, unless the behaviour change was intended and documented.
 - `pytest` prints the last line per suite; failures print the tail. Excel suite runs from the Activity venv with `PYTHONPATH=excel-agent-tools API_KEY=test-key`.
 - `combat` is the offline engine (no LLM). A failure here is a deterministic bug in Schedule Builder — fix before any live run.
-- `live` prints one JSON line per case (`ok`, `status`, `mismatch_count`) and `FAIL <case>: <reason>`. Reasons the harness raises: loop (repeat handoff), repeated HITL question, `completion_review`, step budget, `done` without `.INC`, machine text, `.INC` semantic mismatch.
+- `live` prints one JSON line per case (`ok`, `status`, `mismatch_count`, `steps`, `warnings`, `tool_calls`, `plan`, `duration_ms`, `pass` on commissioning repeats) and `FAIL <case>: <reason>`. Reasons the harness raises: loop (repeat handoff), repeated HITL question, `completion_review`, step budget, `done` without `.INC`, machine text, `.INC` semantic mismatch, α2 log thresholds (`warnings`/`steps`/`tool_calls` over the limit — the message names `seq`/`title` of the log record), LLM provider 503/busy. `--repeat N` runs each of the six commissioning specs N times in one pool (same INC/thresholds) and prints a per-case table (passes, step distribution, plan shapes, time, INC); demo/chain/datasets/recovery stay once (recovery mutates excel-tools / `max_steps` and cannot overlap with commissioning or with each other except rework∥step_limit). Do not enable `demo_agent` while the six run. Wall ≤ 20 min. `--hot` when regen did not change JSON.
 
 ## After a live failure
 

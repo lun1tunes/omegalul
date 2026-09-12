@@ -76,6 +76,7 @@ def test_records_levels_sources_steps_and_links() -> None:
     summary = log["summary"]
     assert summary["steps"] == 2 and summary["tool_calls"] == 2 and summary["hitl_rounds"] == 1 and summary["handoffs"] == 1
     assert summary["errors"] == 0 and summary["warnings"] == 2 and summary["agents"] == ["excel_extractor"]
+    assert summary["tool_calls_by_agent"] == {"excel_extractor": 2}
     steps = {s["step"]: s for s in log["steps"]}
     assert steps[0]["title"] == "Старт" and steps[1]["agent_id"] == "excel_extractor" and steps[1]["tool_calls"] == 2 and steps[1]["level"] == "warn"
     assert steps[2]["action_type"] == "finish" and steps[2]["duration_ms"] is not None
@@ -186,3 +187,87 @@ def test_post_event_with_execution_id_maps_execution_to_case_and_accepts_trace_k
     record = next(r for r in client.get(f"/cases/{case_id}/log").json()["records"] if r["kind"] == "trace.note")
     assert record["level"] == "info" and record["title"] == "demo_agent: фон: 3 файла" and record["detail"]["files"] == 3
     assert client.post(f"/cases/{case_id}/events", json={"kind": "trace.bogus", "actor": "x"}).status_code == 422
+
+
+def test_threshold_violations_name_the_log_record() -> None:
+    """α2: a live fail must point at seq/title, not only a counter (no n8n)."""
+    records = case_log.build_case_log(_seed("CASE-log-thresh"))["records"]
+    clean = case_log.threshold_violations(records, max_warnings=2, max_steps=6, max_tool_calls_per_agent=4)
+    assert clean == []
+    warn = case_log.threshold_violations(records, max_warnings=0, max_steps=6, max_tool_calls_per_agent=4)
+    assert any("warnings=2 > 0" in p and "extract_commissioning" in p and "seq=" in p for p in warn)
+    steps = case_log.threshold_violations(records, max_warnings=10, max_steps=1, max_tool_calls_per_agent=1)
+    assert any("steps=2 > 1" in p and "seq=" in p for p in steps)
+    tools = case_log.threshold_violations(records, max_warnings=10, max_steps=6, max_tool_calls_per_agent=1)
+    assert any("tool_calls[excel_extractor]=2 > 1" in p and "seq=" in p for p in tools)
+    skipped = case_log.threshold_violations(records, max_warnings=None, max_steps=None, max_tool_calls_per_agent=None)
+    assert skipped == []
+
+
+def test_unparsed_and_timeout_are_named_in_the_log() -> None:
+    """CASE-6aa50b14: parser/timeout must show the real reason, not a generic URL hint."""
+    case_id = "CASE-log-parse"
+    control_plane.create_case(case_id, "тест", initial_event={"kind": "case.created", "actor": "user", "status": "new"})
+    control_plane.append_event(
+        case_id,
+        kind="orchestrator.decision",
+        actor="orchestrator",
+        status_message="Не удалось разобрать следующий шаг. Формулирую решение заново.",
+        payload={
+            "action_type": "continue",
+            "guard": "decision_unparsed",
+            "llm_parse": {
+                "error": "llm_truncated_empty",
+                "finish_reason": "length",
+                "completion_tokens": 2048,
+                "reasoning_tokens": 2048,
+                "attempt": 1,
+            },
+        },
+    )
+    control_plane.append_event(
+        case_id,
+        kind="orchestrator.status",
+        actor="orchestrator",
+        status="timeout",
+        status_message="Оркестратор не подтвердил шаг за отведённое время. Задача может ещё выполняться — смотрите лог.",
+        payload={"reason": "orchestrator_timeout", "elapsed_s": 181.2, "timeout_s": 180.0},
+    )
+    log = case_log.build_case_log(case_id)
+    decision = next(r for r in log["records"] if r["kind"] == "orchestrator.decision")
+    timeout = next(r for r in log["records"] if r["kind"] == "orchestrator.status")
+    assert decision["level"] == "warn"
+    assert "decision_unparsed" in decision["title"]
+    assert "llm_truncated_empty" in decision["title"]
+    assert "length" in decision["title"]
+    assert "2048 tok" in decision["title"]
+    assert "think 2048" in decision["title"]
+    assert timeout["level"] == "warn"
+    assert timeout["title"] == "Оркестратор: timeout 181.2s / 180.0s"
+    assert log["summary"]["warnings"] == 1
+    only_timeout = [r for r in log["records"] if r["kind"] == "orchestrator.status"]
+    assert case_log.threshold_violations(only_timeout, max_warnings=0, max_steps=6, max_tool_calls_per_agent=4) == []
+    assert case_log.summarize(only_timeout, status="running")["warnings"] == 0
+
+
+def test_metrics_cases_since_excludes_older_and_omits_records() -> None:
+    old_id = _seed("CASE-metrics-old")
+    when = "2020-01-01T00:00:00+00:00"
+    control_plane._CASES[old_id]["updated_at"] = when
+    for event in control_plane._EVENTS.get(old_id, []):
+        event["created_at"] = when
+    new_id = _seed("CASE-metrics-new")
+    bad = client.get("/metrics/cases", params={"since": "not-a-date"})
+    assert bad.status_code == 400
+    body = client.get("/metrics/cases", params={"since": "2024-01-01T00:00:00Z"}).json()
+    ids = [c["case_id"] for c in body["cases"]]
+    assert new_id in ids and old_id not in ids
+    assert body["totals"]["count"] == 1
+    row = next(c for c in body["cases"] if c["case_id"] == new_id)
+    assert "records" not in row and "summary" in row
+    assert row["summary"]["tool_calls_by_agent"] == {"excel_extractor": 2}
+    assert "warnings" in row["summary"] and "steps" in row["summary"]
+    all_body = client.get("/metrics/cases").json()
+    all_ids = {c["case_id"] for c in all_body["cases"]}
+    assert old_id in all_ids and new_id in all_ids
+    assert all_body["since"] is None

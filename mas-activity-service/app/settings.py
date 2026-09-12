@@ -13,7 +13,20 @@ from pydantic_settings import BaseSettings, SettingsConfigDict
 SERVICE_ROOT = Path(__file__).resolve().parents[1]
 REPO_ROOT = SERVICE_ROOT.parent
 STATIC = SERVICE_ROOT / "static"
-VERSION = "0.7.0"
+
+
+def _read_mas_version() -> str:
+    for path in (SERVICE_ROOT / "VERSION", REPO_ROOT / "VERSION"):
+        if not path.is_file():
+            continue
+        for line in path.read_text(encoding="utf-8").splitlines():
+            text = line.strip()
+            if text and not text.startswith("#"):
+                return text
+    return ""
+
+
+VERSION = _read_mas_version() or "0.0.0"
 DEFAULT_ORCHESTRATOR_WORKFLOW_ID = "e9bbdb6e-3b7c-5dc0-851a-30bd9f2eb0d6"
 ORCHESTRATOR_WEBHOOK_PATH = "mas-orchestrator-step"
 HYDRATE_WEBHOOK_PATH = "mas-activity-hydrate"
@@ -137,6 +150,11 @@ class Settings(BaseSettings):
     n8n_webhook_checks: str = Field(default="", validation_alias="N8N_WEBHOOK_CHECKS")
     # «Продолжить» is allowed on running/waiting_agent only when the last event is this old (seconds).
     resume_stale_s: float = Field(default=120.0, validation_alias="RESUME_STALE_S")
+    # Activity waits this long for one orchestrator webhook (Decision LLM + callee).
+    # Must exceed LLM_HTTP_TIMEOUT_MS (600 s). qwen/qwen3.6-27b steps ran 185–243s (CASE-6aa50b14).
+    orchestrator_invoke_timeout_s: float = Field(
+        default=1800.0, validation_alias="ORCHESTRATOR_INVOKE_TIMEOUT_S"
+    )
 
     @field_validator(
         "n8n_base_url",

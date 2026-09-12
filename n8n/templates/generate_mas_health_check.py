@@ -67,12 +67,17 @@ def _fill(js: str) -> str:
         f"svc('Probe {label} /health', '{label} /health', urls.{hk}, (b) => b && (b.status === 'ok' || b.ok === true));"
         for label, _u, hk, _h in AGENT_SERVICES
     )
+    version_rows = "\n".join(
+        f"    ['{label}', versionOf(readHttp('Probe {label} /health').body)],"
+        for label, _u, _h, _host in AGENT_SERVICES
+    )
     return (
         js.replace("__RUNTIME_KEYS__", json.dumps(RUNTIME_KEYS))
         .replace("__LAB_HOSTS__", json.dumps(LAB_HOSTS))
         .replace("__REQUIRED_AGENTS__", json.dumps(REQUIRED_AGENTS))
         .replace("__AGENT_HEALTH_URLS__", health_urls)
         .replace("__AGENT_HEALTH_CHECKS__", health_checks)
+        .replace("__AGENT_VERSION_ROWS__", version_rows)
     )
 
 
@@ -173,6 +178,7 @@ const KEYS = __RUNTIME_KEYS__;
 const trim = (v) => String(v || '').trim().replace(/\/+$/, '');
 const runtime = {};
 for (const k of KEYS) runtime[k] = trim(cfg[k]);
+runtime.mas_version = String(cfg.mas_version || '').trim();
 const LAB_DNS = new RegExp('^https?://(' + __LAB_HOSTS__.join('|') + ')(:\\d+)?$', 'i');
 const runtime_issues = [];
 if (cfgError) runtime_issues.push({ key: '*', kind: 'unbound', detail: cfgError });
@@ -236,7 +242,7 @@ const unbound = issues.find((i) => i.kind === 'unbound');
 if (unbound) {
   push('Runtime Config: bound and readable', 'FAIL', BIND_FIX, unbound.detail);
 } else {
-  push('Runtime Config: bound and readable', 'PASS', BIND_FIX, `${Object.keys(runtime).filter((k) => runtime[k]).length}/5 URLs set`);
+  push('Runtime Config: bound and readable', 'PASS', BIND_FIX, `${Object.keys(runtime).filter((k) => k !== 'mas_version' && runtime[k]).length}/5 URLs set`);
 }
 for (const i of issues) {
   if (i.kind === 'unbound') continue;
@@ -300,6 +306,19 @@ const ready = readHttp('Probe Activity /ready');
     ready.ok ? ready.detail : `${ready.detail}${failing.length ? ` failing=${failing.join(',')}` : ''}${missing.length ? ` missing_config=${missing.join(',')}` : ''}`);
 }
 __AGENT_HEALTH_CHECKS__
+
+const expectedVer = String(runtime.mas_version || '').trim();
+if (expectedVer) {
+  const versionOf = (body) => (body && typeof body === 'object' ? String(body.mas_version || body.version || '') : '');
+  const seen = [
+    ['Activity', versionOf(activity.body)],
+__AGENT_VERSION_ROWS__
+  ];
+  const bad = seen.filter((row) => row[1] !== expectedVer);
+  push('Live: MAS version', bad.length === 0 ? 'PASS' : 'FAIL',
+    'VERSION at pack root; MAS — Runtime Config → mas_version; restart Windows services after unpack',
+    bad.length ? bad.map((row) => `${row[0]}=${row[1] || 'n/a'}`).join('; ') + ` expected=${expectedVer}` : expectedVer);
+}
 
 /* 3. n8n webhooks (this n8n calling itself — same path the Orchestrator self-POST uses) */
 const webhookFix = (wf) => `n8n: ${wf} Active; Header Auth credential on this form's probe = the one on the ${wf} webhook; orchestrator_step_url in MAS — Runtime Config = URL this n8n can reach itself on`;
@@ -386,7 +405,8 @@ def main() -> None:
         "1. URLs come from **MAS — Runtime Config** (bind **Runtime endpoints**). "
         "No second copy of addresses lives here.\n"
         "2. Probes: Activity `/health` + `/ready`, Excel Tools / Schedule Builder / Math `/health`, "
-        "Orchestrator webhook (`action=probe`), Control Plane Proxy webhook (`list_agents`).\n"
+        "Orchestrator webhook (`action=probe`), Control Plane Proxy webhook (`list_agents`). "
+        "`mas_version` in Runtime Config must match `/health` of the Windows services.\n"
         "3. Webhook probes use the same Header Auth credential as the Orchestrator / Control Plane Proxy webhooks.\n"
         "4. Goal on the field: **PASS** with 0 FAIL. Lab Compose DNS names in Runtime Config show as TODO "
         "(`PASS_WITH_TODO`).\n"

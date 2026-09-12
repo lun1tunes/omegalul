@@ -320,7 +320,15 @@ def test_workflows_use_current_n8n_2_30_8_ai_node_versions() -> None:
             elif node["type"] == "@n8n/n8n-nodes-langchain.lmChatOpenAi":
                 assert node["typeVersion"] == 1.3, (path.name, node["name"])
                 options = node["parameters"].get("options") or {}
-                assert options.get("timeout") == 300000, (path.name, node["name"], options)
+                live_chat = path.name in {
+                    "mas-orchestrator.workflow.json",
+                    "excel-extractor-agent.workflow.json",
+                    "schedule-builder-agent.workflow.json",
+                    "demo-agent.workflow.json",
+                    "tnavigator-schedule-builder.workflow.json",
+                }
+                expect_timeout = 600000 if live_chat else 300000
+                assert options.get("timeout") == expect_timeout, (path.name, node["name"], options)
                 assert options.get("maxRetries") == 5, (path.name, node["name"], options)
             elif node["type"] == "@n8n/n8n-nodes-langchain.outputParserStructured":
                 params = node["parameters"]
@@ -707,8 +715,11 @@ def test_mas_runtime_config_is_the_only_url_set() -> None:
         "math_url",
         "demo_agent_url",
         "orchestrator_step_url",
-        "max_steps",
-        "agent_workflow_ids",
+            "max_steps",
+            "chat_model",
+            "chat_base_url",
+            "agent_workflow_ids",
+            "mas_version",
     ]
     assert urls["parameters"]["includeOtherFields"] is False
     blob = json.dumps(workflow)
@@ -1603,18 +1614,19 @@ def test_schedule_generator_and_architecture_decisions_are_portable_and_explicit
     assert "Path(__file__).resolve().parents[2]" in generator
     assert "/home/" not in generator
 
-    # docs.md is the field runbook; the architecture decisions below must stay stated explicitly
-    # (revision 9 dropped the retired Builder-pipeline scoring thresholds from the runbook).
+    # docs.md is the field engineer's runbook (deploy + use), not the coding-agent contract.
     docs = (ROOT / "docs.md").read_text(encoding="utf-8")
-    assert "Excel читает только Excel Tools" in docs
-    assert "сам `.xlsx` не открывает" in docs
-    assert "`returnIntermediateSteps`" in docs
-    assert "**`CREATE`** — новый SCHEDULE; **`REVISE`**" in docs
-    assert "Сравнение `.INC` с эталоном — **семантическое**" in docs
-    assert "state.agents[<agent_id>]" in docs
-    assert "Оркестратор не правится и не регенерируется" in docs
-    assert "## 6. Интеграция нового агента" in docs
-    assert "### 3.2. Allowlist keywords" in docs
+    assert "Как это устроено" in docs
+    assert "flowchart" in docs
+    assert "MAS — Runtime Config" in docs
+    assert "chat_base_url" in docs
+    assert "IMPORT_ORDER.txt" in docs
+    assert "mas-deployment-health-check" in docs
+    assert "Agent — Excel Extractor" in docs
+    assert "Agent — Schedule Builder" in docs
+    assert "0.0.0.0" in docs
+    assert "## 6. Интеграция нового агента" not in docs
+    assert "### 3.2. Allowlist keywords" not in docs
 
 
 def ingestible_operating_guide_documents() -> list[dict]:

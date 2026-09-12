@@ -1,4 +1,4 @@
-"""Every agent service of the repo has the shape of ``agents-template/demo_agent`` (docs.md §6, AGENTS.md §6).
+"""Every agent service of the repo has the shape of ``agents-template/demo_agent`` (AGENTS.md §6).
 
     <service>/app/__init__.py   puts ../mas-agent-kit on sys.path (the kit is a repo module, not a pip package)
     <service>/app/agent.py      class <Name>Agent(AgentService) with open_session / result; module-level ``agent = <Name>Agent()``

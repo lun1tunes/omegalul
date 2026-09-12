@@ -510,6 +510,7 @@ def test_extract_schedule_from_builder_deliverables() -> None:
 def test_ready_health_and_static_assets() -> None:
     health = client.get("/health").json()
     assert health["version"] == VERSION
+    assert health["mas_version"] == VERSION
     assert health["n8n_transport"] == "unconfigured"
     assert "state_persist" in health
     assert "auth_required" not in health
@@ -544,9 +545,9 @@ def test_ready_health_and_static_assets() -> None:
         assert gone not in html, gone
     # Cache busting: the HTML must reference the current asset versions.
     assert "app.js?v=108" in html
-    assert "schema.js?v=45" in html
+    assert "schema.js?v=46" in html
     assert "log.js?v=1" in html
-    assert "app.css?v=113" in html
+    assert "app.css?v=114" in html
     # Developer mode: the switch and the «Лог» tab (hidden until the switch is on) ship with the page.
     for anchor in ('id="devModeToggle"', "Режим разработчика", 'id="viewLogBtn"', 'id="logView"', 'id="logSteps"', 'id="logDownload"'):
         assert anchor in html, anchor
@@ -596,7 +597,7 @@ def test_ready_health_and_static_assets() -> None:
         "engineer>orchestrator", "function formatHitl", "Инженер",
         "--orch-w", "is-roomy", "agentFit", "w < 700 || h < 360",
         "function syncNodeChrome", "el.dataset.hint", "node.dataset.hint", "is-hint",
-        "const lane = isCompact() ? 36 : 56",
+        "const lane = isCompact() ? 36 : 56", "function placePeek",
     ):
         assert needle in schema_js, needle
     for agent in ("excel_extractor", "schedule_builder", "calculation_agent"):
@@ -614,6 +615,7 @@ def test_ready_health_and_static_assets() -> None:
         "--orch-w:",
         "--cap-lines:",
         ".schema-node-caption.is-hint",
+        "@keyframes peek-in",
     ):
         assert needle in css, needle
     js = client.get("/static/app.js")

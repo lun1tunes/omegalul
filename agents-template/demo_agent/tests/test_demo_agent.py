@@ -77,6 +77,7 @@ def test_health_lists_tools(client: TestClient) -> None:
     body = client.get("/health").json()
     assert body["ok"] is True and body["agent_id"] == "demo_agent"
     assert body["tools"] == ["count_wells", "start_long_job", "ask_engineer"]
+    assert body["mas_version"]
 
 
 def test_count_wells_completes_with_upstream_facts(client: TestClient, activity_url: str) -> None:

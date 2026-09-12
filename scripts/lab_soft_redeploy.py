@@ -24,6 +24,7 @@ import tempfile
 import time
 import urllib.error
 import urllib.request
+from concurrent.futures import ThreadPoolExecutor
 from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[1]
@@ -332,20 +333,34 @@ def apply_control_plane_sql() -> None:
         print(f"applied {name}")
 
 
+def chat_provider(env: dict[str, str]) -> tuple[str, str, str]:
+    """API key, base URL, source name. OpenRouter wins when OPENROUTER_API_KEY is set."""
+    or_key = (env.get("OPENROUTER_API_KEY") or "").strip()
+    if or_key:
+        url = (env.get("OPENROUTER_BASE_URL") or "https://openrouter.ai/api/v1").rstrip("/")
+        return or_key, url, "openrouter"
+    key = (env.get("QWEN_API_KEY") or "").strip()
+    url = (env.get("QWEN_BASE_URL") or "https://api.openai.com/v1").rstrip("/")
+    return key, url, "qwen"
+
+
 def ensure_qwen_credential(env: dict[str, str]) -> str:
-    """Create or reuse OpenAI-compatible Qwen credential. Returns live n8n id."""
+    """Create or sync the OpenAI-compatible chat credential. Returns live n8n id."""
     existing = psql("SELECT name || E'\\t' || id FROM credentials_entity;")
+    found = ""
     for line in existing.splitlines():
         if "\t" not in line:
             continue
         name, cid = line.split("\t", 1)
         if name.strip() == "Qwen OpenAI-compatible":
-            print(f"qwen credential exists id={cid.strip()}")
-            return cid.strip()
-    key = (env.get("QWEN_API_KEY") or "").strip()
-    url = (env.get("QWEN_BASE_URL") or "https://api.openai.com/v1").rstrip("/")
+            found = cid.strip()
+            break
+    key, url, src = chat_provider(env)
     if not key:
-        print("qwen credential skip: QWEN_API_KEY missing")
+        if found:
+            print(f"qwen credential exists id={found} (key missing, left as-is)")
+            return found
+        print("qwen credential skip: OPENROUTER_API_KEY / QWEN_API_KEY missing")
         return ""
     import http.cookiejar
 
@@ -353,7 +368,7 @@ def ensure_qwen_credential(env: dict[str, str]) -> str:
     password = env.get("N8N_PASSWORD")
     if not user or not password:
         print("qwen credential skip: no n8n login")
-        return ""
+        return found
     base = f"http://127.0.0.1:{env.get('N8N_HOST_PORT', '15678')}"
     cj = http.cookiejar.CookieJar()
     opener = urllib.request.build_opener(urllib.request.HTTPCookieProcessor(cj))
@@ -369,6 +384,22 @@ def ensure_qwen_credential(env: dict[str, str]) -> str:
         "type": "openAiApi",
         "data": {"apiKey": key, "url": url},
     }
+    if found:
+        for method, path in (("PATCH", f"/rest/credentials/{found}"), ("PUT", f"/rest/credentials/{found}")):
+            req = urllib.request.Request(
+                base + path,
+                data=json.dumps(payload).encode(),
+                headers={"Content-Type": "application/json", "Accept": "application/json"},
+                method=method,
+            )
+            try:
+                opener.open(req, timeout=60)
+                print(f"qwen credential synced id={found} via {src} url={url}")
+                return found
+            except urllib.error.HTTPError:
+                continue
+        print(f"qwen credential exists id={found} (sync failed, left as-is)")
+        return found
     req = urllib.request.Request(
         base + "/rest/credentials",
         data=json.dumps(payload).encode(),
@@ -386,7 +417,7 @@ def ensure_qwen_credential(env: dict[str, str]) -> str:
             "INSERT INTO shared_credentials (\"credentialsId\", \"projectId\", role) "
             f"VALUES ('{cid}', '{PROJECT_ID}', 'credential:owner') ON CONFLICT DO NOTHING;"
         )
-    print(f"qwen credential created id={cid}")
+    print(f"qwen credential created id={cid} via {src} url={url}")
     return cid
 
 
@@ -515,7 +546,8 @@ def patch_nodes(nodes, name_to_id: dict[str, str], env: dict[str, str]) -> int:
                     changed += 1
                 elif ctype == "openAiApi":
                     qwen_id = str(env.get("_N8N_QWEN_CRED_ID") or "").strip()
-                    if "qwen" in cname.lower() and qwen_id:
+                    is_chat = node.get("type") == "@n8n/n8n-nodes-langchain.lmChatOpenAi"
+                    if qwen_id and (is_chat or "qwen" in cname.lower()):
                         meta["id"] = qwen_id
                         meta["name"] = "Qwen OpenAI-compatible"
                     else:
@@ -604,6 +636,20 @@ def patch_nodes(nodes, name_to_id: dict[str, str], env: dict[str, str]) -> int:
                         "http://127.0.0.1:5678/webhook/mas-orchestrator-step",
                     )
                     changed += 1
+                elif key == "chat_model":
+                    overlay = str(env.get("N8N_CHAT_MODEL") or "").strip()
+                    if overlay:
+                        assignment["value"] = overlay
+                        changed += 1
+                elif key == "chat_base_url":
+                    base = str(
+                        env.get("OPENROUTER_BASE_URL")
+                        or env.get("QWEN_BASE_URL")
+                        or ""
+                    ).strip()
+                    if base:
+                        assignment["value"] = base.rstrip("/")
+                        changed += 1
         if node.get("name") in {"Runtime configuration", "Runtime endpoints"}:
             for assignment in (((params.get("assignments") or {}).get("assignments")) or []):
                 key = assignment.get("name")
@@ -935,6 +981,34 @@ def run_health_form() -> str | None:
     return None
 
 
+def _url_ok(url: str) -> bool:
+    try:
+        with urllib.request.urlopen(url, timeout=3) as resp:
+            return int(resp.status) == 200
+    except Exception:
+        return False
+
+
+def lab_core_healthy(env: dict[str, str]) -> bool:
+    n8n_port = env.get("N8N_HOST_PORT", "15678")
+    excel_port = env.get("EXCEL_TOOLS_HOST_PORT", "8000")
+    schedule_port = env.get("SCHEDULE_BUILDER_HOST_PORT", "8090")
+    math_port = env.get("MATH_SERVICE_HOST_PORT", "8100")
+    demo_port = env.get("DEMO_AGENT_HOST_PORT", "8300")
+    activity_port = env.get("MAS_ACTIVITY_HOST_PORT", "8200")
+    return all(
+        _url_ok(u)
+        for u in (
+            f"http://127.0.0.1:{n8n_port}/healthz",
+            f"http://127.0.0.1:{excel_port}/health",
+            f"http://127.0.0.1:{schedule_port}/health",
+            f"http://127.0.0.1:{math_port}/health",
+            f"http://127.0.0.1:{demo_port}/health",
+            f"http://127.0.0.1:{activity_port}/health",
+        )
+    )
+
+
 def wait_url(url: str, attempts: int = 90) -> None:
     """Host-side health wait — avoids depending on wget inside images."""
     for i in range(attempts):
@@ -948,7 +1022,7 @@ def wait_url(url: str, attempts: int = 90) -> None:
     raise SystemExit(f"not healthy: {url}")
 
 
-def wait_control_plane_webhook(env: dict[str, str], attempts: int = 60) -> None:
+def wait_control_plane_webhook(env: dict[str, str], attempts: int = 60, *, required: bool = True) -> bool:
     """Activity cannot boot until production /webhook/mas-control-plane is registered."""
     port = env.get("N8N_HOST_PORT", "15678")
     url = f"http://127.0.0.1:{port}/webhook/mas-control-plane"
@@ -969,7 +1043,7 @@ def wait_control_plane_webhook(env: dict[str, str], attempts: int = 60) -> None:
                 data = json.loads(raw) if raw else {}
                 if data.get("ok") is True:
                     print("control-plane webhook ok")
-                    return
+                    return True
                 print(f"control-plane unexpected body {str(data)[:180]}")
         except urllib.error.HTTPError as exc:
             code = int(exc.code)
@@ -977,11 +1051,13 @@ def wait_control_plane_webhook(env: dict[str, str], attempts: int = 60) -> None:
             print(f"control-plane HTTP {code} {text.replace(chr(10), ' ')}")
             if code != 404:
                 print("control-plane webhook registered")
-                return
+                return True
         except Exception as exc:  # noqa: BLE001
             print(f"control-plane wait {exc}")
         time.sleep(2)
-    raise SystemExit("control-plane webhook not registered")
+    if required:
+        raise SystemExit("control-plane webhook not registered")
+    return False
 
 
 def wait_activity_health(env: dict[str, str]) -> None:
@@ -1015,6 +1091,47 @@ def wait_activity_health(env: dict[str, str]) -> None:
     raise SystemExit(f"not healthy: {host}")
 
 
+def restart_python_services() -> None:
+    """Bind-mount + uvicorn without --reload: restart so live tests the current Python."""
+    run(["docker", "compose", "restart", "excel-tools", "math-service", "schedule-builder", "demo-agent"], check=False, timeout=300)
+    env = load_env()
+    def _wait_svc(service: str, inner: str) -> None:
+        print(f"wait {service} {inner}")
+        for _ in range(90):
+            cp = run(
+                [
+                    "docker",
+                    "compose",
+                    "exec",
+                    "-T",
+                    service,
+                    "python3",
+                    "-c",
+                    f"import urllib.request; urllib.request.urlopen({inner!r}, timeout=3).read()",
+                ],
+                check=False,
+                timeout=20,
+            )
+            if cp.returncode == 0:
+                return
+            time.sleep(2)
+        logs = run(["docker", "compose", "logs", "--tail", "15", service], check=False, timeout=30)
+        raise SystemExit(f"{service} did not become healthy at {inner}:\n{(logs.stdout or logs.stderr)[-1500:]}")
+
+    with ThreadPoolExecutor(max_workers=4) as pool:
+        futs = [
+            pool.submit(_wait_svc, service, inner)
+            for service, inner in (
+                ("math-service", "http://127.0.0.1:8100/health"),
+                ("schedule-builder", "http://127.0.0.1:8090/health"),
+                ("excel-tools", "http://127.0.0.1:8000/health"),
+                ("demo-agent", "http://127.0.0.1:8300/health"),
+            )
+        ]
+        for fut in futs:
+            fut.result()
+
+
 def ensure_compose_up() -> None:
     print("== compose up ==")
     # Do not start mas-activity yet: it requires an active Control Plane Proxy webhook.
@@ -1035,49 +1152,20 @@ def ensure_compose_up() -> None:
         ],
         timeout=300,
     )
-    # The Python services bind-mount the repo but run uvicorn without --reload: `up -d` keeps an already
-    # running container (and its stale modules). Restart them so the live gate exercises the current code
-    # (CASE-6a9efd37-367ae1: Builder still read state.data.excel after the Phase 2 move to state.agents).
-    run(["docker", "compose", "restart", "excel-tools", "math-service", "schedule-builder", "demo-agent"], check=False, timeout=300)
     env = load_env()
-    n8n_port = env.get("N8N_HOST_PORT", "15678")
-    wait_url(f"http://127.0.0.1:{n8n_port}/healthz")
-    for service, inner in (
-        ("math-service", "http://127.0.0.1:8100/health"),
-        ("schedule-builder", "http://127.0.0.1:8090/health"),
-        ("excel-tools", "http://127.0.0.1:8000/health"),
-        ("demo-agent", "http://127.0.0.1:8300/health"),
-    ):
-        print(f"wait {service} {inner}")
-        for _ in range(90):
-            cp = run(
-                [
-                    "docker",
-                    "compose",
-                    "exec",
-                    "-T",
-                    service,
-                    "python3",
-                    "-c",
-                    f"import urllib.request; urllib.request.urlopen({inner!r}, timeout=3).read()",
-                ],
-                check=False,
-                timeout=20,
-            )
-            if cp.returncode == 0:
-                break
-            time.sleep(2)
-        else:
-            # A dead agent service turns every live case into a false HITL ("К задаче не приложен исходный SCHEDULE",
-            # 6/6 on 2026-09-07 when schedule-builder exited on a pip race) — stop here instead of running cases.
-            logs = run(["docker", "compose", "logs", "--tail", "15", service], check=False, timeout=30)
-            raise SystemExit(f"{service} did not become healthy at {inner}:\n{(logs.stdout or logs.stderr)[-1500:]}")
+    wait_url(f"http://127.0.0.1:{env.get('N8N_HOST_PORT', '15678')}/healthz")
+    restart_python_services()
 
 
 def main() -> int:
     parser = argparse.ArgumentParser()
     parser.add_argument("--skip-health", action="store_true")
     parser.add_argument("--skip-import", action="store_true", help="only rebind/publish existing workflows")
+    parser.add_argument(
+        "--hot",
+        action="store_true",
+        help="lab already up: restart Python services only, skip n8n import (falls back to full if unhealthy)",
+    )
     parser.add_argument(
         "--wipe",
         action="store_true",
@@ -1091,6 +1179,16 @@ def main() -> int:
     args = parser.parse_args()
     t0 = time.time()
     env = load_env()
+    if args.hot and not args.wipe and lab_core_healthy(env) and wait_control_plane_webhook(env, attempts=2, required=False):
+        print("== hot: restart python services, skip n8n import ==")
+        restart_python_services()
+        run(["docker", "compose", "restart", "mas-activity"], timeout=120)
+        wait_activity_health(env)
+        elapsed = round(time.time() - t0, 1)
+        print(json.dumps({"overall": None, "activity_tasks": -1, "elapsed_s": elapsed, "hot": True}, ensure_ascii=False))
+        return 0
+    if args.hot:
+        print("hot: lab not healthy or control-plane down — full redeploy", flush=True)
     ensure_compose_up()
     apply_control_plane_sql()
     qwen_id = ensure_qwen_credential(env)
@@ -1121,12 +1219,13 @@ def main() -> int:
             )
     sync_history()
     publish(name_to_id)
-    run(["docker", "compose", "restart", "n8n"])
-    env = load_env()
-    wait_url(f"http://127.0.0.1:{env.get('N8N_HOST_PORT', '15678')}/healthz")
-    # Forms/webhooks register after active workflows finish loading.
-    time.sleep(8)
-    wait_control_plane_webhook(env)
+    if wait_control_plane_webhook(env, attempts=6, required=False):
+        print("n8n restart skipped: control-plane webhook already live")
+    else:
+        run(["docker", "compose", "restart", "n8n"])
+        env = load_env()
+        wait_url(f"http://127.0.0.1:{env.get('N8N_HOST_PORT', '15678')}/healthz")
+        wait_control_plane_webhook(env)
     run(["docker", "compose", "up", "-d", "--no-deps", "mas-activity"], timeout=180)
     # Volume-mounted Activity keeps running across up -d; restart loads new Python.
     run(["docker", "compose", "restart", "mas-activity"], timeout=120)

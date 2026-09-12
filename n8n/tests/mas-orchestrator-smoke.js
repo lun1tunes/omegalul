@@ -63,7 +63,11 @@ async function run(name, json, nodes = {}, binary = {}) {
     'Prepare decision context',
     'Call Knowledge Retrieval',
     'Attach orchestrator RAG evidence',
+    'Build decision chat',
+    'Decision chat',
     'Decision LLM',
+    'Build verify chat',
+    'Verify chat',
     'Parse decision',
     'Action router',
     'Call agent (n8n)',
@@ -98,32 +102,36 @@ async function run(name, json, nodes = {}, binary = {}) {
   assert.ok(uniqueY >= 8, `orchestrator still a line: uniqueY=${uniqueY}`);
   assert.ok(wf.nodes.some((n) => n.name === 'lane intake'));
   const decision = wf.nodes.find((n) => n.name === 'Decision LLM');
-  assert.equal(decision.type, '@n8n/n8n-nodes-langchain.chainLlm');
-  assert.equal(decision.typeVersion, 1.9);
-  assert.equal(decision.parameters.hasOutputParser, true);
-  // CASE-6aa19313-dadd64: Verify 503 killed the execution and left the case running with .INC already built.
+  assert.equal(decision.type, 'n8n-nodes-base.code');
   const verify = wf.nodes.find((n) => n.name === 'Verify completion');
-  for (const llm of [decision, verify]) {
-    assert.equal(llm.retryOnFail, true, `${llm.name} retries a model 503`);
-    assert.equal(llm.maxTries, 3);
-    assert.equal(llm.onError, 'continueRegularOutput');
+  assert.equal(verify.type, 'n8n-nodes-base.code');
+  // CASE-6aa19313-dadd64 / CASE-6aa51606-822385: HTTP chat retries 503; thinking off is in the body.
+  for (const name of ['Decision chat', 'Verify chat']) {
+    const http = wf.nodes.find((n) => n.name === name);
+    assert.equal(http.type, 'n8n-nodes-base.httpRequest');
+    assert.equal(http.retryOnFail, true, `${name} retries a model 503`);
+    assert.equal(http.maxTries, 3);
+    assert.equal(http.onError, 'continueRegularOutput');
+    assert.equal(http.parameters.nodeCredentialType, 'openAiApi');
+    assert.match(String(http.parameters.url), /chat_url/);
+    assert.equal(http.parameters.options.timeout, 600000);
   }
   assert.equal(text.includes('"Decision Agent"'), false);
+  assert.equal(text.includes('Decision Structured Output'), false);
+  assert.equal(text.includes('Verification Structured Output'), false);
 
   const model = wf.nodes.find((n) => n.name === 'Decision Chat Model — configure in UI');
   assert.ok(model);
-  assert.equal(model.parameters.model.value, 'qwen3.6-plus');
+  assert.equal(model.parameters.model.value, 'qwen/qwen3.6-27b');
   assert.equal(model.parameters.options.temperature, 0);
-  assert.equal(model.parameters.options.maxTokens, 1024);
+  assert.equal('maxTokens' in (model.parameters.options || {}), false);
+  assert.equal('reasoningEffort' in (model.parameters.options || {}), false);
   const modelEdges = wf.connections['Decision Chat Model — configure in UI'].ai_languageModel[0];
   assert.equal(modelEdges[0].type, 'ai_languageModel');
-  assert.ok(modelEdges.some((e) => e.node === 'Decision LLM' && e.type === 'ai_languageModel'));
-  assert.ok(modelEdges.some((e) => e.node === 'Decision Structured Output' && e.type === 'ai_languageModel'));
-  assert.ok(modelEdges.some((e) => e.node === 'Verify completion' && e.type === 'ai_languageModel'));
   assert.ok(modelEdges.some((e) => e.node === 'Interpret free-text answer' && e.type === 'ai_languageModel'));
   assert.ok(modelEdges.some((e) => e.node === 'Answer interpretation Structured Output' && e.type === 'ai_languageModel'));
-  const parserEdges = wf.connections['Decision Structured Output'].ai_outputParser[0];
-  assert.equal(parserEdges[0].node, 'Decision LLM');
+  assert.equal(modelEdges.some((e) => e.node === 'Decision LLM'), false);
+  assert.equal(modelEdges.some((e) => e.node === 'Verify completion'), false);
   const interpretParser = wf.connections['Answer interpretation Structured Output'].ai_outputParser[0];
   assert.equal(interpretParser[0].node, 'Interpret free-text answer');
   const interpretLlm = wf.nodes.find((n) => n.name === 'Interpret free-text answer');
@@ -331,8 +339,10 @@ async function run(name, json, nodes = {}, binary = {}) {
   );
   assert.equal(wf.connections['Prepare decision context'].main[0][0].node, 'Call Knowledge Retrieval');
   assert.equal(wf.connections['Call Knowledge Retrieval'].main[0][0].node, 'Attach orchestrator RAG evidence');
-  assert.equal(wf.connections['Attach orchestrator RAG evidence'].main[0][0].node, 'Decision LLM');
-  const system = decision.parameters.messages.messageValues[0].message;
+  assert.equal(wf.connections['Attach orchestrator RAG evidence'].main[0][0].node, 'Build decision chat');
+  assert.equal(wf.connections['Build decision chat'].main[0][0].node, 'Decision chat');
+  assert.equal(wf.connections['Decision chat'].main[0][0].node, 'Decision LLM');
+  const system = wf.nodes.find((n) => n.name === 'Build decision chat').parameters.jsCode;
   assert.match(system, /orchestrator_routing/);
   assert.equal(system.includes('не ходи в RAG'), false);
   assert.match(source('Prepare decision context'), /orchestrator_routing/);
@@ -1679,13 +1689,13 @@ async function run(name, json, nodes = {}, binary = {}) {
     assert.equal(wf.connections['Decision LLM'].main[0][0].node, 'Finish proposed?');
     assert.equal(wf.connections['Finish proposed?'].main[0][0].node, 'Prepare completion check');
     assert.equal(wf.connections['Finish proposed?'].main[1][0].node, 'Parse decision');
-    assert.equal(wf.connections['Prepare completion check'].main[0][0].node, 'Verify completion');
+    assert.equal(wf.connections['Prepare completion check'].main[0][0].node, 'Build verify chat');
+    assert.equal(wf.connections['Build verify chat'].main[0][0].node, 'Verify chat');
+    assert.equal(wf.connections['Verify chat'].main[0][0].node, 'Verify completion');
     assert.equal(wf.connections['Verify completion'].main[0][0].node, 'Parse decision');
-    assert.equal(wf.connections['Verification Structured Output'].ai_outputParser[0][0].node, 'Verify completion');
-    assert.ok(wf.connections['Decision Chat Model — configure in UI'].ai_languageModel[0].some((c) => c.node === 'Verify completion'));
     const verify = wf.nodes.find((n) => n.name === 'Verify completion');
-    assert.equal(verify.type, '@n8n/n8n-nodes-langchain.chainLlm');
-    const verifySystem = verify.parameters.messages.messageValues[0].message;
+    assert.equal(verify.type, 'n8n-nodes-base.code');
+    const verifySystem = wf.nodes.find((n) => n.name === 'Build verify chat').parameters.jsCode;
     assert.match(verifySystem, /извлечь данные ≠ построить/);
     assert.match(verifySystem, /План оркестратора — подсказка, не источник требований/);
     assert.match(verifySystem, /пункт плана, которого нет в цели, не делай обязательной частью/);
@@ -1837,7 +1847,7 @@ async function run(name, json, nodes = {}, binary = {}) {
     let prepared = await prepare(baseState);
     assert.match(prepared.planner_input, /План задачи \(твоя декомпозиция; статусы pending, active, done, blocked, dropped\):\n- план ещё не составлен: составь его в plan_update/);
     assert.deepEqual(prepared.schedule_retrieval_request.filters.topics, []);
-    const system = wf.nodes.find((n) => n.name === 'Decision LLM').parameters.messages.messageValues[0].message;
+    const system = wf.nodes.find((n) => n.name === 'Build decision chat').parameters.jsCode;
     assert.match(system, /plan_update/);
     assert.match(system, /Пункт без id отбрасывается/);
     assert.match(system, /finish возможен, только когда в плане нет пунктов pending, active или blocked/);
@@ -1848,7 +1858,15 @@ async function run(name, json, nodes = {}, binary = {}) {
     assert.match(system, /Не считай недостатком отсутствие ключа output_provides, которого цель не требовала/);
     assert.equal(system.includes('excel_extractor'), false);
     assert.equal(system.includes('schedule_builder'), false);
-    const schema = JSON.parse(wf.nodes.find((n) => n.name === 'Decision Structured Output').parameters.inputSchema);
+    const schemaStart = system.indexOf('const DECISION_SCHEMA = ');
+    const schemaEnd = system.indexOf(';\nconst DEFAULT_CHAT_MODEL');
+    assert.ok(schemaStart >= 0 && schemaEnd > schemaStart);
+    const schema = JSON.parse(system.slice(schemaStart + 'const DECISION_SCHEMA = '.length, schemaEnd));
+    assert.deepEqual(schema.required, ['status_message', 'action']);
+    assert.equal('task' in schema.properties.action.properties, false, 'action.task is discarded — not in the parser schema');
+    assert.equal('question_id' in schema.properties.action.properties, false);
+    assert.equal('is_repeating' in schema.properties.progress.properties, false);
+    assert.equal('fields' in schema.properties.action.properties.expected_output.properties.datasets.items.properties, false);
     assert.deepEqual(schema.properties.plan_update.items.required, ['id']);
     assert.deepEqual(schema.properties.plan_update.items.properties.status.enum, ['pending', 'active', 'done', 'blocked', 'dropped']);
 
@@ -2110,19 +2128,61 @@ async function run(name, json, nodes = {}, binary = {}) {
     assert.equal(first.state.ledger.parse_failures, 1);
     assert.equal(first.events.find((e) => e.kind === 'orchestrator.decision').payload.guard, 'decision_unparsed');
     assert.ok(first.events.find((e) => e.kind === 'orchestrator.decision').payload.decision);
+    assert.equal(first.events.find((e) => e.kind === 'orchestrator.decision').payload.llm_parse.attempt, 1);
     assert.match(first.events.find((e) => e.kind === 'orchestrator.status').status_message, /Формулирую решение заново/);
     const vEntry = first.state.ledger.history.at(-1);
     assert.equal(vEntry.kind, 'verification');
     assert.deepEqual(vEntry.uncovered, ['решение оркестратора не разобрано']);
     assert.equal(first.events.some((e) => e.kind === 'hitl.request'), false);
+    // CASE-6aa50b14-bc43c5: n8n Structured Output onError shape must be named in the log.
+    const n8nFail = await run('Parse decision', { error: "Model output doesn't fit required format" }, { 'Prepare decision context': prepared });
+    assert.equal(n8nFail.action_type, 'continue');
+    assert.equal(n8nFail.events.find((e) => e.kind === 'orchestrator.decision').payload.llm_parse.error, "Model output doesn't fit required format");
+    // CASE-6aa51606-822385: thinking ate max_tokens — empty content, finish_reason=length.
+    const trunc = await run('Parse decision', {
+      error: 'llm_truncated_empty',
+      llm_parse: { error: 'llm_truncated_empty', finish_reason: 'length', completion_tokens: 2048, reasoning_tokens: 2048, content_len: 0 },
+    }, { 'Prepare decision context': prepared });
+    assert.equal(trunc.action_type, 'continue');
+    assert.match(trunc.events.find((e) => e.kind === 'orchestrator.status').status_message, /размышлением/);
+    assert.equal(trunc.events.find((e) => e.kind === 'orchestrator.decision').payload.llm_parse.finish_reason, 'length');
+    assert.equal(trunc.events.find((e) => e.kind === 'orchestrator.decision').payload.llm_parse.completion_tokens, 2048);
+    const built = await run('Build decision chat', { planner_input: 'Цель: тест' }, { 'Runtime endpoints': { chat_model: 'qwen/qwen3.6-27b', chat_base_url: 'https://openrouter.ai/api/v1' } });
+    assert.equal(built.chat_request.reasoning.enabled, false);
+    assert.equal(built.chat_request.enable_thinking, false);
+    assert.equal(built.chat_request.model, 'qwen/qwen3.6-27b');
+    assert.equal(built.chat_request.response_format.type, 'json_object');
+    assert.equal(built.chat_url, 'https://openrouter.ai/api/v1/chat/completions');
+    assert.equal(Object.prototype.hasOwnProperty.call(built.chat_request, 'reasoning_effort'), false);
+    assert.equal(Object.prototype.hasOwnProperty.call(built.chat_request, 'max_tokens'), false);
+    assert.match(built.chat_request.messages[0].content, /plan_update/);
+    const httpFail = await run('Decision LLM', { error: 'URL parameter must be a string, got undefined' });
+    assert.equal(httpFail.error, 'URL parameter must be a string, got undefined');
+    const formatted = await run('Decision LLM', {
+      choices: [{ message: { content: '{"status_message":"x","action":{"type":"finish"}}' }, finish_reason: 'stop' }],
+      usage: { completion_tokens: 12, prompt_tokens: 40, completion_tokens_details: { reasoning_tokens: 0 } },
+    });
+    assert.equal(formatted.output.action.type, 'finish');
+    const emptyThink = await run('Decision LLM', {
+      choices: [{ message: { content: '' }, finish_reason: 'length' }],
+      usage: { completion_tokens: 2048, completion_tokens_details: { reasoning_tokens: 2048 } },
+    });
+    assert.equal(emptyThink.error, 'llm_truncated_empty');
+    assert.equal(emptyThink.llm_parse.finish_reason, 'length');
+    assert.equal(emptyThink.llm_parse.reasoning_tokens, 2048);
     const second = await decide({ ...prepared, state: first.state }, blank);
-    assert.equal(second.next_status, 'failed');
-    assert.equal(second.action_type, 'fail_case');
-    const failedEvt = second.events.find((e) => e.kind === 'case.failed');
+    assert.equal(second.action_type, 'continue');
+    assert.equal(second.next_status, 'running');
+    assert.equal(second.state.ledger.parse_failures, 2);
+    const third = await decide({ ...prepared, state: second.state }, blank);
+    assert.equal(third.next_status, 'failed');
+    assert.equal(third.action_type, 'fail_case');
+    const failedEvt = third.events.find((e) => e.kind === 'case.failed');
     assert.ok(failedEvt);
-    assert.match(failedEvt.status_message, /дважды не смог сформулировать следующий шаг/);
+    assert.match(failedEvt.status_message, /три раза не смог разобрать следующий шаг/);
     assert.equal(MACHINE.test(failedEvt.status_message), false, failedEvt.status_message);
-    assert.equal(second.events.find((e) => e.kind === 'orchestrator.decision').payload.guard, 'decision_unparsed');
+    assert.equal(third.events.find((e) => e.kind === 'orchestrator.decision').payload.guard, 'decision_unparsed');
+    assert.equal(failedEvt.payload.llm_parse.attempt, 3);
     const unknown = await decide(prepared, { action: { type: 'launch' }, progress: blank.progress, status_message: 'Непонятно.' });
     assert.equal(unknown.action_type, 'continue');
     assert.equal(unknown.events.find((e) => e.kind === 'orchestrator.decision').payload.guard, 'decision_unparsed');

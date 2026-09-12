@@ -11,6 +11,7 @@ from typing import Any
 
 from fastapi import FastAPI, HTTPException
 from mas_agent_kit import agent_router
+from mas_agent_kit.version import read_mas_version
 from pydantic import BaseModel, Field
 
 from .agent import UNITS, agent
@@ -51,7 +52,13 @@ class RenderIRRequest(BaseModel):
 
 @app.get("/health")
 def health() -> dict[str, str]:
-    return {"status": "ok", "service": "schedule-builder-service", "units": UNITS, "keywords": str(len(KEYWORDS))}
+    return {
+        "status": "ok",
+        "service": "schedule-builder-service",
+        "units": UNITS,
+        "keywords": str(len(KEYWORDS)),
+        "mas_version": read_mas_version(),
+    }
 
 
 @app.get("/keywords")
