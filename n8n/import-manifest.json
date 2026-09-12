@@ -13,12 +13,6 @@
     "workflows/core/mas-control-plane-proxy.workflow.json",
     "workflows/core/mas-orchestrator.workflow.json",
     "workflows/core/mas-deployment-health-check.workflow.json",
-    "workflows/support/ai-components.workflow.json",
-    "workflows/support/engineering-specialist-template.workflow.json",
-    "workflows/support/cluster-calc-specialist-adapter.workflow.json",
-    "workflows/support/binary-results-specialist-adapter.workflow.json",
-    "workflows/support/presentation-specialist-adapter.workflow.json",
-    "workflows/support/excel-extraction-form-adapter.workflow.json",
     "workflows/support/demo-agent.workflow.json"
   ],
   "runtime_import_order": [
@@ -32,87 +26,10 @@
     "workflows/core/mas-orchestrator.workflow.json",
     "workflows/core/mas-deployment-health-check.workflow.json"
   ],
-  "retired_not_imported": [
-    "workflows/retired/calculation-specialist-agent.workflow.json",
-    "workflows/retired/cas-persist-task.workflow.json",
-    "workflows/retired/excel-extraction-agent.workflow.json",
-    "workflows/retired/mas-activity-hydrate.workflow.json",
-    "workflows/retired/mas-error-handler.workflow.json",
-    "workflows/retired/mas-human-gate-form.workflow.json",
-    "workflows/retired/mas-trace-event-writer.workflow.json",
-    "workflows/retired/mvp-entry-form.workflow.json",
-    "workflows/retired/tnavigator-schedule-builder.workflow.json",
-    "workflows/retired/universal-engineering-orchestrator.workflow.json"
-  ],
   "optional_or_non_runtime": [
-    {
-      "workflow": "workflows/support/excel-extraction-form-adapter.workflow.json",
-      "reason": "standalone Excel form only"
-    },
-    {
-      "workflow": "workflows/support/engineering-specialist-template.workflow.json",
-      "reason": "extension template (LLM specialist clone)"
-    },
-    {
-      "workflow": "workflows/support/cluster-calc-specialist-adapter.workflow.json",
-      "reason": "extension stub — cluster SSH/job adapter (configured:false)"
-    },
-    {
-      "workflow": "workflows/support/binary-results-specialist-adapter.workflow.json",
-      "reason": "extension stub — binary results extractor (configured:false)"
-    },
-    {
-      "workflow": "workflows/support/presentation-specialist-adapter.workflow.json",
-      "reason": "extension stub — presentation assembler (configured:false)"
-    },
-    {
-      "workflow": "workflows/support/ai-components.workflow.json",
-      "reason": "reference components"
-    },
     {
       "workflow": "workflows/support/demo-agent.workflow.json",
       "reason": "template agent (agents-template/demo_agent, mas-agent-kit + AgentSpec); registry row seeded enabled=false — import only to test the add-an-agent recipe or long-running agents"
-    }
-  ],
-  "data_tables": [
-    {
-      "name": "engineering_orchestrator_tasks_v1",
-      "purpose": "retired CAS task table; not probed by Health Check. Live case state is Postgres cases via Control Plane Proxy.",
-      "columns": {
-        "task_id": "String",
-        "version": "Number",
-        "status": "String",
-        "risk_class": "String",
-        "request_json": "String",
-        "runtime_json": "String",
-        "plan_json": "String",
-        "packet_json": "String",
-        "result_json": "String",
-        "verification_json": "String",
-        "gate_json": "String",
-        "retry_count": "Number",
-        "max_retries": "Number",
-        "created_at": "String",
-        "updated_at": "String"
-      },
-      "status": "retired_not_imported"
-    },
-    {
-      "name": "mas_trace_events_v1",
-      "purpose": "retired Data Table ledger; not probed by Health Check. Live events are Postgres events via Control Plane Proxy.",
-      "columns": {
-        "event_id": "String",
-        "trace_id": "String",
-        "task_id": "String",
-        "at": "String",
-        "stage": "String",
-        "event_type": "String",
-        "actor": "String",
-        "status": "String",
-        "summary": "String",
-        "details_json": "String"
-      },
-      "status": "retired_not_imported"
     }
   ],
   "mandatory_execute_workflow_bindings": [
@@ -192,46 +109,6 @@
     ]
   },
   "future_enterprise_or_optional_bindings": [],
-  "optional_execute_workflow_bindings": [
-    {
-      "owner": "Template — Engineering Specialist",
-      "node": "Call specialist Hybrid Retrieval",
-      "target": "MAS — Knowledge Retrieval",
-      "placeholder": "REPLACE_SCHEDULE_RAG_RETRIEVAL_IN_UI",
-      "note": "support template; bind Hybrid Retrieval only when cloning a specialist"
-    },
-    {
-      "node": "Call Data Specialist",
-      "placeholder": "REPLACE_DATA_SPECIALIST_IN_UI",
-      "note": "legacy stub — do not bind unless you own this route"
-    },
-    {
-      "node": "Call Document Specialist",
-      "placeholder": "REPLACE_DOCUMENT_SPECIALIST_IN_UI",
-      "note": "legacy stub — do not bind unless you own this route"
-    },
-    {
-      "owner": "Orchestrator — Engineering MAS",
-      "node": "Call Cluster Calculation Specialist",
-      "target": "Template — Cluster Calculation Adapter",
-      "placeholder": "REPLACE_CLUSTER_CALC_ADAPTER_IN_UI",
-      "note": "support stub; set configured:true after real implementation"
-    },
-    {
-      "owner": "Orchestrator — Engineering MAS",
-      "node": "Call Binary Results Specialist",
-      "target": "Template — Binary Results Adapter",
-      "placeholder": "REPLACE_BINARY_RESULTS_ADAPTER_IN_UI",
-      "note": "support stub; set configured:true after real implementation"
-    },
-    {
-      "owner": "Orchestrator — Engineering MAS",
-      "node": "Call Presentation Specialist",
-      "target": "Template — Presentation Assembler",
-      "placeholder": "REPLACE_PRESENTATION_ADAPTER_IN_UI",
-      "note": "support stub; set configured:true after real implementation"
-    }
-  ],
   "required_credentials": [
     {
       "type": "openAiApi",
@@ -247,9 +124,8 @@
     }
   ],
   "ui_configuration": [
-    "Field import is runtime_import_order (9 core JSON). Do not import n8n/workflows/retired/. support/ only when adding a specialist.",
-    "Do not create n8n Data Tables for live case state. Health Check no longer probes engineering_orchestrator_tasks_v1 / mas_trace_events_v1.",
-    "Do not set ACTIVITY_HYDRATE_URL. Do not import Activity — Hydrate, Entry Form, Human Gate, CAS Persist, Trace Writer, or Orchestrator — Engineering MAS.",
+    "Field import is runtime_import_order (9 core JSON). Lab also imports support/demo-agent.workflow.json.",
+    "Do not create n8n Data Tables for live case state.",
     "Bind Orchestrator — MAS: Call Knowledge Retrieval → MAS — Knowledge Retrieval (selector target_base=orchestrator_routing). Bind Call Knowledge Retrieval on Excel Extractor (excel_protocol) and Schedule Builder (schedule_mvp). Agents are NOT bound as nodes: Orchestrator's universal Call agent (n8n) takes the workflow id from agent_registry.invoke (seeded by Control Plane Proxy schema). After UI import n8n assigns new ids — copy each agent workflow id (URL of the open workflow) into MAS — Runtime Config → agent_workflow_ids as {\"excel_extractor\":\"<id>\",\"schedule_builder\":\"<id>\"}. Adding an agent = import its workflow + POST {\"operation\":\"upsert_agent\",\"row\":{...}} to the Control Plane Proxy (no orchestrator regen).",
     "Bind Runtime endpoints / Runtime configuration → MAS — Runtime Config on Orchestrator, Excel Extractor, and Schedule Builder. Edit the four URLs once in MAS — Runtime Config (lab Docker DNS in git; field = http://<IP-Windows>:8200/:8000/:8090/:8100). math_url has no /agent/run suffix.",
     "Excel Tools X-API-Key: Header Auth credential (header name X-API-Key) on Agent — Excel Extractor HTTP / toolHttpRequest nodes. Do not store the key in MAS — Runtime Config.",
@@ -260,7 +136,7 @@
     "Optional: Activity Knowledge → Загрузить в RAG (MAS — Knowledge Ingestion). Live Excel/Schedule LLM paths call the same Retrieval with excel_protocol / schedule_mvp. Bind Call Knowledge Retrieval on Orchestrator, Excel Extractor, and Schedule Builder.",
     "Run Form — MAS Deployment Health Check before activating the Orchestrator. Bind its Runtime endpoints → MAS — Runtime Config and the Header Auth credential on both webhook probes. Field target: PASS (0 FAIL, 0 TODO); PASS_WITH_TODO only means lab Docker DNS names are still in Runtime Config.",
     "Keep every workflow inactive until placeholders and credentials are resolved. Activate Proxy, then Ingestion/Retrieval/Excel/Schedule/Error, then Orchestrator.",
-    "Engineers start tasks in Activity UI POST /cases (http://<IP>:8200), not Entry Form.",
+    "Engineers start tasks in Activity UI POST /cases (http://<IP>:8200).",
     "Adding an agent (Phase 4): copy agents-template/demo_agent (FastAPI on mas-agent-kit) + n8n/templates/agents/<agent_id>.py (AgentSpec), run generate_<agent>.py, import the workflow, set <service_url_key> in MAS — Runtime Config, enable the row in Activity /registry (or PUT /agents/{agent_id}). Orchestrator is not regenerated. Long agents return status in_progress and finish with POST /cases/{id}/run {action:resume, source:agent, agent_result}."
   ],
   "activation_order": [
@@ -289,151 +165,5 @@
   "deferred_enterprise_gates": [
     "optional real tNavigator integration may be designed later as a separate approved project",
     "security/load/backup/DR acceptance and production trace policy"
-  ],
-  "retired_execute_workflow_bindings": [
-    {
-      "owner": "Orchestrator — Engineering MAS",
-      "node": "Call CAS persist — insert new task",
-      "target": "CAS — Persist Task State",
-      "placeholder": "REPLACE_CAS_PERSIST_IN_UI"
-    },
-    {
-      "owner": "Orchestrator — Engineering MAS",
-      "node": "Call CAS persist — human action then plan",
-      "target": "CAS — Persist Task State",
-      "placeholder": "REPLACE_CAS_PERSIST_IN_UI"
-    },
-    {
-      "owner": "Orchestrator — Engineering MAS",
-      "node": "Call CAS persist — terminal human action",
-      "target": "CAS — Persist Task State",
-      "placeholder": "REPLACE_CAS_PERSIST_IN_UI"
-    },
-    {
-      "owner": "Orchestrator — Engineering MAS",
-      "node": "Call CAS persist — plan or human gate",
-      "target": "CAS — Persist Task State",
-      "placeholder": "REPLACE_CAS_PERSIST_IN_UI"
-    },
-    {
-      "owner": "Orchestrator — Engineering MAS",
-      "node": "Call CAS persist — SCHEDULE evidence retry",
-      "target": "CAS — Persist Task State",
-      "placeholder": "REPLACE_CAS_PERSIST_IN_UI"
-    },
-    {
-      "owner": "Orchestrator — Engineering MAS",
-      "node": "Call CAS persist — SCHEDULE resume",
-      "target": "CAS — Persist Task State",
-      "placeholder": "REPLACE_CAS_PERSIST_IN_UI"
-    },
-    {
-      "owner": "Orchestrator — Engineering MAS",
-      "node": "Call CAS persist — verification",
-      "target": "CAS — Persist Task State",
-      "placeholder": "REPLACE_CAS_PERSIST_IN_UI"
-    },
-    {
-      "owner": "Orchestrator — Engineering MAS",
-      "node": "Call CAS persist — specialist gate or error",
-      "target": "CAS — Persist Task State",
-      "placeholder": "REPLACE_CAS_PERSIST_IN_UI"
-    },
-    {
-      "owner": "Orchestrator — Engineering MAS",
-      "node": "Call CAS persist — routing gate",
-      "target": "CAS — Persist Task State",
-      "placeholder": "REPLACE_CAS_PERSIST_IN_UI"
-    },
-    {
-      "owner": "Orchestrator — Engineering MAS",
-      "node": "Call Excel Extraction Specialist",
-      "target": "Agent — Excel Extractor",
-      "placeholder": "REPLACE_EXCEL_EXTRACTION_AGENT_IN_UI"
-    },
-    {
-      "owner": "Orchestrator — Engineering MAS",
-      "node": "Call SCHEDULE Hybrid Retrieval",
-      "target": "MAS — Knowledge Retrieval",
-      "placeholder": "REPLACE_SCHEDULE_RAG_RETRIEVAL_IN_UI"
-    },
-    {
-      "owner": "Orchestrator — Engineering MAS",
-      "node": "Call routing Hybrid Retrieval",
-      "target": "MAS — Knowledge Retrieval",
-      "placeholder": "REPLACE_SCHEDULE_RAG_RETRIEVAL_IN_UI"
-    },
-    {
-      "owner": "Orchestrator — Engineering MAS",
-      "node": "Call Excel protocol Hybrid Retrieval",
-      "target": "MAS — Knowledge Retrieval",
-      "placeholder": "REPLACE_SCHEDULE_RAG_RETRIEVAL_IN_UI"
-    },
-    {
-      "owner": "Agent — Excel Extractor",
-      "node": "Call Excel protocol Hybrid Retrieval",
-      "target": "MAS — Knowledge Retrieval",
-      "placeholder": "REPLACE_SCHEDULE_RAG_RETRIEVAL_IN_UI"
-    },
-    {
-      "owner": "Orchestrator — Engineering MAS",
-      "node": "Call SCHEDULE Builder Specialist",
-      "target": "SCHEDULE — Builder",
-      "placeholder": "REPLACE_SCHEDULE_BUILDER_IN_UI"
-    },
-    {
-      "owner": "Orchestrator — Engineering MAS",
-      "node": "Call Calculation Specialist",
-      "target": "Agent — Calculation (Math Service)",
-      "placeholder": "REPLACE_CALCULATION_AGENT_IN_UI"
-    },
-    {
-      "owner": "Orchestrator — Engineering MAS",
-      "node": "Call MAS Trace Event Writer",
-      "target": "Writer — MAS Trace",
-      "placeholder": "REPLACE_MAS_TRACE_WRITER_IN_UI"
-    },
-    {
-      "owner": "Orchestrator — Engineering MAS",
-      "node": "Call Error — MAS Case Handler (specialist)",
-      "target": "Error — MAS Case Handler",
-      "placeholder": "REPLACE_ERROR_HANDLER_IN_UI"
-    },
-    {
-      "owner": "Orchestrator — Engineering MAS",
-      "node": "Call Error — MAS Case Handler (verification)",
-      "target": "Error — MAS Case Handler",
-      "placeholder": "REPLACE_ERROR_HANDLER_IN_UI"
-    },
-    {
-      "owner": "Error — MAS Case Handler",
-      "node": "Call CAS persist — error case",
-      "target": "CAS — Persist Task State",
-      "placeholder": "REPLACE_CAS_PERSIST_IN_UI"
-    },
-    {
-      "owner": "Error — MAS Case Handler",
-      "node": "Call Writer — MAS Trace (error)",
-      "target": "Writer — MAS Trace",
-      "placeholder": "REPLACE_MAS_TRACE_WRITER_IN_UI"
-    },
-    {
-      "owner": "Form — MAS Entry",
-      "node": "Call Universal Engineering Orchestrator",
-      "target": "Orchestrator — Engineering MAS",
-      "placeholder": "REPLACE_ORCHESTRATOR_ID_IN_UI"
-    },
-    {
-      "owner": "Form — MAS Human Gate",
-      "node": "Call Orchestrator status",
-      "target": "Orchestrator — Engineering MAS",
-      "placeholder": "REPLACE_ORCHESTRATOR_ID_IN_UI_HUMAN_GATE_STATUS"
-    },
-    {
-      "owner": "Form — MAS Human Gate",
-      "node": "Call Orchestrator resume",
-      "target": "Orchestrator — Engineering MAS",
-      "placeholder": "REPLACE_ORCHESTRATOR_ID_IN_UI_HUMAN_GATE_RESUME"
-    }
   ]
 }

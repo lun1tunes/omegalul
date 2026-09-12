@@ -1,7 +1,7 @@
 # FastAPI Math Service (MVP)
 
 Геометрический сервис MAS: batch intersection `.dev` × ASCII CPS3/ZMAP.  
-**На работе:** только Windows CMD. Полная установка — [`docs.md`](../docs.md) §2. Оркестратор зовёт HTTP `POST http://<IP>:8100/agent/run`. Старый `Agent — Calculation (Math Service)` лежит в `n8n/workflows/retired/` и **не импортируется**.
+**На работе:** только Windows CMD. Полная установка — [`docs.md`](../docs.md). Оркестратор зовёт HTTP `POST http://<IP>:8100/agent/run`.
 
 ## Windows CMD (канон)
 

@@ -1,6 +1,6 @@
 # NOVATEK RE MASter — анализ и план рефакторинга «от хардкода к инженерной MAS»
 
-Ревизия 32 — 2026-09-12. Статусы ниже сверены с кодом на эту дату; история ревизий — §7. Как работать по плану — `AGENTS.md` (карта, инварианты, цикл задачи), гейт — `python3 scripts/mas_gate.py [--live [--repeat N]]` (`--bundle` — полевой zip, не стадия офлайн-гейта). Полевой гайд для инженера — `docs.md` (схема + деплой + работа).
+Ревизия 34 — 2026-09-12. Статусы ниже сверены с кодом на эту дату; история ревизий — §7. Как работать по плану — `AGENTS.md` (карта, инварианты, цикл задачи), гейт — `python3 scripts/mas_gate.py [--live [--repeat N]]` (`--bundle` — полевой zip, не стадия офлайн-гейта). Полевой гайд для инженера — `docs.md` (схема + деплой + работа).
 
 **Синхрон.** Шапка, §3 «Состояние», §4 сводка и критерий *текущего* гейта, §2.7, «Ближайшие шаги» = код на дату ревизии. Номер шапки = последняя запись §7. Журнал §7 и критерии уже закрытых фаз не переписывать. Счётчики pytest в шапке не фиксировать — плывут; писать «16 smokes, 5 pytest-наборов». `--live` сейчас **12/12**: шесть `run_live_five` + `demo_agent_long_job` + `three_agent_chain` + `excel_datasets` + `agent_down_recovery` + `rework_round` + `step_limit_review`. `--repeat N` — шесть commissioning ×N в одном пуле, остальные шесть сценариев один раз (не 12×N); стена ~20 мин (`--only live --repeat 3` GREEN 1219s). `--hot`, если lab здоров и JSON без дрейфа.
 
@@ -63,7 +63,7 @@
 | O4 | `mas_state_utils.py` `inferRouting*` | Regex по goal для RAG-фильтров | ✅ `inferRetrievalQuery/inferRoutingTopics/inferRoutingKeywordFamilies/inferTaskPatterns` удалены; `buildRetrievalQuery` — текст цели + заголовки пунктов плана (`План: …`) + журнал, без regex-тегов (ревизия 15) |
 | O5 | 8 routing-карточек RAG | Дублируют O1 | ✅ 8 карточек `orchestrator_routing` переписаны как политики декомпозиции (без `agent_id`, без «типичных путей»; агент описывается через поля реестра — «агент, чей `when_to_use` — чтение Excel», «чей `input_required` включает `schedule_source`»); revision bump, в lab старые ревизии `superseded` |
 | O6 | `DECISION_SCHEMA` | `options[]` терялись по дороге к человеку | 🟡 UI рендерит `options[{value,label}]` кнопками; `question_id` LLM-вопросов всё ещё свободный |
-| O7 | `specialist_packet` и retired-контракты | Два контракта | ✅ Не принимаются; retired в `n8n/templates/retired`, `n8n/contracts/retired` |
+| O7 | `specialist_packet` и retired-контракты | Два контракта | ✅ Не принимаются; retired-контур удалён (ревизия 33) |
 | O8 | `MERGE` лимиты | `step_count >= 24` захардкожен, при достижении — тихий `failed` | ✅ `max_steps` в Runtime Config (12); при достижении с результатом — review-гейт с человеком, без результата — честный `failed` |
 | 🆕 O9 | Весь оркестратор | **Нет памяти о результатах агентов**; `current_task` + флаги вместо истории → цикл `CASE-6a9da4e2` | ✅ Журнал `state.ledger.history` (агенты + человек), блок «Журнал задачи» в `planner_input`, `compact.journal` |
 | 🆕 O10 | `DECISION_SCHEMA` / `Parse decision` | Нет критерия завершения: LLM выбирала `finish`/`call_agent` «по привычке» | ✅ Обязательный `progress {goal_satisfied, evidence, missing, is_repeating}`; `finish` при `goal_satisfied`, `summary_for_human` из summary агентов |
@@ -85,7 +85,7 @@
 | H2 | `parseKeepRemove` и зеркало в Activity | Regex по ответу человека | ✅ Удалены (`mas_state_utils.py`, `state_shape.py`). Кнопка = `choice`; свободный текст при вариантах — Interpret free-text answer (Qwen + Structured Output), `confidence < 0.8` → переспрос |
 | H3 | `new_well_defs` со строками `.inc` | Человек пишет SCHEDULE руками | ✅ Инженерные факты `new_wells` (группа, MD верх/низ, диаметр, режим+дебит, BHP, VFP, файл WELLTRACK); `compose_new_well_lines` собирает `WELSPECS/COMPDATMD/WCONPROD` по мануалу; недостающий факт = finding. Legacy typed-lines принимается для совместимости |
 | H4 | combat-3: вопрос про новые скважины не задавался | Диалог не соответствовал уточнениям | ✅ Два последовательных вопроса (unlisted → new_wells), harness отвечает на каждый отдельно |
-| H5 | `hitl_user_copy.py` + `humanizeQuestion` | Два слоя «компиляции» кодов в русский | ✅ Закрыт решением: в MAS-контуре композитора нет — инструменты отдают прозу (H9), `ask_user` оркестратора ограничен схемой. `hitl_user_copy.py` используется только schedule-intake контуром (`schedule_pipeline.py`, `schedule_intake_runtime.py`) как словарь кодов |
+| H5 | `hitl_user_copy.py` + `humanizeQuestion` | Два слоя «компиляции» кодов в русский | ✅ Закрыт: в MAS-контуре композитора нет — инструменты отдают прозу (H9). Словарь `hitl_user_copy.py` и JS schedule-intake удалены вместе с retired-контуром (ревизия 33) |
 | H6 | Activity `/answer` пишет в state напрямую, оркестратор — через `resume` | Два write-path | ✅ Один путь: `/answer` хранит файлы и зовёт `resume` `source=human`; журнал и `hitl.answered` — только оркестратор. `POST /run` `action=resume` `source=agent|system` — внешнее событие (§3 п.10). `reconcileLedgerAnswers` оставлен как safety net для старых кейсов |
 | H7 | `app.js renderGate` | Без кнопок, `kind` всегда `needs_input` | ✅ Кнопки, `choice`+`label`, эхо «Вы решили: …», `kind` из вопроса (`result_approval` для review), без `expected_version`/`gate_id` в DOM; подсказка колонок таблицы для `accepts.table` |
 | H8 | `agent.result` шаблон `DESCRIBE_APPLY` | Лента врала про сделанное | ✅ `summarize_commissioning_result` по фактическому diff (сдвинуто/добавлено/убрано/оставлено); `agent.result` эмитит только оркестратор |
@@ -117,7 +117,7 @@
 
 - Добавить агента = скопировать `agents-template/demo_agent` (сервис на `mas-agent-kit`) + `AgentSpec` в `n8n/templates/agents/` → генерация workflow / поля Runtime Config / seed реестра / пробы Health Check; на поле — импорт workflow, URL в Runtime Config, включить в Activity → Агенты. Оркестратор не правится и не регенерируется — ✅ Фаза 2 (`CASE-6a9f04a5-6f14b7`), ✅ Фаза 4 (`demo_agent`, `CASE-6a9f49ce-9cb933`: `in_progress` → `waiting_agent` → `resume source=agent` → `done`).
 - Добавить инструмент агенту = `@tools.tool(...)` функция в сервисе (`ToolError` для LLM) + строка в `TOOLS` спеки + `system_prompt` + smoke + pytest — ✅ (`agents-template/demo_agent/README.md`, `.cursor/rules/excel-agent-tools.mdc`, `schedule-builder-service.mdc`).
-- `KEYWORDS` один источник — ✅. Retired-контур вне live-генерации/smokes — ✅. Legacy Activity `/v1/tasks*` — 🟡 задокументирован в `main.py`, вынос отложен (связность тестов).
+- `KEYWORDS` один источник — ✅. Legacy Activity `/v1/tasks*` — ✅ удалён (ревизия 34). Каталоги `n8n/**/retired/` на диске ещё есть (ревизия 33 записала удаление; в import не входят) — 🟡 не трогать в этой сессии.
 - Генерация workflow — фиксированная точка: `scripts/mas_gate.py --only regen` (порядок генераторов, relayout последним, `versionId` игнорируется) — ✅.
 
 Цена добавления агента (найдено в ревизии 9 при сверке `docs.md` §6 с кодом) — закрыто Фазой 4 (ревизия 10):
@@ -141,7 +141,7 @@
 | # | Где | Что | Статус |
 |---|---|---|---|
 | 🆕 R1 | `state_shape.py` `nest_artifacts`/`role_for_artifact_id` и JS-двойник `mas_state_utils.py` (`nestArtifacts`, `roleForArtifactId`, `mergeIncomingArtifacts`) | Фиксированные слоты `excel/schedule_source/surface/trajectory/schedule_out/diff`; роль угадывается по имени id; новый вид артефакта = правка обоих двойников (дважды теряли файлы: `excel_1`) | ✅ карточки `{artifact_id, role, kind, producer, filename, bytes, summary, created_at}` в обоих двойниках; `nest/flatten` round-trip без потерь (pytest + smoke); `producer`/`kind` ставит `mergeIncomingArtifacts(..., agentId)`; загрузки инженера — `kind=input, producer=user` в Activity |
-| 🆕 R2 | Activity `GET /cases/{id}/schedule`, `_result_filename`, `_schedule_out_text`, `schedule_artifact` в snapshot | Специальная ручка и поле «результат = schedule_out» | ✅ `GET /cases/{id}/artifacts?kind=&producer=`, `GET /agents`; snapshot/SSE отдают `artifacts[]` + `deliverables[]`, `schedule_artifact` удалён из live API (остался в legacy `/v1/tasks*`); `/schedule` — алиас; inline-артефакты (`schedule_out`, `diff`) отдаются из state без blob store |
+| 🆕 R2 | Activity `GET /cases/{id}/schedule`, `_result_filename`, `_schedule_out_text`, `schedule_artifact` в snapshot | Специальная ручка и поле «результат = schedule_out» | ✅ `GET /cases/{id}/artifacts?kind=&producer=`, `GET /agents`; snapshot/SSE отдают `artifacts[]` + `deliverables[]`, `schedule_artifact` удалён; `/schedule` — алиас; inline-артефакты (`schedule_out`, `diff`) отдаются из state без blob store |
 | 🆕 R3 | UI `index.html`/`app.js`: `scheduleDownloadHead` «Скачать schedule.inc», `schemaEndLabel` «Результат», `setScheduleArtifact` | Один файл подаётся как итог всей работы | ✅ UI переписан (`index.html`, `app.css`, `app.js`, `schema.js`, `knowledge.*`): чипы deliverables под `agent.result` и под итогом, панель «Результаты» по агентам (подписи из `GET /agents`), «Исходные данные» — карточки `kind=input`; ни одного имени агента в UI-коде; схема строит узлы агентов из реестра и событий |
 | 🆕 O17 | `Prepare decision context` `has_schedule_out` (`hasScheduleOut`) | Доменный флаг в `planner_input` — та же утечка, что O1 | ✅ `planner_input.deliverables` + `case.finished.payload.deliverables`; `grep has_schedule_out` по коду пуст |
 | 🆕 R4 | `run_live_five.py`: «`done` без `schedule_out` = провал», скачивание через `/schedule` | Ожидание `.INC` зашито в харнесс | ✅ `expects` в `specs()`; «`done` без ожидаемых deliverables = провал», у каждого deliverable есть `producer`; скачивание через `GET /cases/{id}/artifacts` → `download_path` |
@@ -157,7 +157,7 @@
 
 ### 2.7 Пробелы на пути к масштабированию (сверка в ревизии 14)
 
-Открытое из таблиц выше: **O6** (`question_id` свободный), **O23** (leftover-close по каталогу), **A6**/**A17** (закрываются в 6.0), **F10** (lab-модель), legacy `/v1/tasks*`. Сверка «что нужно, чтобы добавлять агентов и golden-кейсы без сюрпризов» добавила:
+Открытое из таблиц выше: **O6** (`question_id` свободный), **O23** (leftover-close по каталогу), **A6**/**A17** (закрываются в 6.0), **F10** (lab-модель). Сверка «что нужно, чтобы добавлять агентов и golden-кейсы без сюрпризов» добавила:
 
 | # | Где | Что | Статус |
 |---|---|---|---|
@@ -167,7 +167,7 @@
 | 🆕 F4 | Activity, `case_log.summary` | Нет метрик по кейсам: шаги, HITL, вызовы инструментов, `guard`, `warnings`/`errors` есть в логе каждого кейса, но нет сводки по набору кейсов и во времени — рост golden-набора даст только бинарный `mismatch_count` | 🟡 α2 закрыла пороги в `--live` и JSON `GET /metrics/cases?since=` (ревизия 26, `--repeat 3` GREEN 1219s). Страница «Метрики» — после альфы (6.3) |
 | 🆕 F5 | `generate_mas_health_check.py` | Health Check не читает `agent_registry` (нет Header Auth credential в форме): проверяет список `enabled` спек ↔ seed, а не живую привязку `invoke.workflow_id` | ⬜ После альфы (6.2): проба `list_agents` через прокси + «`workflow_id` существует в n8n»; UI «Агенты» — кнопка проверки `/health` сервиса по `service_url_key` |
 | 🆕 F6 | `agents-template`, `mas-agent-kit` | Критерий Фазы 4 «≤ 1 часа до `done`» проверен только на `demo_agent` (один инструмент, таймер). Реальный агент с бинарными входами/выходами, внешней системой и ошибками кластера kit'ом не проходил | ⬜ Фаза 6.2: первый боевой агент; каждая правка kit'а по его следам — с тестом |
-| 🆕 F7 | `mas-activity-service/app/main.py` (2655 строк) | Legacy `/v1/tasks*` / `/v1/turns` (18 маршрутов, in-memory, retired-контур) живёт рядом с live API; в поле не используется, но тесты и `main.py` его тянут | 🟡 Вынос в `legacy_api.py` по образцу Excel — при следующем касании Activity, не отдельной задачей |
+| 🆕 F7 | `mas-activity-service/app/main.py` | Legacy `/v1/tasks*` / `/v1/turns` (in-memory, retired-контур) рядом с live API | ✅ ревизия 34: маршруты и in-memory store удалены (`durable`/`enrich`/`commissioning` Activity); живой вход — `/cases`. Excel `/api/v1` оставлен (pytest + ручная отладка книги) |
 | 🆕 F8 | `scripts/mas_trace_case.py` | Консольная трасса и `/log` — два способа читать одно и то же; консоль умеет n8n REST (вывод узла), лог — нет | 🟡 Оставить обоим свои роли: `/log` — поле и lab без консоли; `mas_trace_case.py` — `--n8n --node`. Дублирование не убирать |
 | 🆕 F9 | `mas_state_utils.py` `reconcileLedgerAnswers`, `state.data.excel` fallback в Builder | Safety net'ы для кейсов до 1.3 / до Фазы 2 | 🟡 Удалить после первого полевого пилота (там кейсов старого формата нет) |
 | 🆕 F10 | шаблоны `qwen/qwen3.6-27b`; lab `.env` `N8N_CHAT_MODEL` + `OPENROUTER_API_KEY`; Runtime Config `chat_model` / `chat_base_url` | Pin и lab на OpenRouter `qwen/qwen3.6-27b`. Decision/Verify — HTTP thinking off, без `max_tokens` (ревизия 30). Overlay `N8N_CHAT_MODEL` патчит Chat Model + `chat_model`. Embeddings RAG — отдельный OpenAI credential. Поле — credential + `chat_base_url` | 🟡 не пункт очереди |
@@ -200,11 +200,11 @@
 10. 🆕 **Долгие агенты.** Расчёт идёт часами при модели «1 шаг = 1 execution»: агенту нужен статус `in_progress` с `watch`; монитор шлёт `agent.progress`, завершение будит оркестратор `resume source=agent`. Закладка — Фаза 1.3 (единый write-path); реализация — Фаза 4.5, live `demo_agent_long_job`.
 11. 🆕 **Техническое — в лог, человеческое — в чат.** Одна лента событий, два читателя: инженер видит `status_message` и вопросы; разработчик — `payload` (решение LLM, `agent_task`, аргументы инструментов, ошибки узлов) в логе с уровнями и ссылками на executions. Новое техническое поле — в `payload`/`trace.*`, никогда в `message`.
 
-**Состояние на ревизию 32:** п. 1–11 реализованы и охраняются гейтом. П. 3a — Excel-половина есть (A16), сборщик ещё ест только `facts`/`new_wells` (A17 → 6.0). **α1 ✅. α2 ✅** (`--only live --repeat 3` GREEN 1219s на luna; на 27b `--only live` GREEN 611s, 12/12). **α3 ✅**. `docs.md` — гайд инженера (схема, развёртывание, работа), не контракт разработчика. Decision/Verify — HTTP thinking off, без `max_tokens`; LLM timeout 600 с, Activity шаг 1800 с. `--only live` GREEN 657s, 12/12. Не реализовано: **α4–α5**, **замкнуть контур 6.0**, **метрики-страница** (F4 → 6.3), **полевой стенд** (F1). Агенты по-прежнему на `lmChatOpenAi` (thinking не выключается в 2.30.8).
+**Состояние на ревизию 34:** п. 1–11 реализованы и охраняются гейтом. Retired-контур n8n удалён (ревизия 33). Legacy Activity `/v1/tasks*` удалён (F7). П. 3a — Excel-половина есть (A16), сборщик ещё ест только `facts`/`new_wells` (A17 → 6.0). **α1 ✅. α2 ✅** (`--only live --repeat 3` GREEN 1219s на luna; на 27b `--only live` GREEN 611s, 12/12). **α3 ✅**. `docs.md` — гайд инженера (схема, развёртывание, работа), не контракт разработчика. Decision/Verify — HTTP thinking off, без `max_tokens`; LLM timeout 600 с, Activity шаг 1800 с. `--only live` GREEN 657s, 12/12 (ревизия 32). Не реализовано: **α4–α5**, **замкнуть контур 6.0**, **метрики-страница** (F4 → 6.3), **полевой стенд** (F1). Агенты по-прежнему на `lmChatOpenAi` (thinking не выключается в 2.30.8). Excel `/api/v1` оставлен (pytest).
 
 ---
 
-## 4. План по фазам (ревизия 32)
+## 4. План по фазам (ревизия 34)
 
 Гейт каждой фазы — `python3 scripts/mas_gate.py`: регенерация без дрейфа, 16 `n8n/tests/*-smoke.js`, пять pytest-наборов (kit, Activity, Schedule Builder, Excel Tools, demo agent), offline combat; `--live` — `lab_soft_redeploy.py` (`--hot`, если lab здоров и нет дрейфа JSON, иначе полный импорт) + **12/12** `done`, `mismatch_count: 0`, без циклов/повторных HITL, с порогами α2: шесть `run_live_five.py` (golden 1–2, combat 0–3) + `run_live_demo_agent.py` (`demo_agent_long_job`, `three_agent_chain`, `agent_down_recovery`, `rework_round`, `step_limit_review`) + `run_live_excel_datasets.py`. На `step_limit_review` один ожидаемый review-вопрос («лимит шагов») — не эскалация `completion_review`. Порядок внутри `--live`: шесть commissioning (`LIVE_FIVE_WORKERS=6`; при `--repeat>1` — 9), затем demo∥цепь∥datasets (`demo_agent` в реестре только на этом слое, не во время шести), затем recovery (`agent_down`, затем `rework`∥`step_limit` под одним патчем `max_steps`). `--repeat N` не троить весь 12-сет. Порядок фаз: лента → оркестратор без домена → расширяемость → план (6.1) → **альфа** (отказы ✅, повторяемость ✅, пакет ✅, поле, заморозка) → **6.0 замкнуть контур данных** → боевой агент, метрики, golden-набор.
 
@@ -631,6 +631,10 @@ Live `--only live` GREEN 611s, 12/12 `done`, `mismatch_count: 0`:
 
 `LLM_HTTP_TIMEOUT_MS` 300 с → 600 с (Decision/Verify HTTP + Chat Model). `ORCHESTRATOR_INVOKE_TIMEOUT_S` 900 с → 1800 с (по-прежнему не валит кейс). Workflow агента `executionTimeout` 900 с → 1800 с. Инструменты FastAPI (180 с) не трогали. `--live` не гоняли.
 
+### Ревизия 33 (2026-09-12) — удалён retired-контур n8n
+
+Удалены `n8n/templates/retired/`, `n8n/workflows/retired/`, `n8n/tests/retired/`, `n8n/contracts/`, `n8n/data-tables/`, JS schedule-intake/pipeline (живой emit — FastAPI), support-заглушки кроме `demo-agent`, `context-seeder/`, неиспользуемые schema JSON. `generate_schedule_workflows.py` пишет только Knowledge Ingestion + Retrieval в `core/`. Lab import — 10 JSON (9 core + demo-agent). Legacy Activity `/v1/tasks*` и Excel `/api/v1` оставлены (F7 / pytest). `--live` не гоняли: оркестратор/агенты/emit не менялись.
+
 ### Ревизия 32 (2026-09-12) — docs.md для инженера
 
 `docs.md` переписан с нуля: схема MAS, развёртывание Windows + UI n8n, работа в Activity, диагностика. Убраны правила для код-агентов, allowlist, lab-гейт, §6 «новый агент» (это `AGENTS.md`).
@@ -641,6 +645,12 @@ Live `--only live` GREEN 657s, 12/12 `done`, `mismatch_count: 0` (полный �
 - demo `CASE-6aa52aa9-bd52a5`, chain `CASE-6aa52aa9-1f7dab`, datasets `CASE-6aa52aa9-0a0552`
 - recovery `CASE-6aa52b41-8e3294`, `CASE-6aa52bab-10da49`, `CASE-6aa52bab-412333`
 
+### Ревизия 34 (2026-09-12) — удалён Activity `/v1/tasks*` (F7)
+
+Удалены in-memory маршруты `/v1/tasks*` / `/v1/turns` / `/v1/sync` / `/v1/hydrate` / `/v1/demo/seed` и модули `durable.py`, `enrich.py`, `commissioning.py`. `main.py` — `/cases`, `/health`, `/ready`, `/v1/diagnostics`, `/v1/knowledge/*`, статика. Lab probe `lab_soft_redeploy.py` → `GET /cases`. Pytest Activity: живые проверки UI/health/CORS + регресс 404 на legacy. `--live` не гоняли: оркестратор/агенты/emit/`cases_api` не менялись.
+
+Не сделано: Excel `/api/v1` (pytest + ручная отладка книги). На диске остаются `n8n/templates/retired/`, `n8n/workflows/retired/`, `n8n/tests/retired/` (ревизия 33 записала удаление; в lab/field import не входят).
+
 ### Ближайшие шаги (в этом порядке)
 
 Каждый пункт — отдельный бриф по `/mas-brief` (файл в `briefs/`); перед стартом и в конце — `python3 scripts/mas_gate.py [--live]`. Полное описание и критерии — §4 «Альфа».
@@ -649,4 +659,4 @@ Live `--only live` GREEN 657s, 12/12 `done`, `mismatch_count: 0` (полный �
 2. **α5 Заморозка** — тег `alpha-1`, CHANGELOG, запись в план.
 3. После альфы: **6.0** замкнуть контур (A6, A17; несколько сессий, см. §4) — сборщик читает любой набор, keyword из RAG/схемы, дырка → HITL; commissioning-кейсы без регресса.
 4. Затем: **6.2** боевой агент (+ F5), **6.3** страница метрик + smoke 3.5, **6.5** golden-набор второго поколения (`review_scope: agent` вживую, два HITL от разных агентов, rebind + commissioning, `REVISE` с INCLUDE/`.dev`).
-5. Хвосты без срока: O6 `question_id`, O23 leftover-close по каталогу `output_provides`, F7 вынос `/v1/tasks*` (при касании Activity), F10 overlay модели, thinking off на агентном Chat Model (нет API в n8n 2.30.8), LLM-судья читаемости, косметика `rag_inventory_incomplete`.
+5. Хвосты без срока: O6 `question_id`, O23 leftover-close по каталогу `output_provides`, F10 overlay модели, thinking off на агентном Chat Model (нет API в n8n 2.30.8), LLM-судья читаемости, косметика `rag_inventory_incomplete`, Excel `/api/v1`, каталоги `n8n/**/retired/` на диске (не в import).

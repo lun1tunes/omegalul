@@ -24,7 +24,7 @@ PACK_DIRS = (
     "scripts",
 )
 ROOT_FILES = (".env.example", "docs.md", "README.md", "docker-compose.yml", ".gitignore")
-NEVER_PACK_DIR_PREFIXES = ("simulation-model-example/", "context-seeder/")
+NEVER_PACK_DIR_PREFIXES = ("simulation-model-example/",)
 EXCLUDED_DIR_NAMES = {
     ".git", ".venv", "venv", "__pycache__", ".mypy_cache", ".pytest_cache",
     ".ruff_cache", ".idea", ".cursor", "node_modules", "data", "task_binaries",

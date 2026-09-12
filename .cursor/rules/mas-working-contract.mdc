@@ -9,7 +9,7 @@ Read `AGENTS.md` first (map, invariants, recipes, traps). The queue of work is `
 
 ## Scope
 - One plan item (or one user request) per session. Do the whole item; do not widen or quietly narrow it. Extra findings → a line in the plan's debt table, not a change.
-- Never touch `n8n/templates/retired/`, `n8n/workflows/retired/`, golden `*_MAS_result.INC`, or wipe cases unless the user asked.
+- Never touch golden `*_MAS_result.INC` or wipe cases unless the user asked. Do not reintroduce a retired n8n contour.
 
 ## Evidence before fixes
 - A live defect is reproduced with `python3 scripts/mas_trace_case.py CASE-… --n8n` (timeline, state, human-text audit, n8n executions) before any edit. Quote the event/node that proves the cause.

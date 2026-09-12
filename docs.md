@@ -135,7 +135,7 @@ n8n → **Import from File**, строго по `IMPORT_ORDER.txt`. Пока **�
 
 После импорта у каждого workflow новый id — он виден в адресной строке, когда workflow открыт. Запишите id Excel Extractor и Schedule Builder: понадобятся на шаге 4.
 
-Другие JSON из папки `retired` / `support` не импортируйте.
+`support/demo-agent.workflow.json` — только если проверяете шаблон агента. Других JSON в `support/` нет.
 
 ### 3. Ключи доступа
 

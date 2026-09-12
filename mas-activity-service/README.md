@@ -63,7 +63,7 @@ curl -sS http://127.0.0.1:8200/ready
 
 Compose бьёт в `http://n8n:5678/webhook/mas-control-plane`. Сначала импорт + activate прокси, потом контейнер Activity (см. `scripts/lab_soft_redeploy.py`). FastAPI **без `--reload`**: после правки Python — `docker compose up -d --force-recreate mas-activity`.
 
-Activity пишет `/data/activity_state.json` (volume `activity_data`), чтобы recreate не обнулял rail. Runtime-only — не коммитить.
+`ACTIVITY_STATE_PATH` — только корень для `task_binaries`, если `ACTIVITY_BINARIES_PATH` не задан. Кейсы живут в Postgres за прокси. Runtime-only — не коммитить `data/`.
 
 ## UI
 
@@ -104,8 +104,6 @@ Tests: `.venv\Scripts\python.exe -m pytest -q`.
 | `GET` | `/metrics/cases` | сводка `summarize` (`?since=` ISO-8601) |
 | `GET`/`PUT` | `/agents[/{agent_id}]` | реестр |
 | `POST` | `/v1/knowledge/ingest` | live corpus → n8n Ingestion |
-
-Пути `/v1/tasks/*`, `/v1/sync`, `/v1/hydrate` — совместимость со старым UI/Trace Writer. Живая морда их не зовёт.
 
 Старт/HITL идут в n8n: webhook `ORCHESTRATOR_WEBHOOK_URL`; иначе REST при `N8N_BASE_URL` + user/password. Иначе 503.
 

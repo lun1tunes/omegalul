@@ -5,7 +5,6 @@ from __future__ import annotations
 import asyncio
 import json
 
-from app import durable
 from app import orchestrator
 
 
@@ -47,16 +46,16 @@ def test_webhook_client_disables_verification_when_configured(monkeypatch) -> No
     assert _Client.instances[0].verify is False
 
 
-def test_durable_clients_use_ca_bundle(monkeypatch, tmp_path) -> None:
+def test_orchestrator_clients_use_ca_bundle(monkeypatch, tmp_path) -> None:
     ca = tmp_path / "corp-ca.pem"
     ca.write_text("dummy", encoding="ascii")
-    monkeypatch.setenv("ACTIVITY_LIST_URL", "https://n8n.example/webhook/list")
+    monkeypatch.setenv("ORCHESTRATOR_WEBHOOK_URL", "https://n8n.example/webhook/orch")
     monkeypatch.setenv("ACTIVITY_TLS_VERIFY", "true")
     monkeypatch.setenv("ACTIVITY_CA_BUNDLE", str(ca))
     _Client.instances.clear()
-    monkeypatch.setattr("app.durable.httpx.AsyncClient", _Client)
+    monkeypatch.setattr("app.orchestrator.httpx.AsyncClient", _Client)
 
-    result = asyncio.run(durable.fetch_task_list(timeout_s=1.0))
+    result = asyncio.run(orchestrator._invoke_webhook({"action": "status"}, timeout_s=1.0))
 
     assert result == {"ok": True}
     assert _Client.instances[0].verify == str(ca)

@@ -27,7 +27,6 @@
 | `simulation-model-example/` | Golden/combat кейсы, живой харнесс `run_live_five.py` (6 задач через Activity), `run_live_demo_agent.py` (`demo_agent_long_job`, `three_agent_chain`, `agent_down_recovery`, `rework_round`, `step_limit_review`) и `run_live_excel_datasets.py` (`extract_table` — именованный набор, не даты ввода) | `scripts/mas_gate.py --live` (12 кейсов) |
 | `scripts/` | Лабораторные инструменты: `mas_gate.py` (гейт; `--bundle` → `dist/mas-<VERSION>.zip`), `field_check.py` (Windows `/health`+`/ready`, stdlib), `mas_trace_case.py` (трасса кейса), `lab_soft_redeploy.py` (переимпорт в lab n8n) | — |
 | `.cursor/rules/`, `.cursor/skills/` | Инварианты (всегда) и рецепты (`/mas-gate`, `/mas-trace`, `/mas-brief`) | — |
-| `n8n/templates/retired/`, `n8n/workflows/retired/` | Старый контур. Не расширять, не импортировать | — |
 
 ## 3. Инварианты (нарушение = откат)
 

@@ -157,27 +157,12 @@ async def probe_n8n_stack(
                 "error": "Orchestrator webhook/REST is not configured",
             }
 
-        if settings.resolved_hydrate_url:
-            hydrate = await _request(
-                client,
-                "POST",
-                settings.resolved_hydrate_url,
-                headers=settings.durable_headers(),
-                json_body={"action": "list"},
-            )
-            checks["activity_list"] = hydrate
-            checks["activity_feed"] = {
-                **hydrate,
-                "note": "same webhook as activity_list (mas-activity-hydrate)",
-            }
-        else:
-            checks["activity_list"] = {"ok": True, "configured": False, "note": "hydrate retired; cases live in Postgres"}
-            checks["activity_feed"] = {"ok": True, "configured": False, "note": "hydrate retired; cases live in Postgres"}
+        checks["activity_list"] = {"ok": True, "configured": False, "note": "hydrate retired; cases live in Postgres"}
+        checks["activity_feed"] = {"ok": True, "configured": False, "note": "hydrate retired; cases live in Postgres"}
 
         extras: list[dict[str, Any]] = []
         seen = {
             settings.resolved_orchestrator_webhook.rstrip("/"),
-            settings.resolved_hydrate_url.rstrip("/"),
         }
         for path in settings.webhook_check_paths:
             url = _webhook_url(settings.n8n_base, path)

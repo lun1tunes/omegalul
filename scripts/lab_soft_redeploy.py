@@ -38,30 +38,16 @@ CRED_OA = "hmOqhmlEN8Kxampr"
 CRED_HDR = "TZWvrKzFO7hsdoZY"
 
 PLACEHOLDERS = {
-    "REPLACE_CAS_PERSIST_IN_UI": "CAS — Persist Task State",
     "REPLACE_SCHEDULE_RAG_RETRIEVAL_IN_UI": "MAS — Knowledge Retrieval",
-    "REPLACE_SCHEDULE_BUILDER_IN_UI": "SCHEDULE — Builder",
     "REPLACE_SCHEDULE_BUILDER_AGENT_IN_UI": "Agent — Schedule Builder",
     "REPLACE_MAS_RUNTIME_CONFIG_IN_UI": "MAS — Runtime Config",
-    "REPLACE_CALCULATION_AGENT_IN_UI": "Agent — Calculation (Math Service)",
-    "REPLACE_MAS_TRACE_WRITER_IN_UI": "Writer — MAS Trace",
     "REPLACE_EXCEL_EXTRACTION_AGENT_IN_UI": "Agent — Excel Extractor",
     "REPLACE_HEALTH_ORCHESTRATOR_IN_UI": "Orchestrator — MAS",
-    "REPLACE_HEALTH_TRACE_IN_UI": "Writer — MAS Trace",
     "REPLACE_ORCHESTRATOR_ID_IN_UI": "Orchestrator — MAS",
-    "REPLACE_ORCHESTRATOR_ID_IN_UI_HUMAN_GATE_STATUS": "Orchestrator — MAS",
-    "REPLACE_ORCHESTRATOR_ID_IN_UI_HUMAN_GATE_RESUME": "Orchestrator — MAS",
     "REPLACE_ERROR_HANDLER_IN_UI": "Error — MAS Node Traces",
 }
 
-# Optional stubs — bind when imported so Orchestrator activate/publish can succeed.
-OPTIONAL_PLACEHOLDERS = {
-    "REPLACE_CLUSTER_CALC_ADAPTER_IN_UI": "Template — Cluster Calculation Adapter",
-    "REPLACE_BINARY_RESULTS_ADAPTER_IN_UI": "Template — Binary Results Adapter",
-    "REPLACE_PRESENTATION_ADAPTER_IN_UI": "Template — Presentation Assembler",
-    "REPLACE_DATA_SPECIALIST_IN_UI": "Template — Engineering Specialist",
-    "REPLACE_DOCUMENT_SPECIALIST_IN_UI": "Template — Engineering Specialist",
-}
+OPTIONAL_PLACEHOLDERS: dict[str, str] = {}
 
 # Publish/activate order: Control Plane Proxy first (Activity cannot boot
 # without /webhook/mas-control-plane), then RAG/specialists, Orchestrator, forms.
@@ -92,6 +78,11 @@ STALE_WORKFLOW_NAMES = (
     "SCHEDULE — Builder",
     "Agent — Excel Extractor (legacy webhook)",
     "MAS — Ensure Control Plane",
+    "Template — Engineering Specialist",
+    "Template — Cluster Calculation Adapter",
+    "Template — Binary Results Adapter",
+    "Template — Presentation Assembler",
+    "Reference — AI Components",
 )
 
 ERROR_WORKFLOW_SKIP = (
@@ -211,26 +202,13 @@ BEGIN
 END$$;
 """
     )
-    run(
-        [
-            "docker",
-            "compose",
-            "exec",
-            "-T",
-            "mas-activity",
-            "python",
-            "-c",
-            "from pathlib import Path; p=Path('/app/data/activity_state.json'); p.parent.mkdir(parents=True, exist_ok=True); p.write_text('{\"tasks\":{}}')",
-        ],
-        check=False,
-    )
     req = urllib.request.Request(
-        f"http://127.0.0.1:{env.get('MAS_ACTIVITY_HOST_PORT', '8200')}/v1/tasks",
+        f"http://127.0.0.1:{env.get('MAS_ACTIVITY_HOST_PORT', '8200')}/cases",
     )
     try:
         with urllib.request.urlopen(req, timeout=5) as resp:
             body = json.loads(resp.read().decode())
-        print("activity tasks", len(body.get("tasks") or []))
+        print("activity cases", len(body.get("cases") or body.get("tasks") or []))
     except Exception as exc:  # noqa: BLE001
         print("activity probe", exc)
 
@@ -1241,10 +1219,11 @@ def main() -> int:
     tasks = -1
     try:
         req = urllib.request.Request(
-            f"http://127.0.0.1:{env.get('MAS_ACTIVITY_HOST_PORT', '8200')}/v1/tasks",
+            f"http://127.0.0.1:{env.get('MAS_ACTIVITY_HOST_PORT', '8200')}/cases",
         )
         with urllib.request.urlopen(req, timeout=5) as resp:
-            tasks = len(json.loads(resp.read().decode()).get("tasks") or [])
+            body = json.loads(resp.read().decode())
+            tasks = len(body.get("cases") or body.get("tasks") or [])
     except Exception as exc:  # noqa: BLE001
         print("activity probe", exc)
     elapsed = round(time.time() - t0, 1)

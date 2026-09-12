@@ -9,7 +9,6 @@ function workflowFile(name) {
   const base = path.basename(name);
   const candidates = [
     path.join(workspace, 'n8n', 'workflows', 'core', base),
-    path.join(workspace, 'n8n', 'workflows', 'retired', base),
     path.join(workspace, 'n8n', 'workflows', 'support', base),
   ];
   for (const candidate of candidates) {

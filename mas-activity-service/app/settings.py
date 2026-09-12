@@ -29,9 +29,6 @@ def _read_mas_version() -> str:
 VERSION = _read_mas_version() or "0.0.0"
 DEFAULT_ORCHESTRATOR_WORKFLOW_ID = "e9bbdb6e-3b7c-5dc0-851a-30bd9f2eb0d6"
 ORCHESTRATOR_WEBHOOK_PATH = "mas-orchestrator-step"
-HYDRATE_WEBHOOK_PATH = "mas-activity-hydrate"
-LIST_WEBHOOK_PATH = HYDRATE_WEBHOOK_PATH
-FEED_WEBHOOK_PATH = HYDRATE_WEBHOOK_PATH
 INGEST_WEBHOOK_PATH = "mas-knowledge-ingest"
 DEFAULT_WEBHOOK_CHECKS = (
     ORCHESTRATOR_WEBHOOK_PATH,
@@ -79,12 +76,6 @@ def _webhook_url(base: str, path: str) -> str:
     return f"{root}/webhook/{slug}"
 
 
-def _legacy_split_hydrate_url(url: str) -> bool:
-    """Old list/feed webhook paths — ignore leftover env after the merge."""
-    tail = url.rstrip("/").rsplit("/", 1)[-1]
-    return tail in {"mas-activity-list-tasks", "mas-activity-load-feed"}
-
-
 class Settings(BaseSettings):
     """All process configuration. Import ``get_settings`` — do not scatter ``os.getenv``."""
 
@@ -119,6 +110,7 @@ class Settings(BaseSettings):
     orchestrator_auth_header: str = Field(default="", validation_alias="ORCHESTRATOR_AUTH_HEADER")
     orchestrator_auth_value: str = Field(default="", validation_alias="ORCHESTRATOR_AUTH_VALUE")
 
+    # Leftover env accepted so old mas-activity.env does not crash; unused at runtime.
     activity_hydrate_url: str = Field(default="", validation_alias="ACTIVITY_HYDRATE_URL")
     activity_list_url: str = Field(default="", validation_alias="ACTIVITY_LIST_URL")
     activity_feed_url: str = Field(default="", validation_alias="ACTIVITY_FEED_URL")
@@ -236,19 +228,15 @@ class Settings(BaseSettings):
 
     @property
     def resolved_hydrate_url(self) -> str:
-        for candidate in (self.activity_hydrate_url, self.activity_list_url, self.activity_feed_url):
-            url = candidate.strip()
-            if url and _is_absolute_http_url(url) and not _legacy_split_hydrate_url(url):
-                return url
-        return _webhook_url(self.n8n_base, HYDRATE_WEBHOOK_PATH)
+        return ""
 
     @property
     def resolved_list_url(self) -> str:
-        return self.resolved_hydrate_url
+        return ""
 
     @property
     def resolved_feed_url(self) -> str:
-        return self.resolved_hydrate_url
+        return ""
 
     @property
     def resolved_knowledge_ingest_url(self) -> str:
@@ -288,21 +276,12 @@ class Settings(BaseSettings):
             return {self.orchestrator_auth_header: self.orchestrator_auth_value}
         return {}
 
-    def durable_headers(self) -> dict[str, str]:
-        headers = {"Content-Type": "application/json", "Accept": "application/json"}
-        if self.activity_durable_auth_header and self.activity_durable_auth_value:
-            headers[self.activity_durable_auth_header] = self.activity_durable_auth_value
-        return headers
-
     def public_summary(self) -> dict[str, Any]:
         return {
             "n8n_transport": self.n8n_transport,
             "n8n_base_url": self.n8n_base or None,
             "orchestrator_webhook_configured": bool(self.resolved_orchestrator_webhook),
             "n8n_rest_configured": bool(self.n8n_base and self.n8n_username and self.n8n_password),
-            "activity_hydrate_configured": bool(self.resolved_hydrate_url),
-            "activity_list_configured": bool(self.resolved_list_url),
-            "activity_feed_configured": bool(self.resolved_feed_url),
             "knowledge_ingest_configured": bool(self.resolved_knowledge_ingest_url),
             "control_plane_proxy_configured": bool(self.control_plane_proxy_url.strip()),
             "control_plane_required": self.control_plane_required,
