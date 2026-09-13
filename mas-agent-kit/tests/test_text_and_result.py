@@ -72,6 +72,17 @@ def test_engineer_request_from_args_validates_like_ask_engineer() -> None:
     assert req["question_id"] == "Q-date_column"
     assert req["type"] == "choice" and [o["label"] for o in req["options"]] == ["План 2026", "Факт"]
     assert req["accepts"]["files"] == ["xlsx", ".inc"]
+    # CASE-6aa5a9d3-1e2ff9: LLM copied excel_gap_wefac.xlsx into ask_engineer → warning.
+    cleaned = engineer_request_from_args(
+        {
+            "question": "В книге excel_gap_wefac.xlsx на листе «Коэффициенты» колонка пуста. Где взять значения?",
+            "options": "Лист «Коэффициенты»; Лист «Примечания»",
+        },
+        default_topic="excel",
+    )
+    assert "excel_gap_wefac" not in cleaned["question"]
+    assert "xlsx" not in cleaned["question"].lower()
+    assert human_text_problems(cleaned["question"]) == []
 
 
 def test_hitl_answers_are_compact_for_the_llm() -> None:

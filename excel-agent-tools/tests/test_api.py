@@ -22,6 +22,7 @@ from app.sessions import load_state, locked_session, session_lock_path
 def client(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> TestClient:
     monkeypatch.setenv("SESSION_DIR", str(tmp_path / "sessions"))
     monkeypatch.setenv("API_KEY", "test-key")
+    monkeypatch.setenv("EXCEL_LEGACY_API", "1")
     # Reload because production settings are read at module import.
     import importlib
     import app.main as main
@@ -110,6 +111,19 @@ def tool(client: TestClient, session_id: str, name: str, args: dict) -> dict:
     payload = response.json()
     assert payload["ok"], payload
     return {key: value for key, value in payload.items() if key != "ok"}
+
+
+def test_legacy_api_absent_without_flag(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setenv("SESSION_DIR", str(tmp_path / "sessions"))
+    monkeypatch.setenv("API_KEY", "test-key")
+    monkeypatch.delenv("EXCEL_LEGACY_API", raising=False)
+    import importlib
+    import app.main as main
+
+    importlib.reload(main)
+    guest = TestClient(main.app)
+    assert guest.get("/health").status_code == 200
+    assert guest.get("/api/v1/tools", headers={"X-API-Key": "test-key"}).status_code == 404
 
 
 def test_full_excel_tool_flow_and_artifact(client: TestClient) -> None:

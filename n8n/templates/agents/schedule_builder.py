@@ -14,15 +14,17 @@ SYSTEM = """Ты — инженер-решатель агента Schedule Build
 Какой инструмент когда:
 - Задача про НОВЫЕ ДАТЫ ВВОДА скважин (Excel «скважина — дата», fact_count > 0) → apply_commissioning. Факты, решение по скважинам вне Excel и параметры новых скважин уже в сессии — аргументов не нужно. Другие apply_* для такой задачи не вызывай.
 - Задача про ГРУППЫ (поместить скважины в группу, групповой контроль GCONPROD) → inspect_schedule (имена скважин, дерево GRUPTREE), затем apply_group_rebind с полным spec: wells, parent_group, parent_of_parent, control (ORAT/WRAT/GRAT/LRAT/RESV), gas_rate числом в м3/сут («200 тыс. м3 газа в сут.» → 200000). Родителя новой группы бери из дерева исходного файла (корень — FIELD или как в inspect), если инженер не сказал иначе.
-- Точечные правки режимов/keywords → search_keywords → get_keyword (details.parameters) → apply_operations или render_ir.
+- В сессии есть именованные наборы (dataset_count > 0, не пары «скважина — дата ввода»): inspect_dataset по имени → search_keywords / get_keyword (имя keyword только из каталога и retrieved knowledge) → apply_dataset с field_map (поле набора → параметр keyword из get_keyword.details.parameters). Сопоставление полей — твоё, по смыслу набора и схемы; не выдумывай keyword и не подставляй пустые значения. apply_commissioning сюда не подходит.
+- Точечные правки режимов/keywords без набора → search_keywords → get_keyword (details.parameters) → apply_operations или render_ir.
 - inspect_well / analyze_forecast_controls / list_records — чтобы посмотреть скважину перед правкой. Не вызывай их «на всякий случай» и не больше трёх раз подряд.
 - build_schedule — только если apply уже менял сессию; validate_result — проверки emit.
-- ask_engineer — единственный способ спросить инженера. Только когда данных нет ни в задаче, ни в исходном файле, ни в ответах инженера (engineer_answers). Один вопрос обычной русской фразой: что нужно и зачем; варианты (options) — как их называет инженер: имена групп из исходного файла, «оставить»/«убрать». Никаких имён полей, JSON, enum, кодов. Инженер отвечает фактами, таблицами и файлами — не строками .INC.
+- ask_engineer — единственный способ спросить инженера. Только когда данных нет ни в задаче, ни в исходном файле, ни в ответах инженера (engineer_answers), ни в наборе. Один вопрос обычной русской фразой: что нужно и зачем; варианты (options) — как их называет инженер: имена групп из исходного файла, «оставить»/«убрать». Никаких имён полей, JSON, enum, кодов. Инженер отвечает фактами, таблицами и файлами — не строками .INC.
 
 Ответы инструментов:
-- ok:false, code:spec_incomplete — это тебе, не инженеру: заполни missing из текста задачи и inspect_schedule (where_to_find подсказывает откуда) и вызови инструмент снова. Спрашивай инженера, только если данных действительно нет.
+- ok:false, code:spec_incomplete — это тебе, не инженеру: заполни missing из текста задачи, inspect_schedule и inspect_dataset (where_to_find подсказывает откуда) и вызови инструмент снова. Спрашивай инженера, только если данных действительно нет.
+- ok:false, code:dataset_values_missing — в наборе пустые обязательные поля: спроси инженера через ask_engineer, не подставляй значения сам.
 - ok:false, code:question_not_human — переформулируй вопрос прозой и вызови ask_engineer снова.
-- ok:false, code:well_not_in_schedule / operations_required — ошибка твоего вызова; исправь аргументы.
+- ok:false, code:well_not_in_schedule / operations_required / unknown_dataset / unknown_keyword — ошибка твоего вызова; исправь аргументы.
 - ok:false, code:result_already_stored — результат этого запуска уже зафиксирован (apply или вопрос инженеру). Больше инструменты не вызывай, заверши ответ.
 - status completed или needs_input от apply_* / ask_engineer — результат зафиксирован. STOP: не вызывай build и другие apply.
 
@@ -53,13 +55,18 @@ TOOLS = [
     ),
     (
         "search_keywords",
-        "Найти keywords и methods по intent (даты ввода, группы, дебиты, перфорация, ГРП).",
-        [("intent", "string", True, "Фраза задачи: даты ввода, перепривязка групп, ORAT, ...")],
+        "Найти keyword в каталоге по фразе задачи или описания набора: имя, описание, поля схемы. Не словарь синонимов. Имя keyword не выдумывать.",
+        [("intent", "string", True, "Фраза из задачи или заголовок/смысл набора")],
     ),
     (
         "get_keyword",
         "Объект keyword: details.kind=schedule_keyword, parameters[{name,position,type,required,unit,description,enum}]. Имена полей только отсюда.",
         [("keyword", "string", True, "DATES / WCONPROD / GRUPTREE / ...")],
+    ),
+    (
+        "inspect_dataset",
+        "Строки и поля именованного набора, уже лежащего в сессии (из Excel). Keyword не выбирает.",
+        [("name", "string", True, "Имя набора из open_session.datasets")],
     ),
     (
         "list_records",
@@ -73,6 +80,16 @@ TOOLS = [
         "apply_commissioning",
         "Сдвинуть даты ввода скважин по фактам «скважина — дата» из Excel, уже лежащим в сессии (fact_count). Решение по скважинам вне Excel и параметры новых скважин тоже берутся из сессии. Аргументов нет. Для задач про даты ввода — это единственный нужный apply.",
         [],
+    ),
+    (
+        "apply_dataset",
+        "Записать именованный набор в SCHEDULE. Keyword — из search_keywords/get_keyword/карточки знаний, не выдумывать. field_map — поле набора → параметр схемы. Пустые значения не подставляй.",
+        [
+            ("dataset", "string", True, "Имя набора из inspect_dataset / open_session.datasets"),
+            ("keyword", "string", True, "Имя keyword из каталога (search_keywords / get_keyword)"),
+            ("field_map", "json", True, "Объект: поле набора → параметр keyword из get_keyword.details.parameters"),
+            ("date_field", "string", False, "Поле набора с датой шага DATES, если строки привязаны к дате исходного файла; пусто — обновить существующие записи скважины"),
+        ],
     ),
     (
         "apply_group_rebind",
@@ -126,10 +143,11 @@ SPEC = AgentSpec(
     title="Schedule Builder",
     when_to_use=(
         "Исходный SCHEDULE (.inc): сдвиг дат ввода по фактам «скважина — дата»; добавление новых скважин по их "
-        "параметрам; перепривязка скважин в группу (GRUPTREE/GCONPROD) по тексту задачи и исходному файлу. Факты дат и "
-        "параметры новых скважин берёт из результатов агента, который читал Excel, и из ответов инженера — сам Excel "
-        "не читает; для перепривязки групп Excel не нужен. Не выдумывает даты и имена, которых нет в задаче, фактах "
-        "или исходном файле. Отдаёт новый .INC и список изменений."
+        "параметрам; перепривязка скважин в группу (GRUPTREE/GCONPROD); запись именованного набора из Excel в keyword "
+        "по схеме (карточка знаний + get_keyword, не словарь в коде). Факты, наборы и параметры новых скважин берёт из "
+        "результатов агента, который читал Excel, и из ответов инженера — сам Excel не читает; для перепривязки групп "
+        "Excel не нужен. Не выдумывает keyword, даты и имена, которых нет в задаче, наборе или исходном файле. Отдаёт "
+        "новый .INC и список изменений."
     ),
     input_required=["schedule_source"],
     output_provides=["schedule_out", "diff"],
@@ -138,6 +156,7 @@ SPEC = AgentSpec(
         "data": {
             "facts": "даты ввода «скважина — дата» (нужны для новых дат ввода)",
             "new_wells": "параметры новых скважин (нужны, если добавляются скважины)",
+            "datasets": "именованные наборы строк из Excel (нужны, если задача — не даты ввода и не перепривязка, а другая таблица в SCHEDULE)",
         },
         "handoff_message": "что изменить в SCHEDULE и на основании чего",
     },
@@ -162,21 +181,13 @@ SPEC = AgentSpec(
     retrieval_filters_js="const ALLOWED_KEYWORDS=" + json.dumps(SCHEDULE_KEYWORDS) + ";\n" + r"""
 const allowed=new Set(ALLOWED_KEYWORDS);
 for(const k of (blob.match(/\b[A-Z][A-Z0-9_]{2,}\b/g)||[])) if(allowed.has(k)) keyword_families.push(k);
-const mapped=[];
-if(/дат[аые].{0,24}ввод|ввод.{0,16}скважин|commission/.test(low)) mapped.push('DATES','WCONPROD');
-if(/групп|перепривяз|gruptree/.test(low)) mapped.push('GRUPTREE','GCONPROD','WELSPECS');
-if(/\borat\b|\bwrat\b|\bgrat\b|дебит|лимит.{0,24}нефт|wconprod|weltarg/.test(low)) mapped.push('WCONPROD','WELTARG');
-if(/грп|гидроразрыв|fracture/.test(low)) mapped.push('FRACTURE_SPECS','FRACTURE_STAGE');
-if(/vfp/.test(low)) mapped.push('VFPPROD','WVFPDP');
-if(/перфорац|compdat/.test(low)) mapped.push('COMPDATMD');
-if(/закачк|инъект|wconinje/.test(low)) mapped.push('WCONINJE');
-for(const k of mapped) if(allowed.has(k)) keyword_families.push(k);
-if(/дат|ввод/.test(low)){topics.push('календарь');task_patterns.push('даты ввода');}
-if(/групп|перепривяз/.test(low)){topics.push('группы');task_patterns.push('перепривязка групп');}
-if(/дебит|orat|лимит/.test(low)){topics.push('контроль');task_patterns.push('прогнозный режим');}
-if(/грп|fracture/.test(low)){topics.push('ГРП');task_patterns.push('гидроразрыв');}
 """,
-    planner_extra_js="fact_count:opened.fact_count||0,\n  facts_preview:opened.facts_preview||[]",
+    planner_extra_js=(
+        "fact_count:opened.fact_count||0,\n"
+        "  facts_preview:opened.facts_preview||[],\n"
+        "  dataset_count:opened.dataset_count||0,\n"
+        "  datasets:opened.datasets||[]"
+    ),
     result_tools=["apply_", "build_", "ask_engineer"],
     texts=FallbackTexts(
         no_result_question=(

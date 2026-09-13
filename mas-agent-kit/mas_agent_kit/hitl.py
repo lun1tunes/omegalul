@@ -12,7 +12,7 @@ from typing import Any
 
 from .errors import ToolError
 from .result import engineer_request
-from .text import human_text_problems, option_problems, options_for_human, parse_jsonish, slug
+from .text import human_text_problems, option_problems, options_for_human, parse_jsonish, slug, strip_attachment_names
 
 FACT_LIST_KEYS = ("new_wells", "new_well_defs")
 
@@ -76,7 +76,7 @@ def engineer_request_from_args(
     (latin slug), ``accepts_files`` (``"xlsx, .inc"`` or list). Machine-looking text raises
     ``ToolError("question_not_human")`` back to the LLM — the engineer never sees it.
     """
-    question = str(args.get("question") or "").strip()
+    question = strip_attachment_names(str(args.get("question") or "").strip())
     options = options_for_human(args.get("options"))
     problems = human_text_problems(question) + option_problems(options)
     if problems:

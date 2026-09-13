@@ -9,7 +9,7 @@ Runs, in order, and prints a summary table (stops at the first failing stage unl
   combat     PUBLISH_ACTIVITY=0 combat-dates-revise/run_integration_cases.py (offline engine check)
   live       (only with --live) lab_soft_redeploy (--hot if lab healthy / no JSON drift) + 12 cases.
              Six commissioning in one pool (LIVE_FIVE_WORKERS=6, 9 when --repeat>1);
-             then demo long-job ∥ three_agent_chain ∥ excel_datasets;
+             then demo long-job ∥ three_agent_chain ∥ excel_datasets (extract + apply + gap);
              then recovery (agent_down, then rework ∥ step_limit). Wall ~20 min including --repeat 3.
              --repeat N redeploys once, runs each of the six commissioning specs N times in that pool
              (same α2 INC / thresholds), demo/chain/datasets/recovery once, prints a repeatability summary.
@@ -26,7 +26,7 @@ Usage:
   python3 scripts/mas_gate.py --live --cases combat_case3
   python3 scripts/mas_gate.py --live --cases demo_agent   # only the template agent cases (long job + three-agent chain)
   python3 scripts/mas_gate.py --live --cases agent_down_recovery
-  python3 scripts/mas_gate.py --live --cases excel_datasets  # extract_table live: events workbook, no .INC
+  python3 scripts/mas_gate.py --live --cases excel_datasets  # extract_table + apply_dataset + hole HITL
 
 Field note: this script needs Node.js, Docker Compose and the lab .venv — it is developer tooling.
 The field path is docs.md and the n8n Health Check form.
@@ -332,7 +332,7 @@ def _live_pass(cases: list[str], *, five_repeat: int = 1) -> tuple[bool, str, li
     if demo_sel:
         second.append(("simulation-model-example/run_live_demo_agent.py", demo_sel, 3600, None))
     if want_datasets:
-        second.append(("simulation-model-example/run_live_excel_datasets.py", [], 1200, None))
+        second.append(("simulation-model-example/run_live_excel_datasets.py", [], 2400, None))
     if len(second) == 1:
         script, args, timeout, extra_env = second[0]
         part_ok, part_note, part_rows = _run_live_script(script, args, timeout=timeout, extra_env=extra_env)

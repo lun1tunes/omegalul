@@ -89,6 +89,36 @@ const catalogue=()=>({contract:'schedule_schema_catalogue',contract_version:'1.0
  assert.equal(fromWebhook[0].json.knowledge_id, 'y');
  const skipTmpl=await collect({documents:[{role:'injection_template',do_not_ingest:true,knowledge_id:'tmpl',text:'x',target_base:'schedule_mvp'}]});
  assert.equal(skipTmpl[0].json.collect_error, 'CORPUS_EMPTY');
+ const prepSrc=src(ingestion,'Prepare RAG inventory query');
+ assert.ok(prepSrc.includes("$('Collect MAS knowledge blocks')"));
+ assert.equal(prepSrc.includes(packaged[0].knowledge_id), false, 'inventory expected ids are this-run Collect, not the packaged snapshot');
+ async function summarize(prepared, rows, diff){
+  const fn=new AsyncFunction('$json','$input','$', src(ingestion,'Summarize RAG inventory'));
+  const lookup=(name)=>{
+   if(name==='Prepare RAG inventory query') return {first:()=>({json:prepared||{}})};
+   if(name==='Select new MAS knowledge') return {first:()=>({json:diff||{}})};
+   throw new Error(name);
+  };
+  const result=await fn({}, {all:()=>rows.map(json=>({json}))}, lookup);
+  return result[0].json;
+ }
+ const invOk=await summarize(
+  {expected_document_ids:['live-a'],rag_table_name:'tnavigator_schedule_knowledge_v1'},
+  [
+   {document_id:'live-a',total_rows:10,distinct_documents:2,embedding_type:'vector'},
+   {document_id:'old-packaged',total_rows:10,distinct_documents:2,embedding_type:'vector'},
+  ],
+  {ingest_action:'insert',inserted:1,skipped:0,skipped_ids:[]}
+ );
+ assert.equal(invOk.status,'rag_inventory_ok');
+ assert.deepEqual(invOk.missing_document_ids,[]);
+ const invMiss=await summarize(
+  {expected_document_ids:['live-a','live-b'],rag_table_name:'tnavigator_schedule_knowledge_v1'},
+  [{document_id:'live-a',total_rows:5,distinct_documents:1,embedding_type:'vector'}],
+  {ingest_action:'insert',inserted:1}
+ );
+ assert.equal(invMiss.status,'rag_inventory_incomplete');
+ assert.deepEqual(invMiss.missing_document_ids,['live-b']);
  async function shape(json, diff){
   const fn=new AsyncFunction('$json','$', src(ingestion,'Shape MAS ingest response'));
   const result=await fn(json, {first:()=>({json: diff||{}})});
@@ -109,5 +139,5 @@ const catalogue=()=>({contract:'schedule_schema_catalogue',contract_version:'1.0
  const shapedSchema=await shape({status:'needs_input',findings:[{code:'SCHEMA_ENTRY_INVALID',severity:'error',keyword:'ENDACTIO',knowledge_id:'endactio-action-close-v1'}],vector_write_allowed:false},{ingest_action:'insert',status:'needs_input',inserted:1,skipped:1});
  assert.ok(String(shapedSchema.message).includes('endactio-action-close-v1'));
  assert.ok(String(shapedSchema.message).includes('ENDACTIO'));
- console.log('SCHEDULE RAG runtime smoke: 24 scenarios passed');
+ console.log('SCHEDULE RAG runtime smoke: 26 scenarios passed');
 })().catch(e=>{console.error(e.stack||e);process.exit(1)});

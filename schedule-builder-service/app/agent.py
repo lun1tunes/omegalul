@@ -15,7 +15,7 @@ from typing import Any
 
 from mas_agent_kit import AgentService, SessionStore, ToolRegistry
 
-from .io import bind_case_packet, commissioning_facts, file_ref, load_source
+from .io import bind_case_packet, collect_datasets, commissioning_facts, compact_datasets, file_ref, load_source
 from .parse import parse_schedule, well_names
 from .well_model import build_well_objects
 
@@ -85,6 +85,7 @@ class ScheduleBuilderAgent(AgentService):
         if not str(source).strip():
             return self.not_opened(self._no_source(task_id, "Нет исходного SCHEDULE"))
         facts = commissioning_facts(context, inputs)
+        datasets = collect_datasets(inputs, context)
         state = self.store.create(
             {
                 "case_id": case_id,
@@ -97,14 +98,18 @@ class ScheduleBuilderAgent(AgentService):
                 "inputs": inputs,
                 "context": context,
                 "facts": facts,
+                "datasets": datasets,
                 "result": None,
             }
         )
+        inventory = compact_datasets(datasets)
         return self.opened(
             state,
             inspect=compact_inspect(source),
             fact_count=len(facts),
             facts_preview=[{"well": row.get("well"), "date": row.get("date")} for row in facts[:40]],
+            dataset_count=len(inventory),
+            datasets=inventory,
         )
 
     def result(self, state: dict[str, Any]) -> dict[str, Any]:

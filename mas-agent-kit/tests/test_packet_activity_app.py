@@ -64,6 +64,7 @@ def test_upstream_data_merges_completed_agents_in_step_order() -> None:
     }
     merged = upstream_agent_data(state)
     assert merged == {"facts": [{"well": "new"}], "new_wells": [{"well": "N1"}]}
+    assert upstream_agent_data({"data": {"excel": {"facts": [{"well": "old"}]}}}) == {}
 
 
 class _FakeActivity(BaseHTTPRequestHandler):

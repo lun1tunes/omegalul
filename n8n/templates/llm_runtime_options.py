@@ -20,7 +20,7 @@ LLM_HTTP_TIMEOUT_MS = 600_000
 # Do not send max_tokens / maxTokens: 0 aborts like timeout:0, and raising the cap
 # does not fix thinking (CASE-6aa51606-822385: 2048 and probe 8192 both left content
 # empty). Decision / Verify omit the field (provider default) and turn thinking off
-# (CHAT_THINKING_OFF). Agent Chat Model also omits maxTokens.
+# (CHAT_THINKING_OFF). Interpret uses the same HTTP body. Agent Chat Model also omits maxTokens.
 # n8n 2.30.8 lmChatOpenAi only forwards reasoningEffort low|medium|high
 # (→ modelKwargs.reasoning_effort) and cannot send OpenRouter reasoning.enabled=false.
 # Setting reasoningEffort *enables* thinking and is what emptied Decision content.

@@ -81,8 +81,9 @@ async function run(name, json, nodes = {}, binary = {}) {
     'Status only?',
     'Resume persist?',
     'Needs interpret?',
+    'Build interpret chat',
+    'Interpret chat',
     'Interpret free-text answer',
-    'Answer interpretation Structured Output',
     'Apply interpreted answer',
     'Resume to decision?',
     'Not a resume?',
@@ -106,7 +107,7 @@ async function run(name, json, nodes = {}, binary = {}) {
   const verify = wf.nodes.find((n) => n.name === 'Verify completion');
   assert.equal(verify.type, 'n8n-nodes-base.code');
   // CASE-6aa19313-dadd64 / CASE-6aa51606-822385: HTTP chat retries 503; thinking off is in the body.
-  for (const name of ['Decision chat', 'Verify chat']) {
+  for (const name of ['Decision chat', 'Verify chat', 'Interpret chat']) {
     const http = wf.nodes.find((n) => n.name === name);
     assert.equal(http.type, 'n8n-nodes-base.httpRequest');
     assert.equal(http.retryOnFail, true, `${name} retries a model 503`);
@@ -119,25 +120,19 @@ async function run(name, json, nodes = {}, binary = {}) {
   assert.equal(text.includes('"Decision Agent"'), false);
   assert.equal(text.includes('Decision Structured Output'), false);
   assert.equal(text.includes('Verification Structured Output'), false);
-
-  const model = wf.nodes.find((n) => n.name === 'Decision Chat Model — configure in UI');
-  assert.ok(model);
-  assert.equal(model.parameters.model.value, 'qwen/qwen3.6-27b');
-  assert.equal(model.parameters.options.temperature, 0);
-  assert.equal('maxTokens' in (model.parameters.options || {}), false);
-  assert.equal('reasoningEffort' in (model.parameters.options || {}), false);
-  const modelEdges = wf.connections['Decision Chat Model — configure in UI'].ai_languageModel[0];
-  assert.equal(modelEdges[0].type, 'ai_languageModel');
-  assert.ok(modelEdges.some((e) => e.node === 'Interpret free-text answer' && e.type === 'ai_languageModel'));
-  assert.ok(modelEdges.some((e) => e.node === 'Answer interpretation Structured Output' && e.type === 'ai_languageModel'));
-  assert.equal(modelEdges.some((e) => e.node === 'Decision LLM'), false);
-  assert.equal(modelEdges.some((e) => e.node === 'Verify completion'), false);
-  const interpretParser = wf.connections['Answer interpretation Structured Output'].ai_outputParser[0];
-  assert.equal(interpretParser[0].node, 'Interpret free-text answer');
-  const interpretLlm = wf.nodes.find((n) => n.name === 'Interpret free-text answer');
-  assert.equal(interpretLlm.type, '@n8n/n8n-nodes-langchain.chainLlm');
-  assert.equal(interpretLlm.typeVersion, 1.9);
-  assert.equal(interpretLlm.parameters.hasOutputParser, true);
+  assert.equal(text.includes('Answer interpretation Structured Output'), false);
+  assert.equal(text.includes('Decision Chat Model'), false);
+  assert.equal(text.includes('outputParserStructured'), false);
+  assert.equal(text.includes('chainLlm'), false);
+  assert.equal(text.includes('reconcileLedgerAnswers'), false);
+  const interpret = wf.nodes.find((n) => n.name === 'Interpret free-text answer');
+  assert.equal(interpret.type, 'n8n-nodes-base.code');
+  const buildInterpret = wf.nodes.find((n) => n.name === 'Build interpret chat');
+  assert.match(buildInterpret.parameters.jsCode, /reasoning.*enabled.*false/);
+  const five = fs.readFileSync(path.join(workspace, 'simulation-model-example/run_live_five.py'), 'utf8');
+  assert.match(five, /hitl_free_text/, 'combat_case3 must exercise Interpret without a HITL button');
+  assert.match(five, /return qid, prose\.strip\(\), None/);
+  assert.match(five, /не удалось однозначно понять/);
 
   const runtime = wf.nodes.find((n) => n.name === 'Runtime endpoints');
   assert.ok(runtime);
@@ -241,6 +236,16 @@ async function run(name, json, nodes = {}, binary = {}) {
     assert.equal(accepted.accepted, true);
     assert.equal(accepted.answer.choice, 'remove');
     assert.equal(accepted.answer.unlisted_wells_policy, 'remove');
+    // CASE-6aa586ab-90a7ae: Interpret HTTP returned the button label, not value.
+    const byLabel = helpers.applyInterpretedDecision(
+      'unlisted_wells_policy',
+      { ...q, options: [{ value: 'keep', label: 'Оставить как в исходном файле' }, { value: 'remove', label: 'Убрать из прогноза' }] },
+      { text: 'Убери их из прогноза, пожалуйста — в Excel этих скважин нет.' },
+      { decision: 'Убрать из прогноза', confidence: 1, paraphrase: 'Исключить скважины, которых нет в Excel' },
+    );
+    assert.equal(byLabel.accepted, true);
+    assert.equal(byLabel.answer.choice, 'remove');
+    assert.equal(byLabel.answer.unlisted_wells_policy, 'remove');
     const rejected = helpers.applyInterpretedDecision('unlisted_wells_policy', q, { text: 'наверное' }, { decision: 'remove', confidence: 0.4, paraphrase: 'неясно' });
     assert.equal(rejected.accepted, false);
     const clarify = helpers.buildClarifyQuestion(q);
@@ -1188,6 +1193,8 @@ async function run(name, json, nodes = {}, binary = {}) {
     { agent_id: 'schedule_builder', title: 'Schedule Builder', needs: { facts: 'даты ввода «скважина — дата»', new_wells: 'параметры новых скважин' } },
   ], 'consumers come from open plan items, not from the LLM');
   assert.equal(Object.keys(shaped.agent_task.inputs).includes('expected_output'), true);
+  assert.deepEqual(shaped.state.plan.find((p) => p.id === 'p1').asked, ['well_events']);
+  assert.equal(shaped.state.plan.find((p) => p.id === 'p2').asked, undefined);
 
   const afterHitl = await run(
     'Parse decision',
@@ -1621,10 +1628,9 @@ async function run(name, json, nodes = {}, binary = {}) {
     const afterRework = await decide(await prepare(resumedRework.state), delegate);
     assert.equal(afterRework.action_type, 'call_agent');
 
-    // Agent asked (needs_input) → Activity wrote the answer into state.hitl.answers and called action=step
-    // (no orchestrator resume). The journal must still pick the answer up, and finishing is not allowed
-    // until the asking agent has run with it (regression for combat_case3: LLM "finished" after the
-    // unlisted-wells answer and hallucinated that schedule_builder had produced the schedule).
+    // Agent asked (needs_input). F9: answers parked in hitl.answers without resume are not copied
+    // into the journal. The live path is resume source=human (combat_case3: finish after the
+    // unlisted-wells answer would drop the engineer's decision).
     const asked = await merge(parsed, {
       status: 'needs_input',
       agent_id: 'schedule_builder',
@@ -1642,7 +1648,23 @@ async function run(name, json, nodes = {}, binary = {}) {
       ...asked.state,
       hitl: { ...asked.state.hitl, pending: false, answers: { unlisted_wells_policy: { choice: 'remove', text: 'Убрать из прогноза', label: 'Убрать из прогноза' } } },
     };
-    const preparedAnswered = await prepare(activityWritten);
+    const preparedStale = await prepare(activityWritten);
+    assert.equal(preparedStale.compact.journal.history.filter((e) => e.kind === 'human').length, 0);
+    const resumedAnswer = await run(
+      'Apply request extras',
+      { state: JSON.stringify(asked.state), status: 'waiting_user' },
+      {
+        'Normalize step request': {
+          ...req,
+          is_resume: true,
+          action: 'resume',
+          source: 'human',
+          gate_id: 'unlisted_wells_policy',
+          human_response: JSON.stringify({ choice: 'remove', text: 'Убрать из прогноза', label: 'Убрать из прогноза' }),
+        },
+      },
+    );
+    const preparedAnswered = await prepare(resumedAnswer.state);
     const humanEntry = preparedAnswered.compact.journal.history.at(-1);
     assert.equal(humanEntry.kind, 'human');
     assert.equal(humanEntry.answer, 'Убрать из прогноза');
@@ -1866,6 +1888,20 @@ async function run(name, json, nodes = {}, binary = {}) {
     assert.equal('task' in schema.properties.action.properties, false, 'action.task is discarded — not in the parser schema');
     assert.equal('question_id' in schema.properties.action.properties, false);
     assert.equal('is_repeating' in schema.properties.progress.properties, false);
+    const llmQid = await decide(prepared, {
+      progress: { goal_satisfied: false, evidence: 'нужно уточнение', missing: 'даты' },
+      status_message: 'Уточните даты ввода.',
+      action: {
+        type: 'ask_user',
+        question: 'Какие даты ввода использовать?',
+        question_id: 'unlisted_wells_policy',
+        options: [{ value: 'keep', label: 'Оставить как в файле' }, { value: 'remove', label: 'Убрать' }],
+      },
+    });
+    assert.equal(llmQid.action_type, 'ask_user');
+    assert.equal(llmQid.state.hitl.questions[0].question_id, 'Q-1', 'O6: LLM question_id is ignored');
+    assert.equal(llmQid.state.hitl.questions[0].question_id, `Q-${llmQid.state.step_count}`);
+    assert.deepEqual(llmQid.state.hitl.questions[0].options.map((o) => o.label), ['Оставить как в файле', 'Убрать']);
     assert.equal('fields' in schema.properties.action.properties.expected_output.properties.datasets.items.properties, false);
     assert.deepEqual(schema.properties.plan_update.items.required, ['id']);
     assert.deepEqual(schema.properties.plan_update.items.properties.status.enum, ['pending', 'active', 'done', 'blocked', 'dropped']);
@@ -1987,9 +2023,10 @@ async function run(name, json, nodes = {}, binary = {}) {
     // -------------------------------------------------------------------------------------------
     const twoExcel = await decide(await prepare(baseState), { ...callExcel, action: { ...callExcel.action, task_id: 'p1' }, plan_update: [
       { id: 'p1', title: 'Извлечь из Excel новые даты ввода скважин', agent_id: 'excel_extractor' },
-      { id: 'p2', title: 'Извлечь из Excel параметры новых скважин', agent_id: 'excel_extractor', depends_on: ['p1'] },
+      { id: 'p2', title: 'Извлечь из Excel параметры новых скважин', agent_id: 'excel_extractor', depends_on: ['p1'], asked: ['facts'] },
       { id: 'p3', title: 'Обновить прогнозный schedule по новым датам и составу скважин', agent_id: 'schedule_builder', depends_on: ['p1', 'p2'] },
     ] });
+    assert.equal(twoExcel.state.plan.find((p) => p.id === 'p2').asked, undefined, 'plan_update asked is ignored');
     assert.equal(twoExcel.agent_task.task_id, 'p1');
     assert.deepEqual(twoExcel.state.plan.map((p) => [p.id, p.status]), [['p1', 'active'], ['p2', 'pending'], ['p3', 'pending']]);
     let incomplete = await merge(twoExcel, { status: 'completed', agent_id: 'excel_extractor', message: 'Даты ввода: 14 скважин.', data: { facts: [1] } });
@@ -2006,6 +2043,22 @@ async function run(name, json, nodes = {}, binary = {}) {
     assert.deepEqual(incomplete.state.agents.excel_extractor.data.new_wells, [1]);
     let chain = await merge(twoExcel, { status: 'completed', agent_id: 'excel_extractor', message: 'Даты ввода: 14 скважин. Параметры новых скважин: 10.', data: { facts: [1], new_wells: [1] } });
     assert.deepEqual(chain.state.plan.map((p) => [p.id, p.status]), [['p1', 'done'], ['p2', 'done'], ['p3', 'pending']], 'CASE-6aa029de-c5e23d: leftover item closes when output_provides are already in data');
+    const askedFacts = await decide(await prepare(baseState), {
+      ...callExcel,
+      action: {
+        ...callExcel.action,
+        task_id: 'p1',
+        expected_output: { datasets: [{ name: 'facts', description: 'даты ввода' }] },
+      },
+      plan_update: [
+        { id: 'p1', title: 'Извлечь из Excel новые даты ввода скважин', agent_id: 'excel_extractor', asked: ['new_wells'] },
+        { id: 'p2', title: 'Извлечь из Excel параметры новых скважин', agent_id: 'excel_extractor', depends_on: ['p1'] },
+        { id: 'p3', title: 'Обновить прогнозный schedule по новым датам и составу скважин', agent_id: 'schedule_builder', depends_on: ['p1', 'p2'] },
+      ],
+    });
+    assert.deepEqual(askedFacts.state.plan.find((p) => p.id === 'p1').asked, ['facts']);
+    const askedMerged = await merge(askedFacts, { status: 'completed', agent_id: 'excel_extractor', message: 'Даты ввода: 14 скважин.', data: { facts: [1] } });
+    assert.deepEqual(askedMerged.state.plan.map((p) => [p.id, p.status]), [['p1', 'done'], ['p2', 'done'], ['p3', 'pending']], 'O23: leftover closes by expected_output asked, not the full catalog');
     const extraExcel = await decide(await prepare(chain.state), { ...callExcel, action: { ...callExcel.action, task_id: 'p2', handoff_message: 'Извлеки параметры новых скважин.' } });
     assert.equal(decisionPayload(extraExcel).guard, 'repeat_review');
     // The same agent again for an item that is already done (or with no task_id) → repeat → review as before.

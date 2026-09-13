@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import re
 from typing import Any
 
 KEYWORDS: list[str] = [
@@ -196,7 +197,7 @@ FIELDS: dict[str, list[dict[str, Any]]] = {
 METHODS = ["create_record", "update_field", "validate_record"]
 
 DESCRIPTIONS = {
-    "DATES": "Границы расчётных периодов",
+    "DATES": "Даты расчётных периодов (шаги календаря SCHEDULE)",
     "WCONPROD": "Управление добывающей скважиной",
     "WCONINJE": "Управление нагнетательной скважиной",
     "WELSPECS": "Спецификация скважины",
@@ -249,49 +250,60 @@ def all_keywords() -> list[dict[str, Any]]:
     return [keyword_object(name) for name in KEYWORDS]
 
 
-INTENT_ALIASES = {
-    "дат": ["DATES", "WCONPROD"],
-    "ввод": ["DATES", "WCONPROD"],
-    "commission": ["DATES", "WCONPROD"],
-    "групп": ["GRUPTREE", "GCONPROD", "WELSPECS"],
-    "перепривяз": ["GRUPTREE", "GCONPROD", "WELSPECS"],
-    "gruptree": ["GRUPTREE"],
-    "gconprod": ["GCONPROD"],
-    "дебит": ["WCONPROD", "WCONINJE", "WELTARG"],
-    "orat": ["WCONPROD"],
-    "перфор": ["COMPDATMD"],
-    "грп": ["FRACTURE_SPECS", "FRACTURE_STAGE", "WFRACP"],
-    "fracture": ["FRACTURE_SPECS", "FRACTURE_STAGE"],
-}
+# Lexical catalogue search only — no stem→keyword maps (A6).
+_WORD_RE = re.compile(r"[0-9A-Za-zА-Яа-яЁё_]{2,}")
+
+
+def _catalogue_blob(item: dict[str, Any]) -> str:
+    parts = [str(item.get("keyword") or ""), str(item.get("description") or "")]
+    for field in item.get("fields") or []:
+        if not isinstance(field, dict):
+            continue
+        parts.append(str(field.get("name") or ""))
+        parts.append(str(field.get("description") or ""))
+    details = item.get("details") if isinstance(item.get("details"), dict) else {}
+    for variant in details.get("variants") or []:
+        if not isinstance(variant, dict):
+            continue
+        for param in variant.get("parameters") or []:
+            if not isinstance(param, dict):
+                continue
+            parts.append(str(param.get("name") or ""))
+            parts.append(str(param.get("description") or ""))
+    return " ".join(parts).lower()
 
 
 def search_keywords(intent: str) -> list[dict[str, Any]]:
+    """Rank catalogue keywords by overlap with the query text (name, description, schema fields).
+
+    Does not map Russian stems onto a keyword list. Empty query → full catalogue.
+    """
     q = (intent or "").strip().lower()
+    catalog = [item for item in all_keywords() if item]
     if not q:
-        return all_keywords()
-    wanted: list[str] = []
-    for token, names in INTENT_ALIASES.items():
-        if token in q:
-            wanted.extend(names)
-    out: list[dict[str, Any]] = []
-    seen: set[str] = set()
-    for name in wanted:
-        item = keyword_object(name)
-        if item and item["keyword"] not in seen:
-            seen.add(item["keyword"])
-            out.append(item)
-    for item in all_keywords():
-        blob = " ".join(
-            [
-                item["keyword"],
-                item.get("description") or "",
-                " ".join(f["name"] for f in item.get("fields") or []),
-            ]
-        ).lower()
-        if q in blob and item["keyword"] not in seen:
-            seen.add(item["keyword"])
-            out.append(item)
-    return out
+        return catalog
+    tokens = [m.group(0).lower() for m in _WORD_RE.finditer(q)]
+    scored: list[tuple[int, dict[str, Any]]] = []
+    for item in catalog:
+        blob = _catalogue_blob(item)
+        keyword = str(item.get("keyword") or "").lower()
+        score = 0
+        if keyword and (keyword == q or keyword in q.split() or q == keyword):
+            score += 100
+        if q and q in blob:
+            score += 20
+        blob_words = {m.group(0).lower() for m in _WORD_RE.finditer(blob)}
+        for tok in tokens:
+            if tok == keyword:
+                score += 50
+            elif tok in blob_words:
+                score += 3
+            elif tok in blob:
+                score += 1
+        if score:
+            scored.append((score, item))
+    scored.sort(key=lambda pair: (-pair[0], str(pair[1].get("keyword") or "")))
+    return [item for _score, item in scored]
 
 
 def within_date_rank(keyword: str, orig_index: int = 0) -> float:

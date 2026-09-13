@@ -24,13 +24,13 @@ from mas_agent_kit import (
 )
 
 from .agent import UNITS, agent, compact_inspect
-from .apply import apply_operations
+from .apply import apply_mapped_records, apply_operations, parameter_specs, well_from_fields
 from .commissioning import run_commissioning_revise
 from .diff import unified_diff
 from .emit import emit_schedule
 from .group_rebind import CONTROLS, gruptree_summary, normalize_group_rebind_spec, run_group_rebind_revise
-from .io import excel_bucket
-from .keywords import keyword_object, search_keywords
+from .io import collect_datasets, compact_datasets, excel_bucket, load_dataset_rows
+from .keywords import keyword_object, normalize_keyword, search_keywords
 from .parse import parse_schedule, well_names
 from .validate import validate_emitted
 from .well_model import build_well_objects, find_well
@@ -39,8 +39,8 @@ MAX_RECORDS = 40
 
 # Tools that fix a result in the session. Whole-task tools produce the final answer for the run;
 # apply_operations / build_schedule may legitimately chain after a completed point edit.
-RESULT_TOOLS = {"apply_commissioning", "apply_group_rebind", "ask_engineer", "apply_operations", "build_schedule"}
-WHOLE_TASK_TOOLS = {"apply_commissioning", "apply_group_rebind", "ask_engineer"}
+RESULT_TOOLS = {"apply_commissioning", "apply_group_rebind", "apply_dataset", "ask_engineer", "apply_operations", "build_schedule"}
+WHOLE_TASK_TOOLS = {"apply_commissioning", "apply_group_rebind", "apply_dataset", "ask_engineer"}
 
 
 def _engineer_answers(state: dict[str, Any]) -> list[dict[str, Any]]:
@@ -304,9 +304,24 @@ def _well_or_error(source: str, name: Any) -> dict[str, Any]:
     return well
 
 
+def _session_datasets(state: dict[str, Any]) -> dict[str, dict[str, Any]]:
+    stored = state.get("datasets") if isinstance(state.get("datasets"), dict) else {}
+    if stored:
+        return {str(k): v for k, v in stored.items() if isinstance(v, dict)}
+    inputs = state.get("inputs") if isinstance(state.get("inputs"), dict) else {}
+    context = state.get("context") if isinstance(state.get("context"), dict) else {}
+    return collect_datasets(inputs, context)
+
+
 @tool("inspect_schedule", "Объектная инвентаризация исходного SCHEDULE без полного .INC.")
 def inspect_schedule(ctx: ToolContext, args: dict[str, Any]) -> dict[str, Any]:
-    return {"inspect": compact_inspect(_source(ctx.state)), "fact_count": len(ctx.state.get("facts") or [])}
+    datasets = compact_datasets(_session_datasets(ctx.state))
+    return {
+        "inspect": compact_inspect(_source(ctx.state)),
+        "fact_count": len(ctx.state.get("facts") or []),
+        "dataset_count": len(datasets),
+        "datasets": datasets,
+    }
 
 
 @tool("inspect_well", "Подробно осмотреть одну скважину.", {"well": {"type": "string"}}, required=["well"])
@@ -354,12 +369,13 @@ def analyze_forecast_controls(ctx: ToolContext, args: dict[str, Any]) -> dict[st
     }
 
 
-@tool("search_keywords", "Найти keywords по intent.", {"intent": {"type": "string"}})
+@tool("search_keywords", "Найти keyword в каталоге по фразе: имя, описание, поля схемы.", {"intent": {"type": "string"}})
 def search_keywords_tool(ctx: ToolContext, args: dict[str, Any]) -> dict[str, Any]:
     intent = str(args.get("intent") or _instruction_blob(ctx.state))
     hits = search_keywords(intent)
     return {
         "intent": intent,
+        "matched": bool(hits),
         "keywords": [
             {
                 "keyword": item["keyword"],
@@ -369,6 +385,7 @@ def search_keywords_tool(ctx: ToolContext, args: dict[str, Any]) -> dict[str, An
             }
             for item in hits[:20]
         ],
+        "hint": None if hits else "Ничего не совпало с каталогом. Возьми имя из get_keyword / retrieved knowledge, не выдумывай keyword.",
     }
 
 
@@ -378,6 +395,249 @@ def get_keyword(ctx: ToolContext, args: dict[str, Any]) -> dict[str, Any]:
     if item is None:
         raise ToolError("unknown_keyword", "Такого keyword нет в каталоге; имена — из search_keywords.", keyword=args.get("keyword"))
     return {"keyword": item}
+
+
+def _dataset_entry(state: dict[str, Any], name: str) -> dict[str, Any]:
+    datasets = _session_datasets(state)
+    if name in datasets:
+        return datasets[name]
+    low = name.casefold()
+    for key, entry in datasets.items():
+        if str(key).casefold() == low or str(entry.get("name") or "").casefold() == low:
+            return entry
+    raise ToolError(
+        "unknown_dataset",
+        "Такого набора в сессии нет. Имена — из open_session.datasets / inspect_dataset.",
+        dataset=name,
+        available_datasets=sorted(datasets),
+    )
+
+
+@tool(
+    "inspect_dataset",
+    "Строки и поля именованного набора из сессии (результат Excel), без угадывания keyword.",
+    {"name": {"type": "string"}},
+    required=["name"],
+)
+def inspect_dataset(ctx: ToolContext, args: dict[str, Any]) -> dict[str, Any]:
+    name = str(args.get("name") or args.get("dataset") or "").strip()
+    if not name:
+        raise ToolError("dataset_required", "Передай имя набора из open_session.datasets.")
+    entry = _dataset_entry(ctx.state, name)
+    try:
+        rows = load_dataset_rows(entry, ctx.state)
+    except FileNotFoundError as exc:
+        raise ToolError("dataset_rows_unavailable", "Строки набора не удалось прочитать.", dataset=name) from exc
+    fields = [f for f in (entry.get("fields") or []) if isinstance(f, dict)]
+    return {
+        "name": str(entry.get("name") or name),
+        "title": str(entry.get("title") or ""),
+        "fields": [{"name": f.get("name"), "type": f.get("type"), "source_column": f.get("source_column")} for f in fields],
+        "row_count": len(rows),
+        "rows": rows[:80],
+        "truncated": len(rows) > 80,
+    }
+
+
+def _parse_field_map(raw: Any) -> dict[str, str]:
+    parsed = raw if isinstance(raw, dict) else _parse_jsonish(raw)
+    if not isinstance(parsed, dict) or not parsed:
+        return {}
+    out: dict[str, str] = {}
+    for key, value in parsed.items():
+        src = str(key or "").strip()
+        dst = str(value or "").strip()
+        if src and dst:
+            out[src] = dst
+    return out
+
+
+def _param_names(keyword: str) -> list[str]:
+    return [str(p.get("name") or "") for p in parameter_specs(keyword) if str(p.get("name") or "")]
+
+
+def _required_params(keyword: str) -> list[str]:
+    return [str(p.get("name") or "") for p in parameter_specs(keyword) if p.get("required") and str(p.get("name") or "")]
+
+
+def _map_row(row: dict[str, Any], field_map: dict[str, str]) -> dict[str, Any]:
+    fields: dict[str, Any] = {}
+    low_row = {str(k).casefold(): v for k, v in row.items()}
+    for src, dst in field_map.items():
+        value = row.get(src)
+        if value in (None, "") and src.casefold() in low_row:
+            value = low_row[src.casefold()]
+        if value not in (None, ""):
+            fields[dst] = value
+    return fields
+
+
+def _row_date(row: dict[str, Any], date_field: str) -> str:
+    if not date_field:
+        return ""
+    value = row.get(date_field)
+    if value in (None, ""):
+        low = date_field.casefold()
+        for key, item in row.items():
+            if str(key).casefold() == low:
+                value = item
+                break
+    return str(value or "").strip()
+
+
+@tool(
+    "apply_dataset",
+    "Применить именованный набор к SCHEDULE: keyword и field_map задаёт модель, записи пишет схема.",
+    {
+        "dataset": {"type": "string"},
+        "keyword": {"type": "string"},
+        "field_map": {"type": ["object", "string"]},
+        "date_field": {"type": "string"},
+    },
+    required=["dataset", "keyword", "field_map"],
+)
+def apply_dataset(ctx: ToolContext, args: dict[str, Any]) -> dict[str, Any]:
+    state = ctx.state
+    _guard_result(state, "apply_dataset")
+    name = str(args.get("dataset") or args.get("name") or "").strip()
+    keyword = normalize_keyword(str(args.get("keyword") or ""))
+    field_map = _parse_field_map(args.get("field_map"))
+    date_field = str(args.get("date_field") or "").strip()
+    if not name:
+        raise ToolError("dataset_required", "Передай имя набора из inspect_dataset / open_session.datasets.")
+    item = keyword_object(keyword)
+    if item is None:
+        raise ToolError("unknown_keyword", "Такого keyword нет в каталоге; имена — из search_keywords / get_keyword.", keyword=args.get("keyword"))
+    params = _param_names(keyword)
+    param_lookup = {p.lower(): p for p in params}
+    if not field_map:
+        raise ToolError(
+            "spec_incomplete",
+            "Нужен field_map: поле набора → параметр keyword из get_keyword.details.parameters. Это тебе, не инженеру.",
+            missing=["field_map"],
+            available_dataset_fields=[],
+            keyword_parameters=params,
+            where_to_find={"field_map": "inspect_dataset.fields сопоставь с get_keyword.details.parameters"},
+        )
+    unknown_params = [dst for dst in field_map.values() if dst.lower() not in param_lookup]
+    if unknown_params:
+        raise ToolError(
+            "spec_incomplete",
+            "В field_map есть параметры, которых нет у этого keyword. Имена — только из get_keyword.",
+            unknown_parameters=unknown_params,
+            keyword_parameters=params,
+        )
+    field_map = {src: param_lookup[dst.lower()] for src, dst in field_map.items()}
+    entry = _dataset_entry(state, name)
+    dataset_fields = [str(f.get("name") or "") for f in (entry.get("fields") or []) if isinstance(f, dict) and f.get("name")]
+    available = set(dataset_fields)
+    try:
+        rows = load_dataset_rows(entry, state)
+    except FileNotFoundError as exc:
+        raise ToolError("dataset_rows_unavailable", "Строки набора не удалось прочитать.", dataset=name) from exc
+    if rows:
+        available.update(str(k) for row in rows for k in row)
+    missing_src = [src for src in field_map if src not in available and src.casefold() not in {f.casefold() for f in available}]
+    if missing_src:
+        raise ToolError(
+            "spec_incomplete",
+            "field_map ссылается на поля, которых нет в наборе. Исправь ключи по inspect_dataset.fields.",
+            missing=missing_src,
+            available_dataset_fields=sorted(available),
+            keyword_parameters=params,
+        )
+    required = _required_params(keyword)
+    mapped_dst = {dst.lower() for dst in field_map.values()}
+    missing_required = [p for p in required if p.lower() not in mapped_dst]
+    if missing_required:
+        raise ToolError(
+            "spec_incomplete",
+            "В field_map нет обязательных параметров keyword. Дополни карту из get_keyword и inspect_dataset.",
+            missing=missing_required,
+            available_dataset_fields=sorted(available),
+            keyword_parameters=params,
+            where_to_find={p: "колонка набора, которую сопоставишь в field_map" for p in missing_required},
+        )
+    mapped_rows: list[dict[str, Any]] = []
+    row_dates: list[str | None] = []
+    empty: list[dict[str, Any]] = []
+    for index, row in enumerate(rows):
+        if not isinstance(row, dict):
+            continue
+        fields = _map_row(row, field_map)
+        holes = [p for p in required if _field_get_local(fields, p) in (None, "")]
+        if holes:
+            empty.append({"row": index, "missing": holes, "well": well_from_fields(fields, keyword)})
+            continue
+        mapped_rows.append(fields)
+        row_dates.append(_row_date(row, date_field) or None)
+    if empty:
+        raise ToolError(
+            "dataset_values_missing",
+            "В наборе нет значений обязательных полей. Не выдумывай числа и скважины — спроси инженера через ask_engineer.",
+            missing_rows=empty[:20],
+            available_dataset_fields=sorted(available),
+            keyword=keyword,
+        )
+    if not mapped_rows:
+        raise ToolError("dataset_empty", "В наборе нет строк, которые можно применить.", dataset=name)
+    source = _source(state)
+    wells = well_names(parse_schedule(source))
+    bad = []
+    for fields in mapped_rows:
+        well = well_from_fields(fields, keyword)
+        if well and well not in wells and well not in {"*", "*LIST"}:
+            bad.append(well)
+    if bad:
+        raise ToolError("well_not_in_schedule", "Нельзя придумывать скважины. Берите имена из inspect_schedule.", wells=sorted(set(bad)))
+    applied, findings = apply_mapped_records(parse_schedule(source), keyword, mapped_rows, dates=row_dates)
+    text = emit_schedule(applied)
+    findings.extend(validate_emitted(text, applied))
+    hard = [f for f in findings if f.get("severity") == "error"]
+    if hard:
+        result = agent.new_result(
+            state,
+            "failed",
+            "Ошибка сборки SCHEDULE",
+            data={"findings": findings, "changed_keywords": [keyword]},
+            artifacts={"schedule_out": text, "diff": unified_diff(str(state.get("source_text") or ""), text)},
+            issues=findings,
+        )
+        return agent.store_result(state, result)
+    state["working_text"] = text
+    applied_wells = sorted({well_from_fields(f, keyword) for f in mapped_rows} - {""})
+    summary = (
+        f"Проставил {keyword} на {_plural_wells(len(applied_wells))}: {_wells_phrase(applied_wells)}."
+        if applied_wells
+        else f"Проставил {keyword} по набору «{entry.get('title') or name}» ({len(mapped_rows)} записей)."
+    )
+    result = agent.new_result(
+        state,
+        "completed",
+        summary,
+        data={
+            "changed_keywords": [keyword],
+            "summary_for_human": summary,
+            "dataset": name,
+            "keyword": keyword,
+            "wells": applied_wells,
+            "records_applied": len(mapped_rows),
+            "findings": findings,
+        },
+        artifacts={"schedule_out": text, "diff": unified_diff(str(state.get("source_text") or ""), text)},
+        issues=findings,
+    )
+    return agent.store_result(state, result)
+
+
+def _field_get_local(fields: dict[str, Any], name: str) -> Any:
+    if name in fields:
+        return fields[name]
+    low = name.lower()
+    for key, value in fields.items():
+        if str(key).lower() == low:
+            return value
+    return None
 
 
 @tool(

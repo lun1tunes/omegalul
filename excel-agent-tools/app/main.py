@@ -1,5 +1,5 @@
-"""Excel Tools FastAPI app: the agent routes (``mas_agent_kit.agent_router`` over ``agent``) behind an API key,
-plus the direct ``/api/v1`` API for debugging a workbook without n8n. No LLM calls live here.
+"""Excel Tools FastAPI app: the agent routes (``mas_agent_kit.agent_router`` over ``agent``) behind an API key.
+The direct ``/api/v1`` debug API mounts only when ``EXCEL_LEGACY_API`` is 1/true/yes. No LLM calls live here.
 
 The agent itself is the n8n workflow ``Agent — Excel Extractor`` (LLM) + ``app/agent.py`` (session,
 inventory, result) + ``app/agent_tools.py`` / ``app/excel_tools.py`` (tools).
@@ -63,4 +63,5 @@ def health() -> dict[str, Any]:
 
 
 app.include_router(agent_router(agent, dependencies=[Depends(require_api_key)]))
-app.include_router(legacy_api.router, dependencies=[Depends(require_api_key)])
+if os.getenv("EXCEL_LEGACY_API", "").strip().casefold() in {"1", "true", "yes"}:
+    app.include_router(legacy_api.router, dependencies=[Depends(require_api_key)])

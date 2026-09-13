@@ -628,7 +628,18 @@ def test_bind_case_packet_hydrates_nested_artifacts_and_facts(monkeypatch) -> No
                 "excel_extractor": {
                     "status": "completed",
                     "step": 1,
-                    "data": {"facts": [{"well": "P1", "date": "1 JAN 2020"}], "new_wells": [{"well": "N1", "group": "G"}]},
+                    "data": {
+                        "facts": [{"well": "P1", "date": "1 JAN 2020"}],
+                        "new_wells": [{"well": "N1", "group": "G"}],
+                        "uptime": {
+                            "kind": "dataset",
+                            "name": "uptime",
+                            "title": "Коэффициенты",
+                            "fields": [{"name": "well"}, {"name": "factor"}],
+                            "row_count": 1,
+                            "rows": [{"well": "P1", "factor": 0.8}],
+                        },
+                    },
                 },
                 "some_failed_agent": {"status": "failed", "step": 2, "data": {"facts": [{"well": "WRONG", "date": "1 JAN 1999"}]}},
             },
@@ -668,12 +679,12 @@ def test_bind_case_packet_hydrates_nested_artifacts_and_facts(monkeypatch) -> No
     assert context["excel"]["facts"] == [{"well": "P1", "date": "1 JAN 2020"}], "failed agents contribute nothing"
     assert context["excel"]["new_wells"] == [{"well": "N1", "group": "G"}]
     assert commissioning_facts(context, inputs)[0]["well"] == "P1"
+    assert context["datasets"]["uptime"]["kind"] == "dataset"
     assert "DATES" in load_source(inputs, "CASE-1", "http://mas-activity:8200")
 
 
-def test_upstream_agent_data_merges_agents_by_step_and_honours_legacy_bucket() -> None:
-    """Phase 2 twin of the orchestrator's state.agents: later completed steps win, omitted_keys is not
-    data, and a pre-Phase-2 case with ``state.data.excel`` still yields its facts."""
+def test_upstream_agent_data_merges_agents_by_step_and_ignores_legacy_excel_bucket() -> None:
+    """F9: later completed steps win; omitted_keys is not data; ``state.data.excel`` is not a source."""
     from app.io import upstream_agent_data
 
     state = {
@@ -687,7 +698,7 @@ def test_upstream_agent_data_merges_agents_by_step_and_honours_legacy_bucket() -
     assert merged["facts"] == [{"well": "B", "date": "1 JAN 2003"}]
     assert merged["new_wells"] == [{"well": "N"}]
     assert "omitted_keys" not in merged
-    assert upstream_agent_data({"data": {"excel": {"facts": [{"well": "OLD"}]}}})["facts"] == [{"well": "OLD"}]
+    assert upstream_agent_data({"data": {"excel": {"facts": [{"well": "OLD"}]}}}) == {}
     assert upstream_agent_data({}) == {}
     assert upstream_agent_data("nope") == {}
 

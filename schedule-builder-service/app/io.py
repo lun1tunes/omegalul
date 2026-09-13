@@ -10,7 +10,13 @@ from __future__ import annotations
 from pathlib import Path
 from typing import Any
 
-from mas_agent_kit import ActivityClient, CasePacket, upstream_agent_data  # noqa: F401  (re-exported for callers/tests)
+from mas_agent_kit import (  # noqa: F401  (re-exported for callers/tests)
+    ActivityClient,
+    CasePacket,
+    dataset_rows,
+    is_dataset,
+    upstream_agent_data,
+)
 
 AGENT_ID = "schedule_builder"
 
@@ -65,9 +71,6 @@ def bind_case_packet(
     if not base or not str(case_id or "").strip():
         return inputs, context
     existing = inputs.get("artifacts") if isinstance(inputs.get("artifacts"), dict) else {}
-    has_source = bool(existing.get("schedule_source") or (isinstance(existing.get("schedule"), dict) and existing["schedule"].get("source")))
-    if has_source and excel_bucket(context).get("facts"):
-        return inputs, context
     client = ActivityClient(base, agent_id=AGENT_ID, case_id=case_id)
     packet = CasePacket({"case_id": case_id, "inputs": {**inputs, "artifacts": {}}, "context": context}, client.case_state(), client)
     if not packet.state:
@@ -81,6 +84,10 @@ def bind_case_packet(
             context["data"] = {**inner, "excel": upstream}
         if not isinstance(context.get("excel"), dict):
             context["excel"] = upstream
+    datasets = packet.datasets()
+    if datasets:
+        prior = context.get("datasets") if isinstance(context.get("datasets"), dict) else {}
+        context["datasets"] = {**datasets, **prior}
     if not inputs.get("schedule_root") and packet.schedule_root:
         inputs["schedule_root"] = packet.schedule_root
     return inputs, context
@@ -108,6 +115,52 @@ def excel_bucket(context: dict[str, Any]) -> dict[str, Any]:
     data = context.get("data") if isinstance(context.get("data"), dict) else {}
     excel = data.get("excel") if isinstance(data.get("excel"), dict) else context.get("excel")
     return excel if isinstance(excel, dict) else {}
+
+
+def collect_datasets(inputs: dict[str, Any] | None, context: dict[str, Any] | None) -> dict[str, dict[str, Any]]:
+    """Named datasets already in the session: packet bind, test ``inputs.datasets``, or upstream slots."""
+    out: dict[str, dict[str, Any]] = {}
+
+    def take(bag: Any) -> None:
+        if not isinstance(bag, dict):
+            return
+        for key, value in bag.items():
+            if is_dataset(value):
+                name = str(value.get("name") or key or "").strip()
+                if name:
+                    out[name] = value
+
+    take((context or {}).get("datasets") if isinstance(context, dict) else None)
+    take((inputs or {}).get("datasets") if isinstance(inputs, dict) else None)
+    take(excel_bucket(context or {}))
+    return out
+
+
+def compact_datasets(datasets: dict[str, dict[str, Any]]) -> list[dict[str, Any]]:
+    """Inventory for the LLM: names, fields, preview — not a keyword suggestion."""
+    rows: list[dict[str, Any]] = []
+    for name, entry in datasets.items():
+        fields = [f for f in (entry.get("fields") or []) if isinstance(f, dict)]
+        preview = entry.get("rows") if isinstance(entry.get("rows"), list) else entry.get("preview")
+        preview = [r for r in (preview or []) if isinstance(r, dict)][:5]
+        rows.append(
+            {
+                "name": name,
+                "title": str(entry.get("title") or ""),
+                "fields": [str(f.get("name") or "") for f in fields if str(f.get("name") or "")],
+                "row_count": int(entry.get("row_count") or len(preview) or 0),
+                "preview": preview,
+            }
+        )
+    return rows
+
+
+def load_dataset_rows(entry: dict[str, Any], state: dict[str, Any]) -> list[dict[str, Any]]:
+    inputs = state.get("inputs") if isinstance(state.get("inputs"), dict) else {}
+    base = str(inputs.get("activity_base_url") or "").rstrip("/")
+    case_id = str(state.get("case_id") or "")
+    client = ActivityClient(base, agent_id=AGENT_ID, case_id=case_id) if base and case_id else None
+    return dataset_rows(entry, client)
 
 
 def _is_well_column(key: str) -> bool:

@@ -1336,6 +1336,37 @@ def test_result_filename_does_not_reuse_baseline_name() -> None:
     assert _result_filename({"schedule": {"source": {"filename": "nested.inc", "artifact_id": "schedule_source"}}}) == "nested_result.inc"
 
 
+def test_collapse_keeps_waiting_agent_watch_beside_running_echo() -> None:
+    """CASE-6aa5a962-24d32b: tools echo and in_progress parking share a message."""
+    from app.cases_api import collapse_duplicate_events
+
+    msg = "Демонстрационный прогон скважин запущен, ориентировочно 1 минута."
+    running = {
+        "kind": "agent.progress",
+        "actor": "demo_agent",
+        "agent_id": "demo_agent",
+        "status": "running",
+        "status_message": msg,
+        "event_id": 1,
+        "payload": {"source": "demo-agent-agent-workflow"},
+    }
+    parked = {
+        "kind": "agent.progress",
+        "actor": "demo_agent",
+        "agent_id": "demo_agent",
+        "status": "waiting_agent",
+        "status_message": msg,
+        "event_id": 2,
+        "payload": {"watch": {"kind": "timer", "ref": "demo_1", "poll_hint": "15s"}},
+    }
+    rows = collapse_duplicate_events([running, parked])
+    assert [row["event_id"] for row in rows] == [1, 2]
+    assert rows[1]["status"] == "waiting_agent"
+    assert rows[1]["payload"]["watch"]["kind"] == "timer"
+    echoes = collapse_duplicate_events([running, {**running, "event_id": 3}])
+    assert [row["event_id"] for row in echoes] == [1]
+
+
 def test_collapse_duplicate_status_and_agent_result() -> None:
     from app.cases_api import collapse_duplicate_events
 

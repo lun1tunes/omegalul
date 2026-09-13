@@ -20,7 +20,7 @@ from .hitl import engineer_answers, engineer_request_from_args, hitl_payloads
 from .packet import CasePacket, flatten_artifacts, upstream_agent_data
 from .result import STATUSES, agent_result, engineer_request, in_progress, needs_input, result_text_problems
 from .session import SessionStore
-from .text import human_text_problems, list_preview, options_for_human, parse_jsonish, plural_ru, slug
+from .text import human_text_problems, list_preview, options_for_human, parse_jsonish, plural_ru, slug, strip_attachment_names
 from .tools import ToolContext, ToolRegistry, tool_schema
 
 __all__ = [
@@ -57,6 +57,7 @@ __all__ = [
     "plural_ru",
     "result_text_problems",
     "slug",
+    "strip_attachment_names",
     "tool_schema",
     "upstream_agent_data",
     "upstream_datasets",

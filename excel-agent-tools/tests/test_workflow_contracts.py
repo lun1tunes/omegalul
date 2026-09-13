@@ -461,7 +461,7 @@ def test_orchestrator_routing_cards_plan_follows_the_goal_not_output_provides() 
     builder = cards["route-schedule-builder"]
     assert excel["revision"] == "9"
     assert thin["revision"] == "7"
-    assert builder["revision"] == "10"
+    assert builder["revision"] == "11"
     for card in (excel, thin, builder):
         assert "baseline" not in card["text"]
         for agent_id in ("excel_extractor", "schedule_builder", "calculation_agent"):
@@ -471,6 +471,7 @@ def test_orchestrator_routing_cards_plan_follows_the_goal_not_output_provides() 
     assert "не каталога агента" in thin["text"]
     assert "не ожидая ключей output_provides, которых цель не требовала" in thin["text"]
     assert "для сдвига дат — факты ввода" in builder["text"]
+    assert "именованный набор" in builder["text"]
 
 def test_legacy_excel_mas_workflow_is_removed() -> None:
     gone = (
@@ -831,10 +832,11 @@ def test_hybrid_rag_is_the_only_agent_knowledge_path() -> None:
     assert "tnavigator_schedule_knowledge_v1" in json.dumps(ingestion, ensure_ascii=False)
     assert "corpus_json" in seed_code
     packaged = json.dumps(next(n for n in ingestion["nodes"] if n["name"] == "Packaged MAS corpus"), ensure_ascii=False)
+    assert "$('Collect MAS knowledge blocks')" in inventory
     for document in ingestible_operating_guide_documents():
         block = document.get("schedule_knowledge_block") if isinstance(document.get("schedule_knowledge_block"), dict) else document
         assert block["knowledge_id"] in packaged
-        assert block["knowledge_id"] in inventory
+        assert block["knowledge_id"] not in inventory
         assert json.dumps(block["text"], ensure_ascii=False) in packaged
 
 

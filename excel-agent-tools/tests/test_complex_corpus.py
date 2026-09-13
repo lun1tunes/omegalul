@@ -21,6 +21,7 @@ MANIFEST = json.loads((FIXTURE_ROOT / "manifest.json").read_text(encoding="utf-8
 def client(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> TestClient:
     monkeypatch.setenv("SESSION_DIR", str(tmp_path / "sessions"))
     monkeypatch.setenv("API_KEY", "test-key")
+    monkeypatch.setenv("EXCEL_LEGACY_API", "1")
     # Settings are deliberately read at import time by the production app.
     import importlib
     import app.main as main

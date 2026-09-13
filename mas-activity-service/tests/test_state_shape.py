@@ -288,7 +288,7 @@ def test_sanitize_plan_requires_id_and_normalises_fields() -> None:
     """CASE-6a9fa129-5ae077: the model wrote plan rows without id → they are dropped, the rest normalised."""
     raw = [
         {"step": 1, "agent": "Excel Extractor", "action": "call_agent"},
-        {"id": " p1 ", "title": "  Даты ввода из Excel ", "agent_id": "excel_extractor", "status": "active", "depends_on": [None, "", "p0"]},
+        {"id": " p1 ", "title": "  Даты ввода из Excel ", "agent_id": "excel_extractor", "status": "active", "depends_on": [None, "", "p0"], "asked": ["facts", "facts", "1bad", "Мероприятия", "well_events"]},
         {"id": "p2", "title": "Новый schedule", "status": "nonsense", "note": "x" * 400, "depends_on": "p1"},
         {"id": "p1", "title": "дубликат"},
         "p3",
@@ -296,7 +296,7 @@ def test_sanitize_plan_requires_id_and_normalises_fields() -> None:
     ]
     plan = sanitize_plan(raw)
     assert plan == [
-        {"id": "p1", "title": "Даты ввода из Excel", "status": "active", "agent_id": "excel_extractor", "depends_on": ["p0"]},
+        {"id": "p1", "title": "Даты ввода из Excel", "status": "active", "agent_id": "excel_extractor", "depends_on": ["p0"], "asked": ["facts", "well_events"]},
         {"id": "p2", "title": "Новый schedule", "status": "pending", "note": "x" * 300},
         {"id": "p4", "title": "", "status": "pending"},
     ]
@@ -309,9 +309,9 @@ def test_sanitize_plan_requires_id_and_normalises_fields() -> None:
 
 
 def test_state_and_compact_carry_the_sanitised_plan() -> None:
-    state = sanitize_case_state({"goal": "g", "plan": [{"id": "p1", "title": "Даты", "agent_id": "excel_extractor", "status": "done"}, {"nope": 1}]})
-    assert state["plan"] == [{"id": "p1", "title": "Даты", "status": "done", "agent_id": "excel_extractor"}]
-    ctx = compact_decision_context({"goal": "g", "plan": [{"id": "p1", "title": "Даты", "status": "done"}, {"id": "p2", "title": "Schedule", "agent_id": "schedule_builder", "note": "n"}]})
+    state = sanitize_case_state({"goal": "g", "plan": [{"id": "p1", "title": "Даты", "agent_id": "excel_extractor", "status": "done", "asked": ["facts"]}, {"nope": 1}]})
+    assert state["plan"] == [{"id": "p1", "title": "Даты", "status": "done", "agent_id": "excel_extractor", "asked": ["facts"]}]
+    ctx = compact_decision_context({"goal": "g", "plan": [{"id": "p1", "title": "Даты", "status": "done", "asked": ["facts"]}, {"id": "p2", "title": "Schedule", "agent_id": "schedule_builder", "note": "n"}]})
     assert ctx["plan"] == [
         {"id": "p1", "title": "Даты", "status": "done"},
         {"id": "p2", "title": "Schedule", "status": "pending", "agent_id": "schedule_builder"},

@@ -201,10 +201,17 @@ def _same_agent_line(left: dict[str, Any], right: dict[str, Any]) -> bool:
     left_task = str(left.get("task_id") or "")
     right_task = str(right.get("task_id") or "")
     task_ok = left_task == right_task or not left_task or not right_task
+    left_status = str(left.get("status") or "")
+    right_status = str(right.get("status") or "")
+    # Empty status is a wildcard (legacy echoes). Distinct statuses are different lines:
+    # Activity tools ``running`` and orchestrator parking ``waiting_agent`` share a
+    # message (CASE-6aa5a962-24d32b) — collapsing them dropped ``payload.watch``.
+    status_ok = left_status == right_status or not left_status or not right_status
     return (
         str(left.get("kind") or "") == str(right.get("kind") or "")
         and str(left.get("agent_id") or left.get("actor") or "")
         == str(right.get("agent_id") or right.get("actor") or "")
+        and status_ok
         and task_ok
         and _event_message(left) == _event_message(right)
     )

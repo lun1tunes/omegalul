@@ -327,12 +327,30 @@ function optionValues(question){
     return String(o||'').trim();
   }).filter(Boolean);
 }
+function normOptionToken(s){
+  return String(s||'').trim().toLowerCase().replace(/[.!?…]+$/,'');
+}
+function resolveOptionDecision(question, decision){
+  /* CASE-6aa586ab-90a7ae: Qwen returned the button label, not value. Match either; store value. */
+  const want=normOptionToken(decision);
+  if(!want) return '';
+  const opts=question&&Array.isArray(question.options)?question.options:[];
+  for(const o of opts){
+    if(o&&typeof o==='object'&&!Array.isArray(o)){
+      const value=String(o.value||'').trim();
+      const label=String(o.label||'').trim();
+      if(normOptionToken(value)===want||normOptionToken(label)===want) return value||label;
+    }else if(normOptionToken(o)===want){
+      return String(o||'').trim();
+    }
+  }
+  return '';
+}
 const INTERPRET_CONFIDENCE_FLOOR=0.8;
 function applyInterpretedDecision(qid, question, rawAnswer, parsed){
   const conf=Number(parsed&&parsed.confidence);
-  const decision=String((parsed&&parsed.decision)||'').trim().toLowerCase();
-  const values=optionValues(question).map(v=>String(v||'').toLowerCase());
-  const ok=decision&&values.indexOf(decision)>=0&&Number.isFinite(conf)&&conf>=INTERPRET_CONFIDENCE_FLOOR;
+  const decision=resolveOptionDecision(question, parsed&&parsed.decision);
+  const ok=Boolean(decision)&&Number.isFinite(conf)&&conf>=INTERPRET_CONFIDENCE_FLOOR;
   if(!ok) return {accepted:false};
   const text=String((parsed&&parsed.paraphrase)||humanAnswerText(rawAnswer)||'').trim()||decision;
   const stored={choice:decision, text, label:text};
@@ -478,8 +496,8 @@ function sanitizeState(state){
   if(arts.file&&!arts.excel) arts.excel=arts.file;
   if(arts.schedule_files&&!arts.schedule_source) arts.schedule_source=arts.schedule_files;
   s.artifacts=nestArtifacts(arts);
-  /* Phase 2: agent results live in state.agents[<agent_id>]. state.data keeps only the case result
-     (finish) and, for cases from before Phase 2, whatever legacy buckets they had — slimmed the same way. */
+  /* Phase 2: agent results live in state.agents[<agent_id>]. state.data keeps the case result (finish).
+     F9: answers enter the journal only via resume source=human, not by copying hitl.answers. */
   s.agents=sanitizeAgents(s.agents);
   const data=s.data&&typeof s.data==='object'&&!Array.isArray(s.data)?{...s.data}:{};
   delete data.facts;
@@ -495,28 +513,7 @@ function sanitizeState(state){
   s.error_count=Number(s.error_count||(s.last_error&&s.last_error.count)||0)||0;
   s.ledger=sanitizeLedger(s.ledger);
   s.plan=sanitizePlan(s.plan);
-  reconcileLedgerAnswers(s);
   return s;
-}
-function reconcileLedgerAnswers(state){
-  /* Safety net for leftover cases from before Phase 1.3: if answers landed in state without a
-     journal row (old Activity write-path), copy them in. The live path is orchestrator resume. */
-  const hitl=state.hitl&&typeof state.hitl==='object'?state.hitl:{};
-  const answers=hitl.answers&&typeof hitl.answers==='object'&&!Array.isArray(hitl.answers)?hitl.answers:{};
-  const questions=Array.isArray(hitl.questions)?hitl.questions:[];
-  const l=sanitizeLedger(state.ledger);
-  const seen=new Set(l.history.filter(e=>e.kind==='human').map(e=>String(e.question_id||'')));
-  let changed=false;
-  for(const [qid,ans] of Object.entries(answers)){
-    if(seen.has(String(qid))) continue;
-    const q=questions.find(x=>x&&String(x.question_id||x.id||'')===String(qid))||{};
-    const reviewAccept=isResultReviewGate(qid)&&humanAnswerChoice(ans)==='accept';
-    ledgerPush(state,{kind:'human',step:Number(state.step_count||0),question_id:String(qid),question:String(q.question||'').slice(0,200),answer:humanAnswerText(ans).slice(0,300),...reviewAcceptFields(reviewAccept, q)});
-    state.ledger.last_human_step=Number(state.step_count||0);
-    state.ledger.stall_count=0;
-    changed=true;
-  }
-  return changed;
 }
 function ledgerAnsweredAgentQuestion(state){
   /* An agent asked (needs_input), the human answered, and that agent has not run since:
@@ -724,6 +721,16 @@ function compactLedger(state){
 const PLAN_STATUSES=__PLAN_STATUSES__;
 const PLAN_OPEN_STATUSES=__PLAN_OPEN_STATUSES__;
 const PLAN_MAX_ITEMS=12;
+function sanitizeAsked(names){
+  const out=[]; const seen=new Set();
+  for(const raw of (Array.isArray(names)?names:[])){
+    const n=String(raw==null?'':raw).trim();
+    if(!/^[A-Za-z][A-Za-z0-9_]{0,39}$/.test(n)||seen.has(n)) continue;
+    seen.add(n); out.push(n);
+    if(out.length>=6) break;
+  }
+  return out;
+}
 function sanitizePlanItem(item){
   if(!item||typeof item!=='object'||Array.isArray(item)) return null;
   const id=String(item.id==null?'':item.id).trim().slice(0,40);
@@ -735,6 +742,8 @@ function sanitizePlanItem(item){
   if(deps.length) out.depends_on=deps;
   const note=String(item.note||'').trim().slice(0,300);
   if(note) out.note=note;
+  const asked=sanitizeAsked(item.asked);
+  if(asked.length) out.asked=asked;
   return out;
 }
 function sanitizePlan(plan){
@@ -776,6 +785,8 @@ function applyPlanUpdate(state, updates, registry){
     if(!merged.title) merged.title=merged.id;
     const agentId=planAgentId(merged.agent_id, registry);
     if(agentId) merged.agent_id=agentId; else delete merged.agent_id;
+    /* asked is orchestrator-owned (expected_output names). The model must not set it via plan_update. */
+    if(prev&&prev.asked&&prev.asked.length) merged.asked=prev.asked; else delete merged.asked;
     by.set(item.id,merged); accepted+=1;
   }
   state.plan=[...by.values()];
@@ -784,15 +795,22 @@ function applyPlanUpdate(state, updates, registry){
 /* Actions drive statuses (flags are the model's habit, actions are its intent): the plan item the call
    names (action.task_id) becomes active — else the first pending item of the agent being called; when
    that agent returns completed, its active item is done, and leftover open items it owns close too if
-   the slot already has every output_provides key (a second handoff without new input is a loop). */
-function planMarkAgentActive(state, agentId, taskId){
+   the slot already has every asked key (expected_output.datasets names) or, if none were asked,
+   every output_provides key (a second handoff without new input is a loop). */
+function planMarkAgentActive(state, agentId, taskId, askedNames){
   const plan=sanitizePlan(state.plan);
   const id=String(agentId||'').trim();
   const named=planItemForCall(plan, id, taskId);
-  if(named) named.status='active';
-  else if(id&&!plan.some(p=>p.agent_id===id&&p.status==='active')){
+  const asked=sanitizeAsked(askedNames);
+  if(named){
+    named.status='active';
+    if(asked.length) named.asked=asked; else delete named.asked;
+  } else if(id&&!plan.some(p=>p.agent_id===id&&p.status==='active')){
     const next=plan.find(p=>p.agent_id===id&&p.status==='pending');
-    if(next) next.status='active';
+    if(next){
+      next.status='active';
+      if(asked.length) next.asked=asked; else delete next.asked;
+    }
   }
   state.plan=plan;
 }
@@ -808,8 +826,10 @@ function planItemForCall(plan, agentId, taskId){
 /* A second call to an agent that already completed is new work — not a repeat — when it names an open
    plan item other than the one the agent completed (CASE-6aa00e09-c6d71f: two results as two items; the
    second call was sent to review as a repeat and the case finished without the next agent). Leftover
-   items of a completed agent are not open once its data already has every output_provides key
-   (CASE-6aa029de-c5e23d: a second handoff without new input is a loop). The plan is capped
+   items of a completed agent are not open once its data already has every asked key, or — when
+   the call named no expected_output — every output_provides key (CASE-6aa029de-c5e23d: a second
+   handoff without new input is a loop; CASE-6aa00e09-c6d71f: facts-only without asked leaves p2
+   open). The plan is capped
    (PLAN_MAX_ITEMS) and every step costs budget, so this cannot loop. */
 function planNamesNewWork(state, agentId, taskId){
   const item=planItemForCall(sanitizePlan(state.plan), agentId, taskId);
@@ -824,8 +844,20 @@ function registryProvides(registry, agentId){
   if(typeof vals==='string'){ try{vals=JSON.parse(vals);}catch{vals=[];} }
   return (Array.isArray(vals)?vals:[]).map(v=>String(v||'').trim()).filter(Boolean);
 }
+function leftoverCloseKeys(state, agentId, registry){
+  const asked=[]; const seen=new Set();
+  for(const p of sanitizePlan(state.plan)){
+    if(String(p.agent_id||'')!==String(agentId||'').trim()) continue;
+    for(const k of sanitizeAsked(p.asked)){
+      if(seen.has(k)) continue;
+      seen.add(k); asked.push(k);
+    }
+  }
+  if(asked.length) return asked;
+  return registryProvides(registry, agentId);
+}
 function agentDataCoversProvides(state, agentId, registry){
-  const provides=registryProvides(registry, agentId);
+  const provides=leftoverCloseKeys(state, agentId, registry);
   if(!provides.length) return false;
   const raw=(state.agents||{})[agentId];
   const slot=raw&&typeof raw==='object'&&!Array.isArray(raw)?raw:{};

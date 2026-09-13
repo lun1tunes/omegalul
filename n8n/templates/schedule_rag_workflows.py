@@ -396,11 +396,16 @@ return fresh.map(block=>({json:{ingest_action:'insert',schedule_knowledge_block:
 """
 
 
-def _inventory_prepare_js(expected_ids: list[str]) -> str:
-    expected = ",\n  ".join(json.dumps(item) for item in expected_ids)
-    return f"""const expected = [
-  {expected},
-];
+INVENTORY_PREPARE_JS = r"""
+let expected = [];
+try {
+  expected = [...new Set(
+    $('Collect MAS knowledge blocks').all()
+      .map((item) => item.json || {})
+      .map((row) => String(row.knowledge_id || '').trim())
+      .filter((id) => id)
+  )];
+} catch {}
 const table = 'tnavigator_schedule_knowledge_v1';
 const query = [
   'WITH inv AS (',
@@ -431,14 +436,14 @@ const query = [
   'FROM meta',
   'LEFT JOIN inv ON TRUE',
   'ORDER BY 1;',
-].join('\\n');
-return [{{ json: {{
+].join('\n');
+return [{ json: {
   rag_table_name: table,
   expected_document_ids: expected,
   expected_document_count: expected.length,
   query,
-}} }}];
-"""
+} }];
+""".strip()
 
 
 INVENTORY_SUMMARIZE_JS = r"""
@@ -471,7 +476,9 @@ const missing = expected.filter((id) => !found.includes(id));
 const totalRows = Number(rows[0]?.total_rows ?? 0);
 const distinctDocuments = Number(rows[0]?.distinct_documents ?? found.length);
 const embeddingType = typeof rows[0]?.embedding_type === 'string' ? rows[0].embedding_type : null;
-const ok = missing.length === 0 && distinctDocuments >= expected.length && totalRows > 0;
+const ok = expected.length
+  ? (missing.length === 0 && distinctDocuments >= expected.length && totalRows > 0)
+  : totalRows > 0;
 const duplicateIngestSuspected = ok && totalRows >= expected.length * 4;
 const warnings = [];
 if (duplicateIngestSuspected) warnings.push('total_rows looks high for a single ingest; re-running insert without skip would append chunks.');
@@ -491,7 +498,7 @@ return [{ json: {
   embedding_type: embeddingType,
   duplicate_ingest_suspected: duplicateIngestSuspected,
   warnings,
-  note: 'Packaged corpus is skipped when target_base+knowledge_id+revision already exists. Compare distinct_documents/found_document_ids, not only total_rows.',
+  note: 'expected_document_ids are this-run Collect knowledge_id values, not the import-time packaged snapshot. Packaged rows already in the parent table are skipped. Compare distinct_documents/found_document_ids, not only total_rows.',
   documents: rows
     .filter((row) => row.document_id && row.document_id !== '(none)')
     .map((row) => ({
@@ -506,7 +513,6 @@ return [{ json: {
 
 def build_ingestion(*, node, note, code, trigger, ifnode, connect, workflow, set_fields):
     packaged = packaged_knowledge_blocks()
-    expected_ids = [block["knowledge_id"] for block in packaged]
     pg = _credential("REPLACE: SCHEDULE PostgreSQL / PGVector credential")
     form = node(
         "SCHEDULE manual ingestion form", "n8n-nodes-base.formTrigger", 2.6, (-1200, -80),
@@ -571,9 +577,9 @@ def build_ingestion(*, node, note, code, trigger, ifnode, connect, workflow, set
         node("PostgreSQL — upsert full parent knowledge", "n8n-nodes-base.postgres", 2.6, (1460, -180), {"operation": "executeQuery", "query": PARENT_UPSERT_SQL, "options": {"queryReplacement": "={{ $json.sql_parameters }}", "queryBatching": "single", "largeNumbersOutput": "text", "replaceEmptyStrings": False}}, credentials=pg),
         code("Prepare approved schema catalogue persistence", (1700, -180), PREPARE_CATALOGUE_PERSIST, executeOnce=True),
         node("PostgreSQL — upsert approved schema catalogue", "n8n-nodes-base.postgres", 2.6, (1940, -180), {"operation": "executeQuery", "query": CATALOGUE_UPSERT_SQL, "options": {"queryReplacement": "={{ $json.sql_parameters }}", "queryBatching": "single", "largeNumbersOutput": "text", "replaceEmptyStrings": False}}, credentials=pg, alwaysOutputData=True),
-        code("Prepare RAG inventory query", (1220, 80), _inventory_prepare_js(expected_ids), executeOnce=True),
+        code("Prepare RAG inventory query", (1220, 80), INVENTORY_PREPARE_JS, executeOnce=True),
         node("Postgres — inspect RAG table contents", "n8n-nodes-base.postgres", 2.6, (1460, 80), {"operation": "executeQuery", "query": "={{ $json.query }}", "options": {"queryBatching": "single", "largeNumbersOutput": "text", "replaceEmptyStrings": False}}, credentials=pg, executeOnce=True, alwaysOutputData=True),
-        code("Summarize RAG inventory", (1700, 80), INVENTORY_SUMMARIZE_JS, executeOnce=True, notesInFlow=True, notes="status=rag_inventory_ok means every packaged knowledge_id is present. skipped_existing lists keys that were already in the parent table."),
+        code("Summarize RAG inventory", (1700, 80), INVENTORY_SUMMARIZE_JS, executeOnce=True, notesInFlow=True, notes="status=rag_inventory_ok means every knowledge_id from this run's Collect is present. skipped_existing lists keys that were already in the parent table."),
         code("Return SCHEDULE ingestion gate", (440, 140), "return [{json:{contract:'schedule_knowledge_ingest_result',contract_version:'1.0',status:$json.status,findings:$json.findings,vector_write_allowed:false}}];"),
         code("Shape MAS ingest response", (1940, 80), SHAPE_INGEST_RESPONSE_JS, executeOnce=True, notesInFlow=True, notes="Webhook lastNode: added / skipped / total_in_rag. Keep this the terminal node."),
     ]

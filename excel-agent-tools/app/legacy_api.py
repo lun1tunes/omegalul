@@ -1,6 +1,6 @@
 """Direct HTTP API of the Excel tools without n8n: upload a workbook, call tools, export artifacts.
 
-Used by the retired workflows, by pytest and for debugging a workbook by hand. The MAS agent contract
+Opt-in debug API (``EXCEL_LEGACY_API=1``). Used by pytest and for debugging a workbook by hand. The MAS agent contract
 (``/agent-tools/open_session``, ``/agent-tools/{tool}``, ``/sessions/{id}/result``) is served by
 ``mas_agent_kit.agent_router`` in ``main.py`` — nothing here is needed for a case to run.
 """

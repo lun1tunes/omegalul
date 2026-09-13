@@ -114,15 +114,12 @@ def upstream_agent_data(state: dict[str, Any]) -> dict[str, Any]:
     """``data`` of every completed agent of the case, merged in step order (later wins).
 
     Agents do not know each other's names: they take the keys they consume (``facts``, ``new_wells``…)
-    from whichever agent produced them. ``state.data.excel`` is honoured for pre-Phase-2 cases.
-    ``omitted_keys`` (dropped by the orchestrator for size) is bookkeeping, not data.
+    from whichever agent produced them. ``omitted_keys`` (dropped by the orchestrator for size) is
+    bookkeeping, not data. F9: ``state.data.excel`` is not a source.
     """
     merged: dict[str, Any] = {}
     if not isinstance(state, dict):
         return merged
-    data = state.get("data") if isinstance(state.get("data"), dict) else {}
-    legacy = data.get("excel") if isinstance(data.get("excel"), dict) else {}
-    merged.update({k: v for k, v in legacy.items() if k != "omitted_keys"})
     agents = state.get("agents") if isinstance(state.get("agents"), dict) else {}
     slots = [s for s in agents.values() if isinstance(s, dict) and isinstance(s.get("data"), dict)]
     slots.sort(key=lambda s: int(s.get("step") or 0))

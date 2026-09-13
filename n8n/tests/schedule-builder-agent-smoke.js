@@ -70,6 +70,8 @@ for (const name of [
   'inspect_schedule',
   'search_keywords',
   'get_keyword',
+  'inspect_dataset',
+  'apply_dataset',
   'apply_commissioning',
   'apply_group_rebind',
   'ask_engineer',
@@ -88,6 +90,12 @@ assert.equal(system.includes('suggested_capability'), false);
 assert.match(system, /ask_engineer — единственный способ спросить инженера/);
 assert.match(system, /spec_incomplete — это тебе, не инженеру/);
 assert.match(system, /не строками \.INC/);
+assert.match(system, /apply_dataset/);
+assert.match(system, /field_map/);
+assert.equal(system.includes('INTENT_ALIASES'), false);
+assert.equal(sourceCode('Prepare AI Agent input').includes('mapped.push'), false);
+assert.equal(sourceCode('Prepare AI Agent input').includes('дат[аые]'), false);
+assert.match(sourceCode('Prepare AI Agent input'), /dataset_count/);
 const rebindTool = wf.nodes.find((n) => n.name === 'apply_group_rebind');
 const rebindArgs = fromAI(rebindTool);
 assert.deepEqual(rebindArgs.map((a) => a.key), ['wells', 'parent_group', 'parent_of_parent', 'control', 'gas_rate', 'effective_at']);
@@ -96,6 +104,9 @@ assert.equal(rebindArgs.find((a) => a.key === 'gas_rate').type, 'number');
 // Zero-arg tools still bind the session; optional JSON args travel as text (n8n rejects empty json).
 assert.deepEqual(fromAI(wf.nodes.find((n) => n.name === 'apply_commissioning')), []);
 assert.equal(fromAI(wf.nodes.find((n) => n.name === 'apply_operations'))[0].type, 'json');
+const applyDs = fromAI(wf.nodes.find((n) => n.name === 'apply_dataset'));
+assert.deepEqual(applyDs.filter((a) => a.required).map((a) => a.key), ['dataset', 'keyword', 'field_map']);
+assert.equal(applyDs.find((a) => a.key === 'field_map').type, 'json');
 const askTool = wf.nodes.find((n) => n.name === 'ask_engineer');
 assert.match(String(askTool.parameters.toolDescription), /русской фразой/);
 const askArgs = fromAI(askTool);

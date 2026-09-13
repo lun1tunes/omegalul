@@ -11,8 +11,6 @@ from llm_runtime_options import (
     CHAT_THINKING_OFF,
     DEFAULT_CHAT_MODEL,
     LLM_HTTP_TIMEOUT_MS,
-    chat_model_options,
-    structured_parser_params,
 )
 from generate_mas_runtime_config import runtime_config_execute_params
 from mas_agent_registry import PLANNER_COLUMNS, list_agents_sql
@@ -331,15 +329,47 @@ INTERPRET_SCHEMA = {
 
 INTERPRET_SYSTEM = """Ты понимаешь свободный ответ инженера на вопрос, у которого уже есть варианты.
 
-Тебе даны: текст вопроса, варианты (как их видит инженер) и его слова.
+Тебе даны: текст вопроса, варианты (подпись и токен в скобках) и его слова.
 
 Верни JSON:
-- decision — значение выбранного варианта (то, что стоит за кнопкой: keep, remove, accept, rework или иное value из списка). Не придумывай вариант, которого нет.
+- decision — токен в скобках у выбранного варианта, не подпись кнопки. Не придумывай токен, которого нет в списке.
 - confidence — число от 0 до 1. Если ответ двусмысленный, двусмысленно-вежливый или не про этот вопрос — ниже 0.8.
 - paraphrase — одна русская фраза, что инженер имел в виду, без идентификаторов и без JSON.
 
 Если не уверен — decision оставь пустым или unclear, confidence ниже 0.8. Не угадывай деструктив (убрать, удалить), если инженер этого явно не сказал.
+
+Возвращай только JSON.
 """
+
+BUILD_INTERPRET_CHAT = (
+    "const INTERPRET_SYSTEM = "
+    + json.dumps(INTERPRET_SYSTEM, ensure_ascii=False)
+    + ";\nconst INTERPRET_SCHEMA = "
+    + json.dumps(INTERPRET_SCHEMA, ensure_ascii=False)
+    + ";\nconst DEFAULT_CHAT_MODEL = "
+    + json.dumps(DEFAULT_CHAT_MODEL)
+    + ";\nconst THINKING_OFF = "
+    + json.dumps(CHAT_THINKING_OFF)
+    + """;
+const prev=$json||{};
+let cfg={};
+try{cfg=$('Runtime endpoints').first().json||{}}catch(e){cfg={}}
+const model=String(cfg.chat_model||'').trim()||DEFAULT_CHAT_MODEL;
+const base=String(cfg.chat_base_url||'').replace(/[/]+$/,'');
+const chat_url=base?base+'/chat/completions':'';
+const chat_request={
+  model,
+  temperature:0,
+  response_format:{type:'json_object'},
+  ...THINKING_OFF,
+  messages:[
+    {role:'system',content:INTERPRET_SYSTEM},
+    {role:'user',content:String(prev.interpret_input||'')}
+  ]
+};
+return [{json:{...prev,chat_request,chat_url,interpret_schema:INTERPRET_SCHEMA}}];
+"""
+)
 
 APPLY_INTERPRETED = STATE_SHAPE_JS + r"""
 const prev=$('Apply request extras').first().json||{};
@@ -794,7 +824,11 @@ if(req.is_resume===true){
   const needsInterpret=!choice&&opts.length>0&&Boolean(humanAnswerText(stored).trim());
   if(needsInterpret){
     const optionLines=(Array.isArray(q0.options)?q0.options:[]).map(o=>{
-      if(o&&typeof o==='object'&&!Array.isArray(o)) return `- ${o.label||o.value||''}`;
+      if(o&&typeof o==='object'&&!Array.isArray(o)){
+        const label=String(o.label||o.value||'').trim();
+        const value=String(o.value||'').trim();
+        return value&&value!==label?`- ${label} (${value})`:`- ${label||value}`;
+      }
       return `- ${o}`;
     }).join('\n');
     const interpret_input=`Вопрос инженеру:\n${String(q0.question||'')}\n\nВарианты:\n${optionLines}\n\nОтвет инженера:\n${humanAnswerText(stored)}\n`;
@@ -1002,7 +1036,8 @@ const planMerge=applyPlanUpdate(state, decision.plan_update, registry);
    3. Re-delegating to an agent that already returned completed, with no new human input since:
       allowed once with an explicit rework_reason; otherwise → result review with the human. A call that
       names another open plan item of that agent is new work, not a repeat (planNamesNewWork). Completing
-      the agent closes leftover items it owns when its data already has every output_provides key. */
+      the agent closes leftover items it owns when its data already has every asked key (or, if none
+      were asked, every output_provides key). */
 let guard=null;
 let reworkReason='';
 const answered=ledgerAnsweredAgentQuestion(state);
@@ -1135,7 +1170,7 @@ if(type==='call_agent'){
   /* inputs are references owned by the orchestrator (artifact ids, data buckets, HITL policy). The LLM talks to
      the agent through handoff_message only: anything it puts into action.task (e.g. its own `facts` with dates)
      is a paraphrase, and an agent that trusted it would override the deterministic result of a previous agent
-     (CASE-6a9ec6b3-74e34e: invented per-well dates replaced data.excel.facts). expected_output is the shape
+     (CASE-6a9ec6b3-74e34e: invented per-well dates replaced upstream facts). expected_output is the shape
      of what to extract (field names, types) — not cell values. */
   const calleeId=String(action.agent_id||'').trim();
   if(!reworkReason) reworkReason=ledgerPendingRework(state);
@@ -1161,7 +1196,7 @@ if(type==='call_agent'){
     constraints:{units:'METRIC'}
   };
   state.current_task=slimCurrentTask({task_id:taskId,agent_id:agentTask.agent_id},state.artifacts,state.agents);
-  planMarkAgentActive(state, agentTask.agent_id, taskId);
+  planMarkAgentActive(state, agentTask.agent_id, taskId, expected?expected.datasets.map(d=>d.name):[]);
   events.push(decisionEvent, {
     kind:'agent.handoff',
     actor:'orchestrator',
@@ -1174,7 +1209,9 @@ if(type==='call_agent'){
   });
 } else if(type==='ask_user'){
   nextStatus='waiting_user';
-  const q={question_id:String(action.question_id||`Q-${state.step_count}`),question:String(action.question||'Нужно уточнение'),options:Array.isArray(action.options)?action.options:[],...(action.kind?{kind:action.kind}:{}),...(action.review_scope?{review_scope:action.review_scope}:{})};
+  const incomingQid=String(action.question_id||'');
+  const reviewOwned=String(action.kind||'')==='result_approval'&&incomingQid.startsWith('result_review_');
+  const q={question_id:reviewOwned?incomingQid:`Q-${state.step_count}`,question:String(action.question||'Нужно уточнение'),options:Array.isArray(action.options)?action.options:[],...(action.kind?{kind:action.kind}:{}),...(action.review_scope?{review_scope:action.review_scope}:{})};
   state.hitl={pending:true,questions:[q],answers:(state.hitl&&state.hitl.answers)||{}};
   state.current_task=null;
   events.push(decisionEvent, {kind:'hitl.request',actor:'orchestrator',status:'waiting_user',status_message:statusMessage,payload:{...q,...execRef()}});
@@ -1395,86 +1432,146 @@ const shouldContinue=String(x.action_type||'')==='continue'&&String(x.next_statu
 return [{json:{...x, should_continue:shouldContinue, continue_url:String(x.orchestrator_step_url||'http://127.0.0.1:5678/webhook/mas-orchestrator-step').replace(/\/$/,'')}}];
 """
 
-# Compact board (not a 12k-wide Kahn line). Grid 250×180; node ~200×88.
-CX, CY = 250, 180
-ORCH_LAYOUT: dict[str, tuple[int, int]] = {
-    "edit after import": (-520, -380),
-    "lane intake": (0, -110),
-    "lane start": (1750, 180),
-    "lane decide": (0, 790),
-    "lane agents": (0, 1150),
-    "Authenticated MAS webhook": (0, 0),
-    "Runtime endpoints": (CX, 0),
-    "Normalize step request": (2 * CX, 0),
-    "Probe ping?": (3 * CX, 0),
-    "Needs create?": (4 * CX, 0),
-    "Insert execution map": (5 * CX, 0),
-    "Load case": (6 * CX, 0),
-    "Prepare start case": (4 * CX, CY),
-    "Insert new case": (5 * CX, CY),
-    "Expand start events": (6 * CX, CY),
-    "Insert start events": (4 * CX, 2 * CY),
-    "Restore after start": (5 * CX, 2 * CY),
-    "Validate loaded case": (0, 3 * CY),
-    "Case found?": (CX, 3 * CY),
-    "Apply request extras": (2 * CX, 3 * CY),
-    "Status only?": (3 * CX, 3 * CY),
-    "Resume persist?": (4 * CX, 3 * CY),
-    "Needs interpret?": (7 * CX, 3 * CY),
-    "Interpret free-text answer": (8 * CX, 3 * CY),
-    "Answer interpretation Structured Output": (8 * CX, 2 * CY),
-    "Apply interpreted answer": (7 * CX, 2 * CY),
-    "Update case after resume": (5 * CX, 3 * CY),
-    "Expand resume events": (6 * CX, 3 * CY),
-    "Insert resume events": (5 * CX, 4 * CY),
-    "Restore after resume": (6 * CX, 4 * CY),
-    "Resume to decision?": (6 * CX, 2 * CY),
-    "Not a resume?": (3 * CX, 4 * CY),
-    "Decision Chat Model — configure in UI": (2 * CX, 4 * CY),
-    "Load agent registry": (0, 5 * CY),
-    "Prepare decision context": (CX, 5 * CY),
-    "Call Knowledge Retrieval": (CX, 6 * CY),
-    "Attach orchestrator RAG evidence": (2 * CX, 6 * CY),
-    "Build decision chat": (2 * CX, 5 * CY),
-    "Decision chat": (3 * CX, 4 * CY),
-    "Decision LLM": (3 * CX, 5 * CY),
-    "Finish proposed?": (4 * CX, 4 * CY),
-    "Prepare completion check": (3 * CX, 6 * CY),
-    "Build verify chat": (4 * CX, 6 * CY),
-    "Verify chat": (5 * CX, 4 * CY),
-    "Verify completion": (5 * CX, 7 * CY),
-    "Parse decision": (4 * CX, 5 * CY),
-    "Update case after decision": (5 * CX, 5 * CY),
-    "Expand decision events": (6 * CX, 5 * CY),
-    "Insert decision events": (5 * CX, 6 * CY),
-    "Restore parsed decision": (6 * CX, 6 * CY),
-    "Prepare agent call": (7 * CX, 5 * CY),
-    "Action router": (7 * CX, 6 * CY),
-    "Call agent (n8n)": (0, 7 * CY),
-    "Call agent (HTTP)": (0, 8 * CY),
-    "Agent not bound": (0, 9 * CY),
-    "No agent this step": (0, 10 * CY),
-    "Merge agent result": (CX, 8 * CY),
-    "Update case after agent": (2 * CX, 8 * CY),
-    "Expand agent events": (3 * CX, 8 * CY),
-    "Insert agent events": (2 * CX, 9 * CY),
-    "Restore after agent events": (3 * CX, 9 * CY),
-    "Continue loop?": (4 * CX, 8 * CY),
-    "POST continue run": (5 * CX, 8 * CY),
-    "Prepare Activity ack": (4 * CX, 10 * CY),
-    "Activity sync?": (5 * CX, 10 * CY),
-    "POST step ack to MAS Activity": (6 * CX, 9 * CY),
-    "Format step ack": (6 * CX, 10 * CY),
+# Swimlanes, not a Kahn line. Numbered banners above each band — keep this for later workflows.
+# Grid 260×170; node ~200×88; IF nodes need the extra 60px so they do not sit on neighbours.
+CX, CY = 260, 170
+NODE_W, NODE_H = 200, 88
+LAYOUT_PAD = 24
+BANNER_H = 56
+ROW0 = 80
+BAND_W = 6 * CX + NODE_W  # 1760 — seven-wide decide row still < 2200
+
+
+def _cells(y: int, names: tuple[str, ...], x0: int = 0) -> dict[str, tuple[int, int]]:
+    return {name: (x0 + i * CX, y) for i, name in enumerate(names)}
+
+
+def _band(banner_y: int, rows: tuple[tuple[str, ...], ...]) -> dict[str, tuple[int, int]]:
+    out: dict[str, tuple[int, int]] = {}
+    for i, names in enumerate(rows):
+        out.update(_cells(banner_y + ROW0 + i * CY, names))
+    return out
+
+
+# (content, color) — width/height applied in apply_orchestrator_layout
+LANE_NOTES: dict[str, tuple[str, int]] = {
+    "lane intake": ("### 1. Вход и загрузка кейса", 6),
+    "lane start": ("### 2. Новый кейс", 4),
+    "lane interpret": ("### 3. Ответ инженера", 2),
+    "lane decide": ("### 4. Решение LLM", 5),
+    "lane agents": ("### 5. Агенты и цикл", 7),
+    "lane ack": ("### 6. Ответ в Activity", 3),
 }
+
+# Banner y: previous last-row bottom + PAD, then ROW0 to first node (no overlap with pad=24).
+_S1, _S2, _S3, _S4, _S5, _S6 = 0, 540, 740, 1110, 1650, 2190
+ORCH_LAYOUT: dict[str, tuple[int, int]] = {
+    "edit after import": (0, -580),
+    "lane intake": (0, _S1),
+    "lane start": (0, _S2),
+    "lane interpret": (0, _S3),
+    "lane decide": (0, _S4),
+    "lane agents": (0, _S5),
+    "lane ack": (0, _S6),
+}
+ORCH_LAYOUT.update(
+    _band(
+        _S1,
+        (
+            ("Authenticated MAS webhook", "Runtime endpoints", "Normalize step request", "Probe ping?", "Needs create?"),
+            ("Insert execution map", "Load case", "Validate loaded case", "Case found?", "Apply request extras"),
+            ("Status only?", "Resume persist?", "Not a resume?"),
+        ),
+    )
+)
+ORCH_LAYOUT.update(
+    _band(
+        _S2,
+        (("Prepare start case", "Insert new case", "Expand start events", "Insert start events", "Restore after start"),),
+    )
+)
+ORCH_LAYOUT.update(
+    _band(
+        _S3,
+        (
+            ("Needs interpret?", "Build interpret chat", "Interpret chat", "Interpret free-text answer", "Apply interpreted answer"),
+            ("Update case after resume", "Expand resume events", "Insert resume events", "Restore after resume", "Resume to decision?"),
+        ),
+    )
+)
+ORCH_LAYOUT.update(
+    _band(
+        _S4,
+        (
+            ("Load agent registry", "Prepare decision context", "Call Knowledge Retrieval", "Attach orchestrator RAG evidence", "Build decision chat", "Decision chat"),
+            ("Decision LLM", "Finish proposed?", "Parse decision", "Update case after decision", "Expand decision events", "Insert decision events"),
+            ("Prepare completion check", "Build verify chat", "Verify chat", "Verify completion", "Restore parsed decision", "Prepare agent call", "Action router"),
+        ),
+    )
+)
+ORCH_LAYOUT.update(
+    _band(
+        _S5,
+        (
+            ("Call agent (n8n)", "Call agent (HTTP)", "Agent not bound", "No agent this step"),
+            ("Merge agent result", "Update case after agent", "Expand agent events", "Insert agent events", "Restore after agent events", "Continue loop?"),
+            ("POST continue run",),
+        ),
+    )
+)
+ORCH_LAYOUT.update(
+    _band(
+        _S6,
+        (("Prepare Activity ack", "Activity sync?", "POST step ack to MAS Activity", "Format step ack"),),
+    )
+)
+
+
+def _layout_box(name: str, pos: tuple[int, int]) -> tuple[int, int, int, int]:
+    x, y = pos
+    if name == "edit after import":
+        return x, y, 480, 420
+    if name in LANE_NOTES:
+        return x, y, BAND_W, BANNER_H
+    return x, y, NODE_W, NODE_H
+
+
+def _boxes_overlap(a: tuple[int, int, int, int], b: tuple[int, int, int, int]) -> bool:
+    ax, ay, aw, ah = a
+    bx, by, bw, bh = b
+    return not (ax + aw + LAYOUT_PAD <= bx or bx + bw + LAYOUT_PAD <= ax or ay + ah + LAYOUT_PAD <= by or by + bh + LAYOUT_PAD <= ay)
+
+
+def assert_orchestrator_layout() -> None:
+    names = list(ORCH_LAYOUT)
+    hits: list[str] = []
+    for i, left in enumerate(names):
+        for right in names[i + 1 :]:
+            if _boxes_overlap(_layout_box(left, ORCH_LAYOUT[left]), _layout_box(right, ORCH_LAYOUT[right])):
+                hits.append(f"{left} × {right}")
+    exec_x = [ORCH_LAYOUT[n][0] for n in names if n != "edit after import" and n not in LANE_NOTES]
+    width = max(exec_x) - min(exec_x)
+    if hits:
+        raise SystemExit("orchestrator layout overlaps:\n  " + "\n  ".join(hits))
+    if width >= 2200:
+        raise SystemExit(f"orchestrator layout too wide: {width}")
 
 
 def apply_orchestrator_layout(wf: dict) -> None:
-    """Keep the board layout; generic layered relayout must not flatten this graph."""
+    """Keep the swimlane board; generic layered relayout must not flatten this graph."""
     for node in wf.get("nodes") or []:
         name = node.get("name")
-        if name in ORCH_LAYOUT:
-            x, y = ORCH_LAYOUT[name]
-            node["position"] = [int(x), int(y)]
+        if name not in ORCH_LAYOUT:
+            continue
+        x, y = ORCH_LAYOUT[name]
+        node["position"] = [int(x), int(y)]
+        if name in LANE_NOTES:
+            title, color = LANE_NOTES[name]
+            params = node.setdefault("parameters", {})
+            params["content"] = title
+            params["width"] = BAND_W
+            params["height"] = BANNER_H
+            params["color"] = color
 
 
 def main() -> None:
@@ -1482,15 +1579,17 @@ def main() -> None:
         note(
             "edit after import",
             (-200, -420),
-            "## edit after import\n\n**Orchestrator — MAS** — thin loop:\n- Bind Postgres on load/insert/update\n- Bind **Qwen** OpenAI-compatible credential on **Decision chat**, **Verify chat**, and Decision Chat Model (Interpret free-text answer)\n- Bind inbound header auth on webhook **and** POST continue run\n- Bind **Runtime endpoints** → `MAS — Runtime Config` (один Set URL на весь контур; `chat_model` + `chat_base_url` — модель и Base URL Decision/Verify)\n- **Call agent (n8n)** — universal: workflowId is an expression from `agent_registry.invoke.workflow_id` (or Runtime Config `agent_workflow_ids` JSON `{\"<agent_id>\":\"<id>\"}` when the field import assigned new ids). No per-agent nodes; adding an agent = `upsert_agent` in Control Plane Proxy + RAG routing card.\n- **Call agent (HTTP)** — `invoke.kind=http`, url with `{math_url}`-style placeholders from Runtime Config\n- Bind **Call Knowledge Retrieval** → `MAS — Knowledge Retrieval` (срез `orchestrator_routing` / `routing_card`; не excel_protocol и не schedule_mvp)\n- Excel `X-API-Key` — credential на Agent — Excel Extractor, не этот workflow\n\n`action`: probe | status | start | create | step | resume\n- **resume** `source`: human (Activity `/answer`) | agent | system (`POST /cases/{id}/run`). Кнопка HITL = `choice`; свободный текст при вариантах — Interpret free-text answer (тот же Qwen).\n- Activity `/cases` stores files; specialists fetch `/cases/{id}/artifacts/{id}` from their FastAPI tools. n8n never carries binaries.\n- **status** loads case and returns `human_gate` without LLM\n- Decision / Verify — HTTP `/chat/completions` with thinking off (`reasoning.enabled=false`); JSON.parse, no Structured Output parser\n- Loop: **POST continue run** → own webhook (`orchestrator_step_url` in Runtime Config). Activity starts/resumes cases; it does not drive the step loop.\n\nOne execution = one step.",
+            "## edit after import\n\n**Orchestrator — MAS** — thin loop:\n- Bind Postgres on load/insert/update\n- Bind **Qwen** OpenAI-compatible credential on **Decision chat**, **Verify chat**, and **Interpret chat**\n- Bind inbound header auth on webhook **and** POST continue run\n- Bind **Runtime endpoints** → `MAS — Runtime Config` (один Set URL на весь контур; `chat_model` + `chat_base_url` — модель и Base URL Decision/Verify/Interpret)\n- **Call agent (n8n)** — universal: workflowId is an expression from `agent_registry.invoke.workflow_id` (or Runtime Config `agent_workflow_ids` JSON `{\"<agent_id>\":\"<id>\"}` when the field import assigned new ids). No per-agent nodes; adding an agent = `upsert_agent` in Control Plane Proxy + RAG routing card.\n- **Call agent (HTTP)** — `invoke.kind=http`, url with `{math_url}`-style placeholders from Runtime Config\n- Bind **Call Knowledge Retrieval** → `MAS — Knowledge Retrieval` (срез `orchestrator_routing` / `routing_card`; не excel_protocol и не schedule_mvp)\n- Excel `X-API-Key` — credential на Agent — Excel Extractor, не этот workflow\n\n`action`: probe | status | start | create | step | resume\n- **resume** `source`: human (Activity `/answer`) | agent | system (`POST /cases/{id}/run`). Кнопка HITL = `choice`; свободный текст при вариантах — Interpret free-text answer (тот же Qwen).\n- Activity `/cases` stores files; specialists fetch `/cases/{id}/artifacts/{id}` from their FastAPI tools. n8n never carries binaries.\n- **status** loads case and returns `human_gate` without LLM\n- Decision / Verify / Interpret — HTTP `/chat/completions` with thinking off (`reasoning.enabled=false`); JSON.parse, no Structured Output parser\n- Loop: **POST continue run** → own webhook (`orchestrator_step_url` in Runtime Config). Activity starts/resumes cases; it does not drive the step loop.\n\nOne execution = one step.",
             480,
             420,
             1,
         ),
-        note("lane intake", (0, -110), "### 1. Вход и загрузка кейса", 280, 72, 6),
-        note("lane start", (1750, 180), "### 2. Новый кейс", 220, 72, 4),
-        note("lane decide", (0, 790), "### 3. Решение LLM", 240, 72, 5),
-        note("lane agents", (0, 1150), "### 4. Агенты и цикл", 260, 72, 7),
+        note("lane intake", (0, _S1), LANE_NOTES["lane intake"][0], BAND_W, BANNER_H, LANE_NOTES["lane intake"][1]),
+        note("lane start", (0, _S2), LANE_NOTES["lane start"][0], BAND_W, BANNER_H, LANE_NOTES["lane start"][1]),
+        note("lane interpret", (0, _S3), LANE_NOTES["lane interpret"][0], BAND_W, BANNER_H, LANE_NOTES["lane interpret"][1]),
+        note("lane decide", (0, _S4), LANE_NOTES["lane decide"][0], BAND_W, BANNER_H, LANE_NOTES["lane decide"][1]),
+        note("lane agents", (0, _S5), LANE_NOTES["lane agents"][0], BAND_W, BANNER_H, LANE_NOTES["lane agents"][1]),
+        note("lane ack", (0, _S6), LANE_NOTES["lane ack"][0], BAND_W, BANNER_H, LANE_NOTES["lane ack"][1]),
         node(
             "Authenticated MAS webhook",
             "n8n-nodes-base.webhook",
@@ -1555,34 +1654,10 @@ def main() -> None:
         if_true("Status only?", (1280, -120), "={{ Boolean($json.is_status) }}"),
         if_true("Resume persist?", (1280, 40), "={{ Boolean($json.did_resume) }}"),
         if_true("Needs interpret?", (1480, -80), "={{ Boolean($json.needs_interpret) }}"),
-        node(
-            "Interpret free-text answer",
-            "@n8n/n8n-nodes-langchain.chainLlm",
-            1.9,
-            (1680, -80),
-            {
-                "promptType": "define",
-                "text": "={{ $json.interpret_input }}",
-                "hasOutputParser": True,
-                "needsFallback": False,
-                "messages": {
-                    "messageValues": [
-                        {
-                            "type": "SystemMessagePromptTemplate",
-                            "message": INTERPRET_SYSTEM,
-                        }
-                    ]
-                },
-            },
-        ),
-        node(
-            "Answer interpretation Structured Output",
-            "@n8n/n8n-nodes-langchain.outputParserStructured",
-            1.3,
-            (1680, -240),
-            structured_parser_params(json.dumps(INTERPRET_SCHEMA, ensure_ascii=False)),
-        ),
-        code("Apply interpreted answer", (1880, -80), APPLY_INTERPRETED),
+        code("Build interpret chat", (1560, -80), BUILD_INTERPRET_CHAT),
+        openai_chat_http("Interpret chat", (1680, -80)),
+        code("Interpret free-text answer", (1840, -80), FORMAT_OPENAI_CHAT, alwaysOutputData=True),
+        code("Apply interpreted answer", (2040, -80), APPLY_INTERPRETED),
         postgres(
             "Update case after resume",
             (1480, 40),
@@ -1624,18 +1699,6 @@ def main() -> None:
         code("Build decision chat", (1440, 0), BUILD_DECISION_CHAT),
         openai_chat_http("Decision chat", (1560, 0)),
         code("Decision LLM", (1680, 0), FORMAT_OPENAI_CHAT, alwaysOutputData=True),
-        node(
-            "Decision Chat Model — configure in UI",
-            "@n8n/n8n-nodes-langchain.lmChatOpenAi",
-            1.3,
-            (1440, -180),
-            {
-                "model": {"mode": "id", "value": DEFAULT_CHAT_MODEL},
-                "options": chat_model_options(),
-                "responsesApiEnabled": False,
-            },
-            credentials=OA,
-        ),
         # Verified completion: only a proposed `finish` takes the detour through the completion check.
         if_true(
             "Finish proposed?",
@@ -1798,13 +1861,12 @@ return [{json:{...x,activity_sync:Boolean(x.case_id&&!x.is_probe&&x.activity_bas
     connect(connections, "Resume persist?", "Not a resume?", si=1)
     connect(connections, "Not a resume?", "Load agent registry", si=0)
     connect(connections, "Not a resume?", "Prepare Activity ack", si=1)
-    connect(connections, "Needs interpret?", "Interpret free-text answer", si=0)
+    connect(connections, "Needs interpret?", "Build interpret chat", si=0)
     connect(connections, "Needs interpret?", "Update case after resume", si=1)
+    connect(connections, "Build interpret chat", "Interpret chat")
+    connect(connections, "Interpret chat", "Interpret free-text answer")
     connect(connections, "Interpret free-text answer", "Apply interpreted answer")
     connect(connections, "Apply interpreted answer", "Update case after resume")
-    connect(connections, "Decision Chat Model — configure in UI", "Interpret free-text answer", out="ai_languageModel", si=0, tin="ai_languageModel")
-    connect(connections, "Decision Chat Model — configure in UI", "Answer interpretation Structured Output", out="ai_languageModel", si=0, tin="ai_languageModel")
-    connect(connections, "Answer interpretation Structured Output", "Interpret free-text answer", out="ai_outputParser", tin="ai_outputParser")
     connect(connections, "Update case after resume", "Expand resume events")
     connect(connections, "Expand resume events", "Insert resume events")
     connect(connections, "Insert resume events", "Restore after resume")
@@ -1871,6 +1933,7 @@ return [{json:{...x,activity_sync:Boolean(x.case_id&&!x.is_probe&&x.activity_bas
         "versionId": str(uuid.uuid4()),
     }
     apply_orchestrator_layout(wf)
+    assert_orchestrator_layout()
     missing = [n["name"] for n in wf["nodes"] if n.get("name") not in ORCH_LAYOUT]
     if missing:
         raise SystemExit(f"orchestrator layout missing nodes: {missing}")

@@ -3,7 +3,7 @@
 Детерминированный сервис без LLM: принимает Excel, держит дисковую сессию и отдаёт tools для schema/query/extract/validate/export.  
 **На работе:** только Windows CMD ниже. Полный MAS — [`docs.md`](../docs.md) §2 (n8n — только UI-импорт).
 
-Каждый запрос к `/api/v1/*` и `/agent-tools/*` требует `X-API-Key`; исключение — `/health`.
+Каждый запрос к `/agent-tools/*` требует `X-API-Key`; исключение — `/health`. Прямой `/api/v1/*` (отладка книги без n8n) монтируется только при `EXCEL_LEGACY_API=1` в `excel-tools.env`.
 
 Живой Agent — Excel Extractor в n8n бьёт в **`excel_tools_url` без `/api/v1`**: `http://<IP>:8000` + пути `/agent-tools/…`. URL задаётся в `MAS — Runtime Config`. Ключ — n8n Header Auth credential **Excel Tools X-API-Key** (header `X-API-Key`), не поле Set. Файлы сервис забирает сам: `GET {activity_base_url}/cases/{id}/artifacts/…`.
 
@@ -36,6 +36,7 @@ start-windows.bat
 | `MAX_INTERNAL_BLANK_ROWS` | сшивка коротких пустых разрывов внутри таблицы |
 | `MAX_PREVIEW_ROWS`, `MAX_QUERY_PREVIEW_ROWS` | лимиты preview |
 | `EXCEL_TOOLS_ENABLE_DOCS` | `/docs`; в production оставьте `false` |
+| `EXCEL_LEGACY_API` | `1`/`true`/`yes` — смонтировать `/api/v1` (pytest, ручная отладка книги). Поле и lab по умолчанию без этого флага |
 
 Формат файла: `ИМЯ=значение` без `set`, кавычек и пробелов вокруг `=`.
 

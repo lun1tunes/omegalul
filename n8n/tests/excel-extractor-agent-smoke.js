@@ -136,6 +136,7 @@ for (const must of ['extract_commissioning', 'extract_well_parameters', 'extract
   assert.ok(system.includes(must), `system prompt mentions ${must}`);
 }
 assert.equal(system.includes('suggested_capability'), false);
+assert.match(system, /Имена файлов в вопрос не вставляй/);
 assert.equal(wf.connections['Call Knowledge Retrieval'].main[0][0].node, 'Attach excel RAG evidence');
 assert.equal(wf.connections['Attach excel RAG evidence'].main[0][0].node, 'Excel Extractor AI Agent');
 assert.equal(wf.connections['Excel Extractor AI Agent'].main[0][0].node, 'Summarize AI steps');

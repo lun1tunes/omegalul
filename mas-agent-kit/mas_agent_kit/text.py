@@ -14,6 +14,16 @@ from typing import Any
 MACHINE_TOKEN_RE = re.compile(r"[a-z]+_[a-z_]+|[a-z_]+=[a-z0-9]+|[{}\[\]<>]|\w\|\w")
 _CYRILLIC_RE = re.compile(r"[А-Яа-яЁё]{3,}")
 _BASELINE_WORD_RE = re.compile(r"\bbaseline\b", re.I)
+# Uploaded names the LLM copies from inspect/handoff (CASE-6aa5a9d3-1e2ff9).
+_ATTACHMENT_NAME_RE = re.compile(r"\b[\w.-]+\.(xlsx|xls|xlsm|xlsb|csv|inc|txt|pdf|json|dev)\b", re.I)
+
+
+def strip_attachment_names(text: Any) -> str:
+    """Drop uploaded file names from engineer-facing prose. Names stay in ``data`` / inspect."""
+    cleaned = _ATTACHMENT_NAME_RE.sub("", str(text or ""))
+    cleaned = re.sub(r"\s{2,}", " ", cleaned)
+    cleaned = re.sub(r"\s+([,.!?;:])", r"\1", cleaned)
+    return cleaned.strip()
 
 
 def human_text_problems(text: Any, *, min_length: int = 12) -> list[str]:

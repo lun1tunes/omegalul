@@ -522,6 +522,21 @@ def bump_version(state: dict[str, Any]) -> dict[str, Any]:
 PLAN_STATUSES = ("pending", "active", "done", "blocked", "dropped")
 PLAN_OPEN_STATUSES = ("pending", "active", "blocked")
 PLAN_MAX_ITEMS = 12
+_ASKED_NAME = re.compile(r"^[A-Za-z][A-Za-z0-9_]{0,39}$")
+
+
+def sanitize_asked(names: Any) -> list[str]:
+    out: list[str] = []
+    seen: set[str] = set()
+    for raw in names if isinstance(names, list) else []:
+        name = str(raw if raw is not None else "").strip()
+        if not _ASKED_NAME.fullmatch(name) or name in seen:
+            continue
+        seen.add(name)
+        out.append(name)
+        if len(out) >= 6:
+            break
+    return out
 
 
 def sanitize_plan_item(item: Any) -> dict[str, Any] | None:
@@ -547,6 +562,9 @@ def sanitize_plan_item(item: Any) -> dict[str, Any] | None:
     note = str(item.get("note") or "").strip()[:300]
     if note:
         out["note"] = note
+    asked = sanitize_asked(item.get("asked"))
+    if asked:
+        out["asked"] = asked
     return out
 
 
@@ -576,8 +594,7 @@ def sanitize_case_state(state: Any) -> dict[str, Any]:
     if arts.get("schedule_files") and not arts.get("schedule_source") and not is_nested_artifacts(arts):
         arts = {**arts, "schedule_source": arts["schedule_files"]}
     src["artifacts"] = nest_artifacts(arts)
-    # Phase 2: agent results live in state.agents; state.data keeps the case result and, for cases from
-    # before Phase 2, legacy buckets — slimmed with the same byte budget (JS twin: sanitizeState).
+    # Phase 2: agent results live in state.agents; state.data keeps the case result (JS twin: sanitizeState).
     src["agents"] = sanitize_agents(src.get("agents"))
     data = dict(src["data"]) if isinstance(src.get("data"), dict) else {}
     data.pop("facts", None)

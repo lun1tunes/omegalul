@@ -241,6 +241,26 @@ def test_ask_engineer_requires_prose_and_stores_needs_input() -> None:
     assert request["accepts"]["free_text"] is True
 
 
+def test_ask_engineer_strips_workbook_filename_from_question() -> None:
+    """CASE-6aa5a9d3-1e2ff9: filename in the question is not a warning and not shown to the engineer."""
+    if not GOLDEN_XLSX.is_file():
+        pytest.skip("golden xlsx missing")
+    opened = agent.open_session(_task(excel_path=str(GOLDEN_XLSX)))
+    state = load_state(opened["session_id"])
+    asked = execute_tool(
+        state,
+        "ask_engineer",
+        {
+            "question": "В книге excel_gap_wefac.xlsx на листе «Коэффициенты» колонка пуста. Где взять значения?",
+            "options": "Лист «Коэффициенты»; Лист «Примечания»",
+        },
+    )
+    assert asked["ok"] is True
+    question = agent.result(load_state(opened["session_id"]))["requests"][0]["question"]
+    assert "excel_gap_wefac" not in question
+    assert "xlsx" not in question.lower()
+
+
 def test_excel_cards_collect_every_workbook_of_the_case(monkeypatch) -> None:
     monkeypatch.setattr(
         ActivityClient,
