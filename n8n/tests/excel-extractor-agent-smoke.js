@@ -113,13 +113,12 @@ assert.equal(runtimeCfg.parameters.workflowId.value, 'REPLACE_MAS_RUNTIME_CONFIG
 assert.equal(runtimeCfg.parameters.workflowId.cachedResultName, 'MAS — Runtime Config');
 assert.equal(JSON.stringify(wf).includes('excel_tools_api_key'), false);
 const openSession = wf.nodes.find((n) => n.name === 'Open excel session');
-assert.equal(openSession.parameters.authentication, 'genericCredentialType');
-assert.equal(openSession.parameters.genericAuthType, 'httpHeaderAuth');
-assert.equal(openSession.credentials.httpHeaderAuth.name, 'REPLACE: Excel Tools X-API-Key');
+assert.equal(openSession.parameters.authentication, undefined);
+assert.equal(openSession.credentials, undefined);
 assert.equal(openSession.retryOnFail, true);
 const introspect = wf.nodes.find((n) => n.name === 'workbook_introspect');
-assert.equal(introspect.parameters.authentication, 'genericCredentialType');
-assert.equal(introspect.credentials.httpHeaderAuth.name, 'REPLACE: Excel Tools X-API-Key');
+assert.equal(introspect.parameters.authentication, undefined);
+assert.equal(introspect.credentials, undefined);
 // No regex "Capability router" and no HTTP extract_commissioning bypass: every task reaches the LLM
 // agent, which picks table and columns from the inventory returned by open_session.
 for (const gone of ['Capability router', 'Extract commissioning', 'Describe extract result', 'Extract finished?', 'Restore after extract event']) {
@@ -155,13 +154,14 @@ assert.equal(activityProgress.parameters.options.response.response.neverError, t
 assert.equal(activityProgress.parameters.authentication, undefined);
 const close = wf.nodes.find((n) => n.name === 'Close excel session');
 assert.ok(String(close.parameters.url).includes('/close'));
-assert.equal(close.parameters.authentication, 'genericCredentialType');
+assert.equal(close.parameters.authentication, undefined);
+assert.equal(close.credentials, undefined);
 assert.ok(toolNodes.length >= 8);
 for (const t of toolNodes) {
   assert.equal(t.typeVersion, 4.4, t.name);
   assert.equal(t.parameters.descriptionType, 'manual', t.name);
-  assert.equal(t.parameters.authentication, 'genericCredentialType', t.name);
-  assert.equal(t.parameters.genericAuthType, 'httpHeaderAuth', t.name);
+  assert.equal(t.parameters.authentication, undefined, t.name);
+  assert.equal(t.credentials, undefined, t.name);
   const body = String(t.parameters.jsonBody);
   assert.ok(body.includes("session_id: $('Open excel session').first().json.session_id"), t.name);
   assert.equal(body.includes('$json.session_id'), false, t.name);

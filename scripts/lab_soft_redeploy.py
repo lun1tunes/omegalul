@@ -1172,9 +1172,6 @@ def main() -> int:
     qwen_id = ensure_qwen_credential(env)
     if qwen_id:
         env["_N8N_QWEN_CRED_ID"] = qwen_id
-    excel_hdr = ensure_excel_tools_header_auth(env)
-    if excel_hdr:
-        env["_N8N_EXCEL_HDR_CRED_ID"] = excel_hdr
     if args.wipe:
         wipe_state(env)
     if not args.skip_import:

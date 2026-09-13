@@ -14,14 +14,6 @@ if not exist "excel-tools.env" (
 
 for /f "usebackq eol=# tokens=1,* delims==" %%A in ("excel-tools.env") do if not "%%A"=="" set "%%A=%%B"
 
-if not defined API_KEY (
-  echo ERROR: API_KEY is not configured in excel-tools.env.
-  exit /b 1
-)
-if /I "%API_KEY%"=="change-me-long-random-excel-tools-key" (
-  echo ERROR: Replace the example API_KEY in excel-tools.env.
-  exit /b 1
-)
 if not defined EXCEL_TOOLS_HOST set "EXCEL_TOOLS_HOST=127.0.0.1"
 if not defined EXCEL_TOOLS_PORT set "EXCEL_TOOLS_PORT=8000"
 

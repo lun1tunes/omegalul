@@ -124,7 +124,8 @@ def test_ui_import_manifest_is_complete_and_matches_static_bindings() -> None:
     assert manifest["health_check"]["ui_name"] == "Form — MAS Deployment Health Check"
     assert (ROOT / "docs.md").is_file()
     header_auth = next(item for item in manifest["required_credentials"] if item["type"] == "httpHeaderAuth")
-    assert "X-API-Key" in header_auth["use"]
+    assert "Authorization" in header_auth["use"]
+    assert "X-API-Key" not in header_auth["use"]
     runtime_order = [Path(value).name for value in manifest["runtime_import_order"]]
     assert runtime_order.index("mas-runtime-config.workflow.json") < runtime_order.index(
         "excel-extractor-agent.workflow.json"
@@ -442,12 +443,8 @@ def test_mas_runtime_config_is_the_only_url_set() -> None:
     assert http_nodes
     for node in http_nodes:
         url = str(node.get("parameters", {}).get("url") or "")
-        if node["name"].startswith("Activity —") or "/events" in url:
-            assert node["parameters"].get("authentication") != "genericCredentialType"
-            continue
-        assert node["parameters"].get("authentication") == "genericCredentialType"
-        assert node["parameters"].get("genericAuthType") == "httpHeaderAuth"
-        assert node["credentials"]["httpHeaderAuth"]["name"] == "REPLACE: Excel Tools X-API-Key"
+        assert node["parameters"].get("authentication") != "genericCredentialType"
+        assert "httpHeaderAuth" not in (node.get("credentials") or {})
 
 def test_orchestrator_routing_cards_plan_follows_the_goal_not_output_provides() -> None:
     """CASE-6aa052eb: Luna copied Excel output_provides (facts+new_wells) into expected_output on a dates-only goal."""
@@ -1004,7 +1001,7 @@ def test_agent_spec_generates_the_uniform_agent_workflow_and_registry_row() -> N
     for s in ALL:
         if s.service_url_key:
             assert s.service_url_key in keys, s.agent_id
-    assert EXCEL_EXTRACTOR.service_credentials is not None and SCHEDULE_BUILDER.service_credentials is None
+    assert EXCEL_EXTRACTOR.service_credentials is None and SCHEDULE_BUILDER.service_credentials is None
     excel_wf = load_json(CORE / "excel-extractor-agent.workflow.json")
     assert excel_wf["id"] == EXCEL_EXTRACTOR.resolved_workflow_id == SEED[0]["invoke"]["workflow_id"]
 

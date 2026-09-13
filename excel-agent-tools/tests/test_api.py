@@ -113,6 +113,37 @@ def tool(client: TestClient, session_id: str, name: str, args: dict) -> dict:
     return {key: value for key, value in payload.items() if key != "ok"}
 
 
+def test_agent_tools_open_without_key_when_api_key_unset(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setenv("SESSION_DIR", str(tmp_path / "sessions"))
+    monkeypatch.delenv("API_KEY", raising=False)
+    monkeypatch.delenv("EXCEL_LEGACY_API", raising=False)
+    import importlib
+    import app.main as main
+
+    importlib.reload(main)
+    guest = TestClient(main.app)
+    assert main.API_KEY == ""
+    opened = guest.post("/agent-tools/open_session", json={"objective": "даты ввода"})
+    assert opened.status_code == 200, opened.text
+
+
+@pytest.mark.parametrize("placeholder", ["change-me-excel-tools-api-key", "local-dev-excel-tools-api-key"])
+def test_placeholder_api_key_does_not_enable_auth(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, placeholder: str
+) -> None:
+    monkeypatch.setenv("SESSION_DIR", str(tmp_path / "sessions"))
+    monkeypatch.setenv("API_KEY", placeholder)
+    monkeypatch.delenv("EXCEL_LEGACY_API", raising=False)
+    import importlib
+    import app.main as main
+
+    importlib.reload(main)
+    guest = TestClient(main.app)
+    assert main.API_KEY == ""
+    opened = guest.post("/agent-tools/open_session", json={"objective": "даты ввода"})
+    assert opened.status_code == 200, opened.text
+
+
 def test_legacy_api_absent_without_flag(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
     monkeypatch.setenv("SESSION_DIR", str(tmp_path / "sessions"))
     monkeypatch.setenv("API_KEY", "test-key")

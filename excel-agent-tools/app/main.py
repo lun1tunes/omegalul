@@ -1,4 +1,5 @@
-"""Excel Tools FastAPI app: the agent routes (``mas_agent_kit.agent_router`` over ``agent``) behind an API key.
+"""Excel Tools FastAPI app: the agent routes (``mas_agent_kit.agent_router`` over ``agent``).
+Auth is off by default. Set ``API_KEY`` only if you want ``X-API-Key`` on ``/agent-tools/*``.
 The direct ``/api/v1`` debug API mounts only when ``EXCEL_LEGACY_API`` is 1/true/yes. No LLM calls live here.
 
 The agent itself is the n8n workflow ``Agent — Excel Extractor`` (LLM) + ``app/agent.py`` (session,
@@ -32,13 +33,15 @@ from .agent import agent  # noqa: E402
 logging.basicConfig(level=os.getenv("LOG_LEVEL", "INFO").upper(), format="%(asctime)s %(levelname)s %(name)s %(message)s")
 logger = logging.getLogger(__name__)
 
-API_KEY = os.getenv("API_KEY", "")
-if not API_KEY:  # fail fast rather than exposing an unauthenticated tools API by mistake
-    raise RuntimeError("API_KEY must be configured")
+API_KEY = os.getenv("API_KEY", "").strip()
+if API_KEY.startswith("change-me") or API_KEY == "local-dev-excel-tools-api-key":
+    API_KEY = ""
 DOCS_ENABLED = os.getenv("EXCEL_TOOLS_ENABLE_DOCS", "false").strip().casefold() == "true"
 
 
 def require_api_key(x_api_key: Annotated[str | None, Header()] = None) -> None:
+    if not API_KEY:
+        return
     if not isinstance(x_api_key, str) or not secrets.compare_digest(x_api_key, API_KEY):
         raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail="Unauthorized")
 
@@ -62,6 +65,7 @@ def health() -> dict[str, Any]:
     }
 
 
-app.include_router(agent_router(agent, dependencies=[Depends(require_api_key)]))
+_auth = [Depends(require_api_key)] if API_KEY else []
+app.include_router(agent_router(agent, dependencies=_auth))
 if os.getenv("EXCEL_LEGACY_API", "").strip().casefold() in {"1", "true", "yes"}:
-    app.include_router(legacy_api.router, dependencies=[Depends(require_api_key)])
+    app.include_router(legacy_api.router, dependencies=_auth)

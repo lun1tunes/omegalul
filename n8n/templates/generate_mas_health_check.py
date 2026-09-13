@@ -361,7 +361,7 @@ const overall = fail.length ? 'FAIL' : (todo.length ? 'PASS_WITH_TODO' : 'PASS')
 
 const MANUAL = [
   'Execute Workflow bindings: Orchestrator — MAS → Runtime endpoints / Call Knowledge Retrieval; Agent — Excel Extractor and Agent — Schedule Builder → Runtime configuration / Call Knowledge Retrieval. Agents are not bound as nodes: Call agent (n8n) reads the workflow id from agent_registry.invoke — after UI import put the new ids into MAS — Runtime Config → agent_workflow_ids.',
-  'Credentials: LLM on the three Chat Models; embeddings on Ingestion / Retrieval; Postgres on Ingestion / Retrieval / Orchestrator / Control Plane Proxy; Header Auth on Orchestrator webhook + POST continue run + Control Plane Proxy webhook; Excel Tools X-API-Key on Agent — Excel Extractor HTTP nodes.',
+  'Credentials: LLM on the three Chat Models; embeddings on Ingestion / Retrieval; Postgres on Ingestion / Retrieval / Orchestrator / Control Plane Proxy; Header Auth on Orchestrator webhook + POST continue run + Control Plane Proxy webhook. Excel Tools has no Header Auth.',
   'Settings → Error workflow = Error — MAS Node Traces on Orchestrator, Excel Extractor, Schedule Builder, Retrieval, Ingestion.',
   'Export each workflow JSON and search REPLACE_ — none may remain.',
   'Activation order: Control Plane Proxy → Ingestion / Retrieval / Excel / Schedule / Error traces → Orchestrator.',

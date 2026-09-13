@@ -1,6 +1,6 @@
 # NOVATEK RE MASter — анализ и план рефакторинга «от хардкода к инженерной MAS»
 
-Ревизия 41 — 2026-09-13. Статусы ниже сверены с кодом на эту дату; история ревизий — §7. Как работать по плану — `AGENTS.md` (карта, инварианты, цикл задачи), гейт — `python3 scripts/mas_gate.py [--live [--repeat N]]` (`--bundle` — полевой zip, не стадия офлайн-гейта). Полевой гайд для инженера — `docs.md` (схема + деплой + работа). Очередь и хвосты простыми словами — §2.8.
+Ревизия 42 — 2026-09-13. Статусы ниже сверены с кодом на эту дату; история ревизий — §7. Как работать по плану — `AGENTS.md` (карта, инварианты, цикл задачи), гейт — `python3 scripts/mas_gate.py [--live [--repeat N]]` (`--bundle` — полевой zip, не стадия офлайн-гейта). Полевой гайд для инженера — `docs.md` (схема + деплой + работа). Очередь и хвосты простыми словами — §2.8.
 
 **Синхрон.** Шапка, §3 «Состояние», §4 сводка и критерий *текущего* гейта, §2.7, «Ближайшие шаги» = код на дату ревизии. Номер шапки = последняя запись §7. Журнал §7 и критерии уже закрытых фаз не переписывать. Счётчики pytest в шапке не фиксировать — плывут; писать «16 smokes, 5 pytest-наборов». `--live` сейчас **12 слотов**: шесть `run_live_five` + `demo_agent_long_job` + `three_agent_chain` + `excel_datasets` (extract + apply + дырка) + `agent_down_recovery` + `rework_round` + `step_limit_review`. `--repeat N` — шесть commissioning ×N в одном пуле, остальные сценарии один раз (не 12×N); стена ~25 мин. `--hot`, если lab здоров и JSON без дрейфа.
 
@@ -262,11 +262,11 @@ HITL: **H1** вопрос прозой с кнопками · **H2** кнопк�
 10. 🆕 **Долгие агенты.** Расчёт идёт часами при модели «1 шаг = 1 execution»: агенту нужен статус `in_progress` с `watch`; монитор шлёт `agent.progress`, завершение будит оркестратор `resume source=agent`. Закладка — Фаза 1.3 (единый write-path); реализация — Фаза 4.5, live `demo_agent_long_job`.
 11. 🆕 **Техническое — в лог, человеческое — в чат.** Одна лента событий, два читателя: инженер видит `status_message` и вопросы; разработчик — `payload` (решение LLM, `agent_task`, аргументы инструментов, ошибки узлов) в логе с уровнями и ссылками на executions. Новое техническое поле — в `payload`/`trace.*`, никогда в `message`.
 
-**Состояние на ревизию 41:** п. 1–11 реализованы и охраняются гейтом. Коды хвостов и очередь — §2.8. **6.0 ✅.** Лента не схлопывает parking `watch` с эхом `running`. `ask_engineer` снимает имя файла с вопроса. Interpret — HTTP thinking off. Excel `/api/v1` только по `EXCEL_LEGACY_API`. **α1–α5 ✅. F9 ✅. A6/A17 ✅.** Offline GREEN; `--only live` 1595s **12/12**. Не реализовано: **6.2–6.5**. Агенты на `lmChatOpenAi` (thinking off в 2.30.8 нет). Тег `alpha-1` — после коммита ревизии 39.
+**Состояние на ревизию 42:** п. 1–11 реализованы и охраняются гейтом. Коды хвостов и очередь — §2.8. **6.0 ✅.** Excel Tools без `API_KEY` / Header Auth. Лента не схлопывает parking `watch` с эхом `running`. `ask_engineer` снимает имя файла с вопроса. Interpret — HTTP thinking off. Excel `/api/v1` только по `EXCEL_LEGACY_API`. **α1–α5 ✅. F9 ✅. A6/A17 ✅.** Не реализовано: **6.2–6.5**. Агенты на `lmChatOpenAi` (thinking off в 2.30.8 нет). Тег `alpha-1` — после коммита ревизии 39.
 
 ---
 
-## 4. План по фазам (ревизия 41)
+## 4. План по фазам (ревизия 42)
 
 Гейт каждой фазы — `python3 scripts/mas_gate.py`: регенерация без дрейфа, 16 `n8n/tests/*-smoke.js`, пять pytest-наборов (kit, Activity, Schedule Builder, Excel Tools, demo agent), offline combat; `--live` — `lab_soft_redeploy.py` (`--hot`, если lab здоров и нет дрейфа JSON, иначе полный импорт) + **12 слотов**, `mismatch_count: 0`, без циклов/повторных HITL, с порогами α2: шесть `run_live_five.py` (golden 1–2, combat 0–3; `combat_case3` — проза без `choice`) + `run_live_demo_agent.py` (`demo_agent_long_job`, `three_agent_chain`, `agent_down_recovery`, `rework_round`, `step_limit_review`) + `run_live_excel_datasets.py` (extract `done` + apply `done` + дырка HITL). На `step_limit_review` один ожидаемый review-вопрос («лимит шагов») — не эскалация `completion_review`. Порядок внутри `--live`: шесть commissioning (`LIVE_FIVE_WORKERS=6`; при `--repeat>1` — 9), затем demo∥цепь∥datasets (`demo_agent` в реестре только на этом слое, не во время шести), затем recovery (`agent_down`, затем `rework`∥`step_limit` под одним патчем `max_steps`). `--repeat N` не троить весь 12-сет. Порядок фаз: лента → оркестратор без домена → расширяемость → план (6.1) → **альфа ✅** → **6.0 ✅** → боевой агент, метрики, golden-набор.
 
@@ -806,6 +806,24 @@ Offline GREEN: regen (Excel JSON), 16 smokes, pytest kit 37 / Activity 128 / Bui
 - apply `CASE-6aa67346-36974f` steps 3, warnings 0, tool_calls 3
 - gap `CASE-6aa67387-6824a0` `waiting_user`, warnings 0, один `ask_engineer` «В книге на листе «Коэффициенты»…»
 - recovery `CASE-6aa673a7-279352`, `CASE-6aa673f7-640bf0`, `CASE-6aa673f7-342e57`
+
+Не сделано: 6.2 / 6.3 / 6.5. Тег `alpha-1` — после коммита.
+
+### Ревизия 42 (2026-09-13) — Excel Tools без ключа
+
+Поле: `API_KEY` не обязателен; агент без Header Auth (как сборщик). Placeholder `change-me…` / lab `local-dev-excel-tools-api-key` не включают авторизацию. Compose больше не передаёт ключ.
+
+Offline GREEN: regen без дрейфа, 16 smokes, pytest kit 37 / Activity 128 / Builder 64 / Excel 83 / demo 7, combat.
+
+Первый `--only live` 523s: 11/12, gap `CASE-6aa6b521-8d3a9b` `warnings=1` (`detect_tables` → `INVALID_ARGUMENTS`) — не 401. Повтор `--cases excel_datasets` GREEN. Полный `--only live` 562s GREEN 12/12 (`mismatch_count: 0`):
+- golden 1–2 `CASE-6aa6b6fc-22327c`, `CASE-6aa6b6fc-8cfcde`
+- combat 0–3 `CASE-6aa6b6fc-f5ef99`, `CASE-6aa6b6fc-ab0ac1`, `CASE-6aa6b6fc-3e5273`, `CASE-6aa6b6fc-3280a9`
+- demo `CASE-6aa6b770-d6a72f`
+- chain `CASE-6aa6b770-250ced`
+- extract `CASE-6aa6b76f-bee4fe`
+- apply `CASE-6aa6b78e-511ccb`
+- gap `CASE-6aa6b7d4-83aeb3` `waiting_user`, warnings 0
+- recovery `CASE-6aa6b821-779bac`, `CASE-6aa6b895-fe5259`, `CASE-6aa6b895-258d26`
 
 Не сделано: 6.2 / 6.3 / 6.5. Тег `alpha-1` — после коммита.
 

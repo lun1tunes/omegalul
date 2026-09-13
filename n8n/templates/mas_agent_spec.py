@@ -34,7 +34,7 @@ ToolField = tuple[str, str, bool, str]
 ToolDef = tuple[str, str, list[ToolField]]
 
 
-# n8n Header Auth credential the Excel Tools service expects (``X-API-Key``); bound in the UI after import.
+# Unused by default. Excel Tools has no Header Auth; keep if a deployment re-enables ``API_KEY``.
 EXCEL_KEY_CRED = {"httpHeaderAuth": {"id": "REPLACE_IN_UI", "name": "REPLACE: Excel Tools X-API-Key"}}
 
 
@@ -115,7 +115,7 @@ class AgentSpec:
     #: Activity feed lines posted by the workflow itself (before the LLM runs).
     accepted_message: str = ""
     progress_message: str = ""
-    #: n8n credential attached to every HTTP node of the service (``EXCEL_KEY_CRED``); None = no auth.
+    #: n8n credential attached to every HTTP node of the service; None = no auth (Excel default).
     service_credentials: dict[str, Any] | None = None
     #: Sticky note shown in the n8n editor after import.
     sticky_note: str = ""

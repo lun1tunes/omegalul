@@ -14,8 +14,6 @@ services:
       - ./mas-agent-kit:/mas-agent-kit:ro
       - ./VERSION:/app/VERSION:ro
     environment:
-      - API_KEY=${EXCEL_TOOLS_API_KEY:-local-dev-excel-tools-api-key}
-      - EXCEL_TOOLS_API_KEY=${EXCEL_TOOLS_API_KEY:-local-dev-excel-tools-api-key}
       - OPENAI_API_KEY=${OPENAI_API_KEY:-}
       - ACTIVITY_BASE_URL=${ACTIVITY_BASE_URL:-http://mas-activity:8200}
       - MAX_QUERY_PREVIEW_ROWS=10000

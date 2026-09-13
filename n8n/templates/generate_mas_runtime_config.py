@@ -2,8 +2,7 @@
 """Generate MAS — Runtime Config: one Set of service URLs for n8n 2.30.8 free.
 
 Callers (Orchestrator, Excel Extractor, Schedule Builder) execute this
-sub-workflow instead of duplicating Set nodes. Excel API key is a Header Auth
-credential on HTTP nodes, not a field here. No $env / $vars.
+sub-workflow instead of duplicating Set nodes. No $env / $vars.
 """
 
 from __future__ import annotations
@@ -14,8 +13,6 @@ from pathlib import Path
 
 from agents import ALL as AGENT_SPECS
 from llm_runtime_options import DEFAULT_CHAT_MODEL
-from mas_agent_spec import EXCEL_KEY_CRED  # noqa: F401  (re-exported for callers that bind the Excel credential)
-
 ROOT = Path(__file__).resolve().parents[1]
 OUT = ROOT / "workflows/core/mas-runtime-config.workflow.json"
 REPO = ROOT.parent
@@ -132,10 +129,7 @@ def main() -> None:
                     "Поле: `http://<IP-Windows>:8200` / `:8000` / `:8090` / `:8100`.\n"
                     "2. На Orchestrator / Excel / Schedule привяжите Execute Workflow → "
                     "этот workflow (ноды **Runtime endpoints** / **Runtime configuration**).\n"
-                    "3. Ключ Excel **не** сюда. Credential Header Auth "
-                    "**Excel Tools X-API-Key**: header name `X-API-Key`, value = "
-                    "`API_KEY` из `excel-tools.env`. Привяжите его на HTTP-нодах "
-                    "Agent — Excel Extractor.\n\n"
+                    "3. Excel Tools и Schedule Builder без Header Auth (как Math).\n\n"
                     "Возвращает "
                     "`activity_base_url`, `excel_tools_url`, `schedule_service_url`, "
                     "`math_url`, `orchestrator_step_url`, `max_steps`, `chat_model`, `agent_workflow_ids`, `mas_version`. Ничего не оркестрирует.\n\n"

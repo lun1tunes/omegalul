@@ -8,6 +8,8 @@
 
 ## 0.8.0+ — 2026-09-13
 
+Excel Tools без `API_KEY` и без Header Auth на агенте (как Schedule Builder). Старый ключ в `excel-tools.env` уберите, иначе сервис снова потребует `X-API-Key`.
+
 Лента: `agent.progress` `running` и parking `waiting_agent` с одним текстом больше не схлопываются — `watch` долгого агента виден в `GET /cases`. `ask_engineer` снимает имя файла с вопроса до проверки «машинности».
 
 ## 0.8.0+ — 2026-09-12

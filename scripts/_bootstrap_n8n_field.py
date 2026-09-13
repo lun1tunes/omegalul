@@ -121,12 +121,6 @@ def main() -> int:
         "httpHeaderAuth",
         {"name": "Authorization", "value": "local-orch-inbound"},
     )
-    excel_hdr_id = ensure(
-        "Excel Tools X-API-Key",
-        "httpHeaderAuth",
-        {"name": "X-API-Key", "value": env.get("EXCEL_TOOLS_API_KEY", "local-dev-excel-tools-api-key")},
-    )
-
     ids = {
         "cred-postgres-pgvector-01": pg_id,
         "cred-openai-production-01": oa_id,
@@ -142,7 +136,6 @@ def main() -> int:
     excel_url = "http://host.docker.internal:8000/api/v1"
     activity_url = "http://host.docker.internal:8200"
     math_url = "http://host.docker.internal:8100/api/v1/math"
-    excel_key = env.get("EXCEL_TOOLS_API_KEY", "local-dev-excel-tools-api-key")
 
     for row in rows:
         wid = row.get("id")
@@ -175,13 +168,8 @@ def main() -> int:
                     meta["name"] = "OpenAI production"
                     changed += 1
                 elif ctype == "httpHeaderAuth":
-                    cname = str(meta.get("name") or "")
-                    if "excel" in cname.lower() or "x-api-key" in cname.lower():
-                        meta["id"] = excel_hdr_id
-                        meta["name"] = "Excel Tools X-API-Key"
-                    else:
-                        meta["id"] = hdr_id
-                        meta["name"] = "Engineering orchestrator inbound key"
+                    meta["id"] = hdr_id
+                    meta["name"] = "Engineering orchestrator inbound key"
                     changed += 1
             if nname == "Runtime URLs":
                 for assignment in (((params.get("assignments") or {}).get("assignments")) or []):

@@ -120,7 +120,7 @@
     },
     {
       "type": "httpHeaderAuth",
-      "use": "Two Header Auth credentials: (1) Orchestrator inbound webhook and Control Plane Proxy webhook (Authorization). (2) Excel Tools X-API-Key — header name X-API-Key, value = API_KEY from excel-tools.env — on Agent — Excel Extractor HTTP nodes. Do not put the Excel key in a Set or item JSON."
+      "use": "Header Auth on Orchestrator inbound webhook and Control Plane Proxy webhook (Authorization). Excel Tools has no Header Auth."
     }
   ],
   "ui_configuration": [
@@ -128,7 +128,7 @@
     "Do not create n8n Data Tables for live case state.",
     "Bind Orchestrator — MAS: Call Knowledge Retrieval → MAS — Knowledge Retrieval (selector target_base=orchestrator_routing). Bind Call Knowledge Retrieval on Excel Extractor (excel_protocol) and Schedule Builder (schedule_mvp). Agents are NOT bound as nodes: Orchestrator's universal Call agent (n8n) takes the workflow id from agent_registry.invoke (seeded by Control Plane Proxy schema). After UI import n8n assigns new ids — copy each agent workflow id (URL of the open workflow) into MAS — Runtime Config → agent_workflow_ids as {\"excel_extractor\":\"<id>\",\"schedule_builder\":\"<id>\"}. Adding an agent = import its workflow + POST {\"operation\":\"upsert_agent\",\"row\":{...}} to the Control Plane Proxy (no orchestrator regen).",
     "Bind Runtime endpoints / Runtime configuration → MAS — Runtime Config on Orchestrator, Excel Extractor, and Schedule Builder. Edit the four URLs once in MAS — Runtime Config (lab Docker DNS in git; field = http://<IP-Windows>:8200/:8000/:8090/:8100). math_url has no /agent/run suffix.",
-    "Excel Tools X-API-Key: Header Auth credential (header name X-API-Key) on Agent — Excel Extractor HTTP / toolHttpRequest nodes. Do not store the key in MAS — Runtime Config.",
+    "Excel Tools: no Header Auth. Do not put a service key in MAS — Runtime Config.",
     "Windows host needs Python 3.11-3.13 venv only (no Node, no Docker). Calculation agent is agent_registry.invoke {kind:http,url:\"{math_url}/agent/run\"} — math_url from MAS — Runtime Config, no /agent/run suffix there. Do not import Agent — Calculation (Math Service).",
     "Bind Header Auth on Orchestrator webhook and Control Plane Proxy webhook. Activate Control Plane Proxy first, POST {\"operation\":\"schema\"}, then start Activity.",
     "Settings → Error workflow = Error — MAS Node Traces on Orchestrator, Excel Extractor, Schedule Builder, Retrieval, Ingestion. Not on the error workflow itself or Control Plane Proxy.",
@@ -141,7 +141,7 @@
   ],
   "activation_order": [
     "Import MAS — Runtime Config, fill Runtime URLs (field: Windows IP), bind Execute Workflow on Orchestrator/Excel/Schedule (Runtime Config) and Call Knowledge Retrieval → MAS — Knowledge Retrieval on Orchestrator, Excel Extractor, and Schedule Builder.",
-    "Create Header Auth credential Excel Tools X-API-Key and bind it on Agent — Excel Extractor HTTP nodes.",
+    "Excel Extractor HTTP nodes have no service credential.",
     "Activate MAS — Control Plane Proxy and POST {\"operation\":\"schema\"}.",
     "Start Activity with CONTROL_PLANE_PROXY_URL; /health control_plane_backend = n8n_proxy.",
     "Activate MAS — Knowledge Retrieval before Orchestrator and before Excel/Schedule LLM smokes (Call Knowledge Retrieval: orchestrator_routing / excel_protocol / schedule_mvp). Ingest cards via Activity.",
@@ -151,7 +151,7 @@
   "smoke_expectations": [
     "Activity POST /cases with Excel + schedule_files + schedule_root stores artifacts on the control plane; specialists GET /cases/{id}/artifacts/{id}.",
     "start without a usable objective asks the user via HITL (waiting_user), not a fabricated .INC.",
-    "Excel Extractor uses X-API-Key tools at /agent-tools/*; dates with an ISO time suffix become YYYY-MM-DD.",
+    "Excel Extractor uses /agent-tools/* (no X-API-Key by default); dates with an ISO time suffix become YYYY-MM-DD.",
     "Schedule Builder commissioning and group-rebind emit in Python FastAPI (timeline_ops). JS timeline stays in n8n templates/smokes only.",
     "INCLUDE text is not rewritten. Petrel ../../INCLUDE/... stays KEEP when bodies are not attached; URL/absolute paths are unsafe.",
     "validated REVISE returns .INC plus completeness/preservation evidence; golden_case_1/2 match *_MAS_result.INC (WEFAC ignored).",

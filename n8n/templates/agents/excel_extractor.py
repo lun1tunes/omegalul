@@ -4,7 +4,7 @@ from __future__ import annotations
 
 import uuid
 
-from mas_agent_spec import EXCEL_KEY_CRED, AgentSpec, FallbackTexts
+from mas_agent_spec import AgentSpec, FallbackTexts
 
 SYSTEM = """Ты — решатель агента Excel Extractor: читаешь задачу инженера, инвентарь приложенных Excel-книг (файлы, листы, таблицы с колонками и первыми строками) и expected_output (форму наборов, которую просит оркестратор). Сам выбираешь таблицу и колонки и вызываешь инструмент извлечения. Данные извлекают инструменты — ты их не переписываешь и SCHEDULE / .INC не пишешь.
 
@@ -190,7 +190,6 @@ if(/уточн|ambigu|clarif/.test(low)) task_patterns.push('clarification_neede
     ),
     accepted_message="Excel Extractor принял задачу и анализирует workbook",
     progress_message="Excel Extractor читает листы и таблицы приложенных книг.",
-    service_credentials=EXCEL_KEY_CRED,
     sticky_height=380,
     node_id_namespace="mas-excel-agent",
     workflow_id=str(uuid.uuid5(uuid.NAMESPACE_URL, "mas-excel-extractor-agent")),

@@ -102,7 +102,7 @@ flowchart TB
 
 | Сервис | Каталог | Порт | Файл настроек |
 |---|---|---|---|
-| Excel Tools | `excel-agent-tools` | 8000 | `excel-tools.env` — обязателен `API_KEY` |
+| Excel Tools | `excel-agent-tools` | 8000 | `excel-tools.env` — ключ не нужен |
 | Schedule Builder | `schedule-builder-service` | 8090 | `schedule-builder.env` |
 | Math | `fastapi-math-service` | 8100 | `math-service.env` |
 | Activity | `mas-activity-service` | 8200 | `mas-activity.env` — заполните, но **запустите позже** |
@@ -159,7 +159,6 @@ n8n → **Import from File**, строго по `IMPORT_ORDER.txt`. Пока **�
 | Knowledge Ingestion и Retrieval → Embeddings | Отдельный embedding credential, модель `text-embedding-3-small`, Dimensions пустое |
 | Ingestion, Retrieval, оркестратор, прокси, Error traces → Postgres | Одна учётка Postgres / PGVector (SSL = Disable, если сервер без TLS) |
 | Webhook оркестратора, нода **POST continue run**, webhook прокси | Header Auth — те же имя и значение, что в `mas-activity.env` |
-| Все HTTP-ноды **Agent — Excel Extractor** | Отдельный Header Auth: заголовок `X-API-Key`, значение = `API_KEY` из `excel-tools.env` |
 
 В **MAS — Runtime Config** откройте Set `Runtime URLs` и замените адреса на полевые (не оставляйте имена вроде `excel-tools` или `n8n:5678`):
 
@@ -176,7 +175,7 @@ n8n → **Import from File**, строго по `IMPORT_ORDER.txt`. Пока **�
 | `max_steps` | обычно `12` |
 | `agent_workflow_ids` | пока `{}` — заполните на следующем шаге |
 
-Ключ Excel в Set не кладите — только в credential.
+Excel Tools без Header Auth — ключ в Runtime Config и на агенте не нужен.
 
 ### 4. Связать workflows
 
@@ -241,7 +240,7 @@ Settings каждого из: оркестратор, оба агента, Retri
 | `/health` без `n8n_proxy` | Не задан `CONTROL_PLANE_PROXY_URL` — для работы так нельзя. |
 | `relation "cases" does not exist` | Ещё раз `{"operation":"schema"}`. Проверьте Postgres и права CREATE. |
 | «Агент недоступен» | Не прописаны id в `agent_workflow_ids` или агент выключен на странице «Агенты». Workflow агента должен быть Active. |
-| Excel 401 | `X-API-Key` в n8n ≠ `API_KEY` в `excel-tools.env`. Сервис слушает `:8000`. |
+| Excel 401 | В `excel-tools.env` остался старый `API_KEY` — уберите его. Сервис слушает `:8000`. |
 | n8n не видит сервисы | Firewall; в env `0.0.0.0`; в Runtime Config IP Windows, не docker-имя. |
 | Health Check 404 / 403 на оркестратор | Оркестратор не Active, или `orchestrator_step_url` — не тот адрес, с которого n8n ходит сам в себя, или Header Auth не совпал. |
 | Форма Health Check по адресу `/webhook/…` даёт 404 | Это форма: `/form/mas-deployment-health-check`. |
